@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file ExplicitFvSolver.hpp
- * @brief Serial/OpenMP CPU reference implementation of the explicit FV 1D solver.
+ * @file      ExplicitFvSolver.hpp
+ * @brief     Serial/OpenMP CPU reference implementation of the explicit FV 1D solver.
  *
  * @details Godunov-type explicit finite volume on the conduit cell mesh:
  *          hydrostatic (Audusse) reconstruction → HLLC face flux → positivity
@@ -31,9 +31,9 @@
  * @see plans/EXPLICIT_FV_KOKKOS_1D_SOLVER_PLAN.md §3, §5
  * @ingroup engine_fv
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_FV_EXPLICIT_FV_SOLVER_HPP
@@ -50,47 +50,136 @@
 #include "PressurizedHeadSolver.hpp"
 
 namespace openswmm::transport::fvkernels {
-struct SpeciesKernelView;  // transport/fvkernels/SpeciesTransportKernels.hpp
+struct SpeciesKernelView; // transport/fvkernels/SpeciesTransportKernels.hpp
 }
 
 namespace openswmm::fv {
 
 class ExplicitFvSolver : public INetworkSolver {
 public:
+    /**
+     * @brief Construct an unbound solver with no borrowed mesh/state.
+     *
+     * Call initialize before using geometry/state helpers or advancing physical time.
+     */
     ExplicitFvSolver() = default;
+    /**
+     * @brief Destroy owned solver scratch without deleting borrowed mesh/state.
+     *
+     * All returned member references and raw views become invalid; no final advance, report publication
+     * or external callback is performed.
+     */
     ~ExplicitFvSolver() override = default;
 
+    /**
+     * @brief Disallow copying a solver and its borrowed state/scratch ownership.
+     */
     ExplicitFvSolver(const ExplicitFvSolver&) = delete;
+    /**
+     * @brief Disallow copy assignment of a live solver.
+     */
     ExplicitFvSolver& operator=(const ExplicitFvSolver&) = delete;
 
-    /// Native-only P0.5 experiment. No input keyword, binding, GUI control or
-    /// backend ABI change. advance() rejects unqualified feature combinations.
+    /**
+     * @brief Enable the restricted native nonlinear pressure-storage experiment.
+     *
+     * Sets a persistent enable flag and copies controls; no immediate feature validation or solve
+     * occurs. advance rejects unsupported options/forcing. There is no disable method on this instance;
+     * initialize does not clear this flag. Serialize configuration with solver execution.
+     *
+     * @param[in] controls Copied nonlinear stopping/work controls; no referenced caller storage is
+     *     retained.
+     */
     void enablePressureStorageCandidate(const NonlinearPressureStorage::Controls& controls = {}) {
         pressure_candidate_ = true;
         pressure_controls_ = controls;
     }
+    /**
+     * @brief Borrow the most recently attempted nonlinear pressure candidate diagnostics.
+     * @return Const member reference; content changes when a later candidate is attempted and expires
+     *     at solver destruction.
+     */
     const NonlinearPressureStorage::Result& pressureCandidateResult() const noexcept {
         return pressure_result_;
     }
+    /**
+     * @brief Read the current restricted-candidate routing-window rejection count.
+     * @return Retry count reset at entry to a nonempty enabled-candidate advance; may retain history
+     *     when that path is not entered.
+     */
     long pressureCandidateRejections() const noexcept { return pressure_rejections_; }
 
-    void   initialize(NetworkMeshData& mesh, NetworkStateData& state,
-                      const FvOptions& opts) override;
-    double advance(double t_current, double t_target,
-                   const FvStepForcing& forcing) override;
-    void   reinitialize(double t0) override;
-    void   finalize() override;
+    /**
+     * @brief Bind a mesh/state and initialize native solver scratch and static eligibility.
+     *
+     * Mesh/state must remain alive at stable addresses and retain coherent dimensions/topology until
+     * finalize or rebinding. Initializes owned face/cell/node/LTS/transport arrays, resets major run
+     * statistics and builds algebraic/pass-through/rim caches. Does not validate every required
+     * array/index; callers provide a constructed mesh and sized state. Allocation can throw after
+     * binding and partial mutation, so is_initialized alone cannot certify successful completion.
+     * Concurrent use of one solver or its borrowed state is unsupported.
+     *
+     * @param[in,out] mesh Borrowed validated mesh/topology and geometry; fills short optional node
+     *     surcharge/ponding and face gate/culvert arrays, and derives missing face geometry.
+     * @param[in,out] state Borrowed dimension-aligned conserved/node/species state in native ft units.
+     *     Refreshes derived depths/velocities/areas, floors negative cell area and clears dry Q;
+     *     initializes/clears TPA regime flags.
+     * @param[in] opts Copied FV options; development environment switches are read synchronously and
+     *     may override selected options.
+     */
+    void initialize(NetworkMeshData& mesh, NetworkStateData& state, const FvOptions& opts) override;
+    /**
+     * @brief Advance the borrowed native state over one requested routing window.
+     *
+     * Resets per-window receipts, reseeds nonalgebraic node volume from heads, subcycles globally or by
+     * eligible LTS tiers and publishes current state/telemetry. Ordinary retry exhaustion or minimum
+     * substep accepts the last state; inspect divergence() and reached time. General
+     * allocation/callback failures can leave partial advance. The enabled restricted pressure candidate
+     * instead validates supported water-only Euler options and restores its routing-window physical
+     * state/accepted receipts on exceptions, then rethrows; work diagnostics remain attempted-work
+     * telemetry. Callbacks must be synchronous and non-reentrant. External edits to cell A/Q require
+     * reinitialize to invalidate derived-state caching.
+     *
+     * @param[in] t_current Finite current simulation time in seconds.
+     * @param[in] t_target Finite target seconds, normally >=t_current; an unbound solver or nonforward
+     *     interval returns t_target without advancing.
+     * @param[in] forcing Borrowed step arrays/callback context, dimension-aligned and live for the
+     *     entire call; values may be synchronously refreshed by the documented callback.
+     * @return Reached time in seconds; can stop short after the ordinary-path two-million-operator-step
+     *     backstop.
+     */
+    double advance(double t_current, double t_target, const FvStepForcing& forcing) override;
+    /**
+     * @brief Invalidate stepping caches and refresh derived state after external restoration.
+     *
+     * No-op when unbound. Invalidates LTS/active-list/CFL caches, refreshes depths/velocity/closure and
+     * node areas. Does not clear run statistics, numerical carry, borrowed topology, existing TPA
+     * history or all report receipts; use initialize for a new run. Does not rebuild static
+     * topology/eligibility caches.
+     *
+     * @param[in] t0 Compatibility time in seconds; ignored by this implementation.
+     */
+    void reinitialize(double t0) override;
+    /**
+     * @brief Detach the borrowed mesh and state.
+     *
+     * Sets only mesh_/state_ to null. Does not delete external storage, clear owned
+     * capacities/statistics/receipts, invoke callbacks or advance time. Reinitialize via initialize
+     * before accessing state-dependent helpers.
+     */
+    void finalize() override;
 
-    long   last_num_steps() const noexcept override { return last_nsteps_; }
+    long last_num_steps() const noexcept override { return last_nsteps_; }
     double last_step_size() const noexcept override { return last_h_; }
     double suggested_step() const noexcept override { return suggested_h_; }
     RunStats run_stats() const noexcept override;
-    bool   is_initialized() const noexcept override { return mesh_ != nullptr; }
-    bool   divergence(Divergence& d) const noexcept override {
-        if (div_link_ < 0) return false;
-        d.link  = div_link_;
+    bool is_initialized() const noexcept override { return mesh_ != nullptr; }
+    bool divergence(Divergence& d) const noexcept override {
+        if (div_link_ < 0)
+            return false;
+        d.link = div_link_;
         d.value = div_value_;
-        d.what  = div_what_;
+        d.what = div_what_;
         return true;
     }
 
@@ -100,194 +189,409 @@ public:
     /// conduit row, with `dt` the conduit's governing (finest-cell) step.
     /// Reporting only: never read by the integrator. Null (default) = off.
     using ConduitStepSink = void (*)(void* user, int conduit, double dt, double dur);
+    /**
+     * @brief Set an optional synchronous per-conduit accepted-step reporting observer.
+     *
+     * Every accepted global step/LTS macro cycle invokes once per conduit. The sink is reporting-only,
+     * must not throw, retain transient arguments, reenter the solver or mutate its mesh/state.
+     * Restricted nonlinear candidate validation disallows the sink. Replacing a sink does not release
+     * user storage.
+     *
+     * @param[in] fn Callback(user,conduit_row,governing_dt,duration), or nullptr to disable;
+     *     dt/duration are seconds and conduit row is mesh ConduitData indexing.
+     * @param[in] user Opaque borrowed callback context retained alongside fn; caller keeps it live
+     *     until replaced or solver destruction.
+     */
     void setConduitStepSink(ConduitStepSink fn, void* user) noexcept {
         step_sink_ = fn;
         step_sink_user_ = user;
     }
 
-    double refreshConduitGeometry(int conduit, const FvGeometry& g_new,
-                                  double t_now, GeomChangePolicy policy) override;
+    double refreshConduitGeometry(int conduit, const FvGeometry& g_new, double t_now,
+                                  GeomChangePolicy policy) override;
 
-    /// Per-node net exchange VOLUME (ft³) accumulated over the last advance().
-    /// Signed positive INTO the node. The Router glue turns this into the node
-    /// inflow/outflow rates the reporting and mass-balance paths expect.
+    /**
+     * @brief Borrow the last-window signed node exchange receipt.
+     *
+     * Const references remain valid only while this solver lives; their underlying element
+     * pointers/contents can change on initialization or later stepping. Serialize reads with mutation.
+     * @return Node-indexed ft3 positive into each node; storage is solver-owned and can change on
+     *     advance/init.
+     */
     const std::vector<double>& node_exchange() const noexcept { return node_exch_; }
 
-    /// Signed numerical continuity carry (ft³). Positive carry is already
-    /// included in node_volume; an inventory audit adds only negative carry
-    /// to that published volume. Read-only: does not add physical storage.
-    const std::vector<double>& node_continuity_carry() const noexcept {
-        return node_carry_;
-    }
+    /**
+     * @brief Borrow the signed numerical node-continuity carry.
+     *
+     * Const references remain valid only while this solver lives; their underlying element
+     * pointers/contents can change on initialization or later stepping. Serialize reads with mutation.
+     * @return Node-indexed ft3. Positive carry is already in node_volume; inventory audits add only
+     *     negative carry, avoiding double counting.
+     */
+    const std::vector<double>& node_continuity_carry() const noexcept { return node_carry_; }
 
-    /// Mask from the most recent pressure classification. Historical if no
-    /// pressure pass ran; use with current regime/forcing when auditing it.
+    /**
+     * @brief Borrow the most recent pressure-classification folded-node mask.
+     *
+     * Const references remain valid only while this solver lives; their underlying element
+     * pointers/contents can change on initialization or later stepping. Serialize reads with mutation.
+     * @return Node-indexed flags. Historical if no current pressure pass ran; combine with current
+     *     regime/forcing before interpreting.
+     */
     const std::vector<std::uint8_t>& pressure_folded_nodes() const noexcept {
         return press_.foldedNodes();
     }
 
-    /// Per-node conduit-face exchange VOLUME split into arriving and departing
-    /// magnitudes (ft³) over the last advance(). SWMM's node ledger is not a
-    /// net figure — `inflow` and `outflow` are separate magnitudes, and the
-    /// mass balance books an outfall's system discharge from `inflow` alone —
-    /// so the split has to be accumulated here, per substep, rather than
-    /// reconstructed from the net afterwards.
+    /**
+     * @brief Borrow accumulated arriving conduit-face volume magnitudes.
+     *
+     * Const references remain valid only while this solver lives; their underlying element
+     * pointers/contents can change on initialization or later stepping. Serialize reads with mutation.
+     * @return Node-indexed nonnegative ft3 over the last advance; do not reconstruct this split from
+     *     net exchange.
+     */
     const std::vector<double>& node_inflow_volume() const noexcept { return node_in_; }
+    /**
+     * @brief Borrow accumulated departing conduit-face/diverted-lateral volume magnitudes.
+     *
+     * Const references remain valid only while this solver lives; their underlying element
+     * pointers/contents can change on initialization or later stepping. Serialize reads with mutation.
+     * @return Node-indexed ft3 over the last advance, kept separately from arrival for report/mass
+     *     ledgers.
+     */
     const std::vector<double>& node_outflow_volume() const noexcept { return node_out_; }
-    /// Book a diverted lateral (credited straight into the incident cells,
-    /// bypassing the node's faces) as node OUTFLOW for the substep — it
-    /// entered the node's ledger as lateral inflow and left it, but never
-    /// crossed a face, so the face ledger holds no outflow for it. Per
-    /// substep, on both stepping paths, so a junction that alternates between
-    /// the pass-through and the solved path within a routing step is booked
-    /// exactly (the report's per-node continuity read 80–100 % at every
-    /// lateral-fed pass-through junction without it, 2026-09-13).
-    void bookDivertedLateral(std::size_t un, double dt,
-                             const FvStepForcing& forcing) noexcept {
+    /**
+     * @brief Book positive node lateral volume that entered cells without crossing node faces.
+     *
+     * If node_lat_div is set and lateral is positive, adds lateral*dt to node_out. Does not inject
+     * water again, change forcing or handle negative lateral withdrawals. Caller invokes exactly once
+     * per node update on either stepping path.
+     *
+     * @param[in] un Valid initialized global node index, unchecked when the diversion mask is present.
+     * @param[in] dt Nonnegative accepted substep duration in seconds.
+     * @param[in] forcing Borrowed aligned node_lateral ft3/s array or a null lateral pointer.
+     */
+    void bookDivertedLateral(std::size_t un, double dt, const FvStepForcing& forcing) noexcept {
         if (node_lat_div_.empty() || !node_lat_div_[un] || !forcing.node_lateral)
             return;
         const double lat = forcing.node_lateral[un];
-        if (lat > 0.0) node_out_[un] += lat * dt;
+        if (lat > 0.0)
+            node_out_[un] += lat * dt;
     }
 
-    /// Per-conduit flag: did HEC-5 inlet control cap this culvert's inflow at
-    /// any point in the last advance()? Reported as the "Inlet Ctrl" column.
-    const std::vector<uint8_t>& inlet_control() const noexcept {
-        return inlet_control_;
-    }
+    /**
+     * @brief Borrow culvert inlet-control occurrence flags for the last window.
+     *
+     * Const references remain valid only while this solver lives; their underlying element
+     * pointers/contents can change on initialization or later stepping. Serialize reads with mutation.
+     * @return Conduit-row-indexed flags set when any substep inlet cap controlled; reset at advance
+     *     entry.
+     */
+    const std::vector<uint8_t>& inlet_control() const noexcept { return inlet_control_; }
 
     /// Per-node flooding VOLUME (ft³) over the last advance().
-    const std::vector<double>& node_flood_volume() const noexcept {
-        return flood_vol_;
-    }
+    const std::vector<double>& node_flood_volume() const noexcept { return flood_vol_; }
 
-    /// Per-structure-entry pass-through VOLUME (ft³) over the last advance(),
-    /// parallel to mesh.struct_link. Nonzero only for DUMMY entries, whose
-    /// discharge the solver derives rather than receiving in the forcing — the
-    /// Router has no other way to report their flow or book their node ledger.
-    const std::vector<double>& dummy_volume() const noexcept {
-        return dummy_vol_;
-    }
+    /**
+     * @brief Borrow per-structure-entry DUMMY pass-through receipts.
+     *
+     * Const references remain valid only while this solver lives; their underlying element
+     * pointers/contents can change on initialization or later stepping. Serialize reads with mutation.
+     * @return ft3 over the last window, aligned with mesh.struct_link; real structure entries remain
+     *     zero.
+     */
+    const std::vector<double>& dummy_volume() const noexcept { return dummy_vol_; }
 
-    /// Pass-through classification (clean degree-2 junctions whose faces
-    /// present the neighbouring cells to each other directly; refreshed with
-    /// the structure flows). The publish path reads it to reconstruct those
-    /// nodes' REPORTED heads face-consistently — the solver-internal head
-    /// stays the stable wet-mean, which also serves as the ghost boundary
-    /// state under LTS tier holds.
-    const std::vector<std::uint8_t>& node_passthrough() const noexcept {
-        return node_pass_;
-    }
+    /**
+     * @brief Borrow the current direct-face algebraic-node bypass mask.
+     *
+     * Const references remain valid only while this solver lives; their underlying element
+     * pointers/contents can change on initialization or later stepping. Serialize reads with mutation.
+     * @return Node-indexed flags refreshed with structure/lateral/carry/pressure state; solver head
+     *     remains a stable diagnostic wet mean.
+     */
+    const std::vector<std::uint8_t>& node_passthrough() const noexcept { return node_pass_; }
 
-    /// Nodes whose PUBLISHED stage should be reconstructed from the incident
-    /// wet cells rather than reported as the solver's own head. A superset of
-    /// node_passthrough(): the same cleanliness and structure/carry tests, but
-    /// at any degree, because the degree-2 restriction exists only for the
-    /// solver's direct-face bypass.
-    ///
-    /// Measured on Example1 under FLOW_ROUTING FV: nodes outside this set
-    /// published a stage up to 0.91 ft above their own adjacent cell at
-    /// FV_MIN_CELLS 1, falling ~first-order with refinement (a datum term),
-    /// while nodes inside it never exceeded 0.0002 ft at any refinement.
-    /// See tests/manual/fv_node_stage/RESULTS.md.
-    const std::vector<std::uint8_t>& node_publish_stage() const noexcept {
-        return node_pub_;
-    }
+    /**
+     * @brief Borrow eligibility for reconstructing reported node stage from adjacent wet cells.
+     *
+     * Const references remain valid only while this solver lives; their underlying element
+     * pointers/contents can change on initialization or later stepping. Serialize reads with mutation.
+     * @return Node-indexed reporting mask, broader than degree-two solver pass-through eligibility.
+     *     Demoted real ponds are excluded before return from advance.
+     */
+    const std::vector<std::uint8_t>& node_publish_stage() const noexcept { return node_pub_; }
 
-    /// Time-integrated cell discharge (ft³) over the last advance(), used to
-    /// publish a routing-step MEAN link flow rather than an end-of-step
-    /// snapshot — the snapshot aliases badly when a routing step spans many
-    /// substeps.
-    const std::vector<double>& cell_flow_integral() const noexcept {
-        return cell_q_int_;
-    }
+    /**
+     * @brief Borrow the last-window time integral of mean face through-flow per cell.
+     *
+     * Const references remain valid only while this solver lives; their underlying element
+     * pointers/contents can change on initialization or later stepping. Serialize reads with mutation.
+     * @return Cell-indexed aggregate ft3 used for routing-window mean discharge, rather than a final
+     *     snapshot.
+     */
+    const std::vector<double>& cell_flow_integral() const noexcept { return cell_q_int_; }
 
-    /// Depth → volume through the node's own storage relation. Exposed for the
-    /// Router glue's seeding path and for the conservation tests.
+    /**
+     * @brief Evaluate native node storage volume from depth.
+     *
+     * Pondable depth above a positive full_depth uses its rim volume plus
+     * ponded_area*(depth-full_depth). A non-storage-table node uses its current node_surf_area*depth; a
+     * table node interpolates 129 uniform samples and extends above table top using node_vol_atop.
+     * Requires positive table spacing and valid nondegenerate geometry. No allocation, state mutation
+     * or independent validation.
+     *
+     * @param[in] node Valid initialized global node index with coherent storage arrays.
+     * @param[in] depth Finite depth in ft; <=0 returns zero.
+     * @return Volume in ft3.
+     */
     double nodeVolumeFromDepth(int node, double depth) const;
 
-    /// Number of LTS tiers the last macro cycle ran with. 1 means tiering
-    /// found nothing to separate and the solver took the global-dt path.
+    /**
+     * @brief Read the most recent local-time-stepping tier count.
+     * @return One means no separated tiering; otherwise the last assigned macro-cycle tier count.
+     */
     int lts_tiers() const noexcept { return lts_tiers_; }
 
-    /// Cells per tier over the run — the §6.12 histogram that proves tiering
-    /// is genuinely active on a case rather than degenerating to K = 1.
+    /**
+     * @brief Borrow the run tier-occupancy histogram.
+     *
+     * Const references remain valid only while this solver lives; their underlying element
+     * pointers/contents can change on initialization or later stepping. Serialize reads with mutation.
+     * @return Counts cells on every re-tier, including assignments whose macro cycle did not fit. It
+     *     does not by itself count accepted macro cycles.
+     */
     const std::array<long, kMaxLtsTiers>& tier_occupancy() const noexcept {
         return tier_occupancy_;
     }
 
 private:
+    /**
+     * @brief Execute the shared mutable routing-window stepping implementation.
+     *
+     * Implements receipt reset, state reseeding, forcing refresh, active/CFL census, LTS/global
+     * retries, state publication and divergence telemetry described by advance. Has no outer
+     * routing-window transaction; enabled pressure-candidate advance supplies that wrapper. Requires
+     * exclusive initialized mesh/state/scratch. Exceptions can leave partial accepted state, except
+     * where the wrapper restores it.
+     *
+     * @param[in] t_current Current seconds; caller supplies finite values.
+     * @param[in] t_target Target seconds; unbound/nonforward calls return target unchanged.
+     * @param[in] forcing Borrowed forcing retained internally for the in-flight call; arrays/context
+     *     must stay valid through all substeps.
+     * @return Time reached in seconds, possibly short after the ordinary step-count backstop.
+     */
     double advanceImpl(double t_current, double t_target, const FvStepForcing& forcing);
+    /**
+     * @brief Reject unsupported nonlinear pressure-storage experiment combinations.
+     *
+     * Requires initialized closed SLOT, pressure-implicit, first-order global Euler, water-only state
+     * with no LTS/compaction/UF, structures, gates, culverts, physical storage/ponding, conduit loss,
+     * finite source caps, refresh callback or reporting sink. Throws invalid_argument if any
+     * restriction fails; does not validate numeric candidate controls or change state.
+     *
+     * @param[in] forcing Current aligned forcing and callback descriptors inspected without mutation.
+     */
     void validatePressureCandidate(const FvStepForcing& forcing) const;
     // -- substep pipeline ---------------------------------------------------
-    void   refreshDepths();
-    void   refreshNodeAreas();
-    void   rebuildActiveLists();
-    /// Global Courant census. @p press_edit applies the R2 edit: a
-    /// pressurized side of an implicit-eligible face is advection-bound only
-    /// (its acoustic pair is integrated implicitly this substep), and a
-    /// junction the implicit pass will fold is exempt from the algebraic
-    /// feedback bound. false everywhere the implicit pass will NOT run —
-    /// the LTS macro path, and every run without FV_PRESSURIZED_IMPLICIT.
+    /**
+     * @brief Rebuild every cell derived state and closure cache from conserved area/discharge.
+     *
+     * Requires coherent initialized geometry/state arrays. Floors negative area to zero, derives
+     * SLOT/TPA depth and stage, refreshes closure cache, zeros non-TPA dry discharge/velocity and
+     * computes wet velocity (TPA uses a tiny area floor). Per-cell writes are independently
+     * parallelizable. Does not advance time or alter report receipts; it can change externally supplied
+     * invalid/dry conserved values.
+     */
+    void refreshDepths();
+    /**
+     * @brief Refresh native node area diagnostics/storage coefficients.
+     *
+     * Virtual nodes receive zero area; table storage reads a finite difference over one table-depth
+     * increment with MIN_SURFAREA floor; other nodes copy the fixed mesh.node_area. Requires positive
+     * table spacing and coherent head/geometry arrays. Does not advance node volume or change topology;
+     * called during initialize/reinitialize.
+     */
+    void refreshNodeAreas();
+    /**
+     * @brief Rebuild active cell/face work lists and invalidate cached tier assignment.
+     *
+     * Requires current depths/velocities/regime/lateral forcing. Clears held mass/momentum/hydrostatic
+     * face arrays whenever the list changes. Without compaction includes the whole mesh; otherwise
+     * seeds wet/moving/TPA/lateral-fed cells and wet node boundaries, grows an eight-cell
+     * double-buffered halo and collects incident faces. Resets rebuild cadence and accumulates
+     * active-fraction telemetry. Allocations may throw; no physical time advances.
+     */
+    void rebuildActiveLists();
+    /**
+     * @brief Reduce the current face/ghost and applicable node timestep constraints.
+     *
+     * Reads initialized active lists/current geometry, velocities, node heads, forcing and regime.
+     * Includes ghost/far pass-through wave speeds, local cell lengths and applicable algebraic-feedback
+     * or node-storage accuracy bounds. Eligible LTS supplies separate node cadence, so its global
+     * census omits node accuracy bounds. Const numerical state is preserved, but mutable
+     * argmin/performance telemetry and optional OPENSWMM_FV_DT_TRACE diagnostics update. No minimum
+     * timestep floor or time advance is applied here.
+     *
+     * @param[in] press_edit True only when the synchronous pressure pass will run: full eligible
+     *     pressure faces lose their acoustic bound and folded nodes lose explicit feedback limits.
+     * @return Stable/accuracy interval in seconds; 1e30 when no finite constraint is found.
+     */
     double censusDt(bool press_edit = false) const;
-    void   reconstructState();
-    /// @p mass_only: the node solve's trial evaluation — same reconstruction
-    /// and wave speeds, writes f_mass_ only (plan Phase 1c).
-    void   computeFaceFlux(int face, bool mass_only = false);
-    /// Species transport forwarders (phase E0): the reconstruction / FCT /
-    /// dispersion bodies live in transport/fvkernels/SpeciesTransportKernels
-    /// and consume this solver's members through the view below.
-    void   reconstructScalars(double dt);
+    void reconstructState();
+    /**
+     * @brief Evaluate one native shared hydraulic face receipt and side corrections.
+     *
+     * Reconstructs both sides in common face geometry, chooses far-cell ghosts for active pass-through
+     * nodes, computes shared HLL flux and applies flap-gate reflection, culvert inlet and optional node
+     * donor caps. Mass-only uses identical scalar mass decisions. Native volume flux is ft3/s and
+     * momentum flux/corrections ft4/s2. Requires live forcing_ when source caps are used. Each face
+     * must have one writer; this routine performs no node/cell update or positivity scaling.
+     *
+     * @param[in] face Valid active face index with initialized geometry/topology and current
+     *     reconstruction.
+     * @param[in] mass_only True for algebraic trial residuals: writes f_mass only among hydraulic face
+     *     arrays; can still latch inlet_control telemetry. False also stores momentum, states, side
+     *     corrections and optional species fan records.
+     */
+    void computeFaceFlux(int face, bool mass_only = false);
+    /**
+     * @brief Forward shared scalar reconstruction/FCT preparation using current limited water flux.
+     *
+     * Requires initialized species state and the final water face ledger after node/pressure/positivity
+     * corrections. Passes a borrowed SpeciesKernelView synchronously to
+     * transport::fvkernels::reconstructScalars. Scalar layouts are species-major; allocation/failure
+     * behavior follows the shared kernel. Does not independently recompute water flux.
+     *
+     * @param[in] dt Positive finite substep duration in seconds, consistent with the current flux/state
+     *     snapshot.
+     */
+    void reconstructScalars(double dt);
+    /**
+     * @brief Create a nonowning view of this solver hydraulic/scalar state for shared transport
+     * kernels.
+     *
+     * Valid only while this initialized solver and its buffers remain stable. Kernels mutate their
+     * designated scalar scratch/state synchronously; do not retain the view across initialization,
+     * finalize, reallocation or destruction. No allocation or ownership transfer occurs here.
+     * @return View by value containing borrowed mesh/state and member-vector pointers plus copied
+     *     scalar options.
+     */
     transport::fvkernels::SpeciesKernelView speciesKernelView();
-    void   computeFluxes();
-    void   limitPositivity(double dt);
+    /**
+     * @brief Evaluate every current active face hydraulic receipt.
+     *
+     * Requires reconstructed state, live forcing_ and initialized active lists. Runs disjoint face
+     * writers, parallel above its work threshold, then increments evaluated-face work count. Inactive
+     * face hydraulic arrays must already be zero/held consistently by rebuildActiveLists. Does not
+     * apply positivity or update conserved state.
+     */
+    void computeFluxes();
+    /**
+     * @brief Bound current shared outgoing water fluxes by donor volume.
+     *
+     * Runs after node/pressure flux replacement. Reapplies finite source-array donor limits, totals
+     * outgoing cell/node volume rates, skips artificial algebraic-node bucket limits, and scales each
+     * final mass/momentum face flux by the donor factor. Both adjacent water ledgers consume that same
+     * scaled mass receipt. Uses thread-local temporary vectors and can allocate; does not update
+     * A/volume or time. Scalar reconstruction follows this pass so transport consumes the final water
+     * ledger.
+     *
+     * @param[in] dt Positive finite substep duration in seconds, consistent with the current flux/state
+     *     snapshot.
+     */
+    void limitPositivity(double dt);
 
-    /// Linearize each node-coupling face's mass flux in the node head and apply
-    /// the correction, so the node's response to its own inflow is damped
-    /// rather than free-running (plan §7B.1).
-    ///
-    /// Conservation is preserved by CONSTRUCTION rather than by care: the
-    /// correction is written into `f_mass_`, which is the single array both the
-    /// cell update and the node update read. Damping the node head directly
-    /// instead — the obvious approach — would imply a volume change different
-    /// from the flux booked into the incident cells, and would trade exact mass
-    /// conservation for stability, which is the one trade this solver cannot
-    /// make.
-    void   relaxNodeFluxes(double dt, const FvStepForcing& forcing);
-    /// Phase 3d: solve/relax every node in @p nodes, in parallel above
-    /// kOmpMinNodes (order-independent, bit-identical at any thread count).
+    /**
+     * @brief Solve/relax global-step node coupling before donor positivity limiting.
+     *
+     * Marks every face live, creates the global node list excluding nodes folded into this substep
+     * pressure system, then dispatches solveNodes at shared dt. Requires current reconstructed face
+     * fluxes and structure/dummy sources. Mutates node heads or shared mass faces through those
+     * routines; no conservative volume integration occurs here.
+     *
+     * @param[in] dt Positive finite substep duration in seconds, consistent with the current flux/state
+     *     snapshot.
+     * @param[in] forcing Borrowed aligned current step forcing in native units, with synchronous
+     *     non-reentrant callback context live for the call.
+     */
+    void relaxNodeFluxes(double dt, const FvStepForcing& forcing);
+    /**
+     * @brief Dispatch independent algebraic and bucket node flux-response updates.
+     *
+     * Splits cheap fixed/pass-through/storage cases from heavy bracketed junctions. Heavy cases run in
+     * a dynamic OpenMP loop above threshold, each writing only its own head/incident faces; light cases
+     * run serially. Requires current live-face stamps and all source/eligibility arrays. Scratch
+     * allocation can throw; callable must not reenter or mutate shared solver structures.
+     *
+     * @param[in] nodes Unique valid node indices; incident node boundary faces must be exclusively
+     *     owned by these nodes.
+     * @param[in] dt_of Synchronous callable(node)->positive seconds; may run concurrently for heavy
+     *     node solves and must be safe for those reads.
+     * @param[in] forcing Borrowed aligned current step forcing in native units, with synchronous
+     *     non-reentrant callback context live for the call.
+     */
     template <class DtOf>
-    void   solveNodes(const std::vector<int>& nodes, DtOf&& dt_of,
-                      const FvStepForcing& forcing);
-    std::vector<int> node_solve_list_;   ///< global-path node list (scratch)
-    std::vector<int> node_heavy_;        ///< junctions that run the bracketed solve (shared by the parallel loop)
-    std::vector<int> node_light_;        ///< pass-through / storage nodes (serial)
+    void solveNodes(const std::vector<int>& nodes, DtOf&& dt_of, const FvStepForcing& forcing);
+    std::vector<int> node_solve_list_; ///< global-path node list (scratch)
+    std::vector<int>
+        node_heavy_; ///< junctions that run the bracketed solve (shared by the parallel loop)
+    std::vector<int> node_light_; ///< pass-through / storage nodes (serial)
 
-    /// One node's worth of the above. Split out because the tiered path applies
-    /// it per node at that node's own Δt, while the global path applies it to
-    /// every node at the shared one.
-    void   relaxOneNode(int node, double dt, const FvStepForcing& forcing);
+    /**
+     * @brief Apply one frozen linearized bucket-node correction to incident mass fluxes.
+     *
+     * Freezes original head, incident fluxes and characteristic sqrt(g*A*T) resistances, then corrects
+     * f_mass by the response of the node continuity equation. Does not move node head, momentum flux or
+     * conserved volume. The identical corrected mass array feeds both cell/node updates; nonpositive
+     * total resistance is a no-op. One node owns its incident boundary faces.
+     *
+     * @param[in] node Valid initialized node index; virtual, fixed-head, zero-area or DUMMY-drain nodes
+     *     return unchanged.
+     * @param[in] dt Positive finite substep duration in seconds, consistent with the current flux/state
+     *     snapshot.
+     * @param[in] forcing Borrowed aligned current step forcing in native units, with synchronous
+     *     non-reentrant callback context live for the call.
+     */
+    void relaxOneNode(int node, double dt, const FvStepForcing& forcing);
 
-    /// Algebraic junction: solve the junction's head from the instantaneous
-    /// flux balance Σ sign·F(h) + q_lat + q_struct + carry/dt = 0 over its
-    /// incident faces (monotone in h), re-solving the faces' Riemann problems
-    /// at each trial head, and leave f_mass_ AND f_mom_ as computed at the
-    /// root — mass and momentum stay jointly consistent, unlike a Δf_mass
-    /// correction. Writes node_head permanently (the solve owns it); the
-    /// bucket-path volume integration is skipped for these nodes and the small
-    /// residual is carried in node_carry_ (see updateNodes) so conservation is
-    /// exact without reintroducing a storage timescale. A PASS-THROUGH node
-    /// (node_pass_) skips the solve entirely: its faces present the two
-    /// neighbouring cells to each other directly, so there is no balance left
-    /// to satisfy and the head is set to the mean adjacent stage, purely as a
-    /// diagnostic.
-    void   solveAlgebraicNode(int node, double dt, const FvStepForcing& forcing);
+    /**
+     * @brief Balance a zero-storage junction head and recompute its live face fluxes.
+     *
+     * Fixed heads are unchanged. Clean pass-through nodes take the wet-neighbor mean stage (or lowest
+     * bed if all dry), without a root solve. Other nodes balance signed face
+     * flow+lateral+structure+carry/dt using up to 64 bracket expansions and 16 guarded
+     * quasi-Newton/bisection iterations, with 1e-12-ft3/s residual and 1e-6-ft movement targets.
+     * Physical ceiling/floor and a guarded degree-one prescribed-discharge fallback handle unbracketed
+     * cases; exhaustion uses the best sampled head without an error status. Trial passes write
+     * node_head and f_mass; finalization recomputes full live hydraulic receipts. Held LTS faces remain
+     * constants. No conserved volume integration occurs here; updateNodes settles the residual.
+     *
+     * @param[in] node Valid initialized node index with coherent topology/eligibility/storage arrays,
+     *     unchecked.
+     * @param[in] dt Positive finite timestep in seconds matching the current flux/source window.
+     * @param[in] forcing Borrowed aligned current forcing in native units; matching structure/lateral
+     *     arrays and callback context remain live for this call.
+     */
+    void solveAlgebraicNode(int node, double dt, const FvStepForcing& forcing);
 
-    /// Dispose of an algebraic junction's window residual: flooding at the
-    /// sealed ceiling, real ponded storage at a pondable rim (demotes the node
-    /// to the bucket path), or the carry ledger. Head is never recomputed
-    /// here — the solve owns it; volume is derived.
-    void   settleAlgebraicNode(int node, double carry);
+    /**
+     * @brief Dispose of a junction continuity residual without introducing artificial bucket storage.
+     *
+     * Folds any published water above the previous positive carry back into the ledger. Positive
+     * surplus at ponding rim becomes real pond volume/head; at a sealed physical ceiling becomes
+     * flooding. A free-surface pass-through can redistribute residual water evenly to adjacent cells
+     * without momentum, leaving unabsorbed remainder as carry. Pressure-adjacent residuals stay banked.
+     * Otherwise stores signed carry and publishes only its positive water volume; solved head is
+     * retained except when real pond volume determines it. May update adjacent cell
+     * A/depth/velocity/cache, so invoke in the serialized node stage.
+     *
+     * @param[in] node Valid initialized node index with coherent topology/eligibility/storage arrays,
+     *     unchecked.
+     * @param[in] carry Signed accumulated residual water volume in ft3, including current substep
+     *     sources/faces.
+     */
+    void settleAlgebraicNode(int node, double carry);
 
     /// Static eligibility for the algebraic junction treatment: plain
     /// junction (no storage table), at least one incident conduit face.
@@ -319,13 +623,23 @@ private:
     /// split-Riemann ~1 mm of head per junction that pass-through exists to
     /// avoid — with rain on every junction of a 400-conduit channel that
     /// integrated into an 18-25% deep bias with exact q (SWASHES §3.3).
-    /// cell_qlat_ is m³/s per cell; node_lat_div_ flags the nodes whose
+    /// cell_qlat_ is native ft3/s per cell; node_lat_div_ flags the nodes whose
     /// forcing.node_lateral must read as zero on every node path.
     std::vector<double> cell_qlat_;
     std::vector<std::uint8_t> node_lat_div_;
-    double nodeLateral(const FvStepForcing& forcing,
-                       std::size_t un) const noexcept {
-        if (!node_lat_div_.empty() && node_lat_div_[un]) return 0.0;
+    /**
+     * @brief Read the effective node lateral source after direct-cell diversion.
+     *
+     * @param[in] forcing Borrowed aligned current step forcing in native units, with synchronous
+     *     non-reentrant callback context live for the call.
+     * @param[in] un Valid initialized node index, unchecked when the diversion mask/forcing array is
+     *     present.
+     * @return Zero for a diverted node or missing lateral array; otherwise the signed lateral rate in
+     *     ft3/s.
+     */
+    double nodeLateral(const FvStepForcing& forcing, std::size_t un) const noexcept {
+        if (!node_lat_div_.empty() && node_lat_div_[un])
+            return 0.0;
         return forcing.node_lateral ? forcing.node_lateral[un] : 0.0;
     }
     /// The diverted lateral's RIM. A pass-through junction has no head state,
@@ -350,56 +664,138 @@ private:
     /// a boundary face's slot, so the cell update stays race-free.
     std::vector<double> face_a_rim_;
     std::vector<double> face_lat_spill_;
-    double injectDivertedLateral(std::size_t uc, double a_new, double dt,
-                                 double inv_dx);
-    void   bookLateralSpills(const std::vector<int>* nodes);
+    /**
+     * @brief Apply a direct-cell lateral source while banking rim-rejected inflow.
+     *
+     * For positive inflow uses the lowest finite incident node rim, retains existing water even if
+     * already above rim, admits only remaining area room and banks refused ft3 in that boundary face
+     * spill slot. Uncapped or withdrawing sources add directly. Only the owning cell writes its
+     * incident boundary spill; caller later floors area and books spills at nodes exactly once.
+     *
+     * @param[in] uc Valid owned cell index with aligned cell_qlat and incident-face/rim arrays.
+     * @param[in] a_new Post-flux candidate aggregate area in ft2.
+     * @param[in] dt Positive finite timestep in seconds matching the current flux/source window.
+     * @param[in] inv_dx Positive inverse cell length in 1/ft.
+     * @return Candidate area plus admitted lateral contribution in ft2; negative sources are not
+     *     floored here.
+     */
+    double injectDivertedLateral(std::size_t uc, double a_new, double dt, double inv_dx);
+    /**
+     * @brief Drain rejected direct-cell lateral volume into node ponding/flooding ledgers.
+     *
+     * For statically eligible pass-through nodes, sums and zeroes incident face spill slots. Positive
+     * spill goes to real ponded volume at least full capacity, or to flood_vol for sealed nodes. Does
+     * not directly refresh pond head; the ensuing node bucket update does so. Must follow corresponding
+     * cell updates and precede node ledger integration, with exclusive spill ownership.
+     *
+     * @param[in] nodes Optional unique valid due-node list; nullptr visits all nodes.
+     */
+    void bookLateralSpills(const std::vector<int>* nodes);
     /// Cached V(full_depth) per node, for the ponding demote test.
     std::vector<double> node_vfull_;
 
-    /// Is node n running the algebraic treatment RIGHT NOW? A ponding
-    /// junction above its rim holds real water on its ponded area and reverts
-    /// to the bucket/ODE path until it drains back below v_full; sealed
-    /// junctions never demote.
+    /**
+     * @brief Test whether a node currently uses zero-storage algebraic continuity.
+     *
+     * Demoted ponds follow the real bucket relation until their water drains below the threshold; no
+     * state is changed.
+     *
+     * @param[in] n Valid initialized node index, unchecked.
+     * @return True for static algebraic eligibility unless enabled ponding has volume strictly above
+     *     cached full volume.
+     */
     bool algebraicActive(int n) const noexcept {
         const auto un = static_cast<std::size_t>(n);
-        if (!node_alg_[un]) return false;
-        if (mesh_->node_can_pond[un] &&
-            state_->node_volume[un] > node_vfull_[un]) return false;
+        if (!node_alg_[un])
+            return false;
+        if (mesh_->node_can_pond[un] && state_->node_volume[un] > node_vfull_[un])
+            return false;
         return true;
     }
 
-    /// Is any cell incident to node @p un pressurized (closed section at or
-    /// above its crown, or a TPA-flagged column)? Same predicate as the step
-    /// census and anyPressurizedCell(). Read by refreshStructFlows: a
-    /// surcharged degree-2 junction leaves the pass-through splice for the
-    /// solved path, whose rim clamp and flooding are what the splice lacks.
+    /**
+     * @brief Inspect adjacent cells for pressure-band or latched TPA state.
+     *
+     * Unlike the narrower anyPressurizedCell early-exit scan, this explicitly recognizes TPA flags
+     * below crown. Used when refreshing bypass/forcing eligibility; no state changes.
+     *
+     * @param[in] un Valid initialized node index with coherent node-face CSR.
+     * @return True for any adjacent flagged TPA cell, or closed geometry whose depth>=y_crown; false
+     *     otherwise.
+     */
     bool incidentPressurized(std::size_t un) const noexcept {
-        for (int p = mesh_->node_face_ptr[un];
-             p < mesh_->node_face_ptr[un + 1]; ++p) {
-            const auto uf = static_cast<std::size_t>(
-                mesh_->node_face_idx[static_cast<std::size_t>(p)]);
-            const int c = (mesh_->face_cl[uf] >= 0) ? mesh_->face_cl[uf]
-                                                    : mesh_->face_cr[uf];
-            if (c < 0) continue;
+        for (int p = mesh_->node_face_ptr[un]; p < mesh_->node_face_ptr[un + 1]; ++p) {
+            const auto uf =
+                static_cast<std::size_t>(mesh_->node_face_idx[static_cast<std::size_t>(p)]);
+            const int c = (mesh_->face_cl[uf] >= 0) ? mesh_->face_cl[uf] : mesh_->face_cr[uf];
+            if (c < 0)
+                continue;
             const auto uc = static_cast<std::size_t>(c);
-            if (tpaCell(uc)) return true;
-            const FvGeometry& g =
-                mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
-            if (!g.is_open && state_->cell_h[uc] >= g.y_crown) return true;
+            if (tpaCell(uc))
+                return true;
+            const FvGeometry& g = mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
+            if (!g.is_open && state_->cell_h[uc] >= g.y_crown)
+                return true;
         }
         return false;
     }
-    void   updateCells(double dt, const FvStepForcing& forcing);
-    void   updateNodes(double dt, const FvStepForcing& forcing);
-    void   dispersionSolve(double dt);
+    /**
+     * @brief Integrate global-step cell water, momentum and scalar fields from final face receipts.
+     *
+     * Requires positivity-limited water fluxes, reconstructed/FCT scalar fluxes, current HO2 slopes and
+     * old-snapshot UF gradients. Each active cell gathers two oriented mass/momentum receipts plus
+     * hydrostatic corrections, adds centered bed and diverted lateral sources, integrates species
+     * conservatively, applies distributed loss and semi-implicit friction/local/UF terms, and refreshes
+     * A/Q/depth/stage/velocity/closure. Dry states zero Q; reports integrate mean face through-flow
+     * rather than collocated momentum. Cell writes are disjoint; rim spill is booked per uniquely owned
+     * boundary face. No clock advance or node volume update occurs here.
+     *
+     * @param[in] dt Positive finite timestep in seconds matching the current flux/source window.
+     * @param[in] forcing Borrowed aligned current forcing in native units; matching structure/lateral
+     *     arrays and callback context remain live for this call.
+     */
+    void updateCells(double dt, const FvStepForcing& forcing);
+    /**
+     * @brief Integrate global-step node receipts and physical/algebraic continuity.
+     *
+     * First derives DUMMY pass-through from the same face-arrival volume, then books cell-rejected
+     * lateral spills. Accumulates net/in/out face receipts and diverted-lateral outflow. Fixed heads
+     * are imposed without owning their volume ledger; active algebraic nodes settle carry, while real
+     * buckets integrate signed source/face water, floor volume, invert depth and apply
+     * pond/surcharge/flood capacity. Virtual nodes have no node update. Uses the identical final f_mass
+     * array as cells.
+     *
+     * @param[in] dt Positive finite timestep in seconds matching the current flux/source window.
+     * @param[in] forcing Borrowed aligned current forcing in native units; matching structure/lateral
+     *     arrays and callback context remain live for this call.
+     */
+    void updateNodes(double dt, const FvStepForcing& forcing);
+    /**
+     * @brief Forward the synchronous implicit scalar dispersion pass.
+     *
+     * Uses speciesKernelView and transport::fvkernels::dispersionSolve after hydraulic/scalar
+     * advection. Requires initialized species-major arrays and coherent chain geometry/dispersion
+     * options. Shared kernel owns scratch/failure behavior; no independent hydraulic flux or clock
+     * update occurs.
+     *
+     * @param[in] dt Positive finite timestep in seconds matching the current flux/source window.
+     */
+    void dispersionSolve(double dt);
 
-    /// Scatter forcing.structure_flow into a per-node net source, once per
-    /// forcing refresh. One array read by the node relaxation, the global node
-    /// ledger and the tiered node update alike, so all three integrate the
-    /// same continuity equation — the relaxation previously omitted structure
-    /// flows and equilibrated the node against a residual the ledger did not
-    /// integrate.
-    void   refreshStructFlows(const FvStepForcing& forcing);
+    /**
+     * @brief Refresh node structure sources and current direct-cell lateral/bypass eligibility.
+     *
+     * At a settled cycle boundary, clears/scatters supplied non-DUMMY aggregate structure flow by
+     * global link index, rebuilds per-cell lateral and node-diversion arrays, and refreshes
+     * pass-through/report masks. Clean unpressurized degree-two laterals split half to each adjacent
+     * cell; virtual-node laterals split at the spliced face. Structure flow, DUMMY drainage, carry or
+     * pressure revoke solver bypass as applicable. Newly fed dry cells invalidate active lists. Can
+     * allocate; no lateral volume is integrated until cell/node update.
+     *
+     * @param[in] forcing Borrowed aligned current forcing in native units; matching structure/lateral
+     *     arrays and callback context remain live for this call.
+     */
+    void refreshStructFlows(const FvStepForcing& forcing);
     std::vector<double> node_qstruct_;
 
     /// Pass-through source/sink from DUMMY links, kept separate from
@@ -417,209 +813,382 @@ private:
     /// step-mean discharge, matching how real structure flows are reported.
     std::vector<double> dummy_vol_;
 
-    /// Compute the DUMMY pass-through for one node-update pass and scatter it
-    /// into node_qdummy_. `arrived(n)` must return the NET volume (ft³) that
-    /// reached node n over `dt` from its faces — the quantity the caller is
-    /// about to add to the node's storage. The dummy removes exactly that,
-    /// plus the node's lateral and structure forcing, so the upstream node's
-    /// volume is unchanged: DW's own continuity for a dummy reduces to
-    /// dV/dt = 0 (findNonConduitFlow sets Q = inflow + overflow, and
-    /// updateNodeFlows books it as outflow — dynwave.c:418-449).
+    /**
+     * @brief Derive one-way DUMMY transfer from the arrival volume about to be consumed.
+     *
+     * No-op with no DUMMY mask or nonpositive dt. Clears node_qdummy then computes
+     * max(arrived/dt+effective lateral+structure,0), applies optional link cap and node source
+     * availability, scatters the paired ft3/s source/sink and accumulates DUMMY ft3 receipt. Requires
+     * topology validation that a DUMMY is its upstream node sole outlet with no chained DUMMY
+     * dependency; capped transfers can leave upstream storage. Callback is not retained and must not
+     * reenter/mutate source arrays.
+     *
+     * @param[in] dt Positive finite timestep in seconds matching the current flux/source window.
+     * @param[in] forcing Borrowed aligned current forcing in native units; matching structure/lateral
+     *     arrays and callback context remain live for this call.
+     * @param[in] arrived Synchronous callable(node_index)->net accepted face arrival volume in ft3 over
+     *     dt; must match the imminent node update.
+     */
     template <class ArrivedFn>
-    void refreshDummyFlows(double dt, const FvStepForcing& forcing,
-                           ArrivedFn&& arrived);
+    void refreshDummyFlows(double dt, const FvStepForcing& forcing, ArrivedFn&& arrived);
 
-    /// node_qdummy_ with the empty-vector case folded in — a model with no
-    /// dummy links never allocates it, and every integration site would
-    /// otherwise need the same guard.
+    /**
+     * @brief Read a DUMMY-derived node source with an empty-array fast path.
+     *
+     * @param[in] un Valid node index when dummy source storage is present.
+     * @return Signed DUMMY rate in ft3/s, or zero when no array is allocated.
+     */
     double nodeQDummy(std::size_t un) const noexcept {
         return node_qdummy_.empty() ? 0.0 : node_qdummy_[un];
     }
 
+    /**
+     * @brief Invert the initialized node volume relation.
+     *
+     * Table-top extension divides by node_vol_atop; pond extension divides by ponded_area, so positive
+     * slopes are required when those branches are reachable. Plateaus use the lower interpolation
+     * endpoint. No input validation, mutation or allocation.
+     *
+     * @param[in] node Valid initialized global node index.
+     * @param[in] volume Finite volume in ft3; <=0 returns zero.
+     * @return Depth in ft using pond tail, positive-area linear bucket or monotone table bisection.
+     */
     double nodeDepthFromVolume(int node, double volume) const;
 
-    /// Is this face's flux the one being computed and booked RIGHT NOW?
-    ///
-    /// Under LTS a node's incident faces can sit in different tiers, so only
-    /// some of them are firing on any given base step. A face that is not
-    /// firing holds the flux it will book at its NEXT firing, over its own
-    /// 2^k*dt0 window — recomputing it there would silently re-time a flux
-    /// that belongs to a different window, which is the one property the
-    /// macro cycle's face-open/volume-close offset exists to guarantee.
-    ///
-    /// The algebraic-junction re-solve and the LTS due-set machinery are the
-    /// callers; both must touch only live faces. On the global path every
-    /// face is live.
-    /// Can the LTS macro cycle run under the current options and state?
-    /// One predicate shared by advance() and censusDt(): tiering is off under
-    /// RK2 (the two stages must share one Δt) and under transport (the FCT
-    /// sweep is synchronous). censusDt() skips the node accuracy bound only
-    /// when tiering can actually supply the node its own fine tier — gating
-    /// that skip on the FV_LTS option alone silently dropped the node bound
-    /// from the global path whenever the option was on but tiering was not
-    /// running (RK2, species).
+    /**
+     * @brief Test option/state prerequisites for the tiered stepping path.
+     *
+     * Does not test current pressure activity or whether a useful multi-tier cycle fits the window;
+     * advance applies those further gates.
+     * @return True when LTS is enabled, integration is not RK2, state is bound and n_species==0.
+     */
     bool ltsEligible() const noexcept {
-        return opts_.lts &&
-               opts_.time_integration != TimeIntegration::RK2 &&
-               state_ && state_->n_species == 0;
+        return opts_.lts && opts_.time_integration != TimeIntegration::RK2 && state_ &&
+               state_->n_species == 0;
     }
 
+    /**
+     * @brief Check whether one face belongs to the flux window currently being processed.
+     *
+     * Algebraic trial recomputation must skip non-live faces to preserve their previously booked
+     * cadence; this query does not advance a stamp.
+     *
+     * @param[in] f Valid face index when all_faces_live_ is false; unchecked.
+     * @return True on the global path or for a matching current LTS generation stamp.
+     */
     bool faceIsLive(int f) const noexcept {
         return all_faces_live_ ||
-               (!live_stamp_.empty() &&
-                live_stamp_[static_cast<std::size_t>(f)] == live_gen_);
+               (!live_stamp_.empty() && live_stamp_[static_cast<std::size_t>(f)] == live_gen_);
     }
 
     /// Faces whose flux is being computed on this base step. Stamped rather
     /// than cleared so marking a due set is O(due), not O(faces).
     std::vector<std::uint32_t> live_stamp_;
-    std::uint32_t              live_gen_ = 0;
+    std::uint32_t live_gen_ = 0;
     /// The global (non-LTS) path recomputes every face each step, so there is
     /// no window to violate and the re-solve is unrestricted there. A run can
     /// use BOTH paths — a rejected macro cycle falls through to the global one
     /// — so this is set per step rather than once.
     bool all_faces_live_ = true;
 
-    /// Semi-implicit friction for one cell: Manning, or — for a FORCE_MAIN
-    /// running full — the Hazen-Williams / Darcy-Weisbach law the section
-    /// actually obeys, through the engine's own forcemain functions.
-    /// Explicit stability bound for an ALGEBRAIC junction (issue: FV rings on
-    /// pressurized networks while dynamic wave does not).
-    ///
-    /// An algebraic junction has no volume state, so it has no STORAGE bound --
-    /// which is why it was exempted here. But it is not unbounded. Its head is
-    /// solved from the instantaneous flux balance and then handed to the
-    /// incident cells as a ghost, so the neighbours integrate against a
-    /// boundary state that can travel a long way inside one step. That feedback
-    /// loop is explicit, and it has its own limit:
-    ///
-    ///     tau = min_i( 0.5*dx_i*T_i )  /  sum_j( T_j*c_j )
-    ///
-    /// Every incident conduit pushes flux into the junction (the sum), but the
-    /// solved head has to be resolved on the TIGHTEST incident storage (the
-    /// min) -- that is the ghost the stiffest neighbour sees. Summing the
-    /// numerator instead, the obvious first guess and what legacy DW does for
-    /// its own node continuity solve, makes the bound LOOSER at exactly the
-    /// junctions that need it: at a 12 ft barrel meeting a 3 ft one the summed
-    /// area gives an effective length of 2123 ft against a 250 ft cell.
-    ///
-    /// Relative to the cell bound this is 1/(2n) * (T_min/T_max), i.e. purely
-    /// geometric: 4x for two identical barrels, 32x across a 16:1 area step.
-    /// Those are the factors the EPA QA decks were measured to need (test5 2x,
-    /// test2 25x), which is what the global FV_CFL had to be hand-lowered to
-    /// 0.1 and 0.02 to fake.
-    ///
-    /// Gated on the junction actually being pressurized: below the crown the
-    /// slot is not engaged, the head response is soft, and the measured
-    /// oscillation disappears entirely (enlarging the barrels so they never
-    /// surcharge takes the zigzag index from 37.6 to 4.97, dynamic wave's own
-    /// value). So an open-channel network pays nothing for this.
+    /**
+     * @brief Compute the explicit pressure-junction ghost-feedback bound.
+     *
+     * TPA flags count pressure at any head. Ignores compaction masks so optional work omission cannot
+     * change the integration schedule. No bucket volume or ordinary node accuracy rule is added here.
+     *
+     * @param[in] n Valid initialized algebraic node index with incident cell geometry.
+     * @return cfl*min_pressure(0.5*dx*T)/sum_all_wet(T*c), in seconds, or 1e30 without a pressure
+     *     storage contribution/admittance.
+     */
     double algebraicNodeStableDt(int n) const noexcept;
 
-    double frictionFor(const FvGeometry& g, double roughness, double rough_factor,
-                       double q, double u, double h, double dt) const;
+    /**
+     * @brief Apply the native steady-friction discharge update for one geometry/regime.
+     *
+     * At full FORCE_MAIN uses q/(1+dt*g*Sf/abs(u)); otherwise delegates to Manning frictionUpdate. Does
+     * not add local loss/UF, change state or validate every coefficient. Increments geometry
+     * performance telemetry.
+     *
+     * @param[in] g Initialized section closure with positive wet friction radius.
+     * @param[in] roughness Full FORCE_MAIN parameter: <1 means Darcy-Weisbach roughness ft, >=1 means
+     *     Hazen-Williams C.
+     * @param[in] rough_factor Native Manning g*(n/1.486)^2 for ordinary/part-full flow.
+     * @param[in] q Candidate aggregate discharge in ft3/s.
+     * @param[in] u Consistent conveyance velocity in ft/s.
+     * @param[in] h Friction depth in ft; TPA callers use y_full to retain the full-pipe law.
+     * @param[in] dt Positive finite timestep in seconds matching the current flux/source window.
+     * @return Damped discharge in ft3/s; force-main zero velocity is unchanged.
+     */
+    double frictionFor(const FvGeometry& g, double roughness, double rough_factor, double q,
+                       double u, double h, double dt) const;
 
-    /// Apply the node's capacity rule to a freshly-integrated volume: ponding,
-    /// surcharge depth, and the flooding that removes water once neither can
-    /// take it. Mirrors DW's getFloodedDepth so a model floods and ponds the
-    /// same way under both solvers; shared by the global and tiered node
-    /// updates, which differ only in the Δt each node integrates over.
-    ///
-    /// @param v_prev  the node's volume before this update — the ponded
-    ///                flooding RATE is the water crossing the rim, which needs
-    ///                where the surface started.
+    /**
+     * @brief Apply ponding or sealed surcharge/flood capacity to an integrated node bucket.
+     *
+     * No-op without positive full depth or while at/below the rim. Pondable nodes keep water and add
+     * only max(vol-max(v_prev,Vfull),0) to flooding-report volume. Sealed nodes may rise through
+     * surcharge depth, then excess volume is removed to flood_vol and volume/depth clamp together. Does
+     * not publish node_head itself or independently validate the supplied pair.
+     *
+     * @param[in] node Valid initialized node index with coherent topology/eligibility/storage arrays,
+     *     unchecked.
+     * @param[in] v_prev Pre-update water volume in ft3, used to report only newly crossed pond-rim
+     *     volume.
+     * @param[in,out] vol Nonnegative integrated volume in ft3; clipped to sealed maximum when spilling.
+     * @param[in,out] depth Depth in ft from the same volume relation; clipped with sealed spilling.
+     */
     void applyNodeCapacity(int node, double v_prev, double& vol, double& depth);
 
     // -- local time stepping (plan §3.3) ------------------------------------
-    /// Per-control-volume stable step, the same quantities censusDt() reduces
-    /// over but kept unreduced so each cell can be tiered on its own stiffness.
+    /**
+     * @brief Compute one cell explicit stability interval including its presented boundary states.
+     *
+     * Uses regime-consistent cell/TPA celerity plus node-head ghosts or the actual far cell through a
+     * pass-through ghost. Does not apply the global implicit-pressure census exemption; used to assign
+     * local tiers. No physical state mutation.
+     *
+     * @param[in] cell Valid initialized cell index, irrespective of compaction activity.
+     * @return opts.cfl*dx/(maximum abs(u)+c) in seconds, or 1e30 when no nontrivial speed exists.
+     */
     double cellStableDt(int cell) const;
+    /**
+     * @brief Compute a bucket node storage/accuracy interval for local tiering.
+     *
+     * Includes wet/TPA adjacent geometry without compaction gating. Algebraic feedback is instead
+     * applied to incident cells before tier-base selection. No state change or physical timestep floor.
+     *
+     * @param[in] node Valid initialized node index.
+     * @return Minimum face CFL interval using effective length node_surf_area/T in seconds; 1e30 for
+     *     virtual, algebraic, outfall, nonpositive-area or unconstrained nodes.
+     */
     double nodeStableDt(int node) const;
 
-    /// Partition the active mesh into power-of-two tiers. Returns the tier
-    /// count K and writes the finest requirement to @p dt0. K == 1 means the
-    /// mesh is uniformly stiff and the caller should take the global path.
-    /// @p k_cap_override > 0 caps the tier count (plan Phase 4c: a cycle cut
-    /// to fit the remaining routing-step window).
-    int    assignTiers(double& dt0, int k_cap_override = 0);
+    /**
+     * @brief Assign synchronized power-of-two cell/face/node cadences and due sets.
+     *
+     * Requires settled accumulators, current state and active lists. Includes all-cell bounds
+     * regardless of compaction, node accuracy and optional algebraic-feedback limits, applies adjacency
+     * grading, pins algebraic nodes to their finest incident cell and structure endpoints to tier zero,
+     * then assigns faces to the finer side. Builds active per-tier/nested due lists, resets pending
+     * accumulators and adds tier occupancy/argmin telemetry. Species force K=1. Allocations can throw;
+     * never re-tier while flux is booked but undrained.
+     *
+     * @param[out] dt0 Finest admissible native interval in seconds when a finite requirement exists;
+     *     early unsupported/unconstrained returns can leave the prior value.
+     * @param[in] k_cap_override Positive optional cap on tier count; <=0 uses the configured cap,
+     *     itself limited to kMaxLtsTiers.
+     * @return Tier count K; one means the caller should take the global path.
+     */
+    int assignTiers(double& dt0, int k_cap_override = 0);
 
-    /// Fire every entity due at one base substep. Faces compute their flux and
-    /// BOOK `±F·Δt` into both incident control volumes' accumulators; cells and
-    /// nodes drain what has accumulated since they last fired. What leaves a
-    /// fine cell is therefore exactly what arrives in its coarse neighbour —
-    /// the tier-interface conservation contract, exact by construction rather
-    /// than by tolerance.
-    ///
-    /// @p dt0 is the BASE step; each entity scales it by its own `2^tier`. The
-    /// due sets are nested (tiers 0..j fire together), so one pass with the
-    /// per-entity Δt is also what keeps positivity limiting correct: a cell
-    /// whose two faces fire at different cadences must be limited against both
-    /// draws at once, not once per tier.
-    void   fireFaces(const std::vector<int>& faces, double dt0);
-    void   fireCells(const std::vector<int>& cells, double dt0,
-                     const FvStepForcing& forcing);
-    void   fireNodes(const std::vector<int>& nodes, double dt0,
-                     const FvStepForcing& forcing);
-    void   runMacroCycle(double dt0, int nsub, const FvStepForcing& forcing);
+    /**
+     * @brief Open due local-tier face windows and book their conservative transfers.
+     *
+     * Stamps only due faces live, evaluates their receipts, solves touched nodes at each node own tier
+     * window, applies outgoing positivity against stored plus pending water and books identical signed
+     * F*dt into both incident accumulators. Updates node receipt and cell flow-integral ledgers at face
+     * cadence. Requires live forcing_ and current reconstruction/tier arrays; no volume is drained yet.
+     * Does not run the synchronized pressure-implicit path or species transport.
+     *
+     * @param[in] faces Unique valid due-face indices from current nested tier lists; empty is a no-op.
+     * @param[in] dt0 Positive finite base interval in seconds; each face uses 2^face_tier*dt0.
+     */
+    void fireFaces(const std::vector<int>& faces, double dt0);
+    /**
+     * @brief Close due local-tier cell windows and drain their booked transfers.
+     *
+     * Requires matching tier assignment, pending oriented mass/momentum and fresh old UF snapshot.
+     * Drains/zeros its accumulators once, adds centered-bed/diverted-lateral/distributed-loss sources,
+     * floors area, derives regime depth/cache and applies steady/local/UF friction. Species are
+     * unsupported on this path. TPA wet cells require positive admitted area for velocity division;
+     * inadmissible state is not separately diagnosed here.
+     *
+     * @param[in] cells Unique valid due active-cell indices; each worker exclusively owns
+     *     cell/accumulator/incident boundary-spill writes.
+     * @param[in] dt0 Positive finite base seconds; each cell source/friction window is 2^cell_tier*dt0.
+     * @param[in] forcing Borrowed aligned current forcing in native units; matching structure/lateral
+     *     arrays and callback context remain live for this call.
+     */
+    void fireCells(const std::vector<int>& cells, double dt0, const FvStepForcing& forcing);
+    /**
+     * @brief Close due local-tier node windows from booked face water.
+     *
+     * Computes DUMMY transfers from pending arrivals (structure endpoints are pinned to base tier),
+     * drains cell spill and node accumulators, books diverted lateral outflow, imposes fixed heads or
+     * integrates algebraic carry/real buckets and capacity. Head solve already occurred at face firing.
+     * No pending face transfer may be reinterpreted with a different tier; re-tier only after
+     * synchronization/settle.
+     *
+     * @param[in] nodes Unique valid nonvirtual due-node indices from current nested tier lists.
+     * @param[in] dt0 Positive base seconds; each node integrates over 2^node_tier*dt0.
+     * @param[in] forcing Borrowed aligned current forcing in native units; matching structure/lateral
+     *     arrays and callback context remain live for this call.
+     */
+    void fireNodes(const std::vector<int>& nodes, double dt0, const FvStepForcing& forcing);
+    /**
+     * @brief Execute one synchronized conservative local-tier macro cycle.
+     *
+     * TPA transitions update once at cycle entry. Face windows open at multiples of 2^tier and
+     * cell/node windows close at their matching end, so sources and booked transfers cover the same
+     * span. Reconstructs HO2 and UF snapshots as required, then fires due faces/cells/nodes. With a
+     * complete cycle all accumulators drain; caller owns outer save/reject/clock/stat acceptance and
+     * must keep forcing unchanged mid-cycle.
+     *
+     * @param[in] dt0 Positive finite base interval in seconds.
+     * @param[in] nsub Required cycle base-step count 2^(K-1), matching current tier/due-set arrays.
+     * @param[in] forcing Borrowed aligned current forcing in native units; matching structure/lateral
+     *     arrays and callback context remain live for this call.
+     */
+    void runMacroCycle(double dt0, int nsub, const FvStepForcing& forcing);
 
-    /// Move every pending accumulator into the state as a pure transfer — no
-    /// time advance, no friction, no source. The only safe way to empty the
-    /// ledger, and required before re-tiering: a flux booked at one tier's Δt
-    /// cannot be drained at another's.
-    void   settleAccumulators();
+    /**
+     * @brief Transfer pending local-tier water/momentum into state before synchronization/re-tiering.
+     *
+     * No-op without accumulator storage or clean non-TPA ledgers. Drains cell mass/momentum and node
+     * water/carry, floors invalid negative water, zeroes pending arrays and refreshes regime/derived
+     * cell state. Applies no time advance, friction, fresh source or extra flow-integral receipt.
+     * Requires exclusive initialized state and settled-source semantics; do not discard booked water by
+     * clearing accumulators without either this transfer or a matching rejected-state restoration.
+     */
+    void settleAccumulators();
 
-    /// Snapshot / roll back the full prognostic state for step rejection.
-    void   saveState();
-    void   restoreState();
+    /**
+     * @brief Snapshot selected prognostic state and accepted receipts for one retry.
+     *
+     * Copies cell A/Q/scalars, node volume/head, net/in/out/flood/flow-integral/carry receipts and
+     * enabled TPA flags. Allocates as needed. Does not capture every diagnostic, inlet/DUMMY flag or
+     * pending LTS accumulator; this is a selected internal retry snapshot rather than a complete
+     * external restart.
+     */
+    void saveState();
+    /**
+     * @brief Restore the selected retry snapshot and regenerate derived cell state.
+     *
+     * Requires a matching saveState for the same dimensions. Restores saved conserved/node/receipt
+     * arrays and TPA flags, zeroes pending diverted spill and refreshes depth/stage/velocity/closure.
+     * Does not rewind work counters or every diagnostic/DUMMY/inlet flag, nor clear LTS accumulators
+     * (macro rejection caller clears those). No physical time advances; vector assignments may
+     * allocate.
+     */
+    void restoreState();
 
-    /// One forward-Euler substep of the whole operator: reconstruct, flux,
-    /// positivity-limit, transport, then the cell and node updates.
-    bool   takeSubstep(double dt, const FvStepForcing& forcing);
+    /**
+     * @brief Apply one full forward Euler operator evaluation to hydraulic/scalar state.
+     *
+     * Updates TPA flags, reconstruction, active face fluxes, pressure classification and node response;
+     * computes old UF gradients, optional pressure predictor, donor limiter/scalars, conservative
+     * cells/nodes, pressure momentum finalization and same-step TPA separation, then dispersion. A
+     * false return may follow partial physical mutation; caller must restore its prior snapshot before
+     * retrying. No clock/stat acceptance is committed here.
+     *
+     * @param[in] dt Positive finite substep duration in seconds, consistent with the current flux/state
+     *     snapshot.
+     * @param[in] forcing Borrowed aligned current step forcing in native units, with synchronous
+     *     non-reentrant callback context live for the call.
+     * @return False only for restricted pressure-candidate solve/endpoint rejection; true otherwise,
+     *     without a general convergence certificate.
+     */
+    bool takeSubstep(double dt, const FvStepForcing& forcing);
 
     // -- implicit pressurized head update (slot program R2a) ----------------
-    /// Any active closed-section cell at/above band entry? Cheap early-exit
-    /// scan deciding whether this substep runs the implicit pass (and
-    /// whether the census may apply the R2 edit).
-    bool   anyPressurizedCell() const;
-    /// Would the implicit pass fold this junction as an unknown row RIGHT
-    /// NOW? Pure state predicate, shared by the census's feedback-bound
-    /// exemption and classify()'s fold pass.
-    bool   nodePressFolded(int n) const;
+    /**
+     * @brief Check whether the global pressure-implicit scan finds active geometric band entry.
+     *
+     * This implementation does not consult sub-crown TPA flags in this early-exit scan; classification
+     * predicates may recognize them separately. Reads current bound mesh/state/lists and changes no
+     * state.
+     * @return False when pressure-implicit is disabled; otherwise true for an active closed cell with
+     *     cell_h>=y_crown.
+     */
+    bool anyPressurizedCell() const;
+    /**
+     * @brief Predict pressure-system ownership for an algebraic junction.
+     *
+     * Uses current forcing_ and state so the CFL feedback exemption matches the pressure fold rule.
+     * Does not itself classify or solve a component.
+     *
+     * @param[in] n Valid initialized global node index.
+     * @return True for active algebraic, non-fixed-head nodes with at least one face and every incident
+     *     face kFull by PressurizedHeadSolver::faceModeOf.
+     */
+    bool nodePressFolded(int n) const;
+    /**
+     * @brief Create the synchronous nonowning pressure-pass view over current solver buffers.
+     *
+     * Caller must not retain it across buffer mutation/reinitialization or beyond the borrowed forcing
+     * lifetime. Pressure kernels own only their documented writes; no storage ownership transfers.
+     *
+     * @param[in] forcing Borrowed aligned current step forcing in native units, with synchronous
+     *     non-reentrant callback context live for the call.
+     * @return View by value with pointers into mesh/state/options, hydraulic face/cell buffers, masks,
+     *     sources and optional UF scratch.
+     */
     PressurizedView pressView(const FvStepForcing& forcing);
     PressurizedHeadSolver press_;
     /// Did classify() find implicit work for the substep in flight?
-    bool   press_step_ = false;
+    bool press_step_ = false;
     bool pressure_candidate_ = false;
     NonlinearPressureStorage::Controls pressure_controls_;
     NonlinearPressureStorage::Result pressure_result_;
     long pressure_rejections_ = 0;
 
-    /// Snapshot / average for SSP-RK2. `rkSave` records Uⁿ and the ledger
-    /// totals; `rkAverage` forms ½(Uⁿ + U⁽²⁾) and halves the ledger deltas the
-    /// two stages accumulated, which is what makes the reported flow integral
-    /// the average of the two stage fluxes rather than their sum.
-    void   rkSave();
-    void   rkAverage(const FvStepForcing& forcing);
+    /**
+     * @brief Capture the independent SSP-RK2 stage-zero state and receipt baselines.
+     *
+     * Copies cell/node prognostic arrays, water receipts/carry and enabled TPA flags into RK-specific
+     * storage. Separate from rejection snapshot so two forward operator stages can still roll back to
+     * the outer step state. Allocations can throw; no state is averaged or time advanced.
+     */
+    void rkSave();
+    /**
+     * @brief Form the SSP-RK2 accepted average and average its water receipt increments.
+     *
+     * Requires matching rkSave followed by two full forward steps at the same dt. Averages cell
+     * A/Q/scalar fields; real node depths follow averaged volume while fixed/algebraic heads average
+     * directly. Halves receipt/carry changes relative to the stage-zero baseline, restores old TPA
+     * flags for regime-consistent inversion and refreshes derived depths. Does not use a midpoint
+     * forcing refresh or independently certify endpoint stability; outer retry/census does that.
+     *
+     * @param[in] forcing Borrowed aligned current step forcing in native units, with synchronous
+     *     non-reentrant callback context live for the call.
+     */
+    void rkAverage(const FvStepForcing& forcing);
 
-    /// Build one side of a face. @p cell < 0 selects the node ghost state,
-    /// whose depth comes from the node head and whose velocity is extrapolated
-    /// from the interior cell (transmissive momentum).
-    /// @param measure_only  fill only @p i1_unreconstructed and @p z_side —
-    ///                       used by the first pass, which needs the
-    ///                       reconstructed bed before z* can be formed.
-    void   faceSide(int face, int cell, int node, double zstar, int dir,
-                    double u_interior, kernels::FaceState& out,
-                    double& i1_unreconstructed, double& z_side,
-                    bool measure_only) const;
+    /**
+     * @brief Reconstruct one cell or boundary ghost in the common face section.
+     *
+     * Requires current caches, slopes/HO2 flags, node/pass-through/regime data. Cell reconstruction
+     * uses limited eta/u with exact linear bed; ghosts use prescribed node head, far pass-through cell,
+     * or reflective wall. Final geometry includes dry safeguards, TPA and configured mixed-wave rules.
+     * Pure reads of solver state; output references must be distinct and not alias inputs/state. No
+     * ownership transfers.
+     *
+     * @param[in] face Valid global face index with coherent common geometry.
+     * @param[in] cell Valid adjacent cell index, or negative to select the node/wall ghost.
+     * @param[in] node Valid coupled node index or negative closed-wall sentinel when cell<0.
+     * @param[in] zstar Common reconstructed bed elevation in ft for the final hydrostatic pass.
+     * @param[in] dir Incident cell axis relative to the face, +1 or -1.
+     * @param[in] u_interior Face-oriented interior/far velocity in ft/s for a ghost.
+     * @param[out] out Native aggregate face state; reset to zero on measure_only.
+     * @param[out] i1_unreconstructed Own-side pre-hydrostatic pressure moment in ft3, or zero on
+     *     measure_only.
+     * @param[out] z_side Side reconstructed bed elevation in ft, always assigned.
+     * @param[in] measure_only True probes bed only and returns before closure evaluation; false fills
+     *     the complete state.
+     */
+    void faceSide(int face, int cell, int node, double zstar, int dir, double u_interior,
+                  kernels::FaceState& out, double& i1_unreconstructed, double& z_side,
+                  bool measure_only) const;
 
-    NetworkMeshData*  mesh_  = nullptr;
+    NetworkMeshData* mesh_ = nullptr;
     NetworkStateData* state_ = nullptr;
 
     /// The forcing for the advance() currently in flight. Held so the tiered
     /// path's face pass can apply the semi-implicit node coupling without
     /// threading it through fireFaces, which is otherwise forcing-free.
     const FvStepForcing* forcing_ = nullptr;
-    FvOptions         opts_{};
+    FvOptions opts_{};
 
     // Face scratch. corr_l/corr_r are the Audusse well-balanced corrections
     // g·(I₁(h_K) − I₁(h*_K)) — per-cell, not per-face, which is why they are
@@ -644,7 +1213,7 @@ private:
     /// flux can be evaluated with the SAME wave speeds the water used. Under
     /// HLL the scalar needs sl/sr and both states, not just the mass flux.
     std::vector<kernels::FaceState> f_state_l_, f_state_r_;
-    std::vector<kernels::FaceFlux>  f_flux_;
+    std::vector<kernels::FaceFlux> f_flux_;
     bool hllc_ = true;
 
     /// Limited scalar slope per cell in the cell's OWN axis (dφ/dx).
@@ -665,10 +1234,9 @@ private:
     /// the faces then produces a negative depth at the upstream end.
     std::vector<char> cell_ho2_;
 
-
     // Cell scratch.
-    std::vector<double> cell_eta_;     ///< z_b + h
-    std::vector<double> cell_u_;       ///< Q/A, dry-guarded
+    std::vector<double> cell_eta_; ///< z_b + h
+    std::vector<double> cell_u_;   ///< Q/A, dry-guarded
 
     /// Closure at the CELL depth, refreshed by cacheClosure() at every write
     /// of cell_h: A(h), T(h) and I₁(h) of the cell's own section. Zero for a
@@ -677,9 +1245,20 @@ private:
     /// stored depth, several times per substep and once per node-solve trial;
     /// read from here the value is the same call on the same inputs, so the
     /// results are bit-identical (plan Phase 1b).
-    std::vector<double> cell_ah_;      ///< areaOfDepth(g, cell_h)
-    std::vector<double> cell_t_;       ///< widthOfDepth(g, cell_h)
-    std::vector<double> cell_i1_;      ///< i1OfDepth(g, cell_h, cell_ah_)
+    std::vector<double> cell_ah_; ///< areaOfDepth(g, cell_h)
+    std::vector<double> cell_t_;  ///< widthOfDepth(g, cell_h)
+    std::vector<double> cell_i1_; ///< i1OfDepth(g, cell_h, cell_ah_)
+    /**
+     * @brief Cache one cell native area/width/pressure integral at its current depth.
+     *
+     * Wet non-TPA cells evaluate one shared closure triple into cell_ah_/cell_t_/cell_i1_; dry or TPA
+     * cells cache zeros because consumers take their dedicated branches. Increments batched performance
+     * counters; no heap allocation or cross-cell writes.
+     *
+     * @param[in] uc Valid initialized cell index owned by the calling worker.
+     * @param[in] g The cell immutable initialized geometry.
+     * @param[in] h Current native depth in ft, consistent with state.cell_h and regime.
+     */
     void cacheClosure(std::size_t uc, const FvGeometry& g, double h) noexcept;
 
     /// Unsteady-friction convective term c·sgn(Vⁿ)·|∂V/∂x|ⁿ per cell
@@ -688,40 +1267,72 @@ private:
     /// neighbor; sized only when FvOptions::unsteady_friction != 0.
     std::vector<double> uf_grad_;
 
-    /// Fill uf_grad_ for @p cells (nullptr = all cells) from the current
-    /// cell_u_/state snapshot. Same-conduit neighbors only: across virtual
-    /// junction splices the conduit frames may point into each other, so the
-    /// stencil falls back to one-sided there rather than risk a sign flip.
+    /**
+     * @brief Compute old-snapshot unsteady-friction acceleration gradients.
+     *
+     * Writes c*sign(u)*abs(dV/dx) in ft/s2 from the current pre-update velocity snapshot. Uses
+     * same-conduit neighbors only, one-sided/own fallback at node/virtual splices, and current TPA slot
+     * width for flagged celerity. Inactive, dry or zero-velocity cells receive zero. Call before any
+     * cell momentum update or pressure pass that changes velocity; selected-cell mode leaves other
+     * gradients unchanged.
+     *
+     * @param[in] cells Optional unique valid cell list; nullptr processes all cells. UF scratch must be
+     *     allocated by enabled initialization.
+     */
     void computeUfGradients(const std::vector<int>* cells);
 
     // -- TPA pressure closure (issue #156 Phase 4) ---------------------------
-    bool tpa_ = false;                    ///< FV_PRESSURE_CLOSURE == TPA
-    bool mixed_wave_ = true;              ///< slot/free interface wave bound (dev switch)
-    bool mw_rh_  = true;                  ///< bore-speed bound at interior slot/free faces
-    bool deg1_guard_slot_ = true;         ///< degree-1 prescribed discharge skips a slot interior (dev: DEG1=1 off)
-    bool census_pass_far_ = true;         ///< census bounds a pass-through ghost by the FAR cell it fluxes (dev: CENSUS_PASS=0 off)
-    bool lts_fit_ = false;                ///< 4c experiment: a shorter macro cycle when the full one does not fit (OPENSWMM_FV_LTS_FIT=1)
-    /// The far cell a pass-through junction's ghost presents at @p face, or
-    /// -1 when the node is not an active pass-through (plan Phase 1e).
-    int  passThroughFarCell(int face, int nd) const noexcept;
-    std::vector<uint8_t> tpa_scratch_;    ///< previous-flag snapshot (sweep)
-    std::vector<uint8_t> save_tpa_;       ///< step-rejection snapshot
+    bool tpa_ = false;       ///< FV_PRESSURE_CLOSURE == TPA
+    bool mixed_wave_ = true; ///< slot/free interface wave bound (dev switch)
+    bool mw_rh_ = true;      ///< bore-speed bound at interior slot/free faces
+    bool deg1_guard_slot_ =
+        true; ///< degree-1 prescribed discharge skips a slot interior (dev: DEG1=1 off)
+    bool census_pass_far_ =
+        true; ///< census bounds a pass-through ghost by the FAR cell it fluxes (dev: CENSUS_PASS=0 off)
+    bool lts_fit_ =
+        false; ///< 4c experiment: a shorter macro cycle when the full one does not fit (OPENSWMM_FV_LTS_FIT=1)
+    /**
+     * @brief Find the opposite cell presented through an active degree-two node ghost.
+     *
+     * Assumes static pass-through validation guarantees a degree-two topology; no allocation or state
+     * change.
+     *
+     * @param[in] face Valid one-of-two incident face index.
+     * @param[in] nd Valid initialized node index or a negative absent-node sentinel.
+     * @return Far incident cell index, or -1 when the node is absent, not active
+     *     pass-through/algebraic, or no other face is present.
+     */
+    int passThroughFarCell(int face, int nd) const noexcept;
+    std::vector<uint8_t> tpa_scratch_; ///< previous-flag snapshot (sweep)
+    std::vector<uint8_t> save_tpa_;    ///< step-rejection snapshot
 
-    /// Update the per-cell regime flags (state_->cell_tpa) once per substep
-    /// from the venting rule — see the implementation comment.
+    /**
+     * @brief Update active cell pressure history from crown filling, venting and column separation.
+     *
+     * Requires enabled TPA and aligned flags/scratch/current eta. Copies old flags so transition
+     * decisions do not depend on sweep order. Open cells clear, inactive cells retain history, free
+     * cells enter at a_crown, and flagged cells exit below the 30-ft pressure bound or after hysteresis
+     * plus an unsubmerged atmospheric connection. Transitions refresh regime-consistent
+     * depth/stage/closure without changing conserved area. Called at each takeSubstep invocation,
+     * including each forward Euler stage of RK2. Snapshot allocation may throw.
+     */
     void updateTpaFlags();
 
-    /// Regime of one cell under TPA; always false when the closure is SLOT.
-    bool tpaCell(std::size_t uc) const noexcept {
-        return tpa_ && state_->cell_tpa[uc] != 0;
-    }
-    std::vector<double> cell_q_int_;   ///< ∫(mean face mass flux) dt over the
-                                       ///< routing step — the DISCHARGE the
-                                       ///< report publishes; equals ∫Q dt in
-                                       ///< open channels but not in the slot
+    /**
+     * @brief Test the current per-cell two-component-pressure regime.
+     *
+     * @param[in] uc Valid cell index; enabled TPA requires an aligned state.cell_tpa array.
+     * @return True only when TPA is configured and the corresponding nonzero flag is set; false in SLOT
+     *     mode.
+     */
+    bool tpaCell(std::size_t uc) const noexcept { return tpa_ && state_->cell_tpa[uc] != 0; }
+    std::vector<double> cell_q_int_; ///< ∫(mean face mass flux) dt over the
+                                     ///< routing step — the DISCHARGE the
+                                     ///< report publishes; equals ∫Q dt in
+                                     ///< open channels but not in the slot
 
     // Node scratch.
-    std::vector<double> node_exch_;    ///< ∫(net inflow) dt over the routing step
+    std::vector<double> node_exch_; ///< ∫(net inflow) dt over the routing step
     std::vector<double> node_in_, node_out_;
     std::vector<double> flood_vol_;
     std::vector<uint8_t> inlet_control_;
@@ -735,22 +1346,20 @@ private:
     // is not, because the stiffness ratio depends on FV_SLOT_CELERITY.
     std::vector<double> save_cell_a_, save_cell_q_, save_cell_phi_;
     std::vector<double> save_node_vol_, save_node_head_;
-    std::vector<double> save_exch_, save_in_, save_out_, save_flood_, save_qint_,
-                        save_carry_;
+    std::vector<double> save_exch_, save_in_, save_out_, save_flood_, save_qint_, save_carry_;
 
     // SSP-RK2 stage-1 snapshot. Separate from the rejection snapshot above:
     // a rejected RK2 step has to roll back to Uⁿ, and Uⁿ must survive the
     // stage-1 save that the rejection machinery performs.
     std::vector<double> rk_cell_a_, rk_cell_q_, rk_cell_phi_;
     std::vector<double> rk_node_vol_, rk_node_head_;
-    std::vector<double> rk_exch_, rk_in_, rk_out_, rk_flood_, rk_qint_,
-                        rk_carry_;
-    std::vector<uint8_t> rk_tpa_;   ///< Uⁿ regime latch (issue #156 R4c)
+    std::vector<double> rk_exch_, rk_in_, rk_out_, rk_flood_, rk_qint_, rk_carry_;
+    std::vector<uint8_t> rk_tpa_; ///< Uⁿ regime latch (issue #156 R4c)
 
     /// Accept a substep when the post-step stable step is at least this
     /// fraction of the step actually taken.
     static constexpr double kStepAcceptRatio = 0.5;
-    static constexpr int    kMaxStepRetries  = 8;
+    static constexpr int kMaxStepRetries = 8;
 
     /// Substep floor — a loop guard only, far below any stable step this
     /// solver legitimately computes. NOT constants::MIN_TIMESTEP (0.001 s,
@@ -759,7 +1368,7 @@ private:
     /// dt < 1 ms, which is routine at acoustic slot celerities on sub-foot
     /// cells — and was the root cause of the issue-#156 "high-celerity TPA
     /// instability" class (see the comment at the clamp site in advance()).
-    static constexpr double kMinSubstep = 1.0e-6;   ///< s
+    static constexpr double kMinSubstep = 1.0e-6; ///< s
 
     // Divergence guard (issue #156 R3). The retry loop above is sound for CFL
     // violations, which shrink away with dt — but a dt-INDEPENDENT
@@ -771,31 +1380,41 @@ private:
     // not particle speed), and 10,000 ft of pressure head is 300 bar. A run
     // that crosses either has left the physics and must say so instead of
     // scoring OK (P6 finding F3). Checked once per routing step, O(cells).
-    static constexpr double kDivergedVelocity = 1000.0;    ///< ft/s
-    static constexpr double kDivergedDepth    = 10000.0;   ///< ft
-    int         div_link_  = -1;       ///< engine link index, -1 = clean
-    double      div_value_ = 0.0;
-    const char* div_what_  = nullptr;
+    static constexpr double kDivergedVelocity = 1000.0; ///< ft/s
+    static constexpr double kDivergedDepth = 10000.0;   ///< ft
+    int div_link_ = -1;                                 ///< engine link index, -1 = clean
+    double div_value_ = 0.0;
+    const char* div_what_ = nullptr;
 
     // Work lists (plan §5.2.1). `halo_` is the compaction safety margin: a wet
     // front advances at most CFL cells per substep, so a halo of `rebuild_
     // interval_` cells keeps a stale list conservative between rebuilds.
-    std::vector<int>  active_faces_;
+    std::vector<int> active_faces_;
     std::vector<char> cell_active_;
-    std::vector<char> halo_prev_;   ///< previous halo level (double buffer)
-    bool              lists_valid_  = false;
-    int               since_rebuild_ = 0;
+    std::vector<char> halo_prev_; ///< previous halo level (double buffer)
+    bool lists_valid_ = false;
+    int since_rebuild_ = 0;
     static constexpr int kRebuildInterval = 8;
 
     // Local time stepping (plan §3.3). Tiers are assigned only at a
     // synchronisation point — never mid-cycle — because a cell re-tiered
     // between firings would either skip a flux it owes or drain one twice.
-    std::vector<std::uint8_t>     cell_tier_, face_tier_, node_tier_;
+    std::vector<std::uint8_t> cell_tier_, face_tier_, node_tier_;
 
-    ConduitStepSink step_sink_      = nullptr;  ///< see setConduitStepSink
-    void*           step_sink_user_ = nullptr;
-    /// Report one accepted step to the sink: every conduit at `dt0` (global
-    /// path, `tiered` false) or at its finest cell's 2^tier·dt0 (LTS cycle).
+    ConduitStepSink step_sink_ = nullptr; ///< see setConduitStepSink
+    void* step_sink_user_ = nullptr;
+    /**
+     * @brief Invoke the reporting sink once for each conduit after accepted work.
+     *
+     * Requires non-null step_sink_ and coherent conduit ranges/tier arrays; caller checks the callback
+     * before entry. Passes borrowed user context, conduit row, governing seconds and duration
+     * synchronously. Sink must not throw/reenter or mutate solver state. No hydraulic changes occur.
+     *
+     * @param[in] dt0 Global governing dt or LTS base dt in seconds.
+     * @param[in] dur Accepted duration weighting in seconds.
+     * @param[in] tiered True selects the finest incident cell tier step per conduit; false uses dt0
+     *     directly.
+     */
     void emitConduitSteps(double dt0, double dur, bool tiered) const;
     std::vector<std::vector<int>> cells_by_tier_, faces_by_tier_, nodes_by_tier_;
 
@@ -810,9 +1429,9 @@ private:
     /// Re-tiering is O(cells + faces) with a grading sweep on top, so doing it
     /// every cycle dominates a small model; between re-tiers dt₀ may only
     /// SHRINK, which is what keeps a cached assignment admissible.
-    bool   lts_valid_    = false;
-    int    lts_countdown_ = 0;
-    double lts_dt0_      = 0.0;
+    bool lts_valid_ = false;
+    int lts_countdown_ = 0;
+    double lts_dt0_ = 0.0;
     static constexpr int kRetierEveryCycles = 8;
 
     /// Pending ∫F dt per control volume, in the cell's OWN axis for momentum.
@@ -824,22 +1443,22 @@ private:
     /// total invariant Σ(volume) + Σ(pending) is what the conservation gate
     /// checks mid-cycle; without it a snapshot taken between firings looks
     /// like a leak.
-    int  lts_tiers_ = 1;
+    int lts_tiers_ = 1;
     std::array<long, kMaxLtsTiers> tier_occupancy_{};
 
     // Statistics.
-    long   last_nsteps_  = 0;
-    double last_h_       = 0.0;
-    double suggested_h_  = 0.0;
-    long   total_steps_  = 0;
-    long   total_flux_   = 0;
-    double min_h_        = 0.0;
-    double sim_time_     = 0.0;
+    long last_nsteps_ = 0;
+    double last_h_ = 0.0;
+    double suggested_h_ = 0.0;
+    long total_steps_ = 0;
+    long total_flux_ = 0;
+    double min_h_ = 0.0;
+    double sim_time_ = 0.0;
     /// LTS macro cycles that ran / were rejected by the post-cycle census.
     /// The tier histogram is filled whether or not a cycle ever fits the
     /// routing step; these say whether tiering ENGAGED.
-    long   n_macro_cycles_   = 0;
-    long   n_macro_rejected_ = 0;
+    long n_macro_cycles_ = 0;
+    long n_macro_rejected_ = 0;
 
     /// True while cell_h / cell_eta_ / cell_u_ are exactly what the solver's
     /// own last update derived from cell_a. advance() then skips its entry
@@ -849,13 +1468,13 @@ private:
     /// Router writes cell_a only before initialize() (the initial seed), so
     /// initialize()/reinitialize() are the only places that clear it; the
     /// pressurized-implicit and TPA paths keep the refresh unconditional.
-    bool   state_clean_ = false;
+    bool state_clean_ = false;
     /// True while acc_a_/acc_q_/acc_nvol_ hold flux fireFaces booked and no
     /// volume has drained. Lets settleAccumulators() skip its transfer AND the
     /// two full-mesh refreshDepths() it ends with when no macro cycle has run
     /// since the last settle — which, on every deck of the 2026-09-11
     /// baseline, was always (LTS fired 0 cycles) while costing 25-50 % of wall.
-    bool   acc_dirty_ = false;
+    bool acc_dirty_ = false;
     /// Per-face √(g·A·T) scratch for relaxOneNode: pass 1 evaluates it into
     /// here and pass 2 reads it, instead of evaluating the same geometry twice.
     std::vector<double> relax_beta_;
@@ -864,29 +1483,29 @@ private:
     // element, counted once per censusDt (global path) / assignTiers (LTS
     // path). `mutable` because censusDt is const; these are telemetry.
     mutable long dt_argmin_pressurized_ = 0;
-    mutable long dt_argmin_band_        = 0;
-    mutable long dt_argmin_free_        = 0;
-    mutable long dt_argmin_node_        = 0;
-    double active_sum_   = 0.0;
-    double active_min_   = -1.0;
-    double active_max_   = -1.0;
-    long   active_n_     = 0;
+    mutable long dt_argmin_band_ = 0;
+    mutable long dt_argmin_free_ = 0;
+    mutable long dt_argmin_node_ = 0;
+    double active_sum_ = 0.0;
+    double active_min_ = -1.0;
+    double active_max_ = -1.0;
+    long active_n_ = 0;
 
     /// The step the last accepted substep actually TOOK. Published as
     /// suggested_step() and therefore what Router::getAdaptiveStep offers the
     /// engine as the next routing step.
-    double dt_cache_     = 0.0;
+    double dt_cache_ = 0.0;
 
     /// The CFL bound the last census returned — deliberately distinct from
     /// dt_cache_. `dt_cache_` is clamped to the time remaining in the routing
     /// step, so caching it as the Courant bound would drag every later substep
     /// down to whatever fragment closed the previous step. Only this one may be
     /// carried across a skipped census (FV_CFL_CENSUS_INTERVAL > 1).
-    double dt_census_    = 0.0;
+    double dt_census_ = 0.0;
 
     /// Substeps remaining before the next full Courant census. Reloaded from
     /// FV_CFL_CENSUS_INTERVAL; zero forces a census on the next substep.
-    int    census_count_ = 0;
+    int census_count_ = 0;
 };
 
 } // namespace openswmm::fv

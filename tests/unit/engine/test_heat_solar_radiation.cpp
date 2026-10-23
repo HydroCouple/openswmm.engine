@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_heat_solar_radiation.cpp
- * @brief Phase H6a gates — solar position, Bird clear-sky, cloud, parser.
+ * @file      test_heat_solar_radiation.cpp
+ * @brief     Phase H6a gates — solar position, Bird clear-sky, cloud, parser.
  *
  * @par What each class of gate is worth — read before trusting a green run
  *      These gates are NOT all equally strong, and the difference is the
@@ -51,9 +51,9 @@
  * @see plans/transport/HEAT_TRANSPORT_PLAN.md §2.5, §6 H6a, §6.4
  * @see plans/transport/H6A_VALIDATION_HANDOFF_2026-08-30.md
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -81,6 +81,17 @@ namespace sr = openswmm::transport::heat;
 
 namespace {
 
+/**
+ * @brief Borrow the concrete engine behind an opaque test handle.
+ *
+ * This exact helper performs only an unchecked static_cast and dereference. It does not validate
+ * lifecycle, retain the handle or transfer ownership; fixture code may use the reference to inspect
+ * or seed internal state.
+ *
+ * @param[in] engine Live non-null new-engine handle whose concrete allocation is SWMMEngine; caller
+ *     keeps ownership.
+ * @return Mutable engine reference that remains valid until handle destruction or replacement.
+ */
 openswmm::SWMMEngine& as_cpp_engine(SWMM_Engine engine) {
     return *static_cast<openswmm::SWMMEngine*>(engine);
 }
@@ -91,6 +102,20 @@ constexpr int kJunSolstice = 172; ///< ~Jun 21
 constexpr int kSepEquinox = 266;  ///< ~Sep 23
 constexpr int kDecSolstice = 355; ///< ~Dec 21
 
+/**
+ * @brief Write a noon summer-solstice solar-forcing fixture.
+ *
+ * Uses a five-minute CFS storage/conduit run, constant 50 F air, 50 percent humidity, sw_ts=700 and
+ * cloud_ts=0.5 time series. The component configuration determines how those forcing series are
+ * used. Opens/truncates the deck using a local ofstream; parent directories must exist. Stream
+ * open/write/close outcomes are not checked, and sidecar names/text are not escaped. Caller-owned
+ * inputs are not retained.
+ *
+ * @param[in] path Destination deck filename, non-null when a character pointer; borrowed only
+ *     during this call. Existing files are truncated.
+ * @param[in] pc_lines Raw PROCESS_COMPONENTS rows, copied when nonempty; caller supplies valid
+ *     component IDs/config references and line separators.
+ */
 void write_deck(const char* path, const std::string& pc_lines) {
     std::ofstream f(path);
     f << "[TITLE]\nH6a solar radiation gate deck\n\n[OPTIONS]\n"
@@ -115,24 +140,51 @@ void write_deck(const char* path, const std::string& pc_lines) {
     f << "[REPORT]\nINPUT NO\n";
 }
 
+/**
+ * @brief Write fixture content to a caller-selected file.
+ *
+ * The parent directory must already exist. Uses ordinary text output mode. Open failure is not
+ * reported by this helper. Subsequent write/close failures are not checked; the local stream closes
+ * at scope exit and no path/content storage is retained. Allocation exceptions can propagate.
+ *
+ * @param[in] path Non-null null-terminated destination path; an existing file is
+ *     truncated/overwritten.
+ * @param[in] body Borrowed content copied verbatim through the output stream; no newline is
+ *     appended.
+ */
 void write_file(const char* path, const std::string& body) {
     std::ofstream f(path);
     f << body;
 }
 
-/// Open only — these gates are about CONFIGURATION being accepted or
-/// refused, so nothing needs to run.
-int open_only(const char* inp, const char* rpt, const char* out,
-              SWMM_Engine* held) {
+/**
+ * @brief Open a solar-forcing fixture and optionally retain its model for inspection.
+ *
+ * A successful open is destroyed before return when held is null; when non-null, the caller must
+ * destroy the transferred handle. Failed opens destroy the temporary handle. No initialization or
+ * stepping occurs, because these gates concern config acceptance.
+ *
+ * @param[in] inp Non-null input deck filename, borrowed during the call.
+ * @param[in] rpt Report destination passed to engine open; may overwrite matching output.
+ * @param[in] out Binary-result destination passed to engine open; start requests saved results.
+ * @param[out] held Optional writable handle slot. Receives ownership only when open succeeds;
+ *     otherwise it is left unchanged.
+ * @return SWMM_ERR_BADHANDLE on allocation failure, otherwise swmm_engine_open status unchanged.
+ */
+int open_only(const char* inp, const char* rpt, const char* out, SWMM_Engine* held) {
     SWMM_Engine e = swmm_engine_create();
-    if (e == nullptr) return SWMM_ERR_BADHANDLE;
+    if (e == nullptr)
+        return SWMM_ERR_BADHANDLE;
     const int rc = swmm_engine_open(e, inp, rpt, out, nullptr);
-    if (held != nullptr && rc == SWMM_OK) { *held = e; return rc; }
+    if (held != nullptr && rc == SWMM_OK) {
+        *held = e;
+        return rc;
+    }
     swmm_engine_destroy(e);
     return rc;
 }
 
-}  // namespace
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Gate 1 — ASTRONOMY. Declination at the cardinal points.
@@ -143,19 +195,11 @@ int open_only(const char* inp, const char* rpt, const char* out,
 // ---------------------------------------------------------------------------
 TEST(HeatSolarRadiationTest, DeclinationMatchesTheCardinalPoints) {
     // Obliquity of the ecliptic — the June solstice declination IS 23.44°.
-    EXPECT_NEAR(sr::solarPosition(kJunSolstice, 12.0, 0.0, 0.0, 0.0)
-                    .declination_deg,
-                23.44, 0.05);
-    EXPECT_NEAR(sr::solarPosition(kDecSolstice, 12.0, 0.0, 0.0, 0.0)
-                    .declination_deg,
-                -23.44, 0.10);
+    EXPECT_NEAR(sr::solarPosition(kJunSolstice, 12.0, 0.0, 0.0, 0.0).declination_deg, 23.44, 0.05);
+    EXPECT_NEAR(sr::solarPosition(kDecSolstice, 12.0, 0.0, 0.0, 0.0).declination_deg, -23.44, 0.10);
     // Equinoxes: the sun crosses the celestial equator, declination 0.
-    EXPECT_NEAR(sr::solarPosition(kMarEquinox, 12.0, 0.0, 0.0, 0.0)
-                    .declination_deg,
-                0.0, 0.40);
-    EXPECT_NEAR(sr::solarPosition(kSepEquinox, 12.0, 0.0, 0.0, 0.0)
-                    .declination_deg,
-                0.0, 0.40);
+    EXPECT_NEAR(sr::solarPosition(kMarEquinox, 12.0, 0.0, 0.0, 0.0).declination_deg, 0.0, 0.40);
+    EXPECT_NEAR(sr::solarPosition(kSepEquinox, 12.0, 0.0, 0.0, 0.0).declination_deg, 0.0, 0.40);
 
     // Earth is near APHELION at the June solstice, so the irradiance
     // correction is BELOW one — and near perihelion in January, above it.
@@ -216,25 +260,22 @@ TEST(HeatSolarRadiationTest, DeclinationAgreesWithTheLegacyFitWhereItIsGood) {
 
     // At the solstices the legacy fit is at its best: agree tightly.
     for (const int doy : {kJunSolstice, kDecSolstice}) {
-        EXPECT_NEAR(sr::solarPosition(doy, 12.0, 0, 0, 0).declination_deg,
-                    legacy_decl(doy), 0.10)
+        EXPECT_NEAR(sr::solarPosition(doy, 12.0, 0, 0, 0).declination_deg, legacy_decl(doy), 0.10)
             << "solstice doy " << doy;
     }
 
     // Everywhere else: bounded, and never wilder than the known 1.5 deg.
     for (int doy = 1; doy <= 365; ++doy) {
-        EXPECT_LT(std::fabs(sr::solarPosition(doy, 12.0, 0, 0, 0)
-                                .declination_deg -
-                            legacy_decl(doy)),
-                  2.0)
+        EXPECT_LT(
+            std::fabs(sr::solarPosition(doy, 12.0, 0, 0, 0).declination_deg - legacy_decl(doy)),
+            2.0)
             << "doy " << doy;
     }
 
     // And at the September equinox the two genuinely disagree, with THIS
     // module the closer to truth. Asserted so that a future "fix" that
     // makes them agree there is caught: it would be a regression.
-    EXPECT_LT(std::fabs(sr::solarPosition(kSepEquinox, 12.0, 0, 0, 0)
-                            .declination_deg),
+    EXPECT_LT(std::fabs(sr::solarPosition(kSepEquinox, 12.0, 0, 0, 0).declination_deg),
               std::fabs(legacy_decl(kSepEquinox)));
 }
 
@@ -243,7 +284,7 @@ TEST(HeatSolarRadiationTest, DeclinationAgreesWithTheLegacyFitWhereItIsGood) {
 // ---------------------------------------------------------------------------
 TEST(HeatSolarRadiationTest, AirMassAndClearSkyInvariants) {
     // Kasten–Young: 1 at the zenith, 2 at 60 deg. Textbook values.
-    EXPECT_NEAR(sr::airMass(0.0),  1.0, 1.0e-3);
+    EXPECT_NEAR(sr::airMass(0.0), 1.0, 1.0e-3);
     EXPECT_NEAR(sr::airMass(60.0), 2.0, 1.0e-2);
     // At and below the horizon there is no path — 0, not a NaN and not a
     // negative. Every Bird term is written to collapse on this.
@@ -255,7 +296,7 @@ TEST(HeatSolarRadiationTest, AirMassAndClearSkyInvariants) {
     // Pressure falls with height, and 1400 m (Salt Lake City) is ~856 mb.
     EXPECT_NEAR(sr::pressureFromElevation(1400.0), 856.0, 2.0);
 
-    openswmm::SolarConfig cfg{};  // paper's standard atmosphere
+    openswmm::SolarConfig cfg{}; // paper's standard atmosphere
 
     // GHI is strictly decreasing in zenith angle across the daylit range,
     // and exactly zero once the sun sets. A constant, a sign error, or a
@@ -282,18 +323,21 @@ TEST(HeatSolarRadiationTest, AirMassAndClearSkyInvariants) {
     // still less than the extraterrestrial constant. The upper bound is the
     // one that catches a transmittance written as its own reciprocal.
     openswmm::SolarConfig clean = cfg;
-    clean.aod380 = 0.0; clean.aod500 = 0.0;
-    clean.precip_water_cm = 0.0; clean.ozone_cm = 0.0;
+    clean.aod380 = 0.0;
+    clean.aod500 = 0.0;
+    clean.precip_water_cm = 0.0;
+    clean.ozone_cm = 0.0;
     auto zenith = sr::solarPosition(kJunSolstice, 12.0, 0, 0, 0);
-    zenith.zenith_deg = 0.0; zenith.cos_zenith = 1.0; zenith.eccentricity = 1.0;
+    zenith.zenith_deg = 0.0;
+    zenith.cos_zenith = 1.0;
+    zenith.eccentricity = 1.0;
     const double ghi_clean = sr::birdClearSkyGHI(zenith, 1013.25, clean);
-    const double ghi_std   = sr::birdClearSkyGHI(zenith, 1013.25, cfg);
+    const double ghi_std = sr::birdClearSkyGHI(zenith, 1013.25, cfg);
     EXPECT_GT(ghi_clean, ghi_std);
     EXPECT_LT(ghi_clean, sr::kSolarConstant);
 
     // Thinner air transmits more: the same sun at altitude beats sea level.
-    EXPECT_GT(sr::birdClearSkyGHI(zenith, sr::pressureFromElevation(2000.0), cfg),
-              ghi_std);
+    EXPECT_GT(sr::birdClearSkyGHI(zenith, sr::pressureFromElevation(2000.0), cfg), ghi_std);
 }
 
 // ---------------------------------------------------------------------------
@@ -311,11 +355,14 @@ TEST(HeatSolarRadiationTest, AirMassAndClearSkyInvariants) {
 TEST(HeatSolarRadiationTest, BirdStandardAtmosphereRegressionPin) {
     openswmm::SolarConfig cfg{};
     auto pos = sr::solarPosition(kJunSolstice, 12.0, 0, 0, 0);
-    pos.zenith_deg = 0.0; pos.cos_zenith = 1.0; pos.eccentricity = 1.0;
+    pos.zenith_deg = 0.0;
+    pos.cos_zenith = 1.0;
+    pos.eccentricity = 1.0;
     // Sea level, sun overhead, paper's standard atmosphere.
     EXPECT_NEAR(sr::birdClearSkyGHI(pos, 1013.25, cfg), 1056.09, 0.5);
 
-    pos.zenith_deg = 60.0; pos.cos_zenith = 0.5;
+    pos.zenith_deg = 60.0;
+    pos.cos_zenith = 0.5;
     EXPECT_NEAR(sr::birdClearSkyGHI(pos, 1013.25, cfg), 476.79, 0.5);
 }
 
@@ -335,15 +382,13 @@ TEST(HeatSolarRadiationTest, ClearSkyReducesToH3Exactly) {
 
     // And the H3 entry points are bit-identical with it applied.
     const double e_a = 0.6159414661;
-    EXPECT_DOUBLE_EQ(
-        openswmm::transport::heat::atmosphericEmissivity(e_a, 0.5),
-        openswmm::transport::heat::atmosphericEmissivity(
-            e_a, 0.5, sr::cloudLongwaveFactor(0.0, 0.17)));
+    EXPECT_DOUBLE_EQ(openswmm::transport::heat::atmosphericEmissivity(e_a, 0.5),
+                     openswmm::transport::heat::atmosphericEmissivity(
+                         e_a, 0.5, sr::cloudLongwaveFactor(0.0, 0.17)));
 
     EXPECT_DOUBLE_EQ(
         openswmm::transport::heat::atmosphericLongwave(10.0, 50.0, 0.5, 0.03, 1.0),
-        openswmm::transport::heat::atmosphericLongwave(10.0, 50.0, 0.5, 0.03, 1.0,
-                                                       1.0));
+        openswmm::transport::heat::atmosphericLongwave(10.0, 50.0, 0.5, 0.03, 1.0, 1.0));
 
     // The negative sentinel on netRadiativeFluxOut means "use the config
     // constant", so the four-argument H3 call and an explicit pass of the
@@ -352,8 +397,7 @@ TEST(HeatSolarRadiationTest, ClearSkyReducesToH3Exactly) {
     rc.shortwave_wm2 = 250.0;
     EXPECT_DOUBLE_EQ(
         openswmm::transport::heat::netRadiativeFluxOut(20.0, 10.0, 50.0, rc),
-        openswmm::transport::heat::netRadiativeFluxOut(20.0, 10.0, 50.0, rc,
-                                                       250.0, 1.0));
+        openswmm::transport::heat::netRadiativeFluxOut(20.0, 10.0, 50.0, rc, 250.0, 1.0));
 
     // An UNRESOLVED cache must fall back on the configured constant, not
     // read as a resolved 0. `radiativeFluxOut` passes `shortwave_now`
@@ -363,10 +407,9 @@ TEST(HeatSolarRadiationTest, ClearSkyReducesToH3Exactly) {
     // silently vanishes from any call landing before the step's
     // updateSolarForcing.
     EXPECT_LT(openswmm::HeatState{}.shortwave_now, 0.0);
-    EXPECT_DOUBLE_EQ(
-        openswmm::transport::heat::netRadiativeFluxOut(
-            20.0, 10.0, 50.0, rc, openswmm::HeatState{}.shortwave_now, 1.0),
-        openswmm::transport::heat::netRadiativeFluxOut(20.0, 10.0, 50.0, rc));
+    EXPECT_DOUBLE_EQ(openswmm::transport::heat::netRadiativeFluxOut(
+                         20.0, 10.0, 50.0, rc, openswmm::HeatState{}.shortwave_now, 1.0),
+                     openswmm::transport::heat::netRadiativeFluxOut(20.0, 10.0, 50.0, rc));
 
     // ...and `resize()` must restore that sentinel, not leave a previous
     // run's forcing behind. `clear()` gets it via whole-struct assignment;
@@ -387,17 +430,13 @@ TEST(HeatSolarRadiationTest, ClearSkyReducesToH3Exactly) {
 // claim about `updateSolarForcing` copying the constant through UNCHANGED.
 // ---------------------------------------------------------------------------
 TEST(HeatSolarRadiationTest, ConstantModeCopiesTheConfiguredValueExactly) {
-    write_file("_h6a_const.heat",
-               "[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 20.0\n\n"
-               "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
-               "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL 317.5\n");
-    write_deck("_h6a_const.inp",
-               "org.hydrocouple.openswmm.heat config=\"_h6a_const.heat\"");
+    write_file("_h6a_const.heat", "[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 20.0\n\n"
+                                  "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
+                                  "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL 317.5\n");
+    write_deck("_h6a_const.inp", "org.hydrocouple.openswmm.heat config=\"_h6a_const.heat\"");
 
     SWMM_Engine e = nullptr;
-    ASSERT_EQ(open_only("_h6a_const.inp", "_h6a_const.rpt", "_h6a_const.out",
-                        &e),
-              SWMM_OK);
+    ASSERT_EQ(open_only("_h6a_const.inp", "_h6a_const.rpt", "_h6a_const.out", &e), SWMM_OK);
     ASSERT_NE(e, nullptr);
     ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK);
@@ -407,8 +446,7 @@ TEST(HeatSolarRadiationTest, ConstantModeCopiesTheConfiguredValueExactly) {
     auto& ctx = as_cpp_engine(e).context();
     // Bit-identical, not close: no cloud configured means the shortwave
     // factor is a literal 1.0 and the multiply is exact.
-    EXPECT_DOUBLE_EQ(ctx.heat_state.shortwave_now,
-                     ctx.heat_config.radiative.shortwave_wm2);
+    EXPECT_DOUBLE_EQ(ctx.heat_state.shortwave_now, ctx.heat_config.radiative.shortwave_wm2);
     EXPECT_DOUBLE_EQ(ctx.heat_state.shortwave_now, 317.5);
     EXPECT_DOUBLE_EQ(ctx.heat_state.cloud_now, 0.0);
 
@@ -423,8 +461,7 @@ TEST(HeatSolarRadiationTest, CloudDarkensShortwaveAndWarmsLongwave) {
     // Overcast removes exactly k of the shortwave.
     EXPECT_NEAR(sr::cloudShortwaveFactor(1.0, 0.75, 3.4), 0.25, 1.0e-12);
     // Monotone in between.
-    EXPECT_GT(sr::cloudShortwaveFactor(0.3, 0.75, 3.4),
-              sr::cloudShortwaveFactor(0.7, 0.75, 3.4));
+    EXPECT_GT(sr::cloudShortwaveFactor(0.3, 0.75, 3.4), sr::cloudShortwaveFactor(0.7, 0.75, 3.4));
     // An over-unity k blocks completely; it does not invert.
     EXPECT_DOUBLE_EQ(sr::cloudShortwaveFactor(1.0, 2.0, 1.0), 0.0);
     // A fraction above 1 is treated as overcast, not extrapolated.
@@ -449,19 +486,16 @@ TEST(HeatSolarRadiationTest, CloudDarkensShortwaveAndWarmsLongwave) {
 // Gate 8 — D-H6a-3. The three spellings are MUTUALLY EXCLUSIVE.
 // ---------------------------------------------------------------------------
 TEST(HeatSolarRadiationTest, TwoShortwaveSpellingsAreRefused) {
-    write_file("_h6a_dup.heat",
-               "[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 20.0\n\n"
-               "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
-               "[RADIATIVE_FLUXES]\n"
-               "SHORTWAVE GLOBAL 250.0\n"
-               "SHORTWAVE GLOBAL COMPUTED\n");
-    write_deck("_h6a_dup.inp",
-               "org.hydrocouple.openswmm.heat config=\"_h6a_dup.heat\"");
+    write_file("_h6a_dup.heat", "[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 20.0\n\n"
+                                "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
+                                "[RADIATIVE_FLUXES]\n"
+                                "SHORTWAVE GLOBAL 250.0\n"
+                                "SHORTWAVE GLOBAL COMPUTED\n");
+    write_deck("_h6a_dup.inp", "org.hydrocouple.openswmm.heat config=\"_h6a_dup.heat\"");
 
     // A precedence ladder would have ACCEPTED this deck and silently run
     // one of the two. Refusing is the decision.
-    EXPECT_NE(open_only("_h6a_dup.inp", "_h6a_dup.rpt", "_h6a_dup.out", nullptr),
-              SWMM_OK);
+    EXPECT_NE(open_only("_h6a_dup.inp", "_h6a_dup.rpt", "_h6a_dup.out", nullptr), SWMM_OK);
 }
 
 // ---------------------------------------------------------------------------
@@ -471,41 +505,30 @@ TEST(HeatSolarRadiationTest, TwoShortwaveSpellingsAreRefused) {
 // reports equatorial noon. Nothing downstream could catch that.
 // ---------------------------------------------------------------------------
 TEST(HeatSolarRadiationTest, ComputedWithoutCoordinatesIsRefused) {
-    write_file("_h6a_nolat.heat",
-               "[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 20.0\n\n"
-               "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
-               "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL COMPUTED\n");
-    write_deck("_h6a_nolat.inp",
-               "org.hydrocouple.openswmm.heat config=\"_h6a_nolat.heat\"");
-    EXPECT_NE(open_only("_h6a_nolat.inp", "_h6a_nolat.rpt", "_h6a_nolat.out",
-                        nullptr),
-              SWMM_OK);
+    write_file("_h6a_nolat.heat", "[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 20.0\n\n"
+                                  "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
+                                  "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL COMPUTED\n");
+    write_deck("_h6a_nolat.inp", "org.hydrocouple.openswmm.heat config=\"_h6a_nolat.heat\"");
+    EXPECT_NE(open_only("_h6a_nolat.inp", "_h6a_nolat.rpt", "_h6a_nolat.out", nullptr), SWMM_OK);
 
     // Latitude alone is still not sited — longitude is equally required.
-    write_file("_h6a_latonly.heat",
-               "[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 20.0\n\n"
-               "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
-               "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL COMPUTED\n\n"
-               "[SOLAR_RADIATION]\nLATITUDE GLOBAL 41.7\n");
-    write_deck("_h6a_latonly.inp",
-               "org.hydrocouple.openswmm.heat config=\"_h6a_latonly.heat\"");
-    EXPECT_NE(open_only("_h6a_latonly.inp", "_h6a_latonly.rpt",
-                        "_h6a_latonly.out", nullptr),
+    write_file("_h6a_latonly.heat", "[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 20.0\n\n"
+                                    "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
+                                    "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL COMPUTED\n\n"
+                                    "[SOLAR_RADIATION]\nLATITUDE GLOBAL 41.7\n");
+    write_deck("_h6a_latonly.inp", "org.hydrocouple.openswmm.heat config=\"_h6a_latonly.heat\"");
+    EXPECT_NE(open_only("_h6a_latonly.inp", "_h6a_latonly.rpt", "_h6a_latonly.out", nullptr),
               SWMM_OK);
 
     // Both present: accepted.
-    write_file("_h6a_sited.heat",
-               "[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 20.0\n\n"
-               "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
-               "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL COMPUTED\n\n"
-               "[SOLAR_RADIATION]\nLATITUDE GLOBAL 41.7\n"
-               "LONGITUDE GLOBAL -111.8\nTIMEZONE GLOBAL -7.0\n");
-    write_deck("_h6a_sited.inp",
-               "org.hydrocouple.openswmm.heat config=\"_h6a_sited.heat\"");
+    write_file("_h6a_sited.heat", "[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 20.0\n\n"
+                                  "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
+                                  "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL COMPUTED\n\n"
+                                  "[SOLAR_RADIATION]\nLATITUDE GLOBAL 41.7\n"
+                                  "LONGITUDE GLOBAL -111.8\nTIMEZONE GLOBAL -7.0\n");
+    write_deck("_h6a_sited.inp", "org.hydrocouple.openswmm.heat config=\"_h6a_sited.heat\"");
     SWMM_Engine e = nullptr;
-    ASSERT_EQ(open_only("_h6a_sited.inp", "_h6a_sited.rpt", "_h6a_sited.out",
-                        &e),
-              SWMM_OK);
+    ASSERT_EQ(open_only("_h6a_sited.inp", "_h6a_sited.rpt", "_h6a_sited.out", &e), SWMM_OK);
     ASSERT_NE(e, nullptr);
 
     int sited = 0;
@@ -524,33 +547,27 @@ TEST(HeatSolarRadiationTest, ComputedWithoutCoordinatesIsRefused) {
 // is how a deck and a GUI come to describe different models.
 // ---------------------------------------------------------------------------
 TEST(HeatSolarRadiationTest, ApiEnforcesTheSameRulesAsTheParser) {
-    write_file("_h6a_api.heat",
-               "[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 20.0\n\n"
-               "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
-               "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL 250.0\n");
+    write_file("_h6a_api.heat", "[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 20.0\n\n"
+                                "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
+                                "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL 250.0\n");
     write_deck("_h6a_api.inp", "org.hydrocouple.openswmm.heat config=\"_h6a_api.heat\"");
     SWMM_Engine e = nullptr;
-    ASSERT_EQ(open_only("_h6a_api.inp", "_h6a_api.rpt", "_h6a_api.out", &e),
-              SWMM_OK);
+    ASSERT_EQ(open_only("_h6a_api.inp", "_h6a_api.rpt", "_h6a_api.out", &e), SWMM_OK);
     ASSERT_NE(e, nullptr);
 
     // COMPUTED is refused until the site is set — the same rule, same reason.
-    EXPECT_EQ(swmm_heat_set_shortwave_mode(e, SWMM_HEAT_SW_COMPUTED),
-              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_heat_set_shortwave_mode(e, SWMM_HEAT_SW_COMPUTED), SWMM_ERR_BADPARAM);
     EXPECT_EQ(swmm_heat_set_solar(e, SWMM_HEAT_SOLAR_LATITUDE, 41.7), SWMM_OK);
     EXPECT_EQ(swmm_heat_set_shortwave_mode(e, SWMM_HEAT_SW_COMPUTED),
-              SWMM_ERR_BADPARAM);  // longitude still missing
-    EXPECT_EQ(swmm_heat_set_solar(e, SWMM_HEAT_SOLAR_LONGITUDE, -111.8),
-              SWMM_OK);
+              SWMM_ERR_BADPARAM); // longitude still missing
+    EXPECT_EQ(swmm_heat_set_solar(e, SWMM_HEAT_SOLAR_LONGITUDE, -111.8), SWMM_OK);
     EXPECT_EQ(swmm_heat_set_shortwave_mode(e, SWMM_HEAT_SW_COMPUTED), SWMM_OK);
 
     // Out-of-range values are REFUSED, not clamped.
-    EXPECT_EQ(swmm_heat_set_solar(e, SWMM_HEAT_SOLAR_LATITUDE, 100.0),
-              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_heat_set_solar(e, SWMM_HEAT_SOLAR_LATITUDE, 100.0), SWMM_ERR_BADPARAM);
     EXPECT_EQ(swmm_heat_set_cloud(e, SWMM_HEAT_CLOUD_FRACTION, 75.0),
-              SWMM_ERR_BADPARAM);   // 75% typed as a fraction
-    EXPECT_EQ(swmm_heat_set_radiative(e, SWMM_HEAT_RAD_ALBEDO, 97.0),
-              SWMM_ERR_BADPARAM);
+              SWMM_ERR_BADPARAM); // 75% typed as a fraction
+    EXPECT_EQ(swmm_heat_set_radiative(e, SWMM_HEAT_RAD_ALBEDO, 97.0), SWMM_ERR_BADPARAM);
 
     // ...and a refused write must not have happened. This is the half-apply
     // check: an API that errors AND mutates is worse than one that errors.
@@ -561,13 +578,10 @@ TEST(HeatSolarRadiationTest, ApiEnforcesTheSameRulesAsTheParser) {
     // A shortwave constant is meaningless outside CONSTANT mode, and the
     // refusal must likewise leave the stored value alone.
     double sw_before = 0.0;
-    EXPECT_EQ(swmm_heat_get_radiative(e, SWMM_HEAT_RAD_SHORTWAVE, &sw_before),
-              SWMM_OK);
-    EXPECT_EQ(swmm_heat_set_radiative(e, SWMM_HEAT_RAD_SHORTWAVE, 900.0),
-              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_heat_get_radiative(e, SWMM_HEAT_RAD_SHORTWAVE, &sw_before), SWMM_OK);
+    EXPECT_EQ(swmm_heat_set_radiative(e, SWMM_HEAT_RAD_SHORTWAVE, 900.0), SWMM_ERR_BADPARAM);
     double sw_after = 0.0;
-    EXPECT_EQ(swmm_heat_get_radiative(e, SWMM_HEAT_RAD_SHORTWAVE, &sw_after),
-              SWMM_OK);
+    EXPECT_EQ(swmm_heat_get_radiative(e, SWMM_HEAT_RAD_SHORTWAVE, &sw_after), SWMM_OK);
     EXPECT_DOUBLE_EQ(sw_before, sw_after);
 
     // Clearing cloud restores the documented defaults wholesale, so "clear"
@@ -591,15 +605,13 @@ TEST(HeatSolarRadiationTest, ApiEnforcesTheSameRulesAsTheParser) {
 // lessons 10/20 name; this gate is what makes the wiring observable.
 // ---------------------------------------------------------------------------
 TEST(HeatSolarRadiationTest, ShortwaveTimeseriesReachesTheResolvedForcing) {
-    write_file("_h6a_ts.heat",
-               "[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 20.0\n\n"
-               "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
-               "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL TIMESERIES sw_ts\n");
+    write_file("_h6a_ts.heat", "[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 20.0\n\n"
+                               "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
+                               "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL TIMESERIES sw_ts\n");
     write_deck("_h6a_ts.inp", "org.hydrocouple.openswmm.heat config=\"_h6a_ts.heat\"");
 
     SWMM_Engine e = nullptr;
-    ASSERT_EQ(open_only("_h6a_ts.inp", "_h6a_ts.rpt", "_h6a_ts.out", &e),
-              SWMM_OK);
+    ASSERT_EQ(open_only("_h6a_ts.inp", "_h6a_ts.rpt", "_h6a_ts.out", &e), SWMM_OK);
     ASSERT_NE(e, nullptr);
 
     int mode = -1;
@@ -624,14 +636,11 @@ TEST(HeatSolarRadiationTest, ShortwaveTimeseriesReachesTheResolvedForcing) {
 // Gate 12 — an unnamed timeseries is refused, not silently zeroed.
 // ---------------------------------------------------------------------------
 TEST(HeatSolarRadiationTest, MissingTimeseriesIsRefused) {
-    write_file("_h6a_missing.heat",
-               "[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 20.0\n\n"
-               "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
-               "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL TIMESERIES no_such_ts\n");
-    write_deck("_h6a_missing.inp",
-               "org.hydrocouple.openswmm.heat config=\"_h6a_missing.heat\"");
-    EXPECT_NE(open_only("_h6a_missing.inp", "_h6a_missing.rpt",
-                        "_h6a_missing.out", nullptr),
+    write_file("_h6a_missing.heat", "[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 20.0\n\n"
+                                    "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
+                                    "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL TIMESERIES no_such_ts\n");
+    write_deck("_h6a_missing.inp", "org.hydrocouple.openswmm.heat config=\"_h6a_missing.heat\"");
+    EXPECT_NE(open_only("_h6a_missing.inp", "_h6a_missing.rpt", "_h6a_missing.out", nullptr),
               SWMM_OK);
 }
 
@@ -645,17 +654,14 @@ TEST(HeatSolarRadiationTest, MissingTimeseriesIsRefused) {
 // ---------------------------------------------------------------------------
 TEST(HeatSolarRadiationTest, NonFiniteValuesAreRefused) {
     for (const char* bad : {"nan", "inf", "-inf"}) {
-        const std::string body =
-            std::string("[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 20.0\n\n"
-                        "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
-                        "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL COMPUTED\n\n"
-                        "[SOLAR_RADIATION]\nLATITUDE GLOBAL ") + bad +
-            "\nLONGITUDE GLOBAL -111.8\n";
+        const std::string body = std::string("[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 20.0\n\n"
+                                             "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
+                                             "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL COMPUTED\n\n"
+                                             "[SOLAR_RADIATION]\nLATITUDE GLOBAL ") +
+                                 bad + "\nLONGITUDE GLOBAL -111.8\n";
         write_file("_h6a_nan.heat", body);
         write_deck("_h6a_nan.inp", "org.hydrocouple.openswmm.heat config=\"_h6a_nan.heat\"");
-        EXPECT_NE(open_only("_h6a_nan.inp", "_h6a_nan.rpt", "_h6a_nan.out",
-                            nullptr),
-                  SWMM_OK)
+        EXPECT_NE(open_only("_h6a_nan.inp", "_h6a_nan.rpt", "_h6a_nan.out", nullptr), SWMM_OK)
             << "accepted LATITUDE " << bad;
     }
 
@@ -665,15 +671,13 @@ TEST(HeatSolarRadiationTest, NonFiniteValuesAreRefused) {
     // exactly the contract gate 10 defends. Closed in the step 3 validation
     // round; this leg is what keeps it closed.
     for (const char* bad : {"nan", "inf"}) {
-        const std::string body =
-            std::string("[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 20.0\n\n"
-                        "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
-                        "[RADIATIVE_FLUXES]\nALBEDO GLOBAL ") + bad + "\n";
+        const std::string body = std::string("[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 20.0\n\n"
+                                             "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
+                                             "[RADIATIVE_FLUXES]\nALBEDO GLOBAL ") +
+                                 bad + "\n";
         write_file("_h6a_nan.heat", body);
         write_deck("_h6a_nan.inp", "org.hydrocouple.openswmm.heat config=\"_h6a_nan.heat\"");
-        EXPECT_NE(open_only("_h6a_nan.inp", "_h6a_nan.rpt", "_h6a_nan.out",
-                            nullptr),
-                  SWMM_OK)
+        EXPECT_NE(open_only("_h6a_nan.inp", "_h6a_nan.rpt", "_h6a_nan.out", nullptr), SWMM_OK)
             << "accepted ALBEDO " << bad;
     }
 }
@@ -684,35 +688,31 @@ TEST(HeatSolarRadiationTest, NonFiniteValuesAreRefused) {
 // ---------------------------------------------------------------------------
 TEST(HeatSolarRadiationTest, AdversarialDecksRefuseOrWarnAsSpecified) {
     // FRACTION 75 typed for 75% must ERROR, not blacken the sky.
-    write_file("_h6a_adv.heat",
-               "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
-               "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL 250.0\n\n"
-               "[CLOUD_COVER]\nFRACTION GLOBAL 75\n");
+    write_file("_h6a_adv.heat", "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
+                                "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL 250.0\n\n"
+                                "[CLOUD_COVER]\nFRACTION GLOBAL 75\n");
     write_deck("_h6a_adv.inp", "org.hydrocouple.openswmm.heat config=\"_h6a_adv.heat\"");
-    EXPECT_NE(open_only("_h6a_adv.inp", "_h6a_adv.rpt", "_h6a_adv.out",
-                        nullptr), SWMM_OK) << "FRACTION 75 accepted";
+    EXPECT_NE(open_only("_h6a_adv.inp", "_h6a_adv.rpt", "_h6a_adv.out", nullptr), SWMM_OK)
+        << "FRACTION 75 accepted";
 
     // LATITUDE 100 must ERROR, not saturate to the pole.
-    write_file("_h6a_adv.heat",
-               "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
-               "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL COMPUTED\n\n"
-               "[SOLAR_RADIATION]\nLATITUDE GLOBAL 100\n"
-               "LONGITUDE GLOBAL -111.8\n");
+    write_file("_h6a_adv.heat", "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
+                                "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL COMPUTED\n\n"
+                                "[SOLAR_RADIATION]\nLATITUDE GLOBAL 100\n"
+                                "LONGITUDE GLOBAL -111.8\n");
     write_deck("_h6a_adv.inp", "org.hydrocouple.openswmm.heat config=\"_h6a_adv.heat\"");
-    EXPECT_NE(open_only("_h6a_adv.inp", "_h6a_adv.rpt", "_h6a_adv.out",
-                        nullptr), SWMM_OK) << "LATITUDE 100 accepted";
+    EXPECT_NE(open_only("_h6a_adv.inp", "_h6a_adv.rpt", "_h6a_adv.out", nullptr), SWMM_OK)
+        << "LATITUDE 100 accepted";
 
     // A measured series with [CLOUD_COVER] on top double-counts: WARN, and
     // still run — a user may be scaling a clear-sky-corrected record.
-    write_file("_h6a_adv.heat",
-               "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
-               "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL TIMESERIES sw_ts\n\n"
-               "[CLOUD_COVER]\nFRACTION GLOBAL 0.4\n");
+    write_file("_h6a_adv.heat", "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
+                                "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL TIMESERIES sw_ts\n\n"
+                                "[CLOUD_COVER]\nFRACTION GLOBAL 0.4\n");
     write_deck("_h6a_adv.inp", "org.hydrocouple.openswmm.heat config=\"_h6a_adv.heat\"");
     {
         SWMM_Engine e = nullptr;
-        ASSERT_EQ(open_only("_h6a_adv.inp", "_h6a_adv.rpt", "_h6a_adv.out",
-                            &e), SWMM_OK);
+        ASSERT_EQ(open_only("_h6a_adv.inp", "_h6a_adv.rpt", "_h6a_adv.out", &e), SWMM_OK);
         bool warned = false;
         for (const auto& w : as_cpp_engine(e).context().warnings)
             if (w.find("attenuates them twice") != std::string::npos)
@@ -723,16 +723,14 @@ TEST(HeatSolarRadiationTest, AdversarialDecksRefuseOrWarnAsSpecified) {
 
     // [SOLAR_RADIATION] with the mode not COMPUTED: coordinates are unused —
     // WARN, and still run.
-    write_file("_h6a_adv.heat",
-               "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
-               "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL 250.0\n\n"
-               "[SOLAR_RADIATION]\nLATITUDE GLOBAL 41.7\n"
-               "LONGITUDE GLOBAL -111.8\n");
+    write_file("_h6a_adv.heat", "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
+                                "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL 250.0\n\n"
+                                "[SOLAR_RADIATION]\nLATITUDE GLOBAL 41.7\n"
+                                "LONGITUDE GLOBAL -111.8\n");
     write_deck("_h6a_adv.inp", "org.hydrocouple.openswmm.heat config=\"_h6a_adv.heat\"");
     {
         SWMM_Engine e = nullptr;
-        ASSERT_EQ(open_only("_h6a_adv.inp", "_h6a_adv.rpt", "_h6a_adv.out",
-                            &e), SWMM_OK);
+        ASSERT_EQ(open_only("_h6a_adv.inp", "_h6a_adv.rpt", "_h6a_adv.out", &e), SWMM_OK);
         bool warned = false;
         for (const auto& w : as_cpp_engine(e).context().warnings)
             if (w.find("coordinates are") != std::string::npos ||
@@ -745,10 +743,9 @@ TEST(HeatSolarRadiationTest, AdversarialDecksRefuseOrWarnAsSpecified) {
     // A cloud SERIES carrying 1.7 arrives mid-run with no user to ask:
     // clamped to [0,1] at runtime, run continues. (A config FRACTION of the
     // same value is refused at parse — the first leg above.)
-    write_file("_h6a_adv.heat",
-               "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
-               "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL 250.0\n\n"
-               "[CLOUD_COVER]\nFRACTION GLOBAL TIMESERIES cloud_hot\n");
+    write_file("_h6a_adv.heat", "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
+                                "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL 250.0\n\n"
+                                "[CLOUD_COVER]\nFRACTION GLOBAL TIMESERIES cloud_hot\n");
     {
         // The deck writer only carries cloud_ts at 0.5; add a hot series.
         std::ofstream f("_h6a_adv.inp");
@@ -770,8 +767,7 @@ TEST(HeatSolarRadiationTest, AdversarialDecksRefuseOrWarnAsSpecified) {
     }
     {
         SWMM_Engine e = nullptr;
-        ASSERT_EQ(open_only("_h6a_adv.inp", "_h6a_adv.rpt", "_h6a_adv.out",
-                            &e), SWMM_OK);
+        ASSERT_EQ(open_only("_h6a_adv.inp", "_h6a_adv.rpt", "_h6a_adv.out", &e), SWMM_OK);
         ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
         ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK);
         double elapsed = 0.0;
@@ -793,19 +789,15 @@ TEST(HeatSolarRadiationTest, AdversarialDecksRefuseOrWarnAsSpecified) {
 // pressure. The flag replaced the sentinel; this is what says so.
 // ---------------------------------------------------------------------------
 TEST(HeatSolarRadiationTest, BelowSeaLevelElevationIsKept) {
-    write_file("_h6a_below.heat",
-               "[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 20.0\n\n"
-               "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
-               "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL COMPUTED\n\n"
-               "[SOLAR_RADIATION]\nLATITUDE GLOBAL 31.5\n"
-               "LONGITUDE GLOBAL 35.5\nTIMEZONE GLOBAL 2.0\n"
-               "ELEVATION GLOBAL -430.0\n");
-    write_deck("_h6a_below.inp",
-               "org.hydrocouple.openswmm.heat config=\"_h6a_below.heat\"");
+    write_file("_h6a_below.heat", "[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 20.0\n\n"
+                                  "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
+                                  "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL COMPUTED\n\n"
+                                  "[SOLAR_RADIATION]\nLATITUDE GLOBAL 31.5\n"
+                                  "LONGITUDE GLOBAL 35.5\nTIMEZONE GLOBAL 2.0\n"
+                                  "ELEVATION GLOBAL -430.0\n");
+    write_deck("_h6a_below.inp", "org.hydrocouple.openswmm.heat config=\"_h6a_below.heat\"");
     SWMM_Engine e = nullptr;
-    ASSERT_EQ(open_only("_h6a_below.inp", "_h6a_below.rpt", "_h6a_below.out",
-                        &e),
-              SWMM_OK);
+    ASSERT_EQ(open_only("_h6a_below.inp", "_h6a_below.rpt", "_h6a_below.out", &e), SWMM_OK);
     ASSERT_NE(e, nullptr);
 
     double elev = 0.0;
@@ -825,17 +817,13 @@ TEST(HeatSolarRadiationTest, BelowSeaLevelElevationIsKept) {
 // nothing, with no error and no warning.
 // ---------------------------------------------------------------------------
 TEST(HeatSolarRadiationTest, CloudCoefficientsWithoutFractionWarn) {
-    write_file("_h6a_coeff.heat",
-               "[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 20.0\n\n"
-               "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
-               "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL 250.0\n\n"
-               "[CLOUD_COVER]\nLW_CLOUD_K GLOBAL 0.30\n");
-    write_deck("_h6a_coeff.inp",
-               "org.hydrocouple.openswmm.heat config=\"_h6a_coeff.heat\"");
+    write_file("_h6a_coeff.heat", "[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 20.0\n\n"
+                                  "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
+                                  "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL 250.0\n\n"
+                                  "[CLOUD_COVER]\nLW_CLOUD_K GLOBAL 0.30\n");
+    write_deck("_h6a_coeff.inp", "org.hydrocouple.openswmm.heat config=\"_h6a_coeff.heat\"");
     SWMM_Engine e = nullptr;
-    ASSERT_EQ(open_only("_h6a_coeff.inp", "_h6a_coeff.rpt", "_h6a_coeff.out",
-                        &e),
-              SWMM_OK);
+    ASSERT_EQ(open_only("_h6a_coeff.inp", "_h6a_coeff.rpt", "_h6a_coeff.out", &e), SWMM_OK);
     ASSERT_NE(e, nullptr);
 
     // The coefficient was stored and the section is marked configured...
@@ -850,8 +838,7 @@ TEST(HeatSolarRadiationTest, CloudCoefficientsWithoutFractionWarn) {
     const auto& warnings = as_cpp_engine(e).context().warnings;
     bool found = false;
     for (const auto& w : warnings)
-        if (w.find("CLOUD_COVER") != std::string::npos &&
-            w.find("FRACTION") != std::string::npos)
+        if (w.find("CLOUD_COVER") != std::string::npos && w.find("FRACTION") != std::string::npos)
             found = true;
     EXPECT_TRUE(found) << "no warning about coefficients without FRACTION";
     swmm_engine_destroy(e);
@@ -866,54 +853,51 @@ TEST(HeatSolarRadiationTest, CloudCoefficientsWithoutFractionWarn) {
 // "Set SHORTWAVE GLOBAL COMPUTED" to someone who had written exactly that.
 // ---------------------------------------------------------------------------
 TEST(HeatSolarRadiationTest, WarningsDoNotSurviveARejectedConfig) {
-    write_file("_h6a_warnerr.heat",
-               "[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 20.0\n\n"
-               "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
-               // Malformed: trailing token. Errors, and leaves sw_mode at
-               // CONSTANT — which is what used to trigger the misleading
-               // "[SOLAR_RADIATION] ... is not COMPUTED" warning.
-               "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL COMPUTED EXTRA\n\n"
-               "[SOLAR_RADIATION]\nLATITUDE GLOBAL 41.7\n"
-               "LONGITUDE GLOBAL -111.8\n");
-    write_deck("_h6a_warnerr.inp",
-               "org.hydrocouple.openswmm.heat config=\"_h6a_warnerr.heat\"");
+    write_file("_h6a_warnerr.heat", "[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 20.0\n\n"
+                                    "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
+                                    // Malformed: trailing token. Errors, and leaves sw_mode at
+                                    // CONSTANT — which is what used to trigger the misleading
+                                    // "[SOLAR_RADIATION] ... is not COMPUTED" warning.
+                                    "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL COMPUTED EXTRA\n\n"
+                                    "[SOLAR_RADIATION]\nLATITUDE GLOBAL 41.7\n"
+                                    "LONGITUDE GLOBAL -111.8\n");
+    write_deck("_h6a_warnerr.inp", "org.hydrocouple.openswmm.heat config=\"_h6a_warnerr.heat\"");
 
     SWMM_Engine e = swmm_engine_create();
     ASSERT_NE(e, nullptr);
-    const int rc = swmm_engine_open(e, "_h6a_warnerr.inp", "_h6a_warnerr.rpt",
-                                    "_h6a_warnerr.out", nullptr);
+    const int rc =
+        swmm_engine_open(e, "_h6a_warnerr.inp", "_h6a_warnerr.rpt", "_h6a_warnerr.out", nullptr);
     // However the open resolves, no warning may claim the coordinates went
     // unused — the config they belong to was discarded.
     for (const auto& w : as_cpp_engine(e).context().warnings) {
-        EXPECT_EQ(w.find("[SOLAR_RADIATION] is configured but"),
-                  std::string::npos)
+        EXPECT_EQ(w.find("[SOLAR_RADIATION] is configured but"), std::string::npos)
             << "warning survived a discarded config: " << w;
     }
     (void)rc;
     swmm_engine_destroy(e);
 }
 
-
 TEST(SharedRadiation, SlopeIntegralAgreesWithAnalyticalEquinoxAndPolarLimits) {
     using openswmm::surface::solarIntegral;
     constexpr double pi = 3.14159265358979323846;
     // Equinox at 45 N: horizontal sunrise/sunset at +/-90 degrees.
     const auto horizontal = solarIntegral(45, 0, -180, 24, 0, 0);
-    EXPECT_NEAR(horizontal.horizontal, std::cos(pi/4)/pi, 1e-15);
+    EXPECT_NEAR(horizontal.horizontal, std::cos(pi / 4) / pi, 1e-15);
     EXPECT_DOUBLE_EQ(horizontal.horizontal, horizontal.hri);
     const auto south = solarIntegral(45, 0, -180, 24, 30, 180);
     const auto north = solarIntegral(45, 0, -180, 24, 30, 0);
-    EXPECT_NEAR(south.cosine, std::cos(pi/12)/pi, 1e-15);
-    EXPECT_NEAR(north.cosine, std::cos(5*pi/12)/pi, 1e-15);
-    EXPECT_NEAR(south.hri, south.cosine/std::cos(pi/6), 1e-15);
+    EXPECT_NEAR(south.cosine, std::cos(pi / 12) / pi, 1e-15);
+    EXPECT_NEAR(north.cosine, std::cos(5 * pi / 12) / pi, 1e-15);
+    EXPECT_NEAR(south.hri, south.cosine / std::cos(pi / 6), 1e-15);
     EXPECT_DOUBLE_EQ(solarIntegral(90, -23.4, -180, 24, 30, 0).cosine, 0);
-    EXPECT_NEAR(solarIntegral(90, 23.4, -180, 24, 0, 0).horizontal, std::sin(23.4*pi/180), 1e-15);
+    EXPECT_NEAR(solarIntegral(90, 23.4, -180, 24, 0, 0).horizontal, std::sin(23.4 * pi / 180),
+                1e-15);
     // East-facing snow receives more of the morning radiation; aspect is
     // clockwise from north, not the reference driver's south-zero azimuth.
-    EXPECT_GT(solarIntegral(45, 0, -90, 6, 30, 90).hri,
-              solarIntegral(45, 0, -90, 6, 30, 270).hri);
+    EXPECT_GT(solarIntegral(45, 0, -90, 6, 30, 90).hri, solarIntegral(45, 0, -90, 6, 30, 270).hri);
     double split = 0;
-    for (int h = 0; h < 24; ++h) split += solarIntegral(50, 17, -180+h*15, 1, 48, 240).hri/24;
+    for (int h = 0; h < 24; ++h)
+        split += solarIntegral(50, 17, -180 + h * 15, 1, 48, 240).hri / 24;
     EXPECT_NEAR(split, solarIntegral(50, 17, -180, 24, 48, 240).hri, 1e-15);
 }
 
@@ -923,7 +907,7 @@ TEST(SharedRadiation, HourlyWeatherConservesIntervalsAndRejectsGapsAtomically) {
     ASSERT_TRUE(met.read(input).empty());
     const double day = openswmm::datetime::encodeDate(2026, 1, 1);
     std::array<double, 5> values{};
-    ASSERT_TRUE(met.average(day+1800./86400, 3600, values).empty());
+    ASSERT_TRUE(met.average(day + 1800. / 86400, 3600, values).empty());
     EXPECT_NEAR(values[0], 0, 1e-8);
     EXPECT_NEAR(values[3], 50, 1e-7);
     EXPECT_NEAR(values[4], 275, 1e-7);
@@ -950,11 +934,11 @@ TEST(SharedRadiation, HourlyWeatherResolvesSubMicrosecondBoundaryRemainders) {
         ASSERT_TRUE(met.average(start, 1e-7, values).empty());
         EXPECT_EQ(values, (std::array<double, 5>{8, 80, 3, 220, 335}));
     }
-    ASSERT_TRUE(met.average(noon - 1./86400, 2, values).empty());
+    ASSERT_TRUE(met.average(noon - 1. / 86400, 2, values).empty());
     EXPECT_NEAR(values[0], 7, 1e-6);
     EXPECT_NEAR(values[3], 200, 1e-5);
     const auto accepted = values;
-    EXPECT_FALSE(met.average(noon + 1./24, 1, values).empty());
+    EXPECT_FALSE(met.average(noon + 1. / 24, 1, values).empty());
     EXPECT_EQ(values, accepted);
 }
 
@@ -963,9 +947,12 @@ TEST(SharedRadiation, MetFilePrecedesSeriesAndComputedWithoutChangingClimateCloc
     const auto day = openswmm::datetime::encodeDate(2026, 1, 1);
     ctx.current_date = day + .5;
     auto& cfg = ctx.snowpacks.config;
-    ASSERT_TRUE(openswmm::surface::setSnowTemperature(cfg, {"SITE", "45", "-120", "-8", "1000"}).empty());
-    ASSERT_TRUE(openswmm::surface::setSnowTemperature(cfg, {"SHORTWAVE", "TIMESERIES", "missing"}).empty());
-    ASSERT_TRUE(openswmm::surface::setSnowTemperature(cfg, {"LONGWAVE", "TIMESERIES", "missing"}).empty());
+    ASSERT_TRUE(
+        openswmm::surface::setSnowTemperature(cfg, {"SITE", "45", "-120", "-8", "1000"}).empty());
+    ASSERT_TRUE(
+        openswmm::surface::setSnowTemperature(cfg, {"SHORTWAVE", "TIMESERIES", "missing"}).empty());
+    ASSERT_TRUE(
+        openswmm::surface::setSnowTemperature(cfg, {"LONGWAVE", "TIMESERIES", "missing"}).empty());
     std::istringstream input("01/01/2026 00:00 -4 75 2 0 250\n01/01/2026 01:00 4 85 4 100 300\n");
     ASSERT_TRUE(ctx.snowpacks.meteorology.read(input).empty());
     openswmm::climate::RadiationState result;
@@ -975,15 +962,19 @@ TEST(SharedRadiation, MetFilePrecedesSeriesAndComputedWithoutChangingClimateCloc
     EXPECT_NEAR(result.shortwave, 50, 1e-7);
     EXPECT_NEAR(result.longwave, 275, 1e-7);
     EXPECT_EQ(result.shortwave_source, openswmm::climate::RadiationOrigin::MetFile);
-    EXPECT_DOUBLE_EQ(ctx.current_date, day+.5);
+    EXPECT_DOUBLE_EQ(ctx.current_date, day + .5);
     EXPECT_LT(result.pressure, 101325);
 }
 
 TEST(SharedRadiation, SnowInputOptionsRoundTripAndInvalidEditsAreAtomic) {
     openswmm::SimulationContext ctx;
-    openswmm::input::handle_temperature(ctx, {"SITE 41.74 -111.8 -7 1800", "SNOWMELT_MODEL UEB", "SNOW_STEP 00:30", "SHORTWAVE COMPUTED", "LONGWAVE TIMESERIES longwave"});
-    openswmm::input::handle_ueb_options(ctx, {"SURFACE_TEMP EQUILIBRIUM", "Z0 0.005", "BC_MONTHLY 1 8", "PRECIP_SPLIT DIVT"});
-    openswmm::input::handle_snowpacks(ctx, {"mountain UEB .2 1.5 2 .15 -200", "preserved UEB 0 1 0 .1 MODEL DEGREE_DAY"});
+    openswmm::input::handle_temperature(ctx, {"SITE 41.74 -111.8 -7 1800", "SNOWMELT_MODEL UEB",
+                                              "SNOW_STEP 00:30", "SHORTWAVE COMPUTED",
+                                              "LONGWAVE TIMESERIES longwave"});
+    openswmm::input::handle_ueb_options(
+        ctx, {"SURFACE_TEMP EQUILIBRIUM", "Z0 0.005", "BC_MONTHLY 1 8", "PRECIP_SPLIT DIVT"});
+    openswmm::input::handle_snowpacks(
+        ctx, {"mountain UEB .2 1.5 2 .15 -200", "preserved UEB 0 1 0 .1 MODEL DEGREE_DAY"});
     ASSERT_TRUE(ctx.errors.empty());
     const auto& cfg = ctx.snowpacks.config;
     EXPECT_EQ(cfg.modelFor(0), openswmm::surface::SnowKind::Ueb);
@@ -1003,13 +994,20 @@ TEST(SharedRadiation, SnowInputOptionsRoundTripAndInvalidEditsAreAtomic) {
     EXPECT_EQ(openswmm::surface::uebOptionRows(reopened.snowpacks.config), rows);
     const std::string path = "shared_radiation_snow_roundtrip.inp";
     ASSERT_EQ(openswmm::inp_writer::writeInpFile(ctx, path), 0);
-    std::ifstream file(path); std::string line, section;
+    std::ifstream file(path);
+    std::string line, section;
     openswmm::SimulationContext decoded;
     while (std::getline(file, line)) {
-        if (!line.empty() && line.front() == '[') { section = line; continue; }
-        if (section == "[TEMPERATURE]") openswmm::input::handle_temperature(decoded, {line});
-        if (section == "[SNOWPACKS]") openswmm::input::handle_snowpacks(decoded, {line});
-        if (section == "[UEB_OPTIONS]") openswmm::input::handle_ueb_options(decoded, {line});
+        if (!line.empty() && line.front() == '[') {
+            section = line;
+            continue;
+        }
+        if (section == "[TEMPERATURE]")
+            openswmm::input::handle_temperature(decoded, {line});
+        if (section == "[SNOWPACKS]")
+            openswmm::input::handle_snowpacks(decoded, {line});
+        if (section == "[UEB_OPTIONS]")
+            openswmm::input::handle_ueb_options(decoded, {line});
     }
     ASSERT_TRUE(decoded.errors.empty());
     EXPECT_EQ(openswmm::surface::uebOptionRows(decoded.snowpacks.config), rows);
@@ -1019,13 +1017,14 @@ TEST(SharedRadiation, SnowInputOptionsRoundTripAndInvalidEditsAreAtomic) {
     EXPECT_EQ(decoded.snowpacks.config.modelFor(1), openswmm::surface::SnowKind::DegreeDay);
 }
 
-
 TEST(SharedRadiation, HeatReadsMeasuredLongwaveWithoutCloudDoubleCounting) {
     openswmm::SimulationContext ctx;
-    ctx.options.heat_transport = true; ctx.heat_config.radiative_exchange = true;
+    ctx.options.heat_transport = true;
+    ctx.heat_config.radiative_exchange = true;
     ctx.current_date = openswmm::datetime::encodeDate(2026, 1, 1);
     ctx.snowpacks.config.met_file = "memory.met";
-    ctx.heat_config.cloud.configured = true; ctx.heat_config.cloud.fraction = .8;
+    ctx.heat_config.cloud.configured = true;
+    ctx.heat_config.cloud.fraction = .8;
     std::istringstream data("01/01/2026 00:00 5 75 2 100 300\n");
     ASSERT_TRUE(ctx.snowpacks.meteorology.read(data).empty());
     openswmm::climate::updateSolarForcing(ctx, 3600);
@@ -1033,20 +1032,28 @@ TEST(SharedRadiation, HeatReadsMeasuredLongwaveWithoutCloudDoubleCounting) {
     EXPECT_DOUBLE_EQ(ctx.climate_state.radiation.longwave, 300);
     EXPECT_TRUE(ctx.climate_state.radiation.shared_heat_forcing);
     openswmm::RadiativeConfig rc;
-    rc.albedo = .2; rc.sky_view = .75; rc.lw_reflection = .03;
+    rc.albedo = .2;
+    rc.sky_view = .75;
+    rc.lw_reflection = .03;
     const double computed = sr::netRadiativeFluxOut(2, 5, 75, rc, 100, 10, 300);
-    const double expected = sr::backLongwave(2, rc.emiss_water) - 80 - 300*.97*.75 - sr::landCoverLongwave(5, rc.emiss_landcover, .75);
+    const double expected = sr::backLongwave(2, rc.emiss_water) - 80 - 300 * .97 * .75 -
+                            sr::landCoverLongwave(5, rc.emiss_landcover, .75);
     EXPECT_DOUBLE_EQ(computed, expected);
 }
 
 TEST(SharedRadiation, ExplicitSiteIsSharedWithHeatAccessors) {
-    SWMM_Engine e = swmm_engine_new(); ASSERT_NE(e, nullptr);
+    SWMM_Engine e = swmm_engine_new();
+    ASSERT_NE(e, nullptr);
     auto& ctx = static_cast<openswmm::SWMMEngine*>(e)->context();
-    ASSERT_TRUE(openswmm::surface::setSnowTemperature(ctx.snowpacks.config, {"SITE", "45", "-120", "-8", "1500"}).empty());
-    double value = 0; int sited = 0;
+    ASSERT_TRUE(openswmm::surface::setSnowTemperature(ctx.snowpacks.config,
+                                                      {"SITE", "45", "-120", "-8", "1500"})
+                    .empty());
+    double value = 0;
+    int sited = 0;
     ASSERT_EQ(swmm_heat_get_solar(e, SWMM_HEAT_SOLAR_LATITUDE, &value), SWMM_OK);
     EXPECT_DOUBLE_EQ(value, 45);
-    ASSERT_EQ(swmm_heat_get_solar_sited(e, &sited), SWMM_OK); EXPECT_EQ(sited, 1);
+    ASSERT_EQ(swmm_heat_get_solar_sited(e, &sited), SWMM_OK);
+    EXPECT_EQ(sited, 1);
     ASSERT_EQ(swmm_heat_set_solar(e, SWMM_HEAT_SOLAR_LATITUDE, 47), SWMM_OK);
     EXPECT_DOUBLE_EQ(ctx.snowpacks.config.site->latitude, 47);
     swmm_engine_destroy(e);
@@ -1054,9 +1061,12 @@ TEST(SharedRadiation, ExplicitSiteIsSharedWithHeatAccessors) {
 
 TEST(SharedRadiation, MissingWeatherRefusesBeforePublishingAnyHeatForcing) {
     openswmm::SimulationContext ctx;
-    ctx.options.heat_transport = true; ctx.heat_config.radiative_exchange = true;
+    ctx.options.heat_transport = true;
+    ctx.heat_config.radiative_exchange = true;
     ctx.current_date = openswmm::datetime::encodeDate(2026, 1, 1);
-    ASSERT_TRUE(openswmm::surface::setSnowTemperature(ctx.snowpacks.config, {"SHORTWAVE", "TIMESERIES", "missing"}).empty());
+    ASSERT_TRUE(openswmm::surface::setSnowTemperature(ctx.snowpacks.config,
+                                                      {"SHORTWAVE", "TIMESERIES", "missing"})
+                    .empty());
     ctx.heat_state.shortwave_now = 500;
     EXPECT_THROW(openswmm::climate::updateSolarForcing(ctx, 3600), std::runtime_error);
     EXPECT_DOUBLE_EQ(ctx.heat_state.shortwave_now, 500);

@@ -22,6 +22,16 @@
  *   through swmm_open(); the models differ only in their [TRANSECTS] block.
  */
 
+/**
+ * @file      test_solver_transect_nc.cpp
+ * @brief     Tests for solver transect nc.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com> (OpenSWMM maintenance and extensions)
+ * @copyright Copyright (c) 2026 Caleb Buahin. OpenSWMM contributions only; original EPA SWMM
+ *            credits are retained.
+ * @license   Apache-2.0 for OpenSWMM contributions; original EPA SWMM provenance is retained.
+ */
+
 #include <gtest/gtest.h>
 
 #include <cstdio>
@@ -36,7 +46,7 @@ constexpr int ERR_TRANSECT_MANNING = 227;
 
 // Two conduits with IRREGULAR cross-sections T1 and T2. The [TRANSECTS]
 // block is supplied per-test so only the NC records vary.
-constexpr const char *kInpHead = R"(
+constexpr const char* kInpHead = R"(
 [TITLE]
 TRANSECTS NC inheritance regression (issue #132)
 
@@ -75,7 +85,7 @@ C2     IRREGULAR T2
 [TRANSECTS]
 )";
 
-constexpr const char *kInpTail = R"(
+constexpr const char* kInpTail = R"(
 [REPORT]
 SUBCATCHMENTS NONE
 NODES         NONE
@@ -83,10 +93,21 @@ LINKS         NONE
 )";
 
 // Writes "head + transectBlock + tail" to a unique temp path.
-std::string writeTempInp(const std::string &transectBlock) {
+/**
+ * @brief Write the fixed model around caller-supplied transect rows to a generated path.
+ *
+ * Uses tmpnam without atomic reservation/null checking and an unsynchronized incrementing counter;
+ * intended exclusive legacy test use, not a general collision-safe temporary-file API. Stream
+ * status is unchecked; caller cleanup owns removal.
+ *
+ * @param[in] transectBlock Raw TRANSECTS content inserted between kInpHead and kInpTail.
+ * @return Owned tmpnam-derived filename with a static counter suffix and .inp extension, even after
+ *     unchecked write failure.
+ */
+std::string writeTempInp(const std::string& transectBlock) {
     static int counter = 0;
-    std::string path = std::string(std::tmpnam(nullptr)) + "_nc" +
-                       std::to_string(counter++) + ".inp";
+    std::string path =
+        std::string(std::tmpnam(nullptr)) + "_nc" + std::to_string(counter++) + ".inp";
     std::ofstream out(path);
     out << kInpHead << transectBlock << kInpTail;
     return path;
@@ -94,8 +115,18 @@ std::string writeTempInp(const std::string &transectBlock) {
 
 // Opens a model built from `transectBlock` and returns swmm_open's code.
 // On success the caller is responsible for swmm_close().
-int openWithTransects(const std::string &transectBlock,
-                      std::string &inpPathOut) {
+/**
+ * @brief Write/open a transect model through the global legacy engine.
+ *
+ * Requires exclusive global legacy state. Does not start/step or close; caller invokes
+ * cleanup/close as appropriate even after refusal, and generated files remain until cleanup.
+ *
+ * @param[in] transectBlock Raw test transect text passed to writeTempInp.
+ * @param[out] inpPathOut Assigned generated input path before opening; identifies its appended
+ *     .rpt/.out artifacts.
+ * @return Raw swmm_open result, with detailed input-rule diagnostics in the report.
+ */
+int openWithTransects(const std::string& transectBlock, std::string& inpPathOut) {
     inpPathOut = writeTempInp(transectBlock);
     const std::string rpt = inpPathOut + ".rpt";
     const std::string out = inpPathOut + ".out";
@@ -105,24 +136,56 @@ int openWithTransects(const std::string &transectBlock,
 // swmm_open() reports input problems with the aggregate code ERR_INPUT (200);
 // the specific code (e.g. 227) is written to the report file, so that is where
 // a test has to look to tell one input error from another.
-bool reportMentions(const std::string &inpPath, const std::string &needle) {
+/**
+ * @brief Search the generated legacy report for one literal diagnostic fragment.
+ *
+ * Does not parse numeric codes, distinguish I/O failure or mutate the report.
+ *
+ * @param[in] inpPath Generated input path; report name is inpPath+.rpt.
+ * @param[in] needle Case-sensitive substring, empty matches the first available line.
+ * @return True for the first matching report line; false for no match or unreadable report.
+ */
+bool reportMentions(const std::string& inpPath, const std::string& needle) {
     std::ifstream rpt(inpPath + ".rpt");
     std::string line;
     while (std::getline(rpt, line)) {
-        if (line.find(needle) != std::string::npos) return true;
+        if (line.find(needle) != std::string::npos)
+            return true;
     }
     return false;
 }
 
-void cleanup(const std::string &inpPath, bool closeSolver = true) {
-    if (closeSolver) swmm_close();
+/**
+ * @brief Optionally close the legacy solver, then remove all three generated artifacts.
+ *
+ * Ignores close/remove statuses and does not delete unrelated files/directories. Global solver use
+ * must be exclusive and no open file owners may still need the artifacts.
+ *
+ * @param[in] inpPath Owned fixture input path whose file and appended .rpt/.out may be removed.
+ * @param[in] closeSolver True closes global legacy state first; false assumes caller already
+ *     handled lifecycle.
+ */
+void cleanup(const std::string& inpPath, bool closeSolver = true) {
+    if (closeSolver)
+        swmm_close();
     std::remove(inpPath.c_str());
     std::remove((inpPath + ".rpt").c_str());
     std::remove((inpPath + ".out").c_str());
 }
 
 // T1 declares the roughness triple; T2's NC record is the variable part.
-std::string block(const std::string &firstNc, const std::string &secondNc) {
+/**
+ * @brief Construct two identical transect geometry records with independently supplied NC rows.
+ *
+ * Only constructs input text; roughness/geometry validation occurs in the legacy parser under test.
+ *
+ * @param[in] firstNc Raw first roughness declaration, normally NC with the baseline triple.
+ * @param[in] secondNc Raw second NC declaration, potentially blank/invalid for inheritance/refusal
+ *     tests.
+ * @return Owned T1/T2 X1/GR row text with fixed seven-point geometry and newline-delimited NC
+ *     overrides.
+ */
+std::string block(const std::string& firstNc, const std::string& secondNc) {
     return firstNc + "\n" +
            "X1 T1 7 10 20 0 0 0 0 0\n"
            "GR 15 0 10 5 10 10 5 15 10 20 10 25 15 30\n" +
@@ -147,16 +210,14 @@ TEST(SolverTransectNc, AllZeroNcRecordInheritsAndOpens) {
 // T2 must have exactly the same qFull as an explicitly declared one.
 TEST(SolverTransectNc, InheritedRoughnessMatchesExplicitRoughness) {
     std::string inpInherited;
-    ASSERT_EQ(openWithTransects(block("NC 0.04 0.05 0.03", "NC 0 0 0"),
-                                inpInherited), 0);
+    ASSERT_EQ(openWithTransects(block("NC 0.04 0.05 0.03", "NC 0 0 0"), inpInherited), 0);
     int idx = swmm_getIndex(swmm_LINK, "C2");
     ASSERT_GE(idx, 0);
     const double qFullInherited = swmm_getValue(swmm_LINK_FULLFLOW, idx);
     cleanup(inpInherited);
 
     std::string inpExplicit;
-    ASSERT_EQ(openWithTransects(block("NC 0.04 0.05 0.03", "NC 0.04 0.05 0.03"),
-                                inpExplicit), 0);
+    ASSERT_EQ(openWithTransects(block("NC 0.04 0.05 0.03", "NC 0.04 0.05 0.03"), inpExplicit), 0);
     idx = swmm_getIndex(swmm_LINK, "C2");
     ASSERT_GE(idx, 0);
     const double qFullExplicit = swmm_getValue(swmm_LINK_FULLFLOW, idx);
@@ -170,16 +231,14 @@ TEST(SolverTransectNc, InheritedRoughnessMatchesExplicitRoughness) {
 // Overwriting the channel roughness alone must change qFull.
 TEST(SolverTransectNc, PositiveComponentOverwritesInheritedChannelValue) {
     std::string inpInherited;
-    ASSERT_EQ(openWithTransects(block("NC 0.04 0.05 0.03", "NC 0 0 0"),
-                                inpInherited), 0);
+    ASSERT_EQ(openWithTransects(block("NC 0.04 0.05 0.03", "NC 0 0 0"), inpInherited), 0);
     int idx = swmm_getIndex(swmm_LINK, "C2");
     ASSERT_GE(idx, 0);
     const double qFullInherited = swmm_getValue(swmm_LINK_FULLFLOW, idx);
     cleanup(inpInherited);
 
     std::string inpOverwritten;
-    ASSERT_EQ(openWithTransects(block("NC 0.04 0.05 0.03", "NC 0 0 0.06"),
-                                inpOverwritten), 0);
+    ASSERT_EQ(openWithTransects(block("NC 0.04 0.05 0.03", "NC 0 0 0.06"), inpOverwritten), 0);
     idx = swmm_getIndex(swmm_LINK, "C2");
     ASSERT_GE(idx, 0);
     const double qFullOverwritten = swmm_getValue(swmm_LINK_FULLFLOW, idx);
@@ -198,7 +257,7 @@ TEST(SolverTransectNc, PositiveComponentOverwritesInheritedChannelValue) {
 TEST(SolverTransectNc, ZeroChannelWithNoPredecessorIsError227) {
     std::string inp;
     EXPECT_NE(openWithTransects(block("NC 0 0 0", "NC 0.04 0.05 0.03"), inp), 0);
-    swmm_close();   // flush the report before reading the error code out of it
+    swmm_close(); // flush the report before reading the error code out of it
     EXPECT_TRUE(reportMentions(inp, std::to_string(ERR_TRANSECT_MANNING)))
         << "Expected ERROR 227 in the report when no channel roughness has "
            "ever been established";
@@ -208,8 +267,7 @@ TEST(SolverTransectNc, ZeroChannelWithNoPredecessorIsError227) {
 // A negative component remains invalid input, never an inheritance request.
 TEST(SolverTransectNc, NegativeComponentIsRejected) {
     std::string inp;
-    EXPECT_NE(openWithTransects(block("NC 0.04 0.05 0.03", "NC -0.01 0 0"),
-                                inp), 0);
+    EXPECT_NE(openWithTransects(block("NC 0.04 0.05 0.03", "NC -0.01 0 0"), inp), 0);
     cleanup(inp);
 }
 

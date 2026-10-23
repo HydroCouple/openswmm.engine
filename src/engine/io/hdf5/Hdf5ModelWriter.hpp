@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file Hdf5ModelWriter.hpp
- * @brief Serialise a SimulationContext to the columnar HDF5 model format.
+ * @file      Hdf5ModelWriter.hpp
+ * @brief     Serialise a SimulationContext to the columnar HDF5 model format.
  *
  * @details Design and rationale: `src/engine/io/hdf5/STRATEGY.md`.
  *
@@ -35,9 +35,9 @@
  *
  * @ingroup engine_hdf5
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_HDF5_MODEL_WRITER_HPP
@@ -54,23 +54,25 @@ namespace h5io {
 
 /// Bumped on any layout change. The reader refuses a major it does not know
 /// rather than silently misreading a file written by a newer engine.
-inline constexpr int    kSchemaVersionMajor = 1;
-inline constexpr int    kSchemaVersionMinor = 0;
+inline constexpr int kSchemaVersionMajor = 1;
+inline constexpr int kSchemaVersionMinor = 0;
 inline constexpr const char* kSchemaVersion = "1.0";
 
 /**
- * @brief Write the model held by @p ctx to @p path as HDF5.
- *
- * @param path      Destination `.h5` path (overwritten if it exists).
- * @param ctx       The model. Not modified: unit conversion runs on a copy.
- * @param warnings  Receives one entry per section that could not be written
- *                  in full. Optional.
- * @returns 0 on success, non-zero on failure.
+ * @brief Write a complete native model and analysis columns to HDF5.
+ * @param path Destination filename, created or truncated.
+ * @param ctx Model in engine internal units; not modified.
+ * @param warnings Optional diagnostics sink, preserved and appended to.
+ * @return Zero after writing and flushing; nonzero on I/O failure.
+ * The native_input dataset is the authoritative editable configuration. Existing
+ * column datasets retain their authored-unit analysis layout. Component configuration
+ * contents are embedded separately. Older column-only files lack enough data to reopen.
+ * Conversion/allocation exceptions propagate. Failure may leave a partial destination.
  */
 int write_model(const std::string& path, const SimulationContext& ctx,
                 std::vector<std::string>* warnings = nullptr);
 
-}  // namespace h5io
-}  // namespace openswmm
+} // namespace h5io
+} // namespace openswmm
 
-#endif  // OPENSWMM_HDF5_MODEL_WRITER_HPP
+#endif // OPENSWMM_HDF5_MODEL_WRITER_HPP

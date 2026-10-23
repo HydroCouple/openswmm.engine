@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_2d_infil.cpp
- * @brief Track-I gates for per-cell 2D infiltration (plan §5.5, D-I1…D-I6).
+ * @file      test_2d_infil.cpp
+ * @brief     Track-I gates for per-cell 2D infiltration (plan §5.5, D-I1…D-I6).
  *
  * @details Unit-level gates over Infil2D itself — the adapter, its units, the
  *          D-I3 resolution order and D-I4 validation. The end-to-end gates
@@ -36,9 +36,9 @@
  * @see plans/TWO_ZONE_GROUNDWATER_EXPLICIT_LTS_PLAN_2026-08-15.md §5.5
  * @ingroup engine_2d
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -62,15 +62,26 @@ namespace {
 // Physical constants used to build EXPECTED values. These are definitions of
 // the units themselves, not engine code.
 // ---------------------------------------------------------------------------
-constexpr double kMetrePerInch = 0.0254;      // exact, by definition
-constexpr double kSecPerHour   = 3600.0;
+constexpr double kMetrePerInch = 0.0254; // exact, by definition
+constexpr double kSecPerHour = 3600.0;
 
-/// A user-typed US rate in in/hr expressed in SI m/s.
+/**
+ * @brief Convert a fixture rainfall/infiltration rate from inches per hour to metres per second.
+ *
+ * @param[in] in_per_hr Signed rate in in/hr, multiplied without range/finite validation.
+ * @return in_per_hr*0.0254/3600 in m/s; no rounding/clamping beyond double arithmetic.
+ */
 constexpr double inhrToMs(double in_per_hr) {
     return in_per_hr * kMetrePerInch / kSecPerHour;
 }
 
-/// A user-typed SI rate in mm/hr expressed in SI m/s.
+/**
+ * @brief Convert a fixture rainfall/infiltration rate from millimetres per hour to metres per
+ * second.
+ *
+ * @param[in] mm_per_hr Signed rate in mm/hr, multiplied without range/finite validation.
+ * @return mm_per_hr*0.001/3600 in m/s.
+ */
 constexpr double mmhrToMs(double mm_per_hr) {
     return mm_per_hr * 0.001 / kSecPerHour;
 }
@@ -79,6 +90,11 @@ constexpr double mmhrToMs(double mm_per_hr) {
 // A four-triangle strip. Tags let the D-I3 resolution order be exercised:
 //   tri 0 -> "LAWN"    tri 1 -> "WOODS"    tri 2 -> "LAWN"    tri 3 -> ""
 // ---------------------------------------------------------------------------
+/**
+ * @brief Build the four-triangle flat tagged strip for infiltration selector precedence.
+ * @return Owned 2-by-1 m mesh with uniform Manning .03, tags LAWN/WOODS/LAWN/empty and built
+ *     topology.
+ */
 MeshData makeTaggedMesh() {
     MeshData mesh;
     mesh.resize_vertices(6);
@@ -100,43 +116,97 @@ MeshData makeTaggedMesh() {
     return mesh;
 }
 
+/**
+ * @brief Create US-authored infiltration options.
+ * @return Owned default options with CFS flow units and wet_step300 s; authored rates/depths use
+ *     in/hr and inches.
+ */
 SimulationOptions usOptions() {
     SimulationOptions o;
-    o.flow_units = FlowUnits::CFS;   // US: rates are in/hr, depths in
-    o.wet_step   = 300.0;
+    o.flow_units = FlowUnits::CFS; // US: rates are in/hr, depths in
+    o.wet_step = 300.0;
     return o;
 }
 
+/**
+ * @brief Create SI-authored infiltration options.
+ * @return Owned default options with CMS flow units and wet_step300 s; authored rates/depths use
+ *     mm/hr and mm.
+ */
 SimulationOptions siOptions() {
     SimulationOptions o;
-    o.flow_units = FlowUnits::CMS;   // SI: rates are mm/hr, depths mm
-    o.wet_step   = 300.0;
+    o.flow_units = FlowUnits::CMS; // SI: rates are mm/hr, depths mm
+    o.wet_step = 300.0;
     return o;
 }
 
+/**
+ * @brief Allocate infiltration-evaluation state and assign uniform water depth/rain rate.
+ *
+ * This helper prepares infiltration inputs only and does not establish a closure-consistent
+ * complete flow state or run the solver.
+ *
+ * @param[in] mesh Mesh providing triangle/vertex counts.
+ * @param[in] depth_m Uniform depth in metres, assigned without validation.
+ * @param[in] rain_ms Uniform rainfall rate in m/s, assigned without validation.
+ * @return Owned resized state with depth/rainfall set; volume/head and unrelated fields retain
+ *     defaults.
+ */
 SurfaceStateData makeState(const MeshData& mesh, double depth_m, double rain_ms) {
     SurfaceStateData s;
     s.resize(mesh.n_triangles(), mesh.n_vertices());
     for (int i = 0; i < mesh.n_triangles(); ++i) {
-        s.depth[i]    = depth_m;
+        s.depth[i] = depth_m;
         s.rainfall[i] = rain_ms;
     }
     return s;
 }
 
-Infil2DRow rowOf(InfilModel m, double p0, double p1 = 0.0, double p2 = 0.0,
-                 double p3 = 0.0, double p4 = 0.0) {
+/**
+ * @brief Construct an authored infiltration row with LOST destination.
+ *
+ * Rate parameters are in/hr for US or mm/hr for SI; suction/maximum depths are inches or mm. No
+ * validation/conversion occurs until resolution/initialization; callers choose parameters matching
+ * m.
+ *
+ * @param[in] m Selected method; has_method is always set true.
+ * @param[in] p0 First authored parameter: Horton f0, Green-Ampt suction, curve number or constant
+ *     rate.
+ * @param[in] p1 Second authored parameter: Horton fmin or Green-Ampt Ks; ignored by curve number.
+ * @param[in] p2 Third authored parameter: Horton decay 1/hr, Green-Ampt IMD or curve-number dry
+ *     time days.
+ * @param[in] p3 Fourth parameter: Horton dry time in days, otherwise unused.
+ * @param[in] p4 Fifth parameter: Horton maximum infiltration depth, otherwise unused.
+ * @return Owned row with exact supplied parameter values; unspecified arguments default zero and
+ *     dest_explicit stays default.
+ */
+Infil2DRow rowOf(InfilModel m, double p0, double p1 = 0.0, double p2 = 0.0, double p3 = 0.0,
+                 double p4 = 0.0) {
     Infil2DRow r;
     r.has_method = true;
-    r.method     = m;
-    r.p[0] = p0; r.p[1] = p1; r.p[2] = p2; r.p[3] = p3; r.p[4] = p4;
+    r.method = m;
+    r.p[0] = p0;
+    r.p[1] = p1;
+    r.p[2] = p2;
+    r.p[3] = p3;
+    r.p[4] = p4;
     r.dest = Infil2DDest::LOST;
     return r;
 }
 
-/// Build an Infil2D whose every cell carries @p row, resolved against @p mesh.
-Infil2D resolvedWith(const MeshData& mesh, const SimulationOptions& opts,
-                     const Infil2DRow& row) {
+/**
+ * @brief Resolve one mesh-wide default infiltration row against fixture options.
+ *
+ * Records EXPECT_TRUE(resolve) with diagnostic. Does not run infiltration, modify the mesh/options
+ * or retain the caller's row reference.
+ *
+ * @param[in] mesh Built compatible mesh whose cells receive the wildcard default.
+ * @param[in] opts Project options determining authored units and resolution behavior.
+ * @param[in] row Authored default prescription copied into a wildcard entry.
+ * @return Owned Infil2D object after the attempted resolve; result may remain unresolved/partial
+ *     when a nonfatal expectation records failure.
+ */
+Infil2D resolvedWith(const MeshData& mesh, const SimulationOptions& opts, const Infil2DRow& row) {
     Infil2D infil;
     Infil2DDefault d;
     d.tag = "*";
@@ -163,8 +233,7 @@ protected:
 // user's rate. 1.0 in/hr must come out as 7.0555...e-6 m/s. A missing ft->m
 // conversion reads 2.3148e-5 (3.28x high); a missing in->ft reads 8.47e-5.
 TEST_F(Infil2DUnitsTest, ConstantRateUSProjectPublishesTheHandComputedSIRate) {
-    Infil2D infil = resolvedWith(mesh_, usOptions(),
-                                 rowOf(InfilModel::CONSTANT, 1.0));
+    Infil2D infil = resolvedWith(mesh_, usOptions(), rowOf(InfilModel::CONSTANT, 1.0));
     ASSERT_TRUE(infil.active());
 
     // 1 m of standing water: available-water rate is enormous, so the kernel
@@ -172,12 +241,12 @@ TEST_F(Infil2DUnitsTest, ConstantRateUSProjectPublishesTheHandComputedSIRate) {
     SurfaceStateData st = makeState(mesh_, 1.0, 0.0);
     infil.updateRates(mesh_, st, 60.0);
 
-    const double expected = inhrToMs(1.0);   // 7.0555555...e-6 m/s
+    const double expected = inhrToMs(1.0); // 7.0555555...e-6 m/s
     for (int i = 0; i < mesh_.n_triangles(); ++i) {
         EXPECT_NEAR(st.infil_rate[i], expected, expected * 1e-12)
             << "cell " << i << ": published " << st.infil_rate[i]
-            << " m/s for a 1.0 in/hr CONSTANT row; expected " << expected
-            << " (ratio " << st.infil_rate[i] / expected << ")";
+            << " m/s for a 1.0 in/hr CONSTANT row; expected " << expected << " (ratio "
+            << st.infil_rate[i] / expected << ")";
     }
 }
 
@@ -185,14 +254,13 @@ TEST_F(Infil2DUnitsTest, ConstantRateUSProjectPublishesTheHandComputedSIRate) {
 // physical rate typed in the SI project's units must produce the SAME SI
 // output. Nothing about the adapter can be right if this fails.
 TEST_F(Infil2DUnitsTest, ConstantRateSIProjectPublishesTheHandComputedSIRate) {
-    Infil2D infil = resolvedWith(mesh_, siOptions(),
-                                 rowOf(InfilModel::CONSTANT, 25.4));
+    Infil2D infil = resolvedWith(mesh_, siOptions(), rowOf(InfilModel::CONSTANT, 25.4));
     ASSERT_TRUE(infil.active());
 
     SurfaceStateData st = makeState(mesh_, 1.0, 0.0);
     infil.updateRates(mesh_, st, 60.0);
 
-    const double expected = mmhrToMs(25.4);  // == inhrToMs(1.0)
+    const double expected = mmhrToMs(25.4); // == inhrToMs(1.0)
     for (int i = 0; i < mesh_.n_triangles(); ++i) {
         EXPECT_NEAR(st.infil_rate[i], expected, expected * 1e-12)
             << "cell " << i << ": published " << st.infil_rate[i]
@@ -207,38 +275,34 @@ TEST_F(Infil2DUnitsTest, ConstantRateSIProjectPublishesTheHandComputedSIRate) {
 TEST_F(Infil2DUnitsTest, EveryMethodAgreesAcrossUnitSystems) {
     struct Case {
         const char* name;
-        InfilModel  method;
-        Infil2DRow  us;
-        Infil2DRow  si;
+        InfilModel method;
+        Infil2DRow us;
+        Infil2DRow si;
     };
 
     // US row -> SI row: rates in/hr *25.4 -> mm/hr; depths in *25.4 -> mm;
     // dimensionless columns (decay 1/hr, dry_time days, IMD, CN) unchanged.
     const Case cases[] = {
-        {"HORTON",              InfilModel::HORTON,
-         rowOf(InfilModel::HORTON,         3.0,       0.5,       4.14, 7.0, 0.0),
-         rowOf(InfilModel::HORTON,         3.0*25.4,  0.5*25.4,  4.14, 7.0, 0.0)},
-        {"MOD_HORTON",          InfilModel::MOD_HORTON,
-         rowOf(InfilModel::MOD_HORTON,     3.0,       0.5,       4.14, 7.0, 0.0),
-         rowOf(InfilModel::MOD_HORTON,     3.0*25.4,  0.5*25.4,  4.14, 7.0, 0.0)},
-        {"GREEN_AMPT",          InfilModel::GREEN_AMPT,
-         rowOf(InfilModel::GREEN_AMPT,     3.5,       0.5,       0.30),
-         rowOf(InfilModel::GREEN_AMPT,     3.5*25.4,  0.5*25.4,  0.30)},
-        {"MOD_GREEN_AMPT",      InfilModel::MOD_GREEN_AMPT,
-         rowOf(InfilModel::MOD_GREEN_AMPT, 3.5,       0.5,       0.30),
-         rowOf(InfilModel::MOD_GREEN_AMPT, 3.5*25.4,  0.5*25.4,  0.30)},
-        {"CURVE_NUMBER",        InfilModel::CURVE_NUM,
-         rowOf(InfilModel::CURVE_NUM,      85.0,      0.0,       7.0),
-         rowOf(InfilModel::CURVE_NUM,      85.0,      0.0,       7.0)},
-        {"CONSTANT",            InfilModel::CONSTANT,
-         rowOf(InfilModel::CONSTANT,       1.2),
-         rowOf(InfilModel::CONSTANT,       1.2*25.4)},
+        {"HORTON", InfilModel::HORTON, rowOf(InfilModel::HORTON, 3.0, 0.5, 4.14, 7.0, 0.0),
+         rowOf(InfilModel::HORTON, 3.0 * 25.4, 0.5 * 25.4, 4.14, 7.0, 0.0)},
+        {"MOD_HORTON", InfilModel::MOD_HORTON,
+         rowOf(InfilModel::MOD_HORTON, 3.0, 0.5, 4.14, 7.0, 0.0),
+         rowOf(InfilModel::MOD_HORTON, 3.0 * 25.4, 0.5 * 25.4, 4.14, 7.0, 0.0)},
+        {"GREEN_AMPT", InfilModel::GREEN_AMPT, rowOf(InfilModel::GREEN_AMPT, 3.5, 0.5, 0.30),
+         rowOf(InfilModel::GREEN_AMPT, 3.5 * 25.4, 0.5 * 25.4, 0.30)},
+        {"MOD_GREEN_AMPT", InfilModel::MOD_GREEN_AMPT,
+         rowOf(InfilModel::MOD_GREEN_AMPT, 3.5, 0.5, 0.30),
+         rowOf(InfilModel::MOD_GREEN_AMPT, 3.5 * 25.4, 0.5 * 25.4, 0.30)},
+        {"CURVE_NUMBER", InfilModel::CURVE_NUM, rowOf(InfilModel::CURVE_NUM, 85.0, 0.0, 7.0),
+         rowOf(InfilModel::CURVE_NUM, 85.0, 0.0, 7.0)},
+        {"CONSTANT", InfilModel::CONSTANT, rowOf(InfilModel::CONSTANT, 1.2),
+         rowOf(InfilModel::CONSTANT, 1.2 * 25.4)},
     };
 
-    constexpr double kDt      = 300.0;
-    constexpr int    kSteps   = 24;      // 2 hours — enough for decay/recovery
-    constexpr double kRainMs  = inhrToMs(2.0);
-    constexpr double kDepthM  = 0.05;
+    constexpr double kDt = 300.0;
+    constexpr int kSteps = 24; // 2 hours — enough for decay/recovery
+    constexpr double kRainMs = inhrToMs(2.0);
+    constexpr double kDepthM = 0.05;
 
     for (const Case& c : cases) {
         Infil2D a = resolvedWith(mesh_, usOptions(), c.us);
@@ -259,18 +323,17 @@ TEST_F(Infil2DUnitsTest, EveryMethodAgreesAcrossUnitSystems) {
 
             // Both must be tracking the same physical process step by step,
             // not merely landing on the same total.
-            const double scale = std::max({std::abs(sa.infil_rate[0]),
-                                           std::abs(sb.infil_rate[0]), 1e-12});
+            const double scale =
+                std::max({std::abs(sa.infil_rate[0]), std::abs(sb.infil_rate[0]), 1e-12});
             EXPECT_NEAR(sa.infil_rate[0], sb.infil_rate[0], scale * 1e-9)
-                << c.name << " step " << n << ": US project published "
-                << sa.infil_rate[0] << " m/s, SI project " << sb.infil_rate[0]
-                << " m/s for the same physical row";
+                << c.name << " step " << n << ": US project published " << sa.infil_rate[0]
+                << " m/s, SI project " << sb.infil_rate[0] << " m/s for the same physical row";
         }
 
         // The process must actually have run: a gate that compares two zeros
         // is no gate at all.
-        EXPECT_GT(sum_a, 0.0) << c.name << " infiltrated nothing in "
-                              << kSteps << " steps — gate is vacuous";
+        EXPECT_GT(sum_a, 0.0) << c.name << " infiltrated nothing in " << kSteps
+                              << " steps — gate is vacuous";
     }
 }
 
@@ -280,23 +343,22 @@ TEST_F(Infil2DUnitsTest, EveryMethodAgreesAcrossUnitSystems) {
 // user-facing numbers. This anchors f0, fmin AND the 1/hr decay column at
 // once, and it is independent of the engine's own conversion path.
 TEST_F(Infil2DUnitsTest, HortonSeriesMatchesTheAnalyticCapacityCurveInSI) {
-    constexpr double kF0Inhr    = 3.0;
-    constexpr double kFminInhr  = 0.5;
+    constexpr double kF0Inhr = 3.0;
+    constexpr double kFminInhr = 0.5;
     constexpr double kDecayPerHr = 4.14;
 
     Infil2D infil = resolvedWith(
-        mesh_, usOptions(),
-        rowOf(InfilModel::HORTON, kF0Inhr, kFminInhr, kDecayPerHr, 7.0, 0.0));
+        mesh_, usOptions(), rowOf(InfilModel::HORTON, kF0Inhr, kFminInhr, kDecayPerHr, 7.0, 0.0));
     ASSERT_TRUE(infil.active());
 
     // Deep ponding so the capacity curve, not the water supply, is what the
     // kernel returns.
     SurfaceStateData st = makeState(mesh_, 1.0, 0.0);
 
-    const double f0   = inhrToMs(kF0Inhr);
+    const double f0 = inhrToMs(kF0Inhr);
     const double fmin = inhrToMs(kFminInhr);
-    const double k    = kDecayPerHr / kSecPerHour;      // 1/hr -> 1/s
-    const double df   = f0 - fmin;
+    const double k = kDecayPerHr / kSecPerHour; // 1/hr -> 1/s
+    const double df = f0 - fmin;
     auto F = [&](double t) { return fmin * t + df / k * (1.0 - std::exp(-k * t)); };
 
     constexpr double kDt = 120.0;
@@ -304,16 +366,14 @@ TEST_F(Infil2DUnitsTest, HortonSeriesMatchesTheAnalyticCapacityCurveInSI) {
         infil.updateRates(mesh_, st, kDt);
         const double expected = (F(n * kDt) - F((n - 1) * kDt)) / kDt;
         EXPECT_NEAR(st.infil_rate[0], expected, expected * 1e-9)
-            << "Horton step " << n << " (t=" << n * kDt << " s): published "
-            << st.infil_rate[0] << " m/s, analytic step-average " << expected
-            << " m/s (ratio " << st.infil_rate[0] / expected << ")";
+            << "Horton step " << n << " (t=" << n * kDt << " s): published " << st.infil_rate[0]
+            << " m/s, analytic step-average " << expected << " m/s (ratio "
+            << st.infil_rate[0] / expected << ")";
     }
 
     // Sanity on the shape: it must actually have decayed toward fmin.
-    EXPECT_LT(st.infil_rate[0], 0.55 * f0)
-        << "Horton never decayed — decay column may be misread";
-    EXPECT_GT(st.infil_rate[0], fmin * 0.999)
-        << "Horton fell below its own fmin floor";
+    EXPECT_LT(st.infil_rate[0], 0.55 * f0) << "Horton never decayed — decay column may be misread";
+    EXPECT_GT(st.infil_rate[0], fmin * 0.999) << "Horton fell below its own fmin floor";
 }
 
 // §3.2's claim, tested from the other side: if CONSTANT really is a degenerate
@@ -323,11 +383,9 @@ TEST_F(Infil2DUnitsTest, HortonSeriesMatchesTheAnalyticCapacityCurveInSI) {
 TEST_F(Infil2DUnitsTest, ConstantEqualsDegenerateHorton) {
     constexpr double kRateInhr = 0.85;
 
-    Infil2D k_const = resolvedWith(mesh_, usOptions(),
-                                   rowOf(InfilModel::CONSTANT, kRateInhr));
-    Infil2D k_horton = resolvedWith(
-        mesh_, usOptions(),
-        rowOf(InfilModel::HORTON, kRateInhr, kRateInhr, 0.0, 0.0, 0.0));
+    Infil2D k_const = resolvedWith(mesh_, usOptions(), rowOf(InfilModel::CONSTANT, kRateInhr));
+    Infil2D k_horton = resolvedWith(mesh_, usOptions(),
+                                    rowOf(InfilModel::HORTON, kRateInhr, kRateInhr, 0.0, 0.0, 0.0));
 
     SurfaceStateData sc = makeState(mesh_, 0.02, inhrToMs(0.4));
     SurfaceStateData sh = makeState(mesh_, 0.02, inhrToMs(0.4));
@@ -336,8 +394,8 @@ TEST_F(Infil2DUnitsTest, ConstantEqualsDegenerateHorton) {
         k_const.updateRates(mesh_, sc, 300.0);
         k_horton.updateRates(mesh_, sh, 300.0);
         EXPECT_DOUBLE_EQ(sc.infil_rate[0], sh.infil_rate[0])
-            << "step " << n << ": CONSTANT " << sc.infil_rate[0]
-            << " != degenerate HORTON " << sh.infil_rate[0];
+            << "step " << n << ": CONSTANT " << sc.infil_rate[0] << " != degenerate HORTON "
+            << sh.infil_rate[0];
     }
     EXPECT_GT(sc.infil_rate[0], 0.0) << "gate is vacuous — nothing infiltrated";
 }
@@ -345,18 +403,16 @@ TEST_F(Infil2DUnitsTest, ConstantEqualsDegenerateHorton) {
 // CONSTANT must be capacity-bounded (plan §5.5.1): offered less water than its
 // nominal rate, it takes only what is there.
 TEST_F(Infil2DUnitsTest, ConstantIsBoundedByAvailableWater) {
-    Infil2D infil = resolvedWith(mesh_, usOptions(),
-                                 rowOf(InfilModel::CONSTANT, 10.0));  // 10 in/hr
+    Infil2D infil = resolvedWith(mesh_, usOptions(), rowOf(InfilModel::CONSTANT, 10.0)); // 10 in/hr
     // 1 mm of water, no rain, 600 s step: only 1e-3/600 m/s is available.
     SurfaceStateData st = makeState(mesh_, 0.001, 0.0);
     infil.updateRates(mesh_, st, 600.0);
 
     const double available = 0.001 / 600.0;
     EXPECT_NEAR(st.infil_rate[0], available, available * 1e-12)
-        << "CONSTANT published " << st.infil_rate[0]
-        << " m/s but only " << available << " m/s was available";
-    EXPECT_LT(st.infil_rate[0], inhrToMs(10.0))
-        << "CONSTANT ignored the available-water bound";
+        << "CONSTANT published " << st.infil_rate[0] << " m/s but only " << available
+        << " m/s was available";
+    EXPECT_LT(st.infil_rate[0], inhrToMs(10.0)) << "CONSTANT ignored the available-water bound";
 }
 
 // Green-Ampt is anchored on its own governing equation, evaluated in SI from
@@ -368,23 +424,22 @@ TEST_F(Infil2DUnitsTest, ConstantIsBoundedByAvailableWater) {
 // scaling of Ks, or the in -> m scaling of S, throws the residual off by that
 // same factor. The wrong-units control at the end proves the gate can fail.
 TEST_F(Infil2DUnitsTest, GreenAmptObeysItsGoverningEquationInSI) {
-    constexpr double kSInch  = 3.5;    // suction head, inches
-    constexpr double kKsInhr = 0.5;    // saturated conductivity, in/hr
-    constexpr double kIMD    = 0.30;
-    constexpr double kDepthM = 0.5;    // held ponded depth
-    constexpr double kDt     = 300.0;
+    constexpr double kSInch = 3.5;  // suction head, inches
+    constexpr double kKsInhr = 0.5; // saturated conductivity, in/hr
+    constexpr double kIMD = 0.30;
+    constexpr double kDepthM = 0.5; // held ponded depth
+    constexpr double kDt = 300.0;
 
-    Infil2D infil = resolvedWith(
-        mesh_, usOptions(),
-        rowOf(InfilModel::GREEN_AMPT, kSInch, kKsInhr, kIMD));
+    Infil2D infil =
+        resolvedWith(mesh_, usOptions(), rowOf(InfilModel::GREEN_AMPT, kSInch, kKsInhr, kIMD));
     ASSERT_TRUE(infil.active());
 
-    SurfaceStateData st = makeState(mesh_, kDepthM, 0.0);   // ponded, no rain
+    SurfaceStateData st = makeState(mesh_, kDepthM, 0.0); // ponded, no rain
 
     // Hand-built SI parameters. 1 in = 0.0254 m, 1 hr = 3600 s. No engine call.
     const double ks_si = inhrToMs(kKsInhr);
-    const double s_si  = kSInch * kMetrePerInch;
-    const double c1    = (s_si + kDepthM) * kIMD;
+    const double s_si = kSInch * kMetrePerInch;
+    const double c1 = (s_si + kDepthM) * kIMD;
 
     auto residual = [&](double F1, double F2, double ks) {
         return F2 - F1 - c1 * std::log((F2 + c1) / (F1 + c1)) - ks * kDt;
@@ -393,7 +448,7 @@ TEST_F(Infil2DUnitsTest, GreenAmptObeysItsGoverningEquationInSI) {
     double prev_rate = 1e30;
     double worst_rel = 0.0;
     double worst_rel_wrong_units = 0.0;
-    int    saturated_steps = 0;
+    int saturated_steps = 0;
 
     for (int n = 0; n < 200; ++n) {
         const double F1 = infil.cumulative()[0];
@@ -402,8 +457,7 @@ TEST_F(Infil2DUnitsTest, GreenAmptObeysItsGoverningEquationInSI) {
 
         // The physical envelope, which holds in every regime.
         EXPECT_GE(st.infil_rate[0], ks_si * (1.0 - 1e-9))
-            << "step " << n << ": rate " << st.infil_rate[0]
-            << " fell below Ks " << ks_si;
+            << "step " << n << ": rate " << st.infil_rate[0] << " fell below Ks " << ks_si;
         EXPECT_LE(st.infil_rate[0], prev_rate * (1.0 + 1e-9))
             << "step " << n << ": rate rose under steady ponding";
         prev_rate = st.infil_rate[0];
@@ -417,8 +471,7 @@ TEST_F(Infil2DUnitsTest, GreenAmptObeysItsGoverningEquationInSI) {
             // Same residual with Ks mis-scaled by the ft/m factor — the exact
             // silent error §3.2 warns about.
             const double rel_bad =
-                std::abs(residual(F1, F2, ks_si * 3.280839895013123))
-                / (ks_si * kDt);
+                std::abs(residual(F1, F2, ks_si * 3.280839895013123)) / (ks_si * kDt);
             worst_rel_wrong_units = std::max(worst_rel_wrong_units, rel_bad);
         }
     }
@@ -428,9 +481,12 @@ TEST_F(Infil2DUnitsTest, GreenAmptObeysItsGoverningEquationInSI) {
 
     EXPECT_LT(worst_rel, 0.02)
         << "Green-Ampt cumulative depth violates F2-F1-c1*ln((F2+c1)/(F1+c1))"
-           " = Ks*dt by " << (worst_rel * 100.0) << "% of Ks*dt, evaluated in "
-           "SI from S=" << kSInch << " in, Ks=" << kKsInhr << " in/hr, IMD="
-        << kIMD << " — a parameter is being read in the wrong unit";
+           " = Ks*dt by "
+        << (worst_rel * 100.0)
+        << "% of Ks*dt, evaluated in "
+           "SI from S="
+        << kSInch << " in, Ks=" << kKsInhr << " in/hr, IMD=" << kIMD
+        << " — a parameter is being read in the wrong unit";
 
     // Non-vacuity: the same residual with a 3.28x error in Ks must fail loudly.
     EXPECT_GT(worst_rel_wrong_units, 1.0)
@@ -443,15 +499,15 @@ TEST_F(Infil2DUnitsTest, GreenAmptObeysItsGoverningEquationInSI) {
 // exceed it.
 TEST_F(Infil2DUnitsTest, CurveNumberCumulativeIsBoundedBySmax) {
     constexpr double kCN = 85.0;
-    Infil2D infil = resolvedWith(mesh_, usOptions(),
-                                 rowOf(InfilModel::CURVE_NUM, kCN, 0.0, 7.0));
+    Infil2D infil = resolvedWith(mesh_, usOptions(), rowOf(InfilModel::CURVE_NUM, kCN, 0.0, 7.0));
     ASSERT_TRUE(infil.active());
 
     // Smax in feet -> metres. No engine call involved.
     const double smax_m = (1000.0 / kCN - 10.0) / 12.0 * 0.3048;
 
     SurfaceStateData st = makeState(mesh_, 0.10, inhrToMs(4.0));
-    for (int n = 0; n < 120; ++n) infil.updateRates(mesh_, st, 300.0);
+    for (int n = 0; n < 120; ++n)
+        infil.updateRates(mesh_, st, 300.0);
 
     const double cum = infil.cumulative()[0];
     EXPECT_GT(cum, 0.0) << "CN infiltrated nothing — gate is vacuous";
@@ -468,10 +524,10 @@ TEST_F(Infil2DUnitsTest, CurveNumberCumulativeIsBoundedBySmax) {
 TEST_F(Infil2DUnitsTest, ModifiedVariantsDifferFromTheirBaseVariants) {
     SurfaceStateData sh = makeState(mesh_, 0.5, 0.0);
     SurfaceStateData sm = makeState(mesh_, 0.5, 0.0);
-    Infil2D h = resolvedWith(mesh_, usOptions(),
-                             rowOf(InfilModel::HORTON,     3.0, 0.5, 4.14, 7.0, 0.0));
-    Infil2D m = resolvedWith(mesh_, usOptions(),
-                             rowOf(InfilModel::MOD_HORTON, 3.0, 0.5, 4.14, 7.0, 0.0));
+    Infil2D h =
+        resolvedWith(mesh_, usOptions(), rowOf(InfilModel::HORTON, 3.0, 0.5, 4.14, 7.0, 0.0));
+    Infil2D m =
+        resolvedWith(mesh_, usOptions(), rowOf(InfilModel::MOD_HORTON, 3.0, 0.5, 4.14, 7.0, 0.0));
 
     bool horton_diverged = false;
     for (int n = 0; n < 40; ++n) {
@@ -494,19 +550,18 @@ TEST_F(Infil2DUnitsTest, ModifiedVariantsDifferFromTheirBaseVariants) {
     // Light rain from the dry start (the timer starts expired) followed by
     // heavy rain can: the variants meet the heavy rain with different IMD
     // and F, and their rates diverge.
-    SurfaceStateData sg  = makeState(mesh_, 0.0, 0.0);
+    SurfaceStateData sg = makeState(mesh_, 0.0, 0.0);
     SurfaceStateData sgm = makeState(mesh_, 0.0, 0.0);
-    Infil2D g  = resolvedWith(mesh_, usOptions(),
-                              rowOf(InfilModel::GREEN_AMPT,     3.5, 0.5, 0.30));
-    Infil2D gm = resolvedWith(mesh_, usOptions(),
-                              rowOf(InfilModel::MOD_GREEN_AMPT, 3.5, 0.5, 0.30));
+    Infil2D g = resolvedWith(mesh_, usOptions(), rowOf(InfilModel::GREEN_AMPT, 3.5, 0.5, 0.30));
+    Infil2D gm =
+        resolvedWith(mesh_, usOptions(), rowOf(InfilModel::MOD_GREEN_AMPT, 3.5, 0.5, 0.30));
     bool ga_diverged = false;
     for (int n = 0; n < 40; ++n) {
-        const bool heavy = (n >= 20);   // 0.3 in/hr (< Ks) then 2 in/hr ponded
+        const bool heavy = (n >= 20); // 0.3 in/hr (< Ks) then 2 in/hr ponded
         for (int i = 0; i < mesh_.n_triangles(); ++i) {
-            sg.depth[i]  = heavy ? 0.05 : 0.0;
+            sg.depth[i] = heavy ? 0.05 : 0.0;
             sgm.depth[i] = heavy ? 0.05 : 0.0;
-            sg.rainfall[i]  = heavy ? inhrToMs(2.0) : inhrToMs(0.3);
+            sg.rainfall[i] = heavy ? inhrToMs(2.0) : inhrToMs(0.3);
             sgm.rainfall[i] = heavy ? inhrToMs(2.0) : inhrToMs(0.3);
         }
         g.updateRates(mesh_, sg, 600.0);
@@ -514,11 +569,10 @@ TEST_F(Infil2DUnitsTest, ModifiedVariantsDifferFromTheirBaseVariants) {
         if (std::abs(sg.infil_rate[0] - sgm.infil_rate[0]) > 1e-12)
             ga_diverged = true;
     }
-    EXPECT_TRUE(ga_diverged)
-        << "MOD_GREEN_AMPT produced the identical series to GREEN_AMPT across "
-           "a light-rain / heavy-rain sequence — grnampt_getInfil is being "
-           "called with the wrong model enum (§5.5.1: the variant is selected "
-           "by an InfilModel argument, not a bool)";
+    EXPECT_TRUE(ga_diverged) << "MOD_GREEN_AMPT produced the identical series to GREEN_AMPT across "
+                                "a light-rain / heavy-rain sequence — grnampt_getInfil is being "
+                                "called with the wrong model enum (§5.5.1: the variant is selected "
+                                "by an InfilModel argument, not a bool)";
 }
 
 // ============================================================================
@@ -527,20 +581,23 @@ TEST_F(Infil2DUnitsTest, ModifiedVariantsDifferFromTheirBaseVariants) {
 
 class Infil2DResolutionTest : public ::testing::Test {
 protected:
-    MeshData mesh_ = makeTaggedMesh();   // tags: LAWN, WOODS, LAWN, ""
+    MeshData mesh_ = makeTaggedMesh(); // tags: LAWN, WOODS, LAWN, ""
 };
 
 // override > tag > '*' > none, on a mesh that carries all four cases at once.
 TEST_F(Infil2DResolutionTest, OverrideBeatsTagBeatsStarBeatsNothing) {
     Infil2D infil;
 
-    Infil2DDefault star;  star.tag  = "*";
+    Infil2DDefault star;
+    star.tag = "*";
     star.row = rowOf(InfilModel::CONSTANT, 1.0);
-    Infil2DDefault lawn;  lawn.tag  = "LAWN";
+    Infil2DDefault lawn;
+    lawn.tag = "LAWN";
     lawn.row = rowOf(InfilModel::HORTON, 3.0, 0.5, 4.14, 7.0, 0.0);
     infil.defaults() = {star, lawn};
 
-    Infil2DOverride ov;  ov.tri = 2;      // a LAWN cell, overridden
+    Infil2DOverride ov;
+    ov.tri = 2; // a LAWN cell, overridden
     ov.row = rowOf(InfilModel::CURVE_NUM, 85.0, 0.0, 7.0);
     infil.overrides() = {ov};
 
@@ -551,13 +608,14 @@ TEST_F(Infil2DResolutionTest, OverrideBeatsTagBeatsStarBeatsNothing) {
     const auto& prov = infil.provenance();
     ASSERT_EQ(rows.size(), 4u);
 
-    EXPECT_EQ(rows[0].method, InfilModel::HORTON)     << "tri 0 (LAWN) should take the tag row";
+    EXPECT_EQ(rows[0].method, InfilModel::HORTON) << "tri 0 (LAWN) should take the tag row";
     EXPECT_EQ(prov[0], Infil2DProvenance::TAG);
-    EXPECT_EQ(rows[1].method, InfilModel::CONSTANT)   << "tri 1 (WOODS, untagged row) should fall back to '*'";
+    EXPECT_EQ(rows[1].method, InfilModel::CONSTANT)
+        << "tri 1 (WOODS, untagged row) should fall back to '*'";
     EXPECT_EQ(prov[1], Infil2DProvenance::STAR);
-    EXPECT_EQ(rows[2].method, InfilModel::CURVE_NUM)  << "tri 2 override must beat its LAWN tag";
+    EXPECT_EQ(rows[2].method, InfilModel::CURVE_NUM) << "tri 2 override must beat its LAWN tag";
     EXPECT_EQ(prov[2], Infil2DProvenance::OVERRIDE);
-    EXPECT_EQ(rows[3].method, InfilModel::CONSTANT)   << "tri 3 (no tag) should take '*'";
+    EXPECT_EQ(rows[3].method, InfilModel::CONSTANT) << "tri 3 (no tag) should take '*'";
     EXPECT_EQ(prov[3], Infil2DProvenance::STAR);
 }
 
@@ -565,10 +623,12 @@ TEST_F(Infil2DResolutionTest, OverrideBeatsTagBeatsStarBeatsNothing) {
 // engine's Infil2DProvenance collapses that to NONE (handoff §3.8).
 TEST_F(Infil2DResolutionTest, TagNoneClearsTheStarDefault) {
     Infil2D infil;
-    Infil2DDefault star;  star.tag = "*";
+    Infil2DDefault star;
+    star.tag = "*";
     star.row = rowOf(InfilModel::CONSTANT, 1.0);
-    Infil2DDefault woods; woods.tag = "WOODS";
-    woods.row = Infil2DRow{};             // has_method == false, i.e. NONE
+    Infil2DDefault woods;
+    woods.tag = "WOODS";
+    woods.row = Infil2DRow{}; // has_method == false, i.e. NONE
     infil.defaults() = {star, woods};
 
     std::string err;
@@ -601,7 +661,8 @@ TEST_F(Infil2DResolutionTest, NoRowsMeansNoAllocationAndInactive) {
 // A '*' row spelling NONE is a no-op, not an activation.
 TEST_F(Infil2DResolutionTest, StarNoneLeavesTheModelInactive) {
     Infil2D infil;
-    Infil2DDefault star;  star.tag = "*";
+    Infil2DDefault star;
+    star.tag = "*";
     star.row = Infil2DRow{};
     infil.defaults().push_back(star);
     std::string err;
@@ -618,7 +679,9 @@ TEST_F(Infil2DResolutionTest, InfilStepDefaultsToWetStep) {
     EXPECT_DOUBLE_EQ(a.stepSeconds(), 900.0);
 
     Infil2D b;
-    Infil2DDefault star; star.tag = "*"; star.row = rowOf(InfilModel::CONSTANT, 1.0);
+    Infil2DDefault star;
+    star.tag = "*";
+    star.row = rowOf(InfilModel::CONSTANT, 1.0);
     b.defaults().push_back(star);
     b.options().infil_step = 120.0;
     std::string err;
@@ -646,7 +709,8 @@ protected:
 TEST_F(Infil2DValidationTest, Aquifer2DDestinationIsRejectedWithoutAnAquifer) {
     for (auto dest : {Infil2DDest::AQUIFER_2D}) {
         Infil2D infil;
-        Infil2DDefault d; d.tag = "LAWN";
+        Infil2DDefault d;
+        d.tag = "LAWN";
         d.row = rowOf(InfilModel::CONSTANT, 1.0);
         d.row.dest = dest;
         infil.defaults().push_back(d);
@@ -669,7 +733,8 @@ TEST_F(Infil2DValidationTest, Aquifer2DDestinationIsRejectedWithoutAnAquifer) {
 // unit-level half of the rule; test_2d_aquifer.cpp runs it on a model.
 TEST_F(Infil2DValidationTest, Aquifer2DDestinationIsObsoleteWithAnAquifer) {
     Infil2D infil;
-    Infil2DDefault d; d.tag = "LAWN";
+    Infil2DDefault d;
+    d.tag = "LAWN";
     d.row = rowOf(InfilModel::CONSTANT, 1.0);
     d.row.dest = Infil2DDest::AQUIFER_2D;
     infil.defaults().push_back(d);
@@ -677,14 +742,15 @@ TEST_F(Infil2DValidationTest, Aquifer2DDestinationIsObsoleteWithAnAquifer) {
 
     std::string err;
     EXPECT_FALSE(infil.resolve(mesh_, usOptions(), err));
-    EXPECT_NE(err.find("obsolete"),std::string::npos);
+    EXPECT_NE(err.find("obsolete"), std::string::npos);
 }
 
 // U3: SUBCATCH_AQUIFER resolves (its containment is a SurfaceRouter2D
 // concern; Infil2D only validates the row).
 TEST_F(Infil2DValidationTest, SubcatchAquiferDestinationResolves) {
     Infil2D infil;
-    Infil2DDefault d; d.tag = "LAWN";
+    Infil2DDefault d;
+    d.tag = "LAWN";
     d.row = rowOf(InfilModel::CONSTANT, 1.0);
     d.row.dest = Infil2DDest::SUBCATCH_AQUIFER;
     infil.defaults().push_back(d);
@@ -695,7 +761,8 @@ TEST_F(Infil2DValidationTest, SubcatchAquiferDestinationResolves) {
 
 TEST_F(Infil2DValidationTest, OutOfRangeCellIndexIsRejected) {
     Infil2D infil;
-    Infil2DOverride ov; ov.tri = 9;    // mesh has 4 triangles
+    Infil2DOverride ov;
+    ov.tri = 9; // mesh has 4 triangles
     ov.row = rowOf(InfilModel::CONSTANT, 1.0);
     infil.overrides().push_back(ov);
 
@@ -707,29 +774,33 @@ TEST_F(Infil2DValidationTest, OutOfRangeCellIndexIsRejected) {
 }
 
 TEST_F(Infil2DValidationTest, OutOfRangeParametersAreRejected) {
-    struct Bad { const char* what; Infil2DRow row; };
+    struct Bad {
+        const char* what;
+        Infil2DRow row;
+    };
     const Bad bad[] = {
-        {"negative Horton f0",  rowOf(InfilModel::HORTON, -1.0, 0.5, 4.14, 7.0, 0.0)},
-        {"negative Ks",         rowOf(InfilModel::GREEN_AMPT, 3.5, -0.5, 0.3)},
-        {"IMD above 1",         rowOf(InfilModel::GREEN_AMPT, 3.5, 0.5, 1.7)},
-        {"CN of 0",             rowOf(InfilModel::CURVE_NUM, 0.0, 0.0, 7.0)},
-        {"CN of 120",           rowOf(InfilModel::CURVE_NUM, 120.0, 0.0, 7.0)},
-        {"negative constant",   rowOf(InfilModel::CONSTANT, -2.0)},
+        {"negative Horton f0", rowOf(InfilModel::HORTON, -1.0, 0.5, 4.14, 7.0, 0.0)},
+        {"negative Ks", rowOf(InfilModel::GREEN_AMPT, 3.5, -0.5, 0.3)},
+        {"IMD above 1", rowOf(InfilModel::GREEN_AMPT, 3.5, 0.5, 1.7)},
+        {"CN of 0", rowOf(InfilModel::CURVE_NUM, 0.0, 0.0, 7.0)},
+        {"CN of 120", rowOf(InfilModel::CURVE_NUM, 120.0, 0.0, 7.0)},
+        {"negative constant", rowOf(InfilModel::CONSTANT, -2.0)},
     };
     for (const Bad& b : bad) {
         Infil2D infil;
-        Infil2DDefault d; d.tag = "*"; d.row = b.row;
+        Infil2DDefault d;
+        d.tag = "*";
+        d.row = b.row;
         infil.defaults().push_back(d);
         std::string err;
-        EXPECT_FALSE(infil.resolve(mesh_, usOptions(), err))
-            << b.what << " was accepted";
+        EXPECT_FALSE(infil.resolve(mesh_, usOptions(), err)) << b.what << " was accepted";
     }
 }
 
 // The token grammar must round-trip through both directions.
 TEST(Infil2DTokensTest, MethodAndDestTokensRoundTrip) {
-    const char* methods[] = {"HORTON", "MODIFIED_HORTON", "GREEN_AMPT",
-                             "MODIFIED_GREEN_AMPT", "CURVE_NUMBER", "CONSTANT"};
+    const char* methods[] = {"HORTON",       "MODIFIED_HORTON", "GREEN_AMPT", "MODIFIED_GREEN_AMPT",
+                             "CURVE_NUMBER", "CONSTANT"};
     for (const char* tok : methods) {
         Infil2DRow r;
         ASSERT_TRUE(parseInfil2DMethod(tok, r.method, r.has_method)) << tok;
@@ -737,7 +808,8 @@ TEST(Infil2DTokensTest, MethodAndDestTokensRoundTrip) {
         EXPECT_STREQ(infil2DMethodToken(r), tok);
         // Case-insensitivity is part of the grammar.
         std::string lower(tok);
-        for (char& c : lower) c = static_cast<char>(std::tolower(c));
+        for (char& c : lower)
+            c = static_cast<char>(std::tolower(c));
         Infil2DRow r2;
         EXPECT_TRUE(parseInfil2DMethod(lower, r2.method, r2.has_method)) << lower;
         EXPECT_EQ(r2.method, r.method);
@@ -748,7 +820,8 @@ TEST(Infil2DTokensTest, MethodAndDestTokensRoundTrip) {
     EXPECT_FALSE(none.has_method);
     EXPECT_STREQ(infil2DMethodToken(none), "NONE");
 
-    InfilModel m; bool has = true;
+    InfilModel m;
+    bool has = true;
     EXPECT_FALSE(parseInfil2DMethod("SPONGE", m, has));
 
     for (const char* tok : {"LOST", "SUBCATCH_AQUIFER", "AQUIFER_2D"}) {
@@ -774,16 +847,15 @@ TEST(Infil2DDryCellTest, HortonRecoversCapacityAcrossADryWindow) {
     MeshData mesh = makeTaggedMesh();
 
     auto runSequence = [&](double dry_time_days) {
-        Infil2D infil = resolvedWith(
-            mesh, usOptions(),
-            rowOf(InfilModel::HORTON, 3.0, 0.5, 4.14, dry_time_days, 0.0));
+        Infil2D infil = resolvedWith(mesh, usOptions(),
+                                     rowOf(InfilModel::HORTON, 3.0, 0.5, 4.14, dry_time_days, 0.0));
         SurfaceStateData st = makeState(mesh, 0.0, 0.0);
         constexpr double kDt = 300.0;
         // Event 1: 10 min of 2 in/hr rain on a bare surface.
         for (int n = 0; n < 2; ++n) {
             for (int i = 0; i < mesh.n_triangles(); ++i) {
                 st.rainfall[i] = inhrToMs(2.0);
-                st.depth[i]    = 0.0;
+                st.depth[i] = 0.0;
             }
             infil.updateRates(mesh, st, kDt);
         }
@@ -791,25 +863,25 @@ TEST(Infil2DDryCellTest, HortonRecoversCapacityAcrossADryWindow) {
         for (int n = 0; n < 28; ++n) {
             for (int i = 0; i < mesh.n_triangles(); ++i) {
                 st.rainfall[i] = 0.0;
-                st.depth[i]    = 0.0;
+                st.depth[i] = 0.0;
             }
             infil.updateRates(mesh, st, kDt);
         }
         // Event 2: the rain returns. Report the capacity it presents.
         for (int i = 0; i < mesh.n_triangles(); ++i) {
             st.rainfall[i] = inhrToMs(2.0);
-            st.depth[i]    = 0.0;
+            st.depth[i] = 0.0;
         }
         infil.updateRates(mesh, st, kDt);
         return st.infil_rate[0];
     };
 
-    const double recovered = runSequence(0.05);   // ~72 min drying time
-    const double stale     = runSequence(0.0);    // recovery disabled
+    const double recovered = runSequence(0.05); // ~72 min drying time
+    const double stale = runSequence(0.0);      // recovery disabled
 
     EXPECT_GT(recovered, stale * 1.05)
-        << "after a 2h20m dry window a cell with a 0.05 d drying time presented "
-        << recovered << " m/s and one with recovery disabled " << stale
+        << "after a 2h20m dry window a cell with a 0.05 d drying time presented " << recovered
+        << " m/s and one with recovery disabled " << stale
         << " m/s — Infil2D::updateRates is not advancing Horton recovery on a "
            "dry cell";
 }

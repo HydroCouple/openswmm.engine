@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file Transect.hpp
- * @brief Irregular transect cross-section geometry (HEC-2 style).
+ * @file      Transect.hpp
+ * @brief     Irregular transect cross-section geometry (HEC-2 style).
  *
  * @details Processes station-elevation pairs into tabulated A/R/W arrays
  *          that can be used by the XSectBatch lookup system. Each transect
@@ -26,9 +26,9 @@
  * @note Legacy reference: src/legacy/engine/transect.c
  * @ingroup new_engine
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_TRANSECT_HPP
@@ -41,7 +41,7 @@
 
 namespace openswmm {
 
-struct TransectStore;  // engine/data/InfraData.hpp
+struct TransectStore; // engine/data/InfraData.hpp
 
 namespace transect {
 
@@ -49,31 +49,31 @@ constexpr int N_TRANSECT_TBL = 51;
 
 struct TransectData {
     std::string name;
-    double n_left   = 0.0;   ///< Left overbank Manning's n
-    double n_right  = 0.0;   ///< Right overbank Manning's n
-    double n_channel = 0.0;  ///< Main channel Manning's n
-    double length_factor = 1.0;  ///< Main-channel / flood-plain length ratio (Lfactor)
+    double n_left = 0.0;        ///< Left overbank Manning's n
+    double n_right = 0.0;       ///< Right overbank Manning's n
+    double n_channel = 0.0;     ///< Main channel Manning's n
+    double length_factor = 1.0; ///< Main-channel / flood-plain length ratio (Lfactor)
 
     // Station-elevation pairs
-    std::vector<double> stations;    ///< x positions (ft)
-    std::vector<double> elevations;  ///< y elevations (ft)
+    std::vector<double> stations;   ///< x positions (ft)
+    std::vector<double> elevations; ///< y elevations (ft)
 
-    double x_left_bank  = 0.0;  ///< Left bank station
-    double x_right_bank = 0.0;  ///< Right bank station
+    double x_left_bank = 0.0;  ///< Left bank station
+    double x_right_bank = 0.0; ///< Right bank station
 
     // Computed geometry tables (normalized)
     double y_full = 0.0;
-    double w_max  = 0.0;
+    double w_max = 0.0;
     double a_full = 0.0;
     double r_full = 0.0;
     // CUSTOM shapes only (legacy TShape.sMax/aMax, shape.c getSmax): max
     // section factor and its area for a shape of UNIT height, computed on the
     // unnormalized tables. Scaled by yFull in the caller (xsect.c:685-686).
-    double s_max  = 0.0;
-    double a_max  = 0.0;
+    double s_max = 0.0;
+    double a_max = 0.0;
 
-    double area_tbl[N_TRANSECT_TBL]  = {};
-    double hrad_tbl[N_TRANSECT_TBL]  = {};
+    double area_tbl[N_TRANSECT_TBL] = {};
+    double hrad_tbl[N_TRANSECT_TBL] = {};
     double width_tbl[N_TRANSECT_TBL] = {};
 
     /// Bucket map over `area_tbl`, used by getYofA's invLookup (plan
@@ -115,8 +115,8 @@ void buildTables(TransectData& td, bool add_end_walls = true);
  * @param curve_y   Normalized width values (w/wMax) from shape curve.
  * @param n_pts     Number of curve points.
  */
-void buildCustomTables(TransectData& td, double y_full,
-                       const double* curve_x, const double* curve_y, int n_pts);
+void buildCustomTables(TransectData& td, double y_full, const double* curve_x,
+                       const double* curve_y, int n_pts);
 
 /**
  * @brief Build one transect's geometry tables from the raw [TRANSECTS] store.
@@ -137,8 +137,7 @@ void buildCustomTables(TransectData& td, double y_full,
  * @return false when the entry has no valid channel Manning's n (caller
  *         reports the error); true on success.
  */
-bool buildFromStore(const TransectStore& ts, int index, double ucf_length,
-                    TransectData& td);
+bool buildFromStore(const TransectStore& ts, int index, double ucf_length, TransectData& td);
 
 } // namespace transect
 } // namespace openswmm

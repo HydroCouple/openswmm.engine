@@ -1,9 +1,13 @@
 /**
- * @file SurfaceFluxCalculator.cpp
- * @brief Implementation of gradient computation, slope limiting, and edge fluxes.
+ * @file      SurfaceFluxCalculator.cpp
+ * @brief     Implementation of gradient computation, slope limiting, and edge fluxes.
  *
  * @see SurfaceFluxCalculator.hpp
  * @ingroup engine_2d
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include "SurfaceFluxCalculator.hpp"
@@ -17,26 +21,55 @@
 #if defined(SWMM_USE_OPENMP)
 #include <omp.h>
 #else
-static inline int omp_get_max_threads() { return 1; }
+/**
+ * @brief Supply the serial OpenMP maximum-thread query when OpenMP support is absent.
+ * @return One thread. No global state, allocation or runtime configuration is consulted.
+ */
+static inline int omp_get_max_threads() {
+    return 1;
+}
 #endif
 
 namespace openswmm::twoD {
 
 namespace {
 
+/**
+ * @brief Read a mixed-cell neighbor with a local-edge guard.
+ * @param[in] mesh Built mesh with valid cell connectivity; cell index is unchecked.
+ * @param[in] t Valid zero-based mixed-cell index.
+ * @param[in] e Local edge index, expected within the cell's three/four active edges.
+ * @return Neighbor cell index, or -1 for an invalid local edge or an exterior edge. No state
+ * changes.
+ */
 inline int tri_nbr(const MeshData& mesh, int t, int e) {
     return (e >= 0 && e < mesh.cell_vertex_count(t)) ? mesh.cell_neighbour(t, e) : -1;
 }
 
-inline double sq(double x) noexcept { return x * x; }
+/**
+ * @brief Square one scalar for slope-limiter norm calculations.
+ * @param[in] x Scalar, normally a finite dimensionless head gradient.
+ * @return x*x; no overflow protection, finite check or mutation occurs.
+ */
+inline double sq(double x) noexcept {
+    return x * x;
+}
 
 // Endpoint bed elevations of local edge e of cell t, sorted z_lo <= z_hi.
-// MeshData convention: edge k = (v[(k+1)%nv], v[(k+2)%nv]) (for a triangle:
-// edge e is opposite vertex e). For an interior edge both incident cells see
+// MeshData supplies the actual endpoint pair for each triangle or quad
+// (a triangle edge e is opposite vertex e). For an interior edge both incident cells see
 // the same two vertices, so both compute identical (z_lo, z_hi) — the face
 // depth below stays antisymmetric and the FV flux mass-conservative.
-inline void edgeEndpointZ(const MeshData& mesh, int t, int e,
-                          double& z_lo, double& z_hi) noexcept {
+/**
+ * @brief Gather and order the bed elevations of a mixed-cell edge's endpoints.
+ * @param[in] mesh Built SI mesh with valid connectivity and vertex elevations.
+ * @param[in] t Valid mixed-cell index.
+ * @param[in] e Valid local edge index for that cell.
+ * @param[out] z_lo Lower endpoint bed elevation m.
+ * @param[out] z_hi Higher endpoint bed elevation m; must be a distinct output from z_lo.
+ * @note No indices or finite values are checked; allocation-free read-only geometry gather.
+ */
+inline void edgeEndpointZ(const MeshData& mesh, int t, int e, double& z_lo, double& z_hi) noexcept {
     int va, vb;
     mesh.cell_edge_vertices(t, e, va, vb);
     const double za = mesh.vz[va];
@@ -75,8 +108,17 @@ using inertial::faceDepthFromEta;
 // [2D_OPTIONS] FLUX_DH_EPS); the env var OPENSWMM_2D_FLUX_DH_EPS override is
 // folded into the options once per SurfaceRouter2D::initialize() — per-run,
 // not process-lifetime. 0 restores the bare √.
+/**
+ * @brief Regularize a nonnegative head-difference square root near zero.
+ * @param[in] x Finite nonnegative absolute head difference m.
+ * @param[in] eps Finite regularization head m. Nonpositive disables regularization; positive
+ * uses a quadratic below eps, matching square root value/slope there with finite slope at zero.
+ * @return Regularized square root in sqrt(m), or sqrt(x) above the threshold. Negative x is
+ * outside the physical precondition and is not validated; no state or allocation is involved.
+ */
 inline double regSqrt(double x, double eps) noexcept {
-    if (eps <= 0.0 || x >= eps) return std::sqrt(x);
+    if (eps <= 0.0 || x >= eps)
+        return std::sqrt(x);
     const double inv = 1.0 / std::sqrt(eps);
     return (1.5 * inv) * x - (0.5 * inv / eps) * x * x;
 }
@@ -89,97 +131,116 @@ inline double regSqrt(double x, double eps) noexcept {
 // agrees. h_bc / per-metre flow values are resolved on the host each step
 // (SurfaceRouter2D::resolveBoundaryValues); a RATING_CURVE is resolved there
 // into edge_bc_flow, so it is handled identically to SPECIFIED_FLOW here.
+/**
+ * @brief Evaluate the host diffusive boundary flux for a prepared cell-edge slot.
+ * @param[in] mesh Built stable SI mesh; geometry/connectivity arrays span cell i and slot idx.
+ * @param[in] state Stable surface state with cell depth/head and optional borrowed boundary
+ * arrays covering idx. The boundary values must already have their per-step signal resolution
+ * applied.
+ * @param[in] opts Validated face-depth reconstruction options.
+ * @param[in] dh_eps Head-difference square-root regularization m; nonpositive disables it.
+ * @param[in] i Valid cell index.
+ * @param[in] idx Valid padded local-edge slot belonging to i, normally an exterior edge.
+ * @return Inflow-positive volume rate m3/s. WALL, absent boundary data and unknown boundary kind
+ * return zero. Specified/rating flow is outward per metre and changes sign after multiplying
+ * length. Normal slope is signed; zero slope blocks flow. Stage uses diffusive Manning
+ * conductance with regularized head difference and optional VFR face depth, rather than a
+ * prognostic inertial update.
+ * @note No index, array-shape or general finite validation occurs, no signal is sampled and no
+ * water budget is applied. Allocation-free, noexcept and read-only with stable borrowed arrays.
+ */
 inline double boundaryEdgeFlux(const MeshData& mesh, const SurfaceStateData& state,
-                               const SolverOptions2D& opts,
-                               double dh_eps, int i, int idx) noexcept {
+                               const SolverOptions2D& opts, double dh_eps, int i,
+                               int idx) noexcept {
     const BoundaryData* b = state.boundary;
-    if (!b) return 0.0;
+    if (!b)
+        return 0.0;
     const double L = mesh.edge_length[idx];
     const double n = mesh.mannings_n[i];
     const double depth = state.depth[i];
-    const bool vfr_face =
-        (opts.face_reconstruction == FaceDepth2D::VFR_FACE);
+    const bool vfr_face = (opts.face_reconstruction == FaceDepth2D::VFR_FACE);
     switch (static_cast<BoundaryType>(b->edge_bc_type[idx])) {
-        case BoundaryType::WALL:
+    case BoundaryType::WALL:
+        return 0.0;
+    case BoundaryType::NORMAL_FLOW: {
+        // Manning normal-flow boundary: per-metre discharge
+        // q = sign(S)·(1/n)·h^(5/3)·√|S|.
+        //
+        // The slope is SIGNED. A positive slope falls away from the
+        // domain and drains it (the historical behaviour, unchanged); a
+        // negative slope falls toward the domain and feeds it. Before
+        // this, S <= 0 conveyed nothing, so the only way to drive inflow
+        // was a SPECIFIED_FLOW edge with a negative discharge.
+        const double S = b->edge_bed_slope[idx];
+        if (S == 0.0 || depth <= 0.0 || n <= 0.0)
             return 0.0;
-        case BoundaryType::NORMAL_FLOW: {
-            // Manning normal-flow boundary: per-metre discharge
-            // q = sign(S)·(1/n)·h^(5/3)·√|S|.
-            //
-            // The slope is SIGNED. A positive slope falls away from the
-            // domain and drains it (the historical behaviour, unchanged); a
-            // negative slope falls toward the domain and feeds it. Before
-            // this, S <= 0 conveyed nothing, so the only way to drive inflow
-            // was a SPECIFIED_FLOW edge with a negative discharge.
-            const double S = b->edge_bed_slope[idx];
-            if (S == 0.0 || depth <= 0.0 || n <= 0.0) return 0.0;
-            const double sgnS = (S > 0.0) ? 1.0 : -1.0;
-            const double absS = std::fabs(S);
-            // §VFR_FACE: convey with the depth AT the boundary edge (Eq. 14
-            // from the cell's free surface) instead of the cell mean, so a
-            // cell whose water pools away from the outlet edge does not leak.
-            double h_out = depth;
-            if (vfr_face) {
-                double z_lo, z_hi;
-                edgeEndpointZ(mesh, i, MeshData::slot_local(idx), z_lo, z_hi);
-                h_out = faceDepthFromEta(state.head[i], z_lo, z_hi);
-                if (h_out <= 0.0) return 0.0;
-            }
-            const double h53 = h_out * std::cbrt(h_out * h_out);
-            return -sgnS * (h53 * std::sqrt(absS) / n) * L;
+        const double sgnS = (S > 0.0) ? 1.0 : -1.0;
+        const double absS = std::fabs(S);
+        // §VFR_FACE: convey with the depth AT the boundary edge (Eq. 14
+        // from the cell's free surface) instead of the cell mean, so a
+        // cell whose water pools away from the outlet edge does not leak.
+        double h_out = depth;
+        if (vfr_face) {
+            double z_lo, z_hi;
+            edgeEndpointZ(mesh, i, MeshData::slot_local(idx), z_lo, z_hi);
+            h_out = faceDepthFromEta(state.head[i], z_lo, z_hi);
+            if (h_out <= 0.0)
+                return 0.0;
         }
-        case BoundaryType::SPECIFIED_FLOW:
-        case BoundaryType::RATING_CURVE:
-            // edge_bc_flow holds outward discharge per metre of edge (m³/s/m).
-            return -b->edge_bc_flow[idx] * L;
-        case BoundaryType::SPECIFIED_STAGE: {
-            // Collapsed-Manning flux toward the prescribed stage h_bc, mirroring
-            // the interior operator with the ghost at h_bc and the centroid→edge
-            // distance Δx = 2A/(3L) (triangle centroid is 1/3 of the height up).
-            // NOTE: the explicit marchers (CPU + Kokkos) no longer call this
-            // branch — they integrate stage boundaries with the interior
-            // local-inertial momentum law (prognostic bc_q_ vs a ghost at
-            // η_bc), because this diffusive-wave conductance saturated the
-            // equilibrium clamp into a Dirichlet cell and left every BC-driven
-            // steady case one head-jump above its prescribed stage.
-            if (n <= 0.0) return 0.0;
-            const double h_bc = b->edge_bc_head[idx];
-            const double dh   = state.head[i] - h_bc;
-            const double A    = mesh.tri_area[i];
-            // Triangle expression retained verbatim (bit-identity); a quad
-            // uses the precomputed centroid→edge normal distance.
-            const double dx_b = (mesh.cell_vertex_count(i) == 3)
-                ? ((L > 1.0e-12) ? (2.0 * A) / (3.0 * L) : 0.0)
-                : mesh.edge_dist_c[idx];
-            if (dx_b <= 1.0e-12) return 0.0;
-            double h_up;
-            if (vfr_face) {
-                // §VFR_FACE: upwind depth AT the boundary edge from whichever
-                // side is higher (cell surface on outflow, prescribed stage on
-                // inflow) — mirrors the interior Eq. 14 treatment.
-                double z_lo, z_hi;
-                edgeEndpointZ(mesh, i, MeshData::slot_local(idx), z_lo, z_hi);
-                h_up = faceDepthFromEta((dh > 0.0) ? state.head[i] : h_bc,
-                                        z_lo, z_hi);
-            } else {
-                h_up = (dh > 0.0) ? depth
-                                  : std::max(h_bc - mesh.tri_cz[i], 0.0);
-            }
-            if (h_up <= 0.0) return 0.0;
-            const double h53     = h_up * std::cbrt(h_up * h_up);
-            const double sign_dh = (dh > 0.0) ? 1.0 : (dh < 0.0 ? -1.0 : 0.0);
-            return -h53 * sign_dh * regSqrt(std::abs(dh), dh_eps) * L
-                   / (n * std::sqrt(dx_b));
+        const double h53 = h_out * std::cbrt(h_out * h_out);
+        return -sgnS * (h53 * std::sqrt(absS) / n) * L;
+    }
+    case BoundaryType::SPECIFIED_FLOW:
+    case BoundaryType::RATING_CURVE:
+        // edge_bc_flow holds outward discharge per metre of edge (m³/s/m).
+        return -b->edge_bc_flow[idx] * L;
+    case BoundaryType::SPECIFIED_STAGE: {
+        // Collapsed-Manning flux toward the prescribed stage h_bc, mirroring
+        // the interior operator with the ghost at h_bc and the centroid→edge
+        // distance Δx = 2A/(3L) (triangle centroid is 1/3 of the height up).
+        // NOTE: the explicit marchers (CPU + Kokkos) no longer call this
+        // branch — they integrate stage boundaries with the interior
+        // local-inertial momentum law (prognostic bc_q_ vs a ghost at
+        // η_bc), because this diffusive-wave conductance saturated the
+        // equilibrium clamp into a Dirichlet cell and left every BC-driven
+        // steady case one head-jump above its prescribed stage.
+        if (n <= 0.0)
+            return 0.0;
+        const double h_bc = b->edge_bc_head[idx];
+        const double dh = state.head[i] - h_bc;
+        const double A = mesh.tri_area[i];
+        // Triangle expression retained verbatim (bit-identity); a quad
+        // uses the precomputed centroid→edge normal distance.
+        const double dx_b = (mesh.cell_vertex_count(i) == 3)
+                                ? ((L > 1.0e-12) ? (2.0 * A) / (3.0 * L) : 0.0)
+                                : mesh.edge_dist_c[idx];
+        if (dx_b <= 1.0e-12)
+            return 0.0;
+        double h_up;
+        if (vfr_face) {
+            // §VFR_FACE: upwind depth AT the boundary edge from whichever
+            // side is higher (cell surface on outflow, prescribed stage on
+            // inflow) — mirrors the interior Eq. 14 treatment.
+            double z_lo, z_hi;
+            edgeEndpointZ(mesh, i, MeshData::slot_local(idx), z_lo, z_hi);
+            h_up = faceDepthFromEta((dh > 0.0) ? state.head[i] : h_bc, z_lo, z_hi);
+        } else {
+            h_up = (dh > 0.0) ? depth : std::max(h_bc - mesh.tri_cz[i], 0.0);
         }
+        if (h_up <= 0.0)
+            return 0.0;
+        const double h53 = h_up * std::cbrt(h_up * h_up);
+        const double sign_dh = (dh > 0.0) ? 1.0 : (dh < 0.0 ? -1.0 : 0.0);
+        return -h53 * sign_dh * regSqrt(std::abs(dh), dh_eps) * L / (n * std::sqrt(dx_b));
+    }
     }
     return 0.0;
 }
 
 } // anonymous namespace
 
-
 void computeUnlimitedGradients(const MeshData& mesh, SurfaceStateData& state,
-                                [[maybe_unused]] int nthreads) {
+                               [[maybe_unused]] int nthreads) {
     int nt = mesh.n_triangles();
 
     // Each cell writes only its own grad_hx[i]/grad_hy[i] (it reads neighbour
@@ -187,8 +248,7 @@ void computeUnlimitedGradients(const MeshData& mesh, SurfaceStateData& state,
     // serial loop for any thread count.
 #pragma omp parallel for schedule(static) num_threads(nthreads)
     for (int i = 0; i < nt; ++i) {
-        double inv_area = (mesh.tri_area[i] > 1.0e-30)
-                              ? 1.0 / mesh.tri_area[i] : 0.0;
+        double inv_area = (mesh.tri_area[i] > 1.0e-30) ? 1.0 / mesh.tri_area[i] : 0.0;
         double gx = 0.0, gy = 0.0;
 
         const int nv_i = mesh.cell_vertex_count(i);
@@ -215,12 +275,10 @@ void computeUnlimitedGradients(const MeshData& mesh, SurfaceStateData& state,
     }
 }
 
-
-void computeLimitedGradients(const MeshData& mesh, SurfaceStateData& state,
-                              double epsilon, [[maybe_unused]] int nthreads) {
+void computeLimitedGradients(const MeshData& mesh, SurfaceStateData& state, double epsilon,
+                             [[maybe_unused]] int nthreads) {
     int nt = mesh.n_triangles();
     double eps2 = epsilon * epsilon;
-
 
     // Each cell writes only its own grad_*_lim[i] from its own and its
     // neighbours' (read-only) unlimited gradients; the per-iteration q[]/
@@ -260,11 +318,17 @@ void computeLimitedGradients(const MeshData& mesh, SurfaceStateData& state,
             double num[5], den = 0.0;
             for (int k = 0; k < 5; ++k) {
                 double pr = 1.0;
-                for (int j = 0; j < 5; ++j) if (j != k) pr *= qq[j];
-                num[k] = pr; den += pr;
+                for (int j = 0; j < 5; ++j)
+                    if (j != k)
+                        pr *= qq[j];
+                num[k] = pr;
+                den += pr;
             }
             double sx = 0.0, sy = 0.0;
-            for (int k = 0; k < 5; ++k) { sx += num[k] / den * gx[k]; sy += num[k] / den * gy[k]; }
+            for (int k = 0; k < 5; ++k) {
+                sx += num[k] / den * gx[k];
+                sy += num[k] / den * gy[k];
+            }
             state.grad_hx_lim[i] = sx;
             state.grad_hy_lim[i] = sy;
             continue;
@@ -280,10 +344,10 @@ void computeLimitedGradients(const MeshData& mesh, SurfaceStateData& state,
         // Uniform inputs → all numerators equal → uniform 1/4 weights.
         // Sum of numerators is positive by construction (each q_j ≥ eps²)
         // so no normalisation pass is required.
-        double n0 = q[0] * q[1] * q[2];   // skip self
-        double n1 = q0   * q[1] * q[2];   // skip nbr 0
-        double n2 = q0   * q[0] * q[2];   // skip nbr 1
-        double n3 = q0   * q[0] * q[1];   // skip nbr 2
+        double n0 = q[0] * q[1] * q[2]; // skip self
+        double n1 = q0 * q[1] * q[2];   // skip nbr 0
+        double n2 = q0 * q[0] * q[2];   // skip nbr 1
+        double n3 = q0 * q[0] * q[1];   // skip nbr 2
 
         double denom = n0 + n1 + n2 + n3;
         double w0 = n0 / denom;
@@ -291,20 +355,18 @@ void computeLimitedGradients(const MeshData& mesh, SurfaceStateData& state,
         double w2 = n2 / denom;
         double w3 = n3 / denom;
 
-        state.grad_hx_lim[i] = w0 * state.grad_hx[i]
-                              + w1 * gx_nbr[0] + w2 * gx_nbr[1] + w3 * gx_nbr[2];
-        state.grad_hy_lim[i] = w0 * state.grad_hy[i]
-                              + w1 * gy_nbr[0] + w2 * gy_nbr[1] + w3 * gy_nbr[2];
+        state.grad_hx_lim[i] =
+            w0 * state.grad_hx[i] + w1 * gx_nbr[0] + w2 * gx_nbr[1] + w3 * gx_nbr[2];
+        state.grad_hy_lim[i] =
+            w0 * state.grad_hy[i] + w1 * gy_nbr[0] + w2 * gy_nbr[1] + w3 * gy_nbr[2];
     }
 }
 
-
 void computeCellContinuity(const MeshData& mesh, SurfaceStateData& state,
-                            const SolverOptions2D& opts, double dt) {
+                           const SolverOptions2D& opts, double dt) {
     int nt = mesh.n_triangles();
     if (dt <= 0.0) {
-        std::fill(state.cell_continuity_err.begin(),
-                  state.cell_continuity_err.end(), 0.0);
+        std::fill(state.cell_continuity_err.begin(), state.cell_continuity_err.end(), 0.0);
         return;
     }
     double inv_dt = 1.0 / dt;
@@ -326,25 +388,22 @@ void computeCellContinuity(const MeshData& mesh, SurfaceStateData& state,
         // character above). Omitting the infiltration term here would leave
         // cell_continuity_err wrong on every infiltrating cell (plan §5.5.2,
         // site 4) — a silently wrong diagnostic, not a crash.
-        double source = (state.liquidRainfall(i) + state.coupling_flux[i]
-                         - evapSink(state.exposedEvaporation(i), state.depth[i],
-                                    opts.dry_depth)
-                         - infilSink(state.infil_rate[i], state.depth[i],
-                                     opts.dry_depth)) * area;
+        double source = (state.liquidRainfall(i) + state.coupling_flux[i] -
+                         evapSink(state.exposedEvaporation(i), state.depth[i], opts.dry_depth) -
+                         infilSink(state.infil_rate[i], state.depth[i], opts.dry_depth)) *
+                        area;
 
         // Storage change rate (m³/s) — volume is the conserved state.
-        double storage_rate =
-            (state.volume[i] - state.old_volume[i]) * inv_dt;
+        double storage_rate = (state.volume[i] - state.old_volume[i]) * inv_dt;
 
         state.cell_continuity_err[i] = storage_rate - (flux_sum + source);
     }
 }
 
-
 void computeFaceVelocity(const MeshData& mesh, SurfaceStateData& state,
-                          const SolverOptions2D& opts) {
+                         const SolverOptions2D& opts) {
     int nt = mesh.n_triangles();
-    constexpr double kQMax = 10.0;  // clamp |b_e| against wet/dry-front spikes
+    constexpr double kQMax = 10.0; // clamp |b_e| against wet/dry-front spikes
 
     // Parallelise the OUTER per-cell loop only; each cell solves its own 2×2
     // normal-equations system and writes only face_vx[i]/face_vy[i]. The inner
@@ -360,21 +419,24 @@ void computeFaceVelocity(const MeshData& mesh, SurfaceStateData& state,
 
         // Normal equations for N·q ≈ b: NᵀN (2×2 SPD) and Nᵀb.
         double a00 = 0.0, a01 = 0.0, a11 = 0.0;
-        double b0  = 0.0, b1  = 0.0;
+        double b0 = 0.0, b1 = 0.0;
         for (int e = 0; e < mesh.cell_vertex_count(i); ++e) {
             int idx = MeshData::slot(i, e);
-            double nx  = mesh.edge_nx[idx];
-            double ny  = mesh.edge_ny[idx];
+            double nx = mesh.edge_nx[idx];
+            double ny = mesh.edge_ny[idx];
             double len = mesh.edge_length[idx];
-            if (len <= 1.0e-12) continue;
-            double b = state.edge_flux[idx] / len;  // m²/s normal speed
-            if (b >  kQMax) b =  kQMax;
-            if (b < -kQMax) b = -kQMax;
+            if (len <= 1.0e-12)
+                continue;
+            double b = state.edge_flux[idx] / len; // m²/s normal speed
+            if (b > kQMax)
+                b = kQMax;
+            if (b < -kQMax)
+                b = -kQMax;
             a00 += nx * nx;
             a01 += nx * ny;
             a11 += ny * ny;
-            b0  += nx * b;
-            b1  += ny * b;
+            b0 += nx * b;
+            b1 += ny * b;
         }
 
         double det = a00 * a11 - a01 * a01;
@@ -385,7 +447,7 @@ void computeFaceVelocity(const MeshData& mesh, SurfaceStateData& state,
         }
         double inv_det = 1.0 / det;
         // Specific-discharge vector (m²/s).
-        double qx = ( a11 * b0 - a01 * b1) * inv_det;
+        double qx = (a11 * b0 - a01 * b1) * inv_det;
         double qy = (-a01 * b0 + a00 * b1) * inv_det;
 
         // Velocity (m/s) = specific discharge / depth.
@@ -395,10 +457,9 @@ void computeFaceVelocity(const MeshData& mesh, SurfaceStateData& state,
     }
 }
 
-double computeBoundaryEdgeFlux(const MeshData& mesh,
-                               const SurfaceStateData& state,
-                               const SolverOptions2D& opts,
-                               double dh_eps, int i, int idx) noexcept {
+double computeBoundaryEdgeFlux(const MeshData& mesh, const SurfaceStateData& state,
+                               const SolverOptions2D& opts, double dh_eps, int i,
+                               int idx) noexcept {
     return boundaryEdgeFlux(mesh, state, opts, dh_eps, i, idx);
 }
 

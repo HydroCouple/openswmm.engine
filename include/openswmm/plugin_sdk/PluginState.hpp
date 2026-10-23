@@ -15,12 +15,13 @@
 // limitations under the License.
 
 /**
- * @file PluginState.hpp
- * @brief Plugin lifecycle state enumerator.
+ * @file      PluginState.hpp
+ * @brief     Plugin lifecycle state enumerator.
  *
  * @details Defines the states that an output or report plugin can occupy.
- *          The PluginFactory enforces valid state transitions and calls the
- *          appropriate lifecycle methods in order.
+ *          PluginFactory gates selected callbacks using reported states, while
+ *          implementations maintain their transitions. The helper below is a
+ *          policy query; it does not change state or enforce calls.
  *
  * ### State machine diagram
  *
@@ -57,16 +58,18 @@
  *          Any state ──── (error) ──────► ERROR
  * @endcode
  *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
+ */
+
+/**
  * @defgroup engine_plugins Plugin System
  * @ingroup  new_engine
  *
  * @see IOutputPlugin.hpp
  * @see IReportPlugin.hpp
  * @see PluginFactory.hpp (in src/engine/plugins/)
- *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_PLUGIN_STATE_HPP
@@ -81,57 +84,79 @@ namespace openswmm {
  * @ingroup engine_plugins
  */
 enum class PluginState : std::int32_t {
-    UNLOADED    =  0, ///< Library not yet loaded (or was closed).
-    LOADED      =  1, ///< Shared library opened via dlopen/LoadLibrary.
-    INITIALIZED =  2, ///< initialize() returned success.
-    VALIDATED   =  3, ///< validate() returned success.
-    PREPARED    =  4, ///< prepare() returned success; ready to accept update() calls.
-    UPDATING    =  5, ///< Currently executing an update() call (transient; not normally observed).
-    FINALIZED   =  6, ///< finalize() returned success; no more update() calls.
-    CLOSED      =  7, ///< Library closed and handle released.
-    ERROR       = -1  ///< Plugin is in an error state; not usable.
+    UNLOADED = 0,    ///< Library not yet loaded (or was closed).
+    LOADED = 1,      ///< Shared library opened via dlopen/LoadLibrary.
+    INITIALIZED = 2, ///< initialize() returned success.
+    VALIDATED = 3,   ///< validate() returned success.
+    PREPARED = 4,    ///< prepare() returned success; ready to accept update() calls.
+    UPDATING = 5,    ///< Currently executing an update() call (transient; not normally observed).
+    FINALIZED = 6,   ///< finalize() returned success; no more update() calls.
+    CLOSED = 7,      ///< Library closed and handle released.
+    ERROR = -1       ///< Plugin is in an error state; not usable.
 };
 
-/**
- * @brief Convert a PluginState to a human-readable string.
- * @param state  Plugin state.
- * @returns Static null-terminated string (never NULL).
- */
+/** @brief Read the static spelling of one lifecycle enum.
+ * @param state Stored enum; unrecognized returns UNKNOWN.
+ * @return Nonnull immutable null-terminated literal with process lifetime. No ownership
+ * transfer, allocation or state mutation; safe for independent concurrent readers. */
 inline const char* plugin_state_to_string(PluginState state) noexcept {
     switch (state) {
-        case PluginState::UNLOADED:    return "UNLOADED";
-        case PluginState::LOADED:      return "LOADED";
-        case PluginState::INITIALIZED: return "INITIALIZED";
-        case PluginState::VALIDATED:   return "VALIDATED";
-        case PluginState::PREPARED:    return "PREPARED";
-        case PluginState::UPDATING:    return "UPDATING";
-        case PluginState::FINALIZED:   return "FINALIZED";
-        case PluginState::CLOSED:      return "CLOSED";
-        case PluginState::ERROR:       return "ERROR";
-        default:                       return "UNKNOWN";
+    case PluginState::UNLOADED:
+        return "UNLOADED";
+    case PluginState::LOADED:
+        return "LOADED";
+    case PluginState::INITIALIZED:
+        return "INITIALIZED";
+    case PluginState::VALIDATED:
+        return "VALIDATED";
+    case PluginState::PREPARED:
+        return "PREPARED";
+    case PluginState::UPDATING:
+        return "UPDATING";
+    case PluginState::FINALIZED:
+        return "FINALIZED";
+    case PluginState::CLOSED:
+        return "CLOSED";
+    case PluginState::ERROR:
+        return "ERROR";
+    default:
+        return "UNKNOWN";
     }
 }
 
-/**
- * @brief Check whether a state transition is valid.
- * @param from  Current state.
- * @param to    Target state.
- * @returns true if the transition is allowed.
- */
+/** @brief Query the standalone lifecycle transition policy without applying it.
+ * @param from Current enum; unknown is allowed only when to is ERROR.
+ * @param to Proposed enum; ERROR is allowed from every from value, including ERROR
+ * or unknown. Normal paths follow load/initialize/validate/prepare/update/finalize/
+ * close; ERROR may close, CLOSED has no outgoing normal transitions.
+ * @return True for a listed edge or any transition to ERROR, false otherwise.
+ * Same-state transitions are false except ERROR->ERROR. Does not read an instance,
+ * set state, invoke callbacks or enforce PluginFactory behavior; no synchronization needed. */
 inline bool plugin_state_transition_valid(PluginState from, PluginState to) noexcept {
     using PS = PluginState;
-    if (to == PS::ERROR) return true;   // any state can transition to ERROR
+    if (to == PS::ERROR)
+        return true; // any state can transition to ERROR
     switch (from) {
-        case PS::UNLOADED:    return to == PS::LOADED;
-        case PS::LOADED:      return to == PS::INITIALIZED || to == PS::CLOSED;
-        case PS::INITIALIZED: return to == PS::VALIDATED   || to == PS::CLOSED;
-        case PS::VALIDATED:   return to == PS::PREPARED    || to == PS::CLOSED;
-        case PS::PREPARED:    return to == PS::UPDATING    || to == PS::FINALIZED;
-        case PS::UPDATING:    return to == PS::PREPARED;
-        case PS::FINALIZED:   return to == PS::CLOSED;
-        case PS::CLOSED:      return false;
-        case PS::ERROR:       return to == PS::CLOSED;
-        default:              return false;
+    case PS::UNLOADED:
+        return to == PS::LOADED;
+    case PS::LOADED:
+        return to == PS::INITIALIZED || to == PS::CLOSED;
+    case PS::INITIALIZED:
+        return to == PS::VALIDATED || to == PS::CLOSED;
+    case PS::VALIDATED:
+        return to == PS::PREPARED || to == PS::CLOSED;
+    case PS::PREPARED:
+        return to == PS::UPDATING || to == PS::FINALIZED;
+    case PS::UPDATING:
+        return to == PS::PREPARED;
+    case PS::FINALIZED:
+        return to == PS::CLOSED;
+    case PS::CLOSED:
+        return false;
+    case PS::ERROR:
+        return to == PS::CLOSED;
+    default:
+        return false;
     }
 }
 

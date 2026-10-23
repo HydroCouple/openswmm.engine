@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file SectionRegistry.hpp
- * @brief Registry that maps SWMM section tags to handler functions.
+ * @file      SectionRegistry.hpp
+ * @brief     Registry that maps SWMM section tags to handler functions.
  *
  * @details The SectionRegistry enables optional sections (R09): user code
  *          can register custom handler functions for new section tags.
@@ -37,9 +37,9 @@
  * @see tests/unit/test_section_registry.cpp
  * @ingroup engine_input
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_SECTION_REGISTRY_HPP
@@ -52,7 +52,7 @@
 #include <unordered_map>
 
 namespace openswmm {
-    struct SimulationContext;
+struct SimulationContext;
 }
 
 namespace openswmm::input {
@@ -60,18 +60,17 @@ namespace openswmm::input {
 /**
  * @brief Handler function type for input file sections.
  *
- * @details Called once per section with all non-comment, non-empty lines
- *          in that section. The handler is responsible for parsing each line
+ * @details Called for each dispatched section batch, including deferred-row replay.
+ *          InputReader can retain leading comment rows for object comments. The handler is responsible for parsing each line
  *          and populating the SimulationContext.
  *
  * @param ctx    Simulation context to populate.
  * @param lines  All non-blank, non-comment lines in the section (after
  *               comment stripping but before tokenization).
  */
-using SectionHandler = std::function<void(
-    SimulationContext&,
-    const std::vector<std::string>& /*lines*/
-)>;
+using SectionHandler =
+    std::function<void(SimulationContext&, const std::vector<std::string>& /*lines*/
+                       )>;
 
 /**
  * @brief Registry that maps section tags (e.g., "[JUNCTIONS]") to handlers.
@@ -86,7 +85,13 @@ using SectionHandler = std::function<void(
  */
 class SectionRegistry {
 public:
+    /**
+     * @brief Create empty built-in/custom handler maps.
+     */
     SectionRegistry() = default;
+    /**
+     * @brief Destroy owned handler function objects and any captures they own.
+     */
     ~SectionRegistry() = default;
 
     // -----------------------------------------------------------------------
@@ -94,34 +99,28 @@ public:
     // -----------------------------------------------------------------------
 
     /**
-     * @brief Register a built-in section handler.
+     * @brief Store or replace one built-in section callback.
      *
-     * @param tag      Section tag without brackets (e.g., "JUNCTIONS").
-     *                 Case is normalized to uppercase before storage.
-     * @param handler  Handler function.
+     * Does not remove an overriding custom callback. Empty function objects are accepted and throw
+     * std::bad_function_call when invoked. Caller serializes registration and dispatch.
+     *
+     * @param[in] tag Borrowed tag without brackets; copied and normalized using Tokenizer::to_upper().
+     *     No bracket stripping or whitespace trimming occurs.
+     * @param[in] handler Function object passed by value and moved into the registry; captured
+     *     references must outlive dispatches.
      */
     void register_builtin(std::string_view tag, SectionHandler handler);
 
     /**
-     * @brief Register a custom (user-defined) section handler. (R09)
+     * @brief Store or replace a callback that takes precedence over a built-in.
      *
-     * @details Custom handlers override built-in handlers with the same tag.
-     *          Use this to:
-     *          - Add entirely new section types to the input file.
-     *          - Override built-in parsing with custom logic.
+     * Empty function objects are accepted; dispatch then throws std::bad_function_call. No internal
+     * synchronization.
      *
-     * @param tag      Section tag without brackets (e.g., "MY_SECTION").
-     * @param handler  Custom handler function.
-     *
-     * Example:
-     * @code{.cpp}
-     * registry.register_custom("MY_CUSTOM", [](SimulationContext& ctx,
-     *     const std::vector<std::string>& lines) {
-     *     for (const auto& line : lines) {
-     *         // parse custom section content
-     *     }
-     * });
-     * @endcode
+     * @param[in] tag Borrowed tag without brackets; copied and normalized using Tokenizer::to_upper().
+     *     No bracket stripping or whitespace trimming occurs.
+     * @param[in] handler Function object passed by value and moved into owned storage; captured
+     *     references remain caller-managed.
      */
     void register_custom(std::string_view tag, SectionHandler handler);
 
@@ -130,16 +129,20 @@ public:
     // -----------------------------------------------------------------------
 
     /**
-     * @brief Check if a section tag has a registered handler.
-     * @param tag  Section tag (without brackets, any case).
-     * @returns    true if a handler is registered.
+     * @brief Test whether either normalized handler map contains a tag.
+     *
+     * @param[in] tag Borrowed tag without brackets; copied and normalized using Tokenizer::to_upper().
+     *     No bracket stripping or whitespace trimming occurs.
+     * @return True when custom or built-in map contains the key, even if its std::function is empty.
      */
     bool has(std::string_view tag) const;
 
     /**
-     * @brief Check if a section tag is a custom (non-builtin) handler.
-     * @param tag  Section tag (without brackets).
-     * @returns    true if registered via register_custom().
+     * @brief Test whether the normalized custom map contains a tag.
+     *
+     * @param[in] tag Borrowed tag without brackets; copied and normalized using Tokenizer::to_upper().
+     *     No bracket stripping or whitespace trimming occurs.
+     * @return True when a custom entry exists; does not compare it with built-in registration.
      */
     bool is_custom(std::string_view tag) const;
 
@@ -148,27 +151,29 @@ public:
     // -----------------------------------------------------------------------
 
     /**
-     * @brief Dispatch a section to its handler.
+     * @brief Invoke a custom callback first, otherwise a built-in, otherwise no-op.
      *
-     * @details If no handler is registered for `tag`, the section is silently
-     *          skipped (and the caller may issue a warning).
+     * Does not catch callback/allocation exceptions or synthesize unknown-section warnings. Callbacks
+     * must not retain line references beyond their valid lifetime. Caller serializes registry mutation
+     * and dispatch.
      *
-     * @param tag    Section tag (without brackets, any case).
-     * @param ctx    Simulation context.
-     * @param lines  Lines in the section.
+     * @param[in] tag Borrowed tag without brackets; copied and normalized using Tokenizer::to_upper().
+     *     No bracket stripping or whitespace trimming occurs.
+     * @param[in,out] ctx Caller-owned context forwarded by reference; callback controls mutations and
+     *     error recording.
+     * @param[in] lines Borrowed section lines passed synchronously; may include retained comment rows
+     *     according to InputReader policy.
      */
-    void dispatch(
-        std::string_view                  tag,
-        SimulationContext&                ctx,
-        const std::vector<std::string>&   lines
-    ) const;
+    void dispatch(std::string_view tag, SimulationContext& ctx,
+                  const std::vector<std::string>& lines) const;
 
     // -----------------------------------------------------------------------
     // Enumeration
     // -----------------------------------------------------------------------
 
     /**
-     * @brief List all registered section tags (built-in + custom).
+     * @brief Copy the union of normalized built-in/custom tags.
+     * @return Owned unsorted tag vector without duplicates; hash-map iteration order is unspecified.
      */
     std::vector<std::string> registered_tags() const;
 
@@ -176,6 +181,13 @@ private:
     std::unordered_map<std::string, SectionHandler> builtin_;
     std::unordered_map<std::string, SectionHandler> custom_;
 
+    /**
+     * @brief Copy and uppercase a tag with tokenizer locale rules.
+     *
+     * @param[in] tag Borrowed tag without brackets; copied and normalized using Tokenizer::to_upper().
+     *     No bracket stripping or whitespace trimming occurs.
+     * @return Owned normalized tag; no bracket or whitespace cleanup.
+     */
     std::string normalize_tag(std::string_view tag) const;
 };
 

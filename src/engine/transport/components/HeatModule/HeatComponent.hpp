@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file HeatComponent.hpp
- * @brief The `org.hydrocouple.openswmm.heat` process component — phase H1:
+ * @file      HeatComponent.hpp
+ * @brief     The `org.hydrocouple.openswmm.heat` process component — phase H1:
  *        parse `[HEAT_SOURCES]` (`model.heat`) into
  *        SimulationContext::heat_config.
  *
@@ -35,9 +35,9 @@
  * @see plans/transport/HEAT_TRANSPORT_PLAN.md §3, §6 H1
  * @ingroup engine_transport
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_TRANSPORT_HEAT_COMPONENT_HPP
@@ -56,6 +56,6 @@ bool heatAttrValueOk(HeatAttr attr, double value) noexcept;
 /// registry (idempotent; called from SWMMEngine::open before resolution).
 void registerHeatComponent();
 
-}  // namespace openswmm::transport
+} // namespace openswmm::transport
 
-#endif  // OPENSWMM_ENGINE_TRANSPORT_HEAT_COMPONENT_HPP
+#endif // OPENSWMM_ENGINE_TRANSPORT_HEAT_COMPONENT_HPP

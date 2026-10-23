@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file ReactionArdBinding.hpp
- * @brief Phase E4/R6 — reaction binding for the Eulerian ARD engine.
+ * @file      ReactionArdBinding.hpp
+ * @brief     Phase E4/R6 — reaction binding for the Eulerian ARD engine.
  *
  * @details One reaction stage per ROUTING step on the ARD mesh state,
  *          Lie-split after the advection–dispersion subcycle (first-order
@@ -52,9 +52,9 @@
  * @see plans/transport/MULTISPECIES_REACTIONS_MSX_PLAN.md §5 R6
  * @ingroup engine_transport
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_TRANSPORT_REACTION_ARD_BINDING_HPP
@@ -78,32 +78,26 @@ bool ardHasWallSpecies(const SimulationContext& ctx);
 /**
  * @brief The E4 reaction stage over one routing step.
  *
- * @param cell_phi  ARD cell state, species-major [s * n_cells + c]; rows
- *                  0..n_pollut-1 are pollutants, rows n_pollut.. are the
- *                  MSX species in ReactionData order.
- * @param cell_a    Cell areas (read-only; dry cells still react — their
- *                  carried concentration evolves like LEGACY's, and holds
- *                  negligible mass).
- * @param cell_dx   Cell lengths (read-only; E5b — with cell_a they give the
- *                  water volume each kdecay concentration change acts on,
- *                  so the removed pollutant mass books into the
- *                  qual_routing_reacted ledger row).
- * @param node_mass Node-store species MASS [nd * ns_total + s].
- * @param node_vol  Node-store water volume [nd].
- * @param n_pollut  Pollutant row count (may be 0 — MSX-only model).
- * @param ns_total  Total species rows (n_pollut + rx.n_species() when the
- *                  component is active, else n_pollut).
- * @param min_store_vol Below this volume a store has no meaningful
- *                  concentration: MSX tank integration is skipped there
- *                  (mass-form kdecay still applies).
+ * - Argument cell_phi: ARD cell state, species-major [s * n_cells + c]; rows 0..n_pollut-1 are
+ * pollutants, rows n_pollut.. are the MSX species in ReactionData order.
+ * - Argument cell_a: Cell areas (read-only; dry cells still react — their carried concentration
+ * evolves like LEGACY's, and holds negligible mass).
+ * - Argument cell_dx: Cell lengths (read-only; E5b — with cell_a they give the water volume each
+ * kdecay concentration change acts on, so the removed pollutant mass books into the
+ * qual_routing_reacted ledger row).
+ * - Argument node_mass: Node-store species MASS [nd * ns_total + s].
+ * - Argument node_vol: Node-store water volume [nd].
+ * - Argument n_pollut: Pollutant row count (may be 0 — MSX-only model).
+ * - Argument ns_total: Total species rows (n_pollut + rx.n_species() when the component is
+ * active, else n_pollut).
+ * - Argument min_store_vol: Below this volume a store has no meaningful concentration: MSX tank
+ * integration is skipped there (mass-form kdecay still applies).
  */
-void reactArdStage(SimulationContext& ctx, double dt, double* cell_phi,
-                   const double* cell_a, const double* cell_dx, int n_cells,
-                   double* node_mass, const double* node_vol, int n_nodes,
-                   int n_pollut, int ns_total, double min_store_vol,
-                   int temp_row = -1, const int* cell_conduit = nullptr,
-                   const int* conduit_link = nullptr);
+void reactArdStage(SimulationContext& ctx, double dt, double* cell_phi, const double* cell_a,
+                   const double* cell_dx, int n_cells, double* node_mass, const double* node_vol,
+                   int n_nodes, int n_pollut, int ns_total, double min_store_vol, int temp_row = -1,
+                   const int* cell_conduit = nullptr, const int* conduit_link = nullptr);
 
-}  // namespace openswmm::transport
+} // namespace openswmm::transport
 
-#endif  // OPENSWMM_ENGINE_TRANSPORT_REACTION_ARD_BINDING_HPP
+#endif // OPENSWMM_ENGINE_TRANSPORT_REACTION_ARD_BINDING_HPP

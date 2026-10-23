@@ -70,7 +70,7 @@ from typing import Iterator, Optional, Union
 
 from ._common cimport *
 from ._dates import datetime_to_oadate, oadate_to_datetime
-from ._enums import EngineState, FlowUnits
+from ._enums import EngineState, FlowUnits, ErrorCode
 
 # Canonical EngineError hierarchy lives in :mod:`_exceptions`. Re-exported for
 # both intra-module raises and backward-compatible imports.
@@ -305,7 +305,7 @@ cdef class Solver:
         self._generation += 1
         self._surface2d = None
         self._access.raise_callback_error()
-        _check(rc)
+        _check_engine(rc, self._handle)
 
     def open_metadata(self) -> None:
         """Parse configured metadata without runtime plugins or output files.
@@ -322,7 +322,35 @@ cdef class Solver:
         self._generation += 1
         self._surface2d = None
         self._access.raise_callback_error()
-        _check(rc)
+        _check_engine(rc, self._handle)
+
+    def open_results(self, *, surface=None, bint live=False):
+        """Open independent result readers for this solver's configured files.
+
+        Call after end(), or after the solver context exits. While the engine
+        remains open, its resolved 2D output path is discovered automatically;
+        after destroy(), supply surface explicitly to include that file.
+        live=True opens only the configured binary 1D output during a run.
+        The returned Results owns its readers and must be closed separately.
+        """
+        from ._results import Results
+        from pathlib import Path
+        self._access.require_idle()
+        cdef char absolute[65536]
+        cdef char original[65536]
+        cdef int status
+        if self._handle != NULL:
+            if not live and self.state not in (EngineState.ENDED, EngineState.CLOSED):
+                raise LifecycleError(ErrorCode.LIFECYCLE, 'Call end() before opening saved results, or use live=True for 1D output')
+            if surface is None and not live:
+                status = swmm_file_path_get(self._handle, <SWMM_FilePathRole>12, b'',
+                                            absolute, 65536, original, 65536)
+                if status == 0:
+                    configured = absolute.decode('utf-8') or original.decode('utf-8')
+                    if configured:
+                        candidate = Path(configured)
+                        surface = candidate if candidate.is_absolute() else Path(self._inp).resolve().parent / candidate
+        return Results.open(self._out or None, surface=surface, live=live)
 
     def initialize(self) -> None:
         """Initialize the simulation; transition to ``INITIALIZED``."""
@@ -412,7 +440,7 @@ cdef class Solver:
         with self._operation():
             rc = swmm_engine_end(<SWMM_Engine><size_t>self.handle)
         self._access.raise_callback_error()
-        _check(rc)
+        _check_engine(rc, self._handle)
 
     def report(self) -> None:
         """Write the summary report to the ``.rpt`` file."""
@@ -420,7 +448,7 @@ cdef class Solver:
         with self._operation():
             rc = swmm_engine_report(<SWMM_Engine><size_t>self.handle)
         self._access.raise_callback_error()
-        _check(rc)
+        _check_engine(rc, self._handle)
 
     def close(self) -> None:
         """Close all files; transition to ``CLOSED``. Idempotent."""
@@ -430,7 +458,7 @@ cdef class Solver:
         with self._operation():
             rc = swmm_engine_close(<SWMM_Engine><size_t>self.handle)
         self._access.raise_callback_error()
-        _check(rc)
+        _check_engine(rc, self._handle)
         self._generation += 1
         self._surface2d = None
 
@@ -729,9 +757,7 @@ cdef class Solver:
     @property
     def crs(self) -> str:
         """Coordinate reference system string from ``[OPTIONS]``."""
-        cdef char buf[256]
-        _check(swmm_get_crs(<SWMM_Engine><size_t>self.handle, buf, 256))
-        return buf.decode('utf-8')
+        return _read_engine_string(<SWMM_Engine><size_t>self.handle, swmm_get_crs)
 
     # ------------------------------------------------------------------
     # Steady-state skip
@@ -778,7 +804,7 @@ cdef class Solver:
         if state.error is not None:
             raise state.error
         self._access.raise_callback_error()
-        _check(rc)
+        _check_engine(rc, h)
 
     def write_compat(self, path, profile):
         """Write FULL, OpenSWMM legacy, or stock EPA SWMM 5 input.
@@ -793,7 +819,7 @@ cdef class Solver:
         with self._operation():
             result = swmm_model_write_compat(self._handle, destination, selected)
         self._access.raise_callback_error()
-        _check(result)
+        _check_engine(result, self._handle)
 
     def write(self, path) -> None:
         """Write the current model to a SWMM ``.inp`` file."""
@@ -802,7 +828,7 @@ cdef class Solver:
         with self._operation():
             result = swmm_model_write(self._handle, b)
         self._access.raise_callback_error()
-        _check(result)
+        _check_engine(result, self._handle)
 
     def write_with_plugin(self, path, str output_plugin_id="") -> None:
         """Write the current model using an output plugin.
@@ -821,7 +847,7 @@ cdef class Solver:
         with self._operation():
             result = swmm_model_write_with_plugin(self._handle, bp, bid)
         self._access.raise_callback_error()
-        _check(result)
+        _check_engine(result, self._handle)
 
     def write_geopackage(self, path, crs=None) -> None:
         """Write the model to an OGC GeoPackage (``.gpkg``).
@@ -1307,19 +1333,21 @@ cdef class Solver:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        # Finish every teardown stage even if a user callback fails in one.
-        callback_error = None
-        for cleanup in (self.end, self.report, self.close):
+        # Preserve a failing report/finalizer while still releasing every resource.
+        cleanup_error = None
+        for cleanup in (self.end, self.report, self.close, self.destroy):
             try:
                 cleanup()
-            except EngineError:
-                pass
             except BaseException as error:
-                if callback_error is None:
-                    callback_error = error
-        self.destroy()
-        if exc_type is None and callback_error is not None:
-            raise callback_error
+                if cleanup_error is None:
+                    cleanup_error = error
+        if exc_val is not None and cleanup_error is not None:
+            if hasattr(exc_val, "add_note"):
+                exc_val.add_note(f"Solver cleanup also failed: {cleanup_error}")
+            else:
+                exc_val.__context__ = cleanup_error
+        if exc_type is None and cleanup_error is not None:
+            raise cleanup_error
         return False
 
     def __repr__(self) -> str:
@@ -1518,9 +1546,7 @@ class _OptionsExtView(MutableMapping):
 def _options_get(solver, str key) -> str:
     cdef SWMM_Engine h = <SWMM_Engine><size_t>solver.handle
     cdef bytes b = key.encode('utf-8')
-    cdef char buf[256]
-    _check(swmm_options_get(h, b, buf, 256))
-    return buf.decode('utf-8')
+    return _read_engine_key_string(h, b, swmm_options_get)
 
 
 def _options_set(solver, str key, str value) -> None:
@@ -1533,9 +1559,7 @@ def _options_set(solver, str key, str value) -> None:
 def _options_ext_get(solver, str key) -> str:
     cdef SWMM_Engine h = <SWMM_Engine><size_t>solver.handle
     cdef bytes b = key.encode('utf-8')
-    cdef char buf[256]
-    _check(swmm_options_get_ext(h, b, buf, 256))
-    return buf.decode('utf-8')
+    return _read_engine_key_string(h, b, swmm_options_get_ext)
 
 
 def _options_ext_set(solver, str key, str value) -> None:

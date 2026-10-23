@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_ard_dispersion.cpp
- * @brief E3 gates: dispersion activation in the Eulerian ARD engine
+ * @file      test_ard_dispersion.cpp
+ * @brief     E3 gates: dispersion activation in the Eulerian ARD engine
  *        (plans/transport/EULERIAN_ARD_TRANSPORT_PLAN.md §6 E3).
  *
  * @details Two tiers, each with an explicit observation path (the R4
@@ -74,9 +74,9 @@
  *          FISCHER → 9.27e-4 (floor 1e-6, deliberately a liveness check);
  *          CMS DISPERSION 10 → 0.0300 (floor 0.01).
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -105,9 +105,20 @@ namespace fvk = openswmm::transport::fvkernels;
 /// dispersionSolve reads are populated (chain arrays, cell_dx; state areas
 /// and phi) — the advection-side face records stay empty.
 struct ChainFixture {
-    openswmm::fv::NetworkMeshData  mesh;
+    openswmm::fv::NetworkMeshData mesh;
     openswmm::fv::NetworkStateData state;
 
+    /**
+     * @brief Build minimal single-chain finite-volume state for dispersion-only kernels.
+     *
+     * Owns mesh/state, sets one species and no faces, and fills only chain/cell-length/area data.
+     * Advection-side face geometry remains empty; this fixture is not a complete hydraulic network.
+     * Allocation exceptions propagate.
+     *
+     * @param[in] m Nonnegative cell count, representable in vector sizes.
+     * @param[in] dx Uniform cell length in feet, positive for the intended dispersion solve.
+     * @param[in] area Uniform wetted cell area in ft2, positive for the intended solve.
+     */
     ChainFixture(int m, double dx, double area) {
         mesh.cell_dx.assign(static_cast<std::size_t>(m), dx);
         mesh.chain_ptr = {0, m};
@@ -119,17 +130,24 @@ struct ChainFixture {
             state.cell_a[static_cast<std::size_t>(i)] = area;
     }
 
+    /**
+     * @brief Borrow a kernel view onto the fixture mesh and mutable state.
+     *
+     * No ownership transfer, validation or solution step occurs.
+     * @return View containing borrowed pointers valid while this fixture members remain alive and
+     *     unmoved.
+     */
     fvk::SpeciesKernelView view() {
         fvk::SpeciesKernelView v;
-        v.mesh  = &mesh;
+        v.mesh = &mesh;
         v.state = &state;
         return v;
     }
 };
 
 TEST(ArdDispersionKernel, UniformArrayBitwiseMatchesScalar) {
-    constexpr int    kM  = 32;
-    constexpr double kD  = 0.7;
+    constexpr int kM = 32;
+    constexpr double kD = 0.7;
     constexpr double kDt = 12.5;
 
     ChainFixture fa(kM, 10.0, 2.0);
@@ -142,13 +160,13 @@ TEST(ArdDispersionKernel, UniformArrayBitwiseMatchesScalar) {
     }
 
     auto va = fa.view();
-    va.dispersion = kD;                      // scalar path (pre-E3)
+    va.dispersion = kD; // scalar path (pre-E3)
     fvk::dispersionSolve(va, kDt);
 
     const std::vector<double> uniform(static_cast<std::size_t>(kM), kD);
     auto vb = fb.view();
-    vb.dispersion      = 0.0;                // must be ignored
-    vb.cell_dispersion = &uniform;           // per-cell path (E3)
+    vb.dispersion = 0.0;           // must be ignored
+    vb.cell_dispersion = &uniform; // per-cell path (E3)
     fvk::dispersionSolve(vb, kDt);
 
     for (int i = 0; i < kM; ++i)
@@ -170,26 +188,25 @@ TEST(ArdDispersionKernel, VarianceGrowthIsExactlyTwoDDtPerStep) {
     // as long as the profile's support stays far from the chain ends (the
     // implicit tails decay geometrically; 100 cells of clearance puts them
     // far below machine epsilon).
-    constexpr int    kM    = 201;
-    constexpr int    kMid  = 100;
-    constexpr double kDx   = 1.0;
-    constexpr double kA    = 1.0;
-    constexpr double kD    = 0.25;
-    constexpr double kDt   = 0.5;
-    constexpr int    kSteps = 20;
+    constexpr int kM = 201;
+    constexpr int kMid = 100;
+    constexpr double kDx = 1.0;
+    constexpr double kA = 1.0;
+    constexpr double kD = 0.25;
+    constexpr double kDt = 0.5;
+    constexpr int kSteps = 20;
 
     ChainFixture f(kM, kDx, kA);
     f.state.cell_phi[kMid] = 1.0;
 
     const auto moments = [&](double& mass, double& m2) {
         mass = 0.0;
-        m2   = 0.0;
+        m2 = 0.0;
         for (int i = 0; i < kM; ++i) {
-            const double w =
-                kA * kDx * f.state.cell_phi[static_cast<std::size_t>(i)];
+            const double w = kA * kDx * f.state.cell_phi[static_cast<std::size_t>(i)];
             const double x = (i - kMid) * kDx;
             mass += w;
-            m2   += w * x * x;
+            m2 += w * x * x;
         }
     };
 
@@ -198,7 +215,8 @@ TEST(ArdDispersionKernel, VarianceGrowthIsExactlyTwoDDtPerStep) {
 
     auto v = f.view();
     v.dispersion = kD;
-    for (int n = 0; n < kSteps; ++n) fvk::dispersionSolve(v, kDt);
+    for (int n = 0; n < kSteps; ++n)
+        fvk::dispersionSolve(v, kDt);
 
     double mass1 = 0.0, m2_1 = 0.0;
     moments(mass1, m2_1);
@@ -213,8 +231,8 @@ TEST(ArdDispersionKernel, VarianceGrowthIsExactlyTwoDDtPerStep) {
 
 TEST(ArdDispersionKernel, HugeDIsStableAndBounded) {
     // The plan's implicit-step restriction verify: no Δx²/(2D) constraint.
-    constexpr int    kM  = 64;
-    constexpr double kD  = 1.0e6;
+    constexpr int kM = 64;
+    constexpr double kD = 1.0e6;
     constexpr double kDt = 1.0e3;
 
     ChainFixture f(kM, 5.0, 1.5);
@@ -228,7 +246,8 @@ TEST(ArdDispersionKernel, HugeDIsStableAndBounded) {
 
     auto v = f.view();
     v.dispersion = kD;
-    for (int n = 0; n < 5; ++n) fvk::dispersionSolve(v, kDt);
+    for (int n = 0; n < 5; ++n)
+        fvk::dispersionSolve(v, kDt);
 
     for (int i = 0; i < kM; ++i) {
         const double phi = f.state.cell_phi[static_cast<std::size_t>(i)];
@@ -239,21 +258,21 @@ TEST(ArdDispersionKernel, HugeDIsStableAndBounded) {
 }
 
 TEST(ArdDispersionKernel, HeterogeneousDIsPerCell) {
-    constexpr int    kM  = 60;
+    constexpr int kM = 60;
     constexpr double kDt = 4.0;
 
     ChainFixture f(kM, 8.0, 1.0);
     std::vector<double> d(static_cast<std::size_t>(kM), 0.0);
-    for (int i = 30; i < kM; ++i) d[static_cast<std::size_t>(i)] = 2.0;
+    for (int i = 30; i < kM; ++i)
+        d[static_cast<std::size_t>(i)] = 2.0;
 
     // Pulse A deep inside the zero-D region; pulse B in the D > 0 region.
     f.state.cell_phi[10] = 5.0;
     f.state.cell_phi[45] = 5.0;
-    const std::vector<double> before(f.state.cell_phi.begin(),
-                                     f.state.cell_phi.end());
+    const std::vector<double> before(f.state.cell_phi.begin(), f.state.cell_phi.end());
 
     auto v = f.view();
-    v.dispersion      = 0.0;
+    v.dispersion = 0.0;
     v.cell_dispersion = &d;
     fvk::dispersionSolve(v, kDt);
 
@@ -275,25 +294,39 @@ TEST(ArdDispersionKernel, HeterogeneousDIsPerCell) {
 // Engine tier — decks + model.ard
 // ===========================================================================
 
+/**
+ * @brief Borrow the concrete engine behind an opaque test handle.
+ *
+ * This exact helper performs only an unchecked static_cast and dereference. It does not validate
+ * lifecycle, retain the handle or transfer ownership; fixture code may use the reference to inspect
+ * or seed internal state.
+ *
+ * @param[in] engine Live non-null new-engine handle whose concrete allocation is SWMMEngine; caller
+ *     keeps ownership.
+ * @return Mutable engine reference that remains valid until handle destruction or replacement.
+ */
 openswmm::SWMMEngine& as_cpp_engine(SWMM_Engine engine) {
     return *static_cast<openswmm::SWMMEngine*>(engine);
 }
 
-/// Five conduits in series, declining inverts, steady clean inflow at J0,
-/// TSS Cinit everywhere: a receding front sweeps the chain. `flat_c3`
-/// zeroes C3's slope (both ends at the same invert) to exercise the FISCHER
-/// slope floor. `extra_options` appends to [OPTIONS].
-///
-/// The junction INITIAL DEPTH is load-bearing, not decoration. initQuality()
-/// seeds Cinit only into elements that are already WET (legacy
-/// qualrout_init's 1 mm test); with the depth column at 0 the whole network
-/// starts dry, Cinit is discarded, and the clean inflow carries no
-/// pollutant — so the deck holds zero TSS for the entire run and every
-/// front-based metric divides by zero. Measured: initial stored mass 0.000
-/// lb at depth 0 versus 3.491 lb at 1.5 ft.
+/**
+ * @brief Write the five-conduit ARD dispersion fixture with selectable raw options.
+ *
+ * Uses one-hour EULERIAN_ARD routing, wet initial nodes at 1.5 authoring length units, TSS Cinit=10
+ * mg/L and fixed inflow 5 authoring flow units. With default CFS those are feet/cfs. Selecting CMS
+ * alone describes a larger numerical model, not an SI transcription. Parent directory must exist;
+ * stream failures are unchecked and raw rows are unescaped.
+ *
+ * @param[in] path Non-null destination filename; existing file is truncated.
+ * @param[in] pc_lines Raw process-component rows; empty omits the section.
+ * @param[in] extra_options Raw OPTIONS rows appended verbatim.
+ * @param[in] flow_units Non-null raw flow-unit keyword; numeric geometry/inflow are not converted
+ *     when changed.
+ * @param[in] flat_c3 Use J2 invert equal to J3 so C3 is flat when true.
+ */
 void write_chain_deck(const char* path, const std::string& pc_lines,
-                      const std::string& extra_options = "",
-                      const char* flow_units = "CFS", bool flat_c3 = false) {
+                      const std::string& extra_options = "", const char* flow_units = "CFS",
+                      bool flat_c3 = false) {
     // C3 spans J2 → J3; a flat C3 puts both of its ends at J3's invert.
     const double j2_inv = flat_c3 ? 8.2 : 8.8;
     std::ofstream f(path);
@@ -304,7 +337,7 @@ void write_chain_deck(const char* path, const std::string& pc_lines,
       << "END_DATE 01/01/2026\nEND_TIME 01:00:00\n"
       << "ROUTING_STEP 5\nREPORT_STEP 00:01:00\n"
       << extra_options << "\n"
-      << "[JUNCTIONS]\n"                   // Name Elev MaxDepth InitDepth …
+      << "[JUNCTIONS]\n" // Name Elev MaxDepth InitDepth …
       << "J0 10.0 10 1.5 0 0\n"
       << "J1 9.4  10 1.5 0 0\n"
       << "J2 " << j2_inv << " 10 1.5 0 0\n"
@@ -331,17 +364,17 @@ void write_chain_deck(const char* path, const std::string& pc_lines,
     f << "[REPORT]\nINPUT NO\n";
 }
 
-/// The EXACT metric transcription of write_chain_deck's CFS geometry: the
-/// same physical system described in SI. Every factor below is a finite
-/// decimal (1 ft = 0.3048 m exactly, 1 ft3 = 0.028316846592 m3 exactly), so
-/// the two decks are the same model to the last digit the parser reads —
-/// which is what lets a gate assert they must produce the SAME answer
-/// instead of asserting a magnitude.
-///
-/// NOTE this is NOT write_chain_deck(..., "CMS"): that flips FLOW_UNITS and
-/// leaves the numbers alone, so it describes a 500 m chain carrying 5 m3/s
-/// — a different, much larger system. Useful for exercising the SI code
-/// path, useless for comparing against anything.
+/**
+ * @brief Write an SI transcription of the default US dispersion chain.
+ *
+ * Converts 500 ft links to 152.4 m, 2 ft diameters to 0.6096 m, 1.5 ft initial depths to 0.4572 m
+ * and 5 cfs inflow to 0.14158423296 m3/s; TSS remains 10 mg/L. This preserves the default chain
+ * geometry/forcing rather than only changing FLOW_UNITS. No stream status or parser validation is
+ * performed.
+ *
+ * @param[in] path Non-null destination filename; existing file is truncated.
+ * @param[in] pc_lines Raw process rows; empty omits the section.
+ */
 void write_chain_deck_si(const char* path, const std::string& pc_lines) {
     std::ofstream f(path);
     f << "[TITLE]\nE3 dispersion gate deck (SI transcription)\n\n[OPTIONS]\n"
@@ -350,32 +383,40 @@ void write_chain_deck_si(const char* path, const std::string& pc_lines) {
       << "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
       << "END_DATE 01/01/2026\nEND_TIME 01:00:00\n"
       << "ROUTING_STEP 5\nREPORT_STEP 00:01:00\n\n"
-      << "[JUNCTIONS]\n"                  // ft x 0.3048
-      << "J0 3.048   3.048 0.4572 0 0\n"   // 10.0 / 10 / 1.5
-      << "J1 2.86512 3.048 0.4572 0 0\n"   //  9.4
-      << "J2 2.68224 3.048 0.4572 0 0\n"   //  8.8
-      << "J3 2.49936 3.048 0.4572 0 0\n"   //  8.2
-      << "J4 2.31648 3.048 0.4572 0 0\n\n" //  7.6
-      << "[OUTFALLS]\nOUT 2.1336 FREE  NO\n\n"   // 7.0
-      << "[CONDUITS]\n"                   // 500 ft = 152.4 m
+      << "[JUNCTIONS]\n"                       // ft x 0.3048
+      << "J0 3.048   3.048 0.4572 0 0\n"       // 10.0 / 10 / 1.5
+      << "J1 2.86512 3.048 0.4572 0 0\n"       //  9.4
+      << "J2 2.68224 3.048 0.4572 0 0\n"       //  8.8
+      << "J3 2.49936 3.048 0.4572 0 0\n"       //  8.2
+      << "J4 2.31648 3.048 0.4572 0 0\n\n"     //  7.6
+      << "[OUTFALLS]\nOUT 2.1336 FREE  NO\n\n" // 7.0
+      << "[CONDUITS]\n"                        // 500 ft = 152.4 m
       << "C1 J0 J1 152.4 0.013 0 0 0\n"
       << "C2 J1 J2 152.4 0.013 0 0 0\n"
       << "C3 J2 J3 152.4 0.013 0 0 0\n"
       << "C4 J3 J4 152.4 0.013 0 0 0\n"
       << "C5 J4 OUT 152.4 0.013 0 0 0\n\n"
-      << "[XSECTIONS]\n"                  // 2.0 ft = 0.6096 m
+      << "[XSECTIONS]\n" // 2.0 ft = 0.6096 m
       << "C1 CIRCULAR 0.6096 0 0 0\nC2 CIRCULAR 0.6096 0 0 0\n"
       << "C3 CIRCULAR 0.6096 0 0 0\nC4 CIRCULAR 0.6096 0 0 0\n"
       << "C5 CIRCULAR 0.6096 0 0 0\n\n"
-      << "[INFLOWS]\n"                    // 5 cfs = 0.14158423296 m3/s
+      << "[INFLOWS]\n" // 5 cfs = 0.14158423296 m3/s
       << "J0 FLOW \"\" FLOW 1.0 1.0 0.14158423296\n\n"
-      << "[POLLUTANTS]\n"                 // mg/L is unit-system independent
+      << "[POLLUTANTS]\n" // mg/L is unit-system independent
       << "TSS    MG/L  0     0   0     0      NO       *        0      0    10\n\n";
     if (!pc_lines.empty())
         f << "[PROCESS_COMPONENTS]\n" << pc_lines << "\n\n";
     f << "[REPORT]\nINPUT NO\n";
 }
 
+/**
+ * @brief Overwrite an ARD sidecar with raw config text.
+ *
+ * Uses a local truncating stream, ignores IO status and retains no caller storage.
+ *
+ * @param[in] path Non-null destination filename; parent directory must exist.
+ * @param[in] body Borrowed config text copied verbatim with no appended newline.
+ */
 void write_ard(const char* path, const std::string& body) {
     std::ofstream c(path);
     c << body;
@@ -386,21 +427,38 @@ void write_ard(const char* path, const std::string& body) {
 /// the R4 EXPECT-on-open lesson).
 class ArdDispersionEngineTest : public ::testing::Test {
 protected:
-    /// One full run on a fresh engine; records every link's conc per step.
-    /// Returns false (with ADD_FAILURE already raised) on lifecycle failure.
+    /**
+     * @brief Run an ARD fixture and copy each link concentration after accepted steps.
+     *
+     * Temporary engine is always destroyed on ordinary returns. Assumes exactly one pollutant so
+     * ctx.links.conc[l] is the intended row; copies native mg/L for these decks including final
+     * completion-step samples. Calls end only while ok remains true; no explicit report or artifact
+     * removal occurs.
+     *
+     * @param[in] inp Non-null input filename.
+     * @param[in] rpt Report output path passed to open; matching files may be overwritten.
+     * @param[in] out Binary output path passed to open; saved results requested.
+     * @param[out] traj Owned output vector cleared first, then filled with one sample vector per link.
+     * @param[out] warnings Optional writable vector replaced by warnings after an accepted start; left
+     *     unchanged if setup fails.
+     * @return False after recorded allocation/open/init/start/step rejection; true also on 20000-step
+     *     guard exhaustion or ignored end failure.
+     */
     bool run_recording(const char* inp, const char* rpt, const char* out,
                        std::vector<std::vector<double>>& traj,
                        std::vector<std::string>* warnings = nullptr) {
         traj.clear();
         SWMM_Engine e = swmm_engine_create();
-        if (e == nullptr) { ADD_FAILURE() << "engine create"; return false; }
+        if (e == nullptr) {
+            ADD_FAILURE() << "engine create";
+            return false;
+        }
         bool ok = true;
         if (swmm_engine_open(e, inp, rpt, out, nullptr) != SWMM_OK) {
             ADD_FAILURE() << "open failed for " << inp;
             ok = false;
         }
-        if (ok && (swmm_engine_initialize(e) != SWMM_OK ||
-                   swmm_engine_start(e, 1) != SWMM_OK)) {
+        if (ok && (swmm_engine_initialize(e) != SWMM_OK || swmm_engine_start(e, 1) != SWMM_OK)) {
             ADD_FAILURE() << "init/start failed for " << inp;
             ok = false;
         }
@@ -420,21 +478,40 @@ protected:
                     traj[static_cast<std::size_t>(l)].push_back(
                         ctx.links.conc[static_cast<std::size_t>(l)]);
             } while (elapsed > 0.0 && ++guard < 20000);
-            if (ok) swmm_engine_end(e);
-            if (warnings != nullptr) *warnings = ctx.warnings;
+            if (ok)
+                swmm_engine_end(e);
+            if (warnings != nullptr)
+                *warnings = ctx.warnings;
         }
         swmm_engine_destroy(e);
         return ok;
     }
 
-    static double integratedAbsDiff(const std::vector<double>& a,
-                                    const std::vector<double>& b) {
+    /**
+     * @brief Sum absolute sample differences over the overlapping trajectory prefix.
+     *
+     * Does not integrate over time, compare vector lengths or mutate inputs.
+     *
+     * @param[in] a Borrowed reference samples.
+     * @param[in] b Borrowed comparison samples in the same units.
+     * @return Unweighted sum of abs(a[i]-b[i]) over min sizes; zero for empty overlap.
+     */
+    static double integratedAbsDiff(const std::vector<double>& a, const std::vector<double>& b) {
         double s = 0.0;
         const std::size_t n = std::min(a.size(), b.size());
-        for (std::size_t i = 0; i < n; ++i) s += std::fabs(a[i] - b[i]);
+        for (std::size_t i = 0; i < n; ++i)
+            s += std::fabs(a[i] - b[i]);
         return s;
     }
-    /// Worst per-link, per-step disagreement between two recordings.
+    /**
+     * @brief Find the largest per-link sample difference over shared recording extents.
+     *
+     * Unmatched tails/links are ignored; no size or finite-value validation occurs.
+     *
+     * @param[in] a Borrowed link-by-sample reference recording.
+     * @param[in] b Borrowed comparison recording with matching intended layout.
+     * @return Maximum absolute difference over overlapping links and samples, zero for empty overlap.
+     */
     static double worstAbsDiff(const std::vector<std::vector<double>>& a,
                                const std::vector<std::vector<double>>& b) {
         double worst = 0.0;
@@ -443,9 +520,19 @@ protected:
                 worst = std::max(worst, std::fabs(a[l][t] - b[l][t]));
         return worst;
     }
+    /**
+     * @brief Sum trajectory samples without time weighting.
+     *
+     * No timestep factor or absolute value is applied; this is a sample sum used by relative fixture
+     * metrics.
+     *
+     * @param[in] a Borrowed sample vector.
+     * @return Ordered double sum, zero for an empty vector.
+     */
     static double integrated(const std::vector<double>& a) {
         double s = 0.0;
-        for (const double x : a) s += x;
+        for (const double x : a)
+            s += x;
         return s;
     }
 };
@@ -455,23 +542,20 @@ constexpr int kC1 = 0, kC2 = 1, kC3 = 2, kC5 = 4;
 
 TEST_F(ArdDispersionEngineTest, GlobalValueDispersionIsObservableAndBounded) {
     write_chain_deck("_e3_base.inp", "");
-    write_chain_deck(
-        "_e3_disp.inp",
-        "org.hydrocouple.openswmm.transport.ard config=\"_e3_disp.ard\"");
+    write_chain_deck("_e3_disp.inp",
+                     "org.hydrocouple.openswmm.transport.ard config=\"_e3_disp.ard\"");
     write_ard("_e3_disp.ard", "[TRANSPORT_OPTIONS]\nDISPERSION 100\n");
 
     std::vector<std::vector<double>> base, disp;
-    ASSERT_TRUE(run_recording("_e3_base.inp", "_e3_base.rpt", "_e3_base.out",
-                              base));
-    ASSERT_TRUE(run_recording("_e3_disp.inp", "_e3_disp.rpt", "_e3_disp.out",
-                              disp));
+    ASSERT_TRUE(run_recording("_e3_base.inp", "_e3_base.rpt", "_e3_base.out", base));
+    ASSERT_TRUE(run_recording("_e3_disp.inp", "_e3_disp.rpt", "_e3_disp.out", disp));
     ASSERT_EQ(base.size(), disp.size());
 
     // Dispersion must observably reshape the receding front at the LAST
     // conduit (integrated-|diff| ≥ 1% of the base signal — with D = 100
     // ft²/s over a 2500-ft chain the true separation is O(1); the loose
     // floor exists to be tightened from the validator's measured value).
-    const double sep  = integratedAbsDiff(base[kC5], disp[kC5]);
+    const double sep = integratedAbsDiff(base[kC5], disp[kC5]);
     const double norm = integrated(base[kC5]);
     ASSERT_GT(norm, 0.0) << "base run never carried TSS to C5 — deck defect";
     EXPECT_GT(sep, 0.01 * norm)
@@ -513,15 +597,12 @@ TEST_F(ArdDispersionEngineTest, SiDeckMatchesItsUsEquivalent) {
     write_chain_deck("_e3_us_nd.inp", "");
     write_chain_deck_si("_e3_si_nd.inp", "");
     std::vector<std::vector<double>> us_nd, si_nd;
-    ASSERT_TRUE(run_recording("_e3_us_nd.inp", "_e3_us_nd.rpt",
-                              "_e3_us_nd.out", us_nd));
-    ASSERT_TRUE(run_recording("_e3_si_nd.inp", "_e3_si_nd.rpt",
-                              "_e3_si_nd.out", si_nd));
+    ASSERT_TRUE(run_recording("_e3_us_nd.inp", "_e3_us_nd.rpt", "_e3_us_nd.out", us_nd));
+    ASSERT_TRUE(run_recording("_e3_si_nd.inp", "_e3_si_nd.rpt", "_e3_si_nd.out", si_nd));
     const double floor_diff = worstAbsDiff(us_nd, si_nd);
-    ASSERT_GT(floor_diff, 0.0)
-        << "the two unit systems agreed EXACTLY with dispersion off — the "
-           "SI deck is probably not being read as SI at all, which would "
-           "make every comparison below vacuous";
+    ASSERT_GT(floor_diff, 0.0) << "the two unit systems agreed EXACTLY with dispersion off — the "
+                                  "SI deck is probably not being read as SI at all, which would "
+                                  "make every comparison below vacuous";
 
     // 2. 100 ft²/s and 9.290304 m²/s are the same coefficient
     //    (1 ft² = 0.09290304 m² exactly) on decks that are the same model,
@@ -531,10 +612,8 @@ TEST_F(ArdDispersionEngineTest, SiDeckMatchesItsUsEquivalent) {
     write_chain_deck_si("_e3_si_eq.inp", kSiArd);
     write_ard("_e3_si_eq.ard", "[TRANSPORT_OPTIONS]\nDISPERSION 9.290304\n");
     std::vector<std::vector<double>> us_d, si_d;
-    ASSERT_TRUE(run_recording("_e3_us_eq.inp", "_e3_us_eq.rpt",
-                              "_e3_us_eq.out", us_d));
-    ASSERT_TRUE(run_recording("_e3_si_eq.inp", "_e3_si_eq.rpt",
-                              "_e3_si_eq.out", si_d));
+    ASSERT_TRUE(run_recording("_e3_us_eq.inp", "_e3_us_eq.rpt", "_e3_us_eq.out", us_d));
+    ASSERT_TRUE(run_recording("_e3_si_eq.inp", "_e3_si_eq.rpt", "_e3_si_eq.out", si_d));
     const double disp_diff = worstAbsDiff(us_d, si_d);
     EXPECT_LT(disp_diff, 1.5 * floor_diff)
         << "dispersion added " << disp_diff / floor_diff
@@ -548,30 +627,24 @@ TEST_F(ArdDispersionEngineTest, SiDeckMatchesItsUsEquivalent) {
     //    to do nothing would satisfy step 2 for the wrong reason.
     write_ard("_e3_si_eq.ard", "[TRANSPORT_OPTIONS]\nDISPERSION 100\n");
     std::vector<std::vector<double>> si_wrong;
-    ASSERT_TRUE(run_recording("_e3_si_eq.inp", "_e3_si_eq.rpt",
-                              "_e3_si_eq.out", si_wrong));
+    ASSERT_TRUE(run_recording("_e3_si_eq.inp", "_e3_si_eq.rpt", "_e3_si_eq.out", si_wrong));
     const double wrong_diff = worstAbsDiff(us_d, si_wrong);
     EXPECT_GT(wrong_diff, 10.0 * floor_diff)
-        << "a deliberately mis-converted DISPERSION landed within "
-        << wrong_diff / floor_diff << "x the transcription floor of the "
+        << "a deliberately mis-converted DISPERSION landed within " << wrong_diff / floor_diff
+        << "x the transcription floor of the "
            "correct run — this deck pair cannot observe the conversion, so "
            "the assertion above proves nothing";
 }
 
 TEST_F(ArdDispersionEngineTest, PerConduitOverrideStaysInItsConduit) {
     write_chain_deck("_e3_ov_base.inp", "");
-    write_chain_deck(
-        "_e3_ov.inp",
-        "org.hydrocouple.openswmm.transport.ard config=\"_e3_ov.ard\"");
-    write_ard("_e3_ov.ard",
-              "[TRANSPORT_OPTIONS]\nDISPERSION OFF\n"
-              "[CONDUIT_DISPERSION]\nC3 200\n");
+    write_chain_deck("_e3_ov.inp", "org.hydrocouple.openswmm.transport.ard config=\"_e3_ov.ard\"");
+    write_ard("_e3_ov.ard", "[TRANSPORT_OPTIONS]\nDISPERSION OFF\n"
+                            "[CONDUIT_DISPERSION]\nC3 200\n");
 
     std::vector<std::vector<double>> base, ov;
-    ASSERT_TRUE(run_recording("_e3_ov_base.inp", "_e3_ov_base.rpt",
-                              "_e3_ov_base.out", base));
-    ASSERT_TRUE(
-        run_recording("_e3_ov.inp", "_e3_ov.rpt", "_e3_ov.out", ov));
+    ASSERT_TRUE(run_recording("_e3_ov_base.inp", "_e3_ov_base.rpt", "_e3_ov_base.out", base));
+    ASSERT_TRUE(run_recording("_e3_ov.inp", "_e3_ov.rpt", "_e3_ov.out", ov));
     ASSERT_EQ(base[kC1].size(), ov[kC1].size());
 
     // Upstream of the override nothing may change — C1/C2 sit in their own
@@ -586,7 +659,7 @@ TEST_F(ArdDispersionEngineTest, PerConduitOverrideStaysInItsConduit) {
     // C3 ITSELF must change: the downstream check alone cannot tell an
     // override that landed on C3 from one that landed on C4, since both
     // reshape C5. Measured 3.7% of C3's own signal.
-    const double sep3  = integratedAbsDiff(base[kC3], ov[kC3]);
+    const double sep3 = integratedAbsDiff(base[kC3], ov[kC3]);
     const double norm3 = integrated(base[kC3]);
     ASSERT_GT(norm3, 0.0);
     EXPECT_GT(sep3, 0.01 * norm3)
@@ -594,7 +667,7 @@ TEST_F(ArdDispersionEngineTest, PerConduitOverrideStaysInItsConduit) {
            "landed somewhere other than C3.";
 
     // Downstream of C3 the smeared front must be visible.
-    const double sep  = integratedAbsDiff(base[kC5], ov[kC5]);
+    const double sep = integratedAbsDiff(base[kC5], ov[kC5]);
     const double norm = integrated(base[kC5]);
     ASSERT_GT(norm, 0.0);
     EXPECT_GT(sep, 0.005 * norm)
@@ -606,23 +679,18 @@ TEST_F(ArdDispersionEngineTest, FischerModeIsActiveFiniteAndBounded) {
     // Sloped chain with C3 dead-flat: the slope floor must keep U* > 0
     // (finite D) rather than dividing by zero.
     write_chain_deck("_e3_fi_base.inp", "", "", "CFS", /*flat_c3=*/true);
-    write_chain_deck(
-        "_e3_fi.inp",
-        "org.hydrocouple.openswmm.transport.ard config=\"_e3_fi.ard\"", "",
-        "CFS", /*flat_c3=*/true);
+    write_chain_deck("_e3_fi.inp", "org.hydrocouple.openswmm.transport.ard config=\"_e3_fi.ard\"",
+                     "", "CFS", /*flat_c3=*/true);
     write_ard("_e3_fi.ard", "[TRANSPORT_OPTIONS]\nDISPERSION FISCHER\n");
 
     std::vector<std::vector<double>> base, fi;
-    ASSERT_TRUE(run_recording("_e3_fi_base.inp", "_e3_fi_base.rpt",
-                              "_e3_fi_base.out", base));
-    ASSERT_TRUE(
-        run_recording("_e3_fi.inp", "_e3_fi.rpt", "_e3_fi.out", fi));
+    ASSERT_TRUE(run_recording("_e3_fi_base.inp", "_e3_fi_base.rpt", "_e3_fi_base.out", base));
+    ASSERT_TRUE(run_recording("_e3_fi.inp", "_e3_fi.rpt", "_e3_fi.out", fi));
 
     for (const auto& row : fi)
         for (const double c : row) {
-            ASSERT_TRUE(std::isfinite(c))
-                << "FISCHER produced a non-finite concentration (slope "
-                   "floor / depth guard failure)";
+            ASSERT_TRUE(std::isfinite(c)) << "FISCHER produced a non-finite concentration (slope "
+                                             "floor / depth guard failure)";
             EXPECT_LE(c, 10.0 * (1.0 + 1.0e-6));
             EXPECT_GE(c, -1.0e-9);
         }
@@ -631,7 +699,7 @@ TEST_F(ArdDispersionEngineTest, FischerModeIsActiveFiniteAndBounded) {
     // if modest — Fischer coefficient (v ≈ several ft/s here gives
     // D = O(1) ft²/s). Threshold deliberately tiny: it detects a dead
     // FISCHER branch, not a magnitude claim.
-    const double sep  = integratedAbsDiff(base[kC5], fi[kC5]);
+    const double sep = integratedAbsDiff(base[kC5], fi[kC5]);
     const double norm = integrated(base[kC5]);
     ASSERT_GT(norm, 0.0);
     EXPECT_GT(sep, 1.0e-6 * norm)
@@ -652,46 +720,35 @@ TEST_F(ArdDispersionEngineTest, ConfigErrorsArePreciseAndNeverHalfApply) {
         // with a good row parsed BEFORE them, which is what gives the
         // never-half-apply assertions below their teeth. Semantic coverage
         // of the new sections lives in test_ard_transport_bcs.cpp.
-        {"_e3_err_scheme",
-         "[TRANSPORT_OPTIONS]\nDISPERSION 5\nSCALAR_SCHEME BOGUS\n",
+        {"_e3_err_scheme", "[TRANSPORT_OPTIONS]\nDISPERSION 5\nSCALAR_SCHEME BOGUS\n",
          "is not UPWIND, MUSCL, or QUICKEST_ULTIMATE"},
         {"_e3_err_bc",
          "[TRANSPORT_OPTIONS]\nDISPERSION 5\n[TRANSPORT_BOUNDARIES]\nOUT "
          "TSS VALUE\n",
          "[TRANSPORT_BOUNDARIES] expects"},
-        {"_e3_err_mix",
-         "[STORAGE_MIXING]\nS1 FIFO\n",
-         "plan phase E2b"},
-        {"_e3_err_name",
-         "[CONDUIT_DISPERSION]\nNOSUCH 5\n",
-         "unknown conduit 'NOSUCH'"},
-        {"_e3_err_neg",
-         "[CONDUIT_DISPERSION]\nC3 -1\n",
-         "non-negative"},
-        {"_e3_err_dup",
-         "[CONDUIT_DISPERSION]\nC3 1\nC3 2\n",
-         "duplicate row for conduit 'C3'"},
+        {"_e3_err_mix", "[STORAGE_MIXING]\nS1 FIFO\n", "plan phase E2b"},
+        {"_e3_err_name", "[CONDUIT_DISPERSION]\nNOSUCH 5\n", "unknown conduit 'NOSUCH'"},
+        {"_e3_err_neg", "[CONDUIT_DISPERSION]\nC3 -1\n", "non-negative"},
+        {"_e3_err_dup", "[CONDUIT_DISPERSION]\nC3 1\nC3 2\n", "duplicate row for conduit 'C3'"},
     };
     for (const auto& c : cases) {
         const std::string inp = std::string(c.name) + ".inp";
         const std::string ard = std::string(c.name) + ".ard";
         write_chain_deck(inp.c_str(),
-                         "org.hydrocouple.openswmm.transport.ard config=\"" +
-                             ard + "\"");
+                         "org.hydrocouple.openswmm.transport.ard config=\"" + ard + "\"");
         write_ard(ard.c_str(), c.body);
 
         SWMM_Engine e = swmm_engine_create();
         ASSERT_NE(e, nullptr);
-        const int rc = swmm_engine_open(
-            e, inp.c_str(), (std::string(c.name) + ".rpt").c_str(),
-            (std::string(c.name) + ".out").c_str(), nullptr);
+        const int rc = swmm_engine_open(e, inp.c_str(), (std::string(c.name) + ".rpt").c_str(),
+                                        (std::string(c.name) + ".out").c_str(), nullptr);
         EXPECT_NE(rc, SWMM_OK) << c.name << ": open should fail";
         auto& ctx = as_cpp_engine(e).context();
         bool found = false;
         for (const auto& err : ctx.errors)
-            if (err.find(c.needle) != std::string::npos) found = true;
-        EXPECT_TRUE(found) << c.name << ": no error contains '" << c.needle
-                           << "'";
+            if (err.find(c.needle) != std::string::npos)
+                found = true;
+        EXPECT_TRUE(found) << c.name << ": no error contains '" << c.needle << "'";
         // Never half-applied. `configured` alone cannot observe this:
         // applyArdSections resets wholesale on ENTRY too, and the error
         // path returns before setting it, so the flag is false either way
@@ -702,8 +759,7 @@ TEST_F(ArdDispersionEngineTest, ConfigErrorsArePreciseAndNeverHalfApply) {
         // engine survives with the errors recorded, so a half-parsed
         // ard_config would be readable by the caller.
         EXPECT_FALSE(ctx.ard_config.configured) << c.name;
-        EXPECT_EQ(ctx.ard_config.dispersion_mode,
-                  openswmm::ArdDispersionMode::OFF)
+        EXPECT_EQ(ctx.ard_config.dispersion_mode, openswmm::ArdDispersionMode::OFF)
             << c.name << ": a row parsed before the error survived";
         EXPECT_TRUE(ctx.ard_config.conduit_disp_link.empty())
             << c.name << ": a conduit row parsed before the error survived";
@@ -714,7 +770,7 @@ TEST_F(ArdDispersionEngineTest, ConfigErrorsArePreciseAndNeverHalfApply) {
 TEST_F(ArdDispersionEngineTest, BypassConfigurationsWarnLoudly) {
     // R4 lesson 5: enumerate the configurations in which the parsed
     // dispersion reaches nothing and gate the warning for each.
-    {   // LEGACY solver
+    { // LEGACY solver
         write_chain_deck("_e3_leg.inp",
                          "org.hydrocouple.openswmm.transport.ard "
                          "config=\"_e3_leg.ard\"",
@@ -722,20 +778,17 @@ TEST_F(ArdDispersionEngineTest, BypassConfigurationsWarnLoudly) {
         write_ard("_e3_leg.ard", "[TRANSPORT_OPTIONS]\nDISPERSION 5\n");
         SWMM_Engine e = swmm_engine_create();
         ASSERT_NE(e, nullptr);
-        ASSERT_EQ(swmm_engine_open(e, "_e3_leg.inp", "_e3_leg.rpt",
-                                   "_e3_leg.out", nullptr),
+        ASSERT_EQ(swmm_engine_open(e, "_e3_leg.inp", "_e3_leg.rpt", "_e3_leg.out", nullptr),
                   SWMM_OK);
         auto& ctx = as_cpp_engine(e).context();
         bool found = false;
         for (const auto& w : ctx.warnings)
-            if (w.find("QUALITY_SOLVER is not EULERIAN_ARD") !=
-                std::string::npos)
+            if (w.find("QUALITY_SOLVER is not EULERIAN_ARD") != std::string::npos)
                 found = true;
-        EXPECT_TRUE(found)
-            << "LEGACY + transport.ard dispersion ran without a warning";
+        EXPECT_TRUE(found) << "LEGACY + transport.ard dispersion ran without a warning";
         swmm_engine_destroy(e);
     }
-    {   // IGNORE_QUALITY
+    { // IGNORE_QUALITY
         write_chain_deck("_e3_iq.inp",
                          "org.hydrocouple.openswmm.transport.ard "
                          "config=\"_e3_iq.ard\"",
@@ -743,18 +796,15 @@ TEST_F(ArdDispersionEngineTest, BypassConfigurationsWarnLoudly) {
         write_ard("_e3_iq.ard", "[TRANSPORT_OPTIONS]\nDISPERSION 5\n");
         SWMM_Engine e = swmm_engine_create();
         ASSERT_NE(e, nullptr);
-        ASSERT_EQ(swmm_engine_open(e, "_e3_iq.inp", "_e3_iq.rpt",
-                                   "_e3_iq.out", nullptr),
-                  SWMM_OK);
+        ASSERT_EQ(swmm_engine_open(e, "_e3_iq.inp", "_e3_iq.rpt", "_e3_iq.out", nullptr), SWMM_OK);
         auto& ctx = as_cpp_engine(e).context();
         bool found = false;
         for (const auto& w : ctx.warnings)
             if (w.find("IGNORE_QUALITY") != std::string::npos &&
                 w.find("transport.ard") != std::string::npos)
                 found = true;
-        EXPECT_TRUE(found)
-            << "IGNORE_QUALITY + transport.ard dispersion ran without a "
-               "warning";
+        EXPECT_TRUE(found) << "IGNORE_QUALITY + transport.ard dispersion ran without a "
+                              "warning";
         swmm_engine_destroy(e);
     }
 }
@@ -769,15 +819,13 @@ TEST_F(ArdDispersionEngineTest, FvDispersionKeyUnderArdIsAnnounced) {
     write_chain_deck("_e3_fvd.inp", "", "FV_DISPERSION 100\n");
     std::vector<std::vector<double>> traj;
     std::vector<std::string> warnings;
-    ASSERT_TRUE(run_recording("_e3_fvd.inp", "_e3_fvd.rpt", "_e3_fvd.out",
-                              traj, &warnings));
+    ASSERT_TRUE(run_recording("_e3_fvd.inp", "_e3_fvd.rpt", "_e3_fvd.out", traj, &warnings));
     bool found = false;
     for (const auto& w : warnings)
         if (w.find("FV_DISPERSION") != std::string::npos &&
             w.find("transport.ard") != std::string::npos)
             found = true;
-    EXPECT_TRUE(found)
-        << "FV_DISPERSION under EULERIAN_ARD applied nothing and said nothing";
+    EXPECT_TRUE(found) << "FV_DISPERSION under EULERIAN_ARD applied nothing and said nothing";
 }
 
-}  // namespace
+} // namespace

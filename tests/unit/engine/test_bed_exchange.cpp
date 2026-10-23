@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_bed_exchange.cpp
- * @brief H6b — the coupled bed / hyporheic stepper.
+ * @file      test_bed_exchange.cpp
+ * @brief     H6b — the coupled bed / hyporheic stepper.
  *
  * @details These gates are on the PURE functions, deliberately. The physics
  *          of a coupled relaxation is where this phase can be wrong in a way
@@ -30,6 +30,10 @@
  *          matrix-exponential step with an independent RK4 integration of
  *          the governing rates, so the hyporheic direction is not inferred
  *          from a copied production result.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -47,14 +51,19 @@ using openswmm::transport::heat::exchangePair;
 using openswmm::transport::heat::relaxPair;
 using openswmm::transport::heat::relaxT;
 
-/// A bed coupling with the orders of magnitude a real 400 ft, 1.5 ft pipe
-/// produces, so the gates exercise the same regime the engine will.
+/**
+ * @brief Build the fixed finite-capacity water/bed energy reference parameters.
+ *
+ * Pure parameter construction; does not initialize temperature state or integrate exchange.
+ * @return Owned 900/120 W/K water-bed/bed-ground conductances, 4e6/2.4e7 J/K heat capacities and 12
+ *     C ground temperature.
+ */
 BedCoupling nominal() {
     BedCoupling g{};
-    g.g_wb = 900.0;      // W/K
-    g.g_bg = 120.0;      // W/K
-    g.c_w  = 4.0e6;      // J/K  (~1 m3 of water)
-    g.c_b  = 2.4e7;      // J/K  (~8 m3 of saturated sediment)
+    g.g_wb = 900.0; // W/K
+    g.g_bg = 120.0; // W/K
+    g.c_w = 4.0e6;  // J/K  (~1 m3 of water)
+    g.c_b = 2.4e7;  // J/K  (~8 m3 of saturated sediment)
     g.t_gr = 12.0;
     return g;
 }
@@ -65,23 +74,31 @@ struct PairReference {
     double ground_j = 0.0;
 };
 
-/// Independent RK4 integration of the stated finite water/bed/ground ODE.
-/// This deliberately advances the three physical rates directly rather than
-/// using relaxPair's matrix-exponential formula.
-PairReference integrateFinitePair(const BedCoupling& g, double water,
-                                  double bed, double surface_power,
-                                  double seconds) {
+/**
+ * @brief Integrate an independent water/bed reference with fixed-step RK4.
+ *
+ * Uses steps<=0.05 s and solves the explicit two-capacity linear exchange equations; no production
+ * integrator is called. Zero/negative intervals are outside intended preconditions and no
+ * parameter/stability validation occurs.
+ *
+ * @param[in] g Stable conductances W/K, positive nonzero heat capacities J/K and ground temperature
+ *     C.
+ * @param[in] water Initial water temperature C.
+ * @param[in] bed Initial bed temperature C.
+ * @param[in] surface_power Constant power W entering the water.
+ * @param[in] seconds Positive finite interval seconds such that ceil(seconds/0.05) fits int.
+ * @return Owned final water/bed temperatures C and accumulated ground-to-bed receipt J.
+ */
+PairReference integrateFinitePair(const BedCoupling& g, double water, double bed,
+                                  double surface_power, double seconds) {
     using State = std::array<double, 3>; // water °C, bed °C, ground receipt J
     const auto derivative = [&g, surface_power](const State& x) {
-        return State{
-            (surface_power + g.g_wb * (x[1] - x[0])) / g.c_w,
-            (g.g_wb * (x[0] - x[1]) + g.g_bg * (g.t_gr - x[1])) / g.c_b,
-            g.g_bg * (g.t_gr - x[1])
-        };
+        return State{(surface_power + g.g_wb * (x[1] - x[0])) / g.c_w,
+                     (g.g_wb * (x[0] - x[1]) + g.g_bg * (g.t_gr - x[1])) / g.c_b,
+                     g.g_bg * (g.t_gr - x[1])};
     };
     const auto shifted = [](const State& x, const State& dx, double scale) {
-        return State{x[0] + scale * dx[0], x[1] + scale * dx[1],
-                     x[2] + scale * dx[2]};
+        return State{x[0] + scale * dx[0], x[1] + scale * dx[1], x[2] + scale * dx[2]};
     };
 
     State x{water, bed, 0.0};
@@ -98,7 +115,7 @@ PairReference integrateFinitePair(const BedCoupling& g, double water,
     return {x[0], x[1], x[2]};
 }
 
-}  // namespace
+} // namespace
 
 // ---------------------------------------------------------------------------
 // 1. THE reduction gate. With no bed conductance the pair must collapse onto
@@ -139,7 +156,7 @@ TEST(BedExchangeTest, ReducesToRelaxTWithNoBedConductance) {
 // ---------------------------------------------------------------------------
 TEST(BedExchangeTest, PureExchangeConservesEnergy) {
     BedCoupling g = nominal();
-    g.g_bg = 0.0;                       // no ground sink
+    g.g_bg = 0.0; // no ground sink
 
     for (const double dt : {1.0, 300.0, 3600.0, 100000.0}) {
         const auto p = relaxPair(g, 25.0, 10.0, 0.0, 0.0, 0.0, 0.0, dt);
@@ -147,7 +164,8 @@ TEST(BedExchangeTest, PureExchangeConservesEnergy) {
         // Scaled against the energy that actually MOVED, so the tolerance
         // cannot be satisfied by a step that did nothing.
         const double moved = std::fabs(g.c_w * p.dt_w);
-        ASSERT_GT(moved, 1.0) << "dt = " << dt << ": nothing moved, so this "
+        ASSERT_GT(moved, 1.0) << "dt = " << dt
+                              << ": nothing moved, so this "
                                  "gate would pass vacuously";
         EXPECT_LT(std::fabs(net) / moved, 1e-12) << "dt = " << dt;
     }
@@ -175,9 +193,9 @@ TEST(BedExchangeTest, CoupledPairNeverOvershootsAtAnyStep) {
         // The warm body cools toward the mean and never below it; the cold
         // body warms toward it and never above.
         EXPECT_GE(tw, mean - 1e-9) << "water overshot at dt = " << dt;
-        EXPECT_LE(tw, tw0 + 1e-9)  << "water warmed against the gradient";
+        EXPECT_LE(tw, tw0 + 1e-9) << "water warmed against the gradient";
         EXPECT_LE(tb, mean + 1e-9) << "bed overshot at dt = " << dt;
-        EXPECT_GE(tb, tb0 - 1e-9)  << "bed cooled against the gradient";
+        EXPECT_GE(tb, tb0 - 1e-9) << "bed cooled against the gradient";
     }
 
     // And at an enormous step it must LAND on the mean, not merely stay on
@@ -223,18 +241,16 @@ TEST(BedExchangeTest, AddedHyporheicConductanceMatchesIndependentGroundedPair) {
     BedCoupling with_hyporheic = conduction_only;
     with_hyporheic.g_wb += rho_water * cp_water * hyporheic_velocity * bed_contact_area;
 
-    const PairReference expected_conduction = integrateFinitePair(
-        conduction_only, initial_water, initial_bed, surface_power, seconds);
-    const PairReference expected_hyporheic = integrateFinitePair(
-        with_hyporheic, initial_water, initial_bed, surface_power, seconds);
-    const auto actual_conduction = relaxPair(
-        conduction_only, initial_water, initial_bed,
-        -surface_power / surface_area, -surface_power / surface_area, 0.0,
-        surface_area, seconds);
-    const auto actual_hyporheic = relaxPair(
-        with_hyporheic, initial_water, initial_bed,
-        -surface_power / surface_area, -surface_power / surface_area, 0.0,
-        surface_area, seconds);
+    const PairReference expected_conduction =
+        integrateFinitePair(conduction_only, initial_water, initial_bed, surface_power, seconds);
+    const PairReference expected_hyporheic =
+        integrateFinitePair(with_hyporheic, initial_water, initial_bed, surface_power, seconds);
+    const auto actual_conduction =
+        relaxPair(conduction_only, initial_water, initial_bed, -surface_power / surface_area,
+                  -surface_power / surface_area, 0.0, surface_area, seconds);
+    const auto actual_hyporheic =
+        relaxPair(with_hyporheic, initial_water, initial_bed, -surface_power / surface_area,
+                  -surface_power / surface_area, 0.0, surface_area, seconds);
 
     EXPECT_NEAR(initial_water + actual_conduction.dt_w, expected_conduction.water, 1e-9);
     EXPECT_NEAR(initial_bed + actual_conduction.dt_b, expected_conduction.bed, 1e-9);
@@ -245,14 +261,12 @@ TEST(BedExchangeTest, AddedHyporheicConductanceMatchesIndependentGroundedPair) {
     EXPECT_GT(expected_hyporheic.bed, expected_conduction.bed);
     EXPECT_LT(expected_hyporheic.ground_j, expected_conduction.ground_j);
 
-    const double conduction_energy = conduction_only.c_w * actual_conduction.dt_w +
-        conduction_only.c_b * actual_conduction.dt_b;
-    const double hyporheic_energy = with_hyporheic.c_w * actual_hyporheic.dt_w +
-        with_hyporheic.c_b * actual_hyporheic.dt_b;
-    EXPECT_NEAR(conduction_energy,
-                surface_power * seconds + expected_conduction.ground_j, 1e-5);
-    EXPECT_NEAR(hyporheic_energy,
-                surface_power * seconds + expected_hyporheic.ground_j, 1e-5);
+    const double conduction_energy =
+        conduction_only.c_w * actual_conduction.dt_w + conduction_only.c_b * actual_conduction.dt_b;
+    const double hyporheic_energy =
+        with_hyporheic.c_w * actual_hyporheic.dt_w + with_hyporheic.c_b * actual_hyporheic.dt_b;
+    EXPECT_NEAR(conduction_energy, surface_power * seconds + expected_conduction.ground_j, 1e-5);
+    EXPECT_NEAR(hyporheic_energy, surface_power * seconds + expected_hyporheic.ground_j, 1e-5);
 }
 
 // ---------------------------------------------------------------------------
@@ -266,10 +280,13 @@ TEST(BedExchangeTest, AddedHyporheicConductanceMatchesIndependentGroundedPair) {
 // ---------------------------------------------------------------------------
 TEST(BedExchangeTest, DegenerateAndSpectralBranchesAgree) {
     BedCoupling g{};
-    g.c_w = 1.0e6; g.c_b = 1.0e6; g.g_bg = 0.0; g.t_gr = 12.0;
+    g.c_w = 1.0e6;
+    g.c_b = 1.0e6;
+    g.g_bg = 0.0;
+    g.t_gr = 12.0;
 
     double prev = 0.0;
-    bool   first = true;
+    bool first = true;
     // Sweep g_wb through the region where s*dt crosses the 1e-8 threshold.
     for (const double gwb : {0.0, 1e-6, 1e-4, 1e-2, 1.0}) {
         g.g_wb = gwb;
@@ -301,8 +318,7 @@ TEST(BedExchangeTest, SoluteExchangeConservesMass) {
         const auto s = exchangePair(9.0, 1.0, vw, vb, q, dt);
         const double moved = std::fabs(vw * s.dc_w);
         ASSERT_GT(moved, 1e-6) << "dt = " << dt << ": nothing moved";
-        EXPECT_LT(std::fabs(vw * s.dc_w + vb * s.dc_b) / moved, 1e-14)
-            << "dt = " << dt;
+        EXPECT_LT(std::fabs(vw * s.dc_w + vb * s.dc_b) / moved, 1e-14) << "dt = " << dt;
         EXPECT_LT(s.dc_w, 0.0) << "the richer body must lose";
         EXPECT_GT(s.dc_b, 0.0) << "the leaner body must gain";
     }
@@ -335,12 +351,14 @@ TEST(BedExchangeTest, DegenerateInputsAreNoOpsNotNaNs) {
     const auto zero = [](const openswmm::transport::heat::PairStep& p) {
         return p.dt_w == 0.0 && p.dt_b == 0.0;
     };
-    EXPECT_TRUE(zero(relaxPair(g, 20, 10, 0, 0, 0, 0, 0.0)))   << "dt = 0";
-    EXPECT_TRUE(zero(relaxPair(g, 20, 10, 0, 0, 0, 0, -5.0)))  << "dt < 0";
+    EXPECT_TRUE(zero(relaxPair(g, 20, 10, 0, 0, 0, 0, 0.0))) << "dt = 0";
+    EXPECT_TRUE(zero(relaxPair(g, 20, 10, 0, 0, 0, 0, -5.0))) << "dt < 0";
 
-    BedCoupling dry = g; dry.c_w = 0.0;      // dry link
+    BedCoupling dry = g;
+    dry.c_w = 0.0; // dry link
     EXPECT_TRUE(zero(relaxPair(dry, 20, 10, 0, 0, 0, 0, 60.0)));
-    BedCoupling thin = g; thin.c_b = 0.0;    // zero-thickness bed
+    BedCoupling thin = g;
+    thin.c_b = 0.0; // zero-thickness bed
     EXPECT_TRUE(zero(relaxPair(thin, 20, 10, 0, 0, 0, 0, 60.0)));
 
     const auto s0 = exchangePair(5.0, 1.0, 0.0, 10.0, 0.01, 60.0);
@@ -379,8 +397,8 @@ TEST(BedExchangeTest, OneBigStepAgreesWithManySmallOnes) {
     // Asserting the strong form is what makes the gate discriminating: an
     // approximate coupling would satisfy a loose tolerance here and fail
     // this one.
-    const auto one  = substep(1);
+    const auto one = substep(1);
     const auto many = substep(360);
-    EXPECT_NEAR(one.first,  many.first,  1e-9);
+    EXPECT_NEAR(one.first, many.first, 1e-9);
     EXPECT_NEAR(one.second, many.second, 1e-9);
 }

@@ -15,13 +15,13 @@
 // limitations under the License.
 
 /**
- * @file Climate.cpp
- * @brief Climate processing — numerically identical to legacy climate.c.
+ * @file      Climate.cpp
+ * @brief     Climate processing — numerically identical to legacy climate.c.
  * @ingroup new_engine
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "Climate.hpp"
@@ -43,20 +43,25 @@ void MovingAvg7::push(double t_avg, double t_range) {
     ta[front] = t_avg;
     tr[front] = t_range;
     front = (front + 1) % 7;
-    if (count < 7) ++count;
+    if (count < 7)
+        ++count;
 }
 
 double MovingAvg7::avg_temp() const {
-    if (count == 0) return 0.0;
+    if (count == 0)
+        return 0.0;
     double sum = 0.0;
-    for (int i = 0; i < count; ++i) sum += ta[i];
+    for (int i = 0; i < count; ++i)
+        sum += ta[i];
     return sum / count;
 }
 
 double MovingAvg7::avg_range() const {
-    if (count == 0) return 0.0;
+    if (count == 0)
+        return 0.0;
     double sum = 0.0;
-    for (int i = 0; i < count; ++i) sum += tr[i];
+    for (int i = 0; i < count; ++i)
+        sum += tr[i];
     return sum / count;
 }
 
@@ -91,62 +96,60 @@ double hargreaves(double latitude, int day_of_year, double t_avg, double t_range
     double omega = std::acos(x);
 
     // Extraterrestrial radiation (MJ/m2/day)
-    double Ra = 37.6 * dr * (omega * std::sin(phi) * std::sin(delta)
-                + std::cos(phi) * std::cos(delta) * std::sin(omega));
+    double Ra = 37.6 * dr *
+                (omega * std::sin(phi) * std::sin(delta) +
+                 std::cos(phi) * std::cos(delta) * std::sin(omega));
     Ra = std::max(Ra, 0.0);
 
     // Hargreaves evapotranspiration (mm/day)
     double e = 0.0023 * Ra / lambda * std::sqrt(tr) * (ta + 17.8);
     e = std::max(e, 0.0);
 
-    return e;  // mm/day
+    return e; // mm/day
 }
 
 void updateDailyClimate(ClimateState& state, int day_of_year, int month) {
     // NOTE: Temperature source (timeseries/file) sets state.temperature
-    // before this function is called. The monthly adjustment is applied
-    // here and reflected in evap/gamma/ea calculations below.
-    // When no source is active, temperature keeps its previous value.
+    // before this function is called. This routine consumes that effective
+    // value for evaporation/ea; temperature adjustments belong to the caller.
 
     switch (state.evap_method) {
-        case EvapMethod::CONSTANT:
-            // legacy setEvap: Evap.rate = monthlyEvap[0] / UCF(EVAPRATE) on
-            // EVERY call, so the monthly adjustment added below is applied
-            // to the constant, not accumulated step after step.
-            state.evap_rate = state.monthly_evap[0] / state.evaprate_ucf;
-            break;
+    case EvapMethod::CONSTANT:
+        // legacy setEvap: Evap.rate = monthlyEvap[0] / UCF(EVAPRATE) on
+        // EVERY call, so the monthly adjustment added below is applied
+        // to the constant, not accumulated step after step.
+        state.evap_rate = state.monthly_evap[0] / state.evaprate_ucf;
+        break;
 
-        case EvapMethod::MONTHLY:
-            // Convert in/day (US) or mm/day (SI) → ft/sec using the project's
-            // unit-system EVAPRATE factor (set at init). Hardcoding the US index
-            // over-evaporated SI (CMS) models by ~25×.
-            state.evap_rate = state.monthly_evap[month] / state.evaprate_ucf;
-            break;
+    case EvapMethod::MONTHLY:
+        // Convert in/day (US) or mm/day (SI) → ft/sec using the project's
+        // unit-system EVAPRATE factor (set at init). Hardcoding the US index
+        // over-evaporated SI (CMS) models by ~25×.
+        state.evap_rate = state.monthly_evap[month] / state.evaprate_ucf;
+        break;
 
-        case EvapMethod::TEMPERATURE: {
-            // Push today's values into 7-day moving average
-            state.temp_ma.push(state.temperature, state.temp_range);
-            // Use smoothed values for Hargreaves (matching legacy Tma)
-            double e_mm = hargreaves(state.latitude, day_of_year,
-                                     state.temp_ma.avg_temp(),
-                                     state.temp_ma.avg_range());
-            // mm/day → ft/sec using SI EVAPRATE factor
-            state.evap_rate = e_mm / ucf::Ucf[ucf::EVAPRATE][1];
-            break;
-        }
+    case EvapMethod::TEMPERATURE: {
+        // Push today's values into 7-day moving average
+        state.temp_ma.push(state.temperature, state.temp_range);
+        // Use smoothed values for Hargreaves (matching legacy Tma)
+        double e_mm = hargreaves(state.latitude, day_of_year, state.temp_ma.avg_temp(),
+                                 state.temp_ma.avg_range());
+        // mm/day → ft/sec using SI EVAPRATE factor
+        state.evap_rate = e_mm / ucf::Ucf[ucf::EVAPRATE][1];
+        break;
+    }
 
-        case EvapMethod::TIMESERIES:
-        case EvapMethod::PAN:
-            // Set externally from timeseries/file
-            break;
+    case EvapMethod::TIMESERIES:
+    case EvapMethod::PAN:
+        // Set externally from timeseries/file
+        break;
     }
 
     // Apply monthly adjustment — legacy setEvap: Evap.rate += Adjust.evap[mon-1]
     // (the [ADJUSTMENTS] EVAP row is a rate ADDED to the source, not a factor).
     // TIMESERIES and PAN are resolved by the engine's climate step, which
     // adds the adjustment itself.
-    if (state.evap_method != EvapMethod::TIMESERIES &&
-        state.evap_method != EvapMethod::PAN)
+    if (state.evap_method != EvapMethod::TIMESERIES && state.evap_method != EvapMethod::PAN)
         state.evap_rate += state.adjust_evap[month];
 
     // Saturation vapor pressure (for snowmelt rain-on-snow)
@@ -169,8 +172,8 @@ void updateDailyClimate(ClimateState& state, int day_of_year, int month) {
 // Batch distribute evap — VECTORISABLE
 // ============================================================================
 
-void batchDistributeEvap(double evap_rate, const double* ponded_depth,
-                         double* evap_out, int n, double dt) {
+void batchDistributeEvap(double evap_rate, const double* ponded_depth, double* evap_out, int n,
+                         double dt) {
     double inv_dt = (dt > 0.0) ? 1.0 / dt : 0.0;
     for (int i = 0; i < n; ++i) {
         double max_evap = ponded_depth[i] * inv_dt;
@@ -188,9 +191,9 @@ void updateTempTimes(ClimateState& state, int doy) {
     double decl = 0.40928 * std::cos(0.017202 * (172.0 - doy));
 
     // Hour-angle argument: -tan(decl) * tan(latitude)
-    double lat_rad  = state.latitude * PI / 180.0;
-    double tan_lat  = std::tan(lat_rad);
-    double arg      = -std::tan(decl) * tan_lat;
+    double lat_rad = state.latitude * PI / 180.0;
+    double tan_lat = std::tan(lat_rad);
+    double arg = -std::tan(decl) * tan_lat;
 
     double hrsr, hrss;
     if (arg >= 1.0) {
@@ -202,30 +205,30 @@ void updateTempTimes(ClimateState& state, int doy) {
         hrsr = 0.0;
         hrss = 24.0;
     } else {
-        double hrang = 3.8197 * std::acos(arg);  // half-day length in hours
+        double hrang = 3.8197 * std::acos(arg); // half-day length in hours
         hrsr = 12.0 - hrang + state.dtlong;
         hrss = 12.0 + hrang + state.dtlong - 3.0; // max temp ~3 h before actual sunset
     }
 
-    state.hrsr  = hrsr;
-    state.hrss  = hrss;
+    state.hrsr = hrsr;
+    state.hrss = hrss;
     state.hrday = (hrsr + hrss) / 2.0;
-    state.dhrdy = hrsr - hrss;                     // negative (~-9 to -12)
-    state.dydif = 24.0 + hrsr - hrss;              // sunset-to-next-sunrise span
+    state.dhrdy = hrsr - hrss;        // negative (~-9 to -12)
+    state.dydif = 24.0 + hrsr - hrss; // sunset-to-next-sunrise span
 }
 
 double getSubdailyTemp(const ClimateState& state, double hour) {
-    double tmin  = state.tmin_daily;
-    double tmax  = state.tmax_daily;
-    double tave  = (tmin + tmax) / 2.0;
-    double trng  = (tmax - tmin) / 2.0;
+    double tmin = state.tmin_daily;
+    double tmax = state.tmax_daily;
+    double tave = (tmin + tmax) / 2.0;
+    double trng = (tmax - tmin) / 2.0;
     // Trng1: overnight range using previous day's max → current min
     double trng1 = state.prev_tmax - tmin;
 
-    double hrsr  = state.hrsr;
-    double hrss  = state.hrss;
+    double hrsr = state.hrsr;
+    double hrss = state.hrss;
     double hrday = state.hrday;
-    double dhrdy = state.dhrdy;  // negative
+    double dhrdy = state.dhrdy; // negative
     double dydif = state.dydif;
 
     double ta;

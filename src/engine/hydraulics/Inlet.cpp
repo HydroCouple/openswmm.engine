@@ -15,13 +15,13 @@
 // limitations under the License.
 
 /**
- * @file Inlet.cpp
- * @brief Street inlet capture — numerically identical to legacy inlet.c.
+ * @file      Inlet.cpp
+ * @brief     Street inlet capture — numerically identical to legacy inlet.c.
  * @ingroup new_engine
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "Inlet.hpp"
@@ -50,25 +50,25 @@ namespace inlet {
 // out-of-range read is one memcpy away; getSplashOverVelocity() guards it here
 // instead of relying on the callers.
 static const double SPLASH_COEFFS[7][4] = {
-    {2.22, 4.03, 0.65, 0.06},     // P_BAR-50
-    {0.74, 2.44, 0.27, 0.02},     // P_BAR-50x100
-    {1.76, 3.12, 0.45, 0.03},     // P_BAR-30
-    {0.30, 4.85, 1.31, 0.15},     // CURVED_VANE
-    {0.99, 2.64, 0.36, 0.03},     // TILT_BAR-45
-    {0.51, 2.34, 0.20, 0.01},     // TILT_BAR-30
-    {0.28, 2.28, 0.18, 0.01},     // RETICULINE
+    {2.22, 4.03, 0.65, 0.06}, // P_BAR-50
+    {0.74, 2.44, 0.27, 0.02}, // P_BAR-50x100
+    {1.76, 3.12, 0.45, 0.03}, // P_BAR-30
+    {0.30, 4.85, 1.31, 0.15}, // CURVED_VANE
+    {0.99, 2.64, 0.36, 0.03}, // TILT_BAR-45
+    {0.51, 2.34, 0.20, 0.01}, // TILT_BAR-30
+    {0.28, 2.28, 0.18, 0.01}, // RETICULINE
 };
 
 // Grate opening ratios (HEC-22 Chart 9B, inlet.c:162-170)
 static const double GRATE_OPEN_RATIOS[8] = {
-    0.90,     // P_BAR-50
-    0.80,     // P_BAR-50x100
-    0.60,     // P_BAR-30
-    0.35,     // CURVED_VANE
-    0.17,     // TILT_BAR-45 (assumed)
-    0.34,     // TILT_BAR-30
-    0.80,     // RETICULINE
-    1.00,     // GENERIC
+    0.90, // P_BAR-50
+    0.80, // P_BAR-50x100
+    0.60, // P_BAR-30
+    0.35, // CURVED_VANE
+    0.17, // TILT_BAR-45 (assumed)
+    0.34, // TILT_BAR-30
+    0.80, // RETICULINE
+    1.00, // GENERIC
 };
 
 // ============================================================================
@@ -155,11 +155,11 @@ double getFlowSpread(const Geom& g, double Q) {
     double Ts1;
 
     if (g.a == 0.0) {
-        Ts1 = std::pow(Q / f, 0.375);                       // HEC-22 Eq(4-2)
+        Ts1 = std::pow(Q / f, 0.375); // HEC-22 Eq(4-2)
     } else {
         // --- check if spread is within curb width
         const double f1 = f * std::pow((g.a / g.w) / g.sx, 1.67);
-        const double Tw = std::pow(Q / f1, 0.375);          // HEC-22 Eq(4-2)
+        const double Tw = std::pow(Q / f1, 0.375); // HEC-22 Eq(4-2)
         if (Tw <= g.w) {
             Ts1 = Tw;
         } else {
@@ -168,12 +168,14 @@ double getFlowSpread(const Geom& g, double Q) {
             int iter = 1;
             double Ts2 = 0.0;
             Ts1 = std::pow(Q / f, 0.375) - g.w;
-            if (Ts1 <= 0) Ts1 = Tw - g.w;
+            if (Ts1 <= 0)
+                Ts1 = Tw - g.w;
             while (iter < 11) {
                 const double Eo = getEo(Sr, Ts1, g.w);
-                const double Qs = (1.0 - Eo) * Q;           // HEC-22 Eq(4-6)
-                Ts2 = std::pow(Qs / f, 0.375);              // HEC-22 Eq(4-2)
-                if (std::fabs(Ts2 - Ts1) < 0.01) break;
+                const double Qs = (1.0 - Eo) * Q; // HEC-22 Eq(4-6)
+                Ts2 = std::pow(Qs / f, 0.375);    // HEC-22 Eq(4-2)
+                if (std::fabs(Ts2 - Ts1) < 0.01)
+                    break;
                 Ts1 = Ts2;
                 iter++;
             }
@@ -185,16 +187,22 @@ double getFlowSpread(const Geom& g, double Q) {
 
 double getGutterFlowRatio(const Geom& g, double w) {
     // inlet.c:1518
-    if (g.t <= w) return 1.0;
-    else if (g.a > 0.0) return getEo(g.sw / g.sx, g.t - w, w);
-    else return 1.0 - std::pow((1.0 - w / g.t), 2.67);      // HEC-22 Eq(4-16)
+    if (g.t <= w)
+        return 1.0;
+    else if (g.a > 0.0)
+        return getEo(g.sw / g.sx, g.t - w, w);
+    else
+        return 1.0 - std::pow((1.0 - w / g.t), 2.67); // HEC-22 Eq(4-16)
 }
 
 double getGutterAreaRatio(const Geom& g, double Wg, double A) {
     // inlet.c:1535
-    if (Wg >= g.w)  return 1.0;
-    if (g.t <= Wg)  return 1.0;
-    if (g.t <= g.w) return Wg / g.t;
+    if (Wg >= g.w)
+        return 1.0;
+    if (g.t <= Wg)
+        return 1.0;
+    if (g.t <= g.w)
+        return Wg / g.t;
     const double As = 0.5 * (g.t - g.w) * (g.t - g.w) * g.sx;
     const double Ag = Wg * ((g.t * g.sx) + g.a - (Wg * g.sw / 2.0));
     return Ag / (A - As);
@@ -203,16 +211,20 @@ double getGutterAreaRatio(const Geom& g, double Wg, double A) {
 double getSplashOverVelocity(int grate_type, double L) {
     // inlet.c:1557. GENERIC (and any out-of-range code) has no fitted curve —
     // its splash-over velocity is the user-supplied value on the design.
-    if (grate_type < 0 || grate_type >= 7) return 0.0;
+    if (grate_type < 0 || grate_type >= 7)
+        return 0.0;
     const auto gt = static_cast<std::size_t>(grate_type);
-    return SPLASH_COEFFS[gt][0] +
-           SPLASH_COEFFS[gt][1] * L -
-           SPLASH_COEFFS[gt][2] * L * L +
+    return SPLASH_COEFFS[gt][0] + SPLASH_COEFFS[gt][1] * L - SPLASH_COEFFS[gt][2] * L * L +
            SPLASH_COEFFS[gt][3] * L * L * L;
 }
 
-/// Grate open-area ratio for a design (legacy GrateOpeningRatios lookup with
-/// the GENERIC/out-of-range guard the 7-row SplashCoeffs table lacks).
+/**
+ * @brief Select standard grate open-area ratio or authored generic fallback.
+ *
+ * @param[in] d Borrowed design; grate_type0..6 uses static ratios, every negative or>=GENERIC uses
+ *     frac_open_area.
+ * @return Dimensionless open-area ratio without finite/range validation.
+ */
 static double grateOpenRatio(const Design& d) {
     const int gt = d.grate_type;
     if (gt < 0 || gt >= static_cast<int>(GrateType::GENERIC))
@@ -225,15 +237,15 @@ double getGrateInletCapture(const Design& d, Geom& g, double Q) {
     // exactly as legacy's shared T / a / W / Sx do.
     const double Lg = d.grate_length;
     double Wg = d.grate_width;
-    double A;                 // total cross-section flow area (ft2)
-    double Eo;                // ratio of gutter to total flow
-    double Qo = Q;            // flow over street area (cfs)
-    double Rf = 1.0;          // ratio of intercepted to total frontal flow
-    double Rs = 0.0;          // ratio of intercepted to total side flow
+    double A;        // total cross-section flow area (ft2)
+    double Eo;       // ratio of gutter to total flow
+    double Qo = Q;   // flow over street area (cfs)
+    double Rf = 1.0; // ratio of intercepted to total frontal flow
+    double Rs = 0.0; // ratio of intercepted to total side flow
 
-    const bool channel = (g.xs != nullptr) &&
-        (g.xs->type == static_cast<int>(XSectShape::TRAPEZOIDAL) ||
-         g.xs->type == static_cast<int>(XSectShape::RECT_OPEN));
+    const bool channel =
+        (g.xs != nullptr) && (g.xs->type == static_cast<int>(XSectShape::TRAPEZOIDAL) ||
+                              g.xs->type == static_cast<int>(XSectShape::RECT_OPEN));
 
     // --- flow ratio for drop inlet in a rectangular/trapezoidal channel
     if (channel) {
@@ -241,32 +253,34 @@ double getGrateInletCapture(const Design& d, Geom& g, double Q) {
         const double Y = xsect::getYofA(*g.xs, A);
         g.t = xsect::getWofY(*g.xs, Y);
         Eo = g.beta * std::pow(Y * Wg, 1.67) / std::pow(Wg + 2 * Y, 0.67) / Q;
-        if (Wg > 0.99 * g.xs->y_bot &&
-            g.xs->type == static_cast<int>(XSectShape::TRAPEZOIDAL) &&
+        if (Wg > 0.99 * g.xs->y_bot && g.xs->type == static_cast<int>(XSectShape::TRAPEZOIDAL) &&
             g.xs->s_bot > 0.0) {
-            Wg   = g.xs->y_bot;
+            Wg = g.xs->y_bot;
             g.sx = 1.0 / g.xs->s_bot;
         }
     }
 
     // --- flow ratio & area for conventional street gutter
     else if (g.a == 0.0) {
-        A  = g.t * g.t * g.sx / 2.0;
-        Eo = getGutterFlowRatio(g, Wg);   // flow ratio based on grate width
-        if (g.t >= g.t_crown) Qo = g.qfactor * std::pow(g.t_crown, 2.67);
+        A = g.t * g.t * g.sx / 2.0;
+        Eo = getGutterFlowRatio(g, Wg); // flow ratio based on grate width
+        if (g.t >= g.t_crown)
+            Qo = g.qfactor * std::pow(g.t_crown, 2.67);
     }
 
     // --- flow ratio & area for composite street gutter
     else {
-        if (g.t <= g.w) A = g.t * g.t * g.sw / 2.0;        // spread within gutter
-        else            A = (g.t * g.t * g.sx + g.a * g.w) / 2.0;
+        if (g.t <= g.w)
+            A = g.t * g.t * g.sw / 2.0; // spread within gutter
+        else
+            A = (g.t * g.t * g.sx + g.a * g.w) / 2.0;
 
         // flow ratio based on gutter width corrected for grate width
         Eo = getGutterFlowRatio(g, g.w);
         if (Eo < 1.0) {
             if (g.t >= g.t_crown)
                 Qo = g.qfactor * std::pow(g.t_crown, 2.67) / (1.0 - Eo);
-            Eo = Eo * getGutterAreaRatio(g, Wg, A);        // HEC-22 Eq(4-20a)
+            Eo = Eo * getGutterAreaRatio(g, Wg, A); // HEC-22 Eq(4-20a)
         }
     }
 
@@ -279,36 +293,36 @@ double getGrateInletCapture(const Design& d, Geom& g, double Q) {
         Vo = getSplashOverVelocity(d.grate_type, Lg);
 
     // --- frontal flow capture efficiency
-    if (V > Vo) Rf = 1.0 - 0.09 * (V - Vo);                // HEC-22 Eq(4-18)
+    if (V > Vo)
+        Rf = 1.0 - 0.09 * (V - Vo); // HEC-22 Eq(4-18)
 
     // --- side flow capture efficiency
     if (Eo < 1.0)
-        Rs = 1.0 / (1.0 + (0.15 * std::pow(V, 1.8) /
-             g.sx / std::pow(Lg, 2.3)));                   // HEC-22 Eq(4-19)
+        Rs = 1.0 / (1.0 + (0.15 * std::pow(V, 1.8) / g.sx / std::pow(Lg, 2.3))); // HEC-22 Eq(4-19)
 
-    return Q * (Rf * Eo + Rs * (1.0 - Eo));                // HEC-22 Eq(4-21)
+    return Q * (Rf * Eo + Rs * (1.0 - Eo)); // HEC-22 Eq(4-21)
 }
 
 double getCurbInletCapture(const Geom& g, double Q, double L) {
     // inlet.c:1477
-    double Se = g.sx;     // equivalent gutter slope
-    double E  = 1.0;      // capture efficiency
+    double Se = g.sx; // equivalent gutter slope
+    double E = 1.0;   // capture efficiency
 
     // --- for depressed gutter section
     if (g.a > 0.0) {
         const double Sr = g.sw / g.sx;
         const double Eo = getEo(Sr, g.t - g.w, g.w);
-        Se = g.sx + (g.a / g.w) * Eo;                      // HEC-22 Eq(4-24)
+        Se = g.sx + (g.a / g.w) * Eo; // HEC-22 Eq(4-24)
     }
 
     // --- opening length for full capture
     const double Lt = 0.6 * std::pow(Q, 0.42) * std::pow(g.sl, 0.3) *
-                      std::pow(1.0 / (g.n * Se), 0.6);     // HEC-22 Eq(4-22a)
+                      std::pow(1.0 / (g.n * Se), 0.6); // HEC-22 Eq(4-22a)
 
     // --- capture efficiency for actual opening length
     if (L < Lt) {
         E = 1.0 - (L / Lt);
-        E = 1 - std::pow(E, 1.8);                          // HEC-22 Eq(4-23)
+        E = 1 - std::pow(E, 1.8); // HEC-22 Eq(4-23)
     }
     E = std::min(E, 1.0);
     E = std::max(E, 0.0);
@@ -340,7 +354,7 @@ double getOnGradeInletCapture(const Design& d, Geom& g, double Q, double depth) 
         return std::min(Qc, Q);
     }
 
-    const double Lcurb  = d.curb_length;
+    const double Lcurb = d.curb_length;
     const double Lgrate = d.grate_length;
 
     // --- curb opening inlet (the sweeper length ahead of the grate)
@@ -354,20 +368,23 @@ double getOnGradeInletCapture(const Design& d, Geom& g, double Q, double depth) 
 
     // --- grate inlet
     if (Lgrate > 0.0 && Q1 > 0.0) {
-        if (Q1 != Q) g.t = getFlowSpread(g, Q1);
+        if (Q1 != Q)
+            g.t = getFlowSpread(g, Q1);
         Qc += getGrateInletCapture(d, g, Q1);
     }
     return Qc;
 }
 
-double getOnGradeCapturedFlow(const Design& d, const UsageParams& u, Geom& g,
-                              double q, double depth) {
+double getOnGradeCapturedFlow(const Design& d, const UsageParams& u, Geom& g, double q,
+                              double depth) {
     // inlet.c:1267 — replicate inlets in series: each one sees the flow the
     // previous ones bypassed.
-    if (u.num_inlets == 0) return 0.0;
+    if (u.num_inlets == 0)
+        return 0.0;
 
     double qApproach = q;
-    if (qApproach < MIN_RUNOFF_FLOW) return 0.0;
+    if (qApproach < MIN_RUNOFF_FLOW)
+        return 0.0;
 
     // --- adjust flow for 2-sided street
     qApproach /= g.nsides;
@@ -376,7 +393,8 @@ double getOnGradeCapturedFlow(const Design& d, const UsageParams& u, Geom& g,
 
     // --- set limit on max. flow captured per inlet
     double qMax = INLET_BIG;
-    if (u.flow_limit > 0.0) qMax = u.flow_limit;
+    if (u.flow_limit > 0.0)
+        qMax = u.flow_limit;
 
     for (int i = 1; i <= u.num_inlets; ++i) {
         double qc = getOnGradeInletCapture(d, g, qBypassed, depth) * u.clog_factor;
@@ -384,37 +402,38 @@ double getOnGradeCapturedFlow(const Design& d, const UsageParams& u, Geom& g,
         qc = std::min(qc, qBypassed);
         qCaptured += qc;
         qBypassed -= qc;
-        if (qBypassed < MIN_RUNOFF_FLOW) break;
+        if (qBypassed < MIN_RUNOFF_FLOW)
+            break;
     }
     return qCaptured * g.nsides;
 }
 
-void findOnSagGrateFlows(const Design& d, const Geom& g, double depth,
-                         double* Qw, double* Qo) {
+void findOnSagGrateFlows(const Design& d, const Geom& g, double depth, double* Qw, double* Qo) {
     // inlet.c:1644
     const double Lg = d.grate_length;
     double Wg = d.grate_width;
-    double P;      // grate perimeter (ft)
-    double di;     // average flow depth across grate (ft)
+    double P;  // grate perimeter (ft)
+    double di; // average flow depth across grate (ft)
 
     // --- for drop grate inlets
     if (d.type == static_cast<int>(InletType::DROP_GRATE)) {
         di = depth;
-        P  = 2.0 * (Lg + Wg);
+        P = 2.0 * (Lg + Wg);
     }
     // --- for gutter grate inlets
     else {
-        if (depth <= Wg * g.sw) Wg = depth / g.sw;   // spread within grate width
-        di = depth - (Wg / 2.0) * g.sw;              // average depth over grate
-        P  = Lg + 2.0 * Wg;                          // effective grate perimeter
+        if (depth <= Wg * g.sw)
+            Wg = depth / g.sw;          // spread within grate width
+        di = depth - (Wg / 2.0) * g.sw; // average depth over grate
+        P = Lg + 2.0 * Wg;              // effective grate perimeter
     }
 
-    const double Ao = Lg * Wg * grateOpenRatio(d);   // grate opening area (ft2)
+    const double Ao = Lg * Wg * grateOpenRatio(d); // grate opening area (ft2)
 
     // --- weir flow applies (below the depth where the weir and orifice
     //     equations agree), otherwise orifice flow
     if (depth <= 1.79 * Ao / P)
-        *Qw = 3.0 * P * std::pow(di, 1.5);           // HEC-22 Eq(4-26)
+        *Qw = 3.0 * P * std::pow(di, 1.5); // HEC-22 Eq(4-26)
     else
         *Qo = 0.67 * Ao * std::sqrt(2.0 * 32.16 * di); // HEC-22 Eq(4-27)
 }
@@ -426,19 +445,21 @@ double getCurbOrificeFlow(double di, double h, double L, int throat_angle) {
         d = di - h / 2.0;
     else if (throat_angle == static_cast<int>(ThroatAngle::INCLINED))
         d = di - (h / 2.0) * 0.7071;
-    return 0.67 * h * L * std::sqrt(2.0 * 32.16 * d);  // HEC-22 Eq(4-31a)
+    return 0.67 * h * L * std::sqrt(2.0 * 32.16 * d); // HEC-22 Eq(4-31a)
 }
 
-void findOnSagCurbFlows(const Design& d, const Geom& g, double depth, double L,
-                        double* Qw, double* Qo) {
+void findOnSagCurbFlows(const Design& d, const Geom& g, double depth, double L, double* Qw,
+                        double* Qo) {
     // inlet.c:1703
-    const int    throat = d.curb_throat;
-    const double h      = d.curb_height;
+    const int throat = d.curb_throat;
+    const double h = d.curb_height;
     double Qweir = 0.0, dweir;
 
-    if (L <= 0.0) return;
+    if (L <= 0.0)
+        return;
     // A drop curb opening in a channel is open on all four sides.
-    if (d.type == static_cast<int>(InletType::DROP_CURB)) L = L * 4.0;
+    if (d.type == static_cast<int>(InletType::DROP_CURB))
+        L = L * 4.0;
 
     // --- check for orifice flow
     const double dorif = 1.4 * h;
@@ -451,7 +472,7 @@ void findOnSagCurbFlows(const Design& d, const Geom& g, double depth, double L,
     if (g.a == 0.0 || L > 12.0) {
         dweir = h;
         if (depth < dweir) {
-            *Qw = 3.0 * L * std::pow(depth, 1.5);          // HEC-22 Eq(4-30)
+            *Qw = 3.0 * L * std::pow(depth, 1.5); // HEC-22 Eq(4-30)
             return;
         }
         Qweir = 3.0 * L * std::pow(dweir, 1.5);
@@ -461,7 +482,7 @@ void findOnSagCurbFlows(const Design& d, const Geom& g, double depth, double L,
         const double P = L + 1.8 * g.w;
         dweir = h + g.a;
         if (depth < dweir) {
-            *Qw = 2.3 * P * std::pow(depth, 1.5);          // HEC-22 Eq(4-28)
+            *Qw = 2.3 * P * std::pow(depth, 1.5); // HEC-22 Eq(4-28)
             return;
         }
         Qweir = 2.3 * P * std::pow(dweir, 1.5);
@@ -479,29 +500,33 @@ double getOnSagSlottedFlow(const Design& d, double depth) {
     const double L = d.slotted_length;
     const double w = d.slotted_width;
     if (depth <= 2.587 * w)
-        return 2.48 * L * std::pow(depth, 1.5);            // HEC-22 Eq(4-32)
-    return 0.8 * L * w * std::sqrt(64.32 * depth);         // HEC-22 Eq(4-33)
+        return 2.48 * L * std::pow(depth, 1.5);    // HEC-22 Eq(4-32)
+    return 0.8 * L * w * std::sqrt(64.32 * depth); // HEC-22 Eq(4-33)
 }
 
 double getOnSagInletCapture(const Design& d, const Geom& g, double depth) {
     // inlet.c:1610
-    double Qsw = 0.0,   // sweeper curb opening weir flow
-           Qso = 0.0,   // sweeper curb opening orifice flow
-           Qgw = 0.0,   // grate weir flow
-           Qgo = 0.0,   // grate orifice flow
-           Qcw = 0.0,   // curb opening weir flow (deliberately not summed)
-           Qco = 0.0;   // curb opening orifice flow
+    double Qsw = 0.0, // sweeper curb opening weir flow
+        Qso = 0.0,    // sweeper curb opening orifice flow
+        Qgw = 0.0,    // grate weir flow
+        Qgo = 0.0,    // grate orifice flow
+        Qcw = 0.0,    // curb opening weir flow (deliberately not summed)
+        Qco = 0.0;    // curb opening orifice flow
 
-    if (d.slotted_length > 0.0) return getOnSagSlottedFlow(d, depth);
+    if (d.slotted_length > 0.0)
+        return getOnSagSlottedFlow(d, depth);
 
     const double Lgrate = d.grate_length;
-    if (Lgrate > 0.0) findOnSagGrateFlows(d, g, depth, &Qgw, &Qgo);
+    if (Lgrate > 0.0)
+        findOnSagGrateFlows(d, g, depth, &Qgw, &Qgo);
 
     const double Lcurb = d.curb_length;
     if (Lcurb > 0.0) {
         const double Lsweep = Lcurb - Lgrate;
-        if (Lsweep > 0.0) findOnSagCurbFlows(d, g, depth, Lsweep, &Qsw, &Qso);
-        if (Qgo > 0.0)    findOnSagCurbFlows(d, g, depth, Lgrate, &Qcw, &Qco);
+        if (Lsweep > 0.0)
+            findOnSagCurbFlows(d, g, depth, Lsweep, &Qsw, &Qso);
+        if (Qgo > 0.0)
+            findOnSagCurbFlows(d, g, depth, Lgrate, &Qcw, &Qco);
     }
     // Qcw is excluded: once the grate is in orifice mode the curb opening over
     // the grate can only add its orifice share (legacy inlet.c:1639).
@@ -509,16 +534,18 @@ double getOnSagInletCapture(const Design& d, const Geom& g, double depth) {
     return Qgw + Qgo + Qsw + Qso + Qco;
 }
 
-double getOnSagCapturedFlow(const Design& d, const UsageParams& u,
-                            const Geom& g, double depth, int nsides_prev) {
+double getOnSagCapturedFlow(const Design& d, const UsageParams& u, const Geom& g, double depth,
+                            int nsides_prev) {
     // inlet.c:1574. `totalInlets` is formed from the module-level Nsides as it
     // stood on ENTRY — legacy computes it before getConduitGeometry() sets
     // Nsides for this inlet, so it carries the previous inlet's street.
-    if (u.num_inlets == 0) return 0.0;
+    if (u.num_inlets == 0)
+        return 0.0;
     const int totalInlets = nsides_prev * u.num_inlets;
 
     double qMax = INLET_BIG;
-    if (u.flow_limit > 0.0) qMax = u.flow_limit;
+    if (u.flow_limit > 0.0)
+        qMax = u.flow_limit;
 
     double qCaptured = getOnSagInletCapture(d, g, std::fabs(depth));
     qCaptured *= u.clog_factor;
@@ -527,15 +554,16 @@ double getOnSagCapturedFlow(const Design& d, const UsageParams& u,
     return qCaptured;
 }
 
-double getCustomCapturedFlow(const UsageParams& u, const Geom& g,
-                             const Table& curve, int curve_kind,
-                             double q, double depth,
-                             double ucf_flow, double ucf_len) {
+double getCustomCapturedFlow(const UsageParams& u, const Geom& g, const Table& curve,
+                             int curve_kind, double q, double depth, double ucf_flow,
+                             double ucf_len) {
     // inlet.c:1902
-    if (u.num_inlets == 0) return 0.0;
+    if (u.num_inlets == 0)
+        return 0.0;
 
     double qMax = INLET_BIG;
-    if (u.flow_limit > 0.0) qMax = u.flow_limit;
+    if (u.flow_limit > 0.0)
+        qMax = u.flow_limit;
 
     // --- adjust flow for 2-sided street (1 for a non-Street conduit)
     const int sides = g.nsides;
@@ -545,18 +573,19 @@ double getCustomCapturedFlow(const UsageParams& u, const Geom& g,
     if (curve_kind == static_cast<int>(CurveKind::DIVERSION)) {
         // --- curve is captured flow v. approach flow
         for (int j = 1; j <= u.num_inlets; ++j) {
-            double qIncrement = u.clog_factor *
-                table_lookupEx(curve, qBypassed * ucf_flow) / ucf_flow;
+            double qIncrement =
+                u.clog_factor * table_lookupEx(curve, qBypassed * ucf_flow) / ucf_flow;
             qIncrement = std::min(qIncrement, qMax);
             qIncrement = std::min(qIncrement, qBypassed);
             qCaptured += qIncrement;
             qBypassed -= qIncrement;
-            if (qBypassed < MIN_RUNOFF_FLOW) break;
+            if (qBypassed < MIN_RUNOFF_FLOW)
+                break;
         }
     } else if (curve_kind == static_cast<int>(CurveKind::RATING)) {
         // --- curve is captured flow v. downstream node depth
-        qCaptured = u.num_inlets * u.clog_factor *
-            table_lookupEx(curve, depth * ucf_len) / ucf_flow;
+        qCaptured =
+            u.num_inlets * u.clog_factor * table_lookupEx(curve, depth * ucf_len) / ucf_flow;
     }
     return qCaptured * sides;
 }
@@ -568,9 +597,11 @@ double getInletArea(const Design& d, const UsageParams& u) {
         area = d.grate_length * d.grate_width * grateOpenRatio(d);
 
     const double curbLength = d.curb_length - d.grate_length;
-    if (curbLength > 0.0) area += curbLength * d.curb_height;
+    if (curbLength > 0.0)
+        area += curbLength * d.curb_height;
 
-    if (d.slotted_length > 0.0) area = d.slotted_length * d.slotted_width;
+    if (d.slotted_length > 0.0)
+        area = d.slotted_length * d.slotted_width;
 
     return area * u.num_inlets * u.clog_factor;
 }
@@ -582,49 +613,48 @@ double getInletArea(const Design& d, const UsageParams& u) {
 Design InletSolver::designOf(int ii) const {
     const auto ui = static_cast<std::size_t>(ii);
     Design d;
-    d.type           = soa_.inlet_type[ui];
-    d.grate_type     = soa_.grate_type[ui];
-    d.grate_length   = soa_.grate_length[ui];
-    d.grate_width    = soa_.grate_width[ui];
+    d.type = soa_.inlet_type[ui];
+    d.grate_type = soa_.grate_type[ui];
+    d.grate_length = soa_.grate_length[ui];
+    d.grate_width = soa_.grate_width[ui];
     d.frac_open_area = soa_.open_area[ui];
-    d.splash_veloc   = soa_.splash_veloc[ui];
-    d.curb_length    = soa_.curb_length[ui];
-    d.curb_height    = soa_.curb_height[ui];
-    d.curb_throat    = soa_.curb_throat[ui];
+    d.splash_veloc = soa_.splash_veloc[ui];
+    d.curb_length = soa_.curb_length[ui];
+    d.curb_height = soa_.curb_height[ui];
+    d.curb_throat = soa_.curb_throat[ui];
     d.slotted_length = soa_.slotted_length[ui];
-    d.slotted_width  = soa_.slotted_width[ui];
+    d.slotted_width = soa_.slotted_width[ui];
     return d;
 }
 
 UsageParams InletSolver::usageOf(int ii) const {
     const auto ui = static_cast<std::size_t>(ii);
     UsageParams u;
-    u.num_inlets  = soa_.num_inlets[ui];
+    u.num_inlets = soa_.num_inlets[ui];
     u.clog_factor = soa_.clog_factor[ui];
-    u.flow_limit  = soa_.flow_limit[ui];
+    u.flow_limit = soa_.flow_limit[ui];
     return u;
 }
 
-Geom InletSolver::geomOf(const SimulationContext& ctx, int ii,
-                         const XSectParams* xs) const {
+Geom InletSolver::geomOf(const SimulationContext& ctx, int ii, const XSectParams* xs) const {
     (void)ctx;
     const auto ui = static_cast<std::size_t>(ii);
     Geom g;
-    g.sx      = soa_.sx[ui];
-    g.sl      = soa_.slope[ui];
-    g.a       = soa_.gutter_depression[ui];
-    g.w       = soa_.gutter_width[ui];
-    g.n       = soa_.road_roughness[ui];
-    g.nsides  = soa_.n_sides[ui];
+    g.sx = soa_.sx[ui];
+    g.sl = soa_.slope[ui];
+    g.a = soa_.gutter_depression[ui];
+    g.w = soa_.gutter_width[ui];
+    g.n = soa_.road_roughness[ui];
+    g.nsides = soa_.n_sides[ui];
     g.t_crown = soa_.t_crown[ui];
     g.qfactor = soa_.flow_factor[ui];
-    g.xs      = xs;
+    g.xs = xs;
 
     // --- add the inlet's local depression to the street's continuous one
     //     (inlet.c:1175-1180)
     if (soa_.local_depress[ui] * soa_.local_width[ui] > 0.0) {
         g.a += soa_.local_depress[ui];
-        g.w  = soa_.local_width[ui];
+        g.w = soa_.local_width[ui];
     }
 
     // --- slope of depressed gutter section (inlet.c:1182-1183)
@@ -644,7 +674,8 @@ void InletSolver::init(SimulationContext& ctx) {
     auto& usages = ctx.inlet_usages;
     const int n = usages.count();
     soa_.resize(n);
-    if (n == 0) return;
+    if (n == 0)
+        return;
 
     const int nn = ctx.n_nodes();
     const int nl = ctx.n_links();
@@ -655,7 +686,7 @@ void InletSolver::init(SimulationContext& ctx) {
     // Stores keep user (display) units; convert once here (same treatment the
     // street transect builder gives StreetStore, PostParseResolver.cpp:2287).
     const int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
-    const double inv_len  = ucf::Ucf_inv[ucf::LENGTH][static_cast<std::size_t>(us)];
+    const double inv_len = ucf::Ucf_inv[ucf::LENGTH][static_cast<std::size_t>(us)];
     const double inv_flow = ucf::Qcf_inv[static_cast<std::size_t>(ctx.options.flow_units)];
 
     // Legacy Node[].degree = outflow-link count (toposort.c:70-91), consulted
@@ -664,13 +695,13 @@ void InletSolver::init(SimulationContext& ctx) {
     std::vector<int> out_degree(static_cast<std::size_t>(nn), 0);
     for (int j = 0; j < nl; ++j) {
         const auto uj = static_cast<std::size_t>(j);
-        int m = (ctx.links.direction[uj] < 0) ? ctx.links.node2[uj]
-                                              : ctx.links.node1[uj];
-        if (m < 0 || m >= nn) continue;
+        int m = (ctx.links.direction[uj] < 0) ? ctx.links.node2[uj] : ctx.links.node1[uj];
+        if (m < 0 || m >= nn)
+            continue;
         if (ctx.nodes.type[static_cast<std::size_t>(m)] == NodeType::OUTFALL) {
-            m = (ctx.links.direction[uj] < 0) ? ctx.links.node1[uj]
-                                              : ctx.links.node2[uj];
-            if (m < 0 || m >= nn) continue;
+            m = (ctx.links.direction[uj] < 0) ? ctx.links.node1[uj] : ctx.links.node2[uj];
+            if (m < 0 || m >= nn)
+                continue;
         }
         out_degree[static_cast<std::size_t>(m)]++;
     }
@@ -681,18 +712,18 @@ void InletSolver::init(SimulationContext& ctx) {
         const int nh = usages.node_host[ui];
         const int di = usages.design_index[ui];
 
-        soa_.link_idx[ui]      = li;
-        soa_.host_node[ui]     = nh;
-        soa_.node_idx[ui]      = usages.node_index[ui];
+        soa_.link_idx[ui] = li;
+        soa_.host_node[ui] = nh;
+        soa_.node_idx[ui] = usages.node_index[ui];
         // legacy inlet.c:512 `Node[inlet->nodeIndex].inlet = CAPTURE`
         if (soa_.node_idx[ui] >= 0 && soa_.node_idx[ui] < nn)
             is_capture_node_[static_cast<std::size_t>(soa_.node_idx[ui])] = 1;
-        soa_.num_inlets[ui]    = usages.num_inlets[ui];
-        soa_.clog_factor[ui]   = usages.clog_factor[ui];
-        soa_.flow_limit[ui]    = usages.flow_limit[ui] * inv_flow;
+        soa_.num_inlets[ui] = usages.num_inlets[ui];
+        soa_.clog_factor[ui] = usages.clog_factor[ui];
+        soa_.flow_limit[ui] = usages.flow_limit[ui] * inv_flow;
         soa_.local_depress[ui] = usages.local_depress[ui] * inv_len;
-        soa_.local_width[ui]   = usages.local_width[ui] * inv_len;
-        soa_.placement[ui]     = usages.placement[ui];
+        soa_.local_width[ui] = usages.local_width[ui] * inv_len;
+        soa_.placement[ui] = usages.placement[ui];
 
         // ------------------------------------------------------------------
         // Design (InletStore rows are in user units)
@@ -701,38 +732,52 @@ void InletSolver::init(SimulationContext& ctx) {
             const auto ud = static_cast<std::size_t>(di);
             const std::string& type_str = ctx.inlets.inlet_type[ud];
             int itype = static_cast<int>(InletType::CUSTOM);
-            if      (type_str == "GRATE")      itype = static_cast<int>(InletType::GRATE);
-            else if (type_str == "CURB")       itype = static_cast<int>(InletType::CURB);
-            else if (type_str == "COMBO")      itype = static_cast<int>(InletType::COMBO);
-            else if (type_str == "SLOTTED")    itype = static_cast<int>(InletType::SLOTTED);
-            else if (type_str == "DROP_GRATE") itype = static_cast<int>(InletType::DROP_GRATE);
-            else if (type_str == "DROP_CURB")  itype = static_cast<int>(InletType::DROP_CURB);
-            else if (type_str == "CUSTOM")     itype = static_cast<int>(InletType::CUSTOM);
+            if (type_str == "GRATE")
+                itype = static_cast<int>(InletType::GRATE);
+            else if (type_str == "CURB")
+                itype = static_cast<int>(InletType::CURB);
+            else if (type_str == "COMBO")
+                itype = static_cast<int>(InletType::COMBO);
+            else if (type_str == "SLOTTED")
+                itype = static_cast<int>(InletType::SLOTTED);
+            else if (type_str == "DROP_GRATE")
+                itype = static_cast<int>(InletType::DROP_GRATE);
+            else if (type_str == "DROP_CURB")
+                itype = static_cast<int>(InletType::DROP_CURB);
+            else if (type_str == "CUSTOM")
+                itype = static_cast<int>(InletType::CUSTOM);
             soa_.inlet_type[ui] = itype;
 
             const std::string& gt_str = ctx.inlets.grate_type[ud];
             int gt = static_cast<int>(GrateType::GENERIC);
-            if      (gt_str == "P_BAR-50")     gt = static_cast<int>(GrateType::P_BAR_50);
-            else if (gt_str == "P_BAR-50x100") gt = static_cast<int>(GrateType::P_BAR_50x100);
-            else if (gt_str == "P_BAR-30")     gt = static_cast<int>(GrateType::P_BAR_30);
-            else if (gt_str == "CURVED_VANE")  gt = static_cast<int>(GrateType::CURVED_VANE);
-            else if (gt_str == "TILT_BAR-45")  gt = static_cast<int>(GrateType::TILT_BAR_45);
-            else if (gt_str == "TILT_BAR-30")  gt = static_cast<int>(GrateType::TILT_BAR_30);
-            else if (gt_str == "RETICULINE")   gt = static_cast<int>(GrateType::RETICULINE);
+            if (gt_str == "P_BAR-50")
+                gt = static_cast<int>(GrateType::P_BAR_50);
+            else if (gt_str == "P_BAR-50x100")
+                gt = static_cast<int>(GrateType::P_BAR_50x100);
+            else if (gt_str == "P_BAR-30")
+                gt = static_cast<int>(GrateType::P_BAR_30);
+            else if (gt_str == "CURVED_VANE")
+                gt = static_cast<int>(GrateType::CURVED_VANE);
+            else if (gt_str == "TILT_BAR-45")
+                gt = static_cast<int>(GrateType::TILT_BAR_45);
+            else if (gt_str == "TILT_BAR-30")
+                gt = static_cast<int>(GrateType::TILT_BAR_30);
+            else if (gt_str == "RETICULINE")
+                gt = static_cast<int>(GrateType::RETICULINE);
             soa_.grate_type[ui] = gt;
 
             // `length`/`width` are the grate dimensions for the grate family
             // and the slot dimensions for SLOTTED (InfraData.hpp column map).
             if (itype == static_cast<int>(InletType::SLOTTED)) {
                 soa_.slotted_length[ui] = ctx.inlets.length[ud] * inv_len;
-                soa_.slotted_width[ui]  = ctx.inlets.width[ud]  * inv_len;
+                soa_.slotted_width[ui] = ctx.inlets.width[ud] * inv_len;
             } else if (itype == static_cast<int>(InletType::GRATE) ||
                        itype == static_cast<int>(InletType::DROP_GRATE) ||
                        itype == static_cast<int>(InletType::COMBO)) {
                 soa_.grate_length[ui] = ctx.inlets.length[ud] * inv_len;
-                soa_.grate_width[ui]  = ctx.inlets.width[ud]  * inv_len;
+                soa_.grate_width[ui] = ctx.inlets.width[ud] * inv_len;
             }
-            soa_.open_area[ui]    = ctx.inlets.open_area[ud];
+            soa_.open_area[ui] = ctx.inlets.open_area[ud];
             soa_.splash_veloc[ui] = ctx.inlets.splash_veloc[ud] * inv_len;
 
             if (itype == static_cast<int>(InletType::CURB) ||
@@ -744,7 +789,7 @@ void InletSolver::init(SimulationContext& ctx) {
             }
 
             soa_.curve_index[ui] = ctx.inlets.curve_index[ud];
-            soa_.curve_kind[ui]  = ctx.inlets.curve_kind[ud];
+            soa_.curve_kind[ui] = ctx.inlets.curve_kind[ud];
         }
 
         // ------------------------------------------------------------------
@@ -760,30 +805,40 @@ void InletSolver::init(SimulationContext& ctx) {
             bypass = nh;
             for (int j = 0; j < nl && up2 < 0; ++j) {
                 const auto uj = static_cast<std::size_t>(j);
-                if (ctx.links.type[uj] != LinkType::CONDUIT) continue;
-                if (ctx.links.node2[uj] != nh) continue;
-                if (up < 0) up = j; else up2 = j;
+                if (ctx.links.type[uj] != LinkType::CONDUIT)
+                    continue;
+                if (ctx.links.node2[uj] != nh)
+                    continue;
+                if (up < 0)
+                    up = j;
+                else
+                    up2 = j;
             }
             if (up < 0) {
                 // Both conduits leave the node (a crest): fall back to either
                 // one for geometry; the approach flow is then 0 by definition.
                 for (int j = 0; j < nl; ++j) {
                     const auto uj = static_cast<std::size_t>(j);
-                    if (ctx.links.type[uj] == LinkType::CONDUIT &&
-                        ctx.links.node1[uj] == nh) { up = j; break; }
+                    if (ctx.links.type[uj] == LinkType::CONDUIT && ctx.links.node1[uj] == nh) {
+                        up = j;
+                        break;
+                    }
                 }
             }
             if (up2 >= 0) {
                 soa_.two_inbound[ui] = 1;
                 // Geometry comes from the steeper of the two approaches
                 // (plan §4 item 5 — the one that governs the gutter flow).
-                const int ca  = ctx.link_subtypes.conduit_row(up);
-                const int cb  = ctx.link_subtypes.conduit_row(up2);
-                const double sa = (ca >= 0) ? ctx.link_subtypes.conduits
-                                      .slope[static_cast<std::size_t>(ca)] : 0.0;
-                const double sb = (cb >= 0) ? ctx.link_subtypes.conduits
-                                      .slope[static_cast<std::size_t>(cb)] : 0.0;
-                if (sb > sa) std::swap(up, up2);
+                const int ca = ctx.link_subtypes.conduit_row(up);
+                const int cb = ctx.link_subtypes.conduit_row(up2);
+                const double sa =
+                    (ca >= 0) ? ctx.link_subtypes.conduits.slope[static_cast<std::size_t>(ca)]
+                              : 0.0;
+                const double sb =
+                    (cb >= 0) ? ctx.link_subtypes.conduits.slope[static_cast<std::size_t>(cb)]
+                              : 0.0;
+                if (sb > sa)
+                    std::swap(up, up2);
             }
         } else if (li >= 0 && li < nl) {
             // Conduit-attribute usage: legacy books bypass at node2 of the
@@ -793,8 +848,8 @@ void InletSolver::init(SimulationContext& ctx) {
             up = li;
         }
         soa_.bypass_node[ui] = bypass;
-        soa_.up_link[ui]     = up;
-        soa_.up_link2[ui]    = up2;
+        soa_.up_link[ui] = up;
+        soa_.up_link2[ui] = up2;
 
         // ------------------------------------------------------------------
         // Street / channel geometry (inlet.c:1147-1196)
@@ -802,40 +857,39 @@ void InletSolver::init(SimulationContext& ctx) {
         const int si = usages.street_index[ui];
         if (si >= 0 && si < ctx.streets.count()) {
             const auto su = static_cast<std::size_t>(si);
-            soa_.sx[ui]                = ctx.streets.sx[su] / 100.0;  // % → fraction
+            soa_.sx[ui] = ctx.streets.sx[su] / 100.0; // % → fraction
             soa_.gutter_depression[ui] = ctx.streets.gutter_depres[su] * inv_len;
-            soa_.gutter_width[ui]      = ctx.streets.gutter_width[su] * inv_len;
-            soa_.road_roughness[ui]    = ctx.streets.n_road[su];
-            soa_.n_sides[ui]           = ctx.streets.sides[su];
-            soa_.t_crown[ui]           = ctx.streets.t_crown[su] * inv_len;
+            soa_.gutter_width[ui] = ctx.streets.gutter_width[su] * inv_len;
+            soa_.road_roughness[ui] = ctx.streets.n_road[su];
+            soa_.n_sides[ui] = ctx.streets.sides[su];
+            soa_.t_crown[ui] = ctx.streets.t_crown[su] * inv_len;
         } else {
             // Rectangular / trapezoidal channel defaults (inlet.c:1188-1195).
             // PARITY NOTE: legacy leaves the shared Tcrown at whatever the
             // previous street inlet set it to; use an unreachable spread
             // instead so the result does not depend on evaluation order.
             const int cr = (up >= 0) ? ctx.link_subtypes.conduit_row(up) : -1;
-            soa_.sx[ui]                = 0.01;
+            soa_.sx[ui] = 0.01;
             soa_.gutter_depression[ui] = 0.0;
-            soa_.gutter_width[ui]      = 0.0;
-            soa_.road_roughness[ui]    = (cr >= 0)
-                ? ctx.link_subtypes.conduits.roughness[static_cast<std::size_t>(cr)]
-                : 0.01;
-            soa_.n_sides[ui]           = 1;
-            soa_.t_crown[ui]           = 100.0;
+            soa_.gutter_width[ui] = 0.0;
+            soa_.road_roughness[ui] =
+                (cr >= 0) ? ctx.link_subtypes.conduits.roughness[static_cast<std::size_t>(cr)]
+                          : 0.01;
+            soa_.n_sides[ui] = 1;
+            soa_.t_crown[ui] = 100.0;
         }
 
         // Longitudinal slope of the approach conduit + Izzard's flow factor.
         {
             const int cr = (up >= 0) ? ctx.link_subtypes.conduit_row(up) : -1;
-            const double sl = (cr >= 0)
-                ? ctx.link_subtypes.conduits.slope[static_cast<std::size_t>(cr)]
-                : 0.0;
+            const double sl =
+                (cr >= 0) ? ctx.link_subtypes.conduits.slope[static_cast<std::size_t>(cr)] : 0.0;
             soa_.slope[ui] = sl;
             // inlet.c:520 — pow(Sx, 1.67), NOT the exact 5/3 exponent.
             soa_.flow_factor[ui] = (soa_.road_roughness[ui] > 0.0 && sl > 0.0)
-                ? (0.56 / soa_.road_roughness[ui]) * std::pow(sl, 0.5)
-                  * std::pow(soa_.sx[ui], 1.67)
-                : 0.0;
+                                       ? (0.56 / soa_.road_roughness[ui]) * std::pow(sl, 0.5) *
+                                             std::pow(soa_.sx[ui], 1.67)
+                                       : 0.0;
         }
 
         // ------------------------------------------------------------------
@@ -855,14 +909,19 @@ void InletSolver::init(SimulationContext& ctx) {
             int n_toward = 0, n_attached = 0;
             for (int j = 0; j < nl; ++j) {
                 const auto uj = static_cast<std::size_t>(j);
-                if (ctx.links.type[uj] != LinkType::CONDUIT) continue;
+                if (ctx.links.type[uj] != LinkType::CONDUIT)
+                    continue;
                 const int a = ctx.links.node1[uj], b = ctx.links.node2[uj];
                 int far = -1;
-                if (a == nh) far = b; else if (b == nh) far = a; else continue;
+                if (a == nh)
+                    far = b;
+                else if (b == nh)
+                    far = a;
+                else
+                    continue;
                 ++n_attached;
                 if (far >= 0 && far < nn &&
-                    ctx.nodes.invert_elev[static_cast<std::size_t>(far)]
-                        > z + constants::FUDGE)
+                    ctx.nodes.invert_elev[static_cast<std::size_t>(far)] > z + constants::FUDGE)
                     ++n_toward;
             }
             sag = (n_attached > 0 && n_toward == n_attached) ? 1 : 0;
@@ -890,7 +949,8 @@ void InletSolver::init(SimulationContext& ctx) {
 
 void InletSolver::computeAll(SimulationContext& ctx, double dt) {
     const int ni = soa_.count;
-    if (ni == 0) return;
+    if (ni == 0)
+        return;
 
     auto& links = ctx.links;
     auto& nodes = ctx.nodes;
@@ -900,7 +960,7 @@ void InletSolver::computeAll(SimulationContext& ctx, double dt) {
     const bool report_on = (ctx.current_date > ctx.options.report_start);
 
     const int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
-    const double ucf_len  = ucf::Ucf[ucf::LENGTH][static_cast<std::size_t>(us)];
+    const double ucf_len = ucf::Ucf[ucf::LENGTH][static_cast<std::size_t>(us)];
     const double ucf_flow = ucf::Qcf[static_cast<std::size_t>(ctx.options.flow_units)];
 
     // Sized in init(); re-sized only if the model grew through the edit API.
@@ -923,8 +983,7 @@ void InletSolver::computeAll(SimulationContext& ctx, double dt) {
             const auto uj = static_cast<std::size_t>(j);
             const int n2 = links.node2[uj];
             if (n2 >= 0 && n2 < nn)
-                node_inflow_[static_cast<std::size_t>(n2)] +=
-                    std::max(0.0, links.flow[uj]);
+                node_inflow_[static_cast<std::size_t>(n2)] += std::max(0.0, links.flow[uj]);
         }
     }
 
@@ -937,15 +996,17 @@ void InletSolver::computeAll(SimulationContext& ctx, double dt) {
     for (int ii = ni - 1; ii >= 0; --ii) {
         const auto ui = static_cast<std::size_t>(ii);
         soa_.flow_capture[ui] = 0.0;
-        soa_.q_approach[ui]   = 0.0;
-        soa_.backflow[ui]     = 0.0;
+        soa_.q_approach[ui] = 0.0;
+        soa_.backflow[ui] = 0.0;
 
-        const int host    = soa_.bypass_node[ui];
+        const int host = soa_.bypass_node[ui];
         const int capture = soa_.node_idx[ui];
-        if (host < 0 || host >= nn) continue;
-        if (capture < 0 || capture >= nn) continue;
+        if (host < 0 || host >= nn)
+            continue;
+        if (capture < 0 || capture >= nn)
+            continue;
 
-        const int up  = soa_.up_link[ui];
+        const int up = soa_.up_link[ui];
         const int up2 = soa_.up_link2[ui];
 
         // --- approach flow
@@ -964,17 +1025,15 @@ void InletSolver::computeAll(SimulationContext& ctx, double dt) {
 
         const double depth = nodes.depth[static_cast<std::size_t>(host)];
 
-        const Design      d = designOf(ii);
+        const Design d = designOf(ii);
         const UsageParams u = usageOf(ii);
 
         // The channel cross-section is needed only by the DROP_* designs.
         XSectParams xs{};
         const XSectParams* xsp = nullptr;
-        if (up >= 0 &&
-            (d.type == static_cast<int>(InletType::DROP_GRATE) ||
-             d.type == static_cast<int>(InletType::DROP_CURB))) {
-            xs  = link::buildXSectParams(links, static_cast<std::size_t>(up),
-                                         &ctx.transect_tables);
+        if (up >= 0 && (d.type == static_cast<int>(InletType::DROP_GRATE) ||
+                        d.type == static_cast<int>(InletType::DROP_CURB))) {
+            xs = link::buildXSectParams(links, static_cast<std::size_t>(up), &ctx.transect_tables);
             xsp = &xs;
         }
         Geom g = geomOf(ctx, ii, xsp);
@@ -983,38 +1042,42 @@ void InletSolver::computeAll(SimulationContext& ctx, double dt) {
         if (d.type == static_cast<int>(InletType::CUSTOM)) {
             const int ci = soa_.curve_index[ui];
             if (ci >= 0 && ci < static_cast<int>(ctx.tables.tables.size()))
-                qc = getCustomCapturedFlow(u, g,
-                        ctx.tables.tables[static_cast<std::size_t>(ci)],
-                        soa_.curve_kind[ui], q, depth, ucf_flow, ucf_len);
+                qc = getCustomCapturedFlow(u, g, ctx.tables.tables[static_cast<std::size_t>(ci)],
+                                           soa_.curve_kind[ui], q, depth, ucf_flow, ucf_len);
         } else if (soa_.is_sag[ui] == 0) {
             qc = getOnGradeCapturedFlow(d, u, g, q, depth);
             // getConduitGeometry runs past both early returns (inlet.c:1290).
-            if (u.num_inlets != 0 && q >= MIN_RUNOFF_FLOW) nsides_prev_ = g.nsides;
+            if (u.num_inlets != 0 && q >= MIN_RUNOFF_FLOW)
+                nsides_prev_ = g.nsides;
         } else {
             // On-sag capture is depth-driven; the approach flow only caps it
             // (second pass). Under non-DW routing legacy feeds the node's
             // accumulated inflow instead of the link flow.
             qc = getOnSagCapturedFlow(d, u, g, depth, nsides_prev_);
-            if (u.num_inlets != 0) nsides_prev_ = g.nsides;
+            if (u.num_inlets != 0)
+                nsides_prev_ = g.nsides;
         }
-        if (std::fabs(qc) < INLET_FUDGE) qc = 0.0;
+        if (std::fabs(qc) < INLET_FUDGE)
+            qc = 0.0;
         soa_.flow_capture[ui] = qc;
         node_inlet_flow_[static_cast<std::size_t>(host)] += qc;
 
         // --- capture node's overflow becomes the inlet's backflow
-        double qbf = nodes.overflow[static_cast<std::size_t>(capture)]
-                     * soa_.backflow_ratio[ui];
-        if (std::fabs(qbf) < INLET_FUDGE) qbf = 0.0;
+        double qbf = nodes.overflow[static_cast<std::size_t>(capture)] * soa_.backflow_ratio[ui];
+        if (std::fabs(qbf) < INLET_FUDGE)
+            qbf = 0.0;
         soa_.backflow[ui] = qbf;
     }
 
     // ---- second pass: throttle, couple, accumulate -------------------------
     for (int ii = ni - 1; ii >= 0; --ii) {
         const auto ui = static_cast<std::size_t>(ii);
-        const int host    = soa_.bypass_node[ui];
+        const int host = soa_.bypass_node[ui];
         const int capture = soa_.node_idx[ui];
-        if (host < 0 || host >= nn) continue;
-        if (capture < 0 || capture >= nn) continue;
+        if (host < 0 || host >= nn)
+            continue;
+        if (capture < 0 || capture >= nn)
+            continue;
         const auto uh = static_cast<std::size_t>(host);
 
         // For on-sag placement under non-DW routing, captured flow is limited
@@ -1036,7 +1099,7 @@ void InletSolver::computeAll(SimulationContext& ctx, double dt) {
         }
 
         const double qcap = soa_.flow_capture[ui];
-        const double qbf  = soa_.backflow[ui];
+        const double qbf = soa_.backflow[ui];
 
         // Adjust lateral flows: subtract the captured flow from the bypass
         // node, add it to the capture node, return any backflow to the bypass.
@@ -1045,14 +1108,16 @@ void InletSolver::computeAll(SimulationContext& ctx, double dt) {
 
         // Volume statistics (Gap #68) — cumulative over the whole run.
         const double qnet = qcap - qbf;
-        soa_.stat_capture_vol[ui]  += qcap * dt;
-        soa_.stat_bypass_vol[ui]   += std::max(0.0, soa_.q_approach[ui] - qnet) * dt;
+        soa_.stat_capture_vol[ui] += qcap * dt;
+        soa_.stat_bypass_vol[ui] += std::max(0.0, soa_.q_approach[ui] - qnet) * dt;
         soa_.stat_backflow_vol[ui] += qbf * dt;
-        if (qcap > soa_.stat_peak_flow[ui]) soa_.stat_peak_flow[ui] = qcap;
+        if (qcap > soa_.stat_peak_flow[ui])
+            soa_.stat_peak_flow[ui] = qcap;
 
         // Legacy performance statistics, gated on the reporting window
         // (inlet.c:648-649).
-        if (report_on) updateStats(ii, soa_.q_approach[ui]);
+        if (report_on)
+            updateStats(ii, soa_.q_approach[ui]);
     }
 }
 
@@ -1062,14 +1127,15 @@ void InletSolver::computeAll(SimulationContext& ctx, double dt) {
 
 void InletSolver::updateStats(int ii, double q) {
     const auto ui = static_cast<std::size_t>(ii);
-    const double qCapture  = soa_.flow_capture[ui];
+    const double qCapture = soa_.flow_capture[ui];
     const double qBackflow = soa_.backflow[ui];
-    const double qNet      = qCapture - qBackflow;
-    const double qBypass   = q - qNet;
+    const double qNet = qCapture - qBackflow;
+    const double qBypass = q - qNet;
     double fCapture = 0.0;
 
     // --- check for no flow condition
-    if (q < MIN_RUNOFF_FLOW && qBackflow <= 0.0) return;
+    if (q < MIN_RUNOFF_FLOW && qBackflow <= 0.0)
+        return;
     soa_.flow_periods[ui]++;
 
     // --- there is positive net flow from inlet to capture node
@@ -1078,10 +1144,12 @@ void InletSolver::updateStats(int ii, double q) {
         fCapture = qNet / q;
         fCapture = std::min(fCapture, 1.0);
         soa_.avg_flow_capture[ui] += fCapture;
-        if (qBypass > MIN_RUNOFF_FLOW) soa_.bypass_freq[ui] += 1.0;
+        if (qBypass > MIN_RUNOFF_FLOW)
+            soa_.bypass_freq[ui] += 1.0;
     }
     // --- otherwise inlet receives backflow from capture node
-    else soa_.backflow_periods[ui]++;
+    else
+        soa_.backflow_periods[ui]++;
 
     // --- update peak flow stats
     if (q > soa_.peak_flow[ui]) {
@@ -1110,20 +1178,22 @@ void InletSolver::updateStats(int ii, double q) {
 
 void InletSolver::computeBackflowRatios() {
     const int ni = soa_.count;
-    if (ni == 0) return;
+    if (ni == 0)
+        return;
 
     // One aggregate bucket — legacy's inletNodes[0] (see the note above).
-    int    n_links     = 0;   // total inlet usages in the model
-    int    n_std_links = 0;   // those with a standard (area > 0) inlet
-    int    n_custom    = 0;   // sum of num_inlets over the custom ones
-    double total_area  = 0.0;
+    int n_links = 0;     // total inlet usages in the model
+    int n_std_links = 0; // those with a standard (area > 0) inlet
+    int n_custom = 0;    // sum of num_inlets over the custom ones
+    double total_area = 0.0;
 
     // Legacy walks its inlet list, which is the [INLET_USAGE] rows in REVERSE
     // (inlet.c:441 prepends); the area sum is a float accumulation, so the
     // order is part of the answer.
     for (int ii = ni - 1; ii >= 0; --ii) {
         const int m = soa_.node_idx[static_cast<std::size_t>(ii)];
-        if (m < 0) continue;
+        if (m < 0)
+            continue;
         n_links++;
         const double area = getInletArea(designOf(ii), usageOf(ii));
         if (area > 0.0) {
@@ -1133,7 +1203,8 @@ void InletSolver::computeBackflowRatios() {
             n_custom += soa_.num_inlets[static_cast<std::size_t>(ii)];
         }
     }
-    if (n_links == 0) return;
+    if (n_links == 0)
+        return;
 
     // f = share of usages carrying a standard inlet (legacy inlet.c:1851-1853)
     const double f = static_cast<double>(n_std_links) / static_cast<double>(n_links);
@@ -1141,16 +1212,16 @@ void InletSolver::computeBackflowRatios() {
     for (int ii = ni - 1; ii >= 0; --ii) {
         const auto ui = static_cast<std::size_t>(ii);
         soa_.backflow_ratio[ui] = 0.0;
-        if (soa_.node_idx[ui] < 0) continue;
+        if (soa_.node_idx[ui] < 0)
+            continue;
 
         const double area = getInletArea(designOf(ii), usageOf(ii));
         if (area > 0.0) {
             if (total_area > 0.0)
                 soa_.backflow_ratio[ui] = area / total_area * f;
         } else if (n_custom > 0) {
-            soa_.backflow_ratio[ui] =
-                static_cast<double>(soa_.num_inlets[ui])
-                / static_cast<double>(n_custom) * (1.0 - f);
+            soa_.backflow_ratio[ui] = static_cast<double>(soa_.num_inlets[ui]) /
+                                      static_cast<double>(n_custom) * (1.0 - f);
         }
     }
 }
@@ -1161,10 +1232,12 @@ void InletSolver::computeBackflowRatios() {
 
 void InletSolver::adjustQualInflows(SimulationContext& ctx, double dt) {
     const int ni = soa_.count;
-    if (ni == 0) return;
+    if (ni == 0)
+        return;
 
     const int np = ctx.n_pollutants();
-    if (np == 0) return;
+    if (np == 0)
+        return;
 
     auto& nodes = ctx.nodes;
     const int nn = ctx.n_nodes();
@@ -1174,10 +1247,12 @@ void InletSolver::adjustQualInflows(SimulationContext& ctx, double dt) {
         const auto ui = static_cast<std::size_t>(ii);
         // Bypass node = the conduit usage's downstream node, or the inlet
         // junction itself — resolved once in init().
-        const int bypass  = soa_.bypass_node[ui];
+        const int bypass = soa_.bypass_node[ui];
         const int capture = soa_.node_idx[ui];
-        if (bypass < 0 || bypass >= nn) continue;
-        if (capture < 0 || capture >= nn) continue;
+        if (bypass < 0 || bypass >= nn)
+            continue;
+        if (capture < 0 || capture >= nn)
+            continue;
 
         const double qNet = soa_.flow_capture[ui] - soa_.backflow[ui];
         const auto ub = static_cast<std::size_t>(bypass);
@@ -1189,8 +1264,7 @@ void InletSolver::adjustQualInflows(SimulationContext& ctx, double dt) {
             for (std::size_t p = 0; p < unp; ++p) {
                 const std::size_t nd_idx = uc * unp + p;
                 const std::size_t by_idx = ub * unp + p;
-                if (nd_idx < nodes.qual_mass_in.size() &&
-                    by_idx < nodes.conc_old.size())
+                if (nd_idx < nodes.qual_mass_in.size() && by_idx < nodes.conc_old.size())
                     nodes.qual_mass_in[nd_idx] += qNet * nodes.conc_old[by_idx];
             }
         } else if (qNet < 0.0) {
@@ -1200,8 +1274,7 @@ void InletSolver::adjustQualInflows(SimulationContext& ctx, double dt) {
             for (std::size_t p = 0; p < unp; ++p) {
                 const std::size_t nd_idx = ub * unp + p;
                 const std::size_t cp_idx = uc * unp + p;
-                if (nd_idx < nodes.qual_mass_in.size() &&
-                    cp_idx < nodes.conc_old.size())
+                if (nd_idx < nodes.qual_mass_in.size() && cp_idx < nodes.conc_old.size())
                     nodes.qual_mass_in[nd_idx] += qBkf * nodes.conc_old[cp_idx];
             }
         }
@@ -1214,10 +1287,11 @@ void InletSolver::adjustQualInflows(SimulationContext& ctx, double dt) {
 
 void InletSolver::adjustFloodingTotals(SimulationContext& ctx, double dt) const {
     const int ni = soa_.count;
-    if (ni == 0) return;
+    if (ni == 0)
+        return;
 
     auto& nodes = ctx.nodes;
-    auto& mb    = ctx.mass_balance;
+    auto& mb = ctx.mass_balance;
     const int nn = ctx.n_nodes();
 
     // A capture node's overflow does not leave the system: computeAll hands it
@@ -1250,11 +1324,13 @@ void InletSolver::adjustFloodingTotals(SimulationContext& ctx, double dt) const 
     // and no longer sum to 1 over a capture node's inlets.
     for (int j = 0; j < nn; ++j) {
         const auto uj = static_cast<std::size_t>(j);
-        if (uj >= is_capture_node_.size() || !is_capture_node_[uj]) continue;
+        if (uj >= is_capture_node_.size() || !is_capture_node_[uj])
+            continue;
         const double q = nodes.overflow[uj];
-        if (q <= 0.0) continue;
+        if (q <= 0.0)
+            continue;
         mb.routing_flooding -= q * dt;
-        mb.step_flooding    -= q;
+        mb.step_flooding -= q;
         // Legacy inlet_adjustQualOutflows (inlet.c:737-743): captured
         // overflow returns its pollutant mass to the street as well.
         const int np = ctx.n_pollutants();
@@ -1271,30 +1347,31 @@ void InletSolver::adjustFloodingTotals(SimulationContext& ctx, double dt) const 
 
 void InletSolver::gatherStats(SimulationContext& ctx) const {
     const int n = std::min(soa_.count, ctx.inlet_usages.count());
-    if (n <= 0) return;
+    if (n <= 0)
+        return;
 
     ctx.inlet_usages.resize_stats(ctx.inlet_usages.count());
     ctx.inlet_diag.resize(n);
 
     for (int i = 0; i < n; ++i) {
         const auto ui = static_cast<std::size_t>(i);
-        ctx.inlet_usages.stat_capture_vol[ui]  = soa_.stat_capture_vol[ui];
-        ctx.inlet_usages.stat_bypass_vol[ui]   = soa_.stat_bypass_vol[ui];
+        ctx.inlet_usages.stat_capture_vol[ui] = soa_.stat_capture_vol[ui];
+        ctx.inlet_usages.stat_bypass_vol[ui] = soa_.stat_bypass_vol[ui];
         ctx.inlet_usages.stat_backflow_vol[ui] = soa_.stat_backflow_vol[ui];
-        ctx.inlet_usages.stat_peak_flow[ui]    = soa_.stat_peak_flow[ui];
+        ctx.inlet_usages.stat_peak_flow[ui] = soa_.stat_peak_flow[ui];
 
         auto& dg = ctx.inlet_diag;
-        dg.host_node[ui]         = soa_.host_node[ui];
-        dg.up_link[ui]           = soa_.up_link[ui];
-        dg.is_sag[ui]            = soa_.is_sag[ui];
-        dg.num_inlets[ui]        = soa_.num_inlets[ui];
-        dg.flow_periods[ui]      = soa_.flow_periods[ui];
-        dg.capture_periods[ui]   = soa_.capture_periods[ui];
-        dg.backflow_periods[ui]  = soa_.backflow_periods[ui];
-        dg.peak_flow[ui]         = soa_.peak_flow[ui];
+        dg.host_node[ui] = soa_.host_node[ui];
+        dg.up_link[ui] = soa_.up_link[ui];
+        dg.is_sag[ui] = soa_.is_sag[ui];
+        dg.num_inlets[ui] = soa_.num_inlets[ui];
+        dg.flow_periods[ui] = soa_.flow_periods[ui];
+        dg.capture_periods[ui] = soa_.capture_periods[ui];
+        dg.backflow_periods[ui] = soa_.backflow_periods[ui];
+        dg.peak_flow[ui] = soa_.peak_flow[ui];
         dg.peak_flow_capture[ui] = soa_.peak_flow_capture[ui];
-        dg.avg_flow_capture[ui]  = soa_.avg_flow_capture[ui];
-        dg.bypass_freq[ui]       = soa_.bypass_freq[ui];
+        dg.avg_flow_capture[ui] = soa_.avg_flow_capture[ui];
+        dg.bypass_freq[ui] = soa_.bypass_freq[ui];
     }
 }
 

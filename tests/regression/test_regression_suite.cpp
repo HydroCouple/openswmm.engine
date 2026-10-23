@@ -1,6 +1,6 @@
 /**
- * @file test_regression_suite.cpp
- * @brief Regression tests: new engine vs legacy SWMM.
+ * @file      test_regression_suite.cpp
+ * @brief     Regression tests: new engine vs legacy SWMM.
  *
  * @details Runs the same input model through both the legacy engine
  *          (openswmm_legacy_engine) and the new engine (openswmm_engine),
@@ -24,6 +24,10 @@
  * this suite previously reported "Passed" while running zero test cases.
  *
  * @ingroup engine_regression
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -45,13 +49,30 @@ namespace {
 struct RegressionParams {
     std::string model_name;
     std::string inp_path;
-    double      abs_tol;
-    double      rel_tol;
+    double abs_tol;
+    double rel_tol;
 };
 
+/**
+ * @brief Select existing known example decks with their measured regression tolerances.
+ *
+ * Uses filesystem exists (exceptions can propagate). Ordinary decks use absolute/relative 0.001;
+ * SlotSurcharge uses 0.05 absolute project units and 0.01 relative. Empty selection leaves the
+ * parameterized fixture uninstantiated for the framework to flag.
+ *
+ * @param[in] data_dir Prefix concatenated directly with each known filename; include a trailing
+ *     separator.
+ * @return Owned records for existing Example1/2/3 and SlotSurcharge decks, preserving table order;
+ *     may be empty.
+ */
 static std::vector<RegressionParams> LoadRegressionCases(const std::string& data_dir) {
     std::vector<RegressionParams> cases;
-    const struct { const char* name; const char* file; double abs_tol; double rel_tol; } known[] = {
+    const struct {
+        const char* name;
+        const char* file;
+        double abs_tol;
+        double rel_tol;
+    } known[] = {
         {"Example1", "Example1.inp", 0.001, 0.001},
         {"Example2", "Example2.inp", 0.001, 0.001},
         {"Example3", "Example3.inp", 0.001, 0.001},
@@ -87,6 +108,17 @@ struct TimeStep {
 
 class RegressionTest : public ::testing::TestWithParam<RegressionParams> {
 protected:
+    /**
+     * @brief Run the legacy model twice and collect live values on the second pass.
+     *
+     * First uses swmm_run, then reopens/starts/steps to append positive-elapsed TimeStep records (days,
+     * model-unit node depths and flows) to legacy_results_. Uses fixed temporary report/output names,
+     * so concurrent invocations conflict. Fatal setup assertions return from this helper; the ordinary
+     * path calls end/close, while step errors merely end collection without an additional assertion.
+     * Does not clear earlier result records.
+     *
+     * @param[in] inp Input-deck path borrowed for the call.
+     */
     void RunLegacy(const std::string& inp) {
         const auto tmp = fs::temp_directory_path();
         std::string rpt = (tmp / "regression_legacy.rpt").string();
@@ -129,6 +161,16 @@ protected:
         swmm_close();
     }
 
+    /**
+     * @brief Run the new engine twice and collect live bulk values on the second pass.
+     *
+     * First uses swmm_engine_run, then owns a fresh handle and appends positive-elapsed TimeStep
+     * records to new_results_. Uses fixed temporary artifacts; successful path
+     * ends/reports/closes/destroys. Fatal setup assertions can return before raw-handle cleanup;
+     * step/bulk-read/finalization statuses are not all asserted. Does not clear earlier records.
+     *
+     * @param[in] inp Input-deck path borrowed for the call.
+     */
     void RunNew(const std::string& inp) {
         const auto tmp = fs::temp_directory_path();
         std::string rpt = (tmp / "regression_new.rpt").string();
@@ -174,6 +216,19 @@ protected:
         swmm_engine_destroy(e);
     }
 
+    /**
+     * @brief Assert time alignment and mixed-tolerance agreement of collected live results.
+     *
+     * Requires nonempty common records, at most one extra end-of-run record, time agreement within 1e-9
+     * days and equal node/link array sizes. Compares the common prefix using max(abs_tol,
+     * rel_tol*abs(reference)), stopping after ten reported value mismatches. Does not interpolate
+     * different cadences or explicitly reject NaN differences; records remain unchanged.
+     *
+     * @param[in] abs_tol Expected nonnegative absolute tolerance in each compared project length/flow
+     *     unit.
+     * @param[in] rel_tol Expected nonnegative relative tolerance multiplying the absolute legacy
+     *     reference.
+     */
     void CompareOutputs(double abs_tol, double rel_tol) {
         // The two engines signal end-of-simulation one step apart: the
         // refactored engine emits a final step landing exactly on the end
@@ -190,9 +245,8 @@ protected:
         const size_t n = std::min(n_leg, n_new);
         ASSERT_GT(n, 0u) << "No timesteps collected from one or both engines";
         const size_t slack = (n_leg > n_new) ? (n_leg - n_new) : (n_new - n_leg);
-        ASSERT_LE(slack, 1u)
-            << "Different number of output timesteps: legacy=" << n_leg
-            << " new=" << n_new << " (only the end-of-run step may differ)";
+        ASSERT_LE(slack, 1u) << "Different number of output timesteps: legacy=" << n_leg
+                             << " new=" << n_new << " (only the end-of-run step may differ)";
 
         // The step cadence itself is part of the contract — if the engines
         // drift onto different routing steps, comparing them index-by-index
@@ -218,9 +272,9 @@ protected:
                 if (delta > tol) {
                     EXPECT_LE(delta, tol)
                         << "Node depth mismatch at step " << t << " node " << i
-                        << ": legacy=" << leg.node_depths[i]
-                        << " new=" << neo.node_depths[i];
-                    if (++mismatches >= max_mismatches) return;
+                        << ": legacy=" << leg.node_depths[i] << " new=" << neo.node_depths[i];
+                    if (++mismatches >= max_mismatches)
+                        return;
                 }
             }
 
@@ -233,9 +287,9 @@ protected:
                 if (delta > tol) {
                     EXPECT_LE(delta, tol)
                         << "Link flow mismatch at step " << t << " link " << i
-                        << ": legacy=" << leg.link_flows[i]
-                        << " new=" << neo.link_flows[i];
-                    if (++mismatches >= max_mismatches) return;
+                        << ": legacy=" << leg.link_flows[i] << " new=" << neo.link_flows[i];
+                    if (++mismatches >= max_mismatches)
+                        return;
                 }
             }
         }
@@ -262,15 +316,11 @@ TEST_P(RegressionTest, NewEngineMatchesLegacyWithinTolerance) {
 }
 
 INSTANTIATE_TEST_SUITE_P(
-    Examples,
-    RegressionTest,
+    Examples, RegressionTest,
     // ctest runs this binary with its working directory set to tests/regression/data
     // (see CMakeLists.txt), so models are looked up relative to that.
     ::testing::ValuesIn(LoadRegressionCases("./")),
-    [](const ::testing::TestParamInfo<RegressionParams>& info) {
-        return info.param.model_name;
-    }
-);
+    [](const ::testing::TestParamInfo<RegressionParams>& info) { return info.param.model_name; });
 
 // ============================================================================
 // Force main under SURCHARGE_METHOD SLOT — refactored engine only
@@ -309,23 +359,23 @@ TEST(SlotForceMain, RefactoredEngineRunsAndConservesMass) {
     double continuity = 0.0;
     while (std::fgets(line, sizeof(line), f)) {
         const std::string s(line);
-        if (s.find("Flow Routing Continuity") != std::string::npos) in_routing = true;
-        if (in_routing && !saw_continuity &&
-            s.find("Continuity Error (%)") != std::string::npos) {
+        if (s.find("Flow Routing Continuity") != std::string::npos)
+            in_routing = true;
+        if (in_routing && !saw_continuity && s.find("Continuity Error (%)") != std::string::npos) {
             // "  Continuity Error (%) .....        -0.046" — take the last token.
             const auto end = s.find_last_not_of(" \t\r\n");
             const auto start = s.find_last_of(" \t", end) + 1;
             continuity = std::stod(s.substr(start, end - start + 1));
             saw_continuity = true;
         }
-        if (s.find("Conduit Surcharge Summary") != std::string::npos) saw_surcharge = true;
+        if (s.find("Conduit Surcharge Summary") != std::string::npos)
+            saw_surcharge = true;
     }
     std::fclose(f);
 
     ASSERT_TRUE(saw_continuity) << "no flow routing continuity error in report";
-    EXPECT_LT(std::fabs(continuity), 1.0)
-        << "flow routing continuity error " << continuity
-        << " % exceeds the 1 % band for a force main under SLOT";
+    EXPECT_LT(std::fabs(continuity), 1.0) << "flow routing continuity error " << continuity
+                                          << " % exceeds the 1 % band for a force main under SLOT";
     EXPECT_TRUE(saw_surcharge)
         << "no Conduit Surcharge Summary — the force main never filled, so the "
            "Preissmann slot was never engaged and this test proves nothing";

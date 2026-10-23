@@ -1,6 +1,6 @@
 /**
- * @file test_fv_closure_shapes.cpp
- * @brief FV slot program R0 — the closure identity gates of
+ * @file      test_fv_closure_shapes.cpp
+ * @brief     FV slot program R0 — the closure identity gates of
  *        test_fv_solver_closure.cpp, swept across the FULL closed
  *        cross-section catalog instead of just the circle.
  *
@@ -16,6 +16,10 @@
  * CUSTOM and STREET_XSECT are closed shapes too, but their geometry comes
  * from curve/street tables that need a parse context — they are exercised
  * at the network level, not here.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -32,32 +36,44 @@ namespace {
 
 struct ShapeCase {
     const char* name;
-    XSectShape  shape;
-    double      p[4];   // [XSECTIONS] geom1..geom4, US units (ucf = 1)
+    XSectShape shape;
+    double p[4]; // [XSECTIONS] geom1..geom4, US units (ucf = 1)
 };
 
 // One representative of every closed shape setParams can build standalone.
 // Sizes in the 3-ft class so the numbers are comparable across shapes.
 const ShapeCase kClosedShapes[] = {
-    {"CIRCULAR",        XSectShape::CIRCULAR,        {3.0, 0.0, 0.0, 0.0}},
-    {"FORCE_MAIN",      XSectShape::FORCE_MAIN,      {3.0, 130.0, 0.0, 0.0}},
+    {"CIRCULAR", XSectShape::CIRCULAR, {3.0, 0.0, 0.0, 0.0}},
+    {"FORCE_MAIN", XSectShape::FORCE_MAIN, {3.0, 130.0, 0.0, 0.0}},
     {"FILLED_CIRCULAR", XSectShape::FILLED_CIRCULAR, {3.0, 0.5, 0.0, 0.0}},
-    {"RECT_CLOSED",     XSectShape::RECT_CLOSED,     {3.0, 2.0, 0.0, 0.0}},
-    {"RECT_TRIANG",     XSectShape::RECT_TRIANG,     {3.0, 2.0, 1.0, 0.0}},
-    {"RECT_ROUND",      XSectShape::RECT_ROUND,      {3.0, 2.0, 1.5, 0.0}},
-    {"MOD_BASKET",      XSectShape::MOD_BASKET,      {3.0, 2.0, 1.0, 0.0}},
-    {"HORIZ_ELLIPSE",   XSectShape::HORIZ_ELLIPSE,   {3.0, 4.0, 0.0, 0.0}},
-    {"VERT_ELLIPSE",    XSectShape::VERT_ELLIPSE,    {3.0, 2.0, 0.0, 0.0}},
-    {"ARCH",            XSectShape::ARCH,            {3.0, 4.0, 0.0, 0.0}},
-    {"EGGSHAPED",       XSectShape::EGGSHAPED,       {3.0, 0.0, 0.0, 0.0}},
-    {"HORSESHOE",       XSectShape::HORSESHOE,       {3.0, 0.0, 0.0, 0.0}},
-    {"GOTHIC",          XSectShape::GOTHIC,          {3.0, 0.0, 0.0, 0.0}},
-    {"CATENARY",        XSectShape::CATENARY,        {3.0, 0.0, 0.0, 0.0}},
-    {"SEMIELLIPTICAL",  XSectShape::SEMIELLIPTICAL,  {3.0, 0.0, 0.0, 0.0}},
-    {"BASKETHANDLE",    XSectShape::BASKETHANDLE,    {3.0, 0.0, 0.0, 0.0}},
-    {"SEMICIRCULAR",    XSectShape::SEMICIRCULAR,    {3.0, 0.0, 0.0, 0.0}},
+    {"RECT_CLOSED", XSectShape::RECT_CLOSED, {3.0, 2.0, 0.0, 0.0}},
+    {"RECT_TRIANG", XSectShape::RECT_TRIANG, {3.0, 2.0, 1.0, 0.0}},
+    {"RECT_ROUND", XSectShape::RECT_ROUND, {3.0, 2.0, 1.5, 0.0}},
+    {"MOD_BASKET", XSectShape::MOD_BASKET, {3.0, 2.0, 1.0, 0.0}},
+    {"HORIZ_ELLIPSE", XSectShape::HORIZ_ELLIPSE, {3.0, 4.0, 0.0, 0.0}},
+    {"VERT_ELLIPSE", XSectShape::VERT_ELLIPSE, {3.0, 2.0, 0.0, 0.0}},
+    {"ARCH", XSectShape::ARCH, {3.0, 4.0, 0.0, 0.0}},
+    {"EGGSHAPED", XSectShape::EGGSHAPED, {3.0, 0.0, 0.0, 0.0}},
+    {"HORSESHOE", XSectShape::HORSESHOE, {3.0, 0.0, 0.0, 0.0}},
+    {"GOTHIC", XSectShape::GOTHIC, {3.0, 0.0, 0.0, 0.0}},
+    {"CATENARY", XSectShape::CATENARY, {3.0, 0.0, 0.0, 0.0}},
+    {"SEMIELLIPTICAL", XSectShape::SEMIELLIPTICAL, {3.0, 0.0, 0.0, 0.0}},
+    {"BASKETHANDLE", XSectShape::BASKETHANDLE, {3.0, 0.0, 0.0, 0.0}},
+    {"SEMICIRCULAR", XSectShape::SEMICIRCULAR, {3.0, 0.0, 0.0, 0.0}},
 };
 
+/**
+ * @brief Build the selected closed-shape FV closure for property tests.
+ *
+ * Checks setParams success, positive full area and closed shape, then invokes buildGeometry
+ * ignoring its status. Adds no validation rollback, state allocation or solver initialization;
+ * dimensional geometry uses feet.
+ *
+ * @param[in] sc Standalone closed shape and four raw US-unit geometry parameters.
+ * @param[in] celerity Positive pressure-wave celerity ft/s.
+ * @param[in] barrels Positive parallel barrel count, default one.
+ * @return Owned FV geometry; may be invalid after recorded nonfatal setParams expectations.
+ */
 FvGeometry build(const ShapeCase& sc, double celerity, int barrels = 1) {
     XSectParams xs;
     xs.type = static_cast<int>(sc.shape);
@@ -70,15 +86,14 @@ FvGeometry build(const ShapeCase& sc, double celerity, int barrels = 1) {
     return g;
 }
 
-}  // namespace
+} // namespace
 
 class FvClosureShapes : public ::testing::TestWithParam<ShapeCase> {};
 
-INSTANTIATE_TEST_SUITE_P(
-    ClosedCatalog, FvClosureShapes, ::testing::ValuesIn(kClosedShapes),
-    [](const ::testing::TestParamInfo<ShapeCase>& i) {
-        return std::string(i.param.name);
-    });
+INSTANTIATE_TEST_SUITE_P(ClosedCatalog, FvClosureShapes, ::testing::ValuesIn(kClosedShapes),
+                         [](const ::testing::TestParamInfo<ShapeCase>& i) {
+                             return std::string(i.param.name);
+                         });
 
 // Area strictly monotone from near-dry through the crown band into the slot,
 // and continuous at the crown (the width may jump; the area may not).
@@ -113,7 +128,7 @@ TEST_P(FvClosureShapes, depthAreaRoundTripsEverywhere) {
 // i1OfDepth against composite-trapezoid quadrature of its own areaOfDepth.
 TEST_P(FvClosureShapes, i1IsTheAntiderivativeOfArea) {
     const FvGeometry g = build(GetParam(), 100.0);
-    const int    n  = 20000;
+    const int n = 20000;
     const double hi = 1.5 * g.y_full;
     const double dh = hi / n;
     double acc = 0.0, prev_a = 0.0;
@@ -124,8 +139,7 @@ TEST_P(FvClosureShapes, i1IsTheAntiderivativeOfArea) {
         prev_a = a;
         if (i % 4000 == 0) {
             const double i1 = k::i1OfDepth(g, h, a);
-            ASSERT_NEAR(i1, acc, 5.0e-4 * std::max(acc, 1.0))
-                << GetParam().name << " at h=" << h;
+            ASSERT_NEAR(i1, acc, 5.0e-4 * std::max(acc, 1.0)) << GetParam().name << " at h=" << h;
         }
     }
 }
@@ -141,13 +155,11 @@ TEST_P(FvClosureShapes, crownWidthJumpIsMeasuredAndRecorded) {
     const double w_above = k::widthOfDepth(g, g.y_full * (1.0 + 1.0e-9));
     EXPECT_NEAR(w_above, g.t_slot, 1.0e-12) << GetParam().name;
     const double jump = w_below - w_above;
-    EXPECT_GE(jump, -1.0e-9) << GetParam().name;   // never NEGATIVE at crown
-    ::testing::Test::RecordProperty(
-        std::string(GetParam().name) + "_crown_width_jump_ft",
-        std::to_string(jump));
-    ::testing::Test::RecordProperty(
-        std::string(GetParam().name) + "_jump_over_wmax",
-        std::to_string((g.w_max > 0.0) ? jump / g.w_max : 0.0));
+    EXPECT_GE(jump, -1.0e-9) << GetParam().name; // never NEGATIVE at crown
+    ::testing::Test::RecordProperty(std::string(GetParam().name) + "_crown_width_jump_ft",
+                                    std::to_string(jump));
+    ::testing::Test::RecordProperty(std::string(GetParam().name) + "_jump_over_wmax",
+                                    std::to_string((g.w_max > 0.0) ? jump / g.w_max : 0.0));
 }
 
 // The 5%-of-W_max cap binds at a shape-dependent celerity because
@@ -158,15 +170,14 @@ TEST_P(FvClosureShapes, slotWidthMatchesTheDesignArithmetic) {
     for (double c : {50.0, 100.0, 300.0}) {
         const FvGeometry g = build(GetParam(), c);
         const double t_req = 32.2 * g.a_full / (c * c);
-        const double cap   = 0.05 * g.w_max;
+        const double cap = 0.05 * g.w_max;
         const double expect = std::max(std::min(t_req, cap), 1.0e-6);
         ASSERT_NEAR(g.t_slot, expect, 1.0e-12 * std::max(expect, 1.0))
             << GetParam().name << " at c=" << c;
     }
     const FvGeometry g = build(GetParam(), 100.0);
-    ::testing::Test::RecordProperty(
-        std::string(GetParam().name) + "_cap_implied_celerity_ftps",
-        std::to_string(std::sqrt(32.2 * g.a_full / (0.05 * g.w_max))));
+    ::testing::Test::RecordProperty(std::string(GetParam().name) + "_cap_implied_celerity_ftps",
+                                    std::to_string(std::sqrt(32.2 * g.a_full / (0.05 * g.w_max))));
 }
 
 // Amendment A-S5P (SWMM5+ review): the TRANSITION CELERITY RATIO — wave
@@ -179,22 +190,19 @@ TEST_P(FvClosureShapes, slotWidthMatchesTheDesignArithmetic) {
 // shape as R3's α-rule work order, and bounded so a cap or band regression
 // bites here first.
 TEST_P(FvClosureShapes, transitionCelerityRatioIsRecordedAndBounded) {
-    const FvGeometry g = build(GetParam(), 15.0);   // cap binds catalog-wide
+    const FvGeometry g = build(GetParam(), 15.0); // cap binds catalog-wide
     const double t_req = 32.2 * g.a_full / (15.0 * 15.0);
-    ASSERT_NEAR(g.t_slot, std::min(t_req, 0.05 * g.w_max),
-                1.0e-12 * std::max(g.t_slot, 1.0))
+    ASSERT_NEAR(g.t_slot, std::min(t_req, 0.05 * g.w_max), 1.0e-12 * std::max(g.t_slot, 1.0))
         << GetParam().name << " — cap expectation moved; re-derive this gate";
 
     const double h_below = g.y_crown * (1.0 - 1.0e-9);
-    const double c_below = k::celerity(k::areaOfDepth(g, h_below),
-                                       k::widthOfDepth(g, h_below));
+    const double c_below = k::celerity(k::areaOfDepth(g, h_below), k::widthOfDepth(g, h_below));
     const double c_above = k::celerity(g.a_crown, g.t_slot);
     ASSERT_GT(c_below, 0.0) << GetParam().name;
     ASSERT_GT(c_above, 0.0) << GetParam().name;
     const double ratio = c_above / c_below;
-    ::testing::Test::RecordProperty(
-        std::string(GetParam().name) + "_transition_celerity_ratio",
-        std::to_string(ratio));
+    ::testing::Test::RecordProperty(std::string(GetParam().name) + "_transition_celerity_ratio",
+                                    std::to_string(ratio));
     // Regression bound, not a design target: today's band+cap geometry
     // delivers ratios in the low single digits across the catalog. The
     // A1 α-rule (R3) would pin this at α ≈ 2 for every shape.
@@ -211,8 +219,8 @@ TEST(FvClosureShapesBarrels, slotCelerityIsBarrelInvariant) {
     EXPECT_NEAR(g3.a_full, 3.0 * g1.a_full, 1.0e-12);
     EXPECT_NEAR(g3.t_slot, 3.0 * g1.t_slot, 1.0e-12);
     // celerity = sqrt(g*A/T) — the barrel factor cancels
-    EXPECT_NEAR(std::sqrt(32.2 * g3.a_full / g3.t_slot),
-                std::sqrt(32.2 * g1.a_full / g1.t_slot), 1.0e-9);
+    EXPECT_NEAR(std::sqrt(32.2 * g3.a_full / g3.t_slot), std::sqrt(32.2 * g1.a_full / g1.t_slot),
+                1.0e-9);
 }
 
 // KNOWN-ISSUE pin (slot program R0): FV_SLOT_CELERITY silently saturates

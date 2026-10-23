@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file WaterAgeLegacy.cpp
- * @brief Phase A1b body — LEGACY CSTR water-age mirror.
+ * @file      WaterAgeLegacy.cpp
+ * @brief     Phase A1b body — LEGACY CSTR water-age mirror.
  *
  * @details Formula provenance, line by line, is the pollutant path in
  *          QualityRouting.cpp: accumulateLinkLoads (rate convention
@@ -31,9 +31,9 @@
  *          factor (plan §8 — evaporation leaves the mean age unchanged)
  *          and no decay (age has none).
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "WaterAgeLegacy.hpp"
@@ -61,6 +61,14 @@ using quality::LEGACY_ZERO;
 /// snapshots and the per-node age-mass accumulator.
 struct AgeScratch {
     std::vector<double> node_old, link_old, age_in;
+    /**
+     * @brief Size private process-wide legacy age scratch to current model counts.
+     * @param[in] nn Nonnegative node count, matching context.
+     * @param[in] nl Nonnegative link count.
+     * @note Node mismatch zeroes node_old/age_in, link mismatch zeroes link_old. No physical
+     * state/clock change; allocations may leave partial scratch. Static shared owner requires
+     * serialization across contexts.
+     */
     void ensure(int nn, int nl) {
         if (node_old.size() != static_cast<std::size_t>(nn)) {
             node_old.assign(static_cast<std::size_t>(nn), 0.0);
@@ -70,19 +78,41 @@ struct AgeScratch {
             link_old.assign(static_cast<std::size_t>(nl), 0.0);
     }
 };
+/**
+ * @brief Access the process-wide mutable legacy water-age workspace.
+ * @return Nonowned static AgeScratch reference, process lifetime. Initialization is
+ * language-safe but subsequent use is not synchronized; all routeLegacyAge calls across contexts
+ * must serialize.
+ */
 AgeScratch& scratch() {
     static AgeScratch s;
     return s;
 }
-}  // namespace
+} // namespace
 
+/**
+ * @brief Advance age seconds through legacy node/conduit mixing without altering pollutants.
+ * @param[in,out] ctx Enabled age config/state, completed old/new hydraulics and assembled
+ * qual_vol_in ft3 plus external age-volume rate (age seconds*ft3/s); writes node/link ages and
+ * clamp diagnostics.
+ * @param[in] dt Positive finite accepted routing interval s; disabled/nonpositive returns.
+ * @note Shape mismatch resizes age state. First legacy call seeds global positive initial age
+ * and initial overrides; then adds dt to old node/link values, routes old-link loads and mixes
+ * with source numerators. Shared quality reactor/dry/conduit inflow thresholds apply; age has no
+ * evaporation concentration multiplier. Negative age-volume extraction floors available
+ * inventory and records clamp; STEADY conduit uses geometric node1 upstream age. No physical
+ * water/clock or pollutant ledger mutation. Static shared scratch makes calls across all
+ * contexts nonconcurrent. Allocations and warnings may leave partial seeding/ages; requires
+ * prepared finite arrays and exactly-once step.
+ */
 void routeLegacyAge(SimulationContext& ctx, double dt) {
-    if (!ctx.options.water_age || dt <= 0.0) return;
+    if (!ctx.options.water_age || dt <= 0.0)
+        return;
     auto& ws = ctx.water_age_state;
     const int nn = ctx.n_nodes();
     const int nl = ctx.n_links();
     if (ws.node_age.size() != static_cast<std::size_t>(nn))
-        ws.resize(nn, nl, ctx.n_subcatches());  // A3: keep watershed rows
+        ws.resize(nn, nl, ctx.n_subcatches()); // A3: keep watershed rows
 
     auto& sc = scratch();
     sc.ensure(nn, nl);
@@ -92,8 +122,8 @@ void routeLegacyAge(SimulationContext& ctx, double dt) {
     //         unseeded mirror would leave a configured INITIAL_STATE age
     //         silently inert under LEGACY — the lesson-10 shape. ----------
     if (!ws.legacy_seeded) {
-        const double a0 = ctx.water_age_config.global_age[static_cast<int>(
-            WaterAgeSource::INITIAL_STATE)];
+        const double a0 =
+            ctx.water_age_config.global_age[static_cast<int>(WaterAgeSource::INITIAL_STATE)];
         if (a0 > 0.0) {
             std::fill(ws.node_age.begin(), ws.node_age.end(), a0);
             std::fill(ws.link_age.begin(), ws.link_age.end(), a0);
@@ -107,11 +137,9 @@ void routeLegacyAge(SimulationContext& ctx, double dt) {
     // ---- 1. Aging: +dt, then the aged values are this step's "old" state
     //         (plan §1: age advances by dt then mixes). -------------------
     for (int i = 0; i < nn; ++i)
-        sc.node_old[static_cast<std::size_t>(i)] =
-            ws.node_age[static_cast<std::size_t>(i)] + dt;
+        sc.node_old[static_cast<std::size_t>(i)] = ws.node_age[static_cast<std::size_t>(i)] + dt;
     for (int j = 0; j < nl; ++j)
-        sc.link_old[static_cast<std::size_t>(j)] =
-            ws.link_age[static_cast<std::size_t>(j)] + dt;
+        sc.link_old[static_cast<std::size_t>(j)] = ws.link_age[static_cast<std::size_t>(j)] + dt;
 
     // ---- 2. Age-mass accumulation (accumulateLinkLoads mirror, RATE
     //         convention) + the loaders' per-source rates. ----------------
@@ -119,11 +147,12 @@ void routeLegacyAge(SimulationContext& ctx, double dt) {
     for (int j = 0; j < nl; ++j) {
         const auto uj = static_cast<std::size_t>(j);
         const double q = std::fabs(ctx.links.flow[uj]);
-        if (q <= 0.0) continue;
-        const int downstream = (ctx.links.flow[uj] >= 0.0)
-                                   ? ctx.links.node2[uj]
-                                   : ctx.links.node1[uj];
-        if (downstream < 0 || downstream >= nn) continue;
+        if (q <= 0.0)
+            continue;
+        const int downstream =
+            (ctx.links.flow[uj] >= 0.0) ? ctx.links.node2[uj] : ctx.links.node1[uj];
+        if (downstream < 0 || downstream >= nn)
+            continue;
         sc.age_in[static_cast<std::size_t>(downstream)] += q * sc.link_old[uj];
     }
     for (int i = 0; i < nn; ++i) {
@@ -140,8 +169,8 @@ void routeLegacyAge(SimulationContext& ctx, double dt) {
     for (int i = 0; i < nn; ++i) {
         const auto ui = static_cast<std::size_t>(i);
         const double v_old = ctx.nodes.old_volume[ui];
-        const double v_in  = ctx.nodes.qual_vol_in[ui];
-        const double q_in  = (dt > 0.0) ? v_in / dt : 0.0;
+        const double v_in = ctx.nodes.qual_vol_in[ui];
+        const double q_in = (dt > 0.0) ? v_in / dt : 0.0;
         const double a_old = sc.node_old[ui];
 
         if (!quality::nodeIsReactor(ctx, i)) {
@@ -164,8 +193,7 @@ void routeLegacyAge(SimulationContext& ctx, double dt) {
                 // it.
                 ws.node_age[ui] = 0.0;
             } else {
-                ws.node_age[ui] =
-                    (ctx.nodes.depth[ui] > ZERO_DEPTH) ? a_old : 0.0;
+                ws.node_age[ui] = (ctx.nodes.depth[ui] > ZERO_DEPTH) ? a_old : 0.0;
             }
             continue;
         }
@@ -184,7 +212,7 @@ void routeLegacyAge(SimulationContext& ctx, double dt) {
         if (q_in <= LEGACY_ZERO) {
             a_new = a_old;
         } else {
-            const double a_in  = mass_in / v_in;
+            const double a_in = mass_in / v_in;
             const double a_max = std::max(a_old, a_in);
             a_new = (a_old * v_old + mass_in) / (v_old + v_in);
             a_new = std::min(a_new, a_max);
@@ -192,13 +220,13 @@ void routeLegacyAge(SimulationContext& ctx, double dt) {
         // A reactor that ends the step empty with nothing coming in holds no
         // water, so it holds no aged water either — the age analogue of
         // legacy zeroing the concentration.
-        if (quality::nodeIsDry(ctx, i, q_in)) a_new = 0.0;
+        if (quality::nodeIsDry(ctx, i, q_in))
+            a_new = 0.0;
         ws.node_age[ui] = std::max(a_new, 0.0);
     }
 
     // ---- 4. Link update (updateLinkQuality mirror; k = 0, no evap). -----
-    const bool is_steady =
-        (ctx.options.routing_model == RoutingModel::STEADY);
+    const bool is_steady = (ctx.options.routing_model == RoutingModel::STEADY);
     for (int j = 0; j < nl; ++j) {
         const auto uj = static_cast<std::size_t>(j);
         // Steady flow draws on node1 unconditionally — legacy
@@ -206,11 +234,11 @@ void routeLegacyAge(SimulationContext& ctx, double dt) {
         // flow.
         const int upstream =
             is_steady ? ctx.links.node1[uj]
-                      : ((ctx.links.flow[uj] >= 0.0) ? ctx.links.node1[uj]
-                                                     : ctx.links.node2[uj]);
-        if (upstream < 0 || upstream >= nn) continue;
+                      : ((ctx.links.flow[uj] >= 0.0) ? ctx.links.node1[uj] : ctx.links.node2[uj]);
+        if (upstream < 0 || upstream >= nn)
+            continue;
         const auto un = static_cast<std::size_t>(upstream);
-        const double a_up  = ws.node_age[un];
+        const double a_up = ws.node_age[un];
 
         // A pump, orifice, weir, outlet or DUMMY conduit holds no water, so
         // it carries the upstream age outright.
@@ -230,7 +258,7 @@ void routeLegacyAge(SimulationContext& ctx, double dt) {
             if (q_in <= LEGACY_ZERO) {
                 a_new = a_old;
             } else {
-                const double v_in  = q_in * dt;
+                const double v_in = q_in * dt;
                 const double a_max = std::max(a_old, a_up);
                 a_new = (a_old * v_old + a_up * v_in) / (v_old + v_in);
                 a_new = std::min(a_new, a_max);
@@ -240,10 +268,11 @@ void routeLegacyAge(SimulationContext& ctx, double dt) {
             // This engine handed such a link the UPSTREAM age instead, so a
             // filling conduit reported its inflow's age from the first period
             // rather than mixing up to it.
-            if (quality::linkIsDry(ctx, j)) a_new = 0.0;
+            if (quality::linkIsDry(ctx, j))
+                a_new = 0.0;
         }
         ws.link_age[uj] = std::max(a_new, 0.0);
     }
 }
 
-}  // namespace openswmm::transport
+} // namespace openswmm::transport

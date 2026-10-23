@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file TopoSort.hpp
- * @brief Topological sort of network links for KW/steady-state routing.
+ * @file      TopoSort.hpp
+ * @brief     Topological sort of network links for KW/steady-state routing.
  *
  * @details Kahn's algorithm: process nodes with zero in-degree first,
  *          then their downstream neighbours. Produces a sorted link
@@ -27,9 +27,9 @@
  * @note Legacy reference: src/legacy/engine/toposort.c
  * @ingroup new_engine
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_TOPOSORT_HPP
@@ -63,10 +63,8 @@ namespace toposort {
  *        inflow down BOTH links. Pass nullptr to skip the adjustment.
  * @returns Number of sorted links (< n_links indicates cycle).
  */
-int sortLinks(const int* node1, const int* node2,
-              int n_links, int n_nodes,
-              std::vector<int>& sorted_links,
-              const int* divert_link = nullptr);
+int sortLinks(const int* node1, const int* node2, int n_links, int n_nodes,
+              std::vector<int>& sorted_links, const int* divert_link = nullptr);
 
 } // namespace toposort
 } // namespace openswmm

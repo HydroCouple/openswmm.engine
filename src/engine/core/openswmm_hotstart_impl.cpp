@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file openswmm_hotstart_impl.cpp
- * @brief Hot start C API implementation — thin wrappers around HotStartManager.
+ * @file      openswmm_hotstart_impl.cpp
+ * @brief     Hot start C API implementation — thin wrappers around HotStartManager.
  *
  * @details Every function declared in
  *          `include/openswmm/engine/openswmm_hotstart.h` is implemented here.
@@ -35,9 +35,9 @@
  * @see SWMMEngine.hpp
  * @ingroup engine_hotstart
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "SWMMEngine.hpp"
@@ -52,16 +52,42 @@
 // Internal cast helpers
 // ============================================================================
 
-static inline openswmm::SWMMEngine*  to_engine(SWMM_Engine e) noexcept {
+/**
+ * @brief Recover a borrowed internal SWMMEngine pointer from its public handle.
+ *
+ * No identity, lifetime or state validation; caller applies guards and prevents use after
+ * close/destruction.
+ *
+ * @param[in] e Opaque handle originally created by the corresponding C API, or NULL.
+ * @return Same pointer with internal type, possibly NULL; ownership unchanged.
+ */
+static inline openswmm::SWMMEngine* to_engine(SWMM_Engine e) noexcept {
     return static_cast<openswmm::SWMMEngine*>(e);
 }
 
+/**
+ * @brief Recover a borrowed internal HotStartFile pointer from its public handle.
+ *
+ * No identity, lifetime or state validation; caller applies guards and prevents use after
+ * close/destruction.
+ *
+ * @param[in] hs Opaque handle originally created by the corresponding C API, or NULL.
+ * @return Same pointer with internal type, possibly NULL; ownership unchanged.
+ */
 static inline openswmm::HotStartFile* to_hs(SWMM_HotStart hs) noexcept {
     return static_cast<openswmm::HotStartFile*>(hs);
 }
 
-#define CHECK_ENGINE(e)  do { if (!(e)) return SWMM_ERR_BADHANDLE; } while(0)
-#define CHECK_HS(hs)     do { if (!(hs)) return SWMM_ERR_BADHANDLE; } while(0)
+#define CHECK_ENGINE(e)                                                                            \
+    do {                                                                                           \
+        if (!(e))                                                                                  \
+            return SWMM_ERR_BADHANDLE;                                                             \
+    } while (0)
+#define CHECK_HS(hs)                                                                               \
+    do {                                                                                           \
+        if (!(hs))                                                                                 \
+            return SWMM_ERR_BADHANDLE;                                                             \
+    } while (0)
 
 // ============================================================================
 // C API implementation
@@ -79,22 +105,22 @@ SWMM_ENGINE_API const char* swmm_hotstart_last_io_error(void) {
 
 SWMM_ENGINE_API int swmm_hotstart_save(SWMM_Engine engine, const char* path) {
     CHECK_ENGINE(engine);
-    if (!path || path[0] == '\0') return SWMM_ERR_BADPARAM;
+    if (!path || path[0] == '\0')
+        return SWMM_ERR_BADPARAM;
 
     openswmm::SWMMEngine* eng = to_engine(engine);
     openswmm::SimulationContext& ctx = eng->context();
 
     // Must be RUNNING or ENDED to save
-    if (ctx.state != openswmm::EngineState::RUNNING &&
-        ctx.state != openswmm::EngineState::ENDED) {
+    if (ctx.state != openswmm::EngineState::RUNNING && ctx.state != openswmm::EngineState::ENDED) {
         return SWMM_ERR_LIFECYCLE;
     }
 
     // A heat model with a full engine checkpoint attached writes the V15
     // file; without one it writes the record-based file like any other
     // model (which refuses coupled mesh/ground heat with a message).
-    if(ctx.options.heat_transport && eng->hotstartCheckpointAttached()) {
-        return eng->saveNativeHotstart(path)==""?SWMM_OK:SWMM_ERR_HOTSTART;
+    if (ctx.options.heat_transport && eng->hotstartCheckpointAttached()) {
+        return eng->saveNativeHotstart(path) == "" ? SWMM_OK : SWMM_ERR_HOTSTART;
     }
 
     // Dispatch through state-IO plugins. The first plugin whose write_state()
@@ -105,19 +131,18 @@ SWMM_ENGINE_API int swmm_hotstart_save(SWMM_Engine engine, const char* path) {
     if (!state_plugins.empty()) {
         for (auto* sp : state_plugins) {
             const int rc = sp->write_state(path, ctx);
-            if (rc == 0) return SWMM_OK;
+            if (rc == 0)
+                return SWMM_OK;
         }
         return SWMM_ERR_HOTSTART;
     }
 
     // Fallback (no plugin registered): direct HotStartManager call.
     openswmm::HotStartFile* hs =
-        openswmm::HotStartManager::save(ctx,
-                                        &eng->runoff_solver(),
-                                        &eng->gw_solver(),
-                                        path);
+        openswmm::HotStartManager::save(ctx, &eng->runoff_solver(), &eng->gw_solver(), path);
 
-    if (!hs) return SWMM_ERR_HOTSTART;
+    if (!hs)
+        return SWMM_ERR_HOTSTART;
     delete hs;
     return SWMM_OK;
 }
@@ -127,12 +152,15 @@ SWMM_ENGINE_API int swmm_hotstart_save(SWMM_Engine engine, const char* path) {
 // ----------------------------------------------------------------------------
 
 SWMM_ENGINE_API int swmm_hotstart_open(const char* path, SWMM_HotStart* hs) {
-    if (!hs) return SWMM_ERR_BADPARAM;
+    if (!hs)
+        return SWMM_ERR_BADPARAM;
     *hs = nullptr;
-    if (!path || path[0] == '\0') return SWMM_ERR_BADPARAM;
+    if (!path || path[0] == '\0')
+        return SWMM_ERR_BADPARAM;
 
     openswmm::HotStartFile* file = openswmm::HotStartManager::open(path);
-    if (!file) return SWMM_ERR_HOTSTART;
+    if (!file)
+        return SWMM_ERR_HOTSTART;
 
     *hs = static_cast<SWMM_HotStart>(file);
     return SWMM_OK;
@@ -155,24 +183,20 @@ SWMM_ENGINE_API int swmm_hotstart_apply(SWMM_Engine engine, SWMM_HotStart hs) {
 
     openswmm::HotStartFile* file = to_hs(hs);
 
-    if(!file->engine_checkpoint.empty()) {
-        const auto error=eng->queueHotstartCheckpoint(file->engine_checkpoint);
-        return error.empty()?SWMM_OK:SWMM_ERR_HOTSTART;
+    if (!file->engine_checkpoint.empty()) {
+        const auto error = eng->queueHotstartCheckpoint(file->engine_checkpoint);
+        return error.empty() ? SWMM_OK : SWMM_ERR_HOTSTART;
     }
 
     // Gap #54: apply V2 format including infiltration + GW state
     const int result = openswmm::HotStartManager::apply(
-        *file,
-        ctx,
-        &eng->runoff_solver(),
-        &eng->gw_solver(),
-        [&eng](const std::string& msg) {
+        *file, ctx, &eng->runoff_solver(), &eng->gw_solver(), [&eng](const std::string& msg) {
             (void)eng;
             (void)msg;
-        }
-    );
+        });
 
-    if (result < 0) return SWMM_ERR_HOTSTART;
+    if (result < 0)
+        return SWMM_ERR_HOTSTART;
     // The run's mass balance opened at initialize(); it now starts from the
     // applied state.
     eng->reopenMassBalance();
@@ -183,49 +207,44 @@ SWMM_ENGINE_API int swmm_hotstart_apply(SWMM_Engine engine, SWMM_HotStart hs) {
 // Modification API
 // ----------------------------------------------------------------------------
 
-SWMM_ENGINE_API int swmm_hotstart_set_node_depth(
-    SWMM_HotStart hs, const char* node_id, double depth)
-{
+SWMM_ENGINE_API int swmm_hotstart_set_node_depth(SWMM_HotStart hs, const char* node_id,
+                                                 double depth) {
     CHECK_HS(hs);
-    if (!node_id) return SWMM_ERR_BADPARAM;
-    return to_hs(hs)->set_node_depth(node_id, depth)
-               ? SWMM_OK : SWMM_ERR_BADPARAM;
+    if (!node_id)
+        return SWMM_ERR_BADPARAM;
+    return to_hs(hs)->set_node_depth(node_id, depth) ? SWMM_OK : SWMM_ERR_BADPARAM;
 }
 
-SWMM_ENGINE_API int swmm_hotstart_set_node_head(
-    SWMM_HotStart hs, const char* node_id, double head)
-{
+SWMM_ENGINE_API int swmm_hotstart_set_node_head(SWMM_HotStart hs, const char* node_id,
+                                                double head) {
     CHECK_HS(hs);
-    if (!node_id) return SWMM_ERR_BADPARAM;
-    return to_hs(hs)->set_node_head(node_id, head)
-               ? SWMM_OK : SWMM_ERR_BADPARAM;
+    if (!node_id)
+        return SWMM_ERR_BADPARAM;
+    return to_hs(hs)->set_node_head(node_id, head) ? SWMM_OK : SWMM_ERR_BADPARAM;
 }
 
-SWMM_ENGINE_API int swmm_hotstart_set_link_flow(
-    SWMM_HotStart hs, const char* link_id, double flow)
-{
+SWMM_ENGINE_API int swmm_hotstart_set_link_flow(SWMM_HotStart hs, const char* link_id,
+                                                double flow) {
     CHECK_HS(hs);
-    if (!link_id) return SWMM_ERR_BADPARAM;
-    return to_hs(hs)->set_link_flow(link_id, flow)
-               ? SWMM_OK : SWMM_ERR_BADPARAM;
+    if (!link_id)
+        return SWMM_ERR_BADPARAM;
+    return to_hs(hs)->set_link_flow(link_id, flow) ? SWMM_OK : SWMM_ERR_BADPARAM;
 }
 
-SWMM_ENGINE_API int swmm_hotstart_set_link_depth(
-    SWMM_HotStart hs, const char* link_id, double depth)
-{
+SWMM_ENGINE_API int swmm_hotstart_set_link_depth(SWMM_HotStart hs, const char* link_id,
+                                                 double depth) {
     CHECK_HS(hs);
-    if (!link_id) return SWMM_ERR_BADPARAM;
-    return to_hs(hs)->set_link_depth(link_id, depth)
-               ? SWMM_OK : SWMM_ERR_BADPARAM;
+    if (!link_id)
+        return SWMM_ERR_BADPARAM;
+    return to_hs(hs)->set_link_depth(link_id, depth) ? SWMM_OK : SWMM_ERR_BADPARAM;
 }
 
-SWMM_ENGINE_API int swmm_hotstart_set_subcatch_runoff(
-    SWMM_HotStart hs, const char* subcatch_id, double runoff)
-{
+SWMM_ENGINE_API int swmm_hotstart_set_subcatch_runoff(SWMM_HotStart hs, const char* subcatch_id,
+                                                      double runoff) {
     CHECK_HS(hs);
-    if (!subcatch_id) return SWMM_ERR_BADPARAM;
-    return to_hs(hs)->set_subcatch_runoff(subcatch_id, runoff)
-               ? SWMM_OK : SWMM_ERR_BADPARAM;
+    if (!subcatch_id)
+        return SWMM_ERR_BADPARAM;
+    return to_hs(hs)->set_subcatch_runoff(subcatch_id, runoff) ? SWMM_OK : SWMM_ERR_BADPARAM;
 }
 
 // ----------------------------------------------------------------------------
@@ -234,36 +253,41 @@ SWMM_ENGINE_API int swmm_hotstart_set_subcatch_runoff(
 
 SWMM_ENGINE_API int swmm_hotstart_get_sim_time(SWMM_HotStart hs, double* sim_time) {
     CHECK_HS(hs);
-    if (!sim_time) return SWMM_ERR_BADPARAM;
+    if (!sim_time)
+        return SWMM_ERR_BADPARAM;
     *sim_time = to_hs(hs)->header.sim_time;
     return SWMM_OK;
 }
 
 SWMM_ENGINE_API int swmm_hotstart_get_start_date(SWMM_HotStart hs, double* start_date) {
     CHECK_HS(hs);
-    if (!start_date) return SWMM_ERR_BADPARAM;
+    if (!start_date)
+        return SWMM_ERR_BADPARAM;
     *start_date = to_hs(hs)->header.start_date;
     return SWMM_OK;
 }
 
 SWMM_ENGINE_API int swmm_hotstart_get_crs(SWMM_HotStart hs, char* buf, int buflen) {
     CHECK_HS(hs);
-    if (!buf || buflen <= 0) return SWMM_ERR_BADPARAM;
+    if (!buf || buflen <= 0)
+        return SWMM_ERR_BADPARAM;
     const std::string& crs = to_hs(hs)->header.crs;
-    const int copy_len = static_cast<int>(crs.size()) < buflen - 1
-                             ? static_cast<int>(crs.size()) : buflen - 1;
+    const int copy_len =
+        static_cast<int>(crs.size()) < buflen - 1 ? static_cast<int>(crs.size()) : buflen - 1;
     std::memcpy(buf, crs.c_str(), static_cast<std::size_t>(copy_len));
     buf[copy_len] = '\0';
     return SWMM_OK;
 }
 
 SWMM_ENGINE_API int swmm_hotstart_node_count(SWMM_HotStart hs) {
-    if (!hs) return -1;
+    if (!hs)
+        return -1;
     return static_cast<int>(to_hs(hs)->nodes.size());
 }
 
 SWMM_ENGINE_API int swmm_hotstart_link_count(SWMM_HotStart hs) {
-    if (!hs) return -1;
+    if (!hs)
+        return -1;
     return static_cast<int>(to_hs(hs)->links.size());
 }
 
@@ -272,14 +296,17 @@ SWMM_ENGINE_API int swmm_hotstart_link_count(SWMM_HotStart hs) {
 // ----------------------------------------------------------------------------
 
 SWMM_ENGINE_API int swmm_hotstart_warning_count(SWMM_HotStart hs) {
-    if (!hs) return 0;
+    if (!hs)
+        return 0;
     return static_cast<int>(to_hs(hs)->warnings.size());
 }
 
 SWMM_ENGINE_API const char* swmm_hotstart_warning(SWMM_HotStart hs, int index) {
-    if (!hs) return nullptr;
+    if (!hs)
+        return nullptr;
     const auto& w = to_hs(hs)->warnings;
-    if (index < 0 || static_cast<std::size_t>(index) >= w.size()) return nullptr;
+    if (index < 0 || static_cast<std::size_t>(index) >= w.size())
+        return nullptr;
     return w[static_cast<std::size_t>(index)].c_str();
 }
 
@@ -288,7 +315,8 @@ SWMM_ENGINE_API const char* swmm_hotstart_warning(SWMM_HotStart hs, int index) {
 // ----------------------------------------------------------------------------
 
 SWMM_ENGINE_API int swmm_hotstart_close(SWMM_HotStart hs) {
-    if (!hs) return SWMM_OK; // safe no-op on null
+    if (!hs)
+        return SWMM_OK; // safe no-op on null
 
     openswmm::HotStartFile* file = to_hs(hs);
 

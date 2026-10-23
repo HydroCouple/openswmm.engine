@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file Runoff.cpp
- * @brief Subcatchment runoff — 3-subarea nonlinear reservoir model.
+ * @file      Runoff.cpp
+ * @brief     Subcatchment runoff — 3-subarea nonlinear reservoir model.
  *
  * @details Three subareas per subcatchment (matching legacy subcatch.c):
  *   - IMPERV0: Impervious with zero depression storage (PctZero fraction)
@@ -28,14 +28,14 @@
  *   updatePondedDepth() + odesolve_integrate() approach exactly.
  *
  *   The legacy fills depression storage first (reducing the integration
- *   interval), then solves dd/dt = inflow - alpha*(d-Ds)^(5/3) implicitly.
+ *   interval), then integrates dd/dt = inflow - alpha*(d-Ds)^(5/3).
  *
  * @note Legacy reference: src/legacy/engine/subcatch.c, odesolve.c
  * @ingroup new_engine
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "Runoff.hpp"
@@ -93,7 +93,8 @@ void RunoffSoA::resize(int n) {
     perv_evap_vol.assign(un, 0.0);
     actual_perv_evap_vol.assign(un, 0.0);
     infil_vol.assign(un, 0.0);
-    spatial_infil_vol.assign(un,0.0);native_infil_rate.assign(un,0.0);
+    spatial_infil_vol.assign(un, 0.0);
+    native_infil_rate.assign(un, 0.0);
     subarea_runoff_rate.assign(un, 0.0);
     imperv_runoff_cfs.assign(un, 0.0);
     perv_runoff_cfs.assign(un, 0.0);
@@ -112,16 +113,18 @@ void RunoffSoA::computeAlpha() {
         double fp = 1.0 - fi;
         if (area[ui] > 0.0) {
             double area_imperv = area[ui] * fi;
-            double area_perv   = area[ui] * fp;
+            double area_perv = area[ui] * fp;
             // Match legacy subcatch.c:398-399 operand order EXACTLY:
             //   PHI * width / area * sqrt(slope) / N
             // i.e. divide by area BEFORE multiplying sqrt(slope), and divide by N
             // as a separate final step — do NOT fold (N*area) into one denominator
             // (that reassociation differs by ~1 ULP and biases every pow() output).
             alpha_imperv[ui] = (n_imperv[ui] > 0.0 && area_imperv > 0.0)
-                ? PHI * width[ui] / area_imperv * sq_slope / n_imperv[ui] : 0.0;
+                                   ? PHI * width[ui] / area_imperv * sq_slope / n_imperv[ui]
+                                   : 0.0;
             alpha_perv[ui] = (n_perv[ui] > 0.0 && area_perv > 0.0)
-                ? PHI * width[ui] / area_perv * sq_slope / n_perv[ui] : 0.0;
+                                 ? PHI * width[ui] / area_perv * sq_slope / n_perv[ui]
+                                 : 0.0;
         }
     }
 }
@@ -131,9 +134,8 @@ void RunoffSoA::computeAlpha() {
 // Matches legacy subcatch.c updatePondedDepth() + odesolve_integrate()
 // ============================================================================
 
-void RunoffSolver::updatePondedDepth(double& depth, double inflow,
-                                      double alpha, double dStore, double dt,
-                                      double& t_runoff) {
+void RunoffSolver::updatePondedDepth(double& depth, double inflow, double alpha, double dStore,
+                                     double dt, double& t_runoff) {
     double tx = dt;
 
     // --- Check if not enough inflow to fill depression storage ---
@@ -154,17 +156,17 @@ void RunoffSolver::updatePondedDepth(double& depth, double inflow,
         // ODE: dd/dt = inflow - alpha * max(0, d - Ds)^(5/3)
         if (alpha > 0.0 && tx > 0.0) {
             double captured_inflow = inflow;
-            double captured_alpha  = alpha;
+            double captured_alpha = alpha;
             double captured_dStore = dStore;
 
             ode::integrate(&depth, 1, 0.0, tx, ODETOL, tx,
-                [captured_inflow, captured_alpha, captured_dStore]
-                (double /*t*/, const double* d, double* dddt) {
-                    double rx = *d - captured_dStore;
-                    double outflow = (rx > 0.0)
-                        ? captured_alpha * std::pow(rx, MEXP) : 0.0;
-                    *dddt = captured_inflow - outflow;
-                });
+                           [captured_inflow, captured_alpha,
+                            captured_dStore](double /*t*/, const double* d, double* dddt) {
+                               double rx = *d - captured_dStore;
+                               double outflow =
+                                   (rx > 0.0) ? captured_alpha * std::pow(rx, MEXP) : 0.0;
+                               *dddt = captured_inflow - outflow;
+                           });
         } else {
             tx = std::max(tx, 0.0);
             depth += inflow * tx;
@@ -186,7 +188,8 @@ void RunoffSolver::updatePondedDepth(double& depth, double inflow,
 double RunoffSolver::pendingRoutingVolume(const SimulationContext& ctx, int source) const {
     const auto i = static_cast<std::size_t>(source);
     const auto& s = soa_;
-    if (s.imperv_pct[i] == 0.0 || s.imperv_pct[i] == 1.0) return 0.0;
+    if (s.imperv_pct[i] == 0.0 || s.imperv_pct[i] == 1.0)
+        return 0.0;
     double rate = 0.0;
     if (ctx.subcatches.subarea_routing[i] == 2)
         rate = s.old_runoff_imperv0[i] * s.frac_imperv0[i] +
@@ -196,7 +199,8 @@ double RunoffSolver::pendingRoutingVolume(const SimulationContext& ctx, int sour
     return rate * ctx.subcatches.pct_routed[i] * s.area[i] * completed_step_seconds_[i];
 }
 
-void RunoffSolver::init(SimulationContext& ctx, const std::vector<std::pair<int, double>>& spatial_areas) {
+void RunoffSolver::init(SimulationContext& ctx,
+                        const std::vector<std::pair<int, double>>& spatial_areas) {
     int n = ctx.n_subcatches();
     std::vector<double> external_area(static_cast<std::size_t>(n), -1);
     for (const auto& [i, area] : spatial_areas) {
@@ -207,9 +211,10 @@ void RunoffSolver::init(SimulationContext& ctx, const std::vector<std::pair<int,
     soa_.resize(n);
     completed_step_seconds_.assign(static_cast<std::size_t>(n), 0.0);
     spatial_full_area_ft2_.clear();
-    if (!spatial_areas.empty()) spatial_full_area_ft2_.assign(static_cast<std::size_t>(n), -1);
+    if (!spatial_areas.empty())
+        spatial_full_area_ft2_.assign(static_cast<std::size_t>(n), -1);
 
-    double ucf_area  = ucf::UCF(ucf::LANDAREA,  ctx.options);
+    double ucf_area = ucf::UCF(ucf::LANDAREA, ctx.options);
     double ucf_depth = ucf::UCF(ucf::RAINDEPTH, ctx.options);
 
     for (int i = 0; i < n; ++i) {
@@ -217,14 +222,14 @@ void RunoffSolver::init(SimulationContext& ctx, const std::vector<std::pair<int,
         // Gap #23: subareas must use non-LID area, matching legacy subcatch_validate()
         // which sets nonLidArea = area - lidArea before computing alpha and subarea sizes.
         double full_area_ft2 = ctx.subcatches.area[ui] / ucf_area;
-        double lid_area_ft2  = ctx.subcatches.total_lid_area_ft2[ui]; // already in ft²
-        soa_.area[ui]       = std::max(0.0, full_area_ft2 - lid_area_ft2);
+        double lid_area_ft2 = ctx.subcatches.total_lid_area_ft2[ui]; // already in ft²
+        soa_.area[ui] = std::max(0.0, full_area_ft2 - lid_area_ft2);
         if (external_area[ui] >= 0) {
             soa_.area[ui] = external_area[ui] / (.3048 * .3048);
             spatial_full_area_ft2_[ui] = soa_.area[ui] + lid_area_ft2;
         }
-        soa_.width[ui]      = ctx.subcatches.width[ui];
-        soa_.slope[ui]      = ctx.subcatches.slope[ui];
+        soa_.width[ui] = ctx.subcatches.width[ui];
+        soa_.slope[ui] = ctx.subcatches.slope[ui];
         soa_.imperv_pct[ui] = ctx.subcatches.frac_imperv[ui];
         // PARITY subcatch.c:268-270 — multiply by the AUTHORED percent,
         // divide by 100 afterwards. See RunoffSoA::frac_imperv0.
@@ -232,10 +237,10 @@ void RunoffSolver::init(SimulationContext& ctx, const std::vector<std::pair<int,
         const double pz_ = ctx.subcatches.pct_zero[ui];
         soa_.frac_imperv0[ui] = fi_ * pz_ / 100.0;
         soa_.frac_imperv1[ui] = fi_ * (1.0 - pz_ / 100.0);
-        soa_.n_imperv[ui]   = ctx.subcatches.n_imperv[ui];
-        soa_.n_perv[ui]     = ctx.subcatches.n_perv[ui];
-        soa_.ds_imperv[ui]  = ctx.subcatches.ds_imperv[ui] / ucf_depth;
-        soa_.ds_perv[ui]    = ctx.subcatches.ds_perv[ui]   / ucf_depth;
+        soa_.n_imperv[ui] = ctx.subcatches.n_imperv[ui];
+        soa_.n_perv[ui] = ctx.subcatches.n_perv[ui];
+        soa_.ds_imperv[ui] = ctx.subcatches.ds_imperv[ui] / ucf_depth;
+        soa_.ds_perv[ui] = ctx.subcatches.ds_perv[ui] / ucf_depth;
     }
     soa_.computeAlpha();
 
@@ -244,11 +249,12 @@ void RunoffSolver::init(SimulationContext& ctx, const std::vector<std::pair<int,
     for (int i = 0; i < n; ++i) {
         const auto ui = static_cast<std::size_t>(i);
         // Preserve legacy subcatchment zero-drying-time normalization.
-        const double dry_time = ctx.subcatches.infil_p4[ui] == 0.0
-            ? constants::TINY : ctx.subcatches.infil_p4[ui];
+        const double dry_time =
+            ctx.subcatches.infil_p4[ui] == 0.0 ? constants::TINY : ctx.subcatches.infil_p4[ui];
         const double p[5] = {ctx.subcatches.infil_p1[ui], ctx.subcatches.infil_p2[ui],
-            ctx.subcatches.infil_p3[ui], dry_time, ctx.subcatches.infil_p5[ui]};
-        infil_bank_.setMethod(i, static_cast<InfilModel>(ctx.subcatches.infil_model[ui]), p, ctx.options);
+                             ctx.subcatches.infil_p3[ui], dry_time, ctx.subcatches.infil_p5[ui]};
+        infil_bank_.setMethod(i, static_cast<InfilModel>(ctx.subcatches.infil_model[ui]), p,
+                              ctx.options);
     }
 }
 
@@ -259,9 +265,9 @@ void RunoffSolver::init(SimulationContext& ctx, const std::vector<std::pair<int,
 // Legacy infil_getInfil (infil.c): dispatch on the subcatchment's model with
 // the [ADJUSTMENTS] / pattern factor and the evaporation recovery factor
 // applied the way each model applies them.
-double RunoffSolver::infilGetInfil(SimulationContext& ctx, int i, double precip,
-                                   double runon, double depth, double dt,
-                                   double local_infil, double recovery_factor) {
+double RunoffSolver::infilGetInfil(SimulationContext& ctx, int i, double precip, double runon,
+                                   double depth, double dt, double local_infil,
+                                   double recovery_factor) {
     (void)ctx;
     return infil_bank_.rateFeet(i, precip, runon, depth, dt, {local_infil, recovery_factor});
 }
@@ -274,24 +280,26 @@ double RunoffSolver::nativeInfilFullLid(SimulationContext& ctx, int i, double dt
                                         double recovery_factor) {
     auto ui = static_cast<std::size_t>(i);
     const double rain = ctx.subcatches.rainfall[ui];
-    const double runon = ctx.subcatches.runon_rate[ui];   // legacy Subcatch.runon
+    const double runon = ctx.subcatches.runon_rate[ui]; // legacy Subcatch.runon
     const double depth = soa_.depth_perv[ui];
-    return infilGetInfil(ctx, i, rain, runon, depth, dt,
-                         infil_factor_used_[ui], recovery_factor);
+    return infilGetInfil(ctx, i, rain, runon, depth, dt, infil_factor_used_[ui], recovery_factor);
 }
 
-std::vector<std::pair<int,double>> RunoffSolver::reviewedAreas() const {
-    std::vector<std::pair<int,double>> areas;
-    constexpr double ft2_to_m2=.3048*.3048;
-    for (int sc=0;sc<int(spatial_full_area_ft2_.size());++sc) if (spatial_full_area_ft2_[sc]>=0) {
-        const double area=soa_.area[sc];double m2=area*ft2_to_m2;
-        if (m2/ft2_to_m2!=area) {
-            const double direction=m2/ft2_to_m2<area ? INFINITY : -INFINITY;
-            m2=std::nextafter(m2,direction);
+std::vector<std::pair<int, double>> RunoffSolver::reviewedAreas() const {
+    std::vector<std::pair<int, double>> areas;
+    constexpr double ft2_to_m2 = .3048 * .3048;
+    for (int sc = 0; sc < int(spatial_full_area_ft2_.size()); ++sc)
+        if (spatial_full_area_ft2_[sc] >= 0) {
+            const double area = soa_.area[sc];
+            double m2 = area * ft2_to_m2;
+            if (m2 / ft2_to_m2 != area) {
+                const double direction = m2 / ft2_to_m2 < area ? INFINITY : -INFINITY;
+                m2 = std::nextafter(m2, direction);
+            }
+            if (m2 / ft2_to_m2 != area)
+                throw std::runtime_error("Reviewed source area cannot be reconstructed exactly.");
+            areas.emplace_back(sc, m2);
         }
-        if (m2/ft2_to_m2!=area) throw std::runtime_error("Reviewed source area cannot be reconstructed exactly.");
-        areas.emplace_back(sc,m2);
-    }
     return areas;
 }
 
@@ -304,29 +312,38 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
     int n = soa_.n_subcatch;
     if (source_forcing) {
         if (!std::isfinite(dt) || dt <= 0.0 || ctx.n_subcatches() != n)
-            throw std::invalid_argument("Completed source solve requires a positive interval and matching source count.");
+            throw std::invalid_argument(
+                "Completed source solve requires a positive interval and matching source count.");
         int previous = -1;
         for (const auto& s : *source_forcing) {
-            if (s.subcatch <= previous || s.subcatch >= n ||
-                !std::isfinite(s.rain) || s.rain < 0.0 || !std::isfinite(s.pet) || s.pet < 0.0)
-                throw std::invalid_argument("Completed source rates require ordered unique sources and finite nonnegative rates.");
-            for(double rate:s.surface_return) if(!std::isfinite(rate) || rate<0)
-                throw std::invalid_argument("Invalid completed surface return rate.");
+            if (s.subcatch <= previous || s.subcatch >= n || !std::isfinite(s.rain) ||
+                s.rain < 0.0 || !std::isfinite(s.pet) || s.pet < 0.0)
+                throw std::invalid_argument(
+                    "Completed source rates require ordered unique sources and finite nonnegative rates.");
+            for (double rate : s.surface_return)
+                if (!std::isfinite(rate) || rate < 0)
+                    throw std::invalid_argument("Invalid completed surface return rate.");
             previous = s.subcatch;
         }
     }
     if (spatial_fractions) {
-        if (!source_forcing || spatial_fractions->size()!=static_cast<std::size_t>(n))
-            throw std::invalid_argument("Partial spatial intake requires completed forcing and matching fractions.");
-        for (double f:*spatial_fractions) if(!std::isfinite(f)||f<0||f>1)
-            throw std::invalid_argument("Invalid partial spatial intake fraction.");
+        if (!source_forcing || spatial_fractions->size() != static_cast<std::size_t>(n))
+            throw std::invalid_argument(
+                "Partial spatial intake requires completed forcing and matching fractions.");
+        for (double f : *spatial_fractions)
+            if (!std::isfinite(f) || f < 0 || f > 1)
+                throw std::invalid_argument("Invalid partial spatial intake fraction.");
     }
     if (source_owners && (source_forcing || source_owners->size() != static_cast<std::size_t>(n)))
-        throw std::invalid_argument("Ordinary runoff ownership requires a matching exclusive source map.");
-    if (n == 0) return;
+        throw std::invalid_argument(
+            "Ordinary runoff ownership requires a matching exclusive source map.");
+    if (n == 0)
+        return;
 
     const int count = source_forcing ? static_cast<int>(source_forcing->size()) : n;
-    const auto source = [&](int slot) { return source_forcing ? (*source_forcing)[slot].subcatch : slot; };
+    const auto source = [&](int slot) {
+        return source_forcing ? (*source_forcing)[slot].subcatch : slot;
+    };
 
     auto un = static_cast<std::size_t>(n);
     precip_.resize(un);
@@ -350,14 +367,15 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
     // re-read — same pattern as the PET forcing below.
     for (int slot = 0; slot < count; ++slot) {
         const int i = source(slot);
-        if (source_owners && (*source_owners)[i] >= 0) continue;
+        if (source_owners && (*source_owners)[i] >= 0)
+            continue;
         auto ui = static_cast<std::size_t>(i);
         if (source_forcing) {
             precip_[ui] = (*source_forcing)[slot].rain;
             ctx.subcatches.rainfall[ui] = precip_[ui];
             continue;
         }
-        gage::PrecipSplit p = gage::splitPrecip(ctx, ui);  // ft/sec
+        gage::PrecipSplit p = gage::splitPrecip(ctx, ui); // ft/sec
         double rain = p.rainfall;
         // The forcing channel speaks user units; the x*UCF/UCF round trip
         // is not an identity in floating point, so it runs only when a
@@ -370,7 +388,7 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         }
         double snow = ctx.forcing.effective_snowfall(ui, p.snowfall);
         precip_[ui] = rain + snow;
-        ctx.subcatches.rainfall[ui] = precip_[ui];  // ft/sec (internal units)
+        ctx.subcatches.rainfall[ui] = precip_[ui]; // ft/sec (internal units)
     }
 
     // ----- Step 2: Evaporation rate -----
@@ -381,7 +399,8 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
     // rate is used as-is (bypasses DRY_ONLY); ADD augments the climate rate.
     for (int slot = 0; slot < count; ++slot) {
         const int i = source(slot);
-        if (source_owners && (*source_owners)[i] >= 0) continue;
+        if (source_owners && (*source_owners)[i] >= 0)
+            continue;
         auto ui = static_cast<std::size_t>(i);
         if (source_forcing) {
             evap_rate_[ui] = (*source_forcing)[slot].pet;
@@ -399,50 +418,57 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
     // to replicate the legacy's loss-limiting and inflow-subtraction order.
     for (int slot = 0; slot < count; ++slot) {
         const int i = source(slot);
-        if (source_owners && (*source_owners)[i] >= 0) continue;
+        if (source_owners && (*source_owners)[i] >= 0)
+            continue;
         auto ui = static_cast<std::size_t>(i);
         double fi = soa_.imperv_pct[ui];
         double fp = 1.0 - fi;
         double f0 = soa_.frac_imperv0[ui];
         double f1 = soa_.frac_imperv1[ui];
-        double total_area = soa_.area[ui];  // ft²
+        double total_area = soa_.area[ui]; // ft²
 
-        double precip  = precip_[ui];     // ft/sec (rainfall + snowmelt)
+        double precip = precip_[ui];      // ft/sec (rainfall + snowmelt)
         double evapRate = evap_rate_[ui]; // ft/sec (global evap rate)
-        double snow_open_imperv=1,snow_open_perv=1;
-        const int snowpack=ctx.subcatches.snowpack[ui];
-        if(!source_forcing&&!ctx.options.ignore_snow_melt&&snowpack>=0&&
-           ctx.snowpacks.config.modelFor(snowpack)==surface::SnowKind::Ueb) {
-            const auto& flux=ctx.snowpacks.runtime.last;
-            if(flux.size()>=3*(ui+1)) {
-                const double plow=snowpack<int(ctx.snowpacks.plowable.size())?ctx.snowpacks.plowable[snowpack][6]:0;
-                snow_open_imperv=std::clamp(1-plow*flux[ui*3].active_fraction-(1-plow)*flux[ui*3+1].active_fraction,0.,1.);
-                snow_open_perv=std::clamp(1-flux[ui*3+2].active_fraction,0.,1.);
+        double snow_open_imperv = 1, snow_open_perv = 1;
+        const int snowpack = ctx.subcatches.snowpack[ui];
+        if (!source_forcing && !ctx.options.ignore_snow_melt && snowpack >= 0 &&
+            ctx.snowpacks.config.modelFor(snowpack) == surface::SnowKind::Ueb) {
+            const auto& flux = ctx.snowpacks.runtime.last;
+            if (flux.size() >= 3 * (ui + 1)) {
+                const double plow = snowpack < int(ctx.snowpacks.plowable.size())
+                                        ? ctx.snowpacks.plowable[snowpack][6]
+                                        : 0;
+                snow_open_imperv = std::clamp(1 - plow * flux[ui * 3].active_fraction -
+                                                  (1 - plow) * flux[ui * 3 + 1].active_fraction,
+                                              0., 1.);
+                snow_open_perv = std::clamp(1 - flux[ui * 3 + 2].active_fraction, 0., 1.);
             }
         }
-
 
         double alpha_i = soa_.alpha_imperv[ui];
         double alpha_p = soa_.alpha_perv[ui];
 
         // Mass balance accumulators (matching legacy Vevap, Vinfil, Voutflow)
-        double Vevap    = 0.0;  // Total evaporation volume (ft³)
-        double Vpevap   = 0.0;  // Pervious-subarea evaporation volume (ft³), legacy Vpevap
+        double Vevap = 0.0;  // Total evaporation volume (ft³)
+        double Vpevap = 0.0; // Pervious-subarea evaporation volume (ft³), legacy Vpevap
         double actual_perv_evap = 0.0;
-        if (source_forcing) soa_.completed[ui] = {};
+        if (source_forcing)
+            soa_.completed[ui] = {};
         double Vspatial = 0.0;
-        soa_.native_infil_rate[ui]=0;
-        double Vinfil   = 0.0;  // Total infiltration volume (ft³)
-        double Voutflow = 0.0;  // Total runoff volume (ft³)
+        soa_.native_infil_rate[ui] = 0;
+        double Vinfil = 0.0;   // Total infiltration volume (ft³)
+        double Voutflow = 0.0; // Total runoff volume (ft³)
 
         // Helper: process one subarea following legacy getSubareaRunoff() exactly.
         // Args: depth, alpha, dStore, subareaFrac, isPervious, runon
-        auto processSubarea = [&](double& depth, double alpha, double dStore,
-                                  double frac, bool isPervious,
-                                  double runon_in, double subarea_n, int pool) -> double {
-            if (frac <= 0.0) return 0.0;
+        auto processSubarea = [&](double& depth, double alpha, double dStore, double frac,
+                                  bool isPervious, double runon_in, double subarea_n,
+                                  int pool) -> double {
+            if (frac <= 0.0)
+                return 0.0;
             double subarea_area = total_area * frac;
-            if (spatial_fractions && subarea_area <= 0.0) return 0.0;
+            if (spatial_fractions && subarea_area <= 0.0)
+                return 0.0;
             const double initial_depth = depth;
 
             // Step 3.1: Available surface moisture (legacy line 923)
@@ -456,22 +482,25 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
             // For RouteTo=OUTLET models, subarea->inflow = 0 (no inter-subarea runon).
             double infil = 0.0;
             const double available = std::max(0.0, surfMoisture + precip + runon_in - surfEvap);
-            const double spatial_fraction=spatial_fractions ? (*spatial_fractions)[ui] : 1.0;
-            const bool external = isPervious && spatial_fraction>0 && boundary && (*boundary)(i, depth, available, infil);
+            const double spatial_fraction = spatial_fractions ? (*spatial_fractions)[ui] : 1.0;
+            const bool external = isPervious && spatial_fraction > 0 && boundary &&
+                                  (*boundary)(i, depth, available, infil);
             if (isPervious && spatial_fractions && spatial_fraction > 0 && !external)
-                throw std::runtime_error("Completed inside pervious area requires a spatial infiltration boundary.");
-            double spatial_rate=0.0;
+                throw std::runtime_error(
+                    "Completed inside pervious area requires a spatial infiltration boundary.");
+            double spatial_rate = 0.0;
             if (external) {
                 if (!std::isfinite(infil) || infil < 0.0 || ctx.subcatches.gw_aquifer[ui] >= 0)
-                    throw std::invalid_argument("External source intake requires a finite nonnegative rate and no lumped aquifer.");
+                    throw std::invalid_argument(
+                        "External source intake requires a finite nonnegative rate and no lumped aquifer.");
                 infil = std::min(infil, available);
-                spatial_rate=infil;
+                spatial_rate = infil;
             }
-            if (isPervious && (!external || spatial_fraction<1)) {
+            if (isPervious && (!external || spatial_fraction < 1)) {
                 // Legacy: infil_getInfil(j, tStep, precip, subarea->inflow, depth)
                 //   → horton_getInfil(state, tStep, precip + runon, depth)
                 // subarea->inflow here is the runon from other subareas (0 for OUTLET routing).
-                double runon = runon_in;  // runon from inter-subarea routing
+                double runon = runon_in; // runon from inter-subarea routing
                 // Per-subcatchment INFIL pattern override
                 // (matching legacy infil_setInfilFactor per subcatchment)
                 double local_infil = infil_factor;
@@ -486,12 +515,15 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
                 }
 
                 infil_factor_used_[ui] = local_infil;
-                const double native = infilGetInfil(ctx, i, precip, runon,
-                    spatial_fractions ? std::max(0.0,depth-surfEvap*dt) : depth, dt,
-                    local_infil, recovery_factor);
-                soa_.native_infil_rate[ui]=spatial_fractions ? std::min(native,available) : native;
-                infil=external ? spatial_fraction*spatial_rate+(1-spatial_fraction)*soa_.native_infil_rate[ui]
-                               : soa_.native_infil_rate[ui];
+                const double native =
+                    infilGetInfil(ctx, i, precip, runon,
+                                  spatial_fractions ? std::max(0.0, depth - surfEvap * dt) : depth,
+                                  dt, local_infil, recovery_factor);
+                soa_.native_infil_rate[ui] =
+                    spatial_fractions ? std::min(native, available) : native;
+                infil = external ? spatial_fraction * spatial_rate +
+                                       (1 - spatial_fraction) * soa_.native_infil_rate[ui]
+                                 : soa_.native_infil_rate[ui];
             }
 
             // Gap #40: limit pervious infiltration by GW upper zone capacity.
@@ -504,12 +536,13 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
             }
 
             // Step 3.4: Accumulate inflow and moisture (legacy lines 930-931)
-            double inflow = precip + runon_in;  // precip + inter-subarea runon
+            double inflow = precip + runon_in; // precip + inter-subarea runon
             surfMoisture += inflow;
 
             // Step 3.5: Update mass balance volumes (legacy lines 934-937)
-            Vevap  += surfEvap * subarea_area * dt;
-            if (isPervious) actual_perv_evap += surfEvap * subarea_area * dt;
+            Vevap += surfEvap * subarea_area * dt;
+            if (isPervious)
+                actual_perv_evap += surfEvap * subarea_area * dt;
             // legacy subcatch.c:984 `if (i == PERV) Vpevap += Vevap;` — the
             // WHOLE subcatchment's surface evaporation so far (the pervious
             // subarea is processed last, after both impervious ones), not
@@ -517,15 +550,17 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
             // MaxEvap = Evap.rate * FracPerv, so an impervious cover
             // evaporating at the full rate leaves the aquifer no evaporation
             // (runoff41-sw5: legacy's soil moisture holds at field capacity).
-            if (isPervious) Vpevap += Vevap;
+            if (isPervious)
+                Vpevap += Vevap;
             Vinfil += infil * subarea_area * dt;
-            if(external) Vspatial+=spatial_rate*spatial_fraction*subarea_area*dt;
+            if (external)
+                Vspatial += spatial_rate * spatial_fraction * subarea_area * dt;
 
             // Step 3.6: Loss check shortcut (legacy lines 945-948)
             // If evaporation + infiltration >= total available moisture,
             // all water is consumed — no runoff, depth goes to zero.
             double runoff_rate = 0.0;
-            double t_runoff = dt;   // legacy tRunoff
+            double t_runoff = dt; // legacy tRunoff
             if (surfEvap + infil >= surfMoisture) {
                 depth = 0.0;
             } else {
@@ -554,7 +589,7 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
             // (%Slope 0) drained instantly where legacy reports no runoff.
             {
                 const double xDepth = depth - dStore;
-                if (xDepth > 1.0e-10) {          // legacy ZERO
+                if (xDepth > 1.0e-10) { // legacy ZERO
                     if (subarea_n > 0.0) {
                         runoff_rate = alpha * std::pow(xDepth, MEXP);
                     } else {
@@ -570,8 +605,8 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
             // the reservoir's integrated storage change supplies the mean
             // outflow, also used by subsequent capture/subarea bookkeeping.
             if (source_forcing)
-                runoff_rate = std::max(0.0, (initial_depth - depth) / dt +
-                    (inflow - (surfEvap + infil)));
+                runoff_rate =
+                    std::max(0.0, (initial_depth - depth) / dt + (inflow - (surfEvap + infil)));
 
             // Step 3.10: Accumulate outlet volume (legacy line 964)
             // fOutlet is the fraction of runoff that goes directly to outlet.
@@ -595,12 +630,15 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
             }
             Voutflow += fOutlet * runoff_rate * subarea_area * dt;
             if (source_forcing) {
-                auto& w = soa_.completed[ui][pool]; w.area = subarea_area;
+                auto& w = soa_.completed[ui][pool];
+                w.area = subarea_area;
                 w.opening = initial_depth * subarea_area;
-                w.rain = precip * subarea_area * dt; w.runon = runon_in * subarea_area * dt;
+                w.rain = precip * subarea_area * dt;
+                w.runon = runon_in * subarea_area * dt;
                 w.evaporation = surfEvap * subarea_area * dt;
                 w.infiltration = infil * subarea_area * dt;
-                w.spatial_infiltration = external ? spatial_rate * spatial_fraction * subarea_area * dt : 0;
+                w.spatial_infiltration =
+                    external ? spatial_rate * spatial_fraction * subarea_area * dt : 0;
                 w.outflow = runoff_rate * subarea_area * dt;
                 w.outlet = fOutlet * runoff_rate * subarea_area * dt;
                 w.closing = depth * subarea_area;
@@ -626,17 +664,19 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         // route_mode: 0=TO_OUTLET, 1=TO_IMPERV (perv→imperv), 2=TO_PERV (imperv→perv)
         int route_mode = ctx.subcatches.subarea_routing[ui];
         double pct = ctx.subcatches.pct_routed[ui];
-        const double f_outlet = 1.0 - pct;   // legacy subArea.fOutlet
+        const double f_outlet = 1.0 - pct; // legacy subArea.fOutlet
         // A changed interval duration must deliver the previous interval's
         // routed VOLUME, not hold its rate across the new duration.
         const double history_scale = source_forcing ? completed_step_seconds_[ui] / dt : 1.0;
         const double runon_sub = (total_area > 0.0) ? ctx.subcatches.runon_rate[ui] : 0.0;
         double runon_imperv0 = runon_sub;
         double runon_imperv1 = runon_sub;
-        double runon_perv    = runon_sub;
-        if(source_forcing) {
-            const auto& rates=(*source_forcing)[slot].surface_return;
-            runon_imperv0+=rates[0];runon_imperv1+=rates[1];runon_perv+=rates[2];
+        double runon_perv = runon_sub;
+        if (source_forcing) {
+            const auto& rates = (*source_forcing)[slot].surface_return;
+            runon_imperv0 += rates[0];
+            runon_imperv1 += rates[1];
+            runon_perv += rates[2];
         }
 
         if (route_mode == 2 && fp > 0.0) {
@@ -644,10 +684,9 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
             // impervious subareas, (1 - fOutlet) of it, over the pervious area
             double q1 = soa_.old_runoff_imperv0[ui] * f0;
             double q2 = soa_.old_runoff_imperv1[ui] * f1;
-            double q  = q1 + q2;
+            double q = q1 + q2;
             runon_perv += q * (1.0 - f_outlet) / fp * history_scale;
-        }
-        else if (route_mode == 1 && f1 > 0.0) {
+        } else if (route_mode == 1 && f1 > 0.0) {
             // legacy Case 2, perv --> imperv (needs an IMPERV1 area)
             double q = soa_.old_runoff_perv[ui];
             runon_imperv1 += q * (1.0 - f_outlet) * fp / f1 * history_scale;
@@ -659,9 +698,9 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
             double q_ret = ctx.subcatches.lid_return_to_perv_cfs[ui];
             if (q_ret > 0.0 && total_area > 0.0 && fp > 0.0) {
                 double perv_area = total_area * fp;
-                runon_perv += q_ret / perv_area;  // ft/sec over pervious area
+                runon_perv += q_ret / perv_area; // ft/sec over pervious area
             }
-            ctx.subcatches.lid_return_to_perv_cfs[ui] = 0.0;  // consume
+            ctx.subcatches.lid_return_to_perv_cfs[ui] = 0.0; // consume
         }
 
         // Gap #20: When snow is active, use snow-modified net precip per subarea
@@ -669,7 +708,7 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         // precip is captured by reference in processSubarea, so setting it here
         // controls the inflow for each subarea call.
         double precip_imperv = precip;
-        double precip_perv   = precip;
+        double precip_perv = precip;
         // IGNORE_SNOWMELT: fall back to raw gage precip for both subareas
         // (legacy subcatch.c:784 `Subcatch[j].snowpack && !IgnoreSnowmelt`).
         // Pairs with the snow-block skip in SWMMEngine::stepRunoff so the now
@@ -677,21 +716,23 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         if (ctx.subcatches.snowpack[ui] >= 0 && !ctx.options.ignore_snow_melt) {
             double sni = ctx.subcatches.snow_net_imperv[ui];
             double snp = ctx.subcatches.snow_net_perv[ui];
-            if (sni >= 0.0) precip_imperv = sni;
-            if (snp >= 0.0) precip_perv   = snp;
+            if (sni >= 0.0)
+                precip_imperv = sni;
+            if (snp >= 0.0)
+                precip_perv = snp;
         }
 
         // Snow suppresses the atmospheric footprint separately on impervious
         // and pervious pools, without changing the source's LID PET forcing.
-        evapRate=evap_rate_[ui]*snow_open_imperv;
-        if(source_forcing && (*source_forcing)[slot].pet_imperv>=0)evapRate=(*source_forcing)[slot].pet_imperv;
+        evapRate = evap_rate_[ui] * snow_open_imperv;
+        if (source_forcing && (*source_forcing)[slot].pet_imperv >= 0)
+            evapRate = (*source_forcing)[slot].pet_imperv;
         // Process all 3 subareas (matching legacy loop: IMPERV0, IMPERV1, PERV)
         precip = precip_imperv;
-        double runoff0  = processSubarea(soa_.depth_imperv0[ui], alpha_i, 0.0,
-                                         f0, false, runon_imperv0, soa_.n_imperv[ui], 0);
-        double runoff1  = processSubarea(soa_.depth_imperv1[ui], alpha_i,
-                                         soa_.ds_imperv[ui], f1, false, runon_imperv1,
-                                         soa_.n_imperv[ui], 1);
+        double runoff0 = processSubarea(soa_.depth_imperv0[ui], alpha_i, 0.0, f0, false,
+                                        runon_imperv0, soa_.n_imperv[ui], 0);
+        double runoff1 = processSubarea(soa_.depth_imperv1[ui], alpha_i, soa_.ds_imperv[ui], f1,
+                                        false, runon_imperv1, soa_.n_imperv[ui], 1);
         // legacy adjustSubareaParams (subcatch.c:1168-1200): the PERVIOUS
         // subarea's depression storage and runoff coefficient carry this
         // month's [ADJUSTMENTS] DSTORE / N-PERV pattern, re-applied to the
@@ -701,19 +742,22 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         // .n_perv / .ds_perv once per step, which the runoff kernel never
         // read back (its alphas and storages are snapshotted in init()), so
         // both adjustments were inert.
-        double alpha_p_adj  = alpha_p;
-        double ds_perv_adj  = soa_.ds_perv[ui];
+        double alpha_p_adj = alpha_p;
+        double ds_perv_adj = soa_.ds_perv[ui];
         if (month >= 0) {
             const auto umon = static_cast<std::size_t>(month);
             auto monthly = [&](const std::vector<int>& pat, double& out) -> bool {
-                if (ui >= pat.size()) return false;
+                if (ui >= pat.size())
+                    return false;
                 const int pi = pat[ui];
-                if (pi < 0) return false;
+                if (pi < 0)
+                    return false;
                 const auto upi = static_cast<std::size_t>(pi);
                 if (upi >= ctx.patterns.types.size() || ctx.patterns.types[upi] != 0)
                     return false;
                 const auto& facs = ctx.patterns.factors[upi];
-                if (umon >= facs.size()) return false;
+                if (umon >= facs.size())
+                    return false;
                 out = facs[umon];
                 return true;
             };
@@ -724,19 +768,18 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
                 alpha_p_adj = (f <= 0.0) ? 0.0 : alpha_p_adj / f;
         }
 
-        evapRate=evap_rate_[ui]*snow_open_perv;
-        if(source_forcing && (*source_forcing)[slot].pet_perv>=0)evapRate=(*source_forcing)[slot].pet_perv;
+        evapRate = evap_rate_[ui] * snow_open_perv;
+        if (source_forcing && (*source_forcing)[slot].pet_perv >= 0)
+            evapRate = (*source_forcing)[slot].pet_perv;
         precip = precip_perv;
-        double runoff_p = processSubarea(soa_.depth_perv[ui], alpha_p_adj,
-                                         ds_perv_adj, fp, true, runon_perv,
-                                         soa_.n_perv[ui], 2);
-        precip = precip_[ui];   // restore for subsequent use
-
+        double runoff_p = processSubarea(soa_.depth_perv[ui], alpha_p_adj, ds_perv_adj, fp, true,
+                                         runon_perv, soa_.n_perv[ui], 2);
+        precip = precip_[ui]; // restore for subsequent use
 
         // Save per-subarea runoff for next step's inter-subarea routing
         soa_.old_runoff_imperv0[ui] = runoff0;
         soa_.old_runoff_imperv1[ui] = runoff1;
-        soa_.old_runoff_perv[ui]    = runoff_p;
+        soa_.old_runoff_perv[ui] = runoff_p;
         completed_step_seconds_[ui] = dt;
 
         // legacy subcatch_getRunoff's return value (subcatch.c:714-724,
@@ -752,12 +795,14 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         {
             double sum = 0.0;
             if (total_area > 0.0) {
-                sum += runoff0  * (total_area * f0);
-                sum += runoff1  * (total_area * f1);
+                sum += runoff0 * (total_area * f0);
+                sum += runoff1 * (total_area * f1);
                 sum += runoff_p * (total_area * fp);
             }
-            const double full_area = !spatial_full_area_ft2_.empty() && spatial_full_area_ft2_[ui] >= 0
-                ? spatial_full_area_ft2_[ui] : ctx.subcatches.area[ui] / ucf_landarea;
+            const double full_area =
+                !spatial_full_area_ft2_.empty() && spatial_full_area_ft2_[ui] >= 0
+                    ? spatial_full_area_ft2_[ui]
+                    : ctx.subcatches.area[ui] / ucf_landarea;
             soa_.subarea_runoff_rate[ui] = (full_area > 0.0) ? sum / full_area : 0.0;
         }
 
@@ -780,10 +825,12 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         // into the runoff of every LID subcatchment).
         {
             double q_i = runoff0 * f0 + runoff1 * f1;
-            if (route_mode == 2 && soa_.imperv_pct[ui] < 1.0) q_i *= 1.0 - pct;
+            if (route_mode == 2 && soa_.imperv_pct[ui] < 1.0)
+                q_i *= 1.0 - pct;
             soa_.imperv_runoff_cfs[ui] = q_i * total_area;
             double q_p = runoff_p * fp;
-            if (route_mode == 1 && soa_.imperv_pct[ui] > 0.0) q_p *= 1.0 - pct;
+            if (route_mode == 1 && soa_.imperv_pct[ui] > 0.0)
+                q_p *= 1.0 - pct;
             soa_.perv_runoff_cfs[ui] = q_p * total_area;
         }
 
@@ -791,15 +838,15 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         // Matches legacy lines 700-709.
         // evapLoss/infilLoss stored as area-averaged depth rates (ft/sec)
         // matching legacy: evapLoss = Vevap / tStep / area
-        double evapLoss  = (total_area > 0.0) ? Vevap / dt / total_area : 0.0;
+        double evapLoss = (total_area > 0.0) ? Vevap / dt / total_area : 0.0;
         double infilLoss = (total_area > 0.0) ? Vinfil / dt / total_area : 0.0;
-        double newRunoff = Voutflow / dt;  // CFS
+        double newRunoff = Voutflow / dt; // CFS
 
         soa_.runoff[ui] = newRunoff;
-        soa_.outflow_vol[ui] = Voutflow;   // ft3, for the LID volume-domain fold
+        soa_.outflow_vol[ui] = Voutflow; // ft3, for the LID volume-domain fold
 
         // Write back to SimulationContext
-        ctx.subcatches.runoff[ui]     = newRunoff;
+        ctx.subcatches.runoff[ui] = newRunoff;
         // legacy subcatch_getRunoff's RETURN (`runoff / area`, ft/sec) — the
         // rate the surface-quality paths wash off with. Mirrored onto the
         // context so the pollutant and reactions-species kernels share one
@@ -816,30 +863,29 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         // mass balance and the age/heat watershed mirrors weight with.
         {
             const double fi = soa_.imperv_pct[ui];
-            ctx.subcatches.ponded_depth[ui] =
-                soa_.depth_imperv0[ui] * soa_.frac_imperv0[ui] +
-                soa_.depth_imperv1[ui] * soa_.frac_imperv1[ui] +
-                soa_.depth_perv[ui]    * (1.0 - fi);
+            ctx.subcatches.ponded_depth[ui] = soa_.depth_imperv0[ui] * soa_.frac_imperv0[ui] +
+                                              soa_.depth_imperv1[ui] * soa_.frac_imperv1[ui] +
+                                              soa_.depth_perv[ui] * (1.0 - fi);
         }
-        ctx.subcatches.evap_loss[ui]  = evapLoss;
+        ctx.subcatches.evap_loss[ui] = evapLoss;
         ctx.subcatches.infil_loss[ui] = infilLoss;
         // The volumes themselves, for the groundwater step: legacy hands
         // gwater_getGroundwater Vpevap and Vinfil (+ the LID shares) and
         // divides by the FULL area then by tStep there.
         soa_.perv_evap_vol[ui] = Vpevap;
         soa_.actual_perv_evap_vol[ui] = actual_perv_evap;
-        soa_.infil_vol[ui]     = Vinfil;
-        soa_.spatial_infil_vol[ui]=Vspatial;
+        soa_.infil_vol[ui] = Vinfil;
+        soa_.spatial_infil_vol[ui] = Vspatial;
 
         // Accumulate per-subcatchment statistics (matching legacy stats_updateSubcatchStats)
-        ctx.subcatches.stat_evap_vol[ui]  += Vevap;
+        ctx.subcatches.stat_evap_vol[ui] += Vevap;
         ctx.subcatches.stat_infil_vol[ui] += Vinfil;
         // Impervious runoff: IMPERV0 + IMPERV1 subarea contributions
         double area_i0 = total_area * f0;
         double area_i1 = total_area * f1;
         double area_pv = total_area * fp;
         ctx.subcatches.stat_imperv_vol[ui] += (runoff0 * area_i0 + runoff1 * area_i1) * dt;
-        ctx.subcatches.stat_perv_vol[ui]   += runoff_p * area_pv * dt;
+        ctx.subcatches.stat_perv_vol[ui] += runoff_p * area_pv * dt;
 
         // Runoff is stored in subcatches.runoff[i]; routing picks it up via
         // interpolateRunoffToNodes() → nodes.runoff_inflow[] → assembleLateralInflows().

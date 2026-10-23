@@ -15,12 +15,12 @@
 // limitations under the License.
 
 /**
- * @file WaterAgeWatershed.cpp
- * @brief Phase A3 body — subcatchment surface water age.
+ * @file      WaterAgeWatershed.cpp
+ * @brief     Phase A3 body — subcatchment surface water age.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "WaterAgeWatershed.hpp"
@@ -37,68 +37,88 @@ namespace openswmm::transport {
 
 namespace {
 constexpr int kNSub = static_cast<int>(SubArea::COUNT_);
-constexpr double kTinyVol = 1.0e-12;  ///< ft³
-}  // namespace
+constexpr double kTinyVol = 1.0e-12; ///< ft³
+} // namespace
 
-void addRunonAge(SimulationContext& ctx, int donor_sc, int receiver_sc,
-                 double q) {
-    if (!ctx.options.water_age) return;
+/**
+ * @brief Add donor subcatchment runoff-age rate to receiver run-on numerator.
+ * @param[in,out] ctx Enabled water-age state with prepared donor and receiver arrays.
+ * @param[in] donor_sc Valid nonnegative donor subcatchment ID; uncovered returns.
+ * @param[in] receiver_sc Valid nonnegative receiver ID; uncovered returns.
+ * @param[in] q Routed run-on ft3/s, not interval volume; finite sign is not checked.
+ * @note Adds q*donor age seconds, does not clear numerator, transfer water or advance clock.
+ * Allocation-free; caller serializes cleared run-on assembly and subsequent watershed mix.
+ */
+void addRunonAge(SimulationContext& ctx, int donor_sc, int receiver_sc, double q) {
+    if (!ctx.options.water_age)
+        return;
     auto& ws = ctx.water_age_state;
     const auto ud = static_cast<std::size_t>(donor_sc);
     const auto ur = static_cast<std::size_t>(receiver_sc);
-    if (ud >= ws.subcatch_runoff_age.size() ||
-        ur >= ws.subcatch_runon_age_vol_in.size())
+    if (ud >= ws.subcatch_runoff_age.size() || ur >= ws.subcatch_runon_age_vol_in.size())
         return;
     // The RATE convention the loaders use everywhere: q · age, integrated by
     // the consumer. Run-on arrives at the age the donor's runoff left at.
     ws.subcatch_runon_age_vol_in[ur] += q * ws.subcatch_runoff_age[ud];
 }
 
-void routeSubcatchmentAge(SimulationContext& ctx,
-                          const runoff::RunoffSoA& soa, double dt) {
-    if (!ctx.options.water_age || dt <= 0.0) return;
+/**
+ * @brief Age/mix subarea water stores with snow-adjusted precipitation and assembled run-on.
+ * @param[in,out] ctx Enabled age config/state and prepared rainfall/snow/run-on receipts; writes
+ * subarea ages seconds, old water volumes ft3 and runoff age.
+ * @param[in] soa Completed runoff area ft2, area fractions and new subarea depths ft, matching
+ * source order.
+ * @param[in] dt Positive finite accepted runoff interval s; disabled/nonpositive or no sources
+ * returns.
+ * @note Shape mismatch calls full age-state resize, potentially resetting unrelated node/link
+ * histories. Adds dt to stored age, mixes arriving rain/melt+run-on volume, clips age
+ * nonnegative. Publishes new-retained-volume-weighted subarea mean (not outgoing-flow-weighted);
+ * dry fallback configured rain age. Does not clear run-on numerator, book water/global mass or
+ * change clock. Parallel extents must cover area count; allocation may partially reset and NaN
+ * dt is not explicitly rejected.
+ */
+void routeSubcatchmentAge(SimulationContext& ctx, const runoff::RunoffSoA& soa, double dt) {
+    if (!ctx.options.water_age || dt <= 0.0)
+        return;
 
     auto& ws = ctx.water_age_state;
     const int nsc = ctx.n_subcatches();
-    if (nsc <= 0) return;
-    const auto want = static_cast<std::size_t>(nsc) *
-                      static_cast<std::size_t>(kNSub);
+    if (nsc <= 0)
+        return;
+    const auto want = static_cast<std::size_t>(nsc) * static_cast<std::size_t>(kNSub);
     if (ws.subarea_age.size() != want)
         ws.resize(ctx.n_nodes(), ctx.n_links(), nsc);
 
     // Age of water arriving from the sky. RAINFALL is the pathway the
     // wet-weather loader already uses for washoff, so the same configured
     // source age governs both — one table, one meaning.
-    const double a_rain = ctx.water_age_config.global_age[
-        static_cast<int>(WaterAgeSource::RAINFALL)];
+    const double a_rain =
+        ctx.water_age_config.global_age[static_cast<int>(WaterAgeSource::RAINFALL)];
 
     for (int i = 0; i < nsc && i < static_cast<int>(soa.area.size()); ++i) {
         const auto ui = static_cast<std::size_t>(i);
         const double area = soa.area[ui];
-        const double fi   = soa.imperv_pct[ui];
-        const double fp   = 1.0 - fi;
-        const double f0   = soa.frac_imperv0[ui];
-        const double f1   = soa.frac_imperv1[ui];
+        const double fi = soa.imperv_pct[ui];
+        const double fp = 1.0 - fi;
+        const double f0 = soa.frac_imperv0[ui];
+        const double f1 = soa.frac_imperv1[ui];
 
         // Area-weighted subarea volumes, the same expression the runoff
         // mass balance uses (SWMMEngine.cpp:3664-3666).
         const double frac[kNSub] = {f0, f1, fp};
-        const double depth[kNSub] = {soa.depth_imperv0[ui],
-                                     soa.depth_imperv1[ui],
+        const double depth[kNSub] = {soa.depth_imperv0[ui], soa.depth_imperv1[ui],
                                      soa.depth_perv[ui]};
 
         // Run-on arrives spread over the whole subcatchment as extra
         // precipitation (Runoff.cpp:331-333), so it mixes into every
         // subarea in proportion to that subarea's share of the inflow.
         const double runon_rate =
-            (ui < ws.subcatch_runon_age_vol_in.size() &&
-             ui < ctx.subcatches.runon_inflow.size())
+            (ui < ws.subcatch_runon_age_vol_in.size() && ui < ctx.subcatches.runon_inflow.size())
                 ? ctx.subcatches.runon_inflow[ui]
                 : 0.0;
-        const double runon_age =
-            (runon_rate > 0.0 && ui < ws.subcatch_runon_age_vol_in.size())
-                ? ws.subcatch_runon_age_vol_in[ui] / runon_rate
-                : 0.0;
+        const double runon_age = (runon_rate > 0.0 && ui < ws.subcatch_runon_age_vol_in.size())
+                                     ? ws.subcatch_runon_age_vol_in[ui] / runon_rate
+                                     : 0.0;
 
         // Run-on spreads over the whole subcatchment, so its depth rate is
         // the same for every subarea. The PRECIPITATION rate is not — see
@@ -107,8 +127,7 @@ void routeSubcatchmentAge(SimulationContext& ctx,
 
         double out_num = 0.0, out_den = 0.0;
         for (int k = 0; k < kNSub; ++k) {
-            const auto idx = ui * static_cast<std::size_t>(kNSub) +
-                             static_cast<std::size_t>(k);
+            const auto idx = ui * static_cast<std::size_t>(kNSub) + static_cast<std::size_t>(k);
             const double v_new = depth[k] * frac[k] * area;
             const double v_old = ws.subarea_vol_prev[idx];
 
@@ -134,9 +153,9 @@ void routeSubcatchmentAge(SimulationContext& ctx,
             // magnitude — on the gate deck's cascade it is 10.08 cfs against
             // 0.027 — so treating the arrival as pure run-on whenever any
             // run-on exists would hand the whole inflow the donor's age.
-            const double a_in = (in_rate > 0.0)
-                ? (rain_rate * a_precip + runon_depth_rate * runon_age) / in_rate
-                : a_precip;
+            const double a_in =
+                (in_rate > 0.0) ? (rain_rate * a_precip + runon_depth_rate * runon_age) / in_rate
+                                : a_precip;
 
             // 1. Age what was already there.
             double a = ws.subarea_age[idx] + dt;
@@ -156,10 +175,9 @@ void routeSubcatchmentAge(SimulationContext& ctx,
             const double v_in = in_rate * frac[k] * area * dt;
             if (v_in > kTinyVol) {
                 const double denom = v_old + v_in;
-                a = (denom > kTinyVol) ? (a * v_old + a_in * v_in) / denom
-                                       : a_in;
+                a = (denom > kTinyVol) ? (a * v_old + a_in * v_in) / denom : a_in;
             }
-            ws.subarea_age[idx]      = std::max(a, 0.0);
+            ws.subarea_age[idx] = std::max(a, 0.0);
             ws.subarea_vol_prev[idx] = v_new;
 
             // 3. Runoff leaves at the volume-weighted mean of the subareas
@@ -172,12 +190,11 @@ void routeSubcatchmentAge(SimulationContext& ctx,
             }
         }
         if (ui < ws.subcatch_runoff_age.size())
-            ws.subcatch_runoff_age[ui] =
-                (out_den > kTinyVol) ? out_num / out_den : a_rain;
+            ws.subcatch_runoff_age[ui] = (out_den > kTinyVol) ? out_num / out_den : a_rain;
     }
 
     // The run-on accumulator is zeroed by SWMMEngine::assembleRunon at the
     // start of the next runoff step, beside the flow it describes.
 }
 
-}  // namespace openswmm::transport
+} // namespace openswmm::transport

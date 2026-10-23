@@ -290,7 +290,7 @@ TAB_SIZE               = 4
 # with the commands \{ and \} for these it is advised to use the version @{ and
 # @} or use a double escape (\\{ and \\})
 
-ALIASES                = "license=\par License\n" \
+ALIASES                = "license=\par License^^" \
                          "description=\par Discription\n" \
                          "mod=\par Modified\n" \
                          "moditem{3}=\b \date\1 \author\2 \3\n" \
@@ -1500,7 +1500,17 @@ HTML_EXTRA_FILES       = custom/js/doxygen-awesome-darkmode-toggle.js \
                          custom/js/doxygen-awesome-paragraph-link.js \
                          custom/js/doxygen-awesome-tabs.js \
                          custom/js/manual-interactive.js \
-                         custom/mathjax-config.js
+                         custom/mathjax-config.js \
+                         manuals/reference/hydraulics/downloads/rubinato2017_review.pdf \
+                         manuals/reference/hydraulics/downloads/rubinato2017_steady_comparison.csv \
+                         manuals/reference/hydraulics/downloads/rubinato2017_results_summary.json \
+                         manuals/reference/hydraulics/downloads/rubinato2017_examples.zip \
+                         manuals/reference/hydraulics/downloads/rubinato2017_results.html \
+                         manuals/reference/hydraulics/downloads/rubinato2017_visual_supplement.pdf \
+                         manuals/reference/hydraulics/downloads/rubinato2017_visuals.zip \
+                         manuals/reference/hydraulics/downloads/rubinato2017_momentum.zip \
+                         manuals/reference/hydraulics/downloads/rubinato2017_momentum_comparison.csv \
+                         manuals/reference/hydraulics/downloads/rubinato2017_momentum_data.json
 
 # The HTML_COLORSTYLE tag can be used to specify if the generated HTML output
 # should be rendered with a dark or light theme.

@@ -15,13 +15,13 @@
 // limitations under the License.
 
 /**
- * @file Exfiltration.cpp
- * @brief Storage exfiltration — numerically identical to legacy exfil.c.
+ * @file      Exfiltration.cpp
+ * @brief     Storage exfiltration — numerically identical to legacy exfil.c.
  * @ingroup new_engine
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "Exfiltration.hpp"
@@ -60,8 +60,7 @@ void ExfilSolver::init(SimulationContext& ctx) {
         // Relational refactor (Phase 3): exfil conductivity from the side-table
         // (ExfilSolver::init runs after node_subtypes.build), wide fallback otherwise.
         const int sr = ctx.node_subtypes.storage_row(i);
-        const double ksat = (sr >= 0)
-            ? lidnode::bottomConductivity(ctx, sr) : 0.0;
+        const double ksat = (sr >= 0) ? lidnode::bottomConductivity(ctx, sr) : 0.0;
         if (nodes.type[ui] == NodeType::STORAGE && ksat > 0.0) {
             ++n_exfil;
         }
@@ -82,12 +81,11 @@ void ExfilSolver::init(SimulationContext& ctx) {
         // Relational refactor (Phase 3): exfil Green-Ampt params from the
         // side-table (fresh at init), with a wide-array fallback.
         const int sr = ctx.node_subtypes.storage_row(i);
-        const double exf_suction = (sr >= 0)
-            ? ctx.node_subtypes.storages.exfil_suction[static_cast<size_t>(sr)] : 0.0;
-        const double exf_ksat = (sr >= 0)
-            ? lidnode::bottomConductivity(ctx, sr) : 0.0;
-        const double exf_imd = (sr >= 0)
-            ? ctx.node_subtypes.storages.exfil_imd[static_cast<size_t>(sr)] : 0.0;
+        const double exf_suction =
+            (sr >= 0) ? ctx.node_subtypes.storages.exfil_suction[static_cast<size_t>(sr)] : 0.0;
+        const double exf_ksat = (sr >= 0) ? lidnode::bottomConductivity(ctx, sr) : 0.0;
+        const double exf_imd =
+            (sr >= 0) ? ctx.node_subtypes.storages.exfil_imd[static_cast<size_t>(sr)] : 0.0;
         if (nodes.type[ui] != NodeType::STORAGE || exf_ksat <= 0.0) {
             continue;
         }
@@ -97,21 +95,12 @@ void ExfilSolver::init(SimulationContext& ctx) {
 
         // --- Initialize Green-Ampt states for bottom and bank
         //     Uses the same soil parameters for both (matching legacy createStorageExfil)
-        infil::grnampt_init(soa_.btm_ga[uk],
-                            exf_suction,
-                            exf_ksat,
-                            exf_imd,
-                            ctx.options);
-        infil::grnampt_init(soa_.bank_ga[uk],
-                            exf_suction,
-                            exf_ksat,
-                            exf_imd,
-                            ctx.options);
+        infil::grnampt_init(soa_.btm_ga[uk], exf_suction, exf_ksat, exf_imd, ctx.options);
+        infil::grnampt_init(soa_.bank_ga[uk], exf_suction, exf_ksat, exf_imd, ctx.options);
 
         // --- Compute bottom area and bank geometry from storage shape
         //     Storage geometry from the side-table (sr from above), wide fallback.
-        int curve_idx = (sr >= 0)
-            ? ctx.node_subtypes.storages.curve[static_cast<size_t>(sr)] : -1;
+        int curve_idx = (sr >= 0) ? ctx.node_subtypes.storages.curve[static_cast<size_t>(sr)] : -1;
 
         if (curve_idx >= 0) {
             // --- TABULAR: storage shape given by a storage curve
@@ -128,7 +117,7 @@ void ExfilSolver::init(SimulationContext& ctx) {
             // Find bank min/max depths and max bank area by scanning curve
             soa_.bank_min_depth[uk] = 0.0;
             soa_.bank_max_depth[uk] = 0.0;
-            soa_.bank_max_area[uk]  = 0.0;
+            soa_.bank_max_area[uk] = 0.0;
 
             if (!curve.x.empty()) {
                 double alast = curve.y[0];
@@ -139,7 +128,7 @@ void ExfilSolver::init(SimulationContext& ctx) {
                     if (a < alast) {
                         break;
                     } else if (a > alast) {
-                        soa_.bank_max_area[uk]  = a;
+                        soa_.bank_max_area[uk] = a;
                         soa_.bank_max_depth[uk] = d;
                     } else if (soa_.bank_max_area[uk] == 0.0) {
                         soa_.bank_min_depth[uk] = d;
@@ -160,8 +149,8 @@ void ExfilSolver::init(SimulationContext& ctx) {
             // from the step its banks first wetted.
             {
                 const double ucf_len = ucf::UCF(ucf::LENGTH, ctx.options);
-                soa_.btm_area[uk]       /= ucf_len * ucf_len;
-                soa_.bank_max_area[uk]  /= ucf_len * ucf_len;
+                soa_.btm_area[uk] /= ucf_len * ucf_len;
+                soa_.bank_max_area[uk] /= ucf_len * ucf_len;
                 soa_.bank_min_depth[uk] /= ucf_len;
                 soa_.bank_max_depth[uk] /= ucf_len;
             }
@@ -176,12 +165,15 @@ void ExfilSolver::init(SimulationContext& ctx) {
             //     TABULAR case only), so the raw USER-unit coefficients are
             //     used directly — storage coefficients stay user-unit
             //     end-to-end (see PostParseResolver), matching this quirk.
-            double a_coeff = (sr >= 0) ? ctx.node_subtypes.storages.a[static_cast<size_t>(sr)] : 0.0;
-            double b_coeff = (sr >= 0) ? ctx.node_subtypes.storages.b[static_cast<size_t>(sr)] : 0.0;
-            double c_coeff = (sr >= 0) ? ctx.node_subtypes.storages.c[static_cast<size_t>(sr)] : 0.0;
-            const StorageShape sshape = (sr >= 0)
-                ? ctx.node_subtypes.storages.shape[static_cast<size_t>(sr)]
-                : StorageShape::FUNCTIONAL;
+            double a_coeff =
+                (sr >= 0) ? ctx.node_subtypes.storages.a[static_cast<size_t>(sr)] : 0.0;
+            double b_coeff =
+                (sr >= 0) ? ctx.node_subtypes.storages.b[static_cast<size_t>(sr)] : 0.0;
+            double c_coeff =
+                (sr >= 0) ? ctx.node_subtypes.storages.c[static_cast<size_t>(sr)] : 0.0;
+            const StorageShape sshape =
+                (sr >= 0) ? ctx.node_subtypes.storages.shape[static_cast<size_t>(sr)]
+                          : StorageShape::FUNCTIONAL;
 
             double btm = c_coeff;
             if (storage_shape_is_geometric(sshape)) {
@@ -204,7 +196,7 @@ void ExfilSolver::init(SimulationContext& ctx) {
             // Legacy: bankMinDepth=0, bankMaxDepth=BIG, bankMaxArea=BIG
             soa_.bank_min_depth[uk] = 0.0;
             soa_.bank_max_depth[uk] = BIG;
-            soa_.bank_max_area[uk]  = BIG;
+            soa_.bank_max_area[uk] = BIG;
         }
 
         ++k;
@@ -217,9 +209,11 @@ void ExfilSolver::computeAll(SimulationContext& ctx, double dt) {
     for (int k = 0; k < soa_.count; ++k) {
         auto uk = static_cast<size_t>(k);
         int ni = soa_.node_idx[uk];
-        if (ni < 0) continue;
+        if (ni < 0)
+            continue;
         auto uni = static_cast<size_t>(ni);
-        if (lidnode::richardsMode(ctx, ni) || lidnode::bottomMode(ctx, ni) != LidNodeBottom::Current) {
+        if (lidnode::richardsMode(ctx, ni) ||
+            lidnode::bottomMode(ctx, ni) != LidNodeBottom::Current) {
             ctx.node_subtypes.storages.exfil_rate[ctx.node_subtypes.storage_row(ni)] = 0;
             continue; // the LID bottom owner suppresses legacy seepage
         }
@@ -248,34 +242,35 @@ void ExfilSolver::computeAll(SimulationContext& ctx, double dt) {
         // rate Ks * hydconFactor. Evaluated as plain GREEN_AMPT at factor
         // 1, the pond of infiltration-detetention-pond lost ~0 where legacy
         // drains 0.8 cfs.
-        const double infil_factor    = ctx.climate_state.infil_factor;
+        const double infil_factor = ctx.climate_state.infil_factor;
         const double recovery_factor = ctx.climate_state.recovery_factor;
         auto ga_rate = [&](infil::GreenAmptState& ga, double d) {
-            if (ga.IMDmax == 0.0) return ga.Ks * infil_factor;
-            return infil::grnampt_getInfil(ga, 0.0, d, dt, InfilModel::MOD_GREEN_AMPT,
-                                           infil_factor, recovery_factor);
+            if (ga.IMDmax == 0.0)
+                return ga.Ks * infil_factor;
+            return infil::grnampt_getInfil(ga, 0.0, d, dt, InfilModel::MOD_GREEN_AMPT, infil_factor,
+                                           recovery_factor);
         };
 
         // Bottom exfiltration
-        total_loss += ga_rate(soa_.btm_ga[uk], depth) * soa_.btm_area[uk]
-            * lidnode::bottomCloggingFactor(ctx, ctx.node_subtypes.storage_row(ni));
+        total_loss += ga_rate(soa_.btm_ga[uk], depth) * soa_.btm_area[uk] *
+                      lidnode::bottomCloggingFactor(ctx, ctx.node_subtypes.storage_row(ni));
 
         // Bank exfiltration (only above bank_min_depth): the bank area is
         // the surface area (capped at the largest area the curve reaches)
         // LESS the bottom area (exfil.c:191 `MIN(area, bankMaxArea) -
         // btmArea`), and only when positive.
         if (depth > soa_.bank_min_depth[uk]) {
-            double area = openswmm::node::getSurfArea(ctx.nodes, soa_.node_idx[uk], depth,
-                                            &ctx.tables,
-                                            openswmm::ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units)),
-                                            &ctx.node_subtypes);
+            double area = openswmm::node::getSurfArea(
+                ctx.nodes, soa_.node_idx[uk], depth, &ctx.tables,
+                openswmm::ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units)),
+                &ctx.node_subtypes);
             area = std::min(area, soa_.bank_max_area[uk]) - soa_.btm_area[uk];
             if (area > 0.0) {
                 double bank_depth = depth;
                 if (soa_.bank_ga[uk].IMDmax != 0.0) {
                     if (depth > soa_.bank_max_depth[uk]) {
-                        bank_depth = depth - soa_.bank_max_depth[uk]
-                                   + (soa_.bank_max_depth[uk] - soa_.bank_min_depth[uk]) / 2.0;
+                        bank_depth = depth - soa_.bank_max_depth[uk] +
+                                     (soa_.bank_max_depth[uk] - soa_.bank_min_depth[uk]) / 2.0;
                     } else {
                         bank_depth = (depth - soa_.bank_min_depth[uk]) / 2.0;
                     }

@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_storage_shapes.cpp
- * @brief Refactored-engine parity for the four geometric storage shapes
+ * @file      test_storage_shapes.cpp
+ * @brief     Refactored-engine parity for the four geometric storage shapes
  *        (CYLINDRICAL / CONICAL / PARABOLOID / PYRAMIDAL).
  *
  * @details These shapes existed only in the legacy solver (src/legacy/engine/node.c);
@@ -29,9 +29,9 @@
  *          so a CYLINDRICAL row (which has b == 0) must NOT fall into the functional
  *          `b == 0 ⇒ d = v/(a+c)` fast path in getDepth().
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -46,52 +46,135 @@ using namespace openswmm;
 
 namespace {
 
-constexpr double kPi = 3.141592654;   // legacy consts.h PI (truncated literal)
+constexpr double kPi = 3.141592654; // legacy consts.h PI (truncated literal)
 
 /** @brief One storage node (index 0) carrying shape @p s with dimensions p1/p2/p3. */
 struct ShapeFixture {
-    NodeData     nodes;
+    NodeData nodes;
     NodeSubtypes subs;
-    std::size_t  ur = 0;
+    std::size_t ur = 0;
 
+    /**
+     * @brief Construct one curve-free storage node with independently derived coefficients.
+     *
+     * Owns node/subtype arrays. Nonfatally expects valid coefficient conversion, then stores the
+     * resulting a/b/c even on failure, where local zero defaults remain. Query unit_sys must agree with
+     * the display system used for p1/p2/p3.
+     *
+     * @param[in] s Geometric storage shape understood by storage_shape_coeffs.
+     * @param[in] p1 First full shape dimension in the intended project display length units.
+     * @param[in] p2 Second full shape dimension in the same display units.
+     * @param[in] p3 Shape slope run/rise, or paraboloid height in display length units.
+     * @param[in] full_depth Node full depth in feet; full_volume is zero to bypass the positive-volume
+     *     clamp.
+     */
     ShapeFixture(StorageShape s, double p1, double p2, double p3, double full_depth = 20.0) {
         nodes.resize(1);
         nodes.type[0] = NodeType::STORAGE;
         nodes.full_depth[0] = full_depth;
-        nodes.full_volume[0] = 0.0;                 // force the analytic path, not the clamp
+        nodes.full_volume[0] = 0.0; // force the analytic path, not the clamp
         const int sr = subs.set_node_type(nodes, 0, NodeType::STORAGE);
         ur = static_cast<std::size_t>(sr);
         auto& S = subs.storages;
         S.curve[ur] = -1;
         S.shape[ur] = s;
-        S.p1[ur] = p1; S.p2[ur] = p2; S.p3[ur] = p3;
+        S.p1[ur] = p1;
+        S.p2[ur] = p2;
+        S.p3[ur] = p3;
         double a = 0.0, b = 0.0, c = 0.0;
         EXPECT_TRUE(storage_shape_coeffs(s, p1, p2, p3, a, b, c));
-        S.a[ur] = a; S.b[ur] = b; S.c[ur] = c;
+        S.a[ur] = a;
+        S.b[ur] = b;
+        S.c[ur] = c;
     }
 
+    /**
+     * @brief Read the stored a coefficient without mutation.
+     * @return Stored display length coefficient for A(d)=c+a*d+b*d*d.
+     */
     double a() const { return subs.storages.a[ur]; }
+    /**
+     * @brief Read the stored b coefficient without mutation.
+     * @return Stored dimensionless quadratic coefficient coefficient for A(d)=c+a*d+b*d*d.
+     */
     double b() const { return subs.storages.b[ur]; }
+    /**
+     * @brief Read the stored c coefficient without mutation.
+     * @return Stored display area coefficient for A(d)=c+a*d+b*d*d.
+     */
     double c() const { return subs.storages.c[ur]; }
 
+    /**
+     * @brief Query production storage area for the fixture node.
+     *
+     * Borrows the fixture arrays and supplies no curve table; does not modify the node geometry.
+     *
+     * @param[in] d Water depth in feet.
+     * @param[in] unit_sys Valid project display column: 0 US, 1 SI, matching constructor shape
+     *     dimensions.
+     * @return Surface area in ft2, including the production depth extrapolation behavior.
+     */
     double area(double d, int unit_sys = 0) {
         return node::getSurfArea(nodes, 0, d, nullptr, unit_sys, &subs);
     }
+    /**
+     * @brief Query production storage vol for the fixture node.
+     *
+     * Borrows the fixture arrays and supplies no curve table; does not modify the node geometry.
+     *
+     * @param[in] d Water depth in feet.
+     * @param[in] unit_sys Valid project display column: 0 US, 1 SI, matching constructor shape
+     *     dimensions.
+     * @return Volume in ft3 from production storage geometry; nonpositive depth yields zero.
+     */
     double vol(double d, int unit_sys = 0) {
         return node::getVolume(nodes, 0, d, nullptr, unit_sys, &subs);
     }
+    /**
+     * @brief Query production storage depth for the fixture node.
+     *
+     * Borrows the fixture arrays and supplies no curve table; does not modify the node geometry.
+     *
+     * @param[in] v Water volume in ft3.
+     * @param[in] unit_sys Valid project display column: 0 US, 1 SI, matching constructor shape
+     *     dimensions.
+     * @return Depth in feet, following production inverse/clamp/convergence behavior.
+     */
     double depth(double v, int unit_sys = 0) {
         return node::getDepth(nodes, 0, v, nullptr, unit_sys, &subs);
     }
 };
 
-/** @brief The analytic relations, written out independently of the engine. */
-double quad_area(double a, double b, double c, double d) { return c + a * d + b * d * d; }
+/**
+ * @brief Evaluate the independent quadratic storage area reference.
+ *
+ * No engine query, range validation or state mutation occurs.
+ *
+ * @param[in] a Linear area coefficient in caller-consistent length units.
+ * @param[in] b Quadratic area coefficient, dimensionless.
+ * @param[in] c Constant area coefficient in squared length units.
+ * @param[in] d Depth in the same length units, used without clamping.
+ * @return c+a*d+b*d*d in squared length units.
+ */
+double quad_area(double a, double b, double c, double d) {
+    return c + a * d + b * d * d;
+}
+/**
+ * @brief Evaluate the independent integral of the quadratic storage area reference.
+ *
+ * No depth clamp or engine query occurs.
+ *
+ * @param[in] a Linear area coefficient in caller-consistent length units.
+ * @param[in] b Quadratic area coefficient, dimensionless.
+ * @param[in] c Constant area coefficient in squared length units.
+ * @param[in] d Depth in the same length units, used without clamping.
+ * @return c*d+(a/2)*d*d+(b/3)*d*d*d in cubed length units.
+ */
 double cubic_vol(double a, double b, double c, double d) {
     return c * d + (a / 2.0) * d * d + (b / 3.0) * d * d * d;
 }
 
-}  // namespace
+} // namespace
 
 // ===========================================================================
 // Coefficient derivation — must reproduce legacy node.c:713-752 exactly
@@ -102,7 +185,7 @@ TEST(StorageShapeCoeffs, CylindricalIsConstantArea) {
     ASSERT_TRUE(storage_shape_coeffs(StorageShape::CYLINDRICAL, 30.0, 20.0, 0.0, a, b, c));
     EXPECT_DOUBLE_EQ(a, 0.0);
     EXPECT_DOUBLE_EQ(b, 0.0);
-    EXPECT_DOUBLE_EQ(c, kPi * 15.0 * 10.0);   // π·A·B, semi-axes
+    EXPECT_DOUBLE_EQ(c, kPi * 15.0 * 10.0); // π·A·B, semi-axes
 }
 
 TEST(StorageShapeCoeffs, ConicalMatchesLegacy) {
@@ -119,27 +202,28 @@ TEST(StorageShapeCoeffs, ParaboloidMatchesLegacy) {
     ASSERT_TRUE(storage_shape_coeffs(StorageShape::PARABOLOID, 30.0, 20.0, 8.0, a, b, c));
     EXPECT_DOUBLE_EQ(a, kPi * 15.0 * 10.0 / 8.0);
     EXPECT_DOUBLE_EQ(b, 0.0);
-    EXPECT_DOUBLE_EQ(c, 0.0);                 // comes to a point at the invert
+    EXPECT_DOUBLE_EQ(c, 0.0); // comes to a point at the invert
 }
 
 TEST(StorageShapeCoeffs, PyramidalUsesFullBaseDims) {
     double a, b, c;
     ASSERT_TRUE(storage_shape_coeffs(StorageShape::PYRAMIDAL, 30.0, 20.0, 2.5, a, b, c));
-    EXPECT_DOUBLE_EQ(a, 2.0 * (30.0 + 20.0) * 2.5);   // NOT semi-axes — full L, W
+    EXPECT_DOUBLE_EQ(a, 2.0 * (30.0 + 20.0) * 2.5); // NOT semi-axes — full L, W
     EXPECT_DOUBLE_EQ(b, 4.0 * 2.5 * 2.5);
     EXPECT_DOUBLE_EQ(c, 30.0 * 20.0);
 }
 
 TEST(StorageShapeCoeffs, RejectsInvalidDimensions) {
     double a, b, c;
-    EXPECT_FALSE(storage_shape_coeffs(StorageShape::PYRAMIDAL,   0.0, 10.0,  1.0, a, b, c));
-    EXPECT_FALSE(storage_shape_coeffs(StorageShape::CONICAL,    10.0,  0.0,  1.0, a, b, c));
-    EXPECT_FALSE(storage_shape_coeffs(StorageShape::CONICAL,    10.0, 10.0, -1.0, a, b, c));
-    EXPECT_FALSE(storage_shape_coeffs(StorageShape::PARABOLOID, 10.0, 10.0,  0.0, a, b, c));  // Z divides
-    EXPECT_TRUE (storage_shape_coeffs(StorageShape::CONICAL,    10.0, 10.0,  0.0, a, b, c));  // Z=0 legal
+    EXPECT_FALSE(storage_shape_coeffs(StorageShape::PYRAMIDAL, 0.0, 10.0, 1.0, a, b, c));
+    EXPECT_FALSE(storage_shape_coeffs(StorageShape::CONICAL, 10.0, 0.0, 1.0, a, b, c));
+    EXPECT_FALSE(storage_shape_coeffs(StorageShape::CONICAL, 10.0, 10.0, -1.0, a, b, c));
+    EXPECT_FALSE(
+        storage_shape_coeffs(StorageShape::PARABOLOID, 10.0, 10.0, 0.0, a, b, c));      // Z divides
+    EXPECT_TRUE(storage_shape_coeffs(StorageShape::CONICAL, 10.0, 10.0, 0.0, a, b, c)); // Z=0 legal
     // TABULAR/FUNCTIONAL derive nothing.
-    EXPECT_FALSE(storage_shape_coeffs(StorageShape::FUNCTIONAL, 10.0, 10.0,  1.0, a, b, c));
-    EXPECT_FALSE(storage_shape_coeffs(StorageShape::TABULAR,    10.0, 10.0,  1.0, a, b, c));
+    EXPECT_FALSE(storage_shape_coeffs(StorageShape::FUNCTIONAL, 10.0, 10.0, 1.0, a, b, c));
+    EXPECT_FALSE(storage_shape_coeffs(StorageShape::TABULAR, 10.0, 10.0, 1.0, a, b, c));
 }
 
 TEST(StorageShapeCoeffs, KeywordRoundTrip) {
@@ -154,9 +238,9 @@ TEST(StorageShapeCoeffs, KeywordRoundTrip) {
     EXPECT_STREQ(storage_shape_keyword(StorageShape::PARABOLOID), "PARABOLIC");
     EXPECT_FALSE(storage_shape_from_keyword("FUNCTIONAL_X", s));
     // Ordinals must match legacy enum StorageType — the C API passes this int through.
-    EXPECT_EQ(static_cast<int>(StorageShape::TABULAR),    0);
+    EXPECT_EQ(static_cast<int>(StorageShape::TABULAR), 0);
     EXPECT_EQ(static_cast<int>(StorageShape::FUNCTIONAL), 1);
-    EXPECT_EQ(static_cast<int>(StorageShape::PYRAMIDAL),  5);
+    EXPECT_EQ(static_cast<int>(StorageShape::PYRAMIDAL), 5);
 }
 
 // ===========================================================================
@@ -164,8 +248,8 @@ TEST(StorageShapeCoeffs, KeywordRoundTrip) {
 // ===========================================================================
 
 TEST(StorageShapeArea, QuadraticNotPowerLaw) {
-    for (auto s : {StorageShape::CYLINDRICAL, StorageShape::CONICAL,
-                   StorageShape::PARABOLOID,  StorageShape::PYRAMIDAL}) {
+    for (auto s : {StorageShape::CYLINDRICAL, StorageShape::CONICAL, StorageShape::PARABOLOID,
+                   StorageShape::PYRAMIDAL}) {
         ShapeFixture f(s, 30.0, 20.0, 2.5);
         for (double d : {0.0, 0.5, 3.0, 7.25, 15.0}) {
             EXPECT_NEAR(f.area(d), quad_area(f.a(), f.b(), f.c(), d), 1e-9)
@@ -177,10 +261,10 @@ TEST(StorageShapeArea, QuadraticNotPowerLaw) {
 TEST(StorageShapeArea, CylindricalAreaIsDepthInvariant) {
     ShapeFixture f(StorageShape::CYLINDRICAL, 30.0, 20.0, 0.0);
     const double expect = kPi * 15.0 * 10.0;
-    EXPECT_NEAR(f.area(0.0),  expect, 1e-9);
-    EXPECT_NEAR(f.area(10.0), expect, 1e-9);   // a power-law read would give the same
-                                               // here, so the discriminating case is
-                                               // getDepth below
+    EXPECT_NEAR(f.area(0.0), expect, 1e-9);
+    EXPECT_NEAR(f.area(10.0), expect, 1e-9); // a power-law read would give the same
+                                             // here, so the discriminating case is
+                                             // getDepth below
 }
 
 TEST(StorageShapeArea, ParaboloidHasZeroAreaAtInvert) {
@@ -193,8 +277,8 @@ TEST(StorageShapeArea, ParaboloidHasZeroAreaAtInvert) {
 // ===========================================================================
 
 TEST(StorageShapeVolume, CubicIsIntegralOfArea) {
-    for (auto s : {StorageShape::CYLINDRICAL, StorageShape::CONICAL,
-                   StorageShape::PARABOLOID,  StorageShape::PYRAMIDAL}) {
+    for (auto s : {StorageShape::CYLINDRICAL, StorageShape::CONICAL, StorageShape::PARABOLOID,
+                   StorageShape::PYRAMIDAL}) {
         ShapeFixture f(s, 30.0, 20.0, 2.5);
         for (double d : {0.5, 3.0, 7.25, 15.0}) {
             EXPECT_NEAR(f.vol(d), cubic_vol(f.a(), f.b(), f.c(), d), 1e-8)
@@ -202,8 +286,7 @@ TEST(StorageShapeVolume, CubicIsIntegralOfArea) {
             // dV/dd == A(d) — central difference against the engine's own area fn.
             const double h = 1e-5;
             const double dv = (f.vol(d + h) - f.vol(d - h)) / (2.0 * h);
-            EXPECT_NEAR(dv, f.area(d), 1e-3)
-                << "shape=" << storage_shape_keyword(s) << " d=" << d;
+            EXPECT_NEAR(dv, f.area(d), 1e-3) << "shape=" << storage_shape_keyword(s) << " d=" << d;
         }
     }
 }
@@ -244,8 +327,8 @@ TEST(StorageShapeDepth, ConicalAndPyramidalNewton) {
 TEST(StorageShapeDepth, RoundTripsUnderSIUnits) {
     // unit_sys = 1 (SI) is where the coefficients' user-unit regime and the truncated
     // SI VOLUME factor interact — the exact spot the last storage bug hid in.
-    for (auto s : {StorageShape::CYLINDRICAL, StorageShape::CONICAL,
-                   StorageShape::PARABOLOID,  StorageShape::PYRAMIDAL}) {
+    for (auto s : {StorageShape::CYLINDRICAL, StorageShape::CONICAL, StorageShape::PARABOLOID,
+                   StorageShape::PYRAMIDAL}) {
         ShapeFixture f(s, 30.0, 20.0, 2.5);
         for (double d : {1.0, 6.0, 13.5}) {
             const double v = f.vol(d, /*unit_sys=*/1);
@@ -281,8 +364,8 @@ TEST(StorageShapeDepth, ClampsAtFullDepth) {
     // the CONICAL/PYRAMIDAL Newton (bounded to [0, fullDepth], xacc 0.001) would
     // converge to just under fullDepth — which is exactly what legacy returns
     // too, so the point of this test is the early-out, not Newton's tail.
-    f.nodes.full_volume[0] = f.vol(10.0);            // V(fullDepth)
-    EXPECT_NEAR(f.depth(f.vol(50.0)), 10.0, 1e-9);   // way over the top → clamps
+    f.nodes.full_volume[0] = f.vol(10.0);          // V(fullDepth)
+    EXPECT_NEAR(f.depth(f.vol(50.0)), 10.0, 1e-9); // way over the top → clamps
     EXPECT_DOUBLE_EQ(f.depth(0.0), 0.0);
 }
 
@@ -300,8 +383,10 @@ TEST(StorageShapeDepth, FunctionalPathUnchanged) {
     const auto ur = static_cast<std::size_t>(subs.set_node_type(nodes, 0, NodeType::STORAGE));
     auto& S = subs.storages;
     S.curve[ur] = -1;
-    S.shape[ur] = StorageShape::FUNCTIONAL;   // the default
-    S.a[ur] = 100.0; S.b[ur] = 1.0; S.c[ur] = 50.0;
+    S.shape[ur] = StorageShape::FUNCTIONAL; // the default
+    S.a[ur] = 100.0;
+    S.b[ur] = 1.0;
+    S.c[ur] = 50.0;
 
     // A = 50 + 100·d ⇒ V = 50d + 50d²; at d=5, V=1500 (same numbers as the pre-existing
     // NodeGetDepth.StorageFunctionalNonlinear, which must keep passing).

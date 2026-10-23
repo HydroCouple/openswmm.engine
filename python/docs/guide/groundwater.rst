@@ -131,9 +131,10 @@ activation and qualification boundaries.
 Mesh chemistry checkpoint sessions
 ----------------------------------
 
-A first-order mesh-only model with matching surface/groundwater transport
+A qualified first-order or RK2 mesh-only model with matching surface/groundwater transport
 rows can use ``solver.checkpoints.start_session(0)`` for numerical state or
-``start_session(2)`` for mesh HDF5 output. The qualified profile requires
+``start_session(1)`` for native binary output, ``start_session(2)`` for mesh
+HDF5 output, or ``start_session(3)`` for both. The qualified profile requires
 matching species layouts and either WATER_ONLY with heat disabled, or
 POROUS_EQUILIBRIUM groundwater heat paired with coupled surface heat and a
 GROUND_COLUMN bed. BULK MSX species, passive pollutants and water age are
@@ -154,7 +155,12 @@ transport sessions also require the accepted-cell-clock payload, including
 species-only bulk models. Older exact-session files cannot supply that omitted
 history; raw default bulk state carriers retain their existing behavior.
 
-This profile excludes live network/catchment owners, WALL species,
-surface-species/buildup report continuation and binary/combined output
-companions. It does not extend the separate passive RK2 component checkpoint
-profile. See the native groundwater transport contracts for the full limits.
+This mesh-only profile excludes private catchment owners, WALL species and
+surface-species/buildup report continuation. The separate native LEGACY
+network profile supports numerical/binary continuation, first-order matched
+conservative mesh exchange and an independent RK2 mesh, without catchments,
+LIDs, treatment expressions or reactions. Keep global ``HEAT_TRANSPORT NO``
+and ``WATER_AGE OFF``. Both sessions must
+use matching pollutant names/order, units, decay, defaults and initial quality.
+Shared RK2 network exchange and ARD/LARD continuation remain refused. See the
+native groundwater transport contracts for the full limits.

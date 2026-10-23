@@ -440,6 +440,7 @@ Table H-2 Culvert coefficients
 - @subpage hydraulics_ref_ch7_advanced_features — Chapter 7: Advanced Features
 - @subpage hydraulics_ref_ch8_finite_volume — Chapter 8: Explicit Finite-Volume Analysis
 - @subpage hydraulics_ref_ch9_two_dimensional — Chapter 9: Two-Dimensional Overland Flow Analysis
+- @ref hydraulics_ref_rubinato2017 — Rubinato sewer/surface comparison and runnable examples
 - @subpage hydraulics_ref_ch10_planned — Chapter 10: Planned and Retired Formulations
 - @subpage hydraulics_ref_references — References
 - @subpage hydraulics_ref_appendix — Appendix

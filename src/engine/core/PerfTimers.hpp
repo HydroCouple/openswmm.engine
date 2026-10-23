@@ -1,3 +1,12 @@
+/**
+ * @file      PerfTimers.hpp
+ * @brief     Performance timing and phase accumulators for engine execution.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
+ */
+
 #pragma once
 // -----------------------------------------------------------------------------
 // PerfTimers — lightweight, env-gated wall-clock accumulators used to attribute
@@ -16,9 +25,9 @@
 
 namespace openswmm::perf {
 
-inline double sec_2d_window  = 0.0;  // full 2D advance window (rainfall+coupling+solve)
-inline double sec_2d_advance = 0.0;  // pure 2D solve (solver_->advance)
-inline double sec_1d_step    = 0.0;  // 1D routing (router_.step)
+inline double sec_2d_window = 0.0;  // full 2D advance window (rainfall+coupling+solve)
+inline double sec_2d_advance = 0.0; // pure 2D solve (solver_->advance)
+inline double sec_1d_step = 0.0;    // 1D routing (router_.step)
 
 // ---------------------------------------------------------------------------
 // Load-phase accumulators — the open() / initialize() / start() window, which
@@ -27,31 +36,31 @@ inline double sec_1d_step    = 0.0;  // 1D routing (router_.step)
 // runs several models reports each one separately.
 // ---------------------------------------------------------------------------
 
-inline double sec_open_prescan2d = 0.0;  // twoD::prescan2DUnitsHeader (whole-file pass)
-inline double sec_open_read      = 0.0;  // input_plugin->read (tokenize + handlers)
+inline double sec_open_prescan2d = 0.0; // twoD::prescan2DUnitsHeader (whole-file pass)
+inline double sec_open_read = 0.0;      // input_plugin->read (tokenize + handlers)
 // open.read split: the line scan (getline, trim, section_lines assembly) is
 // everything in read() that is not a section handler. Dispatch is measured and
 // scan is derived as the remainder, so the two always sum to open.read.
-inline double sec_read_dispatch  = 0.0;  // SectionRegistry handler execution
-inline double sec_open_resolve   = 0.0;  // input::resolve_cross_references
-inline double sec_open_validate  = 0.0;  // validate_project
+inline double sec_read_dispatch = 0.0; // SectionRegistry handler execution
+inline double sec_open_resolve = 0.0;  // input::resolve_cross_references
+inline double sec_open_validate = 0.0; // validate_project
 
 // resolve_cross_references sub-phases (sum <= sec_open_resolve; the remainder
 // is everything not individually bracketed).
-inline double sec_res_extfiles   = 0.0;  // FILE-backed timeseries/curve loads
-inline double sec_res_tables     = 0.0;  // gage/inflow/table name bindings
-inline double sec_res_transects  = 0.0;  // transect + street/inlet resolution
-inline double sec_res_xsect      = 0.0;  // per-link cross-section parameter loop
-inline double sec_res_shrink     = 0.0;  // shrink_all_to_fit
+inline double sec_res_extfiles = 0.0;  // FILE-backed timeseries/curve loads
+inline double sec_res_tables = 0.0;    // gage/inflow/table name bindings
+inline double sec_res_transects = 0.0; // transect + street/inlet resolution
+inline double sec_res_xsect = 0.0;     // per-link cross-section parameter loop
+inline double sec_res_shrink = 0.0;    // shrink_all_to_fit
 
-inline double sec_init_state      = 0.0; // initialize() body before init_modules()
+inline double sec_init_state = 0.0;      // initialize() body before init_modules()
 inline double sec_init_hydraulics = 0.0; // initHydraulics (router_.init, FV mesh build)
-inline double sec_init_hydrology  = 0.0; // initHydrology
-inline double sec_init_quality    = 0.0; // initQuality
-inline double sec_init_geometry   = 0.0; // initGeometry
+inline double sec_init_hydrology = 0.0;  // initHydrology
+inline double sec_init_quality = 0.0;    // initQuality
+inline double sec_init_geometry = 0.0;   // initGeometry
 
-inline double sec_start_iface   = 0.0;   // [FILES] interface-file open block
-inline double sec_start_plugins = 0.0;   // plugins_.prepare_all (report preamble + .out header)
+inline double sec_start_iface = 0.0;   // [FILES] interface-file open block
+inline double sec_start_plugins = 0.0; // plugins_.prepare_all (report preamble + .out header)
 
 // ---------------------------------------------------------------------------
 // FV 1D solver phase breakdown. `sec_1d_step` brackets the whole router step,
@@ -69,22 +78,22 @@ inline double sec_start_plugins = 0.0;   // plugins_.prepare_all (report preambl
 // merged after each worksharing phase. Counts are exact at every team size.
 // ---------------------------------------------------------------------------
 
-inline double sec_fv_census      = 0.0;  // censusDt (Courant min-reduction)
-inline double sec_fv_flux        = 0.0;  // computeFluxes (active-face sweep)
-inline double sec_fv_nodesolve   = 0.0;  // relaxNodeFluxes + solveAlgebraicNode
-inline double sec_fv_positivity  = 0.0;  // limitPositivity
-inline double sec_fv_cellupdate  = 0.0;  // updateCells (incl. depth inversion)
-inline double sec_fv_nodeupdate  = 0.0;  // updateNodes
-inline double sec_fv_refreshdep  = 0.0;  // refreshDepths (full-mesh inversion)
-inline double sec_fv_savestate   = 0.0;  // saveState (11-vector snapshot)
-inline double sec_fv_restore     = 0.0;  // restoreState (snapshot + refreshDepths)
-inline double sec_fv_structref   = 0.0;  // refreshStructFlows (solver side)
-inline double sec_fv_bndcallback = 0.0;  // Router::refreshFvBoundaryFlows (engine side)
-inline double sec_fv_rebuild     = 0.0;  // rebuildActiveLists (halo growth)
-inline double sec_fv_reconstruct = 0.0;  // reconstructState (MUSCL slopes)
-inline double sec_fv_ltsfire     = 0.0;  // fireFaces (LTS face pass)
-inline double sec_fv_settle      = 0.0;  // settleAccumulators
-inline double sec_fv_tier        = 0.0;  // assignTiers
+inline double sec_fv_census = 0.0;      // censusDt (Courant min-reduction)
+inline double sec_fv_flux = 0.0;        // computeFluxes (active-face sweep)
+inline double sec_fv_nodesolve = 0.0;   // relaxNodeFluxes + solveAlgebraicNode
+inline double sec_fv_positivity = 0.0;  // limitPositivity
+inline double sec_fv_cellupdate = 0.0;  // updateCells (incl. depth inversion)
+inline double sec_fv_nodeupdate = 0.0;  // updateNodes
+inline double sec_fv_refreshdep = 0.0;  // refreshDepths (full-mesh inversion)
+inline double sec_fv_savestate = 0.0;   // saveState (11-vector snapshot)
+inline double sec_fv_restore = 0.0;     // restoreState (snapshot + refreshDepths)
+inline double sec_fv_structref = 0.0;   // refreshStructFlows (solver side)
+inline double sec_fv_bndcallback = 0.0; // Router::refreshFvBoundaryFlows (engine side)
+inline double sec_fv_rebuild = 0.0;     // rebuildActiveLists (halo growth)
+inline double sec_fv_reconstruct = 0.0; // reconstructState (MUSCL slopes)
+inline double sec_fv_ltsfire = 0.0;     // fireFaces (LTS face pass)
+inline double sec_fv_settle = 0.0;      // settleAccumulators
+inline double sec_fv_tier = 0.0;        // assignTiers
 
 // Each worker accumulates into a private CounterBatch. Only the completed
 // batch is merged, once per worker/phase; no atomics on individual operations.
@@ -116,9 +125,24 @@ inline std::mutex fv_counts_mutex;
 
 // Read/reset only between worksharing regions. Like the existing phase
 // timers, totals describe one profiled simulation at a time.
-inline long value(FvCounter counter) noexcept { return fv_counts[counter]; }
+/**
+ * @brief Read one process-global completed FV counter total.
+ *
+ * Read only between worksharing regions or under external synchronization.
+ *
+ * @param[in] counter Valid FvCounter below n_fv_counter_count; no bounds check.
+ * @return Stored count, with no locking or merge of currently active thread-local batches.
+ */
+inline long value(FvCounter counter) noexcept {
+    return fv_counts[counter];
+}
 
-/** @brief Zeroes the FV phase accumulators. Called from Router::initFv. */
+/**
+ * @brief Zero FV phase timers and completed counter totals.
+ *
+ * Does not reset sec_1d_step or active thread-local batches. Caller invokes only between
+ * worksharing regions with no concurrent counter/timer use.
+ */
 inline void reset_fv() noexcept {
     sec_fv_census = sec_fv_flux = sec_fv_nodesolve = sec_fv_positivity = 0.0;
     sec_fv_cellupdate = sec_fv_nodeupdate = sec_fv_refreshdep = 0.0;
@@ -140,15 +164,17 @@ inline void reset_fv() noexcept {
  *          time and is itself the useful signal when a phase is missing. It
  *          cannot be negative; if it ever is, a timer is nested inside a scope
  *          that does not go through GatedTimer.
+
+ * @note Emits to stderr whenever called; the caller checks enabled() and serializes access to totals. Printing failures are not returned.
  */
 inline void dump_fv() noexcept {
-    const double total = sec_fv_census + sec_fv_flux + sec_fv_nodesolve
-                       + sec_fv_positivity + sec_fv_cellupdate + sec_fv_nodeupdate
-                       + sec_fv_refreshdep + sec_fv_savestate + sec_fv_restore
-                       + sec_fv_structref + sec_fv_bndcallback + sec_fv_rebuild
-                       + sec_fv_reconstruct + sec_fv_ltsfire + sec_fv_settle
-                       + sec_fv_tier;
-    std::fprintf(stderr,
+    const double total = sec_fv_census + sec_fv_flux + sec_fv_nodesolve + sec_fv_positivity +
+                         sec_fv_cellupdate + sec_fv_nodeupdate + sec_fv_refreshdep +
+                         sec_fv_savestate + sec_fv_restore + sec_fv_structref + sec_fv_bndcallback +
+                         sec_fv_rebuild + sec_fv_reconstruct + sec_fv_ltsfire + sec_fv_settle +
+                         sec_fv_tier;
+    std::fprintf(
+        stderr,
         "[PERF-FV] step=%.4f total=%.4f "
         "census=%.4f flux=%.4f nodesolve=%.4f positivity=%.4f "
         "cellupdate=%.4f nodeupdate=%.4f refreshdepths=%.4f "
@@ -162,43 +188,64 @@ inline void dump_fv() noexcept {
         "n.macro=%ld n.macrorej=%ld "
         "passthru_frac=%.4f rollback_frac=%.4f "
         "algresid_per_solve=%.2f algflux_per_solve=%.2f\n",
-        sec_1d_step, total,
-        sec_fv_census, sec_fv_flux, sec_fv_nodesolve, sec_fv_positivity,
-        sec_fv_cellupdate, sec_fv_nodeupdate, sec_fv_refreshdep,
-        sec_fv_savestate, sec_fv_restore, sec_fv_structref, sec_fv_bndcallback,
-        sec_fv_rebuild, sec_fv_reconstruct, sec_fv_ltsfire, sec_fv_settle,
-        sec_fv_tier,
-        value(n_fv_substep), value(n_fv_census), value(n_fv_census_face), value(n_fv_invert),
-        value(n_fv_savestate), value(n_fv_restore), value(n_fv_structref),
-        value(n_fv_alg_visit), value(n_fv_alg_passthru), value(n_fv_alg_solve),
-        value(n_fv_alg_resid), value(n_fv_alg_flux),
-        value(n_fv_geom_area), value(n_fv_geom_width), value(n_fv_geom_i1), value(n_fv_geom_hydrad),
+        sec_1d_step, total, sec_fv_census, sec_fv_flux, sec_fv_nodesolve, sec_fv_positivity,
+        sec_fv_cellupdate, sec_fv_nodeupdate, sec_fv_refreshdep, sec_fv_savestate, sec_fv_restore,
+        sec_fv_structref, sec_fv_bndcallback, sec_fv_rebuild, sec_fv_reconstruct, sec_fv_ltsfire,
+        sec_fv_settle, sec_fv_tier, value(n_fv_substep), value(n_fv_census),
+        value(n_fv_census_face), value(n_fv_invert), value(n_fv_savestate), value(n_fv_restore),
+        value(n_fv_structref), value(n_fv_alg_visit), value(n_fv_alg_passthru),
+        value(n_fv_alg_solve), value(n_fv_alg_resid), value(n_fv_alg_flux), value(n_fv_geom_area),
+        value(n_fv_geom_width), value(n_fv_geom_i1), value(n_fv_geom_hydrad),
         value(n_fv_macro_cycles), value(n_fv_macro_rejected),
-        (value(n_fv_alg_visit) > 0)
-            ? static_cast<double>(value(n_fv_alg_passthru)) / static_cast<double>(value(n_fv_alg_visit)) : 0.0,
+        (value(n_fv_alg_visit) > 0) ? static_cast<double>(value(n_fv_alg_passthru)) /
+                                          static_cast<double>(value(n_fv_alg_visit))
+                                    : 0.0,
         (value(n_fv_savestate) > 0)
-            ? static_cast<double>(value(n_fv_restore)) / static_cast<double>(value(n_fv_savestate)) : 0.0,
+            ? static_cast<double>(value(n_fv_restore)) / static_cast<double>(value(n_fv_savestate))
+            : 0.0,
+        (value(n_fv_alg_solve) > 0) ? static_cast<double>(value(n_fv_alg_resid)) /
+                                          static_cast<double>(value(n_fv_alg_solve))
+                                    : 0.0,
         (value(n_fv_alg_solve) > 0)
-            ? static_cast<double>(value(n_fv_alg_resid)) / static_cast<double>(value(n_fv_alg_solve)) : 0.0,
-        (value(n_fv_alg_solve) > 0)
-            ? static_cast<double>(value(n_fv_alg_flux)) / static_cast<double>(value(n_fv_alg_solve)) : 0.0);
+            ? static_cast<double>(value(n_fv_alg_flux)) / static_cast<double>(value(n_fv_alg_solve))
+            : 0.0);
 }
 
-/** @brief Manual timing pair, for phases that do not fit a lexical scope. */
+/**
+ * @brief Sample the steady monotonic clock regardless of profiling enablement.
+ * @return Current steady_clock time point for use with since().
+ */
 inline std::chrono::steady_clock::time_point now() noexcept {
     return std::chrono::steady_clock::now();
 }
+/**
+ * @brief Measure elapsed wall time from a steady-clock sample.
+ *
+ * @param[in] t0 Earlier steady-clock time point; a future value yields a negative duration.
+ * @return now()-t0 in fractional seconds, regardless of profiling enablement.
+ */
 inline double since(std::chrono::steady_clock::time_point t0) noexcept {
     return std::chrono::duration<double>(now() - t0).count();
 }
 
-/** @brief True when OPENSWMM_PERF is set. Cached — getenv is not free. */
+/**
+ * @brief Read the process-cached profiling environment gate.
+ *
+ * Subsequent environment changes are ignored. C++ function-local static initialization is
+ * thread-safe.
+ * @return True if OPENSWMM_PERF existed on the first call, including an empty or zero string.
+ */
 inline bool enabled() noexcept {
     static const bool on = (std::getenv("OPENSWMM_PERF") != nullptr);
     return on;
 }
 
-/** @brief Zeroes the load-phase accumulators. Called from open(). */
+/**
+ * @brief Zero load/open/initialize/start phase accumulators.
+ *
+ * Does not reset runtime FV/1D/2D totals or environment gate; caller serializes reset with timer
+ * updates.
+ */
 inline void reset_load() noexcept {
     sec_open_prescan2d = sec_open_read = sec_open_resolve = sec_open_validate = 0.0;
     sec_read_dispatch = 0.0;
@@ -214,44 +261,65 @@ inline void reset_load() noexcept {
  * @details Emitted from close() so all three benchmark cuts (open only,
  *          open+initialize, full) report. Format is `[PERF-LOAD] key=value`
  *          pairs in seconds; tests/benchmarks/scripts/ parses it.
+
+ * @note Emits to stderr whenever called; the caller checks enabled() and serializes access to totals. Printing failures are not returned.
  */
 inline void dump_load() noexcept {
-    const double open_total = sec_open_prescan2d + sec_open_read
-                            + sec_open_resolve + sec_open_validate;
-    const double init_total = sec_init_state + sec_init_hydraulics
-                            + sec_init_hydrology + sec_init_quality
-                            + sec_init_geometry;
+    const double open_total =
+        sec_open_prescan2d + sec_open_read + sec_open_resolve + sec_open_validate;
+    const double init_total = sec_init_state + sec_init_hydraulics + sec_init_hydrology +
+                              sec_init_quality + sec_init_geometry;
     const double start_total = sec_start_iface + sec_start_plugins;
     std::fprintf(stderr,
-        "[PERF-LOAD] open=%.4f open.prescan2d=%.4f open.read=%.4f "
-        "read.scan=%.4f read.dispatch=%.4f "
-        "open.resolve=%.4f open.validate=%.4f "
-        "res.extfiles=%.4f res.tables=%.4f res.transects=%.4f res.xsect=%.4f "
-        "res.shrink=%.4f "
-        "init=%.4f init.state=%.4f init.hydraulics=%.4f init.hydrology=%.4f "
-        "init.quality=%.4f init.geometry=%.4f "
-        "start=%.4f start.iface=%.4f start.plugins=%.4f\n",
-        open_total, sec_open_prescan2d, sec_open_read,
-        sec_open_read - sec_read_dispatch, sec_read_dispatch,
-        sec_open_resolve, sec_open_validate,
-        sec_res_extfiles, sec_res_tables, sec_res_transects, sec_res_xsect,
-        sec_res_shrink,
-        init_total, sec_init_state, sec_init_hydraulics, sec_init_hydrology,
-        sec_init_quality, sec_init_geometry,
-        start_total, sec_start_iface, sec_start_plugins);
+                 "[PERF-LOAD] open=%.4f open.prescan2d=%.4f open.read=%.4f "
+                 "read.scan=%.4f read.dispatch=%.4f "
+                 "open.resolve=%.4f open.validate=%.4f "
+                 "res.extfiles=%.4f res.tables=%.4f res.transects=%.4f res.xsect=%.4f "
+                 "res.shrink=%.4f "
+                 "init=%.4f init.state=%.4f init.hydraulics=%.4f init.hydrology=%.4f "
+                 "init.quality=%.4f init.geometry=%.4f "
+                 "start=%.4f start.iface=%.4f start.plugins=%.4f\n",
+                 open_total, sec_open_prescan2d, sec_open_read, sec_open_read - sec_read_dispatch,
+                 sec_read_dispatch, sec_open_resolve, sec_open_validate, sec_res_extfiles,
+                 sec_res_tables, sec_res_transects, sec_res_xsect, sec_res_shrink, init_total,
+                 sec_init_state, sec_init_hydraulics, sec_init_hydrology, sec_init_quality,
+                 sec_init_geometry, start_total, sec_start_iface, sec_start_plugins);
 }
 
 // Adds the elapsed wall time between construction and destruction to `acc`.
 struct ScopedTimer {
     double* acc;
     std::chrono::steady_clock::time_point t0;
-    explicit ScopedTimer(double& a) noexcept
-        : acc(&a), t0(std::chrono::steady_clock::now()) {}
+    /**
+     * @brief Start an unconditional wall timer against a borrowed accumulator.
+     *
+     * Reads the clock even when profiling is disabled. Nested ScopedTimers include child time, unlike
+     * GatedTimer. Do not copy; destruction must occur before a is destroyed.
+     *
+     * @param[in,out] a Caller-owned seconds accumulator that must outlive this timer; updates are not
+     *     synchronized.
+     */
+    explicit ScopedTimer(double& a) noexcept : acc(&a), t0(std::chrono::steady_clock::now()) {}
+    /**
+     * @brief Add complete elapsed wall seconds to the borrowed accumulator.
+     *
+     * No environment check and no locking; nested timer intervals can overlap.
+     */
     ~ScopedTimer() noexcept {
-        *acc += std::chrono::duration<double>(
-                    std::chrono::steady_clock::now() - t0).count();
+        *acc += std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     }
+    /**
+     * @brief Prevent copying an active ScopedTimer scope.
+     *
+     * A copied scope would duplicate ownership of timing/counter cleanup and is forbidden at compile
+     * time.
+     */
     ScopedTimer(const ScopedTimer&) = delete;
+    /**
+     * @brief Prevent replacing an active ScopedTimer scope by copy assignment.
+     *
+     * Scope state must be completed by its original object on the thread that created it.
+     */
     ScopedTimer& operator=(const ScopedTimer&) = delete;
 };
 
@@ -289,27 +357,56 @@ inline thread_local double nested_wall = 0.0;
 
 struct GatedTimer {
     double* acc = nullptr;
-    double  outer = 0.0;   ///< enclosing timer's tally, restored on close
+    double outer = 0.0; ///< enclosing timer's tally, restored on close
     std::chrono::steady_clock::time_point t0;
+    /**
+     * @brief Start a profiling-gated self-time interval on the current thread.
+     *
+     * When disabled, stores no accumulator and reads no clock. When enabled, saves the thread-local
+     * enclosing tally and starts a new one. Timers must nest lexically and be destroyed on the same
+     * thread.
+     *
+     * @param[in,out] a Borrowed seconds accumulator; must outlive this timer and be externally
+     *     serialized if shared.
+     */
     explicit GatedTimer(double& a) noexcept {
         if (enabled()) {
             acc = &a;
-            outer = nested_wall;   // stash whatever our parent has collected
-            nested_wall = 0.0;     // ...and start a fresh tally for our own
+            outer = nested_wall; // stash whatever our parent has collected
+            nested_wall = 0.0;   // ...and start a fresh tally for our own
             t0 = std::chrono::steady_clock::now();
         }
     }
+    /**
+     * @brief Add elapsed wall time excluding nested GatedTimer intervals.
+     *
+     * No-op when disabled at construction. Restores parent thread-local tally including this full
+     * interval. Accumulator write is not atomic; overlapping timers on distinct threads need separate
+     * accumulators or synchronization.
+     */
     ~GatedTimer() noexcept {
-        if (!acc) return;
-        const double wall = std::chrono::duration<double>(
-                                std::chrono::steady_clock::now() - t0).count();
+        if (!acc)
+            return;
+        const double wall =
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
         // Ours is what the clock says minus what our children already claimed.
         *acc += wall - nested_wall;
         // Our FULL wall time is our parent's child time — the parent must not
         // be charged for us twice, once through its own clock and once here.
         nested_wall = outer + wall;
     }
+    /**
+     * @brief Prevent copying an active GatedTimer scope.
+     *
+     * A copied scope would duplicate ownership of timing/counter cleanup and is forbidden at compile
+     * time.
+     */
     GatedTimer(const GatedTimer&) = delete;
+    /**
+     * @brief Prevent replacing an active GatedTimer scope by copy assignment.
+     *
+     * Scope state must be completed by its original object on the thread that created it.
+     */
     GatedTimer& operator=(const GatedTimer&) = delete;
 };
 
@@ -322,15 +419,30 @@ class CounterBatch {
     FvCounts local_;
     FvCounts* previous_ = nullptr;
     bool active_;
+
 public:
+    /**
+     * @brief Install private FV counters for the current worker when profiling is enabled.
+     *
+     * Nested batches chain to the previous thread-local counter target. Must be destroyed in reverse
+     * construction order on the same thread. Disabled profiling skips initialization and installation.
+     */
     CounterBatch() noexcept : active_(enabled()) {
-        if (!active_) return;
+        if (!active_)
+            return;
         local_.fill(0);
         previous_ = local_fv_counts;
         local_fv_counts = &local_;
     }
+    /**
+     * @brief Merge private counters into the enclosing batch or completed totals.
+     *
+     * Nested merge is thread-local; outermost merge locks fv_counts_mutex once. No-op for a disabled
+     * batch. As noexcept, a mutex-lock exception terminates.
+     */
     ~CounterBatch() noexcept {
-        if (!active_) return;
+        if (!active_)
+            return;
         local_fv_counts = previous_;
         if (previous_) {
             for (std::size_t i = 0; i < local_.size(); ++i)
@@ -341,15 +453,37 @@ public:
                 fv_counts[i] += local_[i];
         }
     }
+    /**
+     * @brief Prevent copying an active CounterBatch scope.
+     *
+     * A copied scope would duplicate ownership of timing/counter cleanup and is forbidden at compile
+     * time.
+     */
     CounterBatch(const CounterBatch&) = delete;
+    /**
+     * @brief Prevent replacing an active CounterBatch scope by copy assignment.
+     *
+     * Scope state must be completed by its original object on the thread that created it.
+     */
     CounterBatch& operator=(const CounterBatch&) = delete;
 };
 
-/// Parallel callers install a CounterBatch before entering their work loop.
+/**
+ * @brief Accumulate a batch of events into worker-private or serial global counters.
+ *
+ * No-op when profiling is disabled. Parallel callers must install a CounterBatch; without one
+ * updates global fv_counts without a lock.
+ *
+ * @param[in] counter Valid FvCounter below n_fv_counter_count; no bounds check.
+ * @param[in] n Increment, default one; may be zero/negative. Caller prevents signed-long overflow.
+ */
 inline void count(FvCounter counter, long n = 1) noexcept {
-    if (!enabled()) return;
-    if (local_fv_counts) (*local_fv_counts)[counter] += n;
-    else fv_counts[counter] += n;
+    if (!enabled())
+        return;
+    if (local_fv_counts)
+        (*local_fv_counts)[counter] += n;
+    else
+        fv_counts[counter] += n;
 }
 
 } // namespace openswmm::perf

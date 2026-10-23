@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_editor_roundtrip_api.cpp
- * @brief Round-trip coverage for the GUI-editor C API getters/setters.
+ * @file      test_editor_roundtrip_api.cpp
+ * @brief     Round-trip coverage for the GUI-editor C API getters/setters.
  *
  * @details The property/editor dialogs need to LOAD an existing definition,
  *          not just write one. These tests assert that each newly added
@@ -31,10 +31,11 @@
  *            - LID layers/type      (swmm_lid_get_{surface,soil,storage,
  *                                     drain,type})
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
+
 #include <gtest/gtest.h>
 
 #include <openswmm/engine/openswmm_engine.h>
@@ -49,8 +50,24 @@ namespace {
 
 // A fresh BUILDING-state engine — the editor config setters are allowed in
 // BUILDING / OPENED only.
-SWMM_Engine makeEngine() { return swmm_engine_new(); }
+/**
+ * @brief Create an editable BUILDING-state engine for editor API checks.
+ *
+ * No model objects, initialization or assertion are added; caller closes/destroys ownership.
+ * @return Caller-owned swmm_engine_new handle, possibly null after allocation refusal.
+ */
+SWMM_Engine makeEngine() {
+    return swmm_engine_new();
+}
 
+/**
+ * @brief Close/destroy the sole editor-test engine owner.
+ *
+ * Ignores close status and does not clear the caller's by-value handle. Does not remove artifact
+ * files or return a lifecycle result.
+ *
+ * @param[in] e Owned live or null handle; all aliases become unusable after return.
+ */
 void destroy(SWMM_Engine e) {
     swmm_engine_close(e);
     swmm_engine_destroy(e);
@@ -63,13 +80,13 @@ void destroy(SWMM_Engine e) {
 // ---------------------------------------------------------------------------
 TEST(EditorRoundtripApi, PollutantUnitsSetGet) {
     SWMM_Engine e = makeEngine();
-    ASSERT_EQ(swmm_pollutant_add(e, "TSS", /*MG/L*/0), SWMM_OK);
+    ASSERT_EQ(swmm_pollutant_add(e, "TSS", /*MG/L*/ 0), SWMM_OK);
 
     int u = -1;
     ASSERT_EQ(swmm_pollutant_get_units(e, 0, &u), SWMM_OK);
     EXPECT_EQ(u, 0);
 
-    ASSERT_EQ(swmm_pollutant_set_units(e, 0, /*#/L*/2), SWMM_OK);
+    ASSERT_EQ(swmm_pollutant_set_units(e, 0, /*#/L*/ 2), SWMM_OK);
     ASSERT_EQ(swmm_pollutant_get_units(e, 0, &u), SWMM_OK);
     EXPECT_EQ(u, 2);
 
@@ -123,7 +140,8 @@ TEST(EditorRoundtripApi, SnowpackSurfacesRoundTrip) {
     ASSERT_EQ(swmm_snowpack_set_plowable(e, 0, 0.001, 0.01, 25.0, 0.10, 1.0, 0.5, 0.20), SWMM_OK);
     double cmin, cmax, tbase, fwfrac, sd0, fw0, last;
     cmin = cmax = tbase = fwfrac = sd0 = fw0 = last = -1.0;
-    ASSERT_EQ(swmm_snowpack_get_plowable(e, 0, &cmin, &cmax, &tbase, &fwfrac, &sd0, &fw0, &last), SWMM_OK);
+    ASSERT_EQ(swmm_snowpack_get_plowable(e, 0, &cmin, &cmax, &tbase, &fwfrac, &sd0, &fw0, &last),
+              SWMM_OK);
     EXPECT_DOUBLE_EQ(cmin, 0.001);
     EXPECT_DOUBLE_EQ(cmax, 0.01);
     EXPECT_DOUBLE_EQ(tbase, 25.0);
@@ -135,21 +153,26 @@ TEST(EditorRoundtripApi, SnowpackSurfacesRoundTrip) {
     ASSERT_EQ(swmm_snowpack_set_impervious(e, 0, 0.002, 0.02, 26.0, 0.11, 1.1, 0.6, 3.0), SWMM_OK);
     ASSERT_EQ(swmm_snowpack_set_pervious(e, 0, 0.003, 0.03, 27.0, 0.12, 1.2, 0.7, 4.0), SWMM_OK);
     double v[7];
-    ASSERT_EQ(swmm_snowpack_get_impervious(e, 0, &v[0], &v[1], &v[2], &v[3], &v[4], &v[5], &v[6]), SWMM_OK);
+    ASSERT_EQ(swmm_snowpack_get_impervious(e, 0, &v[0], &v[1], &v[2], &v[3], &v[4], &v[5], &v[6]),
+              SWMM_OK);
     EXPECT_DOUBLE_EQ(v[0], 0.002);
-    EXPECT_DOUBLE_EQ(v[6], 3.0);   // IMPERVIOUS last = 100%-cover depth
-    ASSERT_EQ(swmm_snowpack_get_pervious(e, 0, &v[0], &v[1], &v[2], &v[3], &v[4], &v[5], &v[6]), SWMM_OK);
+    EXPECT_DOUBLE_EQ(v[6], 3.0); // IMPERVIOUS last = 100%-cover depth
+    ASSERT_EQ(swmm_snowpack_get_pervious(e, 0, &v[0], &v[1], &v[2], &v[3], &v[4], &v[5], &v[6]),
+              SWMM_OK);
     EXPECT_DOUBLE_EQ(v[2], 27.0);
     EXPECT_DOUBLE_EQ(v[6], 4.0);
 
     // Null out-params must be tolerated (read only what you ask for).
     double only_tbase = -1.0;
-    ASSERT_EQ(swmm_snowpack_get_plowable(e, 0, nullptr, nullptr, &only_tbase, nullptr, nullptr, nullptr, nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_snowpack_get_plowable(e, 0, nullptr, nullptr, &only_tbase, nullptr, nullptr,
+                                         nullptr, nullptr),
+              SWMM_OK);
     EXPECT_DOUBLE_EQ(only_tbase, 25.0);
 
     ASSERT_EQ(swmm_snowpack_set_removal(e, 0, 2.0, 0.1, 0.2, 0.3, 0.4, 0.0), SWMM_OK);
     double dsnow, fout, fimp, fperv, fimelt, fsub;
-    ASSERT_EQ(swmm_snowpack_get_removal(e, 0, &dsnow, &fout, &fimp, &fperv, &fimelt, &fsub), SWMM_OK);
+    ASSERT_EQ(swmm_snowpack_get_removal(e, 0, &dsnow, &fout, &fimp, &fperv, &fimelt, &fsub),
+              SWMM_OK);
     EXPECT_DOUBLE_EQ(dsnow, 2.0);
     EXPECT_DOUBLE_EQ(fout, 0.1);
     EXPECT_DOUBLE_EQ(fimp, 0.2);
@@ -172,13 +195,15 @@ TEST(EditorRoundtripApi, SnowpackSurfacesRoundTrip) {
 TEST(EditorRoundtripApi, InletParamsAndTypeRoundTrip) {
     SWMM_Engine e = makeEngine();
     ASSERT_EQ(swmm_inlet_add(e, "IN1", "GRATE"), SWMM_OK);
-    ASSERT_EQ(swmm_inlet_set_params(e, 0, /*length*/2.0, /*width*/1.5,
-                                    "P-50", /*open_area*/0.8, /*splash_veloc*/5.0), SWMM_OK);
+    ASSERT_EQ(swmm_inlet_set_params(e, 0, /*length*/ 2.0, /*width*/ 1.5, "P-50", /*open_area*/ 0.8,
+                                    /*splash_veloc*/ 5.0),
+              SWMM_OK);
 
     double length = 0, width = 0, open_area = 0, splash = 0;
     char grate[32] = {'\0'};
-    ASSERT_EQ(swmm_inlet_get_params(e, 0, &length, &width, grate, sizeof(grate),
-                                    &open_area, &splash), SWMM_OK);
+    ASSERT_EQ(
+        swmm_inlet_get_params(e, 0, &length, &width, grate, sizeof(grate), &open_area, &splash),
+        SWMM_OK);
     EXPECT_DOUBLE_EQ(length, 2.0);
     EXPECT_DOUBLE_EQ(width, 1.5);
     EXPECT_DOUBLE_EQ(open_area, 0.8);
@@ -204,13 +229,16 @@ TEST(EditorRoundtripApi, InletParamsAndTypeRoundTrip) {
 // ---------------------------------------------------------------------------
 TEST(EditorRoundtripApi, LidLayersAndTypeRoundTrip) {
     SWMM_Engine e = makeEngine();
-    ASSERT_EQ(swmm_lid_add(e, "BC1", /*BIO_CELL*/0), SWMM_OK);
+    ASSERT_EQ(swmm_lid_add(e, "BC1", /*BIO_CELL*/ 0), SWMM_OK);
 
-    ASSERT_EQ(swmm_lid_set_surface(e, 0, /*storage*/2.0, /*roughness*/0.1, /*slope*/1.0), SWMM_OK);
-    ASSERT_EQ(swmm_lid_set_soil(e, 0, /*thick*/12.0, /*porosity*/0.5, /*fc*/0.2, /*wp*/0.1,
-                                /*ksat*/0.5, /*kslope*/10.0), SWMM_OK);
-    ASSERT_EQ(swmm_lid_set_storage(e, 0, /*thick*/12.0, /*void_frac*/0.75, /*ksat*/0.5), SWMM_OK);
-    ASSERT_EQ(swmm_lid_set_drain(e, 0, /*coeff*/1.0, /*expon*/0.5, /*offset*/6.0), SWMM_OK);
+    ASSERT_EQ(swmm_lid_set_surface(e, 0, /*storage*/ 2.0, /*roughness*/ 0.1, /*slope*/ 1.0),
+              SWMM_OK);
+    ASSERT_EQ(swmm_lid_set_soil(e, 0, /*thick*/ 12.0, /*porosity*/ 0.5, /*fc*/ 0.2, /*wp*/ 0.1,
+                                /*ksat*/ 0.5, /*kslope*/ 10.0),
+              SWMM_OK);
+    ASSERT_EQ(swmm_lid_set_storage(e, 0, /*thick*/ 12.0, /*void_frac*/ 0.75, /*ksat*/ 0.5),
+              SWMM_OK);
+    ASSERT_EQ(swmm_lid_set_drain(e, 0, /*coeff*/ 1.0, /*expon*/ 0.5, /*offset*/ 6.0), SWMM_OK);
 
     double storage, roughness, slope;
     ASSERT_EQ(swmm_lid_get_surface(e, 0, &storage, &roughness, &slope), SWMM_OK);
@@ -241,27 +269,30 @@ TEST(EditorRoundtripApi, LidLayersAndTypeRoundTrip) {
 
     int type = -1;
     ASSERT_EQ(swmm_lid_get_type(e, 0, &type), SWMM_OK);
-    EXPECT_EQ(type, 0);   // BIO_CELL
+    EXPECT_EQ(type, 0); // BIO_CELL
 
     // A second control with a different type code round-trips its enum too.
-    ASSERT_EQ(swmm_lid_add(e, "PP1", /*PERM_PAVEMENT*/4), SWMM_OK);
+    ASSERT_EQ(swmm_lid_add(e, "PP1", /*PERM_PAVEMENT*/ 4), SWMM_OK);
     ASSERT_EQ(swmm_lid_get_type(e, 1, &type), SWMM_OK);
     EXPECT_EQ(type, 4);
 
     // PAVEMENT (6 vals) round-trips on the permeable-pavement control.
-    ASSERT_EQ(swmm_lid_set_pavement(e, 1, /*thick*/6.0, /*void_ratio*/0.15,
-                                    /*frac_imperv*/0.0, /*ksat*/100.0,
-                                    /*clog_factor*/0.0, /*regen_days*/0.0), SWMM_OK);
+    ASSERT_EQ(swmm_lid_set_pavement(e, 1, /*thick*/ 6.0, /*void_ratio*/ 0.15,
+                                    /*frac_imperv*/ 0.0, /*ksat*/ 100.0,
+                                    /*clog_factor*/ 0.0, /*regen_days*/ 0.0),
+              SWMM_OK);
     double p_thick, p_void, p_fi, p_ksat, p_clog, p_regen;
-    ASSERT_EQ(swmm_lid_get_pavement(e, 1, &p_thick, &p_void, &p_fi, &p_ksat, &p_clog, &p_regen), SWMM_OK);
+    ASSERT_EQ(swmm_lid_get_pavement(e, 1, &p_thick, &p_void, &p_fi, &p_ksat, &p_clog, &p_regen),
+              SWMM_OK);
     EXPECT_DOUBLE_EQ(p_thick, 6.0);
     EXPECT_DOUBLE_EQ(p_void, 0.15);
     EXPECT_DOUBLE_EQ(p_fi, 0.0);
     EXPECT_DOUBLE_EQ(p_ksat, 100.0);
 
     // DRAINMAT (3 vals) round-trips on a green-roof control.
-    ASSERT_EQ(swmm_lid_add(e, "GR1", /*GREEN_ROOF*/2), SWMM_OK);
-    ASSERT_EQ(swmm_lid_set_drainmat(e, 2, /*thick*/1.0, /*void_frac*/0.5, /*roughness*/0.1), SWMM_OK);
+    ASSERT_EQ(swmm_lid_add(e, "GR1", /*GREEN_ROOF*/ 2), SWMM_OK);
+    ASSERT_EQ(swmm_lid_set_drainmat(e, 2, /*thick*/ 1.0, /*void_frac*/ 0.5, /*roughness*/ 0.1),
+              SWMM_OK);
     double d_thick, d_void, d_rough;
     ASSERT_EQ(swmm_lid_get_drainmat(e, 2, &d_thick, &d_void, &d_rough), SWMM_OK);
     EXPECT_DOUBLE_EQ(d_thick, 1.0);
@@ -270,7 +301,8 @@ TEST(EditorRoundtripApi, LidLayersAndTypeRoundTrip) {
 
     // Null out-params tolerated; bad index rejected.
     double only_void = -1.0;
-    ASSERT_EQ(swmm_lid_get_pavement(e, 1, nullptr, &only_void, nullptr, nullptr, nullptr, nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_lid_get_pavement(e, 1, nullptr, &only_void, nullptr, nullptr, nullptr, nullptr),
+              SWMM_OK);
     EXPECT_DOUBLE_EQ(only_void, 0.15);
     EXPECT_EQ(swmm_lid_get_surface(e, 9, &storage, &roughness, &slope), SWMM_ERR_BADINDEX);
     EXPECT_EQ(swmm_lid_set_pavement(e, 9, 1, 0.1, 0, 1, 0, 0), SWMM_ERR_BADINDEX);

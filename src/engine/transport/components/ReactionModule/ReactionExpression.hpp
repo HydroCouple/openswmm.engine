@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file ReactionExpression.hpp
- * @brief Reaction expression compiler + Tier-1 evaluator (phase R2).
+ * @file      ReactionExpression.hpp
+ * @brief     Reaction expression compiler + Tier-1 evaluator (phase R2).
  *
  * @details Shunting-yard compiler from the MSX-convention DSL to a FLAT
  *          token pool (LARD plan §16 D-L3 / reactions plan D-R2 Tier 1):
@@ -43,9 +43,9 @@
  * @see plans/transport/MULTISPECIES_REACTIONS_MSX_PLAN.md §3.2, §5 R2
  * @ingroup engine_transport
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_TRANSPORT_REACTION_EXPRESSION_HPP
@@ -56,12 +56,14 @@
 
 #include "../../../data/ReactionTokens.hpp"
 
-namespace openswmm {struct ReactionData;}
+namespace openswmm {
+struct ReactionData;
+}
 namespace openswmm::transport {
 
 /// context: 0=network, 1=shared term definition, 2=groundwater, 3=wet subcatchment.
-std::string reactionContextDiagnostic(const ReactionData&,const std::vector<RxToken>&,
-    const RxExprSpan&,int context);
+std::string reactionContextDiagnostic(const ReactionData&, const std::vector<RxToken>&,
+                                      const RxExprSpan&, int context);
 
 using openswmm::RxToken;
 using openswmm::RxExprSpan;
@@ -71,37 +73,34 @@ using openswmm::kRxMaxStackDepth;
 /// Name resolution offered to the compiler (pre-resolved at compile time —
 /// the evaluator never sees names).
 struct RxSymbols {
-    const std::vector<std::string>* species = nullptr;  ///< local slots
-    const std::vector<std::string>* coefs   = nullptr;
-    const std::vector<std::string>* terms   = nullptr;  ///< only [0, max_term) resolvable
+    const std::vector<std::string>* species = nullptr; ///< local slots
+    const std::vector<std::string>* coefs = nullptr;
+    const std::vector<std::string>* terms = nullptr; ///< only [0, max_term) resolvable
     /// R4: pollutant names, resolved AFTER terms and BEFORE hydraulic
     /// variables (a pollutant named "D" shadows the depth variable —
     /// user-defined beats builtin; documented in the DSL reference).
     /// Pollutants are READ-ONLY in expressions.
     const std::vector<std::string>* pollutants = nullptr;
-    int max_term = 0;   ///< forward-only rule: terms below this index only
+    int max_term = 0; ///< forward-only rule: terms below this index only
 };
 
 /// Evaluation environment: pre-gathered pointers, no lookups.
 struct RxEvalEnv {
-    const double* species = nullptr;  ///< local species concentrations
-    const double* coefs   = nullptr;  ///< coefficient values
-    const double* terms   = nullptr;  ///< term values (evaluated in-order)
-    const double* hydvar  = nullptr;  ///< RxHydVar::COUNT_ entries
-    const double* pollutants = nullptr;  ///< element pollutant conc (R4, read-only)
+    const double* species = nullptr;    ///< local species concentrations
+    const double* coefs = nullptr;      ///< coefficient values
+    const double* terms = nullptr;      ///< term values (evaluated in-order)
+    const double* hydvar = nullptr;     ///< RxHydVar::COUNT_ entries
+    const double* pollutants = nullptr; ///< element pollutant conc (R4, read-only)
 };
 
 /**
  * @brief Compile `src` into the shared pool.
- * @param error_col [out] 1-based column of the offending token on failure.
- * @return empty on success, else the diagnostic ("undefined identifier
- *         'x'", "expression too deep", "term 'T' references later term", …).
+ * - Argument error_col: [out] 1-based column of the offending token on failure.
+ * @return empty on success, else the diagnostic ("undefined identifier 'x'", "expression too
+ * deep", "term 'T' references later term", …).
  */
-std::string compileReactionExpression(const std::string& src,
-                                      const RxSymbols& symbols,
-                                      std::vector<RxToken>& pool,
-                                      RxExprSpan& out,
-                                      int& error_col);
+std::string compileReactionExpression(const std::string& src, const RxSymbols& symbols,
+                                      std::vector<RxToken>& pool, RxExprSpan& out, int& error_col);
 
 // ---------------------------------------------------------------------------
 // Vocabulary discovery (E-C1) — served from the compiler's OWN tables so the
@@ -128,16 +127,13 @@ bool reactionHydVarPopulated(int idx);
 /// expression @p span reads, or empty. @p error_col is its 1-based column in
 /// @p src (or -1). The evaluator still accepts every variable; this is the
 /// contract check that the system-level compile and the validator apply.
-std::string unpopulatedHydVarDiagnostic(const std::string& src,
-                                        const std::vector<RxToken>& pool,
-                                        const RxExprSpan& span,
-                                        int& error_col);
+std::string unpopulatedHydVarDiagnostic(const std::string& src, const std::vector<RxToken>& pool,
+                                        const RxExprSpan& span, int& error_col);
 
 /// Tier-1 evaluation: one pass, fixed-depth stack, allocation-free.
-double evalReactionExpression(const std::vector<RxToken>& pool,
-                              const RxExprSpan& span,
+double evalReactionExpression(const std::vector<RxToken>& pool, const RxExprSpan& span,
                               const RxEvalEnv& env) noexcept;
 
-}  // namespace openswmm::transport
+} // namespace openswmm::transport
 
-#endif  // OPENSWMM_ENGINE_TRANSPORT_REACTION_EXPRESSION_HPP
+#endif // OPENSWMM_ENGINE_TRANSPORT_REACTION_EXPRESSION_HPP

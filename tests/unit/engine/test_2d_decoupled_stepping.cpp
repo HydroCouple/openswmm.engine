@@ -1,6 +1,6 @@
 /**
- * @file test_2d_decoupled_stepping.cpp
- * @brief Decoupled 1D/2D timesteps: per-step accumulated + interpolated exchange.
+ * @file      test_2d_decoupled_stepping.cpp
+ * @brief     Decoupled 1D/2D timesteps: per-step accumulated + interpolated exchange.
  *
  * @details 2026-07 decoupling plan. The 1D and 2D domains advance on their own
  *          clocks: the junction/outfall exchange is evaluated EVERY 1D routing
@@ -21,6 +21,10 @@
  *
  *          Outputs land in ./decoupled_stepping_out/ (working dir is
  *          tests/unit/engine/data) for review — no temp files.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -44,111 +48,146 @@ namespace {
 // test_2d_coupling_conservation.cpp, with the 2D advance cadence injected per
 // case. Rain wets the patch for 10 min; it then drains through the coupled
 // inlet into J1 → C1 → free outfall O1.
+/**
+ * @brief Construct the SI rain-on-pan source-clock coupling fixture.
+ *
+ * Uses 6 s maximum routing and 30 s surface options; no rain is authored until runner forcing, and
+ * no validation/run or file writing occurs.
+ *
+ * @param[in] coupling_lines Raw extra 2D_OPTIONS lines inserted before vertices; caller supplies
+ *     line separation.
+ * @return Owned CMS/DYNWAVE forty-minute deck with 100 m2 pan at 1 m bed and vertex-zero map to J1.
+ */
 std::string build_model(const std::string& coupling_lines) {
-    return
-        "[OPTIONS]\n"
-        "FLOW_UNITS           CMS\n"
-        "FLOW_ROUTING         DYNWAVE\n"
-        "START_DATE           01/01/2026\n"
-        "START_TIME           00:00:00\n"
-        "END_DATE             01/01/2026\n"
-        "END_TIME             00:40:00\n"
-        "REPORT_STEP          00:01:00\n"
-        "ROUTING_STEP         6\n"
-        "VARIABLE_STEP        0.85\n"
-        "ALLOW_PONDING        NO\n"
-        "\n"
-        "[JUNCTIONS]\n"
-        ";;Name  Elev  MaxDepth  InitDepth  SurDepth  Aponded\n"
-        "J1      0.0   1.0       0          0         0\n"
-        "\n"
-        "[OUTFALLS]\n"
-        ";;Name  Elev   Type  Gated\n"
-        "O1     -0.5    FREE  NO\n"
-        "\n"
-        "[CONDUITS]\n"
-        ";;Name  From  To  Length  Roughness  InOffset  OutOffset  InitFlow\n"
-        "C1      J1    O1  30.0    0.013      0         0          0\n"
-        "\n"
-        "[XSECTIONS]\n"
-        ";;Link  Shape     Geom1  Geom2  Geom3  Geom4  Barrels\n"
-        "C1      CIRCULAR  0.3    0      0      0      1\n"
-        "\n"
-        "[2D_OPTIONS]\n"
-        "MAX_TIMESTEP     30\n"
-        "DRY_DEPTH        0.002\n"
-        "COUPLING_CD      0.7\n"
-        "REPORT_2D        NO\n"
-        + coupling_lines +
-        "\n"
-        "[2D_VERTICES]\n"
-        ";;X      Y      Z   (flat patch at the junction crown elevation, 1.0 m)\n"
-        " 0.0    0.0   1.0\n"
-        "10.0    0.0   1.0\n"
-        "10.0   10.0   1.0\n"
-        " 0.0   10.0   1.0\n"
-        "\n"
-        "[2D_TRIANGLES]\n"
-        ";;V1  V2  V3  MANNINGS_N\n"
-        "0     1   2   0.03\n"
-        "0     2   3   0.03\n"
-        "\n"
-        "[2D_VERTEX_NODE_MAP]\n"
-        ";;Vertex  Node  Cd   Area\n"
-        "0         J1    0.7  1.0\n";
+    return "[OPTIONS]\n"
+           "FLOW_UNITS           CMS\n"
+           "FLOW_ROUTING         DYNWAVE\n"
+           "START_DATE           01/01/2026\n"
+           "START_TIME           00:00:00\n"
+           "END_DATE             01/01/2026\n"
+           "END_TIME             00:40:00\n"
+           "REPORT_STEP          00:01:00\n"
+           "ROUTING_STEP         6\n"
+           "VARIABLE_STEP        0.85\n"
+           "ALLOW_PONDING        NO\n"
+           "\n"
+           "[JUNCTIONS]\n"
+           ";;Name  Elev  MaxDepth  InitDepth  SurDepth  Aponded\n"
+           "J1      0.0   1.0       0          0         0\n"
+           "\n"
+           "[OUTFALLS]\n"
+           ";;Name  Elev   Type  Gated\n"
+           "O1     -0.5    FREE  NO\n"
+           "\n"
+           "[CONDUITS]\n"
+           ";;Name  From  To  Length  Roughness  InOffset  OutOffset  InitFlow\n"
+           "C1      J1    O1  30.0    0.013      0         0          0\n"
+           "\n"
+           "[XSECTIONS]\n"
+           ";;Link  Shape     Geom1  Geom2  Geom3  Geom4  Barrels\n"
+           "C1      CIRCULAR  0.3    0      0      0      1\n"
+           "\n"
+           "[2D_OPTIONS]\n"
+           "MAX_TIMESTEP     30\n"
+           "DRY_DEPTH        0.002\n"
+           "COUPLING_CD      0.7\n"
+           "REPORT_2D        NO\n" +
+           coupling_lines +
+           "\n"
+           "[2D_VERTICES]\n"
+           ";;X      Y      Z   (flat patch at the junction crown elevation, 1.0 m)\n"
+           " 0.0    0.0   1.0\n"
+           "10.0    0.0   1.0\n"
+           "10.0   10.0   1.0\n"
+           " 0.0   10.0   1.0\n"
+           "\n"
+           "[2D_TRIANGLES]\n"
+           ";;V1  V2  V3  MANNINGS_N\n"
+           "0     1   2   0.03\n"
+           "0     2   3   0.03\n"
+           "\n"
+           "[2D_VERTEX_NODE_MAP]\n"
+           ";;Vertex  Node  Cd   Area\n"
+           "0         J1    0.7  1.0\n";
 }
 
 struct RunResult {
-    bool   ok = false;
-    double received_1d  = 0.0;  // ∫ lateral_inflow(J1)·dt over the run (m³)
-    double given_2d_net = 0.0;  // coupling_2d_to_1d_out − coupling_1d_to_2d_in (m³)
-    double rain_in_2d   = 0.0;  // ledger rainfall_in (m³)
+    bool ok = false;
+    double received_1d = 0.0;  // ∫ lateral_inflow(J1)·dt over the run (m³)
+    double given_2d_net = 0.0; // coupling_2d_to_1d_out − coupling_1d_to_2d_in (m³)
+    double rain_in_2d = 0.0;   // ledger rainfall_in (m³)
     double final_storage_2d = 0.0;
-    double cont_2d      = 0.0;
+    double cont_2d = 0.0;
     double cont_routing = 0.0;
-    int    n_steps      = 0;
+    int n_steps = 0;
 };
 
-RunResult run(const fs::path& dir, const std::string& tag,
-              const std::string& coupling_lines) {
+/**
+ * @brief Run the decoupled coupling fixture and compare sampled network receipt to surface ledgers.
+ *
+ * Applies 0.001 m/s rainfall until prior elapsed reaches 600 s and then zero; transitions are
+ * step-quantized. Steps without a guard, integrates successful positive-time J1 lateral flow using
+ * elapsed-day differences, and stops on step error/completion, either yielding ok=true.
+ * Owns/destroys engine; stream/forcing/getter/end/report/close statuses are unchecked.
+ *
+ * @param[in] dir Existing writable artifact directory.
+ * @param[in] tag Safe basename for overwritten retained .inp/.rpt/.out.
+ * @param[in] coupling_lines Raw options passed to build_model.
+ * @return Owned volume totals m3, step count and dimensionless continuity fractions; ok=false only
+ *     for setup/active/node/start refusal.
+ */
+RunResult run(const fs::path& dir, const std::string& tag, const std::string& coupling_lines) {
     RunResult r;
     const fs::path inp = dir / (tag + ".inp");
     const fs::path rpt = dir / (tag + ".rpt");
     const fs::path out = dir / (tag + ".out");
-    { std::ofstream f(inp); f << build_model(coupling_lines); }
+    {
+        std::ofstream f(inp);
+        f << build_model(coupling_lines);
+    }
 
     SWMM_Engine eng = swmm_engine_create();
-    if (swmm_engine_open(eng, inp.string().c_str(), rpt.string().c_str(),
-                         out.string().c_str(), nullptr) != SWMM_OK) {
-        swmm_engine_destroy(eng); return r;
+    if (swmm_engine_open(eng, inp.string().c_str(), rpt.string().c_str(), out.string().c_str(),
+                         nullptr) != SWMM_OK) {
+        swmm_engine_destroy(eng);
+        return r;
     }
     if (swmm_engine_initialize(eng) != SWMM_OK) {
-        swmm_engine_close(eng); swmm_engine_destroy(eng); return r;
+        swmm_engine_close(eng);
+        swmm_engine_destroy(eng);
+        return r;
     }
     int active = 0;
     swmm_2d_is_active(eng, &active);
     const int j1 = swmm_node_index(eng, "J1");
-    if (!active || j1 < 0) { swmm_engine_close(eng); swmm_engine_destroy(eng); return r; }
+    if (!active || j1 < 0) {
+        swmm_engine_close(eng);
+        swmm_engine_destroy(eng);
+        return r;
+    }
     if (swmm_engine_start(eng, 1) != SWMM_OK) {
-        swmm_engine_close(eng); swmm_engine_destroy(eng); return r;
+        swmm_engine_close(eng);
+        swmm_engine_destroy(eng);
+        return r;
     }
 
     constexpr double RAIN_OFF_S = 600.0;
-    constexpr double RAIN_RATE  = 0.001;   // m/s over 100 m² → 60 m³ total
+    constexpr double RAIN_RATE = 0.001; // m/s over 100 m² → 60 m³ total
 
     double elapsed = 0.0, prev_elapsed = 0.0;
     while (true) {
-        const double t_s  = elapsed * 86400.0;
+        const double t_s = elapsed * 86400.0;
         const double rain = (t_s < RAIN_OFF_S) ? RAIN_RATE : 0.0;
-        swmm_2d_force_rainfall_uniform(eng, rain, SWMM_FORCING_OVERRIDE,
-                                       SWMM_FORCING_PERSIST);
+        swmm_2d_force_rainfall_uniform(eng, rain, SWMM_FORCING_OVERRIDE, SWMM_FORCING_PERSIST);
 
-        if (swmm_engine_step(eng, &elapsed) != SWMM_OK || elapsed <= 0.0) break;
+        if (swmm_engine_step(eng, &elapsed) != SWMM_OK || elapsed <= 0.0)
+            break;
         const double dt_s = (elapsed - prev_elapsed) * 86400.0;
         prev_elapsed = elapsed;
-        if (dt_s > 0.0) ++r.n_steps;
+        if (dt_s > 0.0)
+            ++r.n_steps;
 
-        double lat = 0.0;   // CMS; + = into J1 (2D→1D drain)
+        double lat = 0.0; // CMS; + = into J1 (2D→1D drain)
         if (swmm_node_get_lateral_inflow(eng, j1, &lat) == SWMM_OK)
             r.received_1d += lat * dt_s;
     }
@@ -156,9 +195,8 @@ RunResult run(const fs::path& dir, const std::string& tag,
     swmm_engine_end(eng);
 
     double c12 = 0.0, c21 = 0.0;
-    swmm_2d_get_mass_balance(eng, nullptr, &r.final_storage_2d, &r.rain_in_2d,
-                             &c12, &c21, nullptr, nullptr, nullptr, nullptr,
-                             nullptr);
+    swmm_2d_get_mass_balance(eng, nullptr, &r.final_storage_2d, &r.rain_in_2d, &c12, &c21, nullptr,
+                             nullptr, nullptr, nullptr, nullptr);
     r.given_2d_net = c21 - c12;
     swmm_2d_get_continuity_error(eng, &r.cont_2d);
     swmm_get_routing_continuity_error(eng, &r.cont_routing);
@@ -169,8 +207,18 @@ RunResult run(const fs::path& dir, const std::string& tag,
     return r;
 }
 
-void writeCsv(const fs::path& dir, const std::string& tag, const RunResult& r,
-              double rel) {
+/**
+ * @brief Write retained decoupled-run metrics for human review.
+ *
+ * Writes fixed metric/value rows using default stream precision; does not check open/write/close
+ * status, recompute results or mutate the run record.
+ *
+ * @param[in] dir Existing writable output directory.
+ * @param[in] tag Safe basename for overwritten _summary.csv.
+ * @param[in] r Collected result with volume m3, continuity fractions and step count.
+ * @param[in] rel Dimensionless relative receipt mismatch written verbatim.
+ */
+void writeCsv(const fs::path& dir, const std::string& tag, const RunResult& r, double rel) {
     std::ofstream csv(dir / (tag + "_summary.csv"));
     csv << "metric,value\n"
         << "received_1d_m3," << r.received_1d << "\n"
@@ -188,6 +236,13 @@ void writeCsv(const fs::path& dir, const std::string& tag, const RunResult& r,
 class DecoupledStepping2DTest : public ::testing::Test {
 protected:
     fs::path dir_;
+    /**
+     * @brief Create the reviewable decoupled_stepping_out artifact directory.
+     *
+     * Sets dir_ relative to the test working directory and creates missing directories with the
+     * throwing filesystem overload. Existing files are retained; no engine or input file is created
+     * here.
+     */
     void SetUp() override {
         dir_ = fs::path("decoupled_stepping_out");
         fs::create_directories(dir_);
@@ -208,16 +263,13 @@ TEST_F(DecoupledStepping2DTest, MarcherSyncBatchesConserve) {
     ASSERT_GT(std::abs(r.given_2d_net), 1.0)
         << "no meaningful exchange (net " << r.given_2d_net << " m³)";
 
-    const double rel = std::abs(r.received_1d - r.given_2d_net)
-                       / std::abs(r.given_2d_net);
-    EXPECT_LT(rel, 0.01)
-        << "1D-received " << r.received_1d << " m³ != 2D-given "
-        << r.given_2d_net << " m³ across marcher sync batches";
+    const double rel = std::abs(r.received_1d - r.given_2d_net) / std::abs(r.given_2d_net);
+    EXPECT_LT(rel, 0.01) << "1D-received " << r.received_1d << " m³ != 2D-given " << r.given_2d_net
+                         << " m³ across marcher sync batches";
 
     EXPECT_GE(r.final_storage_2d, 0.0)
-        << "marcher positivity violated: negative 2D storage "
-        << r.final_storage_2d << " m³";
-    EXPECT_LT(std::abs(r.cont_2d), 0.05)      << "2D continuity " << r.cont_2d;
+        << "marcher positivity violated: negative 2D storage " << r.final_storage_2d << " m³";
+    EXPECT_LT(std::abs(r.cont_2d), 0.05) << "2D continuity " << r.cont_2d;
     EXPECT_LT(std::abs(r.cont_routing), 0.35) << "1D continuity " << r.cont_routing;
 
     writeCsv(dir_, "marcher_batches", r, rel);
@@ -244,24 +296,27 @@ TEST_P(MeshOnlyStepping2DTest, RoutesRainAndRedistributesWetWater) {
              "[EVAPORATION]\nCONSTANT 0\n"
              "[2D_OPTIONS]\nMAX_TIMESTEP 1\nREPORT_2D NO\n"
              "[2D_VERTICES]\n0 0 0\n10 0 1\n10 10 1\n0 10 0\n"
-             "[2D_TRIANGLES]\n0 1 2 0.03 " << GetParam()
-          << "\n0 2 3 0.03 " << GetParam() << "\n";
+             "[2D_TRIANGLES]\n0 1 2 0.03 "
+          << GetParam() << "\n0 2 3 0.03 " << GetParam() << "\n";
     }
     SWMM_Engine eng = swmm_engine_create();
     ASSERT_NE(eng, nullptr);
     ASSERT_EQ(swmm_engine_open(eng, inp.string().c_str(), rpt.string().c_str(),
-                              out.string().c_str(), nullptr), SWMM_OK);
+                               out.string().c_str(), nullptr),
+              SWMM_OK);
     ASSERT_EQ(swmm_engine_initialize(eng), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(eng, 1), SWMM_OK);
-    ASSERT_EQ(swmm_2d_force_rainfall_uniform(eng, 0.0001,
-              SWMM_FORCING_OVERRIDE, SWMM_FORCING_PERSIST), SWMM_OK);
+    ASSERT_EQ(
+        swmm_2d_force_rainfall_uniform(eng, 0.0001, SWMM_FORCING_OVERRIDE, SWMM_FORCING_PERSIST),
+        SWMM_OK);
     double elapsed = 0.0;
     do {
         ASSERT_EQ(swmm_engine_step(eng, &elapsed), SWMM_OK);
     } while (elapsed > 0.0);
     double rain = 0.0, storage = 0.0, initial = 0.0;
-    ASSERT_EQ(swmm_2d_get_mass_balance(eng, &initial, &storage, &rain,
-              nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_2d_get_mass_balance(eng, &initial, &storage, &rain, nullptr, nullptr, nullptr,
+                                       nullptr, nullptr, nullptr, nullptr),
+              SWMM_OK);
     EXPECT_NEAR(initial, GetParam() * 100.0, 1e-8);
     EXPECT_NEAR(rain, 0.6, 1e-6);
     EXPECT_NEAR(storage, initial + rain, 1e-5);
@@ -277,10 +332,8 @@ TEST_P(MeshOnlyStepping2DTest, RoutesRainAndRedistributesWetWater) {
     std::ifstream report(rpt);
     const std::string text((std::istreambuf_iterator<char>(report)), {});
     std::smatch match;
-    ASSERT_TRUE(std::regex_search(text, match,
-                std::regex("Internal Steps[ .]+([0-9]+)")));
+    ASSERT_TRUE(std::regex_search(text, match, std::regex("Internal Steps[ .]+([0-9]+)")));
     EXPECT_GT(std::stoll(match[1]), 0) << "surface never became active";
 }
 
-INSTANTIATE_TEST_SUITE_P(WetAndDry, MeshOnlyStepping2DTest,
-                        ::testing::Values(0.1, 0.0));
+INSTANTIATE_TEST_SUITE_P(WetAndDry, MeshOnlyStepping2DTest, ::testing::Values(0.1, 0.0));

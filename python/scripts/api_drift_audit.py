@@ -84,8 +84,6 @@ def collect_c_enums() -> dict[str, str]:
 
 # These have Python-native replacements rather than missing wrappers.
 KNOWN_UNBOUND = frozenset({
-    "swmm_get_last_error",      # typed EngineError exceptions
-    "swmm_get_last_error_msg",  # typed EngineError exceptions
     "swmm_get_current_time",    # Solver.current_datetime
     "swmm_coupling_set_source", # scalar C convenience; Python uses identical atomic set_sources
     "swmm_coupling_advance_to", # C alias of swmm_engine_advance_to used by Solver.advance_to
@@ -205,6 +203,7 @@ def main() -> int:
     ap.add_argument("--json", action="store_true", help="emit JSON")
     ap.add_argument("--out", help="write JSON report to this path instead of stdout")
     ap.add_argument("--strict", action="store_true", help="exit 1 if gaps found")
+    ap.add_argument("--coverage", action="store_true", help="include per-header counts and C-to-Python member mapping in --json")
     args = ap.parse_args()
 
     c_funcs = collect_c_functions()
@@ -239,6 +238,21 @@ def main() -> int:
         "declared_but_unsurfaced_in_pyx": declared_unsurfaced,
         "enums_missing_from_python": dict(sorted(missing_enums.items())),
     }
+    if args.coverage:
+        graph = pyx_callgraph()
+        report['function_bindings'] = {
+            name: {'header': header,
+                   'status': 'intentional' if name in KNOWN_UNBOUND else 'bound' if name in pyx else 'missing',
+                   'python_members': ['.'.join(part for part in member if part)
+                                      for member in sorted(graph.get(name, ()))]}
+            for name, header in sorted(c_funcs.items())
+        }
+        report['header_coverage'] = {
+            header: {'functions': sum(h == header for h in c_funcs.values()),
+                     'bound': sum(h == header and name in pyx for name, h in c_funcs.items()),
+                     'intentional': sum(h == header and name in KNOWN_UNBOUND for name, h in c_funcs.items())}
+            for header in sorted(set(c_funcs.values()))
+        }
 
     if args.out:
         lines = []

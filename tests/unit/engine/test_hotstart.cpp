@@ -1,6 +1,6 @@
 /**
- * @file test_hotstart.cpp
- * @brief Unit tests for the hot start file API.
+ * @file      test_hotstart.cpp
+ * @brief     Unit tests for the hot start file API.
  *
  * @details Tests:
  *          - HotStartManager::save() + open() round-trip (binary I/O + CRC32)
@@ -15,6 +15,10 @@
  * @see src/engine/core/HotStartManager.hpp
  * @see include/openswmm/engine/openswmm_hotstart.h
  * @ingroup engine_hotstart
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -48,32 +52,59 @@ namespace {
 /** @brief Unique temp file path for each test (deleted in TearDown). */
 class TempFile {
 public:
+    /**
+     * @brief Choose an address-derived temporary hotstart artifact path.
+     *
+     * Combines temp_directory_path with openswmm_test_<this-address>&lt;suffix&gt;; does not reserve/create
+     * the file, so address reuse or another process can collide. Filesystem/allocation errors
+     * propagate; avoid copying this cleanup owner.
+     *
+     * @param[in] suffix Raw filename suffix appended to this object's decimal address, default .hs;
+     *     must not introduce unintended path components.
+     */
     explicit TempFile(const std::string& suffix = ".hs") {
-        path_ = (fs::temp_directory_path() /
-                 ("openswmm_test_" + std::to_string(
-                     reinterpret_cast<std::uintptr_t>(this)) + suffix)).string();
+        path_ =
+            (fs::temp_directory_path() /
+             ("openswmm_test_" + std::to_string(reinterpret_cast<std::uintptr_t>(this)) + suffix))
+                .string();
     }
+    /**
+     * @brief Remove the owned temporary-path artifact if possible.
+     *
+     * Uses error-code remove and ignores errors; caller closes any active file owners before
+     * destruction. Does not remove parent directories or sidecar files.
+     */
     ~TempFile() {
         std::error_code ec;
         fs::remove(path_, ec);
     }
+    /**
+     * @brief Borrow the selected temporary artifact path.
+     * @return Read-only owner-held string reference, valid only through this TempFile lifetime; no file
+     *     existence is guaranteed.
+     */
     const std::string& path() const { return path_; }
+
 private:
     std::string path_;
 };
 
 /**
- * @brief Build a minimal SimulationContext with a few nodes, links, subcatches.
+ * @brief Build a synthetic running-state context for hotstart serialization tests.
  *
- * @details Sets state to RUNNING so HotStartManager::save() accepts it.
+ * Registers/allocates stores, sets native depth/head feet, node volumes ft3, link flow/runoff
+ * ft3/s, EPSG:4326 metadata, numeric start/end dates and current_time=86400 s. Marks RUNNING
+ * directly to exercise save; does not open/validate/initialize or numerically advance a complete
+ * connected model.
+ * @return Owned context with J1/J2/OUT1, C1/C2, S1 and fixed diagnostic water state.
  */
 static SimulationContext make_test_context() {
     SimulationContext ctx;
 
     // Options
-    ctx.options.start_date = 2460000.5;  // arbitrary Julian date
-    ctx.options.end_date   = 2460001.5;
-    ctx.spatial.crs        = "EPSG:4326";
+    ctx.options.start_date = 2460000.5; // arbitrary Julian date
+    ctx.options.end_date = 2460001.5;
+    ctx.spatial.crs = "EPSG:4326";
 
     // Register nodes
     ctx.node_names.add("J1");
@@ -91,17 +122,25 @@ static SimulationContext make_test_context() {
     ctx.allocate_objects();
 
     // Set state
-    ctx.nodes.depth[0]  = 1.5;   ctx.nodes.head[0]  = 101.5; ctx.nodes.volume[0] = 5.0;
-    ctx.nodes.depth[1]  = 0.8;   ctx.nodes.head[1]  = 100.8; ctx.nodes.volume[1] = 2.0;
-    ctx.nodes.depth[2]  = 0.0;   ctx.nodes.head[2]  = 100.0; ctx.nodes.volume[2] = 0.0;
+    ctx.nodes.depth[0] = 1.5;
+    ctx.nodes.head[0] = 101.5;
+    ctx.nodes.volume[0] = 5.0;
+    ctx.nodes.depth[1] = 0.8;
+    ctx.nodes.head[1] = 100.8;
+    ctx.nodes.volume[1] = 2.0;
+    ctx.nodes.depth[2] = 0.0;
+    ctx.nodes.head[2] = 100.0;
+    ctx.nodes.volume[2] = 0.0;
 
-    ctx.links.flow[0]   = 3.14;  ctx.links.depth[0]  = 0.9;
-    ctx.links.flow[1]   = 1.23;  ctx.links.depth[1]  = 0.4;
+    ctx.links.flow[0] = 3.14;
+    ctx.links.depth[0] = 0.9;
+    ctx.links.flow[1] = 1.23;
+    ctx.links.depth[1] = 0.4;
 
     ctx.subcatches.runoff[0] = 0.05;
 
-    ctx.current_time = 86400.0;  // 1 day in seconds
-    ctx.state        = EngineState::RUNNING;
+    ctx.current_time = 86400.0; // 1 day in seconds
+    ctx.state = EngineState::RUNNING;
 
     return ctx;
 }
@@ -119,7 +158,7 @@ TEST(HotStartManagerTest, SaveCreatesFile) {
     delete hs;
 
     EXPECT_TRUE(fs::exists(tmp.path()));
-    EXPECT_GT(fs::file_size(tmp.path()), 16u);  // at least magic + version
+    EXPECT_GT(fs::file_size(tmp.path()), 16u); // at least magic + version
 }
 
 TEST(HotStartManagerTest, OpenReadsBackSavedFile) {
@@ -209,8 +248,8 @@ TEST(HotStartManagerTest, LinkFlowPreservedAfterRoundTrip) {
 
     HotStartFile* loaded = HotStartManager::open(tmp.path());
     ASSERT_NE(loaded, nullptr);
-    EXPECT_DOUBLE_EQ(loaded->links[0].flow,  3.14);
-    EXPECT_DOUBLE_EQ(loaded->links[1].flow,  1.23);
+    EXPECT_DOUBLE_EQ(loaded->links[0].flow, 3.14);
+    EXPECT_DOUBLE_EQ(loaded->links[1].flow, 1.23);
     EXPECT_EQ(loaded->links[0].id, "C1");
     delete loaded;
 }
@@ -241,9 +280,9 @@ TEST(HotStartManagerTest, HeaderMetadataPreservedAfterRoundTrip) {
     HotStartFile* loaded = HotStartManager::open(tmp.path());
     ASSERT_NE(loaded, nullptr);
     EXPECT_EQ(loaded->header.version, 1u);
-    EXPECT_DOUBLE_EQ(loaded->header.sim_time,   86400.0);
+    EXPECT_DOUBLE_EQ(loaded->header.sim_time, 86400.0);
     EXPECT_DOUBLE_EQ(loaded->header.start_date, ctx.options.start_date);
-    EXPECT_DOUBLE_EQ(loaded->header.end_date,   ctx.options.end_date);
+    EXPECT_DOUBLE_EQ(loaded->header.end_date, ctx.options.end_date);
     EXPECT_EQ(loaded->header.crs, "EPSG:4326");
     delete loaded;
 }
@@ -272,7 +311,7 @@ TEST(HotStartManagerTest, CorruptedFileFailsOpen) {
     }
 
     HotStartFile* loaded = HotStartManager::open(tmp.path());
-    EXPECT_EQ(loaded, nullptr);  // CRC mismatch
+    EXPECT_EQ(loaded, nullptr); // CRC mismatch
     EXPECT_FALSE(HotStartManager::last_io_error().empty());
     delete loaded;
 }
@@ -329,7 +368,7 @@ TEST(HotStartManagerTest, ApplyMissingNodeIssuesWarningNotError) {
     ctx2.state = EngineState::INITIALIZED;
 
     int warnings = HotStartManager::apply(*loaded, ctx2);
-    EXPECT_GE(warnings, 2);  // at least J2 and OUT1 missing
+    EXPECT_GE(warnings, 2); // at least J2 and OUT1 missing
     EXPECT_GE(loaded->warnings.size(), 2u);
     delete loaded;
 }
@@ -384,7 +423,7 @@ TEST(HotStartManagerTest, ApplyWarningCallbackFiredPerMissingObject) {
 
     std::vector<std::string> callback_warnings;
     HotStartManager::apply(*loaded, ctx2,
-        [&](const std::string& msg) { callback_warnings.push_back(msg); });
+                           [&](const std::string& msg) { callback_warnings.push_back(msg); });
 
     EXPECT_EQ(callback_warnings.size(), loaded->warnings.size());
     for (const auto& msg : callback_warnings) {
@@ -496,7 +535,7 @@ TEST(HotStartFileTest, CleanFileFlushIsNoOp) {
     HotStartFile* hs = HotStartManager::save(ctx, tmp.path());
     ASSERT_NE(hs, nullptr);
     EXPECT_FALSE(hs->dirty);
-    EXPECT_TRUE(HotStartManager::flush(*hs));  // should succeed without writing
+    EXPECT_TRUE(HotStartManager::flush(*hs)); // should succeed without writing
     delete hs;
 }
 
@@ -643,44 +682,67 @@ namespace {
 
 using openswmm::NodeType;
 
-/** Append a little-endian POD (int32/float/double) to a byte buffer. */
-template <typename T>
-static void put_pod(std::string& b, T v) {
+/**
+ * @brief Append one value's native object-representation bytes to a fixture buffer.
+ *
+ * Uses reinterpret_cast and append with no endian conversion, padding normalization or
+ * serialization trait check. Caller requires the native little-endian layouts expected by this
+ * fixture; no production hotstart writer is invoked.
+ *
+ * @param[in,out] b Destination binary string, extended by sizeof(T) bytes.
+ * @param[in] v Intended trivially copyable native int32/float/double value.
+ */
+template <typename T> static void put_pod(std::string& b, T v) {
     b.append(reinterpret_cast<const char*>(&v), sizeof(v));
 }
 
 /**
- * @brief Write a legacy "SWMM5-HOTSTART4" file matching a given model shape.
+ * @brief Write an explicit legacy v4 hotstart with runoff padding and supplied routing records.
  *
- * @details Mirrors legacy hotstart.c saveRunoff()+saveRouting() byte layout so
- *          the refactored reader's runoff-section skip is exercised against a
- *          faithful file. Runoff-section values are arbitrary (the reader skips
- *          them); routing values are what we assert on read-back.
+ * Writes a 15-byte stamp, six native int32 header fields (flowUnits0), arbitrary runoff doubles and
+ * routing floats with deterministic HRT/quality sentinels. Requires intended little-endian
+ * int32/IEEE float/double representation and matching shapes; no bounds, byte-order or physical
+ * validation occurs. Stream open/write/close failures are unchecked; this is a negative/readback
+ * fixture writer rather than a general production exporter.
+ *
+ * @param[in] path Binary destination, overwritten/truncated; parent directory exists.
+ * @param[in] nSub Nonnegative subcatchment count, fitting loop/count arithmetic.
+ * @param[in] nLand Nonnegative land-use count used in per-subcatchment quality/buildup padding.
+ * @param[in] nNodes Nonnegative node count.
+ * @param[in] nLinks Nonnegative link count.
+ * @param[in] nPollut Nonnegative pollutant count, fitting per-record arithmetic.
+ * @param[in] gw At least nSub groundwater-presence flags, selecting four extra runoff doubles.
+ * @param[in] snow At least nSub snow-presence flags, selecting fifteen extra runoff doubles.
+ * @param[in] node_types At least nNodes node types; STORAGE adds one HRT float.
+ * @param[in] node_dl At least nNodes pairs of node depth ft and lateral flow CFS.
+ * @param[in] link_fds At least nLinks triplets of flow CFS, depth ft and dimensionless setting.
  */
-static void write_legacy_hsf_v4(const std::string& path,
-                                int nSub, int nLand, int nNodes, int nLinks,
-                                int nPollut,
-                                const std::vector<bool>& gw,
+static void write_legacy_hsf_v4(const std::string& path, int nSub, int nLand, int nNodes,
+                                int nLinks, int nPollut, const std::vector<bool>& gw,
                                 const std::vector<bool>& snow,
                                 const std::vector<NodeType>& node_types,
-                                const std::vector<std::array<float,2>>& node_dl,
-                                const std::vector<std::array<float,3>>& link_fds) {
+                                const std::vector<std::array<float, 2>>& node_dl,
+                                const std::vector<std::array<float, 3>>& link_fds) {
     std::string b;
-    b.append("SWMM5-HOTSTART4", 15);                 // stamp, no NUL (strlen)
+    b.append("SWMM5-HOTSTART4", 15); // stamp, no NUL (strlen)
     put_pod<int32_t>(b, nSub);
     put_pod<int32_t>(b, nLand);
     put_pod<int32_t>(b, nNodes);
     put_pod<int32_t>(b, nLinks);
     put_pod<int32_t>(b, nPollut);
-    put_pod<int32_t>(b, 0);                           // flowUnits
+    put_pod<int32_t>(b, 0); // flowUnits
 
     // Runoff section (doubles), byte layout per legacy saveRunoff().
     for (int i = 0; i < nSub; ++i) {
-        int nd = 4 + 6;                               // subarea depths+runoff, infil
-        if (gw[static_cast<std::size_t>(i)])   nd += 4;
-        if (snow[static_cast<std::size_t>(i)]) nd += 15;
-        if (nPollut > 0) nd += 2 * nPollut + nLand * (nPollut + 1);
-        for (int k = 0; k < nd; ++k) put_pod<double>(b, 0.25 * (k + 1));
+        int nd = 4 + 6; // subarea depths+runoff, infil
+        if (gw[static_cast<std::size_t>(i)])
+            nd += 4;
+        if (snow[static_cast<std::size_t>(i)])
+            nd += 15;
+        if (nPollut > 0)
+            nd += 2 * nPollut + nLand * (nPollut + 1);
+        for (int k = 0; k < nd; ++k)
+            put_pod<double>(b, 0.25 * (k + 1));
     }
 
     // Routing section — nodes: depth, latflow, [hrt if STORAGE], quality.
@@ -688,27 +750,36 @@ static void write_legacy_hsf_v4(const std::string& path,
         put_pod<float>(b, node_dl[static_cast<std::size_t>(i)][0]);
         put_pod<float>(b, node_dl[static_cast<std::size_t>(i)][1]);
         if (node_types[static_cast<std::size_t>(i)] == NodeType::STORAGE)
-            put_pod<float>(b, 7.0f);                  // storage HRT
-        for (int j = 0; j < nPollut; ++j) put_pod<float>(b, 10.0f * (i + 1) + j);
+            put_pod<float>(b, 7.0f); // storage HRT
+        for (int j = 0; j < nPollut; ++j)
+            put_pod<float>(b, 10.0f * (i + 1) + j);
     }
     // Routing section — links: flow, depth, setting, quality.
     for (int i = 0; i < nLinks; ++i) {
         put_pod<float>(b, link_fds[static_cast<std::size_t>(i)][0]);
         put_pod<float>(b, link_fds[static_cast<std::size_t>(i)][1]);
         put_pod<float>(b, link_fds[static_cast<std::size_t>(i)][2]);
-        for (int j = 0; j < nPollut; ++j) put_pod<float>(b, 40.0f * (i + 1) + j);
+        for (int j = 0; j < nPollut; ++j)
+            put_pod<float>(b, 40.0f * (i + 1) + j);
     }
 
     std::ofstream f(path, std::ios::binary | std::ios::trunc);
     f.write(b.data(), static_cast<std::streamsize>(b.size()));
 }
 
-/** Model with subcatchments (one with GW, one with snow), a storage node,
- *  pollutants and a land use — the shape that used to be rejected. */
+/**
+ * @brief Build the mixed model shape used to test legacy runoff-section skipping.
+ *
+ * Populates shape/type/flag metadata only; does not create fully routed physics, real initialized
+ * aquifer/snow state or execute lifecycle calls. Its assigned RUNNING flag enables direct component
+ * tests.
+ * @return Owned context with two subcatchments (one GW, one snow), three typed nodes including
+ *     storage, two links, TSS and one land use, allocated and marked RUNNING.
+ */
 static SimulationContext make_legacy_routing_context() {
     SimulationContext ctx;
     ctx.node_names.add("J1");
-    ctx.node_names.add("ST1");   // storage — exercises the v4 HRT field
+    ctx.node_names.add("ST1"); // storage — exercises the v4 HRT field
     ctx.node_names.add("OUT1");
     ctx.link_names.add("C1");
     ctx.link_names.add("C2");
@@ -723,10 +794,10 @@ static SimulationContext make_legacy_routing_context() {
     ctx.nodes.type[2] = NodeType::OUTFALL;
 
     // S1 has groundwater, S2 has a snowpack (drives runoff-section byte length)
-    ctx.subcatches.gw_aquifer[0] = 0;   // >= 0 => has groundwater
+    ctx.subcatches.gw_aquifer[0] = 0; // >= 0 => has groundwater
     ctx.subcatches.gw_aquifer[1] = -1;
-    ctx.subcatches.snowpack[0]   = -1;
-    ctx.subcatches.snowpack[1]   = 0;   // >= 0 => has snowpack
+    ctx.subcatches.snowpack[0] = -1;
+    ctx.subcatches.snowpack[1] = 0; // >= 0 => has snowpack
 
     ctx.state = EngineState::RUNNING;
     return ctx;
@@ -738,36 +809,32 @@ TEST(HotStartLegacyRoutingTest, ReadsFileWithSubcatchmentsAndAppliesRouting) {
 
     const std::vector<bool> gw{true, false};
     const std::vector<bool> snow{false, true};
-    const std::vector<NodeType> types{NodeType::JUNCTION, NodeType::STORAGE,
-                                      NodeType::OUTFALL};
-    const std::vector<std::array<float,2>> node_dl{
+    const std::vector<NodeType> types{NodeType::JUNCTION, NodeType::STORAGE, NodeType::OUTFALL};
+    const std::vector<std::array<float, 2>> node_dl{
         {{1.25f, 0.5f}}, {{2.75f, -0.1f}}, {{0.0f, 0.0f}}};
-    const std::vector<std::array<float,3>> link_fds{
-        {{3.5f, 0.9f, 1.0f}}, {{1.1f, 0.4f, 0.5f}}};
+    const std::vector<std::array<float, 3>> link_fds{{{3.5f, 0.9f, 1.0f}}, {{1.1f, 0.4f, 0.5f}}};
 
     write_legacy_hsf_v4(tmp.path(), /*nSub=*/2, /*nLand=*/1, /*nNodes=*/3,
-                        /*nLinks=*/2, /*nPollut=*/1, gw, snow, types,
-                        node_dl, link_fds);
+                        /*nLinks=*/2, /*nPollut=*/1, gw, snow, types, node_dl, link_fds);
 
     std::vector<std::string> warnings;
     const int rc = HotStartManager::apply_legacy_routing(
-        tmp.path(), ctx,
-        [&](const std::string& m) { warnings.push_back(m); });
+        tmp.path(), ctx, [&](const std::string& m) { warnings.push_back(m); });
 
     ASSERT_EQ(rc, 0) << HotStartManager::last_io_error();
 
     // Routing state applied by object index (float -> double).
-    EXPECT_FLOAT_EQ(static_cast<float>(ctx.nodes.depth[0]),    1.25f);
+    EXPECT_FLOAT_EQ(static_cast<float>(ctx.nodes.depth[0]), 1.25f);
     EXPECT_FLOAT_EQ(static_cast<float>(ctx.nodes.lat_flow[0]), 0.5f);
-    EXPECT_FLOAT_EQ(static_cast<float>(ctx.nodes.depth[1]),    2.75f);   // past HRT
+    EXPECT_FLOAT_EQ(static_cast<float>(ctx.nodes.depth[1]), 2.75f); // past HRT
     EXPECT_FLOAT_EQ(static_cast<float>(ctx.nodes.lat_flow[1]), -0.1f);
 
-    EXPECT_FLOAT_EQ(static_cast<float>(ctx.links.flow[0]),           3.5f);
-    EXPECT_FLOAT_EQ(static_cast<float>(ctx.links.depth[0]),          0.9f);
-    EXPECT_FLOAT_EQ(static_cast<float>(ctx.links.setting[0]),        1.0f);
+    EXPECT_FLOAT_EQ(static_cast<float>(ctx.links.flow[0]), 3.5f);
+    EXPECT_FLOAT_EQ(static_cast<float>(ctx.links.depth[0]), 0.9f);
+    EXPECT_FLOAT_EQ(static_cast<float>(ctx.links.setting[0]), 1.0f);
     EXPECT_FLOAT_EQ(static_cast<float>(ctx.links.target_setting[0]), 1.0f);
-    EXPECT_FLOAT_EQ(static_cast<float>(ctx.links.flow[1]),           1.1f);
-    EXPECT_FLOAT_EQ(static_cast<float>(ctx.links.setting[1]),        0.5f);
+    EXPECT_FLOAT_EQ(static_cast<float>(ctx.links.flow[1]), 1.1f);
+    EXPECT_FLOAT_EQ(static_cast<float>(ctx.links.setting[1]), 0.5f);
 
     EXPECT_DOUBLE_EQ(ctx.nodes.conc[0], 10.0);
     EXPECT_DOUBLE_EQ(ctx.nodes.conc_old[2], 30.0);
@@ -782,21 +849,17 @@ TEST(HotStartLegacyRoutingTest, ReadsFileWithSubcatchmentsAndAppliesRouting) {
 
 TEST(HotStartLegacyRoutingTest, SubcatchmentCountMismatchRejected) {
     TempFile tmp(".hsf");
-    SimulationContext ctx = make_legacy_routing_context();   // model has 2 subs
+    SimulationContext ctx = make_legacy_routing_context(); // model has 2 subs
 
     const std::vector<bool> gw{true, false, false};
     const std::vector<bool> snow{false, true, false};
-    const std::vector<NodeType> types{NodeType::JUNCTION, NodeType::STORAGE,
-                                      NodeType::OUTFALL};
-    const std::vector<std::array<float,2>> node_dl{
-        {{1.0f, 0.0f}}, {{2.0f, 0.0f}}, {{0.0f, 0.0f}}};
-    const std::vector<std::array<float,3>> link_fds{
-        {{1.0f, 0.5f, 1.0f}}, {{1.0f, 0.5f, 1.0f}}};
+    const std::vector<NodeType> types{NodeType::JUNCTION, NodeType::STORAGE, NodeType::OUTFALL};
+    const std::vector<std::array<float, 2>> node_dl{{{1.0f, 0.0f}}, {{2.0f, 0.0f}}, {{0.0f, 0.0f}}};
+    const std::vector<std::array<float, 3>> link_fds{{{1.0f, 0.5f, 1.0f}}, {{1.0f, 0.5f, 1.0f}}};
 
     // File claims 3 subcatchments; model has 2 -> must be rejected, not misread.
     write_legacy_hsf_v4(tmp.path(), /*nSub=*/3, /*nLand=*/1, /*nNodes=*/3,
-                        /*nLinks=*/2, /*nPollut=*/1, gw, snow, types,
-                        node_dl, link_fds);
+                        /*nLinks=*/2, /*nPollut=*/1, gw, snow, types, node_dl, link_fds);
 
     const int rc = HotStartManager::apply_legacy_routing(tmp.path(), ctx);
     EXPECT_NE(rc, 0);
@@ -815,22 +878,20 @@ TEST(HotStartLegacyRoutingTest, RoutingOnlyFileStillWorksWithoutWarning) {
 
     const std::vector<bool> gw{}, snow{};
     const std::vector<NodeType> types{NodeType::JUNCTION, NodeType::OUTFALL};
-    const std::vector<std::array<float,2>> node_dl{{{4.2f, 0.0f}}, {{0.0f, 0.0f}}};
-    const std::vector<std::array<float,3>> link_fds{{{2.2f, 0.7f, 1.0f}}};
+    const std::vector<std::array<float, 2>> node_dl{{{4.2f, 0.0f}}, {{0.0f, 0.0f}}};
+    const std::vector<std::array<float, 3>> link_fds{{{2.2f, 0.7f, 1.0f}}};
 
     write_legacy_hsf_v4(tmp.path(), /*nSub=*/0, /*nLand=*/0, /*nNodes=*/2,
-                        /*nLinks=*/1, /*nPollut=*/0, gw, snow, types,
-                        node_dl, link_fds);
+                        /*nLinks=*/1, /*nPollut=*/0, gw, snow, types, node_dl, link_fds);
 
     std::vector<std::string> warnings;
     const int rc = HotStartManager::apply_legacy_routing(
-        tmp.path(), ctx,
-        [&](const std::string& m) { warnings.push_back(m); });
+        tmp.path(), ctx, [&](const std::string& m) { warnings.push_back(m); });
 
     ASSERT_EQ(rc, 0) << HotStartManager::last_io_error();
     EXPECT_FLOAT_EQ(static_cast<float>(ctx.nodes.depth[0]), 4.2f);
-    EXPECT_FLOAT_EQ(static_cast<float>(ctx.links.flow[0]),  2.2f);
-    EXPECT_TRUE(warnings.empty());   // no subcatchments -> no routing-only warning
+    EXPECT_FLOAT_EQ(static_cast<float>(ctx.links.flow[0]), 2.2f);
+    EXPECT_TRUE(warnings.empty()); // no subcatchments -> no routing-only warning
 }
 
 TEST(HotStartLegacyRoutingTest, OlderFormatsRestoreQualityAndSkipCompatibilityZeros) {
@@ -845,10 +906,14 @@ TEST(HotStartLegacyRoutingTest, OlderFormatsRestoreQualityAndSkipCompatibilityZe
         ctx.pollutant_names.add("Lead");
         ctx.allocate_objects();
         std::string bytes = "SWMM5-HOTSTART";
-        if (version >= 2) bytes += static_cast<char>('0' + version);
-        if (version >= 2) put_pod<int32_t>(bytes, 0); // subcatchments
-        if (version >= 3) put_pod<int32_t>(bytes, 0); // land uses
-        for (int v : {2, 1, 2, 0}) put_pod<int32_t>(bytes, v);
+        if (version >= 2)
+            bytes += static_cast<char>('0' + version);
+        if (version >= 2)
+            put_pod<int32_t>(bytes, 0); // subcatchments
+        if (version >= 3)
+            put_pod<int32_t>(bytes, 0); // land uses
+        for (int v : {2, 1, 2, 0})
+            put_pod<int32_t>(bytes, v);
         for (int i = 0; i < 2; ++i) {
             for (float v : {1.0f, 0.0f, 10.0f + i, 20.0f + i})
                 put_pod<float>(bytes, v);
@@ -857,8 +922,12 @@ TEST(HotStartLegacyRoutingTest, OlderFormatsRestoreQualityAndSkipCompatibilityZe
                 put_pod<float>(bytes, 0.0f);
             }
         }
-        for (float v : {0.0f, 1.0f, 1.0f, 30.0f, 40.0f}) put_pod<float>(bytes, v);
-        { std::ofstream f(hs.path(), std::ios::binary); f.write(bytes.data(), bytes.size()); }
+        for (float v : {0.0f, 1.0f, 1.0f, 30.0f, 40.0f})
+            put_pod<float>(bytes, v);
+        {
+            std::ofstream f(hs.path(), std::ios::binary);
+            f.write(bytes.data(), bytes.size());
+        }
         ASSERT_EQ(HotStartManager::apply_legacy_routing(hs.path(), ctx), 0);
         EXPECT_EQ(ctx.nodes.conc, (std::vector<double>{10, 20, 11, 21}));
         EXPECT_EQ(ctx.nodes.conc_old, ctx.nodes.conc);
@@ -896,11 +965,11 @@ Lead MG/L 0 0 0 0 NO * 0 0 88
 NODE ST TSS 777
 LINK C Lead 666
 [FILES]
-USE HOTSTART ")" << hs.path() << "\"\n";
+USE HOTSTART ")"
+          << hs.path() << "\"\n";
     }
-    write_legacy_hsf_v4(hs.path(), 0, 0, 2, 1, 2, {}, {},
-        {NodeType::STORAGE, NodeType::OUTFALL},
-        {{{1.0f, 0.0f}}, {{0.0f, 0.0f}}}, {{{0.0f, 1.0f, 1.0f}}});
+    write_legacy_hsf_v4(hs.path(), 0, 0, 2, 1, 2, {}, {}, {NodeType::STORAGE, NodeType::OUTFALL},
+                        {{{1.0f, 0.0f}}, {{0.0f, 0.0f}}}, {{{0.0f, 1.0f, 1.0f}}});
     openswmm::SWMMEngine engine;
     ASSERT_EQ(engine.open(inp.path().c_str(), nullptr, nullptr), 0);
     ASSERT_EQ(engine.initialize(), 0);
@@ -930,6 +999,16 @@ USE HOTSTART ")" << hs.path() << "\"\n";
 // the reader hands it back unchanged (or skips it, with a warning, when the
 // caller takes none). Files go to tests/unit/engine/data/hotstart_format/
 // for review.
+/**
+ * @brief Create a retained hotstart-format review directory and form an absolute artifact path.
+ *
+ * Uses throwing create_directories/absolute on the cwd-relative hotstart_format folder, retains
+ * existing files and does not change cwd.
+ *
+ * @param[in] name Raw filename/path appended under absolute hotstart_format; caller selects a safe
+ *     destination.
+ * @return Owned absolute path string; the artifact itself is not created here.
+ */
 static std::string reviewPath(const std::string& name) {
     fs::create_directories("hotstart_format");
     return (fs::absolute("hotstart_format") / name).string();
@@ -939,9 +1018,10 @@ TEST(HotStartLegacyRoutingTest, SaveWritesTheSubcatchmentSectionItsReaderReturns
     const std::string hs = reviewPath("bare_context_legacy.hsf");
     SimulationContext ctx = make_legacy_routing_context();
     ctx.nodes.depth = {1.5, 2.5, 0.25};
-    ctx.links.flow  = {3.0, 4.0};
+    ctx.links.flow = {3.0, 4.0};
     std::vector<double> runoff(HotStartManager::legacy_runoff_size(ctx, 1));
-    for (std::size_t k = 0; k < runoff.size(); ++k) runoff[k] = 0.5 + static_cast<double>(k);
+    for (std::size_t k = 0; k < runoff.size(); ++k)
+        runoff[k] = 0.5 + static_cast<double>(k);
     ASSERT_EQ(HotStartManager::save_legacy_routing(hs, ctx, &runoff), 0)
         << HotStartManager::last_io_error();
 
@@ -955,8 +1035,8 @@ TEST(HotStartLegacyRoutingTest, SaveWritesTheSubcatchmentSectionItsReaderReturns
     f.seekg(15);
     int32_t counts[6] = {};
     f.read(reinterpret_cast<char*>(counts), sizeof counts);
-    EXPECT_EQ(counts[0], 2);   // subcatchments
-    EXPECT_EQ(counts[1], 1);   // land uses
+    EXPECT_EQ(counts[0], 2); // subcatchments
+    EXPECT_EQ(counts[1], 1); // land uses
 
     auto back = make_legacy_routing_context();
     std::vector<double> read_back;
@@ -968,11 +1048,12 @@ TEST(HotStartLegacyRoutingTest, SaveWritesTheSubcatchmentSectionItsReaderReturns
 
     auto skipped = make_legacy_routing_context();
     std::vector<std::string> warnings;
-    ASSERT_EQ(HotStartManager::apply_legacy_routing(hs, skipped,
-                  [&](const std::string& m) { warnings.push_back(m); }), 0)
+    ASSERT_EQ(HotStartManager::apply_legacy_routing(
+                  hs, skipped, [&](const std::string& m) { warnings.push_back(m); }),
+              0)
         << HotStartManager::last_io_error();
     EXPECT_DOUBLE_EQ(skipped.nodes.depth[1], 2.5);
-    ASSERT_EQ(warnings.size(), 1u);   // subcatchment state skipped
+    ASSERT_EQ(warnings.size(), 1u); // subcatchment state skipped
 }
 
 // A file with the subcatchment section missing — what the writer produced
@@ -980,12 +1061,13 @@ TEST(HotStartLegacyRoutingTest, SaveWritesTheSubcatchmentSectionItsReaderReturns
 TEST(HotStartLegacyRoutingTest, FileWithoutTheSubcatchmentSectionIsRefusedWithAReason) {
     const std::string hs = reviewPath("missing_subcatchment_section.hsf");
     SimulationContext ctx = make_legacy_routing_context();
-    ASSERT_EQ(HotStartManager::save_legacy_routing(hs, ctx), 0);   // no section
+    ASSERT_EQ(HotStartManager::save_legacy_routing(hs, ctx), 0); // no section
 
     std::vector<double> runoff;
     std::vector<std::string> warnings;
-    EXPECT_NE(HotStartManager::apply_legacy_routing(hs, ctx,
-                  [&](const std::string& m) { warnings.push_back(m); }, &runoff), 0);
+    EXPECT_NE(HotStartManager::apply_legacy_routing(
+                  hs, ctx, [&](const std::string& m) { warnings.push_back(m); }, &runoff),
+              0);
     EXPECT_FALSE(HotStartManager::last_io_error().empty());
     EXPECT_TRUE(warnings.empty()) << "no skip warning for a file that is refused";
 }
@@ -995,17 +1077,30 @@ TEST(HotStartLegacyRoutingTest, FileWithoutTheSubcatchmentSectionIsRefusedWithAR
 // records, so neither v6 nor legacy could read it, and a legacy file's
 // runoff state (ponded water, infiltration, groundwater, buildup) was
 // skipped: the continuation restarted its hydrology and buildup cold.
-static std::string splitRunDeck(const std::string& end_time,
-                                const std::string& start_time,
+/**
+ * @brief Construct the runoff/quality deck used for continuous-versus-hotstart split runs.
+ *
+ * Constructs text only; times/files are inserted without validation and must delimit compatible
+ * same-date windows. Does not write/run the model or assert continuation equivalence itself.
+ *
+ * @param[in] end_time Raw same-date END_TIME token in SWMM time syntax.
+ * @param[in] start_time Raw START_TIME token on01/01/2026.
+ * @param[in] files Raw FILES rows inserted after its header, selecting save/use hotstart filenames.
+ * @return Owned CFS/DYNWAVE/Horton deck with two catchments, S1 groundwater, one rain signal, TSS
+ *     buildup/washoff and five-day antecedent dry period.
+ */
+static std::string splitRunDeck(const std::string& end_time, const std::string& start_time,
                                 const std::string& files) {
     return R"([OPTIONS]
 FLOW_UNITS CFS
 FLOW_ROUTING DYNWAVE
 INFILTRATION HORTON
 START_DATE 01/01/2026
-START_TIME )" + start_time + R"(
+START_TIME )" +
+           start_time + R"(
 END_DATE 01/01/2026
-END_TIME )" + end_time + R"(
+END_TIME )" +
+           end_time + R"(
 REPORT_STEP 00:05:00
 WET_STEP 00:05:00
 DRY_STEP 00:05:00
@@ -1050,13 +1145,20 @@ LU1 TSS POW 100 2 1 AREA
 [WASHOFF]
 LU1 TSS EXP 0.1 1.0 0 0
 [FILES]
-)" + files + "\n";
+)" + files +
+           "\n";
 }
 
 TEST(HotStartLegacyRoutingTest, SplitRunRestoresRunoffSectionLikeLegacy) {
     TempFile inp1(".inp"), inp2(".inp"), hs(".hsf");
-    { std::ofstream f(inp1.path()); f << splitRunDeck("02:00:00", "00:00:00", "SAVE HOTSTART \"" + hs.path() + "\""); }
-    { std::ofstream f(inp2.path()); f << splitRunDeck("03:00:00", "02:00:00", "USE HOTSTART \"" + hs.path() + "\""); }
+    {
+        std::ofstream f(inp1.path());
+        f << splitRunDeck("02:00:00", "00:00:00", "SAVE HOTSTART \"" + hs.path() + "\"");
+    }
+    {
+        std::ofstream f(inp2.path());
+        f << splitRunDeck("03:00:00", "02:00:00", "USE HOTSTART \"" + hs.path() + "\"");
+    }
 
     struct State {
         std::vector<double> d0, d1, dp, runoff, conc, ponded, buildup, theta, lower;
@@ -1065,7 +1167,9 @@ TEST(HotStartLegacyRoutingTest, SplitRunRestoresRunoffSectionLikeLegacy) {
     auto capture = [](const openswmm::SWMMEngine& e) {
         State s;
         const auto& soa = e.runoff_solver().soa();
-        s.d0 = soa.depth_imperv0; s.d1 = soa.depth_imperv1; s.dp = soa.depth_perv;
+        s.d0 = soa.depth_imperv0;
+        s.d1 = soa.depth_imperv1;
+        s.dp = soa.depth_perv;
         s.runoff = e.context().subcatches.runoff;
         s.conc = e.context().subcatches.conc;
         s.ponded = e.context().subcatches.ponded_qual;
@@ -1073,9 +1177,11 @@ TEST(HotStartLegacyRoutingTest, SplitRunRestoresRunoffSectionLikeLegacy) {
         s.theta = e.gw_solver().state().theta;
         s.lower = e.gw_solver().state().lower_depth;
         for (int i = 0; i < 2; ++i) {
-            int m = 0; double x[6];
+            int m = 0;
+            double x[6];
             e.runoff_solver().infil_get_state(i, m, x);
-            s.hort_tp[i] = x[0]; s.hort_fe[i] = x[1];
+            s.hort_tp[i] = x[0];
+            s.hort_fe[i] = x[1];
         }
         return s;
     };
@@ -1088,7 +1194,9 @@ TEST(HotStartLegacyRoutingTest, SplitRunRestoresRunoffSectionLikeLegacy) {
         ASSERT_EQ(e.initialize(), 0);
         ASSERT_EQ(e.start(0), 0);
         double t = 0.0;
-        do { ASSERT_EQ(e.step(&t), 0); } while (t > 0.0);
+        do {
+            ASSERT_EQ(e.step(&t), 0);
+        } while (t > 0.0);
         end1 = capture(e);
         ASSERT_EQ(e.end(), 0);
         // What is still on the land: buildup + ponded mass, without the
@@ -1097,7 +1205,7 @@ TEST(HotStartLegacyRoutingTest, SplitRunRestoresRunoffSectionLikeLegacy) {
                    e.context().mass_balance.qual_ponded_lost[0];
         EXPECT_EQ(e.close(), 0);
     }
-    ASSERT_GT(end1.ponded[0] + end1.ponded[1], 0.0);  // the split leaves water ponded
+    ASSERT_GT(end1.ponded[0] + end1.ponded[1], 0.0); // the split leaves water ponded
     {
         // Legacy's layout: nLand is the model's, and the runoff section sits
         // between the header and the routing records.
@@ -1122,10 +1230,10 @@ TEST(HotStartLegacyRoutingTest, SplitRunRestoresRunoffSectionLikeLegacy) {
     EXPECT_EQ(st.conc, end1.conc);
     EXPECT_EQ(st.ponded, end1.ponded);
     ASSERT_EQ(st.buildup.size(), end1.buildup.size());
-    for (std::size_t k = 0; k < st.buildup.size(); ++k)   // mass -> per area round trip
+    for (std::size_t k = 0; k < st.buildup.size(); ++k) // mass -> per area round trip
         EXPECT_NEAR(st.buildup[k], end1.buildup[k], 1e-12 * std::abs(end1.buildup[k]));
     EXPECT_EQ(st.theta[0], end1.theta[0]);
-    EXPECT_NEAR(st.lower[0], end1.lower[0], 1e-12);   // via the water table elevation
+    EXPECT_NEAR(st.lower[0], end1.lower[0], 1e-12); // via the water table elevation
     for (int i = 0; i < 2; ++i) {
         EXPECT_EQ(st.hort_tp[i], end1.hort_tp[i]);
         EXPECT_EQ(st.hort_fe[i], end1.hort_fe[i]);
@@ -1145,11 +1253,18 @@ TEST(HotStartLegacyRoutingTest, SplitRunRestoresRunoffSectionLikeLegacy) {
 // opened the mass balance) left every initial ledger at the cold start.
 TEST(HotStartLegacyRoutingTest, NativeSplitRunRestoresSurfaceAndLedgers) {
     TempFile inp1(".inp"), inp2(".inp"), hs(".hs");
-    { std::ofstream f(inp1.path()); f << splitRunDeck("02:00:00", "00:00:00", "SAVE HOTSTART \"" + hs.path() + "\" NATIVE"); }
-    { std::ofstream f(inp2.path()); f << splitRunDeck("03:00:00", "02:00:00", "USE HOTSTART \"" + hs.path() + "\""); }
+    {
+        std::ofstream f(inp1.path());
+        f << splitRunDeck("02:00:00", "00:00:00", "SAVE HOTSTART \"" + hs.path() + "\" NATIVE");
+    }
+    {
+        std::ofstream f(inp2.path());
+        f << splitRunDeck("03:00:00", "02:00:00", "USE HOTSTART \"" + hs.path() + "\"");
+    }
 
     struct Snap {
-        std::vector<double> d0, d1, dp, conc, ponded, buildup, theta, lower, gw_flow, max_infil, sweep;
+        std::vector<double> d0, d1, dp, conc, ponded, buildup, theta, lower, gw_flow, max_infil,
+            sweep;
         double runoff_store = 0, surface = 0, routing = 0, gw = 0;
     };
     auto capture = [](const openswmm::SWMMEngine& e) {
@@ -1157,10 +1272,16 @@ TEST(HotStartLegacyRoutingTest, NativeSplitRunRestoresSurfaceAndLedgers) {
         const auto& soa = e.runoff_solver().soa();
         const auto& g = e.gw_solver().state();
         const auto& c = e.context();
-        s.d0 = soa.depth_imperv0; s.d1 = soa.depth_imperv1; s.dp = soa.depth_perv;
-        s.conc = c.subcatches.conc; s.ponded = c.subcatches.ponded_qual;
+        s.d0 = soa.depth_imperv0;
+        s.d1 = soa.depth_imperv1;
+        s.dp = soa.depth_perv;
+        s.conc = c.subcatches.conc;
+        s.ponded = c.subcatches.ponded_qual;
         s.buildup = e.surfaceQuality().buildup;
-        s.theta = g.theta; s.lower = g.lower_depth; s.gw_flow = g.gw_flow; s.max_infil = g.max_infil_vol;
+        s.theta = g.theta;
+        s.lower = g.lower_depth;
+        s.gw_flow = g.gw_flow;
+        s.max_infil = g.max_infil_vol;
         s.sweep = c.subcatches.sweep_last_date;
         return s;
     };
@@ -1172,7 +1293,9 @@ TEST(HotStartLegacyRoutingTest, NativeSplitRunRestoresSurfaceAndLedgers) {
         ASSERT_EQ(e.initialize(), 0);
         ASSERT_EQ(e.start(0), 0);
         double t = 0.0;
-        do { ASSERT_EQ(e.step(&t), 0); } while (t > 0.0);
+        do {
+            ASSERT_EQ(e.step(&t), 0);
+        } while (t > 0.0);
         end1 = capture(e);
         ASSERT_EQ(e.end(), 0);
         const auto& mb = e.context().mass_balance;
@@ -1197,7 +1320,7 @@ TEST(HotStartLegacyRoutingTest, NativeSplitRunRestoresSurfaceAndLedgers) {
         EXPECT_EQ(st.dp, end1.dp);
         EXPECT_EQ(st.conc, end1.conc);
         EXPECT_EQ(st.ponded, end1.ponded);
-        EXPECT_EQ(st.buildup, end1.buildup);              // per normalizer: exact
+        EXPECT_EQ(st.buildup, end1.buildup); // per normalizer: exact
         EXPECT_EQ(st.theta, end1.theta);
         EXPECT_EQ(st.lower, end1.lower);
         EXPECT_EQ(st.gw_flow, end1.gw_flow);
@@ -1215,7 +1338,10 @@ TEST(HotStartLegacyRoutingTest, NativeSplitRunRestoresSurfaceAndLedgers) {
     // surface and reopens the ledgers from it.
     {
         TempFile inp3(".inp");
-        { std::ofstream f(inp3.path()); f << splitRunDeck("03:00:00", "02:00:00", ""); }
+        {
+            std::ofstream f(inp3.path());
+            f << splitRunDeck("03:00:00", "02:00:00", "");
+        }
         openswmm::SWMMEngine e;
         ASSERT_EQ(e.open(inp3.path().c_str(), nullptr, nullptr), 0);
         ASSERT_EQ(e.initialize(), 0);
@@ -1248,7 +1374,8 @@ TEST(HotStartLegacyRoutingTest, NativeSplitRunRestoresSurfaceAndLedgers) {
         ASSERT_EQ(e.initialize(), 0);
         const auto& w = e.context().warnings;
         EXPECT_TRUE(std::any_of(w.begin(), w.end(), [](const std::string& m) {
-            return m.find("lacks subcatchment surface state") != std::string::npos; }));
+            return m.find("lacks subcatchment surface state") != std::string::npos;
+        }));
         EXPECT_EQ(e.close(), 0);
     }
 }

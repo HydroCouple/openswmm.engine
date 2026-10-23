@@ -15,18 +15,18 @@
 // limitations under the License.
 
 /**
- * @file DefaultStateIOPlugin.cpp
- * @brief Built-in state IO plugin implementation.
+ * @file      DefaultStateIOPlugin.cpp
+ * @brief     Built-in state IO plugin implementation.
  *
  * @see DefaultStateIOPlugin.hpp
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "DefaultStateIOPlugin.hpp"
-#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
+#include "core/FileIO.hpp" // issue #7: UTF-8 paths on Windows
 
 #include "../core/HotStartManager.hpp"
 #include "../core/SimulationContext.hpp"
@@ -43,21 +43,35 @@ namespace {
 
 // Read the leading bytes of a file into buf without depending on
 // HotStartManager internals. Returns the number of bytes read.
+/** @brief Read at most a prefix from a UTF-8 path and close the temporary stream.
+ * @param path Borrowed filename opened read-only.
+ * @param[out] buf Writable array of at least len bytes; not NUL-terminated here.
+ * @param len Maximum bytes to read.
+ * @return Bytes actually read, zero for failed open; no IO diagnostics retained. */
 std::size_t read_head(const std::string& path, char* buf, std::size_t len) noexcept {
     std::FILE* f = openswmm::io::fopen_utf8(path, "rb");
-    if (!f) return 0;
+    if (!f)
+        return 0;
     const std::size_t n = std::fread(buf, 1, len, f);
     std::fclose(f);
     return n;
 }
 
+/** @brief Compare an exact trailing suffix using bytewise C-locale case folding.
+ * @param s Borrowed candidate string.
+ * @param suffix Required NUL-terminated suffix.
+ * @return True for a case-insensitive suffix match, false if the candidate is shorter.
+ * Does not trim, inspect paths or implement Unicode case folding. */
 bool ends_with_ci(const std::string& s, const char* suffix) noexcept {
     const std::size_t n = std::strlen(suffix);
-    if (s.size() < n) return false;
+    if (s.size() < n)
+        return false;
     for (std::size_t i = 0; i < n; ++i) {
-        const char a = static_cast<char>(std::tolower(static_cast<unsigned char>(s[s.size() - n + i])));
+        const char a =
+            static_cast<char>(std::tolower(static_cast<unsigned char>(s[s.size() - n + i])));
         const char b = static_cast<char>(std::tolower(static_cast<unsigned char>(suffix[i])));
-        if (a != b) return false;
+        if (a != b)
+            return false;
     }
     return true;
 }
@@ -66,10 +80,8 @@ bool ends_with_ci(const std::string& s, const char* suffix) noexcept {
 
 // ---------------------------------------------------------------------------
 
-int DefaultStateIOPlugin::initialize(
-    const std::vector<std::string>& /*init_args*/,
-    const IPluginComponentInfo*     /*info*/)
-{
+int DefaultStateIOPlugin::initialize(const std::vector<std::string>& /*init_args*/,
+                                     const IPluginComponentInfo* /*info*/) {
     state_ = PluginState::INITIALIZED;
     last_error_.clear();
     return 0;
@@ -123,12 +135,14 @@ int DefaultStateIOPlugin::read_state(const std::string& path, SimulationContext&
     // Solver-internal state flows through ctx.state_accessors (wired by
     // SWMMEngine at open()). HotStartManager::apply auto-promotes to V2 when
     // accessors are available and the file is V2.
-    if(HotStartManager::apply(*hs, ctx, warn_cb)<0) {
-        last_error_=HotStartManager::last_io_error();return 1;
+    if (HotStartManager::apply(*hs, ctx, warn_cb) < 0) {
+        last_error_ = HotStartManager::last_io_error();
+        return 1;
     }
 
     // Surface any warnings collected by HotStartManager itself.
-    for (const auto& w : hs->warnings) warnings_.push_back(w);
+    for (const auto& w : hs->warnings)
+        warnings_.push_back(w);
 
     return 0;
 }
@@ -150,7 +164,7 @@ int DefaultStateIOPlugin::write_state(const std::string& path, const SimulationC
         return 1;
     }
 
-    delete hs;  // file is flushed by save(); handle not exposed.
+    delete hs; // file is flushed by save(); handle not exposed.
     return 0;
 }
 

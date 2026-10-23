@@ -1,12 +1,16 @@
 /**
- * @file test_infiltration.cpp
- * @brief Unit tests for Horton, Green-Ampt, and SCS Curve Number infiltration.
+ * @file      test_infiltration.cpp
+ * @brief     Unit tests for Horton, Green-Ampt, and SCS Curve Number infiltration.
  *
  * @details Verifies each infiltration model produces correct rates for
  *          known input scenarios. Cross-referenced against legacy infil.c.
  *
  * @see src/engine/hydrology/Infiltration.hpp
  * @ingroup engine_hydrology
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -23,6 +27,10 @@ using namespace openswmm;
 using namespace openswmm::infil;
 
 // Default options for unit tests (US customary units)
+/**
+ * @brief Construct default US-customary simulation options for infiltration unit fixtures.
+ * @return Independent default-constructed SimulationOptions; no model state or file is touched.
+ */
 static SimulationOptions default_opts() {
     SimulationOptions opts;
     return opts;
@@ -34,7 +42,7 @@ static SimulationOptions default_opts() {
 
 TEST(HortonInfil, InitSetsParameters) {
     HortonState s;
-    horton_init(s, 3.0, 0.5, 4.0, 0.1, 0.0, default_opts());  // in/hr units
+    horton_init(s, 3.0, 0.5, 4.0, 0.1, 0.0, default_opts()); // in/hr units
     // f0 = 3.0 in/hr → 3.0/12/3600 ft/sec
     EXPECT_NEAR(s.f0, 3.0 / 12.0 / 3600.0, 1e-12);
     EXPECT_NEAR(s.fmin, 0.5 / 12.0 / 3600.0, 1e-12);
@@ -43,11 +51,11 @@ TEST(HortonInfil, InitSetsParameters) {
 TEST(HortonInfil, DryPeriodRecovers) {
     HortonState s;
     horton_init(s, 3.0, 0.5, 4.0, 0.5, 0.0, default_opts());
-    s.tp = 1000.0;  // pretend we've been infiltrating
+    s.tp = 1000.0; // pretend we've been infiltrating
 
-    double f = horton_getInfil(s, 0.0, 0.0, 300.0);  // dry period
+    double f = horton_getInfil(s, 0.0, 0.0, 300.0); // dry period
     EXPECT_EQ(f, 0.0);
-    EXPECT_LT(s.tp, 1000.0);  // tp should have recovered (decreased)
+    EXPECT_LT(s.tp, 1000.0); // tp should have recovered (decreased)
 }
 
 TEST(HortonInfil, HourlyLowRainThenStormRetainsLegacyMinimumRate) {
@@ -57,8 +65,7 @@ TEST(HortonInfil, HourlyLowRainThenStormRetainsLegacyMinimumRate) {
     HortonState s;
     horton_init(s, 1.0, 0.025, 10.8, 10.0, 1.8, default_opts());
     for (int i = 0; i < 5; ++i)
-        EXPECT_DOUBLE_EQ(horton_getInfil(s, 0.001 / 43200.0, 0.0, 3600.0),
-                         0.001 / 43200.0);
+        EXPECT_DOUBLE_EQ(horton_getInfil(s, 0.001 / 43200.0, 0.0, 3600.0), 0.001 / 43200.0);
     const double rate = horton_getInfil(s, 0.1 / 43200.0, 0.0, 3600.0);
     EXPECT_DOUBLE_EQ(rate, 0.025 / 43200.0);
     EXPECT_TRUE(std::isfinite(s.Fe));
@@ -68,22 +75,22 @@ TEST(HortonInfil, WetPeriodInfiltrates) {
     HortonState s;
     horton_init(s, 3.0, 0.5, 4.0, 0.1, 0.0, default_opts());
 
-    double precip = 5.0 / 12.0 / 3600.0;  // 5 in/hr → ft/sec (exceeds f0)
+    double precip = 5.0 / 12.0 / 3600.0; // 5 in/hr → ft/sec (exceeds f0)
     double f = horton_getInfil(s, precip, 0.0, 300.0);
 
     EXPECT_GT(f, 0.0);
-    EXPECT_LE(f, precip);  // can't infiltrate more than available water
-    EXPECT_LE(f, s.f0);    // can't exceed max capacity
+    EXPECT_LE(f, precip); // can't infiltrate more than available water
+    EXPECT_LE(f, s.f0);   // can't exceed max capacity
 }
 
 TEST(HortonInfil, CapacityLimitedReducesRate) {
     HortonState s;
     horton_init(s, 3.0, 0.5, 4.0, 0.1, 0.0, default_opts());
 
-    double low_precip = 0.1 / 12.0 / 3600.0;  // 0.1 in/hr (below fmin)
+    double low_precip = 0.1 / 12.0 / 3600.0; // 0.1 in/hr (below fmin)
     double f = horton_getInfil(s, low_precip, 0.0, 300.0);
 
-    EXPECT_NEAR(f, low_precip, 1e-12);  // limited by available water
+    EXPECT_NEAR(f, low_precip, 1e-12); // limited by available water
 }
 
 TEST(HortonInfil, DecayOverTime) {
@@ -106,8 +113,8 @@ TEST(HortonInfil, DecayOverTime) {
 
 TEST(GreenAmptInfil, InitSetsParameters) {
     GreenAmptState s;
-    grnampt_init(s, 4.0, 1.0, 0.3, default_opts());  // S=4in, Ks=1in/hr, IMD=0.3
-    EXPECT_NEAR(s.S, 4.0 / 12.0, 1e-10);     // in → ft
+    grnampt_init(s, 4.0, 1.0, 0.3, default_opts()); // S=4in, Ks=1in/hr, IMD=0.3
+    EXPECT_NEAR(s.S, 4.0 / 12.0, 1e-10);            // in → ft
     EXPECT_NEAR(s.Ks, 1.0 / 12.0 / 3600.0, 1e-12);
     EXPECT_NEAR(s.IMDmax, 0.3, 1e-10);
 }
@@ -116,10 +123,10 @@ TEST(GreenAmptInfil, UnsaturatedPassesThrough) {
     GreenAmptState s;
     grnampt_init(s, 4.0, 1.0, 0.3, default_opts());
 
-    double low_precip = 0.1 / 12.0 / 3600.0;  // less than Ks
+    double low_precip = 0.1 / 12.0 / 3600.0; // less than Ks
     double f = grnampt_getInfil(s, low_precip, 0.0, 300.0);
 
-    EXPECT_NEAR(f, low_precip, 1e-12);  // all rainfall infiltrates
+    EXPECT_NEAR(f, low_precip, 1e-12); // all rainfall infiltrates
     EXPECT_FALSE(s.saturated);
 }
 
@@ -127,7 +134,7 @@ TEST(GreenAmptInfil, SaturationOccurs) {
     GreenAmptState s;
     grnampt_init(s, 4.0, 1.0, 0.3, default_opts());
 
-    double high_precip = 5.0 / 12.0 / 3600.0;  // exceeds Ks
+    double high_precip = 5.0 / 12.0 / 3600.0; // exceeds Ks
     // Multiple steps to reach saturation
     for (int i = 0; i < 100; ++i) {
         grnampt_getInfil(s, high_precip, 0.0, 60.0);
@@ -140,7 +147,7 @@ TEST(GreenAmptInfil, DryPeriodRecoversMoisture) {
     GreenAmptState s;
     grnampt_init(s, 4.0, 1.0, 0.3, default_opts());
     s.saturated = true;
-    s.F  = 0.1;
+    s.F = 0.1;
     s.Fu = 0.1;
 
     // Legacy grnampt_getSatInfil returns 0 for a dry step WITHOUT touching
@@ -154,7 +161,7 @@ TEST(GreenAmptInfil, DryPeriodRecoversMoisture) {
 
     // A light-rain step (supply well under the potential rate) unsaturates
     // the surface ...
-    double light = 0.1 / 12.0 / 3600.0;   // 0.1 in/hr, a tenth of Ks
+    double light = 0.1 / 12.0 / 3600.0; // 0.1 in/hr, a tenth of Ks
     grnampt_getInfil(s, light, 0.0, 300.0);
     EXPECT_FALSE(s.saturated);
     double F_wet = s.F;
@@ -191,19 +198,19 @@ TEST(CurveNumInfil, LowRainfallFullyInfiltrates) {
 
 TEST(CurveNumInfil, HighCNLowInfiltration) {
     CurveNumState s;
-    curvenum_init(s, 98.0, 0.01);  // CN=98 → very low S
+    curvenum_init(s, 98.0, 0.01); // CN=98 → very low S
     // S = (1000/98-10)/12 ≈ 0.017 ft
 
-    double precip = 2.0 / 12.0 / 3600.0;  // 2 in/hr
+    double precip = 2.0 / 12.0 / 3600.0; // 2 in/hr
     double f = curvenum_getInfil(s, precip, 0.0, 300.0);
 
-    EXPECT_LT(f, precip);  // most runs off
+    EXPECT_LT(f, precip); // most runs off
 }
 
 TEST(CurveNumInfil, DryPeriodRecovery) {
     CurveNumState s;
     curvenum_init(s, 80.0, 0.01);
-    s.S = 0.01;  // depleted retention
+    s.S = 0.01; // depleted retention
     s.T = 0.0;
 
     // Dry period long enough to trigger new event
@@ -269,13 +276,13 @@ TEST(HortonInfil, PondedDepthContributes) {
     HortonState s;
     horton_init(s, 3.0, 0.5, 4.0, 0.1, 0.0, default_opts());
 
-    double f = horton_getInfil(s, 0.0, 0.1, 300.0);  // depth=0.1ft
+    double f = horton_getInfil(s, 0.0, 0.1, 300.0); // depth=0.1ft
     EXPECT_GT(f, 0.0);
 }
 
 TEST(HortonInfil, MaxCumulativeInfiltration) {
     HortonState s;
-    horton_init(s, 3.0, 0.5, 4.0, 0.1, 5.0, default_opts());  // Fmax=5in→ft
+    horton_init(s, 3.0, 0.5, 4.0, 0.1, 5.0, default_opts()); // Fmax=5in→ft
 
     double precip = 5.0 / 12.0 / 3600.0;
     double total = 0.0;
@@ -287,7 +294,7 @@ TEST(HortonInfil, MaxCumulativeInfiltration) {
 
     // Cumulative should not exceed Fmax (converted to ft)
     double Fmax_ft = 5.0 / 12.0;
-    EXPECT_LE(total, Fmax_ft * 1.1);  // small tolerance for discretization
+    EXPECT_LE(total, Fmax_ft * 1.1); // small tolerance for discretization
 }
 
 // ============================================================================
@@ -329,7 +336,7 @@ TEST(CurveNumInfil, CN100GivesNearZeroRetention) {
     CurveNumState s;
     curvenum_init(s, 100.0, 0.01);
     // CN=100 → S very small (implementation may cap CN at 98-99)
-    EXPECT_LT(s.Smax, 0.02);  // near zero but not necessarily exact
+    EXPECT_LT(s.Smax, 0.02); // near zero but not necessarily exact
 }
 
 TEST(CurveNumInfil, SmaxFormulaVerification) {
@@ -345,7 +352,7 @@ TEST(CurveNumInfil, SmaxFormulaVerification) {
 TEST(CurveNumInfil, TotalInfilApproachesRetention) {
     // For large cumulative rainfall, total infiltration should approach S
     CurveNumState s;
-    curvenum_init(s, 75.0, 0.001);  // low regen
+    curvenum_init(s, 75.0, 0.001); // low regen
 
     double precip = 3.0 / 12.0 / 3600.0;
     double total_infil = 0.0;
@@ -355,7 +362,7 @@ TEST(CurveNumInfil, TotalInfilApproachesRetention) {
     }
 
     // Total infiltration should be bounded by Smax
-    EXPECT_LE(total_infil, s.Smax * 1.5);  // approximate upper bound
+    EXPECT_LE(total_infil, s.Smax * 1.5); // approximate upper bound
     EXPECT_GT(total_infil, 0.0);
 }
 
@@ -368,7 +375,7 @@ TEST(ModGreenAmpt, StandardGAResetsF) {
     opts.flow_units = FlowUnits::CFS;
 
     GreenAmptState state;
-    grnampt_init(state, 4.0, 1.0, 0.3, opts);  // S=4in, Ks=1in/hr, IMD=0.3
+    grnampt_init(state, 4.0, 1.0, 0.3, opts); // S=4in, Ks=1in/hr, IMD=0.3
 
     // Wet period to build up cumulative F
     for (int t = 0; t < 50; ++t)
@@ -417,7 +424,7 @@ TEST(ModGreenAmpt, ModifiedGAPreservesF) {
     // (it can be small from recovery depletion, but the reset branch is skipped)
     // Note: F gets reduced by recovery (kr*Fumax*dt) but NOT zeroed
     // After long dry period with recovery, F approaches 0 naturally but not via reset
-    EXPECT_TRUE(state.F >= 0.0);  // should never go negative
+    EXPECT_TRUE(state.F >= 0.0); // should never go negative
 }
 
 TEST(ModGreenAmpt, BothModelsProduceSameWetInfiltration) {
@@ -431,9 +438,9 @@ TEST(ModGreenAmpt, BothModelsProduceSameWetInfiltration) {
     // Same wet period should produce identical infiltration for both
     double total_ga = 0.0, total_mod = 0.0;
     for (int t = 0; t < 20; ++t) {
-        double f_ga  = grnampt_getInfil(state_ga, 5e-5, 0.0, 60.0, InfilModel::GREEN_AMPT);
+        double f_ga = grnampt_getInfil(state_ga, 5e-5, 0.0, 60.0, InfilModel::GREEN_AMPT);
         double f_mod = grnampt_getInfil(state_mod, 5e-5, 0.0, 60.0, InfilModel::MOD_GREEN_AMPT);
-        total_ga  += f_ga * 60.0;
+        total_ga += f_ga * 60.0;
         total_mod += f_mod * 60.0;
     }
 
@@ -453,7 +460,7 @@ TEST(InfilMassBalance, HortonCumulativeNeverExceedsInput) {
     HortonState hs;
     horton_init(hs, 3.0, 0.5, 4.0, 7.0, 0.0, opts);
 
-    double precip = 2e-5;  // ft/sec
+    double precip = 2e-5; // ft/sec
     double dt = 60.0;
     double total_infil = 0.0;
     double total_input = 0.0;
@@ -466,8 +473,7 @@ TEST(InfilMassBalance, HortonCumulativeNeverExceedsInput) {
 
     EXPECT_LE(total_infil, total_input + 1e-10)
         << "Cumulative infiltration should never exceed cumulative input";
-    EXPECT_GT(total_infil, 0.0)
-        << "Should have some infiltration";
+    EXPECT_GT(total_infil, 0.0) << "Should have some infiltration";
 }
 
 TEST(InfilMassBalance, GreenAmptCumulativeNeverExceedsInput) {
@@ -523,22 +529,40 @@ TEST(InfilMassBalance, CurveNumCumulativeNeverExceedsInput) {
 // ============================================================================
 
 #ifndef BENCHMARK_DATA_DIR
-#  define BENCHMARK_DATA_DIR ""
+#define BENCHMARK_DATA_DIR ""
 #endif
 
 namespace {
 
-struct HortonBenchRow { double t_s, F_ft; };
+struct HortonBenchRow {
+    double t_s, F_ft;
+};
 
+/**
+ * @brief Read Horton analytic benchmark rows from CSV.
+ *
+ * Skips blank/column-zero # lines and the first data-like header, parses at most 6 numeric comma
+ * tokens with stod, and retains rows with at least 4 values. Extra tokens are ignored; malformed
+ * numeric conversion exceptions propagate.
+ *
+ * @param[in] path Input CSV filename; borrowed during open/read.
+ * @return Owned rows containing time seconds and cumulative infiltration ft, taken from columns
+ *     zero and three, or empty if the file cannot be opened.
+ */
 static std::vector<HortonBenchRow> load_horton_bench(const std::string& path) {
     std::vector<HortonBenchRow> rows;
     std::ifstream in(path);
-    if (!in.is_open()) return rows;
+    if (!in.is_open())
+        return rows;
     std::string line;
     bool header_seen = false;
     while (std::getline(in, line)) {
-        if (line.empty() || line[0] == '#') continue;
-        if (!header_seen) { header_seen = true; continue; }
+        if (line.empty() || line[0] == '#')
+            continue;
+        if (!header_seen) {
+            header_seen = true;
+            continue;
+        }
         // columns: t_s, t_hr, f_ft_per_s, F_ft, f_in_per_hr, F_in
         std::istringstream ss(line);
         std::string tok;
@@ -552,17 +576,36 @@ static std::vector<HortonBenchRow> load_horton_bench(const std::string& path) {
     return rows;
 }
 
-struct GABenchRow { double t_s; double F_ft; };
+struct GABenchRow {
+    double t_s;
+    double F_ft;
+};
 
+/**
+ * @brief Read Green-Ampt analytic benchmark rows from CSV.
+ *
+ * Skips blank/column-zero # lines and the first data-like header, parses at most 2 numeric comma
+ * tokens with stod, and retains rows with at least 2 values. Extra tokens are ignored; malformed
+ * numeric conversion exceptions propagate.
+ *
+ * @param[in] path Input CSV filename; borrowed during open/read.
+ * @return Owned rows containing time seconds and cumulative infiltration ft from the first two
+ *     columns, or empty if the file cannot be opened.
+ */
 static std::vector<GABenchRow> load_ga_bench(const std::string& path) {
     std::vector<GABenchRow> rows;
     std::ifstream in(path);
-    if (!in.is_open()) return rows;
+    if (!in.is_open())
+        return rows;
     std::string line;
     bool header_seen = false;
     while (std::getline(in, line)) {
-        if (line.empty() || line[0] == '#') continue;
-        if (!header_seen) { header_seen = true; continue; }
+        if (line.empty() || line[0] == '#')
+            continue;
+        if (!header_seen) {
+            header_seen = true;
+            continue;
+        }
         std::istringstream ss(line);
         std::string tok;
         double vals[2] = {};
@@ -575,7 +618,7 @@ static std::vector<GABenchRow> load_ga_bench(const std::string& path) {
     return rows;
 }
 
-}  // namespace
+} // namespace
 
 // Horton cumulative-depth trajectory against manufactured benchmark.
 //
@@ -584,8 +627,8 @@ static std::vector<GABenchRow> load_ga_bench(const std::string& path) {
 // intervals therefore reproduces the analytical F(t) to within floating-point
 // rounding — the expected error is well below 1e-9 ft.
 TEST(HortonInfil, TrajectoryMatchesBenchmark) {
-    std::string path = std::string(BENCHMARK_DATA_DIR)
-        + "/manufactured/infil-horton-constant-rainfall/reference.csv";
+    std::string path = std::string(BENCHMARK_DATA_DIR) +
+                       "/manufactured/infil-horton-constant-rainfall/reference.csv";
 
     auto rows = load_horton_bench(path);
     if (rows.empty()) {
@@ -595,10 +638,10 @@ TEST(HortonInfil, TrajectoryMatchesBenchmark) {
     HortonState s;
     horton_init(s, 3.0, 0.5, 4.0, 0.1, 0.0, default_opts());
 
-    const double precip = 5.0 / 12.0 / 3600.0;  // 5 in/hr > f0 → always ponded
+    const double precip = 5.0 / 12.0 / 3600.0; // 5 in/hr > f0 → always ponded
     double F_accum = 0.0;
     double max_err = 0.0, sum_sq = 0.0;
-    double prev_t  = rows[0].t_s;  // t=0
+    double prev_t = rows[0].t_s; // t=0
 
     for (size_t i = 1; i < rows.size(); ++i) {
         double dt = rows[i].t_s - prev_t;
@@ -606,19 +649,16 @@ TEST(HortonInfil, TrajectoryMatchesBenchmark) {
         F_accum += fp * dt;
 
         double err = std::abs(F_accum - rows[i].F_ft);
-        max_err    = std::max(max_err, err);
-        sum_sq    += err * err;
-        prev_t     = rows[i].t_s;
+        max_err = std::max(max_err, err);
+        sum_sq += err * err;
+        prev_t = rows[i].t_s;
     }
 
     double rms_err = std::sqrt(sum_sq / static_cast<double>(rows.size() - 1));
-    EXPECT_LT(max_err, 1e-9)
-        << "Horton cumulative-depth max error " << max_err
-        << " ft exceeds 1e-9 ft tolerance (benchmark: "
-        << path << ")";
-    EXPECT_LT(rms_err, 1e-9)
-        << "Horton cumulative-depth RMS error " << rms_err
-        << " ft exceeds 1e-9 ft tolerance";
+    EXPECT_LT(max_err, 1e-9) << "Horton cumulative-depth max error " << max_err
+                             << " ft exceeds 1e-9 ft tolerance (benchmark: " << path << ")";
+    EXPECT_LT(rms_err, 1e-9) << "Horton cumulative-depth RMS error " << rms_err
+                             << " ft exceeds 1e-9 ft tolerance";
 }
 
 // Modified Horton wet-dry-wet trajectory with Fmax cap and exponential recovery.
@@ -631,10 +671,12 @@ TEST(HortonInfil, TrajectoryMatchesBenchmark) {
 // The Euler update is computed in exact double precision — no iterative solver.
 // Tolerance is 1e-9 ft for Fe and Fmh at each step.
 TEST(ModHortonInfil, SaturationRecoveryTrajectory) {
-    std::string path = std::string(BENCHMARK_DATA_DIR)
-        + "/manufactured/modified-horton-fmax-saturation-recovery/reference.csv";
+    std::string path = std::string(BENCHMARK_DATA_DIR) +
+                       "/manufactured/modified-horton-fmax-saturation-recovery/reference.csv";
 
-    struct Row { double t_s, precip_fts, f_fts, Fe_ft, Fmh_ft; };
+    struct Row {
+        double t_s, precip_fts, f_fts, Fe_ft, Fmh_ft;
+    };
     std::vector<Row> rows;
     {
         std::ifstream in(path);
@@ -644,8 +686,12 @@ TEST(ModHortonInfil, SaturationRecoveryTrajectory) {
         std::string line;
         bool header_seen = false;
         while (std::getline(in, line)) {
-            if (line.empty() || line[0] == '#') continue;
-            if (!header_seen) { header_seen = true; continue; }
+            if (line.empty() || line[0] == '#')
+                continue;
+            if (!header_seen) {
+                header_seen = true;
+                continue;
+            }
             std::istringstream ss(line);
             std::string tok;
             double v[5] = {};
@@ -674,18 +720,16 @@ TEST(ModHortonInfil, SaturationRecoveryTrajectory) {
         double precip = rows[i].precip_fts;
         modHorton_getInfil(s, precip, 0.0, dt);
 
-        double Fe_err  = std::abs(s.Fe  - rows[i].Fe_ft);
+        double Fe_err = std::abs(s.Fe - rows[i].Fe_ft);
         double Fmh_err = std::abs(s.Fmh - rows[i].Fmh_ft);
-        max_Fe_err  = std::max(max_Fe_err,  Fe_err);
+        max_Fe_err = std::max(max_Fe_err, Fe_err);
         max_Fmh_err = std::max(max_Fmh_err, Fmh_err);
     }
 
-    EXPECT_LT(max_Fe_err, 1e-9)
-        << "ModHorton Fe max error " << max_Fe_err
-        << " ft exceeds 1e-9 ft tolerance";
-    EXPECT_LT(max_Fmh_err, 1e-9)
-        << "ModHorton Fmh max error " << max_Fmh_err
-        << " ft exceeds 1e-9 ft tolerance";
+    EXPECT_LT(max_Fe_err, 1e-9) << "ModHorton Fe max error " << max_Fe_err
+                                << " ft exceeds 1e-9 ft tolerance";
+    EXPECT_LT(max_Fmh_err, 1e-9) << "ModHorton Fmh max error " << max_Fmh_err
+                                 << " ft exceeds 1e-9 ft tolerance";
 }
 
 // Green-Ampt saturated-branch trajectory against manufactured benchmark.
@@ -699,8 +743,8 @@ TEST(ModHortonInfil, SaturationRecoveryTrajectory) {
 // error to the Newton tolerance (~1e-5 ft).  The 1e-3 ft acceptance criterion
 // gives two decades of margin; any failure indicates a real regression.
 TEST(GreenAmptInfil, SaturatedTrajectoryMatchesBenchmark) {
-    std::string path = std::string(BENCHMARK_DATA_DIR)
-        + "/manufactured/grnampt-saturated-trajectory/reference.csv";
+    std::string path = std::string(BENCHMARK_DATA_DIR) +
+                       "/manufactured/grnampt-saturated-trajectory/reference.csv";
 
     auto rows = load_ga_bench(path);
     if (rows.empty()) {
@@ -708,12 +752,12 @@ TEST(GreenAmptInfil, SaturatedTrajectoryMatchesBenchmark) {
     }
 
     GreenAmptState state{};
-    state.S         = 1.93 / 12.0;           // ft — sandy loam suction head
-    state.Ks        = 0.43 / 12.0 / 3600.0;  // ft/s — saturated conductivity
-    state.IMD       = 0.25;
-    state.IMDmax    = 0.25;
-    state.T         = 1.0e10;   // timer never expires during wet run
-    state.saturated = true;     // force saturated branch
+    state.S = 1.93 / 12.0;           // ft — sandy loam suction head
+    state.Ks = 0.43 / 12.0 / 3600.0; // ft/s — saturated conductivity
+    state.IMD = 0.25;
+    state.IMDmax = 0.25;
+    state.T = 1.0e10;       // timer never expires during wet run
+    state.saturated = true; // force saturated branch
 
     // Legacy grnampt_getF2 cannot start its Newton solve from F = 0 (the
     // derivative term 1 - c1/(f2 + c1) vanishes there) and falls back to the
@@ -721,10 +765,10 @@ TEST(GreenAmptInfil, SaturatedTrajectoryMatchesBenchmark) {
     // reaches, since it enters the saturated branch with F >= Fs > 0. So the
     // trajectory is seeded at the benchmark's first row and checked from the
     // second; every later row is a Newton solve from a positive F.
-    state.F  = rows[1].F_ft;
+    state.F = rows[1].F_ft;
     state.Fu = rows[1].F_ft;
 
-    const double precip = 1.0;  // ft/s >> dF/dt; ia clamp never activates
+    const double precip = 1.0; // ft/s >> dF/dt; ia clamp never activates
     double t = rows[1].t_s;
     double max_err = 0.0;
 
@@ -736,8 +780,6 @@ TEST(GreenAmptInfil, SaturatedTrajectoryMatchesBenchmark) {
         max_err = std::max(max_err, err);
     }
 
-    EXPECT_LT(max_err, 1e-3)
-        << "Green-Ampt saturated trajectory max error " << max_err
-        << " ft exceeds 1e-3 ft tolerance (benchmark: " << path << ")";
+    EXPECT_LT(max_err, 1e-3) << "Green-Ampt saturated trajectory max error " << max_err
+                             << " ft exceeds 1e-3 ft tolerance (benchmark: " << path << ")";
 }
-

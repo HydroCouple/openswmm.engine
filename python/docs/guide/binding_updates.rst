@@ -1,6 +1,46 @@
 Editing, forcing and live output
 ================================
 
+Saved results and C API parity (2026-10-21)
+-------------------------------------------
+
+``Results`` now provides named 1D fields and saved 2D HDF5 output through a
+consistent interface. ``Output2DReader`` wraps the public
+``openswmm_output2d.h`` API and remains importable without optional features;
+``available()`` reports whether the linked engine has its backend. See
+:doc:`results` for the full interface, selection rules, units and lifecycle.
+
+``OutputReader.pollutant_units`` exposes stored concentration codes as
+labels and interprets reserved water-age/temperature columns correctly.
+``solver.open_results()`` opens configured output after ``end()``. A retained
+1D timestamp cache no longer bypasses the reader's closed-handle check.
+
+The current binding audit covers public engine functions, Python enum
+selectors, Cython declarations/call sites, type stubs and package exports.
+Existing runtime APIs include groundwater and layered transport, surface
+quality, snow/heat, checkpoints, staged authoring, runtime coupling, and
+solver diagnostics. The source audit found no missing function declarations
+or enum types before this change; the additions extend output reading.
+
+Run the maintained checks from the repository root:
+
+.. code-block:: console
+
+   python python/scripts/api_drift_audit.py --strict
+   python python/scripts/api_drift_audit.py --json --coverage
+   python python/scripts/python_surface.py --check
+   python -m pytest python/tests/test_api_coverage.py python/tests/test_enum_drift.py python/tests/test_solver_pxd_attrs.py
+
+``--json --coverage`` includes per-header totals and each public C function's
+Python member mapping. Five C convenience/error functions intentionally use
+Python-native equivalents: ``swmm_get_last_error``, ``swmm_get_last_error_msg``,
+``swmm_get_current_time``, ``swmm_coupling_set_source`` and
+``swmm_coupling_advance_to``. These exclusions remain checked against drift.
+The machine-readable engine catalog also includes the standalone
+``surface_output`` reader root.
+Macro selector checks normalize C line continuations so formatting a header
+cannot hide selectors from the parity audit.
+
 Batch editing
 -------------
 

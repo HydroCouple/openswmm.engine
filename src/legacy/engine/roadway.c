@@ -21,15 +21,23 @@
 //   Build 5.1.012:
 //   - Entries in discharge coeff. table for gravel roadways corrected.
 //-----------------------------------------------------------------------------
+
+/**
+ * @file      roadway.c
+ * @brief     Roadway overtopping flow calculations.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com> (OpenSWMM maintenance and extensions)
+ * @copyright Copyright (c) 2026 Caleb Buahin. OpenSWMM contributions only; original EPA SWMM
+ *            credits are retained.
+ * @license   Apache-2.0 for OpenSWMM contributions; original EPA SWMM provenance is retained.
+ */
+
 #define _CRT_SECURE_NO_DEPRECATE
 
 #include <math.h>
 #include "headers.h"
 
-enum RoadSurface {
-    PAVED = 1,
-    GRAVEL = 2
-};
+enum RoadSurface { PAVED = 1, GRAVEL = 2 };
 
 //-----------------------------------------------------------------------------
 //  Constants
@@ -42,32 +50,29 @@ enum RoadSurface {
 
 // Discharge Coefficients for (head / road width) <= 0.15
 static const int N_Cr_Low_Paved = 4;
-static const double Cr_Low_Paved[4][2] = {
-    {0.0, 2.85}, {0.2, 2.95}, {0.7, 3.03}, {4.0, 3.05}};
+static const double Cr_Low_Paved[4][2] = {{0.0, 2.85}, {0.2, 2.95}, {0.7, 3.03}, {4.0, 3.05}};
 
 static const int N_Cr_Low_Gravel = 8;
-static const double Cr_Low_Gravel[8][2] = {
-    {0.0, 2.5}, {0.5, 2.7},  {1.0, 2.8}, {1.5, 2.9}, {2.0, 2.98},
-    {2.5, 3.02}, {3.0, 3.03}, {4.0, 3.05} };
+static const double Cr_Low_Gravel[8][2] = {{0.0, 2.5},  {0.5, 2.7},  {1.0, 2.8},  {1.5, 2.9},
+                                           {2.0, 2.98}, {2.5, 3.02}, {3.0, 3.03}, {4.0, 3.05}};
 
 // Discharge Coefficients for (head / road width) > 0.15
 static const int N_Cr_High_Paved = 2;
-static const double Cr_High_Paved[2][2] = {{0.15,3.05}, {0.25,3.10}};
+static const double Cr_High_Paved[2][2] = {{0.15, 3.05}, {0.25, 3.10}};
 
 static const int N_Cr_High_Gravel = 2;
-static const double Cr_High_Gravel[2][2] = {{0.15,2.95}, {0.30,3.10}};
+static const double Cr_High_Gravel[2][2] = {{0.15, 2.95}, {0.30, 3.10}};
 
 // Submergence Factors
 static const int N_Kt_Paved = 9;
-static const double Kt_Paved[9][2] = {
-    {0.8, 1.0}, {0.85, 0.98}, {0.90, 0.92}, {0.93, 0.85}, {0.95, 0.80},
-    {0.97, 0.70}, {0.98, 0.60}, {0.99, 0.50}, {1.00, 0.40}};
+static const double Kt_Paved[9][2] = {{0.8, 1.0},   {0.85, 0.98}, {0.90, 0.92},
+                                      {0.93, 0.85}, {0.95, 0.80}, {0.97, 0.70},
+                                      {0.98, 0.60}, {0.99, 0.50}, {1.00, 0.40}};
 
 static const int N_Kt_Gravel = 12;
-static const double Kt_Gravel[12][2] = {
-    {0.75, 1.00}, {0.80, 0.985}, {0.83, 0.97}, {0.86, 0.93}, {0.89, 0.90},
-    {0.90, 0.87}, {0.92, 0.80},  {0.94, 0.70}, {0.96, 0.60}, {0.98, 0.50},
-    {0.99, 0.40}, {1.00, 0.24}};
+static const double Kt_Gravel[12][2] = {{0.75, 1.00}, {0.80, 0.985}, {0.83, 0.97}, {0.86, 0.93},
+                                        {0.89, 0.90}, {0.90, 0.87},  {0.92, 0.80}, {0.94, 0.70},
+                                        {0.96, 0.60}, {0.98, 0.50},  {0.99, 0.40}, {1.00, 0.24}};
 
 //-----------------------------------------------------------------------------
 //  External functions (declared in funcs.h)
@@ -82,44 +87,58 @@ static double getY(double x, const double table[][2], const int n);
 
 //=============================================================================
 
-double roadway_getInflow(int j,          // link index
-                         double dir,     // flow direction (+1 or -1)
-                         double hRoad,   // road elev. (ft)
-                         double h1,      // upstream head (ft)
-                         double h2)      // downstream head (ft)
+/**
+ * @brief Compute signed roadway overtopping discharge and its head derivative.
+ * @param[in] j Valid link index; non-WEIR links return zero without state updates.
+ * @param[in] dir Flow direction multiplier, normally +1 or -1.
+ * @param[in] hRoad Road crest elevation in feet.
+ * @param[in] h1 Higher/upstream hydraulic head in feet for the selected direction.
+ * @param[in] h2 Lower/downstream hydraulic head in feet.
+ * @return Signed roadway discharge in cubic feet per second; zero without
+ * sufficient crest head. Uses HDS-5 coefficients when width/surface are available.
+ * @post Updates Link.dqdh, newDepth and flowClass for a weir link.
+ */
+double roadway_getInflow(int j,        // link index
+                         double dir,   // flow direction (+1 or -1)
+                         double hRoad, // road elev. (ft)
+                         double h1,    // upstream head (ft)
+                         double h2)    // downstream head (ft)
 {
-    int    k;                // weir array index
-    int    roadSurf;         // type of road surface
-    int    useVariableCd;    // true if HDS-5 coeff. curves used
-    double length,           // length of roadway segment transverse to flow (ft)
-           roadWidth,        // width of roadway which receives flow (ft)
-           hWr,              // water elevation on upstream side of roadway (ft)
-           ht,               // water elevation on downstream side of roadway (ft)
-           cD,               // discharge coefficient for cfs flow units
-           q = 0.0,          // flow across roadway (cfs)
-           dqdh = 0.0;       // derivative of flow w.r.t. head (ft2/sec)
+    int k;             // weir array index
+    int roadSurf;      // type of road surface
+    int useVariableCd; // true if HDS-5 coeff. curves used
+    double length,     // length of roadway segment transverse to flow (ft)
+        roadWidth,     // width of roadway which receives flow (ft)
+        hWr,           // water elevation on upstream side of roadway (ft)
+        ht,            // water elevation on downstream side of roadway (ft)
+        cD,            // discharge coefficient for cfs flow units
+        q = 0.0,       // flow across roadway (cfs)
+        dqdh = 0.0;    // derivative of flow w.r.t. head (ft2/sec)
 
     // --- get road width & surface type
-    if ( Link[j].type != WEIR ) return 0.0;
+    if (Link[j].type != WEIR)
+        return 0.0;
     k = Link[j].subIndex;
     roadWidth = Weir[k].roadWidth;
     roadSurf = Weir[k].roadSurface;
 
     // --- user-supplied discharge coeff.
     cD = Weir[k].cDisch1;
-    if ( UnitSystem == SI ) cD = cD / 0.552;
+    if (UnitSystem == SI)
+        cD = cD / 0.552;
 
     // --- check if there's enough info to use a variable cD value
     useVariableCd = FALSE;
-    if ( roadWidth > 0.0 && roadSurf >= 1 ) useVariableCd = TRUE;
+    if (roadWidth > 0.0 && roadSurf >= 1)
+        useVariableCd = TRUE;
 
     // --- upstream and downstream heads
     hWr = h1 - hRoad;
     ht = h2 - hRoad;
-    if ( hWr > FUDGE )
-    {
+    if (hWr > FUDGE) {
         // --- get discharge coeff. as function of heads
-        if ( useVariableCd ) cD = getCd(hWr, ht, roadWidth, roadSurf);
+        if (useVariableCd)
+            cD = getCd(hWr, ht, roadWidth, roadSurf);
 
         // --- use user-supplied weir length
         length = Link[j].xsect.wMax;
@@ -133,62 +152,83 @@ double roadway_getInflow(int j,          // link index
     Link[j].dqdh = dqdh;
     Link[j].newDepth = MAX(h1 - hRoad, 0.0);
     Link[j].flowClass = SUBCRITICAL;
-    if ( hRoad > h2 )
-    {
-        if ( dir == 1.0 ) Link[j].flowClass = DN_CRITICAL;
-        else              Link[j].flowClass = UP_CRITICAL;
+    if (hRoad > h2) {
+        if (dir == 1.0)
+            Link[j].flowClass = DN_CRITICAL;
+        else
+            Link[j].flowClass = UP_CRITICAL;
     }
     return dir * q;
 }
 
 //=============================================================================
 
-double getCd(double hWr, double ht, double roadWidth, int roadSurf)
-{
-    double kT = 1.0;              // submergence factor
-    double hL,                    // ratio of water elevation to road width
-           htH,                   // ratio of downstream to upstream water depth
-           cR;                    // roadway discharge coeff.
+/**
+ * @brief Select a roadway weir coefficient and apply submergence reduction.
+ * @param[in] hWr Upstream water depth above the road crest in feet.
+ * @param[in] ht Downstream water depth above the crest in feet.
+ * @param[in] roadWidth Positive roadway width in feet.
+ * @param[in] roadSurf PAVED selects paved curves; other values select gravel curves.
+ * @return Discharge coefficient for the cfs/feet weir equation; zero for
+ * hWr <= 0. Lookup inputs depend on hWr/roadWidth and ht/hWr.
+ * @note Curves use endpoint clamping rather than extrapolation.
+ */
+double getCd(double hWr, double ht, double roadWidth, int roadSurf) {
+    double kT = 1.0; // submergence factor
+    double hL,       // ratio of water elevation to road width
+        htH,         // ratio of downstream to upstream water depth
+        cR;          // roadway discharge coeff.
 
-    if ( hWr <= 0.0 ) return 0.0;
+    if (hWr <= 0.0)
+        return 0.0;
     hL = hWr / roadWidth;
-    if ( hL <= 0.15 )
-    {
-        if ( roadSurf == PAVED ) cR = getY(hWr, Cr_Low_Paved, N_Cr_Low_Paved);
-        else                     cR = getY(hWr, Cr_Low_Gravel, N_Cr_Low_Gravel);
+    if (hL <= 0.15) {
+        if (roadSurf == PAVED)
+            cR = getY(hWr, Cr_Low_Paved, N_Cr_Low_Paved);
+        else
+            cR = getY(hWr, Cr_Low_Gravel, N_Cr_Low_Gravel);
+    } else {
+        if (roadSurf == PAVED)
+            cR = getY(hL, Cr_High_Paved, N_Cr_High_Paved);
+        else
+            cR = getY(hL, Cr_High_Gravel, N_Cr_High_Gravel);
     }
-    else
-    {
-        if ( roadSurf == PAVED ) cR = getY(hL, Cr_High_Paved, N_Cr_High_Paved);
-        else                     cR = getY(hL, Cr_High_Gravel, N_Cr_High_Gravel);
-    }
-    if ( ht > 0.0 )
-    {
+    if (ht > 0.0) {
         htH = ht / hWr;
-        if ( roadSurf == PAVED ) kT = getY(htH, Kt_Paved, N_Kt_Paved);
-        else                     kT = getY(htH, Kt_Gravel, N_Kt_Gravel);
+        if (roadSurf == PAVED)
+            kT = getY(htH, Kt_Paved, N_Kt_Paved);
+        else
+            kT = getY(htH, Kt_Gravel, N_Kt_Gravel);
     }
     return cR * kT;
 }
 
 //=============================================================================
 
-double getY(double x, const double table[][2], const int n)
-{
+/**
+ * @brief Interpolate a monotone-x two-column roadway coefficient table.
+ * @param[in] x Query coordinate in the table's first-column units.
+ * @param[in] table Borrowed n-by-2 array of x/y pairs sorted by increasing
+ * x, with distinct adjacent x coordinates for any interpolated segment.
+ * @param[in] n Positive row count.
+ * @return Linearly interpolated second-column value, clamped to the first
+ * or last y outside the table domain. No input storage is retained.
+ */
+double getY(double x, const double table[][2], const int n) {
     int i;
-    double x1, y1,dx, dy;
-    if ( x <= table[0][0] ) return table[0][1];
-    if ( x >= table[n-1][0] ) return table[n-1][1];
-    for (i = 1; i < n; i++)
-    {
-        if ( x <= table[i][0] )
-        {
-            x1 = table[i-1][0];
+    double x1, y1, dx, dy;
+    if (x <= table[0][0])
+        return table[0][1];
+    if (x >= table[n - 1][0])
+        return table[n - 1][1];
+    for (i = 1; i < n; i++) {
+        if (x <= table[i][0]) {
+            x1 = table[i - 1][0];
             dx = table[i][0] - x1;
-            y1 = table[i-1][1];
+            y1 = table[i - 1][1];
             dy = table[i][1] - y1;
             return y1 + (x - x1) * dy / dx;
         }
     }
-    return table[n-1][1];
+    return table[n - 1][1];
 }

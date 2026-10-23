@@ -15,15 +15,15 @@
 // limitations under the License.
 
 /**
- * @file SolverOptions2D.hpp
- * @brief Configuration options for the 2D surface routing solver.
+ * @file      SolverOptions2D.hpp
+ * @brief     Configuration options for the 2D surface routing solver.
  *
  * @see TWO_DIMENSIONAL_SURFACE_ROUTING_IMPLEMENTATION_STRATEGY.md §2.3
  * @ingroup engine_2d
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_2D_SOLVER_OPTIONS_HPP
@@ -57,8 +57,8 @@ namespace openswmm::twoD {
  * See plans/2d/2D_VFR_SOLVER_CLOSURE_PLAN.md.
  */
 enum class CellClosure2D : int8_t {
-    FLAT = 0,   ///< Legacy flat-cell closure η = tri_cz + V/A (default).
-    VFR  = 1    ///< Planar-bed VFR closure (regularized), CPU solvers only.
+    FLAT = 0, ///< Legacy flat-cell closure η = tri_cz + V/A (default).
+    VFR = 1   ///< Planar-bed VFR closure (regularized), CPU solvers only.
 };
 
 /**
@@ -89,8 +89,8 @@ enum class CellClosure2D : int8_t {
  * See plans/2d/2D_VFR_SOLVER_CLOSURE_PLAN.md.
  */
 enum class FaceDepth2D : int8_t {
-    MEAN     = 0,   ///< Legacy: upwind cell-mean depth (default).
-    VFR_FACE = 1    ///< B&S Eq. 14 face depth + wetting gate.
+    MEAN = 0,    ///< Legacy: upwind cell-mean depth (default).
+    VFR_FACE = 1 ///< B&S Eq. 14 face depth + wetting gate.
 };
 
 /**
@@ -110,12 +110,12 @@ enum class FaceDepth2D : int8_t {
  * (natural|nearest|system|none) overrides at initialize().
  */
 enum class RainfallMode : int8_t {
-    NATURAL_NEIGHBOUR = 0,  ///< Default: spatial interpolation across all gages.
-    SYSTEM            = 1,  ///< Uniform = mean of all gages.
-    NONE              = 2,  ///< No rain on the mesh. Use when subcatchments
-                            ///< already capture the rainfall (runoff → nodes) —
-                            ///< rain-on-mesh would double-count the same storm.
-    NEAREST_NEIGHBOUR = 3   ///< Closest located gage; ties use first gage order.
+    NATURAL_NEIGHBOUR = 0, ///< Default: spatial interpolation across all gages.
+    SYSTEM = 1,            ///< Uniform = mean of all gages.
+    NONE = 2,              ///< No rain on the mesh. Use when subcatchments
+                           ///< already capture the rainfall (runoff → nodes) —
+                           ///< rain-on-mesh would double-count the same storm.
+    NEAREST_NEIGHBOUR = 3  ///< Closest located gage; ties use first gage order.
 };
 
 /**
@@ -126,10 +126,7 @@ enum class RainfallMode : int8_t {
  * rim gate and the AREA→2·AREA ramp). WEIR_ORIFICE is the regime-aware law
  * of coupling/ExchangeLaw.hpp on the node's structure geometry.
  */
-enum class CouplingLaw2D : int8_t {
-    ORIFICE      = 0,
-    WEIR_ORIFICE = 1
-};
+enum class CouplingLaw2D : int8_t { ORIFICE = 0, WEIR_ORIFICE = 1 };
 
 /**
  * @brief Where the 2D head driving a junction exchange is read
@@ -142,11 +139,7 @@ enum class CouplingLaw2D : int8_t {
  * manhole-area average Rubinato et al. (2017) found best in unsteady runs.
  * Both fall back to the coupling cell when every cell is dry.
  */
-enum class CouplingHead2D : int8_t {
-    CELL             = 0,
-    VERTEX           = 1,
-    STENCIL_WET_MEAN = 2
-};
+enum class CouplingHead2D : int8_t { CELL = 0, VERTEX = 1, STENCIL_WET_MEAN = 2 };
 
 /**
  * @brief Above-rim storage of a 2D-coupled junction under dynamic wave
@@ -159,11 +152,7 @@ enum class CouplingHead2D : int8_t {
  * relaxes from the chamber area toward the currently wet footprint over
  * COUPLING_POND_RELAX, conserving the held volume as it changes.
  */
-enum class CouplingPondMode2D : int8_t {
-    FOOTPRINT = 0,
-    CHAMBER   = 1,
-    TRACKING  = 2
-};
+enum class CouplingPondMode2D : int8_t { FOOTPRINT = 0, CHAMBER = 1, TRACKING = 2 };
 
 /**
  * @brief Compute backend for the 2D marcher (mirrors fv::Backend).
@@ -179,12 +168,12 @@ enum class CouplingPondMode2D : int8_t {
  * Parsed from [2D_OPTIONS] BACKEND (AUTO|CPU|OMP|CUDA|HIP|SYCL).
  */
 enum class Backend2D : int8_t {
-    CPU  = 0,   ///< Built-in marcher (OpenMP-threaded on the host), no plugin.
-    AUTO = 1,   ///< Default: plugins above their size floors, else CPU.
-    OMP  = 2,   ///< Kokkos OpenMP host plugin.
-    CUDA = 3,   ///< Kokkos CUDA device plugin (NVIDIA).
-    HIP  = 4,   ///< Kokkos HIP device plugin (AMD).
-    SYCL = 5    ///< Kokkos SYCL device plugin (Intel).
+    CPU = 0,  ///< Built-in marcher (OpenMP-threaded on the host), no plugin.
+    AUTO = 1, ///< Default: plugins above their size floors, else CPU.
+    OMP = 2,  ///< Kokkos OpenMP host plugin.
+    CUDA = 3, ///< Kokkos CUDA device plugin (NVIDIA).
+    HIP = 4,  ///< Kokkos HIP device plugin (AMD).
+    SYCL = 5  ///< Kokkos SYCL device plugin (Intel).
 };
 
 /**
@@ -202,11 +191,7 @@ enum class Backend2D : int8_t {
  *                    2005 explicit diffusive wave; Δt ∝ Δx² per cell, absorbed
  *                    by the LTS tiers).
  */
-enum class Momentum2D : int8_t {
-    LOCAL_INERTIAL = 0,
-    FULL_SWE       = 1,
-    DIFFUSIVE_WAVE = 2
-};
+enum class Momentum2D : int8_t { LOCAL_INERTIAL = 0, FULL_SWE = 1, DIFFUSIVE_WAVE = 2 };
 
 /**
  * @brief Storage precision of the 2D results file's time-varying datasets
@@ -215,8 +200,8 @@ enum class Momentum2D : int8_t {
  *        centimetres there; depth/velocity fields have no such offset.
  */
 enum class OutputPrecision2D : int8_t {
-    FLOAT32 = 0,   ///< default — halves the file, ~7 significant digits
-    FLOAT64 = 1    ///< bit-for-bit parity tooling
+    FLOAT32 = 0, ///< default — halves the file, ~7 significant digits
+    FLOAT64 = 1  ///< bit-for-bit parity tooling
 };
 
 /**
@@ -227,25 +212,28 @@ enum class OutputPrecision2D : int8_t {
  */
 namespace report2d {
 enum Var : unsigned {
-    DEPTH        = 1u << 0,  ///< Mesh2_face_depth, Mesh2_face_head
-    VELOCITY     = 1u << 1,  ///< Mesh2_face_vx, Mesh2_face_vy
-    EDGE_FLUX    = 1u << 2,  ///< Mesh2_edge_flux (GUI velocity reconstruction, profile flux)
-    NODE_HEAD    = 1u << 3,  ///< Mesh2_node_head, Mesh2_node_depth (render reconstruction)
-    SPECIES      = 1u << 4,  ///< Mesh2_face_species_conc (when transport rows exist)
-    RAINFALL     = 1u << 5,  ///< Mesh2_face_rainfall, Mesh2_face_rain_cum
-    INFILTRATION = 1u << 6,  ///< Mesh2_face_infil_rate, Mesh2_face_infil_cum
-    COUPLING     = 1u << 7,  ///< Mesh2_face_coupling_flux, Mesh2_face_net_source
-    GRADIENTS    = 1u << 8,  ///< Mesh2_face_grad_hx/hy and the _lim pair (solver diagnostics)
-    CONTINUITY   = 1u << 9,  ///< Mesh2_face_continuity_err (solver diagnostic)
-    ENVELOPES    = 1u << 10, ///< Mesh2_face_max_depth / _max_velocity / _max_continuity_err
-    BUILDUP      = 1u << 11, ///< S7: Mesh2_face_buildup (when [2D_COVERAGES] rows resolved)
-    GROUNDWATER  = 1u << 12, ///< G-O: Mesh2_face_gw_* per-cell fields, groundwater_ledger, groundwater_node_exchange_cum (when a [2D_AQUIFER] resolved)
-    GW_DETAILED  = 1u << 13, ///< G-O: Mesh2_face_gw_theta_sigma [time, layer, face] — m × nFace per step
-    HEAT         = 1u << 14, ///< Thermal temperatures, soil layers, and signed cumulative heat budgets
-    ALL_MASK     = (1u << 15) - 1u,
+    DEPTH = 1u << 0,        ///< Mesh2_face_depth, Mesh2_face_head
+    VELOCITY = 1u << 1,     ///< Mesh2_face_vx, Mesh2_face_vy
+    EDGE_FLUX = 1u << 2,    ///< Mesh2_edge_flux (GUI velocity reconstruction, profile flux)
+    NODE_HEAD = 1u << 3,    ///< Mesh2_node_head, Mesh2_node_depth (render reconstruction)
+    SPECIES = 1u << 4,      ///< Mesh2_face_species_conc (when transport rows exist)
+    RAINFALL = 1u << 5,     ///< Mesh2_face_rainfall, Mesh2_face_rain_cum
+    INFILTRATION = 1u << 6, ///< Mesh2_face_infil_rate, Mesh2_face_infil_cum
+    COUPLING = 1u << 7,     ///< Mesh2_face_coupling_flux, Mesh2_face_net_source
+    GRADIENTS = 1u << 8,    ///< Mesh2_face_grad_hx/hy and the _lim pair (solver diagnostics)
+    CONTINUITY = 1u << 9,   ///< Mesh2_face_continuity_err (solver diagnostic)
+    ENVELOPES = 1u << 10,   ///< Mesh2_face_max_depth / _max_velocity / _max_continuity_err
+    BUILDUP = 1u << 11,     ///< S7: Mesh2_face_buildup (when [2D_COVERAGES] rows resolved)
+    GROUNDWATER =
+        1u
+        << 12, ///< G-O: Mesh2_face_gw_* per-cell fields, groundwater_ledger, groundwater_node_exchange_cum (when a [2D_AQUIFER] resolved)
+    GW_DETAILED =
+        1u << 13,    ///< G-O: Mesh2_face_gw_theta_sigma [time, layer, face] — m × nFace per step
+    HEAT = 1u << 14, ///< Thermal temperatures, soil layers, and signed cumulative heat budgets
+    ALL_MASK = (1u << 15) - 1u,
     /// DEFAULT: everything a user renders or plots; solver diagnostics off.
-    DEFAULT_MASK = DEPTH | VELOCITY | EDGE_FLUX | NODE_HEAD | SPECIES |
-                   RAINFALL | INFILTRATION | ENVELOPES | BUILDUP | GROUNDWATER,
+    DEFAULT_MASK = DEPTH | VELOCITY | EDGE_FLUX | NODE_HEAD | SPECIES | RAINFALL | INFILTRATION |
+                   ENVELOPES | BUILDUP | GROUNDWATER,
     /// MINIMAL: depth map + render reconstruction + envelopes only.
     MINIMAL_MASK = DEPTH | NODE_HEAD | ENVELOPES,
 };
@@ -259,14 +247,14 @@ enum Var : unsigned {
  */
 struct SolverOptions2D {
     // Explicit opt-in. Unauthored fields are omitted by the writer.
-    bool coupled_heat=false,heat_model_authored=false;
-    int heat_surface=-1,heat_radiative=-1; // AUTO inherits network module
-    bool heat_surface_authored=false,heat_radiative_authored=false;
-    int bed_heat_model=0; // NONE, LOCAL_STORAGE, GROUND_COLUMN
-    bool bed_heat_authored=false;
+    bool coupled_heat = false, heat_model_authored = false;
+    int heat_surface = -1, heat_radiative = -1; // AUTO inherits network module
+    bool heat_surface_authored = false, heat_radiative_authored = false;
+    int bed_heat_model = 0; // NONE, LOCAL_STORAGE, GROUND_COLUMN
+    bool bed_heat_authored = false;
     // Derived during initialization: legacy runtime-water conversion stays
     // 4.186 MJ/(m3 K); opt-in coupled heat uses configured water rho*cp.
-    double water_heat_capacity=4186000.0;
+    double water_heat_capacity = 4186000.0;
     /// [2D_OPTIONS] MOMENTUM_EQUATION — momentum closure (see Momentum2D).
     Momentum2D momentum = Momentum2D::LOCAL_INERTIAL;
     /// [2D_OPTIONS] FRONT_REBUILD AUTO|YES|NO — rebuild the flux-active set
@@ -276,7 +264,7 @@ struct SolverOptions2D {
     /// per cadence — the stall that pins the SWASHES Ritter/Thacker results.
     /// AUTO (default): YES for FULL_SWE / DIFFUSIVE_WAVE, NO for
     /// LOCAL_INERTIAL (which stays bit-identical to its pre-2026-09 results).
-    int front_rebuild = -1;   ///< -1 AUTO, 0 NO, 1 YES
+    int front_rebuild = -1; ///< -1 AUTO, 0 NO, 1 YES
     /// [2D_OPTIONS] RECONSTRUCTION_ORDER 1|2 — FULL_SWE only: 1 = piecewise
     /// constant (first-order Godunov, forward Euler); 2 = MUSCL on (eta, h, u, v)
     /// with limited Green-Gauss / wet-shoreline gradients + SSP-RK2
@@ -284,9 +272,9 @@ struct SolverOptions2D {
     int reconstruction_order = 1;
     /// Max marcher step (s): caps film-cell CFL steps (and thus the LTS tier
     /// spread) and the co-advance sync-batch span.
-    double max_timestep      = 10.0;
-    double dry_depth         = 0.001;   ///< Dry cell threshold (m)
-    double limiter_epsilon   = 1.0e-6;  ///< Slope limiter epsilon
+    double max_timestep = 10.0;
+    double dry_depth = 0.001;        ///< Dry cell threshold (m)
+    double limiter_epsilon = 1.0e-6; ///< Slope limiter epsilon
     /// Head-difference regularization (m) for the diffusive-wave flux √|Δη|.
     /// Below this gradient the flux is linearized (C¹) so the transmissivity
     /// stays bounded as the water surface flattens — without it, deep near-level
@@ -295,7 +283,7 @@ struct SolverOptions2D {
     /// gradients, so bulk flow is preserved; raise it for extra robustness on
     /// very deep problems. Default 4 mm; 0 = bare √. Parsed from
     /// [2D_OPTIONS] FLUX_DH_EPS; env OPENSWMM_2D_FLUX_DH_EPS overrides.
-    double flux_dh_eps       = 0.004;   ///< Diffusive-flux gradient floor (m)
+    double flux_dh_eps = 0.004; ///< Diffusive-flux gradient floor (m)
     /// [2D_OPTIONS] COUPLING_SYNC (s): 1D↔2D co-advance sync-batch span.
     /// 0 (default) couples every routing step — exchange volumes reach the
     /// 1D with at most one routing step of lag, which keeps fill-and-spill
@@ -304,17 +292,17 @@ struct SolverOptions2D {
     /// [routing_step, 60]) — the wall-clock lever for large meshes where
     /// per-step advances degenerate to the global-dt tail; expect the
     /// held-exchange error to grow with the span.
-    double coupling_sync     = 0.0;
+    double coupling_sync = 0.0;
 
-    double coupling_cd       = 0.65;    ///< Default discharge coefficient
+    double coupling_cd = 0.65; ///< Default discharge coefficient
     /// [2D_OPTIONS] COUPLING_LAW ORIFICE|WEIR_ORIFICE (default ORIFICE).
-    CouplingLaw2D  coupling_law  = CouplingLaw2D::ORIFICE;
+    CouplingLaw2D coupling_law = CouplingLaw2D::ORIFICE;
     /// [2D_OPTIONS] COUPLING_HEAD CELL|VERTEX|STENCIL_WET_MEAN (default CELL).
     CouplingHead2D coupling_head = CouplingHead2D::CELL;
     /// [2D_OPTIONS] COUPLING_COEFFS — WEIR_ORIFICE coefficient preset
     /// (NodeCoupling2DCoeffs: DEFAULT|RUBINATO2017|RUBINATO2017_LOWER|
     /// RUBINATO2017_UPPER); a node's COEFFS / CW / CSW / COI / COO override.
-    int            coupling_coeffs = 0;
+    int coupling_coeffs = 0;
     /// [2D_OPTIONS] COUPLING_POND_MODE FOOTPRINT|CHAMBER|TRACKING.
     CouplingPondMode2D coupling_pond_mode = CouplingPondMode2D::FOOTPRINT;
     /// [2D_OPTIONS] COUPLING_POND_RELAX — TRACKING relaxation time (s);
@@ -328,7 +316,7 @@ struct SolverOptions2D {
     /// one coupling window cannot carry the 1D and 2D heads past each other.
     /// -1 = per law (on under WEIR_ORIFICE, off under ORIFICE).
     int8_t coupling_equalize = -1;
-    bool   report_2d         = true;    ///< Write 2D results to output
+    bool report_2d = true; ///< Write 2D results to output
 
     // ---- Results-file size controls (plans/2D_OUTPUT_FLOAT32_AND_VARIABLE_SELECTION_PLAN) ----
     /// [2D_OPTIONS] OUTPUT_PRECISION FLOAT32|FLOAT64 — storage type of the
@@ -387,9 +375,9 @@ struct SolverOptions2D {
     /// TRANSPORT_TEMPERATURE YES|NO — the 2D column of the Domain × Species
     /// matrix (transport::resolve). NO drops that class's rows from the
     /// surface transport state; the 1D side is unaffected.
-    bool transport_pollutants  = true;
-    bool transport_msx         = true;
-    bool transport_age         = true;
+    bool transport_pollutants = true;
+    bool transport_msx = true;
+    bool transport_age = true;
     bool transport_temperature = true;
 
     // -----------------------------------------------------------------------
@@ -418,7 +406,7 @@ struct SolverOptions2D {
     // across all located gages); SYSTEM applies the uniform all-gage mean.
     // Parsed from [2D_OPTIONS] RAINFALL_MODE; env OPENSWMM_2D_RAINFALL_MODE
     // (natural|nearest|system|none) overrides.
-    RainfallMode       rainfall_mode   = RainfallMode::NATURAL_NEIGHBOUR;
+    RainfallMode rainfall_mode = RainfallMode::NATURAL_NEIGHBOUR;
 
     // Volume → free-surface cell closure. Default FLAT (legacy η = tri_cz + V/A):
     // fast and the right choice for typical deep-water urban flooding, where a
@@ -428,20 +416,20 @@ struct SolverOptions2D {
     // wetting/drying FLAT freezes out — ~3–8× more marcher substeps — so it is
     // OPT-IN (best on shallow water / gentle slopes). Parsed from [2D_OPTIONS]
     // CELL_CLOSURE (FLAT|VFR). See plans/2d/2D_VFR_SOLVER_CLOSURE_PLAN.md.
-    CellClosure2D      cell_closure    = CellClosure2D::FLAT;
+    CellClosure2D cell_closure = CellClosure2D::FLAT;
 
     // Effective conveyance depth at shared edges. Default MEAN (legacy upwind
     // cell-mean depth). VFR_FACE (B&S Eq. 14 face depth + wetting gate) pairs
     // with CELL_CLOSURE=VFR to complete the artifact fix; opt-in for the same
     // reason. Parsed from [2D_OPTIONS] FACE_RECONSTRUCTION (MEAN|VFR_FACE).
-    FaceDepth2D        face_reconstruction = FaceDepth2D::MEAN;
+    FaceDepth2D face_reconstruction = FaceDepth2D::MEAN;
 
     /// Wetted-area-fraction floor ε of the regularized VFR closure: below wet
     /// fraction ε the η(V) relation continues linearly (slope 1/(εA)), bounding
     /// dη/dV for the implicit solvers' Newton/Jacobian path. Exact elsewhere.
     /// Only used when CELL_CLOSURE = VFR. Parsed from [2D_OPTIONS]
     /// VFR_MIN_WET_FRAC; valid range (0, 0.5].
-    double             vfr_min_wet_frac = 0.01;
+    double vfr_min_wet_frac = 0.01;
 
     // -----------------------------------------------------------------------
     // Explicit local-inertial marcher (INTEGRATOR EXPLICIT — the only 2D
@@ -451,22 +439,26 @@ struct SolverOptions2D {
     /// Face-update θ weighting (de Almeida & Bates 2013): 1 = pure Bates 2010
     /// (no numerical diffusion), <1 blends the Perot-reconstructed neighbour
     /// discharge to damp thin-film checkerboarding on steep faces.
-    double theta        = 0.8;    ///< [2D_OPTIONS] THETA, (0, 1]
-    double cfl_number   = 0.7;    ///< [2D_OPTIONS] CFL_NUMBER — α in
-                                  ///< dt = α·L_char/(√(gh)+|u|). L_char is
-                                  ///< derived from the discrete wave operator
-                                  ///< (InertialEdges), so α is a TRUE Courant
-                                  ///< fraction: 1.0 = linear stability limit,
-                                  ///< 0.7 default = 30% margin on any mesh.
+    double theta = 0.8;      ///< [2D_OPTIONS] THETA, (0, 1]
+    /// Seconds over which THETA retains momentum. Zero preserves the legacy
+    /// per-firing blend; positive values make its relaxation rate independent
+    /// of face-step splitting and coupling-window tails.
+    double theta_reference_step = 0.0; ///< [2D_OPTIONS] THETA_REFERENCE_STEP, s >= 0
+    double cfl_number = 0.7; ///< [2D_OPTIONS] CFL_NUMBER — α in
+                             ///< dt = α·L_char/(√(gh)+|u|). L_char is
+                             ///< derived from the discrete wave operator
+                             ///< (InertialEdges), so α is a TRUE Courant
+                             ///< fraction: 1.0 = linear stability limit,
+                             ///< 0.7 default = 30% margin on any mesh.
     /// Flux-activation depth (m): cells below it are source-only (lazy rain
     /// accumulation, no face flux). Hysteresis band ±1 mm around it.
-    double h_move       = 0.003;  ///< [2D_OPTIONS] H_MOVE (m) — flux-active
-                                  ///< cell threshold; the marcher's on/off
-                                  ///< hysteresis band is min(1 mm, h_move/2),
-                                  ///< so thin-depth models (H_MOVE ≪ 1 mm)
-                                  ///< activate near h_move as requested.
-    int    lts_tiers    = 4;      ///< [2D_OPTIONS] LTS_TIERS, 1..8 (1 = global dt)
-    double froude_max   = 1.5;    ///< [2D_OPTIONS] FROUDE_MAX face |u| clamp
+    double h_move = 0.003;   ///< [2D_OPTIONS] H_MOVE (m) — flux-active
+                             ///< cell threshold; the marcher's on/off
+                             ///< hysteresis band is min(1 mm, h_move/2),
+                             ///< so thin-depth models (H_MOVE ≪ 1 mm)
+                             ///< activate near h_move as requested.
+    int lts_tiers = 4;       ///< [2D_OPTIONS] LTS_TIERS, 1..8 (1 = global dt)
+    double froude_max = 1.5; ///< [2D_OPTIONS] FROUDE_MAX face |u| clamp
     /// Convective momentum flux ∂(u·q)/∂n at interior faces, in
     /// Stelling–Duinmeijer staggered upwind form on the Perot cell vectors.
     /// This is the term the pure local-inertial formulation drops, and
@@ -477,10 +469,10 @@ struct SolverOptions2D {
     /// at rest and in uniform flow, so lake-at-rest exactness is untouched.
     /// OPT-IN while the 2D validation ladder is re-graded against it: the
     /// default reproduces the established local-inertial results exactly.
-    bool advection      = false;  ///< [2D_OPTIONS] ADVECTION YES|NO
+    bool advection = false; ///< [2D_OPTIONS] ADVECTION YES|NO
     /// Positivity/exchange availability fraction β: max share of a cell's
     /// volume that outgoing fluxes (or a coupling drain) may take per own-step.
-    double exchange_beta  = 0.8;
+    double exchange_beta = 0.8;
 
     /// Overland transport S2 — `[2D_OPTIONS] DISPERSION <m²/s>`: isotropic
     /// species dispersion coefficient (D-2DT7). 0 (default) means the
@@ -488,7 +480,7 @@ struct SolverOptions2D {
     /// bit-identical by construction rather than by a zero coefficient
     /// multiplying through. Refused negative at parse: anti-diffusion is not
     /// a modelling case.
-    double dispersion     = 0.0;
+    double dispersion = 0.0;
     /// Unused: no input sets it and no solver path reads it. Kept only
     /// because the common-source checkpoint fingerprint hashes it (removing
     /// it would refuse existing native checkpoints).
@@ -496,7 +488,7 @@ struct SolverOptions2D {
     /// [2D_OPTIONS] COUPLING_AREA AUTO: derive exchange area at coupling-point
     /// resolve from the largest connected conduit (clamp(1.25·A_conduit,
     /// 0.05, 2.0) m²) for every junction coupling point, authored or not.
-    bool   coupling_area_auto = false;
+    bool coupling_area_auto = false;
 
     /// [2D_OPTIONS] COUPLING_IN_FLOODING: book the 1D→2D spill into the 1D
     /// report's "Flooding Loss" row instead of its own "2D Coupling Outflow"
@@ -507,7 +499,7 @@ struct SolverOptions2D {
     /// the split, where the spill was inside Flooding Loss. It changes the
     /// report only; the continuity error and every routed volume are
     /// identical either way.
-    bool   coupling_in_flooding = false;
+    bool coupling_in_flooding = false;
 
     /// [2D_OPTIONS] BACKEND: which marcher implementation runs the mesh. See
     /// Backend2D. Read once, at SurfaceRouter2D::initialize() (the solver is
@@ -546,11 +538,11 @@ struct SolverOptions2D {
     // (no coupling occurs). The MESH scaling factor is separate and IS driven
     // by FLOW_UNITS (the mesh is authored in project units) — see initialize().
     // -----------------------------------------------------------------------
-    double len_1d_to_2d  = 1.0;  ///< 1D length → 2D length (ft→m, 0.3048)
-    double len_2d_to_1d  = 1.0;  ///< 2D length → 1D length (m→ft, 3.2808)
-    double vol_1d_to_2d  = 1.0;  ///< 1D volume → 2D volume (ft³→m³, 0.02832)
-    double flow_1d_to_2d = 1.0;  ///< 1D flow → 2D flow (ft³/s→m³/s, 0.02832)
-    double flow_2d_to_1d = 1.0;  ///< 2D flow → 1D flow (m³/s→ft³/s, 35.315)
+    double len_1d_to_2d = 1.0;  ///< 1D length → 2D length (ft→m, 0.3048)
+    double len_2d_to_1d = 1.0;  ///< 2D length → 1D length (m→ft, 3.2808)
+    double vol_1d_to_2d = 1.0;  ///< 1D volume → 2D volume (ft³→m³, 0.02832)
+    double flow_1d_to_2d = 1.0; ///< 1D flow → 2D flow (ft³/s→m³/s, 0.02832)
+    double flow_2d_to_1d = 1.0; ///< 2D flow → 1D flow (m³/s→ft³/s, 35.315)
 
     /*! Runtime-only: resolved OpenMP thread count for the embarrassingly-
      *  parallel 2D per-cell / per-vertex loops (RHS pipeline, Jacobi

@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_reaction_expressions.cpp
- * @brief R2 gates: expression compiler + Tier-1 VM + transactional registry
+ * @file      test_reaction_expressions.cpp
+ * @brief     R2 gates: expression compiler + Tier-1 VM + transactional registry
  *        (plans/transport/MULTISPECIES_REACTIONS_MSX_PLAN.md §5 R2).
  *
  * @details Falsifiers, each asserting wording/values UNIQUE to the defense
@@ -34,9 +34,9 @@
  *            falsifies it: re-add direct registry insertion in
  *            parseSpecies — the gate then fails.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -71,19 +71,32 @@ protected:
     std::vector<std::string> species{"HOCL", "NH2CL"};
     std::vector<std::string> coefs{"k1", "kb"};
     std::vector<std::string> terms{"AMM"};
-    std::vector<RxToken>     pool;
+    std::vector<RxToken> pool;
 
-    double compile_eval(const std::string& src, const RxEvalEnv& env,
-                        int max_term = 1) {
+    /**
+     * @brief Compile one expression against fixture symbols and evaluate its token span.
+     *
+     * Appends compiler tokens to fixture pool, asserts an empty compile-error string using a nonfatal
+     * expectation, then evaluates even after an error. Callers should provide valid expressions for
+     * meaningful results. Symbol lists are the fixture species/coefs/terms; no environment pointers are
+     * retained by this helper.
+     *
+     * @param[in] src Borrowed reaction expression text.
+     * @param[in] env Borrowed evaluation environment; pointed-to species/coefficient/term/hydraulic
+     *     storage must remain valid through synchronous evaluation.
+     * @param[in] max_term Exclusive term-index upper bound: only [0, max_term) is resolvable.
+     *     Default one exposes the fixture term list.
+     * @return evalReactionExpression result for the compiled span in the expression numeric units.
+     */
+    double compile_eval(const std::string& src, const RxEvalEnv& env, int max_term = 1) {
         RxSymbols sym;
         sym.species = &species;
-        sym.coefs   = &coefs;
-        sym.terms   = &terms;
+        sym.coefs = &coefs;
+        sym.terms = &terms;
         sym.max_term = max_term;
         RxExprSpan span;
         int col = 0;
-        const std::string err =
-            compileReactionExpression(src, sym, pool, span, col);
+        const std::string err = compileReactionExpression(src, sym, pool, span, col);
         EXPECT_TRUE(err.empty()) << src << " → " << err << " (col " << col << ")";
         return evalReactionExpression(pool, span, env);
     }
@@ -114,18 +127,18 @@ TEST_F(RxVmTest, PrecedenceAndAssociativityGoldens) {
     // disagree with the same text in model.rxn. Note -2^3 agrees either
     // way (odd exponent), which is exactly why these need EVEN-exponent
     // goldens on both spellings.
-    EXPECT_DOUBLE_EQ(compile_eval("-2 ^ 2", env), -4.0);     // D-R8
-    EXPECT_DOUBLE_EQ(compile_eval("(-2) ^ 2", env), 4.0);    // explicit parens
+    EXPECT_DOUBLE_EQ(compile_eval("-2 ^ 2", env), -4.0);  // D-R8
+    EXPECT_DOUBLE_EQ(compile_eval("(-2) ^ 2", env), 4.0); // explicit parens
     EXPECT_DOUBLE_EQ(compile_eval("-2 ^ 3", env), -8.0);
-    EXPECT_DOUBLE_EQ(compile_eval("2 ^ -2", env), 0.25);     // NEG above '^' rhs
-    EXPECT_DOUBLE_EQ(compile_eval("0 - 2 ^ 2", env), -4.0);  // binary minus
-    EXPECT_DOUBLE_EQ(compile_eval("-2 * 3", env), -6.0);     // unchanged by D-R8
+    EXPECT_DOUBLE_EQ(compile_eval("2 ^ -2", env), 0.25);    // NEG above '^' rhs
+    EXPECT_DOUBLE_EQ(compile_eval("0 - 2 ^ 2", env), -4.0); // binary minus
+    EXPECT_DOUBLE_EQ(compile_eval("-2 * 3", env), -6.0);    // unchanged by D-R8
 }
 
 TEST_F(RxVmTest, KineticsWithResolvedOperandsEvaluateExactly) {
-    const double sp[] = {0.8, 0.2};        // HOCL, NH2CL
-    const double cf[] = {0.36, 0.12};      // k1, kb
-    const double tm[] = {0.05 * 0.2};      // AMM = 0.05*NH2CL = 0.01
+    const double sp[] = {0.8, 0.2};   // HOCL, NH2CL
+    const double cf[] = {0.36, 0.12}; // k1, kb
+    const double tm[] = {0.05 * 0.2}; // AMM = 0.05*NH2CL = 0.01
     double hv[static_cast<int>(RxHydVar::COUNT_)] = {};
     hv[static_cast<int>(RxHydVar::U)] = 2.5;
     RxEvalEnv env{sp, cf, tm, hv};
@@ -138,20 +151,20 @@ TEST_F(RxVmTest, KineticsWithResolvedOperandsEvaluateExactly) {
     // TEMP resolves as a hydraulic variable — the Arrhenius shape the slot
     // exists for. theta^(T-20) with theta=1.07, T=25.
     hv[static_cast<int>(RxHydVar::TEMP)] = 25.0;
-    EXPECT_DOUBLE_EQ(compile_eval("1.07 ^ (TEMP - 20)", env),
-                     std::pow(1.07, 5.0));
+    EXPECT_DOUBLE_EQ(compile_eval("1.07 ^ (TEMP - 20)", env), std::pow(1.07, 5.0));
 }
 
 TEST_F(RxVmTest, UndefinedIdentifierReportsNameAndColumn) {
     RxSymbols sym;
-    sym.species = &species; sym.coefs = &coefs; sym.terms = &terms;
+    sym.species = &species;
+    sym.coefs = &coefs;
+    sym.terms = &terms;
     sym.max_term = 1;
     RxExprSpan span;
     int col = 0;
-    const std::string err =
-        compileReactionExpression("kb * zzz + 1", sym, pool, span, col);
+    const std::string err = compileReactionExpression("kb * zzz + 1", sym, pool, span, col);
     EXPECT_NE(err.find("undefined identifier 'zzz'"), std::string::npos) << err;
-    EXPECT_EQ(col, 6);   // 1-based column of 'zzz'
+    EXPECT_EQ(col, 6); // 1-based column of 'zzz'
 }
 
 TEST_F(RxVmTest, EmptySpanEvaluatesToZeroByContract) {
@@ -166,14 +179,15 @@ TEST_F(RxVmTest, EmptySpanEvaluatesToZeroByContract) {
 
 TEST_F(RxVmTest, DepthGuardRejectsTooDeepExpressions) {
     std::string deep;
-    for (int i = 0; i < 40; ++i) deep += "(1 + ";
+    for (int i = 0; i < 40; ++i)
+        deep += "(1 + ";
     deep += "1";
-    for (int i = 0; i < 40; ++i) deep += ")";
+    for (int i = 0; i < 40; ++i)
+        deep += ")";
     RxSymbols sym;
     RxExprSpan span;
     int col = 0;
-    const std::string err =
-        compileReactionExpression(deep, sym, pool, span, col);
+    const std::string err = compileReactionExpression(deep, sym, pool, span, col);
     EXPECT_NE(err.find("expression too deep"), std::string::npos) << err;
 }
 
@@ -182,22 +196,23 @@ TEST_F(RxVmTest, DepthGuardRejectsTooDeepExpressions) {
 // Falsifier: before the round each of these compiled into the RPN discipline
 // check and reported the generic message.
 TEST_F(RxVmTest, ArityErrorsNameTheFunction) {
-    struct Case { const char* src; const char* needle; };
+    struct Case {
+        const char* src;
+        const char* needle;
+    };
     const Case cases[] = {
-        {"MIN(HOCL)",       "function 'MIN' expects 2 arguments, got 1"},
-        {"MAX(1, 2, 3)",    "function 'MAX' expects 2 arguments, got 3"},
-        {"EXP(1, 2)",       "function 'EXP' expects 1 argument, got 2"},
-        {"1 + POW(2)",      "function 'POW' expects 2 arguments, got 1"},
+        {"MIN(HOCL)", "function 'MIN' expects 2 arguments, got 1"},
+        {"MAX(1, 2, 3)", "function 'MAX' expects 2 arguments, got 3"},
+        {"EXP(1, 2)", "function 'EXP' expects 1 argument, got 2"},
+        {"1 + POW(2)", "function 'POW' expects 2 arguments, got 1"},
     };
     for (const auto& c : cases) {
         RxSymbols sym;
         sym.species = &species;
         RxExprSpan span;
         int col = 0;
-        const std::string err =
-            compileReactionExpression(c.src, sym, pool, span, col);
-        EXPECT_NE(err.find(c.needle), std::string::npos)
-            << c.src << " → '" << err << "'";
+        const std::string err = compileReactionExpression(c.src, sym, pool, span, col);
+        EXPECT_NE(err.find(c.needle), std::string::npos) << c.src << " → '" << err << "'";
         EXPECT_GT(col, 0) << c.src << ": arity error must carry a column";
     }
 }
@@ -206,10 +221,35 @@ TEST_F(RxVmTest, ArityErrorsNameTheFunction) {
 // Engine-level gates
 // ---------------------------------------------------------------------------
 
+/**
+ * @brief Borrow the concrete engine behind an opaque test handle.
+ *
+ * This exact helper performs only an unchecked static_cast and dereference. It does not validate
+ * lifecycle, retain the handle or transfer ownership; fixture code may use the reference to inspect
+ * or seed internal state.
+ *
+ * @param[in] engine Live non-null new-engine handle whose concrete allocation is SWMMEngine; caller
+ *     keeps ownership.
+ * @return Mutable engine reference that remains valid until handle destruction or replacement.
+ */
 openswmm::SWMMEngine& as_cpp_engine(SWMM_Engine engine) {
     return *static_cast<openswmm::SWMMEngine*>(engine);
 }
 
+/**
+ * @brief Write a one-conduit deck referencing an expression-test reaction config.
+ *
+ * Half-hour CFS model with one TSS MG/L pollutant and the reactions process component; no
+ * simulation or sidecar parsing occurs here. Uses a local ofstream and requires existing parent
+ * directories. Open/write/close failures are unchecked; owned input strings are not retained and
+ * raw tokens/config paths are not escaped. Optional sidecar files are also overwritten when
+ * described.
+ *
+ * @param[in] path Borrowed destination filename; character pointers must be non-null.
+ *     Opens/truncates this file for the generated deck.
+ * @param[in] rxn_path Non-null reaction-sidecar path copied in quotes; the sidecar must be created
+ *     separately.
+ */
 void write_deck(const char* path, const char* rxn_path) {
     std::ofstream f(path);
     f << "[TITLE]\nR2 gate deck\n\n[OPTIONS]\n"
@@ -222,18 +262,32 @@ void write_deck(const char* path, const char* rxn_path) {
       << "[CONDUITS]\nC1 J0 OUT 400 0.013 0 0 0\n\n"
       << "[XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\n\n"
       << "[POLLUTANTS]\nTSS MG/L 0 0 0 0 NO * 0 0 0\n\n"
-      << "[PROCESS_COMPONENTS]\norg.hydrocouple.openswmm.reactions  config=\""
-      << rxn_path << "\"\n\n[REPORT]\nINPUT NO\n";
+      << "[PROCESS_COMPONENTS]\norg.hydrocouple.openswmm.reactions  config=\"" << rxn_path
+      << "\"\n\n[REPORT]\nINPUT NO\n";
 }
 
 class RxCompileEngineTest : public ::testing::Test {
 protected:
+    /**
+     * @brief Allocate the per-test engine handle and assert allocation succeeded.
+     *
+     * Leaves the handle unopen for this fixture; its teardown owns destruction. A fatal allocation
+     * assertion stops setup.
+     */
     void SetUp() override {
         engine_ = swmm_engine_create();
         ASSERT_NE(engine_, nullptr);
     }
+    /**
+     * @brief Destroy a non-null fixture handle and clear its member slot.
+     *
+     * Engine destruction supplies remaining model cleanup; safe after setup failed before allocation.
+     */
     void TearDown() override {
-        if (engine_) { swmm_engine_destroy(engine_); engine_ = nullptr; }
+        if (engine_) {
+            swmm_engine_destroy(engine_);
+            engine_ = nullptr;
+        }
     }
     SWMM_Engine engine_ = nullptr;
 };
@@ -246,8 +300,8 @@ TEST_F(RxCompileEngineTest, GoodConfigCompilesToPool) {
           << "[REACTION_PIPES]\nRATE A -T1 * B\n";
     }
     write_deck("_r2_good.inp", "_r2_good.rxn");
-    ASSERT_EQ(swmm_engine_open(engine_, "_r2_good.inp", "_r2_good.rpt",
-                               "_r2_good.out", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(engine_, "_r2_good.inp", "_r2_good.rpt", "_r2_good.out", nullptr),
+              SWMM_OK);
     const auto& rx = as_cpp_engine(engine_).context().reactions;
     EXPECT_TRUE(rx.compiled);
     EXPECT_FALSE(rx.token_pool.empty());
@@ -255,7 +309,7 @@ TEST_F(RxCompileEngineTest, GoodConfigCompilesToPool) {
     EXPECT_GT(rx.term_expr[0].len, 0);
     ASSERT_EQ(rx.pipe_expr.size(), 2u);
     EXPECT_GT(rx.pipe_expr[0].len, 0);
-    EXPECT_EQ(rx.pipe_expr[1].len, 0);     // B has no expression
+    EXPECT_EQ(rx.pipe_expr[1].len, 0); // B has no expression
     std::remove("_r2_good.inp");
     std::remove("_r2_good.rxn");
 }
@@ -267,8 +321,8 @@ TEST_F(RxCompileEngineTest, ForwardOnlyTermRuleFailsOpen) {
           << "[REACTION_TERMS]\nT1 T2 + 1\nT2 2 * A\n";
     }
     write_deck("_r2_fwd.inp", "_r2_fwd.rxn");
-    EXPECT_NE(swmm_engine_open(engine_, "_r2_fwd.inp", "_r2_fwd.rpt",
-                               "_r2_fwd.out", nullptr), SWMM_OK);
+    EXPECT_NE(swmm_engine_open(engine_, "_r2_fwd.inp", "_r2_fwd.rpt", "_r2_fwd.out", nullptr),
+              SWMM_OK);
     bool found = false;
     for (const auto& e : as_cpp_engine(engine_).context().errors)
         if (e.find("references later term — term references are "
@@ -286,12 +340,12 @@ TEST_F(RxCompileEngineTest, TransactionalRegistryOnRejectedConfig) {
     {
         std::ofstream c("_r2_txn.rxn");
         c << "[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n"
-          << "[REACTION_PIPES]\nRATE A -zzz * A\n";   // compile-time failure
+          << "[REACTION_PIPES]\nRATE A -zzz * A\n"; // compile-time failure
     }
     write_deck("_r2_txn.inp", "_r2_txn.rxn");
     swmm_engine_set_lenient_open(engine_, 1);
-    ASSERT_EQ(swmm_engine_open(engine_, "_r2_txn.inp", "_r2_txn.rpt",
-                               "_r2_txn.out", nullptr), SWMM_OK)
+    ASSERT_EQ(swmm_engine_open(engine_, "_r2_txn.inp", "_r2_txn.rpt", "_r2_txn.out", nullptr),
+              SWMM_OK)
         << "lenient open must survive the bad config";
     const auto& ctx = as_cpp_engine(engine_).context();
     // Unique to this defense: the compiler's undefined-identifier wording.
@@ -310,4 +364,4 @@ TEST_F(RxCompileEngineTest, TransactionalRegistryOnRejectedConfig) {
     std::remove("_r2_txn.rxn");
 }
 
-}  // namespace
+} // namespace

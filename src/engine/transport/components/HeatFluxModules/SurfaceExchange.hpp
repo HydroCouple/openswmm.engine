@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file SurfaceExchange.hpp
- * @brief Phase H2 — latent and sensible heat exchange at the water surface
+ * @file      SurfaceExchange.hpp
+ * @brief     Phase H2 — latent and sensible heat exchange at the water surface
  *        (heat plan §2.1; CSHComponent §4.4–4.5).
  *
  * @details The formulations are exposed as PURE FUNCTIONS above the engine
@@ -62,15 +62,15 @@
  * @see plans/transport/HEAT_TRANSPORT_PLAN.md §2.1, §2.4, §6 H2
  * @ingroup engine_transport
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_TRANSPORT_SURFACE_EXCHANGE_HPP
 #define OPENSWMM_ENGINE_TRANSPORT_SURFACE_EXCHANGE_HPP
 
-#include "../../../data/HeatOverrideData.hpp"   // HeatElement (PE1)
+#include "../../../data/HeatOverrideData.hpp" // HeatElement (PE1)
 
 namespace openswmm {
 struct SimulationContext;
@@ -92,13 +92,12 @@ double latentHeatOfVaporization(double t_c) noexcept;
 double windFunction(double wind_ms, double a, double b) noexcept;
 
 /// Evaporative mass-transfer rate [m/s]. Negative under condensation.
-double evaporationRate(double t_water_c, double t_air_c, double humidity_pct,
-                       double wind_ms, double a, double b) noexcept;
+double evaporationRate(double t_water_c, double t_air_c, double humidity_pct, double wind_ms,
+                       double a, double b) noexcept;
 
 /// Latent heat flux [W/m²], POSITIVE out of the water.
-double latentFlux(double t_water_c, double t_air_c, double humidity_pct,
-                  double wind_ms, double a, double b,
-                  double water_density) noexcept;
+double latentFlux(double t_water_c, double t_air_c, double humidity_pct, double wind_ms, double a,
+                  double b, double water_density) noexcept;
 
 /// Bowen ratio [-]. Returns 0 when the vapour-pressure deficit vanishes,
 /// which is the removable singularity in `Br`'s definition, not an error.
@@ -165,8 +164,8 @@ inline constexpr double kProbeC = 1.0e-3;
  *         system has no fixed point to relax onto, so there is nothing to be
  *         stable about).
  */
-double relaxT(double j0, double j1, double h, double area_m2, double vol_m3,
-              double dt, double rho, double cp) noexcept;
+double relaxT(double j0, double j1, double h, double area_m2, double vol_m3, double dt, double rho,
+              double cp) noexcept;
 
 /// The equilibrium temperature the linearization relaxes toward, °C —
 /// `T₀ − J₀/J′`. Exported so a gate can assert the no-overshoot property
@@ -197,9 +196,8 @@ inline constexpr double kMphToMs = 0.44704;
  *      on whichever module ran last. Every flux family now sums into one
  *      `J(T)` before a single relaxation, in `HeatFluxes.cpp`.
  */
-double surfaceFluxOut(const SimulationContext& ctx,
-                      const HeatElement& elem, double t_w) noexcept;
+double surfaceFluxOut(const SimulationContext& ctx, const HeatElement& elem, double t_w) noexcept;
 
-}  // namespace openswmm::transport::heat
+} // namespace openswmm::transport::heat
 
-#endif  // OPENSWMM_ENGINE_TRANSPORT_SURFACE_EXCHANGE_HPP
+#endif // OPENSWMM_ENGINE_TRANSPORT_SURFACE_EXCHANGE_HPP

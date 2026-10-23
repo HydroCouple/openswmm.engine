@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file bench_model_load.cpp
- * @brief Model load / initialization benchmark (optimization plan Phase 0.3).
+ * @file      bench_model_load.cpp
+ * @brief     Model load / initialization benchmark (optimization plan Phase 0.3).
  *
  * @details The window a user experiences between clicking Run and the first
  *          routing step is open() + initialize() + start(). This benchmark
@@ -44,8 +44,9 @@
  *          and compare it between runs of the same single model, not between
  *          benchmarks inside one run.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @license  Apache-2.0
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @license   Apache-2.0
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  */
 
 #include <benchmark/benchmark.h>
@@ -68,105 +69,169 @@ namespace fs = std::filesystem;
 /** @brief Which calls a benchmark iteration makes. */
 enum class Cut { Open, OpenInit, Full };
 
-/** @returns process peak resident set size in bytes, 0 if unavailable. */
+/**
+ * @brief Read the process peak resident-set high-water mark.
+ *
+ * Monotonic process-wide high-water value across benchmark iterations; no per-model reset or
+ * allocation occurs.
+ * @return Peak bytes, or zero when getrusage fails; Apple reports bytes directly and other
+ *     supported systems are interpreted as KiB.
+ */
 std::size_t peak_rss_bytes() {
     rusage ru{};
-    if (getrusage(RUSAGE_SELF, &ru) != 0) return 0;
+    if (getrusage(RUSAGE_SELF, &ru) != 0)
+        return 0;
 #if defined(__APPLE__)
-    return static_cast<std::size_t>(ru.ru_maxrss);          // bytes
+    return static_cast<std::size_t>(ru.ru_maxrss); // bytes
 #else
-    return static_cast<std::size_t>(ru.ru_maxrss) * 1024u;  // kilobytes
+    return static_cast<std::size_t>(ru.ru_maxrss) * 1024u; // kilobytes
 #endif
 }
 
-/** @brief Scratch output paths — the .rpt/.out content is not of interest. */
+/**
+ * @brief Construct a deterministic temporary benchmark artifact path.
+ *
+ * Names are reused across iterations/processes for the same stem, so concurrent runs can collide.
+ * temp_directory_path errors can throw.
+ *
+ * @param[in] stem Model stem incorporated into bench_load_<stem>; caller must supply a
+ *     filename-safe stem.
+ * @param[in] ext Non-null null-terminated extension, normally .rpt or .out.
+ * @return Path string under the process temporary directory; no file is created here.
+ */
 std::string scratch(const std::string& stem, const char* ext) {
     return (fs::temp_directory_path() / ("bench_load_" + stem + ext)).string();
 }
 
 /**
- * @brief One iteration of the requested cut.
- * @returns false if the engine rejected the model, which fails the benchmark
- *          loudly instead of reporting a fast time for work that never ran.
+ * @brief Execute a model-load lifecycle cut without simulation steps.
+ *
+ * Owns/destroys its handle, calling close after every non-null-handle path. Close status is
+ * ignored. Creates/overwrites scratch report/output files and leaves them in the temporary
+ * directory; filesystem path exceptions can propagate.
+ *
+ * @param[in] inp Input-deck path borrowed for the call.
+ * @param[in] stem Filename stem for deterministic temporary report/output artifacts.
+ * @param[in] cut Open only; OpenInit adds initialize; Full adds start/end/report with saved
+ *     results.
+ * @return True if all requested open/initialize/start/end/report operations succeed; false on
+ *     allocation or a rejected operation.
  */
 bool run_cut(const std::string& inp, const std::string& stem, Cut cut) {
     SWMM_Engine eng = swmm_engine_create();
-    if (eng == nullptr) return false;
+    if (eng == nullptr)
+        return false;
 
     const std::string rpt = scratch(stem, ".rpt");
     const std::string out = scratch(stem, ".out");
 
-    bool ok = swmm_engine_open(eng, inp.c_str(), rpt.c_str(), out.c_str(),
-                               nullptr) == SWMM_OK;
+    bool ok = swmm_engine_open(eng, inp.c_str(), rpt.c_str(), out.c_str(), nullptr) == SWMM_OK;
     if (ok && cut != Cut::Open) {
         ok = swmm_engine_initialize(eng) == SWMM_OK;
     }
     if (ok && cut == Cut::Full) {
         ok = swmm_engine_start(eng, 1) == SWMM_OK;
         // Deliberately no step() calls — this is a load benchmark.
-        if (ok) ok = swmm_engine_end(eng) == SWMM_OK;
-        if (ok) ok = swmm_engine_report(eng) == SWMM_OK;
+        if (ok)
+            ok = swmm_engine_end(eng) == SWMM_OK;
+        if (ok)
+            ok = swmm_engine_report(eng) == SWMM_OK;
     }
     swmm_engine_close(eng);
     swmm_engine_destroy(eng);
     return ok;
 }
 
-void bm_load(benchmark::State& state, std::string inp, std::string stem,
-             Cut cut) {
+/**
+ * @brief Time repeated model-load cuts and expose a process peak-RSS counter.
+ *
+ * Stops iteration with SkipWithError if a cut fails. Reports peak_rss_MB as process high-water
+ * bytes divided by 1024^2, including earlier process work; the label is the stem.
+ *
+ * @param[in,out] state Borrowed Google Benchmark iteration/counter state; labels/counters or skip
+ *     status are written during this call.
+ * @param[in] inp Owned input path value for this benchmark invocation.
+ * @param[in] stem Owned model stem used for artifact names and result label.
+ * @param[in] cut Lifecycle cut applied on every iteration.
+ */
+void bm_load(benchmark::State& state, std::string inp, std::string stem, Cut cut) {
     for (auto _ : state) {
         if (!run_cut(inp, stem, cut)) {
             state.SkipWithError("engine rejected the model");
             break;
         }
     }
-    state.counters["peak_rss_MB"] = benchmark::Counter(
-        static_cast<double>(peak_rss_bytes()) / (1024.0 * 1024.0));
+    state.counters["peak_rss_MB"] =
+        benchmark::Counter(static_cast<double>(peak_rss_bytes()) / (1024.0 * 1024.0));
     state.SetLabel(stem);
 }
 
 /**
- * @brief Repetition count, from OPENSWMM_BENCH_REPS (default 5).
- * @details Not --benchmark_repetitions: Google Benchmark only consults that
- *          flag when the benchmark itself requested 0 repetitions, so a
- *          registered Repetitions(n) silently wins over the command line. An
- *          env var keeps the knob honest. Minimum 2, because single-repetition
- *          runs emit no _median aggregate row for the capture script to read.
+ * @brief Choose benchmark repetition count from OPENSWMM_BENCH_REPS.
+ *
+ * The minimum supplies aggregate median rows; this environment-selected Repetitions value takes
+ * priority over the ordinary command-line repetition default.
+ * @return Five when unset; otherwise atoi value clamped to at least two (including nonnumeric text
+ *     yielding two).
  */
 int repetitions_from_env() {
     const char* s = std::getenv("OPENSWMM_BENCH_REPS");
-    if (s == nullptr) return 5;
+    if (s == nullptr)
+        return 5;
     const int n = std::atoi(s);
     return n >= 2 ? n : 2;
 }
 
+/**
+ * @brief Map a lifecycle cut to a stable benchmark-name suffix.
+ *
+ * @param[in] c Open, OpenInit or Full.
+ * @return Borrowed static literal open, open_init or full; ? for an invalid enum. Caller must not
+ *     free it.
+ */
 const char* cut_suffix(Cut c) {
     switch (c) {
-        case Cut::Open:     return "open";
-        case Cut::OpenInit: return "open_init";
-        case Cut::Full:     return "full";
+    case Cut::Open:
+        return "open";
+    case Cut::OpenInit:
+        return "open_init";
+    case Cut::Full:
+        return "full";
     }
     return "?";
 }
 
-}  // namespace
+} // namespace
 
+/**
+ * @brief Discover corpus decks and register three load benchmarks per model.
+ *
+ * Uses OPENSWMM_BENCH_CORPUS or tests/benchmarks/generated, sorts regular .inp paths, registers
+ * real-time millisecond cuts with at least 0.5 seconds per sample and environment-selected
+ * repetitions. Iterations write deterministic temporary artifacts; filesystem operations can throw
+ * where not using error_code.
+ *
+ * @param[in] argc Initial argument count, passed by address to Google Benchmark initialization for
+ *     flag consumption.
+ * @param[in] argv Borrowed process argument strings, also passed to Google Benchmark.
+ * @return One when the corpus is missing or contains no .inp files; otherwise zero after benchmark
+ *     shutdown, even if a benchmark was skipped with an engine error.
+ */
 int main(int argc, char** argv) {
     benchmark::Initialize(&argc, argv);
 
     const char* env = std::getenv("OPENSWMM_BENCH_CORPUS");
-    const fs::path corpus = env != nullptr
-        ? fs::path(env)
-        : fs::path("tests") / "benchmarks" / "generated";
+    const fs::path corpus =
+        env != nullptr ? fs::path(env) : fs::path("tests") / "benchmarks" / "generated";
 
     std::error_code ec;
     if (!fs::is_directory(corpus, ec)) {
         std::fprintf(stderr,
-            "bench_model_load: corpus directory '%s' not found.\n"
-            "Generate it first:\n"
-            "  python3 tests/benchmarks/scripts/gen_load_bench.py\n"
-            "or point OPENSWMM_BENCH_CORPUS at an existing one.\n",
-            corpus.string().c_str());
+                     "bench_model_load: corpus directory '%s' not found.\n"
+                     "Generate it first:\n"
+                     "  python3 tests/benchmarks/scripts/gen_load_bench.py\n"
+                     "or point OPENSWMM_BENCH_CORPUS at an existing one.\n",
+                     corpus.string().c_str());
         return 1;
     }
 
@@ -180,8 +245,7 @@ int main(int argc, char** argv) {
     std::sort(models.begin(), models.end());
 
     if (models.empty()) {
-        std::fprintf(stderr, "bench_model_load: no .inp files in '%s'\n",
-                     corpus.string().c_str());
+        std::fprintf(stderr, "bench_model_load: no .inp files in '%s'\n", corpus.string().c_str());
         return 1;
     }
 
@@ -189,15 +253,12 @@ int main(int argc, char** argv) {
 
     for (const auto& m : models) {
         const std::string stem = m.stem().string();
-        const std::string inp  = m.string();
+        const std::string inp = m.string();
         for (const Cut cut : {Cut::Open, Cut::OpenInit, Cut::Full}) {
-            const std::string name =
-                "BM_Load/" + stem + "/" + cut_suffix(cut);
+            const std::string name = "BM_Load/" + stem + "/" + cut_suffix(cut);
             benchmark::RegisterBenchmark(
                 name.c_str(),
-                [inp, stem, cut](benchmark::State& st) {
-                    bm_load(st, inp, stem, cut);
-                })
+                [inp, stem, cut](benchmark::State& st) { bm_load(st, inp, stem, cut); })
                 ->Unit(benchmark::kMillisecond)
                 ->UseRealTime()
                 ->MinTime(0.5)

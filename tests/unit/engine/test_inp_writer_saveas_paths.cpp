@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_inp_writer_saveas_paths.cpp
- * @brief Save-As re-anchoring for every path-bearing section, end to end.
+ * @file      test_inp_writer_saveas_paths.cpp
+ * @brief     Save-As re-anchoring for every path-bearing section, end to end.
  *
  * @details test_inp_writer_relative_paths.cpp builds a SimulationContext by
  *          hand and covers `[FILES]` only. This file drives the REAL pipeline
@@ -34,9 +34,9 @@
  *          tests/unit/engine/data/saveas_paths/ so a reviewer can open the
  *          decks directly. Files are overwritten on each run.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -55,22 +55,54 @@ namespace {
 
 // Reviewable output root (CLAUDE.md §4.1), located by walking up to the
 // engine source tree the same way test_inp_writer_relative_paths.cpp does.
+/**
+ * @brief Locate and create reviewable Save-As path evidence beneath the source tree.
+ *
+ * Walks upward at most eight times seeking tests/unit/engine/data, then creates the evidence
+ * directory even if the marker was never found. Filesystem exceptions propagate; does not change
+ * current directory.
+ * @return Owned tests/unit/engine/data/saveas_paths path below the discovered ancestor.
+ */
 fs::path testDataDir() {
     fs::path here = fs::current_path();
     for (int i = 0; i < 8 && !fs::exists(here / "tests/unit/engine/data"); ++i) {
-        if (here.has_parent_path()) here = here.parent_path();
+        if (here.has_parent_path())
+            here = here.parent_path();
     }
     fs::path dir = here / "tests/unit/engine/data/saveas_paths";
     fs::create_directories(dir);
     return dir;
 }
 
+/**
+ * @brief Write fixture content to a caller-selected file.
+ *
+ * Creates parent directories with the throwing filesystem overload before opening. Uses ordinary
+ * text output mode. Open failure is not reported by this helper. Subsequent write/close failures
+ * are not checked; the local stream closes at scope exit and no path/content storage is retained.
+ * Allocation/filesystem exceptions can propagate.
+ *
+ * @param[in] p Borrowed destination path; an existing file is truncated/overwritten.
+ * @param[in] text Borrowed content copied verbatim through the output stream; no newline is
+ *     appended.
+ */
 void write_file(const fs::path& p, const std::string& text) {
     fs::create_directories(p.parent_path());
     std::ofstream f(p);
     f << text;
 }
 
+/**
+ * @brief Collect an entire fixture file into owned text.
+ *
+ * Uses ordinary text mode and its platform newline rules. The local stream closes on return; no
+ * model state is touched and no borrowed buffer is returned. Default stream exception settings
+ * apply; allocation exceptions may propagate.
+ *
+ * @param[in] p Borrowed input filename used for this synchronous open/read.
+ * @return Owned string collected from the stream; empty can mean an empty file or failure to open.
+ *     Partial read failures have no separate status.
+ */
 std::string read_file(const fs::path& p) {
     std::ifstream f(p);
     std::stringstream ss;
@@ -80,42 +112,69 @@ std::string read_file(const fs::path& p) {
 
 // First line of `text` containing `needle`, restricted to the [SECTION] block
 // so that e.g. "RAINFALL" cannot match the [OPTIONS] IGNORE_RAINFALL line.
-std::string line_in_section(const std::string& text,
-                            const std::string& section,
+/**
+ * @brief Find the first substring-matching line inside a raw section block.
+ *
+ * Uses the first header occurrence anywhere and ends at the next newline followed by [. Does not
+ * parse full input grammar or exclude the header itself; caller supplies known writer output.
+ *
+ * @param[in] text Borrowed complete written input text.
+ * @param[in] section Raw case-sensitive section-header substring to locate.
+ * @param[in] needle Case-sensitive line substring; empty matches the header line.
+ * @return Owned first matching line, or empty when section/needle is absent.
+ */
+std::string line_in_section(const std::string& text, const std::string& section,
                             const std::string& needle) {
     const auto begin = text.find(section);
-    if (begin == std::string::npos) return {};
+    if (begin == std::string::npos)
+        return {};
     const auto end = text.find("\n[", begin + 1);
-    const std::string block = text.substr(
-        begin, end == std::string::npos ? std::string::npos : end - begin);
+    const std::string block =
+        text.substr(begin, end == std::string::npos ? std::string::npos : end - begin);
     std::istringstream is(block);
     std::string line;
     while (std::getline(is, line))
-        if (line.find(needle) != std::string::npos) return line;
+        if (line.find(needle) != std::string::npos)
+            return line;
     return {};
 }
 
 // The text between the first pair of double quotes on `line`.
+/**
+ * @brief Extract text between the first two literal double quotes.
+ *
+ * Does not interpret escape sequences or distinguish an empty quoted value from missing quotes.
+ *
+ * @param[in] line Borrowed row text.
+ * @return Owned unescaped quoted content, or empty if either quote is absent.
+ */
 std::string quoted(const std::string& line) {
     const auto a = line.find('"');
-    if (a == std::string::npos) return {};
+    if (a == std::string::npos)
+        return {};
     const auto b = line.find('"', a + 1);
-    if (b == std::string::npos) return {};
+    if (b == std::string::npos)
+        return {};
     return line.substr(a + 1, b - a - 1);
 }
 
-const char* kRainRows =
-    "STA01 2007 01 01 00 00 0.10\n"
-    "STA01 2007 01 01 01 00 0.20\n"
-    "STA01 2007 01 01 02 00 0.00\n";
+const char* kRainRows = "STA01 2007 01 01 00 00 0.10\n"
+                        "STA01 2007 01 01 01 00 0.20\n"
+                        "STA01 2007 01 01 02 00 0.00\n";
 
-const char* kSeriesRows =
-    "01/01/2007 00:00 1.0\n"
-    "01/01/2007 01:00 2.0\n"
-    "01/01/2007 02:00 3.0\n";
+const char* kSeriesRows = "01/01/2007 00:00 1.0\n"
+                          "01/01/2007 01:00 2.0\n"
+                          "01/01/2007 02:00 3.0\n";
 
 // One gage on a sibling-directory rain file, one FILE-backed timeseries on a
 // sibling-directory series file, plus the [FILES] interface slots.
+/**
+ * @brief Build the Save-As fixture referring to sibling-directory source files.
+ *
+ * Returns literal text only; setup separately creates referenced fixture files. Does not parse
+ * paths or invoke the writer.
+ * @return Owned CFS deck with ../data rain/series/interface paths and one subcatchment/conduit.
+ */
 std::string deck() {
     return R"INP([TITLE]
 Save-As path re-anchoring probe
@@ -179,26 +238,54 @@ protected:
     fs::path root_, src_dir_, data_dir_, dst_dir_;
     SWMM_Engine eng_ = nullptr;
 
+    /**
+     * @brief Create source/data/saved evidence folders and populate the Save-As fixture.
+     *
+     * Uses testDataDir, creates model/data/saved siblings, overwrites rain.dat/series.dat/empty
+     * inflows.txt and source model.inp. Files remain for user review and can be reused by later cases;
+     * stream helpers define IO assertion behavior.
+     */
     void SetUp() override {
-        root_     = testDataDir();
-        src_dir_  = root_ / "model";
+        root_ = testDataDir();
+        src_dir_ = root_ / "model";
         data_dir_ = root_ / "data";
-        dst_dir_  = root_ / "saved";
+        dst_dir_ = root_ / "saved";
         fs::create_directories(src_dir_);
         fs::create_directories(data_dir_);
         fs::create_directories(dst_dir_);
 
-        write_file(data_dir_ / "rain.dat",     kRainRows);
-        write_file(data_dir_ / "series.dat",   kSeriesRows);
-        write_file(data_dir_ / "inflows.txt",  "");
-        write_file(src_dir_  / "model.inp",    deck());
+        write_file(data_dir_ / "rain.dat", kRainRows);
+        write_file(data_dir_ / "series.dat", kSeriesRows);
+        write_file(data_dir_ / "inflows.txt", "");
+        write_file(src_dir_ / "model.inp", deck());
     }
 
+    /**
+     * @brief Close and destroy a Save-As engine when allocated.
+     *
+     * Ignores close status and leaves the member value uncleared at fixture end. Retains all
+     * source/saved evidence artifacts.
+     */
     void TearDown() override {
-        if (eng_) { swmm_engine_close(eng_); swmm_engine_destroy(eng_); }
+        if (eng_) {
+            swmm_engine_close(eng_);
+            swmm_engine_destroy(eng_);
+        }
     }
 
     // Open the source deck and save it into dst_dir_; returns the saved text.
+    /**
+     * @brief Open the source model and save into the destination sibling directory.
+     *
+     * Requires no previous live eng_ because allocation replaces its slot without release. Uses
+     * nonfatal create/open/write assertions, retains engine until teardown, and does not initialize/run
+     * the model.
+     *
+     * @param[in] out_name Raw filename/path appended below dst_dir_; matching output may be
+     *     overwritten.
+     * @return Owned saved text read through read_file, including possible old/partial text when writer
+     *     status rejects.
+     */
     std::string saveAs(const std::string& out_name) {
         eng_ = swmm_engine_create();
         EXPECT_NE(eng_, nullptr);
@@ -211,10 +298,19 @@ protected:
 
     // A token is correctly re-anchored when resolving it against the
     // DESTINATION directory lands on the same file it named originally.
+    /**
+     * @brief Assert a written relative path resolves to the original source artifact.
+     *
+     * Fatally requires nonempty token, nonfatally rejects absolute paths, and compares
+     * weakly_canonical(dst_dir_/token) with weakly_canonical(expected). Does not alter files or require
+     * existence beyond canonical path rules; filesystem exceptions may propagate.
+     *
+     * @param[in] token Borrowed path token already extracted/unquoted from writer output.
+     * @param[in] expected Borrowed expected source artifact path.
+     */
     void expectResolvesTo(const std::string& token, const fs::path& expected) {
         ASSERT_FALSE(token.empty());
-        EXPECT_FALSE(fs::path(token).is_absolute())
-            << "token leaked an absolute path: " << token;
+        EXPECT_FALSE(fs::path(token).is_absolute()) << "token leaked an absolute path: " << token;
         const fs::path resolved = fs::weakly_canonical(dst_dir_ / fs::path(token));
         EXPECT_EQ(resolved, fs::weakly_canonical(expected))
             << "token '" << token << "' does not resolve back to the source file";
@@ -229,22 +325,19 @@ protected:
 
 TEST_F(SaveAsPathsTest, RaingageFileReanchored) {
     const std::string text = saveAs("raingage.inp");
-    const std::string tok =
-        quoted(line_in_section(text, "[RAINGAGES]", "RG1"));
+    const std::string tok = quoted(line_in_section(text, "[RAINGAGES]", "RG1"));
     expectResolvesTo(tok, data_dir_ / "rain.dat");
 }
 
 TEST_F(SaveAsPathsTest, TimeseriesFileReanchored) {
     const std::string text = saveAs("timeseries.inp");
-    const std::string tok =
-        quoted(line_in_section(text, "[TIMESERIES]", "TS1"));
+    const std::string tok = quoted(line_in_section(text, "[TIMESERIES]", "TS1"));
     expectResolvesTo(tok, data_dir_ / "series.dat");
 }
 
 TEST_F(SaveAsPathsTest, FilesSectionReanchored) {
     const std::string text = saveAs("files.inp");
-    const std::string tok =
-        quoted(line_in_section(text, "[FILES]", "INFLOWS"));
+    const std::string tok = quoted(line_in_section(text, "[FILES]", "INFLOWS"));
     expectResolvesTo(tok, data_dir_ / "inflows.txt");
 }
 
@@ -259,8 +352,7 @@ TEST_F(SaveAsPathsTest, ReanchoredTokensAreParentRelative) {
           std::pair<const char*, const char*>{"[FILES]", "INFLOWS"}}) {
         const std::string tok = quoted(line_in_section(text, section, needle));
         ASSERT_FALSE(tok.empty()) << section;
-        EXPECT_EQ(tok.rfind("..", 0), 0u)
-            << section << " token was not re-anchored: " << tok;
+        EXPECT_EQ(tok.rfind("..", 0), 0u) << section << " token was not re-anchored: " << tok;
     }
 }
 
@@ -298,8 +390,7 @@ TEST_F(SaveAsPathsTest, WriteAbsolutePathsExtKeySetsTheOptionNotExtOptions) {
     // relative — the next open then behaved differently from the save.
     const std::string tok = quoted(line_in_section(text, "[RAINGAGES]", "RG1"));
     ASSERT_FALSE(tok.empty());
-    EXPECT_TRUE(fs::path(tok).is_absolute())
-        << "opt-out did not reach the writer; token: " << tok;
+    EXPECT_TRUE(fs::path(tok).is_absolute()) << "opt-out did not reach the writer; token: " << tok;
     EXPECT_NE(text.find("WRITE_ABSOLUTE_PATHS"), std::string::npos);
 
     // ...and exactly once — a stray ext_options copy would duplicate the line.

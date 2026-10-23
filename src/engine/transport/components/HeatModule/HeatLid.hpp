@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file HeatLid.hpp
- * @brief Phase H5b — temperature through the LID layer stack.
+ * @file      HeatLid.hpp
+ * @brief     Phase H5b — temperature through the LID layer stack.
  *
  * @details A4 built `LidLayerSpeciesState` with a species stride for exactly
  *          this. Temperature is row 1; nothing about the layer indexing
@@ -61,9 +61,9 @@
  * @see src/engine/transport/components/WaterAgeModule/WaterAgeLid.hpp
  * @ingroup engine_transport
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_TRANSPORT_HEAT_LID_HPP
@@ -84,23 +84,21 @@ namespace openswmm::transport {
 /// Size the shared layer block if needed and seed the TEMPERATURE row from
 /// `HeatSource::INITIAL_STATE`. Independent of `initLidLayerAge`: either may
 /// run first, neither wipes the other (`LidLayerSpeciesState::ensureSized`).
-void initLidLayerTemperature(SimulationContext& ctx,
-                             const lid::LIDSolver& solver);
+void initLidLayerTemperature(SimulationContext& ctx, const lid::LIDSolver& solver);
 
 /// Temperature of the water arriving at one unit this step, flow-weighted
 /// over the same four rates `setLidInflowAge` weights. Mirrors it exactly,
 /// including its hard-won choice to take the SUBCATCHMENT's published
 /// runoff value rather than reconstructing a mean from the subarea rows.
-void setLidInflowTemperature(SimulationContext& ctx, int type_index, int unit,
-                             int subcatch, double rain_rate, double q_imperv,
-                             double q_perv, double q_runon, double lid_area);
+void setLidInflowTemperature(SimulationContext& ctx, int type_index, int unit, int subcatch,
+                             double rain_rate, double q_imperv, double q_perv, double q_runon,
+                             double lid_area);
 
 /// Advance every LID column one runoff step: advective mixing per layer,
 /// then one coupled thermal solve over the stack. Publishes the underdrain
 /// temperature, retiring `HeatSource::RAINFALL`'s "(and LID drains until
 /// H5)" marker.
-void routeLidLayerTemperature(SimulationContext& ctx,
-                              const lid::LIDSolver& solver, double dt);
+void routeLidLayerTemperature(SimulationContext& ctx, const lid::LIDSolver& solver, double dt);
 
 /**
  * @brief Heat capacity of one layer, J/m²/K over the layer's footprint.
@@ -110,10 +108,9 @@ void routeLidLayerTemperature(SimulationContext& ctx,
  *          second copy of it in the test would make the gate agree with
  *          itself rather than with the code. Zero for an absent layer.
  */
-double lidLayerHeatCapacity(const SimulationContext& ctx,
-                            const lid::LIDGroupSoA& g, std::size_t unit,
-                            int layer) noexcept;
+double lidLayerHeatCapacity(const SimulationContext& ctx, const lid::LIDGroupSoA& g,
+                            std::size_t unit, int layer) noexcept;
 
-}  // namespace openswmm::transport
+} // namespace openswmm::transport
 
-#endif  // OPENSWMM_ENGINE_TRANSPORT_HEAT_LID_HPP
+#endif // OPENSWMM_ENGINE_TRANSPORT_HEAT_LID_HPP

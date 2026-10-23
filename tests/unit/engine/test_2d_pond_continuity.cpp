@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_2d_pond_continuity.cpp
- * @brief The coupled-junction pond geometry (2d/coupling/PondModel.hpp): a C¹
+ * @file      test_2d_pond_continuity.cpp
+ * @brief     The coupled-junction pond geometry (2d/coupling/PondModel.hpp): a C¹
  *        area ramp entirely above the rim, the closed-form volume and its
  *        exact inverse, volume-conserving relaxation of the pond area, and the
  *        head-equalisation cap.
@@ -24,6 +24,10 @@
  * @details plans/1D2D_FINE_SCALE_COUPLING_PLAN_2026-10-19.md §4, §0R R8/R13.
  *
  * @ingroup engine_2d
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -41,7 +45,7 @@ TEST(PondModel, AreaIsC1AndStartsAtTheRim) {
     EXPECT_EQ(area(band, a, band), a);
     EXPECT_EQ(area(1.0, a, band), a);
     constexpr double e = 1e-7;
-    for (double x : {0.0, band}) {   // band edges
+    for (double x : {0.0, band}) { // band edges
         const double left = (area(x, a, band) - area(x - e, a, band)) / e;
         const double right = (area(x + e, a, band) - area(x, a, band)) / e;
         EXPECT_NEAR(left, right, 1e-3 * a / band) << "slope jump at x=" << x;
@@ -93,20 +97,19 @@ TEST(PondModel, RelaxationConservesVolumeAndConverges) {
     EXPECT_NEAR(a, target, 1e-6 * target);
 }
 
-// Held for the window, the capped exchange never carries the two heads past
-// each other: a 1D chamber of A1 and a 2D cell of A2 end no further apart in
-// sign than they started.
-TEST(PondModel, EqualisationCapNeverInvertsTheHeadDifference) {
+// Held for the window, the capped exchange never carries the 1D head past
+// the 2D head: over the window the 1D side moves at most |Δh| — exactly |Δh|
+// when the law is stronger than the cap. (The 2D cell is live: the law
+// re-reads its head every substep.)
+TEST(PondModel, EqualisationCapNeverCarriesThe1DHeadPastThe2D) {
     for (double a1 : {1.13, 10.0, 300.0})
-        for (double a2 : {0.5, 1.0, 50.0})
-            for (double dh : {-0.4, -0.01, 0.003, 0.2}) {
-                const double T = 6.0;
-                const double q = std::copysign(1e9, dh);          // a law far stronger than the cap
-                const double cap = equalizeCap(dh, T, a1, a2);
-                const double qc = std::copysign(std::min(std::fabs(q), cap), q);
-                const double h2 = dh - qc * T / a2, h1 = qc * T / a1;   // 2D loses, 1D gains
-                EXPECT_GE((h2 - h1) * dh, -1e-12) << "a1 " << a1 << " a2 " << a2 << " dh " << dh;
-                EXPECT_NEAR(h2 - h1, 0.0, 1e-9) << "an unbounded law equalises exactly";
-            }
-    EXPECT_EQ(equalizeCap(0.1, 0.0, 1.0, 1.0), HUGE_VAL);
+        for (double dh : {-0.4, -0.01, 0.003, 0.2}) {
+            const double T = 6.0;
+            const double q = std::copysign(1e9, dh); // a law far stronger than the cap
+            const double cap = equalizeCap(dh, T, a1);
+            const double qc = std::copysign(std::min(std::fabs(q), cap), q);
+            EXPECT_NEAR(qc * T / a1, dh, 1e-12 * std::fabs(dh)) << "a1 " << a1 << " dh " << dh;
+        }
+    EXPECT_EQ(equalizeCap(0.1, 0.0, 1.0), HUGE_VAL);
+    EXPECT_EQ(equalizeCap(0.1, 1.0, 0.0), HUGE_VAL);
 }

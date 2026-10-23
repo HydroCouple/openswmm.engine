@@ -198,6 +198,13 @@ class TestProcessComponentsRegister(_ProcessComponentsCase):
         self.assertEqual(row.config, missing)
         self.assertEqual(row.resolved, "")
 
+    def test_long_utf8_config_path_is_read_in_full(self):
+        s = self.opened_solver()
+        config = "configs/" + "雪" * 3000 + ".rxn"
+        row = s.process_components.register("test.component.longpath", config)
+        self.assertEqual(row.config, config)
+        self.assertEqual(s.process_components["test.component.longpath"].config, config)
+
     def test_register_without_a_config_path(self):
         s = self.opened_solver()
         row = s.process_components.register("test.component.bare")

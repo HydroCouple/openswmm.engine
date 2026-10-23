@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file Hdf5InputPlugin.hpp
- * @brief IInputPlugin implementation for the columnar HDF5 model format.
+ * @file      Hdf5InputPlugin.hpp
+ * @brief     IInputPlugin implementation for the columnar HDF5 model format.
  *
  * @details Mirrors GeoPackageInputPlugin: a thin lifecycle wrapper that
  *          delegates to Hdf5ModelWriter / Hdf5ModelReader. Because the engine
@@ -34,9 +34,9 @@
  *
  * @ingroup engine_hdf5
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_HDF5_INPUT_PLUGIN_HPP
@@ -51,41 +51,73 @@ namespace openswmm::h5io {
 
 class Hdf5InputPlugin : public IInputPlugin {
 public:
+    /**
+     * @brief Construct an unloaded plugin with empty diagnostics.
+     */
     Hdf5InputPlugin() = default;
 
+    /**
+     * @brief Inspect the last explicitly assigned plugin lifecycle state.
+     * @return Current state; a successful write() does not itself advance it.
+     */
     PluginState state() const noexcept override { return state_; }
 
+    /**
+     * @brief Reset diagnostics and mark the plugin initialized.
+     * @param[in] init_args Currently ignored initialization arguments; not retained.
+     * @param[in] info Currently ignored metadata pointer; may be null and is not retained.
+     * @return Zero. Clears the error message and skipped-section list and sets
+     * state() to INITIALIZED without opening a file.
+     */
     int initialize(const std::vector<std::string>& init_args,
                    const IPluginComponentInfo* info) override;
 
+    /**
+     * @brief Mark the plugin validated without inspecting the model.
+     * @param[in] ctx Model context, currently ignored and not modified.
+     * @return Zero; state() becomes VALIDATED. No schema or model checks occur.
+     */
     int validate(const SimulationContext& ctx) override;
 
-    /**
-     * @brief Read a model from an HDF5 file.
-     *
-     * @note Not implemented in schema 1.0 — the format ships write-first, as
-     *       an export target. Returns a non-zero code and sets
-     *       last_error_message() rather than half-populating a context, which
-     *       would be far worse than refusing.
-     */
+    /** @brief Read the complete native model dataset and embedded component configurations.
+     * Older column-only exports are refused with a diagnostic. A successful parse
+     * populates ctx; errors may leave it partially populated. */
     int read(const std::string& path, SimulationContext& ctx) override;
 
-    /** @brief Write the model held by @p ctx to @p path. */
+    /** @brief Write the complete model to HDF5, replacing the destination.
+     * Returns nonzero and records a diagnostic on I/O or conversion failure.
+     * Clears previous diagnostics before writing. */
     int write(const std::string& path, const SimulationContext& ctx) override;
 
-    /** @brief Sections the last write() could not carry. */
+    /**
+     * @brief Copy the most recent successful export's omission diagnostics.
+     * @return Owned vector of warning strings; empty after initialize() or a
+     * failed write(). One string may describe multiple unsupported sections.
+     */
     std::vector<std::string> skipped_sections() const override { return skipped_; }
 
+    /**
+     * @brief Mark this export plugin finalized.
+     * @param[in] ctx Model context, currently ignored and not modified.
+     * @return Zero; state() becomes FINALIZED. Diagnostics are retained and
+     * there are no persistent file handles to release.
+     */
     int finalize(const SimulationContext& ctx) override;
 
+    /**
+     * @brief Access the plugin's most recent error diagnostic.
+     * @return Borrowed null-terminated string, possibly empty; valid until the
+     * next initialize(), read(), write(), or destruction. Do not free or retain
+     * across a call that can modify the plugin's error string.
+     */
     const char* last_error_message() const noexcept override { return error_.c_str(); }
 
 private:
-    PluginState              state_ = PluginState::UNLOADED;
-    std::string              error_;
+    PluginState state_ = PluginState::UNLOADED;
+    std::string error_;
     std::vector<std::string> skipped_;
 };
 
-}  // namespace openswmm::h5io
+} // namespace openswmm::h5io
 
-#endif  // OPENSWMM_HDF5_INPUT_PLUGIN_HPP
+#endif // OPENSWMM_HDF5_INPUT_PLUGIN_HPP

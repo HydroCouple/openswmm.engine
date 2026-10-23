@@ -15,20 +15,20 @@
 // limitations under the License.
 
 /**
- * @file openswmm_reactions_impl.cpp
- * @brief C API implementation — reaction-system validation + discovery
+ * @file      openswmm_reactions_impl.cpp
+ * @brief     C API implementation — reaction-system validation + discovery
  *        (E-C1).
  *
  * @see include/openswmm/engine/openswmm_reactions.h
  * @ingroup engine_api
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "openswmm_api_common.hpp"
-#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
+#include "core/FileIO.hpp" // issue #7: UTF-8 paths on Windows
 #include "../../../include/openswmm/engine/openswmm_reactions.h"
 
 #include "../transport/components/ReactionModule/ReactionExpression.hpp"
@@ -47,39 +47,63 @@
 
 namespace {
 
-/// Copy a std::string into a NUL-terminated caller buffer, truncating safely.
+/**
+ * @brief Copy reaction text into an optional truncated NUL-terminated buffer.
+ *
+ * Truncates bytes without required-length reporting or UTF-8 boundary handling.
+ *
+ * @param[in] src Borrowed bytes, length<=INT_MAX; must not overlap destination.
+ * @param[out] buf Writable buflen-byte destination, NULL means no-op.
+ * @param[in] buflen Capacity including terminator; <=0 no-op.
+ */
 inline void copy_to_buf(const std::string& src, char* buf, int buflen) {
-    if (!buf || buflen <= 0) return;
+    if (!buf || buflen <= 0)
+        return;
     const int copy_len = std::min(static_cast<int>(src.size()), buflen - 1);
     std::memcpy(buf, src.c_str(), static_cast<std::size_t>(copy_len));
     buf[copy_len] = '\0';
 }
 
-/// True when any compiled expression pushes slot @p idx of kind @p op —
-/// the authoritative referenced-check for remove refusals (D-RC3): the
-/// compiled tokens are what evaluation actually reads, so a scan over the
-/// pool cannot miss or over-count.
+/**
+ * @brief Check whether any compiled reaction token matches an opcode/index pair.
+ *
+ * @param[in] rx Borrowed reaction token pool.
+ * @param[in] op Exact token opcode byte; not validated.
+ * @param[in] idx Exact referenced index; not validated.
+ * @return True for any matching token, otherwise false; no dependency graph traversal.
+ */
 bool pool_references(const openswmm::ReactionData& rx, uint8_t op, int idx) {
     for (const auto& t : rx.token_pool)
-        if (t.op == op && t.idx == idx) return true;
+        if (t.op == op && t.idx == idx)
+            return true;
     return false;
 }
 
-/// Rebuild the species registry's MSX block from ctx.reactions after a
-/// species add/remove (D-RC3): snapshot every row after the old MSX block
-/// (the reserved species live there), truncate, re-add the MSX species in
-/// ReactionData order, restore the tail. Legal in BUILDING/OPENED only —
-/// nothing downstream has latched registry indexes before initialize().
-void rebuild_msx_registry(openswmm::SimulationContext& ctx, int old_base,
-                          int old_n_msx) {
+/**
+ * @brief Replace the contiguous MSX species registry block while retaining following reserved
+ * species.
+ *
+ * Copies tail metadata, truncates registry, appends configured reaction species as wall/bulk then
+ * the tail. Clears registry_base until first reaction add. Borrowed registry indices/references may
+ * change; does not remap external state matrices. Allocation/add failures can leave partial
+ * reconstruction.
+ *
+ * @param[in,out] ctx Borrowed coherent registry/reaction metadata; rebuild mutates order and
+ *     registry_base.
+ * @param[in] old_base Nonnegative prior MSX base, or negative to use current pollutant_count.
+ * @param[in] old_n_msx Prior contiguous MSX count when old_base>=0; valid block bounds required.
+ */
+void rebuild_msx_registry(openswmm::SimulationContext& ctx, int old_base, int old_n_msx) {
     auto& reg = ctx.species_registry;
-    auto& rx  = ctx.reactions;
+    auto& rx = ctx.reactions;
     const int base = (old_base >= 0) ? old_base : reg.pollutant_count();
-    struct Row { std::string name; openswmm::SpeciesKind kind;
-                 std::string units; };
+    struct Row {
+        std::string name;
+        openswmm::SpeciesKind kind;
+        std::string units;
+    };
     std::vector<Row> tail;
-    for (int i = base + ((old_base >= 0) ? old_n_msx : 0);
-         i < reg.count(); ++i)
+    for (int i = base + ((old_base >= 0) ? old_n_msx : 0); i < reg.count(); ++i)
         tail.push_back({reg.name(i), reg.kind(i), reg.units(i)});
 
     reg.truncate_to(base);
@@ -87,24 +111,33 @@ void rebuild_msx_registry(openswmm::SimulationContext& ctx, int old_base,
     for (int s = 0; s < rx.n_species(); ++s) {
         const auto us = static_cast<std::size_t>(s);
         const int idx = reg.add(rx.species_name[us],
-                                rx.species_is_wall[us]
-                                    ? openswmm::SpeciesKind::MSX_WALL
-                                    : openswmm::SpeciesKind::MSX_BULK,
+                                rx.species_is_wall[us] ? openswmm::SpeciesKind::MSX_WALL
+                                                       : openswmm::SpeciesKind::MSX_BULK,
                                 rx.species_units[us]);
-        if (rx.registry_base < 0) rx.registry_base = idx;
+        if (rx.registry_base < 0)
+            rx.registry_base = idx;
     }
     for (auto& r : tail)
         reg.add(std::move(r.name), r.kind, std::move(r.units));
 }
 
-/// Recompile after a mutation; on failure restore the given backups and
-/// return false (D-RC5: the engine never holds an uncompilable system).
-bool recompile_or_rollback(openswmm::SimulationContext& ctx,
-                           openswmm::ReactionData& rx_backup,
+/**
+ * @brief Recompile reactions and restore two saved stores on reported compilation failure.
+ *
+ * Compilation diagnostics are discarded; exceptions bypass this explicit rollback and propagate.
+ * Does not restore other possibly affected context state.
+ *
+ * @param[in,out] ctx Borrowed context whose current reaction system is compiled.
+ * @param[in,out] rx_backup Saved reactions, consumed by move only on false result.
+ * @param[in,out] reg_backup Saved species registry, consumed by move only on false result.
+ * @return True on recompile success, false after moving both backups back.
+ */
+bool recompile_or_rollback(openswmm::SimulationContext& ctx, openswmm::ReactionData& rx_backup,
                            openswmm::SpeciesRegistry& reg_backup) {
     std::vector<std::string> errs;
-    if (openswmm::transport::recompileReactionSystem(ctx, errs)) return true;
-    ctx.reactions        = std::move(rx_backup);
+    if (openswmm::transport::recompileReactionSystem(ctx, errs))
+        return true;
+    ctx.reactions = std::move(rx_backup);
     ctx.species_registry = std::move(reg_backup);
     return false;
 }
@@ -113,47 +146,58 @@ bool recompile_or_rollback(openswmm::SimulationContext& ctx,
 
 extern "C" {
 
-SWMM_ENGINE_API int swmm_reaction_validate_expression(SWMM_Engine engine,
-        int scope, const char* expr, char* errbuf, int buflen, int* col_out) {
+SWMM_ENGINE_API int swmm_reaction_validate_expression(SWMM_Engine engine, int scope,
+                                                      const char* expr, char* errbuf, int buflen,
+                                                      int* col_out) {
     CHECK_HANDLE(engine);
-    if (errbuf && buflen > 0) errbuf[0] = '\0';
-    if (col_out) *col_out = -1;
-    if (!expr) return SWMM_ERR_BADPARAM;
+    if (errbuf && buflen > 0)
+        errbuf[0] = '\0';
+    if (col_out)
+        *col_out = -1;
+    if (!expr)
+        return SWMM_ERR_BADPARAM;
     if (scope != SWMM_RXN_SCOPE_TERM && scope != SWMM_RXN_SCOPE_PIPE &&
         scope != SWMM_RXN_SCOPE_TANK && scope != SWMM_RXN_SCOPE_SUBSURFACE &&
         scope != SWMM_RXN_SCOPE_SUBCATCHMENT)
         return SWMM_ERR_BADPARAM;
 
     const auto& ctx = to_engine(engine)->context();
-    const auto& rx  = ctx.reactions;
+    const auto& rx = ctx.reactions;
 
     openswmm::transport::RxSymbols sym;
-    sym.species    = &rx.species_name;
-    sym.coefs      = &rx.coef_name;
-    sym.terms      = &rx.term_name;
+    sym.species = &rx.species_name;
+    sym.coefs = &rx.coef_name;
+    sym.terms = &rx.term_name;
     sym.pollutants = &ctx.pollutant_names.names();
     // D-RC1: validation accepts references to ALL terms — the forward-only
     // rule is a file-ordering property enforced at apply time.
-    sym.max_term   = static_cast<int>(rx.term_name.size());
+    sym.max_term = static_cast<int>(rx.term_name.size());
 
-    std::vector<openswmm::transport::RxToken> pool;   // scratch, discarded
+    std::vector<openswmm::transport::RxToken> pool; // scratch, discarded
     openswmm::transport::RxExprSpan span;
     int col = -1;
-    std::string err = openswmm::transport::compileReactionExpression(
-        expr, sym, pool, span, col);
+    std::string err = openswmm::transport::compileReactionExpression(expr, sym, pool, span, col);
     // Physics review A1: the editor refuses what the load refuses.
     if (err.empty())
-        err = openswmm::transport::reactionContextDiagnostic(rx,pool,span,
-            scope==SWMM_RXN_SCOPE_SUBCATCHMENT?3:scope==SWMM_RXN_SCOPE_SUBSURFACE?2:scope==SWMM_RXN_SCOPE_TERM?1:0);
-    if(!err.empty()) {
-        int precise=-1;
-        openswmm::transport::unpopulatedHydVarDiagnostic(expr,pool,span,precise);
-        if(precise>0)col=precise;
+        err =
+            openswmm::transport::reactionContextDiagnostic(rx, pool, span,
+                                                           scope == SWMM_RXN_SCOPE_SUBCATCHMENT ? 3
+                                                           : scope == SWMM_RXN_SCOPE_SUBSURFACE ? 2
+                                                           : scope == SWMM_RXN_SCOPE_TERM       ? 1
+                                                                                          : 0);
+    if (!err.empty()) {
+        int precise = -1;
+        openswmm::transport::unpopulatedHydVarDiagnostic(expr, pool, span, precise);
+        if (precise > 0)
+            col = precise;
     }
-    if (err.empty()) return SWMM_OK;
+    if (err.empty())
+        return SWMM_OK;
 
-    if (errbuf && buflen > 0) copy_to_buf(err, errbuf, buflen);
-    if (col_out) *col_out = col;
+    if (errbuf && buflen > 0)
+        copy_to_buf(err, errbuf, buflen);
+    if (col_out)
+        *col_out = col;
     return SWMM_ERR_BADPARAM;
 }
 
@@ -162,18 +206,18 @@ SWMM_ENGINE_API int swmm_reaction_validate_expression(SWMM_Engine engine,
 // ============================================================================
 
 SWMM_ENGINE_API int swmm_reaction_species_count(SWMM_Engine engine) {
-    if (!engine) return -1;
+    if (!engine)
+        return -1;
     return to_engine(engine)->context().reactions.n_species();
 }
 
-SWMM_ENGINE_API int swmm_reaction_species_get(SWMM_Engine engine, int idx,
-        char* name, int name_len, int* is_wall,
-        char* units, int units_len, double* atol, double* rtol) {
+SWMM_ENGINE_API int swmm_reaction_species_get(SWMM_Engine engine, int idx, char* name, int name_len,
+                                              int* is_wall, char* units, int units_len,
+                                              double* atol, double* rtol) {
     CHECK_HANDLE(engine);
     const auto& rx = to_engine(engine)->context().reactions;
     CHECK_INDEX(idx >= 0 && idx < rx.n_species());
-    if (!name || name_len <= 0 || !is_wall || !units || units_len <= 0 ||
-        !atol || !rtol)
+    if (!name || name_len <= 0 || !is_wall || !units || units_len <= 0 || !atol || !rtol)
         return SWMM_ERR_BADPARAM;
     const auto u = static_cast<std::size_t>(idx);
     copy_to_buf(rx.species_name[u], name, name_len);
@@ -185,38 +229,36 @@ SWMM_ENGINE_API int swmm_reaction_species_get(SWMM_Engine engine, int idx,
 }
 
 SWMM_ENGINE_API int swmm_reaction_coeff_count(SWMM_Engine engine) {
-    if (!engine) return -1;
-    return static_cast<int>(
-        to_engine(engine)->context().reactions.coef_name.size());
+    if (!engine)
+        return -1;
+    return static_cast<int>(to_engine(engine)->context().reactions.coef_name.size());
 }
 
-SWMM_ENGINE_API int swmm_reaction_coeff_get(SWMM_Engine engine, int idx,
-        char* name, int name_len, int* is_param, double* value) {
+SWMM_ENGINE_API int swmm_reaction_coeff_get(SWMM_Engine engine, int idx, char* name, int name_len,
+                                            int* is_param, double* value) {
     CHECK_HANDLE(engine);
     const auto& rx = to_engine(engine)->context().reactions;
-    CHECK_INDEX(idx >= 0 &&
-                idx < static_cast<int>(rx.coef_name.size()));
+    CHECK_INDEX(idx >= 0 && idx < static_cast<int>(rx.coef_name.size()));
     if (!name || name_len <= 0 || !is_param || !value)
         return SWMM_ERR_BADPARAM;
     const auto u = static_cast<std::size_t>(idx);
     copy_to_buf(rx.coef_name[u], name, name_len);
     *is_param = rx.coef_is_param[u] ? 1 : 0;
-    *value    = rx.coef_value[u];
+    *value = rx.coef_value[u];
     return SWMM_OK;
 }
 
 SWMM_ENGINE_API int swmm_reaction_term_count(SWMM_Engine engine) {
-    if (!engine) return -1;
-    return static_cast<int>(
-        to_engine(engine)->context().reactions.term_name.size());
+    if (!engine)
+        return -1;
+    return static_cast<int>(to_engine(engine)->context().reactions.term_name.size());
 }
 
-SWMM_ENGINE_API int swmm_reaction_term_get(SWMM_Engine engine, int idx,
-        char* name, int name_len, char* expr, int expr_len) {
+SWMM_ENGINE_API int swmm_reaction_term_get(SWMM_Engine engine, int idx, char* name, int name_len,
+                                           char* expr, int expr_len) {
     CHECK_HANDLE(engine);
     const auto& rx = to_engine(engine)->context().reactions;
-    CHECK_INDEX(idx >= 0 &&
-                idx < static_cast<int>(rx.term_name.size()));
+    CHECK_INDEX(idx >= 0 && idx < static_cast<int>(rx.term_name.size()));
     if (!name || name_len <= 0 || !expr || expr_len <= 0)
         return SWMM_ERR_BADPARAM;
     const auto u = static_cast<std::size_t>(idx);
@@ -225,12 +267,13 @@ SWMM_ENGINE_API int swmm_reaction_term_get(SWMM_Engine engine, int idx,
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_reaction_expr_get(SWMM_Engine engine, int scope,
-        int species_idx, int* form, char* expr, int expr_len) {
+SWMM_ENGINE_API int swmm_reaction_expr_get(SWMM_Engine engine, int scope, int species_idx,
+                                           int* form, char* expr, int expr_len) {
     CHECK_HANDLE(engine);
     const auto& rx = to_engine(engine)->context().reactions;
     CHECK_INDEX(species_idx >= 0 && species_idx < rx.n_species());
-    if (!form || !expr || expr_len <= 0) return SWMM_ERR_BADPARAM;
+    if (!form || !expr || expr_len <= 0)
+        return SWMM_ERR_BADPARAM;
     if (scope != SWMM_RXN_SCOPE_PIPE && scope != SWMM_RXN_SCOPE_TANK &&
         scope != SWMM_RXN_SCOPE_SUBCATCHMENT)
         return SWMM_ERR_BADPARAM;
@@ -248,10 +291,11 @@ SWMM_ENGINE_API int swmm_reaction_expr_get(SWMM_Engine engine, int scope,
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_reaction_option_get(SWMM_Engine engine,
-        const char* key, char* value, int value_len) {
+SWMM_ENGINE_API int swmm_reaction_option_get(SWMM_Engine engine, const char* key, char* value,
+                                             int value_len) {
     CHECK_HANDLE(engine);
-    if (!key || !value || value_len <= 0) return SWMM_ERR_BADPARAM;
+    if (!key || !value || value_len <= 0)
+        return SWMM_ERR_BADPARAM;
     const auto& rx = to_engine(engine)->context().reactions;
 
     std::string k(key);
@@ -267,8 +311,8 @@ SWMM_ENGINE_API int swmm_reaction_option_get(SWMM_Engine engine,
     } else if (k == "RATE_UNITS") {
         static const char* kTok[] = {"SEC", "MIN", "HR", "DAY"};
         v = kTok[static_cast<int>(rx.rate_units)];
-    } else if(k=="WALL_GEOMETRY") {
-        v=rx.wall_geometry?"YES":"NO";
+    } else if (k == "WALL_GEOMETRY") {
+        v = rx.wall_geometry ? "YES" : "NO";
     } else if (k == "AREA_UNITS") {
         static const char* kTok[] = {"FT2", "M2", "CM2"};
         v = kTok[static_cast<int>(rx.area_units)];
@@ -293,9 +337,8 @@ SWMM_ENGINE_API int swmm_reaction_option_get(SWMM_Engine engine,
 // CRUD (E-C2) — BUILDING/OPENED, eager validation, rollback on failure
 // ============================================================================
 
-SWMM_ENGINE_API int swmm_reaction_species_add(SWMM_Engine engine,
-        const char* name, int is_wall, const char* units, double atol,
-        double rtol) {
+SWMM_ENGINE_API int swmm_reaction_species_add(SWMM_Engine engine, const char* name, int is_wall,
+                                              const char* units, double atol, double rtol) {
     CHECK_HANDLE(engine);
     if (!name || !*name || !units || atol < 0.0 || rtol < 0.0)
         return SWMM_ERR_BADPARAM;
@@ -305,18 +348,18 @@ SWMM_ENGINE_API int swmm_reaction_species_add(SWMM_Engine engine,
     // pollutant or reserved species) — the parser's collision rule — and a
     // species named like a coefficient or term would silently SHADOW it in
     // expressions (resolution order: species first), so those collide too.
-    if (ctx.species_registry.find(name) >= 0 ||
-        ctx.reactions.find_coef(name) >= 0 ||
+    if (ctx.species_registry.find(name) >= 0 || ctx.reactions.find_coef(name) >= 0 ||
         ctx.reactions.find_term(name) >= 0)
         return SWMM_ERR_BADPARAM;
 
-    auto rx_backup  = ctx.reactions;
+    auto rx_backup = ctx.reactions;
     auto reg_backup = ctx.species_registry;
     auto& rx = ctx.reactions;
     const int old_base = rx.registry_base;
-    const int old_n    = rx.n_species();
+    const int old_n = rx.n_species();
     rx.species_name.push_back(name);
-    if (!rx.report_enabled.empty()) rx.report_enabled.push_back(1);
+    if (!rx.report_enabled.empty())
+        rx.report_enabled.push_back(1);
     rx.species_is_wall.push_back(is_wall ? 1 : 0);
     rx.species_units.push_back(units);
     rx.species_atol.push_back(atol);
@@ -337,31 +380,37 @@ SWMM_ENGINE_API int swmm_reaction_species_add(SWMM_Engine engine,
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_reaction_species_remove(SWMM_Engine engine,
-        int idx) {
+SWMM_ENGINE_API int swmm_reaction_species_remove(SWMM_Engine engine, int idx) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
     auto& rx = ctx.reactions;
     CHECK_INDEX(idx >= 0 && idx < rx.n_species());
-    for(const auto& law:rx.subsurface_laws)if(law.species==idx)return SWMM_ERR_BADPARAM;
+    for (const auto& law : rx.subsurface_laws)
+        if (law.species == idx)
+            return SWMM_ERR_BADPARAM;
     for (const auto& source : rx.sources)
-        if (source.species == idx) return SWMM_ERR_BADPARAM;
+        if (source.species == idx)
+            return SWMM_ERR_BADPARAM;
     // D-RC3: refuse while any compiled expression references the species.
     if (pool_references(rx, openswmm::RxToken::PUSH_SPECIES, idx))
         return SWMM_ERR_BADPARAM;
 
-    auto rx_backup  = ctx.reactions;
+    auto rx_backup = ctx.reactions;
     auto reg_backup = ctx.species_registry;
     const int old_base = rx.registry_base;
-    const int old_n    = rx.n_species();
+    const int old_n = rx.n_species();
     const auto u = static_cast<std::size_t>(idx);
     // Erase the row from EVERY index-aligned vector (the D-RC3 hazard).
-    for(auto& law:rx.subsurface_laws)if(law.species>idx)--law.species;
+    for (auto& law : rx.subsurface_laws)
+        if (law.species > idx)
+            --law.species;
     for (auto& source : rx.sources)
-        if (source.species > idx) --source.species;
+        if (source.species > idx)
+            --source.species;
     rx.species_name.erase(rx.species_name.begin() + u);
-    if (u < rx.report_enabled.size()) rx.report_enabled.erase(rx.report_enabled.begin() + u);
+    if (u < rx.report_enabled.size())
+        rx.report_enabled.erase(rx.report_enabled.begin() + u);
     rx.species_is_wall.erase(rx.species_is_wall.begin() + u);
     rx.species_units.erase(rx.species_units.begin() + u);
     rx.species_atol.erase(rx.species_atol.begin() + u);
@@ -370,16 +419,25 @@ SWMM_ENGINE_API int swmm_reaction_species_remove(SWMM_Engine engine,
     rx.pipe_expr_src.erase(rx.pipe_expr_src.begin() + u);
     rx.tank_form.erase(rx.tank_form.begin() + u);
     rx.tank_expr_src.erase(rx.tank_expr_src.begin() + u);
-    rx.lid_laws.erase(std::remove_if(rx.lid_laws.begin(),rx.lid_laws.end(),[&](const auto& r){return r.species==idx;}),rx.lid_laws.end());
-    for(auto& row:rx.lid_laws)if(row.species>idx)--row.species;
+    rx.lid_laws.erase(std::remove_if(rx.lid_laws.begin(), rx.lid_laws.end(),
+                                     [&](const auto& r) { return r.species == idx; }),
+                      rx.lid_laws.end());
+    for (auto& row : rx.lid_laws)
+        if (row.species > idx)
+            --row.species;
     rx.subcatch_form.erase(rx.subcatch_form.begin() + u);
-    for(auto* laws:{&rx.wet_laws,&rx.buildup_laws}) {
-        laws->erase(std::remove_if(laws->begin(),laws->end(),[&](const auto& r){return r.species==idx;}),laws->end());
-        for(auto& row:*laws)if(row.species>idx)--row.species;
+    for (auto* laws : {&rx.wet_laws, &rx.buildup_laws}) {
+        laws->erase(std::remove_if(laws->begin(), laws->end(),
+                                   [&](const auto& r) { return r.species == idx; }),
+                    laws->end());
+        for (auto& row : *laws)
+            if (row.species > idx)
+                --row.species;
     }
     rx.subcatch_expr_src.erase(rx.subcatch_expr_src.begin() + u);
     rx.init_global.erase(rx.init_global.begin() + u);
-    if (u < rx.rain_conc.size()) rx.rain_conc.erase(rx.rain_conc.begin() + u);
+    if (u < rx.rain_conc.size())
+        rx.rain_conc.erase(rx.rain_conc.begin() + u);
     // Per-element initial rows for the species vanish with it; higher
     // species indexes shift down.
     for (int r = static_cast<int>(rx.init_elem_idx.size()) - 1; r >= 0; --r) {
@@ -400,9 +458,12 @@ SWMM_ENGINE_API int swmm_reaction_species_remove(SWMM_Engine engine,
         for (int r = iq.count() - 1; r >= 0; --r) {
             const auto ur = static_cast<std::size_t>(r);
             const int m = openswmm::InitialQualityData::msxSpecies(iq.kind[ur]);
-            if (m < 0) continue;
-            if (m == idx)      iq.erase(r);
-            else if (m > idx)  iq.kind[ur] = openswmm::InitialQualityData::msxKind(m - 1);
+            if (m < 0)
+                continue;
+            if (m == idx)
+                iq.erase(r);
+            else if (m > idx)
+                iq.kind[ur] = openswmm::InitialQualityData::msxKind(m - 1);
         }
     }
     rebuild_msx_registry(ctx, old_base, old_n);
@@ -411,17 +472,17 @@ SWMM_ENGINE_API int swmm_reaction_species_remove(SWMM_Engine engine,
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_reaction_coeff_add(SWMM_Engine engine,
-        const char* name, int is_param, double value) {
+SWMM_ENGINE_API int swmm_reaction_coeff_add(SWMM_Engine engine, const char* name, int is_param,
+                                            double value) {
     CHECK_HANDLE(engine);
-    if (!name || !*name) return SWMM_ERR_BADPARAM;
+    if (!name || !*name)
+        return SWMM_ERR_BADPARAM;
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
     auto& rx = ctx.reactions;
     // The parser's duplicate rule: a coefficient may not duplicate a
     // coefficient, species, or term name.
-    if (rx.find_coef(name) >= 0 || rx.find_species(name) >= 0 ||
-        rx.find_term(name) >= 0)
+    if (rx.find_coef(name) >= 0 || rx.find_species(name) >= 0 || rx.find_term(name) >= 0)
         return SWMM_ERR_BADPARAM;
     rx.coef_name.push_back(name);
     rx.coef_is_param.push_back(is_param ? 1 : 0);
@@ -430,8 +491,7 @@ SWMM_ENGINE_API int swmm_reaction_coeff_add(SWMM_Engine engine,
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_reaction_coeff_set_value(SWMM_Engine engine,
-        int idx, double value) {
+SWMM_ENGINE_API int swmm_reaction_coeff_set_value(SWMM_Engine engine, int idx, double value) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
@@ -449,13 +509,15 @@ SWMM_ENGINE_API int swmm_reaction_coeff_remove(SWMM_Engine engine, int idx) {
     CHECK_INDEX(idx >= 0 && idx < static_cast<int>(rx.coef_name.size()));
     if (pool_references(rx, openswmm::RxToken::PUSH_COEF, idx))
         return SWMM_ERR_BADPARAM;
-    auto rx_backup  = ctx.reactions;
+    auto rx_backup = ctx.reactions;
     auto reg_backup = ctx.species_registry;
     const auto u = static_cast<std::size_t>(idx);
     for (const auto& row : rx.parameter_overrides)
-        if (row.coefficient == idx) return SWMM_ERR_BADPARAM;
+        if (row.coefficient == idx)
+            return SWMM_ERR_BADPARAM;
     for (auto& row : rx.parameter_overrides)
-        if (row.coefficient > idx) --row.coefficient;
+        if (row.coefficient > idx)
+            --row.coefficient;
     rx.coef_name.erase(rx.coef_name.begin() + u);
     rx.coef_is_param.erase(rx.coef_is_param.begin() + u);
     rx.coef_value.erase(rx.coef_value.begin() + u);
@@ -466,17 +528,16 @@ SWMM_ENGINE_API int swmm_reaction_coeff_remove(SWMM_Engine engine, int idx) {
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_reaction_term_add(SWMM_Engine engine,
-        const char* name, const char* expr) {
+SWMM_ENGINE_API int swmm_reaction_term_add(SWMM_Engine engine, const char* name, const char* expr) {
     CHECK_HANDLE(engine);
-    if (!name || !*name || !expr) return SWMM_ERR_BADPARAM;
+    if (!name || !*name || !expr)
+        return SWMM_ERR_BADPARAM;
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
     auto& rx = ctx.reactions;
-    if (rx.find_term(name) >= 0 || rx.find_species(name) >= 0 ||
-        rx.find_coef(name) >= 0)
+    if (rx.find_term(name) >= 0 || rx.find_species(name) >= 0 || rx.find_coef(name) >= 0)
         return SWMM_ERR_BADPARAM;
-    auto rx_backup  = ctx.reactions;
+    auto rx_backup = ctx.reactions;
     auto reg_backup = ctx.species_registry;
     rx.term_name.push_back(name);
     rx.term_expr_src.push_back(expr);
@@ -485,15 +546,15 @@ SWMM_ENGINE_API int swmm_reaction_term_add(SWMM_Engine engine,
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_reaction_term_set_expr(SWMM_Engine engine, int idx,
-        const char* expr) {
+SWMM_ENGINE_API int swmm_reaction_term_set_expr(SWMM_Engine engine, int idx, const char* expr) {
     CHECK_HANDLE(engine);
-    if (!expr) return SWMM_ERR_BADPARAM;
+    if (!expr)
+        return SWMM_ERR_BADPARAM;
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
     auto& rx = ctx.reactions;
     CHECK_INDEX(idx >= 0 && idx < static_cast<int>(rx.term_name.size()));
-    auto rx_backup  = ctx.reactions;
+    auto rx_backup = ctx.reactions;
     auto reg_backup = ctx.species_registry;
     rx.term_expr_src[static_cast<std::size_t>(idx)] = expr;
     if (!recompile_or_rollback(ctx, rx_backup, reg_backup))
@@ -509,7 +570,7 @@ SWMM_ENGINE_API int swmm_reaction_term_remove(SWMM_Engine engine, int idx) {
     CHECK_INDEX(idx >= 0 && idx < static_cast<int>(rx.term_name.size()));
     if (pool_references(rx, openswmm::RxToken::PUSH_TERM, idx))
         return SWMM_ERR_BADPARAM;
-    auto rx_backup  = ctx.reactions;
+    auto rx_backup = ctx.reactions;
     auto reg_backup = ctx.species_registry;
     const auto u = static_cast<std::size_t>(idx);
     rx.term_name.erase(rx.term_name.begin() + u);
@@ -519,8 +580,8 @@ SWMM_ENGINE_API int swmm_reaction_term_remove(SWMM_Engine engine, int idx) {
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_reaction_expr_set(SWMM_Engine engine, int scope,
-        int species_idx, int form, const char* expr) {
+SWMM_ENGINE_API int swmm_reaction_expr_set(SWMM_Engine engine, int scope, int species_idx, int form,
+                                           const char* expr) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
@@ -534,24 +595,27 @@ SWMM_ENGINE_API int swmm_reaction_expr_set(SWMM_Engine engine, int scope,
     if (form != SWMM_RXN_FORM_NONE && (!expr || !*expr))
         return SWMM_ERR_BADPARAM;
 
-    auto rx_backup  = ctx.reactions;
+    auto rx_backup = ctx.reactions;
     auto reg_backup = ctx.species_registry;
     const auto u = static_cast<std::size_t>(species_idx);
-    auto& forms = scope == SWMM_RXN_SCOPE_SUBCATCHMENT ? rx.subcatch_form :
-                  scope == SWMM_RXN_SCOPE_PIPE ? rx.pipe_form : rx.tank_form;
-    auto& srcs = scope == SWMM_RXN_SCOPE_SUBCATCHMENT ? rx.subcatch_expr_src :
-                 scope == SWMM_RXN_SCOPE_PIPE ? rx.pipe_expr_src : rx.tank_expr_src;
+    auto& forms = scope == SWMM_RXN_SCOPE_SUBCATCHMENT ? rx.subcatch_form
+                  : scope == SWMM_RXN_SCOPE_PIPE       ? rx.pipe_form
+                                                       : rx.tank_form;
+    auto& srcs = scope == SWMM_RXN_SCOPE_SUBCATCHMENT ? rx.subcatch_expr_src
+                 : scope == SWMM_RXN_SCOPE_PIPE       ? rx.pipe_expr_src
+                                                      : rx.tank_expr_src;
     forms[u] = static_cast<openswmm::ReactionExprForm>(form);
-    srcs[u]  = (form == SWMM_RXN_FORM_NONE) ? std::string() : expr;
+    srcs[u] = (form == SWMM_RXN_FORM_NONE) ? std::string() : expr;
     if (!recompile_or_rollback(ctx, rx_backup, reg_backup))
         return SWMM_ERR_BADPARAM;
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_reaction_option_set(SWMM_Engine engine,
-        const char* key, const char* value) {
+SWMM_ENGINE_API int swmm_reaction_option_set(SWMM_Engine engine, const char* key,
+                                             const char* value) {
     CHECK_HANDLE(engine);
-    if (!key || !value) return SWMM_ERR_BADPARAM;
+    if (!key || !value)
+        return SWMM_ERR_BADPARAM;
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
     auto& rx = ctx.reactions;
@@ -559,39 +623,58 @@ SWMM_ENGINE_API int swmm_reaction_option_set(SWMM_Engine engine,
     auto up = [](const char* s) {
         std::string r(s);
         for (auto& ch : r)
-            ch = static_cast<char>(
-                std::toupper(static_cast<unsigned char>(ch)));
+            ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
         return r;
     };
     const std::string k = up(key);
     const std::string v = up(value);
 
     if (k == "SOLVER") {
-        if      (v == "EUL")  rx.solver = openswmm::ReactionSolverKind::EUL;
-        else if (v == "RK5")  rx.solver = openswmm::ReactionSolverKind::RK5;
-        else if (v == "ROS2") rx.solver = openswmm::ReactionSolverKind::ROS2;
-        else if (v == "BDF2") rx.solver = openswmm::ReactionSolverKind::BDF2;
-        else return SWMM_ERR_BADPARAM;
+        if (v == "EUL")
+            rx.solver = openswmm::ReactionSolverKind::EUL;
+        else if (v == "RK5")
+            rx.solver = openswmm::ReactionSolverKind::RK5;
+        else if (v == "ROS2")
+            rx.solver = openswmm::ReactionSolverKind::ROS2;
+        else if (v == "BDF2")
+            rx.solver = openswmm::ReactionSolverKind::BDF2;
+        else
+            return SWMM_ERR_BADPARAM;
     } else if (k == "COUPLING") {
-        if      (v == "NONE") rx.coupling = openswmm::ReactionCoupling::NONE;
-        else if (v == "FULL") rx.coupling = openswmm::ReactionCoupling::FULL;
-        else return SWMM_ERR_BADPARAM;
+        if (v == "NONE")
+            rx.coupling = openswmm::ReactionCoupling::NONE;
+        else if (v == "FULL")
+            rx.coupling = openswmm::ReactionCoupling::FULL;
+        else
+            return SWMM_ERR_BADPARAM;
     } else if (k == "RATE_UNITS") {
-        if      (v == "SEC") rx.rate_units = openswmm::ReactionRateUnits::SEC;
-        else if (v == "MIN") rx.rate_units = openswmm::ReactionRateUnits::MIN;
-        else if (v == "HR")  rx.rate_units = openswmm::ReactionRateUnits::HR;
-        else if (v == "DAY") rx.rate_units = openswmm::ReactionRateUnits::DAY;
-        else return SWMM_ERR_BADPARAM;
-    } else if(k=="WALL_GEOMETRY") {
-        if(v!="YES"&&v!="NO")return SWMM_ERR_BADPARAM;
-        auto rx_backup=rx;auto reg_backup=ctx.species_registry;
-        rx.wall_geometry=v=="YES";
-        if(!recompile_or_rollback(ctx,rx_backup,reg_backup))return SWMM_ERR_BADPARAM;
+        if (v == "SEC")
+            rx.rate_units = openswmm::ReactionRateUnits::SEC;
+        else if (v == "MIN")
+            rx.rate_units = openswmm::ReactionRateUnits::MIN;
+        else if (v == "HR")
+            rx.rate_units = openswmm::ReactionRateUnits::HR;
+        else if (v == "DAY")
+            rx.rate_units = openswmm::ReactionRateUnits::DAY;
+        else
+            return SWMM_ERR_BADPARAM;
+    } else if (k == "WALL_GEOMETRY") {
+        if (v != "YES" && v != "NO")
+            return SWMM_ERR_BADPARAM;
+        auto rx_backup = rx;
+        auto reg_backup = ctx.species_registry;
+        rx.wall_geometry = v == "YES";
+        if (!recompile_or_rollback(ctx, rx_backup, reg_backup))
+            return SWMM_ERR_BADPARAM;
     } else if (k == "AREA_UNITS") {
-        if      (v == "FT2") rx.area_units = openswmm::ReactionAreaUnits::FT2;
-        else if (v == "M2")  rx.area_units = openswmm::ReactionAreaUnits::M2;
-        else if (v == "CM2") rx.area_units = openswmm::ReactionAreaUnits::CM2;
-        else return SWMM_ERR_BADPARAM;
+        if (v == "FT2")
+            rx.area_units = openswmm::ReactionAreaUnits::FT2;
+        else if (v == "M2")
+            rx.area_units = openswmm::ReactionAreaUnits::M2;
+        else if (v == "CM2")
+            rx.area_units = openswmm::ReactionAreaUnits::CM2;
+        else
+            return SWMM_ERR_BADPARAM;
     } else if (k == "PATTERN_TIMESTEP") {
         char* end = nullptr;
         const double d = std::strtod(value, &end);
@@ -627,50 +710,53 @@ SWMM_ENGINE_API int swmm_reaction_option_set(SWMM_Engine engine,
 // Initial quality (GLOBAL + the E-B NODE/LINK rows)
 // ============================================================================
 
-SWMM_ENGINE_API int swmm_reaction_init_global_get(SWMM_Engine engine,
-        int species_idx, double* value) {
+SWMM_ENGINE_API int swmm_reaction_init_global_get(SWMM_Engine engine, int species_idx,
+                                                  double* value) {
     CHECK_HANDLE(engine);
     const auto& rx = to_engine(engine)->context().reactions;
     CHECK_INDEX(species_idx >= 0 && species_idx < rx.n_species());
-    if (!value) return SWMM_ERR_BADPARAM;
+    if (!value)
+        return SWMM_ERR_BADPARAM;
     const auto u = static_cast<std::size_t>(species_idx);
     *value = (u < rx.init_global.size()) ? rx.init_global[u] : 0.0;
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_reaction_rain_conc_get(SWMM_Engine engine,
-        int species_idx, double* value) {
+SWMM_ENGINE_API int swmm_reaction_rain_conc_get(SWMM_Engine engine, int species_idx,
+                                                double* value) {
     CHECK_HANDLE(engine);
     const auto& rx = to_engine(engine)->context().reactions;
     CHECK_INDEX(species_idx >= 0 && species_idx < rx.n_species());
-    if (!value) return SWMM_ERR_BADPARAM;
+    if (!value)
+        return SWMM_ERR_BADPARAM;
     const auto u = static_cast<std::size_t>(species_idx);
     *value = (u < rx.rain_conc.size()) ? rx.rain_conc[u] : 0.0;
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_reaction_rain_conc_set(SWMM_Engine engine,
-        int species_idx, double value) {
+SWMM_ENGINE_API int swmm_reaction_rain_conc_set(SWMM_Engine engine, int species_idx, double value) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
     auto& rx = ctx.reactions;
     CHECK_INDEX(species_idx >= 0 && species_idx < rx.n_species());
-    if (!(value >= 0.0)) return SWMM_ERR_BADPARAM;
+    if (!(value >= 0.0))
+        return SWMM_ERR_BADPARAM;
     if (rx.rain_conc.size() < static_cast<std::size_t>(rx.n_species()))
         rx.rain_conc.resize(static_cast<std::size_t>(rx.n_species()), 0.0);
     rx.rain_conc[static_cast<std::size_t>(species_idx)] = value;
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_reaction_init_global_set(SWMM_Engine engine,
-        int species_idx, double value) {
+SWMM_ENGINE_API int swmm_reaction_init_global_set(SWMM_Engine engine, int species_idx,
+                                                  double value) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
     auto& rx = ctx.reactions;
     CHECK_INDEX(species_idx >= 0 && species_idx < rx.n_species());
-    if (value < 0.0) return SWMM_ERR_BADPARAM;
+    if (value < 0.0)
+        return SWMM_ERR_BADPARAM;
     if (rx.init_global.size() < static_cast<std::size_t>(rx.n_species()))
         rx.init_global.resize(static_cast<std::size_t>(rx.n_species()), 0.0);
     rx.init_global[static_cast<std::size_t>(species_idx)] = value;
@@ -678,30 +764,28 @@ SWMM_ENGINE_API int swmm_reaction_init_global_set(SWMM_Engine engine,
 }
 
 SWMM_ENGINE_API int swmm_reaction_init_elem_count(SWMM_Engine engine) {
-    if (!engine) return -1;
-    return static_cast<int>(
-        to_engine(engine)->context().reactions.init_elem_idx.size());
+    if (!engine)
+        return -1;
+    return static_cast<int>(to_engine(engine)->context().reactions.init_elem_idx.size());
 }
 
-SWMM_ENGINE_API int swmm_reaction_init_elem_get(SWMM_Engine engine,
-        int entry_idx, int* is_link, int* elem_idx, int* species_idx,
-        double* value) {
+SWMM_ENGINE_API int swmm_reaction_init_elem_get(SWMM_Engine engine, int entry_idx, int* is_link,
+                                                int* elem_idx, int* species_idx, double* value) {
     CHECK_HANDLE(engine);
     const auto& rx = to_engine(engine)->context().reactions;
-    CHECK_INDEX(entry_idx >= 0 &&
-                entry_idx < static_cast<int>(rx.init_elem_idx.size()));
+    CHECK_INDEX(entry_idx >= 0 && entry_idx < static_cast<int>(rx.init_elem_idx.size()));
     if (!is_link || !elem_idx || !species_idx || !value)
         return SWMM_ERR_BADPARAM;
     const auto u = static_cast<std::size_t>(entry_idx);
-    *is_link     = rx.init_elem_is_link[u] ? 1 : 0;
-    *elem_idx    = rx.init_elem_idx[u];
+    *is_link = rx.init_elem_is_link[u] ? 1 : 0;
+    *elem_idx = rx.init_elem_idx[u];
     *species_idx = rx.init_elem_species[u];
-    *value       = rx.init_elem_value[u];
+    *value = rx.init_elem_value[u];
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_reaction_init_elem_set(SWMM_Engine engine,
-        int is_link, int elem_idx, int species_idx, double value) {
+SWMM_ENGINE_API int swmm_reaction_init_elem_set(SWMM_Engine engine, int is_link, int elem_idx,
+                                                int species_idx, double value) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
@@ -709,12 +793,12 @@ SWMM_ENGINE_API int swmm_reaction_init_elem_set(SWMM_Engine engine,
     CHECK_INDEX(species_idx >= 0 && species_idx < rx.n_species());
     const int n_elems = is_link ? ctx.n_links() : ctx.n_nodes();
     CHECK_INDEX(elem_idx >= 0 && elem_idx < n_elems);
-    if (value < 0.0) return SWMM_ERR_BADPARAM;
+    if (value < 0.0)
+        return SWMM_ERR_BADPARAM;
     for (std::size_t k = 0; k < rx.init_elem_idx.size(); ++k) {
-        if ((rx.init_elem_is_link[k] != 0) == (is_link != 0) &&
-            rx.init_elem_idx[k] == elem_idx &&
+        if ((rx.init_elem_is_link[k] != 0) == (is_link != 0) && rx.init_elem_idx[k] == elem_idx &&
             rx.init_elem_species[k] == species_idx) {
-            rx.init_elem_value[k] = value;                    // upsert
+            rx.init_elem_value[k] = value; // upsert
             return SWMM_OK;
         }
     }
@@ -725,14 +809,12 @@ SWMM_ENGINE_API int swmm_reaction_init_elem_set(SWMM_Engine engine,
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_reaction_init_elem_remove(SWMM_Engine engine,
-        int entry_idx) {
+SWMM_ENGINE_API int swmm_reaction_init_elem_remove(SWMM_Engine engine, int entry_idx) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
     auto& rx = ctx.reactions;
-    CHECK_INDEX(entry_idx >= 0 &&
-                entry_idx < static_cast<int>(rx.init_elem_idx.size()));
+    CHECK_INDEX(entry_idx >= 0 && entry_idx < static_cast<int>(rx.init_elem_idx.size()));
     const auto u = static_cast<std::size_t>(entry_idx);
     rx.init_elem_is_link.erase(rx.init_elem_is_link.begin() + u);
     rx.init_elem_idx.erase(rx.init_elem_idx.begin() + u);
@@ -745,29 +827,45 @@ SWMM_ENGINE_API int swmm_reaction_init_elem_remove(SWMM_Engine engine,
 // Whole-file text surface (E-C3)
 // ============================================================================
 
-SWMM_ENGINE_API int swmm_reactions_serialize(SWMM_Engine engine, char* buf,
-        int buflen, int* needed_len) {
+SWMM_ENGINE_API int swmm_reactions_serialize(SWMM_Engine engine, char* buf, int buflen,
+                                             int* needed_len) {
     CHECK_HANDLE(engine);
-    if (!needed_len) return SWMM_ERR_BADPARAM;
-    const std::string text = openswmm::transport::serializeReactionSystem(
-        to_engine(engine)->context());
+    if (!needed_len)
+        return SWMM_ERR_BADPARAM;
+    const std::string text =
+        openswmm::transport::serializeReactionSystem(to_engine(engine)->context());
     *needed_len = static_cast<int>(text.size()) + 1;
-    if (!buf) return SWMM_OK;
-    if (buflen < *needed_len) return SWMM_ERR_BADPARAM;
+    if (!buf)
+        return SWMM_OK;
+    if (buflen < *needed_len)
+        return SWMM_ERR_BADPARAM;
     std::memcpy(buf, text.c_str(), text.size() + 1);
     return SWMM_OK;
 }
 
 namespace {
 
-/// Shared body of check_text (keep=false) and apply_text (keep=true):
-/// parse, strip the current MSX system (preserving the reserved-species
-/// tail so the re-applied block lands back in canonical position), apply,
-/// and either keep or restore. On ANY failure both ctx.reactions and the
-/// registry are restored byte-identical (the staged-swap contract).
-int apply_or_check_text(openswmm::SimulationContext& ctx, const char* text,
-                        char* errbuf, int buflen, bool keep) {
-    if (errbuf && buflen > 0) errbuf[0] = '\0';
+/**
+ * @brief Parse and apply or validate replacement reaction sections with selected-store rollback.
+ *
+ * Preserves trailing reserved species after canonical pollutant/MSX block. Clears diagnostic first;
+ * explicit reported apply errors restore the two backups, while exceptions can bypass rollback.
+ * Does not itself check lifecycle or update every external species-dependent store; no exception
+ * barrier here.
+ *
+ * @param[in,out] ctx Borrowed editable model validated by caller; reactions and species registry
+ *     can be replaced.
+ * @param[in] text Non-NULL nonempty NUL-terminated component configuration; empty returns BADPARAM.
+ * @param[out] errbuf Optional writable buflen-byte diagnostic span; NULL suppresses text.
+ * @param[in] buflen Capacity including terminator; nonpositive suppresses writes.
+ * @param[in] keep True retains successfully applied stores; false restores reaction/registry
+ *     backups after checking.
+ * @return OK for accepted sections, BADPARAM with first parse/apply diagnostic otherwise.
+ */
+int apply_or_check_text(openswmm::SimulationContext& ctx, const char* text, char* errbuf,
+                        int buflen, bool keep) {
+    if (errbuf && buflen > 0)
+        errbuf[0] = '\0';
     if (!text || !*text) {
         if (errbuf && buflen > 0)
             copy_to_buf("empty reactions text", errbuf, buflen);
@@ -775,26 +873,29 @@ int apply_or_check_text(openswmm::SimulationContext& ctx, const char* text,
     }
 
     openswmm::components::ComponentConfigSections sections;
-    const std::string perr = openswmm::components::parse_component_config_text(
-        text, "<text>", sections);
+    const std::string perr =
+        openswmm::components::parse_component_config_text(text, "<text>", sections);
     if (!perr.empty()) {
-        if (errbuf && buflen > 0) copy_to_buf(perr, errbuf, buflen);
+        if (errbuf && buflen > 0)
+            copy_to_buf(perr, errbuf, buflen);
         return SWMM_ERR_BADPARAM;
     }
 
-    auto rx_backup  = ctx.reactions;
+    auto rx_backup = ctx.reactions;
     auto reg_backup = ctx.species_registry;
 
     // Strip: remove the current MSX block but SNAPSHOT everything after it
     // (the reserved species), so the fresh apply's registry adds land in
     // the canonical pollutants < MSX < reserved order.
     auto& reg = ctx.species_registry;
-    auto& rx  = ctx.reactions;
-    const int base = (rx.registry_base >= 0) ? rx.registry_base
-                                             : reg.pollutant_count();
+    auto& rx = ctx.reactions;
+    const int base = (rx.registry_base >= 0) ? rx.registry_base : reg.pollutant_count();
     const int old_msx = (rx.registry_base >= 0) ? rx.n_species() : 0;
-    struct Row { std::string name; openswmm::SpeciesKind kind;
-                 std::string units; };
+    struct Row {
+        std::string name;
+        openswmm::SpeciesKind kind;
+        std::string units;
+    };
     std::vector<Row> tail;
     for (int i = base + old_msx; i < reg.count(); ++i)
         tail.push_back({reg.name(i), reg.kind(i), reg.units(i)});
@@ -804,16 +905,17 @@ int apply_or_check_text(openswmm::SimulationContext& ctx, const char* text,
     std::vector<std::string> errs;
     openswmm::transport::applyReactionSections(ctx, sections, errs);
     if (!errs.empty()) {
-        ctx.reactions        = std::move(rx_backup);
+        ctx.reactions = std::move(rx_backup);
         ctx.species_registry = std::move(reg_backup);
-        if (errbuf && buflen > 0) copy_to_buf(errs.front(), errbuf, buflen);
+        if (errbuf && buflen > 0)
+            copy_to_buf(errs.front(), errbuf, buflen);
         return SWMM_ERR_BADPARAM;
     }
     for (auto& r : tail)
         reg.add(std::move(r.name), r.kind, std::move(r.units));
 
     if (!keep) {
-        ctx.reactions        = std::move(rx_backup);
+        ctx.reactions = std::move(rx_backup);
         ctx.species_registry = std::move(reg_backup);
     }
     return SWMM_OK;
@@ -821,8 +923,8 @@ int apply_or_check_text(openswmm::SimulationContext& ctx, const char* text,
 
 } // namespace
 
-SWMM_ENGINE_API int swmm_reactions_check_text(SWMM_Engine engine,
-        const char* text, char* errbuf, int buflen) {
+SWMM_ENGINE_API int swmm_reactions_check_text(SWMM_Engine engine, const char* text, char* errbuf,
+                                              int buflen) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     // The dry-run stages through the live context (restore-always), so it
@@ -832,16 +934,15 @@ SWMM_ENGINE_API int swmm_reactions_check_text(SWMM_Engine engine,
     return apply_or_check_text(ctx, text, errbuf, buflen, /*keep=*/false);
 }
 
-SWMM_ENGINE_API int swmm_reactions_apply_text(SWMM_Engine engine,
-        const char* text, char* errbuf, int buflen) {
+SWMM_ENGINE_API int swmm_reactions_apply_text(SWMM_Engine engine, const char* text, char* errbuf,
+                                              int buflen) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
     return apply_or_check_text(ctx, text, errbuf, buflen, /*keep=*/true);
 }
 
-SWMM_ENGINE_API int swmm_reactions_save(SWMM_Engine engine,
-        const char* path_or_null) {
+SWMM_ENGINE_API int swmm_reactions_save(SWMM_Engine engine, const char* path_or_null) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
 
@@ -850,19 +951,20 @@ SWMM_ENGINE_API int swmm_reactions_save(SWMM_Engine engine,
         // The bound reactions component's config path — resolved when the
         // model was opened from a file, verbatim otherwise.
         for (const auto& spec : ctx.process_component_specs) {
-            if (spec.id != "org.hydrocouple.openswmm.reactions") continue;
-            path = !spec.resolved_config_path.empty()
-                       ? spec.resolved_config_path
-                       : spec.config_path;
+            if (spec.id != "org.hydrocouple.openswmm.reactions")
+                continue;
+            path =
+                !spec.resolved_config_path.empty() ? spec.resolved_config_path : spec.config_path;
             break;
         }
     }
-    if (path.empty()) return SWMM_ERR_BADPARAM;
+    if (path.empty())
+        return SWMM_ERR_BADPARAM;
 
-    const std::string text =
-        openswmm::transport::serializeReactionSystem(ctx);
+    const std::string text = openswmm::transport::serializeReactionSystem(ctx);
     std::ofstream f(openswmm::io::utf8_path(path), std::ios::binary | std::ios::trunc);
-    if (!f.is_open()) return SWMM_ERR_BADPARAM;
+    if (!f.is_open())
+        return SWMM_ERR_BADPARAM;
     f << text;
     return f.good() ? SWMM_OK : SWMM_ERR_BADPARAM;
 }
@@ -876,15 +978,17 @@ SWMM_ENGINE_API int swmm_reaction_hydvar_count(void) {
     return openswmm::transport::reactionHydVarCount();
 }
 
-SWMM_ENGINE_API int swmm_reaction_hydvar_get(int idx, char* name,
-        int name_len, char* description, int desc_len) {
+SWMM_ENGINE_API int swmm_reaction_hydvar_get(int idx, char* name, int name_len, char* description,
+                                             int desc_len) {
     const char* n = nullptr;
     const char* d = nullptr;
     if (!openswmm::transport::reactionHydVarInfo(idx, &n, &d))
         return SWMM_ERR_BADINDEX;
-    if (!name || name_len <= 0) return SWMM_ERR_BADPARAM;
+    if (!name || name_len <= 0)
+        return SWMM_ERR_BADPARAM;
     copy_to_buf(n, name, name_len);
-    if (description && desc_len > 0) copy_to_buf(d, description, desc_len);
+    if (description && desc_len > 0)
+        copy_to_buf(d, description, desc_len);
     return SWMM_OK;
 }
 
@@ -892,13 +996,13 @@ SWMM_ENGINE_API int swmm_reaction_function_count(void) {
     return openswmm::transport::reactionFunctionCount();
 }
 
-SWMM_ENGINE_API int swmm_reaction_function_get(int idx, char* name,
-        int name_len, int* arity) {
+SWMM_ENGINE_API int swmm_reaction_function_get(int idx, char* name, int name_len, int* arity) {
     const char* n = nullptr;
     int a = 0;
     if (!openswmm::transport::reactionFunctionInfo(idx, &n, &a))
         return SWMM_ERR_BADINDEX;
-    if (!name || name_len <= 0 || !arity) return SWMM_ERR_BADPARAM;
+    if (!name || name_len <= 0 || !arity)
+        return SWMM_ERR_BADPARAM;
     copy_to_buf(n, name, name_len);
     *arity = a;
     return SWMM_OK;

@@ -25,6 +25,9 @@
 #
 # cython: language_level=3
 
+from libc.stdlib cimport malloc, free
+from libc.string cimport strlen
+
 cdef extern from "openswmm_engine.h":
 
     # --- Opaque handles ---
@@ -1693,6 +1696,138 @@ cdef inline void _check(int code) except *:
     msg = swmm_error_message(code)
     py_msg = msg.decode('utf-8') if msg != NULL else ""
     raise_for_code(code, py_msg)
+
+
+cdef inline void _check_engine(int code, SWMM_Engine engine) except *:
+    """Preserve an operation's specific diagnostic, when the engine has one."""
+    cdef const char* msg
+    if code == 0:
+        return
+    from openswmm.engine._exceptions import raise_for_code
+    msg = (swmm_get_last_error_msg(engine)
+           if engine != NULL and swmm_get_last_error(engine) == code else NULL)
+    if msg == NULL or msg[0] == 0:
+        msg = swmm_error_message(code)
+    raise_for_code(code, msg.decode('utf-8', 'replace') if msg != NULL else "")
+
+
+cdef inline str _read_engine_key_string(
+    SWMM_Engine engine, const char* key,
+    int (*getter)(SWMM_Engine, const char*, char*, int)
+):
+    cdef int size = 256
+    cdef char* buf
+    while size <= 64 * 1024 * 1024:
+        buf = <char*>malloc(size)
+        if buf == NULL:
+            raise MemoryError()
+        try:
+            buf[0] = 0
+            _check(getter(engine, key, buf, size))
+            if strlen(buf) < <size_t>(size - 1):
+                return (<bytes>buf).decode('utf-8')
+        finally:
+            free(buf)
+        size *= 2
+    raise ValueError("Engine string exceeds 64 MiB")
+
+
+cdef inline str _read_engine_index_string(
+    SWMM_Engine engine, int index,
+    int (*getter)(SWMM_Engine, int, char*, int)
+):
+    cdef int size = 256
+    cdef char* buf
+    while size <= 64 * 1024 * 1024:
+        buf = <char*>malloc(size)
+        if buf == NULL:
+            raise MemoryError()
+        try:
+            buf[0] = 0
+            _check(getter(engine, index, buf, size))
+            if strlen(buf) < <size_t>(size - 1):
+                return (<bytes>buf).decode('utf-8')
+        finally:
+            free(buf)
+        size *= 2
+    raise ValueError("Engine string exceeds 64 MiB")
+
+
+cdef inline str _read_engine_string(
+    SWMM_Engine engine, int (*getter)(SWMM_Engine, char*, int)
+):
+    cdef int size = 256
+    cdef char* buf
+    while size <= 64 * 1024 * 1024:
+        buf = <char*>malloc(size)
+        if buf == NULL:
+            raise MemoryError()
+        try:
+            buf[0] = 0
+            _check(getter(engine, buf, size))
+            if strlen(buf) < <size_t>(size - 1):
+                return (<bytes>buf).decode('utf-8')
+        finally:
+            free(buf)
+        size *= 2
+    raise ValueError("Engine string exceeds 64 MiB")
+
+
+cdef inline tuple _read_engine_file_path(SWMM_Engine engine,
+                                          SWMM_FilePathRole role,
+                                          const char* owner):
+    cdef int size = 256
+    cdef char* absolute
+    cdef char* original
+    while size <= 64 * 1024 * 1024:
+        absolute = <char*>malloc(size)
+        if absolute == NULL:
+            raise MemoryError()
+        original = <char*>malloc(size)
+        if original == NULL:
+            free(absolute)
+            raise MemoryError()
+        try:
+            absolute[0] = 0
+            original[0] = 0
+            _check(swmm_file_path_get(engine, role, owner,
+                                      absolute, size, original, size))
+            if (strlen(absolute) < <size_t>(size - 1) and
+                    strlen(original) < <size_t>(size - 1)):
+                return ((<bytes>absolute).decode('utf-8'),
+                        (<bytes>original).decode('utf-8'))
+        finally:
+            free(absolute)
+            free(original)
+        size *= 2
+    raise ValueError("Engine file path exceeds 64 MiB")
+
+
+cdef inline tuple _read_engine_plugin(SWMM_Engine engine, int index):
+    cdef int size = 256
+    cdef char* path
+    cdef char* args
+    while size <= 64 * 1024 * 1024:
+        path = <char*>malloc(size)
+        if path == NULL:
+            raise MemoryError()
+        args = <char*>malloc(size)
+        if args == NULL:
+            free(path)
+            raise MemoryError()
+        try:
+            path[0] = 0
+            args[0] = 0
+            _check(swmm_plugin_get(engine, index, path, size, args, size))
+            if (strlen(path) < <size_t>(size - 1) and
+                    strlen(args) < <size_t>(size - 1)):
+                return ((<bytes>path).decode('utf-8'),
+                        (<bytes>args).decode('utf-8'))
+        finally:
+            free(path)
+            free(args)
+        size *= 2
+    raise ValueError("Engine plugin field exceeds 64 MiB")
 
 
 # Function-pointer typedefs for the polymorphic ``_resolve_index`` helper —

@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file UserFlagValuesHandler.hpp
- * @brief [USER_FLAG_VALUES] section handler (R28).
+ * @file      UserFlagValuesHandler.hpp
+ * @brief     [USER_FLAG_VALUES] section handler (R28).
  *
  * @details Parses per-object flag value assignments.  Each row binds a
  *          (ObjectType, ObjectName, FlagName) triple to a typed value.
@@ -38,9 +38,9 @@
  * @see UserFlags.hpp
  * @ingroup engine_input
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_USER_FLAG_VALUES_HANDLER_HPP
@@ -49,15 +49,16 @@
 #include <vector>
 #include <string>
 
-namespace openswmm { struct SimulationContext; }
+namespace openswmm {
+struct SimulationContext;
+}
 
 namespace openswmm::input {
 
 /**
  * @brief Parse [USER_FLAG_VALUES] into ctx.user_flags (per-object values).
  */
-void handle_user_flag_values(SimulationContext& ctx,
-                             const std::vector<std::string>& lines);
+void handle_user_flag_values(SimulationContext& ctx, const std::vector<std::string>& lines);
 
 } /* namespace openswmm::input */
 

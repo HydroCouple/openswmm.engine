@@ -15,13 +15,13 @@
 // limitations under the License.
 
 /**
- * @file HeatWatershed.cpp
- * @brief Phase H5a — temperature on subcatchment surfaces.
+ * @file      HeatWatershed.cpp
+ * @brief     Phase H5a — temperature on subcatchment surfaces.
  *
  * @see plans/transport/HEAT_TRANSPORT_PLAN.md §6 H5a, §6.1
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "HeatWatershed.hpp"
@@ -42,8 +42,8 @@ namespace openswmm::transport {
 
 namespace {
 
-constexpr int    kNSub    = HeatState::kNSubArea;
-constexpr double kTinyVol = 1.0e-12;  ///< ft³
+constexpr int kNSub = HeatState::kNSubArea;
+constexpr double kTinyVol = 1.0e-12; ///< ft³
 
 // `kMaxStepC` lived here: the refuse-above-5-°C bound H5a used to stop the
 // forward-Euler divergence. D-H5d removed it with the divergence — a
@@ -51,58 +51,105 @@ constexpr double kTinyVol = 1.0e-12;  ///< ft³
 // refuse, and keeping a threshold nothing can reach would be a constant that
 // no gate could observe being wrong (lesson 39).
 
-/// What a subarea holding no water reports (plan D-H5c).
-///
-/// A4's age rule — "no water, no age", write 0 — cannot be reused, because
-/// 0 °C is a real temperature and a reader has no way to tell the sentinel
-/// from a freezing puddle. The policy is the deck's choice.
-double dryTemperature(const SimulationContext& ctx, double held,
-                      double t_air_c) noexcept {
+/**
+ * @brief What a subarea holding no water reports (plan D-H5c).
+ *
+ * A4's age rule — "no water, no age", write 0 — cannot be reused, because 0 °C is a real
+ * temperature and a reader has no way to tell the sentinel from a freezing puddle. The policy is
+ * the deck's choice.
+ *
+ * @details Select a dry subarea thermal value from configured policy.
+ * @param[in] ctx Stable dry-element policy.
+ * @param[in] held Prior temperature degC, returned by HOLD or unknown policy.
+ * @param[in] t_air_c Current air temperature degC, returned by AIR.
+ * @return AIR, fixed HeatConfigData default degC or held value; no finite/range validation,
+ * allocation or mutation.
+ */
+double dryTemperature(const SimulationContext& ctx, double held, double t_air_c) noexcept {
     switch (ctx.heat_config.dry_temp_policy) {
-        case DryTempPolicy::AIR:     return t_air_c;
-        case DryTempPolicy::DEFAULT: return HeatConfigData::kDefaultTemp;
-        case DryTempPolicy::HOLD:
-        default:                     return held;
+    case DryTempPolicy::AIR:
+        return t_air_c;
+    case DryTempPolicy::DEFAULT:
+        return HeatConfigData::kDefaultTemp;
+    case DryTempPolicy::HOLD:
+    default:
+        return held;
     }
 }
 
-}  // namespace
+} // namespace
 
-void addRunonTemperature(SimulationContext& ctx, int donor_sc,
-                         int receiver_sc, double q) {
-    if (!ctx.options.heat_transport) return;
+/**
+ * @brief Add donor runoff temperature times routed flow to receiver thermal run-on assembly.
+ * @param[in,out] ctx Enabled thermal state with covered donor runoff and receiver numerator/rate
+ * arrays.
+ * @param[in] donor_sc Valid nonnegative donor subcatchment identity; uncovered returns.
+ * @param[in] receiver_sc Valid nonnegative receiver identity; uncovered returns.
+ * @param[in] q Routed run-on ft3/s; addRunonTemperatureAt accepts only positive values.
+ * @note No queue clearing, water/clock update or allocation; caller owns exclusive run-on
+ * assembly.
+ */
+void addRunonTemperature(SimulationContext& ctx, int donor_sc, int receiver_sc, double q) {
+    if (!ctx.options.heat_transport)
+        return;
     auto& hs = ctx.heat_state;
     const auto ud = static_cast<std::size_t>(donor_sc);
     const auto ur = static_cast<std::size_t>(receiver_sc);
-    if (ud >= hs.subcatch_runoff_temp.size() ||
-        ur >= hs.subcatch_runon_temp_vol_in.size() ||
+    if (ud >= hs.subcatch_runoff_temp.size() || ur >= hs.subcatch_runon_temp_vol_in.size() ||
         ur >= hs.subcatch_runon_temp_rate.size())
         return;
     addRunonTemperatureAt(ctx, receiver_sc, q, hs.subcatch_runoff_temp[ud]);
 }
 
-void addRunonTemperatureAt(SimulationContext& ctx, int receiver_sc, double q,
-                           double temp_c) {
-    if (!ctx.options.heat_transport || !(q > 0.0)) return;
+/**
+ * @brief Add a known-temperature positive run-on carrier to one receiver's thermal numerator.
+ * @param[in,out] ctx Enabled thermal state; writes matching receiver rate and temperature-rate
+ * arrays.
+ * @param[in] receiver_sc Valid nonnegative subcatchment ID; uncovered returns.
+ * @param[in] q Positive finite ft3/s; nonpositive/NaN returns.
+ * @param[in] temp_c Flow temperature degC, copied without finite/range validation.
+ * @note Adds q*temp and q without clearing prior receipts. No physical water/clock/global-ledger
+ * change, allocation or source consumption; exclusive source-assembly phase.
+ */
+void addRunonTemperatureAt(SimulationContext& ctx, int receiver_sc, double q, double temp_c) {
+    if (!ctx.options.heat_transport || !(q > 0.0))
+        return;
     auto& hs = ctx.heat_state;
     const auto ur = static_cast<std::size_t>(receiver_sc);
-    if (ur >= hs.subcatch_runon_temp_vol_in.size() ||
-        ur >= hs.subcatch_runon_temp_rate.size())
+    if (ur >= hs.subcatch_runon_temp_vol_in.size() || ur >= hs.subcatch_runon_temp_rate.size())
         return;
     // Numerator AND denominator, always together. Adding to one without the
     // other is the shape of A3's defect, and keeping them in a single
     // function is what makes that shape hard to write by accident.
     hs.subcatch_runon_temp_vol_in[ur] += q * temp_c;
-    hs.subcatch_runon_temp_rate[ur]   += q;
+    hs.subcatch_runon_temp_rate[ur] += q;
 }
 
-void routeSubcatchmentTemperature(SimulationContext& ctx,
-                                  const runoff::RunoffSoA& soa, double dt) {
-    if (!ctx.options.heat_transport || dt <= 0.0) return;
+/**
+ * @brief Mix snow-adjusted precipitation/run-on and atmospheric heat into subarea thermal
+ * stores.
+ * @param[in,out] ctx Enabled thermal configuration and prepared rain/snow/run-on
+ * receipts/weather; updates subarea degC, old volume ft3, runoff degC and solar forcing.
+ * @param[in] soa Completed runoff geometry: native ft2 area, fractions and new depth ft,
+ * matching sources.
+ * @param[in] dt Positive finite accepted runoff interval s; disabled/nonpositive/no sources
+ * returns.
+ * @note Missing watershed shape reseeds that thermal block. Run-on uses known temperature
+ * carrier ratio when available else rain temperature; accepted hydraulic run-on still sets mixed
+ * volume. Atmospheric exchange acts on old retained water in SI before inflow mixing; dry policy
+ * applies when old and arriving water negligible. Publishes retained-volume-weighted mean, dry
+ * fallback rain (not outgoing-flow-weighted). Does not clear run-on queues or advance
+ * water/clock. Allocation and forcing/dependencies can leave partial updates; exclusive state
+ * and complete parallel extents required.
+ */
+void routeSubcatchmentTemperature(SimulationContext& ctx, const runoff::RunoffSoA& soa, double dt) {
+    if (!ctx.options.heat_transport || dt <= 0.0)
+        return;
 
-    auto& hs  = ctx.heat_state;
+    auto& hs = ctx.heat_state;
     const int nsc = ctx.n_subcatches();
-    if (nsc <= 0) return;
+    if (nsc <= 0)
+        return;
     // Seed from INITIAL_STATE, not kDefaultTemp: that is the source meaning
     // "water already in the model at t = 0", and it is exactly what
     // QualityRouting.cpp:164-166 seeds the node and link temperatures from.
@@ -110,13 +157,12 @@ void routeSubcatchmentTemperature(SimulationContext& ctx,
     // against this value, so seeding it differently from the network would
     // put a discontinuity at the outlet that no gate would name.
     if (!hs.watershedSized(nsc))
-        hs.resizeWatershed(nsc, ctx.heat_config.global_temp[
-            static_cast<int>(HeatSource::INITIAL_STATE)]);
+        hs.resizeWatershed(
+            nsc, ctx.heat_config.global_temp[static_cast<int>(HeatSource::INITIAL_STATE)]);
 
     // Temperature of water arriving from the sky. RAINFALL is the pathway
     // the wet-weather loader already uses, so one table governs both.
-    const double t_rain = ctx.heat_config.global_temp[
-        static_cast<int>(HeatSource::RAINFALL)];
+    const double t_rain = ctx.heat_config.global_temp[static_cast<int>(HeatSource::RAINFALL)];
 
     // Met forcing. These are written in stepRunoff at SWMMEngine.cpp:1379
     // (air), :1424 (wind) and :1431 (humidity), all BEFORE runoff_.execute
@@ -128,10 +174,10 @@ void routeSubcatchmentTemperature(SimulationContext& ctx,
     // with D-H5e, so this function no longer knows which parameters a flux
     // family reads.
     const double t_air = heat::airTempCelsius(ctx);
-    const double rho   = ctx.options.water_density;
-    const double cp    = ctx.options.water_specific_heat;
+    const double rho = ctx.options.water_density;
+    const double cp = ctx.options.water_specific_heat;
 
-    const bool do_surface   = ctx.heat_config.surface_exchange;
+    const bool do_surface = ctx.heat_config.surface_exchange;
     const bool do_radiative = ctx.heat_config.radiative_exchange;
 
     // H6a: this binding runs on the RUNOFF clock, the node/link one on the
@@ -149,23 +195,20 @@ void routeSubcatchmentTemperature(SimulationContext& ctx,
         // See the header: the exchange area cancels in `relaxT`, so only the
         // run-on depth conversion below can see this.
         const double area = soa.area[ui];
-        const double fi   = soa.imperv_pct[ui];
-        const double fp   = 1.0 - fi;
-        const double f0   = soa.frac_imperv0[ui];
-        const double f1   = soa.frac_imperv1[ui];
+        const double fi = soa.imperv_pct[ui];
+        const double fp = 1.0 - fi;
+        const double f0 = soa.frac_imperv0[ui];
+        const double f1 = soa.frac_imperv1[ui];
 
-        const double frac[kNSub]  = {f0, f1, fp};
-        const double depth[kNSub] = {soa.depth_imperv0[ui],
-                                     soa.depth_imperv1[ui],
+        const double frac[kNSub] = {f0, f1, fp};
+        const double depth[kNSub] = {soa.depth_imperv0[ui], soa.depth_imperv1[ui],
                                      soa.depth_perv[ui]};
 
         // Run-on spreads over the whole subcatchment as extra precipitation
         // (Runoff.cpp:331-333), so it mixes into every subarea in proportion
         // to that subarea's share of the inflow.
         const double runon_rate =
-            (ui < ctx.subcatches.runon_inflow.size())
-                ? ctx.subcatches.runon_inflow[ui]
-                : 0.0;
+            (ui < ctx.subcatches.runon_inflow.size()) ? ctx.subcatches.runon_inflow[ui] : 0.0;
 
         // Divide by the rate whose temperature is KNOWN, not by the total
         // run-on. A3 divided by the total while filling the numerator from
@@ -177,12 +220,9 @@ void routeSubcatchmentTemperature(SimulationContext& ctx,
         // `EveryRunonContributorKeepsTemperaturesInsideTheSources` asserts
         // they still match.
         const double known_rate =
-            (ui < hs.subcatch_runon_temp_rate.size())
-                ? hs.subcatch_runon_temp_rate[ui]
-                : 0.0;
+            (ui < hs.subcatch_runon_temp_rate.size()) ? hs.subcatch_runon_temp_rate[ui] : 0.0;
         const double runon_temp =
-            (known_rate > kTinyVol &&
-             ui < hs.subcatch_runon_temp_vol_in.size())
+            (known_rate > kTinyVol && ui < hs.subcatch_runon_temp_vol_in.size())
                 ? hs.subcatch_runon_temp_vol_in[ui] / known_rate
                 : t_rain;
 
@@ -192,9 +232,9 @@ void routeSubcatchmentTemperature(SimulationContext& ctx,
 
         double out_num = 0.0, out_den = 0.0;
         for (int k = 0; k < kNSub; ++k) {
-            const auto idx = ui * static_cast<std::size_t>(kNSub) +
-                             static_cast<std::size_t>(k);
-            if (idx >= hs.subarea_temp.size()) break;
+            const auto idx = ui * static_cast<std::size_t>(kNSub) + static_cast<std::size_t>(k);
+            if (idx >= hs.subarea_temp.size())
+                break;
 
             // S1: the water that ACTUALLY reached THIS subarea — the gage
             // rate on a bare subcatchment, `imelt + rain·(1 − asc)` under a
@@ -217,13 +257,13 @@ void routeSubcatchmentTemperature(SimulationContext& ctx,
             // weighted. Rain routinely outweighs run-on by orders of
             // magnitude, so treating the arrival as pure run-on wherever any
             // exists would hand the whole inflow the donor's temperature.
-            const double t_in = (in_rate > 0.0)
-                ? (rain_rate * t_precip + runon_depth_rate * runon_temp) / in_rate
-                : t_precip;
+            const double t_in =
+                (in_rate > 0.0) ? (rain_rate * t_precip + runon_depth_rate * runon_temp) / in_rate
+                                : t_precip;
 
             const double v_new = depth[k] * frac[k] * area;
             const double v_old = hs.subarea_vol_prev[idx];
-            const double v_in  = in_rate * frac[k] * area * dt;
+            const double v_in = in_rate * frac[k] * area * dt;
             const double a_ft2 = frac[k] * area;
 
             double t = hs.subarea_temp[idx];
@@ -233,7 +273,7 @@ void routeSubcatchmentTemperature(SimulationContext& ctx,
             // A4's answer (write 0) is wrong for a temperature — so the
             // deck's policy decides, and the volume ledger still advances.
             if (v_old <= kTinyVol && v_in <= kTinyVol) {
-                hs.subarea_temp[idx]     = dryTemperature(ctx, t, t_air);
+                hs.subarea_temp[idx] = dryTemperature(ctx, t, t_air);
                 hs.subarea_vol_prev[idx] = v_new;
                 continue;
             }
@@ -255,9 +295,7 @@ void routeSubcatchmentTemperature(SimulationContext& ctx,
                 // the token is passed rather than defaulted so the call
                 // site says WHICH element it means.
                 const HeatElement er = HeatElement::subcatch(i);
-                const auto net_out = [&](double tw) {
-                    return heat::netFluxOut(ctx, er, tw);
-                };
+                const auto net_out = [&](double tw) { return heat::netFluxOut(ctx, er, tw); };
                 // Both flux families are signed POSITIVE OUT of the water, so
                 // they add. There is exactly one sign flip in this program
                 // and it lives inside `relaxT`; a second one here would
@@ -273,9 +311,8 @@ void routeSubcatchmentTemperature(SimulationContext& ctx,
                 // exchanging at all. Relaxation removes both problems: the
                 // step cannot overshoot the equilibrium temperature however
                 // thin the film, so there is nothing left to refuse.
-                t += heat::relaxT(net_out(t), net_out(t + heat::kProbeC),
-                                  heat::kProbeC, a_ft2 * heat::kSqFtToSqM,
-                                  v_old * heat::kCuFtToCuM, dt, rho, cp);
+                t += heat::relaxT(net_out(t), net_out(t + heat::kProbeC), heat::kProbeC,
+                                  a_ft2 * heat::kSqFtToSqM, v_old * heat::kCuFtToCuM, dt, rho, cp);
             }
 
             // 2. What arrived mixes in by GROSS inflow volume — never the
@@ -285,15 +322,14 @@ void routeSubcatchmentTemperature(SimulationContext& ctx,
             //    measured that mistake at 6.3x on the age it produced.
             if (v_in > kTinyVol) {
                 const double denom = v_old + v_in;
-                t = (denom > kTinyVol) ? (t * v_old + t_in * v_in) / denom
-                                       : t_in;
+                t = (denom > kTinyVol) ? (t * v_old + t_in * v_in) / denom : t_in;
             }
 
             // No aging term and NO ZERO FLOOR. `WaterAgeWatershed` clamps
             // with max(a, 0) because a negative age is meaningless; a
             // sub-zero temperature is ordinary, and clamping it would
             // silently manufacture energy on every frozen surface.
-            hs.subarea_temp[idx]     = t;
+            hs.subarea_temp[idx] = t;
             hs.subarea_vol_prev[idx] = v_new;
 
             // 3. Runoff leaves at the volume-weighted mean of the subareas
@@ -306,12 +342,11 @@ void routeSubcatchmentTemperature(SimulationContext& ctx,
             }
         }
         if (ui < hs.subcatch_runoff_temp.size())
-            hs.subcatch_runoff_temp[ui] =
-                (out_den > kTinyVol) ? out_num / out_den : t_rain;
+            hs.subcatch_runoff_temp[ui] = (out_den > kTinyVol) ? out_num / out_den : t_rain;
     }
 
     // The run-on accumulators are zeroed by SWMMEngine::assembleRunon at the
     // start of the next runoff step, beside the flow they describe.
 }
 
-}  // namespace openswmm::transport
+} // namespace openswmm::transport

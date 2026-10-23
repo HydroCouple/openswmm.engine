@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file GpuPluginSycl.cpp
- * @brief Plugin entry points for the Phase 5 Kokkos/SYCL surface solver (Intel).
+ * @file      GpuPluginSycl.cpp
+ * @brief     Plugin entry points for the Phase 5 Kokkos/SYCL surface solver (Intel).
  *
  * @details Exports the GpuPluginAbi.h contract for the openswmm_gpu_sycl
  *          plugin. Same shape as GpuPluginCuda.cpp — the probe advertises an
@@ -45,9 +45,9 @@
  *
  * @ingroup engine_2d_gpu
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "../solver/GpuPluginAbi.h"
@@ -64,29 +64,35 @@
 
 namespace {
 std::mutex initialization_mutex;
+/**
+ * @brief Initialize the plugin execution runtime once under a process-level mutex.
+ * @throws std::runtime_error If Kokkos has already been finalized.
+ * @note Existing initialized Kokkos state is reused; this helper does not finalize it.
+ * Initialization exceptions propagate to the enclosing factory/operation handler. Caller uses
+ * the execution-owner thread.
+ */
 void ensureKokkosInitialized() {
     std::lock_guard<std::mutex> lock(initialization_mutex);
-    if (Kokkos::is_finalized()) throw std::runtime_error("Kokkos runtime has already been finalized");
+    if (Kokkos::is_finalized())
+        throw std::runtime_error("Kokkos runtime has already been finalized");
     if (!Kokkos::is_initialized() && !Kokkos::is_finalized()) {
         Kokkos::initialize();
     }
 }
 } // namespace
 
-extern "C" OPENSWMM_GPU_ABI int
-openswmm_gpu_probe(OpenSwmmGpuProbe* out) {
-    if (out == nullptr) return 1;
+extern "C" OPENSWMM_GPU_ABI int openswmm_gpu_probe(OpenSwmmGpuProbe* out) {
+    if (out == nullptr)
+        return 1;
     std::memset(out, 0, sizeof(*out));
     out->abi_version = OPENSWMM_GPU_ABI_VERSION;
-    out->vendor      = OPENSWMM_GPU_VENDOR_SYCL;
+    out->vendor = OPENSWMM_GPU_VENDOR_SYCL;
 
     try {
-        std::vector<sycl::device> devices =
-            sycl::device::get_devices(sycl::info::device_type::gpu);
+        std::vector<sycl::device> devices = sycl::device::get_devices(sycl::info::device_type::gpu);
         if (devices.empty()) {
             // No usable SYCL GPU — tell the core to fall back to the CPU solver.
-            std::strncpy(out->device_name, "no SYCL device",
-                         sizeof(out->device_name) - 1);
+            std::strncpy(out->device_name, "no SYCL device", sizeof(out->device_name) - 1);
             return 1;
         }
         out->device_count = static_cast<int>(devices.size());
@@ -94,13 +100,12 @@ openswmm_gpu_probe(OpenSwmmGpuProbe* out) {
         const sycl::device& dev = devices.front();
         const std::string name = dev.get_info<sycl::info::device::name>();
         std::strncpy(out->device_name, name.c_str(), sizeof(out->device_name) - 1);
-        out->device_mem_bytes = static_cast<unsigned long long>(
-            dev.get_info<sycl::info::device::global_mem_size>());
-        return 0;  // usable device present
+        out->device_mem_bytes =
+            static_cast<unsigned long long>(dev.get_info<sycl::info::device::global_mem_size>());
+        return 0; // usable device present
     } catch (const sycl::exception&) {
         // Any runtime/driver failure -> no usable device, CPU fallback.
-        std::strncpy(out->device_name, "no SYCL device",
-                     sizeof(out->device_name) - 1);
+        std::strncpy(out->device_name, "no SYCL device", sizeof(out->device_name) - 1);
         return 1;
     }
 }

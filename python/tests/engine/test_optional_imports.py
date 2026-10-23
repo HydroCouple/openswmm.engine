@@ -13,7 +13,7 @@ def test_optional_module_import_contract(module, missing):
     stage = str(Path(openswmm.__file__).parents[1])
     script = f'''
 import sys, importlib.abc
-sys.meta_path[:] = [f for f in sys.meta_path if type(f).__module__ != '_openswmm_editable']
+sys.meta_path[:] = [f for f in sys.meta_path if type(f).__module__ not in ('_openswmm_editable', '_editable_skbc_openswmm')]
 sys.path.insert(0, {stage!r})
 class Block(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):

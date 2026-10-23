@@ -1,7 +1,11 @@
 /**
- * @file GeoPackageSchema.cpp
- * @brief DDL implementation for the OpenSWMM GeoPackage schema.
+ * @file      GeoPackageSchema.cpp
+ * @brief     DDL implementation for the OpenSWMM GeoPackage schema.
  * @ingroup engine_geopackage
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include "GeoPackageSchema.hpp"
@@ -1446,7 +1450,9 @@ void create_schema(sqlite3* db) {
         has_bottom |= column_text(columns.get(), 1) == "bottom_mode";
     columns.reset();
     if (!has_bottom)
-        exec(db, "ALTER TABLE lid_nodes ADD COLUMN bottom_mode INTEGER NOT NULL DEFAULT 0 CHECK(bottom_mode IN (0,1,2))");
+        exec(
+            db,
+            "ALTER TABLE lid_nodes ADD COLUMN bottom_mode INTEGER NOT NULL DEFAULT 0 CHECK(bottom_mode IN (0,1,2))");
     exec(db, PART_B_DDL);
     exec(db, PART_C_DDL);
     exec(db, PART_D_DDL);
@@ -1476,10 +1482,12 @@ void create_schema(sqlite3* db) {
         std::string sql;
         auto old = prepare(db, "SELECT sql FROM sqlite_master WHERE type='table' "
                                "AND name='mesh_2d_triangle_coupling'");
-        if (sqlite3_step(old.get()) == SQLITE_ROW) sql = column_text(old.get(), 0);
+        if (sqlite3_step(old.get()) == SQLITE_ROW)
+            sql = column_text(old.get(), 0);
         old.reset();
         if (sql.find("UNIQUE(simulation_id, tri_idx),") != std::string::npos) {
-            exec(db, "ALTER TABLE mesh_2d_triangle_coupling RENAME TO mesh_2d_triangle_coupling_v1");
+            exec(db,
+                 "ALTER TABLE mesh_2d_triangle_coupling RENAME TO mesh_2d_triangle_coupling_v1");
             exec(db, MESH_2D_TRI_COUPLING_DDL);
             exec(db, "INSERT INTO mesh_2d_triangle_coupling "
                      "(fid, simulation_id, tri_idx, node_id, coupling_cd, coupling_area) "
@@ -1497,15 +1505,17 @@ void create_schema(sqlite3* db) {
     add_missing("mesh_2d_triangle_coupling", "coupling_cd_set", "INTEGER");
     add_missing("mesh_2d_triangle_coupling", "coupling_area_set", "INTEGER");
     exec(db, NODE_2D_COUPLING_DDL);
-    exec(db, "CREATE TABLE IF NOT EXISTS surface_ownership_2d_input (simulation_id TEXT PRIMARY KEY, sections TEXT NOT NULL)");
+    exec(
+        db,
+        "CREATE TABLE IF NOT EXISTS surface_ownership_2d_input (simulation_id TEXT PRIMARY KEY, sections TEXT NOT NULL)");
 }
 
-void register_crs(sqlite3* db, int srs_id, const std::string& org,
-                  int org_id, const std::string& srs_name, const std::string& wkt) {
-    auto stmt = prepare(db,
-        "INSERT OR IGNORE INTO gpkg_spatial_ref_sys "
-        "(srs_name, srs_id, organization, organization_coordsys_id, definition) "
-        "VALUES (?, ?, ?, ?, ?)");
+void register_crs(sqlite3* db, int srs_id, const std::string& org, int org_id,
+                  const std::string& srs_name, const std::string& wkt) {
+    auto stmt =
+        prepare(db, "INSERT OR IGNORE INTO gpkg_spatial_ref_sys "
+                    "(srs_name, srs_id, organization, organization_coordsys_id, definition) "
+                    "VALUES (?, ?, ?, ?, ?)");
     bind_text(stmt.get(), 1, srs_name);
     bind_int(stmt.get(), 2, srs_id);
     bind_text(stmt.get(), 3, org);
@@ -1515,14 +1525,14 @@ void register_crs(sqlite3* db, int srs_id, const std::string& org,
 }
 
 void register_feature_table(sqlite3* db, const std::string& table_name,
-                            const std::string& geom_type, int srs_id,
-                            const std::string& identifier, const std::string& description,
-                            double min_x, double min_y, double max_x, double max_y) {
+                            const std::string& geom_type, int srs_id, const std::string& identifier,
+                            const std::string& description, double min_x, double min_y,
+                            double max_x, double max_y) {
     // gpkg_contents
-    auto stmt = prepare(db,
-        "INSERT OR REPLACE INTO gpkg_contents "
-        "(table_name, data_type, identifier, description, min_x, min_y, max_x, max_y, srs_id) "
-        "VALUES (?, 'features', ?, ?, ?, ?, ?, ?, ?)");
+    auto stmt = prepare(
+        db, "INSERT OR REPLACE INTO gpkg_contents "
+            "(table_name, data_type, identifier, description, min_x, min_y, max_x, max_y, srs_id) "
+            "VALUES (?, 'features', ?, ?, ?, ?, ?, ?, ?)");
     bind_text(stmt.get(), 1, table_name);
     bind_text(stmt.get(), 2, identifier);
     bind_text(stmt.get(), 3, description);
@@ -1534,10 +1544,9 @@ void register_feature_table(sqlite3* db, const std::string& table_name,
     sqlite3_step(stmt.get());
 
     // gpkg_geometry_columns
-    auto stmt2 = prepare(db,
-        "INSERT OR REPLACE INTO gpkg_geometry_columns "
-        "(table_name, column_name, geometry_type_name, srs_id, z, m) "
-        "VALUES (?, 'geom', ?, ?, 0, 0)");
+    auto stmt2 = prepare(db, "INSERT OR REPLACE INTO gpkg_geometry_columns "
+                             "(table_name, column_name, geometry_type_name, srs_id, z, m) "
+                             "VALUES (?, 'geom', ?, ?, 0, 0)");
     bind_text(stmt2.get(), 1, table_name);
     bind_text(stmt2.get(), 2, geom_type);
     bind_int(stmt2.get(), 3, srs_id);
@@ -1545,60 +1554,62 @@ void register_feature_table(sqlite3* db, const std::string& table_name,
 }
 
 void populate_default_variables(sqlite3* db) {
-    auto stmt = prepare(db,
-        "INSERT OR IGNORE INTO variables (name, object_type, category, units, description) "
-        "VALUES (?, ?, ?, ?, ?)");
+    auto stmt = prepare(
+        db, "INSERT OR IGNORE INTO variables (name, object_type, category, units, description) "
+            "VALUES (?, ?, ?, ?, ?)");
 
-    struct VarDef { const char *name, *obj, *cat, *units, *desc; };
+    struct VarDef {
+        const char *name, *obj, *cat, *units, *desc;
+    };
     static const VarDef defs[] = {
         // --- NODE ---
-        {"depth",           "NODE", "STATE", "m",    "Water depth above invert"},
-        {"head",            "NODE", "STATE", "m",    "Hydraulic head"},
-        {"volume",          "NODE", "STATE", "m3",   "Stored water volume"},
-        {"lateral_inflow",  "NODE", "STATE", "CMS",  "Lateral inflow rate"},
-        {"total_inflow",    "NODE", "STATE", "CMS",  "Total inflow rate"},
-        {"overflow",        "NODE", "STATE", "CMS",  "Overflow rate"},
-        {"max_depth",       "NODE", "STAT",  "m",    "Maximum water depth"},
-        {"max_overflow",    "NODE", "STAT",  "CMS",  "Maximum overflow rate"},
-        {"time_flooded",    "NODE", "STAT",  "hours","Duration of flooding"},
+        {"depth", "NODE", "STATE", "m", "Water depth above invert"},
+        {"head", "NODE", "STATE", "m", "Hydraulic head"},
+        {"volume", "NODE", "STATE", "m3", "Stored water volume"},
+        {"lateral_inflow", "NODE", "STATE", "CMS", "Lateral inflow rate"},
+        {"total_inflow", "NODE", "STATE", "CMS", "Total inflow rate"},
+        {"overflow", "NODE", "STATE", "CMS", "Overflow rate"},
+        {"max_depth", "NODE", "STAT", "m", "Maximum water depth"},
+        {"max_overflow", "NODE", "STAT", "CMS", "Maximum overflow rate"},
+        {"time_flooded", "NODE", "STAT", "hours", "Duration of flooding"},
         // --- LINK ---
-        {"flow",            "LINK", "STATE", "CMS",  "Flow rate"},
-        {"depth",           "LINK", "STATE", "m",    "Flow depth"},
-        {"velocity",        "LINK", "STATE", "m/s",  "Flow velocity"},
-        {"volume",          "LINK", "STATE", "m3",   "Stored volume"},
-        {"capacity",        "LINK", "STATE", "-",    "Full-flow capacity fraction"},
-        {"froude",          "LINK", "STATE", "-",    "Froude number"},
-        {"max_flow",        "LINK", "STAT",  "CMS",  "Maximum flow rate"},
-        {"max_velocity",    "LINK", "STAT",  "m/s",  "Maximum flow velocity"},
-        {"max_filling",     "LINK", "STAT",  "frac", "Maximum depth/full depth"},
-        {"time_surcharged", "LINK", "STAT",  "hours","Duration of surcharge"},
+        {"flow", "LINK", "STATE", "CMS", "Flow rate"},
+        {"depth", "LINK", "STATE", "m", "Flow depth"},
+        {"velocity", "LINK", "STATE", "m/s", "Flow velocity"},
+        {"volume", "LINK", "STATE", "m3", "Stored volume"},
+        {"capacity", "LINK", "STATE", "-", "Full-flow capacity fraction"},
+        {"froude", "LINK", "STATE", "-", "Froude number"},
+        {"max_flow", "LINK", "STAT", "CMS", "Maximum flow rate"},
+        {"max_velocity", "LINK", "STAT", "m/s", "Maximum flow velocity"},
+        {"max_filling", "LINK", "STAT", "frac", "Maximum depth/full depth"},
+        {"time_surcharged", "LINK", "STAT", "hours", "Duration of surcharge"},
         // --- SUBCATCH ---
-        {"rainfall",        "SUBCATCH", "STATE", "mm/hr", "Rainfall intensity"},
-        {"snow_depth",      "SUBCATCH", "STATE", "mm",    "Snow depth"},
-        {"evap_loss",       "SUBCATCH", "STATE", "mm",    "Evaporation loss"},
-        {"infil_loss",      "SUBCATCH", "STATE", "mm",    "Infiltration loss"},
-        {"runoff",          "SUBCATCH", "STATE", "CMS",   "Runoff flow rate"},
-        {"gw_flow",         "SUBCATCH", "STATE", "CMS",   "Groundwater outflow"},
-        {"gw_elev",         "SUBCATCH", "STATE", "m",     "Groundwater elevation"},
-        {"soil_moist",      "SUBCATCH", "STATE", "-",     "Soil moisture"},
-        {"precip_volume",   "SUBCATCH", "STAT",  "m3",    "Total precipitation volume"},
-        {"runoff_volume",   "SUBCATCH", "STAT",  "m3",    "Total runoff volume"},
+        {"rainfall", "SUBCATCH", "STATE", "mm/hr", "Rainfall intensity"},
+        {"snow_depth", "SUBCATCH", "STATE", "mm", "Snow depth"},
+        {"evap_loss", "SUBCATCH", "STATE", "mm", "Evaporation loss"},
+        {"infil_loss", "SUBCATCH", "STATE", "mm", "Infiltration loss"},
+        {"runoff", "SUBCATCH", "STATE", "CMS", "Runoff flow rate"},
+        {"gw_flow", "SUBCATCH", "STATE", "CMS", "Groundwater outflow"},
+        {"gw_elev", "SUBCATCH", "STATE", "m", "Groundwater elevation"},
+        {"soil_moist", "SUBCATCH", "STATE", "-", "Soil moisture"},
+        {"precip_volume", "SUBCATCH", "STAT", "m3", "Total precipitation volume"},
+        {"runoff_volume", "SUBCATCH", "STAT", "m3", "Total runoff volume"},
         // --- SYSTEM ---
-        {"air_temp",        "SYSTEM", "CLIMATE", "C",     "Air temperature"},
-        {"rainfall",        "SYSTEM", "CLIMATE", "mm/hr", "System rainfall"},
-        {"snow_depth",      "SYSTEM", "CLIMATE", "mm",    "System snow depth"},
-        {"infil",           "SYSTEM", "STATE",   "mm/hr", "Total infiltration rate"},
-        {"runoff",          "SYSTEM", "STATE",   "CMS",   "Total runoff flow"},
-        {"dw_inflow",       "SYSTEM", "STATE",   "CMS",   "Total dry weather inflow"},
-        {"gw_inflow",       "SYSTEM", "STATE",   "CMS",   "Total groundwater inflow"},
-        {"ii_inflow",       "SYSTEM", "STATE",   "CMS",   "Total RDII inflow"},
-        {"ext_inflow",      "SYSTEM", "STATE",   "CMS",   "Total external inflow"},
-        {"total_inflow",    "SYSTEM", "STATE",   "CMS",   "Total lateral inflow"},
-        {"flooding",        "SYSTEM", "STATE",   "CMS",   "Total flooding"},
-        {"outflow",         "SYSTEM", "STATE",   "CMS",   "Total outflow"},
-        {"storage",         "SYSTEM", "STATE",   "m3",    "Total storage volume"},
-        {"evap",            "SYSTEM", "STATE",   "mm/day","Total evaporation rate"},
-        {"pet",             "SYSTEM", "STATE",   "mm/day","Potential evapotranspiration"},
+        {"air_temp", "SYSTEM", "CLIMATE", "C", "Air temperature"},
+        {"rainfall", "SYSTEM", "CLIMATE", "mm/hr", "System rainfall"},
+        {"snow_depth", "SYSTEM", "CLIMATE", "mm", "System snow depth"},
+        {"infil", "SYSTEM", "STATE", "mm/hr", "Total infiltration rate"},
+        {"runoff", "SYSTEM", "STATE", "CMS", "Total runoff flow"},
+        {"dw_inflow", "SYSTEM", "STATE", "CMS", "Total dry weather inflow"},
+        {"gw_inflow", "SYSTEM", "STATE", "CMS", "Total groundwater inflow"},
+        {"ii_inflow", "SYSTEM", "STATE", "CMS", "Total RDII inflow"},
+        {"ext_inflow", "SYSTEM", "STATE", "CMS", "Total external inflow"},
+        {"total_inflow", "SYSTEM", "STATE", "CMS", "Total lateral inflow"},
+        {"flooding", "SYSTEM", "STATE", "CMS", "Total flooding"},
+        {"outflow", "SYSTEM", "STATE", "CMS", "Total outflow"},
+        {"storage", "SYSTEM", "STATE", "m3", "Total storage volume"},
+        {"evap", "SYSTEM", "STATE", "mm/day", "Total evaporation rate"},
+        {"pet", "SYSTEM", "STATE", "mm/day", "Potential evapotranspiration"},
     };
 
     for (const auto& v : defs) {

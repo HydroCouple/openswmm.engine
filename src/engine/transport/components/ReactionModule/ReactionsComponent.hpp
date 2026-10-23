@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file ReactionsComponent.hpp
- * @brief The `org.hydrocouple.openswmm.reactions` process component —
+ * @file      ReactionsComponent.hpp
+ * @brief     The `org.hydrocouple.openswmm.reactions` process component —
  *        phase R1: parse `model.rxn` [REACTION_*] sections into
  *        ReactionData + the species registry.
  *
@@ -32,9 +32,9 @@
  *
  * @ingroup engine_transport
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_TRANSPORT_REACTIONS_COMPONENT_HPP
@@ -72,8 +72,7 @@ void applyReactionSections(SimulationContext& ctx,
 /// apply them with a style warning — unless an external reactions component
 /// was registered, in which case the external file wins wholesale and the
 /// embedded sections are reported ignored.
-void applyEmbeddedReactionSections(SimulationContext& ctx,
-                                   bool external_component_registered,
+void applyEmbeddedReactionSections(SimulationContext& ctx, bool external_component_registered,
                                    std::vector<std::string>& errors);
 
 /// Recompile every reaction expression (terms, pipes, tanks) into a fresh
@@ -82,9 +81,8 @@ void applyEmbeddedReactionSections(SimulationContext& ctx,
 /// D-RC4, no second compiler). Returns true and sets rx.compiled on
 /// success; on failure appends diagnostics and leaves rx.compiled false
 /// (the pool/spans hold the partial result — callers roll back or clear).
-bool recompileReactionSystem(SimulationContext& ctx,
-                             std::vector<std::string>& errors);
+bool recompileReactionSystem(SimulationContext& ctx, std::vector<std::string>& errors);
 
-}  // namespace openswmm::transport
+} // namespace openswmm::transport
 
-#endif  // OPENSWMM_ENGINE_TRANSPORT_REACTIONS_COMPONENT_HPP
+#endif // OPENSWMM_ENGINE_TRANSPORT_REACTIONS_COMPONENT_HPP

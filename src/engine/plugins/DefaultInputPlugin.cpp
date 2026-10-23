@@ -15,15 +15,15 @@
 // limitations under the License.
 
 /**
- * @file DefaultInputPlugin.cpp
- * @brief DefaultInputPlugin — reads/writes SWMM .inp files.
+ * @file      DefaultInputPlugin.cpp
+ * @brief     DefaultInputPlugin — reads/writes SWMM .inp files.
  *
  * @see DefaultInputPlugin.hpp
  * @ingroup engine_plugins
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "DefaultInputPlugin.hpp"
@@ -55,7 +55,44 @@
 #include "../input/handlers/SpatialHandler.hpp"
 #include "../input/handlers/InfraHandler.hpp"
 
+#include "../input/InputReader.hpp"
+#include "../core/SimulationContext.hpp"
+#include <sstream>
+#ifdef OPENSWMM_HAS_2D
+#include "../2d/SurfaceRouter2D.hpp"
+#include "../2d/input/SectionHandlers2D.hpp"
+#include "../2d/quality/SurfaceQuality2D.hpp"
+#include "../2d/gw/GwTransportSections.hpp"
+#include "../2d/subsurface/SubsurfaceSections.hpp"
+#endif
+
 namespace openswmm {
+
+void DefaultInputPlugin::registerContextSections(SimulationContext& ctx) {
+#ifdef OPENSWMM_HAS_2D
+    auto* r = ctx.twod_io.surface_router;
+    if (!r)
+        return;
+    twoD::register2DSections(r->mesh(), r->options(), r->pendingBCRows(),
+        r->pendingEdgeConveyanceRows(), r->pendingInitialQualityRows(),
+        r->pendingInitialBedQualityRows(), r->pendingBoundaryQualityRows(), registry_);
+    twoD::registerGwTransportSections(r->gwTransport(), registry_);
+    twoD::registerSurfaceQualitySections(r->surfaceQuality(), registry_);
+    twoD::registerSubsurfaceSections(r->aquiferConfig(), r->aquiferNodeNames(),
+                                    r->aquiferLinkNames(), registry_);
+#else
+    (void)ctx;
+#endif
+}
+
+int DefaultInputPlugin::readText(const std::string& text, SimulationContext& ctx) {
+    registerContextSections(ctx);
+    std::istringstream stream(text);
+    input::InputReader reader(registry_);
+    const bool ok = reader.read_stream(stream, ctx);
+    skipped_sections_ = reader.skipped_sections();
+    return ok ? 0 : -1;
+}
 
 // ============================================================================
 // Constructor
@@ -73,48 +110,48 @@ void DefaultInputPlugin::register_builtin_handlers() {
     auto noop = [](SimulationContext&, const std::vector<std::string>&) {};
 
     // Title / options
-    registry_.register_builtin("TITLE",   input::handle_title);
+    registry_.register_builtin("TITLE", input::handle_title);
     registry_.register_builtin("OPTIONS", input::handle_options);
 
     // Node sections
-    registry_.register_builtin("JUNCTIONS",    input::handle_junctions);
+    registry_.register_builtin("JUNCTIONS", input::handle_junctions);
     registry_.register_builtin("VIRTUAL_JUNCTIONS", input::handle_virtual_junctions);
     registry_.register_builtin("INLET_JUNCTIONS", input::handle_inlet_junctions);
-    registry_.register_builtin("OUTFALLS",     input::handle_outfalls);
-    registry_.register_builtin("DIVIDERS",     input::handle_dividers);
-    registry_.register_builtin("STORAGE",      input::handle_storage);
-    registry_.register_builtin("COORDINATES",  input::handle_coordinates);
+    registry_.register_builtin("OUTFALLS", input::handle_outfalls);
+    registry_.register_builtin("DIVIDERS", input::handle_dividers);
+    registry_.register_builtin("STORAGE", input::handle_storage);
+    registry_.register_builtin("COORDINATES", input::handle_coordinates);
 
     // Link sections
-    registry_.register_builtin("CONDUITS",     input::handle_conduits);
-    registry_.register_builtin("PUMPS",        input::handle_pumps);
-    registry_.register_builtin("ORIFICES",     input::handle_orifices);
-    registry_.register_builtin("WEIRS",        input::handle_weirs);
-    registry_.register_builtin("OUTLETS",      input::handle_outlets);
-    registry_.register_builtin("XSECTIONS",    input::handle_xsections);
-    registry_.register_builtin("TRANSECTS",    input::handle_transects);
-    registry_.register_builtin("LOSSES",       input::handle_losses);
+    registry_.register_builtin("CONDUITS", input::handle_conduits);
+    registry_.register_builtin("PUMPS", input::handle_pumps);
+    registry_.register_builtin("ORIFICES", input::handle_orifices);
+    registry_.register_builtin("WEIRS", input::handle_weirs);
+    registry_.register_builtin("OUTLETS", input::handle_outlets);
+    registry_.register_builtin("XSECTIONS", input::handle_xsections);
+    registry_.register_builtin("TRANSECTS", input::handle_transects);
+    registry_.register_builtin("LOSSES", input::handle_losses);
 
     // Catchment sections
     registry_.register_builtin("SUBCATCHMENTS", input::handle_subcatchments);
-    registry_.register_builtin("SUBAREAS",      input::handle_subareas);
-    registry_.register_builtin("INFILTRATION",  input::handle_infiltration);
-    registry_.register_builtin("LID_CONTROLS",  input::handle_lid_controls);
-    registry_.register_builtin("LID_USAGE",     input::handle_lid_usage);
+    registry_.register_builtin("SUBAREAS", input::handle_subareas);
+    registry_.register_builtin("INFILTRATION", input::handle_infiltration);
+    registry_.register_builtin("LID_CONTROLS", input::handle_lid_controls);
+    registry_.register_builtin("LID_USAGE", input::handle_lid_usage);
     registry_.register_builtin("LID_LAYER_TREATMENT", lidnode::readTreatment);
     registry_.register_builtin("LID_NODES", lidnode::readNodes);
     registry_.register_builtin("LID_NODE_OUTLETS", lidnode::readOutlets);
     registry_.register_builtin("LID_RICHARDS", lidnode::readRichards);
-    registry_.register_builtin("AQUIFERS",      input::handle_aquifers);
-    registry_.register_builtin("GROUNDWATER",   input::handle_groundwater);
-    registry_.register_builtin("GWF",           input::handle_gwf);
+    registry_.register_builtin("AQUIFERS", input::handle_aquifers);
+    registry_.register_builtin("GROUNDWATER", input::handle_groundwater);
+    registry_.register_builtin("GWF", input::handle_gwf);
 
     // Rain / climate
-    registry_.register_builtin("RAINGAGES",     input::handle_raingages);
-    registry_.register_builtin("EVAPORATION",   input::handle_evaporation);
-    registry_.register_builtin("TEMPERATURE",   input::handle_temperature);
-    registry_.register_builtin("SNOWPACKS",     input::handle_snowpacks);
-    registry_.register_builtin("UEB_OPTIONS",   input::handle_ueb_options);
+    registry_.register_builtin("RAINGAGES", input::handle_raingages);
+    registry_.register_builtin("EVAPORATION", input::handle_evaporation);
+    registry_.register_builtin("TEMPERATURE", input::handle_temperature);
+    registry_.register_builtin("SNOWPACKS", input::handle_snowpacks);
+    registry_.register_builtin("UEB_OPTIONS", input::handle_ueb_options);
     registry_.register_builtin("2D_SNOW_OPTIONS", input::handle_mesh_snow_options);
     registry_.register_builtin("2D_SNOW_DEFAULTS", input::handle_mesh_snow_defaults);
     registry_.register_builtin("2D_SNOW", input::handle_mesh_snow_cells);
@@ -122,32 +159,32 @@ void DefaultInputPlugin::register_builtin_handlers() {
     registry_.register_builtin("2D_NODE_COUPLING", nodecoupling2d::readSection);
 
     // Inflows / loading
-    registry_.register_builtin("INFLOWS",       input::handle_inflows);
-    registry_.register_builtin("DWF",           input::handle_dwf);
-    registry_.register_builtin("RDII",          input::handle_rdii);
-    registry_.register_builtin("HYDROGRAPHS",  input::handle_hydrographs);
-    registry_.register_builtin("RDII_DECAY",    input::handle_rdii_decay);
-    registry_.register_builtin("LOADINGS",      input::handle_loadings);
-    registry_.register_builtin("PATTERNS",      input::handle_patterns);
+    registry_.register_builtin("INFLOWS", input::handle_inflows);
+    registry_.register_builtin("DWF", input::handle_dwf);
+    registry_.register_builtin("RDII", input::handle_rdii);
+    registry_.register_builtin("HYDROGRAPHS", input::handle_hydrographs);
+    registry_.register_builtin("RDII_DECAY", input::handle_rdii_decay);
+    registry_.register_builtin("LOADINGS", input::handle_loadings);
+    registry_.register_builtin("PATTERNS", input::handle_patterns);
 
     // Tables
-    registry_.register_builtin("CURVES",        input::handle_curves);
-    registry_.register_builtin("TIMESERIES",    input::handle_timeseries);
+    registry_.register_builtin("CURVES", input::handle_curves);
+    registry_.register_builtin("TIMESERIES", input::handle_timeseries);
 
     // Water quality
-    registry_.register_builtin("POLLUTANTS",    input::handle_pollutants);
-    registry_.register_builtin("LANDUSES",      input::handle_landuses);
-    registry_.register_builtin("COVERAGES",     input::handle_coverages);
-    registry_.register_builtin("BUILDUP",       input::handle_buildup);
-    registry_.register_builtin("WASHOFF",       input::handle_washoff);
-    registry_.register_builtin("TREATMENT",     input::handle_treatment);
+    registry_.register_builtin("POLLUTANTS", input::handle_pollutants);
+    registry_.register_builtin("LANDUSES", input::handle_landuses);
+    registry_.register_builtin("COVERAGES", input::handle_coverages);
+    registry_.register_builtin("BUILDUP", input::handle_buildup);
+    registry_.register_builtin("WASHOFF", input::handle_washoff);
+    registry_.register_builtin("TREATMENT", input::handle_treatment);
     registry_.register_builtin("INITIAL_QUALITY", input::handle_initial_quality);
 
     // Control / map / reporting
-    registry_.register_builtin("CONTROLS",      input::handle_controls);
-    registry_.register_builtin("VERTICES",      input::handle_vertices);
-    registry_.register_builtin("POLYGONS",      input::handle_polygons);
-    registry_.register_builtin("SYMBOLS",       input::handle_symbols);
+    registry_.register_builtin("CONTROLS", input::handle_controls);
+    registry_.register_builtin("VERTICES", input::handle_vertices);
+    registry_.register_builtin("POLYGONS", input::handle_polygons);
+    registry_.register_builtin("SYMBOLS", input::handle_symbols);
     // [LABELS], [BACKDROP] and [PROFILE] are GUI annotation: legacy SWMM has
     // no `case` for any of them in parseLine, so no engine reads or validates
     // their content. They were registered as no-ops, which meant a model's map
@@ -161,42 +198,40 @@ void DefaultInputPlugin::register_builtin_handlers() {
         };
     };
 
-    registry_.register_builtin("LABELS",        capture("LABELS"));
-    registry_.register_builtin("BACKDROP",      capture("BACKDROP"));
-    registry_.register_builtin("MAP",           input::handle_map);
-    registry_.register_builtin("TAGS",          input::handle_tags);
+    registry_.register_builtin("LABELS", capture("LABELS"));
+    registry_.register_builtin("BACKDROP", capture("BACKDROP"));
+    registry_.register_builtin("MAP", input::handle_map);
+    registry_.register_builtin("TAGS", input::handle_tags);
     // Both spellings: legacy matches section headers by PREFIX (SectWords
     // holds "[PROFILE"), so `[PROFILE]` and `[PROFILES]` are the same section
     // there, while this registry matches the whole tag. Only "PROFILE" was
     // registered — and no deck in the 1396-deck corpus writes that spelling
     // while 59 write `[PROFILES]`, so the handler never once fired and every
     // one of those decks also raised an unknown-section warning.
-    registry_.register_builtin("PROFILE",       capture("PROFILE"));
-    registry_.register_builtin("PROFILES",      capture("PROFILES"));
-    registry_.register_builtin("REPORT",        input::handle_report);
-    registry_.register_builtin("FILES",         input::handle_files);
-    registry_.register_builtin("ADJUSTMENTS",   input::handle_adjustments);
-    registry_.register_builtin("EVENTS",        input::handle_events);
+    registry_.register_builtin("PROFILE", capture("PROFILE"));
+    registry_.register_builtin("PROFILES", capture("PROFILES"));
+    registry_.register_builtin("REPORT", input::handle_report);
+    registry_.register_builtin("FILES", input::handle_files);
+    registry_.register_builtin("ADJUSTMENTS", input::handle_adjustments);
+    registry_.register_builtin("EVENTS", input::handle_events);
 
     // Streets / inlets (legacy s_STREET, s_INLET, s_INLET_USAGE)
-    registry_.register_builtin("STREETS",       input::handle_streets);
-    registry_.register_builtin("INLETS",        input::handle_inlets);
-    registry_.register_builtin("INLET_USAGE",   input::handle_inlet_usage);
+    registry_.register_builtin("STREETS", input::handle_streets);
+    registry_.register_builtin("INLETS", input::handle_inlets);
+    registry_.register_builtin("INLET_USAGE", input::handle_inlet_usage);
 
     // New in 6.0.0
-    registry_.register_builtin("USER_FLAGS",       input::handle_user_flags);
+    registry_.register_builtin("USER_FLAGS", input::handle_user_flags);
     registry_.register_builtin("USER_FLAG_VALUES", input::handle_user_flag_values);
-    registry_.register_builtin("PLUGINS",          input::handle_plugins);
-    registry_.register_builtin("PROCESS_COMPONENTS",
-                               input::handle_process_components);
+    registry_.register_builtin("PLUGINS", input::handle_plugins);
+    registry_.register_builtin("PROCESS_COMPONENTS", input::handle_process_components);
 
     // Embedded component sections (D-UT8 fallback): [REACTION_*] in the
     // legacy .inp are captured verbatim and consumed after component
     // resolution (style warning; external config file wins on conflict).
     for (const auto& tag : transport::reactionSectionTags()) {
-        registry_.register_builtin(tag,
-            [tag](SimulationContext& ctx,
-                  const std::vector<std::string>& lines) {
+        registry_.register_builtin(
+            tag, [tag](SimulationContext& ctx, const std::vector<std::string>& lines) {
                 ctx.embedded_component_sections.emplace_back(tag, lines);
             });
     }
@@ -206,10 +241,8 @@ void DefaultInputPlugin::register_builtin_handlers() {
 // Plugin lifecycle
 // ============================================================================
 
-int DefaultInputPlugin::initialize(
-    const std::vector<std::string>& /*init_args*/,
-    const IPluginComponentInfo* /*info*/)
-{
+int DefaultInputPlugin::initialize(const std::vector<std::string>& /*init_args*/,
+                                   const IPluginComponentInfo* /*info*/) {
     state_ = PluginState::INITIALIZED;
     return 0;
 }
@@ -250,7 +283,8 @@ int DefaultInputPlugin::write(const std::string& path, const SimulationContext& 
     if (err != 0) {
         last_error_ = "Failed to write .inp file: " + path;
         // Losing model data is worth saying even while reporting the failure.
-        for (const auto& w : warns) last_error_ += "\n" + w;
+        for (const auto& w : warns)
+            last_error_ += "\n" + w;
     }
     // On SUCCESS the warnings are collected and deliberately NOT written to
     // last_error_. Putting a non-error in an error channel is worse than the

@@ -15,15 +15,15 @@
 // limitations under the License.
 
 /**
- * @file openswmm_api_common.hpp
- * @brief Internal shared helpers for C API impl files.
+ * @file      openswmm_api_common.hpp
+ * @brief     Internal shared helpers for C API impl files.
  *
  * @details NOT installed — used only by openswmm_*_impl.cpp files.
  *          Provides the opaque-handle cast and common guard macros.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_API_COMMON_HPP
@@ -36,6 +36,16 @@
 #include <cstring>
 #include <algorithm>
 
+/**
+ * @brief Recover the internal engine pointer from an opaque public handle.
+ *
+ * Caller applies handle/lifecycle guards and ensures the object remains alive; a non-NULL arbitrary
+ * pointer is not made valid by this cast.
+ *
+ * @param[in] e Opaque handle originally produced by engine creation, or NULL; no identity/lifetime
+ *     validation.
+ * @return Same pointer cast to SWMMEngine*, possibly NULL; ownership is unchanged.
+ */
 static inline openswmm::SWMMEngine* to_engine(SWMM_Engine e) noexcept {
     return static_cast<openswmm::SWMMEngine*>(e);
 }
@@ -58,68 +68,94 @@ static inline openswmm::SWMMEngine* to_engine(SWMM_Engine e) noexcept {
 // EVAPRATE, RAINDEPTH, ...). Templated on the context type so the include of the
 // full SimulationContext definition is deferred to the impl translation units.
 
-/// Internal SWMM units -> project/display units (getter side).
-template <class Ctx>
-static inline double to_display(const Ctx& ctx, int q, double v) noexcept {
+/**
+ * @brief Scale an internal scalar to project display units.
+ *
+ * Pure multiplicative conversion: absolute temperature requires separate affine offset handling. No
+ * ownership or model-state mutation.
+ *
+ * @param[in] ctx Borrowed context exposing flow-unit options.
+ * @param[in] q Quantity code interpreted by ucf::UCF; caller selects the physical quantity.
+ * @param[in] v Internal-unit value; no finite/range checks.
+ * @return v*UCF(q,options).
+ */
+template <class Ctx> static inline double to_display(const Ctx& ctx, int q, double v) noexcept {
     return v * openswmm::ucf::UCF(q, ctx.options);
 }
 
-/// Project/display units -> internal SWMM units (setter side, reciprocal multiply).
-template <class Ctx>
-static inline double to_internal(const Ctx& ctx, int q, double v) noexcept {
+/**
+ * @brief Scale a display scalar to internal units using a reciprocal factor.
+ *
+ * Pure multiplicative conversion; absolute temperature requires separate affine handling. Caller is
+ * responsible for compatible quantity and unit semantics.
+ *
+ * @param[in] ctx Borrowed context exposing flow-unit options.
+ * @param[in] q Quantity code interpreted by ucf::UCF_inv.
+ * @param[in] v Project display-unit value; no finite/range checks.
+ * @return v*UCF_inv(q,options).
+ */
+template <class Ctx> static inline double to_internal(const Ctx& ctx, int q, double v) noexcept {
     return v * openswmm::ucf::UCF_inv(q, ctx.options);
 }
 
-#define CHECK_HANDLE(e)    do { if (!(e)) return SWMM_ERR_BADHANDLE; } while(0)
-#define CHECK_INDEX(cond)  do { if (!(cond)) return SWMM_ERR_BADINDEX; } while(0)
+#define CHECK_HANDLE(e)                                                                            \
+    do {                                                                                           \
+        if (!(e))                                                                                  \
+            return SWMM_ERR_BADHANDLE;                                                             \
+    } while (0)
+#define CHECK_INDEX(cond)                                                                          \
+    do {                                                                                           \
+        if (!(cond))                                                                               \
+            return SWMM_ERR_BADINDEX;                                                              \
+    } while (0)
 
 // ============================================================================
 // Lifecycle state guards
 // ============================================================================
 
 /// Geometry/topology setters: only BUILDING or OPENED
-#define CHECK_GEOMETRY(ctx) \
-    do { \
-        if ((ctx).state != openswmm::EngineState::BUILDING && \
-            (ctx).state != openswmm::EngineState::OPENED) \
-            return SWMM_ERR_LIFECYCLE; \
-    } while(0)
+#define CHECK_GEOMETRY(ctx)                                                                        \
+    do {                                                                                           \
+        if ((ctx).state != openswmm::EngineState::BUILDING &&                                      \
+            (ctx).state != openswmm::EngineState::OPENED)                                          \
+            return SWMM_ERR_LIFECYCLE;                                                             \
+    } while (0)
 
 /// Model-topology editing (add / remove objects): BUILDING or OPENED.
 /// Explicitly forbids INITIALIZED, STARTED, RUNNING, ENDED — once the
 /// simulation is armed the object-count invariants are baked into
 /// cached solver state that would need a re-init pass to pick up a
 /// new node or link.
-#define CHECK_EDITABLE(ctx) \
-    do { \
-        if ((ctx).state != openswmm::EngineState::BUILDING && \
-            (ctx).state != openswmm::EngineState::OPENED) \
-            return SWMM_ERR_LIFECYCLE; \
-    } while(0)
+#define CHECK_EDITABLE(ctx)                                                                        \
+    do {                                                                                           \
+        if ((ctx).state != openswmm::EngineState::BUILDING &&                                      \
+            (ctx).state != openswmm::EngineState::OPENED)                                          \
+            return SWMM_ERR_LIFECYCLE;                                                             \
+    } while (0)
 
 /// Initial-condition setters: BUILDING, OPENED, or INITIALIZED
-#define CHECK_INITIAL_COND(ctx) \
-    do { \
-        if ((ctx).state != openswmm::EngineState::BUILDING && \
-            (ctx).state != openswmm::EngineState::OPENED && \
-            (ctx).state != openswmm::EngineState::INITIALIZED) \
-            return SWMM_ERR_LIFECYCLE; \
-    } while(0)
+#define CHECK_INITIAL_COND(ctx)                                                                    \
+    do {                                                                                           \
+        if ((ctx).state != openswmm::EngineState::BUILDING &&                                      \
+            (ctx).state != openswmm::EngineState::OPENED &&                                        \
+            (ctx).state != openswmm::EngineState::INITIALIZED)                                     \
+            return SWMM_ERR_LIFECYCLE;                                                             \
+    } while (0)
 
 /// Runtime forcing / state override: only RUNNING
-#define CHECK_RUNNING(ctx) \
-    do { \
-        if ((ctx).state != openswmm::EngineState::RUNNING) \
-            return SWMM_ERR_LIFECYCLE; \
-    } while(0)
+#define CHECK_RUNNING(ctx)                                                                         \
+    do {                                                                                           \
+        if ((ctx).state != openswmm::EngineState::RUNNING)                                         \
+            return SWMM_ERR_LIFECYCLE;                                                             \
+    } while (0)
 
 /// Read-only access: any state where data exists (not CREATED, CLOSED, or ERROR)
-#define CHECK_READABLE(ctx) \
-    do { \
-        if ((ctx).state == openswmm::EngineState::CREATED || \
-            (ctx).state == openswmm::EngineState::CLOSED || \
-            (ctx).state == openswmm::EngineState::ERROR_STATE) \
-            return SWMM_ERR_LIFECYCLE; \
-    } while(0)
+#define CHECK_READABLE(ctx)                                                                        \
+    do {                                                                                           \
+        if ((ctx).state == openswmm::EngineState::CREATED ||                                       \
+            (ctx).state == openswmm::EngineState::CLOSED ||                                        \
+            (ctx).state == openswmm::EngineState::ERROR_STATE)                                     \
+            return SWMM_ERR_LIFECYCLE;                                                             \
+    } while (0)
 
 #endif /* OPENSWMM_API_COMMON_HPP */

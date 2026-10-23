@@ -30,7 +30,7 @@ jobs:
         run: python python/scripts/gen_catalog.py --check
       - name: Check enums, stubs and Cython contracts
         working-directory: python
-        run: python -m pytest tests/test_api_coverage.py tests/test_enum_drift.py tests/test_solver_pxd_attrs.py -q
+        run: python -m pytest tests/test_api_coverage.py tests/test_enum_drift.py tests/test_solver_pxd_attrs.py tests/test_catalog.py -q
 
   minimal-build:
     name: Python without optional features

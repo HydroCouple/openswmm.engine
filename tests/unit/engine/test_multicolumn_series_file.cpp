@@ -1,6 +1,6 @@
 /**
- * @file test_multicolumn_series_file.cpp
- * @brief Parser-level tests for the parse-once multi-column series file
+ * @file      test_multicolumn_series_file.cpp
+ * @brief     Parser-level tests for the parse-once multi-column series file
  *        cache (CSV/TSV/PCSWMM TSF).
  *
  * @details Covers the engine gaps closed by
@@ -17,6 +17,10 @@
  *          Working directory is tests/unit/engine/data/ (see CMakeLists).
  *
  * @see src/engine/input/MultiColumnSeriesFile.{hpp,cpp}
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -39,6 +43,15 @@ namespace dt = openswmm::datetime;
 
 namespace {
 
+/**
+ * @brief Parse one multicolumn reference and record expected success diagnostics.
+ *
+ * Despite its name, uses EXPECT rather than fatal termination: records parser boolean/status
+ * expectations and first diagnostic, then returns. No model is opened and source file is unchanged.
+ *
+ * @param[in] path Existing reference filename borrowed for synchronous parsing.
+ * @return Owned parsed structure, potentially default/partial after nonfatal parser failure.
+ */
 ParsedSeriesFile parseOrDie(const std::string& path) {
     ParsedSeriesFile f;
     std::vector<std::string> errors;
@@ -58,14 +71,14 @@ ParsedSeriesFile parseOrDie(const std::string& path) {
 TEST(MultiColumnSeriesFile, WideCsvParsesUncorrupted) {
     const ParsedSeriesFile f = parseOrDie("rain_series/rain_wide.csv");
 
-    ASSERT_EQ(f.headers.size(), 2001u);      // time + 2000 data columns
-    EXPECT_EQ(f.headers[1],    "G0001");
+    ASSERT_EQ(f.headers.size(), 2001u); // time + 2000 data columns
+    EXPECT_EQ(f.headers[1], "G0001");
     EXPECT_EQ(f.headers[2000], "G2000");
     ASSERT_EQ(f.dates.size(), 6u);
 
     // value(c, r) = c + r/10 — spot-check columns far past the 4 KB mark,
     // where the old fixed buffer split the row and shifted the indices.
-    EXPECT_NEAR(f.columns[1][0],    1.0,    1e-12);
+    EXPECT_NEAR(f.columns[1][0], 1.0, 1e-12);
     EXPECT_NEAR(f.columns[1000][3], 1000.3, 1e-12);
     EXPECT_NEAR(f.columns[1999][2], 1999.2, 1e-12);
     EXPECT_NEAR(f.columns[2000][5], 2000.5, 1e-12);
@@ -94,10 +107,10 @@ TEST(MultiColumnSeriesFile, TsfParsesAmPmDatetimes) {
                                      "must be skipped, not read as data";
 
     const double day0 = dt::encodeDate(2020, 1, 1);
-    EXPECT_NEAR(f.dates[0], day0 + dt::encodeTime(0, 0, 0),   1e-9);  // 12:00 AM
-    EXPECT_NEAR(f.dates[1], day0 + dt::encodeTime(0, 15, 0),  1e-9);  // 12:15 AM
-    EXPECT_NEAR(f.dates[2], day0 + dt::encodeTime(13, 30, 0), 1e-9);  // 01:30 PM
-    EXPECT_NEAR(f.dates[3], day0 + dt::encodeTime(23, 45, 0), 1e-9);  // 11:45 PM
+    EXPECT_NEAR(f.dates[0], day0 + dt::encodeTime(0, 0, 0), 1e-9);   // 12:00 AM
+    EXPECT_NEAR(f.dates[1], day0 + dt::encodeTime(0, 15, 0), 1e-9);  // 12:15 AM
+    EXPECT_NEAR(f.dates[2], day0 + dt::encodeTime(13, 30, 0), 1e-9); // 01:30 PM
+    EXPECT_NEAR(f.dates[3], day0 + dt::encodeTime(23, 45, 0), 1e-9); // 11:45 PM
 
     EXPECT_NEAR(f.columns[1][2], 1.20, 1e-12);
     EXPECT_NEAR(f.columns[2][2], 0.60, 1e-12);
@@ -151,8 +164,7 @@ TEST(MultiColumnSeriesFile, SniffIgnoresDelimitersInsideQuotedHeaderNames) {
     const ParsedSeriesFile f = parseOrDie("rain_series/rain_quoted_header.tsv");
 
     ASSERT_EQ(f.headers.size(), 2u);
-    EXPECT_EQ(f.headers[1], "Rain, North, mm")
-        << "the quoted name is one column, commas and all";
+    EXPECT_EQ(f.headers[1], "Rain, North, mm") << "the quoted name is one column, commas and all";
     EXPECT_EQ(f.find_column("rain, north, mm"), 1);
 
     ASSERT_EQ(f.dates.size(), 3u);
@@ -278,8 +290,8 @@ TEST(MultiColumnSeriesFile, MalformedRowsAreCountedNotFatal) {
 TEST(MultiColumnSeriesFile, TsfRedundantMeridiemKeeps24HourClock) {
     const double day = dt::encodeDate(2019, 1, 1);
     for (int hour : {0, 1, 11, 12, 13, 20, 23}) {
-        const std::string stamp = "01/01/2019 " + std::to_string(hour)
-            + ":15:00 " + (hour < 12 ? "AM" : "PM");
+        const std::string stamp =
+            "01/01/2019 " + std::to_string(hour) + ":15:00 " + (hour < 12 ? "AM" : "PM");
         double actual = 0.0;
         ASSERT_TRUE(parse_series_datetime(stamp, actual));
         EXPECT_NEAR(actual, day + dt::encodeTime(hour, 15, 0), 1e-9) << stamp;

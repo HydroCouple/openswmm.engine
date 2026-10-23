@@ -35,6 +35,27 @@ live output reading. Guides document their units, lifecycle and immutable
 snapshot behavior under `python/docs/guide/`. The strict API coverage check is
 `python python/scripts/api_drift_audit.py --strict` from the repository root.
 
+Saved results have a named interface through `Results`. It reads 1D binary
+output and 2D HDF5 output independently of a running solver, including mixed
+meshes, species, envelopes and layered groundwater. Fields expose their units,
+dimensions and time coordinates before loading NumPy arrays:
+
+```python
+from openswmm.engine import Results
+
+with Results.open("model.out", surface="model.2d.h5") as results:
+    depths = results.nodes["J1"].depth.read()
+    flood_map = results.surface.depth.read(periods=-1)
+    cell_history = results.surface.cells[42].depth.read()
+```
+
+See the [results guide](docs/guide/results.rst) for selections, mesh coordinates,
+optional pandas/xarray conversions and lifecycle rules. Read 2D files after the
+writer closes or from an immutable copy; live monitoring remains available for
+1D binary output. `Output2DReader.available()` checks for the optional backend.
+`python python/scripts/api_drift_audit.py --json --coverage` produces the
+per-header coverage table and C-to-Python member map.
+
 Mesh-only first-order groundwater checkpoint sessions support matched optional BULK MSX/pollutant inventories, age-only and heat-only layouts, using WATER_ONLY or paired porous heat, with numerical state or mesh HDF5 output. Live network/catchment chemistry and binary/combined companions retain their separate guards; see the [groundwater guide](docs/guide/groundwater.rst).
 
 After initialization, `solver.surface2d.groundwater.execution_status` reports available and executed groundwater operators, accepted evaluation counts, effective host threads and CPU-owned companions. The optional OpenMP profile computes raw CLOSED_FORM recharge only; the surface backend label does not describe groundwater operator use.

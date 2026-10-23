@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_ard_node_store.cpp
- * @brief The ARD node store mixes before it discharges, at any ROUTING_STEP.
+ * @file      test_ard_node_store.cpp
+ * @brief     The ARD node store mixes before it discharges, at any ROUTING_STEP.
  *
  * @details The store used to apply the external load and the face inflows
  *          AFTER reading the donor concentration the outflow faces carry.
@@ -50,9 +50,9 @@
  *            diverged in; the mixed donor is a weighted average, so it
  *            cannot.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -69,16 +69,37 @@
 
 namespace {
 
+/**
+ * @brief Borrow the concrete engine behind an opaque test handle.
+ *
+ * This exact helper performs only an unchecked static_cast and dereference. It does not validate
+ * lifecycle, retain the handle or transfer ownership; fixture code may use the reference to inspect
+ * or seed internal state.
+ *
+ * @param[in] engine Live non-null new-engine handle whose concrete allocation is SWMMEngine; caller
+ *     keeps ownership.
+ * @return Mutable engine reference that remains valid until handle destruction or replacement.
+ */
 openswmm::SWMMEngine& as_cpp_engine(SWMM_Engine engine) {
     return *static_cast<openswmm::SWMMEngine*>(engine);
 }
 
-constexpr double kQ = 5.0;      ///< steady inflow, cfs
-constexpr double kCin = 100.0;  ///< steady inflow concentration, mg/L
+constexpr double kQ = 5.0;     ///< steady inflow, cfs
+constexpr double kCin = 100.0; ///< steady inflow concentration, mg/L
 
-/// Five 500 ft conduits in a chain, one steady flow + concentration source
-/// at the head, no decay and no reactions: the exact answer everywhere is
-/// kCin, at every ROUTING_STEP.
+/**
+ * @brief Write a four-hour constant-source ARD/legacy node-storage chain fixture.
+ *
+ * Uses CFS and five 500 ft circular conduits, fixed kQ cfs and kCin mg/L external supply.
+ * Opens/truncates the deck using a local ofstream; parent directories must exist. Stream
+ * open/write/close outcomes are not checked, and sidecar names/text are not escaped. Caller-owned
+ * inputs are not retained.
+ *
+ * @param[in] path Destination deck filename, non-null when a character pointer; borrowed only
+ *     during this call. Existing files are truncated.
+ * @param[in] routing_step Authored routing step in seconds; expected positive, unchecked.
+ * @param[in] ard True emits QUALITY_SOLVER EULERIAN_ARD; false emits LEGACY.
+ */
 void write_deck(const char* path, int routing_step, bool ard) {
     std::ofstream f(path);
     f << "[TITLE]\nARD node store\n\n[OPTIONS]\n"
@@ -107,12 +128,25 @@ void write_deck(const char* path, int routing_step, bool ard) {
 }
 
 struct StoreRun {
-    std::vector<double> link_final;  ///< [link] mg/L at the end
-    double peak_link = 0.0;          ///< max over ALL links and ALL steps
+    std::vector<double> link_final; ///< [link] mg/L at the end
+    double peak_link = 0.0;         ///< max over ALL links and ALL steps
     double peak_node = 0.0;
     bool ok = false;
 };
 
+/**
+ * @brief Run a node-store transport fixture and capture first-pollutant peaks.
+ *
+ * Requires the authored nonempty pollutant arrays. Owns/destroys engine, samples every successful
+ * call including terminal state and caps at 200000 positive-time calls; guard exhaustion can still
+ * set ok=true. End status is ignored and partial peak data survive failure; artifacts remain.
+ *
+ * @param[in] tag Non-null safe cwd artifact prefix.
+ * @param[in] routing_step Positive authored routing interval seconds.
+ * @param[in] ard True selects ARD in write_deck; false comparison quality solver.
+ * @return Owned peak node/link concentrations and final link samples; ok=false on lifecycle/step
+ *     refusal.
+ */
 StoreRun run_deck(const char* tag, int routing_step, bool ard) {
     StoreRun r;
     const std::string inp = std::string(tag) + ".inp";
@@ -121,11 +155,12 @@ StoreRun run_deck(const char* tag, int routing_step, bool ard) {
     write_deck(inp.c_str(), routing_step, ard);
 
     SWMM_Engine e = swmm_engine_create();
-    if (e == nullptr) { ADD_FAILURE() << "engine create"; return r; }
-    if (swmm_engine_open(e, inp.c_str(), rpt.c_str(), out.c_str(), nullptr) !=
-            SWMM_OK ||
-        swmm_engine_initialize(e) != SWMM_OK ||
-        swmm_engine_start(e, 1) != SWMM_OK) {
+    if (e == nullptr) {
+        ADD_FAILURE() << "engine create";
+        return r;
+    }
+    if (swmm_engine_open(e, inp.c_str(), rpt.c_str(), out.c_str(), nullptr) != SWMM_OK ||
+        swmm_engine_initialize(e) != SWMM_OK || swmm_engine_start(e, 1) != SWMM_OK) {
         ADD_FAILURE() << "open/init/start failed for " << inp;
         swmm_engine_destroy(e);
         return r;
@@ -145,13 +180,9 @@ StoreRun run_deck(const char* tag, int routing_step, bool ard) {
         // Sample the peak at EVERY step. Mass manufacture is a transient
         // that can relax away before the run ends.
         for (int l = 0; l < nl; ++l)
-            r.peak_link = std::max(
-                r.peak_link,
-                ctx.links.conc[static_cast<std::size_t>(l * np)]);
+            r.peak_link = std::max(r.peak_link, ctx.links.conc[static_cast<std::size_t>(l * np)]);
         for (int j = 0; j < nn; ++j)
-            r.peak_node = std::max(
-                r.peak_node,
-                ctx.nodes.conc[static_cast<std::size_t>(j * np)]);
+            r.peak_node = std::max(r.peak_node, ctx.nodes.conc[static_cast<std::size_t>(j * np)]);
     } while (elapsed > 0.0 && ++guard < 200000);
     swmm_engine_end(e);
     r.link_final.assign(static_cast<std::size_t>(nl), 0.0);
@@ -204,11 +235,12 @@ TEST(ArdNodeStoreTest, NoElementEverExceedsTheInflowConcentration) {
         // the network. Exceeding it is mass created from nothing — measured
         // at 7730 mg/L (rs=20) and 502.95 (rs=10) before the fix.
         EXPECT_LE(ard.peak_link, kCin * (1.0 + 1.0e-9))
-            << "a link exceeded the inflow concentration at ROUTING_STEP "
-            << rs << " — mass was manufactured";
+            << "a link exceeded the inflow concentration at ROUTING_STEP " << rs
+            << " — mass was manufactured";
         EXPECT_LE(ard.peak_node, kCin * (1.0 + 1.0e-9))
             << "a node store exceeded the inflow concentration at "
-               "ROUTING_STEP " << rs;
+               "ROUTING_STEP "
+            << rs;
     }
 }
 
@@ -253,7 +285,9 @@ TEST(ArdNodeStoreTest, DrainingStorageNodeNeverExceedsItsInitialConcentration) {
              "QUALITY_SOLVER EULERIAN_ARD\n"
              "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
              "END_DATE 01/01/2026\nEND_TIME 02:00:00\n"
-             "ROUTING_STEP " << rs << "\nREPORT_STEP 00:01:00\n\n"
+             "ROUTING_STEP "
+          << rs
+          << "\nREPORT_STEP 00:01:00\n\n"
              // InitDepth must be NON-ZERO or initQuality discards Cinit and
              // the deck holds no pollutant at all — the E3 lesson.
              "[STORAGE]\nS1 5.0 12.0 8.0 FUNCTIONAL 1000 0 0\n\n"
@@ -263,14 +297,16 @@ TEST(ArdNodeStoreTest, DrainingStorageNodeNeverExceedsItsInitialConcentration) {
              "C2 J1 OUT 200 0.013 0 0 0\n\n"
              "[XSECTIONS]\nC1 CIRCULAR 3.0 0 0 0\n"
              "C2 CIRCULAR 3.0 0 0 0\n\n"
-             "[POLLUTANTS]\nTSS MG/L 0 0 0 0 NO * 0 0 " << kCin << "\n\n"
+             "[POLLUTANTS]\nTSS MG/L 0 0 0 0 NO * 0 0 "
+          << kCin
+          << "\n\n"
              "[REPORT]\nINPUT NO\n";
         f.close();
 
         SWMM_Engine e = swmm_engine_create();
         ASSERT_NE(e, nullptr);
-        ASSERT_EQ(swmm_engine_open(e, kInp, "_ns_drain.rpt", "_ns_drain.out",
-                                   nullptr), SWMM_OK) << "rs=" << rs;
+        ASSERT_EQ(swmm_engine_open(e, kInp, "_ns_drain.rpt", "_ns_drain.out", nullptr), SWMM_OK)
+            << "rs=" << rs;
         ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK) << "rs=" << rs;
         ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK) << "rs=" << rs;
         auto& ctx = as_cpp_engine(e).context();
@@ -283,23 +319,21 @@ TEST(ArdNodeStoreTest, DrainingStorageNodeNeverExceedsItsInitialConcentration) {
         do {
             ASSERT_EQ(swmm_engine_step(e, &elapsed), SWMM_OK) << "rs=" << rs;
             for (int l = 0; l < ctx.n_links(); ++l)
-                peak = std::max(peak,
-                                ctx.links.conc[static_cast<std::size_t>(l * np)]);
+                peak = std::max(peak, ctx.links.conc[static_cast<std::size_t>(l * np)]);
             for (int j = 0; j < ctx.n_nodes(); ++j)
-                peak = std::max(peak,
-                                ctx.nodes.conc[static_cast<std::size_t>(j * np)]);
+                peak = std::max(peak, ctx.nodes.conc[static_cast<std::size_t>(j * np)]);
         } while (elapsed > 0.0 && ++guard < 200000);
         swmm_engine_end(e);
         swmm_engine_destroy(e);
 
-        EXPECT_GT(peak, 0.5 * kCin)
-            << "rs=" << rs << ": the deck never carried pollutant, so the "
-               "bound below is vacuous (check the storage InitDepth)";
+        EXPECT_GT(peak, 0.5 * kCin) << "rs=" << rs
+                                    << ": the deck never carried pollutant, so the "
+                                       "bound below is vacuous (check the storage InitDepth)";
         EXPECT_LE(peak, kCin * (1.0 + 1.0e-9))
-            << "rs=" << rs << ": a draining storage node produced "
-            << peak << " mg/L from an initial " << kCin
+            << "rs=" << rs << ": a draining storage node produced " << peak
+            << " mg/L from an initial " << kCin
             << " — concentration manufactured with no inflow to blame";
     }
 }
 
-}  // namespace
+} // namespace

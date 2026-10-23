@@ -15,6 +15,15 @@
 // platform" on Darwin arm64, which is why the existing ASan build never caught
 // this.  So measure the allocator directly instead.
 
+/**
+ * @file      main.cpp
+ * @brief     Application entry point and startup configuration.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
+ */
+
 #include "OdeSolver.hpp"
 
 #include <mach/mach.h>
@@ -27,45 +36,77 @@
 
 namespace {
 
-constexpr int kN       = 65536;  // doubles per equation array
-constexpr int kThreads = 16;     // sequential create/join cycles
+constexpr int kN = 65536;    // doubles per equation array
+constexpr int kThreads = 16; // sequential create/join cycles
 
 // Bytes the workspace holds for a given n: five n-arrays plus the flat n*5 ak.
 constexpr double kWorkspaceBytes = 80.0 * kN;
 
+/**
+ * @brief Read Darwin allocator bytes currently in use.
+ * @return mstats().bytes_used for this process; no allocation-scope isolation or explicit error
+ *     handling.
+ */
 size_t heapBytesUsed() {
     return mstats().bytes_used;
 }
 
+/**
+ * @brief Read Darwin process resident memory for the leak diagnostic.
+ * @return mach_task_basic_info resident bytes, or zero when task_info fails.
+ */
 size_t rssBytes() {
     mach_task_basic_info_data_t info{};
     mach_msg_type_number_t count = MACH_TASK_BASIC_INFO_COUNT;
-    if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO,
-                  reinterpret_cast<task_info_t>(&info), &count) != KERN_SUCCESS)
+    if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO, reinterpret_cast<task_info_t>(&info),
+                  &count) != KERN_SUCCESS)
         return 0;
     return info.resident_size;
 }
 
 // One full integration on the calling thread, touching every workspace buffer.
+/**
+ * @brief Allocate and exercise a large ODE workspace on the calling thread.
+ *
+ * Integrates 65,536 constant equations over [0,1] with zero derivatives, touching the workspace
+ * arrays. Local equation storage is released on return and thread-local solver storage follows the
+ * production lifetime. Prints an error and aborts the process if integration does not return
+ * ODE_OK.
+ */
 void integrateOnce() {
     std::vector<double> y(kN, 1.0);
-    const int rc = openswmm::ode::integrate(
-        y.data(), kN, 0.0, 1.0, 1.0e-6, 1.0,
-        [](double, const double*, double* dydx) {
-            for (int i = 0; i < kN; ++i) dydx[i] = 0.0;
-        });
+    const int rc = openswmm::ode::integrate(y.data(), kN, 0.0, 1.0, 1.0e-6, 1.0,
+                                            [](double, const double*, double* dydx) {
+                                                for (int i = 0; i < kN; ++i)
+                                                    dydx[i] = 0.0;
+                                            });
     if (rc != openswmm::ode::ODE_OK) {
         std::fprintf(stderr, "integrate() returned %d, expected ODE_OK\n", rc);
         std::abort();
     }
 }
 
+/**
+ * @brief Convert a signed byte count to binary mebibytes.
+ *
+ * @param[in] bytes Signed byte total or delta; negative differences are preserved.
+ * @return bytes / 1024^2 as double.
+ */
 double toMiB(long long bytes) {
     return static_cast<double>(bytes) / (1024.0 * 1024.0);
 }
 
-}  // namespace
+} // namespace
 
+/**
+ * @brief Measure whether ODE workspaces survive sequential worker-thread exits.
+ *
+ * Runs one warmup thread and sixteen sequential integration/join cycles, then prints heap/RSS
+ * deltas and a verdict. Darwin-specific measurements are diagnostic; RSS does not determine the
+ * verdict. Thread/allocation exceptions can escape and integration failure aborts.
+ * @return One if allocator heap growth exceeds one quarter of the predicted 16-workspace leak,
+ *     otherwise zero.
+ */
 int main() {
     // Warm-up thread amortises one-time runtime/TLS/allocator first-touch so the
     // baseline below is steady state rather than startup.
@@ -75,7 +116,7 @@ int main() {
     }
 
     const size_t heap0 = heapBytesUsed();
-    const size_t rss0  = rssBytes();
+    const size_t rss0 = rssBytes();
 
     for (int i = 0; i < kThreads; ++i) {
         std::thread t(integrateOnce);
@@ -83,17 +124,16 @@ int main() {
     }
 
     const size_t heap1 = heapBytesUsed();
-    const size_t rss1  = rssBytes();
+    const size_t rss1 = rssBytes();
 
-    const double heapDeltaMiB = toMiB(static_cast<long long>(heap1) -
-                                      static_cast<long long>(heap0));
-    const double rssDeltaMiB  = toMiB(static_cast<long long>(rss1) -
-                                      static_cast<long long>(rss0));
-    const double expectedMiB  = toMiB(static_cast<long long>(
-                                    kThreads * kWorkspaceBytes));
+    const double heapDeltaMiB =
+        toMiB(static_cast<long long>(heap1) - static_cast<long long>(heap0));
+    const double rssDeltaMiB = toMiB(static_cast<long long>(rss1) - static_cast<long long>(rss0));
+    const double expectedMiB = toMiB(static_cast<long long>(kThreads * kWorkspaceBytes));
 
     std::printf("n per integrate      : %d\n", kN);
-    std::printf("workspace per thread : %.2f MiB\n", toMiB(static_cast<long long>(kWorkspaceBytes)));
+    std::printf("workspace per thread : %.2f MiB\n",
+                toMiB(static_cast<long long>(kWorkspaceBytes)));
     std::printf("threads (seq)        : %d\n", kThreads);
     std::printf("expected if leaking  : %.2f MiB\n", expectedMiB);
     std::printf("heap delta (mstats)  : %.2f MiB\n", heapDeltaMiB);

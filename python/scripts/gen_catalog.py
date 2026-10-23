@@ -267,6 +267,7 @@ UNIT_PATTERNS: list[tuple[str, str]] = [
     (r"in/day (?:for )?us, mm/day (?:for )?si", "evap_rate"),
     (r"mph us, km/hr si", "wind_speed"),
     (r"deg f us, deg c si", "user_temperature"),
+    (r"project temperature(?: units)?", "temperature"),
     (r"cfs for us, cms for si|project flow units|\bflow units\b", "flow"),
     (r"project length/time units|project velocity units|velocity units|ft/s or m/s", "velocity"),
     (r"project volume units|volume units|ft3 or m3|ft³ or m³", "volume"),
@@ -284,19 +285,18 @@ UNIT_PATTERNS: list[tuple[str, str]] = [
     (r"\(mm\)|millimetres|millimeters", "mm"),
     (r"\(in or mm\)|inches or mm", "rain_depth"),
     (r"\(°c\)|\(deg ?c\)|\bdegc\b|degrees c(?:elsius)?\b|°c", "degC"),
+    (r"fraction(?: of full opening)? per second", "1/s"),
     (r"\bin seconds\b|\(seconds\)|\bseconds\b", "s"),
     (r"\bin hours\b|\(hours\)", "h"),
     (r"\bin days\b|\(days\b", "d"),
     (r"\bin percent\b|\bpercentage\b", "percent"),
-    (r"fraction per second", "1/s"),
     (r"\bfraction\b|\(0\.\.1\)|\bratio\b", "fraction"),
     (r"\bdimensionless\b", "dimensionless"),
     (r"\(1/day\)", "1/day"),
     (r"\bw/m2\b|w/m²", "W/m2"),
-    (r"project temperature units", "temperature"),
     (r"project length squared per second", "length2/s"),
-    (r"ft-lb/s", "ft-lb/s"),
-    (r"\(ft3\)", "volume"),
+    (r"ft-lb/s|ft\*lbf/s", "ft-lb/s"),
+    (r"\bft3\b(?!\s*/)", "volume"),
     (r"\(degrees\b", "deg"),
     (r"\(minutes\b", "min"),
 ]
@@ -305,7 +305,7 @@ _STATE_RE = re.compile(r"@param\s+engine\b[^\n]*?\(([A-Z_]+(?:\s*(?:,|or|/)\s*[A
 
 _CALL = re.compile(r"(?:\b(self|cls)\s*\.\s*)?\b([A-Za-z_]\w*)\s*\(")
 # Error reporting runs on every failing call; it is not functionality.
-_NOT_HELPERS = {"_check"}
+_NOT_HELPERS = {"_check", "_check_engine"}
 
 
 _CLASS_BASES = re.compile(r"^\s*(?:cdef\s+)?class\s+(\w+)\s*(?:\(([^)]*)\))?")
@@ -323,14 +323,19 @@ def c_symbols_by_def() -> dict[tuple[str, str], set[str]]:
     Module-level defs use the class ``""``.
     """
     direct: dict[tuple[str, str], set[str]] = defaultdict(set)
+    exported = _audit.collect_c_functions()
     for sym, sites in _audit.pyx_callgraph().items():
+        if sym not in exported:
+            continue
         for _module, cls, name in sites:
             direct[(cls, name)].add(sym)
     calls: dict[tuple[str, str], set[tuple[str, str]]] = defaultdict(set)
     defined: set[tuple[str, str]] = set()
     module_defs: dict[str, int] = defaultdict(int)          # name -> modules defining it
     bases: dict[str, list[str]] = {}
-    for pyx in sorted(ENGINE_DIR.glob("*.pyx")):
+    # Visit implementations first so declaration-only classes cannot hide bases.
+    # Shared .pxd files also contain executable inline helpers.
+    for pyx in [*sorted(ENGINE_DIR.glob("*.pyx")), *sorted(ENGINE_DIR.glob("*.pxd"))]:
         scopes: list[tuple[int, str, str]] = []
         in_extern, extern_indent = False, 0
         for raw in _audit.executable_cython(pyx.read_text(encoding="utf-8")).splitlines():

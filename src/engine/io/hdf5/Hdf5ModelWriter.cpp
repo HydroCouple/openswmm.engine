@@ -15,29 +15,48 @@
 // limitations under the License.
 
 /**
- * @file Hdf5ModelWriter.cpp
- * @brief Columnar HDF5 model serialisation. See STRATEGY.md.
+ * @file      Hdf5ModelWriter.cpp
+ * @brief     Columnar HDF5 model serialisation. See STRATEGY.md.
  * @ingroup engine_hdf5
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "Hdf5ModelWriter.hpp"
 #include "Hdf5Util.hpp"
+#include "core/InpWriter.hpp"
+#include "core/NativeModelBundle.hpp"
 
 #include "core/SimulationContext.hpp"
 #include "core/UnitConversion.hpp"
-#include "data/StorageGeometry.hpp"   // storage_shape_keyword
+#include "data/StorageGeometry.hpp" // storage_shape_keyword
 #include "input/PostParseResolver.hpp"
 
 #include <ctime>
+#include <stdexcept>
+#include <utility>
 #include <string>
 #include <vector>
 
 namespace openswmm::h5io {
 namespace {
+
+template <typename... Args> bool checked_column(hid_t parent, const std::string& name, Args&&... args) {
+    if (!write_column(parent, name, std::forward<Args>(args)...))
+        throw std::runtime_error("HDF5: cannot write dataset " + name);
+    return true;
+}
+template <typename T> void checked_attr(hid_t parent, const std::string& name, T&& value) {
+    if (!write_attr(parent, name, std::forward<T>(value)))
+        throw std::runtime_error("HDF5: cannot write attribute " + name);
+}
+Handle checked_group(hid_t parent, const std::string& name) {
+    auto group = make_group(parent, name);
+    if (!group) throw std::runtime_error("HDF5: cannot create group " + name);
+    return group;
+}
 
 // ---------------------------------------------------------------------------
 // Shape keywords. Written as the LEGACY KEYWORD STRING, never an enum ordinal.
@@ -47,67 +66,126 @@ namespace {
 // the single largest parity defect in the project. A format that stores the
 // keyword cannot reproduce that class of error, and stays readable besides.
 // ---------------------------------------------------------------------------
+/**
+ * @brief Encode a model enum as an authored-format keyword.
+ * @param[in] s LinkData cross-section ordinal; valid stored range is 0..25.
+ * @return Borrowed static legacy shape keyword, or CIRCULAR for an unknown ordinal.
+ */
 const char* shape_keyword(int s) {
     static const char* n[] = {
-        "CIRCULAR","FILLED_CIRCULAR","RECT_CLOSED","RECT_OPEN",
-        "TRAPEZOIDAL","TRIANGULAR","PARABOLIC","POWER","MODBASKETHANDLE",
-        "EGG","HORSESHOE","GOTHIC","CATENARY","SEMIELLIPTICAL",
-        "BASKETHANDLE","SEMICIRCULAR","RECT_TRIANGULAR","RECT_ROUND",
-        "HORIZ_ELLIPSE","VERT_ELLIPSE","ARCH",
-        "IRREGULAR","CUSTOM","FORCE_MAIN","STREET","DUMMY"
-    };
+        "CIRCULAR",     "FILLED_CIRCULAR", "RECT_CLOSED", "RECT_OPEN",       "TRAPEZOIDAL",
+        "TRIANGULAR",   "PARABOLIC",       "POWER",       "MODBASKETHANDLE", "EGG",
+        "HORSESHOE",    "GOTHIC",          "CATENARY",    "SEMIELLIPTICAL",  "BASKETHANDLE",
+        "SEMICIRCULAR", "RECT_TRIANGULAR", "RECT_ROUND",  "HORIZ_ELLIPSE",   "VERT_ELLIPSE",
+        "ARCH",         "IRREGULAR",       "CUSTOM",      "FORCE_MAIN",      "STREET",
+        "DUMMY"};
     return (s >= 0 && s <= 25) ? n[s] : "CIRCULAR";
 }
 
 /// Curve type as the legacy [CURVES] keyword. Same reasoning as the shape
 /// keywords: a string cannot be silently misread the way an ordinal can.
+/**
+ * @brief Encode a model enum as an authored-format keyword.
+ * @param[in] t Curve table type to encode.
+ * @return Borrowed static legacy curve keyword, or STORAGE for an unhandled type.
+ */
 const char* curve_type_keyword(TableType t) {
     switch (t) {
-        case TableType::CURVE_DIVERSION: return "DIVERSION";
-        case TableType::CURVE_RATING:    return "RATING";
-        case TableType::CURVE_SHAPE:     return "SHAPE";
-        case TableType::CURVE_CONTROL:   return "CONTROL";
-        case TableType::CURVE_TIDAL:     return "TIDAL";
-        case TableType::CURVE_WEIR:      return "WEIR";
-        case TableType::CURVE_PUMP1:     return "PUMP1";
-        case TableType::CURVE_PUMP2:     return "PUMP2";
-        case TableType::CURVE_PUMP3:     return "PUMP3";
-        case TableType::CURVE_PUMP4:     return "PUMP4";
-        case TableType::CURVE_PUMP5:     return "PUMP5";
-        default:                         return "STORAGE";
+    case TableType::CURVE_DIVERSION:
+        return "DIVERSION";
+    case TableType::CURVE_RATING:
+        return "RATING";
+    case TableType::CURVE_SHAPE:
+        return "SHAPE";
+    case TableType::CURVE_CONTROL:
+        return "CONTROL";
+    case TableType::CURVE_TIDAL:
+        return "TIDAL";
+    case TableType::CURVE_WEIR:
+        return "WEIR";
+    case TableType::CURVE_PUMP1:
+        return "PUMP1";
+    case TableType::CURVE_PUMP2:
+        return "PUMP2";
+    case TableType::CURVE_PUMP3:
+        return "PUMP3";
+    case TableType::CURVE_PUMP4:
+        return "PUMP4";
+    case TableType::CURVE_PUMP5:
+        return "PUMP5";
+    default:
+        return "STORAGE";
     }
 }
 
+/**
+ * @brief Encode a model enum as an authored-format keyword.
+ * @param[in] t Node type to encode.
+ * @return Borrowed static node keyword, defaulting to JUNCTION.
+ */
 const char* node_type_keyword(NodeType t) {
     switch (t) {
-        case NodeType::OUTFALL: return "OUTFALL";
-        case NodeType::DIVIDER: return "DIVIDER";
-        case NodeType::STORAGE: return "STORAGE";
-        default:                return "JUNCTION";
+    case NodeType::OUTFALL:
+        return "OUTFALL";
+    case NodeType::DIVIDER:
+        return "DIVIDER";
+    case NodeType::STORAGE:
+        return "STORAGE";
+    default:
+        return "JUNCTION";
     }
 }
 
+/**
+ * @brief Encode a model enum as an authored-format keyword.
+ * @param[in] t Link type to encode.
+ * @return Borrowed static link keyword, defaulting to CONDUIT.
+ */
 const char* link_type_keyword(LinkType t) {
     switch (t) {
-        case LinkType::PUMP:    return "PUMP";
-        case LinkType::ORIFICE: return "ORIFICE";
-        case LinkType::WEIR:    return "WEIR";
-        case LinkType::OUTLET:  return "OUTLET";
-        default:                return "CONDUIT";
+    case LinkType::PUMP:
+        return "PUMP";
+    case LinkType::ORIFICE:
+        return "ORIFICE";
+    case LinkType::WEIR:
+        return "WEIR";
+    case LinkType::OUTLET:
+        return "OUTLET";
+    default:
+        return "CONDUIT";
     }
 }
 
 /// Safe element access — a SoA array may legitimately be shorter than the
 /// object count when a model was built through the API rather than parsed.
-template <typename V>
-auto at(const V& v, std::size_t i) -> typename V::value_type {
+/**
+ * @brief Copy an optional SoA element or return a default value.
+ * @tparam V Vector-like container with value_type, size() and indexed access.
+ * @param[in] v Borrowed source container, not modified.
+ * @param[in] i Zero-based requested position.
+ * @return v[i] when i < size(), otherwise a value-initialized value_type.
+ * @note Supports short arrays in API-authored models without reading past them.
+ */
+template <typename V> auto at(const V& v, std::size_t i) -> typename V::value_type {
     return i < v.size() ? v[i] : typename V::value_type{};
 }
 
 /// Node / link name by index, or "" for an unresolved (-1) reference.
+/**
+ * @brief Resolve a node reference to an owned name string.
+ * @param[in] c Borrowed model context containing the corresponding name index.
+ * @param[in] idx Zero-based node index; -1 represents an unresolved reference.
+ * @return Copied name for an in-range index, or an empty string otherwise.
+ */
 std::string node_name(const SimulationContext& c, int idx) {
     return (idx >= 0 && idx < c.n_nodes()) ? c.node_names.name_of(idx) : std::string();
 }
+/**
+ * @brief Resolve a link reference to an owned name string.
+ * @param[in] c Borrowed model context containing the corresponding name index.
+ * @param[in] idx Zero-based link index; -1 represents an unresolved reference.
+ * @return Copied name for an in-range index, or an empty string otherwise.
+ */
 std::string link_name(const SimulationContext& c, int idx) {
     return (idx >= 0 && idx < c.n_links()) ? c.link_names.name_of(idx) : std::string();
 }
@@ -118,14 +196,25 @@ struct UnitWords {
     const char* length;
     const char* area;
     const char* flow;
-    const char* depth_rate;   // [LOSSES] seepage, infiltration rates
+    const char* depth_rate; // [LOSSES] seepage, infiltration rates
 };
 
+/**
+ * @brief Select authored unit labels for exported numeric columns.
+ * @param[in] unit_system Zero for US units, nonzero for SI units.
+ * @return Static labels for length, area, flow and depth rate: ft/ac/cfs/in/hr
+ * for US or m/ha/cms/mm/hr for SI. Returned pointers need no cleanup.
+ */
 UnitWords unit_words(int unit_system) {
     return unit_system == 0 ? UnitWords{"ft", "ac", "cfs", "in/hr"}
-                            : UnitWords{"m",  "ha", "cms", "mm/hr"};
+                            : UnitWords{"m", "ha", "cms", "mm/hr"};
 }
 
+/**
+ * @brief Encode a model enum as an authored-format keyword.
+ * @param[in] fu Flow-unit ordinal in [0, 5].
+ * @return Borrowed static CFS/GPM/MGD/CMS/LPS/MLD keyword; CFS if out of range.
+ */
 const char* flow_units_keyword(int fu) {
     static const char* n[] = {"CFS", "GPM", "MGD", "CMS", "LPS", "MLD"};
     return (fu >= 0 && fu < 6) ? n[fu] : "CFS";
@@ -135,36 +224,60 @@ const char* flow_units_keyword(int fu) {
 // Sections
 // ---------------------------------------------------------------------------
 
+/**
+ * @brief Write schema, authored-unit, title and creation-time root attributes.
+ * @param[in] file Borrowed writable HDF5 file identifier.
+ * @param[in] ctx Borrowed authored-unit model context, not modified.
+ * @param[in] us Zero for US labels, nonzero for SI labels.
+ * @note Writes the current UTC wall-clock creation time. Attribute failures
+ * throw a diagnostic; the file can be partly annotated.
+ */
 void write_root_attrs(hid_t file, const SimulationContext& ctx, int us) {
-    write_attr(file, "schema_version", std::string(kSchemaVersion));
-    write_attr(file, "format", std::string("openswmm-model-hdf5"));
-    write_attr(file, "flow_units",
+    checked_attr(file, "schema_version", std::string(kSchemaVersion));
+    checked_attr(file, "format", std::string("openswmm-model-hdf5"));
+    checked_attr(file, "flow_units",
                std::string(flow_units_keyword(static_cast<int>(ctx.options.flow_units))));
-    write_attr(file, "unit_system", std::string(us == 0 ? "US" : "SI"));
+    checked_attr(file, "unit_system", std::string(us == 0 ? "US" : "SI"));
     // Units are AUTHORED, not the engine's internal feet/cfs — the one thing a
     // consumer most needs to know and the decision STRATEGY.md §4 turns on.
-    write_attr(file, "units_convention", std::string("authored"));
+    checked_attr(file, "units_convention", std::string("authored"));
 
     std::time_t now = std::time(nullptr);
     char stamp[32] = {0};
     std::strftime(stamp, sizeof(stamp), "%Y-%m-%dT%H:%M:%SZ", std::gmtime(&now));
-    write_attr(file, "created_utc", std::string(stamp));
+    checked_attr(file, "created_utc", std::string(stamp));
 
     std::string title;
     for (const auto& line : ctx.title_notes) {
-        if (!title.empty()) title += "\n";
+        if (!title.empty())
+            title += "\n";
         title += line;
     }
-    write_attr(file, "title", title);
+    checked_attr(file, "title", title);
 }
 
+/**
+ * @brief Export common node fields and named node types.
+ * @param[in] file Borrowed writable HDF5 file identifier for the destination.
+ * @param[in] ctx Borrowed consistent model context already converted to
+ * authored units; referenced arrays and indices must agree with object counts.
+ * @param[in] u Borrowed authored unit labels matching ctx's converted values.
+ * @note Creates the section groups/columns when possible. Group and dataset
+ * failures are not aggregated or thrown as a section status, so partial data
+ * may remain. Allocation exceptions propagate. No input is retained.
+ */
 void write_nodes(hid_t file, const SimulationContext& ctx, const UnitWords& u) {
     const int n = ctx.n_nodes();
     std::vector<std::string> name(static_cast<std::size_t>(n)), type, tag, comment;
     std::vector<double> invert, full, init, sur, ponded;
-    type.reserve(name.size()); tag.reserve(name.size()); comment.reserve(name.size());
-    invert.reserve(name.size()); full.reserve(name.size()); init.reserve(name.size());
-    sur.reserve(name.size()); ponded.reserve(name.size());
+    type.reserve(name.size());
+    tag.reserve(name.size());
+    comment.reserve(name.size());
+    invert.reserve(name.size());
+    full.reserve(name.size());
+    init.reserve(name.size());
+    sur.reserve(name.size());
+    ponded.reserve(name.size());
 
     for (int j = 0; j < n; ++j) {
         const auto i = static_cast<std::size_t>(j);
@@ -179,20 +292,31 @@ void write_nodes(hid_t file, const SimulationContext& ctx, const UnitWords& u) {
         ponded.push_back(at(ctx.nodes.ponded_area, i));
     }
 
-    Handle g = make_group(file, "nodes");
-    if (!g) return;
-    write_column(g.get(), "name", name, "node id");
-    write_column(g.get(), "type", type, "JUNCTION | OUTFALL | DIVIDER | STORAGE");
-    write_column(g.get(), "invert_elev", invert, u.length, "invert elevation");
-    write_column(g.get(), "full_depth", full, u.length, "depth from invert to ground");
-    write_column(g.get(), "init_depth", init, u.length, "initial water depth");
-    write_column(g.get(), "sur_depth", sur, u.length, "surcharge depth above ground");
-    write_column(g.get(), "ponded_area", ponded,
-                 std::string(u.length) + "^2", "ponded surface area when flooded");
-    write_column(g.get(), "tag", tag, "user tag");
-    write_column(g.get(), "comment", comment, "authored comment");
+    Handle g = checked_group(file, "nodes");
+    if (!g)
+        return;
+    checked_column(g.get(), "name", name, "node id");
+    checked_column(g.get(), "type", type, "JUNCTION | OUTFALL | DIVIDER | STORAGE");
+    checked_column(g.get(), "invert_elev", invert, u.length, "invert elevation");
+    checked_column(g.get(), "full_depth", full, u.length, "depth from invert to ground");
+    checked_column(g.get(), "init_depth", init, u.length, "initial water depth");
+    checked_column(g.get(), "sur_depth", sur, u.length, "surcharge depth above ground");
+    checked_column(g.get(), "ponded_area", ponded, std::string(u.length) + "^2",
+                 "ponded surface area when flooded");
+    checked_column(g.get(), "tag", tag, "user tag");
+    checked_column(g.get(), "comment", comment, "authored comment");
 }
 
+/**
+ * @brief Export junction, outfall, storage and divider subtype fields.
+ * @param[in] file Borrowed writable HDF5 file identifier for the destination.
+ * @param[in] ctx Borrowed consistent model context already converted to
+ * authored units; referenced arrays and indices must agree with object counts.
+ * @param[in] u Borrowed authored unit labels matching ctx's converted values.
+ * @note Creates the section groups/columns when possible. Group and dataset
+ * failures are not aggregated or thrown as a section status, so partial data
+ * may remain. Allocation exceptions propagate. No input is retained.
+ */
 void write_node_subtypes(hid_t file, const SimulationContext& ctx, const UnitWords& u) {
     const int n = ctx.n_nodes();
 
@@ -204,43 +328,57 @@ void write_node_subtypes(hid_t file, const SimulationContext& ctx, const UnitWor
         std::vector<std::string> route_to;
         for (int j = 0; j < n; ++j) {
             const auto i = static_cast<std::size_t>(j);
-            if (at(ctx.nodes.type, i) != NodeType::OUTFALL) continue;
+            if (at(ctx.nodes.type, i) != NodeType::OUTFALL)
+                continue;
             const int r = ctx.node_subtypes.outfall_row(j);
             const auto& O = ctx.node_subtypes.outfalls;
             name.push_back(ctx.node_names.name_of(j));
-            const auto bt = (r >= 0) ? at(O.bc_type, static_cast<std::size_t>(r))
-                                     : OutfallType::FREE;
+            const auto bt =
+                (r >= 0) ? at(O.bc_type, static_cast<std::size_t>(r)) : OutfallType::FREE;
             switch (bt) {
-                case OutfallType::NORMAL:     bc.push_back("NORMAL"); break;
-                case OutfallType::FIXED:      bc.push_back("FIXED"); break;
-                case OutfallType::TIDAL:      bc.push_back("TIDAL"); break;
-                case OutfallType::TIMESERIES: bc.push_back("TIMESERIES"); break;
-                default:                      bc.push_back("FREE"); break;
+            case OutfallType::NORMAL:
+                bc.push_back("NORMAL");
+                break;
+            case OutfallType::FIXED:
+                bc.push_back("FIXED");
+                break;
+            case OutfallType::TIDAL:
+                bc.push_back("TIDAL");
+                break;
+            case OutfallType::TIMESERIES:
+                bc.push_back("TIMESERIES");
+                break;
+            default:
+                bc.push_back("FREE");
+                break;
             }
             const double p = (r >= 0) ? at(O.param, static_cast<std::size_t>(r)) : 0.0;
             // FIXED parks a stage in `param`; TIDAL/TIMESERIES park a table
             // index there instead, which is written as the table's NAME.
-            if (bt == OutfallType::FIXED) { stage.push_back(p); stage_curve.push_back(""); }
-            else {
+            if (bt == OutfallType::FIXED) {
+                stage.push_back(p);
+                stage_curve.push_back("");
+            } else {
                 stage.push_back(0.0);
                 const int t = static_cast<int>(p);
-                stage_curve.push_back((bt == OutfallType::TIDAL || bt == OutfallType::TIMESERIES)
-                                      && t >= 0 && t < ctx.n_tables()
-                                      ? ctx.tables[t].id : std::string());
+                stage_curve.push_back((bt == OutfallType::TIDAL || bt == OutfallType::TIMESERIES) &&
+                                              t >= 0 && t < ctx.n_tables()
+                                          ? ctx.tables[t].id
+                                          : std::string());
             }
             gated.push_back((r >= 0) ? at(O.has_flap_gate, static_cast<std::size_t>(r)) : 0);
             const int rt = (r >= 0) ? at(O.route_to, static_cast<std::size_t>(r)) : -1;
-            route_to.push_back(rt >= 0 && rt < ctx.n_subcatches()
-                               ? ctx.subcatch_names.name_of(rt) : std::string());
+            route_to.push_back(rt >= 0 && rt < ctx.n_subcatches() ? ctx.subcatch_names.name_of(rt)
+                                                                  : std::string());
         }
-        Handle g = make_group(file, "nodes/outfalls");
+        Handle g = checked_group(file, "nodes/outfalls");
         if (g) {
-            write_column(g.get(), "name", name, "node id");
-            write_column(g.get(), "bc_type", bc, "FREE | NORMAL | FIXED | TIDAL | TIMESERIES");
-            write_column(g.get(), "stage", stage, u.length, "fixed stage elevation");
-            write_column(g.get(), "stage_series", stage_curve, "tidal curve or stage time series");
-            write_column(g.get(), "has_flap_gate", gated, "boolean", "flap gate present");
-            write_column(g.get(), "route_to", route_to, "subcatchment receiving the outflow");
+            checked_column(g.get(), "name", name, "node id");
+            checked_column(g.get(), "bc_type", bc, "FREE | NORMAL | FIXED | TIDAL | TIMESERIES");
+            checked_column(g.get(), "stage", stage, u.length, "fixed stage elevation");
+            checked_column(g.get(), "stage_series", stage_curve, "tidal curve or stage time series");
+            checked_column(g.get(), "has_flap_gate", gated, "boolean", "flap gate present");
+            checked_column(g.get(), "route_to", route_to, "subcatchment receiving the outflow");
         }
     }
 
@@ -250,40 +388,51 @@ void write_node_subtypes(hid_t file, const SimulationContext& ctx, const UnitWor
         std::vector<double> cutoff, qmin, dh_max, cd;
         for (int j = 0; j < n; ++j) {
             const auto i = static_cast<std::size_t>(j);
-            if (at(ctx.nodes.type, i) != NodeType::DIVIDER) continue;
+            if (at(ctx.nodes.type, i) != NodeType::DIVIDER)
+                continue;
             const int r = ctx.node_subtypes.divider_row(j);
             const auto& D = ctx.node_subtypes.dividers;
             const auto ur = static_cast<std::size_t>(r);
             name.push_back(ctx.node_names.name_of(j));
             const int dl = (r >= 0) ? at(D.link, ur) : -1;
             std::string dln = link_name(ctx, dl);
-            if (dln.empty() && r >= 0) dln = at(D.link_name, ur);
+            if (dln.empty() && r >= 0)
+                dln = at(D.link_name, ur);
             div_link.push_back(dln);
             const auto m = (r >= 0) ? at(D.method, ur) : DividerType::CUTOFF;
             switch (m) {
-                case DividerType::OVERFLOW_DIV: method.push_back("OVERFLOW"); break;
-                case DividerType::TABULAR:      method.push_back("TABULAR"); break;
-                case DividerType::WEIR:         method.push_back("WEIR"); break;
-                default:                        method.push_back("CUTOFF"); break;
+            case DividerType::OVERFLOW_DIV:
+                method.push_back("OVERFLOW");
+                break;
+            case DividerType::TABULAR:
+                method.push_back("TABULAR");
+                break;
+            case DividerType::WEIR:
+                method.push_back("WEIR");
+                break;
+            default:
+                method.push_back("CUTOFF");
+                break;
             }
             const int ci = (r >= 0) ? at(D.curve, ur) : -1;
             std::string cn = (ci >= 0 && ci < ctx.n_tables()) ? ctx.tables[ci].id : std::string();
-            if (cn.empty() && r >= 0) cn = at(D.curve_name, ur);
+            if (cn.empty() && r >= 0)
+                cn = at(D.curve_name, ur);
             curve.push_back(cn);
             cutoff.push_back((r >= 0) ? at(D.cutoff, ur) : 0.0);
             qmin.push_back((r >= 0) ? at(D.cutoff, ur) : 0.0);
             dh_max.push_back((r >= 0) ? at(D.max_depth, ur) : 0.0);
             cd.push_back((r >= 0) ? at(D.cd, ur) : 0.0);
         }
-        Handle g = make_group(file, "nodes/dividers");
+        Handle g = checked_group(file, "nodes/dividers");
         if (g) {
-            write_column(g.get(), "name", name, "node id");
-            write_column(g.get(), "diverted_link", div_link, "link receiving the diverted flow");
-            write_column(g.get(), "method", method, "CUTOFF | OVERFLOW | TABULAR | WEIR");
-            write_column(g.get(), "curve", curve, "diversion curve (TABULAR)");
-            write_column(g.get(), "cutoff_flow", cutoff, u.flow, "CUTOFF/WEIR minimum flow");
-            write_column(g.get(), "weir_dh_max", dh_max, u.length, "WEIR head range");
-            write_column(g.get(), "weir_cd", cd, "dimensionless", "WEIR discharge coefficient");
+            checked_column(g.get(), "name", name, "node id");
+            checked_column(g.get(), "diverted_link", div_link, "link receiving the diverted flow");
+            checked_column(g.get(), "method", method, "CUTOFF | OVERFLOW | TABULAR | WEIR");
+            checked_column(g.get(), "curve", curve, "diversion curve (TABULAR)");
+            checked_column(g.get(), "cutoff_flow", cutoff, u.flow, "CUTOFF/WEIR minimum flow");
+            checked_column(g.get(), "weir_dh_max", dh_max, u.length, "WEIR head range");
+            checked_column(g.get(), "weir_cd", cd, "dimensionless", "WEIR discharge coefficient");
         }
     }
 
@@ -293,7 +442,8 @@ void write_node_subtypes(hid_t file, const SimulationContext& ctx, const UnitWor
         std::vector<double> a0, a1, a2, p1, p2, p3, fevap, ksat, suction, imd;
         for (int j = 0; j < n; ++j) {
             const auto i = static_cast<std::size_t>(j);
-            if (at(ctx.nodes.type, i) != NodeType::STORAGE) continue;
+            if (at(ctx.nodes.type, i) != NodeType::STORAGE)
+                continue;
             const int r = ctx.node_subtypes.storage_row(j);
             const auto& S = ctx.node_subtypes.storages;
             const auto ur = static_cast<std::size_t>(r);
@@ -306,9 +456,9 @@ void write_node_subtypes(hid_t file, const SimulationContext& ctx, const UnitWor
             // [STORAGE] FUNCTIONAL columns are A1 A2 A0 in that order, so the
             // store's a/b/c are the COEFFICIENT, the EXPONENT and the
             // CONSTANT — not a0/a1/a2 as the letters suggest.
-            a1.push_back((r >= 0) ? at(S.a, ur) : 0.0);   // A1, coefficient
-            a2.push_back((r >= 0) ? at(S.b, ur) : 0.0);   // A2, exponent
-            a0.push_back((r >= 0) ? at(S.c, ur) : 0.0);   // A0, constant
+            a1.push_back((r >= 0) ? at(S.a, ur) : 0.0); // A1, coefficient
+            a2.push_back((r >= 0) ? at(S.b, ur) : 0.0); // A2, exponent
+            a0.push_back((r >= 0) ? at(S.c, ur) : 0.0); // A0, constant
             p1.push_back((r >= 0) ? at(S.p1, ur) : 0.0);
             p2.push_back((r >= 0) ? at(S.p2, ur) : 0.0);
             p3.push_back((r >= 0) ? at(S.p3, ur) : 0.0);
@@ -317,29 +467,39 @@ void write_node_subtypes(hid_t file, const SimulationContext& ctx, const UnitWor
             suction.push_back((r >= 0) ? at(S.exfil_suction, ur) : 0.0);
             imd.push_back((r >= 0) ? at(S.exfil_imd, ur) : 0.0);
         }
-        Handle g = make_group(file, "nodes/storage");
+        Handle g = checked_group(file, "nodes/storage");
         if (g) {
-            write_column(g.get(), "name", name, "node id");
-            write_column(g.get(), "shape", shape, "TABULAR | FUNCTIONAL | CYLINDRICAL | ...");
-            write_column(g.get(), "curve", curve, "storage curve (TABULAR)");
+            checked_column(g.get(), "name", name, "node id");
+            checked_column(g.get(), "shape", shape, "TABULAR | FUNCTIONAL | CYLINDRICAL | ...");
+            checked_column(g.get(), "curve", curve, "storage curve (TABULAR)");
             // FUNCTIONAL A(d) = a0 + a1*d^a2. These stay in USER units
             // end-to-end by design (legacy converts per call in node.c), so
             // they are already authored here.
-            write_column(g.get(), "a1", a1, "model",
+            checked_column(g.get(), "a1", a1, "model",
                          "FUNCTIONAL coefficient A1 in A(d) = A0 + A1*d^A2");
-            write_column(g.get(), "a2", a2, "dimensionless", "FUNCTIONAL exponent A2");
-            write_column(g.get(), "a0", a0, "model", "FUNCTIONAL constant A0");
-            write_column(g.get(), "p1", p1, u.length, "geometric shape parameter 1 (L)");
-            write_column(g.get(), "p2", p2, u.length, "geometric shape parameter 2 (W)");
-            write_column(g.get(), "p3", p3, u.length, "geometric shape parameter 3 (Z/H)");
-            write_column(g.get(), "evap_frac", fevap, "fraction", "evaporation factor");
-            write_column(g.get(), "exfil_suction", suction, u.length, "exfiltration suction head");
-            write_column(g.get(), "exfil_ksat", ksat, u.depth_rate, "exfiltration conductivity");
-            write_column(g.get(), "exfil_imd", imd, "fraction", "initial moisture deficit");
+            checked_column(g.get(), "a2", a2, "dimensionless", "FUNCTIONAL exponent A2");
+            checked_column(g.get(), "a0", a0, "model", "FUNCTIONAL constant A0");
+            checked_column(g.get(), "p1", p1, u.length, "geometric shape parameter 1 (L)");
+            checked_column(g.get(), "p2", p2, u.length, "geometric shape parameter 2 (W)");
+            checked_column(g.get(), "p3", p3, u.length, "geometric shape parameter 3 (Z/H)");
+            checked_column(g.get(), "evap_frac", fevap, "fraction", "evaporation factor");
+            checked_column(g.get(), "exfil_suction", suction, u.length, "exfiltration suction head");
+            checked_column(g.get(), "exfil_ksat", ksat, u.depth_rate, "exfiltration conductivity");
+            checked_column(g.get(), "exfil_imd", imd, "fraction", "initial moisture deficit");
         }
     }
 }
 
+/**
+ * @brief Export common link fields and named endpoint references.
+ * @param[in] file Borrowed writable HDF5 file identifier for the destination.
+ * @param[in] ctx Borrowed consistent model context already converted to
+ * authored units; referenced arrays and indices must agree with object counts.
+ * @param[in] u Borrowed authored unit labels matching ctx's converted values.
+ * @note Creates the section groups/columns when possible. Group and dataset
+ * failures are not aggregated or thrown as a section status, so partial data
+ * may remain. Allocation exceptions propagate. No input is retained.
+ */
 void write_links(hid_t file, const SimulationContext& ctx, const UnitWords& u) {
     const int n = ctx.n_links();
     std::vector<std::string> name, type, n1, n2, tag, comment;
@@ -361,21 +521,32 @@ void write_links(hid_t file, const SimulationContext& ctx, const UnitWords& u) {
         comment.push_back(at(ctx.links.comments, i));
     }
 
-    Handle g = make_group(file, "links");
-    if (!g) return;
-    write_column(g.get(), "name", name, "link id");
-    write_column(g.get(), "type", type, "CONDUIT | PUMP | ORIFICE | WEIR | OUTLET");
-    write_column(g.get(), "node1", n1, "upstream node id");
-    write_column(g.get(), "node2", n2, "downstream node id");
-    write_column(g.get(), "offset1", off1, u.length, "upstream offset (depth convention)");
-    write_column(g.get(), "offset2", off2, u.length, "downstream offset (depth convention)");
-    write_column(g.get(), "q0", q0, u.flow, "initial flow");
-    write_column(g.get(), "q_limit", qlim, u.flow, "maximum flow, 0 = no limit");
-    write_column(g.get(), "has_flap_gate", flap, "boolean", "flap gate present");
-    write_column(g.get(), "tag", tag, "user tag");
-    write_column(g.get(), "comment", comment, "authored comment");
+    Handle g = checked_group(file, "links");
+    if (!g)
+        return;
+    checked_column(g.get(), "name", name, "link id");
+    checked_column(g.get(), "type", type, "CONDUIT | PUMP | ORIFICE | WEIR | OUTLET");
+    checked_column(g.get(), "node1", n1, "upstream node id");
+    checked_column(g.get(), "node2", n2, "downstream node id");
+    checked_column(g.get(), "offset1", off1, u.length, "upstream offset (depth convention)");
+    checked_column(g.get(), "offset2", off2, u.length, "downstream offset (depth convention)");
+    checked_column(g.get(), "q0", q0, u.flow, "initial flow");
+    checked_column(g.get(), "q_limit", qlim, u.flow, "maximum flow, 0 = no limit");
+    checked_column(g.get(), "has_flap_gate", flap, "boolean", "flap gate present");
+    checked_column(g.get(), "tag", tag, "user tag");
+    checked_column(g.get(), "comment", comment, "authored comment");
 }
 
+/**
+ * @brief Export cross-section shape keywords and authored geometry.
+ * @param[in] file Borrowed writable HDF5 file identifier for the destination.
+ * @param[in] ctx Borrowed consistent model context already converted to
+ * authored units; referenced arrays and indices must agree with object counts.
+ * @param[in] u Borrowed authored unit labels matching ctx's converted values.
+ * @note Creates the section groups/columns when possible. Group and dataset
+ * failures are not aggregated or thrown as a section status, so partial data
+ * may remain. Allocation exceptions propagate. No input is retained.
+ */
 void write_xsections(hid_t file, const SimulationContext& ctx, const UnitWords& u) {
     const int n = ctx.n_links();
     std::vector<std::string> link, shape, ref;
@@ -388,7 +559,8 @@ void write_xsections(hid_t file, const SimulationContext& ctx, const UnitWords& 
         // Cross sections belong to conduits, orifices and weirs. A pump or
         // outlet has none, and emitting a default one makes legacy reject the
         // deck (ERROR 211).
-        if (lt == LinkType::PUMP || lt == LinkType::OUTLET) continue;
+        if (lt == LinkType::PUMP || lt == LinkType::OUTLET)
+            continue;
 
         const auto sh = at(ctx.links.xsect_shape, i);
         link.push_back(ctx.link_names.name_of(j));
@@ -419,35 +591,47 @@ void write_xsections(hid_t file, const SimulationContext& ctx, const UnitWords& 
         g4.push_back(at(ctx.links.xsect_geom4, i));
 
         const int cr = ctx.link_subtypes.conduit_row(j);
-        barrels.push_back(cr >= 0
-            ? at(ctx.link_subtypes.conduits.barrels, static_cast<std::size_t>(cr)) : 1);
-        culvert.push_back(cr >= 0
-            ? at(ctx.link_subtypes.conduits.culvert_code, static_cast<std::size_t>(cr)) : 0);
+        barrels.push_back(
+            cr >= 0 ? at(ctx.link_subtypes.conduits.barrels, static_cast<std::size_t>(cr)) : 1);
+        culvert.push_back(
+            cr >= 0 ? at(ctx.link_subtypes.conduits.culvert_code, static_cast<std::size_t>(cr))
+                    : 0);
     }
 
-    Handle g = make_group(file, "links/xsections");
-    if (!g) return;
-    write_column(g.get(), "link", link, "link id");
-    write_column(g.get(), "shape", shape, "legacy shape keyword");
-    write_column(g.get(), "reference", ref,
+    Handle g = checked_group(file, "links/xsections");
+    if (!g)
+        return;
+    checked_column(g.get(), "link", link, "link id");
+    checked_column(g.get(), "shape", shape, "legacy shape keyword");
+    checked_column(g.get(), "reference", ref,
                  "transect / street / shape-curve name for IRREGULAR, STREET, CUSTOM");
     const char* geom_note =
         "raw authored Geom value; meaning is shape-dependent — see STRATEGY.md and "
         "the cross-section matrix in plans/FILE_IO_PARITY_AUDIT_2026-09-22.md";
-    write_column(g.get(), "geom1", g1, "shape-dependent", geom_note);
-    write_column(g.get(), "geom2", g2, "shape-dependent", geom_note);
-    write_column(g.get(), "geom3", g3, "shape-dependent", geom_note);
-    write_column(g.get(), "geom4", g4, "shape-dependent", geom_note);
-    write_column(g.get(), "barrels", barrels, "count", "identical parallel barrels");
-    write_column(g.get(), "culvert_code", culvert, "code",
+    checked_column(g.get(), "geom1", g1, "shape-dependent", geom_note);
+    checked_column(g.get(), "geom2", g2, "shape-dependent", geom_note);
+    checked_column(g.get(), "geom3", g3, "shape-dependent", geom_note);
+    checked_column(g.get(), "geom4", g4, "shape-dependent", geom_note);
+    checked_column(g.get(), "barrels", barrels, "count", "identical parallel barrels");
+    checked_column(g.get(), "culvert_code", culvert, "code",
                  "FHWA culvert inlet-control code, 0 = not a culvert");
-    write_attr(g.get(), "note",
+    checked_attr(g.get(), "note",
                std::string("For HORIZ_ELLIPSE, VERT_ELLIPSE and ARCH a nonzero geom3 "
                            "(or geom1 with geom2 == 0) is a STANDARD SIZE CODE, not a "
                            "dimension. Preserved verbatim."));
     (void)u;
 }
 
+/**
+ * @brief Export conduit, pump, orifice, weir, outlet and loss fields.
+ * @param[in] file Borrowed writable HDF5 file identifier for the destination.
+ * @param[in] ctx Borrowed consistent model context already converted to
+ * authored units; referenced arrays and indices must agree with object counts.
+ * @param[in] u Borrowed authored unit labels matching ctx's converted values.
+ * @note Creates the section groups/columns when possible. Group and dataset
+ * failures are not aggregated or thrown as a section status, so partial data
+ * may remain. Allocation exceptions propagate. No input is retained.
+ */
 void write_link_subtypes(hid_t file, const SimulationContext& ctx, const UnitWords& u) {
     const int n = ctx.n_links();
 
@@ -456,7 +640,8 @@ void write_link_subtypes(hid_t file, const SimulationContext& ctx, const UnitWor
         std::vector<std::string> name;
         std::vector<double> length, rough, k_in, k_out, k_avg, seep;
         for (int j = 0; j < n; ++j) {
-            if (at(ctx.links.type, static_cast<std::size_t>(j)) != LinkType::CONDUIT) continue;
+            if (at(ctx.links.type, static_cast<std::size_t>(j)) != LinkType::CONDUIT)
+                continue;
             const int r = ctx.link_subtypes.conduit_row(j);
             const auto& C = ctx.link_subtypes.conduits;
             const auto ur = static_cast<std::size_t>(r);
@@ -468,18 +653,18 @@ void write_link_subtypes(hid_t file, const SimulationContext& ctx, const UnitWor
             k_avg.push_back((r >= 0) ? at(C.loss_avg, ur) : 0.0);
             seep.push_back((r >= 0) ? at(C.seep_rate, ur) : 0.0);
         }
-        Handle g = make_group(file, "links/conduits");
+        Handle g = checked_group(file, "links/conduits");
         if (g) {
-            write_column(g.get(), "name", name, "link id");
-            write_column(g.get(), "length", length, u.length, "conduit length");
-            write_column(g.get(), "roughness", rough, "dimensionless", "Manning's n");
-            write_column(g.get(), "loss_inlet", k_in, "dimensionless", "entry loss coefficient");
-            write_column(g.get(), "loss_outlet", k_out, "dimensionless", "exit loss coefficient");
-            write_column(g.get(), "loss_avg", k_avg, "dimensionless", "average loss coefficient");
+            checked_column(g.get(), "name", name, "link id");
+            checked_column(g.get(), "length", length, u.length, "conduit length");
+            checked_column(g.get(), "roughness", rough, "dimensionless", "Manning's n");
+            checked_column(g.get(), "loss_inlet", k_in, "dimensionless", "entry loss coefficient");
+            checked_column(g.get(), "loss_outlet", k_out, "dimensionless", "exit loss coefficient");
+            checked_column(g.get(), "loss_avg", k_avg, "dimensionless", "average loss coefficient");
             // Seepage arrives and leaves in in/hr (mm/hr) even though the
             // solver consumes ft/s — the conversion that a LENGTH-only writer
             // gate used to skip on US decks.
-            write_column(g.get(), "seep_rate", seep, u.depth_rate, "seepage loss rate");
+            checked_column(g.get(), "seep_rate", seep, u.depth_rate, "seepage loss rate");
         }
     }
 
@@ -488,7 +673,8 @@ void write_link_subtypes(hid_t file, const SimulationContext& ctx, const UnitWor
         std::vector<std::string> name, curve, status;
         std::vector<double> startup, shutoff;
         for (int j = 0; j < n; ++j) {
-            if (at(ctx.links.type, static_cast<std::size_t>(j)) != LinkType::PUMP) continue;
+            if (at(ctx.links.type, static_cast<std::size_t>(j)) != LinkType::PUMP)
+                continue;
             const int r = ctx.link_subtypes.pump_row(j);
             const auto& P = ctx.link_subtypes.pumps;
             const auto ur = static_cast<std::size_t>(r);
@@ -498,13 +684,13 @@ void write_link_subtypes(hid_t file, const SimulationContext& ctx, const UnitWor
             startup.push_back((r >= 0) ? at(P.startup, ur) : 0.0);
             shutoff.push_back((r >= 0) ? at(P.shutoff, ur) : 0.0);
         }
-        Handle g = make_group(file, "links/pumps");
+        Handle g = checked_group(file, "links/pumps");
         if (g) {
-            write_column(g.get(), "name", name, "link id");
-            write_column(g.get(), "curve", curve, "pump curve name, '*' for an ideal pump");
-            write_column(g.get(), "init_status", status, "ON | OFF");
-            write_column(g.get(), "startup_depth", startup, u.length, "wet-well start depth");
-            write_column(g.get(), "shutoff_depth", shutoff, u.length, "wet-well stop depth");
+            checked_column(g.get(), "name", name, "link id");
+            checked_column(g.get(), "curve", curve, "pump curve name, '*' for an ideal pump");
+            checked_column(g.get(), "init_status", status, "ON | OFF");
+            checked_column(g.get(), "startup_depth", startup, u.length, "wet-well start depth");
+            checked_column(g.get(), "shutoff_depth", shutoff, u.length, "wet-well stop depth");
         }
     }
 
@@ -513,7 +699,8 @@ void write_link_subtypes(hid_t file, const SimulationContext& ctx, const UnitWor
         std::vector<std::string> name, orient;
         std::vector<double> cd, crest, orate;
         for (int j = 0; j < n; ++j) {
-            if (at(ctx.links.type, static_cast<std::size_t>(j)) != LinkType::ORIFICE) continue;
+            if (at(ctx.links.type, static_cast<std::size_t>(j)) != LinkType::ORIFICE)
+                continue;
             const int r = ctx.link_subtypes.orifice_row(j);
             const auto& O = ctx.link_subtypes.orifices;
             const auto ur = static_cast<std::size_t>(r);
@@ -523,13 +710,13 @@ void write_link_subtypes(hid_t file, const SimulationContext& ctx, const UnitWor
             crest.push_back(at(ctx.links.offset1, static_cast<std::size_t>(j)));
             orate.push_back((r >= 0) ? at(O.orate, ur) : 0.0);
         }
-        Handle g = make_group(file, "links/orifices");
+        Handle g = checked_group(file, "links/orifices");
         if (g) {
-            write_column(g.get(), "name", name, "link id");
-            write_column(g.get(), "orientation", orient, "SIDE | BOTTOM");
-            write_column(g.get(), "crest_height", crest, u.length, "offset above the node invert");
-            write_column(g.get(), "discharge_coeff", cd, "dimensionless", "Cd");
-            write_column(g.get(), "open_close_time", orate, "hours", "time to open or close fully");
+            checked_column(g.get(), "name", name, "link id");
+            checked_column(g.get(), "orientation", orient, "SIDE | BOTTOM");
+            checked_column(g.get(), "crest_height", crest, u.length, "offset above the node invert");
+            checked_column(g.get(), "discharge_coeff", cd, "dimensionless", "Cd");
+            checked_column(g.get(), "open_close_time", orate, "hours", "time to open or close fully");
         }
     }
 
@@ -539,11 +726,13 @@ void write_link_subtypes(hid_t file, const SimulationContext& ctx, const UnitWor
         std::vector<double> crest, cd, cd2, end_con, road_width;
         std::vector<int> surcharge;
         for (int j = 0; j < n; ++j) {
-            if (at(ctx.links.type, static_cast<std::size_t>(j)) != LinkType::WEIR) continue;
+            if (at(ctx.links.type, static_cast<std::size_t>(j)) != LinkType::WEIR)
+                continue;
             const int r = ctx.link_subtypes.weir_row(j);
             const auto& W = ctx.link_subtypes.weirs;
             const auto ur = static_cast<std::size_t>(r);
-            static const char* kinds[] = {"TRANSVERSE","SIDEFLOW","V-NOTCH","TRAPEZOIDAL","ROADWAY"};
+            static const char* kinds[] = {"TRANSVERSE", "SIDEFLOW", "V-NOTCH", "TRAPEZOIDAL",
+                                          "ROADWAY"};
             const int wt = (r >= 0) ? at(W.weir_type, ur) : 0;
             name.push_back(ctx.link_names.name_of(j));
             wtype.push_back((wt >= 0 && wt < 5) ? kinds[wt] : "TRANSVERSE");
@@ -555,18 +744,18 @@ void write_link_subtypes(hid_t file, const SimulationContext& ctx, const UnitWor
             surcharge.push_back((r >= 0) ? at(W.can_surcharge, ur) : 1);
             cd_curve.push_back("");
         }
-        Handle g = make_group(file, "links/weirs");
+        Handle g = checked_group(file, "links/weirs");
         if (g) {
-            write_column(g.get(), "name", name, "link id");
-            write_column(g.get(), "weir_type", wtype,
+            checked_column(g.get(), "name", name, "link id");
+            checked_column(g.get(), "weir_type", wtype,
                          "TRANSVERSE | SIDEFLOW | V-NOTCH | TRAPEZOIDAL | ROADWAY");
-            write_column(g.get(), "crest_height", crest, u.length, "crest above the node invert");
-            write_column(g.get(), "discharge_coeff", cd, "dimensionless", "Cd");
-            write_column(g.get(), "discharge_coeff2", cd2, "dimensionless",
+            checked_column(g.get(), "crest_height", crest, u.length, "crest above the node invert");
+            checked_column(g.get(), "discharge_coeff", cd, "dimensionless", "Cd");
+            checked_column(g.get(), "discharge_coeff2", cd2, "dimensionless",
                          "second Cd (TRAPEZOIDAL sides)");
-            write_column(g.get(), "end_contractions", end_con, "count", "end contractions");
-            write_column(g.get(), "road_width", road_width, u.length, "ROADWAY width");
-            write_column(g.get(), "can_surcharge", surcharge, "boolean", "may surcharge");
+            checked_column(g.get(), "end_contractions", end_con, "count", "end contractions");
+            checked_column(g.get(), "road_width", road_width, u.length, "ROADWAY width");
+            checked_column(g.get(), "can_surcharge", surcharge, "boolean", "may surcharge");
         }
     }
 
@@ -575,12 +764,13 @@ void write_link_subtypes(hid_t file, const SimulationContext& ctx, const UnitWor
         std::vector<std::string> name, rating, curve;
         std::vector<double> crest, coeff, expon;
         for (int j = 0; j < n; ++j) {
-            if (at(ctx.links.type, static_cast<std::size_t>(j)) != LinkType::OUTLET) continue;
+            if (at(ctx.links.type, static_cast<std::size_t>(j)) != LinkType::OUTLET)
+                continue;
             const int r = ctx.link_subtypes.outlet_row(j);
             const auto& O = ctx.link_subtypes.outlets;
             const auto ur = static_cast<std::size_t>(r);
-            static const char* kinds[] = {"FUNCTIONAL/HEAD","FUNCTIONAL/DEPTH",
-                                          "TABULAR/HEAD","TABULAR/DEPTH"};
+            static const char* kinds[] = {"FUNCTIONAL/HEAD", "FUNCTIONAL/DEPTH", "TABULAR/HEAD",
+                                          "TABULAR/DEPTH"};
             const int ot = (r >= 0) ? at(O.outlet_type, ur) : 0;
             name.push_back(ctx.link_names.name_of(j));
             rating.push_back((ot >= 0 && ot < 4) ? kinds[ot] : kinds[0]);
@@ -590,19 +780,29 @@ void write_link_subtypes(hid_t file, const SimulationContext& ctx, const UnitWor
             coeff.push_back((r >= 0) ? at(O.coeff, ur) : 0.0);
             expon.push_back((r >= 0) ? at(O.expon, ur) : 0.0);
         }
-        Handle g = make_group(file, "links/outlets");
+        Handle g = checked_group(file, "links/outlets");
         if (g) {
-            write_column(g.get(), "name", name, "link id");
-            write_column(g.get(), "rating_type", rating,
+            checked_column(g.get(), "name", name, "link id");
+            checked_column(g.get(), "rating_type", rating,
                          "FUNCTIONAL|TABULAR crossed with HEAD|DEPTH");
-            write_column(g.get(), "crest_height", crest, u.length, "offset above the node invert");
-            write_column(g.get(), "rating_curve", curve, "rating curve name (TABULAR)");
-            write_column(g.get(), "coefficient", coeff, "model", "FUNCTIONAL coefficient");
-            write_column(g.get(), "exponent", expon, "dimensionless", "FUNCTIONAL exponent");
+            checked_column(g.get(), "crest_height", crest, u.length, "offset above the node invert");
+            checked_column(g.get(), "rating_curve", curve, "rating curve name (TABULAR)");
+            checked_column(g.get(), "coefficient", coeff, "model", "FUNCTIONAL coefficient");
+            checked_column(g.get(), "exponent", expon, "dimensionless", "FUNCTIONAL exponent");
         }
     }
 }
 
+/**
+ * @brief Export subcatchment, subarea and infiltration fields.
+ * @param[in] file Borrowed writable HDF5 file identifier for the destination.
+ * @param[in] ctx Borrowed consistent model context already converted to
+ * authored units; referenced arrays and indices must agree with object counts.
+ * @param[in] u Borrowed authored unit labels matching ctx's converted values.
+ * @note Creates the section groups/columns when possible. Group and dataset
+ * failures are not aggregated or thrown as a section status, so partial data
+ * may remain. Allocation exceptions propagate. No input is retained.
+ */
 void write_subcatchments(hid_t file, const SimulationContext& ctx, const UnitWords& u) {
     const int n = ctx.n_subcatches();
     std::vector<std::string> name, gage, outlet, route_to, tag, comment;
@@ -613,14 +813,14 @@ void write_subcatchments(hid_t file, const SimulationContext& ctx, const UnitWor
         const auto i = static_cast<std::size_t>(j);
         name.push_back(ctx.subcatch_names.name_of(j));
         const int gi = at(ctx.subcatches.gage, i);
-        gage.push_back(gi >= 0 && gi < ctx.gage_names.size()
-                       ? ctx.gage_names.name_of(gi) : std::string());
+        gage.push_back(gi >= 0 && gi < ctx.gage_names.size() ? ctx.gage_names.name_of(gi)
+                                                             : std::string());
         // An outlet is either a node or another subcatchment.
         const int on = at(ctx.subcatches.outlet_node, i);
         const int os = at(ctx.subcatches.outlet_subcatch, i);
-        outlet.push_back(on >= 0 ? node_name(ctx, on)
-                                 : (os >= 0 && os < n ? ctx.subcatch_names.name_of(os)
-                                                      : std::string()));
+        outlet.push_back(
+            on >= 0 ? node_name(ctx, on)
+                    : (os >= 0 && os < n ? ctx.subcatch_names.name_of(os) : std::string()));
         area.push_back(at(ctx.subcatches.area, i));
         pct_imp.push_back(at(ctx.subcatches.frac_imperv, i) * 100.0);
         width.push_back(at(ctx.subcatches.width, i));
@@ -639,32 +839,42 @@ void write_subcatchments(hid_t file, const SimulationContext& ctx, const UnitWor
         comment.push_back(at(ctx.subcatches.comments, i));
     }
 
-    Handle g = make_group(file, "subcatchments");
-    if (!g) return;
-    write_column(g.get(), "name", name, "subcatchment id");
-    write_column(g.get(), "rain_gage", gage, "rain gage id");
-    write_column(g.get(), "outlet", outlet, "receiving node or subcatchment id");
-    write_column(g.get(), "area", area, u.area, "surface area");
-    write_column(g.get(), "pct_imperv", pct_imp, "percent", "impervious fraction");
-    write_column(g.get(), "width", width, u.length, "characteristic overland-flow width");
-    write_column(g.get(), "slope", slope, "percent", "average surface slope");
-    write_column(g.get(), "curb_length", curb, u.length, "curb length for pollutant buildup");
-    write_column(g.get(), "n_imperv", n_imp, "dimensionless", "Manning's n, impervious");
-    write_column(g.get(), "n_perv", n_perv, "dimensionless", "Manning's n, pervious");
-    write_column(g.get(), "s_imperv", s_imp, "depth", "depression storage, impervious");
-    write_column(g.get(), "s_perv", s_perv, "depth", "depression storage, pervious");
-    write_column(g.get(), "pct_zero_imperv", pct_zero, "percent",
+    Handle g = checked_group(file, "subcatchments");
+    if (!g)
+        return;
+    checked_column(g.get(), "name", name, "subcatchment id");
+    checked_column(g.get(), "rain_gage", gage, "rain gage id");
+    checked_column(g.get(), "outlet", outlet, "receiving node or subcatchment id");
+    checked_column(g.get(), "area", area, u.area, "surface area");
+    checked_column(g.get(), "pct_imperv", pct_imp, "percent", "impervious fraction");
+    checked_column(g.get(), "width", width, u.length, "characteristic overland-flow width");
+    checked_column(g.get(), "slope", slope, "percent", "average surface slope");
+    checked_column(g.get(), "curb_length", curb, u.length, "curb length for pollutant buildup");
+    checked_column(g.get(), "n_imperv", n_imp, "dimensionless", "Manning's n, impervious");
+    checked_column(g.get(), "n_perv", n_perv, "dimensionless", "Manning's n, pervious");
+    checked_column(g.get(), "s_imperv", s_imp, "depth", "depression storage, impervious");
+    checked_column(g.get(), "s_perv", s_perv, "depth", "depression storage, pervious");
+    checked_column(g.get(), "pct_zero_imperv", pct_zero, "percent",
                  "impervious area with no depression storage");
-    write_column(g.get(), "route_to", route_to, "OUTLET | IMPERVIOUS | PERVIOUS");
-    write_column(g.get(), "pct_routed", pct_routed, "percent", "runoff routed between subareas");
-    write_column(g.get(), "tag", tag, "user tag");
-    write_column(g.get(), "comment", comment, "authored comment");
+    checked_column(g.get(), "route_to", route_to, "OUTLET | IMPERVIOUS | PERVIOUS");
+    checked_column(g.get(), "pct_routed", pct_routed, "percent", "runoff routed between subareas");
+    checked_column(g.get(), "tag", tag, "user tag");
+    checked_column(g.get(), "comment", comment, "authored comment");
 }
 
 /// Curves, time series and patterns share the ragged-table problem: each
 /// object owns a variable number of ordinates. The CSR idiom keeps everything
 /// contiguous — one flat value array plus an offsets array of length n+1 —
 /// which needs no variable-length HDF5 types and reads cleanly from h5py.
+/**
+ * @brief Export curve and time-series tables with CSR row offsets.
+ * @param[in] file Borrowed writable HDF5 file identifier for the destination.
+ * @param[in] ctx Borrowed consistent model context already converted to
+ * authored units; referenced arrays and indices must agree with object counts.
+ * @note Creates the section groups/columns when possible. Group and dataset
+ * failures are not aggregated or thrown as a section status, so partial data
+ * may remain. Allocation exceptions propagate. No input is retained.
+ */
 void write_tables(hid_t file, const SimulationContext& ctx) {
     std::vector<std::string> cname, ctype;
     std::vector<int> coffs{0};
@@ -677,43 +887,54 @@ void write_tables(hid_t file, const SimulationContext& ctx) {
     for (int t = 0; t < ctx.n_tables(); ++t) {
         const auto& tb = ctx.tables[t];
         const bool is_series = (tb.type == TableType::TIMESERIES);
-        auto& nm  = is_series ? tname : cname;
+        auto& nm = is_series ? tname : cname;
         auto& off = is_series ? toffs : coffs;
-        auto& xs  = is_series ? tx : cx;
-        auto& ys  = is_series ? ty : cy;
+        auto& xs = is_series ? tx : cx;
+        auto& ys = is_series ? ty : cy;
         nm.push_back(tb.id);
-        if (!is_series) ctype.push_back(curve_type_keyword(tb.type));
+        if (!is_series)
+            ctype.push_back(curve_type_keyword(tb.type));
         xs.insert(xs.end(), tb.x.begin(), tb.x.end());
         ys.insert(ys.end(), tb.y.begin(), tb.y.end());
         off.push_back(static_cast<int>(xs.size()));
     }
 
     {
-        Handle g = make_group(file, "tables/curves");
+        Handle g = checked_group(file, "tables/curves");
         if (g) {
-            write_column(g.get(), "name", cname, "curve id");
-            write_column(g.get(), "type", ctype, "STORAGE | RATING | PUMP1..5 | SHAPE | ...");
-            write_column(g.get(), "offsets", coffs, "index",
+            checked_column(g.get(), "name", cname, "curve id");
+            checked_column(g.get(), "type", ctype, "STORAGE | RATING | PUMP1..5 | SHAPE | ...");
+            checked_column(g.get(), "offsets", coffs, "index",
                          "CSR row starts into x/y; row i spans [offsets[i], offsets[i+1])");
-            write_column(g.get(), "x", cx, "model", "abscissa values, all curves concatenated");
-            write_column(g.get(), "y", cy, "model", "ordinate values, all curves concatenated");
+            checked_column(g.get(), "x", cx, "model", "abscissa values, all curves concatenated");
+            checked_column(g.get(), "y", cy, "model", "ordinate values, all curves concatenated");
         }
     }
     {
-        Handle g = make_group(file, "tables/timeseries");
+        Handle g = checked_group(file, "tables/timeseries");
         if (g) {
-            write_column(g.get(), "name", tname, "time series id");
-            write_column(g.get(), "offsets", toffs, "index", "CSR row starts into time/value");
+            checked_column(g.get(), "name", tname, "time series id");
+            checked_column(g.get(), "offsets", toffs, "index", "CSR row starts into time/value");
             // Times are stored as the engine holds them: absolute OADate when
             // the series was authored with dates, else elapsed hours. The
             // `absolute` flag says which, so a relative series is never
             // silently anchored to a start date it did not have.
-            write_column(g.get(), "time", tx, "OADate or elapsed hours", "abscissa");
-            write_column(g.get(), "value", ty, "model", "ordinate");
+            checked_column(g.get(), "time", tx, "OADate or elapsed hours", "abscissa");
+            checked_column(g.get(), "value", ty, "model", "ordinate");
         }
     }
 }
 
+/**
+ * @brief Export node coordinates, link vertices and subcatchment polygons.
+ * @param[in] file Borrowed writable HDF5 file identifier for the destination.
+ * @param[in] ctx Borrowed consistent model context already converted to
+ * authored units; referenced arrays and indices must agree with object counts.
+ * @param[in] u Borrowed authored unit labels matching ctx's converted values.
+ * @note Creates the section groups/columns when possible. Group and dataset
+ * failures are not aggregated or thrown as a section status, so partial data
+ * may remain. Allocation exceptions propagate. No input is retained.
+ */
 void write_geometry(hid_t file, const SimulationContext& ctx, const UnitWords& u) {
     // --- node coordinates ---------------------------------------------------
     {
@@ -721,16 +942,17 @@ void write_geometry(hid_t file, const SimulationContext& ctx, const UnitWords& u
         std::vector<double> x, y;
         for (int j = 0; j < ctx.n_nodes(); ++j) {
             const auto i = static_cast<std::size_t>(j);
-            if (i >= ctx.spatial.node_x.size()) break;
+            if (i >= ctx.spatial.node_x.size())
+                break;
             name.push_back(ctx.node_names.name_of(j));
             x.push_back(ctx.spatial.node_x[i]);
             y.push_back(ctx.spatial.node_y[i]);
         }
-        Handle g = make_group(file, "geometry/coordinates");
+        Handle g = checked_group(file, "geometry/coordinates");
         if (g) {
-            write_column(g.get(), "node", name, "node id");
-            write_column(g.get(), "x", x, "map units", "easting");
-            write_column(g.get(), "y", y, "map units", "northing");
+            checked_column(g.get(), "node", name, "node id");
+            checked_column(g.get(), "x", x, "map units", "easting");
+            checked_column(g.get(), "y", y, "map units", "northing");
         }
     }
     // --- link vertices (CSR) ------------------------------------------------
@@ -740,7 +962,8 @@ void write_geometry(hid_t file, const SimulationContext& ctx, const UnitWords& u
         std::vector<double> x, y;
         for (int j = 0; j < ctx.n_links(); ++j) {
             const auto i = static_cast<std::size_t>(j);
-            if (i >= ctx.spatial.link_vertices_x.size()) break;
+            if (i >= ctx.spatial.link_vertices_x.size())
+                break;
             name.push_back(ctx.link_names.name_of(j));
             const auto& vx = ctx.spatial.link_vertices_x[i];
             const auto& vy = ctx.spatial.link_vertices_y[i];
@@ -748,19 +971,28 @@ void write_geometry(hid_t file, const SimulationContext& ctx, const UnitWords& u
             y.insert(y.end(), vy.begin(), vy.end());
             offs.push_back(static_cast<int>(x.size()));
         }
-        Handle g = make_group(file, "geometry/vertices");
+        Handle g = checked_group(file, "geometry/vertices");
         if (g) {
-            write_column(g.get(), "link", name, "link id");
-            write_column(g.get(), "offsets", offs, "index", "CSR row starts into x/y");
-            write_column(g.get(), "x", x, "map units", "easting");
-            write_column(g.get(), "y", y, "map units", "northing");
+            checked_column(g.get(), "link", name, "link id");
+            checked_column(g.get(), "offsets", offs, "index", "CSR row starts into x/y");
+            checked_column(g.get(), "x", x, "map units", "easting");
+            checked_column(g.get(), "y", y, "map units", "northing");
         }
     }
     (void)u;
 }
 
-void write_transects_and_streets(hid_t file, const SimulationContext& ctx,
-                                 const UnitWords& u) {
+/**
+ * @brief Export transect station/elevation CSR arrays and street geometry.
+ * @param[in] file Borrowed writable HDF5 file identifier for the destination.
+ * @param[in] ctx Borrowed consistent model context already converted to
+ * authored units; referenced arrays and indices must agree with object counts.
+ * @param[in] u Borrowed authored unit labels matching ctx's converted values.
+ * @note Creates the section groups/columns when possible. Group and dataset
+ * failures are not aggregated or thrown as a section status, so partial data
+ * may remain. Allocation exceptions propagate. No input is retained.
+ */
+void write_transects_and_streets(hid_t file, const SimulationContext& ctx, const UnitWords& u) {
     // --- transects (CSR over the station/elevation pairs) -------------------
     {
         const int n = ctx.transects.count();
@@ -784,20 +1016,21 @@ void write_transects_and_streets(hid_t file, const SimulationContext& ctx,
                              ctx.transects.elevations[i].end());
             offs.push_back(static_cast<int>(station.size()));
         }
-        Handle g = make_group(file, "geometry/transects");
+        Handle g = checked_group(file, "geometry/transects");
         if (g) {
-            write_column(g.get(), "name", name, "transect id");
-            write_column(g.get(), "n_left", nl, "dimensionless", "Manning's n, left overbank");
-            write_column(g.get(), "n_right", nr, "dimensionless", "Manning's n, right overbank");
-            write_column(g.get(), "n_channel", nc, "dimensionless", "Manning's n, main channel");
-            write_column(g.get(), "x_left_bank", xl, u.length, "left bank station");
-            write_column(g.get(), "x_right_bank", xr, u.length, "right bank station");
-            write_column(g.get(), "length_factor", lf, "dimensionless", "meander modifier");
-            write_column(g.get(), "x_factor", xf, "dimensionless", "station multiplier");
-            write_column(g.get(), "y_factor", yf, u.length, "elevation offset");
-            write_column(g.get(), "offsets", offs, "index", "CSR row starts into station/elevation");
-            write_column(g.get(), "station", station, u.length, "horizontal station");
-            write_column(g.get(), "elevation", elevation, u.length, "ground elevation");
+            checked_column(g.get(), "name", name, "transect id");
+            checked_column(g.get(), "n_left", nl, "dimensionless", "Manning's n, left overbank");
+            checked_column(g.get(), "n_right", nr, "dimensionless", "Manning's n, right overbank");
+            checked_column(g.get(), "n_channel", nc, "dimensionless", "Manning's n, main channel");
+            checked_column(g.get(), "x_left_bank", xl, u.length, "left bank station");
+            checked_column(g.get(), "x_right_bank", xr, u.length, "right bank station");
+            checked_column(g.get(), "length_factor", lf, "dimensionless", "meander modifier");
+            checked_column(g.get(), "x_factor", xf, "dimensionless", "station multiplier");
+            checked_column(g.get(), "y_factor", yf, u.length, "elevation offset");
+            checked_column(g.get(), "offsets", offs, "index",
+                         "CSR row starts into station/elevation");
+            checked_column(g.get(), "station", station, u.length, "horizontal station");
+            checked_column(g.get(), "elevation", elevation, u.length, "ground elevation");
         }
     }
     // --- streets ------------------------------------------------------------
@@ -820,25 +1053,26 @@ void write_transects_and_streets(hid_t file, const SimulationContext& ctx,
             sback.push_back(ctx.streets.back_slope[i]);
             nback.push_back(ctx.streets.back_n[i]);
         }
-        Handle g = make_group(file, "geometry/streets");
+        Handle g = checked_group(file, "geometry/streets");
         if (g) {
-            write_column(g.get(), "name", name, "street id");
-            write_column(g.get(), "crown_width", tcrown, u.length, "half-width to the crown");
-            write_column(g.get(), "curb_height", hcurb, u.length, "curb height");
-            write_column(g.get(), "cross_slope", sx, "percent", "road cross slope");
-            write_column(g.get(), "n_road", nroad, "dimensionless", "road Manning's n");
-            write_column(g.get(), "gutter_depression", a, u.length, "gutter depression");
-            write_column(g.get(), "gutter_width", wdep, u.length, "gutter width");
-            write_column(g.get(), "sides", sides, "count", "1 or 2 gutters");
-            write_column(g.get(), "backing_width", tback, u.length, "backing width");
-            write_column(g.get(), "backing_slope", sback, "percent", "backing slope");
-            write_column(g.get(), "n_backing", nback, "dimensionless", "backing Manning's n");
+            checked_column(g.get(), "name", name, "street id");
+            checked_column(g.get(), "crown_width", tcrown, u.length, "half-width to the crown");
+            checked_column(g.get(), "curb_height", hcurb, u.length, "curb height");
+            checked_column(g.get(), "cross_slope", sx, "percent", "road cross slope");
+            checked_column(g.get(), "n_road", nroad, "dimensionless", "road Manning's n");
+            checked_column(g.get(), "gutter_depression", a, u.length, "gutter depression");
+            checked_column(g.get(), "gutter_width", wdep, u.length, "gutter width");
+            checked_column(g.get(), "sides", sides, "count", "1 or 2 gutters");
+            checked_column(g.get(), "backing_width", tback, u.length, "backing width");
+            checked_column(g.get(), "backing_slope", sback, "percent", "backing slope");
+            checked_column(g.get(), "n_backing", nback, "dimensionless", "backing Manning's n");
         }
     }
 }
 
-}  // namespace
+} // namespace
 
+// Contract: openswmm::h5io::write_model.
 int write_model(const std::string& path, const SimulationContext& ctx_internal,
                 std::vector<std::string>* warnings) {
     // Authored units, exactly like the .inp writer (STRATEGY.md §4): the same
@@ -847,23 +1081,25 @@ int write_model(const std::string& path, const SimulationContext& ctx_internal,
     const int us = ucf::getUnitSystem(static_cast<int>(ctx_internal.options.flow_units));
     const auto usz = static_cast<std::size_t>(us);
     const bool needs_display =
-        ucf::Ucf[ucf::LENGTH][usz]   != 1.0 ||
-        ucf::Ucf[ucf::RAINFALL][usz] != 1.0 ||
+        ucf::Ucf[ucf::LENGTH][usz] != 1.0 || ucf::Ucf[ucf::RAINFALL][usz] != 1.0 ||
         ucf::Qcf[static_cast<std::size_t>(ctx_internal.options.flow_units)] != 1.0;
     const bool needs_authored = input::needs_authored_conversion(ctx_internal);
 
     SimulationContext copy;
     if (needs_display || needs_authored) {
         copy = ctx_internal;
-        if (needs_display)  input::convert_internal_to_display(copy);
-        if (needs_authored) input::convert_internal_to_authored(copy);
+        if (needs_display)
+            input::convert_internal_to_display(copy);
+        if (needs_authored)
+            input::convert_internal_to_authored(copy);
     }
     const SimulationContext& ctx = (needs_display || needs_authored) ? copy : ctx_internal;
 
     Handle file(H5Fcreate(path.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT),
                 Handle::Kind::File);
     if (!file) {
-        if (warnings) warnings->push_back("HDF5: could not create '" + path + "'");
+        if (warnings)
+            warnings->push_back("HDF5: could not create '" + path + "'");
         return 1;
     }
 
@@ -879,19 +1115,28 @@ int write_model(const std::string& path, const SimulationContext& ctx_internal,
     write_transects_and_streets(file.get(), ctx, u);
     write_geometry(file.get(), ctx, u);
 
-    // Sections this slice does not yet carry. Named explicitly rather than
-    // dropped in silence — the mistake the GeoPackage schema made and the
-    // file-IO audit had to reconstruct by reading the DDL.
-    if (warnings) {
-        warnings->push_back(
-            "HDF5 model schema " + std::string(kSchemaVersion) + " does not yet carry: "
-            "[CONTROLS], [LID_CONTROLS], [LID_USAGE], [AQUIFERS], [GROUNDWATER], [GWF], "
-            "[SNOWPACKS], [POLLUTANTS], [LANDUSES], [BUILDUP], [WASHOFF], [COVERAGES], "
-            "[LOADINGS], [TREATMENT], [INFLOWS], [DWF], [RDII], [HYDROGRAPHS], "
-            "[PATTERNS], [INLETS], [INLET_USAGE], [OPTIONS], [REPORT] and the 2D "
-            "sections. Use the .inp or .gpkg writer for a complete model.");
+    // The native input carries all configuration alongside the analysis columns.
+    // Older column-only files remain distinguishable and cannot be mistaken for
+    // complete editable models.
+    if (!checked_column(file.get(), "native_input", std::vector<std::string>{
+            inp_writer::modelText(ctx_internal, path)})) {
+        if (warnings) warnings->push_back("HDF5: cannot write native model configuration");
+        return 1;
+    }
+    std::vector<std::string> ids, configurations;
+    for (const auto& [id, text] : native_model::configurations(ctx_internal)) {
+        ids.push_back(id); configurations.push_back(text);
+    }
+    if (!ids.empty() && (!checked_column(file.get(), "component_ids", ids) ||
+                        !checked_column(file.get(), "component_configurations", configurations))) {
+        if (warnings) warnings->push_back("HDF5: cannot preserve process component configurations");
+        return 1;
+    }
+    if (H5Fflush(file.get(), H5F_SCOPE_GLOBAL) < 0) {
+        if (warnings) warnings->push_back("HDF5: cannot flush model configuration");
+        return 1;
     }
     return 0;
 }
 
-}  // namespace openswmm::h5io
+} // namespace openswmm::h5io

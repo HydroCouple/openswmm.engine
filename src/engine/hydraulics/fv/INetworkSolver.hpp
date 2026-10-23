@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file INetworkSolver.hpp
- * @brief Backend-neutral interface for the explicit FV 1D network integrator.
+ * @file      INetworkSolver.hpp
+ * @brief     Backend-neutral interface for the explicit FV 1D network integrator.
  *
  * @details Modeled directly on 2d/solver/ISurfaceSolver.hpp so the two solver
  *          families are reviewable side by side:
@@ -32,9 +32,14 @@
  * @see plans/EXPLICIT_FV_KOKKOS_1D_SOLVER_PLAN.md §4
  * @ingroup engine_fv
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
+ */
+
+/**
+ * @defgroup engine_fv Finite-volume network hydraulics
+ * @brief Backend-neutral network solver interfaces, finite-volume kernels, options and mesh assembly. Individual APIs describe internal hydraulic units, caller-owned buffers and accepted-step publication.
  */
 
 #ifndef OPENSWMM_ENGINE_FV_I_NETWORK_SOLVER_HPP
@@ -121,7 +126,7 @@ struct FvStepForcing {
     /// clamps to ROUTING_STEP, since the structure equations live in the
     /// engine, not the kernels.
     void (*refresh)(void* user, double t_elapsed) = nullptr;
-    void*  refresh_user = nullptr;
+    void* refresh_user = nullptr;
 
     int n_nodes = 0;
     int n_links = 0;
@@ -141,18 +146,54 @@ struct FvStepForcing {
  */
 class INetworkSolver {
 public:
+    /**
+     * @brief Destroy a concrete backend through the network-solver interface.
+     *
+     * Router owns the implementation via unique_ptr. Backend destructor handles its owned resources;
+     * referenced mesh/state/options remain externally owned.
+     */
     virtual ~INetworkSolver() = default;
 
-    /// One-time setup. @p mesh, @p state and @p opts must outlive the solver.
+    /**
+     * @brief Bind and initialize a concrete backend for one network model.
+     *
+     * One-time setup in the abstract lifecycle; concrete backend defines validation/allocation failures
+     * and initial workspace. Caller serializes initialize/advance/reinitialize/finalize and does not
+     * resize bound stores during active use.
+     *
+     * @param[in,out] mesh Borrowed validated topology/geometry; must outlive solver use until
+     *     finalize/destruction.
+     * @param[in,out] state Borrowed aligned hydraulic state updated by subsequent advance calls; must
+     *     outlive solver use.
+     * @param[in] opts Borrowed solver options whose lifetime covers solver use.
+     */
     virtual void initialize(NetworkMeshData& mesh, NetworkStateData& state,
                             const FvOptions& opts) = 0;
 
-    /// Advance from @p t_current to @p t_target (s), substepping at the CFL
-    /// limit. @return the time actually reached (== t_target on success).
-    virtual double advance(double t_current, double t_target,
-                           const FvStepForcing& forcing) = 0;
+    /**
+     * @brief Advance bound network state across one requested routing window.
+     *
+     * Concrete backend chooses CFL substeps and failure/partial-state behavior. Caller must check
+     * reached time before publishing full-window receipts; this interface offers no automatic rollback
+     * or exception barrier.
+     *
+     * @param[in] t_current Finite elapsed start seconds consistent with the backend's current state.
+     * @param[in] t_target Finite target elapsed seconds>=t_current.
+     * @param[in] forcing Borrowed forcing and referenced spans valid for all internal substeps;
+     *     optional refresh callback may update its backing arrays synchronously.
+     * @return Elapsed time actually reached; successful full-window advance returns t_target.
+     */
+    virtual double advance(double t_current, double t_target, const FvStepForcing& forcing) = 0;
 
-    /// Reinitialize at @p t0 after external state edits (hot start, API writes).
+    /**
+     * @brief Refresh backend state after caller edits the bound hydraulic arrays.
+     *
+     * Used for hotstart/runtime edits after initialization. Concrete backend determines workspace
+     * resets and validation failures; does not imply ownership transfer or rebuild of externally owned
+     * mesh.
+     *
+     * @param[in] t0 Finite elapsed restart seconds corresponding to externally supplied state.
+     */
     virtual void reinitialize(double t0) = 0;
 
     /// Release all backend resources.
@@ -164,42 +205,44 @@ public:
     /// Last internal substep size (s).
     virtual double last_step_size() const noexcept = 0;
 
-    /// CFL-limited step the solver would take next, from its most recent
-    /// census. Router::getAdaptiveStep publishes this as the routing-step
-    /// suggestion.
+    /**
+     * @brief Read the next CFL step suggestion from the latest backend census.
+     * @return Suggested seconds interpreted by Router adaptive routing; concrete backend defines values
+     *     before initialization or after finalize.
+     */
     virtual double suggested_step() const noexcept = 0;
 
     /// Cumulative statistics over the whole run — what the "FV Solver
     /// Statistics" report block reads.
     struct RunStats {
-        long   nsteps      = 0;    ///< explicit substeps
-        long   nflux       = 0;    ///< face flux evaluations
-        double last_h      = 0.0;  ///< last substep (s)
-        double avg_h       = 0.0;  ///< sim-time / nsteps (s)
-        double min_h       = 0.0;  ///< smallest substep taken (s)
+        long nsteps = 0;     ///< explicit substeps
+        long nflux = 0;      ///< face flux evaluations
+        double last_h = 0.0; ///< last substep (s)
+        double avg_h = 0.0;  ///< sim-time / nsteps (s)
+        double min_h = 0.0;  ///< smallest substep taken (s)
 
         // Work-list compaction telemetry. Negative fractions mean "not
         // populated" (compaction disabled or never sampled).
-        double active_frac_min  = -1.0;
+        double active_frac_min = -1.0;
         double active_frac_mean = -1.0;
-        double active_frac_max  = -1.0;
+        double active_frac_max = -1.0;
 
-        long   tier_cells[8] = {0}; ///< cumulative rebuild-sampled cells per LTS tier
-        int    n_tiers       = 0;   ///< populated tier count (≤ 8)
+        long tier_cells[8] = {0}; ///< cumulative rebuild-sampled cells per LTS tier
+        int n_tiers = 0;          ///< populated tier count (≤ 8)
 
         // dt-argmin attribution (slot program R0): which regime owned the
         // binding CFL element, counted once per census (global path) or
         // re-tier (LTS path). Answers "who sets the step" without a trace.
-        long   dt_argmin_pressurized = 0;  ///< h ≥ y_full (slot celerity)
-        long   dt_argmin_band        = 0;  ///< y_crown ≤ h < y_full (mouth)
-        long   dt_argmin_free        = 0;  ///< open-channel cell
-        long   dt_argmin_node        = 0;  ///< node storage / feedback bound
+        long dt_argmin_pressurized = 0; ///< h ≥ y_full (slot celerity)
+        long dt_argmin_band = 0;        ///< y_crown ≤ h < y_full (mouth)
+        long dt_argmin_free = 0;        ///< open-channel cell
+        long dt_argmin_node = 0;        ///< node storage / feedback bound
 
         // LTS macro cycles that ran vs were rejected. The tier histogram
         // above is filled by assignTiers whether or not a cycle ever fires,
         // so these are what say tiering ENGAGED rather than was assigned.
-        long   n_macro_cycles   = 0;
-        long   n_macro_rejected = 0;
+        long n_macro_cycles = 0;
+        long n_macro_rejected = 0;
     };
 
     /// Read cumulative statistics. Default: zeros (backend has no counters).
@@ -213,14 +256,21 @@ public:
     /// time while the physics is garbage (P6 finding F3: 30 of 118 study
     /// series beyond 10x the observed range, every run status OK).
     struct Divergence {
-        int         link  = -1;       ///< engine link index of the offender
-        double      value = 0.0;      ///< offending magnitude (internal units)
-        const char* what  = nullptr;  ///< "velocity (ft/s)" | "depth (ft)"
+        int link = -1;              ///< engine link index of the offender
+        double value = 0.0;         ///< offending magnitude (internal units)
+        const char* what = nullptr; ///< "velocity (ft/s)" | "depth (ft)"
     };
 
-    /// True when the last advance() left a cell beyond physical bounds (or
-    /// non-finite), with @p d describing the worst offender. Default: never
-    /// reports, for a backend without the check.
+    /**
+     * @brief Report the last advance's worst physical-bound/nonfinite offender when supported.
+     *
+     * Returned what pointer is borrowed backend-defined text; caller must respect concrete
+     * implementation lifetime. Does not run another advance or repair state.
+     *
+     * @param[out] d Populated only when backend returns true; default implementation leaves destination
+     *     unchanged.
+     * @return True for a reported offender; default false for backends without this check.
+     */
     virtual bool divergence(Divergence& d) const noexcept {
         (void)d;
         return false;

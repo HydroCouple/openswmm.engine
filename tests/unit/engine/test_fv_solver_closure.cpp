@@ -1,6 +1,6 @@
 /**
- * @file test_fv_solver_closure.cpp
- * @brief Cross-section closure gates for the explicit FV 1D solver.
+ * @file      test_fv_solver_closure.cpp
+ * @brief     Cross-section closure gates for the explicit FV 1D solver.
  *
  * @details Covers the properties every downstream gate silently relies on
  *          (plan §3.3):
@@ -14,6 +14,10 @@
  *            - the design celerity FV_SLOT_CELERITY is actually delivered
  *
  * @ingroup engine_fv
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -30,12 +34,32 @@ namespace k = openswmm::fv::kernels;
 
 namespace {
 
+/**
+ * @brief Build the closed circular finite-volume closure fixture.
+ *
+ * Ignores buildGeometry status and adds no range validation; caller inspects/uses the result under
+ * valid fixture inputs.
+ *
+ * @param[in] d Intended positive circular diameter feet.
+ * @param[in] celerity Intended positive pressure-wave celerity ft/s, default 100.
+ * @return Owned geometry passed through buildGeometry with is_open=false.
+ */
 FvGeometry makeCircular(double d, double celerity = 100.0) {
     FvGeometry g;
     buildGeometry(circular(d), false, celerity, g);
     return g;
 }
 
+/**
+ * @brief Build the open rectangular finite-volume closure fixture.
+ *
+ * Ignores builder status and performs no solver initialization or independent geometry validation.
+ *
+ * @param[in] w Intended positive width feet.
+ * @param[in] y Intended positive full depth feet.
+ * @param[in] celerity Celerity ft/s passed to builder, default 100.
+ * @return Owned geometry passed through buildGeometry with is_open=true.
+ */
 FvGeometry makeRect(double w, double y, double celerity = 100.0) {
     FvGeometry g;
     buildGeometry(rectOpen(w, y), true, celerity, g);
@@ -52,7 +76,7 @@ TEST(FvClosure, AreaIsStrictlyMonotoneThroughTheCrown) {
     const FvGeometry g = makeCircular(3.0);
     double prev = -1.0;
     for (int i = 0; i <= 4000; ++i) {
-        const double h = 3.0 * static_cast<double>(i) / 2000.0;   // to 2×y_full
+        const double h = 3.0 * static_cast<double>(i) / 2000.0; // to 2×y_full
         const double a = k::areaOfDepth(g, h);
         EXPECT_GT(a, prev) << "A(h) not increasing at h=" << h;
         prev = a;
@@ -62,7 +86,7 @@ TEST(FvClosure, AreaIsStrictlyMonotoneThroughTheCrown) {
 TEST(FvClosure, AreaIsContinuousAtTheCrown) {
     const FvGeometry g = makeCircular(3.0);
     const double below = k::areaOfDepth(g, g.y_full - 1.0e-9);
-    const double at    = k::areaOfDepth(g, g.y_full);
+    const double at = k::areaOfDepth(g, g.y_full);
     const double above = k::areaOfDepth(g, g.y_full + 1.0e-9);
     EXPECT_NEAR(below, at, 1.0e-7);
     EXPECT_NEAR(above, at, 1.0e-7);
@@ -75,8 +99,7 @@ TEST(FvClosure, WidthIsTheDerivativeOfAreaForAnalyticSections) {
     buildGeometry(rectOpen(10.0, 4.0), true, 100.0, g);
     for (double h : {0.3, 1.0, 2.0, 3.9, 4.0, 6.0}) {
         const double e = 1.0e-6;
-        const double num =
-            (k::areaOfDepth(g, h + e) - k::areaOfDepth(g, h - e)) / (2.0 * e);
+        const double num = (k::areaOfDepth(g, h + e) - k::areaOfDepth(g, h - e)) / (2.0 * e);
         EXPECT_NEAR(num, k::widthOfDepth(g, h), 1.0e-7) << "at h=" << h;
     }
 }
@@ -95,10 +118,8 @@ TEST(FvClosure, WidthTracksAreaSlopeToTableResolutionForTabulatedSections) {
     const FvGeometry g = makeCircular(3.0);
     for (double h : {0.6, 1.2, 1.8, 2.4}) {
         const double e = 1.0e-4;
-        const double num =
-            (k::areaOfDepth(g, h + e) - k::areaOfDepth(g, h - e)) / (2.0 * e);
-        EXPECT_NEAR(num, k::widthOfDepth(g, h), 0.10 * k::widthOfDepth(g, h))
-            << "at h=" << h;
+        const double num = (k::areaOfDepth(g, h + e) - k::areaOfDepth(g, h - e)) / (2.0 * e);
+        EXPECT_NEAR(num, k::widthOfDepth(g, h), 0.10 * k::widthOfDepth(g, h)) << "at h=" << h;
     }
 }
 
@@ -109,11 +130,13 @@ TEST(FvClosure, SlotContributionIsExactlyItsOwnDerivative) {
     const FvGeometry g = makeCircular(3.0);
     const double band = g.y_full - g.y_crown;
     auto slotArea = [&](double h) {
-        if (h >= g.y_full) return g.t_slot * band * 0.5 + g.t_slot * (h - g.y_full);
+        if (h >= g.y_full)
+            return g.t_slot * band * 0.5 + g.t_slot * (h - g.y_full);
         return g.t_slot * band * k::slotRampIntegral((h - g.y_crown) / band);
     };
     auto slotWidth = [&](double h) {
-        if (h >= g.y_full) return g.t_slot;
+        if (h >= g.y_full)
+            return g.t_slot;
         return g.t_slot * k::slotRamp((h - g.y_crown) / band);
     };
     for (int i = 0; i <= 200; ++i) {
@@ -129,8 +152,7 @@ TEST(FvClosure, WidthNeverVanishesAboveTheCrownCutoff) {
     // the CFL step. The slot ramp is what floors it.
     const FvGeometry g = makeCircular(3.0);
     for (int i = 0; i <= 500; ++i) {
-        const double h = g.y_crown + (g.y_full - g.y_crown) *
-                                          static_cast<double>(i) / 500.0;
+        const double h = g.y_crown + (g.y_full - g.y_crown) * static_cast<double>(i) / 500.0;
         EXPECT_GT(k::widthOfDepth(g, h), 0.0) << "T vanished at h=" << h;
     }
 }
@@ -140,14 +162,12 @@ TEST(FvClosure, WidthNeverVanishesAboveTheCrownCutoff) {
 // ---------------------------------------------------------------------------
 
 TEST(FvClosure, DepthAreaRoundTripsEverywhere) {
-    for (const FvGeometry& g : {makeCircular(3.0), makeCircular(0.5),
-                                makeRect(10.0, 4.0)}) {
+    for (const FvGeometry& g : {makeCircular(3.0), makeCircular(0.5), makeRect(10.0, 4.0)}) {
         for (int i = 1; i <= 3000; ++i) {
             const double h = g.y_full * 2.0 * static_cast<double>(i) / 1500.0;
             const double a = k::areaOfDepth(g, h);
             const double h2 = k::depthOfArea(g, a);
-            EXPECT_NEAR(h, h2, 1.0e-8 * std::max(1.0, h))
-                << "round-trip failed at h=" << h;
+            EXPECT_NEAR(h, h2, 1.0e-8 * std::max(1.0, h)) << "round-trip failed at h=" << h;
         }
     }
 }
@@ -155,8 +175,7 @@ TEST(FvClosure, DepthAreaRoundTripsEverywhere) {
 TEST(FvClosure, DepthAreaRoundTripsInsideTheTaperBand) {
     const FvGeometry g = makeCircular(3.0);
     for (int i = 0; i <= 2000; ++i) {
-        const double h = g.y_crown +
-                         (g.y_full - g.y_crown) * static_cast<double>(i) / 2000.0;
+        const double h = g.y_crown + (g.y_full - g.y_crown) * static_cast<double>(i) / 2000.0;
         const double a = k::areaOfDepth(g, h);
         EXPECT_NEAR(k::depthOfArea(g, a), h, 1.0e-9);
     }
@@ -201,15 +220,15 @@ TEST(FvClosure, I1AboveTheCrownIsAnalytic) {
 TEST(FvClosure, SlotCelerityMatchesTheDesignValue) {
     for (double c_design : {50.0, 100.0, 300.0}) {
         const FvGeometry g = makeCircular(3.0, c_design);
-        const double h = g.y_full + 5.0;                 // well into the slot
+        const double h = g.y_full + 5.0; // well into the slot
         const double a = k::areaOfDepth(g, h);
         const double t = k::widthOfDepth(g, h);
         const double c = k::celerity(a, t);
         // The pressurized celerity grows slowly with head because the stored
         // slot area adds to A; check it at the crown where the design value is
         // defined, and confirm it stays the right order deeper in.
-        const double c_at_crown = k::celerity(k::areaOfDepth(g, g.y_full),
-                                              k::widthOfDepth(g, g.y_full));
+        const double c_at_crown =
+            k::celerity(k::areaOfDepth(g, g.y_full), k::widthOfDepth(g, g.y_full));
         EXPECT_NEAR(c_at_crown, c_design, 0.03 * c_design);
         EXPECT_GT(c, 0.5 * c_design);
         EXPECT_LT(c, 4.0 * c_design);

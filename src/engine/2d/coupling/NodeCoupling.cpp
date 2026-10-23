@@ -1,14 +1,18 @@
 /**
- * @file NodeCoupling.cpp
- * @brief Implementation of 2D↔1D node coupling via orifice exchange.
+ * @file      NodeCoupling.cpp
+ * @brief     Implementation of 2D↔1D node coupling via orifice exchange.
  *
  * @see NodeCoupling.hpp
  * @ingroup engine_2d
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include "NodeCoupling.hpp"
 #include "PondModel.hpp"
-#include "../mesh/VertexReconstruction.hpp"  // vertexHeadAt (on-demand single-vertex head)
+#include "../mesh/VertexReconstruction.hpp" // vertexHeadAt (on-demand single-vertex head)
 #include "../../core/SimulationContext.hpp"
 
 #include <cmath>
@@ -19,7 +23,7 @@ namespace openswmm::twoD {
 
 namespace {
 
-constexpr double GRAVITY = 9.80665;  // m/s²
+constexpr double GRAVITY = 9.80665; // m/s²
 
 /// Regularization head (m) below which the orifice √-law is replaced by a C¹
 /// quadratic. The bare law Q = Cd·A·sign(Δh)·√(2g|Δh|) has dQ/dΔh → ∞ as
@@ -27,61 +31,102 @@ constexpr double GRAVITY = 9.80665;  // m/s²
 /// heads hover near-equal — a strong stiffness/oscillation source for the
 /// (explicit, step-frozen) exchange. Below H_EPS we use φ(x) that matches √x in
 /// value and slope at H_EPS and has a FINITE slope at 0.
-constexpr double ORIFICE_H_EPS = 0.02;  // 2 cm
+constexpr double ORIFICE_H_EPS = 0.02; // 2 cm
 
-/// √-with-regularized-tail: φ(x)=√x for x≥ε; a C¹ quadratic for x<ε.
+/**
+ * @brief √-with-regularized-tail: φ(x)=√x for x≥ε; a C¹ quadratic for x<ε.
+ *
+ * @param[in] a Nonnegative absolute driving head m, finite by caller contract.
+ * @return Regularized square-root head in sqrt(m), matching sqrt(a) at/above 0.02 m and a C1
+ * quadratic below it. Zero returns zero; negative/nonfinite inputs are not validated. No
+ * mutation.
+ */
 inline double orificePhi(double a) noexcept {
-    if (a >= ORIFICE_H_EPS) return std::sqrt(a);
+    if (a >= ORIFICE_H_EPS)
+        return std::sqrt(a);
     const double inv_sqrt_e = 1.0 / std::sqrt(ORIFICE_H_EPS);
     // φ(x) = (3/(2√ε))x − (1/(2 ε^{3/2}))x² : φ(ε)=√ε, φ'(ε)=1/(2√ε), φ'(0)=3/(2√ε).
     return (1.5 * inv_sqrt_e) * a - (0.5 * inv_sqrt_e / ORIFICE_H_EPS) * a * a;
 }
 
-/// Orifice exchange: Q = Cd · A · sign(Δh) · √(2g) · φ(|Δh|), with φ the
-/// C¹-regularized square root (bounded sensitivity at Δh → 0).
+/**
+ * @brief Orifice exchange: Q = Cd · A · sign(Δh) · √(2g) · φ(|Δh|), with φ the C¹-regularized
+ * square root (bounded sensitivity at Δh → 0).
+ *
+ * @param[in] dh Signed surface-minus-node head m.
+ * @param[in] cd Finite nonnegative dimensionless discharge coefficient.
+ * @param[in] area Finite nonnegative effective opening area m2.
+ * @return Signed Q m3/s, positive for positive dh, zero when |dh|<1e-12 m. Uses a regularized
+ * root below 0.02 m. No source budget, crown/wetness gate, validation or state change occurs.
+ */
 inline double orificeFlow(double dh, double cd, double area) noexcept {
     const double a = std::abs(dh);
-    if (a < 1.0e-12) return 0.0;
+    if (a < 1.0e-12)
+        return 0.0;
     const double sign = (dh > 0.0) ? 1.0 : -1.0;
     return sign * cd * area * std::sqrt(2.0 * GRAVITY) * orificePhi(a);
 }
 
-/// Smooth effective area transition for uncapped surcharge nodes
-inline double effectiveArea(double h_max, double z_ground, double full_depth,
-                             double A_inlet, double A_manhole) noexcept {
-    if (h_max < z_ground) return A_inlet;
-    double d_trans = 0.05;  // 5 cm transition
+/**
+ * @brief Smooth effective area transition for uncapped surcharge nodes
+ *
+ * @param[in] h_max Higher of the two hydraulic heads m.
+ * @param[in] z_ground Ground/crown transition elevation m in the same datum.
+ * @param[in] full_depth Retained interface argument, unused in this implementation.
+ * @param[in] A_inlet Effective area m2 below the transition elevation.
+ * @param[in] A_manhole Effective area m2 at/above z_ground+0.05 m.
+ * @return Linear area transition across 0.05 m, inlet area below it, manhole area above it.
+ * Caller supplies finite physical values; no geometry lookup or state mutation occurs.
+ */
+inline double effectiveArea(double h_max, double z_ground, double full_depth, double A_inlet,
+                            double A_manhole) noexcept {
+    if (h_max < z_ground)
+        return A_inlet;
+    double d_trans = 0.05; // 5 cm transition
     double frac = std::min((h_max - z_ground) / d_trans, 1.0);
     return A_inlet + frac * (A_manhole - A_inlet);
 }
 
-/// Distribute a signed volumetric exchange Q (m³/s) onto the 2D cell(s) of a
-/// coupling point as a coupling_flux rate (m/s). Sign matches coupling_flux:
-/// positive = source INTO the 2D cell, negative = sink OUT of it.
-///
-/// Triangle-coupled points (vertex_idx < 0) inject into the single cell. Vertex-
-/// coupled points spread Q across the vertex stencil weighted by the UPWIND HGL
-/// slope from the vertex to each neighbour cell centroid:
-///   source (Q>0): downhill cells, w_k = max(0,  (vert_head − head_k)/d_k)
-///   sink   (Q<0): uphill   cells, w_k = max(0, −(vert_head − head_k)/d_k)
-/// Weights are normalised (Σ = 1) so the injected volume is exactly Q·dt
-/// (conservative; totalExchangeFlow() unchanged). On a flat surface (Σw ≈ 0) —
-/// or when no cell lies in the upwind direction — fall back to the geometric
-/// partition-of-unity weights the head reconstruction uses (vert_stencil_wt).
-///
-/// S3: when `conc` (length = transport.n_species) is given and Q > 0, the
-/// same share q/area that goes into coupling_flux also goes into
-/// transport.coupling_src[s][cell] × conc[s] — the species mass-rate density
-/// riding this source, so the marcher adds mass beside volume with one rule.
+/**
+ * @brief Distribute a signed volumetric exchange Q (m³/s) onto the 2D cell(s) of a coupling
+ * point as a coupling_flux rate (m/s). Sign matches coupling_flux: positive = source INTO the 2D
+ * cell, negative = sink OUT of it.
+ *
+ * Triangle-coupled points (vertex_idx < 0) inject into the single cell. Vertex- coupled points
+ * spread Q across the vertex stencil weighted by the UPWIND HGL slope from the vertex to each
+ * neighbour cell centroid: source (Q>0): downhill cells, w_k = max(0,  (vert_head − head_k)/d_k)
+ * sink   (Q<0): uphill   cells, w_k = max(0, −(vert_head − head_k)/d_k) Weights are normalised
+ * (Σ = 1) so the injected volume is exactly Q·dt (conservative; totalExchangeFlow() unchanged).
+ * On a flat surface (Σw ≈ 0) — or when no cell lies in the upwind direction — fall back to the
+ * geometric partition-of-unity weights the head reconstruction uses (vert_stencil_wt).
+ *
+ * S3: when `conc` (length = transport.n_species) is given and Q > 0, the same share q/area that
+ * goes into coupling_flux also goes into transport.coupling_src[s][cell] × conc[s] — the species
+ * mass-rate density riding this source, so the marcher adds mass beside volume with one rule.
+ *
+ * @param[in] mesh Prepared SI areas/centroids and valid vertex CSR/geometric weights.
+ * @param[in,out] state Prepared head/coupling_flux arrays and optional transport coupling_src.
+ * Only additive rate-density slots are changed; water and native inventory are not advanced.
+ * @param[in] cp Valid resolved cell or vertex coupling identity; all stencil indices are
+ * unchecked.
+ * @param[in] Q Signed total m3/s, positive into surface. No donor budget or finite validation
+ * occurs.
+ * @param[in] conc Optional readable n_species native concentration tuple, borrowed only during
+ * call. Used only for positive Q with active allocated transport; negative flow is removed by
+ * the marcher.
+ * @note Skips cells with area <=1e-30 m2. Upwind head-gradient weights fall back to prepared
+ * geometric weights. Requires exclusive output slots and stable reconstruction; no allocation or
+ * normalization of caller-provided fallback weights occurs.
+ */
 inline void scatterCouplingFlux(const MeshData& mesh, SurfaceStateData& state,
                                 const CouplingPoint& cp, double Q,
                                 const double* conc = nullptr) noexcept {
     auto& tr = state.transport;
-    const bool with_species =
-        conc && Q > 0.0 && tr.active() && !tr.coupling_src.empty();
+    const bool with_species = conc && Q > 0.0 && tr.active() && !tr.coupling_src.empty();
     auto add = [&](int cell, double q_share) {
         const double area = mesh.tri_area[cell];
-        if (!(area > 1.0e-30)) return;
+        if (!(area > 1.0e-30))
+            return;
         const double dens = q_share / area;
         state.coupling_flux[cell] += dens;
         if (with_species)
@@ -96,11 +141,11 @@ inline void scatterCouplingFlux(const MeshData& mesh, SurfaceStateData& state,
 
     int v = cp.vertex_idx;
     int start = mesh.vert_stencil_ptr[v];
-    int end   = mesh.vert_stencil_ptr[v + 1];
+    int end = mesh.vert_stencil_ptr[v + 1];
     double hv = vertexHeadAt(mesh, state, v);
     double vx = mesh.vx[v];
     double vy = mesh.vy[v];
-    double sign = (Q >= 0.0) ? 1.0 : -1.0;  // source → downhill, sink → uphill
+    double sign = (Q >= 0.0) ? 1.0 : -1.0; // source → downhill, sink → uphill
 
     // Pass 1: sum the upwind-slope weights over the stencil.
     double wsum = 0.0;
@@ -109,9 +154,11 @@ inline void scatterCouplingFlux(const MeshData& mesh, SurfaceStateData& state,
         double dx = mesh.tri_cx[kc] - vx;
         double dy = mesh.tri_cy[kc] - vy;
         double d = std::sqrt(dx * dx + dy * dy);
-        if (d < 1.0e-9) continue;
+        if (d < 1.0e-9)
+            continue;
         double slope = sign * (hv - state.head[kc]) / d;
-        if (slope > 0.0) wsum += slope;
+        if (slope > 0.0)
+            wsum += slope;
     }
 
     // Pass 2: scatter Q. Upwind weighting when a usable gradient exists,
@@ -122,9 +169,11 @@ inline void scatterCouplingFlux(const MeshData& mesh, SurfaceStateData& state,
             double dx = mesh.tri_cx[kc] - vx;
             double dy = mesh.tri_cy[kc] - vy;
             double d = std::sqrt(dx * dx + dy * dy);
-            if (d < 1.0e-9) continue;
+            if (d < 1.0e-9)
+                continue;
             double slope = sign * (hv - state.head[kc]) / d;
-            if (slope <= 0.0) continue;
+            if (slope <= 0.0)
+                continue;
             add(kc, Q * (slope / wsum));
         }
     } else {
@@ -135,41 +184,60 @@ inline void scatterCouplingFlux(const MeshData& mesh, SurfaceStateData& state,
     }
 }
 
-/// Wet-masked 2D free surface at a coupling vertex: depth-weighted average of
-/// the incident WET cells' η (depth ≥ dry_depth), falling back to the vertex
-/// ground elevation when every incident cell is dry. Used for the coupling
-/// head under CELL_CLOSURE = VFR instead of the pseudo-Laplacian vert_head,
-/// which blends DRY-cell heads (= bed elevations) into shoreline vertices and
-/// so reads ≈ terrain over a pond — the failure modes documented at the
-/// stencil-depth scan below and (for outfalls) in updateOutfallBoundaries.
-/// Same weighting rule as reconstructVertexRenderDepths, evaluated on demand
-/// for the handful of coupling vertices inside the RHS (O(stencil) each).
-/// NB: the render path additionally gates contributors on wetted contact
-/// (η > z_v) to fix a profile-plot artifact; this coupling head deliberately
-/// does NOT — gating here would shift exchange onset at every wall-adjacent
-/// manhole and perturb the coupling regression surface for a rendering
-/// concern. Revisit only if a coupling artifact is demonstrated.
-inline double wetVertexEta(const MeshData& mesh, const SurfaceStateData& state,
-                           int v, double dry_depth) noexcept {
+/**
+ * @brief Wet-masked 2D free surface at a coupling vertex: depth-weighted average of the incident
+ * WET cells' η (depth ≥ dry_depth), falling back to the vertex ground elevation when every
+ * incident cell is dry. Used for the coupling head under CELL_CLOSURE = VFR instead of the
+ * pseudo-Laplacian vert_head, which blends DRY-cell heads (= bed elevations) into shoreline
+ * vertices and so reads ≈ terrain over a pond — the failure modes documented at the
+ * stencil-depth scan below and (for outfalls) in updateOutfallBoundaries. Same weighting rule as
+ * reconstructVertexRenderDepths, evaluated on demand for the handful of coupling vertices inside
+ * the RHS (O(stencil) each). NB: the render path additionally gates contributors on wetted
+ * contact (η > z_v) to fix a profile-plot artifact; this coupling head deliberately does NOT —
+ * gating here would shift exchange onset at every wall-adjacent manhole and perturb the coupling
+ * regression surface for a rendering concern. Revisit only if a coupling artifact is
+ * demonstrated.
+ *
+ * @param[in] mesh Prepared vertex CSR and ground elevation in m.
+ * @param[in] state Matching live cell head/depth in m.
+ * @param[in] v Valid vertex index, unchecked.
+ * @param[in] dry_depth Finite positive wet-cell threshold m.
+ * @return Depth-weighted head m over stencil cells with depth>=dry_depth; vertex ground
+ * elevation when no positive wet weight exists. Does not gate water on vertex elevation, update
+ * reconstructed arrays or reserve volume. Requires stable prepared mesh/state; allocation-free.
+ */
+inline double wetVertexEta(const MeshData& mesh, const SurfaceStateData& state, int v,
+                           double dry_depth) noexcept {
     const int s = mesh.vert_stencil_ptr[v];
     const int e = mesh.vert_stencil_ptr[v + 1];
     double num = 0.0, den = 0.0;
     for (int k = s; k < e; ++k) {
         const int t = mesh.vert_stencil_idx[k];
         const double h = state.depth[t];
-        if (!(h >= dry_depth)) continue;            // dry skip (NaN-robust)
+        if (!(h >= dry_depth))
+            continue; // dry skip (NaN-robust)
         num += h * state.head[t];
         den += h;
     }
     return (den > 0.0) ? num / den : mesh.vz[v];
 }
 
-/// Coupling head h_2d at a coupling point: wet-masked vertex η under the VFR
-/// closure, the legacy pseudo-Laplacian vert_head under FLAT (bit-identical
-/// default), the cell head for triangle-coupled points.
+/**
+ * @brief Coupling head h_2d at a coupling point: wet-masked vertex η under the VFR closure, the
+ * legacy pseudo-Laplacian vert_head under FLAT (bit-identical default), the cell head for
+ * triangle-coupled points.
+ *
+ * @param[in] cp Resolved coupling with valid cell/vertex and optional sampling range.
+ * @param[in] mesh Prepared SI mesh and vertex stencil.
+ * @param[in] state Live matching cell fields and optional borrowed coupling_head_cells lookup.
+ * @param[in] opts Resolved cell closure and positive wet threshold m.
+ * @return Sampling-range wet-depth mean when configured (cell-head fallback if dry); otherwise
+ * cell head for centroid coupling, wet-masked vertex head for VFR, or reconstructed vertex head
+ * for FLAT. SI elevation m, not depth. Read-only with unchecked prepared indices; does not
+ * allocate or book water.
+ */
 inline double couplingHead2D(const CouplingPoint& cp, const MeshData& mesh,
-                             const SurfaceStateData& state,
-                             const SolverOptions2D& opts) noexcept {
+                             const SurfaceStateData& state, const SolverOptions2D& opts) noexcept {
     // COUPLING_HEAD VERTEX / STENCIL_WET_MEAN: wet-depth-weighted η over the
     // point's sampling cells, the coupling cell when all are dry.
     if (cp.head_end > cp.head_begin && state.coupling_head_cells) {
@@ -178,19 +246,28 @@ inline double couplingHead2D(const CouplingPoint& cp, const MeshData& mesh,
         for (int k = cp.head_begin; k < cp.head_end; ++k) {
             const int t = cells[static_cast<std::size_t>(k)];
             const double h = state.depth[t];
-            if (!(h >= opts.dry_depth)) continue;
+            if (!(h >= opts.dry_depth))
+                continue;
             num += h * state.head[t];
             den += h;
         }
         return (den > 0.0) ? num / den : state.head[cp.cell_idx];
     }
-    if (cp.vertex_idx < 0) return state.head[cp.cell_idx];
+    if (cp.vertex_idx < 0)
+        return state.head[cp.cell_idx];
     if (opts.cell_closure == CellClosure2D::VFR)
         return wetVertexEta(mesh, state, cp.vertex_idx, opts.dry_depth);
     return vertexHeadAt(mesh, state, cp.vertex_idx);
 }
 
-/// Hermite smoothstep ramp over [0, dry_depth] on the source-side depth.
+/**
+ * @brief Hermite smoothstep ramp over [0, dry_depth] on the source-side depth.
+ *
+ * @param[in] d Source-side available depth m, finite by caller contract.
+ * @param[in] dry_depth Finite positive ramp width m.
+ * @return Hermite smoothstep of clamp(d/dry_depth,0,1), dimensionless. No finite/zero
+ * denominator validation or state mutation occurs.
+ */
 inline double sourceWetRamp(double d, double dry_depth) noexcept {
     const double t = std::min(1.0, std::max(0.0, d / dry_depth));
     return t * t * (3.0 - 2.0 * t);
@@ -198,16 +275,12 @@ inline double sourceWetRamp(double d, double dry_depth) noexcept {
 
 } // anonymous namespace
 
-
-double computeNodeCouplingQ(const CouplingPoint& cp,
-                            const MeshData& mesh,
-                            const SurfaceStateData& state,
-                            const NodeData& nodes,
-                            const SolverOptions2D& opts,
-                            const double* provisional_vol_m3,
+double computeNodeCouplingQ(const CouplingPoint& cp, const MeshData& mesh,
+                            const SurfaceStateData& state, const NodeData& nodes,
+                            const SolverOptions2D& opts, const double* provisional_vol_m3,
                             double h1d_offset_m) noexcept {
     const auto ni = static_cast<std::size_t>(cp.node_idx);
-    const int  ci = cp.cell_idx;
+    const int ci = cp.cell_idx;
 
     // Provisional-state helpers (per-step decoupled path only; nullptr on the
     // live-RHS path, where CVODE's own state is already current). When given,
@@ -242,7 +315,8 @@ double computeNodeCouplingQ(const CouplingPoint& cp,
         for (int k = s; k < e; ++k) {
             const int t = mesh.vert_stencil_idx[k];
             const double d = provDepth(t);
-            if (!(d >= opts.dry_depth)) continue;
+            if (!(d >= opts.dry_depth))
+                continue;
             num += d * (mesh.tri_cz[t] + d);
             den += d;
         }
@@ -253,14 +327,14 @@ double computeNodeCouplingQ(const CouplingPoint& cp,
     // trend slope × time-in-batch, in the 2D metre frame.
     const double h_1d = nodes.head[ni] * opts.len_1d_to_2d + h1d_offset_m;
 
-    // COUPLING_EQUALIZE: no single coupling window may carry the two heads
-    // past each other (the 1D head is held for the window; the 2D cell
-    // responds live). The cap's derivative never enters G.
+    // COUPLING_EQUALIZE: no single coupling window may carry the 1D head (held
+    // for the window) past the 2D head (live). The cap's derivative never
+    // enters G.
     auto equalized = [&](double q) {
         if (!cp.equalize || !state.node_pond_area_m2 || !(state.coupling_window_s > 0.0))
             return q;
-        const double cap = pond::equalizeCap(h_2d - h_1d, state.coupling_window_s,
-                                             (*state.node_pond_area_m2)[ni], mesh.tri_area[ci]);
+        const double cap =
+            pond::equalizeCap(h_2d - h_1d, state.coupling_window_s, (*state.node_pond_area_m2)[ni]);
         return std::clamp(q, -cap, cap);
     };
 
@@ -274,12 +348,11 @@ double computeNodeCouplingQ(const CouplingPoint& cp,
         depth_2d_avail = 0.0;
         for (int k = s; k < e; ++k) {
             const int t = mesh.vert_stencil_idx[k];
-            depth_2d_avail = std::max(depth_2d_avail,
-                (provisional_vol_m3 == nullptr) ? state.depth[t] : provDepth(t));
+            depth_2d_avail = std::max(
+                depth_2d_avail, (provisional_vol_m3 == nullptr) ? state.depth[t] : provDepth(t));
         }
     } else {
-        depth_2d_avail = (provisional_vol_m3 == nullptr) ? state.depth[ci]
-                                                         : provDepth(ci);
+        depth_2d_avail = (provisional_vol_m3 == nullptr) ? state.depth[ci] : provDepth(ci);
     }
     const double depth_1d_avail = nodes.depth[ni] * opts.len_1d_to_2d;
 
@@ -288,17 +361,15 @@ double computeNodeCouplingQ(const CouplingPoint& cp,
     // the legacy orifice applies. The source-side wet ramp still does.
     if (cp.law == static_cast<int8_t>(CouplingLaw2D::WEIR_ORIFICE)) {
         const double Q = exchange::exchange(cp.geo, cp.coef, h_2d, h_1d).q;
-        return equalized(Q * sourceWetRamp(Q > 0.0 ? depth_2d_avail : depth_1d_avail,
-                                           opts.dry_depth));
+        return equalized(Q *
+                         sourceWetRamp(Q > 0.0 ? depth_2d_avail : depth_1d_avail, opts.dry_depth));
     }
 
     // Capped-pipe gate at the crown (= surcharge / slot-engagement threshold).
-    const double crown = (nodes.invert_elev[ni] + nodes.full_depth[ni])
-                         * opts.len_1d_to_2d;
+    const double crown = (nodes.invert_elev[ni] + nodes.full_depth[ni]) * opts.len_1d_to_2d;
     const double z_top = crown;
     const double h_max = std::max(h_1d, h_2d);
-    const double A_eff = effectiveArea(h_max, crown, nodes.full_depth[ni],
-                                       cp.area, cp.area * 2.0);
+    const double A_eff = effectiveArea(h_max, crown, nodes.full_depth[ni], cp.area, cp.area * 2.0);
 
     double Q = orificeFlow(h_2d - h_1d, cp.cd, A_eff);
 
@@ -318,11 +389,8 @@ double computeNodeCouplingQ(const CouplingPoint& cp,
     return equalized(Q);
 }
 
-
-double computeNodeCouplingDQdh1d(const CouplingPoint& cp,
-                                 const MeshData& mesh,
-                                 const SurfaceStateData& state,
-                                 const NodeData& nodes,
+double computeNodeCouplingDQdh1d(const CouplingPoint& cp, const MeshData& mesh,
+                                 const SurfaceStateData& state, const NodeData& nodes,
                                  const SolverOptions2D& opts) noexcept {
     // Mirror of computeNodeCouplingQ with Q = Cd·A_eff·sign(Δh)·√(2g)·φ(|Δh|),
     // Δh = h_2d − h_1d: the head sensitivity is G = −∂Q/∂h_1d =
@@ -344,11 +412,9 @@ double computeNodeCouplingDQdh1d(const CouplingPoint& cp,
 
     const double a = std::abs(h_2d - h_1d);
 
-    const double crown =
-        (nodes.invert_elev[ni] + nodes.full_depth[ni]) * opts.len_1d_to_2d;
+    const double crown = (nodes.invert_elev[ni] + nodes.full_depth[ni]) * opts.len_1d_to_2d;
     const double h_max = std::max(h_1d, h_2d);
-    const double A_eff = effectiveArea(h_max, crown, nodes.full_depth[ni],
-                                       cp.area, cp.area * 2.0);
+    const double A_eff = effectiveArea(h_max, crown, nodes.full_depth[ni], cp.area, cp.area * 2.0);
 
     // φ′ of the C¹-regularized root: 1/(2√a) beyond ε, linear-finite below.
     double phi_p;
@@ -369,35 +435,37 @@ double computeNodeCouplingDQdh1d(const CouplingPoint& cp,
         return t * t * (3.0 - 2.0 * t);
     };
     const double depth_1d = nodes.depth[ni] * opts.len_1d_to_2d;
-    const double depth_2d =
-        (cp.cell_idx >= 0) ? state.depth[cp.cell_idx] : 0.0;
+    const double depth_2d = (cp.cell_idx >= 0) ? state.depth[cp.cell_idx] : 0.0;
     G *= wetRamp(std::max(depth_1d, depth_2d));
     return (G > 0.0) ? G : 0.0;
 }
 
-
 void scatterCouplingToYdot(const MeshData& mesh, const SurfaceStateData& state,
-                           const CouplingPoint& cp, double Q,
-                           double* ydot) noexcept {
-    if (cp.vertex_idx < 0) { ydot[cp.cell_idx] += Q; return; }
+                           const CouplingPoint& cp, double Q, double* ydot) noexcept {
+    if (cp.vertex_idx < 0) {
+        ydot[cp.cell_idx] += Q;
+        return;
+    }
 
     const int v = cp.vertex_idx;
     const int start = mesh.vert_stencil_ptr[v];
-    const int end   = mesh.vert_stencil_ptr[v + 1];
+    const int end = mesh.vert_stencil_ptr[v + 1];
     const double hv = vertexHeadAt(mesh, state, v);
     const double vx = mesh.vx[v];
     const double vy = mesh.vy[v];
-    const double sign = (Q >= 0.0) ? 1.0 : -1.0;  // source → downhill, sink → uphill
+    const double sign = (Q >= 0.0) ? 1.0 : -1.0; // source → downhill, sink → uphill
 
     double wsum = 0.0;
     for (int k = start; k < end; ++k) {
         const int kc = mesh.vert_stencil_idx[k];
         const double dx = mesh.tri_cx[kc] - vx;
         const double dy = mesh.tri_cy[kc] - vy;
-        const double d  = std::sqrt(dx * dx + dy * dy);
-        if (d < 1.0e-9) continue;
+        const double d = std::sqrt(dx * dx + dy * dy);
+        if (d < 1.0e-9)
+            continue;
         const double slope = sign * (hv - state.head[kc]) / d;
-        if (slope > 0.0) wsum += slope;
+        if (slope > 0.0)
+            wsum += slope;
     }
 
     if (wsum > 1.0e-30) {
@@ -405,10 +473,12 @@ void scatterCouplingToYdot(const MeshData& mesh, const SurfaceStateData& state,
             const int kc = mesh.vert_stencil_idx[k];
             const double dx = mesh.tri_cx[kc] - vx;
             const double dy = mesh.tri_cy[kc] - vy;
-            const double d  = std::sqrt(dx * dx + dy * dy);
-            if (d < 1.0e-9) continue;
+            const double d = std::sqrt(dx * dx + dy * dy);
+            if (d < 1.0e-9)
+                continue;
             const double slope = sign * (hv - state.head[kc]) / d;
-            if (slope <= 0.0) continue;
+            if (slope <= 0.0)
+                continue;
             ydot[kc] += Q * (slope / wsum);
         }
     } else {
@@ -419,9 +489,7 @@ void scatterCouplingToYdot(const MeshData& mesh, const SurfaceStateData& state,
     }
 }
 
-
-std::vector<CouplingPoint> buildCouplingPoints(const MeshData& mesh,
-                                                const SimulationContext& ctx) {
+std::vector<CouplingPoint> buildCouplingPoints(const MeshData& mesh, const SimulationContext& ctx) {
     std::vector<CouplingPoint> cps;
 
     // Vertex-to-node couplings
@@ -445,24 +513,24 @@ std::vector<CouplingPoint> buildCouplingPoints(const MeshData& mesh,
     }
     for (int v = 0; v < nv; ++v) {
         int node_idx = mesh.vert_coupled_node[v];
-        if (node_idx < 0) continue;
+        if (node_idx < 0)
+            continue;
 
         CouplingPoint cp;
         cp.vertex_idx = v;
         cp.node_idx = node_idx;
         cp.cd = mesh.vert_coupling_cd[v];
         cp.area = mesh.vert_coupling_area[v];
-        cp.area_authored =
-            v < static_cast<int>(mesh.vert_coupling_area_set.size()) &&
-            mesh.vert_coupling_area_set[static_cast<std::size_t>(v)] != 0;
-        cp.cd_authored =
-            v < static_cast<int>(mesh.vert_coupling_cd_set.size()) &&
-            mesh.vert_coupling_cd_set[static_cast<std::size_t>(v)] != 0;
+        cp.area_authored = v < static_cast<int>(mesh.vert_coupling_area_set.size()) &&
+                           mesh.vert_coupling_area_set[static_cast<std::size_t>(v)] != 0;
+        cp.cd_authored = v < static_cast<int>(mesh.vert_coupling_cd_set.size()) &&
+                         mesh.vert_coupling_cd_set[static_cast<std::size_t>(v)] != 0;
 
         // Find the triangle that contains this vertex (use first one)
         // The coupling flux is distributed to triangles sharing this vertex
         cp.cell_idx = first_cell_of_vertex[static_cast<std::size_t>(v)];
-        if (cp.cell_idx < 0) continue;
+        if (cp.cell_idx < 0)
+            continue;
 
         auto ui = static_cast<std::size_t>(node_idx);
         cp.is_outfall = (ctx.nodes.type[ui] == NodeType::OUTFALL);
@@ -479,12 +547,14 @@ std::vector<CouplingPoint> buildCouplingPoints(const MeshData& mesh,
     // synthesised into rows during resolve (SurfaceRouter2D).
     for (const auto& row : mesh.tri_couplings) {
         const int node_idx = row.node;
-        if (node_idx < 0) continue;
-        if (row.tri < 0 || row.tri >= mesh.n_triangles()) continue;
+        if (node_idx < 0)
+            continue;
+        if (row.tri < 0 || row.tri >= mesh.n_triangles())
+            continue;
 
         CouplingPoint cp;
         cp.cell_idx = row.tri;
-        cp.vertex_idx = -1;  // centroid coupling
+        cp.vertex_idx = -1; // centroid coupling
         cp.node_idx = node_idx;
         cp.cd = row.cd;
         cp.area = row.area;
@@ -503,13 +573,9 @@ std::vector<CouplingPoint> buildCouplingPoints(const MeshData& mesh,
     return cps;
 }
 
-
-void updateOutfallBoundaries(const std::vector<CouplingPoint>& cps,
-                              const MeshData& mesh,
-                              const SurfaceStateData& state,
-                              SimulationContext& ctx,
-                              const SolverOptions2D& opts,
-                              double dt) {
+void updateOutfallBoundaries(const std::vector<CouplingPoint>& cps, const MeshData& mesh,
+                             const SurfaceStateData& state, SimulationContext& ctx,
+                             const SolverOptions2D& opts, double dt) {
     auto& nodes = ctx.nodes;
 
     // C4 refactor: this routine no longer writes nodes.head/depth directly.
@@ -546,14 +612,14 @@ void updateOutfallBoundaries(const std::vector<CouplingPoint>& cps,
     // holds more than ~2·dry_depth of real water. A ramp keyed on depth_2d
     // alone would read ≈1 at that resting film and reinstate the deadlock.
     auto wetRamp = [&opts](double d) {
-        double t = std::min(1.0, std::max(0.0,
-                                (d - opts.dry_depth) / opts.dry_depth));
-        return t * t * (3.0 - 2.0 * t);  // smoothstep, C¹ continuous
+        double t = std::min(1.0, std::max(0.0, (d - opts.dry_depth) / opts.dry_depth));
+        return t * t * (3.0 - 2.0 * t); // smoothstep, C¹ continuous
     };
-    std::vector<double> target;   // per outfall row, 1D length; NaN = unmapped
+    std::vector<double> target; // per outfall row, 1D length; NaN = unmapped
     std::vector<double> relax(ctx.node_subtypes.outfalls.head_2d.size(), 0.0);
     for (const auto& cp : cps) {
-        if (!cp.is_outfall) continue;
+        if (!cp.is_outfall)
+            continue;
 
         // 2D stage and wetness at the outfall coupling point.
         //
@@ -584,25 +650,30 @@ void updateOutfallBoundaries(const std::vector<CouplingPoint>& cps,
             depth_2d = 0.0;
             for (int k = s; k < e; ++k) {
                 const int c = mesh.vert_stencil_idx[k];
-                if (state.depth[c] > depth_2d) { depth_2d = state.depth[c]; deepest = c; }
+                if (state.depth[c] > depth_2d) {
+                    depth_2d = state.depth[c];
+                    deepest = c;
+                }
             }
             // Fully dry stencil: ramp below reads 0, so the cached stage is
             // never applied; the vertex bed keeps the value physically sane.
             h_2d = (deepest >= 0) ? state.head[deepest] : mesh.vz[v];
         } else {
-            h_2d     = state.head[cp.cell_idx];
-            depth_2d = state.depth[cp.cell_idx];  // == head - tri_cz by reconstruction
+            h_2d = state.head[cp.cell_idx];
+            depth_2d = state.depth[cp.cell_idx]; // == head - tri_cz by reconstruction
         }
         if (cp.head_end > cp.head_begin && state.coupling_head_cells) {
             const auto& cells = *state.coupling_head_cells;
             double num = 0.0, den = 0.0;
             for (int k = cp.head_begin; k < cp.head_end; ++k) {
                 const int t = cells[static_cast<std::size_t>(k)];
-                if (!(state.depth[t] >= opts.dry_depth)) continue;
+                if (!(state.depth[t] >= opts.dry_depth))
+                    continue;
                 num += state.depth[t] * state.head[t];
                 den += state.depth[t];
             }
-            if (den > 0.0) h_2d = num / den;
+            if (den > 0.0)
+                h_2d = num / den;
         }
         // h_2d is SI (metres). The 1D consumer (Outfall::setAllOutfallDepths)
         // always compares against h_standard in feet (1D US internal units),
@@ -615,8 +686,8 @@ void updateOutfallBoundaries(const std::vector<CouplingPoint>& cps,
             if (target.empty())
                 target.assign(ctx.node_subtypes.outfalls.head_2d.size(),
                               std::numeric_limits<double>::quiet_NaN());
-            target[ur] = h_2d * opts.len_2d_to_1d;   // several points: the last wins
-            relax[ur]  = cp.tw_relax;
+            target[ur] = h_2d * opts.len_2d_to_1d; // several points: the last wins
+            relax[ur] = cp.tw_relax;
             ctx.node_subtypes.outfalls.ramp_2d[ur] = wetRamp(depth_2d);
         }
     }
@@ -625,7 +696,8 @@ void updateOutfallBoundaries(const std::vector<CouplingPoint>& cps,
     // loop on small cells. The cached head is the state; the first call (still
     // the -1e30 sentinel) starts it at the surface.
     for (std::size_t ur = 0; ur < target.size(); ++ur) {
-        if (std::isnan(target[ur])) continue;
+        if (std::isnan(target[ur]))
+            continue;
         double& h_tw = ctx.node_subtypes.outfalls.head_2d[ur];
         if (relax[ur] > 0.0 && dt > 0.0 && h_tw > -1.0e29)
             h_tw += std::min(1.0, dt / relax[ur]) * (target[ur] - h_tw);
@@ -634,13 +706,19 @@ void updateOutfallBoundaries(const std::vector<CouplingPoint>& cps,
     }
 }
 
-
-
-
 namespace {
 
-/// Remaining withdrawal budget (m³) visible to a coupling point: the whole
-/// vertex stencil for vertex coupling, the single cell for centroid coupling.
+/**
+ * @brief Remaining withdrawal budget (m³) visible to a coupling point: the whole vertex stencil
+ * for vertex coupling, the single cell for centroid coupling.
+ *
+ * @param[in] mesh Prepared cell/vertex topology and normalized geometric weights.
+ * @param[in] cp Valid resolved coupling identity; all selected indices are unchecked.
+ * @param[in] cell_budget_m3 Matching per-cell provisional water m3.
+ * @return Sum of max(0,budget) over the single cell or complete vertex stencil.
+ * @note Read-only and allocation-free. Inputs must remain stable; no shape/finiteness checks or
+ * ownership transfer occurs.
+ */
 inline double budgetAvail(const MeshData& mesh, const CouplingPoint& cp,
                           const std::vector<double>& cell_budget_m3) noexcept {
     if (cp.vertex_idx < 0)
@@ -648,20 +726,32 @@ inline double budgetAvail(const MeshData& mesh, const CouplingPoint& cp,
     double avail = 0.0;
     const int v = cp.vertex_idx;
     for (int k = mesh.vert_stencil_ptr[v]; k < mesh.vert_stencil_ptr[v + 1]; ++k)
-        avail += std::max(0.0,
-            cell_budget_m3[static_cast<std::size_t>(mesh.vert_stencil_idx[k])]);
+        avail += std::max(0.0, cell_budget_m3[static_cast<std::size_t>(mesh.vert_stencil_idx[k])]);
     return avail;
 }
 
-/// Draw `vol` (m³, ≥ 0) down from the budget cells a coupling point taps.
-/// Cells are floored at 0 with the undrawn share spilling to the remaining
-/// cells (two greedy passes): budgetAvail sums max(0, ·), so an unclamped
-/// weighted subtraction that pushes one cell negative while another stays
-/// positive would let repeated draws exceed the true pool — the budget must
-/// consume exactly `vol` from the non-negative mass or it is not a cap.
-inline void budgetDraw(const MeshData& mesh, const CouplingPoint& cp,
-                       double vol, std::vector<double>& cell_budget_m3) noexcept {
-    if (vol <= 0.0) return;
+/**
+ * @brief Draw `vol` (m³, ≥ 0) down from the budget cells a coupling point taps. Cells are
+ * floored at 0 with the undrawn share spilling to the remaining cells (two greedy passes):
+ * budgetAvail sums max(0, ·), so an unclamped weighted subtraction that pushes one cell negative
+ * while another stays positive would let repeated draws exceed the true pool — the budget must
+ * consume exactly `vol` from the non-negative mass or it is not a cap.
+ *
+ * @param[in] mesh Prepared cell/vertex topology and normalized geometric weights.
+ * @param[in] cp Valid resolved coupling identity; all selected indices are unchecked.
+ * @param[in] vol Nonnegative finite accepted volume m3; nonpositive returns. Caller caps a draw
+ * against budgetAvail first; residual overdraw is discarded, not reported.
+ * @param[in,out] cell_budget_m3 Matching per-cell provisional water m3.
+ * @note Changes the provisional budget only; canonical water, species and clocks remain
+ * unchanged.
+ * @note Draw uses weighted then greedy remainder passes; credit uses geometric weights. Requires
+ * exclusive affected slots. Inputs must remain stable; no shape/finiteness checks or ownership
+ * transfer occurs.
+ */
+inline void budgetDraw(const MeshData& mesh, const CouplingPoint& cp, double vol,
+                       std::vector<double>& cell_budget_m3) noexcept {
+    if (vol <= 0.0)
+        return;
     if (cp.vertex_idx < 0) {
         auto& b = cell_budget_m3[static_cast<std::size_t>(cp.cell_idx)];
         b = std::max(0.0, b - vol);
@@ -690,13 +780,27 @@ inline void budgetDraw(const MeshData& mesh, const CouplingPoint& cp,
     // impossible when the per-step cap uses budgetAvail, so drop it.
 }
 
-/// Credit `vol` (m³, ≥ 0) of water ADDED to the cells a coupling point feeds
-/// (1D→2D spill, outfall discharge). Keeps the budget a faithful provisional
-/// volume so the next sub-step's driving head sees the water this window has
-/// already committed to putting on the surface, not just what it took off.
-inline void budgetCredit(const MeshData& mesh, const CouplingPoint& cp,
-                         double vol, std::vector<double>& cell_budget_m3) noexcept {
-    if (vol <= 0.0) return;
+/**
+ * @brief Credit `vol` (m³, ≥ 0) of water ADDED to the cells a coupling point feeds (1D→2D spill,
+ * outfall discharge). Keeps the budget a faithful provisional volume so the next sub-step's
+ * driving head sees the water this window has already committed to putting on the surface, not
+ * just what it took off.
+ *
+ * @param[in] mesh Prepared cell/vertex topology and normalized geometric weights.
+ * @param[in] cp Valid resolved coupling identity; all selected indices are unchecked.
+ * @param[in] vol Nonnegative finite accepted volume m3; nonpositive returns. Caller caps a draw
+ * against budgetAvail first; residual overdraw is discarded, not reported.
+ * @param[in,out] cell_budget_m3 Matching per-cell provisional water m3.
+ * @note Changes the provisional budget only; canonical water, species and clocks remain
+ * unchanged.
+ * @note Draw uses weighted then greedy remainder passes; credit uses geometric weights. Requires
+ * exclusive affected slots. Inputs must remain stable; no shape/finiteness checks or ownership
+ * transfer occurs.
+ */
+inline void budgetCredit(const MeshData& mesh, const CouplingPoint& cp, double vol,
+                         std::vector<double>& cell_budget_m3) noexcept {
+    if (vol <= 0.0)
+        return;
     if (cp.vertex_idx < 0) {
         cell_budget_m3[static_cast<std::size_t>(cp.cell_idx)] += vol;
         return;
@@ -709,24 +813,21 @@ inline void budgetCredit(const MeshData& mesh, const CouplingPoint& cp,
 
 } // anonymous namespace
 
-
-int accumulateOutfallDischargeStep(const std::vector<CouplingPoint>& cps,
-                                   const MeshData& mesh,
-                                   const SurfaceStateData& state,
-                                   const SimulationContext& ctx,
-                                   const SolverOptions2D& opts,
-                                   double dt,
+int accumulateOutfallDischargeStep(const std::vector<CouplingPoint>& cps, const MeshData& mesh,
+                                   const SurfaceStateData& state, const SimulationContext& ctx,
+                                   const SolverOptions2D& opts, double dt,
                                    std::vector<double>& accum_m3,
-                                   std::vector<double>& cell_budget_m3,
-                                   double* sample_row) {
+                                   std::vector<double>& cell_budget_m3, double* sample_row) {
     (void)state;
-    if (dt <= 0.0) return 0;
+    if (dt <= 0.0)
+        return 0;
     const auto& nodes = ctx.nodes;
     int clamped = 0;
 
     for (std::size_t k = 0; k < cps.size(); ++k) {
         const auto& cp = cps[k];
-        if (!cp.is_outfall) continue;
+        if (!cp.is_outfall)
+            continue;
 
         const auto ni = static_cast<std::size_t>(cp.node_idx);
 
@@ -737,42 +838,48 @@ int accumulateOutfallDischargeStep(const std::vector<CouplingPoint>& cps,
         // Withdrawal capped by the shared frozen-2D budget (window-cumulative).
         if (Q_net < 0.0) {
             const double Q_min = -budgetAvail(mesh, cp, cell_budget_m3) / dt;
-            if (Q_net < Q_min) { Q_net = Q_min; ++clamped; }
+            if (Q_net < Q_min) {
+                Q_net = Q_min;
+                ++clamped;
+            }
         }
-        if (Q_net == 0.0) continue;
+        if (Q_net == 0.0)
+            continue;
 
-        const double vol_m3 = Q_net * dt;             // m³ this routing step
-        if (Q_net < 0.0) budgetDraw(mesh, cp, -vol_m3, cell_budget_m3);
-        else             budgetCredit(mesh, cp, vol_m3, cell_budget_m3);
+        const double vol_m3 = Q_net * dt; // m³ this routing step
+        if (Q_net < 0.0)
+            budgetDraw(mesh, cp, -vol_m3, cell_budget_m3);
+        else
+            budgetCredit(mesh, cp, vol_m3, cell_budget_m3);
 
         accum_m3[k] += vol_m3;
 
         // Series sample: Q_net is already net-2D-source-positive.
-        if (sample_row) sample_row[k] = Q_net;
+        if (sample_row)
+            sample_row[k] = Q_net;
     }
     return clamped;
 }
 
-
-void injectAccumulatedExchange(const std::vector<CouplingPoint>& cps,
-                               const MeshData& mesh,
-                               SurfaceStateData& state,
-                               const std::vector<double>& accum_m3,
-                               double window_dt,
-                               double sign,
+void injectAccumulatedExchange(const std::vector<CouplingPoint>& cps, const MeshData& mesh,
+                               SurfaceStateData& state, const std::vector<double>& accum_m3,
+                               double window_dt, double sign,
                                const std::vector<double>* node_conc) {
-    if (window_dt <= 0.0) return;
+    if (window_dt <= 0.0)
+        return;
     const auto ns = static_cast<std::size_t>(state.transport.n_species);
     for (std::size_t k = 0; k < cps.size(); ++k) {
         const double vol = accum_m3[k];
-        if (vol == 0.0) continue;
+        if (vol == 0.0)
+            continue;
         // S3: a 2D-source (positive after sign) carries the NODE's published
         // concentration — for an outfall, the concentration of what the 1D
         // network discharged. Only when the row exists at this stride.
         const double* conc = nullptr;
         if (node_conc && ns > 0 && cps[k].node_idx >= 0) {
             const auto ni = static_cast<std::size_t>(cps[k].node_idx);
-            if ((ni + 1) * ns <= node_conc->size()) conc = &(*node_conc)[ni * ns];
+            if ((ni + 1) * ns <= node_conc->size())
+                conc = &(*node_conc)[ni * ns];
         }
         scatterCouplingFlux(mesh, state, cps[k], sign * vol / window_dt, conc);
     }

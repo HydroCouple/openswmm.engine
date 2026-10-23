@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_capi_gap_closures.cpp
- * @brief Input features that the C API could not reach before 2026-10-11
+ * @file      test_capi_gap_closures.cpp
+ * @brief     Input features that the C API could not reach before 2026-10-11
  *        (python/scripts/engine_feature_gaps.py), now readable and writable.
  *
  * @details Each closure is held to the same three claims:
@@ -28,9 +28,9 @@
  *
  *          Artifacts: tests/unit/engine/data/test_capi_gap_closures_artifacts/.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -55,20 +55,58 @@ namespace fs = std::filesystem;
 
 namespace {
 
-openswmm::SWMMEngine& cpp(SWMM_Engine e) { return *static_cast<openswmm::SWMMEngine*>(e); }
+/**
+ * @brief Borrow internal engine state behind a test handle.
+ *
+ * Unchecked cast/dereference; no ownership transfer or mutation in this helper.
+ *
+ * @param[in] e Non-null live new-engine C API handle.
+ * @return Mutable engine reference valid until e is destroyed.
+ */
+openswmm::SWMMEngine& cpp(SWMM_Engine e) {
+    return *static_cast<openswmm::SWMMEngine*>(e);
+}
 
+/**
+ * @brief Create and return the current-directory API-gap evidence folder.
+ *
+ * Creates missing directories and propagates filesystem exceptions. Does not change current
+ * directory or remove prior artifacts.
+ * @return Owned current_path()/test_capi_gap_closures_artifacts path.
+ */
 fs::path artifactDir() {
     fs::path d = fs::current_path() / "test_capi_gap_closures_artifacts";
     fs::create_directories(d);
     return d;
 }
 
+/**
+ * @brief Read a standard option through a fixed fixture buffer.
+ *
+ * Uses 512-byte zeroed local storage; does not retry longer values, report distinct errors or
+ * mutate the model.
+ *
+ * @param[in] e Borrowed engine handle.
+ * @param[in] key Non-null option name.
+ * @return Owned returned option string, or literal &lt;ERR&gt; on any rejected query.
+ */
 std::string getopt(SWMM_Engine e, const char* key) {
     char buf[512] = {};
-    if (swmm_options_get(e, key, buf, static_cast<int>(sizeof(buf))) != SWMM_OK) return "<ERR>";
+    if (swmm_options_get(e, key, buf, static_cast<int>(sizeof(buf))) != SWMM_OK)
+        return "<ERR>";
     return buf;
 }
 
+/**
+ * @brief Read a extended option through a fixed fixture buffer.
+ *
+ * Uses 512-byte zeroed local storage; does not retry longer values, report distinct errors or
+ * mutate the model.
+ *
+ * @param[in] e Borrowed engine handle.
+ * @param[in] key Non-null option name.
+ * @return Owned returned option string, or literal &lt;ERR&gt; on any rejected query.
+ */
 std::string getext(SWMM_Engine e, const char* key) {
     char buf[512] = {};
     if (swmm_options_get_ext(e, key, buf, static_cast<int>(sizeof(buf))) != SWMM_OK)
@@ -115,13 +153,26 @@ C2      CIRCULAR  1   0   0   0   1
 /// Opens a deck written to the artifact directory; closes and destroys on scope exit.
 struct OpenedDeck {
     SWMM_Engine e = nullptr;
+    /**
+     * @brief Open an existing input and own its engine for the scope.
+     *
+     * Stores swmm_engine_open status in rc without asserting allocation/open success. Does not
+     * initialize/start; destruction closes any partial allocated handle.
+     *
+     * @param[in] inp Borrowed input path; derived report/result destinations may be overwritten.
+     */
     OpenedDeck(const fs::path& inp) {
         e = swmm_engine_create();
         const fs::path rpt = fs::path(inp).replace_extension(".rpt");
         const fs::path out = fs::path(inp).replace_extension(".out");
-        rc = swmm_engine_open(e, inp.string().c_str(), rpt.string().c_str(),
-                              out.string().c_str(), nullptr);
+        rc = swmm_engine_open(e, inp.string().c_str(), rpt.string().c_str(), out.string().c_str(),
+                              nullptr);
     }
+    /**
+     * @brief Close and destroy the scoped deck engine when non-null.
+     *
+     * Ignores close status; any borrowed engine/context references expire. No artifact deletion occurs.
+     */
     ~OpenedDeck() {
         if (e) {
             swmm_engine_close(e);
@@ -131,13 +182,23 @@ struct OpenedDeck {
     int rc = -1;
 };
 
+/**
+ * @brief Overwrite a named artifact with raw literal input text.
+ *
+ * Creates the artifact root, but not arbitrary nested parents. No parsing/escaping or status
+ * assertion occurs.
+ *
+ * @param[in] name Non-null raw path appended below artifactDir.
+ * @param[in] text Non-null text copied verbatim through a truncating stream.
+ * @return Owned written input path, even if unchecked IO failed.
+ */
 fs::path writeDeck(const char* name, const char* text) {
     const fs::path p = artifactDir() / name;
     std::ofstream(p) << text;
     return p;
 }
 
-}  // namespace
+} // namespace
 
 // ---------------------------------------------------------------------------
 // [OPTIONS] keys that had no swmm_options_get/set branch.
@@ -146,7 +207,7 @@ fs::path writeDeck(const char* name, const char* text) {
 TEST(CapiGapOptions, DefaultsAndParsedValuesRead) {
     OpenedDeck d(writeDeck("options_defaults.inp", kDeck1D));
     ASSERT_EQ(d.rc, SWMM_OK);
-    EXPECT_DOUBLE_EQ(std::stod(getopt(d.e, "WATER_DENSITY")), 999.5);  // parsed
+    EXPECT_DOUBLE_EQ(std::stod(getopt(d.e, "WATER_DENSITY")), 999.5); // parsed
     EXPECT_DOUBLE_EQ(std::stod(getopt(d.e, "WATER_SPECIFIC_HEAT_CAPACITY")), 4184.0);
     // Full precision: std::to_string would have printed 0.000000.
     EXPECT_DOUBLE_EQ(std::stod(getopt(d.e, "WIND_FUNC_COEFF_A")), 1.505e-8);
@@ -245,8 +306,9 @@ TEST(CapiGap2DOptions, DispersionReachesTheSolverOptions) {
         EXPECT_DOUBLE_EQ(cpp(d.e).context().twod_io.options->dispersion, 0.25);
         EXPECT_EQ(cpp(d.e).context().options.ext_options.count("DISPERSION"), 0u);
         EXPECT_EQ(swmm_options_set_ext(d.e, "DISPERSION", "-1"), SWMM_ERR_BADPARAM);
-        ASSERT_EQ(swmm_model_write(d.e, (artifactDir() / "dispersion_2d_saved.inp")
-                                           .string().c_str()), SWMM_OK);
+        ASSERT_EQ(
+            swmm_model_write(d.e, (artifactDir() / "dispersion_2d_saved.inp").string().c_str()),
+            SWMM_OK);
     }
     OpenedDeck r(artifactDir() / "dispersion_2d_saved.inp");
     ASSERT_EQ(r.rc, SWMM_OK);
@@ -261,15 +323,46 @@ TEST(CapiGap2DOptions, DispersionReachesTheSolverOptions) {
 
 namespace {
 
-void writeText(const fs::path& p, const std::string& text) { std::ofstream(p) << text; }
+/**
+ * @brief Truncate a fixture file and copy raw text.
+ *
+ * Uses a temporary local stream with unchecked open/write/close status. Does not retain caller
+ * storage or create directories.
+ *
+ * @param[in] p Borrowed destination path; its parent must exist.
+ * @param[in] text Borrowed text written verbatim.
+ */
+void writeText(const fs::path& p, const std::string& text) {
+    std::ofstream(p) << text;
+}
 
+/**
+ * @brief Collect an entire fixture file into owned text.
+ *
+ * Uses binary mode, preserving file bytes. The local stream closes on return; no model state is
+ * touched and no borrowed buffer is returned. Default stream exception settings apply; allocation
+ * exceptions may propagate.
+ *
+ * @param[in] p Borrowed input filename used for this synchronous open/read.
+ * @return Owned string collected from the stream; empty can mean an empty file or failure to open.
+ *     Partial read failures have no separate status.
+ */
 std::string slurp(const fs::path& p) {
     std::ifstream f(p, std::ios::binary);
     return std::string(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
 }
 
-/// Deck with an inert reactions component (species X) and a transport.ard
-/// component; files live in the artifact directory under @p stem.
+/**
+ * @brief Write an inert X reaction/ARD sidecar pair and referencing input deck.
+ *
+ * Overwrites all three artifacts, adds src_ts values and reaction/transport component rows to the
+ * fixed 1D deck. Caller ensures a safe stem and valid config; no parser/runtime validation occurs.
+ *
+ * @param[in] stem Raw basename for .inp/.rxn/.ard beneath artifactDir; copied unescaped into quoted
+ *     process paths.
+ * @param[in] ard Raw ARD config text copied verbatim.
+ * @return Owned input path, even if unchecked writes fail.
+ */
 fs::path writeArdDeck(const std::string& stem, const std::string& ard) {
     const fs::path dir = artifactDir();
     writeText(dir / (stem + ".rxn"),
@@ -278,24 +371,51 @@ fs::path writeArdDeck(const std::string& stem, const std::string& ard) {
     writeText(dir / (stem + ".ard"), ard);
     std::string deck = kDeck1D;
     deck += "\n[TIMESERIES]\nsrc_ts 0 1.0\nsrc_ts 1 1.0\n\n[PROCESS_COMPONENTS]\n"
-            "org.hydrocouple.openswmm.reactions config=\"" + stem + ".rxn\"\n"
-            "org.hydrocouple.openswmm.transport.ard config=\"" + stem + ".ard\"\n";
+            "org.hydrocouple.openswmm.reactions config=\"" +
+            stem +
+            ".rxn\"\n"
+            "org.hydrocouple.openswmm.transport.ard config=\"" +
+            stem + ".ard\"\n";
     const fs::path inp = dir / (stem + ".inp");
     writeText(inp, deck);
     return inp;
 }
 
-int boundaryCount(SWMM_Engine e) { int n = -1; swmm_transport_boundary_count(e, &n); return n; }
-int sourceCount(SWMM_Engine e) { int n = -1; swmm_transport_source_count(e, &n); return n; }
+/**
+ * @brief Read the number of ARD boundary rows through the public API.
+ *
+ * Ignores query status; callers compare the sentinel/count and query behavior separately.
+ *
+ * @param[in] e Borrowed engine handle passed unchanged to its count query.
+ * @return Reported count, or initialized -1 if a rejected query leaves output unchanged.
+ */
+int boundaryCount(SWMM_Engine e) {
+    int n = -1;
+    swmm_transport_boundary_count(e, &n);
+    return n;
+}
+/**
+ * @brief Read the number of ARD source rows through the public API.
+ *
+ * Ignores query status; callers compare the sentinel/count and query behavior separately.
+ *
+ * @param[in] e Borrowed engine handle passed unchanged to its count query.
+ * @return Reported count, or initialized -1 if a rejected query leaves output unchanged.
+ */
+int sourceCount(SWMM_Engine e) {
+    int n = -1;
+    swmm_transport_source_count(e, &n);
+    return n;
+}
 
-}  // namespace
+} // namespace
 
 TEST(CapiGapTransport, DetailedOutputReadsAndWrites) {
     OpenedDeck d(writeArdDeck("ard_detail", "[TRANSPORT_OPTIONS]\nDETAILED_OUTPUT cells.csv\n"));
     ASSERT_EQ(d.rc, SWMM_OK) << swmm_get_last_error_msg(d.e);
     char buf[1024] = {};
     ASSERT_EQ(swmm_transport_get_detailed_output(d.e, buf, sizeof(buf)), SWMM_OK);
-    EXPECT_EQ(fs::path(buf).filename(), "cells.csv");  // resolved against the .ard dir
+    EXPECT_EQ(fs::path(buf).filename(), "cells.csv"); // resolved against the .ard dir
     ASSERT_EQ(swmm_transport_set_detailed_output(d.e, "other.csv"), SWMM_OK);
     ASSERT_EQ(swmm_transport_get_detailed_output(d.e, buf, sizeof(buf)), SWMM_OK);
     EXPECT_STREQ(buf, "other.csv");
@@ -309,7 +429,7 @@ TEST(CapiGapTransport, ConduitDispersionUpsertAndRemove) {
     ASSERT_EQ(d.rc, SWMM_OK) << swmm_get_last_error_msg(d.e);
     const int c2 = swmm_link_index(d.e, "C2");
     ASSERT_EQ(swmm_transport_set_conduit_disp(d.e, c2, 0.5), SWMM_OK);
-    ASSERT_EQ(swmm_transport_set_conduit_disp(d.e, c2, 0.75), SWMM_OK);  // replaces
+    ASSERT_EQ(swmm_transport_set_conduit_disp(d.e, c2, 0.75), SWMM_OK); // replaces
     int n = 0, link = -1;
     double v = 0;
     ASSERT_EQ(swmm_transport_conduit_disp_count(d.e, &n), SWMM_OK);
@@ -332,11 +452,11 @@ TEST(CapiGapTransport, BoundaryAndSourceRowsResolveOrAreRefused) {
 
     ASSERT_EQ(swmm_transport_set_boundary(d.e, "J1", "X", 0, 8.25, nullptr), SWMM_OK);
     EXPECT_EQ(boundaryCount(d.e), 1);
-    ASSERT_EQ(cfg.bc_node.size(), 1u);  // resolved, so the run sees it
+    ASSERT_EQ(cfg.bc_node.size(), 1u); // resolved, so the run sees it
     EXPECT_EQ(cfg.bc_node[0], swmm_node_index(d.e, "J1"));
     EXPECT_DOUBLE_EQ(cfg.bc_value[0], 8.25);
     ASSERT_EQ(swmm_transport_set_boundary(d.e, "J1", "X", 0, 4.0, nullptr), SWMM_OK);
-    EXPECT_EQ(boundaryCount(d.e), 1);  // same node + species replaces
+    EXPECT_EQ(boundaryCount(d.e), 1); // same node + species replaces
     EXPECT_DOUBLE_EQ(cfg.bc_value[0], 4.0);
 
     // Refusals leave the configuration as it was.
@@ -348,7 +468,7 @@ TEST(CapiGapTransport, BoundaryAndSourceRowsResolveOrAreRefused) {
     EXPECT_EQ(cfg.bc_node.size(), 1u);
 
     ASSERT_EQ(swmm_transport_set_source(d.e, "C1", "X", 1, 0.0, "src_ts"), SWMM_OK);
-    ASSERT_EQ(swmm_transport_set_source(d.e, "C2", "X", 0, -0.5, nullptr), SWMM_OK);  // extraction
+    ASSERT_EQ(swmm_transport_set_source(d.e, "C2", "X", 0, -0.5, nullptr), SWMM_OK); // extraction
     EXPECT_EQ(sourceCount(d.e), 2);
     EXPECT_EQ(cfg.src_link.size(), 2u);
     EXPECT_EQ(swmm_transport_set_source(d.e, "J1", "X", 0, 1.0, nullptr), SWMM_ERR_BADPARAM);
@@ -406,6 +526,17 @@ TEST(CapiGapTransport, EditsAreRefusedOnceTheRunStarts) {
 
 namespace {
 
+/**
+ * @brief Write a heat sidecar and referencing tagged conduit fixture.
+ *
+ * Inserts HEAT_TRANSPORT ON at the known fixed OPTIONS anchor, adds a ground-temperature series,
+ * component row and SHADED tags for C1/C2. Overwrites .heat/.inp without parsing; known base anchor
+ * is a precondition.
+ *
+ * @param[in] stem Raw basename below artifactDir; copied unescaped into quoted sidecar path.
+ * @param[in] heat Raw heat config text copied verbatim.
+ * @return Owned input path, even if unchecked writes fail.
+ */
 fs::path writeHeatDeck(const std::string& stem, const std::string& heat) {
     const fs::path dir = artifactDir();
     writeText(dir / (stem + ".heat"), heat);
@@ -414,28 +545,54 @@ fs::path writeHeatDeck(const std::string& stem, const std::string& heat) {
     const std::string key = "FLOW_UNITS           CFS\n";
     deck.insert(deck.find(key) + key.size(), "HEAT_TRANSPORT       ON\n");
     deck += "\n[TIMESERIES]\nground_ts 0 10.0\nground_ts 24 14.0\n\n"
-            "[PROCESS_COMPONENTS]\norg.hydrocouple.openswmm.heat config=\"" + stem + ".heat\"\n\n"
+            "[PROCESS_COMPONENTS]\norg.hydrocouple.openswmm.heat config=\"" +
+            stem +
+            ".heat\"\n\n"
             "[TAGS]\nLink C1 SHADED\nLink C2 SHADED\n";
     const fs::path inp = dir / (stem + ".inp");
     writeText(inp, deck);
     return inp;
 }
 
-const char* kHeatCfg =
-    "[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 20.0\n\n"
-    "[HEAT_FLUXES]\nSEDIMENT_EXCHANGE ON\n\n"
-    "[SEDIMENT_EXCHANGE]\nBED_THICKNESS GLOBAL 0.3\nBED_THICKNESS LINK C1 0.5\n";
+const char* kHeatCfg = "[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 20.0\n\n"
+                       "[HEAT_FLUXES]\nSEDIMENT_EXCHANGE ON\n\n"
+                       "[SEDIMENT_EXCHANGE]\nBED_THICKNESS GLOBAL 0.3\nBED_THICKNESS LINK C1 0.5\n";
 
-double sed(SWMM_Engine e, int p) { double v = -1; swmm_heat_get_sediment(e, p, &v); return v; }
-int overrideCount(SWMM_Engine e) { int n = -1; swmm_heat_element_override_count(e, &n); return n; }
+/**
+ * @brief Read a global sediment-exchange parameter for assertions.
+ *
+ * Ignores query status; does not mutate heat config.
+ *
+ * @param[in] e Borrowed engine handle.
+ * @param[in] p Public sediment parameter selector, with its parameter-specific units.
+ * @return Native public parameter value, or initialized -1 when rejection leaves output unchanged.
+ */
+double sed(SWMM_Engine e, int p) {
+    double v = -1;
+    swmm_heat_get_sediment(e, p, &v);
+    return v;
+}
+/**
+ * @brief Read the number of heat element overrides through the public API.
+ *
+ * Ignores query status; callers compare the sentinel/count and query behavior separately.
+ *
+ * @param[in] e Borrowed engine handle passed unchanged to its count query.
+ * @return Reported count, or initialized -1 if a rejected query leaves output unchanged.
+ */
+int overrideCount(SWMM_Engine e) {
+    int n = -1;
+    swmm_heat_element_override_count(e, &n);
+    return n;
+}
 
-}  // namespace
+} // namespace
 
 TEST(CapiGapHeat, SedimentGlobalsReadAndWrite) {
     OpenedDeck d(writeHeatDeck("heat_sed", kHeatCfg));
     ASSERT_EQ(d.rc, SWMM_OK) << swmm_get_last_error_msg(d.e);
-    EXPECT_DOUBLE_EQ(sed(d.e, SWMM_HEAT_SED_BED_THICKNESS), 0.3);       // parsed
-    EXPECT_DOUBLE_EQ(sed(d.e, SWMM_HEAT_SED_GROUND_DEPTH), 2.0);        // default
+    EXPECT_DOUBLE_EQ(sed(d.e, SWMM_HEAT_SED_BED_THICKNESS), 0.3); // parsed
+    EXPECT_DOUBLE_EQ(sed(d.e, SWMM_HEAT_SED_GROUND_DEPTH), 2.0);  // default
     ASSERT_EQ(swmm_heat_set_sediment(d.e, SWMM_HEAT_SED_HYPORHEIC_VELOCITY, 1e-5), SWMM_OK);
     ASSERT_EQ(swmm_heat_set_sediment(d.e, SWMM_HEAT_SED_GROUND_TEMPERATURE, 9.5), SWMM_OK);
     const auto& sd = cpp(d.e).context().heat_config.sediment;
@@ -445,8 +602,10 @@ TEST(CapiGapHeat, SedimentGlobalsReadAndWrite) {
 
     // The parser's refusals, unchanged values afterwards.
     EXPECT_EQ(swmm_heat_set_sediment(d.e, SWMM_HEAT_SED_BED_THICKNESS, 0.0), SWMM_ERR_BADPARAM);
-    EXPECT_EQ(swmm_heat_set_sediment(d.e, SWMM_HEAT_SED_HYPORHEIC_VELOCITY, -1.0), SWMM_ERR_BADPARAM);
-    EXPECT_EQ(swmm_heat_set_sediment(d.e, SWMM_HEAT_SED_SOLUTE_DIFFUSIVITY, -1e-9), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_heat_set_sediment(d.e, SWMM_HEAT_SED_HYPORHEIC_VELOCITY, -1.0),
+              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_heat_set_sediment(d.e, SWMM_HEAT_SED_SOLUTE_DIFFUSIVITY, -1e-9),
+              SWMM_ERR_BADPARAM);
     EXPECT_EQ(swmm_heat_set_sediment(d.e, 99, 1.0), SWMM_ERR_BADINDEX);
     EXPECT_DOUBLE_EQ(sd.bed_thickness, 0.3);
 
@@ -464,7 +623,7 @@ TEST(CapiGapHeat, SedimentGlobalsReadAndWrite) {
 TEST(CapiGapHeat, ElementOverridesResolveOrAreRefused) {
     OpenedDeck d(writeHeatDeck("heat_over", kHeatCfg));
     ASSERT_EQ(d.rc, SWMM_OK) << swmm_get_last_error_msg(d.e);
-    ASSERT_EQ(overrideCount(d.e), 1);  // BED_THICKNESS LINK C1
+    ASSERT_EQ(overrideCount(d.e), 1); // BED_THICKNESS LINK C1
     int attr = -1, scope = -1;
     char name[64] = {};
     double v = 0;
@@ -477,13 +636,15 @@ TEST(CapiGapHeat, ElementOverridesResolveOrAreRefused) {
     const auto& ov = cpp(d.e).context().heat_config.overrides;
     const int c1 = swmm_link_index(d.e, "C1");
     ASSERT_EQ(swmm_heat_set_element_override(d.e, SWMM_HEAT_ATTR_BED_THICKNESS,
-                                             SWMM_HEAT_SCOPE_LINK, "C1", 0.75), SWMM_OK);
-    EXPECT_EQ(overrideCount(d.e), 1);  // updated in place
+                                             SWMM_HEAT_SCOPE_LINK, "C1", 0.75),
+              SWMM_OK);
+    EXPECT_EQ(overrideCount(d.e), 1); // updated in place
     ASSERT_GT(ov.sed_link.size(), static_cast<std::size_t>(c1));
     EXPECT_DOUBLE_EQ(ov.sed_link[c1].bed_thickness, 0.75);
 
-    ASSERT_EQ(swmm_heat_set_element_override(d.e, SWMM_HEAT_ATTR_SHADE_FACTOR,
-                                             SWMM_HEAT_SCOPE_TAG, "SHADED", 0.4), SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_element_override(d.e, SWMM_HEAT_ATTR_SHADE_FACTOR, SWMM_HEAT_SCOPE_TAG,
+                                             "SHADED", 0.4),
+              SWMM_OK);
     EXPECT_EQ(overrideCount(d.e), 2);
 
     // A global edit refreshes the per-link copies of non-overridden attributes.
@@ -493,11 +654,14 @@ TEST(CapiGapHeat, ElementOverridesResolveOrAreRefused) {
 
     // Refusals leave the rows as they were.
     EXPECT_EQ(swmm_heat_set_element_override(d.e, SWMM_HEAT_ATTR_BED_THICKNESS,
-                                             SWMM_HEAT_SCOPE_NODE, "J1", 0.5), SWMM_ERR_BADPARAM);
-    EXPECT_EQ(swmm_heat_set_element_override(d.e, SWMM_HEAT_ATTR_ALBEDO,
-                                             SWMM_HEAT_SCOPE_LINK, "C1", 1.5), SWMM_ERR_BADPARAM);
-    EXPECT_EQ(swmm_heat_set_element_override(d.e, SWMM_HEAT_ATTR_ALBEDO,
-                                             SWMM_HEAT_SCOPE_LINK, "NOPE", 0.5), SWMM_ERR_BADPARAM);
+                                             SWMM_HEAT_SCOPE_NODE, "J1", 0.5),
+              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(
+        swmm_heat_set_element_override(d.e, SWMM_HEAT_ATTR_ALBEDO, SWMM_HEAT_SCOPE_LINK, "C1", 1.5),
+        SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_heat_set_element_override(d.e, SWMM_HEAT_ATTR_ALBEDO, SWMM_HEAT_SCOPE_LINK,
+                                             "NOPE", 0.5),
+              SWMM_ERR_BADPARAM);
     EXPECT_EQ(overrideCount(d.e), 2);
 
     ASSERT_EQ(swmm_heat_remove_element_override(d.e, 0), SWMM_OK);
@@ -517,7 +681,8 @@ TEST(CapiGapHeat, EditsSurviveSaveAndReopen) {
         ASSERT_EQ(swmm_heat_set_sediment(d.e, SWMM_HEAT_SED_INITIAL_TEMPERATURE, 11.0), SWMM_OK);
         ASSERT_EQ(swmm_heat_set_sediment_ground_timeseries(d.e, "ground_ts"), SWMM_OK);
         ASSERT_EQ(swmm_heat_set_element_override(d.e, SWMM_HEAT_ATTR_SHADE_FACTOR,
-                                                 SWMM_HEAT_SCOPE_TAG, "SHADED", 0.4), SWMM_OK);
+                                                 SWMM_HEAT_SCOPE_TAG, "SHADED", 0.4),
+                  SWMM_OK);
         ASSERT_EQ(swmm_model_write(d.e, saved.string().c_str()), SWMM_OK)
             << swmm_get_last_error_msg(d.e);
     }
@@ -538,6 +703,14 @@ TEST(CapiGapHeat, EditsSurviveSaveAndReopen) {
 #ifdef OPENSWMM_HAS_2D
 namespace {
 
+/**
+ * @brief Build an aquifer/conduit authoring fixture with optional link rows.
+ *
+ * Copies rows without escaping or validation; no file IO or simulation occurs.
+ *
+ * @param[in] link_rows Raw 2D_AQUIFER_LINKS body; empty omits the section.
+ * @return Owned ten-minute CMS deck with 100 mm/hr conduit loss and an eight-metre aquifer.
+ */
 std::string aquiferDeck(const std::string& link_rows) {
     std::string d =
         "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\n"
@@ -552,17 +725,30 @@ std::string aquiferDeck(const std::string& link_rows) {
         "[2D_TRIANGLES]\n0 1 2 0.03 0.0\n0 2 3 0.03 0.0\n\n"
         "[2D_AQUIFER_OPTIONS]\nCLOSURE CLOSED_FORM\nNODE_ENROLMENT ROWS\n\n"
         "[2D_AQUIFER]\n*  36.0  8.0  0.45  0.10  2.0  HG0 2.0\n\n";
-    if (!link_rows.empty()) d += "[2D_AQUIFER_LINKS]\n" + link_rows + "\n";
+    if (!link_rows.empty())
+        d += "[2D_AQUIFER_LINKS]\n" + link_rows + "\n";
     return d + "[REPORT]\nINPUT NO\n";
 }
 
-int linkCount(SWMM_Engine e) { int n = -1; swmm_gw2d_link_count(e, &n); return n; }
+/**
+ * @brief Read the number of aquifer link rows through the public API.
+ *
+ * Ignores query status; callers compare the sentinel/count and query behavior separately.
+ *
+ * @param[in] e Borrowed engine handle passed unchanged to its count query.
+ * @return Reported count, or initialized -1 if a rejected query leaves output unchanged.
+ */
+int linkCount(SWMM_Engine e) {
+    int n = -1;
+    swmm_gw2d_link_count(e, &n);
+    return n;
+}
 
-}  // namespace
+} // namespace
 
 TEST(CapiGapAquiferLinks, ParsedRowsReadAndEdit) {
-    OpenedDeck d(writeDeck("aquifer_links.inp",
-                           aquiferDeck("C1 KC 2.5 DC 0.3 EXCHANGE NO\n").c_str()));
+    OpenedDeck d(
+        writeDeck("aquifer_links.inp", aquiferDeck("C1 KC 2.5 DC 0.3 EXCHANGE NO\n").c_str()));
     ASSERT_EQ(d.rc, SWMM_OK) << swmm_get_last_error_msg(d.e);
     ASSERT_EQ(linkCount(d.e), 1);
     char name[64] = {};
@@ -617,6 +803,17 @@ TEST(CapiGapAquiferLinks, AddedRowSurvivesSaveAndRuns) {
 #ifdef OPENSWMM_HAS_2D
 namespace {
 
+/**
+ * @brief Copy the complete 2D example and append quality authoring sections.
+ *
+ * Reads ../../../../examples/2d_complete_example.inp relative to the working directory with
+ * unchecked slurp and writes via unchecked writeText. Does not verify the base file or parse the
+ * appended model.
+ *
+ * @param[in] stem Raw artifact stem below artifactDir; matching .inp is overwritten.
+ * @param[in] extra Raw sections appended after a TSS mg/L pollutant declaration.
+ * @return Owned input path, even if reading/writing failed.
+ */
 fs::path writeQuality2DDeck(const std::string& stem, const std::string& extra) {
     std::string deck = slurp("../../../../examples/2d_complete_example.inp");
     deck += "\n[POLLUTANTS]\nTSS MG/L 0 0 0 0 NO * 0 0 0\n\n" + extra;
@@ -625,10 +822,34 @@ fs::path writeQuality2DDeck(const std::string& stem, const std::string& extra) {
     return inp;
 }
 
-int iqCount(SWMM_Engine e) { int n = -1; swmm_2d_initial_quality_count(e, &n); return n; }
-int bqCount(SWMM_Engine e) { int n = -1; swmm_2d_boundary_quality_count(e, &n); return n; }
+/**
+ * @brief Read the number of 2D initial-quality rows through the public API.
+ *
+ * Ignores query status; callers compare the sentinel/count and query behavior separately.
+ *
+ * @param[in] e Borrowed engine handle passed unchanged to its count query.
+ * @return Reported count, or initialized -1 if a rejected query leaves output unchanged.
+ */
+int iqCount(SWMM_Engine e) {
+    int n = -1;
+    swmm_2d_initial_quality_count(e, &n);
+    return n;
+}
+/**
+ * @brief Read the number of 2D boundary-quality rows through the public API.
+ *
+ * Ignores query status; callers compare the sentinel/count and query behavior separately.
+ *
+ * @param[in] e Borrowed engine handle passed unchanged to its count query.
+ * @return Reported count, or initialized -1 if a rejected query leaves output unchanged.
+ */
+int bqCount(SWMM_Engine e) {
+    int n = -1;
+    swmm_2d_boundary_quality_count(e, &n);
+    return n;
+}
 
-}  // namespace
+} // namespace
 
 TEST(CapiGap2DQuality, InitialQualityRows) {
     OpenedDeck d(writeQuality2DDeck("q2d_iq", "[2D_INITIAL_QUALITY]\n* TSS 5.0\nCELL 2 TSS 7.5\n"));
@@ -639,25 +860,30 @@ TEST(CapiGap2DQuality, InitialQualityRows) {
     double c = -1;
     ASSERT_EQ(swmm_2d_get_initial_quality(d.e, 1, &scope, tag, 64, &cell, sp, 64, &c), SWMM_OK);
     EXPECT_EQ(scope, SWMM_2D_QUAL_SCOPE_CELL);
-    EXPECT_EQ(cell, 1);  // CELL 2 in the deck is 1-based
+    EXPECT_EQ(cell, 1); // CELL 2 in the deck is 1-based
     EXPECT_STREQ(sp, "TSS");
     EXPECT_DOUBLE_EQ(c, 7.5);
 
-    ASSERT_EQ(swmm_2d_set_initial_quality(d.e, SWMM_2D_QUAL_SCOPE_CELL, nullptr, 1, "TSS", 9.0), SWMM_OK);
-    EXPECT_EQ(iqCount(d.e), 2);  // same key replaces
-    ASSERT_EQ(swmm_2d_set_initial_quality(d.e, SWMM_2D_QUAL_SCOPE_TAG, "east", -1, "TSS", 1.0), SWMM_OK);
+    ASSERT_EQ(swmm_2d_set_initial_quality(d.e, SWMM_2D_QUAL_SCOPE_CELL, nullptr, 1, "TSS", 9.0),
+              SWMM_OK);
+    EXPECT_EQ(iqCount(d.e), 2); // same key replaces
+    ASSERT_EQ(swmm_2d_set_initial_quality(d.e, SWMM_2D_QUAL_SCOPE_TAG, "east", -1, "TSS", 1.0),
+              SWMM_OK);
     EXPECT_EQ(iqCount(d.e), 3);
-    EXPECT_EQ(swmm_2d_set_initial_quality(d.e, SWMM_2D_QUAL_SCOPE_CELL, nullptr, 999, "TSS", 1.0), SWMM_ERR_BADINDEX);
-    EXPECT_EQ(swmm_2d_set_initial_quality(d.e, SWMM_2D_QUAL_SCOPE_GLOBAL, nullptr, -1, "TSS", -1.0), SWMM_ERR_BADPARAM);
-    EXPECT_EQ(swmm_2d_set_initial_quality(d.e, SWMM_2D_QUAL_SCOPE_TAG, "", -1, "TSS", 1.0), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_2d_set_initial_quality(d.e, SWMM_2D_QUAL_SCOPE_CELL, nullptr, 999, "TSS", 1.0),
+              SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_2d_set_initial_quality(d.e, SWMM_2D_QUAL_SCOPE_GLOBAL, nullptr, -1, "TSS", -1.0),
+              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_2d_set_initial_quality(d.e, SWMM_2D_QUAL_SCOPE_TAG, "", -1, "TSS", 1.0),
+              SWMM_ERR_BADPARAM);
     ASSERT_EQ(swmm_2d_remove_initial_quality(d.e, 2), SWMM_OK);
     EXPECT_EQ(iqCount(d.e), 2);
     EXPECT_EQ(swmm_2d_remove_initial_quality(d.e, 5), SWMM_ERR_BADINDEX);
 }
 
 TEST(CapiGap2DQuality, InitialBedQualityRows) {
-    OpenedDeck d(writeQuality2DDeck("q2d_ibq",
-        "[2D_INITIAL_BED_QUALITY]\n* TSS 2.0\nTAG east TSS 4.0\nCELL 2 TSS 7.5\n"));
+    OpenedDeck d(writeQuality2DDeck(
+        "q2d_ibq", "[2D_INITIAL_BED_QUALITY]\n* TSS 2.0\nTAG east TSS 4.0\nCELL 2 TSS 7.5\n"));
     ASSERT_EQ(d.rc, SWMM_OK) << swmm_get_last_error_msg(d.e);
     int count = -1;
     ASSERT_EQ(swmm_2d_initial_bed_quality_count(d.e, &count), SWMM_OK);
@@ -665,21 +891,23 @@ TEST(CapiGap2DQuality, InitialBedQualityRows) {
     int scope = -1, cell = -9;
     char tag[64] = {}, species[64] = {};
     double conc = -1;
-    ASSERT_EQ(swmm_2d_get_initial_bed_quality(d.e, 1, &scope, tag, 64,
-                                               &cell, species, 64, &conc), SWMM_OK);
+    ASSERT_EQ(swmm_2d_get_initial_bed_quality(d.e, 1, &scope, tag, 64, &cell, species, 64, &conc),
+              SWMM_OK);
     EXPECT_EQ(scope, SWMM_2D_QUAL_SCOPE_TAG);
     EXPECT_STREQ(tag, "east");
     EXPECT_STREQ(species, "TSS");
     EXPECT_DOUBLE_EQ(conc, 4.0);
 
-    ASSERT_EQ(swmm_2d_set_initial_bed_quality(d.e, SWMM_2D_QUAL_SCOPE_CELL,
-                                               nullptr, 1, "TSS", 9.0), SWMM_OK);
+    ASSERT_EQ(swmm_2d_set_initial_bed_quality(d.e, SWMM_2D_QUAL_SCOPE_CELL, nullptr, 1, "TSS", 9.0),
+              SWMM_OK);
     ASSERT_EQ(swmm_2d_initial_bed_quality_count(d.e, &count), SWMM_OK);
     EXPECT_EQ(count, 3); // same key replaces
-    EXPECT_EQ(swmm_2d_set_initial_bed_quality(d.e, SWMM_2D_QUAL_SCOPE_CELL,
-                                               nullptr, 999, "TSS", 1.0), SWMM_ERR_BADINDEX);
-    EXPECT_EQ(swmm_2d_set_initial_bed_quality(d.e, SWMM_2D_QUAL_SCOPE_GLOBAL,
-                                               nullptr, -1, "TSS", -1.0), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(
+        swmm_2d_set_initial_bed_quality(d.e, SWMM_2D_QUAL_SCOPE_CELL, nullptr, 999, "TSS", 1.0),
+        SWMM_ERR_BADINDEX);
+    EXPECT_EQ(
+        swmm_2d_set_initial_bed_quality(d.e, SWMM_2D_QUAL_SCOPE_GLOBAL, nullptr, -1, "TSS", -1.0),
+        SWMM_ERR_BADPARAM);
     ASSERT_EQ(swmm_2d_remove_initial_bed_quality(d.e, 0), SWMM_OK);
     EXPECT_EQ(swmm_2d_remove_initial_bed_quality(d.e, 9), SWMM_ERR_BADINDEX);
 }
@@ -711,10 +939,15 @@ TEST(CapiGap2DQuality, EditsSurviveSaveAndAreRefusedAfterInitialize) {
     {
         OpenedDeck d(writeQuality2DDeck("q2d_save", ""));
         ASSERT_EQ(d.rc, SWMM_OK) << swmm_get_last_error_msg(d.e);
-        ASSERT_EQ(swmm_2d_set_initial_quality(d.e, SWMM_2D_QUAL_SCOPE_GLOBAL, nullptr, -1, "TSS", 5.0), SWMM_OK);
-        ASSERT_EQ(swmm_2d_set_initial_bed_quality(d.e, SWMM_2D_QUAL_SCOPE_TAG, "vault", -1, "TSS", 2.5), SWMM_OK);
+        ASSERT_EQ(
+            swmm_2d_set_initial_quality(d.e, SWMM_2D_QUAL_SCOPE_GLOBAL, nullptr, -1, "TSS", 5.0),
+            SWMM_OK);
+        ASSERT_EQ(
+            swmm_2d_set_initial_bed_quality(d.e, SWMM_2D_QUAL_SCOPE_TAG, "vault", -1, "TSS", 2.5),
+            SWMM_OK);
         ASSERT_EQ(swmm_2d_set_boundary_quality(d.e, 0, 2, "TSS", 12.0), SWMM_OK);
-        ASSERT_EQ(swmm_model_write(d.e, saved.string().c_str()), SWMM_OK) << swmm_get_last_error_msg(d.e);
+        ASSERT_EQ(swmm_model_write(d.e, saved.string().c_str()), SWMM_OK)
+            << swmm_get_last_error_msg(d.e);
         ASSERT_EQ(swmm_options_set(d.e, "HEAT_TRANSPORT", "YES"), SWMM_OK);
         ASSERT_EQ(swmm_options_set_ext(d.e, "HEAT_MODEL", "COUPLED"), SWMM_OK);
         ASSERT_EQ(swmm_options_set_ext(d.e, "BED_HEAT_MODEL", "LOCAL_STORAGE"), SWMM_OK);
@@ -733,8 +966,9 @@ TEST(CapiGap2DQuality, EditsSurviveSaveAndAreRefusedAfterInitialize) {
     int bed_scope = -1;
     char bed_tag[64] = {}, bed_species[64] = {};
     double bed_conc = -1;
-    ASSERT_EQ(swmm_2d_get_initial_bed_quality(r.e, 0, &bed_scope,
-        bed_tag, sizeof bed_tag, nullptr, bed_species, sizeof bed_species, &bed_conc), SWMM_OK);
+    ASSERT_EQ(swmm_2d_get_initial_bed_quality(r.e, 0, &bed_scope, bed_tag, sizeof bed_tag, nullptr,
+                                              bed_species, sizeof bed_species, &bed_conc),
+              SWMM_OK);
     EXPECT_EQ(bed_scope, SWMM_2D_QUAL_SCOPE_TAG);
     EXPECT_STREQ(bed_tag, "vault");
     EXPECT_STREQ(bed_species, "TSS");
@@ -749,9 +983,22 @@ TEST(CapiGap2DQuality, EditsSurviveSaveAndAreRefusedAfterInitialize) {
 
 namespace {
 
+/**
+ * @brief Copy public spatial annotation text using a size query then fill.
+ *
+ * Assumes successful sizing returns need>=1 and the fill query succeeds consistently. The second
+ * status is ignored; no retry or length validation occurs, so intended stable valid fixture data is
+ * required.
+ *
+ * @param[in] e Borrowed engine handle.
+ * @param[in] section Non-null public annotation section name.
+ * @return Owned annotation without trailing NUL, or literal &lt;ERR&gt; if the initial size query
+ *     rejects.
+ */
 std::string annotation(SWMM_Engine e, const char* section) {
     int need = 0;
-    if (swmm_spatial_get_annotation(e, section, nullptr, 0, &need) != SWMM_OK) return "<ERR>";
+    if (swmm_spatial_get_annotation(e, section, nullptr, 0, &need) != SWMM_OK)
+        return "<ERR>";
     std::string buf(static_cast<std::size_t>(need), '\0');
     swmm_spatial_get_annotation(e, section, buf.data(), need, nullptr);
     buf.resize(static_cast<std::size_t>(need - 1));
@@ -763,7 +1010,7 @@ const char* kMapExtra =
     "[LABELS]\n;;X Y Label\n100.0 200.0 \"Outfall structure\" \"\" \"Arial\" 10 0 0\n\n"
     "[PROFILES]\n\"profileA        \" C1 C2\n";
 
-}  // namespace
+} // namespace
 
 TEST(CapiGapSpatial, MapExtentAndUnits) {
     OpenedDeck d(writeDeck("map.inp", (std::string(kDeck1D) + kMapExtra).c_str()));
@@ -787,15 +1034,16 @@ TEST(CapiGapSpatial, AnnotationSectionsReadWriteAndSurviveSave) {
     {
         OpenedDeck d(writeDeck("annot.inp", (std::string(kDeck1D) + kMapExtra).c_str()));
         ASSERT_EQ(d.rc, SWMM_OK) << swmm_get_last_error_msg(d.e);
-        const std::string labels = annotation(d.e, "labels");  // case-insensitive
+        const std::string labels = annotation(d.e, "labels"); // case-insensitive
         EXPECT_NE(labels.find("\"Outfall structure\""), std::string::npos) << labels;
         EXPECT_NE(annotation(d.e, "PROFILES").find("\"profileA        \""), std::string::npos);
         EXPECT_EQ(annotation(d.e, "BACKDROP"), "");
-        EXPECT_EQ(annotation(d.e, "JUNCTIONS"), "<ERR>");  // not an annotation section
+        EXPECT_EQ(annotation(d.e, "JUNCTIONS"), "<ERR>"); // not an annotation section
 
         ASSERT_EQ(swmm_spatial_set_annotation(d.e, "BACKDROP",
-                      "DIMENSIONS 0 0 1000 500\nFILE \"Site Post.jpg\"\n"), SWMM_OK);
-        ASSERT_EQ(swmm_spatial_set_annotation(d.e, "LABELS", ""), SWMM_OK);  // removes
+                                              "DIMENSIONS 0 0 1000 500\nFILE \"Site Post.jpg\"\n"),
+                  SWMM_OK);
+        ASSERT_EQ(swmm_spatial_set_annotation(d.e, "LABELS", ""), SWMM_OK); // removes
         EXPECT_EQ(annotation(d.e, "LABELS"), "");
         EXPECT_EQ(swmm_spatial_set_annotation(d.e, "OPTIONS", "x"), SWMM_ERR_BADPARAM);
         ASSERT_EQ(swmm_spatial_set_map_dimensions(d.e, -10, -20, 30, 40), SWMM_OK);

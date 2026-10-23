@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_heat_integrator.cpp
- * @brief D-H5d/D-H5e gates — the semi-implicit surface-balance step and
+ * @file      test_heat_integrator.cpp
+ * @brief     D-H5d/D-H5e gates — the semi-implicit surface-balance step and
  *        the single-relaxation composition of the flux families.
  *
  * @details H5a's validation found the surface energy balance diverging to
@@ -35,9 +35,9 @@
  *          Gate 2 is the one that would have caught the original defect.
  *
  * @see plans/transport/HEAT_TRANSPORT_PLAN.md §6.2 D-H5d, §6.3 D-H5e
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -61,28 +61,46 @@ namespace se = openswmm::transport::heat;
 namespace {
 
 // Water. SI throughout, matching the module's own units.
-constexpr double kRho = 1000.0;    ///< kg/m3
-constexpr double kCp  = 4184.0;    ///< J/kg/C
+constexpr double kRho = 1000.0; ///< kg/m3
+constexpr double kCp = 4184.0;  ///< J/kg/C
 
 /// The measured pathological case, converted once: a 0.52 ft3 film spread
 /// over 27226 ft2. This is not a synthetic worst case — it is the subarea
 /// that produced the NaN.
-constexpr double kFilmVolM3  = 0.52  * 0.028316846592;
+constexpr double kFilmVolM3 = 0.52 * 0.028316846592;
 constexpr double kFilmAreaM2 = 27226.0 * 0.09290304;
 
-/// A linear net-outward flux with slope `slope` W/m2/C and a zero at `t_eq`.
-/// Linear on purpose: relaxation is EXACT for a linear flux, so any
-/// disagreement in these gates is the integrator and not the linearization.
+/**
+ * @brief Evaluate the linear outward surface-energy reference flux.
+ *
+ * Pure arithmetic; does not validate physical signs or finite inputs.
+ *
+ * @param[in] t Water temperature C.
+ * @param[in] t_eq Zero-flux equilibrium temperature C.
+ * @param[in] slope Flux-temperature slope W/m2/C.
+ * @return slope*(t-t_eq) in W/m2, positive outward under positive slope.
+ */
 double linearFlux(double t, double t_eq, double slope) {
     return slope * (t - t_eq);
 }
 
-/// What the old forward-Euler step would have produced.
+/**
+ * @brief Compute the former explicit surface-heat temperature increment.
+ *
+ * Uses fixed water density/heat capacity constants and no stability limit, equilibrium cap or input
+ * checks; intentionally represents the unstable old reference formula.
+ *
+ * @param[in] j0 Net outward flux W/m2.
+ * @param[in] area_m2 Exposed area m2.
+ * @param[in] vol_m3 Positive nonzero water volume m3.
+ * @param[in] dt Interval seconds.
+ * @return Temperature increment C: -j0*area*dt/(kRho*kCp*volume).
+ */
 double explicitStep(double j0, double area_m2, double vol_m3, double dt) {
     return -j0 * area_m2 * dt / (kRho * kCp * vol_m3);
 }
 
-}  // namespace
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Gate 1 — small dt agrees with forward Euler. The scheme must not change any
@@ -90,22 +108,23 @@ double explicitStep(double j0, double area_m2, double vol_m3, double dt) {
 // ---------------------------------------------------------------------------
 TEST(HeatIntegratorTest, SmallStepsAgreeWithTheExplicitForm) {
     constexpr double kTeq = 12.0, kSlope = 8.0, kT0 = 25.0;
-    constexpr double kAreaM2 = 100.0, kVolM3 = 50.0;   // a well-resolved pond
+    constexpr double kAreaM2 = 100.0, kVolM3 = 50.0; // a well-resolved pond
 
     const double j0 = linearFlux(kT0, kTeq, kSlope);
     const double j1 = linearFlux(kT0 + se::kProbeC, kTeq, kSlope);
 
     // 0.1 s on 50 m3: k*dt ~ 1.6e-6, deep in the linear regime.
     constexpr double kDt = 0.1;
-    const double got = se::relaxT(j0, j1, se::kProbeC, kAreaM2, kVolM3, kDt,
-                                  kRho, kCp);
+    const double got = se::relaxT(j0, j1, se::kProbeC, kAreaM2, kVolM3, kDt, kRho, kCp);
     const double want = explicitStep(j0, kAreaM2, kVolM3, kDt);
 
     // Relative agreement, because both numbers are tiny in absolute terms.
     ASSERT_NE(want, 0.0);
     EXPECT_NEAR(got / want, 1.0, 1.0e-6)
         << "the semi-implicit step disagrees with forward Euler at k*dt << 1 "
-           "(got " << got << ", explicit " << want << "). expm1's small-x "
+           "(got "
+        << got << ", explicit " << want
+        << "). expm1's small-x "
            "limit is what keeps every resolved answer unchanged from H2/H3; "
            "if this fails the scheme is not a drop-in and every prior heat "
            "number moved";
@@ -119,15 +138,14 @@ TEST(HeatIntegratorTest, SmallStepsAgreeWithTheExplicitForm) {
     // exactly 1.0 and the subtraction yields a hard zero while expm1 keeps
     // full precision.
     for (double small_dt : {1.0e-2, 1.0e-6, 1.0e-10, 1.0e-14}) {
-        const double g = se::relaxT(j0, j1, se::kProbeC, kAreaM2, kVolM3,
-                                    small_dt, kRho, kCp);
+        const double g = se::relaxT(j0, j1, se::kProbeC, kAreaM2, kVolM3, small_dt, kRho, kCp);
         const double w = explicitStep(j0, kAreaM2, kVolM3, small_dt);
         ASSERT_NE(w, 0.0) << "dt=" << small_dt;
         EXPECT_NEAR(g / w, 1.0, 1.0e-6)
             << "dt=" << small_dt << ": got " << g << ", explicit " << w
             << ". A zero here is the signature of exp(-k*dt) - 1 cancelling "
-               "to nothing at k*dt = " << (small_dt * 100.0 * 8.0 /
-                                           (kRho * kCp * 50.0));
+               "to nothing at k*dt = "
+            << (small_dt * 100.0 * 8.0 / (kRho * kCp * 50.0));
     }
 }
 
@@ -152,31 +170,32 @@ TEST(HeatIntegratorTest, TheFilmThatDivergedIsBoundedByItsEquilibrium) {
     const double explicit_dT = explicitStep(j0, kFilmAreaM2, kFilmVolM3, kDt);
     EXPECT_NEAR(explicit_dT, 862.17, 0.5)
         << "this is meant to be the measured pathological case; the explicit "
-           "step came out at " << explicit_dT << " C rather than the +862 C "
+           "step came out at "
+        << explicit_dT
+        << " C rather than the +862 C "
            "H5a's validation reported";
     ASSERT_GT(std::fabs(explicit_dT), 500.0)
-        << "the explicit step here is only " << explicit_dT << " C, so this "
+        << "the explicit step here is only " << explicit_dT
+        << " C, so this "
            "deck is not the unstable regime and the gate proves nothing";
 
     const double eq = se::equilibriumT(kT0, j0, j1, se::kProbeC);
-    EXPECT_NEAR(eq, kTeq, 1.0e-6)
-        << "the probe did not recover the flux's own zero";
+    EXPECT_NEAR(eq, kTeq, 1.0e-6) << "the probe did not recover the flux's own zero";
 
-    const double dT = se::relaxT(j0, j1, se::kProbeC, kFilmAreaM2, kFilmVolM3,
-                                 kDt, kRho, kCp);
+    const double dT = se::relaxT(j0, j1, se::kProbeC, kFilmAreaM2, kFilmVolM3, kDt, kRho, kCp);
     const double t_new = kT0 + dT;
 
     EXPECT_TRUE(std::isfinite(t_new)) << "the step is not finite";
     // The whole property, stated without a reference value: the result lies
     // between where it started and where it is heading. Nothing else is
     // physically admissible, and the explicit form violated it by 800 C.
-    EXPECT_GE(t_new, kT0 - 1.0e-9)
-        << "the step moved AWAY from equilibrium";
+    EXPECT_GE(t_new, kT0 - 1.0e-9) << "the step moved AWAY from equilibrium";
     EXPECT_LE(t_new, kTeq + 1.0e-9)
-        << "the step overshot equilibrium: " << t_new << " C past a "
-        << kTeq << " C fixed point. This is the divergence H5a shipped — "
+        << "the step overshot equilibrium: " << t_new << " C past a " << kTeq
+        << " C fixed point. This is the divergence H5a shipped — "
            "with dt this large relative to the film's thermal mass, an "
-           "explicit step lands at " << (kT0 + explicit_dT) << " C";
+           "explicit step lands at "
+        << (kT0 + explicit_dT) << " C";
 }
 
 // ---------------------------------------------------------------------------
@@ -187,8 +206,9 @@ TEST(HeatIntegratorTest, NoStepOvershootsEquilibriumInEitherDirection) {
     const double dts[] = {1.0e-3, 1.0, 60.0, 3600.0, 86400.0, 1.0e9};
 
     // Warming (T0 below equilibrium) and cooling (above), same machinery.
-    struct Case { double t0, t_eq; } cases[] = {{5.0, 30.0}, {30.0, 5.0},
-                                                {-4.0, 2.0}, {2.0, -4.0}};
+    struct Case {
+        double t0, t_eq;
+    } cases[] = {{5.0, 30.0}, {30.0, 5.0}, {-4.0, 2.0}, {2.0, -4.0}};
 
     for (const auto& c : cases) {
         const double j0 = linearFlux(c.t0, c.t_eq, kSlope);
@@ -198,16 +218,13 @@ TEST(HeatIntegratorTest, NoStepOvershootsEquilibriumInEitherDirection) {
 
         for (double dt : dts) {
             const double t_new =
-                c.t0 + se::relaxT(j0, j1, se::kProbeC, kFilmAreaM2,
-                                  kFilmVolM3, dt, kRho, kCp);
+                c.t0 + se::relaxT(j0, j1, se::kProbeC, kFilmAreaM2, kFilmVolM3, dt, kRho, kCp);
             EXPECT_TRUE(std::isfinite(t_new))
                 << "dt=" << dt << " from " << c.t0 << " toward " << c.t_eq;
             EXPECT_GE(t_new, lo - 1.0e-9)
-                << "dt=" << dt << ": " << t_new << " below [" << lo << ", "
-                << hi << "]";
+                << "dt=" << dt << ": " << t_new << " below [" << lo << ", " << hi << "]";
             EXPECT_LE(t_new, hi + 1.0e-9)
-                << "dt=" << dt << ": " << t_new << " above [" << lo << ", "
-                << hi << "]";
+                << "dt=" << dt << ": " << t_new << " above [" << lo << ", " << hi << "]";
         }
     }
 }
@@ -224,20 +241,20 @@ TEST(HeatIntegratorTest, LongerStepsMoveMonotonicallyTowardEquilibrium) {
 
     double prev = kT0;
     for (double dt : {1.0, 10.0, 60.0, 600.0, 3600.0}) {
-        const double t_new = kT0 + se::relaxT(j0, j1, se::kProbeC,
-                                              kFilmAreaM2, kFilmVolM3, dt,
-                                              kRho, kCp);
-        EXPECT_GT(t_new, prev - 1.0e-12)
-            << "dt=" << dt << " moved less far than a shorter step — the "
-               "scheme is not integrating, it is clamping";
+        const double t_new =
+            kT0 + se::relaxT(j0, j1, se::kProbeC, kFilmAreaM2, kFilmVolM3, dt, kRho, kCp);
+        EXPECT_GT(t_new, prev - 1.0e-12) << "dt=" << dt
+                                         << " moved less far than a shorter step — the "
+                                            "scheme is not integrating, it is clamping";
         prev = t_new;
     }
     // And the limit really is equilibrium, not some other fixed point.
-    const double t_inf = kT0 + se::relaxT(j0, j1, se::kProbeC, kFilmAreaM2,
-                                          kFilmVolM3, 1.0e12, kRho, kCp);
-    EXPECT_NEAR(t_inf, kTeq, 1.0e-6)
-        << "an unbounded step settles at " << t_inf << " C rather than the "
-           "equilibrium " << kTeq << " C";
+    const double t_inf =
+        kT0 + se::relaxT(j0, j1, se::kProbeC, kFilmAreaM2, kFilmVolM3, 1.0e12, kRho, kCp);
+    EXPECT_NEAR(t_inf, kTeq, 1.0e-6) << "an unbounded step settles at " << t_inf
+                                     << " C rather than the "
+                                        "equilibrium "
+                                     << kTeq << " C";
 }
 
 // ---------------------------------------------------------------------------
@@ -250,9 +267,8 @@ TEST(HeatIntegratorTest, DegenerateInputsFallBackInsteadOfDividing) {
     // system has no fixed point to relax onto. The documented behaviour is
     // the explicit step, not a NaN and not a silent zero.
     const double j0 = 100.0;
-    const double j1 = 100.0 - 5.0 * se::kProbeC;      // negative slope
-    const double dT = se::relaxT(j0, j1, se::kProbeC, 10.0, 1.0, 1.0,
-                                 kRho, kCp);
+    const double j1 = 100.0 - 5.0 * se::kProbeC; // negative slope
+    const double dT = se::relaxT(j0, j1, se::kProbeC, 10.0, 1.0, 1.0, kRho, kCp);
     EXPECT_TRUE(std::isfinite(dT));
     EXPECT_NEAR(dT, explicitStep(j0, 10.0, 1.0, 1.0), 1.0e-12)
         << "J' <= 0 did not fall back to the explicit step";
@@ -266,8 +282,7 @@ TEST(HeatIntegratorTest, DegenerateInputsFallBackInsteadOfDividing) {
     EXPECT_EQ(se::relaxT(j0, j1, se::kProbeC, 10.0, 1.0, 0.0, kRho, kCp), 0.0);
 
     // A zero probe cannot yield a slope; fall back rather than divide by it.
-    EXPECT_TRUE(std::isfinite(
-        se::relaxT(j0, j1, 0.0, 10.0, 1.0, 1.0, kRho, kCp)));
+    EXPECT_TRUE(std::isfinite(se::relaxT(j0, j1, 0.0, 10.0, 1.0, 1.0, kRho, kCp)));
 }
 
 // ---------------------------------------------------------------------------
@@ -275,13 +290,13 @@ TEST(HeatIntegratorTest, DegenerateInputsFallBackInsteadOfDividing) {
 // ---------------------------------------------------------------------------
 TEST(HeatIntegratorTest, AnElementAtEquilibriumDoesNotMove) {
     constexpr double kTeq = 18.0, kSlope = 8.0;
-    const double j0 = linearFlux(kTeq, kTeq, kSlope);      // exactly zero
+    const double j0 = linearFlux(kTeq, kTeq, kSlope); // exactly zero
     const double j1 = linearFlux(kTeq + se::kProbeC, kTeq, kSlope);
     ASSERT_EQ(j0, 0.0);
 
     for (double dt : {1.0, 60.0, 86400.0})
-        EXPECT_NEAR(se::relaxT(j0, j1, se::kProbeC, kFilmAreaM2, kFilmVolM3,
-                               dt, kRho, kCp), 0.0, 1.0e-12)
+        EXPECT_NEAR(se::relaxT(j0, j1, se::kProbeC, kFilmAreaM2, kFilmVolM3, dt, kRho, kCp), 0.0,
+                    1.0e-12)
             << "dt=" << dt << ": a zero flux produced a temperature change";
 }
 
@@ -295,8 +310,8 @@ TEST(HeatIntegratorTest, TwoFluxFamiliesRelaxToTheirCombinedEquilibrium) {
     // point, and a number that is neither module's own.
     constexpr double kS = 7.0, kT0 = 5.0;
     constexpr double kEq1 = 30.0, kEq2 = 10.0, kEqBoth = 20.0;
-    const auto f1   = [](double t) { return kS * (t - kEq1); };
-    const auto f2   = [](double t) { return kS * (t - kEq2); };
+    const auto f1 = [](double t) { return kS * (t - kEq1); };
+    const auto f2 = [](double t) { return kS * (t - kEq2); };
     const auto both = [&](double t) { return f1(t) + f2(t); };
 
     // SETUP: the summed flux really does vanish at 20 C, or the gate is
@@ -308,15 +323,14 @@ TEST(HeatIntegratorTest, TwoFluxFamiliesRelaxToTheirCombinedEquilibrium) {
         // relax the RESULT against the other. Each sub-step relaxes fully
         // toward its own module's equilibrium.
         double seq = kT0;
-        seq += se::relaxT(f1(seq), f1(seq + se::kProbeC), se::kProbeC,
-                          kFilmAreaM2, kFilmVolM3, dt, kRho, kCp);
-        seq += se::relaxT(f2(seq), f2(seq + se::kProbeC), se::kProbeC,
-                          kFilmAreaM2, kFilmVolM3, dt, kRho, kCp);
+        seq += se::relaxT(f1(seq), f1(seq + se::kProbeC), se::kProbeC, kFilmAreaM2, kFilmVolM3, dt,
+                          kRho, kCp);
+        seq += se::relaxT(f2(seq), f2(seq + se::kProbeC), se::kProbeC, kFilmAreaM2, kFilmVolM3, dt,
+                          kRho, kCp);
 
         // How the merged binding behaves: sum first, relax once.
-        const double comb =
-            kT0 + se::relaxT(both(kT0), both(kT0 + se::kProbeC), se::kProbeC,
-                             kFilmAreaM2, kFilmVolM3, dt, kRho, kCp);
+        const double comb = kT0 + se::relaxT(both(kT0), both(kT0 + se::kProbeC), se::kProbeC,
+                                             kFilmAreaM2, kFilmVolM3, dt, kRho, kCp);
 
         // The combined step can never pass the combined equilibrium. No
         // reference value: 20 C is where the summed flux vanishes.
@@ -330,7 +344,8 @@ TEST(HeatIntegratorTest, TwoFluxFamiliesRelaxToTheirCombinedEquilibrium) {
         // added exactly, so splitting cost nothing.
         if (dt <= 1.0e-3) {
             EXPECT_NEAR(seq, comb, 1.0e-5)
-                << "dt=" << dt << ": the split and merged forms disagree "
+                << "dt=" << dt
+                << ": the split and merged forms disagree "
                    "even in the linear regime, which means the discrepancy "
                    "is not the operator split";
         }
@@ -341,17 +356,15 @@ TEST(HeatIntegratorTest, TwoFluxFamiliesRelaxToTheirCombinedEquilibrium) {
     // module's equilibrium (measured 11.05 C against a true 19.95 C).
     constexpr double kBigDt = 10.0;
     double seq = kT0;
-    seq += se::relaxT(f1(seq), f1(seq + se::kProbeC), se::kProbeC,
-                      kFilmAreaM2, kFilmVolM3, kBigDt, kRho, kCp);
-    seq += se::relaxT(f2(seq), f2(seq + se::kProbeC), se::kProbeC,
-                      kFilmAreaM2, kFilmVolM3, kBigDt, kRho, kCp);
-    const double comb =
-        kT0 + se::relaxT(both(kT0), both(kT0 + se::kProbeC), se::kProbeC,
-                         kFilmAreaM2, kFilmVolM3, kBigDt, kRho, kCp);
-    ASSERT_GT(comb - seq, 5.0)
-        << "the split and merged forms differ by only " << (comb - seq)
-        << " C at k*dt ~ 5.7, so this configuration does not reach the "
-           "regime where operator order matters and the gate proves nothing";
+    seq += se::relaxT(f1(seq), f1(seq + se::kProbeC), se::kProbeC, kFilmAreaM2, kFilmVolM3, kBigDt,
+                      kRho, kCp);
+    seq += se::relaxT(f2(seq), f2(seq + se::kProbeC), se::kProbeC, kFilmAreaM2, kFilmVolM3, kBigDt,
+                      kRho, kCp);
+    const double comb = kT0 + se::relaxT(both(kT0), both(kT0 + se::kProbeC), se::kProbeC,
+                                         kFilmAreaM2, kFilmVolM3, kBigDt, kRho, kCp);
+    ASSERT_GT(comb - seq, 5.0) << "the split and merged forms differ by only " << (comb - seq)
+                               << " C at k*dt ~ 5.7, so this configuration does not reach the "
+                                  "regime where operator order matters and the gate proves nothing";
 }
 
 // ---------------------------------------------------------------------------
@@ -417,19 +430,18 @@ TEST(HeatIntegratorTest, ASteadyNodeSitsWhereTheSUMMEDFluxVanishes) {
 
     SWMM_Engine e = swmm_engine_create();
     ASSERT_NE(e, nullptr);
-    ASSERT_EQ(swmm_engine_open(e, "_hi8.inp", "_hi8.rpt", "_hi8.out", nullptr),
-              SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(e, "_hi8.inp", "_hi8.rpt", "_hi8.out", nullptr), SWMM_OK);
     ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK);
     double elapsed = 0.0;
     int guard = 0;
     do {
-        if (swmm_engine_step(e, &elapsed) != SWMM_OK) break;
+        if (swmm_engine_step(e, &elapsed) != SWMM_OK)
+            break;
     } while (elapsed > 0.0 && ++guard < 20000);
     swmm_engine_end(e);
 
-    const auto& ctx =
-        static_cast<openswmm::SWMMEngine*>(e)->context();
+    const auto& ctx = static_cast<openswmm::SWMMEngine*>(e)->context();
     ASSERT_TRUE(ctx.heat_config.surface_exchange);
     ASSERT_TRUE(ctx.heat_config.radiative_exchange)
         << "both families must be enabled or there is no composition to test";
@@ -438,37 +450,41 @@ TEST(HeatIntegratorTest, ASteadyNodeSitsWhereTheSUMMEDFluxVanishes) {
     int n = -1;
     for (int i = 0; i < ctx.n_nodes(); ++i)
         if (ctx.nodes.volume[static_cast<std::size_t>(i)] > 0.0 &&
-            ctx.nodes.depth[static_cast<std::size_t>(i)] > 0.0) { n = i; break; }
+            ctx.nodes.depth[static_cast<std::size_t>(i)] > 0.0) {
+            n = i;
+            break;
+        }
     ASSERT_GE(n, 0) << "no node holds water — nothing exchanged";
     const auto un = static_cast<std::size_t>(n);
 
-    const double t_w  = ctx.heat_state.node_temp[un];
+    const double t_w = ctx.heat_state.node_temp[un];
     // PE1: flux evaluators take the element token; the node's identity here.
     const openswmm::HeatElement he_n = openswmm::HeatElement::node(n);
-    const double j0   = se::netFluxOut(ctx, he_n, t_w);
-    const double j1   = se::netFluxOut(ctx, he_n, t_w + se::kProbeC);
-    const double jp   = (j1 - j0) / se::kProbeC;
+    const double j0 = se::netFluxOut(ctx, he_n, t_w);
+    const double j1 = se::netFluxOut(ctx, he_n, t_w + se::kProbeC);
+    const double jp = (j1 - j0) / se::kProbeC;
     ASSERT_GT(jp, 0.0);
 
     // SETUP: the deck must actually be in the stiff regime. Below k*dt ~ 0.4
     // the split and the merged forms agree and this gate proves nothing
     // about either (lesson 56).
     const double depth_m = ctx.nodes.depth[un] * 0.3048;
-    const double k = jp / (ctx.options.water_density *
-                           ctx.options.water_specific_heat * depth_m);
-    EXPECT_GT(k * 10.0, 0.4)
-        << "k*dt is only " << (k * 10.0) << " on this deck (J' = " << jp
-        << " W/m2/C, depth = " << ctx.nodes.depth[un] << " ft). Sequential "
-           "and summed relaxation agree in the linear regime, so the gate "
-           "would pass without observing anything.";
+    const double k = jp / (ctx.options.water_density * ctx.options.water_specific_heat * depth_m);
+    EXPECT_GT(k * 10.0, 0.4) << "k*dt is only " << (k * 10.0) << " on this deck (J' = " << jp
+                             << " W/m2/C, depth = " << ctx.nodes.depth[un]
+                             << " ft). Sequential "
+                                "and summed relaxation agree in the linear regime, so the gate "
+                                "would pass without observing anything.";
 
     // THE ASSERTION. Residual flux over its own slope is the distance, in
     // degrees, from where the summed flux vanishes.
     const double implied_offset_c = std::fabs(j0) / jp;
     EXPECT_LT(implied_offset_c, 0.05)
-        << "the node settled at " << t_w << " C, which is "
-        << implied_offset_c << " C away from where the SUMMED outward flux "
-           "is zero (residual " << j0 << " W/m2). A steady element must sit "
+        << "the node settled at " << t_w << " C, which is " << implied_offset_c
+        << " C away from where the SUMMED outward flux "
+           "is zero (residual "
+        << j0
+        << " W/m2). A steady element must sit "
            "at the equilibrium of every enabled family taken together. "
            "Relaxing each family separately parks it at neither — measured "
            "2.44 C away on this deck.";
@@ -492,8 +508,7 @@ TEST(HeatIntegratorTest, ASteadyNodeSitsWhereTheSUMMEDFluxVanishes) {
     std::string deck;
     {
         std::ifstream in("_hi8.inp");
-        deck.assign(std::istreambuf_iterator<char>(in),
-                    std::istreambuf_iterator<char>());
+        deck.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
         const auto at = deck.find("_hi8.heat");
         ASSERT_NE(at, std::string::npos);
         deck.replace(at, std::string("_hi8.heat").size(), "_hi8b.heat");
@@ -502,14 +517,14 @@ TEST(HeatIntegratorTest, ASteadyNodeSitsWhereTheSUMMEDFluxVanishes) {
     }
     SWMM_Engine e2 = swmm_engine_create();
     ASSERT_NE(e2, nullptr);
-    ASSERT_EQ(swmm_engine_open(e2, "_hi8b.inp", "_hi8b.rpt", "_hi8b.out",
-                               nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(e2, "_hi8b.inp", "_hi8b.rpt", "_hi8b.out", nullptr), SWMM_OK);
     ASSERT_EQ(swmm_engine_initialize(e2), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(e2, 1), SWMM_OK);
     elapsed = 0.0;
     guard = 0;
     do {
-        if (swmm_engine_step(e2, &elapsed) != SWMM_OK) break;
+        if (swmm_engine_step(e2, &elapsed) != SWMM_OK)
+            break;
     } while (elapsed > 0.0 && ++guard < 20000);
     swmm_engine_end(e2);
 
@@ -518,8 +533,7 @@ TEST(HeatIntegratorTest, ASteadyNodeSitsWhereTheSUMMEDFluxVanishes) {
     ASSERT_TRUE(c2.heat_config.radiative_exchange);
     const double t2 = c2.heat_state.node_temp[un];
     const double r0 = se::radiativeFluxOut(c2, openswmm::HeatElement::node(n), t2);
-    const double r1 = se::radiativeFluxOut(c2, openswmm::HeatElement::node(n),
-                                           t2 + se::kProbeC);
+    const double r1 = se::radiativeFluxOut(c2, openswmm::HeatElement::node(n), t2 + se::kProbeC);
     const double rp = (r1 - r0) / se::kProbeC;
     ASSERT_GT(rp, 0.0);
     // SETUP: the two answers must be far apart, or the assertion cannot tell
@@ -527,10 +541,12 @@ TEST(HeatIntegratorTest, ASteadyNodeSitsWhereTheSUMMEDFluxVanishes) {
     EXPECT_GT(std::fabs(t2 - t_w), 1.0)
         << "radiative-only settled at " << t2 << " C against " << t_w
         << " C with both families — too close to discriminate";
-    EXPECT_LT(std::fabs(r0) / rp, 0.05)
-        << "with SURFACE_EXCHANGE off the node settled at " << t2
-        << " C, which is " << (std::fabs(r0) / rp) << " C from where the "
-           "RADIATIVE flux alone vanishes (residual " << r0 << " W/m2). A "
-           "disabled family is still contributing to netFluxOut.";
+    EXPECT_LT(std::fabs(r0) / rp, 0.05) << "with SURFACE_EXCHANGE off the node settled at " << t2
+                                        << " C, which is " << (std::fabs(r0) / rp)
+                                        << " C from where the "
+                                           "RADIATIVE flux alone vanishes (residual "
+                                        << r0
+                                        << " W/m2). A "
+                                           "disabled family is still contributing to netFluxOut.";
     swmm_engine_destroy(e2);
 }

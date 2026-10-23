@@ -15,14 +15,14 @@
 // limitations under the License.
 
 /**
- * @file VirtualJunctionOps.cpp
- * @brief Virtual-junction rule validation, flag editing, split and fusion.
+ * @file      VirtualJunctionOps.cpp
+ * @brief     Virtual-junction rule validation, flag editing, split and fusion.
  * @see VirtualJunctionOps.hpp
  * @ingroup engine_edit
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "VirtualJunctionOps.hpp"
@@ -41,38 +41,72 @@ namespace {
 
 constexpr double VJ_OFFSET_TOL = 1.0e-9;
 
-/// Find up to two links attached to `node_idx`; returns total touch count.
-int find_attached(const SimulationContext& ctx, int node_idx,
-                  int& link_a, int& link_b) {
+/**
+ * @brief Count incident link endpoints and retain the first two endpoint hits.
+ *
+ * @param[in] ctx Borrowed aligned context; caller prevents concurrent mutation.
+ * @param[in] node_idx Zero-based node index; behavior for invalid indices is specified by the
+ *     return/no-op contract.
+ * @param[out] link_a First encountered link, initialized to -1 when none.
+ * @param[out] link_b Second encountered link, initialized to -1 when absent.
+ * @return Total matching endpoint count; a self-loop contributes two hits and can fill both outputs
+ *     with the same link.
+ */
+int find_attached(const SimulationContext& ctx, int node_idx, int& link_a, int& link_b) {
     link_a = link_b = -1;
     int touches = 0;
     for (int j = 0; j < ctx.n_links(); ++j) {
         const auto uj = static_cast<std::size_t>(j);
-        const int ends[2] = { ctx.links.node1[uj], ctx.links.node2[uj] };
+        const int ends[2] = {ctx.links.node1[uj], ctx.links.node2[uj]};
         for (const int n : ends) {
-            if (n != node_idx) continue;
-            if      (touches == 0) link_a = j;
-            else if (touches == 1) link_b = j;
+            if (n != node_idx)
+                continue;
+            if (touches == 0)
+                link_a = j;
+            else if (touches == 1)
+                link_b = j;
             ++touches;
         }
     }
     return touches;
 }
 
+/**
+ * @brief Read a link end offset using its relationship to a node.
+ *
+ * Caller guarantees the node is an endpoint; unrelated nodes still select offset2.
+ *
+ * @param[in] ctx Borrowed aligned context; caller prevents concurrent mutation.
+ * @param[in] j Caller-validated existing link index.
+ * @param[in] node_idx Zero-based node index; behavior for invalid indices is specified by the
+ *     return/no-op contract.
+ * @return offset1 when node1 equals node_idx, otherwise offset2, in internal feet.
+ */
 double offset_at_node(const SimulationContext& ctx, int j, int node_idx) {
     const auto uj = static_cast<std::size_t>(j);
-    return (ctx.links.node1[uj] == node_idx) ? ctx.links.offset1[uj]
-                                             : ctx.links.offset2[uj];
+    return (ctx.links.node1[uj] == node_idx) ? ctx.links.offset1[uj] : ctx.links.offset2[uj];
 }
 
-/// Conduit slope from end elevations and length (same convention as
-/// PostParseResolver: drop over horizontal distance, negative when adverse).
+/**
+ * @brief Compute signed conduit slope from end elevations and conduit length.
+ *
+ * For absolute drop>=length uses drop/length rather than a square-root horizontal distance. Caller
+ * supplies finite values.
+ *
+ * @param[in] e1 Upstream end elevation in consistent length units.
+ * @param[in] e2 Downstream end elevation in the same units.
+ * @param[in] length Conduit length in those units; nonpositive yields zero.
+ * @return Signed dimensionless drop/horizontal-distance slope; adverse when e1<e2.
+ */
 double slope_from_ends(double e1, double e2, double length) {
-    if (length <= 0.0) return 0.0;
+    if (length <= 0.0)
+        return 0.0;
     double delta = std::fabs(e1 - e2);
     double slope;
-    if (delta >= length) slope = delta / length;
-    else                 slope = delta / std::sqrt(length * length - delta * delta);
+    if (delta >= length)
+        slope = delta / length;
+    else
+        slope = delta / std::sqrt(length * length - delta * delta);
     return (e1 < e2) ? -slope : slope;
 }
 
@@ -83,14 +117,14 @@ double slope_from_ends(double e1, double e2, double length) {
 // ============================================================================
 
 int vj_rule_violation(const SimulationContext& ctx, int node_idx) {
-    if (node_idx < 0 || node_idx >= ctx.n_nodes()) return ERR_VJ_LINK_COUNT;
+    if (node_idx < 0 || node_idx >= ctx.n_nodes())
+        return ERR_VJ_LINK_COUNT;
 
     int j1 = -1, j2 = -1;
     const int touches = find_attached(ctx, node_idx, j1, j2);
 
     // Rule 1: exactly two attached links, both conduits.
-    if (touches != 2 ||
-        ctx.links.type[static_cast<std::size_t>(j1)] != LinkType::CONDUIT ||
+    if (touches != 2 || ctx.links.type[static_cast<std::size_t>(j1)] != LinkType::CONDUIT ||
         ctx.links.type[static_cast<std::size_t>(j2)] != LinkType::CONDUIT)
         return ERR_VJ_LINK_COUNT;
 
@@ -110,8 +144,7 @@ int vj_rule_violation(const SimulationContext& ctx, int node_idx) {
         ctx.links.xsect_geom2[u1] != ctx.links.xsect_geom2[u2] ||
         ctx.links.xsect_geom3[u1] != ctx.links.xsect_geom3[u2] ||
         ctx.links.xsect_geom4[u1] != ctx.links.xsect_geom4[u2] ||
-        ctx.links.xsect_curve[u1] != ctx.links.xsect_curve[u2] ||
-        b1 != b2)
+        ctx.links.xsect_curve[u1] != ctx.links.xsect_curve[u2] || b1 != b2)
         return ERR_VJ_XSECT_MISMATCH;
 
     // Rule 3: zero offsets at the node — the contract is invert continuity.
@@ -132,21 +165,25 @@ int vj_rule_violation(const SimulationContext& ctx, int node_idx) {
         // resolved only when the surface router initialises, so at post-parse
         // validation the name is what identifies the coupling point.
         const auto targets = [&](int stored, const std::string& name) {
-            if (stored >= 0) return stored == node_idx;
+            if (stored >= 0)
+                return stored == node_idx;
             return !name.empty() && ctx.node_names.find(name) == node_idx;
         };
         for (std::size_t v = 0; v < m.vert_coupled_node.size(); ++v) {
-            const std::string& nm = (v < m.vert_coupled_node_name.size())
-                ? m.vert_coupled_node_name[v] : std::string{};
-            if (targets(m.vert_coupled_node[v], nm)) return ERR_VJ_LATERAL_INFLOW;
+            const std::string& nm =
+                (v < m.vert_coupled_node_name.size()) ? m.vert_coupled_node_name[v] : std::string{};
+            if (targets(m.vert_coupled_node[v], nm))
+                return ERR_VJ_LATERAL_INFLOW;
         }
         for (std::size_t t = 0; t < m.tri_coupled_node.size(); ++t) {
-            const std::string& nm = (t < m.tri_coupled_node_name.size())
-                ? m.tri_coupled_node_name[t] : std::string{};
-            if (targets(m.tri_coupled_node[t], nm)) return ERR_VJ_LATERAL_INFLOW;
+            const std::string& nm =
+                (t < m.tri_coupled_node_name.size()) ? m.tri_coupled_node_name[t] : std::string{};
+            if (targets(m.tri_coupled_node[t], nm))
+                return ERR_VJ_LATERAL_INFLOW;
         }
         for (const auto& row : m.tri_couplings)
-            if (targets(row.node, row.node_name)) return ERR_VJ_LATERAL_INFLOW;
+            if (targets(row.node, row.node_name))
+                return ERR_VJ_LATERAL_INFLOW;
     }
 
     return 0;
@@ -158,10 +195,11 @@ int vj_rule_violation(const SimulationContext& ctx, int node_idx) {
 
 void vj_apply_derived_geometry(SimulationContext& ctx, int node_idx) {
     int j1 = -1, j2 = -1;
-    if (find_attached(ctx, node_idx, j1, j2) < 1 || j1 < 0) return;
+    if (find_attached(ctx, node_idx, j1, j2) < 1 || j1 < 0)
+        return;
     const auto ui = static_cast<std::size_t>(node_idx);
-    ctx.nodes.full_depth[ui]  = ctx.links.xsect_y_full[static_cast<std::size_t>(j1)];
-    ctx.nodes.sur_depth[ui]   = 0.0;
+    ctx.nodes.full_depth[ui] = ctx.links.xsect_y_full[static_cast<std::size_t>(j1)];
+    ctx.nodes.sur_depth[ui] = 0.0;
     ctx.nodes.ponded_area[ui] = 0.0;
     // rim_depth is deliberately NOT touched: it is user/split-supplied
     // rendering data, not derived geometry, and this runs on every load and
@@ -173,9 +211,11 @@ void vj_apply_derived_geometry(SimulationContext& ctx, int node_idx) {
 // ============================================================================
 
 void vj_clear_virtual(SimulationContext& ctx, int node_idx) {
-    if (node_idx < 0 || node_idx >= ctx.n_nodes()) return;
+    if (node_idx < 0 || node_idx >= ctx.n_nodes())
+        return;
     const auto ui = static_cast<std::size_t>(node_idx);
-    if (ui >= ctx.nodes.is_virtual.size() || !ctx.nodes.is_virtual[ui]) return;
+    if (ui >= ctx.nodes.is_virtual.size() || !ctx.nodes.is_virtual[ui])
+        return;
 
     ctx.nodes.is_virtual[ui] = 0;
     // An inlet junction is a virtual junction, so leaving virtual leaves inlet
@@ -184,19 +224,21 @@ void vj_clear_virtual(SimulationContext& ctx, int node_idx) {
     if (ui < ctx.nodes.is_inlet.size() && ctx.nodes.is_inlet[ui]) {
         ctx.nodes.is_inlet[ui] = 0;
         const int row = ctx.inlet_usages.find_by_node_host(node_idx);
-        if (row >= 0) ctx.inlet_usages.erase_row(row);
+        if (row >= 0)
+            ctx.inlet_usages.erase_row(row);
     }
     // The node keeps a real full depth from here on, so the rendering-only
     // rim becomes it — a junction that was made virtual and then made regular
     // again gets its max depth back instead of keeping the pipe crown.
     if (ui < ctx.nodes.rim_depth.size() && ctx.nodes.rim_depth[ui] > 0.0) {
         ctx.nodes.full_depth[ui] = ctx.nodes.rim_depth[ui];
-        ctx.nodes.rim_depth[ui]  = 0.0;
+        ctx.nodes.rim_depth[ui] = 0.0;
     }
 }
 
 int vj_set_virtual(SimulationContext& ctx, int node_idx, bool make_virtual) {
-    if (node_idx < 0 || node_idx >= ctx.n_nodes()) return -1;
+    if (node_idx < 0 || node_idx >= ctx.n_nodes())
+        return -1;
     const auto ui = static_cast<std::size_t>(node_idx);
 
     if (!make_virtual) {
@@ -204,9 +246,11 @@ int vj_set_virtual(SimulationContext& ctx, int node_idx, bool make_virtual) {
         return 0;
     }
 
-    if (ctx.nodes.type[ui] != NodeType::JUNCTION) return -1;
+    if (ctx.nodes.type[ui] != NodeType::JUNCTION)
+        return -1;
     const int code = vj_rule_violation(ctx, node_idx);
-    if (code != 0) return code;
+    if (code != 0)
+        return code;
 
     // The full depth is about to be replaced by the derived pipe crown. When
     // the node carried a taller max depth (a real manhole being converted),
@@ -231,26 +275,29 @@ int vj_set_virtual(SimulationContext& ctx, int node_idx, bool make_virtual) {
 // ============================================================================
 
 SplitResult vj_split_conduit(SimulationContext& ctx, int link_idx, double t,
-                             const std::string& new_node_name,
-                             const std::string& new_link_name,
+                             const std::string& new_node_name, const std::string& new_link_name,
                              bool make_virtual) {
     SplitResult res;
-    if (link_idx < 0 || link_idx >= ctx.n_links() ||
-        !(t > 0.0 && t < 1.0) ||
-        new_node_name.empty() || new_link_name.empty() ||
-        ctx.node_names.find(new_node_name) >= 0 ||
+    if (link_idx < 0 || link_idx >= ctx.n_links() || !(t > 0.0 && t < 1.0) ||
+        new_node_name.empty() || new_link_name.empty() || ctx.node_names.find(new_node_name) >= 0 ||
         ctx.link_names.find(new_link_name) >= 0) {
         res.err = -1;
         return res;
     }
     const auto uj = static_cast<std::size_t>(link_idx);
-    if (ctx.links.type[uj] != LinkType::CONDUIT) { res.err = -1; return res; }
+    if (ctx.links.type[uj] != LinkType::CONDUIT) {
+        res.err = -1;
+        return res;
+    }
 
     auto& links = ctx.links;
     auto& nodes = ctx.nodes;
     const int n1 = links.node1[uj];
     const int n2 = links.node2[uj];
-    if (n1 < 0 || n2 < 0) { res.err = -1; return res; }
+    if (n1 < 0 || n2 < 0) {
+        res.err = -1;
+        return res;
+    }
 
     // --- Break-point invert: interpolate along the conduit gradient ---
     const double e1 = nodes.invert_elev[static_cast<std::size_t>(n1)] + links.offset1[uj];
@@ -264,10 +311,8 @@ SplitResult vj_split_conduit(SimulationContext& ctx, int link_idx, double t,
     // when it has one (a chain of splits), else its real full depth.
     const auto un1 = static_cast<std::size_t>(n1);
     const auto un2 = static_cast<std::size_t>(n2);
-    const double d1 = (nodes.rim_depth[un1] > 0.0) ? nodes.rim_depth[un1]
-                                                   : nodes.full_depth[un1];
-    const double d2 = (nodes.rim_depth[un2] > 0.0) ? nodes.rim_depth[un2]
-                                                   : nodes.full_depth[un2];
+    const double d1 = (nodes.rim_depth[un1] > 0.0) ? nodes.rim_depth[un1] : nodes.full_depth[un1];
+    const double d2 = (nodes.rim_depth[un2] > 0.0) ? nodes.rim_depth[un2] : nodes.full_depth[un2];
     const double r1 = nodes.invert_elev[un1] + d1;
     const double r2 = nodes.invert_elev[un2] + d2;
     const double break_rim = r1 + (r2 - r1) * t;
@@ -292,7 +337,7 @@ SplitResult vj_split_conduit(SimulationContext& ctx, int link_idx, double t,
         total += seg[s];
     }
     double sx = px.front(), sy = py.front();
-    std::size_t split_seg = 0;   // vertices [1 .. split_seg] stay upstream
+    std::size_t split_seg = 0; // vertices [1 .. split_seg] stay upstream
     if (total > 0.0) {
         double target = t * total, run = 0.0;
         for (std::size_t s = 0; s < seg.size(); ++s) {
@@ -312,57 +357,61 @@ SplitResult vj_split_conduit(SimulationContext& ctx, int link_idx, double t,
     ctx.nodes.grow_to(ctx.node_names.size());
     {
         const auto un = static_cast<std::size_t>(ctx.node_names.size());
-        if (ctx.spatial.node_x.size() < un) ctx.spatial.node_x.resize(un, 0.0);
-        if (ctx.spatial.node_y.size() < un) ctx.spatial.node_y.resize(un, 0.0);
+        if (ctx.spatial.node_x.size() < un)
+            ctx.spatial.node_x.resize(un, 0.0);
+        if (ctx.spatial.node_y.size() < un)
+            ctx.spatial.node_y.resize(un, 0.0);
     }
     ctx.node_subtypes.set_node_type(ctx.nodes, ni, NodeType::JUNCTION);
     const auto uni = static_cast<std::size_t>(ni);
     nodes.invert_elev[uni] = break_invert;
-    nodes.full_depth[uni]  = links.xsect_y_full[uj];
+    nodes.full_depth[uni] = links.xsect_y_full[uj];
     ctx.spatial.node_x[uni] = sx;
     ctx.spatial.node_y[uni] = sy;
     if (ctx.spatial.node_has_xy.size() < ctx.spatial.node_x.size())
         ctx.spatial.node_has_xy.resize(ctx.spatial.node_x.size(), 0);
-    ctx.spatial.node_has_xy[uni] = 1;   // G-X2
+    ctx.spatial.node_has_xy[uni] = 1; // G-X2
 
     // --- New downstream conduit ---
     const int nj = ctx.link_names.add(new_link_name);
     links.grow_to(ctx.link_names.size());
     {
         const auto ul = static_cast<std::size_t>(ctx.link_names.size());
-        if (ctx.spatial.link_vertices_x.size() < ul) ctx.spatial.link_vertices_x.resize(ul);
-        if (ctx.spatial.link_vertices_y.size() < ul) ctx.spatial.link_vertices_y.resize(ul);
+        if (ctx.spatial.link_vertices_x.size() < ul)
+            ctx.spatial.link_vertices_x.resize(ul);
+        if (ctx.spatial.link_vertices_y.size() < ul)
+            ctx.spatial.link_vertices_y.resize(ul);
     }
     const int new_row = ctx.link_subtypes.set_link_type(links, nj, LinkType::CONDUIT);
     const auto unj = static_cast<std::size_t>(nj);
 
     // Cross-section copy (identical by construction).
-    links.xsect_shape[unj]  = links.xsect_shape[uj];
+    links.xsect_shape[unj] = links.xsect_shape[uj];
     links.xsect_y_full[unj] = links.xsect_y_full[uj];
     links.xsect_a_full[unj] = links.xsect_a_full[uj];
-    links.xsect_w_max[unj]  = links.xsect_w_max[uj];
-    links.xsect_geom1[unj]  = links.xsect_geom1[uj];
-    links.xsect_geom2[unj]  = links.xsect_geom2[uj];
-    links.xsect_geom3[unj]  = links.xsect_geom3[uj];
-    links.xsect_geom4[unj]  = links.xsect_geom4[uj];
-    links.xsect_curve[unj]  = links.xsect_curve[uj];
+    links.xsect_w_max[unj] = links.xsect_w_max[uj];
+    links.xsect_geom1[unj] = links.xsect_geom1[uj];
+    links.xsect_geom2[unj] = links.xsect_geom2[uj];
+    links.xsect_geom3[unj] = links.xsect_geom3[uj];
+    links.xsect_geom4[unj] = links.xsect_geom4[uj];
+    links.xsect_curve[unj] = links.xsect_curve[uj];
     // Named cross-section slot (STREET / IRREGULAR / CUSTOM reference the
     // section BY NAME here). Without it a split STREET conduit loses its
     // [STREETS] reference and no longer round-trips or resolves a street.
     links.pump_curve_name[unj] = links.pump_curve_name[uj];
     links.xsect_r_full[unj] = links.xsect_r_full[uj];
     links.xsect_s_full[unj] = links.xsect_s_full[uj];
-    links.xsect_s_max[unj]  = links.xsect_s_max[uj];
-    links.xsect_y_bot[unj]  = links.xsect_y_bot[uj];
-    links.xsect_a_bot[unj]  = links.xsect_a_bot[uj];
-    links.xsect_s_bot[unj]  = links.xsect_s_bot[uj];
-    links.xsect_r_bot[unj]  = links.xsect_r_bot[uj];
+    links.xsect_s_max[unj] = links.xsect_s_max[uj];
+    links.xsect_y_bot[unj] = links.xsect_y_bot[uj];
+    links.xsect_a_bot[unj] = links.xsect_a_bot[uj];
+    links.xsect_s_bot[unj] = links.xsect_s_bot[uj];
+    links.xsect_r_bot[unj] = links.xsect_r_bot[uj];
     links.xsect_batch_shape[unj] = links.xsect_batch_shape[uj];
-    links.is_closed[unj]    = links.is_closed[uj];
-    links.q_limit[unj]      = links.q_limit[uj];
-    links.has_flap_gate[unj]= links.has_flap_gate[uj];
-    links.direction[unj]    = links.direction[uj];
-    links.q0[unj]           = links.q0[uj];
+    links.is_closed[unj] = links.is_closed[uj];
+    links.q_limit[unj] = links.q_limit[uj];
+    links.has_flap_gate[unj] = links.has_flap_gate[uj];
+    links.direction[unj] = links.direction[uj];
+    links.q0[unj] = links.q0[uj];
 
     // Conduit side-table copy + length split.
     auto& CD = ctx.link_subtypes.conduits;
@@ -371,37 +420,37 @@ SplitResult vj_split_conduit(SimulationContext& ctx, int link_idx, double t,
         const auto uor = static_cast<std::size_t>(orig_row);
         const auto unr = static_cast<std::size_t>(new_row);
         const double L = CD.length[uor];
-        CD.roughness[unr]    = CD.roughness[uor];
-        CD.barrels[unr]      = CD.barrels[uor];
+        CD.roughness[unr] = CD.roughness[uor];
+        CD.barrels[unr] = CD.barrels[uor];
         CD.culvert_code[unr] = CD.culvert_code[uor];
-        CD.seep_rate[unr]    = CD.seep_rate[uor];
+        CD.seep_rate[unr] = CD.seep_rate[uor];
         // Loss partition: entrance loss stays with the upstream conduit,
         // exit loss moves to the new downstream conduit, average loss on both.
-        CD.loss_inlet[unr]   = 0.0;
-        CD.loss_outlet[unr]  = CD.loss_outlet[uor];
-        CD.loss_avg[unr]     = CD.loss_avg[uor];
-        CD.loss_outlet[uor]  = 0.0;
+        CD.loss_inlet[unr] = 0.0;
+        CD.loss_outlet[unr] = CD.loss_outlet[uor];
+        CD.loss_avg[unr] = CD.loss_avg[uor];
+        CD.loss_outlet[uor] = 0.0;
         // The break point lies on the original gradient, so both halves keep
         // the original slope.
-        CD.slope[unr]        = CD.slope[uor];
-        CD.length[uor]       = L * t;
-        CD.length[unr]       = L * (1.0 - t);
-        CD.mod_length[uor]   = CD.length[uor];
-        CD.mod_length[unr]   = CD.length[unr];
+        CD.slope[unr] = CD.slope[uor];
+        CD.length[uor] = L * t;
+        CD.length[unr] = L * (1.0 - t);
+        CD.mod_length[uor] = CD.length[uor];
+        CD.mod_length[unr] = CD.length[unr];
     }
 
     // Rewire: original keeps the upstream end; new conduit takes the
     // downstream end and its offset. An authored 0 at the new junction is
     // stored WITH the sediment bump of a filled circular section (see
     // link::filledCircularOffsetBump), as the resolver would have stored it.
-    const double bump = link::filledCircularOffsetBump(
-        links, uj, ctx.state != EngineState::BUILDING);
+    const double bump =
+        link::filledCircularOffsetBump(links, uj, ctx.state != EngineState::BUILDING);
     links.offset1[unj] = bump;
     links.offset2[unj] = links.offset2[uj];
-    links.node1[unj]   = ni;
-    links.node2[unj]   = n2;
-    links.node2[uj]    = ni;
-    links.offset2[uj]  = bump;
+    links.node1[unj] = ni;
+    links.node2[unj] = n2;
+    links.node2[uj] = ni;
+    links.offset2[uj] = bump;
 
     // Vertex partition: interior points at cumulative length <= t stay with
     // the original conduit; the rest move to the new conduit.
@@ -413,8 +462,13 @@ SplitResult vj_split_conduit(SimulationContext& ctx, int link_idx, double t,
             // Vertex v is the endpoint of polyline segment v (points are
             // node1, verts..., node2), so it stays upstream when its segment
             // index is at or before the split segment endpoint.
-            if (v + 1 <= split_seg) { upx.push_back(vx[v]); upy.push_back(vy[v]); }
-            else                    { dnx.push_back(vx[v]); dny.push_back(vy[v]); }
+            if (v + 1 <= split_seg) {
+                upx.push_back(vx[v]);
+                upy.push_back(vy[v]);
+            } else {
+                dnx.push_back(vx[v]);
+                dny.push_back(vy[v]);
+            }
         }
         vx = std::move(upx);
         vy = std::move(upy);
@@ -428,13 +482,16 @@ SplitResult vj_split_conduit(SimulationContext& ctx, int link_idx, double t,
 
     if (make_virtual) {
         const int code = vj_set_virtual(ctx, ni, true);
-        if (code != 0) { res.err = code; }  // node/link remain as a regular split
+        if (code != 0) {
+            res.err = code;
+        } // node/link remain as a regular split
         else {
             // Carry the interpolated ground surface, but only when it clears
             // the crown — a rim buried inside the pipe would draw worse than
             // the crown fallback.
             const double rim = break_rim - break_invert;
-            if (rim > nodes.full_depth[uni]) nodes.rim_depth[uni] = rim;
+            if (rim > nodes.full_depth[uni])
+                nodes.rim_depth[uni] = rim;
         }
     }
 
@@ -448,25 +505,31 @@ SplitResult vj_split_conduit(SimulationContext& ctx, int link_idx, double t,
 // ============================================================================
 
 int vj_fuse(SimulationContext& ctx, int node_idx, int* surviving_link_out) {
-    if (node_idx < 0 || node_idx >= ctx.n_nodes()) return -1;
+    if (node_idx < 0 || node_idx >= ctx.n_nodes())
+        return -1;
     const auto ui = static_cast<std::size_t>(node_idx);
-    if (!ctx.nodes.is_virtual[ui]) return -1;
+    if (!ctx.nodes.is_virtual[ui])
+        return -1;
 
     int j1 = -1, j2 = -1;
     const int touches = find_attached(ctx, node_idx, j1, j2);
-    if (touches != 2 ||
-        ctx.links.type[static_cast<std::size_t>(j1)] != LinkType::CONDUIT ||
+    if (touches != 2 || ctx.links.type[static_cast<std::size_t>(j1)] != LinkType::CONDUIT ||
         ctx.links.type[static_cast<std::size_t>(j2)] != LinkType::CONDUIT)
         return ERR_VJ_LINK_COUNT;
 
     auto& links = ctx.links;
     // Through orientation: up flows into the node, dn flows out of it.
     int up = -1, dn = -1;
-    if      (links.node2[static_cast<std::size_t>(j1)] == node_idx &&
-             links.node1[static_cast<std::size_t>(j2)] == node_idx) { up = j1; dn = j2; }
-    else if (links.node2[static_cast<std::size_t>(j2)] == node_idx &&
-             links.node1[static_cast<std::size_t>(j1)] == node_idx) { up = j2; dn = j1; }
-    else return ERR_VJ_LINK_COUNT;
+    if (links.node2[static_cast<std::size_t>(j1)] == node_idx &&
+        links.node1[static_cast<std::size_t>(j2)] == node_idx) {
+        up = j1;
+        dn = j2;
+    } else if (links.node2[static_cast<std::size_t>(j2)] == node_idx &&
+               links.node1[static_cast<std::size_t>(j1)] == node_idx) {
+        up = j2;
+        dn = j1;
+    } else
+        return ERR_VJ_LINK_COUNT;
 
     const auto uu = static_cast<std::size_t>(up);
     const auto ud = static_cast<std::size_t>(dn);
@@ -487,8 +550,8 @@ int vj_fuse(SimulationContext& ctx, int node_idx, int* surviving_link_out) {
         double px = mx.empty() ? ctx.spatial.node_x[uup] : mx.back();
         double py = my.empty() ? ctx.spatial.node_y[uup] : my.back();
         double qx, qy;
-        const bool dn_has_verts = (ud < ctx.spatial.link_vertices_x.size() &&
-                                   !ctx.spatial.link_vertices_x[ud].empty());
+        const bool dn_has_verts =
+            (ud < ctx.spatial.link_vertices_x.size() && !ctx.spatial.link_vertices_x[ud].empty());
         if (dn_has_verts) {
             qx = ctx.spatial.link_vertices_x[ud].front();
             qy = ctx.spatial.link_vertices_y[ud].front();
@@ -516,7 +579,7 @@ int vj_fuse(SimulationContext& ctx, int node_idx, int* surviving_link_out) {
 
     // Rewire the surviving conduit to the downstream conduit's outlet.
     const int n2 = links.node2[ud];
-    links.node2[uu]   = n2;
+    links.node2[uu] = n2;
     links.offset2[uu] = links.offset2[ud];
     if (uu < ctx.spatial.link_vertices_x.size()) {
         ctx.spatial.link_vertices_x[uu] = std::move(mx);
@@ -530,14 +593,13 @@ int vj_fuse(SimulationContext& ctx, int node_idx, int* surviving_link_out) {
         const auto uur = static_cast<std::size_t>(ur);
         const auto udr = static_cast<std::size_t>(dr);
         const double L = CD.length[uur] + CD.length[udr];
-        CD.length[uur]      = L;
-        CD.mod_length[uur]  = L;
+        CD.length[uur] = L;
+        CD.mod_length[uur] = L;
         // Exit loss of the pair belongs to the merged conduit's outlet end.
         CD.loss_outlet[uur] = CD.loss_outlet[udr];
-        const double eu = ctx.nodes.invert_elev[static_cast<std::size_t>(links.node1[uu])]
-                          + links.offset1[uu];
-        const double ed = ctx.nodes.invert_elev[static_cast<std::size_t>(n2)]
-                          + links.offset2[uu];
+        const double eu =
+            ctx.nodes.invert_elev[static_cast<std::size_t>(links.node1[uu])] + links.offset1[uu];
+        const double ed = ctx.nodes.invert_elev[static_cast<std::size_t>(n2)] + links.offset2[uu];
         CD.slope[uur] = slope_from_ends(eu, ed, L);
     }
 
@@ -553,7 +615,8 @@ int vj_fuse(SimulationContext& ctx, int node_idx, int* surviving_link_out) {
 
     input::recompute_conduit_flow_properties(ctx, surviving);
 
-    if (surviving_link_out) *surviving_link_out = surviving;
+    if (surviving_link_out)
+        *surviving_link_out = surviving;
     return 0;
 }
 
@@ -563,19 +626,33 @@ int vj_fuse(SimulationContext& ctx, int node_idx, int* surviving_link_out) {
 
 namespace {
 
-/// Rule 623 for one conduit: the cross-section the design needs.
-bool ij_conduit_shape_ok(const SimulationContext& ctx, int link_idx,
-                         bool for_drop_inlet) {
-    if (link_idx < 0 || link_idx >= ctx.n_links()) return false;
+/**
+ * @brief Check a link cross-section against ordinary/drop inlet shape rules.
+ *
+ * @param[in] ctx Borrowed aligned context; caller prevents concurrent mutation.
+ * @param[in] link_idx Existing link index; invalid returns false.
+ * @param[in] for_drop_inlet True accepts RECT_OPEN/TRAPEZOIDAL, false STREET_XSECT.
+ * @return Whether the stored shape matches; does not separately verify conduit type.
+ */
+bool ij_conduit_shape_ok(const SimulationContext& ctx, int link_idx, bool for_drop_inlet) {
+    if (link_idx < 0 || link_idx >= ctx.n_links())
+        return false;
     const XsectShape shape = ctx.links.xsect_shape[static_cast<std::size_t>(link_idx)];
     if (for_drop_inlet)
         return shape == XsectShape::RECT_OPEN || shape == XsectShape::TRAPEZOIDAL;
     return shape == XsectShape::STREET_XSECT;
 }
 
-/// True when the design at `design_idx` is a drop inlet (open-channel shapes).
+/**
+ * @brief Check whether a design stores one of the exact drop-inlet tokens.
+ *
+ * @param[in] ctx Borrowed aligned context; caller prevents concurrent mutation.
+ * @param[in] design_idx Design index; invalid returns false.
+ * @return True only for stored DROP_GRATE or DROP_CURB strings; comparison is case-sensitive.
+ */
 bool ij_design_is_drop(const SimulationContext& ctx, int design_idx) {
-    if (design_idx < 0 || design_idx >= ctx.inlets.count()) return false;
+    if (design_idx < 0 || design_idx >= ctx.inlets.count())
+        return false;
     const std::string& t = ctx.inlets.inlet_type[static_cast<std::size_t>(design_idx)];
     return t == "DROP_GRATE" || t == "DROP_CURB";
 }
@@ -584,30 +661,38 @@ bool ij_design_is_drop(const SimulationContext& ctx, int design_idx) {
 
 int ij_host_conduit(const SimulationContext& ctx, int host_kind, int host_idx) {
     if (host_kind == 0) {
-        if (host_idx < 0 || host_idx >= ctx.n_links()) return -1;
-        return (ctx.links.type[static_cast<std::size_t>(host_idx)] == LinkType::CONDUIT)
-                   ? host_idx : -1;
+        if (host_idx < 0 || host_idx >= ctx.n_links())
+            return -1;
+        return (ctx.links.type[static_cast<std::size_t>(host_idx)] == LinkType::CONDUIT) ? host_idx
+                                                                                         : -1;
     }
-    if (host_idx < 0 || host_idx >= ctx.n_nodes()) return -1;
+    if (host_idx < 0 || host_idx >= ctx.n_nodes())
+        return -1;
     int a = -1, b = -1;
-    if (find_attached(ctx, host_idx, a, b) == 0) return -1;
-    if (a >= 0 && ctx.links.node2[static_cast<std::size_t>(a)] == host_idx) return a;
-    if (b >= 0 && ctx.links.node2[static_cast<std::size_t>(b)] == host_idx) return b;
+    if (find_attached(ctx, host_idx, a, b) == 0)
+        return -1;
+    if (a >= 0 && ctx.links.node2[static_cast<std::size_t>(a)] == host_idx)
+        return a;
+    if (b >= 0 && ctx.links.node2[static_cast<std::size_t>(b)] == host_idx)
+        return b;
     return a;
 }
 
 bool ij_usage_shape_ok(const SimulationContext& ctx, int design_idx, int link_idx) {
-    if (design_idx < 0 || design_idx >= ctx.inlets.count()) return false;
-    if (link_idx < 0 || link_idx >= ctx.n_links()) return false;
+    if (design_idx < 0 || design_idx >= ctx.inlets.count())
+        return false;
+    if (link_idx < 0 || link_idx >= ctx.n_links())
+        return false;
     const std::string& t = ctx.inlets.inlet_type[static_cast<std::size_t>(design_idx)];
-    if (t == "CUSTOM") return true;
+    if (t == "CUSTOM")
+        return true;
     return ij_conduit_shape_ok(ctx, link_idx, ij_design_is_drop(ctx, design_idx));
 }
 
-int ij_rule_violation(const SimulationContext& ctx, int node_idx,
-                      bool for_drop_inlet) {
+int ij_rule_violation(const SimulationContext& ctx, int node_idx, bool for_drop_inlet) {
     const int code = vj_rule_violation(ctx, node_idx);
-    if (code != 0) return code;
+    if (code != 0)
+        return code;
 
     // vj_rule_violation guarantees exactly two attached conduits here.
     int j1 = -1, j2 = -1;
@@ -619,39 +704,44 @@ int ij_rule_violation(const SimulationContext& ctx, int node_idx,
 }
 
 int ij_set_inlet(SimulationContext& ctx, int node_idx, bool make_inlet) {
-    if (node_idx < 0 || node_idx >= ctx.n_nodes()) return -1;
+    if (node_idx < 0 || node_idx >= ctx.n_nodes())
+        return -1;
     const auto ui = static_cast<std::size_t>(node_idx);
 
     if (!make_inlet) {
         if (ui < ctx.nodes.is_inlet.size() && ctx.nodes.is_inlet[ui]) {
             ctx.nodes.is_inlet[ui] = 0;
             const int row = ctx.inlet_usages.find_by_node_host(node_idx);
-            if (row >= 0) ctx.inlet_usages.erase_row(row);
+            if (row >= 0)
+                ctx.inlet_usages.erase_row(row);
         }
         return 0;
     }
 
-    if (ctx.nodes.type[ui] != NodeType::JUNCTION) return -1;
+    if (ctx.nodes.type[ui] != NodeType::JUNCTION)
+        return -1;
 
     // Rules first: ij_rule_violation is read-only, so a violated rule leaves
     // the node exactly as it was instead of stranding it as a virtual junction.
     const int row = ctx.inlet_usages.find_by_node_host(node_idx);
-    const bool drop = (row >= 0) &&
+    const bool drop =
+        (row >= 0) &&
         ij_design_is_drop(ctx, ctx.inlet_usages.design_index[static_cast<std::size_t>(row)]);
     const int code = ij_rule_violation(ctx, node_idx, drop);
-    if (code != 0) return code;
+    if (code != 0)
+        return code;
 
     if (!ctx.nodes.is_virtual[ui]) {
         const int vcode = vj_set_virtual(ctx, node_idx, true);
-        if (vcode != 0) return vcode;
+        if (vcode != 0)
+            return vcode;
     }
     ctx.nodes.is_inlet[ui] = 1;
     return 0;
 }
 
 SplitResult ij_split_conduit(SimulationContext& ctx, int link_idx, double t,
-                             const std::string& new_node_name,
-                             const std::string& new_link_name,
+                             const std::string& new_node_name, const std::string& new_link_name,
                              int design_idx, int capture_node_idx) {
     SplitResult res;
     // Both references are validated BEFORE the split so the common failure
@@ -667,7 +757,8 @@ SplitResult ij_split_conduit(SimulationContext& ctx, int link_idx, double t,
     }
 
     res = vj_split_conduit(ctx, link_idx, t, new_node_name, new_link_name, true);
-    if (res.new_node_idx < 0) return res;              // split itself refused
+    if (res.new_node_idx < 0)
+        return res; // split itself refused
     const int ni = res.new_node_idx;
 
     auto undo = [&](int err) {
@@ -677,7 +768,8 @@ SplitResult ij_split_conduit(SimulationContext& ctx, int link_idx, double t,
         failed.err = err;
         return failed;
     };
-    if (res.err != 0) return undo(res.err);            // make_virtual rule failed
+    if (res.err != 0)
+        return undo(res.err); // make_virtual rule failed
 
     // The usage row must exist before ij_set_inlet so rule 623 can tell a drop
     // inlet from a street inlet.
@@ -691,9 +783,11 @@ SplitResult ij_split_conduit(SimulationContext& ctx, int link_idx, double t,
 }
 
 int ij_fuse(SimulationContext& ctx, int node_idx, int* surviving_link_out) {
-    if (node_idx < 0 || node_idx >= ctx.n_nodes()) return -1;
+    if (node_idx < 0 || node_idx >= ctx.n_nodes())
+        return -1;
     const auto ui = static_cast<std::size_t>(node_idx);
-    if (ui >= ctx.nodes.is_inlet.size() || !ctx.nodes.is_inlet[ui]) return -1;
+    if (ui >= ctx.nodes.is_inlet.size() || !ctx.nodes.is_inlet[ui])
+        return -1;
 
     // vj_fuse merges the pair and deletes the node; delete_node's cascade
     // erases the node-hosted usage row along with it. A failed fuse leaves the

@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_transport_options_api.cpp
- * @brief Y0: the seven quality/transport option keys round-trip through
+ * @file      test_transport_options_api.cpp
+ * @brief     Y0: the seven quality/transport option keys round-trip through
  *        `swmm_options_get/set` — the surface the GUI options page hydrates.
  *
  * @details Subplan Y0 (unblocking Y1). The keys existed in the `[OPTIONS]`
@@ -41,9 +41,9 @@
  *
  *          Scratch fixtures: none (no decks — pure API).
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -56,10 +56,31 @@
 
 namespace {
 
+/**
+ * @brief Borrow the concrete engine behind an opaque test handle.
+ *
+ * This exact helper performs only an unchecked static_cast and dereference. It does not validate
+ * lifecycle, retain the handle or transfer ownership; fixture code may use the reference to inspect
+ * or seed internal state.
+ *
+ * @param[in] engine Live non-null new-engine handle whose concrete allocation is SWMMEngine; caller
+ *     keeps ownership.
+ * @return Mutable engine reference that remains valid until handle destruction or replacement.
+ */
 openswmm::SWMMEngine& as_cpp_engine(SWMM_Engine engine) {
     return *static_cast<openswmm::SWMMEngine*>(engine);
 }
 
+/**
+ * @brief Read a transport option into owned text.
+ *
+ * Does not assert, parse, mutate or retain engine ownership; buffer capacity can itself cause
+ * refusal.
+ *
+ * @param[in] e Live engine handle, borrowed.
+ * @param[in] key Non-null option keyword.
+ * @return Copied value from a 256-byte buffer, or literal &lt;ERR&gt; on getter refusal.
+ */
 std::string get_opt(SWMM_Engine e, const char* key) {
     char buf[256] = {0};
     if (swmm_options_get(e, key, buf, static_cast<int>(sizeof(buf))) != SWMM_OK)
@@ -67,7 +88,17 @@ std::string get_opt(SWMM_Engine e, const char* key) {
     return std::string(buf);
 }
 
-/// Numeric-aware compare: the engine renders doubles as "0.000000".
+/**
+ * @brief Compare numeric-looking option values with a strict absolute tolerance.
+ *
+ * stod trailing characters are not rejected. NaN/infinity arithmetic may fail the numeric
+ * comparison even for identical text; catches all exceptions before the fallback.
+ *
+ * @param[in] got Actual option text.
+ * @param[in] expect Non-null expected text.
+ * @return True when both stod conversions differ by less than 1e-9, or exact string equality when a
+ *     conversion throws.
+ */
 bool opt_equals(const std::string& got, const char* expect) {
     try {
         const double g = std::stod(got);
@@ -100,22 +131,25 @@ TEST(TransportOptionsApiTest, KeysReadTheirDefaults) {
 TEST(TransportOptionsApiTest, KeysRoundTripThroughTheApi) {
     SWMM_Engine e = swmm_engine_create();
     ASSERT_NE(e, nullptr);
-    const struct { const char* key; const char* set; const char* expect; }
-    rows[] = {
-        {"QUALITY_SOLVER",        "LAGRANGIAN",   "LAGRANGIAN"},
-        {"QUALITY_SOLVER",        "EULERIAN_ARD", "EULERIAN_ARD"},
-        {"WATER_AGE",             "YES",          "YES"},
-        {"HEAT_TRANSPORT",        "YES",          "YES"},
-        {"QUALITY_STEP",          "5.00",         "5"},
-        {"MAX_SEGMENTS_PER_LINK", "50",           "50"},
-        {"DISPERSION",            "RWPT",         "RWPT"},
-        {"RWPT_SEED",             "7",            "7"},
+    const struct {
+        const char* key;
+        const char* set;
+        const char* expect;
+    } rows[] = {
+        {"QUALITY_SOLVER", "LAGRANGIAN", "LAGRANGIAN"},
+        {"QUALITY_SOLVER", "EULERIAN_ARD", "EULERIAN_ARD"},
+        {"WATER_AGE", "YES", "YES"},
+        {"HEAT_TRANSPORT", "YES", "YES"},
+        {"QUALITY_STEP", "5.00", "5"},
+        {"MAX_SEGMENTS_PER_LINK", "50", "50"},
+        {"DISPERSION", "RWPT", "RWPT"},
+        {"RWPT_SEED", "7", "7"},
         // ...and back off again: the OFF/NO directions must round-trip too
         // (a setter that only ever turns things ON passes a one-way table).
-        {"WATER_AGE",             "NO",           "NO"},
-        {"HEAT_TRANSPORT",        "NO",           "NO"},
-        {"DISPERSION",            "OFF",          "OFF"},
-        {"QUALITY_SOLVER",        "LEGACY",       "LEGACY"},
+        {"WATER_AGE", "NO", "NO"},
+        {"HEAT_TRANSPORT", "NO", "NO"},
+        {"DISPERSION", "OFF", "OFF"},
+        {"QUALITY_SOLVER", "LEGACY", "LEGACY"},
     };
     for (const auto& r : rows) {
         ASSERT_EQ(swmm_options_set(e, r.key, r.set), SWMM_OK) << r.key;
@@ -186,4 +220,4 @@ TEST(TransportOptionsApiTest, SettersReachTheEngineState) {
     swmm_engine_destroy(e);
 }
 
-}  // namespace
+} // namespace

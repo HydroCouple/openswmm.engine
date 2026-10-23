@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file BoundaryData.hpp
- * @brief Structure-of-Arrays (SoA) storage for 2D mesh boundary conditions.
+ * @file      BoundaryData.hpp
+ * @brief     Structure-of-Arrays (SoA) storage for 2D mesh boundary conditions.
  *
  * @details Stores per-edge boundary condition type, parameters, and cumulative
  *          flux tracking. Arrays are flat 2D [cell * kMaxCellVerts + edge_local],
@@ -31,9 +31,9 @@
  * @see TWO_DIMENSIONAL_SURFACE_ROUTING_IMPLEMENTATION_STRATEGY.md
  * @ingroup engine_2d
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_2D_BOUNDARY_DATA_HPP
@@ -50,33 +50,33 @@ namespace openswmm::twoD {
 /**
  * @brief Boundary condition types for 2D mesh edges.
  *
- * SPECIFIED_FLOW (3) and RATING_CURVE (4) added per GUI plan §V V-E4 / V-E5.
- * All five types are enforced at flux time by the explicit marcher via
- * SurfaceFluxCalculator::boundaryEdgeFlux (and the Kokkos backend's
- * device-side equivalent); time-varying values are resolved each step in
+ * SPECIFIED_FLOW (3) and RATING_CURVE (4) added per GUI plan §V V-E4 / V-E5. All five types are
+ * enforced at flux time by the explicit marcher via SurfaceFluxCalculator::boundaryEdgeFlux (and
+ * the Kokkos backend's device-side equivalent); time-varying values are resolved each step in
  * SurfaceRouter2D::resolveBoundaryValues.
  */
 enum class BoundaryType : int8_t {
-    WALL            = 0,   ///< Zero-flux wall (default)
-    NORMAL_FLOW     = 1,   ///< Manning outflow using bed slope
-    SPECIFIED_STAGE = 2,   ///< Prescribed water surface elevation (constant or TS)
-    SPECIFIED_FLOW  = 3,   ///< Prescribed discharge per metre of edge (constant or TS)
-    RATING_CURVE    = 4    ///< Stage → flow lookup (curve registry index)
+    WALL = 0,            ///< Zero-flux wall (default)
+    NORMAL_FLOW = 1,     ///< Manning outflow using bed slope
+    SPECIFIED_STAGE = 2, ///< Prescribed water surface elevation (constant or TS)
+    SPECIFIED_FLOW = 3,  ///< Prescribed discharge per metre of edge (constant or TS)
+    RATING_CURVE = 4     ///< Stage → flow lookup (curve registry index)
 };
 
 /**
  * @brief SoA storage for per-edge boundary conditions.
  *
- * All arrays are flat 2D: indexed as [cell * kMaxCellVerts + edge_local] where
- * edge_local ∈ {0,1,2}. Only meaningful for boundary edges (tri_nbr == -1),
- * but allocated for all edges to avoid indirection in the flux loop.
+ * All arrays are flat 2D: indexed as [cell * kMaxCellVerts + edge_local] where edge_local ∈
+ * {0,1,2}. Only meaningful for boundary edges (tri_nbr == -1), but allocated for all edges to
+ * avoid indirection in the flux loop.
  */
 struct BoundaryData {
 
     /// Boundary condition type per edge (cast from BoundaryType)
     std::vector<int8_t> edge_bc_type;
 
-    /// Bed slope for NORMAL_FLOW edges (dimensionless, >= 0).
+    /// Signed bed slope for NORMAL_FLOW edges (dimensionless).
+    /// Positive values drain outward; negative values prescribe inward flow.
     /// A zero slope zeroes the Manning outflow — the edge behaves as a
     /// Wall (validate_project warns; no auto-compute from bed geometry).
     std::vector<double> edge_bed_slope;
@@ -132,29 +132,65 @@ struct BoundaryData {
         std::string stage_name, flow_name, rating_name;
     };
     std::map<int, RuntimeOriginal> runtime_original;
-    std::map<int,std::string> runtime_owner;
-    mutable std::map<int,RuntimeReceipt> receipts;
-    void ensureReceipt(int slot,int species) const {
-        auto& receipt=receipts[slot];
-        if(receipt.applied_mass.size()!=static_cast<std::size_t>(species)) {
-            receipt.requested_mass.assign(species,0.0);
-            receipt.applied_mass.assign(species,0.0);
+    std::map<int, std::string> runtime_owner;
+    mutable std::map<int, RuntimeReceipt> receipts;
+    /**
+     * @brief Ensure a boundary receipt has the selected transport tuple width.
+     * @param[in] slot Internal padded edge slot, MeshData::slot(cell,edge); may create a new
+     * receipt map entry.
+     * @param[in] species Nonnegative number of transported species.
+     * @post If applied_mass has a different extent, both species vectors reset to zeros.
+     * Existing cumulative water/heat totals are preserved.
+     * @note This const method mutates the mutable receipts map. Requires exclusive receipt
+     * access, may allocate/throw, and may leave partial vectors on failure.
+     */
+    void ensureReceipt(int slot, int species) const {
+        auto& receipt = receipts[slot];
+
+        if (receipt.applied_mass.size() != static_cast<std::size_t>(species)) {
+            receipt.requested_mass.assign(species, 0.0);
+            receipt.applied_mass.assign(species, 0.0);
         }
     }
+    /**
+     * @brief Capture a boundary's authored prescription before its first runtime override.
+     * @param[in] slot Valid internal padded edge slot across every boundary array.
+     * @post Saves type, scalar values, table indices and table names only if no original exists;
+     * repeated calls preserve the first baseline.
+     * @note Does not save cumulative flux or species receipts. Requires exclusive access;
+     * map/string allocation may throw. No slot/extent validation.
+     */
     void saveRuntime(int slot) {
-        if (runtime_original.count(slot)) return;
-        runtime_original.emplace(slot, RuntimeOriginal{
-            edge_bc_type[slot], edge_bc_head[slot], edge_bc_flow[slot], edge_bed_slope[slot],
-            edge_bc_tseries[slot], edge_bc_flow_tseries[slot], edge_bc_rating_curve[slot],
-            edge_bc_tseries_name[slot], edge_bc_flow_tseries_name[slot], edge_bc_rating_curve_name[slot]});
+        if (runtime_original.count(slot))
+            return;
+        runtime_original.emplace(
+            slot,
+            RuntimeOriginal{edge_bc_type[slot], edge_bc_head[slot], edge_bc_flow[slot],
+                            edge_bed_slope[slot], edge_bc_tseries[slot], edge_bc_flow_tseries[slot],
+                            edge_bc_rating_curve[slot], edge_bc_tseries_name[slot],
+                            edge_bc_flow_tseries_name[slot], edge_bc_rating_curve_name[slot]});
     }
+    /**
+     * @brief Restore a saved authored boundary prescription for one runtime slot.
+     * @param[in] slot Valid internal edge slot with sized boundary arrays.
+     * @post Restores saved scalar/table/name fields, erases its baseline and runtime owner, and
+     * preserves cumulative flux/receipts. An absent baseline is a no-op, including its owner
+     * map.
+     * @note String assignments may allocate/throw after partial scalar restoration. Quality
+     * overrides and lookup-cache invalidation are the caller's responsibility; requires
+     * exclusive access.
+     */
     void clearRuntime(int slot) {
         const auto it = runtime_original.find(slot);
-        if (it == runtime_original.end()) return;
+        if (it == runtime_original.end())
+            return;
         const auto& b = it->second;
-        edge_bc_type[slot] = b.type; edge_bc_head[slot] = b.head;
-        edge_bc_flow[slot] = b.flow; edge_bed_slope[slot] = b.slope;
-        edge_bc_tseries[slot] = b.stage_ts; edge_bc_flow_tseries[slot] = b.flow_ts;
+        edge_bc_type[slot] = b.type;
+        edge_bc_head[slot] = b.head;
+        edge_bc_flow[slot] = b.flow;
+        edge_bed_slope[slot] = b.slope;
+        edge_bc_tseries[slot] = b.stage_ts;
+        edge_bc_flow_tseries[slot] = b.flow_ts;
         edge_bc_rating_curve[slot] = b.rating;
         edge_bc_tseries_name[slot] = b.stage_name;
         edge_bc_flow_tseries_name[slot] = b.flow_name;
@@ -170,6 +206,13 @@ struct BoundaryData {
     /**
      * @brief Resize all arrays to n_edges and initialize to WALL defaults.
      * @param n_edges Total number of edge slots (n_cells * kMaxCellVerts).
+     *
+     * @pre n_edges is nonnegative. Call only during allocation/reset, with exclusive access.
+     * @post Clears runtime owners/originals/receipts and zeroes cumulative flux. Numeric arrays
+     * receive wall defaults; resized string vectors retain names in existing slots, so this is
+     * not a complete string reset.
+     * @note Allocations may throw after partial resizing; prior references/iterators can be
+     * invalidated. No transactional guarantee.
      */
     void resize(int n_edges) {
         runtime_original.clear();
@@ -189,6 +232,11 @@ struct BoundaryData {
         edge_bc_rating_curve_name.resize(n);
     }
 
+    /**
+     * @brief Report the number of padded boundary edge slots.
+     * @return edge_bc_type.size() narrowed to int; includes interior/padding slots. No mutation
+     * or allocation; all boundary arrays are expected to have matching extents.
+     */
     int size() const noexcept { return static_cast<int>(edge_bc_type.size()); }
 };
 

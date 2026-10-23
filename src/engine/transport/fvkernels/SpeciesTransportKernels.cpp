@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file SpeciesTransportKernels.cpp
- * @brief Shared 1D FV species transport kernels — bodies moved VERBATIM from
+ * @file      SpeciesTransportKernels.cpp
+ * @brief     Shared 1D FV species transport kernels — bodies moved VERBATIM from
  *        hydraulics/fv/ExplicitFvSolver.cpp (phase E0; see the header).
  *
  * @details Local reference aliases at the top of each function reproduce the
@@ -25,9 +25,9 @@
  *          the pre-move solver code — the cheapest possible bitwise-identity
  *          argument. Do not "clean up" the aliases: they are the point.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "SpeciesTransportKernels.hpp"
@@ -40,18 +40,40 @@ namespace k = openswmm::fv::kernels;
 // Scalar reconstruction — the anti-diffusion layer (plan §3.2)
 // ===========================================================================
 
+/**
+ * @brief Build bounded face-native concentrations and conservative limited scalar fluxes for all
+ * rows.
+ * @param[in] v Borrowed view with nonnull mesh/state and all scratch/face/velocity/active-list
+ * pointers accessed by reconstruction and limitSpeciesFluxes, even when n_species<=0 because
+ * aliases are bound first. Mesh/state dimensions and all indices must be prepared and mutually
+ * consistent. cell_phi extent n_species*n_cells; face-native buffers n_species*n_faces; slope
+ * n_cells, velocity n_cells, contact-speed n_faces. Caller retains every owner alive/stable and
+ * supplies exclusive writable scratch.
+ * @param[in] dt Positive finite accepted hydraulic substep s, required by Courant/FCT capacity
+ * arithmetic.
+ * @note Uses chain limited MUSCL slopes (zero at ends), UPWIND zero slopes or QUICKEST_ULTIMATE
+ * with bounded extra-upstream stencil/MUSCL fallback. Node ghosts use adjacent interior scalar.
+ * Clamps higher order face values to neighboring old values and invokes shared FCT per row using
+ * positivity-scaled hydraulic water flux. Native conventions: chain length ft, velocity ft/s and
+ * flux ft3/s times row concentration (age s, temperature degC where configured). Does not
+ * install canonical cell_phi, hydraulic water or engine clock; it writes
+ * reconstruction/flux/scratch progressively. Allocations in FCT can throw after earlier row
+ * outputs; no local rollback or generic finite/index validation. Not safe to share scratch
+ * concurrently or alias unrelated input/output vectors.
+ */
 void reconstructScalars(const SpeciesKernelView& v, double dt) {
-    const NetworkMeshData* mesh_  = v.mesh;
-    NetworkStateData*      state_ = v.state;
-    auto&       cell_slope_   = *v.cell_slope;
-    auto&       f_phi_l_      = *v.f_phi_l;
-    auto&       f_phi_r_      = *v.f_phi_r;
-    const auto& f_sstar_      = *v.f_sstar;
-    const auto& cell_u_       = *v.cell_u;
+    const NetworkMeshData* mesh_ = v.mesh;
+    NetworkStateData* state_ = v.state;
+    auto& cell_slope_ = *v.cell_slope;
+    auto& f_phi_l_ = *v.f_phi_l;
+    auto& f_phi_r_ = *v.f_phi_r;
+    const auto& f_sstar_ = *v.f_sstar;
+    const auto& cell_u_ = *v.cell_u;
     const auto& active_faces_ = *v.active_faces;
 
     const int ns = state_->n_species;
-    if (ns <= 0) return;
+    if (ns <= 0)
+        return;
 
     const int nc = mesh_->n_cells();
     const int nf = mesh_->n_faces();
@@ -70,17 +92,20 @@ void reconstructScalars(const SpeciesKernelView& v, double dt) {
                 for (int i = b; i < e; ++i) {
                     const int c = mesh_->chain_cells[static_cast<std::size_t>(i)];
                     const auto uc = static_cast<std::size_t>(c);
-                    if (i == b || i == e - 1) { cell_slope_[uc] = 0.0; continue; }
+                    if (i == b || i == e - 1) {
+                        cell_slope_[uc] = 0.0;
+                        continue;
+                    }
                     const int cm = mesh_->chain_cells[static_cast<std::size_t>(i - 1)];
                     const int cp = mesh_->chain_cells[static_cast<std::size_t>(i + 1)];
                     const auto um = static_cast<std::size_t>(cm);
                     const auto up = static_cast<std::size_t>(cp);
                     const double dm = 0.5 * (mesh_->cell_dx[um] + mesh_->cell_dx[uc]);
                     const double dp = 0.5 * (mesh_->cell_dx[uc] + mesh_->cell_dx[up]);
-                    const double gm = (state_->cell_phi[sbase + uc] -
-                                       state_->cell_phi[sbase + um]) / dm;
-                    const double gp = (state_->cell_phi[sbase + up] -
-                                       state_->cell_phi[sbase + uc]) / dp;
+                    const double gm =
+                        (state_->cell_phi[sbase + uc] - state_->cell_phi[sbase + um]) / dm;
+                    const double gp =
+                        (state_->cell_phi[sbase + up] - state_->cell_phi[sbase + uc]) / dp;
                     // Chain-space slope → the cell's OWN axis.
                     cell_slope_[uc] =
                         limitSlope(gm, gp, v.limiter) *
@@ -123,8 +148,8 @@ void reconstructScalars(const SpeciesKernelView& v, double dt) {
                 // that degraded regime, which is exactly what the §6.11(d)
                 // junction-density sweep is there to quantify.
                 const bool fwd = (f_sstar_[uf] >= 0.0);
-                const int cu = fwd ? cl : cr;         // upwind cell
-                const int cd = fwd ? cr : cl;         // downwind cell
+                const int cu = fwd ? cl : cr; // upwind cell
+                const int cd = fwd ? cr : cl; // downwind cell
                 if (cu >= 0 && cd >= 0) {
                     const auto uu = static_cast<std::size_t>(cu);
                     const int chn = mesh_->cell_chain[uu];
@@ -134,17 +159,16 @@ void reconstructScalars(const SpeciesKernelView& v, double dt) {
                     // Step one further upstream ALONG THE FLOW, which is the
                     // downwind cell's opposite neighbour in the chain.
                     const int dpos = mesh_->cell_chain_pos[static_cast<std::size_t>(cd)];
-                    const int upos = pos + (pos - dpos);   // one further upstream
+                    const int upos = pos + (pos - dpos); // one further upstream
                     if (upos >= 0 && upos < ce - cb) {
-                        const int cuu = mesh_->chain_cells[
-                            static_cast<std::size_t>(cb + upos)];
+                        const int cuu = mesh_->chain_cells[static_cast<std::size_t>(cb + upos)];
                         const auto uuu = static_cast<std::size_t>(cuu);
-                        const double pu  = state_->cell_phi[sbase + uu];
-                        const double pd  = state_->cell_phi[sbase + static_cast<std::size_t>(cd)];
+                        const double pu = state_->cell_phi[sbase + uu];
+                        const double pd = state_->cell_phi[sbase + static_cast<std::size_t>(cd)];
                         const double puu = state_->cell_phi[sbase + uuu];
-                        const double dx  = mesh_->cell_dx[uu];
-                        const double cr_no = std::min(
-                            1.0, std::fabs(cell_u_[uu]) * dt / std::max(dx, 1.0e-12));
+                        const double dx = mesh_->cell_dx[uu];
+                        const double cr_no =
+                            std::min(1.0, std::fabs(cell_u_[uu]) * dt / std::max(dx, 1.0e-12));
                         const double q = pd - 2.0 * pu + puu;
                         double pf = 0.5 * (pd + pu) - 0.5 * cr_no * (pd - pu) -
                                     (1.0 - cr_no * cr_no) / 6.0 * q;
@@ -154,7 +178,7 @@ void reconstructScalars(const SpeciesKernelView& v, double dt) {
                         if (std::fabs(den) > 1.0e-30) {
                             const double un_ = (pu - puu) / den;
                             if (un_ <= 0.0 || un_ >= 1.0) {
-                                pf = pu;                       // non-monotone ⇒ upwind
+                                pf = pu; // non-monotone ⇒ upwind
                             } else {
                                 double fn = (pf - puu) / den;
                                 const double hi = std::min(1.0, un_ / std::max(cr_no, 1.0e-12));
@@ -164,7 +188,10 @@ void reconstructScalars(const SpeciesKernelView& v, double dt) {
                         } else {
                             pf = pu;
                         }
-                        if (fwd) phil = pf; else phir = pf;
+                        if (fwd)
+                            phil = pf;
+                        else
+                            phir = pf;
                     }
                 }
             }
@@ -199,42 +226,55 @@ void reconstructScalars(const SpeciesKernelView& v, double dt) {
 /**
  * @brief Assemble the face species fluxes and limit them (Zalesak FCT).
  *
- * @details Bracketing the reconstructed FACE value between its two cells is
- *          necessary but NOT sufficient for the discrete maximum principle:
- *          under reversing, unsteady flow with the cell areas evolving
- *          underneath the scalar, a face value legitimately inside its bracket
- *          can still drain more solute than its donor cell holds. Measured:
- *          QUICKEST-ULTIMATE produced −1.3e-3 on a step-function advection case
- *          with wall reflections, which is not acceptable in a water-quality
- *          model.
+ * @details Bracketing the reconstructed FACE value between its two cells is necessary but NOT
+ * sufficient for the discrete maximum principle: under reversing, unsteady flow with the cell
+ * areas evolving underneath the scalar, a face value legitimately inside its bracket can still
+ * drain more solute than its donor cell holds. Measured: QUICKEST-ULTIMATE produced −1.3e-3 on a
+ * step-function advection case with wall reflections, which is not acceptable in a water-quality
+ * model.
  *
- *          The fix has to limit the FLUX, not the result. Clipping the updated
- *          concentration would enforce the bound but destroy exact solute
- *          conservation (§6.11c) — the two properties trade off, and Zalesak
- *          (1979) is the construction that keeps both: blend each face's
- *          high-order flux back toward first-order upwind by the largest factor
- *          that no incident cell's bound rejects. The SAME limited flux updates
- *          both incident cells, so conservation is untouched.
+ * The fix has to limit the FLUX, not the result. Clipping the updated concentration would
+ * enforce the bound but destroy exact solute conservation (§6.11c) — the two properties trade
+ * off, and Zalesak (1979) is the construction that keeps both: blend each face's high-order flux
+ * back toward first-order upwind by the largest factor that no incident cell's bound rejects.
+ * The SAME limited flux updates both incident cells, so conservation is untouched.
+ *
+ * @param[in] v Prepared nonnull borrowed view; f_mass, face state/flux and active face vectors
+ * cover n_faces, active cell flags n_cells; old cell_phi and reconstructed face rows cover all
+ * species*cell/ face products. Writable f_phi_flux matches row-face layout; all
+ * low/anti/td/area/rplus/rminus scratch vectors are distinct and caller-owned. Every active
+ * cell's two face indices/sides and chain lengths must be valid, with positive dx; all borrowed
+ * owners live and stable through call.
+ * @param[in] species Valid zero-based native row below state.n_species; unchecked.
+ * @param[in] dt Positive finite hydraulic substep s, strictly nonzero for FCT capacity division.
+ * @note Builds low-order upwind flux from positivity-scaled water and high-order native face
+ * flux, predicts active cell area/low-order concentrations, bounds against old/low-order
+ * neighbors and uses minimum donor/receiver Zalesak ratios on each shared face. Zero-gradient
+ * native node ghosts use interior value; inactive scratch cells retain old state. Native
+ * dimensional flux is concentration* ft3/s; area ft2/dx ft. Writes only output flux/scratch, not
+ * canonical cell_phi/water/clock. Scratch assign can allocate/throw and earlier outputs remain;
+ * no rollback or invalid-state repair. Exclusive scratch/output ownership and one consistent
+ * accepted hydraulic face record required.
  */
 void limitSpeciesFluxes(const SpeciesKernelView& v, int species, double dt) {
-    const NetworkMeshData* mesh_  = v.mesh;
-    NetworkStateData*      state_ = v.state;
-    const auto& f_mass_       = *v.f_mass;
-    const auto& f_state_l_    = *v.f_state_l;
-    const auto& f_state_r_    = *v.f_state_r;
-    const auto& f_flux_       = *v.f_flux;
-    const auto& f_phi_l_      = *v.f_phi_l;
-    const auto& f_phi_r_      = *v.f_phi_r;
-    const auto& cell_active_  = *v.cell_active;
+    const NetworkMeshData* mesh_ = v.mesh;
+    NetworkStateData* state_ = v.state;
+    const auto& f_mass_ = *v.f_mass;
+    const auto& f_state_l_ = *v.f_state_l;
+    const auto& f_state_r_ = *v.f_state_r;
+    const auto& f_flux_ = *v.f_flux;
+    const auto& f_phi_l_ = *v.f_phi_l;
+    const auto& f_phi_r_ = *v.f_phi_r;
+    const auto& cell_active_ = *v.cell_active;
     const auto& active_faces_ = *v.active_faces;
-    auto&       f_phi_flux_   = *v.f_phi_flux;
-    auto&       lo_flux_      = *v.lo_flux;
-    auto&       anti_flux_    = *v.anti_flux;
-    auto&       td_           = *v.td;
-    auto&       anew_         = *v.anew;
-    auto&       rplus_        = *v.rplus;
-    auto&       rminus_       = *v.rminus;
-    const bool  hllc_         = v.hllc;
+    auto& f_phi_flux_ = *v.f_phi_flux;
+    auto& lo_flux_ = *v.lo_flux;
+    auto& anti_flux_ = *v.anti_flux;
+    auto& td_ = *v.td;
+    auto& anew_ = *v.anew;
+    auto& rplus_ = *v.rplus;
+    auto& rminus_ = *v.rminus;
+    const bool hllc_ = v.hllc;
 
     /// The flux record with the positivity-scaled mass flux substituted in, so
     /// the species rides on exactly the water the hydrodynamic update moved.
@@ -247,10 +287,8 @@ void limitSpeciesFluxes(const SpeciesKernelView& v, int species, double dt) {
 
     const int nc = mesh_->n_cells();
     const int nf = mesh_->n_faces();
-    const auto cbase = static_cast<std::size_t>(species) *
-                       static_cast<std::size_t>(nc);
-    const auto fbase = static_cast<std::size_t>(species) *
-                       static_cast<std::size_t>(nf);
+    const auto cbase = static_cast<std::size_t>(species) * static_cast<std::size_t>(nc);
+    const auto fbase = static_cast<std::size_t>(species) * static_cast<std::size_t>(nf);
 
     lo_flux_.assign(static_cast<std::size_t>(nf), 0.0);
     anti_flux_.assign(static_cast<std::size_t>(nf), 0.0);
@@ -264,12 +302,11 @@ void limitSpeciesFluxes(const SpeciesKernelView& v, int species, double dt) {
         const auto ul = static_cast<std::size_t>((cl >= 0) ? cl : cr);
         const auto ur = static_cast<std::size_t>((cr >= 0) ? cr : cl);
         const double fm = f_mass_[uf];
-        const double lo = fm * ((fm >= 0.0) ? state_->cell_phi[cbase + ul]
-                                            : state_->cell_phi[cbase + ur]);
-        const double hi = k::speciesFlux(f_state_l_[uf], f_state_r_[uf],
-                                         adjustedFlux(f), f_phi_l_[fbase + uf],
-                                         f_phi_r_[fbase + uf], hllc_);
-        lo_flux_[uf]   = lo;
+        const double lo =
+            fm * ((fm >= 0.0) ? state_->cell_phi[cbase + ul] : state_->cell_phi[cbase + ur]);
+        const double hi = k::speciesFlux(f_state_l_[uf], f_state_r_[uf], adjustedFlux(f),
+                                         f_phi_l_[fbase + uf], f_phi_r_[fbase + uf], hllc_);
+        lo_flux_[uf] = lo;
         anti_flux_[uf] = hi - lo;
     }
 
@@ -279,9 +316,12 @@ void limitSpeciesFluxes(const SpeciesKernelView& v, int species, double dt) {
     anew_.assign(static_cast<std::size_t>(nc), 0.0);
     for (int c = 0; c < nc; ++c) {
         const auto uc = static_cast<std::size_t>(c);
-        if (!cell_active_[uc]) { td_[uc] = state_->cell_phi[cbase + uc];
-                                 anew_[uc] = state_->cell_a[uc]; continue; }
-        const int faces[2]    = {mesh_->cell_face0[uc], mesh_->cell_face1[uc]};
+        if (!cell_active_[uc]) {
+            td_[uc] = state_->cell_phi[cbase + uc];
+            anew_[uc] = state_->cell_a[uc];
+            continue;
+        }
+        const int faces[2] = {mesh_->cell_face0[uc], mesh_->cell_face1[uc]};
         const int8_t sides[2] = {mesh_->cell_side0[uc], mesh_->cell_side1[uc]};
         double dA = 0.0, dm = 0.0;
         for (int e = 0; e < 2; ++e) {
@@ -293,8 +333,7 @@ void limitSpeciesFluxes(const SpeciesKernelView& v, int species, double dt) {
         const double inv_dx = 1.0 / mesh_->cell_dx[uc];
         const double a_new = std::max(0.0, state_->cell_a[uc] + dt * dA * inv_dx);
         anew_[uc] = a_new;
-        const double m = state_->cell_a[uc] * state_->cell_phi[cbase + uc] +
-                         dt * dm * inv_dx;
+        const double m = state_->cell_a[uc] * state_->cell_phi[cbase + uc] + dt * dm * inv_dx;
         td_[uc] = (a_new > k::kDryArea) ? m / a_new : state_->cell_phi[cbase + uc];
     }
 
@@ -302,8 +341,9 @@ void limitSpeciesFluxes(const SpeciesKernelView& v, int species, double dt) {
     rminus_.assign(static_cast<std::size_t>(nc), 1.0);
     for (int c = 0; c < nc; ++c) {
         const auto uc = static_cast<std::size_t>(c);
-        if (!cell_active_[uc]) continue;
-        const int faces[2]    = {mesh_->cell_face0[uc], mesh_->cell_face1[uc]};
+        if (!cell_active_[uc])
+            continue;
+        const int faces[2] = {mesh_->cell_face0[uc], mesh_->cell_face1[uc]};
         const int8_t sides[2] = {mesh_->cell_side0[uc], mesh_->cell_side1[uc]};
 
         double pmax = std::max(state_->cell_phi[cbase + uc], td_[uc]);
@@ -321,12 +361,17 @@ void limitSpeciesFluxes(const SpeciesKernelView& v, int species, double dt) {
             }
             const double sg = (sides[e] == 0) ? -1.0 : 1.0;
             const double a = sg * anti_flux_[uf];
-            if (a > 0.0) pplus += a; else pminus -= a;
+            if (a > 0.0)
+                pplus += a;
+            else
+                pminus -= a;
         }
         const double cap = anew_[uc] * mesh_->cell_dx[uc] / dt;
-        if (pplus  > 0.0) rplus_[uc]  = std::min(1.0, (pmax - td_[uc]) * cap / pplus);
-        if (pminus > 0.0) rminus_[uc] = std::min(1.0, (td_[uc] - pmin) * cap / pminus);
-        rplus_[uc]  = std::max(0.0, rplus_[uc]);
+        if (pplus > 0.0)
+            rplus_[uc] = std::min(1.0, (pmax - td_[uc]) * cap / pplus);
+        if (pminus > 0.0)
+            rminus_[uc] = std::min(1.0, (td_[uc] - pmin) * cap / pminus);
+        rplus_[uc] = std::max(0.0, rplus_[uc]);
         rminus_[uc] = std::max(0.0, rminus_[uc]);
     }
 
@@ -338,14 +383,12 @@ void limitSpeciesFluxes(const SpeciesKernelView& v, int species, double dt) {
             const int cl = mesh_->face_cl[uf];
             const int cr = mesh_->face_cr[uf];
             // The face contributes −a to its LEFT cell and +a to its RIGHT one.
-            const double from_r = (cr >= 0)
-                ? ((a > 0.0) ? rplus_[static_cast<std::size_t>(cr)]
-                             : rminus_[static_cast<std::size_t>(cr)])
-                : 1.0;
-            const double from_l = (cl >= 0)
-                ? ((a > 0.0) ? rminus_[static_cast<std::size_t>(cl)]
-                             : rplus_[static_cast<std::size_t>(cl)])
-                : 1.0;
+            const double from_r = (cr >= 0) ? ((a > 0.0) ? rplus_[static_cast<std::size_t>(cr)]
+                                                         : rminus_[static_cast<std::size_t>(cr)])
+                                            : 1.0;
+            const double from_l = (cl >= 0) ? ((a > 0.0) ? rminus_[static_cast<std::size_t>(cl)]
+                                                         : rplus_[static_cast<std::size_t>(cl)])
+                                            : 1.0;
             coef = std::min(from_r, from_l);
         }
         f_phi_flux_[fbase + uf] = lo_flux_[uf] + coef * a;
@@ -356,16 +399,35 @@ void limitSpeciesFluxes(const SpeciesKernelView& v, int species, double dt) {
 // Implicit dispersion (D-FV1)
 // ===========================================================================
 
+/**
+ * @brief Apply an implicit per-chain longitudinal dispersion solve to every native scalar row.
+ * @param[in] v Nonnull prepared mesh/state; cell_phi extent n_species*n_cells, area n_cells,
+ * valid chain CSR/cell indices and positive cell_dx ft. Optional cell_dispersion must cover
+ * n_cells with finite nonnegative ft2/s, overriding scalar dispersion of same units.
+ * View/pointees borrowed only for call; state scalar rows require exclusive access.
+ * @param[in] dt Finite nonnegative dispersion duration s chosen by owner.
+ * @note No rows or nonpositive uniform dispersion with null per-cell field returns. Chains
+ * shorter than2 are skipped. Floors cross-sectional area to dry threshold, arithmetic-averages
+ * neighboring coefficients/areas, uses zero end coupling and a Thomas solve per species. Updates
+ * cell_phi in place, including dry/inactive cells; does not modify water or clock and performs
+ * no explicit sign/ finite/pivot validation or result clamp. Allocation of thread-local work
+ * arrays may throw after earlier chains changed; no rollback. Thread-local scratch permits
+ * disjoint owners on different threads but same-thread reentrancy is unsupported. Implicit
+ * stability does not validate arbitrary negative/nonfinite coefficients or imply every
+ * nonuniform discretization conservation property.
+ */
 void dispersionSolve(const SpeciesKernelView& v, double dt) {
-    const NetworkMeshData* mesh_  = v.mesh;
-    NetworkStateData*      state_ = v.state;
+    const NetworkMeshData* mesh_ = v.mesh;
+    NetworkStateData* state_ = v.state;
 
     const int ns = state_->n_species;
-    if (ns <= 0) return;
+    if (ns <= 0)
+        return;
     // Per-cell coefficients (E3) take precedence; the scalar early-out is
     // the pre-E3 condition, untouched when no per-cell array is supplied.
     const std::vector<double>* cd = v.cell_dispersion;
-    if (cd == nullptr && v.dispersion <= 0.0) return;
+    if (cd == nullptr && v.dispersion <= 0.0)
+        return;
 
     /// Cell coefficient under either model. E3 bitwise-preservation note:
     /// each face uses 0.5*(D_i + D_j). With cd == nullptr both operands are
@@ -375,8 +437,7 @@ void dispersionSolve(const SpeciesKernelView& v, double dt) {
     /// bit-identical to the pre-E3 `v.dispersion * …` expression. The FV
     /// solver passes cd == nullptr and keeps its bitwise contract (E0 gate).
     const auto cellD = [&](int c) {
-        return (cd != nullptr) ? (*cd)[static_cast<std::size_t>(c)]
-                               : v.dispersion;
+        return (cd != nullptr) ? (*cd)[static_cast<std::size_t>(c)] : v.dispersion;
     };
 
     const int nc = mesh_->n_cells();
@@ -390,7 +451,8 @@ void dispersionSolve(const SpeciesKernelView& v, double dt) {
         const int b = mesh_->chain_ptr[static_cast<std::size_t>(ch)];
         const int e = mesh_->chain_ptr[static_cast<std::size_t>(ch) + 1];
         const int m = e - b;
-        if (m < 2) continue;
+        if (m < 2)
+            continue;
         aa.assign(static_cast<std::size_t>(m), 0.0);
         bb.assign(static_cast<std::size_t>(m), 0.0);
         ccv.assign(static_cast<std::size_t>(m), 0.0);
@@ -398,33 +460,30 @@ void dispersionSolve(const SpeciesKernelView& v, double dt) {
         xx.assign(static_cast<std::size_t>(m), 0.0);
 
         for (int s = 0; s < ns; ++s) {
-            const auto base = static_cast<std::size_t>(s) *
-                              static_cast<std::size_t>(nc);
+            const auto base = static_cast<std::size_t>(s) * static_cast<std::size_t>(nc);
             for (int i = 0; i < m; ++i) {
                 const int c = mesh_->chain_cells[static_cast<std::size_t>(b + i)];
                 const auto uc = static_cast<std::size_t>(c);
                 const double dx = mesh_->cell_dx[uc];
-                const double a  = std::max(state_->cell_a[uc], k::kDryArea);
+                const double a = std::max(state_->cell_a[uc], k::kDryArea);
                 const double dc = cellD(c);
                 double lo = 0.0, hi = 0.0;
                 if (i > 0) {
                     const int cm = mesh_->chain_cells[static_cast<std::size_t>(b + i - 1)];
-                    const double am = std::max(
-                        state_->cell_a[static_cast<std::size_t>(cm)], k::kDryArea);
-                    lo = 0.5 * (dc + cellD(cm)) * 0.5 * (a + am) * dt /
-                         (dx * dx * a);
+                    const double am =
+                        std::max(state_->cell_a[static_cast<std::size_t>(cm)], k::kDryArea);
+                    lo = 0.5 * (dc + cellD(cm)) * 0.5 * (a + am) * dt / (dx * dx * a);
                 }
                 if (i < m - 1) {
                     const int cp = mesh_->chain_cells[static_cast<std::size_t>(b + i + 1)];
-                    const double ap = std::max(
-                        state_->cell_a[static_cast<std::size_t>(cp)], k::kDryArea);
-                    hi = 0.5 * (dc + cellD(cp)) * 0.5 * (a + ap) * dt /
-                         (dx * dx * a);
+                    const double ap =
+                        std::max(state_->cell_a[static_cast<std::size_t>(cp)], k::kDryArea);
+                    hi = 0.5 * (dc + cellD(cp)) * 0.5 * (a + ap) * dt / (dx * dx * a);
                 }
-                aa[static_cast<std::size_t>(i)]  = -lo;
+                aa[static_cast<std::size_t>(i)] = -lo;
                 ccv[static_cast<std::size_t>(i)] = -hi;
-                bb[static_cast<std::size_t>(i)]  = 1.0 + lo + hi;
-                rr[static_cast<std::size_t>(i)]  = state_->cell_phi[base + uc];
+                bb[static_cast<std::size_t>(i)] = 1.0 + lo + hi;
+                rr[static_cast<std::size_t>(i)] = state_->cell_phi[base + uc];
             }
             for (int i = 1; i < m; ++i) {
                 const auto ui = static_cast<std::size_t>(i);
@@ -447,4 +506,4 @@ void dispersionSolve(const SpeciesKernelView& v, double dt) {
     }
 }
 
-}  // namespace openswmm::transport::fvkernels
+} // namespace openswmm::transport::fvkernels

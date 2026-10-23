@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file InpWriter.hpp
- * @brief Write a SimulationContext to a SWMM .inp file.
+ * @file      InpWriter.hpp
+ * @brief     Write a SimulationContext to a SWMM .inp file.
  *
  * @details Serialises all model data from SoA arrays into standard SWMM
  *          input file format. Supports all sections from the legacy format
@@ -24,14 +24,15 @@
  *
  * @ingroup engine_core
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_INP_WRITER_HPP
 #define OPENSWMM_INP_WRITER_HPP
 
+#include <cstdio>
 #include <functional>
 #include <string>
 #include <vector>
@@ -42,7 +43,17 @@ struct SimulationContext;
 
 namespace inp_writer {
 
-/// Complete authored aquifer, groundwater chemistry and explicit reactor sections.
+/**
+ * @brief Render the authored groundwater chemistry/aquifer reactor sections as text.
+ *
+ * Uses a temporary FILE to reuse emitGwTransportSections; runtime_error on
+ * temporary-file/write/read failure. Does not install output, advance state or rebase the retained
+ * FILE reference; allocation can throw.
+ *
+ * @param[in] ctx Borrowed model with live optional twod_io groundwater attachment and coherent
+ *     authored rows.
+ * @return Owned serialized section text; empty without a 2D build or configured data.
+ */
 std::string groundwaterSections(const SimulationContext& ctx);
 
 /**
@@ -82,8 +93,7 @@ std::string groundwaterSections(const SimulationContext& ctx);
  *          configuration. Output redirection/recovery remain caller concerns.
  * @returns 0 on success, -1 on file error.
  */
-int writeInpFile(const SimulationContext& ctx,
-                 const std::string&       path,
+int writeInpFile(const SimulationContext& ctx, const std::string& path,
                  std::vector<std::string>* warnings = nullptr);
 
 /**
@@ -113,18 +123,25 @@ int writeInpFile(const SimulationContext& ctx,
 struct InpWriteOptions {
     enum class Profile { Full, Swmm5, Swmm5Stock };
     Profile profile = Profile::Full;
+    // Internal container serialization: borrowed stream, no mesh sidecar writes.
+    FILE* stream = nullptr;
+    bool internal_units = false;
+    bool inline_mesh = false;
+    bool skip_component_files = false;
     enum class OutputKind { Model = 0, Mesh = 1, Component = 2 };
     // Final paths remain the reference anchor. Every actual output is sent
     // here before opening; an empty mapped path refuses that output.
     // The caller owns staging cleanup, validation and publication.
     std::function<std::string(const std::string&, OutputKind)> map_output;
-
 };
 
-int writeInpFile(const SimulationContext&  ctx,
-                 const std::string&        path,
-                 std::vector<std::string>* warnings,
-                 const InpWriteOptions&    opts);
+int writeInpFile(const SimulationContext& ctx, const std::string& path,
+                 std::vector<std::string>* warnings, const InpWriteOptions& opts);
+
+// Complete native text, anchored at a container destination. No model/mesh files
+// are created. internal_units is used only for GeoPackage supplemental sections.
+std::string modelText(const SimulationContext& ctx, const std::string& anchor,
+                      bool internal_units = false);
 
 } // namespace inp_writer
 } // namespace openswmm

@@ -15,15 +15,15 @@
 // limitations under the License.
 
 /**
- * @file TitleHandler.cpp
- * @brief [TITLE] section handler implementation.
+ * @file      TitleHandler.cpp
+ * @brief     [TITLE] section handler implementation.
  *
  * @see TitleHandler.hpp
  * @ingroup engine_input
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "TitleHandler.hpp"
@@ -31,6 +31,17 @@
 
 namespace openswmm::input {
 
+/**
+ * @brief Replace title notes with an exact copy of supplied section lines.
+ *
+ * Owned title_notes are cleared and reserved before copying; blank/comment text is preserved,
+ * without tokenization or a three-line cap. Allocation can leave a partially replaced title.
+ *
+ * @param[in,out] ctx Model context receiving authored section state and any documented diagnostics;
+ *     not automatically reset before parsing.
+ * @param[in] lines Borrowed section data lines without the section heading, tokenized/copied
+ *     synchronously; may be empty. Caller serializes context mutation.
+ */
 void handle_title(SimulationContext& ctx, const std::vector<std::string>& lines) {
     ctx.title_notes.clear();
     ctx.title_notes.reserve(lines.size());

@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_process_components.cpp
- * @brief IO1–IO2 gates for [PROCESS_COMPONENTS] + component config files
+ * @file      test_process_components.cpp
+ * @brief     IO1–IO2 gates for [PROCESS_COMPONENTS] + component config files
  *        (plans/transport/TRANSPORT_IO_PLUGIN_CONFIG_PLAN.md §7).
  *
  * @details Covers: registration parsing + round-trip through InpWriter;
@@ -27,9 +27,9 @@
  *          fatality. Test artifacts use the underscore-prefix convention in
  *          the test working directory (CLAUDE.md §4.1).
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -51,11 +51,35 @@
 
 namespace {
 
+/**
+ * @brief Borrow the concrete engine behind an opaque test handle.
+ *
+ * This exact helper performs only an unchecked static_cast and dereference. It does not validate
+ * lifecycle, retain the handle or transfer ownership; fixture code may use the reference to inspect
+ * or seed internal state.
+ *
+ * @param[in] engine Live non-null new-engine handle whose concrete allocation is SWMMEngine; caller
+ *     keeps ownership.
+ * @return Mutable engine reference that remains valid until handle destruction or replacement.
+ */
 openswmm::SWMMEngine& as_cpp_engine(SWMM_Engine engine) {
     return *static_cast<openswmm::SWMMEngine*>(engine);
 }
 
-/// Minimal runnable deck; `pc_lines` lands verbatim in [PROCESS_COMPONENTS].
+/**
+ * @brief Write a minimal component-registration parsing fixture.
+ *
+ * Uses a half-hour CFS one-conduit model with a wet junction; raw rows can intentionally request
+ * invalid or unsupported components for rejection tests. Uses a local ofstream and requires
+ * existing parent directories. Open/write/close failures are unchecked; owned input strings are not
+ * retained and raw tokens/config paths are not escaped. Optional sidecar files are also overwritten
+ * when described.
+ *
+ * @param[in] path Borrowed destination filename; character pointers must be non-null.
+ *     Opens/truncates this file for the generated deck.
+ * @param[in] pc_lines Raw PROCESS_COMPONENTS rows, emitted as a section only when nonempty; copied
+ *     without escaping or validation.
+ */
 void write_deck(const char* path, const std::string& pc_lines) {
     std::ofstream f(path);
     f << "[TITLE]\nIO1/IO2 process components gate deck\n\n"
@@ -77,20 +101,54 @@ void write_deck(const char* path, const std::string& pc_lines) {
 
 class ProcessComponentsTest : public ::testing::Test {
 protected:
+    /**
+     * @brief Allocate the per-test engine handle and assert allocation succeeded.
+     *
+     * Leaves the handle unopen for this fixture; its teardown owns destruction. A fatal allocation
+     * assertion stops setup.
+     */
     void SetUp() override {
         engine_ = swmm_engine_create();
         ASSERT_NE(engine_, nullptr);
     }
+    /**
+     * @brief Destroy a non-null fixture handle and clear its member slot.
+     *
+     * Engine destruction supplies remaining model cleanup; safe after setup failed before allocation.
+     */
     void TearDown() override {
-        if (engine_) { swmm_engine_destroy(engine_); engine_ = nullptr; }
+        if (engine_) {
+            swmm_engine_destroy(engine_);
+            engine_ = nullptr;
+        }
     }
+    /**
+     * @brief Open a generated process-component fixture on its stored handle.
+     *
+     * Requires engine_ allocated by SetUp; leaves the resulting model/diagnostics in fixture ownership
+     * for assertions and TearDown. Does not initialize or run components.
+     *
+     * @param[in] inp Non-null input-deck filename, borrowed for this call.
+     * @param[in] rpt Report destination passed to open; may be null where the engine API permits it.
+     * @param[in] out Binary-output destination passed to open; may be null where supported, though
+     *     start requests saved results.
+     * @return swmm_engine_open status unchanged.
+     */
     int open_deck(const char* inp, const char* rpt, const char* out) {
         return swmm_engine_open(engine_, inp, rpt, out, nullptr);
     }
-    static bool errors_contain(const openswmm::SimulationContext& ctx,
-                               const std::string& needle) {
+    /**
+     * @brief Search the model parse/validation errors for an expected substring.
+     *
+     * @param[in] ctx Borrowed context; its error vector is read only.
+     * @param[in] needle Borrowed case-sensitive substring; empty matches any error entry.
+     * @return True if any ctx.errors entry contains needle; false when absent or the error list is
+     *     empty.
+     */
+    static bool errors_contain(const openswmm::SimulationContext& ctx, const std::string& needle) {
         for (const auto& e : ctx.errors)
-            if (e.find(needle) != std::string::npos) return true;
+            if (e.find(needle) != std::string::npos)
+                return true;
         return false;
     }
     SWMM_Engine engine_ = nullptr;
@@ -100,10 +158,8 @@ protected:
 // IO1 — unknown id fails a strict open with the known-id list.
 // ---------------------------------------------------------------------------
 TEST_F(ProcessComponentsTest, UnknownIdFailsStrictOpen) {
-    write_deck("_pc_unknown.inp",
-               "org.example.nosuch      config=\"x.cfg\"");
-    EXPECT_NE(open_deck("_pc_unknown.inp", "_pc_unknown.rpt",
-                        "_pc_unknown.out"), SWMM_OK);
+    write_deck("_pc_unknown.inp", "org.example.nosuch      config=\"x.cfg\"");
+    EXPECT_NE(open_deck("_pc_unknown.inp", "_pc_unknown.rpt", "_pc_unknown.out"), SWMM_OK);
     const auto& ctx = as_cpp_engine(engine_).context();
     EXPECT_TRUE(errors_contain(ctx, "unknown component id 'org.example.nosuch'"));
     EXPECT_TRUE(errors_contain(ctx, "org.hydrocouple.openswmm.reactions"))
@@ -121,10 +177,8 @@ TEST_F(ProcessComponentsTest, UnknownIdFailsStrictOpen) {
 // LARD (T5), which is still planned. Move it again when T5 lands.
 // ---------------------------------------------------------------------------
 TEST_F(ProcessComponentsTest, PlannedIdReportsPendingPhase) {
-    write_deck("_pc_planned.inp",
-               "org.hydrocouple.openswmm.transport.lard config=\"model.lard\"");
-    EXPECT_NE(open_deck("_pc_planned.inp", "_pc_planned.rpt",
-                        "_pc_planned.out"), SWMM_OK);
+    write_deck("_pc_planned.inp", "org.hydrocouple.openswmm.transport.lard config=\"model.lard\"");
+    EXPECT_NE(open_deck("_pc_planned.inp", "_pc_planned.rpt", "_pc_planned.out"), SWMM_OK);
     const auto& ctx = as_cpp_engine(engine_).context();
     EXPECT_TRUE(errors_contain(ctx, "recognized but not yet implemented"));
     EXPECT_TRUE(errors_contain(ctx, "T5"));
@@ -146,19 +200,18 @@ TEST_F(ProcessComponentsTest, RegisteredComponentReceivesConfig) {
     };
     static Captured cap;
     cap = {};
-    openswmm::components::ProcessComponentRegistry::instance()
-        .register_component(
-            "org.test.iogate", "IO2 gate test component",
-            [](openswmm::SimulationContext&,
-               const openswmm::ProcessComponentSpec& spec,
-               const openswmm::components::ComponentConfigSections& cfg,
-               std::vector<std::string>&) {
-                cap.calls++;
-                cap.source_path = cfg.source_path;
-                for (const auto& s : cfg.sections) cap.tags.push_back(s.first);
-                for (const auto& a : spec.args)
-                    if (a.first == "version") cap.arg_version = a.second;
-            });
+    openswmm::components::ProcessComponentRegistry::instance().register_component(
+        "org.test.iogate", "IO2 gate test component",
+        [](openswmm::SimulationContext&, const openswmm::ProcessComponentSpec& spec,
+           const openswmm::components::ComponentConfigSections& cfg, std::vector<std::string>&) {
+            cap.calls++;
+            cap.source_path = cfg.source_path;
+            for (const auto& s : cfg.sections)
+                cap.tags.push_back(s.first);
+            for (const auto& a : spec.args)
+                if (a.first == "version")
+                    cap.arg_version = a.second;
+        });
 
     // The deck lives in a SUBDIRECTORY of the working directory so that
     // config="…" exercises the [2D_MESH_FILE] §3 rule — resolution against
@@ -173,8 +226,7 @@ TEST_F(ProcessComponentsTest, RegisteredComponentReceivesConfig) {
     }
     write_deck("_pc_sub/_pc_ok.inp",
                "org.test.iogate      config=\"_pc_gate.cfg\" version=\"9.9\"");
-    ASSERT_EQ(open_deck("_pc_sub/_pc_ok.inp", "_pc_sub/_pc_ok.rpt",
-                        "_pc_sub/_pc_ok.out"), SWMM_OK);
+    ASSERT_EQ(open_deck("_pc_sub/_pc_ok.inp", "_pc_sub/_pc_ok.rpt", "_pc_sub/_pc_ok.out"), SWMM_OK);
 
     EXPECT_EQ(cap.calls, 1);
     ASSERT_EQ(cap.tags.size(), 2u);
@@ -182,8 +234,7 @@ TEST_F(ProcessComponentsTest, RegisteredComponentReceivesConfig) {
     EXPECT_EQ(cap.tags[1], "BETA_TABLE");
     EXPECT_EQ(cap.arg_version, "9.9");
     EXPECT_NE(cap.source_path.find("_pc_sub"), std::string::npos)
-        << "config path must resolve against the .inp directory, got '"
-        << cap.source_path << "'";
+        << "config path must resolve against the .inp directory, got '" << cap.source_path << "'";
 
     // Round-trip: write the model back out and reopen it — the registration
     // line, its config path and its extra args must all survive, and the
@@ -191,15 +242,13 @@ TEST_F(ProcessComponentsTest, RegisteredComponentReceivesConfig) {
     {
         const auto& ctx = as_cpp_engine(engine_).context();
         ASSERT_EQ(ctx.process_component_specs.size(), 1u);
-        ASSERT_EQ(openswmm::inp_writer::writeInpFile(ctx, "_pc_sub/_pc_rt.inp"),
-                  0);
+        ASSERT_EQ(openswmm::inp_writer::writeInpFile(ctx, "_pc_sub/_pc_rt.inp"), 0);
     }
     cap = {};
     swmm_engine_destroy(engine_);
     engine_ = swmm_engine_create();
     ASSERT_NE(engine_, nullptr);
-    ASSERT_EQ(open_deck("_pc_sub/_pc_rt.inp", "_pc_sub/_pc_rt.rpt",
-                        "_pc_sub/_pc_rt.out"), SWMM_OK);
+    ASSERT_EQ(open_deck("_pc_sub/_pc_rt.inp", "_pc_sub/_pc_rt.rpt", "_pc_sub/_pc_rt.out"), SWMM_OK);
     {
         const auto& rt = as_cpp_engine(engine_).context();
         ASSERT_EQ(rt.process_component_specs.size(), 1u);
@@ -219,20 +268,14 @@ TEST_F(ProcessComponentsTest, RegisteredComponentReceivesConfig) {
 // IO2 — missing config file and nested [PROCESS_COMPONENTS] are fatal.
 // ---------------------------------------------------------------------------
 TEST_F(ProcessComponentsTest, MissingConfigAndNestingAreFatal) {
-    openswmm::components::ProcessComponentRegistry::instance()
-        .register_component(
-            "org.test.iogate2", "IO2 fatality test component",
-            [](openswmm::SimulationContext&,
-               const openswmm::ProcessComponentSpec&,
-               const openswmm::components::ComponentConfigSections&,
-               std::vector<std::string>&) {});
+    openswmm::components::ProcessComponentRegistry::instance().register_component(
+        "org.test.iogate2", "IO2 fatality test component",
+        [](openswmm::SimulationContext&, const openswmm::ProcessComponentSpec&,
+           const openswmm::components::ComponentConfigSections&, std::vector<std::string>&) {});
 
-    write_deck("_pc_missing.inp",
-               "org.test.iogate2      config=\"_does_not_exist.cfg\"");
-    EXPECT_NE(open_deck("_pc_missing.inp", "_pc_missing.rpt",
-                        "_pc_missing.out"), SWMM_OK);
-    EXPECT_TRUE(errors_contain(as_cpp_engine(engine_).context(),
-                               "not found or unreadable"));
+    write_deck("_pc_missing.inp", "org.test.iogate2      config=\"_does_not_exist.cfg\"");
+    EXPECT_NE(open_deck("_pc_missing.inp", "_pc_missing.rpt", "_pc_missing.out"), SWMM_OK);
+    EXPECT_TRUE(errors_contain(as_cpp_engine(engine_).context(), "not found or unreadable"));
     std::remove("_pc_missing.inp");
 
     swmm_engine_destroy(engine_);
@@ -243,12 +286,9 @@ TEST_F(ProcessComponentsTest, MissingConfigAndNestingAreFatal) {
         std::ofstream c("_pc_nested.cfg");
         c << "[PROCESS_COMPONENTS]\norg.test.iogate2 config=\"x\"\n";
     }
-    write_deck("_pc_nested.inp",
-               "org.test.iogate2      config=\"_pc_nested.cfg\"");
-    EXPECT_NE(open_deck("_pc_nested.inp", "_pc_nested.rpt",
-                        "_pc_nested.out"), SWMM_OK);
-    EXPECT_TRUE(errors_contain(as_cpp_engine(engine_).context(),
-                               "nested [PROCESS_COMPONENTS]"));
+    write_deck("_pc_nested.inp", "org.test.iogate2      config=\"_pc_nested.cfg\"");
+    EXPECT_NE(open_deck("_pc_nested.inp", "_pc_nested.rpt", "_pc_nested.out"), SWMM_OK);
+    EXPECT_TRUE(errors_contain(as_cpp_engine(engine_).context(), "nested [PROCESS_COMPONENTS]"));
     std::remove("_pc_nested.inp");
     std::remove("_pc_nested.cfg");
 }
@@ -261,20 +301,19 @@ TEST_F(ProcessComponentsTest, MissingConfigAndNestingAreFatal) {
 // ---------------------------------------------------------------------------
 TEST_F(ProcessComponentsTest, AbsoluteConfigPathIsRebasedOnWrite) {
     namespace fs = std::filesystem;
-    openswmm::components::ProcessComponentRegistry::instance()
-        .register_component(
-            "org.test.iogate3", "Slice IO-4 rebase test component",
-            [](openswmm::SimulationContext&,
-               const openswmm::ProcessComponentSpec&,
-               const openswmm::components::ComponentConfigSections&,
-               std::vector<std::string>&) {});
+    openswmm::components::ProcessComponentRegistry::instance().register_component(
+        "org.test.iogate3", "Slice IO-4 rebase test component",
+        [](openswmm::SimulationContext&, const openswmm::ProcessComponentSpec&,
+           const openswmm::components::ComponentConfigSections&, std::vector<std::string>&) {});
 
     fs::create_directories("_pc_abs");
-    { std::ofstream c("_pc_abs/_pc_abs.cfg"); c << "[ALPHA_OPTIONS]\nKEY1 V\n"; }
-    write_deck("_pc_abs/_pc_abs.inp",
-               "org.test.iogate3      config=\"_pc_abs.cfg\"");
-    ASSERT_EQ(open_deck("_pc_abs/_pc_abs.inp", "_pc_abs/_pc_abs.rpt",
-                        "_pc_abs/_pc_abs.out"), SWMM_OK);
+    {
+        std::ofstream c("_pc_abs/_pc_abs.cfg");
+        c << "[ALPHA_OPTIONS]\nKEY1 V\n";
+    }
+    write_deck("_pc_abs/_pc_abs.inp", "org.test.iogate3      config=\"_pc_abs.cfg\"");
+    ASSERT_EQ(open_deck("_pc_abs/_pc_abs.inp", "_pc_abs/_pc_abs.rpt", "_pc_abs/_pc_abs.out"),
+              SWMM_OK);
 
     const fs::path abs_cfg = fs::absolute("_pc_abs/_pc_abs.cfg");
     auto& ctx = as_cpp_engine(engine_).context();
@@ -295,29 +334,33 @@ TEST_F(ProcessComponentsTest, AbsoluteConfigPathIsRebasedOnWrite) {
                 in_section = line.rfind("[PROCESS_COMPONENTS]", 0) == 0;
                 continue;
             }
-            if (in_section && !line.empty() && line[0] != ';') { row = line; break; }
+            if (in_section && !line.empty() && line[0] != ';') {
+                row = line;
+                break;
+            }
         }
     }
     ASSERT_FALSE(row.empty()) << "[PROCESS_COMPONENTS] row was not emitted";
     EXPECT_EQ(row.find(abs_cfg.parent_path().string()), std::string::npos)
         << "absolute config path written verbatim, bypassing the Slice IO-4 "
-           "rebase every other external-file slot honors: " << row;
-    EXPECT_NE(row.find("config=\"_pc_abs.cfg\""), std::string::npos)
-        << "expected the path rebased against the destination directory, got: "
+           "rebase every other external-file slot honors: "
         << row;
+    EXPECT_NE(row.find("config=\"_pc_abs.cfg\""), std::string::npos)
+        << "expected the path rebased against the destination directory, got: " << row;
 
     // …and the rebased reference must still resolve on reopen.
     swmm_engine_destroy(engine_);
     engine_ = swmm_engine_create();
     ASSERT_NE(engine_, nullptr);
-    EXPECT_EQ(open_deck(out_inp.string().c_str(), "_pc_abs/_pc_abs_rt.rpt",
-                        "_pc_abs/_pc_abs_rt.out"), SWMM_OK);
+    EXPECT_EQ(
+        open_deck(out_inp.string().c_str(), "_pc_abs/_pc_abs_rt.rpt", "_pc_abs/_pc_abs_rt.out"),
+        SWMM_OK);
 
     std::error_code ec;
     fs::remove_all("_pc_abs", ec);
 }
 
-}  // namespace
+} // namespace
 
 // ---------------------------------------------------------------------------
 // A save that DESTROYS embedded model data must say so, THROUGH THE PATH THE
@@ -392,11 +435,12 @@ TEST_F(ProcessComponentsTest, SavingWarnsThroughTheApiWhenEmbeddedSectionsAreLos
     bool names_loss = false, names_section = false;
     for (int i = warns_before; i < warns_after; ++i) {
         const std::string w = swmm_get_warning_at(engine_, i);
-        if (w.find("lost from this save") != std::string::npos) names_loss = true;
-        if (w.find("REACTION_OPTIONS") != std::string::npos) names_section = true;
+        if (w.find("lost from this save") != std::string::npos)
+            names_loss = true;
+        if (w.find("REACTION_OPTIONS") != std::string::npos)
+            names_section = true;
     }
-    EXPECT_TRUE(names_loss)
-        << "a warning was emitted but it does not say the data is lost";
+    EXPECT_TRUE(names_loss) << "a warning was emitted but it does not say the data is lost";
     EXPECT_TRUE(names_section)
         << "the warning does not name the section that was dropped, so a user "
            "cannot tell what to rescue";
@@ -413,7 +457,6 @@ TEST_F(ProcessComponentsTest, SavingWarnsThroughTheApiWhenEmbeddedSectionsAreLos
            "saveData() has landed (IO3), this gate and the warning it checks "
            "are both obsolete and should be replaced by a round-trip assertion";
 }
-
 
 // ---------------------------------------------------------------------------
 // Closes the "only swmm_model_write_with_plugin is gated" gap recorded in the
@@ -460,12 +503,13 @@ TEST_F(ProcessComponentsTest, SwmmModelWriteAlsoWarnsWhenEmbeddedSectionsAreLost
     bool names_loss = false, names_section = false;
     for (int i = warns_before; i < warns_after; ++i) {
         const std::string w = swmm_get_warning_at(engine_, i);
-        if (w.find("lost from this save") != std::string::npos) names_loss = true;
-        if (w.find("REACTION_OPTIONS") != std::string::npos) names_section = true;
+        if (w.find("lost from this save") != std::string::npos)
+            names_loss = true;
+        if (w.find("REACTION_OPTIONS") != std::string::npos)
+            names_section = true;
     }
     EXPECT_TRUE(names_loss);
-    EXPECT_TRUE(names_section)
-        << "the warning does not name the section that was dropped";
+    EXPECT_TRUE(names_section) << "the warning does not name the section that was dropped";
 }
 
 // ---------------------------------------------------------------------------

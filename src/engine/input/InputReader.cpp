@@ -15,19 +15,19 @@
 // limitations under the License.
 
 /**
- * @file InputReader.cpp
- * @brief Implementation of the top-level SWMM .inp file reader.
+ * @file      InputReader.cpp
+ * @brief     Implementation of the top-level SWMM .inp file reader.
  *
  * @see InputReader.hpp
  * @ingroup engine_input
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "InputReader.hpp"
-#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
+#include "core/FileIO.hpp" // issue #7: UTF-8 paths on Windows
 #include "Tokenizer.hpp"
 #include "../core/ErrorCodes.hpp"
 #include "../core/PerfTimers.hpp"
@@ -46,19 +46,27 @@ namespace {
 // BEGINS with one of them ("[PROFILES]" is "[PROFILE"), so such a header
 // draws no unknown-section warning even when v6 has no handler for it.
 constexpr const char* kLegacySectionWords[] = {
-    "TITLE", "OPTION", "FILE", "RAINGAGE", "TEMPERATURE", "EVAP",
-    "SUBCATCHMENT", "SUBAREA", "INFIL", "AQUIFER", "GROUNDWATER", "SNOWPACK",
-    "JUNC", "OUTFALL", "STORAGE", "DIVIDER", "CONDUIT", "PUMP", "ORIFICE",
-    "WEIR", "OUTLET", "XSECT", "TRANSECT", "LOSS", "CONTROL", "POLLUT",
-    "LANDUSE", "BUILDUP", "WASHOFF", "COVERAGE", "INFLOW", "DWF", "PATTERN",
-    "RDII", "HYDROGRAPH", "LOADING", "TREATMENT", "CURVE", "TIMESERIES",
-    "REPORT", "COORDINATE", "VERTICES", "POLYGON", "LABEL", "SYMBOL",
-    "BACKDROP", "TAG", "PROFILE", "MAP", "LID_CONTROL", "LID_USAGE", "GWF",
-    "ADJUSTMENT", "EVENT", "STREET", "INLET_USAGE", "INLET"};
+    "TITLE",        "OPTION",      "FILE",       "RAINGAGE", "TEMPERATURE", "EVAP",
+    "SUBCATCHMENT", "SUBAREA",     "INFIL",      "AQUIFER",  "GROUNDWATER", "SNOWPACK",
+    "JUNC",         "OUTFALL",     "STORAGE",    "DIVIDER",  "CONDUIT",     "PUMP",
+    "ORIFICE",      "WEIR",        "OUTLET",     "XSECT",    "TRANSECT",    "LOSS",
+    "CONTROL",      "POLLUT",      "LANDUSE",    "BUILDUP",  "WASHOFF",     "COVERAGE",
+    "INFLOW",       "DWF",         "PATTERN",    "RDII",     "HYDROGRAPH",  "LOADING",
+    "TREATMENT",    "CURVE",       "TIMESERIES", "REPORT",   "COORDINATE",  "VERTICES",
+    "POLYGON",      "LABEL",       "SYMBOL",     "BACKDROP", "TAG",         "PROFILE",
+    "MAP",          "LID_CONTROL", "LID_USAGE",  "GWF",      "ADJUSTMENT",  "EVENT",
+    "STREET",       "INLET_USAGE", "INLET"};
 
+/**
+ * @brief Test whether a normalized tag begins with a legacy section keyword.
+ *
+ * @param[in] tag Borrowed uppercase tag without brackets; no normalization here.
+ * @return True for any legacy keyword prefix, including extended suffixes; false otherwise.
+ */
 bool legacy_knows_section(const std::string& tag) {
     for (const char* w : kLegacySectionWords)
-        if (tag.rfind(w, 0) == 0) return true;
+        if (tag.rfind(w, 0) == 0)
+            return true;
     return false;
 }
 } // namespace
@@ -67,9 +75,7 @@ bool legacy_knows_section(const std::string& tag) {
 // Constructor
 // ============================================================================
 
-InputReader::InputReader(SectionRegistry& registry)
-    : registry_(registry)
-{}
+InputReader::InputReader(SectionRegistry& registry) : registry_(registry) {}
 
 // ============================================================================
 // read()
@@ -78,9 +84,9 @@ InputReader::InputReader(SectionRegistry& registry)
 bool InputReader::read(const std::string& path, SimulationContext& ctx) {
     std::ifstream ifs(openswmm::io::utf8_path(path));
     if (!ifs.is_open()) {
-        ctx.error_code    = 2;  // public SWMM_ERR_INPFILE (was 1 = NOMEM)
+        ctx.error_code = 2; // public SWMM_ERR_INPFILE (was 1 = NOMEM)
         ctx.error_message = "InputReader: cannot open file '" + path + "'";
-        ctx.state         = EngineState::ERROR_STATE;
+        ctx.state = EngineState::ERROR_STATE;
         return false;
     }
     ctx.inp_file_path = path;
@@ -103,7 +109,7 @@ bool InputReader::read_stream(std::istream& stream, SimulationContext& ctx) {
     ctx.options.rpt_nodes = 0;
     ctx.options.rpt_links = 0;
 
-    std::string            current_tag;     // e.g. "OPTIONS"
+    std::string current_tag;                // e.g. "OPTIONS"
     std::vector<std::string> section_lines; // accumulated data lines
 
     auto flush_section = [&]() {
@@ -127,7 +133,8 @@ bool InputReader::read_stream(std::istream& stream, SimulationContext& ctx) {
         std::string_view trimmed_raw = Tokenizer::trim(raw_line);
 
         // Skip truly empty lines
-        if (trimmed_raw.empty()) continue;
+        if (trimmed_raw.empty())
+            continue;
 
         // Detect section header. A real header is a clean "[NAME]" token on its
         // own line (an optional trailing comment is allowed). A line that merely
@@ -172,7 +179,7 @@ bool InputReader::read_stream(std::istream& stream, SimulationContext& ctx) {
             continue;
         }
         std::string_view stripped = Tokenizer::strip_comment(trimmed_raw);
-        std::string_view trimmed  = Tokenizer::trim(stripped);
+        std::string_view trimmed = Tokenizer::trim(stripped);
         if (!trimmed.empty() && !current_tag.empty())
             section_lines.emplace_back(std::string(trimmed));
         // Lines before the first section header are silently ignored
@@ -194,7 +201,8 @@ bool InputReader::read_stream(std::istream& stream, SimulationContext& ctx) {
 // ============================================================================
 
 void InputReader::replay_deferred_rows(SimulationContext& ctx) {
-    if (ctx.deferred_section_rows.empty()) return;
+    if (ctx.deferred_section_rows.empty())
+        return;
 
     const auto pending = std::move(ctx.deferred_section_rows);
     ctx.deferred_section_rows.clear();
@@ -211,7 +219,8 @@ void InputReader::replay_deferred_rows(SimulationContext& ctx) {
     for (const auto& tag : tags) {
         std::vector<std::string> lines;
         for (const auto& row : pending) {
-            if (row.first == tag) lines.push_back(row.second);
+            if (row.first == tag)
+                lines.push_back(row.second);
         }
         dispatch_section(tag, lines, ctx);
     }
@@ -231,13 +240,16 @@ void InputReader::replay_deferred_rows(SimulationContext& ctx) {
 
 std::string InputReader::parse_section_header(std::string_view line) {
     // Expect: '[' NAME ']'  (optional trailing whitespace/comment already stripped)
-    if (line.size() < 3 || line.front() != '[') return {};
+    if (line.size() < 3 || line.front() != '[')
+        return {};
 
     const auto close = line.find(']');
-    if (close == std::string_view::npos) return {};
+    if (close == std::string_view::npos)
+        return {};
 
     std::string_view name = Tokenizer::trim(line.substr(1, close - 1));
-    if (name.empty()) return {};
+    if (name.empty())
+        return {};
 
     return Tokenizer::to_upper(name);
 }
@@ -246,24 +258,25 @@ std::string InputReader::parse_section_header(std::string_view line) {
 // dispatch_section()
 // ============================================================================
 
-void InputReader::dispatch_section(
-    const std::string&             tag,
-    const std::vector<std::string>& lines,
-    SimulationContext&             ctx
-) {
+void InputReader::dispatch_section(const std::string& tag, const std::vector<std::string>& lines,
+                                   SimulationContext& ctx) {
     if (registry_.has(tag)) {
         registry_.dispatch(tag, ctx, lines);
     } else if (!legacy_knows_section(tag)) {
         // Unknown section — record it (caller may wish to warn)
         bool already = false;
         for (const auto& s : skipped_sections_) {
-            if (s == tag) { already = true; break; }
+            if (s == tag) {
+                already = true;
+                break;
+            }
         }
-        if (!already) skipped_sections_.push_back(tag);
+        if (!already)
+            skipped_sections_.push_back(tag);
 
         // Issue warning via ctx
         if (ctx.warning_code == 0) {
-            ctx.warning_code = 100;  // SWMM_WARN_UNKNOWN_SECTION
+            ctx.warning_code = 100; // SWMM_WARN_UNKNOWN_SECTION
         }
     }
 }

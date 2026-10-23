@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_reaction_ard_binding.cpp
- * @brief E4/R6 gates: reaction binding for the Eulerian ARD engine + MSX
+ * @file      test_reaction_ard_binding.cpp
+ * @brief     E4/R6 gates: reaction binding for the Eulerian ARD engine + MSX
  *        species transport on the mesh
  *        (plans/transport/EULERIAN_ARD_TRANSPORT_PLAN.md §6 E4;
  *        MULTISPECIES_REACTIONS_MSX_PLAN.md §5 R6).
@@ -65,9 +65,9 @@
  *            pollutant rows to each other, gate 2's front is a one-sided
  *            inequality — and one was there.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -84,29 +84,50 @@
 
 namespace {
 
+/**
+ * @brief Borrow the concrete engine behind an opaque test handle.
+ *
+ * This exact helper performs only an unchecked static_cast and dereference. It does not validate
+ * lifecycle, retain the handle or transfer ownership; fixture code may use the reference to inspect
+ * or seed internal state.
+ *
+ * @param[in] engine Live non-null new-engine handle whose concrete allocation is SWMMEngine; caller
+ *     keeps ownership.
+ * @return Mutable engine reference that remains valid until handle destruction or replacement.
+ */
 openswmm::SWMMEngine& as_cpp_engine(SWMM_Engine engine) {
     return *static_cast<openswmm::SWMMEngine*>(engine);
 }
 
-constexpr double kC0     = 10.0;  ///< TSS Cinit
-constexpr double kMsx0   = 8.0;   ///< MSX GLOBAL initial value
-constexpr double kKdecay = 0.03;  ///< 1/s — k·t = 3.6 over the 2-min horizon
+constexpr double kC0 = 10.0;     ///< TSS Cinit
+constexpr double kMsx0 = 8.0;    ///< MSX GLOBAL initial value
+constexpr double kKdecay = 0.03; ///< 1/s — k·t = 3.6 over the 2-min horizon
 
-/// The E3 chain deck (validator-fixed WET junctions — initQuality seeds
-/// Cinit only into wet elements; roadmap lesson 9), with knobs this suite
-/// needs: kdecay, [POLLUTANTS] on/off (MSX-only models), and `stagnant`.
-///
-/// `stagnant` is not merely "no inflow": a sloped chain DRAINS, and a
-/// draining system contaminates the kinetics gates — node stores receive
-/// PIPE-decayed inflow from upstream cells, so a store no longer tracks its
-/// own tank exponential. The stagnant variant is a LEVEL POOL in exact
-/// hydrostatic equilibrium (flat inverts, FIXED outfall stage at the water
-/// surface): zero flow, zero exchange, every element isolated — the
-/// published concentration isolates the local reaction law.
+/**
+ * @brief Write the ARD reaction-binding level-pool or flowing chain fixture.
+ *
+ * Uses five 500 ft conduits, five-second routing and EULERIAN_ARD. Material/range errors are left
+ * to later engine parsing. Uses a local ofstream and requires existing parent directories.
+ * Open/write/close failures are unchecked; owned input strings are not retained and raw
+ * tokens/config paths are not escaped. Optional sidecar files are also overwritten when described.
+ *
+ * @param[in] path Borrowed destination filename; character pointers must be non-null.
+ *     Opens/truncates this file for the generated deck.
+ * @param[in] pc_lines Raw PROCESS_COMPONENTS rows, emitted as a section only when nonempty; copied
+ *     without escaping or validation.
+ * @param[in] extra_options Raw extra OPTIONS rows inserted verbatim; caller supplies valid line
+ *     boundaries.
+ * @param[in] kdecay First-order pollutant decay in 1/s, multiplied by 86400 for input.
+ * @param[in] stagnant True makes a flat equilibrium pool with no external inflow; false makes a
+ *     sloping chain with 5 cfs supply.
+ * @param[in] pollutants Include a TSS MG/L definition when true; false permits no-pollutant
+ *     configuration tests.
+ * @param[in] end_time Non-null HH:MM:SS end-time token on the fixed start date.
+ * @param[in] cinit Initial TSS concentration in mg/L when pollutants are emitted.
+ */
 void write_deck(const char* path, const std::string& pc_lines,
-                const std::string& extra_options = "", double kdecay = 0.0,
-                bool stagnant = false, bool pollutants = true,
-                const char* end_time = "01:00:00", double cinit = kC0) {
+                const std::string& extra_options = "", double kdecay = 0.0, bool stagnant = false,
+                bool pollutants = true, const char* end_time = "01:00:00", double cinit = kC0) {
     std::ofstream f(path);
     f << "[TITLE]\nE4/R6 ARD reaction binding gate deck\n\n[OPTIONS]\n"
       << "FLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\n"
@@ -116,13 +137,13 @@ void write_deck(const char* path, const std::string& pc_lines,
       << "ROUTING_STEP 5\nREPORT_STEP 00:01:00\n"
       << extra_options << "\n";
     if (stagnant) {
-        f << "[JUNCTIONS]\n"               // level pool: flat, equilibrium
+        f << "[JUNCTIONS]\n" // level pool: flat, equilibrium
           << "J0 10.0 10 1.5 0 0\nJ1 10.0 10 1.5 0 0\n"
           << "J2 10.0 10 1.5 0 0\nJ3 10.0 10 1.5 0 0\n"
           << "J4 10.0 10 1.5 0 0\n\n"
           << "[OUTFALLS]\nOUT 10.0 FIXED 11.5 NO\n\n";
     } else {
-        f << "[JUNCTIONS]\n"               // Name Elev MaxDepth InitDepth …
+        f << "[JUNCTIONS]\n" // Name Elev MaxDepth InitDepth …
           << "J0 10.0 10 1.5 0 0\n"
           << "J1 9.4  10 1.5 0 0\n"
           << "J2 8.8  10 1.5 0 0\n"
@@ -146,43 +167,79 @@ void write_deck(const char* path, const std::string& pc_lines,
         f << "[POLLUTANTS]\n"
           << ";;Name Units Crain Cgw Crdii Kdecay SnowOnly CoPollut CoFrac "
              "Cdwf Cinit\n"
-          << "TSS    MG/L  0     0   0     " << (kdecay * 86400.0)  // 1/day column (KD1)
+          << "TSS    MG/L  0     0   0     " << (kdecay * 86400.0) // 1/day column (KD1)
           << "      NO       *        0      0    " << cinit << "\n\n";
     if (!pc_lines.empty())
         f << "[PROCESS_COMPONENTS]\n" << pc_lines << "\n\n";
     f << "[REPORT]\nINPUT NO\n";
 }
 
+/**
+ * @brief Overwrite a caller-named reaction sidecar with raw config text.
+ *
+ * Uses a local truncating ofstream and does not inspect open/write/close success. Does not
+ * parse/validate the config or retain caller storage.
+ *
+ * @param[in] path Non-null destination filename; parent directory must exist.
+ * @param[in] body Borrowed config text written verbatim, without appending a newline.
+ */
 void write_rxn(const char* path, const std::string& body) {
     std::ofstream c(path);
     c << body;
 }
 
+/**
+ * @brief Build one reactions process-component row for a sidecar path.
+ *
+ * The caller supplies a path safe for the input quoting grammar and handles config creation
+ * separately.
+ *
+ * @param[in] rxn Non-null filename copied inside double quotes, without escaping.
+ * @return Owned org.hydrocouple.openswmm.reactions config row, with no terminating newline.
+ */
 std::string pc_line(const char* rxn) {
-    return std::string("org.hydrocouple.openswmm.reactions config=\"") + rxn +
-           "\"";
+    return std::string("org.hydrocouple.openswmm.reactions config=\"") + rxn + "\"";
 }
 
 /// Per-step trajectories over a full run: pollutant link conc (np-strided),
 /// MSX link/node conc (nm-strided R4 arrays). ASSERT lifecycle failures at
 /// the call site via the returned flag (R4 EXPECT-on-open lesson).
 struct RunRecord {
-    std::vector<std::vector<double>> tss_link;   ///< [link][step]
-    std::vector<std::vector<double>> msx_link;   ///< [link*nm + m][step]
-    std::vector<std::vector<double>> msx_node;   ///< [node*nm + m][step]
+    std::vector<std::vector<double>> tss_link; ///< [link][step]
+    std::vector<std::vector<double>> msx_link; ///< [link*nm + m][step]
+    std::vector<std::vector<double>> msx_node; ///< [node*nm + m][step]
     std::vector<std::string> warnings;
     bool ok = false;
 };
 
-RunRecord run_recording(const char* inp, const char* rpt, const char* out,
-                        int nm) {
+/**
+ * @brief Run an ARD reaction fixture while copying pollutant/MSX samples after each step.
+ *
+ * Allocates a temporary engine and records nonfatal test failures for rejected
+ * allocation/open/init/start/step. Stores first-pollutant link concentrations where present and nm
+ * MSX values per link/node, substituting -1 for out-of-range MSX entries; samples include the final
+ * completion call. Uses a 20000-step guard, ignores end status, copies warnings, then destroys the
+ * handle. Native species units are retained; outputs own all copied vectors.
+ *
+ * @param[in] inp Non-null input deck filename, borrowed during the call.
+ * @param[in] rpt Report destination passed to engine open; may overwrite matching output.
+ * @param[in] out Binary-result destination passed to engine open; start requests saved results.
+ * @param[in] nm Nonnegative expected MSX species count, used as the caller layout stride; must
+ *     match the intended model species ordering.
+ * @return Owned sample/warning record with ok true after accepted setup/steps; guard exhaustion or
+ *     end failure is not reflected in ok.
+ */
+RunRecord run_recording(const char* inp, const char* rpt, const char* out, int nm) {
     RunRecord rec;
     SWMM_Engine e = swmm_engine_create();
-    if (e == nullptr) { ADD_FAILURE() << "engine create"; return rec; }
+    if (e == nullptr) {
+        ADD_FAILURE() << "engine create";
+        return rec;
+    }
     bool ok = swmm_engine_open(e, inp, rpt, out, nullptr) == SWMM_OK;
-    if (!ok) ADD_FAILURE() << "open failed for " << inp;
-    if (ok && (swmm_engine_initialize(e) != SWMM_OK ||
-               swmm_engine_start(e, 1) != SWMM_OK)) {
+    if (!ok)
+        ADD_FAILURE() << "open failed for " << inp;
+    if (ok && (swmm_engine_initialize(e) != SWMM_OK || swmm_engine_start(e, 1) != SWMM_OK)) {
         ADD_FAILURE() << "init/start failed for " << inp;
         ok = false;
     }
@@ -207,9 +264,8 @@ RunRecord run_recording(const char* inp, const char* rpt, const char* out,
                     rec.tss_link[static_cast<std::size_t>(l)].push_back(
                         ctx.links.conc[static_cast<std::size_t>(l * np)]);
                 for (int m = 0; m < nm; ++m) {
-                    const auto idx =
-                        static_cast<std::size_t>(l) * static_cast<std::size_t>(nm) +
-                        static_cast<std::size_t>(m);
+                    const auto idx = static_cast<std::size_t>(l) * static_cast<std::size_t>(nm) +
+                                     static_cast<std::size_t>(m);
                     rec.msx_link[static_cast<std::size_t>(l * nm + m)].push_back(
                         (idx < ctx.reactions.msx_link_conc.size())
                             ? ctx.reactions.msx_link_conc[idx]
@@ -218,16 +274,16 @@ RunRecord run_recording(const char* inp, const char* rpt, const char* out,
             }
             for (int n2 = 0; n2 < nn; ++n2)
                 for (int m = 0; m < nm; ++m) {
-                    const auto idx =
-                        static_cast<std::size_t>(n2) * static_cast<std::size_t>(nm) +
-                        static_cast<std::size_t>(m);
+                    const auto idx = static_cast<std::size_t>(n2) * static_cast<std::size_t>(nm) +
+                                     static_cast<std::size_t>(m);
                     rec.msx_node[static_cast<std::size_t>(n2 * nm + m)].push_back(
                         (idx < ctx.reactions.msx_node_conc.size())
                             ? ctx.reactions.msx_node_conc[idx]
                             : -1.0);
                 }
         } while (elapsed > 0.0 && ++guard < 20000);
-        if (ok) swmm_engine_end(e);
+        if (ok)
+            swmm_engine_end(e);
         rec.warnings = ctx.warnings;
     }
     swmm_engine_destroy(e);
@@ -235,9 +291,17 @@ RunRecord run_recording(const char* inp, const char* rpt, const char* out,
     return rec;
 }
 
+/**
+ * @brief Search captured warning strings for a case-sensitive fragment.
+ *
+ * @param[in] ws Borrowed warning vector, unchanged.
+ * @param[in] needle Borrowed substring; empty matches any existing warning.
+ * @return True on any match, false when absent or empty.
+ */
 bool warned(const std::vector<std::string>& ws, const std::string& needle) {
     for (const auto& w : ws)
-        if (w.find(needle) != std::string::npos) return true;
+        if (w.find(needle) != std::string::npos)
+            return true;
     return false;
 }
 
@@ -256,13 +320,12 @@ TEST(ReactionArdBindingTest, ArdKdecayIsExactExponentialAndWarningRetired) {
     ASSERT_TRUE(rec.ok);
     ASSERT_FALSE(rec.tss_link[kC3].empty());
 
-    const double t      = 120.0;
-    const double exact  = kC0 * std::exp(-kKdecay * t);
-    const double linear = kC0 * std::pow(1.0 - kKdecay * 5.0, 24);  // 35% below
-    const double c      = rec.tss_link[kC3].back();
+    const double t = 120.0;
+    const double exact = kC0 * std::exp(-kKdecay * t);
+    const double linear = kC0 * std::pow(1.0 - kKdecay * 5.0, 24); // 35% below
+    const double c = rec.tss_link[kC3].back();
 
-    EXPECT_NEAR(c, exact, 0.02 * exact)
-        << "ARD kdecay does not track the exact exponential";
+    EXPECT_NEAR(c, exact, 0.02 * exact) << "ARD kdecay does not track the exact exponential";
     EXPECT_GT(c, linear * 1.15)
         << "concentration matches the legacy linearized product — the exact-"
            "exponential stage is not running (or double decay is)";
@@ -274,12 +337,11 @@ TEST(ReactionArdBindingTest, ArdKdecayIsExactExponentialAndWarningRetired) {
 // Gate 2 — THE R6 razor: MSX species are transported on the mesh.
 // ---------------------------------------------------------------------------
 TEST(ReactionArdBindingTest, MsxDilutionFrontProvesTransport) {
-    write_rxn("_e4_tr.rxn",
-              "[REACTION_OPTIONS]\nRATE_UNITS SEC\n"
-              "[REACTION_SPECIES]\nBULK X MG\n"
-              "[REACTION_PIPES]\nRATE X 0\n"
-              "[REACTION_TANKS]\nRATE X 0\n"
-              "[REACTION_QUALITY]\nGLOBAL X 8\n");
+    write_rxn("_e4_tr.rxn", "[REACTION_OPTIONS]\nRATE_UNITS SEC\n"
+                            "[REACTION_SPECIES]\nBULK X MG\n"
+                            "[REACTION_PIPES]\nRATE X 0\n"
+                            "[REACTION_TANKS]\nRATE X 0\n"
+                            "[REACTION_QUALITY]\nGLOBAL X 8\n");
     write_deck("_e4_tr.inp", pc_line("_e4_tr.rxn"));
     const auto rec = run_recording("_e4_tr.inp", "_e4_tr.rpt", "_e4_tr.out", 1);
     ASSERT_TRUE(rec.ok);
@@ -316,12 +378,11 @@ TEST(ReactionArdBindingTest, MsxScopedKineticsUnderArd) {
     // scopes separate hard: links → 8·exp(−0.002·120) = 6.293, stores →
     // 8·exp(−0.008·120) = 3.062. In a DRAINING system this gate would be
     // unfair — stores receive pipe-decayed inflow — hence the level pool.
-    write_rxn("_e4_sc.rxn",
-              "[REACTION_OPTIONS]\nRATE_UNITS SEC\n"
-              "[REACTION_SPECIES]\nBULK Y MG\n"
-              "[REACTION_PIPES]\nRATE Y -0.002 * Y\n"
-              "[REACTION_TANKS]\nRATE Y -0.008 * Y\n"
-              "[REACTION_QUALITY]\nGLOBAL Y 8\n");
+    write_rxn("_e4_sc.rxn", "[REACTION_OPTIONS]\nRATE_UNITS SEC\n"
+                            "[REACTION_SPECIES]\nBULK Y MG\n"
+                            "[REACTION_PIPES]\nRATE Y -0.002 * Y\n"
+                            "[REACTION_TANKS]\nRATE Y -0.008 * Y\n"
+                            "[REACTION_QUALITY]\nGLOBAL Y 8\n");
     write_deck("_e4_sc.inp", pc_line("_e4_sc.rxn"), "", 0.0, /*stagnant=*/true,
                /*pollutants=*/true, "00:02:00");
     const auto rec = run_recording("_e4_sc.inp", "_e4_sc.rpt", "_e4_sc.out", 1);
@@ -340,15 +401,14 @@ TEST(ReactionArdBindingTest, MsxScopedKineticsUnderArd) {
 // Gate 4 — pollutants readable per cell (PUSH_POLLUT on the ARD path).
 // ---------------------------------------------------------------------------
 TEST(ReactionArdBindingTest, MsxFormulaReadsPollutantPerCell) {
-    write_rxn("_e4_fm.rxn",
-              "[REACTION_OPTIONS]\nRATE_UNITS SEC\n"
-              "[REACTION_SPECIES]\nBULK Z MG\n"
-              "[REACTION_PIPES]\nFORMULA Z 3 * TSS\n"
-              "[REACTION_TANKS]\nFORMULA Z 3 * TSS\n");
+    write_rxn("_e4_fm.rxn", "[REACTION_OPTIONS]\nRATE_UNITS SEC\n"
+                            "[REACTION_SPECIES]\nBULK Z MG\n"
+                            "[REACTION_PIPES]\nFORMULA Z 3 * TSS\n"
+                            "[REACTION_TANKS]\nFORMULA Z 3 * TSS\n");
     write_deck("_e4_fm.inp", pc_line("_e4_fm.rxn"), "", kKdecay);
     const auto rec = run_recording("_e4_fm.inp", "_e4_fm.rpt", "_e4_fm.out", 1);
     ASSERT_TRUE(rec.ok);
-    const auto& z   = rec.msx_link[kC3];
+    const auto& z = rec.msx_link[kC3];
     const auto& tss = rec.tss_link[kC3];
     ASSERT_EQ(z.size(), tss.size());
     ASSERT_FALSE(z.empty());
@@ -357,8 +417,7 @@ TEST(ReactionArdBindingTest, MsxFormulaReadsPollutantPerCell) {
     // both decaying and advecting under it.
     for (std::size_t t = 0; t < z.size(); ++t)
         EXPECT_NEAR(z[t], 3.0 * tss[t], 1.0e-6 * std::max(1.0, 3.0 * tss[t]))
-            << "step " << t
-            << ": FORMULA does not see the cell's pollutant block";
+            << "step " << t << ": FORMULA does not see the cell's pollutant block";
 }
 
 // ---------------------------------------------------------------------------
@@ -366,16 +425,14 @@ TEST(ReactionArdBindingTest, MsxFormulaReadsPollutantPerCell) {
 // ---------------------------------------------------------------------------
 TEST(ReactionArdBindingTest, MsxPresenceLeavesPollutantsBitwise) {
     write_deck("_e4_st_base.inp", "");
-    write_rxn("_e4_st.rxn",
-              "[REACTION_OPTIONS]\nRATE_UNITS SEC\n"
-              "[REACTION_SPECIES]\nBULK X MG\nBULK W MG\n"
-              "[REACTION_PIPES]\nRATE X 0\nRATE W 0\n"
-              "[REACTION_TANKS]\nRATE X 0\nRATE W 0\n"
-              "[REACTION_QUALITY]\nGLOBAL X 8\nGLOBAL W 2\n");
+    write_rxn("_e4_st.rxn", "[REACTION_OPTIONS]\nRATE_UNITS SEC\n"
+                            "[REACTION_SPECIES]\nBULK X MG\nBULK W MG\n"
+                            "[REACTION_PIPES]\nRATE X 0\nRATE W 0\n"
+                            "[REACTION_TANKS]\nRATE X 0\nRATE W 0\n"
+                            "[REACTION_QUALITY]\nGLOBAL X 8\nGLOBAL W 2\n");
     write_deck("_e4_st.inp", pc_line("_e4_st.rxn"));
-    const auto base = run_recording("_e4_st_base.inp", "_e4_st_base.rpt",
-                                    "_e4_st_base.out", 0);
-    const auto msx  = run_recording("_e4_st.inp", "_e4_st.rpt", "_e4_st.out", 2);
+    const auto base = run_recording("_e4_st_base.inp", "_e4_st_base.rpt", "_e4_st_base.out", 0);
+    const auto msx = run_recording("_e4_st.inp", "_e4_st.rpt", "_e4_st.out", 2);
     ASSERT_TRUE(base.ok);
     ASSERT_TRUE(msx.ok);
     for (int l = 0; l < 5; ++l) {
@@ -383,11 +440,10 @@ TEST(ReactionArdBindingTest, MsxPresenceLeavesPollutantsBitwise) {
         const auto& b = msx.tss_link[static_cast<std::size_t>(l)];
         ASSERT_EQ(a.size(), b.size()) << "link " << l;
         for (std::size_t t = 0; t < a.size(); ++t)
-            ASSERT_EQ(a[t], b[t])
-                << "link " << l << " step " << t
-                << ": adding inert MSX species changed a POLLUTANT "
-                   "trajectory — an np/ns_total stride slipped somewhere "
-                   "(loads, init, donor, or publish).";
+            ASSERT_EQ(a[t], b[t]) << "link " << l << " step " << t
+                                  << ": adding inert MSX species changed a POLLUTANT "
+                                     "trajectory — an np/ns_total stride slipped somewhere "
+                                     "(loads, init, donor, or publish).";
     }
 }
 
@@ -395,12 +451,11 @@ TEST(ReactionArdBindingTest, MsxPresenceLeavesPollutantsBitwise) {
 // Gate 6 — MSX-only model (np = 0) runs under ARD end to end.
 // ---------------------------------------------------------------------------
 TEST(ReactionArdBindingTest, MsxOnlyModelRunsUnderArd) {
-    write_rxn("_e4_mo.rxn",
-              "[REACTION_OPTIONS]\nRATE_UNITS SEC\n"
-              "[REACTION_SPECIES]\nBULK X MG\n"
-              "[REACTION_PIPES]\nRATE X 0\n"
-              "[REACTION_TANKS]\nRATE X 0\n"
-              "[REACTION_QUALITY]\nGLOBAL X 8\n");
+    write_rxn("_e4_mo.rxn", "[REACTION_OPTIONS]\nRATE_UNITS SEC\n"
+                            "[REACTION_SPECIES]\nBULK X MG\n"
+                            "[REACTION_PIPES]\nRATE X 0\n"
+                            "[REACTION_TANKS]\nRATE X 0\n"
+                            "[REACTION_QUALITY]\nGLOBAL X 8\n");
     write_deck("_e4_mo.inp", pc_line("_e4_mo.rxn"), "", 0.0,
                /*stagnant=*/false, /*pollutants=*/false);
     const auto rec = run_recording("_e4_mo.inp", "_e4_mo.rpt", "_e4_mo.out", 1);
@@ -413,19 +468,17 @@ TEST(ReactionArdBindingTest, MsxOnlyModelRunsUnderArd) {
     // it (max principle), and end diluted.
     EXPECT_LE(c5.front(), kMsx0 * (1.0 + 1.0e-6));
     EXPECT_GT(c5.front(), 0.5 * kMsx0) << "MSX row was not seeded at all";
-    EXPECT_LT(c5.back(), 0.9 * kMsx0)
-        << "MSX-only model did not transport under ARD (np = 0 path)";
+    EXPECT_LT(c5.back(), 0.9 * kMsx0) << "MSX-only model did not transport under ARD (np = 0 path)";
 }
 
 // ---------------------------------------------------------------------------
 // Gate 7 — WALL species fall back to LEGACY with a precise warning.
 // ---------------------------------------------------------------------------
 TEST(ReactionArdBindingTest, WallSpeciesFallsBackToLegacy) {
-    write_rxn("_e4_wl.rxn",
-              "[REACTION_OPTIONS]\nRATE_UNITS SEC\n"
-              "[REACTION_SPECIES]\nBULK X MG\nWALL W MG\n"
-              "[REACTION_TANKS]\nRATE X 0\n"
-              "[REACTION_QUALITY]\nGLOBAL X 8\n");
+    write_rxn("_e4_wl.rxn", "[REACTION_OPTIONS]\nRATE_UNITS SEC\n"
+                            "[REACTION_SPECIES]\nBULK X MG\nWALL W MG\n"
+                            "[REACTION_TANKS]\nRATE X 0\n"
+                            "[REACTION_QUALITY]\nGLOBAL X 8\n");
     write_deck("_e4_wl.inp", pc_line("_e4_wl.rxn"));
     const auto rec = run_recording("_e4_wl.inp", "_e4_wl.rpt", "_e4_wl.out", 0);
     ASSERT_TRUE(rec.ok);
@@ -446,12 +499,11 @@ TEST(ReactionArdBindingTest, FailureContainmentNamesArdElement) {
     // on Y' = -1e6*Y hits the substep cap and returns the actionable
     // message. The run must COMPLETE, warn once naming the ARD element, and
     // leave finite state.
-    write_rxn("_e4_fc.rxn",
-              "[REACTION_OPTIONS]\nRATE_UNITS SEC\n"
-              "[REACTION_SPECIES]\nBULK Y MG\n"
-              "[REACTION_PIPES]\nRATE Y -1000000.0 * Y\n"
-              "[REACTION_TANKS]\nRATE Y -1000000.0 * Y\n"
-              "[REACTION_QUALITY]\nGLOBAL Y 8\n");
+    write_rxn("_e4_fc.rxn", "[REACTION_OPTIONS]\nRATE_UNITS SEC\n"
+                            "[REACTION_SPECIES]\nBULK Y MG\n"
+                            "[REACTION_PIPES]\nRATE Y -1000000.0 * Y\n"
+                            "[REACTION_TANKS]\nRATE Y -1000000.0 * Y\n"
+                            "[REACTION_QUALITY]\nGLOBAL Y 8\n");
     write_deck("_e4_fc.inp", pc_line("_e4_fc.rxn"), "", 0.0,
                /*stagnant=*/false, /*pollutants=*/true, "00:02:00");
     const auto rec = run_recording("_e4_fc.inp", "_e4_fc.rpt", "_e4_fc.out", 1);
@@ -465,8 +517,7 @@ TEST(ReactionArdBindingTest, FailureContainmentNamesArdElement) {
         << "integration failure in a conduit cell was silent";
     for (const auto& row : rec.msx_link)
         for (const double v : row)
-            EXPECT_TRUE(std::isfinite(v))
-                << "containment leaked non-finite state into the mesh";
+            EXPECT_TRUE(std::isfinite(v)) << "containment leaked non-finite state into the mesh";
 }
 
 // ---------------------------------------------------------------------------
@@ -492,10 +543,9 @@ TEST(ReactionArdBindingTest, InertMsxRowMatchesInertPollutantRow) {
     // Cinit == GLOBAL == 8 so the two initial FIELDS coincide, both inert,
     // every element wet. Equality, not proportionality — no scaling to argue
     // about.
-    write_rxn("_e4_cg.rxn",
-              "[REACTION_OPTIONS]\nRATE_UNITS SEC\n"
-              "[REACTION_SPECIES]\nBULK X MG\n"
-              "[REACTION_QUALITY]\nGLOBAL X 8\n");
+    write_rxn("_e4_cg.rxn", "[REACTION_OPTIONS]\nRATE_UNITS SEC\n"
+                            "[REACTION_SPECIES]\nBULK X MG\n"
+                            "[REACTION_QUALITY]\nGLOBAL X 8\n");
     write_deck("_e4_cg.inp", pc_line("_e4_cg.rxn"), "", /*kdecay=*/0.0,
                /*stagnant=*/false, /*pollutants=*/true, "00:30:00",
                /*cinit=*/kMsx0);
@@ -512,17 +562,20 @@ TEST(ReactionArdBindingTest, InertMsxRowMatchesInertPollutantRow) {
         ASSERT_FALSE(t.empty());
         for (std::size_t k = 0; k < t.size(); ++k) {
             const double d = std::fabs(t[k] - x[k]);
-            if (d > worst) { worst = d; worst_link = l; worst_step = k; }
+            if (d > worst) {
+                worst = d;
+                worst_link = l;
+                worst_step = k;
+            }
         }
     }
     // The deck's Cinit is 8 mg/L, so 1e-9 is ~1e-10 relative — round-off
     // room and nothing more.
-    EXPECT_LT(worst, 1.0e-9)
-        << "an inert MSX row diverged from an identically seeded inert "
-           "pollutant row by " << worst << " at link C" << (worst_link + 1)
-        << " step " << worst_step
-        << " — the MSX row's transport, store bookkeeping or publish differs "
-           "from the pollutant path.";
+    EXPECT_LT(worst, 1.0e-9) << "an inert MSX row diverged from an identically seeded inert "
+                                "pollutant row by "
+                             << worst << " at link C" << (worst_link + 1) << " step " << worst_step
+                             << " — the MSX row's transport, store bookkeeping or publish differs "
+                                "from the pollutant path.";
 }
 
-}  // namespace
+} // namespace

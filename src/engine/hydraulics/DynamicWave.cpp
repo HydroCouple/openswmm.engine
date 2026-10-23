@@ -16,8 +16,8 @@
 // limitations under the License.
 
 /**
- * @file DynamicWave.cpp
- * @brief Dynamic wave routing -- batch-oriented St. Venant equations.
+ * @file      DynamicWave.cpp
+ * @brief     Dynamic wave routing -- batch-oriented St. Venant equations.
  *
  * @details The solver follows this pattern per Picard iteration:
  *
@@ -49,9 +49,9 @@
  * @note Legacy reference: src/legacy/engine/dwflow.c, dynwave.c
  * @ingroup new_engine
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "DynamicWave.hpp"
@@ -63,8 +63,8 @@
 #include "Link.hpp"
 #include "ForceMain.hpp"
 #include "Culvert.hpp"
-#include "AquiferLinkExchange.hpp"   // G-X4
-#include "../2d/coupling/PondModel.hpp"   // coupled-junction pond area
+#include "AquiferLinkExchange.hpp"      // G-X4
+#include "../2d/coupling/PondModel.hpp" // coupled-junction pond area
 #include "../core/Constants.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
@@ -81,9 +81,33 @@
 #if defined(SWMM_USE_OPENMP)
 #include <omp.h>
 #else
-static inline int omp_get_max_threads() { return 1; }
-static inline int omp_get_num_threads() { return 1; }
-static inline int omp_get_thread_num()  { return 0; }
+/**
+ * @brief Provide the serial fallback for an unavailable OpenMP runtime query.
+ *
+ * Compiled only without SWMM_USE_OPENMP; no runtime/environment state is queried.
+ * @return One, the serial maximum team size.
+ */
+static inline int omp_get_max_threads() {
+    return 1;
+}
+/**
+ * @brief Provide the serial fallback for an unavailable OpenMP runtime query.
+ *
+ * Compiled only without SWMM_USE_OPENMP; no runtime/environment state is queried.
+ * @return One, the serial active team size.
+ */
+static inline int omp_get_num_threads() {
+    return 1;
+}
+/**
+ * @brief Provide the serial fallback for an unavailable OpenMP runtime query.
+ *
+ * Compiled only without SWMM_USE_OPENMP; no runtime/environment state is queried.
+ * @return Zero, the sole serial worker index.
+ */
+static inline int omp_get_thread_num() {
+    return 0;
+}
 #endif
 
 // Darwin/Apple-Silicon scheduling helper (see execute): pthread QoS to keep
@@ -120,23 +144,25 @@ double DWSolver::getCrownCutoff() const {
 }
 
 /**
- * @brief Legacy xsect_isOpen(): a shape is open iff its Amax entry is 1.0
- * (xsect.c:59-85, 215) — DUMMY, RECT_OPEN, TRAPEZOIDAL, TRIANGULAR,
- * PARABOLIC, POWERFUNC, IRREGULAR and STREET. Every other shape has a crown.
+ * @brief Identify legacy open-profile shape codes for dynamic-wave crown treatment.
+ *
+ * @param[in] shape Storage XsectShape code, not the kernel XSectShape numeric space.
+ * @return True for DUMMY, RECT_OPEN, TRAPEZOIDAL, TRIANGULAR, PARABOLIC, POWER, IRREGULAR and
+ *     STREET_XSECT; false otherwise.
  */
 static bool isOpenShape(XsectShape shape) {
     switch (shape) {
-        case XsectShape::DUMMY:
-        case XsectShape::RECT_OPEN:
-        case XsectShape::TRAPEZOIDAL:
-        case XsectShape::TRIANGULAR:
-        case XsectShape::PARABOLIC:
-        case XsectShape::POWER:
-        case XsectShape::IRREGULAR:
-        case XsectShape::STREET_XSECT:
-            return true;
-        default:
-            return false;
+    case XsectShape::DUMMY:
+    case XsectShape::RECT_OPEN:
+    case XsectShape::TRAPEZOIDAL:
+    case XsectShape::TRIANGULAR:
+    case XsectShape::PARABOLIC:
+    case XsectShape::POWER:
+    case XsectShape::IRREGULAR:
+    case XsectShape::STREET_XSECT:
+        return true;
+    default:
+        return false;
     }
 }
 
@@ -153,38 +179,28 @@ static bool isOpenShape(XsectShape shape) {
  * DYNAMIC_SLOT and TPA are v6 extensions with their own geometry; they take
  * legacy's "not SLOT" branch here (0).
  */
-double DWSolver::getSlotWidth(double y, double y_full, double w_max,
-                              XsectShape shape) const {
-    if (surcharge_method != SurchargeMethod::SLOT) return 0.0;
-    if (y_full <= 0.0 || isOpenShape(shape)) return 0.0;
+double DWSolver::getSlotWidth(double y, double y_full, double w_max, XsectShape shape) const {
+    if (surcharge_method != SurchargeMethod::SLOT)
+        return 0.0;
+    if (y_full <= 0.0 || isOpenShape(shape))
+        return 0.0;
     const double yNorm = y / y_full;
-    if (yNorm < SLOT_CROWN_CUTOFF) return 0.0;
-    if (yNorm > 1.78) return 0.01 * w_max;
+    if (yNorm < SLOT_CROWN_CUTOFF)
+        return 0.0;
+    if (yNorm > 1.78)
+        return 0.01 * w_max;
     return w_max * 0.5423 * std::exp(-std::pow(yNorm, 2.4));
 }
 
 /**
- * @brief Strip the Preissmann slot from a flow area, leaving conveyance area.
+ * @brief Remove above-crown numerical slot storage from a momentum area.
  *
- * @details The slot is a fictitious gap above the crown that supplies a finite
- * free-surface top width so the Saint-Venant system stays hyperbolic once a
- * conduit pressurizes. It stores water but conveys none, so the momentum
- * equation — velocity, friction, inertial terms, local losses — must use the
- * closed-section area. This mirrors the hydraulic-radius clamp to `r_full`
- * applied in STEP E and in `applyDPSGeometry()`, which excludes the slot from
- * the wetted perimeter on exactly the same reasoning.
+ * Continuity and link volume keep slot-inclusive area. Velocity/friction/inertial/local-loss terms
+ * use this capped conveyance area. No mutation or ownership.
  *
- * Node continuity (`surf_area1/2_`, `width_mid_`) and link storage
- * (`links.volume`) deliberately keep the slot-inclusive area — that is where
- * the slot does its work, and where the water it holds is booked. Clamping
- * the volume too would delete water the node-depth solve already absorbed.
- * See issue #144 and plans/PREISSMANN_SLOT_VELOCITY_ISSUE_2026-08-22.md.
- *
- * Covers both surcharge methods: the static Sjoberg slot (STEP E) and DPS,
- * whose `applyDPSGeometry()` writes `area_mid_ = a_full + As`.
- *
- * Off the slot path this is the identity — an open shape or EXTRAN never
- * produces an area above `a_full`.
+ * @param[in] a Per-barrel flow/storage area in ft2.
+ * @param[in] a_full Per-barrel closed-section full area in ft2.
+ * @return min(a,a_full) for ordinary finite inputs; no positive/dry floor is applied.
  */
 static inline double conveyArea(double a, double a_full) {
     return (a > a_full) ? a_full : a;
@@ -212,15 +228,17 @@ void DWSolver::applyDPSGeometry(SimulationContext& ctx) {
         auto uj = static_cast<std::size_t>(j);
         auto uci = static_cast<std::size_t>(ci);
 
-        if (is_open_[uj]) continue;
+        if (is_open_[uj])
+            continue;
 
         const double yf = links.xsect_y_full[uj];
         const double af = links.xsect_a_full[uj];
         const double rf = links.xsect_r_full[uj];
-        if (yf <= 0.0 || af <= 0.0) continue;
+        if (yf <= 0.0 || af <= 0.0)
+            continue;
 
-        const double y1   = depth1_[uj];
-        const double y2   = depth2_[uj];
+        const double y1 = depth1_[uj];
+        const double y2 = depth2_[uj];
         const double yMid = depth_mid_[uj];
 
         // hs_iter is purely geometric — it is what the latest node-depth
@@ -234,14 +252,15 @@ void DWSolver::applyDPSGeometry(SimulationContext& ctx) {
 
         // Dynamic slot top width — Eq. 19 inverted: T_s = g·A_C·P²/c_pT².
         // T_s_target = g·A_C/c_pT² is cached at init so this is a single mul.
-        const double P  = dps_.P[uci];
+        const double P = dps_.P[uci];
         const double Ts = dps_.T_s_target[uci] * P * P;
 
         // Path-dependent accumulation: dAs uses the *current* T_s but past
         // contributions to As are not rewritten.  Eq. 14 is satisfied
         // incrementally, not by re-deriving As from current area_mid.
         double As_new = dps_.As[uci] + Ts * dhs;
-        if (As_new < 0.0) As_new = 0.0;
+        if (As_new < 0.0)
+            As_new = 0.0;
 
         const bool slot_active = (hs_iter > 0.0) || (As_new > 0.0);
 
@@ -263,8 +282,10 @@ void DWSolver::applyDPSGeometry(SimulationContext& ctx) {
         // unit length.  Used by the momentum solve and routing-step CFL.
         const double A_total = af + As_new;
         area_mid_[uj] = A_total;
-        if (y1 > yf) area1_[uj] = A_total;
-        if (y2 > yf) area2_[uj] = A_total;
+        if (y1 > yf)
+            area1_[uj] = A_total;
+        if (y2 > yf)
+            area2_[uj] = A_total;
 
         // Slot width drives node-continuity surface area.  The batch width
         // kernel clamps depth to y_full and returns ~0 at the crown for
@@ -275,9 +296,11 @@ void DWSolver::applyDPSGeometry(SimulationContext& ctx) {
         width_mid_[uj] = Ts;
 
         const double L = cached_length_[uj];
-        const double slot_surf_per_end = 0.25 * Ts * L;  // matches SUBCRITICAL: (w+w)·L/4
-        if (y1 > yf) surf_area1_[uj] = slot_surf_per_end;
-        if (y2 > yf) surf_area2_[uj] = slot_surf_per_end;
+        const double slot_surf_per_end = 0.25 * Ts * L; // matches SUBCRITICAL: (w+w)·L/4
+        if (y1 > yf)
+            surf_area1_[uj] = slot_surf_per_end;
+        if (y2 > yf)
+            surf_area2_[uj] = slot_surf_per_end;
 
         // Friction excludes slot — hydraulic radius stays at full-pipe value.
         hrad_mid_[uj] = rf;
@@ -298,15 +321,21 @@ void DWSolver::applyDPSGeometry(SimulationContext& ctx) {
 void DWSolver::updateTpaLatch(SimulationContext& ctx) {
     const auto& links = ctx.links;
     const auto& nodes = ctx.nodes;
-    constexpr double kCavHead = 30.0;   // ft, mirrors the FV closure
+    constexpr double kCavHead = 30.0; // ft, mirrors the FV closure
     for (int ci = 0; ci < n_conduits_; ++ci) {
         const auto uci = static_cast<std::size_t>(ci);
         const int j = conduit_idx_[uci];
         const auto uj = static_cast<std::size_t>(j);
         tpa_latch_changed_[uci] = 0;
-        if (is_open_[uj]) { tpa_latch_[uci] = 0; continue; }
+        if (is_open_[uj]) {
+            tpa_latch_[uci] = 0;
+            continue;
+        }
         const double yf = links.xsect_y_full[uj];
-        if (yf <= 0.0) { tpa_latch_[uci] = 0; continue; }
+        if (yf <= 0.0) {
+            tpa_latch_[uci] = 0;
+            continue;
+        }
         const double y1 = depth1_[uj];
         const double y2 = depth2_[uj];
         const uint8_t old = tpa_latch_[uci];
@@ -318,22 +347,20 @@ void DWSolver::updateTpaLatch(SimulationContext& ctx) {
         } else {
             const double yMid = depth_mid_[uj];
             if (yMid < yf - kCavHead) {
-                latched = 0;   // column separation
+                latched = 0; // column separation
             } else {
                 // Clear on atmosphere contact: a vented end whose level is
                 // below the crown AT THAT END.
                 auto vented_end = [&](int n, double y_end) -> bool {
-                    if (n < 0) return false;
+                    if (n < 0)
+                        return false;
                     const auto un2 = static_cast<std::size_t>(n);
                     const bool sealed =
-                        (un2 < nodes.is_virtual.size() &&
-                         nodes.is_virtual[un2] != 0) ||
-                        (un2 < nodes.sur_depth.size() &&
-                         nodes.sur_depth[un2] > 0.0);
+                        (un2 < nodes.is_virtual.size() && nodes.is_virtual[un2] != 0) ||
+                        (un2 < nodes.sur_depth.size() && nodes.sur_depth[un2] > 0.0);
                     return !sealed && y_end < yf;
                 };
-                if (vented_end(links.node1[uj], y1) ||
-                    vented_end(links.node2[uj], y2))
+                if (vented_end(links.node1[uj], y1) || vented_end(links.node2[uj], y2))
                     latched = 0;
             }
         }
@@ -355,30 +382,31 @@ void DWSolver::applyTpaGeometry(SimulationContext& ctx) {
         const auto uci = static_cast<std::size_t>(ci);
         const int j = conduit_idx_[uci];
         const auto uj = static_cast<std::size_t>(j);
-        if (is_open_[uj]) continue;
+        if (is_open_[uj])
+            continue;
         const double yf = links.xsect_y_full[uj];
         const double af = links.xsect_a_full[uj];
         const double rf = links.xsect_r_full[uj];
-        if (yf <= 0.0 || af <= 0.0) continue;
+        if (yf <= 0.0 || af <= 0.0)
+            continue;
         const double w = tpa_w_[uci];
-        if (w <= 0.0) continue;
+        if (w <= 0.0)
+            continue;
         const double yMid = depth_mid_[uj];
-        const bool engaged = (tpa_latch_[uci] != 0) ||
-                             (yMid >= SLOT_CROWN_CUTOFF * yf);
-        if (!engaged) continue;
+        const bool engaged = (tpa_latch_[uci] != 0) || (yMid >= SLOT_CROWN_CUTOFF * yf);
+        if (!engaged)
+            continue;
 
-        auto line_area = [&](double y) {
-            return std::max(af + w * (y - yf), 0.05 * af);
-        };
+        auto line_area = [&](double y) { return std::max(af + w * (y - yf), 0.05 * af); };
         area_mid_[uj] = line_area(yMid);
-        area1_[uj]    = line_area(depth1_[uj]);
-        area2_[uj]    = line_area(depth2_[uj]);
+        area1_[uj] = line_area(depth1_[uj]);
+        area2_[uj] = line_area(depth2_[uj]);
         width_mid_[uj] = w;
         const double L = cached_length_[uj];
-        const double slot_surf_per_end = 0.25 * w * L;  // (w+w)·L/4 convention
+        const double slot_surf_per_end = 0.25 * w * L; // (w+w)·L/4 convention
         surf_area1_[uj] = slot_surf_per_end;
         surf_area2_[uj] = slot_surf_per_end;
-        hrad_mid_[uj] = rf;   // slot/elastic area carries no wetted perimeter
+        hrad_mid_[uj] = rf; // slot/elastic area carries no wetted perimeter
     }
 }
 
@@ -396,7 +424,8 @@ void DWSolver::updateDPSState(SimulationContext& ctx, double dt) {
         auto uj = static_cast<std::size_t>(j);
         auto uci = static_cast<std::size_t>(ci);
 
-        if (is_open_[uj]) continue;
+        if (is_open_[uj])
+            continue;
 
         double yf = links.xsect_y_full[uj];
         bool was_surcharged = dps_.surcharged[uci] != 0;
@@ -410,8 +439,8 @@ void DWSolver::updateDPSState(SimulationContext& ctx, double dt) {
         // Eq. 22: P_hat(t - t_s) = (P_hat_0 - 1) * exp(-10*(t - t_s)/r) + 1
         if (now_surcharged) {
             double dt_surcharge = sim_time_ - dps_.t_s[uci];
-            dps_.P_hat[uci] = (dps_.P_hat_0[uci] - 1.0)
-                             * std::exp(-10.0 * dt_surcharge / dps_config_.r) + 1.0;
+            dps_.P_hat[uci] =
+                (dps_.P_hat_0[uci] - 1.0) * std::exp(-10.0 * dt_surcharge / dps_config_.r) + 1.0;
         } else {
             // Fully depressurized: reset to initial P (Eq. 23) and clear the
             // accumulated slot state so the next surcharge episode starts from
@@ -441,7 +470,7 @@ void DWSolver::spatialSmoothP(const SimulationContext& ctx) {
     // Step 1: Accumulate P_hat at nodes from connecting conduits
     auto un = static_cast<std::size_t>(n_nodes_);
     thread_local std::vector<double> node_P_sum;
-    thread_local std::vector<int>    node_P_count;
+    thread_local std::vector<int> node_P_count;
     node_P_sum.assign(un, 0.0);
     node_P_count.assign(un, 0);
 
@@ -450,7 +479,8 @@ void DWSolver::spatialSmoothP(const SimulationContext& ctx) {
         auto uj = static_cast<std::size_t>(j);
         auto uci = static_cast<std::size_t>(ci);
 
-        if (is_open_[uj]) continue;
+        if (is_open_[uj])
+            continue;
 
         int n1 = links.node1[uj];
         int n2 = links.node2[uj];
@@ -470,7 +500,8 @@ void DWSolver::spatialSmoothP(const SimulationContext& ctx) {
         auto uj = static_cast<std::size_t>(j);
         auto uci = static_cast<std::size_t>(ci);
 
-        if (is_open_[uj]) continue;
+        if (is_open_[uj])
+            continue;
 
         int n1 = links.node1[uj];
         int n2 = links.node2[uj];
@@ -478,15 +509,15 @@ void DWSolver::spatialSmoothP(const SimulationContext& ctx) {
         double P_face1 = dps_.P_hat[uci];
         double P_face2 = dps_.P_hat[uci];
         if (n1 >= 0 && n1 < n_nodes_ && node_P_count[static_cast<std::size_t>(n1)] > 0)
-            P_face1 = node_P_sum[static_cast<std::size_t>(n1)]
-                     / node_P_count[static_cast<std::size_t>(n1)];
+            P_face1 = node_P_sum[static_cast<std::size_t>(n1)] /
+                      node_P_count[static_cast<std::size_t>(n1)];
         if (n2 >= 0 && n2 < n_nodes_ && node_P_count[static_cast<std::size_t>(n2)] > 0)
-            P_face2 = node_P_sum[static_cast<std::size_t>(n2)]
-                     / node_P_count[static_cast<std::size_t>(n2)];
+            P_face2 = node_P_sum[static_cast<std::size_t>(n2)] /
+                      node_P_count[static_cast<std::size_t>(n2)];
 
         // Linear smoothing: average of upstream and downstream face values
         dps_.P[uci] = 0.5 * (P_face1 + P_face2);
-        dps_.P[uci] = std::max(dps_.P[uci], 1.0);  // P >= 1 always
+        dps_.P[uci] = std::max(dps_.P[uci], 1.0); // P >= 1 always
     }
 }
 
@@ -496,13 +527,21 @@ void DWSolver::spatialSmoothP(const SimulationContext& ctx) {
 
 // Defined below (with the per-element cross-section helpers); forward-declared
 // so init() can seed each conduit's initial area from its initial flow depth.
+/**
+ * @brief Declare the source-local link-to-section geometry adapter.
+ *
+ * @param[in] ctx Resolved context supplying native per-link coefficients and stable profile tables.
+ * @param[in] uk Valid global link index.
+ * @return Copied scalar geometry with borrowed transect/profile table pointers; their context
+ *     storage must outlive use.
+ */
 static XSectParams buildXSP(const SimulationContext& ctx, std::size_t uk);
 
 void DWSolver::init(int n_nodes, int n_links, const XSectGroups& groups,
                     const SimulationContext& ctx) {
     n_nodes_ = n_nodes;
     n_links_ = n_links;
-    groups_  = &groups;
+    groups_ = &groups;
 
     // Resolve the effective MIN_SURFAREA floor: user override (from
     // INP [OPTIONS] MIN_SURFAREA) if > 0, else the compiled default.
@@ -514,11 +553,11 @@ void DWSolver::init(int n_nodes, int n_links, const XSectGroups& groups,
     // this an SI model's 1.167 m² floor was used as 1.167 ft² (~10.8× too
     // small), driving large per-iteration depth swings and non-convergence.
     {
-        const double ucf_len = ucf::Ucf[ucf::LENGTH][
-            ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units))];
+        const double ucf_len =
+            ucf::Ucf[ucf::LENGTH][ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units))];
         min_surf_area_ = (ctx.options.min_surf_area > 0.0)
-            ? ctx.options.min_surf_area / (ucf_len * ucf_len)
-            : constants::MIN_SURFAREA;
+                             ? ctx.options.min_surf_area / (ucf_len * ucf_len)
+                             : constants::MIN_SURFAREA;
     }
 
     auto un = static_cast<std::size_t>(n_nodes);
@@ -540,16 +579,22 @@ void DWSolver::init(int n_nodes, int n_links, const XSectGroups& groups,
             const auto ujj = static_cast<std::size_t>(j);
             const bool is_cond = (ctx.links.type[ujj] == LinkType::CONDUIT);
             for (const int nd : {ctx.links.node1[ujj], ctx.links.node2[ujj]}) {
-                if (nd < 0 || nd >= n_nodes) continue;
+                if (nd < 0 || nd >= n_nodes)
+                    continue;
                 const auto und = static_cast<std::size_t>(nd);
-                if (!is_cond) { ++other[und]; continue; }
-                if (ccount[und] < 2) inc[und][ccount[und]] = j;
+                if (!is_cond) {
+                    ++other[und];
+                    continue;
+                }
+                if (ccount[und] < 2)
+                    inc[und][ccount[und]] = j;
                 ++ccount[und];
             }
         }
         for (int j = 0; j < n_links; ++j) {
             const auto ujj = static_cast<std::size_t>(j);
-            if (ctx.links.type[ujj] != LinkType::CONDUIT) continue;
+            if (ctx.links.type[ujj] != LinkType::CONDUIT)
+                continue;
             const int n1 = ctx.links.node1[ujj];
             const int n2 = ctx.links.node2[ujj];
             if (n1 >= 0 && n1 < n_nodes) {
@@ -558,9 +603,9 @@ void DWSolver::init(int n_nodes, int n_links, const XSectGroups& groups,
                     const int k = (inc[u1][0] == j) ? inc[u1][1] : inc[u1][0];
                     if (k >= 0) {
                         uf_nb_up_[ujj] = k;
-                        uf_sg_up_[ujj] =
-                            (ctx.links.node2[static_cast<std::size_t>(k)] == n1)
-                                ? int8_t{1} : int8_t{-1};
+                        uf_sg_up_[ujj] = (ctx.links.node2[static_cast<std::size_t>(k)] == n1)
+                                             ? int8_t{1}
+                                             : int8_t{-1};
                     }
                 }
             }
@@ -570,9 +615,9 @@ void DWSolver::init(int n_nodes, int n_links, const XSectGroups& groups,
                     const int k = (inc[u2][0] == j) ? inc[u2][1] : inc[u2][0];
                     if (k >= 0) {
                         uf_nb_dn_[ujj] = k;
-                        uf_sg_dn_[ujj] =
-                            (ctx.links.node1[static_cast<std::size_t>(k)] == n2)
-                                ? int8_t{1} : int8_t{-1};
+                        uf_sg_dn_[ujj] = (ctx.links.node1[static_cast<std::size_t>(k)] == n2)
+                                             ? int8_t{1}
+                                             : int8_t{-1};
                     }
                 }
             }
@@ -594,7 +639,7 @@ void DWSolver::init(int n_nodes, int n_links, const XSectGroups& groups,
         }
     }
 
-    xnode_.resize(un);  // SoA: allocates all per-node arrays
+    xnode_.resize(un); // SoA: allocates all per-node arrays
 
     area1_.resize(ul, 0.0);
     area2_.resize(ul, 0.0);
@@ -672,17 +717,17 @@ void DWSolver::init(int n_nodes, int n_links, const XSectGroups& groups,
                 (cheb_i >= 0 && static_cast<std::size_t>(cheb_i) < ctx.cheb_sections.size()) &&
                 ctx.cheb_sections[static_cast<std::size_t>(cheb_i)].is_open;
         } else {
-            is_open_[uj] = isOpenShape(shape);   // legacy xsect_isOpen (Amax == 1)
+        is_open_[uj] = isOpenShape(shape); // legacy xsect_isOpen (Amax == 1)
         }
         is_force_main_[uj] = (shape == XsectShape::FORCE_MAIN);
-        has_losses_[uj] = (CD.loss_inlet[ucr] != 0.0 ||
-                           CD.loss_outlet[ucr] != 0.0 ||
-                           CD.loss_avg[ucr] != 0.0);
+        has_losses_[uj] =
+            (CD.loss_inlet[ucr] != 0.0 || CD.loss_outlet[ucr] != 0.0 || CD.loss_avg[ucr] != 0.0);
         barrels_d_[uj] = static_cast<double>(std::max(CD.barrels[ucr], 1));
         // legacy initLinks (flowrout.c:498): Conduit.q1 = newFlow / barrels.
         q1_[uj] = links.flow[uj] / barrels_d_[uj];
         double len = CD.mod_length[ucr];
-        if (len <= 0.0) len = CD.length[ucr];
+        if (len <= 0.0)
+            len = CD.length[ucr];
         cached_length_[uj] = len;
         inv_length_[uj] = (len > 0.0) ? 1.0 / len : 0.0;
 
@@ -724,16 +769,15 @@ void DWSolver::init(int n_nodes, int n_links, const XSectGroups& groups,
     // width w = g·A_full/a², a in PROJECT units converted like the other
     // length-per-time options.
     if (surcharge_method == SurchargeMethod::TPA) {
-        const double ucf_len2 = ucf::Ucf[ucf::LENGTH][
-            ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units))];
+        const double ucf_len2 =
+            ucf::Ucf[ucf::LENGTH][ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units))];
         const double a_fts = std::max(tpa_celerity / ucf_len2, 1.0);
         const auto ucn = static_cast<std::size_t>(n_conduits_);
         tpa_w_.assign(ucn, 0.0);
         tpa_latch_.assign(ucn, 0);
         tpa_latch_changed_.assign(ucn, 0);
         for (int ci = 0; ci < n_conduits_; ++ci) {
-            const auto uj = static_cast<std::size_t>(
-                conduit_idx_[static_cast<std::size_t>(ci)]);
+            const auto uj = static_cast<std::size_t>(conduit_idx_[static_cast<std::size_t>(ci)]);
             const double af = ctx.links.xsect_a_full[uj];
             tpa_w_[static_cast<std::size_t>(ci)] =
                 (af > 0.0) ? GRAVITY * af / (a_fts * a_fts) : 0.0;
@@ -743,9 +787,9 @@ void DWSolver::init(int n_nodes, int n_links, const XSectGroups& groups,
     // Dynamic Preissmann Slot (DPS) initialization
     if (surcharge_method == SurchargeMethod::DYNAMIC_SLOT) {
         // Convert c_pT from m/s to ft/s (internal units)
-        dps_config_.c_pT   = ctx.options.dps_target_celerity * 3.28084;
-        dps_config_.alpha   = std::max(ctx.options.dps_alpha, 2.0);
-        dps_config_.r       = std::max(ctx.options.dps_decay_time, 0.001);
+        dps_config_.c_pT = ctx.options.dps_target_celerity * 3.28084;
+        dps_config_.alpha = std::max(ctx.options.dps_alpha, 2.0);
+        dps_config_.r = std::max(ctx.options.dps_decay_time, 0.001);
         dps_config_.c_pT_sq = dps_config_.c_pT * dps_config_.c_pT;
 
         dps_.resize(static_cast<std::size_t>(n_conduits_));
@@ -783,9 +827,8 @@ void DWSolver::init(int n_nodes, int n_links, const XSectGroups& groups,
             // steady-state (P = 1) and follows directly from inverting Eq. 19
             // for the increment: dAs/dhs = g · A_C · P² / c_pT².  The per-iter
             // dynamic width is then T_s = T_s_target · P².
-            dps_.T_s_target[uci] = (dps_config_.c_pT_sq > 0.0)
-                ? (GRAVITY * af) / dps_config_.c_pT_sq
-                : 0.0;
+            dps_.T_s_target[uci] =
+                (dps_config_.c_pT_sq > 0.0) ? (GRAVITY * af) / dps_config_.c_pT_sq : 0.0;
 
             dps_.surcharged[uci] = 0;
             dps_.t_s[uci] = 0.0;
@@ -865,46 +908,45 @@ void DWSolver::refreshConduitTile(const SimulationContext& ctx) {
         auto un1 = static_cast<std::size_t>(n1);
         auto un2 = static_cast<std::size_t>(n2);
 
-        tile_uj_[uci]            = j;
-        tile_crow_[uci]          = static_cast<int>(ucr);
-        tile_n1_[uci]            = n1;
-        tile_n2_[uci]            = n2;
-        tile_inv1_elev_[uci]     = nodes.invert_elev[un1];
-        tile_inv2_elev_[uci]     = nodes.invert_elev[un2];
-        tile_z1_off_[uci]        = links.offset1[uj];
-        tile_z2_off_[uci]        = links.offset2[uj];
-        tile_y_full_[uci]        = links.xsect_y_full[uj];
-        tile_a_full_[uci]        = links.xsect_a_full[uj];
-        tile_r_full_[uci]        = links.xsect_r_full[uj];
-        tile_w_max_[uci]         = links.xsect_w_max[uj];
-        tile_length_[uci]        = cached_length_[uj];
-        tile_inv_length_[uci]    = inv_length_[uj];
-        tile_links_length_[uci]  = (CD.true_length[ucr] > 0.0)
-                                 ? CD.true_length[ucr] : CD.length[ucr];
-        tile_beta_[uci]          = CD.beta[ucr];
-        tile_q_max_[uci]         = CD.q_max[ucr];
-        tile_rough_factor_[uci]  = CD.rough_factor[ucr];
-        tile_barrels_d_[uci]     = barrels_d_[uj];
-        tile_is_open_[uci]       = is_open_[uj];
+        tile_uj_[uci] = j;
+        tile_crow_[uci] = static_cast<int>(ucr);
+        tile_n1_[uci] = n1;
+        tile_n2_[uci] = n2;
+        tile_inv1_elev_[uci] = nodes.invert_elev[un1];
+        tile_inv2_elev_[uci] = nodes.invert_elev[un2];
+        tile_z1_off_[uci] = links.offset1[uj];
+        tile_z2_off_[uci] = links.offset2[uj];
+        tile_y_full_[uci] = links.xsect_y_full[uj];
+        tile_a_full_[uci] = links.xsect_a_full[uj];
+        tile_r_full_[uci] = links.xsect_r_full[uj];
+        tile_w_max_[uci] = links.xsect_w_max[uj];
+        tile_length_[uci] = cached_length_[uj];
+        tile_inv_length_[uci] = inv_length_[uj];
+        tile_links_length_[uci] =
+            (CD.true_length[ucr] > 0.0) ? CD.true_length[ucr] : CD.length[ucr];
+        tile_beta_[uci] = CD.beta[ucr];
+        tile_q_max_[uci] = CD.q_max[ucr];
+        tile_rough_factor_[uci] = CD.rough_factor[ucr];
+        tile_barrels_d_[uci] = barrels_d_[uj];
+        tile_is_open_[uci] = is_open_[uj];
         tile_is_force_main_[uci] = is_force_main_[uj];
-        tile_is_closed_[uci]     = links.is_closed[uj] ? 1 : 0;
-        tile_has_losses_[uci]    = has_losses_[uj];
+        tile_is_closed_[uci] = links.is_closed[uj] ? 1 : 0;
+        tile_has_losses_[uci] = has_losses_[uj];
         tile_xsect_batch_shape_[uci] = links.xsect_batch_shape[uj];
-        tile_shape_[uci]         = links.xsect_shape[uj];
-        tile_has_offset_[uci]    = (links.offset1[uj] > 0.0 ||
-                                    links.offset2[uj] > 0.0) ? 1 : 0;
-        tile_culvert_code_[uci]  = CD.culvert_code[ucr];
-        tile_slope_[uci]         = CD.slope[ucr];
-        tile_q_limit_[uci]       = links.q_limit[uj];
-        tile_loss_inlet_[uci]    = CD.loss_inlet[ucr];
-        tile_loss_outlet_[uci]   = CD.loss_outlet[ucr];
-        tile_loss_avg_[uci]      = CD.loss_avg[ucr];
-        tile_roughness_[uci]     = CD.roughness[ucr];
-        tile_fm_sbot_[uci]       = links.xsect_s_bot[uj];
-        tile_fm_rbot_[uci]       = links.xsect_r_bot[uj];
+        tile_shape_[uci] = links.xsect_shape[uj];
+        tile_has_offset_[uci] = (links.offset1[uj] > 0.0 || links.offset2[uj] > 0.0) ? 1 : 0;
+        tile_culvert_code_[uci] = CD.culvert_code[ucr];
+        tile_slope_[uci] = CD.slope[ucr];
+        tile_q_limit_[uci] = links.q_limit[uj];
+        tile_loss_inlet_[uci] = CD.loss_inlet[ucr];
+        tile_loss_outlet_[uci] = CD.loss_outlet[ucr];
+        tile_loss_avg_[uci] = CD.loss_avg[ucr];
+        tile_roughness_[uci] = CD.roughness[ucr];
+        tile_fm_sbot_[uci] = links.xsect_s_bot[uj];
+        tile_fm_rbot_[uci] = links.xsect_r_bot[uj];
         tile_has_flap_gate_[uci] = links.has_flap_gate[uj] ? 1 : 0;
-        tile_direction_[uci]     = static_cast<int8_t>(links.direction[uj]);
-        tile_uj_to_ci_[uj]       = ci;
+        tile_direction_[uci] = static_cast<int8_t>(links.direction[uj]);
+        tile_uj_to_ci_[uj] = ci;
     }
 }
 
@@ -928,14 +970,16 @@ void DWSolver::buildConduitNodeCSR(const SimulationContext& ctx) {
     // Degree count over conduit ends
     csr_row_.assign(un + 1, 0);
     for (int ci = 0; ci < n_conduits_; ++ci) {
-        const auto uj = static_cast<std::size_t>(
-            conduit_idx_[static_cast<std::size_t>(ci)]);
+        const auto uj = static_cast<std::size_t>(conduit_idx_[static_cast<std::size_t>(ci)]);
         const int n1 = links.node1[uj];
         const int n2 = links.node2[uj];
-        if (n1 >= 0 && n1 < n_nodes_) ++csr_row_[static_cast<std::size_t>(n1) + 1];
-        if (n2 >= 0 && n2 < n_nodes_) ++csr_row_[static_cast<std::size_t>(n2) + 1];
+        if (n1 >= 0 && n1 < n_nodes_)
+            ++csr_row_[static_cast<std::size_t>(n1) + 1];
+        if (n2 >= 0 && n2 < n_nodes_)
+            ++csr_row_[static_cast<std::size_t>(n2) + 1];
     }
-    for (std::size_t i = 0; i < un; ++i) csr_row_[i + 1] += csr_row_[i];
+    for (std::size_t i = 0; i < un; ++i)
+        csr_row_[i + 1] += csr_row_[i];
 
     const std::size_t n_entries = static_cast<std::size_t>(csr_row_[un]);
     csr_link_.assign(n_entries, 0);
@@ -1000,41 +1044,54 @@ void DWSolver::buildVirtualJunctionPairs(const SimulationContext& ctx) {
             vjunc_.push_back(p);
         }
     }
-    if (vjunc_.empty()) return;
+    if (vjunc_.empty())
+        return;
 
     for (int j = 0; j < n_links_; ++j) {
         const auto uj = static_cast<std::size_t>(j);
-        if (links.type[uj] != LinkType::CONDUIT) continue;
-        for (const bool at_node1 : { true, false }) {
+        if (links.type[uj] != LinkType::CONDUIT)
+            continue;
+        for (const bool at_node1 : {true, false}) {
             const int n = at_node1 ? links.node1[uj] : links.node2[uj];
-            if (n < 0 || n >= n_nodes_) continue;
+            if (n < 0 || n >= n_nodes_)
+                continue;
             const int r = row_of_node[static_cast<std::size_t>(n)];
-            if (r < 0) continue;
+            if (r < 0)
+                continue;
             VJuncPair& p = vjunc_[static_cast<std::size_t>(r)];
-            if      (p.link_a < 0) p.link_a = j;
-            else if (p.link_b < 0) p.link_b = j;
+            if (p.link_a < 0)
+                p.link_a = j;
+            else if (p.link_b < 0)
+                p.link_b = j;
             // A chain link belongs to two pairs — record each end separately
             // (the old single vj_of_link_ map was last-write-wins, which left
             // interior links coupled only to their downstream pair: the
             // upwinding mechanism never fired and the convective correction
             // was applied one-sided).
-            if (at_node1) vj_pair_n1_[uj] = r;
-            else          vj_pair_n2_[uj] = r;
+            if (at_node1)
+                vj_pair_n1_[uj] = r;
+            else
+                vj_pair_n2_[uj] = r;
         }
     }
 
     for (VJuncPair& p : vjunc_) {
-        if (p.link_a < 0 || p.link_b < 0) continue;  // validation rejects these
+        if (p.link_a < 0 || p.link_b < 0)
+            continue; // validation rejects these
         const auto ua = static_cast<std::size_t>(p.link_a);
         const auto ub = static_cast<std::size_t>(p.link_b);
 
         // Through orientation: node2 of one conduit and node1 of the other.
         if (links.node2[ua] == p.node && links.node1[ub] == p.node) {
-            p.up_link = p.link_a; p.dn_link = p.link_b; p.through = 1;
+            p.up_link = p.link_a;
+            p.dn_link = p.link_b;
+            p.through = 1;
         } else if (links.node2[ub] == p.node && links.node1[ua] == p.node) {
-            p.up_link = p.link_b; p.dn_link = p.link_a; p.through = 1;
+            p.up_link = p.link_b;
+            p.dn_link = p.link_a;
+            p.through = 1;
         } else {
-            p.through = 0;  // sag (both node2) or peak (both node1)
+            p.through = 0; // sag (both node2) or peak (both node1)
         }
 
         const int ca = ctx.link_subtypes.conduit_row(p.link_a);
@@ -1082,7 +1139,8 @@ void DWSolver::vjPrepareIteration(const SimulationContext& ctx, double dt) {
         p.active = 0;
         p.dirn = 0;
         p.dq4j = 0.0;
-        if (!p.through || p.up_link < 0 || p.dn_link < 0) continue;
+        if (!p.through || p.up_link < 0 || p.dn_link < 0)
+            continue;
 
         // Inlet junctions run mechanism 1 (zero storage) ONLY. Mechanisms 2-4
         // — the shared junction sigma, the cross-junction upwind state and the
@@ -1091,9 +1149,9 @@ void DWSolver::vjPrepareIteration(const SimulationContext& ctx, double dt) {
         // carries a capture sink, so leaving p.active at 0 keeps the pair's
         // per-link momentum treatment. See
         // plans/INLET_JUNCTION_IMPLEMENTATION_PLAN_2026-09-05.md §4.1.
-        if (p.node >= 0 &&
-            static_cast<std::size_t>(p.node) < ctx.nodes.is_inlet.size() &&
-            ctx.nodes.is_inlet[static_cast<std::size_t>(p.node)] != 0) continue;
+        if (p.node >= 0 && static_cast<std::size_t>(p.node) < ctx.nodes.is_inlet.size() &&
+            ctx.nodes.is_inlet[static_cast<std::size_t>(p.node)] != 0)
+            continue;
 
         const auto uu = static_cast<std::size_t>(p.up_link);
         const auto ud = static_cast<std::size_t>(p.dn_link);
@@ -1104,7 +1162,8 @@ void DWSolver::vjPrepareIteration(const SimulationContext& ctx, double dt) {
         // head, identical xsect ⇒ same as the dn-link's upstream end).
         const double aj = area2_[uu];
         const double wj = width2_[uu];
-        if (aj <= FUDGE) continue;    // dry junction — per-link behaviour
+        if (aj <= FUDGE)
+            continue; // dry junction — per-link behaviour
 
         // #144: the junction through-flow velocity and the upwind state handed
         // to the neighbour's aWtd are momentum quantities, so both use
@@ -1119,19 +1178,20 @@ void DWSolver::vjPrepareIteration(const SimulationContext& ctx, double dt) {
             vj = (vj > 0.0) ? MAX_VELOCITY : -MAX_VELOCITY;
 
         const double dh = (wj > FUDGE) ? aj / wj : 0.0;
-        const double frj = (dh > 0.0)
-            ? std::fabs(vj) / std::sqrt(constants::GRAVITY * dh) : 0.0;
+        const double frj = (dh > 0.0) ? std::fabs(vj) / std::sqrt(constants::GRAVITY * dh) : 0.0;
         p.sigma_j = std::max(0.0, std::min(1.0, 2.0 * (1.0 - frj)));
 
         p.a_up_mid = conveyArea(area_mid_[uu], ajFull);
         p.r_up_mid = hrad_mid_[uu];
-        p.active   = 1;
+        p.active = 1;
         // Coherent signed through-flow: momentum is transmitted across the
         // node only when both conduits carry flow the same way through it.
         // Opposing/still flows (seiche antinode, converging fill fronts)
         // have no momentum stream to transmit — the correction must vanish.
-        if      (qU >= 0.0 && qD >= 0.0 && qU + qD > 0.0) p.dirn = 1;
-        else if (qU <= 0.0 && qD <= 0.0 && qU + qD < 0.0) p.dirn = -1;
+        if (qU >= 0.0 && qD >= 0.0 && qU + qD > 0.0)
+            p.dirn = 1;
+        else if (qU <= 0.0 && qD <= 0.0 && qU + qD < 0.0)
+            p.dirn = -1;
 
         if (full_momentum && p.lambda > 0.0 && p.dirn != 0) {
             const double aMu = std::max(area_mid_[uu], FUDGE);
@@ -1172,7 +1232,8 @@ void DWSolver::vjPrepareIteration(const SimulationContext& ctx, double dt) {
 // into ctx.vj_diag for the .rpt Virtual Junction Summary.
 
 void DWSolver::vjAccumulateResiduals(SimulationContext& ctx) {
-    if (vjunc_.empty()) return;
+    if (vjunc_.empty())
+        return;
 
     auto& d = ctx.vj_diag;
     if (d.node_idx.size() != vjunc_.size()) {
@@ -1190,12 +1251,14 @@ void DWSolver::vjAccumulateResiduals(SimulationContext& ctx) {
     const auto& links = ctx.links;
     for (std::size_t r = 0; r < vjunc_.size(); ++r) {
         VJuncPair& p = vjunc_[r];
-        if (!p.through || p.up_link < 0 || p.dn_link < 0) continue;
+        if (!p.through || p.up_link < 0 || p.dn_link < 0)
+            continue;
         const auto uu = static_cast<std::size_t>(p.up_link);
         const auto ud = static_cast<std::size_t>(p.dn_link);
         const double aU = area2_[uu];
         const double aD = area1_[ud];
-        if (aU <= FUDGE || aD <= FUDGE) continue;
+        if (aU <= FUDGE || aD <= FUDGE)
+            continue;
 
         const auto ucu = static_cast<std::size_t>(tile_uj_to_ci_[uu]);
         const auto ucd = static_cast<std::size_t>(tile_uj_to_ci_[ud]);
@@ -1203,8 +1266,7 @@ void DWSolver::vjAccumulateResiduals(SimulationContext& ctx) {
         const double qD = links.flow[ud] / tile_barrels_d_[ucd];
 
         const double flux = qU * qU / aU - qD * qD / aD;
-        const double hyd  = constants::GRAVITY * 0.5 * (aU + aD)
-                            * (depth2_[uu] - depth1_[ud]);
+        const double hyd = constants::GRAVITY * 0.5 * (aU + aD) * (depth2_[uu] - depth1_[ud]);
         const double R = flux + hyd;
         const double aR = std::fabs(R);
 
@@ -1213,7 +1275,7 @@ void DWSolver::vjAccumulateResiduals(SimulationContext& ctx) {
         ++p.resid_n;
         d.resid_max[r] = p.resid_max;
         d.resid_sum[r] = p.resid_sum;
-        d.resid_n[r]   = p.resid_n;
+        d.resid_n[r] = p.resid_n;
     }
 }
 
@@ -1226,6 +1288,13 @@ void DWSolver::vjAccumulateResiduals(SimulationContext& ctx) {
 // keeps it on P-cores. Called once per team thread from the persistent
 // parallel region prologue in execute() (thread_local latch). Errors are
 // ignored — QoS is a scheduling hint, not a correctness requirement.
+/**
+ * @brief Apply a once-per-thread Apple scheduling hint for persistent solver workers.
+ *
+ * On Apple builds sets current pthread QoS to USER_INTERACTIVE once through a thread-local latch;
+ * ignores platform failure because this is a performance hint. Does not pin affinity, query a core
+ * identifier or change hydraulic state.
+ */
 static void darwinPinThreadToPerfCores() {
     static thread_local bool applied = false;
     if (!applied) {
@@ -1247,9 +1316,10 @@ void DWSolver::setNumThreads(int n, std::vector<std::string>* warnings) {
             if (warnings) {
                 char buf[160];
                 std::snprintf(buf, sizeof buf,
-                    "Dynamic-wave thread count forced to %d by the "
-                    "SWMM_DW_THREADS environment variable ([OPTIONS] THREADS "
-                    "ignored for dynamic wave).", forced);
+                              "Dynamic-wave thread count forced to %d by the "
+                              "SWMM_DW_THREADS environment variable ([OPTIONS] THREADS "
+                              "ignored for dynamic wave).",
+                              forced);
                 warnings->emplace_back(buf);
             }
             return;
@@ -1280,7 +1350,8 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
     // call, so the per-iteration latch update was equivalent to this
     // per-step one. Keeping the member read-only inside the Picard loop also
     // makes it safely readable by every team thread.
-    if (evap_rate > 0.0 || any_conduit_seep_) losses_all_zero_ = false;
+    if (evap_rate > 0.0 || any_conduit_seep_)
+        losses_all_zero_ = false;
 
     // Save area_mid from PREVIOUS TIMESTEP for the unsteady momentum term.
     // This must happen ONCE per timestep, BEFORE the iteration loop, matching
@@ -1290,7 +1361,8 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
 
     // TPA latch (issue #156 Phase 5): advanced once per routing step from the
     // last committed state, so Picard/Anderson iterate a FIXED operator.
-    if (surcharge_method == SurchargeMethod::TPA) updateTpaLatch(ctx);
+    if (surcharge_method == SurchargeMethod::TPA)
+        updateTpaLatch(ctx);
 
     // Clear bypass flags at the start of each timestep
     // (matching legacy initRoutingStep: Link[i].bypassed = FALSE)
@@ -1306,18 +1378,18 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
         unit_sys_ = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
         for (int i = 0; i < n_nodes_; ++i) {
             auto ui = static_cast<std::size_t>(i);
-            NodeTile& t  = node_tile_[ui];
-            t.full_depth  = nd.full_depth[ui];
-            t.y_crown     = nd.crown_elev[ui] - nd.invert_elev[ui];
+            NodeTile& t = node_tile_[ui];
+            t.full_depth = nd.full_depth[ui];
+            t.y_crown = nd.crown_elev[ui] - nd.invert_elev[ui];
             t.invert_elev = nd.invert_elev[ui];
             t.ponded_area = nd.ponded_area[ui];
-            t.sur_depth   = nd.sur_depth[ui];
+            t.sur_depth = nd.sur_depth[ui];
             t.full_volume = nd.full_volume[ui];
             t.rpt_full_volume = nd.rpt_full_volume[ui];
-            t.degree      = nd.degree[ui];
-            t.is_storage  = (nd.type[ui] == NodeType::STORAGE) ? 1 : 0;
-            t.is_outfall  = (nd.type[ui] == NodeType::OUTFALL) ? 1 : 0;
-            t.is_virtual  = (ui < nd.is_virtual.size() && nd.is_virtual[ui]) ? 1 : 0;
+            t.degree = nd.degree[ui];
+            t.is_storage = (nd.type[ui] == NodeType::STORAGE) ? 1 : 0;
+            t.is_outfall = (nd.type[ui] == NodeType::OUTFALL) ? 1 : 0;
+            t.is_virtual = (ui < nd.is_virtual.size() && nd.is_virtual[ui]) ? 1 : 0;
         }
     }
 
@@ -1347,12 +1419,12 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
     // At num_threads_ == 1 the `if` clause keeps the region inactive (team of
     // one; barriers/singles are no-ops on the encountering thread).
     // ------------------------------------------------------------------------
-    int  steps_final     = 0;
+    int steps_final = 0;
     bool converged_final = false;
-    int  unconv_shared   = 0;   // shared team tally (see updateNodeDepthsTeam)
-    const bool has_nc    = static_cast<bool>(non_conduit_fn);
+    int unconv_shared = 0; // shared team tally (see updateNodeDepthsTeam)
+    const bool has_nc = static_cast<bool>(non_conduit_fn);
 
-#pragma omp parallel num_threads(num_threads_) if(num_threads_ > 1) default(shared)
+#pragma omp parallel num_threads(num_threads_) if (num_threads_ > 1) default(shared)
     {
 #if defined(__APPLE__)
         // One-time per pool thread (thread_local latch inside): QoS pin to
@@ -1361,8 +1433,8 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
         // straggler (the T=8 collapse — see threadinfo::dwThreads).
         darwinPinThreadToPerfCores();
 #endif
-        int  t_steps     = 0;      // per-thread replica of legacy `Steps`
-        bool t_converged = false;  // per-thread replica of `converged`
+        int t_steps = 0;          // per-thread replica of legacy `Steps`
+        bool t_converged = false; // per-thread replica of `converged`
 
         while (t_steps < max_trials) {
             // Step 0: init node states (team `omp for nowait` — overlaps with
@@ -1403,7 +1475,8 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
                 lidnode::resetPorts(ctx);
                 for (int ci = 0; ci < n_conduits_; ++ci) {
                     const int j = tile_uj_[ci];
-                    if (!lidnode::active(ctx, tile_n1_[ci]) && !lidnode::active(ctx, tile_n2_[ci])) continue;
+                    if (!lidnode::active(ctx, tile_n1_[ci]) && !lidnode::active(ctx, tile_n2_[ci]))
+                        continue;
                     const double before = new_flow_[j];
                     const double after = lidnode::exchangePorts(ctx, j, before, dt);
                     new_flow_[j] = after;
@@ -1416,7 +1489,6 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
                 }
             }
 
-
             // ---- Step 3a: scatter conduit flows to nodes (team) ----
             // Production path (callback present): parallel CSR node-centric
             // gather — bit-exact per-node accumulation order (see
@@ -1424,14 +1496,16 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
             // callback in Step 4, exactly as legacy findLinkFlows scatters
             // conduits first (dynwave.c:385-388), then computes+scatters
             // each non-conduit serially (dynwave.c:391-398).
-            if (has_nc) gatherConduitNodeFlows(ctx);
+            if (has_nc)
+                gatherConduitNodeFlows(ctx);
 
             // ---- Serial scatter/structures phase (one thread) ----
 #pragma omp single
             {
                 // Step 3b: no-callback path (tests/standalone): serial
                 // all-links scatter, matching the pre-threading behaviour.
-                if (!has_nc) updateNodeFlows(ctx);
+                if (!has_nc)
+                    updateNodeFlows(ctx);
 
                 // Step 4: compute non-conduit flows (pumps, orifices, weirs,
                 //         outlets) INSIDE the iteration loop, matching legacy
@@ -1455,7 +1529,8 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
 
                 // Step 5: flag nodes where AA must be skipped (non-smooth
                 // operator). Only needed when Anderson acceleration is active.
-                if (anderson_accel) computeAASkipFlags(ctx);
+                if (anderson_accel)
+                    computeAASkipFlags(ctx);
 
                 // Reset the shared unconverged tally for Step 6 (behind this
                 // single's implicit barrier, so no thread has started adding).
@@ -1469,7 +1544,8 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
             t_steps++;
 
             if (t_steps > 1) {
-                if (t_converged) break;
+                if (t_converged)
+                    break;
 
                 // Mark links whose both end nodes converged so they can be
                 // skipped in the next iteration (matching legacy
@@ -1482,10 +1558,10 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
 
 #pragma omp master
         {
-            steps_final     = t_steps;
+            steps_final = t_steps;
             converged_final = t_converged;
         }
-    }   // end persistent parallel region (implicit barrier)
+    } // end persistent parallel region (implicit barrier)
 
     steps = steps_final;
     converged = converged_final;
@@ -1532,16 +1608,15 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
 
 void DWSolver::initNodeStates(SimulationContext& ctx) {
     auto& nodes = ctx.nodes;
-    const int unit_sys = ucf::getUnitSystem(
-        static_cast<int>(ctx.options.flow_units));
-    // Team-callable: orphaned `omp for` on the persistent team (see execute()).
-    // Per-node single-producer writes — bit-exact at any thread count.
-    // `nowait`: the phase that follows in execute() (geometry STEP A / the
-    // serial prep single) neither reads nor writes any of this pass's outputs
-    // (node inflow/outflow/new_surf_area, xnode_ converged/sumdqdh), and every
-    // consumer (updateNodeFlows / the non-conduit callback / setNodeDepth)
-    // sits behind at least one later barrier.
-    #pragma omp for schedule(static) nowait
+    const int unit_sys = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+// Team-callable: orphaned `omp for` on the persistent team (see execute()).
+// Per-node single-producer writes — bit-exact at any thread count.
+// `nowait`: the phase that follows in execute() (geometry STEP A / the
+// serial prep single) neither reads nor writes any of this pass's outputs
+// (node inflow/outflow/new_surf_area, xnode_ converged/sumdqdh), and every
+// consumer (updateNodeFlows / the non-conduit callback / setNodeDepth)
+// sits behind at least one later barrier.
+#pragma omp for schedule(static) nowait
     for (int i = 0; i < n_nodes_; ++i) {
         auto ui = static_cast<std::size_t>(i);
         xnode_.converged[ui] = 0;
@@ -1559,8 +1634,8 @@ void DWSolver::initNodeStates(SimulationContext& ctx) {
         // ponded_area is the auto-assigned 2D-cell footprint) so the HGL can
         // rise above the crown to track the 2D surface, independent of the
         // global ALLOW_PONDING option. See ctx.coupled_node.
-        const bool node_can_pond = ctx.options.allow_ponding
-            || (ui < ctx.coupled_node.size() && ctx.coupled_node[ui]);
+        const bool node_can_pond =
+            ctx.options.allow_ponding || (ui < ctx.coupled_node.size() && ctx.coupled_node[ui]);
         const NodeTile& t = node_tile_[ui];
         if (!t.is_storage) {
             // Fast path (bit-exact): non-storage nodes have zero curve area —
@@ -1571,21 +1646,22 @@ void DWSolver::initNodeStates(SimulationContext& ctx) {
             // avoids two function calls per node per Picard iteration for
             // the ~98% of nodes that are not storage units.
             xnode_.new_surf_area[ui] =
-                (node_can_pond && nodes.depth[ui] > t.full_depth &&
-                 t.ponded_area > 0.0)
+                (node_can_pond && nodes.depth[ui] > t.full_depth && t.ponded_area > 0.0)
                     ? t.ponded_area
                     : 0.0;
             // A 2D-coupled junction with a configured pond (COUPLING_POND_MODE
             // CHAMBER / TRACKING or a COUPLING_RIM_BAND): its area A_eq ramps
             // in C¹ over the band above the rim instead of stepping onto it.
             if (ui < ctx.coupled_pond_area.size() && ctx.coupled_node[ui])
-                xnode_.new_surf_area[ui] = twoD::pond::area(
-                    nodes.depth[ui] - t.full_depth, ctx.coupled_pond_area[ui],
-                    ctx.coupled_pond_band[ui]);
+                xnode_.new_surf_area[ui] =
+                    twoD::pond::area(nodes.depth[ui] - t.full_depth, ctx.coupled_pond_area[ui],
+                                     ctx.coupled_pond_band[ui]);
         } else {
-            xnode_.new_surf_area[ui] = node_can_pond
-                ? node::getPondedArea(nodes, i, nodes.depth[ui], &ctx.tables, unit_sys, &ctx.node_subtypes)
-                : node::getSurfArea(nodes, i, nodes.depth[ui], &ctx.tables, unit_sys, &ctx.node_subtypes);
+            xnode_.new_surf_area[ui] =
+                node_can_pond ? node::getPondedArea(nodes, i, nodes.depth[ui], &ctx.tables,
+                                                    unit_sys, &ctx.node_subtypes)
+                              : node::getSurfArea(nodes, i, nodes.depth[ui], &ctx.tables, unit_sys,
+                                                  &ctx.node_subtypes);
         }
 
         // Reset node flows (matching legacy initNodeStates)
@@ -1607,27 +1683,32 @@ void DWSolver::initNodeStates(SimulationContext& ctx) {
 
 void DWSolver::findBypassedLinks(const SimulationContext& ctx) {
     const auto& links = ctx.links;
-    // PARITY: legacy findBypassedLinks (dynwave.c) marks EVERY link — conduits
-    // AND non-conduits (weirs/orifices/pumps/outlets) — whose both end nodes
-    // converged, and legacy findLinkFlows then skips dwflow_findConduitFlow /
-    // findNonConduitFlow for them (their flow is held). The non-conduit skip is
-    // honoured in the non_conduit_fn callback (SWMMEngine), which restores the
-    // held flow/dqdh for a bypassed structure. Without it, a weir/orifice whose
-    // nodes have settled kept being recomputed and drifted from legacy's held
-    // value (e.g. extran4 weir 90010).
-    //
-    // Team-callable: orphaned `omp for` on the persistent team (see execute()).
-    // Per-link single-producer writes from read-only converged flags —
-    // bit-exact at any thread count. The implicit closing barrier orders
-    // bypassed_ for the next iteration's geometry/mask readers.
-    #pragma omp for schedule(static)
+// PARITY: legacy findBypassedLinks (dynwave.c) marks EVERY link — conduits
+// AND non-conduits (weirs/orifices/pumps/outlets) — whose both end nodes
+// converged, and legacy findLinkFlows then skips dwflow_findConduitFlow /
+// findNonConduitFlow for them (their flow is held). The non-conduit skip is
+// honoured in the non_conduit_fn callback (SWMMEngine), which restores the
+// held flow/dqdh for a bypassed structure. Without it, a weir/orifice whose
+// nodes have settled kept being recomputed and drifted from legacy's held
+// value (e.g. extran4 weir 90010).
+//
+// Team-callable: orphaned `omp for` on the persistent team (see execute()).
+// Per-link single-producer writes from read-only converged flags —
+// bit-exact at any thread count. The implicit closing barrier orders
+// bypassed_ for the next iteration's geometry/mask readers.
+#pragma omp for schedule(static)
     for (int j = 0; j < n_links_; ++j) {
         auto uj = static_cast<std::size_t>(j);
         int n1 = links.node1[uj];
         int n2 = links.node2[uj];
-        if (n1 < 0 || n2 < 0) { bypassed_[uj] = 0; continue; }
+        if (n1 < 0 || n2 < 0) {
+            bypassed_[uj] = 0;
+            continue;
+        }
         const uint8_t b = (xnode_.converged[static_cast<std::size_t>(n1)] &&
-                           xnode_.converged[static_cast<std::size_t>(n2)]) ? 1 : 0;
+                           xnode_.converged[static_cast<std::size_t>(n2)])
+                              ? 1
+                              : 0;
         bypassed_[uj] = b;
     }
 
@@ -1636,10 +1717,11 @@ void DWSolver::findBypassedLinks(const SimulationContext& ctx) {
     // zero-storage node. Tiny serial fixup behind the `omp for` barrier;
     // every thread evaluates the identical replicated emptiness condition.
     if (!vjunc_.empty()) {
-        #pragma omp single
+#pragma omp single
         {
             for (const VJuncPair& p : vjunc_) {
-                if (p.link_a < 0 || p.link_b < 0) continue;
+                if (p.link_a < 0 || p.link_b < 0)
+                    continue;
                 const auto ua = static_cast<std::size_t>(p.link_a);
                 const auto ub = static_cast<std::size_t>(p.link_b);
                 if (bypassed_[ua] != bypassed_[ub]) {
@@ -1669,7 +1751,7 @@ static XSectParams buildXSP(const SimulationContext& ctx, std::size_t uk) {
     xs.type = link::translateShape(ls);
     xs.y_full = links.xsect_y_full[uk];
     xs.a_full = links.xsect_a_full[uk];
-    xs.w_max  = links.xsect_w_max[uk];
+    xs.w_max = links.xsect_w_max[uk];
     // Depth of maximum width. Read by the seepage clamp in
     // recomputeConduitLossOne (legacy link.c:1381 `if (d >= ywMax) d = ywMax`)
     // and by nothing else in xsect — leaving it 0 collapsed d_seep to 0, so the
@@ -1679,27 +1761,26 @@ static XSectParams buildXSP(const SimulationContext& ctx, std::size_t uk) {
     xs.yw_max = links.xsect_yw_max[uk];
     xs.r_full = links.xsect_r_full[uk];
     xs.s_full = links.xsect_s_full[uk];
-    xs.s_max  = links.xsect_s_max[uk];
-    xs.y_bot  = links.xsect_y_bot[uk];
-    xs.a_bot  = links.xsect_a_bot[uk];
-    xs.s_bot  = links.xsect_s_bot[uk];
-    xs.r_bot  = links.xsect_r_bot[uk];
+    xs.s_max = links.xsect_s_max[uk];
+    xs.y_bot = links.xsect_y_bot[uk];
+    xs.a_bot = links.xsect_a_bot[uk];
+    xs.s_bot = links.xsect_s_bot[uk];
+    xs.r_bot = links.xsect_r_bot[uk];
     // Tabulated shapes (IRREGULAR / CUSTOM / STREET) carry their A/R/W vs depth
     // in per-link transect tables — without these the scalar getters
     // (getWofY/getAofY/getRofY/getAofS/getYofA/getYcrit) return 0, which silently
     // collapses every per-element flow-class patch (UP/DN_CRITICAL, UP/DN_DRY)
     // and the Froude reclassification for transect conduits. Point the table
     // fields at ctx.transect_tables (stable for the run), matching the batch path.
-    if (ls == XsectShape::IRREGULAR || ls == XsectShape::CUSTOM ||
-        ls == XsectShape::STREET_XSECT) {
+    if (ls == XsectShape::IRREGULAR || ls == XsectShape::CUSTOM || ls == XsectShape::STREET_XSECT) {
         const int ci = links.xsect_curve[uk];
         if (ci >= 0 && static_cast<std::size_t>(ci) < ctx.transect_tables.size()) {
             const auto& td = ctx.transect_tables[static_cast<std::size_t>(ci)];
-            xs.transect        = ci;
-            xs.area_tbl        = td.area_tbl;
-            xs.hrad_tbl        = td.hrad_tbl;
-            xs.width_tbl       = td.width_tbl;
-            xs.area_lut        = &td.area_lut;
+            xs.transect = ci;
+            xs.area_tbl = td.area_tbl;
+            xs.hrad_tbl = td.hrad_tbl;
+            xs.width_tbl = td.width_tbl;
+            xs.area_lut = &td.area_lut;
             xs.transect_tbl_size = transect::N_TRANSECT_TBL;
         }
     }
@@ -1714,11 +1795,21 @@ static XSectParams buildXSP(const SimulationContext& ctx, std::size_t uk) {
     return xs;
 }
 
-/// Normal depth from Manning's equation: s = q/beta → a = getAofS → y = getYofA.
-static double computeYnorm(const XSectParams& xs, double beta, double q_max,
-                           double q) {
-    if (beta <= 0.0 || q <= 0.0) return 0.0;
-    if (q_max > 0.0 && q > q_max) q = q_max;
+/**
+ * @brief Invert Manning section factor to a normal water depth.
+ *
+ * @param[in] xs Valid native per-barrel section geometry with live profile tables.
+ * @param[in] beta Positive Manning conveyance coefficient; <=0 returns zero.
+ * @param[in] q_max Positive optional per-barrel capacity cap in ft3/s; <=0 disables this cap.
+ * @param[in] q Requested positive per-barrel flow in ft3/s; <=0 returns zero.
+ * @return Normal depth in ft from getYofA(getAofS(q/beta)); no convergence status or independent
+ *     finite validation.
+ */
+static double computeYnorm(const XSectParams& xs, double beta, double q_max, double q) {
+    if (beta <= 0.0 || q <= 0.0)
+        return 0.0;
+    if (q_max > 0.0 && q > q_max)
+        q = q_max;
     double s = q / beta;
     double a = xsect::getAofS(xs, s);
     return xsect::getYofA(xs, a);
@@ -1754,7 +1845,7 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
     // (which never reads the mask); the mask's only consumers are the STEP B/D
     // triple kernels behind STEP A's closing barrier.
     static const bool mask_disabled = std::getenv("SWMM_DISABLE_BYPASS_MASK") != nullptr;
-    #pragma omp single nowait
+#pragma omp single nowait
     {
         groups_->setBypassMask(!mask_disabled ? bypassed_.data() : nullptr);
     }
@@ -1771,11 +1862,11 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
     // node depth has clearly exceeded the crown.
     const bool slot_mode = (surcharge_method == SurchargeMethod::SLOT ||
                             surcharge_method == SurchargeMethod::DYNAMIC_SLOT);
-    // B2 threading: orphaned `omp for` on the persistent team. Per-conduit
-    // single-producer writes (depth1/2/mid, h1/h2, fasnh, wcap_*) from
-    // read-only node depths — bit-exact at any thread count. SIMD inside
-    // each shape-kernel call is preserved.
-    #pragma omp for schedule(static)
+// B2 threading: orphaned `omp for` on the persistent team. Per-conduit
+// single-producer writes (depth1/2/mid, h1/h2, fasnh, wcap_*) from
+// read-only node depths — bit-exact at any thread count. SIMD inside
+// each shape-kernel call is preserved.
+#pragma omp for schedule(static)
     for (int ci = 0; ci < n_conduits_; ++ci) {
         auto uci = static_cast<std::size_t>(ci);
         int j = tile_uj_[uci];
@@ -1787,7 +1878,8 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
         // the depth1_/depth2_/depth_mid_/h1_/h2_/wcap_* values already in the
         // arrays are exactly correct — recomputing them is pure waste.  This
         // mirrors the bypass skip in solveMomentumBatch and classifyMomentum.
-        if (bypassed_[uj]) continue;
+        if (bypassed_[uj])
+            continue;
 
         auto un1 = static_cast<std::size_t>(tile_n1_[uci]);
         auto un2 = static_cast<std::size_t>(tile_n2_[uci]);
@@ -1796,8 +1888,10 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
         const double inv2 = tile_inv2_elev_[uci];
         const double z1 = inv1 + tile_z1_off_[uci];
         const double z2 = inv2 + tile_z2_off_[uci];
-        const double h1 = std::max(lidnode::portDepth(ctx, static_cast<int>(un1), tile_z1_off_[uci]) + inv1, z1);
-        const double h2 = std::max(lidnode::portDepth(ctx, static_cast<int>(un2), tile_z2_off_[uci]) + inv2, z2);
+        const double h1 =
+            std::max(lidnode::portDepth(ctx, static_cast<int>(un1), tile_z1_off_[uci]) + inv1, z1);
+        const double h2 =
+            std::max(lidnode::portDepth(ctx, static_cast<int>(un2), tile_z2_off_[uci]) + inv2, z2);
 
         double y1 = std::max(h1 - z1, FUDGE);
         double y2 = std::max(h2 - z2, FUDGE);
@@ -1826,8 +1920,8 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
             // init in refreshConduitTile).
             const bool is_open = tile_is_open_[uci];
             const double yCap = (!is_open && yf > 0.0) ? EXTRAN_CROWN_CUTOFF * yf : 1e30;
-            wcap_d1_[uj] = std::min(y1,   yCap);
-            wcap_d2_[uj] = std::min(y2,   yCap);
+            wcap_d1_[uj] = std::min(y1, yCap);
+            wcap_d2_[uj] = std::min(y2, yCap);
             wcap_dm_[uj] = std::min(yMid, yCap);
         }
     }
@@ -1849,34 +1943,32 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
         const int b_tid = omp_get_thread_num();
         const int b_nth = omp_get_num_threads();
         if (!slot_mode) {
-            groups_->computeWidthsTripleTeam(
-                wcap_d1_.data(), wcap_d2_.data(), wcap_dm_.data(),
-                width1_.data(), width2_.data(), width_mid_.data(),
-                n_links_, b_tid, b_nth);
+            groups_->computeWidthsTripleTeam(wcap_d1_.data(), wcap_d2_.data(), wcap_dm_.data(),
+                                             width1_.data(), width2_.data(), width_mid_.data(),
+                                             n_links_, b_tid, b_nth);
         } else {
-            groups_->computeWidthsTripleTeam(
-                depth1_.data(), depth2_.data(), depth_mid_.data(),
-                width1_.data(), width2_.data(), width_mid_.data(),
-                n_links_, b_tid, b_nth);
+            groups_->computeWidthsTripleTeam(depth1_.data(), depth2_.data(), depth_mid_.data(),
+                                             width1_.data(), width2_.data(), width_mid_.data(),
+                                             n_links_, b_tid, b_nth);
         }
     }
-    #pragma omp barrier
+#pragma omp barrier
     if (slot_mode) {
-        // For a surcharged closed conduit the tabulated top width goes to 0 at
-        // the crown (e.g. circular W_Circ[full]=0), so the surface-area that
-        // STEP C builds for the connected nodes would collapse to MinSurfArea.
-        // Legacy getWidth() instead returns the Preissmann slot width when
-        // surcharged (dwflow.c). Without this the SLOT node surface area is too
-        // small, the depth update overshoots the rim, and the excess is booked
-        // as phantom flooding (test1 SLOT continuity −16% vs legacy −2%).
-        // Team `omp for`: per-conduit single-producer overwrites of the width
-        // arrays, reading only STEP-A depths (ordered by STEP A's barrier) and
-        // kernel widths (ordered by the barrier above). Its implicit closing
-        // barrier orders the final widths for STEP C.
-        #pragma omp for schedule(static)
+// For a surcharged closed conduit the tabulated top width goes to 0 at
+// the crown (e.g. circular W_Circ[full]=0), so the surface-area that
+// STEP C builds for the connected nodes would collapse to MinSurfArea.
+// Legacy getWidth() instead returns the Preissmann slot width when
+// surcharged (dwflow.c). Without this the SLOT node surface area is too
+// small, the depth update overshoots the rim, and the excess is booked
+// as phantom flooding (test1 SLOT continuity −16% vs legacy −2%).
+// Team `omp for`: per-conduit single-producer overwrites of the width
+// arrays, reading only STEP-A depths (ordered by STEP A's barrier) and
+// kernel widths (ordered by the barrier above). Its implicit closing
+// barrier orders the final widths for STEP C.
+#pragma omp for schedule(static)
         for (int ci = 0; ci < n_conduits_; ++ci) {
             auto uci = static_cast<std::size_t>(ci);
-            auto uj  = static_cast<std::size_t>(tile_uj_[uci]);
+            auto uj = static_cast<std::size_t>(tile_uj_[uci]);
             double yf = tile_y_full_[uci];
             double wm = tile_w_max_[uci];
             XsectShape shape = tile_shape_[uci];
@@ -1885,24 +1977,27 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
             // from the crown cutoff (0.985257·yFull) upward — not only above
             // full depth. Below the cutoff getSlotWidth() is 0 by itself.
             double ws = getSlotWidth(depth1_[uj], yf, wm, shape);
-            if (ws > 0.0) width1_[uj] = ws;
+            if (ws > 0.0)
+                width1_[uj] = ws;
             ws = getSlotWidth(depth2_[uj], yf, wm, shape);
-            if (ws > 0.0) width2_[uj] = ws;
+            if (ws > 0.0)
+                width2_[uj] = ws;
             ws = getSlotWidth(depth_mid_[uj], yf, wm, shape);
-            if (ws > 0.0) width_mid_[uj] = ws;
+            if (ws > 0.0)
+                width_mid_[uj] = ws;
         }
-    }   // end STEP B
+    } // end STEP B
 
-    // ---- STEP C: Flow classification + surface area (conduits only) ----
-    // Matches legacy dwflow.c findSurfArea + getFlowClass.
-    // Only links with offsets can trigger non-SUBCRITICAL classification,
-    // so the expensive getYnorm/getYcrit Newton solves are rarely needed.
-    // B2 threading: orphaned `omp for` on the persistent team. Per-conduit
-    // writes (surf_area1/2, flow_class, fasnh_, depth_mid_, h1_/h2_,
-    // width_mid_) are single-producer, and all cross-element reads
-    // (nodes.depth/type, links.flow, width buffers) are read-only in this
-    // phase — bit-exact at any thread count.
-    #pragma omp for schedule(static)
+// ---- STEP C: Flow classification + surface area (conduits only) ----
+// Matches legacy dwflow.c findSurfArea + getFlowClass.
+// Only links with offsets can trigger non-SUBCRITICAL classification,
+// so the expensive getYnorm/getYcrit Newton solves are rarely needed.
+// B2 threading: orphaned `omp for` on the persistent team. Per-conduit
+// writes (surf_area1/2, flow_class, fasnh_, depth_mid_, h1_/h2_,
+// width_mid_) are single-producer, and all cross-element reads
+// (nodes.depth/type, links.flow, width buffers) are read-only in this
+// phase — bit-exact at any thread count.
+#pragma omp for schedule(static)
     for (int ci = 0; ci < n_conduits_; ++ci) {
         auto uci = static_cast<std::size_t>(ci);
         // Phase A: timestep-invariant data is read from the conduit-dense
@@ -1915,22 +2010,23 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
         // Legacy parity + perf: skip bypassed conduits (see STEP A skip above).
         // surf_area1/2, flow_class, fasnh and any critical-depth overrides are
         // unchanged for a bypassed link, so the cached values are correct.
-        if (bypassed_[uj]) continue;
+        if (bypassed_[uj])
+            continue;
 
         auto un1 = static_cast<std::size_t>(tile_n1_[uci]);
         auto un2 = static_cast<std::size_t>(tile_n2_[uci]);
 
-        const double yf      = tile_y_full_[uci];
-        const double z1_off  = tile_z1_off_[uci];
-        const double z2_off  = tile_z2_off_[uci];
-        const double beta_j  = tile_beta_[uci];
-        const double qmax_j  = tile_q_max_[uci];
-        const double inv1    = tile_inv1_elev_[uci];
-        const double inv2    = tile_inv2_elev_[uci];
-        double y1   = depth1_[uj];
-        double y2   = depth2_[uj];
-        double h1   = h1_[uj];
-        double h2   = h2_[uj];
+        const double yf = tile_y_full_[uci];
+        const double z1_off = tile_z1_off_[uci];
+        const double z2_off = tile_z2_off_[uci];
+        const double beta_j = tile_beta_[uci];
+        const double qmax_j = tile_q_max_[uci];
+        const double inv1 = tile_inv1_elev_[uci];
+        const double inv2 = tile_inv2_elev_[uci];
+        double y1 = depth1_[uj];
+        double y2 = depth2_[uj];
+        double h1 = h1_[uj];
+        double h2 = h2_[uj];
         double length = tile_length_[uci];
 
         double surfArea1 = 0.0, surfArea2 = 0.0;
@@ -1947,7 +2043,10 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
         XSectParams cached_xs;
         bool xs_built = false;
         auto xs_ref = [&]() -> XSectParams& {
-            if (!xs_built) { cached_xs = buildXSP(ctx, uj); xs_built = true; }
+            if (!xs_built) {
+                cached_xs = buildXSP(ctx, uj);
+                xs_built = true;
+            }
             return cached_xs;
         };
 
@@ -1957,9 +2056,9 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
         // if/else cascades. The compiler can keep these as flags in
         // registers across the whole STEP C body.
         const bool both_full = (y1 >= yf) & (y2 >= yf);
-        const bool both_wet  = (y1 >  FUDGE) & (y2 >  FUDGE);
-        const bool both_dry  = (y1 <= FUDGE) & (y2 <= FUDGE);
-        const bool up_dry_only = (y1 <= FUDGE) & (y2 >  FUDGE);
+        const bool both_wet = (y1 > FUDGE) & (y2 > FUDGE);
+        const bool both_dry = (y1 <= FUDGE) & (y2 <= FUDGE);
+        const bool up_dry_only = (y1 <= FUDGE) & (y2 > FUDGE);
         // dn_dry_only is the implicit remainder when none of the above match.
 
         if (both_full) {
@@ -1977,9 +2076,11 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
             // Branchless via short-circuit comparisons; default fc is
             // already SUBCRITICAL.
             if (up_dry_only) {
-                if (h2 < inv1) fc = FlowClass::UP_DRY;
-            } else if (!both_wet) {           // dn_dry_only
-                if (h1 < inv2) fc = FlowClass::DN_DRY;
+                if (h2 < inv1)
+                    fc = FlowClass::UP_DRY;
+            } else if (!both_wet) { // dn_dry_only
+                if (h1 < inv2)
+                    fc = FlowClass::DN_DRY;
             }
             // else both_wet → keep fc=SUBCRITICAL
         } else {
@@ -2004,7 +2105,8 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
                         cached_yN = computeYnorm(xs, beta_j, qmax_j, q);
                         cached_yC = xsect::getYcrit(xs, q);
                         double ycMin = std::min(cached_yN, cached_yC);
-                        if (y1 < ycMin) fc = FlowClass::UP_CRITICAL;
+                        if (y1 < ycMin)
+                            fc = FlowClass::UP_CRITICAL;
                     }
                 } else {
                     // Normal flow: check downstream end
@@ -2017,8 +2119,10 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
                         if (y2 < ycMin) {
                             fc = FlowClass::DN_CRITICAL;
                         } else if (y2 < ycMax) {
-                            if (ycMax - ycMin < FUDGE) fasnh = 0.0;
-                            else fasnh = (ycMax - y2) / (ycMax - ycMin);
+                            if (ycMax - ycMin < FUDGE)
+                                fasnh = 0.0;
+                            else
+                                fasnh = (ycMax - y2) / (ycMax - ycMin);
                         }
                     }
                 }
@@ -2032,7 +2136,7 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
                     cached_yC = xsect::getYcrit(xs, q);
                     fc = FlowClass::UP_CRITICAL;
                 }
-            } else {  // dn_dry_only
+            } else { // dn_dry_only
                 const double z2_elev = inv2 + z2_off;
                 if (h1 < z2_elev) {
                     fc = FlowClass::DN_DRY;
@@ -2048,133 +2152,135 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
         // ---- Apply flow classification to surface area and depths ----
         // Reuse cached yN/yC from classification above to avoid recomputation.
         switch (fc) {
-            case FlowClass::SUBCRITICAL: {
-                // Surface-area contribution matches legacy findSurfArea (dwflow.c:464-472):
-                //   surfArea1 = (w1 + wMid) * length / 4
-                //   surfArea2 = (wMid + w2) * length / 4 * fasnh
-                // For closed conduits in surcharge, w1/w2/wMid come from STEP B
-                // with a CrownCutoff cap (not zero), matching legacy getWidth(),
-                // so we must NOT skip this branch when y1/y2 >= yf — the capped
-                // widths provide the correct (small, non-zero) contribution that
-                // keeps the Picard denominator at end nodes bounded.
-                double w1 = width1_[uj];
-                double wM = width_mid_[uj];
-                double w2 = width2_[uj];
-                // No width floor: legacy assigns the area unconditionally
-                // (dwflow.c:550-554). Gating on width_mid_ > FUDGE dropped the
-                // whole contribution of a barely-wet conduit, so its end nodes
-                // fell back to MIN_SURFAREA and their depth update overshot —
-                // 1950-h-h-elements' S147-283 at routing step 197.
+        case FlowClass::SUBCRITICAL: {
+            // Surface-area contribution matches legacy findSurfArea (dwflow.c:464-472):
+            //   surfArea1 = (w1 + wMid) * length / 4
+            //   surfArea2 = (wMid + w2) * length / 4 * fasnh
+            // For closed conduits in surcharge, w1/w2/wMid come from STEP B
+            // with a CrownCutoff cap (not zero), matching legacy getWidth(),
+            // so we must NOT skip this branch when y1/y2 >= yf — the capped
+            // widths provide the correct (small, non-zero) contribution that
+            // keeps the Picard denominator at end nodes bounded.
+            double w1 = width1_[uj];
+            double wM = width_mid_[uj];
+            double w2 = width2_[uj];
+            // No width floor: legacy assigns the area unconditionally
+            // (dwflow.c:550-554). Gating on width_mid_ > FUDGE dropped the
+            // whole contribution of a barely-wet conduit, so its end nodes
+            // fell back to MIN_SURFAREA and their depth update overshot —
+            // 1950-h-h-elements' S147-283 at routing step 197.
+            surfArea1 = (w1 + wM) * length / 4.0;
+            surfArea2 = (wM + w2) * length / 4.0 * fasnh;
+            break;
+        }
+        case FlowClass::UP_CRITICAL: {
+            // Use cached yN/yC (already computed during classification)
+            y1 = cached_yC;
+            if (cached_yN < cached_yC)
+                y1 = cached_yN;
+            y1 = std::max(y1, FUDGE);
+            const double z1_elev = inv1 + z1_off;
+            h1 = z1_elev + y1;
+            double yMid = std::max(0.5 * (y1 + y2), FUDGE);
+            double w2 = width2_[uj];
+            XSectParams& xs = xs_ref();
+            double wM = xsect::getWofY(xs, yMid);
+            // PARITY dwflow.c:521-523 + getWidth() (dwflow.c:632-641):
+            // the surface-area midpoint width is getWidth(yMid) — the
+            // Preissmann slot width when active, else capped at
+            // CrownCutoff*yFull for closed sections. Only width_mid_
+            // (Froude) keeps the raw getWofY value, matching legacy
+            // link_getFroude's uncapped xsect_getWofY.
+            double wMsa;
+            double wSlotM = getSlotWidth(yMid, yf, tile_w_max_[uci], tile_shape_[uci]);
+            if (wSlotM > 0.0)
+                wMsa = wSlotM;
+            else if (yMid / yf >= getCrownCutoff() && !xsect::isOpen(xs))
+                wMsa = xsect::getWofY(xs, getCrownCutoff() * yf);
+            else
+                wMsa = wM;
+            surfArea2 = (wMsa + w2) * length * 0.5;
+            depth1_[uj] = y1;
+            depth_mid_[uj] = yMid;
+            width_mid_[uj] = wM; // patch width for modified depth
+            h1_[uj] = h1;
+            break;
+        }
+        case FlowClass::DN_CRITICAL: {
+            // Use cached yN/yC (already computed during classification)
+            y2 = cached_yC;
+            if (cached_yN < cached_yC)
+                y2 = cached_yN;
+            y2 = std::max(y2, FUDGE);
+            const double z2_elev = inv2 + z2_off;
+            h2 = z2_elev + y2;
+            double yMid = std::max(0.5 * (y1 + y2), FUDGE);
+            double w1 = width1_[uj];
+            XSectParams& xs = xs_ref();
+            double wM = xsect::getWofY(xs, yMid);
+            // PARITY dwflow.c:531-535 + getWidth() (dwflow.c:632-641):
+            // the surface-area midpoint width is getWidth(yMid) — the
+            // Preissmann slot width when active, else capped at
+            // CrownCutoff*yFull for closed sections. Only width_mid_
+            // (Froude) keeps the raw getWofY value, matching legacy
+            // link_getFroude's uncapped xsect_getWofY.
+            double wMsa;
+            double wSlotM = getSlotWidth(yMid, yf, tile_w_max_[uci], tile_shape_[uci]);
+            if (wSlotM > 0.0)
+                wMsa = wSlotM;
+            else if (yMid / yf >= getCrownCutoff() && !xsect::isOpen(xs))
+                wMsa = xsect::getWofY(xs, getCrownCutoff() * yf);
+            else
+                wMsa = wM;
+            surfArea1 = (w1 + wMsa) * length * 0.5;
+            depth2_[uj] = y2;
+            depth_mid_[uj] = yMid;
+            width_mid_[uj] = wM; // patch width for modified depth
+            h2_[uj] = h2;
+            break;
+        }
+        case FlowClass::UP_DRY: {
+            y1 = FUDGE;
+            double yMid = std::max(0.5 * (FUDGE + y2), FUDGE);
+            double w1 = width1_[uj];
+            double w2 = width2_[uj];
+            double wM = width_mid_[uj]; // use current width for surface area
+            surfArea2 = (wM + w2) * length / 4.0;
+            if (z1_off <= 0.0)
                 surfArea1 = (w1 + wM) * length / 4.0;
-                surfArea2 = (wM + w2) * length / 4.0 * fasnh;
-                break;
-            }
-            case FlowClass::UP_CRITICAL: {
-                // Use cached yN/yC (already computed during classification)
-                y1 = cached_yC;
-                if (cached_yN < cached_yC) y1 = cached_yN;
-                y1 = std::max(y1, FUDGE);
-                const double z1_elev = inv1 + z1_off;
-                h1 = z1_elev + y1;
-                double yMid = std::max(0.5 * (y1 + y2), FUDGE);
-                double w2 = width2_[uj];
+            depth1_[uj] = FUDGE;
+            depth_mid_[uj] = yMid;
+            // Patch width_mid for modified depth (used by momentum solver)
+            {
                 XSectParams& xs = xs_ref();
-                double wM = xsect::getWofY(xs, yMid);
-                // PARITY dwflow.c:521-523 + getWidth() (dwflow.c:632-641):
-                // the surface-area midpoint width is getWidth(yMid) — the
-                // Preissmann slot width when active, else capped at
-                // CrownCutoff*yFull for closed sections. Only width_mid_
-                // (Froude) keeps the raw getWofY value, matching legacy
-                // link_getFroude's uncapped xsect_getWofY.
-                double wMsa;
-                double wSlotM = getSlotWidth(yMid, yf, tile_w_max_[uci],
-                                             tile_shape_[uci]);
-                if (wSlotM > 0.0)
-                    wMsa = wSlotM;
-                else if (yMid / yf >= getCrownCutoff() &&
-                         !xsect::isOpen(xs))
-                    wMsa = xsect::getWofY(xs, getCrownCutoff() * yf);
-                else
-                    wMsa = wM;
-                surfArea2 = (wMsa + w2) * length * 0.5;
-                depth1_[uj] = y1;
-                depth_mid_[uj] = yMid;
-                width_mid_[uj] = wM;  // patch width for modified depth
-                h1_[uj] = h1;
-                break;
+                width_mid_[uj] = xsect::getWofY(xs, yMid);
             }
-            case FlowClass::DN_CRITICAL: {
-                // Use cached yN/yC (already computed during classification)
-                y2 = cached_yC;
-                if (cached_yN < cached_yC) y2 = cached_yN;
-                y2 = std::max(y2, FUDGE);
-                const double z2_elev = inv2 + z2_off;
-                h2 = z2_elev + y2;
-                double yMid = std::max(0.5 * (y1 + y2), FUDGE);
-                double w1 = width1_[uj];
+            break;
+        }
+        case FlowClass::DN_DRY: {
+            y2 = FUDGE;
+            double yMid = std::max(0.5 * (y1 + FUDGE), FUDGE);
+            double w1 = width1_[uj];
+            double w2 = width2_[uj];
+            double wM = width_mid_[uj]; // use current width for surface area
+            surfArea1 = (wM + w1) * length / 4.0;
+            if (z2_off <= 0.0)
+                surfArea2 = (w2 + wM) * length / 4.0;
+            depth2_[uj] = FUDGE;
+            depth_mid_[uj] = yMid;
+            // Patch width_mid for modified depth (used by momentum solver)
+            {
                 XSectParams& xs = xs_ref();
-                double wM = xsect::getWofY(xs, yMid);
-                // PARITY dwflow.c:531-535 + getWidth() (dwflow.c:632-641):
-                // the surface-area midpoint width is getWidth(yMid) — the
-                // Preissmann slot width when active, else capped at
-                // CrownCutoff*yFull for closed sections. Only width_mid_
-                // (Froude) keeps the raw getWofY value, matching legacy
-                // link_getFroude's uncapped xsect_getWofY.
-                double wMsa;
-                double wSlotM = getSlotWidth(yMid, yf, tile_w_max_[uci],
-                                             tile_shape_[uci]);
-                if (wSlotM > 0.0)
-                    wMsa = wSlotM;
-                else if (yMid / yf >= getCrownCutoff() &&
-                         !xsect::isOpen(xs))
-                    wMsa = xsect::getWofY(xs, getCrownCutoff() * yf);
-                else
-                    wMsa = wM;
-                surfArea1 = (w1 + wMsa) * length * 0.5;
-                depth2_[uj] = y2;
-                depth_mid_[uj] = yMid;
-                width_mid_[uj] = wM;  // patch width for modified depth
-                h2_[uj] = h2;
-                break;
+                width_mid_[uj] = xsect::getWofY(xs, yMid);
             }
-            case FlowClass::UP_DRY: {
-                y1 = FUDGE;
-                double yMid = std::max(0.5 * (FUDGE + y2), FUDGE);
-                double w1 = width1_[uj];
-                double w2 = width2_[uj];
-                double wM = width_mid_[uj];  // use current width for surface area
-                surfArea2 = (wM + w2) * length / 4.0;
-                if (z1_off <= 0.0)
-                    surfArea1 = (w1 + wM) * length / 4.0;
-                depth1_[uj] = FUDGE;
-                depth_mid_[uj] = yMid;
-                // Patch width_mid for modified depth (used by momentum solver)
-                { XSectParams& xs = xs_ref();
-                  width_mid_[uj] = xsect::getWofY(xs, yMid); }
-                break;
-            }
-            case FlowClass::DN_DRY: {
-                y2 = FUDGE;
-                double yMid = std::max(0.5 * (y1 + FUDGE), FUDGE);
-                double w1 = width1_[uj];
-                double w2 = width2_[uj];
-                double wM = width_mid_[uj];  // use current width for surface area
-                surfArea1 = (wM + w1) * length / 4.0;
-                if (z2_off <= 0.0)
-                    surfArea2 = (w2 + wM) * length / 4.0;
-                depth2_[uj] = FUDGE;
-                depth_mid_[uj] = yMid;
-                // Patch width_mid for modified depth (used by momentum solver)
-                { XSectParams& xs = xs_ref();
-                  width_mid_[uj] = xsect::getWofY(xs, yMid); }
-                break;
-            }
-            case FlowClass::DRY:
-                surfArea1 = FUDGE * length / 2.0;
-                surfArea2 = surfArea1;
-                break;
-            default:
-                break;
+            break;
+        }
+        case FlowClass::DRY:
+            surfArea1 = FUDGE * length / 2.0;
+            surfArea2 = surfArea1;
+            break;
+        default:
+            break;
         }
 
         surf_area1_[uj] = surfArea1;
@@ -2190,16 +2296,16 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
     //   d2 → a2            via computeAreas
     //   dm → (am, hrad_mid) via computeAreaAndHydRad
     // Saves one gather of depth1_ plus kernel bookkeeping per Picard iter.
-    double* OPENSWMM_RESTRICT p_d1  = depth1_.data();
-    double* OPENSWMM_RESTRICT p_d2  = depth2_.data();
-    double* OPENSWMM_RESTRICT p_dm  = depth_mid_.data();
-    double* OPENSWMM_RESTRICT p_a1  = area1_.data();
-    double* OPENSWMM_RESTRICT p_a2  = area2_.data();
-    double* OPENSWMM_RESTRICT p_am  = area_mid_.data();
-    double* OPENSWMM_RESTRICT p_hm  = hrad_mid_.data();
-    double* OPENSWMM_RESTRICT p_h1  = hrad1_.data();
-    double* OPENSWMM_RESTRICT p_wm  = width_mid_.data();
-    (void)p_wm;  // width_mid_ already computed in STEP B
+    double* OPENSWMM_RESTRICT p_d1 = depth1_.data();
+    double* OPENSWMM_RESTRICT p_d2 = depth2_.data();
+    double* OPENSWMM_RESTRICT p_dm = depth_mid_.data();
+    double* OPENSWMM_RESTRICT p_a1 = area1_.data();
+    double* OPENSWMM_RESTRICT p_a2 = area2_.data();
+    double* OPENSWMM_RESTRICT p_am = area_mid_.data();
+    double* OPENSWMM_RESTRICT p_hm = hrad_mid_.data();
+    double* OPENSWMM_RESTRICT p_h1 = hrad1_.data();
+    double* OPENSWMM_RESTRICT p_wm = width_mid_.data();
+    (void)p_wm; // width_mid_ already computed in STEP B
 
     // Team-split (B3) — same slice contract as STEP B (see
     // computeAreaHydRadTripleTeam): disjoint single-producer element writes,
@@ -2211,12 +2317,10 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
     {
         const int d_tid = omp_get_thread_num();
         const int d_nth = omp_get_num_threads();
-        groups_->computeAreaHydRadTripleTeam(p_d1, p_d2, p_dm,
-                                             p_a1, p_a2, p_am,
-                                             p_h1, p_hm, n_links_,
-                                             d_tid, d_nth);
+        groups_->computeAreaHydRadTripleTeam(p_d1, p_d2, p_dm, p_a1, p_a2, p_am, p_h1, p_hm,
+                                             n_links_, d_tid, d_nth);
     }
-    #pragma omp barrier
+#pragma omp barrier
     // width_mid_ already computed in STEP B; UP/DN_CRITICAL/DRY cases
     // patched inline in STEP C.
 
@@ -2226,21 +2330,20 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
     //   kernels above so the slot overwrites whatever the shape kernel
     //   produced for above-full depth.
     if (surcharge_method == SurchargeMethod::DYNAMIC_SLOT) {
-        // Dynamic Preissmann Slot: area-based transient storage (Sharior et
-        // al. 2023). Serial inside `omp single`: dps_ state accumulation is
-        // kept off the team on purpose (not a hot path; not used by the
-        // parity models).
-        #pragma omp single
+// Dynamic Preissmann Slot: area-based transient storage (Sharior et
+// al. 2023). Serial inside `omp single`: dps_ state accumulation is
+// kept off the team on purpose (not a hot path; not used by the
+// parity models).
+#pragma omp single
         {
-        applyDPSGeometry(ctx);
+            applyDPSGeometry(ctx);
         }
-    }
-    else if (surcharge_method == SurchargeMethod::TPA) {
-        // TPA (issue #156): same serialization rationale as DPS — the
-        // override is a cheap per-conduit pass and stays off the team.
-        #pragma omp single
+    } else if (surcharge_method == SurchargeMethod::TPA) {
+// TPA (issue #156): same serialization rationale as DPS — the
+// override is a cheap per-conduit pass and stays off the team.
+#pragma omp single
         {
-        applyTpaGeometry(ctx);
+            applyTpaGeometry(ctx);
         }
     }
     // Static slot (Sjoberg formula) / EXTRAN STEP E overrides are FUSED into
@@ -2271,8 +2374,7 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
 // execute()).
 // ============================================================================
 
-void DWSolver::recomputeConduitLossOne(SimulationContext& ctx, double dt,
-                                       int ci) {
+void DWSolver::recomputeConduitLossOne(SimulationContext& ctx, double dt, int ci) {
     auto& links = ctx.links;
     auto& CD = ctx.link_subtypes.conduits;
     const double evap = evap_rate;
@@ -2301,9 +2403,8 @@ void DWSolver::recomputeConduitLossOne(SimulationContext& ctx, double dt,
         // A bypassed conduit keeps its last-computed class and aMid, so this
         // recompute reproduces the value legacy retains for it.
         const FlowClass fc = links.flow_class[u];
-        if (fc == FlowClass::DRY || fc == FlowClass::UP_DRY ||
-            fc == FlowClass::DN_DRY || area_mid_[u] <= FUDGE ||
-            tile_is_closed_[uci] || links.setting[u] == 0.0) {
+        if (fc == FlowClass::DRY || fc == FlowClass::UP_DRY || fc == FlowClass::DN_DRY ||
+            area_mid_[u] <= FUDGE || tile_is_closed_[uci] || links.setting[u] == 0.0) {
             CD.evap_loss_rate[ucr] = 0.0;
             CD.seep_loss_rate[ucr] = 0.0;
             return;
@@ -2317,8 +2418,10 @@ void DWSolver::recomputeConduitLossOne(SimulationContext& ctx, double dt,
         if (depth > FUDGE) {
             // Routing length (legacy conduit_getLength), not modLength.
             double length = CD.true_length[ucr];
-            if (length <= 0.0) length = CD.length[ucr];
-            if (length <= 0.0) length = CD.mod_length[ucr];
+            if (length <= 0.0)
+                length = CD.length[ucr];
+            if (length <= 0.0)
+                length = CD.mod_length[ucr];
             const int shape = links.xsect_batch_shape[u];
 
             // isOpen(int) can't classify a compiled boundary (POLYGON, or any
@@ -2335,26 +2438,23 @@ void DWSolver::recomputeConduitLossOne(SimulationContext& ctx, double dt,
             // G-X4: an aquifer-coupled conduit runs the signed law even
             // with no [LOSSES] seepage rate — `[2D_AQUIFER_LINKS] KC` is
             // what lets a pipe that never leaked GAIN below the table.
-            const bool gw_two_way = !CD.gw_coupled.empty() &&
-                                    CD.gw_coupled[ucr] != 0;
+            const bool gw_two_way = !CD.gw_coupled.empty() && CD.gw_coupled[ucr] != 0;
             const double k_seep = gw_two_way ? CD.gw_kc[ucr] : CD.seep_rate[ucr];
             const bool wantEvap = is_open_sect && evap > 0.0;
             const bool wantSeep = k_seep > 0.0;
             if (wantEvap || wantSeep) {
-                const XSectParams xs = buildXSP(ctx, u);  // faithful incl. transect
+                const XSectParams xs = buildXSP(ctx, u); // faithful incl. transect
                 if (wantEvap) {
                     const double topWidth = xsect::getWofY(xs, depth);
                     evap_loss = topWidth * length * evap;
                 }
                 if (wantSeep) {
                     double d_seep = depth;
-                    if (shape != static_cast<int>(XSectShape::RECT_CLOSED) &&
-                        d_seep >= xs.yw_max)
+                    if (shape != static_cast<int>(XSectShape::RECT_CLOSED) && d_seep >= xs.yw_max)
                         d_seep = xs.yw_max;
-                    const double width =
-                        (shape == static_cast<int>(XSectShape::RECT_CLOSED))
-                            ? xs.w_max
-                            : xsect::getWofY(xs, d_seep);
+                    const double width = (shape == static_cast<int>(XSectShape::RECT_CLOSED))
+                                             ? xs.w_max
+                                             : xsect::getWofY(xs, d_seep);
                     seep_loss = k_seep * width * length;
                     // Monthly conductivity adjustment (legacy link.c:1378:
                     // seepLossRate *= Adjust.hydconFactor). infil_factor
@@ -2366,10 +2466,9 @@ void DWSolver::recomputeConduitLossOne(SimulationContext& ctx, double dt,
                     // over a table at or below its invert, which is the
                     // regime legacy's unit gradient assumes.
                     if (gw_two_way) {
-                        seep_loss *= hydraulics::aquiferSeepFactor(
-                            depth, CD.gw_head_rel[ucr], CD.gw_dc[ucr]);
-                        seep_loss = hydraulics::capAquiferGain(
-                            seep_loss, CD.gw_gain_max[ucr]);
+                        seep_loss *= hydraulics::aquiferSeepFactor(depth, CD.gw_head_rel[ucr],
+                                                                   CD.gw_dc[ucr]);
+                        seep_loss = hydraulics::capAquiferGain(seep_loss, CD.gw_gain_max[ucr]);
                     }
                 }
             }
@@ -2385,7 +2484,8 @@ void DWSolver::recomputeConduitLossOne(SimulationContext& ctx, double dt,
                 const double q = links.volume[u] / dt;
                 if (total > q) {
                     evap_loss = evap_loss * q / total;
-                    if (seep_loss > 0.0) seep_loss = seep_loss * q / total;
+                    if (seep_loss > 0.0)
+                        seep_loss = seep_loss * q / total;
                 }
             }
         }
@@ -2414,8 +2514,7 @@ void DWSolver::recomputeConduitLossOne(SimulationContext& ctx, double dt,
 void DWSolver::momentumKernels(SimulationContext& ctx, double dt, int step) {
     auto& links = ctx.links;
     // Replicated per-thread constants — identical across the team.
-    const bool static_slot_e =
-        (surcharge_method != SurchargeMethod::DYNAMIC_SLOT);
+    const bool static_slot_e = (surcharge_method != SurchargeMethod::DYNAMIC_SLOT);
     const bool do_losses = !losses_all_zero_;
 
     // Virtual-junction pair cache for this Picard iteration (shared sigma,
@@ -2423,7 +2522,7 @@ void DWSolver::momentumKernels(SimulationContext& ctx, double dt, int step) {
     // single's implicit barrier orders the cache before the kernel loop.
     // No-op (no single, no barrier) for models without virtual junctions.
     if (!vjunc_.empty()) {
-        #pragma omp single
+#pragma omp single
         vjPrepareIteration(ctx, dt);
     }
 
@@ -2453,10 +2552,12 @@ void DWSolver::momentumKernels(SimulationContext& ctx, double dt, int step) {
         // the loss here from that fresher depth booked a different loss than
         // legacy into both end nodes (50-transects: node PURGATORY_7's
         // outflow after step 1 was half a stale-vs-fresh evaporation loss).
-        if (bypassed_[uj]) return;
+        if (bypassed_[uj])
+            return;
 
         // Per-iterate evap/seepage loss recompute (flow-class gated inside).
-        if (do_losses) recomputeConduitLossOne(ctx, dt, ci);
+        if (do_losses)
+            recomputeConduitLossOne(ctx, dt, ci);
 
         dqdh_[uj] = 0.0;
 
@@ -2482,9 +2583,17 @@ void DWSolver::momentumKernels(SimulationContext& ctx, double dt, int step) {
             // FILLED_CIRCULAR scalar fallback forms a/p through the circular
             // tables and lands an ulp off (user1-filled-circular, a 1-ulp
             // flow difference on step 559 that grew to 0.3 %).
-            if (depth1_[uj] >= yf)   { area1_[uj]    = af; hrad1_[uj]    = rf; }
-            if (depth2_[uj] >= yf)   { area2_[uj]    = af; }
-            if (depth_mid_[uj] >= yf){ area_mid_[uj] = af; hrad_mid_[uj] = rf; }
+            if (depth1_[uj] >= yf) {
+                area1_[uj] = af;
+                hrad1_[uj] = rf;
+            }
+            if (depth2_[uj] >= yf) {
+                area2_[uj] = af;
+            }
+            if (depth_mid_[uj] >= yf) {
+                area_mid_[uj] = af;
+                hrad_mid_[uj] = rf;
+            }
 
             // PARITY dwflow.c getArea()/getHydRad(): above full depth the
             // area is aFull + (y - yFull)·wSlot UNCONDITIONALLY — wSlot is 0
@@ -2507,7 +2616,8 @@ void DWSolver::momentumKernels(SimulationContext& ctx, double dt, int step) {
             if (yMid > yf) {
                 const double wSlot = getSlotWidth(yMid, yf, wm, shape);
                 area_mid_[uj] = af + (yMid - yf) * wSlot;
-                if (wSlot > 0.0) width_mid_[uj] = wSlot;
+                if (wSlot > 0.0)
+                    width_mid_[uj] = wSlot;
                 hrad_mid_[uj] = rf;
             }
         }
@@ -2524,16 +2634,14 @@ void DWSolver::momentumKernels(SimulationContext& ctx, double dt, int step) {
         // CLOSED`) takes the zero-flow branch every iteration. The tile flag
         // is the C-API's static closure; the rule's setting changes at run
         // time (miami-usgs-rdii's valve conduit kept flowing while closed).
-        if (fc == FlowClass::DRY || fc == FlowClass::UP_DRY ||
-            fc == FlowClass::DN_DRY || aMid <= FUDGE || tile_is_closed_[uci] ||
-            links.setting[uj] == 0.0) {
+        if (fc == FlowClass::DRY || fc == FlowClass::UP_DRY || fc == FlowClass::DN_DRY ||
+            aMid <= FUDGE || tile_is_closed_[uci] || links.setting[uj] == 0.0) {
             cat = MomentumCategory::SKIP_DRY;
         } else if (tile_is_force_main_[uci] && isFull) {
             // Legacy selects by the global FORCE_MAIN_EQUATION option
             // (forcmain.c ForceMainEqn), not by inspecting the coefficient.
-            cat = (ctx.options.force_main_eqn == 1)
-                ? MomentumCategory::FORCE_MAIN_DW
-                : MomentumCategory::FORCE_MAIN_HW;
+            cat = (ctx.options.force_main_eqn == 1) ? MomentumCategory::FORCE_MAIN_DW
+                                                    : MomentumCategory::FORCE_MAIN_HW;
         } else if (!tile_is_open_[uci] && isFull) {
             cat = MomentumCategory::MANNING_CLOSED_FULL;
         } else if (tile_is_open_[uci]) {
@@ -2545,20 +2653,20 @@ void DWSolver::momentumKernels(SimulationContext& ctx, double dt, int step) {
 
         // ---- Momentum kernel dispatch ----
         switch (cat) {
-            case MomentumCategory::SKIP_DRY:
-                processDryLink(ctx, dt, uj);
-                break;
-            case MomentumCategory::MANNING_OPEN:
-            case MomentumCategory::MANNING_CLOSED_FS:
-            case MomentumCategory::MANNING_CLOSED_FULL:
-                processManningLink(ctx, dt, step, uj, cat);
-                break;
-            case MomentumCategory::FORCE_MAIN_HW:
-            case MomentumCategory::FORCE_MAIN_DW:
-                processForceMainLink(ctx, dt, step, uj, cat);
-                break;
-            default:
-                break;
+        case MomentumCategory::SKIP_DRY:
+            processDryLink(ctx, dt, uj);
+            break;
+        case MomentumCategory::MANNING_OPEN:
+        case MomentumCategory::MANNING_CLOSED_FS:
+        case MomentumCategory::MANNING_CLOSED_FULL:
+            processManningLink(ctx, dt, step, uj, cat);
+            break;
+        case MomentumCategory::FORCE_MAIN_HW:
+        case MomentumCategory::FORCE_MAIN_DW:
+            processForceMainLink(ctx, dt, step, uj, cat);
+            break;
+        default:
+            break;
         }
 
         // UF reads neighboring flow/area in this loop. Its ordered path
@@ -2574,17 +2682,19 @@ void DWSolver::momentumKernels(SimulationContext& ctx, double dt, int step) {
     };
 
     if (unsteady_friction != 0 && uf_k3 > 0.0) {
-        // Preserve the established serial UF stencil, including slot-area
-        // overrides and flow commits. A previous-iterate snapshot would
-        // change that numerical method; concurrent in-place reads are a race.
-        // The single barrier publishes the completed momentum phase.
-        #pragma omp single
+// Preserve the established serial UF stencil, including slot-area
+// overrides and flow commits. A previous-iterate snapshot would
+// change that numerical method; concurrent in-place reads are a race.
+// The single barrier publishes the completed momentum phase.
+#pragma omp single
         {
-            for (int ci = 0; ci < n_conduits_; ++ci) solve_conduit(ci);
+            for (int ci = 0; ci < n_conduits_; ++ci)
+                solve_conduit(ci);
         }
     } else {
-        #pragma omp for schedule(static)
-        for (int ci = 0; ci < n_conduits_; ++ci) solve_conduit(ci);
+#pragma omp for schedule(static)
+        for (int ci = 0; ci < n_conduits_; ++ci)
+            solve_conduit(ci);
     }
 }
 
@@ -2592,9 +2702,8 @@ void DWSolver::momentumKernels(SimulationContext& ctx, double dt, int step) {
 // processDryLink -- trivial: zero flow, minimal bookkeeping (per-element)
 // ============================================================================
 
-void DWSolver::processDryLink(SimulationContext& ctx, double dt,
-                              std::size_t uj) {
-    (void)dt;  // unused — kept for signature uniformity across kernels
+void DWSolver::processDryLink(SimulationContext& ctx, double dt, std::size_t uj) {
+    (void)dt; // unused — kept for signature uniformity across kernels
     auto& links = ctx.links;
     const double dt_g = dt_gravity_;
 
@@ -2611,7 +2720,7 @@ void DWSolver::processDryLink(SimulationContext& ctx, double dt,
     dqdh_[uj] = dt_g * aMid / tile_length_[uci] * barrels_d;
     froude_[uj] = 0.0;
     new_flow_[uj] = 0.0;
-    q1_[uj] = 0.0;   // legacy dwflow.c:196 Conduit.q1 = 0
+    q1_[uj] = 0.0; // legacy dwflow.c:196 Conduit.q1 = 0
     double yf = tile_y_full_[uci];
     links.depth[uj] = std::min(depth_mid_[uj], yf);
     // Volume uses RAW user-input length to match legacy. Legacy
@@ -2630,12 +2739,12 @@ void DWSolver::processDryLink(SimulationContext& ctx, double dt,
 //                    flap gates, dry node checks, depth/volume update)
 // ============================================================================
 
-void DWSolver::applyFlowLimits(SimulationContext& ctx, double dt, int step,
-                               std::size_t uj, double& q, double qLast,
-                               double barrels_d, bool isFull) {
+void DWSolver::applyFlowLimits(SimulationContext& ctx, double dt, int step, std::size_t uj,
+                               double& q, double qLast, double barrels_d, bool isFull) {
     auto& links = ctx.links;
     auto& nodes = ctx.nodes;
-    auto& CD = ctx.link_subtypes.conduits;  // inlet_control / normal_flow_limited, indexed by conduit ROW
+    auto& CD =
+        ctx.link_subtypes.conduits; // inlet_control / normal_flow_limited, indexed by conduit ROW
     const int normal_flow_ltd = ctx.options.normal_flow_ltd;
     // Phase A extension: read invariants from the conduit-dense tile.
     auto uci = static_cast<std::size_t>(tile_uj_to_ci_[uj]);
@@ -2660,9 +2769,8 @@ void DWSolver::applyFlowLimits(SimulationContext& ctx, double dt, int step,
             double dqdh_culv = 0.0;
             bool inlet = false;
             const XSectParams xs_c = buildXSP(ctx, uj);
-            const double q_inlet = culvert::getInflow(
-                q, y_in, xs_c, tile_slope_[uci], tile_culvert_code_[uci],
-                dqdh_culv, inlet);
+            const double q_inlet = culvert::getInflow(q, y_in, xs_c, tile_slope_[uci],
+                                                      tile_culvert_code_[uci], dqdh_culv, inlet);
             if (inlet) {
                 q = q_inlet;
                 dqdh_[uj] = dqdh_culv;
@@ -2678,8 +2786,8 @@ void DWSolver::applyFlowLimits(SimulationContext& ctx, double dt, int step,
                     hasOutfall = (nodes.type[un1] == NodeType::OUTFALL ||
                                   nodes.type[un2] == NodeType::OUTFALL);
                 }
-                bool slope_check = (nfl == 0 || nfl == 2 || hasOutfall) &&
-                                   (depth1_[uj] < depth2_[uj]);
+                bool slope_check =
+                    (nfl == 0 || nfl == 2 || hasOutfall) && (depth1_[uj] < depth2_[uj]);
                 bool froude_check = false;
                 if (!slope_check && (nfl == 1 || nfl == 2) && !hasOutfall) {
                     if (depth1_[uj] > FUDGE && depth2_[uj] > FUDGE) {
@@ -2691,8 +2799,7 @@ void DWSolver::applyFlowLimits(SimulationContext& ctx, double dt, int step,
                         // normal-flow limit) — and a CLOSED conduit within
                         // FUDGE of full has Froude 0 (no limit check).
                         const double y1d = depth1_[uj];
-                        const bool closed_nearfull =
-                            !tile_is_open_[uci] && (yf - y1d <= FUDGE);
+                        const bool closed_nearfull = !tile_is_open_[uci] && (yf - y1d <= FUDGE);
                         if (!closed_nearfull) {
                             double v1 = q / area1_[uj];
                             XSectParams xs = buildXSP(ctx, uj);
@@ -2700,8 +2807,7 @@ void DWSolver::applyFlowLimits(SimulationContext& ctx, double dt, int step,
                             // Legacy divides A/W with no zero guard; y1 < yf
                             // and not near-full keeps W finite here.
                             double dh1 = area1_[uj] / w1;
-                            double f1 = std::fabs(v1) /
-                                        std::sqrt(constants::GRAVITY * dh1);
+                            double f1 = std::fabs(v1) / std::sqrt(constants::GRAVITY * dh1);
                             froude_check = (f1 >= 1.0);
                         }
                     }
@@ -2711,11 +2817,9 @@ void DWSolver::applyFlowLimits(SimulationContext& ctx, double dt, int step,
                     // grouped first, libm std::pow (NOT cbrt(x*x)), raw upstream
                     // hyd radius (no FUDGE clamp). §6 fast-mode: cbrt(x*x) (opt-in).
 #ifdef SWMM_FAST_MANNING_POW
-                    double qNorm = tile_beta_[uci] * area1_[uj]
-                                 * fastmath::pow2_3(hrad1_[uj]);
+                    double qNorm = tile_beta_[uci] * area1_[uj] * fastmath::pow2_3(hrad1_[uj]);
 #else
-                    double qNorm = tile_beta_[uci] * area1_[uj]
-                                 * std::pow(hrad1_[uj], 2.0 / 3.0);
+                    double qNorm = tile_beta_[uci] * area1_[uj] * std::pow(hrad1_[uj], 2.0 / 3.0);
 #endif
                     if (qNorm < q) {
                         q = qNorm;
@@ -2729,7 +2833,8 @@ void DWSolver::applyFlowLimits(SimulationContext& ctx, double dt, int step,
     // Under-relaxation (after first iteration)
     if (step > 0) {
         q = (1.0 - omega) * qLast + omega * q;
-        if (q * qLast < 0.0) q = 0.001 * ((q > 0.0) ? 1.0 : -1.0);
+        if (q * qLast < 0.0)
+            q = 0.001 * ((q > 0.0) ? 1.0 : -1.0);
     }
 
     // Flow limit
@@ -2740,7 +2845,8 @@ void DWSolver::applyFlowLimits(SimulationContext& ctx, double dt, int step,
 
     // Flap gate checks
     if (tile_has_flap_gate_[uci]) {
-        if (q * static_cast<double>(tile_direction_[uci]) < 0.0) q = 0.0;
+        if (q * static_cast<double>(tile_direction_[uci]) < 0.0)
+            q = 0.0;
     }
     if (q < 0.0 && n2 >= 0 && nodes.type[un2] == NodeType::OUTFALL) {
         const int ofr = ctx.node_subtypes.outfall_row(n2);
@@ -2754,12 +2860,14 @@ void DWSolver::applyFlowLimits(SimulationContext& ctx, double dt, int step,
     }
 
     // Dry node check
-    if (q >  FUDGE && lidnode::portDepth(ctx, n1, tile_z1_off_[uci]) <= FUDGE) q =  FUDGE;
-    if (q < -FUDGE && lidnode::portDepth(ctx, n2, tile_z2_off_[uci]) <= FUDGE) q = -FUDGE;
+    if (q > FUDGE && lidnode::portDepth(ctx, n1, tile_z1_off_[uci]) <= FUDGE)
+        q = FUDGE;
+    if (q < -FUDGE && lidnode::portDepth(ctx, n2, tile_z2_off_[uci]) <= FUDGE)
+        q = -FUDGE;
 
     // Save new flow
     new_flow_[uj] = q * barrels_d;
-    q1_[uj] = q;     // legacy dwflow.c:365 Conduit.q1 = q (per barrel)
+    q1_[uj] = q; // legacy dwflow.c:365 Conduit.q1 = q (per barrel)
 
     // Update link depth and volume
     links.depth[uj] = std::min(depth_mid_[uj], yf);
@@ -2775,11 +2883,11 @@ void DWSolver::applyFlowLimits(SimulationContext& ctx, double dt, int step,
     // where dwflow has stored the MIDPOINT area in a1 — what dynwave
     // checkCapacity tests. Read only by the report statistics.
     const double a_full = links.xsect_a_full[uj];
-    const bool up_full  = area1_[uj] >= a_full;
-    const bool dn_full  = area2_[uj] >= a_full;
+    const bool up_full = area1_[uj] >= a_full;
+    const bool dn_full = area2_[uj] >= a_full;
     const bool mid_full = area_mid_[uj] >= a_full;
-    CD.full_state[ucr] = static_cast<int8_t>((up_full ? 1 : 0) | (dn_full ? 2 : 0) |
-                                             (mid_full ? 4 : 0));
+    CD.full_state[ucr] =
+        static_cast<int8_t>((up_full ? 1 : 0) | (dn_full ? 2 : 0) | (mid_full ? 4 : 0));
 }
 
 // ============================================================================
@@ -2787,14 +2895,14 @@ void DWSolver::applyFlowLimits(SimulationContext& ctx, double dt, int step,
 //                       MANNING_CLOSED_FS, and MANNING_CLOSED_FULL
 // ============================================================================
 
-void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
-                                  std::size_t uj, MomentumCategory cat) {
+void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step, std::size_t uj,
+                                  MomentumCategory cat) {
     auto& links = ctx.links;
-    const auto& CD = ctx.link_subtypes.conduits;  // Phase 6 Stage B: per-step evap/seep
+    const auto& CD = ctx.link_subtypes.conduits; // Phase 6 Stage B: per-step evap/seep
     const int inert_damping = ctx.options.inertial_damping;
     const double dt_g = dt_gravity_;
     const bool is_closed_full = (cat == MomentumCategory::MANNING_CLOSED_FULL);
-    const bool is_open_cat    = (cat == MomentumCategory::MANNING_OPEN);
+    const bool is_open_cat = (cat == MomentumCategory::MANNING_OPEN);
 
     // Phase A extension: read invariants from the conduit-dense tile.
     auto uci = static_cast<std::size_t>(tile_uj_to_ci_[uj]);
@@ -2803,16 +2911,16 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
     double inv_len = tile_inv_length_[uci];
     double aMid = area_mid_[uj];
     double rMid = hrad_mid_[uj];
-    double qLast = q1_[uj];   // legacy Conduit.q1 (per barrel)
+    double qLast = q1_[uj]; // legacy Conduit.q1 (per barrel)
     double yf = tile_y_full_[uci];
     bool isFull = (depth1_[uj] >= yf && depth2_[uj] >= yf);
 
     // Conveyance areas for the momentum equation — Preissmann slot excluded
     // (issue #144, see conveyArea). aMid/area1_/area2_ keep the slot for
     // storage and node continuity; only the momentum terms below are clamped.
-    const double aFull   = tile_a_full_[uci];
-    const double a1Conv  = conveyArea(area1_[uj], aFull);
-    const double a2Conv  = conveyArea(area2_[uj], aFull);
+    const double aFull = tile_a_full_[uci];
+    const double a1Conv = conveyArea(area1_[uj], aFull);
+    const double a2Conv = conveyArea(area2_[uj], aFull);
     const double aMidConv = conveyArea(aMid, aFull);
 
     // Velocity (clamped)
@@ -2837,8 +2945,7 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
         // residual capped case is SUBCRITICAL with the mid-depth above the crown
         // cutoff. Recompute the uncapped width there to match legacy exactly;
         // every other path leaves width_mid_ untouched (bit-identical).
-        if (links.flow_class[uj] == FlowClass::SUBCRITICAL &&
-            wcap_dm_[uj] < depth_mid_[uj]) {
+        if (links.flow_class[uj] == FlowClass::SUBCRITICAL && wcap_dm_[uj] < depth_mid_[uj]) {
             XSectParams xs = buildXSP(ctx, uj);
             wMid = xsect::getWofY(xs, depth_mid_[uj]);
         }
@@ -2849,8 +2956,7 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
         // test — otherwise open/IRREGULAR channels that fill (user2/5) get fr=0
         // (and sigma=1) and closed pipes straddling the crown (user3) get a
         // spurious nonzero fr, both seeding surcharge divergence.
-        const bool closed_nearfull =
-            !tile_is_open_[uci] && (yf - depth_mid_[uj] <= FUDGE);
+        const bool closed_nearfull = !tile_is_open_[uci] && (yf - depth_mid_[uj] <= FUDGE);
         if (depth_mid_[uj] > FUDGE && !closed_nearfull) {
             // #144: aMid, not aMidConv, is deliberate and equivalent here.
             // The slot only inflates area once depth_mid > y_full, and that
@@ -2923,9 +3029,13 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
     // EXTRAN's per-link Froude sigma already carries the damping policy.
     // Diagnostic toggles (SWMM_VJ_M3/M4=0 disables; default on).
     static const bool vj_m3 = [] {
-        const char* s = std::getenv("SWMM_VJ_M3"); return !(s && *s == '0'); }();
+        const char* s = std::getenv("SWMM_VJ_M3");
+        return !(s && *s == '0');
+    }();
     static const bool vj_m4 = [] {
-        const char* s = std::getenv("SWMM_VJ_M4"); return !(s && *s == '0'); }();
+        const char* s = std::getenv("SWMM_VJ_M4");
+        return !(s && *s == '0');
+    }();
     double vj_dq4 = 0.0;
     if (!vjunc_.empty()) {
         const int r1 = vj_pair_n1_[uj];
@@ -2933,13 +3043,14 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
         if (r1 >= 0) {
             const VJuncPair& p = vjunc_[static_cast<std::size_t>(r1)];
             if (p.active) {
-                if (vj_m3 && p.dirn > 0 && static_cast<int>(uj) == p.dn_link &&
-                    !is_closed_full && !isFull && qLast > 0.0) {
+                if (vj_m3 && p.dirn > 0 && static_cast<int>(uj) == p.dn_link && !is_closed_full &&
+                    !isFull && qLast > 0.0) {
                     // p.a_up_mid is already a conveyance area (#144).
                     aWtd = p.a_up_mid + (aMidConv - p.a_up_mid) * rho;
                     rWtd = p.r_up_mid + (rMid - p.r_up_mid) * rho;
                 }
-                if (vj_m4) vj_dq4 += p.dq4j;
+                if (vj_m4)
+                    vj_dq4 += p.dq4j;
             }
         }
         // NOTE (2026-08-14): each interface's dq4j spans midpoint-to-midpoint
@@ -2951,16 +3062,20 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
         // vjPrepareIteration is. See plans/VJ_MOMENTUM_SCOPE.md Phase 3.
         if (r2 >= 0) {
             const VJuncPair& p = vjunc_[static_cast<std::size_t>(r2)];
-            if (p.active && vj_m4) vj_dq4 += p.dq4j;
+            if (p.active && vj_m4)
+                vj_dq4 += p.dq4j;
         }
     }
 
     // Apply InertDamping override AFTER rho computation
     if (!is_closed_full) {
-        if      (inert_damping == 0) sig = 1.0;  // NO_DAMPING
-        else if (inert_damping == 2) sig = 0.0;  // FULL_DAMPING
+        if (inert_damping == 0)
+            sig = 1.0; // NO_DAMPING
+        else if (inert_damping == 2)
+            sig = 0.0; // FULL_DAMPING
         // MANNING_CLOSED_FS: full damping when surcharged closed conduit
-        if (!is_open_cat && isFull) sig = 0.0;
+        if (!is_open_cat && isFull)
+            sig = 0.0;
     }
     sigma_[uj] = sig;
 
@@ -3004,7 +3119,7 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
     if (sig > 0.0) {
         dq3 = 2.0 * v * (aMidConv - aOld) * sig;
         if (length > 0.0)
-            dq4 = dt * v * v * (a2Conv - a1Conv) / length * sig;  // PARITY dwflow.c:222
+            dq4 = dt * v * v * (a2Conv - a1Conv) / length * sig; // PARITY dwflow.c:222
         // Cross-junction convective correction for virtual-junction pairs
         // (0 unless VIRTUAL_JUNCTION_MOMENTUM FULL and the pair is active);
         // gated on sig so the inertial-damping overrides silence it too.
@@ -3017,10 +3132,13 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
         double absq = std::fabs(qLast);
         double losses = 0.0;
         // #144: local losses are velocity heads — conveyance areas.
-        if (a1Conv > FUDGE) losses += tile_loss_inlet_[uci] * (absq / a1Conv);
-        if (a2Conv > FUDGE) losses += tile_loss_outlet_[uci] * (absq / a2Conv);
-        if (aMidConv > FUDGE) losses += tile_loss_avg_[uci] * (absq / aMidConv);
-        dq5 = losses / 2.0 / length * dt;  // PARITY dwflow.c:229
+        if (a1Conv > FUDGE)
+            losses += tile_loss_inlet_[uci] * (absq / a1Conv);
+        if (a2Conv > FUDGE)
+            losses += tile_loss_outlet_[uci] * (absq / a2Conv);
+        if (aMidConv > FUDGE)
+            losses += tile_loss_avg_[uci] * (absq / aMidConv);
+        dq5 = losses / 2.0 / length * dt; // PARITY dwflow.c:229
     }
 
     // Evaporation/seepage. Length divisor uses RAW length (matching legacy
@@ -3052,15 +3170,15 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
     // 0.01 ft/s dead-band mirrors kernels::ufUpdate (added-inertia noise
     // amplification, measured on the FV side). When inactive, the original
     // expression is evaluated verbatim so the default path stays bit-exact.
-    bool   uf_applied = false;
+    bool uf_applied = false;
     double uf_num = 0.0;
     if (unsteady_friction != 0 && uf_k3 > 0.0) {
-        constexpr double kUfVelFloor = 0.01;  // ft/s, mirrors FvKernels
+        constexpr double kUfVelFloor = 0.01; // ft/s, mirrors FvKernels
         const double vOld = (aOld > FUDGE) ? qOld / aOld : 0.0;
         if (std::fabs(vOld) >= kUfVelFloor || absv >= kUfVelFloor) {
             const double wMid = width_mid_[uj];
-            const double c_wave = (wMid > FUDGE && aMid > FUDGE)
-                ? std::sqrt(GRAVITY * aMid / wMid) : 0.0;
+            const double c_wave =
+                (wMid > FUDGE && aMid > FUDGE) ? std::sqrt(GRAVITY * aMid / wMid) : 0.0;
             // ∂V/∂x: cross-link stencil first (a full link has equal end
             // areas, so the within-link estimator is structurally zero in
             // exactly the pressurized cases UF exists for — measured
@@ -3072,13 +3190,11 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
             {
                 auto nb_vel = [&](int nbj, int8_t sg) -> double {
                     const auto unb = static_cast<std::size_t>(nbj);
-                    const auto uci_nb =
-                        static_cast<std::size_t>(tile_uj_to_ci_[unb]);
-                    const double a_nb = std::max(
-                        conveyArea(area_mid_[unb], tile_a_full_[uci_nb]),
-                        FUDGE);
-                    return static_cast<double>(sg) *
-                           (links.flow[unb] / tile_barrels_d_[uci_nb]) / a_nb;
+                    const auto uci_nb = static_cast<std::size_t>(tile_uj_to_ci_[unb]);
+                    const double a_nb =
+                        std::max(conveyArea(area_mid_[unb], tile_a_full_[uci_nb]), FUDGE);
+                    return static_cast<double>(sg) * (links.flow[unb] / tile_barrels_d_[uci_nb]) /
+                           a_nb;
                 };
                 double vL = v, vR = v, dsum = 0.0;
                 if (uf_nb_up_[uj] >= 0) {
@@ -3112,16 +3228,15 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
             uf_applied = true;
         }
     }
-    double q = uf_applied
-        ? (qOld - dq2 + dq3 + dq4 + dq6 + uf_num) / denom
-        : (qOld - dq2 + dq3 + dq4 + dq6) / denom;
+    double q = uf_applied ? (qOld - dq2 + dq3 + dq4 + dq6 + uf_num) / denom
+                          : (qOld - dq2 + dq3 + dq4 + dq6) / denom;
     // PARITY dwflow.c:240: legacy groups ((1/denom)*GRAVITY)*dt and divides by
     // length directly (NOT dt_g=dt*GRAVITY). dqdh feeds the surcharge node-depth
     // Jacobian (sumdqdh denominator), so the grouping/divide must match exactly.
     dqdh_[uj] = 1.0 / denom * GRAVITY * dt * aWtd / length * barrels_d;
 
-    traceLinkTerms(ctx, uj, qLast, v, sig, rho, aWtd, rWtd, dq1, dq2, dq3, dq4,
-                   dq5, dq6, qOld, q, aMidConv);
+    traceLinkTerms(ctx, uj, qLast, v, sig, rho, aWtd, rWtd, dq1, dq2, dq3, dq4, dq5, dq6, qOld, q,
+                   aMidConv);
 
     // Shared post-processing
     applyFlowLimits(ctx, dt, step, uj, q, qLast, barrels_d, isFull);
@@ -3130,36 +3245,39 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
 // A3 parity term tracing for one link (SWMM_TRACE_LINK=<index>, first 64
 // invocations; format-matched to the legacy trace in dwflow.c). Shared by
 // the Manning and force-main kernels.
-void DWSolver::traceLinkTerms(const SimulationContext& ctx, std::size_t uj,
-                              double qLast, double v, double sig, double rho,
-                              double aWtd, double rWtd, double dq1, double dq2,
-                              double dq3, double dq4, double dq5, double dq6,
+void DWSolver::traceLinkTerms(const SimulationContext& ctx, std::size_t uj, double qLast, double v,
+                              double sig, double rho, double aWtd, double rWtd, double dq1,
+                              double dq2, double dq3, double dq4, double dq5, double dq6,
                               double qOld, double q, double aMidConv) {
     const auto& links = ctx.links;
     {
         static FILE* lf = nullptr;
-        static long  lf_target = -2;
-        static long  lf_skip = 0;
-        static long  lf_step = 0;
-        static int   lf_count = 0;
-        static int   lf_rows = 0;
+        static long lf_target = -2;
+        static long lf_skip = 0;
+        static long lf_step = 0;
+        static int lf_count = 0;
+        static int lf_rows = 0;
         // C++ static initialization synchronizes this configuration across
         // workers, including the ordinary trace-disabled path.
         static const bool trace_initialized = [] {
-            const char* p  = std::getenv("SWMM_TRACE_LINK");
+            const char* p = std::getenv("SWMM_TRACE_LINK");
             const char* tr = std::getenv("SWMM_TRACE_RSTEP");
             const char* sk = std::getenv("SWMM_TRACE_SKIP");
             const char* ls = std::getenv("SWMM_TRACE_LSTEP");
             lf_target = -1;
-            if (sk && *sk) lf_skip = std::atol(sk);
-            if (ls && *ls) lf_step = std::atol(ls);
+            if (sk && *sk)
+                lf_skip = std::atol(sk);
+            if (ls && *ls)
+                lf_step = std::atol(ls);
             if (p && *p && tr && *tr) {
                 char fname[512];
                 lf_target = std::atol(p);
                 std::snprintf(fname, sizeof(fname), "%s.link%ld", tr, lf_target);
                 lf = std::fopen(fname, "w");
-                if (lf) std::fprintf(lf,
-                    "n,qLast,v,sigma,rho,aWtd,rWtd,dq1,dq2,dq3,dq4,dq5,dq6,qOld,q,sa1,sa2,fc,y1,yMid,a1,aMid,r1,rMid,aMidConv,dqdh,h1,h2,n1,n2,yn1,yn2\n");
+                if (lf)
+                    std::fprintf(
+                        lf,
+                        "n,qLast,v,sigma,rho,aWtd,rWtd,dq1,dq2,dq3,dq4,dq5,dq6,qOld,q,sa1,sa2,fc,y1,yMid,a1,aMid,r1,rMid,aMidConv,dqdh,h1,h2,n1,n2,yn1,yn2\n");
             }
             return true;
         }();
@@ -3171,23 +3289,23 @@ void DWSolver::traceLinkTerms(const SimulationContext& ctx, std::size_t uj,
             // (the RSTEP serial increments at the END of each step, so during
             // step N the serial still reads N-1). Otherwise use the
             // invocation-count window (SWMM_TRACE_SKIP).
-            const bool in_window = lf_step > 0
-                ? (openswmm::g_trace_rstep_sn + 1 >= lf_step)
-                : (lf_count > lf_skip);
+            const bool in_window =
+                lf_step > 0 ? (openswmm::g_trace_rstep_sn + 1 >= lf_step) : (lf_count > lf_skip);
             if (in_window && lf_rows < 128) {
                 ++lf_rows;
-                std::fprintf(lf, "%d,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%d,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%d,%d,%a,%a\n",
-                             lf_count, qLast, v, sig, rho, aWtd, rWtd,
-                             dq1, dq2, dq3, dq4, dq5, dq6, qOld, q,
-                             surf_area1_[uj], surf_area2_[uj],
-                             static_cast<int>(links.flow_class[uj]),
-                             depth1_[uj], depth_mid_[uj], area1_[uj],
-                             area_mid_[uj], hrad1_[uj], hrad_mid_[uj],
-                             aMidConv, dqdh_[uj], h1_[uj], h2_[uj],
-                             links.node1[uj], links.node2[uj],
-                             ctx.nodes.depth[static_cast<std::size_t>(links.node1[uj])],
-                             ctx.nodes.depth[static_cast<std::size_t>(links.node2[uj])]);
-                if (lf_rows >= 128) { std::fclose(lf); lf = nullptr; }
+                std::fprintf(
+                    lf,
+                    "%d,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%d,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%d,%d,%a,%a\n",
+                    lf_count, qLast, v, sig, rho, aWtd, rWtd, dq1, dq2, dq3, dq4, dq5, dq6, qOld, q,
+                    surf_area1_[uj], surf_area2_[uj], static_cast<int>(links.flow_class[uj]),
+                    depth1_[uj], depth_mid_[uj], area1_[uj], area_mid_[uj], hrad1_[uj],
+                    hrad_mid_[uj], aMidConv, dqdh_[uj], h1_[uj], h2_[uj], links.node1[uj],
+                    links.node2[uj], ctx.nodes.depth[static_cast<std::size_t>(links.node1[uj])],
+                    ctx.nodes.depth[static_cast<std::size_t>(links.node2[uj])]);
+                if (lf_rows >= 128) {
+                    std::fclose(lf);
+                    lf = nullptr;
+                }
             }
         }
     }
@@ -3197,10 +3315,10 @@ void DWSolver::traceLinkTerms(const SimulationContext& ctx, std::size_t uj,
 // processForceMainLink -- per-element kernel for FORCE_MAIN_HW/FORCE_MAIN_DW
 // ============================================================================
 
-void DWSolver::processForceMainLink(SimulationContext& ctx, double dt, int step,
-                                    std::size_t uj, MomentumCategory cat) {
+void DWSolver::processForceMainLink(SimulationContext& ctx, double dt, int step, std::size_t uj,
+                                    MomentumCategory cat) {
     auto& links = ctx.links;
-    const auto& CD = ctx.link_subtypes.conduits;  // Phase 6 Stage B: per-step evap/seep
+    const auto& CD = ctx.link_subtypes.conduits; // Phase 6 Stage B: per-step evap/seep
     const double dt_g = dt_gravity_;
     const bool is_dw = (cat == MomentumCategory::FORCE_MAIN_DW);
 
@@ -3209,14 +3327,14 @@ void DWSolver::processForceMainLink(SimulationContext& ctx, double dt, int step,
     double barrels_d = tile_barrels_d_[uci];
     double aMid = area_mid_[uj];
     double rMid = hrad_mid_[uj];
-    double qLast = q1_[uj];   // legacy Conduit.q1 (per barrel)
+    double qLast = q1_[uj]; // legacy Conduit.q1 (per barrel)
 
     // Conveyance areas — Preissmann slot excluded (issue #144). A force main
     // is full for the whole simulation, so under SLOT the slot is always
     // active here; this is the systematically affected case.
-    const double aFull    = tile_a_full_[uci];
-    const double a1Conv   = conveyArea(area1_[uj], aFull);
-    const double a2Conv   = conveyArea(area2_[uj], aFull);
+    const double aFull = tile_a_full_[uci];
+    const double a1Conv = conveyArea(area1_[uj], aFull);
+    const double a2Conv = conveyArea(area2_[uj], aFull);
     const double aMidConv = conveyArea(aMid, aFull);
 
     // Force main is always full (that's the classification condition)
@@ -3241,9 +3359,9 @@ void DWSolver::processForceMainLink(SimulationContext& ctx, double dt, int step,
 
     // No upstream weighting when full (rho=1). The a1Conv +/- form is kept
     // rather than collapsing to aMidConv: the two differ in the last ULP.
-    double aWtd = a1Conv + (aMidConv - a1Conv);  // = aMidConv
+    double aWtd = a1Conv + (aMidConv - a1Conv); // = aMidConv
     double rWtd = std::max(rMid, FUDGE);
-    (void)rWtd;  // reserved for future friction variants
+    (void)rWtd; // reserved for future friction variants
 
     // Force main friction — legacy dwflow.c:236-237 via forcmain.c
     // getFricSlope, using the PRECOMPUTED sBot rough factor
@@ -3265,8 +3383,7 @@ void DWSolver::processForceMainLink(SimulationContext& ctx, double dt, int step,
         // forcmain.c:108-112: re = 4·R·|v|/VISCOS; f from Colebrook;
         // Sf-term = f · sBot · |v| / R  (sBot = 1/(8·lengthFactor)).
         const double re = 4.0 * rMid * absv / forcemain::VISCOS;
-        const double f  = forcemain::getFricFactor(tile_fm_rbot_[uci],
-                                                   rMid, re);
+        const double f = forcemain::getFricFactor(tile_fm_rbot_[uci], rMid, re);
         dq1 = dt * (f * sbot * absv / rMid);
     } else {
         // forcmain.c:105-106: Sf-term = sBot · |v|^0.852 / R^1.1667.
@@ -3288,10 +3405,13 @@ void DWSolver::processForceMainLink(SimulationContext& ctx, double dt, int step,
         double absq = std::fabs(qLast);
         double losses = 0.0;
         // #144: local losses are velocity heads — conveyance areas.
-        if (a1Conv > FUDGE) losses += tile_loss_inlet_[uci] * (absq / a1Conv);
-        if (a2Conv > FUDGE) losses += tile_loss_outlet_[uci] * (absq / a2Conv);
-        if (aMidConv > FUDGE) losses += tile_loss_avg_[uci] * (absq / aMidConv);
-        dq5 = losses / 2.0 / fm_length * dt;  // PARITY dwflow.c:229
+        if (a1Conv > FUDGE)
+            losses += tile_loss_inlet_[uci] * (absq / a1Conv);
+        if (a2Conv > FUDGE)
+            losses += tile_loss_outlet_[uci] * (absq / a2Conv);
+        if (aMidConv > FUDGE)
+            losses += tile_loss_avg_[uci] * (absq / aMidConv);
+        dq5 = losses / 2.0 / fm_length * dt; // PARITY dwflow.c:229
     }
 
     // Evaporation/seepage. Length divisor uses RAW length (matching legacy
@@ -3317,27 +3437,23 @@ void DWSolver::processForceMainLink(SimulationContext& ctx, double dt, int step,
     // default path evaluates the original expression verbatim.
     bool uf_applied = false;
     if (unsteady_friction != 0 && uf_k3 > 0.0) {
-        constexpr double kUfVelFloor = 0.01;  // ft/s, mirrors FvKernels
-        const double vOld = (aWtd > FUDGE)
-            ? qOld / aWtd : 0.0;
-        if (std::fabs(vOld) >= kUfVelFloor ||
-            std::fabs(v) >= kUfVelFloor) {
+        constexpr double kUfVelFloor = 0.01; // ft/s, mirrors FvKernels
+        const double vOld = (aWtd > FUDGE) ? qOld / aWtd : 0.0;
+        if (std::fabs(vOld) >= kUfVelFloor || std::fabs(v) >= kUfVelFloor) {
             denom += uf_k3;
             uf_applied = true;
         }
     }
     // k3·aWtd·vOld with vOld = qOld/aWtd collapses to k3·qOld exactly.
-    double q = uf_applied
-        ? (qOld - dq2 + dq6 + uf_k3 * qOld) / denom
-        : (qOld - dq2 + dq6) / denom;
+    double q = uf_applied ? (qOld - dq2 + dq6 + uf_k3 * qOld) / denom : (qOld - dq2 + dq6) / denom;
     // PARITY dwflow.c:240 (same grouping as the Manning kernel):
     // ((1/denom)*GRAVITY)*dt, divide by length — NOT dt_g / inv_len.
     dqdh_[uj] = 1.0 / denom * GRAVITY * dt * aWtd / fm_length * barrels_d;
 
     // The same A3 term trace as the Manning kernel (SWMM_TRACE_LINK), so a
     // traced force main is not silent.
-    traceLinkTerms(ctx, uj, qLast, v, 0.0, 1.0, aWtd, rWtd, dq1, dq2, 0.0, 0.0,
-                   dq5, dq6, qOld, q, aMidConv);
+    traceLinkTerms(ctx, uj, qLast, v, 0.0, 1.0, aWtd, rWtd, dq1, dq2, 0.0, 0.0, dq5, dq6, qOld, q,
+                   aMidConv);
 
     // Shared post-processing
     applyFlowLimits(ctx, dt, step, uj, q, qLast, barrels_d, isFull);
@@ -3375,9 +3491,9 @@ void DWSolver::updateNodeFlows(SimulationContext& ctx) {
         // (matching legacy dynwave.c::updateNodeFlows)
         if (q >= 0.0) {
             nodes.outflow[un1] += q;
-            nodes.inflow[un2]  += q;
+            nodes.inflow[un2] += q;
         } else {
-            nodes.inflow[un1]  -= q;
+            nodes.inflow[un1] -= q;
             nodes.outflow[un2] -= q;
         }
 
@@ -3400,9 +3516,9 @@ void DWSolver::updateNodeFlows(SimulationContext& ctx) {
         if (links.type[uj] == LinkType::CONDUIT) {
             const auto uci_l = static_cast<std::size_t>(tile_uj_to_ci_[uj]);
             const auto ucr_l = static_cast<std::size_t>(tile_crow_[uci_l]);
-            double conduit_loss = (ctx.link_subtypes.conduits.evap_loss_rate[ucr_l]
-                                   + ctx.link_subtypes.conduits.seep_loss_rate[ucr_l])
-                                  * tile_barrels_d_[uci_l];
+            double conduit_loss = (ctx.link_subtypes.conduits.evap_loss_rate[ucr_l] +
+                                   ctx.link_subtypes.conduits.seep_loss_rate[ucr_l]) *
+                                  tile_barrels_d_[uci_l];
             // G-X4: a net-GAINING conduit arrives here as a negative loss.
             // It is an INFLOW to the end nodes — booked on `inflow`, not as
             // a negative `outflow`, because the depth solver takes
@@ -3411,8 +3527,7 @@ void DWSolver::updateNodeFlows(SimulationContext& ctx) {
             // entering a pipe is an inflow in both.
             if (conduit_loss < 0.0) {
                 double gain = -conduit_loss;
-                if (nodes.type[un1] != NodeType::OUTFALL &&
-                    nodes.type[un2] != NodeType::OUTFALL)
+                if (nodes.type[un1] != NodeType::OUTFALL && nodes.type[un2] != NodeType::OUTFALL)
                     gain /= 2.0;
                 if (nodes.type[un1] != NodeType::OUTFALL)
                     nodes.inflow[un1] += gain;
@@ -3420,8 +3535,7 @@ void DWSolver::updateNodeFlows(SimulationContext& ctx) {
                     nodes.inflow[un2] += gain;
             } else if (conduit_loss > 0.0) {
                 // Split loss between nodes unless one is an outfall
-                if (nodes.type[un1] != NodeType::OUTFALL &&
-                    nodes.type[un2] != NodeType::OUTFALL)
+                if (nodes.type[un1] != NodeType::OUTFALL && nodes.type[un2] != NodeType::OUTFALL)
                     conduit_loss /= 2.0;
                 if (nodes.type[un1] != NodeType::OUTFALL)
                     nodes.outflow[un1] += conduit_loss;
@@ -3437,8 +3551,8 @@ void DWSolver::updateNodeFlows(SimulationContext& ctx) {
         // (their committed volume is identically zero); what they skip is
         // the artificial MIN_SURFAREA floor in setNodeDepth.
         const int ci_b = tile_uj_to_ci_[uj];
-        int barrels = (ci_b >= 0)
-            ? static_cast<int>(tile_barrels_d_[static_cast<std::size_t>(ci_b)]) : 1;
+        int barrels =
+            (ci_b >= 0) ? static_cast<int>(tile_barrels_d_[static_cast<std::size_t>(ci_b)]) : 1;
         double b = static_cast<double>(barrels);
         xnode_.new_surf_area[un1] += sa1 * b;
         xnode_.new_surf_area[un2] += sa2 * b;
@@ -3464,18 +3578,19 @@ void DWSolver::gatherConduitNodeFlows(SimulationContext& ctx) {
     auto& nodes = ctx.nodes;
     const auto& CD = ctx.link_subtypes.conduits;
 
-    #pragma omp for schedule(static)
+#pragma omp for schedule(static)
     for (int n = 0; n < n_nodes_; ++n) {
         const auto un = static_cast<std::size_t>(n);
         const int b0 = csr_row_[un];
         const int b1 = csr_row_[un + 1];
-        if (b0 == b1) continue;   // no incident conduits — untouched, like serial
+        if (b0 == b1)
+            continue; // no incident conduits — untouched, like serial
 
         const bool self_outfall = (node_tile_[un].is_outfall != 0);
-        double inflow  = nodes.inflow[un];
+        double inflow = nodes.inflow[un];
         double outflow = nodes.outflow[un];
         double sumdqdh = xnode_.sumdqdh[un];
-        double surf    = xnode_.new_surf_area[un];
+        double surf = xnode_.new_surf_area[un];
 
         for (int k = b0; k < b1; ++k) {
             const auto uk = static_cast<std::size_t>(k);
@@ -3486,9 +3601,15 @@ void DWSolver::gatherConduitNodeFlows(SimulationContext& ctx) {
             // (1) Total inflow & outflow contribution (legacy sign rule).
             const double q = new_flow_[uj];
             if (q >= 0.0) {
-                if (at_n2) inflow += q; else outflow += q;
+                if (at_n2)
+                    inflow += q;
+                else
+                    outflow += q;
             } else {
-                if (at_n2) outflow -= q; else inflow -= q;
+                if (at_n2)
+                    outflow -= q;
+                else
+                    inflow -= q;
             }
 
             // (2) dQ/dH — conduits add to both end nodes unconditionally.
@@ -3499,10 +3620,9 @@ void DWSolver::gatherConduitNodeFlows(SimulationContext& ctx) {
             // receive no share. Recomputing the halved value per node is
             // bit-identical to the serial once-per-link computation.
             const auto ucr_g = static_cast<std::size_t>(tile_crow_[uci]);
-            double conduit_loss = (CD.evap_loss_rate[ucr_g]
-                                   + CD.seep_loss_rate[ucr_g])
-                                  * tile_barrels_d_[uci];
-            if (conduit_loss < 0.0) {                       // G-X4: gaining
+            double conduit_loss =
+                (CD.evap_loss_rate[ucr_g] + CD.seep_loss_rate[ucr_g]) * tile_barrels_d_[uci];
+            if (conduit_loss < 0.0) { // G-X4: gaining
                 double gain = -conduit_loss;
                 if (!self_outfall && !csr_other_outfall_[uk])
                     gain /= 2.0;
@@ -3518,13 +3638,12 @@ void DWSolver::gatherConduitNodeFlows(SimulationContext& ctx) {
             // (4) Surface-area contribution (surfArea * barrels), keeping
             // the serial path's int-cast round-trip of the barrel count.
             const int barrels = static_cast<int>(tile_barrels_d_[uci]);
-            surf += (at_n2 ? surf_area2_[uj] : surf_area1_[uj])
-                    * static_cast<double>(barrels);
+            surf += (at_n2 ? surf_area2_[uj] : surf_area1_[uj]) * static_cast<double>(barrels);
         }
 
-        nodes.inflow[un]         = inflow;
-        nodes.outflow[un]        = outflow;
-        xnode_.sumdqdh[un]       = sumdqdh;
+        nodes.inflow[un] = inflow;
+        nodes.outflow[un] = outflow;
+        xnode_.sumdqdh[un] = sumdqdh;
         xnode_.new_surf_area[un] = surf;
     }
 }
@@ -3546,7 +3665,8 @@ void DWSolver::gatherConduitNodeFlows(SimulationContext& ctx) {
 // additional per-iteration safety net for edge cases not enumerated here.
 
 void DWSolver::computeAASkipFlags(const SimulationContext& ctx) {
-    if (!anderson_accel) return;
+    if (!anderson_accel)
+        return;
 
     const auto& links = ctx.links;
     std::fill(aa_skip_.begin(), aa_skip_.end(), uint8_t(0));
@@ -3577,12 +3697,15 @@ void DWSolver::computeAASkipFlags(const SimulationContext& ctx) {
     if (surcharge_method == SurchargeMethod::TPA) {
         for (int ci = 0; ci < n_conduits_; ++ci) {
             const auto uci = static_cast<std::size_t>(ci);
-            if (!tpa_latch_changed_[uci]) continue;
+            if (!tpa_latch_changed_[uci])
+                continue;
             const auto uj = static_cast<std::size_t>(conduit_idx_[uci]);
             const int n1 = links.node1[uj];
             const int n2 = links.node2[uj];
-            if (n1 >= 0) aa_skip_[static_cast<std::size_t>(n1)] = 1;
-            if (n2 >= 0) aa_skip_[static_cast<std::size_t>(n2)] = 1;
+            if (n1 >= 0)
+                aa_skip_[static_cast<std::size_t>(n1)] = 1;
+            if (n2 >= 0)
+                aa_skip_[static_cast<std::size_t>(n2)] = 1;
         }
     }
 
@@ -3605,9 +3728,11 @@ void DWSolver::computeAASkipFlags(const SimulationContext& ctx) {
             auto uci = static_cast<std::size_t>(ci);
             int j = conduit_idx_[uci];
             auto uj = static_cast<std::size_t>(j);
-            if (is_open_[uj]) continue;  // open shapes have no slot
+            if (is_open_[uj])
+                continue; // open shapes have no slot
             double yf = links.xsect_y_full[uj];
-            if (yf <= 0.0) continue;
+            if (yf <= 0.0)
+                continue;
             double ratio = depth_mid_[uj] / yf;
             if (ratio >= 0.98 && ratio <= 1.02) {
                 aa_skip_[static_cast<std::size_t>(links.node1[uj])] = 1;
@@ -3632,17 +3757,20 @@ void DWSolver::computeAASkipFlags(const SimulationContext& ctx) {
     for (int j = 0; j < n_links_; ++j) {
         auto uj = static_cast<std::size_t>(j);
         auto lt = links.type[uj];
-        if (lt != LinkType::WEIR && lt != LinkType::ORIFICE) continue;
+        if (lt != LinkType::WEIR && lt != LinkType::ORIFICE)
+            continue;
 
         int n1 = links.node1[uj];
         int n2 = links.node2[uj];
-        if (n1 < 0 || n2 < 0) continue;
+        if (n1 < 0 || n2 < 0)
+            continue;
         auto un1 = static_cast<std::size_t>(n1);
         auto un2 = static_cast<std::size_t>(n2);
 
-        double y_full  = links.xsect_y_full[uj];
+        double y_full = links.xsect_y_full[uj];
         double setting = links.setting[uj];
-        if (y_full <= 0.0 || setting <= 0.0) continue;
+        if (y_full <= 0.0 || setting <= 0.0)
+            continue;
 
         // Crown elevation — matches the flow code in HydStructures.cpp:
         //   Weir   : hcrown = invert(n1) + crest_height + y_full
@@ -3655,12 +3783,12 @@ void DWSolver::computeAASkipFlags(const SimulationContext& ctx) {
         double hcrown;
         if (lt == LinkType::WEIR) {
             const int wr = ctx.link_subtypes.weir_row(j);
-            const double crest = (wr >= 0)
-                ? ctx.link_subtypes.weirs.crest_height[static_cast<std::size_t>(wr)] : 0.0;
+            const double crest =
+                (wr >= 0) ? ctx.link_subtypes.weirs.crest_height[static_cast<std::size_t>(wr)]
+                          : 0.0;
             hcrown = nodes.invert_elev[un1] + crest + y_full;
         } else {
-            hcrown = nodes.invert_elev[un1] + links.offset1[uj]
-                   + y_full * setting;
+            hcrown = nodes.invert_elev[un1] + links.offset1[uj] + y_full * setting;
         }
 
         double hgl1 = nodes.depth[un1] + nodes.invert_elev[un1];
@@ -3679,11 +3807,14 @@ void DWSolver::computeAASkipFlags(const SimulationContext& ctx) {
     // legacy has no parallel (no AA), so this is a pure stability guard.
     for (int j = 0; j < n_links_; ++j) {
         auto uj = static_cast<std::size_t>(j);
-        if (links.type[uj] != LinkType::PUMP) continue;
+        if (links.type[uj] != LinkType::PUMP)
+            continue;
         int n1 = links.node1[uj];
         int n2 = links.node2[uj];
-        if (n1 >= 0) aa_skip_[static_cast<std::size_t>(n1)] = 1;
-        if (n2 >= 0) aa_skip_[static_cast<std::size_t>(n2)] = 1;
+        if (n1 >= 0)
+            aa_skip_[static_cast<std::size_t>(n1)] = 1;
+        if (n2 >= 0)
+            aa_skip_[static_cast<std::size_t>(n2)] = 1;
     }
 }
 
@@ -3695,16 +3826,16 @@ void DWSolver::updateNodeDepthsTeam(SimulationContext& ctx, double dt, int step,
                                     int& unconv_shared) {
     auto& nodes = ctx.nodes;
     const bool use_anderson = anderson_accel;
-    int local_unconv = 0;   // per-thread partial of the unconverged-node count
+    int local_unconv = 0; // per-thread partial of the unconverged-node count
 
-    // Phase 1: Compute G(y) for each node via setNodeDepth.
-    // Each thread handles a subset of nodes; per-node data (xnode_, nodes.depth,
-    // etc.) is written only by the owning thread (no cross-node dependencies).
-    // Parallel by analogy with legacy findNodeDepths (src/legacy/engine/dynwave.c:580),
-    // but as an ORPHANED `omp for` binding to the persistent team opened in
-    // execute(). `nowait` — each thread proceeds to its atomic tally combine
-    // below; the explicit barrier after it orders the shared count for all.
-    #pragma omp for schedule(static) nowait
+// Phase 1: Compute G(y) for each node via setNodeDepth.
+// Each thread handles a subset of nodes; per-node data (xnode_, nodes.depth,
+// etc.) is written only by the owning thread (no cross-node dependencies).
+// Parallel by analogy with legacy findNodeDepths (src/legacy/engine/dynwave.c:580),
+// but as an ORPHANED `omp for` binding to the persistent team opened in
+// execute(). `nowait` — each thread proceeds to its atomic tally combine
+// below; the explicit barrier after it orders the shared count for all.
+#pragma omp for schedule(static) nowait
     for (int i = 0; i < n_nodes_; ++i) {
         auto ui = static_cast<std::size_t>(i);
 
@@ -3728,7 +3859,7 @@ void DWSolver::updateNodeDepthsTeam(SimulationContext& ctx, double dt, int step,
 
         double y_last = nodes.depth[ui];
         setNodeDepth(ctx, i, dt, step);
-        double g_k = nodes.depth[ui];  // G(y_k) — the Picard update
+        double g_k = nodes.depth[ui]; // G(y_k) — the Picard update
 
         // --- Anderson acceleration (depth-2 mixing) ---
         // On step 0: just record state for next iteration.
@@ -3738,7 +3869,7 @@ void DWSolver::updateNodeDepthsTeam(SimulationContext& ctx, double dt, int step,
         // residual is too large to trust the linear-convergence assumption
         // AA is built on.
         if (use_anderson && step >= 1 && !aa_skip_[ui] && !lidnode::active(ctx, i)) {
-            double r_k = g_k - y_last;                     // residual at current iterate
+            double r_k = g_k - y_last; // residual at current iterate
 
             // Residual-magnitude safety gate. When |r_k| is many tolerances
             // large, we are far from the linear regime where AA is provably
@@ -3747,11 +3878,11 @@ void DWSolver::updateNodeDepthsTeam(SimulationContext& ctx, double dt, int step,
             // room for normal early-iteration residuals while catching the
             // pathological cases.
             if (std::fabs(r_k) <= 20.0 * head_tol) {
-                double r_km1 = aa_r_prev_[ui];             // residual from previous iterate
+                double r_km1 = aa_r_prev_[ui]; // residual from previous iterate
                 double dr = r_k - r_km1;
                 double dr2 = dr * dr;
 
-                if (dr2 > 1e-30) {  // avoid division by zero
+                if (dr2 > 1e-30) { // avoid division by zero
                     // Two-point Anderson / Aitken coefficient. alpha =
                     // r_k*dr/dr^2 = r_k/(r_k - r_km1) is the weight on the
                     // PREVIOUS mapped value: the textbook secant update is
@@ -3787,8 +3918,7 @@ void DWSolver::updateNodeDepthsTeam(SimulationContext& ctx, double dt, int step,
                         // arithmetic order as setNodeDepth() (inflow/outflow
                         // are unchanged since that call, same iteration).
                         const double dQ = nodes.inflow[ui] - nodes.outflow[ui];
-                        const double dV =
-                            0.5 * (nodes.old_net_inflow[ui] + dQ) * dt;
+                        const double dV = 0.5 * (nodes.old_net_inflow[ui] + dQ) * dt;
                         commitNodeDepthState(ctx, i, y_anderson, dV, dt);
                     }
                     // else: keep g_k (standard Picard result from setNodeDepth)
@@ -3827,30 +3957,30 @@ void DWSolver::updateNodeDepthsTeam(SimulationContext& ctx, double dt, int step,
         // small mixed movement can no longer hide a large raw residual, and a
         // large accepted jump can no longer be declared converged on the
         // strength of a small raw residual alone.
-        const double raw_residual      = std::fabs(g_k - y_last);
+        const double raw_residual = std::fabs(g_k - y_last);
         const double accepted_movement = std::fabs(nodes.depth[ui] - y_last);
         const uint8_t conv_flag =
             (raw_residual <= head_tol && accepted_movement <= head_tol) ? 1 : 0;
         xnode_.converged[ui] = conv_flag;
-        if (!conv_flag) ++local_unconv;
+        if (!conv_flag)
+            ++local_unconv;
     }
 
     // Combine per-thread partials into the shared tally. The caller zeroed
     // unconv_shared behind the previous single's implicit barrier; after the
     // explicit barrier below every thread reads the final combined value.
     if (local_unconv != 0) {
-        #pragma omp atomic
+#pragma omp atomic
         unconv_shared += local_unconv;
     }
-    #pragma omp barrier
+#pragma omp barrier
 }
 
 // ============================================================================
 // setNodeDepth -- single node depth update (EXTRAN surcharge algorithm)
 // ============================================================================
 
-void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
-                            int step) {
+void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt, int step) {
     auto& nodes = ctx.nodes;
     auto ui = static_cast<std::size_t>(node_idx);
 
@@ -3911,16 +4041,20 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
         // same volume explicitly when using the LID volume equation.
         for (int k = csr_row_[ui]; k < csr_row_[ui + 1]; ++k) {
             const int link = csr_link_[k];
-            const int other = ctx.links.node1[link] == node_idx ? ctx.links.node2[link] : ctx.links.node1[link];
+            const int other =
+                ctx.links.node1[link] == node_idx ? ctx.links.node2[link] : ctx.links.node1[link];
             const double share = ctx.nodes.type[other] == NodeType::OUTFALL ? 1.0 : 0.5;
             volume -= share * (ctx.links.volume[link] - ctx.links.old_volume[link]);
         }
         if (volume < 0.0 && !lidnode::richardsMode(ctx, node_idx)) {
-            auto& state = ctx.node_subtypes.storages.lid_state[ctx.node_subtypes.storage_row(node_idx)];
+            auto& state =
+                ctx.node_subtypes.storages.lid_state[ctx.node_subtypes.storage_row(node_idx)];
             for (std::size_t k = 0; k < state.cells.size() && volume < 0.0; ++k) {
                 const auto& cell = state.cells[k];
-                const double take = std::min(-volume, std::max(0.0,
-                    (cell.theta - cell.wilting_point) * cell.geometric_volume + state.port_delta[k]));
+                const double take =
+                    std::min(-volume, std::max(0.0, (cell.theta - cell.wilting_point) *
+                                                            cell.geometric_volume +
+                                                        state.port_delta[k]));
                 state.port_delta[k] -= take;
                 volume += take;
             }
@@ -3933,7 +4067,8 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
             nodes.overflow[ui] = (volume - capacity) / dt;
             volume = capacity;
         }
-        double depth = node::getDepth(nodes, node_idx, std::min(volume, capacity), &ctx.tables, unit_sys_, &ctx.node_subtypes);
+        double depth = node::getDepth(nodes, node_idx, std::min(volume, capacity), &ctx.tables,
+                                      unit_sys_, &ctx.node_subtypes);
         if (pond && volume > capacity)
             depth = nodes.full_depth[ui] + (volume - capacity) / nodes.ponded_area[ui];
         nodes.volume[ui] = volume;
@@ -3942,7 +4077,6 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
         xnode_.dYdT[ui] = std::abs(depth - nodes.old_depth[ui]) / dt;
         return;
     }
-
 
     // --- Determine if node is surcharged ---
     //
@@ -3958,12 +4092,9 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
         surcharge_method == SurchargeMethod::DYNAMIC_SLOT) {
         if (is_ponded) {
             is_surcharged = false;
-        }
-        else if (is_storage) {
-            is_surcharged = (t.sur_depth > 0.0 &&
-                             y_last > full_depth);
-        }
-        else {
+        } else if (is_storage) {
+            is_surcharged = (t.sur_depth > 0.0 && y_last > full_depth);
+        } else {
             is_surcharged = (yCrown > 0.0 && y_last > yCrown);
         }
     }
@@ -4005,8 +4136,7 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
         const double sum = xnode_.sumdqdh[ui];
         const double denom_semi = surf_area + 0.5 * dt * sum;
         const bool semi_implicit =
-            (node_continuity == NodeContinuity::SEMI_IMPLICIT) &&
-            denom_semi > FUDGE;
+            (node_continuity == NodeContinuity::SEMI_IMPLICIT) && denom_semi > FUDGE;
         double y_vj;
         if (semi_implicit) {
             // Unified path — free-surface and surcharged alike, matching the
@@ -4014,14 +4144,16 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
             // is_surcharged dQ/dH split and the crown clamp).
             y_vj = y_old + dV / denom_semi;
             xnode_.old_surf_area[ui] = surf_area;
-            if (step > 0) y_vj = (1.0 - omega) * y_last + omega * y_vj;
+            if (step > 0)
+                y_vj = (1.0 - omega) * y_last + omega * y_vj;
         } else if (surf_area > FUDGE && !is_surcharged) {
             // EXPLICIT free surface: historical dV/A path on the natural area,
             // with the usual under-relaxation. Decks that do not ask for
             // semi-implicit node continuity stay bit-identical.
             y_vj = y_old + dV / surf_area;
             xnode_.old_surf_area[ui] = surf_area;
-            if (step > 0) y_vj = (1.0 - omega) * y_last + omega * y_vj;
+            if (step > 0)
+                y_vj = (1.0 - omega) * y_last + omega * y_vj;
         } else if (sum > FUDGE) {
             // Surcharged or area-less: zero-storage Newton on the flow
             // balance, with the EXTRAN-style crown-proximity blending so the
@@ -4029,15 +4161,15 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
             double denomv = sum;
             if (yCrown > 0.0 && y_last < 1.25 * yCrown) {
                 const double f = (y_last - yCrown) / yCrown;
-                denomv += (xnode_.old_surf_area[ui] / dt - sum)
-                          * std::exp(-15.0 * f);
+                denomv += (xnode_.old_surf_area[ui] / dt - sum) * std::exp(-15.0 * f);
             }
             y_vj = (denomv != 0.0) ? (y_last + dQ / denomv) : y_last;
             // Keep the surcharged iterate at or above the crown, mirroring
             // the EXTRAN branch (the free-surface path recovers below it).
-            if (is_surcharged && y_vj < yCrown) y_vj = yCrown - FUDGE;
+            if (is_surcharged && y_vj < yCrown)
+                y_vj = yCrown - FUDGE;
         } else {
-            y_vj = y_last;   // dry pair — hold
+            y_vj = y_last; // dry pair — hold
         }
         commitNodeDepthState(ctx, node_idx, y_vj, dV, dt);
         return;
@@ -4048,8 +4180,7 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
     // surf_area1/2 by applyDPSGeometry) so the standard dV/A path produces
     // physically sensible head evolution with `head = invert + y =
     // invert + y_full + hs` falling out naturally when y > y_full.
-    const bool use_surcharge_dqdh =
-        is_surcharged && (surcharge_method == SurchargeMethod::EXTRAN);
+    const bool use_surcharge_dqdh = is_surcharged && (surcharge_method == SurchargeMethod::EXTRAN);
 
     double y_new;
 
@@ -4106,8 +4237,7 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
         if (is_ponded && y_new < full_depth) {
             y_new = full_depth - FUDGE;
         }
-    }
-    else {
+    } else {
         // =================================================================
         // Explicit (legacy) two-branch formulation
         // =================================================================
@@ -4116,8 +4246,7 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
         // Also used if storage node is surcharged but has no connecting links,
         // and for DYNAMIC_SLOT in all cases (the slot's contribution to
         // surf_area handles the surcharge regime smoothly, no dQ/dH branch).
-        if (!use_surcharge_dqdh ||
-            (is_storage && xnode_.sumdqdh[ui] == 0.0)) {
+        if (!use_surcharge_dqdh || (is_storage && xnode_.sumdqdh[ui] == 0.0)) {
 
             double dy = dV / surf_area;
             y_new = y_old + dy;
@@ -4141,15 +4270,15 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
         else {
             // Apply correction factor for upstream terminal nodes
             double corr = 1.0;
-            if (t.degree < 0) corr = 0.6;
+            if (t.degree < 0)
+                corr = 0.6;
 
             // Allow surface area from last non-surcharged condition to influence
             // dqdh if depth is close to crown depth (smooth transition)
             double denom = xnode_.sumdqdh[ui];
             if (y_last < 1.25 * yCrown && yCrown > 0.0) {
                 double f = (y_last - yCrown) / yCrown;
-                denom += (xnode_.old_surf_area[ui] / dt -
-                          xnode_.sumdqdh[ui]) * std::exp(-15.0 * f);
+                denom += (xnode_.old_surf_area[ui] / dt - xnode_.sumdqdh[ui]) * std::exp(-15.0 * f);
             }
 
             // Compute new estimate of node depth
@@ -4160,7 +4289,8 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
             y_new = y_last + dy;
 
             // Don't drop below crown
-            if (y_new < yCrown) y_new = yCrown - FUDGE;
+            if (y_new < yCrown)
+                y_new = yCrown - FUDGE;
 
             // Don't allow a newly ponded node to rise much above full depth
             if (can_pond && y_new > full_depth) {
@@ -4173,31 +4303,34 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
     // invocations; format-matched to the legacy trace in dynwave.c).
     {
         static FILE* nf = nullptr;
-        static long  nf_target = -2;
-        static long  nf_skip = 0;
-        static int   nf_count = 0;
+        static long nf_target = -2;
+        static long nf_skip = 0;
+        static int nf_count = 0;
         if (nf_target == -2) {
-            const char* p  = std::getenv("SWMM_TRACE_NODE");
+            const char* p = std::getenv("SWMM_TRACE_NODE");
             const char* tr = std::getenv("SWMM_TRACE_RSTEP");
             const char* sk = std::getenv("SWMM_TRACE_SKIP");
             nf_target = -1;
-            if (sk && *sk) nf_skip = std::atol(sk);
+            if (sk && *sk)
+                nf_skip = std::atol(sk);
             if (p && *p && tr && *tr) {
                 char fname[512];
                 nf_target = std::atol(p);
                 std::snprintf(fname, sizeof(fname), "%s.node%ld", tr, nf_target);
                 nf = std::fopen(fname, "w");
-                if (nf) std::fprintf(nf,
-                    "n,yOld,yLast,dQ,dV,surfArea,sumdqdh,surch,yNew\n");
+                if (nf)
+                    std::fprintf(nf, "n,yOld,yLast,dQ,dV,surfArea,sumdqdh,surch,yNew\n");
             }
         }
         if (nf && node_idx == nf_target) {
             ++nf_count;
             if (nf_count > nf_skip && nf_count <= nf_skip + 128) {
-                std::fprintf(nf, "%d,%a,%a,%a,%a,%a,%a,%d,%a\n", nf_count,
-                             y_old, y_last, dQ, dV, surf_area, xnode_.sumdqdh[ui],
-                             is_surcharged ? 1 : 0, y_new);
-                if (nf_count >= nf_skip + 128) { std::fclose(nf); nf = nullptr; }
+                std::fprintf(nf, "%d,%a,%a,%a,%a,%a,%a,%d,%a\n", nf_count, y_old, y_last, dQ, dV,
+                             surf_area, xnode_.sumdqdh[ui], is_surcharged ? 1 : 0, y_new);
+                if (nf_count >= nf_skip + 128) {
+                    std::fclose(nf);
+                    nf = nullptr;
+                }
             }
         }
     }
@@ -4227,8 +4360,8 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
 // performs the identical arithmetic the previously-inlined block did, in the
 // same order — bit-exact with the prior behavior.
 
-void DWSolver::commitNodeDepthState(SimulationContext& ctx, int node_idx,
-                                    double y_new, double dV, double dt) {
+void DWSolver::commitNodeDepthState(SimulationContext& ctx, int node_idx, double y_new, double dV,
+                                    double dt) {
     auto& nodes = ctx.nodes;
     auto ui = static_cast<std::size_t>(node_idx);
     const NodeTile& t = node_tile_[ui];
@@ -4243,8 +4376,7 @@ void DWSolver::commitNodeDepthState(SimulationContext& ctx, int node_idx,
     // junction property — the unfloored natural surface area and the
     // zero-storage head update in setNodeDepth still apply.
     // See plans/INLET_JUNCTION_IMPLEMENTATION_PLAN_2026-09-05.md §2.2.7.
-    const bool is_inlet_node =
-        (ui < ctx.nodes.is_inlet.size() && ctx.nodes.is_inlet[ui] != 0);
+    const bool is_inlet_node = (ui < ctx.nodes.is_inlet.size() && ctx.nodes.is_inlet[ui] != 0);
 
     // --- Virtual junction: zero storage, no flooding by construction ---
     // The head may rise above the pipe crown without cap (surcharge is
@@ -4252,19 +4384,17 @@ void DWSolver::commitNodeDepthState(SimulationContext& ctx, int node_idx,
     // like a sealed manhole); volume and overflow are identically zero.
     if (t.is_virtual != 0 && !is_inlet_node) {
         nodes.overflow[ui] = 0.0;
-        nodes.volume[ui]   = 0.0;
+        nodes.volume[ui] = 0.0;
         if (dt > 0.0)
             xnode_.dYdT[ui] = std::fabs(y_new - nodes.old_depth[ui]) / dt;
         nodes.depth[ui] = y_new;
-        nodes.head[ui]  = t.invert_elev + y_new;
+        nodes.head[ui] = t.invert_elev + y_new;
         return;
     }
 
     // --- Ponding eligibility (same rule as setNodeDepth's entry logic) ---
-    const bool is_coupled =
-        (ui < ctx.coupled_node.size() && ctx.coupled_node[ui]);
-    const bool can_pond =
-        (ctx.options.allow_ponding || is_coupled) && (t.ponded_area > 0.0);
+    const bool is_coupled = (ui < ctx.coupled_node.size() && ctx.coupled_node[ui]);
+    const bool can_pond = (ctx.options.allow_ponding || is_coupled) && (t.ponded_area > 0.0);
 
     // --- Determine max non-flooded depth ---
     // Plan D-E2: an inlet junction's flood threshold is the [INLET_JUNCTIONS]
@@ -4274,7 +4404,8 @@ void DWSolver::commitNodeDepthState(SimulationContext& ctx, int node_idx,
     double y_max = t.full_depth;
     if (is_inlet_node && nodes.rim_depth[ui] > 0.0)
         y_max = std::max(y_max, nodes.rim_depth[ui]);
-    if (!can_pond) y_max += t.sur_depth;
+    if (!can_pond)
+        y_max += t.sur_depth;
 
     // --- Flooding logic (matching legacy getFloodedDepth) ---
     // Reset first so a re-commit (accepted Anderson mix after the raw Picard
@@ -4298,19 +4429,18 @@ void DWSolver::commitNodeDepthState(SimulationContext& ctx, int node_idx,
             y_new = y_max;
         } else {
             // Ponded: volume can exceed full volume
-            nodes.volume[ui] = std::max(nodes.old_volume[ui] + dV,
-                                        t.rpt_full_volume);
-            nodes.overflow[ui] = (nodes.volume[ui] -
-                std::max(nodes.old_volume[ui], t.rpt_full_volume)) / dt;
+            nodes.volume[ui] = std::max(nodes.old_volume[ui] + dV, t.rpt_full_volume);
+            nodes.overflow[ui] =
+                (nodes.volume[ui] - std::max(nodes.old_volume[ui], t.rpt_full_volume)) / dt;
         }
-        if (nodes.overflow[ui] < FUDGE) nodes.overflow[ui] = 0.0;
+        if (nodes.overflow[ui] < FUDGE)
+            nodes.overflow[ui] = 0.0;
     } else if (t.is_storage) {
-        nodes.volume[ui] = node::getVolume(nodes, node_idx, y_new, &ctx.tables,
-                                           unit_sys_, &ctx.node_subtypes);
+        nodes.volume[ui] =
+            node::getVolume(nodes, node_idx, y_new, &ctx.tables, unit_sys_, &ctx.node_subtypes);
     } else {
         // Legacy node_getVolume default branch: fullVolume * (depth / fullDepth)
-        nodes.volume[ui] = (t.full_depth > 0.0)
-            ? t.rpt_full_volume * (y_new / t.full_depth) : 0.0;
+        nodes.volume[ui] = (t.full_depth > 0.0) ? t.rpt_full_volume * (y_new / t.full_depth) : 0.0;
     }
 
     // An inlet junction floods (above) but is still a zero-storage node: the
@@ -4318,7 +4448,8 @@ void DWSolver::commitNodeDepthState(SimulationContext& ctx, int node_idx,
     // adjacent conduits, not storage of its own, and node::getVolume would
     // book the artificial MIN_SURFAREA junction volume the feature exists to
     // remove (VJ plan D3; inlet plan §2.2.7 "no MIN_SURFAREA floor").
-    if (is_inlet_node) nodes.volume[ui] = 0.0;
+    if (is_inlet_node)
+        nodes.volume[ui] = 0.0;
 
     // --- Compute change in depth w.r.t. time (for CFL) ---
     if (dt > 0.0) {
@@ -4334,19 +4465,19 @@ void DWSolver::commitNodeDepthState(SimulationContext& ctx, int node_idx,
 // getRoutingStep -- CFL-based adaptive timestep
 // ============================================================================
 
-double DWSolver::getRoutingStep(SimulationContext& ctx,
-                                 double fixed_step, double courant_factor) {
-    if (courant_factor <= 0.0) return fixed_step;
+double DWSolver::getRoutingStep(SimulationContext& ctx, double fixed_step, double courant_factor) {
+    if (courant_factor <= 0.0)
+        return fixed_step;
     // Legacy dynwave_getRoutingStep: fixed steps below MINTIMESTEP bypass the
     // variable-step machinery entirely.
-    if (fixed_step < MIN_TIMESTEP) return fixed_step;
+    if (fixed_step < MIN_TIMESTEP)
+        return fixed_step;
 
     // Effective minimum step — legacy dynwave_validate (dynwave.c:178-179)
     // clamps MinRouteStep = min(MinRouteStep, RouteStep), then >= MINTIMESTEP,
     // so the floor can never exceed the user's fixed routing step.
     const double min_route_step =
-        std::max(std::min(ctx.options.min_routing_step, fixed_step),
-                 MIN_TIMESTEP);
+        std::max(std::min(ctx.options.min_routing_step, fixed_step), MIN_TIMESTEP);
 
     // On first call (no flows yet), use minimum step (matching legacy line 201-204:
     // "if (VariableStep == 0.0) VariableStep = MinRouteStep")
@@ -4356,13 +4487,14 @@ double DWSolver::getRoutingStep(SimulationContext& ctx,
     }
 
     double dt_min = fixed_step;
-    int min_link = -1;   // index of CFL-critical link
-    int min_node = -1;   // index of CFL-critical node
+    int min_link = -1; // index of CFL-critical link
+    int min_node = -1; // index of CFL-critical node
 
     // Link-based CFL (matching legacy getLinkStep with CourantFactor per-link)
     for (int j = 0; j < n_links_; ++j) {
         double t = getLinkStep(ctx, j);
-        if (t <= 0.0 || t > 1.0e9) continue;
+        if (t <= 0.0 || t > 1.0e9)
+            continue;
         // Apply Courant factor per-link (matching legacy dynwave.c line 856)
         t *= courant_factor;
         if (t < dt_min) {
@@ -4375,18 +4507,23 @@ double DWSolver::getRoutingStep(SimulationContext& ctx,
     // Node-based CFL (matching legacy getNodeStep)
     for (int i = 0; i < n_nodes_; ++i) {
         auto ui = static_cast<std::size_t>(i);
-        if (ctx.nodes.type[ui] == NodeType::OUTFALL) continue;
-        if (ctx.nodes.depth[ui] <= FUDGE) continue;
+        if (ctx.nodes.type[ui] == NodeType::OUTFALL)
+            continue;
+        if (ctx.nodes.depth[ui] <= FUDGE)
+            continue;
 
         // Skip nodes near or above crown elevation
         double yCrown = ctx.nodes.crown_elev[ui] - ctx.nodes.invert_elev[ui];
-        if (ctx.nodes.depth[ui] + FUDGE >= yCrown) continue;
+        if (ctx.nodes.depth[ui] + FUDGE >= yCrown)
+            continue;
 
         double max_depth = yCrown * 0.25;
-        if (max_depth < FUDGE) continue;
+        if (max_depth < FUDGE)
+            continue;
 
         double dYdT = xnode_.dYdT[ui];
-        if (dYdT < FUDGE) continue;
+        if (dYdT < FUDGE)
+            continue;
 
         double t = max_depth / dYdT;
         if (t > 0.0 && t < dt_min) {
@@ -4401,16 +4538,19 @@ double DWSolver::getRoutingStep(SimulationContext& ctx,
     // wave speed from the junction depth. In practice the per-link CFL checks
     // above dominate; this is a safety net for very short pair legs.
     for (const VJuncPair& p : vjunc_) {
-        if (!p.through || p.lambda <= 0.0) continue;
+        if (!p.through || p.lambda <= 0.0)
+            continue;
         const auto uu = static_cast<std::size_t>(p.up_link);
         const double aj = area2_[uu];
         const double wj = width2_[uu];
-        if (aj <= FUDGE || wj <= FUDGE) continue;
+        if (aj <= FUDGE || wj <= FUDGE)
+            continue;
         const auto ucu = static_cast<std::size_t>(tile_uj_to_ci_[uu]);
         const double qU = ctx.links.flow[uu] / tile_barrels_d_[ucu];
         const double vmag = std::fabs(qU) / aj;
         const double c = std::sqrt(constants::GRAVITY * (aj / wj));
-        if (vmag + c <= FUDGE) continue;
+        if (vmag + c <= FUDGE)
+            continue;
         double t = p.lambda / (vmag + c) * courant_factor;
         if (t > 0.0 && t < dt_min) {
             dt_min = t;
@@ -4442,25 +4582,26 @@ double DWSolver::getRoutingStep(SimulationContext& ctx,
     }();
     if (dt_trace) {
         const char* gov = "fixed";
-        const char* nm  = "-";
+        const char* nm = "-";
         if (floored) {
             gov = "floor";
         } else if (min_link >= 0) {
             gov = "link";
-            nm  = ctx.link_names.name_of(min_link).c_str();
+            nm = ctx.link_names.name_of(min_link).c_str();
         } else if (min_node >= 0) {
             gov = "node";
-            nm  = ctx.node_names.name_of(min_node).c_str();
+            nm = ctx.node_names.name_of(min_node).c_str();
         }
-        std::fprintf(stderr, "[DT] t=%.3f dt=%.3f gov=%s name=%s\n",
-                     ctx.elapsed_ms / 1000.0, dt_min, gov, nm);
+        std::fprintf(stderr, "[DT] t=%.3f dt=%.3f gov=%s name=%s\n", ctx.elapsed_ms / 1000.0,
+                     dt_min, gov, nm);
     }
     return dt_min;
 }
 
 double DWSolver::getLinkStep(const SimulationContext& ctx, int link_idx) const {
     auto uj = static_cast<std::size_t>(link_idx);
-    if (ctx.links.type[uj] != LinkType::CONDUIT) return 1.0e10;
+    if (ctx.links.type[uj] != LinkType::CONDUIT)
+        return 1.0e10;
     const auto& CD = ctx.link_subtypes.conduits;
     const auto ucr = static_cast<std::size_t>(ctx.link_subtypes.conduit_row(link_idx));
 
@@ -4468,16 +4609,19 @@ double DWSolver::getLinkStep(const SimulationContext& ctx, int link_idx) const {
     // q = |newFlow| / barrels (per-barrel flow)
     int barrels = std::max(CD.barrels[ucr], 1);
     double q = std::fabs(ctx.links.flow[uj]) / static_cast<double>(barrels);
-    if (q <= FUDGE) return 1.0e10;
+    if (q <= FUDGE)
+        return 1.0e10;
 
     // Legacy: Conduit[k].a1 (midpoint area from solver, per barrel)
     double a = area_mid_[uj];
-    if (a <= FUDGE) return 1.0e10;
+    if (a <= FUDGE)
+        return 1.0e10;
 
     // legacy dynwave.c:900 scales by modLength / link_getLength(i) — the
     // denominator is the ROUTING length.
     double L = CD.true_length[ucr];
-    if (L <= 0.0) L = CD.length[ucr];
+    if (L <= 0.0)
+        L = CD.length[ucr];
     double modL = CD.mod_length[ucr];
     const double Lscale = (L > 0.0 && modL > 0.0) ? (modL / L) : 1.0;
 
@@ -4496,15 +4640,17 @@ double DWSolver::getLinkStep(const SimulationContext& ctx, int link_idx) const {
                 // convey, so it must not dilute the advective signal speed.
                 double v = q / conveyArea(a, ctx.links.xsect_a_full[uj]);
                 double P = std::max(dps_.P[uci], 1.0);
-                double c_p = dps_config_.c_pT / P;           // pressure celerity
+                double c_p = dps_config_.c_pT / P; // pressure celerity
                 double denom = std::fabs(v) + c_p;
-                if (denom > 0.0) return (L * Lscale) / denom;
+                if (denom > 0.0)
+                    return (L * Lscale) / denom;
             }
         }
     }
 
     double fr = froude_[uj];
-    if (fr <= 0.01) return 1.0e10;
+    if (fr <= 0.01)
+        return 1.0e10;
 
     // Legacy: t = newVolume / barrels / q
     double vol = ctx.links.volume[uj] / static_cast<double>(barrels);
@@ -4517,31 +4663,35 @@ double DWSolver::getLinkStep(const SimulationContext& ctx, int link_idx) const {
     // rounds differently — even (t*L)/L is not always t — and the step is
     // floored to whole milliseconds, so a few-ULP difference straddling a
     // millisecond boundary moves the step grid by 1 ms (user5-slot).
-    if (L > 0.0 && modL > 0.0) t = t * modL / L;
-    t = t * fr / (1.0 + fr);  // Froude-based CFL factor
-    return t;                 // CourantFactor applied per-link in getRoutingStep
+    if (L > 0.0 && modL > 0.0)
+        t = t * modL / L;
+    t = t * fr / (1.0 + fr); // Froude-based CFL factor
+    return t;                // CourantFactor applied per-link in getRoutingStep
 }
 
-void DWSolver::accumulateLinkStepStats(SimulationContext& ctx, double dt,
-                                       double fixed_step,
+void DWSolver::accumulateLinkStepStats(SimulationContext& ctx, double dt, double fixed_step,
                                        double courant_factor) const {
-    if (dt <= 0.0) return;
+    if (dt <= 0.0)
+        return;
     const double cf = (courant_factor > 0.0) ? courant_factor : 1.0;
     auto& L = ctx.links;
     for (int j = 0; j < n_links_; ++j) {
         const auto uj = static_cast<std::size_t>(j);
-        if (L.type[uj] != LinkType::CONDUIT) continue;
+        if (L.type[uj] != LinkType::CONDUIT)
+            continue;
 
         const auto n1 = static_cast<std::size_t>(L.node1[uj]);
         const auto n2 = static_cast<std::size_t>(L.node2[uj]);
         const bool c1 = node_tile_[n1].is_outfall || xnode_.converged[n1];
         const bool c2 = node_tile_[n2].is_outfall || xnode_.converged[n2];
         ++L.stat_conv_total[uj];
-        if (c1 && c2) ++L.stat_conv_steps[uj];
+        if (c1 && c2)
+            ++L.stat_conv_steps[uj];
 
         // No flow (getLinkStep's 1e10 sentinel): no CFL limit to sample.
         const double t = getLinkStep(ctx, j);
-        if (t <= 0.0 || t > 1.0e9) continue;
+        if (t <= 0.0 || t > 1.0e9)
+            continue;
         L.add_lstep_sample(j, std::min(t * cf, fixed_step), dt, fixed_step);
     }
 }

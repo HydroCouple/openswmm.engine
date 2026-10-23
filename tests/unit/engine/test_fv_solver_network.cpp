@@ -1,6 +1,6 @@
 /**
- * @file test_fv_solver_network.cpp
- * @brief Network-level gates for the explicit FV 1D solver (plan §6.3–6.11).
+ * @file      test_fv_solver_network.cpp
+ * @brief     Network-level gates for the explicit FV 1D solver (plan §6.3–6.11).
  *
  * @details
  *   §6.3   Steady-state gates: Manning normal depth on a uniform slope, and
@@ -20,6 +20,10 @@
  *          dispersion gate.
  *
  * @ingroup engine_fv
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -40,18 +44,31 @@ namespace {
 
 constexpr double kG = 32.2;
 
-/// Drive a channel with a fixed lateral inflow at node 0 and a fixed stage at
-/// node 1, in `step`-second routing steps.
-void runNoded(Channel& ch, const FvOptions& opts, double t_end, double step,
-              double q_in, double stage_dn) {
+/**
+ * @brief Advance a fresh two-node channel under constant upstream inflow/downstream stage.
+ *
+ * Constructs/initializes a local solver, keeps local forcing arrays alive through synchronous
+ * advances and ignores returned achieved times. No files or status assertions are produced; solver
+ * exceptions propagate and channel state is not rolled back.
+ *
+ * @param[in,out] ch Compatible initialized-shape channel with exactly the two boundary-node slots
+ *     used by the fixture; water state is advanced.
+ * @param[in] opts Solver options borrowed during the local solver lifetime.
+ * @param[in] t_end Final model time in seconds, starting at zero; <=1e-9 performs no advances.
+ * @param[in] step Strictly positive reporting-size window in seconds; final interval is clipped.
+ * @param[in] q_in Node-zero lateral inflow in CFS.
+ * @param[in] stage_dn Absolute fixed head at node1 in feet; node0 fixed head is NaN for free
+ *     solution.
+ */
+void runNoded(Channel& ch, const FvOptions& opts, double t_end, double step, double q_in,
+              double stage_dn) {
     ExplicitFvSolver s;
     s.initialize(ch.mesh, ch.state, opts);
 
     std::vector<double> lateral = {q_in, 0.0};
-    std::vector<double> fixed   = {std::numeric_limits<double>::quiet_NaN(),
-                                   stage_dn};
+    std::vector<double> fixed = {std::numeric_limits<double>::quiet_NaN(), stage_dn};
     FvStepForcing f;
-    f.node_lateral    = lateral.data();
+    f.node_lateral = lateral.data();
     f.node_fixed_head = fixed.data();
     f.n_nodes = 2;
 
@@ -59,17 +76,27 @@ void runNoded(Channel& ch, const FvOptions& opts, double t_end, double step,
         s.advance(t, std::min(t + step, t_end), f);
 }
 
+/**
+ * @brief Write the current channel profile as a reviewable CSV.
+ *
+ * Creates output directories through an ignored error code, truncates name.csv and silently returns
+ * if open fails. Columns are x/zb/depth ft, area ft2, q CFS and eta ft, with x=(i+.5)*dx in storage
+ * order. Later write/close status is unchecked; does not reorder reversed chains or mutate state.
+ *
+ * @param[in] ch Channel with n valid cell metrics/state rows and dx in feet.
+ * @param[in] name Filesystem-safe basename under outputDir(), without .csv.
+ */
 void dump(const Channel& ch, const std::string& name) {
     std::error_code ec;
     std::filesystem::create_directories(outputDir(), ec);
     std::ofstream os(outputDir() + "/" + name + ".csv");
-    if (!os) return;
+    if (!os)
+        return;
     os << "x,zb,depth,area,q,eta\n";
     for (int i = 0; i < ch.n; ++i) {
         const auto ui = static_cast<std::size_t>(i);
-        os << (static_cast<double>(i) + 0.5) * ch.dx << ','
-           << ch.mesh.cell_zb[ui] << ',' << ch.state.cell_h[ui] << ','
-           << ch.state.cell_a[ui] << ',' << ch.state.cell_q[ui] << ','
+        os << (static_cast<double>(i) + 0.5) * ch.dx << ',' << ch.mesh.cell_zb[ui] << ','
+           << ch.state.cell_h[ui] << ',' << ch.state.cell_a[ui] << ',' << ch.state.cell_q[ui] << ','
            << (ch.mesh.cell_zb[ui] + ch.state.cell_h[ui]) << '\n';
     }
 }
@@ -109,10 +136,8 @@ TEST(FvNetwork, ReachesManningNormalDepthOnAUniformSlope) {
 
     for (int i = n / 4; i < 3 * n / 4; ++i) {
         const auto ui = static_cast<std::size_t>(i);
-        EXPECT_NEAR(ch.state.cell_h[ui], hn, 0.06 * hn)
-            << "depth off normal at cell " << i;
-        EXPECT_NEAR(ch.state.cell_q[ui], Q, 0.06 * Q)
-            << "discharge off target at cell " << i;
+        EXPECT_NEAR(ch.state.cell_h[ui], hn, 0.06 * hn) << "depth off normal at cell " << i;
+        EXPECT_NEAR(ch.state.cell_q[ui], Q, 0.06 * Q) << "discharge off target at cell " << i;
     }
 }
 
@@ -145,7 +170,8 @@ TEST(FvNetwork, SubcriticalFlowOverABumpConservesEnergy) {
     for (int i = 5; i < n - 5; ++i) {
         const auto ui = static_cast<std::size_t>(i);
         const double h = ch.state.cell_h[ui];
-        if (h < 1.0e-3) continue;
+        if (h < 1.0e-3)
+            continue;
         const double u = ch.state.cell_q[ui] / (width * h);
         const double e = h + ch.mesh.cell_zb[ui] + u * u / (2.0 * kG);
         emin = std::min(emin, e);
@@ -161,12 +187,27 @@ TEST(FvNetwork, SubcriticalFlowOverABumpConservesEnergy) {
 
 namespace {
 
-/// Split a walled channel of 2·half cells into two chains joined by a virtual
-/// junction. @p reversed makes the SECOND chain point back at the junction —
-/// the A→VJ←B orientation the rules permit, where the face's dir bookkeeping is
-/// the only thing standing between "equivalent" and "wrong sign".
-Channel makeSplitChannel(const XSectParams& xs, int half, double dx,
-                         double manning, bool reversed) {
+/**
+ * @brief Build a two-conduit walled channel joined by one explicit virtual face.
+ *
+ * Samples bed10-.001*x, constructs virtual-face orientation and cell-face mappings explicitly, and
+ * leaves per-conduit slopes at zero. No physical state is seeded or run. Does not validate
+ * counts/geometry; allocation/build failures propagate.
+ *
+ * @param[in] xs Cross-section parameters in internal feet-based units; compatible with
+ *     buildGeometry.
+ * @param[in] half Strictly positive cells per conduit;2*half and derived arrays must fit
+ *     integer/storage limits.
+ * @param[in] dx Strictly positive uniform cell length in feet.
+ * @param[in] manning Uniform Manning roughness; native roughness factor uses gravity32.2 and
+ *     US1.486 coefficient.
+ * @param[in] reversed Reverse the second conduit's cell order/axis signs to represent
+ *     A-to-VJ-from-B orientation.
+ * @return Owned channel with 2*half cells, one geometry/chain, no hydraulic nodes/species and
+ *     zero-resized water state.
+ */
+Channel makeSplitChannel(const XSectParams& xs, int half, double dx, double manning,
+                         bool reversed) {
     Channel ch;
     ch.n = 2 * half;
     ch.dx = dx;
@@ -174,8 +215,8 @@ Channel makeSplitChannel(const XSectParams& xs, int half, double dx,
     ch.mesh.geom.resize(1);
     buildGeometry(xs, xsect::isOpen(xs.type), 100.0, ch.mesh.geom[0]);
     ch.mesh.geom[0].barrels = 1;
-    ch.mesh.conduit_section    = {0, 0};
-    ch.mesh.conduit_roughness  = {manning, manning};
+    ch.mesh.conduit_section = {0, 0};
+    ch.mesh.conduit_roughness = {manning, manning};
     ch.mesh.conduit_rough_factor.assign(2, 32.2 * (manning / 1.486) * (manning / 1.486));
     ch.mesh.conduit_loss_inlet.assign(2, 0.0);
     ch.mesh.conduit_loss_outlet.assign(2, 0.0);
@@ -191,7 +232,7 @@ Channel makeSplitChannel(const XSectParams& xs, int half, double dx,
         if (i < half || !reversed) {
             x = (static_cast<double>(i) + 0.5) * dx;
         } else {
-            const int j = i - half;                 // reversed: far end first
+            const int j = i - half; // reversed: far end first
             x = (static_cast<double>(2 * half - j) - 0.5) * dx;
         }
         ch.mesh.cell_geom.push_back(0);
@@ -200,8 +241,7 @@ Channel makeSplitChannel(const XSectParams& xs, int half, double dx,
         ch.mesh.cell_zb.push_back(bed(x));
     }
 
-    auto add_face = [&](int cl, int cr, double zb, double fdx,
-                        int8_t dl, int8_t dr, bool vj) {
+    auto add_face = [&](int cl, int cr, double zb, double fdx, int8_t dl, int8_t dr, bool vj) {
         ch.mesh.face_cl.push_back(cl);
         ch.mesh.face_cr.push_back(cr);
         ch.mesh.face_node.push_back(-1);
@@ -213,7 +253,7 @@ Channel makeSplitChannel(const XSectParams& xs, int half, double dx,
         ch.mesh.face_vj_node.push_back(-1);
     };
 
-    add_face(-1, 0, bed(0.0), 0.5 * dx, 1, 1, false);                 // wall
+    add_face(-1, 0, bed(0.0), 0.5 * dx, 1, 1, false); // wall
     for (int i = 1; i < half; ++i)
         add_face(i - 1, i, bed(i * dx), dx, 1, 1, false);
 
@@ -221,15 +261,13 @@ Channel makeSplitChannel(const XSectParams& xs, int half, double dx,
     // When B is reversed its downstream end also meets the junction, so B's
     // axis opposes the face normal: dir_r = −1.
     const int b_first = reversed ? (2 * half - 1) : half;
-    add_face(half - 1, b_first, bed(half * dx), dx, 1,
-             reversed ? int8_t{-1} : int8_t{1}, true);
+    add_face(half - 1, b_first, bed(half * dx), dx, 1, reversed ? int8_t{-1} : int8_t{1}, true);
 
     if (reversed) {
         // Walking downstream means walking DOWN the index range; each such face
         // sits at both incident cells' upstream ends in their own axes.
         for (int j = 2 * half - 1; j > half; --j)
-            add_face(j, j - 1, bed((2 * half - (j - half)) * dx), dx, -1, -1,
-                     false);
+            add_face(j, j - 1, bed((2 * half - (j - half)) * dx), dx, -1, -1, false);
         add_face(half, -1, bed(2 * half * dx), 0.5 * dx, -1, 1, false);
     } else {
         for (int i = half + 1; i < 2 * half; ++i)
@@ -247,13 +285,17 @@ Channel makeSplitChannel(const XSectParams& xs, int half, double dx,
         auto attach = [&](int cell, int8_t side) {
             const auto uc = static_cast<std::size_t>(cell);
             if (ch.mesh.cell_face0[uc] < 0) {
-                ch.mesh.cell_face0[uc] = f; ch.mesh.cell_side0[uc] = side;
+                ch.mesh.cell_face0[uc] = f;
+                ch.mesh.cell_side0[uc] = side;
             } else {
-                ch.mesh.cell_face1[uc] = f; ch.mesh.cell_side1[uc] = side;
+                ch.mesh.cell_face1[uc] = f;
+                ch.mesh.cell_side1[uc] = side;
             }
         };
-        if (ch.mesh.face_cl[uf] >= 0) attach(ch.mesh.face_cl[uf], 0);
-        if (ch.mesh.face_cr[uf] >= 0) attach(ch.mesh.face_cr[uf], 1);
+        if (ch.mesh.face_cl[uf] >= 0)
+            attach(ch.mesh.face_cl[uf], 0);
+        if (ch.mesh.face_cr[uf] >= 0)
+            attach(ch.mesh.face_cr[uf], 1);
     }
 
     ch.mesh.chain_ptr = {0, nc};
@@ -269,12 +311,27 @@ Channel makeSplitChannel(const XSectParams& xs, int half, double dx,
     return ch;
 }
 
-/// Index j of the result is the cell occupying the j-th position from upstream.
+/**
+ * @brief Map physical upstream-to-downstream positions to split-channel cell indices.
+ *
+ * No bounds/count validation occurs; nonpositive counts yield empty loops rather than a useful
+ * channel mapping.
+ *
+ * @param[in] half Intended positive cells per chain;2*half must fit int.
+ * @param[in] reversed Reverse indices of the second half when true.
+ * @return Owned index vector0..half-1 followed by second-half forward/reverse order; no mesh is
+ *     accessed.
+ */
 std::vector<int> physicalOrder(int half, bool reversed) {
     std::vector<int> order;
-    for (int i = 0; i < half; ++i) order.push_back(i);
-    if (reversed) for (int j = 2 * half - 1; j >= half; --j) order.push_back(j);
-    else          for (int j = half; j < 2 * half; ++j)      order.push_back(j);
+    for (int i = 0; i < half; ++i)
+        order.push_back(i);
+    if (reversed)
+        for (int j = 2 * half - 1; j >= half; --j)
+            order.push_back(j);
+    else
+        for (int j = half; j < 2 * half; ++j)
+            order.push_back(j);
     return order;
 }
 
@@ -290,9 +347,9 @@ TEST(FvNetwork, VirtualJunctionIsIndistinguishableFromAnInteriorCut) {
         for (std::size_t j = 0; j < order.size(); ++j) {
             const auto uc = static_cast<std::size_t>(order[j]);
             const double x = (static_cast<double>(j) + 0.5) * dx;
-            const double eta = (x < 400.0) ? 9.0 : 6.5;     // a step to propagate
-            c.state.cell_a[uc] = k::areaOfDepth(
-                c.mesh.geom[0], std::max(0.0, eta - c.mesh.cell_zb[uc]));
+            const double eta = (x < 400.0) ? 9.0 : 6.5; // a step to propagate
+            c.state.cell_a[uc] =
+                k::areaOfDepth(c.mesh.geom[0], std::max(0.0, eta - c.mesh.cell_zb[uc]));
             c.state.cell_q[uc] = 0.0;
         }
     };
@@ -327,8 +384,7 @@ TEST(FvNetwork, VirtualJunctionIsIndistinguishableFromAnInteriorCut) {
             EXPECT_NEAR(split.state.cell_a[us], plain.state.cell_a[up], 1.0e-10)
                 << (reversed ? "reversed" : "forward") << " area at position " << j;
             EXPECT_NEAR(sgn * split.state.cell_q[us], plain.state.cell_q[up], 1.0e-8)
-                << (reversed ? "reversed" : "forward")
-                << " discharge at position " << j;
+                << (reversed ? "reversed" : "forward") << " discharge at position " << j;
         }
     }
 }
@@ -348,19 +404,19 @@ TEST(FvNetwork, VirtualJunctionLateralIsSplitIntoBothSpliceCells) {
     // replaced. It has no face list of its own; node_vj_face is the only
     // association the solver gets.
     const int f_vj = half;
-    ch.mesh.node_invert      = {ch.mesh.face_zb[static_cast<std::size_t>(f_vj)]};
-    ch.mesh.node_full_depth  = {1.0e6};
+    ch.mesh.node_invert = {ch.mesh.face_zb[static_cast<std::size_t>(f_vj)]};
+    ch.mesh.node_full_depth = {1.0e6};
     ch.mesh.node_ponded_area = {0.0};
-    ch.mesh.node_kind        = {kNodeVirtual};
-    ch.mesh.node_area        = {openswmm::constants::MIN_SURFAREA};
-    ch.mesh.node_vol_off     = {-1};
-    ch.mesh.node_vol_dmax    = {0.0};
-    ch.mesh.node_vol_atop    = {0.0};
-    ch.mesh.node_vj_face     = {f_vj};
-    ch.mesh.node_face_ptr    = {0, 0};
+    ch.mesh.node_kind = {kNodeVirtual};
+    ch.mesh.node_area = {openswmm::constants::MIN_SURFAREA};
+    ch.mesh.node_vol_off = {-1};
+    ch.mesh.node_vol_dmax = {0.0};
+    ch.mesh.node_vol_atop = {0.0};
+    ch.mesh.node_vj_face = {f_vj};
+    ch.mesh.node_face_ptr = {0, 0};
     ch.mesh.face_vj_node[static_cast<std::size_t>(f_vj)] = 0;
     ch.state.resize(2 * half, 1, 0);
-    seedLevel(ch, 11.0);            // level pool: nothing moves but the lateral
+    seedLevel(ch, 11.0); // level pool: nothing moves but the lateral
 
     FvOptions o = defaultOptions();
     ExplicitFvSolver s;
@@ -368,15 +424,15 @@ TEST(FvNetwork, VirtualJunctionLateralIsSplitIntoBothSpliceCells) {
 
     const double q_lat = 2.0;
     std::vector<double> lateral = {q_lat};
-    std::vector<double> fixed   = {std::numeric_limits<double>::quiet_NaN()};
+    std::vector<double> fixed = {std::numeric_limits<double>::quiet_NaN()};
     FvStepForcing f;
-    f.node_lateral    = lateral.data();
+    f.node_lateral = lateral.data();
     f.node_fixed_head = fixed.data();
     f.n_nodes = 1;
 
     const auto ul = static_cast<std::size_t>(half - 1);
     const auto ur = static_cast<std::size_t>(half);
-    const double v0   = totalVolume(ch);
+    const double v0 = totalVolume(ch);
     const double a_l0 = ch.state.cell_a[ul];
     const double a_r0 = ch.state.cell_a[ur];
 
@@ -389,7 +445,8 @@ TEST(FvNetwork, VirtualJunctionLateralIsSplitIntoBothSpliceCells) {
     EXPECT_GT(d_r, 0.0);
     EXPECT_NEAR(d_l, d_r, 0.05 * std::max(d_l, d_r));
 
-    for (double t = 1.0; t < 60.0; t += 1.0) s.advance(t, t + 1.0, f);
+    for (double t = 1.0; t < 60.0; t += 1.0)
+        s.advance(t, t + 1.0, f);
     EXPECT_NEAR(totalVolume(ch) - v0, q_lat * 60.0, 1.0e-9 * q_lat * 60.0)
         << "the lateral at the virtual junction is not conserved";
 }
@@ -405,12 +462,10 @@ TEST(FvNetwork, FillingBorePropagatesAndPressurizesWithoutRinging) {
     // oscillation — which is what the tapered slot mouth exists to prevent.
     const double D = 3.0;
     const int n = 200;
-    Channel ch = makeNodedChannel(circular(D), n, 10.0,
-                                  [](double) { return 0.0; }, 0.013);
+    Channel ch = makeNodedChannel(circular(D), n, 10.0, [](double) { return 0.0; }, 0.013);
     for (int i = 0; i < n; ++i)
-        ch.state.cell_a[static_cast<std::size_t>(i)] =
-            k::areaOfDepth(ch.mesh.geom[0], 0.6);
-    ch.state.node_head[0] = 12.0;      // 9 ft above the crown
+        ch.state.cell_a[static_cast<std::size_t>(i)] = k::areaOfDepth(ch.mesh.geom[0], 0.6);
+    ch.state.node_head[0] = 12.0; // 9 ft above the crown
     ch.state.node_head[1] = 0.6;
 
     FvOptions o = defaultOptions();
@@ -418,26 +473,28 @@ TEST(FvNetwork, FillingBorePropagatesAndPressurizesWithoutRinging) {
     s.initialize(ch.mesh, ch.state, o);
 
     std::vector<double> lateral = {0.0, 0.0};
-    std::vector<double> fixed   = {12.0, 0.6};
+    std::vector<double> fixed = {12.0, 0.6};
     FvStepForcing f;
-    f.node_lateral    = lateral.data();
+    f.node_lateral = lateral.data();
     f.node_fixed_head = fixed.data();
     f.n_nodes = 2;
 
-    for (double t = 0.0; t < 120.0; t += 1.0) s.advance(t, t + 1.0, f);
+    for (double t = 0.0; t < 120.0; t += 1.0)
+        s.advance(t, t + 1.0, f);
     dump(ch, "filling_bore");
 
     int pressurized = 0;
     for (int i = 0; i < n / 3; ++i)
-        if (ch.state.cell_h[static_cast<std::size_t>(i)] > D) ++pressurized;
+        if (ch.state.cell_h[static_cast<std::size_t>(i)] > D)
+            ++pressurized;
     EXPECT_GT(pressurized, n / 8) << "bore never pressurized the upstream reach";
 
     // Monotone depth profile: ringing at the crown crossing shows up here.
     for (int i = 1; i < n; ++i) {
         const double a = ch.state.cell_h[static_cast<std::size_t>(i - 1)];
         const double b = ch.state.cell_h[static_cast<std::size_t>(i)];
-        EXPECT_LE(b, a + 1.0e-4)
-            << "non-monotone depth (ringing) between cells " << i - 1 << " and " << i;
+        EXPECT_LE(b, a + 1.0e-4) << "non-monotone depth (ringing) between cells " << i - 1
+                                 << " and " << i;
     }
 }
 
@@ -448,11 +505,9 @@ TEST(FvNetwork, PressurizeDepressurizeCyclingIsHysteresisFree) {
     // rejects DPS for this scheme.
     const double D = 3.0;
     const int n = 60;
-    Channel ch = makeNodedChannel(circular(D), n, 10.0,
-                                  [](double) { return 0.0; }, 0.013);
+    Channel ch = makeNodedChannel(circular(D), n, 10.0, [](double) { return 0.0; }, 0.013);
     for (int i = 0; i < n; ++i)
-        ch.state.cell_a[static_cast<std::size_t>(i)] =
-            k::areaOfDepth(ch.mesh.geom[0], 1.0);
+        ch.state.cell_a[static_cast<std::size_t>(i)] = k::areaOfDepth(ch.mesh.geom[0], 1.0);
     ch.state.node_head[0] = 1.0;
     ch.state.node_head[1] = 1.0;
 
@@ -463,7 +518,7 @@ TEST(FvNetwork, PressurizeDepressurizeCyclingIsHysteresisFree) {
     std::vector<double> lateral = {0.0, 0.0};
     std::vector<double> fixed(2, 1.0);
     FvStepForcing f;
-    f.node_lateral    = lateral.data();
+    f.node_lateral = lateral.data();
     f.node_fixed_head = fixed.data();
     f.n_nodes = 2;
 
@@ -473,15 +528,19 @@ TEST(FvNetwork, PressurizeDepressurizeCyclingIsHysteresisFree) {
     // mean anything.
     double t = 0.0;
     auto hold = [&](double head, double seconds) {
-        fixed[0] = head; fixed[1] = head;
-        for (double e = 0.0; e < seconds; e += 5.0) { s.advance(t, t + 5.0, f); t += 5.0; }
+        fixed[0] = head;
+        fixed[1] = head;
+        for (double e = 0.0; e < seconds; e += 5.0) {
+            s.advance(t, t + 5.0, f);
+            t += 5.0;
+        }
     };
     auto restError = [&](double head) {
         double worst = 0.0;
         for (int i = 0; i < n; ++i) {
             const auto ui = static_cast<std::size_t>(i);
-            worst = std::max(worst, std::fabs(ch.state.cell_a[ui] -
-                                              k::areaOfDepth(ch.mesh.geom[0], head)));
+            worst = std::max(
+                worst, std::fabs(ch.state.cell_a[ui] - k::areaOfDepth(ch.mesh.geom[0], head)));
         }
         return worst;
     };
@@ -541,8 +600,10 @@ TEST(FvNetwork, CompactionIsBitIdenticalToTheFullSweep) {
     Channel plain = build();
     Channel packed = build();
 
-    FvOptions o1 = defaultOptions();  o1.compaction = false;
-    FvOptions o2 = defaultOptions();  o2.compaction = true;
+    FvOptions o1 = defaultOptions();
+    o1.compaction = false;
+    FvOptions o2 = defaultOptions();
+    o2.compaction = true;
 
     ExplicitFvSolver s1, s2;
     s1.initialize(plain.mesh, plain.state, o1);
@@ -573,20 +634,41 @@ TEST(FvNetwork, CompactionIsBitIdenticalToTheFullSweep) {
 
 namespace {
 
+/**
+ * @brief Build a flat frictionless walled rectangular channel with scalar storage.
+ *
+ * Uses a flat zero bed and no nodes. Does not run transport or retain external pointers;
+ * allocation/helper failures propagate.
+ *
+ * @param[in] n Positive cell count supported by makeWalledChannel and state allocation.
+ * @param[in] dx Positive cell length in feet.
+ * @param[in] nspecies Nonnegative scalar row count.
+ * @return Owned 10 ft wide,15 ft maximum-depth channel with zero-resized water and species state;
+ *     caller seeds area/discharge/concentration.
+ */
 Channel makeTransportChannel(int n, double dx, int nspecies) {
-    Channel ch = makeWalledChannel(rectOpen(10.0, 15.0), n, dx,
-                                   [](double) { return 0.0; }, 0.0);
+    Channel ch = makeWalledChannel(rectOpen(10.0, 15.0), n, dx, [](double) { return 0.0; }, 0.0);
     ch.state.resize(n, 0, nspecies);
     return ch;
 }
 
+/**
+ * @brief Integrate one cell concentration row against physical channel water volume.
+ *
+ * No unit conversion, wet/dry filtering, finite validation or state mutation occurs.
+ *
+ * @param[in] ch Channel with consistent n, area ft2, cell length ft and species-major concentration
+ *     arrays.
+ * @param[in] s Valid nonnegative species index; unchecked before offset arithmetic.
+ * @return Sum concentration*area*dx, in the scalar row's native concentration*ft3 amount units;
+ *     zero for no cells.
+ */
 double soluteMass(const Channel& ch, int s) {
     const auto base = static_cast<std::size_t>(s) * static_cast<std::size_t>(ch.n);
     double m = 0.0;
     for (int i = 0; i < ch.n; ++i) {
         const auto ui = static_cast<std::size_t>(i);
-        m += ch.state.cell_phi[base + ui] * ch.state.cell_a[ui] *
-             ch.mesh.cell_dx[ui];
+        m += ch.state.cell_phi[base + ui] * ch.state.cell_a[ui] * ch.mesh.cell_dx[ui];
     }
     return m;
 }
@@ -615,7 +697,8 @@ TEST(FvNetwork, UniformConcentrationStaysUniformUnderArbitraryFlow) {
         s.advance(t, t + 10.0, f);
         for (int i = 0; i < n; ++i) {
             const auto ui = static_cast<std::size_t>(i);
-            if (ch.state.cell_h[ui] <= k::kDryDepth) continue;
+            if (ch.state.cell_h[ui] <= k::kDryDepth)
+                continue;
             ASSERT_NEAR(ch.state.cell_phi[ui], 7.25, 1.0e-10)
                 << "uniform field broke at cell " << i << ", t=" << t;
         }
@@ -632,8 +715,8 @@ TEST(FvNetwork, StepConcentrationObeysTheDiscreteMaximumPrinciple) {
         base.state.cell_phi[ui] = (i < n / 3) ? 100.0 : 0.0;
     }
 
-    for (ScalarScheme sch : {ScalarScheme::UPWIND, ScalarScheme::MUSCL,
-                             ScalarScheme::QUICKEST_ULTIMATE}) {
+    for (ScalarScheme sch :
+         {ScalarScheme::UPWIND, ScalarScheme::MUSCL, ScalarScheme::QUICKEST_ULTIMATE}) {
         Channel c = base;
         FvOptions o = defaultOptions();
         o.scalar_scheme = sch;
@@ -644,10 +727,8 @@ TEST(FvNetwork, StepConcentrationObeysTheDiscreteMaximumPrinciple) {
             s.advance(t, t + 5.0, f);
             for (int i = 0; i < n; ++i) {
                 const double p = c.state.cell_phi[static_cast<std::size_t>(i)];
-                ASSERT_GE(p, -1.0e-9)
-                    << "negative concentration, scheme " << static_cast<int>(sch);
-                ASSERT_LE(p, 100.0 + 1.0e-9)
-                    << "new maximum, scheme " << static_cast<int>(sch);
+                ASSERT_GE(p, -1.0e-9) << "negative concentration, scheme " << static_cast<int>(sch);
+                ASSERT_LE(p, 100.0 + 1.0e-9) << "new maximum, scheme " << static_cast<int>(sch);
             }
         }
     }
@@ -661,8 +742,7 @@ TEST(FvNetwork, SoluteMassIsConservedInAClosedReach) {
         const double x = (static_cast<double>(i) + 0.5) * 5.0;
         ch.state.cell_a[ui] = 10.0 * (5.0 + 1.5 * std::sin(x / 70.0));
         ch.state.cell_phi[ui] = (i > 60 && i < 100) ? 50.0 : 1.0;
-        ch.state.cell_phi[static_cast<std::size_t>(n) + ui] =
-            3.0 + 0.01 * static_cast<double>(i);
+        ch.state.cell_phi[static_cast<std::size_t>(n) + ui] = 3.0 + 0.01 * static_cast<double>(i);
     }
 
     FvOptions o = defaultOptions();
@@ -671,7 +751,8 @@ TEST(FvNetwork, SoluteMassIsConservedInAClosedReach) {
     const double m0 = soluteMass(ch, 0), m1 = soluteMass(ch, 1);
 
     FvStepForcing f;
-    for (double t = 0.0; t < 400.0; t += 10.0) s.advance(t, t + 10.0, f);
+    for (double t = 0.0; t < 400.0; t += 10.0)
+        s.advance(t, t + 10.0, f);
 
     EXPECT_NEAR(soluteMass(ch, 0), m0, 1.0e-9 * m0);
     EXPECT_NEAR(soluteMass(ch, 1), m1, 1.0e-9 * m1);
@@ -701,20 +782,21 @@ TEST(FvNetwork, FrontSharpnessSeparatesRiemannFromReconstruction) {
         ExplicitFvSolver s;
         s.initialize(c.mesh, c.state, o);
         FvStepForcing f;
-        for (double t = 0.0; t < 200.0; t += 10.0) s.advance(t, t + 10.0, f);
+        for (double t = 0.0; t < 200.0; t += 10.0)
+            s.advance(t, t + 10.0, f);
         int w = 0;
         for (int i = 0; i < n; ++i) {
             const double p = c.state.cell_phi[static_cast<std::size_t>(i)];
-            if (p > 0.05 && p < 0.95) ++w;
+            if (p > 0.05 && p < 0.95)
+                ++w;
         }
         return w;
     };
 
-    const int hll_upwind  = measureWidth(RiemannSolver::HLL,  ScalarScheme::UPWIND);
+    const int hll_upwind = measureWidth(RiemannSolver::HLL, ScalarScheme::UPWIND);
     const int hllc_upwind = measureWidth(RiemannSolver::HLLC, ScalarScheme::UPWIND);
-    const int hllc_muscl  = measureWidth(RiemannSolver::HLLC, ScalarScheme::MUSCL);
-    const int hllc_quick  = measureWidth(RiemannSolver::HLLC,
-                                         ScalarScheme::QUICKEST_ULTIMATE);
+    const int hllc_muscl = measureWidth(RiemannSolver::HLLC, ScalarScheme::MUSCL);
+    const int hllc_quick = measureWidth(RiemannSolver::HLLC, ScalarScheme::QUICKEST_ULTIMATE);
 
     std::error_code ec;
     std::filesystem::create_directories(outputDir(), ec);
@@ -750,7 +832,8 @@ TEST(FvNetwork, ImplicitDispersionRemovesTheDeltaXSquaredStepRestriction) {
     const double m0 = soluteMass(ch, 0);
 
     FvStepForcing f;
-    for (double t = 0.0; t < 200.0; t += 10.0) s.advance(t, t + 10.0, f);
+    for (double t = 0.0; t < 200.0; t += 10.0)
+        s.advance(t, t + 10.0, f);
 
     for (int i = 0; i < n; ++i) {
         const double p = ch.state.cell_phi[static_cast<std::size_t>(i)];
@@ -772,16 +855,29 @@ namespace {
 // path: plain junctions are algebraic interfaces (node_alg_ excludes any
 // node with a storage table), so the semi-implicit relaxation and the
 // options that act on it now live on storage nodes alone.
+/**
+ * @brief Append a linear volume table and attach it to a channel node.
+ *
+ * Stores current table offset, dmax and kNodeVolSamples values spanning0..area*dmax ft3. The new
+ * offset must fit int and sample count exceeds1. Does not set node kind/head/current volume or
+ * validate inputs; assigning a storage table excludes the plain algebraic-junction path in intended
+ * solver initialization.
+ *
+ * @param[in,out] ch Channel with allocated per-node volume offset/depth metadata; table storage
+ *     grows.
+ * @param[in] node Valid nonnegative node index in node_vol_off/node_vol_dmax, unchecked here.
+ * @param[in] area Positive intended constant storage area in ft2.
+ * @param[in] dmax Positive intended maximum storage depth in feet.
+ */
 void attachPrismaticStorage(Channel& ch, int node, double area, double dmax) {
     const auto un = static_cast<std::size_t>(node);
-    ch.mesh.node_vol_off[un]  = static_cast<int>(ch.mesh.node_vol_tbl.size());
+    ch.mesh.node_vol_off[un] = static_cast<int>(ch.mesh.node_vol_tbl.size());
     ch.mesh.node_vol_dmax[un] = dmax;
     for (int i = 0; i < kNodeVolSamples; ++i)
-        ch.mesh.node_vol_tbl.push_back(
-            area * dmax * static_cast<double>(i) /
-            static_cast<double>(kNodeVolSamples - 1));
+        ch.mesh.node_vol_tbl.push_back(area * dmax * static_cast<double>(i) /
+                                       static_cast<double>(kNodeVolSamples - 1));
 }
-}  // namespace
+} // namespace
 
 // Conservation is the property that must survive, and the mechanism is
 // specific: the correction is written into the SHARED face-flux array, so the
@@ -789,13 +885,11 @@ void attachPrismaticStorage(Channel& ch, int node, double area, double dmax) {
 // imply a volume change the incident cells never saw — stability bought with
 // the one property this solver exists to provide.
 TEST(FvNetwork, SemiImplicitCouplingConservesMassExactly) {
-    Channel ch = makeNodedChannel(circular(3.0), 40, 25.0,
-                                  [](double) { return 0.0; }, 0.013);
-    attachPrismaticStorage(ch, 0, 12.566, 8.0);   // bucket path under test
+    Channel ch = makeNodedChannel(circular(3.0), 40, 25.0, [](double) { return 0.0; }, 0.013);
+    attachPrismaticStorage(ch, 0, 12.566, 8.0); // bucket path under test
     attachPrismaticStorage(ch, 1, 12.566, 8.0);
     for (int i = 0; i < ch.n; ++i)
-        ch.state.cell_a[static_cast<std::size_t>(i)] =
-            k::areaOfDepth(ch.mesh.geom[0], 1.2);
+        ch.state.cell_a[static_cast<std::size_t>(i)] = k::areaOfDepth(ch.mesh.geom[0], 1.2);
     ch.state.node_head[0] = 1.2;
     ch.state.node_head[1] = 1.2;
 
@@ -808,7 +902,7 @@ TEST(FvNetwork, SemiImplicitCouplingConservesMassExactly) {
     std::vector<double> lateral(2, 0.0);
     std::vector<double> fixed(2, std::numeric_limits<double>::quiet_NaN());
     FvStepForcing f;
-    f.node_lateral    = lateral.data();
+    f.node_lateral = lateral.data();
     f.node_fixed_head = fixed.data();
     f.n_nodes = 2;
 
@@ -818,11 +912,11 @@ TEST(FvNetwork, SemiImplicitCouplingConservesMassExactly) {
             v += ch.state.node_volume[static_cast<std::size_t>(n)];
         return v;
     };
-    s.advance(0.0, 5.0, f);            // seeds the node ledger from the heads
+    s.advance(0.0, 5.0, f); // seeds the node ledger from the heads
     const double v0 = total();
-    for (double t = 5.0; t < 600.0; t += 5.0) s.advance(t, t + 5.0, f);
-    EXPECT_NEAR(total(), v0, 1.0e-10 * v0)
-        << "the semi-implicit correction moved water";
+    for (double t = 5.0; t < 600.0; t += 5.0)
+        s.advance(t, t + 5.0, f);
+    EXPECT_NEAR(total(), v0, 1.0e-10 * v0) << "the semi-implicit correction moved water";
     s.finalize();
 }
 
@@ -836,13 +930,11 @@ TEST(FvNetwork, SemiImplicitCouplingConservesMassExactly) {
 // it. If an unrelated census change moves the count, re-measure both sides
 // rather than loosening past 2750.
 TEST(FvNetwork, NodeDoesNotOwnTheSubstep) {
-    Channel ch = makeNodedChannel(circular(3.0), 40, 25.0,
-                                  [](double x) { return 0.002 * (1000.0 - x); },
-                                  0.013);
-    attachPrismaticStorage(ch, 0, 12.566, 8.0);   // bucket path under test
+    Channel ch = makeNodedChannel(
+        circular(3.0), 40, 25.0, [](double x) { return 0.002 * (1000.0 - x); }, 0.013);
+    attachPrismaticStorage(ch, 0, 12.566, 8.0); // bucket path under test
     for (int i = 0; i < ch.n; ++i)
-        ch.state.cell_a[static_cast<std::size_t>(i)] =
-            k::areaOfDepth(ch.mesh.geom[0], 0.8);
+        ch.state.cell_a[static_cast<std::size_t>(i)] = k::areaOfDepth(ch.mesh.geom[0], 0.8);
     ch.state.node_head[0] = ch.mesh.node_invert[0] + 0.8;
     ch.state.node_head[1] = ch.mesh.node_invert[1] + 0.8;
 
@@ -863,10 +955,10 @@ TEST(FvNetwork, NodeDoesNotOwnTheSubstep) {
     }
     s.finalize();
     std::printf("[fv-node] substeps %ld (recorded: semi-implicit 2453, "
-                "explicit 2750)\n", n);
+                "explicit 2750)\n",
+                n);
     EXPECT_LT(n, 2600L) << "the node is setting the substep again";
 }
-
 
 // ===========================================================================
 // Algebraic junctions — the junction as an interface, not a bucket
@@ -878,14 +970,12 @@ TEST(FvNetwork, NodeDoesNotOwnTheSubstep) {
 // treatment changes the answer rather than the cost of reaching it.
 TEST(FvNetwork, AlgebraicJunctionAgreesWithABucketNodeOnTheSteadyState) {
     auto settle = [](bool bucket_node) {
-        Channel ch = makeNodedChannel(circular(3.0), 40, 25.0,
-                                      [](double x) { return 0.002 * (1000.0 - x); },
-                                      0.013);
+        Channel ch = makeNodedChannel(
+            circular(3.0), 40, 25.0, [](double x) { return 0.002 * (1000.0 - x); }, 0.013);
         if (bucket_node)
             attachPrismaticStorage(ch, 0, 12.566, 8.0);
         for (int i = 0; i < ch.n; ++i)
-            ch.state.cell_a[static_cast<std::size_t>(i)] =
-                k::areaOfDepth(ch.mesh.geom[0], 0.8);
+            ch.state.cell_a[static_cast<std::size_t>(i)] = k::areaOfDepth(ch.mesh.geom[0], 0.8);
         ch.state.node_head[0] = ch.mesh.node_invert[0] + 0.8;
         ch.state.node_head[1] = ch.mesh.node_invert[1] + 0.8;
 
@@ -896,23 +986,20 @@ TEST(FvNetwork, AlgebraicJunctionAgreesWithABucketNodeOnTheSteadyState) {
     };
 
     const std::vector<double> bucket = settle(true);
-    const std::vector<double> alg    = settle(false);
+    const std::vector<double> alg = settle(false);
     ASSERT_EQ(bucket.size(), alg.size());
     for (std::size_t i = 5; i + 5 < bucket.size(); ++i)
-        EXPECT_NEAR(alg[i], bucket[i], 0.02 * 12.0)
-            << "steady discharge differs at cell " << i;
+        EXPECT_NEAR(alg[i], bucket[i], 0.02 * 12.0) << "steady discharge differs at cell " << i;
 }
 
 // A wet channel at rest between two algebraic junctions must STAY at rest —
 // the residual short-circuit exists so a bracketing probe cannot disturb the
 // balance by the solve tolerance — and a closed system must hold its water.
 TEST(FvNetwork, AlgebraicJunctionKeepsAClosedLakeAtRest) {
-    Channel ch = makeNodedChannel(circular(3.0), 40, 25.0,
-                                  [](double) { return 0.0; }, 0.013);
-    ch.mesh.node_kind[1] = kNodeJunction;    // both ends algebraic-eligible
+    Channel ch = makeNodedChannel(circular(3.0), 40, 25.0, [](double) { return 0.0; }, 0.013);
+    ch.mesh.node_kind[1] = kNodeJunction; // both ends algebraic-eligible
     for (int i = 0; i < ch.n; ++i)
-        ch.state.cell_a[static_cast<std::size_t>(i)] =
-            k::areaOfDepth(ch.mesh.geom[0], 1.2);
+        ch.state.cell_a[static_cast<std::size_t>(i)] = k::areaOfDepth(ch.mesh.geom[0], 1.2);
     ch.state.node_head[0] = 1.2;
     ch.state.node_head[1] = 1.2;
 
@@ -923,18 +1010,17 @@ TEST(FvNetwork, AlgebraicJunctionKeepsAClosedLakeAtRest) {
     std::vector<double> lateral(2, 0.0);
     std::vector<double> fixed(2, std::numeric_limits<double>::quiet_NaN());
     FvStepForcing f;
-    f.node_lateral    = lateral.data();
+    f.node_lateral = lateral.data();
     f.node_fixed_head = fixed.data();
     f.n_nodes = 2;
 
     const double v0 = totalVolume(ch);
-    for (double t = 0.0; t < 600.0; t += 5.0) s.advance(t, t + 5.0, f);
+    for (double t = 0.0; t < 600.0; t += 5.0)
+        s.advance(t, t + 5.0, f);
     EXPECT_NEAR(totalVolume(ch), v0, 1.0e-10 * v0)
         << "the algebraic junction moved water in a closed system at rest";
-    EXPECT_NEAR(ch.state.node_head[0], 1.2, 1.0e-9)
-        << "upstream head drifted at rest";
-    EXPECT_NEAR(ch.state.node_head[1], 1.2, 1.0e-9)
-        << "downstream head drifted at rest";
+    EXPECT_NEAR(ch.state.node_head[0], 1.2, 1.0e-9) << "upstream head drifted at rest";
+    EXPECT_NEAR(ch.state.node_head[1], 1.2, 1.0e-9) << "downstream head drifted at rest";
     for (int i = 0; i < ch.n; ++i)
         EXPECT_NEAR(ch.state.cell_q[static_cast<std::size_t>(i)], 0.0, 1.0e-9)
             << "spurious discharge at cell " << i;
@@ -946,14 +1032,12 @@ TEST(FvNetwork, AlgebraicJunctionKeepsAClosedLakeAtRest) {
 // fixture; the algebraic run must step on the cells alone.
 TEST(FvNetwork, AlgebraicJunctionRemovesTheNodeStepLimit) {
     auto substeps = [](bool bucket_node) {
-        Channel ch = makeNodedChannel(circular(3.0), 40, 25.0,
-                                      [](double x) { return 0.002 * (1000.0 - x); },
-                                      0.013);
+        Channel ch = makeNodedChannel(
+            circular(3.0), 40, 25.0, [](double x) { return 0.002 * (1000.0 - x); }, 0.013);
         if (bucket_node)
             attachPrismaticStorage(ch, 0, 12.566, 8.0);
         for (int i = 0; i < ch.n; ++i)
-            ch.state.cell_a[static_cast<std::size_t>(i)] =
-                k::areaOfDepth(ch.mesh.geom[0], 0.8);
+            ch.state.cell_a[static_cast<std::size_t>(i)] = k::areaOfDepth(ch.mesh.geom[0], 0.8);
         ch.state.node_head[0] = ch.mesh.node_invert[0] + 0.8;
         ch.state.node_head[1] = ch.mesh.node_invert[1] + 0.8;
 
@@ -977,9 +1061,8 @@ TEST(FvNetwork, AlgebraicJunctionRemovesTheNodeStepLimit) {
     };
 
     const long bucket = substeps(true);
-    const long alg    = substeps(false);
-    std::printf("[fv-alg] substeps bucket %ld vs algebraic %ld (%.2fx)\n",
-                bucket, alg,
+    const long alg = substeps(false);
+    std::printf("[fv-alg] substeps bucket %ld vs algebraic %ld (%.2fx)\n", bucket, alg,
                 static_cast<double>(bucket) / static_cast<double>(std::max(1L, alg)));
     EXPECT_LT(alg, bucket) << "the junction still sets the substep";
 }
@@ -989,13 +1072,11 @@ TEST(FvNetwork, AlgebraicJunctionRemovesTheNodeStepLimit) {
 // water that entered must equal the water in the channel plus the water
 // reported flooded, to the carry tolerance.
 TEST(FvNetwork, AlgebraicJunctionFloodLedgerCloses) {
-    Channel ch = makeNodedChannel(circular(3.0), 40, 25.0,
-                                  [](double) { return 0.0; }, 0.013);
-    ch.mesh.node_full_depth[0] = 4.0;        // sealed rim just above the crown
-    ch.mesh.node_sur_depth.assign(2, 0.0);   // fixture leaves this unsized
+    Channel ch = makeNodedChannel(circular(3.0), 40, 25.0, [](double) { return 0.0; }, 0.013);
+    ch.mesh.node_full_depth[0] = 4.0;      // sealed rim just above the crown
+    ch.mesh.node_sur_depth.assign(2, 0.0); // fixture leaves this unsized
     for (int i = 0; i < ch.n; ++i)
-        ch.state.cell_a[static_cast<std::size_t>(i)] =
-            k::areaOfDepth(ch.mesh.geom[0], 0.5);
+        ch.state.cell_a[static_cast<std::size_t>(i)] = k::areaOfDepth(ch.mesh.geom[0], 0.5);
     ch.state.node_head[0] = 0.5;
     ch.state.node_head[1] = 0.5;
 
@@ -1003,11 +1084,11 @@ TEST(FvNetwork, AlgebraicJunctionFloodLedgerCloses) {
     ExplicitFvSolver s;
     s.initialize(ch.mesh, ch.state, o);
 
-    const double q_in = 400.0;               // far beyond the pipe's capacity
+    const double q_in = 400.0; // far beyond the pipe's capacity
     std::vector<double> lateral = {q_in, 0.0};
     std::vector<double> fixed = {std::numeric_limits<double>::quiet_NaN(), 0.5};
     FvStepForcing f;
-    f.node_lateral    = lateral.data();
+    f.node_lateral = lateral.data();
     f.node_fixed_head = fixed.data();
     f.n_nodes = 2;
 
@@ -1025,7 +1106,7 @@ TEST(FvNetwork, AlgebraicJunctionFloodLedgerCloses) {
     const double held = totalVolume(ch) - v0;
     EXPECT_GT(flooded, 0.0) << "the fixture never flooded";
     EXPECT_NEAR(held + flooded + outflow, in_total, 1.0e-6 * in_total)
-        << "flood ledger does not close: held " << held << " flooded "
-        << flooded << " out " << outflow << " vs in " << in_total;
+        << "flood ledger does not close: held " << held << " flooded " << flooded << " out "
+        << outflow << " vs in " << in_total;
     s.finalize();
 }

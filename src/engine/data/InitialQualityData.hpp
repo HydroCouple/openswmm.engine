@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file InitialQualityData.hpp
- * @brief SoA store for [INITIAL_QUALITY] per-element initial concentrations.
+ * @file      InitialQualityData.hpp
+ * @brief     SoA store for [INITIAL_QUALITY] per-element initial concentrations.
  *
  * @details Persistent data for .inp round-trip, mirroring ExtInflowData.
  *          Rows prescribe a per-node/per-link initial value for a pollutant
@@ -27,9 +27,9 @@
  *
  * @ingroup engine_data
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_INITIAL_QUALITY_DATA_HPP
@@ -46,40 +46,70 @@ namespace openswmm {
 
 struct InitialQualityData {
     /// Classified constituent kinds (see `kind`).
-    static constexpr int kKindWaterAge    = -1;  ///< __WATER_AGE__ (hours)
-    static constexpr int kKindTemperature = -2;  ///< __TEMPERATURE__ (degC)
-    static constexpr int kKindUnresolved  = -3;  ///< Not yet classified
+    static constexpr int kKindWaterAge = -1;    ///< __WATER_AGE__ (hours)
+    static constexpr int kKindTemperature = -2; ///< __TEMPERATURE__ (degC)
+    static constexpr int kKindUnresolved = -3;  ///< Not yet classified
     /// U2 (2026-09-07): MSX species m of the reactions component is encoded
     /// as kind = kKindMsxFirst - m (every value <= kKindMsxFirst). The row
     /// stays here for the writer ([INITIAL_QUALITY] is the canonical home)
     /// and is mirrored into ReactionData::init_elem_* for the engines by
     /// transport::mirrorInitialQualityMsxRows.
-    static constexpr int kKindMsxFirst    = -100;
+    static constexpr int kKindMsxFirst = -100;
+    /**
+     * @brief Encode a reaction-species index as a negative constituent kind.
+     *
+     * @param[in] species Nonnegative MSX index such that kKindMsxFirst-species fits signed int.
+     * @return kKindMsxFirst-species; no registry/existence or overflow check.
+     */
     static constexpr int msxKind(int species) noexcept { return kKindMsxFirst - species; }
-    /// Species index for an MSX kind, -1 for any other kind.
+    /**
+     * @brief Decode a negative MSX kind into its reaction-species index.
+     *
+     * @param[in] k Constituent kind; caller ensures kKindMsxFirst-k fits signed int if
+     *     k<=kKindMsxFirst.
+     * @return Decoded nonnegative MSX index, or -1 for a non-MSX kind; no species-count validation.
+     */
     static constexpr int msxSpecies(int k) noexcept {
         return (k <= kKindMsxFirst) ? (kKindMsxFirst - k) : -1;
     }
 
+    /**
+     * @brief Count initial-quality rows from the element-kind column.
+     * @return is_link.size() converted to int; other columns are not checked.
+     */
     int count() const { return static_cast<int>(is_link.size()); }
 
-    std::vector<uint8_t>     is_link;      ///< 0 = NODE row, 1 = LINK row
-    std::vector<std::string> elem_name;    ///< Raw element name (post-parse re-resolution)
-    std::vector<int>         elem_idx;     ///< Resolved node/link index (-1 until resolved)
-    std::vector<std::string> constituent;  ///< Raw constituent name (writer round-trip)
-    std::vector<int>         kind;         ///< >=0 pollutant idx; kKind* otherwise
-    std::vector<double>      value;        ///< Raw user-units value
+    std::vector<uint8_t> is_link;         ///< 0 = NODE row, 1 = LINK row
+    std::vector<std::string> elem_name;   ///< Raw element name (post-parse re-resolution)
+    std::vector<int> elem_idx;            ///< Resolved node/link index (-1 until resolved)
+    std::vector<std::string> constituent; ///< Raw constituent name (writer round-trip)
+    std::vector<int> kind;                ///< >=0 pollutant idx; kKind* otherwise
+    std::vector<double> value;            ///< Raw user-units value
     /// U2: 1 when the row came from the `[INITIAL_QUALITY] FILE <csv>`
     /// sidecar. The writer emits the FILE line and the inline rows only;
     /// the sidecar is the source of its rows (edit or re-import it).
-    std::vector<uint8_t>     from_file;
+    std::vector<uint8_t> from_file;
 
     /// U2: `[INITIAL_QUALITY] FILE <path>` as written (relative to the .inp);
     /// empty when none. Read at open, after the .inp parse.
     std::string file;
 
-    void add(bool link, const std::string& name, const std::string& cons,
-             double v, int ei = -1, int k = kKindUnresolved, bool fromFile = false) {
+    /**
+     * @brief Append an initial-quality row without resolving its names.
+     *
+     * Allows duplicate rows and unresolved/invalid inputs. Independent column appends may fail without
+     * rollback; no runtime concentration update or registry synchronization.
+     *
+     * @param[in] link True for a link row, false for a node row.
+     * @param[in] name Borrowed authored element name copied verbatim.
+     * @param[in] cons Borrowed constituent name copied verbatim.
+     * @param[in] v Raw user-unit value: pollutant/species concentration, age hours or temperature degC.
+     * @param[in] ei Resolved element index or -1; no bounds check.
+     * @param[in] k Pollutant index or reserved/MSX/unresolved kind; no validation.
+     * @param[in] fromFile Whether the writer should treat this row as sidecar-owned.
+     */
+    void add(bool link, const std::string& name, const std::string& cons, double v, int ei = -1,
+             int k = kKindUnresolved, bool fromFile = false) {
         is_link.push_back(link ? 1 : 0);
         elem_name.push_back(name);
         elem_idx.push_back(ei);
@@ -89,10 +119,18 @@ struct InitialQualityData {
         from_file.push_back(fromFile ? 1 : 0);
     }
 
-    /// Remove the entry at @p idx. No-op if out of range. Subsequent entries
-    /// shift down by one — callers that hold cached indices must re-resolve.
+    /**
+     * @brief Remove a stored initial-quality row when its index exists.
+     *
+     * Requires aligned core columns; from_file is erased only when present. Subsequent rows shift and
+     * borrowed elements are invalidated; sidecar path and runtime seeded concentrations remain
+     * unchanged.
+     *
+     * @param[in] idx Row index; negative or >=count() is a no-op.
+     */
     void erase(int idx) {
-        if (idx < 0 || idx >= count()) return;
+        if (idx < 0 || idx >= count())
+            return;
         const auto u = static_cast<std::size_t>(idx);
         is_link.erase(is_link.begin() + u);
         elem_name.erase(elem_name.begin() + u);
@@ -100,7 +138,8 @@ struct InitialQualityData {
         constituent.erase(constituent.begin() + u);
         kind.erase(kind.begin() + u);
         value.erase(value.begin() + u);
-        if (u < from_file.size()) from_file.erase(from_file.begin() + u);
+        if (u < from_file.size())
+            from_file.erase(from_file.begin() + u);
     }
 };
 

@@ -15,12 +15,12 @@
 // limitations under the License.
 
 /**
- * @file ReactionArdBinding.cpp
- * @brief Phase E4/R6 body — Eulerian ARD engine reaction stage.
+ * @file      ReactionArdBinding.cpp
+ * @brief     Phase E4/R6 body — Eulerian ARD engine reaction stage.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "ReactionArdBinding.hpp"
@@ -44,13 +44,21 @@ namespace {
 struct ArdScratch {
     RxWorkspace ws;
     std::vector<double> coefficients;
-    std::vector<double> msx;     ///< [n_msx] gathered MSX block
-    std::vector<double> pollut;  ///< [n_pollut] gathered pollutant block
+    std::vector<double> msx;    ///< [n_msx] gathered MSX block
+    std::vector<double> pollut; ///< [n_pollut] gathered pollutant block
     int sized_terms = -1;
     int sized_species = -1;
-    int sized_pollut  = -1;
+    int sized_pollut = -1;
+    /**
+     * @brief Resize shared ARD kinetics workspace for species/term/pollutant dimensions.
+     * @param[in] rx Stable compiled reaction dimensions.
+     * @param[in] np Nonnegative pollutant count, allocates at least one dummy pollutant entry.
+     * @note Does not detect changed same-sized laws. Allocation can partially reset workspace;
+     * process-static binding requires serialization across all ARD contexts.
+     */
     void ensure(const ReactionData& rx, int np) {
-        if (sized_species != rx.n_species() || sized_terms != static_cast<int>(rx.term_name.size())) {
+        if (sized_species != rx.n_species() ||
+            sized_terms != static_cast<int>(rx.term_name.size())) {
             sized_terms = static_cast<int>(rx.term_name.size());
             ws.init(rx);
             msx.assign(static_cast<std::size_t>(rx.n_species()), 0.0);
@@ -63,38 +71,94 @@ struct ArdScratch {
     }
 };
 
+/**
+ * @brief Borrow the process-wide ARD reaction workspace.
+ * @return Static nonowned ArdScratch reference, process lifetime. Mutable use unsynchronized,
+ * caller serializes all reactArdStage calls across models.
+ */
 ArdScratch& scratch() {
     static ArdScratch s;
     return s;
 }
 
-void containFailure(SimulationContext& ctx, const char* what, int index,
-                    const std::string& error) {
-    if (ctx.reactions.warned_react_failure) return;
+/**
+ * @brief Emit at most one context-wide ARD native reaction failure warning.
+ * @param[in,out] ctx Reaction failure latch set before warning append.
+ * @param[in] what Nonnull null-terminated element category.
+ * @param[in] index Zero-based internal element identity for diagnostic only.
+ * @param[in] error Integrator error text copied synchronously.
+ * @note Does not restore anything itself; caller isolates failed local solve before publishing.
+ * May allocate/throw after latch set, no water/clock advance; exclusive context diagnostics.
+ */
+void containFailure(SimulationContext& ctx, const char* what, int index, const std::string& error) {
+    if (ctx.reactions.warned_react_failure)
+        return;
     ctx.reactions.warned_react_failure = true;
-    ctx.warnings.push_back(std::string("Reaction step failed at ARD ") +
-                           what + " index " + std::to_string(index) +
-                           " (element state left unchanged): " + error);
+    ctx.warnings.push_back(std::string("Reaction step failed at ARD ") + what + " index " +
+                           std::to_string(index) + " (element state left unchanged): " + error);
 }
 
-}  // namespace
+} // namespace
 
+/**
+ * @brief Test configured/compiled native reaction flags for ARD binding.
+ * @param[in] ctx Stable reaction metadata.
+ * @return configured and compiled, without species/quality/profile/shape validation or mutation.
+ */
 bool ardReactionsActive(const SimulationContext& ctx) {
     return ctx.reactions.configured && ctx.reactions.compiled;
 }
 
+/**
+ * @brief Test whether any configured reaction species is marked WALL.
+ * @param[in] ctx Stable species_is_wall vector.
+ * @return True for any nonzero flag, independent of configured/compiled/active state. Pure/no
+ * allocation.
+ */
 bool ardHasWallSpecies(const SimulationContext& ctx) {
     for (const auto w : ctx.reactions.species_is_wall)
-        if (w != 0) return true;
+        if (w != 0)
+            return true;
     return false;
 }
 
-void reactArdStage(SimulationContext& ctx, double dt, double* cell_phi,
-                   const double* cell_a, const double* cell_dx, int n_cells,
-                   double* node_mass, const double* node_vol, int n_nodes,
-                   int n_pollut, int ns_total, double min_store_vol,
-                   int temp_row, const int* cell_conduit, const int* conduit_link) {
-    if (dt <= 0.0) return;
+/**
+ * @brief Decay pollutant rows and integrate native reaction rows in ARD cell/node stores.
+ * @param[in,out] ctx Compiled reaction metadata/coefficients and node HRT/geometry, pollutant
+ * decay and reacted ledger plus once-only native reaction diagnostics. No hydraulic or engine
+ * clock advance.
+ * @param[in] dt Positive finite accepted stage duration s; nonpositive returns (NaN not
+ * explicitly rejected).
+ * @param[in,out] cell_phi Species-major [row*n_cells+cell] concentrations, writable
+ * n_cells*ns_total.
+ * @param[in] cell_a Per-cell water area ft2.
+ * @param[in] cell_dx Per-cell length ft, product with area yields represented native volume.
+ * @param[in] n_cells Nonnegative cell count.
+ * @param[in,out] node_mass Node-major [node*ns_total+row] concentration*ft3 inventories.
+ * @param[in] node_vol Per-node retained native ft3, n_nodes entries.
+ * @param[in] n_nodes Matching native node count, nonnegative.
+ * @param[in] n_pollut Number of leading pollutant rows, matching ctx pollutant decay arrays.
+ * @param[in] ns_total Total flattened row count; native n_species follow pollutant rows for this
+ * binding.
+ * @param[in] min_store_vol Native ft3 threshold below/equal which node native kinetics skip.
+ * @param[in] temp_row Optional valid thermal row, negative uses default reaction degC.
+ * @param[in] cell_conduit Optional n_cells conduit indices, must be valid with conduit_link.
+ * @param[in] conduit_link Optional conduit->native-link IDs; both mapping pointers required for
+ * geometry/overrides.
+ * @note Exact pollutant decay occurs even when native reactions inactive, books signed
+ * concentration-volume loss and floors negatives. Native solve uses private scratch; failure
+ * preserves that cell/node's native tuple and warns, accepted RATE negatives floor0. No native
+ * reacted/clamped mass ledger booking here. Requires BULK-compatible ARD profile, valid compiled
+ * spans/extents and stable row layout; this routine itself does not reject WALL systems. Static
+ * scratch makes cross-model calls nonconcurrent. Allocation and diagnostics may leave earlier
+ * stages/elements changed; no global rollback.
+ */
+void reactArdStage(SimulationContext& ctx, double dt, double* cell_phi, const double* cell_a,
+                   const double* cell_dx, int n_cells, double* node_mass, const double* node_vol,
+                   int n_nodes, int n_pollut, int ns_total, double min_store_vol, int temp_row,
+                   const int* cell_conduit, const int* conduit_link) {
+    if (dt <= 0.0)
+        return;
 
     const auto unc = static_cast<std::size_t>(n_cells);
     const auto uns = static_cast<std::size_t>(ns_total);
@@ -108,7 +172,8 @@ void reactArdStage(SimulationContext& ctx, double dt, double* cell_phi,
     //         report would otherwise show as unexplained loss. ------------
     for (int p = 0; p < n_pollut; ++p) {
         const double k = ctx.pollutants.k_decay[static_cast<std::size_t>(p)];
-        if (k == 0.0) continue;
+        if (k == 0.0)
+            continue;
         const double f = std::exp(-k * dt);
         const double loss_frac = 1.0 - f;
         double removed = 0.0;
@@ -117,26 +182,26 @@ void reactArdStage(SimulationContext& ctx, double dt, double* cell_phi,
             const auto uc = row + static_cast<std::size_t>(c);
             const auto ucc = static_cast<std::size_t>(c);
             if (cell_phi[uc] > 0.0)
-                removed += cell_a[ucc] * cell_dx[ucc] * cell_phi[uc] *
-                           loss_frac;
+                removed += cell_a[ucc] * cell_dx[ucc] * cell_phi[uc] * loss_frac;
             cell_phi[uc] *= f;
-            if (cell_phi[uc] < 0.0) cell_phi[uc] = 0.0;
+            if (cell_phi[uc] < 0.0)
+                cell_phi[uc] = 0.0;
         }
         for (int nd = 0; nd < n_nodes; ++nd) {
-            const auto ui =
-                static_cast<std::size_t>(nd) * uns + static_cast<std::size_t>(p);
-            if (node_mass[ui] > 0.0) removed += node_mass[ui] * loss_frac;
+            const auto ui = static_cast<std::size_t>(nd) * uns + static_cast<std::size_t>(p);
+            if (node_mass[ui] > 0.0)
+                removed += node_mass[ui] * loss_frac;
             node_mass[ui] *= f;
-            if (node_mass[ui] < 0.0) node_mass[ui] = 0.0;
+            if (node_mass[ui] < 0.0)
+                node_mass[ui] = 0.0;
         }
-        if (static_cast<std::size_t>(p) <
-            ctx.mass_balance.qual_routing_reacted.size())
-            ctx.mass_balance.qual_routing_reacted[static_cast<std::size_t>(p)] +=
-                removed;
+        if (static_cast<std::size_t>(p) < ctx.mass_balance.qual_routing_reacted.size())
+            ctx.mass_balance.qual_routing_reacted[static_cast<std::size_t>(p)] += removed;
     }
 
     // ---- 2. MSX species: per-cell pipe scope, per-store tank scope. -----
-    if (!ardReactionsActive(ctx)) return;
+    if (!ardReactionsActive(ctx))
+        return;
     auto& rx = ctx.reactions;
     const int nm = rx.n_species();
     // A1a: ns_total may exceed np + nm by the reserved __WATER_AGE__ row
@@ -144,7 +209,8 @@ void reactArdStage(SimulationContext& ctx, double dt, double* cell_phi,
     // [np, np + nm). The old equality guard would have SILENTLY skipped
     // every reaction the moment the age row appeared (the lesson-14 shape:
     // a consistency check about one layout blocking another).
-    if (nm == 0 || ns_total < n_pollut + nm) return;
+    if (nm == 0 || ns_total < n_pollut + nm)
+        return;
 
     auto& sc = scratch();
     sc.ensure(rx, n_pollut);
@@ -161,19 +227,22 @@ void reactArdStage(SimulationContext& ctx, double dt, double* cell_phi,
             sc.pollut[static_cast<std::size_t>(p)] =
                 cell_phi[static_cast<std::size_t>(p) * unc + ucell];
         hydvar[static_cast<int>(RxHydVar::HRT)] = 0.0;
-        const int link=cell_conduit&&conduit_link?conduit_link[cell_conduit[c]]:-1;
-        hydvar[static_cast<int>(RxHydVar::AV)] = rx.wall_geometry&&link>=0?reactionAreaVolume(ctx,true,link,ctx.links.volume[link]):0;
+        const int link = cell_conduit && conduit_link ? conduit_link[cell_conduit[c]] : -1;
+        hydvar[static_cast<int>(RxHydVar::AV)] =
+            rx.wall_geometry && link >= 0
+                ? reactionAreaVolume(ctx, true, link, ctx.links.volume[link])
+                : 0;
         // TEMP: the cell's own heat-transport temperature row when the mesh
         // carries one, else the [REACTION_OPTIONS] TEMPERATURE constant.
         hydvar[static_cast<int>(RxHydVar::TEMP)] =
-            (temp_row >= 0)
-                ? cell_phi[static_cast<std::size_t>(temp_row) * unc + ucell]
-                : rx.default_temp_c;
+            (temp_row >= 0) ? cell_phi[static_cast<std::size_t>(temp_row) * unc + ucell]
+                            : rx.default_temp_c;
 
         const auto rep = ReactionIntegrator::step(
             rx, /*tank=*/false, dt, sc.msx.data(), hydvar, sc.ws,
             (n_pollut > 0) ? sc.pollut.data() : nullptr,
-            rx.coefficients(true, cell_conduit && conduit_link ? conduit_link[cell_conduit[c]] : -1, sc.coefficients));
+            rx.coefficients(true, cell_conduit && conduit_link ? conduit_link[cell_conduit[c]] : -1,
+                            sc.coefficients));
         if (rep.ok) {
             if (clampRateSpecies(rx, false, sc.msx.data(), nullptr) > 0.0)
                 noteNegativeClamp(ctx, "a transport cell");
@@ -189,12 +258,13 @@ void reactArdStage(SimulationContext& ctx, double dt, double* cell_phi,
     for (int nd = 0; nd < n_nodes; ++nd) {
         const auto und = static_cast<std::size_t>(nd);
         const double vol = node_vol[und];
-        if (vol <= min_store_vol) continue;  // no meaningful concentration
-        hydvar[static_cast<int>(RxHydVar::AV)] = rx.wall_geometry?reactionAreaVolume(ctx,false,nd,vol):0.;
+        if (vol <= min_store_vol)
+            continue; // no meaningful concentration
+        hydvar[static_cast<int>(RxHydVar::AV)] =
+            rx.wall_geometry ? reactionAreaVolume(ctx, false, nd, vol) : 0.;
         for (int m = 0; m < nm; ++m)
             sc.msx[static_cast<std::size_t>(m)] =
-                node_mass[und * uns + static_cast<std::size_t>(n_pollut + m)] /
-                vol;
+                node_mass[und * uns + static_cast<std::size_t>(n_pollut + m)] / vol;
         for (int p = 0; p < n_pollut; ++p)
             sc.pollut[static_cast<std::size_t>(p)] =
                 node_mass[und * uns + static_cast<std::size_t>(p)] / vol;
@@ -203,15 +273,13 @@ void reactArdStage(SimulationContext& ctx, double dt, double* cell_phi,
         // TEMP: node stores carry temperature-volume (degC·ft³) on the
         // temperature row, so concentration-form division recovers degC.
         hydvar[static_cast<int>(RxHydVar::TEMP)] =
-            (temp_row >= 0)
-                ? node_mass[und * uns + static_cast<std::size_t>(temp_row)] /
-                      vol
-                : rx.default_temp_c;
+            (temp_row >= 0) ? node_mass[und * uns + static_cast<std::size_t>(temp_row)] / vol
+                            : rx.default_temp_c;
 
-        const auto rep = ReactionIntegrator::step(
-            rx, /*tank=*/true, dt, sc.msx.data(), hydvar, sc.ws,
-            (n_pollut > 0) ? sc.pollut.data() : nullptr,
-            rx.coefficients(false, nd, sc.coefficients));
+        const auto rep =
+            ReactionIntegrator::step(rx, /*tank=*/true, dt, sc.msx.data(), hydvar, sc.ws,
+                                     (n_pollut > 0) ? sc.pollut.data() : nullptr,
+                                     rx.coefficients(false, nd, sc.coefficients));
         if (rep.ok) {
             if (clampRateSpecies(rx, true, sc.msx.data(), nullptr) > 0.0)
                 noteNegativeClamp(ctx, "a node store");
@@ -224,4 +292,4 @@ void reactArdStage(SimulationContext& ctx, double dt, double* cell_phi,
     }
 }
 
-}  // namespace openswmm::transport
+} // namespace openswmm::transport

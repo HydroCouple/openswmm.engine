@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file TimestepController.hpp
- * @brief Explicit next-timestep computation for the new engine.
+ * @file      TimestepController.hpp
+ * @brief     Explicit next-timestep computation for the new engine.
  *
  * @details The TimestepController implements the explicit timestep formula:
  *
@@ -72,9 +72,14 @@
  * @see tests/unit/test_timestep_controller.cpp
  * @ingroup engine_hydraulics
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
+ */
+
+/**
+ * @defgroup engine_hydraulics Network hydraulic routing
+ * @brief One-dimensional network routing, hydraulic closures and timestep selection. Solver-specific helpers document their state mutation, numerical bounds and time/unit conventions.
  */
 
 #ifndef OPENSWMM_ENGINE_TIMESTEP_CONTROLLER_HPP
@@ -84,7 +89,7 @@
 #include <cmath>
 
 namespace openswmm {
-    struct SimulationContext;
+struct SimulationContext;
 }
 
 namespace openswmm::hydraulics {
@@ -99,6 +104,9 @@ namespace openswmm::hydraulics {
  */
 class TimestepController {
 public:
+    /**
+     * @brief Prohibit constructing this static timestep-policy utility.
+     */
     TimestepController() = delete;
 
     // -----------------------------------------------------------------------
@@ -181,7 +189,6 @@ public:
     // -----------------------------------------------------------------------
     // Constants
     // -----------------------------------------------------------------------
-
 
     /** @brief Seconds per day (exact). */
     static constexpr double SEC_PER_DAY = 86400.0;

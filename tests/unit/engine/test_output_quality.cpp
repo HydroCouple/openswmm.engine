@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_output_quality.cpp
- * @brief Pollutant concentrations reach the binary .out file.
+ * @file      test_output_quality.cpp
+ * @brief     Pollutant concentrations reach the binary .out file.
  *
  * @details `SimulationSnapshot::{node,link,subcatch}_quality` are what the
  *          output plugins write into their pollutant columns — and NOTHING
@@ -43,9 +43,9 @@
  *            n_polluts_ = 0 under IGNORE_QUALITY; the vectors stay empty
  *            and the file must report zero pollutants (the bypass leg).
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -60,20 +60,47 @@
 
 namespace {
 
-constexpr double kCinit = 42.0;  ///< distinctive: not 0, not 1, not 10
+constexpr double kCinit = 42.0; ///< distinctive: not 0, not 1, not 10
 
-/// Level pool (zero flow, wet junctions): every element holds Cinit for the
-/// whole run, so the EXPECTED reported value is exactly kCinit — no
-/// transport physics enters the assertion. `extra_options` appends to
-/// [OPTIONS].
+/**
+ * @brief Write fixture content to a caller-selected file.
+ *
+ * The parent directory must already exist. Uses ordinary text output mode. Open failure is not
+ * reported by this helper. Subsequent write/close failures are not checked; the local stream closes
+ * at scope exit and no path/content storage is retained. Allocation exceptions can propagate.
+ *
+ * @param[in] path Non-null null-terminated destination path; an existing file is
+ *     truncated/overwritten.
+ * @param[in] body Borrowed content copied verbatim through the output stream; no newline is
+ *     appended.
+ */
 void write_file(const char* path, const std::string& body) {
     std::ofstream c(path);
     c << body;
 }
 
+/**
+ * @brief Write a stationary or dry network for saved quality/age snapshot checks.
+ *
+ * Ten-minute CFS model with kCinit TSS mg/L, no external inflow and three circular conduits. Wet
+ * mode uses a fixed 11.5 ft boundary; dry selects a free boundary even with storage_reactors. Uses
+ * a local ofstream and requires existing parent directories. Open/write/close failures are
+ * unchecked; owned input strings are not retained and raw tokens/config paths are not escaped.
+ * Optional sidecar files are also overwritten when described.
+ *
+ * @param[in] path Borrowed destination filename; character pointers must be non-null.
+ *     Opens/truncates this file for the generated deck.
+ * @param[in] extra_options Raw extra OPTIONS rows inserted verbatim; caller supplies valid line
+ *     boundaries.
+ * @param[in] pc_lines Raw PROCESS_COMPONENTS rows, emitted as a section only when nonempty; copied
+ *     without escaping or validation.
+ * @param[in] dry Suppress initial junction water and select a free outfall; when storage_reactors
+ *     is true, its fixed wet storage depths still take precedence.
+ * @param[in] storage_reactors Use three 1000 ft2 constant-area wet storage nodes instead of
+ *     junctions.
+ */
 void write_deck(const char* path, const std::string& extra_options = "",
-                const std::string& pc_lines = "", bool dry = false,
-                bool storage_reactors = false) {
+                const std::string& pc_lines = "", bool dry = false, bool storage_reactors = false) {
     std::ofstream f(path);
     f << "[TITLE]\nsnapshot quality gate deck\n\n[OPTIONS]\n"
       << "FLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\n"
@@ -85,14 +112,12 @@ void write_deck(const char* path, const std::string& extra_options = "",
       // `dry` = InitDepth 0 and a FREE outfall: nothing anywhere holds
       // water, which is the configuration that exposed dry-element age
       // reporting (links published 6.000000 h on water that never existed).
-      << (storage_reactors
-              ? "J0 10 10 1.5 FUNCTIONAL 0 0 1000 0 0\n"
-                "J1 10 10 1.5 FUNCTIONAL 0 0 1000 0 0\n"
-                "J2 10 10 1.5 FUNCTIONAL 0 0 1000 0 0\n\n"
-              : dry ? "J0 10.0 10 0 0 0\nJ1 10.0 10 0 0 0\nJ2 10.0 10 0 0 0\n\n"
-              : "J0 10.0 10 1.5 0 0\nJ1 10.0 10 1.5 0 0\nJ2 10.0 10 1.5 0 0\n\n")
-      << (dry ? "[OUTFALLS]\nOUT 10.0 FREE  NO\n\n"
-              : "[OUTFALLS]\nOUT 10.0 FIXED 11.5 NO\n\n")
+      << (storage_reactors ? "J0 10 10 1.5 FUNCTIONAL 0 0 1000 0 0\n"
+                             "J1 10 10 1.5 FUNCTIONAL 0 0 1000 0 0\n"
+                             "J2 10 10 1.5 FUNCTIONAL 0 0 1000 0 0\n\n"
+          : dry            ? "J0 10.0 10 0 0 0\nJ1 10.0 10 0 0 0\nJ2 10.0 10 0 0 0\n\n"
+                           : "J0 10.0 10 1.5 0 0\nJ1 10.0 10 1.5 0 0\nJ2 10.0 10 1.5 0 0\n\n")
+      << (dry ? "[OUTFALLS]\nOUT 10.0 FREE  NO\n\n" : "[OUTFALLS]\nOUT 10.0 FIXED 11.5 NO\n\n")
       << "[CONDUITS]\n"
       << "C1 J0 J1 500 0.013 0 0 0\nC2 J1 J2 500 0.013 0 0 0\n"
       << "C3 J2 OUT 500 0.013 0 0 0\n\n"
@@ -102,55 +127,76 @@ void write_deck(const char* path, const std::string& extra_options = "",
       << "[POLLUTANTS]\n"
       << ";;Name Units Crain Cgw Crdii Kdecay SnowOnly CoPollut CoFrac "
          "Cdwf Cinit\n"
-      << "TSS    MG/L  0     0   0     0      NO       *        0      0    "
-      << kCinit << "\n\n";
+      << "TSS    MG/L  0     0   0     0      NO       *        0      0    " << kCinit << "\n\n";
     if (!pc_lines.empty())
         f << "[PROCESS_COMPONENTS]\n" << pc_lines << "\n\n";
     f << "[REPORT]\nINPUT NO\nSUBCATCHMENTS ALL\nNODES ALL\nLINKS ALL\n";
 }
 
-/// The species IDs the .out header carries, read from the bytes.
-///
-/// Not gratuitous: `swmm_output_*` and `OutputReader` expose pollut_count()
-/// but NO pollutant-ID accessor (only subcatch/node/link IDs are parsed), so
-/// the header NAMES — the thing an age column must be told apart by, since
-/// it shares MG_PER_L's unit code — are unreachable through the reader. A
-/// gate that checks values by index alone passes happily while the header
-/// names them in the opposite order.
-///
-/// Layout (DefaultOutputPlugin::writeHeader): 7 ints, then one
-/// (int len, chars) ID per subcatch/node/link/species, then the unit codes.
+/**
+ * @brief Read the trailing species-name group from a trusted native binary output header.
+ *
+ * Assumes matching native int representation/endianness and reasonable nonnegative counts/lengths
+ * without sum overflow. Negative length is refused, but large lengths can allocate/throw and a
+ * short final string read may still be appended. Does not validate magic/version or use the
+ * production reader.
+ *
+ * @param[in] path Non-null output filename borrowed for synchronous binary read.
+ * @return Owned IDs collected so far, empty on unreadable seven-int header; malformed lengths can
+ *     return a partial list.
+ */
 std::vector<std::string> read_species_ids(const char* path) {
     std::vector<std::string> ids;
     std::ifstream f(path, std::ios::binary);
     int hdr[7] = {0};
     f.read(reinterpret_cast<char*>(hdr), sizeof(hdr));
-    if (!f) return ids;
+    if (!f)
+        return ids;
     const int n_ids = hdr[3] + hdr[4] + hdr[5] + hdr[6];
     for (int i = 0; i < n_ids && f; ++i) {
         int len = 0;
         f.read(reinterpret_cast<char*>(&len), sizeof(len));
-        if (!f || len < 0) return ids;
+        if (!f || len < 0)
+            return ids;
         std::string s(static_cast<std::size_t>(len), '\0');
-        if (len > 0) f.read(s.data(), len);
-        if (i >= n_ids - hdr[6]) ids.push_back(s);
+        if (len > 0)
+            f.read(s.data(), len);
+        if (i >= n_ids - hdr[6])
+            ids.push_back(s);
     }
     return ids;
 }
 
+/**
+ * @brief Run the output-quality deck and generate binary output.
+ *
+ * Owns/destroys engine, caps at 20000 positive-time calls and leaves artifacts. Does not
+ * independently certify completion or report/getter content; errors are returned without
+ * assertions.
+ *
+ * @param[in] inp Non-null existing model path.
+ * @param[in] rpt Report destination passed to open.
+ * @param[in] out Binary output destination passed to open/start.
+ * @return True when create/open/init/start/steps/end succeed; guard exhaustion can still yield
+ *     true.
+ */
 bool run_deck(const char* inp, const char* rpt, const char* out) {
     SWMM_Engine e = swmm_engine_create();
-    if (e == nullptr) return false;
+    if (e == nullptr)
+        return false;
     bool ok = swmm_engine_open(e, inp, rpt, out, nullptr) == SWMM_OK &&
-              swmm_engine_initialize(e) == SWMM_OK &&
-              swmm_engine_start(e, 1) == SWMM_OK;
+              swmm_engine_initialize(e) == SWMM_OK && swmm_engine_start(e, 1) == SWMM_OK;
     if (ok) {
         double elapsed = 0.0;
         int guard = 0;
         do {
-            if (swmm_engine_step(e, &elapsed) != SWMM_OK) { ok = false; break; }
+            if (swmm_engine_step(e, &elapsed) != SWMM_OK) {
+                ok = false;
+                break;
+            }
         } while (elapsed > 0.0 && ++guard < 20000);
-        if (ok) ok = swmm_engine_end(e) == SWMM_OK;
+        if (ok)
+            ok = swmm_engine_end(e) == SWMM_OK;
     }
     swmm_engine_destroy(e);
     return ok;
@@ -168,21 +214,18 @@ TEST(OutputQualityTest, NodeAndLinkConcentrationsReachTheOutFile) {
 
     const int n_periods = swmm_output_get_period_count(h);
     ASSERT_GT(n_periods, 1) << "no reporting periods — deck defect";
-    const int period = n_periods - 1;   // last period: fully settled
+    const int period = n_periods - 1; // last period: fully settled
 
     // Node variable layout: depth, head, volume, latflow, inflow, overflow,
     // then one column per pollutant (DefaultOutputPlugin::writeHeader).
     {
         std::vector<float> v(32, -1.0f);
         int count = 0;
-        ASSERT_EQ(swmm_output_get_node_attribute(h, 0, period, v.data(),
-                                                 &count),
-                  0);
+        ASSERT_EQ(swmm_output_get_node_attribute(h, 0, period, v.data(), &count), 0);
         ASSERT_GE(count, 7) << "node record has no pollutant column — the "
                                "header advertised none";
         EXPECT_NEAR(v[6], static_cast<float>(kCinit), 1.0e-3f)
-            << "node pollutant column reads " << v[6] << ", expected "
-            << kCinit
+            << "node pollutant column reads " << v[6] << ", expected " << kCinit
             << " — the snapshot's node_quality never reaches the writer "
                "(every .out pollutant column was zero).";
     }
@@ -191,13 +234,11 @@ TEST(OutputQualityTest, NodeAndLinkConcentrationsReachTheOutFile) {
     {
         std::vector<float> v(32, -1.0f);
         int count = 0;
-        ASSERT_EQ(swmm_output_get_link_attribute(h, 0, period, v.data(),
-                                                 &count),
-                  0);
+        ASSERT_EQ(swmm_output_get_link_attribute(h, 0, period, v.data(), &count), 0);
         ASSERT_GE(count, 6) << "link record has no pollutant column";
         EXPECT_NEAR(v[5], static_cast<float>(kCinit), 1.0e-3f)
-            << "link pollutant column reads " << v[5] << ", expected "
-            << kCinit << " — link_quality never reaches the writer.";
+            << "link pollutant column reads " << v[5] << ", expected " << kCinit
+            << " — link_quality never reaches the writer.";
     }
 
     swmm_output_close(h);
@@ -218,12 +259,10 @@ TEST(OutputQualityTest, NodeAndLinkConcentrationsReachTheOutFile) {
 // whatever the binding holds; nothing drives it here).
 // ---------------------------------------------------------------------------
 TEST(OutputQualityTest, ReactionSpeciesReportAsTrailingPollutantColumns) {
-    write_file("_oq_msx.rxn",
-               "[REACTION_SPECIES]\nBULK X MG\nWALL W MG\n"
-               "[REACTION_PIPES]\nFORMULA X 2.0 * TSS\n"
-               "[REACTION_TANKS]\nFORMULA X 2.0 * TSS\n");
-    write_deck("_oq_msx.inp", "",
-               "org.hydrocouple.openswmm.reactions config=\"_oq_msx.rxn\"",
+    write_file("_oq_msx.rxn", "[REACTION_SPECIES]\nBULK X MG\nWALL W MG\n"
+                              "[REACTION_PIPES]\nFORMULA X 2.0 * TSS\n"
+                              "[REACTION_TANKS]\nFORMULA X 2.0 * TSS\n");
+    write_deck("_oq_msx.inp", "", "org.hydrocouple.openswmm.reactions config=\"_oq_msx.rxn\"",
                false, true);
     ASSERT_TRUE(run_deck("_oq_msx.inp", "_oq_msx.rpt", "_oq_msx.out"));
 
@@ -236,7 +275,7 @@ TEST(OutputQualityTest, ReactionSpeciesReportAsTrailingPollutantColumns) {
     ASSERT_EQ(ids.size(), 3u);
     EXPECT_EQ(ids[0], "TSS");
     EXPECT_EQ(ids[1], "X") << "MSX species must trail the pollutants in "
-                               "[REACTION_SPECIES] order";
+                              "[REACTION_SPECIES] order";
     EXPECT_EQ(ids[2], "W");
 
     const int n_periods = swmm_output_get_period_count(h);
@@ -246,24 +285,24 @@ TEST(OutputQualityTest, ReactionSpeciesReportAsTrailingPollutantColumns) {
     {
         std::vector<float> v(32, -1.0f);
         int count = 0;
-        ASSERT_EQ(swmm_output_get_node_attribute(h, 0, period, v.data(),
-                                                 &count), 0);
+        ASSERT_EQ(swmm_output_get_node_attribute(h, 0, period, v.data(), &count), 0);
         ASSERT_GE(count, 9) << "node record lacks the species columns";
         EXPECT_NEAR(v[6], static_cast<float>(kCinit), 1.0e-3f)
             << "the pollutant column moved when species columns were added";
         EXPECT_NEAR(v[7], static_cast<float>(2.0 * kCinit), 1.0e-2f)
-            << "node X column reads " << v[7] << ", expected 2 * Cinit — "
+            << "node X column reads " << v[7]
+            << ", expected 2 * Cinit — "
                "msx_node_conc never reached the writer";
     }
     {
         std::vector<float> v(32, -1.0f);
         int count = 0;
-        ASSERT_EQ(swmm_output_get_link_attribute(h, 0, period, v.data(),
-                                                 &count), 0);
+        ASSERT_EQ(swmm_output_get_link_attribute(h, 0, period, v.data(), &count), 0);
         ASSERT_GE(count, 8) << "link record lacks the species columns";
         EXPECT_NEAR(v[5], static_cast<float>(kCinit), 1.0e-3f);
         EXPECT_NEAR(v[6], static_cast<float>(2.0 * kCinit), 1.0e-2f)
-            << "link X column reads " << v[6] << ", expected 2 * Cinit — "
+            << "link X column reads " << v[6]
+            << ", expected 2 * Cinit — "
                "msx_link_conc never reached the writer";
     }
     swmm_output_close(h);
@@ -279,10 +318,9 @@ TEST(OutputQualityTest, IgnoreQualityWritesNoPollutantColumns) {
     SWMM_Output h = swmm_output_open("_oq_ig.out");
     ASSERT_NE(h, nullptr);
     const int n_polluts = swmm_output_get_pollut_count(h);
-    EXPECT_EQ(n_polluts, 0)
-        << "IGNORE_QUALITY still advertised pollutant columns — the "
-           "population block must stay gated on it (an ungated fill would "
-           "write into columns the header says do not exist).";
+    EXPECT_EQ(n_polluts, 0) << "IGNORE_QUALITY still advertised pollutant columns — the "
+                               "population block must stay gated on it (an ungated fill would "
+                               "write into columns the header says do not exist).";
     swmm_output_close(h);
 }
 
@@ -296,8 +334,7 @@ TEST(OutputQualityTest, WaterAgeReportsAsATrailingColumnInHours) {
     // is a 3600x miss, and reading the pollutant column instead of the age
     // column returns 42.
     write_file("_oq_age.age", "[WATER_AGE_SOURCES]\nINITIAL_STATE GLOBAL 2.0\n");
-    write_deck("_oq_age.inp",
-               "WATER_AGE ON\nQUALITY_SOLVER EULERIAN_ARD\n",
+    write_deck("_oq_age.inp", "WATER_AGE ON\nQUALITY_SOLVER EULERIAN_ARD\n",
                "org.hydrocouple.openswmm.waterage config=\"_oq_age.age\"");
     ASSERT_TRUE(run_deck("_oq_age.inp", "_oq_age.rpt", "_oq_age.out"));
 
@@ -327,8 +364,7 @@ TEST(OutputQualityTest, WaterAgeReportsAsATrailingColumnInHours) {
 
     std::vector<float> v(32, -1.0f);
     int count = 0;
-    ASSERT_EQ(swmm_output_get_node_attribute(h, 0, period, v.data(), &count),
-              0);
+    ASSERT_EQ(swmm_output_get_node_attribute(h, 0, period, v.data(), &count), 0);
     ASSERT_GE(count, 8) << "node record lacks the second species column";
 
     // [6] = TSS (unchanged by age's presence — the stride razor), [7] = age.
@@ -338,13 +374,11 @@ TEST(OutputQualityTest, WaterAgeReportsAsATrailingColumnInHours) {
 
     // END_TIME 00:10:00; the last report is at 10 min = 0.1667 h, so the
     // expected age is 2 h + ~0.1667 h. Band covers report-instant placement.
-    EXPECT_GT(v[7], 2.0f)
-        << "age column reads " << v[7]
-        << " h — below the 2 h INITIAL_STATE, so it is not the age column "
-           "(or the seeding never reached the report)";
-    EXPECT_LT(v[7], 2.5f)
-        << "age column reads " << v[7]
-        << " h — a seconds-for-hours slip would read ~7210";
+    EXPECT_GT(v[7], 2.0f) << "age column reads " << v[7]
+                          << " h — below the 2 h INITIAL_STATE, so it is not the age column "
+                             "(or the seeding never reached the report)";
+    EXPECT_LT(v[7], 2.5f) << "age column reads " << v[7]
+                          << " h — a seconds-for-hours slip would read ~7210";
     swmm_output_close(h);
 }
 
@@ -364,8 +398,7 @@ TEST(OutputQualityTest, WaterAgeReportsAsATrailingColumnInHours) {
 // ---------------------------------------------------------------------------
 TEST(OutputQualityTest, SpeciesIdsAreReadableAndOrdered) {
     write_file("_oq_id.age", "[WATER_AGE_SOURCES]\nINITIAL_STATE GLOBAL 2.0\n");
-    write_deck("_oq_id.inp",
-               "WATER_AGE ON\nQUALITY_SOLVER EULERIAN_ARD\n",
+    write_deck("_oq_id.inp", "WATER_AGE ON\nQUALITY_SOLVER EULERIAN_ARD\n",
                "org.hydrocouple.openswmm.waterage config=\"_oq_id.age\"");
     ASSERT_TRUE(run_deck("_oq_id.inp", "_oq_id.rpt", "_oq_id.out"));
 
@@ -383,12 +416,10 @@ TEST(OutputQualityTest, SpeciesIdsAreReadableAndOrdered) {
     // And in the ORDER the data columns use. This is the assertion A2b
     // lacked: swapping only the name list must fail here even though every
     // VALUE still reads correctly at its index.
-    EXPECT_STREQ(s0, "TSS")
-        << "species 0 is '" << s0
-        << "' — the header's name order disagrees with the data column "
-           "order, so a consumer keying on the name reads the wrong series.";
-    EXPECT_STREQ(s1, "__WATER_AGE__")
-        << "species 1 is '" << s1 << "', expected __WATER_AGE__";
+    EXPECT_STREQ(s0, "TSS") << "species 0 is '" << s0
+                            << "' — the header's name order disagrees with the data column "
+                               "order, so a consumer keying on the name reads the wrong series.";
+    EXPECT_STREQ(s1, "__WATER_AGE__") << "species 1 is '" << s1 << "', expected __WATER_AGE__";
 
     // Out-of-range indices return nullptr rather than reading past the end.
     EXPECT_EQ(swmm_output_get_pollut_id(h, 2), nullptr);
@@ -425,8 +456,7 @@ TEST(OutputQualityTest, DryElementsReportNoAge) {
     // report ~6.167 h after the 10-minute run (6 h seed + elapsed). Masked,
     // it reports exactly 0.
     write_file("_oq_dry.age", "[WATER_AGE_SOURCES]\nINITIAL_STATE GLOBAL 6.0\n");
-    write_deck("_oq_dry.inp",
-               "WATER_AGE ON\nQUALITY_SOLVER EULERIAN_ARD\n",
+    write_deck("_oq_dry.inp", "WATER_AGE ON\nQUALITY_SOLVER EULERIAN_ARD\n",
                "org.hydrocouple.openswmm.waterage config=\"_oq_dry.age\"",
                /*dry=*/true);
     ASSERT_TRUE(run_deck("_oq_dry.inp", "_oq_dry.rpt", "_oq_dry.out"));
@@ -441,9 +471,7 @@ TEST(OutputQualityTest, DryElementsReportNoAge) {
     for (int l = 0; l < 3; ++l) {
         std::vector<float> v(32, -1.0f);
         int count = 0;
-        ASSERT_EQ(swmm_output_get_link_attribute(h, l, period, v.data(),
-                                                 &count),
-                  0);
+        ASSERT_EQ(swmm_output_get_link_attribute(h, l, period, v.data(), &count), 0);
         ASSERT_GE(count, 7);
         // Liveness: the deck must actually BE dry, or the gate proves
         // nothing about the mask.
@@ -458,10 +486,9 @@ TEST(OutputQualityTest, DryElementsReportNoAge) {
             << "link " << l << " reports depth " << v[1]
             << " — expected the router's dry floor; if this moved, the "
                "mask's premise needs rechecking";
-        ASSERT_LT(v[3], 0.0353147f)
-            << "link " << l << " holds " << v[3]
-            << " ft3 — the deck is not dry, so this gate cannot observe "
-               "the mask";
+        ASSERT_LT(v[3], 0.0353147f) << "link " << l << " holds " << v[3]
+                                    << " ft3 — the deck is not dry, so this gate cannot observe "
+                                       "the mask";
         EXPECT_FLOAT_EQ(v[6], 0.0f)
             << "link " << l << " reports age " << v[6]
             << " h on an element holding no water (unmasked would be ~6.167)";
@@ -473,16 +500,12 @@ TEST(OutputQualityTest, DryElementsReportNoAge) {
     for (int n = 0; n < 4; ++n) {
         std::vector<float> v(32, -1.0f);
         int count = 0;
-        ASSERT_EQ(swmm_output_get_node_attribute(h, n, period, v.data(),
-                                                 &count),
-                  0);
+        ASSERT_EQ(swmm_output_get_node_attribute(h, n, period, v.data(), &count), 0);
         ASSERT_GE(count, 8);
-        ASSERT_FLOAT_EQ(v[0], 0.0f)
-            << "node " << n << " reports depth " << v[0]
-            << " — not dry, so this leg cannot observe the mask";
-        EXPECT_FLOAT_EQ(v[7], 0.0f)
-            << "node " << n << " reports age " << v[7]
-            << " h while holding no water (unmasked would be ~6.167)";
+        ASSERT_FLOAT_EQ(v[0], 0.0f) << "node " << n << " reports depth " << v[0]
+                                    << " — not dry, so this leg cannot observe the mask";
+        EXPECT_FLOAT_EQ(v[7], 0.0f) << "node " << n << " reports age " << v[7]
+                                    << " h while holding no water (unmasked would be ~6.167)";
     }
     swmm_output_close(h);
 }
@@ -492,8 +515,7 @@ TEST(OutputQualityTest, WetElementsStillReportAgeAfterTheMask) {
     // (this is WaterAgeReportsAsATrailingColumnInHours' deck, asserted here
     // as the mask's negative control).
     write_file("_oq_wet.age", "[WATER_AGE_SOURCES]\nINITIAL_STATE GLOBAL 2.0\n");
-    write_deck("_oq_wet.inp",
-               "WATER_AGE ON\nQUALITY_SOLVER EULERIAN_ARD\n",
+    write_deck("_oq_wet.inp", "WATER_AGE ON\nQUALITY_SOLVER EULERIAN_ARD\n",
                "org.hydrocouple.openswmm.waterage config=\"_oq_wet.age\"");
     ASSERT_TRUE(run_deck("_oq_wet.inp", "_oq_wet.rpt", "_oq_wet.out"));
     SWMM_Output h = swmm_output_open("_oq_wet.out");
@@ -503,10 +525,9 @@ TEST(OutputQualityTest, WetElementsStillReportAgeAfterTheMask) {
     int count = 0;
     ASSERT_EQ(swmm_output_get_node_attribute(h, 0, period, v.data(), &count), 0);
     ASSERT_GE(count, 8);
-    EXPECT_GT(v[7], 2.0f)
-        << "the wet deck's node age was masked to " << v[7]
-        << " — the mask is over-applying (junction reported VOLUME is 0 by "
-           "legacy convention, which is why the mask keys on DEPTH)";
+    EXPECT_GT(v[7], 2.0f) << "the wet deck's node age was masked to " << v[7]
+                          << " — the mask is over-applying (junction reported VOLUME is 0 by "
+                             "legacy convention, which is why the mask keys on DEPTH)";
 
     // A LINK full of standing water, too. This deck's conduits hold 1263 ft3
     // at zero flow, so they are the only case that exercises the link
@@ -514,14 +535,11 @@ TEST(OutputQualityTest, WetElementsStillReportAgeAfterTheMask) {
     // blanks the age of every stagnant pipe in the model and no gate notices.
     ASSERT_EQ(swmm_output_get_link_attribute(h, 0, period, v.data(), &count), 0);
     ASSERT_GE(count, 7);
-    ASSERT_GT(v[3], 1.0f) << "link 0 holds " << v[3]
-                          << " ft3 — expected standing water";
-    ASSERT_NEAR(v[0], 0.0f, 1.0e-6f)
-        << "link 0 carries flow " << v[0]
-        << " — this leg must test HOLDS with no help from CONVEYS";
-    EXPECT_GT(v[6], 2.0f)
-        << "a full but motionless conduit reported age " << v[6]
-        << " — standing water has an age";
+    ASSERT_GT(v[3], 1.0f) << "link 0 holds " << v[3] << " ft3 — expected standing water";
+    ASSERT_NEAR(v[0], 0.0f, 1.0e-6f) << "link 0 carries flow " << v[0]
+                                     << " — this leg must test HOLDS with no help from CONVEYS";
+    EXPECT_GT(v[6], 2.0f) << "a full but motionless conduit reported age " << v[6]
+                          << " — standing water has an age";
     swmm_output_close(h);
 }
 
@@ -541,8 +559,7 @@ TEST(OutputQualityTest, WetElementsStillReportAgeAfterTheMask) {
 // above has no flow.
 // ---------------------------------------------------------------------------
 TEST(OutputQualityTest, FlowingRegulatorsKeepTheirAge) {
-    write_file("_oq_reg.age",
-               "[WATER_AGE_SOURCES]\nINITIAL_STATE GLOBAL 0.0\n");
+    write_file("_oq_reg.age", "[WATER_AGE_SOURCES]\nINITIAL_STATE GLOBAL 0.0\n");
     {
         std::ofstream f("_oq_reg.inp");
         f << "[TITLE]\nregulator age gate\n\n[OPTIONS]\n"
@@ -584,18 +601,18 @@ TEST(OutputQualityTest, FlowingRegulatorsKeepTheirAge) {
     ASSERT_GT(v[0], 1.0f) << "pump is not running (flow " << v[0]
                           << "), so this gate cannot observe the mask";
 
-    EXPECT_GT(v[5], 0.0f)
-        << "the running pump's age was masked to 0 — a storage-free link that "
-           "is conveying water has a real age (its upstream node's)";
+    EXPECT_GT(v[5], 0.0f) << "the running pump's age was masked to 0 — a storage-free link that "
+                             "is conveying water has a real age (its upstream node's)";
     swmm_output_close(h);
 }
 
-}  // namespace
+} // namespace
 
 TEST(OutputQualityTest, SelectedSpeciesKeepInternalIndicesAndUnitsAcrossQualityEngines) {
     for (const auto& solver : {"LEGACY", "EULERIAN_ARD", "LAGRANGIAN"}) {
         SCOPED_TRACE(solver);
-        write_file("_oq_select.rxn",
+        write_file(
+            "_oq_select.rxn",
             "[REACTION_SPECIES]\nBULK hidden MG\nBULK selected UG\nBULK count COUNT\n"
             "[REACTION_COEFFICIENTS]\nPARAMETER k 2\n"
             "[REACTION_PARAMETERS]\nNODE J0 k 3\nLINK C1 k 4\n"
@@ -603,15 +620,17 @@ TEST(OutputQualityTest, SelectedSpeciesKeepInternalIndicesAndUnitsAcrossQualityE
             "[REACTION_TANKS]\nFORMULA hidden 11\nFORMULA selected k * 7\nFORMULA count hidden * 3\n"
             "[REACTION_REPORT]\nSPECIES ALL NO\nSPECIES selected YES\nSPECIES count YES\n");
         write_deck("_oq_select.inp", std::string("QUALITY_SOLVER ") + solver + "\n",
-            "org.hydrocouple.openswmm.reactions config=\"_oq_select.rxn\"", false, true);
+                   "org.hydrocouple.openswmm.reactions config=\"_oq_select.rxn\"", false, true);
         ASSERT_TRUE(run_deck("_oq_select.inp", "_oq_select.rpt", "_oq_select.out"));
         SWMM_Output h = swmm_output_open("_oq_select.out");
         ASSERT_NE(h, nullptr);
         ASSERT_EQ(swmm_output_get_pollut_count(h), 3);
-        EXPECT_EQ(read_species_ids("_oq_select.out"), (std::vector<std::string>{"TSS", "selected", "count"}));
+        EXPECT_EQ(read_species_ids("_oq_select.out"),
+                  (std::vector<std::string>{"TSS", "selected", "count"}));
         const int period = swmm_output_get_period_count(h) - 1;
         ASSERT_GE(period, 0);
-        float values[32] = {}; int count = 0;
+        float values[32] = {};
+        int count = 0;
         ASSERT_EQ(swmm_output_get_node_attribute(h, 0, period, values, &count), 0);
         EXPECT_NEAR(values[7], 21, 1.e-5);
         EXPECT_NEAR(values[8], 33, 1.e-5); // hidden species still participates
@@ -620,12 +639,18 @@ TEST(OutputQualityTest, SelectedSpeciesKeepInternalIndicesAndUnitsAcrossQualityE
         EXPECT_NEAR(values[7], 33, 1.e-5);
         swmm_output_close(h);
         std::ifstream file("_oq_select.out", std::ios::binary);
-        int hdr[7]; file.read(reinterpret_cast<char*>(hdr), sizeof(hdr));
+        int hdr[7];
+        file.read(reinterpret_cast<char*>(hdr), sizeof(hdr));
         for (int i = 0; i < hdr[3] + hdr[4] + hdr[5] + hdr[6]; ++i) {
-            int length; file.read(reinterpret_cast<char*>(&length), 4); file.seekg(length, std::ios::cur);
+            int length;
+            file.read(reinterpret_cast<char*>(&length), 4);
+            file.seekg(length, std::ios::cur);
         }
-        int units[3]; file.read(reinterpret_cast<char*>(units), sizeof(units));
-        EXPECT_EQ(units[0], 0); EXPECT_EQ(units[1], 1); EXPECT_EQ(units[2], 2);
+        int units[3];
+        file.read(reinterpret_cast<char*>(units), sizeof(units));
+        EXPECT_EQ(units[0], 0);
+        EXPECT_EQ(units[1], 1);
+        EXPECT_EQ(units[2], 2);
     }
 }
 
@@ -635,19 +660,22 @@ TEST(OutputQualityTest, ReactionSourcesMatchTheEstablishedInflowLoadSeam) {
             SCOPED_TRACE(std::string(solver) + " " + kind);
             const bool mass = std::string(kind) == "MASS";
             write_file("_oq_source.rxn", std::string("[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n") +
-                "[REACTION_SOURCES]\n" + kind + " J0 A 7\n");
+                                             "[REACTION_SOURCES]\n" + kind + " J0 A 7\n");
             write_deck("_oq_source.inp", std::string("QUALITY_SOLVER ") + solver + "\n",
-                "org.hydrocouple.openswmm.reactions config=\"_oq_source.rxn\"", false, true);
-            { std::ofstream file("_oq_source.inp", std::ios::app);
-              file << "\n[INFLOWS]\nJ0 FLOW * FLOW 1 1 1\nJ0 B * "
-                   << (mass ? "MASS" : "CONCEN") << " 1 1 7\n"; }
+                       "org.hydrocouple.openswmm.reactions config=\"_oq_source.rxn\"", false, true);
+            {
+                std::ofstream file("_oq_source.inp", std::ios::app);
+                file << "\n[INFLOWS]\nJ0 FLOW * FLOW 1 1 1\nJ0 B * " << (mass ? "MASS" : "CONCEN")
+                     << " 1 1 7\n";
+            }
             ASSERT_TRUE(run_deck("_oq_source.inp", "_oq_source.rpt", "_oq_source.out"));
             SWMM_Output h = swmm_output_open("_oq_source.out");
             ASSERT_NE(h, nullptr);
             const int periods = swmm_output_get_period_count(h);
             ASSERT_GT(periods, 0);
             for (int period = 0; period < periods; ++period) {
-                float values[32] = {}; int count = 0;
+                float values[32] = {};
+                int count = 0;
                 ASSERT_EQ(swmm_output_get_node_attribute(h, 0, period, values, &count), 0);
                 EXPECT_NEAR(values[7], values[8], 1.e-6);
                 EXPECT_GT(values[7], 0);

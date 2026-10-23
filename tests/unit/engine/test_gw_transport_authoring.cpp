@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_gw_transport_authoring.cpp
- * @brief U4 + U5 (2026-09-07) — the `[GW_*]` subsurface-transport authoring
+ * @file      test_gw_transport_authoring.cpp
+ * @brief     U4 + U5 (2026-09-07) — the `[GW_*]` subsurface-transport authoring
  *        surface and the 2D groundwater page keys.
  *
  * Gates:
@@ -35,6 +35,10 @@
  *   - G6 (U5) `GROUNDWATER ON` / `GW_ET` round-trip and warn.
  *
  * Artefacts under tests/output/gw_transport (CLAUDE.md §4.1).
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -57,6 +61,17 @@ namespace {
 
 const fs::path kOutDir = fs::path(OPENSWMM_GW_TEST_OUT_DIR) / "gw_transport";
 
+/**
+ * @brief Collect an entire fixture file into owned text.
+ *
+ * Uses ordinary text mode and its platform newline rules. The local stream closes on return; no
+ * model state is touched and no borrowed buffer is returned. Default stream exception settings
+ * apply; allocation exceptions may propagate.
+ *
+ * @param[in] p Borrowed input filename used for this synchronous open/read.
+ * @return Owned string collected from the stream; empty can mean an empty file or failure to open.
+ *     Partial read failures have no separate status.
+ */
 std::string readAll(const fs::path& p) {
     std::ifstream f(p);
     std::ostringstream ss;
@@ -64,29 +79,47 @@ std::string readAll(const fs::path& p) {
     return ss.str();
 }
 
-/// The body of one section. A bare find() over the whole file would match
-/// [OPTIONS] IGNORE_GROUNDWATER when asking whether [2D_OPTIONS] carries
-/// GROUNDWATER.
+/**
+ * @brief Extract the body of the first matching column-zero input section.
+ *
+ * Uses prefix comparison and does not trim whitespace, normalize case, strip comments or return the
+ * header itself. Intended for canonical writer output.
+ *
+ * @param[in] text Complete input text, unchanged.
+ * @param[in] header Section-header prefix including bracket syntax, normally a complete exact
+ *     header.
+ * @return Owned lines after the matching header through the next column-zero bracket header, each
+ *     with appended newline; empty if absent.
+ */
 std::string section(const std::string& text, const std::string& header) {
     std::istringstream in(text);
     std::string line, out;
     bool in_sec = false;
     while (std::getline(in, line)) {
         if (!line.empty() && line[0] == '[') {
-            if (in_sec) break;
+            if (in_sec)
+                break;
             in_sec = line.rfind(header, 0) == 0;
             continue;
         }
-        if (in_sec) out += line + "\n";
+        if (in_sec)
+            out += line + "\n";
     }
     return out;
 }
 
-/// A MIXED mesh: one triangle (cell 0, 3 local edges) and one quad (cell 1,
-/// 4 local edges) — cells are numbered triangles first, then quads — so the
-/// cell-generic edge check has both to observe.
-std::string deck(const std::string& gw_sections,
-                 const std::string& twod_options_extra = "") {
+/**
+ * @brief Construct a mixed triangle/quad CMS groundwater transport-authoring deck.
+ *
+ * Coordinates/elevations use metres under CMS. Constructs text only; override syntax, row selectors
+ * and arbitrary signal references are not validated here.
+ *
+ * @param[in] gw_sections Raw complete groundwater/quality/source sections inserted before REPORT.
+ * @param[in] twod_options_extra Raw additional 2D_OPTIONS lines inserted before mesh sections.
+ * @return Owned ten-minute deck with Cu/age/heat enabled, one triangle then one quad, fixed .5 m
+ *     depth and two held test signals.
+ */
+std::string deck(const std::string& gw_sections, const std::string& twod_options_extra = "") {
     std::ostringstream m;
     m << "[OPTIONS]\n"
          "FLOW_UNITS           CMS\nFLOW_ROUTING         DYNWAVE\n"
@@ -105,7 +138,8 @@ std::string deck(const std::string& gw_sections,
          "RiverT 0:00  11.0\nRiverT 1:00  12.0\n\n"
          "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\n"
          "DRY_DEPTH 0.001\nCOUPLING_CD 0.7\nREPORT_2D NO\n"
-      << twod_options_extra << "\n"
+      << twod_options_extra
+      << "\n"
          "[2D_VERTICES]\n"
          " 0.0  0.0 -10.0\n10.0  0.0 -10.0\n10.0 10.0 -10.0\n 0.0 10.0 -10.0\n"
          "20.0  0.0 -10.0\n\n"
@@ -115,8 +149,7 @@ std::string deck(const std::string& gw_sections,
          "1 4 2 0.03 0.5 FAR\n\n"
          "[2D_QUADS]\n;;V1 V2 V3 V4 N INIT_DEPTH TAG\n"
          "0 1 2 3 0.03 0.5 PAN\n\n"
-      << gw_sections
-      << "[REPORT]\nINPUT NO\n";
+      << gw_sections << "[REPORT]\nINPUT NO\n";
     return m.str();
 }
 
@@ -127,73 +160,109 @@ struct DeckRun {
     bool opened = false, started = false;
 };
 
+/**
+ * @brief Write/open a groundwater-authoring artifact while retaining failed-open diagnostics.
+ *
+ * Creates directories with throwing filesystem operations. Does not initialize/start or destroy a
+ * failed-open handle; caller invokes finish for every non-null e. A failed creation returns default
+ * handle/pointer; no test assertion is made here.
+ *
+ * @param[in] tag Filesystem-safe basename under kOutDir for .inp/.rpt/.out.
+ * @param[in] body Complete input text written through an unchecked stream.
+ * @return Owning result with created handle, borrowed native eng pointer, report path and opened
+ *     flag; started remains false.
+ */
 DeckRun openDeck(const std::string& tag, const std::string& body) {
     fs::create_directories(kOutDir);
     DeckRun r;
     const fs::path inp = kOutDir / (tag + ".inp");
     r.rpt = kOutDir / (tag + ".rpt");
-    { std::ofstream f(inp); f << body; }
+    {
+        std::ofstream f(inp);
+        f << body;
+    }
     r.e = swmm_engine_create();
-    if (!r.e) return r;
+    if (!r.e)
+        return r;
     r.opened = swmm_engine_open(r.e, inp.string().c_str(), r.rpt.string().c_str(),
-                                (kOutDir / (tag + ".out")).string().c_str(),
-                                nullptr) == SWMM_OK;
+                                (kOutDir / (tag + ".out")).string().c_str(), nullptr) == SWMM_OK;
     r.eng = static_cast<openswmm::SWMMEngine*>(r.e);
     return r;
 }
 
+/**
+ * @brief End when marked started, then close/destroy the authoring result's engine.
+ *
+ * Ignores statuses, sets e=null and leaves eng/opened/started unchanged. After cleanup eng is
+ * dangling and must not be used; artifacts and copied result data remain.
+ *
+ * @param[in,out] r Owning result from openDeck; null e is accepted.
+ */
 void finish(DeckRun& r) {
-    if (!r.e) return;
-    if (r.started) swmm_engine_end(r.e);
+    if (!r.e)
+        return;
+    if (r.started)
+        swmm_engine_end(r.e);
     swmm_engine_close(r.e);
     swmm_engine_destroy(r.e);
     r.e = nullptr;
 }
 
+/**
+ * @brief Count native warning strings containing one literal diagnostic fragment.
+ *
+ * Case-sensitive find only; does not clear warnings, run validation or synchronize concurrent model
+ * mutation.
+ *
+ * @param[in] r Live non-null native eng result, not yet passed to finish.
+ * @param[in] needle Non-null substring; empty matches every warning.
+ * @return Number of matching warning entries, with one count per entry regardless of multiple
+ *     occurrences.
+ */
 int warningsMatching(const DeckRun& r, const char* needle) {
     int n = 0;
     for (const auto& w : r.eng->context().warnings)
-        if (w.find(needle) != std::string::npos) ++n;
+        if (w.find(needle) != std::string::npos)
+            ++n;
     return n;
 }
 
 /// The full authoring set the round-trip test uses. Cell 1 is the QUAD
 /// (4 local edges), cell 2 the triangle (3).
-const char* kAllSections =
-    "[GW_TRANSPORT_OPTIONS]\n"
-    "TRANSPORT_POLLUTANTS   YES\n"
-    "TRANSPORT_MSX          NO\n"
-    "TRANSPORT_AGE          YES\n"
-    "TRANSPORT_TEMPERATURE  YES\n"
-    "DISPERSION             YES\n"
-    "CONDUCTION             NO\n"
-    "SURFACE_THERMAL_BC     FIXED 12.5\n"
-    "DEEP_THERMAL_BC        GEOTHERMAL_FLUX 0.065 DEPTH 20\n"
-    "THERMAL_MIXING         GEOMETRIC\n"
-    "C_DIFF                 0.25\n\n"
-    "[GW_TRANSPORT_PARAMS]\n"
-    "*      2650  880  2.0  0  1.0  0.1  1e-9  1e-9  0.065\n"
-    "TAG PAN  2700  900  2.4  0  1.5  0.15 2e-9  1e-9  0.07\n"
-    "CELL 2   2600  860  1.8  0  0.8  0.08 1e-9  1e-9  0.06\n\n"
-    "[GW_SORPTION]\n"
-    "*        Cu  0.5  0.01\n"
-    "TAG FAR  Cu  1.2\n\n"
-    "[GW_INITIAL_QUALITY]\n"
-    "*        SAT     Cu               0.0\n"
-    "*        SAT     __TEMPERATURE__  12.0\n"
-    "TAG PAN  UNSAT   __TEMPERATURE__  14.0\n"
-    "CELL 2   LAYER 3 Cu               1.2\n"
-    "*        SAT     __WATER_AGE__    6.0\n\n"
-    "[GW_BOUNDARY_QUALITY]\n"
-    ";; cell edge species kind value\n"
-    "2  3  Cu               CONC 5.0\n"
-    "1  0  __TEMPERATURE__  TS   RiverT\n"
-    "1  2  Cu               MASSFLUX 0.001\n\n"
-    "[GW_SOURCES]\n"
-    "W1   CELL 1  FLOW WellQ  Cu CONC 0.0  __TEMPERATURE__ CONC 10.0\n"
-    "INJ  CELL 2  FLOW 0.002  Cu MASS 0.5\n\n";
+const char* kAllSections = "[GW_TRANSPORT_OPTIONS]\n"
+                           "TRANSPORT_POLLUTANTS   YES\n"
+                           "TRANSPORT_MSX          NO\n"
+                           "TRANSPORT_AGE          YES\n"
+                           "TRANSPORT_TEMPERATURE  YES\n"
+                           "DISPERSION             YES\n"
+                           "CONDUCTION             NO\n"
+                           "SURFACE_THERMAL_BC     FIXED 12.5\n"
+                           "DEEP_THERMAL_BC        GEOTHERMAL_FLUX 0.065 DEPTH 20\n"
+                           "THERMAL_MIXING         GEOMETRIC\n"
+                           "C_DIFF                 0.25\n\n"
+                           "[GW_TRANSPORT_PARAMS]\n"
+                           "*      2650  880  2.0  0  1.0  0.1  1e-9  1e-9  0.065\n"
+                           "TAG PAN  2700  900  2.4  0  1.5  0.15 2e-9  1e-9  0.07\n"
+                           "CELL 2   2600  860  1.8  0  0.8  0.08 1e-9  1e-9  0.06\n\n"
+                           "[GW_SORPTION]\n"
+                           "*        Cu  0.5  0.01\n"
+                           "TAG FAR  Cu  1.2\n\n"
+                           "[GW_INITIAL_QUALITY]\n"
+                           "*        SAT     Cu               0.0\n"
+                           "*        SAT     __TEMPERATURE__  12.0\n"
+                           "TAG PAN  UNSAT   __TEMPERATURE__  14.0\n"
+                           "CELL 2   LAYER 3 Cu               1.2\n"
+                           "*        SAT     __WATER_AGE__    6.0\n\n"
+                           "[GW_BOUNDARY_QUALITY]\n"
+                           ";; cell edge species kind value\n"
+                           "2  3  Cu               CONC 5.0\n"
+                           "1  0  __TEMPERATURE__  TS   RiverT\n"
+                           "1  2  Cu               MASSFLUX 0.001\n\n"
+                           "[GW_SOURCES]\n"
+                           "W1   CELL 1  FLOW WellQ  Cu CONC 0.0  __TEMPERATURE__ CONC 10.0\n"
+                           "INJ  CELL 2  FLOW 0.002  Cu MASS 0.5\n\n";
 
-}  // namespace
+} // namespace
 
 // ---------------------------------------------------------------------------
 // G1 — parse, validate, round-trip
@@ -224,9 +293,8 @@ TEST(GwTransportAuthoring, EverySectionRoundTrips) {
     const fs::path saved = kOutDir / "all_saved.inp";
     ASSERT_EQ(swmm_model_write(r.e, saved.string().c_str()), SWMM_OK);
     const std::string text = readAll(saved);
-    for (const char* sec : {"[GW_TRANSPORT_OPTIONS]", "[GW_TRANSPORT_PARAMS]",
-                            "[GW_SORPTION]", "[GW_INITIAL_QUALITY]",
-                            "[GW_BOUNDARY_QUALITY]", "[GW_SOURCES]"})
+    for (const char* sec : {"[GW_TRANSPORT_OPTIONS]", "[GW_TRANSPORT_PARAMS]", "[GW_SORPTION]",
+                            "[GW_INITIAL_QUALITY]", "[GW_BOUNDARY_QUALITY]", "[GW_SOURCES]"})
         EXPECT_NE(text.find(sec), std::string::npos) << sec << " was dropped";
     finish(r);
 
@@ -250,11 +318,11 @@ TEST(GwTransportAuthoring, EverySectionRoundTrips) {
     int scope = -1, cell = -1, zone = -1, layer = -1;
     char species[64] = {};
     double value = 0.0;
-    ASSERT_EQ(swmm_gw_init_quality_get(r2.e, 3, &scope, tag, sizeof tag, &cell,
-                                       &zone, &layer, species, sizeof species,
-                                       &value), SWMM_OK);
+    ASSERT_EQ(swmm_gw_init_quality_get(r2.e, 3, &scope, tag, sizeof tag, &cell, &zone, &layer,
+                                       species, sizeof species, &value),
+              SWMM_OK);
     EXPECT_EQ(scope, SWMM_GW_SCOPE_CELL);
-    EXPECT_EQ(cell, 1);                     // CELL 2 in the file, 0-based here
+    EXPECT_EQ(cell, 1); // CELL 2 in the file, 0-based here
     EXPECT_EQ(zone, SWMM_GW_ZONE_LAYER);
     EXPECT_EQ(layer, 3);
     EXPECT_STREQ(species, "Cu");
@@ -262,9 +330,9 @@ TEST(GwTransportAuthoring, EverySectionRoundTrips) {
 
     int bcell = -1, bedge = -1;
     char kind[32] = {}, ts[64] = {};
-    ASSERT_EQ(swmm_gw_boundary_quality_get(r2.e, 1, &bcell, &bedge, species,
-                                           sizeof species, kind, sizeof kind,
-                                           &value, ts, sizeof ts), SWMM_OK);
+    ASSERT_EQ(swmm_gw_boundary_quality_get(r2.e, 1, &bcell, &bedge, species, sizeof species, kind,
+                                           sizeof kind, &value, ts, sizeof ts),
+              SWMM_OK);
     EXPECT_EQ(bcell, 0);
     EXPECT_EQ(bedge, 0);
     EXPECT_STREQ(kind, "TS");
@@ -272,9 +340,9 @@ TEST(GwTransportAuthoring, EverySectionRoundTrips) {
 
     char name[64] = {}, flow_ts[64] = {};
     double flow = 0.0;
-    ASSERT_EQ(swmm_gw_source_get(r2.e, 0, name, sizeof name, &scope, tag,
-                                 sizeof tag, &cell, &flow, flow_ts,
-                                 sizeof flow_ts), SWMM_OK);
+    ASSERT_EQ(swmm_gw_source_get(r2.e, 0, name, sizeof name, &scope, tag, sizeof tag, &cell, &flow,
+                                 flow_ts, sizeof flow_ts),
+              SWMM_OK);
     EXPECT_STREQ(name, "W1");
     EXPECT_EQ(cell, 0);
     EXPECT_STREQ(flow_ts, "WellQ");
@@ -287,32 +355,34 @@ TEST(GwTransportAuthoring, EverySectionRoundTrips) {
 TEST(GwTransportAuthoring, EdgeIsCheckedAgainstItsOwnCellsVertexCount) {
     // Cell 2 is the quad: local edge 3 exists.
     {
-        DeckRun r = openDeck("edge_quad_ok",
-                         deck("[GW_BOUNDARY_QUALITY]\n2  3  Cu  CONC 5.0\n\n"));
+        DeckRun r = openDeck("edge_quad_ok", deck("[GW_BOUNDARY_QUALITY]\n2  3  Cu  CONC 5.0\n\n"));
         EXPECT_TRUE(r.opened) << r.eng->context().error_message;
         finish(r);
     }
     // Cell 1 is the triangle: local edge 3 does not.
     {
-        DeckRun r = openDeck("edge_tri_bad",
-                         deck("[GW_BOUNDARY_QUALITY]\n1  3  Cu  CONC 5.0\n\n"));
-        EXPECT_FALSE(r.opened)
-            << "EDGE 3 on a 3-vertex cell must be refused (cell-generic check)";
-        if (r.e) { swmm_engine_close(r.e); swmm_engine_destroy(r.e); }
+        DeckRun r = openDeck("edge_tri_bad", deck("[GW_BOUNDARY_QUALITY]\n1  3  Cu  CONC 5.0\n\n"));
+        EXPECT_FALSE(r.opened) << "EDGE 3 on a 3-vertex cell must be refused (cell-generic check)";
+        if (r.e) {
+            swmm_engine_close(r.e);
+            swmm_engine_destroy(r.e);
+        }
     }
     // ...and edge 2 does.
     {
-        DeckRun r = openDeck("edge_tri_ok",
-                         deck("[GW_BOUNDARY_QUALITY]\n1  2  Cu  CONC 5.0\n\n"));
+        DeckRun r = openDeck("edge_tri_ok", deck("[GW_BOUNDARY_QUALITY]\n1  2  Cu  CONC 5.0\n\n"));
         EXPECT_TRUE(r.opened) << r.eng->context().error_message;
         finish(r);
     }
     // A cell off the mesh is refused.
     {
-        DeckRun r = openDeck("edge_cell_bad",
-                         deck("[GW_BOUNDARY_QUALITY]\n99  0  Cu  CONC 5.0\n\n"));
+        DeckRun r =
+            openDeck("edge_cell_bad", deck("[GW_BOUNDARY_QUALITY]\n99  0  Cu  CONC 5.0\n\n"));
         EXPECT_FALSE(r.opened);
-        if (r.e) { swmm_engine_close(r.e); swmm_engine_destroy(r.e); }
+        if (r.e) {
+            swmm_engine_close(r.e);
+            swmm_engine_destroy(r.e);
+        }
     }
 }
 
@@ -321,36 +391,44 @@ TEST(GwTransportAuthoring, EdgeIsCheckedAgainstItsOwnCellsVertexCount) {
 // ---------------------------------------------------------------------------
 TEST(GwTransportAuthoring, SpeciesAndSeriesAreResolved) {
     {
-        DeckRun r = openDeck("species_bad",
-                         deck("[GW_INITIAL_QUALITY]\n*  SAT  Nope  1.0\n\n"));
+        DeckRun r = openDeck("species_bad", deck("[GW_INITIAL_QUALITY]\n*  SAT  Nope  1.0\n\n"));
         EXPECT_FALSE(r.opened) << "an unknown species must be fatal";
-        if (r.e) { swmm_engine_close(r.e); swmm_engine_destroy(r.e); }
+        if (r.e) {
+            swmm_engine_close(r.e);
+            swmm_engine_destroy(r.e);
+        }
     }
     {
-        DeckRun r = openDeck("series_bad",
-                         deck("[GW_BOUNDARY_QUALITY]\n1 0 Cu TS NoSuchSeries\n\n"));
+        DeckRun r =
+            openDeck("series_bad", deck("[GW_BOUNDARY_QUALITY]\n1 0 Cu TS NoSuchSeries\n\n"));
         EXPECT_FALSE(r.opened) << "an unknown time series must be fatal";
-        if (r.e) { swmm_engine_close(r.e); swmm_engine_destroy(r.e); }
+        if (r.e) {
+            swmm_engine_close(r.e);
+            swmm_engine_destroy(r.e);
+        }
     }
     {
         // A negative concentration is refused; a negative temperature is not.
-        DeckRun r = openDeck("neg_conc",
-                         deck("[GW_INITIAL_QUALITY]\n*  SAT  Cu  -1.0\n\n"));
+        DeckRun r = openDeck("neg_conc", deck("[GW_INITIAL_QUALITY]\n*  SAT  Cu  -1.0\n\n"));
         EXPECT_FALSE(r.opened);
-        if (r.e) { swmm_engine_close(r.e); swmm_engine_destroy(r.e); }
+        if (r.e) {
+            swmm_engine_close(r.e);
+            swmm_engine_destroy(r.e);
+        }
     }
     {
-        DeckRun r = openDeck("neg_temp",
-                         deck("[GW_INITIAL_QUALITY]\n"
-                              "*  SAT  __TEMPERATURE__  -3.0\n\n"));
+        DeckRun r = openDeck("neg_temp", deck("[GW_INITIAL_QUALITY]\n"
+                                              "*  SAT  __TEMPERATURE__  -3.0\n\n"));
         EXPECT_TRUE(r.opened) << r.eng->context().error_message;
         finish(r);
     }
     {
-        DeckRun r = openDeck("tag_bad",
-                         deck("[GW_SORPTION]\nTAG NOSUCH  Cu  0.5\n\n"));
+        DeckRun r = openDeck("tag_bad", deck("[GW_SORPTION]\nTAG NOSUCH  Cu  0.5\n\n"));
         EXPECT_FALSE(r.opened) << "a TAG matching no cell must be fatal";
-        if (r.e) { swmm_engine_close(r.e); swmm_engine_destroy(r.e); }
+        if (r.e) {
+            swmm_engine_close(r.e);
+            swmm_engine_destroy(r.e);
+        }
     }
 }
 
@@ -366,7 +444,8 @@ TEST(GwTransportAuthoring, RunIsInertWithExactlyOneWarning) {
     ASSERT_EQ(swmm_engine_start(r.e, 1), SWMM_OK);
     r.started = true;
     double elapsed = 0.0;
-    while (swmm_engine_step(r.e, &elapsed) == SWMM_OK && elapsed > 0.0) {}
+    while (swmm_engine_step(r.e, &elapsed) == SWMM_OK && elapsed > 0.0) {
+    }
     const double final_2d = r.eng->context().mass_balance_2d.final_storage;
     finish(r);
 
@@ -377,7 +456,8 @@ TEST(GwTransportAuthoring, RunIsInertWithExactlyOneWarning) {
     ASSERT_EQ(swmm_engine_initialize(r2.e), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(r2.e, 1), SWMM_OK);
     r2.started = true;
-    while (swmm_engine_step(r2.e, &elapsed) == SWMM_OK && elapsed > 0.0) {}
+    while (swmm_engine_step(r2.e, &elapsed) == SWMM_OK && elapsed > 0.0) {
+    }
     EXPECT_DOUBLE_EQ(r2.eng->context().mass_balance_2d.final_storage, final_2d)
         << "authoring the subsurface changed the surface run";
     finish(r2);
@@ -392,22 +472,26 @@ TEST(GwTransportAuthoring, CApiAuthorsAndSaves) {
     EXPECT_EQ(swmm_gw_transport_authored(r.e), 0);
 
     ASSERT_EQ(swmm_gw_transport_option_set(r.e, "TRANSPORT_MSX", "NO"), SWMM_OK);
-    ASSERT_EQ(swmm_gw_transport_option_set(r.e, "SURFACE_THERMAL_BC",
-                                           "FIXED 9.5"), SWMM_OK);
-    EXPECT_NE(swmm_gw_transport_option_set(r.e, "SURFACE_THERMAL_BC", "FIXED"),
-              SWMM_OK) << "FIXED without a value must be refused";
+    ASSERT_EQ(swmm_gw_transport_option_set(r.e, "SURFACE_THERMAL_BC", "FIXED 9.5"), SWMM_OK);
+    EXPECT_NE(swmm_gw_transport_option_set(r.e, "SURFACE_THERMAL_BC", "FIXED"), SWMM_OK)
+        << "FIXED without a value must be refused";
     EXPECT_NE(swmm_gw_transport_option_set(r.e, "C_DIFF", "2.0"), SWMM_OK);
     EXPECT_NE(swmm_gw_transport_option_set(r.e, "NOPE", "1"), SWMM_OK);
     char buf[128] = {};
-    ASSERT_EQ(swmm_gw_transport_option_get(r.e, "SURFACE_THERMAL_BC", buf,
-                                           sizeof buf), SWMM_OK);
+    ASSERT_EQ(swmm_gw_transport_option_get(r.e, "SURFACE_THERMAL_BC", buf, sizeof buf), SWMM_OK);
     EXPECT_STREQ(buf, "FIXED 9.5") << "a refused set must not clobber";
 
     SWMM_GwParams p{};
     p.scope = SWMM_GW_SCOPE_CELL;
-    p.cell  = 0;
-    p.rho_s = 2500.0; p.c_s = 850.0; p.lambda_s = 1.9; p.a_s = 0.0;
-    p.alpha_L = 2.0; p.alpha_T = 0.2; p.D_m = 1e-9; p.D_v = 1e-9;
+    p.cell = 0;
+    p.rho_s = 2500.0;
+    p.c_s = 850.0;
+    p.lambda_s = 1.9;
+    p.a_s = 0.0;
+    p.alpha_L = 2.0;
+    p.alpha_T = 0.2;
+    p.D_m = 1e-9;
+    p.D_v = 1e-9;
     p.geo_flux = 0.05;
     ASSERT_EQ(swmm_gw_params_set(r.e, &p, nullptr), SWMM_OK);
     EXPECT_EQ(swmm_gw_params_count(r.e), 1);
@@ -415,28 +499,26 @@ TEST(GwTransportAuthoring, CApiAuthorsAndSaves) {
     ASSERT_EQ(swmm_gw_params_set(r.e, &p, nullptr), SWMM_OK);
     EXPECT_EQ(swmm_gw_params_count(r.e), 1) << "same scope+cell must upsert";
 
-    ASSERT_EQ(swmm_gw_init_quality_set(r.e, SWMM_GW_SCOPE_GLOBAL, nullptr, -1,
-                                       SWMM_GW_ZONE_SAT, -1, "Cu", 2.5), SWMM_OK);
-    EXPECT_NE(swmm_gw_init_quality_set(r.e, SWMM_GW_SCOPE_GLOBAL, nullptr, -1,
-                                       SWMM_GW_ZONE_SAT, -1, "Cu", -2.5), SWMM_OK)
+    ASSERT_EQ(swmm_gw_init_quality_set(r.e, SWMM_GW_SCOPE_GLOBAL, nullptr, -1, SWMM_GW_ZONE_SAT, -1,
+                                       "Cu", 2.5),
+              SWMM_OK);
+    EXPECT_NE(swmm_gw_init_quality_set(r.e, SWMM_GW_SCOPE_GLOBAL, nullptr, -1, SWMM_GW_ZONE_SAT, -1,
+                                       "Cu", -2.5),
+              SWMM_OK)
         << "a negative concentration must be refused by the API too";
 
     // The cell-generic edge check: cell 1 is the quad (edge 3 legal), cell 0
     // the triangle (edge 3 out of range) — triangles are numbered first.
-    ASSERT_EQ(swmm_gw_boundary_quality_set(r.e, 1, 3, "Cu", "CONC", 4.0, nullptr),
-              SWMM_OK);
-    EXPECT_NE(swmm_gw_boundary_quality_set(r.e, 0, 3, "Cu", "CONC", 4.0, nullptr),
-              SWMM_OK);
-    EXPECT_NE(swmm_gw_boundary_quality_set(r.e, 0, 0, "Cu", "TS", 0.0, nullptr),
-              SWMM_OK) << "TS needs a series name";
+    ASSERT_EQ(swmm_gw_boundary_quality_set(r.e, 1, 3, "Cu", "CONC", 4.0, nullptr), SWMM_OK);
+    EXPECT_NE(swmm_gw_boundary_quality_set(r.e, 0, 3, "Cu", "CONC", 4.0, nullptr), SWMM_OK);
+    EXPECT_NE(swmm_gw_boundary_quality_set(r.e, 0, 0, "Cu", "TS", 0.0, nullptr), SWMM_OK)
+        << "TS needs a series name";
 
-    ASSERT_EQ(swmm_gw_source_set(r.e, "W9", SWMM_GW_SCOPE_CELL, nullptr, 1,
-                                 0.003, nullptr), SWMM_OK);
-    ASSERT_EQ(swmm_gw_source_species_set(r.e, 0, "Cu", "CONC", 1.5, nullptr),
+    ASSERT_EQ(swmm_gw_source_set(r.e, "W9", SWMM_GW_SCOPE_CELL, nullptr, 1, 0.003, nullptr),
               SWMM_OK);
+    ASSERT_EQ(swmm_gw_source_species_set(r.e, 0, "Cu", "CONC", 1.5, nullptr), SWMM_OK);
     EXPECT_EQ(swmm_gw_source_species_count(r.e, 0), 1);
-    EXPECT_NE(swmm_gw_source_species_set(r.e, 0, "Cu", "NOPE", 1.5, nullptr),
-              SWMM_OK);
+    EXPECT_NE(swmm_gw_source_species_set(r.e, 0, "Cu", "NOPE", 1.5, nullptr), SWMM_OK);
     EXPECT_EQ(swmm_gw_transport_authored(r.e), 1);
 
     const fs::path saved = kOutDir / "api_saved.inp";
@@ -451,8 +533,7 @@ TEST(GwTransportAuthoring, CApiAuthorsAndSaves) {
     EXPECT_EQ(swmm_gw_boundary_quality_count(r2.e), 1);
     EXPECT_EQ(swmm_gw_source_count(r2.e), 1);
     EXPECT_EQ(swmm_gw_source_species_count(r2.e, 0), 1);
-    ASSERT_EQ(swmm_gw_transport_option_get(r2.e, "SURFACE_THERMAL_BC", buf,
-                                           sizeof buf), SWMM_OK);
+    ASSERT_EQ(swmm_gw_transport_option_get(r2.e, "SURFACE_THERMAL_BC", buf, sizeof buf), SWMM_OK);
     EXPECT_STREQ(buf, "FIXED 9.5");
     finish(r2);
 }
@@ -475,8 +556,8 @@ TEST(GwPageKeys, GroundwaterEnableIsTriStateAndGwEtIsAnAlias) {
     EXPECT_STREQ(buf, "AUTO") << "the enable round-trips what the deck said";
     const fs::path saved3 = kOutDir / "u5_default_saved.inp";
     ASSERT_EQ(swmm_model_write(r3.e, saved3.string().c_str()), SWMM_OK);
-    EXPECT_EQ(section(readAll(saved3), "[2D_OPTIONS]").find("GROUNDWATER"),
-              std::string::npos) << "AUTO must not be written";
+    EXPECT_EQ(section(readAll(saved3), "[2D_OPTIONS]").find("GROUNDWATER"), std::string::npos)
+        << "AUTO must not be written";
     finish(r3);
 
     // GW_ET spelled in [2D_OPTIONS] folds into [2D_AQUIFER_OPTIONS] and is
@@ -491,8 +572,8 @@ TEST(GwPageKeys, GroundwaterEnableIsTriStateAndGwEtIsAnAlias) {
     const std::string text = readAll(saved);
     EXPECT_EQ(section(text, "[2D_OPTIONS]").find("GW_ET"), std::string::npos)
         << "GW_ET must not be echoed into [2D_OPTIONS] as well";
-    EXPECT_NE(section(text, "[2D_AQUIFER_OPTIONS]").find("GW_ET"),
-              std::string::npos) << "[2D_AQUIFER_OPTIONS] owns GW_ET";
+    EXPECT_NE(section(text, "[2D_AQUIFER_OPTIONS]").find("GW_ET"), std::string::npos)
+        << "[2D_AQUIFER_OPTIONS] owns GW_ET";
     finish(r);
 
     DeckRun r2 = openDeck("u5_reload", text);
@@ -510,17 +591,23 @@ TEST(GwPageKeys, GroundwaterEnableIsTriStateAndGwEtIsAnAlias) {
     EXPECT_EQ(warningsMatching(r4, "no [2D_AQUIFER_OPTIONS] / [2D_AQUIFER] row"), 1);
     const fs::path saved4 = kOutDir / "u5_on_empty_saved.inp";
     ASSERT_EQ(swmm_model_write(r4.e, saved4.string().c_str()), SWMM_OK);
-    EXPECT_NE(section(readAll(saved4), "[2D_OPTIONS]").find("GROUNDWATER"),
-              std::string::npos) << "a non-default enable IS written";
+    EXPECT_NE(section(readAll(saved4), "[2D_OPTIONS]").find("GROUNDWATER"), std::string::npos)
+        << "a non-default enable IS written";
     finish(r4);
 
     DeckRun r5 = openDeck("u5_bad", deck("", "GW_ET SOMETIMES\n"));
     EXPECT_FALSE(r5.opened);
-    if (r5.e) { swmm_engine_close(r5.e); swmm_engine_destroy(r5.e); }
+    if (r5.e) {
+        swmm_engine_close(r5.e);
+        swmm_engine_destroy(r5.e);
+    }
 
     DeckRun r6 = openDeck("u5_bad_gw", deck("", "GROUNDWATER SOMETIMES\n"));
     EXPECT_FALSE(r6.opened);
-    if (r6.e) { swmm_engine_close(r6.e); swmm_engine_destroy(r6.e); }
+    if (r6.e) {
+        swmm_engine_close(r6.e);
+        swmm_engine_destroy(r6.e);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -535,9 +622,8 @@ TEST(GwTransportAuthoring, InitialQualityFileSidecar) {
              "*,SAT,Cu,0.5\n"
              "TAG PAN,UNSAT,__TEMPERATURE__,13.5\n";
     }
-    DeckRun r = openDeck("gw_iq_file",
-                     deck("[GW_INITIAL_QUALITY]\nFILE gw_iq.csv\n"
-                          "*  SAT  __WATER_AGE__  3.0\n\n"));
+    DeckRun r = openDeck("gw_iq_file", deck("[GW_INITIAL_QUALITY]\nFILE gw_iq.csv\n"
+                                            "*  SAT  __WATER_AGE__  3.0\n\n"));
     ASSERT_TRUE(r.opened) << r.eng->context().error_message;
     EXPECT_EQ(swmm_gw_init_quality_count(r.e), 3) << "2 file rows + 1 inline";
     char buf[256] = {};

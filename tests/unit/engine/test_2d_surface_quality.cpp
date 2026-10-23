@@ -1,6 +1,6 @@
 /**
- * @file test_2d_surface_quality.cpp
- * @brief S7 (2026-09-19) — cell coverages, buildup, washoff and sweeping on
+ * @file      test_2d_surface_quality.cpp
+ * @brief     S7 (2026-09-19) — cell coverages, buildup, washoff and sweeping on
  *        the 2D overland surface (OVERLAND plan §8; program plan S7,
  *        D-A22–D-A26).
  *
@@ -27,6 +27,10 @@
  *
  * Artefacts land in the working directory: run from
  * tests/output/2d_surface_quality (CLAUDE.md §4.1).
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -52,8 +56,29 @@ using namespace openswmm::twoD;
 
 namespace {
 
-openswmm::SWMMEngine& cpp(SWMM_Engine e) { return *static_cast<openswmm::SWMMEngine*>(e); }
-void write(const std::string& path, const std::string& body) { std::ofstream f(path); f << body; }
+/**
+ * @brief Borrow the C++ engine behind an opaque surface-quality test handle.
+ *
+ * Unchecked cast/dereference; no ownership transfer or model mutation in this helper.
+ *
+ * @param[in] e Non-null live new-engine C API handle.
+ * @return Mutable engine reference valid until handle destruction.
+ */
+openswmm::SWMMEngine& cpp(SWMM_Engine e) {
+    return *static_cast<openswmm::SWMMEngine*>(e);
+}
+/**
+ * @brief Write complete surface-quality fixture text to a chosen path.
+ *
+ * Does not check open/write/close status or parse/run the contents; no input storage is retained.
+ *
+ * @param[in] path Destination with existing parents; an existing file is truncated.
+ * @param[in] body Complete text inserted verbatim without an extra newline.
+ */
+void write(const std::string& path, const std::string& body) {
+    std::ofstream f(path);
+    f << body;
+}
 
 /// A 10 m × 10 m pan (two triangles, or one quad) at elevation z_pan with
 /// initial depth h0, vertex 0 coupled to `node`; optional subcatchment S1
@@ -67,29 +92,48 @@ struct DeckOpts {
     std::string process_components; // [PROCESS_COMPONENTS] line(s)
     std::string node = "O1";
     double z_pan = -10.0, h0 = 0.5;
-    double exch_area = 1.0;          // [2D_VERTEX_NODE_MAP] exchange area
+    double exch_area = 1.0; // [2D_VERTEX_NODE_MAP] exchange area
     bool quad = false;
     // S7 (added by the macOS validating agent 2026-09-19 for handoff §6.5):
     // one quad (left square) + two triangles (right square) sharing edge 1-2,
     // so the flow path crosses a cell boundary before it drains — the case
     // the rejected gross-flux D-A22 double-counted.
     bool mixed = false;
-    bool rain = false;              // TS1 1 in/hr for 1 h on RG1
-    bool subcatch = false;          // S1 → J1, [COVERAGES] S1 LU1 100
+    bool rain = false;     // TS1 1 in/hr for 1 h on RG1
+    bool subcatch = false; // S1 → J1, [COVERAGES] S1 LU1 100
     std::string end_time = "03:00:00";
 };
 
+/**
+ * @brief Construct the US-project surface buildup/washoff test deck from explicit options.
+ *
+ * Numeric mesh geometry is authored without an SI header under CFS, so its
+ * coordinate/elevation/depth values use project feet before initialization. mixed takes precedence
+ * over quad and adds a second adjacent square; rain enables1 in/hr for one hour; subcatch adds
+ * S1/LU1 coverage. Caller supplies matching raw section delimiters/land-use definitions and valid
+ * component configuration; no syntax/physical validation or simulation occurs.
+ *
+ * @param[in] o Owned/borrowed construction settings: raw options/quality/coverage/component text,
+ *     coupling node/area, geometry depth/elevation, mesh flags, rain/subcatch flags and end-time
+ *     token.
+ * @return Owned CFS/DYNWAVE/Horton deck with five antecedent dry days and requested surface/network
+ *     declarations.
+ */
 std::string deck(const DeckOpts& o) {
     std::ostringstream m;
     m << "[OPTIONS]\n"
          "FLOW_UNITS           CFS\nFLOW_ROUTING         DYNWAVE\nINFILTRATION         HORTON\n"
          "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
-         "END_DATE             01/01/2026\nEND_TIME             " << o.end_time << "\n"
+         "END_DATE             01/01/2026\nEND_TIME             "
+      << o.end_time
+      << "\n"
          "REPORT_STEP          00:05:00\nWET_STEP             00:05:00\nDRY_STEP             00:05:00\n"
          "ROUTING_STEP         5\nDRY_DAYS             5\nALLOW_PONDING        NO\n"
       << o.options_extra
-      << "\n[RAINGAGES]\nRG1  INTENSITY 1:00 1.0 TIMESERIES TS1\n"   // one record = one hour
-         "\n[TIMESERIES]\nTS1  01/01/2026 00:00 " << (o.rain ? "1.0" : "0.0") << "\n"
+      << "\n[RAINGAGES]\nRG1  INTENSITY 1:00 1.0 TIMESERIES TS1\n" // one record = one hour
+         "\n[TIMESERIES]\nTS1  01/01/2026 00:00 "
+      << (o.rain ? "1.0" : "0.0")
+      << "\n"
          "TS1  01/01/2026 01:00 0.0\n";
     if (o.subcatch)
         m << "\n[SUBCATCHMENTS]\nS1  RG1  J1  10.0  50   500  0.5  0\n"
@@ -98,11 +142,11 @@ std::string deck(const DeckOpts& o) {
     m << "\n[JUNCTIONS]\nJ1 0.0 1.0 0 0 0\n\n[OUTFALLS]\nO1 -0.5 FREE NO\n\n"
          "[CONDUITS]\nC1 J1 O1 30.0 0.013 0 0 0\n\n[XSECTIONS]\nC1 CIRCULAR 0.3 0 0 0 1\n"
       << o.quality;
-    if (o.subcatch) m << "\n[COVERAGES]\nS1  LU1  100\n";
+    if (o.subcatch)
+        m << "\n[COVERAGES]\nS1  LU1  100\n";
     m << "\n[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\n"
          "DRY_DEPTH 0.001\nCOUPLING_CD 0.7\nREPORT_2D NO\nRAINFALL_MODE SYSTEM\n"
-      << o.twod_extra
-      << "\n[2D_VERTICES]\n 0.0  0.0 " << o.z_pan << "\n10.0  0.0 " << o.z_pan
+      << o.twod_extra << "\n[2D_VERTICES]\n 0.0  0.0 " << o.z_pan << "\n10.0  0.0 " << o.z_pan
       << "\n10.0 10.0 " << o.z_pan << "\n 0.0 10.0 " << o.z_pan << "\n";
     if (o.mixed)
         // S7 §6.5 (validating agent): two extra vertices make a second square
@@ -112,57 +156,114 @@ std::string deck(const DeckOpts& o) {
         // [2D_TRIANGLES] must precede [2D_QUADS] (cells are numbered
         // triangles first, then quads), so the quad is the LAST cell.
         m << "20.0  0.0 " << o.z_pan << "\n20.0 10.0 " << o.z_pan << "\n"
-          << "\n[2D_TRIANGLES]\n;;V1 V2 V3 N INIT_DEPTH TAG\n1 4 5 0.03 " << o.h0 << " pan\n"
-             "1 5 2 0.03 " << o.h0 << " pan\n"
+          << "\n[2D_TRIANGLES]\n;;V1 V2 V3 N INIT_DEPTH TAG\n1 4 5 0.03 " << o.h0
+          << " pan\n"
+             "1 5 2 0.03 "
+          << o.h0 << " pan\n"
           << "\n[2D_QUADS]\n;;V1 V2 V3 V4 N INIT_DEPTH TAG\n0 1 2 3 0.03 " << o.h0 << " pan\n";
     else if (o.quad)
         m << "\n[2D_QUADS]\n;;V1 V2 V3 V4 N INIT_DEPTH TAG\n0 1 2 3 0.03 " << o.h0 << " pan\n";
     else
-        m << "\n[2D_TRIANGLES]\n;;V1 V2 V3 N INIT_DEPTH TAG\n0 1 2 0.03 " << o.h0 << " pan\n0 2 3 0.03 " << o.h0 << " pan\n";
+        m << "\n[2D_TRIANGLES]\n;;V1 V2 V3 N INIT_DEPTH TAG\n0 1 2 0.03 " << o.h0
+          << " pan\n0 2 3 0.03 " << o.h0 << " pan\n";
     m << "\n[2D_VERTEX_NODE_MAP]\n0 " << o.node << " 0.7 " << o.exch_area << "\n"
       << o.coverages
-      << (o.process_components.empty() ? "" : "\n[PROCESS_COMPONENTS]\n" + o.process_components + "\n")
+      << (o.process_components.empty() ? ""
+                                       : "\n[PROCESS_COMPONENTS]\n" + o.process_components + "\n")
       << "\n[REPORT]\nINPUT NO\n";
     return m.str();
 }
 
-const char* kQualityPow =
-    "\n[POLLUTANTS]\nTSS  MG/L  0  0  0  0  NO  *  0.0  0  0\n"
-    "\n[LANDUSES]\nLU1  0  0  0\n"
-    "\n[BUILDUP]\nLU1  TSS  POW  100  2  1  AREA\n"
-    "\n[WASHOFF]\nLU1  TSS  EXP  0.1  1.0  0  0\n";
+const char* kQualityPow = "\n[POLLUTANTS]\nTSS  MG/L  0  0  0  0  NO  *  0.0  0  0\n"
+                          "\n[LANDUSES]\nLU1  0  0  0\n"
+                          "\n[BUILDUP]\nLU1  TSS  POW  100  2  1  AREA\n"
+                          "\n[WASHOFF]\nLU1  TSS  EXP  0.1  1.0  0  0\n";
 
 struct DeckRun {
-    SWMM_Engine e = nullptr; bool ok = false; int rc_open = -1;
+    SWMM_Engine e = nullptr;
+    bool ok = false;
+    int rc_open = -1;
     std::vector<double> tss_j1;
     std::vector<std::string> warnings;
-    double v_start = 0.0;            // Σ cell volume (m³) right after start
+    double v_start = 0.0; // Σ cell volume (m³) right after start
 };
+/**
+ * @brief Write/start a surface-quality deck and optionally collect its J1 concentration trace.
+ *
+ * Creation/open/init/start failure leaves ok=false and retains an allocated handle for cleanup.
+ * When stepping, records samples only after successful nonterminal steps; later step error still
+ * permits ok=true, so ok does not certify completion. Leaves engine un-ended, copies warnings after
+ * the loop and performs no status assertion itself.
+ *
+ * @param[in] tag Filesystem-safe path stem for overwritten .inp/.rpt/.out artifacts in cwd.
+ * @param[in] body Complete deck text passed to write().
+ * @param[in] step True attempts steps until error/completion; false inspects successful startup
+ *     only.
+ * @return Owning DeckRun containing handle, raw open code, initial surface volume m3, J1
+ *     first-pollutant samples and warnings; caller invokes close for any non-null handle.
+ */
 DeckRun run(const std::string& tag, const std::string& body, bool step = true) {
     DeckRun r;
     write(tag + ".inp", body);
     r.e = swmm_engine_create();
-    if (!r.e) return r;
-    r.rc_open = swmm_engine_open(r.e, (tag + ".inp").c_str(), (tag + ".rpt").c_str(), (tag + ".out").c_str(), nullptr);
-    if (r.rc_open != SWMM_OK) return r;
-    if (swmm_engine_initialize(r.e) != SWMM_OK || swmm_engine_start(r.e, 1) != SWMM_OK) return r;
+    if (!r.e)
+        return r;
+    r.rc_open = swmm_engine_open(r.e, (tag + ".inp").c_str(), (tag + ".rpt").c_str(),
+                                 (tag + ".out").c_str(), nullptr);
+    if (r.rc_open != SWMM_OK)
+        return r;
+    if (swmm_engine_initialize(r.e) != SWMM_OK || swmm_engine_start(r.e, 1) != SWMM_OK)
+        return r;
     auto& ctx = cpp(r.e).context();
     const int j1 = ctx.node_names.find("J1");
-    for (double v : cpp(r.e).surfaceRouter2D().state().volume) r.v_start += v;
+    for (double v : cpp(r.e).surfaceRouter2D().state().volume)
+        r.v_start += v;
     if (step) {
         double elapsed = 0.0;
         while (swmm_engine_step(r.e, &elapsed) == SWMM_OK && elapsed > 0.0) {
             if (j1 >= 0 && ctx.n_pollutants() > 0)
-                r.tss_j1.push_back(ctx.nodes.conc[static_cast<std::size_t>(j1) * ctx.n_pollutants()]);
+                r.tss_j1.push_back(
+                    ctx.nodes.conc[static_cast<std::size_t>(j1) * ctx.n_pollutants()]);
         }
     }
     r.warnings = ctx.warnings;
     r.ok = true;
     return r;
 }
-void close(DeckRun& r) { if (!r.e) return; swmm_engine_end(r.e); swmm_engine_close(r.e); swmm_engine_destroy(r.e); r.e = nullptr; }
+/**
+ * @brief End/close/destroy the surface-quality result's engine and clear its handle.
+ *
+ * Ignores cleanup statuses and sets e=null. Leaves ok, metrics and warning copies unchanged;
+ * borrowed references into the engine expire and artifacts are retained.
+ *
+ * @param[in,out] r Owning run result; null e is accepted as a no-op.
+ */
+void close(DeckRun& r) {
+    if (!r.e)
+        return;
+    swmm_engine_end(r.e);
+    swmm_engine_close(r.e);
+    swmm_engine_destroy(r.e);
+    r.e = nullptr;
+}
 
-double storeUserMass(const SurfaceQuality2D& sq, const MeshData& mesh, int s, double area_to_la, bool si) {
+/**
+ * @brief Integrate per-land-area buildup across mesh cell areas.
+ *
+ * Does not independently convert mass units, apply coverage a second time, validate extents or
+ * mutate buildup.
+ *
+ * @param[in] sq Initialized stable surface-quality store whose nCells/species indexing matches
+ *     mesh.
+ * @param[in] mesh Mesh with at least sq.nCells() areas in m2.
+ * @param[in] s Valid buildup species index, unchecked here.
+ * @param[in] area_to_la Conversion factor from m2 to the store's land-area unit, such
+ *     as1/4046.8564224 acres/m2.
+ * @param[in] si Ignored compatibility flag; does not change the calculation or units.
+ * @return Sum buildupPerArea*cellArea*area_to_la in the species' authored user-mass units.
+ */
+double storeUserMass(const SurfaceQuality2D& sq, const MeshData& mesh, int s, double area_to_la,
+                     bool si) {
     (void)si;
     double total = 0.0;
     for (int c = 0; c < sq.nCells(); ++c)
@@ -189,7 +290,7 @@ TEST(SurfaceQuality2D_S7, BuildupParityWithSubcatchment) {
     DeckRun r = run("_s7_par", deck(o));
     ASSERT_TRUE(r.ok) << "open rc " << r.rc_open;
     const auto& eng = cpp(r.e);
-    const auto& sq  = eng.surfaceRouter2D().surfaceQuality();
+    const auto& sq = eng.surfaceRouter2D().surfaceQuality();
     ASSERT_TRUE(sq.active());
     ASSERT_EQ(sq.nSpecies(), 2);
     ASSERT_EQ(sq.nLandUses(), 1);
@@ -206,7 +307,8 @@ TEST(SurfaceQuality2D_S7, BuildupParityWithSubcatchment) {
     // Ledger: initial buildup = 10 lbs/ac × Σ area(ac); net accrual > 0; nothing washed.
     const auto& mesh = eng.surfaceRouter2D().mesh();
     double area_ac = 0.0;
-    for (int c = 0; c < mesh.n_triangles(); ++c) area_ac += mesh.tri_area[static_cast<std::size_t>(c)] / 4046.8564224;
+    for (int c = 0; c < mesh.n_triangles(); ++c)
+        area_ac += mesh.tri_area[static_cast<std::size_t>(c)] / 4046.8564224;
     EXPECT_NEAR(sq.ledInitBuildup()[0], 10.0 * area_ac, 1e-12 * 10.0 * area_ac);
     EXPECT_GT(sq.ledBuildup()[0], 0.0);
     EXPECT_EQ(sq.ledWashoff()[0], 0.0) << "no flow, no washoff";
@@ -224,8 +326,10 @@ TEST(SurfaceQuality2D_S7, BuildupParityWithSubcatchment) {
 TEST(SurfaceQuality2D_S7, EmcWashoffIsExactOnATriangleAndAQuadPan) {
     for (const bool quad : {false, true}) {
         DeckOpts o;
-        o.node = "J1"; o.z_pan = 5.0; o.h0 = 0.5;   // pan above J1's rim (1.0): drains
-        o.exch_area = 0.002;                         // ~15 min to empty
+        o.node = "J1";
+        o.z_pan = 5.0;
+        o.h0 = 0.5;          // pan above J1's rim (1.0): drains
+        o.exch_area = 0.002; // ~15 min to empty
         o.quality = "\n[POLLUTANTS]\nTSS  MG/L  0  0  0  0  NO  *  0.0  0  0\n"
                     "\n[LANDUSES]\nLU1  0  0  0\n"
                     "\n[WASHOFF]\nLU1  TSS  EMC  50  0  0  0\n";
@@ -244,9 +348,9 @@ TEST(SurfaceQuality2D_S7, EmcWashoffIsExactOnATriangleAndAQuadPan) {
         // since the last runoff step (the routing loop runs past it)
         double v_end = 0.0, runoff = 0.0, wet = 0.0, pending = 0.0;
         for (int c = 0; c < tr.n_cells; ++c) {
-            v_end   += st.volume[static_cast<std::size_t>(c)];
-            runoff  += sq.runoffVolume(c);
-            wet     += sq.wetRunoffVolume(c);
+            v_end += st.volume[static_cast<std::size_t>(c)];
+            runoff += sq.runoffVolume(c);
+            wet += sq.wetRunoffVolume(c);
             pending += std::max(tr.cell_runoff_vol[static_cast<std::size_t>(c)], 0.0);
         }
         const double v0 = r.v_start;
@@ -281,7 +385,9 @@ TEST(SurfaceQuality2D_S7, EmcWashoffIsExactOnATriangleAndAQuadPan) {
 // ---------------------------------------------------------------------------
 TEST(SurfaceQuality2D_S7, EmcWashoffIsExactOnAMixedTriQuadPan) {
     DeckOpts o;
-    o.node = "J1"; o.z_pan = 5.0; o.h0 = 0.5;
+    o.node = "J1";
+    o.z_pan = 5.0;
+    o.h0 = 0.5;
     o.exch_area = 0.002;
     o.quality = "\n[POLLUTANTS]\nTSS  MG/L  0  0  0  0  NO  *  0.0  0  0\n"
                 "\n[LANDUSES]\nLU1  0  0  0\n"
@@ -303,9 +409,9 @@ TEST(SurfaceQuality2D_S7, EmcWashoffIsExactOnAMixedTriQuadPan) {
 
     double v_end = 0.0, runoff = 0.0, wet = 0.0, pending = 0.0;
     for (int c = 0; c < tr.n_cells; ++c) {
-        v_end   += st.volume[static_cast<std::size_t>(c)];
-        runoff  += sq.runoffVolume(c);
-        wet     += sq.wetRunoffVolume(c);
+        v_end += st.volume[static_cast<std::size_t>(c)];
+        runoff += sq.runoffVolume(c);
+        wet += sq.wetRunoffVolume(c);
         pending += std::max(tr.cell_runoff_vol[static_cast<std::size_t>(c)], 0.0);
     }
     const double v0 = r.v_start;
@@ -332,10 +438,12 @@ TEST(SurfaceQuality2D_S7, EmcWashoffIsExactOnAMixedTriQuadPan) {
 // ---------------------------------------------------------------------------
 TEST(SurfaceQuality2D_S7, LedgerClosesUnderRainWithSweepingAndBmp) {
     DeckOpts o;
-    o.node = "J1"; o.z_pan = 5.0; o.h0 = 0.0;   // dry pan, rain fills and drains it
+    o.node = "J1";
+    o.z_pan = 5.0;
+    o.h0 = 0.0; // dry pan, rain fills and drains it
     o.rain = true;
     o.quality = "\n[POLLUTANTS]\nTSS  MG/L  0  0  0  0  NO  *  0.0  0  0\n"
-                "\n[LANDUSES]\nLU1  0.05  60  0\n"                 // sweep every 1.2 h dry
+                "\n[LANDUSES]\nLU1  0.05  60  0\n" // sweep every 1.2 h dry
                 "\n[BUILDUP]\nLU1  TSS  POW  100  2  1  AREA\n"
                 "\n[WASHOFF]\nLU1  TSS  EXP  0.5  1.0  50  20\n";
     o.coverages = "\n[2D_COVERAGES]\n*  LU1  100\n";
@@ -350,11 +458,12 @@ TEST(SurfaceQuality2D_S7, LedgerClosesUnderRainWithSweepingAndBmp) {
     // final store, user mass
     double final_store = 0.0;
     for (int c = 0; c < sq.nCells(); ++c)
-        final_store += sq.buildupPerArea(c, 0) * mesh.tri_area[static_cast<std::size_t>(c)] / 4046.8564224;
-    const double lhs = sq.ledInitBuildup()[0] + sq.ledBuildup()[0] - sq.ledWashoff()[0]
-                     - sq.ledBmp()[0] - sq.ledSweeping()[0];
+        final_store +=
+            sq.buildupPerArea(c, 0) * mesh.tri_area[static_cast<std::size_t>(c)] / 4046.8564224;
+    const double lhs = sq.ledInitBuildup()[0] + sq.ledBuildup()[0] - sq.ledWashoff()[0] -
+                       sq.ledBmp()[0] - sq.ledSweeping()[0];
     const double scale = sq.ledInitBuildup()[0] + sq.ledBuildup()[0];
-    EXPECT_GT(sq.ledWashoff()[0], 0.0)  << "rain must wash something off";
+    EXPECT_GT(sq.ledWashoff()[0], 0.0) << "rain must wash something off";
     EXPECT_GT(sq.ledBmp()[0], 0.0);
     EXPECT_GT(sq.ledSweeping()[0], 0.0) << "one sweep in the dry tail";
     EXPECT_NEAR(lhs, final_store, 1e-10 * scale) << "init + net − washed − BMP − swept == store";
@@ -362,7 +471,8 @@ TEST(SurfaceQuality2D_S7, LedgerClosesUnderRainWithSweepingAndBmp) {
     // is on the pan or in J1 (S1 identity with gained_washoff subtracted).
     EXPECT_NEAR(tr.totalIncludingLedgers(0), 0.0, 1e-9 * tr.gained_washoff[0]);
     // Row units ↔ user mass: washed_user = gained_washoff × 1000 × mcf
-    EXPECT_NEAR(sq.ledWashoff()[0], tr.gained_washoff[0] * 1000.0 * sq.mcf(0), 1e-9 * sq.ledWashoff()[0]);
+    EXPECT_NEAR(sq.ledWashoff()[0], tr.gained_washoff[0] * 1000.0 * sq.mcf(0),
+                1e-9 * sq.ledWashoff()[0]);
     close(r);
 }
 
@@ -378,7 +488,9 @@ TEST(SurfaceQuality2D_S7, OwnershipWarnings) {
         DeckRun r = run("_s7_own_none", deck(o), false);
         ASSERT_TRUE(r.ok);
         int hits = 0;
-        for (const auto& w : r.warnings) if (w.find("RAINFALL_MODE NONE") != std::string::npos) ++hits;
+        for (const auto& w : r.warnings)
+            if (w.find("RAINFALL_MODE NONE") != std::string::npos)
+                ++hits;
         EXPECT_EQ(hits, 1);
         EXPECT_FALSE(cpp(r.e).surfaceRouter2D().surfaceQuality().active()) << "inert";
         close(r);
@@ -394,7 +506,9 @@ TEST(SurfaceQuality2D_S7, OwnershipWarnings) {
         ASSERT_TRUE(r.ok);
         int hits = 0;
         for (const auto& w : r.warnings)
-            if (w.find("covered cells lie inside subcatchment") != std::string::npos && w.find("S1") != std::string::npos) ++hits;
+            if (w.find("covered cells lie inside subcatchment") != std::string::npos &&
+                w.find("S1") != std::string::npos)
+                ++hits;
         EXPECT_EQ(hits, 1);
         EXPECT_TRUE(cpp(r.e).surfaceRouter2D().surfaceQuality().active()) << "the run proceeds";
         close(r);
@@ -417,9 +531,12 @@ TEST(SurfaceQuality2D_S7, RoundTripAndGrammar) {
     SWMM_Engine e = swmm_engine_create();
     ASSERT_EQ(swmm_engine_open(e, "_s7_rt.inp", "_s7_rt.rpt", "_s7_rt.out", nullptr), SWMM_OK);
     ASSERT_EQ(swmm_model_write(e, "_s7_rt_saved.inp"), SWMM_OK);
-    swmm_engine_close(e); swmm_engine_destroy(e);
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
     {
-        std::ifstream f("_s7_rt_saved.inp"); std::stringstream ss; ss << f.rdbuf();
+        std::ifstream f("_s7_rt_saved.inp");
+        std::stringstream ss;
+        ss << f.rdbuf();
         const std::string t = ss.str();
         EXPECT_NE(t.find("[2D_COVERAGES]"), std::string::npos);
         EXPECT_NE(t.find("TAG pan"), std::string::npos);
@@ -428,7 +545,8 @@ TEST(SurfaceQuality2D_S7, RoundTripAndGrammar) {
         EXPECT_NE(t.find("[2D_CURB_LENGTH]"), std::string::npos);
     }
     SWMM_Engine e2 = swmm_engine_create();
-    ASSERT_EQ(swmm_engine_open(e2, "_s7_rt_saved.inp", "_s7_rt2.rpt", "_s7_rt2.out", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(e2, "_s7_rt_saved.inp", "_s7_rt2.rpt", "_s7_rt2.out", nullptr),
+              SWMM_OK);
     ASSERT_EQ(swmm_engine_initialize(e2), SWMM_OK);
     const auto& sq = cpp(e2).surfaceRouter2D().surfaceQuality();
     ASSERT_EQ(sq.coverage_rows.size(), 3u);
@@ -436,10 +554,10 @@ TEST(SurfaceQuality2D_S7, RoundTripAndGrammar) {
     ASSERT_EQ(sq.curb_rows.size(), 2u);
     ASSERT_TRUE(sq.active());
     // GLOBAL < TAG < CELL: cell 1 (index 0) took the TAG row, cell 2 the CELL row.
-    EXPECT_DOUBLE_EQ(sq.coverage(0, 0), 1.0);   // LU1 100 %
+    EXPECT_DOUBLE_EQ(sq.coverage(0, 0), 1.0); // LU1 100 %
     EXPECT_DOUBLE_EQ(sq.coverage(0, 1), 0.0);
     EXPECT_DOUBLE_EQ(sq.coverage(1, 0), 0.0);
-    EXPECT_DOUBLE_EQ(sq.coverage(1, 1), 1.0);   // LU2 100 %
+    EXPECT_DOUBLE_EQ(sq.coverage(1, 1), 1.0); // LU2 100 %
     EXPECT_DOUBLE_EQ(sq.curbLength(0), 30.0);
     EXPECT_DOUBLE_EQ(sq.curbLength(1), 45.0);
     // loadings: cell 1 → 3 (CELL row wins), cell 2 → 12.5 (GLOBAL); LU2 is
@@ -447,39 +565,55 @@ TEST(SurfaceQuality2D_S7, RoundTripAndGrammar) {
     EXPECT_DOUBLE_EQ(sq.buildup(0, 0, 0), 3.0);
     const double area2_ac = cpp(e2).surfaceRouter2D().mesh().tri_area[1] / 4046.8564224;
     EXPECT_NEAR(sq.buildup(1, 1, 0), 12.5 * area2_ac / 45.0, 1e-12);
-    swmm_engine_close(e2); swmm_engine_destroy(e2);
+    swmm_engine_close(e2);
+    swmm_engine_destroy(e2);
 
     // Grammar refusals at open.
-    auto refused = [&](const char* tag, const std::string& cov, const std::string& quality = kQualityPow) {
-        DeckOpts q; q.quality = quality; q.coverages = cov;
+    auto refused = [&](const char* tag, const std::string& cov,
+                       const std::string& quality = kQualityPow) {
+        DeckOpts q;
+        q.quality = quality;
+        q.coverages = cov;
         write(std::string(tag) + ".inp", deck(q));
         SWMM_Engine x = swmm_engine_create();
         const int rc = swmm_engine_open(x, (std::string(tag) + ".inp").c_str(),
-                                        (std::string(tag) + ".rpt").c_str(), (std::string(tag) + ".out").c_str(), nullptr);
+                                        (std::string(tag) + ".rpt").c_str(),
+                                        (std::string(tag) + ".out").c_str(), nullptr);
         int rc2 = SWMM_OK;
-        if (rc == SWMM_OK) rc2 = swmm_engine_initialize(x);
-        swmm_engine_close(x); swmm_engine_destroy(x);
+        if (rc == SWMM_OK)
+            rc2 = swmm_engine_initialize(x);
+        swmm_engine_close(x);
+        swmm_engine_destroy(x);
         return rc != SWMM_OK || rc2 != SWMM_OK;
     };
-    EXPECT_TRUE(refused("_s7_bad_pct", "\n[2D_COVERAGES]\n*  LU1  70  LU1  40\n")) << "percent > 100";
-    EXPECT_TRUE(refused("_s7_bad_lu",  "\n[2D_COVERAGES]\n*  NOPE  100\n"))       << "unknown land use";
-    EXPECT_TRUE(refused("_s7_bad_curb", "\n[2D_COVERAGES]\n*  LU1  100\n",
+    EXPECT_TRUE(refused("_s7_bad_pct", "\n[2D_COVERAGES]\n*  LU1  70  LU1  40\n"))
+        << "percent > 100";
+    EXPECT_TRUE(refused("_s7_bad_lu", "\n[2D_COVERAGES]\n*  NOPE  100\n")) << "unknown land use";
+    EXPECT_TRUE(refused(
+        "_s7_bad_curb", "\n[2D_COVERAGES]\n*  LU1  100\n",
         "\n[POLLUTANTS]\nTSS  MG/L  0  0  0  0  NO  *  0.0  0  0\n\n[LANDUSES]\nLU1  0  0  0\n"
-        "\n[BUILDUP]\nLU1  TSS  POW  100  2  1  CURB\n")) << "PER_CURB without [2D_CURB_LENGTH]";
+        "\n[BUILDUP]\nLU1  TSS  POW  100  2  1  CURB\n"))
+        << "PER_CURB without [2D_CURB_LENGTH]";
 }
 
 // ---------------------------------------------------------------------------
 // 6. Inert rows change nothing.
 // ---------------------------------------------------------------------------
 TEST(SurfaceQuality2D_S7, InertRowsLeaveTheHydrographBitIdentical) {
-    DeckOpts a; a.node = "J1"; a.z_pan = 5.0; a.h0 = 0.5; a.end_time = "00:30:00";
-    a.quality = "\n[POLLUTANTS]\nTSS  MG/L  0  0  0  0  NO  *  0.0  0  0\n\n[LANDUSES]\nLU1  0  0  0\n";
+    DeckOpts a;
+    a.node = "J1";
+    a.z_pan = 5.0;
+    a.h0 = 0.5;
+    a.end_time = "00:30:00";
+    a.quality =
+        "\n[POLLUTANTS]\nTSS  MG/L  0  0  0  0  NO  *  0.0  0  0\n\n[LANDUSES]\nLU1  0  0  0\n";
     a.coverages = "";
     DeckOpts b = a;
-    b.coverages = "\n[2D_COVERAGES]\n*  LU1  100\n";   // LU1 has no buildup / washoff function
+    b.coverages = "\n[2D_COVERAGES]\n*  LU1  100\n"; // LU1 has no buildup / washoff function
     DeckRun ra = run("_s7_inert_a", deck(a));
     DeckRun rb = run("_s7_inert_b", deck(b));
-    ASSERT_TRUE(ra.ok); ASSERT_TRUE(rb.ok);
+    ASSERT_TRUE(ra.ok);
+    ASSERT_TRUE(rb.ok);
     EXPECT_FALSE(cpp(ra.e).surfaceRouter2D().surfaceQuality().active());
     EXPECT_TRUE(cpp(rb.e).surfaceRouter2D().surfaceQuality().active());
     const auto& sa = cpp(ra.e).surfaceRouter2D().state();
@@ -487,9 +621,11 @@ TEST(SurfaceQuality2D_S7, InertRowsLeaveTheHydrographBitIdentical) {
     for (std::size_t c = 0; c < sa.volume.size(); ++c)
         EXPECT_EQ(sa.volume[c], sb.volume[c]) << "cell " << c;
     ASSERT_EQ(ra.tss_j1.size(), rb.tss_j1.size());
-    for (std::size_t k = 0; k < ra.tss_j1.size(); ++k) ASSERT_EQ(ra.tss_j1[k], rb.tss_j1[k]) << k;
+    for (std::size_t k = 0; k < ra.tss_j1.size(); ++k)
+        ASSERT_EQ(ra.tss_j1[k], rb.tss_j1[k]) << k;
     EXPECT_EQ(sb.transport.gained_washoff[0], 0.0);
-    close(ra); close(rb);
+    close(ra);
+    close(rb);
 }
 
 // ---------------------------------------------------------------------------
@@ -513,34 +649,46 @@ TEST(SurfaceQuality2D_S7, CApiRowsShareTheFileGrammar) {
     const char* lus[2] = {"LU1", "LU2"};
     const double pcts[2] = {60.0, 25.0};
     ASSERT_EQ(swmm_2d_coverage_set(e, SWMM_SQ2D_SCOPE_GLOBAL, nullptr, -1, lus, pcts, 2), SWMM_OK);
-    const char* lu1[1] = {"LU1"}; const double p100[1] = {100.0};
+    const char* lu1[1] = {"LU1"};
+    const double p100[1] = {100.0};
     ASSERT_EQ(swmm_2d_coverage_set(e, SWMM_SQ2D_SCOPE_TAG, "pan", -1, lu1, p100, 1), SWMM_OK);
     const char* lu2[1] = {"LU2"};
     ASSERT_EQ(swmm_2d_coverage_set(e, SWMM_SQ2D_SCOPE_CELL, nullptr, 1, lu2, p100, 1), SWMM_OK);
     // grammar: percent > 100, unknown land use, TAG without a tag
     const double bad[2] = {70.0, 40.0};
-    EXPECT_EQ(swmm_2d_coverage_set(e, SWMM_SQ2D_SCOPE_GLOBAL, nullptr, -1, lus, bad, 2), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_2d_coverage_set(e, SWMM_SQ2D_SCOPE_GLOBAL, nullptr, -1, lus, bad, 2),
+              SWMM_ERR_BADPARAM);
     const char* nope[1] = {"NOPE"};
-    EXPECT_EQ(swmm_2d_coverage_set(e, SWMM_SQ2D_SCOPE_GLOBAL, nullptr, -1, nope, p100, 1), SWMM_ERR_BADPARAM);
-    EXPECT_EQ(swmm_2d_coverage_set(e, SWMM_SQ2D_SCOPE_TAG, nullptr, -1, lu1, p100, 1), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_2d_coverage_set(e, SWMM_SQ2D_SCOPE_GLOBAL, nullptr, -1, nope, p100, 1),
+              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_2d_coverage_set(e, SWMM_SQ2D_SCOPE_TAG, nullptr, -1, lu1, p100, 1),
+              SWMM_ERR_BADPARAM);
     // a same-scope row replaces: re-set GLOBAL, still 3 rows
     ASSERT_EQ(swmm_2d_coverage_set(e, SWMM_SQ2D_SCOPE_GLOBAL, nullptr, -1, lus, pcts, 2), SWMM_OK);
     ASSERT_EQ(swmm_2d_coverage_count(e, &n), SWMM_OK);
     EXPECT_EQ(n, 3);
     ASSERT_EQ(swmm_2d_loading_set(e, SWMM_SQ2D_SCOPE_GLOBAL, nullptr, -1, "TSS", 12.5), SWMM_OK);
     ASSERT_EQ(swmm_2d_loading_set(e, SWMM_SQ2D_SCOPE_CELL, nullptr, 0, "TSS", 3.0), SWMM_OK);
-    EXPECT_EQ(swmm_2d_loading_set(e, SWMM_SQ2D_SCOPE_GLOBAL, nullptr, -1, "__WATER_AGE__", 1.0), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_2d_loading_set(e, SWMM_SQ2D_SCOPE_GLOBAL, nullptr, -1, "__WATER_AGE__", 1.0),
+              SWMM_ERR_BADPARAM);
     ASSERT_EQ(swmm_2d_curb_length_set(e, SWMM_SQ2D_SCOPE_GLOBAL, nullptr, -1, 30.0), SWMM_OK);
     ASSERT_EQ(swmm_2d_curb_length_set(e, SWMM_SQ2D_SCOPE_CELL, nullptr, 1, 45.0), SWMM_OK);
     // read-back of the CELL coverage row (index 2 after the GLOBAL re-set: TAG, CELL, GLOBAL)
-    int scope = -1, cell = -1, k = -1; char tag[32] = {0}, lu[32] = {0}; double pct = 0.0;
+    int scope = -1, cell = -1, k = -1;
+    char tag[32] = {0}, lu[32] = {0};
+    double pct = 0.0;
     ASSERT_EQ(swmm_2d_coverage_row_size(e, 1, &k), SWMM_OK);
     EXPECT_EQ(k, 1);
     ASSERT_EQ(swmm_2d_coverage_get(e, 1, 0, &scope, tag, 32, &cell, lu, 32, &pct), SWMM_OK);
-    EXPECT_EQ(scope, SWMM_SQ2D_SCOPE_CELL); EXPECT_EQ(cell, 1); EXPECT_STREQ(lu, "LU2"); EXPECT_DOUBLE_EQ(pct, 100.0);
+    EXPECT_EQ(scope, SWMM_SQ2D_SCOPE_CELL);
+    EXPECT_EQ(cell, 1);
+    EXPECT_STREQ(lu, "LU2");
+    EXPECT_DOUBLE_EQ(pct, 100.0);
     double len = 0.0;
     ASSERT_EQ(swmm_2d_curb_length_get(e, 1, &scope, tag, 32, &cell, &len), SWMM_OK);
-    EXPECT_EQ(scope, SWMM_SQ2D_SCOPE_CELL); EXPECT_EQ(cell, 1); EXPECT_DOUBLE_EQ(len, 45.0);
+    EXPECT_EQ(scope, SWMM_SQ2D_SCOPE_CELL);
+    EXPECT_EQ(cell, 1);
+    EXPECT_DOUBLE_EQ(len, 45.0);
 
     // …and they resolve exactly as the RoundTripAndGrammar deck's rows did.
     ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
@@ -555,12 +703,14 @@ TEST(SurfaceQuality2D_S7, CApiRowsShareTheFileGrammar) {
     EXPECT_NEAR(sq.buildup(1, 1, 0), 12.5 * area2_ac / 45.0, 1e-12);
     // edits are refused once initialized; the store reads back
     EXPECT_EQ(swmm_2d_coverage_remove(e, 0), SWMM_ERR_LIFECYCLE);
-    EXPECT_EQ(swmm_2d_curb_length_set(e, SWMM_SQ2D_SCOPE_GLOBAL, nullptr, -1, 1.0), SWMM_ERR_LIFECYCLE);
+    EXPECT_EQ(swmm_2d_curb_length_set(e, SWMM_SQ2D_SCOPE_GLOBAL, nullptr, -1, 1.0),
+              SWMM_ERR_LIFECYCLE);
     double bu[2] = {0.0, 0.0};
     ASSERT_EQ(swmm_2d_get_buildup_bulk(e, "TSS", bu, 2), SWMM_OK);
     EXPECT_DOUBLE_EQ(bu[0], sq.buildupPerArea(0, 0));
     EXPECT_DOUBLE_EQ(bu[1], sq.buildupPerArea(1, 0));
-    swmm_engine_close(e); swmm_engine_destroy(e);
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
 }
 
 // ---------------------------------------------------------------------------
@@ -568,14 +718,31 @@ TEST(SurfaceQuality2D_S7, CApiRowsShareTheFileGrammar) {
 // subcatchment kernel's rules. Each case failed before the alignment.
 // ---------------------------------------------------------------------------
 namespace {
+/**
+ * @brief Create options for a slowly draining quality pan with explicit row text.
+ *
+ * Other flags/defaults remain those of DeckOpts; does not construct the final deck, run a case or
+ * validate the provided text.
+ *
+ * @param[in] quality Raw pollutant/land-use/buildup/washoff section text.
+ * @param[in] coverages Raw surface coverage section text.
+ * @param[in] end Same-date END_TIME token, default 00:40:00.
+ * @return Owned options with J1 coupling, authored bed5/depth.5 feet under deck CFS units and
+ *     exchange area.002 in the authored coupling-area convention.
+ */
 DeckOpts drainingPan(const std::string& quality, const std::string& coverages,
                      const std::string& end = "00:40:00") {
     DeckOpts o;
-    o.node = "J1"; o.z_pan = 5.0; o.h0 = 0.5; o.exch_area = 0.002;
-    o.quality = quality; o.coverages = coverages; o.end_time = end;
+    o.node = "J1";
+    o.z_pan = 5.0;
+    o.h0 = 0.5;
+    o.exch_area = 0.002;
+    o.quality = quality;
+    o.coverages = coverages;
+    o.end_time = end;
     return o;
 }
-}  // namespace
+} // namespace
 
 // Buildup accrues only on a dry step (legacy runoff.c:280). The pan runs off
 // on every step of this 10-minute run, so its store must not grow; before,
@@ -595,9 +762,11 @@ TEST(SurfaceQuality2D_S7, BuildupWaitsForADryStep) {
     ASSERT_EQ(swmm_engine_step(r.e, &elapsed), SWMM_OK);
     const double b0 = sq.buildup(0, 0, 0);
     ASSERT_GT(b0, 0.0);
-    while (swmm_engine_step(r.e, &elapsed) == SWMM_OK && elapsed > 0.0) {}
+    while (swmm_engine_step(r.e, &elapsed) == SWMM_OK && elapsed > 0.0) {
+    }
     double runoff = 0.0;
-    for (int c = 0; c < sq.nCells(); ++c) runoff += sq.runoffVolume(c);
+    for (int c = 0; c < sq.nCells(); ++c)
+        runoff += sq.runoffVolume(c);
     ASSERT_GT(runoff, 0.0) << "the pan must run off";
     EXPECT_EQ(sq.buildup(0, 0, 0), b0) << "buildup accrued while the cell was running off";
     close(r);
@@ -607,21 +776,24 @@ TEST(SurfaceQuality2D_S7, BuildupWaitsForADryStep) {
 // (the kernel's frac). Two land uses at 50 % with EMC 50 must wash off
 // 50 × runoff, not 100 ×.
 TEST(SurfaceQuality2D_S7, EmcWashoffScalesWithLandUseShare) {
-    DeckOpts o = drainingPan("\n[POLLUTANTS]\nTSS  MG/L  0  0  0  0  NO  *  0.0  0  0\n"
-                             "\n[LANDUSES]\nLU1  0  0  0\nLU2  0  0  0\n"
-                             "\n[WASHOFF]\nLU1  TSS  EMC  50  0  0  0\nLU2  TSS  EMC  50  0  0  0\n",
-                             "\n[2D_COVERAGES]\nTAG pan  LU1  50  LU2  50\n");
+    DeckOpts o =
+        drainingPan("\n[POLLUTANTS]\nTSS  MG/L  0  0  0  0  NO  *  0.0  0  0\n"
+                    "\n[LANDUSES]\nLU1  0  0  0\nLU2  0  0  0\n"
+                    "\n[WASHOFF]\nLU1  TSS  EMC  50  0  0  0\nLU2  TSS  EMC  50  0  0  0\n",
+                    "\n[2D_COVERAGES]\nTAG pan  LU1  50  LU2  50\n");
     DeckRun r = run("_s7_emc2", deck(o));
     ASSERT_TRUE(r.ok) << "open rc " << r.rc_open;
     const auto& sq = cpp(r.e).surfaceRouter2D().surfaceQuality();
     const auto& tr = cpp(r.e).surfaceRouter2D().state().transport;
     double runoff = 0.0;
-    for (int c = 0; c < sq.nCells(); ++c) runoff += sq.wetRunoffVolume(c);
+    for (int c = 0; c < sq.nCells(); ++c)
+        runoff += sq.wetRunoffVolume(c);
     ASSERT_GT(runoff, 0.0);
     ASSERT_EQ(sq.coverage(0, 0), 0.5) << "LU1 share";
     ASSERT_EQ(sq.coverage(0, 1), 0.5) << "LU2 share";
     EXPECT_NEAR(tr.gained_washoff[0], 50.0 * runoff, 1e-9 * 50.0 * runoff)
-        << "two half-covering land uses washed off " << tr.gained_washoff[0] / runoff << " × runoff";
+        << "two half-covering land uses washed off " << tr.gained_washoff[0] / runoff
+        << " × runoff";
     close(r);
 }
 
@@ -644,7 +816,7 @@ TEST(SurfaceQuality2D_S7, RatingCurveWithoutBuildupWashesOff) {
 // [LANDUSES] removal is a fraction, as legacy reads it. Before, the 2D store
 // divided it by 100 again. Dry pan, a sweep every 0.01 day removing half.
 TEST(SurfaceQuality2D_S7, SweepingRemovesItsFraction) {
-    DeckOpts o;   // default pan: below J1, no flow, no rain
+    DeckOpts o; // default pan: below J1, no flow, no rain
     o.quality = "\n[POLLUTANTS]\nTSS  MG/L  0  0  0  0  NO  *  0.0  0  0\n"
                 "\n[LANDUSES]\nLU1  0.01  0.5  0\n"
                 "\n[BUILDUP]\nLU1  TSS  POW  100  2  1  AREA\n"

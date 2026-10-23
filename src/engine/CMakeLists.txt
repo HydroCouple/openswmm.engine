@@ -46,6 +46,8 @@ file(GLOB_RECURSE OPENSWMM_ENGINE_SOURCES CONFIGURE_DEPENDS
 list(FILTER OPENSWMM_ENGINE_SOURCES EXCLUDE REGEX "input/geopackage/.*")
 # io/hdf5 is gated on OPENSWMM_WITH_HDF5 and re-added below when it is on.
 list(FILTER OPENSWMM_ENGINE_SOURCES EXCLUDE REGEX "io/hdf5/.*")
+# The checkpoint VFD is compiled with the optional mesh HDF5 writer below.
+list(FILTER OPENSWMM_ENGINE_SOURCES EXCLUDE REGEX "io/CheckpointHdf5[.]cpp$")
 
 file(GLOB_RECURSE OPENSWMM_ENGINE_HEADERS
     RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
@@ -95,8 +97,6 @@ add_library(openswmm::engine ALIAS openswmm_engine)
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/GpuContract.cmake)
 openswmm_gpu_contract(openswmm_engine)
-find_package(Threads REQUIRED)
-target_link_libraries(openswmm_engine PRIVATE Threads::Threads)
 
 # ---- Output name ----
 set_target_properties(openswmm_engine PROPERTIES
@@ -519,7 +519,8 @@ if(OPENSWMM_BUILD_2D)
     # results are read through the swmm_2d_* API.
     if(OPENSWMM_2D_HDF5_OUTPUT)
         list(APPEND OPENSWMM_2D_SOURCES 2d/output/Default2DOutputPlugin.cpp
-            2d/output/Default2DOutputCheckpoint.cpp)
+            2d/output/Default2DOutputCheckpoint.cpp
+            io/CheckpointHdf5.cpp)
     endif()
 
     target_sources(openswmm_engine PRIVATE ${OPENSWMM_2D_SOURCES})

@@ -15,15 +15,15 @@
 // limitations under the License.
 
 /**
- * @file SectionRegistry.cpp
- * @brief Implementation of the section-handler registry.
+ * @file      SectionRegistry.cpp
+ * @brief     Implementation of the section-handler registry.
  *
  * @see SectionRegistry.hpp for interface documentation.
  * @ingroup engine_input
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "SectionRegistry.hpp"
@@ -68,11 +68,8 @@ bool SectionRegistry::is_custom(std::string_view tag) const {
 // Dispatch
 // ============================================================================
 
-void SectionRegistry::dispatch(
-    std::string_view                tag,
-    SimulationContext&              ctx,
-    const std::vector<std::string>& lines
-) const {
+void SectionRegistry::dispatch(std::string_view tag, SimulationContext& ctx,
+                               const std::vector<std::string>& lines) const {
     const std::string key = normalize_tag(tag);
 
     // Custom handlers override built-ins with the same tag
@@ -100,14 +97,19 @@ void SectionRegistry::dispatch(
 std::vector<std::string> SectionRegistry::registered_tags() const {
     std::vector<std::string> tags;
     tags.reserve(builtin_.size() + custom_.size());
-    for (const auto& [tag, _] : builtin_) tags.push_back(tag);
+    for (const auto& [tag, _] : builtin_)
+        tags.push_back(tag);
     for (const auto& [tag, _] : custom_) {
         // Avoid duplicates (custom overrides same-named builtin)
         bool already = false;
         for (const auto& existing : tags) {
-            if (existing == tag) { already = true; break; }
+            if (existing == tag) {
+                already = true;
+                break;
+            }
         }
-        if (!already) tags.push_back(tag);
+        if (!already)
+            tags.push_back(tag);
     }
     return tags;
 }

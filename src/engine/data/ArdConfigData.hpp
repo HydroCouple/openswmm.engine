@@ -15,21 +15,21 @@
 // limitations under the License.
 
 /**
- * @file ArdConfigData.hpp
- * @brief Parsed configuration of the Eulerian ARD transport component
+ * @file      ArdConfigData.hpp
+ * @brief     Parsed configuration of the Eulerian ARD transport component
  *        (`org.hydrocouple.openswmm.transport.ard`, config file `model.ard`).
  *
  * @details Phase E3 of the Eulerian ARD plan activates the dispersion
  *          subset of the component config (D-UT8 placement: these options
  *          live in the external component file, NOT in [OPTIONS]):
  *
- *          ```
+ *          @code{.text}
  *          [TRANSPORT_OPTIONS]
  *          DISPERSION   OFF | FISCHER | <value>   ; global coefficient model
  *
  *          [CONDUIT_DISPERSION]
  *          <conduit_name>  <value>                ; per-conduit override
- *          ```
+ *          @endcode
  *
  *          Values are entered in project display units (len²/s — m²/s under
  *          SI flow units, ft²/s under US); the engine converts to internal
@@ -45,9 +45,9 @@
  * @see plans/transport/TRANSPORT_IO_PLUGIN_CONFIG_PLAN.md §3.2
  * @ingroup engine_data
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_DATA_ARD_CONFIG_DATA_HPP
@@ -70,19 +70,19 @@ namespace openswmm {
  *          text in the diagnostic.
  */
 struct ArdTransportRow {
-    std::string element;   ///< node name (boundary) / conduit name (source)
-    std::string species;   ///< MSX species name (pollutants refused in E5a)
-    bool        is_ts = false;
-    double      value = 0.0;   ///< VALUE mode: conc (BC, species units) or
-                               ///< mass rate (source, species mass units/s)
-    std::string ts_name;       ///< TIMESERIES mode
+    std::string element; ///< node name (boundary) / conduit name (source)
+    std::string species; ///< MSX species name (pollutants refused in E5a)
+    bool is_ts = false;
+    double value = 0.0;  ///< VALUE mode: conc (BC, species units) or
+                         ///< mass rate (source, species mass units/s)
+    std::string ts_name; ///< TIMESERIES mode
 };
 
 /// Global dispersion coefficient model ([TRANSPORT_OPTIONS] DISPERSION).
 enum class ArdDispersionMode : int {
-    OFF     = 0,  ///< no global dispersion (per-conduit overrides still apply)
-    FISCHER = 1,  ///< Fischer et al. (1979): D = 0.011 v²B²/(Y·U*), U* = √(gYS)
-    VALUE   = 2,  ///< uniform user value (display units, len²/s)
+    OFF = 0,     ///< no global dispersion (per-conduit overrides still apply)
+    FISCHER = 1, ///< Fischer et al. (1979): D = 0.011 v²B²/(Y·U*), U* = √(gYS)
+    VALUE = 2,   ///< uniform user value (display units, len²/s)
 };
 
 /**
@@ -106,7 +106,7 @@ struct ArdConfigData {
     // Per-conduit overrides (parallel arrays, SoA): link index + coefficient
     // in display units. Applied to every cell of the conduit; wins over the
     // global model.
-    std::vector<int>    conduit_disp_link;
+    std::vector<int> conduit_disp_link;
     std::vector<double> conduit_disp_value;
 
     // ---- E5a: raw boundary/source rows (cold; see ArdTransportRow) -------
@@ -119,15 +119,15 @@ struct ArdConfigData {
     // conc·ft³, so no conversion). Sources: distributed over the conduit's
     // cells, INTERNAL units conc·ft³/s (converted from species-mass/s by
     // dividing by kLitersPerFt3 at resolution).
-    std::vector<int>    bc_node;    ///< node index
-    std::vector<int>    bc_msx;     ///< ReactionData species index
-    std::vector<double> bc_value;   ///< VALUE-mode concentration
-    std::vector<int>    bc_ts;      ///< timeseries table index, -1 ⇒ VALUE
-    std::vector<int>    src_link;   ///< link index (conduit)
-    std::vector<int>    src_msx;
-    std::vector<double> src_value;  ///< VALUE-mode rate, internal conc·ft³/s
-    std::vector<int>    src_ts;     ///< ts index, -1 ⇒ VALUE (ts values are
-                                    ///< species-mass/s; engine converts)
+    std::vector<int> bc_node;     ///< node index
+    std::vector<int> bc_msx;      ///< ReactionData species index
+    std::vector<double> bc_value; ///< VALUE-mode concentration
+    std::vector<int> bc_ts;       ///< timeseries table index, -1 ⇒ VALUE
+    std::vector<int> src_link;    ///< link index (conduit)
+    std::vector<int> src_msx;
+    std::vector<double> src_value; ///< VALUE-mode rate, internal conc·ft³/s
+    std::vector<int> src_ts;       ///< ts index, -1 ⇒ VALUE (ts values are
+                                   ///< species-mass/s; engine converts)
     bool transport_rows_resolved = false;
 
     // ---- E5b ------------------------------------------------------------
@@ -152,19 +152,32 @@ struct ArdConfigData {
     /// resolved at apply against the CONFIG file's directory (empty ⇒ off).
     std::string detailed_output_path;
 
+    /**
+     * @brief Test whether a global dispersion mode or conduit override is authored.
+     * @return True for mode!=OFF or any conduit_disp_link row; values and parallel-column alignment are
+     *     not inspected.
+     */
     bool any_dispersion() const noexcept {
-        return dispersion_mode != ArdDispersionMode::OFF ||
-               !conduit_disp_link.empty();
+        return dispersion_mode != ArdDispersionMode::OFF || !conduit_disp_link.empty();
     }
+    /**
+     * @brief Test whether unresolved transport boundary/source rows are present.
+     * @return True if boundary_rows or source_rows is nonempty; resolved hot arrays and resolved flag
+     *     are not inspected.
+     */
     bool any_transport_rows() const noexcept {
         return !boundary_rows.empty() || !source_rows.empty();
     }
-    /// Anything in this config that only the ARD engine can honour — the
-    /// bypass-warning predicate (lesson 10: silence is misleading whenever
-    /// ANY of it is configured but the engine will not run).
+    /**
+     * @brief Test whether configuration carries ARD-specific engine content.
+     *
+     * Used for bypass diagnostics; configured/scalar-scheme/limiter flags alone and resolved-only hot
+     * arrays do not trigger this predicate.
+     * @return True for dispersion, raw transport rows, detailed-output path or target_dx>0.
+     */
     bool any_engine_content() const noexcept {
-        return any_dispersion() || any_transport_rows() ||
-               !detailed_output_path.empty() || target_dx > 0.0;
+        return any_dispersion() || any_transport_rows() || !detailed_output_path.empty() ||
+               target_dx > 0.0;
     }
 };
 
@@ -172,6 +185,6 @@ struct ArdConfigData {
 /// conversion (internal MSX store mass is concentration (mass/L) × ft³).
 inline constexpr double kLitersPerFt3 = 28.316846592;
 
-}  // namespace openswmm
+} // namespace openswmm
 
-#endif  // OPENSWMM_ENGINE_DATA_ARD_CONFIG_DATA_HPP
+#endif // OPENSWMM_ENGINE_DATA_ARD_CONFIG_DATA_HPP

@@ -843,6 +843,34 @@ formulation of de Almeida et al. (2012). The default \f$\theta = 0.8\f$
 applies enough diffusion to suppress the oscillation without visibly
 smearing fronts.
 
+**Smoothing over a fixed time interval.** By default,
+`THETA_REFERENCE_STEP = 0`: the authored weight is applied on every face
+firing. Shortening a routing window can create more face firings per second
+and increase this numerical damping. A positive `THETA_REFERENCE_STEP`
+\f$T_\theta\f$, in seconds, instead defines the retention over that interval:
+
+\f[
+\theta_f = \exp\!\left(\frac{\Delta t_f}{T_\theta}\ln\theta\right),\qquad
+\widehat q = q_f + (1-\theta_f)(q_{reconstructed}-q_f).
+\f]
+
+Here \f$\Delta t_f\f$ is the actual face step, including local-timestep tiers
+and shortened window tails. For a fixed reconstructed target, subdividing
+an interval gives the same total relaxation. The implementation evaluates
+the blend fraction with `expm1` to retain precision at small steps; CPU and
+Kokkos use the same scalar function. `THETA = 1` still disables blending
+and retains the existing no-vector-friction branch described above.
+
+For example, `THETA 0.8` with `THETA_REFERENCE_STEP 1` retains 80% of the
+momentum difference over one second, independently of the number of face
+steps. The equivalent relaxation timescale is
+\f$-T_\theta/\ln\theta\f$. This is a numerical stabilization control, not a
+discharge coefficient or a calibration to measured flow. Select the interval
+explicitly and check timestep refinement, stability, heads and conservation.
+Omitting it preserves the historical calculation and restart identity;
+positive values are included in checkpoint compatibility checks. Surface
+plugins must be rebuilt for GPU ABI v9, which includes the new option layout.
+
 Finally the result is clamped:
 
 | | | | |
@@ -1822,8 +1850,8 @@ junctions and one for outfalls.
 
 `[2D_VERTEX_NODE_MAP]` and `[2D_TRIANGLE_NODE_MAP]` associate a mesh
 vertex or cell with a SWMM node, with a discharge coefficient \f$C_d\f$
-(default 0.65) and an exchange area. Exchange is an orifice law on the
-head difference:
+(default 0.65) and an exchange area. With the legacy
+`COUPLING_LAW ORIFICE`, exchange is an orifice law on the head difference:
 
 | | | | |
 |---|---|---|---|
@@ -1883,6 +1911,197 @@ one.
 Exchange volumes reach the 1D side through the lateral-inflow **delivery
 queue**, drained at a uniform rate over the batch span rather than as a
 single-step pulse.
+
+#### Regime-aware exchange and fine-scale ponding {#hydraulics_ref_regime_exchange}
+
+`COUPLING_LAW WEIR_ORIFICE` combines free and submerged weir control with
+orifice control. Heads and geometry are evaluated in metres; Q > 0 denotes
+surface-to-network flow. With crest z, surface head h2, network head h1,
+surface depth hs = max(h2-z,0), crest perimeter L and opening area A:
+
+- Free drainage uses Qw = (2/3) Cw L sqrt(2g) hs phi(hs).
+- Submerged drainage uses Qw = Csw L sqrt(2g) hs phi(h2-h1).
+- Inward orifice control uses Qo = Coi A sqrt(2g) phi(hs), or the
+  submerged head difference. The drainage rate is the p-norm minimum
+  `(Qw^-16 + Qo^-16)^(-1/16)`. It is no greater than either control and is
+  about 4.2% below either when the two are equal.
+- Outward flow uses an orifice rate with coefficient Coo and blends the
+  dry-surface head h1-z into the wet-surface difference h1-h2.
+
+The free/submerged transition is smoothed over a submergence ratio of 0.1.
+The regularised root phi equals sqrt(x) above its head threshold and is
+quadratic below, with a finite derivative at zero. The routed implementation
+uses a 0.02 m threshold. That is a numerical regularisation scale, and is
+large relative to the heads of the Rubinato laboratory rig. A comparison
+using a smaller threshold only in the isolated law test does not validate
+the routed model at that scale.
+
+The dynamic-wave head sensitivity is a nonnegative damping approximation:
+blend-weight and availability-ramp derivatives are dropped. It should not
+be described as the exact derivative of the blended expression.
+
+| Preset | Cw | Csw | Coi | Coo |
+|---|---|---|---|---|
+| DEFAULT | 0.540 | 0.360 | 0.167 | 0.160 |
+| RUBINATO2017 | 0.540 | 0.056 | 0.167 | 0.160 |
+| RUBINATO2017_LOWER | 0.493 | 0.055 | 0.160 | 0.159 |
+| RUBINATO2017_UPPER | 0.587 | 0.057 | 0.174 | 0.161 |
+
+These are implementation presets, not four independently calibrated
+physical regimes. Rubinato et al. calibrated free drainage (S1), submerged
+weir drainage (S2), wet outward orifice flow (S3, expected 0.167) and dry
+outward flow (S4, expected 0.160). The implementation uses Coo = 0.160 for
+both outward cases. Coi is borrowed by analogy; inward orifice flow was not
+calibrated in that paper. The default Csw = (2/3) Cw is a continuity choice,
+not the paper's submerged-weir calibration. Per-node coefficients override
+the selected preset; authored mapping-row Cd/Area can override the orifice
+terms and opening geometry.
+
+`COUPLING_HEAD CELL`, `VERTEX` and `STENCIL_WET_MEAN` select different head
+representations. The wet stencil excludes dry bed elevations from a water
+surface estimate; it is not the same as averaging all numerical cells
+within a circular opening, as in the paper's HMho construction.
+
+`[2D_NODE_COUPLING]` describes node eligibility and structure geometry before
+mesh mapping. `NONE` excludes a node; `MANHOLE`, `GRATE`, `CURB`, `OPEN` and
+`OUTFALL` distinguish the applicable geometry or boundary treatment.
+Geometry is authored in project length/area units and converted at routing.
+
+For non-storage coupled junctions, `COUPLING_POND_MODE FOOTPRINT`, `CHAMBER`
+and `TRACKING` select the effective above-rim storage. The smoothed area
+transition lies above the rim. Storage nodes retain their storage curves.
+`COUPLING_EQUALIZE` bounds the 1D-side exchange over the interval for which
+its head is held; the surface state evolves within that interval. It is
+not a proof that a frozen two-reservoir equilibrium is never crossed.
+Availability budgets still prevent spending donor water twice.
+
+#### Node configuration, defaults and mesh registration {#hydraulics_node_coupling_configuration}
+
+A coupling configuration has three independent inputs: `[2D_NODE_COUPLING]`
+selects the eligible structure and optional node overrides; a vertex/cell map
+selects its position on the surface; `[2D_OPTIONS]` supplies global law and
+numerical defaults. A node setting alone creates no hydraulic exchange. A
+`NONE` node is excluded even if an old map still names it; initialization warns
+about ignored rows. An explicitly eligible node without a map also produces a
+warning. Node overrides persist independently of mesh regeneration.
+
+| Node class | Default without an authored row | Allowed explicit structures |
+| --- | --- | --- |
+| Ordinary junction, divider | `MANHOLE` | `NONE`, `MANHOLE`, `GRATE`, `CURB` |
+| Inlet or virtual junction | `NONE` | `NONE`, `MANHOLE`, `GRATE`, `CURB` (explicit enabling requires a deliberate hydraulic representation) |
+| Storage | `OPEN` | `NONE`, `MANHOLE`, `GRATE`, `CURB`, `OPEN` |
+| Outfall | `OUTFALL` | `NONE`, `OUTFALL` |
+
+An inlet junction already receives street drainage through its inlet
+representation; its default avoids adding a second surface route. A virtual
+junction is a conduit split point without a physical rim. `OPEN` uses storage
+geometry; `OUTFALL` follows the link/tailwater exchange described in §9.7.2,
+not the junction weir/orifice law.
+
+Each row is `NodeID TYPE KEY=value ...`. Omitted parameters inherit the defaults
+below. Clearing an override differs from entering zero. Node lengths are in
+project length units (m for SI flow units; ft for US flow units) and node areas
+in their square. An SI mesh tag (`;; UNITS: SI (m)`) does not convert these node inputs to metres on
+a US project. By contrast, map-row areas follow the mesh units. Coefficients and
+lid fractions are dimensionless in the exchange equations used in this chapter;
+tailwater relaxation is in seconds.
+
+| Parameter | Interpretation, range and default |
+| --- | --- |
+| `D` | Positive opening diameter; default 1.2 m or 4 ft. A manhole starts with \f$A=\pi D^2/4\f$, \f$L=\pi D\f$ |
+| `AREA` | Positive hydraulic opening area. For `MANHOLE`, replaces the diameter area; for `GRATE`/`CURB`, supplies opening area (fallback: authored map area, then diameter area). For `OPEN`, overrides storage surface area at full depth |
+| `PERIMETER` | Positive effective weir length. Overrides derived length. Without it, `GRATE`/`CURB` use \f$4\sqrt A\f$, `OPEN` uses \f$\sqrt{4\pi A}\f$, and `MANHOLE` uses \f$\pi D\f$ |
+| `CHAMBER_AREA` | Positive chamber plan area. Under `WEIR_ORIFICE`, defaults to resolved opening area before lid scaling; under `ORIFICE`, defaults to the map area at structure resolution. Used by chamber/tracking storage treatment; storage-node curves remain authoritative |
+| `LID_OPEN_FRACTION` | In (0,1], default 1. Scales resolved opening area and weir length, not chamber area. A zero value is invalid; use `NONE` for no exchange |
+| `CREST` | `NODE_RIM` default: invert + full depth. `MESH_BED`: mapped vertex bed or cell-centroid bed. `MAX` or `MIN`: maximum/minimum of those elevations |
+| `LAW` | `ORIFICE` or `WEIR_ORIFICE`; absent inherits global `COUPLING_LAW`. Orifice mode retains map/global Cd and area; the weir geometry/crest/preset inputs do not redefine it |
+| `COEFFS` | `DEFAULT`, `RUBINATO2017`, `RUBINATO2017_LOWER`, `RUBINATO2017_UPPER`; absent inherits the global preset, subject to the `OPEN` rule below |
+| `CW`, `CSW` | Positive overrides for free-weir and submerged-weir drainage coefficients |
+| `COI`, `COO` | Positive overrides for surface-to-sewer and sewer-to-surface orifice coefficients |
+| `SPREAD` | Outfalls only: nonnegative discharge radius, default 0. Expands receivers to connected cells within the radius that are wet or below/equal to the highest original receiving bed; discharge is area weighted. Withdrawal uses original donor reservations |
+| `TAILWATER_RELAX` | Outfalls only: nonnegative relaxation time, default 0. Cached head updates by \f$h_{tw}\leftarrow h_{tw}+\min(1,\Delta t/\tau)(h_{2D}-h_{tw})\f$ for positive τ; zero applies the current surface head immediately. First initialization uses the surface head |
+
+For `WEIR_ORIFICE`, coefficient resolution uses the following values before
+individual overrides:
+
+| Preset | CW | CSW | COI | COO |
+| --- | ---: | ---: | ---: | ---: |
+| `DEFAULT` | 0.540 | 2CW/3 = 0.360 | 0.167 | 0.160 |
+| `RUBINATO2017` | 0.540 | 0.056 | 0.167 | 0.160 |
+| `RUBINATO2017_LOWER` | 0.493 | 0.055 | 0.160 | 0.159 |
+| `RUBINATO2017_UPPER` | 0.587 | 0.057 | 0.174 | 0.161 |
+| `OPEN` with no node `COEFFS` override | 1 | 2/3 | 1 | 1 |
+
+`OPEN` applies its special coefficients even when the global preset differs;
+a node `COEFFS` override selects a preset explicitly. Individual CW/CSW/COI/COO
+then override the result. With `DEFAULT` or the special `OPEN` rule, CSW is
+computed as 2CW/3 after any CW override, unless CSW is explicitly supplied.
+The Rubinato ranges are laboratory coefficient alternatives, not confidence
+bounds on predictions at another site. The low experimental CSW is not the
+continuous-join DEFAULT value; see the comparison's limitations.
+
+Finally, an authored map-row Cd overrides both COI and COO, and an authored
+map-row area overrides the resolved opening area. The perimeter is derived
+before this final area override; changing only map area does not resize an
+independently derived/authored perimeter. Chamber area defaults from the final
+opening area before lid scaling unless explicitly supplied. Thus a map inherited
+from a legacy model can mask changes to a node's coefficients or opening area.
+`COUPLING_AREA AUTO` applies only to `ORIFICE`: it derives 1.25 times the largest
+connected-conduit area, bounded to 0.05–2.0 m², where a positive conduit area is
+available. `WEIR_ORIFICE` retains its structure geometry.
+
+In SWMMVis, set **2D Coupleable**, the structure and its parameters in node
+properties or the node attribute table. **NO** authors `NONE`; **YES** restores
+the class default (or explicit `MANHOLE` when that default is `NONE`). Switching
+structure/eligibility clears prior structure parameters; Undo restores the full
+state. Blank editors restore inheritance; the table displays `NULL` for an
+unauthored numeric override. Node-table booleans display YES/NO
+and support single-value/selected-row paste; spreadsheet blocks can supply
+multiple geometry values. Set type before pasting parameters.
+
+During mesh generation, **1D geometry influence** controls Steiner points and
+constraints, while **Map model nodes to the mesh after generation** independently
+runs spatial registration. **Map only coupleable nodes** normally stays on;
+**Set coupleable…** edits the candidate set. Coincident nodes map to vertices;
+other in-domain nodes map to containing cells. Nodes not pinned because of
+minimum separation remain available for cell mapping. Outside nodes are reported.
+
+**Mesh 2D → Remap 1D↔2D** previews Current/Proposed mappings and |rim − bed|.
+Preserve existing retains eligible mappings and fills missing ones; Clear &
+rebuild remaps by coordinate, retaining Cd/Area for a node returning to the same
+location. Apply records undoable edits. Use this after remeshing or changing
+coordinates; a node attribute edit alone does not relocate its map. The mapper
+leaves new Cd/Area fields unauthored when the *global* law is WEIR_ORIFICE;
+per-node law changes alone do not remove existing map overrides.
+
+Neither a selected structure nor a fine mesh guarantees experimental accuracy.
+Verify opening dimensions and rim/terrain datum, inspect map overrides, compare
+routing timesteps and check continuity and exchange hydrographs. Head-sampling
+stencils and delivery cells are numerical supports; they do not automatically
+represent a spatial average over the physical opening footprint.
+
+#### Laboratory comparison and qualification
+
+The accompanying @ref hydraulics_ref_rubinato2017 "Rubinato comparison" compares all 36 steady
+measurements with the bare paper equations, a junction reconstruction and
+an actual-shaft-storage sensitivity. It preserves the fit, continuity,
+head residuals and successive-window drift separately. The paper's printed
+regression slopes have nonzero intercepts; matching the slopes does not
+establish absolute flow agreement.
+
+The nine transient demonstration shapes use Table 1 peak ratios and
+durations. Their boundary forcing is synthetic and must not be labelled
+validation against the measured events or Figure 11. The 0.0125 m local
+mesh check demonstrates that the equalisation cap does not choke exchange;
+it does not establish mesh convergence or footprint-resolved delivery.
+The current comparison is a qualified numerical example. It does not
+support an experimental validation claim.
+
+Reference: Rubinato et al. (2017), *Journal of Hydrology* 552, 421-432,
+[doi:10.1016/j.jhydrol.2017.06.024](https://doi.org/10.1016/j.jhydrol.2017.06.024).
+
+
+@subpage hydraulics_ref_rubinato2017 — measured steady comparisons, synthetic events, report and example downloads.
 
 ### 9.7.2 Outfalls
 
@@ -2457,6 +2676,7 @@ sections at @ref engine_manual_sect_2D_BOUNDARY_CONDITIONS,
 | `RECONSTRUCTION_ORDER` | §9.5.10, §9.5.6 |
 | `FRONT_REBUILD` | §9.5.7 |
 | `THETA` | §9.5.1 |
+| `THETA_REFERENCE_STEP` | §9.5.1; zero keeps the per-firing weight, positive seconds define physical-time retention |
 | `CFL_NUMBER` | §9.5.5; clamped to ½ under `FULL_SWE`, §9.5.10; the diffusion safety fraction of §9.5.11 |
 | `H_MOVE` | §9.5.7 |
 | `LTS_TIERS` | §9.5.6 |

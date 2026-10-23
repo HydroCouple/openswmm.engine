@@ -1,6 +1,6 @@
 /**
- * @file test_2d_coupling_conservation.cpp
- * @brief Cross-domain volume conservation of 1D↔2D coupling under VARIABLE_STEP.
+ * @file      test_2d_coupling_conservation.cpp
+ * @brief     Cross-domain volume conservation of 1D↔2D coupling under VARIABLE_STEP.
  *
  * @details The coupling is staggered: the exchange computed at the end of step N
  *          is applied to 2D immediately and to 1D one routing step later. It is
@@ -24,6 +24,10 @@
  *          engine through the public C API. Inputs and a summary are written to
  *          ./coupling_conservation_out/ (working dir is tests/unit/engine/data)
  *          for review — no temp files (project convention).
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -50,102 +54,138 @@ namespace {
 // outfall O1 and has NO [INFLOWS] — its only lateral inflow is the 2D coupling.
 // VARIABLE_STEP is ON so the routing dt varies step-to-step (amplified by the 2D
 // CFL hint as the patch fills then drains), exercising the dt-robust carry.
+/**
+ * @brief Build the SI rain-pan coupling-conservation fixture.
+ *
+ * Uses 6 s routing maximum and 4 s surface maximum; caller supplies rain through forcing. No model
+ * validation, file write or run.
+ *
+ * @param[in] extra_2d_options Raw extra 2D_OPTIONS rows inserted verbatim.
+ * @return Owned forty-minute CMS/DYNWAVE deck with 100 m2 pan at J1 crown, one pipe and vertex-zero
+ *     coupling.
+ */
 std::string build_model(const std::string& extra_2d_options = "") {
-    return
-        "[OPTIONS]\n"
-        "FLOW_UNITS           CMS\n"
-        "FLOW_ROUTING         DYNWAVE\n"
-        "START_DATE           01/01/2026\n"
-        "START_TIME           00:00:00\n"
-        "END_DATE             01/01/2026\n"
-        "END_TIME             00:40:00\n"
-        "REPORT_STEP          00:01:00\n"
-        "ROUTING_STEP         6\n"
-        "VARIABLE_STEP        0.85\n"
-        "ALLOW_PONDING        NO\n"
-        "\n"
-        "[JUNCTIONS]\n"
-        ";;Name  Elev  MaxDepth  InitDepth  SurDepth  Aponded\n"
-        "J1      0.0   1.0       0          0         0\n"
-        "\n"
-        "[OUTFALLS]\n"
-        ";;Name  Elev   Type  Gated\n"
-        "O1     -0.5    FREE  NO\n"
-        "\n"
-        "[CONDUITS]\n"
-        ";;Name  From  To  Length  Roughness  InOffset  OutOffset  InitFlow\n"
-        "C1      J1    O1  30.0    0.013      0         0          0\n"
-        "\n"
-        "[XSECTIONS]\n"
-        ";;Link  Shape     Geom1  Geom2  Geom3  Geom4  Barrels\n"
-        "C1      CIRCULAR  0.3    0      0      0      1\n"
-        "\n"
-        "[2D_OPTIONS]\n"
-        "MAX_TIMESTEP     4\n"
-        "DRY_DEPTH        0.002\n"
-        "COUPLING_CD      0.7\n"
-        "REPORT_2D        NO\n"
-      + extra_2d_options +
-        "\n"
-        "[2D_VERTICES]\n"
-        ";;X      Y      Z   (flat patch at the junction crown elevation, 1.0 m)\n"
-        " 0.0    0.0   1.0\n"
-        "10.0    0.0   1.0\n"
-        "10.0   10.0   1.0\n"
-        " 0.0   10.0   1.0\n"
-        "\n"
-        "[2D_TRIANGLES]\n"
-        ";;V1  V2  V3  MANNINGS_N\n"
-        "0     1   2   0.03\n"
-        "0     2   3   0.03\n"
-        "\n"
-        "[2D_VERTEX_NODE_MAP]\n"
-        ";;Vertex  Node  Cd   Area\n"
-        "0         J1    0.7  1.0\n";
+    return "[OPTIONS]\n"
+           "FLOW_UNITS           CMS\n"
+           "FLOW_ROUTING         DYNWAVE\n"
+           "START_DATE           01/01/2026\n"
+           "START_TIME           00:00:00\n"
+           "END_DATE             01/01/2026\n"
+           "END_TIME             00:40:00\n"
+           "REPORT_STEP          00:01:00\n"
+           "ROUTING_STEP         6\n"
+           "VARIABLE_STEP        0.85\n"
+           "ALLOW_PONDING        NO\n"
+           "\n"
+           "[JUNCTIONS]\n"
+           ";;Name  Elev  MaxDepth  InitDepth  SurDepth  Aponded\n"
+           "J1      0.0   1.0       0          0         0\n"
+           "\n"
+           "[OUTFALLS]\n"
+           ";;Name  Elev   Type  Gated\n"
+           "O1     -0.5    FREE  NO\n"
+           "\n"
+           "[CONDUITS]\n"
+           ";;Name  From  To  Length  Roughness  InOffset  OutOffset  InitFlow\n"
+           "C1      J1    O1  30.0    0.013      0         0          0\n"
+           "\n"
+           "[XSECTIONS]\n"
+           ";;Link  Shape     Geom1  Geom2  Geom3  Geom4  Barrels\n"
+           "C1      CIRCULAR  0.3    0      0      0      1\n"
+           "\n"
+           "[2D_OPTIONS]\n"
+           "MAX_TIMESTEP     4\n"
+           "DRY_DEPTH        0.002\n"
+           "COUPLING_CD      0.7\n"
+           "REPORT_2D        NO\n" +
+           extra_2d_options +
+           "\n"
+           "[2D_VERTICES]\n"
+           ";;X      Y      Z   (flat patch at the junction crown elevation, 1.0 m)\n"
+           " 0.0    0.0   1.0\n"
+           "10.0    0.0   1.0\n"
+           "10.0   10.0   1.0\n"
+           " 0.0   10.0   1.0\n"
+           "\n"
+           "[2D_TRIANGLES]\n"
+           ";;V1  V2  V3  MANNINGS_N\n"
+           "0     1   2   0.03\n"
+           "0     2   3   0.03\n"
+           "\n"
+           "[2D_VERTEX_NODE_MAP]\n"
+           ";;Vertex  Node  Cd   Area\n"
+           "0         J1    0.7  1.0\n";
 }
 
 struct RunResult {
-    bool   ok = false;
-    double received_1d = 0.0;   // ∫ lateral_inflow(J1)·dt over the run (m³)
-    double given_2d_net = 0.0;  // coupling_2d_to_1d_out − coupling_1d_to_2d_in (m³)
+    bool ok = false;
+    double received_1d = 0.0;  // ∫ lateral_inflow(J1)·dt over the run (m³)
+    double given_2d_net = 0.0; // coupling_2d_to_1d_out − coupling_1d_to_2d_in (m³)
     double cont_2d = 0.0;
     double cont_routing = 0.0;
-    double dt_min = 1e30;       // observed routing-step spread (s) — confirms the
-    double dt_max = 0.0;        //   variable-dt path is actually exercised
-    int    n_steps = 0;
+    double dt_min = 1e30; // observed routing-step spread (s) — confirms the
+    double dt_max = 0.0;  //   variable-dt path is actually exercised
+    int n_steps = 0;
     // C1/C2 (2026-09-07)
-    double cell_applied_sum = 0.0;  // Σ swmm_2d_get_coupling_volume_bulk (m³)
-    double c12 = 0.0, c21 = 0.0;    // coupling_1d_to_2d_in / _2d_to_1d_out (m³)
-    double routing_coupling_out = 0.0;  // SWMM_ROUTING_COUPLING_OUT (ft³)
-    double routing_flooding = 0.0;      // SWMM_ROUTING_FLOODING (ft³)
+    double cell_applied_sum = 0.0;     // Σ swmm_2d_get_coupling_volume_bulk (m³)
+    double c12 = 0.0, c21 = 0.0;       // coupling_1d_to_2d_in / _2d_to_1d_out (m³)
+    double routing_coupling_out = 0.0; // SWMM_ROUTING_COUPLING_OUT (ft³)
+    double routing_flooding = 0.0;     // SWMM_ROUTING_FLOODING (ft³)
 };
 
+/**
+ * @brief Run the coupling-conservation fixture and collect water-bookkeeping diagnostics.
+ *
+ * Forces 0.001 m/s rain until prior elapsed reaches 600 s, steps without a cap and integrates
+ * positive-time J1 lateral flow. Copies per-cell applied coupling before end, then reads gross/net
+ * coupling and routing totals afterward. Step error can still produce ok=true;
+ * stream/forcing/getter/end/report/close statuses are unchecked. Owns/destroys engine; native
+ * routing volumes are ft3 even for this CMS project.
+ *
+ * @param[in] dir Existing writable artifact directory.
+ * @param[in] extra_2d_options Raw options passed to build_model.
+ * @param[in] tag Safe basename for overwritten retained .inp/.rpt/.out.
+ * @return Owned SI surface/network receipt volumes, native routing-total volumes, step durations
+ *     seconds and continuity fractions; ok=false only on setup/active/node/start refusal.
+ */
 RunResult run(const fs::path& dir, const std::string& extra_2d_options = "",
               const std::string& tag = "coupling_conservation") {
     RunResult r;
     const fs::path inp = dir / (tag + ".inp");
     const fs::path rpt = dir / (tag + ".rpt");
     const fs::path out = dir / (tag + ".out");
-    { std::ofstream f(inp); f << build_model(extra_2d_options); }
+    {
+        std::ofstream f(inp);
+        f << build_model(extra_2d_options);
+    }
 
     SWMM_Engine eng = swmm_engine_create();
-    if (swmm_engine_open(eng, inp.string().c_str(), rpt.string().c_str(),
-                         out.string().c_str(), nullptr) != SWMM_OK) {
-        swmm_engine_destroy(eng); return r;
+    if (swmm_engine_open(eng, inp.string().c_str(), rpt.string().c_str(), out.string().c_str(),
+                         nullptr) != SWMM_OK) {
+        swmm_engine_destroy(eng);
+        return r;
     }
     if (swmm_engine_initialize(eng) != SWMM_OK) {
-        swmm_engine_close(eng); swmm_engine_destroy(eng); return r;
+        swmm_engine_close(eng);
+        swmm_engine_destroy(eng);
+        return r;
     }
     int active = 0;
     swmm_2d_is_active(eng, &active);
     const int j1 = swmm_node_index(eng, "J1");
-    if (!active || j1 < 0) { swmm_engine_close(eng); swmm_engine_destroy(eng); return r; }
+    if (!active || j1 < 0) {
+        swmm_engine_close(eng);
+        swmm_engine_destroy(eng);
+        return r;
+    }
     if (swmm_engine_start(eng, 1) != SWMM_OK) {
-        swmm_engine_close(eng); swmm_engine_destroy(eng); return r;
+        swmm_engine_close(eng);
+        swmm_engine_destroy(eng);
+        return r;
     }
 
-    constexpr double RAIN_OFF_S = 600.0;     // rain the patch for the first 10 min
-    constexpr double RAIN_RATE  = 0.001;     // m/s (fills above the crown, then drains)
+    constexpr double RAIN_OFF_S = 600.0; // rain the patch for the first 10 min
+    constexpr double RAIN_RATE = 0.001;  // m/s (fills above the crown, then drains)
 
     double elapsed = 0.0, prev_elapsed = 0.0;
     while (true) {
@@ -156,7 +196,8 @@ RunResult run(const fs::path& dir, const std::string& extra_2d_options = "",
         const double rain = (t_s < RAIN_OFF_S) ? RAIN_RATE : 0.0;
         swmm_2d_force_rainfall_uniform(eng, rain, SWMM_FORCING_OVERRIDE, SWMM_FORCING_PERSIST);
 
-        if (swmm_engine_step(eng, &elapsed) != SWMM_OK || elapsed <= 0.0) break;
+        if (swmm_engine_step(eng, &elapsed) != SWMM_OK || elapsed <= 0.0)
+            break;
 
         const double dt_s = (elapsed - prev_elapsed) * 86400.0;
         prev_elapsed = elapsed;
@@ -166,7 +207,7 @@ RunResult run(const fs::path& dir, const std::string& extra_2d_options = "",
             ++r.n_steps;
         }
 
-        double lat = 0.0;  // project flow units (CMS = m³/s); + = into J1 (2D→1D drain)
+        double lat = 0.0; // project flow units (CMS = m³/s); + = into J1 (2D→1D drain)
         if (swmm_node_get_lateral_inflow(eng, j1, &lat) == SWMM_OK)
             r.received_1d += lat * dt_s;
     }
@@ -178,21 +219,22 @@ RunResult run(const fs::path& dir, const std::string& extra_2d_options = "",
     if (swmm_2d_triangle_count(eng, &ncells) == SWMM_OK && ncells > 0) {
         std::vector<double> v(static_cast<std::size_t>(ncells), 0.0);
         if (swmm_2d_get_coupling_volume_bulk(eng, v.data()) == SWMM_OK)
-            for (double x : v) r.cell_applied_sum += x;
+            for (double x : v)
+                r.cell_applied_sum += x;
     }
 
     swmm_engine_end(eng);
 
     double c12 = 0.0, c21 = 0.0;
-    swmm_2d_get_mass_balance(eng, nullptr, nullptr, nullptr, &c12, &c21,
-                             nullptr, nullptr, nullptr, nullptr, nullptr);
-    r.given_2d_net = c21 - c12;   // net volume 2D → 1D (m³)
+    swmm_2d_get_mass_balance(eng, nullptr, nullptr, nullptr, &c12, &c21, nullptr, nullptr, nullptr,
+                             nullptr, nullptr);
+    r.given_2d_net = c21 - c12; // net volume 2D → 1D (m³)
     r.c12 = c12;
     r.c21 = c21;
 
     // C2: the split-out spill row and what remains under Flooding Loss.
     swmm_get_routing_total(eng, SWMM_ROUTING_COUPLING_OUT, &r.routing_coupling_out);
-    swmm_get_routing_total(eng, SWMM_ROUTING_FLOODING,     &r.routing_flooding);
+    swmm_get_routing_total(eng, SWMM_ROUTING_FLOODING, &r.routing_flooding);
     swmm_2d_get_continuity_error(eng, &r.cont_2d);
     swmm_get_routing_continuity_error(eng, &r.cont_routing);
     swmm_engine_report(eng);
@@ -207,6 +249,13 @@ RunResult run(const fs::path& dir, const std::string& extra_2d_options = "",
 class CouplingConservation2DTest : public ::testing::Test {
 protected:
     fs::path dir_;
+    /**
+     * @brief Create the reviewable coupling_conservation_out artifact directory.
+     *
+     * Sets dir_ relative to the test working directory and creates missing directories with the
+     * throwing filesystem overload. Existing files are retained; no engine or input file is created
+     * here.
+     */
     void SetUp() override {
         dir_ = fs::path("coupling_conservation_out");
         fs::create_directories(dir_);
@@ -229,12 +278,10 @@ TEST_F(CouplingConservation2DTest, ReceivedEqualsGivenUnderVariableStep) {
     // Cross-domain conservation: 1D-received ≈ 2D-given. The only admissible
     // discrepancy is the single-step boundary term (the last window's exchange,
     // ~0 once the patch has drained), so the match is tight.
-    const double rel = std::abs(r.received_1d - r.given_2d_net)
-                       / std::abs(r.given_2d_net);
-    EXPECT_LT(rel, 0.005)
-        << "1D-received (" << r.received_1d << " m³) != 2D-given ("
-        << r.given_2d_net << " m³); rel err " << rel
-        << " — coupling not volume-conservative under VARIABLE_STEP";
+    const double rel = std::abs(r.received_1d - r.given_2d_net) / std::abs(r.given_2d_net);
+    EXPECT_LT(rel, 0.005) << "1D-received (" << r.received_1d << " m³) != 2D-given ("
+                          << r.given_2d_net << " m³); rel err " << rel
+                          << " — coupling not volume-conservative under VARIABLE_STEP";
 
     // Both domains' own continuity must also stay closed.
     EXPECT_LT(std::abs(r.cont_2d), 0.05) << "2D continuity error: " << r.cont_2d;
@@ -271,11 +318,10 @@ TEST_F(CouplingConservation2DTest, PerCellAbstractionTiesBackToTheDomainTotals) 
     // coupling_applied is + INTO the cell: water arrives as the 1D→2D spill and
     // leaves as the 2D→1D drain, so the sum is (in − out).
     const double expect = r.c12 - r.c21;
-    const double scale  = std::max(1.0, std::abs(expect));
+    const double scale = std::max(1.0, std::abs(expect));
     EXPECT_NEAR(r.cell_applied_sum, expect, 1.0e-6 * scale)
         << "Σ per-cell coupling_applied (" << r.cell_applied_sum
-        << " m³) != coupling_1d_to_2d_in − coupling_2d_to_1d_out (" << expect
-        << " m³)";
+        << " m³) != coupling_1d_to_2d_in − coupling_2d_to_1d_out (" << expect << " m³)";
 }
 
 // ---------------------------------------------------------------------------
@@ -284,7 +330,7 @@ TEST_F(CouplingConservation2DTest, PerCellAbstractionTiesBackToTheDomainTotals) 
 // the old grouping back for comparison against a pre-split build.
 // ---------------------------------------------------------------------------
 TEST_F(CouplingConservation2DTest, CouplingOutflowSplitsFromFloodingAndConserves) {
-    RunResult split  = run(dir_, "", "c2_split");
+    RunResult split = run(dir_, "", "c2_split");
     RunResult folded = run(dir_, "COUPLING_IN_FLOODING YES\n", "c2_folded");
     ASSERT_TRUE(split.ok && folded.ok);
 

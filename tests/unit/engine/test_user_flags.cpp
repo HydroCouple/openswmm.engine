@@ -1,6 +1,6 @@
 /**
- * @file test_user_flags.cpp
- * @brief Unit tests for [USER_FLAGS] + [USER_FLAG_VALUES] parsing and
+ * @file      test_user_flags.cpp
+ * @brief     Unit tests for [USER_FLAGS] + [USER_FLAG_VALUES] parsing and
  *        the UserFlags runtime API (ICM two-section design).
  *
  * Design:
@@ -11,6 +11,10 @@
  * @see src/engine/input/handlers/UserFlagsHandler.hpp
  * @see src/engine/input/handlers/UserFlagValuesHandler.hpp
  * @ingroup engine_core
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -27,10 +31,29 @@ using openswmm::UserFlags;
 
 namespace {
 
+/**
+ * @brief Apply raw user-flag definition rows through the maintained input handler.
+ *
+ * No status is returned; inspect ctx diagnostics/flag registry. Does not parse a complete model or
+ * run a simulation.
+ *
+ * @param[in,out] ctx Context whose definitions and diagnostics may change.
+ * @param[in] lines Owned-copy definition lines, unchanged outside the call.
+ */
 static void parse_defs(SimulationContext& ctx, std::vector<std::string> lines) {
     openswmm::input::handle_user_flags(ctx, lines);
 }
 
+/**
+ * @brief Apply raw per-object user-flag values through the maintained handler.
+ *
+ * Delegates without independent validation or return status; does not write a file, resolve an
+ * entire input or execute a run.
+ *
+ * @param[in,out] ctx Context with referenced objects/definitions; values and diagnostics may
+ *     change.
+ * @param[in] lines Owned-copy value rows.
+ */
 static void parse_vals(SimulationContext& ctx, std::vector<std::string> lines) {
     openswmm::input::handle_user_flag_values(ctx, lines);
 }
@@ -72,11 +95,11 @@ TEST(UserFlagsTest, DefineStringFlag) {
 TEST(UserFlagsTest, DefineMultipleFlags) {
     SimulationContext ctx;
     parse_defs(ctx, {
-        "INSPECTED     BOOLEAN  \"Field inspected?\"",
-        "PRIORITY      INTEGER  \"Maintenance priority\"",
-        "ROUGHNESS_ADJ REAL     \"Roughness multiplier\"",
-        "ASSET_ID      STRING   \"Asset ID\"",
-    });
+                        "INSPECTED     BOOLEAN  \"Field inspected?\"",
+                        "PRIORITY      INTEGER  \"Maintenance priority\"",
+                        "ROUGHNESS_ADJ REAL     \"Roughness multiplier\"",
+                        "ASSET_ID      STRING   \"Asset ID\"",
+                    });
     EXPECT_EQ(ctx.user_flags.def_count(), 4u);
     EXPECT_TRUE(ctx.user_flags.is_defined("INSPECTED"));
     EXPECT_TRUE(ctx.user_flags.is_defined("PRIORITY"));
@@ -102,9 +125,9 @@ TEST(UserFlagsTest, DefineFlagCaseInsensitiveName) {
 TEST(UserFlagsTest, RedefineOverwrites) {
     SimulationContext ctx;
     parse_defs(ctx, {
-        "MY_FLAG  BOOLEAN  \"first\"",
-        "MY_FLAG  INTEGER  \"second\"",
-    });
+                        "MY_FLAG  BOOLEAN  \"first\"",
+                        "MY_FLAG  INTEGER  \"second\"",
+                    });
     EXPECT_EQ(ctx.user_flags.def_count(), 1u);
     EXPECT_EQ(ctx.user_flags.get_def("MY_FLAG").type, UserFlagType::INTEGER);
     EXPECT_EQ(ctx.user_flags.get_def("MY_FLAG").description, "second");
@@ -173,10 +196,10 @@ TEST(UserFlagsTest, MultipleObjectsSameFlag) {
     SimulationContext ctx;
     parse_defs(ctx, {"PRIORITY  INTEGER"});
     parse_vals(ctx, {
-        "NODE  J1  PRIORITY  1",
-        "NODE  J2  PRIORITY  3",
-        "NODE  J3  PRIORITY  2",
-    });
+                        "NODE  J1  PRIORITY  1",
+                        "NODE  J2  PRIORITY  3",
+                        "NODE  J3  PRIORITY  2",
+                    });
     EXPECT_EQ(std::get<int>(ctx.user_flags.get_value("NODE", "J1", "PRIORITY")), 1);
     EXPECT_EQ(std::get<int>(ctx.user_flags.get_value("NODE", "J2", "PRIORITY")), 3);
     EXPECT_EQ(std::get<int>(ctx.user_flags.get_value("NODE", "J3", "PRIORITY")), 2);
@@ -185,27 +208,27 @@ TEST(UserFlagsTest, MultipleObjectsSameFlag) {
 TEST(UserFlagsTest, SameObjectMultipleFlags) {
     SimulationContext ctx;
     parse_defs(ctx, {
-        "INSPECTED  BOOLEAN",
-        "PRIORITY   INTEGER",
-        "ASSET_ID   STRING",
-    });
+                        "INSPECTED  BOOLEAN",
+                        "PRIORITY   INTEGER",
+                        "ASSET_ID   STRING",
+                    });
     parse_vals(ctx, {
-        "NODE  J1  INSPECTED  YES",
-        "NODE  J1  PRIORITY   2",
-        "NODE  J1  ASSET_ID   \"EX-1234\"",
-    });
-    EXPECT_TRUE (std::get<bool>(ctx.user_flags.get_value("NODE", "J1", "INSPECTED")));
-    EXPECT_EQ   (std::get<int> (ctx.user_flags.get_value("NODE", "J1", "PRIORITY")), 2);
-    EXPECT_EQ   (std::get<std::string>(ctx.user_flags.get_value("NODE", "J1", "ASSET_ID")), "EX-1234");
+                        "NODE  J1  INSPECTED  YES",
+                        "NODE  J1  PRIORITY   2",
+                        "NODE  J1  ASSET_ID   \"EX-1234\"",
+                    });
+    EXPECT_TRUE(std::get<bool>(ctx.user_flags.get_value("NODE", "J1", "INSPECTED")));
+    EXPECT_EQ(std::get<int>(ctx.user_flags.get_value("NODE", "J1", "PRIORITY")), 2);
+    EXPECT_EQ(std::get<std::string>(ctx.user_flags.get_value("NODE", "J1", "ASSET_ID")), "EX-1234");
 }
 
 TEST(UserFlagsTest, AssignValueOverwrites) {
     SimulationContext ctx;
     parse_defs(ctx, {"PRIORITY  INTEGER"});
     parse_vals(ctx, {
-        "NODE  J1  PRIORITY  1",
-        "NODE  J1  PRIORITY  9",
-    });
+                        "NODE  J1  PRIORITY  1",
+                        "NODE  J1  PRIORITY  9",
+                    });
     EXPECT_EQ(std::get<int>(ctx.user_flags.get_value("NODE", "J1", "PRIORITY")), 9);
 }
 
@@ -260,7 +283,9 @@ TEST(UserFlagsTest, TryGetValueReturnsNulloptForMissing) {
 
 TEST(UserFlagsTest, TryGetValueReturnsValueIfPresent) {
     UserFlags flags;
-    UserFlagDef def; def.name = "X"; def.type = UserFlagType::INTEGER;
+    UserFlagDef def;
+    def.name = "X";
+    def.type = UserFlagType::INTEGER;
     flags.define(def);
     flags.set("NODE", "J1", "X", 42);
     auto result = flags.try_get_value("NODE", "J1", "X");
@@ -270,7 +295,9 @@ TEST(UserFlagsTest, TryGetValueReturnsValueIfPresent) {
 
 TEST(UserFlagsTest, ClearRemovesDefsAndValues) {
     UserFlags flags;
-    UserFlagDef def; def.name = "A"; def.type = UserFlagType::BOOLEAN;
+    UserFlagDef def;
+    def.name = "A";
+    def.type = UserFlagType::BOOLEAN;
     flags.define(def);
     flags.set("NODE", "J1", "A", true);
     flags.clear();
@@ -282,9 +309,18 @@ TEST(UserFlagsTest, ClearRemovesDefsAndValues) {
 
 TEST(UserFlagsTest, AllDefsInInsertionOrder) {
     UserFlags flags;
-    UserFlagDef a; a.name = "A"; a.type = UserFlagType::BOOLEAN; flags.define(a);
-    UserFlagDef b; b.name = "B"; b.type = UserFlagType::INTEGER; flags.define(b);
-    UserFlagDef c; c.name = "C"; c.type = UserFlagType::STRING;  flags.define(c);
+    UserFlagDef a;
+    a.name = "A";
+    a.type = UserFlagType::BOOLEAN;
+    flags.define(a);
+    UserFlagDef b;
+    b.name = "B";
+    b.type = UserFlagType::INTEGER;
+    flags.define(b);
+    UserFlagDef c;
+    c.name = "C";
+    c.type = UserFlagType::STRING;
+    flags.define(c);
     ASSERT_EQ(flags.all_defs().size(), 3u);
     EXPECT_EQ(flags.all_defs()[0].name, "A");
     EXPECT_EQ(flags.all_defs()[1].name, "B");

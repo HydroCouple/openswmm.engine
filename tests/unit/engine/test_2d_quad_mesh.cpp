@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_2d_quad_mesh.cpp
- * @brief Mixed triangle/quadrilateral mesh gates
+ * @file      test_2d_quad_mesh.cpp
+ * @brief     Mixed triangle/quadrilateral mesh gates
  *        (plans/2D_TRI_QUAD_MESH_PLAN_2026-09-06.md, phases Q1–Q2).
  *
  * @details
@@ -35,6 +35,10 @@
  *    convexity and ordering errors, byte-exact INIT_DEPTH/TAG round trip.
  *
  * @ingroup engine_2d
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -59,8 +63,20 @@ using namespace openswmm::twoD;
 namespace {
 
 // nx × ny grid of dx-square QUAD cells, bed from z(x, y).
-template <typename ZFn>
-MeshData makeQuadGrid(int nx, int ny, double dx, ZFn z, double n = 0.03) {
+/**
+ * @brief Build a uniform rectangular momentum-test mesh with one quad per square.
+ *
+ * No dimension, finite-value or callback-result validation occurs; callback/allocation/topology
+ * failures propagate.
+ *
+ * @param[in] nx Positive square count along x; derived counts must fit integer/storage limits.
+ * @param[in] ny Positive square count along y; derived counts must fit integer/storage limits.
+ * @param[in] dx Positive square edge length in metres.
+ * @param[in] z Synchronous callable z(x,y) returning vertex bed elevation in metres; not retained.
+ * @param[in] n Uniform Manning roughness, default 0.03.
+ * @return Owned mesh with sampled bed, uniform roughness and built geometry/topology.
+ */
+template <typename ZFn> MeshData makeQuadGrid(int nx, int ny, double dx, ZFn z, double n = 0.03) {
     MeshData mesh;
     const int nvx = nx + 1, nvy = ny + 1;
     mesh.resize_vertices(nvx * nvy);
@@ -75,26 +91,41 @@ MeshData makeQuadGrid(int nx, int ny, double dx, ZFn z, double n = 0.03) {
     int c = 0;
     for (int j = 0; j < ny; ++j)
         for (int i = 0; i < nx; ++i) {
-            const int v00 = j * nvx + i,       v10 = j * nvx + i + 1;
+            const int v00 = j * nvx + i, v10 = j * nvx + i + 1;
             const int v01 = (j + 1) * nvx + i, v11 = (j + 1) * nvx + i + 1;
-            mesh.set_quad(c++, v00, v10, v11, v01);   // CCW
+            mesh.set_quad(c++, v00, v10, v11, v01); // CCW
         }
-    for (int i = 0; i < mesh.n_triangles(); ++i) mesh.mannings_n[i] = n;
+    for (int i = 0; i < mesh.n_triangles(); ++i)
+        mesh.mannings_n[i] = n;
     buildMeshTopology(mesh);
     return mesh;
 }
 
 // Mixed strip: nx quads in the middle (columns 1..nx), one column of two
 // triangles at each end. Cells: triangles first (4), then quads.
-template <typename ZFn>
-MeshData makeMixedStrip(int nx, double dx, ZFn z, double n = 0.03) {
+/**
+ * @brief Build a one-row quad strip with two triangular end squares.
+ *
+ * No dimension/geometry/finite validation occurs here; callback/allocation/topology exceptions
+ * propagate.
+ *
+ * @param[in] nx Positive interior quad count; derived nx+2 columns/counts must fit storage/index
+ *     limits.
+ * @param[in] dx Positive square edge length in metres.
+ * @param[in] z Synchronous bed-elevation callable z(x,y) in metres, not retained.
+ * @param[in] n Uniform Manning roughness, default 0.03.
+ * @return Owned mesh of nx quads and four end triangles, with built topology.
+ */
+template <typename ZFn> MeshData makeMixedStrip(int nx, double dx, ZFn z, double n = 0.03) {
     MeshData mesh;
     const int ncol = nx + 2, nvx = ncol + 1;
     mesh.resize_vertices(nvx * 2);
     for (int j = 0; j < 2; ++j)
         for (int i = 0; i < nvx; ++i) {
             const int v = j * nvx + i;
-            mesh.vx[v] = i * dx; mesh.vy[v] = j * dx; mesh.vz[v] = z(i * dx, j * dx);
+            mesh.vx[v] = i * dx;
+            mesh.vy[v] = j * dx;
+            mesh.vz[v] = z(i * dx, j * dx);
         }
     mesh.resize_triangles(4 + nx);
     auto V = [&](int i, int j) { return j * nvx + i; };
@@ -107,81 +138,154 @@ MeshData makeMixedStrip(int nx, double dx, ZFn z, double n = 0.03) {
         const int col = i + 1;
         mesh.set_quad(4 + i, V(col, 0), V(col + 1, 0), V(col + 1, 1), V(col, 1));
     }
-    for (int i = 0; i < mesh.n_triangles(); ++i) mesh.mannings_n[i] = n;
+    for (int i = 0; i < mesh.n_triangles(); ++i)
+        mesh.mannings_n[i] = n;
     buildMeshTopology(mesh);
     return mesh;
 }
 
+/**
+ * @brief Create dry fixture water storage with heads equal to cell bed elevations.
+ *
+ * @param[in] mesh Built mesh supplying compatible counts and cell bed elevations in metres.
+ * @return Owned resized state with zero volume/depth and head=tri_cz for every cell; unrelated
+ *     fields use defaults.
+ */
 SurfaceStateData makeState(const MeshData& mesh) {
     SurfaceStateData state;
     state.resize(mesh.n_triangles(), mesh.n_vertices());
     for (int i = 0; i < mesh.n_triangles(); ++i) {
-        state.head[i]   = mesh.tri_cz[i];
-        state.depth[i]  = 0.0;
+        state.head[i] = mesh.tri_cz[i];
+        state.depth[i] = 0.0;
         state.volume[i] = 0.0;
     }
     return state;
 }
 
-void seedSurface(const MeshData& mesh, const SolverOptions2D& opts,
-                 SurfaceStateData& state, double eta) {
+/**
+ * @brief Seed a uniform water-surface elevation through the selected cell closure.
+ *
+ * Converts eta to cell volume then back to head/depth with production closure helpers, allowing dry
+ * cells where appropriate. Does not initialize momentum or run dynamics; preconditions follow the
+ * selected closure.
+ *
+ * @param[in] mesh Built mesh compatible with state.
+ * @param[in] opts Options selecting the volume/elevation closure.
+ * @param[in,out] state Already resized surface state receiving per-cell volume/head/depth; other
+ *     arrays remain unchanged.
+ * @param[in] eta Common absolute water-surface elevation in metres.
+ */
+void seedSurface(const MeshData& mesh, const SolverOptions2D& opts, SurfaceStateData& state,
+                 double eta) {
     for (int i = 0; i < mesh.n_triangles(); ++i) {
         state.volume[i] = inertial::cellVolumeFromEta(mesh, opts, i, eta);
-        inertial::cellEtaDepth(mesh, opts, i, state.volume[i], state.head[i],
-                               state.depth[i]);
+        inertial::cellEtaDepth(mesh, opts, i, state.volume[i], state.head[i], state.depth[i]);
     }
 }
 
+/**
+ * @brief Sum the selected prefix of SI surface cell volumes.
+ *
+ * Does not include groundwater, exchange queues or boundary ledgers; does not mutate state.
+ *
+ * @param[in] state Borrowed surface state with volume storage covering nt cells.
+ * @param[in] nt Nonnegative cell count no greater than the volume vector length.
+ * @return Ordered double sum in m3, zero for an empty prefix.
+ */
 double totalVolume(const SurfaceStateData& state, int nt) {
     double s = 0.0;
-    for (int i = 0; i < nt; ++i) s += state.volume[i];
+    for (int i = 0; i < nt; ++i)
+        s += state.volume[i];
     return s;
 }
 
 // Brute-force oracle: mean depth of water at stage eta over the quad's
 // two-plane bed model (B&S 2007), by midpoint quadrature on each sub-triangle.
-double bruteForceMeanDepth(const double* x, const double* y, const double* z,
-                           double eta, int& kase) {
+/**
+ * @brief Approximate a quad's two-plane mean pond depth by independent triangle quadrature.
+ *
+ * Requires valid nondegenerate quad with positive A1+A2. Uses production precompute only to choose
+ * the same bed split/areas, then directly samples planar subtriangle beds at barycentric midpoints.
+ * Not independent of split selection; no pointer/shape/zero-area validation or state mutation
+ * occurs.
+ *
+ * @param[in] x Required readable four-entry vertex x coordinates in metres, in quad order.
+ * @param[in] y Required readable four-entry vertex y coordinates in metres.
+ * @param[in] z Required readable four-entry bed elevations in metres.
+ * @param[in] eta Uniform absolute water-surface elevation in metres.
+ * @param[out] kase Assigned production quadVfrPrecompute split-case code selecting the two bed
+ *     triangles.
+ * @return Area-weighted approximate mean max(0,eta-z) in metres using 400 subdivisions per
+ *     subtriangle.
+ */
+double bruteForceMeanDepth(const double* x, const double* y, const double* z, double eta,
+                           int& kase) {
     double zs[6], A1, A2;
     kase = quadVfrPrecompute(x, y, z, zs, A1, A2);
     // Recover the sub-triangle vertex sets from the case (same rule as the
     // header) to integrate the planar beds.
     int p[4] = {0, 1, 2, 3};
     for (int i = 1; i < 4; ++i) {
-        const int key = p[i]; int j = i - 1;
-        while (j >= 0 && z[p[j]] > z[key]) { p[j + 1] = p[j]; --j; }
+        const int key = p[i];
+        int j = i - 1;
+        while (j >= 0 && z[p[j]] > z[key]) {
+            p[j + 1] = p[j];
+            --j;
+        }
         p[j + 1] = key;
     }
     const int n1 = p[0], n2 = p[1], n3 = p[2], n4 = p[3];
     int t1[3], t2[3];
-    if (kase == 1)      { t1[0]=n1;t1[1]=n2;t1[2]=n4; t2[0]=n1;t2[1]=n3;t2[2]=n4; }
-    else if (kase == 2) { t1[0]=n1;t1[1]=n2;t1[2]=n4; t2[0]=n2;t2[1]=n3;t2[2]=n4; }
-    else                { t1[0]=n1;t1[1]=n3;t1[2]=n4; t2[0]=n2;t2[1]=n3;t2[2]=n4; }
+    if (kase == 1) {
+        t1[0] = n1;
+        t1[1] = n2;
+        t1[2] = n4;
+        t2[0] = n1;
+        t2[1] = n3;
+        t2[2] = n4;
+    } else if (kase == 2) {
+        t1[0] = n1;
+        t1[1] = n2;
+        t1[2] = n4;
+        t2[0] = n2;
+        t2[1] = n3;
+        t2[2] = n4;
+    } else {
+        t1[0] = n1;
+        t1[1] = n3;
+        t1[2] = n4;
+        t2[0] = n2;
+        t2[1] = n3;
+        t2[2] = n4;
+    }
     auto integrate = [&](const int* t) {
         const double ax = x[t[0]], ay = y[t[0]], az = z[t[0]];
         const double bx = x[t[1]], by = y[t[1]], bz = z[t[1]];
         const double cx = x[t[2]], cy = y[t[2]], cz = z[t[2]];
         const double area = 0.5 * std::abs((bx - ax) * (cy - ay) - (cx - ax) * (by - ay));
         const int N = 400;
-        double sum = 0.0; int cnt = 0;
+        double sum = 0.0;
+        int cnt = 0;
         for (int i = 0; i < N; ++i)
             for (int j = 0; j < N - i; ++j) {
                 // Barycentric midpoints of a regular sub-triangulation.
                 const double u = (i + 1.0 / 3.0) / N, v = (j + 1.0 / 3.0) / N;
                 const double zb = az + u * (bz - az) + v * (cz - az);
-                sum += std::max(0.0, eta - zb); ++cnt;
+                sum += std::max(0.0, eta - zb);
+                ++cnt;
                 if (j < N - i - 1) {
                     const double u2 = (i + 2.0 / 3.0) / N, v2 = (j + 2.0 / 3.0) / N;
                     const double zb2 = az + u2 * (bz - az) + v2 * (cz - az);
-                    sum += std::max(0.0, eta - zb2); ++cnt;
+                    sum += std::max(0.0, eta - zb2);
+                    ++cnt;
                 }
             }
-        return area * sum / cnt;   // volume over this sub-triangle
+        return area * sum / cnt; // volume over this sub-triangle
     };
     return (integrate(t1) + integrate(t2)) / (A1 + A2);
 }
 
-}  // namespace
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Geometry of a single skewed quad.
@@ -210,7 +314,8 @@ TEST(QuadMesh, SkewedQuadGeometry) {
         cx += (mesh.vx[a] + mesh.vx[b]) * cr;
         cy += (mesh.vy[a] + mesh.vy[b]) * cr;
     }
-    cx /= 6.0 * 9.5; cy /= 6.0 * 9.5;
+    cx /= 6.0 * 9.5;
+    cy /= 6.0 * 9.5;
     EXPECT_NEAR(mesh.tri_cx[0], cx, 1e-12);
     EXPECT_NEAR(mesh.tri_cy[0], cy, 1e-12);
     // The vertex mean is NOT the centroid of this quad (guards D5).
@@ -226,7 +331,8 @@ TEST(QuadMesh, SkewedQuadGeometry) {
         const int s = MeshData::slot(0, k);
         const double len = std::hypot(mesh.vx[b] - mesh.vx[a], mesh.vy[b] - mesh.vy[a]);
         EXPECT_NEAR(mesh.edge_length[s], len, 1e-12);
-        EXPECT_NEAR(mesh.edge_nx[s] * mesh.edge_nx[s] + mesh.edge_ny[s] * mesh.edge_ny[s], 1.0, 1e-12);
+        EXPECT_NEAR(mesh.edge_nx[s] * mesh.edge_nx[s] + mesh.edge_ny[s] * mesh.edge_ny[s], 1.0,
+                    1e-12);
         // Outward: (midpoint − centroid)·n > 0 and equals edge_dist_c.
         const double dmx = mesh.edge_mx[s] - mesh.tri_cx[0];
         const double dmy = mesh.edge_my[s] - mesh.tri_cy[0];
@@ -241,15 +347,18 @@ TEST(QuadMesh, SkewedQuadGeometry) {
 TEST(QuadMesh, TriangleEdgeDistMatchesTwoAOverThreeL) {
     MeshData mesh;
     mesh.resize_vertices(3);
-    mesh.vx = {0.0, 3.0, 1.0}; mesh.vy = {0.0, 0.5, 2.5}; mesh.vz = {0, 0, 0};
+    mesh.vx = {0.0, 3.0, 1.0};
+    mesh.vy = {0.0, 0.5, 2.5};
+    mesh.vz = {0, 0, 0};
     mesh.resize_triangles(1);
     mesh.set_triangle(0, 0, 1, 2);
     buildMeshTopology(mesh);
     for (int k = 0; k < 3; ++k) {
         const int s = MeshData::slot(0, k);
-        EXPECT_NEAR(mesh.edge_dist_c[s], 2.0 * mesh.tri_area[0] / (3.0 * mesh.edge_length[s]), 1e-12);
+        EXPECT_NEAR(mesh.edge_dist_c[s], 2.0 * mesh.tri_area[0] / (3.0 * mesh.edge_length[s]),
+                    1e-12);
     }
-    EXPECT_EQ(mesh.edge_dist_c[MeshData::slot(0, 3)], 0.0);   // padding
+    EXPECT_EQ(mesh.edge_dist_c[MeshData::slot(0, 3)], 0.0); // padding
     EXPECT_EQ(mesh.cell_neighbour(0, 3), -2);
 }
 
@@ -257,7 +366,7 @@ TEST(QuadMesh, TriangleEdgeDistMatchesTwoAOverThreeL) {
 TEST(QuadMesh, NonConvexQuadRejected) {
     MeshData mesh;
     mesh.resize_vertices(4);
-    mesh.vx = {0.0, 4.0, 1.0, 0.0};     // (1,1) is a re-entrant corner
+    mesh.vx = {0.0, 4.0, 1.0, 0.0}; // (1,1) is a re-entrant corner
     mesh.vy = {0.0, 0.0, 1.0, 4.0};
     mesh.vz = {0, 0, 0, 0};
     mesh.resize_triangles(1);
@@ -267,7 +376,8 @@ TEST(QuadMesh, NonConvexQuadRejected) {
     const std::string err = validateMesh(mesh);
     EXPECT_NE(err.find("not a convex quadrilateral"), std::string::npos) << err;
     // Bow-tie ordering of a square is likewise rejected.
-    mesh.vx = {0.0, 1.0, 0.0, 1.0}; mesh.vy = {0.0, 1.0, 1.0, 0.0};
+    mesh.vx = {0.0, 1.0, 0.0, 1.0};
+    mesh.vy = {0.0, 1.0, 1.0, 0.0};
     buildMeshTopology(mesh);
     EXPECT_FALSE(validateMesh(mesh).empty());
 }
@@ -277,14 +387,17 @@ TEST(QuadMesh, NonConvexQuadRejected) {
 TEST(QuadMesh, ClockwiseQuadAccepted) {
     MeshData mesh;
     mesh.resize_vertices(4);
-    mesh.vx = {0.0, 0.0, 2.0, 2.0}; mesh.vy = {0.0, 2.0, 2.0, 0.0}; mesh.vz = {0, 0, 0, 0};
+    mesh.vx = {0.0, 0.0, 2.0, 2.0};
+    mesh.vy = {0.0, 2.0, 2.0, 0.0};
+    mesh.vz = {0, 0, 0, 0};
     mesh.resize_triangles(1);
-    mesh.set_quad(0, 0, 1, 2, 3);   // CW
+    mesh.set_quad(0, 0, 1, 2, 3); // CW
     mesh.mannings_n[0] = 0.03;
     buildMeshTopology(mesh);
     EXPECT_TRUE(validateMesh(mesh).empty()) << validateMesh(mesh);
     EXPECT_NEAR(mesh.tri_area[0], 4.0, 1e-12);
-    for (int k = 0; k < 4; ++k) EXPECT_GT(mesh.edge_dist_c[MeshData::slot(0, k)], 0.0);
+    for (int k = 0; k < 4; ++k)
+        EXPECT_GT(mesh.edge_dist_c[MeshData::slot(0, k)], 0.0);
 }
 
 // ---------------------------------------------------------------------------
@@ -317,7 +430,8 @@ TEST(QuadMesh, MixedStripAdjacencyAndUniqueEdges) {
         EXPECT_EQ(ed.cell_ptr[c + 1] - ed.cell_ptr[c], 2) << "quad " << c;
     // Vertex stencils reach every cell.
     int total = 0;
-    for (int c = 0; c < mesh.n_triangles(); ++c) total += mesh.cell_vertex_count(c);
+    for (int c = 0; c < mesh.n_triangles(); ++c)
+        total += mesh.cell_vertex_count(c);
     EXPECT_EQ(total, 4 * 3 + 5 * 4);
 }
 
@@ -335,7 +449,8 @@ TEST(QuadVfr, MatchesBruteForceIntegrationAllCases) {
         double z[4] = {uz(rng), uz(rng), uz(rng), uz(rng)};
         double zs[6], A1, A2;
         const int kase = quadVfrPrecompute(x, y, z, zs, A1, A2);
-        ASSERT_GE(kase, 1); ASSERT_LE(kase, 3);
+        ASSERT_GE(kase, 1);
+        ASSERT_LE(kase, 3);
         ++seen[kase];
         ASSERT_GT(A1 + A2, 0.0);
         const double zlo = *std::min_element(z, z + 4), zhi = *std::max_element(z, z + 4);
@@ -343,13 +458,14 @@ TEST(QuadVfr, MatchesBruteForceIntegrationAllCases) {
             const double eta = zlo - 0.05 + (zhi - zlo + 0.4) * m / 10.0;
             int kk;
             const double oracle = bruteForceMeanDepth(x, y, z, eta, kk);
-            const double got    = quadMeanDepthFromEta(zs, A1, A2, eta, 0.0);
-            EXPECT_NEAR(got, oracle, 2.0e-4 * (1.0 + oracle))
-                << "case " << kase << " eta " << eta;
+            const double got = quadMeanDepthFromEta(zs, A1, A2, eta, 0.0);
+            EXPECT_NEAR(got, oracle, 2.0e-4 * (1.0 + oracle)) << "case " << kase << " eta " << eta;
         }
     }
     // All three B&S topologies were exercised.
-    EXPECT_GT(seen[1], 0); EXPECT_GT(seen[2], 0); EXPECT_GT(seen[3], 0);
+    EXPECT_GT(seen[1], 0);
+    EXPECT_GT(seen[2], 0);
+    EXPECT_GT(seen[3], 0);
 }
 
 TEST(QuadVfr, RoundTripMonotoneAndRegularised) {
@@ -367,14 +483,15 @@ TEST(QuadVfr, RoundTripMonotoneAndRegularised) {
                 const double eta = quadEtaFromMeanDepth(zs, A1, A2, h, eps);
                 const double back = quadMeanDepthFromEta(zs, A1, A2, eta, eps);
                 EXPECT_NEAR(back, h, 1.0e-10 * (1.0 + h)) << "eps " << eps << " h " << h;
-                EXPECT_GT(eta, prev);        // strictly monotone in h̄
+                EXPECT_GT(eta, prev); // strictly monotone in h̄
                 prev = eta;
             }
             // Dry limit maps back to zero depth; fully wet is the flat closure.
             const double eta0 = quadEtaFromMeanDepth(zs, A1, A2, 0.0, eps);
             EXPECT_NEAR(quadMeanDepthFromEta(zs, A1, A2, eta0, eps), 0.0, 1e-14);
-            const double zw = (A1 * (zs[0] + zs[1] + zs[2]) / 3.0 +
-                               A2 * (zs[3] + zs[4] + zs[5]) / 3.0) / (A1 + A2);
+            const double zw =
+                (A1 * (zs[0] + zs[1] + zs[2]) / 3.0 + A2 * (zs[3] + zs[4] + zs[5]) / 3.0) /
+                (A1 + A2);
             EXPECT_NEAR(quadEtaFromMeanDepth(zs, A1, A2, 5.0, eps), zw + 5.0, 1e-12);
         }
     }
@@ -384,7 +501,7 @@ TEST(QuadVfr, RoundTripMonotoneAndRegularised) {
 // once wet, and the split's diagonal choice cannot matter.
 TEST(QuadVfr, PlanarQuadIsExactPlane) {
     double x[4] = {0, 2, 2, 0}, y[4] = {0, 0, 1, 1};
-    double z[4] = {0.0, 0.2, 0.5, 0.3};   // z = 0.1x + 0.3y — planar
+    double z[4] = {0.0, 0.2, 0.5, 0.3}; // z = 0.1x + 0.3y — planar
     double zs[6], A1, A2;
     quadVfrPrecompute(x, y, z, zs, A1, A2);
     EXPECT_NEAR(A1 + A2, 2.0, 1e-12);
@@ -392,9 +509,9 @@ TEST(QuadVfr, PlanarQuadIsExactPlane) {
     for (double eta : {0.6, 1.0, 3.0})
         EXPECT_NEAR(quadMeanDepthFromEta(zs, A1, A2, eta, 0.0), eta - zmean, 1e-12);
     // Partially wet: exact for a plane inclined along x only.
-    double zz[4] = {0.0, 0.4, 0.4, 0.0};   // z = 0.2 x
+    double zz[4] = {0.0, 0.4, 0.4, 0.0}; // z = 0.2 x
     quadVfrPrecompute(x, y, zz, zs, A1, A2);
-    const double eta = 0.2;                // wets x < 1: depth ∫₀¹(0.2−0.2x)dx / 2 = 0.05
+    const double eta = 0.2; // wets x < 1: depth ∫₀¹(0.2−0.2x)dx / 2 = 0.05
     EXPECT_NEAR(quadMeanDepthFromEta(zs, A1, A2, eta, 0.0), 0.05, 1e-12);
 }
 
@@ -407,8 +524,8 @@ TEST(QuadMarcher, LakeAtRestExactFlatAndVfrOnQuadsAndMixed) {
             auto bed = [](double x, double y) {
                 return 0.05 * x + 0.11 * y + 0.3 * std::sin(0.7 * x);
             };
-            MeshData mesh = (kind == 0) ? makeQuadGrid(6, 6, 5.0, bed)
-                                        : makeMixedStrip(8, 5.0, bed);
+            MeshData mesh =
+                (kind == 0) ? makeQuadGrid(6, 6, 5.0, bed) : makeMixedStrip(8, 5.0, bed);
             SolverOptions2D opts;
             opts.cell_closure = closure;
             auto state = makeState(mesh);
@@ -429,9 +546,7 @@ TEST(QuadMarcher, LakeAtRestExactFlatAndVfrOnQuadsAndMixed) {
 }
 
 TEST(QuadMarcher, DryNeighbourWallNoCreepOnQuads) {
-    auto mesh = makeQuadGrid(8, 4, 2.0, [](double x, double) {
-        return (x < 8.0) ? 0.0 : 2.0;
-    });
+    auto mesh = makeQuadGrid(8, 4, 2.0, [](double x, double) { return (x < 8.0) ? 0.0 : 2.0; });
     SolverOptions2D opts;
     auto state = makeState(mesh);
     seedSurface(mesh, opts, state, 1.0);
@@ -441,7 +556,8 @@ TEST(QuadMarcher, DryNeighbourWallNoCreepOnQuads) {
     solver.initialize(mesh, state, opts);
     solver.advance(0.0, 600.0);
     for (int i = 0; i < mesh.n_triangles(); ++i)
-        if (mesh.tri_cz[i] > 1.5) EXPECT_EQ(state.volume[i], 0.0);
+        if (mesh.tri_cz[i] > 1.5)
+            EXPECT_EQ(state.volume[i], 0.0);
     EXPECT_NEAR(totalVolume(state, mesh.n_triangles()), sum0, 1.0e-9 * sum0);
     for (int i = 0; i < mesh.n_triangles(); ++i)
         EXPECT_NEAR(state.volume[i], v0[i], 1.0e-9 * (v0[i] + 1.0));
@@ -458,8 +574,8 @@ TEST(QuadMarcher, PositivityWithFourExportingFaces) {
     auto state = makeState(mesh);
     const int centre = 4;
     state.volume[centre] = 3.0 * mesh.tri_area[centre];
-    inertial::cellEtaDepth(mesh, opts, centre, state.volume[centre],
-                           state.head[centre], state.depth[centre]);
+    inertial::cellEtaDepth(mesh, opts, centre, state.volume[centre], state.head[centre],
+                           state.depth[centre]);
     const double sum0 = totalVolume(state, mesh.n_triangles());
     ExplicitInertialSolver solver;
     solver.initialize(mesh, state, opts);
@@ -472,7 +588,8 @@ TEST(QuadMarcher, PositivityWithFourExportingFaces) {
     }
     EXPECT_NEAR(totalVolume(state, mesh.n_triangles()), sum0, 1.0e-10 * sum0);
     // Water actually spread to all four neighbours.
-    for (int nb : {1, 3, 5, 7}) EXPECT_GT(state.volume[nb], 0.0);
+    for (int nb : {1, 3, 5, 7})
+        EXPECT_GT(state.volume[nb], 0.0);
     solver.finalize();
 }
 
@@ -514,7 +631,8 @@ TEST(QuadMarcher, ManningSteadySlopeRainOutflowQuadStrip) {
     for (int i = 0; i < mesh.n_triangles(); ++i)
         for (int e = 0; e < mesh.cell_vertex_count(i); ++e) {
             const int idx = MeshData::slot(i, e);
-            if (mesh.cell_neighbour(i, e) >= 0) continue;
+            if (mesh.cell_neighbour(i, e) >= 0)
+                continue;
             if (mesh.edge_mx[idx] < 1.0e-9) {
                 boundary.edge_bc_type[idx] = static_cast<int8_t>(BoundaryType::NORMAL_FLOW);
                 boundary.edge_bed_slope[idx] = S;
@@ -524,7 +642,8 @@ TEST(QuadMarcher, ManningSteadySlopeRainOutflowQuadStrip) {
     ASSERT_EQ(outlet_slots, ny);
     state.boundary = &boundary;
     const double rain = 2.0e-4;
-    for (int i = 0; i < mesh.n_triangles(); ++i) state.rainfall[i] = rain;
+    for (int i = 0; i < mesh.n_triangles(); ++i)
+        state.rainfall[i] = rain;
 
     ExplicitInertialSolver solver;
     solver.initialize(mesh, state, opts);
@@ -541,16 +660,21 @@ TEST(QuadMarcher, ManningSteadySlopeRainOutflowQuadStrip) {
                 q_out += -state.edge_flux[idx];
         }
     double q_rain = 0.0;
-    for (int i = 0; i < mesh.n_triangles(); ++i) q_rain += rain * mesh.tri_area[i];
+    for (int i = 0; i < mesh.n_triangles(); ++i)
+        q_rain += rain * mesh.tri_area[i];
     EXPECT_NEAR(q_rain * T, q_out * T + (v_end - v_start), 1.0e-8 * q_rain * T);
     EXPECT_NEAR(q_out, q_rain, 0.10 * q_rain);
 
     const double L = nx * dx, x_mid = 0.5 * L;
     const double q_mid = rain * (L - x_mid);
     const double h_n = std::pow(n_man * q_mid / std::sqrt(S), 3.0 / 5.0);
-    double h_avg = 0.0; int h_cnt = 0;
+    double h_avg = 0.0;
+    int h_cnt = 0;
     for (int i = 0; i < mesh.n_triangles(); ++i)
-        if (std::fabs(mesh.tri_cx[i] - x_mid) < dx) { h_avg += state.depth[i]; ++h_cnt; }
+        if (std::fabs(mesh.tri_cx[i] - x_mid) < dx) {
+            h_avg += state.depth[i];
+            ++h_cnt;
+        }
     h_avg /= h_cnt;
     EXPECT_NEAR(h_avg, h_n, 0.04 * h_n);
     solver.finalize();
@@ -562,7 +686,9 @@ TEST(QuadMarcher, ManningSteadySlopeRainOutflowQuadStrip) {
 TEST(QuadParser, QuadRowsAppendAfterTriangles) {
     MeshData mesh;
     mesh.resize_vertices(6);
-    mesh.vx = {0, 1, 2, 0, 1, 2}; mesh.vy = {0, 0, 0, 1, 1, 1}; mesh.vz = {0, 0, 0, 0, 0, 0};
+    mesh.vx = {0, 1, 2, 0, 1, 2};
+    mesh.vy = {0, 0, 0, 1, 1, 1};
+    mesh.vz = {0, 0, 0, 0, 0, 0};
     EXPECT_TRUE(parse2DTriangleLine({"0", "1", "4", "0.03"}, mesh).empty());
     EXPECT_TRUE(parse2DTriangleLine({"0", "4", "3", "0.03", "0.5", "cap"}, mesh).empty());
     EXPECT_TRUE(parse2DQuadLine({"1", "2", "5", "4", "0.02", "street"}, mesh).empty());
@@ -600,9 +726,11 @@ TEST(QuadParser, MomentumEquationOption) {
     EXPECT_TRUE(parse2DOptionsLine({"MOMENTUM_EQUATION", "FULL_SWE"}, opts, &warnings).empty());
     EXPECT_EQ(opts.momentum, Momentum2D::FULL_SWE);
     EXPECT_EQ(format2DOptionValue(opts, "MOMENTUM_EQUATION"), "FULL_SWE");
-    EXPECT_TRUE(parse2DOptionsLine({"MOMENTUM_EQUATION", "diffusive_wave"}, opts, &warnings).empty());
+    EXPECT_TRUE(
+        parse2DOptionsLine({"MOMENTUM_EQUATION", "diffusive_wave"}, opts, &warnings).empty());
     EXPECT_EQ(opts.momentum, Momentum2D::DIFFUSIVE_WAVE);
-    EXPECT_TRUE(parse2DOptionsLine({"MOMENTUM_EQUATION", "LOCAL_INERTIAL"}, opts, &warnings).empty());
+    EXPECT_TRUE(
+        parse2DOptionsLine({"MOMENTUM_EQUATION", "LOCAL_INERTIAL"}, opts, &warnings).empty());
     EXPECT_EQ(opts.momentum, Momentum2D::LOCAL_INERTIAL);
     EXPECT_FALSE(parse2DOptionsLine({"MOMENTUM_EQUATION", "BOGUS"}, opts, &warnings).empty());
     EXPECT_TRUE(parse2DOptionsLine({"RECONSTRUCTION_ORDER", "2"}, opts, &warnings).empty());

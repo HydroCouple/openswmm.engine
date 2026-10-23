@@ -15,9 +15,13 @@
 // limitations under the License.
 
 /**
- * @file PressurizedHeadSolver.cpp
- * @brief Implementation of the R2a implicit pressurized head update.
+ * @file      PressurizedHeadSolver.cpp
+ * @brief     Implementation of the R2a implicit pressurized head update.
  * @ingroup engine_fv
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include "PressurizedHeadSolver.hpp"
@@ -35,75 +39,100 @@ namespace k = kernels;
 
 namespace {
 
-/// Friction coefficient γ in the semi-implicit denominator 1 + Δt·γ — the
-/// SAME laws frictionFor applies to the cell momentum (Manning by default;
-/// a full FORCE_MAIN switches to its own HW/DW slope), expressed per unit
-/// time so the face conductance damps exactly as the cell does.
-///
-/// Evaluated at the PHYSICAL velocity Q/min(A, a_crown), not Q/A: above the
-/// crown the conserved A carries the slot's numerical storage, and a
-/// velocity diluted by it under-states the friction slope by exactly the
-/// slot share — which is the mechanism that made the explicit scheme's
-/// full-bore head loss a function of FV_SLOT_CELERITY (R1: 8.8 ft at c=30
-/// against 13.30 analytic). The implicit face law is not a conservative
-/// Godunov flux — no bore-speed consistency binds it — so it is free to use
-/// the conveyance area, the same distinction legacy DW draws with
-/// conveyArea (#144).
-double frictionGamma(const FvGeometry& g, double roughness, double rough_factor,
-                     double q, double a, double h) {
+/**
+ * @brief Convert the selected steady friction law to an implicit face damping rate.
+ *
+ * Full FORCE_MAIN uses g*Sf/abs(u); otherwise Manning uses rough_factor*abs(u)/R^(4/3). No
+ * finite/geometry validation or timestep multiplication occurs here.
+ *
+ * @param[in] g Initialized geometry with valid radius closure and crown area.
+ * @param[in] roughness Force-main roughness: <1 selects Darcy-Weisbach absolute roughness ft; >=1
+ *     selects Hazen-Williams C.
+ * @param[in] rough_factor Native Manning g*(n/1.486)^2 coefficient for ordinary/part-full geometry;
+ *     <=0 disables Manning damping.
+ * @param[in] q Aggregate discharge in ft3/s.
+ * @param[in] a Aggregate conserved area in ft2; conveyance area is capped at max(a_crown,kDryArea).
+ * @param[in] h Friction evaluation depth in ft; flagged TPA callers supply at least y_full.
+ * @return Damping gamma in 1/s, or zero for dry conveyance/nonpositive radius/inactive roughness.
+ */
+double frictionGamma(const FvGeometry& g, double roughness, double rough_factor, double q, double a,
+                     double h) {
     const double a_conv = std::min(a, std::max(g.a_crown, k::kDryArea));
-    if (a_conv <= k::kDryArea) return 0.0;
+    if (a_conv <= k::kDryArea)
+        return 0.0;
     const double u = q / a_conv;
     const double absu = std::fabs(u);
     const double r = k::hydRadOfDepth(g, h);
-    if (r <= 0.0) return 0.0;
-    if (g.xs.type == static_cast<int>(XSectShape::FORCE_MAIN) &&
-        h >= g.y_full) {
-        if (absu <= 0.0) return 0.0;
-        const double sf = (roughness < 1.0)
-                              ? hydkernels::fricSlopeDW(u, r, roughness)
-                              : hydkernels::fricSlopeHW(u, r, roughness);
+    if (r <= 0.0)
+        return 0.0;
+    if (g.xs.type == static_cast<int>(XSectShape::FORCE_MAIN) && h >= g.y_full) {
+        if (absu <= 0.0)
+            return 0.0;
+        const double sf = (roughness < 1.0) ? hydkernels::fricSlopeDW(u, r, roughness)
+                                            : hydkernels::fricSlopeHW(u, r, roughness);
         return k::kGravity * sf / absu;
     }
-    if (rough_factor <= 0.0) return 0.0;
+    if (rough_factor <= 0.0)
+        return 0.0;
     const double r43 = r * std::cbrt(r);
     return rough_factor * absu / r43;
 }
 
+/**
+ * @brief Recognize a finite prescribed node head in optional step forcing.
+ *
+ * @param[in] f Borrowed forcing pointer or nullptr; its fixed-head array may also be null.
+ * @param[in] un Valid node index when the array is present.
+ * @return True only when a fixed-head array exists and the indexed elevation is finite.
+ *     NaN/infinity mean unspecified.
+ */
 bool fixedHead(const FvStepForcing* f, std::size_t un) {
     return f && f->node_fixed_head && std::isfinite(f->node_fixed_head[un]);
 }
 
-/// algebraicActive, replicated from ExplicitFvSolver over the view's data:
-/// eligible AND not demoted to the bucket path by a real pond above v_full.
+/**
+ * @brief Test whether a node still uses algebraic continuity instead of a real pond bucket.
+ *
+ * @param[in] v Borrowed aligned node_alg/node_vfull, mesh ponding mask and current node volumes;
+ *     required pointers non-null.
+ * @param[in] n Valid nonnegative node index.
+ * @return True for an eligible algebraic node unless enabled ponding has volume strictly above its
+ *     full-volume threshold.
+ */
 bool algActive(const PressurizedView& v, int n) {
     const auto un = static_cast<std::size_t>(n);
-    if (!(*v.node_alg)[un]) return false;
-    if (v.mesh->node_can_pond[un] &&
-        v.state->node_volume[un] > (*v.node_vfull)[un])
+    if (!(*v.node_alg)[un])
+        return false;
+    if (v.mesh->node_can_pond[un] && v.state->node_volume[un] > (*v.node_vfull)[un])
         return false;
     return true;
 }
 
-/// The node's physical ceiling — the same bracket top solveAlgebraicNode
-/// uses: the rim for a pondable node (above it the water is real storage),
-/// rim + surcharge depth for a sealed one, and a generous crown-derived
-/// ceiling for a junction with no rim on record.
+/**
+ * @brief Compute a folded junction upper head bracket in native elevation units.
+ *
+ * Without positive full depth uses invert+max(1 ft, face_zb-invert+2*y_full over adjacent cells).
+ * This only supplies the upper bracket; sealed TPA lower-head extension is applied by the caller.
+ *
+ * @param[in] m Aligned immutable mesh with valid node-face CSR and adjacent geometry.
+ * @param[in] n Valid node index.
+ * @return Head ceiling in ft: rim for pondable nodes, rim+surcharge depth for sealed nodes, or a
+ *     connected-crown fallback.
+ */
 double nodeCeiling(const NetworkMeshData& m, int n) {
     const auto un = static_cast<std::size_t>(n);
     const double invert = m.node_invert[un];
     const double full = m.node_full_depth[un];
     if (full > 0.0)
-        return invert +
-               (m.node_can_pond[un] ? full : full + m.node_sur_depth[un]);
+        return invert + (m.node_can_pond[un] ? full : full + m.node_sur_depth[un]);
     double top = 1.0;
     for (int p = m.node_face_ptr[un]; p < m.node_face_ptr[un + 1]; ++p) {
-        const auto uf = static_cast<std::size_t>(
-            m.node_face_idx[static_cast<std::size_t>(p)]);
+        const auto uf = static_cast<std::size_t>(m.node_face_idx[static_cast<std::size_t>(p)]);
         const int cell = (m.face_cl[uf] >= 0) ? m.face_cl[uf] : m.face_cr[uf];
-        if (cell < 0) continue;
-        const FvGeometry& g = m.geom[static_cast<std::size_t>(
-            m.cell_geom[static_cast<std::size_t>(cell)])];
+        if (cell < 0)
+            continue;
+        const FvGeometry& g =
+            m.geom[static_cast<std::size_t>(m.cell_geom[static_cast<std::size_t>(cell)])];
         top = std::max(top, (m.face_zb[uf] - invert) + 2.0 * g.y_full);
     }
     return invert + top;
@@ -118,8 +147,7 @@ double nodeCeiling(const NetworkMeshData& m, int n) {
 int PressurizedHeadSolver::ufFind(int i) {
     while (uf_parent_[static_cast<std::size_t>(i)] != i) {
         uf_parent_[static_cast<std::size_t>(i)] =
-            uf_parent_[static_cast<std::size_t>(
-                uf_parent_[static_cast<std::size_t>(i)])];
+            uf_parent_[static_cast<std::size_t>(uf_parent_[static_cast<std::size_t>(i)])];
         i = uf_parent_[static_cast<std::size_t>(i)];
     }
     return i;
@@ -127,8 +155,8 @@ int PressurizedHeadSolver::ufFind(int i) {
 
 void PressurizedHeadSolver::ufUnion(int a, int b) {
     const int ra = ufFind(a), rb = ufFind(b);
-    if (ra != rb) uf_parent_[static_cast<std::size_t>(std::max(ra, rb))] =
-        std::min(ra, rb);
+    if (ra != rb)
+        uf_parent_[static_cast<std::size_t>(std::max(ra, rb))] = std::min(ra, rb);
 }
 
 // ---------------------------------------------------------------------------
@@ -147,13 +175,15 @@ bool PressurizedHeadSolver::classify(const PressurizedView& v) {
 
     bool any = false;
     for (std::size_t c = 0; c < nc; ++c) {
-        if (!(*v.cell_active)[c]) continue;
+        if (!(*v.cell_active)[c])
+            continue;
         if (cellPressurized(mesh, state, static_cast<int>(c))) {
             cell_press_[c] = 1;
             any = true;
         }
     }
-    if (!any) return false;
+    if (!any)
+        return false;
 
     cell_unk_.assign(nc, -1);
     node_unk_.assign(nn, -1);
@@ -164,30 +194,36 @@ bool PressurizedHeadSolver::classify(const PressurizedView& v) {
     // kDelta taxonomy note in the header for the measured reasons).
     for (const int f : *v.active_faces) {
         const std::uint8_t mode = faceModeOf(mesh, state, f);
-        if (mode != kFull) continue;
+        if (mode != kFull)
+            continue;
         ImpFace F;
         F.face = f;
         F.mode = mode;
         imp_faces_.push_back(F);
     }
-    if (imp_faces_.empty()) return false;
+    if (imp_faces_.empty())
+        return false;
 
     // Fold pass: a pressurized algebraic junction whose EVERY incident face
     // is FULL-implicit becomes an unknown row. Anything else stays Dirichlet
     // data (fixed heads, storage/demoted nodes, transition junctions).
     for (std::size_t un = 0; un < nn; ++un) {
         const int n = static_cast<int>(un);
-        if (!algActive(v, n)) continue;
-        if (fixedHead(v.forcing, un)) continue;
+        if (!algActive(v, n))
+            continue;
+        if (fixedHead(v.forcing, un))
+            continue;
         const int b = mesh.node_face_ptr[un];
         const int e = mesh.node_face_ptr[un + 1];
-        if (e <= b) continue;
+        if (e <= b)
+            continue;
         bool all_full = true;
         for (int p = b; p < e && all_full; ++p) {
             const int f = mesh.node_face_idx[static_cast<std::size_t>(p)];
             all_full = faceModeOf(mesh, state, f) == kFull;
         }
-        if (all_full) node_fold_[un] = 1;
+        if (all_full)
+            node_fold_[un] = 1;
     }
 
     // Unknown table: pressurized cell sides of implicit faces, then folded
@@ -222,7 +258,7 @@ bool PressurizedHeadSolver::classify(const PressurizedView& v) {
             if (cell_press_[static_cast<std::size_t>(cl)])
                 F.unk_l = cellUnknown(cl);
             else
-                F.dir_l = 0.0;  // value filled at solve time (cell_eta)
+                F.dir_l = 0.0; // value filled at solve time (cell_eta)
         } else if (nd >= 0 && node_fold_[static_cast<std::size_t>(nd)]) {
             F.unk_l = nodeUnknown(nd);
         }
@@ -238,9 +274,11 @@ bool PressurizedHeadSolver::classify(const PressurizedView& v) {
     // Components over FULL faces whose both endpoints are unknowns.
     const int nu = static_cast<int>(unk_entity_.size());
     uf_parent_.resize(static_cast<std::size_t>(nu));
-    for (int i = 0; i < nu; ++i) uf_parent_[static_cast<std::size_t>(i)] = i;
+    for (int i = 0; i < nu; ++i)
+        uf_parent_[static_cast<std::size_t>(i)] = i;
     for (const ImpFace& F : imp_faces_)
-        if (F.unk_l >= 0 && F.unk_r >= 0) ufUnion(F.unk_l, F.unk_r);
+        if (F.unk_l >= 0 && F.unk_r >= 0)
+            ufUnion(F.unk_l, F.unk_r);
 
     return true;
 }
@@ -267,8 +305,7 @@ void PressurizedHeadSolver::prepare(const PressurizedView& v, double dt) {
         const int ent = unk_entity_[static_cast<std::size_t>(u)];
         if (ent < mesh.n_cells()) {
             const auto uc = static_cast<std::size_t>(ent);
-            const FvGeometry& g =
-                mesh.geom[static_cast<std::size_t>(mesh.cell_geom[uc])];
+            const FvGeometry& g = mesh.geom[static_cast<std::size_t>(mesh.cell_geom[uc])];
             const double h = state.cell_h[uc];
             // TPA (issue #156 Phase 5): a FLAGGED cell lives on the SIGNED
             // slot line, whose storage derivative dA/dη is the constant
@@ -281,29 +318,24 @@ void PressurizedHeadSolver::prepare(const PressurizedView& v, double dt) {
             // apex cell's head left the physical range within 4 substeps and
             // the run NaN'd at t=0 (P5 task-3). The width must follow the
             // regime, exactly as censusDt/cellStableDt already do.
-            const bool tpa_c =
-                !state.cell_tpa.empty() && state.cell_tpa[uc] != 0;
-            const double T =
-                std::max(tpa_c ? g.t_slot : k::widthOfDepth(g, h), 1.0e-12);
-            unk_store_[static_cast<std::size_t>(u)] =
-                T * mesh.cell_dx[uc] / dt;
+            const bool tpa_c = !state.cell_tpa.empty() && state.cell_tpa[uc] != 0;
+            const double T = std::max(tpa_c ? g.t_slot : k::widthOfDepth(g, h), 1.0e-12);
+            unk_store_[static_cast<std::size_t>(u)] = T * mesh.cell_dx[uc] / dt;
             unk_eta0_[static_cast<std::size_t>(u)] = v.cell_eta[uc];
             if (v.cell_qlat && !v.cell_qlat->empty())
-                unk_rhs_ext_[static_cast<std::size_t>(u)] +=
-                    (*v.cell_qlat)[uc];
+                unk_rhs_ext_[static_cast<std::size_t>(u)] += (*v.cell_qlat)[uc];
             // Explicit faces of a pressurized cell — transition faces,
             // gates, culvert caps, walls — enter as constants: the
             // divergence updateCells will integrate has to be the
             // divergence this solve balanced.
             const int faces[2] = {mesh.cell_face0[uc], mesh.cell_face1[uc]};
-            const std::int8_t sides[2] = {mesh.cell_side0[uc],
-                                          mesh.cell_side1[uc]};
+            const std::int8_t sides[2] = {mesh.cell_side0[uc], mesh.cell_side1[uc]};
             for (int e2 = 0; e2 < 2; ++e2) {
                 const int f = faces[e2];
-                if (faceModeOf(mesh, state, f) == kFull) continue;
+                if (faceModeOf(mesh, state, f) == kFull)
+                    continue;
                 const double fa = v.f_mass[static_cast<std::size_t>(f)];
-                unk_rhs_ext_[static_cast<std::size_t>(u)] +=
-                    (sides[e2] == 0) ? -fa : fa;
+                unk_rhs_ext_[static_cast<std::size_t>(u)] += (sides[e2] == 0) ? -fa : fa;
             }
         } else {
             const int n = ent - mesh.n_cells();
@@ -313,8 +345,7 @@ void PressurizedHeadSolver::prepare(const PressurizedView& v, double dt) {
             // in exactly as solveAlgebraicNode bled it.
             unk_eta0_[static_cast<std::size_t>(u)] = state.node_head[un];
             double q_ext = (*v.node_qstruct)[un] + (*v.node_carry)[un] / dt;
-            if (!(v.node_lat_div && !v.node_lat_div->empty() &&
-                  (*v.node_lat_div)[un]) &&
+            if (!(v.node_lat_div && !v.node_lat_div->empty() && (*v.node_lat_div)[un]) &&
                 v.forcing && v.forcing->node_lateral)
                 q_ext += v.forcing->node_lateral[un];
             unk_rhs_ext_[static_cast<std::size_t>(u)] = q_ext;
@@ -329,36 +360,35 @@ void PressurizedHeadSolver::prepare(const PressurizedView& v, double dt) {
         // Conveyance area, not conserved area: the slot's numerical storage
         // must not conduct (see frictionGamma above). Capped at the FACE
         // section's crown area — both sides were reconstructed in it.
-        const FvGeometry& gf =
-            mesh.geom[static_cast<std::size_t>(mesh.face_geom[uf])];
-        const double ahat =
-            std::min(0.5 * (L.a + R.a), std::max(gf.a_crown, k::kDryArea));
+        const FvGeometry& gf = mesh.geom[static_cast<std::size_t>(mesh.face_geom[uf])];
+        const double ahat = std::min(0.5 * (L.a + R.a), std::max(gf.a_crown, k::kDryArea));
         const double Lf = mesh.face_dx[uf];
         F.cond = 0.0;
-        if (ahat <= k::kDryArea || Lf <= 0.0) continue;
+        if (ahat <= k::kDryArea || Lf <= 0.0)
+            continue;
 
         double gamma = 0.0;
         int ngam = 0;
         for (const int c : {mesh.face_cl[uf], mesh.face_cr[uf]}) {
-            if (c < 0) continue;
+            if (c < 0)
+                continue;
             const auto uc = static_cast<std::size_t>(c);
-            const FvGeometry& g =
-                mesh.geom[static_cast<std::size_t>(mesh.cell_geom[uc])];
+            const FvGeometry& g = mesh.geom[static_cast<std::size_t>(mesh.cell_geom[uc])];
             // A TPA-flagged cell (issue #156) is full at any piezometric
             // depth: friction evaluates at y_full (R = r_full, and a full
             // FORCE_MAIN keeps its pressurized law) rather than at a
             // sub-atmospheric h the table would read as part-full.
             const double h_fric =
-                (!state.cell_tpa.empty() && state.cell_tpa[uc] != 0 &&
-                 state.cell_h[uc] < g.y_full)
-                    ? g.y_full : state.cell_h[uc];
+                (!state.cell_tpa.empty() && state.cell_tpa[uc] != 0 && state.cell_h[uc] < g.y_full)
+                    ? g.y_full
+                    : state.cell_h[uc];
             const auto ucd = static_cast<std::size_t>(mesh.cell_conduit[uc]);
-            gamma += frictionGamma(g, mesh.conduit_roughness[ucd],
-                                   mesh.conduit_rough_factor[ucd],
+            gamma += frictionGamma(g, mesh.conduit_roughness[ucd], mesh.conduit_rough_factor[ucd],
                                    state.cell_q[uc], state.cell_a[uc], h_fric);
             ++ngam;
         }
-        if (ngam > 0) gamma /= static_cast<double>(ngam);
+        if (ngam > 0)
+            gamma /= static_cast<double>(ngam);
 
         const int cl = mesh.face_cl[uf];
         const int cr = mesh.face_cr[uf];
@@ -376,9 +406,8 @@ void PressurizedHeadSolver::prepare(const PressurizedView& v, double dt) {
         // deck stays bit-identical; k3 = 0 (or UF off) leaves every
         // coefficient bit-unchanged (adding 0.0 is exact).
         double k3 = 0.0, uf_src = 0.0;
-        if (v.opts && v.opts->unsteady_friction != 0 &&
-            v.opts->uf_k3 > 0.0 && v.uf_grad && !v.uf_grad->empty() &&
-            std::fabs(qstar0 / ahat) >= 0.01 /* ft/s dead-band */) {
+        if (v.opts && v.opts->unsteady_friction != 0 && v.opts->uf_k3 > 0.0 && v.uf_grad &&
+            !v.uf_grad->empty() && std::fabs(qstar0 / ahat) >= 0.01 /* ft/s dead-band */) {
             k3 = v.opts->uf_k3;
             double gterm = 0.0;
             if (cl >= 0 && cr >= 0) {
@@ -401,7 +430,7 @@ void PressurizedHeadSolver::prepare(const PressurizedView& v, double dt) {
         }
 
         F.alpha = 1.0 / (1.0 + dt * gamma + k3);
-        F.cond  = F.alpha * dt * k::kGravity * ahat / Lf;
+        F.cond = F.alpha * dt * k::kGravity * ahat / Lf;
         F.qstar = qstar0 * (1.0 + k3) - uf_src;
 
         // Time-n heads / Dirichlet values of each side.
@@ -413,11 +442,11 @@ void PressurizedHeadSolver::prepare(const PressurizedView& v, double dt) {
         F.dir_l = F.eta_l;
         F.dir_r = F.eta_r;
     }
-
 }
 
 void PressurizedHeadSolver::solve(const PressurizedView& v, double dt) {
-    if (imp_faces_.empty() || dt <= 0.0) return;
+    if (imp_faces_.empty() || dt <= 0.0)
+        return;
     prepare(v, dt);
     const auto& mesh = *v.mesh;
     auto& state = *v.state;
@@ -434,17 +463,18 @@ void PressurizedHeadSolver::solve(const PressurizedView& v, double dt) {
         for (int pass = 0; pass < 4; ++pass) {
             assembleRhs(v, dt);
             buildComponents();
-            const int ncomp =
-                static_cast<int>(comp_ptr_.empty() ? 0 : comp_ptr_.size() - 1);
+            const int ncomp = static_cast<int>(comp_ptr_.empty() ? 0 : comp_ptr_.size() - 1);
             for (int cidx = 0; cidx < ncomp; ++cidx)
                 solveComponent(cidx, v, dt);
 
             bool violated = false;
             for (int u = 0; u < nu; ++u) {
                 const auto uu = static_cast<std::size_t>(u);
-                if (unk_dirichlet_[uu]) continue;
+                if (unk_dirichlet_[uu])
+                    continue;
                 const int ent = unk_entity_[uu];
-                if (ent < mesh.n_cells()) continue;
+                if (ent < mesh.n_cells())
+                    continue;
                 const int n = ent - mesh.n_cells();
                 // TPA (issue #156 Phase 5): a SEALED folded junction inside
                 // a pressurized column carries sub-atmospheric head —
@@ -468,7 +498,8 @@ void PressurizedHeadSolver::solve(const PressurizedView& v, double dt) {
                     violated = true;
                 }
             }
-            if (!violated) break;
+            if (!violated)
+                break;
         }
     };
     solvePass();
@@ -514,29 +545,34 @@ void PressurizedHeadSolver::solve(const PressurizedView& v, double dt) {
             for (int u = 0; u < nu; ++u) {
                 const auto uu = static_cast<std::size_t>(u);
                 const int ent = unk_entity_[uu];
-                if (ent >= mesh.n_cells()) continue;
+                if (ent >= mesh.n_cells())
+                    continue;
                 const auto uc = static_cast<std::size_t>(ent);
-                if (!state.cell_tpa.empty() && state.cell_tpa[uc] != 0) continue;
-                const FvGeometry& g =
-                    mesh.geom[static_cast<std::size_t>(mesh.cell_geom[uc])];
+                if (!state.cell_tpa.empty() && state.cell_tpa[uc] != 0)
+                    continue;
+                const FvGeometry& g = mesh.geom[static_cast<std::size_t>(mesh.cell_geom[uc])];
                 const double h0 = state.cell_h[uc];
-                const double eta1 =
-                    unk_dirichlet_[uu] ? unk_dirvalue_[uu] : unk_head_[uu];
-                if (it > 0) move = std::max(move, std::fabs(eta1 - eta_prev[uu]));
+                const double eta1 = unk_dirichlet_[uu] ? unk_dirvalue_[uu] : unk_head_[uu];
+                if (it > 0)
+                    move = std::max(move, std::fabs(eta1 - eta_prev[uu]));
                 eta_prev[uu] = eta1;
                 double h1 = h0 + (eta1 - unk_eta0_[uu]);
-                if (h1 < 0.0) h1 = 0.0;
-                if (h0 >= g.y_full && h1 >= g.y_full) continue;   // slot: T = t_slot
+                if (h1 < 0.0)
+                    h1 = 0.0;
+                if (h0 >= g.y_full && h1 >= g.y_full)
+                    continue; // slot: T = t_slot
                 const double dh = h1 - h0;
-                if (std::fabs(dh) <= 1.0e-12 * g.y_full) continue;
+                if (std::fabs(dh) <= 1.0e-12 * g.y_full)
+                    continue;
                 const double T_sec =
-                    std::max((k::areaOfDepth(g, h1) - k::areaOfDepth(g, h0)) / dh,
-                             1.0e-12);
+                    std::max((k::areaOfDepth(g, h1) - k::areaOfDepth(g, h0)) / dh, 1.0e-12);
                 unk_store_[uu] = T_sec * mesh.cell_dx[uc] / dt;
                 changed = true;
             }
-            if (!changed) break;
-            if (it > 0 && move <= 1.0e-9) break;   // ft — predictions converged
+            if (!changed)
+                break;
+            if (it > 0 && move <= 1.0e-9)
+                break; // ft — predictions converged
             solvePass();
         }
     }
@@ -548,19 +584,19 @@ void PressurizedHeadSolver::solve(const PressurizedView& v, double dt) {
     for (int u = 0; u < nu; ++u) {
         const auto uu = static_cast<std::size_t>(u);
         const int ent = unk_entity_[uu];
-        if (ent < mesh.n_cells()) continue;
+        if (ent < mesh.n_cells())
+            continue;
         const auto un = static_cast<std::size_t>(ent - mesh.n_cells());
-        state.node_head[un] =
-            unk_dirichlet_[uu] ? unk_dirvalue_[uu] : unk_head_[uu];
+        state.node_head[un] = unk_dirichlet_[uu] ? unk_dirvalue_[uu] : unk_head_[uu];
     }
 }
 
-NonlinearPressureStorage::Result PressurizedHeadSolver::solveCandidate(
-    const PressurizedView& v, double dt,
-    const NonlinearPressureStorage::Controls& controls) {
+NonlinearPressureStorage::Result
+PressurizedHeadSolver::solveCandidate(const PressurizedView& v, double dt,
+                                      const NonlinearPressureStorage::Controls& controls) {
     using Result = NonlinearPressureStorage::Result;
-    if (imp_faces_.empty() || !std::isfinite(dt) || dt <= 0.0 ||
-        !v.state->cell_tpa.empty()) return Result{};
+    if (imp_faces_.empty() || !std::isfinite(dt) || dt <= 0.0 || !v.state->cell_tpa.empty())
+        return Result{};
     prepare(v, dt);
     const auto& mesh = *v.mesh;
     const auto& state = *v.state;
@@ -587,20 +623,26 @@ NonlinearPressureStorage::Result PressurizedHeadSolver::solveCandidate(
         }
     }
     for (const auto& face : imp_faces_) {
-        if (!(face.cond > 0.0) || !std::isfinite(face.cond)) return Result{};
+        if (!(face.cond > 0.0) || !std::isfinite(face.cond))
+            return Result{};
         const double base = face.alpha * face.qstar;
-        if (face.unk_l >= 0) candidate_rows_[face.unk_l].source -= base;
-        if (face.unk_r >= 0) candidate_rows_[face.unk_r].source += base;
+        if (face.unk_l >= 0)
+            candidate_rows_[face.unk_l].source -= base;
+        if (face.unk_r >= 0)
+            candidate_rows_[face.unk_r].source += base;
         if (face.unk_l >= 0 && face.unk_r >= 0)
             candidate_edges_.push_back({face.unk_l, face.unk_r, face.cond, 0.0});
         else if (face.unk_l >= 0)
             candidate_edges_.push_back({face.unk_l, -1, face.cond, face.dir_r});
         else if (face.unk_r >= 0)
             candidate_edges_.push_back({face.unk_r, -1, face.cond, face.dir_l});
-        else return Result{};
+        else
+            return Result{};
     }
-    auto result = candidate_.solve(candidate_rows_, candidate_edges_, dt, controls, candidate_head_);
-    if (!result.converged()) return result;
+    auto result =
+        candidate_.solve(candidate_rows_, candidate_edges_, dt, controls, candidate_head_);
+    if (!result.converged())
+        return result;
     // The sole publication point: use precisely the same water/species face
     // ledger and folded-head ownership as the existing pressure predictor.
     unk_head_ = candidate_head_;
@@ -612,8 +654,7 @@ NonlinearPressureStorage::Result PressurizedHeadSolver::solveCandidate(
 }
 
 bool PressurizedHeadSolver::verifyCandidateEndpoint(
-    const PressurizedView& v, double dt,
-    const NonlinearPressureStorage::Controls& controls) {
+    const PressurizedView& v, double dt, const NonlinearPressureStorage::Controls& controls) {
     const auto& mesh = *v.mesh;
     const auto& state = *v.state;
     const auto count = candidate_rows_.size();
@@ -626,26 +667,32 @@ bool PressurizedHeadSolver::verifyCandidateEndpoint(
         if (entity < mesh.n_cells()) {
             candidate_head_[u] = mesh.cell_zb[entity] + state.cell_h[entity];
             volume_change = row.length * (state.cell_a[entity] - row.old_area);
-        } else candidate_head_[u] = state.node_head[entity - mesh.n_cells()];
+        } else
+            candidate_head_[u] = state.node_head[entity - mesh.n_cells()];
         if (!std::isfinite(candidate_head_[u]) || candidate_head_[u] < row.lower_head ||
-            candidate_head_[u] > row.upper_head) return false;
-        candidate_budget_[u] = controls.absolute_volume + controls.relative_volume *
-            std::max({1.0, row.geometry ? row.length * row.old_area : 0.0,
-                      dt * std::fabs(row.source)});
+            candidate_head_[u] > row.upper_head)
+            return false;
+        candidate_budget_[u] = controls.absolute_volume +
+                               controls.relative_volume *
+                                   std::max({1.0, row.geometry ? row.length * row.old_area : 0.0,
+                                             dt * std::fabs(row.source)});
         candidate_residual_[u] = volume_change - dt * row.source;
     }
     for (const auto& edge : candidate_edges_) {
         const double other = edge.right < 0 ? edge.boundary_head : candidate_head_[edge.right];
         const double transfer = dt * edge.conductance * (candidate_head_[edge.left] - other);
         candidate_residual_[edge.left] += transfer;
-        if (edge.right >= 0) candidate_residual_[edge.right] -= transfer;
+        if (edge.right >= 0)
+            candidate_residual_[edge.right] -= transfer;
     }
     for (std::size_t u = 0; u < count; ++u) {
         if (!std::isfinite(candidate_residual_[u]) ||
-            std::fabs(candidate_residual_[u]) > candidate_budget_[u]) return false;
+            std::fabs(candidate_residual_[u]) > candidate_budget_[u])
+            return false;
         if (unk_entity_[u] >= mesh.n_cells()) {
             const double carry = (*v.node_carry)[unk_entity_[u] - mesh.n_cells()];
-            if (!std::isfinite(carry) || std::fabs(carry) > candidate_budget_[u]) return false;
+            if (!std::isfinite(carry) || std::fabs(carry) > candidate_budget_[u])
+                return false;
         }
     }
     for (const auto& face : imp_faces_) {
@@ -653,10 +700,13 @@ bool PressurizedHeadSolver::verifyCandidateEndpoint(
         const double right = face.unk_r < 0 ? face.dir_r : candidate_head_[face.unk_r];
         const double expected = face.alpha * face.qstar - face.cond * (right - left);
         double budget = std::numeric_limits<double>::max();
-        if (face.unk_l >= 0) budget = std::min(budget, candidate_budget_[face.unk_l]);
-        if (face.unk_r >= 0) budget = std::min(budget, candidate_budget_[face.unk_r]);
+        if (face.unk_l >= 0)
+            budget = std::min(budget, candidate_budget_[face.unk_l]);
+        if (face.unk_r >= 0)
+            budget = std::min(budget, candidate_budget_[face.unk_r]);
         const double defect = dt * std::fabs(v.f_mass[face.face] - expected);
-        if (!std::isfinite(defect) || defect > budget) return false;
+        if (!std::isfinite(defect) || defect > budget)
+            return false;
     }
     return true;
 }
@@ -684,36 +734,33 @@ void PressurizedHeadSolver::assembleRhs(const PressurizedView& v, double dt) {
     }
 
     for (const ImpFace& F : imp_faces_) {
-        if (F.cond <= 0.0) continue;
+        if (F.cond <= 0.0)
+            continue;
         // Base flux — the Casulli predictor (the implicit set is FULL
         // faces only; transition faces never reach this assembly).
         const double base = F.alpha * F.qstar;
-        const bool ul = F.unk_l >= 0 &&
-                        !unk_dirichlet_[static_cast<std::size_t>(F.unk_l)];
-        const bool ur = F.unk_r >= 0 &&
-                        !unk_dirichlet_[static_cast<std::size_t>(F.unk_r)];
-        const double val_l =
-            (F.unk_l >= 0)
-                ? (ul ? 0.0
-                      : unk_dirvalue_[static_cast<std::size_t>(F.unk_l)])
-                : F.dir_l;
-        const double val_r =
-            (F.unk_r >= 0)
-                ? (ur ? 0.0
-                      : unk_dirvalue_[static_cast<std::size_t>(F.unk_r)])
-                : F.dir_r;
+        const bool ul = F.unk_l >= 0 && !unk_dirichlet_[static_cast<std::size_t>(F.unk_l)];
+        const bool ur = F.unk_r >= 0 && !unk_dirichlet_[static_cast<std::size_t>(F.unk_r)];
+        const double val_l = (F.unk_l >= 0)
+                                 ? (ul ? 0.0 : unk_dirvalue_[static_cast<std::size_t>(F.unk_l)])
+                                 : F.dir_l;
+        const double val_r = (F.unk_r >= 0)
+                                 ? (ur ? 0.0 : unk_dirvalue_[static_cast<std::size_t>(F.unk_r)])
+                                 : F.dir_r;
 
         if (ul) {
             const auto lu = static_cast<std::size_t>(F.unk_l);
             diag_[lu] += F.cond;
             rhs_[lu] -= base;
-            if (!ur) rhs_[lu] += F.cond * (val_r - datum);
+            if (!ur)
+                rhs_[lu] += F.cond * (val_r - datum);
         }
         if (ur) {
             const auto ru = static_cast<std::size_t>(F.unk_r);
             diag_[ru] += F.cond;
             rhs_[ru] += base;
-            if (!ul) rhs_[ru] += F.cond * (val_l - datum);
+            if (!ul)
+                rhs_[ru] += F.cond * (val_l - datum);
         }
     }
 }
@@ -728,10 +775,12 @@ void PressurizedHeadSolver::buildComponents() {
 
     std::vector<int> roots;
     roots.reserve(static_cast<std::size_t>(nu));
-    for (int u = 0; u < nu; ++u) roots.push_back(ufFind(u));
+    for (int u = 0; u < nu; ++u)
+        roots.push_back(ufFind(u));
 
     std::vector<int> order(static_cast<std::size_t>(nu));
-    for (int u = 0; u < nu; ++u) order[static_cast<std::size_t>(u)] = u;
+    for (int u = 0; u < nu; ++u)
+        order[static_cast<std::size_t>(u)] = u;
     std::sort(order.begin(), order.end(), [&](int a, int b) {
         const int ra = roots[static_cast<std::size_t>(a)];
         const int rb = roots[static_cast<std::size_t>(b)];
@@ -745,8 +794,7 @@ void PressurizedHeadSolver::buildComponents() {
             comp_ptr_.push_back(static_cast<int>(comp_unks_.size()));
             prev_root = r;
         }
-        unk_comp_[static_cast<std::size_t>(u)] =
-            static_cast<int>(comp_ptr_.size()) - 1;
+        unk_comp_[static_cast<std::size_t>(u)] = static_cast<int>(comp_ptr_.size()) - 1;
         comp_unks_.push_back(u);
     }
     comp_ptr_.push_back(static_cast<int>(comp_unks_.size()));
@@ -755,7 +803,8 @@ void PressurizedHeadSolver::buildComponents() {
     const auto unu = static_cast<std::size_t>(nu);
     degree_.assign(unu, 0);
     for (const ImpFace& F : imp_faces_) {
-        if (F.cond <= 0.0 || F.unk_l < 0 || F.unk_r < 0) continue;
+        if (F.cond <= 0.0 || F.unk_l < 0 || F.unk_r < 0)
+            continue;
         ++degree_[static_cast<std::size_t>(F.unk_l)];
         ++degree_[static_cast<std::size_t>(F.unk_r)];
     }
@@ -766,7 +815,8 @@ void PressurizedHeadSolver::buildComponents() {
     adj_c_.assign(static_cast<std::size_t>(adj_ptr_[unu]), 0.0);
     std::vector<int> fill(unu, 0);
     for (const ImpFace& F : imp_faces_) {
-        if (F.cond <= 0.0 || F.unk_l < 0 || F.unk_r < 0) continue;
+        if (F.cond <= 0.0 || F.unk_l < 0 || F.unk_r < 0)
+            continue;
         const auto lu = static_cast<std::size_t>(F.unk_l);
         const auto ru = static_cast<std::size_t>(F.unk_r);
         adj_idx_[static_cast<std::size_t>(adj_ptr_[lu] + fill[lu])] = F.unk_r;
@@ -778,29 +828,26 @@ void PressurizedHeadSolver::buildComponents() {
     }
 }
 
-void PressurizedHeadSolver::solveComponent(int comp, const PressurizedView& v,
-                                           double dt) {
+void PressurizedHeadSolver::solveComponent(int comp, const PressurizedView& v, double dt) {
     (void)v;
     (void)dt;
     const int b = comp_ptr_[static_cast<std::size_t>(comp)];
     const int e = comp_ptr_[static_cast<std::size_t>(comp) + 1];
     const int n = e - b;
-    if (n <= 0) return;
+    if (n <= 0)
+        return;
     const double datum = unk_eta0_.empty() ? 0.0 : unk_eta0_.front();
 
     // Demoted (Dirichlet) rows solve trivially; edges to them were folded
     // into neighbours' RHS at assembly. They still occupy a slot here so the
     // indexing stays uniform.
-    auto isDir = [&](int u) {
-        return unk_dirichlet_[static_cast<std::size_t>(u)] != 0;
-    };
+    auto isDir = [&](int u) { return unk_dirichlet_[static_cast<std::size_t>(u)] != 0; };
     auto edgeActive = [&](int a2, int b2) { return !isDir(a2) && !isDir(b2); };
 
     if (n == 1) {
         const int u = comp_unks_[static_cast<std::size_t>(b)];
         const auto uu = static_cast<std::size_t>(u);
-        unk_head_[uu] = (diag_[uu] > 0.0) ? datum + rhs_[uu] / diag_[uu]
-                                          : unk_eta0_[uu];
+        unk_head_[uu] = (diag_[uu] > 0.0) ? datum + rhs_[uu] / diag_[uu] : unk_eta0_[uu];
         return;
     }
 
@@ -811,14 +858,18 @@ void PressurizedHeadSolver::solveComponent(int comp, const PressurizedView& v,
     int endpoint = -1;
     for (int p = b; p < e; ++p) {
         const int u = comp_unks_[static_cast<std::size_t>(p)];
-        if (isDir(u)) continue;
+        if (isDir(u))
+            continue;
         int deg = 0;
         for (int a2 = adj_ptr_[static_cast<std::size_t>(u)];
              a2 < adj_ptr_[static_cast<std::size_t>(u) + 1]; ++a2)
-            if (edgeActive(u, adj_idx_[static_cast<std::size_t>(a2)])) ++deg;
+            if (edgeActive(u, adj_idx_[static_cast<std::size_t>(a2)]))
+                ++deg;
         m_edges += deg;
-        if (deg > 2) path = false;
-        if (deg <= 1 && endpoint < 0) endpoint = u;
+        if (deg > 2)
+            path = false;
+        if (deg <= 1 && endpoint < 0)
+            endpoint = u;
     }
     m_edges /= 2;
 
@@ -827,10 +878,13 @@ void PressurizedHeadSolver::solveComponent(int comp, const PressurizedView& v,
     act.reserve(static_cast<std::size_t>(n));
     for (int p = b; p < e; ++p) {
         const int u = comp_unks_[static_cast<std::size_t>(p)];
-        if (!isDir(u)) act.push_back(u);
+        if (!isDir(u))
+            act.push_back(u);
     }
-    if (act.empty()) return;
-    if (m_edges != static_cast<int>(act.size()) - 1) path = false;
+    if (act.empty())
+        return;
+    if (m_edges != static_cast<int>(act.size()) - 1)
+        path = false;
 
     if (path && endpoint >= 0) {
         // Order the path from an endpoint and run Thomas — exact, O(n).
@@ -843,7 +897,8 @@ void PressurizedHeadSolver::solveComponent(int comp, const PressurizedView& v,
             for (int a2 = adj_ptr_[static_cast<std::size_t>(cur)];
                  a2 < adj_ptr_[static_cast<std::size_t>(cur) + 1]; ++a2) {
                 const int w = adj_idx_[static_cast<std::size_t>(a2)];
-                if (w == prev || !edgeActive(cur, w)) continue;
+                if (w == prev || !edgeActive(cur, w))
+                    continue;
                 next = w;
                 break;
             }
@@ -858,10 +913,8 @@ void PressurizedHeadSolver::solveComponent(int comp, const PressurizedView& v,
             thom_d_.assign(static_cast<std::size_t>(np), 0.0);
             for (int i = 0; i < np; ++i) {
                 const int u = path_order_[static_cast<std::size_t>(i)];
-                thom_b_[static_cast<std::size_t>(i)] =
-                    diag_[static_cast<std::size_t>(u)];
-                thom_d_[static_cast<std::size_t>(i)] =
-                    rhs_[static_cast<std::size_t>(u)];
+                thom_b_[static_cast<std::size_t>(i)] = diag_[static_cast<std::size_t>(u)];
+                thom_d_[static_cast<std::size_t>(i)] = rhs_[static_cast<std::size_t>(u)];
                 if (i + 1 < np) {
                     const int w = path_order_[static_cast<std::size_t>(i) + 1];
                     double cval = 0.0;
@@ -875,8 +928,7 @@ void PressurizedHeadSolver::solveComponent(int comp, const PressurizedView& v,
             }
             for (int i = 1; i < np; ++i) {
                 const double w =
-                    thom_a_[static_cast<std::size_t>(i)] /
-                    thom_b_[static_cast<std::size_t>(i) - 1];
+                    thom_a_[static_cast<std::size_t>(i)] / thom_b_[static_cast<std::size_t>(i) - 1];
                 thom_b_[static_cast<std::size_t>(i)] -=
                     w * thom_c_[static_cast<std::size_t>(i) - 1];
                 thom_d_[static_cast<std::size_t>(i)] -=
@@ -884,14 +936,14 @@ void PressurizedHeadSolver::solveComponent(int comp, const PressurizedView& v,
             }
             double x = thom_d_[static_cast<std::size_t>(np - 1)] /
                        thom_b_[static_cast<std::size_t>(np - 1)];
-            unk_head_[static_cast<std::size_t>(
-                path_order_[static_cast<std::size_t>(np - 1)])] = datum + x;
+            unk_head_[static_cast<std::size_t>(path_order_[static_cast<std::size_t>(np - 1)])] =
+                datum + x;
             for (int i = np - 2; i >= 0; --i) {
                 x = (thom_d_[static_cast<std::size_t>(i)] -
                      thom_c_[static_cast<std::size_t>(i)] * x) /
                     thom_b_[static_cast<std::size_t>(i)];
-                unk_head_[static_cast<std::size_t>(
-                    path_order_[static_cast<std::size_t>(i)])] = datum + x;
+                unk_head_[static_cast<std::size_t>(path_order_[static_cast<std::size_t>(i)])] =
+                    datum + x;
             }
             return;
         }
@@ -920,11 +972,12 @@ void PressurizedHeadSolver::solveComponent(int comp, const PressurizedView& v,
             for (int a2 = adj_ptr_[static_cast<std::size_t>(u)];
                  a2 < adj_ptr_[static_cast<std::size_t>(u) + 1]; ++a2) {
                 const int w = adj_idx_[static_cast<std::size_t>(a2)];
-                if (isDir(w)) continue;
+                if (isDir(w))
+                    continue;
                 const int lw = lidx[static_cast<std::size_t>(w)];
-                if (lw < 0) continue;
-                s -= adj_c_[static_cast<std::size_t>(a2)] *
-                     in[static_cast<std::size_t>(lw)];
+                if (lw < 0)
+                    continue;
+                s -= adj_c_[static_cast<std::size_t>(a2)] * in[static_cast<std::size_t>(lw)];
             }
             out[i] = s;
         }
@@ -934,8 +987,7 @@ void PressurizedHeadSolver::solveComponent(int comp, const PressurizedView& v,
     double bnorm = 0.0;
     for (std::size_t i = 0; i < na; ++i) {
         cg_r_[i] = rhs_[static_cast<std::size_t>(act[i])] - cg_ap_[i];
-        bnorm += rhs_[static_cast<std::size_t>(act[i])] *
-                 rhs_[static_cast<std::size_t>(act[i])];
+        bnorm += rhs_[static_cast<std::size_t>(act[i])] * rhs_[static_cast<std::size_t>(act[i])];
     }
     const double tol2 = std::max(1.0e-24 * bnorm, 1.0e-28);
     double rz = 0.0;
@@ -947,12 +999,16 @@ void PressurizedHeadSolver::solveComponent(int comp, const PressurizedView& v,
     const int itmax = 200 + 2 * static_cast<int>(na);
     for (int it = 0; it < itmax; ++it) {
         double r2 = 0.0;
-        for (std::size_t i = 0; i < na; ++i) r2 += cg_r_[i] * cg_r_[i];
-        if (r2 <= tol2) break;
+        for (std::size_t i = 0; i < na; ++i)
+            r2 += cg_r_[i] * cg_r_[i];
+        if (r2 <= tol2)
+            break;
         matvec(cg_p_, cg_ap_);
         double pap = 0.0;
-        for (std::size_t i = 0; i < na; ++i) pap += cg_p_[i] * cg_ap_[i];
-        if (!(pap > 0.0)) break;
+        for (std::size_t i = 0; i < na; ++i)
+            pap += cg_p_[i] * cg_ap_[i];
+        if (!(pap > 0.0))
+            break;
         const double a2 = rz / pap;
         for (std::size_t i = 0; i < na; ++i) {
             x[i] += a2 * cg_p_[i];
@@ -974,12 +1030,14 @@ void PressurizedHeadSolver::solveComponent(int comp, const PressurizedView& v,
 
 void PressurizedHeadSolver::backSubstitute(const PressurizedView& v) {
     auto headOf = [&](int unk, double dirval) {
-        if (unk < 0) return dirval;
+        if (unk < 0)
+            return dirval;
         const auto uu = static_cast<std::size_t>(unk);
         return unk_dirichlet_[uu] ? unk_dirvalue_[uu] : unk_head_[uu];
     };
     for (const ImpFace& F : imp_faces_) {
-        if (F.cond <= 0.0) continue;
+        if (F.cond <= 0.0)
+            continue;
         const auto uf = static_cast<std::size_t>(F.face);
         const double base = F.alpha * F.qstar;
         const double hl = headOf(F.unk_l, F.dir_l);
@@ -1000,22 +1058,23 @@ void PressurizedHeadSolver::backSubstitute(const PressurizedView& v) {
 // ---------------------------------------------------------------------------
 
 void PressurizedHeadSolver::finalizeCells(const PressurizedView& v) {
-    if (imp_faces_.empty()) return;
+    if (imp_faces_.empty())
+        return;
     const NetworkMeshData& mesh = *v.mesh;
     NetworkStateData& state = *v.state;
     const int nc = mesh.n_cells();
     for (int c = 0; c < nc; ++c) {
         const auto uc = static_cast<std::size_t>(c);
-        if (cell_unk_[uc] < 0 || !cell_press_[uc]) continue;
+        if (cell_unk_[uc] < 0 || !cell_press_[uc])
+            continue;
         const int faces[2] = {mesh.cell_face0[uc], mesh.cell_face1[uc]};
         const std::int8_t sides[2] = {mesh.cell_side0[uc], mesh.cell_side1[uc]};
         double q_thru = 0.0;
         for (int e2 = 0; e2 < 2; ++e2) {
             const auto uf = static_cast<std::size_t>(faces[e2]);
             const double fa = v.f_mass[uf];
-            q_thru += (sides[e2] == 0)
-                          ? static_cast<double>(mesh.face_dir_l[uf]) * fa
-                          : static_cast<double>(mesh.face_dir_r[uf]) * fa;
+            q_thru += (sides[e2] == 0) ? static_cast<double>(mesh.face_dir_l[uf]) * fa
+                                       : static_cast<double>(mesh.face_dir_r[uf]) * fa;
         }
         const double a = state.cell_a[uc];
         const double q = 0.5 * q_thru;

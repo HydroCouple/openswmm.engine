@@ -15,8 +15,18 @@
 // limitations under the License.
 
 /**
- * @file TransportPolicy.hpp
- * @brief The Domain × Species-class transport contract (OPT plan §5, E2).
+ * @defgroup engine_transport Species, age and heat transport
+ * @brief Native transport policy, conservative species kernels and physical transport
+ * components.
+ * @details Covers canonical row layouts and initial sources, Eulerian routing, reaction
+ * kinetics, water age, finite heat exchange and coupled watershed/LID bindings. Each owner
+ * documents its units, borrowing, accepted-step lifecycle and report-ledger obligations at the
+ * source interface.
+ */
+
+/**
+ * @file      TransportPolicy.hpp
+ * @brief     The Domain × Species-class transport contract (OPT plan §5, E2).
  *
  * @details One function decides which species classes run in which domain
  *          and why. Before E2 the answer was re-derived in three places —
@@ -40,14 +50,13 @@
  *
  *          Policy (OPT plan §5.1): inherit-on. A class enabled at project
  *          level runs in every domain whose solver carries it; per-domain
- *          opt-outs exist only where a key does (2D: `TRANSPORT_*`; 1D:
- *          `IGNORE_QUALITY`; runoff/GW/LID have none). Groundwater has no
- *          transported quality (legacy parity) and reports UNAVAILABLE with
- *          the seam-column explanation rather than staying silent.
+ *          opt-outs exist where domain keys support them. The legacy subcatchment aquifer
+ *          supplies quality at the native node seam without its own transported inventories;
+ *          the active integrated 2D aquifer carries enabled native rows with GW domain opt-outs.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_TRANSPORT_POLICY_HPP
@@ -64,49 +73,53 @@ namespace openswmm::transport {
 
 /// Rows of the matrix. Values are the C API's SWMM_TRANSPORT_DOMAIN_* codes.
 enum class Domain : int {
-    RUNOFF      = 0,  ///< subcatchment runoff + LID
-    GROUNDWATER = 1,  ///< legacy per-subcatchment aquifers
-    NETWORK_1D  = 2,  ///< LEGACY / EULERIAN_ARD / LAGRANGIAN routing
-    SURFACE_2D  = 3,  ///< the 2D mesh
-    COUNT       = 4
+    RUNOFF = 0,      ///< subcatchment runoff + LID
+    GROUNDWATER = 1, ///< legacy per-subcatchment aquifers
+    NETWORK_1D = 2,  ///< LEGACY / EULERIAN_ARD / LAGRANGIAN routing
+    SURFACE_2D = 3,  ///< the 2D mesh
+    COUNT = 4
 };
 
 /// Columns of the matrix. Values are the C API's SWMM_TRANSPORT_CLASS_* codes.
 enum class SpeciesClass : int {
-    POLLUTANTS  = 0,  ///< [POLLUTANTS]
-    MSX         = 1,  ///< reactions component species
-    AGE         = 2,  ///< __WATER_AGE__
-    TEMPERATURE = 3,  ///< __TEMPERATURE__
-    COUNT       = 4
+    POLLUTANTS = 0,  ///< [POLLUTANTS]
+    MSX = 1,         ///< reactions component species
+    AGE = 2,         ///< __WATER_AGE__
+    TEMPERATURE = 3, ///< __TEMPERATURE__
+    COUNT = 4
 };
 
 /// One cell's state. Values are the C API's SWMM_TRANSPORT_* state codes.
 enum class CellState : int {
-    ENABLED          = 0,  ///< rows are carried in this domain
-    DISABLED_BY_USER = 1,  ///< a key turned it off — `reason` names the key
-    UNAVAILABLE      = 2   ///< nothing to carry, or the solver lacks it — `reason` says which
+    ENABLED = 0,          ///< rows are carried in this domain
+    DISABLED_BY_USER = 1, ///< a key turned it off — `reason` names the key
+    UNAVAILABLE = 2       ///< nothing to carry, or the solver lacks it — `reason` says which
 };
 
 struct Cell {
-    CellState   state  = CellState::UNAVAILABLE;
-    int         count  = 0;      ///< rows of this class carried (0 unless ENABLED)
-    std::string reason;          ///< key (DISABLED_BY_USER) or explanation (UNAVAILABLE); empty when ENABLED
+    CellState state = CellState::UNAVAILABLE;
+    int count = 0;      ///< rows of this class carried (0 unless ENABLED)
+    std::string reason; ///< key (DISABLED_BY_USER) or explanation (UNAVAILABLE); empty when ENABLED
 };
 
 /**
- * @brief Allocation-free class enables for one domain — what the engines
- *        size from. `n_msx` is the reactions component's species count when
- *        MSX is on for the domain; `msx_has_wall` tells ARD / 2D that the
- *        component declares WALL species (their own fallback / warning).
+ * @brief Allocation-free class enables for one domain — what the engines size from. `n_msx` is
+ * the reactions component's species count when MSX is on for the domain; `msx_has_wall` tells
+ * ARD / 2D that the component declares WALL species (their own fallback / warning).
  */
 struct ClassEnables {
-    int  n_pollut     = 0;
-    int  n_msx        = 0;
-    bool age          = false;
-    bool temperature  = false;
+    int n_pollut = 0;
+    int n_msx = 0;
+    bool age = false;
+    bool temperature = false;
     bool msx_has_wall = false;
     bool msx_bulk_only = false;
-    int  total() const noexcept { return n_pollut + n_msx + (age ? 1 : 0) + (temperature ? 1 : 0); }
+    /**
+     * @brief Count all rows advertised by these enables.
+     * @return n_pollut+n_msx plus one per active age/temperature flag. Allocation-free, no
+     * validation of nonnegative counts or metadata extents; caller provides qualified enables.
+     */
+    int total() const noexcept { return n_pollut + n_msx + (age ? 1 : 0) + (temperature ? 1 : 0); }
 };
 
 /// 1D network enables: LEGACY / ARD / LARD all size from this.
@@ -128,19 +141,35 @@ ClassEnables groundwaterEnables(const SimulationContext& ctx) noexcept;
 /// enables — the SpeciesRegistry order ARD and 2D use.
 struct RowLayout {
     int n_pollut = 0;
-    int n_msx    = 0;
-    int age_row  = -1;
+    int n_msx = 0;
+    int age_row = -1;
     int temp_row = -1;
-    int ns       = 0;
-    std::vector<std::string> names;   ///< one per row
+    int ns = 0;
+    std::vector<std::string> names; ///< one per row
 };
 RowLayout canonicalRows(const SimulationContext& ctx, const ClassEnables& e);
 
 struct Matrix {
     Cell cells[static_cast<int>(Domain::COUNT)][static_cast<int>(SpeciesClass::COUNT)];
+    /**
+     * @brief Borrow one transport matrix cell by enum index.
+     * @param[in] d Valid domain in [RUNOFF,COUNT), unchecked.
+     * @param[in] c Valid class in [POLLUTANTS,COUNT), unchecked.
+     * @return Reference to matrix-owned cell, constness determined by overload. No allocation,
+     * validation or ownership transfer; matrix must remain alive/stable and mutable use
+     * exclusive.
+     */
     const Cell& at(Domain d, SpeciesClass c) const noexcept {
         return cells[static_cast<int>(d)][static_cast<int>(c)];
     }
+    /**
+     * @brief Borrow one transport matrix cell by enum index.
+     * @param[in] d Valid domain in [RUNOFF,COUNT), unchecked.
+     * @param[in] c Valid class in [POLLUTANTS,COUNT), unchecked.
+     * @return Reference to matrix-owned cell, constness determined by overload. No allocation,
+     * validation or ownership transfer; matrix must remain alive/stable and mutable use
+     * exclusive.
+     */
     Cell& at(Domain d, SpeciesClass c) noexcept {
         return cells[static_cast<int>(d)][static_cast<int>(c)];
     }
@@ -148,10 +177,10 @@ struct Matrix {
 
 /// Build the full matrix (states + reasons). Pure: never writes warnings.
 struct Draft {
-    bool ignore_quality=false, heat=false, age=false, ignore_2d=false;
-    bool surface_class[4]={true,true,true,true};
-    bool groundwater=false;
-    bool mesh=false;
+    bool ignore_quality = false, heat = false, age = false, ignore_2d = false;
+    bool surface_class[4] = {true, true, true, true};
+    bool groundwater = false;
+    bool mesh = false;
 };
 Matrix resolve(const SimulationContext& ctx, const Draft* draft = nullptr);
 
@@ -163,6 +192,6 @@ const char* cellStateName(CellState s) noexcept;
 /// per class, each cell "on(n)" / "off:KEY" / "n/a:reason". Ends with '\n'.
 std::string formatReportBlock(const Matrix& m);
 
-}  // namespace openswmm::transport
+} // namespace openswmm::transport
 
-#endif  // OPENSWMM_ENGINE_TRANSPORT_POLICY_HPP
+#endif // OPENSWMM_ENGINE_TRANSPORT_POLICY_HPP

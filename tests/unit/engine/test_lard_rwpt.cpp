@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_lard_rwpt.cpp
- * @brief X3b: RWPT dispersion — resolved shear spreads fronts, keyed
+ * @file      test_lard_rwpt.cpp
+ * @brief     X3b: RWPT dispersion — resolved shear spreads fronts, keyed
  *        deterministically, conserving mass under the maximum principle.
  *
  * @details Subplan X3b (strategy §5, D-X3b1 in RwptDispersion.hpp). Claims:
@@ -40,9 +40,9 @@
  *
  *          Scratch fixtures use the `_lr_` prefix (collision-checked).
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -61,6 +61,17 @@
 
 namespace {
 
+/**
+ * @brief Borrow the concrete engine behind an opaque test handle.
+ *
+ * This exact helper performs only an unchecked static_cast and dereference. It does not validate
+ * lifecycle, retain the handle or transfer ownership; fixture code may use the reference to inspect
+ * or seed internal state.
+ *
+ * @param[in] engine Live non-null new-engine handle whose concrete allocation is SWMMEngine; caller
+ *     keeps ownership.
+ * @return Mutable engine reference that remains valid until handle destruction or replacement.
+ */
 openswmm::SWMMEngine& as_cpp_engine(SWMM_Engine engine) {
     return *static_cast<openswmm::SWMMEngine*>(engine);
 }
@@ -71,23 +82,41 @@ constexpr double kCin = 100.0;
 struct DeckSpec {
     bool rwpt = true;
     int seed = 7;
-    bool explicit_off = false;   ///< write "DISPERSION OFF" instead of omit
+    bool explicit_off = false; ///< write "DISPERSION OFF" instead of omit
     const char* end_time = "02:00:00";
-    bool chain = false;          ///< 5-conduit chain (conservation deck)
+    bool chain = false; ///< 5-conduit chain (conservation deck)
     double cinit = 0.0;
-    int length = 3000;           ///< single-conduit reach, ft
-    bool delayed = false;        ///< step injection at t=1000 s (see gate 1)
-    int dtq = 0;                 ///< QUALITY_STEP seconds; 0 = omit
+    int length = 3000;    ///< single-conduit reach, ft
+    bool delayed = false; ///< step injection at t=1000 s (see gate 1)
+    int dtq = 0;          ///< QUALITY_STEP seconds; 0 = omit
 };
 
+/**
+ * @brief Write a Lagrangian random-walk dispersion fixture with selected topology/source.
+ *
+ * Uses CFS and five-second routing. Delayed mode keeps concentration zero until 1001 seconds to
+ * isolate the front from startup transients; otherwise the source starts at kCin. No random
+ * simulation is executed by this writer. Opens/truncates the deck using a local ofstream; parent
+ * directories must exist. Stream open/write/close outcomes are not checked, and sidecar names/text
+ * are not escaped. Caller-owned inputs are not retained.
+ *
+ * @param[in] path Destination deck filename, non-null when a character pointer; borrowed only
+ *     during this call. Existing files are truncated.
+ * @param[in] s Borrowed spec selecting RWPT/seed or explicit OFF, optional positive quality-step
+ *     seconds, end token, chain versus single conduit length ft, initial TSS mg/L and delayed
+ *     concentration-front flag.
+ */
 void write_deck(const std::string& path, const DeckSpec& s) {
     std::ofstream f(path);
     f << "[TITLE]\nLARD X3b rwpt\n\n[OPTIONS]\n"
       << "FLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\n"
       << "QUALITY_SOLVER LAGRANGIAN\n";
-    if (s.rwpt) f << "DISPERSION RWPT\nRWPT_SEED " << s.seed << "\n";
-    else if (s.explicit_off) f << "DISPERSION OFF\n";
-    if (s.dtq > 0) f << "QUALITY_STEP " << s.dtq << "\n";
+    if (s.rwpt)
+        f << "DISPERSION RWPT\nRWPT_SEED " << s.seed << "\n";
+    else if (s.explicit_off)
+        f << "DISPERSION OFF\n";
+    if (s.dtq > 0)
+        f << "QUALITY_STEP " << s.dtq << "\n";
     f << "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
       << "END_DATE 01/01/2026\nEND_TIME " << s.end_time << "\n"
       << "ROUTING_STEP 5\nREPORT_STEP 00:05:00\n\n";
@@ -132,25 +161,40 @@ void write_deck(const std::string& path, const DeckSpec& s) {
 }
 
 struct RwptRun {
-    std::vector<double> t;        ///< seconds
-    std::vector<double> cout;     ///< outfall conc per step
+    std::vector<double> t;    ///< seconds
+    std::vector<double> cout; ///< outfall conc per step
     double peak_node = 0.0, peak_link = 0.0;
     double mb_init = 0.0, mb_ex_in = 0.0, mb_outflow = 0.0, mb_final = 0.0;
-    double ubar = 0.0, h = 0.0, rh = 0.0;  ///< C1 end-state hydraulics
+    double ubar = 0.0, h = 0.0, rh = 0.0; ///< C1 end-state hydraulics
     bool ok = false;
 };
 
+/**
+ * @brief Run the LARD random-walk fixture and capture outlet response and ledger state.
+ *
+ * Owns/destroys engine and caps at 200000 positive-time calls; guard exhaustion can still be ok.
+ * Uses last encountered outfall, records terminal elapsed as zero when API returns it, and copies
+ * native ft3/s/feet hydraulic data and native quality ledgers. Ignores end status; partial traces
+ * survive early step refusal.
+ *
+ * @param[in] tag Safe cwd artifact prefix.
+ * @param[in] s Deck specification that must provide a pollutant, link zero and an outfall.
+ * @return Owned time/concentration trajectories, first-pollutant peaks, final hydraulics and mass
+ *     ledgers; ok=false on setup/step/missing-outfall refusal.
+ */
 RwptRun run_deck(const std::string& tag, const DeckSpec& s) {
     RwptRun r;
     const std::string inp = tag + ".inp";
     write_deck(inp, s);
 
     SWMM_Engine e = swmm_engine_create();
-    if (e == nullptr) { ADD_FAILURE() << "engine create"; return r; }
-    if (swmm_engine_open(e, inp.c_str(), (tag + ".rpt").c_str(),
-                         (tag + ".out").c_str(), nullptr) != SWMM_OK ||
-        swmm_engine_initialize(e) != SWMM_OK ||
-        swmm_engine_start(e, 1) != SWMM_OK) {
+    if (e == nullptr) {
+        ADD_FAILURE() << "engine create";
+        return r;
+    }
+    if (swmm_engine_open(e, inp.c_str(), (tag + ".rpt").c_str(), (tag + ".out").c_str(), nullptr) !=
+            SWMM_OK ||
+        swmm_engine_initialize(e) != SWMM_OK || swmm_engine_start(e, 1) != SWMM_OK) {
         ADD_FAILURE() << "open/init/start failed for " << inp;
         swmm_engine_destroy(e);
         return r;
@@ -161,8 +205,7 @@ RwptRun run_deck(const std::string& tag, const DeckSpec& s) {
     const int nn = ctx.n_nodes();
     int out_node = -1;
     for (int j = 0; j < nn; ++j)
-        if (ctx.nodes.type[static_cast<std::size_t>(j)] ==
-            openswmm::NodeType::OUTFALL)
+        if (ctx.nodes.type[static_cast<std::size_t>(j)] == openswmm::NodeType::OUTFALL)
             out_node = j;
     if (out_node < 0) {
         ADD_FAILURE() << "no outfall in deck";
@@ -179,14 +222,11 @@ RwptRun run_deck(const std::string& tag, const DeckSpec& s) {
             return r;
         }
         r.t.push_back(elapsed * 86400.0);
-        r.cout.push_back(
-            ctx.nodes.conc[static_cast<std::size_t>(out_node * np)]);
+        r.cout.push_back(ctx.nodes.conc[static_cast<std::size_t>(out_node * np)]);
         for (int l = 0; l < nl; ++l)
-            r.peak_link = std::max(
-                r.peak_link, ctx.links.conc[static_cast<std::size_t>(l * np)]);
+            r.peak_link = std::max(r.peak_link, ctx.links.conc[static_cast<std::size_t>(l * np)]);
         for (int j = 0; j < nn; ++j)
-            r.peak_node = std::max(
-                r.peak_node, ctx.nodes.conc[static_cast<std::size_t>(j * np)]);
+            r.peak_node = std::max(r.peak_node, ctx.nodes.conc[static_cast<std::size_t>(j * np)]);
     } while (elapsed > 0.0 && ++guard < 200000);
     swmm_engine_end(e);
 
@@ -194,24 +234,18 @@ RwptRun run_deck(const std::string& tag, const DeckSpec& s) {
     {
         const int row = ctx.link_subtypes.conduit_row(0);
         const double len =
-            (row >= 0)
-                ? ctx.link_subtypes.conduits.length[static_cast<std::size_t>(
-                      row)]
-                : 0.0;
+            (row >= 0) ? ctx.link_subtypes.conduits.length[static_cast<std::size_t>(row)] : 0.0;
         const double vol = ctx.links.volume[0];
         const double q = std::abs(ctx.links.flow[0]);
         if (len > 0.0 && vol > 0.0 && q > 0.0) {
             const double a = vol / len;
             r.ubar = q / a;
             r.h = ctx.links.depth[0];
-            r.rh = openswmm::lard::rwpt_hyd_radius(
-                a, r.h, ctx.links.xsect_geom1[0], true);
+            r.rh = openswmm::lard::rwpt_hyd_radius(a, r.h, ctx.links.xsect_geom1[0], true);
         }
     }
     const auto& mb = ctx.mass_balance;
-    auto row0 = [](const std::vector<double>& v) {
-        return v.empty() ? 0.0 : v[0];
-    };
+    auto row0 = [](const std::vector<double>& v) { return v.empty() ? 0.0 : v[0]; };
     r.mb_init = row0(mb.qual_routing_init);
     r.mb_ex_in = row0(mb.qual_routing_ex_in);
     r.mb_outflow = row0(mb.qual_routing_outflow);
@@ -221,27 +255,40 @@ RwptRun run_deck(const std::string& tag, const DeckSpec& s) {
     return r;
 }
 
-/// Truncated rising-mass temporal moments of a breakthrough curve: the
-/// variance of dC-weighted arrival times, truncated at the first 99.5%
-/// crossing so end-of-run MC jitter (tiny late rises at large (t-tbar)^2)
-/// cannot dominate. Returns {tbar, var}.
+/**
+ * @brief Compute concentration-rise weighted arrival mean and variance.
+ *
+ * Stops at first sample reaching 99.5% of kCin or the available end, uses only positive
+ * concentration increments and their interval midpoints, and ignores falling increments. Does not
+ * sort/interpolate the crossing, normalize by injected mass or validate extents/finiteness.
+ *
+ * @param[in] r Run with time seconds vector covering all concentration entries, in chronological
+ *     order.
+ * @return Pair of mean seconds and variance seconds squared; {0,0} if no positive rise weight.
+ */
 std::pair<double, double> rise_moments(const RwptRun& r) {
     std::size_t end = r.cout.size();
     for (std::size_t i = 0; i < r.cout.size(); ++i)
-        if (r.cout[i] >= 0.995 * kCin) { end = i + 1; break; }
+        if (r.cout[i] >= 0.995 * kCin) {
+            end = i + 1;
+            break;
+        }
     double w = 0.0, m1 = 0.0;
     for (std::size_t i = 1; i < end; ++i) {
         const double dc = r.cout[i] - r.cout[i - 1];
-        if (dc <= 0.0) continue;
+        if (dc <= 0.0)
+            continue;
         w += dc;
         m1 += dc * 0.5 * (r.t[i] + r.t[i - 1]);
     }
-    if (w <= 0.0) return {0.0, 0.0};
+    if (w <= 0.0)
+        return {0.0, 0.0};
     const double tbar = m1 / w;
     double m2 = 0.0;
     for (std::size_t i = 1; i < end; ++i) {
         const double dc = r.cout[i] - r.cout[i - 1];
-        if (dc <= 0.0) continue;
+        if (dc <= 0.0)
+            continue;
         const double tm = 0.5 * (r.t[i] + r.t[i - 1]) - tbar;
         m2 += dc * tm * tm;
     }
@@ -270,7 +317,8 @@ TEST(LardRwptTest, FrontSpreadsAndEmergentDispersionNearsElder) {
     on.length = 6000;
     on.dtq = 1;
     on.end_time = "03:00:00";
-    DeckSpec off = on;  off.rwpt = false;
+    DeckSpec off = on;
+    off.rwpt = false;
 
     const RwptRun a = run_deck("_lr_front_on", on);
     const RwptRun b = run_deck("_lr_front_off", off);
@@ -282,27 +330,24 @@ TEST(LardRwptTest, FrontSpreadsAndEmergentDispersionNearsElder) {
     ASSERT_GT(tbar_off, 1000.0) << "control breakthrough never arrived";
 
     const double sig_on = std::sqrt(var_on);
-    const double sig_off = std::max(std::sqrt(var_off), 2.5);  // ≥ dt/2
-    std::printf("[ RWPT     ] sigma_on=%.2f s  sigma_off=%.2f s\n",
-                sig_on, sig_off);
+    const double sig_off = std::max(std::sqrt(var_off), 2.5); // ≥ dt/2
+    std::printf("[ RWPT     ] sigma_on=%.2f s  sigma_off=%.2f s\n", sig_on, sig_off);
     // Structural liveness: resolved shear must beat the plug engine's
     // numerical front width by a clear factor.
-    EXPECT_GT(sig_on, 2.0 * sig_off)
-        << "RWPT did not spread the front beyond the numerical width";
+    EXPECT_GT(sig_on, 2.0 * sig_off) << "RWPT did not spread the front beyond the numerical width";
 
     // Emergent D_L from the EXCESS temporal variance vs Elder.
     ASSERT_GT(a.ubar, 0.0);
     const double x = 6000.0;
     const double var_ex = std::max(var_on - var_off, 0.0);
-    const double d_meas =
-        a.ubar * a.ubar * a.ubar * var_ex / (2.0 * x);
+    const double d_meas = a.ubar * a.ubar * a.ubar * var_ex / (2.0 * x);
     const double n = 0.013;
-    const double sf = (n * a.ubar) * (n * a.ubar) /
-                      (2.208 * std::pow(std::max(a.rh, 1e-3), 4.0 / 3.0));
+    const double sf =
+        (n * a.ubar) * (n * a.ubar) / (2.208 * std::pow(std::max(a.rh, 1e-3), 4.0 / 3.0));
     const double ustar = std::sqrt(32.174 * std::max(a.rh, 1e-3) * sf);
     const double d_elder = 5.93 * ustar * a.h;
-    std::printf("[ RWPT     ] D_meas=%.4f  D_elder=%.4f  (u*=%.4f h=%.3f)\n",
-                d_meas, d_elder, ustar, a.h);
+    std::printf("[ RWPT     ] D_meas=%.4f  D_elder=%.4f  (u*=%.4f h=%.3f)\n", d_meas, d_elder,
+                ustar, a.h);
     ASSERT_GT(d_elder, 0.0);
     // MEASURED (X3b round), seeds {7,8,9,11,13} on this deck:
     // D_meas/D_elder = {1.44, 1.24, 0.96, 1.28, 1.20} — max |ln ratio|
@@ -323,22 +368,25 @@ TEST(LardRwptTest, SameSeedIsBitIdenticalNewSeedIsNot) {
     s.end_time = "01:00:00";
     const RwptRun a = run_deck("_lr_det_a", s);
     const RwptRun b = run_deck("_lr_det_b", s);
-    DeckSpec s2 = s;  s2.seed = 8;
+    DeckSpec s2 = s;
+    s2.seed = 8;
     const RwptRun c = run_deck("_lr_det_c", s2);
     ASSERT_TRUE(a.ok && b.ok && c.ok);
     ASSERT_EQ(a.cout.size(), b.cout.size());
 
     for (std::size_t i = 0; i < a.cout.size(); ++i)
-        ASSERT_EQ(a.cout[i], b.cout[i])
-            << "same seed diverged at step " << i << " — the counter RNG "
-               "is not a pure function of its key (D-L6)";
+        ASSERT_EQ(a.cout[i], b.cout[i]) << "same seed diverged at step " << i
+                                        << " — the counter RNG "
+                                           "is not a pure function of its key (D-L6)";
 
     // Liveness: a different seed must move SOMETHING mid-front.
     bool differs = false;
     for (std::size_t i = 0; i < std::min(a.cout.size(), c.cout.size()); ++i)
-        if (a.cout[i] != c.cout[i]) { differs = true; break; }
-    EXPECT_TRUE(differs)
-        << "RWPT_SEED changed nothing — the seed is not reaching the RNG";
+        if (a.cout[i] != c.cout[i]) {
+            differs = true;
+            break;
+        }
+    EXPECT_TRUE(differs) << "RWPT_SEED changed nothing — the seed is not reaching the RNG";
 }
 
 // ---------------------------------------------------------------------------
@@ -363,8 +411,7 @@ TEST(LardRwptTest, MassConservesAndMaxPrincipleHoldsUnderRwpt) {
     // Steady closure per the T3 conventions (transient family shares the
     // X2-measured ±% envelope; RWPT adds NO ledger terms of its own —
     // exchange is internal to the link).
-    EXPECT_NEAR(out / in, 1.0, 0.01)
-        << "ledger moved under RWPT: in=" << in << " out=" << out;
+    EXPECT_NEAR(out / in, 1.0, 0.01) << "ledger moved under RWPT: in=" << in << " out=" << out;
 }
 
 // ---------------------------------------------------------------------------
@@ -384,18 +431,15 @@ TEST(LardRwptTest, ProfileRngAndGeometryKernelsObeyInvariants) {
     }
     EXPECT_LT(std::abs(sum_t / N), 5.0e-3 * ustar)
         << "turbulent log-law deviation is not mean-free";
-    EXPECT_LT(std::abs(sum_l / N), 1.0e-6 * ubar)
-        << "laminar parabola deviation is not mean-free";
+    EXPECT_LT(std::abs(sum_l / N), 1.0e-6 * ubar) << "laminar parabola deviation is not mean-free";
 
     // Rouse endpoints and the drift = dD/dη identity (finite difference).
     EXPECT_NEAR(rwpt_d_eta(0.0, h, ustar, true), 0.0, 1e-12);
     EXPECT_NEAR(rwpt_d_eta(1.0, h, ustar, true), 0.0, 1e-12);
     const double e0 = 0.3, de = 1e-6;
-    const double fd = (rwpt_d_eta(e0 + de, h, ustar, true) -
-                       rwpt_d_eta(e0 - de, h, ustar, true)) /
-                      (2.0 * de);
-    EXPECT_NEAR(rwpt_d_eta_grad(e0, h, ustar, true), fd,
-                1e-6 * std::abs(fd) + 1e-12)
+    const double fd =
+        (rwpt_d_eta(e0 + de, h, ustar, true) - rwpt_d_eta(e0 - de, h, ustar, true)) / (2.0 * de);
+    EXPECT_NEAR(rwpt_d_eta_grad(e0, h, ustar, true), fd, 1e-6 * std::abs(fd) + 1e-12)
         << "the Itô drift is not the diffusivity gradient";
 
     // RNG: in (0,1); key-sensitive in every component; reproducible.
@@ -418,8 +462,10 @@ TEST(LardRwptTest, ProfileRngAndGeometryKernelsObeyInvariants) {
 // Gate 5 — DISPERSION OFF is bit-inert against the omitted key.
 // ---------------------------------------------------------------------------
 TEST(LardRwptTest, ExplicitOffMatchesOmittedKeyBitwise) {
-    DeckSpec omit;  omit.rwpt = false;
-    DeckSpec off = omit;  off.explicit_off = true;
+    DeckSpec omit;
+    omit.rwpt = false;
+    DeckSpec off = omit;
+    off.explicit_off = true;
     omit.end_time = off.end_time = "01:00:00";
 
     const RwptRun a = run_deck("_lr_off_omit", omit);
@@ -431,4 +477,4 @@ TEST(LardRwptTest, ExplicitOffMatchesOmittedKeyBitwise) {
             << "DISPERSION OFF is not the omitted-key path at step " << i;
 }
 
-}  // namespace
+} // namespace

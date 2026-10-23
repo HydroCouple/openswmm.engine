@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_2d_exchange_law.cpp
- * @brief Properties of the WEIR_ORIFICE exchange law (2d/coupling/ExchangeLaw.hpp):
+ * @file      test_2d_exchange_law.cpp
+ * @brief     Properties of the WEIR_ORIFICE exchange law (2d/coupling/ExchangeLaw.hpp):
  *        sign, monotonicity, G ≥ 0 and G = −∂Q/∂h1, C⁰/C¹ across every regime
  *        boundary, the weir/orifice crossover, for every coefficient preset.
  *
@@ -24,6 +24,10 @@
  *          No engine, no data: the law is a pure function.
  *
  * @ingroup engine_2d
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -40,34 +44,98 @@ using namespace openswmm::twoD::exchange;
 namespace {
 
 constexpr double kPi = 3.14159265358979323846;
-constexpr double kZ  = 10.0;   // crest
+constexpr double kZ = 10.0; // crest
 
-struct Preset { std::string name; Coefficients c; };
+struct Preset {
+    std::string name;
+    Coefficients c;
+};
 
+/**
+ * @brief Construct the five exchange-coefficient sets used by property tests.
+ *
+ * Default submerged coefficient is explicitly 2/3 of weir coefficient. Does not modify global
+ * presets, validate coefficients or evaluate exchange.
+ * @return Owned DEFAULT, Rubinato central/lower/upper and OPEN named presets; coefficients are
+ *     dimensionless.
+ */
 std::vector<Preset> presets() {
-    Coefficients dflt;                                  // 0.540, ⅔·0.540, 0.167, 0.160
+    Coefficients dflt; // 0.540, ⅔·0.540, 0.167, 0.160
     dflt.c_sw = 2.0 / 3.0 * dflt.c_w;
-    Coefficients rub;   rub.c_w = 0.540; rub.c_sw = 0.056; rub.c_oi = 0.167; rub.c_oo = 0.160;
-    Coefficients lower; lower.c_w = 0.493; lower.c_sw = 0.055; lower.c_oi = 0.160; lower.c_oo = 0.159;
-    Coefficients upper; upper.c_w = 0.587; upper.c_sw = 0.057; upper.c_oi = 0.174; upper.c_oo = 0.161;
-    Coefficients open;  open.c_w = open.c_oi = open.c_oo = 1.0; open.c_sw = 2.0 / 3.0;
-    return {{"DEFAULT", dflt}, {"RUBINATO2017", rub}, {"RUBINATO2017_LOWER", lower},
-            {"RUBINATO2017_UPPER", upper}, {"OPEN", open}};
+    Coefficients rub;
+    rub.c_w = 0.540;
+    rub.c_sw = 0.056;
+    rub.c_oi = 0.167;
+    rub.c_oo = 0.160;
+    Coefficients lower;
+    lower.c_w = 0.493;
+    lower.c_sw = 0.055;
+    lower.c_oi = 0.160;
+    lower.c_oo = 0.159;
+    Coefficients upper;
+    upper.c_w = 0.587;
+    upper.c_sw = 0.057;
+    upper.c_oi = 0.174;
+    upper.c_oo = 0.161;
+    Coefficients open;
+    open.c_w = open.c_oi = open.c_oo = 1.0;
+    open.c_sw = 2.0 / 3.0;
+    return {{"DEFAULT", dflt},
+            {"RUBINATO2017", rub},
+            {"RUBINATO2017_LOWER", lower},
+            {"RUBINATO2017_UPPER", upper},
+            {"OPEN", open}};
 }
 
-Geometry manhole(double d = 1.2) { return {kZ, kPi * d, kPi * d * d / 4.0}; }
+/**
+ * @brief Construct circular manhole exchange geometry at the fixed crest.
+ *
+ * No range or finite checks are added; no engine state is involved.
+ *
+ * @param[in] d Intended positive finite diameter in meters, default 1.2.
+ * @return Owned geometry with crest kZ meters, weir length pi*d meters and orifice area pi*d*d/4
+ *     m2.
+ */
+Geometry manhole(double d = 1.2) {
+    return {kZ, kPi * d, kPi * d * d / 4.0};
+}
 
+/**
+ * @brief Evaluate only the signed exchange flow from the shared law.
+ *
+ * Discards conductance/other diagnostics without changing inputs or independently validating them.
+ *
+ * @param[in] g SI crest, weir length and orifice area geometry.
+ * @param[in] c Dimensionless law coefficients.
+ * @param[in] h2 Surface head in meters.
+ * @param[in] h1 Sewer head in meters.
+ * @return Signed flow in m3/s, positive surface-to-sewer, as returned by exchange.
+ */
 double Q(const Geometry& g, const Coefficients& c, double h2, double h1) {
     return exchange(g, c, h2, h1).q;
 }
 
 // One-sided slopes on either side of x along h1 (dir 1) or h2 (dir 2), step d.
-struct Sides { double jump, slope_left, slope_right; };
+struct Sides {
+    double jump, slope_left, slope_right;
+};
+/**
+ * @brief Estimate flow continuity and one-sided head slopes near a selected point.
+ *
+ * Slope stencils use [-2d,-d] and [d,2d], leaving the center unsampled. No tolerance assertion,
+ * input validation or analytic derivative evaluation occurs.
+ *
+ * @param[in] g SI exchange geometry.
+ * @param[in] c Dimensionless coefficients.
+ * @param[in] h2 Surface head meters.
+ * @param[in] h1 Sewer head meters.
+ * @param[in] dir One varies h1; every other value varies h2.
+ * @param[in] d Positive nonzero finite-difference head step meters, default 1e-7.
+ * @return Owned jump over +/-1e-10 m in m3/s and left/right secant slopes in m2/s.
+ */
 Sides sides(const Geometry& g, const Coefficients& c, double h2, double h1, int dir,
             double d = 1.0e-7) {
-    auto at = [&](double off) {
-        return dir == 1 ? Q(g, c, h2, h1 + off) : Q(g, c, h2 + off, h1);
-    };
+    auto at = [&](double off) { return dir == 1 ? Q(g, c, h2, h1 + off) : Q(g, c, h2 + off, h1); };
     return {at(1e-10) - at(-1e-10), (at(-d) - at(-2 * d)) / d, (at(2 * d) - at(d)) / d};
 }
 
@@ -87,15 +155,20 @@ TEST(ExchangeLaw, SignMonotoneAndNonNegativeConductanceOnGrid) {
                 const double h1 = lo + j * step;
                 const auto r = exchange(g, p.c, h2, h1);
                 ASSERT_TRUE(std::isfinite(r.q) && std::isfinite(r.g)) << p.name;
-                if (h2 > h1) ASSERT_GE(r.q, 0.0) << p.name << " h2=" << h2 << " h1=" << h1;
-                if (h1 > h2) ASSERT_LE(r.q, 0.0) << p.name << " h2=" << h2 << " h1=" << h1;
-                if (h2 <= kZ && h1 <= kZ) ASSERT_EQ(r.q, 0.0) << p.name;
+                if (h2 > h1)
+                    ASSERT_GE(r.q, 0.0) << p.name << " h2=" << h2 << " h1=" << h1;
+                if (h1 > h2)
+                    ASSERT_LE(r.q, 0.0) << p.name << " h2=" << h2 << " h1=" << h1;
+                if (h2 <= kZ && h1 <= kZ)
+                    ASSERT_EQ(r.q, 0.0) << p.name;
                 ASSERT_GE(r.g, 0.0) << p.name << " h2=" << h2 << " h1=" << h1;
-                if (j > 0) ASSERT_LE(r.q, prev_h1 + 1e-12)
-                    << p.name << ": Q rose with the sewer head at h2=" << h2 << " h1=" << h1;
+                if (j > 0)
+                    ASSERT_LE(r.q, prev_h1 + 1e-12)
+                        << p.name << ": Q rose with the sewer head at h2=" << h2 << " h1=" << h1;
                 prev_h1 = r.q;
-                if (i > 0) ASSERT_GE(r.q, Q(g, p.c, h2 - step, h1) - 1e-12)
-                    << p.name << ": Q fell with the surface head at h2=" << h2 << " h1=" << h1;
+                if (i > 0)
+                    ASSERT_GE(r.q, Q(g, p.c, h2 - step, h1) - 1e-12)
+                        << p.name << ": Q fell with the surface head at h2=" << h2 << " h1=" << h1;
             }
         }
     }
@@ -111,10 +184,11 @@ TEST(ExchangeLaw, ContinuousWithContinuousSlopeAcrossRegimeBoundaries) {
     for (const auto& p : presets()) {
         auto expect_c1 = [&](const char* where, double h2, double h1, int dir) {
             const auto coarse = sides(g, p.c, h2, h1, dir, 1.0e-6);
-            const auto fine   = sides(g, p.c, h2, h1, dir, 1.0e-8);
-            const double scale = std::max({1.0, std::fabs(fine.slope_left), std::fabs(fine.slope_right)});
+            const auto fine = sides(g, p.c, h2, h1, dir, 1.0e-8);
+            const double scale =
+                std::max({1.0, std::fabs(fine.slope_left), std::fabs(fine.slope_right)});
             const double gap_coarse = std::fabs(coarse.slope_right - coarse.slope_left);
-            const double gap_fine   = std::fabs(fine.slope_right - fine.slope_left);
+            const double gap_fine = std::fabs(fine.slope_right - fine.slope_left);
             EXPECT_LT(std::fabs(fine.jump), 1e-8) << p.name << " " << where << ": jump";
             EXPECT_LT(gap_fine, 0.05 * gap_coarse + 1e-5 * scale)
                 << p.name << " " << where << ": slope gap " << gap_coarse << " -> " << gap_fine
@@ -160,7 +234,8 @@ TEST(ExchangeLaw, WeirGovernsShallowOrificeGovernsDeep) {
         const double q = Q(g, c, kZ + hs, kZ - 1.0);
         const double lim = std::min(weir, orif);
         EXPECT_LE(q, lim * (1 + 1e-12)) << "hs=" << hs;
-        EXPECT_GT(q, 0.99 * lim) << "hs=" << hs << ": far from the crossing the limiting control governs";
+        EXPECT_GT(q, 0.99 * lim) << "hs=" << hs
+                                 << ": far from the crossing the limiting control governs";
         EXPECT_EQ(weir < orif, hs < h_cross) << "hs=" << hs;
     }
     const double at = Q(g, c, kZ + h_cross, kZ - 1.0);
@@ -212,6 +287,9 @@ TEST(ExchangeLaw, SoftminIsBelowTheMinimumAndZeroWithAZeroTerm) {
             ASSERT_GE(q, std::min(a, b) * std::pow(2.0, -1.0 / 16.0) * (1 - 1e-12));
             constexpr double e = 1e-9;
             double w1, w2;
-            EXPECT_NEAR(wa, (softmin(a * (1 + e), b, w1, w2) - softmin(a * (1 - e), b, w1, w2)) / (2 * a * e), 1e-5);
+            EXPECT_NEAR(wa,
+                        (softmin(a * (1 + e), b, w1, w2) - softmin(a * (1 - e), b, w1, w2)) /
+                            (2 * a * e),
+                        1e-5);
         }
 }

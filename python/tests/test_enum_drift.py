@@ -52,14 +52,26 @@ MACROS = {
     'TransportState': ('SWMM_TRANSPORT_',),
 }
 
+
+def _macro_values(text, prefix):
+    # C preprocesses continued lines before interpreting a #define. Header
+    # formatting can wrap a selector independently of its numeric meaning.
+    text = re.sub(r'\\\r?\n', '', text)
+    return {symbol[len(prefix):]: int(value) for symbol, value in
+            re.findall(r'^#define\s+(' + prefix + r'\w+)\s+\(?(-?\d+)\)?', text, re.M)}
+
+
+def test_macro_selectors_support_line_continuations():
+    text = '#define SWMM_TEST_A \\\n    15\n#define SWMM_TEST_B 16\n'
+    assert _macro_values(text, 'SWMM_TEST_') == {'A': 15, 'B': 16}
+
 @pytest.mark.parametrize('name,prefixes', MACROS.items())
 def test_native_macro_selectors(name, prefixes):
     headers = Path(__file__).resolve().parents[2] / 'include/openswmm/engine'
     text = '\n'.join(p.read_text() for p in headers.glob('*.h'))
     enum = getattr(_enums, name)
     for prefix in prefixes:
-        values = dict((symbol[len(prefix):], int(value)) for symbol, value in
-                      re.findall(r'^#define\s+(' + prefix + r'\w+)\s+\(?(-?\d+)\)?', text, re.M))
+        values = _macro_values(text, prefix)
         values.pop('COUNT', None)
         if name == 'TransportState':
             values = {key: value for key, value in values.items() if not key.startswith(('DOMAIN_', 'CLASS_'))}

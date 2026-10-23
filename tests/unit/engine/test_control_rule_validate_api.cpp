@@ -1,6 +1,6 @@
 /**
- * @file test_control_rule_validate_api.cpp
- * @brief Unit tests for `swmm_control_validate_rule` (engine gap BR-02).
+ * @file      test_control_rule_validate_api.cpp
+ * @brief     Unit tests for `swmm_control_validate_rule` (engine gap BR-02).
  *
  * @details The validator runs the live engine's control-rule parser against
  *          the live SimulationContext for name resolution, but does **not**
@@ -18,6 +18,10 @@
  *
  * @see src/engine/core/openswmm_controls_impl.cpp::swmm_control_validate_rule
  * @ingroup engine_controls
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -40,6 +44,13 @@ class ControlRuleValidateTest : public ::testing::Test {
 protected:
     SWMM_Engine engine = nullptr;
 
+    /**
+     * @brief Build an editable control-reference context with two junctions and a pump.
+     *
+     * Uses swmm_engine_new (BUILDING), adds J1/J2/P1 for name/type resolution, and performs no node
+     * wiring, validation or simulation here. Fatal GoogleTest assertions return from this hook on
+     * failure; any created handle remains owned by the fixture for teardown.
+     */
     void SetUp() override {
         engine = swmm_engine_new();
         ASSERT_NE(engine, nullptr);
@@ -51,6 +62,12 @@ protected:
         ASSERT_EQ(swmm_link_add(engine, "P1", SWMM_LINK_PUMP), SWMM_OK);
     }
 
+    /**
+     * @brief Destroy the fixture-owned engine and its model resources.
+     *
+     * The destroy API accepts a null handle after failed setup. The member slot is not reset and must
+     * not be used afterward.
+     */
     void TearDown() override { swmm_engine_destroy(engine); }
 };
 
@@ -59,15 +76,13 @@ protected:
 // ============================================================================
 
 TEST_F(ControlRuleValidateTest, AcceptsWellFormedRule) {
-    char errbuf[128] = {'X'};   // pre-fill so we can verify truncation/clear
-    int  line = 99;             // pre-fill so we can verify -1 on success
-    const char* rule =
-        "RULE R_OK\n"
-        "IF NODE J1 DEPTH > 5\n"
-        "THEN PUMP P1 STATUS = ON";
+    char errbuf[128] = {'X'}; // pre-fill so we can verify truncation/clear
+    int line = 99;            // pre-fill so we can verify -1 on success
+    const char* rule = "RULE R_OK\n"
+                       "IF NODE J1 DEPTH > 5\n"
+                       "THEN PUMP P1 STATUS = ON";
 
-    EXPECT_EQ(swmm_control_validate_rule(engine, rule, errbuf, sizeof(errbuf), &line),
-              SWMM_OK);
+    EXPECT_EQ(swmm_control_validate_rule(engine, rule, errbuf, sizeof(errbuf), &line), SWMM_OK);
     EXPECT_STREQ(errbuf, "");
     EXPECT_EQ(line, -1);
 }
@@ -76,18 +91,22 @@ TEST_F(ControlRuleValidateTest, RainfallValidationUsesLegacyGrammarWithoutMutati
     ASSERT_GE(swmm_gage_add(engine, "RG"), 0);
     const int before = swmm_control_count(engine);
     for (const auto* attribute : {"INTENSITY", "24-HR_DEPTH", "48-HR_DEPTH", "24", "3-DAY_DEPTH"}) {
-        const std::string rule = std::string("RULE Rain\nIF GAGE RG ") + attribute +
-            " > .5\nTHEN PUMP P1 STATUS = ON";
-        char message[256] = {}; int line = -1;
-        EXPECT_EQ(swmm_control_validate_rule(engine, rule.c_str(), message, sizeof(message), &line), SWMM_OK)
+        const std::string rule =
+            std::string("RULE Rain\nIF GAGE RG ") + attribute + " > .5\nTHEN PUMP P1 STATUS = ON";
+        char message[256] = {};
+        int line = -1;
+        EXPECT_EQ(swmm_control_validate_rule(engine, rule.c_str(), message, sizeof(message), &line),
+                  SWMM_OK)
             << attribute << ": " << message;
         EXPECT_EQ(swmm_control_count(engine), before);
     }
     for (const auto* attribute : {"49-HR_DEPTH", "72", "0", "nan", "999999999999999999999"}) {
-        const std::string rule = std::string("RULE Rain\nIF GAGE RG ") + attribute +
-            " > .5\nTHEN PUMP P1 STATUS = ON";
-        char message[256] = {}; int line = -1;
-        EXPECT_EQ(swmm_control_validate_rule(engine, rule.c_str(), message, sizeof(message), &line), SWMM_ERR_BADPARAM);
+        const std::string rule =
+            std::string("RULE Rain\nIF GAGE RG ") + attribute + " > .5\nTHEN PUMP P1 STATUS = ON";
+        char message[256] = {};
+        int line = -1;
+        EXPECT_EQ(swmm_control_validate_rule(engine, rule.c_str(), message, sizeof(message), &line),
+                  SWMM_ERR_BADPARAM);
         EXPECT_EQ(line, 2);
         EXPECT_NE(std::string(message).find("1 to 48"), std::string::npos);
         EXPECT_EQ(swmm_control_count(engine), before);
@@ -96,8 +115,9 @@ TEST_F(ControlRuleValidateTest, RainfallValidationUsesLegacyGrammarWithoutMutati
 
 TEST_F(ControlRuleValidateTest, RainfallRulesParticipateInReferenceDiscovery) {
     ASSERT_GE(swmm_gage_add(engine, "RG"), 0);
-    ASSERT_EQ(swmm_control_add_rule(engine,
-        "RULE Rain\nIF GAGE RG 24-HR_DEPTH > .5\nTHEN PUMP P1 STATUS = ON"), SWMM_OK);
+    ASSERT_EQ(swmm_control_add_rule(
+                  engine, "RULE Rain\nIF GAGE RG 24-HR_DEPTH > .5\nTHEN PUMP P1 STATUS = ON"),
+              SWMM_OK);
     int count = 4, references[4] = {};
     ASSERT_EQ(swmm_control_find_references(engine, "rg", references, &count), SWMM_OK);
     ASSERT_EQ(count, 1);
@@ -111,17 +131,18 @@ TEST_F(ControlRuleValidateTest, RainfallRulesParticipateInReferenceDiscovery) {
 
 TEST_F(ControlRuleValidateTest, RejectsEmptyText) {
     char errbuf[128] = {};
-    int  line = 0;
+    int line = 0;
     EXPECT_EQ(swmm_control_validate_rule(engine, "", errbuf, sizeof(errbuf), &line),
               SWMM_ERR_BADPARAM);
 }
 
 TEST_F(ControlRuleValidateTest, RejectsRuleWithNoName) {
     char errbuf[128] = {};
-    int  line = 0;
+    int line = 0;
     // "RULE" alone — no name token.
-    EXPECT_EQ(swmm_control_validate_rule(engine, "RULE\nIF NODE J1 DEPTH > 5\nTHEN PUMP P1 STATUS = ON",
-                                          errbuf, sizeof(errbuf), &line),
+    EXPECT_EQ(swmm_control_validate_rule(engine,
+                                         "RULE\nIF NODE J1 DEPTH > 5\nTHEN PUMP P1 STATUS = ON",
+                                         errbuf, sizeof(errbuf), &line),
               SWMM_ERR_BADPARAM);
     // The buffer should hold a non-empty message on reject.
     EXPECT_GT(std::strlen(errbuf), 0u);
@@ -130,36 +151,33 @@ TEST_F(ControlRuleValidateTest, RejectsRuleWithNoName) {
 
 TEST_F(ControlRuleValidateTest, RejectsUnresolvedNodeName) {
     char errbuf[128] = {};
-    int  line = 0;
+    int line = 0;
     // J_DOES_NOT_EXIST is not in ctx.node_names — parser returns -1.
-    const char* rule =
-        "RULE R_BadNode\n"
-        "IF NODE J_DOES_NOT_EXIST DEPTH > 5\n"
-        "THEN PUMP P1 STATUS = ON";
+    const char* rule = "RULE R_BadNode\n"
+                       "IF NODE J_DOES_NOT_EXIST DEPTH > 5\n"
+                       "THEN PUMP P1 STATUS = ON";
     EXPECT_EQ(swmm_control_validate_rule(engine, rule, errbuf, sizeof(errbuf), &line),
               SWMM_ERR_BADPARAM);
 }
 
 TEST_F(ControlRuleValidateTest, RejectsUnresolvedLinkInAction) {
     char errbuf[128] = {};
-    int  line = 0;
+    int line = 0;
     // PUMP P_GHOST does not exist.
-    const char* rule =
-        "RULE R_BadLink\n"
-        "IF NODE J1 DEPTH > 5\n"
-        "THEN PUMP P_GHOST STATUS = ON";
+    const char* rule = "RULE R_BadLink\n"
+                       "IF NODE J1 DEPTH > 5\n"
+                       "THEN PUMP P_GHOST STATUS = ON";
     EXPECT_EQ(swmm_control_validate_rule(engine, rule, errbuf, sizeof(errbuf), &line),
               SWMM_ERR_BADPARAM);
 }
 
 TEST_F(ControlRuleValidateTest, RejectsMissingActionEquals) {
     char errbuf[128] = {};
-    int  line = 0;
+    int line = 0;
     // "STATUS ON" instead of "STATUS = ON" — missing '='.
-    const char* rule =
-        "RULE R_NoEq\n"
-        "IF NODE J1 DEPTH > 5\n"
-        "THEN PUMP P1 STATUS ON";
+    const char* rule = "RULE R_NoEq\n"
+                       "IF NODE J1 DEPTH > 5\n"
+                       "THEN PUMP P1 STATUS ON";
     EXPECT_EQ(swmm_control_validate_rule(engine, rule, errbuf, sizeof(errbuf), &line),
               SWMM_ERR_BADPARAM);
 }
@@ -172,16 +190,17 @@ TEST_F(ControlRuleValidateTest, RejectsMissingActionEquals) {
 
 TEST_F(ControlRuleValidateTest, DoesNotMutateEngineOnAccept) {
     // Pre-seed one stored rule via the existing add API.
-    ASSERT_EQ(swmm_control_add_rule(engine,
-        "RULE Preexisting\nIF NODE J2 DEPTH > 2\nTHEN PUMP P1 STATUS = ON"),
-        SWMM_OK);
+    ASSERT_EQ(swmm_control_add_rule(
+                  engine, "RULE Preexisting\nIF NODE J2 DEPTH > 2\nTHEN PUMP P1 STATUS = ON"),
+              SWMM_OK);
     ASSERT_EQ(swmm_control_count(engine), 1);
 
     char errbuf[128] = {};
-    int  line = 0;
-    ASSERT_EQ(swmm_control_validate_rule(engine,
-        "RULE Transient\nIF NODE J1 DEPTH > 5\nTHEN PUMP P1 STATUS = ON",
-        errbuf, sizeof(errbuf), &line), SWMM_OK);
+    int line = 0;
+    ASSERT_EQ(swmm_control_validate_rule(
+                  engine, "RULE Transient\nIF NODE J1 DEPTH > 5\nTHEN PUMP P1 STATUS = ON", errbuf,
+                  sizeof(errbuf), &line),
+              SWMM_OK);
 
     // Rule list must still hold exactly the one Preexisting rule.
     EXPECT_EQ(swmm_control_count(engine), 1);
@@ -191,16 +210,16 @@ TEST_F(ControlRuleValidateTest, DoesNotMutateEngineOnAccept) {
 }
 
 TEST_F(ControlRuleValidateTest, DoesNotMutateEngineOnReject) {
-    ASSERT_EQ(swmm_control_add_rule(engine,
-        "RULE Preexisting\nIF NODE J2 DEPTH > 2\nTHEN PUMP P1 STATUS = ON"),
-        SWMM_OK);
+    ASSERT_EQ(swmm_control_add_rule(
+                  engine, "RULE Preexisting\nIF NODE J2 DEPTH > 2\nTHEN PUMP P1 STATUS = ON"),
+              SWMM_OK);
     ASSERT_EQ(swmm_control_count(engine), 1);
 
     char errbuf[128] = {};
-    int  line = 0;
-    ASSERT_EQ(swmm_control_validate_rule(engine,
-        "RULE Garbage\nIF SOMETHING TOTALLY WRONG",
-        errbuf, sizeof(errbuf), &line), SWMM_ERR_BADPARAM);
+    int line = 0;
+    ASSERT_EQ(swmm_control_validate_rule(engine, "RULE Garbage\nIF SOMETHING TOTALLY WRONG", errbuf,
+                                         sizeof(errbuf), &line),
+              SWMM_ERR_BADPARAM);
 
     EXPECT_EQ(swmm_control_count(engine), 1);
     char buf[64] = {};
@@ -214,9 +233,7 @@ TEST_F(ControlRuleValidateTest, DoesNotMutateEngineOnReject) {
 
 TEST_F(ControlRuleValidateTest, NullErrbufIsTolerated) {
     int line = 0;
-    EXPECT_EQ(swmm_control_validate_rule(engine, "RULE\n",
-                                          nullptr, 0, &line),
-              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_control_validate_rule(engine, "RULE\n", nullptr, 0, &line), SWMM_ERR_BADPARAM);
     // Should not crash — line still gets a value.
     EXPECT_EQ(line, 1);
 }
@@ -229,12 +246,11 @@ TEST_F(ControlRuleValidateTest, NullErrbufIsTolerated) {
 
 TEST_F(ControlRuleValidateTest, ReportsLineAndReasonForUnknownLink) {
     char errbuf[256] = {};
-    int  line = 0;
-    const char* rule =
-        "RULE R_BadLink\n"        // 1
-        "IF NODE J1 DEPTH > 5\n"  // 2
-        "THEN PUMP P1 STATUS = ON\n"
-        "AND PUMP P_GHOST STATUS = OFF";  // 4 — the bad one
+    int line = 0;
+    const char* rule = "RULE R_BadLink\n"       // 1
+                       "IF NODE J1 DEPTH > 5\n" // 2
+                       "THEN PUMP P1 STATUS = ON\n"
+                       "AND PUMP P_GHOST STATUS = OFF"; // 4 — the bad one
     ASSERT_EQ(swmm_control_validate_rule(engine, rule, errbuf, sizeof(errbuf), &line),
               SWMM_ERR_BADPARAM);
     EXPECT_EQ(line, 4);
@@ -246,13 +262,12 @@ TEST_F(ControlRuleValidateTest, LineNumberCountsBlankLines) {
     // Blank lines are skipped by the parser but must still be counted, so the
     // reported number indexes the caller's text directly.
     char errbuf[256] = {};
-    int  line = 0;
-    const char* rule =
-        "RULE R_Blank\n"          // 1
-        "\n"                      // 2
-        "IF NODE J1 DEPTH > 5\n"  // 3
-        "\n"                      // 4
-        "THEN PUMP P1 STATUS = MAYBE";  // 5
+    int line = 0;
+    const char* rule = "RULE R_Blank\n"               // 1
+                       "\n"                           // 2
+                       "IF NODE J1 DEPTH > 5\n"       // 3
+                       "\n"                           // 4
+                       "THEN PUMP P1 STATUS = MAYBE"; // 5
     ASSERT_EQ(swmm_control_validate_rule(engine, rule, errbuf, sizeof(errbuf), &line),
               SWMM_ERR_BADPARAM);
     EXPECT_EQ(line, 5);
@@ -260,11 +275,10 @@ TEST_F(ControlRuleValidateTest, LineNumberCountsBlankLines) {
 
 TEST_F(ControlRuleValidateTest, ReportsReasonForBadRelationalOperator) {
     char errbuf[256] = {};
-    int  line = 0;
-    const char* rule =
-        "RULE R_BadOp\n"
-        "IF NODE J1 DEPTH => 5\n"   // "=>" is not an operator; ">=" is
-        "THEN PUMP P1 STATUS = ON";
+    int line = 0;
+    const char* rule = "RULE R_BadOp\n"
+                       "IF NODE J1 DEPTH => 5\n" // "=>" is not an operator; ">=" is
+                       "THEN PUMP P1 STATUS = ON";
     ASSERT_EQ(swmm_control_validate_rule(engine, rule, errbuf, sizeof(errbuf), &line),
               SWMM_ERR_BADPARAM);
     EXPECT_EQ(line, 2);
@@ -276,7 +290,7 @@ TEST_F(ControlRuleValidateTest, EmptyTextHasNoOffendingLine) {
     // Whitespace-only input parses cleanly but yields no rule, so there is no
     // single line to blame — line_out stays -1 while the call still fails.
     char errbuf[128] = {};
-    int  line = 0;
+    int line = 0;
     EXPECT_EQ(swmm_control_validate_rule(engine, "   \n\n", errbuf, sizeof(errbuf), &line),
               SWMM_ERR_BADPARAM);
     EXPECT_EQ(line, -1);
@@ -291,29 +305,29 @@ TEST_F(ControlRuleValidateTest, EmptyTextHasNoOffendingLine) {
 TEST_F(ControlRuleValidateTest, AcceptsManyChainedActions) {
     std::string rule = "RULE R_Many\nIF SIMULATION TIME >= 0\n"
                        "THEN PUMP P1 STATUS = ON";
-    for (int i = 0; i < 32; ++i) rule += "\nAND PUMP P1 SETTING = 0.5";
+    for (int i = 0; i < 32; ++i)
+        rule += "\nAND PUMP P1 SETTING = 0.5";
 
     char errbuf[256] = {};
-    int  line = 0;
-    EXPECT_EQ(swmm_control_validate_rule(engine, rule.c_str(),
-                                          errbuf, sizeof(errbuf), &line),
-              SWMM_OK) << errbuf;
+    int line = 0;
+    EXPECT_EQ(swmm_control_validate_rule(engine, rule.c_str(), errbuf, sizeof(errbuf), &line),
+              SWMM_OK)
+        << errbuf;
 }
 
 TEST_F(ControlRuleValidateTest, NullLineOutIsTolerated) {
     char errbuf[64] = {};
     EXPECT_EQ(swmm_control_validate_rule(engine,
-        "RULE R\nIF NODE J1 DEPTH > 5\nTHEN PUMP P1 STATUS = ON",
-        errbuf, sizeof(errbuf), nullptr),
+                                         "RULE R\nIF NODE J1 DEPTH > 5\nTHEN PUMP P1 STATUS = ON",
+                                         errbuf, sizeof(errbuf), nullptr),
               SWMM_OK);
 }
 
 TEST_F(ControlRuleValidateTest, ErrbufTruncatesWithoutOverflow) {
     // 8-byte buffer is shorter than the canned reject message — the impl
     // must truncate without writing past the end + still null-terminate.
-    char errbuf[8] = {'\xAB','\xAB','\xAB','\xAB','\xAB','\xAB','\xAB','\xAB'};
-    EXPECT_EQ(swmm_control_validate_rule(engine, "RULE\n",
-                                          errbuf, sizeof(errbuf), nullptr),
+    char errbuf[8] = {'\xAB', '\xAB', '\xAB', '\xAB', '\xAB', '\xAB', '\xAB', '\xAB'};
+    EXPECT_EQ(swmm_control_validate_rule(engine, "RULE\n", errbuf, sizeof(errbuf), nullptr),
               SWMM_ERR_BADPARAM);
     EXPECT_EQ(errbuf[sizeof(errbuf) - 1], '\0');
     EXPECT_GT(std::strlen(errbuf), 0u);
@@ -328,15 +342,13 @@ TEST_F(ControlRuleValidateTest, ErrbufTruncatesWithoutOverflow) {
 // ============================================================================
 
 TEST_F(ControlRuleValidateTest, AddRuleStillStoresValidatedText) {
-    const char* rule =
-        "RULE Persist\n"
-        "IF NODE J1 DEPTH > 5\n"
-        "THEN PUMP P1 STATUS = ON";
+    const char* rule = "RULE Persist\n"
+                       "IF NODE J1 DEPTH > 5\n"
+                       "THEN PUMP P1 STATUS = ON";
 
     char errbuf[128] = {};
-    int  line = 0;
-    ASSERT_EQ(swmm_control_validate_rule(engine, rule, errbuf, sizeof(errbuf), &line),
-              SWMM_OK);
+    int line = 0;
+    ASSERT_EQ(swmm_control_validate_rule(engine, rule, errbuf, sizeof(errbuf), &line), SWMM_OK);
     ASSERT_EQ(swmm_control_add_rule(engine, rule), SWMM_OK);
 
     EXPECT_EQ(swmm_control_count(engine), 1);

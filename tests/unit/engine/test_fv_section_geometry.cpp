@@ -1,6 +1,6 @@
 /**
- * @file test_fv_section_geometry.cpp
- * @brief Gates for the exact-geometry FV closure (plan
+ * @file      test_fv_section_geometry.cpp
+ * @brief     Gates for the exact-geometry FV closure (plan
  *        FV1D_CLOSURE_KERNEL_PERF_PLAN_2026-09-11 §2c).
  *
  * @details Three layers, each verified against geometry rather than legacy:
@@ -16,6 +16,10 @@
  *          recorded per shape, not asserted.
  *
  * @ingroup engine_fv
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -41,8 +45,8 @@ namespace {
 
 struct Case {
     const char* name;
-    XSectShape  shape;
-    double      p[4];
+    XSectShape shape;
+    double p[4];
 };
 
 // Closed-form shapes (round, rectangular, open), then table/composite shapes.
@@ -51,30 +55,41 @@ struct Case {
 // less area than the legacy HORIZ_ELLIPSE table at mid-depth and 21 % less
 // when full — so they are table-defined here, deliberately.
 const Case kClosedForm[] = {
-    {"CIRCULAR",        XSectShape::CIRCULAR,        {3.0, 0.0, 0.0, 0.0}},
-    {"FORCE_MAIN",      XSectShape::FORCE_MAIN,      {3.0, 130.0, 0.0, 0.0}},
+    {"CIRCULAR", XSectShape::CIRCULAR, {3.0, 0.0, 0.0, 0.0}},
+    {"FORCE_MAIN", XSectShape::FORCE_MAIN, {3.0, 130.0, 0.0, 0.0}},
     {"FILLED_CIRCULAR", XSectShape::FILLED_CIRCULAR, {3.0, 0.5, 0.0, 0.0}},
-    {"RECT_CLOSED",     XSectShape::RECT_CLOSED,     {3.0, 2.0, 0.0, 0.0}},
-    {"RECT_OPEN",       XSectShape::RECT_OPEN,       {5.0, 10.0, 0.0, 0.0}},
-    {"TRAPEZOIDAL",     XSectShape::TRAPEZOIDAL,     {5.0, 4.0, 2.0, 2.0}},
-    {"TRIANGULAR",      XSectShape::TRIANGULAR,      {5.0, 10.0, 0.0, 0.0}},
-    {"PARABOLIC",       XSectShape::PARABOLIC,       {5.0, 10.0, 0.0, 0.0}},
-    {"POWERFUNC",       XSectShape::POWERFUNC,       {5.0, 10.0, 2.0, 0.0}},
+    {"RECT_CLOSED", XSectShape::RECT_CLOSED, {3.0, 2.0, 0.0, 0.0}},
+    {"RECT_OPEN", XSectShape::RECT_OPEN, {5.0, 10.0, 0.0, 0.0}},
+    {"TRAPEZOIDAL", XSectShape::TRAPEZOIDAL, {5.0, 4.0, 2.0, 2.0}},
+    {"TRIANGULAR", XSectShape::TRIANGULAR, {5.0, 10.0, 0.0, 0.0}},
+    {"PARABOLIC", XSectShape::PARABOLIC, {5.0, 10.0, 0.0, 0.0}},
+    {"POWERFUNC", XSectShape::POWERFUNC, {5.0, 10.0, 2.0, 0.0}},
 };
 const Case kTableDefined[] = {
-    {"HORIZ_ELLIPSE",   XSectShape::HORIZ_ELLIPSE,   {3.0, 4.0, 0.0, 0.0}},
-    {"VERT_ELLIPSE",    XSectShape::VERT_ELLIPSE,    {3.0, 2.0, 0.0, 0.0}},
-    {"EGGSHAPED",       XSectShape::EGGSHAPED,       {3.0, 0.0, 0.0, 0.0}},
-    {"ARCH",            XSectShape::ARCH,            {3.0, 4.0, 0.0, 0.0}},
-    {"RECT_TRIANG",     XSectShape::RECT_TRIANG,     {3.0, 2.0, 1.0, 0.0}},
-    {"RECT_ROUND",      XSectShape::RECT_ROUND,      {3.0, 2.0, 1.5, 0.0}},
-    {"MOD_BASKET",      XSectShape::MOD_BASKET,      {3.0, 2.0, 1.0, 0.0}},
-    {"HORSESHOE",       XSectShape::HORSESHOE,       {3.0, 0.0, 0.0, 0.0}},
+    {"HORIZ_ELLIPSE", XSectShape::HORIZ_ELLIPSE, {3.0, 4.0, 0.0, 0.0}},
+    {"VERT_ELLIPSE", XSectShape::VERT_ELLIPSE, {3.0, 2.0, 0.0, 0.0}},
+    {"EGGSHAPED", XSectShape::EGGSHAPED, {3.0, 0.0, 0.0, 0.0}},
+    {"ARCH", XSectShape::ARCH, {3.0, 4.0, 0.0, 0.0}},
+    {"RECT_TRIANG", XSectShape::RECT_TRIANG, {3.0, 2.0, 1.0, 0.0}},
+    {"RECT_ROUND", XSectShape::RECT_ROUND, {3.0, 2.0, 1.5, 0.0}},
+    {"MOD_BASKET", XSectShape::MOD_BASKET, {3.0, 2.0, 1.0, 0.0}},
+    {"HORSESHOE", XSectShape::HORSESHOE, {3.0, 0.0, 0.0, 0.0}},
 };
 // Indices into kClosedForm used below.
-constexpr int kIdxRectOpen = 4, kIdxTrapezoid = 5, kIdxTriangular = 6,
-              kIdxParabolic = 7, kIdxPowerfunc = 8;
+constexpr int kIdxRectOpen = 4, kIdxTrapezoid = 5, kIdxTriangular = 6, kIdxParabolic = 7,
+              kIdxPowerfunc = 8;
 
+/**
+ * @brief Build native cross-section parameters for one declared geometry case.
+ *
+ * Records a nonfatal success expectation; does not independently validate case inputs, build FV
+ * tables or retain the case parameter array.
+ *
+ * @param[in] c Stable case containing shape, raw four-parameter array and diagnostic name; lengths
+ *     use feet.
+ * @return Owned XSectParams after setParams with conversion factor 1, including possible
+ *     partial/default state after refusal.
+ */
 XSectParams params(const Case& c) {
     XSectParams xs;
     xs.type = static_cast<int>(c.shape);
@@ -83,6 +98,18 @@ XSectParams params(const Case& c) {
     return xs;
 }
 
+/**
+ * @brief Build one FV section geometry from the authored native test case.
+ *
+ * The nested params expectation is nonfatal, so caller must inspect test status before trusting a
+ * result after invalid setup. Build/allocation errors propagate; no hydraulic state is initialized.
+ *
+ * @param[in] c Readable geometry case accepted by params().
+ * @param[in] celerity Positive slot celerity in ft/s, default 100.
+ * @param[in] barrels Positive parallel barrel count, default 1.
+ * @return Owned FvGeometry from buildGeometry, with open/closed classification derived from the
+ *     section type.
+ */
 FvGeometry build(const Case& c, double celerity = 100.0, int barrels = 1) {
     const XSectParams xs = params(c);
     FvGeometry g;
@@ -90,8 +117,18 @@ FvGeometry build(const Case& c, double celerity = 100.0, int barrels = 1) {
     return g;
 }
 
-/// The exact section with the closure's slot taper folded in — what the
-/// tabulated closure is supposed to reproduce (per cell, i.e. × barrels).
+/**
+ * @brief Evaluate the geometric reference area plus the production slot-ramp correction.
+ *
+ * Uses sg::areaOfDepth and production slotRampIntegral rather than tabulated FV area evaluation.
+ * Does not validate depth/geometry or mutate input.
+ *
+ * @param[in] g Valid fixture geometry containing native section, barrel scaling, crown/full depths
+ *     and slot width.
+ * @param[in] h Sample depth in feet in the section/ramp functions' intended domain.
+ * @return Cross-sectional area in ft2, scaled for barrels and including the crown taper when its
+ *     band is positive and h exceeds crown.
+ */
 double expectedArea(const FvGeometry& g, double h) {
     double a = g.barrel_scale * sg::areaOfDepth(g.xs, h);
     const double band = g.y_full - g.y_crown;
@@ -99,6 +136,16 @@ double expectedArea(const FvGeometry& g, double h) {
         a += g.t_slot * band * k::slotRampIntegral((h - g.y_crown) / band);
     return a;
 }
+/**
+ * @brief Evaluate reference section width plus the production crown slot-ramp correction.
+ *
+ * Adds correction only for positive full-minus-crown band and h above crown. Uses sg::widthOfDepth
+ * and slotRamp; no finite/domain validation or mutation occurs.
+ *
+ * @param[in] g Valid fixture section/barrel/crown/slot geometry.
+ * @param[in] h Sample depth in feet within the invoked geometry/ramp domain.
+ * @return Barrel-scaled geometric width plus slot ramp in feet.
+ */
 double expectedWidth(const FvGeometry& g, double h) {
     double w = g.barrel_scale * sg::widthOfDepth(g.xs, h);
     const double band = g.y_full - g.y_crown;
@@ -107,6 +154,13 @@ double expectedWidth(const FvGeometry& g, double h) {
     return w;
 }
 
+/**
+ * @brief Collect closed-form and table-defined section cases in declared order.
+ *
+ * Does not build geometry, validate cases or run assertions; allocation errors propagate.
+ * @return Owned vector containing kClosedForm followed by kTableDefined; any string/parameter
+ *     fields retain the Case type's normal copy semantics.
+ */
 std::vector<Case> allCases() {
     std::vector<Case> v(std::begin(kClosedForm), std::end(kClosedForm));
     v.insert(v.end(), std::begin(kTableDefined), std::end(kTableDefined));
@@ -127,8 +181,7 @@ TEST(FvSectionGeometry, ClosedFormAreaIsTheIntegralOfWidth) {
             const double h = xs.y_full * static_cast<double>(i) / 16.0;
             const double a = sg::areaOfDepth(xs, h);
             const double ia = sg::detail::integrate(
-                [&](double y) { return sg::widthOfDepth(xs, y); }, 0.0, h,
-                1.0e-13 * xs.a_full);
+                [&](double y) { return sg::widthOfDepth(xs, y); }, 0.0, h, 1.0e-13 * xs.a_full);
             EXPECT_NEAR(a, ia, 2.0e-9 * xs.a_full) << c.name << " h=" << h;
         }
     }
@@ -145,7 +198,7 @@ TEST(FvSectionGeometry, ClosedFormFullDepthMatchesTheLegacyFullProperties) {
         // perimeter is a 50-step polyline. Everything else agrees to legacy's
         // own π = 3.141592654.
         const bool filled = c.shape == XSectShape::FILLED_CIRCULAR;
-        const bool power  = c.shape == XSectShape::POWERFUNC;
+        const bool power = c.shape == XSectShape::POWERFUNC;
         EXPECT_NEAR(a / xs.a_full, 1.0, filled ? 1.0e-3 : 1.0e-9) << c.name;
         EXPECT_NEAR(r / xs.r_full, 1.0, filled ? 1.0e-1 : (power ? 2.0e-2 : 1.0e-6))
             << c.name << " R_full exact " << r << " legacy " << xs.r_full;
@@ -189,8 +242,9 @@ TEST(FvSectionGeometry, ClosureReproducesTheExactSection) {
             // through its crown panel (measured 5.9 % there, friction-only).
             EXPECT_LT(max_r, c.shape == XSectShape::FILLED_CIRCULAR ? 1.0e-1 : 5.0e-2) << c.name;
         }
-        std::printf("  closure-vs-exact %-16s max|dA|/a_full %.2e  max|dW|/w_max %.2e  max|dR|/r_full %.2e\n",
-                    c.name, max_a, max_w, max_r);
+        std::printf(
+            "  closure-vs-exact %-16s max|dA|/a_full %.2e  max|dW|/w_max %.2e  max|dR|/r_full %.2e\n",
+            c.name, max_a, max_w, max_r);
     }
 }
 
@@ -204,11 +258,13 @@ TEST(FvSectionGeometry, WidthIsTheDerivativeOfTheClosureArea) {
         const double dh = g.y_full / openswmm::fv::kClosurePanels;
         for (int i = 1; i < 2000; ++i) {
             const double h = 1.4 * g.y_full * static_cast<double>(i) / 2000.0;
-            if (std::fabs(h - g.y_full) < 2.0 * d) continue;   // the crown kink
+            if (std::fabs(h - g.y_full) < 2.0 * d)
+                continue; // the crown kink
             // The table is C¹ at its panel nodes, not C²: a centred difference
             // straddling a node carries (δ/4)·[A''] and is not the derivative.
             const double frac = h / dh - std::floor(h / dh);
-            if (h < g.y_full && (frac * dh < 2.0 * d || (1.0 - frac) * dh < 2.0 * d)) continue;
+            if (h < g.y_full && (frac * dh < 2.0 * d || (1.0 - frac) * dh < 2.0 * d))
+                continue;
             const double fd = (k::areaOfDepth(g, h + d) - k::areaOfDepth(g, h - d)) / (2.0 * d);
             EXPECT_NEAR(k::widthOfDepth(g, h), fd, 1.0e-6 * g.w_max + 1.0e-9 * std::fabs(fd))
                 << c.name << " h=" << h;
@@ -225,7 +281,8 @@ TEST(FvSectionGeometry, ClosureIsMonotoneWithNonNegativeWidth) {
             const double a = k::areaOfDepth(g, h);
             ASSERT_GE(a, prev) << c.name << " at h=" << h;
             ASSERT_GE(k::widthOfDepth(g, h), 0.0) << c.name << " at h=" << h;
-            if (h > 0.0) ASSERT_GT(a, prev) << c.name << " flat at h=" << h;
+            if (h > 0.0)
+                ASSERT_GT(a, prev) << c.name << " flat at h=" << h;
             prev = a;
         }
     }
@@ -241,7 +298,10 @@ TEST(FvSectionGeometry, DepthAreaRoundTripsToTheClosureTolerance) {
         auto probe = [&](double h) {
             const double back = k::depthOfArea(g, k::areaOfDepth(g, h));
             const double e = std::fabs(back - h) / g.y_full;
-            if (e > worst) { worst = e; worst_h = h; }
+            if (e > worst) {
+                worst = e;
+                worst_h = h;
+            }
         };
         for (int i = 0; i <= 40000; ++i)
             probe(1.5 * g.y_full * static_cast<double>(i) / 40000.0);
@@ -251,12 +311,14 @@ TEST(FvSectionGeometry, DepthAreaRoundTripsToTheClosureTolerance) {
             s = s * 6364136223846793005ULL + 1442695040888963407ULL;
             const double u = static_cast<double>(s >> 11) * (1.0 / 9007199254740992.0);
             h += 0.02 * g.y_full * (2.0 * u - 1.0);
-            if (h < 0.0) h = -h;
-            if (h > 1.5 * g.y_full) h = 3.0 * g.y_full - h;
+            if (h < 0.0)
+                h = -h;
+            if (h > 1.5 * g.y_full)
+                h = 3.0 * g.y_full - h;
             probe(h);
         }
-        EXPECT_LT(worst, 1.0e-12) << c.name << " worst at h=" << worst_h
-                                  << " (panel " << worst_h / (g.y_full / openswmm::fv::kClosurePanels) << ")";
+        EXPECT_LT(worst, 1.0e-12) << c.name << " worst at h=" << worst_h << " (panel "
+                                  << worst_h / (g.y_full / openswmm::fv::kClosurePanels) << ")";
     }
 }
 
@@ -341,7 +403,8 @@ TEST(FvSectionGeometry, ClosureIsAPlainBufferAnyBackendCanCapture) {
             EXPECT_EQ(e0.t, e1.t) << c.name;
             EXPECT_EQ(e0.i1, e1.i1) << c.name;
             EXPECT_EQ(k::closureDepthOfArea(g.closure_tbl, e0.a),
-                      k::closureDepthOfArea(*copy, e1.a)) << c.name;
+                      k::closureDepthOfArea(*copy, e1.a))
+                << c.name;
             EXPECT_EQ(k::closureHydRad(g.closure_tbl, h), k::closureHydRad(*copy, h)) << c.name;
         }
     }
@@ -357,13 +420,16 @@ TEST(FvSectionGeometry, LegacyTableErrorAgainstTheExactSectionIsRecorded) {
         double max_a = 0.0, max_w = 0.0, max_r = 0.0;
         for (int i = 1; i < 2000; ++i) {
             const double h = xs.y_full * static_cast<double>(i) / 2000.0;
-            max_a = std::max(max_a, std::fabs(xsect::getAofY(xs, h) - sg::areaOfDepth(xs, h)) / xs.a_full);
-            max_w = std::max(max_w, std::fabs(xsect::getWofY(xs, h) - sg::widthOfDepth(xs, h)) / xs.w_max);
-            max_r = std::max(max_r, std::fabs(xsect::getRofY(xs, h) - sg::hydRadOfDepth(xs, h)) / xs.r_full);
+            max_a = std::max(max_a,
+                             std::fabs(xsect::getAofY(xs, h) - sg::areaOfDepth(xs, h)) / xs.a_full);
+            max_w = std::max(max_w,
+                             std::fabs(xsect::getWofY(xs, h) - sg::widthOfDepth(xs, h)) / xs.w_max);
+            max_r = std::max(max_r, std::fabs(xsect::getRofY(xs, h) - sg::hydRadOfDepth(xs, h)) /
+                                        xs.r_full);
         }
-        std::printf("  legacy-vs-exact %-16s max|dA|/a_full %.2e  max|dW|/w_max %.2e  max|dR|/r_full %.2e\n",
-                    c.name, max_a, max_w, max_r);
+        std::printf(
+            "  legacy-vs-exact %-16s max|dA|/a_full %.2e  max|dW|/w_max %.2e  max|dR|/r_full %.2e\n",
+            c.name, max_a, max_w, max_r);
         EXPECT_TRUE(std::isfinite(max_a) && std::isfinite(max_w) && std::isfinite(max_r)) << c.name;
     }
 }
-

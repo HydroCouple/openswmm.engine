@@ -1,6 +1,6 @@
 /**
- * @file test_subcatch_scale_factors.cpp
- * @brief Per-subcatchment precipitation scale factors + gage SCF application.
+ * @file      test_subcatch_scale_factors.cpp
+ * @brief     Per-subcatchment precipitation scale factors + gage SCF application.
  *
  * @details Covers the precipitation-scaling feature end to end in the new
  *          engine (see plans/PRECIP_SCALING_IMPLEMENTATION_PLAN.md):
@@ -25,6 +25,10 @@
  * @see src/engine/input/handlers/CatchmentHandler.cpp (handle_subcatchments)
  * @see Legacy parity: src/legacy/engine/subcatch.c, snow.c, gage.c
  * @ingroup engine_hydrology
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -62,20 +66,24 @@ TEST(SubcatchScaleSoA, ResizeDefaultsToOne) {
     s.resize(3);
     ASSERT_EQ(s.rain_scale_factor.size(), 3u);
     ASSERT_EQ(s.snow_scale_factor.size(), 3u);
-    for (double f : s.rain_scale_factor) EXPECT_DOUBLE_EQ(f, 1.0);
-    for (double f : s.snow_scale_factor) EXPECT_DOUBLE_EQ(f, 1.0);
+    for (double f : s.rain_scale_factor)
+        EXPECT_DOUBLE_EQ(f, 1.0);
+    for (double f : s.snow_scale_factor)
+        EXPECT_DOUBLE_EQ(f, 1.0);
 }
 
 TEST(SubcatchScaleSoA, GrowToPreservesExistingAndDefaultsNew) {
     SubcatchData s;
     s.resize(2);
-    s.rain_scale_factor[0] = 2.5; s.snow_scale_factor[0] = 0.4;
-    s.rain_scale_factor[1] = 0.5; s.snow_scale_factor[1] = 3.0;
+    s.rain_scale_factor[0] = 2.5;
+    s.snow_scale_factor[0] = 0.4;
+    s.rain_scale_factor[1] = 0.5;
+    s.snow_scale_factor[1] = 3.0;
 
     s.grow_to(4);
     EXPECT_DOUBLE_EQ(s.rain_scale_factor[0], 2.5);
     EXPECT_DOUBLE_EQ(s.snow_scale_factor[1], 3.0);
-    EXPECT_DOUBLE_EQ(s.rain_scale_factor[2], 1.0);  // new rows default to 1.0
+    EXPECT_DOUBLE_EQ(s.rain_scale_factor[2], 1.0); // new rows default to 1.0
     EXPECT_DOUBLE_EQ(s.snow_scale_factor[3], 1.0);
 }
 
@@ -102,6 +110,17 @@ namespace {
 // or node registries: registering a bare name with no backing SoA would make
 // the InpWriter emit a phantom [RAINGAGES]/[JUNCTIONS] row and index out of
 // bounds. An unresolved gage/outlet is written as '*', which is fine here.
+/**
+ * @brief Parse one subcatchment row with only the snowpack registry prepopulated.
+ *
+ * Delegates to handle_subcatchments; does not register gage/node names or allocate their backing
+ * arrays. Unresolved gage/outlet names remain available for negative/round-trip tests. Parser
+ * diagnostics are left in ctx.
+ *
+ * @param[in,out] ctx Fresh intended context receiving SP1 registration and parsed subcatchment
+ *     arrays; existing state is not cleared.
+ * @param[in] row Raw SUBCATCHMENTS data row, potentially containing rain/snow scale and SP1 tokens.
+ */
 void parseSub(SimulationContext& ctx, const std::string& row) {
     ctx.snowpack_names.add("SP1");
     handle_subcatchments(ctx, std::vector<std::string>{row});
@@ -110,7 +129,7 @@ void parseSub(SimulationContext& ctx, const std::string& row) {
 
 TEST(SubcatchScaleParse, EightTokensLeaveDefaults) {
     SimulationContext ctx;
-    parseSub(ctx, "S1 RG1 J1 10 100 500 0.5 0");   // stock 8-token form
+    parseSub(ctx, "S1 RG1 J1 10 100 500 0.5 0"); // stock 8-token form
     ASSERT_EQ(ctx.n_subcatches(), 1);
     EXPECT_DOUBLE_EQ(ctx.subcatches.rain_scale_factor[0], 1.0);
     EXPECT_DOUBLE_EQ(ctx.subcatches.snow_scale_factor[0], 1.0);
@@ -118,15 +137,15 @@ TEST(SubcatchScaleParse, EightTokensLeaveDefaults) {
 
 TEST(SubcatchScaleParse, SnowPackPlusBothFactors) {
     SimulationContext ctx;
-    parseSub(ctx, "S1 RG1 J1 10 100 500 0.5 0 SP1 0.8 1.3");  // 11 tokens
-    EXPECT_EQ(ctx.subcatches.snowpack[0], 0);                 // SP1 resolved
+    parseSub(ctx, "S1 RG1 J1 10 100 500 0.5 0 SP1 0.8 1.3"); // 11 tokens
+    EXPECT_EQ(ctx.subcatches.snowpack[0], 0);                // SP1 resolved
     EXPECT_DOUBLE_EQ(ctx.subcatches.rain_scale_factor[0], 0.8);
     EXPECT_DOUBLE_EQ(ctx.subcatches.snow_scale_factor[0], 1.3);
 }
 
 TEST(SubcatchScaleParse, StarPlaceholderMeansNoSnowPack) {
     SimulationContext ctx;
-    parseSub(ctx, "S1 RG1 J1 10 100 500 0.5 0 * 0.5");        // 10 tokens, '*'
+    parseSub(ctx, "S1 RG1 J1 10 100 500 0.5 0 * 0.5"); // 10 tokens, '*'
     EXPECT_LT(ctx.subcatches.snowpack[0], 0)
         << "'*' is a positional placeholder, not a snow-pack name";
     EXPECT_DOUBLE_EQ(ctx.subcatches.rain_scale_factor[0], 0.5);
@@ -135,7 +154,7 @@ TEST(SubcatchScaleParse, StarPlaceholderMeansNoSnowPack) {
 
 TEST(SubcatchScaleParse, RainScaleOnlyLeavesSnowDefault) {
     SimulationContext ctx;
-    parseSub(ctx, "S1 RG1 J1 10 100 500 0.5 0 SP1 2.0");      // 10 tokens w/ pack
+    parseSub(ctx, "S1 RG1 J1 10 100 500 0.5 0 SP1 2.0"); // 10 tokens w/ pack
     EXPECT_DOUBLE_EQ(ctx.subcatches.rain_scale_factor[0], 2.0);
     EXPECT_DOUBLE_EQ(ctx.subcatches.snow_scale_factor[0], 1.0);
 }
@@ -155,21 +174,54 @@ TEST(SubcatchScaleParse, NonPositiveIsIgnoredNotDestructive) {
 // ============================================================================
 
 namespace {
+/**
+ * @brief Locate/create the precipitation-scaling artifact directory near the source tree.
+ *
+ * Starts at current_path and searches at most eight parents for tests/unit/engine/data; if none is
+ * found, still creates the target beneath the final ancestor. Throwing filesystem operations
+ * propagate; existing files are retained and cwd is unchanged.
+ * @return Path ending tests/unit/engine/data/precip_scaling beneath the located or final searched
+ *     ancestor.
+ */
 fs::path testDataDir() {
     fs::path here = fs::current_path();
     for (int i = 0; i < 8 && !fs::exists(here / "tests/unit/engine/data"); ++i)
-        if (here.has_parent_path()) here = here.parent_path();
+        if (here.has_parent_path())
+            here = here.parent_path();
     fs::path dir = here / "tests/unit/engine/data/precip_scaling";
     fs::create_directories(dir);
     return dir;
 }
 
+/**
+ * @brief Collect an entire fixture file into owned text.
+ *
+ * Uses ordinary text mode and its platform newline rules. The local stream closes on return; no
+ * model state is touched and no borrowed buffer is returned. Default stream exception settings
+ * apply; allocation exceptions may propagate.
+ *
+ * @param[in] p Borrowed input filename used for this synchronous open/read.
+ * @return Owned string collected from the stream; empty can mean an empty file or failure to open.
+ *     Partial read failures have no separate status.
+ */
 std::string readFile(const fs::path& p) {
     std::ifstream in(p);
-    std::stringstream ss; ss << in.rdbuf();
+    std::stringstream ss;
+    ss << in.rdbuf();
     return ss.str();
 }
 
+/**
+ * @brief Write a context through InpWriter and read back the available text.
+ *
+ * Collects writer warnings locally but does not assert them; records a nonfatal success expectation
+ * and still calls readFile after failure.
+ *
+ * @param[in] ctx Stable serializable fixture context; unchanged.
+ * @param[in] fname Non-null filesystem-safe filename under testDataDir(); existing output is
+ *     replaced by the writer.
+ * @return Owned text read from the written file; may be empty/partial on I/O failure.
+ */
 std::string writeInp(const SimulationContext& ctx, const char* fname) {
     const fs::path dst = testDataDir() / fname;
     std::vector<std::string> warnings;
@@ -178,12 +230,28 @@ std::string writeInp(const SimulationContext& ctx, const char* fname) {
 }
 
 // First non-comment line of the written [SUBCATCHMENTS] block.
+/**
+ * @brief Return the first apparent data line in a SUBCATCHMENTS block.
+ *
+ * Section recognition is column-zero and uses a prefix match; whitespace-only lines and
+ * single-semicolon comments are not excluded. Intended for canonical writer output rather than
+ * arbitrary input normalization.
+ *
+ * @param[in] content Complete input text, scanned by newline without mutation.
+ * @return Owned first nonempty line not starting with ;; in a column-zero SUBCATCHMENTS block, or
+ *     empty if absent.
+ */
 std::string firstSubcatchLine(const std::string& content) {
     std::istringstream is(content);
-    std::string line; bool in_sec = false;
+    std::string line;
+    bool in_sec = false;
     while (std::getline(is, line)) {
-        if (!line.empty() && line[0] == '[') { in_sec = line.rfind("[SUBCATCHMENTS]", 0) == 0; continue; }
-        if (in_sec && !line.empty() && line.rfind(";;", 0) != 0) return line;
+        if (!line.empty() && line[0] == '[') {
+            in_sec = line.rfind("[SUBCATCHMENTS]", 0) == 0;
+            continue;
+        }
+        if (in_sec && !line.empty() && line.rfind(";;", 0) != 0)
+            return line;
     }
     return {};
 }
@@ -191,16 +259,18 @@ std::string firstSubcatchLine(const std::string& content) {
 
 TEST(SubcatchScaleRoundTrip, DefaultModelEmitsNoScaleColumns) {
     SimulationContext ctx;
-    parseSub(ctx, "S1 RG1 J1 10 100 500 0.5 0");  // all factors default, no pack
+    parseSub(ctx, "S1 RG1 J1 10 100 500 0.5 0"); // all factors default, no pack
 
     const std::string line = firstSubcatchLine(writeInp(ctx, "_rt_default.inp"));
     ASSERT_FALSE(line.empty());
     // 8 stock columns only — no snow-pack token, no scale tokens.
     std::istringstream is(line);
-    std::vector<std::string> cols; std::string c;
-    while (is >> c) cols.push_back(c);
-    EXPECT_EQ(cols.size(), 8u)
-        << "A default-valued subcatchment must stay 8 columns wide: " << line;
+    std::vector<std::string> cols;
+    std::string c;
+    while (is >> c)
+        cols.push_back(c);
+    EXPECT_EQ(cols.size(), 8u) << "A default-valued subcatchment must stay 8 columns wide: "
+                               << line;
 }
 
 TEST(SubcatchScaleRoundTrip, FactorsAndSnowPackSurvive) {
@@ -212,7 +282,9 @@ TEST(SubcatchScaleRoundTrip, FactorsAndSnowPackSurvive) {
     EXPECT_NE(line.find("SP1"), std::string::npos) << "A3: snow pack dropped: " << line;
 
     SimulationContext ctx2;
-    ctx2.gage_names.add("RG1"); ctx2.node_names.add("J1"); ctx2.snowpack_names.add("SP1");
+    ctx2.gage_names.add("RG1");
+    ctx2.node_names.add("J1");
+    ctx2.snowpack_names.add("SP1");
     handle_subcatchments(ctx2, std::vector<std::string>{line});
     EXPECT_EQ(ctx2.subcatches.snowpack[0], 0);
     EXPECT_DOUBLE_EQ(ctx2.subcatches.rain_scale_factor[0], 0.8);
@@ -221,7 +293,7 @@ TEST(SubcatchScaleRoundTrip, FactorsAndSnowPackSurvive) {
 
 TEST(SubcatchScaleRoundTrip, StarPlaceholderWrittenWhenNoPackButScaled) {
     SimulationContext ctx;
-    parseSub(ctx, "S1 RG1 J1 10 100 500 0.5 0 * 0.5");   // scaled, no pack
+    parseSub(ctx, "S1 RG1 J1 10 100 500 0.5 0 * 0.5"); // scaled, no pack
 
     const std::string line = firstSubcatchLine(writeInp(ctx, "_rt_star.inp"));
     ASSERT_FALSE(line.empty());
@@ -229,10 +301,24 @@ TEST(SubcatchScaleRoundTrip, StarPlaceholderWrittenWhenNoPackButScaled) {
         << "token 8 must be '*' to hold the rain-scale position: " << line;
 
     SimulationContext ctx2;
-    ctx2.gage_names.add("RG1"); ctx2.node_names.add("J1");
+    ctx2.gage_names.add("RG1");
+    ctx2.node_names.add("J1");
     handle_subcatchments(ctx2, std::vector<std::string>{line});
     EXPECT_LT(ctx2.subcatches.snowpack[0], 0);
     EXPECT_DOUBLE_EQ(ctx2.subcatches.rain_scale_factor[0], 0.5);
+}
+
+TEST(SubcatchScaleRoundTrip, RainAndSnowFactorsKeepPrecision) {
+    SimulationContext ctx;
+    parseSub(ctx, "S1 RG1 J1 10 100 500 0.5 0 * 0.123456789 1.23456789");
+    const auto line = firstSubcatchLine(writeInp(ctx, "_rt_precise.inp"));
+    SimulationContext reopened;
+    parseSub(reopened, line);
+    ASSERT_EQ(reopened.n_subcatches(), 1);
+    EXPECT_DOUBLE_EQ(reopened.subcatches.rain_scale_factor[0],
+                     ctx.subcatches.rain_scale_factor[0]) << line;
+    EXPECT_DOUBLE_EQ(reopened.subcatches.snow_scale_factor[0],
+                     ctx.subcatches.snow_scale_factor[0]) << line;
 }
 
 // ============================================================================
@@ -242,22 +328,36 @@ TEST(SubcatchScaleRoundTrip, StarPlaceholderWrittenWhenNoPackButScaled) {
 namespace {
 // Minimal context: one gage with a given intensity/SCF, one subcatchment with
 // given scale factors, and a chosen air temperature.
-void setUpSplit(SimulationContext& ctx, double intensity, double snow_factor,
-                double rain_scale, double snow_scale, double temp_f) {
+/**
+ * @brief Populate one gage/subcatchment and temperature for precipitation-phase tests.
+ *
+ * Sets phase threshold 34 F and enables snow melt; no validation, time advance or additional
+ * scaling occurs in this helper.
+ *
+ * @param[in,out] ctx Fresh intended context receiving one gage and subcatchment; name registries
+ *     append and other state is retained.
+ * @param[in] intensity Already adjusted internal gage rainfall rate in ft/s, copied directly.
+ * @param[in] snow_factor Dimensionless gage snow correction factor.
+ * @param[in] rain_scale Dimensionless subcatchment rain multiplier.
+ * @param[in] snow_scale Dimensionless subcatchment snow multiplier.
+ * @param[in] temp_f Air temperature in degrees F.
+ */
+void setUpSplit(SimulationContext& ctx, double intensity, double snow_factor, double rain_scale,
+                double snow_scale, double temp_f) {
     ctx.gage_names.add("RG1");
     ctx.gages.resize(1);
-    ctx.gages.rainfall[0]    = intensity;   // already units*scale*adjust applied
+    ctx.gages.rainfall[0] = intensity; // already units*scale*adjust applied
     ctx.gages.snow_factor[0] = snow_factor;
 
     ctx.subcatch_names.add("S1");
     ctx.subcatches.resize(1);
-    ctx.subcatches.gage[0]              = 0;
+    ctx.subcatches.gage[0] = 0;
     ctx.subcatches.rain_scale_factor[0] = rain_scale;
     ctx.subcatches.snow_scale_factor[0] = snow_scale;
 
     ctx.climate_state.temperature = temp_f;
-    ctx.options.snow_divt         = 34.0;
-    ctx.options.ignore_snow_melt  = false;
+    ctx.options.snow_divt = 34.0;
+    ctx.options.ignore_snow_melt = false;
 }
 } // namespace
 
@@ -268,7 +368,7 @@ TEST(SubcatchScaleSplit, WarmBranchScalesRainOnly) {
 
     auto p = openswmm::gage::splitPrecip(ctx, 0);
     EXPECT_DOUBLE_EQ(p.snowfall, 0.0);
-    EXPECT_DOUBLE_EQ(p.rainfall, 2.0 * 0.5 / ucf);  // SCF/snowScale inert when warm
+    EXPECT_DOUBLE_EQ(p.rainfall, 2.0 * 0.5 / ucf); // SCF/snowScale inert when warm
 }
 
 TEST(SubcatchScaleSplit, ColdBranchAppliesScfAndSnowScale) {
@@ -279,7 +379,7 @@ TEST(SubcatchScaleSplit, ColdBranchAppliesScfAndSnowScale) {
 
     auto p = openswmm::gage::splitPrecip(ctx, 0);
     EXPECT_DOUBLE_EQ(p.rainfall, 0.0);
-    EXPECT_DOUBLE_EQ(p.snowfall, 2.0 * 0.7 * 1.3 / ucf);  // rain scale inert when cold
+    EXPECT_DOUBLE_EQ(p.snowfall, 2.0 * 0.7 * 1.3 / ucf); // rain scale inert when cold
 }
 
 TEST(SubcatchScaleSplit, NonSnowPackSubcatchStillSplits) {
@@ -287,18 +387,18 @@ TEST(SubcatchScaleSplit, NonSnowPackSubcatchStillSplits) {
     // subcatchment with no pack still receives scaled snowfall (not raw rain).
     SimulationContext ctx;
     setUpSplit(ctx, /*intensity=*/1.0, /*SCF=*/0.5, /*rain=*/1.0, /*snow=*/1.0, /*temp=*/10);
-    ctx.subcatches.snowpack[0] = -1;   // explicitly no pack
+    ctx.subcatches.snowpack[0] = -1; // explicitly no pack
     const double ucf = openswmm::ucf::UCF(openswmm::ucf::RAINFALL, ctx.options);
 
     auto p = openswmm::gage::splitPrecip(ctx, 0);
     EXPECT_DOUBLE_EQ(p.rainfall, 0.0);
-    EXPECT_DOUBLE_EQ(p.snowfall, 1.0 * 0.5 / ucf);  // == raw*SCF, not raw
+    EXPECT_DOUBLE_EQ(p.snowfall, 1.0 * 0.5 / ucf); // == raw*SCF, not raw
 }
 
 TEST(SubcatchScaleSplit, IgnoreSnowMeltTreatsAllAsRain) {
     SimulationContext ctx;
     setUpSplit(ctx, /*intensity=*/2.0, /*SCF=*/0.7, /*rain=*/1.0, /*snow=*/1.0, /*temp=*/10);
-    ctx.options.ignore_snow_melt = true;   // legacy gage.c:517 guard
+    ctx.options.ignore_snow_melt = true; // legacy gage.c:517 guard
     const double ucf = openswmm::ucf::UCF(openswmm::ucf::RAINFALL, ctx.options);
 
     auto p = openswmm::gage::splitPrecip(ctx, 0);
@@ -312,24 +412,31 @@ TEST(SubcatchScaleSplit, CompositionRatioExactForBothBranches) {
     auto build = [](SimulationContext& ctx, double temp) {
         ctx.gage_names.add("RG1");
         ctx.gages.resize(1);
-        ctx.gages.rainfall[0]    = 2.0;
+        ctx.gages.rainfall[0] = 2.0;
         ctx.gages.snow_factor[0] = 0.7;
-        ctx.subcatch_names.add("S1"); ctx.subcatch_names.add("S2");
+        ctx.subcatch_names.add("S1");
+        ctx.subcatch_names.add("S2");
         ctx.subcatches.resize(2);
-        for (int j = 0; j < 2; ++j) ctx.subcatches.gage[j] = 0;
-        ctx.subcatches.rain_scale_factor[0] = 0.5; ctx.subcatches.snow_scale_factor[0] = 0.5;
-        ctx.subcatches.rain_scale_factor[1] = 2.0; ctx.subcatches.snow_scale_factor[1] = 2.0;
-        ctx.options.snow_divt = 34.0; ctx.options.ignore_snow_melt = false;
+        for (int j = 0; j < 2; ++j)
+            ctx.subcatches.gage[j] = 0;
+        ctx.subcatches.rain_scale_factor[0] = 0.5;
+        ctx.subcatches.snow_scale_factor[0] = 0.5;
+        ctx.subcatches.rain_scale_factor[1] = 2.0;
+        ctx.subcatches.snow_scale_factor[1] = 2.0;
+        ctx.options.snow_divt = 34.0;
+        ctx.options.ignore_snow_melt = false;
         ctx.climate_state.temperature = temp;
     };
 
-    SimulationContext warm; build(warm, 50);
+    SimulationContext warm;
+    build(warm, 50);
     auto w0 = openswmm::gage::splitPrecip(warm, 0);
     auto w1 = openswmm::gage::splitPrecip(warm, 1);
     ASSERT_GT(w1.rainfall, 0.0);
     EXPECT_DOUBLE_EQ(w1.rainfall / w0.rainfall, 2.0 / 0.5);
 
-    SimulationContext cold; build(cold, 20);
+    SimulationContext cold;
+    build(cold, 20);
     auto c0 = openswmm::gage::splitPrecip(cold, 0);
     auto c1 = openswmm::gage::splitPrecip(cold, 1);
     ASSERT_GT(c1.snowfall, 0.0);
@@ -345,15 +452,35 @@ namespace {
 class SubcatchScaleCApi : public ::testing::Test {
 protected:
     SWMM_Engine engine_ = nullptr;
+    /**
+     * @brief Create/open the rainfall-scaling deck for C API property tests.
+     *
+     * Loads precip_scaling/rain_scaled.inp relative to cwd, replacing engine_. Intended once per fresh
+     * fixture; caller/fixture cleanup owns destruction. Fatal assertions return from this helper on
+     * creation/open failure; no automatic initialization/start occurs.
+     *
+     * @param[in] rpt Non-null report destination path passed to engine_open.
+     * @param[in] out Non-null binary-output destination path passed to engine_open.
+     */
     void openRain(const char* rpt, const char* out) {
         engine_ = swmm_engine_create();
         ASSERT_NE(engine_, nullptr);
-        ASSERT_EQ(swmm_engine_open(engine_, "precip_scaling/rain_scaled.inp",
-                                   rpt, out, nullptr), SWMM_OK)
+        ASSERT_EQ(swmm_engine_open(engine_, "precip_scaling/rain_scaled.inp", rpt, out, nullptr),
+                  SWMM_OK)
             << swmm_get_last_error_msg(engine_);
     }
+    /**
+     * @brief Close and destroy the fixture model, then clear its handle.
+     *
+     * Checks for null, ignores close status and releases partial state after setup/test failure. No
+     * simulation report is requested here.
+     */
     void TearDown() override {
-        if (engine_) { swmm_engine_close(engine_); swmm_engine_destroy(engine_); engine_ = nullptr; }
+        if (engine_) {
+            swmm_engine_close(engine_);
+            swmm_engine_destroy(engine_);
+            engine_ = nullptr;
+        }
     }
 };
 } // namespace
@@ -365,8 +492,8 @@ TEST_F(SubcatchScaleCApi, GetReturnsParsedAndDefault) {
     double rsf = 0.0, ssf = 0.0;
     EXPECT_EQ(swmm_subcatch_get_rain_scale_factor(engine_, 0, &rsf), SWMM_OK);
     EXPECT_EQ(swmm_subcatch_get_snow_scale_factor(engine_, 0, &ssf), SWMM_OK);
-    EXPECT_DOUBLE_EQ(rsf, 0.5);   // parsed from the INP
-    EXPECT_DOUBLE_EQ(ssf, 1.0);   // default
+    EXPECT_DOUBLE_EQ(rsf, 0.5); // parsed from the INP
+    EXPECT_DOUBLE_EQ(ssf, 1.0); // default
 }
 
 TEST_F(SubcatchScaleCApi, SetRoundTripsAndRejectsNonPositive) {
@@ -381,7 +508,7 @@ TEST_F(SubcatchScaleCApi, SetRoundTripsAndRejectsNonPositive) {
     EXPECT_DOUBLE_EQ(ssf, 2.25);
 
     // Reject <= 0 without mutating the stored value.
-    EXPECT_NE(swmm_subcatch_set_rain_scale_factor(engine_, 0,  0.0), SWMM_OK);
+    EXPECT_NE(swmm_subcatch_set_rain_scale_factor(engine_, 0, 0.0), SWMM_OK);
     EXPECT_NE(swmm_subcatch_set_snow_scale_factor(engine_, 0, -1.0), SWMM_OK);
     EXPECT_EQ(swmm_subcatch_get_rain_scale_factor(engine_, 0, &rsf), SWMM_OK);
     EXPECT_DOUBLE_EQ(rsf, 3.5) << "rejected set must not mutate the value";
@@ -408,28 +535,45 @@ TEST_F(SubcatchScaleCApi, SettableMidRun) {
 namespace {
 // Open rain_scaled.inp, optionally override the rain scale before the run, step
 // to a fixed elapsed time inside the rain period, and return subcatch rainfall.
+/**
+ * @brief Sample subcatchment rainfall after a fixed number of fixture engine steps.
+ *
+ * Writes _e2e.rpt/.out in cwd, initializes/starts with output, samples then ends/closes/destroys
+ * the engine. Lifecycle/property failures use nonfatal expectations and may permit subsequent calls
+ * on a failed model; this is not a general safe-run wrapper.
+ *
+ * @param[in] override_rain_scale Positive value replaces subcatchment zero's factor before
+ *     initialization; nonpositive leaves the authored value.
+ * @param[in] steps Number of engine_step calls, nonpositive performs none; statuses/elapsed
+ *     completion are not checked inside the loop.
+ * @return Sampled rainfall in the model display rainfall units (in/hr for the fixture), initially
+ *     zero if the getter does not assign it.
+ */
 double rainfallAfterSteps(double override_rain_scale, int steps) {
     SWMM_Engine e = swmm_engine_create();
     EXPECT_NE(e, nullptr);
-    EXPECT_EQ(swmm_engine_open(e, "precip_scaling/rain_scaled.inp",
-                               "_e2e.rpt", "_e2e.out", nullptr), SWMM_OK);
+    EXPECT_EQ(
+        swmm_engine_open(e, "precip_scaling/rain_scaled.inp", "_e2e.rpt", "_e2e.out", nullptr),
+        SWMM_OK);
     if (override_rain_scale > 0.0)
         EXPECT_EQ(swmm_subcatch_set_rain_scale_factor(e, 0, override_rain_scale), SWMM_OK);
     EXPECT_EQ(swmm_engine_initialize(e), SWMM_OK);
     EXPECT_EQ(swmm_engine_start(e, 1), SWMM_OK);
     double t = 0.0;
-    for (int i = 0; i < steps; ++i) swmm_engine_step(e, &t);
+    for (int i = 0; i < steps; ++i)
+        swmm_engine_step(e, &t);
     double rain = 0.0;
     EXPECT_EQ(swmm_subcatch_get_rainfall(e, 0, &rain), SWMM_OK);
     swmm_engine_end(e);
-    swmm_engine_close(e); swmm_engine_destroy(e);
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
     return rain;
 }
 } // namespace
 
 TEST(SubcatchScaleEndToEnd, RainScaleHalvesSubcatchRainfall) {
-    const double scaled = rainfallAfterSteps(-1.0, 5);  // parsed 0.5
-    const double unit   = rainfallAfterSteps(1.0,  5);  // overridden to 1.0
+    const double scaled = rainfallAfterSteps(-1.0, 5); // parsed 0.5
+    const double unit = rainfallAfterSteps(1.0, 5);    // overridden to 1.0
     ASSERT_GT(unit, 0.0);
     EXPECT_NEAR(scaled, 0.5 * unit, std::abs(0.5 * unit) * 1e-9)
         << "rain scale factor did not reach the subcatchment rainfall series";
@@ -450,20 +594,23 @@ TEST(SubcatchScaleEndToEnd, ScaledModelContinuityCloses) {
     // tests above and by legacy-vs-C++ parity in the regression suite.
     SWMM_Engine e = swmm_engine_create();
     ASSERT_NE(e, nullptr);
-    ASSERT_EQ(swmm_engine_open(e, "precip_scaling/rain_scaled.inp",
-                               "_scale_e2e.rpt", "_scale_e2e.out", nullptr), SWMM_OK)
+    ASSERT_EQ(swmm_engine_open(e, "precip_scaling/rain_scaled.inp", "_scale_e2e.rpt",
+                               "_scale_e2e.out", nullptr),
+              SWMM_OK)
         << swmm_get_last_error_msg(e);
     ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK);
     double t = 0.0;
-    do { ASSERT_EQ(swmm_engine_step(e, &t), SWMM_OK); } while (t > 0.0);
+    do {
+        ASSERT_EQ(swmm_engine_step(e, &t), SWMM_OK);
+    } while (t > 0.0);
     ASSERT_EQ(swmm_engine_end(e), SWMM_OK);
 
     double err = 0.0;
     ASSERT_EQ(swmm_get_runoff_continuity_error(e, &err), SWMM_OK);
-    EXPECT_LT(std::fabs(err), 0.10)
-        << "runoff continuity error " << (err * 100.0) << "% too large";
-    swmm_engine_close(e); swmm_engine_destroy(e);
+    EXPECT_LT(std::fabs(err), 0.10) << "runoff continuity error " << (err * 100.0) << "% too large";
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
 }
 
 // ============================================================================
@@ -475,11 +622,23 @@ TEST(SubcatchScaleEndToEnd, ScaledModelContinuityCloses) {
 
 namespace {
 // Finalised legacy runoff continuity error (percent).
+/**
+ * @brief Run the legacy singleton and return finalized runoff continuity percent.
+ *
+ * Overwrites _legacy_parity.rpt/.out in cwd. Open/start/end statuses use nonfatal expectations;
+ * step loop stops at failure or completion, getter/close statuses are ignored. Closes global state
+ * before return; no exception cleanup guard exists.
+ *
+ * @param[in] inp Non-null readable legacy input path; global legacy engine must not be in use
+ *     concurrently.
+ * @return Legacy runoff continuity error in percent, promoted from float.
+ */
 double legacyRunoffContinuityPct(const char* inp) {
     EXPECT_EQ(swmm_open(inp, "_legacy_parity.rpt", "_legacy_parity.out"), 0);
     EXPECT_EQ(swmm_start(1), 0);
     double t = 0.0;
-    while (swmm_step(&t) == 0 && t > 0.0) { }
+    while (swmm_step(&t) == 0 && t > 0.0) {
+    }
     EXPECT_EQ(swmm_end(), 0);
     float runoff = 0.0f, flow = 0.0f, qual = 0.0f;
     swmm_getMassBalErr(&runoff, &flow, &qual);
@@ -488,6 +647,17 @@ double legacyRunoffContinuityPct(const char* inp) {
 }
 
 // Finalised new-engine runoff continuity error (fraction).
+/**
+ * @brief Run a native engine and return finalized runoff continuity fraction.
+ *
+ * Overwrites _new_parity.rpt/.out in cwd, initializes/starts with output and loops until
+ * elapsed<=0, ignoring step status. Uses nonfatal lifecycle expectations, ends/closes/destroys the
+ * engine, and ignores continuity/close status. Caller must interpret any recorded test failures
+ * before trusting the result.
+ *
+ * @param[in] inp Non-null readable native input path.
+ * @return Raw native runoff continuity fraction, initially zero if retrieval fails.
+ */
 double newRunoffContinuityFrac(const char* inp) {
     SWMM_Engine e = swmm_engine_create();
     EXPECT_NE(e, nullptr);
@@ -495,18 +665,21 @@ double newRunoffContinuityFrac(const char* inp) {
     EXPECT_EQ(swmm_engine_initialize(e), SWMM_OK);
     EXPECT_EQ(swmm_engine_start(e, 1), SWMM_OK);
     double t = 0.0;
-    do { swmm_engine_step(e, &t); } while (t > 0.0);
+    do {
+        swmm_engine_step(e, &t);
+    } while (t > 0.0);
     EXPECT_EQ(swmm_engine_end(e), SWMM_OK);
     double err = 0.0;
     swmm_get_runoff_continuity_error(e, &err);
-    swmm_engine_close(e); swmm_engine_destroy(e);
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
     return err;
 }
 } // namespace
 
 TEST(SubcatchScaleParity, LegacyAndNewAgreeOnScaledRainModel) {
-    const double legacy_pct  = legacyRunoffContinuityPct("precip_scaling/rain_scaled.inp");
-    const double new_pct     = newRunoffContinuityFrac("precip_scaling/rain_scaled.inp") * 100.0;
+    const double legacy_pct = legacyRunoffContinuityPct("precip_scaling/rain_scaled.inp");
+    const double new_pct = newRunoffContinuityFrac("precip_scaling/rain_scaled.inp") * 100.0;
     // Both engines apply the rain scale (0.5) and the '*' placeholder; their
     // finalised runoff continuity must land in the same place.
     EXPECT_NEAR(new_pct, legacy_pct, 0.05)

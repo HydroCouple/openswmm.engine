@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_process_component_loader.cpp
- * @brief D2, Gate D-a (program plan §C.1) — HydroCouple component discovery.
+ * @file      test_process_component_loader.cpp
+ * @brief     D2, Gate D-a (program plan §C.1) — HydroCouple component discovery.
  *
  * Gate D-a, as the plan states it:
  *   - the smoke component loads from ALL THREE search-path sources;
@@ -28,6 +28,10 @@
  * starts from `component_catalog_reset_for_testing()`.
  *
  * Built only with OPENSWMM_WITH_HYDROCOUPLE=ON.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -61,13 +65,23 @@ namespace fs = std::filesystem;
 
 namespace {
 
-constexpr const char* kNext       = "org.hydrocouple.openswmm.test.smoke.next";
-constexpr const char* kInstalled  = "org.hydrocouple.openswmm.test.smoke.installed";
-constexpr const char* kEnv        = "org.hydrocouple.openswmm.test.smoke.env";
-constexpr const char* kExplicit   = "org.hydrocouple.openswmm.test.smoke.explicit";
-constexpr const char* kMisstamped = "hc_smoke_misstamped";   // refused: matched by file
-constexpr const char* kLegacy     = "org.hydrocouple.openswmm.test.smoke.legacy";
+constexpr const char* kNext = "org.hydrocouple.openswmm.test.smoke.next";
+constexpr const char* kInstalled = "org.hydrocouple.openswmm.test.smoke.installed";
+constexpr const char* kEnv = "org.hydrocouple.openswmm.test.smoke.env";
+constexpr const char* kExplicit = "org.hydrocouple.openswmm.test.smoke.explicit";
+constexpr const char* kMisstamped = "hc_smoke_misstamped"; // refused: matched by file
+constexpr const char* kLegacy = "org.hydrocouple.openswmm.test.smoke.legacy";
 
+/**
+ * @brief Replace a process environment variable for component-discovery tests.
+ *
+ * Uses _putenv_s on Windows or setenv(overwrite1) elsewhere and ignores status. Does not
+ * preserve/restore original values or synchronize process-global access; caller excludes competing
+ * mutations.
+ *
+ * @param[in] key Non-null valid environment key.
+ * @param[in] value Non-null value text copied by the platform environment call.
+ */
 void set_env(const char* key, const char* value) {
 #if defined(_WIN32)
     _putenv_s(key, value);
@@ -76,6 +90,15 @@ void set_env(const char* key, const char* value) {
 #endif
 }
 
+/**
+ * @brief Copy each currently enumerated component-library catalog entry.
+ *
+ * Records a nonfatal getter expectation then appends each zero-initialized/possibly partial record.
+ * Catalog must remain stable across count/get calls; does not discover/reset libraries itself or
+ * transfer native library ownership.
+ * @return Owned vector of fixed-array metadata records in catalog-index order; empty for
+ *     nonpositive reported count.
+ */
 std::vector<SWMM_ComponentLibraryInfo> all_libraries() {
     std::vector<SWMM_ComponentLibraryInfo> out;
     const int n = swmm_component_library_count();
@@ -87,19 +110,51 @@ std::vector<SWMM_ComponentLibraryInfo> all_libraries() {
     return out;
 }
 
+/**
+ * @brief Find the first exact component identifier in an owned metadata snapshot.
+ *
+ * Does not copy records, load libraries or mutate the vector; never free the returned pointer.
+ *
+ * @param[in] v Stable vector whose record.id arrays are NUL-terminated.
+ * @param[in] id Exact case-sensitive identifier to match.
+ * @return Borrowed pointer into v, or null; invalidated by vector element
+ *     relocation/destruction/replacement.
+ */
 const SWMM_ComponentLibraryInfo* by_id(const std::vector<SWMM_ComponentLibraryInfo>& v,
                                        const std::string& id) {
-    for (const auto& r : v) if (id == r.id) return &r;
+    for (const auto& r : v)
+        if (id == r.id)
+            return &r;
     return nullptr;
 }
 
+/**
+ * @brief Find the first library filename containing a literal stem.
+ *
+ * Uses filesystem filename extraction without canonicalization; filesystem/string exceptions
+ * propagate. Does not open a library or transfer ownership.
+ *
+ * @param[in] v Stable vector with NUL-terminated path arrays.
+ * @param[in] stem Case-sensitive filename substring; empty matches the first record.
+ * @return Borrowed pointer into v or null, valid until element relocation/replacement/destruction.
+ */
 const SWMM_ComponentLibraryInfo* by_file(const std::vector<SWMM_ComponentLibraryInfo>& v,
                                          const std::string& stem) {
     for (const auto& r : v)
-        if (fs::path(r.path).filename().string().find(stem) != std::string::npos) return &r;
+        if (fs::path(r.path).filename().string().find(stem) != std::string::npos)
+            return &r;
     return nullptr;
 }
 
+/**
+ * @brief Format component catalog identifiers, paths, stamps and refusal diagnostics.
+ *
+ * Does not write output, load/discover libraries or mutate catalog records; allocation errors
+ * propagate.
+ *
+ * @param[in] v Stable snapshot with NUL-terminated id/path/stamp/load_error arrays.
+ * @return Owned multiline diagnostic string including record count and nonempty errors.
+ */
 std::string dump(const std::vector<SWMM_ComponentLibraryInfo>& v) {
     std::string s = "\ncatalogue (" + std::to_string(v.size()) + "):";
     for (const auto& r : v)
@@ -110,13 +165,24 @@ std::string dump(const std::vector<SWMM_ComponentLibraryInfo>& v) {
 
 class ComponentLoader : public ::testing::Test {
 protected:
+    /**
+     * @brief Reset the test component catalog and select the smoke-component search path.
+     *
+     * Calls component_catalog_reset_for_testing then sets process-global HYDROCOUPLE_COMPONENT_PATH to
+     * SMOKE_ENV_DIR. Does not preserve/restore prior environment here; catalog/environment access
+     * requires exclusive test control.
+     */
     void SetUp() override {
         openswmm::PluginFactory::component_catalog_reset_for_testing();
         set_env("HYDROCOUPLE_COMPONENT_PATH", SMOKE_ENV_DIR);
     }
-    void TearDown() override {
-        openswmm::PluginFactory::component_catalog_reset_for_testing();
-    }
+    /**
+     * @brief Reset cached test component discovery state.
+     *
+     * Calls component_catalog_reset_for_testing only; does not restore HYDROCOUPLE_COMPONENT_PATH or
+     * delete fixture libraries.
+     */
+    void TearDown() override { openswmm::PluginFactory::component_catalog_reset_for_testing(); }
 };
 
 } // namespace
@@ -129,10 +195,13 @@ TEST_F(ComponentLoader, SmokeLoadsFromAllThreeSearchPathSources) {
     ASSERT_EQ(swmm_component_search_path_add(SMOKE_EXPLICIT_DIR), SWMM_OK);
     const auto libs = all_libraries();
 
-    struct Source { const char* id; const char* where; };
+    struct Source {
+        const char* id;
+        const char* where;
+    };
     const Source sources[] = {
-        {kNext,     "next to the host library (components/)"},
-        {kEnv,      "HYDROCOUPLE_COMPONENT_PATH"},
+        {kNext, "next to the host library (components/)"},
+        {kEnv, "HYDROCOUPLE_COMPONENT_PATH"},
         {kExplicit, "swmm_component_search_path_add"},
     };
     for (const auto& s : sources) {
@@ -160,9 +229,9 @@ TEST_F(ComponentLoader, MisStampedTwinIsRefusedWithBothStamps) {
     ASSERT_EQ(swmm_component_search_path_add(SMOKE_EXPLICIT_DIR), SWMM_OK);
     const auto libs = all_libraries();
     const auto* r = by_file(libs, kMisstamped);
-    ASSERT_NE(r, nullptr)
-        << "the mis-stamped library was not RECORDED — a refusal must be listed, "
-           "not skipped" << dump(libs);
+    ASSERT_NE(r, nullptr) << "the mis-stamped library was not RECORDED — a refusal must be listed, "
+                             "not skipped"
+                          << dump(libs);
 
     // Refused: never called beyond its stamp, so it has no id.
     EXPECT_STREQ(r->id, "") << "a mis-stamped library was LOADED" << dump(libs);
@@ -224,8 +293,10 @@ TEST_F(ComponentLoader, SecondCopyOfAnIdIsRefusedNamingTheFirst) {
     int loaded = 0;
     const SWMM_ComponentLibraryInfo* refused = nullptr;
     for (const auto& r : libs) {
-        if (std::string(r.id) == kExplicit && r.load_error[0] == '\0') ++loaded;
-        if (fs::weakly_canonical(r.path) == fs::weakly_canonical(copy)) refused = &r;
+        if (std::string(r.id) == kExplicit && r.load_error[0] == '\0')
+            ++loaded;
+        if (fs::weakly_canonical(r.path) == fs::weakly_canonical(copy))
+            refused = &r;
     }
     EXPECT_EQ(loaded, 1) << "one id, one loaded library" << dump(libs);
     ASSERT_NE(refused, nullptr) << dump(libs);
@@ -251,11 +322,9 @@ TEST_F(ComponentLoader, AddingTheSameDirectoryTwiceIsIdempotent) {
 TEST_F(ComponentLoader, ApiRejectsBadArguments) {
     EXPECT_EQ(swmm_component_search_path_add(nullptr), SWMM_ERR_BADPARAM);
     EXPECT_EQ(swmm_component_search_path_add(""), SWMM_ERR_BADPARAM);
-    EXPECT_EQ(swmm_component_search_path_add("/no/such/directory/anywhere"),
-              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_component_search_path_add("/no/such/directory/anywhere"), SWMM_ERR_BADPARAM);
     SWMM_ComponentLibraryInfo info{};
     EXPECT_EQ(swmm_component_library_get(-1, &info), SWMM_ERR_BADINDEX);
-    EXPECT_EQ(swmm_component_library_get(swmm_component_library_count(), &info),
-              SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_component_library_get(swmm_component_library_count(), &info), SWMM_ERR_BADINDEX);
     EXPECT_EQ(swmm_component_library_get(0, nullptr), SWMM_ERR_BADPARAM);
 }

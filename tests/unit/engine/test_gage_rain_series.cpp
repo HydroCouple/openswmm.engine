@@ -1,6 +1,6 @@
 /**
- * @file test_gage_rain_series.cpp
- * @brief swmm_gage_get_rainfall_series + USER_CSV rain-file loading.
+ * @file      test_gage_rain_series.cpp
+ * @brief     swmm_gage_get_rainfall_series + USER_CSV rain-file loading.
  *
  * @details Two things are under test.
  *
@@ -18,6 +18,10 @@
  *
  * @see src/engine/input/PostParseResolver.cpp (load_external_rain_files)
  * @see src/engine/hydrology/Gage.cpp (gageRainSeries / convertGageValue)
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -43,16 +47,40 @@ class GageRainSeries : public ::testing::Test {
 protected:
     SWMM_Engine engine_ = nullptr;
 
-    void openModel(const char* rpt, const char* out) {
-        openModelAt(kInp, rpt, out);
-    }
+    /**
+     * @brief Open the fixed US rain-series model into the fixture.
+     *
+     * Delegates to openModelAt(kInp); requires no currently owned model to avoid replacing/leaking an
+     * existing handle. Does not initialize or run.
+     *
+     * @param[in] rpt Report destination accepted by openModelAt.
+     * @param[in] out Binary output destination accepted by openModelAt.
+     */
+    void openModel(const char* rpt, const char* out) { openModelAt(kInp, rpt, out); }
 
+    /**
+     * @brief Create and open the requested rain-series fixture model.
+     *
+     * Assigns engine_ before fatal create/open assertions; TearDown owns cleanup of partial state.
+     * Requires engine_ initially null. Assertion failure returns only from this helper; callers must
+     * not assume success unless checked. Does not initialize/start the model.
+     *
+     * @param[in] inp Non-null existing deck filename.
+     * @param[in] rpt Report destination passed to engine open.
+     * @param[in] out Binary output destination passed to engine open.
+     */
     void openModelAt(const char* inp, const char* rpt, const char* out) {
         engine_ = swmm_engine_create();
         ASSERT_NE(engine_, nullptr);
         ASSERT_EQ(swmm_engine_open(engine_, inp, rpt, out, nullptr), SWMM_OK);
     }
 
+    /**
+     * @brief Close and destroy the fixture model, then clear its handle.
+     *
+     * Checks for null, ignores close status and releases partial state after setup/test failure. No
+     * simulation report is requested here.
+     */
     void TearDown() override {
         if (engine_) {
             swmm_engine_close(engine_);
@@ -61,16 +89,33 @@ protected:
         }
     }
 
+    /**
+     * @brief Look up a rain gage through the fixture engine.
+     *
+     * Requires a live opened engine_ and retains neither argument nor ownership.
+     *
+     * @param[in] id Non-null identifier accepted by swmm_gage_index.
+     * @return Gage index or the C API lookup failure sentinel; no assertion or mutation.
+     */
     int gageIndex(const char* id) { return swmm_gage_index(engine_, id); }
 
+    /**
+     * @brief Collect resolved rainfall intensity values while discarding their timestamps.
+     *
+     * Count/getter failures record nonfatal expectations, so partial/default values can be returned.
+     * Initializes count to zero and allocates matching temporary time/value buffers; no simulation step
+     * or independent status is returned.
+     *
+     * @param[in] idx Valid rain gage index in the opened fixture engine.
+     * @return Owned values in project rainfall units (in/hr for the US fixture); empty on zero count.
+     */
     std::vector<double> seriesValues(int idx) {
         int n = 0;
         EXPECT_EQ(swmm_gage_get_rainfall_series_count(engine_, idx, &n), SWMM_OK);
         std::vector<double> t(static_cast<std::size_t>(n));
         std::vector<double> v(static_cast<std::size_t>(n));
         if (n > 0)
-            EXPECT_EQ(swmm_gage_get_rainfall_series(engine_, idx, t.data(), v.data(), n),
-                      SWMM_OK);
+            EXPECT_EQ(swmm_gage_get_rainfall_series(engine_, idx, t.data(), v.data(), n), SWMM_OK);
         return v;
     }
 };
@@ -132,11 +177,13 @@ TEST_F(GageRainSeries, UserCsvGageProducesRainfallAtRuntime) {
     // Run to completion: the first non-zero record is at 00:15, which a short
     // fixed step budget would never reach.
     for (int i = 0; i < 5000; ++i) {
-        if (swmm_engine_step(engine_, &elapsed) != SWMM_OK) break;
+        if (swmm_engine_step(engine_, &elapsed) != SWMM_OK)
+            break;
         double r = 0.0;
         if (swmm_gage_get_rainfall(engine_, east, &r) == SWMM_OK)
             peak = std::max(peak, r);
-        if (elapsed <= 0.0) break;
+        if (elapsed <= 0.0)
+            break;
     }
     swmm_engine_end(engine_);
     EXPECT_GT(peak, 0.0) << "a USER_CSV gage must actually rain";
@@ -150,11 +197,9 @@ TEST_F(GageRainSeries, SharedFileIsParsedExactlyOnce) {
     const long before = openswmm::input::multicolumn_parse_count_total();
     // rain_shared.inp: 4 USER_CSV gages + 2 FILE timeseries, all on
     // rain_multi.csv.
-    openModelAt("rain_series/rain_shared.inp",
-                "_rain_shared.rpt", "_rain_shared.out");
+    openModelAt("rain_series/rain_shared.inp", "_rain_shared.rpt", "_rain_shared.out");
     const long after = openswmm::input::multicolumn_parse_count_total();
-    EXPECT_EQ(after - before, 1)
-        << "six consumers of one file must trigger exactly one parse";
+    EXPECT_EQ(after - before, 1) << "six consumers of one file must trigger exactly one parse";
 
     // And every consumer actually got its data.
     for (const char* id : {"CSV_EAST", "CSV_WEST", "CSV_DEFAULT", "CSV_BARE"}) {
@@ -171,8 +216,7 @@ TEST_F(GageRainSeries, SharedFileIsParsedExactlyOnce) {
 // ---------------------------------------------------------------------------
 
 TEST_F(GageRainSeries, EmptyColumnNameLoadsFirstDataColumn) {
-    openModelAt("rain_series/rain_shared.inp",
-                "_rain_shared_b2.rpt", "_rain_shared_b2.out");
+    openModelAt("rain_series/rain_shared.inp", "_rain_shared_b2.rpt", "_rain_shared_b2.out");
 
     // CSV_DEFAULT is declared FILE "rain_multi.csv:" (empty column). The
     // first data column is EAST_GAGE, so its series must equal CSV_EAST's
@@ -191,8 +235,7 @@ TEST_F(GageRainSeries, EmptyColumnNameLoadsFirstDataColumn) {
 // ---------------------------------------------------------------------------
 
 TEST_F(GageRainSeries, BarePathUserCsvGageLoadsFirstColumn) {
-    openModelAt("rain_series/rain_shared.inp",
-                "_rain_shared_bare.rpt", "_rain_shared_bare.out");
+    openModelAt("rain_series/rain_shared.inp", "_rain_shared_bare.rpt", "_rain_shared_bare.out");
 
     // CSV_BARE is declared FILE "rain_multi.csv" — no colon, no station/units
     // tokens, which is what InpWriter emits for a USER_CSV gage with an empty
@@ -221,8 +264,7 @@ TEST_F(GageRainSeries, BarePathUserCsvGageLoadsFirstColumn) {
 // ---------------------------------------------------------------------------
 
 TEST_F(GageRainSeries, TsfGageLoadsItsColumnWith24HourTimes) {
-    openModelAt("rain_series/rain_tsf.inp",
-                "_rain_tsf.rpt", "_rain_tsf.out");
+    openModelAt("rain_series/rain_tsf.inp", "_rain_tsf.rpt", "_rain_tsf.out");
 
     const int g1 = gageIndex("TSF_G1");
     const int g2 = gageIndex("TSF_G2");
@@ -234,8 +276,7 @@ TEST_F(GageRainSeries, TsfGageLoadsItsColumnWith24HourTimes) {
     ASSERT_EQ(n, 4) << "the TSF parameter/units header rows must be skipped";
 
     std::vector<double> t1(4), v1(4);
-    ASSERT_EQ(swmm_gage_get_rainfall_series(engine_, g1, t1.data(), v1.data(), 4),
-              SWMM_OK);
+    ASSERT_EQ(swmm_gage_get_rainfall_series(engine_, g1, t1.data(), v1.data(), 4), SWMM_OK);
     const std::vector<double> v2 = seriesValues(g2);
     ASSERT_EQ(v2.size(), 4u);
 
@@ -243,8 +284,8 @@ TEST_F(GageRainSeries, TsfGageLoadsItsColumnWith24HourTimes) {
     // shifted index) breaks the ratio immediately.
     for (int i = 1; i < 4; ++i) {
         ASSERT_GT(v2[static_cast<std::size_t>(i)], 0.0);
-        EXPECT_NEAR(v1[static_cast<std::size_t>(i)] / v2[static_cast<std::size_t>(i)],
-                    2.0, 1e-9) << "row " << i;
+        EXPECT_NEAR(v1[static_cast<std::size_t>(i)] / v2[static_cast<std::size_t>(i)], 2.0, 1e-9)
+            << "row " << i;
     }
 
     // AM/PM decoding: 12:00:00 AM = midnight, 11:45:00 PM = 23:45 — the
@@ -284,7 +325,7 @@ TEST_F(GageRainSeries, RuntimeAgreement) {
     std::vector<GageProbe> probes;
     for (const char* id : {"TS_GAGE", "STD_GAGE", "CSV_EAST", "CSV_WEST"}) {
         GageProbe p;
-        p.id  = id;
+        p.id = id;
         p.idx = gageIndex(id);
         ASSERT_GE(p.idx, 0) << id;
 
@@ -293,8 +334,8 @@ TEST_F(GageRainSeries, RuntimeAgreement) {
         ASSERT_GT(n, 0) << id << " has no resolved series";
         p.times.resize(static_cast<std::size_t>(n));
         p.values.resize(static_cast<std::size_t>(n));
-        ASSERT_EQ(swmm_gage_get_rainfall_series(engine_, p.idx, p.times.data(),
-                                                p.values.data(), n), SWMM_OK);
+        ASSERT_EQ(swmm_gage_get_rainfall_series(engine_, p.idx, p.times.data(), p.values.data(), n),
+                  SWMM_OK);
         ASSERT_EQ(swmm_gage_get_rain_interval(engine_, p.idx, &p.interval), SWMM_OK);
         probes.push_back(std::move(p));
     }
@@ -321,8 +362,10 @@ TEST_F(GageRainSeries, RuntimeAgreement) {
     int checks = 0;
     int wet_checks = 0;
     for (int step = 0; step < 5000; ++step) {
-        if (swmm_engine_step(engine_, &elapsed) != SWMM_OK) break;
-        if (elapsed <= 0.0) break;
+        if (swmm_engine_step(engine_, &elapsed) != SWMM_OK)
+            break;
+        if (elapsed <= 0.0)
+            break;
         const double probe = start + elapsed - kSecond;
 
         for (const GageProbe& p : probes) {
@@ -330,16 +373,21 @@ TEST_F(GageRainSeries, RuntimeAgreement) {
             for (std::size_t k = 0; k < p.times.size(); ++k) {
                 const double t0 = p.times[k];
                 double t1 = t0 + p.interval * kSecond;
-                if (k + 1 < p.times.size()) t1 = std::min(t1, p.times[k + 1]);
-                if (probe >= t0 && probe < t1) { expected = p.values[k]; break; }
+                if (k + 1 < p.times.size())
+                    t1 = std::min(t1, p.times[k + 1]);
+                if (probe >= t0 && probe < t1) {
+                    expected = p.values[k];
+                    break;
+                }
             }
             double actual = 0.0;
             ASSERT_EQ(swmm_gage_get_rainfall(engine_, p.idx, &actual), SWMM_OK);
             EXPECT_NEAR(actual, expected, 1e-6)
-                << p.id << " disagrees with its reported series at elapsed="
-                << elapsed << " — the API and the runtime have drifted";
+                << p.id << " disagrees with its reported series at elapsed=" << elapsed
+                << " — the API and the runtime have drifted";
             ++checks;
-            if (actual > 0.0) ++wet_checks;
+            if (actual > 0.0)
+                ++wet_checks;
         }
     }
     swmm_engine_end(engine_);
@@ -353,8 +401,7 @@ TEST_F(GageRainSeries, RuntimeAgreement) {
 TEST_F(GageRainSeries, FullFileRecordIgnoresSimulationWindowAndKeepsCumulativeBaseline) {
     openModelAt("rain_series/rain_full_record.inp", "_rain_full_record.rpt", nullptr);
     const std::vector<std::vector<double>> expected = {
-        {10, 12, 14, 1, 3}, {40, 48, 56, 4, 12}, {40, 8, 8, 4, 8}
-    };
+        {10, 12, 14, 1, 3}, {40, 48, 56, 4, 12}, {40, 8, 8, 4, 8}};
     for (const char* prefix : {"TSF_", "STD_"}) {
         int type = 0;
         for (const char* name : {"INTENSITY", "VOLUME", "CUMULATIVE"}) {

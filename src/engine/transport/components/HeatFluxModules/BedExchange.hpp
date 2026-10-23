@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file BedExchange.hpp
- * @brief Plan H6b — bed conduction, deep-ground conduction, and hyporheic
+ * @file      BedExchange.hpp
+ * @brief     Plan H6b — bed conduction, deep-ground conduction, and hyporheic
  *        exchange, integrated SIMULTANEOUSLY with the surface fluxes.
  *
  * @par Why this is not "one more term in netFluxOut"
@@ -89,15 +89,15 @@
  * @see HTSComponent/src/element.cpp:121-200 (the reference)
  * @ingroup engine_transport
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_TRANSPORT_BED_EXCHANGE_HPP
 #define OPENSWMM_ENGINE_TRANSPORT_BED_EXCHANGE_HPP
 
-#include "../../../data/BedZoneData.hpp"   // SedimentConfig (light header)
+#include "../../../data/BedZoneData.hpp" // SedimentConfig (light header)
 
 namespace openswmm {
 struct SimulationContext;
@@ -109,27 +109,32 @@ namespace openswmm::transport::heat {
 /**
  * @brief One element's bed coupling, fully reduced to SI conductances.
  *
- * @details Everything geometric and material has already been folded in, so
- *          `relaxPair` contains no unit conversion and no reference to
- *          conduit shape. That separation is deliberate: the geometry is
- *          what differs between the LEGACY link binding and the ARD mesh
- *          binding, and the integration is what must not.
+ * @details Everything geometric and material has already been folded in, so `relaxPair` contains
+ * no unit conversion and no reference to conduit shape. That separation is deliberate: the
+ * geometry is what differs between the LEGACY link binding and the ARD mesh binding, and the
+ * integration is what must not.
  */
 struct BedCoupling {
-    double g_wb = 0.0;  ///< Water<->bed conductance, W/K (conduction + advection)
-    double g_bg = 0.0;  ///< Bed<->deep-ground conductance, W/K
-    double c_w  = 0.0;  ///< Water heat capacity, J/K
-    double c_b  = 0.0;  ///< Bed heat capacity, J/K
-    double t_gr = 0.0;  ///< Deep-ground temperature, °C
+    double g_wb = 0.0; ///< Water<->bed conductance, W/K (conduction + advection)
+    double g_bg = 0.0; ///< Bed<->deep-ground conductance, W/K
+    double c_w = 0.0;  ///< Water heat capacity, J/K
+    double c_b = 0.0;  ///< Bed heat capacity, J/K
+    double t_gr = 0.0; ///< Deep-ground temperature, °C
 
-    /// True when the pair is worth stepping at all.
+    /**
+     * @brief True when the pair is worth stepping at all.
+     *
+     * @details Test only whether water and bed capacities are positive.
+     * @return c_w>0&&c_b>0; no finite/conductance/temperature/geometry qualification.
+     * Read-only/no allocation.
+     */
     bool viable() const noexcept { return c_w > 0.0 && c_b > 0.0; }
 };
 
 /// Simultaneous temperature increments for the coupled pair, °C.
 struct PairStep {
-    double dt_w = 0.0;  ///< Channel water
-    double dt_b = 0.0;  ///< Bed
+    double dt_w = 0.0; ///< Channel water
+    double dt_b = 0.0; ///< Bed
 };
 
 /**
@@ -139,35 +144,31 @@ struct PairStep {
  * @param t_w     Current channel water temperature, °C.
  * @param t_b     Current bed temperature, °C.
  * @param j0      Net outward SURFACE flux at `t_w`, W/m² (`netFluxOut`).
- * @param j1      The same flux at `t_w + h` — the probe `relaxT` already
- *                takes, passed in rather than recomputed so the pair is
- *                stepped against exactly the function the single body was.
- * @param h       Probe offset, °C. `<= 0` disables the linearization and
- *                takes `j0` as a constant forcing.
- * @param area_m2 Free-surface area the surface flux acts on, m². May be 0
- *                for a closed conduit — the bed terms still apply.
- * @param dt      Step, seconds.
+ * @param j1      The same flux at `t_w + h` — the probe `relaxT` already takes, passed in rather
+ * than recomputed so the pair is stepped against exactly the function the single body was.
+ * @param h       Probe offset, °C. `<= 0` disables the linearization and takes `j0` as a
+ * constant forcing.
+ * @param area_m2 Free-surface area the surface flux acts on, m². May be 0 for a closed conduit —
+ * the bed terms still apply.
+ * - Additional argument dt: Step, seconds.
  *
  * @return Increments for both bodies. `{0,0}` when `g` is not viable.
  *
- * @note Reduces to `relaxT` when `g_wb == g_bg == 0`, to within 1-2 ULP —
- *       the two take different but algebraically identical routes to the
- *       same scalar, so the last bit can differ. Measured over `dt` in
- *       {1, 60, 900, 86400}: 1 ULP at every step, well inside the 4 ULP
- *       `EXPECT_DOUBLE_EQ` allows. **The reduction is what keeps pre-H6b
- *       answers unchanged, and it holds only because the module is OFF by
- *       default** — a deck without `SEDIMENT_EXCHANGE` never enters
- *       `relaxPair` at all, so byte-identity is exact for the reason that
- *       matters, not for this one.
+ * @note Reduces to `relaxT` when `g_wb == g_bg == 0`, to within 1-2 ULP — the two take different
+ * but algebraically identical routes to the same scalar, so the last bit can differ. Measured
+ * over `dt` in {1, 60, 900, 86400}: 1 ULP at every step, well inside the 4 ULP
+ * `EXPECT_DOUBLE_EQ` allows. **The reduction is what keeps pre-H6b answers unchanged, and it
+ * holds only because the module is OFF by default** — a deck without `SEDIMENT_EXCHANGE` never
+ * enters `relaxPair` at all, so byte-identity is exact for the reason that matters, not for this
+ * one.
  */
-PairStep relaxPair(const BedCoupling& g, double t_w, double t_b,
-                   double j0, double j1, double h, double area_m2,
-                   double dt) noexcept;
+PairStep relaxPair(const BedCoupling& g, double t_w, double t_b, double j0, double j1, double h,
+                   double area_m2, double dt) noexcept;
 
 /// Simultaneous concentration increments for the coupled pair.
 struct SolutePairStep {
-    double dc_w = 0.0;  ///< Channel water
-    double dc_b = 0.0;  ///< Bed water
+    double dc_w = 0.0; ///< Channel water
+    double dc_b = 0.0; ///< Bed water
 };
 
 /**
@@ -176,26 +177,24 @@ struct SolutePairStep {
  * @param c_w     Channel concentration.
  * @param c_b     Bed concentration.
  * @param vol_w   Channel water volume, m³.
- * @param vol_b   Bed water volume, m³ (bed volume x porosity is the honest
- *                reading; the reference uses the bulk volume and so does
- *                this, see the header note on porosity).
+ * @param vol_b   Bed water volume, m³ (bed volume x porosity is the honest reading; the
+ * reference uses the bulk volume and so does this, see the header note on porosity).
  * @param q_exch  Total exchange discharge, m³/s: `D_sed*A/Y + v_hyp*A`.
  * @param dt      Step, seconds.
  *
- * @return Increments satisfying `vol_w*dc_w + vol_b*dc_b == 0` to relative
- *         round-off. See the header on why this is not bit-exact.
+ * @return Increments satisfying `vol_w*dc_w + vol_b*dc_b == 0` to relative round-off. See the
+ * header on why this is not bit-exact.
  */
-SolutePairStep exchangePair(double c_w, double c_b, double vol_w,
-                            double vol_b, double q_exch, double dt) noexcept;
+SolutePairStep exchangePair(double c_w, double c_b, double vol_w, double vol_b, double q_exch,
+                            double dt) noexcept;
 
 /**
- * @brief Bed conductances for link `j` from the deck configuration and the
- *        link's current hydraulics.
+ * @brief Bed conductances for link `j` from the deck configuration and the link's current
+ * hydraulics.
  *
- * @details Contact area is the WETTED PERIMETER times length times barrels —
- *          see `BedZoneData.hpp` divergence 1. Returns a non-viable coupling
- *          (which `relaxPair` treats as a no-op) for a dry link, a
- *          non-conduit, or a link whose perimeter cannot be formed.
+ * @details Contact area is the WETTED PERIMETER times length times barrels — see
+ * `BedZoneData.hpp` divergence 1. Returns a non-viable coupling (which `relaxPair` treats as a
+ * no-op) for a dry link, a non-conduit, or a link whose perimeter cannot be formed.
  */
 ///          `t_gr` is passed in rather than resolved here because the
 ///          TIMESERIES lookup is GLOBAL scope: one lookup per STEP, not one
@@ -203,29 +202,25 @@ SolutePairStep exchangePair(double c_w, double c_b, double vol_w,
 ///          it exists. PE2: the link's own SedimentConfig (per-element
 ///          overrides included) is resolved INSIDE, so every caller of the
 ///          link form gets per-element bed attributes without threading them.
-BedCoupling bedCouplingForLink(const SimulationContext& ctx, int link,
-                               double vol_ft3, double t_gr) noexcept;
+BedCoupling bedCouplingForLink(const SimulationContext& ctx, int link, double vol_ft3,
+                               double t_gr) noexcept;
 
 /**
  * @brief The material half of the coupling, geometry already folded in.
  *
- * @details Split out of `bedCouplingForLink` for the ARD binding: a CELL has
- *          its own contact area and volume but the same material math, and a
- *          second hand-written copy of that math is how the two engines'
- *          beds would come to disagree about the same sediment. LEGACY and
- *          LARD go through `bedCouplingForLink` (link geometry); ARD
- *          computes its per-cell `bed_m2`/`vol_ft3` and calls this directly.
+ * @details Split out of `bedCouplingForLink` for the ARD binding: a CELL has its own contact
+ * area and volume but the same material math, and a second hand-written copy of that math is how
+ * the two engines' beds would come to disagree about the same sediment. LEGACY and LARD go
+ * through `bedCouplingForLink` (link geometry); ARD computes its per-cell `bed_m2`/`vol_ft3` and
+ * calls this directly.
  *
- *          PE2: `sc` is the SedimentConfig in force for the element —
- *          `sedimentFor(ctx, elem)`, or the global for a caller with no
- *          element. The check found the handoff's draft resolving the
- *          per-element table and never passing it to ANY bed reader: both
- *          links of the per-tag gate cooled to the identical bit.
+ * PE2: `sc` is the SedimentConfig in force for the element — `sedimentFor(ctx, elem)`, or the
+ * global for a caller with no element. The check found the handoff's draft resolving the
+ * per-element table and never passing it to ANY bed reader: both links of the per-tag gate
+ * cooled to the identical bit.
  */
-BedCoupling bedCouplingFromContact(const SimulationContext& ctx,
-                                   const SedimentConfig& sc,
-                                   double bed_m2, double vol_ft3,
-                                   double t_gr) noexcept;
+BedCoupling bedCouplingFromContact(const SimulationContext& ctx, const SedimentConfig& sc,
+                                   double bed_m2, double vol_ft3, double t_gr) noexcept;
 
 /// PE2: the deep-ground temperature in force for ONE element. The global
 /// `GROUND_TEMPERATURE TIMESERIES` wins when configured — the TIMESERIES
@@ -250,7 +245,7 @@ double linkBedAreaM2(const SimulationContext& ctx, int link) noexcept;
 /// the XSectParams builder.
 double linkFreeSurfaceFt2(const SimulationContext& ctx, int link) noexcept;
 /// Shared LEGACY/LARD geometry adapter, in SI. ARD supplies its actual cell geometry.
-void fillChannelThermalGeometry(const SimulationContext&,ChannelThermalRegion&) noexcept;
+void fillChannelThermalGeometry(const SimulationContext&, ChannelThermalRegion&) noexcept;
 
 /// The deep-ground temperature in force this step, °C — resolves the
 /// `GROUND_TEMPERATURE TIMESERIES` spelling against the simulation clock.
@@ -264,39 +259,33 @@ bool bedExchangeEnabled(const SimulationContext& ctx) noexcept;
 /**
  * @brief Size and seed the bed temperature array, idempotently.
  *
- * @details There is deliberately **no `applyBedHeatExchange`**. A function by
- *          that name would be called beside `applyHeatFluxes` and would step
- *          the bed in its own relaxation — which is D-H5e's defect, one phase
- *          after D-H5e removed it. The heat coupling instead happens INSIDE
- *          `applyHeatFluxes`'s link loop, which calls `relaxPair` with the
- *          real `j0`/`j1`/area so the surface families and the bed are one
- *          simultaneous step. This function is only the state setup that
- *          loop needs first.
+ * @details There is deliberately **no `applyBedHeatExchange`**. A function by that name would be
+ * called beside `applyHeatFluxes` and would step the bed in its own relaxation — which is
+ * D-H5e's defect, one phase after D-H5e removed it. The heat coupling instead happens INSIDE
+ * `applyHeatFluxes`'s link loop, which calls `relaxPair` with the real `j0`/`j1`/area so the
+ * surface families and the bed are one simultaneous step. This function is only the state setup
+ * that loop needs first.
  */
 void seedBedTemperature(SimulationContext& ctx);
 
 /**
  * @brief Step every conduit's bed/channel solute exchange for one `dt`.
  *
- * @param link_conc  [link * n_arr + s] channel concentrations, updated in
- *                   place. The caller owns the layout because the engines
- *                   hold their channel state differently; what they share
- *                   is this function and the bed array it moves mass into.
+ * - Additional argument link_conc: [link * n_arr + s] channel concentrations, updated in place.
+ * The caller owns the layout because the engines hold their channel state differently; what they
+ * share is this function and the bed array it moves mass into.
  * @param n_arr      Species carried by `link_conc`.
- * @param offset     Where `link_conc`'s rows start inside the bed store.
- *                   The bed carries ONE species set — pollutants then MSX —
- *                   and LEGACY holds those in two arrays (`links.conc`,
- *                   `msx_link_conc`), so it calls twice: `(conc, np, 0)`
- *                   and `(msx, nm, np)`. Splitting the bed store instead
- *                   would give the two halves independent sizing paths and
- *                   a seam where one resizes and the other does not.
- * @param n_total    Total species the bed store carries (`np + nm`). Sizing
- *                   is by `n_total`, so the two LEGACY calls agree about
- *                   the store's shape by construction.
+ * @param offset     Where `link_conc`'s rows start inside the bed store. The bed carries ONE
+ * species set — pollutants then MSX — and LEGACY holds those in two arrays (`links.conc`,
+ * `msx_link_conc`), so it calls twice: `(conc, np, 0)` and `(msx, nm, np)`. Splitting the bed
+ * store instead would give the two halves independent sizing paths and a seam where one resizes
+ * and the other does not.
+ * @param n_total    Total species the bed store carries (`np + nm`). Sizing is by `n_total`, so
+ * the two LEGACY calls agree about the store's shape by construction.
  */
-void applyBedSoluteExchange(SimulationContext& ctx, double* link_conc,
-                            int n_arr, int offset, int n_total, double dt);
+void applyBedSoluteExchange(SimulationContext& ctx, double* link_conc, int n_arr, int offset,
+                            int n_total, double dt);
 
-}  // namespace openswmm::transport::heat
+} // namespace openswmm::transport::heat
 
-#endif  // OPENSWMM_ENGINE_TRANSPORT_BED_EXCHANGE_HPP
+#endif // OPENSWMM_ENGINE_TRANSPORT_BED_EXCHANGE_HPP

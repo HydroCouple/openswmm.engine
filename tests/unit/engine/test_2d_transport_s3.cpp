@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_2d_transport_s3.cpp
- * @brief Overland transport S3 — the 1D↔2D coupling carries species
+ * @file      test_2d_transport_s3.cpp
+ * @brief     Overland transport S3 — the 1D↔2D coupling carries species
  *        (D-2DT4), both directions, through the DECK path.
  *
  * @details Every gate here runs the full engine on a coupled deck, because
@@ -40,6 +40,10 @@
  *          2D ledger says left (× the m³→ft³ factor) must equal what the 1D
  *          quality continuity table received plus whatever is still in the
  *          delivery queue at the final step.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -63,6 +67,22 @@ namespace {
 // species Cu seeded at `c0` everywhere, coupled at vertex 0 to `node`.
 // `one_d_head` selects the 1D side: a clean network (drain gate) or a junction
 // fed at c0 (spill / outfall gates).
+/**
+ * @brief Build a SI coupled surface-quality pan fixture.
+ *
+ * Uses explicit one-tier surface stepping and 5 s routing; no file writing, validation or
+ * simulation.
+ *
+ * @param[in] node Raw node ID coupled to vertex zero, without escaping.
+ * @param[in] z_pan Uniform bed elevation meters.
+ * @param[in] h0 Initial triangle depth meters.
+ * @param[in] c0 Initial Cu concentration mg/L.
+ * @param[in] inflows Raw complete inflow sections/rows inserted before 2D_OPTIONS; caller supplies
+ *     headers/newlines.
+ * @param[in] j1_maxdepth J1 maximum depth meters.
+ * @return Owned CMS/DYNWAVE deck with 10 m square pan, two triangles, one pipe and 20 minute
+ *     duration.
+ */
 std::string deck(const std::string& node, double z_pan, double h0, double c0,
                  const std::string& inflows, double j1_maxdepth) {
     std::ostringstream m;
@@ -74,20 +94,32 @@ std::string deck(const std::string& node, double z_pan, double h0, double c0,
          "ALLOW_PONDING        NO\n\n"
          "[POLLUTANTS]\n;;Name Units Crain Cgw Crdii Kdecay\n"
          "Cu     MG/L  0     0   0     0\n\n"
-         "[JUNCTIONS]\nJ1 0.0 " << j1_maxdepth << " 0 0 0\n\n"
+         "[JUNCTIONS]\nJ1 0.0 "
+      << j1_maxdepth
+      << " 0 0 0\n\n"
          "[OUTFALLS]\nO1 -0.5 FREE NO\n\n"
          "[CONDUITS]\nC1 J1 O1 30.0 0.013 0 0 0\n\n"
          "[XSECTIONS]\nC1 CIRCULAR 0.3 0 0 0 1\n\n"
-      << inflows <<
-         "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\n"
+      << inflows
+      << "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\n"
          "DRY_DEPTH 0.001\nCOUPLING_CD 0.7\nREPORT_2D NO\n\n"
          "[2D_VERTICES]\n"
-         " 0.0  0.0 " << z_pan << "\n10.0  0.0 " << z_pan << "\n"
-         "10.0 10.0 " << z_pan << "\n 0.0 10.0 " << z_pan << "\n\n"
+         " 0.0  0.0 "
+      << z_pan << "\n10.0  0.0 " << z_pan
+      << "\n"
+         "10.0 10.0 "
+      << z_pan << "\n 0.0 10.0 " << z_pan
+      << "\n\n"
          "[2D_TRIANGLES]\n;;V1 V2 V3 N INIT_DEPTH\n"
-         "0 1 2 0.03 " << h0 << "\n0 2 3 0.03 " << h0 << "\n\n"
-         "[2D_VERTEX_NODE_MAP]\n0 " << node << " 0.7 1.0\n\n"
-         "[2D_INITIAL_QUALITY]\n* Cu " << c0 << "\n\n"
+         "0 1 2 0.03 "
+      << h0 << "\n0 2 3 0.03 " << h0
+      << "\n\n"
+         "[2D_VERTEX_NODE_MAP]\n0 "
+      << node
+      << " 0.7 1.0\n\n"
+         "[2D_INITIAL_QUALITY]\n* Cu "
+      << c0
+      << "\n\n"
          "[REPORT]\nINPUT NO\n";
     return m.str();
 }
@@ -98,41 +130,76 @@ struct CoupledRun {
     bool ok = false;
 };
 
-/// Open/initialize/start and step to the end; the engine is left OPEN (not
-/// ended) so the caller can read the live context, then destroyed by `close`.
+/**
+ * @brief Write/open/run the coupled-quality deck while retaining its engine for inspection.
+ *
+ * Caller must close the returned record on all paths. Requires active 2D, then steps without a
+ * guard until error/completion; either can leave ok=true. Does not end/close before returning.
+ * Subsequent copies of this plain record alias the same ownership and must not be independently
+ * destroyed.
+ *
+ * @param[in] tag Safe artifact prefix in cwd for overwritten .inp/.rpt/.out.
+ * @param[in] body Complete deck text, written with unchecked stream status.
+ * @return Record owning e when allocated, even after early failure; eng borrows it only when ok is
+ *     set.
+ */
 CoupledRun runDeck(const std::string& tag, const std::string& body) {
     CoupledRun r;
-    { std::ofstream f(tag + ".inp"); f << body; }
+    {
+        std::ofstream f(tag + ".inp");
+        f << body;
+    }
     r.e = swmm_engine_create();
-    if (!r.e) return r;
+    if (!r.e)
+        return r;
     if (swmm_engine_open(r.e, (tag + ".inp").c_str(), (tag + ".rpt").c_str(),
                          (tag + ".out").c_str(), nullptr) != SWMM_OK ||
-        swmm_engine_initialize(r.e) != SWMM_OK ||
-        swmm_engine_start(r.e, 1) != SWMM_OK)
+        swmm_engine_initialize(r.e) != SWMM_OK || swmm_engine_start(r.e, 1) != SWMM_OK)
         return r;
     int active = 0;
     swmm_2d_is_active(r.e, &active);
-    if (!active) return r;
+    if (!active)
+        return r;
     double elapsed = 0.0;
-    while (swmm_engine_step(r.e, &elapsed) == SWMM_OK && elapsed > 0.0) {}
+    while (swmm_engine_step(r.e, &elapsed) == SWMM_OK && elapsed > 0.0) {
+    }
     r.eng = static_cast<openswmm::SWMMEngine*>(r.e);
     r.ok = true;
     return r;
 }
 
+/**
+ * @brief End, close and destroy the retained coupled-run handle.
+ *
+ * Ignores lifecycle statuses and handles partial state through the API. Leaves eng dangling and ok
+ * unchanged, so neither indicates a usable engine afterward. No action for null e; retained
+ * artifacts are not deleted.
+ *
+ * @param[in,out] r Sole owning record or null e; e is cleared after destruction.
+ */
 void close(CoupledRun& r) {
-    if (!r.e) return;
+    if (!r.e)
+        return;
     swmm_engine_end(r.e);
     swmm_engine_close(r.e);
     swmm_engine_destroy(r.e);
     r.e = nullptr;
 }
 
+/**
+ * @brief Read the router's configured surface-to-network volume conversion.
+ *
+ * No recomputation, validation or mutation; naming does not imply a fixed factor across unit
+ * systems.
+ *
+ * @param[in] router Live initialized router whose options reflect the target model.
+ * @return flow_2d_to_1d factor converting surface m3 to native 1D volume units.
+ */
 double m3_to_1d(const openswmm::twoD::SurfaceRouter2D& router) {
     return router.options().flow_2d_to_1d;
 }
 
-}  // namespace
+} // namespace
 
 // ---------------------------------------------------------------------------
 // 1. 2D → 1D drain. A pan at c0 = 4 drains through J1 (initially empty and
@@ -145,9 +212,9 @@ TEST(SurfaceTransportS3, DrainDeliversCellConcentrationToTheNode) {
     const double c0 = 4.0;
     CoupledRun r = runDeck("_s3_drain", deck("J1", 1.0, 0.5, c0, "", 1.0));
     ASSERT_TRUE(r.ok) << "coupled deck did not run";
-    const auto& ctx    = r.eng->context();
+    const auto& ctx = r.eng->context();
     const auto& router = r.eng->surfaceRouter2D();
-    const auto& tr     = router.state().transport;
+    const auto& tr = router.state().transport;
     ASSERT_EQ(tr.n_species, 1);
 
     const double drained = ctx.mass_balance_2d.coupling_2d_to_1d_out;
@@ -176,8 +243,7 @@ TEST(SurfaceTransportS3, DrainDeliversCellConcentrationToTheNode) {
     // identity lives in the queue comparison below, which counts drain-only
     // exch_mass.
     const double spilled_back = ctx.mass_balance_2d.coupling_1d_to_2d_in;
-    EXPECT_NEAR(tr.lost_coupling[0] - tr.gained_coupling[0],
-                c0 * (drained - spilled_back),
+    EXPECT_NEAR(tr.lost_coupling[0] - tr.gained_coupling[0], c0 * (drained - spilled_back),
                 1.0e-9 * c0 * drained)
         << "net coupling mass != c0 × net coupling volume";
 
@@ -185,7 +251,8 @@ TEST(SurfaceTransportS3, DrainDeliversCellConcentrationToTheNode) {
     // external quality inflow plus what the delivery queue still holds.
     const double f = m3_to_1d(router);
     double queued = 0.0;
-    for (double q : ctx.nodes.coupling_qual_queue) queued += q;
+    for (double q : ctx.nodes.coupling_qual_queue)
+        queued += q;
     const double received = ctx.mass_balance.qual_routing_ex_in[0] + queued;
     // What the 1D quality path received must be EXACTLY c0 × the volume the
     // 2D→1D out-ledger booked. The rim exchange flip-flops across whole
@@ -213,17 +280,16 @@ TEST(SurfaceTransportS3, DrainDeliversCellConcentrationToTheNode) {
 // ---------------------------------------------------------------------------
 TEST(SurfaceTransportS3, SpillArrivesAtTheNodeConcentration) {
     const double c0 = 4.0;
-    const std::string inflows =
-        "[INFLOWS]\n"
-        ";;Node Constituent TSeries Type Mfactor Sfactor Baseline\n"
-        "J1 FLOW \"\" FLOW   1.0 1.0 0.3\n"
-        "J1 Cu   \"\" CONCEN 1.0 1.0 4.0\n\n";
+    const std::string inflows = "[INFLOWS]\n"
+                                ";;Node Constituent TSeries Type Mfactor Sfactor Baseline\n"
+                                "J1 FLOW \"\" FLOW   1.0 1.0 0.3\n"
+                                "J1 Cu   \"\" CONCEN 1.0 1.0 4.0\n\n";
     CoupledRun r = runDeck("_s3_spill", deck("J1", 0.5, 0.2, c0, inflows, 1.0));
     ASSERT_TRUE(r.ok);
-    const auto& ctx    = r.eng->context();
+    const auto& ctx = r.eng->context();
     const auto& router = r.eng->surfaceRouter2D();
-    const auto& st     = router.state();
-    const auto& tr     = st.transport;
+    const auto& st = router.state();
+    const auto& tr = st.transport;
 
     const double spilled = ctx.mass_balance_2d.coupling_1d_to_2d_in;
     const double drained = ctx.mass_balance_2d.coupling_2d_to_1d_out;
@@ -238,16 +304,16 @@ TEST(SurfaceTransportS3, SpillArrivesAtTheNodeConcentration) {
     int wet = 0;
     for (int c = 0; c < tr.n_cells; ++c) {
         const double v_dry = router.options().dry_depth * router.mesh().tri_area[c];
-        if (!(st.volume[c] > v_dry)) continue;
+        if (!(st.volume[c] > v_dry))
+            continue;
         ++wet;
         const double conc = tr.concentration(0, c, st.volume[c], v_dry);
         worst = std::max(worst, std::fabs(conc - c0) / c0);
     }
     ASSERT_GT(wet, 0);
-    EXPECT_LT(worst, 1.0e-9)
-        << "spill at c0 onto a c0 pan changed a cell: the spill is not booked "
-           "at nodes.conc against the volume the exchange actually moved";
-    const double net_vol  = spilled - drained;
+    EXPECT_LT(worst, 1.0e-9) << "spill at c0 onto a c0 pan changed a cell: the spill is not booked "
+                                "at nodes.conc against the volume the exchange actually moved";
+    const double net_vol = spilled - drained;
     const double net_mass = tr.gained_coupling[0] - tr.lost_coupling[0];
     EXPECT_NEAR(net_mass, c0 * net_vol, 1.0e-9 * std::fabs(c0 * net_vol) + 1e-12)
         << "net coupling mass != c0 × net coupling volume";
@@ -265,16 +331,15 @@ TEST(SurfaceTransportS3, SpillArrivesAtTheNodeConcentration) {
 // ---------------------------------------------------------------------------
 TEST(SurfaceTransportS3, OutfallDischargeCarriesTheOutfallConcentration) {
     const double c0 = 4.0;
-    const std::string inflows =
-        "[INFLOWS]\n"
-        "J1 FLOW \"\" FLOW   1.0 1.0 0.05\n"
-        "J1 Cu   \"\" CONCEN 1.0 1.0 4.0\n\n";
+    const std::string inflows = "[INFLOWS]\n"
+                                "J1 FLOW \"\" FLOW   1.0 1.0 0.05\n"
+                                "J1 Cu   \"\" CONCEN 1.0 1.0 4.0\n\n";
     CoupledRun r = runDeck("_s3_outfall", deck("O1", -1.0, 0.05, c0, inflows, 5.0));
     ASSERT_TRUE(r.ok);
-    const auto& ctx    = r.eng->context();
+    const auto& ctx = r.eng->context();
     const auto& router = r.eng->surfaceRouter2D();
-    const auto& st     = router.state();
-    const auto& tr     = st.transport;
+    const auto& st = router.state();
+    const auto& tr = st.transport;
 
     const double out_in = ctx.mass_balance_2d.outfall_in;
     ASSERT_GT(out_in, 0.5) << "fixture produced no outfall discharge onto the mesh";
@@ -287,7 +352,8 @@ TEST(SurfaceTransportS3, OutfallDischargeCarriesTheOutfallConcentration) {
     double cmax = 0.0;
     for (int c = 0; c < tr.n_cells; ++c) {
         const double v_dry = router.options().dry_depth * router.mesh().tri_area[c];
-        if (!(st.volume[c] > v_dry)) continue;
+        if (!(st.volume[c] > v_dry))
+            continue;
         cmax = std::max(cmax, tr.concentration(0, c, st.volume[c], v_dry));
     }
     EXPECT_LE(cmax, c0 * (1.0 + 1.0e-9)) << "cross-domain max principle broken";
@@ -321,7 +387,8 @@ TEST(SurfaceTransportS3, SpeciesArePassengersOnTheCoupledHydraulics) {
     // Strip [POLLUTANTS] and [2D_INITIAL_QUALITY].
     auto strip = [&](const std::string& head) {
         const auto p = body.find(head);
-        if (p == std::string::npos) return;
+        if (p == std::string::npos)
+            return;
         const auto q = body.find("\n\n", p);
         body.erase(p, (q == std::string::npos ? body.size() : q + 2) - p);
     };
@@ -341,20 +408,23 @@ TEST(SurfaceTransportS3, SpeciesArePassengersOnTheCoupledHydraulics) {
 // ---------------------------------------------------------------------------
 TEST(SurfaceTransportS3, DrainDeliversReactionSpeciesToTheNode) {
     const double c0 = 4.0;
-    { std::ofstream f("_s3_drain_msx.rxn");
-      f << "[REACTION_OPTIONS]\nSOLVER RK5\n[REACTION_SPECIES]\nBULK X MG\n"
-           "[REACTION_PIPES]\nRATE X 0\n[REACTION_TANKS]\nRATE X 0\n"; }
+    {
+        std::ofstream f("_s3_drain_msx.rxn");
+        f << "[REACTION_OPTIONS]\nSOLVER RK5\n[REACTION_SPECIES]\nBULK X MG\n"
+             "[REACTION_PIPES]\nRATE X 0\n[REACTION_TANKS]\nRATE X 0\n";
+    }
     std::string body = deck("J1", 1.0, 0.5, c0, "", 1.0);
     const std::string iq = "[2D_INITIAL_QUALITY]\n* Cu 4\n";
     const auto at = body.find(iq);
     ASSERT_NE(at, std::string::npos);
     body.insert(at + iq.size(), "* X 4\n");
-    body.insert(body.find("[REPORT]"),
-                "[PROCESS_COMPONENTS]\norg.hydrocouple.openswmm.reactions config=\"_s3_drain_msx.rxn\"\n\n");
+    body.insert(
+        body.find("[REPORT]"),
+        "[PROCESS_COMPONENTS]\norg.hydrocouple.openswmm.reactions config=\"_s3_drain_msx.rxn\"\n\n");
     CoupledRun r = runDeck("_s3_drain_msx", body);
     ASSERT_TRUE(r.ok) << "coupled deck did not run";
     const auto& ctx = r.eng->context();
-    const auto& tr  = r.eng->surfaceRouter2D().state().transport;
+    const auto& tr = r.eng->surfaceRouter2D().state().transport;
     ASSERT_EQ(tr.n_msx, 1) << "the species is not transported on the mesh";
     ASSERT_GT(ctx.mass_balance_2d.coupling_2d_to_1d_out, 0.5) << "no drain";
     const int j1 = swmm_node_index(r.e, "J1");
@@ -363,8 +433,7 @@ TEST(SurfaceTransportS3, DrainDeliversReactionSpeciesToTheNode) {
     const double x = ctx.reactions.msx_node_conc[static_cast<std::size_t>(j1) * ns];
     ASSERT_NEAR(cu, c0, 1.0e-9 * c0) << "pollutant control failed; deck defect";
     EXPECT_NEAR(x, cu, 1.0e-9 * c0)
-        << "the junction fed only by the drain reads species " << x
-        << " against pollutant " << cu;
+        << "the junction fed only by the drain reads species " << x << " against pollutant " << cu;
     close(r);
 }
 
@@ -377,16 +446,19 @@ TEST(SurfaceTransportS3, DrainDeliversReactionSpeciesToTheNode) {
 // ---------------------------------------------------------------------------
 TEST(SurfaceTransportS3, MeshWaterEnteringThroughAnOutfallCarriesItsQuality) {
     const double c0 = 4.0;
-    { std::ofstream f("_s3_outfall_in.rxn");
-      f << "[REACTION_OPTIONS]\nSOLVER RK5\n[REACTION_SPECIES]\nBULK X MG\n"
-           "[REACTION_PIPES]\nRATE X 0\n[REACTION_TANKS]\nRATE X 0\n"; }
+    {
+        std::ofstream f("_s3_outfall_in.rxn");
+        f << "[REACTION_OPTIONS]\nSOLVER RK5\n[REACTION_SPECIES]\nBULK X MG\n"
+             "[REACTION_PIPES]\nRATE X 0\n[REACTION_TANKS]\nRATE X 0\n";
+    }
     std::string body = deck("O1", 0.5, 0.5, c0, "", 3.0);
     const std::string iq = "[2D_INITIAL_QUALITY]\n* Cu 4\n";
     const auto at = body.find(iq);
     ASSERT_NE(at, std::string::npos);
     body.insert(at + iq.size(), "* X 4\n");
-    body.insert(body.find("[REPORT]"),
-                "[PROCESS_COMPONENTS]\norg.hydrocouple.openswmm.reactions config=\"_s3_outfall_in.rxn\"\n\n");
+    body.insert(
+        body.find("[REPORT]"),
+        "[PROCESS_COMPONENTS]\norg.hydrocouple.openswmm.reactions config=\"_s3_outfall_in.rxn\"\n\n");
     CoupledRun r = runDeck("_s3_outfall_in", body);
     ASSERT_TRUE(r.ok) << "coupled deck did not run";
     const auto& ctx = r.eng->context();

@@ -1,4 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
+
+/**
+ * @file      KokkosSweKernels.hpp
+ * @brief     Experimental Kokkos kernels for shallow water equation evaluation.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
+ */
+
 #pragma once
 #include "KokkosTypes.hpp"
 #pragma push_macro("OPENSWMM_KERNEL_FN")
@@ -32,8 +42,33 @@ struct Transfers {
     DView waterL, waterR, mxL, mxR, myL, myR, discharge;
 };
 
-inline void gradients(const Mesh &mesh, const State &state, const Gradients &grad,
-                      const IView &cells, int count, double dry) {
+/**
+ * @brief Launch connected-wet-neighbor reconstruction for eta, velocity and depth gradients.
+ * @param[in] mesh Prepared SI cell/unique-face/CSR geometry. Per-cell arrays span n, CSR row
+ * pointers n+1, incidence arrays their terminal pointer and padded boundary/slot arrays 4*n.
+ * Cells have three/four vertices, valid reciprocal faces, positive finite area and distinct
+ * centroids.
+ * @param[in] state Stable cell head/depth m, qx/qy m2/s and active mask spanning
+ * n=depth.extent(0).
+ * @param[out] grad Device x/y output views, each at least 4*n doubles, in contiguous blocks for
+ * eta, u, v and depth; gradient units are dimensionless, 1/s, 1/s and dimensionless
+ * respectively.
+ * @param[in] cells Device list with at least count valid distinct cell indices.
+ * @param[in] count Nonnegative number of selected cells to overwrite; unlisted gradients are
+ * retained.
+ * @param[in] dry Finite positive wet/dry depth threshold m. Cells <=10*dry get zero gradients;
+ * dry/inactive/disconnected neighbors are excluded, with conditioned wet-neighbor fits at shore.
+ * @details Physical boundaries complete the Green-Gauss sum by self extrapolation. Shore
+ * velocity gradients remain zero; BJ bounds and omitted-face depth positivity constrain
+ * reconstructed fields.
+ * @note Launches on ExecSpace without an explicit fence. All views must be device-accessible,
+ * correctly sized and alive through completion; caller orders dependent kernels/copies and
+ * excludes conflicting writes. Input counts/indices/geometry are unchecked, listed cells/faces
+ * must be unique, and runtime launch/allocation errors may propagate. These are experimental
+ * building blocks, not a registered complete FULL_SWE solver or a complete RK2 stage.
+ */
+inline void gradients(const Mesh& mesh, const State& state, const Gradients& grad,
+                      const IView& cells, int count, double dry) {
     const int n = static_cast<int>(state.depth.extent(0));
     Kokkos::parallel_for(
         "swe_connected_gradients", Kokkos::RangePolicy<ExecSpace>(0, count), KOKKOS_LAMBDA(int k) {
@@ -188,8 +223,37 @@ inline void gradients(const Mesh &mesh, const State &state, const Gradients &gra
 // retained at blocked sills and are not multiplied by the conveyance factor,
 // matching the CPU wall-pressure convention. The positivity factor scales
 // mass and advective/pressure Riemann momentum together.
-inline void faces(const Mesh &mesh, const State &state, const Gradients &grad, const Transfers &acc,
-                  const IView &face_list, int count, const IView &face_tier, double dt, double dry,
+/**
+ * @brief Launch one Euler stage's interior-face water and momentum receipt booking.
+ * @param[in] mesh Prepared SI unique-face geometry, CSR-related metadata, cell areas/counts and
+ * finite nonnegative conveyance, with all view extents covering referenced cells/faces.
+ * @param[in] state Stable head/depth m, volume m3, momentum qx/qy m2/s and integer cell tiers.
+ * @param[in] grad Prepared four-block x/y gradients, required when second_order is true.
+ * @param[in,out] acc Device per-face receipt views. Adds signed water m3 and integrated x/y
+ * momentum m4/s to left/right sides, and overwrites discharge m2/s. A blocked face only sets its
+ * discharge to zero; previously queued receipt accumulators remain for their owner's gather.
+ * @param[in] face_list Device list with at least count valid distinct interior-face indices.
+ * @param[in] count Nonnegative number of listed faces.
+ * @param[in] face_tier Device tier per face. In LTS mode giver tier minus face tier must be a
+ * valid nonnegative int shift count; hierarchy/refire consistency belongs to the caller.
+ * @param[in] dt Finite nonnegative face interval s.
+ * @param[in] dry Finite positive wet/dry threshold m.
+ * @param[in] beta Finite donor availability fraction in [0,1], divided across giver
+ * faces/refires.
+ * @param[in] second_order True reconstructs eta/velocity/depth at faces; false uses cell states.
+ * @param[in] global_step True uses one refire, otherwise tier differences scale each face's
+ * budget.
+ * @details Riemann pressure corrections are not multiplied by conveyance; donor limiting scales
+ * water and advective/Riemann momentum together. Equal/opposite water receipts preserve pairing;
+ * this kernel changes neither cell volume nor canonical qx/qy.
+ * @note Launches on ExecSpace without an explicit fence. All views must be device-accessible,
+ * correctly sized and alive through completion; caller orders dependent kernels/copies and
+ * excludes conflicting writes. Input counts/indices/geometry are unchecked, listed cells/faces
+ * must be unique, and runtime launch/allocation errors may propagate. These are experimental
+ * building blocks, not a registered complete FULL_SWE solver or a complete RK2 stage.
+ */
+inline void faces(const Mesh& mesh, const State& state, const Gradients& grad, const Transfers& acc,
+                  const IView& face_list, int count, const IView& face_tier, double dt, double dry,
                   double beta, bool second_order, bool global_step) {
     const int n = static_cast<int>(state.depth.extent(0));
     Kokkos::parallel_for(
@@ -259,8 +323,29 @@ inline void faces(const Mesh &mesh, const State &state, const Gradients &grad, c
 // averaging. Returns integrated momentum increments (m^4/s), not q updates.
 // Those operations belong to the future stage driver; do not call this a
 // complete Euler/RK2 surface advance.
-inline void gather(const Mesh &mesh, const State &state, const Transfers &acc, const IView &cells,
-                   int count, const DView &dmx, const DView &dmy) {
+/**
+ * @brief Gather and clear selected cells' owned interior-face receipt sides.
+ * @param[in] mesh Prepared CSR incidence/side-sign views with valid unique-face indices.
+ * @param[in,out] state Adds gathered water to selected volume m3 and floors at zero; head/depth
+ * and qx/qy are untouched and must be refreshed/advanced by the stage owner.
+ * @param[in,out] acc Consumes and zeros each listed cell's left or right water/momentum
+ * receipts. The opposite cell's side and instantaneous discharge are retained.
+ * @param[in] cells Device list of at least count valid distinct cells.
+ * @param[in] count Nonnegative selected cell count.
+ * @param[out] dmx Device per-cell x integrated momentum increment m4/s; selected entries
+ * overwritten.
+ * @param[out] dmy Device per-cell y integrated momentum increment m4/s; selected entries
+ * overwritten.
+ * @details Performs no closure, boundary wall pressure, friction, source update or RK averaging.
+ * Receipt views and outputs must not alias state or each other in conflicting ways.
+ * @note Launches on ExecSpace without an explicit fence. All views must be device-accessible,
+ * correctly sized and alive through completion; caller orders dependent kernels/copies and
+ * excludes conflicting writes. Input counts/indices/geometry are unchecked, listed cells/faces
+ * must be unique, and runtime launch/allocation errors may propagate. These are experimental
+ * building blocks, not a registered complete FULL_SWE solver or a complete RK2 stage.
+ */
+inline void gather(const Mesh& mesh, const State& state, const Transfers& acc, const IView& cells,
+                   int count, const DView& dmx, const DView& dmy) {
     Kokkos::parallel_for(
         "swe_cell_gather", Kokkos::RangePolicy<ExecSpace>(0, count), KOKKOS_LAMBDA(int k) {
             const int i = cells(k);
@@ -287,9 +372,36 @@ inline void gather(const Mesh &mesh, const State &state, const Transfers &acc, c
 // Caller must refresh depth/head after volume/source updates before this
 // kernel. wall_ptr/slot enumerate only physical WALL boundaries. Non-wall
 // boundaries and live node exchange are separate ordered stage operations.
-inline void momentum(const Mesh &mesh, const State &state, const IView &cells, int count,
-                     const DView &dmx, const DView &dmy, const IView &wall_ptr,
-                     const IView &wall_slot, const DView &roughness, double dt, double dry) {
+/**
+ * @brief Launch selected-cell momentum adoption with physical-wall pressure and Manning
+ * friction.
+ * @param[in] mesh Prepared positive cell areas m2 and padded four-slot boundary geometry.
+ * @param[in,out] state Selected qx/qy m2/s are updated from gathered increments and wall
+ * receipts; depth/head must already reflect current volume/source closure and remain stable
+ * through this call. Cells at/below dry have both momentum components reset to zero.
+ * @param[in] cells Device list with at least count valid distinct selected cells.
+ * @param[in] count Nonnegative selected cell count.
+ * @param[in] dmx Device per-cell integrated x momentum receipts m4/s from gather().
+ * @param[in] dmy Device per-cell integrated y momentum receipts m4/s.
+ * @param[in] wall_ptr Device CSR pointers, n+1, into wall_slot, enumerating only physical WALL
+ * slots.
+ * @param[in] wall_slot Device padded slot indices matching each selected cell's physical
+ * boundaries.
+ * @param[in] roughness Device finite nonnegative Manning n per cell, s/m^(1/3).
+ * @param[in] dt Finite nonnegative momentum/friction interval s.
+ * @param[in] dry Finite positive dry-depth threshold m.
+ * @details Adds reflected-ghost wall pressure, divides integrated momentum by cell area and
+ * applies friction. Non-wall boundary forcing and live node exchange are separately ordered
+ * stage work.
+ * @note Launches on ExecSpace without an explicit fence. All views must be device-accessible,
+ * correctly sized and alive through completion; caller orders dependent kernels/copies and
+ * excludes conflicting writes. Input counts/indices/geometry are unchecked, listed cells/faces
+ * must be unique, and runtime launch/allocation errors may propagate. These are experimental
+ * building blocks, not a registered complete FULL_SWE solver or a complete RK2 stage.
+ */
+inline void momentum(const Mesh& mesh, const State& state, const IView& cells, int count,
+                     const DView& dmx, const DView& dmy, const IView& wall_ptr,
+                     const IView& wall_slot, const DView& roughness, double dt, double dry) {
     Kokkos::parallel_for(
         "swe_cell_momentum", Kokkos::RangePolicy<ExecSpace>(0, count), KOKKOS_LAMBDA(int k) {
             const int i = cells(k);
@@ -325,7 +437,18 @@ inline void momentum(const Mesh &mesh, const State &state, const IView &cells, i
 // Generic RK2 ledger finish: snapshot before either Euler stage, accumulate
 // both stages, then retain half their increment. NOT a state/closure update.
 // Snapshot and live views must not alias and must have equal extents.
-inline void averageLedger(const DView &initial, const DView &live) {
+/**
+ * @brief Retain half the two-stage increment of a cumulative RK2 ledger.
+ * @param[in] initial Device snapshot before either Euler stage, with the same extent as live.
+ * @param[in,out] live Device ledger after both stage increments; each entry becomes initial +
+ * 0.5*(live-initial), in the ledger's own physical units.
+ * @note Views must not alias and must remain alive/device-accessible through completion.
+ * Launches on ExecSpace without an explicit fence; caller orders producers/consumers and
+ * excludes other writers. No extents, finite values or int-index range are checked. This is
+ * ledger averaging only, not a hydraulic/quality state or closure update; runtime launch errors
+ * may propagate.
+ */
+inline void averageLedger(const DView& initial, const DView& live) {
     Kokkos::parallel_for(
         "swe_rk2_ledger", Kokkos::RangePolicy<ExecSpace>(0, live.extent(0)),
         KOKKOS_LAMBDA(int i) { live(i) = initial(i) + 0.5 * (live(i) - initial(i)); });

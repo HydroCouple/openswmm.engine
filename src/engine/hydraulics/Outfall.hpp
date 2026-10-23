@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file Outfall.hpp
- * @brief Outfall boundary depth computation — free/normal/fixed/tidal/timeseries.
+ * @file      Outfall.hpp
+ * @brief     Outfall boundary depth computation — free/normal/fixed/tidal/timeseries.
  *
  * @details Computes the water depth at outfall nodes based on boundary
  *          condition type. Called before each routing step.
@@ -24,9 +24,9 @@
  * @note Legacy reference: src/legacy/engine/node.c (outfall_setOutletDepth)
  * @ingroup new_engine
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_OUTFALL_HPP

@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_virtual_junction.cpp
- * @brief Virtual junction feature tests: parse/round-trip, validation rule
+ * @file      test_virtual_junction.cpp
+ * @brief     Virtual junction feature tests: parse/round-trip, validation rule
  *        codes, zero-storage behaviour, steady equivalence vs a single
  *        conduit, split/fuse edit operations, and runtime inflow guards.
  *
@@ -26,9 +26,9 @@
  *          convention, CLAUDE.md §4.1). Refactored engine only; the legacy
  *          engine is untouched by the feature.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -50,7 +50,7 @@
 #include <openswmm/engine/openswmm_inflows.h>
 #include <openswmm/engine/openswmm_subcatchments.h>
 
-#include "core/SWMMEngine.hpp"   // published node inflow (no C getter)
+#include "core/SWMMEngine.hpp" // published node inflow (no C getter)
 
 namespace fs = std::filesystem;
 
@@ -58,16 +58,49 @@ namespace {
 
 const char* kOutDir = "virtual_junction_out";
 
+/**
+ * @brief Create the fixture output directory and form one artifact filename.
+ *
+ * Creates missing output-root directories and propagates filesystem errors. Does not
+ * create/truncate the artifact, sanitize name or create arbitrary nested parents; no
+ * current-directory change occurs.
+ *
+ * @param[in] name Raw filename/path appended below kOutDir; caller chooses a safe fixture
+ *     destination.
+ * @return Owned native path string.
+ */
 std::string outPath(const std::string& name) {
     fs::create_directories(kOutDir);
     return (fs::path(kOutDir) / name).string();
 }
 
+/**
+ * @brief Write fixture content to a caller-selected file.
+ *
+ * The parent directory must already exist. Uses ordinary text output mode. Open failure is not
+ * reported by this helper. Subsequent write/close failures are not checked; the local stream closes
+ * at scope exit and no path/content storage is retained. Allocation exceptions can propagate.
+ *
+ * @param[in] path Borrowed destination path; an existing file is truncated/overwritten.
+ * @param[in] text Borrowed content copied verbatim through the output stream; no newline is
+ *     appended.
+ */
 void writeFile(const std::string& path, const std::string& text) {
     std::ofstream f(path);
     f << text;
 }
 
+/**
+ * @brief Collect an entire fixture file into owned text.
+ *
+ * Uses ordinary text mode and its platform newline rules. The local stream closes on return; no
+ * model state is touched and no borrowed buffer is returned. Default stream exception settings
+ * apply; allocation exceptions may propagate.
+ *
+ * @param[in] path Borrowed input filename used for this synchronous open/read.
+ * @return Owned string collected from the stream; empty can mean an empty file or failure to open.
+ *     Partial read failures have no separate status.
+ */
 std::string readFile(const std::string& path) {
     std::ifstream f(path);
     std::stringstream ss;
@@ -78,128 +111,204 @@ std::string readFile(const std::string& path) {
 // Common [OPTIONS] block. J_IN (invert 10) -> 200 ft of 1-ft circular pipe
 // on a constant slope -> free outfall O_OUT (invert 8). DWF supplies a
 // constant 1.5 cfs at J_IN.
+/**
+ * @brief Build the common half-hour CFS options text for virtual-junction cases.
+ *
+ * Only constructs text; does not validate option syntax or touch files/model state.
+ *
+ * @param[in] routing FLOW_ROUTING token inserted verbatim, normally DYNWAVE or FV.
+ * @param[in] extra Raw option text appended after ALLOW_PONDING NO; default empty.
+ * @return Owned section text with one-second routing and one-minute reporting.
+ */
 std::string options(const std::string& routing, const std::string& extra = "") {
-    return
-        "[OPTIONS]\n"
-        "FLOW_UNITS           CFS\n"
-        "FLOW_ROUTING         " + routing + "\n"
-        "START_DATE           01/01/2026\n"
-        "START_TIME           00:00:00\n"
-        "END_DATE             01/01/2026\n"
-        "END_TIME             00:30:00\n"
-        "REPORT_STEP          00:01:00\n"
-        "ROUTING_STEP         1\n"
-        "ALLOW_PONDING        NO\n"
-        + extra +
-        "\n";
+    return "[OPTIONS]\n"
+           "FLOW_UNITS           CFS\n"
+           "FLOW_ROUTING         " +
+           routing +
+           "\n"
+           "START_DATE           01/01/2026\n"
+           "START_TIME           00:00:00\n"
+           "END_DATE             01/01/2026\n"
+           "END_TIME             00:30:00\n"
+           "REPORT_STEP          00:01:00\n"
+           "ROUTING_STEP         1\n"
+           "ALLOW_PONDING        NO\n" +
+           extra + "\n";
 }
 
+/**
+ * @brief Construct the unsplit one-foot, 200-foot reference conduit deck.
+ *
+ * No file creation, parsing or simulation occurs.
+ *
+ * @param[in] extra_options Raw option text inserted into the common options block; caller supplies
+ *     any required newline delimiters.
+ * @return Owned DYNWAVE input text with 1.5 CFS J_IN dry-weather inflow, 10-to-8 ft invert drop and
+ *     free outfall.
+ */
 std::string singlePipeModel(const std::string& extra_options = "") {
-    return options("DYNWAVE", extra_options) +
-        "[JUNCTIONS]\n"
-        ";;Name  Elev  MaxDepth\n"
-        "J_IN    10.0  5.0\n"
-        "\n"
-        "[OUTFALLS]\n"
-        ";;Name  Elev  Type  Gated\n"
-        "O_OUT   8.0   FREE  NO\n"
-        "\n"
-        "[CONDUITS]\n"
-        ";;Name    From   To     Length  N      Z1  Z2\n"
-        "C_MAIN    J_IN   O_OUT  200.0   0.013  0   0\n"
-        "\n"
-        "[XSECTIONS]\n"
-        ";;Link    Shape     G1   G2  G3  G4  Barrels\n"
-        "C_MAIN    CIRCULAR  1.0  0   0   0   1\n"
-        "\n"
-        "[DWF]\n"
-        ";;Node  Param  Value\n"
-        "J_IN    FLOW   1.5\n"
-        "\n"
-        "[COORDINATES]\n"
-        ";;Node  X    Y\n"
-        "J_IN    0.0    0.0\n"
-        "O_OUT   200.0  0.0\n";
+    return options("DYNWAVE", extra_options) + "[JUNCTIONS]\n"
+                                               ";;Name  Elev  MaxDepth\n"
+                                               "J_IN    10.0  5.0\n"
+                                               "\n"
+                                               "[OUTFALLS]\n"
+                                               ";;Name  Elev  Type  Gated\n"
+                                               "O_OUT   8.0   FREE  NO\n"
+                                               "\n"
+                                               "[CONDUITS]\n"
+                                               ";;Name    From   To     Length  N      Z1  Z2\n"
+                                               "C_MAIN    J_IN   O_OUT  200.0   0.013  0   0\n"
+                                               "\n"
+                                               "[XSECTIONS]\n"
+                                               ";;Link    Shape     G1   G2  G3  G4  Barrels\n"
+                                               "C_MAIN    CIRCULAR  1.0  0   0   0   1\n"
+                                               "\n"
+                                               "[DWF]\n"
+                                               ";;Node  Param  Value\n"
+                                               "J_IN    FLOW   1.5\n"
+                                               "\n"
+                                               "[COORDINATES]\n"
+                                               ";;Node  X    Y\n"
+                                               "J_IN    0.0    0.0\n"
+                                               "O_OUT   200.0  0.0\n";
 }
 
 // Same reach split at midpoint by node MID: declared either as a virtual
 // junction (mid_section = "[VIRTUAL_JUNCTIONS]\nMID  9.0\n") or as a regular
 // junction (mid_section = "" and MID appears in [JUNCTIONS]).
-std::string splitModel(bool virtual_mid,
-                       const std::string& extra_options = "",
+/**
+ * @brief Construct the reference reach split at a regular or virtual midpoint.
+ *
+ * Constructs text only; arbitrary token overrides are deliberately left unvalidated for negative
+ * tests.
+ *
+ * @param[in] virtual_mid True declares MID in VIRTUAL_JUNCTIONS; false declares a zero-MaxDepth
+ *     regular junction.
+ * @param[in] extra_options Raw option text inserted into the common options block; caller supplies
+ *     any required newline delimiters.
+ * @param[in] xsect2 Raw C_DN cross-section tokens after the link name; default matches the upstream
+ *     one-foot circular pipe.
+ * @param[in] c2_offsets Raw downstream conduit inlet/outlet offset tokens, in feet under fixture
+ *     units.
+ * @param[in] extra_sections Raw text appended after J_IN DWF before coordinates; may add DWF rows
+ *     or complete sections with proper delimiters.
+ * @return Owned DYNWAVE input deck text with two 100 ft conduits, midpoint invert 9 ft and 1.5 CFS
+ *     upstream DWF.
+ */
+std::string splitModel(bool virtual_mid, const std::string& extra_options = "",
                        const std::string& xsect2 = "CIRCULAR  1.0  0   0   0   1",
                        const std::string& c2_offsets = "0   0",
                        const std::string& extra_sections = "") {
-    std::string junctions =
-        "[JUNCTIONS]\n"
-        ";;Name  Elev  MaxDepth\n"
-        "J_IN    10.0  5.0\n";
-    if (!virtual_mid) junctions += "MID     9.0   0.0\n";
+    std::string junctions = "[JUNCTIONS]\n"
+                            ";;Name  Elev  MaxDepth\n"
+                            "J_IN    10.0  5.0\n";
+    if (!virtual_mid)
+        junctions += "MID     9.0   0.0\n";
 
-    std::string mid_section = virtual_mid
-        ? "[VIRTUAL_JUNCTIONS]\n;;Name  Elev\nMID     9.0\n\n"
-        : "";
+    std::string mid_section =
+        virtual_mid ? "[VIRTUAL_JUNCTIONS]\n;;Name  Elev\nMID     9.0\n\n" : "";
 
     return options("DYNWAVE", extra_options) + junctions + "\n" + mid_section +
-        "[OUTFALLS]\n"
-        ";;Name  Elev  Type  Gated\n"
-        "O_OUT   8.0   FREE  NO\n"
-        "\n"
-        "[CONDUITS]\n"
-        ";;Name    From   To     Length  N      Z1  Z2\n"
-        "C_UP      J_IN   MID    100.0   0.013  0   0\n"
-        "C_DN      MID    O_OUT  100.0   0.013  " + c2_offsets + "\n"
-        "\n"
-        "[XSECTIONS]\n"
-        ";;Link    Shape     G1   G2  G3  G4  Barrels\n"
-        "C_UP      CIRCULAR  1.0  0   0   0   1\n"
-        "C_DN      " + xsect2 + "\n"
-        "\n"
-        "[DWF]\n"
-        ";;Node  Param  Value\n"
-        "J_IN    FLOW   1.5\n"
-        + extra_sections +
-        "\n"
-        "[COORDINATES]\n"
-        ";;Node  X    Y\n"
-        "J_IN    0.0    0.0\n"
-        "MID     100.0  0.0\n"
-        "O_OUT   200.0  0.0\n";
+           "[OUTFALLS]\n"
+           ";;Name  Elev  Type  Gated\n"
+           "O_OUT   8.0   FREE  NO\n"
+           "\n"
+           "[CONDUITS]\n"
+           ";;Name    From   To     Length  N      Z1  Z2\n"
+           "C_UP      J_IN   MID    100.0   0.013  0   0\n"
+           "C_DN      MID    O_OUT  100.0   0.013  " +
+           c2_offsets +
+           "\n"
+           "\n"
+           "[XSECTIONS]\n"
+           ";;Link    Shape     G1   G2  G3  G4  Barrels\n"
+           "C_UP      CIRCULAR  1.0  0   0   0   1\n"
+           "C_DN      " +
+           xsect2 +
+           "\n"
+           "\n"
+           "[DWF]\n"
+           ";;Node  Param  Value\n"
+           "J_IN    FLOW   1.5\n" +
+           extra_sections +
+           "\n"
+           "[COORDINATES]\n"
+           ";;Node  X    Y\n"
+           "J_IN    0.0    0.0\n"
+           "MID     100.0  0.0\n"
+           "O_OUT   200.0  0.0\n";
 }
 
-// Open a model from text; returns the engine (nullptr on open failure when
-// expect_ok is false). rpt/out land next to the inp for review.
-SWMM_Engine openModel(const std::string& base, const std::string& text,
-                      bool expect_ok, int* open_rc = nullptr) {
+// Open a model from text; retain its handle even after an open error so the
+// caller can inspect diagnostics. Report/output artifacts accompany the input.
+/**
+ * @brief Write a fixture deck and return the newly created engine after attempting open.
+ *
+ * Creates artifacts under outPath(), propagating directory errors; stream failures are not checked.
+ * base.rpt/.out paths are passed to open. No rollback or automatic handle destruction occurs.
+ *
+ * @param[in] base Artifact basename beneath virtual_junction_out; caller selects a distinct
+ *     filesystem-safe name without extension.
+ * @param[in] text Complete input content passed to writeFile(), overwriting base.inp.
+ * @param[in] expect_ok True records a nonfatal expectation that open succeeds; false suppresses
+ *     that expectation only.
+ * @param[out] open_rc Optional integer receiving the raw open status; may be null.
+ * @return Created handle regardless of open status, including failure; caller must close/destroy
+ *     it. Null can reflect create failure, which this helper does not explicitly check.
+ */
+SWMM_Engine openModel(const std::string& base, const std::string& text, bool expect_ok,
+                      int* open_rc = nullptr) {
     const std::string inp = outPath(base + ".inp");
     writeFile(inp, text);
     SWMM_Engine e = swmm_engine_create();
-    const int rc = swmm_engine_open(e, inp.c_str(),
-                                    outPath(base + ".rpt").c_str(),
+    const int rc = swmm_engine_open(e, inp.c_str(), outPath(base + ".rpt").c_str(),
                                     outPath(base + ".out").c_str(), nullptr);
-    if (open_rc) *open_rc = rc;
+    if (open_rc)
+        *open_rc = rc;
     if (expect_ok) {
-        EXPECT_EQ(rc, 0) << "open failed for " << base << ": "
-                         << swmm_get_last_error_msg(e);
+        EXPECT_EQ(rc, 0) << "open failed for " << base << ": " << swmm_get_last_error_msg(e);
     }
     return e;
 }
 
+/**
+ * @brief Close and destroy a fixture engine handle.
+ *
+ * Invokes close then destroy and ignores close status. The caller must not use a successfully
+ * destroyed handle again; this helper does not add separate validity checks.
+ *
+ * @param[in] e Handle returned by fixture creation/open helpers; ownership is consumed by this
+ *     call.
+ */
 void destroy(SWMM_Engine e) {
     swmm_engine_close(e);
     swmm_engine_destroy(e);
 }
 
 // Collected engine error text (for asserting specific ERROR codes).
+/**
+ * @brief Copy all available engine errors and the last-error text into one diagnostic.
+ *
+ * Skips null message pointers; no borrowed strings survive the call and error state is not cleared.
+ *
+ * @param[in] e Live engine handle retained after the operation being diagnosed.
+ * @return Owned newline-separated indexed errors followed by any non-null last-error text; last
+ *     error may duplicate an indexed message.
+ */
 std::string allErrors(SWMM_Engine e) {
     std::string s;
     const int n = swmm_get_error_count(e);
     for (int i = 0; i < n; ++i) {
         const char* m = swmm_get_error_at(e, i);
-        if (m) { s += m; s += "\n"; }
+        if (m) {
+            s += m;
+            s += "\n";
+        }
     }
     const char* last = swmm_get_last_error_msg(e);
-    if (last) { s += last; }
+    if (last) {
+        s += last;
+    }
     return s;
 }
 
@@ -213,17 +322,32 @@ struct RunProbe {
     bool ran = false;
 };
 
-RunProbe runModel(SWMM_Engine e, const std::string& link_name,
-                  const std::string& probe_node) {
+/**
+ * @brief Run a split/reference fixture while sampling optional midpoint storage and flooding.
+ *
+ * Initialize/start failures are nonfatal expectations and do not stop execution. Enables output,
+ * steps until elapsed<=0, measures absolute node volume/overflow maxima, then final flow/depth in
+ * fixture CFS/ft3/ft units. Getter/end statuses are ignored; early returns leave the engine for
+ * caller cleanup.
+ *
+ * @param[in,out] e Borrowed live engine opened on the intended fixture, ready to initialize/start;
+ *     caller retains destruction responsibility.
+ * @param[in] link_name Existing link whose final flow is sampled.
+ * @param[in] probe_node Node identifier to monitor; empty disables monitoring, and a missing node
+ *     also leaves monitoring disabled.
+ * @return Owned probe with ran=true after the step loop completes and end is called;
+ *     default/partial probe with ran=false on missing link or step error.
+ */
+RunProbe runModel(SWMM_Engine e, const std::string& link_name, const std::string& probe_node) {
     RunProbe p;
     EXPECT_EQ(swmm_engine_initialize(e), 0) << swmm_get_last_error_msg(e);
     EXPECT_EQ(swmm_engine_start(e, 1), 0) << swmm_get_last_error_msg(e);
 
     const int link = swmm_link_index(e, link_name.c_str());
-    const int node = probe_node.empty() ? -1
-                     : swmm_node_index(e, probe_node.c_str());
+    const int node = probe_node.empty() ? -1 : swmm_node_index(e, probe_node.c_str());
     EXPECT_GE(link, 0) << "missing link " << link_name;
-    if (link < 0) return p;
+    if (link < 0)
+        return p;
 
     double elapsed = 0.0;
     do {
@@ -241,7 +365,8 @@ RunProbe runModel(SWMM_Engine e, const std::string& link_name,
     } while (elapsed > 0.0);
 
     swmm_link_get_flow(e, link, &p.final_flow);
-    if (node >= 0) swmm_node_get_depth(e, node, &p.final_probe_depth);
+    if (node >= 0)
+        swmm_node_get_depth(e, node, &p.final_probe_depth);
     swmm_engine_end(e);
     p.ran = true;
     return p;
@@ -250,36 +375,49 @@ RunProbe runModel(SWMM_Engine e, const std::string& link_name,
 // Sections that make `outlet` the outlet of a small subcatchment under a
 // constant 1 in/hr rain, optionally with a bio-cell whose underdrain also
 // drains to that node. Appended through splitModel's extra_sections.
+/**
+ * @brief Build rain/runoff sections optionally including a bioretention underdrain.
+ *
+ * Intended for splitModel extra_sections under CFS units; only constructs text and does not check
+ * destination validity.
+ *
+ * @param[in] outlet Node identifier inserted as subcatchment outlet and, when present, LID drain
+ *     destination.
+ * @param[in] with_lid Append the BC1 layer/control/usage definitions when true.
+ * @return Owned section text for a two-acre, 50%-impervious catchment under constant 1 in/hr rain;
+ *     optional LID area is 1000 ft2.
+ */
 std::string subcatchSections(const std::string& outlet, bool with_lid) {
-    std::string s =
-        "\n[RAINGAGES]\n"
-        ";;Name  Format     Interval  SCF  Source\n"
-        "RG1     INTENSITY  0:15      1.0  TIMESERIES  TS_RAIN\n"
-        "\n[SUBCATCHMENTS]\n"
-        ";;Name  Gage  Outlet  Area  %Imperv  Width  Slope  CurbLen\n"
-        "S1      RG1   " + outlet + "     2.0   50       200    0.5    0\n"
-        "\n[SUBAREAS]\n"
-        ";;Subcatch  N-Imperv  N-Perv  S-Imperv  S-Perv  PctZero  RouteTo\n"
-        "S1          0.01      0.1     0.05      0.05    25       OUTLET\n"
-        "\n[INFILTRATION]\n"
-        ";;Subcatch  MaxRate  MinRate  Decay  DryTime  MaxInfil\n"
-        "S1          3.0      0.5      4      7        0\n"
-        "\n[TIMESERIES]\n"
-        ";;Name   Time  Value\n"
-        "TS_RAIN  0:00  1.0\n"
-        "TS_RAIN  0:30  1.0\n";
+    std::string s = "\n[RAINGAGES]\n"
+                    ";;Name  Format     Interval  SCF  Source\n"
+                    "RG1     INTENSITY  0:15      1.0  TIMESERIES  TS_RAIN\n"
+                    "\n[SUBCATCHMENTS]\n"
+                    ";;Name  Gage  Outlet  Area  %Imperv  Width  Slope  CurbLen\n"
+                    "S1      RG1   " +
+                    outlet +
+                    "     2.0   50       200    0.5    0\n"
+                    "\n[SUBAREAS]\n"
+                    ";;Subcatch  N-Imperv  N-Perv  S-Imperv  S-Perv  PctZero  RouteTo\n"
+                    "S1          0.01      0.1     0.05      0.05    25       OUTLET\n"
+                    "\n[INFILTRATION]\n"
+                    ";;Subcatch  MaxRate  MinRate  Decay  DryTime  MaxInfil\n"
+                    "S1          3.0      0.5      4      7        0\n"
+                    "\n[TIMESERIES]\n"
+                    ";;Name   Time  Value\n"
+                    "TS_RAIN  0:00  1.0\n"
+                    "TS_RAIN  0:30  1.0\n";
     if (with_lid) {
-        s +=
-        "\n[LID_CONTROLS]\n"
-        ";;Name  Type/Layer  Parameters\n"
-        "BC1     BC\n"
-        "BC1     SURFACE   6    0.0   0.1   1.0   5\n"
-        "BC1     SOIL      12   0.5   0.2   0.1   0.5   10.0  3.5\n"
-        "BC1     STORAGE   12   0.75  0.5   0\n"
-        "BC1     DRAIN     0.5  0.5   6     6     0     0\n"
-        "\n[LID_USAGE]\n"
-        ";;Subcatch  LID  Number  Area    Width  InitSat  FromImp  ToPerv  RptFile  DrainTo\n"
-        "S1          BC1  1       1000.0  20.0   0        50       0       *        " + outlet + "\n";
+        s += "\n[LID_CONTROLS]\n"
+             ";;Name  Type/Layer  Parameters\n"
+             "BC1     BC\n"
+             "BC1     SURFACE   6    0.0   0.1   1.0   5\n"
+             "BC1     SOIL      12   0.5   0.2   0.1   0.5   10.0  3.5\n"
+             "BC1     STORAGE   12   0.75  0.5   0\n"
+             "BC1     DRAIN     0.5  0.5   6     6     0     0\n"
+             "\n[LID_USAGE]\n"
+             ";;Subcatch  LID  Number  Area    Width  InitSat  FromImp  ToPerv  RptFile  DrainTo\n"
+             "S1          BC1  1       1000.0  20.0   0        50       0       *        " +
+             outlet + "\n";
     }
     return s;
 }
@@ -325,10 +463,9 @@ TEST(VirtualJunction, ParseFlagAndRoundTrip) {
 
     // Re-open the written file: flag and invert survive.
     SWMM_Engine e2 = swmm_engine_create();
-    ASSERT_EQ(swmm_engine_open(e2, rt.c_str(),
-                               outPath("vj_roundtrip_rt.rpt").c_str(),
-                               outPath("vj_roundtrip_rt.out").c_str(),
-                               nullptr), 0)
+    ASSERT_EQ(swmm_engine_open(e2, rt.c_str(), outPath("vj_roundtrip_rt.rpt").c_str(),
+                               outPath("vj_roundtrip_rt.out").c_str(), nullptr),
+              0)
         << swmm_get_last_error_msg(e2);
     const int mid2 = swmm_node_index(e2, "MID");
     ASSERT_GE(mid2, 0);
@@ -347,8 +484,19 @@ TEST(VirtualJunction, ParseFlagAndRoundTrip) {
 
 namespace {
 // splitModel(true) with a rendering MaxDepth on the [VIRTUAL_JUNCTIONS] row.
-std::string splitModelWithRim(const std::string& rim,
-                              const std::string& extra_options = "") {
+/**
+ * @brief Add a rendering rim-depth token to the virtual midpoint declaration.
+ *
+ * Records a nonfatal expectation that the fixed MID spelling is found, then replaces
+ * unconditionally; missing text can throw std::out_of_range. Does not change the hydraulic
+ * cross-section tokens or execute the deck.
+ *
+ * @param[in] rim Raw third VIRTUAL_JUNCTIONS token, interpreted as feet for these decks.
+ * @param[in] extra_options Raw option text inserted into the common options block; caller supplies
+ *     any required newline delimiters.
+ * @return Owned splitModel(true) input text with the MID declaration replaced.
+ */
+std::string splitModelWithRim(const std::string& rim, const std::string& extra_options = "") {
     std::string m = splitModel(true, extra_options);
     const auto pos = m.find("MID     9.0");
     EXPECT_NE(pos, std::string::npos);
@@ -386,7 +534,8 @@ TEST(VirtualJunction, RimDepthParsesAndRoundTrips) {
     // Re-open the written file: the rim survives and the crown is unchanged.
     SWMM_Engine e2 = swmm_engine_create();
     ASSERT_EQ(swmm_engine_open(e2, rt.c_str(), outPath("vj_rim_rt.rpt").c_str(),
-                               outPath("vj_rim_rt.out").c_str(), nullptr), 0)
+                               outPath("vj_rim_rt.out").c_str(), nullptr),
+              0)
         << swmm_get_last_error_msg(e2);
     const int mid2 = swmm_node_index(e2, "MID");
     ASSERT_GE(mid2, 0);
@@ -427,8 +576,7 @@ TEST(VirtualJunction, RimDepthIsHydraulicallyInert) {
     destroy(rimmed);
 
     ASSERT_TRUE(pp.ran && pr.ran);
-    EXPECT_EQ(pr.final_flow, pp.final_flow)
-        << "a rendering-only MaxDepth changed the routed flow";
+    EXPECT_EQ(pr.final_flow, pp.final_flow) << "a rendering-only MaxDepth changed the routed flow";
     EXPECT_EQ(pr.final_probe_depth, pp.final_probe_depth)
         << "a rendering-only MaxDepth changed the node depth";
     EXPECT_EQ(pr.max_probe_volume, 0.0);
@@ -466,44 +614,57 @@ TEST(VirtualJunction, RimDepthSurvivesMetricRoundTrip) {
 // ---------------------------------------------------------------------------
 
 namespace {
-void expectOpenError(const std::string& base, const std::string& text,
-                     const std::string& code) {
+/**
+ * @brief Require a negative deck to fail open with the expected diagnostic code.
+ *
+ * Uses nonfatal GoogleTest expectations for nonzero status and code presence, then closes/destroys
+ * the returned handle. Writes reviewable artifacts through openModel(); does not attempt
+ * simulation.
+ *
+ * @param[in] base Artifact basename beneath virtual_junction_out; caller selects a distinct
+ *     filesystem-safe name without extension.
+ * @param[in] text Complete deliberately invalid input deck to write/open.
+ * @param[in] code Substring required in collected indexed/last error text; not parsed as a numeric
+ *     code.
+ */
+void expectOpenError(const std::string& base, const std::string& text, const std::string& code) {
     int rc = 0;
     SWMM_Engine e = openModel(base, text, false, &rc);
     EXPECT_NE(rc, 0) << base << " unexpectedly opened clean";
     EXPECT_NE(allErrors(e).find(code), std::string::npos)
-        << base << ": expected ERROR " << code << " in:\n" << allErrors(e);
+        << base << ": expected ERROR " << code << " in:\n"
+        << allErrors(e);
     destroy(e);
 }
 } // namespace
 
 TEST(VirtualJunction, ValidationRuleCodes) {
     // 611: cross-section mismatch (C_DN is a 2-ft pipe).
-    expectOpenError("vj_err_xsect",
-        splitModel(true, "", "CIRCULAR  2.0  0   0   0   1"), "611");
+    expectOpenError("vj_err_xsect", splitModel(true, "", "CIRCULAR  2.0  0   0   0   1"), "611");
 
     // 613: nonzero offset at the virtual node (C_DN upstream offset 0.5).
-    expectOpenError("vj_err_offset",
-        splitModel(true, "", "CIRCULAR  1.0  0   0   0   1", "0.5  0"), "613");
+    expectOpenError("vj_err_offset", splitModel(true, "", "CIRCULAR  1.0  0   0   0   1", "0.5  0"),
+                    "613");
 
     // 617: the virtual junction is a 2D surface-coupling point. Point lateral
     // inflows are permitted (LateralSourcesOpenClean); only coupling to the
     // overlying mesh is refused — a virtual junction has no opening.
     expectOpenError("vj_err_2d",
-        splitModel(true, "", "CIRCULAR  1.0  0   0   0   1", "0   0",
-                   "\n[2D_OPTIONS]\n"
-                   "INTEGRATOR       EXPLICIT\n"
-                   "REPORT_2D        NO\n"
-                   "\n[2D_VERTICES]\n"
-                   " 90.0  -10.0  16.0\n"
-                   "110.0  -10.0  16.0\n"
-                   "110.0   10.0  16.0\n"
-                   " 90.0   10.0  16.0\n"
-                   "\n[2D_TRIANGLES]\n"
-                   "0  1  2  0.03\n"
-                   "0  2  3  0.03\n"
-                   "\n[2D_VERTEX_NODE_MAP]\n"
-                   "0  MID  0.7  25\n"), "617");
+                    splitModel(true, "", "CIRCULAR  1.0  0   0   0   1", "0   0",
+                               "\n[2D_OPTIONS]\n"
+                               "INTEGRATOR       EXPLICIT\n"
+                               "REPORT_2D        NO\n"
+                               "\n[2D_VERTICES]\n"
+                               " 90.0  -10.0  16.0\n"
+                               "110.0  -10.0  16.0\n"
+                               "110.0   10.0  16.0\n"
+                               " 90.0   10.0  16.0\n"
+                               "\n[2D_TRIANGLES]\n"
+                               "0  1  2  0.03\n"
+                               "0  2  3  0.03\n"
+                               "\n[2D_VERTEX_NODE_MAP]\n"
+                               "0  MID  0.7  25\n"),
+                    "617");
 
     // 619: KINWAVE routing.
     {
@@ -541,14 +702,22 @@ TEST(VirtualJunction, ValidationRuleCodes) {
 // ---------------------------------------------------------------------------
 
 namespace {
+/**
+ * @brief Compare steady flow and zero virtual-junction storage against the unsplit reach.
+ *
+ * Writes/runs/destroys both half-hour fixtures. Requires completed probes, zero virtual
+ * volume/overflow, near-1.5 CFS reference flow and split/reference agreement within 0.02 CFS. Uses
+ * GoogleTest assertions; helper early failure does not provide a separate status.
+ *
+ * @param[in] tag Filesystem-safe artifact tag appended to distinct single/split basenames.
+ * @param[in] extra_opts Raw common option overrides applied identically to both models.
+ */
 void steadyEquivalence(const std::string& tag, const std::string& extra_opts) {
-    SWMM_Engine single = openModel("vj_single_" + tag,
-                                   singlePipeModel(extra_opts), true);
+    SWMM_Engine single = openModel("vj_single_" + tag, singlePipeModel(extra_opts), true);
     RunProbe ps = runModel(single, "C_MAIN", "");
     destroy(single);
 
-    SWMM_Engine vj = openModel("vj_split_" + tag,
-                               splitModel(true, extra_opts), true);
+    SWMM_Engine vj = openModel("vj_split_" + tag, splitModel(true, extra_opts), true);
     RunProbe pv = runModel(vj, "C_DN", "MID");
     destroy(vj);
 
@@ -582,21 +751,18 @@ TEST(VirtualJunction, SteadyEquivalenceSemiImplicit) {
 // restored mass but still left l1 5.24 % against BASIC's 0.163 %. See
 // epaswmm5_qa suites/swashes plans/VJ_MOMENTUM_SCOPE.md Phase 3.
 TEST(VirtualJunction, SteadyEquivalenceFullMomentumRetired) {
-    steadyEquivalence("full",
-        "VIRTUAL_JUNCTION_MOMENTUM  FULL\n"
-        "NODE_CONTINUITY      SEMI_IMPLICIT\n");
+    steadyEquivalence("full", "VIRTUAL_JUNCTION_MOMENTUM  FULL\n"
+                              "NODE_CONTINUITY      SEMI_IMPLICIT\n");
 }
 
 TEST(VirtualJunction, FullMomentumRetiredMatchesBasic) {
     const std::string semi = "NODE_CONTINUITY      SEMI_IMPLICIT\n";
-    SWMM_Engine basic = openModel("vj_retired_basic",
-                                  splitModel(true, semi), true);
+    SWMM_Engine basic = openModel("vj_retired_basic", splitModel(true, semi), true);
     RunProbe pb = runModel(basic, "C_DN", "MID");
     destroy(basic);
 
     SWMM_Engine full = openModel(
-        "vj_retired_full",
-        splitModel(true, "VIRTUAL_JUNCTION_MOMENTUM  FULL\n" + semi), true);
+        "vj_retired_full", splitModel(true, "VIRTUAL_JUNCTION_MOMENTUM  FULL\n" + semi), true);
     RunProbe pf = runModel(full, "C_DN", "MID");
     destroy(full);
 
@@ -609,9 +775,8 @@ TEST(VirtualJunction, FullMomentumRetiredMatchesBasic) {
 }
 
 TEST(VirtualJunction, SteadyEquivalenceAnderson) {
-    steadyEquivalence("aa",
-        "ANDERSON_ACCEL       YES\n"
-        "NODE_CONTINUITY      SEMI_IMPLICIT\n");
+    steadyEquivalence("aa", "ANDERSON_ACCEL       YES\n"
+                            "NODE_CONTINUITY      SEMI_IMPLICIT\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -628,6 +793,18 @@ namespace {
 // dV/A step divided a large volume change by a near-zero area; on TwinOaks
 // (5028 virtual junctions) the head reached 1.9e14 by the fourth routing step.
 // Reproduced compactly here with 12 chain nodes.
+/**
+ * @brief Build the steep twelve-midpoint slot-surcharge stress deck.
+ *
+ * Uses SLOT surcharge, SEMI_IMPLICIT continuity, 30 s nominal routing, 0.5 s minimum step and zero
+ * minimum surface area; numeric geometry is formatted to two decimals. No files/simulation are
+ * created here.
+ *
+ * @param[in] virtual_mid True declares all MID nodes virtual; false uses zero-MaxDepth regular
+ *     junctions.
+ * @return Owned half-hour DYNWAVE CFS deck with 13 one-foot pipes of length 300 ft, 500 CFS inflow
+ *     and a 200 ft hill rise.
+ */
 std::string hillChainModel(bool virtual_mid) {
     const int n = 12;
     const double seg = 300.0, dia = 1.0, rise = 200.0, q = 500.0;
@@ -653,30 +830,30 @@ std::string hillChainModel(bool virtual_mid) {
     // The TwinOaks step regime: a 30 s nominal step the Courant limiter walks
     // down toward MINIMUM_STEP. dV = 0.5*(Qold+Q)*dt scales with the step, so
     // the large nominal step is part of what starves the update.
-    std::string m =
-        "[OPTIONS]\n"
-        "FLOW_UNITS           CFS\n"
-        "FLOW_ROUTING         DYNWAVE\n"
-        "START_DATE           01/01/2026\n"
-        "START_TIME           00:00:00\n"
-        "END_DATE             01/01/2026\n"
-        "END_TIME             00:30:00\n"
-        "REPORT_STEP          00:01:00\n"
-        "ROUTING_STEP         30\n"
-        "ALLOW_PONDING        NO\n"
-        "SURCHARGE_METHOD     SLOT\n"
-        "NODE_CONTINUITY      SEMI_IMPLICIT\n"
-        "INERTIAL_DAMPING     PARTIAL\n"
-        "NORMAL_FLOW_LIMITED  BOTH\n"
-        "VARIABLE_STEP        0.75\n"
-        "LENGTHENING_STEP     0\n"
-        "MIN_SURFAREA         0\n"
-        "MAX_TRIALS           8\n"
-        "HEAD_TOLERANCE       0.005\n"
-        "MINIMUM_STEP         0.5\n"
-        "\n"
-        "[JUNCTIONS]\n;;Name  Elev  MaxDepth\n"
-        "J_IN    " + num(top) + "  " + num(rise) + "\n";
+    std::string m = "[OPTIONS]\n"
+                    "FLOW_UNITS           CFS\n"
+                    "FLOW_ROUTING         DYNWAVE\n"
+                    "START_DATE           01/01/2026\n"
+                    "START_TIME           00:00:00\n"
+                    "END_DATE             01/01/2026\n"
+                    "END_TIME             00:30:00\n"
+                    "REPORT_STEP          00:01:00\n"
+                    "ROUTING_STEP         30\n"
+                    "ALLOW_PONDING        NO\n"
+                    "SURCHARGE_METHOD     SLOT\n"
+                    "NODE_CONTINUITY      SEMI_IMPLICIT\n"
+                    "INERTIAL_DAMPING     PARTIAL\n"
+                    "NORMAL_FLOW_LIMITED  BOTH\n"
+                    "VARIABLE_STEP        0.75\n"
+                    "LENGTHENING_STEP     0\n"
+                    "MIN_SURFAREA         0\n"
+                    "MAX_TRIALS           8\n"
+                    "HEAD_TOLERANCE       0.005\n"
+                    "MINIMUM_STEP         0.5\n"
+                    "\n"
+                    "[JUNCTIONS]\n;;Name  Elev  MaxDepth\n"
+                    "J_IN    " +
+                    num(top) + "  " + num(rise) + "\n";
     if (!virtual_mid)
         for (int i = 0; i < n; ++i)
             m += names[i] + "   " + num(inv[i]) + "  0.0\n";
@@ -690,7 +867,8 @@ std::string hillChainModel(bool virtual_mid) {
     }
 
     m += "[OUTFALLS]\n;;Name  Elev  Type  Gated\n"
-         "O_OUT   " + num(top) + "   FREE  NO\n\n";
+         "O_OUT   " +
+         num(top) + "   FREE  NO\n\n";
 
     std::vector<std::string> chain{"J_IN"};
     chain.insert(chain.end(), names.begin(), names.end());
@@ -700,8 +878,8 @@ std::string hillChainModel(bool virtual_mid) {
     for (std::size_t i = 0; i + 1 < chain.size(); ++i) {
         char b[16];
         std::snprintf(b, sizeof(b), "C%02d", static_cast<int>(i));
-        m += std::string(b) + "   " + chain[i] + "  " + chain[i + 1] + "  " +
-             num(seg) + "  0.013  0  0\n";
+        m += std::string(b) + "   " + chain[i] + "  " + chain[i + 1] + "  " + num(seg) +
+             "  0.013  0  0\n";
     }
     m += "\n[XSECTIONS]\n;;Link  Shape  G1  G2  G3  G4  Barrels\n";
     for (std::size_t i = 0; i + 1 < chain.size(); ++i) {
@@ -724,6 +902,18 @@ struct ChainRun {
 };
 
 // Steps the model to completion, tracking the largest depth reached anywhere.
+/**
+ * @brief Run the hill chain while tracking the largest absolute published node depth.
+ *
+ * Initialize/start statuses use nonfatal expectations; enables output. Bulk-depth failures skip
+ * that step's sampling. End/continuity getter statuses are ignored; early failures leave cleanup to
+ * caller. Does not close/destroy the engine.
+ *
+ * @param[in,out] e Borrowed live engine opened on the intended fixture, ready to initialize/start;
+ *     caller retains destruction responsibility.
+ * @return Owned probe with depth in feet, raw routing continuity error and ran=true after normal
+ *     loop/end; partial ran=false probe after step failure.
+ */
 ChainRun runChain(SWMM_Engine e) {
     ChainRun r;
     EXPECT_EQ(swmm_engine_initialize(e), 0) << swmm_get_last_error_msg(e);
@@ -776,8 +966,8 @@ TEST(VirtualJunction, SlotChainOverCrestStaysBounded) {
     // The zero-storage chain must not be dramatically worse at conserving mass
     // than the stored one. Pre-fix this was -1.0e6 % against the twin's few %.
     EXPECT_LT(std::fabs(pv.routing_error), std::fabs(pr.routing_error) + 25.0)
-        << "virtual-junction routing continuity " << pv.routing_error
-        << " % vs real-junction " << pr.routing_error << " %";
+        << "virtual-junction routing continuity " << pv.routing_error << " % vs real-junction "
+        << pr.routing_error << " %";
 }
 
 // The regular-junction split still passes flow (baseline sanity for the
@@ -818,7 +1008,7 @@ TEST(VirtualJunction, SetVirtualApi) {
     EXPECT_EQ(swmm_node_virtual_eligible(e, jin, &code), SWMM_OK);
     EXPECT_EQ(code, 609);
     swmm_node_is_virtual(e, mid, &isv);
-    EXPECT_EQ(isv, 0);   // dry-run left the flag untouched
+    EXPECT_EQ(isv, 0); // dry-run left the flag untouched
     destroy(e);
 }
 
@@ -834,8 +1024,8 @@ TEST(VirtualJunction, SplitFuseRoundTrip) {
     const int cmain = swmm_link_index(e, "C_MAIN");
     ASSERT_GE(cmain, 0);
     int new_node = -1, new_link = -1;
-    ASSERT_EQ(swmm_conduit_split(e, cmain, 0.5, "VJX", "C_MAIN_B", 1,
-                                 &new_node, &new_link), SWMM_OK);
+    ASSERT_EQ(swmm_conduit_split(e, cmain, 0.5, "VJX", "C_MAIN_B", 1, &new_node, &new_link),
+              SWMM_OK);
     EXPECT_EQ(swmm_node_count(e), n_nodes0 + 1);
     EXPECT_EQ(swmm_link_count(e), n_links0 + 1);
 
@@ -891,8 +1081,8 @@ TEST(VirtualJunction, SplitInterpolatesRimDepth) {
     const int cmain = swmm_link_index(e, "C_MAIN");
     ASSERT_GE(cmain, 0);
     int new_node = -1, new_link = -1;
-    ASSERT_EQ(swmm_conduit_split(e, cmain, 0.5, "VJR", "C_MAIN_B", 1,
-                                 &new_node, &new_link), SWMM_OK);
+    ASSERT_EQ(swmm_conduit_split(e, cmain, 0.5, "VJR", "C_MAIN_B", 1, &new_node, &new_link),
+              SWMM_OK);
 
     // Midpoint rim 13.0 over the midpoint invert 9.0.
     double rim = -1.0, maxd = -1.0, inv = 0.0;
@@ -911,8 +1101,8 @@ TEST(VirtualJunction, PlainSplitLeavesRimUnset) {
     SWMM_Engine e = openModel("vj_split_plain_rim", singlePipeModel(), true);
     const int cmain = swmm_link_index(e, "C_MAIN");
     int new_node = -1, new_link = -1;
-    ASSERT_EQ(swmm_conduit_split(e, cmain, 0.5, "PJ", "C_MAIN_B", 0,
-                                 &new_node, &new_link), SWMM_OK);
+    ASSERT_EQ(swmm_conduit_split(e, cmain, 0.5, "PJ", "C_MAIN_B", 0, &new_node, &new_link),
+              SWMM_OK);
     double rim = -1.0;
     ASSERT_EQ(swmm_node_get_rim_depth(e, new_node, &rim), SWMM_OK);
     EXPECT_EQ(rim, 0.0);
@@ -938,7 +1128,7 @@ TEST(VirtualJunction, SetVirtualCarriesMaxDepthBothWays) {
     ASSERT_EQ(swmm_node_get_max_depth(e, mid, &maxd), SWMM_OK);
     ASSERT_EQ(swmm_node_get_rim_depth(e, mid, &rim), SWMM_OK);
     EXPECT_NEAR(maxd, 1.0, 1e-9) << "solver depth becomes the pipe crown";
-    EXPECT_NEAR(rim, 4.0, 1e-9)  << "the drawn ground surface is preserved";
+    EXPECT_NEAR(rim, 4.0, 1e-9) << "the drawn ground surface is preserved";
 
     ASSERT_EQ(swmm_node_set_virtual(e, mid, 0), SWMM_OK);
     ASSERT_EQ(swmm_node_get_max_depth(e, mid, &maxd), SWMM_OK);
@@ -987,7 +1177,7 @@ TEST(VirtualJunction, RuntimeLateralInflowAccepted) {
         swmm_node_get_volume(e, mid, &v);
         swmm_node_get_overflow(e, mid, &ov);
         max_vol = std::max(max_vol, std::fabs(v));
-        max_ov  = std::max(max_ov, std::fabs(ov));
+        max_ov = std::max(max_ov, std::fabs(ov));
     } while (elapsed > 0.0);
 
     double lat = 0.0, q = 0.0;
@@ -1006,21 +1196,23 @@ TEST(VirtualJunction, RuntimeLateralInflowAccepted) {
 // be converted in place.
 TEST(VirtualJunction, LateralSourcesOpenClean) {
     const std::string xs = "CIRCULAR  1.0  0   0   0   1";
-    struct Case { const char* base; std::string sections; };
+    struct Case {
+        const char* base;
+        std::string sections;
+    };
     const std::vector<Case> cases = {
-        {"vj_lat_dwf",      "\n[DWF]\nMID  FLOW  0.5\n"},
-        {"vj_lat_inflows",  "\n[INFLOWS]\n"
-                            ";;Node  Constituent  TimeSeries  Type  Mfactor  Sfactor\n"
-                            "MID     FLOW         TS_LAT      FLOW  1.0      1.0\n"
-                            "\n[TIMESERIES]\n"
-                            "TS_LAT  0:00  0.5\n"
-                            "TS_LAT  1:00  0.5\n"},
+        {"vj_lat_dwf", "\n[DWF]\nMID  FLOW  0.5\n"},
+        {"vj_lat_inflows", "\n[INFLOWS]\n"
+                           ";;Node  Constituent  TimeSeries  Type  Mfactor  Sfactor\n"
+                           "MID     FLOW         TS_LAT      FLOW  1.0      1.0\n"
+                           "\n[TIMESERIES]\n"
+                           "TS_LAT  0:00  0.5\n"
+                           "TS_LAT  1:00  0.5\n"},
         {"vj_lat_subcatch", subcatchSections("MID", false)},
-        {"vj_lat_lid",      subcatchSections("MID", true)},
+        {"vj_lat_lid", subcatchSections("MID", true)},
     };
     for (const auto& c : cases) {
-        SWMM_Engine e = openModel(c.base,
-            splitModel(true, "", xs, "0   0", c.sections), true);
+        SWMM_Engine e = openModel(c.base, splitModel(true, "", xs, "0   0", c.sections), true);
         const int mid = swmm_node_index(e, "MID");
         ASSERT_GE(mid, 0) << c.base;
         int isv = 0, code = -1;
@@ -1031,8 +1223,8 @@ TEST(VirtualJunction, LateralSourcesOpenClean) {
         destroy(e);
     }
 
-    SWMM_Engine e = openModel("vj_lat_convert",
-        splitModel(false, "", xs, "0   0", "\n[DWF]\nMID  FLOW  0.5\n"), true);
+    SWMM_Engine e = openModel(
+        "vj_lat_convert", splitModel(false, "", xs, "0   0", "\n[DWF]\nMID  FLOW  0.5\n"), true);
     const int mid = swmm_node_index(e, "MID");
     ASSERT_GE(mid, 0);
     EXPECT_EQ(swmm_node_set_virtual(e, mid, 1), SWMM_OK);
@@ -1046,12 +1238,13 @@ TEST(VirtualJunction, LateralSourcesOpenClean) {
 // own inflow rows are erased and a subcatchment that drained to it loses its
 // outlet — the same outcome as deleting the node (documented policy).
 TEST(VirtualJunction, FuseDropsLateralSourcesLikeDeleteNode) {
-    SWMM_Engine e = openModel("vj_fuse_fed",
-        splitModel(true, "", "CIRCULAR  1.0  0   0   0   1", "0   0",
-                   "\n[DWF]\nMID  FLOW  0.5\n" + subcatchSections("MID", false)),
-        true);
+    SWMM_Engine e =
+        openModel("vj_fuse_fed",
+                  splitModel(true, "", "CIRCULAR  1.0  0   0   0   1", "0   0",
+                             "\n[DWF]\nMID  FLOW  0.5\n" + subcatchSections("MID", false)),
+                  true);
     const int mid = swmm_node_index(e, "MID");
-    const int s1  = swmm_subcatch_index(e, "S1");
+    const int s1 = swmm_subcatch_index(e, "S1");
     ASSERT_GE(mid, 0);
     ASSERT_GE(s1, 0);
     const int n_dwf0 = swmm_dwf_count(e);
@@ -1077,39 +1270,68 @@ namespace {
 
 // splitModel with J_IN fed q_in (0 = dry start) and the midpoint node fed
 // q_lat through [DWF].
-std::string fedSplitModel(bool virtual_mid, const std::string& extra_options,
-                          double q_in, double q_lat) {
-    std::string m = splitModel(virtual_mid, extra_options,
-                               "CIRCULAR  1.0  0   0   0   1", "0   0",
+/**
+ * @brief Modify split-model DWF to feed the upstream and midpoint nodes independently.
+ *
+ * Matches the exact original J_IN DWF spelling; if absent, upstream replacement is silently
+ * skipped. Values are formatted by to_string without validation.
+ *
+ * @param[in] virtual_mid Select virtual versus regular MID declaration.
+ * @param[in] extra_options Raw option text inserted into the common options block; caller supplies
+ *     any required newline delimiters.
+ * @param[in] q_in Upstream DWF in CFS; exactly zero removes the original upstream row, other values
+ *     replace it.
+ * @param[in] q_lat MID lateral DWF in CFS, appended as a DWF row.
+ * @return Owned modified deck text.
+ */
+std::string fedSplitModel(bool virtual_mid, const std::string& extra_options, double q_in,
+                          double q_lat) {
+    std::string m = splitModel(virtual_mid, extra_options, "CIRCULAR  1.0  0   0   0   1", "0   0",
                                "MID     FLOW   " + std::to_string(q_lat) + "\n");
     const std::string jin = "J_IN    FLOW   1.5\n";
     const auto pos = m.find(jin);
     if (pos != std::string::npos) {
-        if (q_in == 0.0) m.erase(pos, jin.size());
-        else m.replace(pos, jin.size(),
-                       "J_IN    FLOW   " + std::to_string(q_in) + "\n");
+        if (q_in == 0.0)
+            m.erase(pos, jin.size());
+        else
+            m.replace(pos, jin.size(), "J_IN    FLOW   " + std::to_string(q_in) + "\n");
     }
     return m;
 }
 
 struct FedProbe {
-    double final_flow    = 0.0;   // C_DN at the end of the run
-    double max_depth     = 0.0;   // MID
-    double min_depth     = 0.0;
-    double max_volume    = 0.0;
-    double max_overflow  = 0.0;
-    int    reversals     = 0;     // depth-increment sign changes, last 10 min
-    double routing_error = 0.0;   // fraction
-    bool   ran = false;
+    double final_flow = 0.0; // C_DN at the end of the run
+    double max_depth = 0.0;  // MID
+    double min_depth = 0.0;
+    double max_volume = 0.0;
+    double max_overflow = 0.0;
+    int reversals = 0;          // depth-increment sign changes, last 10 min
+    double routing_error = 0.0; // fraction
+    bool ran = false;
 };
 
+/**
+ * @brief Run the fed split fixture and measure midpoint depth/storage/overflow and ringing.
+ *
+ * Requires C_DN and MID; missing indices return default ran=false without a test failure here.
+ * Init/start expectations are nonfatal; step errors record failure and return partial data.
+ * Reversal counting uses the final 600 samples (intended one-second steps), ignores increments
+ * under 1e-6 ft, and therefore is sample-based rather than an independently timed ten-minute
+ * window. End/getter statuses are ignored; caller owns cleanup.
+ *
+ * @param[in,out] e Borrowed live engine opened on the intended fixture, ready to initialize/start;
+ *     caller retains destruction responsibility.
+ * @return Owned probe with final C_DN flow CFS, MID depth feet, volume ft3, overflow CFS, increment
+ *     reversal count, raw continuity error and completion flag.
+ */
 FedProbe runFed(SWMM_Engine e) {
     FedProbe p;
     EXPECT_EQ(swmm_engine_initialize(e), 0) << swmm_get_last_error_msg(e);
     EXPECT_EQ(swmm_engine_start(e, 1), 0) << swmm_get_last_error_msg(e);
     const int link = swmm_link_index(e, "C_DN");
     const int node = swmm_node_index(e, "MID");
-    if (link < 0 || node < 0) return p;
+    if (link < 0 || node < 0)
+        return p;
 
     std::vector<double> depths;
     double elapsed = 0.0;
@@ -1123,9 +1345,9 @@ FedProbe runFed(SWMM_Engine e) {
         swmm_node_get_volume(e, node, &v);
         swmm_node_get_overflow(e, node, &ov);
         depths.push_back(d);
-        p.max_depth    = std::max(p.max_depth, d);
-        p.min_depth    = std::min(p.min_depth, d);
-        p.max_volume   = std::max(p.max_volume, std::fabs(v));
+        p.max_depth = std::max(p.max_depth, d);
+        p.min_depth = std::min(p.min_depth, d);
+        p.max_volume = std::max(p.max_volume, std::fabs(v));
         p.max_overflow = std::max(p.max_overflow, std::fabs(ov));
     } while (elapsed > 0.0);
     swmm_link_get_flow(e, link, &p.final_flow);
@@ -1137,9 +1359,11 @@ FedProbe runFed(SWMM_Engine e) {
     int last_sign = 0;
     for (std::size_t i = (n > 600) ? n - 600 : 1; i < n; ++i) {
         const double dd = depths[i] - depths[i - 1];
-        if (std::fabs(dd) < 1e-6) continue;
+        if (std::fabs(dd) < 1e-6)
+            continue;
         const int s = (dd > 0.0) ? 1 : -1;
-        if (last_sign != 0 && s != last_sign) ++p.reversals;
+        if (last_sign != 0 && s != last_sign)
+            ++p.reversals;
         last_sign = s;
     }
     swmm_engine_end(e);
@@ -1152,14 +1376,24 @@ FedProbe runFed(SWMM_Engine e) {
 // explicit update divides the imposed volume by a vanishing natural area
 // (runaway head) or falls into the dry-pair hold that swallows the inflow
 // (continuity error equal to the injected volume).
+/**
+ * @brief Compare dry-start midpoint-only inflow with regular and virtual junctions.
+ *
+ * Runs/destroys both fixtures with 0.5 CFS MID inflow and no upstream DWF. Checks bounded virtual
+ * depth, zero storage/overflow, final-flow agreement, relative continuity allowance and at most
+ * three sampled depth-increment reversals. GoogleTest fatal assertions return only from this
+ * helper.
+ *
+ * @param[in] tag Filesystem-safe tag for the two reviewable deck/report/output sets.
+ * @param[in] extra_opts Raw common option overrides used in both models.
+ */
 void lateralDryStart(const std::string& tag, const std::string& extra_opts) {
-    SWMM_Engine ref = openModel("vj_latdry_ref_" + tag,
-                                fedSplitModel(false, extra_opts, 0.0, 0.5), true);
+    SWMM_Engine ref =
+        openModel("vj_latdry_ref_" + tag, fedSplitModel(false, extra_opts, 0.0, 0.5), true);
     FedProbe pr = runFed(ref);
     destroy(ref);
 
-    SWMM_Engine vj = openModel("vj_latdry_" + tag,
-                               fedSplitModel(true, extra_opts, 0.0, 0.5), true);
+    SWMM_Engine vj = openModel("vj_latdry_" + tag, fedSplitModel(true, extra_opts, 0.0, 0.5), true);
     FedProbe pv = runFed(vj);
     destroy(vj);
 
@@ -1170,8 +1404,8 @@ void lateralDryStart(const std::string& tag, const std::string& extra_opts) {
     EXPECT_NEAR(pv.final_flow, 0.5, 0.02) << tag;
     EXPECT_NEAR(pv.final_flow, pr.final_flow, 0.02) << tag;
     EXPECT_LE(std::fabs(pv.routing_error), std::fabs(pr.routing_error) + 0.005)
-        << "continuity (" << tag << "): vj " << pv.routing_error
-        << " vs regular " << pr.routing_error;
+        << "continuity (" << tag << "): vj " << pv.routing_error << " vs regular "
+        << pr.routing_error;
     EXPECT_LE(pv.reversals, 3) << "ringing (" << tag << ")";
 }
 
@@ -1185,22 +1419,19 @@ TEST(VirtualJunction, LateralDryStartExplicitSlot) {
 }
 TEST(VirtualJunction, LateralDryStartSemiImplicitExtran) {
     lateralDryStart("semi_extran",
-        "NODE_CONTINUITY      SEMI_IMPLICIT\nSURCHARGE_METHOD     EXTRAN\n");
+                    "NODE_CONTINUITY      SEMI_IMPLICIT\nSURCHARGE_METHOD     EXTRAN\n");
 }
 TEST(VirtualJunction, LateralDryStartSemiImplicitSlot) {
-    lateralDryStart("semi_slot",
-        "NODE_CONTINUITY      SEMI_IMPLICIT\nSURCHARGE_METHOD     SLOT\n");
+    lateralDryStart("semi_slot", "NODE_CONTINUITY      SEMI_IMPLICIT\nSURCHARGE_METHOD     SLOT\n");
 }
 
 // A lateral joining a live through-flow: the pair passes the sum, matching
 // the same reach split at a regular junction.
 TEST(VirtualJunction, LateralSteadyEquivalence) {
-    SWMM_Engine ref = openModel("vj_latsteady_ref",
-                                fedSplitModel(false, "", 1.0, 0.5), true);
+    SWMM_Engine ref = openModel("vj_latsteady_ref", fedSplitModel(false, "", 1.0, 0.5), true);
     FedProbe pr = runFed(ref);
     destroy(ref);
-    SWMM_Engine vj = openModel("vj_latsteady",
-                               fedSplitModel(true, "", 1.0, 0.5), true);
+    SWMM_Engine vj = openModel("vj_latsteady", fedSplitModel(true, "", 1.0, 0.5), true);
     FedProbe pv = runFed(vj);
     destroy(vj);
     ASSERT_TRUE(pr.ran && pv.ran);
@@ -1212,8 +1443,7 @@ TEST(VirtualJunction, LateralSteadyEquivalence) {
 
 // A negative lateral (withdrawal) at the virtual junction.
 TEST(VirtualJunction, LateralExtractionAtVirtualJunction) {
-    SWMM_Engine vj = openModel("vj_latextract",
-                               fedSplitModel(true, "", 1.5, -0.3), true);
+    SWMM_Engine vj = openModel("vj_latextract", fedSplitModel(true, "", 1.5, -0.3), true);
     FedProbe pv = runFed(vj);
     destroy(vj);
     ASSERT_TRUE(pv.ran);
@@ -1232,43 +1462,49 @@ namespace {
 // join sent both spliced faces to the first matching node and left VJ_B
 // permanently unreported (depth 0 for the whole run); the mesh now carries
 // the face → node association directly (face_vj_node).
+/**
+ * @brief Construct an FV chain with two distinct virtual nodes at the same invert.
+ *
+ * Builds text only; no parsing, file creation or simulation occurs.
+ * @return Owned half-hour CFS deck with 0.75 CFS inflow and VJ_A/VJ_B both at 9 ft, preserving
+ *     distinct face/node identities.
+ */
 std::string fvCollidingInvertModel() {
-    return options("FV") +
-        "[JUNCTIONS]\n"
-        ";;Name  Elev  MaxDepth\n"
-        "J_IN    11.0  5.0\n"
-        "\n"
-        "[VIRTUAL_JUNCTIONS]\n"
-        ";;Name  Elev\n"
-        "VJ_A    9.0\n"
-        "VJ_B    9.0\n"
-        "\n"
-        "[OUTFALLS]\n"
-        ";;Name  Elev  Type  Gated\n"
-        "O_OUT   8.0   FREE  NO\n"
-        "\n"
-        "[CONDUITS]\n"
-        ";;Name    From   To     Length  N      Z1  Z2\n"
-        "C_UP      J_IN   VJ_A   100.0   0.013  0   0\n"
-        "C_FLAT    VJ_A   VJ_B   100.0   0.013  0   0\n"
-        "C_DN      VJ_B   O_OUT  100.0   0.013  0   0\n"
-        "\n"
-        "[XSECTIONS]\n"
-        ";;Link    Shape     G1   G2  G3  G4  Barrels\n"
-        "C_UP      CIRCULAR  1.0  0   0   0   1\n"
-        "C_FLAT    CIRCULAR  1.0  0   0   0   1\n"
-        "C_DN      CIRCULAR  1.0  0   0   0   1\n"
-        "\n"
-        "[DWF]\n"
-        ";;Node  Param  Value\n"
-        "J_IN    FLOW   0.75\n"
-        "\n"
-        "[COORDINATES]\n"
-        ";;Node  X      Y\n"
-        "J_IN    0.0    0.0\n"
-        "VJ_A    100.0  0.0\n"
-        "VJ_B    200.0  0.0\n"
-        "O_OUT   300.0  0.0\n";
+    return options("FV") + "[JUNCTIONS]\n"
+                           ";;Name  Elev  MaxDepth\n"
+                           "J_IN    11.0  5.0\n"
+                           "\n"
+                           "[VIRTUAL_JUNCTIONS]\n"
+                           ";;Name  Elev\n"
+                           "VJ_A    9.0\n"
+                           "VJ_B    9.0\n"
+                           "\n"
+                           "[OUTFALLS]\n"
+                           ";;Name  Elev  Type  Gated\n"
+                           "O_OUT   8.0   FREE  NO\n"
+                           "\n"
+                           "[CONDUITS]\n"
+                           ";;Name    From   To     Length  N      Z1  Z2\n"
+                           "C_UP      J_IN   VJ_A   100.0   0.013  0   0\n"
+                           "C_FLAT    VJ_A   VJ_B   100.0   0.013  0   0\n"
+                           "C_DN      VJ_B   O_OUT  100.0   0.013  0   0\n"
+                           "\n"
+                           "[XSECTIONS]\n"
+                           ";;Link    Shape     G1   G2  G3  G4  Barrels\n"
+                           "C_UP      CIRCULAR  1.0  0   0   0   1\n"
+                           "C_FLAT    CIRCULAR  1.0  0   0   0   1\n"
+                           "C_DN      CIRCULAR  1.0  0   0   0   1\n"
+                           "\n"
+                           "[DWF]\n"
+                           ";;Node  Param  Value\n"
+                           "J_IN    FLOW   0.75\n"
+                           "\n"
+                           "[COORDINATES]\n"
+                           ";;Node  X      Y\n"
+                           "J_IN    0.0    0.0\n"
+                           "VJ_A    100.0  0.0\n"
+                           "VJ_B    200.0  0.0\n"
+                           "O_OUT   300.0  0.0\n";
 }
 
 // J_IN → C_SUP → VJ_S → C_SDN → O_OUT on 10 % slopes, with the downhill
@@ -1276,65 +1512,93 @@ std::string fvCollidingInvertModel() {
 // The retired one-sided reconstruction read that cell's centre-datum WSE and
 // clamped the virtual junction to zero whenever the flow depth was below half
 // the conduit drop (5 ft here).
+/**
+ * @brief Construct an FV virtual junction on two ten-percent conduit slopes.
+ *
+ * The 20/10/0 ft inverts over two 100 ft one-foot pipes exercise face-datum reconstruction.
+ * Constructs text without running or validating it.
+ * @return Owned half-hour CFS deck with 0.75 CFS inflow and the downhill conduit listed before the
+ *     upstream conduit.
+ */
 std::string fvSteepVJModel() {
-    return options("FV") +
-        "[JUNCTIONS]\n"
-        ";;Name  Elev  MaxDepth\n"
-        "J_IN    20.0  5.0\n"
-        "\n"
-        "[VIRTUAL_JUNCTIONS]\n"
-        ";;Name  Elev\n"
-        "VJ_S    10.0\n"
-        "\n"
-        "[OUTFALLS]\n"
-        ";;Name  Elev  Type  Gated\n"
-        "O_OUT   0.0   FREE  NO\n"
-        "\n"
-        "[CONDUITS]\n"
-        ";;Name    From   To     Length  N      Z1  Z2\n"
-        "C_SDN     VJ_S   O_OUT  100.0   0.013  0   0\n"
-        "C_SUP     J_IN   VJ_S   100.0   0.013  0   0\n"
-        "\n"
-        "[XSECTIONS]\n"
-        ";;Link    Shape     G1   G2  G3  G4  Barrels\n"
-        "C_SDN     CIRCULAR  1.0  0   0   0   1\n"
-        "C_SUP     CIRCULAR  1.0  0   0   0   1\n"
-        "\n"
-        "[DWF]\n"
-        ";;Node  Param  Value\n"
-        "J_IN    FLOW   0.75\n"
-        "\n"
-        "[COORDINATES]\n"
-        ";;Node  X      Y\n"
-        "J_IN    0.0    0.0\n"
-        "VJ_S    100.0  0.0\n"
-        "O_OUT   200.0  0.0\n";
+    return options("FV") + "[JUNCTIONS]\n"
+                           ";;Name  Elev  MaxDepth\n"
+                           "J_IN    20.0  5.0\n"
+                           "\n"
+                           "[VIRTUAL_JUNCTIONS]\n"
+                           ";;Name  Elev\n"
+                           "VJ_S    10.0\n"
+                           "\n"
+                           "[OUTFALLS]\n"
+                           ";;Name  Elev  Type  Gated\n"
+                           "O_OUT   0.0   FREE  NO\n"
+                           "\n"
+                           "[CONDUITS]\n"
+                           ";;Name    From   To     Length  N      Z1  Z2\n"
+                           "C_SDN     VJ_S   O_OUT  100.0   0.013  0   0\n"
+                           "C_SUP     J_IN   VJ_S   100.0   0.013  0   0\n"
+                           "\n"
+                           "[XSECTIONS]\n"
+                           ";;Link    Shape     G1   G2  G3  G4  Barrels\n"
+                           "C_SDN     CIRCULAR  1.0  0   0   0   1\n"
+                           "C_SUP     CIRCULAR  1.0  0   0   0   1\n"
+                           "\n"
+                           "[DWF]\n"
+                           ";;Node  Param  Value\n"
+                           "J_IN    FLOW   0.75\n"
+                           "\n"
+                           "[COORDINATES]\n"
+                           ";;Node  X      Y\n"
+                           "J_IN    0.0    0.0\n"
+                           "VJ_S    100.0  0.0\n"
+                           "O_OUT   200.0  0.0\n";
 }
 
 // Step to completion WITHOUT swmm_engine_end so node state is still readable.
+/**
+ * @brief Initialize and step a fixture to completion while retaining readable live node state.
+ *
+ * Starts with output disabled and steps until elapsed<=0. Fatal GoogleTest assertions return from
+ * this helper on initialization/start/step failure. Deliberately omits engine_end/close/destroy;
+ * caller must handle the remaining lifecycle and cannot infer completion solely from the void
+ * return.
+ *
+ * @param[in,out] e Borrowed live engine opened on the intended fixture, ready to initialize/start;
+ *     caller retains destruction responsibility.
+ */
 void stepToEnd(SWMM_Engine e) {
     ASSERT_EQ(swmm_engine_initialize(e), 0) << swmm_get_last_error_msg(e);
     ASSERT_EQ(swmm_engine_start(e, 0), 0) << swmm_get_last_error_msg(e);
     double elapsed = 0.0;
     do {
-        ASSERT_EQ(swmm_engine_step(e, &elapsed), 0)
-            << swmm_get_last_error_msg(e);
+        ASSERT_EQ(swmm_engine_step(e, &elapsed), 0) << swmm_get_last_error_msg(e);
     } while (elapsed > 0.0);
 }
 
+/**
+ * @brief Read the named node depth from the public API.
+ *
+ * Missing lookup records a nonfatal expectation; getter status is ignored.
+ *
+ * @param[in] e Live native engine with initialized/readable fixture state; ownership remains with
+ *     caller.
+ * @param[in] name Non-null exact existing object identifier.
+ * @return Published node depth in fixture feet, or initial -1 when lookup/getter does not assign a
+ *     result.
+ */
 double nodeDepth(SWMM_Engine e, const char* name) {
     const int n = swmm_node_index(e, name);
     EXPECT_GE(n, 0) << "missing node " << name;
     double d = -1.0;
-    if (n >= 0) swmm_node_get_depth(e, n, &d);
+    if (n >= 0)
+        swmm_node_get_depth(e, n, &d);
     return d;
 }
 
 } // namespace
 
 TEST(VirtualJunction, FvReportsBothCollidingInvertVJs) {
-    SWMM_Engine e = openModel("vj_fv_invert_collision",
-                              fvCollidingInvertModel(), true);
+    SWMM_Engine e = openModel("vj_fv_invert_collision", fvCollidingInvertModel(), true);
     stepToEnd(e);
 
     // Steady 0.75 cfs through the whole chain: both virtual junctions are
@@ -1373,19 +1637,43 @@ namespace {
 // in internal cfs). No public getter exposes it — swmm_node_get_inflow and
 // swmm_node_get_inflows_bulk both return the lateral alone — so read the
 // engine context the way the ARD gates do.
+/**
+ * @brief Read the native context's total node inflow for the named node.
+ *
+ * Requires a native SWMMEngine handle for the static cast. Missing lookup records a nonfatal
+ * expectation; directly reads ctx.nodes.inflow after index lookup.
+ *
+ * @param[in] e Live native engine with initialized/readable fixture state; ownership remains with
+ *     caller.
+ * @param[in] name Non-null exact existing object identifier.
+ * @return Internal total through-plus-lateral inflow in CFS, or -1 for a missing node.
+ */
 double nodeInflow(SWMM_Engine e, const char* name) {
     const int n = swmm_node_index(e, name);
     EXPECT_GE(n, 0) << "missing node " << name;
-    if (n < 0) return -1.0;
+    if (n < 0)
+        return -1.0;
     const auto& ctx = static_cast<openswmm::SWMMEngine*>(e)->context();
     return ctx.nodes.inflow[static_cast<std::size_t>(n)];
 }
 
+/**
+ * @brief Read the named link flow from the public API.
+ *
+ * Missing lookup records a nonfatal expectation; getter status is ignored.
+ *
+ * @param[in] e Live native engine with initialized/readable fixture state; ownership remains with
+ *     caller.
+ * @param[in] name Non-null exact existing object identifier.
+ * @return Published signed link flow in fixture CFS, or initial -1 when lookup/getter does not
+ *     assign a result.
+ */
 double linkFlow(SWMM_Engine e, const char* name) {
     const int j = swmm_link_index(e, name);
     EXPECT_GE(j, 0) << "missing link " << name;
     double q = -1.0;
-    if (j >= 0) swmm_link_get_flow(e, j, &q);
+    if (j >= 0)
+        swmm_link_get_flow(e, j, &q);
     return q;
 }
 
@@ -1415,8 +1703,7 @@ TEST(VirtualJunction, FvLateralAtVirtualJunctionIsRouted) {
     EXPECT_NEAR(nodeInflow(e, "VJ_A"), 1.25, 0.06);
     EXPECT_NEAR(nodeInflow(e, "VJ_B"), 1.25, 0.06);
     double lat = 0.0;
-    ASSERT_EQ(swmm_node_get_lateral_inflow(e, swmm_node_index(e, "VJ_A"), &lat),
-              SWMM_OK);
+    ASSERT_EQ(swmm_node_get_lateral_inflow(e, swmm_node_index(e, "VJ_A"), &lat), SWMM_OK);
     EXPECT_NEAR(lat, 0.5, 1e-9);
 
     swmm_engine_end(e);
@@ -1450,22 +1737,48 @@ namespace {
 // J_IN (invert 10, init d_in) -> 100 ft -> MID (VJ, invert 9) -> 100 ft ->
 // J_OUT (invert 8, init d_out); high-crest weir to O_OUT satisfies the
 // >=1-outfall rule without draining the pool at t=0.
+/**
+ * @brief Construct a two-reach pool with seeded endpoint depths and a virtual midpoint.
+ *
+ * Constructs text only; values are inserted without physical/syntax validation. The high weir
+ * preserves the intended seeded pool initially; no simulation or general no-drain guarantee is
+ * computed here.
+ *
+ * @param[in] d_in J_IN initial depth in feet above its 10 ft invert.
+ * @param[in] d_out J_OUT initial depth in feet above its 8 ft invert.
+ * @param[in] mid_invert MID invert elevation in feet, default 9.
+ * @param[in] routing Routing token inserted into the common options, default DYNWAVE.
+ * @param[in] len_a Upstream conduit length in feet, intended positive.
+ * @param[in] len_b Downstream conduit length in feet, intended positive.
+ * @return Owned half-hour CFS deck text with one-foot circular pipes and a 7.9 ft crest-height
+ *     overflow weir to the required outfall.
+ */
 std::string seededPoolModel(double d_in, double d_out, double mid_invert = 9.0,
-                            const std::string& routing = "DYNWAVE",
-                            double len_a = 100.0, double len_b = 100.0) {
+                            const std::string& routing = "DYNWAVE", double len_a = 100.0,
+                            double len_b = 100.0) {
     std::ostringstream ss;
     ss << options(routing)
        << "[JUNCTIONS]\n"
           ";;Name  Elev  MaxDepth  InitDepth\n"
-          "J_IN    10.0  8.0       " << d_in << "\n"
-          "J_OUT   8.0   8.0       " << d_out << "\n\n"
-          "[VIRTUAL_JUNCTIONS]\n;;Name  Elev\nMID     " << mid_invert << "\n\n"
+          "J_IN    10.0  8.0       "
+       << d_in
+       << "\n"
+          "J_OUT   8.0   8.0       "
+       << d_out
+       << "\n\n"
+          "[VIRTUAL_JUNCTIONS]\n;;Name  Elev\nMID     "
+       << mid_invert
+       << "\n\n"
           "[OUTFALLS]\n;;Name  Elev  Type  Gated\nO_OUT   8.0   FREE  NO\n\n"
           "[WEIRS]\n;;Name  From   To     Type        CrestHt  Cd\n"
           "W_OVF   J_OUT  O_OUT  TRANSVERSE  7.9      3.33\n\n"
           "[CONDUITS]\n;;Name  From  To     Length  N      Z1  Z2\n"
-          "C_A     J_IN  MID    " << len_a << "   0.013  0   0\n"
-          "C_B     MID   J_OUT  " << len_b << "   0.013  0   0\n\n"
+          "C_A     J_IN  MID    "
+       << len_a
+       << "   0.013  0   0\n"
+          "C_B     MID   J_OUT  "
+       << len_b
+       << "   0.013  0   0\n\n"
           "[XSECTIONS]\n;;Link  Shape     G1   G2  G3  G4  Barrels\n"
           "C_A     CIRCULAR  1.0  0   0   0   1\n"
           "C_B     CIRCULAR  1.0  0   0   0   1\n"
@@ -1517,8 +1830,7 @@ TEST(VirtualJunction, InitialStateDryDeckLowVJStaysDry) {
     // interpolated 9.0). A dry node's head is just its invert — seeding must
     // not manufacture 0.5 ft of water on a bone-dry deck. Requires the
     // wet-endpoint gate.
-    SWMM_Engine e = openModel("vj_seed_dry_low",
-                              seededPoolModel(0.0, 0.0, 8.5), true);
+    SWMM_Engine e = openModel("vj_seed_dry_low", seededPoolModel(0.0, 0.0, 8.5), true);
     const int mid = swmm_node_index(e, "MID");
     ASSERT_GE(mid, 0);
     double d = -1.0;
@@ -1530,8 +1842,7 @@ TEST(VirtualJunction, InitialStateDryDeckLowVJStaysDry) {
 TEST(VirtualJunction, InitialStateHumpVJAbovePoolStaysDry) {
     // Wet endpoints (heads 13.5) but the VJ sits on a hump above the pool
     // surface (invert 14.0): interpolated head < invert -> stays dry.
-    SWMM_Engine e = openModel("vj_seed_hump",
-                              seededPoolModel(3.5, 5.5, 14.0), true);
+    SWMM_Engine e = openModel("vj_seed_hump", seededPoolModel(3.5, 5.5, 14.0), true);
     const int mid = swmm_node_index(e, "MID");
     ASSERT_GE(mid, 0);
     double d = -1.0;
@@ -1548,8 +1859,7 @@ TEST(VirtualJunction, InitialStateSurvivesTheColdStartReset) {
     // before the first routing step, and the study's e4 deck produced .out
     // files byte-identical to the un-seeded engine. This gate is the one that
     // observes the state the solver actually starts from.
-    SWMM_Engine e = openModel("vj_seed_survives_init", seededPoolModel(3.5, 5.5),
-                              true);
+    SWMM_Engine e = openModel("vj_seed_survives_init", seededPoolModel(3.5, 5.5), true);
     const int mid = swmm_node_index(e, "MID");
     ASSERT_GE(mid, 0);
 
@@ -1572,8 +1882,7 @@ TEST(VirtualJunction, InitialStateIsNotSeededUnderFv) {
     // guard was absent: flow-routing continuity 0.000% -> -19.133%, VJ head
     // excursion 4371 m. This pins the restriction so that lifting it has to be
     // a deliberate act with the cell projection landed alongside.
-    SWMM_Engine e = openModel("vj_seed_fv_unseeded",
-                              seededPoolModel(3.5, 5.5, 9.0, "FV"), true);
+    SWMM_Engine e = openModel("vj_seed_fv_unseeded", seededPoolModel(3.5, 5.5, 9.0, "FV"), true);
     const int mid = swmm_node_index(e, "MID");
     ASSERT_GE(mid, 0);
     double d = -1.0;
@@ -1635,8 +1944,7 @@ TEST(VirtualJunction, InitialStateWeightsByDistanceNotByEndOrder) {
     // (13.5*300 + 12.5*100)/400 = 13.25, depth 4.25 over MID's invert 9.0.
     // The transposed form would give 12.75 -> depth 3.75.
     SWMM_Engine e = openModel("vj_seed_weighted",
-                              seededPoolModel(3.5, 4.5, 9.0, "DYNWAVE",
-                                              100.0, 300.0), true);
+                              seededPoolModel(3.5, 4.5, 9.0, "DYNWAVE", 100.0, 300.0), true);
     const int mid = swmm_node_index(e, "MID");
     ASSERT_GE(mid, 0);
     double d = -1.0;

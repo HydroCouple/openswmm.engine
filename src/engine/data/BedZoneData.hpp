@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file BedZoneData.hpp
- * @brief Plan H6b — the bed / hyporheic transient-storage zone.
+ * @file      BedZoneData.hpp
+ * @brief     Plan H6b — the bed / hyporheic transient-storage zone.
  *
  * @details A second, immobile water-and-sediment body beneath each conduit.
  *          It exchanges with the channel by conduction and by hyporheic
@@ -64,9 +64,9 @@
  * @see plans/transport/HEAT_TRANSPORT_PLAN.md §2.3, §6.5 D-H6b
  * @ingroup engine_data
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_DATA_BED_ZONE_DATA_HPP
@@ -86,8 +86,9 @@ namespace openswmm {
  *          temperature. See `has_ground_temp`.
  */
 struct SedimentConfig {
-    bool mesh_ground=false; ///< Explicit routed-channel finite mesh contact; default prescribed ground.
-    bool ground_source_configured=false; ///< Preserve an explicitly authored PRESCRIBED choice.
+    bool mesh_ground =
+        false; ///< Explicit routed-channel finite mesh contact; default prescribed ground.
+    bool ground_source_configured = false; ///< Preserve an explicitly authored PRESCRIBED choice.
     /// Pore fraction of the new mesh bed; legacy 1D capacity is unchanged.
     double mesh_porosity = 0.30;
     /// Bed thermal diffusivity alpha_sed, m²/s. `HTSComponent` takes this
@@ -145,7 +146,7 @@ struct SedimentConfig {
     /// bed starts at `ground_temp`, which is the only temperature in the
     /// configuration that describes the subsurface.
     double initial_temp = 12.0;
-    bool   has_initial_temp = false;
+    bool has_initial_temp = false;
 };
 
 /**
@@ -166,13 +167,13 @@ struct SedimentConfig {
  *          the array they would have to widen.
  */
 struct BedZoneState {
-    std::vector<double> link_temp;   ///< [link], °C
+    std::vector<double> link_temp; ///< [link], °C
     /// [link * n_species + s], concentration in the bed water, in each
     /// species' own units. Species-minor to match `node_mass_`'s layout in
     /// the ARD store, which is the binding most likely to index it.
     std::vector<double> link_conc;
-    int  n_species = 0;
-    bool seeded    = false;
+    int n_species = 0;
+    bool seeded = false;
 
     // ---- ARD (cell-resolved) bed. The per-link arrays above are the
     //      LEGACY and LARD substrate; under EULERIAN_ARD every CELL gets
@@ -183,14 +184,25 @@ struct BedZoneState {
     //      coexist because engine choice is per model and this state is
     //      runtime-only (not persisted), so nothing ever has to convert
     //      one into the other.
-    std::vector<double> cell_temp;   ///< [cell], °C
+    std::vector<double> cell_temp; ///< [cell], °C
     /// SPECIES-MAJOR [s * n_cells + c] — `cell_phi`'s own layout, because
     /// the ARD binding walks both arrays in the same loop and two layouts
     /// in one loop is how a stride bug reads plausibly.
     std::vector<double> cell_conc;
-    int  cell_n_species = 0;
-    bool cells_seeded   = false;
+    int cell_n_species = 0;
+    bool cells_seeded = false;
 
+    /**
+     * @brief Replace cell-resolved bed state with initial temperature and zero solutes.
+     *
+     * Concentrations use species-major [species*cell_count+cell] layout in species units. Sets
+     * cells_seeded=true after allocations; link state is unchanged. Allocation can leave partially
+     * replaced vectors.
+     *
+     * @param[in] n_cells Cell count; negative treated as zero.
+     * @param[in] n_spec Species count; negative treated as zero. Dimension product must fit size_t.
+     * @param[in] t_init Initial bed temperature in degC, copied without validation.
+     */
     void resizeCells(int n_cells, int n_spec, double t_init) {
         const auto nc = static_cast<std::size_t>(n_cells > 0 ? n_cells : 0);
         const auto ns = static_cast<std::size_t>(n_spec > 0 ? n_spec : 0);
@@ -200,6 +212,16 @@ struct BedZoneState {
         cells_seeded = true;
     }
 
+    /**
+     * @brief Replace link bed state and request subsequent concentration seeding.
+     *
+     * Link concentrations are zero-filled in link-major [link*n_spec+species] layout and seeded=false.
+     * Cell state is unchanged. Does not validate temperatures or roll back allocation failure.
+     *
+     * @param[in] n_links Link count; negative treated as zero.
+     * @param[in] n_spec Species count; negative treated as zero; size product must fit size_t.
+     * @param[in] t_init Initial bed temperature in degC.
+     */
     void resize(int n_links, int n_spec, double t_init) {
         const auto nl = static_cast<std::size_t>(n_links > 0 ? n_links : 0);
         const auto ns = static_cast<std::size_t>(n_spec > 0 ? n_spec : 0);
@@ -209,13 +231,26 @@ struct BedZoneState {
         seeded = false;
     }
 
+    /**
+     * @brief Check the link-temperature array length.
+     *
+     * @param[in] n_links Expected link count; negative treated as zero.
+     * @return True for matching link_temp length, independent of species shape, concentrations and
+     *     seeded flag.
+     */
     bool sized(int n_links) const noexcept {
         return link_temp.size() == static_cast<std::size_t>(n_links > 0 ? n_links : 0);
     }
 
+    /**
+     * @brief Release all link/cell bed state and reset counts/seeding flags.
+     *
+     * Restores default empty state; invalidates borrowed vector entries and leaves sediment
+     * configuration elsewhere unchanged.
+     */
     void clear() { *this = BedZoneState{}; }
 };
 
-}  // namespace openswmm
+} // namespace openswmm
 
-#endif  // OPENSWMM_ENGINE_DATA_BED_ZONE_DATA_HPP
+#endif // OPENSWMM_ENGINE_DATA_BED_ZONE_DATA_HPP

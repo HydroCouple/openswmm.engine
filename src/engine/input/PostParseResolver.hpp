@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file PostParseResolver.hpp
- * @brief Post-parse cross-reference resolution for the input system.
+ * @file      PostParseResolver.hpp
+ * @brief     Post-parse cross-reference resolution for the input system.
  *
  * @details After all sections are parsed, some object references that
  *          appear forward (e.g., a subcatchment referencing a gage that
@@ -33,9 +33,9 @@
  * @see InputReader.hpp — calls resolve() after all sections are dispatched
  * @ingroup engine_input
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_POST_PARSE_RESOLVER_HPP
@@ -44,7 +44,7 @@
 #include <string>
 
 namespace openswmm {
-    struct SimulationContext;
+struct SimulationContext;
 }
 
 namespace openswmm::input {
@@ -151,8 +151,7 @@ void convert_internal_to_authored(SimulationContext& ctx);
  *                     Empty means "no anchor" — relative tokens are left
  *                     lexically normalised against an empty base.
  */
-void resolve_external_file_slots(SimulationContext& ctx,
-                                  const std::string& anchor_dir);
+void resolve_external_file_slots(SimulationContext& ctx, const std::string& anchor_dir);
 
 /**
  * @brief Recompute a single conduit's derived dynamic-wave flow properties.

@@ -1,6 +1,6 @@
 /**
- * @file test_transect_mutation_api.cpp
- * @brief DA-ENG-09 + BQ-TR-02 — Unit tests for the transect mutation surface
+ * @file      test_transect_mutation_api.cpp
+ * @brief     DA-ENG-09 + BQ-TR-02 — Unit tests for the transect mutation surface
  *        used by Slice BQ Phase 6.7.4 TransectEditor (GUI).
  *
  * @details Covers the new C API additions to ::openswmm_infrastructure.h:
@@ -17,6 +17,10 @@
  *
  * @see include/openswmm/engine/openswmm_infrastructure.h
  * @see docs/GUI_IMPLEMENTATION_PLAN.md (Slice BQ Phase 6.7.4 detail)
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -37,6 +41,13 @@ protected:
     SWMM_Engine engine = nullptr;
     int t1_idx = -1;
 
+    /**
+     * @brief Create an editable engine containing transect T1.
+     *
+     * Adds/resolves T1 and caches its nonnegative index; no geometry points, validation or simulation
+     * are added here. Fatal GoogleTest assertions return from this hook on failure; any created handle
+     * remains owned by the fixture for teardown.
+     */
     void SetUp() override {
         engine = swmm_engine_new();
         ASSERT_NE(engine, nullptr);
@@ -45,7 +56,16 @@ protected:
         ASSERT_GE(t1_idx, 0);
     }
 
-    void TearDown() override { if (engine) swmm_engine_destroy(engine); }
+    /**
+     * @brief Destroy the fixture engine when allocation succeeded.
+     *
+     * Releases model resources through engine destruction; the member value is not reset and must not
+     * be reused after teardown.
+     */
+    void TearDown() override {
+        if (engine)
+            swmm_engine_destroy(engine);
+    }
 };
 
 // ---------------------------------------------------------------------------
@@ -188,7 +208,7 @@ TEST_F(TransectMutationTest, GetCommentsTruncatesWithNulTerminator) {
     ASSERT_EQ(swmm_transect_set_comments(engine, t1_idx, "abcdefghij"), SWMM_OK);
     char buf[6] = {};
     EXPECT_EQ(swmm_transect_get_comments(engine, t1_idx, buf, sizeof(buf)), SWMM_OK);
-    EXPECT_STREQ(buf, "abcde");      // 5 chars + NUL
+    EXPECT_STREQ(buf, "abcde"); // 5 chars + NUL
     EXPECT_EQ(buf[5], '\0');
 }
 
@@ -203,7 +223,7 @@ TEST_F(TransectMutationTest, SetCommentsNullClearsContent) {
 TEST_F(TransectMutationTest, GetCommentsRejectsBadBuffer) {
     char buf[1];
     EXPECT_EQ(swmm_transect_get_comments(engine, t1_idx, nullptr, 64), SWMM_ERR_BADPARAM);
-    EXPECT_EQ(swmm_transect_get_comments(engine, t1_idx, buf, 0),     SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_transect_get_comments(engine, t1_idx, buf, 0), SWMM_ERR_BADPARAM);
 }
 
 // ---------------------------------------------------------------------------
@@ -211,23 +231,25 @@ TEST_F(TransectMutationTest, GetCommentsRejectsBadBuffer) {
 // ---------------------------------------------------------------------------
 
 TEST_F(TransectMutationTest, StationsRoundTripWithCountAndGet) {
-    ASSERT_EQ(swmm_transect_add_station(engine, t1_idx, 0.0,  10.0), SWMM_OK);
-    ASSERT_EQ(swmm_transect_add_station(engine, t1_idx, 5.0,   2.0), SWMM_OK);
-    ASSERT_EQ(swmm_transect_add_station(engine, t1_idx, 12.0,  3.0), SWMM_OK);
+    ASSERT_EQ(swmm_transect_add_station(engine, t1_idx, 0.0, 10.0), SWMM_OK);
+    ASSERT_EQ(swmm_transect_add_station(engine, t1_idx, 5.0, 2.0), SWMM_OK);
+    ASSERT_EQ(swmm_transect_add_station(engine, t1_idx, 12.0, 3.0), SWMM_OK);
     ASSERT_EQ(swmm_transect_add_station(engine, t1_idx, 20.0, 11.0), SWMM_OK);
 
     EXPECT_EQ(swmm_transect_get_station_count(engine, t1_idx), 4);
 
     double s = 0, e = 0;
     EXPECT_EQ(swmm_transect_get_station(engine, t1_idx, 0, &s, &e), SWMM_OK);
-    EXPECT_DOUBLE_EQ(s, 0.0);  EXPECT_DOUBLE_EQ(e, 10.0);
+    EXPECT_DOUBLE_EQ(s, 0.0);
+    EXPECT_DOUBLE_EQ(e, 10.0);
     EXPECT_EQ(swmm_transect_get_station(engine, t1_idx, 2, &s, &e), SWMM_OK);
-    EXPECT_DOUBLE_EQ(s, 12.0); EXPECT_DOUBLE_EQ(e, 3.0);
+    EXPECT_DOUBLE_EQ(s, 12.0);
+    EXPECT_DOUBLE_EQ(e, 3.0);
 }
 
 TEST_F(TransectMutationTest, ClearStationsResetsToEmpty) {
     ASSERT_EQ(swmm_transect_add_station(engine, t1_idx, 0.0, 10.0), SWMM_OK);
-    ASSERT_EQ(swmm_transect_add_station(engine, t1_idx, 5.0,  2.0), SWMM_OK);
+    ASSERT_EQ(swmm_transect_add_station(engine, t1_idx, 5.0, 2.0), SWMM_OK);
     ASSERT_EQ(swmm_transect_get_station_count(engine, t1_idx), 2);
 
     EXPECT_EQ(swmm_transect_clear_stations(engine, t1_idx), SWMM_OK);
@@ -242,7 +264,7 @@ TEST_F(TransectMutationTest, GetStationOutOfRangeReturnsBadIndex) {
     ASSERT_EQ(swmm_transect_add_station(engine, t1_idx, 0.0, 10.0), SWMM_OK);
     double s = 0, e = 0;
     EXPECT_EQ(swmm_transect_get_station(engine, t1_idx, -1, &s, &e), SWMM_ERR_BADINDEX);
-    EXPECT_EQ(swmm_transect_get_station(engine, t1_idx,  1, &s, &e), SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_transect_get_station(engine, t1_idx, 1, &s, &e), SWMM_ERR_BADINDEX);
 }
 
 // ---------------------------------------------------------------------------
@@ -271,7 +293,7 @@ TEST_F(TransectMutationTest, RenameRejectsCaseInsensitiveCollision) {
 
 TEST_F(TransectMutationTest, RenameRejectsNullOrEmpty) {
     EXPECT_EQ(swmm_transect_rename(engine, t1_idx, nullptr), SWMM_ERR_BADPARAM);
-    EXPECT_EQ(swmm_transect_rename(engine, t1_idx, ""),       SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_transect_rename(engine, t1_idx, ""), SWMM_ERR_BADPARAM);
 }
 
 // ---------------------------------------------------------------------------
@@ -323,28 +345,28 @@ TEST_F(TransectMutationTest, RemoveDropsTransectAndShiftsIndices) {
 
 TEST_F(TransectMutationTest, BadHandleReturnsBadHandle) {
     double v = 0;
-    EXPECT_EQ(swmm_transect_get_roughness(nullptr, 0, &v, &v, &v),            SWMM_ERR_BADHANDLE);
-    EXPECT_EQ(swmm_transect_set_bank_stations(nullptr, 0, 1, 2),              SWMM_ERR_BADHANDLE);
-    EXPECT_EQ(swmm_transect_get_bank_stations(nullptr, 0, &v, &v),            SWMM_ERR_BADHANDLE);
-    EXPECT_EQ(swmm_transect_set_encroachment_stations(nullptr, 0, 1, 2),      SWMM_ERR_BADHANDLE);
-    EXPECT_EQ(swmm_transect_get_encroachment_stations(nullptr, 0, &v, &v),    SWMM_ERR_BADHANDLE);
-    EXPECT_EQ(swmm_transect_set_modifiers(nullptr, 0, 1, 1, 1),               SWMM_ERR_BADHANDLE);
-    EXPECT_EQ(swmm_transect_get_modifiers(nullptr, 0, &v, &v, &v),            SWMM_ERR_BADHANDLE);
-    EXPECT_EQ(swmm_transect_set_comments(nullptr, 0, "x"),                    SWMM_ERR_BADHANDLE);
-    EXPECT_EQ(swmm_transect_clear_stations(nullptr, 0),                       SWMM_ERR_BADHANDLE);
-    EXPECT_EQ(swmm_transect_rename(nullptr, 0, "x"),                          SWMM_ERR_BADHANDLE);
-    EXPECT_EQ(swmm_transect_remove(nullptr, 0),                               SWMM_ERR_BADHANDLE);
+    EXPECT_EQ(swmm_transect_get_roughness(nullptr, 0, &v, &v, &v), SWMM_ERR_BADHANDLE);
+    EXPECT_EQ(swmm_transect_set_bank_stations(nullptr, 0, 1, 2), SWMM_ERR_BADHANDLE);
+    EXPECT_EQ(swmm_transect_get_bank_stations(nullptr, 0, &v, &v), SWMM_ERR_BADHANDLE);
+    EXPECT_EQ(swmm_transect_set_encroachment_stations(nullptr, 0, 1, 2), SWMM_ERR_BADHANDLE);
+    EXPECT_EQ(swmm_transect_get_encroachment_stations(nullptr, 0, &v, &v), SWMM_ERR_BADHANDLE);
+    EXPECT_EQ(swmm_transect_set_modifiers(nullptr, 0, 1, 1, 1), SWMM_ERR_BADHANDLE);
+    EXPECT_EQ(swmm_transect_get_modifiers(nullptr, 0, &v, &v, &v), SWMM_ERR_BADHANDLE);
+    EXPECT_EQ(swmm_transect_set_comments(nullptr, 0, "x"), SWMM_ERR_BADHANDLE);
+    EXPECT_EQ(swmm_transect_clear_stations(nullptr, 0), SWMM_ERR_BADHANDLE);
+    EXPECT_EQ(swmm_transect_rename(nullptr, 0, "x"), SWMM_ERR_BADHANDLE);
+    EXPECT_EQ(swmm_transect_remove(nullptr, 0), SWMM_ERR_BADHANDLE);
 }
 
 TEST_F(TransectMutationTest, OutOfRangeIndexReturnsBadIndex) {
     double v = 0;
-    EXPECT_EQ(swmm_transect_get_roughness(engine, 99, &v, &v, &v),         SWMM_ERR_BADINDEX);
-    EXPECT_EQ(swmm_transect_set_bank_stations(engine, 99, 1, 2),           SWMM_ERR_BADINDEX);
-    EXPECT_EQ(swmm_transect_set_encroachment_stations(engine, 99, 1, 2),   SWMM_ERR_BADINDEX);
-    EXPECT_EQ(swmm_transect_set_modifiers(engine, 99, 1, 1, 1),            SWMM_ERR_BADINDEX);
-    EXPECT_EQ(swmm_transect_set_comments(engine, 99, "x"),                 SWMM_ERR_BADINDEX);
-    EXPECT_EQ(swmm_transect_clear_stations(engine, 99),                    SWMM_ERR_BADINDEX);
-    EXPECT_EQ(swmm_transect_rename(engine, 99, "X"),                       SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_transect_get_roughness(engine, 99, &v, &v, &v), SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_transect_set_bank_stations(engine, 99, 1, 2), SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_transect_set_encroachment_stations(engine, 99, 1, 2), SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_transect_set_modifiers(engine, 99, 1, 1, 1), SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_transect_set_comments(engine, 99, "x"), SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_transect_clear_stations(engine, 99), SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_transect_rename(engine, 99, "X"), SWMM_ERR_BADINDEX);
     // remove() is intentionally a no-op for out-of-range (mirrors patterns).
 }
 
@@ -364,11 +386,8 @@ TEST_F(TransectMutationTest, EditDeleteKeepsEveryParallelArrayInLockStep) {
     const char* comments[] = {"first", "second", "third"};
     for (int i = 0; i < 3; ++i) {
         ASSERT_EQ(swmm_transect_set_comments(engine, i, comments[i]), SWMM_OK);
-        ASSERT_EQ(swmm_transect_set_encroachment_stations(engine, i,
-                                                          10.0 + i, 20.0 + i),
-                  SWMM_OK);
-        ASSERT_EQ(swmm_transect_set_modifiers(engine, i, 1.0, 0.25 * i,
-                                              1.0 + i), SWMM_OK);
+        ASSERT_EQ(swmm_transect_set_encroachment_stations(engine, i, 10.0 + i, 20.0 + i), SWMM_OK);
+        ASSERT_EQ(swmm_transect_set_modifiers(engine, i, 1.0, 0.25 * i, 1.0 + i), SWMM_OK);
     }
 
     ASSERT_EQ(swmm_transect_delete(engine, 1, nullptr), SWMM_OK);

@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_2d_exchange_rubinato_steady.cpp
- * @brief The WEIR_ORIFICE law against Rubinato et al. (2017) Table 2/3.
+ * @file      test_2d_exchange_rubinato_steady.cpp
+ * @brief     The WEIR_ORIFICE law against Rubinato et al. (2017) Table 2/3.
  *
  * @details For each of the 36 steady rows the law is evaluated in the row's
  *          regime with unit coefficients on the rig (D_M = 0.24 m, crest
@@ -31,6 +31,10 @@
  *          Reference data: tests/benchmarks/rubinato2017/ (provenance there).
  *
  * @ingroup engine_2d
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -38,6 +42,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <map>
 #include <sstream>
 #include <string>
@@ -54,6 +59,16 @@ const fs::path kRef = fs::path(__FILE__).parent_path() / "../../benchmarks/rubin
 constexpr double kPi = 3.14159265358979323846;
 constexpr double kDm = 0.24, kZ = 0.478;
 
+/**
+ * @brief Read the simple unquoted steady-exchange reference CSV.
+ *
+ * Splits literal commas, preserves trailing empty fields, skips only empty lines, fills missing
+ * cells with empty text and discards extra cells. Duplicate headers overwrite and CR may remain; no
+ * quoting, whitespace normalization or numeric conversion.
+ *
+ * @param[in] p Reference filename borrowed for synchronous text read.
+ * @return Owned header-keyed row maps; empty on missing first line/open failure.
+ */
 std::vector<std::map<std::string, std::string>> read_csv(const fs::path& p) {
     std::ifstream f(p);
     std::vector<std::map<std::string, std::string>> rows;
@@ -62,39 +77,61 @@ std::vector<std::map<std::string, std::string>> read_csv(const fs::path& p) {
     auto split = [](const std::string& s) {
         std::vector<std::string> out;
         std::stringstream ss(s);
-        for (std::string t; std::getline(ss, t, ',');) out.push_back(t);
-        if (!s.empty() && s.back() == ',') out.emplace_back();
+        for (std::string t; std::getline(ss, t, ',');)
+            out.push_back(t);
+        if (!s.empty() && s.back() == ',')
+            out.emplace_back();
         return out;
     };
-    if (!std::getline(f, line)) return rows;
+    if (!std::getline(f, line))
+        return rows;
     head = split(line);
     while (std::getline(f, line)) {
-        if (line.empty()) continue;
+        if (line.empty())
+            continue;
         const auto v = split(line);
         std::map<std::string, std::string> r;
-        for (std::size_t i = 0; i < head.size(); ++i) r[head[i]] = i < v.size() ? v[i] : "";
+        for (std::size_t i = 0; i < head.size(); ++i)
+            r[head[i]] = i < v.size() ? v[i] : "";
         rows.push_back(r);
     }
     return rows;
 }
 
 // Equation term X of a Table 2 row through the law, unit coefficients.
+/**
+ * @brief Evaluate the unit-coefficient exchange term selected by a reference scenario.
+ *
+ * Uses fixed manhole geometry and 1/6-scale head regularization; S1/S2 disable limiting orifice
+ * with 1e9 coefficient and set relevant weir coefficients, other scenarios set outflow orifice
+ * coefficient one. map::at/stod errors propagate; unknown scenarios follow the latter branch
+ * without explicit validation.
+ *
+ * @param[in] row Required scenario/h_s_m and, except S1, h_p_m keys with valid numeric text; heads
+ *     use meters.
+ * @return Positive-direction scenario term m3/s: S1/S2 shared-law q, otherwise negative q for the
+ *     sewer-to-surface convention.
+ */
 double term(const std::map<std::string, std::string>& row) {
     const Geometry g{kZ, kPi * kDm, kPi * kDm * kDm / 4.0};
     Coefficients c;
-    c.h_eps = 0.02 / 6.0;                     // φ head at the 1/6 rig scale
+    c.h_eps = 0.02 / 6.0; // φ head at the 1/6 rig scale
     const std::string s = row.at("scenario");
     const double hs = row.at("h_s_m").empty() ? 0.0 : std::stod(row.at("h_s_m"));
-    if (s == "S1") {                          // free weir, orifice not limiting
-        c.c_w = 1.0; c.c_sw = 2.0 / 3.0; c.c_oi = 1e9;
+    if (s == "S1") { // free weir, orifice not limiting
+        c.c_w = 1.0;
+        c.c_sw = 2.0 / 3.0;
+        c.c_oi = 1e9;
         return exchange(g, c, kZ + hs, kZ - 1.0).q;
     }
     const double hp = std::stod(row.at("h_p_m"));
-    if (s == "S2") {                          // submerged weir: ⅔·C_w = C_sw = 1
-        c.c_w = 1.5; c.c_sw = 1.0; c.c_oi = 1e9;
+    if (s == "S2") { // submerged weir: ⅔·C_w = C_sw = 1
+        c.c_w = 1.5;
+        c.c_sw = 1.0;
+        c.c_oi = 1e9;
         return exchange(g, c, kZ + hs, hp).q;
     }
-    c.c_oo = 1.0;                             // S3 wet / S4 dry: sewer → surface orifice
+    c.c_oo = 1.0; // S3 wet / S4 dry: sewer → surface orifice
     return -exchange(g, c, kZ + hs, hp).q;
 }
 
@@ -108,6 +145,7 @@ TEST(ExchangeRubinatoSteady, LawTermsRecoverTable3Slopes) {
 
     fs::create_directories("rubinato_steady_out");
     std::ofstream rep("rubinato_steady_out/law_vs_table2.csv");
+    rep << std::setprecision(12);
     rep << "scenario,q_e_lps,xi_f_lps,term_m3s,law_q_lps,rel_err\n";
 
     for (const auto& t : t3) {
@@ -115,7 +153,8 @@ TEST(ExchangeRubinatoSteady, LawTermsRecoverTable3Slopes) {
         const double c_expected = std::stod(t.at("c_expected"));
         std::vector<double> x, q;
         for (const auto& r : t2) {
-            if (r.at("scenario") != s) continue;
+            if (r.at("scenario") != s)
+                continue;
             const double xi = term(r);
             const double qe = std::stod(r.at("q_e_lps")) * 1e-3;
             ASSERT_GT(xi, 0.0) << s;
@@ -126,8 +165,12 @@ TEST(ExchangeRubinatoSteady, LawTermsRecoverTable3Slopes) {
         }
         const double n = static_cast<double>(x.size());
         double mx = 0, mq = 0;
-        for (std::size_t i = 0; i < x.size(); ++i) { mx += x[i]; mq += q[i]; }
-        mx /= n; mq /= n;
+        for (std::size_t i = 0; i < x.size(); ++i) {
+            mx += x[i];
+            mq += q[i];
+        }
+        mx /= n;
+        mq /= n;
         double sxx = 0, sxq = 0, sqq = 0;
         for (std::size_t i = 0; i < x.size(); ++i) {
             sxx += (x[i] - mx) * (x[i] - mx);

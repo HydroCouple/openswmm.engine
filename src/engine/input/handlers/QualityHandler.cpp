@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file QualityHandler.cpp
- * @brief Section handlers for [POLLUTANTS], [LANDUSES], [COVERAGES],
+ * @file      QualityHandler.cpp
+ * @brief     Section handlers for [POLLUTANTS], [LANDUSES], [COVERAGES],
  *        [BUILDUP], [WASHOFF], [TREATMENT], and [LOADINGS].
  *
  * ### [POLLUTANTS] format
@@ -65,9 +65,9 @@
  * @see Legacy reference: src/solver/input.c — readPollutant(), readLanduse(), etc.
  * @ingroup engine_input
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "QualityHandler.hpp"
@@ -89,21 +89,16 @@ namespace openswmm::input {
 
 namespace {
 
-/// Legacy `findmatch(tok, Words)` (input.c:791) over a keyword list, where
-/// `match(str, substr)` (input.c:805) returns true when the KEYWORD is a
-/// PREFIX of the token — not when the two are equal.
-///
-/// That distinction is load-bearing here. Legacy's BuildupTypeWords are the
-/// three-letter stems POW / EXP / SAT / EXT and its WashoffTypeWords are
-/// EXP / RC / EMC, while decks — including everything the SWMM GUI writes —
-/// spell the functions out as POWER, EXPON, SATUR, EXTERNAL. Comparing for
-/// equality left `func_type` at NONE for every one of them, so the land use
-/// silently had NO buildup function: nothing accumulated over the antecedent
-/// dry period and there was nothing for the washoff to wash off.
-///
-/// Returns the keyword's index, or -1 for no match.
-int findmatch_prefix(const std::string& token,
-                     std::initializer_list<const char*> words) {
+/**
+ * @brief Find the first nonempty exact-case catalogue token that prefixes input.
+ *
+ * Accepts trailing characters after a matched keyword; empty catalogue words never match.
+ *
+ * @param[in] token Borrowed tokenizer-normalized input; no local case folding or trimming.
+ * @param[in] words Borrowed list of non-NULL NUL-terminated prefixes; list length fits int.
+ * @return First zero-based prefix match or -1.
+ */
+int findmatch_prefix(const std::string& token, std::initializer_list<const char*> words) {
     int i = 0;
     for (const char* w : words) {
         // The tokenizer has already stripped the leading blanks legacy's
@@ -116,19 +111,34 @@ int findmatch_prefix(const std::string& token,
     return -1;
 }
 
-}  // namespace
+} // namespace
 
 // ============================================================================
 // handle_pollutants()
 // ============================================================================
 
+/**
+ * @brief Register pollutant names and populate definition columns in two passes.
+ *
+ * Name pass permits forward co-pollutant references and records duplicates. Then resize_pollutants
+ * resets every existing definition to defaults before parsing all rows; duplicate rows still
+ * repopulate the original index in the second pass. Unknown unit text defaults mg/L; decay converts
+ * 1/day to 1/second. Stores concentration, snow flag, co-pollutant/fraction and comments without
+ * complete finite/range validation; no network concentration matrices are sized.
+ *
+ * @param[in,out] ctx Context receiving authored quality stores and errors; caller serializes
+ *     input-phase mutations and provides coherent name/dimension counts.
+ * @param[in] lines Borrowed section rows, tokenized/copied synchronously. Numeric quantities retain
+ *     their documented authored units except explicit conversions below.
+ */
 void handle_pollutants(SimulationContext& ctx, const std::vector<std::string>& lines) {
     const auto parsed = parse_section(lines);
 
     // First pass: register all pollutant names so co-pollutant lookup works
     for (const auto& pl : parsed) {
         auto tok = Tokenizer::tokenize(pl.data);
-        if (tok.size() < 2) continue;
+        if (tok.size() < 2)
+            continue;
 
         const std::string& name = tok[0];
         add_unique(ctx.pollutant_names, name, ctx.errors);
@@ -143,11 +153,13 @@ void handle_pollutants(SimulationContext& ctx, const std::vector<std::string>& l
     // Second pass: populate pollutant properties and comments
     for (const auto& pl : parsed) {
         auto tok = Tokenizer::tokenize(pl.data);
-        if (tok.size() < 2) continue;
+        if (tok.size() < 2)
+            continue;
         // Name  Units  Crain  Cgw  Crdii  Kdecay  SnowOnly  CoPollut  CoFrac  Cdwf  Cinit
 
         const int idx = ctx.pollutant_names.find(tok[0]);
-        if (idx < 0) continue;
+        if (idx < 0)
+            continue;
 
         // Units
         const std::string units_str = Tokenizer::to_upper(tok[1]);
@@ -158,14 +170,16 @@ void handle_pollutants(SimulationContext& ctx, const std::vector<std::string>& l
         else
             ctx.pollutants.units[idx] = MassUnits::MG_PER_L;
 
-        if (tok.size() > 2) ctx.pollutants.c_rain[idx]  = to_double(tok[2]);
-        if (tok.size() > 3) ctx.pollutants.c_gw[idx]    = to_double(tok[3]);
-        if (tok.size() > 4) ctx.pollutants.c_rdii[idx]  = to_double(tok[4]);
+        if (tok.size() > 2)
+            ctx.pollutants.c_rain[idx] = to_double(tok[2]);
+        if (tok.size() > 3)
+            ctx.pollutants.c_gw[idx] = to_double(tok[3]);
+        if (tok.size() > 4)
+            ctx.pollutants.c_rdii[idx] = to_double(tok[4]);
         // The Kdecay column is 1/day; store 1/sec, exactly as legacy
         // does (landuse.c divides by SECperDAY at parse) — KD1.
         if (tok.size() > 5)
-            ctx.pollutants.k_decay[idx] =
-                to_double(tok[5]) / constants::SEC_PER_DAY;
+            ctx.pollutants.k_decay[idx] = to_double(tok[5]) / constants::SEC_PER_DAY;
 
         // SnowOnly
         if (tok.size() > 6) {
@@ -183,13 +197,20 @@ void handle_pollutants(SimulationContext& ctx, const std::vector<std::string>& l
         }
 
         // CoFrac
-        if (tok.size() > 8)  ctx.pollutants.co_frac[idx]   = to_double(tok[8]);
+        if (tok.size() > 8)
+            ctx.pollutants.co_frac[idx] = to_double(tok[8]);
 
         // Cdwf — default dry weather sanitary flow concentration
-        if (tok.size() > 9)  ctx.pollutants.c_dwf[idx]     = to_double(tok[9]);
+        if (tok.size() > 9)
+            ctx.pollutants.c_dwf[idx] = to_double(tok[9]);
+
+        // Native extension after the legacy Cinit column.
+        if (tok.size() > 11)
+            ctx.pollutants.mwt[idx] = to_double(tok[11]);
 
         // Cinit
-        if (tok.size() > 10) ctx.pollutants.init_conc[idx]  = to_double(tok[10]);
+        if (tok.size() > 10)
+            ctx.pollutants.init_conc[idx] = to_double(tok[10]);
 
         if (!pl.comment.empty())
             ctx.pollutants.comments[static_cast<std::size_t>(idx)] = pl.comment;
@@ -200,15 +221,30 @@ void handle_pollutants(SimulationContext& ctx, const std::vector<std::string>& l
 // handle_landuses()
 // ============================================================================
 
+/**
+ * @brief Append named land uses with optional sweep parameters/comments.
+ *
+ * Duplicate names report ERR_DUP_NAME and skip; existing other rows persist. Defaults zero
+ * interval/removal/days-since-sweep, stores supplied values permissively in authored days/fraction
+ * conventions. Does not allocate buildup/washoff/coverage matrices, validate sweep ranges or
+ * execute sweeping.
+ *
+ * @param[in,out] ctx Context receiving authored quality stores and errors; caller serializes
+ *     input-phase mutations and provides coherent name/dimension counts.
+ * @param[in] lines Borrowed section rows, tokenized/copied synchronously. Numeric quantities retain
+ *     their documented authored units except explicit conversions below.
+ */
 void handle_landuses(SimulationContext& ctx, const std::vector<std::string>& lines) {
     for (const auto& pl : parse_section(lines)) {
         auto tok = Tokenizer::tokenize(pl.data);
-        if (tok.empty()) continue;
+        if (tok.empty())
+            continue;
         // Name  [SweepInterval]  [SweepRemoval]  [SweepDays0]
 
         const std::string& name = tok[0];
         int idx = add_unique(ctx.landuse_names, name, ctx.errors);
-        if (idx < 0) continue;  // duplicate ID (ERR 207, legacy input.c parity)
+        if (idx < 0)
+            continue; // duplicate ID (ERR 207, legacy input.c parity)
 
         // Ensure capacity
         const auto n = static_cast<std::size_t>(idx + 1);
@@ -219,9 +255,12 @@ void handle_landuses(SimulationContext& ctx, const std::vector<std::string>& lin
             ctx.landuses.comments.resize(n, std::string{});
         }
 
-        if (tok.size() > 1) ctx.landuses.sweep_interval[idx] = to_double(tok[1]);
-        if (tok.size() > 2) ctx.landuses.sweep_removal[idx]  = to_double(tok[2]);
-        if (tok.size() > 3) ctx.landuses.last_swept[idx]     = to_double(tok[3]);
+        if (tok.size() > 1)
+            ctx.landuses.sweep_interval[idx] = to_double(tok[1]);
+        if (tok.size() > 2)
+            ctx.landuses.sweep_removal[idx] = to_double(tok[2]);
+        if (tok.size() > 3)
+            ctx.landuses.last_swept[idx] = to_double(tok[3]);
         if (!pl.comment.empty())
             ctx.landuses.comments[static_cast<std::size_t>(idx)] = pl.comment;
     }
@@ -231,12 +270,28 @@ void handle_landuses(SimulationContext& ctx, const std::vector<std::string>& lin
 // handle_coverages()
 // ============================================================================
 
+/**
+ * @brief Assign land-use percentages for each named subcatchment.
+ *
+ * No-op unless both name registries are nonempty; undersized coverage/sweep arrays are replaced
+ * with zeros and coverage stride updated. Each row accepts multiple LANDUSE PERCENT pairs, last
+ * duplicate wins. Missing items/names/bad complete numeric tokens append errors and stop the
+ * remaining pairs after any earlier assignments. Values remain percentages, without [0,100] or
+ * sum-to100 validation; caller counts/products must fit signed arithmetic.
+ *
+ * @param[in,out] ctx Context receiving authored quality stores and errors; caller serializes
+ *     input-phase mutations and provides coherent name/dimension counts.
+ * @param[in] lines Borrowed section rows, tokenized/copied synchronously. Numeric quantities retain
+ *     their documented authored units except explicit conversions below.
+ */
 void handle_coverages(SimulationContext& ctx, const std::vector<std::string>& lines) {
     const int n_landuses = ctx.landuse_names.size();
-    if (n_landuses <= 0) return;
+    if (n_landuses <= 0)
+        return;
 
     const int n_subcatches = ctx.subcatch_names.size();
-    if (n_subcatches <= 0) return;
+    if (n_subcatches <= 0)
+        return;
 
     // Allocate flat coverage array if needed
     const auto total = static_cast<std::size_t>(n_subcatches * n_landuses);
@@ -256,7 +311,8 @@ void handle_coverages(SimulationContext& ctx, const std::vector<std::string>& li
 
     for (const auto& line : lines) {
         auto tok = Tokenizer::tokenize(line);
-        if (tok.empty()) continue;
+        if (tok.empty())
+            continue;
         // Subcatch  LandUse  Percent  [LandUse  Percent ...]
         // Legacy subcatch_readLanduseParams (subcatch.c): every pair is read,
         // the last value for a repeated land use wins, and an unknown name,
@@ -296,10 +352,26 @@ void handle_coverages(SimulationContext& ctx, const std::vector<std::string>& li
 // handle_buildup()
 // ============================================================================
 
+/**
+ * @brief Assign pollutant buildup functions or defer nonpollutant species rows.
+ *
+ * Requires existing land uses; resizes pollutant parameter matrices only when dimensions differ,
+ * discarding them in that case. Known pollutant rows overwrite supplied parameters, using legacy
+ * keyword prefixes and unknown=>NONE; EXT parameter3 looks up a timeseries immediately.
+ * Nonpollutant names append deferred MSX rows with retained series name. Coefficients retain
+ * function-specific authored mass/area/curb/time units; no full range, reference or species
+ * validation.
+ *
+ * @param[in,out] ctx Context receiving authored quality stores and errors; caller serializes
+ *     input-phase mutations and provides coherent name/dimension counts.
+ * @param[in] lines Borrowed section rows, tokenized/copied synchronously. Numeric quantities retain
+ *     their documented authored units except explicit conversions below.
+ */
 void handle_buildup(SimulationContext& ctx, const std::vector<std::string>& lines) {
-    const int n_landuses   = ctx.landuse_names.size();
+    const int n_landuses = ctx.landuse_names.size();
     const int n_pollutants = ctx.pollutant_names.size();
-    if (n_landuses <= 0) return;
+    if (n_landuses <= 0)
+        return;
 
     // Ensure buildup arrays are sized
     if (n_pollutants > 0 &&
@@ -309,11 +381,13 @@ void handle_buildup(SimulationContext& ctx, const std::vector<std::string>& line
 
     for (const auto& line : lines) {
         auto tok = Tokenizer::tokenize(line);
-        if (tok.size() < 5) continue;
+        if (tok.size() < 5)
+            continue;
         // Landuse  Pollutant  Type  C1  C2  C3  PerUnit
 
         const int lu_idx = ctx.landuse_names.find(tok[0]);
-        if (lu_idx < 0) continue;
+        if (lu_idx < 0)
+            continue;
 
         const int p_idx = ctx.pollutant_names.find(tok[1]);
         if (p_idx < 0) {
@@ -321,21 +395,26 @@ void handle_buildup(SimulationContext& ctx, const std::vector<std::string>& line
             // reactions component's species, resolved after the component
             // is applied (msxsurf::resolve). Same deferral as [INITIAL_QUALITY].
             MsxSurfaceRows::Buildup r;
-            r.landuse = tok[0]; r.species = tok[1];
+            r.landuse = tok[0];
+            r.species = tok[1];
             const std::string ts = Tokenizer::to_upper(tok[2]);
             const int mbt = findmatch_prefix(ts, {"NONE", "POW", "EXP", "SAT", "EXT"});
             r.func_type = (mbt >= 0) ? mbt : 0;
             r.c1 = to_double(tok[3]);
             r.c2 = to_double(tok[4]);
             if (tok.size() > 5) {
-                if (r.func_type == 4) r.ts_name = tok[5];
-                else                  r.c3 = to_double(tok[5]);
+                if (r.func_type == 4)
+                    r.ts_name = tok[5];
+                else
+                    r.c3 = to_double(tok[5]);
             }
-            if (tok.size() > 6) r.normalizer = (Tokenizer::to_upper(tok[6]) == "CURB") ? 1 : 0;
+            if (tok.size() > 6)
+                r.normalizer = (Tokenizer::to_upper(tok[6]) == "CURB") ? 1 : 0;
             ctx.reactions.surface.rows.buildup.push_back(std::move(r));
             continue;
         }
-        if (n_pollutants <= 0) continue;
+        if (n_pollutants <= 0)
+            continue;
 
         const auto flat = static_cast<std::size_t>(lu_idx * n_pollutants + p_idx);
 
@@ -343,8 +422,7 @@ void handle_buildup(SimulationContext& ctx, const std::vector<std::string>& line
         // matched by PREFIX so the decks' POWER / EXPON / SATUR / EXTERNAL
         // reach their stems (see findmatch_prefix).
         const std::string type_str = Tokenizer::to_upper(tok[2]);
-        const int bt = findmatch_prefix(type_str,
-                                        {"NONE", "POW", "EXP", "SAT", "EXT"});
+        const int bt = findmatch_prefix(type_str, {"NONE", "POW", "EXP", "SAT", "EXT"});
         ctx.buildup.func_type[flat] = (bt >= 0) ? bt : 0;
 
         ctx.buildup.coeff1[flat] = to_double(tok[3]);
@@ -353,7 +431,7 @@ void handle_buildup(SimulationContext& ctx, const std::vector<std::string>& line
         if (tok.size() > 5) {
             // Gap #35: EXT buildup uses a time series name in tok[5], not a number.
             // Resolve to table index; other types store a numeric exponent.
-            if (ctx.buildup.func_type[flat] == 4) {  // EXTERNAL
+            if (ctx.buildup.func_type[flat] == 4) { // EXTERNAL
                 int ts_idx = ctx.find_timeseries(tok[5]);
                 ctx.buildup.coeff3[flat] = static_cast<double>(ts_idx);
             } else {
@@ -373,10 +451,25 @@ void handle_buildup(SimulationContext& ctx, const std::vector<std::string>& line
 // handle_washoff()
 // ============================================================================
 
+/**
+ * @brief Assign pollutant washoff functions or defer nonpollutant species rows.
+ *
+ * Requires existing land uses and known land-use ID; short/unknown-land-use rows skip. Resizes
+ * dimension-changed pollutant matrices; known pollutants overwrite supplied
+ * coefficients/efficiencies, others append MSX authoring rows by name. Types match legacy prefixes
+ * (unknown=>NONE); coefficients/exponents and sweep/BMP percentages are stored permissively without
+ * finite/range conversion or runtime load computation.
+ *
+ * @param[in,out] ctx Context receiving authored quality stores and errors; caller serializes
+ *     input-phase mutations and provides coherent name/dimension counts.
+ * @param[in] lines Borrowed section rows, tokenized/copied synchronously. Numeric quantities retain
+ *     their documented authored units except explicit conversions below.
+ */
 void handle_washoff(SimulationContext& ctx, const std::vector<std::string>& lines) {
-    const int n_landuses   = ctx.landuse_names.size();
+    const int n_landuses = ctx.landuse_names.size();
     const int n_pollutants = ctx.pollutant_names.size();
-    if (n_landuses <= 0) return;
+    if (n_landuses <= 0)
+        return;
 
     // Ensure washoff arrays are sized
     if (n_pollutants > 0 &&
@@ -386,28 +479,34 @@ void handle_washoff(SimulationContext& ctx, const std::vector<std::string>& line
 
     for (const auto& line : lines) {
         auto tok = Tokenizer::tokenize(line);
-        if (tok.size() < 5) continue;
+        if (tok.size() < 5)
+            continue;
         // Landuse  Pollutant  Type  C1  C2  [SweepEffic]  [BMPEffic]
 
         const int lu_idx = ctx.landuse_names.find(tok[0]);
-        if (lu_idx < 0) continue;
+        if (lu_idx < 0)
+            continue;
 
         const int p_idx = ctx.pollutant_names.find(tok[1]);
         if (p_idx < 0) {
             // BW-MSX: park by name (see handle_buildup).
             MsxSurfaceRows::Washoff r;
-            r.landuse = tok[0]; r.species = tok[1];
+            r.landuse = tok[0];
+            r.species = tok[1];
             const std::string ts = Tokenizer::to_upper(tok[2]);
             const int mwt = findmatch_prefix(ts, {"NONE", "EXP", "RC", "EMC"});
             r.func_type = (mwt >= 0) ? mwt : 0;
             r.coeff = to_double(tok[3]);
             r.expon = to_double(tok[4]);
-            if (tok.size() > 5) r.sweep_effic = to_double(tok[5]);
-            if (tok.size() > 6) r.bmp_effic   = to_double(tok[6]);
+            if (tok.size() > 5)
+                r.sweep_effic = to_double(tok[5]);
+            if (tok.size() > 6)
+                r.bmp_effic = to_double(tok[6]);
             ctx.reactions.surface.rows.washoff.push_back(std::move(r));
             continue;
         }
-        if (n_pollutants <= 0) continue;
+        if (n_pollutants <= 0)
+            continue;
 
         const auto flat = static_cast<std::size_t>(lu_idx * n_pollutants + p_idx);
 
@@ -421,8 +520,10 @@ void handle_washoff(SimulationContext& ctx, const std::vector<std::string>& line
         ctx.washoff.coeff[flat] = to_double(tok[3]);
         ctx.washoff.expon[flat] = to_double(tok[4]);
 
-        if (tok.size() > 5) ctx.washoff.sweep_effic[flat] = to_double(tok[5]);
-        if (tok.size() > 6) ctx.washoff.bmp_effic[flat]   = to_double(tok[6]);
+        if (tok.size() > 5)
+            ctx.washoff.sweep_effic[flat] = to_double(tok[5]);
+        if (tok.size() > 6)
+            ctx.washoff.bmp_effic[flat] = to_double(tok[6]);
     }
 }
 
@@ -430,10 +531,24 @@ void handle_washoff(SimulationContext& ctx, const std::vector<std::string>& line
 // handle_treatment()
 // ============================================================================
 
+/**
+ * @brief Store authored treatment expressions by node/pollutant key.
+ *
+ * No-op without nodes or pollutants. Dimension changes resize/reset treatment authored storage;
+ * known-key rows reconstruct tokens from the third onward with single spaces and overwrite their
+ * slot. Unknown/short rows skip. Does not compile expressions, set has_treatment, resolve
+ * dependency cycles or execute removal.
+ *
+ * @param[in,out] ctx Context receiving authored quality stores and errors; caller serializes
+ *     input-phase mutations and provides coherent name/dimension counts.
+ * @param[in] lines Borrowed section rows, tokenized/copied synchronously. Numeric quantities retain
+ *     their documented authored units except explicit conversions below.
+ */
 void handle_treatment(SimulationContext& ctx, const std::vector<std::string>& lines) {
     const int n_pollutants = ctx.pollutant_names.size();
-    const int n_nodes      = ctx.node_names.size();
-    if (n_pollutants <= 0 || n_nodes <= 0) return;
+    const int n_nodes = ctx.node_names.size();
+    if (n_pollutants <= 0 || n_nodes <= 0)
+        return;
 
     // Ensure treatment arrays are sized
     if (ctx.treatment.n_nodes != n_nodes || ctx.treatment.n_pollutants != n_pollutants) {
@@ -442,21 +557,25 @@ void handle_treatment(SimulationContext& ctx, const std::vector<std::string>& li
 
     for (const auto& line : lines) {
         auto tok = Tokenizer::tokenize(line);
-        if (tok.size() < 3) continue;
+        if (tok.size() < 3)
+            continue;
         // Node  Pollutant  Result = Expression
 
         const int node_idx = ctx.node_names.find(tok[0]);
-        if (node_idx < 0) continue;
+        if (node_idx < 0)
+            continue;
 
         const int p_idx = ctx.pollutant_names.find(tok[1]);
-        if (p_idx < 0) continue;
+        if (p_idx < 0)
+            continue;
 
         const auto flat = static_cast<std::size_t>(node_idx * n_pollutants + p_idx);
 
         // Reconstruct the expression from remaining tokens (e.g. "R = 0.5 * ...")
         std::string expr;
         for (std::size_t i = 2; i < tok.size(); ++i) {
-            if (i > 2) expr += ' ';
+            if (i > 2)
+                expr += ' ';
             expr += tok[i];
         }
         ctx.treatment.expressions[flat] = expr;
@@ -467,6 +586,20 @@ void handle_treatment(SimulationContext& ctx, const std::vector<std::string>& li
 // handle_loadings()
 // ============================================================================
 
+/**
+ * @brief Assign initial pollutant surface buildup and defer MSX loading rows.
+ *
+ * Nonpollutant names append raw MSX loading rows first, even without pollutant definitions;
+ * species/subcatchment validation defers. Known pollutant/subcatchment pairs overwrite init_loading
+ * in authored mass per unit area, not runoff concentration. Can resize/zero quality matrices if
+ * pollutant shape differs. Short/unknown rows otherwise skip and numeric parsing is permissive; no
+ * runtime buildup seeding or unit conversion.
+ *
+ * @param[in,out] ctx Context receiving authored quality stores and errors; caller serializes
+ *     input-phase mutations and provides coherent name/dimension counts.
+ * @param[in] lines Borrowed section rows, tokenized/copied synchronously. Numeric quantities retain
+ *     their documented authored units except explicit conversions below.
+ */
 void handle_loadings(SimulationContext& ctx, const std::vector<std::string>& lines) {
     const int n_pollutants = ctx.pollutant_names.size();
     // BW-MSX: rows naming a non-pollutant are parked by name for the
@@ -474,34 +607,41 @@ void handle_loadings(SimulationContext& ctx, const std::vector<std::string>& lin
     // [POLLUTANTS] at all may still carry MSX loadings.
     for (const auto& line : lines) {
         auto tok = Tokenizer::tokenize(line);
-        if (tok.size() < 3) continue;
-        if (ctx.pollutant_names.find(tok[1]) >= 0) continue;
+        if (tok.size() < 3)
+            continue;
+        if (ctx.pollutant_names.find(tok[1]) >= 0)
+            continue;
         MsxSurfaceRows::Loading r;
-        r.subcatch = tok[0]; r.species = tok[1]; r.value = to_double(tok[2]);
+        r.subcatch = tok[0];
+        r.species = tok[1];
+        r.value = to_double(tok[2]);
         ctx.reactions.surface.rows.loadings.push_back(std::move(r));
     }
-    if (n_pollutants <= 0) return;
+    if (n_pollutants <= 0)
+        return;
 
     // Size the quality arrays now (iteration 4): they used to be sized only
     // by PostParseResolver AFTER the handlers ran, so the `flat < size()`
     // guard below silently dropped every [LOADINGS] row.
     const int n_sub = ctx.subcatch_names.size();
-    if (n_sub > 0 &&
-        (ctx.subcatches.conc_n_pollutants != n_pollutants ||
-         static_cast<int>(ctx.subcatches.conc.size()) != n_sub * n_pollutants)) {
+    if (n_sub > 0 && (ctx.subcatches.conc_n_pollutants != n_pollutants ||
+                      static_cast<int>(ctx.subcatches.conc.size()) != n_sub * n_pollutants)) {
         ctx.subcatches.resize_quality(n_pollutants);
     }
 
     for (const auto& line : lines) {
         auto tok = Tokenizer::tokenize(line);
-        if (tok.size() < 3) continue;
+        if (tok.size() < 3)
+            continue;
         // Subcatch  Pollutant  InitBuildup
 
         const int sub_idx = ctx.subcatch_names.find(tok[0]);
-        if (sub_idx < 0) continue;
+        if (sub_idx < 0)
+            continue;
 
         const int p_idx = ctx.pollutant_names.find(tok[1]);
-        if (p_idx < 0) continue;
+        if (p_idx < 0)
+            continue;
 
         const auto flat = static_cast<std::size_t>(sub_idx * n_pollutants + p_idx);
         // The row is an initial surface BUILDUP per unit area, not a runoff
@@ -528,11 +668,25 @@ void handle_loadings(SimulationContext& ctx, const std::vector<std::string>& lin
 // independent); only row shape is validated here, loudly.
 // ============================================================================
 
-void handle_initial_quality(SimulationContext& ctx,
-                            const std::vector<std::string>& lines) {
+/**
+ * @brief Append per-node/link initial-quality rows or record a CSV sidecar reference.
+ *
+ * FILE stores its path token (last wins) for later loading without IO. Inline scope must be
+ * NODE/LINK with >=4 tokens and complete from_chars_double value; malformed rows append errors.
+ * Element/constituent resolution defers and raw value remains concentration units, age hours or
+ * temperature degC. Does not reject negative/nonfinite values solely via a separate policy check,
+ * apply seeds, clear prior rows or set error_code.
+ *
+ * @param[in,out] ctx Context receiving authored quality stores and errors; caller serializes
+ *     input-phase mutations and provides coherent name/dimension counts.
+ * @param[in] lines Borrowed section rows, tokenized/copied synchronously. Numeric quantities retain
+ *     their documented authored units except explicit conversions below.
+ */
+void handle_initial_quality(SimulationContext& ctx, const std::vector<std::string>& lines) {
     for (const auto& line : lines) {
         auto tok = Tokenizer::tokenize(line);
-        if (tok.empty()) continue;
+        if (tok.empty())
+            continue;
         // U2: `FILE <path>` names a CSV sidecar (scope,element,constituent,
         // value per line; header optional) read at open once the .inp
         // directory is known (SWMMEngine::open → load_initial_quality_file).
@@ -545,9 +699,9 @@ void handle_initial_quality(SimulationContext& ctx,
             continue;
         }
         if (tok.size() < 4) {
-            ctx.errors.push_back(
-                "[INITIAL_QUALITY] row needs NODE|LINK element constituent "
-                "value: '" + line + "'.");
+            ctx.errors.push_back("[INITIAL_QUALITY] row needs NODE|LINK element constituent "
+                                 "value: '" +
+                                 line + "'.");
             continue;
         }
 
@@ -556,9 +710,7 @@ void handle_initial_quality(SimulationContext& ctx,
         if (scope == "LINK") {
             link = true;
         } else if (scope != "NODE") {
-            ctx.errors.push_back(
-                "[INITIAL_QUALITY] scope must be NODE or LINK: '" + tok[0] +
-                "'.");
+            ctx.errors.push_back("[INITIAL_QUALITY] scope must be NODE or LINK: '" + tok[0] + "'.");
             continue;
         }
 
@@ -566,12 +718,10 @@ void handle_initial_quality(SimulationContext& ctx,
         // typo into a silent 0.0 initial condition.
         const std::string& vs = tok[3];
         double v = 0.0;
-        auto [p, ec] = openswmm::from_chars_double(vs.data(),
-                                                   vs.data() + vs.size(), v);
+        auto [p, ec] = openswmm::from_chars_double(vs.data(), vs.data() + vs.size(), v);
         if (ec != std::errc{} || p != vs.data() + vs.size()) {
-            ctx.errors.push_back(
-                "[INITIAL_QUALITY] bad value '" + vs + "' for '" + tok[2] +
-                "' at " + scope + " '" + tok[1] + "'.");
+            ctx.errors.push_back("[INITIAL_QUALITY] bad value '" + vs + "' for '" + tok[2] +
+                                 "' at " + scope + " '" + tok[1] + "'.");
             continue;
         }
 

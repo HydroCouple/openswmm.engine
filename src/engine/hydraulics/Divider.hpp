@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file Divider.hpp
- * @brief Flow divider node logic — cutoff, overflow, tabular, weir.
+ * @file      Divider.hpp
+ * @brief     Flow divider node logic — cutoff, overflow, tabular, weir.
  *
  * @details Divider nodes split incoming flow between a primary and diversion
  *          link. The split depends on divider type:
@@ -30,9 +30,9 @@
  * @note Legacy reference: src/legacy/engine/node.c (divider_getOutflow)
  * @ingroup new_engine
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_DIVIDER_HPP
@@ -48,10 +48,10 @@ struct SimulationContext;
 namespace divider {
 
 enum class DividerMethod : int {
-    CUTOFF       = 0,
-    OVERFLOW_DIV = 1,  ///< Renamed to avoid macOS math.h OVERFLOW macro
-    TABULAR      = 2,
-    WEIR         = 3
+    CUTOFF = 0,
+    OVERFLOW_DIV = 1, ///< Renamed to avoid macOS math.h OVERFLOW macro
+    TABULAR = 2,
+    WEIR = 3
 };
 
 /**

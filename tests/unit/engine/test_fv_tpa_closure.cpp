@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_fv_tpa_closure.cpp
- * @brief Gates for the FV two-component pressure approach (issue #156 P4).
+ * @file      test_fv_tpa_closure.cpp
+ * @brief     Gates for the FV two-component pressure approach (issue #156 P4).
  *
  * @details Kernel algebra of the TPA branch (round-trip through ΔA < 0,
  *          continuity with the slot line at the crown), option inertness
@@ -28,9 +28,9 @@
  *          rule, A2). Plans: TPA_TWO_COMPONENT_PRESSURE_PLAN.md §3,
  *          MIXED_FLOW_CLOSURES_TPA_UF_PLAN_2026-08-29.md §2.2.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -63,15 +63,23 @@ using openswmm::fv::FvGeometry;
 
 namespace {
 
+/**
+ * @brief Construct a synthetic one-foot-circle pressure-closure algebra fixture.
+ *
+ * Computes a_crown from the chosen slot relation; unrelated table fields remain zero/default.
+ * Intended for TPA branch algebra only, rather than a fully tabulated conduit geometry.
+ * @return Owned geometry with full depth1 ft/area pi/4 ft2, crown.985257 ft, slot width.02 ft,
+ *     representative pressure integral.3927 ft3 and hydraulic radius.25 ft.
+ */
 FvGeometry tpaGeom() {
     FvGeometry g{};
-    g.y_full   = 1.0;
-    g.a_full   = 0.7853981633974483;   // 1-ft circle
-    g.y_crown  = 0.985257;
-    g.t_slot   = 0.02;
-    g.a_crown  = g.a_full + 0.5 * g.t_slot * (g.y_full - g.y_crown);
-    g.i1_crown = 0.3927;               // representative; algebra-only tests
-    g.r_full   = 0.25;
+    g.y_full = 1.0;
+    g.a_full = 0.7853981633974483; // 1-ft circle
+    g.y_crown = 0.985257;
+    g.t_slot = 0.02;
+    g.a_crown = g.a_full + 0.5 * g.t_slot * (g.y_full - g.y_crown);
+    g.i1_crown = 0.3927; // representative; algebra-only tests
+    g.r_full = 0.25;
     return g;
 }
 
@@ -103,18 +111,17 @@ TEST(TpaKernel, I1DropsQuadraticSlotTerm) {
     const double i1_tpa = k::tpaI1OfDepth(g, g.y_full + d);
     EXPECT_NEAR(i1_tpa - g.i1_crown, g.a_crown * d, 1e-12);
     // and symmetric for hs < 0 (the new half):
-    EXPECT_NEAR(g.i1_crown - k::tpaI1OfDepth(g, g.y_full - d),
-                g.a_crown * d, 1e-12);
+    EXPECT_NEAR(g.i1_crown - k::tpaI1OfDepth(g, g.y_full - d), g.a_crown * d, 1e-12);
 }
 
 TEST(TpaKernel, NegativeDeltaAShrinksNotDries) {
     // "Shrinkage" of the section: ΔA < 0 keeps a near-full area, and the
     // celerity stays acoustic (√(gA/t_slot)), not shallow-water.
     const FvGeometry g = tpaGeom();
-    const double a = k::tpaAreaOfDepth(g, g.y_full - 2.0);   // hs = -2 ft
+    const double a = k::tpaAreaOfDepth(g, g.y_full - 2.0); // hs = -2 ft
     EXPECT_GT(a, 0.9 * g.a_full);
     const double c = k::celerity(a, g.t_slot);
-    EXPECT_GT(c, 30.0);   // ~√(32.2·0.75/0.02) ≈ 35 ft/s for this geometry
+    EXPECT_GT(c, 30.0); // ~√(32.2·0.75/0.02) ≈ 35 ft/s for this geometry
 }
 
 // ===========================================================================
@@ -139,13 +146,39 @@ namespace {
 
 const char* kOutDir = "fv_tpa_out";
 
+/**
+ * @brief Create the fixture output directory and form one artifact filename.
+ *
+ * Creates missing output-root directories and propagates filesystem errors. Does not
+ * create/truncate the artifact, sanitize name or create arbitrary nested parents; no
+ * current-directory change occurs.
+ *
+ * @param[in] name Raw filename/path appended below kOutDir; caller chooses a safe fixture
+ *     destination.
+ * @return Owned native path string.
+ */
 std::string outPath(const std::string& name) {
     fs::create_directories(kOutDir);
     return (fs::path(kOutDir) / name).string();
 }
 
-std::string overTopModel(const std::string& closure, bool apex_sealed,
-                         double init_head = 8.0, double withdraw_cfs = 0.5) {
+/**
+ * @brief Construct a primed over-the-top two-tank drawdown deck.
+ *
+ * Only constructs text; does not validate ranges, prime dynamically or run drawdown. Requests six
+ * cells per link and 100 ft/s slot celerity.
+ *
+ * @param[in] closure Raw pressure-closure option text inserted after common options, not just an
+ *     enum token.
+ * @param[in] apex_sealed Use30 ft surcharge allowance at apex JS when true, zero when false.
+ * @param[in] init_head Initial tank depth/head in feet; apex depth is max(init_head-6,0).
+ * @param[in] withdraw_cfs Nonnegative intended withdrawal magnitude in CFS; inserted after a
+ *     literal minus sign.
+ * @return Owned half-hour CFS/FV deck with 100 ft2 tanks, two 60 ft one-foot pipes, apex invert6 ft
+ *     and fixed high overflow weir.
+ */
+std::string overTopModel(const std::string& closure, bool apex_sealed, double init_head = 8.0,
+                         double withdraw_cfs = 0.5) {
     std::ostringstream ss;
     const double js_init = init_head > 6.0 ? init_head - 6.0 : 0.0;
     ss << "[OPTIONS]\n"
@@ -162,11 +195,14 @@ std::string overTopModel(const std::string& closure, bool apex_sealed,
        << closure
        << "\n[STORAGE]\n"
           ";;Name Elev MaxDepth InitDepth Shape      A1 A2 A0\n"
-          "TA     0.0  20.0     " << init_head << "  FUNCTIONAL 0  0  100\n"
-          "TB     0.0  20.0     " << init_head << "  FUNCTIONAL 0  0  100\n"
+          "TA     0.0  20.0     "
+       << init_head
+       << "  FUNCTIONAL 0  0  100\n"
+          "TB     0.0  20.0     "
+       << init_head << "  FUNCTIONAL 0  0  100\n"
        << "\n[JUNCTIONS]\n;;Name Elev MaxDepth InitDepth SurDepth\n"
-          "JS     6.0  2.0      " << js_init << "     "
-       << (apex_sealed ? "30" : "0") << "\n"
+          "JS     6.0  2.0      "
+       << js_init << "     " << (apex_sealed ? "30" : "0") << "\n"
        << "\n[OUTFALLS]\n;;Name Elev Type Gated\nO_OUT  0.0  FREE NO\n"
           "\n[WEIRS]\n;;Name From To    Type       CrestHt Cd\n"
           "W_OVF  TB   O_OUT TRANSVERSE 19.5    3.33\n"
@@ -185,21 +221,38 @@ std::string overTopModel(const std::string& closure, bool apex_sealed,
 }
 
 struct DrawdownResult {
-    double final_ta = -1.0;     ///< final TA depth (ft)
-    double final_tb = -1.0;     ///< final TB depth (ft)
+    double final_ta = -1.0; ///< final TA depth (ft)
+    double final_tb = -1.0; ///< final TB depth (ft)
     /// Minimum piezometric head at JS (ft, absolute elevation), read with
     /// swmm_node_get_head. NOT derived from the node DEPTH: a depth is a
     /// water depth floored at zero, so `invert + depth` can never express a
     /// sub-atmospheric column and this gate would be unfalsifiable.
     double min_apex_head = 1e9;
-    double cont_err = 1e9;      ///< routing continuity error (%)
+    double cont_err = 1e9; ///< raw native routing continuity error fraction
     bool ok = false;
 };
 
+/**
+ * @brief Run a drawdown deck and collect tank/apex state and routing continuity.
+ *
+ * Open failure records ADD_FAILURE and returns default after destruction.
+ * Initialize/start/apex-index checks are nonfatal; step error records failure and breaks, but
+ * cleanup and ok=true still follow. Getter/end statuses are ignored; a true ok can therefore
+ * describe a partial run. Samples continuity before end and destroys the engine afterward.
+ *
+ * @param[in] base Artifact basename beneath outPath, without extension; .inp/.rpt/.out are
+ *     overwritten.
+ * @param[in] deck Complete input text written through an unchecked stream.
+ * @return Owned result with final tank depths/minimum apex head in feet, raw native
+ *     routing-continuity fraction and ok flag.
+ */
 DrawdownResult runDrawdown(const std::string& base, const std::string& deck) {
     DrawdownResult r;
     const std::string inp = outPath(base + ".inp");
-    { std::ofstream f(inp); f << deck; }
+    {
+        std::ofstream f(inp);
+        f << deck;
+    }
     SWMM_Engine e = swmm_engine_create();
     if (swmm_engine_open(e, inp.c_str(), outPath(base + ".rpt").c_str(),
                          outPath(base + ".out").c_str(), nullptr) != 0) {
@@ -232,6 +285,15 @@ DrawdownResult runDrawdown(const std::string& base, const std::string& deck) {
     return r;
 }
 
+/**
+ * @brief Collect an artifact's binary bytes for exact output comparisons.
+ *
+ * Uses unchecked stream open/read and retains no input buffer or file handle.
+ *
+ * @param[in] p Readable input path, unchanged.
+ * @return Owned available bytes; empty can mean empty/unreadable, and partial reads have no
+ *     separate status.
+ */
 std::string fileBytes(const std::string& p) {
     std::ifstream f(p, std::ios::binary);
     std::stringstream ss;
@@ -246,25 +308,19 @@ const char* kTpa = "FV_PRESSURE_CLOSURE  TPA\n";
 TEST(FvTpa, AbsentEqualsExplicitSlot) {
     // A-G5 analog: option absent ≡ FV_PRESSURE_CLOSURE SLOT, byte-for-byte.
     const auto a = runDrawdown("tpa_absent", overTopModel("", true));
-    const auto b = runDrawdown("tpa_slot",
-                               overTopModel("FV_PRESSURE_CLOSURE  SLOT\n",
-                                            true));
+    const auto b = runDrawdown("tpa_slot", overTopModel("FV_PRESSURE_CLOSURE  SLOT\n", true));
     ASSERT_TRUE(a.ok && b.ok);
-    EXPECT_TRUE(fileBytes(outPath("tpa_absent.out")) ==
-                fileBytes(outPath("tpa_slot.out")));
+    EXPECT_TRUE(fileBytes(outPath("tpa_absent.out")) == fileBytes(outPath("tpa_slot.out")));
 }
 
 TEST(FvTpa, FreeSurfaceDeckIsBitIdentical) {
     // Shallow puddles only (init head 0.4 ft < the 1-ft crown, no
     // withdrawal): no cell can ever reach a_crown and flag, so TPA must be
     // bit-identical to the base run.
-    const auto a = runDrawdown("tpa_fs_base",
-                               overTopModel("", true, 0.4, 0.0));
-    const auto b = runDrawdown("tpa_fs_on",
-                               overTopModel(kTpa, true, 0.4, 0.0));
+    const auto a = runDrawdown("tpa_fs_base", overTopModel("", true, 0.4, 0.0));
+    const auto b = runDrawdown("tpa_fs_on", overTopModel(kTpa, true, 0.4, 0.0));
     ASSERT_TRUE(a.ok && b.ok);
-    EXPECT_TRUE(fileBytes(outPath("tpa_fs_base.out")) ==
-                fileBytes(outPath("tpa_fs_on.out")));
+    EXPECT_TRUE(fileBytes(outPath("tpa_fs_base.out")) == fileBytes(outPath("tpa_fs_on.out")));
 }
 
 TEST(FvTpa, SealedApexSustainsSubAtmosphericColumn) {
@@ -272,7 +328,7 @@ TEST(FvTpa, SealedApexSustainsSubAtmosphericColumn) {
     // falls below the apex crown, TPA keeps both tanks draining together
     // through a sub-atmospheric apex; SLOT breaks the column and strands TA.
     const auto slot = runDrawdown("tpa_dd_slot", overTopModel("", true));
-    const auto tpa  = runDrawdown("tpa_dd_tpa", overTopModel(kTpa, true));
+    const auto tpa = runDrawdown("tpa_dd_tpa", overTopModel(kTpa, true));
     ASSERT_TRUE(slot.ok && tpa.ok);
     // The discriminator is the PRESSURE SIGNAL, exactly what the paper
     // measures in E3. (Gross drainage cannot discriminate here: the table
@@ -289,25 +345,24 @@ TEST(FvTpa, SealedApexSustainsSubAtmosphericColumn) {
     // Hence both a hard threshold and a separation: the hard one alone passed
     // against a build where the node merely sat on its bed.
     EXPECT_LT(tpa.min_apex_head, 5.8)
-        << "TPA apex never dropped below the invert (no true vacuum): "
-        << tpa.min_apex_head;
+        << "TPA apex never dropped below the invert (no true vacuum): " << tpa.min_apex_head;
     EXPECT_LT(tpa.min_apex_head, slot.min_apex_head - 1.0)
-        << "the closures did not separate: TPA " << tpa.min_apex_head
-        << " vs SLOT " << slot.min_apex_head;
+        << "the closures did not separate: TPA " << tpa.min_apex_head << " vs SLOT "
+        << slot.min_apex_head;
     EXPECT_GT(slot.min_apex_head, 5.4)
         << "SLOT apex went below its own lowest bed — a free-surface closure "
-           "cannot carry tension: " << slot.min_apex_head;
+           "cannot carry tension: "
+        << slot.min_apex_head;
     // And the column stays coupled under TPA: both tanks drain together.
     EXPECT_LT(std::fabs(tpa.final_ta - tpa.final_tb), 1.5)
-        << "TPA tanks decoupled: TA " << tpa.final_ta
-        << " TB " << tpa.final_tb;
+        << "TPA tanks decoupled: TA " << tpa.final_ta << " TB " << tpa.final_tb;
 }
 
 TEST(FvTpa, OpenApexVentsAndBreaksTheColumn) {
     // The venting rule (A2): with SUR_DEPTH 0 at the apex, air enters when
     // the apex head reaches the crown; the flag must clear and TPA must
     // strand TA like the slot closure does.
-    const auto tpa_open  = runDrawdown("tpa_open", overTopModel(kTpa, false));
+    const auto tpa_open = runDrawdown("tpa_open", overTopModel(kTpa, false));
     ASSERT_TRUE(tpa_open.ok);
     // With air available at the apex the flag must clear at crown contact:
     // no vacuum can form — the apex head keeps the ordinary invert floor.
@@ -326,10 +381,9 @@ TEST(FvTpa, ImplicitPressurizedPathBuildsTheSameVacuum) {
     // the implicit acoustic set. What that buys is verified here: the sealed
     // apex still goes sub-atmospheric and the run still conserves mass.
     // What it does NOT buy is pinned as a known issue directly below.
-    const auto imp = runDrawdown(
-        "tpa_dd_tpa_implicit",
-        overTopModel("FV_PRESSURE_CLOSURE  TPA\nFV_PRESSURIZED_IMPLICIT YES\n",
-                     true));
+    const auto imp =
+        runDrawdown("tpa_dd_tpa_implicit",
+                    overTopModel("FV_PRESSURE_CLOSURE  TPA\nFV_PRESSURIZED_IMPLICIT YES\n", true));
     ASSERT_TRUE(imp.ok);
     EXPECT_LT(imp.min_apex_head, 5.8)
         << "implicit x TPA apex carried no vacuum: " << imp.min_apex_head;
@@ -342,8 +396,7 @@ TEST(FvTpa, SealedDrawdownMassConserved) {
     // writer).
     const auto tpa = runDrawdown("tpa_mass", overTopModel(kTpa, true));
     ASSERT_TRUE(tpa.ok);
-    EXPECT_LT(std::fabs(tpa.cont_err), 2.0)
-        << "routing continuity error % = " << tpa.cont_err;
+    EXPECT_LT(std::fabs(tpa.cont_err), 2.0) << "routing continuity error % = " << tpa.cont_err;
 }
 
 // ===========================================================================
@@ -356,16 +409,13 @@ TEST(FvTpa, SealedApexHoldsUnderImplicit) {
     // (measured |TA−TB| 3.743 vs 0.003 explicit). With the floor extended by
     // the column-separation bound, the implicit path must now match the
     // explicit physics.
-    const auto imp = runDrawdown(
-        "tpa_dd_imp",
-        overTopModel("FV_PRESSURE_CLOSURE  TPA\n"
-                     "FV_PRESSURIZED_IMPLICIT YES\n", true));
+    const auto imp = runDrawdown("tpa_dd_imp", overTopModel("FV_PRESSURE_CLOSURE  TPA\n"
+                                                            "FV_PRESSURIZED_IMPLICIT YES\n",
+                                                            true));
     ASSERT_TRUE(imp.ok);
-    EXPECT_LT(imp.min_apex_head, 5.8)
-        << "implicit apex never went below the invert";
+    EXPECT_LT(imp.min_apex_head, 5.8) << "implicit apex never went below the invert";
     EXPECT_LT(std::fabs(imp.final_ta - imp.final_tb), 1.5)
-        << "implicit column decoupled: TA " << imp.final_ta
-        << " TB " << imp.final_tb;
+        << "implicit column decoupled: TA " << imp.final_ta << " TB " << imp.final_tb;
     EXPECT_LT(std::fabs(imp.cont_err), 2.0);
 }
 
@@ -385,11 +435,10 @@ TEST(FvTpa, SealedSlopedColumnSurvivesAcousticCelerity) {
     // Rollbacks were observed only inside the pre-existing high-celerity
     // filling divergence (see KnownIssueHighCelerityFillingDiverges), so a
     // meaningful rollback gate awaits that fix (P5 falsifier (b)).
-    std::string deck = overTopModel(
-        "FV_PRESSURE_CLOSURE  TPA\n"
-        "FV_SLOT_CELERITY     984\n"
-        "FV_CELL_LENGTH       0.5\n",
-        true, 7.2, 2.0);
+    std::string deck = overTopModel("FV_PRESSURE_CLOSURE  TPA\n"
+                                    "FV_SLOT_CELERITY     984\n"
+                                    "FV_CELL_LENGTH       0.5\n",
+                                    true, 7.2, 2.0);
     const auto pos = deck.find("END_TIME             00:30:00");
     ASSERT_NE(pos, std::string::npos);
     deck.replace(pos, std::string("END_TIME             00:30:00").size(),
@@ -401,11 +450,10 @@ TEST(FvTpa, SealedSlopedColumnSurvivesAcousticCelerity) {
         << "sealed sloped column never went sub-crown: " << r.min_apex_head;
     EXPECT_GT(r.min_apex_head, -30.0)
         << "apex head fell past the column-separation bound — slot-line "
-           "garbage: " << r.min_apex_head;
-    EXPECT_LT(std::fabs(r.cont_err), 2.0)
-        << "routing continuity error % = " << r.cont_err;
+           "garbage: "
+        << r.min_apex_head;
+    EXPECT_LT(std::fabs(r.cont_err), 2.0) << "routing continuity error % = " << r.cont_err;
 }
-
 
 TEST(FvTpa, SealedSlopedColumnHoldsUnderImplicitAcoustic) {
     // P5 task-3 (the matrix.yaml open item): implicit × TPA diverged at t=0
@@ -419,12 +467,11 @@ TEST(FvTpa, SealedSlopedColumnHoldsUnderImplicitAcoustic) {
     // run NaN'd (measured: cell 199 h → 877208 ft by substep 50). A flagged
     // cell's storage derivative is the constant t_slot at ANY h. Same deck
     // as the explicit acoustic gate, implicit path on.
-    std::string deck = overTopModel(
-        "FV_PRESSURE_CLOSURE  TPA\n"
-        "FV_SLOT_CELERITY     984\n"
-        "FV_CELL_LENGTH       0.5\n"
-        "FV_PRESSURIZED_IMPLICIT YES\n",
-        true, 7.2, 2.0);
+    std::string deck = overTopModel("FV_PRESSURE_CLOSURE  TPA\n"
+                                    "FV_SLOT_CELERITY     984\n"
+                                    "FV_CELL_LENGTH       0.5\n"
+                                    "FV_PRESSURIZED_IMPLICIT YES\n",
+                                    true, 7.2, 2.0);
     const auto pos = deck.find("END_TIME             00:30:00");
     ASSERT_NE(pos, std::string::npos);
     deck.replace(pos, std::string("END_TIME             00:30:00").size(),
@@ -434,40 +481,39 @@ TEST(FvTpa, SealedSlopedColumnHoldsUnderImplicitAcoustic) {
     EXPECT_TRUE(std::isfinite(r.min_apex_head));
     EXPECT_GT(r.min_apex_head, -30.0)
         << "apex head fell past the column-separation bound — the implicit "
-           "storage width regressed: " << r.min_apex_head;
-    EXPECT_LT(std::fabs(r.cont_err), 2.0)
-        << "routing continuity error % = " << r.cont_err;
+           "storage width regressed: "
+        << r.min_apex_head;
+    EXPECT_LT(std::fabs(r.cont_err), 2.0) << "routing continuity error % = " << r.cont_err;
 }
 
 TEST(FvTpa, SignedHeadsReachTheOutFile) {
     // O-6: with REPORT_SIGNED_HEADS YES the .out HEAD field must carry the
     // sub-invert vacuum; without it the field stays floored at the invert.
-    const auto on = runDrawdown(
-        "tpa_dd_signed",
-        overTopModel("FV_PRESSURE_CLOSURE  TPA\n"
-                     "REPORT_SIGNED_HEADS  YES\n", true));
+    const auto on = runDrawdown("tpa_dd_signed", overTopModel("FV_PRESSURE_CLOSURE  TPA\n"
+                                                              "REPORT_SIGNED_HEADS  YES\n",
+                                                              true));
     ASSERT_TRUE(on.ok);
     // Minimum of the APEX node's HEAD series specifically — a global
     // minimum would trivially pick the outfall at elevation 0.
     auto min_out_head = [](const std::string& path) {
         SWMM_Output out = swmm_output_open(path.c_str());
         EXPECT_NE(out, nullptr);
-        if (!out) return 1e9;
+        if (!out)
+            return 1e9;
         const int periods = swmm_output_get_period_count(out);
         const int nn = swmm_output_get_node_count(out);
         double best = 1e9;
         std::vector<float> series(static_cast<std::size_t>(periods), 0.0f);
         for (int n = 0; n < nn; ++n) {
             const char* id = swmm_output_get_node_id(out, n);
-            if (!id || std::string(id) != "JS") continue;
+            if (!id || std::string(id) != "JS")
+                continue;
             // Returns 0 on success (not a count).
-            if (swmm_output_get_node_series(out, n, SWMM_OUT_NODE_HEAD, 0,
-                                            periods - 1, series.data()) != 0)
+            if (swmm_output_get_node_series(out, n, SWMM_OUT_NODE_HEAD, 0, periods - 1,
+                                            series.data()) != 0)
                 continue;
             for (int i = 0; i < periods; ++i)
-                best = std::min(best,
-                                static_cast<double>(
-                                    series[static_cast<std::size_t>(i)]));
+                best = std::min(best, static_cast<double>(series[static_cast<std::size_t>(i)]));
         }
         swmm_output_close(out);
         return best;
@@ -489,55 +535,82 @@ TEST(FvTpa, SignedHeadsReachTheOutFile) {
 
 namespace {
 
-std::string fillingSurgeDeck(const std::string& celerity,
-                             const std::string& extra = "") {
-    return
-        "[OPTIONS]\n"
-        "FLOW_UNITS           LPS\n"
-        "FLOW_ROUTING         FV\n"
-        "LINK_OFFSETS         DEPTH\n"
-        "START_DATE           01/01/2026\n"
-        "START_TIME           00:00:00\n"
-        "END_DATE             01/01/2026\n"
-        "END_TIME             00:02:00\n"
-        "REPORT_STEP          1\n"
-        "ROUTING_STEP         0.01\n"
-        "MIN_SURFAREA         0.05\n"
-        "INERTIAL_DAMPING     NONE\n"
-        "NORMAL_FLOW_LIMITED  NEITHER\n"
-        "FV_CELL_LENGTH       0.04\n"
-        "FV_MIN_CELLS         4\n"
-        "FV_SLOT_CELERITY     " + celerity + "\n"
-        "FV_PRESSURE_CLOSURE  TPA\n"
-        "FV_PRESSURIZED_IMPLICIT NO\n"
-        + extra +
-        "\n[STORAGE]\n"
-        ";;Name  Elev  MaxDepth InitDepth Shape      A1 A2 A0\n"
-        "FB      0.0   0.40     0.073     FUNCTIONAL 0  0  0.03\n"
-        "ST      0.0   1.50     0.073     FUNCTIONAL 0  0  0.005\n"
-        "\n[OUTFALLS]\n;;Name Elev Type Gated\nDN  0.0  FREE NO\n"
-        "\n[WEIRS]\n;;Name From To Type CrestHt Cd Gated EC\n"
-        "OVF     ST    DN TRANSVERSE 1.50 1.84 NO 0\n"
-        "\n[CONDUITS]\n;;Name From To Length N Zin Zout Q0\n"
-        "P1      FB    ST 8.00   0.012 0 0 0\n"
-        "\n[XSECTIONS]\n;;Link Shape Geom1 Geom2 Geom3 Geom4 Barrels\n"
-        "P1      CIRCULAR 0.094 0 0 0 1\n"
-        "OVF     RECT_OPEN 0.10 0.19 0 0\n"
-        "\n[INFLOWS]\n;;Node Constituent Tseries Type Mfactor Sfactor Baseline\n"
-        "FB      FLOW        \"\"      FLOW 1.0     1.0     3.1\n";
+/**
+ * @brief Construct the LPS tank/pipe filling-surge deck using explicit TPA routing.
+ *
+ * Constructs text only; celerity/options are not validated or converted. Initial tank depths are
+ * .073 m and authored tank area/overflow fields remain fixed.
+ *
+ * @param[in] celerity Raw positive FV_SLOT_CELERITY token in m/s.
+ * @param[in] extra Raw additional option lines inserted before STORAGE.
+ * @return Owned two-minute deck with 3.1 L/s inflow,8 m pipe of.094 m diameter, .04 m FV cell
+ *     target, .01 s routing and implicit pressurization disabled.
+ */
+std::string fillingSurgeDeck(const std::string& celerity, const std::string& extra = "") {
+    return "[OPTIONS]\n"
+           "FLOW_UNITS           LPS\n"
+           "FLOW_ROUTING         FV\n"
+           "LINK_OFFSETS         DEPTH\n"
+           "START_DATE           01/01/2026\n"
+           "START_TIME           00:00:00\n"
+           "END_DATE             01/01/2026\n"
+           "END_TIME             00:02:00\n"
+           "REPORT_STEP          1\n"
+           "ROUTING_STEP         0.01\n"
+           "MIN_SURFAREA         0.05\n"
+           "INERTIAL_DAMPING     NONE\n"
+           "NORMAL_FLOW_LIMITED  NEITHER\n"
+           "FV_CELL_LENGTH       0.04\n"
+           "FV_MIN_CELLS         4\n"
+           "FV_SLOT_CELERITY     " +
+           celerity +
+           "\n"
+           "FV_PRESSURE_CLOSURE  TPA\n"
+           "FV_PRESSURIZED_IMPLICIT NO\n" +
+           extra +
+           "\n[STORAGE]\n"
+           ";;Name  Elev  MaxDepth InitDepth Shape      A1 A2 A0\n"
+           "FB      0.0   0.40     0.073     FUNCTIONAL 0  0  0.03\n"
+           "ST      0.0   1.50     0.073     FUNCTIONAL 0  0  0.005\n"
+           "\n[OUTFALLS]\n;;Name Elev Type Gated\nDN  0.0  FREE NO\n"
+           "\n[WEIRS]\n;;Name From To Type CrestHt Cd Gated EC\n"
+           "OVF     ST    DN TRANSVERSE 1.50 1.84 NO 0\n"
+           "\n[CONDUITS]\n;;Name From To Length N Zin Zout Q0\n"
+           "P1      FB    ST 8.00   0.012 0 0 0\n"
+           "\n[XSECTIONS]\n;;Link Shape Geom1 Geom2 Geom3 Geom4 Barrels\n"
+           "P1      CIRCULAR 0.094 0 0 0 1\n"
+           "OVF     RECT_OPEN 0.10 0.19 0 0\n"
+           "\n[INFLOWS]\n;;Node Constituent Tseries Type Mfactor Sfactor Baseline\n"
+           "FB      FLOW        \"\"      FLOW 1.0     1.0     3.1\n";
 }
 
 struct FillingSurgeResult {
-    bool completed = false;   ///< every step succeeded to END_TIME
-    double cont = 1e9;        ///< routing continuity error (%)
-    double max_st = -1e9;     ///< max surge-tank depth seen (m)
+    bool completed = false; ///< every step succeeded to END_TIME
+    double cont = 1e9;      ///< raw native routing continuity error fraction
+    double max_st = -1e9;   ///< max surge-tank depth seen (m)
 };
 
-FillingSurgeResult runFillingSurge(const std::string& base,
-                                   const std::string& deck) {
+/**
+ * @brief Run a filling-surge deck while distinguishing failed steps from completion.
+ *
+ * Open failure records failure and returns defaults after destruction. Init/start/index
+ * expectations are nonfatal; completed is set true before stepping and cleared on nonzero step
+ * status. Getter/end statuses are unchecked, and raw continuity is sampled before end. Destroys the
+ * handle; does not return the step error code.
+ *
+ * @param[in] base Artifact basename beneath outPath, without extension; .inp/.rpt/.out are
+ *     overwritten.
+ * @param[in] deck Complete input text written through an unchecked stream.
+ * @return Owned completed flag, maximum ST depth in metres and raw native routing-continuity
+ *     fraction.
+ */
+FillingSurgeResult runFillingSurge(const std::string& base, const std::string& deck) {
     FillingSurgeResult r;
     const std::string inp = outPath(base + ".inp");
-    { std::ofstream f(inp); f << deck; }
+    {
+        std::ofstream f(inp);
+        f << deck;
+    }
     SWMM_Engine e = swmm_engine_create();
     if (swmm_engine_open(e, inp.c_str(), outPath(base + ".rpt").c_str(),
                          outPath(base + ".out").c_str(), nullptr) != 0) {
@@ -553,7 +626,7 @@ FillingSurgeResult runFillingSurge(const std::string& base,
     r.completed = true;
     do {
         if (swmm_engine_step(e, &elapsed) != 0) {
-            r.completed = false;   // divergence: ERROR 14 class
+            r.completed = false; // divergence: ERROR 14 class
             break;
         }
         double d = 0.0;
@@ -589,12 +662,14 @@ TEST(FvTpa, DivergenceGuardFailsLoudNotSilent) {
     // loudly, the same routing step.
     const std::string deck = fillingSurgeDeck("10000");
     const std::string inp = outPath("tpa_guard_loud.inp");
-    { std::ofstream f(inp); f << deck; }
+    {
+        std::ofstream f(inp);
+        f << deck;
+    }
     SWMM_Engine e = swmm_engine_create();
-    ASSERT_EQ(swmm_engine_open(e, inp.c_str(),
-                               outPath("tpa_guard_loud.rpt").c_str(),
-                               outPath("tpa_guard_loud.out").c_str(),
-                               nullptr), 0)
+    ASSERT_EQ(swmm_engine_open(e, inp.c_str(), outPath("tpa_guard_loud.rpt").c_str(),
+                               outPath("tpa_guard_loud.out").c_str(), nullptr),
+              0)
         << swmm_get_last_error_msg(e);
     ASSERT_EQ(swmm_engine_initialize(e), 0);
     ASSERT_EQ(swmm_engine_start(e, 1), 0);
@@ -603,13 +678,11 @@ TEST(FvTpa, DivergenceGuardFailsLoudNotSilent) {
     do {
         rc = swmm_engine_step(e, &elapsed);
     } while (rc == 0 && elapsed > 0.0);
-    EXPECT_NE(rc, 0)
-        << "Euler at a = 10 000 m/s completed — find the next natural "
-           "divergence for this gate's deck";
+    EXPECT_NE(rc, 0) << "Euler at a = 10 000 m/s completed — find the next natural "
+                        "divergence for this gate's deck";
     if (rc != 0) {
         const std::string msg = swmm_get_last_error_msg(e);
-        EXPECT_NE(msg.find("the FV solution diverged in conduit"),
-                  std::string::npos)
+        EXPECT_NE(msg.find("the FV solution diverged in conduit"), std::string::npos)
             << "run failed but not through the cell-state guard: " << msg;
     }
     swmm_engine_end(e);
@@ -628,11 +701,9 @@ TEST(FvTpa, FillingSurgeSurvivesRegimeTransitions) {
     const auto r = runFillingSurge("tpa_filling_surge", fillingSurgeDeck("25"));
     EXPECT_TRUE(r.completed) << "filling surge diverged at a = 25 m/s";
     if (r.completed) {
-        EXPECT_LT(std::fabs(r.cont), 2.0)
-            << "routing continuity error % = " << r.cont;
-        EXPECT_GT(r.max_st, 0.094)
-            << "surge tank never rose above the pipe crown — the bore never "
-               "arrived and the fixture is not exercising the surge";
+        EXPECT_LT(std::fabs(r.cont), 2.0) << "routing continuity error % = " << r.cont;
+        EXPECT_GT(r.max_st, 0.094) << "surge tank never rose above the pipe crown — the bore never "
+                                      "arrived and the fixture is not exercising the surge";
     }
 }
 
@@ -649,17 +720,13 @@ TEST(FvTpa, HighCelerityFillingCompletes) {
     // Rankine–Hugoniot bore speed instead removes the mode — the deck
     // completes at 0.000 % continuity at a = 150, 300, 600, 1000 and 3000.
     // This is now the positive gate the pin's own text asked for.
-    const auto r =
-        runFillingSurge("tpa_filling_surge_c150", fillingSurgeDeck("150"));
-    EXPECT_TRUE(r.completed)
-        << "high-celerity filling diverged again at a = 150 m/s — the "
-           "slot/free-surface wave-speed bound regressed";
+    const auto r = runFillingSurge("tpa_filling_surge_c150", fillingSurgeDeck("150"));
+    EXPECT_TRUE(r.completed) << "high-celerity filling diverged again at a = 150 m/s — the "
+                                "slot/free-surface wave-speed bound regressed";
     if (r.completed) {
-        EXPECT_LT(std::fabs(r.cont), 2.0)
-            << "routing continuity error % = " << r.cont;
-        EXPECT_GT(r.max_st, 0.094)
-            << "surge tank never rose above the pipe crown — the bore never "
-               "arrived and the fixture is not exercising the surge";
+        EXPECT_LT(std::fabs(r.cont), 2.0) << "routing continuity error % = " << r.cont;
+        EXPECT_GT(r.max_st, 0.094) << "surge tank never rose above the pipe crown — the bore never "
+                                      "arrived and the fixture is not exercising the surge";
     }
 }
 
@@ -685,13 +752,11 @@ TEST(FvTpa, Rk2CompletesWhereEulerFillingPinDiverges) {
     // gone with the slot/free-surface wave-speed bound; both integrators now
     // complete). If THIS fails, either Heun regressed or the dt floor crept
     // back up.
-    const auto rk2 = runFillingSurge(
-        "tpa_filling_surge_c150_rk2",
-        fillingSurgeDeck("150", "FV_TIME_INTEGRATION  RK2\n"));
+    const auto rk2 = runFillingSurge("tpa_filling_surge_c150_rk2",
+                                     fillingSurgeDeck("150", "FV_TIME_INTEGRATION  RK2\n"));
     EXPECT_TRUE(rk2.completed) << "RK2 diverged on the filling deck";
     if (rk2.completed) {
-        EXPECT_LT(std::fabs(rk2.cont), 2.0)
-            << "routing continuity error % = " << rk2.cont;
+        EXPECT_LT(std::fabs(rk2.cont), 2.0) << "routing continuity error % = " << rk2.cont;
         EXPECT_GT(rk2.max_st, 0.094)
             << "surge tank never rose above the pipe crown — the bore never "
                "arrived and the fixture is not exercising the surge";
@@ -700,15 +765,12 @@ TEST(FvTpa, Rk2CompletesWhereEulerFillingPinDiverges) {
     // Positive control at the paper's own a = 25 m/s (never clamped: stable
     // dt 1.4e-3 s > the old floor — which is exactly why a = 25 always
     // worked and a = 150 didn't; the "celerity threshold" WAS the clamp).
-    const auto rk2_25 = runFillingSurge(
-        "tpa_filling_surge_c25_rk2",
-        fillingSurgeDeck("25", "FV_TIME_INTEGRATION  RK2\n"));
-    EXPECT_TRUE(rk2_25.completed)
-        << "RK2 diverged at a = 25 where Euler completes — a takeSubstep/"
-           "Heun regression";
+    const auto rk2_25 = runFillingSurge("tpa_filling_surge_c25_rk2",
+                                        fillingSurgeDeck("25", "FV_TIME_INTEGRATION  RK2\n"));
+    EXPECT_TRUE(rk2_25.completed) << "RK2 diverged at a = 25 where Euler completes — a takeSubstep/"
+                                     "Heun regression";
     if (rk2_25.completed) {
-        EXPECT_LT(std::fabs(rk2_25.cont), 2.0)
-            << "routing continuity error % = " << rk2_25.cont;
+        EXPECT_LT(std::fabs(rk2_25.cont), 2.0) << "routing continuity error % = " << rk2_25.cont;
         EXPECT_GT(rk2_25.max_st, 0.094);
     }
 }

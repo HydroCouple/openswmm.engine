@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file InitialQualitySeeds.hpp
- * @brief [INITIAL_QUALITY] reserved-species (__WATER_AGE__/__TEMPERATURE__)
+ * @file      InitialQualitySeeds.hpp
+ * @brief     [INITIAL_QUALITY] reserved-species (__WATER_AGE__/__TEMPERATURE__)
  *        helpers for the per-engine seed sites (E-A3).
  *
  * @details Precedence (D-IQ7): hotstart > [INITIAL_QUALITY] per-element >
@@ -32,9 +32,9 @@
  *
  * @ingroup engine_transport
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_INITIAL_QUALITY_SEEDS_HPP
@@ -46,56 +46,87 @@
 namespace openswmm::transport {
 
 /**
- * @brief Per-element initial age (SECONDS) for one node/link, falling back
- *        to @p fallback (normally the INITIAL_STATE global) when no
- *        [INITIAL_QUALITY] row targets the element. Later rows win.
+ * @brief Per-element initial age (SECONDS) for one node/link, falling back to @p fallback
+ * (normally the INITIAL_STATE global) when no [INITIAL_QUALITY] row targets the element. Later
+ * rows win.
+ *
+ * @param[in] ctx Stable resolved initial_quality parallel arrays, each covering count().
+ * @param[in] is_link True for a link seed, false for node.
+ * @param[in] idx Resolved zero-based element index to match; not dereferenced or bounds-checked
+ * here.
+ * @param[in] fallback Already-internal default age s, retained when no matching row.
+ * @return Last matching age row value*3600 (authored hours to s), otherwise fallback. Does not
+ * check hotstart/finite/sign itself; callers determine seed precedence. Read-only,
+ * allocation-free.
  */
-inline double initialAgeSecondsFor(const SimulationContext& ctx, bool is_link,
-                                   int idx, double fallback) {
+inline double initialAgeSecondsFor(const SimulationContext& ctx, bool is_link, int idx,
+                                   double fallback) {
     double v = fallback;
     const auto& iq = ctx.initial_quality;
     for (int r = 0; r < iq.count(); ++r) {
         const auto ur = static_cast<std::size_t>(r);
-        if (iq.kind[ur] != InitialQualityData::kKindWaterAge) continue;
-        if ((iq.is_link[ur] != 0) != is_link) continue;
-        if (iq.elem_idx[ur] != idx) continue;
-        v = iq.value[ur] * 3600.0;   // hours -> seconds
+        if (iq.kind[ur] != InitialQualityData::kKindWaterAge)
+            continue;
+        if ((iq.is_link[ur] != 0) != is_link)
+            continue;
+        if (iq.elem_idx[ur] != idx)
+            continue;
+        v = iq.value[ur] * 3600.0; // hours -> seconds
     }
     return v;
 }
 
 /**
- * @brief Per-element initial temperature (degC) for one node/link, falling
- *        back to @p fallback (normally the INITIAL_STATE global).
+ * @brief Per-element initial temperature (degC) for one node/link, falling back to @p fallback
+ * (normally the INITIAL_STATE global).
+ *
+ * @param[in] ctx Stable resolved initial_quality arrays covering count().
+ * @param[in] is_link True for link, false node.
+ * @param[in] idx Zero-based resolved element index used only for equality.
+ * @param[in] fallback Default Celsius temperature.
+ * @return Last matching temperature row in degC or fallback; no finite/sign/hotstart check.
+ * @note Read-only/no allocation/physical/clock change; caller applies at prepared seed phase.
  */
-inline double initialTempFor(const SimulationContext& ctx, bool is_link,
-                             int idx, double fallback) {
+inline double initialTempFor(const SimulationContext& ctx, bool is_link, int idx, double fallback) {
     double v = fallback;
     const auto& iq = ctx.initial_quality;
     for (int r = 0; r < iq.count(); ++r) {
         const auto ur = static_cast<std::size_t>(r);
-        if (iq.kind[ur] != InitialQualityData::kKindTemperature) continue;
-        if ((iq.is_link[ur] != 0) != is_link) continue;
-        if (iq.elem_idx[ur] != idx) continue;
+        if (iq.kind[ur] != InitialQualityData::kKindTemperature)
+            continue;
+        if ((iq.is_link[ur] != 0) != is_link)
+            continue;
+        if (iq.elem_idx[ur] != idx)
+            continue;
         v = iq.value[ur];
     }
     return v;
 }
 
 /**
- * @brief Apply __WATER_AGE__ rows onto water_age_state.node_age/link_age
- *        (hours -> seconds). No-op when a hotstart state is loaded (D-IQ7)
- *        or the arrays are unsized.
+ * @brief Apply __WATER_AGE__ rows onto water_age_state.node_age/link_age (hours -> seconds).
+ * No-op when a hotstart state is loaded (D-IQ7) or the arrays are unsized.
+ *
+ * @param[in,out] ctx Stable resolved initial-quality rows and already-sized native node/link age
+ * arrays in s. Matching in-range age targets receive authored hours*3600 in row order, last
+ * wins.
+ * @note Hotstart-loaded age is preserved. Negative/out-of-array targets ignored, unrelated kinds
+ * skipped; no resize/finite/sign validation. Call after owner's final resize/initial fallback
+ * seed, before evolution; repeated call reapplies seeds, not an incremental age operator.
+ * Exclusive state, no allocation/water/engine-clock change.
  */
 inline void applyInitialAgeOverrides(SimulationContext& ctx) {
     auto& ws = ctx.water_age_state;
-    if (ws.hotstart_loaded) return;
+    if (ws.hotstart_loaded)
+        return;
     const auto& iq = ctx.initial_quality;
     for (int r = 0; r < iq.count(); ++r) {
         const auto ur = static_cast<std::size_t>(r);
-        if (iq.kind[ur] != InitialQualityData::kKindWaterAge) continue;
+        if (iq.kind[ur] != InitialQualityData::kKindWaterAge)
+            continue;
         const int ei = iq.elem_idx[ur];
-        if (ei < 0) continue;
+        if (ei < 0)
+            continue;
         auto& arr = iq.is_link[ur] ? ws.link_age : ws.node_age;
         if (static_cast<std::size_t>(ei) < arr.size())
             arr[static_cast<std::size_t>(ei)] = iq.value[ur] * 3600.0;
@@ -103,17 +134,26 @@ inline void applyInitialAgeOverrides(SimulationContext& ctx) {
 }
 
 /**
- * @brief Apply __TEMPERATURE__ rows onto heat_state.node_temp/link_temp
- *        (degC). No-op on unsized arrays.
+ * @brief Apply __TEMPERATURE__ rows onto heat_state.node_temp/link_temp (degC). No-op on unsized
+ * arrays.
+ *
+ * @param[in,out] ctx Stable resolved initial-quality rows and already-sized native node/link
+ * degC arrays, overwritten at matching valid targets in row order (last wins).
+ * @note Skips negative/out-of-array indices and other kinds; no hotstart guard, resize or finite
+ * validation. Caller enforces temperature hotstart precedence and invokes only at correct seed
+ * phase, after final state resize. Repeated call reapplies initial values; no water/clock
+ * mutation, serial use.
  */
 inline void applyInitialTempOverrides(SimulationContext& ctx) {
     auto& hs = ctx.heat_state;
     const auto& iq = ctx.initial_quality;
     for (int r = 0; r < iq.count(); ++r) {
         const auto ur = static_cast<std::size_t>(r);
-        if (iq.kind[ur] != InitialQualityData::kKindTemperature) continue;
+        if (iq.kind[ur] != InitialQualityData::kKindTemperature)
+            continue;
         const int ei = iq.elem_idx[ur];
-        if (ei < 0) continue;
+        if (ei < 0)
+            continue;
         auto& arr = iq.is_link[ur] ? hs.link_temp : hs.node_temp;
         if (static_cast<std::size_t>(ei) < arr.size())
             arr[static_cast<std::size_t>(ei)] = iq.value[ur];

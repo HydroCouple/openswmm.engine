@@ -15,15 +15,15 @@
 // limitations under the License.
 
 /**
- * @file IOThread.cpp
- * @brief IOThread — producer/consumer output writer implementation.
+ * @file      IOThread.cpp
+ * @brief     IOThread — producer/consumer output writer implementation.
  *
  * @see IOThread.hpp
  * @ingroup engine_io
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "IOThread.hpp"
@@ -38,9 +38,7 @@ namespace openswmm {
 // ============================================================================
 
 IOThread::IOThread(PluginFactory& factory, std::size_t capacity)
-    : factory_(factory)
-    , capacity_(capacity)
-{}
+    : factory_(factory), capacity_(capacity) {}
 
 IOThread::~IOThread() {
     stop();
@@ -52,7 +50,8 @@ void IOThread::start() {
 }
 
 void IOThread::post(SimulationSnapshot snap) {
-    if (stop_flag_.load(std::memory_order_relaxed)) return;
+    if (stop_flag_.load(std::memory_order_relaxed))
+        return;
     WriteTask task(std::move(snap), next_sequence_++);
     const int rc = factory_.update_all(task.snapshot);
     if (rc != 0) {
@@ -68,7 +67,9 @@ void IOThread::stop() {
 
 void IOThread::run() {}
 
-int IOThread::flush() const { return last_error(); }
+int IOThread::flush() const {
+    return last_error();
+}
 
 #else
 
@@ -77,9 +78,7 @@ int IOThread::flush() const { return last_error(); }
 // ============================================================================
 
 IOThread::IOThread(PluginFactory& factory, std::size_t capacity)
-    : factory_(factory)
-    , capacity_(capacity)
-{}
+    : factory_(factory), capacity_(capacity) {}
 
 IOThread::~IOThread() {
     stop();
@@ -90,7 +89,8 @@ IOThread::~IOThread() {
 // ============================================================================
 
 void IOThread::start() {
-    if (running_.load(std::memory_order_relaxed)) return;
+    if (running_.load(std::memory_order_relaxed))
+        return;
     stop_flag_.store(false, std::memory_order_relaxed);
     thread_ = std::thread(&IOThread::run, this);
 }
@@ -104,11 +104,11 @@ void IOThread::post(SimulationSnapshot snap) {
         std::unique_lock<std::mutex> lock(mutex_);
         // Block if the queue is full (back-pressure on the sim thread)
         cv_not_full_.wait(lock, [this] {
-            return queue_.size() < capacity_ ||
-                   stop_flag_.load(std::memory_order_relaxed);
+            return queue_.size() < capacity_ || stop_flag_.load(std::memory_order_relaxed);
         });
 
-        if (stop_flag_.load(std::memory_order_relaxed)) return;
+        if (stop_flag_.load(std::memory_order_relaxed))
+            return;
 
         queue_.emplace(std::move(snap), next_sequence_++);
     }
@@ -152,12 +152,12 @@ void IOThread::run() {
         {
             std::unique_lock<std::mutex> lock(mutex_);
             cv_not_empty_.wait(lock, [this] {
-                return !queue_.empty() ||
-                       stop_flag_.load(std::memory_order_relaxed);
+                return !queue_.empty() || stop_flag_.load(std::memory_order_relaxed);
             });
 
             // If stopped and queue is empty, exit
-            if (queue_.empty()) break;
+            if (queue_.empty())
+                break;
 
             task = std::move(queue_.front());
             queue_.pop();

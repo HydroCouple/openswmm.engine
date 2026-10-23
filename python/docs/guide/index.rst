@@ -108,6 +108,7 @@ balance, accumulated statistics.
    :maxdepth: 1
 
    output_reader
+   results
    trace
    plotting
    hotstart
@@ -131,8 +132,8 @@ configure complex hydraulic infrastructure; spatial / CRS handling.
 2-D surface routing & data exchange
 ===================================
 
-Overlay a triangular mesh on the 1-D network and route the surface with a
-explicit finite-volume solver; persist results and observed data to a GeoPackage.
+Overlay a triangle/quad mesh on the 1-D network and route the surface with an
+explicit finite-volume solver; read saved HDF5 results through :doc:`results`.
 
 .. toctree::
    :maxdepth: 1

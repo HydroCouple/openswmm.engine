@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file openswmm_subcatchments.h
- * @brief OpenSWMM Engine — Subcatchment C API.
+ * @file      openswmm_subcatchments.h
+ * @brief     OpenSWMM Engine — Subcatchment C API.
  *
  * @details Subcatchment add (BUILDING state), property setters, state get,
  *          rainfall forcing, bulk access, quality.
@@ -24,9 +24,9 @@
  * @ingroup engine_api
  * @see openswmm_engine.h
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_SUBCATCHMENTS_H
@@ -44,24 +44,34 @@ extern "C" {
 
 /**
  * @brief Get the total number of subcatchments in the model.
- * @param engine  Engine handle.
+ * @param[in] engine Engine handle.
  * @returns Number of subcatchments, or -1 on error.
+ *
+ *
+ * @note Null engine returns -1.
  */
 SWMM_ENGINE_API int swmm_subcatch_count(SWMM_Engine engine);
 
 /**
  * @brief Look up a subcatchment's zero-based index by its string identifier.
- * @param engine  Engine handle.
- * @param id      Null-terminated subcatchment identifier.
+ * @param[in] engine Engine handle.
+ * @param[in] id Null-terminated subcatchment identifier.
  * @returns Zero-based index, or -1 if not found.
+ *
+ *
+ * @note Case-insensitive name lookup; null engine/name or no match returns -1.
  */
 SWMM_ENGINE_API int swmm_subcatch_index(SWMM_Engine engine, const char* id);
 
 /**
  * @brief Get the string identifier of a subcatchment by index.
- * @param engine  Engine handle.
- * @param idx     Zero-based subcatchment index.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based subcatchment index.
  * @returns Null-terminated string owned by the engine, or NULL on error.
+ *
+ *
+ * @note Returned text borrows engine storage; do not free. Copy before a registry/table edit or
+ *     engine close/destruction. Null engine/invalid index returns NULL.
  */
 SWMM_ENGINE_API const char* swmm_subcatch_id(SWMM_Engine engine, int idx);
 
@@ -77,10 +87,15 @@ SWMM_ENGINE_API const char* swmm_subcatch_id(SWMM_Engine engine, int idx);
  *          use the property setters to configure area, slope, imperviousness,
  *          etc.
  *
- * @param engine  Engine handle.
- * @param id      Unique null-terminated identifier for the new subcatchment.
+ * @param[in] engine Engine handle.
+ * @param[in] id Unique null-terminated identifier for the new subcatchment.
  * @returns SWMM_OK on success, SWMM_ERR_LIFECYCLE if not in an editable
  *          state, or another error code.
+ *
+ *
+ * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE. Copies ID and rejects case-insensitive duplicates; NULL is refused, but
+ *     this wrapper has no explicit empty-ID check.
  */
 SWMM_ENGINE_API int swmm_subcatch_add(SWMM_Engine engine, const char* id);
 
@@ -90,130 +105,220 @@ SWMM_ENGINE_API int swmm_subcatch_add(SWMM_Engine engine, const char* id);
 
 /**
  * @brief Set the outlet node that receives runoff from this subcatchment.
- * @param engine    Engine handle.
- * @param idx       Zero-based subcatchment index.
- * @param node_idx  Zero-based node index of the receiving node.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based subcatchment index.
+ * @param[in] node_idx Zero-based node index of the receiving node.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE. A failed subcatchment/pollutant index check returns SWMM_ERR_BADINDEX.
+ *     Only the owning subcatchment index is checked; the supplied target reference is stored
+ *     without target range, cycle or cross-field validation.
  */
 SWMM_ENGINE_API int swmm_subcatch_set_outlet(SWMM_Engine engine, int idx, int node_idx);
 
 /**
  * @brief Set the subcatchment area.
- * @param engine  Engine handle.
- * @param idx     Zero-based subcatchment index.
- * @param area    Area in project area units (acres or hectares).
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based subcatchment index.
+ * @param[in] area Area in project area units (acres or hectares).
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE. A failed subcatchment/pollutant index check returns SWMM_ERR_BADINDEX. No
+ *     independent finite/range validation of the numeric inputs is performed here.
  */
 SWMM_ENGINE_API int swmm_subcatch_set_area(SWMM_Engine engine, int idx, double area);
 
 /**
  * @brief Set the characteristic overland flow width.
- * @param engine  Engine handle.
- * @param idx     Zero-based subcatchment index.
- * @param width   Width in project length units.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based subcatchment index.
+ * @param[in] width Width in project length units.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE. A failed subcatchment/pollutant index check returns SWMM_ERR_BADINDEX. No
+ *     independent finite/range validation of the numeric inputs is performed here.
  */
 SWMM_ENGINE_API int swmm_subcatch_set_width(SWMM_Engine engine, int idx, double width);
 
 /**
  * @brief Set the average surface slope.
- * @param engine  Engine handle.
- * @param idx     Zero-based subcatchment index.
- * @param slope   Slope as a percentage (e.g., 2.0 = 2%).
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based subcatchment index.
+ * @param[in] slope Slope as a percentage (e.g., 2.0 = 2%).
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE. A failed subcatchment/pollutant index check returns SWMM_ERR_BADINDEX. No
+ *     independent finite/range validation of the numeric inputs is performed here.
  */
 SWMM_ENGINE_API int swmm_subcatch_set_slope(SWMM_Engine engine, int idx, double slope);
 
 /**
  * @brief Set the percentage of impervious area.
- * @param engine  Engine handle.
- * @param idx     Zero-based subcatchment index.
- * @param pct     Imperviousness as a percentage (0–100).
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based subcatchment index.
+ * @param[in] pct Imperviousness as a percentage (0–100).
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE. A failed subcatchment/pollutant index check returns SWMM_ERR_BADINDEX. No
+ *     independent finite/range validation of the numeric inputs is performed here.
  */
 SWMM_ENGINE_API int swmm_subcatch_set_imperv_pct(SWMM_Engine engine, int idx, double pct);
 
 /**
  * @brief Set the percentage of the impervious area having no depression storage.
  * @details The [SUBAREAS] @c PctZero column; legacy @c Subcatch[i].fracImperv2.
- * @param engine  Engine handle.
- * @param idx     Zero-based subcatchment index.
- * @param pct     Zero-depression-storage impervious area as a percentage
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based subcatchment index.
+ * @param[in] pct Zero-depression-storage impervious area as a percentage
  *                (0–100) of the impervious area.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE. A failed subcatchment/pollutant index check returns SWMM_ERR_BADINDEX. No
+ *     independent finite/range validation of the numeric inputs is performed here.
  */
 SWMM_ENGINE_API int swmm_subcatch_set_zero_imperv_pct(SWMM_Engine engine, int idx, double pct);
 
 /**
  * @brief Set Manning's n for the impervious area.
- * @param engine  Engine handle.
- * @param idx     Zero-based subcatchment index.
- * @param n       Manning's roughness coefficient.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based subcatchment index.
+ * @param[in] n Manning's roughness coefficient.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE. A failed subcatchment/pollutant index check returns SWMM_ERR_BADINDEX. No
+ *     independent finite/range validation of the numeric inputs is performed here.
  */
 SWMM_ENGINE_API int swmm_subcatch_set_n_imperv(SWMM_Engine engine, int idx, double n);
 
 /**
  * @brief Set Manning's n for the pervious area.
- * @param engine  Engine handle.
- * @param idx     Zero-based subcatchment index.
- * @param n       Manning's roughness coefficient.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based subcatchment index.
+ * @param[in] n Manning's roughness coefficient.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE. A failed subcatchment/pollutant index check returns SWMM_ERR_BADINDEX. No
+ *     independent finite/range validation of the numeric inputs is performed here.
  */
 SWMM_ENGINE_API int swmm_subcatch_set_n_perv(SWMM_Engine engine, int idx, double n);
 
 /**
  * @brief Set the depression storage depth for the impervious area.
- * @param engine  Engine handle.
- * @param idx     Zero-based subcatchment index.
- * @param ds      Depression storage in project length units.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based subcatchment index.
+ * @param[in] ds Depression storage in project length units.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE. A failed subcatchment/pollutant index check returns SWMM_ERR_BADINDEX. No
+ *     independent finite/range validation of the numeric inputs is performed here.
  */
 SWMM_ENGINE_API int swmm_subcatch_set_ds_imperv(SWMM_Engine engine, int idx, double ds);
 
 /**
  * @brief Set the depression storage depth for the pervious area.
- * @param engine  Engine handle.
- * @param idx     Zero-based subcatchment index.
- * @param ds      Depression storage in project length units.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based subcatchment index.
+ * @param[in] ds Depression storage in project length units.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE. A failed subcatchment/pollutant index check returns SWMM_ERR_BADINDEX. No
+ *     independent finite/range validation of the numeric inputs is performed here.
  */
 SWMM_ENGINE_API int swmm_subcatch_set_ds_perv(SWMM_Engine engine, int idx, double ds);
 
 /**
  * @brief Assign a rain gage to a subcatchment.
- * @param engine    Engine handle.
- * @param idx       Zero-based subcatchment index.
- * @param gage_idx  Zero-based rain gage index.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based subcatchment index.
+ * @param[in] gage_idx Zero-based rain gage index.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE. A failed subcatchment/pollutant index check returns SWMM_ERR_BADINDEX.
+ *     Only the owning subcatchment index is checked; the supplied target reference is stored
+ *     without target range, cycle or cross-field validation.
  */
 SWMM_ENGINE_API int swmm_subcatch_set_gage(SWMM_Engine engine, int idx, int gage_idx);
 
 /* --- Infiltration parameters (BUILDING or OPENED) --- */
 
-/** @brief Set Horton infiltration parameters. */
-SWMM_ENGINE_API int swmm_subcatch_set_infil_horton(SWMM_Engine engine, int idx,
-                                                     double f0, double fmin,
-                                                     double decay, double dry_time);
+/**
+ * @brief Select ordinary Horton infiltration and store its input parameters.
+ *
+ * Requires BUILDING/OPENED. Sets model=0 and parameter slots 1..4 without finite/range checks;
+ * leaves the fifth slot unchanged. Selecting a modified model later requires
+ * swmm_subcatch_set_infil_model().
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] idx Zero-based existing subcatchment index.
+ * @param[in] f0 Initial maximum capacity, inches/hour or mm/hour.
+ * @param[in] fmin Minimum capacity, inches/hour or mm/hour.
+ * @param[in] decay Exponential capacity decay constant, per hour.
+ * @param[in] dry_time Drying/regeneration time, days.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments. SWMM_ERR_LIFECYCLE outside
+ *     BUILDING/OPENED.
+ */
+SWMM_ENGINE_API int swmm_subcatch_set_infil_horton(SWMM_Engine engine, int idx, double f0,
+                                                   double fmin, double decay, double dry_time);
 
-/** @brief Set Green-Ampt infiltration parameters. */
-SWMM_ENGINE_API int swmm_subcatch_set_infil_green_ampt(SWMM_Engine engine, int idx,
-                                                         double suction, double conductivity,
-                                                         double initial_deficit);
+/**
+ * @brief Select ordinary Green-Ampt infiltration and store input parameters.
+ *
+ * Requires BUILDING/OPENED. Sets model=2 and slots 1..3 without finite/range checks; later
+ * parameter slots remain unchanged.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] idx Zero-based existing subcatchment index.
+ * @param[in] suction Wetting-front suction head, inches/mm.
+ * @param[in] conductivity Saturated hydraulic conductivity, inches/hour or mm/hour.
+ * @param[in] initial_deficit Initial volumetric soil-moisture deficit fraction.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments. SWMM_ERR_LIFECYCLE outside
+ *     BUILDING/OPENED.
+ */
+SWMM_ENGINE_API int swmm_subcatch_set_infil_green_ampt(SWMM_Engine engine, int idx, double suction,
+                                                       double conductivity, double initial_deficit);
 
 /**
  * @brief Set Curve Number infiltration parameters.
- * @param engine       Engine handle.
- * @param idx          Zero-based subcatchment index.
- * @param cn           SCS curve number (clamped to 10–99 by the runoff solver).
- * @param drying_time  Days for a fully saturated soil to dry, matching the
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based subcatchment index.
+ * @param[in] cn SCS curve number (clamped to 10–99 by the runoff solver).
+ * @param[in] drying_time Days for a fully saturated soil to dry, matching the
  *                     third [INFILTRATION] column and legacy
  *                     @c curvenum_setParams p[2]. Drives the regeneration
  *                     constant; a value <= 0 disables regeneration.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE. A failed subcatchment/pollutant index check returns SWMM_ERR_BADINDEX. No
+ *     independent finite/range validation of the numeric inputs is performed here.
  */
-SWMM_ENGINE_API int swmm_subcatch_set_infil_curve_number(SWMM_Engine engine, int idx,
-                                                           double cn, double drying_time);
+SWMM_ENGINE_API int swmm_subcatch_set_infil_curve_number(SWMM_Engine engine, int idx, double cn,
+                                                         double drying_time);
 
 /**
  * @brief Set ONLY the infiltration model code for a subcatchment.
@@ -223,10 +328,14 @@ SWMM_ENGINE_API int swmm_subcatch_set_infil_curve_number(SWMM_Engine engine, int
  *          overloaded, so after switching the model code callers should set
  *          the matching parameters via swmm_subcatch_set_infil_horton /
  *          _green_ampt / _curve_number.
- * @param engine  Engine handle.
- * @param idx     Zero-based subcatchment index.
- * @param model   Infiltration model code (0..4).
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based subcatchment index.
+ * @param[in] model Infiltration model code (0..4).
  * @returns SWMM_OK, or SWMM_ERR_BADPARAM if model is out of range.
+ *
+ *
+ * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE. A failed subcatchment/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_subcatch_set_infil_model(SWMM_Engine engine, int idx, int model);
 
@@ -236,101 +345,145 @@ SWMM_ENGINE_API int swmm_subcatch_set_infil_model(SWMM_Engine engine, int idx, i
 
 /**
  * @brief Get the subcatchment area.
- * @param engine     Engine handle.
- * @param idx        Zero-based subcatchment index.
- * @param[out] area  Receives the area in project area units.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based subcatchment index.
+ * @param[out] area Receives the area in project area units.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note area may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
+ *     failed subcatchment/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_subcatch_get_area(SWMM_Engine engine, int idx, double* area);
 
 /**
  * @brief Get the percentage of impervious area.
- * @param engine    Engine handle.
- * @param idx       Zero-based subcatchment index.
- * @param[out] pct  Receives the imperviousness percentage (0–100).
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based subcatchment index.
+ * @param[out] pct Receives the imperviousness percentage (0–100).
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note pct may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A failed
+ *     subcatchment/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_subcatch_get_imperv_pct(SWMM_Engine engine, int idx, double* pct);
 
 /**
  * @brief Get the percentage of the impervious area having no depression storage.
- * @param engine    Engine handle.
- * @param idx       Zero-based subcatchment index.
- * @param[out] pct  Receives the zero-depression-storage percentage (0–100).
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based subcatchment index.
+ * @param[out] pct Receives the zero-depression-storage percentage (0–100).
  * @returns SWMM_OK on success, or an error code.
  * @see swmm_subcatch_set_zero_imperv_pct
+ *
+ *
+ * @note pct may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A failed
+ *     subcatchment/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_subcatch_get_zero_imperv_pct(SWMM_Engine engine, int idx, double* pct);
 
 /**
  * @brief Get the outlet node index for a subcatchment.
- * @param engine         Engine handle.
- * @param idx            Zero-based subcatchment index.
- * @param[out] node_idx  Receives the outlet node index.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based subcatchment index.
+ * @param[out] node_idx Receives the outlet node index.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note node_idx may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
+ *     failed subcatchment/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_subcatch_get_outlet(SWMM_Engine engine, int idx, int* node_idx);
 
 /**
  * @brief Get the characteristic overland flow width.
- * @param engine  Engine handle.
- * @param idx     Zero-based subcatchment index.
- * @param[out] w  Receives the width in project length units.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based subcatchment index.
+ * @param[out] w Receives the width in project length units.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note w may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A failed
+ *     subcatchment/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_subcatch_get_width(SWMM_Engine engine, int idx, double* w);
 
 /**
  * @brief Get the average surface slope.
- * @param engine  Engine handle.
- * @param idx     Zero-based subcatchment index.
- * @param[out] s  Receives the slope percentage.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based subcatchment index.
+ * @param[out] s Receives the slope percentage.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note s may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A failed
+ *     subcatchment/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_subcatch_get_slope(SWMM_Engine engine, int idx, double* s);
 
 /**
  * @brief Get Manning's n for the impervious area.
- * @param engine  Engine handle.
- * @param idx     Zero-based subcatchment index.
- * @param[out] n  Receives Manning's n.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based subcatchment index.
+ * @param[out] n Receives Manning's n.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note n may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A failed
+ *     subcatchment/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_subcatch_get_n_imperv(SWMM_Engine engine, int idx, double* n);
 
 /**
  * @brief Get Manning's n for the pervious area.
- * @param engine  Engine handle.
- * @param idx     Zero-based subcatchment index.
- * @param[out] n  Receives Manning's n.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based subcatchment index.
+ * @param[out] n Receives Manning's n.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note n may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A failed
+ *     subcatchment/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_subcatch_get_n_perv(SWMM_Engine engine, int idx, double* n);
 
 /**
  * @brief Get the depression storage depth for the impervious area.
- * @param engine   Engine handle.
- * @param idx      Zero-based subcatchment index.
- * @param[out] ds  Receives the depression storage depth.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based subcatchment index.
+ * @param[out] ds Receives the depression storage depth.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note ds may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A failed
+ *     subcatchment/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_subcatch_get_ds_imperv(SWMM_Engine engine, int idx, double* ds);
 
 /**
  * @brief Get the depression storage depth for the pervious area.
- * @param engine   Engine handle.
- * @param idx      Zero-based subcatchment index.
- * @param[out] ds  Receives the depression storage depth.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based subcatchment index.
+ * @param[out] ds Receives the depression storage depth.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note ds may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A failed
+ *     subcatchment/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_subcatch_get_ds_perv(SWMM_Engine engine, int idx, double* ds);
 
 /**
  * @brief Get the rain gage index assigned to a subcatchment.
- * @param engine         Engine handle.
- * @param idx            Zero-based subcatchment index.
- * @param[out] gage_idx  Receives the gage index.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based subcatchment index.
+ * @param[out] gage_idx Receives the gage index.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note gage_idx may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
+ *     failed subcatchment/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_subcatch_get_gage(SWMM_Engine engine, int idx, int* gage_idx);
 
@@ -341,19 +494,29 @@ SWMM_ENGINE_API int swmm_subcatch_get_gage(SWMM_Engine engine, int idx, int* gag
  *          directly to a node, use this function. Mutually exclusive with
  *          swmm_subcatch_set_outlet().
  *
- * @param engine  Engine handle.
- * @param idx     Zero-based subcatchment index.
- * @param sc_idx  Zero-based index of the receiving subcatchment.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based subcatchment index.
+ * @param[in] sc_idx Zero-based index of the receiving subcatchment.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE. A failed subcatchment/pollutant index check returns SWMM_ERR_BADINDEX.
+ *     Only the owning subcatchment index is checked; the supplied target reference is stored
+ *     without target range, cycle or cross-field validation.
  */
 SWMM_ENGINE_API int swmm_subcatch_set_outlet_subcatch(SWMM_Engine engine, int idx, int sc_idx);
 
 /**
  * @brief Get the downstream subcatchment index (for cascading outlets).
- * @param engine       Engine handle.
- * @param idx          Zero-based subcatchment index.
- * @param[out] sc_idx  Receives the downstream subcatchment index, or -1 if none.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based subcatchment index.
+ * @param[out] sc_idx Receives the downstream subcatchment index, or -1 if none.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note sc_idx may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
+ *     failed subcatchment/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_subcatch_get_outlet_subcatch(SWMM_Engine engine, int idx, int* sc_idx);
 
@@ -367,51 +530,73 @@ SWMM_ENGINE_API int swmm_subcatch_get_outlet_subcatch(SWMM_Engine engine, int id
  * @details Returns an integer code: 0=HORTON, 1=MOD_HORTON, 2=GREEN_AMPT,
  *          3=MOD_GREEN_AMPT, 4=CURVE_NUMBER.
  *
- * @param engine      Engine handle.
- * @param idx         Zero-based subcatchment index.
- * @param[out] model  Receives the infiltration model code.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based subcatchment index.
+ * @param[out] model Receives the infiltration model code.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note model may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
+ *     failed subcatchment/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_subcatch_get_infil_model(SWMM_Engine engine, int idx, int* model);
 
 /**
  * @brief Get Horton infiltration parameters for a subcatchment.
- * @param engine          Engine handle.
- * @param idx             Zero-based subcatchment index.
- * @param[out] f0         Receives the maximum infiltration rate.
- * @param[out] fmin       Receives the minimum infiltration rate.
- * @param[out] decay      Receives the decay constant (1/hr).
- * @param[out] dry_time   Receives the time to fully dry (hours).
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based subcatchment index.
+ * @param[out] f0 Receives the maximum infiltration rate.
+ * @param[out] fmin Receives the minimum infiltration rate.
+ * @param[out] decay Receives the decay constant (1/hr).
+ * @param[out] dry_time Receives the time to fully dry (hours).
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note f0 may be NULL to suppress that output. fmin may be NULL to suppress that output. decay may
+ *     be NULL to suppress that output. dry_time may be NULL to suppress that output. A null engine
+ *     returns SWMM_ERR_BADHANDLE. A failed subcatchment/pollutant index check returns
+ *     SWMM_ERR_BADINDEX. Reads the overloaded input slots without checking the active infiltration
+ *     model; select the getter matching swmm_subcatch_get_infil_model().
  */
-SWMM_ENGINE_API int swmm_subcatch_get_infil_horton(SWMM_Engine engine, int idx,
-                                                          double* f0, double* fmin,
-                                                          double* decay, double* dry_time);
+SWMM_ENGINE_API int swmm_subcatch_get_infil_horton(SWMM_Engine engine, int idx, double* f0,
+                                                   double* fmin, double* decay, double* dry_time);
 
 /**
  * @brief Get Green–Ampt infiltration parameters for a subcatchment.
- * @param engine              Engine handle.
- * @param idx                 Zero-based subcatchment index.
- * @param[out] suction        Receives the soil capillary suction head.
- * @param[out] conductivity   Receives the saturated hydraulic conductivity.
- * @param[out] deficit        Receives the initial moisture deficit (fraction).
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based subcatchment index.
+ * @param[out] suction Receives the soil capillary suction head.
+ * @param[out] conductivity Receives the saturated hydraulic conductivity.
+ * @param[out] deficit Receives the initial moisture deficit (fraction).
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note suction may be NULL to suppress that output. conductivity may be NULL to suppress that
+ *     output. deficit may be NULL to suppress that output. A null engine returns
+ *     SWMM_ERR_BADHANDLE. A failed subcatchment/pollutant index check returns SWMM_ERR_BADINDEX.
+ *     Reads the overloaded input slots without checking the active infiltration model; select the
+ *     getter matching swmm_subcatch_get_infil_model().
  */
-SWMM_ENGINE_API int swmm_subcatch_get_infil_green_ampt(SWMM_Engine engine, int idx,
-                                                          double* suction, double* conductivity,
-                                                          double* deficit);
+SWMM_ENGINE_API int swmm_subcatch_get_infil_green_ampt(SWMM_Engine engine, int idx, double* suction,
+                                                       double* conductivity, double* deficit);
 
 /**
  * @brief Get the Curve Number infiltration parameters for a subcatchment.
- * @param engine            Engine handle.
- * @param idx               Zero-based subcatchment index.
- * @param[out] cn           Receives the SCS curve number. May be NULL.
- * @param[out] drying_time  Receives the drying time in days. May be NULL.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based subcatchment index.
+ * @param[out] cn Receives the SCS curve number. May be NULL.
+ * @param[out] drying_time Receives the drying time in days. May be NULL.
  * @returns SWMM_OK on success, or an error code.
  * @see swmm_subcatch_set_infil_curve_number
+ *
+ *
+ * @note cn may be NULL to suppress that output. drying_time may be NULL to suppress that output. A
+ *     null engine returns SWMM_ERR_BADHANDLE. A failed subcatchment/pollutant index check returns
+ *     SWMM_ERR_BADINDEX. Reads the overloaded input slots without checking the active infiltration
+ *     model; select the getter matching swmm_subcatch_get_infil_model().
  */
-SWMM_ENGINE_API int swmm_subcatch_get_infil_curve_number(SWMM_Engine engine, int idx,
-                                                           double* cn, double* drying_time);
+SWMM_ENGINE_API int swmm_subcatch_get_infil_curve_number(SWMM_Engine engine, int idx, double* cn,
+                                                         double* drying_time);
 
 /* =========================================================================
  * Subcatchment statistics
@@ -419,28 +604,40 @@ SWMM_ENGINE_API int swmm_subcatch_get_infil_curve_number(SWMM_Engine engine, int
 
 /**
  * @brief Get the total precipitation volume at a subcatchment.
- * @param engine    Engine handle (ENDED or RUNNING state).
- * @param idx       Zero-based subcatchment index.
- * @param[out] vol  Receives the precipitation volume in project volume units.
+ * @param[in] engine Engine handle (ENDED or RUNNING state).
+ * @param[in] idx Zero-based subcatchment index.
+ * @param[out] vol Receives the precipitation volume in project volume units.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note vol may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A failed
+ *     subcatchment/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_subcatch_get_stat_precip(SWMM_Engine engine, int idx, double* vol);
 
 /**
  * @brief Get the total runoff volume from a subcatchment.
- * @param engine    Engine handle.
- * @param idx       Zero-based subcatchment index.
- * @param[out] vol  Receives the runoff volume in project volume units.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based subcatchment index.
+ * @param[out] vol Receives the runoff volume in project volume units.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note vol may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A failed
+ *     subcatchment/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_subcatch_get_stat_runoff_vol(SWMM_Engine engine, int idx, double* vol);
 
 /**
  * @brief Get the maximum runoff rate from a subcatchment.
- * @param engine     Engine handle.
- * @param idx        Zero-based subcatchment index.
- * @param[out] rate  Receives the maximum runoff rate in project flow units.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based subcatchment index.
+ * @param[out] rate Receives the maximum runoff rate in project flow units.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note rate may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
+ *     failed subcatchment/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_subcatch_get_stat_max_runoff(SWMM_Engine engine, int idx, double* rate);
 
@@ -456,23 +653,34 @@ SWMM_ENGINE_API int swmm_subcatch_get_stat_max_runoff(SWMM_Engine engine, int id
  *          Stored and reported verbatim in PERCENT (0–100), matching the
  *          [COVERAGES] .inp convention.
  *
- * @param engine    Engine handle.
- * @param sc_idx    Zero-based subcatchment index.
- * @param lu_idx    Zero-based land use index.
- * @param fraction  Coverage in percent (0–100).
+ * @param[in] engine Engine handle.
+ * @param[in] sc_idx Zero-based subcatchment index.
+ * @param[in] lu_idx Zero-based land use index.
+ * @param[in] fraction Coverage in percent (0–100).
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE. A failed subcatchment/pollutant index check returns SWMM_ERR_BADINDEX. No
+ *     independent finite/range validation of the numeric inputs is performed here.
  */
-SWMM_ENGINE_API int swmm_subcatch_set_coverage(SWMM_Engine engine, int sc_idx, int lu_idx, double fraction);
+SWMM_ENGINE_API int swmm_subcatch_set_coverage(SWMM_Engine engine, int sc_idx, int lu_idx,
+                                               double fraction);
 
 /**
  * @brief Get the land use coverage percent for a subcatchment.
- * @param engine          Engine handle.
- * @param sc_idx          Zero-based subcatchment index.
- * @param lu_idx          Zero-based land use index.
- * @param[out] fraction   Receives the coverage in percent (0–100).
+ * @param[in] engine Engine handle.
+ * @param[in] sc_idx Zero-based subcatchment index.
+ * @param[in] lu_idx Zero-based land use index.
+ * @param[out] fraction Receives the coverage in percent (0–100).
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note fraction may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
+ *     failed subcatchment/pollutant index check returns SWMM_ERR_BADINDEX.
  */
-SWMM_ENGINE_API int swmm_subcatch_get_coverage(SWMM_Engine engine, int sc_idx, int lu_idx, double* fraction);
+SWMM_ENGINE_API int swmm_subcatch_get_coverage(SWMM_Engine engine, int sc_idx, int lu_idx,
+                                               double* fraction);
 
 /**
  * @brief Get all land use coverage percents for a subcatchment in one call.
@@ -481,11 +689,16 @@ SWMM_ENGINE_API int swmm_subcatch_get_coverage(SWMM_Engine engine, int sc_idx, i
  *          out[0..n-1] with the coverage percent for land uses 0..n-1.
  *          n must not exceed the engine's land use count.
  *
- * @param engine   Engine handle.
- * @param sc_idx   Zero-based subcatchment index.
+ * @param[in] engine Engine handle.
+ * @param[in] sc_idx Zero-based subcatchment index.
  * @param[out] out Caller-owned array receiving n percents (0–100).
- * @param n        Number of land uses to fetch (array capacity).
+ * @param[in] n Number of land uses to fetch (array capacity).
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A failed subcatchment/pollutant index check
+ *     returns SWMM_ERR_BADINDEX. Requires non-null out even for n=0. n must be in [0,landuse count]
+ *     or BADINDEX. Writes exactly n prefix percentages; unsized coverage returns zeros.
  */
 SWMM_ENGINE_API int swmm_subcatch_get_coverages(SWMM_Engine engine, int sc_idx, double* out, int n);
 
@@ -500,23 +713,38 @@ SWMM_ENGINE_API int swmm_subcatch_get_coverages(SWMM_Engine engine, int sc_idx, 
  *          (normalizer units) present at the simulation start, overriding
  *          the DRY_DAYS-derived buildup for the pollutant.
  *
- * @param engine      Engine handle.
- * @param sc_idx      Zero-based subcatchment index.
- * @param pollut_idx  Zero-based pollutant index.
- * @param buildup     Initial buildup (mass per unit area).
+ * @param[in] engine Engine handle.
+ * @param[in] sc_idx Zero-based subcatchment index.
+ * @param[in] pollut_idx Zero-based pollutant index.
+ * @param[in] buildup Initial buildup (mass per unit area).
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE. A failed subcatchment/pollutant index check returns SWMM_ERR_BADINDEX. No
+ *     independent finite/range validation of the numeric inputs is performed here. Constituent
+ *     indices 0..np-1 select pollutants; np+m selects reaction species m. This is an initial
+ *     authoring loading, not current runoff concentration; unset storage reads zero.
  */
-SWMM_ENGINE_API int swmm_subcatch_set_initial_loading(SWMM_Engine engine, int sc_idx, int pollut_idx, double buildup);
+SWMM_ENGINE_API int swmm_subcatch_set_initial_loading(SWMM_Engine engine, int sc_idx,
+                                                      int pollut_idx, double buildup);
 
 /**
  * @brief Get the initial pollutant buildup on a subcatchment.
- * @param engine         Engine handle.
- * @param sc_idx         Zero-based subcatchment index.
- * @param pollut_idx     Zero-based pollutant index.
- * @param[out] buildup   Receives the initial buildup (mass per unit area).
+ * @param[in] engine Engine handle.
+ * @param[in] sc_idx Zero-based subcatchment index.
+ * @param[in] pollut_idx Zero-based pollutant index.
+ * @param[out] buildup Receives the initial buildup (mass per unit area).
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note buildup may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
+ *     failed subcatchment/pollutant index check returns SWMM_ERR_BADINDEX. Constituent indices
+ *     0..np-1 select pollutants; np+m selects reaction species m. This is an initial authoring
+ *     loading, not current runoff concentration; unset storage reads zero.
  */
-SWMM_ENGINE_API int swmm_subcatch_get_initial_loading(SWMM_Engine engine, int sc_idx, int pollut_idx, double* buildup);
+SWMM_ENGINE_API int swmm_subcatch_get_initial_loading(SWMM_Engine engine, int sc_idx,
+                                                      int pollut_idx, double* buildup);
 
 /* =========================================================================
  * Hydraulic state getters
@@ -524,46 +752,66 @@ SWMM_ENGINE_API int swmm_subcatch_get_initial_loading(SWMM_Engine engine, int sc
 
 /**
  * @brief Get the current runoff rate from a subcatchment.
- * @param engine       Engine handle.
- * @param idx          Zero-based subcatchment index.
- * @param[out] runoff  Receives the runoff rate in project flow units.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based subcatchment index.
+ * @param[out] runoff Receives the runoff rate in project flow units.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note runoff may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
+ *     failed subcatchment/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_subcatch_get_runoff(SWMM_Engine engine, int idx, double* runoff);
 
 /**
  * @brief Get the current groundwater flow from a subcatchment.
- * @param engine        Engine handle.
- * @param idx           Zero-based subcatchment index.
- * @param[out] gw_flow  Receives the groundwater flow in project flow units.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based subcatchment index.
+ * @param[out] gw_flow Receives the groundwater flow in project flow units.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note gw_flow may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
+ *     failed subcatchment/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_subcatch_get_groundwater(SWMM_Engine engine, int idx, double* gw_flow);
 
 /**
  * @brief Get the current rainfall intensity at a subcatchment.
- * @param engine          Engine handle.
- * @param idx             Zero-based subcatchment index.
- * @param[out] rainfall   Receives the rainfall in project rate units.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based subcatchment index.
+ * @param[out] rainfall Receives the rainfall in project rate units.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note rainfall may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
+ *     failed subcatchment/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_subcatch_get_rainfall(SWMM_Engine engine, int idx, double* rainfall);
 
 /**
  * @brief Get the current snow depth on a subcatchment.
- * @param engine      Engine handle.
- * @param idx         Zero-based subcatchment index.
- * @param[out] depth  Receives the snow depth in project length units.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based subcatchment index.
+ * @param[out] depth Receives the snow depth in project length units.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note depth may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
+ *     failed subcatchment/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_subcatch_get_snow_depth(SWMM_Engine engine, int idx, double* depth);
 
 /**
  * @brief Get the current evaporation rate at a subcatchment.
- * @param engine     Engine handle.
- * @param idx        Zero-based subcatchment index.
- * @param[out] evap  Receives the evaporation rate.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based subcatchment index.
+ * @param[out] evap Receives the evaporation rate.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note evap may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
+ *     failed subcatchment/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_subcatch_get_evap(SWMM_Engine engine, int idx, double* evap);
 
@@ -576,42 +824,111 @@ SWMM_ENGINE_API int swmm_subcatch_get_evap(SWMM_Engine engine, int idx, double* 
  * injected via swmm_subcatch_set_gw_state. All are BUILDING/OPENED editable.
  */
 
-/** @brief Assign the aquifer (by index, -1 = none) used by a subcatchment. */
+/**
+ * @brief Assign the aquifer used for groundwater.
+ *
+ * Requires BUILDING/OPENED. Stores the reference verbatim without changing current groundwater
+ * state.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] idx Zero-based existing subcatchment index.
+ * @param[in] aquifer_idx Existing zero-based target index or -1 for none; the target range is NOT
+ *     checked by this wrapper.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments. SWMM_ERR_LIFECYCLE outside
+ *     BUILDING/OPENED.
+ */
 SWMM_ENGINE_API int swmm_subcatch_set_aquifer(SWMM_Engine engine, int idx, int aquifer_idx);
 
-/** @brief Get the aquifer index assigned to a subcatchment (-1 = none). */
+/**
+ * @brief Read the assigned aquifer used for groundwater.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] idx Zero-based existing subcatchment index.
+ * @param[out] aquifer_idx Optional stored target-index output; -1 denotes none.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments.
+ */
 SWMM_ENGINE_API int swmm_subcatch_get_aquifer(SWMM_Engine engine, int idx, int* aquifer_idx);
 
-/** @brief Set the node (by index, -1 = none) receiving the subcatchment's groundwater flow. */
+/**
+ * @brief Assign the node receiving groundwater.
+ *
+ * Requires BUILDING/OPENED. Stores the reference verbatim without changing current groundwater
+ * state.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] idx Zero-based existing subcatchment index.
+ * @param[in] node_idx Existing zero-based target index or -1 for none; the target range is NOT
+ *     checked by this wrapper.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments. SWMM_ERR_LIFECYCLE outside
+ *     BUILDING/OPENED.
+ */
 SWMM_ENGINE_API int swmm_subcatch_set_gw_node(SWMM_Engine engine, int idx, int node_idx);
 
-/** @brief Get the node index receiving the subcatchment's groundwater flow (-1 = none). */
+/**
+ * @brief Read the assigned node receiving groundwater.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] idx Zero-based existing subcatchment index.
+ * @param[out] node_idx Optional stored target-index output; -1 denotes none.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments.
+ */
 SWMM_ENGINE_API int swmm_subcatch_get_gw_node(SWMM_Engine engine, int idx, int* node_idx);
 
 /**
- * @brief Set the groundwater flow parameters ([GROUNDWATER] token order).
- * @param surf_elev  Surface elevation (SurfEl).
- * @param a1,b1      Groundwater outflow coefficient & exponent.
- * @param a2,b2      Surface-water outflow coefficient & exponent.
- * @param a3         Surface/groundwater interaction coefficient.
- * @param tw         Dsw: fixed depth of surface water at the receiving node
- *                   (length units); 0 = use the node's live water depth.
- * @param hstar      Egwt: threshold water-table elevation below which there is
- *                   no lateral flow (length units). -1.0e10 (MISSING, `*` in
- *                   the .inp) = the receiving node's invert. Any other value,
- *                   including -99, is a literal elevation.
- * @returns SWMM_OK or error code.
+ * @brief Assign the input groundwater flow-law parameters.
+ *
+ * Values retain input-file units. Requires BUILDING/OPENED. Stores values without finite/range
+ * validation; does not inject runtime groundwater state.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] idx Zero-based existing subcatchment index.
+ * @param[in] surf_elev Ground surface elevation, ft/m.
+ * @param[in] a1 Groundwater outflow coefficient in the project input groundwater law.
+ * @param[in] b1 Dimensionless groundwater outflow exponent.
+ * @param[in] a2 Surface-water outflow coefficient in the project input groundwater law.
+ * @param[in] b2 Dimensionless surface-water outflow exponent.
+ * @param[in] a3 Surface/groundwater interaction coefficient in the project input law.
+ * @param[in] tw Fixed receiving surface-water depth, ft/m; zero uses live node depth.
+ * @param[in] hstar Lateral-flow threshold water-table elevation, ft/m; -1e10 uses receiving-node
+ *     invert. Other values, including -99, are literal elevations.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments. SWMM_ERR_LIFECYCLE outside
+ *     BUILDING/OPENED.
  */
-SWMM_ENGINE_API int swmm_subcatch_set_gw_params(SWMM_Engine engine, int idx,
-                                                double surf_elev, double a1, double b1,
-                                                double a2, double b2, double a3,
-                                                double tw, double hstar);
+SWMM_ENGINE_API int swmm_subcatch_set_gw_params(SWMM_Engine engine, int idx, double surf_elev,
+                                                double a1, double b1, double a2, double b2,
+                                                double a3, double tw, double hstar);
 
-/** @brief Get the groundwater flow parameters (see swmm_subcatch_set_gw_params). */
-SWMM_ENGINE_API int swmm_subcatch_get_gw_params(SWMM_Engine engine, int idx,
-                                                double* surf_elev, double* a1, double* b1,
-                                                double* a2, double* b2, double* a3,
-                                                double* tw, double* hstar);
+/**
+ * @brief Read the input groundwater flow-law parameters.
+ *
+ * Values retain input-file units. No lifecycle check; does not read runtime theta/lower_depth.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] idx Zero-based existing subcatchment index.
+ * @param[out] surf_elev Optional output. Ground surface elevation, ft/m.
+ * @param[out] a1 Optional output. Groundwater outflow coefficient in the project input groundwater
+ *     law.
+ * @param[out] b1 Optional output. Dimensionless groundwater outflow exponent.
+ * @param[out] a2 Optional output. Surface-water outflow coefficient in the project input
+ *     groundwater law.
+ * @param[out] b2 Optional output. Dimensionless surface-water outflow exponent.
+ * @param[out] a3 Optional output. Surface/groundwater interaction coefficient in the project input
+ *     law.
+ * @param[out] tw Optional output. Fixed receiving surface-water depth, ft/m; zero uses live node
+ *     depth.
+ * @param[out] hstar Optional output. Lateral-flow threshold water-table elevation, ft/m; -1e10 uses
+ *     receiving-node invert. Other values, including -99, are literal elevations.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments.
+ */
+SWMM_ENGINE_API int swmm_subcatch_get_gw_params(SWMM_Engine engine, int idx, double* surf_elev,
+                                                double* a1, double* b1, double* a2, double* b2,
+                                                double* a3, double* tw, double* hstar);
 
 /* =========================================================================
  * State injection (data assimilation)
@@ -625,27 +942,40 @@ SWMM_ENGINE_API int swmm_subcatch_get_gw_params(SWMM_Engine engine, int idx,
  * balance reports will reflect the storage discontinuity, mirroring
  * hotstart loading.
  *
- * @param engine       Engine handle.
- * @param idx          Subcatchment index (must have groundwater).
- * @param theta        Upper zone moisture content (0..porosity), or < 0 to keep.
- * @param lower_depth  Saturated zone depth above aquifer bottom in user
+ * @param[in] engine Engine handle.
+ * @param[in] idx Subcatchment index (must have groundwater).
+ * @param[in] theta Upper zone moisture content (0..porosity), or < 0 to keep.
+ * @param[in] lower_depth Saturated zone depth above aquifer bottom in user
  *                     length units (ft US, m SI), or < 0 to keep.
  * @returns SWMM_OK or error code.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A failed subcatchment/pollutant index check
+ *     returns SWMM_ERR_BADINDEX. No lifecycle guard, but requires an initialized groundwater solver
+ *     row with positive total depth or BADPARAM. Nonnegative theta is capped at porosity only (not
+ *     raised to wilting point); nonnegative lower_depth is converted from ft/m and capped at
+ *     aquifer total depth. Negative values leave each component unchanged.
  */
-SWMM_ENGINE_API int swmm_subcatch_set_gw_state(SWMM_Engine engine, int idx,
-                                               double theta, double lower_depth);
+SWMM_ENGINE_API int swmm_subcatch_set_gw_state(SWMM_Engine engine, int idx, double theta,
+                                               double lower_depth);
 
 /**
  * @brief Get the groundwater state on a subcatchment.
  *
- * @param engine            Engine handle.
- * @param idx               Subcatchment index (must have groundwater).
- * @param[out] theta        Receives the upper zone moisture content.
- * @param[out] lower_depth  Receives the saturated zone depth (user length units).
+ * @param[in] engine Engine handle.
+ * @param[in] idx Subcatchment index (must have groundwater).
+ * @param[out] theta Receives the upper zone moisture content.
+ * @param[out] lower_depth Receives the saturated zone depth (user length units).
  * @returns SWMM_OK or error code.
+ *
+ *
+ * @note theta may be NULL to suppress that output. lower_depth may be NULL to suppress that output.
+ *     A null engine returns SWMM_ERR_BADHANDLE. A failed subcatchment/pollutant index check returns
+ *     SWMM_ERR_BADINDEX. No lifecycle guard, but requires an initialized groundwater solver row
+ *     with positive total depth or BADPARAM.
  */
-SWMM_ENGINE_API int swmm_subcatch_get_gw_state(SWMM_Engine engine, int idx,
-                                               double* theta, double* lower_depth);
+SWMM_ENGINE_API int swmm_subcatch_get_gw_state(SWMM_Engine engine, int idx, double* theta,
+                                               double* lower_depth);
 
 /**
  * @brief Set degree-day snow state on one snow subarea of a subcatchment.
@@ -653,54 +983,79 @@ SWMM_ENGINE_API int swmm_subcatch_get_gw_state(SWMM_Engine engine, int idx,
  * State injection for data assimilation (e.g. observed SWE). Pass a
  * negative value to leave that component unchanged.
  *
- * @param engine   Engine handle.
- * @param idx      Subcatchment index (must have a snow pack).
- * @param surface  Snow subarea: 0 plowable, 1 impervious, 2 pervious.
- * @param swe      Snow water equivalent in user depth units (in US, mm SI), or < 0 to keep.
- * @param fw       Free water in user depth units, or < 0 to keep.
- * @param ati      Antecedent temperature index (deg F US, deg C SI); pass
+ * @param[in] engine Engine handle.
+ * @param[in] idx Subcatchment index (must have a snow pack).
+ * @param[in] surface Snow subarea: 0 plowable, 1 impervious, 2 pervious.
+ * @param[in] swe Snow water equivalent in user depth units (in US, mm SI), or < 0 to keep.
+ * @param[in] fw Free water in user depth units, or < 0 to keep.
+ * @param[in] ati Antecedent temperature index (deg F US, deg C SI); pass
  *                 <= -999 to keep (negative temperatures are valid).
- * @param coldc    Cold content in user depth units of melt equivalent, or < 0 to keep.
+ * @param[in] coldc Cold content in user depth units of melt equivalent, or < 0 to keep.
  * @returns SWMM_OK or error code.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A failed subcatchment/pollutant index check
+ *     returns SWMM_ERR_BADINDEX. No lifecycle guard, but requires assigned degree-day snowpack and
+ *     allocated solver state. UEB snowpacks or missing solver rows return BADPARAM; invalid surface
+ *     returns BADINDEX. Negative swe/fw/coldc preserve each component; ati<=-999 preserves ATI.
+ *     After any edit, free water is capped to pack SWE, even if its input was negative. No
+ *     independent finite check.
  */
-SWMM_ENGINE_API int swmm_subcatch_set_snow_state(SWMM_Engine engine, int idx,
-                                                 int surface, double swe, double fw,
-                                                 double ati, double coldc);
+SWMM_ENGINE_API int swmm_subcatch_set_snow_state(SWMM_Engine engine, int idx, int surface,
+                                                 double swe, double fw, double ati, double coldc);
 
 /**
  * @brief Get degree-day snow state on one snow subarea of a subcatchment.
  * UEB callers use swmm_subcatch_get_snow_process_state in openswmm_snow.h.
  *
- * @param engine      Engine handle.
- * @param idx         Subcatchment index (must have a snow pack).
- * @param surface     Snow subarea: 0 plowable, 1 impervious, 2 pervious.
- * @param[out] swe    Receives SWE (user depth units); may be NULL.
- * @param[out] fw     Receives free water (user depth units); may be NULL.
- * @param[out] ati    Receives ATI (user temperature units); may be NULL.
- * @param[out] coldc  Receives cold content (user depth units); may be NULL.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Subcatchment index (must have a snow pack).
+ * @param[in] surface Snow subarea: 0 plowable, 1 impervious, 2 pervious.
+ * @param[out] swe Receives SWE (user depth units); may be NULL.
+ * @param[out] fw Receives free water (user depth units); may be NULL.
+ * @param[out] ati Receives ATI (user temperature units); may be NULL.
+ * @param[out] coldc Receives cold content (user depth units); may be NULL.
  * @returns SWMM_OK or error code.
+ *
+ *
+ * @note swe may be NULL to suppress that output. fw may be NULL to suppress that output. ati may be
+ *     NULL to suppress that output. coldc may be NULL to suppress that output. A null engine
+ *     returns SWMM_ERR_BADHANDLE. A failed subcatchment/pollutant index check returns
+ *     SWMM_ERR_BADINDEX. No lifecycle guard, but requires assigned degree-day snowpack and
+ *     allocated solver state. UEB snowpacks or missing solver rows return BADPARAM; invalid surface
+ *     returns BADINDEX.
  */
-SWMM_ENGINE_API int swmm_subcatch_get_snow_state(SWMM_Engine engine, int idx,
-                                                 int surface, double* swe, double* fw,
-                                                 double* ati, double* coldc);
+SWMM_ENGINE_API int swmm_subcatch_get_snow_state(SWMM_Engine engine, int idx, int surface,
+                                                 double* swe, double* fw, double* ati,
+                                                 double* coldc);
 
 /**
  * @brief Get the current infiltration rate at a subcatchment.
- * @param engine      Engine handle.
- * @param idx         Zero-based subcatchment index.
- * @param[out] infil  Receives the infiltration rate.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based subcatchment index.
+ * @param[out] infil Receives the infiltration rate.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note infil may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
+ *     failed subcatchment/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_subcatch_get_infil(SWMM_Engine engine, int idx, double* infil);
 
 /* --- Runtime forcing (RUNNING state only) --- */
 
 /**
- * @brief Override rainfall on a subcatchment for the current timestep.
+ * @brief Overwrite the current subcatchment rainfall state during RUNNING.
  *
- * @details Overrides the gage-driven rainfall for this subcatchment only.
- *          Value is applied for the current timestep; call again each step
- *          to sustain. Pass a negative value to revert to gage-driven.
+ * Directly replaces the stored rainfall value; the next hydrology/forcing update can overwrite it.
+ * Does not register a persistent forcing provider.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] idx Zero-based existing subcatchment index.
+ * @param[in] rainfall Rainfall intensity, inches/hour or mm/hour; converted to internal ft/s
+ *     without finite/range validation.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments. SWMM_ERR_LIFECYCLE unless RUNNING.
  */
 SWMM_ENGINE_API int swmm_subcatch_set_rainfall(SWMM_Engine engine, int idx, double rainfall);
 
@@ -710,14 +1065,20 @@ SWMM_ENGINE_API int swmm_subcatch_set_rainfall(SWMM_Engine engine, int idx, doub
 
 /**
  * @brief Get the pollutant concentration in subcatchment runoff.
- * @param engine        Engine handle.
- * @param subcatch_idx  Zero-based subcatchment index.
- * @param pollutant_idx Zero-based pollutant index.
- * @param[out] conc     Receives the concentration in pollutant units.
+ * @param[in] engine Engine handle.
+ * @param[in] subcatch_idx Zero-based subcatchment index.
+ * @param[in] pollutant_idx Zero-based pollutant index.
+ * @param[out] conc Receives the concentration in pollutant units.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note conc may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
+ *     failed subcatchment/pollutant index check returns SWMM_ERR_BADINDEX. Pollutant indices
+ *     exclude reaction/reserved species. Concentration storage must already be sized (normal
+ *     initialized model); this wrapper does not lazily allocate it.
  */
 SWMM_ENGINE_API int swmm_subcatch_get_quality(SWMM_Engine engine, int subcatch_idx,
-                                               int pollutant_idx, double* conc);
+                                              int pollutant_idx, double* conc);
 
 /* =========================================================================
  * Bulk access
@@ -725,23 +1086,35 @@ SWMM_ENGINE_API int swmm_subcatch_get_quality(SWMM_Engine engine, int subcatch_i
 
 /**
  * @brief Get runoff rates for all subcatchments in a single call.
- * @param engine    Engine handle.
- * @param[out] buf  Caller-allocated buffer of at least @p count doubles.
- * @param count     Number of elements (should equal swmm_subcatch_count()).
+ * @param[in] engine Engine handle.
+ * @param[out] buf Caller-allocated buffer of at least @p count doubles.
+ * @param[in] count Number of elements (should equal swmm_subcatch_count()).
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A null buffer or nonpositive count returns
+ *     SWMM_ERR_BADPARAM. Copies min(count,subcatchment count) records and leaves any buffer tail
+ *     unchanged.
  */
 SWMM_ENGINE_API int swmm_subcatch_get_runoff_bulk(SWMM_Engine engine, double* buf, int count);
 
 /**
  * @brief Get pollutant concentrations for all subcatchments for one pollutant.
- * @param engine        Engine handle.
- * @param pollutant_idx Zero-based pollutant index.
- * @param[out] buf      Caller-allocated buffer of at least @p count doubles.
- * @param count         Number of elements (should equal swmm_subcatch_count()).
+ * @param[in] engine Engine handle.
+ * @param[in] pollutant_idx Zero-based pollutant index.
+ * @param[out] buf Caller-allocated buffer of at least @p count doubles.
+ * @param[in] count Number of elements (should equal swmm_subcatch_count()).
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A failed subcatchment/pollutant index check
+ *     returns SWMM_ERR_BADINDEX. A null buffer or nonpositive count returns SWMM_ERR_BADPARAM.
+ *     Copies min(count,subcatchment count) records and leaves any buffer tail unchanged. Pollutant
+ *     indices exclude reaction/reserved species. Concentration storage must already be sized
+ *     (normal initialized model); this wrapper does not lazily allocate it.
  */
 SWMM_ENGINE_API int swmm_subcatch_get_quality_bulk(SWMM_Engine engine, int pollutant_idx,
-                                                    double* buf, int count);
+                                                   double* buf, int count);
 
 /* =========================================================================
  * Phase 3 bulk getters — added in OpenSWMM 6.0.0 to eliminate the N
@@ -752,35 +1125,67 @@ SWMM_ENGINE_API int swmm_subcatch_get_quality_bulk(SWMM_Engine engine, int pollu
  * ========================================================================= */
 
 /**
- * @brief Get rainfall rates for all subcatchments in a single call.
- * @details Bulk variant of @ref swmm_subcatch_get_rainfall. Simple SoA copy.
- * @since 6.0.0
+ * @brief Copy rainfall values for a prefix of subcatchments.
+ *
+ * Writes min(count,subcatchment count) elements and preserves any remaining buffer tail. No
+ * lifecycle check; returns the current stored state.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[out] buf Non-null caller-owned array with room for min(count,subcatchment count) doubles.
+ *     Rainfall intensity in inches/hour or mm/hour.
+ * @param[in] count Positive destination element capacity; a short buffer selects the corresponding
+ *     model prefix.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments.
  */
 SWMM_ENGINE_API int swmm_subcatch_get_rainfall_bulk(SWMM_Engine engine, double* buf, int count);
 
 /**
- * @brief Get evaporation losses for all subcatchments in a single call.
- * @details Bulk variant of @ref swmm_subcatch_get_evap. Simple SoA copy of
- *          the @c evap_loss column.
- * @since 6.0.0
+ * @brief Copy evap values for a prefix of subcatchments.
+ *
+ * Writes min(count,subcatchment count) elements and preserves any remaining buffer tail. No
+ * lifecycle check; returns the current stored state.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[out] buf Non-null caller-owned array with room for min(count,subcatchment count) doubles.
+ *     Evaporation loss rate in inches/day or mm/day.
+ * @param[in] count Positive destination element capacity; a short buffer selects the corresponding
+ *     model prefix.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments.
  */
 SWMM_ENGINE_API int swmm_subcatch_get_evap_bulk(SWMM_Engine engine, double* buf, int count);
 
 /**
- * @brief Get infiltration losses for all subcatchments in a single call.
- * @details Bulk variant of @ref swmm_subcatch_get_infil. Simple SoA copy
- *          of the @c infil_loss column.
- * @since 6.0.0
+ * @brief Copy infil values for a prefix of subcatchments.
+ *
+ * Writes min(count,subcatchment count) elements and preserves any remaining buffer tail. No
+ * lifecycle check; returns the current stored state.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[out] buf Non-null caller-owned array with room for min(count,subcatchment count) doubles.
+ *     Infiltration loss rate in inches/hour or mm/hour.
+ * @param[in] count Positive destination element capacity; a short buffer selects the corresponding
+ *     model prefix.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments.
  */
 SWMM_ENGINE_API int swmm_subcatch_get_infil_bulk(SWMM_Engine engine, double* buf, int count);
 
 /**
- * @brief Get snow depths for all subcatchments in a single call.
- * @details Bulk variant of @ref swmm_subcatch_get_snow_depth. Snow state
- *          currently lives in the SnowSolver, not SubcatchData; like the
- *          scalar accessor this returns zeros for every entry pending
- *          full snow-state integration (see plan Appendix A).
- * @since 6.0.0
+ * @brief Copy snow depth values for a prefix of subcatchments.
+ *
+ * Writes min(count,subcatchment count) elements and preserves any remaining buffer tail. This
+ * implementation zero-fills the prefix; unlike the scalar snow-depth getter it does not sample
+ * integrated snow state.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[out] buf Non-null caller-owned array with room for min(count,subcatchment count) doubles.
+ *     Placeholder zero, not a sampled SnowSolver depth.
+ * @param[in] count Positive destination element capacity; a short buffer selects the corresponding
+ *     model prefix.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments.
  */
 SWMM_ENGINE_API int swmm_subcatch_get_snow_depth_bulk(SWMM_Engine engine, double* buf, int count);
 
@@ -788,36 +1193,75 @@ SWMM_ENGINE_API int swmm_subcatch_get_snow_depth_bulk(SWMM_Engine engine, double
  * @brief Get subcatchment IDs for all subcatchments in a single call
  *        (stride-packed UTF-8).
  * @details Format identical to @ref swmm_node_get_ids_bulk.
- * @param engine  Engine handle.
+ * @param[in] engine Engine handle.
  * @param[out] buf Caller-allocated buffer of @c stride*count bytes.
- * @param stride  Per-ID slot size in bytes (must be > 1).
- * @param count   Number of IDs to read.
+ * @param[in] stride Per-ID slot size in bytes (must be > 1).
+ * @param[in] count Number of IDs to read.
  * @returns @c SWMM_OK on success; @c SWMM_ERR_BADHANDLE if @p engine is
  *          invalid; @c SWMM_ERR_BADPARAM if @p buf is NULL,
  *          @p stride < 2, or @p count <= 0.
  * @see swmm_subcatch_id, swmm_node_get_ids_bulk
  * @since 6.0.0
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE.
  */
-SWMM_ENGINE_API int swmm_subcatch_get_ids_bulk(SWMM_Engine engine,
-                                                char* buf,
-                                                int stride,
-                                                int count);
+SWMM_ENGINE_API int swmm_subcatch_get_ids_bulk(SWMM_Engine engine, char* buf, int stride,
+                                               int count);
 
 /* =========================================================================
  * Ponded quality (mass in standing water between events)
  * ========================================================================= */
 
-/** @brief Get ponded quality mass for a subcatchment-pollutant pair. */
-SWMM_ENGINE_API int swmm_subcatch_get_ponded_quality(SWMM_Engine engine,
-    int subcatch_idx, int pollutant_idx, double* mass);
+/**
+ * @brief Read a pollutant's ponded surface mass.
+ *
+ * Mass uses the surface-quality kernel's internal constituent mass convention (mg for mass-based
+ * pollutant transport). No lifecycle check. A missing slot returns zero.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] subcatch_idx Zero-based existing subcatchment index.
+ * @param[in] pollutant_idx Zero-based pollutant index in the allocated concentration stride;
+ *     reaction/reserved species are not selected by this API.
+ * @param[out] mass Optional output of stored mass, zero when no ponded slot exists.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments.
+ */
+SWMM_ENGINE_API int swmm_subcatch_get_ponded_quality(SWMM_Engine engine, int subcatch_idx,
+                                                     int pollutant_idx, double* mass);
 
-/** @brief Set ponded quality mass for a subcatchment-pollutant pair. */
-SWMM_ENGINE_API int swmm_subcatch_set_ponded_quality(SWMM_Engine engine,
-    int subcatch_idx, int pollutant_idx, double mass);
+/**
+ * @brief Replace a pollutant's ponded surface mass.
+ *
+ * Mass uses the surface-quality kernel's internal constituent mass convention (mg for mass-based
+ * pollutant transport). No lifecycle check. A valid index with no allocated ponded slot succeeds
+ * without writing; injection is not booked as an external source in this wrapper.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] subcatch_idx Zero-based existing subcatchment index.
+ * @param[in] pollutant_idx Zero-based pollutant index in the allocated concentration stride;
+ *     reaction/reserved species are not selected by this API.
+ * @param[in] mass Raw stored ponded mass; no finite/range validation or unit conversion.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments.
+ */
+SWMM_ENGINE_API int swmm_subcatch_set_ponded_quality(SWMM_Engine engine, int subcatch_idx,
+                                                     int pollutant_idx, double mass);
 
-/** @brief Rename the subcatchment at `idx` to `newId`.
- *  Returns SWMM_ERR_BADPARAM if newId is null, empty, already in use, or
- *  idx is out of range. */
+/**
+ * @brief Rename a subcatchment in its name registry.
+ *
+ * Requires BUILDING/OPENED. Uses the registry collision policy; returns BADPARAM on collision. This
+ * wrapper does not explicitly migrate name-keyed GWF expression options.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] idx Zero-based existing subcatchment index.
+ * @param[in] newId Non-null, nonempty copied unique ID; case-only respelling of this row is
+ *     permitted.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments. SWMM_ERR_LIFECYCLE outside
+ *     BUILDING/OPENED.
+ */
 SWMM_ENGINE_API int swmm_subcatch_rename(SWMM_Engine engine, int idx, const char* newId);
 
 /* =========================================================================
@@ -826,24 +1270,34 @@ SWMM_ENGINE_API int swmm_subcatch_rename(SWMM_Engine engine, int idx, const char
 
 /**
  * @brief Get the total number of aquifer definitions in the model.
- * @param engine  Engine handle.
+ * @param[in] engine Engine handle.
  * @returns Number of aquifer definitions, or -1 on error.
+ *
+ *
+ * @note Null engine returns -1.
  */
 SWMM_ENGINE_API int swmm_aquifer_count(SWMM_Engine engine);
 
 /**
  * @brief Look up an aquifer's zero-based index by its string identifier.
- * @param engine  Engine handle.
- * @param id      Null-terminated aquifer identifier.
+ * @param[in] engine Engine handle.
+ * @param[in] id Null-terminated aquifer identifier.
  * @returns Zero-based index, or -1 if not found.
+ *
+ *
+ * @note Case-insensitive name lookup; null engine/name or no match returns -1.
  */
 SWMM_ENGINE_API int swmm_aquifer_index(SWMM_Engine engine, const char* id);
 
 /**
  * @brief Get the string identifier of an aquifer definition by index.
- * @param engine  Engine handle.
- * @param idx     Zero-based aquifer index.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based aquifer index.
  * @returns Null-terminated string owned by the engine, or NULL on error.
+ *
+ *
+ * @note Returned text borrows engine storage; do not free. Copy before a registry/table edit or
+ *     engine close/destruction. Null engine/invalid index returns NULL.
  */
 SWMM_ENGINE_API const char* swmm_aquifer_id(SWMM_Engine engine, int idx);
 
@@ -854,9 +1308,14 @@ SWMM_ENGINE_API const char* swmm_aquifer_id(SWMM_Engine engine, int idx);
  *          setters from Slice BP `AquiferEditor` to configure porosity,
  *          conductivity, etc. Lifecycle: BUILDING or OPENED.
  *
- * @param engine  Engine handle.
- * @param id      Unique null-terminated identifier.
+ * @param[in] engine Engine handle.
+ * @param[in] id Unique null-terminated identifier.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE. Copies ID and rejects case-insensitive duplicates; NULL is refused, but
+ *     this wrapper has no explicit empty-ID check.
  */
 SWMM_ENGINE_API int swmm_aquifer_add(SWMM_Engine engine, const char* id);
 
@@ -869,11 +1328,15 @@ SWMM_ENGINE_API int swmm_aquifer_add(SWMM_Engine engine, const char* id);
  *          references follow automatically.
  *          Lifecycle: BUILDING or OPENED.
  *
- * @param engine  Engine handle.
- * @param idx     Aquifer index.
- * @param new_id  New unique name (non-empty). A pure case-respelling of this
+ * @param[in] engine Engine handle.
+ * @param[in] idx Aquifer index.
+ * @param[in] new_id New unique name (non-empty). A pure case-respelling of this
  *                same aquifer is allowed.
  * @returns SWMM_OK, or SWMM_ERR_BADPARAM on an empty or duplicate name.
+ *
+ *
+ * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE. A failed subcatchment/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_aquifer_rename(SWMM_Engine engine, int idx, const char* new_id);
 
@@ -906,11 +1369,15 @@ typedef enum SWMM_AquiferParam {
 
 /**
  * @brief Get an aquifer parameter (input-file units).
- * @param engine  Engine handle.
- * @param idx     Zero-based aquifer index.
- * @param param   A SWMM_AquiferParam code.
- * @param value   Receives the parameter value.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based aquifer index.
+ * @param[in] param A SWMM_AquiferParam code.
+ * @param[out] value Receives the parameter value.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A failed subcatchment/pollutant index check
+ *     returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_aquifer_get_param(SWMM_Engine engine, int idx, int param, double* value);
 
@@ -922,11 +1389,17 @@ SWMM_ENGINE_API int swmm_aquifer_get_param(SWMM_Engine engine, int idx, int para
  *          refreshed); structural / initial-condition parameters return
  *          SWMM_ERR_LIFECYCLE while the simulation is running.
  *
- * @param engine  Engine handle.
- * @param idx     Zero-based aquifer index.
- * @param param   A SWMM_AquiferParam code.
- * @param value   New parameter value.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based aquifer index.
+ * @param[in] param A SWMM_AquiferParam code.
+ * @param[in] value New parameter value.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A failed subcatchment/pollutant index check
+ *     returns SWMM_ERR_BADINDEX. Structural/initial parameters require BUILDING/OPENED; flux
+ *     parameters have no lifecycle restriction and refresh cached aquifer parameters outside those
+ *     states. Numeric bounds use comparisons only; provide finite inputs.
  */
 SWMM_ENGINE_API int swmm_aquifer_set_param(SWMM_Engine engine, int idx, int param, double value);
 
@@ -941,13 +1414,19 @@ SWMM_ENGINE_API int swmm_aquifer_set_param(SWMM_Engine engine, int idx, int para
  *          (empty when no pattern is assigned), truncating if `buflen` is too
  *          small.
  *
- * @param engine       Engine handle.
- * @param idx          Zero-based aquifer index.
- * @param[out] buf     Destination buffer for the pattern name.
- * @param buflen       Size of `buf` in bytes (must be > 0).
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based aquifer index.
+ * @param[out] buf Destination buffer for the pattern name.
+ * @param[in] buflen Size of `buf` in bytes (must be > 0).
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A failed subcatchment/pollutant index check
+ *     returns SWMM_ERR_BADINDEX. Output must be non-null with positive byte capacity; text is
+ *     NUL-terminated and silently truncated to capacity minus one byte.
  */
-SWMM_ENGINE_API int swmm_aquifer_get_evap_pattern(SWMM_Engine engine, int idx, char* buf, int buflen);
+SWMM_ENGINE_API int swmm_aquifer_get_evap_pattern(SWMM_Engine engine, int idx, char* buf,
+                                                  int buflen);
 
 /**
  * @brief Set or clear the aquifer's upper-zone evaporation pattern name.
@@ -958,10 +1437,14 @@ SWMM_ENGINE_API int swmm_aquifer_get_evap_pattern(SWMM_Engine engine, int idx, c
  *          index is bound when the simulation starts, so a mid-run change
  *          returns SWMM_ERR_LIFECYCLE.
  *
- * @param engine  Engine handle.
- * @param idx     Zero-based aquifer index.
- * @param name    Pattern name, or null/empty to clear.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based aquifer index.
+ * @param[in] name Pattern name, or null/empty to clear.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE. A failed subcatchment/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_aquifer_set_evap_pattern(SWMM_Engine engine, int idx, const char* name);
 
@@ -969,33 +1452,63 @@ SWMM_ENGINE_API int swmm_aquifer_set_evap_pattern(SWMM_Engine engine, int idx, c
  * Snowpack definitions ([SNOWPACKS] section) — Slice BM.0 / BP.6.6.5
  * ========================================================================= */
 
-/** Assign a snowpack by name before initialization. NULL/empty clears it.
- * Unknown names return BADPARAM without changing the assignment. */
+/**
+ * @brief Assign an existing snowpack before initialization.
+ *
+ * Requires BUILDING/OPENED. Unknown nonempty names return BADPARAM without changing the assignment;
+ * stores both resolved index and canonical name.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] idx Zero-based existing subcatchment index.
+ * @param[in] name Borrowed snowpack ID resolved case-insensitively; NULL/empty clears the
+ *     assignment.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments. SWMM_ERR_LIFECYCLE outside
+ *     BUILDING/OPENED.
+ */
 SWMM_ENGINE_API int swmm_subcatch_set_snowpack(SWMM_Engine engine, int idx, const char* name);
-/** Return the assigned snowpack name, or an empty string when unassigned.
- * Returns NULL for an invalid engine/subcatchment. */
+/**
+ * @brief Borrow the assigned snowpack ID.
+ *
+ * Do not free; copy before renaming/removing the snowpack or closing/destroying the engine.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] idx Zero-based existing subcatchment index.
+ * @return Engine-owned NUL-terminated name, an empty string for no assignment, or NULL for null
+ *     engine/invalid subcatchment.
+ */
 SWMM_ENGINE_API const char* swmm_subcatch_get_snowpack(SWMM_Engine engine, int idx);
 
 /**
  * @brief Get the total number of snowpack definitions in the model.
- * @param engine  Engine handle.
+ * @param[in] engine Engine handle.
  * @returns Number of snowpack definitions, or -1 on error.
+ *
+ *
+ * @note Null engine returns -1.
  */
 SWMM_ENGINE_API int swmm_snowpack_count(SWMM_Engine engine);
 
 /**
  * @brief Look up a snowpack's zero-based index by its string identifier.
- * @param engine  Engine handle.
- * @param id      Null-terminated snowpack identifier.
+ * @param[in] engine Engine handle.
+ * @param[in] id Null-terminated snowpack identifier.
  * @returns Zero-based index, or -1 if not found.
+ *
+ *
+ * @note Case-insensitive name lookup; null engine/name or no match returns -1.
  */
 SWMM_ENGINE_API int swmm_snowpack_index(SWMM_Engine engine, const char* id);
 
 /**
  * @brief Get the string identifier of a snowpack definition by index.
- * @param engine  Engine handle.
- * @param idx     Zero-based snowpack index.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based snowpack index.
  * @returns Null-terminated string owned by the engine, or NULL on error.
+ *
+ *
+ * @note Returned text borrows engine storage; do not free. Copy before a registry/table edit or
+ *     engine close/destruction. Null engine/invalid index returns NULL.
  */
 SWMM_ENGINE_API const char* swmm_snowpack_id(SWMM_Engine engine, int idx);
 
@@ -1008,9 +1521,14 @@ SWMM_ENGINE_API const char* swmm_snowpack_id(SWMM_Engine engine, int idx);
  *          ATI, negative-melt-ratio, and removal fractions.
  *          Lifecycle: BUILDING or OPENED.
  *
- * @param engine  Engine handle.
- * @param id      Unique null-terminated identifier.
+ * @param[in] engine Engine handle.
+ * @param[in] id Unique null-terminated identifier.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE. Copies ID and rejects case-insensitive duplicates; NULL is refused, but
+ *     this wrapper has no explicit empty-ID check.
  */
 SWMM_ENGINE_API int swmm_snowpack_add(SWMM_Engine engine, const char* id);
 
@@ -1025,11 +1543,15 @@ SWMM_ENGINE_API int swmm_snowpack_add(SWMM_Engine engine, const char* id);
  *          automatically.
  *          Lifecycle: BUILDING or OPENED.
  *
- * @param engine  Engine handle.
- * @param idx     Snow pack index.
- * @param new_id  New unique name (non-empty). A pure case-respelling of this
+ * @param[in] engine Engine handle.
+ * @param[in] idx Snow pack index.
+ * @param[in] new_id New unique name (non-empty). A pure case-respelling of this
  *                same snow pack is allowed.
  * @returns SWMM_OK, or SWMM_ERR_BADPARAM on an empty or duplicate name.
+ *
+ *
+ * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE. A failed subcatchment/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_snowpack_rename(SWMM_Engine engine, int idx, const char* new_id);
 
@@ -1057,113 +1579,298 @@ SWMM_ENGINE_API int swmm_snowpack_rename(SWMM_Engine engine, int idx, const char
  * editor can load existing definitions. Any getter out-param may be null.
  * ------------------------------------------------------------------------- */
 
-/** @brief Set the PLOWABLE surface parameters (`last` = plowable area fraction). */
-SWMM_ENGINE_API int swmm_snowpack_set_plowable(SWMM_Engine engine, int idx,
-                                               double cmin, double cmax, double tbase,
-                                               double fwfrac, double sd0, double fw0, double last);
-/** @brief Read the PLOWABLE surface parameters. Inverse of @ref swmm_snowpack_set_plowable. */
-SWMM_ENGINE_API int swmm_snowpack_get_plowable(SWMM_Engine engine, int idx,
-                                               double* cmin, double* cmax, double* tbase,
-                                               double* fwfrac, double* sd0, double* fw0, double* last);
-
-/** @brief Set the IMPERVIOUS surface parameters (`last` = 100%-cover depth). */
-SWMM_ENGINE_API int swmm_snowpack_set_impervious(SWMM_Engine engine, int idx,
-                                                 double cmin, double cmax, double tbase,
-                                                 double fwfrac, double sd0, double fw0, double last);
-/** @brief Read the IMPERVIOUS surface parameters. Inverse of @ref swmm_snowpack_set_impervious. */
-SWMM_ENGINE_API int swmm_snowpack_get_impervious(SWMM_Engine engine, int idx,
-                                                 double* cmin, double* cmax, double* tbase,
-                                                 double* fwfrac, double* sd0, double* fw0, double* last);
-
-/** @brief Set the PERVIOUS surface parameters (`last` = 100%-cover depth). */
-SWMM_ENGINE_API int swmm_snowpack_set_pervious(SWMM_Engine engine, int idx,
-                                               double cmin, double cmax, double tbase,
-                                               double fwfrac, double sd0, double fw0, double last);
-/** @brief Read the PERVIOUS surface parameters. Inverse of @ref swmm_snowpack_set_pervious. */
-SWMM_ENGINE_API int swmm_snowpack_get_pervious(SWMM_Engine engine, int idx,
-                                               double* cmin, double* cmax, double* tbase,
-                                               double* fwfrac, double* sd0, double* fw0, double* last);
+/**
+ * @brief Assign the plowable snow-melt surface parameters.
+ *
+ * Requires BUILDING/OPENED. Values seed snow state at start; this setter stores them without
+ * finite/range checks.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] idx Zero-based existing snowpack definition index.
+ * @param[in] cmin Minimum melt factor, inches/hour/degree F or mm/hour/degree C.
+ * @param[in] cmax Maximum melt factor in the same units.
+ * @param[in] tbase Base melt temperature, degrees F for US or C for SI.
+ * @param[in] fwfrac Free-water capacity fraction.
+ * @param[in] sd0 Initial snow water-equivalent depth, inches/mm.
+ * @param[in] fw0 Initial free-water depth, inches/mm.
+ * @param[in] last Plowable fraction of impervious area.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments. SWMM_ERR_LIFECYCLE outside
+ *     BUILDING/OPENED.
+ */
+SWMM_ENGINE_API int swmm_snowpack_set_plowable(SWMM_Engine engine, int idx, double cmin,
+                                               double cmax, double tbase, double fwfrac, double sd0,
+                                               double fw0, double last);
+/**
+ * @brief Read the plowable snow-melt surface parameters.
+ *
+ * No lifecycle check; reads stored input values.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] idx Zero-based existing snowpack definition index.
+ * @param[out] cmin Optional output. Minimum melt factor, inches/hour/degree F or mm/hour/degree C.
+ * @param[out] cmax Optional output. Maximum melt factor in the same units.
+ * @param[out] tbase Optional output. Base melt temperature, degrees F for US or C for SI.
+ * @param[out] fwfrac Optional output. Free-water capacity fraction.
+ * @param[out] sd0 Optional output. Initial snow water-equivalent depth, inches/mm.
+ * @param[out] fw0 Optional output. Initial free-water depth, inches/mm.
+ * @param[out] last Optional output. Plowable fraction of impervious area.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments.
+ */
+SWMM_ENGINE_API int swmm_snowpack_get_plowable(SWMM_Engine engine, int idx, double* cmin,
+                                               double* cmax, double* tbase, double* fwfrac,
+                                               double* sd0, double* fw0, double* last);
 
 /**
- * @brief Set the REMOVAL parameters (snow redistribution at depth `dsnow`).
+ * @brief Assign the impervious snow-melt surface parameters.
  *
- * @details The six fractions of the `[SNOWPACKS] ... REMOVAL` line:
- *          `dsnow` (depth at which removal begins, in/mm), then the fractions
- *          routed out of the watershed (`fout`), to impervious area (`fimp`),
- *          to pervious area (`fperv`), converted to immediate melt (`fimelt`),
- *          and transferred to another subcatchment (`fsubcatch`). The optional
- *          destination subcatchment is named via
- *          @ref swmm_snowpack_set_removal_subcatch. Pre-start-only.
+ * Requires BUILDING/OPENED. Values seed snow state at start; this setter stores them without
+ * finite/range checks.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] idx Zero-based existing snowpack definition index.
+ * @param[in] cmin Minimum melt factor, inches/hour/degree F or mm/hour/degree C.
+ * @param[in] cmax Maximum melt factor in the same units.
+ * @param[in] tbase Base melt temperature, degrees F for US or C for SI.
+ * @param[in] fwfrac Free-water capacity fraction.
+ * @param[in] sd0 Initial snow water-equivalent depth, inches/mm.
+ * @param[in] fw0 Initial free-water depth, inches/mm.
+ * @param[in] last Snow water-equivalent depth for complete cover, inches/mm.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments. SWMM_ERR_LIFECYCLE outside
+ *     BUILDING/OPENED.
  */
-SWMM_ENGINE_API int swmm_snowpack_set_removal(SWMM_Engine engine, int idx,
-                                              double dsnow, double fout, double fimp,
-                                              double fperv, double fimelt, double fsubcatch);
-/** @brief Read the REMOVAL parameters. Inverse of @ref swmm_snowpack_set_removal. */
-SWMM_ENGINE_API int swmm_snowpack_get_removal(SWMM_Engine engine, int idx,
-                                              double* dsnow, double* fout, double* fimp,
-                                              double* fperv, double* fimelt, double* fsubcatch);
+SWMM_ENGINE_API int swmm_snowpack_set_impervious(SWMM_Engine engine, int idx, double cmin,
+                                                 double cmax, double tbase, double fwfrac,
+                                                 double sd0, double fw0, double last);
+/**
+ * @brief Read the impervious snow-melt surface parameters.
+ *
+ * No lifecycle check; reads stored input values.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] idx Zero-based existing snowpack definition index.
+ * @param[out] cmin Optional output. Minimum melt factor, inches/hour/degree F or mm/hour/degree C.
+ * @param[out] cmax Optional output. Maximum melt factor in the same units.
+ * @param[out] tbase Optional output. Base melt temperature, degrees F for US or C for SI.
+ * @param[out] fwfrac Optional output. Free-water capacity fraction.
+ * @param[out] sd0 Optional output. Initial snow water-equivalent depth, inches/mm.
+ * @param[out] fw0 Optional output. Initial free-water depth, inches/mm.
+ * @param[out] last Optional output. Snow water-equivalent depth for complete cover, inches/mm.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments.
+ */
+SWMM_ENGINE_API int swmm_snowpack_get_impervious(SWMM_Engine engine, int idx, double* cmin,
+                                                 double* cmax, double* tbase, double* fwfrac,
+                                                 double* sd0, double* fw0, double* last);
 
-/** @brief Set/clear the destination subcatchment for the REMOVAL `fsubcatch` fraction. Pre-start-only. */
-SWMM_ENGINE_API int swmm_snowpack_set_removal_subcatch(SWMM_Engine engine, int idx, const char* name);
-/** @brief Read the REMOVAL destination subcatchment name (empty if none). NUL-terminates, truncates to `buflen`. */
-SWMM_ENGINE_API int swmm_snowpack_get_removal_subcatch(SWMM_Engine engine, int idx, char* buf, int buflen);
+/**
+ * @brief Assign the pervious snow-melt surface parameters.
+ *
+ * Requires BUILDING/OPENED. Values seed snow state at start; this setter stores them without
+ * finite/range checks.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] idx Zero-based existing snowpack definition index.
+ * @param[in] cmin Minimum melt factor, inches/hour/degree F or mm/hour/degree C.
+ * @param[in] cmax Maximum melt factor in the same units.
+ * @param[in] tbase Base melt temperature, degrees F for US or C for SI.
+ * @param[in] fwfrac Free-water capacity fraction.
+ * @param[in] sd0 Initial snow water-equivalent depth, inches/mm.
+ * @param[in] fw0 Initial free-water depth, inches/mm.
+ * @param[in] last Snow water-equivalent depth for complete cover, inches/mm.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments. SWMM_ERR_LIFECYCLE outside
+ *     BUILDING/OPENED.
+ */
+SWMM_ENGINE_API int swmm_snowpack_set_pervious(SWMM_Engine engine, int idx, double cmin,
+                                               double cmax, double tbase, double fwfrac, double sd0,
+                                               double fw0, double last);
+/**
+ * @brief Read the pervious snow-melt surface parameters.
+ *
+ * No lifecycle check; reads stored input values.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] idx Zero-based existing snowpack definition index.
+ * @param[out] cmin Optional output. Minimum melt factor, inches/hour/degree F or mm/hour/degree C.
+ * @param[out] cmax Optional output. Maximum melt factor in the same units.
+ * @param[out] tbase Optional output. Base melt temperature, degrees F for US or C for SI.
+ * @param[out] fwfrac Optional output. Free-water capacity fraction.
+ * @param[out] sd0 Optional output. Initial snow water-equivalent depth, inches/mm.
+ * @param[out] fw0 Optional output. Initial free-water depth, inches/mm.
+ * @param[out] last Optional output. Snow water-equivalent depth for complete cover, inches/mm.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments.
+ */
+SWMM_ENGINE_API int swmm_snowpack_get_pervious(SWMM_Engine engine, int idx, double* cmin,
+                                               double* cmax, double* tbase, double* fwfrac,
+                                               double* sd0, double* fw0, double* last);
+
+/**
+ * @brief Assign snow redistribution parameters.
+ *
+ * Requires BUILDING/OPENED. Does not validate individual values, fraction sum or destination;
+ * stores authoring inputs verbatim.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] idx Zero-based existing snowpack definition index.
+ * @param[in] dsnow Snow depth at which removal begins, inches/mm.
+ * @param[in] fout Fraction exported out of the watershed.
+ * @param[in] fimp Fraction routed to impervious surface.
+ * @param[in] fperv Fraction routed to pervious surface.
+ * @param[in] fimelt Fraction converted to immediate melt.
+ * @param[in] fsubcatch Fraction transferred to the separately named destination subcatchment.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments. SWMM_ERR_LIFECYCLE outside
+ *     BUILDING/OPENED.
+ */
+SWMM_ENGINE_API int swmm_snowpack_set_removal(SWMM_Engine engine, int idx, double dsnow,
+                                              double fout, double fimp, double fperv, double fimelt,
+                                              double fsubcatch);
+/**
+ * @brief Read snow redistribution parameters.
+ *
+ * No lifecycle check.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] idx Zero-based existing snowpack definition index.
+ * @param[out] dsnow Optional output. Snow depth at which removal begins, inches/mm.
+ * @param[out] fout Optional output. Fraction exported out of the watershed.
+ * @param[out] fimp Optional output. Fraction routed to impervious surface.
+ * @param[out] fperv Optional output. Fraction routed to pervious surface.
+ * @param[out] fimelt Optional output. Fraction converted to immediate melt.
+ * @param[out] fsubcatch Optional output. Fraction transferred to the separately named destination
+ *     subcatchment.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments.
+ */
+SWMM_ENGINE_API int swmm_snowpack_get_removal(SWMM_Engine engine, int idx, double* dsnow,
+                                              double* fout, double* fimp, double* fperv,
+                                              double* fimelt, double* fsubcatch);
+
+/**
+ * @brief Set or clear the copied snow-removal destination name.
+ *
+ * Requires BUILDING/OPENED. Stores the name without resolving existence here.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] idx Zero-based existing snowpack definition index.
+ * @param[in] name Borrowed NUL-terminated subcatchment name; NULL/empty clears it.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments. SWMM_ERR_LIFECYCLE outside
+ *     BUILDING/OPENED.
+ */
+SWMM_ENGINE_API int swmm_snowpack_set_removal_subcatch(SWMM_Engine engine, int idx,
+                                                       const char* name);
+/**
+ * @brief Copy the snow-removal destination name.
+ *
+ * No lifecycle check; empty when no destination is assigned.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] idx Zero-based existing snowpack definition index.
+ * @param[out] buf Non-null caller-owned buffer, NUL-terminated and silently truncated to buflen-1
+ *     bytes.
+ * @param[in] buflen Positive capacity in bytes including NUL.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments.
+ */
+SWMM_ENGINE_API int swmm_snowpack_get_removal_subcatch(SWMM_Engine engine, int idx, char* buf,
+                                                       int buflen);
 
 /* =========================================================================
  * Tag — free-form string label from the INP `[TAGS]` section
  * ========================================================================= */
 
-/** @brief Read the subcatchment's tag into `buf` (NUL-terminated, truncated if too small). */
-SWMM_ENGINE_API int swmm_subcatch_get_tag(SWMM_Engine engine, int idx,
-                                            char* buf, int buflen);
-
-/** @brief Set or clear the subcatchment's tag. Null/empty clears. Persists across rename. */
-SWMM_ENGINE_API int swmm_subcatch_set_tag(SWMM_Engine engine, int idx,
-                                            const char* tag);
+/**
+ * @brief Copy a subcatchment tag.
+ *
+ * Missing tags copy as empty text. No lifecycle check.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] idx Zero-based existing subcatchment index.
+ * @param[out] buf Non-null caller-owned buffer, NUL-terminated and silently truncated to buflen-1
+ *     bytes.
+ * @param[in] buflen Positive capacity in bytes including NUL.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments.
+ */
+SWMM_ENGINE_API int swmm_subcatch_get_tag(SWMM_Engine engine, int idx, char* buf, int buflen);
 
 /**
- * @brief Set the subcatchment's rainfall scale factor (optional token 9 of
- *        [SUBCATCHMENTS]; default 1.0 = no scaling).
+ * @brief Replace or clear a copied subcatchment tag.
  *
- * @details Multiplies the gage-derived rainfall for this subcatchment only,
- *          composing multiplicatively with the gage's own scale factor:
- *              rainfall = gage_rain * gage_scale_factor * rain_scale_factor
- *          API/forcing rainfall overrides are NOT scaled by this.
+ * No lifecycle check. Stored per object, so a registry rename preserves the tag.
  *
- *          Settable mid-run (no geometry lock), so it can be driven by a
- *          calibration or RTC loop.
- *
- * @param factor Must be > 0.0.
- * @returns SWMM_OK, or SWMM_ERR_BADPARAM if factor <= 0.0.
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] idx Zero-based existing subcatchment index.
+ * @param[in] tag Borrowed NUL-terminated tag; NULL/empty clears it.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments.
  */
-SWMM_ENGINE_API int swmm_subcatch_set_rain_scale_factor(SWMM_Engine engine, int idx,
-                                            double factor);
+SWMM_ENGINE_API int swmm_subcatch_set_tag(SWMM_Engine engine, int idx, const char* tag);
 
-/** @brief Get the subcatchment's rainfall scale factor. @see swmm_subcatch_set_rain_scale_factor */
+/**
+ * @brief Replace the rain precipitation multiplier.
+ *
+ * No lifecycle guard. The runoff precipitation path applies it on subsequent rain evaluation, in
+ * addition to the gage factor.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] idx Zero-based existing subcatchment index.
+ * @param[in] factor Dimensionless multiplier; values <=0 are refused. Supply a finite positive
+ *     value because no explicit finiteness check is made.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments.
+ */
+SWMM_ENGINE_API int swmm_subcatch_set_rain_scale_factor(SWMM_Engine engine, int idx, double factor);
+
+/**
+ * @brief Read the rain precipitation multiplier.
+ *
+ * No lifecycle guard. The runoff precipitation path applies it on subsequent rain evaluation, in
+ * addition to the gage factor.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] idx Zero-based existing subcatchment index.
+ * @param[out] factor Optional dimensionless stored factor output.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments.
+ */
 SWMM_ENGINE_API int swmm_subcatch_get_rain_scale_factor(SWMM_Engine engine, int idx,
-                                            double* factor);
+                                                        double* factor);
 
 /**
- * @brief Set the subcatchment's snowfall scale factor (optional token 10 of
- *        [SUBCATCHMENTS]; default 1.0 = no scaling).
+ * @brief Replace the snow precipitation multiplier.
  *
- * @details Composes multiplicatively with the gage snow catch factor (SCF):
- *              snowfall = gage_rain * gage_scale_factor * gage_snow_factor
- *                                   * snow_scale_factor
- *          Distinct from the gage SCF: SCF corrects a physical gage's
- *          snow-catch deficiency, while this represents spatial variation
- *          across the catchment (orographic gradient, canopy, drifting).
+ * No lifecycle guard. The runoff precipitation path applies it on subsequent snow evaluation, in
+ * addition to the gage factor.
  *
- *          Settable mid-run (no geometry lock).
- *
- * @param factor Must be > 0.0.
- * @returns SWMM_OK, or SWMM_ERR_BADPARAM if factor <= 0.0.
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] idx Zero-based existing subcatchment index.
+ * @param[in] factor Dimensionless multiplier; values <=0 are refused. Supply a finite positive
+ *     value because no explicit finiteness check is made.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments.
  */
-SWMM_ENGINE_API int swmm_subcatch_set_snow_scale_factor(SWMM_Engine engine, int idx,
-                                            double factor);
+SWMM_ENGINE_API int swmm_subcatch_set_snow_scale_factor(SWMM_Engine engine, int idx, double factor);
 
-/** @brief Get the subcatchment's snowfall scale factor. @see swmm_subcatch_set_snow_scale_factor */
+/**
+ * @brief Read the snow precipitation multiplier.
+ *
+ * No lifecycle guard. The runoff precipitation path applies it on subsequent snow evaluation, in
+ * addition to the gage factor.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] idx Zero-based existing subcatchment index.
+ * @param[out] factor Optional dimensionless stored factor output.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments.
+ */
 SWMM_ENGINE_API int swmm_subcatch_get_snow_scale_factor(SWMM_Engine engine, int idx,
-                                            double* factor);
+                                                        double* factor);
 
 /* =========================================================================
  * Custom groundwater flow expressions ([GWF] section)
@@ -1178,10 +1885,7 @@ SWMM_ENGINE_API int swmm_subcatch_get_snow_scale_factor(SWMM_Engine engine, int 
  *          listed by @ref swmm_gwf_function_name, and the operators
  *          `+ - * / ^ ( )`; names are case-insensitive.
  */
-typedef enum SWMM_GwfType {
-    SWMM_GWF_LATERAL = 0,
-    SWMM_GWF_DEEP = 1
-} SWMM_GwfType;
+typedef enum SWMM_GwfType { SWMM_GWF_LATERAL = 0, SWMM_GWF_DEEP = 1 } SWMM_GwfType;
 
 /**
  * @brief Read a subcatchment's custom groundwater flow expression.
@@ -1189,12 +1893,17 @@ typedef enum SWMM_GwfType {
  * @details Writes a NUL-terminated string into `buf` (empty when no
  *          expression is set), truncating if `buflen` is too small.
  *
- * @param engine   Engine handle.
- * @param index    Zero-based subcatchment index.
- * @param type     A SWMM_GwfType code.
+ * @param[in] engine Engine handle.
+ * @param[in] index Zero-based subcatchment index.
+ * @param[in] type A SWMM_GwfType code.
  * @param[out] buf Destination buffer for the expression text.
- * @param buflen   Size of `buf` in bytes (must be > 0).
+ * @param[in] buflen Size of `buf` in bytes (must be > 0).
  * @returns SWMM_OK on success, SWMM_ERR_BADPARAM for a bad type, or an error code.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A failed subcatchment/pollutant index check
+ *     returns SWMM_ERR_BADINDEX. Output must be non-null with positive byte capacity; text is
+ *     NUL-terminated and silently truncated to capacity minus one byte.
  */
 SWMM_ENGINE_API int swmm_subcatch_get_gwf_expression(SWMM_Engine engine, int index, int type,
                                                      char* buf, int buflen);
@@ -1210,11 +1919,17 @@ SWMM_ENGINE_API int swmm_subcatch_get_gwf_expression(SWMM_Engine engine, int ind
  *          the expression is compiled when the simulation starts, so a
  *          mid-run change returns SWMM_ERR_LIFECYCLE.
  *
- * @param engine  Engine handle.
- * @param index   Zero-based subcatchment index.
- * @param type    A SWMM_GwfType code.
- * @param expr    Expression text, or null/empty to clear.
+ * @param[in] engine Engine handle.
+ * @param[in] index Zero-based subcatchment index.
+ * @param[in] type A SWMM_GwfType code.
+ * @param[in] expr Expression text, or null/empty to clear.
  * @returns SWMM_OK on success, SWMM_ERR_BADPARAM for a bad type, or an error code.
+ *
+ *
+ * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE. A failed subcatchment/pollutant index check returns SWMM_ERR_BADINDEX.
+ *     Copies or clears source text without compiling it; call swmm_gwf_validate_expression() for an
+ *     immediate syntax diagnostic.
  */
 SWMM_ENGINE_API int swmm_subcatch_set_gwf_expression(SWMM_Engine engine, int index, int type,
                                                      const char* expr);
@@ -1232,51 +1947,70 @@ SWMM_ENGINE_API int swmm_subcatch_set_gwf_expression(SWMM_Engine engine, int ind
  *          ("expression is empty") — callers treat empty as "clear"
  *          themselves.
  *
- * @param engine        Engine handle (grammar only; no model data is read).
- * @param expr          Expression text.
- * @param[out] errbuf   Receives the diagnostic on failure ("" on success).
+ * @param[in] engine Engine handle (grammar only; no model data is read).
+ * @param[in] expr Expression text.
+ * @param[out] errbuf Receives the diagnostic on failure ("" on success).
  *                      May be NULL.
- * @param buflen        Size of errbuf in bytes.
- * @param[out] col_out  Receives the 0-based character offset of the error,
+ * @param[in] buflen Size of errbuf in bytes.
+ * @param[out] col_out Receives the 0-based character offset of the error,
  *                      or -1 when not attributable. May be NULL.
  * @returns SWMM_OK when the expression is valid, SWMM_ERR_BADPARAM when
  *          invalid (diagnostic in errbuf/col_out) or on NULL expr.
+ *
+ *
+ * @note col_out may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE.
  */
-SWMM_ENGINE_API int swmm_gwf_validate_expression(SWMM_Engine engine, const char* expr,
-                                                 char* errbuf, int buflen, int* col_out);
+SWMM_ENGINE_API int swmm_gwf_validate_expression(SWMM_Engine engine, const char* expr, char* errbuf,
+                                                 int buflen, int* col_out);
 
 /**
  * @brief Number of variables a [GWF] expression may reference.
- * @param engine  Engine handle.
+ * @param[in] engine Engine handle.
  * @returns Variable count, or -1 on error.
+ *
+ *
+ * @note Null engine returns -1.
  */
 SWMM_ENGINE_API int swmm_gwf_variable_count(SWMM_Engine engine);
 
 /**
  * @brief Name of the i-th [GWF] variable (upper-case, e.g. "HGW").
- * @param engine   Engine handle.
- * @param i        Zero-based index, < swmm_gwf_variable_count().
+ * @param[in] engine Engine handle.
+ * @param[in] i Zero-based index, < swmm_gwf_variable_count().
  * @param[out] buf Destination buffer (NUL-terminated, truncated if too small).
- * @param buflen   Size of `buf` in bytes (must be > 0).
+ * @param[in] buflen Size of `buf` in bytes (must be > 0).
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A failed subcatchment/pollutant index check
+ *     returns SWMM_ERR_BADINDEX. Output must be non-null with positive byte capacity; text is
+ *     NUL-terminated and silently truncated to capacity minus one byte.
  */
 SWMM_ENGINE_API int swmm_gwf_variable_name(SWMM_Engine engine, int i, char* buf, int buflen);
 
 /**
  * @brief Short English description of the i-th [GWF] variable, with a units
  *        placeholder, e.g. "Water table height above aquifer bottom (ft or m)".
- * @param engine   Engine handle.
- * @param i        Zero-based index, < swmm_gwf_variable_count().
+ * @param[in] engine Engine handle.
+ * @param[in] i Zero-based index, < swmm_gwf_variable_count().
  * @param[out] buf Destination buffer (NUL-terminated, truncated if too small).
- * @param buflen   Size of `buf` in bytes (must be > 0).
+ * @param[in] buflen Size of `buf` in bytes (must be > 0).
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A failed subcatchment/pollutant index check
+ *     returns SWMM_ERR_BADINDEX. Output must be non-null with positive byte capacity; text is
+ *     NUL-terminated and silently truncated to capacity minus one byte.
  */
 SWMM_ENGINE_API int swmm_gwf_variable_description(SWMM_Engine engine, int i, char* buf, int buflen);
 
 /**
  * @brief Number of built-in functions a [GWF] expression may call.
- * @param engine  Engine handle.
+ * @param[in] engine Engine handle.
  * @returns Function count, or -1 on error.
+ *
+ *
+ * @note Null engine returns -1.
  */
 SWMM_ENGINE_API int swmm_gwf_function_count(SWMM_Engine engine);
 
@@ -1284,11 +2018,16 @@ SWMM_ENGINE_API int swmm_gwf_function_count(SWMM_Engine engine);
  * @brief Name of the i-th expression function (lower-case, stable order:
  *        abs, sgn, sqrt, log, exp, sin, cos, tan, asin, acos, atan, step, min,
  *        max, cot, sinh, cosh, tanh, coth, log10, acot).
- * @param engine   Engine handle.
- * @param i        Zero-based index, < swmm_gwf_function_count().
+ * @param[in] engine Engine handle.
+ * @param[in] i Zero-based index, < swmm_gwf_function_count().
  * @param[out] buf Destination buffer (NUL-terminated, truncated if too small).
- * @param buflen   Size of `buf` in bytes (must be > 0).
+ * @param[in] buflen Size of `buf` in bytes (must be > 0).
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A failed subcatchment/pollutant index check
+ *     returns SWMM_ERR_BADINDEX. Output must be non-null with positive byte capacity; text is
+ *     NUL-terminated and silently truncated to capacity minus one byte.
  */
 SWMM_ENGINE_API int swmm_gwf_function_name(SWMM_Engine engine, int i, char* buf, int buflen);
 

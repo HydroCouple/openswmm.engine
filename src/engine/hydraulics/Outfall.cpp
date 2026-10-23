@@ -15,13 +15,13 @@
 // limitations under the License.
 
 /**
- * @file Outfall.cpp
- * @brief Outfall boundary depths — matching legacy link_setOutfallDepth / outfall_setOutletDepth.
+ * @file      Outfall.cpp
+ * @brief     Outfall boundary depths — matching legacy link_setOutfallDepth / outfall_setOutletDepth.
  * @ingroup new_engine
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "Outfall.hpp"
@@ -38,54 +38,97 @@
 namespace openswmm {
 namespace outfall {
 
-/// Translate LinkData::XsectShape to batch XSectShape (different enum orderings).
+/**
+ * @brief Translate a model-storage section enum to the kernel enum.
+ *
+ * @param[in] link_shape Storage XsectShape candidate; unknown values select DUMMY.
+ * @return Kernel XSectShape integer code, never a direct ordinal cast between the enums.
+ */
 static int translateShape(XsectShape link_shape) {
     switch (link_shape) {
-        case XsectShape::CIRCULAR:        return static_cast<int>(XSectShape::CIRCULAR);
-        case XsectShape::FILLED_CIRCULAR: return static_cast<int>(XSectShape::FILLED_CIRCULAR);
-        case XsectShape::RECT_CLOSED:     return static_cast<int>(XSectShape::RECT_CLOSED);
-        case XsectShape::RECT_OPEN:       return static_cast<int>(XSectShape::RECT_OPEN);
-        case XsectShape::TRAPEZOIDAL:     return static_cast<int>(XSectShape::TRAPEZOIDAL);
-        case XsectShape::TRIANGULAR:      return static_cast<int>(XSectShape::TRIANGULAR);
-        case XsectShape::PARABOLIC:       return static_cast<int>(XSectShape::PARABOLIC);
-        case XsectShape::POWER:           return static_cast<int>(XSectShape::POWERFUNC);
-        case XsectShape::MODBASKETHANDLE: return static_cast<int>(XSectShape::MOD_BASKET);
-        case XsectShape::EGGSHAPED:       return static_cast<int>(XSectShape::EGGSHAPED);
-        case XsectShape::HORSESHOE:       return static_cast<int>(XSectShape::HORSESHOE);
-        case XsectShape::GOTHIC:          return static_cast<int>(XSectShape::GOTHIC);
-        case XsectShape::CATENARY:        return static_cast<int>(XSectShape::CATENARY);
-        case XsectShape::SEMIELLIPTICAL:  return static_cast<int>(XSectShape::SEMIELLIPTICAL);
-        case XsectShape::BASKETHANDLE:    return static_cast<int>(XSectShape::BASKETHANDLE);
-        case XsectShape::SEMICIRCULAR:    return static_cast<int>(XSectShape::SEMICIRCULAR);
-        case XsectShape::RECT_TRIANG:     return static_cast<int>(XSectShape::RECT_TRIANG);
-        case XsectShape::RECT_ROUND:      return static_cast<int>(XSectShape::RECT_ROUND);
-        case XsectShape::HORIZ_ELLIPSE:   return static_cast<int>(XSectShape::HORIZ_ELLIPSE);
-        case XsectShape::VERT_ELLIPSE:    return static_cast<int>(XSectShape::VERT_ELLIPSE);
-        case XsectShape::ARCH:            return static_cast<int>(XSectShape::ARCH);
-        case XsectShape::IRREGULAR:       return static_cast<int>(XSectShape::IRREGULAR);
-        case XsectShape::CUSTOM:          return static_cast<int>(XSectShape::CUSTOM);
-        case XsectShape::FORCE_MAIN:      return static_cast<int>(XSectShape::FORCE_MAIN);
-        case XsectShape::STREET_XSECT:    return static_cast<int>(XSectShape::STREET_XSECT);
-        case XsectShape::DUMMY:           return static_cast<int>(XSectShape::DUMMY);
+    case XsectShape::CIRCULAR:
+        return static_cast<int>(XSectShape::CIRCULAR);
+    case XsectShape::FILLED_CIRCULAR:
+        return static_cast<int>(XSectShape::FILLED_CIRCULAR);
+    case XsectShape::RECT_CLOSED:
+        return static_cast<int>(XSectShape::RECT_CLOSED);
+    case XsectShape::RECT_OPEN:
+        return static_cast<int>(XSectShape::RECT_OPEN);
+    case XsectShape::TRAPEZOIDAL:
+        return static_cast<int>(XSectShape::TRAPEZOIDAL);
+    case XsectShape::TRIANGULAR:
+        return static_cast<int>(XSectShape::TRIANGULAR);
+    case XsectShape::PARABOLIC:
+        return static_cast<int>(XSectShape::PARABOLIC);
+    case XsectShape::POWER:
+        return static_cast<int>(XSectShape::POWERFUNC);
+    case XsectShape::MODBASKETHANDLE:
+        return static_cast<int>(XSectShape::MOD_BASKET);
+    case XsectShape::EGGSHAPED:
+        return static_cast<int>(XSectShape::EGGSHAPED);
+    case XsectShape::HORSESHOE:
+        return static_cast<int>(XSectShape::HORSESHOE);
+    case XsectShape::GOTHIC:
+        return static_cast<int>(XSectShape::GOTHIC);
+    case XsectShape::CATENARY:
+        return static_cast<int>(XSectShape::CATENARY);
+    case XsectShape::SEMIELLIPTICAL:
+        return static_cast<int>(XSectShape::SEMIELLIPTICAL);
+    case XsectShape::BASKETHANDLE:
+        return static_cast<int>(XSectShape::BASKETHANDLE);
+    case XsectShape::SEMICIRCULAR:
+        return static_cast<int>(XSectShape::SEMICIRCULAR);
+    case XsectShape::RECT_TRIANG:
+        return static_cast<int>(XSectShape::RECT_TRIANG);
+    case XsectShape::RECT_ROUND:
+        return static_cast<int>(XSectShape::RECT_ROUND);
+    case XsectShape::HORIZ_ELLIPSE:
+        return static_cast<int>(XSectShape::HORIZ_ELLIPSE);
+    case XsectShape::VERT_ELLIPSE:
+        return static_cast<int>(XSectShape::VERT_ELLIPSE);
+    case XsectShape::ARCH:
+        return static_cast<int>(XSectShape::ARCH);
+    case XsectShape::IRREGULAR:
+        return static_cast<int>(XSectShape::IRREGULAR);
+    case XsectShape::CUSTOM:
+        return static_cast<int>(XSectShape::CUSTOM);
+    case XsectShape::FORCE_MAIN:
+        return static_cast<int>(XSectShape::FORCE_MAIN);
+    case XsectShape::STREET_XSECT:
+        return static_cast<int>(XSectShape::STREET_XSECT);
+    case XsectShape::DUMMY:
+        return static_cast<int>(XSectShape::DUMMY);
         case XsectShape::POLYGON:         return static_cast<int>(XSectShape::POLYGON);
-        default:                          return static_cast<int>(XSectShape::DUMMY);
+    default:
+        return static_cast<int>(XSectShape::DUMMY);
     }
 }
 
-/// Build XSectParams from link SoA data for a conduit (with shape translation).
+/**
+ * @brief Build a native scalar section view for one resolved model link.
+ *
+ * Copies full and bottom geometry, translating storage shape codes where needed.
+ * IRREGULAR/CUSTOM/STREET valid curve indices attach process-run-stable transect arrays; missing
+ * indices retain NULL pointers. Returned table views must not outlive/reallocate context tables. No
+ * full geometry validation or ownership transfer.
+ *
+ * @param[in] ctx Borrowed aligned resolved link geometry and stable transect_tables.
+ * @param[in] uk Valid global link index; no local bounds check.
+ * @return Owned scalar XSectParams copy with borrowed optional area/radius/width/LUT pointers.
+ */
 static XSectParams buildXSectParams(const SimulationContext& ctx, std::size_t uk) {
     XSectParams xs{};
-    xs.type   = ctx.links.xsect_batch_shape[uk];
+    xs.type = ctx.links.xsect_batch_shape[uk];
     xs.y_full = ctx.links.xsect_y_full[uk];
     xs.a_full = ctx.links.xsect_a_full[uk];
-    xs.w_max  = ctx.links.xsect_w_max[uk];
+    xs.w_max = ctx.links.xsect_w_max[uk];
     xs.r_full = ctx.links.xsect_r_full[uk];
     xs.s_full = ctx.links.xsect_s_full[uk];
-    xs.s_max  = ctx.links.xsect_s_max[uk];
-    xs.y_bot  = ctx.links.xsect_y_bot[uk];
-    xs.a_bot  = ctx.links.xsect_a_bot[uk];
-    xs.s_bot  = ctx.links.xsect_s_bot[uk];
-    xs.r_bot  = ctx.links.xsect_r_bot[uk];
+    xs.s_max = ctx.links.xsect_s_max[uk];
+    xs.y_bot = ctx.links.xsect_y_bot[uk];
+    xs.a_bot = ctx.links.xsect_a_bot[uk];
+    xs.s_bot = ctx.links.xsect_s_bot[uk];
+    xs.r_bot = ctx.links.xsect_r_bot[uk];
     // Tabulated shapes (IRREGULAR / CUSTOM / STREET) carry their A/R/W vs
     // depth in per-link transect tables. Without them getAofS/getYofA/
     // getYcrit return 0, so a NORMAL or FREE outfall on such a conduit sat
@@ -93,16 +136,15 @@ static XSectParams buildXSectParams(const SimulationContext& ctx, std::size_t uk
     // (customconduitshape D/S_Culvert1). Same wiring as DynamicWave's
     // buildXSP.
     const auto ls = ctx.links.xsect_shape[uk];
-    if (ls == XsectShape::IRREGULAR || ls == XsectShape::CUSTOM ||
-        ls == XsectShape::STREET_XSECT) {
+    if (ls == XsectShape::IRREGULAR || ls == XsectShape::CUSTOM || ls == XsectShape::STREET_XSECT) {
         const int ci = ctx.links.xsect_curve[uk];
         if (ci >= 0 && static_cast<std::size_t>(ci) < ctx.transect_tables.size()) {
             const auto& td = ctx.transect_tables[static_cast<std::size_t>(ci)];
-            xs.transect          = ci;
-            xs.area_tbl          = td.area_tbl;
-            xs.hrad_tbl          = td.hrad_tbl;
-            xs.width_tbl         = td.width_tbl;
-            xs.area_lut          = &td.area_lut;
+            xs.transect = ci;
+            xs.area_tbl = td.area_tbl;
+            xs.hrad_tbl = td.hrad_tbl;
+            xs.width_tbl = td.width_tbl;
+            xs.area_lut = &td.area_lut;
             xs.transect_tbl_size = transect::N_TRANSECT_TBL;
         }
     }
@@ -113,12 +155,22 @@ static XSectParams buildXSectParams(const SimulationContext& ctx, std::size_t uk
     return xs;
 }
 
-/// Compute normal depth for a given flow rate in a conduit.
-/// Matches legacy link_getYnorm: s = q/beta, a = getAofS(s), y = getYofA(a).
-static double getYnorm(const XSectParams& xs, double beta, double q_max,
-                       double q) {
-    if (beta <= 0.0 || q <= 0.0) return 0.0;
-    if (q > q_max && q_max > 0.0) q = q_max;
+/**
+ * @brief Compute conduit normal depth from capped positive discharge.
+ *
+ * No complete finite/domain validation or separate inverse-root convergence status.
+ *
+ * @param[in] xs Borrowed valid native section with live applicable lookup tables.
+ * @param[in] beta Positive conveyance coefficient matching xs section-factor convention.
+ * @param[in] q_max Positive cfs cap; nonpositive disables cap.
+ * @param[in] q Requested positive discharge cfs in the same per-barrel convention.
+ * @return 0 for beta<=0 or q<=0, otherwise Y(A(S=q/beta)) ft after optional q_max cap.
+ */
+static double getYnorm(const XSectParams& xs, double beta, double q_max, double q) {
+    if (beta <= 0.0 || q <= 0.0)
+        return 0.0;
+    if (q > q_max && q_max > 0.0)
+        q = q_max;
     double s = q / beta;
     double a = xsect::getAofS(xs, s);
     double y = xsect::getYofA(xs, a);
@@ -130,6 +182,19 @@ static double getYnorm(const XSectParams& xs, double beta, double q_max,
 // stores in BOTH offset fields (link.c:369-391) while this engine keeps the
 // weir/outlet crest in its side table and the orifice offset in offset1;
 // a pump has none.
+/**
+ * @brief Read the legacy regulator/conduit offset used at one outfall end.
+ *
+ * Downstream nonconduit/nonpump uses offset2 before type dispatch. Does not add node invert or
+ * filled-circle sediment bump.
+ *
+ * @param[in] ctx Borrowed coherent native link/subtype geometry.
+ * @param[in] uk Valid global link slot.
+ * @param[in] downstream True selects downstream offset convention, retaining unraised regulator
+ *     crest via offset2.
+ * @return Native ft offset: conduit end offset, or upstream orifice/weir/outlet crest;0 for
+ *     unsupported/missing subtype.
+ */
 static double legacyOffset(const SimulationContext& ctx, std::size_t uk, bool downstream) {
     // A regulator's downstream offset is legacy's un-raised crest (the
     // resolver's WARNING-10 pass keeps it in offset2 before raising offset1
@@ -138,26 +203,27 @@ static double legacyOffset(const SimulationContext& ctx, std::size_t uk, bool do
         ctx.links.type[uk] != LinkType::PUMP)
         return ctx.links.offset2[uk];
     switch (ctx.links.type[uk]) {
-        case LinkType::CONDUIT:
-            return downstream ? ctx.links.offset2[uk] : ctx.links.offset1[uk];
-        case LinkType::ORIFICE:
-            return ctx.links.offset1[uk];
-        case LinkType::WEIR: {
-            const int wr = ctx.link_subtypes.weir_row(static_cast<int>(uk));
-            return (wr >= 0) ? ctx.link_subtypes.weirs.crest_height[static_cast<std::size_t>(wr)] : 0.0;
-        }
-        case LinkType::OUTLET: {
-            const int olr = ctx.link_subtypes.outlet_row(static_cast<int>(uk));
-            return (olr >= 0) ? ctx.link_subtypes.outlets.crest_height[static_cast<std::size_t>(olr)] : 0.0;
-        }
-        default:
-            return 0.0;
+    case LinkType::CONDUIT:
+        return downstream ? ctx.links.offset2[uk] : ctx.links.offset1[uk];
+    case LinkType::ORIFICE:
+        return ctx.links.offset1[uk];
+    case LinkType::WEIR: {
+        const int wr = ctx.link_subtypes.weir_row(static_cast<int>(uk));
+        return (wr >= 0) ? ctx.link_subtypes.weirs.crest_height[static_cast<std::size_t>(wr)] : 0.0;
+    }
+    case LinkType::OUTLET: {
+        const int olr = ctx.link_subtypes.outlet_row(static_cast<int>(uk));
+        return (olr >= 0) ? ctx.link_subtypes.outlets.crest_height[static_cast<std::size_t>(olr)]
+                          : 0.0;
+    }
+    default:
+        return 0.0;
     }
 }
 
 void buildOutfallLinkMap(SimulationContext& ctx) {
     auto& nodes = ctx.nodes;
-    auto& outs  = ctx.node_subtypes.outfalls;   // relational side-table (authoritative)
+    auto& outs = ctx.node_subtypes.outfalls; // relational side-table (authoritative)
     const int n_links = ctx.n_links();
 
     // Reset the cached connectivity on every outfall row.
@@ -180,13 +246,16 @@ void buildOutfallLinkMap(SimulationContext& ctx) {
         int n = -1;
         double z = 0.0;
         if (n2 >= 0 && nodes.type[static_cast<std::size_t>(n2)] == NodeType::OUTFALL) {
-            n = n2; z = legacyOffset(ctx, uk, true);
+            n = n2;
+            z = legacyOffset(ctx, uk, true);
         } else if (n1 >= 0 && nodes.type[static_cast<std::size_t>(n1)] == NodeType::OUTFALL) {
-            n = n1; z = legacyOffset(ctx, uk, false);
-        } else continue;
+            n = n1;
+            z = legacyOffset(ctx, uk, false);
+        } else
+            continue;
         const int r = ctx.node_subtypes.outfall_row(n);
         if (r >= 0) {
-            outs.link_idx[static_cast<std::size_t>(r)]    = k;
+            outs.link_idx[static_cast<std::size_t>(r)] = k;
             outs.link_offset[static_cast<std::size_t>(r)] = z;
         }
     }
@@ -202,26 +271,39 @@ namespace {
 // separately from the side-table (outfalls.head_2d) at the use site.
 struct OutfallStatic {
     OutfallType bc_type;
-    double      param;
-    uint8_t     has_flap;
-    int         link_idx;
-    double      link_offset;
+    double param;
+    uint8_t has_flap;
+    int link_idx;
+    double link_offset;
 };
 
+/**
+ * @brief Copy relational outfall boundary metadata or default free-outfall values.
+ *
+ * Parameter retains boundary-type-dependent units/index encoding; no pointer ownership, runtime
+ * stage lookup or validation.
+ *
+ * @param[in] nodes Borrowed node data, currently unused.
+ * @param[in] subs Borrowed coherent outfall subtype mapping/columns.
+ * @param[in] uj Global node index representable as int; subtype mapping lookup provides absence
+ *     handling.
+ * @return Value copy of boundary type/parameter/flap/cached link/offset; default FREE,0,no
+ *     flap,-1,0 when absent.
+ */
 inline OutfallStatic outfallStatic(const NodeData& nodes, const NodeSubtypes& subs,
                                    std::size_t uj) {
     (void)nodes;
     const int r = subs.outfall_row(static_cast<int>(uj));
     if (r >= 0) {
         const auto ur = static_cast<std::size_t>(r);
-        return OutfallStatic{ subs.outfalls.bc_type[ur], subs.outfalls.param[ur],
-                              subs.outfalls.has_flap_gate[ur], subs.outfalls.link_idx[ur],
-                              subs.outfalls.link_offset[ur] };
+        return OutfallStatic{subs.outfalls.bc_type[ur], subs.outfalls.param[ur],
+                             subs.outfalls.has_flap_gate[ur], subs.outfalls.link_idx[ur],
+                             subs.outfalls.link_offset[ur]};
     }
     // Non-outfall / no row: resize defaults (FREE, no flap, no cached link).
-    return OutfallStatic{ OutfallType::FREE, 0.0, 0, -1, 0.0 };
+    return OutfallStatic{OutfallType::FREE, 0.0, 0, -1, 0.0};
 }
-}  // namespace
+} // namespace
 
 void setAllOutfallDepths(SimulationContext& ctx, double dt_routing) {
     auto& nodes = ctx.nodes;
@@ -234,7 +316,7 @@ void setAllOutfallDepths(SimulationContext& ctx, double dt_routing) {
     // are evaluated at the END of the step. routing-outfall-tidal read the
     // calendar hour of the step's START, rounded to whole seconds.
     const double new_routing_ms = ctx.elapsed_ms + 1000.0 * dt_routing;
-    constexpr double kMsecPerDay = 86400000.0;   // legacy MSECperDAY
+    constexpr double kMsecPerDay = 86400000.0; // legacy MSECperDAY
     const double elapsed_days = new_routing_ms / kMsecPerDay;
 
     // Legacy: iterates over LINKS and calls link_setOutfallDepth(j) for each.
@@ -262,12 +344,19 @@ void setAllOutfallDepths(SimulationContext& ctx, double dt_routing) {
             for (int k = 0; k < ctx.n_links(); ++k) {
                 auto uk = static_cast<std::size_t>(k);
                 const int n2 = ctx.links.node2[uk], n1 = ctx.links.node1[uk];
-                if (n2 == j) { link_idx = k; z = legacyOffset(ctx, uk, true); }
-                else if (n2 >= 0 && nodes.type[static_cast<std::size_t>(n2)] == NodeType::OUTFALL) continue;
-                else if (n1 == j) { link_idx = k; z = legacyOffset(ctx, uk, false); }
+                if (n2 == j) {
+                    link_idx = k;
+                    z = legacyOffset(ctx, uk, true);
+                } else if (n2 >= 0 && nodes.type[static_cast<std::size_t>(n2)] == NodeType::OUTFALL)
+                    continue;
+                else if (n1 == j) {
+                    link_idx = k;
+                    z = legacyOffset(ctx, uk, false);
+                }
             }
         }
-        if (link_idx < 0) return;
+        if (link_idx < 0)
+            return;
 
         // Normal and critical depths for the current flow — conduits only
         // (legacy: yNorm = yCrit = 0 for any other link type).
@@ -286,101 +375,103 @@ void setAllOutfallDepths(SimulationContext& ctx, double dt_routing) {
         }
 
         switch (ost.bc_type) {
-            case OutfallType::FREE:
-                // Legacy: depth = z + MIN(yNorm, yCrit)
-                depth = z + std::min(yNorm, yCrit);
-                break;
+        case OutfallType::FREE:
+            // Legacy: depth = z + MIN(yNorm, yCrit)
+            depth = z + std::min(yNorm, yCrit);
+            break;
 
-            case OutfallType::NORMAL:
-                // Legacy: depth = z + yNorm
-                depth = z + yNorm;
-                break;
+        case OutfallType::NORMAL:
+            // Legacy: depth = z + yNorm
+            depth = z + yNorm;
+            break;
 
-            case OutfallType::FIXED: {
-                // outfall_param is ALREADY in internal feet (converted once in
-                // PostParseResolver, matching legacy node.c fixedStage). The
-                // TIDAL/TIMESERIES branches below divide by ucf_len because
-                // those read raw display-unit table values; FIXED must not —
-                // a second division inflated the stage by 1/ucf_len in metric
-                // models (e.g. user3: 223.7 m → 733.9 m), driving huge spurious
-                // outfall backflow that flooded the upstream storage nodes.
-                double stage = ost.param;
-                // Legacy outfall_setOutletDepth (node.c:1429-1454):
-                //   yCrit = MIN(yCrit, yNorm)
-                //   if (yCrit+z+inv < stage)  yNew = stage - inv
-                //   else if (z > 0) { if (stage < inv+z) yNew = MAX(0, stage-inv)
-                //                     else               yNew = z + yCrit }
-                //   else                      yNew = yCrit
-                yCrit = std::min(yCrit, yNorm);
-                if (yCrit + z + nodes.invert_elev[uj] < stage)
-                    depth = stage - nodes.invert_elev[uj];
-                else if (z > 0.0)
-                    depth = (stage < nodes.invert_elev[uj] + z)
-                                ? std::max(0.0, stage - nodes.invert_elev[uj])
-                                : z + yCrit;
-                else
-                    // free-overfall (no offset, stage below critical-depth
-                    // elev): node sits at the conduit's critical depth, NOT 0.
-                    // Using max(0, stage-inv) here left a free-discharging
-                    // FIXED outfall below its invert at depth 0, so the
-                    // connecting conduit's downstream depth/area was too small
-                    // and it under-conveyed (user3 EGG conduit CCOROUT1 ~6%),
-                    // backing water up and surcharging the upstream node.
-                    depth = yCrit;
-                break;
+        case OutfallType::FIXED: {
+            // outfall_param is ALREADY in internal feet (converted once in
+            // PostParseResolver, matching legacy node.c fixedStage). The
+            // TIDAL/TIMESERIES branches below divide by ucf_len because
+            // those read raw display-unit table values; FIXED must not —
+            // a second division inflated the stage by 1/ucf_len in metric
+            // models (e.g. user3: 223.7 m → 733.9 m), driving huge spurious
+            // outfall backflow that flooded the upstream storage nodes.
+            double stage = ost.param;
+            // Legacy outfall_setOutletDepth (node.c:1429-1454):
+            //   yCrit = MIN(yCrit, yNorm)
+            //   if (yCrit+z+inv < stage)  yNew = stage - inv
+            //   else if (z > 0) { if (stage < inv+z) yNew = MAX(0, stage-inv)
+            //                     else               yNew = z + yCrit }
+            //   else                      yNew = yCrit
+            yCrit = std::min(yCrit, yNorm);
+            if (yCrit + z + nodes.invert_elev[uj] < stage)
+                depth = stage - nodes.invert_elev[uj];
+            else if (z > 0.0)
+                depth = (stage < nodes.invert_elev[uj] + z)
+                            ? std::max(0.0, stage - nodes.invert_elev[uj])
+                            : z + yCrit;
+            else
+                // free-overfall (no offset, stage below critical-depth
+                // elev): node sits at the conduit's critical depth, NOT 0.
+                // Using max(0, stage-inv) here left a free-discharging
+                // FIXED outfall below its invert at depth 0, so the
+                // connecting conduit's downstream depth/area was too small
+                // and it under-conveyed (user3 EGG conduit CCOROUT1 ~6%),
+                // backing water up and surcharging the upstream node.
+                depth = yCrit;
+            break;
+        }
+
+        case OutfallType::TIDAL: {
+            int curve_idx = static_cast<int>(ost.param);
+            double stage = nodes.invert_elev[uj];
+            if (curve_idx >= 0 && curve_idx < static_cast<int>(ctx.tables.tables.size())) {
+                // legacy: table_getFirstEntry(&Curve[k], &x, &y);
+                //         currentDate = NewRoutingTime / MSECperDAY;
+                //         x += (currentDate - floor(currentDate)) * 24.0;
+                //         stage = table_lookup(&Curve[k], x) / UCF(LENGTH);
+                auto& curve = ctx.tables.tables[static_cast<std::size_t>(curve_idx)];
+                double x = curve.x.empty() ? 0.0 : curve.x[0];
+                x += (elapsed_days - std::floor(elapsed_days)) * 24.0;
+                stage = table_lookup_cursor(curve, x) / ucf_len;
             }
+            yCrit = std::min(yCrit, yNorm);
+            if (yCrit + z + nodes.invert_elev[uj] < stage)
+                depth = stage - nodes.invert_elev[uj];
+            else if (z > 0.0)
+                depth = (stage < nodes.invert_elev[uj] + z)
+                            ? std::max(0.0, stage - nodes.invert_elev[uj])
+                            : z + yCrit;
+            else
+                depth = yCrit; // free overfall sits at critical depth (legacy node.c:1453)
+            break;
+        }
 
-            case OutfallType::TIDAL: {
-                int curve_idx = static_cast<int>(ost.param);
-                double stage = nodes.invert_elev[uj];
-                if (curve_idx >= 0 && curve_idx < static_cast<int>(ctx.tables.tables.size())) {
-                    // legacy: table_getFirstEntry(&Curve[k], &x, &y);
-                    //         currentDate = NewRoutingTime / MSECperDAY;
-                    //         x += (currentDate - floor(currentDate)) * 24.0;
-                    //         stage = table_lookup(&Curve[k], x) / UCF(LENGTH);
-                    auto& curve = ctx.tables.tables[static_cast<std::size_t>(curve_idx)];
-                    double x = curve.x.empty() ? 0.0 : curve.x[0];
-                    x += (elapsed_days - std::floor(elapsed_days)) * 24.0;
-                    stage = table_lookup_cursor(curve, x) / ucf_len;
-                }
-                yCrit = std::min(yCrit, yNorm);
-                if (yCrit + z + nodes.invert_elev[uj] < stage)
-                    depth = stage - nodes.invert_elev[uj];
-                else if (z > 0.0)
-                    depth = (stage < nodes.invert_elev[uj] + z)
-                                ? std::max(0.0, stage - nodes.invert_elev[uj])
-                                : z + yCrit;
-                else
-                    depth = yCrit;  // free overfall sits at critical depth (legacy node.c:1453)
-                break;
+        case OutfallType::TIMESERIES: {
+            int ts_idx = static_cast<int>(ost.param);
+            double stage = nodes.invert_elev[uj];
+            if (ts_idx >= 0 && ts_idx < static_cast<int>(ctx.tables.tables.size())) {
+                // legacy: currentDate = StartDateTime + NewRoutingTime / MSECperDAY;
+                //         stage = table_tseriesLookup(&Tseries[k], currentDate, TRUE) / UCF(LENGTH)
+                const double date = ctx.options.start_date + elapsed_days;
+                stage =
+                    table_lookup_cursor(ctx.tables.tables[static_cast<std::size_t>(ts_idx)], date) /
+                    ucf_len;
             }
-
-            case OutfallType::TIMESERIES: {
-                int ts_idx = static_cast<int>(ost.param);
-                double stage = nodes.invert_elev[uj];
-                if (ts_idx >= 0 && ts_idx < static_cast<int>(ctx.tables.tables.size())) {
-                    // legacy: currentDate = StartDateTime + NewRoutingTime / MSECperDAY;
-                    //         stage = table_tseriesLookup(&Tseries[k], currentDate, TRUE) / UCF(LENGTH)
-                    const double date = ctx.options.start_date + elapsed_days;
-                    stage = table_lookup_cursor(ctx.tables.tables[static_cast<std::size_t>(ts_idx)], date) / ucf_len;
-                }
-                yCrit = std::min(yCrit, yNorm);
-                if (yCrit + z + nodes.invert_elev[uj] < stage)
-                    depth = stage - nodes.invert_elev[uj];
-                else if (z > 0.0)
-                    depth = (stage < nodes.invert_elev[uj] + z)
-                                ? std::max(0.0, stage - nodes.invert_elev[uj])
-                                : z + yCrit;
-                else
-                    depth = yCrit;  // free overfall sits at critical depth (legacy node.c:1453)
-                break;
-            }
+            yCrit = std::min(yCrit, yNorm);
+            if (yCrit + z + nodes.invert_elev[uj] < stage)
+                depth = stage - nodes.invert_elev[uj];
+            else if (z > 0.0)
+                depth = (stage < nodes.invert_elev[uj] + z)
+                            ? std::max(0.0, stage - nodes.invert_elev[uj])
+                            : z + yCrit;
+            else
+                depth = yCrit; // free overfall sits at critical depth (legacy node.c:1453)
+            break;
+        }
         }
 
         // Standard outfall stage in absolute elevation, used by the
         // overrides below to express the priority ordering as a sequence
         // of max() / replace operations.
-        double z_inv      = nodes.invert_elev[uj];
+        double z_inv = nodes.invert_elev[uj];
         double h_standard = z_inv + depth;
 
         // ----------------------------------------------------------------
@@ -420,18 +511,17 @@ void setAllOutfallDepths(SimulationContext& ctx, double dt_routing) {
         // when there is no outfall row; ramp 0 = dry (override suppressed).
         const int orow = ctx.node_subtypes.outfall_row(static_cast<int>(uj));
         double h_2d = (orow >= 0)
-            ? ctx.node_subtypes.outfalls.head_2d[static_cast<std::size_t>(orow)]
-            : -1.0e30;
-        double ramp_2d = (orow >= 0)
-            ? ctx.node_subtypes.outfalls.ramp_2d[static_cast<std::size_t>(orow)]
-            : 0.0;
+                          ? ctx.node_subtypes.outfalls.head_2d[static_cast<std::size_t>(orow)]
+                          : -1.0e30;
+        double ramp_2d =
+            (orow >= 0) ? ctx.node_subtypes.outfalls.ramp_2d[static_cast<std::size_t>(orow)] : 0.0;
         if (h_2d > z_inv && ramp_2d > 0.0) {
             // Blend free (h_standard) → tailwater (h_2d) by wetness.
             // ramp=1 reproduces the legacy max(h_standard, h_2d).
             double h_blend = h_standard + ramp_2d * std::max(0.0, h_2d - h_standard);
             if (h_blend > h_standard) {
                 h_standard = h_blend;
-                depth      = h_standard - z_inv;
+                depth = h_standard - z_inv;
             }
         }
 

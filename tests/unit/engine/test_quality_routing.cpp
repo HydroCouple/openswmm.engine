@@ -1,6 +1,6 @@
 /**
- * @file test_quality_routing.cpp
- * @brief Unit tests for batch water quality routing (QualitySolver).
+ * @file      test_quality_routing.cpp
+ * @brief     Unit tests for batch water quality routing (QualitySolver).
  *
  * @details Tests each stage of the quality routing pipeline:
  *   - addWetWeatherLoads: subcatchment washoff → node mass/volume inflow
@@ -13,6 +13,10 @@
  *
  * @see src/engine/quality/QualityRouting.cpp
  * @ingroup engine_quality
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -38,9 +42,15 @@ using openswmm::quality::ZERO_VOLUME;
 // ============================================================================
 
 /**
- * @brief Create a small network:
- *        Subcatch0 → Node0 →(Link0)→ Node1 →(Link1)→ Node2 (outfall)
- *        with `np` pollutants.
+ * @brief Allocate the minimal three-node/two-link quality-routing fixture.
+ *
+ * Uses allocate_objects after registry creation, leaves other physical values at defaults and does
+ * not initialize/run hydraulics. Tests set matching volumes and concentrations; nominal depth
+ * avoids accidental dry-rule classification.
+ *
+ * @param[in] np Nonnegative P0.. pollutant count fitting allocation/stride indices.
+ * @return Owned context with L0 N0-to-N1, L1 N1-to-N2, S0 draining to N0 and nominal node/link
+ *     depth 1 ft.
  */
 SimulationContext makeContext(int np) {
     SimulationContext ctx;
@@ -96,6 +106,13 @@ protected:
     SimulationContext ctx;
     QualitySolver solver;
 
+    /**
+     * @brief Construct the quality context and size its routing solver.
+     *
+     * Replaces ctx with makeContext(NP) and initializes solver with the resulting node/link counts and
+     * NP constituents; no reaction/advection timestep is applied. Fatal GoogleTest assertions return
+     * from this hook on failure; any created handle remains owned by the fixture for teardown.
+     */
     void SetUp() override {
         ctx = makeContext(NP);
         solver.init(ctx.n_nodes(), ctx.n_links(), NP);
@@ -110,15 +127,15 @@ TEST_F(QualityRoutingTest, WetWeatherLoadsAccumulateMassAndVolume) {
     double dt = 10.0; // seconds
 
     // Subcatch0 has runoff flowing to Node0
-    ctx.subcatches.runoff[0] = 2.0;       // cfs
-    ctx.subcatches.old_runoff[0] = 4.0;   // cfs
+    ctx.subcatches.runoff[0] = 2.0;     // cfs
+    ctx.subcatches.old_runoff[0] = 4.0; // cfs
 
     // Pollutant concentrations on subcatch
     // conc[subcatch * np + pollutant]
-    ctx.subcatches.conc[0 * NP + 0] = 10.0; // P0 new
-    ctx.subcatches.conc[0 * NP + 1] = 20.0; // P1 new
+    ctx.subcatches.conc[0 * NP + 0] = 10.0;     // P0 new
+    ctx.subcatches.conc[0 * NP + 1] = 20.0;     // P1 new
     ctx.subcatches.conc_old[0 * NP + 0] = 8.0;  // P0 old
-    ctx.subcatches.conc_old[0 * NP + 1] = 16.0;  // P1 old
+    ctx.subcatches.conc_old[0 * NP + 1] = 16.0; // P1 old
 
     // Reset assembly arrays (as execute() does)
     std::fill(ctx.nodes.qual_mass_in.begin(), ctx.nodes.qual_mass_in.end(), 0.0);
@@ -184,8 +201,8 @@ TEST_F(QualityRoutingTest, ExecuteCompleteMixingBasic) {
     double dt = 10.0;
 
     // Node0: has old volume and old concentration
-    ctx.nodes.old_volume[0] = 100.0; // ft3
-    ctx.nodes.volume[0] = 100.0;     // remains same (no evap)
+    ctx.nodes.old_volume[0] = 100.0;       // ft3
+    ctx.nodes.volume[0] = 100.0;           // remains same (no evap)
     ctx.nodes.conc_old[0 * NP + 0] = 5.0;  // P0 old conc at Node0
     ctx.nodes.conc_old[0 * NP + 1] = 10.0; // P1 old conc at Node0
 
@@ -228,8 +245,8 @@ TEST_F(QualityRoutingTest, ExecuteCompleteMixingBasic) {
     // c_new_p0 = (c_old*v_old + mass_in) / (v_old + v_in)
     //          = (2.0*50.0 + 50.0) / (50.0 + 10.0) = 150/60 = 2.5
     double v_old1 = 50.0;
-    double v_in1 = 1.0 * dt;  // 10
-    double mass_in_p0 = 1.0 * 5.0 * dt; // 50
+    double v_in1 = 1.0 * dt;             // 10
+    double mass_in_p0 = 1.0 * 5.0 * dt;  // 50
     double mass_in_p1 = 1.0 * 10.0 * dt; // 100
     double c_new_p0 = (2.0 * v_old1 + mass_in_p0) / (v_old1 + v_in1);
     double c_new_p1 = (4.0 * v_old1 + mass_in_p1) / (v_old1 + v_in1);
@@ -276,8 +293,7 @@ TEST_F(QualityRoutingTest, ExecuteFirstOrderDecay) {
         auto ui = static_cast<size_t>(i);
         EXPECT_NEAR(ctx.nodes.conc[ui * NP + 0], 50.0 * decay_factor, 1e-10)
             << "Node " << i << " P0 decay";
-        EXPECT_NEAR(ctx.nodes.conc[ui * NP + 1], 50.0, 1e-10)
-            << "Node " << i << " P1 no decay";
+        EXPECT_NEAR(ctx.nodes.conc[ui * NP + 1], 50.0, 1e-10) << "Node " << i << " P1 no decay";
     }
 }
 
@@ -326,10 +342,8 @@ TEST_F(QualityRoutingTest, ExecuteUpdateLinkQualFromUpstream) {
     // with q_in = 2.0 (the volume is unchanged, so the DW correction is 0):
     //   P0: (99*100 + 7*2*10)  / 120 = 83.666...
     //   P1: (99*100 + 14*2*10) / 120 = 84.833...
-    EXPECT_NEAR(ctx.links.conc[0 * NP + 0], (99.0 * 100.0 + 7.0 * 20.0) / 120.0,
-                1e-10);
-    EXPECT_NEAR(ctx.links.conc[0 * NP + 1], (99.0 * 100.0 + 14.0 * 20.0) / 120.0,
-                1e-10);
+    EXPECT_NEAR(ctx.links.conc[0 * NP + 0], (99.0 * 100.0 + 7.0 * 20.0) / 120.0, 1e-10);
+    EXPECT_NEAR(ctx.links.conc[0 * NP + 1], (99.0 * 100.0 + 14.0 * 20.0) / 120.0, 1e-10);
 }
 
 TEST_F(QualityRoutingTest, KinematicWaveFillingConduitMixesWithAcceptedInflow) {
@@ -378,15 +392,15 @@ TEST_F(QualityRoutingTest, ExecuteReverseFlowUsesCorrectUpstream) {
     ctx.nodes.old_volume[2] = 100.0;
     ctx.nodes.volume[2] = 100.0;
 
-    ctx.nodes.conc_old[0 * NP + 0] = 1.0;  // Node0, P0
-    ctx.nodes.conc_old[1 * NP + 0] = 9.0;  // Node1, P0
+    ctx.nodes.conc_old[0 * NP + 0] = 1.0; // Node0, P0
+    ctx.nodes.conc_old[1 * NP + 0] = 9.0; // Node1, P0
 
     // Wet conduit — a dry one reads zero whatever its upstream holds
     ctx.links.volume[0] = 100.0;
     ctx.links.old_volume[0] = 100.0;
     ctx.links.depth[0] = 1.0;
 
-    ctx.links.conc_old[0 * NP + 0] = 9.0;  // Link0 old conc
+    ctx.links.conc_old[0 * NP + 0] = 9.0; // Link0 old conc
     ctx.links.conc_old[0 * NP + 1] = 0.0;
 
     ctx.pollutants.k_decay[0] = 0.0;
@@ -448,10 +462,10 @@ TEST_F(QualityRoutingTest, NonConduitTakesUpstreamQuality) {
     ctx.nodes.conc[0 * NP + 1] = 24.0;
     ctx.links.conc_old[0 * NP + 0] = 999.0;
     ctx.links.conc_old[0 * NP + 1] = 999.0;
-    ctx.links.flow[0] = 0.0;           // no flow: the CSTR would hold 999
-    ctx.links.volume[0] = 0.0;         // no volume: the dry rule would zero it
+    ctx.links.flow[0] = 0.0;   // no flow: the CSTR would hold 999
+    ctx.links.volume[0] = 0.0; // no volume: the dry rule would zero it
     ctx.links.depth[0] = 0.0;
-    ctx.pollutants.k_decay[0] = 0.5;   // and decay would bite, if it applied
+    ctx.pollutants.k_decay[0] = 0.5; // and decay would bite, if it applied
 
     ctx.links.type[0] = openswmm::LinkType::PUMP;
     solver.updateLinkQuality(ctx, dt);
@@ -537,8 +551,10 @@ TEST_F(QualityRoutingTest, ResidualInflowBelowLegacyZeroIsNotDividedBy) {
     ctx.nodes.conc_old[1 * NP + 1] = 0.0;
 
     // Node0 and Node2 stay out of the way; nothing washes off.
-    ctx.nodes.old_volume[0] = 0.0;  ctx.nodes.volume[0] = 0.0;
-    ctx.nodes.old_volume[2] = 0.0;  ctx.nodes.volume[2] = 0.0;
+    ctx.nodes.old_volume[0] = 0.0;
+    ctx.nodes.volume[0] = 0.0;
+    ctx.nodes.old_volume[2] = 0.0;
+    ctx.nodes.volume[2] = 0.0;
     ctx.links.flow[1] = 0.0;
     ctx.pollutants.k_decay[0] = 0.0;
     ctx.pollutants.k_decay[1] = 0.0;
@@ -695,10 +711,10 @@ TEST(SteadyFlowQuality, NoDecayLinkGetsUpstreamConc) {
     ctx.nodes.conc[0] = 10.0;
 
     // Link 0 (N0→N1): flowing, no decay, no evap
-    ctx.links.flow[0]       = 1.0;
-    ctx.links.volume[0]     = 100.0;
+    ctx.links.flow[0] = 1.0;
+    ctx.links.volume[0] = 100.0;
     ctx.links.old_volume[0] = 100.0;
-    ctx.links.conc_old[0]   = 5.0;   // old link conc shouldn't matter for STEADY
+    ctx.links.conc_old[0] = 5.0; // old link conc shouldn't matter for STEADY
 
     // k_decay = 0 → no decay
     ctx.pollutants.k_decay.assign(1, 0.0);
@@ -715,15 +731,15 @@ TEST(SteadyFlowQuality, WithDecayUsesExponentialNotLinear) {
     QualitySolver solver;
     solver.init(ctx.n_nodes(), ctx.n_links(), 1);
 
-    const double dt    = 300.0;   // routing step
-    const double k     = 0.001;   // /sec decay constant
-    const double c_up  = 8.0;     // upstream conc
+    const double dt = 300.0; // routing step
+    const double k = 0.001;  // /sec decay constant
+    const double c_up = 8.0; // upstream conc
 
-    ctx.nodes.conc[0]       = c_up;
-    ctx.links.flow[0]       = 1.0;
-    ctx.links.volume[0]     = 100.0;
+    ctx.nodes.conc[0] = c_up;
+    ctx.links.flow[0] = 1.0;
+    ctx.links.volume[0] = 100.0;
     ctx.links.old_volume[0] = 100.0;
-    ctx.links.conc_old[0]   = 999.0;  // irrelevant for STEADY
+    ctx.links.conc_old[0] = 999.0; // irrelevant for STEADY
     ctx.pollutants.k_decay.assign(1, k);
 
     solver.updateLinkQuality(ctx, dt);
@@ -744,11 +760,11 @@ TEST(SteadyFlowQuality, OldLinkConcIgnored) {
     QualitySolver solver;
     solver.init(ctx.n_nodes(), ctx.n_links(), 1);
 
-    ctx.nodes.conc[0]       = 5.0;
-    ctx.links.flow[0]       = 2.0;
-    ctx.links.volume[0]     = 50.0;
+    ctx.nodes.conc[0] = 5.0;
+    ctx.links.flow[0] = 2.0;
+    ctx.links.volume[0] = 50.0;
     ctx.links.old_volume[0] = 50.0;
-    ctx.links.conc_old[0]   = 100.0;  // very different old conc
+    ctx.links.conc_old[0] = 100.0; // very different old conc
     ctx.pollutants.k_decay.assign(1, 0.0);
 
     solver.updateLinkQuality(ctx, 60.0);
@@ -771,17 +787,19 @@ TEST(SteadyFlowQuality, OldLinkConcIgnored) {
 // ============================================================================
 
 #ifndef BENCHMARK_DATA_DIR
-#  define BENCHMARK_DATA_DIR ""
+#define BENCHMARK_DATA_DIR ""
 #endif
 
 // First-order decay trajectory: C[N] = C0 * (1-k*dt)^N.
 // Verifies applyDecay applies the linear factor correctly across multiple steps.
 TEST(QualityCSTR, FirstOrderDecayTrajectory) {
-    const std::string path = std::string(BENCHMARK_DATA_DIR)
-        + "/manufactured/quality-cstr-first-order-decay/reference.csv";
+    const std::string path = std::string(BENCHMARK_DATA_DIR) +
+                             "/manufactured/quality-cstr-first-order-decay/reference.csv";
 
     // Load reference CSV (t_s, C_mgl)
-    struct DecayRow { double t_s, C_mgl; };
+    struct DecayRow {
+        double t_s, C_mgl;
+    };
     std::vector<DecayRow> rows;
     {
         std::ifstream in(path);
@@ -791,8 +809,12 @@ TEST(QualityCSTR, FirstOrderDecayTrajectory) {
         std::string line;
         bool header_seen = false;
         while (std::getline(in, line)) {
-            if (line.empty() || line[0] == '#') continue;
-            if (!header_seen) { header_seen = true; continue; }
+            if (line.empty() || line[0] == '#')
+                continue;
+            if (!header_seen) {
+                header_seen = true;
+                continue;
+            }
             std::istringstream ss(line);
             std::string tok;
             double vals[2] = {};
@@ -812,9 +834,9 @@ TEST(QualityCSTR, FirstOrderDecayTrajectory) {
     QualitySolver solver;
     solver.init(ctx.n_nodes(), ctx.n_links(), 1);
 
-    const double K_DECAY = 1.0e-3;     // /s — first-order decay rate
-    const double C_0     = rows[0].C_mgl;  // 100.0 mg/L
-    const double V_NODE  = 1000.0;         // constant volume — must be > ZERO_VOLUME
+    const double K_DECAY = 1.0e-3;    // /s — first-order decay rate
+    const double C_0 = rows[0].C_mgl; // 100.0 mg/L
+    const double V_NODE = 1000.0;     // constant volume — must be > ZERO_VOLUME
 
     ctx.pollutants.k_decay.assign(1, K_DECAY);
 
@@ -822,26 +844,26 @@ TEST(QualityCSTR, FirstOrderDecayTrajectory) {
     for (size_t j = 0; j < static_cast<size_t>(ctx.n_links()); ++j) {
         ctx.links.flow[j] = 0.0;
     }
-    ctx.subcatches.runoff[0]     = 0.0;
+    ctx.subcatches.runoff[0] = 0.0;
     ctx.subcatches.old_runoff[0] = 0.0;
 
     // Initialise node 0 with C_0; other nodes at 0 (not tested)
     for (size_t i = 0; i < static_cast<size_t>(ctx.n_nodes()); ++i) {
         ctx.nodes.old_volume[i] = V_NODE;
-        ctx.nodes.volume[i]     = V_NODE;
-        ctx.nodes.conc_old[i]   = (i == 0) ? C_0 : 0.0;
-        ctx.nodes.conc[i]       = (i == 0) ? C_0 : 0.0;
+        ctx.nodes.volume[i] = V_NODE;
+        ctx.nodes.conc_old[i] = (i == 0) ? C_0 : 0.0;
+        ctx.nodes.conc[i] = (i == 0) ? C_0 : 0.0;
     }
     for (size_t j = 0; j < static_cast<size_t>(ctx.n_links()); ++j) {
         ctx.links.old_volume[j] = V_NODE;
-        ctx.links.volume[j]     = V_NODE;
-        ctx.links.conc_old[j]   = 0.0;
-        ctx.links.conc[j]       = 0.0;
+        ctx.links.volume[j] = V_NODE;
+        ctx.links.conc_old[j] = 0.0;
+        ctx.links.conc[j] = 0.0;
     }
 
-    double max_err  = 0.0;
-    double sum_sq   = 0.0;
-    double prev_t   = rows[0].t_s;
+    double max_err = 0.0;
+    double sum_sq = 0.0;
+    double prev_t = rows[0].t_s;
 
     for (size_t i = 1; i < rows.size(); ++i) {
         double dt = rows[i].t_s - prev_t;
@@ -853,19 +875,17 @@ TEST(QualityCSTR, FirstOrderDecayTrajectory) {
         solver.execute(ctx, dt);
 
         double err = std::abs(ctx.nodes.conc[0] - rows[i].C_mgl);
-        max_err  = std::max(max_err, err);
-        sum_sq  += err * err;
-        prev_t   = rows[i].t_s;
+        max_err = std::max(max_err, err);
+        sum_sq += err * err;
+        prev_t = rows[i].t_s;
     }
 
     ASSERT_GE(rows.size(), 2u) << "benchmark CSV must have at least one data row";
     double n = static_cast<double>(rows.size() - 1);
 
-    EXPECT_LT(max_err, 1e-9)
-        << "CSTR decay max error " << max_err
-        << " mg/L exceeds 1e-9 (benchmark: " << path << ")";
-    EXPECT_LT(std::sqrt(sum_sq / n), 1e-10)
-        << "CSTR decay RMS error exceeds 1e-10 mg/L";
+    EXPECT_LT(max_err, 1e-9) << "CSTR decay max error " << max_err
+                             << " mg/L exceeds 1e-9 (benchmark: " << path << ")";
+    EXPECT_LT(std::sqrt(sum_sq / n), 1e-10) << "CSTR decay RMS error exceeds 1e-10 mg/L";
 }
 
 } /* anonymous namespace */

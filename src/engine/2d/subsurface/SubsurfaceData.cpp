@@ -15,15 +15,15 @@
 // limitations under the License.
 
 /**
- * @file SubsurfaceData.cpp
- * @brief Sizing, storage accounting and token round-trip for the two-zone
+ * @file      SubsurfaceData.cpp
+ * @brief     Sizing, storage accounting and token round-trip for the two-zone
  *        groundwater state (G-step 1).
  *
  * @ingroup engine_2d
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "SubsurfaceData.hpp"
@@ -36,8 +36,8 @@
 namespace openswmm::twoD {
 
 void SubsurfaceState::resize(int n, int m) {
-    led_boundary_in=led_boundary_out=0;
-    n_cells  = n < 0 ? 0 : n;
+    led_boundary_in = led_boundary_out = 0;
+    n_cells = n < 0 ? 0 : n;
     m_layers = m < 1 ? 1 : m;
     const auto nn = static_cast<std::size_t>(n_cells);
 
@@ -69,20 +69,28 @@ void SubsurfaceState::resize(int n, int m) {
     qplus_last.assign(nn, 0.0);
     infil_capacity.assign(nn, std::numeric_limits<double>::quiet_NaN());
     infil_refresh.assign(nn, std::numeric_limits<double>::quiet_NaN());
-    infil_remaining.assign(nn, std::numeric_limits<double>::quiet_NaN()); infil_interval.assign(nn, 0.0);
-    wetting_front.assign(nn, 0.0); reject_last.assign(nn, 0.0);
-    reject_cumulative.assign(nn, 0.0); dunne_cumulative.assign(nn, 0.0);
-    et_pending.assign(nn,0.0); et_potential_cumulative.assign(nn,0.0);
-    et_surface_cumulative.assign(nn,0.0); et_soil_cumulative.assign(nn,0.0); et_unused_cumulative.assign(nn,0.0);
-    et_surface_last.assign(nn,std::numeric_limits<double>::quiet_NaN());
-    et_potential_last=et_surface_last; et_stress=et_surface_last; et_refresh=et_surface_last;
-    qlink_last.assign(nn, 0.0);   // G-X3
+    infil_remaining.assign(nn, std::numeric_limits<double>::quiet_NaN());
+    infil_interval.assign(nn, 0.0);
+    wetting_front.assign(nn, 0.0);
+    reject_last.assign(nn, 0.0);
+    reject_cumulative.assign(nn, 0.0);
+    dunne_cumulative.assign(nn, 0.0);
+    et_pending.assign(nn, 0.0);
+    et_potential_cumulative.assign(nn, 0.0);
+    et_surface_cumulative.assign(nn, 0.0);
+    et_soil_cumulative.assign(nn, 0.0);
+    et_unused_cumulative.assign(nn, 0.0);
+    et_surface_last.assign(nn, std::numeric_limits<double>::quiet_NaN());
+    et_potential_last = et_surface_last;
+    et_stress = et_surface_last;
+    et_refresh = et_surface_last;
+    qlink_last.assign(nn, 0.0); // G-X3
 
     dt_cell.assign(nn, 0.0);
     tier.assign(nn, 0);
     xacc_from_surface.assign(nn, 0.0);
     xacc_to_surface.assign(nn, 0.0);
-    lacc.assign(nn, 0.0);         // G-X3
+    lacc.assign(nn, 0.0); // G-X3
     // eacc_L/R and nacc are sized by the solver against the edge and node
     // counts, which this struct deliberately does not know.
 }
@@ -100,8 +108,8 @@ double SubsurfaceState::storage() const noexcept {
             const double L = zs[u] - hg[u];
             const double Ldsig = (L > 0.0 ? L : 0.0) * dsig;
             for (int j = 0; j < m_layers; ++j) {
-                col += theta_sigma[static_cast<std::size_t>(j) *
-                                       static_cast<std::size_t>(n_cells) + u] *
+                col += theta_sigma[static_cast<std::size_t>(j) * static_cast<std::size_t>(n_cells) +
+                                   u] *
                        Ldsig;
             }
         } else {
@@ -115,82 +123,123 @@ double SubsurfaceState::storage() const noexcept {
 // G-O: the three storage views the C API, the results file and the report share.
 double SubsurfaceState::liveStorage() const noexcept {
     double s = storage();
-    for (double v : eacc_L) s += v;
-    for (double v : eacc_R) s += v;
-    for (double v : xacc_from_surface) s += v;
-    for (double v : xacc_to_surface)   s += v;
-    for (double v : lacc)              s += v;   // G-X3: seepage in flight
+    for (double v : eacc_L)
+        s += v;
+    for (double v : eacc_R)
+        s += v;
+    for (double v : xacc_from_surface)
+        s += v;
+    for (double v : xacc_to_surface)
+        s += v;
+    for (double v : lacc)
+        s += v; // G-X3: seepage in flight
     return s;
 }
 
 double SubsurfaceState::ledgeredStorage() const noexcept {
     double s = storage();
-    for (double v : eacc_L) s += v;
-    for (double v : eacc_R) s += v;
+    for (double v : eacc_L)
+        s += v;
+    for (double v : eacc_R)
+        s += v;
     return s;
 }
 
 double SubsurfaceState::continuityResidual() const noexcept {
-    const double in  = led_infil_in + led_lateral + led_link + led_source_in;   // G-X3
+    const double in = led_infil_in + led_lateral + led_link + led_source_in; // G-X3
     const double out = led_deep + led_node + led_et + led_dunne + led_reject + led_source_out;
     return ledgeredStorage() - led_init_storage - (in - out);
 }
 
 namespace {
 
+/**
+ * @brief Copy a token with all whitespace removed and remaining characters uppercased.
+ * @param[in] t Input bytes, classified through unsigned char using the current C locale.
+ * @return Owned normalized string; internal whitespace is removed as well as leading/trailing
+ * whitespace. Allocation exceptions propagate; no input mutation occurs.
+ */
 std::string upperTrim(const std::string& t) {
     std::string s;
     s.reserve(t.size());
     for (char c : t) {
         if (!std::isspace(static_cast<unsigned char>(c))) {
-            s.push_back(static_cast<char>(
-                std::toupper(static_cast<unsigned char>(c))));
+            s.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
         }
     }
     return s;
 }
 
-}  // namespace
+} // namespace
 
 const char* soilCharToken(SoilChar s) noexcept {
     switch (s) {
-        case SoilChar::RUSSO:         return "RUSSO";
-        case SoilChar::GARDNER:       return "GARDNER";
-        case SoilChar::BROOKS_COREY:  return "BROOKS_COREY";
-        case SoilChar::VAN_GENUCHTEN: return "VAN_GENUCHTEN";
+    case SoilChar::RUSSO:
+        return "RUSSO";
+    case SoilChar::GARDNER:
+        return "GARDNER";
+    case SoilChar::BROOKS_COREY:
+        return "BROOKS_COREY";
+    case SoilChar::VAN_GENUCHTEN:
+        return "VAN_GENUCHTEN";
     }
     return "RUSSO";
 }
 
 bool parseSoilChar(const std::string& t, SoilChar& s) noexcept {
     const std::string u = upperTrim(t);
-    if (u == "RUSSO")                                    { s = SoilChar::RUSSO;         return true; }
-    if (u == "GARDNER")                                  { s = SoilChar::GARDNER;       return true; }
-    if (u == "BROOKS_COREY" || u == "BROOKSCOREY" ||
-        u == "BROOKS-COREY" || u == "BC")                { s = SoilChar::BROOKS_COREY;  return true; }
-    if (u == "VAN_GENUCHTEN" || u == "VANGENUCHTEN" ||
-        u == "VAN-GENUCHTEN" || u == "VG")               { s = SoilChar::VAN_GENUCHTEN; return true; }
+    if (u == "RUSSO") {
+        s = SoilChar::RUSSO;
+        return true;
+    }
+    if (u == "GARDNER") {
+        s = SoilChar::GARDNER;
+        return true;
+    }
+    if (u == "BROOKS_COREY" || u == "BROOKSCOREY" || u == "BROOKS-COREY" || u == "BC") {
+        s = SoilChar::BROOKS_COREY;
+        return true;
+    }
+    if (u == "VAN_GENUCHTEN" || u == "VANGENUCHTEN" || u == "VAN-GENUCHTEN" || u == "VG") {
+        s = SoilChar::VAN_GENUCHTEN;
+        return true;
+    }
     return false;
 }
 
 const char* gwClosureToken(GwClosure c) noexcept {
     switch (c) {
-        case GwClosure::AUTO:        return "AUTO";
-        case GwClosure::CLOSED_FORM: return "CLOSED_FORM";
-        case GwClosure::ENSLAVED:    return "ENSLAVED";
-        case GwClosure::SIGMA:       return "SIGMA";
+    case GwClosure::AUTO:
+        return "AUTO";
+    case GwClosure::CLOSED_FORM:
+        return "CLOSED_FORM";
+    case GwClosure::ENSLAVED:
+        return "ENSLAVED";
+    case GwClosure::SIGMA:
+        return "SIGMA";
     }
     return "AUTO";
 }
 
 bool parseGwClosure(const std::string& t, GwClosure& c) noexcept {
     const std::string u = upperTrim(t);
-    if (u == "AUTO")                              { c = GwClosure::AUTO;        return true; }
-    if (u == "CLOSED_FORM" || u == "CLOSEDFORM" ||
-        u == "CLOSED-FORM" || u == "A")           { c = GwClosure::CLOSED_FORM; return true; }
-    if (u == "ENSLAVED")                          { c = GwClosure::ENSLAVED;    return true; }
-    if (u == "SIGMA" || u == "COLUMN" || u == "B"){ c = GwClosure::SIGMA;       return true; }
+    if (u == "AUTO") {
+        c = GwClosure::AUTO;
+        return true;
+    }
+    if (u == "CLOSED_FORM" || u == "CLOSEDFORM" || u == "CLOSED-FORM" || u == "A") {
+        c = GwClosure::CLOSED_FORM;
+        return true;
+    }
+    if (u == "ENSLAVED") {
+        c = GwClosure::ENSLAVED;
+        return true;
+    }
+    if (u == "SIGMA" || u == "COLUMN" || u == "B") {
+        c = GwClosure::SIGMA;
+        return true;
+    }
     return false;
 }
 
-}  // namespace openswmm::twoD
+} // namespace openswmm::twoD

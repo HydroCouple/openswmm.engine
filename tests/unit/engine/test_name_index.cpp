@@ -1,6 +1,6 @@
 /**
- * @file test_name_index.cpp
- * @brief Unit tests for NameIndex case-insensitive name↔index registry.
+ * @file      test_name_index.cpp
+ * @brief     Unit tests for NameIndex case-insensitive name↔index registry.
  *
  * @details Legacy EPA SWMM's hash table (src/legacy/engine/hash.c) matches
  *          object names case-insensitively; NameIndex must do the same while
@@ -8,6 +8,10 @@
  *
  * @see src/engine/data/NameIndex.hpp
  * @ingroup engine_data
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -24,7 +28,7 @@ TEST(NameIndex, FindIsCaseInsensitive) {
     EXPECT_EQ(idx.add("J12"), 1);
 
     EXPECT_EQ(idx.find("ChestnutHillRes_IM"), 0);
-    EXPECT_EQ(idx.find("ChestnuthillRes_IM"), 0);  // the MWRA deck typo
+    EXPECT_EQ(idx.find("ChestnuthillRes_IM"), 0); // the MWRA deck typo
     EXPECT_EQ(idx.find("CHESTNUTHILLRES_IM"), 0);
     EXPECT_EQ(idx.find("j12"), 1);
     EXPECT_EQ(idx.find("nope"), -1);
@@ -49,8 +53,8 @@ TEST(NameIndex, OriginalSpellingIsPreserved) {
 TEST(NameIndex, CaseVariantAddIsDuplicate) {
     NameIndex idx;
     EXPECT_EQ(idx.try_add("J1"), 0);
-    EXPECT_EQ(idx.try_add("J1"), -1);   // exact duplicate
-    EXPECT_EQ(idx.try_add("j1"), -1);   // case-variant duplicate
+    EXPECT_EQ(idx.try_add("J1"), -1); // exact duplicate
+    EXPECT_EQ(idx.try_add("j1"), -1); // case-variant duplicate
     EXPECT_EQ(idx.size(), 1);
     EXPECT_THROW(idx.add("j1"), std::invalid_argument);
 }
@@ -64,9 +68,9 @@ TEST(NameIndex, PopBackAndRemoveAtStayConsistent) {
     idx.pop_back();
     EXPECT_EQ(idx.size(), 2);
     EXPECT_EQ(idx.find("c3"), -1);
-    EXPECT_EQ(idx.try_add("c3"), 2);  // slot reusable after pop
+    EXPECT_EQ(idx.try_add("c3"), 2); // slot reusable after pop
 
-    idx.remove_at(0);  // drop A1; B2 and c3 shift down
+    idx.remove_at(0); // drop A1; B2 and c3 shift down
     EXPECT_EQ(idx.find("a1"), -1);
     EXPECT_EQ(idx.find("b2"), 0);
     EXPECT_EQ(idx.find("C3"), 1);

@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file GwTransportData.hpp
- * @brief U4 (2026-09-07) — authoring state for subsurface (groundwater)
+ * @file      GwTransportData.hpp
+ * @brief     U4 (2026-09-07) — authoring state for subsurface (groundwater)
  *        transport: `[GW_TRANSPORT_OPTIONS]`, `[GW_TRANSPORT_PARAMS]`,
  *        `[GW_SORPTION]`, `[GW_INITIAL_QUALITY]`, `[GW_BOUNDARY_QUALITY]`
  *        and `[GW_SOURCES]`.
@@ -37,9 +37,9 @@
  *
  * @ingroup engine_2d
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_2D_GW_TRANSPORT_DATA_HPP
@@ -56,16 +56,16 @@ namespace openswmm::twoD {
 
 /// Which zone of the two-zone column a row addresses.
 enum class GwZone : int8_t {
-    SAT   = 0,   ///< saturated (lower) zone
-    UNSAT = 1,   ///< unsaturated (upper) zone
-    LAYER = 2    ///< an explicit layer index (`layer` field)
+    SAT = 0,   ///< saturated (lower) zone
+    UNSAT = 1, ///< unsaturated (upper) zone
+    LAYER = 2  ///< an explicit layer index (`layer` field)
 };
 
 /// Scope of a per-cell row.
 enum class GwScope : int8_t {
-    GLOBAL = 0,  ///< the `*` row
-    TAG    = 1,  ///< every cell carrying `tag`
-    CELL   = 2   ///< one cell, by 0-based index (1-based in the file)
+    GLOBAL = 0, ///< the `*` row
+    TAG = 1,    ///< every cell carrying `tag`
+    CELL = 2    ///< one cell, by 0-based index (1-based in the file)
 };
 
 /// `[GW_TRANSPORT_OPTIONS]` — the subsurface column of the Domain × Species
@@ -73,29 +73,30 @@ enum class GwScope : int8_t {
 /// kernel would carry", so a deck that only names the section gets the
 /// full model when the kernel arrives.
 struct GwTransportOptions {
-    std::string unsat_transport="BULK"; ///< explicit SIGMA chemistry opt-in
+    std::string unsat_transport = "BULK"; ///< explicit SIGMA chemistry opt-in
     // Explicit opt-in; dormant legacy CONDUCTION flags never activate it.
-    std::string thermal_model="WATER_ONLY";
-    int thermal_layers=16;
-    bool lateral_conduction=false;
-    double thermal_max_step=60,water_conductivity=.606,air_conductivity=.025,surface_resistance=.1;
-    std::string soil_et_heat="LATENT_SURFACE";
+    std::string thermal_model = "WATER_ONLY";
+    int thermal_layers = 16;
+    bool lateral_conduction = false;
+    double thermal_max_step = 60, water_conductivity = .606, air_conductivity = .025,
+           surface_resistance = .1;
+    std::string soil_et_heat = "LATENT_SURFACE";
     std::set<std::string> thermal_authored;
-    bool transport_pollutants  = true;
-    bool transport_msx         = true;
-    bool transport_age         = true;
+    bool transport_pollutants = true;
+    bool transport_msx = true;
+    bool transport_age = true;
     bool transport_temperature = true;
-    bool dispersion            = true;   ///< α_L / α_T / D_m active
-    bool conduction            = true;   ///< vertical + lateral heat conduction
+    bool dispersion = true; ///< α_L / α_T / D_m active
+    bool conduction = true; ///< vertical + lateral heat conduction
     /// SURFACE_THERMAL_BC kind and its argument: AIR | SURFACE_WATER |
-    /// FIXED <degC> | TIMESERIES <name>.
+    /// `FIXED <degC> | TIMESERIES <name>`.
     std::string surface_thermal_bc = "AIR";
     std::string surface_thermal_arg;
-    /// DEEP_THERMAL_BC: GEOTHERMAL_FLUX <W/m2> | FIXED_TEMP <degC> |
-    /// TIMESERIES <name>, with DEPTH <z_deep> in the `deep_depth` field.
+    /// DEEP_THERMAL_BC: `GEOTHERMAL_FLUX <W/m2> | FIXED_TEMP <degC> |`
+    /// `TIMESERIES <name>`, with `DEPTH <z_deep>` in the `deep_depth` field.
     std::string deep_thermal_bc = "GEOTHERMAL_FLUX";
     std::string deep_thermal_arg;
-    double      deep_depth = 0.0;
+    double deep_depth = 0.0;
     /// THERMAL_MIXING ARITHMETIC | GEOMETRIC.
     std::string thermal_mixing = "ARITHMETIC";
     /// Explicit diffusion Courant number for the kernel's tier bound.
@@ -108,108 +109,130 @@ struct GwTransportOptions {
 
 /// One `[GW_TRANSPORT_PARAMS]` row: solute + thermal matrix properties.
 struct GwParamsRow {
-    GwScope     scope = GwScope::GLOBAL;
-    std::string tag;              ///< TAG scope
-    int         cell = -1;        ///< CELL scope (0-based)
-    double rho_s    = 2650.0;     ///< grain density (kg/m3)
-    double c_s      = 880.0;      ///< grain specific heat (J/kg/K)
-    double lambda_s = 2.0;        ///< grain thermal conductivity (W/m/K)
-    double a_s      = 0.0;        ///< specific surface area (m2/kg)
-    double alpha_L  = 1.0;        ///< longitudinal dispersivity (m)
-    double alpha_T  = 0.1;        ///< transverse dispersivity (m)
-    double D_m      = 1.0e-9;     ///< molecular diffusivity (m2/s)
-    double D_v      = 1.0e-9;     ///< vapour diffusivity (m2/s)
-    double geo_flux = 0.065;      ///< geothermal flux (W/m2) or deep temp (degC)
+    GwScope scope = GwScope::GLOBAL;
+    std::string tag;         ///< TAG scope
+    int cell = -1;           ///< CELL scope (0-based)
+    double rho_s = 2650.0;   ///< grain density (kg/m3)
+    double c_s = 880.0;      ///< grain specific heat (J/kg/K)
+    double lambda_s = 2.0;   ///< grain thermal conductivity (W/m/K)
+    double a_s = 0.0;        ///< specific surface area (m2/kg)
+    double alpha_L = 1.0;    ///< longitudinal dispersivity (m)
+    double alpha_T = 0.1;    ///< transverse dispersivity (m)
+    double D_m = 1.0e-9;     ///< molecular diffusivity (m2/s)
+    double D_v = 1.0e-9;     ///< vapour diffusivity (m2/s)
+    double geo_flux = 0.065; ///< geothermal flux (W/m2) or deep temp (degC)
 };
 
 /// One `[GW_SORPTION]` row: retardation input for one species in one scope.
 struct GwSorptionRow {
-    GwScope     scope = GwScope::GLOBAL;
+    GwScope scope = GwScope::GLOBAL;
     std::string tag;
-    int         cell = -1;
+    int cell = -1;
     std::string species;
-    double      kd    = 0.0;      ///< partition coefficient (L/kg)
-    double      decay = -1.0;     ///< 1/day; < 0 = "use [POLLUTANTS] kdecay"
+    double kd = 0.0;     ///< partition coefficient (L/kg)
+    double decay = -1.0; ///< 1/day; < 0 = "use [POLLUTANTS] kdecay"
 };
 
 /// One `[GW_INITIAL_QUALITY]` row.
 struct GwInitialQualityRow {
-    GwScope     scope = GwScope::GLOBAL;
+    GwScope scope = GwScope::GLOBAL;
     std::string tag;
-    int         cell  = -1;
-    GwZone      zone  = GwZone::SAT;
-    int         layer = -1;       ///< LAYER zone only
+    int cell = -1;
+    GwZone zone = GwZone::SAT;
+    int layer = -1; ///< LAYER zone only
     std::string species;
-    double      value = 0.0;
+    double value = 0.0;
 };
 
 /// One `[GW_BOUNDARY_QUALITY]` row — a lateral edge BC.
 struct GwBoundaryQualityRow {
-    int         cell    = -1;     ///< 0-based cell index
-    int         edge    = -1;     ///< local edge 0..nv-1 of that cell
+    int cell = -1; ///< 0-based cell index
+    int edge = -1; ///< local edge 0..nv-1 of that cell
     std::string species;
     /// CONC | TS | MASSFLUX | HEATFLUX.
-    std::string kind    = "CONC";
-    double      value   = 0.0;    ///< constant form
-    std::string ts_name;          ///< TS form (kind == "TS", or a TS argument)
+    std::string kind = "CONC";
+    double value = 0.0;  ///< constant form
+    std::string ts_name; ///< TS form (kind == "TS", or a TS argument)
 };
 
 /// One `[GW_SOURCES]` species term.
 struct GwSourceSpeciesTerm {
     std::string species;
-    std::string kind = "CONC";    ///< CONC | MASS
-    double      value = 0.0;
+    std::string kind = "CONC"; ///< CONC | MASS
+    double value = 0.0;
     std::string ts_name;
 };
 
 /// One `[GW_SOURCES]` row — a well / point source or sink.
 struct GwSourceRow {
     std::string name;
-    GwScope     scope = GwScope::CELL;   ///< CELL | TAG | (XY resolves to CELL)
+    GwScope scope = GwScope::CELL; ///< CELL | TAG | (XY resolves to CELL)
     std::string tag;
-    int         cell = -1;
-    double      x = 0.0, y = 0.0;        ///< XY form (retained for the writer)
-    bool        by_xy = false;
-    double      flow = 0.0;              ///< m3/s, + inject / − extract
-    std::string flow_ts;                 ///< when the FLOW argument is a series
-    double scale = 1.0;                  ///< source-total multiplier, also applied to MASS (not CONC)
+    int cell = -1;
+    double x = 0.0, y = 0.0; ///< XY form (retained for the writer)
+    bool by_xy = false;
+    double flow = 0.0;   ///< m3/s, + inject / − extract
+    std::string flow_ts; ///< when the FLOW argument is a series
+    double scale = 1.0;  ///< source-total multiplier, also applied to MASS (not CONC)
     std::vector<GwSourceSpeciesTerm> species;
 };
 
 /**
  * @brief Every `[GW_*]` authoring row of one model.
  *
- * @details Owned by SurfaceRouter2D (the 2D module's data home) and reached
- *          through `SimulationContext::twod_io.gw` so the writer, the C API
- *          and the GeoPackage path can read it without depending on the
- *          router.
+ * @details Owned by SurfaceRouter2D (the 2D module's data home) and reached through
+ * `SimulationContext::twod_io.gw` so the writer, the C API and the GeoPackage path can read it
+ * without depending on the router.
  */
 struct GwTransportData {
-    GwTransportOptions               options;
-    std::vector<GwParamsRow>         params;
-    std::vector<GwSorptionRow>       sorption;
+    GwTransportOptions options;
+    std::vector<GwParamsRow> params;
+    std::vector<GwSorptionRow> sorption;
     std::vector<GwInitialQualityRow> initial_quality;
     /// `[GW_INITIAL_QUALITY] FILE <csv>` (element,zone,species,value).
-    std::string                      initial_quality_file;
+    std::string initial_quality_file;
     std::vector<GwBoundaryQualityRow> boundary_quality;
-    std::vector<GwSourceRow>         sources;
+    std::vector<GwSourceRow> sources;
 
+    /**
+     * @brief Test whether any groundwater transport section was authored or has rows.
+     * @return True only when authored is false and every row/path collection is empty. Default
+     * process-option values alone do not make this nonempty; read-only and allocation-free.
+     */
     bool empty() const noexcept {
-        return !options.authored && params.empty() && sorption.empty() &&
-               initial_quality.empty() && initial_quality_file.empty() &&
-               boundary_quality.empty() && sources.empty();
+        return !options.authored && params.empty() && sorption.empty() && initial_quality.empty() &&
+               initial_quality_file.empty() && boundary_quality.empty() && sources.empty();
     }
 
+    /**
+     * @brief Replace all groundwater transport authoring state with default empty data.
+     * @post Resets options, rows, file path and derived index caches. All borrowed row/string
+     * references and indices become invalid; requires exclusive authoring access.
+     */
     void clear() { *this = GwTransportData{}; }
 
     // Derived authoring indexes contain positions, never vector pointers. Direct
     // key edits or bulk replacement must invalidate them; parser and FILE reload
     // do so explicitly. Size checks also catch ordinary direct append/erase.
-    void invalidateAuthoringIndexes() noexcept {
-        source_index_size_ = quality_index_size_ = noRow;
-    }
+    /**
+     * @brief Mark source/initial-quality name indexes stale after direct key edits.
+     * @post Leaves allocated maps in place but sets their size markers to noRow; next lookup
+     * rebuilds. Required after same-size direct key replacement, since size checks cannot detect
+     * changed names. No allocation; requires exclusive access.
+     */
+    void invalidateAuthoringIndexes() noexcept { source_index_size_ = quality_index_size_ = noRow; }
     static constexpr std::size_t noRow = std::numeric_limits<std::size_t>::max();
 
+    /**
+     * @brief Resolve the first exact named groundwater source with lazy index rebuild.
+     * @param[in] name Borrowed case-sensitive source identifier, not retained by the lookup.
+     * @return First matching sources index, or noRow when absent; duplicate names retain the
+     * first indexed position.
+     * @post Rebuilds source_index_ when the stored size marker differs from sources.size().
+     * Same-size direct key edits require explicit invalidation.
+     * @note May allocate/throw during rebuild, leaving the marker stale for retry. Serializes
+     * with authoring mutations; no runtime model initialization or unit conversion.
+     */
     std::size_t findSource(const std::string& name) {
         if (source_index_size_ != sources.size()) {
             source_index_size_ = noRow;
@@ -222,6 +245,15 @@ struct GwTransportData {
         const auto it = source_index_.find(name);
         return it == source_index_.end() ? noRow : it->second;
     }
+    /**
+     * @brief Resolve the first complete initial-quality row key using a lazy cache.
+     * @param[in] row Borrowed lookup key: scope, tag, cell, zone, layer and species; value is
+     * ignored.
+     * @return First exact matching index, or noRow when absent.
+     * @post Rebuilds when the row-count marker is stale; same-size key edits require
+     * invalidation. Keys copy strings into the cache and allocations may throw. Requires
+     * exclusive cache/authoring access; no row values are changed.
+     */
     std::size_t findInitialQuality(const GwInitialQualityRow& row) {
         if (quality_index_size_ != initial_quality.size()) {
             quality_index_size_ = noRow;
@@ -234,32 +266,74 @@ struct GwTransportData {
         const auto it = quality_index_.find(QualityKey(row));
         return it == quality_index_.end() ? noRow : it->second;
     }
+    /**
+     * @brief Incrementally extend a valid sources authoring index after one append.
+     * @pre Exactly one row was appended; existing cached keys/positions have not otherwise
+     * changed.
+     * @post Updates a previously valid size marker/map when its old count is exactly
+     * sources.size()-1; otherwise leaves the cache for later lazy rebuild. Duplicate keys
+     * preserve the earlier match.
+     * @note String/hash allocation may throw. Requires exclusive authoring access; does not
+     * append the actual row or publish runtime state.
+     */
     void sourceAppended() {
         if (source_index_size_ != noRow && source_index_size_ + 1 == sources.size()) {
             source_index_.emplace(sources.back().name, sources.size() - 1);
             source_index_size_ = sources.size();
         }
     }
+    /**
+     * @brief Incrementally extend a valid initial_quality authoring index after one append.
+     * @pre Exactly one row was appended; existing cached keys/positions have not otherwise
+     * changed.
+     * @post Updates a previously valid size marker/map when its old count is exactly
+     * initial_quality.size()-1; otherwise leaves the cache for later lazy rebuild. Duplicate
+     * keys preserve the earlier match.
+     * @note String/hash allocation may throw. Requires exclusive authoring access; does not
+     * append the actual row or publish runtime state.
+     */
     void initialQualityAppended() {
         if (quality_index_size_ != noRow && quality_index_size_ + 1 == initial_quality.size()) {
             quality_index_.emplace(QualityKey(initial_quality.back()), initial_quality.size() - 1);
             quality_index_size_ = initial_quality.size();
         }
     }
+    /**
+     * @brief Erase one sources row while maintaining or invalidating its lookup cache.
+     * @param[in] index Valid zero-based row offset in sources; no bounds check.
+     * @post Removes the row and shifts later rows. A valid last-row cache is adjusted
+     * incrementally; other removals mark it stale. Borrowed row references/indices may be
+     * invalidated.
+     * @note Requires exclusive authoring access. No runtime-state rebuild, name validation, or
+     * unit conversion. String-key construction for quality removal can allocate/throw.
+     */
     void removeSource(std::size_t index) {
         if (source_index_size_ == sources.size() && index + 1 == sources.size()) {
             const auto it = source_index_.find(sources[index].name);
-            if (it != source_index_.end() && it->second == index) source_index_.erase(it);
+            if (it != source_index_.end() && it->second == index)
+                source_index_.erase(it);
             --source_index_size_;
-        } else source_index_size_ = noRow;
+        } else
+            source_index_size_ = noRow;
         sources.erase(sources.begin() + index);
     }
+    /**
+     * @brief Erase one initial_quality row while maintaining or invalidating its lookup cache.
+     * @param[in] index Valid zero-based row offset in initial_quality; no bounds check.
+     * @post Removes the row and shifts later rows. A valid last-row cache is adjusted
+     * incrementally; other removals mark it stale. Borrowed row references/indices may be
+     * invalidated.
+     * @note Requires exclusive authoring access. No runtime-state rebuild, name validation, or
+     * unit conversion. String-key construction for quality removal can allocate/throw.
+     */
     void removeInitialQuality(std::size_t index) {
         if (quality_index_size_ == initial_quality.size() && index + 1 == initial_quality.size()) {
             const auto it = quality_index_.find(QualityKey(initial_quality[index]));
-            if (it != quality_index_.end() && it->second == index) quality_index_.erase(it);
+            if (it != quality_index_.end() && it->second == index)
+                quality_index_.erase(it);
             --quality_index_size_;
-        } else quality_index_size_ = noRow;
+        } else
+            quality_index_size_ = noRow;
         initial_quality.erase(initial_quality.begin() + index);
     }
 
@@ -271,17 +345,38 @@ private:
         GwZone zone;
         int layer;
         std::string species;
+        /**
+         * @brief Copy the identity fields of an authored initial-quality row.
+         * @param[in] r Borrowed row; its concentration/value is not part of the identity.
+         * @post Owns copied tag/species strings plus scope, cell, zone and layer. String
+         * allocation may throw; no reference to r is retained.
+         */
         explicit QualityKey(const GwInitialQualityRow& r)
-            : scope(r.scope), tag(r.tag), cell(r.cell), zone(r.zone), layer(r.layer), species(r.species) {}
+            : scope(r.scope), tag(r.tag), cell(r.cell), zone(r.zone), layer(r.layer),
+              species(r.species) {}
+        /**
+         * @brief Compare all initial-quality identity fields exactly.
+         * @param[in] r Borrowed other key.
+         * @return True when scope/tag/cell/zone/layer/species all match, including ignored-scope
+         * fields; comparison is case-sensitive and does not mutate/allocate.
+         */
         bool operator==(const QualityKey& r) const noexcept {
-            return scope == r.scope && tag == r.tag && cell == r.cell &&
-                   zone == r.zone && layer == r.layer && species == r.species;
+            return scope == r.scope && tag == r.tag && cell == r.cell && zone == r.zone &&
+                   layer == r.layer && species == r.species;
         }
     };
     struct QualityHash {
+        /**
+         * @brief Hash every initial-quality identity field consistently with equality.
+         * @param[in] r Borrowed complete key.
+         * @return Combined size_t hash using ordinary unsigned wraparound; collisions remain
+         * possible and equality resolves them. No allocation or mutation.
+         */
         std::size_t operator()(const QualityKey& r) const noexcept {
             std::size_t h = 0;
-            const auto combine = [&h](std::size_t v) { h ^= v + 0x9e3779b9u + (h << 6) + (h >> 2); };
+            const auto combine = [&h](std::size_t v) {
+                h ^= v + 0x9e3779b9u + (h << 6) + (h >> 2);
+            };
             combine(std::hash<int>{}(static_cast<int>(r.scope)));
             combine(std::hash<std::string>{}(r.tag));
             combine(std::hash<int>{}(r.cell));
@@ -297,10 +392,29 @@ private:
     std::size_t quality_index_size_ = noRow;
 };
 
+/**
+ * @brief Borrow the input-section token for an aquifer zone.
+ * - Argument z (in): GwZone enum; unsupported values fall back to SAT.
+ * @return Process-lifetime immutable literal SAT, UNSAT or LAYER; do not modify/free it. No
+ * allocation or mutation.
+ */
 const char* gwZoneToken(GwZone z) noexcept;
-bool        parseGwZone(const std::string& token, GwZone& z) noexcept;
+/**
+ * @brief Parse one aquifer zone token without changing state on failure.
+ * - Argument token (in): Borrowed case-insensitive complete token SAT, UNSAT or LAYER; not
+ * whitespace-trimmed here.
+ * - Argument z (out): Assigned only on success; unchanged for invalid text.
+ * @return True for a recognized token, otherwise false. No input retention or allocation.
+ */
+bool parseGwZone(const std::string& token, GwZone& z) noexcept;
+/**
+ * @brief Borrow the input-section token for an aquifer row scope.
+ * - Argument s (in): GwScope enum; unsupported values fall back to GLOBAL.
+ * @return Process-lifetime immutable literal *, TAG or CELL; do not modify/free it. No
+ * allocation or mutation.
+ */
 const char* gwScopeToken(GwScope s) noexcept;
 
-}  // namespace openswmm::twoD
+} // namespace openswmm::twoD
 
-#endif  // OPENSWMM_ENGINE_2D_GW_TRANSPORT_DATA_HPP
+#endif // OPENSWMM_ENGINE_2D_GW_TRANSPORT_DATA_HPP

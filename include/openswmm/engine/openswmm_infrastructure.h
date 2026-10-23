@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file openswmm_infrastructure.h
- * @brief OpenSWMM Engine — Infrastructure (Transects, Streets, Inlets, LIDs) C API.
+ * @file      openswmm_infrastructure.h
+ * @brief     OpenSWMM Engine — Infrastructure (Transects, Streets, Inlets, LIDs) C API.
  *
  * @details Transect creation and station data, street parameters, inlet
  *          definitions, LID control layers, and LID usage assignment.
@@ -24,9 +24,9 @@
  * @ingroup engine_api
  * @see openswmm_engine.h
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_INFRASTRUCTURE_H
@@ -44,22 +44,34 @@ extern "C" {
 
 /**
  * @brief Add a new transect for irregular cross-sections.
- * @param engine  Engine handle (SWMM_STATE_BUILDING).
- * @param id      Unique null-terminated identifier.
+ * @param[in] engine Engine handle; see this operation's lifecycle note.
+ * @param[in] id Unique null-terminated identifier.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. No lifecycle guard in this wrapper; authoring
+ *     edits do not generally rebuild running hydraulic/geometry caches. Rejects case-insensitive
+ *     duplicate IDs; NULL is refused but an empty ID is accepted.
  */
 SWMM_ENGINE_API int swmm_transect_add(SWMM_Engine engine, const char* id);
 
 /**
  * @brief Set Manning's roughness for left overbank, right overbank, and channel.
- * @param engine     Engine handle.
- * @param idx        Zero-based transect index.
- * @param n_left     Manning's n for the left overbank.
- * @param n_right    Manning's n for the right overbank.
- * @param n_channel  Manning's n for the main channel.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based transect index.
+ * @param[in] n_left Manning's n for the left overbank.
+ * @param[in] n_right Manning's n for the right overbank.
+ * @param[in] n_channel Manning's n for the main channel.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A failed infrastructure/pollutant index check
+ *     returns SWMM_ERR_BADINDEX. No lifecycle guard in this wrapper; authoring edits do not
+ *     generally rebuild running hydraulic/geometry caches. Numeric values are stored verbatim
+ *     without finite/range validation.
  */
-SWMM_ENGINE_API int swmm_transect_set_roughness(SWMM_Engine engine, int idx, double n_left, double n_right, double n_channel);
+SWMM_ENGINE_API int swmm_transect_set_roughness(SWMM_Engine engine, int idx, double n_left,
+                                                double n_right, double n_channel);
 
 /**
  * @brief Add a station–elevation data point to a transect.
@@ -67,34 +79,50 @@ SWMM_ENGINE_API int swmm_transect_set_roughness(SWMM_Engine engine, int idx, dou
  * @details Stations must be added in order from left to right across the
  *          cross-section.
  *
- * @param engine     Engine handle.
- * @param idx        Zero-based transect index.
- * @param station    Horizontal distance (station) from a reference.
- * @param elevation  Elevation at this station.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based transect index.
+ * @param[in] station Horizontal distance (station) from a reference.
+ * @param[in] elevation Elevation at this station.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A failed infrastructure/pollutant index check
+ *     returns SWMM_ERR_BADINDEX. Numeric values are stored verbatim without finite/range
+ *     validation.
  */
-SWMM_ENGINE_API int swmm_transect_add_station(SWMM_Engine engine, int idx, double station, double elevation);
+SWMM_ENGINE_API int swmm_transect_add_station(SWMM_Engine engine, int idx, double station,
+                                              double elevation);
 
 /**
  * @brief Get the total number of transects in the model.
- * @param engine  Engine handle.
+ * @param[in] engine Engine handle.
  * @returns Number of transects, or -1 on error.
+ *
+ *
+ * @note Null engine returns -1.
  */
 SWMM_ENGINE_API int swmm_transect_count(SWMM_Engine engine);
 
 /**
  * @brief Look up a transect's zero-based index by its string identifier.
- * @param engine  Engine handle.
- * @param id      Null-terminated transect identifier.
+ * @param[in] engine Engine handle.
+ * @param[in] id Null-terminated transect identifier.
  * @returns Zero-based index, or -1 if not found.
+ *
+ *
+ * @note Name lookup is case-insensitive; null engine/name or no match returns -1.
  */
 SWMM_ENGINE_API int swmm_transect_index(SWMM_Engine engine, const char* id);
 
 /**
  * @brief Get the string identifier of a transect by index.
- * @param engine  Engine handle.
- * @param idx     Zero-based transect index.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based transect index.
  * @returns Null-terminated string owned by the engine, or NULL on error.
+ *
+ *
+ * @note Returned text borrows engine storage: do not free; copy before editing the table or
+ *     closing/destroying the engine. NULL is returned for a null engine or invalid index.
  */
 SWMM_ENGINE_API const char* swmm_transect_id(SWMM_Engine engine, int idx);
 
@@ -108,15 +136,20 @@ SWMM_ENGINE_API const char* swmm_transect_id(SWMM_Engine engine, int idx);
 
 /**
  * @brief Get the Manning's roughness values for a transect.
- * @param engine     Engine handle.
- * @param idx        Zero-based transect index.
- * @param n_left     [out] Manning's n for the left overbank. May be NULL.
- * @param n_right    [out] Manning's n for the right overbank. May be NULL.
- * @param n_channel  [out] Manning's n for the main channel. May be NULL.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based transect index.
+ * @param[out] n_left Manning's n for the left overbank. May be NULL.
+ * @param[out] n_right Manning's n for the right overbank. May be NULL.
+ * @param[out] n_channel Manning's n for the main channel. May be NULL.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note n_left may be NULL to suppress that output. n_right may be NULL to suppress that output.
+ *     n_channel may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
+ *     failed infrastructure/pollutant index check returns SWMM_ERR_BADINDEX.
  */
-SWMM_ENGINE_API int swmm_transect_get_roughness(SWMM_Engine engine, int idx,
-                                                 double* n_left, double* n_right, double* n_channel);
+SWMM_ENGINE_API int swmm_transect_get_roughness(SWMM_Engine engine, int idx, double* n_left,
+                                                double* n_right, double* n_channel);
 
 /**
  * @brief Set the left and right bank stations for a transect.
@@ -124,25 +157,36 @@ SWMM_ENGINE_API int swmm_transect_get_roughness(SWMM_Engine engine, int idx,
  * @details Bank stations delimit the main channel from the overbanks; they
  *          are independent of the encroachment stations (BQ-TR-02).
  *
- * @param engine   Engine handle.
- * @param idx      Zero-based transect index.
- * @param x_left   Station of the left bank.
- * @param x_right  Station of the right bank.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based transect index.
+ * @param[in] x_left Station of the left bank.
+ * @param[in] x_right Station of the right bank.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A failed infrastructure/pollutant index check
+ *     returns SWMM_ERR_BADINDEX. No lifecycle guard in this wrapper; authoring edits do not
+ *     generally rebuild running hydraulic/geometry caches. Numeric values are stored verbatim
+ *     without finite/range validation.
  */
-SWMM_ENGINE_API int swmm_transect_set_bank_stations(SWMM_Engine engine, int idx,
-                                                     double x_left, double x_right);
+SWMM_ENGINE_API int swmm_transect_set_bank_stations(SWMM_Engine engine, int idx, double x_left,
+                                                    double x_right);
 
 /**
  * @brief Get the left and right bank stations for a transect.
- * @param engine   Engine handle.
- * @param idx      Zero-based transect index.
- * @param x_left   [out] Station of the left bank. May be NULL.
- * @param x_right  [out] Station of the right bank. May be NULL.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based transect index.
+ * @param[out] x_left Station of the left bank. May be NULL.
+ * @param[out] x_right Station of the right bank. May be NULL.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note x_left may be NULL to suppress that output. x_right may be NULL to suppress that output. A
+ *     null engine returns SWMM_ERR_BADHANDLE. A failed infrastructure/pollutant index check returns
+ *     SWMM_ERR_BADINDEX.
  */
-SWMM_ENGINE_API int swmm_transect_get_bank_stations(SWMM_Engine engine, int idx,
-                                                     double* x_left, double* x_right);
+SWMM_ENGINE_API int swmm_transect_get_bank_stations(SWMM_Engine engine, int idx, double* x_left,
+                                                    double* x_right);
 
 /**
  * @brief Set the left and right encroachment stations for a transect (BQ-TR-02).
@@ -154,25 +198,36 @@ SWMM_ENGINE_API int swmm_transect_get_bank_stations(SWMM_Engine engine, int idx,
  *          to preserve backward compatibility; callers writing programmatic
  *          values via this API are setting them explicitly.
  *
- * @param engine   Engine handle.
- * @param idx      Zero-based transect index.
- * @param x_left   Station of the left encroachment limit.
- * @param x_right  Station of the right encroachment limit.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based transect index.
+ * @param[in] x_left Station of the left encroachment limit.
+ * @param[in] x_right Station of the right encroachment limit.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A failed infrastructure/pollutant index check
+ *     returns SWMM_ERR_BADINDEX. No lifecycle guard in this wrapper; authoring edits do not
+ *     generally rebuild running hydraulic/geometry caches. Numeric values are stored verbatim
+ *     without finite/range validation.
  */
 SWMM_ENGINE_API int swmm_transect_set_encroachment_stations(SWMM_Engine engine, int idx,
-                                                             double x_left, double x_right);
+                                                            double x_left, double x_right);
 
 /**
  * @brief Get the left and right encroachment stations for a transect (BQ-TR-02).
- * @param engine   Engine handle.
- * @param idx      Zero-based transect index.
- * @param x_left   [out] Station of the left encroachment limit. May be NULL.
- * @param x_right  [out] Station of the right encroachment limit. May be NULL.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based transect index.
+ * @param[out] x_left Station of the left encroachment limit. May be NULL.
+ * @param[out] x_right Station of the right encroachment limit. May be NULL.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note x_left may be NULL to suppress that output. x_right may be NULL to suppress that output. A
+ *     null engine returns SWMM_ERR_BADHANDLE. A failed infrastructure/pollutant index check returns
+ *     SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_transect_get_encroachment_stations(SWMM_Engine engine, int idx,
-                                                             double* x_left, double* x_right);
+                                                            double* x_left, double* x_right);
 
 /**
  * @brief Set the station, elevation, and meander modifiers for a transect.
@@ -186,34 +241,51 @@ SWMM_ENGINE_API int swmm_transect_get_encroachment_stations(SWMM_Engine engine, 
  *          - `length_factor` = meander factor = channel / floodplain length
  *                              ratio (default 1.0).
  *
- * @param engine         Engine handle.
- * @param idx            Zero-based transect index.
- * @param x_factor       Station spacing multiplier.
- * @param y_factor       Elevation offset.
- * @param length_factor  Meander factor (channel/floodplain length ratio).
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based transect index.
+ * @param[in] x_factor Station spacing multiplier.
+ * @param[in] y_factor Elevation offset.
+ * @param[in] length_factor Meander factor (channel/floodplain length ratio).
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A failed infrastructure/pollutant index check
+ *     returns SWMM_ERR_BADINDEX. No lifecycle guard in this wrapper; authoring edits do not
+ *     generally rebuild running hydraulic/geometry caches. Numeric values are stored verbatim
+ *     without finite/range validation.
  */
-SWMM_ENGINE_API int swmm_transect_set_modifiers(SWMM_Engine engine, int idx,
-                                                 double x_factor, double y_factor, double length_factor);
+SWMM_ENGINE_API int swmm_transect_set_modifiers(SWMM_Engine engine, int idx, double x_factor,
+                                                double y_factor, double length_factor);
 
 /**
  * @brief Get the station, elevation, and meander modifiers for a transect.
- * @param engine         Engine handle.
- * @param idx            Zero-based transect index.
- * @param x_factor       [out] Station spacing multiplier. May be NULL.
- * @param y_factor       [out] Elevation offset. May be NULL.
- * @param length_factor  [out] Meander factor. May be NULL.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based transect index.
+ * @param[out] x_factor Station spacing multiplier. May be NULL.
+ * @param[out] y_factor Elevation offset. May be NULL.
+ * @param[out] length_factor Meander factor. May be NULL.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note x_factor may be NULL to suppress that output. y_factor may be NULL to suppress that output.
+ *     length_factor may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE.
+ *     A failed infrastructure/pollutant index check returns SWMM_ERR_BADINDEX.
  */
-SWMM_ENGINE_API int swmm_transect_get_modifiers(SWMM_Engine engine, int idx,
-                                                 double* x_factor, double* y_factor, double* length_factor);
+SWMM_ENGINE_API int swmm_transect_get_modifiers(SWMM_Engine engine, int idx, double* x_factor,
+                                                double* y_factor, double* length_factor);
 
 /**
  * @brief Set the free-form comments / description for a transect.
- * @param engine  Engine handle.
- * @param idx     Zero-based transect index.
- * @param text    Null-terminated comment string. NULL clears the comment.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based transect index.
+ * @param[in] text Null-terminated comment string. NULL clears the comment.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A failed infrastructure/pollutant index check
+ *     returns SWMM_ERR_BADINDEX. No lifecycle guard in this wrapper; authoring edits do not
+ *     generally rebuild running hydraulic/geometry caches. Numeric values are stored verbatim
+ *     without finite/range validation.
  */
 SWMM_ENGINE_API int swmm_transect_set_comments(SWMM_Engine engine, int idx, const char* text);
 
@@ -224,33 +296,46 @@ SWMM_ENGINE_API int swmm_transect_set_comments(SWMM_Engine engine, int idx, cons
  *          if the buffer is smaller than the comment. Always returns SWMM_OK
  *          (an empty comment results in @p buf[0] == '\0').
  *
- * @param engine  Engine handle.
- * @param idx     Zero-based transect index.
- * @param buf     Destination buffer.
- * @param buflen  Size of @p buf in bytes (must be > 0).
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based transect index.
+ * @param[out] buf Destination buffer.
+ * @param[in] buflen Size of @p buf in bytes (must be > 0).
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A failed infrastructure/pollutant index check
+ *     returns SWMM_ERR_BADINDEX. Required output buffer must be non-null with positive capacity.
+ *     Copies a terminating NUL and silently truncates to capacity-1 bytes.
  */
 SWMM_ENGINE_API int swmm_transect_get_comments(SWMM_Engine engine, int idx, char* buf, int buflen);
 
 /**
  * @brief Get the number of station–elevation points stored for a transect.
- * @param engine  Engine handle.
- * @param idx     Zero-based transect index.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based transect index.
  * @returns Station count, or -1 on error.
+ *
+ *
+ * @note Null engine returns -1.
  */
 SWMM_ENGINE_API int swmm_transect_get_station_count(SWMM_Engine engine, int idx);
 
 /**
  * @brief Get a single station–elevation pair from a transect.
- * @param engine       Engine handle.
- * @param idx          Zero-based transect index.
- * @param station_idx  Zero-based station-pair index.
- * @param station      [out] Horizontal distance. May be NULL.
- * @param elevation    [out] Elevation at this station. May be NULL.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based transect index.
+ * @param[in] station_idx Zero-based station-pair index.
+ * @param[out] station Horizontal distance. May be NULL.
+ * @param[out] elevation Elevation at this station. May be NULL.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note station may be NULL to suppress that output. elevation may be NULL to suppress that output.
+ *     A null engine returns SWMM_ERR_BADHANDLE. A failed infrastructure/pollutant index check
+ *     returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_transect_get_station(SWMM_Engine engine, int idx, int station_idx,
-                                               double* station, double* elevation);
+                                              double* station, double* elevation);
 
 /**
  * @brief Remove all station–elevation pairs from a transect.
@@ -258,9 +343,14 @@ SWMM_ENGINE_API int swmm_transect_get_station(SWMM_Engine engine, int idx, int s
  * @details Used by the GUI's snapshot-and-rewrite path: clear then re-add
  *          the full station list in one shot.
  *
- * @param engine  Engine handle.
- * @param idx     Zero-based transect index.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based transect index.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A failed infrastructure/pollutant index check
+ *     returns SWMM_ERR_BADINDEX. No lifecycle guard in this wrapper; authoring edits do not
+ *     generally rebuild running hydraulic/geometry caches.
  */
 SWMM_ENGINE_API int swmm_transect_clear_stations(SWMM_Engine engine, int idx);
 
@@ -270,10 +360,15 @@ SWMM_ENGINE_API int swmm_transect_clear_stations(SWMM_Engine engine, int idx);
  * @details Refuses on collision with another existing transect name (case
  *          insensitive); same-name is a no-op SWMM_OK.
  *
- * @param engine   Engine handle.
- * @param idx      Zero-based transect index.
- * @param new_id   New null-terminated identifier.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based transect index.
+ * @param[in] new_id New null-terminated identifier.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A failed infrastructure/pollutant index check
+ *     returns SWMM_ERR_BADINDEX. No lifecycle guard in this wrapper; authoring edits do not
+ *     generally rebuild running hydraulic/geometry caches.
  */
 SWMM_ENGINE_API int swmm_transect_rename(SWMM_Engine engine, int idx, const char* new_id);
 
@@ -285,9 +380,15 @@ SWMM_ENGINE_API int swmm_transect_rename(SWMM_Engine engine, int idx, const char
  *          transects preserve their relative order; their indices shift
  *          down by one.
  *
- * @param engine  Engine handle.
- * @param idx     Zero-based transect index.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based transect index.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. No lifecycle guard in this wrapper; authoring
+ *     edits do not generally rebuild running hydraulic/geometry caches. Out-of-range indices
+ *     succeed without mutation. Erases only the transect arrays; does not nullify/renumber
+ *     referring link cross-sections. Use swmm_transect_delete() for cascaded reference repair.
  */
 SWMM_ENGINE_API int swmm_transect_remove(SWMM_Engine engine, int idx);
 
@@ -297,9 +398,14 @@ SWMM_ENGINE_API int swmm_transect_remove(SWMM_Engine engine, int idx);
 
 /**
  * @brief Add a new street cross-section definition.
- * @param engine  Engine handle (SWMM_STATE_BUILDING).
- * @param id      Unique null-terminated identifier.
+ * @param[in] engine Engine handle; see this operation's lifecycle note.
+ * @param[in] id Unique null-terminated identifier.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. No lifecycle guard in this wrapper; authoring
+ *     edits do not generally rebuild running hydraulic/geometry caches. Required strings are
+ *     copied; empty/duplicate IDs and unresolved type tokens are not rejected here.
  */
 SWMM_ENGINE_API int swmm_street_add(SWMM_Engine engine, const char* id);
 
@@ -313,57 +419,78 @@ SWMM_ENGINE_API int swmm_street_add(SWMM_Engine engine, const char* id);
  *          rewrites every such reference, so renaming cannot leave a link
  *          pointing at a street that no longer exists.
  *
- * @param engine  Engine handle.
- * @param idx     Street index.
- * @param new_id  New unique name (non-empty), compared case-insensitively
+ * @param[in] engine Engine handle.
+ * @param[in] idx Street index.
+ * @param[in] new_id New unique name (non-empty), compared case-insensitively
  *                against the other streets. A pure case-respelling of this
  *                same street is allowed.
  * @returns SWMM_OK, or SWMM_ERR_BADPARAM on an empty or duplicate name.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A failed infrastructure/pollutant index check
+ *     returns SWMM_ERR_BADINDEX. No lifecycle guard in this wrapper; authoring edits do not
+ *     generally rebuild running hydraulic/geometry caches.
  */
 SWMM_ENGINE_API int swmm_street_rename(SWMM_Engine engine, int idx, const char* new_id);
 
 /**
  * @brief Set the geometric parameters for a street cross-section.
  *
- * @param engine         Engine handle.
- * @param idx            Zero-based street index.
- * @param t_crown        Crown thickness (rise of the crown above the gutter).
- * @param h_curb         Curb height.
- * @param sx             Cross slope of the roadway.
- * @param n_road         Manning's n for the road surface.
- * @param gutter_depres  Gutter depression depth.
- * @param gutter_width   Gutter width.
- * @param sides          Number of sides (1 or 2).
- * @param back_width     Backing (sidewalk) width.
- * @param back_slope     Backing slope.
- * @param back_n         Manning's n for the backing area.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based street index.
+ * @param[in] t_crown Crown thickness (rise of the crown above the gutter).
+ * @param[in] h_curb Curb height.
+ * @param[in] sx Cross slope of the roadway.
+ * @param[in] n_road Manning's n for the road surface.
+ * @param[in] gutter_depres Gutter depression depth.
+ * @param[in] gutter_width Gutter width.
+ * @param[in] sides Number of sides (1 or 2).
+ * @param[in] back_width Backing (sidewalk) width.
+ * @param[in] back_slope Backing slope.
+ * @param[in] back_n Manning's n for the backing area.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A failed infrastructure/pollutant index check
+ *     returns SWMM_ERR_BADINDEX. No lifecycle guard in this wrapper; authoring edits do not
+ *     generally rebuild running hydraulic/geometry caches. Numeric values are stored verbatim
+ *     without finite/range validation.
  */
-SWMM_ENGINE_API int swmm_street_set_params(SWMM_Engine engine, int idx,
-                                             double t_crown, double h_curb, double sx, double n_road,
-                                             double gutter_depres, double gutter_width, int sides,
-                                             double back_width, double back_slope, double back_n);
+SWMM_ENGINE_API int swmm_street_set_params(SWMM_Engine engine, int idx, double t_crown,
+                                           double h_curb, double sx, double n_road,
+                                           double gutter_depres, double gutter_width, int sides,
+                                           double back_width, double back_slope, double back_n);
 
 /**
  * @brief Get the total number of street definitions in the model.
- * @param engine  Engine handle.
+ * @param[in] engine Engine handle.
  * @returns Number of streets, or -1 on error.
+ *
+ *
+ * @note Null engine returns -1.
  */
 SWMM_ENGINE_API int swmm_street_count(SWMM_Engine engine);
 
 /**
  * @brief Look up a street's zero-based index by its string identifier.
- * @param engine  Engine handle.
- * @param id      Null-terminated street identifier.
+ * @param[in] engine Engine handle.
+ * @param[in] id Null-terminated street identifier.
  * @returns Zero-based index, or -1 if not found.
+ *
+ *
+ * @note Name lookup is case-insensitive; null engine/name or no match returns -1.
  */
 SWMM_ENGINE_API int swmm_street_index(SWMM_Engine engine, const char* id);
 
 /**
  * @brief Get the string identifier of a street by index.
- * @param engine  Engine handle.
- * @param idx     Zero-based street index.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based street index.
  * @returns Null-terminated string owned by the engine, or NULL on error.
+ *
+ *
+ * @note Returned text borrows engine storage: do not free; copy before editing the table or
+ *     closing/destroying the engine. NULL is returned for a null engine or invalid index.
  */
 SWMM_ENGINE_API const char* swmm_street_id(SWMM_Engine engine, int idx);
 
@@ -374,24 +501,33 @@ SWMM_ENGINE_API const char* swmm_street_id(SWMM_Engine engine, int idx);
  *          if that field is not needed. Values are returned in the same units
  *          they were supplied (display units).
  *
- * @param engine         Engine handle.
- * @param idx            Zero-based street index.
- * @param[out] t_crown        Crown thickness.
- * @param[out] h_curb         Curb height.
- * @param[out] sx             Cross slope of the roadway.
- * @param[out] n_road         Manning's n for the road surface.
- * @param[out] gutter_depres  Gutter depression depth.
- * @param[out] gutter_width   Gutter width.
- * @param[out] sides          Number of sides (1 or 2).
- * @param[out] back_width     Backing (sidewalk) width.
- * @param[out] back_slope     Backing slope.
- * @param[out] back_n         Manning's n for the backing area.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based street index.
+ * @param[out] t_crown Crown thickness.
+ * @param[out] h_curb Curb height.
+ * @param[out] sx Cross slope of the roadway.
+ * @param[out] n_road Manning's n for the road surface.
+ * @param[out] gutter_depres Gutter depression depth.
+ * @param[out] gutter_width Gutter width.
+ * @param[out] sides Number of sides (1 or 2).
+ * @param[out] back_width Backing (sidewalk) width.
+ * @param[out] back_slope Backing slope.
+ * @param[out] back_n Manning's n for the backing area.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note t_crown may be NULL to suppress that output. h_curb may be NULL to suppress that output. sx
+ *     may be NULL to suppress that output. n_road may be NULL to suppress that output.
+ *     gutter_depres may be NULL to suppress that output. gutter_width may be NULL to suppress that
+ *     output. sides may be NULL to suppress that output. back_width may be NULL to suppress that
+ *     output. back_slope may be NULL to suppress that output. back_n may be NULL to suppress that
+ *     output. A null engine returns SWMM_ERR_BADHANDLE. A failed infrastructure/pollutant index
+ *     check returns SWMM_ERR_BADINDEX.
  */
-SWMM_ENGINE_API int swmm_street_get_params(SWMM_Engine engine, int idx,
-                                             double* t_crown, double* h_curb, double* sx, double* n_road,
-                                             double* gutter_depres, double* gutter_width, int* sides,
-                                             double* back_width, double* back_slope, double* back_n);
+SWMM_ENGINE_API int swmm_street_get_params(SWMM_Engine engine, int idx, double* t_crown,
+                                           double* h_curb, double* sx, double* n_road,
+                                           double* gutter_depres, double* gutter_width, int* sides,
+                                           double* back_width, double* back_slope, double* back_n);
 
 /* =========================================================================
  * Inlets
@@ -399,10 +535,15 @@ SWMM_ENGINE_API int swmm_street_get_params(SWMM_Engine engine, int idx,
 
 /**
  * @brief Add a new inlet definition.
- * @param engine  Engine handle (SWMM_STATE_BUILDING).
- * @param id      Unique null-terminated identifier.
- * @param type    Inlet type string (e.g., "GRATE", "CURB", "SLOTTED", "CUSTOM").
+ * @param[in] engine Engine handle; see this operation's lifecycle note.
+ * @param[in] id Unique null-terminated identifier.
+ * @param[in] type Inlet type string (e.g., "GRATE", "CURB", "SLOTTED", "CUSTOM").
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. No lifecycle guard in this wrapper; authoring
+ *     edits do not generally rebuild running hydraulic/geometry caches. Required strings are
+ *     copied; empty/duplicate IDs and unresolved type tokens are not rejected here.
  */
 SWMM_ENGINE_API int swmm_inlet_add(SWMM_Engine engine, const char* id, const char* type);
 
@@ -412,49 +553,71 @@ SWMM_ENGINE_API int swmm_inlet_add(SWMM_Engine engine, const char* id, const cha
  * @details [INLET_USAGE] rows hold an inlet INDEX, not a name, so usages
  *          follow automatically.
  *
- * @param engine  Engine handle.
- * @param idx     Inlet index.
- * @param new_id  New unique name (non-empty), compared case-insensitively
+ * @param[in] engine Engine handle.
+ * @param[in] idx Inlet index.
+ * @param[in] new_id New unique name (non-empty), compared case-insensitively
  *                against the other inlets. A pure case-respelling of this
  *                same inlet is allowed.
  * @returns SWMM_OK, or SWMM_ERR_BADPARAM on an empty or duplicate name.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A failed infrastructure/pollutant index check
+ *     returns SWMM_ERR_BADINDEX. No lifecycle guard in this wrapper; authoring edits do not
+ *     generally rebuild running hydraulic/geometry caches.
  */
 SWMM_ENGINE_API int swmm_inlet_rename(SWMM_Engine engine, int idx, const char* new_id);
 
 /**
  * @brief Set the geometric parameters for an inlet.
- * @param engine        Engine handle.
- * @param idx           Zero-based inlet index.
- * @param length        Inlet length.
- * @param width         Inlet width.
- * @param grate_type    Grate type string (e.g., "P-50", "GENERIC").
- * @param open_area     Open area fraction (0–1).
- * @param splash_veloc  Splash-over velocity threshold.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based inlet index.
+ * @param[in] length Inlet length.
+ * @param[in] width Inlet width.
+ * @param[in] grate_type Grate type string (e.g., "P-50", "GENERIC").
+ * @param[in] open_area Open area fraction (0–1).
+ * @param[in] splash_veloc Splash-over velocity threshold.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A failed infrastructure/pollutant index check
+ *     returns SWMM_ERR_BADINDEX. No lifecycle guard in this wrapper; authoring edits do not
+ *     generally rebuild running hydraulic/geometry caches. Numeric values are stored verbatim
+ *     without finite/range validation.
  */
 SWMM_ENGINE_API int swmm_inlet_set_params(SWMM_Engine engine, int idx, double length, double width,
-                                            const char* grate_type, double open_area, double splash_veloc);
+                                          const char* grate_type, double open_area,
+                                          double splash_veloc);
 
 /**
  * @brief Get the total number of inlet definitions in the model.
- * @param engine  Engine handle.
+ * @param[in] engine Engine handle.
  * @returns Number of inlets, or -1 on error.
+ *
+ *
+ * @note Null engine returns -1.
  */
 SWMM_ENGINE_API int swmm_inlet_count(SWMM_Engine engine);
 
 /**
  * @brief Look up an inlet's zero-based index by its string identifier.
- * @param engine  Engine handle.
- * @param id      Null-terminated inlet identifier.
+ * @param[in] engine Engine handle.
+ * @param[in] id Null-terminated inlet identifier.
  * @returns Zero-based index, or -1 if not found.
+ *
+ *
+ * @note Name lookup is case-insensitive; null engine/name or no match returns -1.
  */
 SWMM_ENGINE_API int swmm_inlet_index(SWMM_Engine engine, const char* id);
 
 /**
  * @brief Get the string identifier of an inlet by index.
- * @param engine  Engine handle.
- * @param idx     Zero-based inlet index.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based inlet index.
  * @returns Null-terminated string owned by the engine, or NULL on error.
+ *
+ *
+ * @note Returned text borrows engine storage: do not free; copy before editing the table or
+ *     closing/destroying the engine. NULL is returned for a null engine or invalid index.
  */
 SWMM_ENGINE_API const char* swmm_inlet_id(SWMM_Engine engine, int idx);
 
@@ -466,30 +629,43 @@ SWMM_ENGINE_API const char* swmm_inlet_id(SWMM_Engine engine, int idx);
  *          string (set at @ref swmm_inlet_add) is read separately via
  *          @ref swmm_inlet_get_type.
  *
- * @param engine            Engine handle.
- * @param idx               Zero-based inlet index.
- * @param[out] length       Receives the inlet length.
- * @param[out] width        Receives the inlet width.
- * @param[out] grate_type   Buffer for the grate-type string (NUL-terminated,
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based inlet index.
+ * @param[out] length Receives the inlet length.
+ * @param[out] width Receives the inlet width.
+ * @param[out] grate_type Buffer for the grate-type string (NUL-terminated,
  *                          truncated to `grate_buflen`); may be null to skip.
- * @param grate_buflen      Size of `grate_type` in bytes; ignored when
+ * @param[in] grate_buflen Size of `grate_type` in bytes; ignored when
  *                          `grate_type` is null.
- * @param[out] open_area    Receives the open-area fraction.
+ * @param[out] open_area Receives the open-area fraction.
  * @param[out] splash_veloc Receives the splash-over velocity threshold.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note length may be NULL to suppress that output. width may be NULL to suppress that output.
+ *     grate_type may be NULL to suppress that output. open_area may be NULL to suppress that
+ *     output. splash_veloc may be NULL to suppress that output. A null engine returns
+ *     SWMM_ERR_BADHANDLE. A failed infrastructure/pollutant index check returns SWMM_ERR_BADINDEX.
+ *     For CURB/DROP_CURB, length/width map to curb length/height. Other kinds use grate/slot
+ *     fields. A requested grate buffer must have positive capacity; numeric outputs may already be
+ *     written if that capacity fails.
  */
-SWMM_ENGINE_API int swmm_inlet_get_params(SWMM_Engine engine, int idx,
-                                            double* length, double* width,
-                                            char* grate_type, int grate_buflen,
-                                            double* open_area, double* splash_veloc);
+SWMM_ENGINE_API int swmm_inlet_get_params(SWMM_Engine engine, int idx, double* length,
+                                          double* width, char* grate_type, int grate_buflen,
+                                          double* open_area, double* splash_veloc);
 
 /**
  * @brief Read an inlet's type string (the value passed to @ref swmm_inlet_add).
- * @param engine     Engine handle.
- * @param idx        Zero-based inlet index.
- * @param[out] buf   Destination buffer (NUL-terminated, truncated to `buflen`).
- * @param buflen     Size of `buf` in bytes (must be > 0).
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based inlet index.
+ * @param[out] buf Destination buffer (NUL-terminated, truncated to `buflen`).
+ * @param[in] buflen Size of `buf` in bytes (must be > 0).
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A failed infrastructure/pollutant index check
+ *     returns SWMM_ERR_BADINDEX. Required output buffer must be non-null with positive capacity.
+ *     Copies a terminating NUL and silently truncates to capacity-1 bytes.
  */
 SWMM_ENGINE_API int swmm_inlet_get_type(SWMM_Engine engine, int idx, char* buf, int buflen);
 
@@ -502,46 +678,46 @@ SWMM_ENGINE_API int swmm_inlet_get_type(SWMM_Engine engine, int idx, char* buf, 
 
 /** Inlet design type codes (match legacy InletType ordering). */
 enum SWMM_InletType {
-    SWMM_INLET_GRATE      = 0,
-    SWMM_INLET_CURB       = 1,
-    SWMM_INLET_COMBO      = 2,
-    SWMM_INLET_SLOTTED    = 3,
+    SWMM_INLET_GRATE = 0,
+    SWMM_INLET_CURB = 1,
+    SWMM_INLET_COMBO = 2,
+    SWMM_INLET_SLOTTED = 3,
     SWMM_INLET_DROP_GRATE = 4,
-    SWMM_INLET_DROP_CURB  = 5,
-    SWMM_INLET_CUSTOM     = 6
+    SWMM_INLET_DROP_CURB = 5,
+    SWMM_INLET_CUSTOM = 6
 };
 
 /** Grate bar patterns (HEC-22). */
 enum SWMM_GrateType {
-    SWMM_GRATE_P_BAR_50     = 0,
+    SWMM_GRATE_P_BAR_50 = 0,
     SWMM_GRATE_P_BAR_50x100 = 1,
-    SWMM_GRATE_P_BAR_30     = 2,
-    SWMM_GRATE_CURVED_VANE  = 3,
-    SWMM_GRATE_TILT_BAR_45  = 4,
-    SWMM_GRATE_TILT_BAR_30  = 5,
-    SWMM_GRATE_RETICULINE   = 6,
-    SWMM_GRATE_GENERIC      = 7
+    SWMM_GRATE_P_BAR_30 = 2,
+    SWMM_GRATE_CURVED_VANE = 3,
+    SWMM_GRATE_TILT_BAR_45 = 4,
+    SWMM_GRATE_TILT_BAR_30 = 5,
+    SWMM_GRATE_RETICULINE = 6,
+    SWMM_GRATE_GENERIC = 7
 };
 
 /** Curb-opening throat orientation (legacy ThroatAngleWords order). */
 enum SWMM_ThroatType {
     SWMM_THROAT_HORIZONTAL = 0,
-    SWMM_THROAT_INCLINED   = 1,
-    SWMM_THROAT_VERTICAL   = 2
+    SWMM_THROAT_INCLINED = 1,
+    SWMM_THROAT_VERTICAL = 2
 };
 
 /** Custom-inlet curve kind. */
 enum SWMM_InletCurveKind {
-    SWMM_INLET_CURVE_NONE      = 0,
-    SWMM_INLET_CURVE_DIVERSION = 1,  /**< captured flow vs approach flow */
-    SWMM_INLET_CURVE_RATING    = 2   /**< captured flow vs water depth */
+    SWMM_INLET_CURVE_NONE = 0,
+    SWMM_INLET_CURVE_DIVERSION = 1, /**< captured flow vs approach flow */
+    SWMM_INLET_CURVE_RATING = 2     /**< captured flow vs water depth */
 };
 
 /** Inlet placement mode. */
 enum SWMM_InletPlacement {
     SWMM_INLET_AUTOMATIC = 0,
-    SWMM_INLET_ON_GRADE  = 1,
-    SWMM_INLET_ON_SAG    = 2
+    SWMM_INLET_ON_GRADE = 1,
+    SWMM_INLET_ON_SAG = 2
 };
 
 /**
@@ -549,54 +725,84 @@ enum SWMM_InletPlacement {
  *        project's display units (ft or m; ft/s or m/s).
  */
 typedef struct SWMM_InletDesign {
-    int    type;          /**< SWMM_InletType */
+    int type; /**< SWMM_InletType */
     /* GRATE / DROP_GRATE / COMBO */
     double grate_length;
     double grate_width;
-    int    grate_type;    /**< SWMM_GrateType */
-    double open_area;     /**< GENERIC only, fraction (0,1] */
-    double splash_veloc;  /**< GENERIC only */
+    int grate_type;      /**< SWMM_GrateType */
+    double open_area;    /**< GENERIC only, fraction (0,1] */
+    double splash_veloc; /**< GENERIC only */
     /* CURB / DROP_CURB / COMBO */
     double curb_length;
     double curb_height;
-    int    throat;        /**< SWMM_ThroatType (ignored for DROP_CURB) */
+    int throat; /**< SWMM_ThroatType (ignored for DROP_CURB) */
     /* SLOTTED */
     double slot_length;
     double slot_width;
     /* CUSTOM */
-    char   curve_id[64];
-    int    curve_kind;    /**< SWMM_InletCurveKind */
+    char curve_id[64];
+    int curve_kind; /**< SWMM_InletCurveKind */
 } SWMM_InletDesign;
 
 /**
  * @brief Read every field of an inlet design.
- * @param engine  Engine handle.
- * @param idx     Zero-based inlet index.
- * @param[out] out  Receives the design (must not be NULL).
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based inlet index.
+ * @param[out] out Receives the design (must not be NULL).
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A failed infrastructure/pollutant index check
+ *     returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_inlet_get_design(SWMM_Engine engine, int idx, SWMM_InletDesign* out);
 
 /**
- * @brief Overwrite every field of an inlet design (type may change).
- * @details Validation: lengths/widths/heights used by `type` must be > 0;
- *          open_area in (0,1] when grate_type is GENERIC; CUSTOM requires a
- *          non-empty curve_id. BUILDING or OPENED state.
+ * @brief Validate and replace the type-specific inlet design.
  *
- *          CUSTOM curve_kind: the [INLETS] grammar has no kind token, so the
- *          named curve's own table type is the authority. If the curve already
- *          exists, the kind is taken from it and a contradicting `curve_kind`
- *          (or a curve that is neither DIVERSION nor RATING) is rejected with
- *          SWMM_ERR_BADPARAM; if it does not exist yet, `curve_kind` is stored
- *          as given and re-derived when the model is validated.
- * @returns SWMM_OK, or SWMM_ERR_BADPARAM on a violated constraint.
+ * Requires BUILDING/OPENED. Validates only fields used by type: positive geometric dimensions;
+ * valid type/grate/throat codes; GENERIC open_area in (0,1]; nonnegative splash velocity. CUSTOM
+ * requires nonempty curve_id and a valid curve_kind; existing curves must be DIVERSION/RATING and
+ * match any explicit kind. Unresolved custom names are retained for later resolution. Clears fields
+ * unused by the new type. Numeric comparison guards are not independent finite checks; supply
+ * finite values.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] idx Zero-based existing object index in this function's table.
+ * @param[in] design Non-null borrowed design copied on success; embedded curve_id must be
+ *     NUL-terminated within its 64-byte array. Dimensions use ft/m and velocities ft/s or m/s.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments. SWMM_ERR_LIFECYCLE outside
+ *     BUILDING/OPENED.
  */
-SWMM_ENGINE_API int swmm_inlet_set_design(SWMM_Engine engine, int idx, const SWMM_InletDesign* design);
+SWMM_ENGINE_API int swmm_inlet_set_design(SWMM_Engine engine, int idx,
+                                          const SWMM_InletDesign* design);
 
 /**
- * @brief Get/set the free-text description of an inlet design.
+ * @brief Copy an inlet design comment.
+ *
+ * No lifecycle guard. Does not change inlet geometry or usages.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] idx Zero-based existing object index in this function's table.
+ * @param[out] buf Non-null caller-owned text buffer; NUL-terminated and silently truncated to
+ *     buflen-1 bytes.
+ * @param[in] buflen Positive capacity in bytes including the terminating NUL.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments.
  */
 SWMM_ENGINE_API int swmm_inlet_get_comment(SWMM_Engine engine, int idx, char* buf, int buflen);
+/**
+ * @brief Replace an inlet design comment.
+ *
+ * No lifecycle guard. Does not change inlet geometry or usages.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] idx Zero-based existing object index in this function's table.
+ * @param[in] text Borrowed NUL-terminated text copied into the model; NULL clears it.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments.
+ */
 SWMM_ENGINE_API int swmm_inlet_set_comment(SWMM_Engine engine, int idx, const char* text);
 
 /* -------------------------------------------------------------------------
@@ -605,59 +811,95 @@ SWMM_ENGINE_API int swmm_inlet_set_comment(SWMM_Engine engine, int idx, const ch
  *   host_kind = SWMM_INLET_HOST_NODE : an inlet junction ([INLET_JUNCTIONS] row)
  * ------------------------------------------------------------------------- */
 
-enum SWMM_InletHostKind {
-    SWMM_INLET_HOST_LINK = 0,
-    SWMM_INLET_HOST_NODE = 1
-};
+enum SWMM_InletHostKind { SWMM_INLET_HOST_LINK = 0, SWMM_INLET_HOST_NODE = 1 };
 
 typedef struct SWMM_InletUsage {
-    int    host_kind;        /**< SWMM_InletHostKind */
-    int    host_idx;         /**< link index or node index per host_kind */
-    int    design_idx;       /**< inlet design index */
-    int    capture_node_idx; /**< receiving (underdrain) node index */
-    int    num_inlets;       /**< inlets per side (>= 1) */
-    double pct_clogged;      /**< 0..99 */
-    double flow_limit;       /**< max capture per inlet, display flow units; 0 = none */
-    double local_depress;    /**< local gutter depression, display length units */
-    double local_width;      /**< local depression width, display length units */
-    int    placement;        /**< SWMM_InletPlacement */
+    int host_kind;        /**< SWMM_InletHostKind */
+    int host_idx;         /**< link index or node index per host_kind */
+    int design_idx;       /**< inlet design index */
+    int capture_node_idx; /**< receiving (underdrain) node index */
+    int num_inlets;       /**< inlets per side (>= 1) */
+    double pct_clogged;   /**< 0..99 */
+    double flow_limit;    /**< max capture per inlet, display flow units; 0 = none */
+    double local_depress; /**< local gutter depression, display length units */
+    double local_width;   /**< local depression width, display length units */
+    int placement;        /**< SWMM_InletPlacement */
 } SWMM_InletUsage;
 
-/** @returns number of usage rows (both host kinds), or -1 on error. */
+/**
+ * @brief Count inlet-usage rows of both host kinds.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @return Nonnegative row count, or -1 for null engine.
+ */
 SWMM_ENGINE_API int swmm_inlet_usage_count(SWMM_Engine engine);
 
-/** @returns usage row index hosted by conduit `link_idx`, or -1 if none / error. */
+/**
+ * @brief Find the first inlet-usage row hosted by a link.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] link_idx Zero-based host link index; this lookup does not separately validate the host
+ *     table.
+ * @return Matching usage index, or -1 for no match/null engine.
+ */
 SWMM_ENGINE_API int swmm_inlet_usage_find_link(SWMM_Engine engine, int link_idx);
 
-/** @returns usage row index hosted by inlet-junction node `node_idx`, or -1 if none / error. */
+/**
+ * @brief Find the first inlet-usage row hosted by a node.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] node_idx Zero-based host node index; this lookup does not separately validate the host
+ *     table.
+ * @return Matching usage index, or -1 for no match/null engine.
+ */
 SWMM_ENGINE_API int swmm_inlet_usage_find_node(SWMM_Engine engine, int node_idx);
 
 /**
- * @brief Read a usage row.
- * @returns SWMM_OK, SWMM_ERR_BADINDEX, or SWMM_ERR_BADPARAM (NULL out).
+ * @brief Read a complete inlet placement row.
+ *
+ * Returns percentage clogged as (1-clog_factor)*100; performs no lifecycle check.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] usage_idx Zero-based existing usage-row index.
+ * @param[out] out Non-null caller-owned struct receiving host/design/capture indices and
+ *     display-unit parameters.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments.
  */
 SWMM_ENGINE_API int swmm_inlet_usage_get(SWMM_Engine engine, int usage_idx, SWMM_InletUsage* out);
 
 /**
- * @brief Create or replace the usage row for a host.
- * @details At most one row per host: if a row already exists for
- *          (host_kind, host_idx) it is overwritten, otherwise a row is
- *          appended. Validation: design_idx and capture_node_idx must exist;
- *          capture node must not be the host node, nor a virtual/inlet
- *          junction; a link host must be a conduit; a node host must have
- *          is_inlet set (see swmm_node_set_inlet); num_inlets >= 1;
- *          pct_clogged in [0,99]. Shape compatibility (STREET vs drop) is
- *          checked here and reported as ERR_INLET_USAGE_SHAPE (635).
- *          BUILDING or OPENED state.
- * @param[out] usage_idx  Receives the row index (may be NULL).
- * @returns SWMM_OK, SWMM_ERR_BADINDEX / SWMM_ERR_BADPARAM, or 635.
+ * @brief Validate and upsert one inlet placement per host.
+ *
+ * Requires BUILDING/OPENED. Copies the row and clears deferred design/capture names. Flow and local
+ * dimensions are display flow/length units. Supply finite numbers because comparison guards do not
+ * independently reject NaN.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] usage Non-null borrowed struct. Host must be a conduit or already flagged inlet
+ *     junction, design/capture indices valid; capture must not be virtual or the host node.
+ *     num_inlets>=1, clogging 0..99 percent, nonnegative flow_limit/local dimensions and valid
+ *     placement code.
+ * @param[out] usage_idx Optional row index, written only on success; existing host row is replaced,
+ *     otherwise appended.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments. SWMM_ERR_LIFECYCLE outside
+ *     BUILDING/OPENED. Returns ERR_INLET_USAGE_SHAPE for incompatible host/design cross-section.
  */
-SWMM_ENGINE_API int swmm_inlet_usage_set(SWMM_Engine engine, const SWMM_InletUsage* usage, int* usage_idx);
+SWMM_ENGINE_API int swmm_inlet_usage_set(SWMM_Engine engine, const SWMM_InletUsage* usage,
+                                         int* usage_idx);
 
 /**
- * @brief Remove a usage row. Removing the row of an inlet junction leaves the
- *        node flagged is_inlet; the model then fails validation with 633
- *        until a design is assigned or the node is demoted.
+ * @brief Remove an inlet-usage row and shift later row indices.
+ *
+ * Requires BUILDING/OPENED. Removing an inlet junction usage does not fuse/delete the host node or
+ * clear its inlet-junction flag.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] usage_idx Zero-based existing usage-row index.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments. SWMM_ERR_LIFECYCLE outside
+ *     BUILDING/OPENED.
  */
 SWMM_ENGINE_API int swmm_inlet_usage_remove(SWMM_Engine engine, int usage_idx);
 
@@ -672,10 +914,14 @@ SWMM_ENGINE_API int swmm_inlet_usage_remove(SWMM_Engine engine, int usage_idx);
  *          3=INFIL_TRENCH, 4=PERM_PAVEMENT, 5=RAIN_BARREL,
  *          6=ROOFTOP_DISCONN, 7=VEGETATIVE_SWALE, 8=NODE.
  *
- * @param engine  Engine handle (SWMM_STATE_BUILDING).
- * @param id      Unique null-terminated identifier.
- * @param type    LID type code.
+ * @param[in] engine Engine handle; see this operation's lifecycle note.
+ * @param[in] id Unique null-terminated identifier.
+ * @param[in] type LID type code.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. Requires BUILDING/OPENED; other states return
+ *     SWMM_ERR_LIFECYCLE.
  */
 SWMM_ENGINE_API int swmm_lid_add(SWMM_Engine engine, const char* id, int type);
 
@@ -689,10 +935,15 @@ SWMM_ENGINE_API int swmm_lid_add(SWMM_Engine engine, const char* id, int type);
  * AGGREGATE=(thickness, porosity, Ksat), BOTTOM=(seepage, clogging).
  * Unused parameters must be zero. BOTTOM is not a numbered physical layer. */
 enum SWMM_LidNodeLayerKind {
-    SWMM_LID_NODE_SURFACE = 0, SWMM_LID_NODE_MEDIA = 1,
-    SWMM_LID_NODE_AGGREGATE = 2, SWMM_LID_NODE_BOTTOM = 3
+    SWMM_LID_NODE_SURFACE = 0,
+    SWMM_LID_NODE_MEDIA = 1,
+    SWMM_LID_NODE_AGGREGATE = 2,
+    SWMM_LID_NODE_BOTTOM = 3
 };
-typedef struct SWMM_LidNodeLayer { int kind; double params[7]; } SWMM_LidNodeLayer;
+typedef struct SWMM_LidNodeLayer {
+    int kind;
+    double params[7];
+} SWMM_LidNodeLayer;
 /** Alternative flow model. model=0 preserves the existing layer formulation with backwater;
  * model=1 is conservative semi-discrete Richards with adaptive stiff BDF1.
  * atol is water-content fraction, rtol dimensionless, max_step seconds. */
@@ -705,8 +956,31 @@ typedef struct SWMM_LidRichardsOptions {
 typedef struct SWMM_LidRichardsMaterial {
     double theta_r, alpha, n, l, specific_storage;
 } SWMM_LidRichardsMaterial;
-SWMM_ENGINE_API int swmm_lid_richards_options_get(SWMM_Engine, int control, SWMM_LidRichardsOptions*);
-SWMM_ENGINE_API int swmm_lid_richards_material_get(SWMM_Engine, int control, int row, SWMM_LidRichardsMaterial*);
+/**
+ * @brief Read a control's Richards options.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] control Zero-based existing LID control index.
+ * @param[out] out Non-null caller-owned output. Defaults are returned for an empty stack; model is
+ *     0 or 1.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments.
+ */
+SWMM_ENGINE_API int swmm_lid_richards_options_get(SWMM_Engine engine, int control,
+                                                  SWMM_LidRichardsOptions* out);
+/**
+ * @brief Read a control's Richards material.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] control Zero-based existing LID control index.
+ * @param[in] row Zero-based row index in the selected profile/table.
+ * @param[out] out Non-null caller-owned output. alpha/specific_storage are inverse metres in both
+ *     project unit systems; nonporous rows may contain unused defaults.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments.
+ */
+SWMM_ENGINE_API int swmm_lid_richards_material_get(SWMM_Engine engine, int control, int row,
+                                                   SWMM_LidRichardsMaterial* out);
 /** Per-layer treatment. Layer is one-based; pollutant is its engine index.
  * Removal percent applies to outgoing mass; decay is first-order per day.
  * Optional R=/C= expression applies after fixed removal at the layer exit. */
@@ -717,37 +991,211 @@ typedef struct SWMM_LidLayerTreatment {
     double decay_per_day;
     const char* expression;
 } SWMM_LidLayerTreatment;
+/**
+ * @brief Count per-layer treatment rows flattened top-to-bottom.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] control Zero-based existing LID control index.
+ * @return Nonnegative row count; -1 for null engine or invalid control.
+ */
 SWMM_ENGINE_API int swmm_lid_node_treatment_count(SWMM_Engine engine, int control);
-SWMM_ENGINE_API int swmm_lid_node_treatment_get(SWMM_Engine engine, int control, int row, SWMM_LidLayerTreatment* out);
-SWMM_ENGINE_API int swmm_lid_node_configure(SWMM_Engine engine, int control, const SWMM_LidNodeLayer* layers, int count, const SWMM_LidLayerTreatment* treatment, int treatment_count);
-/** Atomically configure layers, treatment and flow model. materials has one
- * row per authored layer (SURFACE/BOTTOM entries are ignored); required for
- * Richards. Invalid input changes neither layers nor dependent node geometry. */
-SWMM_ENGINE_API int swmm_lid_node_configure_flow(SWMM_Engine, int control, const SWMM_LidNodeLayer*, int count,
-    const SWMM_LidLayerTreatment*, int treatment_count, const SWMM_LidRichardsOptions*, const SWMM_LidRichardsMaterial*);
+/**
+ * @brief Read a flattened per-layer treatment row.
+ *
+ * Reads explicitly authored node_layers storage; a control lacking that storage can return
+ * BADINDEX. removal_percent is 0..100; decay_per_day is per day.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] control Zero-based existing LID control index.
+ * @param[in] row Zero-based flattened treatment index; negative/out-of-range rows return BADPARAM.
+ * @param[out] out Non-null struct. expression borrows engine storage; do not free and copy before
+ *     editing/destroying the control/engine. layer is one-based and pollutant is an engine
+ *     pollutant index.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments.
+ */
+SWMM_ENGINE_API int swmm_lid_node_treatment_get(SWMM_Engine engine, int control, int row,
+                                                SWMM_LidLayerTreatment* out);
+/**
+ * @brief Atomically configure a NODE control stack and treatment.
+ *
+ * Requires BUILDING/OPENED and a NODE control. Validates stack, treatment expressions and outlet
+ * anchors before retaining the edit; rejects edits that orphan an anchored layer. Synchronizes
+ * dependent MaxDepths/outlet offsets. Preserves existing flow/retention settings, requiring
+ * compatible layer count/kinds when those settings are active.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] control Zero-based existing LID control index.
+ * @param[in] layers Non-null borrowed array of count layers, copied synchronously. See
+ *     SWMM_LidNodeLayerKind for parameter positions/units; unused params must be zero.
+ * @param[in] count Positive authored layer count, including optional final BOTTOM. SURFACE may
+ *     occur only first; at least one MEDIA/AGGREGATE is required.
+ * @param[in] treatment Borrowed treatment_count rows, required if treatment_count>0; expressions
+ *     are copied.
+ *     Layer is one-based, cannot target BOTTOM; each layer/pollutant key must be unique.
+ * @param[in] treatment_count Nonnegative number of treatment rows; zero clears treatment.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments. SWMM_ERR_LIFECYCLE outside
+ *     BUILDING/OPENED.
+ */
+SWMM_ENGINE_API int swmm_lid_node_configure(SWMM_Engine engine, int control,
+                                            const SWMM_LidNodeLayer* layers, int count,
+                                            const SWMM_LidLayerTreatment* treatment,
+                                            int treatment_count);
+/**
+ * @brief Atomically configure a NODE control stack, treatment and flow formulation.
+ *
+ * Requires BUILDING/OPENED and a NODE control. Validates stack, treatment expressions and outlet
+ * anchors before retaining the edit; rejects edits that orphan an anchored layer. Synchronizes
+ * dependent MaxDepths/outlet offsets. Richards requires SURFACE first and valid retention on every
+ * porous layer; invalid configuration leaves stack and dependent geometry unchanged.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] control Zero-based existing LID control index.
+ * @param[in] layers Non-null borrowed array of count layers, copied synchronously. See
+ *     SWMM_LidNodeLayerKind for parameter positions/units; unused params must be zero.
+ * @param[in] count Positive authored layer count, including optional final BOTTOM. SURFACE may
+ *     occur only first; at least one MEDIA/AGGREGATE is required.
+ * @param[in] treatment Borrowed treatment_count rows, required if treatment_count>0; expressions
+ *     are copied.
+ *     Layer is one-based, cannot target BOTTOM; each layer/pollutant key must be unique.
+ * @param[in] treatment_count Nonnegative number of treatment rows; zero clears treatment.
+ * @param[in] options Non-null flow options: model=0 classical/backwater, model=1 Richards. Richards
+ *     requires finite positive tolerances/max_step and cells_per_layer in [1,256].
+ * @param[in] material Borrowed array with count entries; required for Richards. Porous rows use
+ *     residual theta, inverse-metre alpha/specific-storage in BOTH unit systems, n>1 and l>=0;
+ *     SURFACE/BOTTOM rows are ignored.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments. SWMM_ERR_LIFECYCLE outside
+ *     BUILDING/OPENED.
+ */
+SWMM_ENGINE_API int swmm_lid_node_configure_flow(SWMM_Engine engine, int control,
+                                                 const SWMM_LidNodeLayer* layers, int count,
+                                                 const SWMM_LidLayerTreatment* treatment,
+                                                 int treatment_count,
+                                                 const SWMM_LidRichardsOptions* options,
+                                                 const SWMM_LidRichardsMaterial* material);
+/**
+ * @brief Count authored or derived stack layers, including a BOTTOM row when present.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] control Zero-based existing LID control index.
+ * @return Nonnegative row count; -1 for null engine or invalid control.
+ */
 SWMM_ENGINE_API int swmm_lid_node_layer_count(SWMM_Engine engine, int control);
-SWMM_ENGINE_API int swmm_lid_node_layer_get(SWMM_Engine engine, int control, int row, SWMM_LidNodeLayer* out);
-/** Atomically replace the stack; sync dependent MaxDepths and outlet offsets.
- * BUILDING/OPENED only. An invalid stack leaves the model unchanged. */
-SWMM_ENGINE_API int swmm_lid_node_layers_set(SWMM_Engine engine, int control, const SWMM_LidNodeLayer* rows, int count);
-/** control=-1 means plain storage. Set assigns and synchronizes MaxDepth.
- * Get also accepts non-storage nodes, returning control=-1. InitSat is percent. */
-SWMM_ENGINE_API int swmm_node_get_lid(SWMM_Engine engine, int node, int* control, double* saturation);
+/**
+ * @brief Read one authored or derived NODE layer.
+ *
+ * No lifecycle check. Uses the derived stack for conventional controls as well as explicitly
+ * authored NODE stacks.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] control Zero-based existing LID control index.
+ * @param[in] row Zero-based row index in the selected profile/table.
+ * @param[out] out Non-null caller-owned output receiving kind and all seven input-unit parameters.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments.
+ */
+SWMM_ENGINE_API int swmm_lid_node_layer_get(SWMM_Engine engine, int control, int row,
+                                            SWMM_LidNodeLayer* out);
+/**
+ * @brief Replace NODE layers while preserving compatible treatment and flow settings.
+ *
+ * Requires BUILDING/OPENED and NODE type. Validates stack and existing anchor bounds. Existing
+ * Richards/retention configuration requires same layer count/kinds; treatment-bearing layers must
+ * retain their kind. Refusal preserves the authored stack. Success synchronizes dependent node
+ * MaxDepths/outlet offsets.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] control Zero-based existing LID control index.
+ * @param[in] rows Non-null copied array of count layers; unused parameters must be zero.
+ * @param[in] count Positive authored layer count, including optional final BOTTOM. SURFACE may
+ *     occur only first; at least one MEDIA/AGGREGATE is required.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments. SWMM_ERR_LIFECYCLE outside
+ *     BUILDING/OPENED.
+ */
+SWMM_ENGINE_API int swmm_lid_node_layers_set(SWMM_Engine engine, int control,
+                                             const SWMM_LidNodeLayer* rows, int count);
+/**
+ * @brief Read a node LID-control assignment and initial saturation.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] node Zero-based existing node index.
+ * @param[out] control Non-null control-index output; -1 for nonstorage/plain storage.
+ * @param[out] saturation Non-null initial saturation output in percent; zero for nonstorage.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments.
+ */
+SWMM_ENGINE_API int swmm_node_get_lid(SWMM_Engine engine, int node, int* control,
+                                      double* saturation);
+/**
+ * @brief Assign or clear a storage-node LID and synchronize its geometry.
+ *
+ * Requires BUILDING/OPENED and storage node. Checks existing outlet anchors and refuses a second
+ * LID endpoint. Clears node runtime LID state and cached full volume. Assignment preserves bottom
+ * mode; clearing resets CURRENT and removes attached outlet anchors.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] node Zero-based existing node index.
+ * @param[in] control Existing control with a valid derived/authored stack, or -1 to clear the
+ *     assignment.
+ * @param[in] saturation Finite initial saturation in percent [0,100]; ignored/reset to zero when
+ *     clearing.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments. SWMM_ERR_LIFECYCLE outside
+ *     BUILDING/OPENED.
+ */
 SWMM_ENGINE_API int swmm_node_set_lid(SWMM_Engine engine, int node, int control, double saturation);
 /** Per-node bottom owner, independent of a shared control. Old assignments
  * use CURRENT. INP grammar: Node Control InitSat [BOTTOM CURRENT|SEALED|MESH_AQUIFER].
  * Nondefault modes are written explicitly. MESH_AQUIFER can be authored but
  * execution remains gated on the R5 signed-volume/restart qualification. */
 enum SWMM_LidNodeBottom {
-    SWMM_LID_BOTTOM_CURRENT=0, SWMM_LID_BOTTOM_SEALED=1, SWMM_LID_BOTTOM_MESH_AQUIFER=2
+    SWMM_LID_BOTTOM_CURRENT = 0,
+    SWMM_LID_BOTTOM_SEALED = 1,
+    SWMM_LID_BOTTOM_MESH_AQUIFER = 2
 };
+/**
+ * @brief Read a node's bottom exchange ownership mode.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] node Zero-based existing node index.
+ * @param[out] mode Non-null SWMM_LID_BOTTOM_* destination; CURRENT for nodes without a LID
+ *     assignment.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments.
+ */
 SWMM_ENGINE_API int swmm_node_get_lid_bottom(SWMM_Engine engine, int node, int* mode);
-/** BUILDING/OPENED; requires an assigned storage LID. Assignment/saturation
- * edits preserve this mode; removing the assignment resets it to CURRENT. */
+/**
+ * @brief Select bottom ownership for one assigned storage LID.
+ *
+ * Requires BUILDING/OPENED and an assigned storage LID. Authoring MESH_AQUIFER does not by itself
+ * establish a qualified executable mesh connection.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] node Zero-based existing node index.
+ * @param[in] mode SWMM_LID_BOTTOM_CURRENT, SEALED or MESH_AQUIFER.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments. SWMM_ERR_LIFECYCLE outside
+ *     BUILDING/OPENED.
+ */
 SWMM_ENGINE_API int swmm_node_set_lid_bottom(SWMM_Engine engine, int node, int mode);
-/** Authored geometric contact area at the LID base, in project square-length
- * units. BUILDING/OPENED only; excludes pore/retained-water factors. Zero is
- * reported honestly and requires an explicit positive connection area. */
+/**
+ * @brief Read the authored geometric area at a storage LID base.
+ *
+ * Requires BUILDING/OPENED, assigned storage LID, and no initialized runtime cells. Uses geometry
+ * at depth zero without pore/retained-water factors; rejects nonfinite/negative computed area. Zero
+ * requires explicit positive area when creating a connection.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] node Zero-based existing node index.
+ * @param[out] area Non-null contact-area destination in project square-length units, ft2 or m2; may
+ *     be zero.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments. SWMM_ERR_LIFECYCLE outside
+ *     BUILDING/OPENED.
+ */
 SWMM_ENGINE_API int swmm_lid_node_base_area(SWMM_Engine engine, int node, double* area);
 /** Accepted mesh-bottom diagnostics, always SI. Positive net flow is from
  * LID to aquifer. The sample is the last completed exchange interval; the
@@ -758,36 +1206,126 @@ SWMM_ENGINE_API int swmm_lid_node_base_area(SWMM_Engine engine, int node, double
  * failure leaves *out unchanged. This function does not advance either clock. */
 typedef struct SWMM_LidBottomState {
     int flow_model; /* 0 existing/backwater, 1 Richards */
-    int cell,valid_sample;
-    double contact_area_m2,surface_head_m,aquifer_head_m,aquifer_time_s;
-    double down_cumulative_m3,up_cumulative_m3,net_cumulative_m3;
-    double pending_down_m3,pending_up_m3,groundwater_residual_m3;
-    double sample_start_s,sample_end_s,sampled_aquifer_time_s;
-    double sampled_lid_head_m,sampled_aquifer_head_m;
-    double requested_down_m3,requested_up_m3,reserved_down_m3,reserved_up_m3;
-    double accepted_down_m3,accepted_up_m3,net_rate_m3s;
+    int cell, valid_sample;
+    double contact_area_m2, surface_head_m, aquifer_head_m, aquifer_time_s;
+    double down_cumulative_m3, up_cumulative_m3, net_cumulative_m3;
+    double pending_down_m3, pending_up_m3, groundwater_residual_m3;
+    double sample_start_s, sample_end_s, sampled_aquifer_time_s;
+    double sampled_lid_head_m, sampled_aquifer_head_m;
+    double requested_down_m3, requested_up_m3, reserved_down_m3, reserved_up_m3;
+    double accepted_down_m3, accepted_up_m3, net_rate_m3s;
 } SWMM_LidBottomState;
-SWMM_ENGINE_API int swmm_lid_node_bottom_state_get(SWMM_Engine, int node, SWMM_LidBottomState* out);
+/**
+ * @brief Read the last accepted LID-to-mesh exchange diagnostics without advancing time.
+ *
+ * Requires an initialized explicit MESH_AQUIFER bottom connection with receipts enabled and a
+ * 2D-enabled build; otherwise BADPARAM. Current aquifer and sample timestamps can differ. Classical
+ * samples use mobile LID head; Richards uses bottom porous total head. Pending gross up/down
+ * transfers remain separate.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] node Zero-based existing node index.
+ * @param[out] out Non-null caller-owned SI diagnostics struct; preserved on failure. Positive net
+ *     volume/rate is LID to aquifer; valid_sample=0 before the first completed sample.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments.
+ */
+SWMM_ENGINE_API int swmm_lid_node_bottom_state_get(SWMM_Engine engine, int node,
+                                                   SWMM_LidBottomState* out);
 
-/** layer=0 removes an anchor; otherwise layer is one-based, top-to-bottom.
- * top=0 anchors BOTTOM, top=1 anchors TOP. Requires exactly one LID endpoint. */
+/**
+ * @brief Read a link's LID layer anchor.
+ *
+ * No lifecycle check.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] link Zero-based existing link index.
+ * @param[out] layer Non-null output; zero when no anchor exists.
+ * @param[out] top Non-null output: 0=BOTTOM, 1=TOP; zero when absent.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments.
+ */
 SWMM_ENGINE_API int swmm_lid_node_outlet_get(SWMM_Engine engine, int link, int* layer, int* top);
+/**
+ * @brief Set or remove a link's LID layer anchor.
+ *
+ * Requires BUILDING/OPENED. Nonzero layer requires exactly one LID endpoint and a valid layer
+ * index. Replaces any previous anchor, then synchronizes offsets; removal needs no LID endpoint.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] link Zero-based existing link index.
+ * @param[in] layer Zero removes the anchor; otherwise one-based physical layer, top-to-bottom
+ *     excluding BOTTOM.
+ * @param[in] top 0=BOTTOM or 1=TOP, required even when removing.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments. SWMM_ERR_LIFECYCLE outside
+ *     BUILDING/OPENED.
+ */
 SWMM_ENGINE_API int swmm_lid_node_outlet_set(SWMM_Engine engine, int link, int layer, int top);
-/** Runtime profile, in display length units and volumetric moisture fraction.
- * count=0 before initialization or on plain storage. Rows are top-to-bottom;
- * each MEDIA layer is discretized into multiple rows. */
+/**
+ * @brief Count initialized runtime profile cells.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] node Zero-based existing node index.
+ * @return Nonnegative row count; -1 for null engine or invalid selected node/control. Runtime state
+ *     count is zero for nonstorage/plain storage and before initialization.
+ */
 SWMM_ENGINE_API int swmm_lid_node_state_count(SWMM_Engine engine, int node);
-SWMM_ENGINE_API int swmm_lid_node_state_get(SWMM_Engine engine, int node, int row, int* layer, double* bottom, double* top, double* moisture);
-/** Richards pressure/total head in project length units, complete cell water
- * in project volume units. Returns BADPARAM on the existing formulation. */
-SWMM_ENGINE_API int swmm_lid_richards_state_get(SWMM_Engine, int node, int row, double* pressure, double* head, double* water);
+/**
+ * @brief Read one initialized LID profile cell.
+ *
+ * Runtime rows are top-to-bottom; porous layers may produce several cells. No lifecycle check, but
+ * node must be storage with an existing runtime row.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] node Zero-based existing node index.
+ * @param[in] row Zero-based row index in the selected profile/table.
+ * @param[out] layer Non-null one-based physical layer identifier.
+ * @param[out] bottom Non-null cell-bottom depth above node invert, ft/m.
+ * @param[out] top Non-null cell-top depth above node invert, ft/m.
+ * @param[out] moisture Non-null volumetric water fraction; Richards porous rows use theta,
+ *     classical rows include mobile-head inundation.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments.
+ */
+SWMM_ENGINE_API int swmm_lid_node_state_get(SWMM_Engine engine, int node, int row, int* layer,
+                                            double* bottom, double* top, double* moisture);
+/**
+ * @brief Read one Richards cell's pressure, total head and complete water volume.
+ *
+ * Requires an initialized Richards storage profile; classical formulation returns BADPARAM. No
+ * state is advanced.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] node Zero-based existing node index.
+ * @param[in] row Zero-based row index in the selected profile/table.
+ * @param[out] pressure Non-null pressure head in project length units, ft/m.
+ * @param[out] head Non-null total hydraulic head in ft/m, including node invert and cell elevation.
+ * @param[out] water Non-null complete cell water in project volume units, ft3/m3; surface row uses
+ *     node volume.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments.
+ */
+SWMM_ENGINE_API int swmm_lid_richards_state_get(SWMM_Engine engine, int node, int row,
+                                                double* pressure, double* head, double* water);
 typedef struct SWMM_LidRichardsStatistics {
     int accepted, rejected, rhs, newton;
     double min_step, balance_m3;
 } SWMM_LidRichardsStatistics;
-SWMM_ENGINE_API int swmm_lid_richards_statistics_get(SWMM_Engine, int node, SWMM_LidRichardsStatistics*);
-
-
+/**
+ * @brief Read the last stored Richards adaptive-solver report.
+ *
+ * Returns BADPARAM unless the node uses Richards; does not advance/reset statistics.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] node Zero-based existing node index.
+ * @param[out] out Non-null caller-owned statistics: accepted/rejected steps, RHS evaluations,
+ *     Newton iterations, min_step in seconds and balance_m3 in SI cubic metres.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments.
+ */
+SWMM_ENGINE_API int swmm_lid_richards_statistics_get(SWMM_Engine engine, int node,
+                                                     SWMM_LidRichardsStatistics* out);
 
 /**
  * @brief Rename an LID control in place.
@@ -798,73 +1336,135 @@ SWMM_ENGINE_API int swmm_lid_richards_statistics_get(SWMM_Engine, int node, SWMM
  *          LID INDEX, so subcatchment deployments follow automatically.
  *          Lifecycle: BUILDING or OPENED.
  *
- * @param engine  Engine handle.
- * @param idx     LID control index.
- * @param new_id  New unique name (non-empty). A pure case-respelling of this
+ * @param[in] engine Engine handle.
+ * @param[in] idx LID control index.
+ * @param[in] new_id New unique name (non-empty). A pure case-respelling of this
  *                same control is allowed.
  * @returns SWMM_OK, SWMM_ERR_LIFECYCLE outside BUILDING/OPENED, or
  *          SWMM_ERR_BADPARAM on an empty or duplicate name.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A failed infrastructure/pollutant index check
+ *     returns SWMM_ERR_BADINDEX. Requires BUILDING/OPENED; other states return SWMM_ERR_LIFECYCLE.
  */
 SWMM_ENGINE_API int swmm_lid_rename(SWMM_Engine engine, int idx, const char* new_id);
 
 /**
  * @brief Set the surface layer properties for a LID control.
- * @param engine     Engine handle.
- * @param idx        Zero-based LID index.
- * @param storage    Surface storage depth.
- * @param roughness  Surface Manning's n.
- * @param slope      Surface slope (fraction).
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based LID index.
+ * @param[in] storage Surface storage depth.
+ * @param[in] roughness Surface Manning's n.
+ * @param[in] slope Surface slope in percent.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A failed infrastructure/pollutant index check
+ *     returns SWMM_ERR_BADINDEX. Requires BUILDING/OPENED; other states return SWMM_ERR_LIFECYCLE.
+ *     Rejects NODE controls; use the NODE stack configuration API. Supply finite values because
+ *     scalar comparison guards are not independent finiteness checks. These are pre-initialization
+ *     authoring parameters. Layer depths use inches/mm, conductivities inches/hour or mm/hour;
+ *     surface slope is percent.
  */
-SWMM_ENGINE_API int swmm_lid_set_surface(SWMM_Engine engine, int idx, double storage, double roughness, double slope);
+SWMM_ENGINE_API int swmm_lid_set_surface(SWMM_Engine engine, int idx, double storage,
+                                         double roughness, double slope);
 
 /**
  * @brief Set the soil layer properties for a LID control.
- * @param engine    Engine handle.
- * @param idx       Zero-based LID index.
- * @param thick     Soil thickness.
- * @param porosity  Soil porosity (fraction).
- * @param fc        Field capacity (fraction).
- * @param wp        Wilting point (fraction).
- * @param ksat      Saturated hydraulic conductivity.
- * @param kslope    Slope of the conductivity–moisture curve.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based LID index.
+ * @param[in] thick Soil thickness.
+ * @param[in] porosity Soil porosity (fraction).
+ * @param[in] fc Field capacity (fraction).
+ * @param[in] wp Wilting point (fraction).
+ * @param[in] ksat Saturated hydraulic conductivity.
+ * @param[in] kslope Slope of the conductivity–moisture curve.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A failed infrastructure/pollutant index check
+ *     returns SWMM_ERR_BADINDEX. Requires BUILDING/OPENED; other states return SWMM_ERR_LIFECYCLE.
+ *     Rejects NODE controls; use the NODE stack configuration API. Supply finite values because
+ *     scalar comparison guards are not independent finiteness checks. These are pre-initialization
+ *     authoring parameters. Layer depths use inches/mm, conductivities inches/hour or mm/hour;
+ *     surface slope is percent.
  */
-SWMM_ENGINE_API int swmm_lid_set_soil(SWMM_Engine engine, int idx, double thick, double porosity, double fc, double wp, double ksat, double kslope);
+SWMM_ENGINE_API int swmm_lid_set_soil(SWMM_Engine engine, int idx, double thick, double porosity,
+                                      double fc, double wp, double ksat, double kslope);
 
 /**
  * @brief Set the storage layer properties for a LID control.
- * @param engine    Engine handle.
- * @param idx       Zero-based LID index.
- * @param thick     Storage layer thickness.
- * @param void_frac Void ratio (void volume / solid volume); porosity is e/(1+e).
- * @param ksat      Seepage rate through the storage layer bottom.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based LID index.
+ * @param[in] thick Storage layer thickness.
+ * @param[in] void_frac Void ratio (void volume / solid volume); porosity is e/(1+e).
+ * @param[in] ksat Seepage rate through the storage layer bottom.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A failed infrastructure/pollutant index check
+ *     returns SWMM_ERR_BADINDEX. Requires BUILDING/OPENED; other states return SWMM_ERR_LIFECYCLE.
+ *     Rejects NODE controls; use the NODE stack configuration API. Supply finite values because
+ *     scalar comparison guards are not independent finiteness checks. These are pre-initialization
+ *     authoring parameters. Layer depths use inches/mm, conductivities inches/hour or mm/hour;
+ *     surface slope is percent.
  */
-SWMM_ENGINE_API int swmm_lid_set_storage(SWMM_Engine engine, int idx, double thick, double void_frac, double ksat);
+SWMM_ENGINE_API int swmm_lid_set_storage(SWMM_Engine engine, int idx, double thick,
+                                         double void_frac, double ksat);
 
 /**
  * @brief Set the underdrain properties for a LID control.
- * @param engine  Engine handle.
- * @param idx     Zero-based LID index.
- * @param coeff   Drain coefficient.
- * @param expon   Drain exponent.
- * @param offset  Drain offset height above the storage layer bottom.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based LID index.
+ * @param[in] coeff Drain coefficient.
+ * @param[in] expon Drain exponent.
+ * @param[in] offset Drain offset height above the storage layer bottom.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A failed infrastructure/pollutant index check
+ *     returns SWMM_ERR_BADINDEX. No lifecycle guard in this wrapper; authoring edits do not
+ *     generally rebuild running hydraulic/geometry caches. Rejects NODE controls; use the NODE
+ *     stack configuration API. Supply finite values because scalar comparison guards are not
+ *     independent finiteness checks. No lifecycle guard; refreshes cached unit drain coefficients
+ *     for subsequent steps. offset uses inches/mm, expon is dimensionless and coeff follows the
+ *     input depth/hour power law; all three must be nonnegative.
  */
-SWMM_ENGINE_API int swmm_lid_set_drain(SWMM_Engine engine, int idx, double coeff, double expon, double offset);
+SWMM_ENGINE_API int swmm_lid_set_drain(SWMM_Engine engine, int idx, double coeff, double expon,
+                                       double offset);
 
 /**
- * @brief Underdrain removal of one constituent by a LID control (the
- *        `[LID_CONTROLS] REMOVALS` row), in percent.
- * @details @p constituent below the pollutant count names a pollutant;
- *          pollutant count + m names reaction species m (the convention of
- *          swmm_buildup_get / swmm_washoff_get). A constituent with no row
- *          reads 0. The setter is BUILDING/OPENED only; 0 % removes the row.
- *          Storage-node LIDs use layer treatment and are refused.
+ * @brief Read a constituent underdrain-removal percentage.
+ *
+ * No lifecycle guard on get.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] idx Zero-based existing object index in this function's table.
+ * @param[in] constituent 0..np-1 selects pollutant; np+m selects reaction species m, included only
+ *     when reactions are configured. Excludes reserved registry species.
+ * @param[out] percent Non-null required output; zero if no row exists.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments.
  */
-SWMM_ENGINE_API int swmm_lid_get_removal(SWMM_Engine engine, int idx, int constituent, double* percent);
-SWMM_ENGINE_API int swmm_lid_set_removal(SWMM_Engine engine, int idx, int constituent, double percent);
+SWMM_ENGINE_API int swmm_lid_get_removal(SWMM_Engine engine, int idx, int constituent,
+                                         double* percent);
+/**
+ * @brief Assign a constituent underdrain-removal percentage.
+ *
+ * Requires BUILDING/OPENED and rejects NODE controls. Updates pollutant rows by index or
+ * reaction-species rows by name and the aligned runtime removal array when present.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] idx Zero-based existing object index in this function's table.
+ * @param[in] constituent 0..np-1 selects pollutant; np+m selects reaction species m, included only
+ *     when reactions are configured. Excludes reserved registry species.
+ * @param[in] percent Percentage in [0,100]; zero removes the stored entry.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments. SWMM_ERR_LIFECYCLE outside
+ *     BUILDING/OPENED.
+ */
+SWMM_ENGINE_API int swmm_lid_set_removal(SWMM_Engine engine, int idx, int constituent,
+                                         double percent);
 
 /**
  * @brief Set the porous-pavement layer properties for a LID control.
@@ -874,18 +1474,27 @@ SWMM_ENGINE_API int swmm_lid_set_removal(SWMM_Engine engine, int idx, int consti
  *          units. Pre-start-only (BUILDING/OPENED) — the layer seeds per-unit
  *          LID state at start().
  *
- * @param engine       Engine handle.
- * @param idx          Zero-based LID index.
- * @param thick        Pavement layer thickness.
- * @param void_ratio   Void ratio (volume of voids / volume of solids).
- * @param frac_imperv  Impervious surface fraction (0–1).
- * @param ksat         Permeability / saturated conductivity.
- * @param clog_factor  Clogging factor (0 = no clogging).
- * @param regen_days   Days between clogging regeneration (0 = never).
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based LID index.
+ * @param[in] thick Pavement layer thickness.
+ * @param[in] void_ratio Void ratio (volume of voids / volume of solids).
+ * @param[in] frac_imperv Impervious surface fraction (0–1).
+ * @param[in] ksat Permeability / saturated conductivity.
+ * @param[in] clog_factor Clogging factor (0 = no clogging).
+ * @param[in] regen_days Days between clogging regeneration (0 = never).
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A failed infrastructure/pollutant index check
+ *     returns SWMM_ERR_BADINDEX. Requires BUILDING/OPENED; other states return SWMM_ERR_LIFECYCLE.
+ *     Rejects NODE controls; use the NODE stack configuration API. Supply finite values because
+ *     scalar comparison guards are not independent finiteness checks. These are pre-initialization
+ *     authoring parameters. Layer depths use inches/mm, conductivities inches/hour or mm/hour;
+ *     surface slope is percent.
  */
-SWMM_ENGINE_API int swmm_lid_set_pavement(SWMM_Engine engine, int idx, double thick, double void_ratio,
-                                          double frac_imperv, double ksat, double clog_factor, double regen_days);
+SWMM_ENGINE_API int swmm_lid_set_pavement(SWMM_Engine engine, int idx, double thick,
+                                          double void_ratio, double frac_imperv, double ksat,
+                                          double clog_factor, double regen_days);
 
 /**
  * @brief Set the drainage-mat layer properties for a LID control.
@@ -894,70 +1503,182 @@ SWMM_ENGINE_API int swmm_lid_set_pavement(SWMM_Engine engine, int idx, double th
  *          values of the `[LID_CONTROLS] ... DRAINMAT` line, in input-file
  *          units. Pre-start-only (BUILDING/OPENED).
  *
- * @param engine     Engine handle.
- * @param idx        Zero-based LID index.
- * @param thick      Drainage-mat thickness.
- * @param void_frac  Void fraction of the mat (0–1).
- * @param roughness  Manning's n for flow through the mat.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based LID index.
+ * @param[in] thick Drainage-mat thickness.
+ * @param[in] void_frac Void fraction of the mat (0–1).
+ * @param[in] roughness Manning's n for flow through the mat.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A failed infrastructure/pollutant index check
+ *     returns SWMM_ERR_BADINDEX. Requires BUILDING/OPENED; other states return SWMM_ERR_LIFECYCLE.
+ *     Rejects NODE controls; use the NODE stack configuration API. Supply finite values because
+ *     scalar comparison guards are not independent finiteness checks. These are pre-initialization
+ *     authoring parameters. Layer depths use inches/mm, conductivities inches/hour or mm/hour;
+ *     surface slope is percent.
  */
-SWMM_ENGINE_API int swmm_lid_set_drainmat(SWMM_Engine engine, int idx, double thick, double void_frac, double roughness);
+SWMM_ENGINE_API int swmm_lid_set_drainmat(SWMM_Engine engine, int idx, double thick,
+                                          double void_frac, double roughness);
 
 /**
  * @brief Get the total number of LID controls in the model.
- * @param engine  Engine handle.
+ * @param[in] engine Engine handle.
  * @returns Number of LID controls, or -1 on error.
+ *
+ *
+ * @note Null engine returns -1.
  */
 SWMM_ENGINE_API int swmm_lid_count(SWMM_Engine engine);
 
 /**
  * @brief Look up a LID control's zero-based index by its string identifier.
- * @param engine  Engine handle.
- * @param id      Null-terminated LID identifier.
+ * @param[in] engine Engine handle.
+ * @param[in] id Null-terminated LID identifier.
  * @returns Zero-based index, or -1 if not found.
+ *
+ *
+ * @note Name lookup is case-insensitive; null engine/name or no match returns -1.
  */
 SWMM_ENGINE_API int swmm_lid_index(SWMM_Engine engine, const char* id);
 
 /**
  * @brief Get the string identifier of a LID control by index.
- * @param engine  Engine handle.
- * @param idx     Zero-based LID index.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based LID index.
  * @returns Null-terminated string owned by the engine, or NULL on error.
+ *
+ *
+ * @note Returned text borrows engine storage: do not free; copy before editing the table or
+ *     closing/destroying the engine. NULL is returned for a null engine or invalid index.
  */
 SWMM_ENGINE_API const char* swmm_lid_id(SWMM_Engine engine, int idx);
 
 /**
  * @brief Read a LID control's type code. Inverse of the `type` argument to
  *        @ref swmm_lid_add.
- * @param engine     Engine handle.
- * @param idx        Zero-based LID index.
- * @param[out] type  Receives the LID type code (0=BIO_CELL … 7=VEGETATIVE_SWALE).
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based LID index.
+ * @param[out] type Receives the LID type code (0=BIO_CELL … 7=VEGETATIVE_SWALE, 8=NODE; -1 for
+ *     unknown stored code).
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note type may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
+ *     failed infrastructure/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_lid_get_type(SWMM_Engine engine, int idx, int* type);
 
 /**
- * @brief Read the surface layer properties. Inverse of @ref swmm_lid_set_surface.
- * @details Lets the GUI LID editor load an existing control's layers instead of
- *          only writing them. Any out-param may be null.
+ * @brief Read the stored surface layer parameters.
+ *
+ * All outputs may be NULL; returns stored authoring values without runtime conversion or a
+ * lifecycle guard.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] idx Zero-based existing object index in this function's table.
+ * @param[out] storage Optional output. Surface storage depth in inches/mm.
+ * @param[out] roughness Optional output. Surface Manning roughness.
+ * @param[out] slope Optional output. Surface slope in percent, not fraction.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments.
  */
-SWMM_ENGINE_API int swmm_lid_get_surface(SWMM_Engine engine, int idx, double* storage, double* roughness, double* slope);
+SWMM_ENGINE_API int swmm_lid_get_surface(SWMM_Engine engine, int idx, double* storage,
+                                         double* roughness, double* slope);
 
-/** @brief Read the soil layer properties. Inverse of @ref swmm_lid_set_soil. Any out-param may be null. */
-SWMM_ENGINE_API int swmm_lid_get_soil(SWMM_Engine engine, int idx, double* thick, double* porosity, double* fc, double* wp, double* ksat, double* kslope);
+/**
+ * @brief Read the stored soil layer parameters.
+ *
+ * All outputs may be NULL; returns stored authoring values without runtime conversion or a
+ * lifecycle guard.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] idx Zero-based existing object index in this function's table.
+ * @param[out] thick Optional output. Soil thickness in inches/mm.
+ * @param[out] porosity Optional output. Volumetric porosity fraction.
+ * @param[out] fc Optional output. Field-capacity moisture fraction.
+ * @param[out] wp Optional output. Wilting-point moisture fraction.
+ * @param[out] ksat Optional output. Saturated conductivity in inches/hour or mm/hour.
+ * @param[out] kslope Optional output. Dimensionless exponential conductivity slope.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments.
+ */
+SWMM_ENGINE_API int swmm_lid_get_soil(SWMM_Engine engine, int idx, double* thick, double* porosity,
+                                      double* fc, double* wp, double* ksat, double* kslope);
 
-/** @brief Read the storage layer properties. Inverse of @ref swmm_lid_set_storage. Any out-param may be null. */
-SWMM_ENGINE_API int swmm_lid_get_storage(SWMM_Engine engine, int idx, double* thick, double* void_frac, double* ksat);
+/**
+ * @brief Read the stored storage layer parameters.
+ *
+ * All outputs may be NULL; returns stored authoring values without runtime conversion or a
+ * lifecycle guard.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] idx Zero-based existing object index in this function's table.
+ * @param[out] thick Optional output. Storage thickness in inches/mm.
+ * @param[out] void_frac Optional output. Void ratio e (void/solid volume), converted to porosity
+ *     e/(1+e) at initialization.
+ * @param[out] ksat Optional output. Bottom seepage in inches/hour or mm/hour.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments.
+ */
+SWMM_ENGINE_API int swmm_lid_get_storage(SWMM_Engine engine, int idx, double* thick,
+                                         double* void_frac, double* ksat);
 
-/** @brief Read the underdrain properties. Inverse of @ref swmm_lid_set_drain. Any out-param may be null. */
-SWMM_ENGINE_API int swmm_lid_get_drain(SWMM_Engine engine, int idx, double* coeff, double* expon, double* offset);
+/**
+ * @brief Read the stored drain layer parameters.
+ *
+ * All outputs may be NULL; returns stored authoring values without runtime conversion or a
+ * lifecycle guard.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] idx Zero-based existing object index in this function's table.
+ * @param[out] coeff Optional output. User coefficient in the input depth/hour drain power law.
+ * @param[out] expon Optional output. Dimensionless drain power-law exponent.
+ * @param[out] offset Optional output. Drain height above storage bottom, inches/mm.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments.
+ */
+SWMM_ENGINE_API int swmm_lid_get_drain(SWMM_Engine engine, int idx, double* coeff, double* expon,
+                                       double* offset);
 
-/** @brief Read the porous-pavement layer. Inverse of @ref swmm_lid_set_pavement. Any out-param may be null. */
-SWMM_ENGINE_API int swmm_lid_get_pavement(SWMM_Engine engine, int idx, double* thick, double* void_ratio,
-                                          double* frac_imperv, double* ksat, double* clog_factor, double* regen_days);
+/**
+ * @brief Read the stored pavement layer parameters.
+ *
+ * All outputs may be NULL; returns stored authoring values without runtime conversion or a
+ * lifecycle guard.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] idx Zero-based existing object index in this function's table.
+ * @param[out] thick Optional output. Pavement thickness, inches/mm.
+ * @param[out] void_ratio Optional output. Void/solid volume ratio.
+ * @param[out] frac_imperv Optional output. Impervious surface fraction.
+ * @param[out] ksat Optional output. Permeability, inches/hour or mm/hour.
+ * @param[out] clog_factor Optional output. Dimensionless clogging factor; zero disables clogging.
+ * @param[out] regen_days Optional output. Regeneration interval, days; zero disables it.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments.
+ */
+SWMM_ENGINE_API int swmm_lid_get_pavement(SWMM_Engine engine, int idx, double* thick,
+                                          double* void_ratio, double* frac_imperv, double* ksat,
+                                          double* clog_factor, double* regen_days);
 
-/** @brief Read the drainage-mat layer. Inverse of @ref swmm_lid_set_drainmat. Any out-param may be null. */
-SWMM_ENGINE_API int swmm_lid_get_drainmat(SWMM_Engine engine, int idx, double* thick, double* void_frac, double* roughness);
+/**
+ * @brief Read the stored drainmat layer parameters.
+ *
+ * All outputs may be NULL; returns stored authoring values without runtime conversion or a
+ * lifecycle guard.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] idx Zero-based existing object index in this function's table.
+ * @param[out] thick Optional output. Drainage mat thickness, inches/mm.
+ * @param[out] void_frac Optional output. Stored drainage-mat void parameter, as passed to its
+ *     setter.
+ * @param[out] roughness Optional output. Manning roughness.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments.
+ */
+SWMM_ENGINE_API int swmm_lid_get_drainmat(SWMM_Engine engine, int idx, double* thick,
+                                          double* void_frac, double* roughness);
 
 /* =========================================================================
  * LID usage (assign LID to subcatchment)
@@ -969,51 +1690,74 @@ SWMM_ENGINE_API int swmm_lid_get_drainmat(SWMM_Engine engine, int idx, double* t
  * @details Multiple LID units of the same or different types can be assigned
  *          to a single subcatchment.
  *
- * @param engine       Engine handle.
- * @param subcatch_idx Zero-based subcatchment index.
- * @param lid_idx      Zero-based LID control index.
- * @param number       Number of replicate LID units.
- * @param area         Area of each LID unit in project area units.
- * @param width        Top width of the overland flow surface per unit.
- * @param init_sat     Initial saturation of the soil layer (0–1).
- * @param from_imperv  Fraction of impervious area runoff treated by this LID (0–1).
+ * @param[in] engine Engine handle.
+ * @param[in] subcatch_idx Zero-based subcatchment index.
+ * @param[in] lid_idx Zero-based LID control index.
+ * @param[in] number Number of replicate LID units.
+ * @param[in] area Area of each LID unit in square feet/metres (not acres/hectares).
+ * @param[in] width Top width of the overland flow surface per unit.
+ * @param[in] init_sat Initial saturation of the soil layer in percent (0–100).
+ * @param[in] from_imperv Percentage of impervious runoff treated by this LID (0–100).
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A failed infrastructure/pollutant index check
+ *     returns SWMM_ERR_BADINDEX. No lifecycle guard in this wrapper; authoring edits do not
+ *     generally rebuild running hydraulic/geometry caches. Stores an appended configuration row
+ *     without numeric validation or runtime solver rebuild. Area is square feet/metres per unit
+ *     (not acres/hectares); width is ft/m, init_sat and from_imperv are PERCENT, not fractions.
+ *     NODE controls are refused.
  */
-SWMM_ENGINE_API int swmm_lid_usage_add(SWMM_Engine engine, int subcatch_idx, int lid_idx, int number, double area, double width, double init_sat, double from_imperv);
+SWMM_ENGINE_API int swmm_lid_usage_add(SWMM_Engine engine, int subcatch_idx, int lid_idx,
+                                       int number, double area, double width, double init_sat,
+                                       double from_imperv);
 
 /**
- * @brief Total number of LID usage rows across all subcatchments.
- * @details To enumerate the usages on one subcatchment, iterate
- *          [0, count) and filter on the subcatch index returned by
- *          swmm_lid_usage_get.
- * @returns The usage count, or -1 on a bad handle.
+ * @brief Count LID-usage rows across all subcatchments.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @return Nonnegative row count, or -1 for null engine.
  */
 SWMM_ENGINE_API int swmm_lid_usage_count(SWMM_Engine engine);
 
 /**
  * @brief Read one LID usage row by global index.
- * @param engine             Engine handle.
- * @param usage_idx          Zero-based global usage index ([0, count)).
- * @param[out] subcatch_idx  Owning subcatchment index (nullable).
- * @param[out] lid_idx       LID control index (nullable).
- * @param[out] number        Number of replicate units (nullable).
- * @param[out] area          Area per unit (nullable).
- * @param[out] width         Overland flow top width (nullable).
- * @param[out] init_sat      Initial saturation 0–1 (nullable).
- * @param[out] from_imperv   Fraction of impervious runoff treated (nullable).
- * @param[out] to_perv       1 = route outflow to pervious area (nullable).
- * @param[out] from_perv     Fraction of pervious runoff treated (nullable).
+ * @param[in] engine Engine handle.
+ * @param[in] usage_idx Zero-based global usage index ([0, count)).
+ * @param[out] subcatch_idx Owning subcatchment index (nullable).
+ * @param[out] lid_idx LID control index (nullable).
+ * @param[out] number Number of replicate units (nullable).
+ * @param[out] area Area per unit (nullable).
+ * @param[out] width Overland flow top width (nullable).
+ * @param[out] init_sat Initial saturation in percent (nullable).
+ * @param[out] from_imperv Percentage of impervious runoff treated (nullable).
+ * @param[out] to_perv 1 = route outflow to pervious area (nullable).
+ * @param[out] from_perv Percentage of pervious runoff treated (nullable).
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note subcatch_idx may be NULL to suppress that output. lid_idx may be NULL to suppress that
+ *     output. number may be NULL to suppress that output. area may be NULL to suppress that output.
+ *     width may be NULL to suppress that output. init_sat may be NULL to suppress that output.
+ *     from_imperv may be NULL to suppress that output. to_perv may be NULL to suppress that output.
+ *     from_perv may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
+ *     failed infrastructure/pollutant index check returns SWMM_ERR_BADINDEX.
  */
-SWMM_ENGINE_API int swmm_lid_usage_get(SWMM_Engine engine, int usage_idx,
-                                       int* subcatch_idx, int* lid_idx, int* number,
-                                       double* area, double* width, double* init_sat,
-                                       double* from_imperv, int* to_perv, double* from_perv);
+SWMM_ENGINE_API int swmm_lid_usage_get(SWMM_Engine engine, int usage_idx, int* subcatch_idx,
+                                       int* lid_idx, int* number, double* area, double* width,
+                                       double* init_sat, double* from_imperv, int* to_perv,
+                                       double* from_perv);
 
 /**
- * @brief Remove one LID usage row by global index.
- * @details Later usage indices shift down by one after removal.
- * @returns SWMM_OK on success, or an error code.
+ * @brief Erase a subcatchment LID-usage row and shift later indices.
+ *
+ * No lifecycle guard. Erases configuration arrays and resizes balance arrays; does not rebuild
+ * running LID solver groups.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] usage_idx Zero-based global LID-usage index.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for a failed index check,
+ *     or SWMM_ERR_BADPARAM for invalid required arguments.
  */
 SWMM_ENGINE_API int swmm_lid_usage_remove(SWMM_Engine engine, int usage_idx);
 

@@ -1,6 +1,6 @@
 /**
- * @file test_model_write_with_plugin.cpp
- * @brief Unit tests for AA-3.1 — plugin-routed model write + [PLUGINS]
+ * @file      test_model_write_with_plugin.cpp
+ * @brief     Unit tests for AA-3.1 — plugin-routed model write + [PLUGINS]
  *        section accessors + grouped plugin discovery facade.
  *
  * @details Covers:
@@ -12,6 +12,10 @@
  *          - discover_plugins_by_id: groups multiple filter entries that
  *            share a plugin_id into a single DiscoveredPlugin with the
  *            full role set.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -36,6 +40,13 @@ class ModelWriteWithPluginTest : public ::testing::Test {
 protected:
     SWMM_Engine engine = nullptr;
 
+    /**
+     * @brief Create an editable J1-to-O1 conduit model for API edits.
+     *
+     * Allocates the fixture-owned handle, adds junction/outfall/L1 conduit and connects its endpoints.
+     * Does not yet set complete hydraulic geometry or initialize a simulation. Fatal assertions leave
+     * the partial model for teardown.
+     */
     void SetUp() override {
         engine = swmm_engine_new();
         ASSERT_NE(engine, nullptr);
@@ -43,20 +54,36 @@ protected:
         // Nodes: J1 (junction) → O1 (outfall).  Smallest valid model
         // that swmm_validate_model accepts.
         ASSERT_EQ(swmm_node_add(engine, "J1", SWMM_NODE_JUNCTION), SWMM_OK);
-        ASSERT_EQ(swmm_node_add(engine, "O1", SWMM_NODE_OUTFALL),  SWMM_OK);
-        ASSERT_EQ(swmm_link_add(engine, "L1", SWMM_LINK_CONDUIT),  SWMM_OK);
-        ASSERT_EQ(swmm_link_set_nodes(engine,
-                      swmm_link_index(engine, "L1"),
-                      swmm_node_index(engine, "J1"),
-                      swmm_node_index(engine, "O1")), SWMM_OK);
+        ASSERT_EQ(swmm_node_add(engine, "O1", SWMM_NODE_OUTFALL), SWMM_OK);
+        ASSERT_EQ(swmm_link_add(engine, "L1", SWMM_LINK_CONDUIT), SWMM_OK);
+        ASSERT_EQ(swmm_link_set_nodes(engine, swmm_link_index(engine, "L1"),
+                                      swmm_node_index(engine, "J1"), swmm_node_index(engine, "O1")),
+                  SWMM_OK);
     }
 
+    /**
+     * @brief Destroy the fixture engine when allocation succeeded.
+     *
+     * Releases model resources through engine destruction; the member value is not reset and must not
+     * be reused after teardown.
+     */
     void TearDown() override {
-        if (engine) swmm_engine_destroy(engine);
+        if (engine)
+            swmm_engine_destroy(engine);
     }
 
     // Each test that touches the filesystem uses its own tmp file so
     // parallel test runs don't collide.
+    /**
+     * @brief Form the plugin-write test's system-temporary artifact name.
+     *
+     * Filesystem/allocation exceptions propagate; no uniqueness, sanitation or cleanup is added.
+     * Documentation preserves the existing test artifact policy rather than relocating its executable
+     * behavior.
+     *
+     * @param[in] tag Non-null controlled suffix inserted in aa3_tag.inp.
+     * @return Owned filename beneath filesystem::temp_directory_path, without creation or reservation.
+     */
     std::string tmpFile(const char* tag) {
         auto dir = fs::temp_directory_path();
         return (dir / ("aa3_" + std::string(tag) + ".inp")).string();
@@ -85,8 +112,7 @@ TEST_F(ModelWriteWithPluginTest, EmptyPluginIdFallsBackToInpWriter) {
 
 TEST_F(ModelWriteWithPluginTest, UnknownPluginIdReturnsBadParam) {
     const std::string path = tmpFile("unknown_plugin");
-    int rc = swmm_model_write_with_plugin(engine, path.c_str(),
-                                           "org.does.not.exist");
+    int rc = swmm_model_write_with_plugin(engine, path.c_str(), "org.does.not.exist");
     EXPECT_EQ(rc, SWMM_ERR_BADPARAM);
     EXPECT_FALSE(fs::exists(path));
 }
@@ -107,9 +133,7 @@ TEST_F(ModelWriteWithPluginTest, PluginsEmptyAtStart) {
 }
 
 TEST_F(ModelWriteWithPluginTest, PluginSetThenGetRoundTrip) {
-    EXPECT_EQ(swmm_plugin_set(engine, "org.example.foo",
-                               "arg1 arg2 keyA=valueA"),
-              SWMM_OK);
+    EXPECT_EQ(swmm_plugin_set(engine, "org.example.foo", "arg1 arg2 keyA=valueA"), SWMM_OK);
 
     int count = 0;
     ASSERT_EQ(swmm_plugins_count(engine, &count), SWMM_OK);
@@ -117,8 +141,7 @@ TEST_F(ModelWriteWithPluginTest, PluginSetThenGetRoundTrip) {
 
     char path_buf[128] = {};
     char args_buf[128] = {};
-    ASSERT_EQ(swmm_plugin_get(engine, 0, path_buf, sizeof(path_buf),
-                               args_buf, sizeof(args_buf)),
+    ASSERT_EQ(swmm_plugin_get(engine, 0, path_buf, sizeof(path_buf), args_buf, sizeof(args_buf)),
               SWMM_OK);
     EXPECT_STREQ(path_buf, "org.example.foo");
     EXPECT_STREQ(args_buf, "arg1 arg2 keyA=valueA");
@@ -126,7 +149,7 @@ TEST_F(ModelWriteWithPluginTest, PluginSetThenGetRoundTrip) {
 
 TEST_F(ModelWriteWithPluginTest, PluginSetReplacesByKey) {
     ASSERT_EQ(swmm_plugin_set(engine, "alpha", "first"), SWMM_OK);
-    ASSERT_EQ(swmm_plugin_set(engine, "beta",  "second"), SWMM_OK);
+    ASSERT_EQ(swmm_plugin_set(engine, "beta", "second"), SWMM_OK);
     // Replace alpha's args, count stays at 2.
     ASSERT_EQ(swmm_plugin_set(engine, "alpha", "replaced"), SWMM_OK);
 
@@ -136,8 +159,7 @@ TEST_F(ModelWriteWithPluginTest, PluginSetReplacesByKey) {
 
     char buf[64] = {};
     char args[64] = {};
-    ASSERT_EQ(swmm_plugin_get(engine, 0, buf, sizeof(buf), args, sizeof(args)),
-              SWMM_OK);
+    ASSERT_EQ(swmm_plugin_get(engine, 0, buf, sizeof(buf), args, sizeof(args)), SWMM_OK);
     EXPECT_STREQ(buf, "alpha");
     EXPECT_STREQ(args, "replaced");
 }
@@ -145,8 +167,8 @@ TEST_F(ModelWriteWithPluginTest, PluginSetReplacesByKey) {
 TEST_F(ModelWriteWithPluginTest, PluginRemoveIsIdempotent) {
     ASSERT_EQ(swmm_plugin_set(engine, "to.remove", ""), SWMM_OK);
     EXPECT_EQ(swmm_plugin_remove(engine, "to.remove"), SWMM_OK);
-    EXPECT_EQ(swmm_plugin_remove(engine, "to.remove"), SWMM_OK);  // idempotent
-    EXPECT_EQ(swmm_plugin_remove(engine, "never.set"), SWMM_OK);  // also idempotent
+    EXPECT_EQ(swmm_plugin_remove(engine, "to.remove"), SWMM_OK); // idempotent
+    EXPECT_EQ(swmm_plugin_remove(engine, "never.set"), SWMM_OK); // also idempotent
 
     int count = 0;
     ASSERT_EQ(swmm_plugins_count(engine, &count), SWMM_OK);
@@ -154,20 +176,16 @@ TEST_F(ModelWriteWithPluginTest, PluginRemoveIsIdempotent) {
 }
 
 TEST_F(ModelWriteWithPluginTest, PluginGetTruncatesSmallBuffer) {
-    ASSERT_EQ(swmm_plugin_set(engine, "very.long.plugin.id", "args"),
-              SWMM_OK);
+    ASSERT_EQ(swmm_plugin_set(engine, "very.long.plugin.id", "args"), SWMM_OK);
     char tiny[6] = {0};
-    EXPECT_EQ(swmm_plugin_get(engine, 0, tiny, sizeof(tiny), nullptr, 0),
-              SWMM_OK);
-    EXPECT_STREQ(tiny, "very.");  // 5 chars + NUL
+    EXPECT_EQ(swmm_plugin_get(engine, 0, tiny, sizeof(tiny), nullptr, 0), SWMM_OK);
+    EXPECT_STREQ(tiny, "very."); // 5 chars + NUL
 }
 
 TEST_F(ModelWriteWithPluginTest, PluginGetAllowsNullArgsBuf) {
     ASSERT_EQ(swmm_plugin_set(engine, "id.only", "ignored"), SWMM_OK);
     char path_buf[32] = {};
-    EXPECT_EQ(swmm_plugin_get(engine, 0, path_buf, sizeof(path_buf),
-                               nullptr, 0),
-              SWMM_OK);
+    EXPECT_EQ(swmm_plugin_get(engine, 0, path_buf, sizeof(path_buf), nullptr, 0), SWMM_OK);
     EXPECT_STREQ(path_buf, "id.only");
 }
 
@@ -178,10 +196,8 @@ TEST_F(ModelWriteWithPluginTest, PluginSetRejectsEmptyKey) {
 
 TEST_F(ModelWriteWithPluginTest, PluginGetBadIndex) {
     char buf[32] = {};
-    EXPECT_EQ(swmm_plugin_get(engine, -1, buf, sizeof(buf), nullptr, 0),
-              SWMM_ERR_BADINDEX);
-    EXPECT_EQ(swmm_plugin_get(engine, 99, buf, sizeof(buf), nullptr, 0),
-              SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_plugin_get(engine, -1, buf, sizeof(buf), nullptr, 0), SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_plugin_get(engine, 99, buf, sizeof(buf), nullptr, 0), SWMM_ERR_BADINDEX);
 }
 
 // ---------------------------------------------------------------------------
@@ -207,8 +223,8 @@ TEST(DiscoverPluginsByIdTest, RolesDeduplicated) {
         for (std::size_t i = 0; i < p.roles.size(); ++i) {
             for (std::size_t j = i + 1; j < p.roles.size(); ++j) {
                 EXPECT_NE(p.roles[i], p.roles[j])
-                    << "plugin " << p.plugin_id
-                    << " has duplicate role at indices " << i << " and " << j;
+                    << "plugin " << p.plugin_id << " has duplicate role at indices " << i << " and "
+                    << j;
             }
         }
     }
@@ -217,7 +233,7 @@ TEST(DiscoverPluginsByIdTest, RolesDeduplicated) {
 TEST(DiscoverPluginsByIdTest, MatchesAllFiltersByPluginId) {
     // Cross-check: every (plugin_id, filter) pair from discover_all_filters
     // must show up exactly once in the grouped view.
-    auto flat    = openswmm::discover_all_filters();
+    auto flat = openswmm::discover_all_filters();
     auto grouped = openswmm::discover_plugins_by_id();
 
     std::size_t flat_count = flat.size();

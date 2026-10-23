@@ -1,6 +1,6 @@
 /**
- * @file test_fv_solver_analytic.cpp
- * @brief Analytic/physics gates for the explicit FV 1D solver (plan §6.1–6.4).
+ * @file      test_fv_solver_analytic.cpp
+ * @brief     Analytic/physics gates for the explicit FV 1D solver (plan §6.1–6.4).
  *
  * @details
  *   §6.1  Lake at rest across slope breaks — machine precision — plus the
@@ -13,6 +13,10 @@
  *         over 10⁵ substeps.
  *
  * @ingroup engine_fv
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -34,7 +38,20 @@ namespace {
 
 constexpr double kG = 32.2;
 
-/// Drive a channel to @p t_end with no forcing (walls only).
+/**
+ * @brief Advance a fresh walled analytic-test channel without boundary forcing.
+ *
+ * Initializes a local solver, uses zero-node/zero-link forcing and ignores achieved times. Requires
+ * progress for meaningful positive-time runs; exceptions propagate without rolling back channel
+ * state. No artifact is written here.
+ *
+ * @param[in,out] ch Compatible initialized-shape channel whose mesh/state outlive the local solver.
+ * @param[in] opts Options borrowed during the synchronous local solver lifetime.
+ * @param[in] t_end Desired end time in seconds; nonpositive performs no advance calls.
+ * @param[in] step Positive value requests clipped windows of that size in seconds; otherwise uses
+ *     t_end as one window.
+ * @return Sum of last_num_steps across attempted advances.
+ */
 long run(Channel& ch, const FvOptions& opts, double t_end, double step = 0.0) {
     ExplicitFvSolver s;
     s.initialize(ch.mesh, ch.state, opts);
@@ -50,12 +67,25 @@ long run(Channel& ch, const FvOptions& opts, double t_end, double step = 0.0) {
     return n;
 }
 
-/// Ritter (1892) dry-bed dam-break depth at (x, t) for a wide rectangle.
+/**
+ * @brief Evaluate the exact rectangular dry-bed dam-break depth reference.
+ *
+ * No zero-time, finite or positive-depth guard occurs; no production solver/state is used.
+ *
+ * @param[in] x Physical sample position in feet.
+ * @param[in] t Strictly positive elapsed seconds.
+ * @param[in] h0 Positive upstream reservoir depth in feet.
+ * @param[in] x0 Initial dam position in feet.
+ * @return Reference depth in feet from reservoir/rarefaction/dry-front branches using gravity 32.2
+ *     ft/s2.
+ */
 double ritterDepth(double x, double t, double h0, double x0) {
     const double c0 = std::sqrt(kG * h0);
     const double xi = (x - x0) / t;
-    if (xi <= -c0) return h0;
-    if (xi >= 2.0 * c0) return 0.0;
+    if (xi <= -c0)
+        return h0;
+    if (xi >= 2.0 * c0)
+        return 0.0;
     const double c = (2.0 * c0 - xi) / 3.0;
     return c * c / kG;
 }
@@ -63,59 +93,98 @@ double ritterDepth(double x, double t, double h0, double x0) {
 /// Stoker (1957) wet-bed dam-break: solve for the shock speed, then assemble
 /// the four-region profile. hl > hr > 0.
 struct Stoker {
-    double h2 = 0.0;   ///< depth in the constant middle state
-    double u2 = 0.0;   ///< velocity there
-    double s  = 0.0;   ///< shock speed
+    double h2 = 0.0; ///< depth in the constant middle state
+    double u2 = 0.0; ///< velocity there
+    double s = 0.0;  ///< shock speed
 };
 
+/**
+ * @brief Solve the wet-bed rectangular dam-break intermediate reference state.
+ *
+ * Uses 200 bisection iterations matching left rarefaction and right shock with gravity 32.2 ft/s2.
+ * Requires the intended bracket/regime and nonzero final h2-hr denominator; no adaptive tolerance,
+ * invalid-input guard or production solve is used.
+ *
+ * @param[in] hl Positive upstream depth in feet, strictly greater than hr.
+ * @param[in] hr Strictly positive downstream depth in feet.
+ * @return Owned middle depth h2 ft, velocity u2 ft/s and shock speed s ft/s.
+ */
 Stoker stoker(double hl, double hr) {
     const double cl = std::sqrt(kG * hl);
     // Root-find on h2 in (hr, hl): rarefaction from the left must match the
     // Rankine–Hugoniot jump into the right state.
     auto f = [&](double h2) {
         const double u_raref = 2.0 * (cl - std::sqrt(kG * h2));
-        const double u_shock =
-            (h2 - hr) * std::sqrt(0.5 * kG * (h2 + hr) / (h2 * hr));
+        const double u_shock = (h2 - hr) * std::sqrt(0.5 * kG * (h2 + hr) / (h2 * hr));
         return u_raref - u_shock;
     };
     double lo = hr * (1.0 + 1.0e-12), hi = hl * (1.0 - 1.0e-12);
     for (int i = 0; i < 200; ++i) {
         const double mid = 0.5 * (lo + hi);
-        if (f(lo) * f(mid) <= 0.0) hi = mid; else lo = mid;
+        if (f(lo) * f(mid) <= 0.0)
+            hi = mid;
+        else
+            lo = mid;
     }
     Stoker out;
     out.h2 = 0.5 * (lo + hi);
     out.u2 = 2.0 * (cl - std::sqrt(kG * out.h2));
-    out.s  = out.u2 * out.h2 / (out.h2 - hr);
+    out.s = out.u2 * out.h2 / (out.h2 - hr);
     return out;
 }
 
+/**
+ * @brief Evaluate the self-similar wet-bed dam-break depth reference.
+ *
+ * Computes stoker() afresh, divides by t without guarding and uses the fixed native gravity; no
+ * model mutation occurs.
+ *
+ * @param[in] x Sample position in feet.
+ * @param[in] t Strictly positive elapsed seconds.
+ * @param[in] hl Upstream depth in feet, strictly greater than hr.
+ * @param[in] hr Strictly positive downstream depth in feet.
+ * @param[in] x0 Initial dam position in feet.
+ * @return Reference depth in feet from left reservoir, rarefaction, middle state or right
+ *     reservoir.
+ */
 double stokerDepth(double x, double t, double hl, double hr, double x0) {
     const Stoker st = stoker(hl, hr);
     const double cl = std::sqrt(kG * hl);
     const double c2 = std::sqrt(kG * st.h2);
     const double xi = (x - x0) / t;
-    if (xi <= -cl) return hl;
+    if (xi <= -cl)
+        return hl;
     if (xi <= st.u2 - c2) {
         const double c = (2.0 * cl - xi) / 3.0;
         return c * c / kG;
     }
-    if (xi <= st.s) return st.h2;
+    if (xi <= st.s)
+        return st.h2;
     return hr;
 }
 
-/// Write a profile the reviewer can open, per CLAUDE.md §4.1.
+/**
+ * @brief Write the current uniform-channel profile as a reviewable CSV.
+ *
+ * Creates directories through an ignored error code, truncates the CSV and silently returns on open
+ * failure. Writes x/zb/depth/eta ft, area ft2 and q CFS in cell storage order; subsequent
+ * write/close errors are unchecked. Does not mutate channel state.
+ *
+ * @param[in] ch Channel with n consistent metric/state rows and uniform dx in feet.
+ * @param[in] name Safe artifact basename under outputDir(), without .csv.
+ */
 void dumpProfile(const Channel& ch, const std::string& name) {
     std::error_code ec;
     std::filesystem::create_directories(outputDir(), ec);
     std::ofstream os(outputDir() + "/" + name + ".csv");
-    if (!os) return;
+    if (!os)
+        return;
     os << "x,zb,depth,area,q,eta\n";
     for (int i = 0; i < ch.n; ++i) {
         const auto ui = static_cast<std::size_t>(i);
         const double x = (static_cast<double>(i) + 0.5) * ch.dx;
-        os << x << ',' << ch.mesh.cell_zb[ui] << ',' << ch.state.cell_h[ui]
-           << ',' << ch.state.cell_a[ui] << ',' << ch.state.cell_q[ui] << ','
+        os << x << ',' << ch.mesh.cell_zb[ui] << ',' << ch.state.cell_h[ui] << ','
+           << ch.state.cell_a[ui] << ',' << ch.state.cell_q[ui] << ','
            << (ch.mesh.cell_zb[ui] + ch.state.cell_h[ui]) << '\n';
     }
 }
@@ -130,9 +199,10 @@ TEST(FvAnalytic, LakeAtRestOverASlopeBreak) {
     // Bed with a slope reversal AND a bump — the reconstruction has to be
     // well-balanced for every sign of the bed step, not just monotone slopes.
     auto bed = [](double x) {
-        if (x < 200.0) return 10.0 - 0.02 * x;
-        if (x < 400.0) return 6.0 + 0.03 * (x - 200.0) +
-                              1.5 * std::exp(-std::pow((x - 300.0) / 30.0, 2));
+        if (x < 200.0)
+            return 10.0 - 0.02 * x;
+        if (x < 400.0)
+            return 6.0 + 0.03 * (x - 200.0) + 1.5 * std::exp(-std::pow((x - 300.0) / 30.0, 2));
         return 12.0 - 0.01 * (x - 400.0);
     };
     Channel ch = makeWalledChannel(rectOpen(20.0, 30.0), 200, 3.0, bed, 0.015);
@@ -147,11 +217,10 @@ TEST(FvAnalytic, LakeAtRestOverASlopeBreak) {
     for (int i = 0; i < ch.n; ++i) {
         const auto ui = static_cast<std::size_t>(i);
         const double h = ch.state.cell_h[ui];
-        if (h <= k::kDryDepth) continue;              // dry above the water line
-        EXPECT_NEAR(ch.mesh.cell_zb[ui] + h, eta, 1.0e-9)
-            << "free surface drifted at cell " << i;
-        EXPECT_NEAR(ch.state.cell_q[ui], 0.0, 1.0e-9)
-            << "spurious discharge at cell " << i;
+        if (h <= k::kDryDepth)
+            continue; // dry above the water line
+        EXPECT_NEAR(ch.mesh.cell_zb[ui] + h, eta, 1.0e-9) << "free surface drifted at cell " << i;
+        EXPECT_NEAR(ch.state.cell_q[ui], 0.0, 1.0e-9) << "spurious discharge at cell " << i;
     }
 }
 
@@ -161,7 +230,7 @@ TEST(FvAnalytic, LakeAtRestWhilePressurized) {
     // the cell state share the identical slot closure.
     auto bed = [](double x) { return 10.0 - 0.004 * x; };
     Channel ch = makeWalledChannel(circular(3.0), 120, 5.0, bed, 0.013);
-    const double eta = 20.0;                          // ~7 ft above the crown
+    const double eta = 20.0; // ~7 ft above the crown
     seedLevel(ch, eta);
 
     FvOptions o = defaultOptions();
@@ -186,9 +255,10 @@ TEST(FvAnalytic, SecondOrderStaysWellBalanced) {
     // error. Reconstructing eta with the bed taken from its exact per-cell
     // gradient, plus the centred bed source, is what keeps it exact.
     auto bed = [](double x) {
-        if (x < 200.0) return 10.0 - 0.02 * x;
-        if (x < 400.0) return 6.0 + 0.03 * (x - 200.0) +
-                              1.5 * std::exp(-std::pow((x - 300.0) / 30.0, 2));
+        if (x < 200.0)
+            return 10.0 - 0.02 * x;
+        if (x < 400.0)
+            return 6.0 + 0.03 * (x - 200.0) + 1.5 * std::exp(-std::pow((x - 300.0) / 30.0, 2));
         return 12.0 - 0.01 * (x - 400.0);
     };
     for (Limiter lim : {Limiter::MINMOD, Limiter::VANLEER, Limiter::SUPERBEE}) {
@@ -201,10 +271,11 @@ TEST(FvAnalytic, SecondOrderStaysWellBalanced) {
         run(ch, o, 600.0, 60.0);
         for (int i = 0; i < ch.n; ++i) {
             const auto ui = static_cast<std::size_t>(i);
-            if (ch.state.cell_h[ui] <= k::kDryDepth) continue;
+            if (ch.state.cell_h[ui] <= k::kDryDepth)
+                continue;
             ASSERT_NEAR(ch.mesh.cell_zb[ui] + ch.state.cell_h[ui], eta, 1.0e-9)
-                << "second order broke lake-at-rest at cell " << i
-                << ", limiter " << static_cast<int>(lim);
+                << "second order broke lake-at-rest at cell " << i << ", limiter "
+                << static_cast<int>(lim);
             ASSERT_NEAR(ch.state.cell_q[ui], 0.0, 1.0e-9)
                 << "second order produced spurious flow at cell " << i;
         }
@@ -215,13 +286,13 @@ TEST(FvAnalytic, SecondOrderSharpensTheDamBreakFront) {
     // Consistency check on the accuracy the second-order path is there to buy:
     // the same Ritter problem must come out closer to the analytic solution.
     const double h0 = 10.0, L = 2000.0, x0 = 1000.0;
-    const int n = 200;                                  // deliberately coarse
+    const int n = 200; // deliberately coarse
     const double dx = L / n;
     const double t_end = 20.0;
 
     auto errorAtOrder = [&](int order) {
-        Channel ch = makeWalledChannel(rectOpen(50.0, 40.0), n, dx,
-                                       [](double) { return 0.0; }, 0.0);
+        Channel ch =
+            makeWalledChannel(rectOpen(50.0, 40.0), n, dx, [](double) { return 0.0; }, 0.0);
         for (int i = 0; i < n; ++i) {
             const double x = (static_cast<double>(i) + 0.5) * dx;
             ch.state.cell_a[static_cast<std::size_t>(i)] = 50.0 * ((x < x0) ? h0 : 0.0);
@@ -233,8 +304,10 @@ TEST(FvAnalytic, SecondOrderSharpensTheDamBreakFront) {
         const double c0 = std::sqrt(kG * h0);
         for (int i = 0; i < n; ++i) {
             const double x = (static_cast<double>(i) + 0.5) * dx;
-            if (x < x0 - c0 * t_end + 3 * dx) continue;
-            if (x > x0 + 2.0 * c0 * t_end - 3 * dx) continue;
+            if (x < x0 - c0 * t_end + 3 * dx)
+                continue;
+            if (x > x0 + 2.0 * c0 * t_end - 3 * dx)
+                continue;
             const double want = ritterDepth(x, t_end, h0, x0);
             l1 += std::fabs(ch.state.cell_h[static_cast<std::size_t>(i)] - want);
             ref += want;
@@ -248,8 +321,7 @@ TEST(FvAnalytic, SecondOrderSharpensTheDamBreakFront) {
     std::filesystem::create_directories(outputDir(), ec);
     std::ofstream os(outputDir() + "/order_convergence.csv");
     os << "order,ritter_relative_l1\n1," << e1 << "\n2," << e2 << "\n";
-    EXPECT_LT(e2, e1) << "FV_ORDER 2 did not improve on first order ("
-                      << e1 << " -> " << e2 << ")";
+    EXPECT_LT(e2, e1) << "FV_ORDER 2 did not improve on first order (" << e1 << " -> " << e2 << ")";
 }
 
 // ===========================================================================
@@ -260,8 +332,7 @@ TEST(FvAnalytic, RitterDryBedDamBreak) {
     const double h0 = 10.0, L = 2000.0, x0 = 1000.0;
     const int n = 800;
     const double dx = L / n;
-    Channel ch = makeWalledChannel(rectOpen(50.0, 40.0), n, dx,
-                                   [](double) { return 0.0; }, 0.0);
+    Channel ch = makeWalledChannel(rectOpen(50.0, 40.0), n, dx, [](double) { return 0.0; }, 0.0);
     for (int i = 0; i < n; ++i) {
         const double x = (static_cast<double>(i) + 0.5) * dx;
         const double h = (x < x0) ? h0 : 0.0;
@@ -280,8 +351,10 @@ TEST(FvAnalytic, RitterDryBedDamBreak) {
     for (int i = 0; i < n; ++i) {
         const double x = (static_cast<double>(i) + 0.5) * dx;
         const double c0 = std::sqrt(kG * h0);
-        if (x < x0 - c0 * t_end + 3 * dx) continue;
-        if (x > x0 + 2.0 * c0 * t_end - 3 * dx) continue;
+        if (x < x0 - c0 * t_end + 3 * dx)
+            continue;
+        if (x > x0 + 2.0 * c0 * t_end - 3 * dx)
+            continue;
         const double want = ritterDepth(x, t_end, h0, x0);
         l1 += std::fabs(ch.state.cell_h[static_cast<std::size_t>(i)] - want);
         ref += want;
@@ -296,8 +369,7 @@ TEST(FvAnalytic, StokerWetBedDamBreak) {
     const double hl = 10.0, hr = 2.0, L = 2000.0, x0 = 1000.0;
     const int n = 800;
     const double dx = L / n;
-    Channel ch = makeWalledChannel(rectOpen(50.0, 40.0), n, dx,
-                                   [](double) { return 0.0; }, 0.0);
+    Channel ch = makeWalledChannel(rectOpen(50.0, 40.0), n, dx, [](double) { return 0.0; }, 0.0);
     for (int i = 0; i < n; ++i) {
         const double x = (static_cast<double>(i) + 0.5) * dx;
         ch.state.cell_a[static_cast<std::size_t>(i)] = 50.0 * ((x < x0) ? hl : hr);
@@ -313,7 +385,8 @@ TEST(FvAnalytic, StokerWetBedDamBreak) {
     int cnt = 0;
     for (int i = 0; i < n; ++i) {
         const double x = (static_cast<double>(i) + 0.5) * dx;
-        if (x < 200.0 || x > 1800.0) continue;
+        if (x < 200.0 || x > 1800.0)
+            continue;
         const double want = stokerDepth(x, t_end, hl, hr, x0);
         l1 += std::fabs(ch.state.cell_h[static_cast<std::size_t>(i)] - want);
         ref += want;
@@ -332,12 +405,14 @@ TEST(FvAnalytic, StokerWetBedDamBreak) {
     for (int i = 1; i < n; ++i) {
         const double d = std::fabs(ch.state.cell_h[static_cast<std::size_t>(i)] -
                                    ch.state.cell_h[static_cast<std::size_t>(i - 1)]);
-        if (d > best) { best = d; ishock = i; }
+        if (d > best) {
+            best = d;
+            ishock = i;
+        }
     }
     const double x_shock = (static_cast<double>(ishock) + 0.5) * dx;
     EXPECT_NEAR(x_shock, x0 + st.s * t_end, 4.0 * dx)
-        << "shock speed wrong: got x=" << x_shock
-        << " want " << (x0 + st.s * t_end);
+        << "shock speed wrong: got x=" << x_shock << " want " << (x0 + st.s * t_end);
 }
 
 // ===========================================================================
@@ -383,8 +458,7 @@ TEST(FvAnalytic, MomentumIsConservedOnAFlatFrictionlessClosedReach) {
     // ends — so ∫Q dx must return to its initial value after a full sloshing
     // period. Between reflections it is bounded, which is what this checks
     // substep-by-substep.
-    Channel ch = makeWalledChannel(rectOpen(12.0, 20.0), 200, 5.0,
-                                   [](double) { return 0.0; }, 0.0);
+    Channel ch = makeWalledChannel(rectOpen(12.0, 20.0), 200, 5.0, [](double) { return 0.0; }, 0.0);
     for (int i = 0; i < ch.n; ++i) {
         const auto ui = static_cast<std::size_t>(i);
         ch.state.cell_a[ui] = 12.0 * 6.0;
@@ -411,24 +485,24 @@ TEST(FvAnalytic, MomentumIsConservedOnAFlatFrictionlessClosedReach) {
 // ignored is worse than an unsupported one.
 TEST(FvAnalytic, Rk2IsAnIntegratorNotANoOp) {
     auto run = [](TimeIntegration ti) {
-        Channel ch = makeWalledChannel(rectOpen(10.0, 20.0), 80, 5.0,
-                                       [](double) { return 0.0; }, 0.0);
+        Channel ch =
+            makeWalledChannel(rectOpen(10.0, 20.0), 80, 5.0, [](double) { return 0.0; }, 0.0);
         for (int i = 0; i < ch.n; ++i)
-            ch.state.cell_a[static_cast<std::size_t>(i)] =
-                10.0 * ((i < 40) ? 4.0 : 1.0);
+            ch.state.cell_a[static_cast<std::size_t>(i)] = 10.0 * ((i < 40) ? 4.0 : 1.0);
         FvOptions o = defaultOptions();
         o.time_integration = ti;
         ExplicitFvSolver s;
         s.initialize(ch.mesh, ch.state, o);
         FvStepForcing f;
         f.n_nodes = 0;
-        for (double t = 0.0; t < 20.0; t += 1.0) s.advance(t, t + 1.0, f);
+        for (double t = 0.0; t < 20.0; t += 1.0)
+            s.advance(t, t + 1.0, f);
         s.finalize();
         return ch.state.cell_a;
     };
 
     const std::vector<double> euler = run(TimeIntegration::EULER);
-    const std::vector<double> rk2   = run(TimeIntegration::RK2);
+    const std::vector<double> rk2 = run(TimeIntegration::RK2);
     ASSERT_EQ(euler.size(), rk2.size());
 
     double worst = 0.0;
@@ -449,12 +523,10 @@ TEST(FvAnalytic, Rk2IsAnIntegratorNotANoOp) {
 // stages' flux integrals summed would double the reported transport while the
 // state showed the average.
 TEST(FvAnalytic, Rk2ConservesMassExactly) {
-    Channel ch = makeWalledChannel(rectOpen(10.0, 20.0), 60, 5.0,
-                                   [](double x) { return 0.002 * (300.0 - x); },
-                                   0.013);
+    Channel ch = makeWalledChannel(
+        rectOpen(10.0, 20.0), 60, 5.0, [](double x) { return 0.002 * (300.0 - x); }, 0.013);
     for (int i = 0; i < ch.n; ++i)
-        ch.state.cell_a[static_cast<std::size_t>(i)] =
-            10.0 * ((i < 30) ? 5.0 : 1.5);
+        ch.state.cell_a[static_cast<std::size_t>(i)] = 10.0 * ((i < 30) ? 5.0 : 1.5);
 
     FvOptions o = defaultOptions();
     o.time_integration = TimeIntegration::RK2;
@@ -464,7 +536,8 @@ TEST(FvAnalytic, Rk2ConservesMassExactly) {
 
     FvStepForcing f;
     f.n_nodes = 0;
-    for (double t = 0.0; t < 300.0; t += 5.0) s.advance(t, t + 5.0, f);
+    for (double t = 0.0; t < 300.0; t += 5.0)
+        s.advance(t, t + 5.0, f);
     EXPECT_NEAR(totalVolume(ch), v0, 1.0e-12 * v0)
         << "RK2 stage averaging leaked mass in a closed reach";
     s.finalize();
@@ -473,9 +546,8 @@ TEST(FvAnalytic, Rk2ConservesMassExactly) {
 // Well-balancedness survives the averaging: a lake at rest is a fixed point of
 // each stage, so it must be a fixed point of their average.
 TEST(FvAnalytic, Rk2StaysWellBalanced) {
-    Channel ch = makeWalledChannel(rectOpen(10.0, 20.0), 60, 5.0,
-                                   [](double x) { return (x < 150.0) ? 1.0 : 2.0; },
-                                   0.013);
+    Channel ch = makeWalledChannel(
+        rectOpen(10.0, 20.0), 60, 5.0, [](double x) { return (x < 150.0) ? 1.0 : 2.0; }, 0.013);
     seedLevel(ch, 6.0);
     FvOptions o = defaultOptions();
     o.time_integration = TimeIntegration::RK2;
@@ -483,17 +555,16 @@ TEST(FvAnalytic, Rk2StaysWellBalanced) {
     s.initialize(ch.mesh, ch.state, o);
     FvStepForcing f;
     f.n_nodes = 0;
-    for (double t = 0.0; t < 200.0; t += 5.0) s.advance(t, t + 5.0, f);
+    for (double t = 0.0; t < 200.0; t += 5.0)
+        s.advance(t, t + 5.0, f);
     for (int i = 0; i < ch.n; ++i) {
         const auto ui = static_cast<std::size_t>(i);
         EXPECT_NEAR(ch.mesh.cell_zb[ui] + ch.state.cell_h[ui], 6.0, 1.0e-9)
             << "free surface moved at cell " << i;
-        EXPECT_NEAR(ch.state.cell_q[ui], 0.0, 1.0e-9)
-            << "spurious discharge at cell " << i;
+        EXPECT_NEAR(ch.state.cell_q[ui], 0.0, 1.0e-9) << "spurious discharge at cell " << i;
     }
     s.finalize();
 }
-
 
 // ---------------------------------------------------------------------------
 // Well-balancedness on a COMPILED section (XSECT_GEOMETRY EXACT)

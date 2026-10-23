@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file InpWriter.cpp
- * @brief Comprehensive .inp serialisation — round-trip identical output.
+ * @file      InpWriter.cpp
+ * @brief     Comprehensive .inp serialisation — round-trip identical output.
  *
  * @details Writes every SWMM input section with exact column layouts matching
  *          the legacy format so that read -> write -> read produces identical
@@ -44,14 +44,17 @@
  *
  * @ingroup engine_core
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "InpWriter.hpp"
+#include "../transport/components/ReactionModule/ReactionsWriter.hpp"
+#include <memory>
+#include <limits>
 #include "AtomicOutputFile.hpp"
-#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
+#include "core/FileIO.hpp" // issue #7: UTF-8 paths on Windows
 #include "Constants.hpp"
 #include "NodeCoupling2D.hpp"
 #include "PathResolver.hpp"
@@ -67,9 +70,9 @@
 #include "../2d/data/MeshData.hpp"
 #include "../2d/data/SolverOptions2D.hpp"
 #include "../2d/data/Report2DVars.hpp"
-#include "../2d/gw/GwTransportData.hpp"   // U4
-#include "../2d/quality/SurfaceQuality2D.hpp"   // S7
-#include "../2d/subsurface/SubsurfaceSections.hpp"   // G1
+#include "../2d/gw/GwTransportData.hpp"            // U4
+#include "../2d/quality/SurfaceQuality2D.hpp"      // S7
+#include "../2d/subsurface/SubsurfaceSections.hpp" // G1
 #include "../2d/data/BoundaryData.hpp"
 #include "../2d/data/PendingRows2D.hpp"
 #include "../2d/data/Serialize2D.hpp"
@@ -92,7 +95,7 @@
 
 // IO3a: the component save hook — each component writes its own config file.
 #include "../plugins/ProcessComponentRegistry.hpp"
-#include "../edit/VirtualJunctionOps.hpp"   // ij_host_conduit (SWMM 5.x profile)
+#include "../edit/VirtualJunctionOps.hpp" // ij_host_conduit (SWMM 5.x profile)
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -100,61 +103,133 @@
 namespace openswmm {
 namespace inp_writer {
 
+/**
+ * @brief Append a bracketed INP section header with a preceding blank line.
+ *
+ * Ignores fprintf failure; does not close/flush the stream.
+ *
+ * @param[in,out] f Borrowed non-NULL writable FILE stream; caller owns flush/error checks/close and
+ *     serializes writes.
+ * @param[in] name Borrowed NUL-terminated section name emitted verbatim, without brackets or
+ *     escaping.
+ */
 static void sec(FILE* f, const char* name) {
     std::fprintf(f, "\n[%s]\n", name);
 }
 
 // Preserve filename whitespace and characters with input-format meaning.
+/**
+ * @brief Wrap a path token when empty or containing INP separators.
+ *
+ * Does not escape embedded double quotes or normalize paths; callers supply grammar-compatible path
+ * text.
+ *
+ * @param[in] path Borrowed UTF-8/token bytes.
+ * @return Owned token, wrapped in double quotes for whitespace/semicolon/comma or empty input.
+ */
 static std::string quote_path(const std::string& path) {
     return path.empty() || path.find_first_of(" \t\r\n\v\f;,") != std::string::npos
-        ? "\"" + path + "\"" : path;
+               ? "\"" + path + "\""
+               : path;
 }
 
 // Embedded quotes (file="folder name/output.h5") already protect an argument.
 // Whole quoted arguments lose their outer quotes on read, so restore them.
+/**
+ * @brief Preserve a component argument as one tokenizer-equivalent token.
+ *
+ * Does not escape embedded quotes; allocation/tokenizer failures can throw.
+ *
+ * @param[in] arg Borrowed argument bytes; tested with the input tokenizer.
+ * @return Unchanged owned copy if tokenization yields exactly arg, otherwise double-quoted copy.
+ */
 static std::string quote_argument(const std::string& arg) {
     const auto tokens = input::Tokenizer::tokenize(arg);
     return tokens.size() == 1 && tokens[0] == arg ? arg : "\"" + arg + "\"";
 }
 
 // Format an OADate as MM/DD/YYYY
-template<std::size_t N>
-static void fmt_date(char (&buf)[N], double oadate) {
+/**
+ * @brief Format a calendar date for INP output.
+ *
+ * Writes MM/DD/YYYY without timezone conversion; caller provides sufficient buffer for full text.
+ *
+ * @param[out] buf Caller-owned N-byte character array; snprintf truncates to capacity and
+ *     terminates when N>0.
+ * @param[in] oadate Engine OADate decoded into month/day/year.
+ */
+template <std::size_t N> static void fmt_date(char (&buf)[N], double oadate) {
     int y, m, d;
     datetime::decodeDate(oadate, y, m, d);
     std::snprintf(buf, N, "%02d/%02d/%04d", m, d, y);
 }
 
 // Format the time-of-day part of an OADate as HH:MM:SS
-template<std::size_t N>
-static void fmt_time(char (&buf)[N], double oadate) {
-    int h, m, s;
-    datetime::decodeTime(oadate, h, m, s);
-    std::snprintf(buf, N, "%02d:%02d:%02d", h, m, s);
+/**
+ * @brief Format the time-of-day component of an OADate.
+ *
+ * Writes HH:MM:SS with bounded snprintf; short buffers truncate, no timezone conversion.
+ *
+ * @param[out] buf Caller-owned N-byte array, N>0 for a terminator.
+ * @param[in] oadate Engine OADate supported by datetime::decodeTime.
+ */
+template <std::size_t N> static void fmt_elapsed(char (&buf)[N], double seconds, double day, bool elapsed = false) {
+    const double nearest = std::round(seconds);
+    const double ulp = std::abs(std::nextafter(day, std::numeric_limits<double>::infinity()) - day);
+    if (std::abs(seconds - nearest) <= std::max(1e-12, 0.51 * ulp * 86400.0)) seconds = nearest;
+    const auto h = static_cast<long long>(std::floor(seconds / 3600.0));
+    const int m = static_cast<int>(std::floor((seconds - h * 3600.0) / 60.0));
+    const double second = seconds - h * 3600.0 - m * 60.0;
+    if (elapsed && second == 0.0) std::snprintf(buf, N, "%lld:%02d", h, m);
+    else if (second == std::floor(second))
+        std::snprintf(buf, N, elapsed ? "%lld:%02d:%02d" : "%02lld:%02d:%02d", h, m, static_cast<int>(second));
+    else std::snprintf(buf, N, elapsed ? "%lld:%02d:%.17g" : "%02lld:%02d:%.17g", h, m, second);
+}
+
+template <std::size_t N> static void fmt_time(char (&buf)[N], double oadate) {
+    fmt_elapsed(buf, (oadate - std::floor(oadate)) * 86400.0, oadate);
 }
 
 // Format a timestep (seconds).  Whole-second values use H:MM:SS (matching
-// legacy SWMM GUI GetTimeString); fractional values use %g decimal notation.
-template<std::size_t N>
-static void fmt_step(char (&buf)[N], double secs) {
+// legacy SWMM GUI GetTimeString); fractional values use %.17g decimal notation.
+/**
+ * @brief Format a timestep in legacy clock or fractional-second notation.
+ *
+ * Exact whole seconds use H:MM:SS; otherwise use 17 significant digits. No range validation before
+ * numeric conversion.
+ *
+ * @param[out] buf Caller-owned N-byte character array; short capacity truncates.
+ * @param[in] secs Finite timestep seconds representable by lround and the derived int hour count;
+ *     normally nonnegative.
+ */
+template <std::size_t N> static void fmt_step(char (&buf)[N], double secs) {
     long r = std::lround(secs);
-    if (std::fabs(secs - static_cast<double>(r)) < 0.001) {
+    if (secs == static_cast<double>(r)) {
         int ss = static_cast<int>(r % 60);
         int mm = static_cast<int>((r / 60) % 60);
         int hh = static_cast<int>(r / 3600);
         std::snprintf(buf, N, "%d:%02d:%02d", hh, mm, ss);
     } else {
-        std::snprintf(buf, N, "%g", secs);
+        std::snprintf(buf, N, "%.17g", secs);
     }
 }
 
 // Format a day-of-year integer as M/D (no leading zeros, matching legacy GUI)
-template<std::size_t N>
-static void fmt_sweep(char (&buf)[N], int doy) {
+/**
+ * @brief Format a non-leap-year sweep day as month/day.
+ *
+ * Uses 2001 as the date anchor, emitting M/D without leading zeroes.
+ *
+ * @param[out] buf Caller-owned N-byte array; bounded snprintf, N>0 for termination.
+ * @param[in] doy One-based day-of-year, normally 1..365. Values >365 clamp to 365; lower values are
+ *     not clamped.
+ */
+template <std::size_t N> static void fmt_sweep(char (&buf)[N], int doy) {
     // Anchor to a non-leap year to get a stable month/day. Clamp 366 (a
     // value only the retired leap-year parse anchor could store, e.g. in a
     // GeoPackage saved before the fix) to 12/31 instead of wrapping to 1/1.
-    if (doy > 365) doy = 365;
+    if (doy > 365)
+        doy = 365;
     double dt = datetime::encodeDate(2001, 1, 1) + static_cast<double>(doy - 1);
     int y, m, d;
     datetime::decodeDate(dt, y, m, d);
@@ -163,54 +238,101 @@ static void fmt_sweep(char (&buf)[N], int doy) {
 
 // Write per-object comment lines. Multi-line comments are stored with literal
 // "\\n" (backslash + n) as separator; each part is emitted as a ;-prefixed row.
-static void write_obj_comment(FILE* f,
-                               const std::vector<std::string>& comments,
-                               std::size_t idx)
-{
-    if (idx >= comments.size() || comments[idx].empty()) return;
+/**
+ * @brief Emit a stored object description as semicolon-prefixed INP lines.
+ *
+ * No escaping or IO status propagation. Literal separator splitting preserves empty pieces; each
+ * printed piece length must fit int.
+ *
+ * @param[in,out] f Borrowed non-NULL writable FILE stream; caller owns flush/error checks/close and
+ *     serializes writes.
+ * @param[in] comments Borrowed per-object descriptions; literal backslash-n separates comment rows.
+ * @param[in] idx Object/comment index; outside the vector or an empty entry writes nothing.
+ */
+static void write_obj_comment(FILE* f, const std::vector<std::string>& comments, std::size_t idx) {
+    if (idx >= comments.size() || comments[idx].empty())
+        return;
     const std::string& c = comments[idx];
-    const char* sep = "\\n";   // literal two-character token
+    const char* sep = "\\n"; // literal two-character token
     std::size_t start = 0;
     while (start <= c.size()) {
         std::size_t end = c.find(sep, start);
-        if (end == std::string::npos) end = c.size();
-        std::fprintf(f, ";%.*s\n",
-                     static_cast<int>(end - start), c.data() + start);
-        if (end == c.size()) break;
-        start = end + 2;  // skip the two-character "\\n" token
+        if (end == std::string::npos)
+            end = c.size();
+        std::fprintf(f, ";%.*s\n", static_cast<int>(end - start), c.data() + start);
+        if (end == c.size())
+            break;
+        start = end + 2; // skip the two-character "\\n" token
     }
 }
 
 static const std::unordered_map<int, const char*> CURVE_TYPE_LABEL = {
-    {static_cast<int>(TableType::CURVE_STORAGE),   "STORAGE"},
-    {static_cast<int>(TableType::CURVE_DIVERSION),  "DIVERSION"},
-    {static_cast<int>(TableType::CURVE_RATING),     "RATING"},
-    {static_cast<int>(TableType::CURVE_SHAPE),      "SHAPE"},
-    {static_cast<int>(TableType::CURVE_CONTROL),    "CONTROL"},
-    {static_cast<int>(TableType::CURVE_TIDAL),      "TIDAL"},
-    {static_cast<int>(TableType::CURVE_WEIR),       "WEIR"},
-    {static_cast<int>(TableType::CURVE_PUMP1),      "PUMP1"},
-    {static_cast<int>(TableType::CURVE_PUMP2),      "PUMP2"},
-    {static_cast<int>(TableType::CURVE_PUMP3),      "PUMP3"},
-    {static_cast<int>(TableType::CURVE_PUMP4),      "PUMP4"},
-    {static_cast<int>(TableType::CURVE_PUMP5),      "PUMP5"},
+    {static_cast<int>(TableType::CURVE_STORAGE), "STORAGE"},
+    {static_cast<int>(TableType::CURVE_DIVERSION), "DIVERSION"},
+    {static_cast<int>(TableType::CURVE_RATING), "RATING"},
+    {static_cast<int>(TableType::CURVE_SHAPE), "SHAPE"},
+    {static_cast<int>(TableType::CURVE_CONTROL), "CONTROL"},
+    {static_cast<int>(TableType::CURVE_TIDAL), "TIDAL"},
+    {static_cast<int>(TableType::CURVE_WEIR), "WEIR"},
+    {static_cast<int>(TableType::CURVE_PUMP1), "PUMP1"},
+    {static_cast<int>(TableType::CURVE_PUMP2), "PUMP2"},
+    {static_cast<int>(TableType::CURVE_PUMP3), "PUMP3"},
+    {static_cast<int>(TableType::CURVE_PUMP4), "PUMP4"},
+    {static_cast<int>(TableType::CURVE_PUMP5), "PUMP5"},
 };
 
+/**
+ * @brief Borrow a node name for an INP reference.
+ *
+ * Valid until the corresponding model string/store changes or dies. Does not escape or quote names.
+ *
+ * @param[in] c Borrowed coherent model whose name indexes and parallel data columns are aligned.
+ * @param[in] i Stored node index; negative/out-of-range uses the positional placeholder.
+ * @return Owned-model string pointer for an existing index, otherwise static * token; do not free.
+ */
 static const char* nN(const SimulationContext& c, int i) {
-    return (i>=0 && i<c.n_nodes()) ? c.node_names.name_of(i).c_str() : "*";
+    return (i >= 0 && i < c.n_nodes()) ? c.node_names.name_of(i).c_str() : "*";
 }
+/**
+ * @brief Borrow a table name for an INP reference.
+ *
+ * Valid until the corresponding model string/store changes or dies. Does not escape or quote names.
+ *
+ * @param[in] c Borrowed coherent model whose name indexes and parallel data columns are aligned.
+ * @param[in] i Stored table index; negative/out-of-range uses the positional placeholder.
+ * @return Owned-model string pointer for an existing index, otherwise static * token; do not free.
+ */
 static const char* tN(const SimulationContext& c, int i) {
-    return (i>=0 && i<c.n_tables()) ? c.tables[i].id.c_str() : "*";
+    return (i >= 0 && i < c.n_tables()) ? c.tables[i].id.c_str() : "*";
 }
+/**
+ * @brief Borrow a pollutant name for an INP reference.
+ *
+ * Valid until the corresponding model string/store changes or dies. Does not escape or quote names.
+ *
+ * @param[in] c Borrowed coherent model whose name indexes and parallel data columns are aligned.
+ * @param[in] i Stored pollutant index; negative/out-of-range uses the positional placeholder.
+ * @return Owned-model string pointer for an existing index, otherwise static * token; do not free.
+ */
 static const char* pN(const SimulationContext& c, int i) {
-    return (i>=0 && i<c.n_pollutants()) ? c.pollutant_names.name_of(i).c_str() : "*";
+    return (i >= 0 && i < c.n_pollutants()) ? c.pollutant_names.name_of(i).c_str() : "*";
 }
 // [PATTERNS] live in their own store, NOT in ctx.tables — resolving a pattern
 // index through tN() returns whatever curve or time series happens to occupy
 // that slot, which legacy then rejects as an undefined object (ERROR 209).
+/**
+ * @brief Borrow a pattern name for an INP reference.
+ *
+ * Valid until the corresponding model string/store changes or dies. Does not escape or quote names.
+ *
+ * @param[in] c Borrowed coherent model whose name indexes and parallel data columns are aligned.
+ * @param[in] i Stored pattern index; negative/out-of-range uses the positional placeholder.
+ * @return Owned-model string pointer for an existing index, otherwise static * token; do not free.
+ */
 static const char* patN(const SimulationContext& c, int i) {
-    return (i>=0 && i<c.patterns.count())
-        ? c.patterns.names[static_cast<std::size_t>(i)].c_str() : "*";
+    return (i >= 0 && i < c.patterns.count())
+               ? c.patterns.names[static_cast<std::size_t>(i)].c_str()
+               : "*";
 }
 
 // ---------------------------------------------------------------------------
@@ -226,20 +348,43 @@ static const char* patN(const SimulationContext& c, int i) {
 // [SUBCATCHMENTS] Outlet: a node, another subcatchment, or the raw name.
 // A subcatch draining to another subcatch (or itself) has outlet_node == -1,
 // so nN() alone would emit '*' and fail reload with ERR_NAME (209).
+/**
+ * @brief Borrow an authored subcatchment outlet reference with deferred-name fallback.
+ *
+ * Pointer lifetime follows the owning model string; no escaping, resolution or ownership transfer.
+ *
+ * @param[in] c Borrowed coherent model whose name indexes and parallel data columns are aligned.
+ * @param[in] u Existing subcatchment row index with aligned core reference columns; unchecked.
+ * @return Borrowed model string chosen by valid node, then valid subcatchment, then retained
+ *     outlet_name, otherwise static * token.
+ */
 static const char* oN(const SimulationContext& c, size_t u) {
     const int n = c.subcatches.outlet_node[u];
-    if (n>=0 && n<c.n_nodes())      return c.node_names.name_of(n).c_str();
+    if (n >= 0 && n < c.n_nodes())
+        return c.node_names.name_of(n).c_str();
     const int s = c.subcatches.outlet_subcatch[u];
-    if (s>=0 && s<c.n_subcatches()) return c.subcatch_names.name_of(s).c_str();
+    if (s >= 0 && s < c.n_subcatches())
+        return c.subcatch_names.name_of(s).c_str();
     const std::string& nm = c.subcatches.outlet_name[u];
     return nm.empty() ? "*" : nm.c_str();
 }
 
 // [SUBCATCHMENTS] RainGage: gage index, else the retained gage name.
 // An unresolved gage is also a fatal ERR_NAME (209) on reload.
+/**
+ * @brief Borrow an authored subcatchment rain gage reference with deferred-name fallback.
+ *
+ * Pointer lifetime follows the owning model string; no escaping, resolution or ownership transfer.
+ *
+ * @param[in] c Borrowed coherent model whose name indexes and parallel data columns are aligned.
+ * @param[in] u Existing subcatchment row index with aligned core reference columns; unchecked.
+ * @return Borrowed model string chosen by valid gage index, then nonempty retained gage_name,
+ *     otherwise static * token.
+ */
 static const char* sgN(const SimulationContext& c, size_t u) {
     const int g = c.subcatches.gage[u];
-    if (g>=0 && g<c.n_gages()) return c.gage_names.name_of(g).c_str();
+    if (g >= 0 && g < c.n_gages())
+        return c.gage_names.name_of(g).c_str();
     if (u < c.subcatches.gage_name.size() && !c.subcatches.gage_name[u].empty())
         return c.subcatches.gage_name[u].c_str();
     return "*";
@@ -248,36 +393,83 @@ static const char* sgN(const SimulationContext& c, size_t u) {
 // [SUBCATCHMENTS] Snowpack: pack index, else the retained pack name.
 // '*' is a legal positional placeholder here (CatchmentHandler), so an
 // unresolved name is data loss rather than a reload failure.
+/**
+ * @brief Borrow an authored subcatchment snowpack reference with deferred-name fallback.
+ *
+ * Pointer lifetime follows the owning model string; no escaping, resolution or ownership transfer.
+ *
+ * @param[in] c Borrowed coherent model whose name indexes and parallel data columns are aligned.
+ * @param[in] u Existing subcatchment row index with aligned core reference columns; unchecked.
+ * @return Borrowed model string chosen by valid snowpack index, then nonempty retained
+ *     snowpack_name, otherwise static * token.
+ */
 static const char* sspN(const SimulationContext& c, size_t u) {
     const int s = c.subcatches.snowpack[u];
-    if (s>=0 && s<static_cast<int>(c.snowpack_names.size()))
+    if (s >= 0 && s < static_cast<int>(c.snowpack_names.size()))
         return c.snowpack_names.name_of(s).c_str();
-    if (u < c.subcatches.snowpack_name.size() &&
-        !c.subcatches.snowpack_name[u].empty())
+    if (u < c.subcatches.snowpack_name.size() && !c.subcatches.snowpack_name[u].empty())
         return c.subcatches.snowpack_name[u].c_str();
     return "*";
 }
 
+/**
+ * @brief Translate a cross-section ordinal to its INP token.
+ *
+ * @param[in] s Cross-section ordinal; accepts 0..25.
+ * @return Static canonical token, otherwise CIRCULAR fallback; never free.
+ */
 static const char* xsName(int s) {
     // Indexed by LinkData::XsectShape enum values
     static const char* n[] = {
-        "CIRCULAR","FILLED_CIRCULAR","RECT_CLOSED","RECT_OPEN",
-        "TRAPEZOIDAL","TRIANGULAR","PARABOLIC","POWER","MODBASKETHANDLE",
-        "EGG","HORSESHOE","GOTHIC","CATENARY","SEMIELLIPTICAL",
-        "BASKETHANDLE","SEMICIRCULAR","RECT_TRIANGULAR","RECT_ROUND",
-        "HORIZ_ELLIPSE","VERT_ELLIPSE","ARCH",
-        "IRREGULAR","CUSTOM","FORCE_MAIN","STREET","DUMMY"
-    };
-    return (s>=0&&s<=25) ? n[s] : "CIRCULAR";
+        "CIRCULAR",     "FILLED_CIRCULAR", "RECT_CLOSED", "RECT_OPEN",       "TRAPEZOIDAL",
+        "TRIANGULAR",   "PARABOLIC",       "POWER",       "MODBASKETHANDLE", "EGG",
+        "HORSESHOE",    "GOTHIC",          "CATENARY",    "SEMIELLIPTICAL",  "BASKETHANDLE",
+        "SEMICIRCULAR", "RECT_TRIANGULAR", "RECT_ROUND",  "HORIZ_ELLIPSE",   "VERT_ELLIPSE",
+        "ARCH",         "IRREGULAR",       "CUSTOM",      "FORCE_MAIN",      "STREET",
+        "DUMMY"};
+    return (s >= 0 && s <= 25) ? n[s] : "CIRCULAR";
 }
+/**
+ * @brief Translate an outfall type to its INP token.
+ *
+ * @param[in] t Outfall enum; unknown values share FREE fallback.
+ * @return Static NORMAL/FIXED/TIDAL/TIMESERIES/FREE token; never free.
+ */
 static const char* ofName(OutfallType t) {
-    switch(t){case OutfallType::NORMAL:return"NORMAL";case OutfallType::FIXED:return"FIXED";
-    case OutfallType::TIDAL:return"TIDAL";case OutfallType::TIMESERIES:return"TIMESERIES";default:return"FREE";}
+    switch (t) {
+    case OutfallType::NORMAL:
+        return "NORMAL";
+    case OutfallType::FIXED:
+        return "FIXED";
+    case OutfallType::TIDAL:
+        return "TIDAL";
+    case OutfallType::TIMESERIES:
+        return "TIMESERIES";
+    default:
+        return "FREE";
+    }
 }
+/**
+ * @brief Test whether the node base store contains a requested type.
+ *
+ * @param[in] c Borrowed coherent model whose name indexes and parallel data columns are aligned.
+ * @param[in] t Node type compared directly without enum validation.
+ * @return True on the first matching type among n_nodes() entries.
+ */
 static bool hasNT(const SimulationContext& c, NodeType t) {
-    for(int j=0;j<c.n_nodes();++j) if(c.nodes.type[static_cast<size_t>(j)]==t) return true; return false;
+    for (int j = 0; j < c.n_nodes(); ++j)
+        if (c.nodes.type[static_cast<size_t>(j)] == t)
+            return true;
+    return false;
 }
 // Virtual junctions are JUNCTION-typed but emit into [VIRTUAL_JUNCTIONS], not [JUNCTIONS].
+/**
+ * @brief Check an optional per-node virtual-junction flag.
+ *
+ * @param[in] c Borrowed coherent model whose name indexes and parallel data columns are aligned.
+ * @param[in] u Node index; beyond the optional flag vector returns false.
+ * @return True when is_virtual[u] exists and is nonzero; does not require JUNCTION type.
+ */
 static bool isVirtualNode(const SimulationContext& c, size_t u) {
     return u < c.nodes.is_virtual.size() && c.nodes.is_virtual[u] != 0;
 }
@@ -285,48 +477,115 @@ static bool isVirtualNode(const SimulationContext& c, size_t u) {
 // [INLET_JUNCTIONS] instead. A node flagged is_inlet whose usage row is missing
 // or unresolved cannot be written in that grammar, so it falls back to
 // [VIRTUAL_JUNCTIONS] (with a warning) rather than disappearing.
+/**
+ * @brief Find a node-hosted inlet usage that can be serialized.
+ *
+ * Requires aligned usage columns. Does not validate complete approach topology, inlet type
+ * compatibility, placement or mesh coupling.
+ *
+ * @param[in] c Borrowed coherent model whose name indexes and parallel data columns are aligned.
+ * @param[in] u Node index; beyond is_inlet or an unset flag refuses immediately.
+ * @return First node-host usage row with valid design/capture indices, otherwise -1.
+ */
 static int inletUsageRow(const SimulationContext& c, size_t u) {
-    if(u>=c.nodes.is_inlet.size()||!c.nodes.is_inlet[u]) return -1;
-    const int r=c.inlet_usages.find_by_node_host(static_cast<int>(u));
-    if(r<0) return -1;
-    const auto ur=static_cast<size_t>(r);
-    const int di=c.inlet_usages.design_index[ur];
-    const int ni=c.inlet_usages.node_index[ur];
-    if(di<0||di>=c.inlets.count()||ni<0||ni>=c.n_nodes()) return -1;
+    if (u >= c.nodes.is_inlet.size() || !c.nodes.is_inlet[u])
+        return -1;
+    const int r = c.inlet_usages.find_by_node_host(static_cast<int>(u));
+    if (r < 0)
+        return -1;
+    const auto ur = static_cast<size_t>(r);
+    const int di = c.inlet_usages.design_index[ur];
+    const int ni = c.inlet_usages.node_index[ur];
+    if (di < 0 || di >= c.inlets.count() || ni < 0 || ni >= c.n_nodes())
+        return -1;
     return r;
 }
+/**
+ * @brief Test whether a node has a serializable inlet-junction usage.
+ *
+ * @param[in] c Borrowed coherent model whose name indexes and parallel data columns are aligned.
+ * @param[in] u Node index examined through inletUsageRow().
+ * @return True when inletUsageRow(c,u)>=0; flag alone is insufficient.
+ */
 static bool isInletNode(const SimulationContext& c, size_t u) {
-    return inletUsageRow(c,u)>=0;
+    return inletUsageRow(c, u) >= 0;
 }
+/**
+ * @brief Test whether the model contains an ordinary JUNCTION row.
+ *
+ * @param[in] c Borrowed coherent model whose name indexes and parallel data columns are aligned.
+ * @return True for JUNCTION type without a virtual flag; linear scan.
+ */
 static bool hasRegularJunction(const SimulationContext& c) {
-    for(int j=0;j<c.n_nodes();++j){auto u=static_cast<size_t>(j);
-        if(c.nodes.type[u]==NodeType::JUNCTION && !isVirtualNode(c,u)) return true;}
+    for (int j = 0; j < c.n_nodes(); ++j) {
+        auto u = static_cast<size_t>(j);
+        if (c.nodes.type[u] == NodeType::JUNCTION && !isVirtualNode(c, u))
+            return true;
+    }
     return false;
 }
+/**
+ * @brief Test whether the model contains a virtual row outside inlet-junction serialization.
+ *
+ * @param[in] c Borrowed coherent model whose name indexes and parallel data columns are aligned.
+ * @return True for a virtual flag with no valid serializable inlet usage.
+ */
 static bool hasVirtualJunction(const SimulationContext& c) {
-    for(int j=0;j<c.n_nodes();++j){auto u=static_cast<size_t>(j);
-        if(isVirtualNode(c,u) && !isInletNode(c,u)) return true;}
+    for (int j = 0; j < c.n_nodes(); ++j) {
+        auto u = static_cast<size_t>(j);
+        if (isVirtualNode(c, u) && !isInletNode(c, u))
+            return true;
+    }
     return false;
 }
+/**
+ * @brief Test whether any model node has a valid serializable inlet usage.
+ *
+ * @param[in] c Borrowed coherent model whose name indexes and parallel data columns are aligned.
+ * @return True on the first isInletNode match; scans all registered nodes.
+ */
 static bool hasInletJunction(const SimulationContext& c) {
-    for(int j=0;j<c.n_nodes();++j) if(isInletNode(c,static_cast<size_t>(j))) return true;
+    for (int j = 0; j < c.n_nodes(); ++j)
+        if (isInletNode(c, static_cast<size_t>(j)))
+            return true;
     return false;
 }
 // Placement words, [INLET_USAGE] token 9 / [INLET_JUNCTIONS] token 11.
-static const char* const kInletPlacementWords[]={"AUTOMATIC","ON_GRADE","ON_SAG"};
+static const char* const kInletPlacementWords[] = {"AUTOMATIC", "ON_GRADE", "ON_SAG"};
 // Curb-opening throat words, legacy inlet.c ThroatAngleWords order.
-static const char* const kInletThroatWords[]={"HORIZONTAL","INCLINED","VERTICAL"};
+static const char* const kInletThroatWords[] = {"HORIZONTAL", "INCLINED", "VERTICAL"};
 // True when any virtual junction carries a rendering rim depth, which is what
 // widens [VIRTUAL_JUNCTIONS] to its optional third column. Models without one
 // keep writing the two-column section byte-for-byte.
+/**
+ * @brief Determine whether virtual-junction output needs a rim-depth column.
+ *
+ * Models with no such row retain the two-column virtual-junction grammar.
+ *
+ * @param[in] c Borrowed coherent model whose name indexes and parallel data columns are aligned.
+ * @return True for a non-inlet virtual node with an existing positive rim_depth.
+ */
 static bool hasVirtualJunctionRim(const SimulationContext& c) {
-    for(int j=0;j<c.n_nodes();++j){auto u=static_cast<size_t>(j);
-        if(isVirtualNode(c,u) && !isInletNode(c,u) &&
-           u<c.nodes.rim_depth.size() && c.nodes.rim_depth[u]>0.0) return true;}
+    for (int j = 0; j < c.n_nodes(); ++j) {
+        auto u = static_cast<size_t>(j);
+        if (isVirtualNode(c, u) && !isInletNode(c, u) && u < c.nodes.rim_depth.size() &&
+            c.nodes.rim_depth[u] > 0.0)
+            return true;
+    }
     return false;
 }
+/**
+ * @brief Test whether the link base store contains a requested type.
+ *
+ * @param[in] c Borrowed coherent model whose name indexes and parallel data columns are aligned.
+ * @param[in] t Link type compared directly without enum validation.
+ * @return True on the first matching type among n_links() entries.
+ */
 static bool hasLT(const SimulationContext& c, LinkType t) {
-    for(int j=0;j<c.n_links();++j) if(c.links.type[static_cast<size_t>(j)]==t) return true; return false;
+    for (int j = 0; j < c.n_links(); ++j)
+        if (c.links.type[static_cast<size_t>(j)] == t)
+            return true;
+    return false;
 }
 
 // Slice IO-4 helper — pick the path token to emit for an external-file slot.
@@ -343,11 +602,24 @@ static bool hasLT(const SimulationContext& c, LinkType t) {
 //
 // Returns the token (without surrounding quotes) to emit inside the .inp.
 // Empty return means "don't emit the row".
-static std::string emit_path_token(const FilePathPair& slot,
-                                    const std::string&  dst_dir,
-                                    bool                force_abs,
-                                    std::vector<std::string>* warnings_out) {
-    if (slot.absolute.empty() && slot.original.empty()) return {};
+/**
+ * @brief Choose an unquoted external-file reference for a destination directory.
+ *
+ * Unresolved relative originals pass through because there is no source anchor. Otherwise uses
+ * makeRelative against dst_dir and may fall back to absolute; no file access, mutation or copying
+ * of referenced content.
+ *
+ * @param[in] slot Borrowed original/resolved absolute path pair; both empty omits the reference.
+ * @param[in] dst_dir Destination directory anchor; empty preserves original token where possible.
+ * @param[in] force_abs Prefer resolved absolute path, falling back to original, without rebasing.
+ * @param[in,out] warnings_out Optional append-only diagnostics for makeRelative fallbacks; NULL
+ *     discards warnings.
+ * @return Owned path token, possibly empty; caller quotes it for the target grammar.
+ */
+static std::string emit_path_token(const FilePathPair& slot, const std::string& dst_dir,
+                                   bool force_abs, std::vector<std::string>* warnings_out) {
+    if (slot.absolute.empty() && slot.original.empty())
+        return {};
 
     if (force_abs) {
         // Power-user opt-out — emit absolute form verbatim. Prefer the
@@ -368,16 +640,13 @@ static std::string emit_path_token(const FilePathPair& slot,
     // it; otherwise treat it as already relative to the source `.inp`
     // and pass through unchanged — the writer has no anchor to rebase
     // against.
-    const std::string& target = !slot.absolute.empty() ? slot.absolute
-                                                       : slot.original;
+    const std::string& target = !slot.absolute.empty() ? slot.absolute : slot.original;
     if (slot.absolute.empty() && !io::isAbsolutePath(slot.original)) {
         return slot.original;
     }
 
     auto r = io::makeRelative(target, dst_dir);
-    if (warnings_out
-        && r.classification != io::PathClass::Relative
-        && !r.warning.empty()) {
+    if (warnings_out && r.classification != io::PathClass::Relative && !r.warning.empty()) {
         warnings_out->push_back(r.warning);
     }
     return r.path;
@@ -410,13 +679,24 @@ static std::string emit_path_token(const FilePathPair& slot,
 
 // [2D_BOUNDARY_CONDITIONS] grammar token for a pending row (TS_* spellings
 // chosen when the parameter is a timeseries name, so type round-trips).
+/**
+ * @brief Choose the grammar token preserving a pending boundary condition kind.
+ *
+ * @param[in] r Borrowed row; bc_type interpreted with 1 normal,2 stage,3 flow,4 rating.
+ * @return Static token; stage/flow use TS_ variants when name is nonempty, unknown type uses WALL.
+ */
 static const char* bc2d_type_token(const twoD::PendingBoundaryRow& r) {
     switch (r.bc_type) {
-        case 1:  return "NORMAL_FLOW";
-        case 2:  return r.name.empty() ? "SPECIFIED_STAGE" : "TS_STAGE";
-        case 3:  return r.name.empty() ? "SPECIFIED_FLOW"  : "TS_FLOW";
-        case 4:  return "RATING_CURVE";
-        default: return "WALL";
+    case 1:
+        return "NORMAL_FLOW";
+    case 2:
+        return r.name.empty() ? "SPECIFIED_STAGE" : "TS_STAGE";
+    case 3:
+        return r.name.empty() ? "SPECIFIED_FLOW" : "TS_FLOW";
+    case 4:
+        return "RATING_CURVE";
+    default:
+        return "WALL";
     }
 }
 
@@ -439,9 +719,23 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx);
 // (§5.5.3): its columns are positional (V1 V2 V3 MANNINGS_N [INIT_DEPTH]
 // [TAG], a numeric 5th token meaning INIT_DEPTH) and appending would break
 // hand-authored meshes.
+/**
+ * @brief Emit 2D infiltration options/defaults/cell overrides from authored state.
+ *
+ * No-op without infiltration attachment. Echoes authored project-unit parameters, trims unused
+ * method columns and writes only explicitly authored destinations; internal cell indices become
+ * one-based. Does not mutate configuration, validate all rows or report individual stream write
+ * failures.
+ *
+ * @param[in,out] f Borrowed non-NULL writable FILE stream; caller owns flush/error checks/close and
+ *     serializes writes.
+ * @param[in] ctx Borrowed coherent authored model and nonowning twod_io attachments; caller keeps
+ *     all referenced arrays/objects alive and aligned.
+ */
 static void emit2DInfilSections(FILE* f, const SimulationContext& ctx) {
     const twoD::Infil2D* infil = ctx.twod_io.infil;
-    if (!infil) return;
+    if (!infil)
+        return;
 
     // METHOD [P1..Pn] DEST. Parameter columns are POSITIONAL and in PROJECT
     // UNITS (stored verbatim; Infil2D::resolve converts). Trailing columns the
@@ -451,13 +745,16 @@ static void emit2DInfilSections(FILE* f, const SimulationContext& ctx) {
     // columns after it keep their positions.
     auto emit_row = [f](const twoD::Infil2DRow& row) {
         std::fprintf(f, " %-20s", twoD::infil2DMethodToken(row));
-        if (!row.has_method) { std::fprintf(f, "\n"); return; }
+        if (!row.has_method) {
+            std::fprintf(f, "\n");
+            return;
+        }
         const int np = twoD::infil2DParamCount(row.method);
         for (int k = 0; k < np && k < twoD::kInfil2DMaxParams; ++k) {
             if (row.method == InfilModel::CURVE_NUM && k == 1)
                 std::fprintf(f, " %-12s", "-");
             else
-                std::fprintf(f, " %-12.12g", row.p[k]);
+                std::fprintf(f, " %.17g", row.p[k]);
         }
         // E2: DEST only when the row spelled it; unspelled rows follow
         // [2D_OPTIONS] INFIL_DESTINATION and must not freeze a copy here.
@@ -477,8 +774,8 @@ static void emit2DInfilSections(FILE* f, const SimulationContext& ctx) {
 
     if (!infil->defaults().empty()) {
         sec(f, "2D_INFILTRATION_DEFAULTS");
-        std::fprintf(f, ";;%-14s %-20s %-12s %-12s %-12s %-12s %-12s %s\n",
-                     "TAG", "METHOD", "P1", "P2", "P3", "P4", "P5", "DEST");
+        std::fprintf(f, ";;%-14s %-20s %-12s %-12s %-12s %-12s %-12s %s\n", "TAG", "METHOD", "P1",
+                     "P2", "P3", "P4", "P5", "DEST");
         for (const auto& d : infil->defaults()) {
             std::fprintf(f, "%-16s", d.tag.c_str());
             emit_row(d.row);
@@ -487,8 +784,8 @@ static void emit2DInfilSections(FILE* f, const SimulationContext& ctx) {
 
     if (!infil->overrides().empty()) {
         sec(f, "2D_INFILTRATION");
-        std::fprintf(f, ";;%-14s %-20s %-12s %-12s %-12s %-12s %-12s %s\n",
-                     "CELL", "METHOD", "P1", "P2", "P3", "P4", "P5", "DEST");
+        std::fprintf(f, ";;%-14s %-20s %-12s %-12s %-12s %-12s %-12s %s\n", "CELL", "METHOD", "P1",
+                     "P2", "P3", "P4", "P5", "DEST");
         for (const auto& o : infil->overrides()) {
             // CELL is 1-BASED in the file (tri is 0-based internally).
             std::fprintf(f, "%-16d", o.tri + 1);
@@ -509,15 +806,29 @@ static void emit2DInfilSections(FILE* f, const SimulationContext& ctx) {
 // ---- S7 (2026-09-19) — [2D_COVERAGES] / [2D_LOADINGS] / [2D_CURB_LENGTH] ----
 // Echoed with the scope token they were authored with (GLOBAL < TAG < CELL
 // is the reader's ladder, not a writer expansion).
+/**
+ * @brief Emit surface quality coverage/loading/curb rows from authored state.
+ *
+ * No-op without authored surface-quality data. Retains scope tokens and authored percentage,
+ * buildup and length values rather than expanding precedence. Does not mutate configuration,
+ * validate all rows or report individual stream write failures.
+ *
+ * @param[in,out] f Borrowed non-NULL writable FILE stream; caller owns flush/error checks/close and
+ *     serializes writes.
+ * @param[in] ctx Borrowed coherent authored model and nonowning twod_io attachments; caller keeps
+ *     all referenced arrays/objects alive and aligned.
+ */
 static void emitSurfaceQualitySections(FILE* f, const SimulationContext& ctx) {
     const twoD::SurfaceQuality2D* sq = ctx.twod_io.surface_quality;
-    if (!sq || !sq->authored()) return;
+    if (!sq || !sq->authored())
+        return;
     if (!sq->coverage_rows.empty()) {
         sec(f, "2D_COVERAGES");
         std::fprintf(f, ";;%-14s %-16s %-8s ...\n", "Scope", "LandUse", "Percent");
         for (const auto& r : sq->coverage_rows) {
             std::fprintf(f, "%-16s", twoD::formatSqScope(r.key).c_str());
-            for (const auto& u : r.uses) std::fprintf(f, " %-16s %8.3f", u.first.c_str(), u.second);
+            for (const auto& u : r.uses)
+                std::fprintf(f, " %-16s %.17g", u.first.c_str(), u.second);
             std::fprintf(f, "\n");
         }
     }
@@ -525,33 +836,47 @@ static void emitSurfaceQualitySections(FILE* f, const SimulationContext& ctx) {
         sec(f, "2D_LOADINGS");
         std::fprintf(f, ";;%-14s %-16s %-10s\n", "Scope", "Species", "Buildup");
         for (const auto& r : sq->loading_rows)
-            std::fprintf(f, "%-16s %-16s %10.4f\n", twoD::formatSqScope(r.key).c_str(),
+            std::fprintf(f, "%-16s %-16s %.17g\n", twoD::formatSqScope(r.key).c_str(),
                          r.species.c_str(), r.value);
     }
     if (!sq->curb_rows.empty()) {
         sec(f, "2D_CURB_LENGTH");
         std::fprintf(f, ";;%-14s %-10s\n", "Scope", "Length");
         for (const auto& r : sq->curb_rows)
-            std::fprintf(f, "%-16s %10.4f\n", twoD::formatSqScope(r.key).c_str(), r.length);
+            std::fprintf(f, "%-16s %.17g\n", twoD::formatSqScope(r.key).c_str(), r.length);
     }
 }
 
+/**
+ * @brief Emit groundwater transport/chemistry/source authoring sections from authored state.
+ *
+ * No-op without nonempty GW data. Retains authored scopes, species units, layer/edge conventions
+ * and sidecar FILE reference; does not inline sidecar-owned initial rows or rebase that path.
+ * Fixed-size scope/location buffers can truncate long tag/location text. Does not mutate
+ * configuration, validate all rows or report individual stream write failures.
+ *
+ * @param[in,out] f Borrowed non-NULL writable FILE stream; caller owns flush/error checks/close and
+ *     serializes writes.
+ * @param[in] ctx Borrowed coherent authored model and nonowning twod_io attachments; caller keeps
+ *     all referenced arrays/objects alive and aligned.
+ */
 static void emitGwTransportSections(FILE* f, const SimulationContext& ctx) {
     const twoD::GwTransportData* gw = ctx.twod_io.gw;
-    if (!gw || gw->empty()) return;
+    if (!gw || gw->empty())
+        return;
 
-    auto scope_col = [](const twoD::GwScope s, const std::string& tag, int cell,
-                        char* buf, std::size_t n) {
+    auto scope_col = [](const twoD::GwScope s, const std::string& tag, int cell, char* buf,
+                        std::size_t n) {
         switch (s) {
-            case twoD::GwScope::TAG:
-                std::snprintf(buf, n, "TAG %s", tag.c_str());
-                break;
-            case twoD::GwScope::CELL:
-                std::snprintf(buf, n, "CELL %d", cell + 1);   // 1-based in file
-                break;
-            default:
-                std::snprintf(buf, n, "*");
-                break;
+        case twoD::GwScope::TAG:
+            std::snprintf(buf, n, "TAG %s", tag.c_str());
+            break;
+        case twoD::GwScope::CELL:
+            std::snprintf(buf, n, "CELL %d", cell + 1); // 1-based in file
+            break;
+        default:
+            std::snprintf(buf, n, "*");
+            break;
         }
     };
     char sc[128];
@@ -562,18 +887,20 @@ static void emitGwTransportSections(FILE* f, const SimulationContext& ctx) {
     {
         const auto& o = gw->options;
         sec(f, "GW_TRANSPORT_OPTIONS");
-        if(o.unsat_transport!="BULK")std::fprintf(f,"%-24s %s\n","UNSAT_TRANSPORT",o.unsat_transport.c_str());
+        if (o.unsat_transport != "BULK")
+            std::fprintf(f, "%-24s %s\n", "UNSAT_TRANSPORT", o.unsat_transport.c_str());
         std::fprintf(f, ";;%-22s %s\n", "Parameter", "Value");
-        std::fprintf(f, "%-24s %s\n", "TRANSPORT_POLLUTANTS",  o.transport_pollutants  ? "YES" : "NO");
-        std::fprintf(f, "%-24s %s\n", "TRANSPORT_MSX",         o.transport_msx         ? "YES" : "NO");
-        std::fprintf(f, "%-24s %s\n", "TRANSPORT_AGE",         o.transport_age         ? "YES" : "NO");
-        std::fprintf(f, "%-24s %s\n", "TRANSPORT_TEMPERATURE", o.transport_temperature ? "YES" : "NO");
-        std::fprintf(f, "%-24s %s\n", "DISPERSION",            o.dispersion ? "YES" : "NO");
-        if(o.thermal_authored.count("CONDUCTION"))std::fprintf(f, "%-24s %s\n", "CONDUCTION", o.conduction ? "YES" : "NO");
-        std::fprintf(f, "%-24s %s%s%s\n", "SURFACE_THERMAL_BC",
-                     o.surface_thermal_bc.c_str(),
-                     o.surface_thermal_arg.empty() ? "" : " ",
-                     o.surface_thermal_arg.c_str());
+        std::fprintf(f, "%-24s %s\n", "TRANSPORT_POLLUTANTS",
+                     o.transport_pollutants ? "YES" : "NO");
+        std::fprintf(f, "%-24s %s\n", "TRANSPORT_MSX", o.transport_msx ? "YES" : "NO");
+        std::fprintf(f, "%-24s %s\n", "TRANSPORT_AGE", o.transport_age ? "YES" : "NO");
+        std::fprintf(f, "%-24s %s\n", "TRANSPORT_TEMPERATURE",
+                     o.transport_temperature ? "YES" : "NO");
+        std::fprintf(f, "%-24s %s\n", "DISPERSION", o.dispersion ? "YES" : "NO");
+        if (o.thermal_authored.count("CONDUCTION"))
+            std::fprintf(f, "%-24s %s\n", "CONDUCTION", o.conduction ? "YES" : "NO");
+        std::fprintf(f, "%-24s %s%s%s\n", "SURFACE_THERMAL_BC", o.surface_thermal_bc.c_str(),
+                     o.surface_thermal_arg.empty() ? "" : " ", o.surface_thermal_arg.c_str());
         // Every DEEP_THERMAL_BC kind carries an argument (a flux, a
         // temperature or a series name), so an empty one means the deck never
         // authored the key. Writing the bare default kind would emit
@@ -582,93 +909,99 @@ static void emitGwTransportSections(FILE* f, const SimulationContext& ctx) {
         if (!o.deep_thermal_arg.empty()) {
             if (o.deep_depth > 0.0)
                 std::fprintf(f, "%-24s %s %s DEPTH %.17g\n", "DEEP_THERMAL_BC",
-                             o.deep_thermal_bc.c_str(),
-                             o.deep_thermal_arg.c_str(), o.deep_depth);
+                             o.deep_thermal_bc.c_str(), o.deep_thermal_arg.c_str(), o.deep_depth);
             else
-                std::fprintf(f, "%-24s %s %s\n", "DEEP_THERMAL_BC",
-                             o.deep_thermal_bc.c_str(),
+                std::fprintf(f, "%-24s %s %s\n", "DEEP_THERMAL_BC", o.deep_thermal_bc.c_str(),
                              o.deep_thermal_arg.c_str());
         }
-        if(o.thermal_authored.count("THERMAL_MIXING"))std::fprintf(f, "%-24s %s\n", "THERMAL_MIXING", o.thermal_mixing.c_str());
-        if(o.deep_thermal_bc=="ADIABATIC")std::fprintf(f,"%-24s ADIABATIC\n","DEEP_THERMAL_BC");
-        if(o.thermal_authored.count("THERMAL_MODEL"))std::fprintf(f,"%-24s %s\n","THERMAL_MODEL",o.thermal_model.c_str());
-        if(o.thermal_authored.count("THERMAL_LAYERS"))std::fprintf(f,"%-24s %d\n","THERMAL_LAYERS",o.thermal_layers);
-        if(o.thermal_authored.count("LATERAL_CONDUCTION"))std::fprintf(f,"%-24s %s\n","LATERAL_CONDUCTION",o.lateral_conduction?"YES":"NO");
-        if(o.thermal_authored.count("SOIL_ET_HEAT"))std::fprintf(f,"%-24s %s\n","SOIL_ET_HEAT",o.soil_et_heat.c_str());
-        for(const auto* key:{"THERMAL_MAX_STEP","WATER_THERMAL_CONDUCTIVITY","AIR_THERMAL_CONDUCTIVITY","SURFACE_THERMAL_RESISTANCE"})
-            if(o.thermal_authored.count(key)) {
-                const double value=std::strcmp(key,"THERMAL_MAX_STEP")==0?o.thermal_max_step:
-                    std::strcmp(key,"WATER_THERMAL_CONDUCTIVITY")==0?o.water_conductivity:
-                    std::strcmp(key,"AIR_THERMAL_CONDUCTIVITY")==0?o.air_conductivity:o.surface_resistance;
-                std::fprintf(f,"%-24s %.17g\n",key,value);
+        if (o.thermal_authored.count("THERMAL_MIXING"))
+            std::fprintf(f, "%-24s %s\n", "THERMAL_MIXING", o.thermal_mixing.c_str());
+        if (o.deep_thermal_bc == "ADIABATIC")
+            std::fprintf(f, "%-24s ADIABATIC\n", "DEEP_THERMAL_BC");
+        if (o.thermal_authored.count("THERMAL_MODEL"))
+            std::fprintf(f, "%-24s %s\n", "THERMAL_MODEL", o.thermal_model.c_str());
+        if (o.thermal_authored.count("THERMAL_LAYERS"))
+            std::fprintf(f, "%-24s %d\n", "THERMAL_LAYERS", o.thermal_layers);
+        if (o.thermal_authored.count("LATERAL_CONDUCTION"))
+            std::fprintf(f, "%-24s %s\n", "LATERAL_CONDUCTION",
+                         o.lateral_conduction ? "YES" : "NO");
+        if (o.thermal_authored.count("SOIL_ET_HEAT"))
+            std::fprintf(f, "%-24s %s\n", "SOIL_ET_HEAT", o.soil_et_heat.c_str());
+        for (const auto* key : {"THERMAL_MAX_STEP", "WATER_THERMAL_CONDUCTIVITY",
+                                "AIR_THERMAL_CONDUCTIVITY", "SURFACE_THERMAL_RESISTANCE"})
+            if (o.thermal_authored.count(key)) {
+                const double value =
+                    std::strcmp(key, "THERMAL_MAX_STEP") == 0             ? o.thermal_max_step
+                    : std::strcmp(key, "WATER_THERMAL_CONDUCTIVITY") == 0 ? o.water_conductivity
+                    : std::strcmp(key, "AIR_THERMAL_CONDUCTIVITY") == 0   ? o.air_conductivity
+                                                                          : o.surface_resistance;
+                std::fprintf(f, "%-24s %.17g\n", key, value);
             }
         std::fprintf(f, "%-24s %.17g\n", "C_DIFF", o.c_diff);
     }
 
     if (!gw->params.empty()) {
         sec(f, "GW_TRANSPORT_PARAMS");
-        std::fprintf(f, ";;%-14s %-9s %-7s %-9s %-7s %-8s %-8s %-9s %-9s %s\n",
-                     "Scope", "rho_s", "c_s", "lambda_s", "a_s", "alpha_L",
-                     "alpha_T", "D_m", "D_v", "geo_flux");
+        std::fprintf(f, ";;%-14s %-9s %-7s %-9s %-7s %-8s %-8s %-9s %-9s %s\n", "Scope", "rho_s",
+                     "c_s", "lambda_s", "a_s", "alpha_L", "alpha_T", "D_m", "D_v", "geo_flux");
         for (const auto& r : gw->params) {
             scope_col(r.scope, r.tag, r.cell, sc, sizeof sc);
             std::fprintf(f,
-                "%-16s %-9.17g %-7.17g %-9.17g %-7.17g %-8.17g %-8.17g "
-                "%-9.17g %-9.17g %.17g\n",
-                sc, r.rho_s, r.c_s, r.lambda_s, r.a_s, r.alpha_L, r.alpha_T,
-                r.D_m, r.D_v, r.geo_flux);
+                         "%-16s %.17g %.17g %.17g %.17g %.17g %.17g "
+                         "%.17g %.17g %.17g\n",
+                         sc, r.rho_s, r.c_s, r.lambda_s, r.a_s, r.alpha_L, r.alpha_T, r.D_m, r.D_v,
+                         r.geo_flux);
         }
     }
 
     if (!gw->sorption.empty()) {
         sec(f, "GW_SORPTION");
-        std::fprintf(f, ";;%-14s %-16s %-12s %s\n", "Scope", "Species",
-                     "Kd(L/kg)", "Decay(1/d)");
+        std::fprintf(f, ";;%-14s %-16s %-12s %s\n", "Scope", "Species", "Kd(L/kg)", "Decay(1/d)");
         for (const auto& r : gw->sorption) {
             scope_col(r.scope, r.tag, r.cell, sc, sizeof sc);
             if (r.decay >= 0.0)
-                std::fprintf(f, "%-16s %-16s %-12.17g %.17g\n", sc,
-                             r.species.c_str(), r.kd, r.decay);
+                std::fprintf(f, "%-16s %-16s %.17g %.17g\n", sc, r.species.c_str(), r.kd,
+                             r.decay);
             else
-                std::fprintf(f, "%-16s %-16s %-12.17g -\n", sc,
-                             r.species.c_str(), r.kd);
+                std::fprintf(f, "%-16s %-16s %.17g -\n", sc, r.species.c_str(), r.kd);
         }
     }
 
     {
         bool any_inline = false;
         for (const auto& r : gw->initial_quality)
-            if (r.layer != -2) { any_inline = true; break; }
+            if (r.layer != -2) {
+                any_inline = true;
+                break;
+            }
         if (any_inline || !gw->initial_quality_file.empty()) {
             sec(f, "GW_INITIAL_QUALITY");
             if (!gw->initial_quality_file.empty())
-                std::fprintf(f, "%-16s %s\n", "FILE",
-                             quote_path(gw->initial_quality_file).c_str());
-            std::fprintf(f, ";;%-14s %-14s %-16s %s\n", "Scope", "Zone",
-                         "Species", "Value");
+                std::fprintf(f, "%-16s %s\n", "FILE", quote_path(gw->initial_quality_file).c_str());
+            std::fprintf(f, ";;%-14s %-14s %-16s %s\n", "Scope", "Zone", "Species", "Value");
             for (const auto& r : gw->initial_quality) {
-                if (r.layer == -2) continue;   // the FILE's row
+                if (r.layer == -2)
+                    continue; // the FILE's row
                 scope_col(r.scope, r.tag, r.cell, sc, sizeof sc);
                 char zone[32];
                 if (r.zone == twoD::GwZone::LAYER)
                     std::snprintf(zone, sizeof zone, "LAYER %d", r.layer);
                 else
                     std::snprintf(zone, sizeof zone, "%s", twoD::gwZoneToken(r.zone));
-                std::fprintf(f, "%-16s %-14s %-16s %.17g\n", sc, zone,
-                             r.species.c_str(), r.value);
+                std::fprintf(f, "%-16s %-14s %-16s %.17g\n", sc, zone, r.species.c_str(), r.value);
             }
         }
     }
 
     if (!gw->boundary_quality.empty()) {
         sec(f, "GW_BOUNDARY_QUALITY");
-        std::fprintf(f, ";;%-6s %-6s %-16s %-10s %s\n", "Cell", "Edge",
-                     "Species", "Kind", "Value/Series");
+        std::fprintf(f, ";;%-6s %-6s %-16s %-10s %s\n", "Cell", "Edge", "Species", "Kind",
+                     "Value/Series");
         for (const auto& r : gw->boundary_quality) {
             // CELL 1-based, EDGE 0-based (0..nv-1 of its own cell).
             if (!r.ts_name.empty())
-                std::fprintf(f, "%-8d %-6d %-16s %-10s %s\n", r.cell + 1, r.edge,
-                             r.species.c_str(), r.kind.c_str(), r.ts_name.c_str());
+                std::fprintf(f, "%-8d %-6d %-16s %-10s %s\n", r.cell + 1, r.edge, r.species.c_str(),
+                             r.kind.c_str(), r.ts_name.c_str());
             else
                 std::fprintf(f, "%-8d %-6d %-16s %-10s %.17g\n", r.cell + 1, r.edge,
                              r.species.c_str(), r.kind.c_str(), r.value);
@@ -677,8 +1010,7 @@ static void emitGwTransportSections(FILE* f, const SimulationContext& ctx) {
 
     if (!gw->sources.empty()) {
         sec(f, "GW_SOURCES");
-        std::fprintf(f, ";;%-12s %-16s %-16s %s\n", "Name", "Location",
-                     "Flow", "Species terms");
+        std::fprintf(f, ";;%-12s %-16s %-16s %s\n", "Name", "Location", "Flow", "Species terms");
         for (const auto& r : gw->sources) {
             char loc[128];
             if (r.by_xy)
@@ -690,16 +1022,18 @@ static void emitGwTransportSections(FILE* f, const SimulationContext& ctx) {
             else
                 std::snprintf(loc, sizeof loc, "CELL %d", r.cell + 1);
             std::fprintf(f, "%-14s %-16s FLOW ", r.name.c_str(), loc);
-            if (!r.flow_ts.empty()) std::fprintf(f, "%-12s", r.flow_ts.c_str());
-            else                    std::fprintf(f, "%-12.17g", r.flow);
-            if (r.scale != 1.0) std::fprintf(f, " SCALE %.17g", r.scale);
+            if (!r.flow_ts.empty())
+                std::fprintf(f, "%-12s", r.flow_ts.c_str());
+            else
+                std::fprintf(f, "%.17g", r.flow);
+            if (r.scale != 1.0)
+                std::fprintf(f, " SCALE %.17g", r.scale);
             for (const auto& t : r.species) {
                 if (!t.ts_name.empty())
-                    std::fprintf(f, " %s %s %s", t.species.c_str(),
-                                 t.kind.c_str(), t.ts_name.c_str());
+                    std::fprintf(f, " %s %s %s", t.species.c_str(), t.kind.c_str(),
+                                 t.ts_name.c_str());
                 else
-                    std::fprintf(f, " %s %s %.17g", t.species.c_str(),
-                                 t.kind.c_str(), t.value);
+                    std::fprintf(f, " %s %s %.17g", t.species.c_str(), t.kind.c_str(), t.value);
             }
             std::fprintf(f, "\n");
         }
@@ -708,25 +1042,50 @@ static void emitGwTransportSections(FILE* f, const SimulationContext& ctx) {
 
 std::string groundwaterSections(const SimulationContext& ctx) {
 #ifdef OPENSWMM_HAS_2D
-    FILE* file=std::tmpfile();if(!file)throw std::runtime_error("Cannot stage groundwater sections.");
-    struct Close {FILE* file;~Close(){std::fclose(file);}} close{file};
-    emitGwTransportSections(file,ctx);
-    if(std::fflush(file)!=0 || std::ferror(file))throw std::runtime_error("Cannot serialize groundwater sections.");
-    std::rewind(file);std::string result;char buffer[8192];std::size_t count=0;
-    while((count=std::fread(buffer,1,sizeof buffer,file))>0)result.append(buffer,count);
-    if(std::ferror(file))throw std::runtime_error("Cannot read staged groundwater sections.");
+    FILE* file = std::tmpfile();
+    if (!file)
+        throw std::runtime_error("Cannot stage groundwater sections.");
+    struct Close {
+        FILE* file;
+        ~Close() { std::fclose(file); }
+    } close{file};
+    emitGwTransportSections(file, ctx);
+    if (std::fflush(file) != 0 || std::ferror(file))
+        throw std::runtime_error("Cannot serialize groundwater sections.");
+    std::rewind(file);
+    std::string result;
+    char buffer[8192];
+    std::size_t count = 0;
+    while ((count = std::fread(buffer, 1, sizeof buffer, file)) > 0)
+        result.append(buffer, count);
+    if (std::ferror(file))
+        throw std::runtime_error("Cannot read staged groundwater sections.");
     return result;
 #else
-    (void)ctx;return {};
+    (void)ctx;
+    return {};
 #endif
 }
 
 // Reference tokens always use final paths. Only physical writes are redirected.
-static std::string mappedOutputPath(const std::string& finalPath,
-                                    InpWriteOptions::OutputKind kind,
+/**
+ * @brief Map a final output destination to an explicitly separate physical staging path.
+ *
+ * Checks string/equivalent/canonical aliases when filesystem queries succeed. Does not create,
+ * publish or clean staging files; callback and allocation exceptions propagate.
+ *
+ * @param[in] finalPath UTF-8 final reference path; remains the anchor for serialized references.
+ * @param[in] kind Model/mesh/component category passed to the mapper.
+ * @param[in] opts Borrowed options with optional synchronous map_output callback.
+ * @param[in,out] warnings Optional append-only refusal diagnostics; NULL discards them.
+ * @return finalPath unchanged without mapper; mapped nonalias path on success, empty on
+ *     refusal/alias.
+ */
+static std::string mappedOutputPath(const std::string& finalPath, InpWriteOptions::OutputKind kind,
                                     const InpWriteOptions& opts,
                                     std::vector<std::string>* warnings) {
-    if (!opts.map_output) return finalPath;
+    if (!opts.map_output)
+        return finalPath;
     const std::string staged = opts.map_output(finalPath, kind);
     std::error_code ec;
     bool aliases = staged == finalPath;
@@ -735,57 +1094,76 @@ static std::string mappedOutputPath(const std::string& finalPath,
         const auto a = std::filesystem::weakly_canonical(io::utf8_path(staged), ec);
         if (!ec) {
             const auto b = std::filesystem::weakly_canonical(io::utf8_path(finalPath), ec);
-            if (!ec && a == b) aliases = true;
+            if (!ec && a == b)
+                aliases = true;
         }
     }
     if (staged.empty() || aliases) {
-        if (warnings) warnings->push_back("Cannot stage output '" + finalPath
-            + "': callback refused output or returned its final destination");
+        if (warnings)
+            warnings->push_back("Cannot stage output '" + finalPath +
+                                "': callback refused output or returned its final destination");
         return {};
     }
     return staged;
 }
 
-static bool write2DSections(FILE* f, const SimulationContext& ctx,
-                            const std::string& dst_dir,
-                            bool force_abs_paths,
-                            std::vector<std::string>* warnings,
+/**
+ * @brief Serialize 2D options and publish the current external mesh when configured.
+ *
+ * No-op without mesh/options or any mesh/reference. Inline mode writes geometry to f; external mode
+ * emits FILE and writes loaded current mesh via AtomicOutputFile, preserving a referenced unloaded
+ * mesh. Publishing sidecar is an individual atomic replace, not coordinated with main INP commit.
+ * Main stream errors are checked by caller; exceptions can propagate.
+ *
+ * @param[in,out] f Borrowed non-NULL writable FILE stream; caller owns flush/error checks/close and
+ *     serializes writes.
+ * @param[in] ctx Borrowed coherent authored model and nonowning twod_io attachments; caller keeps
+ *     all referenced arrays/objects alive and aligned.
+ * @param[in] dst_dir Final INP directory for relative references and sidecar destinations.
+ * @param[in] force_abs_paths Path portability preference for emitted mesh reference.
+ * @param[in,out] warnings Optional append-only portability/IO diagnostics.
+ * @param[in] opts Write options, including optional staging mapper for mesh outputs.
+ * @return True for emitted/no-op 2D output or successful mesh commit; false on handled sidecar/map
+ *     failure.
+ */
+static bool write2DSections(FILE* f, const SimulationContext& ctx, const std::string& dst_dir,
+                            bool force_abs_paths, std::vector<std::string>* warnings,
                             const InpWriteOptions& opts) {
     const auto& tio = ctx.twod_io;
-    if (!tio.mesh || !tio.options) return true;
+    if (!tio.mesh || !tio.options)
+        return true;
     const auto& mesh = *tio.mesh;
-    const auto& o    = *tio.options;
+    const auto& o = *tio.options;
 
     const bool has_mesh = mesh.n_vertices() > 0 && mesh.n_triangles() > 0;
-    const bool external = !o.mesh_file.empty();
-    if (!has_mesh && !external) return true;
+    const bool external = !opts.inline_mesh && !o.mesh_file.empty();
 
     // ---- [2D_OPTIONS] -----------------------------------------------------
     // Exact key set accepted by parse2DOptionsLine — nothing else (unknown
     // keys are parse errors on reload).
-    static const char* sRainMode[]  = {"NATURAL_NEIGHBOUR", "SYSTEM", "NONE",
-                                       "NEAREST_NEIGHBOUR"};   // RainfallMode order
+    static const char* sRainMode[] = {"NATURAL_NEIGHBOUR", "SYSTEM", "NONE",
+                                      "NEAREST_NEIGHBOUR"}; // RainfallMode order
     sec(f, "2D_OPTIONS");
     std::fprintf(f, ";;%-20s %s\n", "Parameter", "Value");
-    std::fprintf(f, "%-22s %.12g\n", "MAX_TIMESTEP",      o.max_timestep);
-    std::fprintf(f, "%-22s %.12g\n", "DRY_DEPTH",         o.dry_depth);
-    std::fprintf(f, "%-22s %.12g\n", "LIMITER_EPSILON",   o.limiter_epsilon);
-    std::fprintf(f, "%-22s %.12g\n", "FLUX_DH_EPS",       o.flux_dh_eps);
-    std::fprintf(f, "%-22s %.12g\n", "COUPLING_CD",       o.coupling_cd);
-    std::fprintf(f, "%-22s %.12g\n", "COUPLING_SYNC",     o.coupling_sync);
-    std::fprintf(f, "%-22s %s\n",    "RAINFALL_MODE",
-                 sRainMode[static_cast<int>(o.rainfall_mode) >= 0 &&
-                           static_cast<int>(o.rainfall_mode) <= 3
-                               ? static_cast<int>(o.rainfall_mode) : 0]);
-    std::fprintf(f, "%-22s %s\n",    "REPORT_2D", o.report_2d ? "YES" : "NO");
-    std::fprintf(f, "%-22s %s\n",    "CELL_CLOSURE",
+    std::fprintf(f, "%-22s %.17g\n", "MAX_TIMESTEP", o.max_timestep);
+    std::fprintf(f, "%-22s %.17g\n", "DRY_DEPTH", o.dry_depth);
+    std::fprintf(f, "%-22s %.17g\n", "LIMITER_EPSILON", o.limiter_epsilon);
+    std::fprintf(f, "%-22s %.17g\n", "FLUX_DH_EPS", o.flux_dh_eps);
+    std::fprintf(f, "%-22s %.17g\n", "COUPLING_CD", o.coupling_cd);
+    std::fprintf(f, "%-22s %.17g\n", "COUPLING_SYNC", o.coupling_sync);
+    std::fprintf(
+        f, "%-22s %s\n", "RAINFALL_MODE",
+        sRainMode[static_cast<int>(o.rainfall_mode) >= 0 && static_cast<int>(o.rainfall_mode) <= 3
+                      ? static_cast<int>(o.rainfall_mode)
+                      : 0]);
+    std::fprintf(f, "%-22s %s\n", "REPORT_2D", o.report_2d ? "YES" : "NO");
+    std::fprintf(f, "%-22s %s\n", "CELL_CLOSURE",
                  o.cell_closure == twoD::CellClosure2D::VFR ? "VFR" : "FLAT");
-    std::fprintf(f, "%-22s %s\n",    "FACE_RECONSTRUCTION",
-                 o.face_reconstruction == twoD::FaceDepth2D::VFR_FACE
-                     ? "VFR_FACE" : "MEAN");
-    std::fprintf(f, "%-22s %.12g\n", "VFR_MIN_WET_FRAC",  o.vfr_min_wet_frac);
+    std::fprintf(f, "%-22s %s\n", "FACE_RECONSTRUCTION",
+                 o.face_reconstruction == twoD::FaceDepth2D::VFR_FACE ? "VFR_FACE" : "MEAN");
+    std::fprintf(f, "%-22s %.17g\n", "VFR_MIN_WET_FRAC", o.vfr_min_wet_frac);
     // Explicit-marcher configuration (the only 2D integrator).
-    std::fprintf(f, "%-22s %s\n",    "INTEGRATOR",        "EXPLICIT");
+    std::fprintf(f, "%-22s %s\n", "INTEGRATOR", "EXPLICIT");
     // Momentum closure: the LOCAL_INERTIAL default is omitted (option-default
     // rule — pre-2026-09 files round-trip byte-identically).
     if (o.momentum == twoD::Momentum2D::FULL_SWE)
@@ -796,17 +1174,17 @@ static bool write2DSections(FILE* f, const SimulationContext& ctx,
         std::fprintf(f, "%-22s %d\n", "RECONSTRUCTION_ORDER", o.reconstruction_order);
     if (o.front_rebuild >= 0)
         std::fprintf(f, "%-22s %s\n", "FRONT_REBUILD", o.front_rebuild ? "YES" : "NO");
-    std::fprintf(f, "%-22s %.12g\n", "THETA",             o.theta);
-    std::fprintf(f, "%-22s %.12g\n", "CFL_NUMBER",        o.cfl_number);
-    std::fprintf(f, "%-22s %.12g\n", "H_MOVE",            o.h_move);
-    std::fprintf(f, "%-22s %d\n",    "LTS_TIERS",         o.lts_tiers);
-    std::fprintf(f, "%-22s %.12g\n", "FROUDE_MAX",        o.froude_max);
-    std::fprintf(f, "%-22s %s\n",    "ADVECTION",
-                 o.advection ? "YES" : "NO");
-    std::fprintf(f, "%-22s %s\n",    "COUPLING_AREA",
-                 o.coupling_area_auto ? "AUTO" : "DEFAULT");
-    if (o.dispersion > 0.0)   // S2: default 0 is omitted (option-default rule)
-        std::fprintf(f, "%-22s %.12g\n", "DISPERSION", o.dispersion);
+    std::fprintf(f, "%-22s %.17g\n", "THETA", o.theta);
+    if (o.theta_reference_step > 0.0)
+        std::fprintf(f, "%-22s %.17g\n", "THETA_REFERENCE_STEP", o.theta_reference_step);
+    std::fprintf(f, "%-22s %.17g\n", "CFL_NUMBER", o.cfl_number);
+    std::fprintf(f, "%-22s %.17g\n", "H_MOVE", o.h_move);
+    std::fprintf(f, "%-22s %d\n", "LTS_TIERS", o.lts_tiers);
+    std::fprintf(f, "%-22s %.17g\n", "FROUDE_MAX", o.froude_max);
+    std::fprintf(f, "%-22s %s\n", "ADVECTION", o.advection ? "YES" : "NO");
+    std::fprintf(f, "%-22s %s\n", "COUPLING_AREA", o.coupling_area_auto ? "AUTO" : "DEFAULT");
+    if (o.dispersion > 0.0) // S2: default 0 is omitted (option-default rule)
+        std::fprintf(f, "%-22s %.17g\n", "DISPERSION", o.dispersion);
     // Exchange law / head sampling / coefficient preset — defaults omitted.
     if (o.coupling_law != twoD::CouplingLaw2D::ORIFICE)
         std::fprintf(f, "%-22s %s\n", "COUPLING_LAW", "WEIR_ORIFICE");
@@ -816,22 +1194,22 @@ static bool write2DSections(FILE* f, const SimulationContext& ctx,
                                                                      : "STENCIL_WET_MEAN");
     if (o.coupling_pond_mode != twoD::CouplingPondMode2D::FOOTPRINT)
         std::fprintf(f, "%-22s %s\n", "COUPLING_POND_MODE",
-                     o.coupling_pond_mode == twoD::CouplingPondMode2D::CHAMBER ? "CHAMBER" : "TRACKING");
+                     o.coupling_pond_mode == twoD::CouplingPondMode2D::CHAMBER ? "CHAMBER"
+                                                                               : "TRACKING");
     if (o.coupling_pond_relax > 0.0)
-        std::fprintf(f, "%-22s %.12g\n", "COUPLING_POND_RELAX", o.coupling_pond_relax);
+        std::fprintf(f, "%-22s %.17g\n", "COUPLING_POND_RELAX", o.coupling_pond_relax);
     if (o.coupling_rim_band >= 0.0)
-        std::fprintf(f, "%-22s %.12g\n", "COUPLING_RIM_BAND", o.coupling_rim_band);
+        std::fprintf(f, "%-22s %.17g\n", "COUPLING_RIM_BAND", o.coupling_rim_band);
     if (o.coupling_equalize >= 0)
         std::fprintf(f, "%-22s %s\n", "COUPLING_EQUALIZE", o.coupling_equalize ? "YES" : "NO");
     if (o.coupling_coeffs != 0)
-        std::fprintf(f, "%-22s %s\n", "COUPLING_COEFFS",
-                     nodecoupling2d::formatValue(NodeCoupling2DKey::COEFFS,
-                                                 o.coupling_coeffs).c_str());
+        std::fprintf(
+            f, "%-22s %s\n", "COUPLING_COEFFS",
+            nodecoupling2d::formatValue(NodeCoupling2DKey::COEFFS, o.coupling_coeffs).c_str());
     {
-        static const char* sBackend2D[] = {"CPU","AUTO","OMP","CUDA","HIP","SYCL"};
+        static const char* sBackend2D[] = {"CPU", "AUTO", "OMP", "CUDA", "HIP", "SYCL"};
         const int bi = static_cast<int>(o.backend);
-        std::fprintf(f, "%-22s %s\n", "BACKEND",
-                     (bi >= 0 && bi <= 5) ? sBackend2D[bi] : "AUTO");
+        std::fprintf(f, "%-22s %s\n", "BACKEND", (bi >= 0 && bi <= 5) ? sBackend2D[bi] : "AUTO");
     }
     if (!o.output_file.empty()) {
         const std::string of_tok =
@@ -865,16 +1243,33 @@ static bool write2DSections(FILE* f, const SimulationContext& ctx,
         std::fprintf(f, "%-22s %s\n", "INFIL_DEFAULT_METHOD", o.infil_default_method.c_str());
     if (!o.infil_destination.empty() && o.infil_destination != "LOST")
         std::fprintf(f, "%-22s %s\n", "INFIL_DESTINATION", o.infil_destination.c_str());
-    if(o.heat_model_authored)std::fprintf(f,"%-22s %s\n","HEAT_MODEL",o.coupled_heat?"COUPLED":"TRANSPORT_ONLY");
-    if(o.bed_heat_authored)std::fprintf(f,"%-22s %s\n","BED_HEAT_MODEL",o.bed_heat_model==0?"NONE":o.bed_heat_model==1?"LOCAL_STORAGE":"GROUND_COLUMN");
-    if(o.heat_surface_authored)std::fprintf(f,"%-22s %s\n","HEAT_SURFACE_EXCHANGE",o.heat_surface<0?"AUTO":o.heat_surface?"YES":"NO");
-    if(o.heat_radiative_authored)std::fprintf(f,"%-22s %s\n","HEAT_RADIATIVE_EXCHANGE",o.heat_radiative<0?"AUTO":o.heat_radiative?"YES":"NO");
+    if (o.heat_model_authored)
+        std::fprintf(f, "%-22s %s\n", "HEAT_MODEL", o.coupled_heat ? "COUPLED" : "TRANSPORT_ONLY");
+    if (o.bed_heat_authored)
+        std::fprintf(f, "%-22s %s\n", "BED_HEAT_MODEL",
+                     o.bed_heat_model == 0   ? "NONE"
+                     : o.bed_heat_model == 1 ? "LOCAL_STORAGE"
+                                             : "GROUND_COLUMN");
+    if (o.heat_surface_authored)
+        std::fprintf(f, "%-22s %s\n", "HEAT_SURFACE_EXCHANGE",
+                     o.heat_surface < 0 ? "AUTO"
+                     : o.heat_surface   ? "YES"
+                                        : "NO");
+    if (o.heat_radiative_authored)
+        std::fprintf(f, "%-22s %s\n", "HEAT_RADIATIVE_EXCHANGE",
+                     o.heat_radiative < 0 ? "AUTO"
+                     : o.heat_radiative   ? "YES"
+                                          : "NO");
     if (o.evaporation != 1)
         std::fprintf(f, "%-22s %s\n", "EVAPORATION", o.evaporation == 0 ? "NO" : "CLIMATE");
-    if (!o.transport_pollutants)  std::fprintf(f, "%-22s NO\n", "TRANSPORT_POLLUTANTS");
-    if (!o.transport_msx)         std::fprintf(f, "%-22s NO\n", "TRANSPORT_MSX");
-    if (!o.transport_age)         std::fprintf(f, "%-22s NO\n", "TRANSPORT_AGE");
-    if (!o.transport_temperature) std::fprintf(f, "%-22s NO\n", "TRANSPORT_TEMPERATURE");
+    if (!o.transport_pollutants)
+        std::fprintf(f, "%-22s NO\n", "TRANSPORT_POLLUTANTS");
+    if (!o.transport_msx)
+        std::fprintf(f, "%-22s NO\n", "TRANSPORT_MSX");
+    if (!o.transport_age)
+        std::fprintf(f, "%-22s NO\n", "TRANSPORT_AGE");
+    if (!o.transport_temperature)
+        std::fprintf(f, "%-22s NO\n", "TRANSPORT_TEMPERATURE");
     // U5 — the 2D groundwater process enable. AUTO is the default and is not
     // written (same rule as INFILTRATION). GW_ET is NOT emitted here: it is an
     // alias that open() folds into [2D_AQUIFER_OPTIONS], which writes it —
@@ -906,8 +1301,7 @@ static bool write2DSections(FILE* f, const SimulationContext& ctx,
             tok = o.mesh_file.original;
             if (!force_abs_paths && !dst_dir.empty() && io::isAbsolutePath(tok)) {
                 auto r = io::makeRelative(tok, dst_dir);
-                if (warnings && r.classification != io::PathClass::Relative
-                    && !r.warning.empty())
+                if (warnings && r.classification != io::PathClass::Relative && !r.warning.empty())
                     warnings->push_back(r.warning);
                 tok = r.path;
             }
@@ -930,15 +1324,19 @@ static bool write2DSections(FILE* f, const SimulationContext& ctx,
             fs::path sp = openswmm::io::utf8_path(tok);
             if (sp.is_relative() && !dst_dir.empty())
                 sp = openswmm::io::utf8_path(dst_dir) / sp;
-            const std::string physical = mappedOutputPath(io::path_utf8(sp),
-                InpWriteOptions::OutputKind::Mesh, opts, warnings);
-            if (physical.empty()) return false;
+            const std::string physical = mappedOutputPath(
+                io::path_utf8(sp), InpWriteOptions::OutputKind::Mesh, opts, warnings);
+            if (physical.empty())
+                return false;
             sp = io::utf8_path(physical);
             std::error_code ec;
-            if (sp.has_parent_path()) fs::create_directories(sp.parent_path(), ec);
+            if (sp.has_parent_path())
+                fs::create_directories(sp.parent_path(), ec);
             if (ec) {
-                if (warnings) warnings->push_back("Cannot create mesh output directory '"
-                    + openswmm::io::path_utf8(sp.parent_path()) + "': " + ec.message());
+                if (warnings)
+                    warnings->push_back("Cannot create mesh output directory '" +
+                                        openswmm::io::path_utf8(sp.parent_path()) +
+                                        "': " + ec.message());
                 return false;
             }
             openswmm::io::AtomicOutputFile sidecar(sp);
@@ -946,15 +1344,18 @@ static bool write2DSections(FILE* f, const SimulationContext& ctx,
                 std::fprintf(sf, ";; OpenSWMM 2D mesh — written by the engine "
                                  "alongside the .inp save.\n");
                 emit2DMeshSections(sf, ctx);
-                if (sidecar.commit()) return true;
+                if (sidecar.commit())
+                    return true;
             }
-            if (warnings) warnings->push_back(sidecar.error());
+            if (warnings)
+                warnings->push_back(sidecar.error());
             return false;
         }
         return true;
     }
 
-    emit2DMeshSections(f, ctx);
+    if (has_mesh)
+        emit2DMeshSections(f, ctx);
     return true;
 }
 
@@ -964,10 +1365,24 @@ static bool write2DSections(FILE* f, const SimulationContext& ctx,
 // .2dm sidecar — both are parsed by the same section grammar
 // (SectionHandlers2D / load2DMeshExternalFile). Exactly one destination per
 // save, which is what keeps every section here single-emission.
+/**
+ * @brief Emit current mesh geometry and associated authored spatial sections to one stream.
+ *
+ * Requires non-NULL twod_io.mesh/options and aligned valid mesh indices. Writes geometry, maps,
+ * boundary/conveyance/initial quality plus supported infiltration/GW/surface-quality/aquifer
+ * authoring. Coordinates remain stored units; emits SI marker when mesh_units_si or
+ * mesh_scaled_to_si. Caller chooses inline INP or external mesh stream once. Does not advance
+ * solvers, rebase nested GW FILE paths or check individual fprintf errors.
+ *
+ * @param[in,out] f Borrowed non-NULL writable FILE stream; caller owns flush/error checks/close and
+ *     serializes writes.
+ * @param[in] ctx Borrowed coherent authored model and nonowning twod_io attachments; caller keeps
+ *     all referenced arrays/objects alive and aligned.
+ */
 static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
-    const auto& tio  = ctx.twod_io;
+    const auto& tio = ctx.twod_io;
     const auto& mesh = *tio.mesh;
-    const auto& o    = *tio.options;
+    const auto& o = *tio.options;
 
     // ---- [2D_VERTICES] ------------------------------------------------------
     const bool si = o.mesh_units_si || o.mesh_scaled_to_si;
@@ -975,12 +1390,13 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
     const int nt = mesh.n_triangles();
 
     sec(f, "2D_VERTICES");
-    if (si) std::fprintf(f, ";; UNITS: SI (m)\n");
+    if (si)
+        std::fprintf(f, ";; UNITS: SI (m)\n");
     std::fprintf(f, ";;%-16s %-18s %-14s %s\n", "X", "Y", "Z", "TAG");
     for (int i = 0; i < nv; ++i) {
-        std::fprintf(f, "%-18.10g %-18.10g %-14.10g", mesh.vx[i], mesh.vy[i],
-                     mesh.vz[i]);
-        if (!mesh.vtag[i].empty()) std::fprintf(f, " %s", mesh.vtag[i].c_str());
+        std::fprintf(f, "%.17g %.17g %.17g", mesh.vx[i], mesh.vy[i], mesh.vz[i]);
+        if (!mesh.vtag[i].empty())
+            std::fprintf(f, " %s", mesh.vtag[i].c_str());
         std::fprintf(f, "\n");
     }
 
@@ -992,8 +1408,10 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
     // 5th token always means INIT_DEPTH).
     bool any_init_depth = false, any_tag = false;
     for (int t = 0; t < nt; ++t) {
-        if (mesh.tri_init_depth[t] != 0.0) any_init_depth = true;
-        if (!mesh.tri_tag[t].empty()) any_tag = true;
+        if (mesh.tri_init_depth[t] != 0.0)
+            any_init_depth = true;
+        if (!mesh.tri_tag[t].empty())
+            any_tag = true;
     }
     const bool write_depth_col = any_init_depth || any_tag;
     // Cells are triangles first, then quads (MeshData contract); the two
@@ -1001,17 +1419,17 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
     const int n_quads = mesh.n_quads();
     sec(f, "2D_TRIANGLES");
     if (write_depth_col)
-        std::fprintf(f, ";;%-6s %-8s %-8s %-12s %-12s %s\n", "V1", "V2", "V3",
-                     "MANNINGS_N", "INIT_DEPTH", "TAG");
+        std::fprintf(f, ";;%-6s %-8s %-8s %-12s %-12s %s\n", "V1", "V2", "V3", "MANNINGS_N",
+                     "INIT_DEPTH", "TAG");
     else
-        std::fprintf(f, ";;%-6s %-8s %-8s %-12s %s\n", "V1", "V2", "V3",
-                     "MANNINGS_N", "TAG");
+        std::fprintf(f, ";;%-6s %-8s %-8s %-12s %s\n", "V1", "V2", "V3", "MANNINGS_N", "TAG");
     for (int t = 0; t < nt; ++t) {
-        if (mesh.cell_vertex_count(t) != 3) continue;
-        std::fprintf(f, "%-8d %-8d %-8d %-12.6g", mesh.cell_vertex(t, 0),
-                     mesh.cell_vertex(t, 1), mesh.cell_vertex(t, 2), mesh.mannings_n[t]);
+        if (mesh.cell_vertex_count(t) != 3)
+            continue;
+        std::fprintf(f, "%-8d %-8d %-8d %.17g", mesh.cell_vertex(t, 0), mesh.cell_vertex(t, 1),
+                     mesh.cell_vertex(t, 2), mesh.mannings_n[t]);
         if (write_depth_col)
-            std::fprintf(f, " %-12.6g", mesh.tri_init_depth[t]);
+            std::fprintf(f, " %.17g", mesh.tri_init_depth[t]);
         if (!mesh.tri_tag[t].empty())
             std::fprintf(f, " %s", mesh.tri_tag[t].c_str());
         std::fprintf(f, "\n");
@@ -1023,18 +1441,19 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
     if (n_quads > 0) {
         sec(f, "2D_QUADS");
         if (write_depth_col)
-            std::fprintf(f, ";;%-6s %-8s %-8s %-8s %-12s %-12s %s\n", "V1", "V2",
-                         "V3", "V4", "MANNINGS_N", "INIT_DEPTH", "TAG");
+            std::fprintf(f, ";;%-6s %-8s %-8s %-8s %-12s %-12s %s\n", "V1", "V2", "V3", "V4",
+                         "MANNINGS_N", "INIT_DEPTH", "TAG");
         else
-            std::fprintf(f, ";;%-6s %-8s %-8s %-8s %-12s %s\n", "V1", "V2", "V3",
-                         "V4", "MANNINGS_N", "TAG");
+            std::fprintf(f, ";;%-6s %-8s %-8s %-8s %-12s %s\n", "V1", "V2", "V3", "V4",
+                         "MANNINGS_N", "TAG");
         for (int t = 0; t < nt; ++t) {
-            if (mesh.cell_vertex_count(t) != 4) continue;
-            std::fprintf(f, "%-8d %-8d %-8d %-8d %-12.6g", mesh.cell_vertex(t, 0),
-                         mesh.cell_vertex(t, 1), mesh.cell_vertex(t, 2),
-                         mesh.cell_vertex(t, 3), mesh.mannings_n[t]);
+            if (mesh.cell_vertex_count(t) != 4)
+                continue;
+            std::fprintf(f, "%-8d %-8d %-8d %-8d %.17g", mesh.cell_vertex(t, 0),
+                         mesh.cell_vertex(t, 1), mesh.cell_vertex(t, 2), mesh.cell_vertex(t, 3),
+                         mesh.mannings_n[t]);
             if (write_depth_col)
-                std::fprintf(f, " %-12.6g", mesh.tri_init_depth[t]);
+                std::fprintf(f, " %.17g", mesh.tri_init_depth[t]);
             if (!mesh.tri_tag[t].empty())
                 std::fprintf(f, " %s", mesh.tri_tag[t].c_str());
             std::fprintf(f, "\n");
@@ -1054,8 +1473,7 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
             for (int t = 0; t < nt; ++t) {
                 if (mesh.tri_init_u[t] == 0.0 && mesh.tri_init_v[t] == 0.0)
                     continue;
-                std::fprintf(f, "%-8d %-12.6g %.6g\n", t, mesh.tri_init_u[t],
-                             mesh.tri_init_v[t]);
+                std::fprintf(f, "%-8d %.17g %.17g\n", t, mesh.tri_init_u[t], mesh.tri_init_v[t]);
             }
         }
     }
@@ -1063,7 +1481,8 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
     // Coupled-node name: prefer the authored name, fall back to the
     // resolved index (API-built models; rename-safe).
     auto node_name_for = [&ctx](const std::string& name, int idx) -> std::string {
-        if (!name.empty()) return name;
+        if (!name.empty())
+            return name;
         if (idx >= 0 && idx < ctx.node_names.size())
             return ctx.node_names.name_of(idx);
         return {};
@@ -1073,13 +1492,13 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
     // keeps COUPLING_CD and the area defaults in charge of the rest. CD and
     // AREA are positional — an authored AREA under a defaulted CD writes the
     // CD the run would use (COUPLING_CD).
-    auto map_row = [&o](FILE* out, int idx, const std::string& node, double cd,
-                        bool cd_set, double area, bool area_set) {
+    auto map_row = [&o](FILE* out, int idx, const std::string& node, double cd, bool cd_set,
+                        double area, bool area_set) {
         if (area_set)
-            std::fprintf(out, "%-8d %-16s %-10.6g %.12g\n", idx, node.c_str(),
+            std::fprintf(out, "%-8d %-16s %.17g %.17g\n", idx, node.c_str(),
                          cd_set ? cd : o.coupling_cd, area);
         else if (cd_set)
-            std::fprintf(out, "%-8d %-16s %.6g\n", idx, node.c_str(), cd);
+            std::fprintf(out, "%-8d %-16s %.17g\n", idx, node.c_str(), cd);
         else
             std::fprintf(out, "%-8d %s\n", idx, node.c_str());
     };
@@ -1088,20 +1507,17 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
     {
         bool any = false;
         for (int i = 0; i < nv && !any; ++i)
-            any = !node_name_for(mesh.vert_coupled_node_name[i],
-                                 mesh.vert_coupled_node[i]).empty();
+            any = !node_name_for(mesh.vert_coupled_node_name[i], mesh.vert_coupled_node[i]).empty();
         if (any) {
             sec(f, "2D_VERTEX_NODE_MAP");
-            std::fprintf(f, ";;%-6s %-16s %-10s %s\n", "VERTEX", "NODE", "CD",
-                         "AREA");
+            std::fprintf(f, ";;%-6s %-16s %-10s %s\n", "VERTEX", "NODE", "CD", "AREA");
             for (int i = 0; i < nv; ++i) {
-                const std::string cn = node_name_for(
-                    mesh.vert_coupled_node_name[i], mesh.vert_coupled_node[i]);
-                if (cn.empty()) continue;
-                map_row(f, i, cn, mesh.vert_coupling_cd[i],
-                        mesh.vert_coupling_cd_set[i] != 0,
-                        mesh.vert_coupling_area[i],
-                        mesh.vert_coupling_area_set[i] != 0);
+                const std::string cn =
+                    node_name_for(mesh.vert_coupled_node_name[i], mesh.vert_coupled_node[i]);
+                if (cn.empty())
+                    continue;
+                map_row(f, i, cn, mesh.vert_coupling_cd[i], mesh.vert_coupling_cd_set[i] != 0,
+                        mesh.vert_coupling_area[i], mesh.vert_coupling_area_set[i] != 0);
             }
         }
     }
@@ -1114,31 +1530,30 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
     {
         if (!mesh.tri_couplings.empty()) {
             sec(f, "2D_TRIANGLE_NODE_MAP");
-            std::fprintf(f, ";;%-6s %-16s %-10s %s\n", "TRIANGLE", "NODE", "CD",
-                         "AREA");
+            std::fprintf(f, ";;%-6s %-16s %-10s %s\n", "TRIANGLE", "NODE", "CD", "AREA");
             for (const auto& row : mesh.tri_couplings) {
                 const std::string cn = node_name_for(row.node_name, row.node);
-                if (cn.empty()) continue;
-                if (row.tri < 0 || row.tri >= nt) continue;
-                map_row(f, row.tri, cn, row.cd, row.cd_set, row.area,
-                        row.area_set);
+                if (cn.empty())
+                    continue;
+                if (row.tri < 0 || row.tri >= nt)
+                    continue;
+                map_row(f, row.tri, cn, row.cd, row.cd_set, row.area, row.area_set);
             }
         } else {
             bool any = false;
             for (int t = 0; t < nt && !any; ++t)
-                any = !node_name_for(mesh.tri_coupled_node_name[t],
-                                     mesh.tri_coupled_node[t]).empty();
+                any =
+                    !node_name_for(mesh.tri_coupled_node_name[t], mesh.tri_coupled_node[t]).empty();
             if (any) {
                 sec(f, "2D_TRIANGLE_NODE_MAP");
-                std::fprintf(f, ";;%-6s %-16s %-10s %s\n", "TRIANGLE", "NODE",
-                             "CD", "AREA");
+                std::fprintf(f, ";;%-6s %-16s %-10s %s\n", "TRIANGLE", "NODE", "CD", "AREA");
                 for (int t = 0; t < nt; ++t) {
-                    const std::string cn = node_name_for(
-                        mesh.tri_coupled_node_name[t], mesh.tri_coupled_node[t]);
-                    if (cn.empty()) continue;
-                    std::fprintf(f, "%-8d %-16s %-10.6g %.12g\n", t, cn.c_str(),
-                                 mesh.tri_coupling_cd[t],
-                                 mesh.tri_coupling_area[t]);
+                    const std::string cn =
+                        node_name_for(mesh.tri_coupled_node_name[t], mesh.tri_coupled_node[t]);
+                    if (cn.empty())
+                        continue;
+                    std::fprintf(f, "%-8d %-16s %.17g %.17g\n", t, cn.c_str(),
+                                 mesh.tri_coupling_cd[t], mesh.tri_coupling_area[t]);
                 }
             }
         }
@@ -1148,13 +1563,12 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
     // Authored pending rows preferred (retained after the initialize()
     // drain); BoundaryData reconstruction fallback loses the GROUP label.
     {
-        const auto rows = twoD::collectBCRows(tio.pending_bc, tio.boundary,
-                                              o.pending_rows_drained,
+        const auto rows = twoD::collectBCRows(tio.pending_bc, tio.boundary, o.pending_rows_drained,
                                               o.bc_flow_to_si_applied);
         if (!rows.empty()) {
             sec(f, "2D_BOUNDARY_CONDITIONS");
-            std::fprintf(f, ";;%-4s %-4s %-16s %-14s %-8s %s\n", "TRI", "EDGE",
-                         "TYPE", "PARAM_1", "PARAM_2", "GROUP");
+            std::fprintf(f, ";;%-4s %-4s %-16s %-14s %-8s %s\n", "TRI", "EDGE", "TYPE", "PARAM_1",
+                         "PARAM_2", "GROUP");
             for (const auto& r : rows) {
                 char p1[32];
                 if (!r.name.empty()) {
@@ -1162,15 +1576,13 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
                 } else if (r.bc_type == 0) { // WALL — no parameter
                     std::snprintf(p1, sizeof(p1), "*");
                 } else {
-                    std::snprintf(p1, sizeof(p1), "%.12g", r.param1);
+                    std::snprintf(p1, sizeof(p1), "%.17g", r.param1);
                 }
                 if (!r.group.empty()) {
-                    std::fprintf(f, "%-6d %-4d %-16s %-14s %-8s %s\n", r.tri,
-                                 r.edge, bc2d_type_token(r), p1, "*",
-                                 r.group.c_str());
+                    std::fprintf(f, "%-6d %-4d %-16s %-14s %-8s %s\n", r.tri, r.edge,
+                                 bc2d_type_token(r), p1, "*", r.group.c_str());
                 } else {
-                    std::fprintf(f, "%-6d %-4d %-16s %s\n", r.tri, r.edge,
-                                 bc2d_type_token(r), p1);
+                    std::fprintf(f, "%-6d %-4d %-16s %s\n", r.tri, r.edge, bc2d_type_token(r), p1);
                 }
             }
         }
@@ -1178,15 +1590,13 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
 
     // ---- [2D_EDGE_CONVEYANCE] -------------------------------------------------
     {
-        const auto rows = twoD::collectConveyanceRows(tio.pending_ec, tio.mesh,
-                                                      o.pending_rows_drained);
+        const auto rows =
+            twoD::collectConveyanceRows(tio.pending_ec, tio.mesh, o.pending_rows_drained);
         if (!rows.empty()) {
             sec(f, "2D_EDGE_CONVEYANCE");
-            std::fprintf(f, ";;%-10s %-12s %s\n", "FROM_VERTEX", "TO_VERTEX",
-                         "CONVEYANCE");
+            std::fprintf(f, ";;%-10s %-12s %s\n", "FROM_VERTEX", "TO_VERTEX", "CONVEYANCE");
             for (const auto& r : rows) {
-                std::fprintf(f, "%-12d %-12d %.12g\n", r.v_from, r.v_to,
-                             r.conveyance);
+                std::fprintf(f, "%-12d %-12d %.17g\n", r.v_from, r.v_to, r.conveyance);
             }
         }
     }
@@ -1199,11 +1609,13 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
         std::fprintf(f, ";;%-6s %-16s %-12s %s\n", "SCOPE", "NAME", "SPECIES", "CONC");
         for (const auto& r : *tio.pending_iq) {
             if (r.all)
-                std::fprintf(f, "%-8s %-16s %-12s %.12g\n", "*", "", r.species.c_str(), r.conc);
+                std::fprintf(f, "%-8s %-16s %-12s %.17g\n", "*", "", r.species.c_str(), r.conc);
             else if (r.tri >= 0)
-                std::fprintf(f, "%-8s %-16d %-12s %.12g\n", "CELL", r.tri + 1, r.species.c_str(), r.conc);
+                std::fprintf(f, "%-8s %-16d %-12s %.17g\n", "CELL", r.tri + 1, r.species.c_str(),
+                             r.conc);
             else
-                std::fprintf(f, "%-8s %-16s %-12s %.12g\n", "TAG", r.tag.c_str(), r.species.c_str(), r.conc);
+                std::fprintf(f, "%-8s %-16s %-12s %.17g\n", "TAG", r.tag.c_str(), r.species.c_str(),
+                             r.conc);
         }
     }
     if (tio.pending_ibq && !tio.pending_ibq->empty()) {
@@ -1211,18 +1623,20 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
         std::fprintf(f, ";;%-6s %-16s %-12s %s\n", "SCOPE", "NAME", "SPECIES", "CONC");
         for (const auto& r : *tio.pending_ibq) {
             if (r.all)
-                std::fprintf(f, "%-8s %-16s %-12s %.12g\n", "*", "", r.species.c_str(), r.conc);
+                std::fprintf(f, "%-8s %-16s %-12s %.17g\n", "*", "", r.species.c_str(), r.conc);
             else if (r.tri >= 0)
-                std::fprintf(f, "%-8s %-16d %-12s %.12g\n", "CELL", r.tri + 1, r.species.c_str(), r.conc);
+                std::fprintf(f, "%-8s %-16d %-12s %.17g\n", "CELL", r.tri + 1, r.species.c_str(),
+                             r.conc);
             else
-                std::fprintf(f, "%-8s %-16s %-12s %.12g\n", "TAG", r.tag.c_str(), r.species.c_str(), r.conc);
+                std::fprintf(f, "%-8s %-16s %-12s %.17g\n", "TAG", r.tag.c_str(), r.species.c_str(),
+                             r.conc);
         }
     }
     if (tio.pending_bq && !tio.pending_bq->empty()) {
         sec(f, "2D_BOUNDARY_QUALITY");
         std::fprintf(f, ";;%-4s %-4s %-12s %s\n", "TRI", "EDGE", "SPECIES", "CONC");
         for (const auto& r : *tio.pending_bq)
-            std::fprintf(f, "%-6d %-4d %-12s %.12g\n", r.tri, r.edge, r.species.c_str(), r.conc);
+            std::fprintf(f, "%-6d %-4d %-12s %.17g\n", r.tri, r.edge, r.species.c_str(), r.conc);
     }
 
 #ifdef OPENSWMM_HAS_2D
@@ -1239,7 +1653,7 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
     // section order here guarantees, since the mesh sections precede this
     // call in write2DSections.
     emitGwTransportSections(f, ctx);
-    emitSurfaceQualitySections(f, ctx);   // S7
+    emitSurfaceQualitySections(f, ctx); // S7
 
     // G1: the [2D_AQUIFER*] rows, echoed in the units they were authored in.
     // The writer is a verbatim echo because the config is never converted in
@@ -1248,11 +1662,11 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
         std::string aq;
         static const std::vector<std::string> kNoNames;
         twoD::writeSubsurfaceSections(
-            *ctx.twod_io.aquifer,
-            ctx.twod_io.aquifer_nodes ? *ctx.twod_io.aquifer_nodes : kNoNames,
-            ctx.twod_io.aquifer_links ? *ctx.twod_io.aquifer_links : kNoNames,  // G-X4
+            *ctx.twod_io.aquifer, ctx.twod_io.aquifer_nodes ? *ctx.twod_io.aquifer_nodes : kNoNames,
+            ctx.twod_io.aquifer_links ? *ctx.twod_io.aquifer_links : kNoNames, // G-X4
             aq);
-        if (!aq.empty()) std::fputs(aq.c_str(), f);
+        if (!aq.empty())
+            std::fputs(aq.c_str(), f);
     }
 #endif
 }
@@ -1260,24 +1674,41 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
 // Component render hooks produce text; this writer owns checked file publication.
 // Copy fallback is used only when a component declines rendering, never after a
 // failed rendered write (which would replace edited data with the old config).
-static bool writeComponentConfig(const SimulationContext& ctx,
-                                 const ProcessComponentSpec& pc,
-                                 const std::string& token,
-                                 const std::string& dst_dir,
-                                 std::vector<std::string>* warnings,
-                                 const InpWriteOptions& opts) {
+/**
+ * @brief Render or copy one process-component configuration to its save destination.
+ *
+ * Invokes registered save hook; empty rendered text declines serialization, enabling raw-file copy
+ * only for relative configs. Creates destination directories and individually atomically replaces a
+ * checked binary output. A failed rendered write never falls back to copying old content. Does not
+ * coordinate rollback with other sidecars/main output.
+ *
+ * @param[in] ctx Borrowed coherent authored model and nonowning twod_io attachments; caller keeps
+ *     all referenced arrays/objects alive and aligned.
+ * @param[in] pc Borrowed component specification and resolved original config path.
+ * @param[in] token Emitted config reference resolved relative to dst_dir for physical writing.
+ * @param[in] dst_dir Final INP directory used as the reference anchor.
+ * @param[in,out] warnings Optional append-only copy/replacement/IO diagnostics.
+ * @param[in] opts Borrowed staging mapper/options; callback failures can propagate.
+ * @return True after commit or when an unrendered absolute/unresolved reference needs no copy;
+ *     false on handled map/copy/write refusal.
+ */
+static bool writeComponentConfig(const SimulationContext& ctx, const ProcessComponentSpec& pc,
+                                 const std::string& token, const std::string& dst_dir,
+                                 std::vector<std::string>* warnings, const InpWriteOptions& opts) {
     namespace fs = std::filesystem;
     fs::path destination = io::utf8_path(token);
     if (destination.is_relative() && !dst_dir.empty())
         destination = io::utf8_path(dst_dir) / destination;
     auto fail = [&](const std::string& reason) {
-        if (warnings) warnings->push_back("Cannot save component '" + pc.id
-            + "' configuration '" + io::path_utf8(destination) + "': " + reason);
+        if (warnings)
+            warnings->push_back("Cannot save component '" + pc.id + "' configuration '" +
+                                io::path_utf8(destination) + "': " + reason);
         return false;
     };
     std::string text;
     const auto* entry = components::ProcessComponentRegistry::instance().find(pc.id);
-    if (entry && entry->save) text = entry->save(ctx, pc);
+    if (entry && entry->save)
+        text = entry->save(ctx, pc);
     const bool rendered = !text.empty();
     std::ifstream source;
     fs::path source_path;
@@ -1289,39 +1720,47 @@ static bool writeComponentConfig(const SimulationContext& ctx,
             return true;
         source_path = io::utf8_path(pc.resolved_config_path);
         if (!fs::is_regular_file(source_path, ec))
-            return fail("source '" + pc.resolved_config_path + "' is missing or not a regular file");
+            return fail("source '" + pc.resolved_config_path +
+                        "' is missing or not a regular file");
         source.open(source_path, std::ios::binary);
-        if (!source.is_open()) return fail("cannot read source '" + pc.resolved_config_path + "'");
+        if (!source.is_open())
+            return fail("cannot read source '" + pc.resolved_config_path + "'");
         ec.clear();
-        if (fs::equivalent(source_path, destination, ec) && !ec) return true;
+        if (fs::equivalent(source_path, destination, ec) && !ec)
+            return true;
     }
-    const std::string physical = mappedOutputPath(io::path_utf8(destination),
-        InpWriteOptions::OutputKind::Component, opts, warnings);
-    if (physical.empty()) return false;
+    const std::string physical = mappedOutputPath(
+        io::path_utf8(destination), InpWriteOptions::OutputKind::Component, opts, warnings);
+    if (physical.empty())
+        return false;
     const fs::path staging = io::utf8_path(physical);
     ec.clear();
-    if (staging.has_parent_path()) fs::create_directories(staging.parent_path(), ec);
-    if (ec) return fail("cannot create output directory: " + ec.message());
+    if (staging.has_parent_path())
+        fs::create_directories(staging.parent_path(), ec);
+    if (ec)
+        return fail("cannot create output directory: " + ec.message());
     // Binary: configs are copied and compared byte for byte.
     io::AtomicOutputFile output(staging, /*binary=*/true);
     FILE* f = output.stream();
-    if (!f) return fail(output.error());
+    if (!f)
+        return fail(output.error());
     // Preserve the existing notice when a successful save replaces different
     // destination content. Failure diagnostics below take precedence.
     bool replacing_different = false;
     std::ifstream previous;
     // Staging redirects the writer's output validation. The final destination
     // can still be non-regular; it is not a readable comparison source.
-    if (fs::is_regular_file(destination, ec)) previous.open(destination, std::ios::binary);
+    if (fs::is_regular_file(destination, ec))
+        previous.open(destination, std::ios::binary);
     if (previous.is_open()) {
         if (rendered) {
             const std::string old((std::istreambuf_iterator<char>(previous)), {});
             replacing_different = old != text;
         } else {
             std::ifstream comparison(source_path, std::ios::binary);
-            replacing_different = !std::equal(std::istreambuf_iterator<char>(previous),
-                std::istreambuf_iterator<char>(), std::istreambuf_iterator<char>(comparison),
-                std::istreambuf_iterator<char>());
+            replacing_different = !std::equal(
+                std::istreambuf_iterator<char>(previous), std::istreambuf_iterator<char>(),
+                std::istreambuf_iterator<char>(comparison), std::istreambuf_iterator<char>());
         }
         previous.close();
     }
@@ -1340,32 +1779,49 @@ static bool writeComponentConfig(const SimulationContext& ctx,
             return fail("cannot finish reading source '" + pc.resolved_config_path + "'");
         source.close();
     }
-    if (!output.commit()) return fail(output.error());
+    if (!output.commit())
+        return fail(output.error());
     if (replacing_different && warnings)
-        warnings->push_back("Saving this model replaced an existing, different '"
-            + pc.config_path + "' in the destination folder with this model's "
-            + (rendered ? "rendered configuration." : "configuration copy."));
+        warnings->push_back("Saving this model replaced an existing, different '" + pc.config_path +
+                            "' in the destination folder with this model's " +
+                            (rendered ? "rendered configuration." : "configuration copy."));
     return true;
 }
 
-int writeInpFile(const SimulationContext& ctx,
-                 const std::string&       path,
+int writeInpFile(const SimulationContext& ctx, const std::string& path,
                  std::vector<std::string>* warnings) {
     return writeInpFile(ctx, path, warnings, InpWriteOptions{});
 }
 
-int writeInpFile(const SimulationContext&  ctx_internal,
-                 const std::string&        path,
-                 std::vector<std::string>* warnings,
-                 const InpWriteOptions&    opts) {
+/**
+ * @brief Write a complete model with explicit native or SWMM5 export options.
+ *
+ * Converts a local context copy back to display/authored representation as needed, leaving the live
+ * model unchanged. Writes main/mesh/component files via individual AtomicOutputFile commits; a
+ * later failure does not roll back earlier sidecar publication. Maps legacy-incompatible features
+ * according to profile; rejects UEB/mesh snow rather than silently replacing physics. Allocation,
+ * callback and serializer exceptions can propagate.
+ *
+ * @param[in] ctx_internal Borrowed coherent model in its current authored/resolved unit/orientation
+ *     state; valid flow_units and aligned names/arrays required.
+ * @param[in] path UTF-8 final INP destination, also the path-rebasing anchor.
+ * @param[in,out] warnings Optional append-only portability, profile-substitution and IO
+ *     diagnostics; NULL discards them.
+ * @param[in] opts Export profile and optional physical staging callback; caller owns mapped staging
+ *     cleanup/publication.
+ * @return 0 after successful main commit, -1 for most handled IO/profile failures. Current
+ *     mesh-snow SWMM5 refusal also returns false (integer zero) before writing, so inspect
+ *     warnings/output for that case.
+ */
+int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
+                 std::vector<std::string>* warnings, const InpWriteOptions& opts) {
     // The engine stores 1D input fields in internal units (feet/cfs); the .inp
     // must carry display units matching FLOW_UNITS. For SI models, convert a
     // local copy back to display units so the live engine state is never
     // mutated. Skipped for US models (factor 1.0) so the common case pays
     // nothing. Without this, each save dumps internal feet and the next open
     // re-applies the m→ft factor, compounding ×3.28084 per cycle.
-    const int us_check = ucf::getUnitSystem(
-        static_cast<int>(ctx_internal.options.flow_units));
+    const int us_check = ucf::getUnitSystem(static_cast<int>(ctx_internal.options.flow_units));
     const auto us_idx = static_cast<std::size_t>(us_check);
     // Gate on EVERY factor convert_internal_to_display touches, not just
     // LENGTH. Keying it on LENGTH alone (which is 1.0 for all US flow units)
@@ -1373,15 +1829,14 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     // back-conversions that are not length-dimensioned and that the READ side
     // performs unconditionally:
     //   * [LOSSES] seepage, /= UCF(RAINFALL) = 43200 on read — written back in
-    //     internal ft/s under an in/hr column, and at %10.6f it prints
+    //     internal ft/s under an in/hr column, and the former fixed-six-decimal format printed
     //     0.000000 after one save, so the error is a FIXED POINT that a
     //     save-convergence test can never catch.
     //   * q0 / q_limit / divider cutoff, /= Qcf on read for GPM and MGD decks.
     // convert_internal_to_display already self-guards per quantity, so a
     // broader gate costs a copy on decks that need one and nothing else.
     const bool needs_display_conv =
-        ucf::Ucf[ucf::LENGTH][us_idx]   != 1.0 ||
-        ucf::Ucf[ucf::RAINFALL][us_idx] != 1.0 ||
+        ucf::Ucf[ucf::LENGTH][us_idx] != 1.0 || ucf::Ucf[ucf::RAINFALL][us_idx] != 1.0 ||
         ucf::Qcf[static_cast<std::size_t>(ctx_internal.options.flow_units)] != 1.0;
 
     // Likewise, parse-time normalisations (adverse-slope conduit reversal and
@@ -1392,13 +1847,15 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     const bool needs_authored_conv = input::needs_authored_conversion(ctx_internal);
 
     SimulationContext ctx_display;
-    if (needs_display_conv || needs_authored_conv) {
+    if ((!opts.internal_units && needs_display_conv) || needs_authored_conv) {
         ctx_display = ctx_internal;
-        if (needs_display_conv)  input::convert_internal_to_display(ctx_display);
-        if (needs_authored_conv) input::convert_internal_to_authored(ctx_display);
+        if (needs_display_conv && !opts.internal_units)
+            input::convert_internal_to_display(ctx_display);
+        if (needs_authored_conv)
+            input::convert_internal_to_authored(ctx_display);
     }
     const SimulationContext& ctx =
-        (needs_display_conv || needs_authored_conv) ? ctx_display : ctx_internal;
+        ((needs_display_conv && !opts.internal_units) || needs_authored_conv) ? ctx_display : ctx_internal;
 
     // SWMM 5.x write profile (MULTI_ENGINE plan V2 Phase 4): omit the v6-only
     // sections and option keys, map incompatible option values, and write
@@ -1408,28 +1865,41 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     // engine without the OpenSWMM legacy grammar extensions (see
     // InpWriteOptions::Profile::Swmm5Stock).
     const bool stock5 = (opts.profile == InpWriteOptions::Profile::Swmm5Stock);
-    const bool swmm5  = (opts.profile == InpWriteOptions::Profile::Swmm5) || stock5;
-    auto note = [&](const std::string& s) { if (warnings) warnings->push_back(s); };
+    const bool swmm5 = (opts.profile == InpWriteOptions::Profile::Swmm5) || stock5;
+    auto note = [&](const std::string& s) {
+        if (warnings)
+            warnings->push_back(s);
+    };
 
     if (swmm5 && !ctx.options.ignore_snow_melt && !ctx.options.ignore_2d &&
-        ctx.snowpacks.mesh_config.mode!=surface::MeshSnowConfig::Mode::No && ctx.snowpacks.mesh_config.assigned()) {
-        note("SWMM 5.x cannot execute mesh snow. Export refused because dropping snow storage would change the model.");
+        ctx.snowpacks.mesh_config.mode != surface::MeshSnowConfig::Mode::No &&
+        ctx.snowpacks.mesh_config.assigned()) {
+        note(
+            "SWMM 5.x cannot execute mesh snow. Export refused because dropping snow storage would change the model.");
         return false;
     }
     if (swmm5 && !ctx.options.ignore_snow_melt) {
         for (int pack : ctx.subcatches.snowpack) {
             if (pack >= 0 && ctx.snowpacks.config.modelFor(pack) == surface::SnowKind::Ueb) {
-                note("SWMM 5.x cannot execute UEB snowpacks. Export refused because substituting degree-day snow would change the model.");
+                note(
+                    "SWMM 5.x cannot execute UEB snowpacks. Export refused because substituting degree-day snow would change the model.");
                 return -1;
             }
         }
     }
 
-    const std::string physical = mappedOutputPath(path, InpWriteOptions::OutputKind::Model, opts, warnings);
-    if (physical.empty()) return -1;
-    openswmm::io::AtomicOutputFile output(openswmm::io::utf8_path(physical));
-    FILE* f = output.stream();
-    if (!f) { note(output.error()); return -1; }
+    const std::string physical =
+        mappedOutputPath(path, InpWriteOptions::OutputKind::Model, opts, warnings);
+    if (physical.empty())
+        return -1;
+    std::unique_ptr<openswmm::io::AtomicOutputFile> output;
+    if (!opts.stream)
+        output = std::make_unique<openswmm::io::AtomicOutputFile>(openswmm::io::utf8_path(physical));
+    FILE* f = opts.stream ? opts.stream : output->stream();
+    if (!f) {
+        note(output->error());
+        return -1;
+    }
     if (swmm5)
         std::fprintf(f, ";; Written by OpenSWMM for a SWMM 5.x engine: v6-only sections and "
                         "options omitted; virtual and inlet junctions written as junctions.\n");
@@ -1440,484 +1910,532 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     // so a save to "dir/model.inp" is anchored at the working directory.
     const std::string dst_dir = [&] {
         const std::string dir = openswmm::io::parentDir(path);
-        if (dir.empty() || openswmm::io::isAbsolutePath(dir)) return dir;
+        if (dir.empty() || openswmm::io::isAbsolutePath(dir))
+            return dir;
         std::error_code ec;
         const auto abs = std::filesystem::absolute(openswmm::io::utf8_path(dir), ec);
         return ec ? dir : openswmm::io::path_utf8(abs);
     }();
-    const bool        force_abs_paths = ctx.options.write_absolute_paths;
+    const bool force_abs_paths = ctx.options.write_absolute_paths;
 
-    sec(f,"TITLE");
-    std::fprintf(f,";;Project Title/Notes\n");
+    sec(f, "TITLE");
+    std::fprintf(f, ";;Project Title/Notes\n");
     // Skip any re-parsed copies of the section-header comment so repeated
     // load/save cycles don't accumulate duplicate ";;Project Title/Notes"
     // lines in the [TITLE] block.
     for (const auto& line : ctx.title_notes) {
-        if (line == ";;Project Title/Notes") continue;
-        std::fprintf(f,"%s\n", line.c_str());
+        if (line == ";;Project Title/Notes")
+            continue;
+        std::fprintf(f, "%s\n", line.c_str());
     }
 
     // [OPTIONS] — writes every option unconditionally, matching legacy SWMM GUI
     // ExportOptions() structure: core group, ignore group, date/time group,
     // dynamic wave solver group, then engine-specific extensions.
     {
-    sec(f,"OPTIONS");
-    std::fprintf(f,";;%-20s %s\n","Option","Value");
+        sec(f, "OPTIONS");
+        std::fprintf(f, ";;%-20s %s\n", "Option", "Value");
 
-    static const char* sFlowUnits[]  = {"CFS","GPM","MGD","CMS","LPS","MLD"};
-    static const char* sInfilt[]     = {"HORTON","MODIFIED_HORTON","GREEN_AMPT","MODIFIED_GREEN_AMPT","CURVE_NUMBER"};
-    static const char* sRouting[]    = {"STEADY","KINWAVE","DYNWAVE","FV"};
-    static const char* sInertial[]   = {"NONE","PARTIAL","FULL"};
-    static const char* sNormFlow[]   = {"SLOPE","FROUDE","BOTH","NEITHER"};
-    static const char* sSurcharge[]  = {"EXTRAN","SLOT","DYNAMIC_SLOT","TPA"};
-    static const char* sUnsteadyFriction[] = {"NONE","VITKOVSKY"};  // issue #156
+        static const char* sFlowUnits[] = {"CFS", "GPM", "MGD", "CMS", "LPS", "MLD"};
+        static const char* sInfilt[] = {"HORTON", "MODIFIED_HORTON", "GREEN_AMPT",
+                                        "MODIFIED_GREEN_AMPT", "CURVE_NUMBER"};
+        static const char* sRouting[] = {"STEADY", "KINWAVE", "DYNWAVE", "FV"};
+        static const char* sInertial[] = {"NONE", "PARTIAL", "FULL"};
+        static const char* sNormFlow[] = {"SLOPE", "FROUDE", "BOTH", "NEITHER"};
+        static const char* sSurcharge[] = {"EXTRAN", "SLOT", "DYNAMIC_SLOT", "TPA"};
+        static const char* sUnsteadyFriction[] = {"NONE", "VITKOVSKY"}; // issue #156
 
-    const SimulationOptions& o = ctx.options;
-    int fu  = static_cast<int>(o.flow_units);
-    int inf = static_cast<int>(o.infiltration);
-    int rm  = static_cast<int>(o.routing_model);
-    int id  = o.inertial_damping;
-    int nfl = o.normal_flow_ltd;
-    int sm  = o.surcharge_method;
+        const SimulationOptions& o = ctx.options;
+        int fu = static_cast<int>(o.flow_units);
+        int inf = static_cast<int>(o.infiltration);
+        int rm = static_cast<int>(o.routing_model);
+        int id = o.inertial_damping;
+        int nfl = o.normal_flow_ltd;
+        int sm = o.surcharge_method;
 
-    // --- Group 1: Core process options (FLOW_UNITS .. SKIP_STEADY_STATE) ---
-    std::fprintf(f,"%-20s %s\n",  "FLOW_UNITS",       (fu>=0&&fu<=5)?sFlowUnits[fu]:"CFS");
-    std::fprintf(f,"%-20s %s\n",  "INFILTRATION",     (inf>=0&&inf<=4)?sInfilt[inf]:"HORTON");
-    {
-        const char* routing_word = (rm>=0&&rm<=3)?sRouting[rm]:"DYNWAVE";
-        if (swmm5 && rm == 3) {   // FV has no 5.x counterpart
-            routing_word = "DYNWAVE";
-            note("[OPTIONS] FLOW_ROUTING FV written as DYNWAVE (SWMM 5.x profile)");
-        }
-        std::fprintf(f,"%-20s %s\n",  "FLOW_ROUTING",     routing_word);
-    }
-    std::fprintf(f,"%-20s %s\n",  "LINK_OFFSETS",     o.link_offsets==1?"ELEVATION":"DEPTH");
-    std::fprintf(f,"%-20s %g\n",  "MIN_SLOPE",        o.min_slope);
-    std::fprintf(f,"%-20s %s\n",  "ALLOW_PONDING",    o.allow_ponding?"YES":"NO");
-    std::fprintf(f,"%-20s %s\n",  "SKIP_STEADY_STATE",o.skip_steady_state?"YES":"NO");
-    std::fprintf(f,"\n");
-
-    // --- Group 2: Ignore flags (write all, even when NO) ---
-    std::fprintf(f,"%-20s %s\n",  "IGNORE_RAINFALL",   o.ignore_rainfall?"YES":"NO");
-    std::fprintf(f,"%-20s %s\n",  "IGNORE_SNOWMELT",   o.ignore_snow_melt?"YES":"NO");
-    std::fprintf(f,"%-20s %s\n",  "IGNORE_GROUNDWATER",o.ignore_groundwater?"YES":"NO");
-    std::fprintf(f,"%-20s %s\n",  "IGNORE_RDII",       o.ignore_rdii?"YES":"NO");
-    std::fprintf(f,"%-20s %s\n",  "IGNORE_ROUTING",    o.ignore_routing?"YES":"NO");
-    std::fprintf(f,"%-20s %s\n",  "IGNORE_QUALITY",    o.ignore_quality?"YES":"NO");
-    // OpenSWMM extension, not a legacy key — emit only when set so 1D-only
-    // models keep a legacy-clean [OPTIONS] block.
-    if (o.ignore_2d && !swmm5)
-        std::fprintf(f,"%-20s %s\n",  "IGNORE_2D",         "YES");
-    // Same rule for the two transport engine-selection keys. Both were
-    // dropped on save: a EULERIAN_ARD model came back LEGACY and a
-    // WATER_AGE model came back with age tracking off, silently. They are
-    // written TOGETHER because either alone is worse than neither — a deck
-    // carrying WATER_AGE ON without its EULERIAN_ARD line opens with the
-    // "no age is tracked this simulation" warning instead of the model the
-    // user saved.
-    if (o.quality_solver == QualitySolverKind::EULERIAN_ARD && !swmm5)
-        std::fprintf(f,"%-20s %s\n",  "QUALITY_SOLVER",    "EULERIAN_ARD");
-    // X1: same rule for LAGRANGIAN — a save-as must not silently reopen as
-    // LEGACY (the A1a defect shape, third instance guarded).
-    if (o.quality_solver == QualitySolverKind::LAGRANGIAN && !swmm5)
-        std::fprintf(f,"%-20s %s\n",  "QUALITY_SOLVER",    "LAGRANGIAN");
-    // X3a: the LARD stepping keys ride the same save-as rule — dropping
-    // either silently changes the transport discretization on reopen.
-    if (o.quality_step > 0.0 && !swmm5) {
-        char qsb[32];
-        fmt_step(qsb, o.quality_step);
-        std::fprintf(f,"%-20s %s\n",  "QUALITY_STEP",      qsb);
-    }
-    if (o.max_segments_per_link != 100 && !swmm5)
-        std::fprintf(f,"%-20s %d\n",  "MAX_SEGMENTS_PER_LINK",
-                     o.max_segments_per_link);
-    // X3b: the RWPT keys ride the same rule.
-    if (o.lard_rwpt && !swmm5)
-        std::fprintf(f,"%-20s %s\n",  "DISPERSION",         "RWPT");
-    if (o.rwpt_seed != 0 && !swmm5)
-        std::fprintf(f,"%-20s %d\n",  "RWPT_SEED",          o.rwpt_seed);
-    if (o.water_age && !swmm5)
-        std::fprintf(f,"%-20s %s\n",  "WATER_AGE",         "ON");
-    // Same save-as rule: dropping this line silently reverts a fresh-boundary
-    // model to the legacy held-quality backflow on reopen.
-    if (o.outfall_backflow_zero)
-        std::fprintf(f,"%-20s %s\n",  "OUTFALL_BACKFLOW_QUALITY", "ZERO");
-    // H1: same rule, same reason — a save-as that dropped this reopened as a
-    // model with no temperature tracking, silently (the A1a defect).
-    if (o.heat_transport && !swmm5)
-        std::fprintf(f,"%-20s %s\n",  "HEAT_TRANSPORT",    "ON");
-    std::fprintf(f,"\n");
-
-    // --- Group 3: Date / time options (START_DATE .. RULE_STEP) ---
-    char db[32], tb[32], sb[32];
-    fmt_date(db, o.start_date);  fmt_time(tb, o.start_date);
-    std::fprintf(f,"%-20s %s\n",  "START_DATE",        db);
-    std::fprintf(f,"%-20s %s\n",  "START_TIME",        tb);
-
-    double rpt_start = (o.report_start > 0.0) ? o.report_start : o.start_date;
-    fmt_date(db, rpt_start);  fmt_time(tb, rpt_start);
-    std::fprintf(f,"%-20s %s\n",  "REPORT_START_DATE", db);
-    std::fprintf(f,"%-20s %s\n",  "REPORT_START_TIME", tb);
-
-    double end_dt = (o.end_date > 0.0) ? o.end_date : o.start_date;
-    fmt_date(db, end_dt);  fmt_time(tb, end_dt);
-    std::fprintf(f,"%-20s %s\n",  "END_DATE",          db);
-    std::fprintf(f,"%-20s %s\n",  "END_TIME",          tb);
-
-    fmt_sweep(sb, o.sweep_start);
-    std::fprintf(f,"%-20s %s\n",  "SWEEP_START",       sb);
-    fmt_sweep(sb, o.sweep_end);
-    std::fprintf(f,"%-20s %s\n",  "SWEEP_END",         sb);
-
-    std::fprintf(f,"%-20s %g\n",  "DRY_DAYS",          o.dry_days);
-    fmt_step(sb, o.report_step);
-    std::fprintf(f,"%-20s %s\n",  "REPORT_STEP",       sb);
-    fmt_step(sb, o.wet_step);
-    std::fprintf(f,"%-20s %s\n",  "WET_STEP",          sb);
-    fmt_step(sb, o.dry_step);
-    std::fprintf(f,"%-20s %s\n",  "DRY_STEP",          sb);
-    fmt_step(sb, o.routing_step);
-    std::fprintf(f,"%-20s %s\n",  "ROUTING_STEP",      sb);
-    fmt_step(sb, o.rule_step);
-    std::fprintf(f,"%-20s %s\n",  "RULE_STEP",         sb);
-    std::fprintf(f,"\n");
-
-    // --- Group 4: Dynamic wave / solver options (INERTIAL_DAMPING .. THREADS) ---
-    std::fprintf(f,"%-20s %s\n",  "INERTIAL_DAMPING",    (id>=0&&id<=2)?sInertial[id]:"PARTIAL");
-    std::fprintf(f,"%-20s %s\n",  "NORMAL_FLOW_LIMITED", (nfl>=0&&nfl<=3)?sNormFlow[nfl]:"BOTH");
-    std::fprintf(f,"%-20s %s\n",  "FORCE_MAIN_EQUATION", o.force_main_eqn==1?"D-W":"H-W");
-    {
-        const char* sm_word = (sm>=0&&sm<=3)?sSurcharge[sm]:"EXTRAN";
-        if (swmm5 && sm >= 2) {   // DYNAMIC_SLOT / TPA: 5.x knows only EXTRAN and SLOT
-            note(std::string("[OPTIONS] SURCHARGE_METHOD ") + sm_word +
-                 " written as SLOT (SWMM 5.x profile)");
-            sm_word = "SLOT";
-        }
-        std::fprintf(f,"%-20s %s\n",  "SURCHARGE_METHOD",    sm_word);
-    }
-    if (sm == 3 && !swmm5)   // issue #156: TPA acoustic celerity, non-default method only
-        std::fprintf(f,"%-20s %g\n","TPA_CELERITY", o.tpa_celerity);
-    if (!swmm5) {   // Unsteady friction (issue #156): round-tripped unconditionally, like
-        // SURCHARGE_METHOD — the keys are inert unless a consuming solver runs.
-        const int uf = o.unsteady_friction;
-        std::fprintf(f,"%-20s %s\n","UNSTEADY_FRICTION",
-                     (uf>=0&&uf<=1)?sUnsteadyFriction[uf]:"NONE");
-        std::fprintf(f,"%-20s %g\n","UF_K3", o.uf_k3);
-        if (o.report_signed_heads)   // issue #156 O-6: non-default only
-            std::fprintf(f,"%-20s %s\n","REPORT_SIGNED_HEADS","YES");
-    }
-    std::fprintf(f,"%-20s %.2f\n","VARIABLE_STEP",       o.variable_step);
-    std::fprintf(f,"%-20s %g\n",  "LENGTHENING_STEP",    o.lengthening_step);
-    std::fprintf(f,"%-20s %g\n",  "MIN_SURFAREA",        o.min_surf_area);
-    std::fprintf(f,"%-20s %d\n",  "MAX_TRIALS",          o.max_trials);
-    std::fprintf(f,"%-20s %g\n",  "HEAD_TOLERANCE",      o.head_tol);
-    std::fprintf(f,"%-20s %g\n",  "SYS_FLOW_TOL",        o.sys_flow_tol * 100.0);
-    std::fprintf(f,"%-20s %g\n",  "LAT_FLOW_TOL",        o.lat_flow_tol * 100.0);
-    // MINIMUM_STEP takes DECIMAL SECONDS only — legacy's MIN_ROUTE_STEP is a
-    // bare getDouble with no clock fallback (project.c:701-704), unlike
-    // ROUTE_STEP/LENGTHENING_STEP which try both (:676-690). Running it through
-    // fmt_step emitted "0:00:00" for every whole-second value, which legacy
-    // rejects with ERROR 211 — refusing the ENTIRE deck, not just the option.
-    std::fprintf(f,"%-20s %.15g\n", "MINIMUM_STEP",       o.min_routing_step);
-    std::fprintf(f,"%-20s %d\n",  "THREADS",             o.num_threads);
-
-    // --- Engine-specific extensions (not in legacy GUI) ---
-    if (sm == 2 && !swmm5) {
-        std::fprintf(f,"%-20s %.4f\n","DPS_CELERITY",   o.dps_target_celerity);
-        std::fprintf(f,"%-20s %.4f\n","DPS_ALPHA",      o.dps_alpha);
-        std::fprintf(f,"%-20s %.4f\n","DPS_DECAY_TIME", o.dps_decay_time);
-    }
-    if (o.node_continuity != NodeContinuity::EXPLICIT && !swmm5)
-        std::fprintf(f,"%-20s %s\n",  "NODE_CONTINUITY","SEMI_IMPLICIT");
-    if (o.anderson_accel && !swmm5)
-        std::fprintf(f,"%-20s %s\n",  "ANDERSON_ACCEL", "YES");
-    // VIRTUAL_JUNCTION_MOMENTUM is not emitted: FULL is retired (see
-    // SimulationOptions.hpp) and virtual_junction_momentum is now always 0,
-    // so writing the key could only ever re-emit the retired value.
-
-    // Explicit finite-volume solver knobs. Emitted only under FLOW_ROUTING FV
-    // so a DW model's [OPTIONS] block stays legacy-clean; the keys are inert
-    // under other routing models, so a round-trip that changes FLOW_ROUTING
-    // does not lose a user's FV configuration mid-session — it is simply not
-    // written until FV is selected again.
-    if (o.routing_model == RoutingModel::FV && !swmm5) {
-        static const char* sRiemann[] = {"HLL","HLLC"};
-        static const char* sLimiter[] = {"MINMOD","VANLEER","SUPERBEE"};
-        static const char* sScalar[]  = {"UPWIND","MUSCL","QUICKEST_ULTIMATE"};
-        static const char* sTime[]    = {"EULER","RK2"};
-        static const char* sBackend[] = {"CPU","AUTO","OMP","CUDA","HIP","SYCL"};
-        const auto& fvo = o.fv;
-        std::fprintf(f,"%-20s %g\n", "FV_CELL_LENGTH",  fvo.cell_length);
-        std::fprintf(f,"%-20s %d\n", "FV_MIN_CELLS",    fvo.min_cells);
-        std::fprintf(f,"%-20s %g\n", "FV_CFL",          fvo.cfl);
-        std::fprintf(f,"%-20s %s\n", "FV_RIEMANN",      sRiemann[static_cast<int>(fvo.riemann)]);
-        std::fprintf(f,"%-20s %d\n", "FV_ORDER",        fvo.order);
-        std::fprintf(f,"%-20s %s\n", "FV_LIMITER",      sLimiter[static_cast<int>(fvo.limiter)]);
-        std::fprintf(f,"%-20s %s\n", "FV_SCALAR_SCHEME",sScalar[static_cast<int>(fvo.scalar_scheme)]);
-        std::fprintf(f,"%-20s %s\n", "FV_TIME_INTEGRATION",
-                     sTime[static_cast<int>(fvo.time_integration)]);
-        std::fprintf(f,"%-20s %g\n", "FV_SLOT_CELERITY", fvo.slot_celerity);
-        if (fvo.pressurized_implicit)
-            std::fprintf(f,"%-20s %s\n", "FV_PRESSURIZED_IMPLICIT", "YES");
-        if (fvo.node_feedback_dt)   // non-default only
-            std::fprintf(f,"%-20s %s\n", "FV_NODE_FEEDBACK_DT", "YES");
-        if (fvo.pressure_closure == 1)  // issue #156: non-default only
-            std::fprintf(f,"%-20s %s\n", "FV_PRESSURE_CLOSURE", "TPA");
-        if (fvo.dispersion > 0.0)
-            std::fprintf(f,"%-20s %g\n", "FV_DISPERSION", fvo.dispersion);
-        if (fvo.structure_coupling != fv::StructureCoupling::SUBSTEP)
-            std::fprintf(f,"%-20s %s\n", "FV_STRUCTURE_COUPLING", "ROUTING_STEP");
-        if (!fvo.compaction)
-            std::fprintf(f,"%-20s %s\n", "FV_COMPACTION", "NO");
-        std::fprintf(f,"%-20s %s\n", "FV_BACKEND",      sBackend[static_cast<int>(fvo.backend)]);
-        std::fprintf(f,"%-20s %ld\n","FV_MIN_PARALLEL_CELLS", fvo.min_parallel_cells);
-        if (!fvo.lts)
-            std::fprintf(f,"%-20s %s\n", "FV_LTS", "NO");
-        std::fprintf(f,"%-20s %d\n", "FV_LTS_MAX_TIERS", fvo.lts_max_tiers);
-        if (fvo.cfl_census_interval != 1)
-            std::fprintf(f,"%-20s %d\n","FV_CFL_CENSUS_INTERVAL", fvo.cfl_census_interval);
-    }
-    // The spatial frame is the only CRS store a GeoPackage open fills, so
-    // fall back to it — otherwise a .gpkg model saved as .inp loses its CRS.
-    // v6-only key: a 5.x engine has nothing to do with it (stock 5.2.4 as
-    // shipped would reject it; the SWMMVis build warns and ignores).
-    if (!swmm5) {
-        const std::string& crs = !o.crs.empty() ? o.crs : ctx.spatial.crs;
-        if (!crs.empty())
-            std::fprintf(f,"%-20s %s\n",  "CRS",            crs.c_str());
-    }
-    if (o.write_absolute_paths)
-        std::fprintf(f,"%-20s %s\n",  "WRITE_ABSOLUTE_PATHS", "YES");
-    if (!swmm5) {
-        // v6-only physical constants: written when they differ from the
-        // SimulationOptions defaults (option-default rule), at full precision.
-        const SimulationOptions defaults{};
-        auto put = [&](const char* name, double v, double dflt) {
-            if (v == dflt) return;
-            char b[40];   // shortest form that reads back to exactly v
-            for (int prec = 15; prec <= 17; ++prec) {
-                std::snprintf(b, sizeof(b), "%.*g", prec, v);
-                if (std::strtod(b, nullptr) == v) break;
+        // --- Group 1: Core process options (FLOW_UNITS .. SKIP_STEADY_STATE) ---
+        std::fprintf(f, "%-20s %s\n", "FLOW_UNITS", (fu >= 0 && fu <= 5) ? sFlowUnits[fu] : "CFS");
+        std::fprintf(f, "%-20s %s\n", "INFILTRATION",
+                     (inf >= 0 && inf <= 4) ? sInfilt[inf] : "HORTON");
+        {
+            const char* routing_word = (rm >= 0 && rm <= 3) ? sRouting[rm] : "DYNWAVE";
+            if (swmm5 && rm == 3) { // FV has no 5.x counterpart
+                routing_word = "DYNWAVE";
+                note("[OPTIONS] FLOW_ROUTING FV written as DYNWAVE (SWMM 5.x profile)");
             }
-            std::fprintf(f, "%-20s %s\n", name, b);
-        };
-        put("WATER_DENSITY",                o.water_density,       defaults.water_density);
-        put("WATER_SPECIFIC_HEAT_CAPACITY", o.water_specific_heat, defaults.water_specific_heat);
-        put("WIND_FUNC_COEFF_A",            o.wind_func_coeff_a,   defaults.wind_func_coeff_a);
-        put("WIND_FUNC_COEFF_B",            o.wind_func_coeff_b,   defaults.wind_func_coeff_b);
-        put("PRESSURE_RATIO",               o.pressure_ratio,      defaults.pressure_ratio);
-    }
-    for (const auto& kv : o.ext_options) {
-        // "GWF:<subcatch>:<type>" entries are the parsed [GWF] section, not real
-        // options — they are re-emitted by the [GWF] writer. Round-tripping them
-        // through here corrupts them: handle_options() uppercases the key and
-        // keeps only the first value token.
-        if (kv.first.rfind("GWF:", 0) == 0) continue;
-        std::fprintf(f,"%-20s %s\n",  kv.first.c_str(), kv.second.c_str());
-    }
+            std::fprintf(f, "%-20s %s\n", "FLOW_ROUTING", routing_word);
+        }
+        std::fprintf(f, "%-20s %s\n", "LINK_OFFSETS", o.link_offsets == 1 ? "ELEVATION" : "DEPTH");
+        std::fprintf(f, "%-20s %.17g\n", "MIN_SLOPE", o.min_slope);
+        std::fprintf(f, "%-20s %s\n", "ALLOW_PONDING", o.allow_ponding ? "YES" : "NO");
+        std::fprintf(f, "%-20s %s\n", "SKIP_STEADY_STATE", o.skip_steady_state ? "YES" : "NO");
+        std::fprintf(f, "\n");
+
+        // --- Group 2: Ignore flags (write all, even when NO) ---
+        std::fprintf(f, "%-20s %s\n", "IGNORE_RAINFALL", o.ignore_rainfall ? "YES" : "NO");
+        std::fprintf(f, "%-20s %s\n", "IGNORE_SNOWMELT", o.ignore_snow_melt ? "YES" : "NO");
+        std::fprintf(f, "%-20s %s\n", "IGNORE_GROUNDWATER", o.ignore_groundwater ? "YES" : "NO");
+        std::fprintf(f, "%-20s %s\n", "IGNORE_RDII", o.ignore_rdii ? "YES" : "NO");
+        std::fprintf(f, "%-20s %s\n", "IGNORE_ROUTING", o.ignore_routing ? "YES" : "NO");
+        std::fprintf(f, "%-20s %s\n", "IGNORE_QUALITY", o.ignore_quality ? "YES" : "NO");
+        // OpenSWMM extension, not a legacy key — emit only when set so 1D-only
+        // models keep a legacy-clean [OPTIONS] block.
+        if (o.ignore_2d && !swmm5)
+            std::fprintf(f, "%-20s %s\n", "IGNORE_2D", "YES");
+        // Same rule for the two transport engine-selection keys. Both were
+        // dropped on save: a EULERIAN_ARD model came back LEGACY and a
+        // WATER_AGE model came back with age tracking off, silently. They are
+        // written TOGETHER because either alone is worse than neither — a deck
+        // carrying WATER_AGE ON without its EULERIAN_ARD line opens with the
+        // "no age is tracked this simulation" warning instead of the model the
+        // user saved.
+        if (o.quality_solver == QualitySolverKind::EULERIAN_ARD && !swmm5)
+            std::fprintf(f, "%-20s %s\n", "QUALITY_SOLVER", "EULERIAN_ARD");
+        // X1: same rule for LAGRANGIAN — a save-as must not silently reopen as
+        // LEGACY (the A1a defect shape, third instance guarded).
+        if (o.quality_solver == QualitySolverKind::LAGRANGIAN && !swmm5)
+            std::fprintf(f, "%-20s %s\n", "QUALITY_SOLVER", "LAGRANGIAN");
+        // X3a: the LARD stepping keys ride the same save-as rule — dropping
+        // either silently changes the transport discretization on reopen.
+        if (o.quality_step > 0.0 && !swmm5) {
+            char qsb[32];
+            fmt_step(qsb, o.quality_step);
+            std::fprintf(f, "%-20s %s\n", "QUALITY_STEP", qsb);
+        }
+        if (o.max_segments_per_link != 100 && !swmm5)
+            std::fprintf(f, "%-20s %d\n", "MAX_SEGMENTS_PER_LINK", o.max_segments_per_link);
+        // X3b: the RWPT keys ride the same rule.
+        if (o.lard_rwpt && !swmm5)
+            std::fprintf(f, "%-20s %s\n", "DISPERSION", "RWPT");
+        if (o.rwpt_seed != 0 && !swmm5)
+            std::fprintf(f, "%-20s %d\n", "RWPT_SEED", o.rwpt_seed);
+        if (o.water_age && !swmm5)
+            std::fprintf(f, "%-20s %s\n", "WATER_AGE", "ON");
+        // Same save-as rule: dropping this line silently reverts a fresh-boundary
+        // model to the legacy held-quality backflow on reopen.
+        if (o.outfall_backflow_zero)
+            std::fprintf(f, "%-20s %s\n", "OUTFALL_BACKFLOW_QUALITY", "ZERO");
+        // H1: same rule, same reason — a save-as that dropped this reopened as a
+        // model with no temperature tracking, silently (the A1a defect).
+        if (o.heat_transport && !swmm5)
+            std::fprintf(f, "%-20s %s\n", "HEAT_TRANSPORT", "ON");
+        std::fprintf(f, "\n");
+
+        // --- Group 3: Date / time options (START_DATE .. RULE_STEP) ---
+        char db[32], tb[32], sb[32];
+        fmt_date(db, o.start_date);
+        fmt_time(tb, o.start_date);
+        std::fprintf(f, "%-20s %s\n", "START_DATE", db);
+        std::fprintf(f, "%-20s %s\n", "START_TIME", tb);
+
+        double rpt_start = (o.report_start > 0.0) ? o.report_start : o.start_date;
+        fmt_date(db, rpt_start);
+        fmt_time(tb, rpt_start);
+        std::fprintf(f, "%-20s %s\n", "REPORT_START_DATE", db);
+        std::fprintf(f, "%-20s %s\n", "REPORT_START_TIME", tb);
+
+        double end_dt = (o.end_date > 0.0) ? o.end_date : o.start_date;
+        fmt_date(db, end_dt);
+        fmt_time(tb, end_dt);
+        std::fprintf(f, "%-20s %s\n", "END_DATE", db);
+        std::fprintf(f, "%-20s %s\n", "END_TIME", tb);
+
+        fmt_sweep(sb, o.sweep_start);
+        std::fprintf(f, "%-20s %s\n", "SWEEP_START", sb);
+        fmt_sweep(sb, o.sweep_end);
+        std::fprintf(f, "%-20s %s\n", "SWEEP_END", sb);
+
+        std::fprintf(f, "%-20s %.17g\n", "DRY_DAYS", o.dry_days);
+        fmt_step(sb, o.report_step);
+        std::fprintf(f, "%-20s %s\n", "REPORT_STEP", sb);
+        fmt_step(sb, o.wet_step);
+        std::fprintf(f, "%-20s %s\n", "WET_STEP", sb);
+        fmt_step(sb, o.dry_step);
+        std::fprintf(f, "%-20s %s\n", "DRY_STEP", sb);
+        fmt_step(sb, o.routing_step);
+        std::fprintf(f, "%-20s %s\n", "ROUTING_STEP", sb);
+        fmt_step(sb, o.rule_step);
+        std::fprintf(f, "%-20s %s\n", "RULE_STEP", sb);
+        std::fprintf(f, "\n");
+
+        // --- Group 4: Dynamic wave / solver options (INERTIAL_DAMPING .. THREADS) ---
+        std::fprintf(f, "%-20s %s\n", "INERTIAL_DAMPING",
+                     (id >= 0 && id <= 2) ? sInertial[id] : "PARTIAL");
+        std::fprintf(f, "%-20s %s\n", "NORMAL_FLOW_LIMITED",
+                     (nfl >= 0 && nfl <= 3) ? sNormFlow[nfl] : "BOTH");
+        std::fprintf(f, "%-20s %s\n", "FORCE_MAIN_EQUATION", o.force_main_eqn == 1 ? "D-W" : "H-W");
+        {
+            const char* sm_word = (sm >= 0 && sm <= 3) ? sSurcharge[sm] : "EXTRAN";
+            if (swmm5 && sm >= 2) { // DYNAMIC_SLOT / TPA: 5.x knows only EXTRAN and SLOT
+                note(std::string("[OPTIONS] SURCHARGE_METHOD ") + sm_word +
+                     " written as SLOT (SWMM 5.x profile)");
+                sm_word = "SLOT";
+            }
+            std::fprintf(f, "%-20s %s\n", "SURCHARGE_METHOD", sm_word);
+        }
+        if (!swmm5) // Retain authored TPA celerity even while another method is active.
+            std::fprintf(f, "%-20s %.17g\n", "TPA_CELERITY", o.tpa_celerity);
+        if (!swmm5) { // Unsteady friction (issue #156): round-tripped unconditionally, like
+            // SURCHARGE_METHOD — the keys are inert unless a consuming solver runs.
+            const int uf = o.unsteady_friction;
+            std::fprintf(f, "%-20s %s\n", "UNSTEADY_FRICTION",
+                         (uf >= 0 && uf <= 1) ? sUnsteadyFriction[uf] : "NONE");
+            std::fprintf(f, "%-20s %.17g\n", "UF_K3", o.uf_k3);
+            if (o.report_signed_heads) // issue #156 O-6: non-default only
+                std::fprintf(f, "%-20s %s\n", "REPORT_SIGNED_HEADS", "YES");
+        }
+        std::fprintf(f, "%-20s %.17g\n", "VARIABLE_STEP", o.variable_step);
+        std::fprintf(f, "%-20s %.17g\n", "LENGTHENING_STEP", o.lengthening_step);
+        std::fprintf(f, "%-20s %.17g\n", "MIN_SURFAREA", o.min_surf_area);
+        std::fprintf(f, "%-20s %d\n", "MAX_TRIALS", o.max_trials);
+        std::fprintf(f, "%-20s %.17g\n", "HEAD_TOLERANCE", o.head_tol);
+        std::fprintf(f, "%-20s %.17g\n", "SYS_FLOW_TOL", o.sys_flow_tol * 100.0);
+        std::fprintf(f, "%-20s %.17g\n", "LAT_FLOW_TOL", o.lat_flow_tol * 100.0);
+        // MINIMUM_STEP takes DECIMAL SECONDS only — legacy's MIN_ROUTE_STEP is a
+        // bare getDouble with no clock fallback (project.c:701-704), unlike
+        // ROUTE_STEP/LENGTHENING_STEP which try both (:676-690). Running it through
+        // fmt_step emitted "0:00:00" for every whole-second value, which legacy
+        // rejects with ERROR 211 — refusing the ENTIRE deck, not just the option.
+        std::fprintf(f, "%-20s %.17g\n", "MINIMUM_STEP", o.min_routing_step);
+        std::fprintf(f, "%-20s %d\n", "THREADS", o.num_threads);
+
+        // --- Engine-specific extensions (not in legacy GUI) ---
+        if (!swmm5) {
+            std::fprintf(f, "%-20s %.17g\n", "DPS_CELERITY", o.dps_target_celerity);
+            std::fprintf(f, "%-20s %.17g\n", "DPS_ALPHA", o.dps_alpha);
+            std::fprintf(f, "%-20s %.17g\n", "DPS_DECAY_TIME", o.dps_decay_time);
+        }
+        if (o.node_continuity != NodeContinuity::EXPLICIT && !swmm5)
+            std::fprintf(f, "%-20s %s\n", "NODE_CONTINUITY", "SEMI_IMPLICIT");
+        if (o.anderson_accel && !swmm5)
+            std::fprintf(f, "%-20s %s\n", "ANDERSON_ACCEL", "YES");
+        // VIRTUAL_JUNCTION_MOMENTUM is not emitted: FULL is retired (see
+        // SimulationOptions.hpp) and virtual_junction_momentum is now always 0,
+        // so writing the key could only ever re-emit the retired value.
+
+        // Preserve finite-volume settings in native files even while another
+        // routing method is selected; the keys remain inert until FV is active.
+        if (!swmm5) {
+            static const char* sRiemann[] = {"HLL", "HLLC"};
+            static const char* sLimiter[] = {"MINMOD", "VANLEER", "SUPERBEE"};
+            static const char* sScalar[] = {"UPWIND", "MUSCL", "QUICKEST_ULTIMATE"};
+            static const char* sTime[] = {"EULER", "RK2"};
+            static const char* sBackend[] = {"CPU", "AUTO", "OMP", "CUDA", "HIP", "SYCL"};
+            const auto& fvo = o.fv;
+            std::fprintf(f, "%-20s %.17g\n", "FV_CELL_LENGTH", fvo.cell_length);
+            std::fprintf(f, "%-20s %d\n", "FV_MIN_CELLS", fvo.min_cells);
+            std::fprintf(f, "%-20s %.17g\n", "FV_CFL", fvo.cfl);
+            std::fprintf(f, "%-20s %s\n", "FV_RIEMANN", sRiemann[static_cast<int>(fvo.riemann)]);
+            std::fprintf(f, "%-20s %d\n", "FV_ORDER", fvo.order);
+            std::fprintf(f, "%-20s %s\n", "FV_LIMITER", sLimiter[static_cast<int>(fvo.limiter)]);
+            std::fprintf(f, "%-20s %s\n", "FV_SCALAR_SCHEME",
+                         sScalar[static_cast<int>(fvo.scalar_scheme)]);
+            std::fprintf(f, "%-20s %s\n", "FV_TIME_INTEGRATION",
+                         sTime[static_cast<int>(fvo.time_integration)]);
+            std::fprintf(f, "%-20s %.17g\n", "FV_SLOT_CELERITY", fvo.slot_celerity);
+            if (fvo.pressurized_implicit)
+                std::fprintf(f, "%-20s %s\n", "FV_PRESSURIZED_IMPLICIT", "YES");
+            if (fvo.node_feedback_dt) // non-default only
+                std::fprintf(f, "%-20s %s\n", "FV_NODE_FEEDBACK_DT", "YES");
+            if (fvo.pressure_closure == 1) // issue #156: non-default only
+                std::fprintf(f, "%-20s %s\n", "FV_PRESSURE_CLOSURE", "TPA");
+            if (fvo.dispersion > 0.0)
+                std::fprintf(f, "%-20s %.17g\n", "FV_DISPERSION", fvo.dispersion);
+            if (fvo.structure_coupling != fv::StructureCoupling::SUBSTEP)
+                std::fprintf(f, "%-20s %s\n", "FV_STRUCTURE_COUPLING", "ROUTING_STEP");
+            if (!fvo.compaction)
+                std::fprintf(f, "%-20s %s\n", "FV_COMPACTION", "NO");
+            std::fprintf(f, "%-20s %s\n", "FV_BACKEND", sBackend[static_cast<int>(fvo.backend)]);
+            std::fprintf(f, "%-20s %ld\n", "FV_MIN_PARALLEL_CELLS", fvo.min_parallel_cells);
+            if (!fvo.lts)
+                std::fprintf(f, "%-20s %s\n", "FV_LTS", "NO");
+            std::fprintf(f, "%-20s %d\n", "FV_LTS_MAX_TIERS", fvo.lts_max_tiers);
+            if (fvo.cfl_census_interval != 1)
+                std::fprintf(f, "%-20s %d\n", "FV_CFL_CENSUS_INTERVAL", fvo.cfl_census_interval);
+        }
+        // The spatial frame is the only CRS store a GeoPackage open fills, so
+        // fall back to it — otherwise a .gpkg model saved as .inp loses its CRS.
+        // v6-only key: a 5.x engine has nothing to do with it (stock 5.2.4 as
+        // shipped would reject it; the SWMMVis build warns and ignores).
+        if (!swmm5) {
+            const std::string& crs = !o.crs.empty() ? o.crs : ctx.spatial.crs;
+            if (!crs.empty())
+                std::fprintf(f, "%-20s %s\n", "CRS", crs.c_str());
+        }
+        if (o.write_absolute_paths)
+            std::fprintf(f, "%-20s %s\n", "WRITE_ABSOLUTE_PATHS", "YES");
+        if (!swmm5) {
+            // v6-only physical constants: written when they differ from the
+            // SimulationOptions defaults (option-default rule), at full precision.
+            const SimulationOptions defaults{};
+            auto put = [&](const char* name, double v, double dflt) {
+                if (v == dflt)
+                    return;
+                char b[40]; // shortest form that reads back to exactly v
+                for (int prec = 15; prec <= 17; ++prec) {
+                    std::snprintf(b, sizeof(b), "%.*g", prec, v);
+                    if (std::strtod(b, nullptr) == v)
+                        break;
+                }
+                std::fprintf(f, "%-20s %s\n", name, b);
+            };
+            put("WATER_DENSITY", o.water_density, defaults.water_density);
+            put("WATER_SPECIFIC_HEAT_CAPACITY", o.water_specific_heat,
+                defaults.water_specific_heat);
+            put("WIND_FUNC_COEFF_A", o.wind_func_coeff_a, defaults.wind_func_coeff_a);
+            put("WIND_FUNC_COEFF_B", o.wind_func_coeff_b, defaults.wind_func_coeff_b);
+            put("PRESSURE_RATIO", o.pressure_ratio, defaults.pressure_ratio);
+        }
+        for (const auto& kv : o.ext_options) {
+            // "GWF:<subcatch>:<type>" entries are the parsed [GWF] section, not real
+            // options — they are re-emitted by the [GWF] writer. Round-tripping them
+            // through here corrupts them: handle_options() uppercases the key and
+            // keeps only the first value token.
+            if (kv.first.rfind("GWF:", 0) == 0)
+                continue;
+            if (swmm5 && kv.first.starts_with("IO_")) continue;
+            if (kv.first.starts_with("IO_")) {
+                std::string value = kv.second;
+                if (kv.first.ends_with("_PATH") && !value.empty()) {
+                    if (!io::isAbsolutePath(value))
+                        value = io::path_utf8(io::utf8_path(ctx.inp_file_path).parent_path() / io::utf8_path(value));
+                    if (!force_abs_paths && !dst_dir.empty()) value = io::makeRelative(value, dst_dir).path;
+                }
+                std::fprintf(f, "%-20s %s\n", kv.first.c_str(), quote_argument(value).c_str());
+            } else if (!swmm5 || !kv.first.starts_with("FV_"))
+                std::fprintf(f, "%-20s %s\n", kv.first.c_str(), kv.second.c_str());
+        }
     }
 
     // [EVAPORATION]
     {
         const auto& opts = ctx.options;
-        sec(f,"EVAPORATION");
-        std::fprintf(f,";;Type       Parameters\n");
-        std::fprintf(f,";;---------- ----------\n");
+        sec(f, "EVAPORATION");
+        std::fprintf(f, ";;Type       Parameters\n");
+        std::fprintf(f, ";;---------- ----------\n");
         switch (opts.evap_type) {
-            case 0:  // CONSTANT
-                std::fprintf(f,"CONSTANT     %.4f\n", opts.evap_values[0]);
-                break;
-            case 1:  // MONTHLY
-                std::fprintf(f,"MONTHLY     ");
-                for (int i = 0; i < 12; ++i)
-                    std::fprintf(f," %.4f", opts.evap_values[i]);
-                std::fprintf(f,"\n");
-                break;
-            case 2:  // TIMESERIES
-                std::fprintf(f,"TIMESERIES   %s\n", opts.evap_ts_name.c_str());
-                break;
-            case 3:  // TEMPERATURE
-                std::fprintf(f,"TEMPERATURE\n");
-                break;
-            case 4:  // FILE
-                std::fprintf(f,"FILE        ");
-                for (int i = 0; i < 12; ++i)
-                    std::fprintf(f," %.4f", opts.pan_coeff[i]);
-                std::fprintf(f,"\n");
-                break;
+        case 0: // CONSTANT
+            std::fprintf(f, "CONSTANT     %.17g\n", opts.evap_values[0]);
+            break;
+        case 1: // MONTHLY
+            std::fprintf(f, "MONTHLY     ");
+            for (int i = 0; i < 12; ++i)
+                std::fprintf(f, " %.17g", opts.evap_values[i]);
+            std::fprintf(f, "\n");
+            break;
+        case 2: // TIMESERIES
+            std::fprintf(f, "TIMESERIES   %s\n", opts.evap_ts_name.c_str());
+            break;
+        case 3: // TEMPERATURE
+            std::fprintf(f, "TEMPERATURE\n");
+            break;
+        case 4: // FILE
+            std::fprintf(f, "FILE        ");
+            for (int i = 0; i < 12; ++i)
+                std::fprintf(f, " %.17g", opts.pan_coeff[i]);
+            std::fprintf(f, "\n");
+            break;
         }
         if (!opts.evap_recovery_pat.empty())
-            std::fprintf(f,"RECOVERY     %s\n", opts.evap_recovery_pat.c_str());
-        std::fprintf(f,"DRY_ONLY     %s\n", opts.evap_dry_only ? "YES" : "NO");
+            std::fprintf(f, "RECOVERY     %s\n", opts.evap_recovery_pat.c_str());
+        std::fprintf(f, "DRY_ONLY     %s\n", opts.evap_dry_only ? "YES" : "NO");
     }
 
     // [TEMPERATURE]
     {
         const auto& opts = ctx.options;
-        bool has_temp = (opts.temp_source > 0 || opts.wind_type > 0 ||
-                         opts.snow_divt != 34.0 || opts.snow_lat != 0.0 ||
-                         opts.snow_dtlong != 0.0);
+        bool has_temp = (opts.temp_source > 0 || opts.wind_type > 0 || opts.snow_divt != 34.0 ||
+                         opts.snow_lat != 0.0 || opts.snow_dtlong != 0.0);
         for (int i = 0; i < 10 && !has_temp; ++i)
-            if (opts.adc_imperv[i] != 1.0 || opts.adc_perv[i] != 1.0) has_temp = true;
+            if (opts.adc_imperv[i] != 1.0 || opts.adc_perv[i] != 1.0)
+                has_temp = true;
         // Check monthly wind speeds
         for (int i = 0; i < 12 && !has_temp; ++i)
-            if (opts.wind_speed[i] != 0.0) has_temp = true;
+            if (opts.wind_speed[i] != 0.0)
+                has_temp = true;
         // Humidity is written whenever it departs from the 50 % RH constant
         // default (a HUMIDITY line used to be dropped on save).
         bool has_humidity = (opts.humidity_type != 0 || opts.humidity_var != 0);
         for (int i = 0; i < 12 && !has_humidity; ++i)
-            if (opts.humidity[i] != 50.0) has_humidity = true;
-        if (has_humidity) has_temp = true;
-        if (!swmm5 && ctx.snowpacks.config.hasTemperatureRows()) has_temp = true;
+            if (opts.humidity[i] != 50.0)
+                has_humidity = true;
+        if (has_humidity)
+            has_temp = true;
+        if (!swmm5 && ctx.snowpacks.config.hasTemperatureRows())
+            has_temp = true;
 
         if (has_temp) {
-            sec(f,"TEMPERATURE");
+            sec(f, "TEMPERATURE");
             const auto& snow = ctx.snowpacks.config;
             if (!swmm5) {
-            if (snow.site) {
-                const auto& s = *snow.site;
-                std::fprintf(f, "SITE %.17g %.17g %.17g %.17g\n", s.latitude, s.longitude, s.timezone, s.elevation);
-            }
-            if (snow.model_authored)
-                std::fprintf(f, "SNOWMELT_MODEL %s\n", snow.model == surface::SnowKind::Ueb ? "UEB" : "DEGREE_DAY");
-            if (snow.step != 3600) std::fprintf(f, "SNOW_STEP %.17g\n", snow.step);
-            if (!snow.met_file.empty()) {
-                const auto path = emit_path_token(snow.met_file, dst_dir, force_abs_paths, warnings);
-                std::fprintf(f, "MET_FILE \"%s\"\n", path.c_str());
-            }
-            for (const auto& source : {std::pair{"SHORTWAVE", &snow.shortwave}, std::pair{"LONGWAVE", &snow.longwave}}) {
-                if (!source.second->authored) continue;
-                using Mode = surface::RadiationSource::Mode;
-                if (source.second->mode == Mode::Timeseries)
-                    std::fprintf(f, "%s TIMESERIES %s\n", source.first, source.second->series.c_str());
-                else std::fprintf(f, "%s %s\n", source.first, source.second->mode == Mode::File ? "FILE" : "COMPUTED");
-            }
+                if (snow.site) {
+                    const auto& s = *snow.site;
+                    std::fprintf(f, "SITE %.17g %.17g %.17g %.17g\n", s.latitude, s.longitude,
+                                 s.timezone, s.elevation);
+                }
+                if (snow.model_authored)
+                    std::fprintf(f, "SNOWMELT_MODEL %s\n",
+                                 snow.model == surface::SnowKind::Ueb ? "UEB" : "DEGREE_DAY");
+                if (snow.step != 3600)
+                    std::fprintf(f, "SNOW_STEP %.17g\n", snow.step);
+                if (!snow.met_file.empty()) {
+                    const auto path =
+                        emit_path_token(snow.met_file, dst_dir, force_abs_paths, warnings);
+                    std::fprintf(f, "MET_FILE \"%s\"\n", path.c_str());
+                }
+                for (const auto& source : {std::pair{"SHORTWAVE", &snow.shortwave},
+                                           std::pair{"LONGWAVE", &snow.longwave}}) {
+                    if (!source.second->authored)
+                        continue;
+                    using Mode = surface::RadiationSource::Mode;
+                    if (source.second->mode == Mode::Timeseries)
+                        std::fprintf(f, "%s TIMESERIES %s\n", source.first,
+                                     source.second->series.c_str());
+                    else
+                        std::fprintf(f, "%s %s\n", source.first,
+                                     source.second->mode == Mode::File ? "FILE" : "COMPUTED");
+                }
             }
             if (opts.temp_source == 1)
-                std::fprintf(f,"TIMESERIES   %s\n", opts.temp_ts_name.c_str());
+                std::fprintf(f, "TIMESERIES   %s\n", opts.temp_ts_name.c_str());
             else if (opts.temp_source == 2) {
                 const std::string tok =
                     emit_path_token(opts.temp_file, dst_dir, force_abs_paths, warnings);
-                std::fprintf(f,"FILE         \"%s\"", tok.c_str());
+                std::fprintf(f, "FILE         \"%s\"", tok.c_str());
                 // Legacy positional form: FILE fname [startdate] [units]. Emit a
                 // "*" start-date placeholder when units are set without a date.
                 if (opts.temp_file_start > 0.0) {
                     char sd[32];
                     fmt_date(sd, opts.temp_file_start);
-                    std::fprintf(f," %s", sd);
-                }
-                else if (opts.temp_units >= 0)
-                    std::fprintf(f," *");
+                    std::fprintf(f, " %s", sd);
+                } else if (opts.temp_units >= 0)
+                    std::fprintf(f, " *");
                 if (opts.temp_units >= 0) {
                     static const char* kUnitsWords[] = {"C10", "C", "F"};
-                    std::fprintf(f," %s", kUnitsWords[opts.temp_units]);
+                    std::fprintf(f, " %s", kUnitsWords[opts.temp_units]);
                 }
-                std::fprintf(f,"\n");
+                std::fprintf(f, "\n");
             }
 
             if (opts.wind_type == 0) {
-                std::fprintf(f,"WINDSPEED    MONTHLY");
+                std::fprintf(f, "WINDSPEED    MONTHLY");
                 for (int i = 0; i < 12; ++i)
-                    std::fprintf(f," %.4f", opts.wind_speed[i]);
-                std::fprintf(f,"\n");
+                    std::fprintf(f, " %.17g", opts.wind_speed[i]);
+                std::fprintf(f, "\n");
             } else {
-                std::fprintf(f,"WINDSPEED    FILE\n");
+                std::fprintf(f, "WINDSPEED    FILE\n");
             }
 
             if (has_humidity) {
-                std::fprintf(f,"HUMIDITY    ");
-                if (opts.humidity_var == 1) std::fprintf(f," DEWPOINT");
+                std::fprintf(f, "HUMIDITY    ");
+                if (opts.humidity_var == 1)
+                    std::fprintf(f, " DEWPOINT");
                 if (opts.humidity_type == 2) {
-                    std::fprintf(f," TIMESERIES %s\n", opts.humidity_ts_name.c_str());
+                    std::fprintf(f, " TIMESERIES %s\n", opts.humidity_ts_name.c_str());
                 } else if (opts.humidity_type == 1) {
-                    std::fprintf(f," MONTHLY");
+                    std::fprintf(f, " MONTHLY");
                     for (int i = 0; i < 12; ++i)
-                        std::fprintf(f," %.4f", opts.humidity[i]);
-                    std::fprintf(f,"\n");
+                        std::fprintf(f, " %.17g", opts.humidity[i]);
+                    std::fprintf(f, "\n");
                 } else {
-                    std::fprintf(f," %.4f\n", opts.humidity[0]);
+                    std::fprintf(f, " %.17g\n", opts.humidity[0]);
                 }
             }
 
             // Legacy form: SNOWMELT Stemp ATIwt RNM Elev Lat DTLong (minutes).
             // The v6-only minMelt/maxMelt ride as tokens 7-8 only when set
             // (legacy ignores extra tokens; the solver does not use them).
-            std::fprintf(f,"SNOWMELT     %.2f %.4f %.4f %.4f %.4f %.4f",
-                         opts.snow_divt, opts.snow_ati_wt, opts.snow_nrg_ratio,
-                         opts.snow_elev, opts.snow_lat, opts.snow_dtlong);
+            std::fprintf(f, "SNOWMELT     %.17g %.17g %.17g %.17g %.17g %.17g", opts.snow_divt,
+                         opts.snow_ati_wt, opts.snow_nrg_ratio, opts.snow_elev, opts.snow_lat,
+                         opts.snow_dtlong);
             if (opts.snow_min_melt != 0.0 || opts.snow_max_melt != 0.0)
-                std::fprintf(f," %.6f %.6f", opts.snow_min_melt, opts.snow_max_melt);
-            std::fprintf(f,"\n");
+                std::fprintf(f, " %.17g %.17g", opts.snow_min_melt, opts.snow_max_melt);
+            std::fprintf(f, "\n");
 
-            std::fprintf(f,"ADC          IMPERVIOUS");
+            std::fprintf(f, "ADC          IMPERVIOUS");
             for (int i = 0; i < 10; ++i)
-                std::fprintf(f," %.4f", opts.adc_imperv[i]);
-            std::fprintf(f,"\n");
-            std::fprintf(f,"ADC          PERVIOUS");
+                std::fprintf(f, " %.17g", opts.adc_imperv[i]);
+            std::fprintf(f, "\n");
+            std::fprintf(f, "ADC          PERVIOUS");
             for (int i = 0; i < 10; ++i)
-                std::fprintf(f," %.4f", opts.adc_perv[i]);
-            std::fprintf(f,"\n");
+                std::fprintf(f, " %.17g", opts.adc_perv[i]);
+            std::fprintf(f, "\n");
         }
     }
 
     const auto ueb_rows = surface::uebOptionRows(ctx.snowpacks.config);
     if (!swmm5 && !ueb_rows.empty()) {
         sec(f, "UEB_OPTIONS");
-        for (const auto& row : ueb_rows) std::fprintf(f, "%s\n", row.c_str());
+        for (const auto& row : ueb_rows)
+            std::fprintf(f, "%s\n", row.c_str());
     }
 
-    if(!swmm5)for(int section=0;section<3;++section) {
-        const auto rows=section==0?surface::meshSnowOptionRows(ctx.snowpacks.mesh_config):
-            surface::meshSnowRows(ctx.snowpacks.mesh_config,section==2);
-        if(rows.empty())continue;
-        sec(f,section==0?"2D_SNOW_OPTIONS":section==1?"2D_SNOW_DEFAULTS":"2D_SNOW");
-        for(const auto& row:rows)std::fprintf(f,"%s\n",row.c_str());
-    }
+    if (!swmm5)
+        for (int section = 0; section < 3; ++section) {
+            const auto rows = section == 0
+                                  ? surface::meshSnowOptionRows(ctx.snowpacks.mesh_config)
+                                  : surface::meshSnowRows(ctx.snowpacks.mesh_config, section == 2);
+            if (rows.empty())
+                continue;
+            sec(f, section == 0   ? "2D_SNOW_OPTIONS"
+                   : section == 1 ? "2D_SNOW_DEFAULTS"
+                                  : "2D_SNOW");
+            for (const auto& row : rows)
+                std::fprintf(f, "%s\n", row.c_str());
+        }
 
     // [SNOWPACKS]
     if (!ctx.snowpacks.names.empty()) {
-        sec(f,"SNOWPACKS");
-        std::fprintf(f,";;%-16s %-12s Parameters\n","Name","Surface");
-        std::fprintf(f,";;---------- ---------- ----------\n");
+        sec(f, "SNOWPACKS");
+        std::fprintf(f, ";;%-16s %-12s Parameters\n", "Name", "Surface");
+        std::fprintf(f, ";;---------- ---------- ----------\n");
         for (size_t j = 0; j < ctx.snowpacks.names.size(); ++j) {
             const char* name = ctx.snowpacks.names[j].c_str();
             const auto ueb = ctx.snowpacks.config.packs.find(static_cast<int>(j));
             if (!swmm5 && ueb != ctx.snowpacks.config.packs.end()) {
                 const auto& p = ueb->second;
                 std::fprintf(f, "%s UEB %.17g %.17g %.17g %.17g %.17g MODEL %s\n", name,
-                    p.site.forest, p.site.drift, p.site.ground_heat, p.site.extinction_depth, p.initial_energy,
-                    p.model == surface::SnowKind::Ueb ? "UEB" : "DEGREE_DAY");
+                             p.site.forest, p.site.drift, p.site.ground_heat,
+                             p.site.extinction_depth, p.initial_energy,
+                             p.model == surface::SnowKind::Ueb ? "UEB" : "DEGREE_DAY");
             }
             if (j < ctx.snowpacks.plowable.size()) {
                 const auto& p = ctx.snowpacks.plowable[j];
-                std::fprintf(f,"%-16s PLOWABLE    ", name);
-                for (int k = 0; k < 7; ++k) std::fprintf(f," %10.4f", p[static_cast<size_t>(k)]);
-                std::fprintf(f,"\n");
+                std::fprintf(f, "%-16s PLOWABLE    ", name);
+                for (int k = 0; k < 7; ++k)
+                    std::fprintf(f, " %.17g", p[static_cast<size_t>(k)]);
+                std::fprintf(f, "\n");
             }
             if (j < ctx.snowpacks.impervious.size()) {
                 const auto& p = ctx.snowpacks.impervious[j];
-                std::fprintf(f,"%-16s IMPERVIOUS  ", name);
-                for (int k = 0; k < 7; ++k) std::fprintf(f," %10.4f", p[static_cast<size_t>(k)]);
-                std::fprintf(f,"\n");
+                std::fprintf(f, "%-16s IMPERVIOUS  ", name);
+                for (int k = 0; k < 7; ++k)
+                    std::fprintf(f, " %.17g", p[static_cast<size_t>(k)]);
+                std::fprintf(f, "\n");
             }
             if (j < ctx.snowpacks.pervious.size()) {
                 const auto& p = ctx.snowpacks.pervious[j];
-                std::fprintf(f,"%-16s PERVIOUS    ", name);
-                for (int k = 0; k < 7; ++k) std::fprintf(f," %10.4f", p[static_cast<size_t>(k)]);
-                std::fprintf(f,"\n");
+                std::fprintf(f, "%-16s PERVIOUS    ", name);
+                for (int k = 0; k < 7; ++k)
+                    std::fprintf(f, " %.17g", p[static_cast<size_t>(k)]);
+                std::fprintf(f, "\n");
             }
             if (j < ctx.snowpacks.removal.size()) {
                 const auto& r = ctx.snowpacks.removal[j];
                 bool has_removal = false;
                 for (int k = 0; k < 6; ++k)
-                    if (r[static_cast<size_t>(k)] != 0.0) { has_removal = true; break; }
+                    if (r[static_cast<size_t>(k)] != 0.0) {
+                        has_removal = true;
+                        break;
+                    }
                 if (has_removal) {
-                    std::fprintf(f,"%-16s REMOVAL     ", name);
-                    for (int k = 0; k < 6; ++k) std::fprintf(f," %10.4f", r[static_cast<size_t>(k)]);
+                    std::fprintf(f, "%-16s REMOVAL     ", name);
+                    for (int k = 0; k < 6; ++k)
+                        std::fprintf(f, " %.17g", r[static_cast<size_t>(k)]);
                     if (j < ctx.snowpacks.removal_subcatch.size() &&
                         !ctx.snowpacks.removal_subcatch[j].empty())
-                        std::fprintf(f," %s", ctx.snowpacks.removal_subcatch[j].c_str());
-                    std::fprintf(f,"\n");
+                        std::fprintf(f, " %s", ctx.snowpacks.removal_subcatch[j].c_str());
+                    std::fprintf(f, "\n");
                 }
             }
         }
@@ -1928,47 +2446,54 @@ int writeInpFile(const SimulationContext&  ctx_internal,
         bool has_adj = false;
         for (int i = 0; i < 12; ++i) {
             if (ctx.adjust_temp[i] != 0.0 || ctx.adjust_evap[i] != 0.0 ||
-                ctx.adjust_rain[i] != 1.0 || ctx.adjust_hydcon[i] != 1.0)
-            { has_adj = true; break; }
+                ctx.adjust_rain[i] != 1.0 || ctx.adjust_hydcon[i] != 1.0) {
+                has_adj = true;
+                break;
+            }
         }
         for (size_t i = 0; i < ctx.subcatch_n_perv_pattern.size() && !has_adj; ++i)
-            if (ctx.subcatch_n_perv_pattern[i] >= 0) has_adj = true;
+            if (ctx.subcatch_n_perv_pattern[i] >= 0)
+                has_adj = true;
         for (size_t i = 0; i < ctx.subcatch_d_store_pattern.size() && !has_adj; ++i)
-            if (ctx.subcatch_d_store_pattern[i] >= 0) has_adj = true;
+            if (ctx.subcatch_d_store_pattern[i] >= 0)
+                has_adj = true;
         for (size_t i = 0; i < ctx.subcatch_infil_pattern.size() && !has_adj; ++i)
-            if (ctx.subcatch_infil_pattern[i] >= 0) has_adj = true;
+            if (ctx.subcatch_infil_pattern[i] >= 0)
+                has_adj = true;
 
         if (has_adj) {
-            sec(f,"ADJUSTMENTS");
-            auto write12 = [&](const char* key, const double* arr) {
-                std::fprintf(f,"%-12s", key);
+            sec(f, "ADJUSTMENTS");
+            auto write12 = [&](const char* key, const double* arr,
+                               const char* format = " %.17g") {
+                std::fprintf(f, "%-12s", key);
                 for (int i = 0; i < 12; ++i)
-                    std::fprintf(f," %10.4f", arr[i]);
-                std::fprintf(f,"\n");
+                    std::fprintf(f, format, arr[i]);
+                std::fprintf(f, "\n");
             };
-            write12("TEMP",    ctx.adjust_temp);
-            write12("EVAP",    ctx.adjust_evap);
-            write12("RAIN",    ctx.adjust_rain);
+            write12("TEMP", ctx.adjust_temp);
+            write12("EVAP", ctx.adjust_evap);
+            // A small positive multiplier must not round to zero on save.
+            write12("RAIN", ctx.adjust_rain, " %.17g");
             write12("CONDUCT", ctx.adjust_hydcon);
 
             for (size_t i = 0; i < ctx.subcatch_n_perv_pattern.size(); ++i) {
                 int pi = ctx.subcatch_n_perv_pattern[i];
                 if (pi >= 0)
-                    std::fprintf(f,"N-PERV       %-16s %s\n",
+                    std::fprintf(f, "N-PERV       %-16s %s\n",
                                  ctx.subcatch_names.name_of(static_cast<int>(i)).c_str(),
                                  patN(ctx, pi));
             }
             for (size_t i = 0; i < ctx.subcatch_d_store_pattern.size(); ++i) {
                 int pi = ctx.subcatch_d_store_pattern[i];
                 if (pi >= 0)
-                    std::fprintf(f,"DSTORE       %-16s %s\n",
+                    std::fprintf(f, "DSTORE       %-16s %s\n",
                                  ctx.subcatch_names.name_of(static_cast<int>(i)).c_str(),
                                  patN(ctx, pi));
             }
             for (size_t i = 0; i < ctx.subcatch_infil_pattern.size(); ++i) {
                 int pi = ctx.subcatch_infil_pattern[i];
                 if (pi >= 0)
-                    std::fprintf(f,"INFIL        %-16s %s\n",
+                    std::fprintf(f, "INFIL        %-16s %s\n",
                                  ctx.subcatch_names.name_of(static_cast<int>(i)).c_str(),
                                  patN(ctx, pi));
             }
@@ -1997,97 +2522,115 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     }
 
     // [RAINGAGES]
-    if(ctx.n_gages()>0){sec(f,"RAINGAGES");
-    std::fprintf(f,";;%-16s %-12s %-8s %-8s %-16s\n","Name","Format","Intvl","SCF","Source");
-    std::fprintf(f,";;%-16s %-12s %-8s %-8s %-16s\n","----------------","------------","--------","--------","----------------");
-    for(int j=0;j<ctx.n_gages();++j){auto u=static_cast<size_t>(j);
-    write_obj_comment(f, ctx.gages.comments, u);
-    int iv=ctx.gages.interval_sec[u];int h=iv/3600,m=(iv%3600)/60;int ts=ctx.gages.ts_index[u];
-    // The recording interval is H:MM only while it IS a whole number of
-    // minutes. Legacy reads this column with getDouble FIRST and only then
-    // falls back to a clock (gage.c readGageSeriesFormat), so decimal hours
-    // are always legal — and they are the only form that can carry a
-    // sub-minute interval. A 4-second gage (0.001111 h, which real HEC-HMS
-    // decks carry) was being written as "0:00", which legacy rejects with
-    // ERROR 213 and refuses the whole deck.
-    char gsb[32];
-    if(iv>0&&iv%60==0) std::snprintf(gsb,sizeof(gsb),"%d:%02d",h,m);
-    else               std::snprintf(gsb,sizeof(gsb),"%.10g",iv/3600.0);
-    // Emit the actual rain-data format (0=INTENSITY,1=VOLUME,2=CUMULATIVE) — a
-    // prior hardcoded "INTENSITY" silently rewrote VOLUME/CUMULATIVE gages.
-    const char* fmt = ctx.gages.rain_type[u]==1 ? "VOLUME"
-                    : ctx.gages.rain_type[u]==2 ? "CUMULATIVE" : "INTENSITY";
-    double sf = ctx.gages.scale_factor[u];
-    // The trailing scale-factor token is an OpenSWMM legacy-engine extension;
-    // a stock SWMM 5 parser has no slot for it. Drop it for that profile and
-    // say so — it scales the gage's rainfall, so it is model content.
-    if(stock5 && sf!=1.0){
-        note("[RAINGAGES] gage \""+ctx.gage_names.name_of(j)+"\": rain scale factor "+
-             std::to_string(sf)+" dropped (stock SWMM 5 has no such column)");
-        sf = 1.0;
-    }
-    if(ts>=0){
-        std::fprintf(f,"%-16s %-12s %-8s     %.2f     TIMESERIES %s",ctx.gage_names.name_of(j).c_str(),fmt,gsb,ctx.gages.snow_factor[u],tN(ctx,ts));
-        if(sf!=1.0)std::fprintf(f," %.4g",sf);
-        std::fprintf(f,"\n");
-    }
-    else if(!ctx.gages.file_path[u].empty()){
-        const std::string tok = emit_path_token(ctx.gages.file_path[u],
-                                                 dst_dir, force_abs_paths, warnings);
-        if(ctx.gages.file_format[u]==RainFileFormat::USER_CSV){
-            // Compact openswmm extension — the reader expects one "path:col"
-            // token. An EMPTY column is a legal state (it means "first data
-            // column"), so emit the bare path rather than a dangling
-            // "path:" that reads as malformed to EPA SWMM / PCSWMM.
-            const std::string& col = ctx.gages.col_name[u];
-            const std::string src = col.empty() ? tok : tok + ":" + col;
-            std::fprintf(f,"%-16s %-12s %-8s     %.2f     FILE \"%s\"",
-                          ctx.gage_names.name_of(j).c_str(),fmt,gsb,
-                          ctx.gages.snow_factor[u],
-                          src.c_str());
-            if(sf!=1.0)std::fprintf(f," %.4g",sf);
-        }else{
-            // Legacy FILE grammar: Fname Station Units [StartDate] [SF] — the
-            // station + units tokens are REQUIRED (gage.c errors with ERROR 203
-            // without them). An empty station gets a '*' placeholder so the
-            // line stays parseable; legacy will match no rows on it.
-            const std::string& sta = ctx.gages.station_id[u];
-            if(sta.empty() && warnings)
-                warnings->push_back("[RAINGAGES] gage \""+ctx.gage_names.name_of(j)+
-                                    "\": no station ID set; wrote '*' — the legacy "
-                                    "engine will match no rows in \""+tok+"\"");
-            std::fprintf(f,"%-16s %-12s %-8s     %.2f     FILE \"%s\" %s %s",
-                          ctx.gage_names.name_of(j).c_str(),fmt,gsb,
-                          ctx.gages.snow_factor[u],
-                          tok.c_str(),
-                          sta.empty() ? "*" : sta.c_str(),
-                          ctx.gages.rain_units[u]==1 ? "MM" : "IN");
-            // tok[8] is the start date ('*' = none), tok[9] the scale factor.
-            const double sd = ctx.gages.file_start_date[u];
-            if(sd>0.0){char db[32]; fmt_date(db,sd); std::fprintf(f," %s",db);}
-            else if(sf!=1.0) std::fprintf(f," *");
-            if(sf!=1.0)std::fprintf(f," %.4g",sf);
+    if (ctx.n_gages() > 0) {
+        sec(f, "RAINGAGES");
+        std::fprintf(f, ";;%-16s %-12s %-8s %-8s %-16s\n", "Name", "Format", "Intvl", "SCF",
+                     "Source");
+        std::fprintf(f, ";;%-16s %-12s %-8s %-8s %-16s\n", "----------------", "------------",
+                     "--------", "--------", "----------------");
+        for (int j = 0; j < ctx.n_gages(); ++j) {
+            auto u = static_cast<size_t>(j);
+            write_obj_comment(f, ctx.gages.comments, u);
+            int iv = ctx.gages.interval_sec[u];
+            int h = iv / 3600, m = (iv % 3600) / 60;
+            int ts = ctx.gages.ts_index[u];
+            // The recording interval is H:MM only while it IS a whole number of
+            // minutes. Legacy reads this column with getDouble FIRST and only then
+            // falls back to a clock (gage.c readGageSeriesFormat), so decimal hours
+            // are always legal — and they are the only form that can carry a
+            // sub-minute interval. A 4-second gage (0.001111 h, which real HEC-HMS
+            // decks carry) was being written as "0:00", which legacy rejects with
+            // ERROR 213 and refuses the whole deck.
+            char gsb[32];
+            if (iv > 0 && iv % 60 == 0)
+                std::snprintf(gsb, sizeof(gsb), "%d:%02d", h, m);
+            else
+                std::snprintf(gsb, sizeof(gsb), "%.17g", iv / 3600.0);
+            // Emit the actual rain-data format (0=INTENSITY,1=VOLUME,2=CUMULATIVE) — a
+            // prior hardcoded "INTENSITY" silently rewrote VOLUME/CUMULATIVE gages.
+            const char* fmt = ctx.gages.rain_type[u] == 1   ? "VOLUME"
+                              : ctx.gages.rain_type[u] == 2 ? "CUMULATIVE"
+                                                            : "INTENSITY";
+            double sf = ctx.gages.scale_factor[u];
+            // Preserve both precipitation multipliers through the saved input
+            // used by GUI runs; display precision must not change the model.
+            // The trailing scale-factor token is an OpenSWMM legacy-engine extension;
+            // a stock SWMM 5 parser has no slot for it. Drop it for that profile and
+            // say so — it scales the gage's rainfall, so it is model content.
+            if (stock5 && sf != 1.0) {
+                note("[RAINGAGES] gage \"" + ctx.gage_names.name_of(j) + "\": rain scale factor " +
+                     std::to_string(sf) + " dropped (stock SWMM 5 has no such column)");
+                sf = 1.0;
+            }
+            if (ts >= 0) {
+                std::fprintf(f, "%-16s %-12s %-8s     %.17g     TIMESERIES %s",
+                             ctx.gage_names.name_of(j).c_str(), fmt, gsb, ctx.gages.snow_factor[u],
+                             tN(ctx, ts));
+                if (sf != 1.0)
+                    std::fprintf(f, " %.17g", sf);
+                std::fprintf(f, "\n");
+            } else if (!ctx.gages.file_path[u].empty()) {
+                const std::string tok =
+                    emit_path_token(ctx.gages.file_path[u], dst_dir, force_abs_paths, warnings);
+                if (ctx.gages.file_format[u] == RainFileFormat::USER_CSV) {
+                    // Compact openswmm extension — the reader expects one "path:col"
+                    // token. An EMPTY column is a legal state (it means "first data
+                    // column"), so emit the bare path rather than a dangling
+                    // "path:" that reads as malformed to EPA SWMM / PCSWMM.
+                    const std::string& col = ctx.gages.col_name[u];
+                    const std::string src = col.empty() ? tok : tok + ":" + col;
+                    std::fprintf(f, "%-16s %-12s %-8s     %.17g     FILE \"%s\"",
+                                 ctx.gage_names.name_of(j).c_str(), fmt, gsb,
+                                 ctx.gages.snow_factor[u], src.c_str());
+                    if (sf != 1.0)
+                        std::fprintf(f, " %.17g", sf);
+                } else {
+                    // Legacy FILE grammar: Fname Station Units [StartDate] [SF] — the
+                    // station + units tokens are REQUIRED (gage.c errors with ERROR 203
+                    // without them). An empty station gets a '*' placeholder so the
+                    // line stays parseable; legacy will match no rows on it.
+                    const std::string& sta = ctx.gages.station_id[u];
+                    if (sta.empty() && warnings)
+                        warnings->push_back("[RAINGAGES] gage \"" + ctx.gage_names.name_of(j) +
+                                            "\": no station ID set; wrote '*' — the legacy "
+                                            "engine will match no rows in \"" +
+                                            tok + "\"");
+                    std::fprintf(f, "%-16s %-12s %-8s     %.17g     FILE \"%s\" %s %s",
+                                 ctx.gage_names.name_of(j).c_str(), fmt, gsb,
+                                 ctx.gages.snow_factor[u], tok.c_str(),
+                                 sta.empty() ? "*" : sta.c_str(),
+                                 ctx.gages.rain_units[u] == 1 ? "MM" : "IN");
+                    // tok[8] is the start date ('*' = none), tok[9] the scale factor.
+                    const double sd = ctx.gages.file_start_date[u];
+                    if (sd > 0.0) {
+                        char db[32];
+                        fmt_date(db, sd);
+                        std::fprintf(f, " %s", db);
+                    } else if (sf != 1.0)
+                        std::fprintf(f, " *");
+                    if (sf != 1.0)
+                        std::fprintf(f, " %.17g", sf);
+                }
+                std::fprintf(f, "\n");
+            } else {
+                // Neither a resolved series index nor a file path. Dropping the row
+                // entirely would delete the gage while [SUBCATCHMENTS] still names it,
+                // which fails reload with a fatal ERR_NAME (209) on the subcatchment.
+                // Emit the retained series name (or the '*' placeholder, which the gage
+                // resolver tolerates) so the gage definition always survives.
+                const std::string& tsn = ctx.gages.ts_name[u];
+                if (tsn.empty() && warnings)
+                    warnings->push_back("[RAINGAGES] gage \"" + ctx.gage_names.name_of(j) +
+                                        "\": no rainfall source set; wrote 'TIMESERIES *'");
+                std::fprintf(f, "%-16s %-12s %-8s     %.17g     TIMESERIES %s",
+                             ctx.gage_names.name_of(j).c_str(), fmt, gsb, ctx.gages.snow_factor[u],
+                             tsn.empty() ? "*" : tsn.c_str());
+                if (sf != 1.0)
+                    std::fprintf(f, " %.17g", sf);
+                std::fprintf(f, "\n");
+            }
         }
-        std::fprintf(f,"\n");
     }
-    else{
-        // Neither a resolved series index nor a file path. Dropping the row
-        // entirely would delete the gage while [SUBCATCHMENTS] still names it,
-        // which fails reload with a fatal ERR_NAME (209) on the subcatchment.
-        // Emit the retained series name (or the '*' placeholder, which the gage
-        // resolver tolerates) so the gage definition always survives.
-        const std::string& tsn = ctx.gages.ts_name[u];
-        if(tsn.empty() && warnings)
-            warnings->push_back("[RAINGAGES] gage \""+ctx.gage_names.name_of(j)+
-                                "\": no rainfall source set; wrote 'TIMESERIES *'");
-        std::fprintf(f,"%-16s %-12s %-8s     %.2f     TIMESERIES %s",
-                      ctx.gage_names.name_of(j).c_str(),fmt,gsb,
-                      ctx.gages.snow_factor[u],
-                      tsn.empty() ? "*" : tsn.c_str());
-        if(sf!=1.0)std::fprintf(f," %.4g",sf);
-        std::fprintf(f,"\n");
-    }
-    }}
 
     // [SUBCATCHMENTS]
     // Grammar: Name RainGage Outlet Area %Imperv Width %Slope CurbLen
@@ -2098,95 +2641,140 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     // written past it (same convention as the [RAINGAGES] FILE start date).
     // Scale factors are omitted entirely when both are 1.0, so models that do
     // not use them round-trip byte-identically to before.
-    if(ctx.n_subcatches()>0){sec(f,"SUBCATCHMENTS");
-    std::fprintf(f,";;%-16s %-16s %-16s %-12s %-10s %-12s %-10s %-10s %-16s %-10s %-10s\n","Name","RainGage","Outlet","Area","%%Imperv","Width","%%Slope","CurbLen","Snowpack","RainScale","SnowScale");
-    std::fprintf(f,";;%-16s %-16s %-16s %-12s %-10s %-12s %-10s %-10s %-16s %-10s %-10s\n","----------------","----------------","----------------","------------","----------","------------","----------","----------","----------------","----------","----------");
-    for(int j=0;j<ctx.n_subcatches();++j){auto u=static_cast<size_t>(j);
-    write_obj_comment(f, ctx.subcatches.comments, u);
-    const char* spname = sspN(ctx,u);          // index, else retained name, else "*"
-    const bool  has_sp = std::strcmp(spname,"*")!=0;
-    const double rsf = ctx.subcatches.rain_scale_factor[u];
-    const double ssf = ctx.subcatches.snow_scale_factor[u];
-    bool need_scale = (rsf!=1.0 || ssf!=1.0);
-    // A stock SWMM 5 parser has no scale-factor columns: it reads the '*'
-    // placeholder as a snowpack name (ERROR 209) and a factor as a stray
-    // token. Drop them for that profile, and say so when they carried a value.
-    if(stock5 && need_scale){
-        note("[SUBCATCHMENTS] " + ctx.subcatch_names.name_of(j) + ": rain/snow scale factors " +
-             std::to_string(rsf) + "/" + std::to_string(ssf) +
-             " dropped (stock SWMM 5 has no such columns)");
-        need_scale = false;
+    if (ctx.n_subcatches() > 0) {
+        sec(f, "SUBCATCHMENTS");
+        std::fprintf(f, ";;%-16s %-16s %-16s %-12s %-10s %-12s %-10s %-10s %-16s %-10s %-10s\n",
+                     "Name", "RainGage", "Outlet", "Area", "%%Imperv", "Width", "%%Slope",
+                     "CurbLen", "Snowpack", "RainScale", "SnowScale");
+        std::fprintf(f, ";;%-16s %-16s %-16s %-12s %-10s %-12s %-10s %-10s %-16s %-10s %-10s\n",
+                     "----------------", "----------------", "----------------", "------------",
+                     "----------", "------------", "----------", "----------", "----------------",
+                     "----------", "----------");
+        for (int j = 0; j < ctx.n_subcatches(); ++j) {
+            auto u = static_cast<size_t>(j);
+            write_obj_comment(f, ctx.subcatches.comments, u);
+            const char* spname = sspN(ctx, u); // index, else retained name, else "*"
+            const bool has_sp = std::strcmp(spname, "*") != 0;
+            const double rsf = ctx.subcatches.rain_scale_factor[u];
+            const double ssf = ctx.subcatches.snow_scale_factor[u];
+            bool need_scale = (rsf != 1.0 || ssf != 1.0);
+            // A stock SWMM 5 parser has no scale-factor columns: it reads the '*'
+            // placeholder as a snowpack name (ERROR 209) and a factor as a stray
+            // token. Drop them for that profile, and say so when they carried a value.
+            if (stock5 && need_scale) {
+                note("[SUBCATCHMENTS] " + ctx.subcatch_names.name_of(j) +
+                     ": rain/snow scale factors " + std::to_string(rsf) + "/" +
+                     std::to_string(ssf) + " dropped (stock SWMM 5 has no such columns)");
+                need_scale = false;
+            }
+            // Full precision on every solver-facing field. %.17g is an ABSOLUTE
+            // 4-decimal format, so a small area lost most of its significance
+            // (0.018939394 ac -> 0.0189, a 0.2% error applied straight to runoff
+            // volume); of the corpus decks whose [SUBCATCHMENTS] changed on round
+            // trip, 13 of 13 went on to simulate differently. Keeps the column width
+            // so the file still reads as a table (same form as [CONDUITS] length).
+            std::fprintf(f, "%-16s %-16s %-16s %.17g %.17g %.17g %.17g %.17g",
+                         ctx.subcatch_names.name_of(j).c_str(), sgN(ctx, u), oN(ctx, u),
+                         ctx.subcatches.area[u], ctx.subcatches.frac_imperv[u] * 100.0,
+                         ctx.subcatches.width[u], ctx.subcatches.slope[u] * 100.0,
+                         ctx.subcatches.curb_length[u]);
+            // Token 8 must be present to reach tokens 9/10 positionally.
+            if (has_sp || need_scale)
+                std::fprintf(f, " %-16s", spname);
+            if (need_scale) {
+                // RainScale must be written even when 1.0 if SnowScale is not, to hold
+                // the position of token 10.
+                std::fprintf(f, " %.17g", rsf);
+                if (ssf != 1.0)
+                    std::fprintf(f, " %.17g", ssf);
+            }
+            std::fprintf(f, "\n");
+        }
     }
-    // Full precision on every solver-facing field. %12.4f is an ABSOLUTE
-    // 4-decimal format, so a small area lost most of its significance
-    // (0.018939394 ac -> 0.0189, a 0.2% error applied straight to runoff
-    // volume); of the corpus decks whose [SUBCATCHMENTS] changed on round
-    // trip, 13 of 13 went on to simulate differently. Keeps the column width
-    // so the file still reads as a table (same form as [CONDUITS] length).
-    std::fprintf(f,"%-16s %-16s %-16s %12.15g %10.15g %12.15g %10.15g %10.15g",ctx.subcatch_names.name_of(j).c_str(),sgN(ctx,u),oN(ctx,u),ctx.subcatches.area[u],ctx.subcatches.frac_imperv[u]*100.0,ctx.subcatches.width[u],ctx.subcatches.slope[u]*100.0,ctx.subcatches.curb_length[u]);
-    // Token 8 must be present to reach tokens 9/10 positionally.
-    if(has_sp || need_scale) std::fprintf(f," %-16s",spname);
-    if(need_scale){
-        // RainScale must be written even when 1.0 if SnowScale is not, to hold
-        // the position of token 10.
-        std::fprintf(f," %-10.4g",rsf);
-        if(ssf!=1.0) std::fprintf(f," %-10.4g",ssf);
-    }
-    std::fprintf(f,"\n");
-    }}
 
     // [SUBAREAS]
-    if(ctx.n_subcatches()>0){
-    static const char* kRouteToNames[]={"OUTLET","IMPERV","PERV"};
-    sec(f,"SUBAREAS");
-    std::fprintf(f,";;%-16s %-10s %-10s %-10s %-10s %-10s %-8s %-10s\n","Subcatch","N-Imperv","N-Perv","S-Imperv","S-Perv","%%ZeroImp","RouteTo","PctRouted");
-    std::fprintf(f,";;%-16s %-10s %-10s %-10s %-10s %-10s %-8s %-10s\n","----------------","----------","----------","----------","----------","----------","--------","----------");
-    for(int j=0;j<ctx.n_subcatches();++j){auto u=static_cast<size_t>(j);
-    int rt=ctx.subcatches.subarea_routing[u];
-    if(rt<0||rt>2)rt=0;
-    // S-Imperv/S-Perv are stored in display depth units (Runoff converts them
-    // via UCF(RAINDEPTH) at use), so emit as-is — a prior *12.0 corrupted them
-    // (and broke file→write→reparse round-trips).
-    std::fprintf(f,"%-16s %10.4f %10.4f %10.4f %10.4f %10.2f %-8s %10.2f\n",ctx.subcatch_names.name_of(j).c_str(),ctx.subcatches.n_imperv[u],ctx.subcatches.n_perv[u],ctx.subcatches.ds_imperv[u],ctx.subcatches.ds_perv[u],ctx.subcatches.frac_imperv_no_store[u]*100.0,kRouteToNames[rt],ctx.subcatches.pct_routed[u]*100.0);
-    }}
+    if (ctx.n_subcatches() > 0) {
+        static const char* kRouteToNames[] = {"OUTLET", "IMPERV", "PERV"};
+        sec(f, "SUBAREAS");
+        std::fprintf(f, ";;%-16s %-10s %-10s %-10s %-10s %-10s %-8s %-10s\n", "Subcatch",
+                     "N-Imperv", "N-Perv", "S-Imperv", "S-Perv", "%%ZeroImp", "RouteTo",
+                     "PctRouted");
+        std::fprintf(f, ";;%-16s %-10s %-10s %-10s %-10s %-10s %-8s %-10s\n", "----------------",
+                     "----------", "----------", "----------", "----------", "----------",
+                     "--------", "----------");
+        for (int j = 0; j < ctx.n_subcatches(); ++j) {
+            auto u = static_cast<size_t>(j);
+            int rt = ctx.subcatches.subarea_routing[u];
+            if (rt < 0 || rt > 2)
+                rt = 0;
+            // S-Imperv/S-Perv are stored in display depth units (Runoff converts them
+            // via UCF(RAINDEPTH) at use), so emit as-is — a prior *12.0 corrupted them
+            // (and broke file→write→reparse round-trips).
+            std::fprintf(f, "%-16s %.17g %.17g %.17g %.17g %.17g %-8s %.17g\n",
+                         ctx.subcatch_names.name_of(j).c_str(), ctx.subcatches.n_imperv[u],
+                         ctx.subcatches.n_perv[u], ctx.subcatches.ds_imperv[u],
+                         ctx.subcatches.ds_perv[u], ctx.subcatches.frac_imperv_no_store[u] * 100.0,
+                         kRouteToNames[rt], ctx.subcatches.pct_routed[u] * 100.0);
+        }
+    }
 
     // [INFILTRATION]
-    if(ctx.n_subcatches()>0){sec(f,"INFILTRATION");
-    std::fprintf(f,";;%-16s %-10s %-10s %-10s %-10s %-10s\n","Subcatch","Param1","Param2","Param3","Param4","Param5");
-    std::fprintf(f,";;%-16s %-10s %-10s %-10s %-10s %-10s\n","----------------","----------","----------","----------","----------","----------");
-    static const char* infilNames[]={"HORTON","MODIFIED_HORTON","GREEN_AMPT","MODIFIED_GREEN_AMPT","CURVE_NUMBER"};
-    for(int j=0;j<ctx.n_subcatches();++j){auto u=static_cast<size_t>(j);
-    int im=ctx.subcatches.infil_model[u];
-    const char* mn=(im>=0&&im<=4)?infilNames[im]:"HORTON";
-    // Full precision, like the other solver-facing fields. %10.4f is an
-    // ABSOLUTE 4-decimal format, so a Green-Ampt Ksat of 1e-6 in/hr — which
-    // real low-conductivity decks carry — was written as 0.0000, and legacy
-    // rejects a non-positive Ksat outright with ERROR 235 (grnampt_setParams).
-    std::fprintf(f,"%-16s %10.15g %10.15g %10.15g %10.15g %10.15g %s\n",
-        ctx.subcatch_names.name_of(j).c_str(),
-        ctx.subcatches.infil_p1[u],ctx.subcatches.infil_p2[u],
-        ctx.subcatches.infil_p3[u],ctx.subcatches.infil_p4[u],
-        ctx.subcatches.infil_p5[u],mn);
-    }}
+    if (ctx.n_subcatches() > 0) {
+        sec(f, "INFILTRATION");
+        std::fprintf(f, ";;%-16s %-10s %-10s %-10s %-10s %-10s\n", "Subcatch", "Param1", "Param2",
+                     "Param3", "Param4", "Param5");
+        std::fprintf(f, ";;%-16s %-10s %-10s %-10s %-10s %-10s\n", "----------------", "----------",
+                     "----------", "----------", "----------", "----------");
+        static const char* infilNames[] = {"HORTON", "MODIFIED_HORTON", "GREEN_AMPT",
+                                           "MODIFIED_GREEN_AMPT", "CURVE_NUMBER"};
+        for (int j = 0; j < ctx.n_subcatches(); ++j) {
+            auto u = static_cast<size_t>(j);
+            int im = ctx.subcatches.infil_model[u];
+            const char* mn = (im >= 0 && im <= 4) ? infilNames[im] : "HORTON";
+            // Full precision, like the other solver-facing fields. %.17g is an
+            // ABSOLUTE 4-decimal format, so a Green-Ampt Ksat of 1e-6 in/hr — which
+            // real low-conductivity decks carry — was written as 0.0000, and legacy
+            // rejects a non-positive Ksat outright with ERROR 235 (grnampt_setParams).
+            std::fprintf(f, "%-16s %.17g %.17g %.17g %.17g %.17g %s\n",
+                         ctx.subcatch_names.name_of(j).c_str(), ctx.subcatches.infil_p1[u],
+                         ctx.subcatches.infil_p2[u], ctx.subcatches.infil_p3[u],
+                         ctx.subcatches.infil_p4[u], ctx.subcatches.infil_p5[u], mn);
+        }
+    }
 
     // [AQUIFERS]
     // Grammar: Name Por WP FC Ksat Kslope Tslope ETu ETs Seep Ebot Egw Umc [ETupat]
-    // %.10g preserves full double precision without scientific notation for the
+    // %.17g preserves full double precision without scientific notation for the
     // magnitudes seen in elevations and conductivities.
-    if(ctx.aquifers.count()>0){sec(f,"AQUIFERS");
-    std::fprintf(f,";;%-16s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-16s\n","Name","Porosity","WiltPoint","FieldCap","Ksat","Kslope","Tslope","ETu","ETs","Seepage","Ebot","Egw","Umc","ETupat");
-    std::fprintf(f,";;%-16s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-16s\n","----------------","----------","----------","----------","----------","----------","----------","----------","----------","----------","----------","----------","----------","----------------");
-    for(int j=0;j<ctx.aquifers.count();++j){auto u=static_cast<size_t>(j);
-    std::fprintf(f,"%-16s %-10.10g %-10.10g %-10.10g %-10.10g %-10.10g %-10.10g %-10.10g %-10.10g %-10.10g %-10.10g %-10.10g %-10.10g",
-        ctx.aquifers.names[u].c_str(),
-        ctx.aquifers.porosity[u],ctx.aquifers.wilting_point[u],ctx.aquifers.field_capacity[u],
-        ctx.aquifers.conductivity[u],ctx.aquifers.conduct_slope[u],ctx.aquifers.tension_slope[u],
-        ctx.aquifers.upper_evap[u],ctx.aquifers.lower_evap[u],ctx.aquifers.lower_loss[u],
-        ctx.aquifers.bottom_elev[u],ctx.aquifers.water_table_elev[u],ctx.aquifers.upper_moist[u]);
-    if(!ctx.aquifers.upper_evap_pat[u].empty())
-        std::fprintf(f," %-16s",ctx.aquifers.upper_evap_pat[u].c_str());
-    std::fprintf(f,"\n");
-    }}
+    if (ctx.aquifers.count() > 0) {
+        sec(f, "AQUIFERS");
+        std::fprintf(
+            f,
+            ";;%-16s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-16s\n",
+            "Name", "Porosity", "WiltPoint", "FieldCap", "Ksat", "Kslope", "Tslope", "ETu", "ETs",
+            "Seepage", "Ebot", "Egw", "Umc", "ETupat");
+        std::fprintf(
+            f,
+            ";;%-16s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-16s\n",
+            "----------------", "----------", "----------", "----------", "----------",
+            "----------", "----------", "----------", "----------", "----------", "----------",
+            "----------", "----------", "----------------");
+        for (int j = 0; j < ctx.aquifers.count(); ++j) {
+            auto u = static_cast<size_t>(j);
+            std::fprintf(
+                f,
+                "%-16s %.17g %.17g %.17g %.17g %.17g %.17g %.17g %.17g %.17g %.17g %.17g %.17g",
+                ctx.aquifers.names[u].c_str(), ctx.aquifers.porosity[u],
+                ctx.aquifers.wilting_point[u], ctx.aquifers.field_capacity[u],
+                ctx.aquifers.conductivity[u], ctx.aquifers.conduct_slope[u],
+                ctx.aquifers.tension_slope[u], ctx.aquifers.upper_evap[u],
+                ctx.aquifers.lower_evap[u], ctx.aquifers.lower_loss[u], ctx.aquifers.bottom_elev[u],
+                ctx.aquifers.water_table_elev[u], ctx.aquifers.upper_moist[u]);
+            if (!ctx.aquifers.upper_evap_pat[u].empty())
+                std::fprintf(f, " %-16s", ctx.aquifers.upper_evap_pat[u].c_str());
+            std::fprintf(f, "\n");
+        }
+    }
 
     // [GROUNDWATER]
     // Grammar: Subcatch Aquifer Node SurfElev A1 B1 A2 B2 A3 Dsw [Egwt Ebot Wgw Umc]
@@ -2196,53 +2784,77 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     // than written with '*', which would fail reload with ERR_NAME (209).
     // The gw_* vectors are grown per-row by the parser (ensure_subcatch_gw_capacity),
     // so they can be SHORTER than the subcatchment count — bound the loop by them.
-    {size_t nGw=static_cast<size_t>(ctx.n_subcatches());
-    if(ctx.subcatches.gw_aquifer.size()<nGw) nGw=ctx.subcatches.gw_aquifer.size();
-    if(ctx.subcatches.gw_node.size()   <nGw) nGw=ctx.subcatches.gw_node.size();
-    bool anyGw=false;
-    for(size_t us=0;us<nGw;++us){
-        const int a=ctx.subcatches.gw_aquifer[us];
-        if(a>=0 && a<ctx.aquifers.count() && ctx.subcatches.gw_node[us]>=0){anyGw=true;break;}}
-    if(anyGw){sec(f,"GROUNDWATER");
-    std::fprintf(f,";;%-16s %-16s %-16s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s\n","Subcatchment","Aquifer","Node","SurfElev","A1","B1","A2","B2","A3","Dsw","Egwt");
-    std::fprintf(f,";;%-16s %-16s %-16s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s\n","----------------","----------------","----------------","----------","----------","----------","----------","----------","----------","----------","----------");
-    for(size_t u=0;u<nGw;++u){const int s=static_cast<int>(u);
-    const int aq=ctx.subcatches.gw_aquifer[u];
-    if(aq<0 || aq>=ctx.aquifers.count()) continue;
-    if(ctx.subcatches.gw_node[u]<0){
-        if(warnings)
-            warnings->push_back("[GROUNDWATER] subcatchment \""+ctx.subcatch_names.name_of(s)+
-                                "\": receiving node unresolved; row omitted");
-        continue;
-    }
-    std::fprintf(f,"%-16s %-16s %-16s %-10.10g %-10.10g %-10.10g %-10.10g %-10.10g %-10.10g %-10.10g",
-        ctx.subcatch_names.name_of(s).c_str(),
-        ctx.aquifers.names[static_cast<size_t>(aq)].c_str(),
-        nN(ctx,ctx.subcatches.gw_node[u]),
-        ctx.subcatches.gw_surf_elev[u],ctx.subcatches.gw_a1[u],ctx.subcatches.gw_b1[u],
-        ctx.subcatches.gw_a2[u],ctx.subcatches.gw_b2[u],ctx.subcatches.gw_a3[u],
-        ctx.subcatches.gw_tw[u]);
-    // Optional Egwt Ebot Wgw Umc: legacy reads `*` (or absence) as MISSING —
-    // the node invert / the aquifer's values — so a missing field is written
-    // as `*`, and only as far as the last field actually given.
-    //
-    // At least ONE of them is always emitted, because legacy rejects the row
-    // with ERR_ITEMS at `ntoks < 11` (gwater.c gwater_readGroundwaterParams)
-    // even though only ten tokens are mandatory — the eleventh may be `*`, but
-    // it must be there. Stopping at ten when every optional was unset produced
-    // a file legacy refused outright.
     {
-        const double opt[4] = {ctx.subcatches.gw_hstar[u], ctx.subcatches.gw_bot_elev[u],
-                               ctx.subcatches.gw_wt_elev[u], ctx.subcatches.gw_upper_moist[u]};
-        int last = 0;
-        for (int k = 0; k < 4; ++k) if (opt[k] != constants::MISSING) last = k;
-        for (int k = 0; k <= last; ++k) {
-            if (opt[k] != constants::MISSING) std::fprintf(f, " %-10.10g", opt[k]);
-            else                              std::fprintf(f, " %-10s", "*");
+        size_t nGw = static_cast<size_t>(ctx.n_subcatches());
+        if (ctx.subcatches.gw_aquifer.size() < nGw)
+            nGw = ctx.subcatches.gw_aquifer.size();
+        if (ctx.subcatches.gw_node.size() < nGw)
+            nGw = ctx.subcatches.gw_node.size();
+        bool anyGw = false;
+        for (size_t us = 0; us < nGw; ++us) {
+            const int a = ctx.subcatches.gw_aquifer[us];
+            if (a >= 0 && a < ctx.aquifers.count() && ctx.subcatches.gw_node[us] >= 0) {
+                anyGw = true;
+                break;
+            }
         }
-        std::fprintf(f, "\n");
+        if (anyGw) {
+            sec(f, "GROUNDWATER");
+            std::fprintf(f, ";;%-16s %-16s %-16s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s\n",
+                         "Subcatchment", "Aquifer", "Node", "SurfElev", "A1", "B1", "A2", "B2",
+                         "A3", "Dsw", "Egwt");
+            std::fprintf(f, ";;%-16s %-16s %-16s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s\n",
+                         "----------------", "----------------", "----------------", "----------",
+                         "----------", "----------", "----------", "----------", "----------",
+                         "----------", "----------");
+            for (size_t u = 0; u < nGw; ++u) {
+                const int s = static_cast<int>(u);
+                const int aq = ctx.subcatches.gw_aquifer[u];
+                if (aq < 0 || aq >= ctx.aquifers.count())
+                    continue;
+                if (ctx.subcatches.gw_node[u] < 0) {
+                    if (warnings)
+                        warnings->push_back("[GROUNDWATER] subcatchment \"" +
+                                            ctx.subcatch_names.name_of(s) +
+                                            "\": receiving node unresolved; row omitted");
+                    continue;
+                }
+                std::fprintf(
+                    f,
+                    "%-16s %-16s %-16s %.17g %.17g %.17g %.17g %.17g %.17g %.17g",
+                    ctx.subcatch_names.name_of(s).c_str(),
+                    ctx.aquifers.names[static_cast<size_t>(aq)].c_str(),
+                    nN(ctx, ctx.subcatches.gw_node[u]), ctx.subcatches.gw_surf_elev[u],
+                    ctx.subcatches.gw_a1[u], ctx.subcatches.gw_b1[u], ctx.subcatches.gw_a2[u],
+                    ctx.subcatches.gw_b2[u], ctx.subcatches.gw_a3[u], ctx.subcatches.gw_tw[u]);
+                // Optional Egwt Ebot Wgw Umc: legacy reads `*` (or absence) as MISSING —
+                // the node invert / the aquifer's values — so a missing field is written
+                // as `*`, and only as far as the last field actually given.
+                //
+                // At least ONE of them is always emitted, because legacy rejects the row
+                // with ERR_ITEMS at `ntoks < 11` (gwater.c gwater_readGroundwaterParams)
+                // even though only ten tokens are mandatory — the eleventh may be `*`, but
+                // it must be there. Stopping at ten when every optional was unset produced
+                // a file legacy refused outright.
+                {
+                    const double opt[4] = {
+                        ctx.subcatches.gw_hstar[u], ctx.subcatches.gw_bot_elev[u],
+                        ctx.subcatches.gw_wt_elev[u], ctx.subcatches.gw_upper_moist[u]};
+                    int last = 0;
+                    for (int k = 0; k < 4; ++k)
+                        if (opt[k] != constants::MISSING)
+                            last = k;
+                    for (int k = 0; k <= last; ++k) {
+                        if (opt[k] != constants::MISSING)
+                            std::fprintf(f, " %.17g", opt[k]);
+                        else
+                            std::fprintf(f, " %-10s", "*");
+                    }
+                    std::fprintf(f, "\n");
+                }
+            }
+        }
     }
-    }}}
 
     // [GWF]
     // Grammar: Subcatch LATERAL|DEEP <expression>
@@ -2252,19 +2864,24 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     // and keeps only the first value token, which mangles the key case and
     // truncates any multi-token expression. Iterate subcatchments (not the
     // unordered_map) so the output order is deterministic.
-    {bool wroteGwf=false;
-    static const char* kGwfTypes[]={"LATERAL","DEEP"};
-    for(int s=0;s<ctx.n_subcatches();++s){
-        const std::string& scn = ctx.subcatch_names.name_of(s);
-        for(const char* ty : kGwfTypes){
-            auto it = ctx.options.ext_options.find("GWF:"+scn+":"+ty);
-            if(it==ctx.options.ext_options.end() || it->second.empty()) continue;
-            if(!wroteGwf){sec(f,"GWF");
-                std::fprintf(f,";;%-16s %-10s %s\n","Subcatchment","Type","Expression");
-                wroteGwf=true;}
-            std::fprintf(f,"%-16s %-10s %s\n",scn.c_str(),ty,it->second.c_str());
+    {
+        bool wroteGwf = false;
+        static const char* kGwfTypes[] = {"LATERAL", "DEEP"};
+        for (int s = 0; s < ctx.n_subcatches(); ++s) {
+            const std::string& scn = ctx.subcatch_names.name_of(s);
+            for (const char* ty : kGwfTypes) {
+                auto it = ctx.options.ext_options.find("GWF:" + scn + ":" + ty);
+                if (it == ctx.options.ext_options.end() || it->second.empty())
+                    continue;
+                if (!wroteGwf) {
+                    sec(f, "GWF");
+                    std::fprintf(f, ";;%-16s %-10s %s\n", "Subcatchment", "Type", "Expression");
+                    wroteGwf = true;
+                }
+                std::fprintf(f, "%-16s %-10s %s\n", scn.c_str(), ty, it->second.c_str());
+            }
         }
-    }}
+    }
 
     // [LID_RICHARDS]: keep SI retention parameters separate from the legacy
     // layer grammar and numerical model selection explicit.
@@ -2272,101 +2889,158 @@ int writeInpFile(const SimulationContext&  ctx_internal,
         bool header = false;
         for (int c = 0; c < static_cast<int>(ctx.lid_controls.node_layers.size()); ++c) {
             const auto& stack = ctx.lid_controls.node_layers[c];
-            if (stack.empty()) continue;
-            const bool has_material = std::any_of(stack.begin(), stack.end(), [](const auto& l) { return richards::valid(l.retention, l.params[1]); });
-            if (!stack.front().flow.enabled && !has_material) continue;
-            if (!header) { sec(f, "LID_RICHARDS"); header = true; }
-            const auto& o = stack.front().flow; const auto& name = ctx.lid_controls.names[c];
-            if (o.enabled) std::fprintf(f, "%s OPTIONS %d %.17g %.17g %.17g\n", name.c_str(), o.cells_per_layer, o.atol, o.rtol, o.max_step);
-            for (std::size_t i = 0; i < stack.size(); ++i) if (stack[i].kind == LidNodeLayerKind::Media || stack[i].kind == LidNodeLayerKind::Aggregate) {
-                const auto& p = stack[i].retention;
-                if (!richards::valid(p, stack[i].params[1])) continue;
-                std::fprintf(f, "%s %zu %.17g %.17g %.17g %.17g %.17g\n", name.c_str(), i + 1, p.theta_r, p.alpha, p.n, p.l, p.specific_storage);
+            if (stack.empty())
+                continue;
+            const bool has_material = std::any_of(stack.begin(), stack.end(), [](const auto& l) {
+                return richards::valid(l.retention, l.params[1]);
+            });
+            if (!stack.front().flow.enabled && !has_material)
+                continue;
+            if (!header) {
+                sec(f, "LID_RICHARDS");
+                header = true;
             }
+            const auto& o = stack.front().flow;
+            const auto& name = ctx.lid_controls.names[c];
+            if (o.enabled)
+                std::fprintf(f, "%s OPTIONS %d %.17g %.17g %.17g\n", name.c_str(),
+                             o.cells_per_layer, o.atol, o.rtol, o.max_step);
+            for (std::size_t i = 0; i < stack.size(); ++i)
+                if (stack[i].kind == LidNodeLayerKind::Media ||
+                    stack[i].kind == LidNodeLayerKind::Aggregate) {
+                    const auto& p = stack[i].retention;
+                    if (!richards::valid(p, stack[i].params[1]))
+                        continue;
+                    std::fprintf(f, "%s %zu %.17g %.17g %.17g %.17g %.17g\n", name.c_str(), i + 1,
+                                 p.theta_r, p.alpha, p.n, p.l, p.specific_storage);
+                }
         }
     }
     // [LID_CONTROLS]
     if (ctx.lid_controls.count() > 0) {
-        sec(f,"LID_CONTROLS");
-        std::fprintf(f,";;%-16s %-12s Parameters\n","Name","Type/Layer");
-        std::fprintf(f,";;---------- ---------- ----------\n");
+        sec(f, "LID_CONTROLS");
+        std::fprintf(f, ";;%-16s %-12s Parameters\n", "Name", "Type/Layer");
+        std::fprintf(f, ";;---------- ---------- ----------\n");
         for (int j = 0; j < ctx.lid_controls.count(); ++j) {
             auto uj = static_cast<size_t>(j);
             const char* name = ctx.lid_controls.names[uj].c_str();
             const char* ltype = ctx.lid_controls.lid_type[uj].c_str();
             if (std::string(ltype) == "NODE") {
-                if (swmm5) { note("SWMM 5 export omits NODE LID control " + std::string(name)); continue; }
-                std::fprintf(f, "%-16s NODE\n", name);
-                if (uj < ctx.lid_controls.node_layers.size()) for (const auto& row : ctx.lid_controls.node_layers[uj]) {
-                    static const char* labels[] = {"SURFACE", "MEDIA", "AGGREGATE", "BOTTOM"};
-                    static const int counts[] = {2, 7, 3, 2};
-                    const int k = static_cast<int>(row.kind);
-                    std::fprintf(f, "%-16s %-12s", name, labels[k]);
-                    for (int p = 0; p < counts[k]; ++p) std::fprintf(f, " %.17g", row.params[p]);
-                    std::fprintf(f, "\n");
+                if (swmm5) {
+                    note("SWMM 5 export omits NODE LID control " + std::string(name));
+                    continue;
                 }
+                std::fprintf(f, "%-16s NODE\n", name);
+                if (uj < ctx.lid_controls.node_layers.size())
+                    for (const auto& row : ctx.lid_controls.node_layers[uj]) {
+                        static const char* labels[] = {"SURFACE", "MEDIA", "AGGREGATE", "BOTTOM"};
+                        static const int counts[] = {2, 7, 3, 2};
+                        const int k = static_cast<int>(row.kind);
+                        std::fprintf(f, "%-16s %-12s", name, labels[k]);
+                        for (int p = 0; p < counts[k]; ++p)
+                            std::fprintf(f, " %.17g", row.params[p]);
+                        std::fprintf(f, "\n");
+                    }
                 continue;
             }
             // Type line
-            std::fprintf(f,"%-16s %s\n", name, ltype);
+            std::fprintf(f, "%-16s %s\n", name, ltype);
             // SURFACE (5 params)
             if (uj < ctx.lid_controls.surface.size()) {
                 const auto& p = ctx.lid_controls.surface[uj];
-                bool has = false; for (int k=0;k<5;++k) if(p[k]!=0.0){has=true;break;}
+                bool has = false;
+                for (int k = 0; k < 5; ++k)
+                    if (p[k] != 0.0) {
+                        has = true;
+                        break;
+                    }
                 if (has) {
-                    std::fprintf(f,"%-16s SURFACE    ", name);
-                    for (int k=0;k<5;++k) std::fprintf(f," %10.4f",p[k]);
-                    std::fprintf(f,"\n");
+                    std::fprintf(f, "%-16s SURFACE    ", name);
+                    for (int k = 0; k < 5; ++k)
+                        std::fprintf(f, " %.17g", p[k]);
+                    std::fprintf(f, "\n");
                 }
             }
             // SOIL (7 params)
             if (uj < ctx.lid_controls.soil.size()) {
                 const auto& p = ctx.lid_controls.soil[uj];
-                bool has = false; for (int k=0;k<7;++k) if(p[k]!=0.0){has=true;break;}
+                bool has = false;
+                for (int k = 0; k < 7; ++k)
+                    if (p[k] != 0.0) {
+                        has = true;
+                        break;
+                    }
                 if (has) {
-                    std::fprintf(f,"%-16s SOIL       ", name);
-                    for (int k=0;k<7;++k) std::fprintf(f," %10.4f",p[k]);
-                    std::fprintf(f,"\n");
+                    std::fprintf(f, "%-16s SOIL       ", name);
+                    for (int k = 0; k < 7; ++k)
+                        std::fprintf(f, " %.17g", p[k]);
+                    std::fprintf(f, "\n");
                 }
             }
             // PAVEMENT (6 params)
             if (uj < ctx.lid_controls.pavement.size()) {
                 const auto& p = ctx.lid_controls.pavement[uj];
-                bool has = false; for (int k=0;k<6;++k) if(p[k]!=0.0){has=true;break;}
+                bool has = false;
+                for (int k = 0; k < 6; ++k)
+                    if (p[k] != 0.0) {
+                        has = true;
+                        break;
+                    }
                 if (has) {
-                    std::fprintf(f,"%-16s PAVEMENT   ", name);
-                    for (int k=0;k<6;++k) std::fprintf(f," %10.4f",p[k]);
-                    std::fprintf(f,"\n");
+                    std::fprintf(f, "%-16s PAVEMENT   ", name);
+                    for (int k = 0; k < 6; ++k)
+                        std::fprintf(f, " %.17g", p[k]);
+                    std::fprintf(f, "\n");
                 }
             }
             // STORAGE (4 params)
             if (uj < ctx.lid_controls.storage.size()) {
                 const auto& p = ctx.lid_controls.storage[uj];
-                bool has = false; for (int k=0;k<4;++k) if(p[k]!=0.0){has=true;break;}
+                bool has = false;
+                for (int k = 0; k < 4; ++k)
+                    if (p[k] != 0.0) {
+                        has = true;
+                        break;
+                    }
                 if (has) {
-                    std::fprintf(f,"%-16s STORAGE    ", name);
-                    for (int k=0;k<4;++k) std::fprintf(f," %10.4f",p[k]);
-                    std::fprintf(f,"\n");
+                    std::fprintf(f, "%-16s STORAGE    ", name);
+                    for (int k = 0; k < 4; ++k)
+                        std::fprintf(f, " %.17g", p[k]);
+                    std::fprintf(f, "\n");
                 }
             }
             // DRAIN (6 params)
             if (uj < ctx.lid_controls.drain.size()) {
                 const auto& p = ctx.lid_controls.drain[uj];
-                bool has = false; for (int k=0;k<6;++k) if(p[k]!=0.0){has=true;break;}
+                bool has = uj < ctx.lid_controls.drain_curve.size() && !ctx.lid_controls.drain_curve[uj].empty();
+                for (int k = 0; k < 6; ++k)
+                    if (p[k] != 0.0) {
+                        has = true;
+                        break;
+                    }
                 if (has) {
-                    std::fprintf(f,"%-16s DRAIN      ", name);
-                    for (int k=0;k<6;++k) std::fprintf(f," %10.4f",p[k]);
-                    std::fprintf(f,"\n");
+                    std::fprintf(f, "%-16s DRAIN      ", name);
+                    for (int k = 0; k < 6; ++k)
+                        std::fprintf(f, " %.17g", p[k]);
+                    if (uj < ctx.lid_controls.drain_curve.size() && !ctx.lid_controls.drain_curve[uj].empty())
+                        std::fprintf(f, " %s", ctx.lid_controls.drain_curve[uj].c_str());
+                    std::fprintf(f, "\n");
                 }
             }
             // DRAINMAT (3 params)
             if (uj < ctx.lid_controls.drainmat.size()) {
                 const auto& p = ctx.lid_controls.drainmat[uj];
-                bool has = false; for (int k=0;k<3;++k) if(p[k]!=0.0){has=true;break;}
+                bool has = false;
+                for (int k = 0; k < 3; ++k)
+                    if (p[k] != 0.0) {
+                        has = true;
+                        break;
+                    }
                 if (has) {
-                    std::fprintf(f,"%-16s DRAINMAT   ", name);
-                    for (int k=0;k<3;++k) std::fprintf(f," %10.4f",p[k]);
-                    std::fprintf(f,"\n");
+                    std::fprintf(f, "%-16s DRAINMAT   ", name);
+                    for (int k = 0; k < 3; ++k)
+                        std::fprintf(f, " %.17g", p[k]);
+                    std::fprintf(f, "\n");
                 }
             }
             // REMOVALS (percent): pollutants by index, then the entries kept
@@ -2377,17 +3051,23 @@ int writeInpFile(const SimulationContext&  ctx_internal,
                 char buf[64];
                 if (uj < ctx.lid_controls.removals.size())
                     for (const auto& pr : ctx.lid_controls.removals[uj]) {
-                        if (pr.first < 0 || pr.first >= ctx.n_pollutants()) continue;
+                        if (pr.first < 0 || pr.first >= ctx.n_pollutants())
+                            continue;
                         std::snprintf(buf, sizeof buf, " %.17g", pr.second * 100.0);
                         row += " " + ctx.pollutant_names.name_of(pr.first) + buf;
                     }
                 if (uj < ctx.lid_controls.removals_by_name.size())
                     for (const auto& pr : ctx.lid_controls.removals_by_name[uj]) {
-                        if (swmm5) { note("SWMM 5 export omits the LID removal of reaction species " + pr.first); continue; }
+                        if (swmm5) {
+                            note("SWMM 5 export omits the LID removal of reaction species " +
+                                 pr.first);
+                            continue;
+                        }
                         std::snprintf(buf, sizeof buf, " %.17g", pr.second * 100.0);
                         row += " " + pr.first + buf;
                     }
-                if (!row.empty()) std::fprintf(f, "%-16s REMOVALS  %s\n", name, row.c_str());
+                if (!row.empty())
+                    std::fprintf(f, "%-16s REMOVALS  %s\n", name, row.c_str());
             }
         }
     }
@@ -2397,623 +3077,868 @@ int writeInpFile(const SimulationContext&  ctx_internal,
         const auto& st = ctx.node_subtypes.storages;
         for (int r = 0; r < st.count(); ++r) {
             const auto& lid = st.lid[r];
-            if (lid.control < 0) continue;
+            if (lid.control < 0)
+                continue;
             const auto& name = ctx.node_names.name_of(st.node_idx[r]);
-            if (swmm5) { note("SWMM 5 export treats LID node " + name + " as plain storage"); continue; }
-            if (!header) { sec(f, "LID_NODES"); header = true; }
-            std::fprintf(f, "%s %s %.17g", name.c_str(), ctx.lid_names.name_of(lid.control).c_str(), lid.initial_saturation);
+            if (swmm5) {
+                note("SWMM 5 export treats LID node " + name + " as plain storage");
+                continue;
+            }
+            if (!header) {
+                sec(f, "LID_NODES");
+                header = true;
+            }
+            std::fprintf(f, "%s %s %.17g", name.c_str(), ctx.lid_names.name_of(lid.control).c_str(),
+                         lid.initial_saturation);
             if (lid.bottom != LidNodeBottom::Current)
-                std::fprintf(f, " BOTTOM %s", lid.bottom == LidNodeBottom::Sealed ? "SEALED" : "MESH_AQUIFER");
+                std::fprintf(f, " BOTTOM %s",
+                             lid.bottom == LidNodeBottom::Sealed ? "SEALED" : "MESH_AQUIFER");
             std::fprintf(f, "\n");
         }
         if (!ctx.lid_node_outlets.empty()) {
-            if (swmm5) note("SWMM 5 export omits [LID_NODE_OUTLETS]");
+            if (swmm5)
+                note("SWMM 5 export omits [LID_NODE_OUTLETS]");
             else {
                 sec(f, "LID_NODE_OUTLETS");
                 for (const auto& a : ctx.lid_node_outlets)
-                    std::fprintf(f, "%s %d %s\n", ctx.link_names.name_of(a.link).c_str(), a.layer, a.top ? "TOP" : "BOTTOM");
+                    std::fprintf(f, "%s %d %s\n", ctx.link_names.name_of(a.link).c_str(), a.layer,
+                                 a.top ? "TOP" : "BOTTOM");
             }
         }
     }
 
     {
-        bool header=false;
-        for(int c=0;c<static_cast<int>(ctx.lid_controls.node_layers.size());++c) {
-            int layer=0;
-            for(const auto& row:ctx.lid_controls.node_layers[c]) { ++layer; for(const auto& t:row.treatment) {
-                if(swmm5) { note("SWMM 5 export omits layer treatment for " + ctx.lid_names.name_of(c)); continue; }
-                if(!header) { sec(f,"LID_LAYER_TREATMENT");header=true; }
-                std::fprintf(f,"%s %d %s %.17g %.17g %s\n",ctx.lid_names.name_of(c).c_str(),layer,t.pollutant.c_str(),t.removal*100,t.decay,t.expression.empty()?"-":t.expression.c_str());
-            }}
+        bool header = false;
+        for (int c = 0; c < static_cast<int>(ctx.lid_controls.node_layers.size()); ++c) {
+            int layer = 0;
+            for (const auto& row : ctx.lid_controls.node_layers[c]) {
+                ++layer;
+                for (const auto& t : row.treatment) {
+                    if (swmm5) {
+                        note("SWMM 5 export omits layer treatment for " + ctx.lid_names.name_of(c));
+                        continue;
+                    }
+                    if (!header) {
+                        sec(f, "LID_LAYER_TREATMENT");
+                        header = true;
+                    }
+                    std::fprintf(f, "%s %d %s %.17g %.17g %s\n", ctx.lid_names.name_of(c).c_str(),
+                                 layer, t.pollutant.c_str(), t.removal * 100, t.decay,
+                                 t.expression.empty() ? "-" : t.expression.c_str());
+                }
+            }
         }
     }
 
     // [LID_USAGE]
     if (ctx.lid_usage.count() > 0) {
-        sec(f,"LID_USAGE");
-        std::fprintf(f,";;%-16s %-16s %-8s %-12s %-10s %-8s %-8s %-8s %-16s %-16s %-8s\n",
-                     "Subcatch","LID","Number","Area","Width","InitSat",
-                     "FromImp","ToPerv","RptFile","DrainTo","FromPerv");
+        sec(f, "LID_USAGE");
+        std::fprintf(f, ";;%-16s %-16s %-8s %-12s %-10s %-8s %-8s %-8s %-16s %-16s %-8s\n",
+                     "Subcatch", "LID", "Number", "Area", "Width", "InitSat", "FromImp", "ToPerv",
+                     "RptFile", "DrainTo", "FromPerv");
         for (int j = 0; j < ctx.lid_usage.count(); ++j) {
             auto uj = static_cast<size_t>(j);
             int sc = ctx.lid_usage.subcatch_index[uj];
             int li = ctx.lid_usage.lid_index[uj];
             const char* sc_name = (sc >= 0) ? ctx.subcatch_names.name_of(sc).c_str() : "*";
-            const char* lid_name = (li >= 0 && li < ctx.lid_names.size())
-                                   ? ctx.lid_names.name_of(li).c_str() : "*";
-            std::fprintf(f,"%-16s %-16s %8d %12.2f %10.2f %8.2f %8.2f %8d",
-                         sc_name, lid_name,
-                         ctx.lid_usage.number[uj],
-                         ctx.lid_usage.area[uj],
-                         ctx.lid_usage.width[uj],
-                         ctx.lid_usage.init_sat[uj],
-                         ctx.lid_usage.from_imperv[uj],
+            const char* lid_name =
+                (li >= 0 && li < ctx.lid_names.size()) ? ctx.lid_names.name_of(li).c_str() : "*";
+            std::fprintf(f, "%-16s %-16s %8d %.17g %.17g %.17g %.17g %8d", sc_name, lid_name,
+                         ctx.lid_usage.number[uj], ctx.lid_usage.area[uj], ctx.lid_usage.width[uj],
+                         ctx.lid_usage.init_sat[uj], ctx.lid_usage.from_imperv[uj],
                          ctx.lid_usage.to_perv[uj]);
-            const std::string rpt_tok =
-                (uj < ctx.lid_usage.rpt_file.size())
-                    ? emit_path_token(ctx.lid_usage.rpt_file[uj], dst_dir,
-                                      force_abs_paths, warnings)
-                    : std::string{};
+            const std::string rpt_tok = (uj < ctx.lid_usage.rpt_file.size())
+                                            ? emit_path_token(ctx.lid_usage.rpt_file[uj], dst_dir,
+                                                              force_abs_paths, warnings)
+                                            : std::string{};
             // Quote the report path, as every other FILE token here does
             // (see the [TIMESERIES] and [RAINGAGES] FILE emissions). Legacy
             // strips the quotes, and without them a path containing a space
             // tokenises into several columns and shifts DrainTo and FromPerv
             // along with it. `*` is the "no report" sentinel, never a path,
             // so it stays bare.
-            if (rpt_tok.empty()) std::fprintf(f," *");
-            else                 std::fprintf(f," \"%s\"", rpt_tok.c_str());
-            if (uj < ctx.lid_usage.drain_to.size() && !ctx.lid_usage.drain_to[uj].empty())
-                std::fprintf(f," %s", ctx.lid_usage.drain_to[uj].c_str());
+            if (rpt_tok.empty())
+                std::fprintf(f, " *");
             else
-                std::fprintf(f," *");
+                std::fprintf(f, " \"%s\"", rpt_tok.c_str());
+            if (uj < ctx.lid_usage.drain_to.size() && !ctx.lid_usage.drain_to[uj].empty())
+                std::fprintf(f, " %s", ctx.lid_usage.drain_to[uj].c_str());
+            else
+                std::fprintf(f, " *");
             if (uj < ctx.lid_usage.from_perv.size())
-                std::fprintf(f," %8.2f", ctx.lid_usage.from_perv[uj]);
-            std::fprintf(f,"\n");
+                std::fprintf(f, " %.17g", ctx.lid_usage.from_perv[uj]);
+            std::fprintf(f, "\n");
         }
     }
 
     // [JUNCTIONS]
     // Under the SWMM 5.x profile virtual and inlet junctions are written here as
     // ordinary junctions (no [VIRTUAL_JUNCTIONS] / [INLET_JUNCTIONS] in 5.x).
-    if(hasRegularJunction(ctx)||(swmm5&&(hasVirtualJunction(ctx)||hasInletJunction(ctx)))){sec(f,"JUNCTIONS");
-    std::fprintf(f,";;%-16s %-12s %-12s %-12s %-12s %-12s\n","Name","Elev","MaxDepth","InitDepth","SurDepth","Aponded");
-    std::fprintf(f,";;%-16s %-12s %-12s %-12s %-12s %-12s\n","----------------","------------","------------","------------","------------","------------");
-    for(int j=0;j<ctx.n_nodes();++j){auto u=static_cast<size_t>(j);if(ctx.nodes.type[u]!=NodeType::JUNCTION)continue;
-    const bool vnode=isVirtualNode(ctx,u);
-    if(vnode&&!swmm5)continue;
-    write_obj_comment(f, ctx.nodes.comments, u);
-    if(vnode){
-        // MaxDepth: the rim / flood threshold when one was given, else 0 so the
-        // 5.x engine derives it from the crown as for any junction. The node
-        // had no surcharge depth and no ponded area.
-        const double rim=(u<ctx.nodes.rim_depth.size())?ctx.nodes.rim_depth[u]:0.0;
-        std::fprintf(f,"%-16s %12.4f %12.4f %12.4f %12.4f %12.4f\n",ctx.node_names.name_of(j).c_str(),
-            ctx.nodes.invert_elev[u],rim>0.0?rim:0.0,0.0,0.0,0.0);
-        note("Node "+ctx.node_names.name_of(j)+(isInletNode(ctx,u)
-            ?": inlet junction written as a junction plus an [INLET_USAGE] row on its approach conduit"
-            :": virtual junction written as a junction")+" (SWMM 5.x profile)");
-        continue;
+    if (hasRegularJunction(ctx) || (swmm5 && (hasVirtualJunction(ctx) || hasInletJunction(ctx)))) {
+        sec(f, "JUNCTIONS");
+        std::fprintf(f, ";;%-16s %-12s %-12s %-12s %-12s %-12s\n", "Name", "Elev", "MaxDepth",
+                     "InitDepth", "SurDepth", "Aponded");
+        std::fprintf(f, ";;%-16s %-12s %-12s %-12s %-12s %-12s\n", "----------------",
+                     "------------", "------------", "------------", "------------",
+                     "------------");
+        for (int j = 0; j < ctx.n_nodes(); ++j) {
+            auto u = static_cast<size_t>(j);
+            if (ctx.nodes.type[u] != NodeType::JUNCTION)
+                continue;
+            const bool vnode = isVirtualNode(ctx, u);
+            if (vnode && !swmm5)
+                continue;
+            write_obj_comment(f, ctx.nodes.comments, u);
+            if (vnode) {
+                // MaxDepth: the rim / flood threshold when one was given, else 0 so the
+                // 5.x engine derives it from the crown as for any junction. The node
+                // had no surcharge depth and no ponded area.
+                const double rim = (u < ctx.nodes.rim_depth.size()) ? ctx.nodes.rim_depth[u] : 0.0;
+                std::fprintf(f, "%-16s %.17g %.17g %.17g %.17g %.17g\n",
+                             ctx.node_names.name_of(j).c_str(), ctx.nodes.invert_elev[u],
+                             rim > 0.0 ? rim : 0.0, 0.0, 0.0, 0.0);
+                note(
+                    "Node " + ctx.node_names.name_of(j) +
+                    (isInletNode(ctx, u)
+                         ? ": inlet junction written as a junction plus an [INLET_USAGE] row on its approach conduit"
+                         : ": virtual junction written as a junction") +
+                    " (SWMM 5.x profile)");
+                continue;
+            }
+            std::fprintf(f, "%-16s %.17g %.17g %.17g %.17g %.17g\n",
+                         ctx.node_names.name_of(j).c_str(), ctx.nodes.invert_elev[u],
+                         ctx.nodes.full_depth[u], ctx.nodes.init_depth[u], ctx.nodes.sur_depth[u],
+                         ctx.nodes.ponded_area[u]);
+        }
     }
-    std::fprintf(f,"%-16s %12.4f %12.4f %12.4f %12.4f %12.4f\n",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ctx.nodes.full_depth[u],ctx.nodes.init_depth[u],ctx.nodes.sur_depth[u],ctx.nodes.ponded_area[u]);
-    }}
 
     // [VIRTUAL_JUNCTIONS] — name + invert elevation, plus an optional MaxDepth
     // that is used ONLY to draw the ground surface. All solver geometry is
     // derived from the attached conduits at load time (refactored engine only).
-    if(!swmm5&&hasVirtualJunction(ctx)){sec(f,"VIRTUAL_JUNCTIONS");
-    const bool anyRim = hasVirtualJunctionRim(ctx);
-    if(anyRim){
-        std::fprintf(f,";;%-16s %-12s %-12s\n","Name","Elev","MaxDepth");
-        std::fprintf(f,";;%-16s %-12s %-12s\n","----------------","------------","------------");
-    } else {
-        std::fprintf(f,";;%-16s %-12s\n","Name","Elev");
-        std::fprintf(f,";;%-16s %-12s\n","----------------","------------");
+    if (!swmm5 && hasVirtualJunction(ctx)) {
+        sec(f, "VIRTUAL_JUNCTIONS");
+        const bool anyRim = hasVirtualJunctionRim(ctx);
+        if (anyRim) {
+            std::fprintf(f, ";;%-16s %-12s %-12s\n", "Name", "Elev", "MaxDepth");
+            std::fprintf(f, ";;%-16s %-12s %-12s\n", "----------------", "------------",
+                         "------------");
+        } else {
+            std::fprintf(f, ";;%-16s %-12s\n", "Name", "Elev");
+            std::fprintf(f, ";;%-16s %-12s\n", "----------------", "------------");
+        }
+        for (int j = 0; j < ctx.n_nodes(); ++j) {
+            auto u = static_cast<size_t>(j);
+            if (!isVirtualNode(ctx, u) || isInletNode(ctx, u))
+                continue;
+            if (u < ctx.nodes.is_inlet.size() && ctx.nodes.is_inlet[u] && warnings)
+                warnings->push_back("Node " + ctx.node_names.name_of(j) +
+                                    ": inlet junction has no resolved inlet usage; "
+                                    "written as a plain [VIRTUAL_JUNCTIONS] row");
+            write_obj_comment(f, ctx.nodes.comments, u);
+            const double rim = (u < ctx.nodes.rim_depth.size()) ? ctx.nodes.rim_depth[u] : 0.0;
+            if (rim > 0.0)
+                std::fprintf(f, "%-16s %.17g %.17g\n", ctx.node_names.name_of(j).c_str(),
+                             ctx.nodes.invert_elev[u], rim);
+            else
+                std::fprintf(f, "%-16s %.17g\n", ctx.node_names.name_of(j).c_str(),
+                             ctx.nodes.invert_elev[u]);
+        }
     }
-    for(int j=0;j<ctx.n_nodes();++j){auto u=static_cast<size_t>(j);
-    if(!isVirtualNode(ctx,u)||isInletNode(ctx,u))continue;
-    if(u<ctx.nodes.is_inlet.size()&&ctx.nodes.is_inlet[u]&&warnings)
-        warnings->push_back("Node "+ctx.node_names.name_of(j)+
-                            ": inlet junction has no resolved inlet usage; "
-                            "written as a plain [VIRTUAL_JUNCTIONS] row");
-    write_obj_comment(f, ctx.nodes.comments, u);
-    const double rim = (u<ctx.nodes.rim_depth.size()) ? ctx.nodes.rim_depth[u] : 0.0;
-    if(rim>0.0)
-        std::fprintf(f,"%-16s %12.4f %12.4f\n",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],rim);
-    else
-        std::fprintf(f,"%-16s %12.4f\n",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u]);
-    }}
 
     // [INLET_JUNCTIONS] — a virtual junction plus its street inlet. Tokens 1-3
     // mirror [VIRTUAL_JUNCTIONS] (MaxDepth here is the flood threshold, carried
     // in rim_depth); tokens 4-11 are the [INLET_USAGE] tail.
-    if(!swmm5&&hasInletJunction(ctx)){sec(f,"INLET_JUNCTIONS");
-    std::fprintf(f,";;%-16s %-12s %-12s %-16s %-16s %-8s %-8s %-10s %-10s %-10s %-10s\n",
-        "Name","Elev","MaxDepth","Inlet","CaptureNode","#Inlets","%Clog","Qmax","aLocal","wLocal","Placement");
-    std::fprintf(f,";;%-16s %-12s %-12s %-16s %-16s %-8s %-8s %-10s %-10s %-10s %-10s\n",
-        "----------------","------------","------------","----------------","----------------",
-        "--------","--------","----------","----------","----------","----------");
-    for(int j=0;j<ctx.n_nodes();++j){auto u=static_cast<size_t>(j);
-    const int r=inletUsageRow(ctx,u); if(r<0)continue;
-    const auto ur=static_cast<size_t>(r);
-    write_obj_comment(f, ctx.nodes.comments, u);
-    int pl=ctx.inlet_usages.placement[ur]; if(pl<0||pl>2)pl=0;
-    std::fprintf(f,"%-16s %12.4f %12.4f %-16s %-16s %8d %8.4g %10.4g %10.4g %10.4g %-10s\n",
-        ctx.node_names.name_of(j).c_str(),
-        ctx.nodes.invert_elev[u],
-        (u<ctx.nodes.rim_depth.size())?ctx.nodes.rim_depth[u]:0.0,
-        ctx.inlets.names[static_cast<size_t>(ctx.inlet_usages.design_index[ur])].c_str(),
-        ctx.node_names.name_of(ctx.inlet_usages.node_index[ur]).c_str(),
-        ctx.inlet_usages.num_inlets[ur],
-        (1.0-ctx.inlet_usages.clog_factor[ur])*100.0,
-        ctx.inlet_usages.flow_limit[ur],
-        ctx.inlet_usages.local_depress[ur],
-        ctx.inlet_usages.local_width[ur],
-        kInletPlacementWords[pl]);
-    }}
+    if (!swmm5 && hasInletJunction(ctx)) {
+        sec(f, "INLET_JUNCTIONS");
+        std::fprintf(f, ";;%-16s %-12s %-12s %-16s %-16s %-8s %-8s %-10s %-10s %-10s %-10s\n",
+                     "Name", "Elev", "MaxDepth", "Inlet", "CaptureNode", "#Inlets", "%Clog", "Qmax",
+                     "aLocal", "wLocal", "Placement");
+        std::fprintf(f, ";;%-16s %-12s %-12s %-16s %-16s %-8s %-8s %-10s %-10s %-10s %-10s\n",
+                     "----------------", "------------", "------------", "----------------",
+                     "----------------", "--------", "--------", "----------", "----------",
+                     "----------", "----------");
+        for (int j = 0; j < ctx.n_nodes(); ++j) {
+            auto u = static_cast<size_t>(j);
+            const int r = inletUsageRow(ctx, u);
+            if (r < 0)
+                continue;
+            const auto ur = static_cast<size_t>(r);
+            write_obj_comment(f, ctx.nodes.comments, u);
+            int pl = ctx.inlet_usages.placement[ur];
+            if (pl < 0 || pl > 2)
+                pl = 0;
+            std::fprintf(
+                f, "%-16s %.17g %.17g %-16s %-16s %8d %.17g %.17g %.17g %.17g %-10s\n",
+                ctx.node_names.name_of(j).c_str(), ctx.nodes.invert_elev[u],
+                (u < ctx.nodes.rim_depth.size()) ? ctx.nodes.rim_depth[u] : 0.0,
+                ctx.inlets.names[static_cast<size_t>(ctx.inlet_usages.design_index[ur])].c_str(),
+                ctx.node_names.name_of(ctx.inlet_usages.node_index[ur]).c_str(),
+                ctx.inlet_usages.num_inlets[ur], (1.0 - ctx.inlet_usages.clog_factor[ur]) * 100.0,
+                ctx.inlet_usages.flow_limit[ur], ctx.inlet_usages.local_depress[ur],
+                ctx.inlet_usages.local_width[ur], kInletPlacementWords[pl]);
+        }
+    }
 
     // [OUTFALLS]
     // Column order must match outfall_readParams() / handle_outfalls():
     //   Name Elev Type [StageData] Gated [RouteTo]
     // StageData is present only for FIXED (numeric stage) and TIDAL/TIMESERIES
     // (table NAME, not the internal index).
-    if(hasNT(ctx,NodeType::OUTFALL)){sec(f,"OUTFALLS");
-    std::fprintf(f,";;%-16s %-12s %-12s %-16s %-8s %-16s\n","Name","Elev","Type","Stage Data","Gated","Route To");
-    std::fprintf(f,";;%-16s %-12s %-12s %-16s %-8s %-16s\n","----------------","------------","------------","----------------","--------","----------------");
-    for(int j=0;j<ctx.n_nodes();++j){auto u=static_cast<size_t>(j);if(ctx.nodes.type[u]!=NodeType::OUTFALL)continue;
-    write_obj_comment(f, ctx.nodes.comments, u);
-    // Relational side-table (Phase 4).
-    const int orow = ctx.node_subtypes.outfall_row(j); const auto& O = ctx.node_subtypes.outfalls;
-    const OutfallType otype = (orow>=0)?O.bc_type[static_cast<size_t>(orow)]:OutfallType::FREE;
-    const int oflap = (orow>=0)?O.has_flap_gate[static_cast<size_t>(orow)]:0;
-    const double oparam = (orow>=0)?O.param[static_cast<size_t>(orow)]:0.0;
-    const int oroute = (orow>=0)?O.route_to[static_cast<size_t>(orow)]:-1;
+    if (hasNT(ctx, NodeType::OUTFALL)) {
+        sec(f, "OUTFALLS");
+        std::fprintf(f, ";;%-16s %-12s %-12s %-16s %-8s %-16s\n", "Name", "Elev", "Type",
+                     "Stage Data", "Gated", "Route To");
+        std::fprintf(f, ";;%-16s %-12s %-12s %-16s %-8s %-16s\n", "----------------",
+                     "------------", "------------", "----------------", "--------",
+                     "----------------");
+        for (int j = 0; j < ctx.n_nodes(); ++j) {
+            auto u = static_cast<size_t>(j);
+            if (ctx.nodes.type[u] != NodeType::OUTFALL)
+                continue;
+            write_obj_comment(f, ctx.nodes.comments, u);
+            // Relational side-table (Phase 4).
+            const int orow = ctx.node_subtypes.outfall_row(j);
+            const auto& O = ctx.node_subtypes.outfalls;
+            const OutfallType otype =
+                (orow >= 0) ? O.bc_type[static_cast<size_t>(orow)] : OutfallType::FREE;
+            const int oflap = (orow >= 0) ? O.has_flap_gate[static_cast<size_t>(orow)] : 0;
+            const double oparam = (orow >= 0) ? O.param[static_cast<size_t>(orow)] : 0.0;
+            const int oroute = (orow >= 0) ? O.route_to[static_cast<size_t>(orow)] : -1;
 
-    // Stage-data column.
-    char stage[64]; stage[0]='\0';
-    if(otype==OutfallType::FIXED){
-        std::snprintf(stage,sizeof(stage),"%.4f",oparam);
-    } else if(otype==OutfallType::TIDAL||otype==OutfallType::TIMESERIES){
-        const int t = static_cast<int>(oparam);
-        if(t>=0 && t<static_cast<int>(ctx.tables.tables.size()))
-            std::snprintf(stage,sizeof(stage),"%s",ctx.tables[t].id.c_str());
+            // Stage-data column.
+            char stage[64];
+            stage[0] = '\0';
+            if (otype == OutfallType::FIXED) {
+                std::snprintf(stage, sizeof(stage), "%.17g", oparam);
+            } else if (otype == OutfallType::TIDAL || otype == OutfallType::TIMESERIES) {
+                const int t = static_cast<int>(oparam);
+                if (t >= 0 && t < static_cast<int>(ctx.tables.tables.size()))
+                    std::snprintf(stage, sizeof(stage), "%s", ctx.tables[t].id.c_str());
+            }
+
+            const bool has_route = (oroute >= 0 && oroute < ctx.n_subcatches());
+            // Legacy reads the two trailing columns with EXACT token-count equality:
+            // `ntoks == n` assigns the flap gate, `ntoks == n+1` assigns RouteTo
+            // (node.c outfall_readParams). Writing both therefore makes legacy skip
+            // the gate entirely and default it to NO — the combination simply cannot
+            // be expressed in the legacy grammar. We still write both, because our own
+            // reader takes them, but say so rather than losing it silently.
+            if (oflap && has_route && warnings)
+                warnings->push_back(
+                    "[OUTFALLS] node \"" + ctx.node_names.name_of(j) +
+                    "\": a flap gate together with a Route To subcatchment cannot be "
+                    "expressed in SWMM 5.x — a legacy engine reading this file will "
+                    "ignore the flap gate.");
+            std::fprintf(f, "%-16s %.17g %-12s", ctx.node_names.name_of(j).c_str(),
+                         ctx.nodes.invert_elev[u], ofName(otype));
+            if (stage[0] != '\0')
+                std::fprintf(f, " %-16s", stage);
+            std::fprintf(f, " %-8s", oflap ? "YES" : "NO");
+            if (has_route)
+                std::fprintf(f, " %-16s", ctx.subcatch_names.name_of(oroute).c_str());
+            std::fprintf(f, "\n");
+        }
     }
-
-    const bool has_route = (oroute>=0 && oroute<ctx.n_subcatches());
-    // Legacy reads the two trailing columns with EXACT token-count equality:
-    // `ntoks == n` assigns the flap gate, `ntoks == n+1` assigns RouteTo
-    // (node.c outfall_readParams). Writing both therefore makes legacy skip
-    // the gate entirely and default it to NO — the combination simply cannot
-    // be expressed in the legacy grammar. We still write both, because our own
-    // reader takes them, but say so rather than losing it silently.
-    if(oflap && has_route && warnings)
-        warnings->push_back("[OUTFALLS] node \""+ctx.node_names.name_of(j)+
-            "\": a flap gate together with a Route To subcatchment cannot be "
-            "expressed in SWMM 5.x — a legacy engine reading this file will "
-            "ignore the flap gate.");
-    std::fprintf(f,"%-16s %12.15g %-12s",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ofName(otype));
-    if(stage[0]!='\0')std::fprintf(f," %-16s",stage);
-    std::fprintf(f," %-8s",oflap?"YES":"NO");
-    if(has_route)
-        std::fprintf(f," %-16s",ctx.subcatch_names.name_of(oroute).c_str());
-    std::fprintf(f,"\n");
-    }}
 
     // [DIVIDERS]
-    if(hasNT(ctx,NodeType::DIVIDER)){sec(f,"DIVIDERS");
-    std::fprintf(f,";;%-16s %-12s %-16s %-12s\n","Name","Elev","DivLink","Type");
-    std::fprintf(f,";;%-16s %-12s %-16s %-12s\n","----------------","------------","----------------","------------");
-    for(int j=0;j<ctx.n_nodes();++j){auto u=static_cast<size_t>(j);if(ctx.nodes.type[u]!=NodeType::DIVIDER)continue;
-    write_obj_comment(f, ctx.nodes.comments, u);
-    // Relational side-table (Phase 4).
-    const int drow = ctx.node_subtypes.divider_row(j); const auto& D = ctx.node_subtypes.dividers;
-    // Resolve diversion link name
-    const char* divLinkName = "*";
-    std::string dlnStr;
-    int dlIdx = (drow>=0) ? D.link[static_cast<size_t>(drow)]
-                          : -1;
-    if(dlIdx >= 0 && dlIdx < ctx.link_names.size()) {
-        dlnStr = ctx.link_names.name_of(dlIdx); divLinkName = dlnStr.c_str();
-    } else if(drow>=0 && !D.link_name[static_cast<size_t>(drow)].empty()) {
-        divLinkName = D.link_name[static_cast<size_t>(drow)].c_str();
-    }
-    auto dtype = (drow>=0) ? D.method[static_cast<size_t>(drow)] : DividerType::CUTOFF;
-    double cutoff = (drow>=0) ? D.cutoff[static_cast<size_t>(drow)] : 0.0;
-    switch(dtype) {
-    case DividerType::CUTOFF:
-        std::fprintf(f,"%-16s %12.4f %-16s CUTOFF   %12.4f %12.4f %12.4f %12.4f %12.4f\n",
-            ctx.node_names.name_of(j).c_str(), ctx.nodes.invert_elev[u], divLinkName,
-            cutoff, ctx.nodes.full_depth[u], ctx.nodes.init_depth[u],
-            ctx.nodes.sur_depth[u], ctx.nodes.ponded_area[u]);
-        break;
-    case DividerType::OVERFLOW_DIV:
-        std::fprintf(f,"%-16s %12.4f %-16s OVERFLOW %12.4f %12.4f %12.4f %12.4f\n",
-            ctx.node_names.name_of(j).c_str(), ctx.nodes.invert_elev[u], divLinkName,
-            ctx.nodes.full_depth[u], ctx.nodes.init_depth[u],
-            ctx.nodes.sur_depth[u], ctx.nodes.ponded_area[u]);
-        break;
-    case DividerType::TABULAR: {
-        const char* curveName = "*";
-        std::string cnStr;
-        int ci = (drow>=0) ? D.curve[static_cast<size_t>(drow)]
-                           : -1;
-        if(ci >= 0 && ci < ctx.n_tables()) {
-            cnStr = ctx.tables[ci].id; curveName = cnStr.c_str();
-        } else if(drow>=0 && !D.curve_name[static_cast<size_t>(drow)].empty()) {
-            curveName = D.curve_name[static_cast<size_t>(drow)].c_str();
+    if (hasNT(ctx, NodeType::DIVIDER)) {
+        sec(f, "DIVIDERS");
+        std::fprintf(f, ";;%-16s %-12s %-16s %-12s\n", "Name", "Elev", "DivLink", "Type");
+        std::fprintf(f, ";;%-16s %-12s %-16s %-12s\n", "----------------", "------------",
+                     "----------------", "------------");
+        for (int j = 0; j < ctx.n_nodes(); ++j) {
+            auto u = static_cast<size_t>(j);
+            if (ctx.nodes.type[u] != NodeType::DIVIDER)
+                continue;
+            write_obj_comment(f, ctx.nodes.comments, u);
+            // Relational side-table (Phase 4).
+            const int drow = ctx.node_subtypes.divider_row(j);
+            const auto& D = ctx.node_subtypes.dividers;
+            // Resolve diversion link name
+            const char* divLinkName = "*";
+            std::string dlnStr;
+            int dlIdx = (drow >= 0) ? D.link[static_cast<size_t>(drow)] : -1;
+            if (dlIdx >= 0 && dlIdx < ctx.link_names.size()) {
+                dlnStr = ctx.link_names.name_of(dlIdx);
+                divLinkName = dlnStr.c_str();
+            } else if (drow >= 0 && !D.link_name[static_cast<size_t>(drow)].empty()) {
+                divLinkName = D.link_name[static_cast<size_t>(drow)].c_str();
+            }
+            auto dtype = (drow >= 0) ? D.method[static_cast<size_t>(drow)] : DividerType::CUTOFF;
+            double cutoff = (drow >= 0) ? D.cutoff[static_cast<size_t>(drow)] : 0.0;
+            switch (dtype) {
+            case DividerType::CUTOFF:
+                std::fprintf(f, "%-16s %.17g %-16s CUTOFF   %.17g %.17g %.17g %.17g %.17g\n",
+                             ctx.node_names.name_of(j).c_str(), ctx.nodes.invert_elev[u],
+                             divLinkName, cutoff, ctx.nodes.full_depth[u], ctx.nodes.init_depth[u],
+                             ctx.nodes.sur_depth[u], ctx.nodes.ponded_area[u]);
+                break;
+            case DividerType::OVERFLOW_DIV:
+                std::fprintf(f, "%-16s %.17g %-16s OVERFLOW %.17g %.17g %.17g %.17g\n",
+                             ctx.node_names.name_of(j).c_str(), ctx.nodes.invert_elev[u],
+                             divLinkName, ctx.nodes.full_depth[u], ctx.nodes.init_depth[u],
+                             ctx.nodes.sur_depth[u], ctx.nodes.ponded_area[u]);
+                break;
+            case DividerType::TABULAR: {
+                const char* curveName = "*";
+                std::string cnStr;
+                int ci = (drow >= 0) ? D.curve[static_cast<size_t>(drow)] : -1;
+                if (ci >= 0 && ci < ctx.n_tables()) {
+                    cnStr = ctx.tables[ci].id;
+                    curveName = cnStr.c_str();
+                } else if (drow >= 0 && !D.curve_name[static_cast<size_t>(drow)].empty()) {
+                    curveName = D.curve_name[static_cast<size_t>(drow)].c_str();
+                }
+                std::fprintf(f, "%-16s %.17g %-16s TABULAR  %-16s %.17g %.17g %.17g %.17g\n",
+                             ctx.node_names.name_of(j).c_str(), ctx.nodes.invert_elev[u],
+                             divLinkName, curveName, ctx.nodes.full_depth[u],
+                             ctx.nodes.init_depth[u], ctx.nodes.sur_depth[u],
+                             ctx.nodes.ponded_area[u]);
+                break;
+            }
+            case DividerType::WEIR: {
+                double cd = (drow >= 0) ? D.cd[static_cast<size_t>(drow)] : 0.0;
+                double maxd = (drow >= 0) ? D.max_depth[static_cast<size_t>(drow)] : 0.0;
+                // Legacy column order: qMin dhMax cWeir (node.c:1112)
+                std::fprintf(
+                    f,
+                    "%-16s %.17g %-16s WEIR     %.17g %.17g %.17g %.17g %.17g %.17g %.17g\n",
+                    ctx.node_names.name_of(j).c_str(), ctx.nodes.invert_elev[u], divLinkName,
+                    cutoff, maxd, cd, ctx.nodes.full_depth[u], ctx.nodes.init_depth[u],
+                    ctx.nodes.sur_depth[u], ctx.nodes.ponded_area[u]);
+                break;
+            }
+            }
         }
-        std::fprintf(f,"%-16s %12.4f %-16s TABULAR  %-16s %12.4f %12.4f %12.4f %12.4f\n",
-            ctx.node_names.name_of(j).c_str(), ctx.nodes.invert_elev[u], divLinkName,
-            curveName, ctx.nodes.full_depth[u], ctx.nodes.init_depth[u],
-            ctx.nodes.sur_depth[u], ctx.nodes.ponded_area[u]);
-        break;
     }
-    case DividerType::WEIR: {
-        double cd = (drow>=0) ? D.cd[static_cast<size_t>(drow)] : 0.0;
-        double maxd = (drow>=0) ? D.max_depth[static_cast<size_t>(drow)] : 0.0;
-        // Legacy column order: qMin dhMax cWeir (node.c:1112)
-        std::fprintf(f,"%-16s %12.4f %-16s WEIR     %12.4f %12.4f %12.4f %12.4f %12.4f %12.4f %12.4f\n",
-            ctx.node_names.name_of(j).c_str(), ctx.nodes.invert_elev[u], divLinkName,
-            cutoff, maxd, cd, ctx.nodes.full_depth[u], ctx.nodes.init_depth[u],
-            ctx.nodes.sur_depth[u], ctx.nodes.ponded_area[u]);
-        break;
-    }
-    }
-    }}
 
     // [STORAGE]
-    if(hasNT(ctx,NodeType::STORAGE)){sec(f,"STORAGE");
-    std::fprintf(f,";;%-16s %-12s %-12s %-12s %-12s\n","Name","Elev","MaxDepth","InitDepth","Shape");
-    std::fprintf(f,";;%-16s %-12s %-12s %-12s %-12s\n","----------------","------------","------------","------------","------------");
-    for(int j=0;j<ctx.n_nodes();++j){auto u=static_cast<size_t>(j);if(ctx.nodes.type[u]!=NodeType::STORAGE)continue;
-    write_obj_comment(f, ctx.nodes.comments, u);
-    // Relational side-table (Phase 4).
-    const int srow = ctx.node_subtypes.storage_row(j); const auto& S = ctx.node_subtypes.storages;
-    const int scurve = (srow>=0)?S.curve[static_cast<size_t>(srow)]:-1;
-    const StorageShape sshape = (srow>=0)?S.shape[static_cast<size_t>(srow)]:StorageShape::FUNCTIONAL;
-    // Shape, then legacy 5.2's trailing columns in storage_readParams' order:
-    // SurDepth, Fevap, and the exfiltration triple Psi Ksat IMD when Ksat is
-    // set (exfil_readStorageParams). The former `0 0 <surdepth>` /
-    // `0 <surdepth>` tails re-read the surcharge depth as Fevap or as a bare
-    // Ksat.
-    if(scurve>=0)
-        std::fprintf(f,"%-16s %12.15g %12.15g %12.15g TABULAR    %s",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ctx.nodes.full_depth[u],ctx.nodes.init_depth[u],tN(ctx,scurve));
-    else if(storage_shape_is_geometric(sshape)){
-        // Geometric shapes re-emit the RAW L/W/Z the user gave us, not the derived
-        // a/b/c — that is the whole point of keeping p1..p3 in the SoA. Writing the
-        // coefficients here would silently downgrade the node to FUNCTIONAL on save.
-        const double q1=S.p1[static_cast<size_t>(srow)];
-        const double q2=S.p2[static_cast<size_t>(srow)];
-        const double q3=S.p3[static_cast<size_t>(srow)];
-        std::fprintf(f,"%-16s %12.15g %12.15g %12.15g %-10s %.15g %.15g %.15g",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ctx.nodes.full_depth[u],ctx.nodes.init_depth[u],storage_shape_keyword(sshape),q1,q2,q3);
+    if (hasNT(ctx, NodeType::STORAGE)) {
+        sec(f, "STORAGE");
+        std::fprintf(f, ";;%-16s %-12s %-12s %-12s %-12s\n", "Name", "Elev", "MaxDepth",
+                     "InitDepth", "Shape");
+        std::fprintf(f, ";;%-16s %-12s %-12s %-12s %-12s\n", "----------------", "------------",
+                     "------------", "------------", "------------");
+        for (int j = 0; j < ctx.n_nodes(); ++j) {
+            auto u = static_cast<size_t>(j);
+            if (ctx.nodes.type[u] != NodeType::STORAGE)
+                continue;
+            write_obj_comment(f, ctx.nodes.comments, u);
+            // Relational side-table (Phase 4).
+            const int srow = ctx.node_subtypes.storage_row(j);
+            const auto& S = ctx.node_subtypes.storages;
+            const int scurve = (srow >= 0) ? S.curve[static_cast<size_t>(srow)] : -1;
+            const StorageShape sshape =
+                (srow >= 0) ? S.shape[static_cast<size_t>(srow)] : StorageShape::FUNCTIONAL;
+            // Shape, then legacy 5.2's trailing columns in storage_readParams' order:
+            // SurDepth, Fevap, and the exfiltration triple Psi Ksat IMD when Ksat is
+            // set (exfil_readStorageParams). The former `0 0 <surdepth>` /
+            // `0 <surdepth>` tails re-read the surcharge depth as Fevap or as a bare
+            // Ksat.
+            if (scurve >= 0)
+                std::fprintf(f, "%-16s %.17g %.17g %.17g TABULAR    %s",
+                             ctx.node_names.name_of(j).c_str(), ctx.nodes.invert_elev[u],
+                             ctx.nodes.full_depth[u], ctx.nodes.init_depth[u], tN(ctx, scurve));
+            else if (storage_shape_is_geometric(sshape)) {
+                // Geometric shapes re-emit the RAW L/W/Z the user gave us, not the derived
+                // a/b/c — that is the whole point of keeping p1..p3 in the SoA. Writing the
+                // coefficients here would silently downgrade the node to FUNCTIONAL on save.
+                const double q1 = S.p1[static_cast<size_t>(srow)];
+                const double q2 = S.p2[static_cast<size_t>(srow)];
+                const double q3 = S.p3[static_cast<size_t>(srow)];
+                std::fprintf(f, "%-16s %.17g %.17g %.17g %-10s %.17g %.17g %.17g",
+                             ctx.node_names.name_of(j).c_str(), ctx.nodes.invert_elev[u],
+                             ctx.nodes.full_depth[u], ctx.nodes.init_depth[u],
+                             storage_shape_keyword(sshape), q1, q2, q3);
+            } else {
+                const double sa = (srow >= 0) ? S.a[static_cast<size_t>(srow)] : 0.0;
+                const double sb = (srow >= 0) ? S.b[static_cast<size_t>(srow)] : 0.0;
+                const double sc = (srow >= 0) ? S.c[static_cast<size_t>(srow)] : 0.0;
+                // Bare %g is 6 significant digits, so a coefficient of any size lost
+                // its fraction (278.539816 -> 278.54). A1 scales storage surface area,
+                // hence volume and routing: 13 of 14 corpus decks whose [STORAGE] rows
+                // changed on round trip went on to simulate differently.
+                std::fprintf(f, "%-16s %.17g %.17g %.17g FUNCTIONAL %.17g %.17g %.17g",
+                             ctx.node_names.name_of(j).c_str(), ctx.nodes.invert_elev[u],
+                             ctx.nodes.full_depth[u], ctx.nodes.init_depth[u], sa, sb, sc);
+            }
+            {
+                const double fevap = (srow >= 0) ? S.evap_frac[static_cast<size_t>(srow)] : 0.0;
+                const double ksat = (srow >= 0) ? S.exfil_ksat[static_cast<size_t>(srow)] : 0.0;
+                std::fprintf(f, " %.17g %.17g", ctx.nodes.sur_depth[u], fevap);
+                if (ksat != 0.0)
+                    std::fprintf(f, " %.17g %.17g %.17g", S.exfil_suction[static_cast<size_t>(srow)], ksat,
+                                 S.exfil_imd[static_cast<size_t>(srow)]);
+                std::fprintf(f, "\n");
+            }
+        }
     }
-    else {
-        const double sa=(srow>=0)?S.a[static_cast<size_t>(srow)]:0.0;
-        const double sb=(srow>=0)?S.b[static_cast<size_t>(srow)]:0.0;
-        const double sc=(srow>=0)?S.c[static_cast<size_t>(srow)]:0.0;
-        // Bare %g is 6 significant digits, so a coefficient of any size lost
-        // its fraction (278.539816 -> 278.54). A1 scales storage surface area,
-        // hence volume and routing: 13 of 14 corpus decks whose [STORAGE] rows
-        // changed on round trip went on to simulate differently.
-        std::fprintf(f,"%-16s %12.15g %12.15g %12.15g FUNCTIONAL %.15g %.15g %.15g",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ctx.nodes.full_depth[u],ctx.nodes.init_depth[u],sa,sb,sc);
-    }
-    {
-        const double fevap=(srow>=0)?S.evap_frac[static_cast<size_t>(srow)]:0.0;
-        const double ksat=(srow>=0)?S.exfil_ksat[static_cast<size_t>(srow)]:0.0;
-        std::fprintf(f," %12.15g %.15g",ctx.nodes.sur_depth[u],fevap);
-        if(ksat!=0.0)
-            std::fprintf(f," %g %g %g",S.exfil_suction[static_cast<size_t>(srow)],ksat,S.exfil_imd[static_cast<size_t>(srow)]);
-        std::fprintf(f,"\n");
-    }
-    }}
 
     // [CONDUITS]
-    if(hasLT(ctx,LinkType::CONDUIT)){sec(f,"CONDUITS");
-    std::fprintf(f,";;%-16s %-16s %-16s %-12s %-12s %-12s %-12s %-10s %-10s\n","Name","FromNode","ToNode","Length","Roughness","InOffset","OutOffset","InitFlow","MaxFlow");
-    std::fprintf(f,";;%-16s %-16s %-16s %-12s %-12s %-12s %-12s %-10s %-10s\n","----------------","----------------","----------------","------------","------------","------------","------------","----------","----------");
-    for(int j=0;j<ctx.n_links();++j){auto u=static_cast<size_t>(j);if(ctx.links.type[u]!=LinkType::CONDUIT)continue;
-    write_obj_comment(f, ctx.links.comments, u);
-    const int cr=ctx.link_subtypes.conduit_row(j); const auto& CD=ctx.link_subtypes.conduits;
-    // Length and roughness are emitted at full double precision (%.15g), not a
-    // fixed 4/6-decimal field: real models carry sub-metre lengths and 1/n-derived
-    // roughness with many significant figures, and truncating them perturbs the
-    // routing solution — noticeable on large, control-heavy (chaos-sensitive) models.
-    // The offsets and flows on the same row were left at %12.4f/%10.4f and so
-    // kept truncating (0.000195 -> 0.0002); they feed the solver just as directly.
-    std::fprintf(f,"%-16s %-16s %-16s %15.15g %15.15g %12.15g %12.15g %10.15g %10.15g\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),(cr>=0)?CD.length[static_cast<size_t>(cr)]:0.0,(cr>=0)?CD.roughness[static_cast<size_t>(cr)]:0.01,ctx.links.offset1[u],ctx.links.offset2[u],ctx.links.q0[u],ctx.links.q_limit[u]);
-    }}
+    if (hasLT(ctx, LinkType::CONDUIT)) {
+        sec(f, "CONDUITS");
+        std::fprintf(f, ";;%-16s %-16s %-16s %-12s %-12s %-12s %-12s %-10s %-10s\n", "Name",
+                     "FromNode", "ToNode", "Length", "Roughness", "InOffset", "OutOffset",
+                     "InitFlow", "MaxFlow");
+        std::fprintf(f, ";;%-16s %-16s %-16s %-12s %-12s %-12s %-12s %-10s %-10s\n",
+                     "----------------", "----------------", "----------------", "------------",
+                     "------------", "------------", "------------", "----------", "----------");
+        for (int j = 0; j < ctx.n_links(); ++j) {
+            auto u = static_cast<size_t>(j);
+            if (ctx.links.type[u] != LinkType::CONDUIT)
+                continue;
+            write_obj_comment(f, ctx.links.comments, u);
+            const int cr = ctx.link_subtypes.conduit_row(j);
+            const auto& CD = ctx.link_subtypes.conduits;
+            // Length and roughness are emitted at full double precision (%.17g), not a
+            // fixed 4/6-decimal field: real models carry sub-metre lengths and 1/n-derived
+            // roughness with many significant figures, and truncating them perturbs the
+            // routing solution — noticeable on large, control-heavy (chaos-sensitive) models.
+            // The offsets and flows on the same row formerly used four/six decimals and so
+            // kept truncating (0.000195 -> 0.0002); they feed the solver just as directly.
+            std::fprintf(
+                f, "%-16s %-16s %-16s %.17g %.17g %.17g %.17g %.17g %.17g\n",
+                ctx.link_names.name_of(j).c_str(), nN(ctx, ctx.links.node1[u]),
+                nN(ctx, ctx.links.node2[u]), (cr >= 0) ? CD.length[static_cast<size_t>(cr)] : 0.0,
+                (cr >= 0) ? CD.roughness[static_cast<size_t>(cr)] : 0.01, ctx.links.offset1[u],
+                ctx.links.offset2[u], ctx.links.q0[u], ctx.links.q_limit[u]);
+        }
+    }
 
     // [PUMPS]
-    if(hasLT(ctx,LinkType::PUMP)){sec(f,"PUMPS");
-    std::fprintf(f,";;%-16s %-16s %-16s %-16s %-10s %-10s %-10s\n","Name","FromNode","ToNode","PumpCurve","Status","Startup","Shutoff");
-    std::fprintf(f,";;%-16s %-16s %-16s %-16s %-10s %-10s %-10s\n","----------------","----------------","----------------","----------------","----------","----------","----------");
-    for(int j=0;j<ctx.n_links();++j){auto u=static_cast<size_t>(j);if(ctx.links.type[u]!=LinkType::PUMP)continue;
-    write_obj_comment(f, ctx.links.comments, u);
-    const int pr=ctx.link_subtypes.pump_row(j); const auto& PD=ctx.link_subtypes.pumps;
-    // Emit the real startup/shutoff depths (and initial state) rather than a
-    // hardcoded "0 0": those are the wet-well depths at which the pump switches
-    // on/off. Dropping them makes every pump run unconditionally on re-read,
-    // changing the pumping regime and downstream flooding/continuity.
-    const char* pstat=(pr>=0)?(PD.init_state[static_cast<size_t>(pr)]?"ON":"OFF"):(ctx.links.setting[u]>0?"ON":"OFF");
-    // Pump curve: prefer the resolved index, then the retained curve name (the
-    // [OUTLETS] writer already does this). Writing tN() alone silently
-    // downgraded a curved pump to IDEAL whenever only the name was known.
-    // '*' is the legal IDEAL placeholder, so an empty name is not an error.
-    const int pcurve=(pr>=0)?PD.curve[static_cast<size_t>(pr)]:-1;
-    const char* pcname=(pcurve>=0)?tN(ctx,pcurve)
-                      :(ctx.links.pump_curve_name[u].empty()?"*"
-                        :ctx.links.pump_curve_name[u].c_str());
-    std::fprintf(f,"%-16s %-16s %-16s %-16s %-10s %.10g %.10g\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),pcname,pstat,(pr>=0)?PD.startup[static_cast<size_t>(pr)]:0.0,(pr>=0)?PD.shutoff[static_cast<size_t>(pr)]:0.0);
-    }}
+    if (hasLT(ctx, LinkType::PUMP)) {
+        sec(f, "PUMPS");
+        std::fprintf(f, ";;%-16s %-16s %-16s %-16s %-10s %-10s %-10s\n", "Name", "FromNode",
+                     "ToNode", "PumpCurve", "Status", "Startup", "Shutoff");
+        std::fprintf(f, ";;%-16s %-16s %-16s %-16s %-10s %-10s %-10s\n", "----------------",
+                     "----------------", "----------------", "----------------", "----------",
+                     "----------", "----------");
+        for (int j = 0; j < ctx.n_links(); ++j) {
+            auto u = static_cast<size_t>(j);
+            if (ctx.links.type[u] != LinkType::PUMP)
+                continue;
+            write_obj_comment(f, ctx.links.comments, u);
+            const int pr = ctx.link_subtypes.pump_row(j);
+            const auto& PD = ctx.link_subtypes.pumps;
+            // Emit the real startup/shutoff depths (and initial state) rather than a
+            // hardcoded "0 0": those are the wet-well depths at which the pump switches
+            // on/off. Dropping them makes every pump run unconditionally on re-read,
+            // changing the pumping regime and downstream flooding/continuity.
+            const char* pstat = (pr >= 0) ? (PD.init_state[static_cast<size_t>(pr)] ? "ON" : "OFF")
+                                          : (ctx.links.setting[u] > 0 ? "ON" : "OFF");
+            // Pump curve: prefer the resolved index, then the retained curve name (the
+            // [OUTLETS] writer already does this). Writing tN() alone silently
+            // downgraded a curved pump to IDEAL whenever only the name was known.
+            // '*' is the legal IDEAL placeholder, so an empty name is not an error.
+            const int pcurve = (pr >= 0) ? PD.curve[static_cast<size_t>(pr)] : -1;
+            const char* pcname = (pcurve >= 0) ? tN(ctx, pcurve)
+                                               : (ctx.links.pump_curve_name[u].empty()
+                                                      ? "*"
+                                                      : ctx.links.pump_curve_name[u].c_str());
+            std::fprintf(f, "%-16s %-16s %-16s %-16s %-10s %.17g %.17g\n",
+                         ctx.link_names.name_of(j).c_str(), nN(ctx, ctx.links.node1[u]),
+                         nN(ctx, ctx.links.node2[u]), pcname, pstat,
+                         (pr >= 0) ? PD.startup[static_cast<size_t>(pr)] : 0.0,
+                         (pr >= 0) ? PD.shutoff[static_cast<size_t>(pr)] : 0.0);
+        }
+    }
 
     // [ORIFICES]
-    if(hasLT(ctx,LinkType::ORIFICE)){sec(f,"ORIFICES");
-    std::fprintf(f,";;%-16s %-16s %-16s %-10s %-10s %-10s %-8s %-10s\n","Name","FromNode","ToNode","Type","Offset","Cd","Gated","CloseTime");
-    std::fprintf(f,";;%-16s %-16s %-16s %-10s %-10s %-10s %-8s %-10s\n","----------------","----------------","----------------","----------","----------","----------","--------","----------");
-    for(int j=0;j<ctx.n_links();++j){auto u=static_cast<size_t>(j);if(ctx.links.type[u]!=LinkType::ORIFICE)continue;
-    write_obj_comment(f, ctx.links.comments, u);
-    const int orr=ctx.link_subtypes.orifice_row(j);
-    const auto uorr=static_cast<size_t>(orr);
-    // orifice_type: 0 = BOTTOM, 1 = SIDE (LinkSubtypes.hpp). `orate` is stored
-    // as parsed — HOURS, converted at use (SWMMEngine.cpp:2927) — so it is
-    // emitted verbatim. All four were previously hardcoded/dropped, which
-    // destroyed the orientation, the flap gate and the close time on save.
-    const char* otype=(orr>=0&&ctx.link_subtypes.orifices.orifice_type[uorr]!=0.0)?"SIDE":"BOTTOM";
-    std::fprintf(f,"%-16s %-16s %-16s %-10s %10.4f %10.4f %-8s %10.4f\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),otype,ctx.links.offset1[u],(orr>=0)?ctx.link_subtypes.orifices.cd[uorr]:0.0,ctx.links.has_flap_gate[u]?"YES":"NO",(orr>=0)?ctx.link_subtypes.orifices.orate[uorr]:0.0);
-    }}
+    if (hasLT(ctx, LinkType::ORIFICE)) {
+        sec(f, "ORIFICES");
+        std::fprintf(f, ";;%-16s %-16s %-16s %-10s %-10s %-10s %-8s %-10s\n", "Name", "FromNode",
+                     "ToNode", "Type", "Offset", "Cd", "Gated", "CloseTime");
+        std::fprintf(f, ";;%-16s %-16s %-16s %-10s %-10s %-10s %-8s %-10s\n", "----------------",
+                     "----------------", "----------------", "----------", "----------",
+                     "----------", "--------", "----------");
+        for (int j = 0; j < ctx.n_links(); ++j) {
+            auto u = static_cast<size_t>(j);
+            if (ctx.links.type[u] != LinkType::ORIFICE)
+                continue;
+            write_obj_comment(f, ctx.links.comments, u);
+            const int orr = ctx.link_subtypes.orifice_row(j);
+            const auto uorr = static_cast<size_t>(orr);
+            // orifice_type: 0 = BOTTOM, 1 = SIDE (LinkSubtypes.hpp). `orate` is stored
+            // as parsed — HOURS, converted at use (SWMMEngine.cpp:2927) — so it is
+            // emitted verbatim. All four were previously hardcoded/dropped, which
+            // destroyed the orientation, the flap gate and the close time on save.
+            const char* otype = (orr >= 0 && ctx.link_subtypes.orifices.orifice_type[uorr] != 0.0)
+                                    ? "SIDE"
+                                    : "BOTTOM";
+            std::fprintf(f, "%-16s %-16s %-16s %-10s %.17g %.17g %-8s %.17g\n",
+                         ctx.link_names.name_of(j).c_str(), nN(ctx, ctx.links.node1[u]),
+                         nN(ctx, ctx.links.node2[u]), otype, ctx.links.offset1[u],
+                         (orr >= 0) ? ctx.link_subtypes.orifices.cd[uorr] : 0.0,
+                         ctx.links.has_flap_gate[u] ? "YES" : "NO",
+                         (orr >= 0) ? ctx.link_subtypes.orifices.orate[uorr] : 0.0);
+        }
+    }
 
     // [WEIRS]
-    if(hasLT(ctx,LinkType::WEIR)){sec(f,"WEIRS");
-    std::fprintf(f,";;%-16s %-16s %-16s %-12s %-10s %-10s %-8s %-10s %-10s %-10s %-10s %-10s %s\n","Name","FromNode","ToNode","Type","CrestHt","Cd","Gated","EndCon","EndCoeff","Surcharge","RoadWidth","RoadSurf","Coeff.Curve");
-    std::fprintf(f,";;%-16s %-16s %-16s %-12s %-10s %-10s %-8s %-10s %-10s %-10s %-10s %-10s %s\n","----------------","----------------","----------------","------------","----------","----------","--------","----------","----------","----------","----------","----------","----------------");
-    static const char* WEIR_TYPE[]={"TRANSVERSE","SIDEFLOW","V-NOTCH","TRAPEZOIDAL","ROADWAY"};
-    for(int j=0;j<ctx.n_links();++j){auto u=static_cast<size_t>(j);if(ctx.links.type[u]!=LinkType::WEIR)continue;
-    write_obj_comment(f, ctx.links.comments, u);
-    const int wr=ctx.link_subtypes.weir_row(j); const auto& WD=ctx.link_subtypes.weirs;
-    // Emit the real weir type, gate, end-contractions, end-coeff and the
-    // can-surcharge flag rather than hardcoding TRANSVERSE/NO/0/0: dropping the
-    // surcharge flag defaults it back to YES on re-read, changing drowned-weir
-    // flow (weir↔orifice switch) and hence overflow/flooding.
-    const int wt=(wr>=0)?static_cast<int>(WD.weir_type[static_cast<size_t>(wr)]):0;
-    const char* wtStr=(wt>=0&&wt<5)?WEIR_TYPE[wt]:"TRANSVERSE";
-    const char* wgate=ctx.links.has_flap_gate[u]?"YES":"NO";
-    const char* wsurch=(wr>=0&&WD.can_surcharge[static_cast<size_t>(wr)])?"YES":"NO";
-    std::fprintf(f,"%-16s %-16s %-16s %-12s %10.4f %10.4f %-8s %10.4f %10.4f %-10s",
-        ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),
-        wtStr,
-        (wr>=0)?WD.crest_height[static_cast<size_t>(wr)]:0.0,
-        (wr>=0)?WD.cd[static_cast<size_t>(wr)]:0.0,
-        wgate,
-        (wr>=0)?WD.end_contractions[static_cast<size_t>(wr)]:0.0,
-        (wr>=0)?WD.cd2[static_cast<size_t>(wr)]:0.0,
-        wsurch);
-    // ROADWAY road width / surface (legacy columns 11-12, read for that type
-    // only) and the optional Cd(head) curve (column 13, any type).
-    const int cdc=(wr>=0)?WD.cd_curve[static_cast<size_t>(wr)]:-1;
-    if(wt==4||cdc>=0){
-        const int rs=(wr>=0)?WD.road_surface[static_cast<size_t>(wr)]:0;
-        std::fprintf(f," %10.4f %-10s",(wr>=0)?WD.road_width[static_cast<size_t>(wr)]:0.0,
-            rs==1?"PAVED":rs==2?"GRAVEL":"*");
-        if(cdc>=0&&static_cast<size_t>(cdc)<ctx.tables.tables.size())
-            std::fprintf(f," %s",ctx.tables.tables[static_cast<size_t>(cdc)].id.c_str());
+    if (hasLT(ctx, LinkType::WEIR)) {
+        sec(f, "WEIRS");
+        std::fprintf(
+            f, ";;%-16s %-16s %-16s %-12s %-10s %-10s %-8s %-10s %-10s %-10s %-10s %-10s %s\n",
+            "Name", "FromNode", "ToNode", "Type", "CrestHt", "Cd", "Gated", "EndCon", "EndCoeff",
+            "Surcharge", "RoadWidth", "RoadSurf", "Coeff.Curve");
+        std::fprintf(
+            f, ";;%-16s %-16s %-16s %-12s %-10s %-10s %-8s %-10s %-10s %-10s %-10s %-10s %s\n",
+            "----------------", "----------------", "----------------", "------------",
+            "----------", "----------", "--------", "----------", "----------", "----------",
+            "----------", "----------", "----------------");
+        static const char* WEIR_TYPE[] = {"TRANSVERSE", "SIDEFLOW", "V-NOTCH", "TRAPEZOIDAL",
+                                          "ROADWAY"};
+        for (int j = 0; j < ctx.n_links(); ++j) {
+            auto u = static_cast<size_t>(j);
+            if (ctx.links.type[u] != LinkType::WEIR)
+                continue;
+            write_obj_comment(f, ctx.links.comments, u);
+            const int wr = ctx.link_subtypes.weir_row(j);
+            const auto& WD = ctx.link_subtypes.weirs;
+            // Emit the real weir type, gate, end-contractions, end-coeff and the
+            // can-surcharge flag rather than hardcoding TRANSVERSE/NO/0/0: dropping the
+            // surcharge flag defaults it back to YES on re-read, changing drowned-weir
+            // flow (weir↔orifice switch) and hence overflow/flooding.
+            const int wt = (wr >= 0) ? static_cast<int>(WD.weir_type[static_cast<size_t>(wr)]) : 0;
+            const char* wtStr = (wt >= 0 && wt < 5) ? WEIR_TYPE[wt] : "TRANSVERSE";
+            const char* wgate = ctx.links.has_flap_gate[u] ? "YES" : "NO";
+            const char* wsurch =
+                (wr >= 0 && WD.can_surcharge[static_cast<size_t>(wr)]) ? "YES" : "NO";
+            std::fprintf(f, "%-16s %-16s %-16s %-12s %.17g %.17g %-8s %.17g %.17g %-10s",
+                         ctx.link_names.name_of(j).c_str(), nN(ctx, ctx.links.node1[u]),
+                         nN(ctx, ctx.links.node2[u]), wtStr,
+                         (wr >= 0) ? WD.crest_height[static_cast<size_t>(wr)] : 0.0,
+                         (wr >= 0) ? WD.cd[static_cast<size_t>(wr)] : 0.0, wgate,
+                         (wr >= 0) ? WD.end_contractions[static_cast<size_t>(wr)] : 0.0,
+                         (wr >= 0) ? WD.cd2[static_cast<size_t>(wr)] : 0.0, wsurch);
+            // ROADWAY road width / surface (legacy columns 11-12, read for that type
+            // only) and the optional Cd(head) curve (column 13, any type).
+            const int cdc = (wr >= 0) ? WD.cd_curve[static_cast<size_t>(wr)] : -1;
+            if (wt == 4 || cdc >= 0) {
+                const int rs = (wr >= 0) ? WD.road_surface[static_cast<size_t>(wr)] : 0;
+                std::fprintf(f, " %.17g %-10s",
+                             (wr >= 0) ? WD.road_width[static_cast<size_t>(wr)] : 0.0,
+                             rs == 1   ? "PAVED"
+                             : rs == 2 ? "GRAVEL"
+                                       : "*");
+                if (cdc >= 0 && static_cast<size_t>(cdc) < ctx.tables.tables.size())
+                    std::fprintf(f, " %s", ctx.tables.tables[static_cast<size_t>(cdc)].id.c_str());
+            }
+            std::fprintf(f, "\n");
+        }
     }
-    std::fprintf(f,"\n");
-    }}
 
     // [OUTLETS]
-    if(hasLT(ctx,LinkType::OUTLET)){sec(f,"OUTLETS");
-    std::fprintf(f,";;%-16s %-16s %-16s %-10s %-16s %-10s %-10s\n","Name","FromNode","ToNode","Offset","Type","Coeff","Expon");
-    std::fprintf(f,";;%-16s %-16s %-16s %-10s %-16s %-10s %-10s\n","----------------","----------------","----------------","----------","----------------","----------","----------");
-    for(int j=0;j<ctx.n_links();++j){auto u=static_cast<size_t>(j);if(ctx.links.type[u]!=LinkType::OUTLET)continue;
-    write_obj_comment(f, ctx.links.comments, u);
-    const int olr=ctx.link_subtypes.outlet_row(j); const auto& OUT=ctx.link_subtypes.outlets;
-    // Rating type (param1): 0 FUNCTIONAL/HEAD, 1 FUNCTIONAL/DEPTH, 2 TABULAR/HEAD,
-    // 3 TABULAR/DEPTH. Legacy SWMM requires the compound TYPE token (and the curve
-    // name for TABULAR); a bare "FUNCTIONAL" both loses the rating curve and
-    // segfaults the legacy parser (strcomp(NULL,"HEAD")).
-    const int otype=(olr>=0)?static_cast<int>(OUT.outlet_type[static_cast<size_t>(olr)]):0;
-    const bool otab=(otype>=2), odepth=(otype==1||otype==3);
-    const char* otypeStr=otab?(odepth?"TABULAR/DEPTH":"TABULAR/HEAD")
-                              :(odepth?"FUNCTIONAL/DEPTH":"FUNCTIONAL/HEAD");
-    const double ocrest=(olr>=0)?OUT.crest_height[static_cast<size_t>(olr)]:ctx.links.offset1[u];
-    const char* ogate=ctx.links.has_flap_gate[u]?"YES":"NO";
-    if(otab){
-        const int oci=(olr>=0)?OUT.curve[static_cast<size_t>(olr)]:-1;
-        const char* ocurve=(oci>=0)?tN(ctx,oci):ctx.links.pump_curve_name[u].c_str();
-        std::fprintf(f,"%-16s %-16s %-16s %10.4f %-16s %-16s %s\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),ocrest,otypeStr,ocurve,ogate);
-    } else {
-        std::fprintf(f,"%-16s %-16s %-16s %10.4f %-16s %10g %10g %s\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),ocrest,otypeStr,(olr>=0)?OUT.coeff[static_cast<size_t>(olr)]:0.0,(olr>=0)?OUT.expon[static_cast<size_t>(olr)]:0.0,ogate);
+    if (hasLT(ctx, LinkType::OUTLET)) {
+        sec(f, "OUTLETS");
+        std::fprintf(f, ";;%-16s %-16s %-16s %-10s %-16s %-10s %-10s\n", "Name", "FromNode",
+                     "ToNode", "Offset", "Type", "Coeff", "Expon");
+        std::fprintf(f, ";;%-16s %-16s %-16s %-10s %-16s %-10s %-10s\n", "----------------",
+                     "----------------", "----------------", "----------", "----------------",
+                     "----------", "----------");
+        for (int j = 0; j < ctx.n_links(); ++j) {
+            auto u = static_cast<size_t>(j);
+            if (ctx.links.type[u] != LinkType::OUTLET)
+                continue;
+            write_obj_comment(f, ctx.links.comments, u);
+            const int olr = ctx.link_subtypes.outlet_row(j);
+            const auto& OUT = ctx.link_subtypes.outlets;
+            // Rating type (param1): 0 FUNCTIONAL/HEAD, 1 FUNCTIONAL/DEPTH, 2 TABULAR/HEAD,
+            // 3 TABULAR/DEPTH. Legacy SWMM requires the compound TYPE token (and the curve
+            // name for TABULAR); a bare "FUNCTIONAL" both loses the rating curve and
+            // segfaults the legacy parser (strcomp(NULL,"HEAD")).
+            const int otype =
+                (olr >= 0) ? static_cast<int>(OUT.outlet_type[static_cast<size_t>(olr)]) : 0;
+            const bool otab = (otype >= 2), odepth = (otype == 1 || otype == 3);
+            const char* otypeStr = otab ? (odepth ? "TABULAR/DEPTH" : "TABULAR/HEAD")
+                                        : (odepth ? "FUNCTIONAL/DEPTH" : "FUNCTIONAL/HEAD");
+            const double ocrest =
+                (olr >= 0) ? OUT.crest_height[static_cast<size_t>(olr)] : ctx.links.offset1[u];
+            const char* ogate = ctx.links.has_flap_gate[u] ? "YES" : "NO";
+            if (otab) {
+                const int oci = (olr >= 0) ? OUT.curve[static_cast<size_t>(olr)] : -1;
+                const char* ocurve =
+                    (oci >= 0) ? tN(ctx, oci) : ctx.links.pump_curve_name[u].c_str();
+                std::fprintf(f, "%-16s %-16s %-16s %.17g %-16s %-16s %s\n",
+                             ctx.link_names.name_of(j).c_str(), nN(ctx, ctx.links.node1[u]),
+                             nN(ctx, ctx.links.node2[u]), ocrest, otypeStr, ocurve, ogate);
+            } else {
+                std::fprintf(f, "%-16s %-16s %-16s %.17g %-16s %.17g %.17g %s\n",
+                             ctx.link_names.name_of(j).c_str(), nN(ctx, ctx.links.node1[u]),
+                             nN(ctx, ctx.links.node2[u]), ocrest, otypeStr,
+                             (olr >= 0) ? OUT.coeff[static_cast<size_t>(olr)] : 0.0,
+                             (olr >= 0) ? OUT.expon[static_cast<size_t>(olr)] : 0.0, ogate);
+            }
+        }
     }
-    }}
 
     // [XSECTIONS]
-    {sec(f,"XSECTIONS");
-    std::fprintf(f,";;%-16s %-16s %-12s %-12s %-12s %-12s %-8s %-8s\n","Link","Shape","Geom1","Geom2","Geom3","Geom4","Barrels","Culvert");
-    std::fprintf(f,";;%-16s %-16s %-12s %-12s %-12s %-12s %-8s %-8s\n","----------------","----------------","------------","------------","------------","------------","--------","--------");
-    for(int j=0;j<ctx.n_links();++j){auto u=static_cast<size_t>(j);
-    // [XSECTIONS] applies to conduits, orifices and weirs only. Pumps and
-    // outlets have no cross-section; emitting one (a default CIRCULAR with
-    // Geom1=0) makes legacy SWMM reject it with ERROR 211 (invalid number).
-    if(ctx.links.type[u]==LinkType::PUMP||ctx.links.type[u]==LinkType::OUTLET)continue;
-    const int cr=ctx.link_subtypes.conduit_row(j);
-    const int xbarrels=(cr>=0)?ctx.link_subtypes.conduits.barrels[static_cast<size_t>(cr)]:1;
-    // Culvert code (legacy tok[7], conduits only, link.c:258-264). It is read
-    // back, drives inlet control in the dynamic wave and is persisted by the
-    // GeoPackage writer — but was never written here, so Open -> Save silently
-    // turned every culvert into an ordinary conduit. Legacy offers no way to
-    // skip the Barrels column, so the code can only be reached by emitting
-    // both; a 0 means "not a culvert" and is simply omitted.
-    const int xculvert=(cr>=0)?ctx.link_subtypes.conduits.culvert_code[static_cast<size_t>(cr)]:0;
-    // Emit the retained raw Geom1–Geom4 (preserves trapezoid bottom width /
-    // side slopes the derived fields can't reproduce).  xsect_geom1 == 0 means
-    // the object was built by a path that didn't populate them; fall back to
-    // the legacy derived-field emission.  See LinkData::xsect_geom1.
-    // STREET cross-sections store a named [STREETS] reference (Geom1 is the
-    // street name, not a dimension), so emit the retained name instead of the
-    // numeric geometry — matching the [XSECTIONS] parser's STREET handling.
-    if(ctx.links.xsect_shape[u]==XsectShape::STREET_XSECT){
-        std::fprintf(f,"%-16s %-16s %-12s %12.4f %12.4f %12.4f %8d\n",
-            ctx.link_names.name_of(j).c_str(),
-            xsName(static_cast<int>(ctx.links.xsect_shape[u])),
-            ctx.links.pump_curve_name[u].c_str(),0.0,0.0,0.0,xbarrels);
-        continue;
+    {
+        sec(f, "XSECTIONS");
+        std::fprintf(f, ";;%-16s %-16s %-12s %-12s %-12s %-12s %-8s %-8s\n", "Link", "Shape",
+                     "Geom1", "Geom2", "Geom3", "Geom4", "Barrels", "Culvert");
+        std::fprintf(f, ";;%-16s %-16s %-12s %-12s %-12s %-12s %-8s %-8s\n", "----------------",
+                     "----------------", "------------", "------------", "------------",
+                     "------------", "--------", "--------");
+        for (int j = 0; j < ctx.n_links(); ++j) {
+            auto u = static_cast<size_t>(j);
+            // [XSECTIONS] applies to conduits, orifices and weirs only. Pumps and
+            // outlets have no cross-section; emitting one (a default CIRCULAR with
+            // Geom1=0) makes legacy SWMM reject it with ERROR 211 (invalid number).
+            if (ctx.links.type[u] == LinkType::PUMP || ctx.links.type[u] == LinkType::OUTLET)
+                continue;
+            const int cr = ctx.link_subtypes.conduit_row(j);
+            const int xbarrels =
+                (cr >= 0) ? ctx.link_subtypes.conduits.barrels[static_cast<size_t>(cr)] : 1;
+            // Culvert code (legacy tok[7], conduits only, link.c:258-264). It is read
+            // back, drives inlet control in the dynamic wave and is persisted by the
+            // GeoPackage writer — but was never written here, so Open -> Save silently
+            // turned every culvert into an ordinary conduit. Legacy offers no way to
+            // skip the Barrels column, so the code can only be reached by emitting
+            // both; a 0 means "not a culvert" and is simply omitted.
+            const int xculvert =
+                (cr >= 0) ? ctx.link_subtypes.conduits.culvert_code[static_cast<size_t>(cr)] : 0;
+            // Emit the retained raw Geom1–Geom4 (preserves trapezoid bottom width /
+            // side slopes the derived fields can't reproduce).  xsect_geom1 == 0 means
+            // the object was built by a path that didn't populate them; fall back to
+            // the legacy derived-field emission.  See LinkData::xsect_geom1.
+            // STREET cross-sections store a named [STREETS] reference (Geom1 is the
+            // street name, not a dimension), so emit the retained name instead of the
+            // numeric geometry — matching the [XSECTIONS] parser's STREET handling.
+            if (ctx.links.xsect_shape[u] == XsectShape::STREET_XSECT) {
+                std::fprintf(f, "%-16s %-16s %-12s %.17g %.17g %.17g %8d\n",
+                             ctx.link_names.name_of(j).c_str(),
+                             xsName(static_cast<int>(ctx.links.xsect_shape[u])),
+                             ctx.links.pump_curve_name[u].c_str(), 0.0, 0.0, 0.0, xbarrels);
+                continue;
+            }
+            // IRREGULAR cross-sections reference a named [TRANSECTS] entry: Geom1 is
+            // the transect NAME, not a dimension. The parser retains it in
+            // pump_curve_name (and keeps xsect_geom1 at 0), so falling through to the
+            // numeric emission below wrote the resolver-derived y_full/w_max where the
+            // name belongs — on reload that numeric failed to resolve as a transect
+            // and the conduit silently degenerated to zero area. The trailing zeros
+            // land in w_max/y_bot/r_bot at reparse but the resolver re-derives all of
+            // them from the transect table; barrels stay in the tok[6] column. Legacy
+            // SWMM returns right after reading the name, so the tail is harmless there.
+            if (ctx.links.xsect_shape[u] == XsectShape::IRREGULAR) {
+                const char* tname = ctx.links.pump_curve_name[u].c_str();
+                // API-built link that resolved a transect without retaining the name.
+                if (!*tname && ctx.links.xsect_curve[u] >= 0 &&
+                    ctx.links.xsect_curve[u] < ctx.transects.count())
+                    tname =
+                        ctx.transects.names[static_cast<size_t>(ctx.links.xsect_curve[u])].c_str();
+                std::fprintf(f, "%-16s %-16s %-12s %.17g %.17g %.17g %8d\n",
+                             ctx.link_names.name_of(j).c_str(),
+                             xsName(static_cast<int>(ctx.links.xsect_shape[u])), tname, 0.0, 0.0,
+                             0.0, xbarrels);
+                continue;
+            }
+            // CUSTOM cross-sections reference a named shape curve: Geom1 is the max
+            // height and the Geom2 slot holds the curve NAME (not a dimension), barrels
+            // stay in the Geom5 column. Emitting numeric geometry drops the curve name,
+            // so legacy SWMM reads "0.0000" as the curve id (ERROR 209). The name is
+            // retained in pump_curve_name by the [XSECTIONS] parser.
+            if (ctx.links.xsect_shape[u] == XsectShape::CUSTOM) {
+                const double cy = (ctx.links.xsect_geom1[u] != 0.0) ? ctx.links.xsect_geom1[u]
+                                                                    : ctx.links.xsect_y_full[u];
+                std::fprintf(f, "%-16s %-16s %.17g %-16s %.17g %.17g %8d\n",
+                             ctx.link_names.name_of(j).c_str(),
+                             xsName(static_cast<int>(ctx.links.xsect_shape[u])), cy,
+                             ctx.links.pump_curve_name[u].c_str(), 0.0, 0.0, xbarrels);
+                continue;
+            }
+            double g1, g2, g3, g4;
+            if (ctx.links.xsect_geom1[u] != 0.0) {
+                g1 = ctx.links.xsect_geom1[u];
+                g2 = ctx.links.xsect_geom2[u];
+                g3 = ctx.links.xsect_geom3[u];
+                g4 = ctx.links.xsect_geom4[u];
+            } else {
+                // Fallback for an object built by a path that never populated the raw
+                // Geom1-4 (every .inp- and API-built link does, so this is rare).
+                // It reconstructs only what the derived fields actually carry, and
+                // cannot recover Geom3/Geom4 in general — a shape that needs them is
+                // reported below rather than written wrong in silence.
+                g1 = ctx.links.xsect_y_full[u];
+                g2 = ctx.links.xsect_w_max[u];
+                g3 = 0.0;
+                g4 = 0.0;
+                // FORCE_MAIN Geom2 is the Hazen-Williams C-factor / D-W roughness,
+                // which xsect::setParams parks in r_bot (legacy xsect.c:266) — w_max
+                // there is the DIAMETER, so the generic fallback wrote the diameter
+                // into the roughness column.
+                if (ctx.links.xsect_shape[u] == XsectShape::FORCE_MAIN)
+                    g2 = ctx.links.xsect_r_bot[u];
+            }
+            // Legacy rejects Geom1 <= 0 for every shape but DUMMY (xsect.c:233) and
+            // answers ERROR 211, which refuses the whole deck. Writing it anyway
+            // produces a file no SWMM 5.x engine will open, so say so.
+            if (warnings && g1 <= 0.0 && ctx.links.xsect_shape[u] != XsectShape::DUMMY)
+                warnings->push_back("[XSECTIONS] link \"" + ctx.link_names.name_of(j) +
+                                    "\": Geom1 is " + std::to_string(g1) +
+                                    ", which SWMM 5.x rejects "
+                                    "(ERROR 211) for shape " +
+                                    xsName(static_cast<int>(ctx.links.xsect_shape[u])));
+            // Full precision on the geometry: xsect dimensions (e.g. CUSTOM/irregular
+            // heights like 0.61875) set conduit conveyance; fixed-decimal truncation perturbs routing.
+            std::fprintf(
+                f, "%-16s %-16s %.17g %.17g %.17g %.17g %8d", ctx.link_names.name_of(j).c_str(),
+                xsName(static_cast<int>(ctx.links.xsect_shape[u])), g1, g2, g3, g4, xbarrels);
+            if (xculvert > 0)
+                std::fprintf(f, " %8d", xculvert);
+            std::fprintf(f, "\n");
+        }
     }
-    // IRREGULAR cross-sections reference a named [TRANSECTS] entry: Geom1 is
-    // the transect NAME, not a dimension. The parser retains it in
-    // pump_curve_name (and keeps xsect_geom1 at 0), so falling through to the
-    // numeric emission below wrote the resolver-derived y_full/w_max where the
-    // name belongs — on reload that numeric failed to resolve as a transect
-    // and the conduit silently degenerated to zero area. The trailing zeros
-    // land in w_max/y_bot/r_bot at reparse but the resolver re-derives all of
-    // them from the transect table; barrels stay in the tok[6] column. Legacy
-    // SWMM returns right after reading the name, so the tail is harmless there.
-    if(ctx.links.xsect_shape[u]==XsectShape::IRREGULAR){
-        const char* tname=ctx.links.pump_curve_name[u].c_str();
-        // API-built link that resolved a transect without retaining the name.
-        if(!*tname&&ctx.links.xsect_curve[u]>=0&&
-           ctx.links.xsect_curve[u]<ctx.transects.count())
-            tname=ctx.transects.names[static_cast<size_t>(ctx.links.xsect_curve[u])].c_str();
-        std::fprintf(f,"%-16s %-16s %-12s %12.4f %12.4f %12.4f %8d\n",
-            ctx.link_names.name_of(j).c_str(),
-            xsName(static_cast<int>(ctx.links.xsect_shape[u])),
-            tname,0.0,0.0,0.0,xbarrels);
-        continue;
-    }
-    // CUSTOM cross-sections reference a named shape curve: Geom1 is the max
-    // height and the Geom2 slot holds the curve NAME (not a dimension), barrels
-    // stay in the Geom5 column. Emitting numeric geometry drops the curve name,
-    // so legacy SWMM reads "0.0000" as the curve id (ERROR 209). The name is
-    // retained in pump_curve_name by the [XSECTIONS] parser.
-    if(ctx.links.xsect_shape[u]==XsectShape::CUSTOM){
-        const double cy=(ctx.links.xsect_geom1[u]!=0.0)?ctx.links.xsect_geom1[u]:ctx.links.xsect_y_full[u];
-        std::fprintf(f,"%-16s %-16s %.15g %-16s %12.4f %12.4f %8d\n",
-            ctx.link_names.name_of(j).c_str(),
-            xsName(static_cast<int>(ctx.links.xsect_shape[u])),
-            cy,ctx.links.pump_curve_name[u].c_str(),0.0,0.0,xbarrels);
-        continue;
-    }
-    double g1,g2,g3,g4;
-    if(ctx.links.xsect_geom1[u]!=0.0){
-        g1=ctx.links.xsect_geom1[u]; g2=ctx.links.xsect_geom2[u];
-        g3=ctx.links.xsect_geom3[u]; g4=ctx.links.xsect_geom4[u];
-    } else {
-        // Fallback for an object built by a path that never populated the raw
-        // Geom1-4 (every .inp- and API-built link does, so this is rare).
-        // It reconstructs only what the derived fields actually carry, and
-        // cannot recover Geom3/Geom4 in general — a shape that needs them is
-        // reported below rather than written wrong in silence.
-        g1=ctx.links.xsect_y_full[u]; g2=ctx.links.xsect_w_max[u]; g3=0.0; g4=0.0;
-        // FORCE_MAIN Geom2 is the Hazen-Williams C-factor / D-W roughness,
-        // which xsect::setParams parks in r_bot (legacy xsect.c:266) — w_max
-        // there is the DIAMETER, so the generic fallback wrote the diameter
-        // into the roughness column.
-        if(ctx.links.xsect_shape[u]==XsectShape::FORCE_MAIN)
-            g2=ctx.links.xsect_r_bot[u];
-    }
-    // Legacy rejects Geom1 <= 0 for every shape but DUMMY (xsect.c:233) and
-    // answers ERROR 211, which refuses the whole deck. Writing it anyway
-    // produces a file no SWMM 5.x engine will open, so say so.
-    if(warnings&&g1<=0.0&&ctx.links.xsect_shape[u]!=XsectShape::DUMMY)
-        warnings->push_back("[XSECTIONS] link \""+ctx.link_names.name_of(j)+
-            "\": Geom1 is "+std::to_string(g1)+", which SWMM 5.x rejects "
-            "(ERROR 211) for shape "+xsName(static_cast<int>(ctx.links.xsect_shape[u])));
-    // Full precision on the geometry: xsect dimensions (e.g. CUSTOM/irregular
-    // heights like 0.61875) set conduit conveyance; %.4f truncation perturbs routing.
-    std::fprintf(f,"%-16s %-16s %.15g %.15g %.15g %.15g %8d",ctx.link_names.name_of(j).c_str(),xsName(static_cast<int>(ctx.links.xsect_shape[u])),g1,g2,g3,g4,xbarrels);
-    if(xculvert>0)std::fprintf(f," %8d",xculvert);
-    std::fprintf(f,"\n");
-    }}
 
     // [LOSSES]
-    {bool hasLoss=false;
-    for(int j=0;j<ctx.n_links();++j){auto u=static_cast<size_t>(j);
-    {const int cr=ctx.link_subtypes.conduit_row(j);const auto&CD=ctx.link_subtypes.conduits;
-    if(ctx.links.type[u]==LinkType::CONDUIT&&cr>=0&&(CD.loss_inlet[static_cast<size_t>(cr)]!=0||CD.loss_outlet[static_cast<size_t>(cr)]!=0||CD.loss_avg[static_cast<size_t>(cr)]!=0||ctx.links.has_flap_gate[u]||CD.seep_rate[static_cast<size_t>(cr)]!=0)){hasLoss=true;break;}}}
-    if(hasLoss){sec(f,"LOSSES");
-    std::fprintf(f,";;%-16s %-10s %-10s %-10s %-8s %-10s\n","Link","Kentry","Kexit","Kavg","Flap","Seepage");
-    std::fprintf(f,";;%-16s %-10s %-10s %-10s %-8s %-10s\n","----------------","----------","----------","----------","--------","----------");
-    for(int j=0;j<ctx.n_links();++j){auto u=static_cast<size_t>(j);
-    if(ctx.links.type[u]!=LinkType::CONDUIT)continue;
-    const int cr=ctx.link_subtypes.conduit_row(j); const auto& CD=ctx.link_subtypes.conduits;
-    if(cr<0)continue;
-    const auto ucr=static_cast<size_t>(cr);
-    if(CD.loss_inlet[ucr]==0&&CD.loss_outlet[ucr]==0&&CD.loss_avg[ucr]==0&&!ctx.links.has_flap_gate[u]&&CD.seep_rate[ucr]==0)continue;
-    std::fprintf(f,"%-16s %10.4f %10.4f %10.4f %-8s %10.6f\n",
-        ctx.link_names.name_of(j).c_str(),
-        CD.loss_inlet[ucr],CD.loss_outlet[ucr],CD.loss_avg[ucr],
-        ctx.links.has_flap_gate[u]?"YES":"NO",CD.seep_rate[ucr]);
-    }}}
+    {
+        bool hasLoss = false;
+        for (int j = 0; j < ctx.n_links(); ++j) {
+            auto u = static_cast<size_t>(j);
+            {
+                const int cr = ctx.link_subtypes.conduit_row(j);
+                const auto& CD = ctx.link_subtypes.conduits;
+                if (ctx.links.type[u] == LinkType::CONDUIT && cr >= 0 &&
+                    (CD.loss_inlet[static_cast<size_t>(cr)] != 0 ||
+                     CD.loss_outlet[static_cast<size_t>(cr)] != 0 ||
+                     CD.loss_avg[static_cast<size_t>(cr)] != 0 || ctx.links.has_flap_gate[u] ||
+                     CD.seep_rate[static_cast<size_t>(cr)] != 0)) {
+                    hasLoss = true;
+                    break;
+                }
+            }
+        }
+        if (hasLoss) {
+            sec(f, "LOSSES");
+            std::fprintf(f, ";;%-16s %-10s %-10s %-10s %-8s %-10s\n", "Link", "Kentry", "Kexit",
+                         "Kavg", "Flap", "Seepage");
+            std::fprintf(f, ";;%-16s %-10s %-10s %-10s %-8s %-10s\n", "----------------",
+                         "----------", "----------", "----------", "--------", "----------");
+            for (int j = 0; j < ctx.n_links(); ++j) {
+                auto u = static_cast<size_t>(j);
+                if (ctx.links.type[u] != LinkType::CONDUIT)
+                    continue;
+                const int cr = ctx.link_subtypes.conduit_row(j);
+                const auto& CD = ctx.link_subtypes.conduits;
+                if (cr < 0)
+                    continue;
+                const auto ucr = static_cast<size_t>(cr);
+                if (CD.loss_inlet[ucr] == 0 && CD.loss_outlet[ucr] == 0 && CD.loss_avg[ucr] == 0 &&
+                    !ctx.links.has_flap_gate[u] && CD.seep_rate[ucr] == 0)
+                    continue;
+                std::fprintf(f, "%-16s %.17g %.17g %.17g %-8s %.17g\n",
+                             ctx.link_names.name_of(j).c_str(), CD.loss_inlet[ucr],
+                             CD.loss_outlet[ucr], CD.loss_avg[ucr],
+                             ctx.links.has_flap_gate[u] ? "YES" : "NO", CD.seep_rate[ucr]);
+            }
+        }
+    }
 
     // [TRANSECTS]
-    if(ctx.transects.count()>0){sec(f,"TRANSECTS");
-    for(int t=0;t<ctx.transects.count();++t){auto ut=static_cast<size_t>(t);
-    std::fprintf(f,"NC %10.4f %10.4f %10.4f\n",ctx.transects.n_left[ut],ctx.transects.n_right[ut],ctx.transects.n_channel[ut]);
-    int nsta=static_cast<int>(ctx.transects.stations[ut].size());
-    // X1 layout per EPA SWMM 5 (transect.c::setParams):
-    //   X1 Name Nsta Xleft Xright 0 0 Lfactor Xfactor Yfactor
-    // i.e. TWO placeholder zeros between Xright and Lfactor (not three).
-    // An extra zero shifts Lfactor/Xfactor/Yfactor by one column, which
-    // every SWMM-5 parser then misreads.
-    std::fprintf(f,"X1 %-16s %10d %10.4f %10.4f 0 0 %10.4f %10.4f %10.4f\n",
-        ctx.transects.names[ut].c_str(),nsta,ctx.transects.x_left_bank[ut],
-        ctx.transects.x_right_bank[ut],
-        ctx.transects.length_factor[ut],
-        ctx.transects.x_factor[ut],
-        ctx.transects.y_factor[ut]);
-    // Full precision on the GR pairs: they are token-parsed on both engines
-    // (column width is not load-bearing) and %.4f silently rounded >4-dp
-    // stations/elevations on every save. Matches the [XSECTIONS] precedent.
-    for(int k=0;k<nsta;++k){auto uk=static_cast<size_t>(k);
-    if(k%5==0)std::fprintf(f,"GR");
-    std::fprintf(f," %10.15g %10.15g",ctx.transects.elevations[ut][uk],ctx.transects.stations[ut][uk]);
-    if(k%5==4||k==nsta-1)std::fprintf(f,"\n");
-    }}}
+    if (ctx.transects.count() > 0) {
+        sec(f, "TRANSECTS");
+        for (int t = 0; t < ctx.transects.count(); ++t) {
+            auto ut = static_cast<size_t>(t);
+            write_obj_comment(f, ctx.transects.comments, ut);
+            std::fprintf(f, "NC %.17g %.17g %.17g\n", ctx.transects.n_left[ut],
+                         ctx.transects.n_right[ut], ctx.transects.n_channel[ut]);
+            int nsta = static_cast<int>(ctx.transects.stations[ut].size());
+            if (swmm5 && (ctx.transects.x_left_encroachment[ut] != 0.0 ||
+                          ctx.transects.x_right_encroachment[ut] != 0.0))
+                note("Transect " + ctx.transects.names[ut] + ": encroachment stations omitted (SWMM 5.x profile)");
+            // Native X1 uses the two legacy placeholders for encroachment stations.
+            // X1 layout per EPA SWMM 5 (transect.c::setParams):
+            //   X1 Name Nsta Xleft Xright 0 0 Lfactor Xfactor Yfactor
+            // i.e. TWO placeholder zeros between Xright and Lfactor (not three).
+            // An extra zero shifts Lfactor/Xfactor/Yfactor by one column, which
+            // every SWMM-5 parser then misreads.
+            std::fprintf(f, "X1 %-16s %10d %.17g %.17g %.17g %.17g %.17g %.17g %.17g\n",
+                         ctx.transects.names[ut].c_str(), nsta, ctx.transects.x_left_bank[ut],
+                         ctx.transects.x_right_bank[ut],
+                         swmm5 ? 0.0 : ctx.transects.x_left_encroachment[ut],
+                         swmm5 ? 0.0 : ctx.transects.x_right_encroachment[ut],
+                         ctx.transects.length_factor[ut],
+                         ctx.transects.x_factor[ut], ctx.transects.y_factor[ut]);
+            // Full precision on the GR pairs: they are token-parsed on both engines
+            // (column width is not load-bearing) and the former four-decimal format rounded >4-dp
+            // stations/elevations on every save. Matches the [XSECTIONS] precedent.
+            for (int k = 0; k < nsta; ++k) {
+                auto uk = static_cast<size_t>(k);
+                if (k % 5 == 0)
+                    std::fprintf(f, "GR");
+                std::fprintf(f, " %.17g %.17g", ctx.transects.elevations[ut][uk],
+                             ctx.transects.stations[ut][uk]);
+                if (k % 5 == 4 || k == nsta - 1)
+                    std::fprintf(f, "\n");
+            }
+        }
+    }
 
     // [STREETS]
-    if(ctx.streets.count()>0){sec(f,"STREETS");
-    std::fprintf(f,";;%-16s %-10s %-10s %-10s %-10s %-10s %-10s %-8s %-10s %-10s %-10s\n",
-        "Name","Tcrown","Hcurb","Sx","nRoad","a","Wdep","Sides","Tback","Sback","nBack");
-    for(int j=0;j<ctx.streets.count();++j){auto u=static_cast<size_t>(j);
-    std::fprintf(f,"%-16s %10.4f %10.4f %10.4f %10.6f %10.4f %10.4f %8d %10.4f %10.4f %10.6f\n",
-        ctx.streets.names[u].c_str(),ctx.streets.t_crown[u],ctx.streets.h_curb[u],
-        ctx.streets.sx[u],ctx.streets.n_road[u],ctx.streets.gutter_depres[u],
-        ctx.streets.gutter_width[u],ctx.streets.sides[u],
-        ctx.streets.back_width[u],ctx.streets.back_slope[u],ctx.streets.back_n[u]);
-    }}
+    if (ctx.streets.count() > 0) {
+        sec(f, "STREETS");
+        std::fprintf(f, ";;%-16s %-10s %-10s %-10s %-10s %-10s %-10s %-8s %-10s %-10s %-10s\n",
+                     "Name", "Tcrown", "Hcurb", "Sx", "nRoad", "a", "Wdep", "Sides", "Tback",
+                     "Sback", "nBack");
+        for (int j = 0; j < ctx.streets.count(); ++j) {
+            auto u = static_cast<size_t>(j);
+            std::fprintf(
+                f, "%-16s %.17g %.17g %.17g %.17g %.17g %.17g %8d %.17g %.17g %.17g\n",
+                ctx.streets.names[u].c_str(), ctx.streets.t_crown[u], ctx.streets.h_curb[u],
+                ctx.streets.sx[u], ctx.streets.n_road[u], ctx.streets.gutter_depres[u],
+                ctx.streets.gutter_width[u], ctx.streets.sides[u], ctx.streets.back_width[u],
+                ctx.streets.back_slope[u], ctx.streets.back_n[u]);
+        }
+    }
 
     // [INLETS] — the legacy per-type grammar (inlet.c:321-327). A COMBO design
     // is written the way legacy encodes it: a GRATE line and a CURB line
     // sharing one name, which handle_inlets merges back into one row.
-    if(ctx.inlets.count()>0){sec(f,"INLETS");
-    auto grate_line=[&](const std::string& name,size_t u,const char* kw){
-        std::fprintf(f,"%-16s %-12s %10.4f %10.4f %s",name.c_str(),kw,
-            ctx.inlets.length[u],ctx.inlets.width[u],ctx.inlets.grate_type[u].c_str());
-        if(ieq(ctx.inlets.grate_type[u],"GENERIC")){
-            std::fprintf(f," %g",ctx.inlets.open_area[u]);
-            if(ctx.inlets.splash_veloc[u]>0) std::fprintf(f," %g",ctx.inlets.splash_veloc[u]);
+    if (ctx.inlets.count() > 0) {
+        sec(f, "INLETS");
+        auto grate_line = [&](const std::string& name, size_t u, const char* kw) {
+            std::fprintf(f, "%-16s %-12s %.17g %.17g %s", name.c_str(), kw, ctx.inlets.length[u],
+                         ctx.inlets.width[u], ctx.inlets.grate_type[u].c_str());
+            if (ieq(ctx.inlets.grate_type[u], "GENERIC")) {
+                std::fprintf(f, " %.17g", ctx.inlets.open_area[u]);
+                if (ctx.inlets.splash_veloc[u] > 0)
+                    std::fprintf(f, " %.17g", ctx.inlets.splash_veloc[u]);
+            }
+            std::fprintf(f, "\n");
+        };
+        auto curb_line = [&](const std::string& name, size_t u, bool drop) {
+            std::fprintf(f, "%-16s %-12s %.17g %.17g", name.c_str(), drop ? "DROP_CURB" : "CURB",
+                         ctx.inlets.curb_length[u], ctx.inlets.curb_height[u]);
+            // DROP_CURB has no throat token in the legacy grammar.
+            if (!drop) {
+                int th = ctx.inlets.curb_throat[u];
+                if (th < 0 || th > 2)
+                    th = 2;
+                std::fprintf(f, " %s", kInletThroatWords[th]);
+            }
+            std::fprintf(f, "\n");
+        };
+        for (int j = 0; j < ctx.inlets.count(); ++j) {
+            auto u = static_cast<size_t>(j);
+            write_obj_comment(f, ctx.inlets.comments, u);
+            const std::string& name = ctx.inlets.names[u];
+            const std::string& t = ctx.inlets.inlet_type[u];
+            if (t == "COMBO") {
+                grate_line(name, u, "GRATE");
+                curb_line(name, u, false);
+            } else if (t == "GRATE" || t == "DROP_GRATE")
+                grate_line(name, u, t.c_str());
+            else if (t == "CURB" || t == "DROP_CURB")
+                curb_line(name, u, t == "DROP_CURB");
+            else if (t == "CUSTOM")
+                std::fprintf(f, "%-16s %-12s %s\n", name.c_str(), "CUSTOM",
+                             ctx.inlets.curve_id[u].c_str());
+            else // SLOTTED (and any type string carried through verbatim)
+                std::fprintf(f, "%-16s %-12s %.17g %.17g\n", name.c_str(), t.c_str(),
+                             ctx.inlets.length[u], ctx.inlets.width[u]);
         }
-        std::fprintf(f,"\n");
-    };
-    auto curb_line=[&](const std::string& name,size_t u,bool drop){
-        std::fprintf(f,"%-16s %-12s %10.4f %10.4f",name.c_str(),drop?"DROP_CURB":"CURB",
-            ctx.inlets.curb_length[u],ctx.inlets.curb_height[u]);
-        // DROP_CURB has no throat token in the legacy grammar.
-        if(!drop){int th=ctx.inlets.curb_throat[u]; if(th<0||th>2)th=2;
-            std::fprintf(f," %s",kInletThroatWords[th]);}
-        std::fprintf(f,"\n");
-    };
-    for(int j=0;j<ctx.inlets.count();++j){auto u=static_cast<size_t>(j);
-    write_obj_comment(f, ctx.inlets.comments, u);
-    const std::string& name=ctx.inlets.names[u];
-    const std::string& t=ctx.inlets.inlet_type[u];
-    if(t=="COMBO"){ grate_line(name,u,"GRATE"); curb_line(name,u,false); }
-    else if(t=="GRATE"||t=="DROP_GRATE") grate_line(name,u,t.c_str());
-    else if(t=="CURB"||t=="DROP_CURB")   curb_line(name,u,t=="DROP_CURB");
-    else if(t=="CUSTOM")
-        std::fprintf(f,"%-16s %-12s %s\n",name.c_str(),"CUSTOM",ctx.inlets.curve_id[u].c_str());
-    else   // SLOTTED (and any type string carried through verbatim)
-        std::fprintf(f,"%-16s %-12s %10.4f %10.4f\n",name.c_str(),t.c_str(),
-            ctx.inlets.length[u],ctx.inlets.width[u]);
-    }}
+    }
 
     // [INLET_USAGE]
     // Grammar: Link Inlet Node #Inlets %Clog Qmax aLocal wLocal Placement
@@ -3021,456 +3946,645 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     // inlet-to-link assignment was lost on save and [STREETS]/[INLETS] became
     // inert. clog_factor is stored as 1 - pctClogged/100 (InfraHandler).
     // Node-hosted rows belong to [INLET_JUNCTIONS] and are skipped here.
-    bool anyLinkUsage=false;
-    for(int j=0;j<ctx.inlet_usages.count();++j)
-        if(ctx.inlet_usages.node_host[static_cast<size_t>(j)]<0||swmm5){anyLinkUsage=true;break;}
-    if(anyLinkUsage){sec(f,"INLET_USAGE");
-    std::fprintf(f,";;%-16s %-16s %-16s %-8s %-8s %-10s %-10s %-10s %-10s\n","Link","Inlet","Node","#Inlets","%Clog","Qmax","aLocal","wLocal","Placement");
-    std::fprintf(f,";;%-16s %-16s %-16s %-8s %-8s %-10s %-10s %-10s %-10s\n","----------------","----------------","----------------","--------","--------","----------","----------","----------","----------");
-    const char* const* kPlacement=kInletPlacementWords;
-    for(int j=0;j<ctx.inlet_usages.count();++j){auto u=static_cast<size_t>(j);
-    int li=ctx.inlet_usages.link_index[u];
-    const int nh=ctx.inlet_usages.node_host[u];
-    if(nh>=0){
-        if(!swmm5)continue;
-        // SWMM 5.x profile: the inlet junction's row moves onto its approach
-        // conduit — legacy books the capture at that conduit's downstream node,
-        // which is this junction — keeping design, capture node and the
-        // placement columns (plan §2.3).
-        li=edit::ij_host_conduit(ctx,/*host_kind=*/1,nh);
-        if(li<0){
-            note("Node "+ctx.node_names.name_of(nh)+
-                 ": inlet junction has no approach conduit; its inlet is dropped in the SWMM 5.x profile");
-            continue;
+    bool anyLinkUsage = false;
+    for (int j = 0; j < ctx.inlet_usages.count(); ++j)
+        if (ctx.inlet_usages.node_host[static_cast<size_t>(j)] < 0 || swmm5) {
+            anyLinkUsage = true;
+            break;
+        }
+    if (anyLinkUsage) {
+        sec(f, "INLET_USAGE");
+        std::fprintf(f, ";;%-16s %-16s %-16s %-8s %-8s %-10s %-10s %-10s %-10s\n", "Link", "Inlet",
+                     "Node", "#Inlets", "%Clog", "Qmax", "aLocal", "wLocal", "Placement");
+        std::fprintf(f, ";;%-16s %-16s %-16s %-8s %-8s %-10s %-10s %-10s %-10s\n",
+                     "----------------", "----------------", "----------------", "--------",
+                     "--------", "----------", "----------", "----------", "----------");
+        const char* const* kPlacement = kInletPlacementWords;
+        for (int j = 0; j < ctx.inlet_usages.count(); ++j) {
+            auto u = static_cast<size_t>(j);
+            int li = ctx.inlet_usages.link_index[u];
+            const int nh = ctx.inlet_usages.node_host[u];
+            if (nh >= 0) {
+                if (!swmm5)
+                    continue;
+                // SWMM 5.x profile: the inlet junction's row moves onto its approach
+                // conduit — legacy books the capture at that conduit's downstream node,
+                // which is this junction — keeping design, capture node and the
+                // placement columns (plan §2.3).
+                li = edit::ij_host_conduit(ctx, /*host_kind=*/1, nh);
+                if (li < 0) {
+                    note(
+                        "Node " + ctx.node_names.name_of(nh) +
+                        ": inlet junction has no approach conduit; its inlet is dropped in the SWMM 5.x profile");
+                    continue;
+                }
+            }
+            const int di = ctx.inlet_usages.design_index[u];
+            const int ni = ctx.inlet_usages.node_index[u];
+            // The reader drops rows naming an unknown link/inlet/node, so a stale index
+            // here would be silently discarded on reload — skip it with a warning
+            // instead of writing '*'.
+            if (li < 0 || li >= ctx.n_links() || di < 0 || di >= ctx.inlets.count() || ni < 0 ||
+                ni >= ctx.n_nodes()) {
+                if (warnings)
+                    warnings->push_back("[INLET_USAGE] row " + std::to_string(j) +
+                                        ": unresolved link/inlet/node; row omitted");
+                continue;
+            }
+            int pl = ctx.inlet_usages.placement[u];
+            if (pl < 0 || pl > 2)
+                pl = 0;
+            std::fprintf(f, "%-16s %-16s %-16s %8d %.17g %.17g %.17g %.17g %-10s\n",
+                         ctx.link_names.name_of(li).c_str(),
+                         ctx.inlets.names[static_cast<size_t>(di)].c_str(),
+                         ctx.node_names.name_of(ni).c_str(), ctx.inlet_usages.num_inlets[u],
+                         (1.0 - ctx.inlet_usages.clog_factor[u]) * 100.0,
+                         ctx.inlet_usages.flow_limit[u], ctx.inlet_usages.local_depress[u],
+                         ctx.inlet_usages.local_width[u], kPlacement[pl]);
         }
     }
-    const int di=ctx.inlet_usages.design_index[u];
-    const int ni=ctx.inlet_usages.node_index[u];
-    // The reader drops rows naming an unknown link/inlet/node, so a stale index
-    // here would be silently discarded on reload — skip it with a warning
-    // instead of writing '*'.
-    if(li<0||li>=ctx.n_links()||di<0||di>=ctx.inlets.count()||ni<0||ni>=ctx.n_nodes()){
-        if(warnings)
-            warnings->push_back("[INLET_USAGE] row "+std::to_string(j)+
-                                ": unresolved link/inlet/node; row omitted");
-        continue;
-    }
-    int pl=ctx.inlet_usages.placement[u]; if(pl<0||pl>2)pl=0;
-    std::fprintf(f,"%-16s %-16s %-16s %8d %8.4g %10.4g %10.4g %10.4g %-10s\n",
-        ctx.link_names.name_of(li).c_str(),
-        ctx.inlets.names[static_cast<size_t>(di)].c_str(),
-        ctx.node_names.name_of(ni).c_str(),
-        ctx.inlet_usages.num_inlets[u],
-        (1.0-ctx.inlet_usages.clog_factor[u])*100.0,
-        ctx.inlet_usages.flow_limit[u],
-        ctx.inlet_usages.local_depress[u],
-        ctx.inlet_usages.local_width[u],
-        kPlacement[pl]);
-    }}
 
     // [CONTROLS]
-    if(ctx.control_rules.count()>0){sec(f,"CONTROLS");
-    for(int j=0;j<ctx.control_rules.count();++j){
-    std::fprintf(f,"%s\n",ctx.control_rules.rule_text[static_cast<size_t>(j)].c_str());
-    }}
+    if (ctx.control_rules.count() > 0) {
+        sec(f, "CONTROLS");
+        for (int j = 0; j < ctx.control_rules.count(); ++j) {
+            std::fprintf(f, "%s\n", ctx.control_rules.rule_text[static_cast<size_t>(j)].c_str());
+        }
+    }
 
     // [REPORT]
-    {sec(f,"REPORT");
-    std::fprintf(f,";;%-16s %s\n","Keyword","Value");
-    std::fprintf(f,"%-20s %s\n","DISABLED",ctx.options.rpt_disabled?"YES":"NO");
-    std::fprintf(f,"%-20s %s\n","INPUT",ctx.options.rpt_input?"YES":"NO");
-    std::fprintf(f,"%-20s %s\n","CONTINUITY",ctx.options.rpt_continuity?"YES":"NO");
-    std::fprintf(f,"%-20s %s\n","FLOWSTATS",ctx.options.rpt_flowstats?"YES":"NO");
-    std::fprintf(f,"%-20s %s\n","CONTROLS",ctx.options.rpt_controls?"YES":"NO");
-    std::fprintf(f,"%-20s %s\n","AVERAGES",ctx.options.rpt_averages?"YES":"NO");
-    if(ctx.options.rpt_link_steps&&!swmm5)   // v6-only key; 5.x rejects it
-    std::fprintf(f,"%-20s %s\n","LINK_STEPS","YES");
-    if(ctx.options.rpt_subcatchments==0)std::fprintf(f,"%-20s %s\n","SUBCATCHMENTS","NONE");
-    else if(ctx.options.rpt_subcatchments==1)std::fprintf(f,"%-20s %s\n","SUBCATCHMENTS","ALL");
-    else for(const auto&n:ctx.options.rpt_subcatch_names)std::fprintf(f,"%-20s %s\n","SUBCATCHMENTS",n.c_str());
-    if(ctx.options.rpt_nodes==0)std::fprintf(f,"%-20s %s\n","NODES","NONE");
-    else if(ctx.options.rpt_nodes==1)std::fprintf(f,"%-20s %s\n","NODES","ALL");
-    else for(const auto&n:ctx.options.rpt_node_names)std::fprintf(f,"%-20s %s\n","NODES",n.c_str());
-    if(ctx.options.rpt_links==0)std::fprintf(f,"%-20s %s\n","LINKS","NONE");
-    else if(ctx.options.rpt_links==1)std::fprintf(f,"%-20s %s\n","LINKS","ALL");
-    else for(const auto&n:ctx.options.rpt_link_names)std::fprintf(f,"%-20s %s\n","LINKS",n.c_str());
+    {
+        sec(f, "REPORT");
+        std::fprintf(f, ";;%-16s %s\n", "Keyword", "Value");
+        std::fprintf(f, "%-20s %s\n", "DISABLED", ctx.options.rpt_disabled ? "YES" : "NO");
+        std::fprintf(f, "%-20s %s\n", "INPUT", ctx.options.rpt_input ? "YES" : "NO");
+        std::fprintf(f, "%-20s %s\n", "CONTINUITY", ctx.options.rpt_continuity ? "YES" : "NO");
+        std::fprintf(f, "%-20s %s\n", "FLOWSTATS", ctx.options.rpt_flowstats ? "YES" : "NO");
+        std::fprintf(f, "%-20s %s\n", "CONTROLS", ctx.options.rpt_controls ? "YES" : "NO");
+        std::fprintf(f, "%-20s %s\n", "AVERAGES", ctx.options.rpt_averages ? "YES" : "NO");
+        if (ctx.options.rpt_link_steps && !swmm5) // v6-only key; 5.x rejects it
+            std::fprintf(f, "%-20s %s\n", "LINK_STEPS", "YES");
+        if (ctx.options.rpt_subcatchments == 0)
+            std::fprintf(f, "%-20s %s\n", "SUBCATCHMENTS", "NONE");
+        else if (ctx.options.rpt_subcatchments == 1)
+            std::fprintf(f, "%-20s %s\n", "SUBCATCHMENTS", "ALL");
+        else
+            for (const auto& n : ctx.options.rpt_subcatch_names)
+                std::fprintf(f, "%-20s %s\n", "SUBCATCHMENTS", n.c_str());
+        if (ctx.options.rpt_nodes == 0)
+            std::fprintf(f, "%-20s %s\n", "NODES", "NONE");
+        else if (ctx.options.rpt_nodes == 1)
+            std::fprintf(f, "%-20s %s\n", "NODES", "ALL");
+        else
+            for (const auto& n : ctx.options.rpt_node_names)
+                std::fprintf(f, "%-20s %s\n", "NODES", n.c_str());
+        if (ctx.options.rpt_links == 0)
+            std::fprintf(f, "%-20s %s\n", "LINKS", "NONE");
+        else if (ctx.options.rpt_links == 1)
+            std::fprintf(f, "%-20s %s\n", "LINKS", "ALL");
+        else
+            for (const auto& n : ctx.options.rpt_link_names)
+                std::fprintf(f, "%-20s %s\n", "LINKS", n.c_str());
     }
 
     // [POLLUTANTS]
-    if(ctx.n_pollutants()>0){sec(f,"POLLUTANTS");
-    std::fprintf(f,";;%-16s %-8s %-10s %-10s %-10s %-10s %-10s %-16s %-10s %-10s %-10s\n","Name","Units","Crain","Cgw","Crdii","Kdecay","SnowOnly","CoPollut","CoFrac","Cdwf","Cinit");
-    std::fprintf(f,";;%-16s %-8s %-10s %-10s %-10s %-10s %-10s %-16s %-10s %-10s %-10s\n","----------------","--------","----------","----------","----------","----------","----------","----------------","----------","----------","----------");
-    for(int p=0;p<ctx.n_pollutants();++p){auto u=static_cast<size_t>(p);
-    write_obj_comment(f, ctx.pollutants.comments, u);
-    const char*un="MG/L";if(ctx.pollutants.units[u]==MassUnits::UG_PER_L)un="UG/L";if(ctx.pollutants.units[u]==MassUnits::COUNTS_PER_L)un="#/L";
-    std::fprintf(f,"%-16s %-8s %10.4f %10.4f %10.4f %10.4f %-10s %-16s %10.4f %10.4f %10.4f\n",pN(ctx,p),un,ctx.pollutants.c_rain[u],ctx.pollutants.c_gw[u],ctx.pollutants.c_rdii[u],ctx.pollutants.k_decay[u]*constants::SEC_PER_DAY,ctx.pollutants.snow_only[u]?"YES":"NO",ctx.pollutants.co_pollut[u]>=0?pN(ctx,ctx.pollutants.co_pollut[u]):"*",ctx.pollutants.co_frac[u],ctx.pollutants.c_dwf[u],ctx.pollutants.init_conc[u]);
-    }}
+    if (ctx.n_pollutants() > 0) {
+        sec(f, "POLLUTANTS");
+        std::fprintf(f, ";;%-16s %-8s %-10s %-10s %-10s %-10s %-10s %-16s %-10s %-10s %-10s\n",
+                     "Name", "Units", "Crain", "Cgw", "Crdii", "Kdecay", "SnowOnly", "CoPollut",
+                     "CoFrac", "Cdwf", "Cinit");
+        std::fprintf(f, ";;%-16s %-8s %-10s %-10s %-10s %-10s %-10s %-16s %-10s %-10s %-10s\n",
+                     "----------------", "--------", "----------", "----------", "----------",
+                     "----------", "----------", "----------------", "----------", "----------",
+                     "----------");
+        for (int p = 0; p < ctx.n_pollutants(); ++p) {
+            auto u = static_cast<size_t>(p);
+            write_obj_comment(f, ctx.pollutants.comments, u);
+            const char* un = "MG/L";
+            if (ctx.pollutants.units[u] == MassUnits::UG_PER_L)
+                un = "UG/L";
+            if (ctx.pollutants.units[u] == MassUnits::COUNTS_PER_L)
+                un = "#/L";
+            std::fprintf(
+                f, "%-16s %-8s %.17g %.17g %.17g %.17g %-10s %-16s %.17g %.17g %.17g",
+                pN(ctx, p), un, ctx.pollutants.c_rain[u], ctx.pollutants.c_gw[u],
+                ctx.pollutants.c_rdii[u], ctx.pollutants.k_decay[u] * constants::SEC_PER_DAY,
+                ctx.pollutants.snow_only[u] ? "YES" : "NO",
+                ctx.pollutants.co_pollut[u] >= 0 ? pN(ctx, ctx.pollutants.co_pollut[u]) : "*",
+                ctx.pollutants.co_frac[u], ctx.pollutants.c_dwf[u], ctx.pollutants.init_conc[u]);
+            if (!swmm5)
+                std::fprintf(f, " %.17g", ctx.pollutants.mwt[u]);
+            else if (ctx.pollutants.mwt[u] != 1.0)
+                note("Pollutant " + ctx.pollutant_names.name_of(p) + ": molecular weight omitted (SWMM 5.x profile)");
+            std::fprintf(f, "\n");
+        }
+    }
 
     // [INITIAL_QUALITY] — per-element initial concentrations (raw constituent
     // name + raw value retained by the store; resolved element names preferred,
     // falling back to the retained raw name for never-resolved rows).
-    if(ctx.initial_quality.count()>0||!ctx.initial_quality.file.empty()){sec(f,"INITIAL_QUALITY");
-    // U2: the CSV sidecar is referenced, not expanded — its rows carry
-    // from_file and are skipped below.
-    if(!ctx.initial_quality.file.empty())
-        std::fprintf(f,"%-8s %s\n","FILE",quote_path(ctx.initial_quality.file).c_str());
-    std::fprintf(f,";;%-8s %-16s %-16s %-10s\n","Scope","Element","Constituent","Value");
-    std::fprintf(f,";;%-8s %-16s %-16s %-10s\n","--------","----------------","----------------","----------");
-    for(int j=0;j<ctx.initial_quality.count();++j){auto u=static_cast<size_t>(j);
-    const auto& iq=ctx.initial_quality;
-    if(u<iq.from_file.size()&&iq.from_file[u])continue;
-    const bool link=iq.is_link[u]!=0;
-    const int ei=iq.elem_idx[u];
-    const char*en;
-    if(link)en=(ei>=0&&ei<ctx.n_links())?ctx.link_names.name_of(ei).c_str():iq.elem_name[u].c_str();
-    else en=(ei>=0&&ei<ctx.n_nodes())?ctx.node_names.name_of(ei).c_str():iq.elem_name[u].c_str();
-    std::fprintf(f,"%-8s %-16s %-16s %10.4f\n",link?"LINK":"NODE",en,
-        iq.constituent[u].c_str(),iq.value[u]);
-    }}
+    if (ctx.initial_quality.count() > 0 || !ctx.initial_quality.file.empty()) {
+        sec(f, "INITIAL_QUALITY");
+        // U2: the CSV sidecar is referenced, not expanded — its rows carry
+        // from_file and are skipped below.
+        if (!ctx.initial_quality.file.empty())
+            std::fprintf(f, "%-8s %s\n", "FILE", quote_path(ctx.initial_quality.file).c_str());
+        std::fprintf(f, ";;%-8s %-16s %-16s %-10s\n", "Scope", "Element", "Constituent", "Value");
+        std::fprintf(f, ";;%-8s %-16s %-16s %-10s\n", "--------", "----------------",
+                     "----------------", "----------");
+        for (int j = 0; j < ctx.initial_quality.count(); ++j) {
+            auto u = static_cast<size_t>(j);
+            const auto& iq = ctx.initial_quality;
+            if (u < iq.from_file.size() && iq.from_file[u])
+                continue;
+            const bool link = iq.is_link[u] != 0;
+            const int ei = iq.elem_idx[u];
+            const char* en;
+            if (link)
+                en = (ei >= 0 && ei < ctx.n_links()) ? ctx.link_names.name_of(ei).c_str()
+                                                     : iq.elem_name[u].c_str();
+            else
+                en = (ei >= 0 && ei < ctx.n_nodes()) ? ctx.node_names.name_of(ei).c_str()
+                                                     : iq.elem_name[u].c_str();
+            std::fprintf(f, "%-8s %-16s %-16s %.17g\n", link ? "LINK" : "NODE", en,
+                         iq.constituent[u].c_str(), iq.value[u]);
+        }
+    }
 
     // [LANDUSES]
-    if(ctx.n_landuses()>0){sec(f,"LANDUSES");
-    std::fprintf(f,";;%-16s %-12s %-12s %-12s\n","Name","SweepIntrvl","MaxRemoval","LastSwept");
-    std::fprintf(f,";;%-16s %-12s %-12s %-12s\n","----------------","------------","------------","------------");
-    for(int j=0;j<ctx.n_landuses();++j){auto u=static_cast<size_t>(j);
-    write_obj_comment(f, ctx.landuses.comments, u);
-    std::fprintf(f,"%-16s %12.2f %12.2f %12.2f\n",ctx.landuse_names.name_of(j).c_str(),
-        ctx.landuses.sweep_interval[u],ctx.landuses.sweep_removal[u],ctx.landuses.last_swept[u]);
-    }}
+    if (ctx.n_landuses() > 0) {
+        sec(f, "LANDUSES");
+        std::fprintf(f, ";;%-16s %-12s %-12s %-12s\n", "Name", "SweepIntrvl", "MaxRemoval",
+                     "LastSwept");
+        std::fprintf(f, ";;%-16s %-12s %-12s %-12s\n", "----------------", "------------",
+                     "------------", "------------");
+        for (int j = 0; j < ctx.n_landuses(); ++j) {
+            auto u = static_cast<size_t>(j);
+            write_obj_comment(f, ctx.landuses.comments, u);
+            std::fprintf(f, "%-16s %.17g %.17g %.17g\n", ctx.landuse_names.name_of(j).c_str(),
+                         ctx.landuses.sweep_interval[u], ctx.landuses.sweep_removal[u],
+                         ctx.landuses.last_swept[u]);
+        }
+    }
 
     // [COVERAGES] — percent of each subcatchment covered by each land use
     // (stored verbatim in percent, matching handle_coverages). Zero rows
     // are skipped: absent coverage rows parse back to 0.
-    if(ctx.subcatches.coverage_n_landuses>0&&ctx.n_subcatches()>0){
-    const int nLu=ctx.subcatches.coverage_n_landuses;
-    bool any=false;
-    for(std::size_t i=0;i<ctx.subcatches.coverage.size()&&!any;++i)
-        if(ctx.subcatches.coverage[i]!=0.0)any=true;
-    if(any){sec(f,"COVERAGES");
-    std::fprintf(f,";;%-16s %-16s %-10s\n","Subcatchment","LandUse","Percent");
-    std::fprintf(f,";;%-16s %-16s %-10s\n","----------------","----------------","----------");
-    for(int s=0;s<ctx.n_subcatches();++s){
-    for(int lu=0;lu<nLu;++lu){
-    auto idx=static_cast<size_t>(s)*static_cast<size_t>(nLu)+static_cast<size_t>(lu);
-    if(idx>=ctx.subcatches.coverage.size())break;
-    const double pct=ctx.subcatches.coverage[idx];
-    if(pct==0.0)continue;
-    std::fprintf(f,"%-16s %-16s %10.4f\n",
-        ctx.subcatch_names.name_of(s).c_str(),
-        ctx.landuse_names.name_of(lu).c_str(),pct);
-    }}}}
+    if (ctx.subcatches.coverage_n_landuses > 0 && ctx.n_subcatches() > 0) {
+        const int nLu = ctx.subcatches.coverage_n_landuses;
+        bool any = false;
+        for (std::size_t i = 0; i < ctx.subcatches.coverage.size() && !any; ++i)
+            if (ctx.subcatches.coverage[i] != 0.0)
+                any = true;
+        if (any) {
+            sec(f, "COVERAGES");
+            std::fprintf(f, ";;%-16s %-16s %-10s\n", "Subcatchment", "LandUse", "Percent");
+            std::fprintf(f, ";;%-16s %-16s %-10s\n", "----------------", "----------------",
+                         "----------");
+            for (int s = 0; s < ctx.n_subcatches(); ++s) {
+                for (int lu = 0; lu < nLu; ++lu) {
+                    auto idx =
+                        static_cast<size_t>(s) * static_cast<size_t>(nLu) + static_cast<size_t>(lu);
+                    if (idx >= ctx.subcatches.coverage.size())
+                        break;
+                    const double pct = ctx.subcatches.coverage[idx];
+                    if (pct == 0.0)
+                        continue;
+                    std::fprintf(f, "%-16s %-16s %.17g\n", ctx.subcatch_names.name_of(s).c_str(),
+                                 ctx.landuse_names.name_of(lu).c_str(), pct);
+                }
+            }
+        }
+    }
 
     // [BUILDUP] — pollutant rows, then (BW-MSX) the reactions component's
     // species from ctx.reactions.surface (resolved params, by name).
-    const auto& msxs=ctx.reactions.surface;
-    auto msxHasBu=[&]{for(std::size_t k=0;k<msxs.bu_type.size();++k)if(msxs.bu_type[k]!=0)return true;return false;}();
-    auto msxHasWo=[&]{for(std::size_t k=0;k<msxs.wo_type.size();++k)if(msxs.wo_type[k]!=0)return true;return false;}();
-    if((ctx.buildup.n_landuses>0&&ctx.buildup.n_pollutants>0)||msxHasBu){sec(f,"BUILDUP");
-    std::fprintf(f,";;%-16s %-16s %-10s %-10s %-10s %-10s %-8s\n","LandUse","Pollutant","FuncType","Coeff1","Coeff2","Coeff3","PerUnit");
-    std::fprintf(f,";;%-16s %-16s %-10s %-10s %-10s %-10s %-8s\n","----------------","----------------","----------","----------","----------","----------","--------");
-    static const char* buNames[]={"NONE","POW","EXP","SAT","EXT"};
-    for(int lu=0;lu<ctx.buildup.n_landuses;++lu){
-    for(int p=0;p<ctx.buildup.n_pollutants;++p){
-    auto idx=static_cast<size_t>(lu*ctx.buildup.n_pollutants+p);
-    int ft=ctx.buildup.func_type[idx];
-    if(ft==0)continue;
-    std::fprintf(f,"%-16s %-16s %-10s %10.4f %10.4f %10.4f %-8s\n",
-        ctx.landuse_names.name_of(lu).c_str(),pN(ctx,p),
-        (ft>=0&&ft<=4)?buNames[ft]:"NONE",
-        ctx.buildup.coeff1[idx],ctx.buildup.coeff2[idx],ctx.buildup.coeff3[idx],
-        ctx.buildup.normalizer[idx]==0?"AREA":"CURB");
-    }}
-    for(int lu=0;lu<msxs.n_landuses;++lu){
-    for(int m=0;m<msxs.n_species;++m){
-    auto idx=msxs.pidx(lu,m);
-    int ft=msxs.bu_type[idx];
-    if(ft==0)continue;
-    const std::string& sp=(static_cast<std::size_t>(m)<ctx.reactions.species_name.size())?ctx.reactions.species_name[static_cast<std::size_t>(m)]:std::string{};
-    if(ft==4){
-        const int ts=static_cast<int>(msxs.bu_c3[idx]);
-        const std::string tsn=(ts>=0&&ts<static_cast<int>(ctx.tables.tables.size()))?ctx.tables.tables[static_cast<std::size_t>(ts)].id:std::string{"*"};
-        std::fprintf(f,"%-16s %-16s %-10s %10.4f %10.4f %-10s %-8s\n",
-            ctx.landuse_names.name_of(lu).c_str(),sp.c_str(),"EXT",
-            msxs.bu_c1[idx],msxs.bu_c2[idx],tsn.c_str(),
-            msxs.bu_normalizer[idx]==0?"AREA":"CURB");
-    }else{
-        std::fprintf(f,"%-16s %-16s %-10s %10.4f %10.4f %10.4f %-8s\n",
-            ctx.landuse_names.name_of(lu).c_str(),sp.c_str(),
-            (ft>=0&&ft<=4)?buNames[ft]:"NONE",
-            msxs.bu_c1[idx],msxs.bu_c2[idx],msxs.bu_c3[idx],
-            msxs.bu_normalizer[idx]==0?"AREA":"CURB");
+    const auto& msxs = ctx.reactions.surface;
+    auto msxHasBu = [&] {
+        for (std::size_t k = 0; k < msxs.bu_type.size(); ++k)
+            if (msxs.bu_type[k] != 0)
+                return true;
+        return false;
+    }();
+    auto msxHasWo = [&] {
+        for (std::size_t k = 0; k < msxs.wo_type.size(); ++k)
+            if (msxs.wo_type[k] != 0)
+                return true;
+        return false;
+    }();
+    if ((ctx.buildup.n_landuses > 0 && ctx.buildup.n_pollutants > 0) || msxHasBu) {
+        sec(f, "BUILDUP");
+        std::fprintf(f, ";;%-16s %-16s %-10s %-10s %-10s %-10s %-8s\n", "LandUse", "Pollutant",
+                     "FuncType", "Coeff1", "Coeff2", "Coeff3", "PerUnit");
+        std::fprintf(f, ";;%-16s %-16s %-10s %-10s %-10s %-10s %-8s\n", "----------------",
+                     "----------------", "----------", "----------", "----------", "----------",
+                     "--------");
+        static const char* buNames[] = {"NONE", "POW", "EXP", "SAT", "EXT"};
+        for (int lu = 0; lu < ctx.buildup.n_landuses; ++lu) {
+            for (int p = 0; p < ctx.buildup.n_pollutants; ++p) {
+                auto idx = static_cast<size_t>(lu * ctx.buildup.n_pollutants + p);
+                int ft = ctx.buildup.func_type[idx];
+                if (ft == 0)
+                    continue;
+                std::fprintf(f, "%-16s %-16s %-10s %.17g %.17g %.17g %-8s\n",
+                             ctx.landuse_names.name_of(lu).c_str(), pN(ctx, p),
+                             (ft >= 0 && ft <= 4) ? buNames[ft] : "NONE", ctx.buildup.coeff1[idx],
+                             ctx.buildup.coeff2[idx], ctx.buildup.coeff3[idx],
+                             ctx.buildup.normalizer[idx] == 0 ? "AREA" : "CURB");
+            }
+        }
+        for (int lu = 0; lu < msxs.n_landuses; ++lu) {
+            for (int m = 0; m < msxs.n_species; ++m) {
+                auto idx = msxs.pidx(lu, m);
+                int ft = msxs.bu_type[idx];
+                if (ft == 0)
+                    continue;
+                const std::string& sp =
+                    (static_cast<std::size_t>(m) < ctx.reactions.species_name.size())
+                        ? ctx.reactions.species_name[static_cast<std::size_t>(m)]
+                        : std::string{};
+                if (ft == 4) {
+                    const int ts = static_cast<int>(msxs.bu_c3[idx]);
+                    const std::string tsn =
+                        (ts >= 0 && ts < static_cast<int>(ctx.tables.tables.size()))
+                            ? ctx.tables.tables[static_cast<std::size_t>(ts)].id
+                            : std::string{"*"};
+                    std::fprintf(f, "%-16s %-16s %-10s %.17g %.17g %-10s %-8s\n",
+                                 ctx.landuse_names.name_of(lu).c_str(), sp.c_str(), "EXT",
+                                 msxs.bu_c1[idx], msxs.bu_c2[idx], tsn.c_str(),
+                                 msxs.bu_normalizer[idx] == 0 ? "AREA" : "CURB");
+                } else {
+                    std::fprintf(f, "%-16s %-16s %-10s %.17g %.17g %.17g %-8s\n",
+                                 ctx.landuse_names.name_of(lu).c_str(), sp.c_str(),
+                                 (ft >= 0 && ft <= 4) ? buNames[ft] : "NONE", msxs.bu_c1[idx],
+                                 msxs.bu_c2[idx], msxs.bu_c3[idx],
+                                 msxs.bu_normalizer[idx] == 0 ? "AREA" : "CURB");
+                }
+            }
+        }
     }
-    }}}
 
     // [WASHOFF] — pollutant rows, then (BW-MSX) species rows.
-    if((ctx.washoff.n_landuses>0&&ctx.washoff.n_pollutants>0)||msxHasWo){sec(f,"WASHOFF");
-    std::fprintf(f,";;%-16s %-16s %-10s %-10s %-10s %-10s %-10s\n","LandUse","Pollutant","FuncType","Coeff","Expon","SweepEff","BmpEff");
-    std::fprintf(f,";;%-16s %-16s %-10s %-10s %-10s %-10s %-10s\n","----------------","----------------","----------","----------","----------","----------","----------");
-    static const char* woNames[]={"NONE","EXP","RC","EMC"};
-    for(int lu=0;lu<ctx.washoff.n_landuses;++lu){
-    for(int p=0;p<ctx.washoff.n_pollutants;++p){
-    auto idx=static_cast<size_t>(lu*ctx.washoff.n_pollutants+p);
-    int ft=ctx.washoff.func_type[idx];
-    if(ft==0)continue;
-    std::fprintf(f,"%-16s %-16s %-10s %10.4f %10.4f %10.2f %10.2f\n",
-        ctx.landuse_names.name_of(lu).c_str(),pN(ctx,p),
-        (ft>=0&&ft<=3)?woNames[ft]:"NONE",
-        ctx.washoff.coeff[idx],ctx.washoff.expon[idx],
-        ctx.washoff.sweep_effic[idx],ctx.washoff.bmp_effic[idx]);
-    }}
-    for(int lu=0;lu<msxs.n_landuses;++lu){
-    for(int m=0;m<msxs.n_species;++m){
-    auto idx=msxs.pidx(lu,m);
-    int ft=msxs.wo_type[idx];
-    if(ft==0)continue;
-    const std::string& sp=(static_cast<std::size_t>(m)<ctx.reactions.species_name.size())?ctx.reactions.species_name[static_cast<std::size_t>(m)]:std::string{};
-    std::fprintf(f,"%-16s %-16s %-10s %10.4f %10.4f %10.2f %10.2f\n",
-        ctx.landuse_names.name_of(lu).c_str(),sp.c_str(),
-        (ft>=0&&ft<=3)?woNames[ft]:"NONE",
-        msxs.wo_coeff[idx],msxs.wo_expon[idx],
-        msxs.wo_sweep_effic[idx],msxs.wo_bmp_effic[idx]);
-    }}}
+    if ((ctx.washoff.n_landuses > 0 && ctx.washoff.n_pollutants > 0) || msxHasWo) {
+        sec(f, "WASHOFF");
+        std::fprintf(f, ";;%-16s %-16s %-10s %-10s %-10s %-10s %-10s\n", "LandUse", "Pollutant",
+                     "FuncType", "Coeff", "Expon", "SweepEff", "BmpEff");
+        std::fprintf(f, ";;%-16s %-16s %-10s %-10s %-10s %-10s %-10s\n", "----------------",
+                     "----------------", "----------", "----------", "----------", "----------",
+                     "----------");
+        static const char* woNames[] = {"NONE", "EXP", "RC", "EMC"};
+        for (int lu = 0; lu < ctx.washoff.n_landuses; ++lu) {
+            for (int p = 0; p < ctx.washoff.n_pollutants; ++p) {
+                auto idx = static_cast<size_t>(lu * ctx.washoff.n_pollutants + p);
+                int ft = ctx.washoff.func_type[idx];
+                if (ft == 0)
+                    continue;
+                std::fprintf(f, "%-16s %-16s %-10s %.17g %.17g %.17g %.17g\n",
+                             ctx.landuse_names.name_of(lu).c_str(), pN(ctx, p),
+                             (ft >= 0 && ft <= 3) ? woNames[ft] : "NONE", ctx.washoff.coeff[idx],
+                             ctx.washoff.expon[idx], ctx.washoff.sweep_effic[idx],
+                             ctx.washoff.bmp_effic[idx]);
+            }
+        }
+        for (int lu = 0; lu < msxs.n_landuses; ++lu) {
+            for (int m = 0; m < msxs.n_species; ++m) {
+                auto idx = msxs.pidx(lu, m);
+                int ft = msxs.wo_type[idx];
+                if (ft == 0)
+                    continue;
+                const std::string& sp =
+                    (static_cast<std::size_t>(m) < ctx.reactions.species_name.size())
+                        ? ctx.reactions.species_name[static_cast<std::size_t>(m)]
+                        : std::string{};
+                std::fprintf(f, "%-16s %-16s %-10s %.17g %.17g %.17g %.17g\n",
+                             ctx.landuse_names.name_of(lu).c_str(), sp.c_str(),
+                             (ft >= 0 && ft <= 3) ? woNames[ft] : "NONE", msxs.wo_coeff[idx],
+                             msxs.wo_expon[idx], msxs.wo_sweep_effic[idx], msxs.wo_bmp_effic[idx]);
+            }
+        }
+    }
 
     // [LOADINGS] — initial pollutant buildup per subcatchment (stored in
     // ctx.subcatches.conc by handle_loadings; see also the object-deletion
     // re-pack tests). Zero rows are skipped: absent rows parse back to 0.
     {
-    const int np=ctx.subcatches.conc_n_pollutants;
-    const bool polluts=(np>0&&ctx.n_subcatches()>0&&ctx.n_pollutants()>0);
-    bool any=false;
-    if(polluts)for(std::size_t i=0;i<ctx.subcatches.init_loading.size()&&!any;++i)
-        if(ctx.subcatches.init_loading[i]!=0.0)any=true;
-    bool anyMsx=false;   // BW-MSX: species initial loadings
-    for(std::size_t i=0;i<msxs.init_loading.size()&&!anyMsx;++i)
-        if(msxs.init_loading[i]!=0.0)anyMsx=true;
-    if(any||anyMsx){sec(f,"LOADINGS");
-    std::fprintf(f,";;%-16s %-16s %-10s\n","Subcatchment","Pollutant","Buildup");
-    std::fprintf(f,";;%-16s %-16s %-10s\n","----------------","----------------","----------");
-    if(any)for(int s=0;s<ctx.n_subcatches();++s){
-    for(int p=0;p<np&&p<ctx.n_pollutants();++p){
-    auto idx=static_cast<size_t>(s)*static_cast<size_t>(np)+static_cast<size_t>(p);
-    if(idx>=ctx.subcatches.init_loading.size())break;
-    const double w=ctx.subcatches.init_loading[idx];
-    if(w==0.0)continue;
-    std::fprintf(f,"%-16s %-16s %10.4f\n",
-        ctx.subcatch_names.name_of(s).c_str(),pN(ctx,p),w);
-    }}
-    if(anyMsx)for(int s=0;s<ctx.n_subcatches();++s){
-    for(int m=0;m<msxs.n_species;++m){
-    if(msxs.sidx(s,m)>=msxs.init_loading.size())break;
-    const double w=msxs.init_loading[msxs.sidx(s,m)];
-    if(w==0.0)continue;
-    const std::string& sp=(static_cast<std::size_t>(m)<ctx.reactions.species_name.size())?ctx.reactions.species_name[static_cast<std::size_t>(m)]:std::string{};
-    std::fprintf(f,"%-16s %-16s %10.4f\n",
-        ctx.subcatch_names.name_of(s).c_str(),sp.c_str(),w);
-    }}}}
+        const int np = ctx.subcatches.conc_n_pollutants;
+        const bool polluts = (np > 0 && ctx.n_subcatches() > 0 && ctx.n_pollutants() > 0);
+        bool any = false;
+        if (polluts)
+            for (std::size_t i = 0; i < ctx.subcatches.init_loading.size() && !any; ++i)
+                if (ctx.subcatches.init_loading[i] != 0.0)
+                    any = true;
+        bool anyMsx = false; // BW-MSX: species initial loadings
+        for (std::size_t i = 0; i < msxs.init_loading.size() && !anyMsx; ++i)
+            if (msxs.init_loading[i] != 0.0)
+                anyMsx = true;
+        if (any || anyMsx) {
+            sec(f, "LOADINGS");
+            std::fprintf(f, ";;%-16s %-16s %-10s\n", "Subcatchment", "Pollutant", "Buildup");
+            std::fprintf(f, ";;%-16s %-16s %-10s\n", "----------------", "----------------",
+                         "----------");
+            if (any)
+                for (int s = 0; s < ctx.n_subcatches(); ++s) {
+                    for (int p = 0; p < np && p < ctx.n_pollutants(); ++p) {
+                        auto idx = static_cast<size_t>(s) * static_cast<size_t>(np) +
+                                   static_cast<size_t>(p);
+                        if (idx >= ctx.subcatches.init_loading.size())
+                            break;
+                        const double w = ctx.subcatches.init_loading[idx];
+                        if (w == 0.0)
+                            continue;
+                        std::fprintf(f, "%-16s %-16s %.17g\n",
+                                     ctx.subcatch_names.name_of(s).c_str(), pN(ctx, p), w);
+                    }
+                }
+            if (anyMsx)
+                for (int s = 0; s < ctx.n_subcatches(); ++s) {
+                    for (int m = 0; m < msxs.n_species; ++m) {
+                        if (msxs.sidx(s, m) >= msxs.init_loading.size())
+                            break;
+                        const double w = msxs.init_loading[msxs.sidx(s, m)];
+                        if (w == 0.0)
+                            continue;
+                        const std::string& sp =
+                            (static_cast<std::size_t>(m) < ctx.reactions.species_name.size())
+                                ? ctx.reactions.species_name[static_cast<std::size_t>(m)]
+                                : std::string{};
+                        std::fprintf(f, "%-16s %-16s %.17g\n",
+                                     ctx.subcatch_names.name_of(s).c_str(), sp.c_str(), w);
+                    }
+                }
+        }
+    }
 
     // [TREATMENT]
-    if(ctx.treatment.hasAny()){sec(f,"TREATMENT");
-    std::fprintf(f,";;%-16s %-16s %s\n","Node","Pollutant","Function");
-    std::fprintf(f,";;%-16s %-16s\n","----------------","----------------");
-    for(int n=0;n<ctx.treatment.n_nodes;++n){
-    for(int p=0;p<ctx.treatment.n_pollutants;++p){
-    auto idx=static_cast<size_t>(n*ctx.treatment.n_pollutants+p);
-    if(ctx.treatment.expressions[idx].empty())continue;
-    std::fprintf(f,"%-16s %-16s %s\n",nN(ctx,n),pN(ctx,p),ctx.treatment.expressions[idx].c_str());
-    }}}
+    if (ctx.treatment.hasAny()) {
+        sec(f, "TREATMENT");
+        std::fprintf(f, ";;%-16s %-16s %s\n", "Node", "Pollutant", "Function");
+        std::fprintf(f, ";;%-16s %-16s\n", "----------------", "----------------");
+        for (int n = 0; n < ctx.treatment.n_nodes; ++n) {
+            for (int p = 0; p < ctx.treatment.n_pollutants; ++p) {
+                auto idx = static_cast<size_t>(n * ctx.treatment.n_pollutants + p);
+                if (ctx.treatment.expressions[idx].empty())
+                    continue;
+                std::fprintf(f, "%-16s %-16s %s\n", nN(ctx, n), pN(ctx, p),
+                             ctx.treatment.expressions[idx].c_str());
+            }
+        }
+    }
 
     // [INFLOWS]
-    if(ctx.ext_inflows.count()>0){sec(f,"INFLOWS");
-    std::fprintf(f,";;%-16s %-16s %-16s %-16s %-10s %-10s %-10s %-16s\n",
-        "Node","Constituent","TimeSeries","Type","Mfactor","Sfactor","Baseline","Pattern");
-    std::fprintf(f,";;%-16s %-16s %-16s %-16s %-10s %-10s %-10s %-16s\n",
-        "----------------","----------------","----------------","----------------","----------","----------","----------","----------------");
-    for(int j=0;j<ctx.ext_inflows.count();++j){auto u=static_cast<size_t>(j);
-    std::fprintf(f,"%-16s %-16s %-16s %-16s %10.4f %10.4f %10.4f %-16s\n",
-        nN(ctx,ctx.ext_inflows.node_idx[u]),
-        ctx.ext_inflows.constituent[u].c_str(),
-        ctx.ext_inflows.ts_name[u].empty()?"\"\"":ctx.ext_inflows.ts_name[u].c_str(),
-        ctx.ext_inflows.inflow_type[u].c_str(),
-        ctx.ext_inflows.m_factor[u],ctx.ext_inflows.s_factor[u],
-        ctx.ext_inflows.baseline[u],
-        ctx.ext_inflows.pattern_name[u].empty()?"":ctx.ext_inflows.pattern_name[u].c_str());
-    }}
+    if (ctx.ext_inflows.count() > 0) {
+        sec(f, "INFLOWS");
+        std::fprintf(f, ";;%-16s %-16s %-16s %-16s %-10s %-10s %-10s %-16s\n", "Node",
+                     "Constituent", "TimeSeries", "Type", "Mfactor", "Sfactor", "Baseline",
+                     "Pattern");
+        std::fprintf(f, ";;%-16s %-16s %-16s %-16s %-10s %-10s %-10s %-16s\n", "----------------",
+                     "----------------", "----------------", "----------------", "----------",
+                     "----------", "----------", "----------------");
+        for (int j = 0; j < ctx.ext_inflows.count(); ++j) {
+            auto u = static_cast<size_t>(j);
+            std::fprintf(
+                f, "%-16s %-16s %-16s %-16s %.17g %.17g %.17g %-16s\n",
+                nN(ctx, ctx.ext_inflows.node_idx[u]), ctx.ext_inflows.constituent[u].c_str(),
+                ctx.ext_inflows.ts_name[u].empty() ? "\"\"" : ctx.ext_inflows.ts_name[u].c_str(),
+                ctx.ext_inflows.inflow_type[u].c_str(), ctx.ext_inflows.m_factor[u],
+                ctx.ext_inflows.s_factor[u], ctx.ext_inflows.baseline[u],
+                ctx.ext_inflows.pattern_name[u].empty() ? ""
+                                                        : ctx.ext_inflows.pattern_name[u].c_str());
+        }
+    }
 
     // [DWF]
-    if(ctx.dwf_inflows.count()>0){sec(f,"DWF");
-    std::fprintf(f,";;%-16s %-16s %-12s %-16s %-16s %-16s %-16s\n",
-        "Node","Constituent","AvgValue","Pat1","Pat2","Pat3","Pat4");
-    std::fprintf(f,";;%-16s %-16s %-12s %-16s %-16s %-16s %-16s\n",
-        "----------------","----------------","------------","----------------","----------------","----------------","----------------");
-    for(int j=0;j<ctx.dwf_inflows.count();++j){auto u=static_cast<size_t>(j);
-    // Full precision on the average value: DWF base flows are small (~1e-4 m3/s)
-    // with many significant figures; %.6f truncation shifts the base sewage load.
-    std::fprintf(f,"%-16s %-16s %.15g",
-        nN(ctx,ctx.dwf_inflows.node_idx[u]),
-        ctx.dwf_inflows.constituent[u].c_str(),
-        ctx.dwf_inflows.avg_value[u]);
-    if(!ctx.dwf_inflows.pat1[u].empty())std::fprintf(f," %-16s",ctx.dwf_inflows.pat1[u].c_str());
-    if(!ctx.dwf_inflows.pat2[u].empty())std::fprintf(f," %-16s",ctx.dwf_inflows.pat2[u].c_str());
-    if(!ctx.dwf_inflows.pat3[u].empty())std::fprintf(f," %-16s",ctx.dwf_inflows.pat3[u].c_str());
-    if(!ctx.dwf_inflows.pat4[u].empty())std::fprintf(f," %-16s",ctx.dwf_inflows.pat4[u].c_str());
-    std::fprintf(f,"\n");
-    }}
+    if (ctx.dwf_inflows.count() > 0) {
+        sec(f, "DWF");
+        std::fprintf(f, ";;%-16s %-16s %-12s %-16s %-16s %-16s %-16s\n", "Node", "Constituent",
+                     "AvgValue", "Pat1", "Pat2", "Pat3", "Pat4");
+        std::fprintf(f, ";;%-16s %-16s %-12s %-16s %-16s %-16s %-16s\n", "----------------",
+                     "----------------", "------------", "----------------", "----------------",
+                     "----------------", "----------------");
+        for (int j = 0; j < ctx.dwf_inflows.count(); ++j) {
+            auto u = static_cast<size_t>(j);
+            // Full precision on the average value: DWF base flows are small (~1e-4 m3/s)
+            // with many significant figures; fixed-decimal truncation shifts the base sewage load.
+            std::fprintf(f, "%-16s %-16s %.17g", nN(ctx, ctx.dwf_inflows.node_idx[u]),
+                         ctx.dwf_inflows.constituent[u].c_str(), ctx.dwf_inflows.avg_value[u]);
+            if (!ctx.dwf_inflows.pat1[u].empty())
+                std::fprintf(f, " %-16s", ctx.dwf_inflows.pat1[u].c_str());
+            if (!ctx.dwf_inflows.pat2[u].empty())
+                std::fprintf(f, " %-16s", ctx.dwf_inflows.pat2[u].c_str());
+            if (!ctx.dwf_inflows.pat3[u].empty())
+                std::fprintf(f, " %-16s", ctx.dwf_inflows.pat3[u].c_str());
+            if (!ctx.dwf_inflows.pat4[u].empty())
+                std::fprintf(f, " %-16s", ctx.dwf_inflows.pat4[u].c_str());
+            std::fprintf(f, "\n");
+        }
+    }
 
     // [RDII]
-    if(ctx.rdii_assigns.count()>0){sec(f,"RDII");
-    std::fprintf(f,";;%-16s %-16s %-12s\n","Node","UnitHyd","SewerArea");
-    std::fprintf(f,";;%-16s %-16s %-12s\n","----------------","----------------","------------");
-    for(int j=0;j<ctx.rdii_assigns.count();++j){auto u=static_cast<size_t>(j);
-    std::fprintf(f,"%-16s %-16s %12.4f\n",
-        nN(ctx,ctx.rdii_assigns.node_idx[u]),
-        ctx.rdii_assigns.uh_name[u].c_str(),
-        ctx.rdii_assigns.sewer_area[u]);
-    }}
+    if (ctx.rdii_assigns.count() > 0) {
+        sec(f, "RDII");
+        std::fprintf(f, ";;%-16s %-16s %-12s\n", "Node", "UnitHyd", "SewerArea");
+        std::fprintf(f, ";;%-16s %-16s %-12s\n", "----------------", "----------------",
+                     "------------");
+        for (int j = 0; j < ctx.rdii_assigns.count(); ++j) {
+            auto u = static_cast<size_t>(j);
+            std::fprintf(f, "%-16s %-16s %.17g\n", nN(ctx, ctx.rdii_assigns.node_idx[u]),
+                         ctx.rdii_assigns.uh_name[u].c_str(), ctx.rdii_assigns.sewer_area[u]);
+        }
+    }
 
     // [HYDROGRAPHS]
-    if(ctx.unit_hyds.count()>0||!ctx.unit_hyds.gage_assignments.empty()){
-    sec(f,"HYDROGRAPHS");
-    std::fprintf(f,";;%-16s %-16s %-8s %-8s %-8s %-8s %-8s %-8s %-8s\n",
-        "Name","Month/Gage","Response","R","T","K","Dmax","Drecov","Dinit");
-    std::fprintf(f,";;%-16s %-16s %-8s %-8s %-8s %-8s %-8s %-8s %-8s\n",
-        "----------------","----------------","--------","--------","--------","--------","--------","--------","--------");
-    // Gage assignment lines
-    for(size_t i=0;i<ctx.unit_hyds.gage_assignments.size();++i){
-    std::fprintf(f,"%-16s %s\n",
-        ctx.unit_hyds.gage_assignments[i].c_str(),
-        ctx.unit_hyds.gage_names[i].c_str());
+    if (ctx.unit_hyds.count() > 0 || !ctx.unit_hyds.gage_assignments.empty()) {
+        sec(f, "HYDROGRAPHS");
+        std::fprintf(f, ";;%-16s %-16s %-8s %-8s %-8s %-8s %-8s %-8s %-8s\n", "Name", "Month/Gage",
+                     "Response", "R", "T", "K", "Dmax", "Drecov", "Dinit");
+        std::fprintf(f, ";;%-16s %-16s %-8s %-8s %-8s %-8s %-8s %-8s %-8s\n", "----------------",
+                     "----------------", "--------", "--------", "--------", "--------", "--------",
+                     "--------", "--------");
+        // Gage assignment lines
+        for (size_t i = 0; i < ctx.unit_hyds.gage_assignments.size(); ++i) {
+            std::fprintf(f, "%-16s %s\n", ctx.unit_hyds.gage_assignments[i].c_str(),
+                         ctx.unit_hyds.gage_names[i].c_str());
+        }
+        // Parameter lines
+        static const char* uhMonths[] = {"JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+                                         "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
+        static const char* uhResp[] = {"SHORT", "MEDIUM", "LONG"};
+        for (const auto& e : ctx.unit_hyds.entries) {
+            const char* mon = (e.month < 0) ? "ALL" : uhMonths[e.month];
+            std::fprintf(f, "%-16s %-9s %-8s %.17g %.17g %.17g", e.name.c_str(), mon,
+                         uhResp[e.response], e.r, e.t, e.k);
+            if (e.dmax > 0.0 || e.drecov > 0.0 || e.dinit > 0.0)
+                std::fprintf(f, " %.17g %.17g %.17g", e.dmax, e.drecov, e.dinit);
+            std::fprintf(f, "\n");
+        }
     }
-    // Parameter lines
-    static const char* uhMonths[]={"JAN","FEB","MAR","APR","MAY","JUN",
-                                   "JUL","AUG","SEP","OCT","NOV","DEC"};
-    static const char* uhResp[]={"SHORT","MEDIUM","LONG"};
-    for(const auto& e:ctx.unit_hyds.entries){
-    const char* mon=(e.month<0)?"ALL":uhMonths[e.month];
-    std::fprintf(f,"%-16s %-9s %-8s %8.4f %8.4f %8.4f",
-        e.name.c_str(),mon,uhResp[e.response],e.r,e.t,e.k);
-    if(e.dmax>0.0||e.drecov>0.0||e.dinit>0.0)
-        std::fprintf(f," %8.4f %8.4f %8.4f",e.dmax,e.drecov,e.dinit);
-    std::fprintf(f,"\n");
-    }}
 
     // [RDII_DECAY] (exponential IA decay parameters; optional degree-day snow
     // clause "SNOW snow_T snow_ddf" appended to rows with the snow model on)
-    if(swmm5&&ctx.rdii_decay.count()>0) note("[RDII_DECAY] omitted (SWMM 5.x profile)");
-    if(!swmm5&&ctx.rdii_decay.count()>0){sec(f,"RDII_DECAY");
-    std::fprintf(f,";;%-16s %-8s %-10s %-10s %-10s %-8s %-10s %-10s %-4s %-8s %-10s\n",
-        "UHGroup","Response","k_dep","k_0","k_T","T_ref","theta_rec","T_freeze",
-        "Snow","snow_T","snow_ddf");
-    std::fprintf(f,";;%-16s %-8s %-10s %-10s %-10s %-8s %-10s %-10s %-4s %-8s %-10s\n",
-        "----------------","--------","----------","----------","----------",
-        "--------","----------","----------","----","--------","----------");
-    static const char* decayResp[]={"SHORT","MEDIUM","LONG"};
-    for(const auto& e:ctx.rdii_decay.entries){
-    const char* r=(e.response>=0&&e.response<=2)?decayResp[e.response]:"SHORT";
-    std::fprintf(f,"%-16s %-8s %10.5f %10.5f %10.5f %8.2f %10.5f %10.5f",
-        e.uh_name.c_str(),r,
-        e.k_dep,e.k_0,e.k_T,e.T_ref,e.theta_rec,e.T_freeze);
-    if(e.snow_on)
-        std::fprintf(f," SNOW %8.2f %10.5f",e.snow_T,e.snow_ddf);
-    std::fprintf(f,"\n");
-    }}
-
-    // [PATTERNS]
-    if(ctx.patterns.count()>0){sec(f,"PATTERNS");
-    std::fprintf(f,";;%-16s %-12s\n","Name","Type");
-    std::fprintf(f,";;%-16s %-12s\n","----------------","------------");
-    static const char* patNames[]={"MONTHLY","DAILY","HOURLY","WEEKEND"};
-    for(int j=0;j<ctx.patterns.count();++j){auto u=static_cast<size_t>(j);
-    int pt=ctx.patterns.types[u];
-    const char* ptn=(pt>=0&&pt<=3)?patNames[pt]:"MONTHLY";
-    const auto& facs=ctx.patterns.factors[u];
-    // First line: name + type + first batch of values
-    std::fprintf(f,"%-16s %-12s",ctx.patterns.names[u].c_str(),ptn);
-    for(size_t k=0;k<facs.size()&&k<6;++k)std::fprintf(f," %10.4f",facs[k]);
-    std::fprintf(f,"\n");
-    // Continuation lines (6 values per line)
-    for(size_t k=6;k<facs.size();k+=6){
-    std::fprintf(f,"%-16s            ",ctx.patterns.names[u].c_str());
-    for(size_t m=k;m<facs.size()&&m<k+6;++m)std::fprintf(f," %10.4f",facs[m]);
-    std::fprintf(f,"\n");
-    }}}
-
-    // [TIMESERIES]
-    {bool has=false;for(const auto&t:ctx.tables.tables)if(t.type==TableType::TIMESERIES){has=true;break;}
-    if(has){sec(f,"TIMESERIES");
-    std::fprintf(f,";;%-16s %-20s %-12s\n","Name","Date/Time","Value");
-    std::fprintf(f,";;%-16s %-20s %-12s\n","----------------","--------------------","------------");
-    for(int t=0;t<static_cast<int>(ctx.tables.tables.size());++t){const auto&tb=ctx.tables.tables[static_cast<size_t>(t)];
-    if(tb.type!=TableType::TIMESERIES)continue;
-    if(!tb.comment.empty()){
-        const char*sep="\\n";std::size_t s=0;
-        while(s<=tb.comment.size()){std::size_t e=tb.comment.find(sep,s);
-        if(e==std::string::npos)e=tb.comment.size();
-        std::fprintf(f,";%.*s\n",static_cast<int>(e-s),tb.comment.data()+s);
-        if(e==tb.comment.size())break;s=e+2;}
-    }
-    // File-backed series — preserve the FILE reference rather than dumping
-    // the in-memory cache of rows. The path token (possibly carrying a
-    // `:column` suffix) is stored verbatim by TablesHandler; Slice IO-4
-    // rebases the path portion relative to the destination directory.
-    if(!tb.file_path.empty()){
-        const std::string tok = emit_path_token(tb.file_path, dst_dir,
-                                                 force_abs_paths, warnings);
-        std::fprintf(f,"%-16s FILE         \"%s\"\n",tN(ctx,t),tok.c_str());
-        continue;
-    }
-    // Rows below n_relative were authored as elapsed times anchored at the
-    // simulation start; rel_anchor is the start_date offset the resolver
-    // baked into them (0 if the model was never resolved). Subtract it to
-    // emit those rows back in their authored time-only form. All later rows
-    // carry explicit dates and are written date + time — never inferred
-    // from x-value magnitude (the old x[0]-start heuristic rewrote a series
-    // the user authored WITH dates near the start date as elapsed times,
-    // silently re-basing that data onto START_DATE).
-    char dateBuf[16], timeBuf[12];
-    for(size_t k=0;k<tb.x.size();++k){
-        const bool relative = static_cast<int>(k) < tb.n_relative;
-        if(relative){
-            // Elapsed fractional days → H:MM[:SS]; hours may exceed 23.
-            // Round to whole seconds first so 0.99999998 days prints as
-            // 24:00 and not the truncated-then-rounded "23:60".
-            const double xv = tb.x[k] - tb.rel_anchor;
-            const long long totalSecs = std::llround(xv * 86400.0);
-            const long long hh = totalSecs / 3600;
-            const int       mm = static_cast<int>((totalSecs / 60) % 60);
-            const int       ss = static_cast<int>(totalSecs % 60);
-            if(ss)
-                std::fprintf(f,"%-16s %lld:%02d:%02d %12.6f\n",tN(ctx,t),hh,mm,ss,tb.y[k]);
-            else
-                std::fprintf(f,"%-16s %lld:%02d %12.6f\n",tN(ctx,t),hh,mm,tb.y[k]);
-        } else {
-            fmt_date(dateBuf, tb.x[k]);
-            fmt_time(timeBuf, tb.x[k]);
-            std::fprintf(f,"%-16s %-12s %-8s %12.6f\n",tN(ctx,t),dateBuf,timeBuf,tb.y[k]);
+    if (swmm5 && ctx.rdii_decay.count() > 0)
+        note("[RDII_DECAY] omitted (SWMM 5.x profile)");
+    if (!swmm5 && ctx.rdii_decay.count() > 0) {
+        sec(f, "RDII_DECAY");
+        std::fprintf(f, ";;%-16s %-8s %-10s %-10s %-10s %-8s %-10s %-10s %-4s %-8s %-10s\n",
+                     "UHGroup", "Response", "k_dep", "k_0", "k_T", "T_ref", "theta_rec", "T_freeze",
+                     "Snow", "snow_T", "snow_ddf");
+        std::fprintf(f, ";;%-16s %-8s %-10s %-10s %-10s %-8s %-10s %-10s %-4s %-8s %-10s\n",
+                     "----------------", "--------", "----------", "----------", "----------",
+                     "--------", "----------", "----------", "----", "--------", "----------");
+        static const char* decayResp[] = {"SHORT", "MEDIUM", "LONG"};
+        for (const auto& e : ctx.rdii_decay.entries) {
+            const char* r = (e.response >= 0 && e.response <= 2) ? decayResp[e.response] : "SHORT";
+            std::fprintf(f, "%-16s %-8s %.17g %.17g %.17g %.17g %.17g %.17g",
+                         e.uh_name.c_str(), r, e.k_dep, e.k_0, e.k_T, e.T_ref, e.theta_rec,
+                         e.T_freeze);
+            if (e.snow_on)
+                std::fprintf(f, " SNOW %.17g %.17g", e.snow_T, e.snow_ddf);
+            std::fprintf(f, "\n");
         }
     }
-    }}}
+
+    // [PATTERNS]
+    if (ctx.patterns.count() > 0) {
+        sec(f, "PATTERNS");
+        std::fprintf(f, ";;%-16s %-12s\n", "Name", "Type");
+        std::fprintf(f, ";;%-16s %-12s\n", "----------------", "------------");
+        static const char* patNames[] = {"MONTHLY", "DAILY", "HOURLY", "WEEKEND"};
+        for (int j = 0; j < ctx.patterns.count(); ++j) {
+            auto u = static_cast<size_t>(j);
+            int pt = ctx.patterns.types[u];
+            const char* ptn = (pt >= 0 && pt <= 3) ? patNames[pt] : "MONTHLY";
+            const auto& facs = ctx.patterns.factors[u];
+            // First line: name + type + first batch of values
+            std::fprintf(f, "%-16s %-12s", ctx.patterns.names[u].c_str(), ptn);
+            for (size_t k = 0; k < facs.size() && k < 6; ++k)
+                std::fprintf(f, " %.17g", facs[k]);
+            std::fprintf(f, "\n");
+            // Continuation lines (6 values per line)
+            for (size_t k = 6; k < facs.size(); k += 6) {
+                std::fprintf(f, "%-16s            ", ctx.patterns.names[u].c_str());
+                for (size_t m = k; m < facs.size() && m < k + 6; ++m)
+                    std::fprintf(f, " %.17g", facs[m]);
+                std::fprintf(f, "\n");
+            }
+        }
+    }
+
+    // [TIMESERIES]
+    {
+        bool has = false;
+        for (const auto& t : ctx.tables.tables)
+            if (t.type == TableType::TIMESERIES) {
+                has = true;
+                break;
+            }
+        if (has) {
+            sec(f, "TIMESERIES");
+            std::fprintf(f, ";;%-16s %-20s %-12s\n", "Name", "Date/Time", "Value");
+            std::fprintf(f, ";;%-16s %-20s %-12s\n", "----------------", "--------------------",
+                         "------------");
+            for (int t = 0; t < static_cast<int>(ctx.tables.tables.size()); ++t) {
+                const auto& tb = ctx.tables.tables[static_cast<size_t>(t)];
+                if (tb.type != TableType::TIMESERIES)
+                    continue;
+                if (!tb.comment.empty()) {
+                    const char* sep = "\\n";
+                    std::size_t s = 0;
+                    while (s <= tb.comment.size()) {
+                        std::size_t e = tb.comment.find(sep, s);
+                        if (e == std::string::npos)
+                            e = tb.comment.size();
+                        std::fprintf(f, ";%.*s\n", static_cast<int>(e - s), tb.comment.data() + s);
+                        if (e == tb.comment.size())
+                            break;
+                        s = e + 2;
+                    }
+                }
+                // File-backed series — preserve the FILE reference rather than dumping
+                // the in-memory cache of rows. The path token (possibly carrying a
+                // `:column` suffix) is stored verbatim by TablesHandler; Slice IO-4
+                // rebases the path portion relative to the destination directory.
+                if (!tb.file_path.empty()) {
+                    const std::string tok =
+                        emit_path_token(tb.file_path, dst_dir, force_abs_paths, warnings);
+                    std::fprintf(f, "%-16s FILE         \"%s\"\n", tN(ctx, t), tok.c_str());
+                    continue;
+                }
+                // Rows below n_relative were authored as elapsed times anchored at the
+                // simulation start; rel_anchor is the start_date offset the resolver
+                // baked into them (0 if the model was never resolved). Subtract it to
+                // emit those rows back in their authored time-only form. All later rows
+                // carry explicit dates and are written date + time — never inferred
+                // from x-value magnitude (the old x[0]-start heuristic rewrote a series
+                // the user authored WITH dates near the start date as elapsed times,
+                // silently re-basing that data onto START_DATE).
+                char dateBuf[16], timeBuf[64];
+                for (size_t k = 0; k < tb.x.size(); ++k) {
+                    const bool relative = static_cast<int>(k) < tb.n_relative;
+                    if (relative) {
+                        // Elapsed fractional days → H:MM[:SS]; hours may exceed 23.
+                        // Round to whole seconds first so 0.99999998 days prints as
+                        // 24:00 and not the truncated-then-rounded "23:60".
+                        const double xv = tb.x[k] - tb.rel_anchor;
+                        char elapsed[64];
+                        fmt_elapsed(elapsed, xv * 86400.0, tb.x[k], true);
+                        std::fprintf(f, "%-16s %s %.17g\n", tN(ctx, t), elapsed, tb.y[k]);
+                    } else {
+                        fmt_date(dateBuf, tb.x[k]);
+                        fmt_time(timeBuf, tb.x[k]);
+                        std::fprintf(f, "%-16s %-12s %-8s %.17g\n", tN(ctx, t), dateBuf, timeBuf,
+                                     tb.y[k]);
+                    }
+                }
+            }
+        }
+    }
 
     // [CURVES]
-    {bool has=false;for(const auto&t:ctx.tables.tables)if(t.type!=TableType::TIMESERIES){has=true;break;}
-    if(has){sec(f,"CURVES");
-    std::fprintf(f,";;%-16s %-12s %-12s %-12s\n","Name","Type","X-Value","Y-Value");
-    std::fprintf(f,";;%-16s %-12s %-12s %-12s\n","----------------","------------","------------","------------");
-    for(int t=0;t<static_cast<int>(ctx.tables.tables.size());++t){const auto&tb=ctx.tables.tables[static_cast<size_t>(t)];
-    if(tb.type==TableType::TIMESERIES)continue;
-    auto lbl_it=CURVE_TYPE_LABEL.find(static_cast<int>(tb.type));
-    const char* lbl=lbl_it!=CURVE_TYPE_LABEL.end()?lbl_it->second:"STORAGE";
-    if(!tb.comment.empty()){
-        const char*sep="\\n";std::size_t s=0;
-        while(s<=tb.comment.size()){std::size_t e=tb.comment.find(sep,s);
-        if(e==std::string::npos)e=tb.comment.size();
-        std::fprintf(f,";%.*s\n",static_cast<int>(e-s),tb.comment.data()+s);
-        if(e==tb.comment.size())break;s=e+2;}
+    {
+        bool has = false;
+        for (const auto& t : ctx.tables.tables)
+            if (t.type != TableType::TIMESERIES) {
+                has = true;
+                break;
+            }
+        if (has) {
+            sec(f, "CURVES");
+            std::fprintf(f, ";;%-16s %-12s %-12s %-12s\n", "Name", "Type", "X-Value", "Y-Value");
+            std::fprintf(f, ";;%-16s %-12s %-12s %-12s\n", "----------------", "------------",
+                         "------------", "------------");
+            for (int t = 0; t < static_cast<int>(ctx.tables.tables.size()); ++t) {
+                const auto& tb = ctx.tables.tables[static_cast<size_t>(t)];
+                if (tb.type == TableType::TIMESERIES)
+                    continue;
+                auto lbl_it = CURVE_TYPE_LABEL.find(static_cast<int>(tb.type));
+                const char* lbl = lbl_it != CURVE_TYPE_LABEL.end() ? lbl_it->second : "STORAGE";
+                if (!tb.comment.empty()) {
+                    const char* sep = "\\n";
+                    std::size_t s = 0;
+                    while (s <= tb.comment.size()) {
+                        std::size_t e = tb.comment.find(sep, s);
+                        if (e == std::string::npos)
+                            e = tb.comment.size();
+                        std::fprintf(f, ";%.*s\n", static_cast<int>(e - s), tb.comment.data() + s);
+                        if (e == tb.comment.size())
+                            break;
+                        s = e + 2;
+                    }
+                }
+                // The curve TYPE keyword goes on the FIRST row only; continuation rows are
+                // "Name X Y". Legacy SWMM reads a repeated type on a later row as the
+                // X-value → ERROR 211 (invalid number).
+                // Full precision on the ordinates: a storage or pump curve IS the node's
+                // geometry or the pump's operating point, and the former fixed-decimal format rounded both
+                // on every save.
+                for (size_t k = 0; k < tb.x.size(); ++k)
+                    std::fprintf(f, "%-16s %-12s %.17g %.17g\n", tN(ctx, t),
+                                 (k == 0 ? lbl : ""), tb.x[k], tb.y[k]);
+            }
+        }
     }
-    // The curve TYPE keyword goes on the FIRST row only; continuation rows are
-    // "Name X Y". Legacy SWMM reads a repeated type on a later row as the
-    // X-value → ERROR 211 (invalid number).
-    // Full precision on the ordinates: a storage or pump curve IS the node's
-    // geometry or the pump's operating point, and %12.6f silently rounded both
-    // on every save.
-    for(size_t k=0;k<tb.x.size();++k)std::fprintf(f,"%-16s %-12s %12.15g %12.15g\n",tN(ctx,t),(k==0?lbl:""),tb.x[k],tb.y[k]);
-    }}}
 
     // Geospatial block — section order matches the legacy SWMM GUI ExportMap():
     //   [MAP]  →  [COORDINATES]  →  [VERTICES]  →  [Polygons]  →  [SYMBOLS]
@@ -3478,87 +4592,114 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     // [MAP] — always written when any spatial data exists, matching legacy GUI
     // behaviour of always serialising map dimensions and units.
     {
-    const bool has_nodes   = !ctx.spatial.node_x.empty();
-    bool has_verts = false;
-    for(const auto& vx:ctx.spatial.link_vertices_x) if(!vx.empty()){has_verts=true;break;}
-    bool has_polys = false;
-    for(const auto& px:ctx.spatial.subcatch_polygon_x) if(!px.empty()){has_polys=true;break;}
-    const bool has_gages   = !ctx.spatial.gage_x.empty();
-    const bool has_spatial = has_nodes||has_verts||has_polys||has_gages
-                             ||ctx.spatial.map_x2!=0.0||ctx.spatial.map_y2!=0.0
-                             ||!ctx.spatial.map_units.empty();
+        const bool has_nodes = !ctx.spatial.node_x.empty();
+        bool has_verts = false;
+        for (const auto& vx : ctx.spatial.link_vertices_x)
+            if (!vx.empty()) {
+                has_verts = true;
+                break;
+            }
+        bool has_polys = false;
+        for (const auto& px : ctx.spatial.subcatch_polygon_x)
+            if (!px.empty()) {
+                has_polys = true;
+                break;
+            }
+        const bool has_gages = !ctx.spatial.gage_x.empty();
+        const bool has_spatial = has_nodes || has_verts || has_polys || has_gages ||
+                                 ctx.spatial.map_x2 != 0.0 || ctx.spatial.map_y2 != 0.0 ||
+                                 !ctx.spatial.map_units.empty();
 
-    if(has_spatial){
-    // [MAP] first — legacy writes this before coordinates
-    sec(f,"MAP");
-    std::fprintf(f,"DIMENSIONS %-18.4f %-18.4f %-18.4f %-18.4f\n",
-        ctx.spatial.map_x1, ctx.spatial.map_y1,
-        ctx.spatial.map_x2, ctx.spatial.map_y2);
-    // "Units" (mixed case) matches legacy GUI keyword exactly. The VALUE is
-    // written in the legacy GUI's mixed case too, mapped from the parser's
-    // uppercase canonical — writing the canonical directly made the second
-    // save differ from the first ("None" → "NONE"), the gen2→gen3 drift the
-    // H6b save check caught. Always written; defaults to "None".
-    const std::string& mu = ctx.spatial.map_units;
-    const char* map_units = "None";
-    if      (mu == "FEET")    map_units = "Feet";
-    else if (mu == "METERS")  map_units = "Meters";
-    else if (mu == "DEGREES") map_units = "Degrees";
-    else if (!mu.empty() && mu != "NONE") map_units = mu.c_str();
-    std::fprintf(f,"Units      %s\n", map_units);
-    }
+        if (has_spatial) {
+            // [MAP] first — legacy writes this before coordinates
+            sec(f, "MAP");
+            std::fprintf(f, "DIMENSIONS %.17g %.17g %.17g %.17g\n", ctx.spatial.map_x1,
+                         ctx.spatial.map_y1, ctx.spatial.map_x2, ctx.spatial.map_y2);
+            // "Units" (mixed case) matches legacy GUI keyword exactly. The VALUE is
+            // written in the legacy GUI's mixed case too, mapped from the parser's
+            // uppercase canonical — writing the canonical directly made the second
+            // save differ from the first ("None" → "NONE"), the gen2→gen3 drift the
+            // H6b save check caught. Always written; defaults to "None".
+            const std::string& mu = ctx.spatial.map_units;
+            const char* map_units = "None";
+            if (mu == "FEET")
+                map_units = "Feet";
+            else if (mu == "METERS")
+                map_units = "Meters";
+            else if (mu == "DEGREES")
+                map_units = "Degrees";
+            else if (!mu.empty() && mu != "NONE")
+                map_units = mu.c_str();
+            std::fprintf(f, "Units      %s\n", map_units);
+        }
 
-    // [COORDINATES] — all nodes (junctions, outfalls, dividers, storage)
-    // Column layout: %-16s name | %-18.4f X | %-18.4f Y  (matches legacy Fmt)
-    if(has_nodes){sec(f,"COORDINATES");
-    std::fprintf(f,";;%-14s %-18s %-18s\n","Node","X-Coord","Y-Coord");
-    std::fprintf(f,";;%-14s %-18s %-18s\n","--------------","------------------","------------------");
-    for(int j=0;j<ctx.n_nodes();++j){auto u=static_cast<size_t>(j);
-    if(u<ctx.spatial.node_x.size())
-        std::fprintf(f,"%-16s %-18.4f %-18.4f\n",
-            ctx.node_names.name_of(j).c_str(),
-            ctx.spatial.node_x[u], ctx.spatial.node_y[u]);
-    }}
+        // [COORDINATES] — all nodes (junctions, outfalls, dividers, storage)
+        // Column layout: %-16s name | %.17g X | %.17g Y  (matches legacy Fmt)
+        if (has_nodes) {
+            sec(f, "COORDINATES");
+            std::fprintf(f, ";;%-14s %-18s %-18s\n", "Node", "X-Coord", "Y-Coord");
+            std::fprintf(f, ";;%-14s %-18s %-18s\n", "--------------", "------------------",
+                         "------------------");
+            for (int j = 0; j < ctx.n_nodes(); ++j) {
+                auto u = static_cast<size_t>(j);
+                if (u < ctx.spatial.node_x.size())
+                    std::fprintf(f, "%-16s %.17g %.17g\n", ctx.node_names.name_of(j).c_str(),
+                                 ctx.spatial.node_x[u], ctx.spatial.node_y[u]);
+            }
+        }
 
-    // [VERTICES] — link polyline interior vertices (conduits through outlets)
-    if(has_verts){sec(f,"VERTICES");
-    std::fprintf(f,";;%-14s %-18s %-18s\n","Link","X-Coord","Y-Coord");
-    std::fprintf(f,";;%-14s %-18s %-18s\n","--------------","------------------","------------------");
-    for(int j=0;j<ctx.n_links();++j){auto u=static_cast<size_t>(j);
-    if(u>=ctx.spatial.link_vertices_x.size())continue;
-    const auto& vx=ctx.spatial.link_vertices_x[u];
-    const auto& vy=ctx.spatial.link_vertices_y[u];
-    for(size_t k=0;k<vx.size();++k)
-        std::fprintf(f,"%-16s %-18.4f %-18.4f\n",
-            ctx.link_names.name_of(j).c_str(), vx[k], vy[k]);
-    }}
+        // [VERTICES] — link polyline interior vertices (conduits through outlets)
+        if (has_verts) {
+            sec(f, "VERTICES");
+            std::fprintf(f, ";;%-14s %-18s %-18s\n", "Link", "X-Coord", "Y-Coord");
+            std::fprintf(f, ";;%-14s %-18s %-18s\n", "--------------", "------------------",
+                         "------------------");
+            for (int j = 0; j < ctx.n_links(); ++j) {
+                auto u = static_cast<size_t>(j);
+                if (u >= ctx.spatial.link_vertices_x.size())
+                    continue;
+                const auto& vx = ctx.spatial.link_vertices_x[u];
+                const auto& vy = ctx.spatial.link_vertices_y[u];
+                for (size_t k = 0; k < vx.size(); ++k)
+                    std::fprintf(f, "%-16s %.17g %.17g\n", ctx.link_names.name_of(j).c_str(),
+                                 vx[k], vy[k]);
+            }
+        }
 
-    // [Polygons] — subcatchment boundary polygons.
-    // Mixed-case tag matches legacy SWMM GUI (readers are case-insensitive).
-    // Legacy also appends storage-node polygons under the same section tag;
-    // storage polygon data is not yet modelled in SpatialFrame.
-    if(has_polys){std::fprintf(f,"\n[Polygons]\n");
-    std::fprintf(f,";;%-14s %-18s %-18s\n","Subcatchment","X-Coord","Y-Coord");
-    std::fprintf(f,";;%-14s %-18s %-18s\n","--------------","------------------","------------------");
-    for(int j=0;j<ctx.n_subcatches();++j){auto u=static_cast<size_t>(j);
-    if(u>=ctx.spatial.subcatch_polygon_x.size())continue;
-    const auto& px=ctx.spatial.subcatch_polygon_x[u];
-    const auto& py=ctx.spatial.subcatch_polygon_y[u];
-    for(size_t k=0;k<px.size();++k)
-        std::fprintf(f,"%-16s %-18.4f %-18.4f\n",
-            ctx.subcatch_names.name_of(j).c_str(), px[k], py[k]);
-    }}
+        // [Polygons] — subcatchment boundary polygons.
+        // Mixed-case tag matches legacy SWMM GUI (readers are case-insensitive).
+        // Legacy also appends storage-node polygons under the same section tag;
+        // storage polygon data is not yet modelled in SpatialFrame.
+        if (has_polys) {
+            std::fprintf(f, "\n[Polygons]\n");
+            std::fprintf(f, ";;%-14s %-18s %-18s\n", "Subcatchment", "X-Coord", "Y-Coord");
+            std::fprintf(f, ";;%-14s %-18s %-18s\n", "--------------", "------------------",
+                         "------------------");
+            for (int j = 0; j < ctx.n_subcatches(); ++j) {
+                auto u = static_cast<size_t>(j);
+                if (u >= ctx.spatial.subcatch_polygon_x.size())
+                    continue;
+                const auto& px = ctx.spatial.subcatch_polygon_x[u];
+                const auto& py = ctx.spatial.subcatch_polygon_y[u];
+                for (size_t k = 0; k < px.size(); ++k)
+                    std::fprintf(f, "%-16s %.17g %.17g\n",
+                                 ctx.subcatch_names.name_of(j).c_str(), px[k], py[k]);
+            }
+        }
 
-    // [SYMBOLS] — rain gage symbol coordinates
-    if(has_gages){sec(f,"SYMBOLS");
-    std::fprintf(f,";;%-14s %-18s %-18s\n","Gage","X-Coord","Y-Coord");
-    std::fprintf(f,";;%-14s %-18s %-18s\n","--------------","------------------","------------------");
-    for(int j=0;j<ctx.n_gages();++j){auto u=static_cast<size_t>(j);
-    if(u<ctx.spatial.gage_x.size())
-        std::fprintf(f,"%-16s %-18.4f %-18.4f\n",
-            ctx.gage_names.name_of(j).c_str(),
-            ctx.spatial.gage_x[u], ctx.spatial.gage_y[u]);
-    }}
+        // [SYMBOLS] — rain gage symbol coordinates
+        if (has_gages) {
+            sec(f, "SYMBOLS");
+            std::fprintf(f, ";;%-14s %-18s %-18s\n", "Gage", "X-Coord", "Y-Coord");
+            std::fprintf(f, ";;%-14s %-18s %-18s\n", "--------------", "------------------",
+                         "------------------");
+            for (int j = 0; j < ctx.n_gages(); ++j) {
+                auto u = static_cast<size_t>(j);
+                if (u < ctx.spatial.gage_x.size())
+                    std::fprintf(f, "%-16s %.17g %.17g\n", ctx.gage_names.name_of(j).c_str(),
+                                 ctx.spatial.gage_x[u], ctx.spatial.gage_y[u]);
+            }
+        }
     }
 
     // [LABELS], [BACKDROP] — GUI map annotation the solver never reads,
@@ -3570,11 +4711,13 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     // it — so the authored lines are written back unchanged.
     // Each tag is written back under the spelling it was read with, so a deck
     // that said [PROFILES] still says [PROFILES] afterwards.
-    for(const char* tag : {"LABELS","BACKDROP","PROFILE","PROFILES"}){
+    for (const char* tag : {"LABELS", "BACKDROP", "PROFILE", "PROFILES"}) {
         auto it = ctx.passthrough_sections.find(tag);
-        if(it==ctx.passthrough_sections.end()||it->second.empty()) continue;
-        sec(f,tag);
-        for(const auto& line : it->second) std::fprintf(f,"%s\n",line.c_str());
+        if (it == ctx.passthrough_sections.end() || it->second.empty())
+            continue;
+        sec(f, tag);
+        for (const auto& line : it->second)
+            std::fprintf(f, "%s\n", line.c_str());
     }
 
     // [TAGS] — per-object free-form labels. Tags are stored per-SoA
@@ -3582,67 +4725,102 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     // they survive swmm_*_rename. Only objects with a non-empty tag
     // are emitted; section is skipped entirely if nothing's tagged.
     {
-        auto has_any = [](const std::vector<std::string>& v){
-            for (const auto& s : v) if (!s.empty()) return true;
+        auto has_any = [](const std::vector<std::string>& v) {
+            for (const auto& s : v)
+                if (!s.empty())
+                    return true;
             return false;
         };
         const bool any =
-            has_any(ctx.nodes.tags) ||
-            has_any(ctx.links.tags) ||
-            has_any(ctx.subcatches.tags);
+            has_any(ctx.nodes.tags) || has_any(ctx.links.tags) || has_any(ctx.subcatches.tags);
         if (any) {
-            sec(f,"TAGS");
-            std::fprintf(f,";;%-10s %-16s %s\n","Type","Name","Tag");
-            std::fprintf(f,";;%-10s %-16s %s\n","----------","----------------","---");
+            sec(f, "TAGS");
+            std::fprintf(f, ";;%-10s %-16s %s\n", "Type", "Name", "Tag");
+            std::fprintf(f, ";;%-10s %-16s %s\n", "----------", "----------------", "---");
             for (int j = 0; j < ctx.n_nodes(); ++j) {
                 const auto u = static_cast<size_t>(j);
                 if (u < ctx.nodes.tags.size() && !ctx.nodes.tags[u].empty())
-                    std::fprintf(f,"%-10s %-16s %s\n", "Node",
-                        ctx.node_names.name_of(j).c_str(),
-                        ctx.nodes.tags[u].c_str());
+                    std::fprintf(f, "%-10s %-16s %s\n", "Node", ctx.node_names.name_of(j).c_str(),
+                                 ctx.nodes.tags[u].c_str());
             }
             for (int j = 0; j < ctx.n_links(); ++j) {
                 const auto u = static_cast<size_t>(j);
                 if (u < ctx.links.tags.size() && !ctx.links.tags[u].empty())
-                    std::fprintf(f,"%-10s %-16s %s\n", "Link",
-                        ctx.link_names.name_of(j).c_str(),
-                        ctx.links.tags[u].c_str());
+                    std::fprintf(f, "%-10s %-16s %s\n", "Link", ctx.link_names.name_of(j).c_str(),
+                                 ctx.links.tags[u].c_str());
             }
             for (int j = 0; j < ctx.n_subcatches(); ++j) {
                 const auto u = static_cast<size_t>(j);
                 if (u < ctx.subcatches.tags.size() && !ctx.subcatches.tags[u].empty())
-                    std::fprintf(f,"%-10s %-16s %s\n", "Subcatch",
-                        ctx.subcatch_names.name_of(j).c_str(),
-                        ctx.subcatches.tags[u].c_str());
+                    std::fprintf(f, "%-10s %-16s %s\n", "Subcatch",
+                                 ctx.subcatch_names.name_of(j).c_str(),
+                                 ctx.subcatches.tags[u].c_str());
             }
         }
     }
 
     // [USER_FLAGS]
-    if(swmm5&&ctx.user_flags.def_count()>0) note("[USER_FLAGS] / [USER_FLAG_VALUES] omitted (SWMM 5.x profile)");
-    if(!swmm5&&ctx.user_flags.def_count()>0){sec(f,"USER_FLAGS");
-    std::fprintf(f,";;%-20s %-10s %s\n","Name","Type","Description");
-    std::fprintf(f,";;%-20s %-10s\n","--------------------","----------");
-    for(const auto&d:ctx.user_flags.all_defs()){
-    const char*ts="BOOLEAN";switch(d.type){case UserFlagType::INTEGER:ts="INTEGER";break;case UserFlagType::REAL:ts="REAL";break;case UserFlagType::STRING:ts="STRING";break;default:break;}
-    if(d.description.empty())std::fprintf(f,"%-20s %-10s\n",d.name.c_str(),ts);
-    else std::fprintf(f,"%-20s %-10s \"%s\"\n",d.name.c_str(),ts,d.description.c_str());
-    }}
+    if (swmm5 && ctx.user_flags.def_count() > 0)
+        note("[USER_FLAGS] / [USER_FLAG_VALUES] omitted (SWMM 5.x profile)");
+    if (!swmm5 && ctx.user_flags.def_count() > 0) {
+        sec(f, "USER_FLAGS");
+        std::fprintf(f, ";;%-20s %-10s %s\n", "Name", "Type", "Description");
+        std::fprintf(f, ";;%-20s %-10s\n", "--------------------", "----------");
+        for (const auto& d : ctx.user_flags.all_defs()) {
+            const char* ts = "BOOLEAN";
+            switch (d.type) {
+            case UserFlagType::INTEGER:
+                ts = "INTEGER";
+                break;
+            case UserFlagType::REAL:
+                ts = "REAL";
+                break;
+            case UserFlagType::STRING:
+                ts = "STRING";
+                break;
+            default:
+                break;
+            }
+            if (d.description.empty())
+                std::fprintf(f, "%-20s %-10s\n", d.name.c_str(), ts);
+            else
+                std::fprintf(f, "%-20s %-10s \"%s\"\n", d.name.c_str(), ts, d.description.c_str());
+        }
+    }
 
     // [USER_FLAG_VALUES]
-    if(!swmm5&&ctx.user_flags.value_count()>0){sec(f,"USER_FLAG_VALUES");
-    std::fprintf(f,";;%-14s %-16s %-20s %s\n","ObjectType","ObjectName","FlagName","Value");
-    std::fprintf(f,";;%-14s %-16s %-20s\n","--------------","----------------","--------------------");
-    for(const auto&kv:ctx.user_flags.all_values()){const auto&k=kv.first;
-    auto p1=k.find(':');if(p1==std::string::npos)continue;auto p2=k.find(':',p1+1);if(p2==std::string::npos)continue;
-    std::fprintf(f,"%-14s %-16s %-20s ",k.substr(0,p1).c_str(),k.substr(p1+1,p2-p1-1).c_str(),k.substr(p2+1).c_str());
-    const auto&v=kv.second;
-    if(std::holds_alternative<bool>(v))std::fprintf(f,"%s\n",std::get<bool>(v)?"YES":"NO");
-    else if(std::holds_alternative<int>(v))std::fprintf(f,"%d\n",std::get<int>(v));
-    else if(std::holds_alternative<double>(v))std::fprintf(f,"%g\n",std::get<double>(v));
-    else if(std::holds_alternative<std::string>(v)){const auto&s=std::get<std::string>(v);
-    if(s.find(' ')!=std::string::npos)std::fprintf(f,"\"%s\"\n",s.c_str());else std::fprintf(f,"%s\n",s.c_str());}
-    }}
+    if (!swmm5 && ctx.user_flags.value_count() > 0) {
+        sec(f, "USER_FLAG_VALUES");
+        std::fprintf(f, ";;%-14s %-16s %-20s %s\n", "ObjectType", "ObjectName", "FlagName",
+                     "Value");
+        std::fprintf(f, ";;%-14s %-16s %-20s\n", "--------------", "----------------",
+                     "--------------------");
+        for (const auto& kv : ctx.user_flags.all_values()) {
+            const auto& k = kv.first;
+            auto p1 = k.find(':');
+            if (p1 == std::string::npos)
+                continue;
+            auto p2 = k.find(':', p1 + 1);
+            if (p2 == std::string::npos)
+                continue;
+            std::fprintf(f, "%-14s %-16s %-20s ", k.substr(0, p1).c_str(),
+                         k.substr(p1 + 1, p2 - p1 - 1).c_str(), k.substr(p2 + 1).c_str());
+            const auto& v = kv.second;
+            if (std::holds_alternative<bool>(v))
+                std::fprintf(f, "%s\n", std::get<bool>(v) ? "YES" : "NO");
+            else if (std::holds_alternative<int>(v))
+                std::fprintf(f, "%d\n", std::get<int>(v));
+            else if (std::holds_alternative<double>(v))
+                std::fprintf(f, "%.17g\n", std::get<double>(v));
+            else if (std::holds_alternative<std::string>(v)) {
+                const auto& s = std::get<std::string>(v);
+                if (s.find(' ') != std::string::npos)
+                    std::fprintf(f, "\"%s\"\n", s.c_str());
+                else
+                    std::fprintf(f, "%s\n", s.c_str());
+            }
+        }
+    }
 
     // [FILES] — secondary file references (rainfall / runoff / RDII /
     // inflows / outflows / hot-start save & use).  Mode → keyword
@@ -3653,45 +4831,44 @@ int writeInpFile(const SimulationContext&  ctx_internal,
         sec(f, "FILES");
         std::fprintf(f, ";;%-12s %-10s %s\n", "Mode", "FileType", "Path");
         auto mode_word = [](FileMode m) {
-            return m == FileMode::SAVE ? "SAVE" :
-                   m == FileMode::USE  ? "USE"  : "";
+            return m == FileMode::SAVE ? "SAVE" : m == FileMode::USE ? "USE" : "";
         };
-        auto write_pair = [&](FileMode mode, const char* kind,
-                               const FilePathPair& slot) {
-            if (mode == FileMode::NONE || slot.empty()) return;
-            const std::string tok = emit_path_token(slot, dst_dir,
-                                                     force_abs_paths, warnings);
-            std::fprintf(f, "%-13s %-10s \"%s\"\n",
-                          mode_word(mode), kind, tok.c_str());
+        auto write_pair = [&](FileMode mode, const char* kind, const FilePathPair& slot) {
+            if (mode == FileMode::NONE || slot.empty())
+                return;
+            const std::string tok = emit_path_token(slot, dst_dir, force_abs_paths, warnings);
+            std::fprintf(f, "%-13s %-10s \"%s\"\n", mode_word(mode), kind, tok.c_str());
         };
         write_pair(ctx.files.rainfall_mode, "RAINFALL", ctx.files.rainfall_path);
-        write_pair(ctx.files.runoff_mode,   "RUNOFF",   ctx.files.runoff_path);
-        write_pair(ctx.files.rdii_mode,     "RDII",     ctx.files.rdii_path);
+        write_pair(ctx.files.runoff_mode, "RUNOFF", ctx.files.runoff_path);
+        write_pair(ctx.files.rdii_mode, "RDII", ctx.files.rdii_path);
         if (!ctx.files.inflows_path.empty()) {
-            const std::string tok = emit_path_token(ctx.files.inflows_path,
-                                                     dst_dir, force_abs_paths, warnings);
-            std::fprintf(f, "%-13s %-10s \"%s\"\n", "USE",  "INFLOWS", tok.c_str());
+            const std::string tok =
+                emit_path_token(ctx.files.inflows_path, dst_dir, force_abs_paths, warnings);
+            std::fprintf(f, "%-13s %-10s \"%s\"\n", "USE", "INFLOWS", tok.c_str());
         }
         if (!ctx.files.outflows_path.empty()) {
-            const std::string tok = emit_path_token(ctx.files.outflows_path,
-                                                     dst_dir, force_abs_paths, warnings);
+            const std::string tok =
+                emit_path_token(ctx.files.outflows_path, dst_dir, force_abs_paths, warnings);
             std::fprintf(f, "%-13s %-10s \"%s\"\n", "SAVE", "OUTFLOWS", tok.c_str());
         }
         if (!ctx.files.hotstart_use_path.empty()) {
-            const std::string tok = emit_path_token(ctx.files.hotstart_use_path,
-                                                     dst_dir, force_abs_paths, warnings);
+            const std::string tok =
+                emit_path_token(ctx.files.hotstart_use_path, dst_dir, force_abs_paths, warnings);
             std::fprintf(f, "%-13s %-10s \"%s\"\n", "USE", "HOTSTART", tok.c_str());
         }
-        for (const auto &save : ctx.files.hotstart_saves) {
-            if (save.path.empty()) continue;
-            const std::string tok = emit_path_token(save.path, dst_dir,
-                                                     force_abs_paths, warnings);
+        for (const auto& save : ctx.files.hotstart_saves) {
+            if (save.path.empty())
+                continue;
+            const std::string tok = emit_path_token(save.path, dst_dir, force_abs_paths, warnings);
             // Trailing format keyword only when one was chosen, so rows
             // without it round-trip unchanged. SWMM 5 export drops it: on
             // a dated row legacy would otherwise ignore the datetime.
             const char* fmt = "";
-            if (save.format == HotstartFormat::LEGACY) fmt = " LEGACY";
-            if (save.format == HotstartFormat::NATIVE) fmt = " NATIVE";
+            if (save.format == HotstartFormat::LEGACY)
+                fmt = " LEGACY";
+            if (save.format == HotstartFormat::NATIVE)
+                fmt = " NATIVE";
             if (swmm5 && *fmt) {
                 note("[FILES] SAVE HOTSTART format keyword omitted (SWMM 5.x profile)");
                 fmt = "";
@@ -3700,23 +4877,26 @@ int writeInpFile(const SimulationContext&  ctx_internal,
                 char date_buf[16], time_buf[16];
                 fmt_date(date_buf, save.datetime);
                 fmt_time(time_buf, save.datetime);
-                std::fprintf(f, "%-13s %-10s \"%s\" %s %s%s\n",
-                              "SAVE", "HOTSTART",
-                              tok.c_str(),
-                              date_buf, time_buf, fmt);
+                std::fprintf(f, "%-13s %-10s \"%s\" %s %s%s\n", "SAVE", "HOTSTART", tok.c_str(),
+                             date_buf, time_buf, fmt);
             } else {
-                std::fprintf(f, "%-13s %-10s \"%s\"%s\n", "SAVE", "HOTSTART",
-                              tok.c_str(), fmt);
+                std::fprintf(f, "%-13s %-10s \"%s\"%s\n", "SAVE", "HOTSTART", tok.c_str(), fmt);
             }
         }
     }
 
     // [PLUGINS]
-    if(swmm5&&!ctx.plugin_specs.empty()) note("[PLUGINS] omitted (SWMM 5.x profile)");
-    if(!swmm5&&!ctx.plugin_specs.empty()){sec(f,"PLUGINS");
-    for(const auto&ps:ctx.plugin_specs){std::fprintf(f,"%s",quote_path(ps.path).c_str());
-    for(const auto&a:ps.init_args)std::fprintf(f," %s",quote_argument(a).c_str());std::fprintf(f,"\n");
-    }}
+    if (swmm5 && !ctx.plugin_specs.empty())
+        note("[PLUGINS] omitted (SWMM 5.x profile)");
+    if (!swmm5 && !ctx.plugin_specs.empty()) {
+        sec(f, "PLUGINS");
+        for (const auto& ps : ctx.plugin_specs) {
+            std::fprintf(f, "%s", quote_path(ps.path).c_str());
+            for (const auto& a : ps.init_args)
+                std::fprintf(f, " %s", quote_argument(a).c_str());
+            std::fprintf(f, "\n");
+        }
+    }
 
     // Do not publish component files after a detected main-output failure.
     if (std::ferror(f) || std::fflush(f) != 0) {
@@ -3729,34 +4909,40 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     // The config= reference is an external-file slot like any other, so it
     // goes through emit_path_token (Slice IO-4): an absolute path is rebased
     // against the destination directory, a relative one passes through.
-    if(swmm5&&!ctx.process_component_specs.empty()) note("[PROCESS_COMPONENTS] omitted (SWMM 5.x profile)");
-    if(!swmm5&&!ctx.process_component_specs.empty()){sec(f,"PROCESS_COMPONENTS");
-    for(const auto&pc:ctx.process_component_specs){std::fprintf(f,"%s",pc.id.c_str());
-    if(!pc.config_path.empty()){const std::string cfg=
-    emit_path_token(pc.config_path,dst_dir,force_abs_paths,warnings);
-    std::fprintf(f," config=\"%s\"",cfg.c_str());
+    if (swmm5 && !ctx.process_component_specs.empty())
+        note("[PROCESS_COMPONENTS] omitted (SWMM 5.x profile)");
+    if (!swmm5 && !ctx.process_component_specs.empty()) {
+        sec(f, "PROCESS_COMPONENTS");
+        for (const auto& pc : ctx.process_component_specs) {
+            std::fprintf(f, "%s", pc.id.c_str());
+            if (!pc.config_path.empty()) {
+                const std::string cfg =
+                    emit_path_token(pc.config_path, dst_dir, force_abs_paths, warnings);
+                std::fprintf(f, " config=\"%s\"", cfg.c_str());
 
-    if (!writeComponentConfig(ctx, pc, cfg, dst_dir, warnings, opts)) return -1;
+                if (!opts.skip_component_files && !writeComponentConfig(ctx, pc, cfg, dst_dir, warnings, opts))
+                    return -1;
+            }
+            for (const auto& a : pc.args)
+                std::fprintf(f, " %s=\"%s\"", a.first.c_str(), a.second.c_str());
+            std::fprintf(f, "\n");
+        }
     }
-    for(const auto&a:pc.args)std::fprintf(f," %s=\"%s\"",a.first.c_str(),a.second.c_str());
-    std::fprintf(f,"\n");
-    }}
 
-    // Embedded component sections ([REACTION_*] today) are NOT serialized —
-    // there is no per-component saveData() until IO3, and the intended layout
-    // is an external config file anyway. Say so rather than dropping
-    // user-authored model data silently: whether they were applied or
-    // overridden by an external file, they are gone from the deck we just
-    // wrote.
-    if(warnings && !ctx.embedded_component_sections.empty()){
-    std::string tags;
-    for(const auto&es:ctx.embedded_component_sections){
-    if(!tags.empty())tags+=", ";tags+="["+es.first+"]";}
-    warnings->push_back(
-    "Embedded component sections are NOT written back to the .inp and are "
-    "lost from this save: "+tags+". Move them to an external component "
-    "config file registered in [PROCESS_COMPONENTS] (config=\"model.rxn\") "
-    "to keep them — per-component serialization arrives with plan phase IO3.");
+    if (!swmm5) {
+        bool wroteReactions = false;
+        for (const auto& section : ctx.embedded_component_sections) {
+            if (section.first.starts_with("REACTION_") && ctx.reactions.n_species() > 0) {
+                if (!wroteReactions) {
+                    const auto text = transport::serializeReactionSystem(ctx);
+                    std::fprintf(f, "%s", text.c_str());
+                    wroteReactions = true;
+                }
+                continue;
+            }
+            sec(f, section.first.c_str());
+            for (const auto& line : section.second) std::fprintf(f, "%s\n", line.c_str());
+        }
     }
 
     // [2D_*] — 2D surface-routing model definition (no-op for 1D models
@@ -3783,8 +4969,56 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     }
     if (!swmm5 && !write2DSections(f, ctx, dst_dir, force_abs_paths, warnings, opts))
         return -1;
-    if (!output.commit()) { note(output.error()); return -1; }
+    if (output && !output->commit()) {
+        note(output->error());
+        return -1;
+    }
     return 0;
+}
+
+std::string modelText(const SimulationContext& ctx, const std::string& anchor, bool internal_units) {
+    std::unique_ptr<FILE, decltype(&std::fclose)> file(std::tmpfile(), &std::fclose);
+    if (!file)
+        throw std::runtime_error("Cannot create native model serialization stream");
+    // Data-level importers may supply sparse optional parallel columns. Complete
+    // a copy in that case; ordinary API models avoid this extra allocation.
+    std::unique_ptr<SimulationContext> completed;
+    const bool sparse = ctx.nodes.comments.size() < std::size_t(ctx.n_nodes()) ||
+        ctx.links.direction.size() < std::size_t(ctx.n_links()) ||
+        ctx.subcatches.snowpack_name.size() < std::size_t(ctx.n_subcatches()) ||
+        ctx.gages.scale_factor.size() < std::size_t(ctx.gage_names.size()) ||
+        ctx.pollutants.mwt.size() < std::size_t(ctx.n_pollutants());
+    if (sparse) {
+        completed = std::make_unique<SimulationContext>(ctx);
+        auto grow = [](auto& store, auto& primary, int count) {
+            auto values = std::move(primary);
+            primary.clear(); store.grow_to(count);
+            std::copy_n(values.begin(), std::min(values.size(), primary.size()), primary.begin());
+        };
+        grow(completed->nodes, completed->nodes.type, ctx.n_nodes());
+        grow(completed->links, completed->links.type, ctx.n_links());
+        grow(completed->subcatches, completed->subcatches.area, ctx.n_subcatches());
+        grow(completed->gages, completed->gages.source, ctx.gage_names.size());
+        completed->pollutants.mwt.resize(ctx.n_pollutants(), 1.0);
+        completed->pollutants.comments.resize(ctx.n_pollutants());
+    }
+    InpWriteOptions options;
+    options.stream = file.get();
+    options.inline_mesh = true;
+    options.internal_units = internal_units;
+    options.skip_component_files = true;
+    std::vector<std::string> warnings;
+    if (writeInpFile(completed ? *completed : ctx, anchor, &warnings, options) != 0 || std::fflush(file.get()) != 0)
+        throw std::runtime_error(warnings.empty() ? "Cannot serialize native model" : warnings.back());
+    std::rewind(file.get());
+    std::string text;
+    char buffer[16384];
+    std::size_t count;
+    while ((count = std::fread(buffer, 1, sizeof buffer, file.get())) != 0)
+        text.append(buffer, count);
+    if (std::ferror(file.get()))
+        throw std::runtime_error("Cannot read native model serialization stream");
+    return text;
 }
 
 } // namespace inp_writer

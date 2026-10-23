@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_ard_transport.cpp
- * @brief Phase E1 gates for QUALITY_SOLVER EULERIAN_ARD
+ * @file      test_ard_transport.cpp
+ * @brief     Phase E1 gates for QUALITY_SOLVER EULERIAN_ARD
  *        (plans/transport/EULERIAN_ARD_TRANSPORT_PLAN.md §6, E1).
  *
  * @details Three engine-level gates on a 3-conduit line (J0→C1→J1→C2→J2→C3→OUT)
@@ -35,9 +35,9 @@
  *          working directory with the same underscore-prefix convention the
  *          other engine tests use (CLAUDE.md §4.1).
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -55,25 +55,48 @@
 
 namespace {
 
-constexpr double kC0 = 12.5;  ///< inflow / initial concentration (mg/L)
+constexpr double kC0 = 12.5; ///< inflow / initial concentration (mg/L)
 
+/**
+ * @brief Borrow the concrete engine behind an opaque test handle.
+ *
+ * This exact helper performs only an unchecked static_cast and dereference. It does not validate
+ * lifecycle, retain the handle or transfer ownership; fixture code may use the reference to inspect
+ * or seed internal state.
+ *
+ * @param[in] engine Live non-null new-engine handle whose concrete allocation is SWMMEngine; caller
+ *     keeps ownership.
+ * @return Mutable engine reference that remains valid until handle destruction or replacement.
+ */
 openswmm::SWMMEngine& as_cpp_engine(SWMM_Engine engine) {
     return *static_cast<openswmm::SWMMEngine*>(engine);
 }
 
-/// Three conduits in series, constant 1 cfs inflow at J0 with pollutant TSS
-/// at concentration `c_in`; initial TSS everywhere = `c_init`.
-/// `extra_options` appends raw [OPTIONS] lines (E2: FV_MIN_CELLS etc.).
-void write_deck(const char* path, const char* quality_solver_line,
-                double c_in, double c_init,
+/**
+ * @brief Write a six-hour concentration-source fixture for transport comparisons.
+ *
+ * Uses CFS, a three-conduit chain and 1 cfs source flow; no validation of concentration ranges or
+ * options occurs. Opens/truncates the deck using a local ofstream; parent directories must exist.
+ * Stream open/write/close outcomes are not checked, and sidecar names/text are not escaped.
+ * Caller-owned inputs are not retained.
+ *
+ * @param[in] path Destination deck filename, non-null when a character pointer; borrowed only
+ *     during this call. Existing files are truncated.
+ * @param[in] quality_solver_line Non-null raw OPTIONS text selecting quality solver; include a
+ *     trailing newline when nonempty.
+ * @param[in] c_in J0 source TSS concentration in mg/L.
+ * @param[in] c_init Initial global TSS concentration in mg/L.
+ * @param[in] extra_options Non-null raw additional OPTIONS text; include a trailing newline when
+ *     nonempty because START_DATE follows immediately.
+ */
+void write_deck(const char* path, const char* quality_solver_line, double c_in, double c_init,
                 const char* extra_options = "") {
     std::ofstream f(path);
     f << "[TITLE]\nE1 ARD transport gate deck\n\n"
       << "[OPTIONS]\n"
       << "FLOW_UNITS           CFS\n"
       << "FLOW_ROUTING         DYNWAVE\n"
-      << quality_solver_line
-      << extra_options
+      << quality_solver_line << extra_options
       << "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
       << "END_DATE             01/01/2026\nEND_TIME             06:00:00\n"
       << "REPORT_START_DATE    01/01/2026\nREPORT_START_TIME    00:00:00\n"
@@ -100,38 +123,61 @@ void write_deck(const char* path, const char* quality_solver_line,
       << ";;Name  Units  Crain  Cgw  Crdii  Kdecay  SnowOnly  CoPollut  "
          "CoFrac  Cdwf  Cinit\n"
       << "TSS     MG/L   0.0    0.0  0.0    0.0     NO        *         "
-         "0.0     0.0   " << c_init << "\n\n"
+         "0.0     0.0   "
+      << c_init << "\n\n"
       << "[INFLOWS]\n"
       << ";;Node  Constituent  Timeseries  Type    Mfactor  Sfactor  "
          "Baseline  Pattern\n"
       << "J0      FLOW         \"\"          FLOW    1.0      1.0      "
          "1.0\n"
-      << "J0      TSS          \"\"          CONCEN  1.0      1.0      "
-      << c_in << "\n\n"
+      << "J0      TSS          \"\"          CONCEN  1.0      1.0      " << c_in << "\n\n"
       << "[REPORT]\nINPUT NO\nCONTINUITY YES\nFLOWSTATS NO\n";
 }
 
 class ArdTransportTest : public ::testing::Test {
 protected:
+    /**
+     * @brief Allocate the per-test engine handle and assert allocation succeeded.
+     *
+     * Leaves the handle unopen for this fixture; its teardown owns destruction. A fatal allocation
+     * assertion stops setup.
+     */
     void SetUp() override {
         engine_ = swmm_engine_create();
         ASSERT_NE(engine_, nullptr);
     }
+    /**
+     * @brief Destroy a non-null fixture handle and clear its member slot.
+     *
+     * Engine destruction supplies remaining model cleanup; safe after setup failed before allocation.
+     */
     void TearDown() override {
-        if (engine_) { swmm_engine_destroy(engine_); engine_ = nullptr; }
+        if (engine_) {
+            swmm_engine_destroy(engine_);
+            engine_ = nullptr;
+        }
     }
-    /// @param forced_mass_rate  if > 0, applied once via
-    ///        swmm_node_set_quality_mass_flux at node 0 / pollutant 0 after
-    ///        start() — the persistent runtime-API forcing path.
-    void run(const char* inp, const char* rpt, const char* out,
-             double forced_mass_rate = 0.0) {
+    /**
+     * @brief Run the owned ARD fixture with optional persistent node quality forcing.
+     *
+     * Requires an allocated fixture handle. Fatally asserts open/init/start, optional runtime forcing,
+     * each accepted step and end. Uses a 200000-iteration guard but does not separately fail on
+     * exhaustion, so end can occur before natural completion. Retains ended engine for queries and
+     * teardown; forced node/species zero must exist. Fatal returns leave partial lifecycle for
+     * teardown.
+     *
+     * @param[in] inp Non-null input filename.
+     * @param[in] rpt Report destination passed to open; matching file may be overwritten.
+     * @param[in] out Result destination passed to open; saved results are enabled.
+     * @param[in] forced_mass_rate Positive raw internal concentration-unit*ft3/s amount-rate
+     *     contribution for node/pollutant zero; nonpositive skips setting it.
+     */
+    void run(const char* inp, const char* rpt, const char* out, double forced_mass_rate = 0.0) {
         ASSERT_EQ(swmm_engine_open(engine_, inp, rpt, out, nullptr), SWMM_OK);
         ASSERT_EQ(swmm_engine_initialize(engine_), SWMM_OK);
         ASSERT_EQ(swmm_engine_start(engine_, 1), SWMM_OK);
         if (forced_mass_rate > 0.0)
-            ASSERT_EQ(swmm_node_set_quality_mass_flux(engine_, 0, 0,
-                                                      forced_mass_rate),
-                      SWMM_OK);
+            ASSERT_EQ(swmm_node_set_quality_mass_flux(engine_, 0, 0, forced_mass_rate), SWMM_OK);
         double elapsed_days = 0.0;
         int guard = 0;
         do {
@@ -139,7 +185,12 @@ protected:
         } while (elapsed_days > 0.0 && ++guard < 200000);
         ASSERT_EQ(swmm_engine_end(engine_), SWMM_OK);
     }
-    /// Fresh engine handle, so one TEST_F can run several simulations.
+    /**
+     * @brief Destroy the previous ARD fixture handle and allocate a fresh unopen engine.
+     *
+     * Invalidates all borrowed model references, then fatally asserts allocation. Does not preserve
+     * runtime forcing, model state or output session; teardown owns the replacement handle.
+     */
     void restart() {
         swmm_engine_destroy(engine_);
         engine_ = swmm_engine_create();
@@ -152,8 +203,7 @@ protected:
 // Gate 1 — uniform field stays uniform under EULERIAN_ARD (E1 / G-UT2 seed).
 // ---------------------------------------------------------------------------
 TEST_F(ArdTransportTest, UniformFieldStaysUniform) {
-    write_deck("_ard_uniform.inp", "QUALITY_SOLVER       EULERIAN_ARD\n",
-               kC0, kC0);
+    write_deck("_ard_uniform.inp", "QUALITY_SOLVER       EULERIAN_ARD\n", kC0, kC0);
     run("_ard_uniform.inp", "_ard_uniform.rpt", "_ard_uniform.out");
 
     const auto& ctx = as_cpp_engine(engine_).context();
@@ -167,14 +217,11 @@ TEST_F(ArdTransportTest, UniformFieldStaysUniform) {
     ASSERT_FALSE(fell_back);
 
     for (int l = 0; l < ctx.n_links(); ++l)
-        EXPECT_NEAR(ctx.links.conc[static_cast<std::size_t>(l)], kC0,
-                    1.0e-6 * kC0)
-            << "link " << l;
+        EXPECT_NEAR(ctx.links.conc[static_cast<std::size_t>(l)], kC0, 1.0e-6 * kC0) << "link " << l;
     for (int n = 0; n < ctx.n_nodes(); ++n) {
         // Outfalls hold no volume; only check nodes that carry water.
         if (ctx.nodes.volume[static_cast<std::size_t>(n)] > 1.0e-9)
-            EXPECT_NEAR(ctx.nodes.conc[static_cast<std::size_t>(n)], kC0,
-                        1.0e-6 * kC0)
+            EXPECT_NEAR(ctx.nodes.conc[static_cast<std::size_t>(n)], kC0, 1.0e-6 * kC0)
                 << "node " << n;
     }
     std::remove("_ard_uniform.inp");
@@ -184,8 +231,7 @@ TEST_F(ArdTransportTest, UniformFieldStaysUniform) {
 // Gate 2 — max principle + monotone front on a clean system fed at c0.
 // ---------------------------------------------------------------------------
 TEST_F(ArdTransportTest, FrontIsBoundedMonotoneAndOrdered) {
-    write_deck("_ard_front.inp", "QUALITY_SOLVER       EULERIAN_ARD\n",
-               kC0, 0.0);
+    write_deck("_ard_front.inp", "QUALITY_SOLVER       EULERIAN_ARD\n", kC0, 0.0);
     run("_ard_front.inp", "_ard_front.rpt", "_ard_front.out");
 
     const auto& ctx = as_cpp_engine(engine_).context();
@@ -210,7 +256,7 @@ TEST_F(ArdTransportTest, FrontIsBoundedMonotoneAndOrdered) {
 // Gate 3 — LEGACY still the default; both engines agree at steady state.
 // ---------------------------------------------------------------------------
 TEST_F(ArdTransportTest, LegacyDefaultAndSteadyStateAgreement) {
-    write_deck("_ard_legacy.inp", "", kC0, 0.0);   // no QUALITY_SOLVER line
+    write_deck("_ard_legacy.inp", "", kC0, 0.0); // no QUALITY_SOLVER line
     run("_ard_legacy.inp", "_ard_legacy.rpt", "_ard_legacy.out");
     std::vector<double> legacy_conc;
     {
@@ -223,8 +269,7 @@ TEST_F(ArdTransportTest, LegacyDefaultAndSteadyStateAgreement) {
     engine_ = swmm_engine_create();
     ASSERT_NE(engine_, nullptr);
 
-    write_deck("_ard_steady.inp", "QUALITY_SOLVER       EULERIAN_ARD\n",
-               kC0, 0.0);
+    write_deck("_ard_steady.inp", "QUALITY_SOLVER       EULERIAN_ARD\n", kC0, 0.0);
     run("_ard_steady.inp", "_ard_steady.rpt", "_ard_steady.out");
     const auto& ctx = as_cpp_engine(engine_).context();
     ASSERT_EQ(legacy_conc.size(), ctx.links.conc.size());
@@ -244,7 +289,16 @@ TEST_F(ArdTransportTest, LegacyDefaultAndSteadyStateAgreement) {
 // passthrough of the donor node store.
 // ---------------------------------------------------------------------------
 
-/// J0 →C1→ J1 →O1(orifice)→ J2 →C2→ OUT, constant inflow at concentration c0.
+/**
+ * @brief Write a two-conduit/orifice chain isolating structure quality passthrough.
+ *
+ * Uses six-hour CFS/EULERIAN_ARD settings, wet initial nodes and 1 cfs J0 inflow, with zero initial
+ * TSS. IO status is unchecked; no parsing or simulation occurs and no caller storage is retained.
+ *
+ * @param[in] path Non-null destination filename; parent directory must exist and existing content
+ *     is truncated.
+ * @param[in] c_in Authored TSS inflow concentration in mg/L, copied without range validation.
+ */
 void write_orifice_deck(const char* path, double c_in) {
     std::ofstream f(path);
     f << "[TITLE]\nE2 structure passthrough gate deck\n\n"
@@ -284,8 +338,7 @@ void write_orifice_deck(const char* path, double c_in) {
       << ";;Node  Constituent  Timeseries  Type    Mfactor  Sfactor  "
          "Baseline  Pattern\n"
       << "J0      FLOW         \"\"          FLOW    1.0      1.0      1.0\n"
-      << "J0      TSS          \"\"          CONCEN  1.0      1.0      "
-      << c_in << "\n\n"
+      << "J0      TSS          \"\"          CONCEN  1.0      1.0      " << c_in << "\n\n"
       << "[REPORT]\nINPUT NO\nCONTINUITY YES\nFLOWSTATS NO\n";
 }
 
@@ -308,11 +361,10 @@ TEST_F(ArdTransportTest, StructurePassthroughCarriesMass) {
     for (int l = 0; l < ctx.n_links(); ++l) {
         const double c = ctx.links.conc[static_cast<std::size_t>(l)];
         EXPECT_GE(c, -tol) << "link " << l;
-        EXPECT_LE(c, kC0 + tol) << "link " << l;   // max principle across the structure
+        EXPECT_LE(c, kC0 + tol) << "link " << l; // max principle across the structure
     }
     c2 = ctx.links.conc[1];
-    EXPECT_GT(c2, 0.5 * kC0)
-        << "constituent did not cross the orifice (E2 passthrough)";
+    EXPECT_GT(c2, 0.5 * kC0) << "constituent did not cross the orifice (E2 passthrough)";
     std::remove("_ard_orifice.inp");
 }
 
@@ -322,8 +374,7 @@ TEST_F(ArdTransportTest, StructurePassthroughCarriesMass) {
 // storage topology at this resolution but differ in mixing order.
 // ---------------------------------------------------------------------------
 TEST_F(ArdTransportTest, CstrLimitTracksLegacy) {
-    const char* kCstrOpts =
-        "FV_MIN_CELLS         1\nFV_SCALAR_SCHEME     UPWIND\n";
+    const char* kCstrOpts = "FV_MIN_CELLS         1\nFV_SCALAR_SCHEME     UPWIND\n";
     write_deck("_ard_cstr_legacy.inp", "", kC0, 0.0);
     run("_ard_cstr_legacy.inp", "_ard_cstr_legacy.rpt", "_ard_cstr_legacy.out");
     std::vector<double> legacy_conc;
@@ -335,8 +386,7 @@ TEST_F(ArdTransportTest, CstrLimitTracksLegacy) {
     engine_ = swmm_engine_create();
     ASSERT_NE(engine_, nullptr);
 
-    write_deck("_ard_cstr.inp", "QUALITY_SOLVER       EULERIAN_ARD\n",
-               kC0, 0.0, kCstrOpts);
+    write_deck("_ard_cstr.inp", "QUALITY_SOLVER       EULERIAN_ARD\n", kC0, 0.0, kCstrOpts);
     run("_ard_cstr.inp", "_ard_cstr.rpt", "_ard_cstr.out");
     const auto& ctx = as_cpp_engine(engine_).context();
     ASSERT_EQ(legacy_conc.size(), ctx.links.conc.size());
@@ -362,9 +412,12 @@ TEST_F(ArdTransportTest, CstrLimitTracksLegacy) {
 // apiExtQualMassFlux → Node[j].newQual[p] + massbal EXTERNAL_INFLOW.
 // ---------------------------------------------------------------------------
 TEST_F(ArdTransportTest, ForcedQualityMassFluxRoutesUnderBothEngines) {
-    struct Case { const char* name; const char* solver_line; };
+    struct Case {
+        const char* name;
+        const char* solver_line;
+    };
     const Case cases[] = {
-        {"LEGACY",       ""},
+        {"LEGACY", ""},
         {"EULERIAN_ARD", "QUALITY_SOLVER       EULERIAN_ARD\n"},
     };
 
@@ -387,8 +440,8 @@ TEST_F(ArdTransportTest, ForcedQualityMassFluxRoutesUnderBothEngines) {
         const double forced_c0 = ctx.links.conc[0];
 
         EXPECT_GT(forced_c0, 1.5 * base_c0)
-            << "forced quality mass never reached the network (base "
-            << base_c0 << " -> forced " << forced_c0 << ")";
+            << "forced quality mass never reached the network (base " << base_c0 << " -> forced "
+            << forced_c0 << ")";
 
         // ...and it must be booked, or the mass shows up as a continuity hole.
         double err = 0.0;
@@ -400,4 +453,4 @@ TEST_F(ArdTransportTest, ForcedQualityMassFluxRoutesUnderBothEngines) {
     std::remove("_ard_force.inp");
 }
 
-}  // namespace
+} // namespace

@@ -15,13 +15,13 @@
 // limitations under the License.
 
 /**
- * @file Hdf5PluginInfo.cpp
- * @brief Factory methods for the HDF5 plugin info singleton.
+ * @file      Hdf5PluginInfo.cpp
+ * @brief     Factory methods for the HDF5 plugin info singleton.
  * @ingroup engine_hdf5
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "Hdf5PluginInfo.hpp"
@@ -29,6 +29,7 @@
 
 namespace openswmm::h5io {
 
+// Contract: openswmm::h5io::Hdf5PluginInfo::create_input_plugin.
 IInputPlugin* Hdf5PluginInfo::create_input_plugin() const {
     // The caller owns the instance; swmm_model_write_with_plugin creates one
     // transiently per call and deletes it, so the engine's primary input
@@ -36,4 +37,4 @@ IInputPlugin* Hdf5PluginInfo::create_input_plugin() const {
     return new Hdf5InputPlugin();
 }
 
-}  // namespace openswmm::h5io
+} // namespace openswmm::h5io

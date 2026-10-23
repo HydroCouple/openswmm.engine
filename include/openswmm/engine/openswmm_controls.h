@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file openswmm_controls.h
- * @brief OpenSWMM Engine — Control Rules C API.
+ * @file      openswmm_controls.h
+ * @brief     OpenSWMM Engine — Control Rules C API.
  *
  * @details Control rule addition, retrieval, clearing, and direct
  *          link setting/status overrides.
@@ -24,9 +24,9 @@
  * @ingroup engine_api
  * @see openswmm_engine.h
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_CONTROLS_H
@@ -43,176 +43,159 @@ extern "C" {
  * ========================================================================= */
 
 /**
- * @brief Add a control rule from its text representation.
+ * @brief Store a control-rule text block and compile immediately when the engine is initialized.
  *
- * @details The rule text follows the standard SWMM control rule syntax
- *          (e.g., "RULE R1\\nIF NODE J1 DEPTH > 5\\nTHEN PUMP P1 STATUS = ON").
- *          Lines are separated by newline characters within the string.
+ * CREATED/BUILDING/OPENED store text verbatim and defer parsing to initialization, allowing
+ * unresolved objects during model construction. Other states first validate in a fresh control
+ * engine, then append to the live engine. Rejected text is not stored and the last-error message
+ * identifies the line/reason. A live block must contain at least one RULE; references to
+ * VARIABLE/EXPRESSION declarations in earlier blocks do not resolve in the validation sandbox. One
+ * stored text block may contain several compiled rules.
  *
- *          Behaviour depends on the engine's lifecycle state:
- *
- *          - `CREATED` / `BUILDING` / `OPENED` — the text is stored verbatim
- *            and compiled later by `swmm_engine_initialize()`. It is *not*
- *            validated here, because the objects a rule references may
- *            legitimately not exist yet while a model is being built.
- *          - `INITIALIZED` and beyond — rules have already been compiled, so
- *            the text is parsed and compiled into the live control engine and
- *            takes effect immediately. Text the parser rejects is not stored;
- *            @ref swmm_get_last_error_msg then carries a "line N: reason"
- *            diagnostic. Use @ref swmm_control_validate_rule to pre-flight.
- *
- * @param engine     Engine handle.
- * @param rule_text  Null-terminated string containing the full rule text.
- * @returns SWMM_OK on success, SWMM_ERR_BADPARAM if the engine is initialized
- *          and the parser rejects the text or finds no rule in it, or another
- *          error code.
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access.
+ * @param[in] rule_text Non-null NUL-terminated SWMM [CONTROLS] text; copied internally. May contain
+ *     newline-separated rules and declarations.
+ * @return SWMM_OK on storage/compilation; SWMM_ERR_BADHANDLE for null engine or SWMM_ERR_BADPARAM
+ *     for null text or a live parser rejection.
  */
 SWMM_ENGINE_API int swmm_control_add_rule(SWMM_Engine engine, const char* rule_text);
 
 /**
- * @brief Get the total number of control rules defined.
- * @param engine  Engine handle.
- * @returns Number of control rules, or -1 on error.
+ * @brief Count stored control text blocks.
+ *
+ * The count is the number of entries added to the text store, not necessarily the number of
+ * compiled RULE clauses inside them.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access.
+ * @return Number of stored blocks, or -1 for null engine.
  */
 SWMM_ENGINE_API int swmm_control_count(SWMM_Engine engine);
 
 /**
- * @brief Get the text of a control rule by index.
- * @param engine  Engine handle.
- * @param idx     Zero-based rule index.
- * @param buf     Caller-allocated buffer to receive the rule text.
- * @param buflen  Size of @p buf in bytes.
- * @returns SWMM_OK on success, or an error code.
+ * @brief Copy a stored control text block by index.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access.
+ * @param[in] idx Zero-based stored text-block index in [0,swmm_control_count(engine)).
+ * @param[out] buf Non-null caller-owned destination, NUL-terminated on success. Excess text is
+ *     silently truncated to buflen-1 bytes.
+ * @param[in] buflen Positive destination capacity in bytes, including the NUL terminator.
+ * @return SWMM_OK, including when truncated; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX
+ *     for invalid idx, or SWMM_ERR_BADPARAM for null/empty-capacity buffer.
  */
 SWMM_ENGINE_API int swmm_control_get_rule(SWMM_Engine engine, int idx, char* buf, int buflen);
 
 /**
- * @brief Get the canonical name of a control rule by index.
+ * @brief Copy the RULE identifier at the beginning of a stored text block.
  *
- * @details Parses the stored rule text and returns the first whitespace-delimited
- *          token that follows the `RULE` keyword (case-insensitive match, leading
- *          whitespace tolerated). On parse failure — when the rule text does not
- *          begin with a `RULE` keyword token — returns `SWMM_ERR_BADPARAM` so
- *          callers can surface a sentinel display name for malformed rules.
+ * Skips leading whitespace, matches RULE case-insensitively as a complete token and takes the next
+ * whitespace-delimited token. Leading declarations/comments cause refusal; the function does not
+ * search for a later RULE. Outputs are unchanged on refusal.
  *
- * @param engine  Engine handle.
- * @param idx     Zero-based rule index.
- * @param buf     [out] Caller-allocated buffer to receive the rule name.
- * @param buflen  Size of @p buf in bytes.
- * @returns SWMM_OK on success, `SWMM_ERR_BADPARAM` if the rule text has no
- *          parseable RULE token, or another error code.
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access.
+ * @param[in] idx Zero-based stored text-block index in [0,swmm_control_count(engine)).
+ * @param[out] buf Non-null caller-owned destination, NUL-terminated on success. Excess text is
+ *     silently truncated to buflen-1 bytes.
+ * @param[in] buflen Positive destination capacity in bytes, including the NUL terminator.
+ * @return SWMM_OK, including when truncated; SWMM_ERR_BADHANDLE, SWMM_ERR_BADINDEX, or
+ *     SWMM_ERR_BADPARAM for invalid buffer or text without a RULE/name prefix.
  */
 SWMM_ENGINE_API int swmm_control_get_id(SWMM_Engine engine, int idx, char* buf, int buflen);
 
 /**
- * @brief Remove all control rules from the model.
- * @param engine  Engine handle.
- * @returns SWMM_OK on success, or an error code.
+ * @brief Clear the stored control text blocks.
+ *
+ * Clears the text store without a lifecycle guard. It does not clear the already compiled live
+ * ControlEngine or its PID state; clear before initialization when the intent is to run without
+ * these rules.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access.
+ * @return SWMM_OK, or SWMM_ERR_BADHANDLE for null engine.
  */
 SWMM_ENGINE_API int swmm_control_clear_rules(SWMM_Engine engine);
 
 /**
- * @brief Remove one control rule by index.
+ * @brief Remove one stored control text block while the model is editable.
  *
- * @details Later rule indices shift down by one. BUILDING/OPENED state only.
+ * Later stored-block indices shift down by one. This operation changes the text store before
+ * compilation.
  *
- * @param engine  Engine handle.
- * @param idx     Zero-based rule index (0..swmm_control_count()-1).
- * @returns SWMM_OK, SWMM_ERR_LIFECYCLE, SWMM_ERR_BADHANDLE, or
- *          SWMM_ERR_BADINDEX.
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access.
+ * @param[in] idx Zero-based stored text-block index in [0,swmm_control_count(engine)).
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_LIFECYCLE outside BUILDING/OPENED,
+ *     or SWMM_ERR_BADINDEX for invalid idx.
  */
 SWMM_ENGINE_API int swmm_control_remove_rule(SWMM_Engine engine, int idx);
 
 /**
- * @brief Find control rules whose text references an object by name.
+ * @brief Find stored rule blocks that reference an object name.
  *
- * @details Scans each rule's clauses for an object-type keyword (NODE, LINK,
- *          CONDUIT, PUMP, ORIFICE, WEIR, OUTLET, GAGE) immediately followed by
- *          @p object_name (case-insensitive, matching legacy rule parsing).
- *          Read-only — no delete ever edits rule text; callers decide what to
- *          do with affected rules.
+ * Read-only token-based search using the object-reference scanner. Does not rewrite rules or
+ * resolve references against the object tables.
  *
- * @param engine            Engine handle.
- * @param object_name       Object name to search for.
- * @param rule_indices_out  Receives matching rule indices, ascending (may be
- *                          NULL to query the count only).
- * @param n_inout           In: capacity of rule_indices_out (ignored when it
- *                          is NULL). Out: total number of matching rules.
- * @returns SWMM_OK, SWMM_ERR_BADHANDLE, or SWMM_ERR_BADPARAM if object_name
- *          or n_inout is NULL.
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access.
+ * @param[in] object_name Non-null NUL-terminated name, matched case-insensitively after an object
+ *     keyword (NODE, LINK, CONDUIT, PUMP, ORIFICE, WEIR, OUTLET or GAGE).
+ * @param[out] rule_indices_out Caller-owned array receiving ascending matching indices; NULL
+ *     requests only the total count. A short array receives a prefix without an error.
+ * @param[in,out] n_inout Non-null pointer: on input nonnegative array capacity (ignored for NULL
+ *     array); on output total matches, which may exceed the number copied.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine or SWMM_ERR_BADPARAM for null name/count.
  */
-SWMM_ENGINE_API int swmm_control_find_references(SWMM_Engine engine,
-                                                 const char* object_name,
-                                                 int* rule_indices_out,
-                                                 int* n_inout);
+SWMM_ENGINE_API int swmm_control_find_references(SWMM_Engine engine, const char* object_name,
+                                                 int* rule_indices_out, int* n_inout);
 
 /**
- * @brief Validate a control-rule text block without storing it.
+ * @brief Parse a control text block in a disposable engine without storing it.
  *
- * @details Runs the engine's control-rule parser against the engine's live
- *          @ref SimulationContext for name resolution (NODE / LINK / CURVE /
- *          TIMESERIES references), but **does not** mutate the engine's rule
- *          list or PID state. Designed for GUI-side live validation where
- *          the editor needs the production parser's accept/reject verdict
- *          on each keystroke without side effects.
+ * Leaves stored rules, live compiled rules and PID state unchanged. Validation uses a fresh control
+ * engine, so a block referencing VARIABLE/EXPRESSION declarations from an earlier stored block
+ * cannot resolve them. Rejection messages use line N: reason when a line is available.
  *
- *          The validation contract matches @ref swmm_control_add_rule
- *          followed by a simulation-initialisation parse: identical input
- *          text yields identical accept/reject. Engine state across the
- *          call is invariant — `swmm_control_count`, `swmm_control_get_rule`,
- *          and the engine's internal `ControlEngine::rules()` vector are
- *          unchanged.
- *
- *          On reject the function returns @ref SWMM_ERR_BADPARAM and writes
- *          a human-readable `"line N: reason"` message to @p errbuf
- *          (truncated to fit), with the same 1-based line number in
- *          @p line_out. The line number counts blank lines, so it indexes
- *          @p rule_text exactly as submitted. When the text parses but
- *          contains no rule at all, @p line_out is `-1` — there is no
- *          single offending line.
- *
- * @param engine     Engine handle.
- * @param rule_text  Null-terminated rule text. Same grammar as the
- *                   `[CONTROLS]` section.
- * @param errbuf     [out, optional] Buffer for the rejection message. May
- *                   be NULL or zero-length to suppress message capture.
- * @param buflen     Size of @p errbuf in bytes.
- * @param line_out   [out, optional] 1-based line number of the rejection,
- *                   or `-1` if not available. May be NULL.
- * @returns SWMM_OK if the parser accepts the text, SWMM_ERR_BADPARAM if it
- *          rejects, or another error code on infrastructure failure.
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access.
+ * @param[in] rule_text Non-null NUL-terminated [CONTROLS] text. Object/curve/time-series names
+ *     resolve against this engine model.
+ * @param[out] errbuf Optional caller-owned rejection-message buffer; NULL or nonpositive buflen
+ *     suppresses capture. NUL-terminated and truncated to fit when provided; emptied on success.
+ * @param[in] buflen Capacity in bytes, including the NUL terminator; nonpositive means no message
+ *     output.
+ * @param[out] line_out Optional destination for the 1-based rejected line, counting blank lines; -1
+ *     on success or when there is no RULE and thus no single offending line.
+ * @return SWMM_OK when at least one RULE parses; SWMM_ERR_BADPARAM for null text, parser rejection
+ *     or no RULE; SWMM_ERR_BADHANDLE for null engine.
  */
-SWMM_ENGINE_API int swmm_control_validate_rule(SWMM_Engine engine,
-                                                const char* rule_text,
-                                                char* errbuf, int buflen,
-                                                int* line_out);
+SWMM_ENGINE_API int swmm_control_validate_rule(SWMM_Engine engine, const char* rule_text,
+                                               char* errbuf, int buflen, int* line_out);
 
 /* =========================================================================
  * Direct control actions (without rules)
  * ========================================================================= */
 
 /**
- * @brief Directly set the control setting of a link.
+ * @brief Assign the current setting field for one link directly.
  *
- * @details Bypasses the control rule engine. For pumps: 0.0=off, 1.0=full.
- *          For orifices/weirs: fractional opening [0, 1].
+ * The implementation applies no RUNNING guard and directly stores the value. It does not remove a
+ * rule or establish a persistent override; subsequent rule evaluation or link physics can change
+ * the effective setting.
  *
- * @param engine    Engine handle (RUNNING state).
- * @param link_idx  Zero-based link index.
- * @param setting   Setting value.
- * @returns SWMM_OK on success, or an error code.
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access.
+ * @param[in] link_idx Zero-based link index in the current model.
+ * @param[in] setting Setting to store without range/finite-value validation: pumps conventionally
+ *     use 0=off and 1=full, orifices/weirs use a fractional opening in [0,1].
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine or SWMM_ERR_BADINDEX for invalid link index.
  */
 SWMM_ENGINE_API int swmm_control_set_link_setting(SWMM_Engine engine, int link_idx, double setting);
 
 /**
- * @brief Directly set the open/close status of a link.
+ * @brief Assign the current closed/open flag for one link directly.
  *
- * @details Bypasses the control rule engine. Status: 0=closed, 1=open.
+ * No lifecycle guard or persistent override is installed. This updates is_closed directly; it does
+ * not change the stored setting or remove control rules, and subsequent simulation/control work may
+ * change link behavior.
  *
- * @param engine    Engine handle (RUNNING state).
- * @param link_idx  Zero-based link index.
- * @param status    0 for closed, non-zero for open.
- * @returns SWMM_OK on success, or an error code.
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access.
+ * @param[in] link_idx Zero-based link index in the current model.
+ * @param[in] status 0 stores closed; every nonzero value stores open.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine or SWMM_ERR_BADINDEX for invalid link index.
  */
 SWMM_ENGINE_API int swmm_control_set_link_status(SWMM_Engine engine, int link_idx, int status);
 

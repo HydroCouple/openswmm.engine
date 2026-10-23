@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_water_age.cpp
- * @brief A1a gates: water-age tracking on the ARD mesh + the waterage
+ * @file      test_water_age.cpp
+ * @brief     A1a gates: water-age tracking on the ARD mesh + the waterage
  *        component ([WATER_AGE_SOURCES])
  *        (plans/transport/WATER_AGE_TRACKING_PLAN.md §1–§2, §7 A1).
  *
@@ -52,9 +52,9 @@
  *            (the inflow row wins, warned), TIMESERIES-driven ages, the
  *            silent-drop path replaced by warnings, and writer round-trip.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -76,29 +76,61 @@
 
 namespace {
 
+/**
+ * @brief Borrow the concrete engine behind an opaque test handle.
+ *
+ * This exact helper performs only an unchecked static_cast and dereference. It does not validate
+ * lifecycle, retain the handle or transfer ownership; fixture code may use the reference to inspect
+ * or seed internal state.
+ *
+ * @param[in] engine Live non-null new-engine handle whose concrete allocation is SWMMEngine; caller
+ *     keeps ownership.
+ * @return Mutable engine reference that remains valid until handle destruction or replacement.
+ */
 openswmm::SWMMEngine& as_cpp_engine(SWMM_Engine engine) {
     return *static_cast<openswmm::SWMMEngine*>(engine);
 }
 
-constexpr double kQ = 5.0;  ///< steady inflow, cfs
+constexpr double kQ = 5.0; ///< steady inflow, cfs
 
-/// The established chain deck. `water_age` writes [OPTIONS] WATER_AGE ON;
-/// `stagnant` gives the level pool; `pollutants` toggles [POLLUTANTS].
-void write_deck(const char* path, const std::string& pc_lines,
-                bool water_age = true, bool pollutants = false,
-                bool stagnant = false,
-                const std::string& extra_options = "",
-                int routing_step = 5, bool dry = false,
-                const std::string& extra_inflows = "",
-                const std::string& extra_sections = "") {
+/**
+ * @brief Write a wet, stagnant or dry ARD water-age fixture.
+ *
+ * Flowing mode lasts one hour with fixed kQ cfs supply. Always uses a five-conduit CFS chain and
+ * EULERIAN_ARD; water-age/source behavior is measured only by subsequent runner helpers. Uses a
+ * local ofstream and requires existing parent directories. Open/write/close failures are unchecked;
+ * owned input strings are not retained and raw tokens/config paths are not escaped. Optional
+ * sidecar files are also overwritten when described.
+ *
+ * @param[in] path Borrowed destination filename; character pointers must be non-null.
+ *     Opens/truncates this file for the generated deck.
+ * @param[in] pc_lines Raw PROCESS_COMPONENTS rows, emitted as a section only when nonempty; copied
+ *     without escaping or validation.
+ * @param[in] water_age Emit WATER_AGE ON when true.
+ * @param[in] pollutants Emit a TSS MG/L pollutant with initial concentration ten when true.
+ * @param[in] stagnant Select a two-minute flat wet pool with fixed stage and no inflow; geometry
+ *     selection takes precedence over dry.
+ * @param[in] extra_options Raw extra OPTIONS rows inserted verbatim; caller supplies valid line
+ *     boundaries.
+ * @param[in] routing_step Authored positive routing step seconds, unchecked.
+ * @param[in] dry Suppress inflow and use initially dry sloping geometry unless stagnant already
+ *     selected wet pool geometry.
+ * @param[in] extra_inflows Raw extra INFLOWS rows, emitted only when neither stagnant nor dry is
+ *     selected.
+ * @param[in] extra_sections Raw complete sections copied before pollutant/component sections;
+ *     require valid line boundaries.
+ */
+void write_deck(const char* path, const std::string& pc_lines, bool water_age = true,
+                bool pollutants = false, bool stagnant = false,
+                const std::string& extra_options = "", int routing_step = 5, bool dry = false,
+                const std::string& extra_inflows = "", const std::string& extra_sections = "") {
     std::ofstream f(path);
     f << "[TITLE]\nA1a water age gate deck\n\n[OPTIONS]\n"
       << "FLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\n"
       << "QUALITY_SOLVER EULERIAN_ARD\n"
-      << (water_age ? "WATER_AGE ON\n" : "")
-      << "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
-      << "END_DATE 01/01/2026\nEND_TIME "
-      << (stagnant ? "00:02:00" : "01:00:00") << "\n"
+      << (water_age ? "WATER_AGE ON\n" : "") << "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
+      << "END_DATE 01/01/2026\nEND_TIME " << (stagnant ? "00:02:00" : "01:00:00")
+      << "\n"
       // A1a pinned this at 1 s because the ARD node store lost
       // external-inflow mass above ROUTING_STEP 2, which dragged gate 2's
       // 6-hour shift down to 15246 s and made the age row look broken when
@@ -108,8 +140,7 @@ void write_deck(const char* path, const std::string& pc_lines,
       // across rs 1/2/5/10/20/60 after the fix: the ARD shift is
       // 21599.998 -> 21599.9999 and the level pool is 3720.0000 at every
       // step, so nothing here depends on the choice any more.
-      << "ROUTING_STEP " << routing_step
-      << "\nREPORT_STEP 00:01:00\n"
+      << "ROUTING_STEP " << routing_step << "\nREPORT_STEP 00:01:00\n"
       << extra_options << "\n";
     if (stagnant) {
         f << "[JUNCTIONS]\n"
@@ -141,9 +172,9 @@ void write_deck(const char* path, const std::string& pc_lines,
       << "C3 CIRCULAR 2.0 0 0 0\nC4 CIRCULAR 2.0 0 0 0\n"
       << "C5 CIRCULAR 2.0 0 0 0\n\n";
     if (!stagnant && !dry)
-        f << "[INFLOWS]\nJ0 FLOW \"\" FLOW 1.0 1.0 " << kQ << "\n"
-          << extra_inflows << "\n";
-    if (!extra_sections.empty()) f << extra_sections << "\n";
+        f << "[INFLOWS]\nJ0 FLOW \"\" FLOW 1.0 1.0 " << kQ << "\n" << extra_inflows << "\n";
+    if (!extra_sections.empty())
+        f << extra_sections << "\n";
     if (pollutants)
         f << "[POLLUTANTS]\n"
           << ";;Name Units Crain Cgw Crdii Kdecay SnowOnly CoPollut CoFrac "
@@ -155,29 +186,58 @@ void write_deck(const char* path, const std::string& pc_lines,
     f << "[REPORT]\nINPUT NO\n";
 }
 
+/**
+ * @brief Write fixture content to a caller-selected file.
+ *
+ * The parent directory must already exist. Uses ordinary text output mode. Open failure is not
+ * reported by this helper. Subsequent write/close failures are not checked; the local stream closes
+ * at scope exit and no path/content storage is retained. Allocation exceptions can propagate.
+ *
+ * @param[in] path Non-null null-terminated destination path; an existing file is
+ *     truncated/overwritten.
+ * @param[in] body Borrowed content copied verbatim through the output stream; no newline is
+ *     appended.
+ */
 void write_file(const char* path, const std::string& body) {
     std::ofstream c(path);
     c << body;
 }
 
 struct RunRecord {
-    std::vector<std::vector<double>> tss_link;   ///< [link][step]
-    std::vector<std::vector<double>> msx_link;   ///< [link][step] species 0
-    std::vector<std::vector<double>> age_link;   ///< [link][step], seconds
-    std::vector<double> age_node_final;          ///< [node], seconds
+    std::vector<std::vector<double>> tss_link; ///< [link][step]
+    std::vector<std::vector<double>> msx_link; ///< [link][step] species 0
+    std::vector<std::vector<double>> age_link; ///< [link][step], seconds
+    std::vector<double> age_node_final;        ///< [node], seconds
     std::vector<std::string> warnings;
-    double system_volume_final = 0.0;            ///< ft³ (nodes + links)
+    double system_volume_final = 0.0; ///< ft³ (nodes + links)
     bool ok = false;
 };
 
+/**
+ * @brief Run a water-age fixture and snapshot concentrations, ages and final system volume.
+ *
+ * Owns/destroys engine and records nonfatal failures. Samples first pollutant/MSX concentrations
+ * and link ages in seconds after successful calls, using -1 for missing optional state. At most
+ * 20000 positive-time calls; partial guard-limited runs may be ok. Copies final node ages, warnings
+ * and node+link volume in ft3. No time-weighted integration or independent completeness check.
+ *
+ * @param[in] inp Non-null existing model input filename.
+ * @param[in] rpt Report destination passed to open.
+ * @param[in] out Binary output destination passed to open.
+ * @return Owned record; ok reflects lifecycle/step success but not guard exhaustion or ignored end
+ *     status.
+ */
 RunRecord run_recording(const char* inp, const char* rpt, const char* out) {
     RunRecord rec;
     SWMM_Engine e = swmm_engine_create();
-    if (e == nullptr) { ADD_FAILURE() << "engine create"; return rec; }
+    if (e == nullptr) {
+        ADD_FAILURE() << "engine create";
+        return rec;
+    }
     bool ok = swmm_engine_open(e, inp, rpt, out, nullptr) == SWMM_OK;
-    if (!ok) ADD_FAILURE() << "open failed for " << inp;
-    if (ok && (swmm_engine_initialize(e) != SWMM_OK ||
-               swmm_engine_start(e, 1) != SWMM_OK)) {
+    if (!ok)
+        ADD_FAILURE() << "open failed for " << inp;
+    if (ok && (swmm_engine_initialize(e) != SWMM_OK || swmm_engine_start(e, 1) != SWMM_OK)) {
         ADD_FAILURE() << "init/start failed for " << inp;
         ok = false;
     }
@@ -200,29 +260,25 @@ RunRecord run_recording(const char* inp, const char* rpt, const char* out) {
             for (int l = 0; l < nl; ++l) {
                 const auto ul = static_cast<std::size_t>(l);
                 if (np > 0)
-                    rec.tss_link[ul].push_back(
-                        ctx.links.conc[static_cast<std::size_t>(l * np)]);
+                    rec.tss_link[ul].push_back(ctx.links.conc[static_cast<std::size_t>(l * np)]);
                 if (nm > 0) {
                     const auto idx = ul * static_cast<std::size_t>(nm);
-                    rec.msx_link[ul].push_back(
-                        (idx < ctx.reactions.msx_link_conc.size())
-                            ? ctx.reactions.msx_link_conc[idx]
-                            : -1.0);
+                    rec.msx_link[ul].push_back((idx < ctx.reactions.msx_link_conc.size())
+                                                   ? ctx.reactions.msx_link_conc[idx]
+                                                   : -1.0);
                 }
-                rec.age_link[ul].push_back(
-                    (ul < ctx.water_age_state.link_age.size())
-                        ? ctx.water_age_state.link_age[ul]
-                        : -1.0);
+                rec.age_link[ul].push_back((ul < ctx.water_age_state.link_age.size())
+                                               ? ctx.water_age_state.link_age[ul]
+                                               : -1.0);
             }
         } while (elapsed > 0.0 && ++guard < 20000);
-        if (ok) swmm_engine_end(e);
+        if (ok)
+            swmm_engine_end(e);
         rec.age_node_final = ctx.water_age_state.node_age;
         for (int j = 0; j < ctx.n_nodes(); ++j)
-            rec.system_volume_final +=
-                ctx.nodes.volume[static_cast<std::size_t>(j)];
+            rec.system_volume_final += ctx.nodes.volume[static_cast<std::size_t>(j)];
         for (int j = 0; j < ctx.n_links(); ++j)
-            rec.system_volume_final +=
-                ctx.links.volume[static_cast<std::size_t>(j)];
+            rec.system_volume_final += ctx.links.volume[static_cast<std::size_t>(j)];
         rec.warnings = ctx.warnings;
     }
     swmm_engine_destroy(e);
@@ -230,9 +286,17 @@ RunRecord run_recording(const char* inp, const char* rpt, const char* out) {
     return rec;
 }
 
+/**
+ * @brief Search warning text for a case-sensitive fragment.
+ *
+ * @param[in] v String vector, unchanged.
+ * @param[in] n Literal needle; empty matches any available entry.
+ * @return True for a matching entry; false if no match or list empty.
+ */
 bool has_needle(const std::vector<std::string>& v, const std::string& n) {
     for (const auto& s : v)
-        if (s.find(n) != std::string::npos) return true;
+        if (s.find(n) != std::string::npos)
+            return true;
     return false;
 }
 
@@ -242,18 +306,16 @@ constexpr int kC1 = 0, kC3 = 2, kC5 = 4;
 // Gate 1 — the motivating configuration: pure-age deck, residence time.
 // ---------------------------------------------------------------------------
 TEST(WaterAgeTest, PureAgeDeckTracksResidenceTime) {
-    write_deck("_a1_res.inp", "");   // no pollutants, no components
+    write_deck("_a1_res.inp", ""); // no pollutants, no components
     const auto rec = run_recording("_a1_res.inp", "_a1_res.rpt", "_a1_res.out");
     ASSERT_TRUE(rec.ok);
     ASSERT_FALSE(rec.age_link[kC5].empty());
 
     const double age_c5 = rec.age_link[kC5].back();
     const double age_c1 = rec.age_link[kC1].back();
-    ASSERT_GT(age_c5, 0.0)
-        << "age never grew — the age row is dead on the pure-age deck "
-           "(the A1a motivating configuration; lesson 20)";
-    EXPECT_GT(age_c5, age_c1)
-        << "age does not grow along the flow direction";
+    ASSERT_GT(age_c5, 0.0) << "age never grew — the age row is dead on the pure-age deck "
+                              "(the A1a motivating configuration; lesson 20)";
+    EXPECT_GT(age_c5, age_c1) << "age does not grow along the flow direction";
 
     // The residence-time theorem: at steady state the mean age of water
     // leaving a system is exactly V/Q. Measured on this deck: 0.9426 (the
@@ -272,14 +334,10 @@ TEST(WaterAgeTest, PureAgeDeckTracksResidenceTime) {
 // ---------------------------------------------------------------------------
 TEST(WaterAgeTest, SourceAgeShiftsEffluentExactly) {
     write_deck("_a1_base.inp", "");
-    write_file("_a1_src.age",
-               "[WATER_AGE_SOURCES]\nEXTERNAL_INFLOW NODE J0 6.0\n");
-    write_deck("_a1_src.inp",
-               "org.hydrocouple.openswmm.waterage config=\"_a1_src.age\"");
-    const auto base = run_recording("_a1_base.inp", "_a1_base.rpt",
-                                    "_a1_base.out");
-    const auto src  = run_recording("_a1_src.inp", "_a1_src.rpt",
-                                    "_a1_src.out");
+    write_file("_a1_src.age", "[WATER_AGE_SOURCES]\nEXTERNAL_INFLOW NODE J0 6.0\n");
+    write_deck("_a1_src.inp", "org.hydrocouple.openswmm.waterage config=\"_a1_src.age\"");
+    const auto base = run_recording("_a1_base.inp", "_a1_base.rpt", "_a1_base.out");
+    const auto src = run_recording("_a1_src.inp", "_a1_src.rpt", "_a1_src.out");
     ASSERT_TRUE(base.ok);
     ASSERT_TRUE(src.ok);
     ASSERT_FALSE(base.age_link[kC5].empty());
@@ -291,21 +349,18 @@ TEST(WaterAgeTest, SourceAgeShiftsEffluentExactly) {
     // than the delivered 1080 s. A band of 5% passed a run that was 29%
     // short (see the ROUTING_STEP note in write_deck).
     const double shift = src.age_link[kC5].back() - base.age_link[kC5].back();
-    EXPECT_NEAR(shift, 21600.0, 5.0)
-        << "an EXTERNAL_INFLOW initial age of 6 h did not shift the "
-           "steady effluent age by 6 h — the per-source wiring "
-           "(addAgeVolume → age-volume load) is wrong or dead.";
+    EXPECT_NEAR(shift, 21600.0, 5.0) << "an EXTERNAL_INFLOW initial age of 6 h did not shift the "
+                                        "steady effluent age by 6 h — the per-source wiring "
+                                        "(addAgeVolume → age-volume load) is wrong or dead.";
 }
 
 // ---------------------------------------------------------------------------
 // Gate 3 — level pool: aging is exact, mixing equal ages is the identity.
 // ---------------------------------------------------------------------------
 TEST(WaterAgeTest, LevelPoolAgingIsExact) {
-    write_file("_a1_lp.age",
-               "[WATER_AGE_SOURCES]\nINITIAL_STATE GLOBAL 1.0\n");
-    write_deck("_a1_lp.inp",
-               "org.hydrocouple.openswmm.waterage config=\"_a1_lp.age\"",
-               true, false, /*stagnant=*/true);
+    write_file("_a1_lp.age", "[WATER_AGE_SOURCES]\nINITIAL_STATE GLOBAL 1.0\n");
+    write_deck("_a1_lp.inp", "org.hydrocouple.openswmm.waterage config=\"_a1_lp.age\"", true, false,
+               /*stagnant=*/true);
     const auto rec = run_recording("_a1_lp.inp", "_a1_lp.rpt", "_a1_lp.out");
     ASSERT_TRUE(rec.ok);
     ASSERT_FALSE(rec.age_link[kC3].empty());
@@ -323,20 +378,16 @@ TEST(WaterAgeTest, LevelPoolAgingIsExact) {
 // Gate 4 — the symmetric-row razor: age ON leaves TSS and MSX bitwise.
 // ---------------------------------------------------------------------------
 TEST(WaterAgeTest, AgeRowLeavesOtherRowsBitwise) {
-    write_file("_a1_bw.rxn",
-               "[REACTION_OPTIONS]\nRATE_UNITS SEC\n"
-               "[REACTION_SPECIES]\nBULK X MG\n"
-               "[REACTION_PIPES]\nRATE X -0.001 * X\n"
-               "[REACTION_TANKS]\nRATE X -0.001 * X\n"
-               "[REACTION_QUALITY]\nGLOBAL X 8\n");
-    const std::string pc =
-        "org.hydrocouple.openswmm.reactions config=\"_a1_bw.rxn\"";
+    write_file("_a1_bw.rxn", "[REACTION_OPTIONS]\nRATE_UNITS SEC\n"
+                             "[REACTION_SPECIES]\nBULK X MG\n"
+                             "[REACTION_PIPES]\nRATE X -0.001 * X\n"
+                             "[REACTION_TANKS]\nRATE X -0.001 * X\n"
+                             "[REACTION_QUALITY]\nGLOBAL X 8\n");
+    const std::string pc = "org.hydrocouple.openswmm.reactions config=\"_a1_bw.rxn\"";
     write_deck("_a1_bw_off.inp", pc, /*water_age=*/false, /*pollutants=*/true);
-    write_deck("_a1_bw_on.inp",  pc, /*water_age=*/true,  /*pollutants=*/true);
-    const auto off = run_recording("_a1_bw_off.inp", "_a1_bw_off.rpt",
-                                   "_a1_bw_off.out");
-    const auto on  = run_recording("_a1_bw_on.inp", "_a1_bw_on.rpt",
-                                   "_a1_bw_on.out");
+    write_deck("_a1_bw_on.inp", pc, /*water_age=*/true, /*pollutants=*/true);
+    const auto off = run_recording("_a1_bw_off.inp", "_a1_bw_off.rpt", "_a1_bw_off.out");
+    const auto on = run_recording("_a1_bw_on.inp", "_a1_bw_on.rpt", "_a1_bw_on.out");
     ASSERT_TRUE(off.ok);
     ASSERT_TRUE(on.ok);
     for (int l = 0; l < 5; ++l) {
@@ -344,8 +395,7 @@ TEST(WaterAgeTest, AgeRowLeavesOtherRowsBitwise) {
         ASSERT_EQ(off.tss_link[ul].size(), on.tss_link[ul].size());
         for (std::size_t t = 0; t < off.tss_link[ul].size(); ++t) {
             ASSERT_EQ(off.tss_link[ul][t], on.tss_link[ul][t])
-                << "link " << l << " step " << t
-                << ": WATER_AGE ON changed a POLLUTANT trajectory";
+                << "link " << l << " step " << t << ": WATER_AGE ON changed a POLLUTANT trajectory";
             ASSERT_EQ(off.msx_link[ul][t], on.msx_link[ul][t])
                 << "link " << l << " step " << t
                 << ": WATER_AGE ON changed an MSX trajectory — check the "
@@ -362,7 +412,11 @@ TEST(WaterAgeTest, AgeRowLeavesOtherRowsBitwise) {
 // Gate 5 — config errors are precise; a failed apply never half-applies.
 // ---------------------------------------------------------------------------
 TEST(WaterAgeTest, ConfigErrorsArePrecise) {
-    struct Case { const char* tag; const char* body; const char* needle; };
+    struct Case {
+        const char* tag;
+        const char* body;
+        const char* needle;
+    };
     const Case cases[] = {
         // Z1 (amendment D-Y4) FLIP: the A1a deferral ("arrive with a
         // later water-age phase") became a REDIRECT — time-varying ages
@@ -372,53 +426,45 @@ TEST(WaterAgeTest, ConfigErrorsArePrecise) {
          "prescribed as [INFLOWS] rows naming __WATER_AGE__"},
         {"_a1_e_sc", "[WATER_AGE_SOURCES]\nGW SUBCATCH S1 10\n",
          "SUBCATCH scope arrives with plan phase A3"},
-        {"_a1_e_uk", "[WATER_AGE_SOURCES]\nMAGIC GLOBAL 1\n",
-         "unknown source 'MAGIC'"},
+        {"_a1_e_uk", "[WATER_AGE_SOURCES]\nMAGIC GLOBAL 1\n", "unknown source 'MAGIC'"},
         {"_a1_e_ns", "[WATER_AGE_SOURCES]\nGW NODE J0 10\n",
          "NODE scope applies to DWF and EXTERNAL_INFLOW"},
-        {"_a1_e_un", "[WATER_AGE_SOURCES]\nDWF NODE NOPE 10\n",
-         "unknown node 'NOPE'"},
+        {"_a1_e_un", "[WATER_AGE_SOURCES]\nDWF NODE NOPE 10\n", "unknown node 'NOPE'"},
         // D-NS1 (X6) FLIP: "GW GLOBAL -1" is no longer an ERROR — a
         // negative source age extracts age-volume and parses with a
         // warning instead. The refusal row keeps this table's shape with a
         // genuinely non-numeric value; the negative-row WARNING has its
         // own gate in test_negative_sources.cpp.
-        {"_a1_e_bad", "[WATER_AGE_SOURCES]\nGW GLOBAL abc\n",
-         "is not an age in hours"},
+        {"_a1_e_bad", "[WATER_AGE_SOURCES]\nGW GLOBAL abc\n", "is not an age in hours"},
         // The spelling plan §2 actually documents — the series NAME makes
         // the row one column wider than a constant row. Checking arity
         // first reported "malformed row" here and left the TIMESERIES
         // deferral unreachable in the only form a user would write.
-        {"_a1_e_tsn",
-         "[WATER_AGE_SOURCES]\nEXTERNAL_INFLOW NODE J0 TIMESERIES age_ts\n",
+        {"_a1_e_tsn", "[WATER_AGE_SOURCES]\nEXTERNAL_INFLOW NODE J0 TIMESERIES age_ts\n",
          "prescribed as [INFLOWS] rows naming __WATER_AGE__"},
         // A NODE row with the age omitted. The value token used to be bound
         // as toks[3] BEFORE the arity check, reading one past the end of a
         // 3-token row.
-        {"_a1_e_short", "[WATER_AGE_SOURCES]\nDWF NODE J0\n",
-         "malformed row"},
+        {"_a1_e_short", "[WATER_AGE_SOURCES]\nDWF NODE J0\n", "malformed row"},
     };
     for (const auto& c : cases) {
         write_file((std::string(c.tag) + ".age").c_str(), c.body);
         write_deck((std::string(c.tag) + ".inp").c_str(),
-                   std::string("org.hydrocouple.openswmm.waterage config=\"") +
-                       c.tag + ".age\"");
+                   std::string("org.hydrocouple.openswmm.waterage config=\"") + c.tag + ".age\"");
         SWMM_Engine e = swmm_engine_create();
         ASSERT_NE(e, nullptr);
         EXPECT_NE(swmm_engine_open(e, (std::string(c.tag) + ".inp").c_str(),
                                    (std::string(c.tag) + ".rpt").c_str(),
-                                   (std::string(c.tag) + ".out").c_str(),
-                                   nullptr),
+                                   (std::string(c.tag) + ".out").c_str(), nullptr),
                   SWMM_OK)
             << c.tag;
         auto& ctx = as_cpp_engine(e).context();
         bool found = false;
         for (const auto& err : ctx.errors)
-            if (err.find(c.needle) != std::string::npos) found = true;
-        EXPECT_TRUE(found) << c.tag << ": no error contains '" << c.needle
-                           << "'";
-        EXPECT_FALSE(ctx.water_age_config.configured)
-            << c.tag << ": a failed apply half-applied";
+            if (err.find(c.needle) != std::string::npos)
+                found = true;
+        EXPECT_TRUE(found) << c.tag << ": no error contains '" << c.needle << "'";
+        EXPECT_FALSE(ctx.water_age_config.configured) << c.tag << ": a failed apply half-applied";
         swmm_engine_destroy(e);
     }
 }
@@ -427,29 +473,25 @@ TEST(WaterAgeTest, ConfigErrorsArePrecise) {
 // Gate 6 — bypass warnings, both directions (lessons 10/20).
 // ---------------------------------------------------------------------------
 TEST(WaterAgeTest, BypassConfigurationsWarn) {
-    {   // component present, option OFF
+    { // component present, option OFF
         write_file("_a1_off.age", "[WATER_AGE_SOURCES]\nGW GLOBAL 720\n");
-        write_deck("_a1_off.inp",
-                   "org.hydrocouple.openswmm.waterage config=\"_a1_off.age\"",
+        write_deck("_a1_off.inp", "org.hydrocouple.openswmm.waterage config=\"_a1_off.age\"",
                    /*water_age=*/false);
         SWMM_Engine e = swmm_engine_create();
         ASSERT_NE(e, nullptr);
-        ASSERT_EQ(swmm_engine_open(e, "_a1_off.inp", "_a1_off.rpt",
-                                   "_a1_off.out", nullptr),
+        ASSERT_EQ(swmm_engine_open(e, "_a1_off.inp", "_a1_off.rpt", "_a1_off.out", nullptr),
                   SWMM_OK);
-        EXPECT_TRUE(has_needle(as_cpp_engine(e).context().warnings,
-                               "WATER_AGE is OFF"))
+        EXPECT_TRUE(has_needle(as_cpp_engine(e).context().warnings, "WATER_AGE is OFF"))
             << "waterage component with WATER_AGE OFF ran without a word";
         swmm_engine_destroy(e);
     }
-    {   // A1b FLIP (lesson 21, in the retiring changeset): LEGACY now runs
+    { // A1b FLIP (lesson 21, in the retiring changeset): LEGACY now runs
         // its own age mirror, so the deferral warning must be GONE and the
         // pure-age LEGACY deck must TRACK — the positive coverage this leg
         // used to defer to.
-        write_deck("_a1_leg.inp", "", /*water_age=*/true, /*pollutants=*/false,
-                   false, "QUALITY_SOLVER LEGACY\n");
-        const auto rec = run_recording("_a1_leg.inp", "_a1_leg.rpt",
-                                       "_a1_leg.out");
+        write_deck("_a1_leg.inp", "", /*water_age=*/true, /*pollutants=*/false, false,
+                   "QUALITY_SOLVER LEGACY\n");
+        const auto rec = run_recording("_a1_leg.inp", "_a1_leg.rpt", "_a1_leg.out");
         ASSERT_TRUE(rec.ok) << "WATER_AGE ON under LEGACY with no pollutants "
                                "did not survive a full run";
         EXPECT_FALSE(has_needle(rec.warnings, "arrives with plan phase A1b"))
@@ -469,34 +511,25 @@ TEST(WaterAgeTest, LegacySourceAgeShiftsEffluentExactly) {
     // The mixing algebra is linear under the CSTR mirror too: an
     // EXTERNAL_INFLOW age of 6 h shifts the steady effluent age by exactly
     // 21600 s (same reasoning as gate 2, LEGACY engine).
-    write_deck("_a1b_base.inp", "", true, false, false,
-               "QUALITY_SOLVER LEGACY\n");
-    write_file("_a1b_src.age",
-               "[WATER_AGE_SOURCES]\nEXTERNAL_INFLOW NODE J0 6.0\n");
-    write_deck("_a1b_src.inp",
-               "org.hydrocouple.openswmm.waterage config=\"_a1b_src.age\"",
-               true, false, false, "QUALITY_SOLVER LEGACY\n");
-    const auto base = run_recording("_a1b_base.inp", "_a1b_base.rpt",
-                                    "_a1b_base.out");
-    const auto src  = run_recording("_a1b_src.inp", "_a1b_src.rpt",
-                                    "_a1b_src.out");
+    write_deck("_a1b_base.inp", "", true, false, false, "QUALITY_SOLVER LEGACY\n");
+    write_file("_a1b_src.age", "[WATER_AGE_SOURCES]\nEXTERNAL_INFLOW NODE J0 6.0\n");
+    write_deck("_a1b_src.inp", "org.hydrocouple.openswmm.waterage config=\"_a1b_src.age\"", true,
+               false, false, "QUALITY_SOLVER LEGACY\n");
+    const auto base = run_recording("_a1b_base.inp", "_a1b_base.rpt", "_a1b_base.out");
+    const auto src = run_recording("_a1b_src.inp", "_a1b_src.rpt", "_a1b_src.out");
     ASSERT_TRUE(base.ok);
     ASSERT_TRUE(src.ok);
     ASSERT_FALSE(base.age_link[kC5].empty());
-    const double shift =
-        src.age_link[kC5].back() - base.age_link[kC5].back();
+    const double shift = src.age_link[kC5].back() - base.age_link[kC5].back();
     EXPECT_NEAR(shift, 21600.0, 0.05 * 21600.0)
         << "the LEGACY mirror's per-source wiring is wrong or dead";
 }
 
 TEST(WaterAgeTest, LegacyLevelPoolAgingIsExact) {
-    write_file("_a1b_lp.age",
-               "[WATER_AGE_SOURCES]\nINITIAL_STATE GLOBAL 1.0\n");
-    write_deck("_a1b_lp.inp",
-               "org.hydrocouple.openswmm.waterage config=\"_a1b_lp.age\"",
-               true, false, /*stagnant=*/true, "QUALITY_SOLVER LEGACY\n");
-    const auto rec = run_recording("_a1b_lp.inp", "_a1b_lp.rpt",
-                                   "_a1b_lp.out");
+    write_file("_a1b_lp.age", "[WATER_AGE_SOURCES]\nINITIAL_STATE GLOBAL 1.0\n");
+    write_deck("_a1b_lp.inp", "org.hydrocouple.openswmm.waterage config=\"_a1b_lp.age\"", true,
+               false, /*stagnant=*/true, "QUALITY_SOLVER LEGACY\n");
+    const auto rec = run_recording("_a1b_lp.inp", "_a1b_lp.rpt", "_a1b_lp.out");
     ASSERT_TRUE(rec.ok);
     ASSERT_FALSE(rec.age_link[kC3].empty());
     // Symmetric with ARD's gate 3: INITIAL_STATE seeds on the mirror's
@@ -517,10 +550,8 @@ TEST(WaterAgeTest, LegacyAgeLeavesPollutantsBitwise) {
                /*pollutants=*/true, false, "QUALITY_SOLVER LEGACY\n");
     write_deck("_a1b_bw_on.inp", "", /*water_age=*/true,
                /*pollutants=*/true, false, "QUALITY_SOLVER LEGACY\n");
-    const auto off = run_recording("_a1b_bw_off.inp", "_a1b_bw_off.rpt",
-                                   "_a1b_bw_off.out");
-    const auto on  = run_recording("_a1b_bw_on.inp", "_a1b_bw_on.rpt",
-                                   "_a1b_bw_on.out");
+    const auto off = run_recording("_a1b_bw_off.inp", "_a1b_bw_off.rpt", "_a1b_bw_off.out");
+    const auto on = run_recording("_a1b_bw_on.inp", "_a1b_bw_on.rpt", "_a1b_bw_on.out");
     ASSERT_TRUE(off.ok);
     ASSERT_TRUE(on.ok);
     for (int l = 0; l < 5; ++l) {
@@ -542,19 +573,36 @@ struct HsRun {
     std::vector<double> node_age, link_age;
     bool ok = false;
 };
+/**
+ * @brief Run the age fixture and attempt a final hotstart save.
+ *
+ * Uses fixed _a2_hs.rpt/.out, so calls require serialized artifact use. Caps at 20000 positive-time
+ * calls; guard exhaustion can still save partial state. Ignores end status and copies ages even if
+ * save fails. Records nonfatal create/final failure and destroys the handle on normal paths; files
+ * remain for review.
+ *
+ * @param[in] inp Non-null existing input filename.
+ * @param[in] hs_path Non-null hotstart destination, potentially overwritten.
+ * @return Owned final node/link ages in seconds; ok requires lifecycle, step and hotstart-save
+ *     success.
+ */
 HsRun run_and_save(const char* inp, const char* hs_path) {
     HsRun out;
     SWMM_Engine e = swmm_engine_create();
-    if (e == nullptr) { ADD_FAILURE() << "create"; return out; }
-    bool ok = swmm_engine_open(e, inp, "_a2_hs.rpt", "_a2_hs.out", nullptr) ==
-                  SWMM_OK &&
-              swmm_engine_initialize(e) == SWMM_OK &&
-              swmm_engine_start(e, 1) == SWMM_OK;
+    if (e == nullptr) {
+        ADD_FAILURE() << "create";
+        return out;
+    }
+    bool ok = swmm_engine_open(e, inp, "_a2_hs.rpt", "_a2_hs.out", nullptr) == SWMM_OK &&
+              swmm_engine_initialize(e) == SWMM_OK && swmm_engine_start(e, 1) == SWMM_OK;
     if (ok) {
         double elapsed = 0.0;
         int guard = 0;
         do {
-            if (swmm_engine_step(e, &elapsed) != SWMM_OK) { ok = false; break; }
+            if (swmm_engine_step(e, &elapsed) != SWMM_OK) {
+                ok = false;
+                break;
+            }
         } while (elapsed > 0.0 && ++guard < 20000);
         if (ok) {
             swmm_engine_end(e);
@@ -563,28 +611,26 @@ HsRun run_and_save(const char* inp, const char* hs_path) {
             out.link_age = as_cpp_engine(e).context().water_age_state.link_age;
         }
     }
-    if (!ok) ADD_FAILURE() << "run_and_save failed for " << inp;
+    if (!ok)
+        ADD_FAILURE() << "run_and_save failed for " << inp;
     swmm_engine_destroy(e);
     out.ok = ok;
     return out;
 }
-}  // namespace
+} // namespace
 
 TEST(WaterAgeTest, HotstartRoundTripsAgeAcrossBothEngines) {
     // INITIAL_STATE is a DISCRIMINATOR here, not decoration: 100 h. If the
     // restart seeded from INITIAL_STATE instead of the loaded state, ages
     // jump to 360000 s; the loaded ages are O(10²–10³) s. The same deck
     // shape runs under both engines.
-    write_file("_a2_hs.age",
-               "[WATER_AGE_SOURCES]\nINITIAL_STATE GLOBAL 100.0\n");
-    const std::string pc =
-        "org.hydrocouple.openswmm.waterage config=\"_a2_hs.age\"";
+    write_file("_a2_hs.age", "[WATER_AGE_SOURCES]\nINITIAL_STATE GLOBAL 100.0\n");
+    const std::string pc = "org.hydrocouple.openswmm.waterage config=\"_a2_hs.age\"";
 
     for (const bool legacy : {false, true}) {
         const char* inp = legacy ? "_a2_hs_leg.inp" : "_a2_hs_ard.inp";
         const char* hsf = legacy ? "_a2_hs_leg.bin" : "_a2_hs_ard.bin";
-        write_deck(inp, pc, true, false, false,
-                   legacy ? "QUALITY_SOLVER LEGACY\n" : "");
+        write_deck(inp, pc, true, false, false, legacy ? "QUALITY_SOLVER LEGACY\n" : "");
         const auto saved = run_and_save(inp, hsf);
         ASSERT_TRUE(saved.ok);
         ASSERT_FALSE(saved.node_age.empty());
@@ -601,9 +647,7 @@ TEST(WaterAgeTest, HotstartRoundTripsAgeAcrossBothEngines) {
         // and compare the restored state BIT-FOR-BIT (double → double).
         SWMM_Engine e2 = swmm_engine_create();
         ASSERT_NE(e2, nullptr);
-        ASSERT_EQ(swmm_engine_open(e2, inp, "_a2_hs2.rpt", "_a2_hs2.out",
-                                   nullptr),
-                  SWMM_OK);
+        ASSERT_EQ(swmm_engine_open(e2, inp, "_a2_hs2.rpt", "_a2_hs2.out", nullptr), SWMM_OK);
         // swmm_hotstart_apply requires EngineState::INITIALIZED — it
         // returns SWMM_ERR_LIFECYCLE from OPENED. initialize() must
         // therefore run BEFORE the apply, not after, and the apply's
@@ -646,8 +690,7 @@ TEST(WaterAgeTest, HotstartRoundTripsAgeAcrossBothEngines) {
         // re-uniformizes it. 10% leaves 2.3x headroom over that without
         // admitting a partially restored state.
         EXPECT_NEAR(a, saved.link_age[kC5], 0.10 * saved.link_age[kC5])
-            << (legacy ? "LEGACY" : "ARD")
-            << ": one step after the restart the age is " << a
+            << (legacy ? "LEGACY" : "ARD") << ": one step after the restart the age is " << a
             << " against a loaded " << saved.link_age[kC5]
             << ". Near zero means the restart lost the state; near 360000 "
                "means it re-seeded from INITIAL_STATE.";
@@ -663,16 +706,13 @@ TEST(WaterAgeTest, PreV3HotstartFallsBackToInitialState) {
     const auto v2 = run_and_save("_a2_v2.inp", "_a2_v2.bin");
     ASSERT_TRUE(v2.ok);
 
-    write_file("_a2_v2on.age",
-               "[WATER_AGE_SOURCES]\nINITIAL_STATE GLOBAL 100.0\n");
-    write_deck("_a2_v2on.inp",
-               "org.hydrocouple.openswmm.waterage config=\"_a2_v2on.age\"");
+    write_file("_a2_v2on.age", "[WATER_AGE_SOURCES]\nINITIAL_STATE GLOBAL 100.0\n");
+    write_deck("_a2_v2on.inp", "org.hydrocouple.openswmm.waterage config=\"_a2_v2on.age\"");
     SWMM_Engine e = swmm_engine_create();
     ASSERT_NE(e, nullptr);
-    ASSERT_EQ(swmm_engine_open(e, "_a2_v2on.inp", "_a2_v2on.rpt",
-                               "_a2_v2on.out", nullptr),
+    ASSERT_EQ(swmm_engine_open(e, "_a2_v2on.inp", "_a2_v2on.rpt", "_a2_v2on.out", nullptr),
               SWMM_OK);
-    ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);   // apply needs INITIALIZED
+    ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK); // apply needs INITIALIZED
     SWMM_HotStart hs = nullptr;
     ASSERT_EQ(swmm_hotstart_open("_a2_v2.bin", &hs), SWMM_OK);
     ASSERT_EQ(swmm_hotstart_apply(e, hs), SWMM_OK);
@@ -690,13 +730,13 @@ TEST(WaterAgeTest, PreV3HotstartFallsBackToInitialState) {
     // The LEGACY mirror reaches INITIAL_STATE by a DIFFERENT route — apply()
     // leaves legacy_seeded false so routeLegacyAge fills on its first step,
     // where the ARD engine seeds in init(). One leg cannot cover both.
-    write_deck("_a2_v2on_leg.inp",
-               "org.hydrocouple.openswmm.waterage config=\"_a2_v2on.age\"",
+    write_deck("_a2_v2on_leg.inp", "org.hydrocouple.openswmm.waterage config=\"_a2_v2on.age\"",
                true, false, false, "QUALITY_SOLVER LEGACY\n");
     SWMM_Engine el = swmm_engine_create();
     ASSERT_NE(el, nullptr);
-    ASSERT_EQ(swmm_engine_open(el, "_a2_v2on_leg.inp", "_a2_v2on_leg.rpt",
-                               "_a2_v2on_leg.out", nullptr), SWMM_OK);
+    ASSERT_EQ(
+        swmm_engine_open(el, "_a2_v2on_leg.inp", "_a2_v2on_leg.rpt", "_a2_v2on_leg.out", nullptr),
+        SWMM_OK);
     ASSERT_EQ(swmm_engine_initialize(el), SWMM_OK);
     SWMM_HotStart hs2 = nullptr;
     ASSERT_EQ(swmm_hotstart_open("_a2_v2.bin", &hs2), SWMM_OK);
@@ -730,25 +770,20 @@ TEST(WaterAgeTest, LegacySourceShiftIsRoutingStepInvariant) {
     // (measured: the outfall age carries a clean O(dt) splitting bias of
     // one dt per element crossed). The shift cancels that bias, which is
     // what makes it the right invariant to gate.
-    write_file("_a1b_inv.age",
-               "[WATER_AGE_SOURCES]\nEXTERNAL_INFLOW NODE J0 6.0\n");
+    write_file("_a1b_inv.age", "[WATER_AGE_SOURCES]\nEXTERNAL_INFLOW NODE J0 6.0\n");
     for (const int rs : {1, 5, 20}) {
-        write_deck("_a1b_inv_b.inp", "", true, false, false,
-                   "QUALITY_SOLVER LEGACY\n", rs);
-        write_deck("_a1b_inv_s.inp",
-                   "org.hydrocouple.openswmm.waterage config=\"_a1b_inv.age\"",
+        write_deck("_a1b_inv_b.inp", "", true, false, false, "QUALITY_SOLVER LEGACY\n", rs);
+        write_deck("_a1b_inv_s.inp", "org.hydrocouple.openswmm.waterage config=\"_a1b_inv.age\"",
                    true, false, false, "QUALITY_SOLVER LEGACY\n", rs);
-        const auto b = run_recording("_a1b_inv_b.inp", "_a1b_inv_b.rpt",
-                                     "_a1b_inv_b.out");
-        const auto s2 = run_recording("_a1b_inv_s.inp", "_a1b_inv_s.rpt",
-                                      "_a1b_inv_s.out");
+        const auto b = run_recording("_a1b_inv_b.inp", "_a1b_inv_b.rpt", "_a1b_inv_b.out");
+        const auto s2 = run_recording("_a1b_inv_s.inp", "_a1b_inv_s.rpt", "_a1b_inv_s.out");
         ASSERT_TRUE(b.ok) << "rs=" << rs;
         ASSERT_TRUE(s2.ok) << "rs=" << rs;
         ASSERT_FALSE(b.age_link[kC5].empty()) << "rs=" << rs;
         const double shift = s2.age_link[kC5].back() - b.age_link[kC5].back();
         EXPECT_NEAR(shift, 21600.0, 10.0)
-            << "ROUTING_STEP " << rs << ": the 6-hour source shift came out "
-            << shift << " s. Linearity makes it step-independent, so a shift "
+            << "ROUTING_STEP " << rs << ": the 6-hour source shift came out " << shift
+            << " s. Linearity makes it step-independent, so a shift "
                "that moves with the step means the mirror's ordering has "
                "come apart the way the ARD store's did.";
     }
@@ -773,13 +808,11 @@ TEST(WaterAgeTest, LegacyOutfallAgeConvergesToResidenceTime) {
     // EXACT in the limit and carries a clean O(dt) operator-splitting bias
     // (age-then-mix at every element). The band below is set from that law
     // rather than from a single observation.
-    write_deck("_a1b_rt.inp", "", true, false, false,
-               "QUALITY_SOLVER LEGACY\n", 1);
-    const auto rec = run_recording("_a1b_rt.inp", "_a1b_rt.rpt",
-                                   "_a1b_rt.out");
+    write_deck("_a1b_rt.inp", "", true, false, false, "QUALITY_SOLVER LEGACY\n", 1);
+    const auto rec = run_recording("_a1b_rt.inp", "_a1b_rt.rpt", "_a1b_rt.out");
     ASSERT_TRUE(rec.ok);
     ASSERT_FALSE(rec.age_node_final.empty());
-    const double outfall  = rec.age_node_final.back();
+    const double outfall = rec.age_node_final.back();
     const double residence = rec.system_volume_final / kQ;
     ASSERT_GT(residence, 0.0);
     ASSERT_GT(outfall, 0.0) << "the outfall never aged — mirror dead";
@@ -809,28 +842,23 @@ TEST(WaterAgeTest, LegacySplittingBiasIsOneStepPerElement) {
     double bias[2];
     const int steps[2] = {1, 5};
     for (int k = 0; k < 2; ++k) {
-        write_deck("_a1b_sl.inp", "", true, false, false,
-                   "QUALITY_SOLVER LEGACY\n", steps[k]);
-        const auto rec = run_recording("_a1b_sl.inp", "_a1b_sl.rpt",
-                                       "_a1b_sl.out");
+        write_deck("_a1b_sl.inp", "", true, false, false, "QUALITY_SOLVER LEGACY\n", steps[k]);
+        const auto rec = run_recording("_a1b_sl.inp", "_a1b_sl.rpt", "_a1b_sl.out");
         ASSERT_TRUE(rec.ok) << "rs=" << steps[k];
         ASSERT_FALSE(rec.age_node_final.empty());
         ASSERT_GT(rec.system_volume_final, 0.0);
         bias[k] = rec.age_node_final.back() - rec.system_volume_final / kQ;
     }
     // Per routing step, per element crossed. Five conduits on this deck.
-    const double per_element =
-        (bias[1] - bias[0]) / (steps[1] - steps[0]) / 5.0;
-    EXPECT_GT(per_element, 0.5)
-        << "the splitting bias vanished (" << per_element
-        << " dt/element) — aging is not running at all, or the outfall is "
-           "not being written";
-    EXPECT_LT(per_element, 1.5)
-        << "the splitting bias is " << per_element
-        << " routing steps per element, not one. Two per element is the "
-           "signature of the link stage reading its upstream node age "
-           "BEFORE that node mixed in this step's inflow — the ARD node "
-           "store's defect (7b2dfaae) written into the mirror.";
+    const double per_element = (bias[1] - bias[0]) / (steps[1] - steps[0]) / 5.0;
+    EXPECT_GT(per_element, 0.5) << "the splitting bias vanished (" << per_element
+                                << " dt/element) — aging is not running at all, or the outfall is "
+                                   "not being written";
+    EXPECT_LT(per_element, 1.5) << "the splitting bias is " << per_element
+                                << " routing steps per element, not one. Two per element is the "
+                                   "signature of the link stage reading its upstream node age "
+                                   "BEFORE that node mixed in this step's inflow — the ARD node "
+                                   "store's defect (7b2dfaae) written into the mirror.";
 }
 
 TEST(WaterAgeTest, IgnoreQualityWarnsWithoutAWaterageComponent) {
@@ -839,14 +867,12 @@ TEST(WaterAgeTest, IgnoreQualityWarnsWithoutAWaterageComponent) {
     // now fires engine-level, which is the point of the move — WATER_AGE ON
     // needs no component. Nothing observed it, and a warning that changes
     // homes is exactly when one goes missing.
-    write_deck("_a1b_iq.inp", "", /*water_age=*/true, /*pollutants=*/true,
-               false, "IGNORE_QUALITY YES\n");
+    write_deck("_a1b_iq.inp", "", /*water_age=*/true, /*pollutants=*/true, false,
+               "IGNORE_QUALITY YES\n");
     SWMM_Engine e = swmm_engine_create();
     ASSERT_NE(e, nullptr);
-    ASSERT_EQ(swmm_engine_open(e, "_a1b_iq.inp", "_a1b_iq.rpt",
-                               "_a1b_iq.out", nullptr), SWMM_OK);
-    EXPECT_TRUE(has_needle(as_cpp_engine(e).context().warnings,
-                           "IGNORE_QUALITY is YES"))
+    ASSERT_EQ(swmm_engine_open(e, "_a1b_iq.inp", "_a1b_iq.rpt", "_a1b_iq.out", nullptr), SWMM_OK);
+    EXPECT_TRUE(has_needle(as_cpp_engine(e).context().warnings, "IGNORE_QUALITY is YES"))
         << "WATER_AGE ON with IGNORE_QUALITY YES and no waterage component "
            "tracked nothing without a word — the engine-level move lost the "
            "warning the component used to carry";
@@ -865,29 +891,25 @@ TEST(WaterAgeTest, SaveKeepsWaterAgeAndQualitySolver) {
     write_deck("_a1_rt.inp", "");
     SWMM_Engine e = swmm_engine_create();
     ASSERT_NE(e, nullptr);
-    ASSERT_EQ(swmm_engine_open(e, "_a1_rt.inp", "_a1_rt.rpt", "_a1_rt.out",
-                               nullptr),
-              SWMM_OK);
-    ASSERT_EQ(openswmm::inp_writer::writeInpFile(as_cpp_engine(e).context(),
-                                                 "_a1_rt_saved.inp", nullptr),
-              0);
+    ASSERT_EQ(swmm_engine_open(e, "_a1_rt.inp", "_a1_rt.rpt", "_a1_rt.out", nullptr), SWMM_OK);
+    ASSERT_EQ(
+        openswmm::inp_writer::writeInpFile(as_cpp_engine(e).context(), "_a1_rt_saved.inp", nullptr),
+        0);
     swmm_engine_destroy(e);
 
     SWMM_Engine e2 = swmm_engine_create();
     ASSERT_NE(e2, nullptr);
-    ASSERT_EQ(swmm_engine_open(e2, "_a1_rt_saved.inp", "_a1_rt_saved.rpt",
-                               "_a1_rt_saved.out", nullptr),
-              SWMM_OK);
+    ASSERT_EQ(
+        swmm_engine_open(e2, "_a1_rt_saved.inp", "_a1_rt_saved.rpt", "_a1_rt_saved.out", nullptr),
+        SWMM_OK);
     const auto& o = as_cpp_engine(e2).context().options;
-    EXPECT_TRUE(o.water_age)
-        << "saving the model turned WATER_AGE off";
+    EXPECT_TRUE(o.water_age) << "saving the model turned WATER_AGE off";
     EXPECT_EQ(o.quality_solver, openswmm::QualitySolverKind::EULERIAN_ARD)
         << "saving the model reverted QUALITY_SOLVER to LEGACY — with "
            "WATER_AGE ON that deck opens warning that no age is tracked";
     // And the saved deck must NOT have collected the A1b bypass warning,
     // which is what a half-written pair produces.
-    EXPECT_FALSE(has_needle(as_cpp_engine(e2).context().warnings,
-                            "arrives with plan phase A1b"));
+    EXPECT_FALSE(has_needle(as_cpp_engine(e2).context().warnings, "arrives with plan phase A1b"));
     swmm_engine_destroy(e2);
 }
 
@@ -910,10 +932,8 @@ TEST(WaterAgeTest, SaveKeepsWaterAgeAndQualitySolver) {
 // value and fails here.
 // ---------------------------------------------------------------------------
 TEST(WaterAgeTest, DryElementHotstartCarriesTheAgedState) {
-    write_file("_a2_dry.age",
-               "[WATER_AGE_SOURCES]\nINITIAL_STATE GLOBAL 6.0\n");
-    write_deck("_a2_dry.inp",
-               "org.hydrocouple.openswmm.waterage config=\"_a2_dry.age\"",
+    write_file("_a2_dry.age", "[WATER_AGE_SOURCES]\nINITIAL_STATE GLOBAL 6.0\n");
+    write_deck("_a2_dry.inp", "org.hydrocouple.openswmm.waterage config=\"_a2_dry.age\"",
                /*water_age=*/true, /*pollutants=*/false, /*stagnant=*/false,
                /*extra_options=*/"", /*routing_step=*/5, /*dry=*/true);
 
@@ -935,8 +955,7 @@ TEST(WaterAgeTest, DryElementHotstartCarriesTheAgedState) {
     // And it must survive the round trip, like any other age (A2a).
     SWMM_Engine e2 = swmm_engine_create();
     ASSERT_NE(e2, nullptr);
-    ASSERT_EQ(swmm_engine_open(e2, "_a2_dry.inp", "_a2_dry2.rpt",
-                               "_a2_dry2.out", nullptr),
+    ASSERT_EQ(swmm_engine_open(e2, "_a2_dry.inp", "_a2_dry2.rpt", "_a2_dry2.out", nullptr),
               SWMM_OK);
     ASSERT_EQ(swmm_engine_initialize(e2), SWMM_OK);
     SWMM_HotStart hs = nullptr;
@@ -953,7 +972,6 @@ TEST(WaterAgeTest, DryElementHotstartCarriesTheAgedState) {
     swmm_engine_destroy(e2);
 }
 
-
 // ===========================================================================
 // Z1 (amendment D-Y4) — reserved species as [INFLOWS] constituents.
 // ===========================================================================
@@ -964,25 +982,19 @@ TEST(WaterAgeTest, DryElementHotstartCarriesTheAgedState) {
 // exactly, and the shift against the clean base run is gate 2's razor.
 TEST(WaterAgeTest, InflowAgeRowMatchesSourceTableExactly) {
     write_deck("_z1_base.inp", "");
-    write_file("_z1_tab.age",
-               "[WATER_AGE_SOURCES]\nEXTERNAL_INFLOW NODE J0 6.0\n");
-    write_deck("_z1_tab.inp",
-               "org.hydrocouple.openswmm.waterage config=\"_z1_tab.age\"");
+    write_file("_z1_tab.age", "[WATER_AGE_SOURCES]\nEXTERNAL_INFLOW NODE J0 6.0\n");
+    write_deck("_z1_tab.inp", "org.hydrocouple.openswmm.waterage config=\"_z1_tab.age\"");
     write_deck("_z1_row.inp", "", true, false, false, "", 5, false,
                "J0 __WATER_AGE__ \"\" CONCEN 1.0 1.0 6.0\n");
-    const auto base = run_recording("_z1_base.inp", "_z1_base.rpt",
-                                    "_z1_base.out");
-    const auto tab  = run_recording("_z1_tab.inp", "_z1_tab.rpt",
-                                    "_z1_tab.out");
-    const auto row  = run_recording("_z1_row.inp", "_z1_row.rpt",
-                                    "_z1_row.out");
+    const auto base = run_recording("_z1_base.inp", "_z1_base.rpt", "_z1_base.out");
+    const auto tab = run_recording("_z1_tab.inp", "_z1_tab.rpt", "_z1_tab.out");
+    const auto row = run_recording("_z1_row.inp", "_z1_row.rpt", "_z1_row.out");
     ASSERT_TRUE(base.ok);
     ASSERT_TRUE(tab.ok);
     ASSERT_TRUE(row.ok);
     ASSERT_FALSE(row.age_link[kC5].empty());
 
-    const double shift =
-        row.age_link[kC5].back() - base.age_link[kC5].back();
+    const double shift = row.age_link[kC5].back() - base.age_link[kC5].back();
     EXPECT_NEAR(shift, 21600.0, 5.0)
         << "an [INFLOWS] __WATER_AGE__ row of 6 h did not shift the steady "
            "effluent age by 6 h — the row is dead or mis-scaled (hours vs "
@@ -991,7 +1003,8 @@ TEST(WaterAgeTest, InflowAgeRowMatchesSourceTableExactly) {
     ASSERT_EQ(tab.age_link[kC5].size(), row.age_link[kC5].size());
     for (std::size_t t = 0; t < tab.age_link[kC5].size(); ++t)
         ASSERT_EQ(tab.age_link[kC5][t], row.age_link[kC5][t])
-            << "step " << t << ": the [INFLOWS] pathway and the source "
+            << "step " << t
+            << ": the [INFLOWS] pathway and the source "
                "table disagree for the identical prescription — the two "
                "must be the same statement through the same loader.";
 }
@@ -1000,18 +1013,13 @@ TEST(WaterAgeTest, InflowAgeRowMatchesSourceTableExactly) {
 // more specific statement, amendment §6), and the conflict is warned
 // rather than silently resolved.
 TEST(WaterAgeTest, InflowAgeRowWinsOverSourceTable) {
-    write_file("_z1_conf.age",
-               "[WATER_AGE_SOURCES]\nEXTERNAL_INFLOW NODE J0 2.0\n");
-    write_deck("_z1_conf.inp",
-               "org.hydrocouple.openswmm.waterage config=\"_z1_conf.age\"",
-               true, false, false, "", 5, false,
-               "J0 __WATER_AGE__ \"\" CONCEN 1.0 1.0 6.0\n");
+    write_file("_z1_conf.age", "[WATER_AGE_SOURCES]\nEXTERNAL_INFLOW NODE J0 2.0\n");
+    write_deck("_z1_conf.inp", "org.hydrocouple.openswmm.waterage config=\"_z1_conf.age\"", true,
+               false, false, "", 5, false, "J0 __WATER_AGE__ \"\" CONCEN 1.0 1.0 6.0\n");
     write_deck("_z1_row6.inp", "", true, false, false, "", 5, false,
                "J0 __WATER_AGE__ \"\" CONCEN 1.0 1.0 6.0\n");
-    const auto conf = run_recording("_z1_conf.inp", "_z1_conf.rpt",
-                                    "_z1_conf.out");
-    const auto row6 = run_recording("_z1_row6.inp", "_z1_row6.rpt",
-                                    "_z1_row6.out");
+    const auto conf = run_recording("_z1_conf.inp", "_z1_conf.rpt", "_z1_conf.out");
+    const auto row6 = run_recording("_z1_row6.inp", "_z1_row6.rpt", "_z1_row6.out");
     ASSERT_TRUE(conf.ok);
     ASSERT_TRUE(row6.ok);
     ASSERT_FALSE(conf.age_link[kC5].empty());
@@ -1029,17 +1037,15 @@ TEST(WaterAgeTest, InflowAgeRowWinsOverSourceTable) {
 // reproduces the baseline-6 h run: the series pathway carries the number.
 // (b) A 1 h → 9 h step at 00:30 shifts the effluent on the schedule.
 TEST(WaterAgeTest, InflowAgeTimeseriesDrivesTheValue) {
-    const std::string ts6 =
-        "[TIMESERIES]\n"
-        "age6 01/01/2026 00:00 6.0\n"
-        "age6 01/01/2026 12:00 6.0\n";
+    const std::string ts6 = "[TIMESERIES]\n"
+                            "age6 01/01/2026 00:00 6.0\n"
+                            "age6 01/01/2026 12:00 6.0\n";
     write_deck("_z1_ts6.inp", "", true, false, false, "", 5, false,
                "J0 __WATER_AGE__ age6 CONCEN 1.0 1.0 0.0\n", ts6);
     write_deck("_z1_b6.inp", "", true, false, false, "", 5, false,
                "J0 __WATER_AGE__ \"\" CONCEN 1.0 1.0 6.0\n");
-    const auto ts  = run_recording("_z1_ts6.inp", "_z1_ts6.rpt",
-                                   "_z1_ts6.out");
-    const auto b6  = run_recording("_z1_b6.inp", "_z1_b6.rpt", "_z1_b6.out");
+    const auto ts = run_recording("_z1_ts6.inp", "_z1_ts6.rpt", "_z1_ts6.out");
+    const auto b6 = run_recording("_z1_b6.inp", "_z1_b6.rpt", "_z1_b6.out");
     ASSERT_TRUE(ts.ok);
     ASSERT_TRUE(b6.ok);
     ASSERT_FALSE(ts.age_link[kC5].empty());
@@ -1047,20 +1053,18 @@ TEST(WaterAgeTest, InflowAgeTimeseriesDrivesTheValue) {
         << "a flat 6 h TIMESERIES and a 6 h baseline disagree — the series "
            "value is not reaching the age pathway.";
 
-    const std::string tsStep =
-        "[TIMESERIES]\n"
-        "agestep 01/01/2026 00:00 1.0\n"
-        "agestep 01/01/2026 00:29 1.0\n"
-        "agestep 01/01/2026 00:30 9.0\n"
-        "agestep 01/01/2026 12:00 9.0\n";
+    const std::string tsStep = "[TIMESERIES]\n"
+                               "agestep 01/01/2026 00:00 1.0\n"
+                               "agestep 01/01/2026 00:29 1.0\n"
+                               "agestep 01/01/2026 00:30 9.0\n"
+                               "agestep 01/01/2026 12:00 9.0\n";
     write_deck("_z1_tsstep.inp", "", true, false, false, "", 5, false,
                "J0 __WATER_AGE__ agestep CONCEN 1.0 1.0 0.0\n", tsStep);
     write_deck("_z1_b1.inp", "", true, false, false, "", 5, false,
                "J0 __WATER_AGE__ \"\" CONCEN 1.0 1.0 1.0\n");
     write_deck("_z1_b9.inp", "", true, false, false, "", 5, false,
                "J0 __WATER_AGE__ \"\" CONCEN 1.0 1.0 9.0\n");
-    const auto st = run_recording("_z1_tsstep.inp", "_z1_tsstep.rpt",
-                                  "_z1_tsstep.out");
+    const auto st = run_recording("_z1_tsstep.inp", "_z1_tsstep.rpt", "_z1_tsstep.out");
     const auto b1 = run_recording("_z1_b1.inp", "_z1_b1.rpt", "_z1_b1.out");
     const auto b9 = run_recording("_z1_b9.inp", "_z1_b9.rpt", "_z1_b9.out");
     ASSERT_TRUE(st.ok);
@@ -1075,9 +1079,9 @@ TEST(WaterAgeTest, InflowAgeTimeseriesDrivesTheValue) {
     // Before the schedule moves (first 25 min) the two decks are the same
     // deck — the trajectories agree to interpolation noise.
     for (std::size_t t = 0; t < std::size_t(25); ++t)
-        ASSERT_NEAR(stc5[t], b1c5[t], 1.0e-6)
-            << "step " << t << ": the step-series deck diverged from the "
-               "constant deck BEFORE the schedule moved.";
+        ASSERT_NEAR(stc5[t], b1c5[t], 1.0e-6) << "step " << t
+                                              << ": the step-series deck diverged from the "
+                                                 "constant deck BEFORE the schedule moved.";
     // After it moves, the effluent shifts on the schedule: by the end the
     // step deck has left 1 h decisively behind and cannot exceed the
     // always-9 h deck.
@@ -1093,30 +1097,26 @@ TEST(WaterAgeTest, InflowAgeTimeseriesDrivesTheValue) {
 // deferred __TEMPERATURE__ row, an inert row under WATER_AGE OFF, and a
 // MASS-typed age row all WARN — and the runs still complete.
 TEST(WaterAgeTest, InflowConstituentSilentDropReplacedByWarnings) {
-    write_deck("_z1_typo.inp", "", true, /*pollutants=*/true, false, "", 5,
-               false, "J0 TSSX \"\" CONCEN 1.0 1.0 5.0\n");
-    const auto typo = run_recording("_z1_typo.inp", "_z1_typo.rpt",
-                                    "_z1_typo.out");
+    write_deck("_z1_typo.inp", "", true, /*pollutants=*/true, false, "", 5, false,
+               "J0 TSSX \"\" CONCEN 1.0 1.0 5.0\n");
+    const auto typo = run_recording("_z1_typo.inp", "_z1_typo.rpt", "_z1_typo.out");
     ASSERT_TRUE(typo.ok);
     // U2 (2026-09-07) widened the accepted set — and the wording with it —
     // now that a reactions species is a legal [INFLOWS] constituent.
-    EXPECT_TRUE(has_needle(typo.warnings,
-                           "matches no pollutant, reactions species or reserved"))
+    EXPECT_TRUE(has_needle(typo.warnings, "matches no pollutant, reactions species or reserved"))
         << "a misspelled [INFLOWS] constituent still vanishes silently.";
 
     write_deck("_z1_temp.inp", "", true, false, false, "", 5, false,
                "J0 __TEMPERATURE__ \"\" CONCEN 1.0 1.0 20.0\n");
-    const auto temp = run_recording("_z1_temp.inp", "_z1_temp.rpt",
-                                    "_z1_temp.out");
+    const auto temp = run_recording("_z1_temp.inp", "_z1_temp.rpt", "_z1_temp.out");
     ASSERT_TRUE(temp.ok);
     EXPECT_TRUE(has_needle(temp.warnings, "arrive with heat's round"))
         << "__TEMPERATURE__ rows must defer with words, not vanish "
            "(amendment §6: temperature keeps the old treatment).";
 
-    write_deck("_z1_off.inp", "", /*water_age=*/false, false, false, "", 5,
-               false, "J0 __WATER_AGE__ \"\" CONCEN 1.0 1.0 6.0\n");
-    const auto off = run_recording("_z1_off.inp", "_z1_off.rpt",
-                                   "_z1_off.out");
+    write_deck("_z1_off.inp", "", /*water_age=*/false, false, false, "", 5, false,
+               "J0 __WATER_AGE__ \"\" CONCEN 1.0 1.0 6.0\n");
+    const auto off = run_recording("_z1_off.inp", "_z1_off.rpt", "_z1_off.out");
     ASSERT_TRUE(off.ok);
     EXPECT_TRUE(has_needle(off.warnings, "WATER_AGE is OFF"))
         << "an age row on a WATER_AGE OFF deck is inert and must say so "
@@ -1125,16 +1125,13 @@ TEST(WaterAgeTest, InflowConstituentSilentDropReplacedByWarnings) {
     write_deck("_z1_mbase.inp", "");
     write_deck("_z1_mass.inp", "", true, false, false, "", 5, false,
                "J0 __WATER_AGE__ \"\" MASS 1.0 1.0 6.0\n");
-    const auto mbase = run_recording("_z1_mbase.inp", "_z1_mbase.rpt",
-                                     "_z1_mbase.out");
-    const auto mass  = run_recording("_z1_mass.inp", "_z1_mass.rpt",
-                                     "_z1_mass.out");
+    const auto mbase = run_recording("_z1_mbase.inp", "_z1_mbase.rpt", "_z1_mbase.out");
+    const auto mass = run_recording("_z1_mass.inp", "_z1_mass.rpt", "_z1_mass.out");
     ASSERT_TRUE(mbase.ok);
     ASSERT_TRUE(mass.ok);
     EXPECT_TRUE(has_needle(mass.warnings, "MASS has no meaning"))
         << "a MASS-typed age row was reinterpreted without a word.";
-    EXPECT_NEAR(mass.age_link[kC5].back() - mbase.age_link[kC5].back(),
-                21600.0, 5.0)
+    EXPECT_NEAR(mass.age_link[kC5].back() - mbase.age_link[kC5].back(), 21600.0, 5.0)
         << "the MASS-typed age row did not land as 6 h (CONCEN "
            "semantics) — the warning promised one thing and the engine "
            "did another.";
@@ -1148,25 +1145,20 @@ TEST(WaterAgeTest, InflowAgeRowRoundTripsThroughTheWriter) {
     {
         SWMM_Engine e = swmm_engine_create();
         ASSERT_NE(e, nullptr);
-        ASSERT_EQ(swmm_engine_open(e, "_z1_rt.inp", "_z1_rt.rpt",
-                                   "_z1_rt.out", nullptr),
-                  SWMM_OK);
+        ASSERT_EQ(swmm_engine_open(e, "_z1_rt.inp", "_z1_rt.rpt", "_z1_rt.out", nullptr), SWMM_OK);
         ASSERT_EQ(swmm_model_write(e, "_z1_rt_w.inp"), SWMM_OK);
         swmm_engine_destroy(e);
     }
     {
         std::ifstream f("_z1_rt_w.inp");
         ASSERT_TRUE(f.good());
-        std::string text((std::istreambuf_iterator<char>(f)),
-                         std::istreambuf_iterator<char>());
+        std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
         EXPECT_NE(text.find("__WATER_AGE__"), std::string::npos)
             << "the writer dropped the __WATER_AGE__ [INFLOWS] row — the "
                "prescription dies on the first save.";
     }
-    const auto orig = run_recording("_z1_rt.inp", "_z1_rt2.rpt",
-                                    "_z1_rt2.out");
-    const auto rt   = run_recording("_z1_rt_w.inp", "_z1_rt_w.rpt",
-                                    "_z1_rt_w.out");
+    const auto orig = run_recording("_z1_rt.inp", "_z1_rt2.rpt", "_z1_rt2.out");
+    const auto rt = run_recording("_z1_rt_w.inp", "_z1_rt_w.rpt", "_z1_rt_w.out");
     ASSERT_TRUE(orig.ok);
     ASSERT_TRUE(rt.ok);
     ASSERT_FALSE(orig.age_link[kC5].empty());
@@ -1174,8 +1166,7 @@ TEST(WaterAgeTest, InflowAgeRowRoundTripsThroughTheWriter) {
         << "the round-tripped deck runs to a different effluent age.";
 }
 
-
-}  // namespace
+} // namespace
 
 // ===========================================================================
 // IO3c — the water-age component writes its own config file.
@@ -1187,46 +1178,61 @@ TEST(WaterAgeTest, InflowAgeRowRoundTripsThroughTheWriter) {
 
 namespace {
 
+/**
+ * @brief Collect an entire fixture file into owned text.
+ *
+ * Uses binary mode, preserving file bytes. The local stream closes on return; no model state is
+ * touched and no borrowed buffer is returned. Default stream exception settings apply; allocation
+ * exceptions may propagate.
+ *
+ * @param[in] path Non-null null-terminated filename used for this synchronous open/read.
+ * @return Owned string collected from the stream; empty can mean an empty file or failure to open.
+ *     Partial read failures have no separate status.
+ */
 std::string slurp(const char* path) {
     std::ifstream f(path, std::ios::binary);
-    return std::string(std::istreambuf_iterator<char>(f),
-                       std::istreambuf_iterator<char>());
+    return std::string(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
 }
 
+/**
+ * @brief Create/open a model for water-age persistence checks.
+ *
+ * Caller must destroy the returned handle; this helper neither initializes nor starts it. EXPECT
+ * failures do not stop subsequent open or return, so callers must verify state before further
+ * operations.
+ *
+ * @param[in] inp Non-null existing input deck.
+ * @param[in] rpt Report destination passed to open.
+ * @param[in] out Binary output destination passed to open.
+ * @return Caller-owned engine handle, possibly null or partially opened after recorded nonfatal
+ *     failure.
+ */
 SWMM_Engine open_ok(const char* inp, const char* rpt, const char* out) {
     SWMM_Engine e = swmm_engine_create();
     EXPECT_NE(e, nullptr);
-    EXPECT_EQ(swmm_engine_open(e, inp, rpt, out, nullptr), SWMM_OK)
-        << swmm_get_last_error_msg(e);
+    EXPECT_EQ(swmm_engine_open(e, inp, rpt, out, nullptr), SWMM_OK) << swmm_get_last_error_msg(e);
     return e;
 }
 
-}  // namespace
+} // namespace
 
 // Gate 1 (base-FAILING): an API edit survives write → reopen.
 TEST(WaterAgeIo3cTest, AgeSourceEditsSurviveASaveAndReopen) {
-    write_file("_io3c_edit.age",
-               "[WATER_AGE_SOURCES]\n"
-               "EXTERNAL_INFLOW GLOBAL 6.0\n"
-               "DWF NODE J0 2.5\n");
-    write_deck("_io3c_edit.inp",
-               "org.hydrocouple.openswmm.waterage config=\"_io3c_edit.age\"");
+    write_file("_io3c_edit.age", "[WATER_AGE_SOURCES]\n"
+                                 "EXTERNAL_INFLOW GLOBAL 6.0\n"
+                                 "DWF NODE J0 2.5\n");
+    write_deck("_io3c_edit.inp", "org.hydrocouple.openswmm.waterage config=\"_io3c_edit.age\"");
 
-    SWMM_Engine e = open_ok("_io3c_edit.inp", "_io3c_edit.rpt",
-                            "_io3c_edit.out");
-    ASSERT_EQ(swmm_water_age_set_global_source(
-                  e, SWMM_AGE_SRC_EXTERNAL_INFLOW, 12.0), SWMM_OK);
-    ASSERT_EQ(swmm_model_write(e, "_io3c_edit_out.inp"), SWMM_OK)
-        << swmm_get_last_error_msg(e);
+    SWMM_Engine e = open_ok("_io3c_edit.inp", "_io3c_edit.rpt", "_io3c_edit.out");
+    ASSERT_EQ(swmm_water_age_set_global_source(e, SWMM_AGE_SRC_EXTERNAL_INFLOW, 12.0), SWMM_OK);
+    ASSERT_EQ(swmm_model_write(e, "_io3c_edit_out.inp"), SWMM_OK) << swmm_get_last_error_msg(e);
     swmm_engine_destroy(e);
 
     e = open_ok("_io3c_edit_out.inp", "_io3c_edit_r.rpt", "_io3c_edit_r.out");
     double hours = -1.0;
-    ASSERT_EQ(swmm_water_age_get_global_source(
-                  e, SWMM_AGE_SRC_EXTERNAL_INFLOW, &hours), SWMM_OK);
-    EXPECT_EQ(hours, 12.0)
-        << "the API edit was lost on save — model.age still declines the "
-           "ComponentConfigSave hook and the copy fallback restored 6.0";
+    ASSERT_EQ(swmm_water_age_get_global_source(e, SWMM_AGE_SRC_EXTERNAL_INFLOW, &hours), SWMM_OK);
+    EXPECT_EQ(hours, 12.0) << "the API edit was lost on save — model.age still declines the "
+                              "ComponentConfigSave hook and the copy fallback restored 6.0";
 
     // The untouched NODE override rides along unharmed.
     int src = -1, node = -1;
@@ -1249,15 +1255,13 @@ TEST(WaterAgeIo3cTest, AgeConfigRoundTripsExactlyAndIdempotently) {
     // 1.23456789 is the %g falsifier: six significant digits truncate it.
     // -0.25 exercises the D-NS1 negative (extraction) spelling. 0.1 is the
     // classic non-representable decimal.
-    write_file("_io3c_rt.age",
-               "[WATER_AGE_SOURCES]\n"
-               "RAINFALL GLOBAL 0.1\n"
-               "GW GLOBAL 1.23456789\n"
-               "RDII GLOBAL -0.25\n"
-               "EXTERNAL_INFLOW NODE J2 7.75\n"
-               "DWF NODE J4 0.3\n");
-    write_deck("_io3c_rt.inp",
-               "org.hydrocouple.openswmm.waterage config=\"_io3c_rt.age\"");
+    write_file("_io3c_rt.age", "[WATER_AGE_SOURCES]\n"
+                               "RAINFALL GLOBAL 0.1\n"
+                               "GW GLOBAL 1.23456789\n"
+                               "RDII GLOBAL -0.25\n"
+                               "EXTERNAL_INFLOW NODE J2 7.75\n"
+                               "DWF NODE J4 0.3\n");
+    write_deck("_io3c_rt.inp", "org.hydrocouple.openswmm.waterage config=\"_io3c_rt.age\"");
 
     SWMM_Engine e = open_ok("_io3c_rt.inp", "_io3c_rt.rpt", "_io3c_rt.out");
     ASSERT_EQ(swmm_model_write(e, "_io3c_rt_out.inp"), SWMM_OK);
@@ -1273,14 +1277,11 @@ TEST(WaterAgeIo3cTest, AgeConfigRoundTripsExactlyAndIdempotently) {
 
     e = open_ok("_io3c_rt_out.inp", "_io3c_rt_r.rpt", "_io3c_rt_r.out");
     double h = 0.0;
-    ASSERT_EQ(swmm_water_age_get_global_source(e, SWMM_AGE_SRC_RAINFALL, &h),
-              SWMM_OK);
+    ASSERT_EQ(swmm_water_age_get_global_source(e, SWMM_AGE_SRC_RAINFALL, &h), SWMM_OK);
     EXPECT_EQ(h, 0.1);
-    ASSERT_EQ(swmm_water_age_get_global_source(e, SWMM_AGE_SRC_GW, &h),
-              SWMM_OK);
+    ASSERT_EQ(swmm_water_age_get_global_source(e, SWMM_AGE_SRC_GW, &h), SWMM_OK);
     EXPECT_EQ(h, 1.23456789) << "shortest-exact formatting regressed (%g?)";
-    ASSERT_EQ(swmm_water_age_get_global_source(e, SWMM_AGE_SRC_RDII, &h),
-              SWMM_OK);
+    ASSERT_EQ(swmm_water_age_get_global_source(e, SWMM_AGE_SRC_RDII, &h), SWMM_OK);
     EXPECT_EQ(h, -0.25);
     int count = 0;
     ASSERT_EQ(swmm_water_age_override_count(e, &count), SWMM_OK);
@@ -1294,7 +1295,6 @@ TEST(WaterAgeIo3cTest, AgeConfigRoundTripsExactlyAndIdempotently) {
     ASSERT_EQ(swmm_model_write(e, "_io3c_rt_out3.inp"), SWMM_OK);
     swmm_engine_destroy(e);
     const std::string gen3 = slurp("_io3c_rt.age");
-    EXPECT_EQ(gen2, gen3)
-        << "the hours↔seconds round trip has no fixed point — successive "
-           "saves oscillate";
+    EXPECT_EQ(gen2, gen3) << "the hours↔seconds round trip has no fixed point — successive "
+                             "saves oscillate";
 }

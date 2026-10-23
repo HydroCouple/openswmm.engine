@@ -43,7 +43,7 @@ physics when evaluating an optimization.
 | `FULL_SWE`, order 2, water only | Limited surface/depth/velocity reconstruction and SSP-RK2; global one-tier stepping |
 | Order 2 with multiple tiers | Tiers reduced to one with a diagnostic |
 | Order 2 with active surface transport | Falls back to first order with a diagnostic; prior tier reduction is not undone |
-| Active second-order RK2 with groundwater | Standalone CPU pollutant/MSX/age/water-temperature CLOSED_FORM/ENSLAVED/SIGMA with symmetric groundwater/surface reactions, authored wells and HEAD/FLOW edges; porous RK2 adds soil energy/conduction and chemical/age inventories under constant thermal boundaries and sensible ET; further heat and network owners remain guarded (Hydrology §9.11) |
+| Active second-order RK2 with groundwater | Standalone CPU pollutant/MSX/age/water-temperature CLOSED_FORM/ENSLAVED/SIGMA with symmetric groundwater/surface reactions, authored wells and HEAD/FLOW edges; porous RK2 adds soil energy/conduction and chemical/age inventories under constant, time-series or held AIR thermal boundaries and sensible or latent soil ET; a fully covered COUPLED/GROUND_COLUMN finite-contact profile also supports RK2 heat, chemical/age contact and reactions with nonlinear radiation, sensible atmosphere and accepted surface latent cooling; copied surface/groundwater sources, runtime aquifer HEAD/FLOW edges and rain/quality/ET/paired infiltration and authored surface STAGE/FLOW, in-memory series/rating, normal-flow boundaries and copied overrides use bounded stages, shared expiry and component continuation, with accepted rain reports; managed standalone RK2 sessions preserve native weather/calendar state, pending batches, copied prescriptions and numerical, binary or combined mesh-HDF5 history; disjoint water-only or qualified native LEGACY pollutant networks also preserve their actual hydraulic/quality state; independent owned degree-day/UEB snow supports water delivery with native or cached weather, full point/ledger restart and all four output modes; zero transport rows, heat disabled, no soil contact or copied weather are required; further heat, wider network quality and shared RK2 network owners remain guarded (Hydrology §9.11) |
 | Local inertial or diffusive momentum | Their own first-order face laws; order 2 does not enable MUSCL for these closures |
 | `FULL_SWE` with CFL above 0.5 | CFL reduced to 0.5 with a diagnostic |
 
@@ -55,6 +55,8 @@ statistics do not independently prove that reconstruction order 2 was
 used; check fallback diagnostics and the model's enabled features too.
 A model with zero active surface faces does not exercise wet-surface
 performance, even if its groundwater is active.
+
+Native LEGACY network pollutants now support numerical/binary checkpoint continuation, including signed native loads, current/old concentrations, load statistics and pollutant balances. First-order matched conservative mesh/aquifer rows can share actual surface/node exchange; an independent RK2 mesh can retain the native network quality owner alongside its own integrator. Pollutant order, units, decay, defaults and per-element initial quality participate in model identity. This profile excludes catchments, LIDs, treatment expressions, native heat/age and multispecies reactions. Shared network RK2, ARD/LARD continuation and broader quality owners remain guarded.
 
 ## 7.3 Conservation and source-accounting contract
 
@@ -260,6 +262,13 @@ jobs; then verify the intended numerical equivalence before reporting
 timing ratios. The reviewed component builds use O3/native CPU with fast
 math disabled and floating-point contraction disabled. Changing arithmetic
 settings requires a new correctness comparison.
+
+Managed global-RK2 integration checks also cover skewed all-quad and mixed
+triangle/quad meshes with heterogeneous aquifers, independent chemical/thermal
+grids, both boundary domains, reactions, age and optional latent heat. Physical
+budgets and numerical/combined output histories pass together; this does not
+establish general spatial order on distorted meshes. See the groundwater
+transport design for the integration/restart capability matrix.
 
 The remaining boundaries are further thermal and borrowed-owner support for RK2,
 long-period damping, mesh-dependent stability, production-catchment

@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file Roadway.hpp
- * @brief Roadway weir overflow — FHWA HDS-5 (legacy roadway.c, op for op).
+ * @file      Roadway.hpp
+ * @brief     Roadway weir overflow — FHWA HDS-5 (legacy roadway.c, op for op).
  *
  * @details Q = Cd * L * hWr^1.5 over the road crest. With a road width and
  *          surface the coefficient is the HDS-5 curve value: Cr from the
@@ -27,9 +27,9 @@
  * @note Legacy reference: src/legacy/engine/roadway.c
  * @ingroup new_engine
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ROADWAY_HPP
@@ -40,8 +40,8 @@ namespace openswmm {
 namespace roadway {
 
 /// legacy roadway.c RoadSurface: 0 = none (user Cd), 1 = PAVED, 2 = GRAVEL.
-constexpr int SURFACE_NONE   = 0;
-constexpr int SURFACE_PAVED  = 1;
+constexpr int SURFACE_NONE = 0;
+constexpr int SURFACE_PAVED = 1;
 constexpr int SURFACE_GRAVEL = 2;
 
 /**
@@ -62,9 +62,8 @@ constexpr int SURFACE_GRAVEL = 2;
  * @param[out] depth  Link depth: max(h1 - h_road, 0).
  * @returns dir * q (cfs).
  */
-double getInflow(double dir, double h_road, double h1, double h2,
-                 double cd_user, bool si, double road_width, int road_surf,
-                 double length, double& dqdh, double& depth);
+double getInflow(double dir, double h_road, double h1, double h2, double cd_user, bool si,
+                 double road_width, int road_surf, double length, double& dqdh, double& depth);
 
 } // namespace roadway
 } // namespace openswmm

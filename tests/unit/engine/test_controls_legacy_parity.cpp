@@ -1,6 +1,6 @@
 /**
- * @file test_controls_legacy_parity.cpp
- * @brief Unit tests verifying that the control-rule engine matches legacy
+ * @file      test_controls_legacy_parity.cpp
+ * @brief     Unit tests verifying that the control-rule engine matches legacy
  *        controls.c semantics for time/date variables and AND/OR
  *        short-circuit semantics across mixed variable types.
  *
@@ -21,6 +21,10 @@
  * SIM_TIME is that date minus the start date, in days, like the RHS.
  *
  * @ingroup engine_controls
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -50,25 +54,33 @@ class ControlsParityTest : public ::testing::Test {
 protected:
     SimulationContext ctx;
 
+    /**
+     * @brief Build a dated native pump/conduit context for legacy-control comparisons.
+     *
+     * Sets 2025-01-01 to Jan02 CFS and rule_step0, allocates J1/J2/P1/C1, assigns typed links, initial
+     * pump setting/target1 and time-last-set at start date. Initializes current elapsed time0/current
+     * date; no hydraulic step occurs. Fatal GoogleTest assertions return from this hook on failure; any
+     * created handle remains owned by the fixture for teardown.
+     */
     void SetUp() override {
         ctx.options.start_date = openswmm::datetime::encodeDate(2025, 1, 1);
-        ctx.options.end_date   = openswmm::datetime::encodeDate(2025, 1, 2);
+        ctx.options.end_date = openswmm::datetime::encodeDate(2025, 1, 2);
         ctx.options.flow_units = openswmm::FlowUnits::CFS;
-        ctx.options.rule_step  = 0.0;  // every step
+        ctx.options.rule_step = 0.0; // every step
 
         ctx.node_names.add("J1");
         ctx.node_names.add("J2");
-        ctx.link_names.add("P1");      // the pump
-        ctx.link_names.add("C1");      // a conduit
+        ctx.link_names.add("P1"); // the pump
+        ctx.link_names.add("C1"); // a conduit
 
         ctx.allocate_objects();
 
         // Mark P1 as a pump so LINK_STATUS returns its setting.
         ctx.link_subtypes.set_link_type(ctx.links, 0, openswmm::LinkType::PUMP);
         ctx.link_subtypes.set_link_type(ctx.links, 1, openswmm::LinkType::CONDUIT);
-        ctx.links.setting[0]        = 1.0;
+        ctx.links.setting[0] = 1.0;
         ctx.links.target_setting[0] = 1.0;
-        ctx.links.time_last_set[0]  = ctx.options.start_date;
+        ctx.links.time_last_set[0] = ctx.options.start_date;
 
         ctx.current_time = 0.0;
         ctx.current_date = ctx.options.start_date;
@@ -77,6 +89,14 @@ protected:
 
 class GageControlsParityTest : public ControlsParityTest {
 protected:
+    /**
+     * @brief Extend the base control context with a used gage and rain-history sentinels.
+     *
+     * Calls ControlsParityTest::SetUp, adds RG, sets st_used1, rainfall2 and past-rain entries at
+     * offsets0/1/23/47 to1/3/7/13 in internal rain-history units. Does not advance a gage or clear
+     * unrelated base state. Fatal GoogleTest assertions return from this hook on failure; any created
+     * handle remains owned by the fixture for teardown.
+     */
     void SetUp() override {
         ControlsParityTest::SetUp();
         ctx.gage_names.add("RG");
@@ -88,10 +108,28 @@ protected:
         ctx.gages.past_rain[23] = 7.0;
         ctx.gages.past_rain[47] = 13.0;
     }
+    /**
+     * @brief Build a pump-setting rule around one raw condition.
+     *
+     * Does not escape/parse/evaluate the expression or mutate context.
+     *
+     * @param[in] condition Raw IF expression without the IF keyword.
+     * @return Owned RULE Rain text selecting P1 setting 0.5 when true and zero otherwise.
+     */
     std::string rule(const std::string& condition) {
         return "RULE Rain\nIF " + condition +
-            "\nTHEN PUMP P1 SETTING = .5\nELSE PUMP P1 SETTING = 0\n";
+               "\nTHEN PUMP P1 SETTING = .5\nELSE PUMP P1 SETTING = 0\n";
     }
+    /**
+     * @brief Parse/evaluate one fixture rule and assert pump target setting.
+     *
+     * Uses a local ControlEngine and mutable fixture ctx, evaluates at start_date with 60 s elapsed,
+     * then checks target_setting[0] exactly. Fatal parse assertion returns from the helper. Requires a
+     * valid P1 fixture and does not execute hydraulic stepping.
+     *
+     * @param[in] text Complete control-rule text.
+     * @param[in] expected Dimensionless expected target setting, default 0.5.
+     */
     void fires(const std::string& text, double expected = .5) {
         ControlEngine engine;
         ASSERT_GE(engine.parseRuleText(text, ctx), 0) << engine.lastParseError().message;
@@ -101,14 +139,14 @@ protected:
 };
 
 TEST_F(GageControlsParityTest, LegacyAttributeGrammarAndLimit) {
-    for (const auto* attr : {"INTENSITY", "1-HR_DEPTH", "24-HR_DEPTH", "48-hr_depth",
-                             "24", "+24", "24.5", "1e999", "3-DAY_DEPTH"}) {
+    for (const auto* attr : {"INTENSITY", "1-HR_DEPTH", "24-HR_DEPTH", "48-hr_depth", "24", "+24",
+                             "24.5", "1e999", "3-DAY_DEPTH"}) {
         SCOPED_TRACE(attr);
         ControlEngine engine;
         EXPECT_GE(engine.parseRuleText(rule(std::string("GAGE RG ") + attr + " >= 0"), ctx), 0);
     }
-    for (const auto* attr : {"0", "-1", "49", "49-HR_DEPTH", "72", "168-HR_DEPTH",
-                             "NaN", "Inf", "9999999999999999999999999", "DEPTH"}) {
+    for (const auto* attr : {"0", "-1", "49", "49-HR_DEPTH", "72", "168-HR_DEPTH", "NaN", "Inf",
+                             "9999999999999999999999999", "DEPTH"}) {
         SCOPED_TRACE(attr);
         ControlEngine engine;
         EXPECT_LT(engine.parseRuleText(rule(std::string("GAGE RG ") + attr + " >= 0"), ctx), 0);
@@ -165,10 +203,8 @@ TEST(GageControlHistory, ExactHoursExcludeThePartialBucketAndSplitLongIntervals)
 // stored as a raw double so the rule never fired in any normal sim.
 TEST_F(ControlsParityTest, ActionsRequireTheDeclaredLinkSubtype) {
     const std::pair<const char*, openswmm::LinkType> types[] = {
-        {"CONDUIT", openswmm::LinkType::CONDUIT},
-        {"PUMP", openswmm::LinkType::PUMP},
-        {"ORIFICE", openswmm::LinkType::ORIFICE},
-        {"WEIR", openswmm::LinkType::WEIR},
+        {"CONDUIT", openswmm::LinkType::CONDUIT}, {"PUMP", openswmm::LinkType::PUMP},
+        {"ORIFICE", openswmm::LinkType::ORIFICE}, {"WEIR", openswmm::LinkType::WEIR},
         {"OUTLET", openswmm::LinkType::OUTLET},
     };
     for (const auto& [actual_name, actual_type] : types) {
@@ -177,43 +213,43 @@ TEST_F(ControlsParityTest, ActionsRequireTheDeclaredLinkSubtype) {
             SCOPED_TRACE(std::string(actual_name) + " as " + declared_name);
             ControlEngine eng;
             const std::string rule = "RULE T1\nIF SIMULATION TIME > 0\nTHEN " +
-                std::string(declared_name) + " C1 SETTING = 0.5\n";
+                                     std::string(declared_name) + " C1 SETTING = 0.5\n";
             // Legacy addAction: a CONDUIT action takes STATUS only.
             EXPECT_EQ(eng.parseRuleText(rule, ctx),
-                      (actual_type == declared_type &&
-                       actual_type != openswmm::LinkType::CONDUIT) ? 1 : -1);
+                      (actual_type == declared_type && actual_type != openswmm::LinkType::CONDUIT)
+                          ? 1
+                          : -1);
         }
         ControlEngine eng;
         // Legacy addAction rejects a generic LINK action.
-        EXPECT_EQ(eng.parseRuleText(
-            "RULE T1\nIF SIMULATION TIME > 0\nTHEN LINK C1 SETTING = 0.5\n", ctx), -1);
+        EXPECT_EQ(
+            eng.parseRuleText("RULE T1\nIF SIMULATION TIME > 0\nTHEN LINK C1 SETTING = 0.5\n", ctx),
+            -1);
     }
     ctx.link_subtypes.set_link_type(ctx.links, 1, openswmm::LinkType::CONDUIT);
     ControlEngine eng;
     EXPECT_EQ(eng.parseRuleText(
-        "RULE T1\nIF SIMULATION TIME > 0\nTHEN CONDUIT C1 STATUS = CLOSED\n", ctx), 1);
+                  "RULE T1\nIF SIMULATION TIME > 0\nTHEN CONDUIT C1 STATUS = CLOSED\n", ctx),
+              1);
 }
 
 TEST_F(ControlsParityTest, SimulationTimeHoursParsedAsDays) {
     ControlEngine eng;
-    const char* rule =
-        "RULE T1\n"
-        "IF SIMULATION TIME > 4.5\n"
-        "THEN PUMP P1 STATUS = OFF\n"
-        "ELSE PUMP P1 STATUS = ON\n";
+    const char* rule = "RULE T1\n"
+                       "IF SIMULATION TIME > 4.5\n"
+                       "THEN PUMP P1 STATUS = OFF\n"
+                       "ELSE PUMP P1 STATUS = ON\n";
     ASSERT_EQ(eng.parseRuleText(rule, ctx), 1);
 
     // At t = 4.0 hours the rule must NOT fire (ELSE -> pump ON, setting 1.0)
-    ctx.current_time = 4.0 * 3600.0;  // 4 h in seconds
-    ctx.current_date = openswmm::datetime::addSeconds(
-        ctx.options.start_date, ctx.current_time);
+    ctx.current_time = 4.0 * 3600.0; // 4 h in seconds
+    ctx.current_date = openswmm::datetime::addSeconds(ctx.options.start_date, ctx.current_time);
     eng.evaluate(ctx, ctx.current_date, 60.0);
     EXPECT_DOUBLE_EQ(ctx.links.target_setting[0], 1.0);
 
     // At t = 5.0 hours the rule fires (THEN -> pump OFF, setting 0.0)
     ctx.current_time = 5.0 * 3600.0;
-    ctx.current_date = openswmm::datetime::addSeconds(
-        ctx.options.start_date, ctx.current_time);
+    ctx.current_date = openswmm::datetime::addSeconds(ctx.options.start_date, ctx.current_time);
     eng.evaluate(ctx, ctx.current_date, 60.0);
     EXPECT_DOUBLE_EQ(ctx.links.target_setting[0], 0.0);
 }
@@ -222,22 +258,19 @@ TEST_F(ControlsParityTest, SimulationTimeHoursParsedAsDays) {
 // sscanf branch.
 TEST_F(ControlsParityTest, SimulationTimeHmsParsedAsDays) {
     ControlEngine eng;
-    const char* rule =
-        "RULE T2\n"
-        "IF SIMULATION TIME > 04:30:00\n"
-        "THEN PUMP P1 STATUS = OFF\n"
-        "ELSE PUMP P1 STATUS = ON\n";
+    const char* rule = "RULE T2\n"
+                       "IF SIMULATION TIME > 04:30:00\n"
+                       "THEN PUMP P1 STATUS = OFF\n"
+                       "ELSE PUMP P1 STATUS = ON\n";
     ASSERT_EQ(eng.parseRuleText(rule, ctx), 1);
 
     ctx.current_time = 4.0 * 3600.0;
-    ctx.current_date = openswmm::datetime::addSeconds(
-        ctx.options.start_date, ctx.current_time);
+    ctx.current_date = openswmm::datetime::addSeconds(ctx.options.start_date, ctx.current_time);
     eng.evaluate(ctx, ctx.current_date, 60.0);
     EXPECT_DOUBLE_EQ(ctx.links.target_setting[0], 1.0);
 
     ctx.current_time = 5.0 * 3600.0;
-    ctx.current_date = openswmm::datetime::addSeconds(
-        ctx.options.start_date, ctx.current_time);
+    ctx.current_date = openswmm::datetime::addSeconds(ctx.options.start_date, ctx.current_time);
     eng.evaluate(ctx, ctx.current_date, 60.0);
     EXPECT_DOUBLE_EQ(ctx.links.target_setting[0], 0.0);
 }
@@ -245,31 +278,25 @@ TEST_F(ControlsParityTest, SimulationTimeHmsParsedAsDays) {
 // The user's exact rule shape: pump-outage between two times.
 TEST_F(ControlsParityTest, PumpOutageWindow_UserReportedCase) {
     ControlEngine eng;
-    const char* rule =
-        "RULE PUMP1_outage\n"
-        "IF SIMULATION TIME > 4.5\n"
-        "AND SIMULATION TIME < 12\n"
-        "THEN PUMP P1 STATUS = OFF\n"
-        "ELSE PUMP P1 STATUS = ON\n"
-        "PRIORITY 4\n";
+    const char* rule = "RULE PUMP1_outage\n"
+                       "IF SIMULATION TIME > 4.5\n"
+                       "AND SIMULATION TIME < 12\n"
+                       "THEN PUMP P1 STATUS = OFF\n"
+                       "ELSE PUMP P1 STATUS = ON\n"
+                       "PRIORITY 4\n";
     ASSERT_EQ(eng.parseRuleText(rule, ctx), 1);
 
-    struct { double hr; double expected; } cases[] = {
-        { 0.0,  1.0},
-        { 4.0,  1.0},
-        { 4.6,  0.0},
-        { 8.0,  0.0},
-        {11.9,  0.0},
-        {12.5,  1.0},
-        {24.0,  1.0},
+    struct {
+        double hr;
+        double expected;
+    } cases[] = {
+        {0.0, 1.0}, {4.0, 1.0}, {4.6, 0.0}, {8.0, 0.0}, {11.9, 0.0}, {12.5, 1.0}, {24.0, 1.0},
     };
     for (auto c : cases) {
         ctx.current_time = c.hr * 3600.0;
-        ctx.current_date = openswmm::datetime::addSeconds(
-            ctx.options.start_date, ctx.current_time);
+        ctx.current_date = openswmm::datetime::addSeconds(ctx.options.start_date, ctx.current_time);
         eng.evaluate(ctx, ctx.current_date, 60.0);
-        EXPECT_DOUBLE_EQ(ctx.links.target_setting[0], c.expected)
-            << "at " << c.hr << " h";
+        EXPECT_DOUBLE_EQ(ctx.links.target_setting[0], c.expected) << "at " << c.hr << " h";
     }
 }
 
@@ -280,22 +307,19 @@ TEST_F(ControlsParityTest, PumpOutageWindow_UserReportedCase) {
 TEST_F(ControlsParityTest, ClockTimeRhsAndLhsBothInDays) {
     ControlEngine eng;
     // Trigger at noon local (12:00:00 = 0.5 days)
-    const char* rule =
-        "RULE NoonFire\n"
-        "IF SIMULATION CLOCKTIME > 12\n"
-        "THEN PUMP P1 STATUS = OFF\n"
-        "ELSE PUMP P1 STATUS = ON\n";
+    const char* rule = "RULE NoonFire\n"
+                       "IF SIMULATION CLOCKTIME > 12\n"
+                       "THEN PUMP P1 STATUS = OFF\n"
+                       "ELSE PUMP P1 STATUS = ON\n";
     ASSERT_EQ(eng.parseRuleText(rule, ctx), 1);
 
     // At 11:00 AM the rule does not fire
-    ctx.current_date = ctx.options.start_date +
-                       openswmm::datetime::encodeTime(11, 0, 0);
+    ctx.current_date = ctx.options.start_date + openswmm::datetime::encodeTime(11, 0, 0);
     eng.evaluate(ctx, ctx.current_date, 60.0);
     EXPECT_DOUBLE_EQ(ctx.links.target_setting[0], 1.0);
 
     // At 13:00 it does
-    ctx.current_date = ctx.options.start_date +
-                       openswmm::datetime::encodeTime(13, 0, 0);
+    ctx.current_date = ctx.options.start_date + openswmm::datetime::encodeTime(13, 0, 0);
     eng.evaluate(ctx, ctx.current_date, 60.0);
     EXPECT_DOUBLE_EQ(ctx.links.target_setting[0], 0.0);
 }
@@ -310,11 +334,10 @@ TEST_F(ControlsParityTest, SimDayReturnsCorrectDayOfWeek) {
     ControlEngine eng;
     // No rules needed — we drive getVariableValue() via a trivial rule
     // that compares SIMULATION DAY against several values.
-    const char* rule =
-        "RULE Sunday\n"
-        "IF SIMULATION DAY = 1\n"
-        "THEN PUMP P1 STATUS = OFF\n"
-        "ELSE PUMP P1 STATUS = ON\n";
+    const char* rule = "RULE Sunday\n"
+                       "IF SIMULATION DAY = 1\n"
+                       "THEN PUMP P1 STATUS = OFF\n"
+                       "ELSE PUMP P1 STATUS = ON\n";
     ASSERT_EQ(eng.parseRuleText(rule, ctx), 1);
 
     // 2025-01-05 is Sunday
@@ -345,16 +368,15 @@ TEST_F(ControlsParityTest, MixedVariableTypeShortCircuitOrder) {
     // Legacy semantics: ((P0 OR P1) AND P2) = (TRUE AND FALSE) = FALSE
     // Pre-fix new engine: re-ordered to ((P0 AND P2) OR P1) = TRUE.
     ctx.nodes.depth[0] = 0.0;
-    ctx.nodes.head[0]  = 0.0;
+    ctx.nodes.head[0] = 0.0;
 
     ControlEngine eng;
-    const char* rule =
-        "RULE Mixed\n"
-        "IF NODE J1 DEPTH > 100\n"
-        "OR NODE J1 HEAD  > -1\n"
-        "AND NODE J1 DEPTH > 100\n"
-        "THEN PUMP P1 STATUS = OFF\n"
-        "ELSE PUMP P1 STATUS = ON\n";
+    const char* rule = "RULE Mixed\n"
+                       "IF NODE J1 DEPTH > 100\n"
+                       "OR NODE J1 HEAD  > -1\n"
+                       "AND NODE J1 DEPTH > 100\n"
+                       "THEN PUMP P1 STATUS = OFF\n"
+                       "ELSE PUMP P1 STATUS = ON\n";
     ASSERT_EQ(eng.parseRuleText(rule, ctx), 1);
     eng.evaluate(ctx, ctx.current_date, 60.0);
     EXPECT_DOUBLE_EQ(ctx.links.target_setting[0], 1.0)
@@ -371,14 +393,15 @@ TEST_F(ControlsParityTest, FailedAndStopsBeforeLaterOrCanStartPump) {
     ctx.links.setting[0] = 0.0;
     ctx.links.target_setting[0] = 0.0;
     ControlEngine engine;
-    ASSERT_EQ(engine.parseRuleText(
-        "RULE Early\n"
-        "IF NODE J1 DEPTH >= 14\n"
-        "AND NODE J2 DEPTH > 5\n"
-        "AND NODE J1 HEAD > 3.2\n"
-        "OR NODE J2 HEAD > 3.75\n"
-        "THEN PUMP P1 STATUS = ON\n"
-        "ELSE PUMP P1 STATUS = OFF\n", ctx), 1);
+    ASSERT_EQ(engine.parseRuleText("RULE Early\n"
+                                   "IF NODE J1 DEPTH >= 14\n"
+                                   "AND NODE J2 DEPTH > 5\n"
+                                   "AND NODE J1 HEAD > 3.2\n"
+                                   "OR NODE J2 HEAD > 3.75\n"
+                                   "THEN PUMP P1 STATUS = ON\n"
+                                   "ELSE PUMP P1 STATUS = OFF\n",
+                                   ctx),
+              1);
     engine.evaluate(ctx, ctx.current_date, 60.0);
     EXPECT_DOUBLE_EQ(ctx.links.target_setting[0], 0.0);
 }
@@ -389,20 +412,19 @@ TEST_F(ControlsParityTest, FailedAndStopsBeforeLaterOrCanStartPump) {
 
 TEST_F(ControlsParityTest, ExpressionMixedWithDirectPremise) {
     ctx.nodes.depth[0] = 0.0;
-    ctx.nodes.head[0]  = 0.0;
+    ctx.nodes.head[0] = 0.0;
 
     ControlEngine eng;
     // Declare a named expression that evaluates to 0 (always FALSE > 1).
     // Combined with a direct AND that is TRUE.
-    const char* rule =
-        "VARIABLE D1 = NODE J1 DEPTH\n"
-        "EXPRESSION e1 = D1 + 0\n"
-        "RULE WithExpr\n"
-        "IF e1 > 1\n"
-        "OR NODE J1 HEAD > -1\n"
-        "AND e1 > 1\n"
-        "THEN PUMP P1 STATUS = OFF\n"
-        "ELSE PUMP P1 STATUS = ON\n";
+    const char* rule = "VARIABLE D1 = NODE J1 DEPTH\n"
+                       "EXPRESSION e1 = D1 + 0\n"
+                       "RULE WithExpr\n"
+                       "IF e1 > 1\n"
+                       "OR NODE J1 HEAD > -1\n"
+                       "AND e1 > 1\n"
+                       "THEN PUMP P1 STATUS = OFF\n"
+                       "ELSE PUMP P1 STATUS = ON\n";
     ASSERT_EQ(eng.parseRuleText(rule, ctx), 1);
     eng.evaluate(ctx, ctx.current_date, 60.0);
     EXPECT_DOUBLE_EQ(ctx.links.target_setting[0], 1.0)
@@ -418,12 +440,11 @@ TEST_F(ControlsParityTest, NamedVariableInRhs) {
     ctx.nodes.depth[1] = 1.0;
 
     ControlEngine eng;
-    const char* rule =
-        "VARIABLE J2depth = NODE J2 DEPTH\n"
-        "RULE NamedVar\n"
-        "IF NODE J1 DEPTH > J2depth\n"
-        "THEN PUMP P1 STATUS = OFF\n"
-        "ELSE PUMP P1 STATUS = ON\n";
+    const char* rule = "VARIABLE J2depth = NODE J2 DEPTH\n"
+                       "RULE NamedVar\n"
+                       "IF NODE J1 DEPTH > J2depth\n"
+                       "THEN PUMP P1 STATUS = OFF\n"
+                       "ELSE PUMP P1 STATUS = ON\n";
     ASSERT_EQ(eng.parseRuleText(rule, ctx), 1);
     eng.evaluate(ctx, ctx.current_date, 60.0);
     EXPECT_DOUBLE_EQ(ctx.links.target_setting[0], 0.0);
@@ -435,14 +456,13 @@ TEST_F(ControlsParityTest, NamedVariableInRhs) {
 
 TEST_F(ControlsParityTest, RuleStepGating) {
     ControlEngine eng;
-    const char* rule =
-        "RULE Step\n"
-        "IF SIMULATION TIME > 0\n"
-        "THEN PUMP P1 STATUS = OFF\n"
-        "ELSE PUMP P1 STATUS = ON\n";
+    const char* rule = "RULE Step\n"
+                       "IF SIMULATION TIME > 0\n"
+                       "THEN PUMP P1 STATUS = OFF\n"
+                       "ELSE PUMP P1 STATUS = ON\n";
     ASSERT_EQ(eng.parseRuleText(rule, ctx), 1);
 
-    ctx.options.rule_step = 300.0;  // 5 minutes
+    ctx.options.rule_step = 300.0; // 5 minutes
 
     // The RULE_STEP gate is the caller's (legacy routing.c: RuleStep == 0
     // || |NewRoutingTime - NewRuleTime| < 1 ms on the routing ms clock);
@@ -450,11 +470,11 @@ TEST_F(ControlsParityTest, RuleStepGating) {
     int evals = 0;
     for (int t_sec = 0; t_sec < 600; t_sec += 60) {
         ctx.current_time = static_cast<double>(t_sec);
-        ctx.current_date = openswmm::datetime::addSeconds(
-            ctx.options.start_date, ctx.current_time);
+        ctx.current_date = openswmm::datetime::addSeconds(ctx.options.start_date, ctx.current_time);
         const bool on_grid = (t_sec % 300) == 0;
         const int actions = eng.evaluate(ctx, ctx.current_date, 60.0, on_grid);
-        if (actions > 0) ++evals;
+        if (actions > 0)
+            ++evals;
         // simulate the routing layer applying target_setting -> setting
         ctx.links.setting[0] = ctx.links.target_setting[0];
     }
@@ -470,16 +490,15 @@ TEST_F(ControlsParityTest, RuleStepGating) {
 
 TEST_F(ControlsParityTest, TimeOpenReadsExternalTimeLastSet) {
     // Simulate that the link was opened 0.25 days (6 hr) ago.
-    ctx.links.setting[0]        = 1.0;
-    ctx.links.time_last_set[0]  = ctx.options.start_date;
-    ctx.current_date            = ctx.options.start_date + 0.25;
+    ctx.links.setting[0] = 1.0;
+    ctx.links.time_last_set[0] = ctx.options.start_date;
+    ctx.current_date = ctx.options.start_date + 0.25;
 
     ControlEngine eng;
-    const char* rule =
-        "RULE OpenLong\n"
-        "IF PUMP P1 TIMEOPEN > 4\n"            // 4 h
-        "THEN PUMP P1 STATUS = OFF\n"
-        "ELSE PUMP P1 STATUS = ON\n";
+    const char* rule = "RULE OpenLong\n"
+                       "IF PUMP P1 TIMEOPEN > 4\n" // 4 h
+                       "THEN PUMP P1 STATUS = OFF\n"
+                       "ELSE PUMP P1 STATUS = ON\n";
     ASSERT_EQ(eng.parseRuleText(rule, ctx), 1);
     eng.evaluate(ctx, ctx.current_date, 60.0);
     EXPECT_DOUBLE_EQ(ctx.links.target_setting[0], 0.0)
@@ -500,10 +519,9 @@ TEST_F(ControlsParityTest, NumericActionAppearsInControlLog) {
     ctx.control_log.clear();
 
     ControlEngine eng;
-    const char* rule =
-        "RULE FireNow\n"
-        "IF NODE J1 DEPTH > -1\n"
-        "THEN PUMP P1 STATUS = OFF\n";
+    const char* rule = "RULE FireNow\n"
+                       "IF NODE J1 DEPTH > -1\n"
+                       "THEN PUMP P1 STATUS = OFF\n";
     ASSERT_EQ(eng.parseRuleText(rule, ctx), 1);
     eng.evaluate(ctx, ctx.current_date, 60.0);
     ASSERT_FALSE(ctx.control_log.empty());
@@ -524,10 +542,10 @@ TEST_F(ControlsParityTest, ControlLogIsCappedAndCountsTheOverflow) {
     const std::size_t cap = SimulationContext::kMaxControlLog;
     SimulationContext::ControlLogEntry e{};
     for (std::size_t i = 0; i < cap + 10; ++i) {
-        e.link_idx    = static_cast<int>(i & 7u);
-        e.rule_idx    = 0;
+        e.link_idx = static_cast<int>(i & 7u);
+        e.rule_idx = 0;
         e.new_setting = 1.0;
-        e.date        = static_cast<double>(i);
+        e.date = static_cast<double>(i);
         ctx.logControlAction(e);
     }
     EXPECT_EQ(ctx.control_log.size(), cap);
@@ -544,9 +562,8 @@ TEST_F(ControlsParityTest, ControlLogIsCappedAndCountsTheOverflow) {
 TEST_F(ControlsParityTest, MalformedRuleReturnsError) {
     ControlEngine eng;
     // Unknown node name in LHS — must fail.
-    const char* rule =
-        "RULE Bad\n"
-        "IF NODE NotARealNode DEPTH > 1\n"
-        "THEN PUMP P1 STATUS = OFF\n";
+    const char* rule = "RULE Bad\n"
+                       "IF NODE NotARealNode DEPTH > 1\n"
+                       "THEN PUMP P1 STATUS = OFF\n";
     EXPECT_LT(eng.parseRuleText(rule, ctx), 0);
 }

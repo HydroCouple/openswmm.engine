@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file Inlet.hpp
- * @brief Street inlet capture efficiency — FHWA HEC-22.
+ * @file      Inlet.hpp
+ * @brief     Street inlet capture efficiency — FHWA HEC-22.
  *
  * @details Inlet types: GRATE, CURB, COMBO, SLOTTED, DROP_GRATE, DROP_CURB,
  *          CUSTOM. On-grade capture uses splash-over velocity and frontal /
@@ -32,16 +32,16 @@
  *
  *          The pure kernel functions below are transliterations of the legacy
  *          file-scope routines and carry the HEC-22 equation numbers; they take
- *          their state through @ref inlet::Geom / @ref inlet::Design /
- *          @ref inlet::UsageParams instead of legacy's module-level shared
+ *          their state through @ref openswmm::inlet::Geom / @ref openswmm::inlet::Design /
+ *          @ref openswmm::inlet::UsageParams instead of legacy's module-level shared
  *          variables, so they are directly unit-testable.
  *
  * @note Legacy reference: src/legacy/engine/inlet.c
  * @ingroup new_engine
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_INLET_HPP
@@ -61,25 +61,25 @@ namespace inlet {
 /// Legacy `enum InletType` (inlet.c:119-122) — the COMBO slot is the merged
 /// GRATE+CURB design the legacy parser encodes as two `[INLETS]` lines.
 enum class InletType : int {
-    GRATE       = 0,
-    CURB        = 1,
-    COMBO       = 2,
-    SLOTTED     = 3,
-    DROP_GRATE  = 4,
-    DROP_CURB   = 5,
-    CUSTOM      = 6
+    GRATE = 0,
+    CURB = 1,
+    COMBO = 2,
+    SLOTTED = 3,
+    DROP_GRATE = 4,
+    DROP_CURB = 5,
+    CUSTOM = 6
 };
 
 /// Legacy `enum GrateType` (inlet.c:124-127).
 enum class GrateType : int {
-    P_BAR_50      = 0,
-    P_BAR_50x100  = 1,
-    P_BAR_30      = 2,
-    CURVED_VANE   = 3,
-    TILT_BAR_45   = 4,
-    TILT_BAR_30   = 5,
-    RETICULINE    = 6,
-    GENERIC       = 7
+    P_BAR_50 = 0,
+    P_BAR_50x100 = 1,
+    P_BAR_30 = 2,
+    CURVED_VANE = 3,
+    TILT_BAR_45 = 4,
+    TILT_BAR_30 = 5,
+    RETICULINE = 6,
+    GENERIC = 7
 };
 
 /// Legacy `enum InletPlacementType` (inlet.c:129) — matches the token order of
@@ -113,17 +113,17 @@ inline constexpr double INLET_BIG = 1.0e10;
  *          exactly as legacy's shared `T` is.
  */
 struct Geom {
-    double sx      = 0.01;   ///< Street cross slope (fraction)
-    double sl      = 0.0;    ///< Conduit longitudinal slope (fraction)
-    double sw      = 0.01;   ///< Gutter + cross slope
-    double a       = 0.0;    ///< Gutter depression (ft)
-    double w       = 0.0;    ///< Gutter width (ft)
-    double t       = 0.0;    ///< Top width of flow spread (ft) — set by getFlowSpread
-    double n       = 0.016;  ///< Manning's roughness
-    int    nsides  = 1;      ///< 1- or 2-sided street
-    double t_crown = 100.0;  ///< Distance from curb to crown (ft)
-    double beta    = 0.0;    ///< 1.486·√SL / n
-    double qfactor = 0.0;    ///< Izzard's f in Q = f·T^2.67
+    double sx = 0.01;       ///< Street cross slope (fraction)
+    double sl = 0.0;        ///< Conduit longitudinal slope (fraction)
+    double sw = 0.01;       ///< Gutter + cross slope
+    double a = 0.0;         ///< Gutter depression (ft)
+    double w = 0.0;         ///< Gutter width (ft)
+    double t = 0.0;         ///< Top width of flow spread (ft) — set by getFlowSpread
+    double n = 0.016;       ///< Manning's roughness
+    int nsides = 1;         ///< 1- or 2-sided street
+    double t_crown = 100.0; ///< Distance from curb to crown (ft)
+    double beta = 0.0;      ///< 1.486·√SL / n
+    double qfactor = 0.0;   ///< Izzard's f in Q = f·T^2.67
 
     /// Host conduit cross-section — non-null only for the DROP_* (channel)
     /// designs, whose grate kernel needs A(S)/Y(A)/W(Y) of the channel.
@@ -132,103 +132,305 @@ struct Geom {
 
 /// One inlet design in INTERNAL units (legacy `TInletDesign`, inlet.c:66-74).
 struct Design {
-    int    type            = 0;    ///< inlet::InletType
-    int    grate_type      = static_cast<int>(GrateType::GENERIC);
-    double grate_length    = 0.0;  ///< ft (0 ⇒ no grate half)
-    double grate_width     = 0.0;  ///< ft
-    double frac_open_area  = 0.0;  ///< GENERIC grates only
-    double splash_veloc    = 0.0;  ///< ft/s, GENERIC grates only
-    double curb_length     = 0.0;  ///< ft (0 ⇒ no curb half)
-    double curb_height     = 0.0;  ///< ft
-    int    curb_throat     = static_cast<int>(ThroatAngle::VERTICAL);
-    double slotted_length  = 0.0;  ///< ft (0 ⇒ not a slotted drain)
-    double slotted_width   = 0.0;  ///< ft
+    int type = 0; ///< inlet::InletType
+    int grate_type = static_cast<int>(GrateType::GENERIC);
+    double grate_length = 0.0;   ///< ft (0 ⇒ no grate half)
+    double grate_width = 0.0;    ///< ft
+    double frac_open_area = 0.0; ///< GENERIC grates only
+    double splash_veloc = 0.0;   ///< ft/s, GENERIC grates only
+    double curb_length = 0.0;    ///< ft (0 ⇒ no curb half)
+    double curb_height = 0.0;    ///< ft
+    int curb_throat = static_cast<int>(ThroatAngle::VERTICAL);
+    double slotted_length = 0.0; ///< ft (0 ⇒ not a slotted drain)
+    double slotted_width = 0.0;  ///< ft
 };
 
 /// The per-placement half of one usage row (legacy `TInlet` fields).
 struct UsageParams {
-    int    num_inlets  = 1;
-    double clog_factor = 1.0;   ///< 1 − %clog/100
-    double flow_limit  = 0.0;   ///< cfs per inlet; 0 ⇒ unlimited
+    int num_inlets = 1;
+    double clog_factor = 1.0; ///< 1 − %clog/100
+    double flow_limit = 0.0;  ///< cfs per inlet; 0 ⇒ unlimited
 };
 
 // ============================================================================
 // Pure kernel — 1:1 ports of the legacy static functions
 // ============================================================================
 
-/// HEC-22 Eq(4-4) solved for Eo with Ts/w substituted for (T/w)−1 (inlet.c:1248).
+/**
+ * @brief Compute the depressed-gutter flow ratio using HEC-22 Eq4-4.
+ *
+ * No finite/domain checks or clamping; caller supplies a physically valid nondegenerate geometry.
+ *
+ * @param[in] sr Positive gutter-to-street cross-slope ratio, dimensionless.
+ * @param[in] ts Positive spread beyond gutter ft; no zero-denominator guard.
+ * @param[in] w Positive gutter width ft.
+ * @return Dimensionless ratio1/(1+sr/((1+sr/(ts/w))^2.67-1)).
+ */
 double getEo(double sr, double ts, double w);
 
-/// Width of flow spread, HEC-22 Eq(4-2)/(4-6) (inlet.c:1200).
+/**
+ * @brief Compute approach flow spread with crown limiting and depressed-gutter iteration.
+ *
+ * Undepressed street uses (Q/qfactor)^0.375. Depressed gutter uses a maximum10-update fixed-point
+ * solve with0.01ft difference tolerance; last estimate is returned without a convergence flag. Does
+ * not assign g.t because geometry is const.
+ *
+ * @param[in] g Borrowed native street/channel geometry with positive physical
+ *     slopes/roughness/dimensions needed by the chosen branch.
+ * @param[in] Q Positive finite approach discharge cfs; low-level formula does not validate it.
+ * @return Top width/spread ft, capped above by g.t_crown.
+ */
 double getFlowSpread(const Geom& g, double Q);
 
-/// Ratio of the flow over width `w` to the total street flow, Eq(4-16) (inlet.c:1518).
+/**
+ * @brief Compute the fraction of street flow above a selected gutter width.
+ *
+ * No flow calculation, spread refresh or finite/range checks.
+ *
+ * @param[in] g Borrowed native street/channel geometry with positive physical
+ *     slopes/roughness/dimensions needed by the chosen branch.
+ * @param[in] w Positive width ft; g.t is already computed flow spread.
+ * @return 1 when spread<=w, otherwise depressed-gutter Eo or1-(1-w/t)^2.67.
+ */
 double getGutterFlowRatio(const Geom& g, double w);
 
-/// Ratio of the flow area above the grate to that above the depressed gutter,
-/// Eq(4-20a) numerator/denominator (inlet.c:1535).
+/**
+ * @brief Compute the grate-width correction to depressed-gutter intercepted flow.
+ *
+ * Uses precomputed spread and gutter slopes; no generic denominator/finite guard.
+ *
+ * @param[in] g Borrowed native street/channel geometry with positive physical
+ *     slopes/roughness/dimensions needed by the chosen branch.
+ * @param[in] grate_width Positive effective grate width ft.
+ * @param[in] area Positive total flow cross-section area ft2; denominator after subtracting
+ *     outside-gutter area must remain positive.
+ * @return Dimensionless grate/gutter flow-area ratio, with1 for full-width coverage.
+ */
 double getGutterAreaRatio(const Geom& g, double grate_width, double area);
 
-/// Splash-over velocity for a standard grate type (HEC-22 Chart 5B, inlet.c:1557).
-/// Returns 0 for GENERIC / out-of-range types — those carry a user velocity.
+/**
+ * @brief Evaluate the standard grate splash-over velocity polynomial.
+ *
+ * Polynomial is not clamped to nonnegative values; generic designs use their separate authored
+ * splash velocity.
+ *
+ * @param[in] grate_type Standard fitted type0..6; GENERIC or out-of-range selects0.
+ * @param[in] grate_length Physical grate length ft.
+ * @return Fitted velocity ft/s, or0 for an unsupported curve.
+ */
 double getSplashOverVelocity(int grate_type, double grate_length);
 
-/// On-grade grate capture, Eq(4-16)/(4-18)/(4-19)/(4-20a)/(4-21) (inlet.c:1387).
-/// Reads `g.t` (spread) and may update `g.t` / `g.sx` for a channel drop grate.
+/**
+ * @brief Compute one on-grade grate's frontal and side capture.
+ *
+ * Reads existing spread for street geometry; rectangular/trapezoidal DROP_GRATE may recompute
+ * area/depth/width and adjust sx. Uses standard or authored splash velocity and depressed-gutter
+ * corrections. This low-level result is not globally clipped to0..Q; outer usage routines apply
+ * selected upper caps.
+ *
+ * @param[in] d Borrowed validated inlet design in native ft/ft per second; coefficients/types must
+ *     match the selected physical design.
+ * @param[in,out] g Borrowed native geometry; capture routines may update spread t and channel
+ *     cross-slope sx. Borrowed xs must remain live for the call.
+ * @param[in] Q Positive finite approach discharge cfs; low-level formula does not validate it.
+ * @return Native cfs capture from HEC-22 efficiency formulas.
+ */
 double getGrateInletCapture(const Design& d, Geom& g, double Q);
 
-/// On-grade curb-opening capture, Eq(4-22a)/(4-23)/(4-24) (inlet.c:1477).
+/**
+ * @brief Compute on-grade curb-opening capture from equivalent cross slope.
+ *
+ * Depressed gutters modify equivalent slope through Eo; full-capture length uses HEC-22 Eq4-22a.
+ * Requires positive slope/roughness and valid spread; no independent geometry/finite checks.
+ *
+ * @param[in] g Borrowed native street/channel geometry with positive physical
+ *     slopes/roughness/dimensions needed by the chosen branch.
+ * @param[in] Q Positive finite approach discharge cfs; low-level formula does not validate it.
+ * @param[in] opening_length Nonnegative curb/slotted opening length ft.
+ * @return Approach Q times capture efficiency clamped0..1, cfs.
+ */
 double getCurbInletCapture(const Geom& g, double Q, double opening_length);
 
-/// Capture of a single on-grade inlet — type dispatch + COMBO sweeper (inlet.c:1325).
+/**
+ * @brief Compute a single on-grade inlet or combination sweeper/grate capture.
+ *
+ * DROP_CURB uses sag capacity and DROP_GRATE grate capacity, each upper-limited to Q. SLOTTED uses
+ * curb capture. Street combinations compute positive curb length ahead of grate, then grate on
+ * remaining Q, refreshing spread as needed. No universal lower clamp or donor inventory booking.
+ *
+ * @param[in] d Borrowed validated inlet design in native ft/ft per second; coefficients/types must
+ *     match the selected physical design.
+ * @param[in,out] g Borrowed native geometry; capture routines may update spread t and channel
+ *     cross-slope sx. Borrowed xs must remain live for the call.
+ * @param[in] Q Positive finite approach discharge cfs; low-level formula does not validate it.
+ * @param[in] depth Nonnegative finite local water depth ft unless explicitly stated otherwise.
+ * @return Native cfs capture before usage clog/replicate/flow-limit scaling.
+ */
 double getOnGradeInletCapture(const Design& d, Geom& g, double Q, double depth);
 
-/// Total capture of an on-grade usage: `num_inlets` in series, both sides (inlet.c:1267).
-double getOnGradeCapturedFlow(const Design& d, const UsageParams& u, Geom& g,
-                              double q, double depth);
-
-/// On-sag grate weir/orifice flows, Eq(4-26)/(4-27) (inlet.c:1644).
-void findOnSagGrateFlows(const Design& d, const Geom& g, double depth,
-                         double* weir_flow, double* orifice_flow);
-
-/// On-sag curb weir/orifice flows with the transition band, Eq(4-28)/(4-30)
-/// (inlet.c:1703). A DROP_CURB opening acts on all four sides (`L × 4`).
-void findOnSagCurbFlows(const Design& d, const Geom& g, double depth,
-                        double opening_length,
-                        double* weir_flow, double* orifice_flow);
-
-/// Curb-opening orifice flow with the throat-angle head, Eq(4-31a) (inlet.c:1764).
-double getCurbOrificeFlow(double flow_depth, double opening_height,
-                          double opening_length, int throat_angle);
-
-/// On-sag slotted drain flow, Eq(4-32)/(4-33) (inlet.c:1785).
-double getOnSagSlottedFlow(const Design& d, double depth);
-
-/// Capture of a single on-sag inlet (inlet.c:1610).
-double getOnSagInletCapture(const Design& d, const Geom& g, double depth);
-
-/// Total capture of an on-sag usage: single inlet × `nsides_prev · num_inlets`
-/// (inlet.c:1574). `nsides_prev` is legacy's module-level Nsides as it stood on
-/// entry — the PREVIOUSLY processed inlet's street — because legacy forms
-/// totalInlets before getConduitGeometry refreshes it.
-double getOnSagCapturedFlow(const Design& d, const UsageParams& u,
-                            const Geom& g, double depth, int nsides_prev);
+/**
+ * @brief Compute series inlet capture across the current street sides.
+ *
+ * Requires positive g.nsides. Divides approach per side, evaluates replicates on remaining bypass,
+ * applies clog/per-inlet limit and bypass upper cap, then multiplies sides. Stops when remaining
+ * per-side flow is below MIN_RUNOFF_FLOW; geometry spread can change during evaluation.
+ *
+ * @param[in] d Borrowed validated inlet design in native ft/ft per second; coefficients/types must
+ *     match the selected physical design.
+ * @param[in] u Borrowed usage with nonnegative replicate count, clog factor0..1 and per-inlet
+ *     flow_limit cfs (<=0 means unlimited).
+ * @param[in,out] g Borrowed native geometry; capture routines may update spread t and channel
+ *     cross-slope sx. Borrowed xs must remain live for the call.
+ * @param[in] q Finite approach cfs; q<MIN_RUNOFF_FLOW or zero replicates returns0.
+ * @param[in] depth Nonnegative finite local water depth ft unless explicitly stated otherwise.
+ * @return Total native cfs captured across g.nsides.
+ */
+double getOnGradeCapturedFlow(const Design& d, const UsageParams& u, Geom& g, double q,
+                              double depth);
 
 /**
- * @brief Capture of a CUSTOM inlet from its diversion / rating curve (inlet.c:1902).
+ * @brief Compute the active grate weir or orifice contribution for one sag inlet.
  *
- * @param curve      Resolved capture curve (`InletStore::curve_index`).
- * @param curve_kind inlet::CurveKind — DIVERSION (capture vs approach flow) or
- *                   RATING (capture vs depth).
- * @param ucf_flow   internal → display flow factor (curve x/y are user units).
- * @param ucf_len    internal → display length factor.
+ * DROP_GRATE uses all-four-side perimeter; gutter grate adjusts wetted width and mean depth.
+ * Transition is depth<=1.79*open_area/perimeter; outputs cfs. Caller supplies positive
+ * nondegenerate geometry and valid root/power domains; no full output reset or pointer validation.
+ *
+ * @param[in] d Borrowed validated inlet design in native ft/ft per second; coefficients/types must
+ *     match the selected physical design.
+ * @param[in] g Borrowed native street/channel geometry with positive physical
+ *     slopes/roughness/dimensions needed by the chosen branch.
+ * @param[in] depth Nonnegative finite local water depth ft unless explicitly stated otherwise.
+ * @param[in,out] weir_flow Non-NULL scalar initialized by caller, typically0; assigned only on weir
+ *     branch, otherwise preserved.
+ * @param[in,out] orifice_flow Non-NULL scalar initialized by caller, typically0; assigned only on
+ *     orifice branch, otherwise preserved.
  */
-double getCustomCapturedFlow(const UsageParams& u, const Geom& g,
-                             const Table& curve, int curve_kind,
-                             double q, double depth,
-                             double ucf_flow, double ucf_len);
+void findOnSagGrateFlows(const Design& d, const Geom& g, double depth, double* weir_flow,
+                         double* orifice_flow);
 
-/// Unclogged open area of one usage (ft²) — legacy getInletArea (inlet.c:1870).
+/**
+ * @brief Compute sag curb-opening weir/orifice contributions with transition blending.
+ *
+ * Uses uniform/long-opening or depressed-gutter weir, then blends toward orifice at1.4*curb_height.
+ * Caller supplies nondegenerate transition depths and positive root domains; no automatic output
+ * clearing, unit conversion or pointer checks.
+ *
+ * @param[in] d Borrowed validated inlet design in native ft/ft per second; coefficients/types must
+ *     match the selected physical design.
+ * @param[in] g Borrowed native street/channel geometry with positive physical
+ *     slopes/roughness/dimensions needed by the chosen branch.
+ * @param[in] depth Nonnegative finite local water depth ft unless explicitly stated otherwise.
+ * @param[in] opening_length Curb length ft; <=0 leaves both outputs unchanged, DROP_CURB multiplies
+ *     it by4.
+ * @param[in,out] weir_flow Non-NULL cfs destination initialized by caller; untouched on
+ *     pure-orifice/no-opening branch.
+ * @param[in,out] orifice_flow Non-NULL cfs destination initialized by caller; untouched on
+ *     pure-weir/no-opening branch.
+ */
+void findOnSagCurbFlows(const Design& d, const Geom& g, double depth, double opening_length,
+                        double* weir_flow, double* orifice_flow);
+
+/**
+ * @brief Compute sag curb-opening orifice flow using throat-adjusted head.
+ *
+ * No finite/domain guard or source-flow cap.
+ *
+ * @param[in] flow_depth Water depth ft; must leave nonnegative head after throat correction.
+ * @param[in] opening_height Positive curb-opening height ft.
+ * @param[in] opening_length Nonnegative effective opening length ft.
+ * @param[in] throat_angle HORIZONTAL subtracts height/2, INCLINED0.7071*height/2; other codes use
+ *     full depth.
+ * @return 0.67*height*length*sqrt(64.32*effective_head), cfs.
+ */
+double getCurbOrificeFlow(double flow_depth, double opening_height, double opening_length,
+                          int throat_angle);
+
+/**
+ * @brief Compute one sag slotted-drain weir or orifice capacity.
+ *
+ * Uses2.48*length*depth^1.5 below threshold,0.8*length*width*sqrt(64.32*depth) above. No clog,
+ * replicate or approach-flow cap here.
+ *
+ * @param[in] d Borrowed validated inlet design in native ft/ft per second; coefficients/types must
+ *     match the selected physical design.
+ * @param[in] depth Nonnegative finite local water depth ft unless explicitly stated otherwise.
+ * @return Native cfs, switching at depth=2.587*slotted_width.
+ */
+double getOnSagSlottedFlow(const Design& d, double depth);
+
+/**
+ * @brief Combine one sag inlet's grate, sweeper and curb-orifice contributions.
+ *
+ * Positive slotted length takes precedence. Otherwise sums grate/sweeper weir+orifice and only
+ * curb-orifice overlap when grate is in orifice mode; excludes overlapping curb-weir contribution
+ * to match legacy. No donor cap or validation.
+ *
+ * @param[in] d Borrowed validated inlet design in native ft/ft per second; coefficients/types must
+ *     match the selected physical design.
+ * @param[in] g Borrowed native street/channel geometry with positive physical
+ *     slopes/roughness/dimensions needed by the chosen branch.
+ * @param[in] depth Nonnegative finite local water depth ft unless explicitly stated otherwise.
+ * @return Native cfs capacity before usage scaling.
+ */
+double getOnSagInletCapture(const Design& d, const Geom& g, double depth);
+
+/**
+ * @brief Scale sag capacity using usage factors and legacy carried-over street sides.
+ *
+ * Zero replicates returns0. Does not cap by current approach/disposable volume; caller applies
+ * routing-model limits. Previous-side ordering deliberately preserves legacy shared-state behavior.
+ *
+ * @param[in] d Borrowed validated inlet design in native ft/ft per second; coefficients/types must
+ *     match the selected physical design.
+ * @param[in] u Borrowed usage with nonnegative replicate count, clog factor0..1 and per-inlet
+ *     flow_limit cfs (<=0 means unlimited).
+ * @param[in] g Borrowed native street/channel geometry with positive physical
+ *     slopes/roughness/dimensions needed by the chosen branch.
+ * @param[in] depth Finite signed depth ft; absolute value is used for sag capacity.
+ * @param[in] nsides_prev Nonnegative side count from previously processed inlet, not necessarily
+ *     g.nsides; product with num_inlets must fit int.
+ * @return Sag capacity cfs after clog/per-inlet limit, multiplied by nsides_prev*num_inlets.
+ */
+double getOnSagCapturedFlow(const Design& d, const UsageParams& u, const Geom& g, double depth,
+                            int nsides_prev);
+
+/**
+ * @brief Compute custom inlet capture from authored diversion or rating curves.
+ *
+ * DIVERSION loops replicates on bypassed per-side flow, applying clog, per-inlet limit and bypass
+ * upper cap. RATING multiplies depth-curve output by replicates/clog/sides without applying q or
+ * flow_limit caps. No name binding, finite check or inventory booking.
+ *
+ * @param[in] u Borrowed usage with nonnegative replicate count, clog factor0..1 and per-inlet
+ *     flow_limit cfs (<=0 means unlimited).
+ * @param[in] g Borrowed native street/channel geometry with positive physical
+ *     slopes/roughness/dimensions needed by the chosen branch.
+ * @param[in] curve Borrowed resolved table with valid shape/sample units; table_lookupEx
+ *     extrapolation rules apply.
+ * @param[in] curve_kind DIVERSION means captured versus approach flow; RATING means captured versus
+ *     depth; other codes return0.
+ * @param[in] q Nonnegative native approach flow cfs.
+ * @param[in] depth Nonnegative finite local water depth ft unless explicitly stated otherwise.
+ * @param[in] ucf_flow Positive project-display flow units per cfs, for curve x/y conversion.
+ * @param[in] ucf_len Positive project-display length units per ft, for rating curve depth.
+ * @return Native cfs capture across current positive g.nsides.
+ */
+double getCustomCapturedFlow(const UsageParams& u, const Geom& g, const Table& curve,
+                             int curve_kind, double q, double depth, double ucf_flow,
+                             double ucf_len);
+
+/**
+ * @brief Compute the usage's effective open inlet area for backflow weighting.
+ *
+ * Adds grate openings and curb length exceeding grate length; positive slotted length replaces that
+ * sum with slot area. Does not multiply street sides or validate dimensions.
+ *
+ * @param[in] d Borrowed validated inlet design in native ft/ft per second; coefficients/types must
+ *     match the selected physical design.
+ * @param[in] u Borrowed usage with nonnegative replicate count, clog factor0..1 and per-inlet
+ *     flow_limit cfs (<=0 means unlimited).
+ * @return Native ft2 open area times replicate count and clog factor.
+ */
 double getInletArea(const Design& d, const UsageParams& u);
 
 // ============================================================================
@@ -239,47 +441,47 @@ struct InletSoA {
     int count = 0;
 
     // --- host / topology -----------------------------------------------------
-    std::vector<int>    link_idx;       ///< Host conduit link index (−1 for a node host)
-    std::vector<int>    host_node;      ///< Host inlet-junction node (−1 for a conduit host)
-    std::vector<int>    node_idx;       ///< Capture (receiving) node index
-    std::vector<int>    bypass_node;    ///< Node the uncaptured flow stays at
-    std::vector<int>    up_link;        ///< Approach conduit (node host: node2 == host)
-    std::vector<int>    up_link2;       ///< Second inbound conduit at a sag node host (−1)
-    std::vector<uint8_t> two_inbound;   ///< 1 when both attached conduits flow toward the host
+    std::vector<int> link_idx;        ///< Host conduit link index (−1 for a node host)
+    std::vector<int> host_node;       ///< Host inlet-junction node (−1 for a conduit host)
+    std::vector<int> node_idx;        ///< Capture (receiving) node index
+    std::vector<int> bypass_node;     ///< Node the uncaptured flow stays at
+    std::vector<int> up_link;         ///< Approach conduit (node host: node2 == host)
+    std::vector<int> up_link2;        ///< Second inbound conduit at a sag node host (−1)
+    std::vector<uint8_t> two_inbound; ///< 1 when both attached conduits flow toward the host
 
     // --- design --------------------------------------------------------------
-    std::vector<int>    inlet_type;
-    std::vector<int>    grate_type;
+    std::vector<int> inlet_type;
+    std::vector<int> grate_type;
     std::vector<double> grate_length;   ///< ft
     std::vector<double> grate_width;    ///< ft
     std::vector<double> open_area;      ///< GENERIC open-area fraction
     std::vector<double> splash_veloc;   ///< ft/s (GENERIC)
     std::vector<double> curb_length;    ///< ft
     std::vector<double> curb_height;    ///< ft
-    std::vector<int>    curb_throat;    ///< 0=HORIZONTAL 1=INCLINED 2=VERTICAL
+    std::vector<int> curb_throat;       ///< 0=HORIZONTAL 1=INCLINED 2=VERTICAL
     std::vector<double> slotted_length; ///< ft
     std::vector<double> slotted_width;  ///< ft
-    std::vector<int>    curve_index;    ///< CUSTOM: index into ctx.tables
-    std::vector<int>    curve_kind;     ///< CUSTOM: inlet::CurveKind
+    std::vector<int> curve_index;       ///< CUSTOM: index into ctx.tables
+    std::vector<int> curve_kind;        ///< CUSTOM: inlet::CurveKind
 
     // --- usage ---------------------------------------------------------------
-    std::vector<int>    num_inlets;
+    std::vector<int> num_inlets;
     std::vector<double> clog_factor;
-    std::vector<double> flow_limit;     ///< cfs per inlet (0 = unlimited)
-    std::vector<double> local_depress;  ///< ft
-    std::vector<double> local_width;    ///< ft
-    std::vector<int>    placement;      ///< as authored (inlet::Placement)
-    std::vector<uint8_t> is_sag;        ///< resolved placement: 1 = ON_SAG
+    std::vector<double> flow_limit;    ///< cfs per inlet (0 = unlimited)
+    std::vector<double> local_depress; ///< ft
+    std::vector<double> local_width;   ///< ft
+    std::vector<int> placement;        ///< as authored (inlet::Placement)
+    std::vector<uint8_t> is_sag;       ///< resolved placement: 1 = ON_SAG
 
     // --- street / conduit geometry (internal units) --------------------------
-    std::vector<double> sx;                 ///< Cross slope (fraction)
-    std::vector<double> gutter_depression;  ///< ft
-    std::vector<double> gutter_width;       ///< ft
-    std::vector<double> road_roughness;     ///< Manning's n
-    std::vector<double> t_crown;            ///< ft
-    std::vector<int>    n_sides;
-    std::vector<double> slope;              ///< Host/approach conduit slope
-    std::vector<double> flow_factor;        ///< Izzard f = (0.56/n)·√SL·Sx^1.67
+    std::vector<double> sx;                ///< Cross slope (fraction)
+    std::vector<double> gutter_depression; ///< ft
+    std::vector<double> gutter_width;      ///< ft
+    std::vector<double> road_roughness;    ///< Manning's n
+    std::vector<double> t_crown;           ///< ft
+    std::vector<int> n_sides;
+    std::vector<double> slope;       ///< Host/approach conduit slope
+    std::vector<double> flow_factor; ///< Izzard f = (0.56/n)·√SL·Sx^1.67
 
     // --- per-step results ----------------------------------------------------
     std::vector<double> q_approach;     ///< Approach flow seen this step (cfs)
@@ -288,71 +490,115 @@ struct InletSoA {
     std::vector<double> backflow_ratio; ///< inlet backflow / capture-node overflow
 
     // --- legacy statistics (inlet.c:78-87, updateInletStats :985) ------------
-    std::vector<int>    flow_periods;
-    std::vector<int>    capture_periods;
-    std::vector<int>    backflow_periods;
-    std::vector<double> peak_flow;          ///< Peak approach flow (cfs)
-    std::vector<double> peak_flow_capture;  ///< Capture efficiency at peak flow (%)
-    std::vector<double> avg_flow_capture;   ///< Σ capture efficiency over capture periods
-    std::vector<double> bypass_freq;        ///< # capture periods that also bypassed
+    std::vector<int> flow_periods;
+    std::vector<int> capture_periods;
+    std::vector<int> backflow_periods;
+    std::vector<double> peak_flow;         ///< Peak approach flow (cfs)
+    std::vector<double> peak_flow_capture; ///< Capture efficiency at peak flow (%)
+    std::vector<double> avg_flow_capture;  ///< Σ capture efficiency over capture periods
+    std::vector<double> bypass_freq;       ///< # capture periods that also bypassed
 
     // --- volume statistics (Gap #68 → InletUsageStore) -----------------------
-    std::vector<double> stat_capture_vol;   ///< ft³
-    std::vector<double> stat_bypass_vol;    ///< ft³
-    std::vector<double> stat_backflow_vol;  ///< ft³
-    std::vector<double> stat_peak_flow;     ///< Peak captured flow (cfs)
+    std::vector<double> stat_capture_vol;  ///< ft³
+    std::vector<double> stat_bypass_vol;   ///< ft³
+    std::vector<double> stat_backflow_vol; ///< ft³
+    std::vector<double> stat_peak_flow;    ///< Peak captured flow (cfs)
 
+    /**
+     * @brief Reset every inlet runtime/design/statistic column to n rows.
+     *
+     * Assigns defaults/zero statistics and-1 topology references, invalidating element views as vectors
+     * reallocate. Allocation can leave partial reset; does not resize InletSolver node scratch itself.
+     *
+     * @param[in] n Nonnegative count; negative is unchecked before size_t conversion.
+     */
     void resize(int n);
 };
 
 class InletSolver {
 public:
-    /// Resolve designs, street geometry, host topology and placement.
+    /**
+     * @brief Resolve inlet deployments into native geometry, topology, placement and backflow weights.
+     *
+     * Resets SoA/statistics, converts lengths/flow limits once to ft/cfs and slopes percent to
+     * fractions, finds node-host approach links or conduit downstream bypass, resolves AUTOMATIC sag
+     * placement and seeds carried-over side count. Backflow weights deliberately use the legacy global
+     * inlet bucket. No-op after resetting count when no usages; no complete geometry/reference
+     * validation. Allocation can leave partial solver state; rerun after authoring edits, serialize all
+     * solver use.
+     *
+     * @param[in] ctx Borrowed resolved model with coherent inlet usage/design/street/link/node/curve
+     *     registries; authoring lengths/flows stay in project units.
+     */
     void init(SimulationContext& ctx);
 
     /**
-     * @brief Compute capture + backflow and fold them into `nodes.lat_flow`.
+     * @brief Evaluate capture/backflow and add inlet exchanges to node lateral flows.
      *
-     * @details Runs at the END of `SWMMEngine::assembleLateralInflows`, i.e.
-     *          BEFORE the router sees `lat_flow` — matching legacy
-     *          `inlet_findCapturedFlows` at routing.c:244 (plan G6).
+     * Runs before hydraulic routing after external lateral assembly. Processes reverse authored order
+     * with carried-over street sides, computes approach/design capacity and previous capture-node
+     * overflow backflow, then applies selected non-DW/node-host water limits. Subtracts net capture at
+     * bypass and adds capture at receiving node, accumulating ft3/flow statistics. Performance counters
+     * require current_date>report_start. Scratch can resize if node count grew; no full topology
+     * rebind, generic rollback or finite validation.
      *
-     * @param ctx  Simulation context.
-     * @param dt   Routing timestep (seconds).
+     * @param[in,out] ctx Borrowed live hydraulic state and aligned init mappings; modifies
+     *     nodes.lat_flow and reads previous link flows/overflow.
+     * @param[in] dt Positive finite routing interval seconds for donor-volume caps and cumulative
+     *     volumes.
      */
     void computeAll(SimulationContext& ctx, double dt);
 
     /**
-     * @brief Adjust quality inflows at the bypass and capture nodes.
+     * @brief Add pollutant inflow volume and mass-rate contributions for net inlet exchange.
      *
-     * @details Called after hydraulic routing, before quality routing; moves
-     *          pollutant mass by the net flow direction. Matches legacy
-     *          `inlet_adjustQualInflows()`. Covers both host kinds.
+     * Call after hydraulic routing before quality routing. Positive net capture uses bypass old
+     * concentration at capture receiver; negative net uses capture old concentration at bypass
+     * receiver. Skips absent/invalid endpoints and no-inlet/no-pollutant cases. Does not subtract
+     * sender mass itself, convert concentration units or multiply mass-rate by dt here.
+     *
+     * @param[in,out] ctx Borrowed live quality arrays with valid node-sized qual_vol_in and
+     *     pollutant-strided old concentrations/mass-rate accumulators.
+     * @param[in] dt Routing interval seconds; qNet*dt adds ft3 while qNet*old concentration adds
+     *     mass-rate in existing quality conventions.
      */
     void adjustQualInflows(SimulationContext& ctx, double dt);
 
     /**
-     * @brief Take the backflow returned to the street back out of the
-     *        system flooding totals.
+     * @brief Credit current capture-node overflow returned to inlet corridors out of flooding ledgers.
      *
-     * @details A capture node's overflow is handed back to the street through
-     *          its inlets as backflow (computeAll), so it never leaves the
-     *          system — booking it as flooding counts the same water once as a
-     *          loss and once as water put back on the corridor. Matches legacy
-     *          `inlet_adjustQualOutflows()` (inlet.c:706), called from
-     *          routing.c:260 directly after `removeSystemOutflows()`.
+     * Call after system outflow removal. Visits each marked capture node once and subtracts its entire
+     * positive current overflow, independent of legacy per-inlet backflow ratios. Step flooding rate
+     * and cumulative flooding may become slightly negative; no clamp. Does not modify hydraulic
+     * overflow or inlet capture columns.
      *
-     * @param ctx  Simulation context.
-     * @param dt   Routing timestep (seconds).
+     * @param[in,out] ctx Borrowed aligned current overflow/concentration and mass-balance arrays;
+     *     updates global water/pollutant flood totals.
+     * @param[in] dt Routing seconds; water volume q*dt ft3 and pollutant ledger q*concentration*dt.
      */
     void adjustFloodingTotals(SimulationContext& ctx, double dt) const;
 
-    /// Copy accumulated statistics into `ctx.inlet_usages` (volumes, Gap #68)
-    /// and `ctx.inlet_diag` (the legacy per-inlet performance block the report
-    /// needs). Called by SWMMEngine::report() before the summary tables.
+    /**
+     * @brief Publish retained inlet statistics to model usage and reporting stores.
+     *
+     * Copies ft3 captured/bypass/backflow totals, peak cfs and legacy period/efficiency sums; does not
+     * normalize average sums or reset runtime statistics. Allocation can leave partial publication;
+     * call before report generation.
+     *
+     * @param[in,out] ctx Borrowed model whose inlet_usages stat vectors and inlet_diag are
+     *     resized/overwritten for min(runtime count,usage count).
+     */
     void gatherStats(SimulationContext& ctx) const;
 
+    /**
+     * @brief Borrow read-only resolved inlet/runtime/statistic columns.
+     * @return Owned SoA reference; element views invalidate on init/resize/destruction.
+     */
     const InletSoA& soa() const noexcept { return soa_; }
+    /**
+     * @brief Check whether any runtime usage rows are allocated.
+     * @return True when soa.count>0; does not establish valid topology or active capture.
+     */
     bool hasInlets() const noexcept { return soa_.count > 0; }
 
 private:
@@ -378,19 +624,58 @@ private:
     /// count; empty when the model has no inlets.
     std::vector<uint8_t> is_capture_node_;
 
-    /// Assemble the kernel geometry block for row `ii` (legacy getConduitGeometry).
-    Geom geomOf(const SimulationContext& ctx, int ii,
-                const XSectParams* xs) const;
-    /// Assemble the design block for row `ii`.
+    /**
+     * @brief Assemble a copied native geometry record for one runtime inlet.
+     *
+     * Adds local depression when depression*width>0, substitutes local width, then
+     * beta=1.486*sqrt(slope)/n for positive slope/n. No allocation/validation or section ownership
+     * transfer.
+     *
+     * @param[in] ctx Borrowed context, currently unused.
+     * @param[in] ii Valid runtime row with aligned columns, unchecked.
+     * @param[in] xs Optional borrowed channel section pointer copied into returned view; must outlive
+     *     subsequent kernel use.
+     * @return Value geometry with local depression override and computed gutter slope/beta; spread
+     *     starts at its default until capture sets it.
+     */
+    Geom geomOf(const SimulationContext& ctx, int ii, const XSectParams* xs) const;
+    /**
+     * @brief Copy one native inlet design from resolved runtime columns.
+     *
+     * @param[in] ii Valid zero-based runtime row with aligned design columns.
+     * @return Owned scalar Design, with ft dimensions/ft per second splash velocity; no validation.
+     */
     Design designOf(int ii) const;
-    /// Assemble the usage block for row `ii`.
+    /**
+     * @brief Copy replicate, clog and native flow-limit settings from one runtime row.
+     *
+     * @param[in] ii Valid zero-based row with aligned usage columns.
+     * @return Value copy; flow_limit cfs, clog dimensionless.
+     */
     UsageParams usageOf(int ii) const;
 
-    /// Legacy updateInletStats (inlet.c:985) for row `ii` at approach flow `q`.
+    /**
+     * @brief Accumulate one reported inlet performance sample.
+     *
+     * Returns for near-zero approach without backflow. Updates flow/capture/backflow period counts,
+     * capped capture-efficiency sum, bypass frequency and peak approach/percent capture; does not add
+     * volume statistics or check report window itself.
+     *
+     * @param[in] ii Valid runtime row with current capture/backflow already stored.
+     * @param[in] q Nonnegative approach flow cfs; caller ensures meaningful q for a positive net
+     *     capture ratio.
+     */
     void updateStats(int ii, double q);
 
-    /// Pre-compute backflow_ratio[] from the capture-node topology
-    /// (legacy getBackflowRatios, with the inlet.c:1836 node-index bug fixed).
+    /**
+     * @brief Compute legacy global-bucket backflow shares across all valid inlet usages.
+     *
+     * Walks reverse authored order, summing effective open areas and custom replicate counts into ONE
+     * model-wide bucket, reproducing the legacy capture-node indexing quirk. Shares standard area
+     * proportionally by fraction of standard usages, custom counts by remaining fraction. Does not
+     * group by individual capture node; node-index-negative usages are ignored. No-inlet/no-valid-row
+     * returns preserve prior weights.
+     */
     void computeBackflowRatios();
 };
 

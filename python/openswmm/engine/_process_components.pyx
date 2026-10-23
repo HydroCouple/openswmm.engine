@@ -57,6 +57,9 @@ import os
 from collections.abc import Iterator
 from typing import NamedTuple
 
+from libc.stdlib cimport malloc, free
+from libc.string cimport strlen
+
 from ._common cimport *
 from ._enums import ErrorCode
 from ._exceptions import BadHandleError, ElementNotFoundError
@@ -306,18 +309,34 @@ class ProcessComponents:
 
     def _get(self, int idx) -> ProcessComponent:
         """Read registration *idx* into a :class:`ProcessComponent`."""
-        cdef char id_buf[128]
-        cdef char config_buf[512]
-        cdef char resolved_buf[512]
-        id_buf[0] = 0
-        config_buf[0] = 0
-        resolved_buf[0] = 0
-        _check(swmm_process_component_get(
-            _h(self._solver), idx, id_buf, 128, config_buf, 512,
-            resolved_buf, 512))
-        return ProcessComponent(
-            idx, id_buf.decode('utf-8'), config_buf.decode('utf-8'),
-            resolved_buf.decode('utf-8'))
+        cdef int size = 512
+        cdef char* id_buf
+        cdef char* config_buf
+        cdef char* resolved_buf
+        cdef SWMM_Engine h = _h(self._solver)
+        while size <= 64 * 1024 * 1024:
+            id_buf = <char*>malloc(size)
+            config_buf = <char*>malloc(size)
+            resolved_buf = <char*>malloc(size)
+            try:
+                if id_buf == NULL or config_buf == NULL or resolved_buf == NULL:
+                    raise MemoryError()
+                id_buf[0] = config_buf[0] = resolved_buf[0] = 0
+                _check(swmm_process_component_get(
+                    h, idx, id_buf, size, config_buf, size,
+                    resolved_buf, size))
+                if (strlen(id_buf) < <size_t>(size - 1) and
+                        strlen(config_buf) < <size_t>(size - 1) and
+                        strlen(resolved_buf) < <size_t>(size - 1)):
+                    return ProcessComponent(
+                        idx, id_buf.decode('utf-8'), config_buf.decode('utf-8'),
+                        resolved_buf.decode('utf-8'))
+            finally:
+                free(id_buf)
+                free(config_buf)
+                free(resolved_buf)
+            size *= 2
+        raise ValueError("Process component field exceeds 64 MiB")
 
     def __repr__(self) -> str:
         try:

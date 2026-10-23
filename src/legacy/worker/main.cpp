@@ -1,9 +1,11 @@
-/*!
- * \file main.cpp
- * \brief Legacy SWMM engine worker process for parallel simulation.
+/**
+ * @file      main.cpp
+ * @brief     Legacy SWMM engine worker process for parallel simulation.
  *
  * Spawned by openswmm.gui's SimulationRunner with arguments:
+ * @code
  *   openswmm-legacy-worker <inp_path> <rpt_path> <out_path>
+ * @endcode
  *
  * Each worker process has isolated global state, allowing true parallel
  * execution of legacy simulations without global-variable conflicts.
@@ -12,6 +14,11 @@
  *   - stdout: JSON progress/warning/error lines (one per line)
  *   - stderr: raw warnings/errors for logging
  *   - exit code: 0 on success, non-zero on failure
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com> (OpenSWMM maintenance and extensions)
+ * @copyright Copyright (c) 2026 Caleb Buahin. OpenSWMM contributions only; original EPA SWMM
+ *            credits are retained.
+ * @license   Apache-2.0 for OpenSWMM contributions; original EPA SWMM provenance is retained.
  */
 
 #include "worker_progress.h"
@@ -25,40 +32,65 @@
 // the engine has no text for it. swmm_getError translates the global ErrorCode
 // (set by the failing swmm_* call) into a human-readable string, matching the
 // descriptive messages the refactored engine surfaces via swmm_error_message.
-static void emitEngineError(int rc, const char *context)
-{
+/**
+ * @brief Emit the current legacy engine error with a context fallback.
+ *
+ * Copies at most the local 1024-byte error buffer through swmm_getError(), then synchronously
+ * writes stderr and stdout using WorkerProgress. The text reflects current global ErrorCode rather
+ * than translating rc independently.
+ *
+ * @param[in] rc Engine return code printed as the JSON/stderr error code.
+ * @param[in] context Non-null fallback diagnostic used when the current global engine error yields
+ *     no text.
+ */
+static void emitEngineError(int rc, const char* context) {
     char msg[1024] = {0};
     swmm_getError(msg, sizeof(msg));
     WorkerProgress::emitError(rc, msg[0] ? msg : context);
 }
 
-int main(int argc, char *argv[])
-{
+/**
+ * @brief Run one isolated legacy simulation and stream JSON status to its parent.
+ *
+ * Registers a process-global warning callback before open, saves binary results, emits dates,
+ * initial progress, first-step and wall-clock-throttled progress, then final continuity fractions
+ * after end. On start failure closes the model; on open failure returns immediately. One worker
+ * process owns the legacy global engine state, so concurrent simulations require separate
+ * processes. Report/output paths may be overwritten by the legacy engine.
+ *
+ * @param[in] argc Argument count must be four or five including program name.
+ * @param[in] argv Borrowed paths for input/report/output and optional wall-clock tick milliseconds.
+ *     Omitted interval is 1000; atoi conversion makes nonnumeric text zero and negative values are
+ *     clamped to zero.
+ * @return 1 for argument count errors; otherwise the failing open/start/step code, or zero after
+ *     successful stepping. Final end/close/mass-balance errors do not affect exit status.
+ */
+int main(int argc, char* argv[]) {
     // Validate arguments. The optional 4th argument is the progress emit
     // interval in milliseconds (wall clock); the GUI passes its progressTickMs
     // preference. Omitted/invalid → default ~1 Hz; 0 → emit every step.
     if (argc < 4 || argc > 5) {
-        WorkerProgress::emitError(1,
-            "Usage: openswmm-legacy-worker <inp_path> <rpt_path> <out_path> [tickIntervalMs]");
+        WorkerProgress::emitError(
+            1, "Usage: openswmm-legacy-worker <inp_path> <rpt_path> <out_path> [tickIntervalMs]");
         return 1;
     }
 
-    const char *inpPath = argv[1];
-    const char *rptPath = argv[2];
-    const char *outPath = argv[3];
+    const char* inpPath = argv[1];
+    const char* rptPath = argv[2];
+    const char* outPath = argv[3];
     int tickIntervalMs = 1000;
     if (argc == 5) {
         tickIntervalMs = std::atoi(argv[4]);
-        if (tickIntervalMs < 0) tickIntervalMs = 0;
+        if (tickIntervalMs < 0)
+            tickIntervalMs = 0;
     }
 
     // Forward each engine warning as a JSON "warning" line. Registered BEFORE
     // swmm_open so warnings issued during input parsing (unknown section/option)
     // are captured too. A captureless lambda converts to the C callback type;
     // the legacy engine is single-threaded per process, so this is safe.
-    swmm_setWarningCallback(
-        [](const char *msg, void *) { WorkerProgress::emitWarning(msg); },
-        nullptr);
+    swmm_setWarningCallback([](const char* msg, void*) { WorkerProgress::emitWarning(msg); },
+                            nullptr);
 
     // Step 1: Open the model
     int rc = swmm_open(inpPath, rptPath, outPath);
@@ -68,7 +100,7 @@ int main(int argc, char *argv[])
     }
 
     // Step 2: Initialize (start) the simulation
-    rc = swmm_start(1);  // 1 = save results to output file
+    rc = swmm_start(1); // 1 = save results to output file
     if (rc != 0) {
         emitEngineError(rc, "swmm_start failed");
         swmm_close();
@@ -79,8 +111,7 @@ int main(int argc, char *argv[])
     // progress fraction (and readable date columns) from the per-step
     // elapsed-days value. System date properties (< 100) are dispatched to
     // getSystemValue, which ignores the index argument.
-    WorkerProgress::emitDates(swmm_getValue(swmm_STARTDATE, 0),
-                              swmm_getValue(swmm_ENDDATE, 0));
+    WorkerProgress::emitDates(swmm_getValue(swmm_STARTDATE, 0), swmm_getValue(swmm_ENDDATE, 0));
 
     // Emit an initial step-0 progress so the GUI row paints at 0 % immediately,
     // before the first (possibly slow) step. Continuity is not yet meaningful.
@@ -124,8 +155,8 @@ int main(int argc, char *argv[])
             // convert to fractions to match the final "continuity" line.
             float runoffErrPct = 0.0f, flowErrPct = 0.0f;
             swmm_getRunningMassBalErr(&runoffErrPct, &flowErrPct);
-            WorkerProgress::emitProgress(stepCount, elapsed,
-                                         runoffErrPct / 100.0, flowErrPct / 100.0);
+            WorkerProgress::emitProgress(stepCount, elapsed, runoffErrPct / 100.0,
+                                         flowErrPct / 100.0);
         }
     }
 

@@ -1,6 +1,6 @@
 /**
- * @file test_table_rename_api.cpp
- * @brief swmm_table_rename — renaming a timeseries or curve in place.
+ * @file      test_table_rename_api.cpp
+ * @brief     swmm_table_rename — renaming a timeseries or curve in place.
  *
  * The GUI adds a curve or timeseries to the engine as soon as it is created
  * (so pumps, gages, outfalls … can reference it while its editor is still
@@ -9,7 +9,12 @@
  * lookup by the new name, and the name-based reference copies the writer and
  * deferred resolution read (gage, external inflow). Index references (pump
  * curve) are unaffected by a rename.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
+
 #include <gtest/gtest.h>
 
 #include <openswmm/engine/openswmm_engine.h>
@@ -26,13 +31,39 @@ class TableRenameTest : public ::testing::Test {
 protected:
     SWMM_Engine engine = nullptr;
 
+    /**
+     * @brief Create an editable model with one J1 junction.
+     *
+     * Owns the stored engine handle until fixture teardown. Each allocation/add status is asserted; a
+     * fatal assertion leaves any partial model for teardown.
+     */
     void SetUp() override {
         engine = swmm_engine_new();
         ASSERT_NE(engine, nullptr);
         ASSERT_EQ(swmm_node_add(engine, "J1", SWMM_NODE_JUNCTION), SWMM_OK);
     }
-    void TearDown() override { if (engine) swmm_engine_destroy(engine); }
+    /**
+     * @brief Destroy the fixture engine when allocation succeeded.
+     *
+     * Releases model resources through engine destruction; the member value is not reset and must not
+     * be reused after teardown.
+     */
+    void TearDown() override {
+        if (engine)
+            swmm_engine_destroy(engine);
+    }
 
+    /**
+     * @brief Add a curve and locate its last matching non-timeseries table row.
+     *
+     * Records nonfatal add expectation, ignores per-row type-getter failures and continues scanning
+     * rather than returning the first match. Requires valid table ID pointers; no points, validation or
+     * simulation are supplied.
+     *
+     * @param[in] id Non-null curve ID expected to be addable in the editable fixture engine.
+     * @param[in] type Curve type code, default nine for PUMP3.
+     * @return Matching table index, or -1 when no matching nonzero-type table is found.
+     */
     int curve(const char* id, int type = 9 /* PUMP3 */) {
         EXPECT_EQ(swmm_curve_add(engine, id, type), SWMM_OK);
         int idx = -1;
@@ -40,7 +71,8 @@ protected:
         for (int i = 0; i < n; ++i) {
             int t = -1;
             swmm_table_get_type(engine, i, &t);
-            if (t != 0 && std::string(swmm_table_id(engine, i)) == id) idx = i;
+            if (t != 0 && std::string(swmm_table_id(engine, i)) == id)
+                idx = i;
         }
         return idx;
     }
@@ -96,8 +128,9 @@ TEST_F(TableRenameTest, TimeseriesRenameRewritesNameReferences) {
     ASSERT_EQ(swmm_gage_add(engine, "G1"), SWMM_OK);
     const int g = swmm_gage_index(engine, "G1");
     ASSERT_EQ(swmm_gage_set_timeseries(engine, g, "RAIN"), SWMM_OK);
-    ASSERT_EQ(swmm_ext_inflow_add(engine, swmm_node_index(engine, "J1"), "FLOW",
-                                  "RAIN", "FLOW", 1.0, 1.0, 0.0, ""), SWMM_OK);
+    ASSERT_EQ(swmm_ext_inflow_add(engine, swmm_node_index(engine, "J1"), "FLOW", "RAIN", "FLOW",
+                                  1.0, 1.0, 0.0, ""),
+              SWMM_OK);
 
     ASSERT_EQ(swmm_table_rename(engine, ts, "STORM"), SWMM_OK);
 
@@ -105,17 +138,21 @@ TEST_F(TableRenameTest, TimeseriesRenameRewritesNameReferences) {
     ASSERT_EQ(swmm_gage_get_timeseries(engine, g, buf, sizeof buf), SWMM_OK);
     EXPECT_STREQ(buf, "STORM");
 
-    int n = -1; char c[64] = {}, tsn[64] = {}, tp[64] = {}, pat[64] = {};
+    int n = -1;
+    char c[64] = {}, tsn[64] = {}, tp[64] = {}, pat[64] = {};
     double mf = 0, sf = 0, base = 0;
-    ASSERT_EQ(swmm_ext_inflow_get(engine, 0, &n, c, sizeof c, tsn, sizeof tsn,
-                                  tp, sizeof tp, &mf, &sf, &base, pat, sizeof pat), SWMM_OK);
+    ASSERT_EQ(swmm_ext_inflow_get(engine, 0, &n, c, sizeof c, tsn, sizeof tsn, tp, sizeof tp, &mf,
+                                  &sf, &base, pat, sizeof pat),
+              SWMM_OK);
     EXPECT_STREQ(tsn, "STORM");
 
     // The curve that shared the old name keeps it.
     bool curveKept = false;
     for (int i = 0; i < swmm_table_count(engine); ++i) {
-        int t = -1; swmm_table_get_type(engine, i, &t);
-        if (t == 1 && std::string(swmm_table_id(engine, i)) == "RAIN") curveKept = true;
+        int t = -1;
+        swmm_table_get_type(engine, i, &t);
+        if (t == 1 && std::string(swmm_table_id(engine, i)) == "RAIN")
+            curveKept = true;
     }
     EXPECT_TRUE(curveKept);
 }
@@ -146,6 +183,5 @@ TEST_F(TableRenameTest, SetTypeRejectsTimeseriesBothWays) {
     EXPECT_EQ(swmm_table_set_type(engine, c, 0), SWMM_ERR_BADPARAM);
     EXPECT_EQ(swmm_table_set_type(engine, c, 12), SWMM_ERR_BADPARAM);
     ASSERT_EQ(swmm_timeseries_add(engine, "TS"), SWMM_OK);
-    EXPECT_EQ(swmm_table_set_type(engine, swmm_table_index(engine, "TS"), 7),
-              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_table_set_type(engine, swmm_table_index(engine, "TS"), 7), SWMM_ERR_BADPARAM);
 }

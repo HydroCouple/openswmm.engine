@@ -1,6 +1,6 @@
 /**
- * @file test_gage_scalefactor.cpp
- * @brief Unit tests for the rain gage scale factor feature in the new engine.
+ * @file      test_gage_scalefactor.cpp
+ * @brief     Unit tests for the rain gage scale factor feature in the new engine.
  *
  * @details Covers:
  *   - GageData SoA wiring (default value, grow_to preservation, erase_at,
@@ -16,6 +16,10 @@
  * @see src/engine/hydrology/Gage.cpp
  * @see Legacy parity: src/legacy/engine/gage.c (convertRainfall + co-gage paths)
  * @ingroup engine_hydrology
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -39,7 +43,8 @@ TEST(GageDataScaleFactor, ResizeDefaultsToOne) {
     GageData g;
     g.resize(3);
     ASSERT_EQ(g.scale_factor.size(), 3u);
-    for (double sf : g.scale_factor) EXPECT_DOUBLE_EQ(sf, 1.0);
+    for (double sf : g.scale_factor)
+        EXPECT_DOUBLE_EQ(sf, 1.0);
 }
 
 TEST(GageDataScaleFactor, GrowToPreservesExistingAndDefaultsNew) {
@@ -74,10 +79,10 @@ TEST(GageDataScaleFactor, EraseAtRemovesScaleFactor) {
 
 TEST(GageConvertRainfall, ScaleFactorMultipliesIntensity) {
     gage::GageState state;
-    state.rain_type     = gage::RainType::INTENSITY;
-    state.units_factor  = 1.0;
+    state.rain_type = gage::RainType::INTENSITY;
+    state.units_factor = 1.0;
     state.adjust_factor = 1.0;
-    state.scale_factor  = 2.0;
+    state.scale_factor = 2.0;
 
     double out = gage::convertRainfall(0.75, state);
     EXPECT_DOUBLE_EQ(out, 0.75 * 2.0);
@@ -85,10 +90,10 @@ TEST(GageConvertRainfall, ScaleFactorMultipliesIntensity) {
 
 TEST(GageConvertRainfall, ScaleFactorComposesWithUnitsAndAdjust) {
     gage::GageState state;
-    state.rain_type     = gage::RainType::INTENSITY;
-    state.units_factor  = 25.4;  // in -> mm
-    state.adjust_factor = 1.1;   // monthly adjustment
-    state.scale_factor  = 0.5;
+    state.rain_type = gage::RainType::INTENSITY;
+    state.units_factor = 25.4; // in -> mm
+    state.adjust_factor = 1.1; // monthly adjustment
+    state.scale_factor = 0.5;
 
     double out = gage::convertRainfall(2.0, state);
     EXPECT_DOUBLE_EQ(out, 2.0 * 25.4 * 0.5 * 1.1);
@@ -102,8 +107,20 @@ namespace {
 
 // Build a context with one gage tied to one INTENSITY timeseries containing
 // a single non-zero entry.  Returns the OADate at which to query.
-double setUpOneGageOneTimeseries(SimulationContext& ctx,
-                                 double scale_factor,
+/**
+ * @brief Populate the minimal used-gage intensity/scalefactor fixture.
+ *
+ * Creates table points at days zero/one, 3600 s gage interval, no co-gage and API override sentinel
+ * -1. Does not update the gage, size full forcing storage or validate a complete model. Repeated
+ * calls on nonempty registries are unsupported.
+ *
+ * @param[in,out] ctx Initially empty context populated with RG1, S1 and TS1 registries/state.
+ * @param[in] scale_factor Dimensionless rain scale applied by later gage update.
+ * @param[in] ts_value Initial timeseries intensity in project rainfall units, default one in/hr for
+ *     these CFS tests.
+ * @return Absolute OADate zero used as the initial query time.
+ */
+double setUpOneGageOneTimeseries(SimulationContext& ctx, double scale_factor,
                                  double ts_value = 1.0) {
     // Register names so n_gages() / n_tables() report correctly.
     ctx.gage_names.add("RG1");
@@ -118,19 +135,19 @@ double setUpOneGageOneTimeseries(SimulationContext& ctx,
     // Timeseries: one entry at OADate = 0.0 (start of epoch), value = ts_value.
     int tidx = ctx.tables.add("TS1", TableType::TIMESERIES);
     auto& tbl = ctx.tables[tidx];
-    tbl.x = {0.0, 1.0};       // Two points so the cursor has somewhere to land.
+    tbl.x = {0.0, 1.0}; // Two points so the cursor has somewhere to land.
     tbl.y = {ts_value, 0.0};
     tbl.cursor.index = 0;
 
     // Gage wiring.
-    ctx.gages.rain_type[0]      = 0;                       // INTENSITY (in/hr already)
-    ctx.gages.interval_sec[0]   = 3600;
-    ctx.gages.source[0]         = RainSource::TIMESERIES;
-    ctx.gages.ts_index[0]       = tidx;
-    ctx.gages.scale_factor[0]   = scale_factor;
-    ctx.gages.snow_factor[0]    = 1.0;
-    ctx.gages.co_gage_index[0]  = -1;
-    ctx.gages.api_rainfall[0]   = -1.0;
+    ctx.gages.rain_type[0] = 0; // INTENSITY (in/hr already)
+    ctx.gages.interval_sec[0] = 3600;
+    ctx.gages.source[0] = RainSource::TIMESERIES;
+    ctx.gages.ts_index[0] = tidx;
+    ctx.gages.scale_factor[0] = scale_factor;
+    ctx.gages.snow_factor[0] = 1.0;
+    ctx.gages.co_gage_index[0] = -1;
+    ctx.gages.api_rainfall[0] = -1.0;
 
     // Query at a time inside the first interval [0.0, 0.0 + 3600s).
     return 0.0;
@@ -149,8 +166,7 @@ TEST(GageUpdateAllGages, ScaleFactorMultipliesPrimaryRainfall) {
 
     ASSERT_GT(ctx_a.gages.rainfall[0], 0.0)
         << "Baseline gage produced no rainfall — fixture is broken.";
-    EXPECT_NEAR(ctx_b.gages.rainfall[0],
-                2.0 * ctx_a.gages.rainfall[0],
+    EXPECT_NEAR(ctx_b.gages.rainfall[0], 2.0 * ctx_a.gages.rainfall[0],
                 std::abs(2.0 * ctx_a.gages.rainfall[0]) * 1e-9);
 }
 
@@ -189,17 +205,17 @@ TEST(GageUpdateAllGages, CoGageRainfallRescaledByRatio) {
     tbl.cursor.index = 0;
 
     for (int j = 0; j < 2; ++j) {
-        ctx.gages.rain_type[j]    = 0;
+        ctx.gages.rain_type[j] = 0;
         ctx.gages.interval_sec[j] = 3600;
-        ctx.gages.source[j]       = RainSource::TIMESERIES;
-        ctx.gages.ts_index[j]     = tidx;
-        ctx.gages.snow_factor[j]  = 1.0;
+        ctx.gages.source[j] = RainSource::TIMESERIES;
+        ctx.gages.ts_index[j] = tidx;
+        ctx.gages.snow_factor[j] = 1.0;
         ctx.gages.api_rainfall[j] = -1.0;
     }
 
     // Primary scale_factor=2.0; secondary scale_factor=3.0; co_gage_index=0.
-    ctx.gages.scale_factor[0]  = 2.0;
-    ctx.gages.scale_factor[1]  = 3.0;
+    ctx.gages.scale_factor[0] = 2.0;
+    ctx.gages.scale_factor[1] = 3.0;
     ctx.gages.co_gage_index[0] = -1;
     ctx.gages.co_gage_index[1] = 0;
 
@@ -207,8 +223,7 @@ TEST(GageUpdateAllGages, CoGageRainfallRescaledByRatio) {
 
     ASSERT_GT(ctx.gages.rainfall[0], 0.0);
     // Secondary = primary * (3.0 / 2.0).
-    EXPECT_NEAR(ctx.gages.rainfall[1],
-                ctx.gages.rainfall[0] * 3.0 / 2.0,
+    EXPECT_NEAR(ctx.gages.rainfall[1], ctx.gages.rainfall[0] * 3.0 / 2.0,
                 std::abs(ctx.gages.rainfall[0] * 3.0 / 2.0) * 1e-9);
 }
 
@@ -231,11 +246,11 @@ TEST(GageUpdateAllGages, CoGageWithEqualScaleFactorsCopiesPrimary) {
     tbl.cursor.index = 0;
 
     for (int j = 0; j < 2; ++j) {
-        ctx.gages.rain_type[j]    = 0;
+        ctx.gages.rain_type[j] = 0;
         ctx.gages.interval_sec[j] = 3600;
-        ctx.gages.source[j]       = RainSource::TIMESERIES;
-        ctx.gages.ts_index[j]     = tidx;
-        ctx.gages.snow_factor[j]  = 1.0;
+        ctx.gages.source[j] = RainSource::TIMESERIES;
+        ctx.gages.ts_index[j] = tidx;
+        ctx.gages.snow_factor[j] = 1.0;
         ctx.gages.api_rainfall[j] = -1.0;
         ctx.gages.scale_factor[j] = 1.5;
     }
@@ -282,12 +297,28 @@ class GageScaleFactorCApi : public ::testing::Test {
 protected:
     SWMM_Engine engine_ = nullptr;
 
+    /**
+     * @brief Create/open the requested gage-scalefactor API fixture.
+     *
+     * Requires engine_ initially null. Fatal create/open assertions leave partial state to TearDown and
+     * return only from the helper; no initialization/start occurs.
+     *
+     * @param[in] inp Non-null existing model path.
+     * @param[in] rpt Report destination passed to open.
+     * @param[in] out Binary destination passed to open.
+     */
     void openModel(const char* inp, const char* rpt, const char* out) {
         engine_ = swmm_engine_create();
         ASSERT_NE(engine_, nullptr);
         ASSERT_EQ(swmm_engine_open(engine_, inp, rpt, out, nullptr), SWMM_OK);
     }
 
+    /**
+     * @brief Close and destroy the fixture model, then clear its handle.
+     *
+     * Checks for null, ignores close status and releases partial state after setup/test failure. No
+     * simulation report is requested here.
+     */
     void TearDown() override {
         if (engine_) {
             swmm_engine_close(engine_);
@@ -300,9 +331,7 @@ protected:
 } // namespace
 
 TEST_F(GageScaleFactorCApi, GetReturnsParsedValue) {
-    openModel("gage_scalefactor.inp",
-              "_gage_scalefactor_get.rpt",
-              "_gage_scalefactor_get.out");
+    openModel("gage_scalefactor.inp", "_gage_scalefactor_get.rpt", "_gage_scalefactor_get.out");
 
     ASSERT_EQ(swmm_gage_count(engine_), 1);
 
@@ -312,8 +341,7 @@ TEST_F(GageScaleFactorCApi, GetReturnsParsedValue) {
 }
 
 TEST_F(GageScaleFactorCApi, GetReturnsDefaultOneWhenUnset) {
-    openModel("gage_noscalefactor.inp",
-              "_gage_noscalefactor_get.rpt",
+    openModel("gage_noscalefactor.inp", "_gage_noscalefactor_get.rpt",
               "_gage_noscalefactor_get.out");
 
     double sf = 0.0;
@@ -322,9 +350,7 @@ TEST_F(GageScaleFactorCApi, GetReturnsDefaultOneWhenUnset) {
 }
 
 TEST_F(GageScaleFactorCApi, SetRoundTrips) {
-    openModel("gage_noscalefactor.inp",
-              "_gage_set_roundtrip.rpt",
-              "_gage_set_roundtrip.out");
+    openModel("gage_noscalefactor.inp", "_gage_set_roundtrip.rpt", "_gage_set_roundtrip.out");
 
     EXPECT_EQ(swmm_gage_set_scale_factor(engine_, 0, 3.5), SWMM_OK);
 
@@ -334,12 +360,10 @@ TEST_F(GageScaleFactorCApi, SetRoundTrips) {
 }
 
 TEST_F(GageScaleFactorCApi, SetRejectsNonPositive) {
-    openModel("gage_noscalefactor.inp",
-              "_gage_set_invalid.rpt",
-              "_gage_set_invalid.out");
+    openModel("gage_noscalefactor.inp", "_gage_set_invalid.rpt", "_gage_set_invalid.out");
 
     // baseline default is 1.0
-    EXPECT_NE(swmm_gage_set_scale_factor(engine_, 0,  0.0), SWMM_OK);
+    EXPECT_NE(swmm_gage_set_scale_factor(engine_, 0, 0.0), SWMM_OK);
     EXPECT_NE(swmm_gage_set_scale_factor(engine_, 0, -1.0), SWMM_OK);
 
     double sf = 0.0;
@@ -348,21 +372,17 @@ TEST_F(GageScaleFactorCApi, SetRejectsNonPositive) {
 }
 
 TEST_F(GageScaleFactorCApi, SetRejectsBadIndex) {
-    openModel("gage_noscalefactor.inp",
-              "_gage_set_badidx.rpt",
-              "_gage_set_badidx.out");
+    openModel("gage_noscalefactor.inp", "_gage_set_badidx.rpt", "_gage_set_badidx.out");
 
     EXPECT_NE(swmm_gage_set_scale_factor(engine_, -1, 2.0), SWMM_OK);
-    EXPECT_NE(swmm_gage_set_scale_factor(engine_,  5, 2.0), SWMM_OK);
+    EXPECT_NE(swmm_gage_set_scale_factor(engine_, 5, 2.0), SWMM_OK);
 }
 
 TEST_F(GageScaleFactorCApi, SetAllowedDuringRunning) {
-    openModel("gage_noscalefactor.inp",
-              "_gage_set_running.rpt",
-              "_gage_set_running.out");
+    openModel("gage_noscalefactor.inp", "_gage_set_running.rpt", "_gage_set_running.out");
 
     ASSERT_EQ(swmm_engine_initialize(engine_), SWMM_OK);
-    ASSERT_EQ(swmm_engine_start(engine_, 1),   SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(engine_, 1), SWMM_OK);
 
     double elapsed = 0.0;
     ASSERT_EQ(swmm_engine_step(engine_, &elapsed), SWMM_OK);
@@ -381,8 +401,7 @@ TEST_F(GageScaleFactorCApi, SetAllowedDuringRunning) {
 // rainfall scale factor — it must be settable mid-run (its CHECK_GEOMETRY guard
 // was removed to match). Guards against that guard creeping back.
 TEST_F(GageScaleFactorCApi, SnowFactorSettableDuringRunning) {
-    openModel("gage_noscalefactor.inp",
-              "_gage_snow_running.rpt", "_gage_snow_running.out");
+    openModel("gage_noscalefactor.inp", "_gage_snow_running.rpt", "_gage_snow_running.out");
 
     ASSERT_EQ(swmm_engine_initialize(engine_), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(engine_, 1), SWMM_OK);

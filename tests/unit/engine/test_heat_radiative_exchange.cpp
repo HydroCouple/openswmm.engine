@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_heat_radiative_exchange.cpp
- * @brief Phase H3 gates — shortwave and longwave radiation.
+ * @file      test_heat_radiative_exchange.cpp
+ * @brief     Phase H3 gates — shortwave and longwave radiation.
  *
  * @details The formulation gates carry values computed outside this
  *          codebase from `RHEComponent/src/element.cpp:106-135`, which is
@@ -33,9 +33,9 @@
  *            reference value catches it.
  *
  * @see plans/transport/HEAT_TRANSPORT_PLAN.md §2.2, §6 H3
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -51,27 +51,61 @@
 #include "transport/components/HeatFluxModules/SurfaceExchange.hpp"
 
 namespace re = openswmm::transport::heat;
-namespace se = openswmm::transport::heat;  // same namespace; se:: reads as the H2 module
+namespace se = openswmm::transport::heat; // same namespace; se:: reads as the H2 module
 
 namespace {
 
+/**
+ * @brief Borrow the concrete engine behind an opaque test handle.
+ *
+ * This exact helper performs only an unchecked static_cast and dereference. It does not validate
+ * lifecycle, retain the handle or transfer ownership; fixture code may use the reference to inspect
+ * or seed internal state.
+ *
+ * @param[in] engine Live non-null new-engine handle whose concrete allocation is SWMMEngine; caller
+ *     keeps ownership.
+ * @return Mutable engine reference that remains valid until handle destruction or replacement.
+ */
 openswmm::SWMMEngine& as_cpp_engine(SWMM_Engine engine) {
     return *static_cast<openswmm::SWMMEngine*>(engine);
 }
 
 constexpr double kTWater = 20.0;
-constexpr double kTAirC  = 10.0;   ///< 50 °F in the deck
-constexpr double kRH     = 50.0;
+constexpr double kTAirC = 10.0; ///< 50 °F in the deck
+constexpr double kRH = 50.0;
 
+/**
+ * @brief Write fixture content to a caller-selected file.
+ *
+ * The parent directory must already exist. Uses ordinary text output mode. Open failure is not
+ * reported by this helper. Subsequent write/close failures are not checked; the local stream closes
+ * at scope exit and no path/content storage is retained. Allocation exceptions can propagate.
+ *
+ * @param[in] path Non-null null-terminated destination path; an existing file is
+ *     truncated/overwritten.
+ * @param[in] body Borrowed content copied verbatim through the output stream; no newline is
+ *     appended.
+ */
 void write_file(const char* path, const std::string& body) {
     std::ofstream f(path);
     f << body;
 }
 
-/// Storage pool, no inflow, five minutes — the regime where a flux law is
-/// linear in the state (H2 lesson 55: pick the regime, don't widen the band).
-void write_deck(const char* path, const std::string& pc_lines,
-                const char* end_time = "00:05:00") {
+/**
+ * @brief Write a pond/conduit longwave-exchange fixture with constant meteorology.
+ *
+ * Enables heat on a storage-to-outfall network in CFS with constant 50 F air and kRH humidity;
+ * component rows supply the exchange configuration. Opens/truncates the deck using a local
+ * ofstream; parent directories must exist. Stream open/write/close outcomes are not checked, and
+ * sidecar names/text are not escaped. Caller-owned inputs are not retained.
+ *
+ * @param[in] path Destination deck filename, non-null when a character pointer; borrowed only
+ *     during this call. Existing files are truncated.
+ * @param[in] pc_lines Raw PROCESS_COMPONENTS rows, copied when nonempty; caller supplies valid
+ *     component IDs/config references and line separators.
+ * @param[in] end_time Non-null authored HH:MM:SS end time on the fixed start date; copied verbatim.
+ */
+void write_deck(const char* path, const std::string& pc_lines, const char* end_time = "00:05:00") {
     std::ofstream f(path);
     f << "[TITLE]\nH3 radiative exchange gate deck\n\n[OPTIONS]\n"
       << "FLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\nHEAT_TRANSPORT ON\n"
@@ -91,32 +125,54 @@ void write_deck(const char* path, const std::string& pc_lines,
     f << "[REPORT]\nINPUT NO\n";
 }
 
+/**
+ * @brief Build a 20 C initial-state longwave-exchange config.
+ *
+ * @param[in] on Write RADIATIVE_EXCHANGE ON or OFF.
+ * @param[in] rad_rows Raw RADIATIVE_FLUXES rows emitted only when nonempty; caller supplies valid
+ *     syntax/newlines.
+ * @return Owned configuration text; no file IO or validation.
+ */
 std::string heat_cfg(bool on, const std::string& rad_rows = "") {
     return std::string("[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 20.0\n\n"
                        "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ") +
-           (on ? "ON\n" : "OFF\n") +
-           (rad_rows.empty() ? "" : "\n[RADIATIVE_FLUXES]\n" + rad_rows);
+           (on ? "ON\n" : "OFF\n") + (rad_rows.empty() ? "" : "\n[RADIATIVE_FLUXES]\n" + rad_rows);
 }
 
+/**
+ * @brief Run a generated fixture and keep its engine for state inspection.
+ *
+ * Steps with saved results until completion, step error or a 20000-step guard, then invokes end
+ * without checking its status. A non-null result does not prove successful complete
+ * stepping/finalization. Does not request a full report; returned context/diagnostics remain owned
+ * by that handle.
+ *
+ * @param[in] inp Non-null input-deck path, borrowed for the synchronous run.
+ * @param[in] rpt Report destination passed through to engine open.
+ * @param[in] out Binary-result destination; start requests saved results.
+ * @return Owned raw engine handle after allocation/open/initialize/start succeed, or null after
+ *     allocation/setup failure; caller must destroy any returned handle.
+ */
 SWMM_Engine run_and_hold(const char* inp, const char* rpt, const char* out) {
     SWMM_Engine e = swmm_engine_create();
-    if (e == nullptr) return nullptr;
+    if (e == nullptr)
+        return nullptr;
     if (swmm_engine_open(e, inp, rpt, out, nullptr) != SWMM_OK ||
-        swmm_engine_initialize(e) != SWMM_OK ||
-        swmm_engine_start(e, 1) != SWMM_OK) {
+        swmm_engine_initialize(e) != SWMM_OK || swmm_engine_start(e, 1) != SWMM_OK) {
         swmm_engine_destroy(e);
         return nullptr;
     }
     double elapsed = 0.0;
     int guard = 0;
     do {
-        if (swmm_engine_step(e, &elapsed) != SWMM_OK) break;
+        if (swmm_engine_step(e, &elapsed) != SWMM_OK)
+            break;
     } while (elapsed > 0.0 && ++guard < 20000);
     swmm_engine_end(e);
     return e;
 }
 
-}  // namespace
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Gate 1 — the four terms against RHEComponent's arithmetic.
@@ -126,8 +182,7 @@ TEST(HeatRadiativeExchangeTest, TermsMatchTheReferenceImplementation) {
     EXPECT_NEAR(re::backLongwave(kTWater, 0.97), 406.1761205, 1.0e-5);
 
     // Jan at open sky (element.cpp:119-129).
-    EXPECT_NEAR(re::atmosphericLongwave(kTAirC, kRH, 0.5, 0.03, 1.0),
-                200.4523032, 1.0e-5);
+    EXPECT_NEAR(re::atmosphericLongwave(kTAirC, kRH, 0.5, 0.03, 1.0), 200.4523032, 1.0e-5);
 
     // Jlc vanishes under an open sky and appears as the sky closes.
     EXPECT_NEAR(re::landCoverLongwave(kTAirC, 0.97, 1.0), 0.0, 1.0e-12);
@@ -147,8 +202,7 @@ TEST(HeatRadiativeExchangeTest, BruntEmissivityTakesPascals) {
     // e_a = 0.6159414661 kPa at 10 C / 50 % RH.
     // Correct:  0.5 + 0.0027*sqrt(615.94) = 0.56700905
     // In kPa:   0.5 + 0.0027*sqrt(0.6159) = 0.50211887  <- plausible, wrong
-    EXPECT_NEAR(re::atmosphericEmissivity(0.6159414661, 0.5), 0.56700905,
-                1.0e-7)
+    EXPECT_NEAR(re::atmosphericEmissivity(0.6159414661, 0.5), 0.56700905, 1.0e-7)
         << "atmospheric emissivity is off. A value near 0.502 means the "
            "vapour pressure went into sqrt() as kPa rather than Pa — the "
            "term is then understated by sqrt(1000), which looks like a "
@@ -171,23 +225,23 @@ TEST(HeatRadiativeExchangeTest, SkyViewSplitsTheLongwaveBudget) {
     // of fsky whether or not the code is correct. Derive the land-cover
     // emissivity from the SAME call the atmospheric term uses, so "equal
     // emissivities" is true by construction rather than by hope.
-    const double kAa = 0.5;   // an ordinary Brunt coefficient
-    const double e_a =
-        se::saturationVapourPressure(kTAirC) * kRH / 100.0;
+    const double kAa = 0.5; // an ordinary Brunt coefficient
+    const double e_a = se::saturationVapourPressure(kTAirC) * kRH / 100.0;
     const double eps = re::atmosphericEmissivity(e_a, kAa);
     ASSERT_LT(eps, 1.0) << "atmospheric emissivity " << eps
                         << " exceeds unity — the coefficient is being read "
                            "as an emissivity again";
     double prev = -1.0;
     for (const double fsky : {0.0, 0.25, 0.5, 0.75, 1.0}) {
-        const double jan =
-            re::atmosphericLongwave(kTAirC, kRH, kAa, 0.0, fsky);
+        const double jan = re::atmosphericLongwave(kTAirC, kRH, kAa, 0.0, fsky);
         const double jlc = re::landCoverLongwave(kTAirC, eps, fsky);
         const double total = jan + jlc;
         if (prev >= 0.0)
             EXPECT_NEAR(total, prev, 1.0e-9)
                 << "incoming longwave changed with the sky-view factor at "
-                   "equal emissivities (fsky = " << fsky << "). Jan must "
+                   "equal emissivities (fsky = "
+                << fsky
+                << "). Jan must "
                    "carry fsky and Jlc (1 - fsky); dropping either makes an "
                    "open-sky element double-count.";
         prev = total;
@@ -198,7 +252,7 @@ TEST(HeatRadiativeExchangeTest, SkyViewSplitsTheLongwaveBudget) {
 // Gate 4 — net flux sign, and the day/night reversal.
 // ---------------------------------------------------------------------------
 TEST(HeatRadiativeExchangeTest, NetFluxIsPositiveOutAtNightAndInByDay) {
-    openswmm::RadiativeConfig cfg{};  // defaults: no sun, open sky
+    openswmm::RadiativeConfig cfg{}; // defaults: no sun, open sky
     const double night = re::netRadiativeFluxOut(kTWater, kTAirC, kRH, cfg);
     EXPECT_NEAR(night, 205.7238174, 1.0e-5)
         << "night-time net radiative flux should be Jbr - Jan = 406.176 - "
@@ -207,9 +261,9 @@ TEST(HeatRadiativeExchangeTest, NetFluxIsPositiveOutAtNightAndInByDay) {
 
     cfg.shortwave_wm2 = 800.0;
     const double day = re::netRadiativeFluxOut(kTWater, kTAirC, kRH, cfg);
-    EXPECT_LT(day, 0.0)
-        << "800 W/m2 of sun must make the net flux negative (into the "
-           "water); it reads " << day;
+    EXPECT_LT(day, 0.0) << "800 W/m2 of sun must make the net flux negative (into the "
+                           "water); it reads "
+                        << day;
     EXPECT_NEAR(night - day, 800.0, 1.0e-6)
         << "with albedo 0 and no shade, all 800 W/m2 must enter";
 }
@@ -221,8 +275,7 @@ TEST(HeatRadiativeExchangeTest, SunWarmsAndNightCoolsThePool) {
     write_file("_hr_night.heat", heat_cfg(true));
     write_deck("_hr_night.inp", "org.hydrocouple.openswmm.heat "
                                 "config=\"_hr_night.heat\"");
-    SWMM_Engine n = run_and_hold("_hr_night.inp", "_hr_night.rpt",
-                                 "_hr_night.out");
+    SWMM_Engine n = run_and_hold("_hr_night.inp", "_hr_night.rpt", "_hr_night.out");
     ASSERT_NE(n, nullptr);
     const double t_night = as_cpp_engine(n).context().heat_state.node_temp[0];
     swmm_engine_destroy(n);
@@ -245,14 +298,12 @@ TEST(HeatRadiativeExchangeTest, SunWarmsAndNightCoolsThePool) {
     const double t_off = as_cpp_engine(o).context().heat_state.node_temp[0];
     swmm_engine_destroy(o);
     EXPECT_NEAR(t_off, kTWater, 1.0e-9)
-        << "RADIATIVE_EXCHANGE OFF left the pool at " << t_off
-        << " degC, not its 20 degC seed";
+        << "RADIATIVE_EXCHANGE OFF left the pool at " << t_off << " degC, not its 20 degC seed";
 
-    EXPECT_LT(t_night, kTWater)
-        << "a 20 degC pool under a 10 degC sky must radiate away net heat; "
-           "it reads " << t_night;
-    EXPECT_GT(t_day, kTWater)
-        << "800 W/m2 of sun must warm the pool; it reads " << t_day;
+    EXPECT_LT(t_night, kTWater) << "a 20 degC pool under a 10 degC sky must radiate away net heat; "
+                                   "it reads "
+                                << t_night;
+    EXPECT_GT(t_day, kTWater) << "800 W/m2 of sun must warm the pool; it reads " << t_day;
 }
 
 // ---------------------------------------------------------------------------
@@ -266,9 +317,7 @@ TEST(HeatRadiativeExchangeTest, ConfigRefusesOutOfRangeAndUnknown) {
                               "config=\"_hr_bad.heat\"");
     SWMM_Engine e = swmm_engine_create();
     ASSERT_NE(e, nullptr);
-    EXPECT_NE(swmm_engine_open(e, "_hr_bad.inp", "_hr_bad.rpt", "_hr_bad.out",
-                               nullptr),
-              SWMM_OK)
+    EXPECT_NE(swmm_engine_open(e, "_hr_bad.inp", "_hr_bad.rpt", "_hr_bad.out", nullptr), SWMM_OK)
         << "an emissivity of 97 was accepted as a fraction";
     swmm_engine_destroy(e);
 
@@ -277,9 +326,7 @@ TEST(HeatRadiativeExchangeTest, ConfigRefusesOutOfRangeAndUnknown) {
                               "config=\"_hr_unk.heat\"");
     SWMM_Engine e2 = swmm_engine_create();
     ASSERT_NE(e2, nullptr);
-    EXPECT_NE(swmm_engine_open(e2, "_hr_unk.inp", "_hr_unk.rpt", "_hr_unk.out",
-                               nullptr),
-              SWMM_OK)
+    EXPECT_NE(swmm_engine_open(e2, "_hr_unk.inp", "_hr_unk.rpt", "_hr_unk.out", nullptr), SWMM_OK)
         << "EXTINCTION is the H6 sediment split and must not be silently "
            "ignored";
     swmm_engine_destroy(e2);
@@ -297,9 +344,7 @@ TEST(HeatRadiativeExchangeTest, TheH3DeferralIsRetiredAndH6IsNot) {
                              "config=\"_hr_on.heat\"");
     SWMM_Engine e = swmm_engine_create();
     ASSERT_NE(e, nullptr);
-    ASSERT_EQ(swmm_engine_open(e, "_hr_on.inp", "_hr_on.rpt", "_hr_on.out",
-                               nullptr),
-              SWMM_OK)
+    ASSERT_EQ(swmm_engine_open(e, "_hr_on.inp", "_hr_on.rpt", "_hr_on.out", nullptr), SWMM_OK)
         << "RADIATIVE_EXCHANGE ON still refuses — the H3 deferral was not "
            "retired with the phase that implements it";
     EXPECT_TRUE(as_cpp_engine(e).context().heat_config.radiative_exchange);
@@ -307,16 +352,13 @@ TEST(HeatRadiativeExchangeTest, TheH3DeferralIsRetiredAndH6IsNot) {
 
     // H6b retired the SEDIMENT_EXCHANGE deferral — the same flip this gate
     // performed for RADIATIVE_EXCHANGE when H3 landed, one module over.
-    write_file("_hr_sed.heat",
-               "[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 20.0\n\n"
-               "[HEAT_FLUXES]\nSEDIMENT_EXCHANGE ON\n");
+    write_file("_hr_sed.heat", "[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 20.0\n\n"
+                               "[HEAT_FLUXES]\nSEDIMENT_EXCHANGE ON\n");
     write_deck("_hr_sed.inp", "org.hydrocouple.openswmm.heat "
                               "config=\"_hr_sed.heat\"");
     SWMM_Engine e2 = swmm_engine_create();
     ASSERT_NE(e2, nullptr);
-    ASSERT_EQ(swmm_engine_open(e2, "_hr_sed.inp", "_hr_sed.rpt", "_hr_sed.out",
-                               nullptr),
-              SWMM_OK)
+    ASSERT_EQ(swmm_engine_open(e2, "_hr_sed.inp", "_hr_sed.rpt", "_hr_sed.out", nullptr), SWMM_OK)
         << "SEDIMENT_EXCHANGE ON still refuses — the H6 deferral was not "
            "retired with the phase that implements it (H6b)";
     EXPECT_TRUE(as_cpp_engine(e2).context().heat_config.sediment_exchange);

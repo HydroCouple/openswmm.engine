@@ -1,6 +1,6 @@
 /**
- * @file test_2d_junction_coupling.cpp
- * @brief End-to-end regression for two-way 1D↔2D JUNCTION coupling.
+ * @file      test_2d_junction_coupling.cpp
+ * @brief     End-to-end regression for two-way 1D↔2D JUNCTION coupling.
  *
  * @details A 2D-coupled junction must exchange with the overland surface in two
  *          physical regimes (NodeCoupling.cpp computeCouplingExchange):
@@ -32,6 +32,10 @@
  *          engine through the public C API. Inputs and a summary are written to
  *          ./junction_coupling_out/ (working dir is tests/unit/engine/data) for
  *          review — no temp files (project convention).
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -58,89 +62,116 @@ namespace {
 // patch bed sits at z = 1.0 m = J1's crown elevation, so spill/capture happen at
 // the rim. ALLOW_PONDING is OFF on purpose: only the 2D-coupled exception lets
 // J1's HGL climb above the crown.
-const char* const kTwoPhaseInflow =
-    "IN_TS   0:00   0.10\n"
-    "IN_TS   0:12   0.10\n"
-    "IN_TS   0:13   0.0\n"
-    "IN_TS   0:40   0.0\n";
+const char* const kTwoPhaseInflow = "IN_TS   0:00   0.10\n"
+                                    "IN_TS   0:12   0.10\n"
+                                    "IN_TS   0:13   0.0\n"
+                                    "IN_TS   0:40   0.0\n";
 
+/**
+ * @brief Build the SI junction-spill/capture fixture.
+ *
+ * ALLOW_PONDING is off; tests observe the coupled-node exception. Raw tokens are unescaped; no
+ * validation, file writing or run occurs.
+ *
+ * @param[in] extra_2d_options Raw additional 2D_OPTIONS lines.
+ * @param[in] inflow_ts Raw IN_TS rows in m3/s with newline separators; default two-phase supply.
+ * @param[in] end_time Raw same-day END_TIME token, default 00:40:00.
+ * @return Owned CMS deck with J1 crown at 1 m, 0.2 m pipe and 100 m2 pan mapped at vertex zero.
+ */
 std::string build_junction_model(const std::string& extra_2d_options,
                                  const std::string& inflow_ts = kTwoPhaseInflow,
                                  const std::string& end_time = "00:40:00") {
-    return
-        "[OPTIONS]\n"
-        "FLOW_UNITS           CMS\n"
-        "FLOW_ROUTING         DYNWAVE\n"
-        "START_DATE           01/01/2026\n"
-        "START_TIME           00:00:00\n"
-        "END_DATE             01/01/2026\n"
-        "END_TIME             " + end_time + "\n"
-        "REPORT_STEP          00:01:00\n"
-        "ROUTING_STEP         1\n"
-        "ALLOW_PONDING        NO\n"
-        "\n"
-        "[JUNCTIONS]\n"
-        ";;Name  Elev  MaxDepth  InitDepth  SurDepth  Aponded\n"
-        "J1      0.0   1.0       0          0         0\n"
-        "\n"
-        "[OUTFALLS]\n"
-        ";;Name  Elev   Type  Gated\n"
-        "O1     -0.5    FREE  NO\n"
-        "\n"
-        "[CONDUITS]\n"
-        ";;Name  From  To  Length  Roughness  InOffset  OutOffset  InitFlow\n"
-        "C1      J1    O1  30.0    0.013      0         0          0\n"
-        "\n"
-        "[XSECTIONS]\n"
-        ";;Link  Shape     Geom1  Geom2  Geom3  Geom4  Barrels\n"
-        "C1      CIRCULAR  0.2    0      0      0      1\n"
-        "\n"
-        "[INFLOWS]\n"
-        ";;Node  Constituent  Tseries  Type  Mfactor  Sfactor  Baseline\n"
-        "J1      FLOW         IN_TS    FLOW  1.0      1.0\n"
-        "\n"
-        "[TIMESERIES]\n"
-        ";;Name  Time   Value   (default: surcharge for 12 min, then off so the patch drains)\n"
-        + inflow_ts +
-        "\n"
-        "[2D_OPTIONS]\n"
-        "MAX_TIMESTEP     1\n"
-        "DRY_DEPTH        0.002\n"
-        "COUPLING_CD      0.7\n"
-        "REPORT_2D        NO\n"
-        + extra_2d_options +
-        "\n"
-        "[2D_VERTICES]\n"
-        ";;X      Y      Z   (flat patch at the junction crown elevation, 1.0 m)\n"
-        " 0.0    0.0   1.0\n"   // v0 — coupled cell vertex
-        "10.0    0.0   1.0\n"   // v1
-        "10.0   10.0   1.0\n"   // v2
-        " 0.0   10.0   1.0\n"   // v3
-        "\n"
-        "[2D_TRIANGLES]\n"
-        ";;V1  V2  V3  MANNINGS_N\n"
-        "0     1   2   0.03\n"
-        "0     2   3   0.03\n"
-        "\n"
-        "[2D_VERTEX_NODE_MAP]\n"
-        ";;Vertex  Node  Cd   Area\n"
-        "0         J1    0.7  1.0\n";
+    return "[OPTIONS]\n"
+           "FLOW_UNITS           CMS\n"
+           "FLOW_ROUTING         DYNWAVE\n"
+           "START_DATE           01/01/2026\n"
+           "START_TIME           00:00:00\n"
+           "END_DATE             01/01/2026\n"
+           "END_TIME             " +
+           end_time +
+           "\n"
+           "REPORT_STEP          00:01:00\n"
+           "ROUTING_STEP         1\n"
+           "ALLOW_PONDING        NO\n"
+           "\n"
+           "[JUNCTIONS]\n"
+           ";;Name  Elev  MaxDepth  InitDepth  SurDepth  Aponded\n"
+           "J1      0.0   1.0       0          0         0\n"
+           "\n"
+           "[OUTFALLS]\n"
+           ";;Name  Elev   Type  Gated\n"
+           "O1     -0.5    FREE  NO\n"
+           "\n"
+           "[CONDUITS]\n"
+           ";;Name  From  To  Length  Roughness  InOffset  OutOffset  InitFlow\n"
+           "C1      J1    O1  30.0    0.013      0         0          0\n"
+           "\n"
+           "[XSECTIONS]\n"
+           ";;Link  Shape     Geom1  Geom2  Geom3  Geom4  Barrels\n"
+           "C1      CIRCULAR  0.2    0      0      0      1\n"
+           "\n"
+           "[INFLOWS]\n"
+           ";;Node  Constituent  Tseries  Type  Mfactor  Sfactor  Baseline\n"
+           "J1      FLOW         IN_TS    FLOW  1.0      1.0\n"
+           "\n"
+           "[TIMESERIES]\n"
+           ";;Name  Time   Value   (default: surcharge for 12 min, then off so the patch drains)\n" +
+           inflow_ts +
+           "\n"
+           "[2D_OPTIONS]\n"
+           "MAX_TIMESTEP     1\n"
+           "DRY_DEPTH        0.002\n"
+           "COUPLING_CD      0.7\n"
+           "REPORT_2D        NO\n" +
+           extra_2d_options +
+           "\n"
+           "[2D_VERTICES]\n"
+           ";;X      Y      Z   (flat patch at the junction crown elevation, 1.0 m)\n"
+           " 0.0    0.0   1.0\n" // v0 — coupled cell vertex
+           "10.0    0.0   1.0\n" // v1
+           "10.0   10.0   1.0\n" // v2
+           " 0.0   10.0   1.0\n" // v3
+           "\n"
+           "[2D_TRIANGLES]\n"
+           ";;V1  V2  V3  MANNINGS_N\n"
+           "0     1   2   0.03\n"
+           "0     2   3   0.03\n"
+           "\n"
+           "[2D_VERTEX_NODE_MAP]\n"
+           ";;Vertex  Node  Cd   Area\n"
+           "0         J1    0.7  1.0\n";
 }
 
 struct RunResult {
-    bool   ok = false;
-    int    n_tri = 0;
+    bool ok = false;
+    int n_tri = 0;
     double peak_j1_depth = 0.0;     // max junction depth over the run (m)
     double peak_patch_depth = 0.0;  // max per-cell 2D depth over the run (m)
     double final_patch_depth = 0.0; // max per-cell 2D depth at the last step (m)
     double cont_2d = 0.0;
     double cont_routing = 0.0;
-    double spilled_1d_to_2d = 0.0;  // cumulative 1D→2D exchange (m³)
+    double spilled_1d_to_2d = 0.0; // cumulative 1D→2D exchange (m³)
     // 1D routing ledger (m³) and J1's booked volume at the end of the run.
     double rt_external_in = 0.0, rt_outfall_out = 0.0, rt_coupling_out = 0.0,
            rt_final_storage = 0.0, j1_volume_end = 0.0;
 };
 
+/**
+ * @brief Run the junction exchange fixture and collect depths and water ledgers.
+ *
+ * ok=false on setup/inactive/J1/start refusal; step error can still yield ok=true. Steps without a
+ * cap, samples peak/final patch depths on positive elapsed calls and reads J1 volume before end.
+ * Owns/destroys engine, ignoring stream/getter/end/report/close statuses. Routing-total API values
+ * remain native ft3 despite the older record comment labeling all ledger fields m3.
+ *
+ * @param[in] dir Existing writable retained artifact directory.
+ * @param[in] tag Safe basename for overwritten .inp/.rpt/.out.
+ * @param[in] extra_2d_options Raw additional 2D_OPTIONS lines.
+ * @param[in] inflow_ts Raw IN_TS rows in m3/s with newline separators; default two-phase supply.
+ * @param[in] end_time Raw same-day END_TIME token, default 00:40:00.
+ * @return Owned depths meters, J1 displayed volume m3, native routing totals ft3, surface spill m3
+ *     and continuity fractions.
+ */
 RunResult run_junction_model(const fs::path& dir, const std::string& tag,
                              const std::string& extra_2d_options,
                              const std::string& inflow_ts = kTwoPhaseInflow,
@@ -149,37 +180,55 @@ RunResult run_junction_model(const fs::path& dir, const std::string& tag,
     const fs::path inp = dir / (tag + ".inp");
     const fs::path rpt = dir / (tag + ".rpt");
     const fs::path out = dir / (tag + ".out");
-    { std::ofstream f(inp); f << build_junction_model(extra_2d_options, inflow_ts, end_time); }
+    {
+        std::ofstream f(inp);
+        f << build_junction_model(extra_2d_options, inflow_ts, end_time);
+    }
 
     SWMM_Engine eng = swmm_engine_create();
-    if (swmm_engine_open(eng, inp.string().c_str(), rpt.string().c_str(),
-                         out.string().c_str(), nullptr) != SWMM_OK) {
-        swmm_engine_destroy(eng); return r;
+    if (swmm_engine_open(eng, inp.string().c_str(), rpt.string().c_str(), out.string().c_str(),
+                         nullptr) != SWMM_OK) {
+        swmm_engine_destroy(eng);
+        return r;
     }
     if (swmm_engine_initialize(eng) != SWMM_OK) {
-        swmm_engine_close(eng); swmm_engine_destroy(eng); return r;
+        swmm_engine_close(eng);
+        swmm_engine_destroy(eng);
+        return r;
     }
     int active = 0;
     swmm_2d_is_active(eng, &active);
-    if (!active) { swmm_engine_close(eng); swmm_engine_destroy(eng); return r; }
+    if (!active) {
+        swmm_engine_close(eng);
+        swmm_engine_destroy(eng);
+        return r;
+    }
     swmm_2d_triangle_count(eng, &r.n_tri);
     const int j1 = swmm_node_index(eng, "J1");
-    if (j1 < 0) { swmm_engine_close(eng); swmm_engine_destroy(eng); return r; }
+    if (j1 < 0) {
+        swmm_engine_close(eng);
+        swmm_engine_destroy(eng);
+        return r;
+    }
 
     if (swmm_engine_start(eng, 1) != SWMM_OK) {
-        swmm_engine_close(eng); swmm_engine_destroy(eng); return r;
+        swmm_engine_close(eng);
+        swmm_engine_destroy(eng);
+        return r;
     }
 
     std::vector<double> depths(static_cast<std::size_t>(r.n_tri));
     double elapsed = 0.0;
     while (true) {
-        if (swmm_engine_step(eng, &elapsed) != SWMM_OK || elapsed <= 0.0) break;
+        if (swmm_engine_step(eng, &elapsed) != SWMM_OK || elapsed <= 0.0)
+            break;
         double jd = 0.0;
         if (swmm_node_get_depth(eng, j1, &jd) == SWMM_OK)
             r.peak_j1_depth = std::max(r.peak_j1_depth, jd);
         if (swmm_2d_get_depths_bulk(eng, depths.data()) == SWMM_OK) {
             double step_max = 0.0;
-            for (double d : depths) step_max = std::max(step_max, d);
+            for (double d : depths)
+                step_max = std::max(step_max, d);
             r.peak_patch_depth = std::max(r.peak_patch_depth, step_max);
             r.final_patch_depth = step_max;
         }
@@ -191,8 +240,8 @@ RunResult run_junction_model(const fs::path& dir, const std::string& tag,
     swmm_get_routing_total(eng, SWMM_ROUTING_OUTFLOW, &r.rt_outfall_out);
     swmm_get_routing_total(eng, SWMM_ROUTING_COUPLING_OUT, &r.rt_coupling_out);
     swmm_get_routing_total(eng, SWMM_ROUTING_FINAL_STORAGE, &r.rt_final_storage);
-    swmm_2d_get_mass_balance(eng, nullptr, nullptr, nullptr, &r.spilled_1d_to_2d,
-                             nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
+    swmm_2d_get_mass_balance(eng, nullptr, nullptr, nullptr, &r.spilled_1d_to_2d, nullptr, nullptr,
+                             nullptr, nullptr, nullptr, nullptr);
     swmm_2d_get_continuity_error(eng, &r.cont_2d);
     swmm_get_routing_continuity_error(eng, &r.cont_routing);
     swmm_engine_report(eng);
@@ -207,6 +256,13 @@ RunResult run_junction_model(const fs::path& dir, const std::string& tag,
 class JunctionCoupling2DTest : public ::testing::Test {
 protected:
     fs::path dir_;
+    /**
+     * @brief Create the reviewable junction_coupling_out artifact directory.
+     *
+     * Sets dir_ relative to the test working directory and creates missing directories with the
+     * throwing filesystem overload. Existing files are retained; no engine or input file is created
+     * here.
+     */
     void SetUp() override {
         dir_ = fs::path("junction_coupling_out");
         fs::create_directories(dir_);
@@ -225,13 +281,13 @@ TEST_F(JunctionCoupling2DTest, JunctionSpillsAndCapturesAcrossTheCrown) {
     // (1) THE FIX: the coupled junction HGL rose ABOVE its crown (full_depth =
     //     1.0 m) even though ALLOW_PONDING is off — pre-fix it was pinned at 1.0.
     EXPECT_GT(r.peak_j1_depth, 1.05)
-        << "junction HGL did not rise above the crown (peak depth "
-        << r.peak_j1_depth << " m) — coupled-node ponding is not engaged";
+        << "junction HGL did not rise above the crown (peak depth " << r.peak_j1_depth
+        << " m) — coupled-node ponding is not engaged";
 
     // (2) Surcharge spill wetted the 2D patch. Pre-fix: ~0 (spill can't fire).
     EXPECT_GT(r.peak_patch_depth, 0.01)
-        << "junction surcharge did not spill onto the 2D mesh (peak depth "
-        << r.peak_patch_depth << " m)";
+        << "junction surcharge did not spill onto the 2D mesh (peak depth " << r.peak_patch_depth
+        << " m)";
 
     // (3) Inlet capture drained the ponded surface back through the junction
     //     after the inflow stopped (one-way capture on the surface-depth gradient).
@@ -240,8 +296,7 @@ TEST_F(JunctionCoupling2DTest, JunctionSpillsAndCapturesAcrossTheCrown) {
         << r.final_patch_depth << " m vs peak " << r.peak_patch_depth << " m)";
 
     // (4) Both continuity ledgers close.
-    EXPECT_LT(std::abs(r.cont_2d), 0.05)
-        << "2D surface continuity error too large: " << r.cont_2d;
+    EXPECT_LT(std::abs(r.cont_2d), 0.05) << "2D surface continuity error too large: " << r.cont_2d;
     EXPECT_LT(std::abs(r.cont_routing), 0.05)
         << "1D routing continuity error too large: " << r.cont_routing;
 
@@ -260,11 +315,10 @@ TEST_F(JunctionCoupling2DTest, JunctionSpillsAndCapturesAcrossTheCrown) {
 // first 1.167 m³, so J1 had to pond 1.167 / 33.3 m² ≈ 3.5 cm above its rim
 // before any water reached the patch, and the patch got ~1.167 m³ less.
 TEST_F(JunctionCoupling2DTest, SpillDrawsTheWholePond) {
-    const std::string pulse =
-        "IN_TS   0:00   0.09\n"
-        "IN_TS   0:01   0.09\n"
-        "IN_TS   0:02   0.0\n"
-        "IN_TS   0:40   0.0\n";
+    const std::string pulse = "IN_TS   0:00   0.09\n"
+                              "IN_TS   0:01   0.09\n"
+                              "IN_TS   0:02   0.0\n"
+                              "IN_TS   0:40   0.0\n";
     RunResult r = run_junction_model(dir_, "junction_small_pond", "", pulse);
     ASSERT_TRUE(r.ok) << "coupled junction run failed";
     std::ofstream csv(dir_ / "junction_small_pond_massbalance.csv");
@@ -273,11 +327,10 @@ TEST_F(JunctionCoupling2DTest, SpillDrawsTheWholePond) {
         << "spilled_1d_to_2d_m3," << r.spilled_1d_to_2d << "\n"
         << "continuity_2d_frac," << r.cont_2d << "\n";
     EXPECT_GT(r.peak_j1_depth, 1.0) << "fixture never surcharged J1";
-    const double withheld_head = 1.167 / (100.0 / 3.0);   // 1D pond head if 1.167 m³ is held back
+    const double withheld_head = 1.167 / (100.0 / 3.0); // 1D pond head if 1.167 m³ is held back
     EXPECT_LT(r.peak_j1_depth, 1.0 + 0.5 * withheld_head)
         << "J1 ponded as if MIN_SURFAREA × full depth were withheld from the spill";
-    EXPECT_GT(r.spilled_1d_to_2d, 0.6)
-        << "the spill drew less than the pond holds";
+    EXPECT_GT(r.spilled_1d_to_2d, 0.6) << "the spill drew less than the pond holds";
     EXPECT_LT(std::abs(r.cont_2d), 0.05) << "2D continuity: " << r.cont_2d;
 }
 
@@ -288,11 +341,9 @@ TEST_F(JunctionCoupling2DTest, SpillDrawsTheWholePond) {
 // −2.3 % left once it is counted is the dynamic wave's own node-continuity
 // error during the 12 s fill of this fixture).
 TEST_F(JunctionCoupling2DTest, CoupledPondCountsAsStorage) {
-    const std::string surcharge =
-        "IN_TS   0:00   0.10\n"
-        "IN_TS   0:40   0.10\n";
-    RunResult r = run_junction_model(dir_, "junction_pond_at_end", "", surcharge,
-                                     "00:03:00");
+    const std::string surcharge = "IN_TS   0:00   0.10\n"
+                                  "IN_TS   0:40   0.10\n";
+    RunResult r = run_junction_model(dir_, "junction_pond_at_end", "", surcharge, "00:03:00");
     ASSERT_TRUE(r.ok) << "coupled junction run failed";
     std::ofstream csv(dir_ / "junction_pond_at_end_massbalance.csv");
     csv << "metric,value\n"
@@ -311,6 +362,5 @@ TEST_F(JunctionCoupling2DTest, CoupledPondCountsAsStorage) {
     EXPECT_GT(r.rt_final_storage, r.j1_volume_end * kFt3PerM3)
         << "final stored volume (" << r.rt_final_storage / kFt3PerM3
         << " m³) does not include J1's pond (" << r.j1_volume_end << " m³)";
-    EXPECT_LT(std::abs(r.cont_routing), 0.03)
-        << "routing continuity error " << r.cont_routing;
+    EXPECT_LT(std::abs(r.cont_routing), 0.03) << "routing continuity error " << r.cont_routing;
 }
