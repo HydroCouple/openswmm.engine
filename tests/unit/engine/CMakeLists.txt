@@ -52,7 +52,8 @@ function(add_gtest_unit TEST_NAME SOURCE_FILE)
     )
 
     if(MSVC)
-        target_compile_options(${TEST_NAME} PRIVATE /EHsc)
+        # Large Google Test translation units exceed the default COFF section limit.
+        target_compile_options(${TEST_NAME} PRIVATE /EHsc /bigobj)
     endif()
 
     set_target_properties(${TEST_NAME} PROPERTIES
