@@ -34,7 +34,7 @@ REPORT_2D_VARIABLES ALL
 REPORT_2D_STEP 00:02:00
 OUTPUT_PRECISION FLOAT64
 TRANSPORT_POLLUTANTS YES''')
-    path.write_text(text)
+    path.write_text(text, encoding='utf-8')
     solver = Solver(path, path.with_suffix('.rpt'), path.with_suffix('.out'))
     try:
         solver.open()

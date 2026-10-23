@@ -91,15 +91,15 @@ def test_native_network_identity_refusal_preserves_target_and_output(tmp_path, m
         path, before, after = [tmp_path / name for name in ('source.chk', 'before.chk', 'after.chk')]
         a.checkpoints.save(path)
         b.checkpoints.save(before)
-        files = [tmp_path / 'b/model.out', tmp_path / 'b/mesh.h5']
-        prefixes = [f.read_bytes() for f in files]
+        # Combined checkpoints embed both full output prefixes. Compare the closed
+        # snapshots without reopening the live, exclusively locked HDF5 writer.
+        before_bytes = before.read_bytes()
         for operation in (b.checkpoints.inspect, b.checkpoints.restore):
             with pytest.raises(FileError):
                 operation(path)
             b.checkpoints.save(after)
-            assert before.read_bytes() == after.read_bytes()
+            assert before_bytes == after.read_bytes()
             after.unlink()
-            assert prefixes == [f.read_bytes() for f in files]
             assert b.elapsed.total_seconds() == 0
     finally:
         cleanup(a)
