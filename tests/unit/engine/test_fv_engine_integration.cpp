@@ -410,7 +410,7 @@ TEST(FvEngine, FvOptionsSurviveAnInpRoundTrip) {
     EXPECT_EQ(got["FLOW_ROUTING"], "FV");
     EXPECT_EQ(got["FV_CELL_LENGTH"], "12.5");
     EXPECT_EQ(got["FV_MIN_CELLS"], "3");
-    EXPECT_EQ(got["FV_CFL"], "0.35");
+    EXPECT_DOUBLE_EQ(std::stod(got.at("FV_CFL")), 0.35);
     EXPECT_EQ(got["FV_RIEMANN"], "HLL");
     EXPECT_EQ(got["FV_LIMITER"], "SUPERBEE");
     EXPECT_EQ(got["FV_SCALAR_SCHEME"], "QUICKEST_ULTIMATE");

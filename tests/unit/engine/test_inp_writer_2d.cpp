@@ -518,10 +518,10 @@ TEST_F(InpWriter2DTest, UnitsHeaderPreventsDoubleScaling) {
 }
 
 // ---------------------------------------------------------------------------
-// Pure-1D model emits no [2D_*] text at all
+// A model without mesh preserves draft options without emitting mesh geometry
 // ---------------------------------------------------------------------------
 
-TEST_F(InpWriter2DTest, No2DModelEmitsNothing) {
+TEST_F(InpWriter2DTest, NoMeshModelPreservesDraftOptions) {
     const fs::path inp_a = dir_ / "plain.inp";
     write_file(inp_a, replace(k1DBase, "{FLOW_UNITS}", "CMS"));
 
@@ -529,7 +529,15 @@ TEST_F(InpWriter2DTest, No2DModelEmitsNothing) {
     const fs::path inp_b = dir_ / "plain_out.inp";
     ASSERT_EQ(swmm_model_write(eng_a_, inp_b.string().c_str()), 0);
 
-    EXPECT_EQ(read_file(inp_b).find("[2D_"), std::string::npos);
+    const auto text = read_file(inp_b);
+    EXPECT_NE(text.find("[2D_OPTIONS]"), std::string::npos);
+    EXPECT_EQ(text.find("[2D_VERTICES]"), std::string::npos);
+    EXPECT_EQ(text.find("[2D_TRIANGLES]"), std::string::npos);
+    EXPECT_EQ(text.find("[2D_QUADS]"), std::string::npos);
+    eng_b_ = open_engine(inp_b);
+    int active = -1;
+    ASSERT_EQ(swmm_2d_is_active(eng_b_, &active), 0);
+    EXPECT_EQ(active, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -948,12 +956,20 @@ TEST_F(InpWriter2DTest, CouplingRowsWriteOnlyAuthoredTokens) {
     ASSERT_EQ(vrows.size(), 3u) << text;
     EXPECT_EQ(vrows[0], (std::vector<std::string>{"0", "J1"}))
         << "an unauthored row must not gain CD/AREA tokens";
-    EXPECT_EQ(vrows[1], (std::vector<std::string>{"1", "J1", "0.7", "3"}))
+    ASSERT_EQ(vrows[1].size(), 4u)
         << "an API AREA under a defaulted CD writes COUPLING_CD positionally";
+    EXPECT_EQ(vrows[1][0], "1");
+    EXPECT_EQ(vrows[1][1], "J1");
+    EXPECT_DOUBLE_EQ(std::stod(vrows[1][2]), 0.7);
+    EXPECT_DOUBLE_EQ(std::stod(vrows[1][3]), 3.0);
     EXPECT_EQ(vrows[2], (std::vector<std::string>{"2", "J1"}));
     const auto trows = section_rows(text, "[2D_TRIANGLE_NODE_MAP]");
     ASSERT_EQ(trows.size(), 1u) << text;
-    EXPECT_EQ(trows[0], (std::vector<std::string>{"1", "J1", "0.55", "1.5"}));
+    ASSERT_EQ(trows[0].size(), 4u);
+    EXPECT_EQ(trows[0][0], "1");
+    EXPECT_EQ(trows[0][1], "J1");
+    EXPECT_DOUBLE_EQ(std::stod(trows[0][2]), 0.55);
+    EXPECT_DOUBLE_EQ(std::stod(trows[0][3]), 1.5);
 
     eng_b_ = open_engine(inp_b);
     double cd = 0.0, area = 0.0;

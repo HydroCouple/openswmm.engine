@@ -349,12 +349,9 @@ TEST_F(ReactionsConfigTest, EmbeddedFallbackAppliesAndExternalWins) {
 }
 
 // ---------------------------------------------------------------------------
-// Embedded [REACTION_*] sections are dropped by InpWriter (no per-component
-// serialization until IO3) — the save must SAY so rather than destroying
-// user-authored model data silently. Falsifier: remove the writer warning and
-// this fails; the sections themselves are expected to be absent either way.
+// Embedded reaction definitions survive the writer and reopen as configured species.
 // ---------------------------------------------------------------------------
-TEST_F(ReactionsConfigTest, EmbeddedSectionsLostOnSaveAreReported) {
+TEST_F(ReactionsConfigTest, EmbeddedSectionsSurviveSaveAndReopen) {
     write_deck("_rx_save.inp", "", "[REACTION_SPECIES]\nBULK EMB_A MG\n\n");
     ASSERT_EQ(open_deck("_rx_save.inp", "_rx_save.rpt", "_rx_save.out"), SWMM_OK);
     const auto& ctx = as_cpp_engine(engine_).context();
@@ -362,19 +359,16 @@ TEST_F(ReactionsConfigTest, EmbeddedSectionsLostOnSaveAreReported) {
 
     std::vector<std::string> warnings;
     ASSERT_EQ(openswmm::inp_writer::writeInpFile(ctx, "_rx_saved.inp", &warnings), 0);
-    EXPECT_TRUE(contains(warnings, "NOT written back"))
-        << "InpWriter dropped the embedded sections without a word";
-    EXPECT_TRUE(contains(warnings, "[REACTION_SPECIES]")) << "the warning must name what was lost";
-
-    // The data really is gone — the warning is the whole mitigation.
-    std::ifstream in("_rx_saved.inp");
-    std::string line;
-    bool found = false;
-    while (std::getline(in, line))
-        if (line.rfind("[REACTION", 0) == 0)
-            found = true;
-    EXPECT_FALSE(found);
-
+    EXPECT_FALSE(contains(warnings, "NOT written back"));
+    ASSERT_EQ(swmm_engine_close(engine_), SWMM_OK);
+    swmm_engine_destroy(engine_);
+    engine_ = swmm_engine_create();
+    ASSERT_NE(engine_, nullptr);
+    ASSERT_EQ(open_deck("_rx_saved.inp", "", ""), SWMM_OK)
+        << swmm_get_last_error_msg(engine_);
+    const auto& restored = as_cpp_engine(engine_).context();
+    EXPECT_TRUE(restored.reactions.configured);
+    EXPECT_GE(restored.species_registry.find("EMB_A"), 0);
     std::remove("_rx_save.inp");
     std::remove("_rx_saved.inp");
 }

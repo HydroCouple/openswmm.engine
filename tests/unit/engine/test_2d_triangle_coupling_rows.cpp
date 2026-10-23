@@ -426,7 +426,10 @@ TEST_F(TriangleCouplingRowsTest, ApiNanLeavesTokensUnauthored) {
     }
     ASSERT_EQ(data.size(), 3u);
     EXPECT_EQ(data[0], (std::vector<std::string>{"0", "J1"}));
-    EXPECT_EQ(data[1], (std::vector<std::string>{"1", "J2", "0.8"}));
+    ASSERT_EQ(data[1].size(), 3u);
+    EXPECT_EQ(data[1][0], "1");
+    EXPECT_EQ(data[1][1], "J2");
+    EXPECT_DOUBLE_EQ(std::stod(data[1][2]), 0.8);
     ASSERT_EQ(data[2].size(), 4u);
     EXPECT_EQ(data[2][1], "O1");
     EXPECT_EQ(data[2][3], "3.5");

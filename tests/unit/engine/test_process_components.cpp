@@ -362,27 +362,9 @@ TEST_F(ProcessComponentsTest, AbsoluteConfigPathIsRebasedOnWrite) {
 
 } // namespace
 
-// ---------------------------------------------------------------------------
-// A save that DESTROYS embedded model data must say so, THROUGH THE PATH THE
-// PRODUCTION CALLERS TAKE.
-//
-// Found 2026-08-26. The writer's "embedded [REACTION_*] sections are lost from
-// this save" notice (InpWriter.cpp:2580-2586) is gated on an OPTIONAL warnings
-// sink, and every production caller passed nullptr -- so it never fired.
-// Opening a deck with embedded reaction sections, editing anything and saving
-// destroyed the reaction system silently, from the GUI included.
-//
-// The reason it survived is the shape this gate is built to avoid: the
-// existing round-trip coverage calls `inp_writer::writeInpFile` DIRECTLY and
-// hands it a sink, so it exercises a code path production never takes and
-// certifies a behaviour users never get. Lesson 91's family, one level out.
-//
-// So this gate drives `swmm_model_write_with_plugin` -- literally what the GUI
-// calls -- and reads `swmm_get_warning_at`, literally what the GUI reads. It
-// touches the writer's own API nowhere.
-TEST_F(ProcessComponentsTest, SavingWarnsThroughTheApiWhenEmbeddedSectionsAreLost) {
-    // A deck carrying an EMBEDDED [REACTION_*] section -- no external config
-    // file, which is exactly the configuration that gets silently dropped.
+// The GUI save path must preserve embedded reactions without a loss warning.
+TEST_F(ProcessComponentsTest, PluginSavePreservesEmbeddedReactions) {
+    // Save embedded sections without relying on an external configuration file.
     {
         std::ofstream f("_pc_embed.inp");
         f << "[TITLE]\nembedded reaction sections, saved via the C API\n\n"
@@ -408,13 +390,9 @@ TEST_F(ProcessComponentsTest, SavingWarnsThroughTheApiWhenEmbeddedSectionsAreLos
     ASSERT_EQ(open_deck("_pc_embed.inp", "_pc_embed.rpt", "_pc_embed.out"), 0)
         << swmm_get_last_error_msg(engine_);
 
-    // SETUP leg: the deck must actually carry an embedded section, or the
-    // assertion below is vacuous and would pass on any deck at all.
+    // Require embedded source data so the preservation assertion is meaningful.
     const auto& ctx = as_cpp_engine(engine_).context();
-    ASSERT_FALSE(ctx.embedded_component_sections.empty())
-        << "the deck carries no embedded component sections, so this gate "
-           "cannot observe the loss it exists for -- fix the deck, not the "
-           "assertion";
+    ASSERT_FALSE(ctx.embedded_component_sections.empty());
 
     const int warns_before = swmm_get_warning_count(engine_);
 
@@ -423,48 +401,20 @@ TEST_F(ProcessComponentsTest, SavingWarnsThroughTheApiWhenEmbeddedSectionsAreLos
     ASSERT_EQ(swmm_model_write_with_plugin(engine_, "_pc_embed_saved.inp", ""), 0)
         << swmm_get_last_error_msg(engine_);
 
-    // The save SUCCEEDS -- warn, not refuse -- but it must not be silent.
-    const int warns_after = swmm_get_warning_count(engine_);
-    ASSERT_GT(warns_after, warns_before)
-        << "saving destroyed the embedded reaction sections and emitted NO "
-           "warning through the C API. The notice exists in InpWriter but is "
-           "gated on an optional sink; if this fails, a production caller is "
-           "passing nullptr again.";
-
-    // ...and it must be the RIGHT warning, naming the section it dropped.
-    bool names_loss = false, names_section = false;
-    for (int i = warns_before; i < warns_after; ++i) {
-        const std::string w = swmm_get_warning_at(engine_, i);
-        if (w.find("lost from this save") != std::string::npos)
-            names_loss = true;
-        if (w.find("REACTION_OPTIONS") != std::string::npos)
-            names_section = true;
-    }
-    EXPECT_TRUE(names_loss) << "a warning was emitted but it does not say the data is lost";
-    EXPECT_TRUE(names_section)
-        << "the warning does not name the section that was dropped, so a user "
-           "cannot tell what to rescue";
-
-    // And the loss itself is real -- the saved deck has no reaction section.
-    // This is the claim the warning makes; if it stops being true the warning
-    // becomes a lie rather than a courtesy.
-    std::ifstream in("_pc_embed_saved.inp");
-    ASSERT_TRUE(in.good());
-    std::stringstream ss;
-    ss << in.rdbuf();
-    EXPECT_EQ(ss.str().find("[REACTION_OPTIONS]"), std::string::npos)
-        << "the saved deck DOES contain the reaction section -- if per-component "
-           "saveData() has landed (IO3), this gate and the warning it checks "
-           "are both obsolete and should be replaced by a round-trip assertion";
+    EXPECT_EQ(swmm_get_warning_count(engine_), warns_before);
+    ASSERT_EQ(swmm_engine_close(engine_), SWMM_OK);
+    swmm_engine_destroy(engine_);
+    engine_ = swmm_engine_create();
+    ASSERT_NE(engine_, nullptr);
+    ASSERT_EQ(open_deck("_pc_embed_saved.inp", "", ""), SWMM_OK)
+        << swmm_get_last_error_msg(engine_);
+    const auto& restored = as_cpp_engine(engine_).context();
+    EXPECT_TRUE(restored.reactions.configured);
+    EXPECT_GE(restored.species_registry.find("A"), 0);
 }
 
-// ---------------------------------------------------------------------------
-// Closes the "only swmm_model_write_with_plugin is gated" gap recorded in the
-// 2026-08-26 handoff §5. Falsifier ii of that round proved the point the hard
-// way: reverting the sink at `swmm_model_write` alone leaves the gate above
-// GREEN, because it drives the other entry point entirely. Two entry points,
-// two gates.
-TEST_F(ProcessComponentsTest, SwmmModelWriteAlsoWarnsWhenEmbeddedSectionsAreLost) {
+// The direct C save entry point must preserve the same reaction data.
+TEST_F(ProcessComponentsTest, ModelSavePreservesEmbeddedReactions) {
     {
         std::ofstream f("_pc_embed2.inp");
         f << "[TITLE]\nembedded reaction sections, saved via swmm_model_write\n\n"
@@ -487,29 +437,21 @@ TEST_F(ProcessComponentsTest, SwmmModelWriteAlsoWarnsWhenEmbeddedSectionsAreLost
         << swmm_get_last_error_msg(engine_);
 
     const auto& ctx = as_cpp_engine(engine_).context();
-    ASSERT_FALSE(ctx.embedded_component_sections.empty())
-        << "the deck carries no embedded component sections, so this gate "
-           "cannot observe the loss it exists for";
+    ASSERT_FALSE(ctx.embedded_component_sections.empty());
 
     const int warns_before = swmm_get_warning_count(engine_);
     ASSERT_EQ(swmm_model_write(engine_, "_pc_embed2_saved.inp"), 0)
         << swmm_get_last_error_msg(engine_);
-    const int warns_after = swmm_get_warning_count(engine_);
-
-    ASSERT_GT(warns_after, warns_before)
-        << "swmm_model_write destroyed the embedded reaction sections and "
-           "emitted NO warning through the C API";
-
-    bool names_loss = false, names_section = false;
-    for (int i = warns_before; i < warns_after; ++i) {
-        const std::string w = swmm_get_warning_at(engine_, i);
-        if (w.find("lost from this save") != std::string::npos)
-            names_loss = true;
-        if (w.find("REACTION_OPTIONS") != std::string::npos)
-            names_section = true;
-    }
-    EXPECT_TRUE(names_loss);
-    EXPECT_TRUE(names_section) << "the warning does not name the section that was dropped";
+    EXPECT_EQ(swmm_get_warning_count(engine_), warns_before);
+    ASSERT_EQ(swmm_engine_close(engine_), SWMM_OK);
+    swmm_engine_destroy(engine_);
+    engine_ = swmm_engine_create();
+    ASSERT_NE(engine_, nullptr);
+    ASSERT_EQ(open_deck("_pc_embed2_saved.inp", "", ""), SWMM_OK)
+        << swmm_get_last_error_msg(engine_);
+    const auto& restored = as_cpp_engine(engine_).context();
+    EXPECT_TRUE(restored.reactions.configured);
+    EXPECT_GE(restored.species_registry.find("A"), 0);
 }
 
 // ---------------------------------------------------------------------------

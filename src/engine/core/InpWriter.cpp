@@ -1664,7 +1664,7 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
         twoD::writeSubsurfaceSections(
             *ctx.twod_io.aquifer, ctx.twod_io.aquifer_nodes ? *ctx.twod_io.aquifer_nodes : kNoNames,
             ctx.twod_io.aquifer_links ? *ctx.twod_io.aquifer_links : kNoNames, // G-X4
-            aq);
+            aq, true);
         if (!aq.empty())
             std::fputs(aq.c_str(), f);
     }
