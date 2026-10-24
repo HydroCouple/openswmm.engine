@@ -3745,8 +3745,16 @@ void resolve_cross_references(SimulationContext& ctx) {
                     // width of 0, which has no geometry at all, ran as a
                     // rectangle. rc is what must be tested, not this branch —
                     // DUMMY reaches it with rc == 0, because setParams leaves a
-                    // dummy's fields to the caller.
-                    ctx.errors.push_back(format_error(ERR_NUMBER, ""));
+                    // dummy's fields to the caller. Legacy's empty token leans on
+                    // the line number it prints; v6 has none here, so name the
+                    // link and its geometry.
+                    char geom[128];
+                    std::snprintf(geom, sizeof(geom), "(Geom1-4: %.10g %.10g %.10g %.10g)", p[0],
+                                  p[1], p[2], p[3]);
+                    ctx.errors.push_back(format_error(ERR_NUMBER,
+                                                      "in the cross-section geometry of link " +
+                                                          std::string(ctx.link_names.name_of(j)),
+                                                      geom));
                 }
                 // Invalid geometry — preserve the previous generic fallback.
                 a_full = w_max * y_full;
