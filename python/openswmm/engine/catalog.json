@@ -2594,7 +2594,7 @@
     "swmm_climate_preview_evaporation_with_config",
     "swmm_file_path_get"
    ],
-   "returns": "dict",
+   "returns": "dict[str, Any]",
    "params": [
     {
      "name": "start",
@@ -8626,7 +8626,7 @@
     "swmm_link_count",
     "swmm_link_index"
    ],
-   "returns": "dict",
+   "returns": "dict[str, Any]",
    "params": [
     {
      "name": "link",

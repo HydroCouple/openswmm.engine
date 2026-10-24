@@ -10,7 +10,11 @@ import operator
 from os import PathLike
 import re
 from types import MappingProxyType
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
+
+if TYPE_CHECKING:
+    import pandas as pd
+    import xarray as xr
 
 import numpy as np
 from numpy.typing import NDArray
@@ -78,11 +82,12 @@ class ResultField:
     def __getitem__(self, selection: Any) -> NDArray[Any]:
         return self.read(selection=selection)
 
-    def to_pandas(self):
+    def to_pandas(self) -> pd.Series[Any] | pd.DataFrame:
         """Load as a Series or DataFrame; available for one or two dimensions."""
         import pandas as pd
         values = self.read()
         times = self.times
+        result: pd.Series[Any] | pd.DataFrame
         if values.ndim == 1:
             result = pd.Series(values, index=times, name=self.name)
         elif values.ndim == 2:
@@ -93,10 +98,10 @@ class ResultField:
         result.attrs['units'] = self.units
         return result
 
-    def to_xarray(self):
+    def to_xarray(self) -> xr.DataArray:
         """Load as an xarray.DataArray, retaining named dimensions and units."""
         import xarray as xr
-        coords = {}
+        coords: dict[str, NDArray[Any] | list[str]] = {}
         if self.times is not None:
             coords['time'] = self.times
         if hasattr(self, 'object_ids') and 'object' in self.dimensions:
@@ -235,13 +240,13 @@ class _ResultObject:
         return sorted(set(super().__dir__()) | set(self._collection.variables))
 
 
-class ResultCollection(Mapping):
+class ResultCollection(Mapping[str, _ResultObject]):
     """Recorded objects and named variables; indexing accepts an ID or index."""
     def __init__(self, reader: OutputReader, kind: str):
         self.reader, self.kind = reader, kind
         enum: Any = {'node': OutNodeVar, 'link': OutLinkVar,
                 'subcatchment': OutSubcatchVar, 'system': OutSystemVar}[kind]
-        self.ids = tuple(getattr(reader, kind + '_ids')) if kind != 'system' else ()
+        self.ids: tuple[str, ...] = tuple(getattr(reader, kind + '_ids')) if kind != 'system' else ()
         fields = {}
         for member in enum:
             if member.name == 'POLLUT_BASE':
@@ -407,7 +412,8 @@ class _SurfaceCell:
         self._surface, self.index = surface, index
 
     def __getattr__(self, name: str) -> SurfaceField:
-        return getattr(self._surface, name).bind(cell=self.index)
+        field = cast(SurfaceField, getattr(self._surface, name))
+        return field.bind(cell=self.index)
 
     @property
     def species(self) -> Mapping[str, SurfaceField]:

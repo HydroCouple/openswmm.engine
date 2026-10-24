@@ -218,6 +218,7 @@ from ._enums import (
     RunoffTotal as RunoffTotal,
 )
 
+HAS_2D: bool
 HAS_GEOPACKAGE: bool
 
 from ._capabilities import capabilities as capabilities

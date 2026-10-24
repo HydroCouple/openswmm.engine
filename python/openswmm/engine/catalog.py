@@ -103,7 +103,7 @@ def current_path(path: str, catalog: dict[str, Any],
     """
     new = renamed_path(path, catalog.get("renamed", {}))
     was_renamed = new is not None
-    path = new if was_renamed else path
+    path = new if new is not None else path
     views = views_of(catalog) if views is None else views
     for _ in range(8):  # views can chain (coupling.groundwater -> coupling.surface)
         parts = path.split(".")
