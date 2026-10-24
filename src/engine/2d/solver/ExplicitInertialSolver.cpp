@@ -337,7 +337,9 @@ void ExplicitInertialSolver::initialize(MeshData& mesh, SurfaceStateData& state,
                 const double qay = state.depth[a] * mesh.tri_init_v[a];
                 const double qbx = state.depth[b] * mesh.tri_init_u[b];
                 const double qby = state.depth[b] * mesh.tri_init_v[b];
-                q_[e] = 0.5 * ((qax + qbx) * edges_.nx[e] + (qay + qby) * edges_.ny[e]);
+                q_[e] = edges_.conveyance[e] > 0.0
+                            ? 0.5 * ((qax + qbx) * edges_.nx[e] + (qay + qby) * edges_.ny[e])
+                            : 0.0;
             }
             // Perot gather so the θ-blend and CFL speed see the seeded
             // momentum from the very first firing (same stencil as fireCells).
@@ -347,7 +349,9 @@ void ExplicitInertialSolver::initialize(MeshData& mesh, SurfaceStateData& state,
                     double sx = 0.0, sy = 0.0;
                     for (int p = ed.cell_ptr[i]; p < ed.cell_ptr[i + 1]; ++p) {
                         const int e = ed.cell_edge[p];
-                        const double fq = static_cast<double>(ed.cell_sign[p]) * q_[e] * ed.xi[e];
+                        double fq = static_cast<double>(ed.cell_sign[p]) * q_[e] * ed.xi[e];
+                        if (mode_ == Momentum2D::LOCAL_INERTIAL)
+                            fq *= ed.conveyance[e];
                         sx += fq * (ed.mx[e] - mesh.tri_cx[i]);
                         sy += fq * (ed.my[e] - mesh.tri_cy[i]);
                     }
@@ -1614,6 +1618,11 @@ void ExplicitInertialSolver::fireFacesInertial(const std::vector<int>& faces, do
 #pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
     for (int k = 0; k < na; ++k) {
         const int e = faces[static_cast<std::size_t>(k)];
+        if (ed.conveyance[e] == 0.0) {
+            q_[e] = 0.0;
+            continue; // Impermeable face: no momentum, water or species exchange.
+        }
+        const double width = ed.xi[e] * ed.conveyance[e];
         const int a = ed.cL[e], b = ed.cR[e];
         const double hf =
             vfr_face ? inertial::faceFlowDepthVfr(state_->head[a], state_->head[b], ed.ze_lo[e],
@@ -1671,13 +1680,13 @@ void ExplicitInertialSolver::fireFacesInertial(const std::vector<int>& faces, do
         const double beta_share =
             (has_quads && mesh_->cell_vertex_count(exp_cell) == 4) ? beta4 : beta3;
         const double budget = beta_share / refire * std::max(state_->volume[exp_cell], 0.0);
-        const double take = std::fabs(qn1) * ed.xi[e] * dt_f;
+        const double take = std::fabs(qn1) * width * dt_f;
         if (take > budget)
             qn1 *= (take > 0.0) ? budget / take : 0.0;
         q_[e] = qn1;
 
         // Book the identical ±ΔM on both sides (single writer per face).
-        const double dM = qn1 * ed.xi[e] * dt_f; // positive = cL→cR
+        const double dM = qn1 * width * dt_f; // positive = cL→cR
         facc_L_[e] -= dM;
         facc_R_[e] += dM;
 
@@ -1686,6 +1695,38 @@ void ExplicitInertialSolver::fireFacesInertial(const std::vector<int>& faces, do
     }
     face_passes_ += na;
     accumulators_pending_ = true;
+}
+
+void ExplicitInertialSolver::refreshConveyance() {
+    if (mode_ != Momentum2D::LOCAL_INERTIAL || !edges_.refreshConveyance(*mesh_))
+        return;
+    const auto& ed = edges_;
+    for (int e = 0; e < ed.ne; ++e)
+        if (ed.conveyance[e] == 0.0)
+            q_[e] = 0.0; // Closing and reopening a face must not revive stale momentum.
+    if (qcx_.empty())
+        return;
+    for (int i = 0; i < mesh_->n_cells(); ++i) {
+        double sx = 0.0, sy = 0.0;
+        for (int p = ed.cell_ptr[i]; p < ed.cell_ptr[i + 1]; ++p) {
+            const int e = ed.cell_edge[p];
+            const double f =
+                static_cast<double>(ed.cell_sign[p]) * q_[e] * ed.xi[e] * ed.conveyance[e];
+            sx += f * ed.cell_arm_x[p];
+            sy += f * ed.cell_arm_y[p];
+        }
+        qcx_[i] = sx / mesh_->tri_area[i];
+        qcy_[i] = sy / mesh_->tri_area[i];
+    }
+    // Preserve the boundary completion used by fireCells: bc_q is the last
+    // accepted inflow per unit width, so its outward contribution has opposite sign.
+    for (std::size_t k = 0; k < bc_cell_.size(); ++k) {
+        const int i = bc_cell_[k], slot = bc_slot_[k];
+        const double fo = -bc_q_[k] * mesh_->edge_length[slot];
+        const double inv_a = 1.0 / mesh_->tri_area[i];
+        qcx_[i] += fo * (mesh_->edge_mx[slot] - mesh_->tri_cx[i]) * inv_a;
+        qcy_[i] += fo * (mesh_->edge_my[slot] - mesh_->tri_cy[i]) * inv_a;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1904,7 +1945,8 @@ void ExplicitInertialSolver::bookFaceSpecies(int e, int a, int b, double dM, dou
         const double va = state_->volume[a], vb = state_->volume[b];
         if (va > 0.0 && vb > 0.0) {
             const double cond =
-                opts_->dispersion * hf * ed.xi[e] * ed.inv_dx_normal[e] * dt_f; // m³ exchanged
+                opts_->dispersion * hf * ed.xi[e] * ed.inv_dx_normal[e] * dt_f *
+                (mode_ == Momentum2D::LOCAL_INERTIAL ? ed.conveyance[e] : 1.0); // m³ exchanged
             const auto ns = static_cast<std::size_t>(state_->transport.n_species);
             const auto ue = static_cast<std::size_t>(e);
             auto& tr = state_->transport;
@@ -2127,7 +2169,9 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells, double
                 }
             }
             if (perot) {
-                const double f = static_cast<double>(ed.cell_sign[p]) * q_[e] * ed.xi[e];
+                double f = static_cast<double>(ed.cell_sign[p]) * q_[e] * ed.xi[e];
+                if (mode_ == Momentum2D::LOCAL_INERTIAL)
+                    f *= ed.conveyance[e];
                 sx += f * ed.cell_arm_x[p];
                 sy += f * ed.cell_arm_y[p];
             }
@@ -4011,6 +4055,7 @@ double ExplicitInertialSolver::advanceImpl(double t_current, double t_target) {
         throw std::invalid_argument("Common source marcher requires its accepted completed clock.");
     if (!initialized_ || t_target <= t_current)
         return t_target;
+    refreshConveyance();
     if (common_stage_)
         checkpoint_ready_ = false;
 
@@ -4196,7 +4241,7 @@ double ExplicitInertialSolver::advanceImpl(double t_current, double t_target) {
                          : inertial::faceFlowDepth(state_->head[edges_.cL[e]],
                                                    state_->head[edges_.cR[e]], edges_.zface[e]);
             if (hf > opts_->dry_depth)
-                qp = inertial::froudeCap(q_[e], hf, opts_->froude_max);
+                qp = inertial::froudeCap(q_[e], hf, opts_->froude_max) * edges_.conveyance[e];
         } else {
             qp = q_[e]; // last evaluated face mass flux (already limited)
         }

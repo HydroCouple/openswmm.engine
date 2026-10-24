@@ -116,11 +116,11 @@ struct MeshData {
     std::vector<double> quad_vfr_a;
 
     /// Per-edge conveyance factor in [0, 1], flat 2D [cell * kMaxCellVerts + k].
-    /// Default 1.0 (unrestricted) for every edge.  Multiplies the
-    /// diffusion-wave flux in SurfaceFluxCalculator::computeEdgeFluxes
-    /// (the last factor before edge_flux is stored).  Symmetric: for
-    /// an interior edge shared by triangles A and B, the slots
-    /// [A*3 + e_A] and [B*3 + e_B] must carry the same value;
+    /// Default 1.0 (unrestricted) for every edge. Scales transported and
+    /// reported interior face flux; zero blocks exchange. The explicit local-inertial
+    /// solvers keep ψ separate from geometric width and CFL lengths.
+    /// Symmetric: an interior edge's two MeshData::slot(cell, edge) entries
+    /// must carry the same value;
     /// SurfaceRouter2D::initialize enforces this when draining the
     /// [2D_EDGE_CONVEYANCE] pending rows.  See §11A of
     /// docs/2dModelStrategy.md.

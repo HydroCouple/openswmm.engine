@@ -994,6 +994,120 @@ void perModelCounters() {
     require(gpu::ExplicitKokkosSurfaceSolverTestAccess::advances(y) == 1, "second model counters");
     std::cout << "Per-model performance attribution PASS\n";
 }
+// Issue #195: exercise ψ on the live LI marcher, including updates after device upload.
+void edgeConveyance() {
+    for (bool vfr : {false, true})
+        for (int tiers : {1, 4})
+            for (double theta : {1., .8}) {
+                double previous_flux = 1e30, previous_volume = 1e30;
+                for (double psi : {1., .5, .3, 0.}) {
+                    auto m = mesh(4);
+                    auto setBarrier = [&](double value) {
+                        for (int c = 0; c < m.n_cells(); ++c)
+                            for (int k = 0; k < m.cell_vertex_count(c); ++k) {
+                                const int n = m.cell_neighbour(c, k);
+                                if (n >= 0 && (m.tri_cx[c] < 2) != (m.tri_cx[n] < 2))
+                                    m.edge_conveyance[MeshData::slot(c, k)] = value;
+                            }
+                    };
+                    setBarrier(psi);
+                    auto a = state(m, 0.);
+                    for (int c = 0; c < m.n_cells(); ++c) {
+                        a.volume[c] = m.tri_cx[c] < 2 ? .2 * m.tri_area[c] : 0.;
+                        m.tri_init_u[c] = m.tri_cx[c] < 2 ? .1 : 0.;
+                    }
+                    auto b = a;
+                    auto o = options(tiers), ro = o;
+                    o.theta = ro.theta = theta;
+                    o.advection = ro.advection = true;
+                    if (vfr) {
+                        o.cell_closure = ro.cell_closure = CellClosure2D::VFR;
+                        o.face_reconstruction = ro.face_reconstruction = FaceDepth2D::VFR_FACE;
+                    }
+                    ExplicitInertialSolver cpu;
+                    gpu::ExplicitKokkosSurfaceSolver kk;
+                    cpu.initialize(m, a, ro);
+                    kk.initialize(m, b, o);
+                    const auto widths = cpu.inertialEdges().xi;
+                    const auto lengths = cpu.inertialEdges().cell_lchar;
+                    cpu.advance(0, .001);
+                    kk.advance(0, .001);
+                    compare(a.volume, b.volume, "conveyance initial volume");
+                    compare(a.edge_flux, b.edge_flux, "conveyance initial flux");
+                    double flux = 0, volume = 0;
+                    const auto& ed = cpu.inertialEdges();
+                    for (int e = 0; e < ed.ne; ++e)
+                        if (ed.mx[e] == 2)
+                            flux -= b.edge_flux[ed.slotL[e]];
+                    for (int c = 0; c < m.n_cells(); ++c)
+                        if (m.tri_cx[c] > 2)
+                            volume += b.volume[c];
+                    require(flux < previous_flux && volume < previous_volume,
+                            "conveyance must rank 1 > .5 > .3 > 0");
+                    previous_flux = flux;
+                    previous_volume = volume;
+                    if (psi == 0)
+                        require(volume == 0 && flux == 0, "closed line must retain a dry side");
+                    double t = .001;
+                    for (double next : {0., .3, .5, 1., 0., 1.}) {
+                        // Change every face so closure freezes all cells exactly, then reopen.
+                        std::fill(m.edge_conveyance.begin(), m.edge_conveyance.end(), next);
+                        const auto before = b.volume;
+                        cpu.advance(t, t + .017);
+                        kk.advance(t, t + .017);
+                        compare(a.volume, b.volume, "runtime conveyance volume");
+                        compare(a.edge_flux, b.edge_flux, "runtime conveyance flux");
+                        near(sum(b.volume), 1.6, "conveyance water conservation");
+                        require(cpu.inertialEdges().xi == widths &&
+                                    cpu.inertialEdges().cell_lchar == lengths,
+                                "conveyance must preserve CFL geometry");
+                        if (next == 0) {
+                            require(b.volume == before, "closing faces must freeze volume exactly");
+                            for (double f : b.edge_flux)
+                                require(f == 0, "closed face must publish zero flux");
+                        }
+                        t += .017;
+                    }
+                }
+            }
+    // A runtime factor edit must retain the Perot contribution of an active inlet.
+    {
+        auto m = mesh(4);
+        BoundaryData ba, bb;
+        ba.resize(m.n_edge_slots());
+        int inlet = -1;
+        for (int c = 0; c < m.n_cells() && inlet < 0; ++c)
+            for (int k = 0; k < 3; ++k) {
+                const int slot = MeshData::slot(c, k);
+                if (m.cell_neighbour(c, k) < 0 && m.edge_nx[slot] < -.9) {
+                    inlet = slot;
+                    break;
+                }
+            }
+        require(inlet >= 0, "conveyance inlet fixture");
+        ba.edge_bc_type[inlet] = int8_t(BoundaryType::SPECIFIED_FLOW);
+        ba.edge_bc_flow[inlet] = -.01;
+        bb = ba;
+        auto a = state(m, .2), b = a;
+        a.boundary = &ba;
+        b.boundary = &bb;
+        auto o = options(), ro = o;
+        o.theta = ro.theta = .8;
+        ExplicitInertialSolver cpu;
+        gpu::ExplicitKokkosSurfaceSolver kk;
+        cpu.initialize(m, a, ro);
+        kk.initialize(m, b, o);
+        cpu.advance(0, .001);
+        kk.advance(0, .001);
+        std::fill(m.edge_conveyance.begin(), m.edge_conveyance.end(), .3);
+        cpu.advance(.001, .002);
+        kk.advance(.001, .002);
+        compare(a.volume, b.volume, "conveyance inlet volume");
+        compare(a.edge_flux, b.edge_flux, "conveyance inlet flux");
+    }
+    std::cout << "Local-inertial edge conveyance PASS\n";
+}
+
 /**
  * @brief Run the standalone host/device alignment checks inside a Kokkos runtime lifetime.
  *
@@ -1026,6 +1140,7 @@ int main(int argc, char** argv) {
         frozenTier();
         unsupported();
         marcher();
+        edgeConveyance();
         boundaries();
         boundaryReversal();
         nodeExchange();

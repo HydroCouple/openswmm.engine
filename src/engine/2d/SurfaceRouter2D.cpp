@@ -1092,7 +1092,7 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
 #endif
 
     // Attach the per-edge boundary conditions to the state so the flux kernels
-    // (serial computeEdgeFluxes and the Kokkos RHS) apply them at boundary
+    // (CPU and Kokkos explicit marchers) apply them at boundary
     // edges instead of walling them. Non-owning: boundary_ outlives state_.
     state_.boundary = &boundary_;
 

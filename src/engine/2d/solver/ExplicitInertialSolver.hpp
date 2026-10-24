@@ -712,9 +712,11 @@ private:
     SurfaceStateData* state_ = nullptr;
     SolverOptions2D* opts_ = nullptr;
 
+    void refreshConveyance(); ///< Synchronize runtime LI factors and reconstructed cell discharge.
     InertialEdges edges_;
     /// Per unique interior face (m²/s). LOCAL_INERTIAL: the prognostic face
-    /// discharge. FULL_SWE / DIFFUSIVE_WAVE: the last evaluated face mass
+    /// discharge per open width; transported flux is q * xi * conveyance.
+    /// FULL_SWE / DIFFUSIVE_WAVE: the last evaluated face mass
     /// flux per unit width (diagnostic — published as edge_flux).
     std::vector<double> q_;
     /// LOCAL_INERTIAL: Perot cell discharge vector (θ < 1 / ADVECTION).
@@ -843,7 +845,8 @@ private:
      * @note Uses prepared SI geometry and live cell state, limits outgoing m3 by exchange_beta
      * divided by triangle/quad face count and refire ratio, updates q_ m2/s, adds equal-opposite
      * facc m3, and books native advective/dispersion packets from the final accepted water
-     * transfer. Dry face depth resets q_ and skips transfer. Applies Froude cap after the
+     * transfer. Dry or zero-conveyance faces reset q_ and skip exchange; ψ scales flux,
+     * limiter volume and Perot discharge without changing CFL geometry. Applies Froude cap after the
      * inertial update. Updates cumulative face work and pending flag. Does not gather canonical
      * cell volume/native state, advance clocks, validate all finite inputs or roll back side
      * packets. Requires exclusive outer scheduling, matching per-face/native/momentum shapes and

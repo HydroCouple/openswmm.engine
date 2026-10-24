@@ -728,8 +728,8 @@ void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
         // Edge flux [nTime, nFace, stride]
         ds_edge_flux_ = createUnlimitedDataset("Mesh2_edge_flux", 3, zero3, edge_chunk);
         writeStringAttr(ds_edge_flux_, "long_name", "normal flux through cell edges");
-        // Volumetric edge flux F_e = -q·n_e·L_e (see SurfaceFluxCalculator
-        // computeEdgeFluxes, which derives the m3/s dimensioning). Matches the
+        // Volumetric edge flux F_e = -ψ·q·n_e·L_e, as published by the explicit
+        // marcher after conveyance and availability limiting. Matches the
         // m3 s-1 units of the continuity-residual datasets that sum these fluxes.
         writeStringAttr(ds_edge_flux_, "units", "m3 s-1");
         writeStringAttr(ds_edge_flux_, "mesh", "Mesh2");

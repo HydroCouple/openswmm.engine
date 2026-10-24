@@ -69,7 +69,7 @@ struct SurfaceStateData {
     /// Non-owning view of the per-edge boundary conditions (owned by
     /// SurfaceRouter2D). nullptr ⇒ all boundary edges are no-flux walls (the
     /// legacy behaviour, and what the unit-test call sites that build a bare
-    /// state get). When set, computeEdgeFluxes applies the per-type boundary
+    /// state get). When set, the explicit marcher applies the per-type boundary
     /// flux (NORMAL_FLOW / SPECIFIED_STAGE / SPECIFIED_FLOW / RATING_CURVE).
     /// The pointer is shallow-copied on assignment (it references config, not
     /// per-cell state), which is fine — both copies see the same BC config.
