@@ -521,9 +521,8 @@ cdef class Link:
         @rtype: str
         """
         _check_fresh(self)
-        cdef char buf[256]
-        _check(swmm_link_get_tag(_h(self._solver), self._index, buf, 256))
-        return buf.decode('utf-8')
+        return _read_engine_index_string(_h(self._solver), self._index,
+                                         swmm_link_get_tag)
 
     @tag.setter
     def tag(self, value) -> None:

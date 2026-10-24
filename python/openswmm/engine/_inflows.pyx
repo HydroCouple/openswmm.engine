@@ -145,17 +145,21 @@ class Inflows:
         """
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int node_idx = -1
-        cdef char c_buf[128]
-        cdef char ts_buf[128]
-        cdef char ty_buf[128]
-        cdef char pat_buf[128]
+        cdef _TextBufs t
         cdef double m_factor = 0.0, s_factor = 0.0, baseline = 0.0
-        _check(swmm_ext_inflow_get(
-            h, entry_idx, &node_idx, c_buf, 128, ts_buf, 128, ty_buf, 128,
-            &m_factor, &s_factor, &baseline, pat_buf, 128))
-        return (node_idx, c_buf.decode('utf-8'), ts_buf.decode('utf-8'),
-                ty_buf.decode('utf-8'), m_factor, s_factor, baseline,
-                pat_buf.decode('utf-8'))
+        _tb_open(&t, 4)
+        try:
+            while True:
+                _check(swmm_ext_inflow_get(
+                    h, entry_idx, &node_idx, t.p[0], t.size, t.p[1], t.size,
+                    t.p[2], t.size, &m_factor, &s_factor, &baseline, t.p[3], t.size))
+                if not _tb_retry(&t):
+                    break
+            return (node_idx, _tb_str(&t, 0), _tb_str(&t, 1),
+                    _tb_str(&t, 2), m_factor, s_factor, baseline,
+                    _tb_str(&t, 3))
+        finally:
+            _tb_close(&t)
 
     def remove_external(self, int entry_idx) -> None:
         """Remove the external-inflow row at C{entry_idx}.
@@ -230,18 +234,21 @@ class Inflows:
         """
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int node_idx = -1
-        cdef char c_buf[128]
-        cdef char p1[128]
-        cdef char p2[128]
-        cdef char p3[128]
-        cdef char p4[128]
+        cdef _TextBufs t
         cdef double avg_value = 0.0
-        _check(swmm_dwf_get(
-            h, entry_idx, &node_idx, c_buf, 128, &avg_value,
-            p1, 128, p2, 128, p3, 128, p4, 128))
-        return (node_idx, c_buf.decode('utf-8'), avg_value,
-                p1.decode('utf-8'), p2.decode('utf-8'),
-                p3.decode('utf-8'), p4.decode('utf-8'))
+        _tb_open(&t, 5)
+        try:
+            while True:
+                _check(swmm_dwf_get(
+                    h, entry_idx, &node_idx, t.p[0], t.size, &avg_value,
+                    t.p[1], t.size, t.p[2], t.size, t.p[3], t.size, t.p[4], t.size))
+                if not _tb_retry(&t):
+                    break
+            return (node_idx, _tb_str(&t, 0), avg_value,
+                    _tb_str(&t, 1), _tb_str(&t, 2),
+                    _tb_str(&t, 3), _tb_str(&t, 4))
+        finally:
+            _tb_close(&t)
 
     def remove_dwf(self, int entry_idx) -> None:
         """Remove the dry-weather-flow row at C{entry_idx}.
@@ -279,11 +286,18 @@ class Inflows:
         """Return the :class:`RDIIEntry` at *idx*."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int node_idx = -1
-        cdef char buf[128]
+        cdef _TextBufs t
         cdef double area = 0.0
-        _check(swmm_rdii_get(h, idx, &node_idx, buf, 128, &area))
-        return RDIIEntry(
-            node_index=node_idx, uh_name=buf.decode('utf-8'), area=area)
+        _tb_open(&t, 1)
+        try:
+            while True:
+                _check(swmm_rdii_get(h, idx, &node_idx, t.p[0], t.size, &area))
+                if not _tb_retry(&t):
+                    break
+            return RDIIEntry(
+                node_index=node_idx, uh_name=_tb_str(&t, 0), area=area)
+        finally:
+            _tb_close(&t)
 
     @property
     def rdii_count(self) -> int:
@@ -316,16 +330,23 @@ class Inflows:
     def get_hydrograph(self, int idx) -> HydrographEntry:
         """Return the :class:`HydrographEntry` at *idx*."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef char buf[128]
+        cdef _TextBufs tb
         cdef int month = 0, response = 0
         cdef double r = 0.0, t = 0.0, k = 0.0
         cdef double dmax = 0.0, drecov = 0.0, dinit = 0.0
-        _check(swmm_hydrograph_get(
-            h, idx, buf, 128, &month, &response,
-            &r, &t, &k, &dmax, &drecov, &dinit))
-        return HydrographEntry(
-            uh_name=buf.decode('utf-8'), month=month, response=response,
-            r=r, t=t, k=k, dmax=dmax, drecov=drecov, dinit=dinit)
+        _tb_open(&tb, 1)
+        try:
+            while True:
+                _check(swmm_hydrograph_get(
+                    h, idx, tb.p[0], tb.size, &month, &response,
+                    &r, &t, &k, &dmax, &drecov, &dinit))
+                if not _tb_retry(&tb):
+                    break
+            return HydrographEntry(
+                uh_name=_tb_str(&tb, 0), month=month, response=response,
+                r=r, t=t, k=k, dmax=dmax, drecov=drecov, dinit=dinit)
+        finally:
+            _tb_close(&tb)
 
     @property
     def hydrograph_count(self) -> int:
@@ -426,11 +447,17 @@ class Inflows:
     def get_hydrograph_gage(self, int idx) -> HydrographGageEntry:
         """Return the :class:`HydrographGageEntry` at *idx*."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef char uh_buf[128]
-        cdef char g_buf[128]
-        _check(swmm_hydrograph_get_gage(h, idx, uh_buf, 128, g_buf, 128))
-        return HydrographGageEntry(
-            uh_name=uh_buf.decode('utf-8'), gage_name=g_buf.decode('utf-8'))
+        cdef _TextBufs t
+        _tb_open(&t, 2)
+        try:
+            while True:
+                _check(swmm_hydrograph_get_gage(h, idx, t.p[0], t.size, t.p[1], t.size))
+                if not _tb_retry(&t):
+                    break
+            return HydrographGageEntry(
+                uh_name=_tb_str(&t, 0), gage_name=_tb_str(&t, 1))
+        finally:
+            _tb_close(&t)
 
     @property
     def hydrograph_gage_count(self) -> int:
@@ -445,9 +472,7 @@ class Inflows:
     def get_hydrograph_group_id(self, int idx) -> str:
         """Return the ID of the unit-hydrograph group at *idx*."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef char buf[128]
-        _check(swmm_hydrograph_group_id(h, idx, buf, 128))
-        return buf.decode('utf-8')
+        return _read_engine_index_string(h, idx, swmm_hydrograph_group_id)
 
     # =========================================================================
     # RDII decay
@@ -473,21 +498,28 @@ class Inflows:
     def get_rdii_decay(self, int idx) -> RDIIDecayEntry:
         """Return the :class:`RDIIDecayEntry` at *idx*."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef char buf[128]
+        cdef _TextBufs t
         cdef int response = 0
         cdef double k_dep = 0, k_0 = 0, k_T = 0
         cdef double T_ref = 0, theta_rec = 0, T_freeze = 0
         cdef int snow_on = 0
         cdef double snow_T = 0, snow_ddf = 0
-        _check(swmm_rdii_decay_get(
-            h, idx, buf, 128, &response,
-            &k_dep, &k_0, &k_T, &T_ref, &theta_rec, &T_freeze,
-            &snow_on, &snow_T, &snow_ddf))
-        return RDIIDecayEntry(
-            uh_name=buf.decode('utf-8'), response=response,
-            k_dep=k_dep, k_0=k_0, k_T=k_T,
-            T_ref=T_ref, theta_rec=theta_rec, T_freeze=T_freeze,
-            snow_on=bool(snow_on), snow_T=snow_T, snow_ddf=snow_ddf)
+        _tb_open(&t, 1)
+        try:
+            while True:
+                _check(swmm_rdii_decay_get(
+                    h, idx, t.p[0], t.size, &response,
+                    &k_dep, &k_0, &k_T, &T_ref, &theta_rec, &T_freeze,
+                    &snow_on, &snow_T, &snow_ddf))
+                if not _tb_retry(&t):
+                    break
+            return RDIIDecayEntry(
+                uh_name=_tb_str(&t, 0), response=response,
+                k_dep=k_dep, k_0=k_0, k_T=k_T,
+                T_ref=T_ref, theta_rec=theta_rec, T_freeze=T_freeze,
+                snow_on=bool(snow_on), snow_T=snow_T, snow_ddf=snow_ddf)
+        finally:
+            _tb_close(&t)
 
     @property
     def rdii_decay_count(self) -> int:

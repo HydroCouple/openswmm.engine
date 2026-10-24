@@ -1,11 +1,14 @@
 """Optional mesh snow configuration and accepted SI snapshots."""
-from ._common cimport SWMM_Engine, _check
+from ._common cimport SWMM_Engine, _check, _TextBufs, _tb_open, _tb_alloc, _tb_str, _tb_close
 from ._snow cimport SWMM_SnowState, _h, _text, _state
 from ._access import resolve_owner
 from libc.stdlib cimport malloc, free
 
 cdef extern from "openswmm/engine/openswmm_2d.h":
     int swmm_2d_cell_count(SWMM_Engine,int*)
+cdef extern from "openswmm/engine/openswmm_engine.h":
+    enum:
+        SWMM_ERR_BADPARAM
 cdef extern from "openswmm/engine/openswmm_snow2d.h":
     ctypedef struct SWMM_MeshSnowLedger:
         double completed_s
@@ -114,14 +117,26 @@ class MeshSnow:
         sections={'defaults': 1, 'cells': 2}
         if section not in sections:raise ValueError('section must be defaults or cells')
         cdef SWMM_Engine h=_h(self)
-        cdef int which=sections[section], cell, count
-        cdef char tag[4096], pack[4096]
+        cdef int which=sections[section], cell, count, rc
+        cdef _TextBufs t
         cdef SWMM_MeshSnowOverrides v
         count=swmm_snow2d_defaults_count(h) if which==1 else swmm_snow2d_cells_count(h)
         result=[]
-        for i in range(count):
-            _check(swmm_snow2d_get_row(h,which,i,&cell,tag,sizeof(tag),pack,sizeof(pack),&v))
-            result.append({'cell': cell, 'tag': tag.decode('utf-8'), 'pack': pack.decode('utf-8'),
-                           'forest': v.forest, 'drift': v.drift, 'ground_heat_wm2': v.ground_heat_wm2,
-                           'extinction_depth_m': v.extinction_depth_m, 'slope_deg': v.slope_deg, 'aspect_deg': v.aspect_deg})
+        _tb_open(&t,2)
+        try:
+            for i in range(count):
+                while True:
+                    rc=swmm_snow2d_get_row(h,which,i,&cell,t.p[0],t.size,t.p[1],t.size,&v)
+                    # A short buffer is refused (BADPARAM), never truncated: grow both.
+                    if rc!=SWMM_ERR_BADPARAM or t.size>=1024*1024:  # BADPARAM may also mean a bad key
+                        _check(rc)
+                        break
+                    _tb_close(&t)
+                    t.size*=2
+                    _tb_alloc(&t)
+                result.append({'cell': cell, 'tag': _tb_str(&t,0), 'pack': _tb_str(&t,1),
+                               'forest': v.forest, 'drift': v.drift, 'ground_heat_wm2': v.ground_heat_wm2,
+                               'extinction_depth_m': v.extinction_depth_m, 'slope_deg': v.slope_deg, 'aspect_deg': v.aspect_deg})
+        finally:
+            _tb_close(&t)
         return result

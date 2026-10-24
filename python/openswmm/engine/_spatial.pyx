@@ -83,9 +83,7 @@ class Spatial:
     @property
     def crs(self) -> str:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef char buf[256]
-        _check(swmm_spatial_get_crs(h, buf, 256))
-        return buf.decode('utf-8')
+        return _read_engine_string(h, swmm_spatial_get_crs)
 
     @crs.setter
     def crs(self, str value) -> None:

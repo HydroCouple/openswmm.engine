@@ -162,37 +162,51 @@ class ExpressionDiagnostic(NamedTuple):
 
 def _species_row(solver, int idx):
     """Read species *idx* as ``(name, is_wall, units, atol, rtol)``."""
-    cdef char name[128]
-    cdef char units[128]
+    cdef _TextBufs t
     cdef int is_wall = 0
     cdef double atol = 0.0
     cdef double rtol = 0.0
-    name[0] = 0
-    units[0] = 0
-    _check(swmm_reaction_species_get(
-        _h(solver), idx, name, 128, &is_wall, units, 128, &atol, &rtol))
-    return (name.decode('utf-8'), is_wall != 0, units.decode('utf-8'),
-            atol, rtol)
+    _tb_open(&t, 2)
+    try:
+        while True:
+            _check(swmm_reaction_species_get(
+                _h(solver), idx, t.p[0], t.size, &is_wall, t.p[1], t.size, &atol, &rtol))
+            if not _tb_retry(&t):
+                break
+        return (_tb_str(&t, 0), is_wall != 0, _tb_str(&t, 1),
+                atol, rtol)
+    finally:
+        _tb_close(&t)
 
 
 def _coeff_row(solver, int idx):
     """Read coefficient *idx* as ``(name, is_param, value)``."""
-    cdef char name[128]
+    cdef _TextBufs t
     cdef int is_param = 0
     cdef double value = 0.0
-    name[0] = 0
-    _check(swmm_reaction_coeff_get(_h(solver), idx, name, 128, &is_param, &value))
-    return (name.decode('utf-8'), is_param != 0, value)
+    _tb_open(&t, 1)
+    try:
+        while True:
+            _check(swmm_reaction_coeff_get(_h(solver), idx, t.p[0], t.size, &is_param, &value))
+            if not _tb_retry(&t):
+                break
+        return (_tb_str(&t, 0), is_param != 0, value)
+    finally:
+        _tb_close(&t)
 
 
 def _term_row(solver, int idx):
     """Read term *idx* as ``(name, expression)``."""
-    cdef char name[128]
-    cdef char expr[1024]
-    name[0] = 0
-    expr[0] = 0
-    _check(swmm_reaction_term_get(_h(solver), idx, name, 128, expr, 1024))
-    return (name.decode('utf-8'), expr.decode('utf-8'))
+    cdef _TextBufs t
+    _tb_open(&t, 2)
+    try:
+        while True:
+            _check(swmm_reaction_term_get(_h(solver), idx, t.p[0], t.size, t.p[1], t.size))
+            if not _tb_retry(&t):
+                break
+        return (_tb_str(&t, 0), _tb_str(&t, 1))
+    finally:
+        _tb_close(&t)
 
 
 def _species_count(solver) -> int:
@@ -305,11 +319,17 @@ class ReactionSpecies:
         :raises BadParamError: *scope* is not a species expression scope.
         """
         cdef int form = 0
-        cdef char expr[1024]
-        expr[0] = 0
-        _check(swmm_reaction_expr_get(
-            _h(self._solver), int(scope), self._index, &form, expr, 1024))
-        return (ReactionExprForm(form), expr.decode('utf-8'))
+        cdef _TextBufs t
+        _tb_open(&t, 1)
+        try:
+            while True:
+                _check(swmm_reaction_expr_get(
+                    _h(self._solver), int(scope), self._index, &form, t.p[0], t.size))
+                if not _tb_retry(&t):
+                    break
+            return (ReactionExprForm(form), _tb_str(&t, 0))
+        finally:
+            _tb_close(&t)
 
     def set_expression(self, scope, form, str expression="") -> None:
         """Set — or with ``ReactionExprForm.NONE`` clear — one scope's expression.
@@ -932,10 +952,7 @@ class Reactions:
         :raises BadParamError: *key* is not a recognised option.
         """
         cdef bytes b = key.encode('utf-8')
-        cdef char buf[128]
-        buf[0] = 0
-        _check(swmm_reaction_option_get(_h(self._solver), b, buf, 128))
-        return buf.decode('utf-8')
+        return _read_engine_key_string(_h(self._solver), b, swmm_reaction_option_get)
 
     def set_option(self, str key, str value) -> None:
         """Set one ``[REACTION_OPTIONS]`` value from its canonical token.

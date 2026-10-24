@@ -172,13 +172,19 @@ class InitialQuality:
             raise IndexError(row_index)
         cdef int is_link = 0
         cdef int elem_idx = -1
-        cdef char buf[128]
+        cdef _TextBufs t
         cdef double value = 0.0
-        buf[0] = 0
-        _check(swmm_init_quality_get(
-            _h(self._solver), i, &is_link, &elem_idx, buf, 128, &value))
-        return InitialQualityEntry(
-            is_link != 0, elem_idx, buf.decode('utf-8'), value)
+        _tb_open(&t, 1)
+        try:
+            while True:
+                _check(swmm_init_quality_get(
+                    _h(self._solver), i, &is_link, &elem_idx, t.p[0], t.size, &value))
+                if not _tb_retry(&t):
+                    break
+            return InitialQualityEntry(
+                is_link != 0, elem_idx, _tb_str(&t, 0), value)
+        finally:
+            _tb_close(&t)
 
     def set(self, str constituent, double value, *, node=None,
             link=None) -> None:

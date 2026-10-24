@@ -336,20 +336,26 @@ cdef class Solver:
         from ._results import Results
         from pathlib import Path
         self._access.require_idle()
-        cdef char absolute[65536]
-        cdef char original[65536]
+        cdef _TextBufs t
         cdef int status
         if self._handle != NULL:
             if not live and self.state not in (EngineState.ENDED, EngineState.CLOSED):
                 raise LifecycleError(ErrorCode.LIFECYCLE, 'Call end() before opening saved results, or use live=True for 1D output')
             if surface is None and not live:
-                status = swmm_file_path_get(self._handle, <SWMM_FilePathRole>12, b'',
-                                            absolute, 65536, original, 65536)
-                if status == 0:
-                    configured = absolute.decode('utf-8') or original.decode('utf-8')
-                    if configured:
-                        candidate = Path(configured)
-                        surface = candidate if candidate.is_absolute() else Path(self._inp).resolve().parent / candidate
+                _tb_open(&t, 2)
+                try:
+                    while True:
+                        status = swmm_file_path_get(self._handle, <SWMM_FilePathRole>12, b'',
+                                                    t.p[0], t.size, t.p[1], t.size)
+                        if status != 0 or not _tb_retry(&t):
+                            break
+                    if status == 0:
+                        configured = _tb_str(&t, 0) or _tb_str(&t, 1)
+                        if configured:
+                            candidate = Path(configured)
+                            surface = candidate if candidate.is_absolute() else Path(self._inp).resolve().parent / candidate
+                finally:
+                    _tb_close(&t)
         return Results.open(self._out or None, surface=surface, live=live)
 
     def initialize(self) -> None:
@@ -1573,7 +1579,7 @@ class UserFlags(MutableMapping):
         cdef bytes b = (<str>key).encode('utf-8')
         cdef int iv = 0
         cdef double dv = 0.0
-        cdef char sbuf[512]
+        cdef _TextBufs t
         cdef int found = 0
         # Try bool first, then int, then real, then string (the scalar
         # store is the MODEL-scoped per-object value). If all four fail
@@ -1587,9 +1593,16 @@ class UserFlags(MutableMapping):
         rc = swmm_userflag_get_real(h, b, &dv)
         if rc == 0:
             return float(dv)
-        rc = swmm_userflag_value_get(h, b"MODEL", b"", b, sbuf, 512, &found)
-        if rc == 0 and found:
-            return sbuf.decode('utf-8')
+        _tb_open(&t, 1)
+        try:
+            while True:
+                rc = swmm_userflag_value_get(h, b"MODEL", b"", b, t.p[0], t.size, &found)
+                if rc != 0 or not found or not _tb_retry(&t):
+                    break
+            if rc == 0 and found:
+                return _tb_str(&t, 0)
+        finally:
+            _tb_close(&t)
         raise KeyError(key)
 
     def __setitem__(self, key, value):
@@ -1690,15 +1703,21 @@ class UserFlags(MutableMapping):
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int n = 0
         cdef int t = 0
-        cdef char name_buf[128]
-        cdef char desc_buf[512]
+        cdef _TextBufs tb
         _check(swmm_userflag_def_count(h, &n))
         out = []
-        for i in range(n):
-            _check(swmm_userflag_def_get(h, i, name_buf, 128, &t,
-                                         desc_buf, 512))
-            out.append(UserFlagDef(name_buf.decode('utf-8'), t,
-                                   desc_buf.decode('utf-8')))
+        _tb_open(&tb, 2)
+        try:
+            for i in range(n):
+                while True:
+                    _check(swmm_userflag_def_get(h, i, tb.p[0], tb.size, &t,
+                                                 tb.p[1], tb.size))
+                    if not _tb_retry(&tb):
+                        break
+                out.append(UserFlagDef(_tb_str(&tb, 0), t,
+                                       _tb_str(&tb, 1)))
+        finally:
+            _tb_close(&tb)
         return out
 
     # -- [USER_FLAG_VALUES] per-object values -------------------------------
@@ -1724,13 +1743,20 @@ class UserFlags(MutableMapping):
         cdef bytes b_type = obj_type.encode('utf-8')
         cdef bytes b_name = obj_name.encode('utf-8')
         cdef bytes b_flag = flag_name.encode('utf-8')
-        cdef char buf[512]
+        cdef _TextBufs t
         cdef int found = 0
-        _check(swmm_userflag_value_get(h, b_type, b_name, b_flag,
-                                       buf, 512, &found))
-        if not found:
-            return None
-        return buf.decode('utf-8')
+        _tb_open(&t, 1)
+        try:
+            while True:
+                _check(swmm_userflag_value_get(h, b_type, b_name, b_flag,
+                                               t.p[0], t.size, &found))
+                if not found:
+                    return None
+                if not _tb_retry(&t):
+                    break
+            return _tb_str(&t, 0)
+        finally:
+            _tb_close(&t)
 
     def set_value(self, str obj_type, str obj_name, str flag_name,
                   str value) -> None:

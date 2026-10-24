@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import numpy as np
 cimport numpy as np
 from libcpp.vector cimport vector
-from ._common cimport SWMM_Engine, _check
+from ._common cimport SWMM_Engine, _check, _TextBufs, _tb_open, _tb_retry, _tb_str, _tb_close
 from ._access import EngineView
 from ._enums import CellScope
 
@@ -66,18 +66,24 @@ class SurfaceQuality(EngineView):
         cdef SWMM_Engine h = _h(self)
         cdef int count=0, index, pairs=0, k, scope=0, cell=0
         cdef double percent=0
-        cdef char tag[512]
-        cdef char landuse[512]
+        cdef _TextBufs t
         _check(swmm_2d_coverage_count(h, &count))
         rows = []
-        for index in range(count):
-            _check(swmm_2d_coverage_row_size(h, index, &pairs))
-            uses = []
-            for k in range(pairs):
-                _check(swmm_2d_coverage_get(h, index, k, &scope, tag, 512,
-                                           &cell, landuse, 512, &percent))
-                uses.append((landuse.decode('utf-8'), percent))
-            rows.append(SurfaceCoverage(CellScope(scope), tag.decode('utf-8'), cell, tuple(uses)))
+        _tb_open(&t, 2)
+        try:
+            for index in range(count):
+                _check(swmm_2d_coverage_row_size(h, index, &pairs))
+                uses = []
+                for k in range(pairs):
+                    while True:
+                        _check(swmm_2d_coverage_get(h, index, k, &scope, t.p[0], t.size,
+                                                   &cell, t.p[1], t.size, &percent))
+                        if not _tb_retry(&t):
+                            break
+                    uses.append((_tb_str(&t, 1), percent))
+                rows.append(SurfaceCoverage(CellScope(scope), _tb_str(&t, 0), cell, tuple(uses)))
+        finally:
+            _tb_close(&t)
         return tuple(rows)
 
     def set_coverage(self, scope, landuses, *, str tag='', int cell=-1):
@@ -107,14 +113,21 @@ class SurfaceQuality(EngineView):
         cdef SWMM_Engine h = _h(self)
         cdef int count=0, index, scope=0, cell=0
         cdef double value=0
-        cdef char tag[512]
-        cdef char species[512]
+        cdef _TextBufs t
         _check(swmm_2d_loading_count(h, &count))
         rows = []
-        for index in range(count):
-            _check(swmm_2d_loading_get(h, index, &scope, tag, 512, &cell, species, 512, &value))
-            rows.append(SurfaceLoading(CellScope(scope), tag.decode('utf-8'), cell,
-                                        species.decode('utf-8'), value))
+        _tb_open(&t, 2)
+        try:
+            for index in range(count):
+                while True:
+                    _check(swmm_2d_loading_get(h, index, &scope, t.p[0], t.size, &cell,
+                                               t.p[1], t.size, &value))
+                    if not _tb_retry(&t):
+                        break
+                rows.append(SurfaceLoading(CellScope(scope), _tb_str(&t, 0), cell,
+                                            _tb_str(&t, 1), value))
+        finally:
+            _tb_close(&t)
         return tuple(rows)
 
     def set_loading(self, scope, str species, double value, *, str tag='', int cell=-1):
@@ -133,12 +146,19 @@ class SurfaceQuality(EngineView):
         cdef SWMM_Engine h = _h(self)
         cdef int count=0, index, scope=0, cell=0
         cdef double value=0
-        cdef char tag[512]
+        cdef _TextBufs t
         _check(swmm_2d_curb_length_count(h, &count))
         rows = []
-        for index in range(count):
-            _check(swmm_2d_curb_length_get(h, index, &scope, tag, 512, &cell, &value))
-            rows.append(SurfaceCurbLength(CellScope(scope), tag.decode('utf-8'), cell, value))
+        _tb_open(&t, 1)
+        try:
+            for index in range(count):
+                while True:
+                    _check(swmm_2d_curb_length_get(h, index, &scope, t.p[0], t.size, &cell, &value))
+                    if not _tb_retry(&t):
+                        break
+                rows.append(SurfaceCurbLength(CellScope(scope), _tb_str(&t, 0), cell, value))
+        finally:
+            _tb_close(&t)
         return tuple(rows)
 
     def set_curb_length(self, scope, double length, *, str tag='', int cell=-1):

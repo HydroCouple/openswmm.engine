@@ -100,21 +100,27 @@ cdef inline int _resolve_surface_species(solver, key) except -1:
     cdef SWMM_Engine h = _h(solver)
     cdef int np = swmm_pollutant_count(h)
     cdef int nm = swmm_reaction_species_count(h)
-    cdef int i, m, is_wall
+    cdef int i, m, is_wall, rc
     cdef double atol, rtol
-    cdef char name[128]
-    cdef char units[32]
+    cdef _TextBufs t
     cdef bytes b
     if isinstance(key, str):
         b = (<str>key).encode('utf-8')
         i = swmm_pollutant_index(h, b)
         if i >= 0:
             return i
-        for m in range(nm):
-            if swmm_reaction_species_get(h, m, name, sizeof(name), &is_wall,
-                                         units, sizeof(units), &atol, &rtol) == 0 \
-                    and name == b:
-                return np + m
+        _tb_open(&t, 2)
+        try:
+            for m in range(nm):
+                while True:
+                    rc = swmm_reaction_species_get(h, m, t.p[0], t.size, &is_wall,
+                                                   t.p[1], t.size, &atol, &rtol)
+                    if rc != 0 or not _tb_retry(&t):
+                        break
+                if rc == 0 and <bytes>t.p[0] == b:
+                    return np + m
+        finally:
+            _tb_close(&t)
         raise KeyError(f"Pollutant or species '{key}' not found")
     if isinstance(key, bool):
         raise TypeError("Pollutant key must be int or str, got bool")
@@ -423,9 +429,8 @@ cdef class Subcatchment:
         @rtype: str
         """
         _check_fresh(self)
-        cdef char buf[256]
-        _check(swmm_subcatch_get_tag(_h(self._solver), self._index, buf, 256))
-        return buf.decode('utf-8')
+        return _read_engine_index_string(_h(self._solver), self._index,
+                                         swmm_subcatch_get_tag)
 
     @tag.setter
     def tag(self, value) -> None:
@@ -1158,10 +1163,17 @@ cdef class Subcatchments:
         @rtype: str
         """
         cdef int idx = _resolve_subcatch(self._solver, key)
-        cdef char buf[1024]
-        _check(swmm_subcatch_get_gwf_expression(
-            _h(self._solver), idx, int(gwf_type), buf, sizeof(buf)))
-        return buf.decode('utf-8')
+        cdef _TextBufs t
+        _tb_open(&t, 1)
+        try:
+            while True:
+                _check(swmm_subcatch_get_gwf_expression(
+                    _h(self._solver), idx, int(gwf_type), t.p[0], t.size))
+                if not _tb_retry(&t):
+                    break
+            return _tb_str(&t, 0)
+        finally:
+            _tb_close(&t)
 
     def set_gwf_expression(self, key, gwf_type, expression) -> None:
         """Set or clear a subcatchment's C{[GWF]} expression.
@@ -1409,9 +1421,7 @@ cdef class Aquifers(_NamedObjects):
         @rtype: str
         """
         cdef int idx = aquifer if isinstance(aquifer, int) else self.get_index(aquifer)
-        cdef char buf[256]
-        _check(swmm_aquifer_get_evap_pattern(_h(self._solver), idx, buf, sizeof(buf)))
-        return buf.decode('utf-8')
+        return _read_engine_index_string(_h(self._solver), idx, swmm_aquifer_get_evap_pattern)
 
     def set_evap_pattern(self, aquifer, name) -> None:
         """Set or clear the aquifer's upper-zone evaporation pattern name.
@@ -1527,9 +1537,8 @@ cdef class Snowpacks(_NamedObjects):
     def get_removal_subcatch(self, snowpack) -> str:
         """Read the REMOVAL destination subcatchment name (empty if none)."""
         cdef int idx = self._idx(snowpack)
-        cdef char buf[256]
-        _check(swmm_snowpack_get_removal_subcatch(_h(self._solver), idx, buf, sizeof(buf)))
-        return buf.decode('utf-8')
+        return _read_engine_index_string(_h(self._solver), idx,
+                                         swmm_snowpack_get_removal_subcatch)
 
     def __repr__(self) -> str:
         try:

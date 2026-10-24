@@ -71,21 +71,27 @@ cdef inline int _resolve_surface_species(solver, key) except -1:
     cdef SWMM_Engine h = _h(solver)
     cdef int np = swmm_pollutant_count(h)
     cdef int nm = swmm_reaction_species_count(h)
-    cdef int i, m, is_wall
+    cdef int i, m, is_wall, rc
     cdef double atol, rtol
-    cdef char name[128]
-    cdef char units[32]
+    cdef _TextBufs t
     cdef bytes b
     if isinstance(key, str):
         b = (<str>key).encode('utf-8')
         i = swmm_pollutant_index(h, b)
         if i >= 0:
             return i
-        for m in range(nm):
-            if swmm_reaction_species_get(h, m, name, sizeof(name), &is_wall,
-                                         units, sizeof(units), &atol, &rtol) == 0 \
-                    and name == b:
-                return np + m
+        _tb_open(&t, 2)
+        try:
+            for m in range(nm):
+                while True:
+                    rc = swmm_reaction_species_get(h, m, t.p[0], t.size, &is_wall,
+                                                   t.p[1], t.size, &atol, &rtol)
+                    if rc != 0 or not _tb_retry(&t):
+                        break
+                if rc == 0 and <bytes>t.p[0] == b:
+                    return np + m
+        finally:
+            _tb_close(&t)
         raise KeyError(f"Pollutant or species '{key}' not found")
     if isinstance(key, bool):
         raise TypeError("Pollutant key must be int or str, got bool")
@@ -317,9 +323,16 @@ class Quality:
         cdef int ni = _resolve_node(self._solver, node)
         cdef int pi = _resolve_pollutant(self._solver, pollutant)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef char buf[1024]
-        _check(swmm_treatment_get(h, ni, pi, buf, 1024))
-        return buf.decode('utf-8')
+        cdef _TextBufs t
+        _tb_open(&t, 1)
+        try:
+            while True:
+                _check(swmm_treatment_get(h, ni, pi, t.p[0], t.size))
+                if not _tb_retry(&t):
+                    break
+            return _tb_str(&t, 0)
+        finally:
+            _tb_close(&t)
 
     def clear_treatment(self, node, pollutant) -> None:
         """Remove any treatment for *pollutant* at *node*."""

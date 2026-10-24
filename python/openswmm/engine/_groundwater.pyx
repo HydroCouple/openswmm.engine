@@ -9,7 +9,8 @@ from dataclasses import dataclass
 from collections.abc import MutableMapping
 import numpy as np
 cimport numpy as np
-from ._common cimport SWMM_Engine, _check
+from ._common cimport (SWMM_Engine, _check, _read_engine_key_string, _TextBufs,
+                       _tb_open, _tb_alloc, _tb_retry, _tb_str, _tb_close)
 from ._access import EngineView
 from ._enums import (CellScope, GroundwaterVariable, GroundwaterLedger,
                      GroundwaterZone, GroundwaterSpeciesLedger)
@@ -87,6 +88,10 @@ cdef extern from "openswmm/engine/openswmm_gw2d.h":
     int swmm_gw2d_get_continuity_error(SWMM_Engine engine, double* value) nogil
     int swmm_gw2d_get_tier_histogram(SWMM_Engine engine, long* out, int len, int* written) nogil
 
+cdef extern from "openswmm/engine/openswmm_engine.h":
+    enum:
+        SWMM_ERR_BADPARAM
+
 cdef inline SWMM_Engine _h(view):
     return <SWMM_Engine><size_t>view._address()
 
@@ -132,9 +137,7 @@ class AquiferOptions(EngineView, MutableMapping):
         return iter(self._keys)
     def __getitem__(self, key):
         cdef bytes name = str(key).encode('utf-8')
-        cdef char value[512]
-        _check(swmm_gw2d_option_get(_h(self), name, value, 512))
-        return value.decode('utf-8')
+        return _read_engine_key_string(_h(self), name, swmm_gw2d_option_get)
     def __setitem__(self, key, value):
         cdef bytes name = str(key).encode('utf-8')
         cdef bytes text = str(value).encode('utf-8')
@@ -172,15 +175,22 @@ class Groundwater(EngineView):
         """Aquifer snapshots in authored order (GLOBAL, TAG or CELL scopes)."""
         cdef int count=0, index, scope=0, cell=0
         cdef double ks=0, zs=0, theta_s=0, theta_r=0, alpha=0
-        cdef char tag[512]
+        cdef _TextBufs t
         cdef SWMM_Engine h = _h(self)
         _check(swmm_gw2d_row_count(h, &count))
         rows = []
-        for index in range(count):
-            _check(swmm_gw2d_row_get(h, index, &scope, tag, 512, &cell,
-                                    &ks, &zs, &theta_s, &theta_r, &alpha))
-            rows.append(AquiferRow(CellScope(scope), tag.decode('utf-8'), cell,
-                                   ks, zs, theta_s, theta_r, alpha))
+        _tb_open(&t, 1)
+        try:
+            for index in range(count):
+                while True:
+                    _check(swmm_gw2d_row_get(h, index, &scope, t.p[0], t.size, &cell,
+                                            &ks, &zs, &theta_s, &theta_r, &alpha))
+                    if not _tb_retry(&t):
+                        break
+                rows.append(AquiferRow(CellScope(scope), _tb_str(&t, 0), cell,
+                                       ks, zs, theta_s, theta_r, alpha))
+        finally:
+            _tb_close(&t)
         return tuple(rows)
 
     def add_row(self, scope, double ks, double zs, double theta_s,
@@ -216,14 +226,21 @@ class Groundwater(EngineView):
         cdef SWMM_Engine h = _h(self)
         cdef int count=0, index, cell=0, locate=0, exchange=0, automatic=0
         cdef double kc=0, dc=0, area=0
-        cdef char node[512]
+        cdef _TextBufs t
         _check(swmm_gw2d_node_count(h, &count))
         rows = []
-        for index in range(count):
-            _check(swmm_gw2d_node_get(h, index, node, 512, &cell, &kc, &dc, &area))
-            _check(swmm_gw2d_node_get_flags(h, index, &locate, &exchange, &automatic))
-            rows.append(AquiferNode(node.decode('utf-8'), cell, kc, dc, area,
-                                    bool(locate), bool(exchange), bool(automatic)))
+        _tb_open(&t, 1)
+        try:
+            for index in range(count):
+                while True:
+                    _check(swmm_gw2d_node_get(h, index, t.p[0], t.size, &cell, &kc, &dc, &area))
+                    if not _tb_retry(&t):
+                        break
+                _check(swmm_gw2d_node_get_flags(h, index, &locate, &exchange, &automatic))
+                rows.append(AquiferNode(_tb_str(&t, 0), cell, kc, dc, area,
+                                        bool(locate), bool(exchange), bool(automatic)))
+        finally:
+            _tb_close(&t)
         return tuple(rows)
 
     def replace_nodes(self, expected, replacement, *, bottoms=(), apply=True):
@@ -301,12 +318,19 @@ class Groundwater(EngineView):
         cdef SWMM_Engine h = _h(self)
         cdef int count=0, index, exchange=0
         cdef double kc=0, dc=0
-        cdef char link[512]
+        cdef _TextBufs t
         _check(swmm_gw2d_link_count(h, &count))
         rows = []
-        for index in range(count):
-            _check(swmm_gw2d_link_get(h, index, link, 512, &kc, &dc, &exchange))
-            rows.append(AquiferLink(link.decode('utf-8'), kc, dc, bool(exchange)))
+        _tb_open(&t, 1)
+        try:
+            for index in range(count):
+                while True:
+                    _check(swmm_gw2d_link_get(h, index, t.p[0], t.size, &kc, &dc, &exchange))
+                    if not _tb_retry(&t):
+                        break
+                rows.append(AquiferLink(_tb_str(&t, 0), kc, dc, bool(exchange)))
+        finally:
+            _tb_close(&t)
         return tuple(rows)
 
     def add_link(self, str link, double kc=0, double dc=0, bint exchange=True):
@@ -407,12 +431,19 @@ class Groundwater(EngineView):
         """Transported names in native policy order."""
         cdef SWMM_Engine h = _h(self)
         cdef int count=0, index
-        cdef char name[512]
+        cdef _TextBufs t
         _check(swmm_gw2d_species_count(h, &count))
         names = []
-        for index in range(count):
-            _check(swmm_gw2d_species_name(h, index, name, 512))
-            names.append(name.decode('utf-8'))
+        _tb_open(&t, 1)
+        try:
+            for index in range(count):
+                while True:
+                    _check(swmm_gw2d_species_name(h, index, t.p[0], t.size))
+                    if not _tb_retry(&t):
+                        break
+                names.append(_tb_str(&t, 0))
+        finally:
+            _tb_close(&t)
         return tuple(names)
 
     @property
@@ -458,16 +489,28 @@ class Groundwater(EngineView):
     @property
     def authored_boundaries(self):
         """Exterior edge forcing. HEAD uses project elevation units; FLOW is total inward m3/s."""
-        cdef int count=0,index
-        cdef char series[8192]
+        cdef int count=0,index,rc
+        cdef _TextBufs t
         cdef SWMM_GwBoundary row
         count=swmm_gw2d_boundary_count(_h(self))
         if count<0:raise RuntimeError("Unable to read authored groundwater boundaries")
         result=[]
-        for index in range(count):
-            _check(swmm_gw2d_boundary_get(_h(self),index,&row,series,sizeof(series)))
-            result.append({'cell':row.cell,'edge':row.edge,'kind':'HEAD' if row.kind==0 else 'FLOW',
-                           'value':row.value,'series':series.decode('utf-8')})
+        _tb_open(&t,1)
+        try:
+            for index in range(count):
+                while True:
+                    rc=swmm_gw2d_boundary_get(_h(self),index,&row,t.p[0],t.size)
+                    # A short series buffer is refused (BADPARAM), never truncated: grow it.
+                    if rc!=SWMM_ERR_BADPARAM or t.size>=1024*1024:  # BADPARAM may also mean a bad key
+                        _check(rc)
+                        break
+                    _tb_close(&t)
+                    t.size*=2
+                    _tb_alloc(&t)
+                result.append({'cell':row.cell,'edge':row.edge,'kind':'HEAD' if row.kind==0 else 'FLOW',
+                               'value':row.value,'series':_tb_str(&t,0)})
+        finally:
+            _tb_close(&t)
         return tuple(result)
 
     def set_authored_boundary(self,int cell,int edge,kind,double value=0,series=''):

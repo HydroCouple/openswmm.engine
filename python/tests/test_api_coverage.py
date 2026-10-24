@@ -352,3 +352,38 @@ class TestOptionKeyList(unittest.TestCase):
         self.assertGreater(len(branches), 90)
         self.assertEqual(listed, branches)
 
+
+def _fixed_text_buffers() -> dict[str, int]:
+    """``{"<module>.pyx::<function>::<buffer>": line}`` for every ``cdef char x[N]``."""
+    found: dict[str, int] = {}
+    for pyx in sorted((_PYTHON_DIR / "openswmm" / "engine").glob("*.pyx")):
+        lines = pyx.read_text(encoding="utf-8").split("\n")
+        for i, line in enumerate(lines):
+            m = re.match(r"(\s*)cdef char (\w+)\[\w+\]", line)
+            if not m:
+                continue
+            function = "?"
+            for prev in reversed(lines[:i]):
+                d = re.match(r"(\s*)(?:cpdef|cdef|def)\s+(?:[\w*]+\s+)*(\w+)\s*\(", prev)
+                if d and len(d.group(1)) < len(m.group(1)):
+                    function = d.group(2)
+                    break
+            found[f"{pyx.name}::{function}::{m.group(2)}"] = i + 1
+    return found
+
+
+class TestFixedBuffers(unittest.TestCase):
+    """Native text getters silently truncate; bindings read them through growing buffers
+    (``_read_engine_*`` or ``_TextBufs`` in ``_common.pxd``). A fixed ``char[N]`` is allowed
+    only where ``scripts/fixed_buffer_allow.json`` gives the reason it cannot lose data."""
+
+    def test_every_fixed_buffer_is_justified(self):
+        import json
+
+        allow = json.loads((_PYTHON_DIR / "scripts" / "fixed_buffer_allow.json").read_text(
+            encoding="utf-8"))
+        found = _fixed_text_buffers()
+        unjustified = sorted(f"{k} (line {v})" for k, v in found.items() if k not in allow)
+        stale = sorted(k for k in allow if k not in found)
+        self.assertEqual(unjustified, [], "fixed text buffers: use a growing reader")
+        self.assertEqual(stale, [], "allow-list entries with no matching buffer")

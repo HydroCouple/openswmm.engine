@@ -730,9 +730,7 @@ class _HeatSediment:
     @property
     def ground_timeseries(self) -> str:
         """Timeseries driving the ground temperature; ``''`` for the constant."""
-        cdef char buf[1024]
-        _check(swmm_heat_get_sediment_ground_timeseries(_h(self._solver), buf, 1024))
-        return buf.decode('utf-8')
+        return _read_engine_string(_h(self._solver), swmm_heat_get_sediment_ground_timeseries)
 
     @ground_timeseries.setter
     def ground_timeseries(self, name) -> None:
@@ -770,11 +768,18 @@ class _HeatElementOverrides:
             raise IndexError(row_index)
         cdef int attr = 0, scope = 0
         cdef double value = 0.0
-        cdef char name[512]
-        _check(swmm_heat_get_element_override(
-            _h(self._solver), i, &attr, &scope, name, 512, &value))
-        return HeatElementOverride(HeatAttr(attr), HeatOverrideScope(scope),
-                                   name.decode('utf-8'), value)
+        cdef _TextBufs t
+        _tb_open(&t, 1)
+        try:
+            while True:
+                _check(swmm_heat_get_element_override(
+                    _h(self._solver), i, &attr, &scope, t.p[0], t.size, &value))
+                if not _tb_retry(&t):
+                    break
+            return HeatElementOverride(HeatAttr(attr), HeatOverrideScope(scope),
+                                       _tb_str(&t, 0), value)
+        finally:
+            _tb_close(&t)
 
     def set(self, attr, scope, str name, double value) -> None:
         """Add or update the override for ``(attr, scope, name)``.

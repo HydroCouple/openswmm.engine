@@ -4,7 +4,8 @@
 
 Unavailable UEB quantities remain NaN.
 """
-from ._common cimport SWMM_Engine, _check, swmm_snowpack_index, swmm_subcatch_index
+from ._common cimport (SWMM_Engine, _check, swmm_snowpack_index, swmm_subcatch_index,
+                       _TextBufs, _tb_open, _tb_alloc, _tb_str, _tb_close)
 from libc.stdlib cimport malloc, free
 from ._access import resolve_owner
 from ._exceptions import StaleObjectError
@@ -84,6 +85,10 @@ cdef extern from "openswmm/engine/openswmm_snow.h":
     int swmm_snow_get_ueb_ledger(SWMM_Engine,SWMM_SnowLedger*)
     int swmm_snow_apply_configuration(SWMM_Engine,const char*,const char*,char*,int)
 
+cdef extern from "openswmm/engine/openswmm_engine.h":
+    enum:
+        SWMM_ERR_BADPARAM
+
 cdef SWMM_Engine _h(view) except NULL:
     if view._generation != view._owner.generation:
         raise StaleObjectError("Snow view was invalidated; reacquire it from the solver")
@@ -129,9 +134,22 @@ class Snow:
         _check(swmm_snow_set_step(_h(self),value))
 
     def option(self,key):
-        cdef char value[4096]
-        _check(swmm_ueb_option_get(_h(self),_text(key),value,sizeof(value)))
-        return value.decode('utf-8')
+        cdef _TextBufs t
+        cdef int rc
+        _tb_open(&t,1)
+        try:
+            while True:
+                rc=swmm_ueb_option_get(_h(self),_text(key),t.p[0],t.size)
+                # A short buffer is refused (BADPARAM), never truncated: grow it.
+                if rc!=SWMM_ERR_BADPARAM or t.size>=1024*1024:  # BADPARAM may also mean a bad key
+                    _check(rc)
+                    break
+                _tb_close(&t)
+                t.size*=2
+                _tb_alloc(&t)
+            return _tb_str(&t,0)
+        finally:
+            _tb_close(&t)
 
     def set_option(self,key,value):
         _check(swmm_ueb_option_set(_h(self),_text(key),_text(value)))
@@ -238,9 +256,22 @@ class Snow:
 
     def radiation_source(self, int channel):
         """Source name: channel 0 shortwave, 1 longwave, 2 meteorology file."""
-        cdef char value[4096]
-        _check(swmm_climate_get_radiation_source(_h(self),channel,value,sizeof(value)))
-        return value.decode('utf-8')
+        cdef _TextBufs t
+        cdef int rc
+        _tb_open(&t,1)
+        try:
+            while True:
+                rc=swmm_climate_get_radiation_source(_h(self),channel,t.p[0],t.size)
+                # A short buffer is refused (BADPARAM), never truncated: grow it.
+                if rc!=SWMM_ERR_BADPARAM or t.size>=1024*1024:  # BADPARAM may also mean a bad key
+                    _check(rc)
+                    break
+                _tb_close(&t)
+                t.size*=2
+                _tb_alloc(&t)
+            return _tb_str(&t,0)
+        finally:
+            _tb_close(&t)
 
     def set_radiation_source(self, int channel, value):
         """Bind a source name; select its mode separately in radiation."""
@@ -250,9 +281,22 @@ class Snow:
     def cloud(self):
         """Cloud modes 0 default, 1 constant, 2 series; fraction is dimensionless."""
         cdef SWMM_ClimateCloudConfig v
-        cdef char series[4096]
-        _check(swmm_climate_get_cloud(_h(self),&v,series,sizeof(series)))
-        return {'mode': v.mode, 'fraction': v.fraction, 'shortwave_k': v.shortwave_k, 'shortwave_n': v.shortwave_n, 'longwave_k': v.longwave_k, 'series': series.decode('utf-8')}
+        cdef _TextBufs t
+        cdef int rc
+        _tb_open(&t,1)
+        try:
+            while True:
+                rc=swmm_climate_get_cloud(_h(self),&v,t.p[0],t.size)
+                # A short buffer is refused (BADPARAM), never truncated: grow it.
+                if rc!=SWMM_ERR_BADPARAM or t.size>=1024*1024:  # BADPARAM may also mean a bad key
+                    _check(rc)
+                    break
+                _tb_close(&t)
+                t.size*=2
+                _tb_alloc(&t)
+            return {'mode': v.mode, 'fraction': v.fraction, 'shortwave_k': v.shortwave_k, 'shortwave_n': v.shortwave_n, 'longwave_k': v.longwave_k, 'series': _tb_str(&t,0)}
+        finally:
+            _tb_close(&t)
 
     def preview_meteorology(self, path):
         """Validate hourly forcing; raw OLE dates and extrema in C, %, m/s, W/m2."""
