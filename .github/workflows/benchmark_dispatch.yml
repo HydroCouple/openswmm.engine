@@ -1,0 +1,122 @@
+# Tell openswmm.engine.benchmarks that this engine moved, so it can build THIS
+# commit and sweep the model corpus against it.
+#
+# Why a dispatch rather than a job here: the benchmark platform owns the corpus,
+# the engine registry, the scoring taxonomy and its own Pages site. Keeping the
+# sweep there means this repository needs only permission to say "a new commit
+# exists" -- it never needs a Pages credential, and the corpus never has to be
+# vendored into this tree.
+#
+# Gated on Unit Testing succeeding. A sweep is a multi-hour, multi-runner job;
+# dispatching a commit that does not build wastes it and buries the real signal
+# under a matrix of ERROR cells.
+name: Benchmark dispatch
+
+on:
+  workflow_run:
+    workflows: ["Unit Testing"]
+    types: [completed]
+    branches: [main, develop]
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Engine commit to benchmark (blank = this branch's HEAD)
+        required: false
+
+permissions:
+  contents: read
+
+env:
+  BENCHMARKS_REPO: HydroCouple/openswmm.engine.benchmarks
+
+jobs:
+  dispatch:
+    name: Notify the benchmark platform
+    # workflow_run fires on completion regardless of outcome, so filter to the
+    # successful PUSH runs. Pull-request runs are excluded deliberately: a fork
+    # PR cannot read secrets, and a sweep per PR would cost more than it tells
+    # us until the PR tier is curated.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve the commit to benchmark
+        id: target
+        env:
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_REF: ${{ github.event.workflow_run.head_branch }}
+          INPUT_SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          sha="${INPUT_SHA:-${RUN_SHA:-${GITHUB_SHA}}}"
+          ref="${RUN_REF:-${GITHUB_REF_NAME}}"
+          # A blank sha would make the receiver silently check out its default
+          # branch and publish results keyed to the wrong commit.
+          if [ -z "$sha" ]; then
+            echo "::error::could not resolve an engine SHA to dispatch"
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "Dispatching $ref @ $sha to $BENCHMARKS_REPO"
+
+      - name: Check the dispatch token is configured
+        env:
+          TOKEN: ${{ secrets.BENCHMARKS_DISPATCH_TOKEN }}
+        run: |
+          if [ -n "${TOKEN:-}" ]; then exit 0; fi
+          cat >&2 <<'MSG'
+          The secret BENCHMARKS_DISPATCH_TOKEN is not set on this repository.
+
+          Cross-repository repository_dispatch cannot use the default
+          GITHUB_TOKEN -- it is scoped to this repository only -- so a separate
+          credential is required.
+
+          To configure:
+            1. Create a token that may POST to
+               HydroCouple/openswmm.engine.benchmarks:
+                 * fine-grained PAT  -> Repository access: that repo,
+                                        Permissions: Contents = Read and write
+                 * classic PAT       -> scope: repo
+               (A GitHub App installation token works too, and is preferable
+                for a shared org: it is not tied to one person's account.)
+            2. Add it here as an Actions secret named
+               BENCHMARKS_DISPATCH_TOKEN.
+
+          Until then the benchmark platform picks this engine up only via its
+          own nightly cron (07:00 UTC, building `develop`), not per push.
+          MSG
+          echo "::error::BENCHMARKS_DISPATCH_TOKEN is not configured -- see the log above"
+          exit 1
+
+      - name: Dispatch to openswmm.engine.benchmarks
+        env:
+          TOKEN: ${{ secrets.BENCHMARKS_DISPATCH_TOKEN }}
+          SHA: ${{ steps.target.outputs.sha }}
+          REF: ${{ steps.target.outputs.ref }}
+        run: |
+          set -euo pipefail
+          # Built with jq, not string interpolation: a branch name is
+          # attacker-influenced text and must not be able to break out of the
+          # JSON body.
+          payload=$(jq -n \
+            --arg sha "$SHA" \
+            --arg ref "$REF" \
+            --arg repo "$GITHUB_REPOSITORY" \
+            --arg run_url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/${{ github.event.workflow_run.id || github.run_id }}" \
+            '{event_type: "engine-push",
+              client_payload: {sha: $sha, ref: $ref, repo: $repo, run_url: $run_url}}')
+
+          curl --fail-with-body -sS -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$GITHUB_API_URL/repos/$BENCHMARKS_REPO/dispatches" \
+            -d "$payload"
+
+          echo "Dispatched $REF @ $SHA"
+          echo "### Benchmark sweep dispatched" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`$REF\` @ \`$SHA\` -> [$BENCHMARKS_REPO]($GITHUB_SERVER_URL/$BENCHMARKS_REPO/actions)" >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,1564 @@
+// SPDX-License-Identifier: Apache-2.0
+
+/**
+ * @file      MeshHeat.cpp
+ * @brief     Mesh thermal state, including bed energy retained through surface drying.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
+ */
+
+#include "MeshHeat.hpp"
+#include "../data/MeshData.hpp"
+#include "../data/SurfaceStateData.hpp"
+#include "../data/SolverOptions2D.hpp"
+#include "../solver/InertialKernels.hpp"
+#include "../subsurface/SubsurfaceData.hpp"
+#include "../../data/LidNodeData.hpp"
+#include "../gw/GwTransportData.hpp"
+#include "../../core/SimulationContext.hpp"
+#include "../../transport/components/HeatFluxModules/BedExchange.hpp"
+#include "../../transport/components/HeatFluxModules/SurfaceExchange.hpp"
+#include "../../transport/components/HeatFluxModules/RadiativeExchange.hpp"
+#include "../../transport/components/HeatFluxModules/HeatOverrides.hpp"
+#include "../../transport/components/HeatFluxModules/SolarRadiation.hpp"
+#include <algorithm>
+#include <cmath>
+#include <set>
+#include <sstream>
+#include <stdexcept>
+namespace openswmm::twoD {
+namespace {
+using namespace transport::heat;
+/**
+ * @brief Test whether a mesh cell participates in authored hyporheic exchange.
+ * @param[in] ctx Prepared heat override rows, read only.
+ * @param[in] mesh Prepared tags, with i in tri_tag bounds.
+ * @param[in] i Valid cell index; authored CELL2D IDs are matched to decimal i+1.
+ * @return True for a tag beginning channel: or a positive SED_HYPORHEIC_VELOCITY MESH_TAG/CELL2D
+ * row matching this cell. Does not evaluate general override precedence or current wetness.
+ * @note May allocate decimal ID text; does not book water/species or mutate configuration.
+ */
+bool hyporheicEligible(const SimulationContext& ctx, const MeshData& mesh, int i) {
+    const auto& tag = mesh.tri_tag[i];
+    if (tag.rfind("channel:", 0) == 0)
+        return true;
+    for (const auto& row : ctx.heat_config.overrides.rows)
+        if (row.attr == HeatAttr::SED_HYPORHEIC_VELOCITY && row.value > 0 &&
+            ((row.scope == HeatScope::MESH_TAG && row.name == tag) ||
+             (row.scope == HeatScope::CELL2D && row.name == std::to_string(i + 1))))
+            return true;
+    return false;
+}
+/**
+ * @brief Evaluate the second exponential phi function with a small-argument series.
+ * @param[in] z Dimensionless exponent, expected finite and nonpositive for passive thermal
+ * decay.
+ * @return (exp(z)-1-z)/(z*z), continuously 1/2 at zero. Uses a polynomial for |z|<1e-3; other
+ * inputs follow floating arithmetic and may overflow. No input check or state change.
+ */
+double phi2(double z) noexcept {
+    if (std::abs(z) < 1e-3)
+        return .5 + z * (1. / 6 + z * (1. / 24 + z * (1. / 120 + z / 720)));
+    return (std::expm1(z) - z) / (z * z);
+}
+/**
+ * @brief Evaluate the derivative of the second exponential phi function.
+ * @param[in] z Dimensionless exponent, expected finite and nonpositive.
+ * @return phi2 derivative, continuously 1/6 at zero, using a polynomial for |z|<1e-3. No
+ * finite-value guard or overflow recovery is performed; allocation-free and read-only.
+ */
+double phi2prime(double z) noexcept {
+    if (std::abs(z) < 1e-3)
+        return 1. / 6 + z * (1. / 12 + z * (1. / 40 + z / 180));
+    return (z * std::expm1(z) - 2 * (std::expm1(z) - z)) / (z * z * z);
+}
+// Integral of the temperature increments of the SAME exact linear pair.
+// Keeping increments avoids cancellation against the absolute temperatures.
+/**
+ * @brief Integrate water and bed temperature increments for the same exact affine thermal pair.
+ * @param[in] g Prepared positive water/bed capacities J/K and passive conductances W/K, with
+ * ground temperature degC. Caller supplies physically valid, finite coefficients.
+ * @param[in] tw Initial water temperature degC.
+ * @param[in] tb Initial bed temperature degC.
+ * @param[in] j0 Signed outward atmospheric flux W/m2 at tw.
+ * @param[in] slope Nonnegative atmospheric derivative W/(m2 K).
+ * @param[in] area Finite nonnegative wetted area m2.
+ * @param[in] dt Finite positive duration s.
+ * @param[out] iw Time integral of the water temperature increment relative to tw, K*s.
+ * @param[out] ib Time integral of the bed temperature increment relative to tb, K*s.
+ * @note Outputs are overwritten. Uses eigenvalue/phi-function formulas to avoid cancellation of
+ * absolute temperatures; invalid capacities/results are not checked here. No owner mutation.
+ */
+void pairIntegrals(const BedCoupling& g, double tw, double tb, double j0, double slope, double area,
+                   double dt, double& iw, double& ib) noexcept {
+    const double a = -(area * slope + g.g_wb) / g.c_w, b = g.g_wb / g.c_w;
+    const double c = g.g_wb / g.c_b, d = -(g.g_wb + g.g_bg) / g.c_b;
+    const double f = (-area * j0 + g.g_wb * (tb - tw)) / g.c_w;
+    const double q = (g.g_wb * (tw - tb) + g.g_bg * (g.t_gr - tb)) / g.c_b;
+    const double root = std::sqrt((a - d) * (a - d) + 4 * b * c);
+    const double fast = .5 * (a + d - root), det = a * d - b * c;
+    const double slow = fast != 0 ? det / fast : 0;
+    const double z1 = slow * dt, z2 = fast * dt;
+    double beta, alpha;
+    if (std::abs(z1 - z2) > 1e-7) {
+        beta = (phi2(z1) - phi2(z2)) / (z1 - z2);
+        alpha = phi2(z1) - beta * z1;
+    } else {
+        const double z = .5 * (z1 + z2);
+        beta = phi2prime(z);
+        alpha = phi2(z) - beta * z;
+    }
+    iw = dt * dt * (alpha * f + beta * dt * (a * f + b * q));
+    ib = dt * dt * (alpha * q + beta * dt * (c * f + d * q));
+}
+/**
+ * @brief Evaluate signed outward atmospheric flux components at a mesh-water temperature.
+ * @param[in] h Prepared heat flags and a live borrowed context with resolved forcing/overrides.
+ * @param[in] i Valid mesh heat-element index.
+ * @param[in] t Water temperature degC, finite and physically valid for selected flux laws.
+ * @param[in] evaporation Accepted hydrologic evaporation rate m/s, rather than a newly predicted
+ * wind-driven water loss. Supplies latent sensible-energy debit only.
+ * @return Radiation, sensible and latent W/m2, positive outward. Disabled components are zero.
+ * @note Reads current element air/wind/solar forcing; does not remove water, apply energy or
+ * update clocks. No general finite validation occurs; noexcept dependencies must not throw.
+ */
+MeshAtmosphericFlux outward(const MeshHeatState& h, int i, double t, double evaporation) noexcept {
+    const auto& ctx = *h.context;
+    const auto elem = HeatElement::cell2d(i);
+    MeshAtmosphericFlux flux;
+    flux.radiation = h.radiative ? radiativeFluxOut(ctx, elem, t, true) : 0;
+    if (h.surface) {
+        const double air =
+            (ctx.forcing.elementAirTempF(elem, ctx.climate_state.temperature) - 32) * 5. / 9;
+        const double wind =
+            ctx.forcing.elementWindMph(elem, ctx.climate_state.wind_speed) * kMphToMs;
+        const double transfer =
+            windFunction(wind, ctx.options.wind_func_coeff_a, ctx.options.wind_func_coeff_b);
+        // The Bowen sensible term has a removable vapour-deficit singularity.
+        // Evaporation itself is the hydrology's accepted volume, not this wind formula.
+        flux.latent = ctx.options.water_density * latentHeatOfVaporization(t) * evaporation;
+        flux.sensible = ctx.options.water_density * latentHeatOfVaporization(t) * transfer *
+                        kBowenCoeff * ctx.options.pressure_ratio * (t - air);
+    }
+    return flux;
+}
+/**
+ * @brief Solve a finite column at RK2 order with an exact stiff water/soil pair fallback.
+ * @param[in] a Prepared assembly indices into the supplied graph, especially optional water
+ * store.
+ * @param[in] stores Beginning capacities J/K and energies J; copied for local fallback work.
+ * @param[in] contacts Passive W/K links indexed into stores.
+ * @param[in] boundaries Local graph temperature/flux reservoirs.
+ * @param[in] dt Finite positive interval s, validated by thermal solvers.
+ * @return ThermalSolution with endpoint energy/temperature and signed J receipts, or solver
+ * error. If only the water pair causes the interval limit and has one distinct neighbor,
+ * integrates that pair in exact symmetric half steps around the remaining RK2 graph. Invalid or
+ * multi-neighbor fallback retains the original refusal; nonfinite exact exchange gets an
+ * explicit error.
+ * @note Allocates local graphs and may throw; input graph/owners are unchanged. Receipt indices
+ * are remapped to original contact order, sharing parallel-pair energy by conductance.
+ */
+ThermalSolution solveColumnMidpoint(const GroundColumnAssembly& a,
+                                    const std::vector<ThermalStore>& stores,
+                                    const std::vector<ThermalContact>& contacts,
+                                    const std::vector<ThermalBoundary>& boundaries, double dt) {
+    auto result = solveThermalContactsRk2(stores, contacts, boundaries, dt);
+    if (!result.interval_limit || a.water < 0)
+        return result;
+    // A vanishing water heat capacity makes this one pair arbitrarily fast.
+    // Integrate that pair exactly in symmetric halves around the remaining
+    // soil graph. Invalid graphs and soil work limits retain their refusal.
+    int neighbour = -1;
+    double conductance = 0;
+    std::vector<std::size_t> pair, rest_index;
+    std::vector<ThermalContact> rest;
+    for (std::size_t k = 0; k < contacts.size(); ++k) {
+        const auto& c = contacts[k];
+        if (c.conductance > 0 && (c.a == a.water || c.b == a.water)) {
+            const int other = c.a == a.water ? c.b : c.a;
+            if (neighbour >= 0 && neighbour != other)
+                return result;
+            neighbour = other;
+            conductance += c.conductance;
+            pair.push_back(k);
+        } else {
+            rest.push_back(c);
+            rest_index.push_back(k);
+        }
+    }
+    if (neighbour < 0 || !std::isfinite(conductance) || !(.5 * dt > 0))
+        return result;
+    auto current = stores;
+    const auto exchange = [&](double& receipt) {
+        auto& water = current[std::size_t(a.water)];
+        auto& soil = current[std::size_t(neighbour)];
+        const double small = std::min(water.capacity, soil.capacity),
+                     large = std::max(water.capacity, soil.capacity);
+        const double capacity = small / (1 + small / large),
+                     difference = water.energy / water.capacity - soil.energy / soil.capacity;
+        if (!(capacity > 0) || !std::isfinite(difference))
+            return false;
+        receipt = capacity * difference * (-std::expm1(-(.5 * dt) * conductance / capacity));
+        water.energy -= receipt;
+        soil.energy += receipt;
+        return std::isfinite(receipt) && std::isfinite(water.energy) &&
+               std::isfinite(soil.energy) && std::isfinite(water.energy / water.capacity) &&
+               std::isfinite(soil.energy / soil.capacity);
+    };
+    const auto refused = []() {
+        ThermalSolution out;
+        out.error = "Nonfinite exact surface/soil thermal pair.";
+        return out;
+    };
+    double first = 0, last = 0;
+    if (!exchange(first))
+        return refused();
+    auto middle = solveThermalContactsRk2(current, rest, boundaries, dt);
+    if (!middle.error.empty())
+        return middle;
+    for (std::size_t j = 0; j < current.size(); ++j)
+        current[j].energy = middle.energy[j];
+    if (!exchange(last) || !std::isfinite(first + last))
+        return refused();
+    const auto receipts = std::move(middle.contact_j);
+    middle.contact_j.assign(contacts.size(), 0);
+    for (std::size_t k = 0; k < rest_index.size(); ++k)
+        middle.contact_j[rest_index[k]] = receipts[k];
+    double assigned = 0;
+    for (std::size_t k = 0; k < pair.size(); ++k) {
+        const auto index = pair[k];
+        const double value = k + 1 == pair.size()
+                                 ? first + last - assigned
+                                 : (first + last) * (contacts[index].conductance / conductance);
+        middle.contact_j[index] = contacts[index].a == a.water ? value : -value;
+        assigned += value;
+    }
+    for (std::size_t j = 0; j < current.size(); ++j) {
+        middle.energy[j] = current[j].energy;
+        middle.temperature[j] = current[j].energy / current[j].capacity;
+    }
+    return middle;
+}
+// Nonlinear atmosphere is evaluated at the SAME midpoint as every finite
+// store/contact. The half-step graph is affine in its one atmospheric power;
+// a scaled homogeneous solve gives its response without subtracting energies.
+/**
+ * @brief Solve nonlinear atmosphere and the finite column at a common thermal midpoint.
+ * @param[in,out] a Prepared assembly with live mesh_heat, valid cell/water/atmosphere indices,
+ * wet area m2 and zero evaporated volume. On success sets slope=0 and flux0/flux1 to
+ * interval-average radiative/sensible flux for subsequent receipt accounting; physical owners
+ * are not committed here.
+ * @param[in] stores Beginning finite capacities J/K and energies J.
+ * @param[in] contacts Finite passive graph links W/K.
+ * @param[in] boundaries Boundary vector copied locally; its atmospheric record is replaced by a
+ * nonlinear power found from the half-step response.
+ * @param[in] dt Finite positive interval s; invalid or nonzero latent evaporation returns an
+ * error.
+ * @return ThermalSolution with midpoint-consistent endpoint energy/temperature and signed J
+ * receipts; error on invalid weather/graph, nonphysical temperature, nonfinite arithmetic or
+ * work limit.
+ * @note Validates graph, bounds subdivision by thermal/atmospheric rates, bisects the
+ * temperature root and retries with up to 65536 steps. Subdivision exhaustion sets
+ * interval_limit=true. Allocates and may throw; caller serializes reads of weather and commits
+ * only an accepted solution.
+ */
+ThermalSolution solveAtmosphericColumnMidpoint(GroundColumnAssembly& a,
+                                               const std::vector<ThermalStore>& stores,
+                                               const std::vector<ThermalContact>& contacts,
+                                               std::vector<ThermalBoundary> boundaries, double dt) {
+    const auto refused = [](const char* message) {
+        ThermalSolution out;
+        out.error = message;
+        return out;
+    };
+    const auto add = [](double& value, double increment, double& correction) {
+        const double adjusted = increment - correction, next = value + adjusted;
+        correction = (next - value) - adjusted;
+        value = next;
+    };
+    const auto derivative = [&](double t) {
+        return (outward(*a.mesh_heat, a.cell, t + .01, 0).total() -
+                outward(*a.mesh_heat, a.cell, t - .01, 0).total()) /
+               .02;
+    };
+    if (!(dt > 0) || !std::isfinite(dt) || a.evaporated != 0)
+        return refused(
+            "RK2 atmosphere requires a finite positive interval without surface latent evaporation.");
+    boundaries[a.atmosphere] = {a.water, 0, 0, 0};
+    // Validate every store and graph before using indices to form the work bound.
+    auto validated = solveThermalContacts(stores, contacts, boundaries, .5 * dt);
+    if (!validated.error.empty())
+        return validated;
+    std::vector<long double> rate(stores.size(), 0);
+    for (const auto& c : contacts) {
+        rate[c.a] += c.conductance;
+        rate[c.b] += c.conductance;
+    }
+    for (const auto& b : boundaries)
+        rate[b.store] += b.conductance;
+    const double slope = derivative(a.temperature);
+    if (!std::isfinite(slope) || slope < 0 || !(a.temperature + 273.15 > 0))
+        return refused("Invalid atmospheric temperature, weather or heat-transfer derivative.");
+    rate[a.water] += 2 * a.wet * slope;
+    long double divisions = 1;
+    for (std::size_t i = 0; i < stores.size(); ++i)
+        divisions = std::max(divisions, std::ceil(static_cast<long double>(dt) * rate[i] /
+                                                  (2.L * stores[i].capacity)));
+    for (; std::isfinite(divisions) && divisions <= 65536; divisions *= 2) {
+        const int steps = int(divisions);
+        const double h = dt / steps, half = .5 * h;
+        if (!(half > 0))
+            return refused("Atmospheric midpoint interval is below the representable step.");
+        auto homogeneous = stores;
+        double capacity = 0;
+        for (auto& store : homogeneous) {
+            capacity += store.capacity;
+            store.energy = 0;
+        }
+        auto probe_boundaries = boundaries;
+        for (auto& b : probe_boundaries) {
+            b.temperature = 0;
+            b.power = 0;
+        }
+        const double power = capacity / half;
+        if (!(power > 0) || !std::isfinite(power))
+            return refused("Unrepresentable atmospheric response power.");
+        probe_boundaries[a.atmosphere].power = power;
+        const auto probe = solveThermalContacts(homogeneous, contacts, probe_boundaries, half);
+        if (!probe.error.empty())
+            return probe;
+        const double response = probe.temperature[a.water] / power;
+        if (!(response > 0) || !std::isfinite(response))
+            return refused("Unrepresentable atmospheric midpoint response.");
+        auto current = stores;
+        ThermalSolution out;
+        out.contact_j.assign(contacts.size(), 0);
+        out.boundary_j.assign(boundaries.size(), 0);
+        std::vector<double> ec(stores.size(), 0), cc(contacts.size(), 0), bc(boundaries.size(), 0);
+        MeshAtmosphericFlux average, correction;
+        bool retry = false;
+        for (int step = 0; step < steps; ++step) {
+            boundaries[a.atmosphere].power = 0;
+            const auto base = solveThermalContacts(current, contacts, boundaries, half);
+            if (!base.error.empty())
+                return base;
+            const double tbase = base.temperature[a.water];
+            const auto equation = [&](double t) {
+                return t - tbase + response * a.wet * outward(*a.mesh_heat, a.cell, t, 0).total();
+            };
+            double lo = -273.15 + 1e-9, hi = std::max(100., tbase + 100.);
+            double flo = equation(lo), fhi = equation(hi);
+            if (!std::isfinite(flo) || !std::isfinite(fhi))
+                return refused("Nonfinite nonlinear atmospheric flux.");
+            if (flo > 0 || fhi < 0) {
+                retry = true;
+                break;
+            }
+            for (int iteration = 0; iteration < 100; ++iteration) {
+                const double t = lo + .5 * (hi - lo), f = equation(t);
+                if (!std::isfinite(f))
+                    return refused("Nonfinite nonlinear atmospheric root.");
+                if (f > 0)
+                    hi = t;
+                else
+                    lo = t;
+                if (hi - lo <= 2e-13 * std::max(1., std::abs(t)))
+                    break;
+            }
+            const double middle = lo + .5 * (hi - lo);
+            const auto flux = outward(*a.mesh_heat, a.cell, middle, 0);
+            boundaries[a.atmosphere].power = -a.wet * flux.total();
+            const auto solved = solveThermalContacts(current, contacts, boundaries, half);
+            if (!solved.error.empty())
+                return solved;
+            const double end = 2 * solved.temperature[a.water] -
+                               current[a.water].energy / current[a.water].capacity;
+            double local_slope = 0;
+            for (double t : {middle, end, current[a.water].energy / current[a.water].capacity}) {
+                const double value = derivative(t);
+                if (!std::isfinite(value) || value < 0)
+                    return refused("Invalid atmospheric midpoint derivative.");
+                local_slope = std::max(local_slope, value);
+            }
+            if (!std::isfinite(end))
+                return refused("Nonfinite atmospheric midpoint state.");
+            if (!(end + 273.15 > 0) || local_slope < 0 ||
+                h * (double(rate[a.water]) - 2 * a.wet * slope + a.wet * local_slope) >
+                    2 * stores[a.water].capacity ||
+                std::abs(solved.temperature[a.water] - middle) >
+                    1e-10 * std::max(1., std::abs(middle))) {
+                retry = true;
+                break;
+            }
+            for (std::size_t k = 0; k < contacts.size(); ++k) {
+                const double j = 2 * solved.contact_j[k];
+                const auto& c = contacts[k];
+                add(current[c.a].energy, -j, ec[c.a]);
+                add(current[c.b].energy, j, ec[c.b]);
+                add(out.contact_j[k], j, cc[k]);
+            }
+            for (std::size_t k = 0; k < boundaries.size(); ++k) {
+                const double j = 2 * solved.boundary_j[k];
+                add(current[boundaries[k].store].energy, j, ec[boundaries[k].store]);
+                add(out.boundary_j[k], j, bc[k]);
+            }
+            add(average.radiation, flux.radiation / steps, correction.radiation);
+            add(average.sensible, flux.sensible / steps, correction.sensible);
+            for (const auto& store : current)
+                if (!std::isfinite(store.energy) || !std::isfinite(store.energy / store.capacity))
+                    return refused("Nonfinite atmospheric energy receipt.");
+            out.iterations += solved.iterations;
+            out.algebraic_residual =
+                std::max(out.algebraic_residual, 2 * solved.algebraic_residual);
+        }
+        if (retry)
+            continue;
+        for (const auto& store : current) {
+            out.energy.push_back(store.energy);
+            out.temperature.push_back(store.energy / store.capacity);
+        }
+        a.slope = 0;
+        a.flux0 = a.flux1 = average;
+        return out;
+    }
+    auto out = refused("Atmospheric midpoint subdivision limit exceeded; reduce the step.");
+    out.interval_limit = true;
+    return out;
+}
+/**
+ * @brief Assemble, solve and commit one surface/physical-ground finite thermal interval.
+ * @param[in] mesh Prepared SI mesh geometry.
+ * @param[in] options Resolved solver geometry/thermal controls.
+ * @param[in,out] h Live prepared heat owner and mutable per-cell diagnostics/bindings.
+ * @param[in] i Valid cell index across all owner/mesh vectors.
+ * @param[in] mass Mixed surface temperature-volume degC*m3 before intensive sinks.
+ * @param[in] volume Available surface water m3, nonnegative.
+ * @param[in] evaporated Accepted evaporation m3 whose producer-time heat is included in this
+ * solve.
+ * @param[in] dt Finite positive interval s.
+ * @param[in] midpoint True selects nonlinear atmospheric or finite-graph midpoint/RK2 solving;
+ * false selects the ordinary finite thermal solve.
+ * @return Updated surface temperature-volume degC*m3, or unchanged mass when no finite water
+ * store.
+ * @throws std::runtime_error Assembly or solver refusal. Allocation exceptions propagate.
+ * @note Uses current channel footprint, includes physical LID/snow contacts, then commits
+ * receipts and owner energy. Commit may flag a reciprocal snow refusal without throwing; caller
+ * checks failure diagnostics. Requires exclusive cell and coupled-owner access; not a rollback
+ * transaction.
+ */
+double groundColumnStep(const MeshData& mesh, const SolverOptions2D& options, MeshHeatState& h,
+                        int i, double mass, double volume, double evaporated, double dt,
+                        bool midpoint) {
+    std::vector<ThermalStore> stores;
+    std::vector<ThermalContact> contacts;
+    std::vector<ThermalBoundary> boundaries;
+    const double channel = h.channel_footprint.empty() ? 0 : h.channel_footprint[i];
+    auto assembled =
+        appendGroundColumnSystem(mesh, options, h.groundOwner(i), i, &h, mass, volume, evaporated,
+                                 dt, channel, stores, contacts, boundaries);
+    auto solved = midpoint && assembled.water >= 0 && (h.surface || h.radiative)
+                      ? solveAtmosphericColumnMidpoint(assembled, stores, contacts, boundaries, dt)
+                  : midpoint ? solveColumnMidpoint(assembled, stores, contacts, boundaries, dt)
+                             : solveThermalContacts(stores, contacts, boundaries, dt);
+    if (!solved.error.empty())
+        throw std::runtime_error(solved.error);
+    return commitGroundColumnSystem(assembled, solved);
+}
+}
+/**
+ * @brief Append one physical column and its finite surface/LID contacts to a shared thermal
+ * graph.
+ * @param[in] mesh Prepared SI mesh geometry.
+ * @param[in] options Resolved water geometry/thermal controls.
+ * @param[in,out] owner Prepared canonical physical ground owner. Borrowed in the returned
+ * assembly; physical energy is read here and committed later.
+ * @param[in] i Valid cell index with nonempty prepared layers/material arrays.
+ * @param[in,out] h Optional live surface heat owner; null omits the finite overland water store.
+ * @param[in] mass Mixed surface temperature-volume degC*m3.
+ * @param[in] volume Nonnegative available surface m3; only positive water creates a thermal
+ * store.
+ * @param[in] evaporated Accepted evaporating volume m3, used for latent flux before water
+ * removal.
+ * @param[in] dt Finite positive duration s.
+ * @param[in] channel_area Finite channel footprint m2 in [0,column.area], excluded along with
+ * LID footprints from overland/atmospheric ground contact.
+ * @param[in,out] stores Appended stores with capacity J/K and energy J; existing indices
+ * retained.
+ * @param[in,out] contacts Appended finite W/K links, shifted to global store indices.
+ * @param[in,out] boundaries Appended temperature/power records, shifted to this graph's stores.
+ * @return Assembly retaining borrowed owner pointers, exact index ranges, sampled flux and
+ * staged physical LID energy/receipts needed by commitGroundColumnSystem(). It must be used with
+ * this graph.
+ * @throws std::runtime_error Invalid footprint, LID binding/geometry, exhausted active capacity
+ * or snow/soil contact setup. Temporary/vector allocation may also throw.
+ * @note Appends progressively, so failure may leave graph vectors partly extended; callers stage
+ * the shared graph. Does not change canonical thermal energy, but reads external LID/snow
+ * owners. Requires stable topology, positive active capacities and exclusive graph/owner access
+ * through commit.
+ */
+GroundColumnAssembly appendGroundColumnSystem(const MeshData& mesh, const SolverOptions2D& options,
+                                              GroundHeatState& owner, int i, MeshHeatState* h,
+                                              double mass, double volume, double evaporated,
+                                              double dt, double channel_area,
+                                              std::vector<ThermalStore>& stores,
+                                              std::vector<ThermalContact>& contacts,
+                                              std::vector<ThermalBoundary>& boundaries) {
+    auto& c = owner.cells[i].column;
+    const auto& o = owner.config->options;
+    if (channel_area < 0 || channel_area > c.area || !std::isfinite(channel_area))
+        throw std::runtime_error("Channel thermal footprint exceeds its soil cell area.");
+    GroundColumnAssembly a;
+    a.owner = &owner;
+    a.mesh_heat = h;
+    a.cell = i;
+    a.mass = mass;
+    a.volume = volume;
+    a.evaporated = evaporated;
+    a.seconds = dt;
+    static const std::vector<GroundLidThermalOwner> no_lid_owners;
+    const auto& lid_owners =
+        std::size_t(i) < owner.lid_owners.size() ? owner.lid_owners[std::size_t(i)] : no_lid_owners;
+    double lid_area = 0;
+    if (!lid_owners.empty()) {
+        if (!owner.context)
+            throw std::runtime_error("Mesh LID contact has no simulation context.");
+        const double initial =
+            owner.context->heat_config.global_temp[static_cast<int>(HeatSource::INITIAL_STATE)];
+        for (const auto& binding : lid_owners) {
+            if (binding.row < 0 ||
+                std::size_t(binding.row) >=
+                    owner.context->node_subtypes.storages.lid_state.size() ||
+                !(binding.area > 0) || !std::isfinite(binding.area))
+                throw std::runtime_error("Invalid resolved Mesh LID thermal owner.");
+            const auto& state =
+                owner.context->node_subtypes.storages.lid_state[std::size_t(binding.row)];
+            if (!state.richards)
+                throw std::runtime_error(
+                    "Mesh LID ground contact requires a Richards layer state.");
+            GroundColumnAssembly::LidEnergy draft;
+            draft.row = binding.row;
+            if (auto error = buildLidNodeThermalGraph(state, 0, owner.water_capacity,
+                                                      owner.context->heat_config.conduction,
+                                                      initial, draft.graph);
+                !error.empty())
+                throw std::runtime_error(error);
+            if (!owner.context->heat_config.layer_conduction)
+                draft.graph.contacts.clear();
+            draft.first_store = int(stores.size());
+            draft.area = binding.area;
+            stores.insert(stores.end(), draft.graph.stores.begin(), draft.graph.stores.end());
+            draft.physical_energy = state.thermal_energy;
+            if (draft.physical_energy.empty()) {
+                draft.physical_energy.assign(state.cells.size(), 0);
+                for (std::size_t k = 0; k < draft.graph.cells.size(); ++k)
+                    draft.physical_energy[draft.graph.cells[k]] = draft.graph.stores[k].energy;
+            }
+            draft.physical_ground_contact_j = state.thermal_ground_contact_j;
+            if (draft.physical_ground_contact_j.empty())
+                draft.physical_ground_contact_j.assign(state.cells.size(), 0.0);
+            else if (draft.physical_ground_contact_j.size() != state.cells.size() ||
+                     std::any_of(draft.physical_ground_contact_j.begin(),
+                                 draft.physical_ground_contact_j.end(),
+                                 [](double x) { return !std::isfinite(x); }))
+                throw std::runtime_error(
+                    "Mesh LID ground-contact receipt shape or value is invalid.");
+            lid_area += binding.area;
+            a.lids.push_back(std::move(draft));
+        }
+    }
+    if (!std::isfinite(lid_area) || lid_area + channel_area > c.area * (1 + 1e-12))
+        throw std::runtime_error(
+            "Mesh LID and channel thermal footprints exceed their groundwater cell area.");
+    a.first_store = int(stores.size());
+    a.soil_count = int(c.energy.size());
+    for (std::size_t j = 0; j < c.energy.size(); ++j) {
+        const double capacity = owner.activeCapacity(i, j);
+        if (!(capacity > 0) || !std::isfinite(capacity))
+            throw std::runtime_error(
+                "Accepted groundwater export leaves no active thermal capacity in its soil layer.");
+        stores.push_back({capacity, c.energy[j]});
+    }
+    a.first_contact = contacts.size();
+    if (o.conduction)
+        for (auto contact : c.contacts()) {
+            contact.a += a.first_store;
+            contact.b += a.first_store;
+            contacts.push_back(contact);
+        }
+    a.vertical_count = contacts.size() - a.first_contact;
+    if (h && volume > 0) {
+        a.water = int(stores.size());
+        a.temperature = mass / volume;
+        a.water_initial_j = owner.water_capacity * mass;
+        stores.push_back({owner.water_capacity * volume, a.water_initial_j});
+        a.wet = inertial::cellWetArea(mesh, options, i, volume);
+        const double exposed_fraction = std::max(0., 1 - (channel_area + lid_area) / c.area);
+        const double contact_area = a.wet * exposed_fraction;
+        const auto& sc = sedimentFor(*h->context, HeatElement::cell2d(i));
+        if (o.conduction && contact_area > 0)
+            contacts.push_back(
+                {a.water, a.first_store,
+                 contact_area / (.5 * (c.depth_edges[1] - c.depth_edges[0]) / c.conductivity[0])});
+        double pores = 0;
+        for (std::size_t j = 0; j < c.energy.size(); ++j)
+            pores +=
+                c.theta[j] * c.area *
+                std::max(0., std::min(sc.bed_thickness, c.depth_edges[j + 1]) - c.depth_edges[j]);
+        if (h->hyporheic_eligible[i] && pores > 0 && sc.hyporheic_velocity > 0)
+            for (std::size_t j = 0; j < c.energy.size(); ++j) {
+                const double v = c.theta[j] * c.area *
+                                 std::max(0., std::min(sc.bed_thickness, c.depth_edges[j + 1]) -
+                                                  c.depth_edges[j]);
+                if (v > 0)
+                    contacts.push_back(
+                        {a.water, a.first_store + int(j),
+                         owner.water_capacity * sc.hyporheic_velocity * contact_area * v / pores});
+            }
+        const double evaporation = a.wet > 0 ? evaporated / (a.wet * dt) : 0;
+        a.flux0 = outward(*h, i, a.temperature, evaporation);
+        a.flux1 = outward(*h, i, a.temperature + kProbeC, evaporation);
+        a.slope = std::max(0., (a.flux1.total() - a.flux0.total()) / kProbeC);
+    }
+    a.contact_count = contacts.size() - a.first_contact;
+    a.first_boundary = boundaries.size();
+    std::vector<ThermalBoundary> ground;
+    const double snow_fraction = owner.snowContactFraction(i);
+    const double exposed_fraction = std::max(0., 1 - (channel_area + lid_area) / c.area);
+    const double bare_fraction = (1 - a.wet / c.area) * exposed_fraction;
+    a.top_count = owner.boundaries(i, bare_fraction * (1 - snow_fraction), ground);
+    a.ground_count = ground.size();
+    for (auto boundary : ground) {
+        boundary.store += a.first_store;
+        boundaries.push_back(boundary);
+    }
+    const double snow_area = std::max(0., c.area - a.wet) * exposed_fraction * snow_fraction;
+    if (owner.appendSnowContact(i, snow_area, boundaries))
+        a.snow_boundary = int(boundaries.size() - 1);
+    a.atmosphere = boundaries.size();
+    if (a.water >= 0)
+        boundaries.push_back({a.water, a.wet * a.slope, a.temperature, -a.wet * a.flux0.total()});
+    for (auto& lid : a.lids) {
+        for (const auto& vertical : lid.graph.contacts) {
+            lid.vertical_contacts.push_back(contacts.size());
+            contacts.push_back({int(lid.first_store) + vertical.a,
+                                int(lid.first_store) + vertical.b, vertical.conductance});
+        }
+        if (o.conduction) {
+            const auto& graph = lid.graph;
+            ThermalContact contact;
+            if (auto error = buildLidNodeGroundThermalContact(
+                    graph, stores.size(), a.first_store, lid.area, c.area,
+                    c.depth_edges[1] - c.depth_edges[0], c.conductivity.front(), 0, contact);
+                !error.empty())
+                throw std::runtime_error(error);
+            contact.a += lid.first_store;
+            lid.ground_contact = contacts.size();
+            contacts.push_back(contact);
+        }
+    }
+    return a;
+}
+/**
+ * @brief Publish an accepted shared thermal solution into one assembly's canonical owners.
+ * @param[in,out] a Live assembly from appendGroundColumnSystem() against the same graph.
+ * Physical LID staging buffers are consumed by swaps; repeated commit is invalid.
+ * @param[in] solved Successful complete solution with matching graph-indexed energies,
+ * temperatures, contact_j and boundary_j arrays. Most bounds/finiteness checks are caller
+ * preconditions.
+ * @return Updated surface temperature-volume degC*m3, or a.mass for no water/early LID
+ * validation failure. That unchanged return does not by itself indicate success; inspect owner
+ * failure flags.
+ * @note Validates staged LID energy/receipt layout, books vertical/ground/snow/water contact J,
+ * swaps LID energy/reciprocal receipts, replaces physical soil energy, refreshes bed views and
+ * records atmospheric components/temperature/evaporation. Snow refusal flags failure but later
+ * commits continue; no blanket rollback. Requires exclusive matching owners and nonthrowing
+ * dependencies: an unexpected exception inside this noexcept routine terminates. Does not
+ * publish hydraulic water or advance clocks.
+ */
+double commitGroundColumnSystem(GroundColumnAssembly& a, const ThermalSolution& solved) noexcept {
+    auto& owner = *a.owner;
+    auto& cell = owner.cells[a.cell];
+    auto& c = cell.column;
+    auto* h = a.mesh_heat;
+    for (const auto& lid : a.lids) {
+        if (lid.physical_ground_contact_j.size() != lid.graph.physical_thickness_m.size() ||
+            (lid.ground_contact != std::numeric_limits<std::size_t>::max() &&
+             (lid.graph.cells.empty() ||
+              lid.graph.cells.back() >= lid.physical_ground_contact_j.size() ||
+              lid.ground_contact >= solved.contact_j.size() ||
+              !std::isfinite(lid.physical_ground_contact_j[lid.graph.cells.back()] -
+                             solved.contact_j[lid.ground_contact])))) {
+            cell.failed = 1;
+            try {
+                cell.error = "Invalid solved Mesh LID ground-contact receipt.";
+            } catch (...) {
+            }
+            if (h)
+                h->failures[a.cell] = 1;
+            return a.mass;
+        }
+    }
+    for (auto& lid : a.lids) {
+        for (std::size_t k = 0; k < lid.graph.cells.size(); ++k) {
+            const auto index = lid.graph.cells[k];
+            const double energy = solved.energy[std::size_t(lid.first_store) + k];
+            if (index >= lid.physical_energy.size() || !std::isfinite(energy)) {
+                cell.failed = 1;
+                try {
+                    cell.error = "Invalid solved Mesh LID thermal energy layout.";
+                } catch (...) {
+                }
+                if (h)
+                    h->failures[a.cell] = 1;
+                return a.mass;
+            }
+            lid.physical_energy[index] = energy;
+        }
+    }
+    double contact = 0;
+    for (std::size_t k = 0; k < a.contact_count; ++k) {
+        const double j = solved.contact_j[a.first_contact + k];
+        if (k < a.vertical_count)
+            cell.vertical_absolute_j += std::abs(j);
+        else
+            contact += j;
+    }
+    cell.water_contact_j += contact;
+    if (h)
+        h->water_bed_j[a.cell] += contact;
+    for (std::size_t k = 0; k < a.ground_count; ++k) {
+        const double j = solved.boundary_j[a.first_boundary + k];
+        if (k < a.top_count)
+            cell.surface_j += j;
+        else {
+            cell.deep_j += j;
+            if (h)
+                h->ground_j[a.cell] += j;
+        }
+    }
+    if (a.snow_boundary >= 0) {
+        const double j = solved.boundary_j[std::size_t(a.snow_boundary)];
+        cell.surface_j += j;
+        if (auto error = owner.applySnowContactEnergy(a.cell, j); !error.empty()) {
+            cell.failed = 1;
+            try {
+                cell.error = error;
+            } catch (...) {
+            }
+            if (h)
+                h->failures[a.cell] = 1;
+        }
+    }
+    for (auto& lid : a.lids) {
+        auto& state = owner.context->node_subtypes.storages.lid_state[std::size_t(lid.row)];
+        state.thermal_energy.swap(lid.physical_energy);
+        for (const auto index : lid.vertical_contacts)
+            cell.vertical_absolute_j += std::abs(solved.contact_j[index]);
+        if (lid.ground_contact != std::numeric_limits<std::size_t>::max()) {
+            cell.lid_contact_j += solved.contact_j[lid.ground_contact];
+            lid.physical_ground_contact_j[lid.graph.cells.back()] -=
+                solved.contact_j[lid.ground_contact];
+        }
+        state.thermal_ground_contact_j.swap(lid.physical_ground_contact_j);
+    }
+    for (int j = 0; j < a.soil_count; ++j)
+        c.energy[j] = solved.energy[a.first_store + j];
+    if (h)
+        h->refreshBedView(a.cell);
+    if (a.water < 0)
+        return a.mass;
+    const double delta = solved.temperature[a.water] - a.temperature;
+    h->water_j[a.cell] += solved.energy[a.water] - a.water_initial_j;
+    h->atmospheric_j[a.cell] += solved.boundary_j[a.atmosphere];
+    h->evaporated_m3[a.cell] += a.evaporated;
+    const auto received = [&](double first, double second) {
+        return -a.wet * a.seconds *
+               (first + (a.slope > 0 ? (second - first) / kProbeC : 0) * delta);
+    };
+    h->radiative_j[a.cell] += received(a.flux0.radiation, a.flux1.radiation);
+    h->sensible_j[a.cell] += received(a.flux0.sensible, a.flux1.sensible);
+    h->latent_j[a.cell] += received(a.flux0.latent, a.flux1.latent);
+    h->reported_temperature[a.cell] = solved.temperature[a.water];
+    return solved.energy[a.water] / owner.water_capacity;
+}
+/**
+ * @brief Prepare optional surface thermal stores, porewater and physical ground ownership.
+ * @param[in,out] ctx Engine context with resolved water properties and heat configuration. Heat
+ * overrides are resolved here and its physical aquifer may gain surface_owned flags.
+ * @param[in] mesh SI mesh geometry with matching surface cell count/tags.
+ * @param[in,out] state Surface owner; clears heat first, allocates cell diagnostics/stores and
+ * resets transport.gained_bed when bed species are enabled.
+ * @param[in] options Resolved coupled heat and bed model controls; inherited exchange flags come
+ * from ctx. Disabled heat or missing surface temperature row leaves empty heat state.
+ * @param[in,out] aquifer Optional borrowed active porous-equilibrium ground owner, stable/alive
+ * through future surface contact solves. Matching populated cells are shared instead of
+ * duplicated.
+ * @param[in] coverage Optional mesh ownership mask; covered hydraulic cells without qualified
+ * physical thermal owners are rejected. Null means no explicit hydraulic coverage assertion.
+ * @return Empty for success/disabled mode; configuration/material/ownership diagnostic
+ * otherwise.
+ * @note LOCAL_STORAGE is refused over an active aquifer. GROUND_COLUMN creates standalone
+ * saturated columns only outside shared aquifer owners. Initializes local-bed porewater at zero
+ * native inventory. Initialization mutates progressively; failure/exception can leave partial
+ * heat state or external ownership flags. Requires exclusive access and prepared shapes;
+ * allocations/forcing parse can throw.
+ */
+std::string initializeMeshHeat(SimulationContext& ctx, const MeshData& mesh,
+                               SurfaceStateData& state, const SolverOptions2D& options,
+                               GroundHeatState* aquifer, const std::vector<uint8_t>* coverage) {
+    state.heat.clear();
+    if (!options.coupled_heat || !ctx.options.heat_transport || state.transport.temp_row < 0)
+        return {};
+    if (!(ctx.options.water_density > 0) || !(ctx.options.water_specific_heat > 0) ||
+        !std::isfinite(ctx.options.water_density) ||
+        !std::isfinite(ctx.options.water_specific_heat))
+        return "WATER_DENSITY and WATER_SPECIFIC_HEAT_CAPACITY must be finite and positive.";
+    if (options.bed_heat_model == 1 && ctx.twod_io.aquifer_state &&
+        ctx.twod_io.aquifer_state->active)
+        return "LOCAL_STORAGE cannot overlap an active aquifer; use GROUND_COLUMN after porous thermal coupling is qualified.";
+    auto& h = state.heat;
+    h.context = &ctx;
+    h.enabled = true;
+    h.bed = options.bed_heat_model > 0;
+    h.ground_column = options.bed_heat_model == 2;
+    h.surface_inherits = options.heat_surface < 0;
+    h.radiative_inherits = options.heat_radiative < 0;
+    h.surface =
+        options.heat_surface < 0 ? ctx.heat_config.surface_exchange : options.heat_surface != 0;
+    h.radiative = options.heat_radiative < 0 ? ctx.heat_config.radiative_exchange
+                                             : options.heat_radiative != 0;
+    if (h.bed && state.transport.n_species > 0) {
+        h.bed_species = state.transport.n_species;
+        h.bed_age_row = state.transport.age_row;
+        h.bed_temp_row = state.transport.temp_row;
+        state.transport.gained_bed.assign(static_cast<std::size_t>(h.bed_species), 0);
+    }
+    const auto errors = transport::heat::resolveHeatOverrides(ctx);
+    if (!errors.empty())
+        return errors.front();
+    const auto n = std::size_t(mesh.n_cells());
+    h.hyporheic_eligible.resize(n);
+    for (std::size_t i = 0; i < n; ++i)
+        h.hyporheic_eligible[i] = hyporheicEligible(ctx, mesh, int(i));
+    h.reported_temperature.assign(
+        n, ctx.heat_config.global_temp[static_cast<int>(HeatSource::INITIAL_STATE)]);
+    for (auto* row : {&h.atmospheric_j, &h.radiative_j, &h.sensible_j, &h.ground_j, &h.water_bed_j,
+                      &h.water_j, &h.latent_j, &h.evaporated_m3})
+        row->assign(n, 0);
+    h.failures.assign(n, 0);
+    h.ground_column_seconds.assign(n, 0);
+    if (h.ground_column) {
+        if (!ctx.twod_io.gw)
+            return "Ground-column boundary configuration is unavailable.";
+        h.aquifer_ground = aquifer;
+        h.aquifer_owned.assign(n, 0);
+        std::vector<unsigned char> standalone(n, 1);
+        for (std::size_t i = 0; i < n; ++i) {
+            const bool covered = ctx.twod_io.aquifer_state && ctx.twod_io.aquifer_state->active &&
+                                 coverage && i < coverage->size() && (*coverage)[i];
+            if (aquifer && aquifer->active() && !aquifer->cells[i].column.energy.empty()) {
+                h.aquifer_owned[i] = 1;
+                standalone[i] = 0;
+                // The overland marcher owns this shared column only when it
+                // has an active surface-temperature row. Without one, leave
+                // conduction to the groundwater clock (including LID contact).
+                aquifer->cells[i].surface_owned = state.transport.temp_row >= 0;
+            } else if (covered)
+                return "GROUND_COLUMN over an aquifer requires POROUS_EQUILIBRIUM and groundwater temperature transport.";
+        }
+        if (auto error =
+                h.standalone_ground.initializeStandalone(ctx, mesh, *ctx.twod_io.gw, standalone);
+            !error.empty())
+            return error;
+        h.bed_energy.resize(n);
+        h.bed_capacity.resize(n);
+        for (std::size_t i = 0; i < n; ++i)
+            h.refreshBedView(int(i));
+        h.initial_bed_energy = h.bed_energy;
+        return {};
+    }
+    if (h.bed) {
+        h.bed_energy.resize(n);
+        h.bed_capacity.resize(n);
+        h.ground_now = groundTemperature(ctx);
+        for (std::size_t i = 0; i < n; ++i) {
+            const auto& sc = sedimentFor(ctx, HeatElement::cell2d(int(i)));
+            // New-model density/cp describe the solid phase. Porewater is
+            // an additional finite store; the legacy channel bed is untouched.
+            const double cap =
+                ((1 - sc.mesh_porosity) * sc.sed_density * sc.sed_specific_heat +
+                 sc.mesh_porosity * ctx.options.water_density * ctx.options.water_specific_heat) *
+                mesh.tri_area[i] * sc.bed_thickness;
+            if (!(cap > 0) || !std::isfinite(cap))
+                return "Mesh bed heat capacity must be finite and positive.";
+            h.bed_capacity[i] = cap;
+            const double initial =
+                sc.has_initial_temp ? sc.initial_temp : groundTempFor(ctx, sc, h.ground_now);
+            h.bed_energy[i] = cap * initial;
+        }
+        h.initial_bed_energy = h.bed_energy;
+        // The fixed local-bed pore volume is a physical storage property,
+        // even when quality transport is disabled. Quality mass arrays below
+        // are optional, but the result interface must still expose this store.
+        h.bed_pore_volume.resize(n);
+        for (std::size_t i = 0; i < n; ++i) {
+            const auto& sc = sedimentFor(ctx, HeatElement::cell2d(int(i)));
+            h.bed_pore_volume[i] = mesh.tri_area[i] * sc.bed_thickness * sc.mesh_porosity;
+            if (!std::isfinite(h.bed_pore_volume[i]))
+                return "Local bed porewater volume must be finite.";
+        }
+        if (state.transport.n_species > 0) {
+            h.bed_carried_mass.assign(n * h.bed_species, 0);
+            h.bed_initial_mass = h.bed_carried_mass;
+            h.bed_exchange_mass = h.bed_carried_mass;
+            h.bed_generated_age.assign(n, 0);
+        }
+    }
+    return {};
+}
+/**
+ * @brief Map persistent Mesh Richards LID thermal owners onto physical ground cells.
+ * @param[in] ctx Prepared node subtype/config/state arrays; physical LID geometry is native ft
+ * units.
+ * @param[in] mesh SI cell geometry and areas.
+ * @param[in,out] owner Replaces lid_owners with a mesh-sized mapping; inactive returns after
+ * clearing.
+ * @param[in] beds Resolved exchange beds with valid zero-based node/cell IDs and optional SI
+ * area. Only configured MeshAquifer LIDs participate; invalid/unrelated bindings are skipped.
+ * @return Empty on success; diagnostic for duplicate node owners, absent Richards layers,
+ * invalid footprint or total LID overlap exceeding the mesh cell area.
+ * @note Footprint is min(resolved bed area, bottom LID native area converted to m2, mesh area).
+ * Sorts each cell's owners by node for deterministic assembly. Does not alter LID energy or
+ * water; validation can leave partial mapping and allocation can throw. Caller serializes owner
+ * rebuild.
+ */
+std::string configureGroundLidOwners(SimulationContext& ctx, const MeshData& mesh,
+                                     GroundHeatState& owner, const std::vector<GwNodeBed>& beds) {
+    owner.lid_owners.assign(mesh.n_cells(), {});
+    if (!owner.active())
+        return {};
+    constexpr double ft2_to_m2 = .09290304;
+    std::vector<double> areas(mesh.n_cells(), 0);
+    std::set<int> seen;
+    const auto& storage = ctx.node_subtypes.storages;
+    for (const auto& bed : beds) {
+        if (!bed.exchange || bed.node < 0 || bed.node >= ctx.n_nodes() || bed.cell < 0 ||
+            bed.cell >= mesh.n_cells())
+            continue;
+        const int row = ctx.node_subtypes.storage_row(bed.node);
+        if (row < 0 || std::size_t(row) >= storage.lid.size() ||
+            std::size_t(row) >= storage.lid_state.size())
+            continue;
+        const auto& config = storage.lid[std::size_t(row)];
+        if (config.control < 0 || config.bottom != LidNodeBottom::MeshAquifer)
+            continue;
+        if (!seen.insert(bed.node).second)
+            return "Mesh Richards LID has duplicate resolved groundwater bed owners.";
+        const auto& lid = storage.lid_state[std::size_t(row)];
+        if (!lid.richards || lid.cells.empty())
+            return "Mesh LID heat requires a persistent Richards layer state.";
+        const double bed_area = bed.area > 0 ? bed.area : mesh.tri_area[std::size_t(bed.cell)];
+        const double lid_area = lid.cells.back().area * ft2_to_m2;
+        const double area = std::min({bed_area, lid_area, mesh.tri_area[std::size_t(bed.cell)]});
+        if (!(area > 0) || !std::isfinite(area))
+            return "Mesh LID thermal contact has no positive mapped overlap area.";
+        auto& total = areas[std::size_t(bed.cell)];
+        total += area;
+        if (!std::isfinite(total) || total > mesh.tri_area[std::size_t(bed.cell)] * (1 + 1e-12))
+            return "Mesh Richards LID footprints overlap beyond their groundwater cell area.";
+        owner.lid_owners[std::size_t(bed.cell)].push_back({bed.node, row, area});
+    }
+    for (auto& rows : owner.lid_owners)
+        std::sort(rows.begin(), rows.end(),
+                  [](const auto& a, const auto& b) { return a.node < b.node; });
+    return {};
+}
+/**
+ * @brief Exchange one native surface row with finite bed porewater.
+ * @param[in] mesh Prepared SI mesh geometry.
+ * @param[in,out] h Prepared bed/physical-ground owner and per-cell failure/receipt storage.
+ * @param[in] i Valid cell across mesh/material/diagnostic arrays; some failure paths index
+ * without guards.
+ * @param[in] r Native species row (temperature is skipped), matching bed/porewater identity.
+ * @param[in] mass Beginning surface native inventory (concentration*m3), finite nonnegative.
+ * @param[in] volume Available water m3, finite nonnegative; dry residue does not exchange.
+ * @param[in] dt Finite positive duration s.
+ * @return Updated surface native inventory for caller publication. Physical porewater or local
+ * bed inventory changes by the equal opposite accepted amount. Does not transfer water or age
+ * species.
+ * @note Disabled heat/bed, temperature/invalid row or nonpositive duration/water returns mass.
+ * GROUND_COLUMN uses a single backward-Euler star solve against physical porewater layers,
+ * excluding reserved native exports and channel footprint; stages updates before commit.
+ * LOCAL_STORAGE uses the exact finite water/bed pair and records bed_exchange_mass. Invalid
+ * physical/result data marks h.failures[i] and returns original mass. Allocations occur inside
+ * noexcept and can terminate; this interface does not promise exception recovery. No canonical
+ * surface species slot is written.
+ */
+double applyLocalBedSpecies(const MeshData& mesh, MeshHeatState& h, int i, int r, double mass,
+                            double volume, double dt) noexcept {
+    if (!h.enabled || !h.bed || r == h.bed_temp_row || r < 0 || r >= h.bed_species ||
+        !(volume > 0) || !(dt > 0))
+        return mass;
+    const auto& sc = sedimentFor(*h.context, HeatElement::cell2d(i));
+    if (h.ground_column) {
+        if (i < 0 || std::size_t(i) >= h.aquifer_owned.size() || !h.aquifer_owned[i] ||
+            !h.aquifer_ground || std::size_t(i) >= h.aquifer_ground->cells.size() ||
+            !(sc.bed_thickness > 0) || !std::isfinite(sc.bed_thickness) ||
+            sc.solute_diffusivity < 0 || !std::isfinite(sc.solute_diffusivity) ||
+            sc.hyporheic_velocity < 0 || !std::isfinite(sc.hyporheic_velocity) ||
+            !std::isfinite(mass) || mass < 0) {
+            h.failures[i] = 1;
+            return mass;
+        }
+        auto& ground = h.aquifer_ground->cells[std::size_t(i)];
+        auto& pore = ground.porewater;
+        const auto& column = ground.column;
+        const auto nl = column.theta.size();
+        if (!pore.active() || std::size_t(r) >= std::size_t(pore.n_species) ||
+            pore.n_species != h.bed_species || column.depth_edges.size() != nl + 1 ||
+            pore.mass.size() != std::size_t(pore.n_species) * nl ||
+            pore.retention.size() != pore.mass.size() ||
+            pore.reserved_out.size() != pore.mass.size() || !std::isfinite(column.area) ||
+            !(column.area > 0)) {
+            h.failures[i] = 1;
+            return mass;
+        }
+        const double mesh_area = mesh.tri_area[std::size_t(i)];
+        const double channel_area =
+            h.channel_footprint.empty() ? 0.0 : h.channel_footprint[std::size_t(i)];
+        if (!(mesh_area > 0) || !std::isfinite(mesh_area) || channel_area < 0 ||
+            !std::isfinite(channel_area) || channel_area > mesh_area * (1 + 1e-10)) {
+            h.failures[i] = 1;
+            return mass;
+        }
+        const double contact_area = std::max(0.0, mesh_area - std::min(channel_area, mesh_area));
+        const double velocity =
+            std::size_t(i) < h.hyporheic_eligible.size() && h.hyporheic_eligible[std::size_t(i)]
+                ? sc.hyporheic_velocity
+                : 0.0;
+        const double rate = sc.solute_diffusivity / sc.bed_thickness + velocity;
+        if (!(contact_area > 0) || !(rate > 0))
+            return mass;
+        double total_pore_overlap = 0;
+        for (std::size_t j = 0; j < nl; ++j) {
+            const double overlap = std::max(
+                0.0, std::min(column.depth_edges[j + 1], sc.bed_thickness) - column.depth_edges[j]);
+            total_pore_overlap += column.theta[j] * overlap;
+        }
+        if (!(total_pore_overlap > 0))
+            return mass;
+
+        // The surface store contacts every fixed soil layer intersected by
+        // the bed. Solve this star-shaped finite system as one backward-Euler
+        // update; sequential pair updates would make the result depend on
+        // layer order. Reserved accepted groundwater exports remain outside
+        // the contact donor inventory until their owning gather settles them.
+        std::vector<double> qdt(nl, 0.0), active_mass(nl, 0.0), capacity(nl, 0.0);
+        const auto base = std::size_t(r) * nl;
+        double denominator = volume, numerator = mass;
+        for (std::size_t j = 0; j < nl; ++j) {
+            const double overlap = std::max(
+                0.0, std::min(column.depth_edges[j + 1], sc.bed_thickness) - column.depth_edges[j]);
+            if (!(overlap > 0) || !(column.theta[j] > 0))
+                continue;
+            const double bulk = column.area * (column.depth_edges[j + 1] - column.depth_edges[j]);
+            capacity[j] = column.theta[j] * bulk + pore.retention[base + j];
+            active_mass[j] = pore.contactAvailableMass(r, j);
+            qdt[j] = dt * rate * contact_area * (column.theta[j] * overlap / total_pore_overlap);
+            if (!(capacity[j] > 0) || !std::isfinite(capacity[j]) ||
+                !std::isfinite(active_mass[j]) || active_mass[j] < 0 || !std::isfinite(qdt[j]) ||
+                qdt[j] < 0) {
+                h.failures[i] = 1;
+                return mass;
+            }
+            if (qdt[j] == 0)
+                continue;
+            const double conductance_dt = qdt[j];
+            const double denominator_j = capacity[j] + conductance_dt;
+            const double weight = conductance_dt * capacity[j] / denominator_j;
+            denominator += weight;
+            numerator += weight * (active_mass[j] / capacity[j]);
+        }
+        if (!(denominator > 0) || !std::isfinite(denominator) || !std::isfinite(numerator)) {
+            h.failures[i] = 1;
+            return mass;
+        }
+        const double surface_concentration = numerator / denominator;
+        if (!std::isfinite(surface_concentration) || surface_concentration < 0) {
+            h.failures[i] = 1;
+            return mass;
+        }
+        auto next = pore;
+        double total_transfer = 0;
+        for (std::size_t j = 0; j < nl; ++j)
+            if (qdt[j] > 0) {
+                const double soil_concentration =
+                    (active_mass[j] + qdt[j] * surface_concentration) / (capacity[j] + qdt[j]);
+                const double increment = qdt[j] * (surface_concentration - soil_concentration);
+                if (!std::isfinite(increment) ||
+                    !next.canApplyContactMassIncrement(r, j, increment) ||
+                    !next.applyContactMassIncrement(r, j, increment)) {
+                    h.failures[i] = 1;
+                    return mass;
+                }
+                total_transfer += increment;
+            }
+        const double next_surface = mass - total_transfer;
+        if (!std::isfinite(total_transfer) || !std::isfinite(next_surface) || next_surface < 0) {
+            h.failures[i] = 1;
+            return mass;
+        }
+        pore = std::move(next);
+        return next_surface;
+    }
+    if (i < 0 || std::size_t(i) >= h.bed_pore_volume.size())
+        return mass;
+    const double pores = h.bed_pore_volume[std::size_t(i)];
+    if (!(pores > 0))
+        return mass;
+    const auto k = std::size_t(r) * h.bed_pore_volume.size() + std::size_t(i);
+    const double q = mesh.tri_area[std::size_t(i)] *
+                     (sc.solute_diffusivity / sc.bed_thickness +
+                      (h.hyporheic_eligible[std::size_t(i)] ? sc.hyporheic_velocity : 0));
+    if (!(q > 0))
+        return mass;
+    const auto delta =
+        exchangePair(mass / volume, h.bed_carried_mass[k] / pores, volume, pores, q, dt);
+    const double next = volume * (mass / volume + delta.dc_w), transfer = mass - next,
+                 bed = h.bed_carried_mass[k] + transfer;
+    if (!std::isfinite(q) || !std::isfinite(next) || !std::isfinite(bed) || next < 0 || bed < 0 ||
+        !std::isfinite(h.bed_exchange_mass[k] + transfer)) {
+        h.failures[i] = 1;
+        return mass;
+    }
+    h.bed_carried_mass[k] = bed;
+    h.bed_exchange_mass[k] += transfer;
+    return next;
+}
+/**
+ * @brief Exchange one native surface row with finite bed porewater for an Euler RK2 stage.
+ * @param[in] mesh Prepared SI mesh geometry.
+ * @param[in,out] h Prepared bed/physical-ground owner and per-cell failure/receipt storage.
+ * @param[in] i Valid cell across mesh/material/diagnostic arrays; some failure paths index
+ * without guards.
+ * @param[in] r Native species row (temperature is skipped), matching bed/porewater identity.
+ * @param[in] mass Beginning surface native inventory (concentration*m3), finite nonnegative.
+ * @param[in] volume Available water m3, finite nonnegative; dry residue does not exchange.
+ * @param[in] dt Finite positive duration s.
+ * @return Updated surface native inventory for caller publication. Physical porewater or local
+ * bed inventory changes by the equal opposite accepted amount. Does not transfer water or age
+ * species.
+ * @throws std::runtime_error Invalid finite porewater contact, overdraw or invalid result;
+ * std::out_of_range can propagate for invalid cell geometry. Allocations can also throw.
+ * @note This Euler path requires an owned active aquifer porewater column. Uses beginning-state
+ * donor budgets: incoming soil mass cannot fund an outgoing surface export in the same stage.
+ * Caps donor exports and stages porewater updates before commit. No reported failure commits
+ * porewater; caller wraps the larger RK2 water/species transaction.
+ */
+double applyLocalBedSpeciesEuler(const MeshData& mesh, MeshHeatState& h, int i, int r, double mass,
+                                 double volume, double dt) {
+    if (r == h.bed_temp_row)
+        return mass;
+    const auto refused = []() {
+        throw std::runtime_error("Invalid RK2 finite porewater contact.");
+    };
+    const auto& sc = sedimentFor(*h.context, HeatElement::cell2d(i));
+    if (!std::isfinite(mass) || mass < 0 || !std::isfinite(volume) || volume < 0 || !(dt > 0) ||
+        !std::isfinite(dt) || !(sc.bed_thickness > 0) || !std::isfinite(sc.bed_thickness) ||
+        sc.solute_diffusivity < 0 || !std::isfinite(sc.solute_diffusivity) ||
+        sc.hyporheic_velocity < 0 || !std::isfinite(sc.hyporheic_velocity))
+        refused();
+    auto& cell = h.aquifer_ground->cells.at(std::size_t(i));
+    auto& pore = cell.porewater;
+    const auto& column = cell.column;
+    const auto nl = column.theta.size(), base = std::size_t(r) * nl;
+    if (r < 0 || r >= pore.n_species || pore.n_species != h.bed_species ||
+        pore.retention.size() != std::size_t(pore.n_species) * nl ||
+        cell.reserved_out_water.size() != nl)
+        refused();
+    // Dry residue remains in its current inventory; it cannot participate
+    // in a finite aqueous contact before the surface rewets.
+    if (!(volume > 0))
+        return mass;
+    const double area = mesh.tri_area.at(std::size_t(i));
+    const double velocity = std::size_t(i) < h.hyporheic_eligible.size() && h.hyporheic_eligible[i]
+                                ? sc.hyporheic_velocity
+                                : 0;
+    const double rate = sc.solute_diffusivity / sc.bed_thickness + velocity;
+    if (!(area > 0) || !std::isfinite(area) || !std::isfinite(rate))
+        refused();
+    double overlap_total = 0;
+    for (std::size_t j = 0; j < nl; ++j)
+        overlap_total +=
+            column.theta[j] * std::max(0., std::min(column.depth_edges[j + 1], sc.bed_thickness) -
+                                               column.depth_edges[j]);
+    if (!(overlap_total > 0) || rate == 0)
+        return mass;
+    std::vector<double> delta(nl, 0);
+    double outgoing = 0;
+    for (std::size_t j = 0; j < nl; ++j) {
+        const double overlap = std::max(0., std::min(column.depth_edges[j + 1], sc.bed_thickness) -
+                                                column.depth_edges[j]);
+        const double available = pore.contactAvailableMass(r, j);
+        const double water =
+            column.theta[j] * column.area * (column.depth_edges[j + 1] - column.depth_edges[j]) -
+            cell.reserved_out_water[j];
+        const double capacity = water + pore.retention[base + j];
+        if (!std::isfinite(available) || available < 0 || !std::isfinite(water) || water < 0 ||
+            !std::isfinite(capacity) || capacity < 0)
+            refused();
+        if (!(overlap > 0) || !(column.theta[j] > 0) || !(capacity > 0))
+            continue;
+        const double conductance = rate * area * (column.theta[j] * overlap / overlap_total);
+        const double transfer = dt * conductance * (mass / volume - available / capacity);
+        if (!std::isfinite(transfer))
+            refused();
+        delta[j] = std::max(-available, transfer);
+        if (delta[j] > 0)
+            outgoing += delta[j];
+    }
+    if (!std::isfinite(outgoing))
+        refused();
+    // Incoming soil mass never funds an export in the same Euler stage.
+    const double scale = outgoing > mass ? std::nextafter(mass / outgoing, 0.) : 1.;
+    auto next = pore;
+    double result = mass;
+    // Settle surface debits first against their representable remainder.
+    // Summing scaled exports and subtracting once can overdraw by one ulp
+    // even when their proportional scale was rounded downward.
+    for (int pass = 0; pass < 2; ++pass)
+        for (std::size_t j = 0; j < nl; ++j) {
+            if ((delta[j] > 0) != (pass == 0))
+                continue;
+            if (delta[j] > 0)
+                delta[j] = std::min(delta[j] * scale, result);
+            if (!next.applyContactMassIncrement(r, j, delta[j])) {
+                std::ostringstream error;
+                error.precision(17);
+                error << "RK2 porewater contact donor at cell " << i << ", species " << r
+                      << ", layer " << j << ": mass=" << next.mass[base + j]
+                      << ", reserved=" << next.reserved_out[base + j] << ", increment=" << delta[j];
+                throw std::runtime_error(error.str());
+            }
+            result -= delta[j];
+        }
+    if (!std::isfinite(result) || result < 0) {
+        std::ostringstream error;
+        error.precision(17);
+        error << "RK2 surface contact donor at cell " << i << ", species " << r << ": mass=" << mass
+              << ", remainder=" << result;
+        throw std::runtime_error(error.str());
+    }
+    pore = std::move(next);
+    return result;
+}
+/**
+ * @brief Advance the local-storage porewater age inventory without altering water volume.
+ * @param[in,out] h Prepared local bed with row-major mass and per-cell generated-age counters.
+ * @param[in] dt Finite positive age interval s.
+ * @return True for success or disabled/inapplicable mode; false for invalid active interval or
+ * any nonfinite resulting age sum. Preflights every cell before writing, so false preserves
+ * inventories.
+ * @note Adds dt*fixed_pore_volume in s*m3 to the age row and generation ledger, including dry
+ * surface cells. Physical ground-column age is owned elsewhere. Requires matching allocated
+ * arrays and exclusive access; no allocation, water transfer or engine clock change occurs.
+ */
+bool ageLocalBedPorewater(MeshHeatState& h, double dt) noexcept {
+    if (!h.enabled || h.ground_column || h.bed_age_row < 0 || h.bed_pore_volume.empty())
+        return true;
+    if (!(dt > 0) || !std::isfinite(dt))
+        return false;
+    const auto n = h.bed_pore_volume.size(), base = std::size_t(h.bed_age_row) * n;
+    for (std::size_t i = 0; i < n; ++i)
+        if (!std::isfinite(h.bed_carried_mass[base + i] + dt * h.bed_pore_volume[i]) ||
+            !std::isfinite(h.bed_generated_age[i] + dt * h.bed_pore_volume[i]))
+            return false;
+    for (std::size_t i = 0; i < n; ++i) {
+        const double generated = dt * h.bed_pore_volume[i];
+        h.bed_carried_mass[base + i] += generated;
+        h.bed_generated_age[i] += generated;
+    }
+    return true;
+}
+/**
+ * @brief Rebuild reported bed energy/capacity from the physical ground column's upper bed
+ * thickness.
+ * @param[in] i Valid prepared cell across ownership, physical layers, bed_energy/bed_capacity
+ * and context material arrays; unchecked.
+ * @note Returns for non-ground-column mode. Integrates fractional overlap with configured bed
+ * thickness, using canonical J and active J/K after reserved water. Writes derived bed vectors
+ * only; no physical energy or water is changed. Requires stable owner/material binding; no
+ * allocation.
+ */
+void MeshHeatState::refreshBedView(int i) {
+    if (!ground_column)
+        return;
+    const auto& c = groundOwner(i).cells[i].column;
+    const double thickness = sedimentFor(*context, HeatElement::cell2d(i)).bed_thickness;
+    double e = 0, cap = 0;
+    for (std::size_t j = 0; j < c.energy.size(); ++j) {
+        const double fraction = std::clamp(
+            (thickness - c.depth_edges[j]) / (c.depth_edges[j + 1] - c.depth_edges[j]), 0., 1.);
+        e += fraction * c.energy[j];
+        cap += fraction * groundOwner(i).activeCapacity(i, j);
+    }
+    bed_energy[i] = e;
+    bed_capacity[i] = cap;
+}
+/**
+ * @brief Carry accepted infiltration heat through a standalone saturated physical soil column.
+ * @param[in,out] h Prepared ground-column surface heat owner and per-cell diagnostics.
+ * @param[in] i Valid prepared cell; aquifer-owned cells are skipped. Ownership index is
+ * unchecked.
+ * @param[in] volume Positive accepted water m3; nonpositive/NaN returns without work.
+ * @param[in] donor Finite producer temperature degC, not the post-withdrawal surface
+ * temperature.
+ * @note Uses downward implicit upwind substitution through fixed-capacity physical layers and
+ * equal bottom displacement. Preflights energy arithmetic, flags nonfinite results and leaves
+ * physical energy unchanged on that refusal. On success updates layer J, net advective_j and
+ * derived bed view. Does not change fixed porewater volume or hydraulic storage; requires
+ * exclusive cell access and nonthrowing prepared material dependencies under noexcept.
+ */
+void advectStandaloneGround(MeshHeatState& h, int i, double volume, double donor) noexcept {
+    if (!h.ground_column || h.aquifer_owned[i] || !(volume > 0))
+        return;
+    auto& owner = h.standalone_ground;
+    auto& cell = owner.cells[i];
+    auto& c = cell.column;
+    const double carried = volume * owner.water_capacity, input = carried * donor;
+    // Downward implicit upwind throughflow. The forward substitution solves
+    // every finite layer and the outlet together; large accepted volumes do
+    // not drain more heat than is available or require temperature clipping.
+    const double inlet = donor;
+    if (!std::isfinite(carried) || !std::isfinite(input)) {
+        h.failures[i] = 1;
+        return;
+    }
+    for (std::size_t j = 0; j < c.energy.size(); ++j) {
+        const double next = (c.energy[j] + carried * donor) / (c.capacity[j] + carried);
+        if (!std::isfinite(next) || !std::isfinite(c.energy[j] + carried * (donor - next))) {
+            h.failures[i] = 1;
+            return;
+        }
+        donor = next;
+    }
+    if (!std::isfinite(cell.advective_j + input - carried * donor)) {
+        h.failures[i] = 1;
+        return;
+    }
+    donor = inlet;
+    for (std::size_t j = 0; j < c.energy.size(); ++j) {
+        const double next = (c.energy[j] + carried * donor) / (c.capacity[j] + carried);
+        c.energy[j] += carried * (donor - next);
+        donor = next;
+    }
+    cell.advective_j += input - carried * donor;
+    h.refreshBedView(i);
+}
+/**
+ * @brief Prepare inherited exchange flags, weather and fresh per-cell thermal interval
+ * accounting.
+ * @param[in,out] ctx Live engine context; may update solar forcing when radiation is active.
+ * @param[in,out] state Prepared surface owner; resets ground_column_seconds, refreshes inherited
+ * surface/radiative flags, ground_now and standalone ground boundary cache as applicable.
+ * @param[in] dt Router interval s forwarded to solar forcing; caller supplies a finite valid
+ * duration.
+ * @note Disabled heat returns. Does not advance physical energy or clear cumulative J receipts.
+ * Standalone prepare() may throw on invalid thermal forcing after earlier cache changes;
+ * requires serial access to shared forcing and all prepared heat arrays.
+ */
+void prepareMeshHeat(SimulationContext& ctx, SurfaceStateData& state, double dt) {
+    if (!state.heat.enabled)
+        return;
+    std::fill(state.heat.ground_column_seconds.begin(), state.heat.ground_column_seconds.end(), 0);
+    if (state.heat.surface_inherits)
+        state.heat.surface = ctx.heat_config.surface_exchange;
+    if (state.heat.radiative_inherits)
+        state.heat.radiative = ctx.heat_config.radiative_exchange;
+    if (state.heat.radiative)
+        climate::updateSolarForcing(ctx, dt, true);
+    if (state.heat.bed)
+        state.heat.ground_now = groundTemperature(ctx);
+    if (state.heat.ground_column)
+        state.heat.standalone_ground.prepare();
+}
+/**
+ * @brief Update one mixed surface thermal sample before accepted intensive water sinks.
+ * @param[in] mesh Prepared SI mesh geometry.
+ * @param[in] options Resolved wetted-geometry and thermal controls.
+ * @param[in,out] h Prepared live thermal owner and diagnostics, exclusively accessed for this
+ * cell and any coupled LID/snow/ground owners touched by its finite solve.
+ * @param[in] i Valid cell across mesh, heat, material and physical owner arrays, unchecked.
+ * @param[in] mass Mixed pre-sink temperature-volume degC*m3; dry residue is retained.
+ * @param[in] volume Available mixed water m3, nonnegative.
+ * @param[in] evaporated Accepted evaporation m3, whose sensible/latent thermal effects apply
+ * before the caller removes water, including complete drying.
+ * @param[in] dt Positive duration s; nonpositive/NaN returns mass. Caller supplies finite
+ * controls.
+ * @param[in] midpoint True selects midpoint/RK2 only for physical ground-column mode; local bed
+ * mode uses its exact affine pair regardless of this flag.
+ * @return Updated degC*m3 for caller publication; mass on skipped/refused work. Dry cells can
+ * still conduct their bed and update reported dry temperature according to policy.
+ * @note Physical mode counts attempted interval before solving, catches solve exceptions, flags
+ * failure and retains input mass. Commit diagnostics/reciprocal-owner effects may already be
+ * changed on a late refusal. Local mode checks finite updates then books bed,
+ * atmospheric/deep/water J, component receipts and reported temperature. Does not remove water
+ * or write surface transport slots. Unexpected throwing dependencies outside the guarded
+ * physical path terminate under noexcept.
+ */
+double applyMeshHeatCell(const MeshData& mesh, const SolverOptions2D& options, MeshHeatState& h,
+                         int i, double mass, double volume, double evaporated, double dt,
+                         bool midpoint) noexcept {
+    if (!h.enabled || !(dt > 0))
+        return mass;
+    const auto& ctx = *h.context;
+    const auto elem = HeatElement::cell2d(i);
+    if (h.ground_column) {
+        if (std::size_t(i) < h.ground_column_seconds.size()) {
+            auto& applied = h.ground_column_seconds[i];
+            applied += dt;
+            if (!std::isfinite(applied)) {
+                applied = 0;
+                h.failures[i] = 1;
+            }
+        }
+        try {
+            const double updated =
+                groundColumnStep(mesh, options, h, i, mass, volume, evaporated, dt, midpoint);
+            if (!(volume > 0)) {
+                if (ctx.heat_config.dry_temp_policy == DryTempPolicy::AIR)
+                    h.reported_temperature[i] = airTempCelsius(ctx);
+                else if (ctx.heat_config.dry_temp_policy == DryTempPolicy::DEFAULT)
+                    h.reported_temperature[i] = HeatConfigData::kDefaultTemp;
+            }
+            return updated;
+        } catch (const std::exception& e) {
+            h.failures[i] = 1;
+            try {
+                h.groundOwner(i).cells[i].error = e.what();
+            } catch (...) {
+            }
+            return mass;
+        } catch (...) {
+            h.failures[i] = 1;
+            return mass;
+        }
+    }
+    const double rho = ctx.options.water_density, cp = ctx.options.water_specific_heat;
+    const auto& sc = sedimentFor(ctx, elem);
+    const double area = mesh.tri_area[i],
+                 k = sc.thermal_diffusivity * sc.sed_density * sc.sed_specific_heat;
+    const double tground = groundTempFor(ctx, sc, h.ground_now);
+    const double gb = h.bed && sc.ground_depth > 0 ? k * area / sc.ground_depth : 0;
+    if (!(volume > 0)) {
+        if (h.bed) {
+            const double old = h.bed_energy[i], tb = old / h.bed_capacity[i];
+            const double delta =
+                h.bed_capacity[i] * (tground - tb) * (-std::expm1(-gb * dt / h.bed_capacity[i]));
+            h.bed_energy[i] += delta;
+            h.ground_j[i] += delta;
+        }
+        if (ctx.heat_config.dry_temp_policy == DryTempPolicy::AIR)
+            h.reported_temperature[i] = airTempCelsius(ctx);
+        else if (ctx.heat_config.dry_temp_policy == DryTempPolicy::DEFAULT)
+            h.reported_temperature[i] = HeatConfigData::kDefaultTemp;
+        return mass;
+    }
+    const double tw = mass / volume;
+    double eta = 0, depth = 0;
+    inertial::cellEtaDepth(mesh, options, i, volume, eta, depth);
+    const double wet = depth > 0 ? std::clamp(volume / depth, 0.0, area) : 0;
+    const double evap_rate = wet > 0 ? evaporated / (wet * dt) : 0;
+    const auto flux0 = outward(h, i, tw, evap_rate), flux1 = outward(h, i, tw + kProbeC, evap_rate);
+    const double j0 = flux0.total(), j1 = flux1.total();
+    const double slope = std::max(0.0, (j1 - j0) / kProbeC);
+    double dw = 0, db = 0, qg = 0, qwb = 0, qa = 0, iw = 0;
+    if (h.bed) {
+        BedCoupling g;
+        g.c_w = rho * cp * volume;
+        g.c_b = h.bed_capacity[i];
+        g.g_bg = gb;
+        g.t_gr = tground;
+        g.g_wb = k * wet / sc.bed_thickness +
+                 (h.hyporheic_eligible[i] ? rho * cp * sc.hyporheic_velocity * wet : 0);
+        const double tb = h.bed_energy[i] / g.c_b;
+        const auto step = relaxPair(g, tw, tb, j0, j1, kProbeC, wet, dt);
+        dw = step.dt_w;
+        db = step.dt_b;
+        double ib = 0;
+        pairIntegrals(g, tw, tb, j0, slope, wet, dt, iw, ib);
+        qg = gb * ((tground - tb) * dt - ib);
+        // Define reciprocal bed receipts from the accepted bed-energy
+        // increment and its deep-ground receipt. The equivalent time
+        // integral subtracts two O(g_wb*dt) values and becomes catastrophically
+        // ill-conditioned for stiff hyporheic exchange.
+        qwb = g.c_b * db - qg;
+        qa = -wet * (j0 * dt + slope * iw);
+    } else {
+        dw = relaxT(j0, j1, kProbeC, wet, volume, dt, rho, cp);
+        iw = -wet * j0 / (rho * cp * volume) * dt * dt *
+             phi2(-wet * slope * dt / (rho * cp * volume));
+        qa = rho * cp * volume * dw;
+    }
+    const double updated = mass + volume * dw;
+    if (!std::isfinite(updated) || !std::isfinite(db) || !std::isfinite(qa) || !std::isfinite(qg) ||
+        !std::isfinite(qwb)) {
+        h.failures[i] = 1;
+        return mass;
+    }
+    if (h.bed)
+        h.bed_energy[i] += h.bed_capacity[i] * db;
+    h.ground_j[i] += qg;
+    h.atmospheric_j[i] += qa;
+    h.water_bed_j[i] += qwb;
+    h.water_j[i] += rho * cp * volume * dw;
+    h.evaporated_m3[i] += evaporated;
+    const auto received = [&](double a, double b) {
+        return -wet * (a * dt + (slope > 0 ? (b - a) / kProbeC : 0) * iw);
+    };
+    h.latent_j[i] += received(flux0.latent, flux1.latent);
+    h.radiative_j[i] += received(flux0.radiation, flux1.radiation);
+    h.sensible_j[i] += received(flux0.sensible, flux1.sensible);
+    h.reported_temperature[i] = tw + dw;
+    return updated;
+}
+/**
+ * @brief Complete each surface-owned physical ground column's unprocessed router interval.
+ * @param[in] mesh Prepared SI cell geometry.
+ * @param[in] options Resolved thermal controls.
+ * @param[in,out] state Prepared surface water/temperature row and thermal owner; replaces each
+ * due cell's temperature-volume with applyMeshHeatCell() output and updates its thermal
+ * receipts.
+ * @param[in] seconds Positive completed router duration s; disabled/nonpositive mode returns.
+ * @note Skips missing volume cells, absent surface temperature row and remainders below relative
+ * machine epsilon. Uses max remaining time implicitly by skipping nonpositive remainders; adds
+ * no latent evaporation. Without a temperature row the groundwater clock owns conduction.
+ * Requires exclusive matching state/owners and finite valid duration; failures are retained in
+ * heat diagnostics.
+ */
+void advanceRemainingGroundColumns(const MeshData& mesh, const SolverOptions2D& options,
+                                   SurfaceStateData& state, double seconds) noexcept {
+    auto& h = state.heat;
+    if (!h.enabled || !h.ground_column || !(seconds > 0))
+        return;
+    const int temp_row = state.transport.temp_row;
+    for (int i = 0; i < mesh.n_cells(); ++i) {
+        if (i >= int(state.volume.size()))
+            continue;
+        // Without a surface temperature row, the groundwater clock owns
+        // conduction. Do not invent an overland water temperature here.
+        if (temp_row < 0)
+            continue;
+        const double applied =
+            std::size_t(i) < h.ground_column_seconds.size() ? h.ground_column_seconds[i] : 0.;
+        const double remaining = seconds - applied;
+        if (!(remaining > std::numeric_limits<double>::epsilon() * std::max(1., seconds)))
+            continue;
+        double mass = state.transport.cell_mass[state.transport.idx(temp_row, i)];
+        mass = applyMeshHeatCell(mesh, options, h, i, mass, state.volume[i], 0, remaining);
+        state.transport.cell_mass[state.transport.idx(temp_row, i)] = mass;
+    }
+}
+} // namespace openswmm::twoD

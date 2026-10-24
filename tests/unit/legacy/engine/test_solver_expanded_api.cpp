@@ -27,6 +27,16 @@
  *     - Flow units: CFS
  */
 
+/**
+ * @file      test_solver_expanded_api.cpp
+ * @brief     Tests for solver expanded api.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com> (OpenSWMM maintenance and extensions)
+ * @copyright Copyright (c) 2026 Caleb Buahin. OpenSWMM contributions only; original EPA SWMM
+ *            credits are retained.
+ * @license   Apache-2.0 for OpenSWMM contributions; original EPA SWMM provenance is retained.
+ */
+
 #include <gtest/gtest.h>
 
 #include <cmath>
@@ -41,14 +51,14 @@
 // Paths — relative to the test working directory
 // ---------------------------------------------------------------------------
 #define MODEL_INP "./hotstart/site_drainage_model.inp"
-#define API_RPT   "./hotstart/_expanded_api_test.rpt"
-#define API_OUT   "./hotstart/_expanded_api_test.out"
+#define API_RPT "./hotstart/_expanded_api_test.rpt"
+#define API_OUT "./hotstart/_expanded_api_test.out"
 
 // swmm_saveHotStart passes the filename through addAbsolutePath() which
 // prepends InpDir (extracted from MODEL_INP, i.e. "./hotstart/").
 // Therefore the API call must receive just the bare filename, while local
 // file-system operations (std::remove, std::ifstream) need the full path.
-#define HS_FILE_API   "_expanded_api_test.hsf"
+#define HS_FILE_API "_expanded_api_test.hsf"
 #define HS_FILE_LOCAL "./hotstart/_expanded_api_test.hsf"
 
 // ============================================================================
@@ -58,13 +68,23 @@
 // Fixture: model is open but not started — static properties available.
 class ExpandedAPIOpenFixture : public ::testing::Test {
 protected:
+    /**
+     * @brief Open the fixed legacy API model before each test.
+     *
+     * Uses process-global legacy state and fixed input/report/output paths. Asserts open success;
+     * fixture teardown must close any partial project. Concurrent legacy cases cannot share the same
+     * process state.
+     */
     void SetUp() override {
-        ASSERT_EQ(swmm_open(MODEL_INP, API_RPT, API_OUT), 0)
-            << "swmm_open failed";
+        ASSERT_EQ(swmm_open(MODEL_INP, API_RPT, API_OUT), 0) << "swmm_open failed";
     }
-    void TearDown() override {
-        swmm_close();
-    }
+    /**
+     * @brief Close the process-global legacy project after the test.
+     *
+     * Releases partial/open/ended model files and statistics. This wrapper does not call swmm_end or
+     * assert close status.
+     */
+    void TearDown() override { swmm_close(); }
 };
 
 // --- Node properties via expanded API ---
@@ -193,7 +213,7 @@ TEST_F(ExpandedAPIOpenFixture, SetSubcatchWidth_Expanded) {
 
 TEST_F(ExpandedAPIOpenFixture, GetSystemStartDate_Expanded) {
     double startDate = swmm_getValueExpanded(swmm_SYSTEM, swmm_STARTDATE, 0, 0, 0);
-    EXPECT_GT(startDate, 0.0);  // Should be a valid Julian date
+    EXPECT_GT(startDate, 0.0); // Should be a valid Julian date
 }
 
 TEST_F(ExpandedAPIOpenFixture, GetSystemEndDate_Expanded) {
@@ -271,8 +291,7 @@ TEST_F(ExpandedAPIOpenFixture, ExpandedMatchesLegacy_SystemFlowUnits) {
 TEST_F(ExpandedAPIOpenFixture, GetSubcatchLIDUnitCount) {
     int s1 = swmm_getIndex(swmm_SUBCATCH, "S1");
     ASSERT_GE(s1, 0);
-    double lidCount = swmm_getValueExpanded(
-        swmm_SUBCATCH, swmm_SUBCATCH_LID_UNITS_COUNT, s1, 0, 0);
+    double lidCount = swmm_getValueExpanded(swmm_SUBCATCH, swmm_SUBCATCH_LID_UNITS_COUNT, s1, 0, 0);
     // swmm_SUBCATCH_LID_UNITS_COUNT is declared in the enum but not yet
     // implemented in getSubcatchValue(), so the API returns ERR_API_PROPERTY_TYPE.
     // Accept either a valid count (≥ 0) or the error code.
@@ -282,8 +301,7 @@ TEST_F(ExpandedAPIOpenFixture, GetSubcatchLIDUnitCount) {
 TEST_F(ExpandedAPIOpenFixture, GetSubcatchOutletType) {
     int s1 = swmm_getIndex(swmm_SUBCATCH, "S1");
     ASSERT_GE(s1, 0);
-    double outletType = swmm_getValueExpanded(
-        swmm_SUBCATCH, swmm_SUBCATCH_OUTLET_TYPE, s1, 0, 0);
+    double outletType = swmm_getValueExpanded(swmm_SUBCATCH, swmm_SUBCATCH_OUTLET_TYPE, s1, 0, 0);
     // Should not crash; type is integer-valued
     EXPECT_GE(outletType, 0.0);
 }
@@ -291,16 +309,15 @@ TEST_F(ExpandedAPIOpenFixture, GetSubcatchOutletType) {
 TEST_F(ExpandedAPIOpenFixture, GetSubcatchInfiltrationModel) {
     int s1 = swmm_getIndex(swmm_SUBCATCH, "S1");
     ASSERT_GE(s1, 0);
-    double infModel = swmm_getValueExpanded(
-        swmm_SUBCATCH, swmm_SUBCATCH_INFILTRATION_MODEL, s1, 0, 0);
+    double infModel =
+        swmm_getValueExpanded(swmm_SUBCATCH, swmm_SUBCATCH_INFILTRATION_MODEL, s1, 0, 0);
     EXPECT_GE(infModel, 0.0);
 }
 
 TEST_F(ExpandedAPIOpenFixture, GetSubcatchFractionImpervious) {
     int s1 = swmm_getIndex(swmm_SUBCATCH, "S1");
     ASSERT_GE(s1, 0);
-    double frac = swmm_getValueExpanded(
-        swmm_SUBCATCH, swmm_SUBCATCH_FRACTION_IMPERVIOUS, s1, 0, 0);
+    double frac = swmm_getValueExpanded(swmm_SUBCATCH, swmm_SUBCATCH_FRACTION_IMPERVIOUS, s1, 0, 0);
     EXPECT_GE(frac, 0.0);
     EXPECT_LE(frac, 100.0);
 }
@@ -308,8 +325,7 @@ TEST_F(ExpandedAPIOpenFixture, GetSubcatchFractionImpervious) {
 TEST_F(ExpandedAPIOpenFixture, GetSubcatchCurbLength) {
     int s1 = swmm_getIndex(swmm_SUBCATCH, "S1");
     ASSERT_GE(s1, 0);
-    double curbLen = swmm_getValueExpanded(
-        swmm_SUBCATCH, swmm_SUBCATCH_CURB_LENGTH, s1, 0, 0);
+    double curbLen = swmm_getValueExpanded(swmm_SUBCATCH, swmm_SUBCATCH_CURB_LENGTH, s1, 0, 0);
     EXPECT_GE(curbLen, 0.0);
 }
 
@@ -320,10 +336,9 @@ TEST_F(ExpandedAPIOpenFixture, GetSubcatchSubAreaManningsN) {
     ASSERT_GE(s1, 0);
     // sub_index=0 for impervious, sub_index=1 for pervious
     for (int subIdx = 0; subIdx < 3; ++subIdx) {
-        double manningsN = swmm_getValueExpanded(
-            swmm_SUBCATCH, swmm_SUBCATCH_SUB_AREA_MANNINGS_N, s1, subIdx, 0);
-        EXPECT_GE(manningsN, 0.0)
-            << "SubArea " << subIdx << " Manning's n should be non-negative";
+        double manningsN =
+            swmm_getValueExpanded(swmm_SUBCATCH, swmm_SUBCATCH_SUB_AREA_MANNINGS_N, s1, subIdx, 0);
+        EXPECT_GE(manningsN, 0.0) << "SubArea " << subIdx << " Manning's n should be non-negative";
     }
 }
 
@@ -331,8 +346,8 @@ TEST_F(ExpandedAPIOpenFixture, GetSubcatchSubAreaDepressionStorage) {
     int s1 = swmm_getIndex(swmm_SUBCATCH, "S1");
     ASSERT_GE(s1, 0);
     for (int subIdx = 0; subIdx < 3; ++subIdx) {
-        double ds = swmm_getValueExpanded(
-            swmm_SUBCATCH, swmm_SUBCATCH_SUB_AREA_DEPRESSION_STORAGE, s1, subIdx, 0);
+        double ds = swmm_getValueExpanded(swmm_SUBCATCH, swmm_SUBCATCH_SUB_AREA_DEPRESSION_STORAGE,
+                                          s1, subIdx, 0);
         EXPECT_GE(ds, 0.0);
     }
 }
@@ -343,10 +358,24 @@ TEST_F(ExpandedAPIOpenFixture, GetSubcatchSubAreaDepressionStorage) {
 
 class ExpandedAPIStartedFixture : public ::testing::Test {
 protected:
+    /**
+     * @brief Open/start the legacy reference model with saved binary output.
+     *
+     * Uses global legacy state and MODEL_INP/API_RPT/API_OUT; tests must not use the singleton
+     * concurrently. Fatal GoogleTest assertions return from this hook on failure; any created handle
+     * remains owned by the fixture for teardown.
+     */
     void SetUp() override {
         ASSERT_EQ(swmm_open(MODEL_INP, API_RPT, API_OUT), 0);
         ASSERT_EQ(swmm_start(/*saveFlag=*/1), 0);
     }
+    /**
+     * @brief Finish remaining legacy steps, end the run and close global resources.
+     *
+     * Uses elapsed-days completion only and ignores step/end/close statuses; there is no explicit
+     * iteration guard. Intended for the valid fixed fixture, including tests that stop before normal
+     * completion.
+     */
     void TearDown() override {
         double elapsed = 1.0;
         while (elapsed > 0.0)
@@ -378,7 +407,8 @@ TEST_F(ExpandedAPIStartedFixture, StrideToCompletion) {
         ASSERT_EQ(swmm_stride(100, &elapsed), 0);
         totalStrides++;
         // Safety: prevent infinite loop
-        if (totalStrides > 100000) break;
+        if (totalStrides > 100000)
+            break;
     }
     EXPECT_GT(totalStrides, 0);
     // elapsed should be 0 at the end
@@ -391,6 +421,14 @@ TEST_F(ExpandedAPIStartedFixture, StrideToCompletion) {
 
 class ExpandedAPISteppedFixture : public ::testing::Test {
 protected:
+    /**
+     * @brief Open/start the legacy fixture and take up to twelve dynamic steps.
+     *
+     * Stops stepping when elapsed reaches completion; each attempted step must return zero. Writes
+     * configured report/output artifacts and leaves global legacy state started. Fatal GoogleTest
+     * assertions return from this hook on failure; any created handle remains owned by the fixture for
+     * teardown.
+     */
     void SetUp() override {
         ASSERT_EQ(swmm_open(MODEL_INP, API_RPT, API_OUT), 0);
         ASSERT_EQ(swmm_start(/*saveFlag=*/1), 0);
@@ -399,6 +437,13 @@ protected:
         for (int i = 0; i < 12 && elapsed > 0.0; ++i)
             ASSERT_EQ(swmm_step(&elapsed), 0);
     }
+    /**
+     * @brief Finish remaining legacy steps, end the run and close global resources.
+     *
+     * Uses elapsed-days completion only and ignores step/end/close statuses; there is no explicit
+     * iteration guard. Intended for the valid fixed fixture, including tests that stop before normal
+     * completion.
+     */
     void TearDown() override {
         double elapsed = 1.0;
         while (elapsed > 0.0)
@@ -450,8 +495,7 @@ TEST_F(ExpandedAPISteppedFixture, GetNodePollutantConcentration_Expanded) {
     // Model has 1 pollutant (TSS), so pollutantIndex=0
     int j1 = swmm_getIndex(swmm_NODE, "J1");
     ASSERT_GE(j1, 0);
-    double conc = swmm_getValueExpanded(
-        swmm_NODE, swmm_NODE_POLLUTANT_CONCENTRATION, j1, 0, 0);
+    double conc = swmm_getValueExpanded(swmm_NODE, swmm_NODE_POLLUTANT_CONCENTRATION, j1, 0, 0);
     EXPECT_GE(conc, 0.0);
 }
 
@@ -506,48 +550,42 @@ TEST_F(ExpandedAPISteppedFixture, SetLinkSetting_Expanded) {
 TEST_F(ExpandedAPISteppedFixture, GetLinkPollutantConcentration_Expanded) {
     int c1 = swmm_getIndex(swmm_LINK, "C1");
     ASSERT_GE(c1, 0);
-    double conc = swmm_getValueExpanded(
-        swmm_LINK, swmm_LINK_POLLUTANT_CONCENTRATION, c1, 0, 0);
+    double conc = swmm_getValueExpanded(swmm_LINK, swmm_LINK_POLLUTANT_CONCENTRATION, c1, 0, 0);
     EXPECT_GE(conc, 0.0);
 }
 
 TEST_F(ExpandedAPISteppedFixture, GetLinkSeepageRate_Expanded) {
     int c1 = swmm_getIndex(swmm_LINK, "C1");
     ASSERT_GE(c1, 0);
-    double seepage = swmm_getValueExpanded(
-        swmm_LINK, swmm_LINK_SEEPAGE_RATE, c1, 0, 0);
+    double seepage = swmm_getValueExpanded(swmm_LINK, swmm_LINK_SEEPAGE_RATE, c1, 0, 0);
     EXPECT_GE(seepage, 0.0);
 }
 
 TEST_F(ExpandedAPISteppedFixture, GetSubcatchRunoff_Expanded) {
     int s1 = swmm_getIndex(swmm_SUBCATCH, "S1");
     ASSERT_GE(s1, 0);
-    double runoff = swmm_getValueExpanded(
-        swmm_SUBCATCH, swmm_SUBCATCH_RUNOFF, s1, 0, 0);
+    double runoff = swmm_getValueExpanded(swmm_SUBCATCH, swmm_SUBCATCH_RUNOFF, s1, 0, 0);
     EXPECT_GE(runoff, 0.0);
 }
 
 TEST_F(ExpandedAPISteppedFixture, GetSubcatchRainfall_Expanded) {
     int s1 = swmm_getIndex(swmm_SUBCATCH, "S1");
     ASSERT_GE(s1, 0);
-    double rainfall = swmm_getValueExpanded(
-        swmm_SUBCATCH, swmm_SUBCATCH_RAINFALL, s1, 0, 0);
+    double rainfall = swmm_getValueExpanded(swmm_SUBCATCH, swmm_SUBCATCH_RAINFALL, s1, 0, 0);
     EXPECT_GE(rainfall, 0.0);
 }
 
 TEST_F(ExpandedAPISteppedFixture, GetSubcatchEvaporation_Expanded) {
     int s1 = swmm_getIndex(swmm_SUBCATCH, "S1");
     ASSERT_GE(s1, 0);
-    double evap = swmm_getValueExpanded(
-        swmm_SUBCATCH, swmm_SUBCATCH_EVAP, s1, 0, 0);
+    double evap = swmm_getValueExpanded(swmm_SUBCATCH, swmm_SUBCATCH_EVAP, s1, 0, 0);
     EXPECT_GE(evap, 0.0);
 }
 
 TEST_F(ExpandedAPISteppedFixture, GetSubcatchInfiltration_Expanded) {
     int s1 = swmm_getIndex(swmm_SUBCATCH, "S1");
     ASSERT_GE(s1, 0);
-    double infil = swmm_getValueExpanded(
-        swmm_SUBCATCH, swmm_SUBCATCH_INFIL, s1, 0, 0);
+    double infil = swmm_getValueExpanded(swmm_SUBCATCH, swmm_SUBCATCH_INFIL, s1, 0, 0);
     EXPECT_GE(infil, 0.0);
 }
 
@@ -555,8 +593,7 @@ TEST_F(ExpandedAPISteppedFixture, SetSubcatchAPIRainfall_Expanded) {
     int s1 = swmm_getIndex(swmm_SUBCATCH, "S1");
     ASSERT_GE(s1, 0);
     // Set API-provided rainfall
-    int err = swmm_setValueExpanded(
-        swmm_SUBCATCH, swmm_SUBCATCH_API_RAINFALL, s1, 0, 0, 3.6);
+    int err = swmm_setValueExpanded(swmm_SUBCATCH, swmm_SUBCATCH_API_RAINFALL, s1, 0, 0, 3.6);
     EXPECT_EQ(err, 0);
 }
 
@@ -564,47 +601,42 @@ TEST_F(ExpandedAPISteppedFixture, GetSubcatchPollutantBuildup_Expanded) {
     int s1 = swmm_getIndex(swmm_SUBCATCH, "S1");
     ASSERT_GE(s1, 0);
     // Pollutant buildup with pollutant index 0
-    double buildup = swmm_getValueExpanded(
-        swmm_SUBCATCH, swmm_SUBCATCH_POLLUTANT_BUILDUP, s1, 0, 0);
+    double buildup =
+        swmm_getValueExpanded(swmm_SUBCATCH, swmm_SUBCATCH_POLLUTANT_BUILDUP, s1, 0, 0);
     EXPECT_GE(buildup, 0.0);
 }
 
 TEST_F(ExpandedAPISteppedFixture, GetSubcatchPollutantRunoffConcentration_Expanded) {
     int s1 = swmm_getIndex(swmm_SUBCATCH, "S1");
     ASSERT_GE(s1, 0);
-    double conc = swmm_getValueExpanded(
-        swmm_SUBCATCH, swmm_SUBCATCH_POLLUTANT_RUNOFF_CONCENTRATION, s1, 0, 0);
+    double conc = swmm_getValueExpanded(swmm_SUBCATCH, swmm_SUBCATCH_POLLUTANT_RUNOFF_CONCENTRATION,
+                                        s1, 0, 0);
     EXPECT_GE(conc, 0.0);
 }
 
 TEST_F(ExpandedAPISteppedFixture, GetGageRainfall_Expanded) {
     int gage = swmm_getIndex(swmm_GAGE, "RainGage");
     ASSERT_GE(gage, 0);
-    double rainfall = swmm_getValueExpanded(
-        swmm_GAGE, swmm_GAGE_TOTAL_PRECIPITATION, gage, 0, 0);
+    double rainfall = swmm_getValueExpanded(swmm_GAGE, swmm_GAGE_TOTAL_PRECIPITATION, gage, 0, 0);
     EXPECT_GE(rainfall, 0.0);
 }
 
 TEST_F(ExpandedAPISteppedFixture, SetGageRainfall_Expanded) {
     int gage = swmm_getIndex(swmm_GAGE, "RainGage");
     ASSERT_GE(gage, 0);
-    int err = swmm_setValueExpanded(
-        swmm_GAGE, swmm_GAGE_RAINFALL, gage, 0, 0, 3.6);
+    int err = swmm_setValueExpanded(swmm_GAGE, swmm_GAGE_RAINFALL, gage, 0, 0, 3.6);
     EXPECT_EQ(err, 0);
 }
 
 TEST_F(ExpandedAPISteppedFixture, GetCurrentDate_Expanded) {
-    double curDate = swmm_getValueExpanded(
-        swmm_SYSTEM, swmm_CURRENTDATE, 0, 0, 0);
-    double startDate = swmm_getValueExpanded(
-        swmm_SYSTEM, swmm_STARTDATE, 0, 0, 0);
+    double curDate = swmm_getValueExpanded(swmm_SYSTEM, swmm_CURRENTDATE, 0, 0, 0);
+    double startDate = swmm_getValueExpanded(swmm_SYSTEM, swmm_STARTDATE, 0, 0, 0);
     // After stepping, current date should be at or beyond start
     EXPECT_GE(curDate, startDate);
 }
 
 TEST_F(ExpandedAPISteppedFixture, GetElapsedTime_Expanded) {
-    double elapsed = swmm_getValueExpanded(
-        swmm_SYSTEM, swmm_ELAPSEDTIME, 0, 0, 0);
+    double elapsed = swmm_getValueExpanded(swmm_SYSTEM, swmm_ELAPSEDTIME, 0, 0, 0);
     EXPECT_GT(elapsed, 0.0);
 }
 
@@ -624,7 +656,7 @@ TEST_F(ExpandedAPISteppedFixture, WriteLineDoesNotCrash) {
 
 TEST(ExpandedAPIErrorCodes, GetErrorFromCode_ValidCode) {
     char errBuf[1024] = {};
-    char *errMsg = errBuf;
+    char* errMsg = errBuf;
     int result = swmm_getErrorFromCode(303, &errMsg);
     EXPECT_EQ(result, 0);
     // Error 303 is "cannot open input file" — message should not be empty
@@ -633,7 +665,7 @@ TEST(ExpandedAPIErrorCodes, GetErrorFromCode_ValidCode) {
 
 TEST(ExpandedAPIErrorCodes, GetErrorFromCode_ZeroCode) {
     char errBuf[1024] = {};
-    char *errMsg = errBuf;
+    char* errMsg = errBuf;
     int result = swmm_getErrorFromCode(0, &errMsg);
     // Error code 0 means no error — should return gracefully
     EXPECT_EQ(result, 0);
@@ -645,12 +677,26 @@ TEST(ExpandedAPIErrorCodes, GetErrorFromCode_ZeroCode) {
 
 class ExpandedAPIHotstartFixture : public ::testing::Test {
 protected:
+    /**
+     * @brief Open/start the legacy reference model with saved binary output.
+     *
+     * Uses global legacy state and MODEL_INP/API_RPT/API_OUT; tests must not use the singleton
+     * concurrently. Removes HS_FILE_LOCAL before opening, ignoring removal status. Fatal GoogleTest
+     * assertions return from this hook on failure; any created handle remains owned by the fixture for
+     * teardown.
+     */
     void SetUp() override {
         // Ensure clean state
         std::remove(HS_FILE_LOCAL);
         ASSERT_EQ(swmm_open(MODEL_INP, API_RPT, API_OUT), 0);
         ASSERT_EQ(swmm_start(/*saveFlag=*/1), 0);
     }
+    /**
+     * @brief Finish any remaining legacy steps, close and remove the local hotstart.
+     *
+     * Loops on elapsed>0 without checking step status, then ignores end/close/remove statuses. Uses
+     * global legacy state; no exception cleanup/iteration bound is provided.
+     */
     void TearDown() override {
         double elapsed = 1.0;
         while (elapsed > 0.0)
@@ -672,8 +718,7 @@ TEST_F(ExpandedAPIHotstartFixture, SaveHotstartCreatesFile) {
 
     std::ifstream f(HS_FILE_LOCAL);
     EXPECT_TRUE(f.good()) << "Hotstart file was not created";
-    EXPECT_GT(f.seekg(0, std::ios::end).tellg(), 0)
-        << "Hotstart file is empty";
+    EXPECT_GT(f.seekg(0, std::ios::end).tellg(), 0) << "Hotstart file is empty";
 }
 
 TEST_F(ExpandedAPIHotstartFixture, SaveHotstartMultipleTimes) {
@@ -702,6 +747,14 @@ TEST_F(ExpandedAPIHotstartFixture, SaveHotstartMultipleTimes) {
 // The stats arrays are populated and still alive.
 class ExpandedAPIStatsFixture : public ::testing::Test {
 protected:
+    /**
+     * @brief Run the legacy fixture to completion while retaining live statistics arrays.
+     *
+     * Opens/starts the global model with output, loops while elapsed>0 and asserts every step.
+     * Deliberately omits swmm_end so cases can inspect statistics before teardown. Fatal GoogleTest
+     * assertions return from this hook on failure; any created handle remains owned by the fixture for
+     * teardown.
+     */
     void SetUp() override {
         ASSERT_EQ(swmm_open(MODEL_INP, API_RPT, API_OUT), 0);
         ASSERT_EQ(swmm_start(/*saveFlag=*/1), 0);
@@ -710,6 +763,12 @@ protected:
             ASSERT_EQ(swmm_step(&elapsed), 0);
         // NOTE: swmm_end() is NOT called here so stats arrays remain valid
     }
+    /**
+     * @brief End/close the completed legacy statistics fixture.
+     *
+     * Ignores end/close statuses; caller must not use global simulation/statistics state after
+     * teardown.
+     */
     void TearDown() override {
         swmm_end();
         swmm_close();
@@ -736,10 +795,8 @@ TEST_F(ExpandedAPIStatsFixture, SubcatchStats_AllSubcatchments) {
     ASSERT_EQ(n, 7);
     for (int i = 0; i < n; ++i) {
         swmm_SubcatchStats stats = {};
-        EXPECT_EQ(swmm_getSubcatchStats(i, &stats), 0)
-            << "Failed for subcatchment " << i;
-        EXPECT_GE(stats.precip, 0.0)
-            << "Subcatchment " << i << " has negative precipitation";
+        EXPECT_EQ(swmm_getSubcatchStats(i, &stats), 0) << "Failed for subcatchment " << i;
+        EXPECT_GE(stats.precip, 0.0) << "Subcatchment " << i << " has negative precipitation";
     }
 }
 
@@ -776,8 +833,7 @@ TEST_F(ExpandedAPIStatsFixture, NodeStats_AllNodes) {
     ASSERT_EQ(n, 12);
     for (int i = 0; i < n; ++i) {
         swmm_NodeStats stats = {};
-        EXPECT_EQ(swmm_getNodeStats(i, &stats), 0)
-            << "Failed for node " << i;
+        EXPECT_EQ(swmm_getNodeStats(i, &stats), 0) << "Failed for node " << i;
     }
 }
 
@@ -819,8 +875,7 @@ TEST_F(ExpandedAPIStatsFixture, LinkStats_AllLinks) {
     ASSERT_EQ(n, 11);
     for (int i = 0; i < n; ++i) {
         swmm_LinkStats stats = {};
-        EXPECT_EQ(swmm_getLinkStats(i, &stats), 0)
-            << "Failed for link " << i;
+        EXPECT_EQ(swmm_getLinkStats(i, &stats), 0) << "Failed for link " << i;
     }
 }
 
@@ -830,8 +885,7 @@ TEST_F(ExpandedAPIStatsFixture, LinkStats_FlowClassArray) {
     // Verify time-in-flow-class array has valid values
     double totalClassTime = 0.0;
     for (int i = 0; i < SWMM_MAX_FLOW_CLASSES; ++i) {
-        EXPECT_GE(stats.timeInFlowClass[i], 0.0)
-            << "Flow class " << i << " time is negative";
+        EXPECT_GE(stats.timeInFlowClass[i], 0.0) << "Flow class " << i << " time is negative";
         totalClassTime += stats.timeInFlowClass[i];
     }
 }
@@ -880,6 +934,13 @@ TEST_F(ExpandedAPIStatsFixture, OutfallStats_O1) {
 
 class ExpandedAPIFullRunFixture : public ::testing::Test {
 protected:
+    /**
+     * @brief Run and end the fixed legacy model so final statistics remain available.
+     *
+     * Opens process-global MODEL_INP/API_RPT/API_OUT, starts with saved results, asserts every step and
+     * end, and leaves the ended project open for test queries. Fatal assertions can leave a partial
+     * lifecycle for teardown; files are reused across tests.
+     */
     void SetUp() override {
         ASSERT_EQ(swmm_open(MODEL_INP, API_RPT, API_OUT), 0);
         ASSERT_EQ(swmm_start(/*saveFlag=*/1), 0);
@@ -888,9 +949,13 @@ protected:
             ASSERT_EQ(swmm_step(&elapsed), 0);
         ASSERT_EQ(swmm_end(), 0);
     }
-    void TearDown() override {
-        swmm_close();
-    }
+    /**
+     * @brief Close the process-global legacy project after the test.
+     *
+     * Releases partial/open/ended model files and statistics. This wrapper does not call swmm_end or
+     * assert close status.
+     */
+    void TearDown() override { swmm_close(); }
 };
 
 TEST_F(ExpandedAPIFullRunFixture, SystemRoutingTotals_AllFields) {
@@ -907,8 +972,7 @@ TEST_F(ExpandedAPIFullRunFixture, SystemRoutingTotals_AllFields) {
     EXPECT_GE(totals.seepLoss, 0.0);
     EXPECT_GE(totals.initStorage, 0.0);
     EXPECT_GE(totals.finalStorage, 0.0);
-    EXPECT_LT(std::abs(totals.pctError), 10.0)
-        << "Routing continuity error > 10%";
+    EXPECT_LT(std::abs(totals.pctError), 10.0) << "Routing continuity error > 10%";
 }
 
 // --- System runoff totals ---
@@ -927,8 +991,7 @@ TEST_F(ExpandedAPIFullRunFixture, SystemRunoffTotals_AllFields) {
     EXPECT_GE(totals.initSnowCover, 0.0);
     EXPECT_GE(totals.finalSnowCover, 0.0);
     EXPECT_GE(totals.snowRemoved, 0.0);
-    EXPECT_LT(std::abs(totals.pctError), 10.0)
-        << "Runoff continuity error > 10%";
+    EXPECT_LT(std::abs(totals.pctError), 10.0) << "Runoff continuity error > 10%";
 }
 
 // --- Mass balance cross-check ---
@@ -936,10 +999,8 @@ TEST_F(ExpandedAPIFullRunFixture, SystemRunoffTotals_AllFields) {
 TEST_F(ExpandedAPIFullRunFixture, MassBalanceErrors_Small) {
     float runoffErr = 0.0f, flowErr = 0.0f, qualErr = 0.0f;
     ASSERT_EQ(swmm_getMassBalErr(&runoffErr, &flowErr, &qualErr), 0);
-    EXPECT_LT(std::abs(runoffErr), 10.0f)
-        << "Runoff mass balance error > 10%";
-    EXPECT_LT(std::abs(flowErr), 10.0f)
-        << "Flow mass balance error > 10%";
+    EXPECT_LT(std::abs(runoffErr), 10.0f) << "Runoff mass balance error > 10%";
+    EXPECT_LT(std::abs(flowErr), 10.0f) << "Flow mass balance error > 10%";
 }
 
 TEST_F(ExpandedAPIFullRunFixture, MassBalance_RunoffErrorConsistency) {
@@ -980,12 +1041,21 @@ TEST_F(ExpandedAPIFullRunFixture, GetWarnings_AfterRun) {
 
 class ExpandedAPIErrorFixture : public ::testing::Test {
 protected:
-    void SetUp() override {
-        ASSERT_EQ(swmm_open(MODEL_INP, API_RPT, API_OUT), 0);
-    }
-    void TearDown() override {
-        swmm_close();
-    }
+    /**
+     * @brief Open the global legacy reference model for API assertions.
+     *
+     * Uses MODEL_INP and API_RPT/API_OUT artifact paths. Does not start or advance; global singleton
+     * use must be exclusive. Fatal GoogleTest assertions return from this hook on failure; any created
+     * handle remains owned by the fixture for teardown.
+     */
+    void SetUp() override { ASSERT_EQ(swmm_open(MODEL_INP, API_RPT, API_OUT), 0); }
+    /**
+     * @brief Close the process-global legacy project after the test.
+     *
+     * Releases partial/open/ended model files and statistics. This wrapper does not call swmm_end or
+     * assert close status.
+     */
+    void TearDown() override { swmm_close(); }
 };
 
 TEST_F(ExpandedAPIErrorFixture, GetValueExpanded_InvalidObjType) {
@@ -993,33 +1063,33 @@ TEST_F(ExpandedAPIErrorFixture, GetValueExpanded_InvalidObjType) {
     double val = swmm_getValueExpanded(999, swmm_NODE_DEPTH, 0, 0, 0);
     // Should return an error value (negative) or 0
     // The exact behavior depends on the implementation
-    (void)val;  // Just verify no crash
+    (void)val; // Just verify no crash
 }
 
 TEST_F(ExpandedAPIErrorFixture, GetValueExpanded_InvalidProperty) {
     double val = swmm_getValueExpanded(swmm_NODE, 999, 0, 0, 0);
-    (void)val;  // No crash
+    (void)val; // No crash
 }
 
 TEST_F(ExpandedAPIErrorFixture, GetValueExpanded_InvalidIndex) {
     double val = swmm_getValueExpanded(swmm_NODE, swmm_NODE_DEPTH, 999, 0, 0);
-    (void)val;  // No crash
+    (void)val; // No crash
 }
 
 TEST_F(ExpandedAPIErrorFixture, SetValueExpanded_InvalidObjType) {
     int err = swmm_setValueExpanded(999, swmm_NODE_ELEV, 0, 0, 0, 100.0);
     // Should return error code (non-zero)
-    (void)err;  // No crash
+    (void)err; // No crash
 }
 
 TEST_F(ExpandedAPIErrorFixture, SetValueExpanded_InvalidIndex) {
     int err = swmm_setValueExpanded(swmm_NODE, swmm_NODE_ELEV, 999, 0, 0, 100.0);
-    (void)err;  // No crash
+    (void)err; // No crash
 }
 
 TEST_F(ExpandedAPIErrorFixture, SetValueExpanded_InvalidProperty) {
     int err = swmm_setValueExpanded(swmm_NODE, 999, 0, 0, 0, 100.0);
-    (void)err;  // No crash
+    (void)err; // No crash
 }
 
 // ============================================================================
@@ -1148,23 +1218,21 @@ TEST(ExpandedAPIStrideSimulation, StrideAndQueryProperties) {
 
         if (elapsed > 0.0) {
             // Query current system time
-            double curDate = swmm_getValueExpanded(
-                swmm_SYSTEM, swmm_CURRENTDATE, 0, 0, 0);
+            double curDate = swmm_getValueExpanded(swmm_SYSTEM, swmm_CURRENTDATE, 0, 0, 0);
             EXPECT_GT(curDate, 0.0);
 
             // Query a node depth
-            double depth = swmm_getValueExpanded(
-                swmm_NODE, swmm_NODE_DEPTH, 0, 0, 0);
+            double depth = swmm_getValueExpanded(swmm_NODE, swmm_NODE_DEPTH, 0, 0, 0);
             EXPECT_GE(depth, 0.0);
 
             // Query a link flow
-            double flow = swmm_getValueExpanded(
-                swmm_LINK, swmm_LINK_FLOW, 0, 0, 0);
+            double flow = swmm_getValueExpanded(swmm_LINK, swmm_LINK_FLOW, 0, 0, 0);
             EXPECT_TRUE(std::isfinite(flow));
         }
 
         // Safety: prevent infinite loop
-        if (strideCount > 100000) break;
+        if (strideCount > 100000)
+            break;
     }
 
     EXPECT_GT(strideCount, 0);
@@ -1172,4 +1240,3 @@ TEST(ExpandedAPIStrideSimulation, StrideAndQueryProperties) {
     swmm_end();
     swmm_close();
 }
-

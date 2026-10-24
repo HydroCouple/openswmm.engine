@@ -1,0 +1,7 @@
+;legacy dated series exercising the full table_parseFileLine grammar:
+;dash separators, a 3-letter month name, a date-less carryover row,
+;and a decimal-hour time on a dated row.
+01-01-2024 0:00 1.0
+Jan-01-2024 6:00 2.0
+12:00 3.0
+01/02/2024 6.5 4.0

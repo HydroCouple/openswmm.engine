@@ -1,0 +1,8 @@
+;; Eulerian ARD transport options for the SWMMVis manual tutorial T7.
+;; Only meaningful when [OPTIONS] QUALITY_SOLVER is EULERIAN_ARD.
+
+[TRANSPORT_OPTIONS]
+DISPERSION      FISCHER
+SCALAR_SCHEME   MUSCL
+LIMITER         VANLEER
+TARGET_DX       25

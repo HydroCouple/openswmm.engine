@@ -1,10 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright 2026 Caleb Buahin
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Node access (Pythonic v1 surface)
 =================================
 
 :author: Caleb Buahin
 :copyright: Copyright (c) 2026 Caleb Buahin
-:license: MIT
+:license: Apache-2.0
 
 The :class:`Nodes` collection and :class:`Node` wrapper are the entry
 point for reading and writing node state in the new bindings. The
@@ -193,6 +209,13 @@ cdef class StorageView:
 
     @property
     def seep_rate(self) -> float:
+        """Constant seepage (exfiltration) rate, in/hr or mm/hr.
+
+        The constant-rate form of storage exfiltration (a ``[STORAGE]`` row
+        ending in a bare Ksat): setting it sets the exfiltration Ksat with
+        zero suction and IMD, replacing any Green-Ampt parameters; it reads
+        0 when exfiltration uses Green-Ampt parameters or is off.
+        """
         _check_fresh(self._node)
         cdef double v = 0.0
         _check(swmm_node_get_storage_seep_rate(_h(self._node._solver), self._node._index, &v))
@@ -319,6 +342,42 @@ cdef class OutfallView:
         _check(swmm_node_set_outfall_route_to(
             _h(self._node._solver), self._node._index, subcatch_idx))
 
+    @property
+    def export_receipt(self) -> dict:
+        """Copied cumulative committed export, independent of REPORT_START.
+
+        Keys: exported_m3, reversed_m3, exported_heat_j, flags,
+        pollutant_amounts and pollutant_amount_units. Pollutants use stable IDs
+        and kg for MG/L or UG/L, counts for #/L. Heat is J relative to 0 degC.
+        Capability flags are 1 water, 2 LEGACY pollutants, 4 native heat.
+        Exports have already left the donor; never debit them a second time.
+        Native rerouting/2D ownership and pre-start reads raise EngineError.
+        No MSX or ARD/LARD mass capability is implied.
+        """
+        _check_fresh(self._node)
+        cdef SWMM_Engine handle = _h(self._node._solver)
+        cdef int count = swmm_pollutant_count(handle)
+        cdef SWMM_OutfallExportReceipt receipt
+        cdef np.ndarray[np.float64_t, ndim=1] amounts = np.empty(max(count, 0), dtype=np.float64)
+        _check(swmm_node_get_export_receipt(handle, self._node._index,
+                                           &receipt, <double*>amounts.data, count))
+        cdef int i, units
+        values = {}
+        amount_units = {}
+        for i in range(count):
+            name = swmm_pollutant_id(handle, i).decode('utf-8')
+            _check(swmm_pollutant_get_units(handle, i, &units))
+            values[name] = float(amounts[i])
+            amount_units[name] = 'counts' if units == 2 else 'kg'
+        return {
+            'exported_m3': receipt.exported_m3,
+            'reversed_m3': receipt.reversed_m3,
+            'exported_heat_j': receipt.exported_heat_j,
+            'flags': receipt.flags,
+            'pollutant_amounts': values,
+            'pollutant_amount_units': amount_units,
+        }
+
     def __repr__(self) -> str:
         return f"<OutfallView for {self._node!r}>"
 
@@ -404,9 +463,8 @@ cdef class Node:
         @rtype: str
         """
         _check_fresh(self)
-        cdef char buf[256]
-        _check(swmm_node_get_tag(_h(self._solver), self._index, buf, 256))
-        return buf.decode('utf-8')
+        return _read_engine_index_string(_h(self._solver), self._index,
+                                         swmm_node_get_tag)
 
     @tag.setter
     def tag(self, value) -> None:
@@ -458,17 +516,71 @@ cdef class Node:
         """Dry-run check of the virtual-junction usage rules for this node.
 
         C{0} when the node satisfies every structural rule (exactly two
-        attached conduits of identical cross-section, zero offsets, no
-        lateral inflow sources, dynamic-wave routing) — i.e. setting
-        L{is_virtual} to C{True} would succeed on a JUNCTION-typed node —
-        else the distinct ERR_VJ_* rule code (609-621) identifying the
-        violated rule. Read-only; no state is changed.
+        attached conduits of identical cross-section, zero offsets, not a
+        2D surface-coupling point, dynamic-wave or FV routing) — i.e.
+        setting L{is_virtual} to C{True} would succeed on a JUNCTION-typed
+        node — else the distinct ERR_VJ_* rule code (609-621) identifying
+        the violated rule. Point lateral inflows ([INFLOWS], [DWF], RDII,
+        subcatchment outlets, LID drains) do not disqualify a node.
+        Read-only; no state is changed.
 
         @rtype: int
         """
         _check_fresh(self)
         cdef int code = 0
         _check(swmm_node_virtual_eligible(_h(self._solver), self._index, &code))
+        return code
+
+    @property
+    def is_inlet(self) -> bool:
+        """C{True} when this node is an B{inlet junction}.
+
+        An inlet junction is a virtual junction on a STREET conduit pair that
+        also carries a street inlet: it captures gutter flow from the
+        approaching conduit, delivers it to a designated capture (underdrain)
+        node, passes the uncaptured flow on through the downstream conduit,
+        and receives the capture node's overflow back as backflow (INP
+        C{[INLET_JUNCTIONS]}; refactored engine only). C{is_inlet} implies
+        L{is_virtual}.
+
+        Setting to C{True} runs the virtual-junction rules plus the street
+        shape rule (623) and promotes the node to a virtual junction first if
+        it is not one; a violated rule raises and leaves the node unchanged.
+        Setting to C{False} demotes it and deletes its inlet-usage row (the
+        node stays a virtual junction).
+
+        @rtype: bool
+        """
+        _check_fresh(self)
+        cdef int v = 0
+        _check(swmm_node_is_inlet(_h(self._solver), self._index, &v))
+        return v != 0
+
+    @is_inlet.setter
+    def is_inlet(self, value) -> None:
+        _check_fresh(self)
+        _check(swmm_node_set_inlet(_h(self._solver), self._index,
+                                   1 if value else 0))
+
+    def inlet_rule_violation(self, bint for_drop_inlet=False) -> int:
+        """Dry-run check of the inlet-junction usage rules for this node.
+
+        C{0} when setting L{is_inlet} to C{True} would succeed — every
+        virtual-junction rule holds B{and} both attached conduits carry the
+        cross-section the design needs — else the violated rule's code (the
+        ERR_VJ_* codes 609-621, or 623 when the conduits are not STREET).
+        Read-only; no state is changed.
+
+        @param for_drop_inlet: Check against a C{DROP_GRATE}/C{DROP_CURB}
+            design, whose conduits must be C{RECT_OPEN} or C{TRAPEZOIDAL}
+            rather than C{STREET}.
+        @type for_drop_inlet: bool
+        @rtype: int
+        """
+        _check_fresh(self)
+        cdef int code = 0
+        _check(swmm_node_inlet_eligible(_h(self._solver), self._index,
+                                        1 if for_drop_inlet else 0, &code))
         return code
 
     @property
@@ -501,6 +613,28 @@ cdef class Node:
     def max_depth(self, double value) -> None:
         _check_fresh(self)
         _check(swmm_node_set_max_depth(_h(self._solver), self._index, value))
+
+    @property
+    def rim_depth(self) -> float:
+        """Rendering-only rim (ground) depth above the invert; 0 = unset.
+
+        No hydraulics, routing, reporting or output-file path reads this, so
+        setting it can never change a result. It exists for virtual junctions,
+        whose L{max_depth} is derived (always the shared pipe crown): without
+        it a drawn ground line collapses to the crown at every break point.
+        It is the optional third token of an INP C{[VIRTUAL_JUNCTIONS]} row.
+
+        When 0, a renderer should fall back to L{max_depth}.
+        """
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_node_get_rim_depth(_h(self._solver), self._index, &v))
+        return v
+
+    @rim_depth.setter
+    def rim_depth(self, double value) -> None:
+        _check_fresh(self)
+        _check(swmm_node_set_rim_depth(_h(self._solver), self._index, value))
 
     @property
     def surcharge_depth(self) -> float:
@@ -816,9 +950,11 @@ cdef class Nodes:
         cdef int n = swmm_node_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         cdef double* p = <double*>buf.data
-        cdef int err
-        with nogil:
-            err = swmm_node_get_depths_bulk(h, p, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_node_get_depths_bulk(h, p, n)
         _check(err)
         return buf
 
@@ -831,9 +967,11 @@ cdef class Nodes:
             raise ValueError(
                 f"depths array length {arr.shape[0]} != node count {n}")
         cdef const double* p = <const double*>arr.data
-        cdef int err
-        with nogil:
-            err = swmm_node_set_depths_bulk(h, p, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_node_set_depths_bulk(h, p, n)
         _check(err)
 
     @property
@@ -841,9 +979,11 @@ cdef class Nodes:
         cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_node_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with nogil:
-            err = swmm_node_get_heads_bulk(h, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_node_get_heads_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -852,9 +992,11 @@ cdef class Nodes:
         cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_node_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with nogil:
-            err = swmm_node_get_inflows_bulk(h, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_node_get_inflows_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -863,9 +1005,11 @@ cdef class Nodes:
         cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_node_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with nogil:
-            err = swmm_node_get_overflows_bulk(h, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_node_get_overflows_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -874,9 +1018,11 @@ cdef class Nodes:
         cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_node_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with nogil:
-            err = swmm_node_get_volumes_bulk(h, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_node_get_volumes_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -885,9 +1031,11 @@ cdef class Nodes:
         cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_node_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with nogil:
-            err = swmm_node_get_outflows_bulk(h, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_node_get_outflows_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -896,9 +1044,11 @@ cdef class Nodes:
         cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_node_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with nogil:
-            err = swmm_node_get_losses_bulk(h, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_node_get_losses_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -907,9 +1057,11 @@ cdef class Nodes:
         cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_node_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with nogil:
-            err = swmm_node_get_lateral_inflows_bulk(h, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_node_get_lateral_inflows_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -924,9 +1076,11 @@ cdef class Nodes:
             raise ValueError(
                 f"lateral_inflows array length {arr.shape[0]} != node count {n}")
         cdef const double* p = <const double*>arr.data
-        cdef int err
-        with nogil:
-            err = swmm_node_set_lat_inflows_bulk(h, p, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_node_set_lat_inflows_bulk(h, p, n)
         _check(err)
 
     def qualities(self, pollutant):
@@ -935,9 +1089,11 @@ cdef class Nodes:
         cdef int n = swmm_node_count(h)
         cdef int p_idx = _resolve_pollutant(self._solver, pollutant)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with nogil:
-            err = swmm_node_get_quality_bulk(h, p_idx, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_node_get_quality_bulk(h, p_idx, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -951,9 +1107,11 @@ cdef class Nodes:
         cdef int n = swmm_node_count(h)
         cdef np.ndarray[char, ndim=1, mode="c"] buf = np.zeros(
             n * stride, dtype=np.int8)
-        cdef int err
-        with nogil:
-            err = swmm_node_get_ids_bulk(h, <char*>buf.data, stride, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_node_get_ids_bulk(h, <char*>buf.data, stride, n)
         _check(err)
         raw = bytes(buf)
         out = []

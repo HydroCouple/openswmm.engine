@@ -1,0 +1,65 @@
+{
+  "repository": "openswmm.engine",
+  "project_function_documentation_complete": true,
+  "completion_scope": "Maintained production/header/test sources in the current working tree; existing generated/vendor sources excluded by inventory.",
+  "maintained_source_header_test_files": 1049,
+  "production_files": 749,
+  "test_script_files": 300,
+  "metadata_missing": [],
+  "original_licenses_spdx_and_upstream_public_domain_notices_preserved": true,
+  "current_source_manifest_sha256": "f28ed8e7dbcef31dc59af9b3f6cb43d70d5407f888e74bf7b8ad927c12b4eed9",
+  "production_doxygen": {
+    "unique_canonical_or_body_records": 7576,
+    "named_parameter_positions": 16958,
+    "strict_gaps": 0
+  },
+  "tests_doxygen": {
+    "unique_canonical_or_body_records": 1838,
+    "named_parameter_positions": 3273,
+    "strict_gaps": 0
+  },
+  "whole_scan_warning_log_lines": {
+    "final-engine-warnings.log": 89,
+    "final-engine-windows-warnings.log": 89,
+    "final-engine-apple-openmp-warnings.log": 89,
+    "final-engine-tests-doxygen-warnings.log": 0
+  },
+  "exact_parser_diagnostics": {
+    "final-engine-warnings.log": {
+      "count": 22,
+      "classification": "Doxygen 1.17 static-linkage declaration/definition binding limitation; existing C static prototypes establish internal linkage and carry complete canonical contracts."
+    },
+    "final-engine-windows-warnings.log": {
+      "count": 22,
+      "classification": "Doxygen 1.17 static-linkage declaration/definition binding limitation; existing C static prototypes establish internal linkage and carry complete canonical contracts."
+    },
+    "final-engine-apple-openmp-warnings.log": {
+      "count": 22,
+      "classification": "Doxygen 1.17 static-linkage declaration/definition binding limitation; existing C static prototypes establish internal linkage and carry complete canonical contracts."
+    }
+  },
+  "optional_configuration": "Every 2D documentation audit defining OPENSWMM_HAS_2D also enables ENABLED_SECTIONS += OPENSWMM_HAS_2D for conditional argument tags. Official/default base configuration leaves both empty.",
+  "validation": "Immediate snapshot lexical/directive checks, exact parameter-identifier ledgers, clang-format idempotence, configured native syntax and focused feature/platform extraction. Engine test/C API smoke checks recorded in local module evidence; no new full runtime regression suite claimed for documentation-only edits.",
+  "documentation_commit_excludes_unrelated_implementation": true,
+  "additional_source_paths_selected": 71,
+  "approved_parameter_identifier_files": [
+    "src/engine/2d/coupling/Rk2RuntimeSources.hpp",
+    "src/engine/2d/solver/SurfaceSolverFactory.hpp",
+    "src/engine/2d/subsurface/CommonSourceStage.hpp",
+    "src/engine/2d/subsurface/EngineSourceResultHistory.hpp",
+    "src/engine/2d/subsurface/EngineSourceResultStream.hpp",
+    "src/engine/io/CheckpointFile.hpp",
+    "src/engine/io/CheckpointOutputPublication.hpp",
+    "src/legacy/engine/climate.c",
+    "src/legacy/engine/datetime.h",
+    "src/legacy/engine/error.h",
+    "src/legacy/engine/funcs.h"
+  ],
+  "deferred_comment_files": [
+    "src/engine/hydraulics/fv/ImplicitNetworkSolver.cpp",
+    "src/engine/hydraulics/fv/ImplicitNetworkSolver.hpp",
+    "tests/unit/engine/test_2d_exchange_rubinato_model.cpp",
+    "tests/unit/engine/test_2d_exchange_rubinato_steady.cpp"
+  ],
+  "source_hashes_are_point_in_time": true
+}

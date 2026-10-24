@@ -1,17 +1,37 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file openswmm_gages_impl.cpp
- * @brief C API implementation — rain gage identity, creation, properties, state, bulk.
+ * @file      openswmm_gages_impl.cpp
+ * @brief     C API implementation — rain gage identity, creation, properties, state, bulk.
  *
  * @see include/openswmm/engine/openswmm_gages.h
  * @ingroup engine_api
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #include "openswmm_api_common.hpp"
 #include "../../../include/openswmm/engine/openswmm_gages.h"
+
+#include "../hydrology/Gage.hpp"
+#include "../input/PostParseResolver.hpp"
+#include <cmath>
 
 extern "C" {
 
@@ -20,19 +40,23 @@ extern "C" {
 // ============================================================================
 
 SWMM_ENGINE_API int swmm_gage_count(SWMM_Engine engine) {
-    if (!engine) return -1;
+    if (!engine)
+        return -1;
     return to_engine(engine)->context().n_gages();
 }
 
 SWMM_ENGINE_API int swmm_gage_index(SWMM_Engine engine, const char* id) {
-    if (!engine || !id) return -1;
+    if (!engine || !id)
+        return -1;
     return to_engine(engine)->context().gage_names.find(id);
 }
 
 SWMM_ENGINE_API const char* swmm_gage_id(SWMM_Engine engine, int idx) {
-    if (!engine) return nullptr;
+    if (!engine)
+        return nullptr;
     const auto& ctx = to_engine(engine)->context();
-    if (idx < 0 || idx >= ctx.n_gages()) return nullptr;
+    if (idx < 0 || idx >= ctx.n_gages())
+        return nullptr;
     return ctx.gage_names.name_of(idx).c_str();
 }
 
@@ -42,7 +66,8 @@ SWMM_ENGINE_API const char* swmm_gage_id(SWMM_Engine engine, int idx) {
 
 SWMM_ENGINE_API int swmm_gage_add(SWMM_Engine engine, const char* id) {
     CHECK_HANDLE(engine);
-    if (!id) return SWMM_ERR_BADPARAM;
+    if (!id)
+        return SWMM_ERR_BADPARAM;
 
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
@@ -54,8 +79,10 @@ SWMM_ENGINE_API int swmm_gage_add(SWMM_Engine engine, const char* id) {
     int n = ctx.gage_names.size();
     ctx.gages.grow_to(n);
     const auto un = static_cast<std::size_t>(n);
-    if (ctx.spatial.gage_x.size() < un) ctx.spatial.gage_x.resize(un, 0.0);
-    if (ctx.spatial.gage_y.size() < un) ctx.spatial.gage_y.resize(un, 0.0);
+    if (ctx.spatial.gage_x.size() < un)
+        ctx.spatial.gage_x.resize(un, 0.0);
+    if (ctx.spatial.gage_y.size() < un)
+        ctx.spatial.gage_y.resize(un, 0.0);
 
     return SWMM_OK;
 }
@@ -69,7 +96,8 @@ SWMM_ENGINE_API int swmm_gage_set_rain_type(SWMM_Engine engine, int idx, int typ
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
-    if (type < 0 || type > 2) return SWMM_ERR_BADPARAM;
+    if (type < 0 || type > 2)
+        return SWMM_ERR_BADPARAM;
     ctx.gages.rain_type[static_cast<std::size_t>(idx)] = type;
     return SWMM_OK;
 }
@@ -94,21 +122,24 @@ SWMM_ENGINE_API int swmm_gage_set_data_source(SWMM_Engine engine, int idx, int s
 
 SWMM_ENGINE_API int swmm_gage_set_timeseries(SWMM_Engine engine, int idx, const char* ts_id) {
     CHECK_HANDLE(engine);
-    if (!ts_id) return SWMM_ERR_BADPARAM;
+    if (!ts_id)
+        return SWMM_ERR_BADPARAM;
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
     int ts_idx = ctx.find_timeseries(ts_id);
-    if (ts_idx < 0) return SWMM_ERR_BADPARAM;
+    if (ts_idx < 0)
+        return SWMM_ERR_BADPARAM;
     ctx.gages.ts_index[static_cast<std::size_t>(idx)] = ts_idx;
     ctx.gages.source[static_cast<std::size_t>(idx)] = openswmm::RainSource::TIMESERIES;
     return SWMM_OK;
 }
 
 SWMM_ENGINE_API int swmm_gage_set_filename(SWMM_Engine engine, int idx, const char* path,
-                                             const char* station_id) {
+                                           const char* station_id) {
     CHECK_HANDLE(engine);
-    if (!path) return SWMM_ERR_BADPARAM;
+    if (!path)
+        return SWMM_ERR_BADPARAM;
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
@@ -116,10 +147,18 @@ SWMM_ENGINE_API int swmm_gage_set_filename(SWMM_Engine engine, int idx, const ch
     // Standard SWMM rain file grammar: `Fname Station Units`. The station
     // token selects rows in the file by its first column, so it belongs in
     // station_id (not the CSV column-name slot used by the "path:col" form).
-    ctx.gages.file_path[uidx]   = path;
-    ctx.gages.station_id[uidx]  = station_id ? station_id : "";
-    ctx.gages.file_format[uidx] = openswmm::RainFileFormat::STAN_PRCP;
-    ctx.gages.source[uidx]      = openswmm::RainSource::FILE_RAIN;
+    ctx.gages.file_path[uidx] = path;
+    ctx.gages.station_id[uidx] = station_id ? station_id : "";
+    // B1 fix: do NOT unconditionally force STAN_PRCP — that destroyed a
+    // USER_CSV gage's column binding when the GUI edited the path. Preserve
+    // an existing USER_CSV format; otherwise auto-detect (a non-empty
+    // col_name implies the multi-column "path:col" form).
+    if (ctx.gages.file_format[uidx] != openswmm::RainFileFormat::USER_CSV) {
+        ctx.gages.file_format[uidx] = !ctx.gages.col_name[uidx].empty()
+                                          ? openswmm::RainFileFormat::USER_CSV
+                                          : openswmm::RainFileFormat::STAN_PRCP;
+    }
+    ctx.gages.source[uidx] = openswmm::RainSource::FILE_RAIN;
     return SWMM_OK;
 }
 
@@ -129,14 +168,56 @@ SWMM_ENGINE_API int swmm_gage_set_station_id(SWMM_Engine engine, int idx, const 
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
     auto uidx = static_cast<std::size_t>(idx);
-    ctx.gages.station_id[uidx]  = station_id ? station_id : "";
-    ctx.gages.file_format[uidx] = openswmm::RainFileFormat::STAN_PRCP;
+    // B1 fix: only the station id changes here. Forcing file_format to
+    // STAN_PRCP silently corrupted USER_CSV gages when a host edited the
+    // Station ID field.
+    ctx.gages.station_id[uidx] = station_id ? station_id : "";
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_gage_set_file_column(SWMM_Engine engine, int idx, const char* column) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
+    auto uidx = static_cast<std::size_t>(idx);
+    ctx.gages.col_name[uidx] = column ? column : "";
+    // A named column only exists in the multi-column "path:col" form, so a
+    // non-empty selector implies USER_CSV. Clearing it leaves the format
+    // alone: an empty column on a USER_CSV gage means "first data column".
+    if (!ctx.gages.col_name[uidx].empty())
+        ctx.gages.file_format[uidx] = openswmm::RainFileFormat::USER_CSV;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_gage_set_file_format(SWMM_Engine engine, int idx, int format) {
+    CHECK_HANDLE(engine);
+    // Validate against RainFileFormat (GageData.hpp): UNKNOWN(-1)..USER_CSV(6).
+    if (format < static_cast<int>(openswmm::RainFileFormat::UNKNOWN) ||
+        format > static_cast<int>(openswmm::RainFileFormat::USER_CSV))
+        return SWMM_ERR_BADPARAM;
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
+    auto uidx = static_cast<std::size_t>(idx);
+    const auto fmt = static_cast<openswmm::RainFileFormat>(format);
+    ctx.gages.file_format[uidx] = fmt;
+    // The row selectors are mutually exclusive — a standard rain file picks
+    // rows by station id and has no columns; a multi-column file picks a
+    // column and has no station column. Clearing the inapplicable one keeps
+    // the gage in a state InpWriter can express, and gives a host an explicit
+    // way OUT of USER_CSV (set_filename/set_file_column both preserve it).
+    if (fmt == openswmm::RainFileFormat::USER_CSV)
+        ctx.gages.station_id[uidx].clear();
+    else
+        ctx.gages.col_name[uidx].clear();
     return SWMM_OK;
 }
 
 SWMM_ENGINE_API int swmm_gage_set_snow_factor(SWMM_Engine engine, int idx, double factor) {
     CHECK_HANDLE(engine);
-    if (factor <= 0.0) return SWMM_ERR_BADPARAM;
+    if (factor <= 0.0)
+        return SWMM_ERR_BADPARAM;
     auto& ctx = to_engine(engine)->context();
     // No CHECK_GEOMETRY: the snow catch factor (SCF) is a scalar precipitation
     // multiplier, not geometry — settable mid-run for calibration/RTC, matching
@@ -148,7 +229,8 @@ SWMM_ENGINE_API int swmm_gage_set_snow_factor(SWMM_Engine engine, int idx, doubl
 
 SWMM_ENGINE_API int swmm_gage_set_rain_units(SWMM_Engine engine, int idx, int units) {
     CHECK_HANDLE(engine);
-    if (units < 0 || units > 1) return SWMM_ERR_BADPARAM;
+    if (units < 0 || units > 1)
+        return SWMM_ERR_BADPARAM;
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
@@ -158,7 +240,8 @@ SWMM_ENGINE_API int swmm_gage_set_rain_units(SWMM_Engine engine, int idx, int un
 
 SWMM_ENGINE_API int swmm_gage_set_scale_factor(SWMM_Engine engine, int idx, double factor) {
     CHECK_HANDLE(engine);
-    if (factor <= 0.0) return SWMM_ERR_BADPARAM;
+    if (factor <= 0.0)
+        return SWMM_ERR_BADPARAM;
     auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
     ctx.gages.scale_factor[static_cast<std::size_t>(idx)] = factor;
@@ -173,7 +256,8 @@ SWMM_ENGINE_API int swmm_gage_get_rain_type(SWMM_Engine engine, int idx, int* ty
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
-    if (type) *type = ctx.gages.rain_type[static_cast<std::size_t>(idx)];
+    if (type)
+        *type = ctx.gages.rain_type[static_cast<std::size_t>(idx)];
     return SWMM_OK;
 }
 
@@ -181,7 +265,8 @@ SWMM_ENGINE_API int swmm_gage_get_data_source(SWMM_Engine engine, int idx, int* 
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
-    if (source) *source = static_cast<int>(ctx.gages.source[static_cast<std::size_t>(idx)]);
+    if (source)
+        *source = static_cast<int>(ctx.gages.source[static_cast<std::size_t>(idx)]);
     return SWMM_OK;
 }
 
@@ -189,14 +274,26 @@ SWMM_ENGINE_API int swmm_gage_get_scale_factor(SWMM_Engine engine, int idx, doub
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
-    if (factor) *factor = ctx.gages.scale_factor[static_cast<std::size_t>(idx)];
+    if (factor)
+        *factor = ctx.gages.scale_factor[static_cast<std::size_t>(idx)];
     return SWMM_OK;
 }
 
 // Local NUL-terminated copy helper (mirrors fill_buf in openswmm_model_impl.cpp;
 // kept local to avoid exporting a shared symbol across translation units).
+/**
+ * @brief Copy a gage string into an optional bounded NUL-terminated buffer.
+ *
+ * Copies min(sz-1,s.size()) bytes and appends NUL, silently truncating. Embedded source NULs are
+ * copied; byte truncation does not preserve UTF-8 code-point boundaries.
+ *
+ * @param[out] buf Caller-owned writable sz-byte array; NULL is a no-op.
+ * @param[in] sz Capacity including terminator; <=0 is a no-op.
+ * @param[in] s Borrowed source bytes; must not overlap the writable destination when memcpy copies.
+ */
 static void gage_fill_buf(char* buf, int sz, const std::string& s) {
-    if (!buf || sz <= 0) return;
+    if (!buf || sz <= 0)
+        return;
     const std::size_t n = std::min(static_cast<std::size_t>(sz - 1), s.size());
     std::memcpy(buf, s.data(), n);
     buf[n] = '\0';
@@ -215,13 +312,15 @@ SWMM_ENGINE_API int swmm_gage_get_snow_factor(SWMM_Engine engine, int idx, doubl
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
-    if (factor) *factor = ctx.gages.snow_factor[static_cast<std::size_t>(idx)];
+    if (factor)
+        *factor = ctx.gages.snow_factor[static_cast<std::size_t>(idx)];
     return SWMM_OK;
 }
 
 SWMM_ENGINE_API int swmm_gage_get_timeseries(SWMM_Engine engine, int idx, char* buf, int buflen) {
     CHECK_HANDLE(engine);
-    if (!buf || buflen <= 0) return SWMM_ERR_BADPARAM;
+    if (!buf || buflen <= 0)
+        return SWMM_ERR_BADPARAM;
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
     const int ts = ctx.gages.ts_index[static_cast<std::size_t>(idx)];
@@ -229,17 +328,37 @@ SWMM_ENGINE_API int swmm_gage_get_timeseries(SWMM_Engine engine, int idx, char* 
     if (ts >= 0 && ts < ctx.n_tables())
         id = ctx.tables[ts].id;
     else
-        id = ctx.gages.ts_name[static_cast<std::size_t>(idx)];  // unresolved name, if any
+        id = ctx.gages.ts_name[static_cast<std::size_t>(idx)]; // unresolved name, if any
     gage_fill_buf(buf, buflen, id);
     return SWMM_OK;
 }
 
 SWMM_ENGINE_API int swmm_gage_get_station_id(SWMM_Engine engine, int idx, char* buf, int buflen) {
     CHECK_HANDLE(engine);
-    if (!buf || buflen <= 0) return SWMM_ERR_BADPARAM;
+    if (!buf || buflen <= 0)
+        return SWMM_ERR_BADPARAM;
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
     gage_fill_buf(buf, buflen, ctx.gages.station_id[static_cast<std::size_t>(idx)]);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_gage_get_file_column(SWMM_Engine engine, int idx, char* buf, int buflen) {
+    CHECK_HANDLE(engine);
+    if (!buf || buflen <= 0)
+        return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
+    gage_fill_buf(buf, buflen, ctx.gages.col_name[static_cast<std::size_t>(idx)]);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_gage_get_file_format(SWMM_Engine engine, int idx, int* format) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
+    if (format)
+        *format = static_cast<int>(ctx.gages.file_format[static_cast<std::size_t>(idx)]);
     return SWMM_OK;
 }
 
@@ -247,7 +366,8 @@ SWMM_ENGINE_API int swmm_gage_get_rain_units(SWMM_Engine engine, int idx, int* u
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
-    if (units) *units = ctx.gages.rain_units[static_cast<std::size_t>(idx)];
+    if (units)
+        *units = ctx.gages.rain_units[static_cast<std::size_t>(idx)];
     return SWMM_OK;
 }
 
@@ -259,7 +379,8 @@ SWMM_ENGINE_API int swmm_gage_get_rainfall(SWMM_Engine engine, int idx, double* 
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
-    if (rainfall) *rainfall = ctx.gages.rainfall[static_cast<std::size_t>(idx)];
+    if (rainfall)
+        *rainfall = ctx.gages.rainfall[static_cast<std::size_t>(idx)];
     return SWMM_OK;
 }
 
@@ -268,6 +389,9 @@ SWMM_ENGINE_API int swmm_gage_set_rainfall(SWMM_Engine engine, int idx, double r
     auto& ctx = to_engine(engine)->context();
     CHECK_RUNNING(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
+    if (!std::isfinite(rainfall) || rainfall < 0.0)
+        return SWMM_ERR_BADPARAM;
+    ctx.gages.api_rainfall[static_cast<std::size_t>(idx)] = rainfall;
     ctx.gages.rainfall[static_cast<std::size_t>(idx)] = rainfall;
     return SWMM_OK;
 }
@@ -279,7 +403,8 @@ SWMM_ENGINE_API int swmm_gage_set_rainfall(SWMM_Engine engine, int idx, double r
 SWMM_ENGINE_API int swmm_gage_get_rainfall_bulk(SWMM_Engine engine, double* buf, int count) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
-    if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
+    if (!buf || count <= 0)
+        return SWMM_ERR_BADPARAM;
     const int n = std::min(count, ctx.n_gages());
     std::copy(ctx.gages.rainfall.begin(), ctx.gages.rainfall.begin() + n, buf);
     return SWMM_OK;
@@ -287,11 +412,72 @@ SWMM_ENGINE_API int swmm_gage_get_rainfall_bulk(SWMM_Engine engine, double* buf,
 
 SWMM_ENGINE_API int swmm_gage_rename(SWMM_Engine engine, int idx, const char* newId) {
     CHECK_HANDLE(engine);
-    if (!newId || newId[0] == '\0') return SWMM_ERR_BADPARAM;
+    if (!newId || newId[0] == '\0')
+        return SWMM_ERR_BADPARAM;
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
     return ctx.gage_names.rename(idx, newId) ? SWMM_OK : SWMM_ERR_BADPARAM;
+}
+
+// ============================================================================
+// Resolved rainfall series
+// ============================================================================
+
+SWMM_ENGINE_API int swmm_gage_get_rainfall_series_count(SWMM_Engine engine, int idx, int* count) {
+    CHECK_HANDLE(engine);
+    if (!count)
+        return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
+
+    const openswmm::Table* tbl = openswmm::gage::gageRainSeries(ctx, idx);
+    *count = tbl ? static_cast<int>(tbl->x.size()) : 0;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_gage_get_rainfall_series(SWMM_Engine engine, int idx, double* times,
+                                                  double* values, int count) {
+    CHECK_HANDLE(engine);
+    if (count < 0)
+        return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
+
+    const openswmm::Table* tbl = openswmm::gage::gageRainSeries(ctx, idx);
+    if (!tbl)
+        return SWMM_OK; // no series: nothing to write, not an error
+
+    const auto ug = static_cast<std::size_t>(idx);
+    const int rain_type = openswmm::gage::gageSeriesRainType(ctx, idx);
+    const double interval = ctx.gages.interval_sec[ug];
+    const double units_fac = openswmm::gage::gageUnitsFactor(ctx, idx);
+    const double scale_fac = ctx.gages.scale_factor[ug];
+
+    // The CUMULATIVE accumulator is stateful across entries, so the series must
+    // be walked in order from a fresh accumulator — reusing the live one would
+    // both corrupt the run and make this call order-dependent.
+    double cumul_accum = 0.0;
+
+    const int n = std::min(count, static_cast<int>(tbl->x.size()));
+    for (int k = 0; k < n; ++k) {
+        const auto uk = static_cast<std::size_t>(k);
+        if (times)
+            times[k] = tbl->x[uk];
+        const double v = openswmm::gage::convertGageValue(tbl->y[uk], rain_type, interval,
+                                                          cumul_accum, units_fac, scale_fac);
+        if (values)
+            values[k] = v;
+    }
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_gage_reload_rain_files(SWMM_Engine engine) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+    openswmm::input::load_external_rain_files(ctx);
+    return SWMM_OK;
 }
 
 } /* extern "C" */

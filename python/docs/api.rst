@@ -34,9 +34,10 @@ OpenSWMM 6 — refactored engine
 The :mod:`openswmm.engine` subpackage exposes the **new, refactored
 OpenSWMM 6 engine** — the recommended API for all new work.
 
-All domain access is class-based: each class takes an active
+Runtime domain access is class-based: each class takes an active
 :class:`~openswmm.engine._solver.Solver` in its constructor and may only be
 called when the solver is in an appropriate :class:`EngineState`.
+Saved result readers operate independently of a solver; see :doc:`guide/results`.
 
 .. seealso::
 
@@ -190,6 +191,46 @@ Water quality  (landuse, buildup, washoff, treatment)
    :undoc-members:
    :show-inheritance:
 
+Initial quality  (per-element starting concentrations)
+-------------------------------------------------------
+
+.. automodule:: openswmm.engine._initial_quality
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Reactions  (multi-species reaction system)
+-------------------------------------------
+
+.. automodule:: openswmm.engine._reactions
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Process components  (``[PROCESS_COMPONENTS]`` registrations)
+-------------------------------------------------------------
+
+.. automodule:: openswmm.engine._process_components
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Water age  (source ages and node overrides)
+--------------------------------------------
+
+.. automodule:: openswmm.engine._water_age
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Heat transport  (fluxes, solar, cloud, heat sources)
+-----------------------------------------------------
+
+.. automodule:: openswmm.engine._heat
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 Tables  (time series, curves, patterns)
 ---------------------------------------
 
@@ -230,6 +271,14 @@ Statistics
    :undoc-members:
    :show-inheritance:
 
+Offline flow tracing
+--------------------
+
+.. automodule:: openswmm.engine._trace
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 Output reader  (binary ``.out`` file)
 -------------------------------------
 
@@ -238,6 +287,17 @@ Output reader  (binary ``.out`` file)
    :undoc-members:
    :show-inheritance:
 
+Saved 1D/2D results
+-------------------
+
+.. automodule:: openswmm.engine._results
+   :members: Results, ResultField, SeriesField, SurfaceField, SurfaceResults, ResultMesh
+   :undoc-members:
+
+.. automodule:: openswmm.engine._output2d
+   :members:
+   :undoc-members:
+
 Spatial  (CRS, coordinates, vertices, polygons)
 -----------------------------------------------
 
@@ -245,6 +305,14 @@ Spatial  (CRS, coordinates, vertices, polygons)
    :members:
    :undoc-members:
    :show-inheritance:
+
+Engine catalog
+--------------
+
+Machine-readable map of this API; see :doc:`guide/catalog`.
+
+.. automodule:: openswmm.engine.catalog
+   :members:
 
 Enumerations
 ------------

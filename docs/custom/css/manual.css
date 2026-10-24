@@ -1,0 +1,103 @@
+/* Manual-specific styling on top of doxygen-awesome.
+ *
+ * Status badges: emitted by the Doxyfile alias
+ *   \status{Implemented} -> <span class="status-badge" data-status="Implemented">Implemented</span>
+ * The four hex values are copied from docs/figures/status.py; the lint
+ * (check_status_badges) fails if they drift apart, so change them there first.
+ */
+.status-badge {
+  display: inline-block;
+  padding: 0 0.55em;
+  border-radius: 1em;
+  font-size: 0.78em;
+  font-weight: 600;
+  line-height: 1.7;
+  letter-spacing: 0.01em;
+  color: #ffffff;
+  white-space: nowrap;
+  vertical-align: baseline;
+}
+.status-badge[data-status="Implemented"]  { background: #1baf7a; }
+.status-badge[data-status="Experimental"] { background: #eda100; }
+.status-badge[data-status="Planned"]      { background: #898781; }
+.status-badge[data-status="Retired"]      { background: #e87ba4; text-decoration: line-through; }
+
+html.dark-mode .status-badge[data-status="Implemented"]  { background: #148a5f; }
+html.dark-mode .status-badge[data-status="Experimental"] { background: #b97e00; }
+html.dark-mode .status-badge[data-status="Planned"]      { background: #6a6863; }
+html.dark-mode .status-badge[data-status="Retired"]      { background: #b85c7f; }
+
+/* A table whose header names a Status column reads better with the badge
+ * centred and the column kept narrow. */
+table.markdownTable td .status-badge { margin: 0 auto; }
+
+/* Interactive diagrams (docs/custom/js/manual-interactive.js).
+ *
+ * The link blocks that carry the click targets are data for the script, not
+ * content: hidden here so a page without JavaScript shows the plain figure. */
+div.fig-hotspots, div.workflow-links { display: none; }
+
+.mi-wrap { position: relative; margin: 0.6em 0 0.3em; }
+.mi-viewport {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--separator-color, #dedede);
+  border-radius: 6px;
+  background: var(--page-background-color, #ffffff);
+  cursor: grab;
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.mi-viewport.is-active {
+  border-color: var(--primary-color, #1982d2);
+  box-shadow: 0 0 0 2px rgba(25, 130, 210, 0.22);
+  touch-action: none;
+}
+.mi-viewport.is-dragging { cursor: grabbing; }
+.mi-canvas { position: relative; display: inline-block; max-width: 100%; transform-origin: 0 0; will-change: transform; }
+.mi-canvas > img { display: block; max-width: 100%; height: auto; }
+.mi-canvas > pre.mermaid { margin: 0; padding: 0.4em; background: transparent; border: 0; text-align: center; }
+.mi-canvas > pre.mermaid > svg { max-width: 100%; height: auto; }
+.mi-overlay { position: absolute; left: 0; top: 0; right: 0; bottom: 0; }
+.mi-hs {
+  position: absolute;
+  display: block;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  box-sizing: border-box;
+  cursor: pointer;
+}
+.mi-hs:hover, .mi-hs:focus-visible {
+  border-color: var(--primary-color, #1982d2);
+  background: rgba(25, 130, 210, 0.13);
+  outline: none;
+}
+.mi-toolbar {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  gap: 4px;
+  z-index: 5;
+  opacity: 0.45;
+  transition: opacity 0.15s;
+}
+.mi-wrap:hover .mi-toolbar, .mi-viewport.is-active ~ .mi-toolbar { opacity: 1; }
+.mi-btn {
+  min-width: 26px;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--separator-color, #cfcfcf);
+  border-radius: 5px;
+  background: var(--page-background-color, #ffffff);
+  color: var(--page-foreground-color, #222222);
+  font: 600 14px/24px sans-serif;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+}
+.mi-btn:hover { border-color: var(--primary-color, #1982d2); color: var(--primary-color, #1982d2); }
+.mi-hint { font-size: 0.78em; color: var(--page-secondary-foreground-color, #6a6a6a); margin-top: 0.3em; }
+html.dark-mode .mi-viewport.is-active { box-shadow: 0 0 0 2px rgba(120, 180, 240, 0.28); }
+html.dark-mode .mi-hs:hover, html.dark-mode .mi-hs:focus-visible { background: rgba(120, 180, 240, 0.18); }

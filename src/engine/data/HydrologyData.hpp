@@ -1,22 +1,45 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file HydrologyData.hpp
- * @brief SoA stores for snowpacks, aquifers, LID controls, and LID usage.
+ * @file      HydrologyData.hpp
+ * @brief     SoA stores for snowpacks, aquifers, LID controls, and LID usage.
  *
  * @details Persistent data for .inp round-trip of hydrology-related sections.
  *
  * @ingroup engine_data
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_HYDROLOGY_DATA_HPP
 #define OPENSWMM_ENGINE_HYDROLOGY_DATA_HPP
 
+#include "LidNodeData.hpp"
+#include "../hydrology/surface/UebConfig.hpp"
+#include "../hydrology/surface/MeshSnowConfig.hpp"
+#include "../hydrology/surface/UebSubcatchments.hpp"
+#include "../hydrology/HourlyMeteorology.hpp"
 #include <vector>
 #include <string>
 #include <array>
+
+#include "../core/FilePathPair.hpp"
 
 namespace openswmm {
 
@@ -34,6 +57,18 @@ namespace openswmm {
  * @ingroup engine_data
  */
 struct SnowpackStore {
+    // Derived at report time from accepted native and completed source owners.
+    // Not restart state; it is rebuilt after every run/resume.
+    std::vector<std::pair<std::string, double>> report_values;
+    surface::ueb::NativeState runtime;
+    surface::SnowConfig config;
+    surface::MeshSnowConfig mesh_config;
+    climate::HourlyMeteorology meteorology;
+    std::vector<climate::SnowDailyWeather> daily_weather;
+    /**
+     * @brief Count SnowpackStore rows from the names column.
+     * @return names.size() converted to int; no parallel-column or reference-validity checks.
+     */
     int count() const { return static_cast<int>(names.size()); }
 
     std::vector<std::string> names;
@@ -49,7 +84,7 @@ struct SnowpackStore {
 
     // REMOVAL: dSnow, fOut, fImp, fPerv, fImelt, fToSubcatch, subcatch_name
     std::vector<std::array<double, 6>> removal;
-    std::vector<std::string>           removal_subcatch;
+    std::vector<std::string> removal_subcatch;
 };
 
 // ============================================================================
@@ -64,22 +99,26 @@ struct SnowpackStore {
  * @ingroup engine_data
  */
 struct AquiferStore {
+    /**
+     * @brief Count AquiferStore rows from the names column.
+     * @return names.size() converted to int; no parallel-column or reference-validity checks.
+     */
     int count() const { return static_cast<int>(names.size()); }
 
     std::vector<std::string> names;
-    std::vector<double>      porosity;
-    std::vector<double>      wilting_point;
-    std::vector<double>      field_capacity;
-    std::vector<double>      conductivity;
-    std::vector<double>      conduct_slope;
-    std::vector<double>      tension_slope;
-    std::vector<double>      upper_evap;
-    std::vector<double>      lower_evap;
-    std::vector<double>      lower_loss;
-    std::vector<double>      bottom_elev;
-    std::vector<double>      water_table_elev;
-    std::vector<double>      upper_moist;
-    std::vector<std::string> upper_evap_pat;   ///< ET pattern name (optional)
+    std::vector<double> porosity;
+    std::vector<double> wilting_point;
+    std::vector<double> field_capacity;
+    std::vector<double> conductivity;
+    std::vector<double> conduct_slope;
+    std::vector<double> tension_slope;
+    std::vector<double> upper_evap;
+    std::vector<double> lower_evap;
+    std::vector<double> lower_loss;
+    std::vector<double> bottom_elev;
+    std::vector<double> water_table_elev;
+    std::vector<double> upper_moist;
+    std::vector<std::string> upper_evap_pat; ///< ET pattern name (optional)
 };
 
 // ============================================================================
@@ -97,6 +136,11 @@ struct AquiferStore {
  * @ingroup engine_data
  */
 struct LidControlStore {
+    std::vector<std::vector<LidNodeLayer>> node_layers;
+    /**
+     * @brief Count LidControlStore rows from the names column.
+     * @return names.size() converted to int; no parallel-column or reference-validity checks.
+     */
     int count() const { return static_cast<int>(names.size()); }
 
     std::vector<std::string> names;
@@ -118,6 +162,7 @@ struct LidControlStore {
 
     /** @brief DRAIN layer params (up to 6 values). */
     std::vector<std::array<double, 6>> drain;
+    std::vector<std::string> drain_curve;
 
     /** @brief DRAINMAT layer params (up to 3 values). */
     std::vector<std::array<double, 3>> drainmat;
@@ -126,6 +171,13 @@ struct LidControlStore {
      *  removals[lid_index] = vector of {pollutant_index, fraction} pairs.
      */
     std::vector<std::vector<std::pair<int, double>>> removals;
+
+    /** @brief REMOVALS entries naming something that was not a pollutant when
+     *  the row was read: a reaction species, or a pollutant declared later in
+     *  the file. Kept by name and bound by msxsurf::resolve (Multispecies
+     *  Phase 2); the writer emits them so they survive a save.
+     */
+    std::vector<std::vector<std::pair<std::string, double>>> removals_by_name;
 };
 
 // ============================================================================
@@ -138,29 +190,44 @@ struct LidControlStore {
  * @ingroup engine_data
  */
 struct LidUsageStore {
+    /**
+     * @brief Count LidUsageStore rows from the subcatch_index column.
+     * @return subcatch_index.size() converted to int; no parallel-column or reference-validity checks.
+     */
     int count() const { return static_cast<int>(subcatch_index.size()); }
 
-    std::vector<int>         subcatch_index;   ///< Subcatchment index
-    std::vector<int>         lid_index;        ///< Index into LidControlStore
-    std::vector<int>         number;           ///< Number of replicate units
-    std::vector<double>      area;             ///< Area of each unit (ft2 or m2)
-    std::vector<double>      width;            ///< Top width of overland flow (ft or m)
-    std::vector<double>      init_sat;         ///< Initial saturation (0–1)
-    std::vector<double>      from_imperv;      ///< % of impervious area routed to LID
-    std::vector<int>         to_perv;          ///< 1 = route outflow to pervious area
-    std::vector<std::string> rpt_file;         ///< Report file name (optional)
-    std::vector<std::string> drain_to;         ///< Drain-to subcatchment name (optional)
-    std::vector<double>      from_perv;        ///< % of pervious area routed to LID
+    std::vector<int> subcatch_index; ///< Subcatchment index
+    std::vector<int> lid_index;      ///< Index into LidControlStore
+    std::vector<int> number;         ///< Number of replicate units
+    std::vector<double> area;        ///< Area of each unit (ft2 or m2)
+    std::vector<double> width;       ///< Top width of overland flow (ft or m)
+    std::vector<double> init_sat;    ///< Initial saturation (0–1)
+    std::vector<double> from_imperv; ///< % of impervious area routed to LID
+    std::vector<int> to_perv;        ///< 1 = route outflow to pervious area
+    /// Per-unit LID report file (optional). A FilePathPair so the writer can
+    /// re-anchor it against the destination directory on Save-As, like every
+    /// other external-file slot.
+    std::vector<FilePathPair> rpt_file;
+    std::vector<std::string> drain_to; ///< Drain-to subcatchment name (optional)
+    std::vector<double> from_perv;     ///< % of pervious area routed to LID
 
     // Water balance results (ft depth, filled at end of simulation from LIDGroupSoA)
-    std::vector<double>      wb_inflow;        ///< Total inflow depth (ft)
-    std::vector<double>      wb_evap;          ///< Total evaporation depth (ft)
-    std::vector<double>      wb_infil;         ///< Total exfiltration depth (ft)
-    std::vector<double>      wb_surf_flow;     ///< Total surface outflow depth (ft)
-    std::vector<double>      wb_drain_flow;    ///< Total drain outflow depth (ft)
-    std::vector<double>      wb_init_vol;      ///< Initial stored depth (ft)
-    std::vector<double>      wb_final_vol;     ///< Final stored depth (ft)
+    std::vector<double> wb_inflow;     ///< Total inflow depth (ft)
+    std::vector<double> wb_evap;       ///< Total evaporation depth (ft)
+    std::vector<double> wb_infil;      ///< Total exfiltration depth (ft)
+    std::vector<double> wb_surf_flow;  ///< Total surface outflow depth (ft)
+    std::vector<double> wb_drain_flow; ///< Total drain outflow depth (ft)
+    std::vector<double> wb_init_vol;   ///< Initial stored depth (ft)
+    std::vector<double> wb_final_vol;  ///< Final stored depth (ft)
 
+    /**
+     * @brief Replace all LID usage water-balance columns with zero totals.
+     *
+     * All seven balances are depths in internal feet, including SI display projects. Does not resize
+     * usage definitions or LID runtime groups; independent allocations can fail partway.
+     *
+     * @param[in] n Nonnegative number of usage rows; no sign guard before size_t conversion.
+     */
     void resize_wb(int n) {
         auto un = static_cast<std::size_t>(n);
         wb_inflow.assign(un, 0.0);

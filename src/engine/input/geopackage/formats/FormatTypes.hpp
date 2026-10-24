@@ -1,6 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file FormatTypes.hpp
- * @brief Plain-data types shared by every external-file format parser.
+ * @file      FormatTypes.hpp
+ * @brief     Plain-data types shared by every external-file format parser.
  *
  * @details Slice IO-6. Each format parser converts bytes-on-disk into the
  *          row types declared here (the same shape the GeoPackage Part D
@@ -13,15 +29,16 @@
  *
  * @ingroup engine_geopackage
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_GEOPACKAGE_FORMAT_TYPES_HPP
 #define OPENSWMM_GEOPACKAGE_FORMAT_TYPES_HPP
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -53,19 +70,19 @@ struct RaingageRow {
 struct ClimateRow {
     /// ISO-8601 date string (yyyy-mm-dd) for daily climate observations.
     std::string record_date;
-    double tmin        = 0.0;
-    double tmax        = 0.0;
+    double tmin = 0.0;
+    double tmax = 0.0;
     double evaporation = 0.0;
-    double wind_speed  = 0.0;
-    double sky_cover   = 0.0;
-    double humidity    = 0.0;
+    double wind_speed = 0.0;
+    double sky_cover = 0.0;
+    double humidity = 0.0;
 };
 
 /** @brief One per-object record in a routing interface file. */
 struct RoutingInterfaceRow {
-    std::string object_id;         ///< Node, subcatchment, or gage id.
-    double      timestamp_oa = 0.0;
-    double      flow_value   = 0.0; ///< Flow (or rainfall) value.
+    std::string object_id; ///< Node, subcatchment, or gage id.
+    double timestamp_oa = 0.0;
+    double flow_value = 0.0; ///< Flow (or rainfall) value.
     /// Pollutant concentrations parallel to `pollutant_ids` in the
     /// surrounding metadata struct.
     std::vector<double> pollutant_values;
@@ -74,8 +91,8 @@ struct RoutingInterfaceRow {
 /** @brief Header / metadata captured at the top of a routing interface file. */
 struct RoutingInterfaceMetadata {
     std::string title;
-    int         report_step_sec = 0;
-    std::string flow_units;        ///< e.g. "CFS", "CMS", ...
+    int report_step_sec = 0;
+    std::string flow_units; ///< e.g. "CFS", "CMS", ...
     /// Pollutant ids in file order (column order matches RoutingInterfaceRow::pollutant_values).
     std::vector<std::string> pollutant_ids;
     /// Pollutant units in file order (parallel to pollutant_ids).
@@ -93,28 +110,28 @@ struct HotstartHeader {
     /// File-stamp string, including the version suffix ("SWMM5-HOTSTART4").
     std::string file_stamp;
     /// Numeric version derived from file_stamp suffix (1..4).
-    int         file_version = 4;
-    int         num_subcatch = 0;
-    int         num_landuses = 0;   ///< Present in v3+.
-    int         num_nodes    = 0;
-    int         num_links    = 0;
-    int         num_pollut   = 0;
-    int         flow_units   = 0;   ///< Mirrors SimulationOptions enum (CFS=0..MLD=5).
+    int file_version = 4;
+    int num_subcatch = 0;
+    int num_landuses = 0; ///< Present in v3+.
+    int num_nodes = 0;
+    int num_links = 0;
+    int num_pollut = 0;
+    int flow_units = 0; ///< Mirrors SimulationOptions enum (CFS=0..MLD=5).
 };
 
 /** @brief Per-subcatchment routing state snapshot (HSF v3+). */
 struct HotstartSubcatchState {
     double runoff = 0.0;
     /// Infiltration model id + 6 state doubles (legacy layout).
-    int    infil_model = 0;
-    double infil_state[6] = {0,0,0,0,0,0};
+    int infil_model = 0;
+    double infil_state[6] = {0, 0, 0, 0, 0, 0};
     /// Groundwater zone state.
-    double gw_theta_upper  = 0.0;
-    double gw_lower_depth  = 0.0;
+    double gw_theta_upper = 0.0;
+    double gw_lower_depth = 0.0;
     /// Snowpack water-equivalent + free-water + ATI per surface.
     double snow_we_plowable = 0.0, snow_we_imperv = 0.0, snow_we_perv = 0.0;
     double snow_fw_plowable = 0.0, snow_fw_imperv = 0.0, snow_fw_perv = 0.0;
-    double snow_ati         = 0.0;
+    double snow_ati = 0.0;
     /// Surface buildup mass + ponded concentration per pollutant.
     /// Length must equal HotstartHeader::num_pollut.
     std::vector<double> surface_buildup;
@@ -123,32 +140,54 @@ struct HotstartSubcatchState {
 
 /** @brief Per-node routing state snapshot. */
 struct HotstartNodeState {
-    double depth          = 0.0;
+    double depth = 0.0;
     double lateral_inflow = 0.0;
-    double overflow       = 0.0;
+    double overflow = 0.0;
+    /// Storage residence time; in the file only for storage nodes of a v4 file.
+    bool has_hrt = false;
+    double hrt = 0.0;
     /// Pollutant concentration array (length = HotstartHeader::num_pollut).
     std::vector<double> concentration;
 };
 
 /** @brief Per-link routing state snapshot. */
 struct HotstartLinkState {
-    double flow           = 0.0;
-    double depth          = 0.0;
-    double volume         = 0.0;
-    double setting        = 0.0;
+    double flow = 0.0;
+    double depth = 0.0;
+    double volume = 0.0;
+    double setting = 0.0;
     double target_setting = 0.0;
-    double time_open      = 0.0;
-    double time_closed    = 0.0;
+    double time_open = 0.0;
+    double time_closed = 0.0;
     /// Pollutant concentration array (length = HotstartHeader::num_pollut).
     std::vector<double> concentration;
 };
 
 /** @brief Top-level snapshot — header plus per-object vectors. */
 struct HotstartSnapshot {
-    HotstartHeader                    header;
-    std::vector<HotstartSubcatchState> subcatch_state;  // size == header.num_subcatch
-    std::vector<HotstartNodeState>     node_state;      // size == header.num_nodes
-    std::vector<HotstartLinkState>     link_state;      // size == header.num_links
+    HotstartHeader header;
+    std::vector<HotstartSubcatchState> subcatch_state; // size == header.num_subcatch
+    std::vector<HotstartNodeState> node_state;         // size == header.num_nodes
+    std::vector<HotstartLinkState> link_state;         // size == header.num_links
+    /// The subcatchment (runoff) section of a v3+ file, verbatim: its length
+    /// depends on the model, so it is kept as bytes, not decoded.
+    std::string runoff_raw;
+    /// Everything after the link records (e.g. the reaction-species trailer),
+    /// verbatim.
+    std::string tail_raw;
+};
+
+/**
+ * @brief What the model says about a file's layout that the file does not.
+ * @details The runoff section of a v3+ file has no length of its own: it
+ *          depends on which subcatchments have groundwater or a snowpack and
+ *          on the land-use count in the header. A v4 file also carries one
+ *          extra float (residence time) per storage node.
+ */
+struct HsfLayout {
+    int n_subcatch = 0;                                        ///< the model's count
+    std::function<std::size_t(int n_landuses)> runoff_doubles; ///< runoff section length
+    std::vector<char> storage;                                 ///< per node: is a storage node
 };
 
 // ============================================================================
@@ -163,12 +202,26 @@ struct HotstartSnapshot {
  *          whether to surface it as a warning, throw, or abort.
  */
 struct FormatResult {
-    bool        ok    = true;
+    bool ok = true;
     std::string error;
 };
 
-inline FormatResult ok()                       { return {true,  {}};            }
-inline FormatResult fail(std::string message)  { return {false, std::move(message)}; }
+/**
+ * @brief Create a successful format-adapter outcome.
+ * @return Value with ok=true and empty diagnostic.
+ */
+inline FormatResult ok() {
+    return {true, {}};
+}
+/**
+ * @brief Create a failed format-adapter outcome with an owned explanation.
+ *
+ * @param[in] message Diagnostic passed by value and moved into the result; may be empty.
+ * @return Value with ok=false and the supplied text; no logging, rollback or exception.
+ */
+inline FormatResult fail(std::string message) {
+    return {false, std::move(message)};
+}
 
 } // namespace openswmm::gpkg::formats
 

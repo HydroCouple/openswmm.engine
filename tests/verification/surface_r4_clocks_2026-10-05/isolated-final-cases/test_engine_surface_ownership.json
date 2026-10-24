@@ -1,0 +1,112 @@
+{
+  "tests": 9,
+  "failures": 0,
+  "disabled": 0,
+  "errors": 0,
+  "timestamp": "2026-10-05T14:24:52Z",
+  "time": "0.039s",
+  "name": "AllTests",
+  "testsuites": [
+    {
+      "name": "SurfaceOwnership",
+      "tests": 9,
+      "failures": 0,
+      "disabled": 0,
+      "errors": 0,
+      "timestamp": "2026-10-05T14:24:52Z",
+      "time": "0.039s",
+      "testsuite": [
+        {
+          "name": "ReconcilesFootprintLidFirstAndExactHalfOutside",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_surface_ownership.cpp",
+          "line": 34,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T14:24:52Z",
+          "time": "0.001s",
+          "classname": "SurfaceOwnership"
+        },
+        {
+          "name": "UsAndSiGeometryResolveTheSamePhysicalArea",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_surface_ownership.cpp",
+          "line": 40,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T14:24:52Z",
+          "time": "0s",
+          "classname": "SurfaceOwnership"
+        },
+        {
+          "name": "RejectsMismatchMissingGeometryAndOverbookedLid",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_surface_ownership.cpp",
+          "line": 47,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T14:24:52Z",
+          "time": "0s",
+          "classname": "SurfaceOwnership"
+        },
+        {
+          "name": "ConcaveDisconnectedClipClosingVertexAndLargeCoordinates",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_surface_ownership.cpp",
+          "line": 50,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T14:24:52Z",
+          "time": "0s",
+          "classname": "SurfaceOwnership"
+        },
+        {
+          "name": "RejectsSelfIntersectionAndInvalidCellWithoutSkipping",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_surface_ownership.cpp",
+          "line": 56,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T14:24:52Z",
+          "time": "0s",
+          "classname": "SurfaceOwnership"
+        },
+        {
+          "name": "ConflictingPeersBlockEvenOutsideEditScope",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_surface_ownership.cpp",
+          "line": 60,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T14:24:52Z",
+          "time": "0s",
+          "classname": "SurfaceOwnership"
+        },
+        {
+          "name": "StaleTokenAtomicityAbsenceAndLumpedWeather",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_surface_ownership.cpp",
+          "line": 66,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T14:24:52Z",
+          "time": "0s",
+          "classname": "SurfaceOwnership"
+        },
+        {
+          "name": "PublicPreviewDoesNotMutateAndCanCancel",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_surface_ownership.cpp",
+          "line": 72,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T14:24:52Z",
+          "time": "0s",
+          "classname": "SurfaceOwnership"
+        },
+        {
+          "name": "InpAndGeoPackagePreserveAuthoredReviewAndAquifer",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_surface_ownership.cpp",
+          "line": 78,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T14:24:52Z",
+          "time": "0.034s",
+          "classname": "SurfaceOwnership"
+        }
+      ]
+    }
+  ]
+}

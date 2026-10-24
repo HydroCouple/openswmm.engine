@@ -1,0 +1,19 @@
+{
+  "baseline-stage": {
+    "tests": 2,
+    "failures": 2,
+    "failed_cases": [
+      "PartialInsideSourcesKeepOutsideLossAndWeatherSeparate",
+      "ConnectedOutsideOnlyPeerKeepsItsNativePath"
+    ]
+  },
+  "baseline-water": {
+    "tests": 1,
+    "failures": 1,
+    "failed_cases": [
+      "GeneralizedLayeredAndRoofUnitsUseExistingCompletedLaws"
+    ]
+  },
+  "parent": "5431760b847d267230e825f6cd1314329198cb4a",
+  "regression_only_tree": "a60fb1edac95eedb47cb1fc685424eaaf866b6f5"
+}

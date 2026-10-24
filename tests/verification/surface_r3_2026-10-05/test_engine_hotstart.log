@@ -1,0 +1,96 @@
+Running main() from /Users/calebbuahin/Documents/Projects/vcpkg/buildtrees/gtest/src/v1.15.2-41f5afb119.clean/googletest/src/gtest_main.cc
+[==========] Running 39 tests from 4 test suites.
+[----------] Global test environment set-up.
+[----------] 15 tests from HotStartManagerTest
+[ RUN      ] HotStartManagerTest.SaveCreatesFile
+[       OK ] HotStartManagerTest.SaveCreatesFile (0 ms)
+[ RUN      ] HotStartManagerTest.OpenReadsBackSavedFile
+[       OK ] HotStartManagerTest.OpenReadsBackSavedFile (0 ms)
+[ RUN      ] HotStartManagerTest.FileHasMagicHeader
+[       OK ] HotStartManagerTest.FileHasMagicHeader (0 ms)
+[ RUN      ] HotStartManagerTest.NodeCountPreservedAfterRoundTrip
+[       OK ] HotStartManagerTest.NodeCountPreservedAfterRoundTrip (0 ms)
+[ RUN      ] HotStartManagerTest.NodeDepthPreservedAfterRoundTrip
+[       OK ] HotStartManagerTest.NodeDepthPreservedAfterRoundTrip (0 ms)
+[ RUN      ] HotStartManagerTest.NodeHeadPreservedAfterRoundTrip
+[       OK ] HotStartManagerTest.NodeHeadPreservedAfterRoundTrip (0 ms)
+[ RUN      ] HotStartManagerTest.LinkFlowPreservedAfterRoundTrip
+[       OK ] HotStartManagerTest.LinkFlowPreservedAfterRoundTrip (0 ms)
+[ RUN      ] HotStartManagerTest.SubcatchRunoffPreservedAfterRoundTrip
+[       OK ] HotStartManagerTest.SubcatchRunoffPreservedAfterRoundTrip (0 ms)
+[ RUN      ] HotStartManagerTest.HeaderMetadataPreservedAfterRoundTrip
+[       OK ] HotStartManagerTest.HeaderMetadataPreservedAfterRoundTrip (0 ms)
+[ RUN      ] HotStartManagerTest.CorruptedFileFailsOpen
+[       OK ] HotStartManagerTest.CorruptedFileFailsOpen (0 ms)
+[ RUN      ] HotStartManagerTest.OpenNonexistentFileReturnsNull
+[       OK ] HotStartManagerTest.OpenNonexistentFileReturnsNull (0 ms)
+[ RUN      ] HotStartManagerTest.ApplyAllObjectsPresentZeroWarnings
+[       OK ] HotStartManagerTest.ApplyAllObjectsPresentZeroWarnings (0 ms)
+[ RUN      ] HotStartManagerTest.ApplyMissingNodeIssuesWarningNotError
+[       OK ] HotStartManagerTest.ApplyMissingNodeIssuesWarningNotError (0 ms)
+[ RUN      ] HotStartManagerTest.ApplyMissingObjectsDoNotPreventMatchingObjects
+[       OK ] HotStartManagerTest.ApplyMissingObjectsDoNotPreventMatchingObjects (0 ms)
+[ RUN      ] HotStartManagerTest.ApplyWarningCallbackFiredPerMissingObject
+[       OK ] HotStartManagerTest.ApplyWarningCallbackFiredPerMissingObject (0 ms)
+[----------] 15 tests from HotStartManagerTest (3 ms total)
+
+[----------] 8 tests from HotStartFileTest
+[ RUN      ] HotStartFileTest.SetNodeDepthModifiesRecord
+[       OK ] HotStartFileTest.SetNodeDepthModifiesRecord (0 ms)
+[ RUN      ] HotStartFileTest.SetNodeDepthUnknownIdReturnsFalse
+[       OK ] HotStartFileTest.SetNodeDepthUnknownIdReturnsFalse (0 ms)
+[ RUN      ] HotStartFileTest.SetNodeHeadModifiesRecord
+[       OK ] HotStartFileTest.SetNodeHeadModifiesRecord (0 ms)
+[ RUN      ] HotStartFileTest.SetLinkFlowModifiesRecord
+[       OK ] HotStartFileTest.SetLinkFlowModifiesRecord (0 ms)
+[ RUN      ] HotStartFileTest.SetLinkDepthModifiesRecord
+[       OK ] HotStartFileTest.SetLinkDepthModifiesRecord (0 ms)
+[ RUN      ] HotStartFileTest.SetSubcatchRunoffModifiesRecord
+[       OK ] HotStartFileTest.SetSubcatchRunoffModifiesRecord (0 ms)
+[ RUN      ] HotStartFileTest.FlushWritesModifiedDepthToDisk
+[       OK ] HotStartFileTest.FlushWritesModifiedDepthToDisk (0 ms)
+[ RUN      ] HotStartFileTest.CleanFileFlushIsNoOp
+[       OK ] HotStartFileTest.CleanFileFlushIsNoOp (0 ms)
+[----------] 8 tests from HotStartFileTest (1 ms total)
+
+[----------] 11 tests from HotStartCApiTest
+[ RUN      ] HotStartCApiTest.OpenNullPathReturnsError
+[       OK ] HotStartCApiTest.OpenNullPathReturnsError (0 ms)
+[ RUN      ] HotStartCApiTest.OpenNullOutParamReturnsError
+[       OK ] HotStartCApiTest.OpenNullOutParamReturnsError (0 ms)
+[ RUN      ] HotStartCApiTest.OpenNonexistentFileReturnsError
+[       OK ] HotStartCApiTest.OpenNonexistentFileReturnsError (0 ms)
+[ RUN      ] HotStartCApiTest.CloseNullHandleIsNoOp
+[       OK ] HotStartCApiTest.CloseNullHandleIsNoOp (0 ms)
+[ RUN      ] HotStartCApiTest.NodeCountMatchesSavedModel
+[       OK ] HotStartCApiTest.NodeCountMatchesSavedModel (0 ms)
+[ RUN      ] HotStartCApiTest.GetSimTimeMatchesSaved
+[       OK ] HotStartCApiTest.GetSimTimeMatchesSaved (0 ms)
+[ RUN      ] HotStartCApiTest.GetStartDateMatchesSaved
+[       OK ] HotStartCApiTest.GetStartDateMatchesSaved (0 ms)
+[ RUN      ] HotStartCApiTest.GetCrsMatchesSaved
+[       OK ] HotStartCApiTest.GetCrsMatchesSaved (0 ms)
+[ RUN      ] HotStartCApiTest.SetNodeDepthViaApiBadIdReturnsError
+[       OK ] HotStartCApiTest.SetNodeDepthViaApiBadIdReturnsError (0 ms)
+[ RUN      ] HotStartCApiTest.WarningCountZeroBeforeApply
+[       OK ] HotStartCApiTest.WarningCountZeroBeforeApply (0 ms)
+[ RUN      ] HotStartCApiTest.WarningAccessNullHandleIsSafe
+[       OK ] HotStartCApiTest.WarningAccessNullHandleIsSafe (0 ms)
+[----------] 11 tests from HotStartCApiTest (1 ms total)
+
+[----------] 5 tests from HotStartLegacyRoutingTest
+[ RUN      ] HotStartLegacyRoutingTest.ReadsFileWithSubcatchmentsAndAppliesRouting
+[       OK ] HotStartLegacyRoutingTest.ReadsFileWithSubcatchmentsAndAppliesRouting (0 ms)
+[ RUN      ] HotStartLegacyRoutingTest.SubcatchmentCountMismatchRejected
+[       OK ] HotStartLegacyRoutingTest.SubcatchmentCountMismatchRejected (0 ms)
+[ RUN      ] HotStartLegacyRoutingTest.RoutingOnlyFileStillWorksWithoutWarning
+[       OK ] HotStartLegacyRoutingTest.RoutingOnlyFileStillWorksWithoutWarning (0 ms)
+[ RUN      ] HotStartLegacyRoutingTest.OlderFormatsRestoreQualityAndSkipCompatibilityZeros
+[       OK ] HotStartLegacyRoutingTest.OlderFormatsRestoreQualityAndSkipCompatibilityZeros (0 ms)
+[ RUN      ] HotStartLegacyRoutingTest.SavedQualityOverridesColdSeedsAtStartup
+[       OK ] HotStartLegacyRoutingTest.SavedQualityOverridesColdSeedsAtStartup (2 ms)
+[----------] 5 tests from HotStartLegacyRoutingTest (3 ms total)
+
+[----------] Global test environment tear-down
+[==========] 39 tests from 4 test suites ran. (10 ms total)
+[  PASSED  ] 39 tests.

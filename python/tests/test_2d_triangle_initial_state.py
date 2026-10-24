@@ -17,7 +17,7 @@ import math
 import os
 import unittest
 
-from openswmm.engine import Solver
+from openswmm.engine import BadParamError, BadIndexError, Solver
 
 from ._paths import artifact_dir
 
@@ -111,9 +111,9 @@ class TwoDTriangleInitialStateTest(unittest.TestCase):
 
     def test_invalid_depth_raises(self):
         surf = self._open_model("depth_invalid").surface2d
-        with self.assertRaises(RuntimeError):  # negative depth
+        with self.assertRaises(BadParamError):  # negative depth
             surf.set_triangle_init_depth(0, -0.1)
-        with self.assertRaises(RuntimeError):  # bad triangle index
+        with self.assertRaises(BadIndexError):  # bad triangle index
             surf.set_triangle_init_depth(99, 0.1)
         self.assertAlmostEqual(surf.get_triangle_init_depth(0), 0.0)
 
@@ -134,11 +134,11 @@ class TwoDTriangleInitialStateTest(unittest.TestCase):
 
     def test_invalid_velocity_raises(self):
         surf = self._open_model("vel_invalid").surface2d
-        with self.assertRaises(RuntimeError):  # non-finite u
+        with self.assertRaises(BadParamError):  # non-finite u
             surf.set_triangle_init_velocity(0, math.inf, 0.0)
-        with self.assertRaises(RuntimeError):  # non-finite v
+        with self.assertRaises(BadParamError):  # non-finite v
             surf.set_triangle_init_velocity(0, 0.0, math.nan)
-        with self.assertRaises(RuntimeError):  # bad triangle index
+        with self.assertRaises(BadIndexError):  # bad triangle index
             surf.set_triangle_init_velocity(99, 1.0, 1.0)
         self.assertEqual(surf.get_triangle_init_velocity(0), (0.0, 0.0))
 

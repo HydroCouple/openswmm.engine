@@ -1,0 +1,55 @@
+[TITLE]
+E2 structure passthrough
+
+[OPTIONS]
+FLOW_UNITS           CFS
+FLOW_ROUTING         DYNWAVE
+START_DATE           01/01/2026
+START_TIME           00:00:00
+END_DATE             01/01/2026
+END_TIME             06:00:00
+REPORT_START_DATE    01/01/2026
+REPORT_START_TIME    00:00:00
+ROUTING_STEP         5
+REPORT_STEP          00:05:00
+WET_STEP             00:05:00
+DRY_STEP             00:05:00
+
+[JUNCTIONS]
+;;Name  Elev  MaxDepth  InitDepth  SurDepth  Aponded
+J0      10.0  10        0.5        0         0
+J1      9.0   10        0.5        0         0
+J2      8.5   10        0.5        0         0
+
+[OUTFALLS]
+;;Name  Elev  Type  StageData  Gated
+OUT     7.0   FREE              NO
+
+[CONDUITS]
+;;Name  From  To   Length  N      Zin  Zout  Q0
+C1      J0    J1   400     0.013  0    0     0
+C2      J2    OUT  400     0.013  0    0     0
+
+[ORIFICES]
+;;Name  From  To   Type  Offset  Cd    Gated  CloseTime
+O1      J1    J2   SIDE  0.0     0.65  NO     0
+
+[XSECTIONS]
+;;Link  Shape       G1   G2 G3 G4
+C1      CIRCULAR    1.5  0  0  0
+C2      CIRCULAR    1.5  0  0  0
+O1      CIRCULAR    1.0  0  0  0
+
+[POLLUTANTS]
+;;Name  Units  Crain  Cgw  Crdii  Kdecay  SnowOnly  CoPollut  CoFrac  Cdwf  Cinit
+TSS     MG/L   0.0    0.0  0.0    0.0     NO        *         0.0     0.0   0.0
+
+[INFLOWS]
+;;Node  Constituent  Timeseries  Type    Mfactor  Sfactor  Baseline  Pattern
+J0      FLOW         ""          FLOW    1.0      1.0      1.0
+J0      TSS          ""          CONCEN  1.0      1.0      12.5
+
+[REPORT]
+INPUT NO
+CONTINUITY YES
+FLOWSTATS YES

@@ -29,7 +29,7 @@ subcatchment as a nonlinear reservoir, as sketched in Figure 3-2.
 
 ![](hydrology/media/media/Figure3-1.png "Figure 3-1")
 
-![Figure 3-2](hydrology/media/media/Figure3-2.png)
+![Figure 3-2](figures/png/hydrology_ch3_nonlinear_reservoir.png)
 
 **Figure 3-1 Idealized representation of a subcatchment.**
 
@@ -133,7 +133,7 @@ or channel). How to model indirectly connected areas, such as roof
 drains that discharge to pervious lawn areas, is discussed in section
 3.6 below.
 
-![Figure 3-3](hydrology/media/media/image8.png)
+![Figure 3-3](hydrology/media/media/hydrology-image8.png)
 
 **Figure 3-3 Types of subareas within a subcatchment.**
 
@@ -392,11 +392,11 @@ south, but the pipe connecting junctions 412 and 712 drains north! If
 only the surface contours were considered a quite different catchment
 response to rainfall would result than what actually exists.
 
-![Figure 3-6](hydrology/media/media/image10.png)
+![Figure 3-6](hydrology/media/media/hydrology-image10.jpg)
 
 **Figure 3-6 Fisk B catchment, Portland, Oregon (Portland BES, 1996).**
 
-![Figure 3-7](hydrology/media/media/image11.png)
+![Figure 3-7](hydrology/media/media/hydrology-image11.png)
 
 **Figure 3-7 Detailed view of two Fisk B subcatchments (Portland BES, 1996).**
 
@@ -583,7 +583,7 @@ length.) Note also in Figure 3-8 that for this idealized case, if the
 two sides of the subcatchment are symmetrical the total width is twice
 the length of the drainage channel.
 
-![](hydrology/media/media/Figure3-8.png "Figure 3-8")
+![](hydrology/media/media/Figure3-1.png "Figure 3-8")
 
 **Figure 3-8 Idealized representation of a subcatchment.**
 
@@ -639,7 +639,7 @@ sensitive to the time distribution of rainfall.
 
 **Parameters:** Slope = 1%, Imperviousness = 100%, Depression Storage = 0, n = 0.02, Equilibrium outflow = i*A = 0.926 cfs, *∆t* = 5 min = 300 sec, i* = Rainfall excess = 1.0 in./hr = 0.000023148 ft/sec
 
-![Figure 3-10](hydrology/media/media/image12.png)
+![Figure 3-10](hydrology/media/media/hydrology-image12.png)
 
 **Figure 3-10 Subcatchment hydrographs for different shapes of Figure 3-9.**
 
@@ -711,7 +711,7 @@ where:
 >
 > A = total area.
 
-![Figure 3-11](hydrology/media/media/image13.png)
+![Figure 3-11](hydrology/media/media/hydrology-image13.png)
 
 **Figure 3-11 Irregular subcatchment shape for width calculations (DiGiano et al., 1977, p. 165).**
 

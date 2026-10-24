@@ -15,6 +15,15 @@
 //
 // Exit code 0 on success, non-zero on any check failure.
 
+/**
+ * @file      verify_datetime_api.cpp
+ * @brief     verify datetime api implementation.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
+ */
+
 #include "openswmm_datetime.h"
 
 #include <cassert>
@@ -23,13 +32,22 @@
 
 static int failures = 0;
 
-#define EXPECT(cond) do { \
-    if (!(cond)) { \
-        std::printf("FAIL %s:%d  %s\n", __FILE__, __LINE__, #cond); \
-        ++failures; \
-    } \
-} while (0)
+#define EXPECT(cond)                                                                               \
+    do {                                                                                           \
+        if (!(cond)) {                                                                             \
+            std::printf("FAIL %s:%d  %s\n", __FILE__, __LINE__, #cond);                            \
+            ++failures;                                                                            \
+        }                                                                                          \
+    } while (0)
 
+/**
+ * @brief Check standalone datetime C-API roundtrips, midnight arithmetic and null handling.
+ *
+ * Uses a process-local failure counter and stdout diagnostics. Exercises the 1899-12-30 epoch,
+ * invalid date/time sentinels, combined decoding and a 60-second midnight transition; no model or
+ * output files are created.
+ * @return Zero when every EXPECT check passes, otherwise one after printing the failed-check count.
+ */
 int main() {
     // --- encode / decode date round-trip ---
     double d = 0.0;
@@ -74,7 +92,7 @@ int main() {
     EXPECT(swmm_datetime_encode_time(23, 59, 30, &t1) == 0);
     double before = midnight + t1;
     double after = 0.0;
-    EXPECT(swmm_datetime_add_seconds(before, 60.0, &after) == 0);  // +60 s
+    EXPECT(swmm_datetime_add_seconds(before, 60.0, &after) == 0); // +60 s
     EXPECT(swmm_datetime_decode_date(after, &y, &m, &day) == 0);
     EXPECT(swmm_datetime_decode_time(after, &h, &mi, &s) == 0);
     EXPECT(y == 2024 && m == 6 && day == 16);

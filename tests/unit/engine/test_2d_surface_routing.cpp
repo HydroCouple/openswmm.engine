@@ -1,6 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file test_2d_surface_routing.cpp
- * @brief Unit tests for the optional 2D surface routing module.
+ * @file      test_2d_surface_routing.cpp
+ * @brief     Unit tests for the optional 2D surface routing module.
  *
  * @details Verifies:
  *          - Mesh topology construction (neighbours, edges, areas)
@@ -15,14 +31,16 @@
  * @see src/engine/2d/
  * @ingroup engine_2d
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
 #include <algorithm>
 #include <cmath>
+#include <cctype>
+#include <cstdlib>
 #include <vector>
 #include <string>
 #include <numeric>
@@ -35,6 +53,10 @@
 #include "2d/mesh/VertexReconstruction.hpp"
 #include "2d/solver/SurfaceFluxCalculator.hpp"
 #include "2d/input/SectionHandlers2D.hpp"
+#include "2d/solver/SurfaceSolverFactory.hpp"
+#include "2d/solver/ISurfaceSolver.hpp"
+
+#include "platform_test_support.hpp"
 
 #ifdef OPENSWMM_HAS_2D
 #include "2d/output/Default2DOutputPlugin.hpp"
@@ -44,6 +66,11 @@
 #include <filesystem>
 #include <stdexcept>
 #endif
+
+// The backend-selection tests below set OPENSWMM_2D_BACKEND, which MSVC has
+// no setenv/unsetenv for.
+using plattest::setEnvVar;
+using plattest::unsetEnvVar;
 
 using namespace openswmm::twoD;
 
@@ -58,6 +85,13 @@ using namespace openswmm::twoD;
 //   v0 (0,0,0) -------- v1 (1,0,0)
 //
 
+/**
+ * @brief Build the flat two-triangle unit-square surface fixture.
+ *
+ * Geometry and state arrays are owned by the returned mesh. No solver, forcing or water state is
+ * initialized; allocation/topology errors propagate.
+ * @return Owned 1-by-1 m mesh with triangles(0,1,3)/(0,3,2), uniform Manning.035 and built topology.
+ */
 static MeshData makeUnitSquareMesh() {
     MeshData mesh;
     mesh.resize_vertices(4);
@@ -67,10 +101,10 @@ static MeshData makeUnitSquareMesh() {
 
     mesh.resize_triangles(2);
     // T0: lower-right triangle
-    mesh.tri_v0[0] = 0; mesh.tri_v1[0] = 1; mesh.tri_v2[0] = 3;
+    mesh.set_triangle(0, 0, 1, 3);
     mesh.mannings_n[0] = 0.035;
     // T1: upper-left triangle
-    mesh.tri_v0[1] = 0; mesh.tri_v1[1] = 3; mesh.tri_v2[1] = 2;
+    mesh.set_triangle(1, 0, 3, 2);
     mesh.mannings_n[1] = 0.035;
 
     buildMeshTopology(mesh);
@@ -84,24 +118,30 @@ static MeshData makeUnitSquareMesh() {
 // z = 0.1 * x + 0.2 * y on a 2-triangle mesh
 //
 
+/**
+ * @brief Build a two-triangle planar-bed gradient fixture.
+ *
+ * Geometry and state arrays are owned by the returned mesh. No solver, forcing or water state is
+ * initialized; allocation/topology errors propagate.
+ * @return Owned 10-by-10 m mesh sampled from z=.1*x+.2*y in metres, Manning.03 and built topology.
+ */
 static MeshData makeTiltedPlaneMesh() {
     MeshData mesh;
     mesh.resize_vertices(4);
     mesh.vx = {0.0, 10.0, 0.0, 10.0};
-    mesh.vy = {0.0,  0.0, 10.0, 10.0};
+    mesh.vy = {0.0, 0.0, 10.0, 10.0};
     // z = 0.1*x + 0.2*y
     mesh.vz = {0.0, 1.0, 2.0, 3.0};
 
     mesh.resize_triangles(2);
-    mesh.tri_v0[0] = 0; mesh.tri_v1[0] = 1; mesh.tri_v2[0] = 3;
-    mesh.tri_v0[1] = 0; mesh.tri_v1[1] = 3; mesh.tri_v2[1] = 2;
+    mesh.set_triangle(0, 0, 1, 3);
+    mesh.set_triangle(1, 0, 3, 2);
     mesh.mannings_n[0] = 0.03;
     mesh.mannings_n[1] = 0.03;
 
     buildMeshTopology(mesh);
     return mesh;
 }
-
 
 // ============================================================================
 // MeshBuilder Tests
@@ -128,10 +168,10 @@ TEST(MeshBuilder, FindsSharedNeighbour) {
     auto mesh = makeUnitSquareMesh();
     // The two triangles share one edge (v0-v3 diagonal).
     // At least one neighbour of T0 must be T1, and vice versa.
-    bool t0_sees_t1 = (mesh.tri_nbr0[0] == 1 || mesh.tri_nbr1[0] == 1
-                       || mesh.tri_nbr2[0] == 1);
-    bool t1_sees_t0 = (mesh.tri_nbr0[1] == 0 || mesh.tri_nbr1[1] == 0
-                       || mesh.tri_nbr2[1] == 0);
+    bool t0_sees_t1 = (mesh.cell_neighbour(0, 0) == 1 || mesh.cell_neighbour(0, 1) == 1 ||
+                       mesh.cell_neighbour(0, 2) == 1);
+    bool t1_sees_t0 = (mesh.cell_neighbour(1, 0) == 0 || mesh.cell_neighbour(1, 1) == 0 ||
+                       mesh.cell_neighbour(1, 2) == 0);
     EXPECT_TRUE(t0_sees_t1);
     EXPECT_TRUE(t1_sees_t0);
 }
@@ -140,35 +180,48 @@ TEST(MeshBuilder, BoundaryEdgesAreMinusOne) {
     auto mesh = makeUnitSquareMesh();
     // Each triangle has 3 edges; 1 is shared, 2 are boundary.
     int boundary_count_t0 = 0;
-    if (mesh.tri_nbr0[0] == -1) ++boundary_count_t0;
-    if (mesh.tri_nbr1[0] == -1) ++boundary_count_t0;
-    if (mesh.tri_nbr2[0] == -1) ++boundary_count_t0;
+    if (mesh.cell_neighbour(0, 0) == -1)
+        ++boundary_count_t0;
+    if (mesh.cell_neighbour(0, 1) == -1)
+        ++boundary_count_t0;
+    if (mesh.cell_neighbour(0, 2) == -1)
+        ++boundary_count_t0;
     EXPECT_EQ(boundary_count_t0, 2);
 
     int boundary_count_t1 = 0;
-    if (mesh.tri_nbr0[1] == -1) ++boundary_count_t1;
-    if (mesh.tri_nbr1[1] == -1) ++boundary_count_t1;
-    if (mesh.tri_nbr2[1] == -1) ++boundary_count_t1;
+    if (mesh.cell_neighbour(1, 0) == -1)
+        ++boundary_count_t1;
+    if (mesh.cell_neighbour(1, 1) == -1)
+        ++boundary_count_t1;
+    if (mesh.cell_neighbour(1, 2) == -1)
+        ++boundary_count_t1;
     EXPECT_EQ(boundary_count_t1, 2);
 }
 
 TEST(MeshBuilder, EdgeLengthsPositive) {
     auto mesh = makeUnitSquareMesh();
-    int n3 = mesh.n_triangles() * 3;
-    for (int i = 0; i < n3; ++i) {
-        EXPECT_GT(mesh.edge_length[i], 0.0)
-            << "Edge " << i << " has non-positive length";
+    // Padded layout: every REAL slot (k < cell_nv) has positive length; the
+    // padding slot of a triangle row is zero by contract.
+    for (int t = 0; t < mesh.n_triangles(); ++t) {
+        for (int e = 0; e < kMaxCellVerts; ++e) {
+            const int i = MeshData::slot(t, e);
+            if (e < mesh.cell_vertex_count(t))
+                EXPECT_GT(mesh.edge_length[i], 0.0) << "Edge " << i << " has non-positive length";
+            else
+                EXPECT_EQ(mesh.edge_length[i], 0.0) << "padding slot " << i;
+        }
     }
 }
 
 TEST(MeshBuilder, EdgeNormalsUnitLength) {
     auto mesh = makeUnitSquareMesh();
-    int n3 = mesh.n_triangles() * 3;
-    for (int i = 0; i < n3; ++i) {
-        double len = std::sqrt(mesh.edge_nx[i] * mesh.edge_nx[i]
-                               + mesh.edge_ny[i] * mesh.edge_ny[i]);
-        EXPECT_NEAR(len, 1.0, 1e-12)
-            << "Edge " << i << " normal is not unit length";
+    for (int t = 0; t < mesh.n_triangles(); ++t) {
+        for (int e = 0; e < mesh.cell_vertex_count(t); ++e) {
+            const int i = MeshData::slot(t, e);
+            double len =
+                std::sqrt(mesh.edge_nx[i] * mesh.edge_nx[i] + mesh.edge_ny[i] * mesh.edge_ny[i]);
+            EXPECT_NEAR(len, 1.0, 1e-12) << "Edge " << i << " normal is not unit length";
+        }
     }
 }
 
@@ -189,15 +242,15 @@ TEST(MeshBuilder, RecomputeVertexZDependentsUpdatesIncidentTriangles) {
     // Edges incident to v3 see midpoint Z = 0.5 * (0 + 3) = 1.5;
     // edges not incident to v3 stay at 0.
     for (int t = 0; t < mesh.n_triangles(); ++t) {
-        const int v0 = mesh.tri_v0[t];
-        const int v1 = mesh.tri_v1[t];
-        const int v2 = mesh.tri_v2[t];
+        const int v0 = mesh.cell_vertex(t, 0);
+        const int v1 = mesh.cell_vertex(t, 1);
+        const int v2 = mesh.cell_vertex(t, 2);
         const int endpoints[3][2] = {{v1, v2}, {v2, v0}, {v0, v1}};
         for (int e = 0; e < 3; ++e) {
             const int va = endpoints[e][0];
             const int vb = endpoints[e][1];
             const double expected = 0.5 * (mesh.vz[va] + mesh.vz[vb]);
-            EXPECT_NEAR(mesh.edge_mz[t * 3 + e], expected, 1e-12)
+            EXPECT_NEAR(mesh.edge_mz[MeshData::slot(t, e)], expected, 1e-12)
                 << "t=" << t << " e=" << e;
         }
     }
@@ -209,15 +262,20 @@ TEST(V_E3_Parser, ParsesAllSupportedTypes) {
     std::vector<openswmm::twoD::SurfaceRouter2D::PendingBoundaryRow> rows;
 
     EXPECT_TRUE(openswmm::twoD::parse2DBoundaryConditionsLine(
-        {"3", "1", "NORMAL_FLOW", "0.002", "*", "*"}, rows).empty());
+                    {"3", "1", "NORMAL_FLOW", "0.002", "*", "*"}, rows)
+                    .empty());
     EXPECT_TRUE(openswmm::twoD::parse2DBoundaryConditionsLine(
-        {"4", "0", "SPECIFIED_STAGE", "95.4", "*", "*"}, rows).empty());
+                    {"4", "0", "SPECIFIED_STAGE", "95.4", "*", "*"}, rows)
+                    .empty());
     EXPECT_TRUE(openswmm::twoD::parse2DBoundaryConditionsLine(
-        {"5", "2", "TS_STAGE", "DownstreamTS", "*", "Outlet"}, rows).empty());
+                    {"5", "2", "TS_STAGE", "DownstreamTS", "*", "Outlet"}, rows)
+                    .empty());
     EXPECT_TRUE(openswmm::twoD::parse2DBoundaryConditionsLine(
-        {"6", "1", "SPECIFIED_FLOW", "0.5", "*", "*"}, rows).empty());
+                    {"6", "1", "SPECIFIED_FLOW", "0.5", "*", "*"}, rows)
+                    .empty());
     EXPECT_TRUE(openswmm::twoD::parse2DBoundaryConditionsLine(
-        {"7", "0", "RATING_CURVE", "WeirRC", "*", "*"}, rows).empty());
+                    {"7", "0", "RATING_CURVE", "WeirRC", "*", "*"}, rows)
+                    .empty());
 
     ASSERT_EQ(rows.size(), 5u);
     EXPECT_EQ(rows[0].bc_type, static_cast<int>(BoundaryType::NORMAL_FLOW));
@@ -235,8 +293,9 @@ TEST(V_E3_Parser, ParsesAllSupportedTypes) {
 
 TEST(V_E3_Parser, RejectsBadType) {
     std::vector<openswmm::twoD::SurfaceRouter2D::PendingBoundaryRow> rows;
-    EXPECT_FALSE(openswmm::twoD::parse2DBoundaryConditionsLine(
-        {"1", "0", "GIBBERISH", "0", "*", "*"}, rows).empty());
+    EXPECT_FALSE(
+        openswmm::twoD::parse2DBoundaryConditionsLine({"1", "0", "GIBBERISH", "0", "*", "*"}, rows)
+            .empty());
 }
 
 TEST(V_E3_Parser, EmptyLineIsSilentlySkipped) {
@@ -251,21 +310,21 @@ TEST(BoundaryData, ResizeInitialisesAllSlotsIncludingV_E4andV_E5) {
     // default values are the "unset" / "constant zero" sentinels the
     // API documents.
     BoundaryData b;
-    b.resize(12);  // 4 triangles * 3 edges
+    b.resize(12); // 4 triangles * 3 edges
     EXPECT_EQ(b.size(), 12);
     for (int i = 0; i < 12; ++i) {
         EXPECT_EQ(b.edge_bc_type[i], static_cast<int8_t>(BoundaryType::WALL));
-        EXPECT_DOUBLE_EQ(b.edge_bed_slope[i],  0.0);
-        EXPECT_DOUBLE_EQ(b.edge_bc_head[i],    0.0);
-        EXPECT_EQ(b.edge_bc_tseries[i],         -1);
+        EXPECT_DOUBLE_EQ(b.edge_bed_slope[i], 0.0);
+        EXPECT_DOUBLE_EQ(b.edge_bc_head[i], 0.0);
+        EXPECT_EQ(b.edge_bc_tseries[i], -1);
         EXPECT_TRUE(b.edge_bc_tseries_name[i].empty());
         EXPECT_DOUBLE_EQ(b.edge_bc_cum_flux[i], 0.0);
 
-        EXPECT_DOUBLE_EQ(b.edge_bc_flow[i],    0.0);
-        EXPECT_EQ(b.edge_bc_flow_tseries[i],    -1);
+        EXPECT_DOUBLE_EQ(b.edge_bc_flow[i], 0.0);
+        EXPECT_EQ(b.edge_bc_flow_tseries[i], -1);
         EXPECT_TRUE(b.edge_bc_flow_tseries_name[i].empty());
 
-        EXPECT_EQ(b.edge_bc_rating_curve[i],   -1);
+        EXPECT_EQ(b.edge_bc_rating_curve[i], -1);
         EXPECT_TRUE(b.edge_bc_rating_curve_name[i].empty());
     }
 }
@@ -275,21 +334,21 @@ TEST(MeshBuilder, RecomputeVertexZDependentsLeavesNonIncidentTrianglesAlone) {
     // the centroid Z of the other.
     MeshData mesh;
     mesh.resize_vertices(6);
-    mesh.vx = {0, 1, 0,   10, 11, 10};
-    mesh.vy = {0, 0, 1,   10, 10, 11};
-    mesh.vz = {0, 0, 0,   0,  0,  0};
+    mesh.vx = {0, 1, 0, 10, 11, 10};
+    mesh.vy = {0, 0, 1, 10, 10, 11};
+    mesh.vz = {0, 0, 0, 0, 0, 0};
 
     mesh.resize_triangles(2);
-    mesh.tri_v0[0] = 0; mesh.tri_v1[0] = 1; mesh.tri_v2[0] = 2;
-    mesh.tri_v0[1] = 3; mesh.tri_v1[1] = 4; mesh.tri_v2[1] = 5;
+    mesh.set_triangle(0, 0, 1, 2);
+    mesh.set_triangle(1, 3, 4, 5);
     mesh.mannings_n[0] = 0.035;
     mesh.mannings_n[1] = 0.035;
     buildMeshTopology(mesh);
 
     mesh.vz[1] = 9.0;
     recomputeVertexZDependents(mesh, 1);
-    EXPECT_NEAR(mesh.tri_cz[0], 3.0, 1e-12);  // (0 + 9 + 0) / 3
-    EXPECT_NEAR(mesh.tri_cz[1], 0.0, 1e-12);  // untouched
+    EXPECT_NEAR(mesh.tri_cz[0], 3.0, 1e-12); // (0 + 9 + 0) / 3
+    EXPECT_NEAR(mesh.tri_cz[1], 0.0, 1e-12); // untouched
 }
 
 TEST(MeshBuilder, ValidationRejectsNegativeArea) {
@@ -300,7 +359,7 @@ TEST(MeshBuilder, ValidationRejectsNegativeArea) {
     mesh.vz = {0.0, 0.0, 0.0};
 
     mesh.resize_triangles(1);
-    mesh.tri_v0[0] = 0; mesh.tri_v1[0] = 1; mesh.tri_v2[0] = 2;
+    mesh.set_triangle(0, 0, 1, 2);
     mesh.mannings_n[0] = 0.035;
 
     buildMeshTopology(mesh);
@@ -320,9 +379,9 @@ TEST(MeshBuilder, ValidationRejectsDuplicateVertices) {
 
     mesh.resize_triangles(1);
     // Degenerate: two vertices are the same index
-    mesh.tri_v0[0] = 0; mesh.tri_v1[0] = 0; mesh.tri_v2[0] = 2;
+    mesh.set_triangle(0, 0, 0, 2);
     mesh.mannings_n[0] = 0.035;
-    mesh.tri_area[0] = 1.0;  // Fake area so we reach the duplicate check
+    mesh.tri_area[0] = 1.0; // Fake area so we reach the duplicate check
 
     auto err = validateMesh(mesh);
     EXPECT_FALSE(err.empty());
@@ -337,7 +396,7 @@ TEST(MeshBuilder, ValidationRejectsOutOfRangeIndex) {
     mesh.vz = {0.0, 0.0, 0.0};
 
     mesh.resize_triangles(1);
-    mesh.tri_v0[0] = 0; mesh.tri_v1[0] = 1; mesh.tri_v2[0] = 99;  // out of range
+    mesh.set_triangle(0, 0, 1, 99); // out of range
     mesh.mannings_n[0] = 0.035;
     mesh.tri_area[0] = 1.0;
 
@@ -345,7 +404,6 @@ TEST(MeshBuilder, ValidationRejectsOutOfRangeIndex) {
     EXPECT_FALSE(err.empty());
     EXPECT_NE(err.find("out-of-range"), std::string::npos);
 }
-
 
 // ============================================================================
 // VertexReconstruction Tests
@@ -358,16 +416,16 @@ TEST(VertexReconstruction, StencilWeightsSumToOne) {
     int nv = mesh.n_vertices();
     for (int b = 0; b < nv; ++b) {
         int start = mesh.vert_stencil_ptr[b];
-        int end   = mesh.vert_stencil_ptr[b + 1];
+        int end = mesh.vert_stencil_ptr[b + 1];
 
-        if (start == end) continue;  // isolated vertex
+        if (start == end)
+            continue; // isolated vertex
 
         double wsum = 0.0;
         for (int k = start; k < end; ++k) {
             wsum += mesh.vert_stencil_wt[k];
         }
-        EXPECT_NEAR(wsum, 1.0, 1e-10)
-            << "Stencil weights for vertex " << b << " sum to " << wsum;
+        EXPECT_NEAR(wsum, 1.0, 1e-10) << "Stencil weights for vertex " << b << " sum to " << wsum;
     }
 }
 
@@ -376,8 +434,7 @@ TEST(VertexReconstruction, WeightsNonNegative) {
     buildVertexStencils(mesh);
 
     for (std::size_t k = 0; k < mesh.vert_stencil_wt.size(); ++k) {
-        EXPECT_GE(mesh.vert_stencil_wt[k], 0.0)
-            << "Stencil weight " << k << " is negative";
+        EXPECT_GE(mesh.vert_stencil_wt[k], 0.0) << "Stencil weight " << k << " is negative";
     }
 }
 
@@ -424,7 +481,6 @@ TEST(VertexReconstruction, ReconstructsLinearFieldAccurately) {
     }
 }
 
-
 // ============================================================================
 // Cell Free-Surface Closure Tests (render/output eta(V) inversion)
 // ============================================================================
@@ -432,16 +488,29 @@ TEST(VertexReconstruction, ReconstructsLinearFieldAccurately) {
 // Analytic mean depth h(eta) for a planar-bed triangular cell with sorted
 // vertex elevations z1 <= z2 <= z3 — the forward relation the inversion must
 // round-trip. Mirrors the piecewise form documented in VertexReconstruction.hpp.
+/**
+ * @brief Evaluate the analytic planar-triangle mean water-depth relation.
+ *
+ * Requires finite sorted elevations and nonzero denominators in the selected partial-wetting
+ * branch; a fully flat cell takes only dry/full branches. No sorting, tolerance normalization or
+ * production inversion routine is invoked.
+ *
+ * @param[in] eta Absolute water-surface elevation in metres.
+ * @param[in] z1 Lowest vertex elevation in metres.
+ * @param[in] z2 Middle vertex elevation, z1<=z2<=z3.
+ * @param[in] z3 Highest vertex elevation in metres.
+ * @return Area-mean water depth in metres: zero when dry, eta-meanBed when fully wet, cubic
+ *     partial-wetting expression otherwise.
+ */
 static double meanDepthAtEta(double eta, double z1, double z2, double z3) {
     const double zbar = (z1 + z2 + z3) / 3.0;
-    if (eta <= z1) return 0.0;
-    if (eta >= z3) return eta - zbar;
+    if (eta <= z1)
+        return 0.0;
+    if (eta >= z3)
+        return eta - zbar;
     if (eta <= z2)
-        return (eta - z1) * (eta - z1) * (eta - z1)
-               / (3.0 * (z2 - z1) * (z3 - z1));
-    return (eta - zbar)
-           + (z3 - eta) * (z3 - eta) * (z3 - eta)
-             / (3.0 * (z3 - z1) * (z3 - z2));
+        return (eta - z1) * (eta - z1) * (eta - z1) / (3.0 * (z2 - z1) * (z3 - z1));
+    return (eta - zbar) + (z3 - eta) * (z3 - eta) * (z3 - eta) / (3.0 * (z3 - z1) * (z3 - z2));
 }
 
 TEST(CellFreeSurface, FlatCellMatchesFlatClosure) {
@@ -460,21 +529,21 @@ TEST(CellFreeSurface, RoundTripsTiltedCell) {
     // eta -> h (analytic forward) -> eta (inversion under test), across both
     // partial-wet branches and several bed shapes, in any vertex order.
     const double beds[][3] = {
-        {0.0, 0.5, 1.0},   // general tilt
-        {0.0, 0.0, 1.0},   // z1 == z2 (branch A degenerate)
-        {0.0, 1.0, 1.0},   // z2 == z3 (branch B degenerate)
-        {3.0, 3.2, 7.0},   // step-like cell with datum offset
+        {0.0, 0.5, 1.0}, // general tilt
+        {0.0, 0.0, 1.0}, // z1 == z2 (branch A degenerate)
+        {0.0, 1.0, 1.0}, // z2 == z3 (branch B degenerate)
+        {3.0, 3.2, 7.0}, // step-like cell with datum offset
     };
     for (const auto& z : beds) {
         for (double frac : {0.05, 0.25, 0.5, 0.75, 0.95, 1.0}) {
-            const double eta   = z[0] + frac * (z[2] - z[0]);
-            const double h     = meanDepthAtEta(eta, z[0], z[1], z[2]);
-            if (!(h > 0.0)) continue;
+            const double eta = z[0] + frac * (z[2] - z[0]);
+            const double h = meanDepthAtEta(eta, z[0], z[1], z[2]);
+            if (!(h > 0.0))
+                continue;
             // Scrambled argument order must not matter.
             const double eta_r = cellFreeSurfaceElevation(h, z[2], z[0], z[1]);
             EXPECT_NEAR(eta_r, eta, 1e-8)
-                << "bed {" << z[0] << "," << z[1] << "," << z[2]
-                << "} frac " << frac;
+                << "bed {" << z[0] << "," << z[1] << "," << z[2] << "} frac " << frac;
         }
     }
 }
@@ -484,14 +553,13 @@ TEST(CellFreeSurface, PartialWetSitsBelowFlatClosure) {
     // flat closure) — the water pools on the low side, eta < zbar + h. This is
     // the step-cell overstatement the closure exists to remove.
     const double z1 = 0.0, z2 = 0.5, z3 = 1.0, zbar = 0.5;
-    const double h  = 0.05;
+    const double h = 0.05;
     const double eta = cellFreeSurfaceElevation(h, z1, z2, z3);
     EXPECT_LT(eta, zbar + h);
     EXPECT_GT(eta, z1);
     // And it must round-trip mass: h(eta) == h.
     EXPECT_NEAR(meanDepthAtEta(eta, z1, z2, z3), h, 1e-10);
 }
-
 
 // ============================================================================
 // Vertex Render Reconstruction Tests (wet-masked signed depths)
@@ -505,6 +573,14 @@ TEST(CellFreeSurface, PartialWetSitsBelowFlatClosure) {
 //     | T0   \    |
 //   v0 (0,0, z=0) ---- v1 (1,0, z=0)
 //
+/**
+ * @brief Build a unit square with one raised vertex for partial-wetting tests.
+ *
+ * Geometry and state arrays are owned by the returned mesh. No solver, forcing or water state is
+ * initialized; allocation/topology errors propagate.
+ * @return Owned two-triangle mesh with v2 at5 m and other vertex beds zero, Manning.035 and built
+ *     topology.
+ */
 static MeshData makeStepMesh() {
     MeshData mesh;
     mesh.resize_vertices(4);
@@ -513,8 +589,8 @@ static MeshData makeStepMesh() {
     mesh.vz = {0.0, 0.0, 5.0, 0.0};
 
     mesh.resize_triangles(2);
-    mesh.tri_v0[0] = 0; mesh.tri_v1[0] = 1; mesh.tri_v2[0] = 3;
-    mesh.tri_v0[1] = 0; mesh.tri_v1[1] = 3; mesh.tri_v2[1] = 2;
+    mesh.set_triangle(0, 0, 1, 3);
+    mesh.set_triangle(1, 0, 3, 2);
     mesh.mannings_n[0] = 0.035;
     mesh.mannings_n[1] = 0.035;
 
@@ -538,8 +614,8 @@ TEST(VertexRenderReconstruction, DryNeighborDoesNotRaiseWaterSurface) {
 
     reconstructVertexRenderDepths(mesh, state, dry);
 
-    const double eta0 = cellFreeSurfaceElevation(
-        0.5, mesh.vz[0], mesh.vz[1], mesh.vz[3]);   // T0's free surface (0.5)
+    const double eta0 = cellFreeSurfaceElevation(0.5, mesh.vz[0], mesh.vz[1],
+                                                 mesh.vz[3]); // T0's free surface (0.5)
 
     // Shared vertices see ONLY the wet cell's eta.
     EXPECT_NEAR(state.vert_depth_signed[0], eta0 - mesh.vz[0], 1e-12);
@@ -557,7 +633,7 @@ TEST(VertexRenderReconstruction, DryNeighborDoesNotRaiseWaterSurface) {
 }
 
 TEST(VertexRenderReconstruction, LakeAtRestIsFlat) {
-    auto mesh = makeUnitSquareMesh();   // flat bed z = 0
+    auto mesh = makeUnitSquareMesh(); // flat bed z = 0
     buildVertexStencils(mesh);
 
     SurfaceStateData state;
@@ -596,8 +672,8 @@ TEST(VertexRenderReconstruction, WallTopVertexIsNoDataNotNotched) {
 
     SurfaceStateData state;
     state.resize(mesh.n_triangles(), mesh.n_vertices());
-    state.depth[0] = 0.5;    // flat T0: eta = 0.5
-    state.depth[1] = 0.2;    // tilted T1 (z 0..5): partially wet, eta << 5
+    state.depth[0] = 0.5; // flat T0: eta = 0.5
+    state.depth[1] = 0.2; // tilted T1 (z 0..5): partially wet, eta << 5
 
     reconstructVertexRenderDepths(mesh, state, 1.0e-3);
 
@@ -625,15 +701,14 @@ TEST(VertexRenderReconstruction, WallBaseFilmDoesNotNotchPool) {
 
     SurfaceStateData state;
     state.resize(mesh.n_triangles(), mesh.n_vertices());
-    state.depth[0] = 1.0;     // pool: flat T0, eta = 1.0
-    state.depth[1] = 0.01;    // thin film on the flank, pools near the base
+    state.depth[0] = 1.0;  // pool: flat T0, eta = 1.0
+    state.depth[1] = 0.01; // thin film on the flank, pools near the base
 
     reconstructVertexRenderDepths(mesh, state, 1.0e-3);
 
-    const double eta0 = cellFreeSurfaceElevation(
-        1.0, mesh.vz[0], mesh.vz[1], mesh.vz[3]);           // 1.0
-    const double eta1 = cellFreeSurfaceElevation(
-        0.01, mesh.vz[0], mesh.vz[3], mesh.vz[2]);          // ≈ base level
+    const double eta0 = cellFreeSurfaceElevation(1.0, mesh.vz[0], mesh.vz[1], mesh.vz[3]); // 1.0
+    const double eta1 =
+        cellFreeSurfaceElevation(0.01, mesh.vz[0], mesh.vz[3], mesh.vz[2]); // ≈ base level
 
     // Wall-top vertex: film eta << z_v2 → sentinel, not a negative.
     EXPECT_DOUBLE_EQ(state.vert_depth_signed[2], 0.0);
@@ -647,7 +722,6 @@ TEST(VertexRenderReconstruction, WallBaseFilmDoesNotNotchPool) {
     // Pool-only vertex v1 reads the pool exactly.
     EXPECT_NEAR(state.vert_depth_signed[1], eta0 - mesh.vz[1], 1e-12);
 }
-
 
 // ============================================================================
 // Gradient Computation Tests
@@ -705,8 +779,10 @@ TEST(GradientComputation, LimiterReducesForUniformGradient) {
     state.resize(mesh.n_triangles(), mesh.n_vertices());
 
     // Set gradients to identical values in both cells
-    state.grad_hx[0] = 1.0; state.grad_hy[0] = 2.0;
-    state.grad_hx[1] = 1.0; state.grad_hy[1] = 2.0;
+    state.grad_hx[0] = 1.0;
+    state.grad_hy[0] = 2.0;
+    state.grad_hx[1] = 1.0;
+    state.grad_hy[1] = 2.0;
 
     computeLimitedGradients(mesh, state, 1e-6);
 
@@ -746,25 +822,34 @@ TEST(GradientComputation, LimiterReducesForUniformGradient) {
 //                          \ /
 //                          v5 (0.5, -sqrt(3)/2)
 //
+/**
+ * @brief Build a central equilateral triangle with one neighbor across each edge.
+ *
+ * Geometry and state arrays are owned by the returned mesh. No solver, forcing or water state is
+ * initialized; allocation/topology errors propagate.
+ * @return Owned flat six-vertex/four-cell mesh with unit-metre edge triangles, Manning.035 and
+ *     built topology.
+ */
 static MeshData makeCentralTriangleMesh() {
     const double h = std::sqrt(3.0) * 0.5;
     MeshData mesh;
     mesh.resize_vertices(6);
-    mesh.vx = { 0.0,  1.0,  0.5, -0.5,  1.5,  0.5};
-    mesh.vy = { 0.0,  0.0,    h,    h,    h,   -h};
-    mesh.vz = { 0.0,  0.0,  0.0,  0.0,  0.0,  0.0};
+    mesh.vx = {0.0, 1.0, 0.5, -0.5, 1.5, 0.5};
+    mesh.vy = {0.0, 0.0, h, h, h, -h};
+    mesh.vz = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
 
     mesh.resize_triangles(4);
     // T0 (central): v0, v1, v2
-    mesh.tri_v0[0] = 0; mesh.tri_v1[0] = 1; mesh.tri_v2[0] = 2;
+    mesh.set_triangle(0, 0, 1, 2);
     // T1 (left,  shares edge v0-v2 with T0): v0, v2, v3
-    mesh.tri_v0[1] = 0; mesh.tri_v1[1] = 2; mesh.tri_v2[1] = 3;
+    mesh.set_triangle(1, 0, 2, 3);
     // T2 (right, shares edge v1-v2 with T0): v1, v4, v2
-    mesh.tri_v0[2] = 1; mesh.tri_v1[2] = 4; mesh.tri_v2[2] = 2;
+    mesh.set_triangle(2, 1, 4, 2);
     // T3 (below, shares edge v0-v1 with T0): v0, v5, v1
-    mesh.tri_v0[3] = 0; mesh.tri_v1[3] = 5; mesh.tri_v2[3] = 1;
+    mesh.set_triangle(3, 0, 5, 1);
 
-    for (int i = 0; i < 4; ++i) mesh.mannings_n[i] = 0.035;
+    for (int i = 0; i < 4; ++i)
+        mesh.mannings_n[i] = 0.035;
 
     buildMeshTopology(mesh);
     return mesh;
@@ -774,9 +859,9 @@ TEST(GradientComputation, LimiterIsPermutationInvariant) {
     auto mesh = makeCentralTriangleMesh();
 
     // Confirm the central triangle (T0) really has three interior neighbours.
-    ASSERT_GE(mesh.tri_nbr0[0], 0);
-    ASSERT_GE(mesh.tri_nbr1[0], 0);
-    ASSERT_GE(mesh.tri_nbr2[0], 0);
+    ASSERT_GE(mesh.cell_neighbour(0, 0), 0);
+    ASSERT_GE(mesh.cell_neighbour(0, 1), 0);
+    ASSERT_GE(mesh.cell_neighbour(0, 2), 0);
 
     SurfaceStateData state;
     state.resize(mesh.n_triangles(), mesh.n_vertices());
@@ -784,7 +869,9 @@ TEST(GradientComputation, LimiterIsPermutationInvariant) {
     // Three distinct neighbour gradients (deliberately differing magnitudes
     // and directions so the limiter actually has to mix them) and a fixed
     // self-gradient on the central triangle.
-    struct Grad { double gx, gy; };
+    struct Grad {
+        double gx, gy;
+    };
     Grad neighbour_grads[3] = {
         {1.0, 0.0},
         {0.0, 3.0},
@@ -799,9 +886,9 @@ TEST(GradientComputation, LimiterIsPermutationInvariant) {
         state.grad_hy[0] = self_grad.gy;
         int order[3] = {p0, p1, p2};
         for (int slot = 0; slot < 3; ++slot) {
-            int nbr = (slot == 0) ? mesh.tri_nbr0[0]
-                    : (slot == 1) ? mesh.tri_nbr1[0]
-                    :               mesh.tri_nbr2[0];
+            int nbr = (slot == 0)   ? mesh.cell_neighbour(0, 0)
+                      : (slot == 1) ? mesh.cell_neighbour(0, 1)
+                                    : mesh.cell_neighbour(0, 2);
             state.grad_hx[nbr] = neighbour_grads[order[slot]].gx;
             state.grad_hy[nbr] = neighbour_grads[order[slot]].gy;
         }
@@ -817,20 +904,14 @@ TEST(GradientComputation, LimiterIsPermutationInvariant) {
     // T0 — the limiter result is a function of the multiset of contributing
     // gradients, not of slot order.
     int perms[5][3] = {
-        {0, 2, 1},
-        {1, 0, 2},
-        {1, 2, 0},
-        {2, 0, 1},
-        {2, 1, 0},
+        {0, 2, 1}, {1, 0, 2}, {1, 2, 0}, {2, 0, 1}, {2, 1, 0},
     };
     for (auto& p : perms) {
         Grad out = run_with_assignment(p[0], p[1], p[2]);
-        EXPECT_NEAR(out.gx, ref.gx, 1e-12)
-            << "Limited grad_x changes under neighbour permutation ("
-            << p[0] << "," << p[1] << "," << p[2] << ")";
-        EXPECT_NEAR(out.gy, ref.gy, 1e-12)
-            << "Limited grad_y changes under neighbour permutation ("
-            << p[0] << "," << p[1] << "," << p[2] << ")";
+        EXPECT_NEAR(out.gx, ref.gx, 1e-12) << "Limited grad_x changes under neighbour permutation ("
+                                           << p[0] << "," << p[1] << "," << p[2] << ")";
+        EXPECT_NEAR(out.gy, ref.gy, 1e-12) << "Limited grad_y changes under neighbour permutation ("
+                                           << p[0] << "," << p[1] << "," << p[2] << ")";
     }
 }
 
@@ -842,9 +923,9 @@ TEST(GradientComputation, LimiterEqualsAverageForUniformMagnitudes) {
     // normalization step that masked the asymmetric denominator; the new
     // form satisfies it structurally with no normalization fix-up.
     auto mesh = makeCentralTriangleMesh();
-    ASSERT_GE(mesh.tri_nbr0[0], 0);
-    ASSERT_GE(mesh.tri_nbr1[0], 0);
-    ASSERT_GE(mesh.tri_nbr2[0], 0);
+    ASSERT_GE(mesh.cell_neighbour(0, 0), 0);
+    ASSERT_GE(mesh.cell_neighbour(0, 1), 0);
+    ASSERT_GE(mesh.cell_neighbour(0, 2), 0);
 
     SurfaceStateData state;
     state.resize(mesh.n_triangles(), mesh.n_vertices());
@@ -852,11 +933,12 @@ TEST(GradientComputation, LimiterEqualsAverageForUniformMagnitudes) {
     // Four gradients, each with squared magnitude = 1, pointing in four
     // different directions. The arithmetic mean has zero x-component and
     // a positive y-component because of how the four directions are placed.
-    double gx[4] = { 1.0,  0.0, -1.0,  0.0};
-    double gy[4] = { 0.0,  1.0,  0.0,  1.0};
+    double gx[4] = {1.0, 0.0, -1.0, 0.0};
+    double gy[4] = {0.0, 1.0, 0.0, 1.0};
 
-    state.grad_hx[0] = gx[0]; state.grad_hy[0] = gy[0];
-    int nbrs[3] = {mesh.tri_nbr0[0], mesh.tri_nbr1[0], mesh.tri_nbr2[0]};
+    state.grad_hx[0] = gx[0];
+    state.grad_hy[0] = gy[0];
+    int nbrs[3] = {mesh.cell_neighbour(0, 0), mesh.cell_neighbour(0, 1), mesh.cell_neighbour(0, 2)};
     for (int k = 0; k < 3; ++k) {
         state.grad_hx[nbrs[k]] = gx[k + 1];
         state.grad_hy[nbrs[k]] = gy[k + 1];
@@ -873,7 +955,6 @@ TEST(GradientComputation, LimiterEqualsAverageForUniformMagnitudes) {
     EXPECT_NEAR(state.grad_hy_lim[0], mean_y, 1e-9)
         << "Limited grad_y ≠ mean for equal-magnitude inputs";
 }
-
 
 // ============================================================================
 // Edge Flux Tests
@@ -907,14 +988,13 @@ TEST(CellContinuity, DetectsImbalance) {
 
     // No fluxes/sources but storage grows → residual = dV/dt (nonzero).
     SolverOptions2D opts;
-    state.save_state();                          // old_volume = 0
-    state.volume[0] = 0.10 * mesh.tri_area[0];   // volume grew with no inflow
+    state.save_state();                        // old_volume = 0
+    state.volume[0] = 0.10 * mesh.tri_area[0]; // volume grew with no inflow
     computeCellContinuity(mesh, state, opts, 5.0);
 
     double expected = 0.10 * mesh.tri_area[0] / 5.0;
     EXPECT_NEAR(state.cell_continuity_err[0], expected, 1e-12);
 }
-
 
 // ============================================================================
 // RT0 cell-centred velocity reconstruction
@@ -933,10 +1013,9 @@ TEST(FaceVelocity, ReconstructsUniformField) {
     std::fill(state.depth.begin(), state.depth.end(), depth);
     for (int i = 0; i < mesh.n_triangles(); ++i)
         for (int e = 0; e < 3; ++e) {
-            int idx = i * 3 + e;
+            int idx = MeshData::slot(i, e);
             state.edge_flux[idx] =
-                (qx * mesh.edge_nx[idx] + qy * mesh.edge_ny[idx])
-                * mesh.edge_length[idx];
+                (qx * mesh.edge_nx[idx] + qy * mesh.edge_ny[idx]) * mesh.edge_length[idx];
         }
 
     computeFaceVelocity(mesh, state, opts);
@@ -955,7 +1034,7 @@ TEST(FaceVelocity, DryCellIsZero) {
     state.resize(mesh.n_triangles(), mesh.n_vertices());
     SolverOptions2D opts;
 
-    std::fill(state.depth.begin(), state.depth.end(), 0.0);  // dry
+    std::fill(state.depth.begin(), state.depth.end(), 0.0); // dry
     std::fill(state.edge_flux.begin(), state.edge_flux.end(), 0.123);
 
     computeFaceVelocity(mesh, state, opts);
@@ -965,7 +1044,6 @@ TEST(FaceVelocity, DryCellIsZero) {
         EXPECT_EQ(state.face_vy[i], 0.0);
     }
 }
-
 
 // ============================================================================
 // Input Parsing Tests
@@ -1011,12 +1089,10 @@ TEST(InputParsing, Parse2DOptionsLine) {
     // programmatic path (no warnings sink), warn-and-ignore on the file-load
     // path (warnings sink provided) so legacy models still open.
     std::vector<std::string> warns;
-    for (const char* retired : {"REL_TOLERANCE", "ABS_TOLERANCE",
-                                "MAX_CVODE_STEPS", "LINEAR_SOLVER",
-                                "PRECONDITIONER", "MAX_KRYLOV_DIM",
-                                "COUPLING_INTERVAL", "COUPLING_WINDOW",
-                                "MIN_TIMESTEP", "ACTIVE_SET", "MOMENTUM",
-                                "JACOBIAN", "ATOL_AREA_REF"}) {
+    for (const char* retired :
+         {"REL_TOLERANCE", "ABS_TOLERANCE", "MAX_CVODE_STEPS", "LINEAR_SOLVER", "PRECONDITIONER",
+          "MAX_KRYLOV_DIM", "COUPLING_INTERVAL", "COUPLING_WINDOW", "MIN_TIMESTEP", "ACTIVE_SET",
+          "MOMENTUM", "JACOBIAN", "ATOL_AREA_REF"}) {
         err = parse2DOptionsLine({retired, "1"}, opts);
         EXPECT_FALSE(err.empty()) << retired << " must be a hard error";
         EXPECT_FALSE(is2DOptionKey(retired)) << retired;
@@ -1033,8 +1109,7 @@ TEST(InputParsing, Parse2DOptionsLine) {
     EXPECT_FALSE(err.empty()) << "INTEGRATOR ARKODE must be a hard error";
     err = parse2DOptionsLine({"INTEGRATOR", "CVODE"}, opts, &warns);
     EXPECT_TRUE(err.empty()) << "INTEGRATOR CVODE must warn on file load: " << err;
-    EXPECT_NE(warns.back().find("INTEGRATOR CVODE"), std::string::npos)
-        << warns.back();
+    EXPECT_NE(warns.back().find("INTEGRATOR CVODE"), std::string::npos) << warns.back();
 
     // RAINFALL_MODE NONE: no rain on the mesh (subcatchments already capture
     // the storm; rain-on-mesh would double-count it).
@@ -1042,6 +1117,94 @@ TEST(InputParsing, Parse2DOptionsLine) {
     EXPECT_TRUE(err.empty()) << err;
     EXPECT_EQ(opts.rainfall_mode, RainfallMode::NONE);
     EXPECT_EQ(format2DOptionValue(opts, "RAINFALL_MODE"), "NONE");
+
+    // BACKEND: the model's own marcher-backend request (AUTO default). Every
+    // token round-trips through format2DOptionValue, case-insensitively, and
+    // an unknown accelerator is rejected rather than silently becoming AUTO.
+    EXPECT_EQ(opts.backend, Backend2D::AUTO);
+    EXPECT_TRUE(is2DOptionKey("BACKEND"));
+    EXPECT_EQ(format2DOptionValue(opts, "BACKEND"), "AUTO");
+    const struct {
+        const char* tok;
+        Backend2D want;
+    } backends[] = {
+        {"cpu", Backend2D::CPU}, {"OMP", Backend2D::OMP},   {"Cuda", Backend2D::CUDA},
+        {"HIP", Backend2D::HIP}, {"sycl", Backend2D::SYCL}, {"auto", Backend2D::AUTO},
+    };
+    for (const auto& b : backends) {
+        err = parse2DOptionsLine({"BACKEND", b.tok}, opts);
+        EXPECT_TRUE(err.empty()) << b.tok << ": " << err;
+        EXPECT_EQ(opts.backend, b.want) << b.tok;
+        std::string upper = b.tok;
+        for (char& c : upper)
+            c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        EXPECT_EQ(format2DOptionValue(opts, "BACKEND"), upper) << b.tok;
+    }
+    err = parse2DOptionsLine({"BACKEND", "METAL"}, opts);
+    EXPECT_FALSE(err.empty()) << "BACKEND METAL must be rejected";
+    EXPECT_EQ(opts.backend, Backend2D::AUTO)
+        << "a rejected token must not clobber the previous value";
+}
+
+// The factory honours [2D_OPTIONS] BACKEND when OPENSWMM_2D_BACKEND is unset,
+// and the environment variable overrides the option when set — the same
+// precedence the FV module gives OPENSWMM_FV_BACKEND over FV_BACKEND. The
+// ctest harness pins OPENSWMM_2D_BACKEND=cpu for this binary, so the variable
+// is saved, cleared and restored around the checks.
+TEST(SurfaceSolverFactory, DeckBackendOptionSelectsMarcher) {
+    const char* prev = std::getenv("OPENSWMM_2D_BACKEND");
+    const std::string saved = prev ? prev : "";
+    /** @cond */
+    struct Restore {
+        std::string v;
+        bool had;
+        /**
+         * @brief Restore the process 2D backend request captured by the test.
+         *
+         * Installs saved v when had is true, otherwise removes OPENSWMM_2D_BACKEND. Uses platform
+         * environment helpers without independent status checks. Caller serializes process-global
+         * environment mutation; no solver/model state is restored.
+         */
+        ~Restore() {
+            if (had)
+                setEnvVar("OPENSWMM_2D_BACKEND", v.c_str());
+            else
+                unsetEnvVar("OPENSWMM_2D_BACKEND");
+        }
+    } restore{saved, prev != nullptr};
+    /** @endcond */
+
+    SolverOptions2D opts;
+    std::string chosen;
+
+    // CPU by option, no env: the built-in marcher, no plugin discovery.
+    unsetEnvVar("OPENSWMM_2D_BACKEND");
+    opts.backend = Backend2D::CPU;
+    auto s = openswmm::twoD::makeSurfaceSolver(opts, &chosen, 200000);
+    ASSERT_TRUE(s);
+    EXPECT_EQ(chosen.rfind("cpu", 0), 0u) << chosen;
+
+    // Env wins over the option: BACKEND OMP in the deck, cpu in the env.
+    setEnvVar("OPENSWMM_2D_BACKEND", "cpu");
+    opts.backend = Backend2D::OMP;
+    chosen.clear();
+    s = openswmm::twoD::makeSurfaceSolver(opts, &chosen, 200000);
+    ASSERT_TRUE(s);
+    EXPECT_EQ(chosen.rfind("cpu", 0), 0u) << chosen;
+
+    // OMP by option, no env: the Kokkos OpenMP plugin when it is discoverable
+    // (co-located beside the engine library in every default build); an
+    // absent plugin falls back to CPU by contract, which is not a failure of
+    // the option plumbing — so that case is reported as skipped, not passed.
+    unsetEnvVar("OPENSWMM_2D_BACKEND");
+    opts.backend = Backend2D::OMP;
+    chosen.clear();
+    s = openswmm::twoD::makeSurfaceSolver(opts, &chosen, 10); // below every floor
+    ASSERT_TRUE(s);
+    if (chosen.rfind("omp", 0) != 0)
+        GTEST_SKIP() << "omp plugin not discoverable here (chosen='" << chosen
+                     << "'); CPU + env-precedence legs passed";
+    EXPECT_EQ(chosen.rfind("omp", 0), 0u) << chosen;
 }
 
 TEST(InputParsing, Parse2DOptionsRejectsUnknown) {
@@ -1064,7 +1227,7 @@ TEST(InputParsing, Parse2DVertexLine) {
     EXPECT_EQ(mesh.n_vertices(), 1);
     EXPECT_NEAR(mesh.vx[0], 100.0, 1e-12);
     EXPECT_NEAR(mesh.vy[0], 200.0, 1e-12);
-    EXPECT_NEAR(mesh.vz[0], 10.5,  1e-12);
+    EXPECT_NEAR(mesh.vz[0], 10.5, 1e-12);
 
     err = parse2DVertexLine({"101.0", "201.0", "10.3", "inlet_tag"}, mesh);
     EXPECT_TRUE(err.empty()) << err;
@@ -1086,16 +1249,16 @@ TEST(InputParsing, Parse2DTriangleLine) {
     auto err = parse2DTriangleLine({"0", "1", "2", "0.035"}, mesh);
     EXPECT_TRUE(err.empty()) << err;
     EXPECT_EQ(mesh.n_triangles(), 1);
-    EXPECT_EQ(mesh.tri_v0[0], 0);
-    EXPECT_EQ(mesh.tri_v1[0], 1);
-    EXPECT_EQ(mesh.tri_v2[0], 2);
+    EXPECT_EQ(mesh.cell_vertex(0, 0), 0);
+    EXPECT_EQ(mesh.cell_vertex(0, 1), 1);
+    EXPECT_EQ(mesh.cell_vertex(0, 2), 2);
     EXPECT_NEAR(mesh.mannings_n[0], 0.035, 1e-12);
 
     err = parse2DTriangleLine({"0", "2", "1", "0.025", "road"}, mesh);
     EXPECT_TRUE(err.empty()) << err;
     EXPECT_EQ(mesh.n_triangles(), 2);
     EXPECT_EQ(mesh.tri_tag[1], "road");
-    EXPECT_NEAR(mesh.tri_init_depth[1], 0.0, 1e-12);   // tag-only: dry default
+    EXPECT_NEAR(mesh.tri_init_depth[1], 0.0, 1e-12); // tag-only: dry default
 }
 
 TEST(InputParsing, Parse2DTriangleInitDepth) {
@@ -1135,7 +1298,7 @@ TEST(InputParsing, Parse2DInitialVelocity) {
     EXPECT_TRUE(err.empty()) << err;
     EXPECT_NEAR(mesh.tri_init_u[1], 0.5, 1e-12);
     EXPECT_NEAR(mesh.tri_init_v[1], -1.25, 1e-12);
-    EXPECT_NEAR(mesh.tri_init_u[0], 0.0, 1e-12);   // unlisted rows stay 0
+    EXPECT_NEAR(mesh.tri_init_u[0], 0.0, 1e-12); // unlisted rows stay 0
 
     // Out-of-range triangle and short rows rejected
     EXPECT_FALSE(parse2DInitialVelocityLine({"2", "1", "1"}, mesh).empty());
@@ -1183,7 +1346,6 @@ TEST(InputParsing, Parse2DVertexNodeMapRejectsOutOfRange) {
     EXPECT_FALSE(err.empty());
 }
 
-
 // ============================================================================
 // SurfaceStateData Lifecycle Tests
 // ============================================================================
@@ -1195,7 +1357,7 @@ TEST(SurfaceState, ResizeSetsZero) {
     EXPECT_EQ(state.depth.size(), 10u);
     EXPECT_EQ(state.head.size(), 10u);
     EXPECT_EQ(state.vert_head.size(), 5u);
-    EXPECT_EQ(state.edge_flux.size(), 30u);  // 10 * 3
+    EXPECT_EQ(state.edge_flux.size(), 40u); // 10 * kMaxCellVerts (padded)
 
     for (int i = 0; i < 10; ++i) {
         EXPECT_EQ(state.depth[i], 0.0);
@@ -1231,15 +1393,17 @@ TEST(SurfaceState, UpdateStatisticsTracksMax) {
     state.resize(2, 1);
     std::vector<double> areas = {10.0, 20.0};
 
-    state.depth[0] = 0.5; state.depth[1] = 0.3;
+    state.depth[0] = 0.5;
+    state.depth[1] = 0.3;
     state.update_statistics(areas, 1.0);
     EXPECT_NEAR(state.stat_max_depth[0], 0.5, 1e-12);
     EXPECT_NEAR(state.stat_max_depth[1], 0.3, 1e-12);
 
-    state.depth[0] = 0.2; state.depth[1] = 0.8;
+    state.depth[0] = 0.2;
+    state.depth[1] = 0.8;
     state.update_statistics(areas, 1.0);
-    EXPECT_NEAR(state.stat_max_depth[0], 0.5, 1e-12);  // Still 0.5
-    EXPECT_NEAR(state.stat_max_depth[1], 0.8, 1e-12);  // Updated to 0.8
+    EXPECT_NEAR(state.stat_max_depth[0], 0.5, 1e-12); // Still 0.5
+    EXPECT_NEAR(state.stat_max_depth[1], 0.8, 1e-12); // Updated to 0.8
 }
 
 TEST(SurfaceState, UpdateStatisticsTracksVelocityAndContinuityEnvelopes) {
@@ -1248,10 +1412,12 @@ TEST(SurfaceState, UpdateStatisticsTracksVelocityAndContinuityEnvelopes) {
     std::vector<double> areas = {10.0, 20.0};
 
     // Step 1: cell 0 moves fast (3-4-5 triangle → |v| = 5), cell 1 slow.
-    state.face_vx[0] = 3.0; state.face_vy[0] = 4.0;   // |v| = 5
-    state.face_vx[1] = 0.6; state.face_vy[1] = 0.8;   // |v| = 1
-    state.cell_continuity_err[0] = -2.0;              // |err| = 2
-    state.cell_continuity_err[1] =  0.5;
+    state.face_vx[0] = 3.0;
+    state.face_vy[0] = 4.0; // |v| = 5
+    state.face_vx[1] = 0.6;
+    state.face_vy[1] = 0.8;              // |v| = 1
+    state.cell_continuity_err[0] = -2.0; // |err| = 2
+    state.cell_continuity_err[1] = 0.5;
     state.update_statistics(areas, 1.0);
     EXPECT_NEAR(state.stat_max_velocity[0], 5.0, 1e-12);
     EXPECT_NEAR(state.stat_max_velocity[1], 1.0, 1e-12);
@@ -1259,29 +1425,35 @@ TEST(SurfaceState, UpdateStatisticsTracksVelocityAndContinuityEnvelopes) {
     EXPECT_NEAR(state.stat_max_cont_err[1], 0.5, 1e-12);
 
     // Step 2: cell 0 slows, cell 1 speeds up; envelopes are monotone.
-    state.face_vx[0] = 1.0; state.face_vy[0] = 0.0;   // |v| = 1 (< 5)
-    state.face_vx[1] = 0.0; state.face_vy[1] = 2.0;   // |v| = 2 (> 1)
-    state.cell_continuity_err[0] =  0.1;              // |err| = 0.1 (< 2)
-    state.cell_continuity_err[1] = -3.0;              // |err| = 3 (> 0.5)
+    state.face_vx[0] = 1.0;
+    state.face_vy[0] = 0.0; // |v| = 1 (< 5)
+    state.face_vx[1] = 0.0;
+    state.face_vy[1] = 2.0;              // |v| = 2 (> 1)
+    state.cell_continuity_err[0] = 0.1;  // |err| = 0.1 (< 2)
+    state.cell_continuity_err[1] = -3.0; // |err| = 3 (> 0.5)
     state.update_statistics(areas, 1.0);
-    EXPECT_NEAR(state.stat_max_velocity[0], 5.0, 1e-12);  // retained
-    EXPECT_NEAR(state.stat_max_velocity[1], 2.0, 1e-12);  // raised
-    EXPECT_NEAR(state.stat_max_cont_err[0], 2.0, 1e-12);  // retained
-    EXPECT_NEAR(state.stat_max_cont_err[1], 3.0, 1e-12);  // raised
+    EXPECT_NEAR(state.stat_max_velocity[0], 5.0, 1e-12); // retained
+    EXPECT_NEAR(state.stat_max_velocity[1], 2.0, 1e-12); // raised
+    EXPECT_NEAR(state.stat_max_cont_err[0], 2.0, 1e-12); // retained
+    EXPECT_NEAR(state.stat_max_cont_err[1], 3.0, 1e-12); // raised
 }
 
 TEST(SurfaceState, ClearResetForcings) {
     SurfaceStateData state;
     state.resize(2, 1);
 
-    // Set RESET forcing on cell 0, PERSIST on cell 1
+    // Set RESET forcing on cell 0, PERSIST on cell 1. forcing_ever_set is
+    // what the swmm_2d_force_* API stamps when it writes a prescription; the
+    // expiry sweep is skipped without it (it is dead work on every deck that
+    // never forces anything), so a direct-write test must stamp it too.
+    state.forcing_ever_set = true;
     state.rainfall_forced[0] = 1;
     state.rainfall_force_val[0] = 0.001;
-    state.rainfall_persist[0] = 0;  // RESET
+    state.rainfall_persist[0] = 0; // RESET
 
     state.rainfall_forced[1] = 1;
     state.rainfall_force_val[1] = 0.002;
-    state.rainfall_persist[1] = 1;  // PERSIST
+    state.rainfall_persist[1] = 1; // PERSIST
 
     state.clear_reset_forcings();
 
@@ -1293,7 +1465,6 @@ TEST(SurfaceState, ClearResetForcings) {
     EXPECT_EQ(state.rainfall_forced[1], 1);
     EXPECT_NEAR(state.rainfall_force_val[1], 0.002, 1e-12);
 }
-
 
 // ============================================================================
 // SolverOptions2D Defaults
@@ -1321,7 +1492,6 @@ TEST(SolverOptions, DefaultValues) {
     EXPECT_NEAR(opts.froude_max, 1.5, 1e-12);
     EXPECT_FALSE(opts.coupling_area_auto);
 }
-
 
 // ============================================================================
 // MeshData Resize Tests
@@ -1353,15 +1523,21 @@ TEST(MeshData, ResizeTriangles) {
     mesh.resize_triangles(3);
 
     EXPECT_EQ(mesh.n_triangles(), 3);
-    EXPECT_EQ(mesh.tri_v0.size(), 3u);
-    EXPECT_EQ(mesh.edge_length.size(), 9u);  // 3 * 3
+    EXPECT_EQ(mesh.cell_nv.size(), 3u);
+    EXPECT_EQ(mesh.edge_length.size(), 12u); // 3 * kMaxCellVerts (padded)
+    EXPECT_EQ(mesh.n_quads(), 0);
+    EXPECT_EQ(mesh.edge_stride(), 3); // public stride stays 3 for all-tri
     EXPECT_EQ(mesh.mannings_n.size(), 3u);
 
-    // Default neighbours are -1
+    // Default neighbours are -1; the padding slot of a triangle is -2 and
+    // its padding vertex is -1.
     for (int i = 0; i < 3; ++i) {
-        EXPECT_EQ(mesh.tri_nbr0[i], -1);
-        EXPECT_EQ(mesh.tri_nbr1[i], -1);
-        EXPECT_EQ(mesh.tri_nbr2[i], -1);
+        EXPECT_EQ(mesh.cell_vertex_count(i), 3);
+        EXPECT_EQ(mesh.cell_neighbour(i, 0), -1);
+        EXPECT_EQ(mesh.cell_neighbour(i, 1), -1);
+        EXPECT_EQ(mesh.cell_neighbour(i, 2), -1);
+        EXPECT_EQ(mesh.cell_neighbour(i, 3), -2);
+        EXPECT_EQ(mesh.cell_vertex(i, 3), -1);
     }
 
     // Default Manning's n
@@ -1369,7 +1545,6 @@ TEST(MeshData, ResizeTriangles) {
         EXPECT_NEAR(mesh.mannings_n[i], 0.035, 1e-12);
     }
 }
-
 
 // ============================================================================
 // Larger Mesh: 4-triangle diamond
@@ -1386,24 +1561,33 @@ TEST(MeshData, ResizeTriangles) {
 //        v4 (0,-2,0)
 //
 
+/**
+ * @brief Build a flat four-triangle diamond around its center.
+ *
+ * Geometry and state arrays are owned by the returned mesh. No solver, forcing or water state is
+ * initialized; allocation/topology errors propagate.
+ * @return Owned five-vertex mesh spanning axes +/-2 m, four triangular cells, Manning.03 and built
+ *     topology.
+ */
 static MeshData makeDiamondMesh() {
     MeshData mesh;
     mesh.resize_vertices(5);
-    mesh.vx = { 0.0, 2.0,  0.0, -2.0,  0.0};
-    mesh.vy = { 0.0, 0.0,  2.0,  0.0, -2.0};
-    mesh.vz = { 0.0, 0.0,  0.0,  0.0,  0.0};
+    mesh.vx = {0.0, 2.0, 0.0, -2.0, 0.0};
+    mesh.vy = {0.0, 0.0, 2.0, 0.0, -2.0};
+    mesh.vz = {0.0, 0.0, 0.0, 0.0, 0.0};
 
     mesh.resize_triangles(4);
     // T0: v0, v1, v2 (right-upper)
-    mesh.tri_v0[0] = 0; mesh.tri_v1[0] = 1; mesh.tri_v2[0] = 2;
+    mesh.set_triangle(0, 0, 1, 2);
     // T1: v0, v2, v3 (left-upper)
-    mesh.tri_v0[1] = 0; mesh.tri_v1[1] = 2; mesh.tri_v2[1] = 3;
+    mesh.set_triangle(1, 0, 2, 3);
     // T2: v0, v3, v4 (left-lower)
-    mesh.tri_v0[2] = 0; mesh.tri_v1[2] = 3; mesh.tri_v2[2] = 4;
+    mesh.set_triangle(2, 0, 3, 4);
     // T3: v0, v4, v1 (right-lower)
-    mesh.tri_v0[3] = 0; mesh.tri_v1[3] = 4; mesh.tri_v2[3] = 1;
+    mesh.set_triangle(3, 0, 4, 1);
 
-    for (int i = 0; i < 4; ++i) mesh.mannings_n[i] = 0.03;
+    for (int i = 0; i < 4; ++i)
+        mesh.mannings_n[i] = 0.03;
 
     buildMeshTopology(mesh);
     return mesh;
@@ -1416,11 +1600,14 @@ TEST(DiamondMesh, AllTrianglesHaveOneNeighbourEach) {
     // adjacent triangles) and 1 boundary edge.
     for (int t = 0; t < 4; ++t) {
         int internal = 0;
-        if (mesh.tri_nbr0[t] >= 0) ++internal;
-        if (mesh.tri_nbr1[t] >= 0) ++internal;
-        if (mesh.tri_nbr2[t] >= 0) ++internal;
-        EXPECT_EQ(internal, 2) << "Triangle " << t << " has "
-                                << internal << " internal edges, expected 2";
+        if (mesh.cell_neighbour(t, 0) >= 0)
+            ++internal;
+        if (mesh.cell_neighbour(t, 1) >= 0)
+            ++internal;
+        if (mesh.cell_neighbour(t, 2) >= 0)
+            ++internal;
+        EXPECT_EQ(internal, 2) << "Triangle " << t << " has " << internal
+                               << " internal edges, expected 2";
     }
 }
 
@@ -1440,7 +1627,7 @@ TEST(DiamondMesh, CentreVertexStencilHasFourCells) {
 
     // Vertex 0 (centre) should have all 4 triangles in its stencil
     int start = mesh.vert_stencil_ptr[0];
-    int end   = mesh.vert_stencil_ptr[1];
+    int end = mesh.vert_stencil_ptr[1];
     EXPECT_EQ(end - start, 4);
 }
 
@@ -1479,9 +1666,10 @@ TEST(DiamondMesh, VertexReconstructionConstantExact) {
 // ============================================================================
 
 TEST(EdgeConveyance, DefaultsToOneForEveryEdgeAfterResize) {
-    MeshData mesh = makeUnitSquareMesh();   // 2 triangles → 6 edge slots
-    ASSERT_EQ(mesh.edge_conveyance.size(), 6u);
-    for (double c : mesh.edge_conveyance) EXPECT_DOUBLE_EQ(c, 1.0);
+    MeshData mesh = makeUnitSquareMesh(); // 2 triangles → 8 padded edge slots
+    ASSERT_EQ(mesh.edge_conveyance.size(), 8u);
+    for (double c : mesh.edge_conveyance)
+        EXPECT_DOUBLE_EQ(c, 1.0);
 }
 
 TEST(EdgeConveyance, ParserAcceptsValidRowAndStashesIt) {
@@ -1490,16 +1678,54 @@ TEST(EdgeConveyance, ParserAcceptsValidRowAndStashesIt) {
     EXPECT_TRUE(err.empty()) << err;
     ASSERT_EQ(pending.size(), 1u);
     EXPECT_EQ(pending[0].v_from, 17);
-    EXPECT_EQ(pending[0].v_to,   18);
+    EXPECT_EQ(pending[0].v_to, 18);
     EXPECT_DOUBLE_EQ(pending[0].conveyance, 0.4);
+}
+
+// ============================================================================
+// recomputeAllZDependents — whole-mesh form must equal the per-vertex form
+// ============================================================================
+//
+// swmm_2d_set_vertex_z_bulk exists because the scalar setter rescans every
+// triangle per call, making a whole-mesh rewrite O(nVertices x nTriangles).
+// The bulk path is only a legitimate substitute if it lands on bitwise the
+// same derived geometry — hence EXPECT_EQ on the raw doubles, not EXPECT_NEAR.
+
+TEST(RecomputeAllZDependents, MatchesPerVertexFormBitwise) {
+    // Irregular Zs so cancellation/ordering differences would show up.
+    const std::vector<double> zs = {1.25, -3.5, 7.125, 0.0, 12.875, -0.375};
+
+    MeshData a = makeUnitSquareMesh();
+    ASSERT_GE(static_cast<std::size_t>(a.n_vertices()), 4u);
+
+    // Reference: assign every Z, then recompute vertex by vertex, exactly what
+    // a loop of swmm_2d_set_vertex_z does.
+    for (int v = 0; v < a.n_vertices(); ++v) {
+        a.vz[v] = zs[static_cast<std::size_t>(v) % zs.size()];
+        recomputeVertexZDependents(a, v);
+    }
+
+    // Candidate: same Zs, one whole-mesh pass.
+    MeshData b = makeUnitSquareMesh();
+    for (int v = 0; v < b.n_vertices(); ++v)
+        b.vz[v] = zs[static_cast<std::size_t>(v) % zs.size()];
+    recomputeAllZDependents(b);
+
+    ASSERT_EQ(a.n_triangles(), b.n_triangles());
+    for (int t = 0; t < a.n_triangles(); ++t) {
+        EXPECT_EQ(a.tri_cz[t], b.tri_cz[t]) << "tri_cz diverged at triangle " << t;
+        for (int e = 0; e < 3; ++e)
+            EXPECT_EQ(a.edge_mz[MeshData::slot(t, e)], b.edge_mz[MeshData::slot(t, e)])
+                << "edge_mz diverged at triangle " << t << " edge " << e;
+    }
 }
 
 TEST(EdgeConveyance, ParserRejectsOutOfRangeConveyance) {
     std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow> pending;
     EXPECT_FALSE(parse2DEdgeConveyanceLine({"0", "1", "-0.1"}, pending).empty());
-    EXPECT_FALSE(parse2DEdgeConveyanceLine({"0", "1", "1.5"},  pending).empty());
-    EXPECT_TRUE (parse2DEdgeConveyanceLine({"0", "1", "0.0"},  pending).empty());
-    EXPECT_TRUE (parse2DEdgeConveyanceLine({"0", "1", "1.0"},  pending).empty());
+    EXPECT_FALSE(parse2DEdgeConveyanceLine({"0", "1", "1.5"}, pending).empty());
+    EXPECT_TRUE(parse2DEdgeConveyanceLine({"0", "1", "0.0"}, pending).empty());
+    EXPECT_TRUE(parse2DEdgeConveyanceLine({"0", "1", "1.0"}, pending).empty());
     // The two bad rows pushed nothing; the two good rows pushed one each.
     EXPECT_EQ(pending.size(), 2u);
 }
@@ -1513,7 +1739,7 @@ TEST(EdgeConveyance, ParserRejectsEqualFromAndTo) {
 TEST(EdgeConveyance, ParserRejectsTooFewTokens) {
     std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow> pending;
     EXPECT_FALSE(parse2DEdgeConveyanceLine({"0", "1"}, pending).empty());
-    EXPECT_FALSE(parse2DEdgeConveyanceLine({"0"},      pending).empty());
+    EXPECT_FALSE(parse2DEdgeConveyanceLine({"0"}, pending).empty());
 }
 
 TEST(EdgeConveyance, ParserSkipsEmptyTokenList) {
@@ -1530,38 +1756,38 @@ TEST(Default2DOutputPlugin, WritesUgridHdf5WithExpectedDatasets) {
 
     // Hand-build a tiny 2-triangle mesh (the unit square)
     MeshData mesh = makeUnitSquareMesh();
-    const int n_tri  = mesh.n_triangles();
+    const int n_tri = mesh.n_triangles();
     const int n_vert = mesh.n_vertices();
-    ASSERT_EQ(n_tri,  2);
+    ASSERT_EQ(n_tri, 2);
     ASSERT_EQ(n_vert, 4);
 
     // Build a snapshot carrying one tick's worth of surface state
     openswmm::SimulationSnapshot snap;
-    snap.sim_time            = 0.0;
-    snap.surface_tri_count   = n_tri;
-    snap.surface_vert_count  = n_vert;
-    snap.surface_depth         = {0.05, 0.10};
-    snap.surface_head          = {0.05, 0.10};
-    snap.surface_grad_hx       = {0.0,  0.0};
-    snap.surface_grad_hy       = {0.0,  0.0};
-    snap.surface_grad_hx_lim   = {0.0,  0.0};
-    snap.surface_grad_hy_lim   = {0.0,  0.0};
-    snap.surface_rainfall      = {0.0,  0.0};
-    snap.surface_coupling_flux = {0.0,  0.0};
-    snap.surface_net_source    = {0.0,  0.0};
-    snap.surface_face_vx       = {0.0,  0.0};
-    snap.surface_face_vy       = {0.0,  0.0};
-    snap.surface_continuity_err = {0.0,  0.0};
-    snap.surface_edge_flux     = {0.0, 0.0, 0.0,  0.0, 0.0, 0.0}; // [tri*3+e]
-    snap.surface_vert_head     = {0.0, 0.0, 0.0,  0.0};
+    snap.sim_time = 0.0;
+    snap.surface_tri_count = n_tri;
+    snap.surface_vert_count = n_vert;
+    snap.surface_depth = {0.05, 0.10};
+    snap.surface_head = {0.05, 0.10};
+    snap.surface_grad_hx = {0.0, 0.0};
+    snap.surface_grad_hy = {0.0, 0.0};
+    snap.surface_grad_hx_lim = {0.0, 0.0};
+    snap.surface_grad_hy_lim = {0.0, 0.0};
+    snap.surface_rainfall = {0.0, 0.0};
+    snap.surface_rain_cum = {3.0, 7.0}; // m³ per cell; sums to rainfall_in
+    snap.surface_coupling_flux = {0.0, 0.0};
+    snap.surface_net_source = {0.0, 0.0};
+    snap.surface_face_vx = {0.0, 0.0};
+    snap.surface_face_vy = {0.0, 0.0};
+    snap.surface_continuity_err = {0.0, 0.0};
+    snap.surface_edge_flux = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0}; // [tri*3+e]
+    snap.surface_vert_head = {0.0, 0.0, 0.0, 0.0};
     // Cumulative rendering envelopes (per face)
-    snap.surface_stat_max_depth    = {0.05, 0.10};
+    snap.surface_stat_max_depth = {0.05, 0.10};
     snap.surface_stat_max_velocity = {0.20, 0.40};
     snap.surface_stat_max_cont_err = {1.0e-6, 2.0e-6};
 
     // Output path in a temp location; remove any stale file first.
-    const fs::path h5_path = fs::temp_directory_path() /
-                              "openswmm_test_2d_output.h5";
+    const fs::path h5_path = fs::temp_directory_path() / "openswmm_test_2d_output.h5";
     fs::remove(h5_path);
 
     // Exercise the plugin lifecycle
@@ -1573,13 +1799,13 @@ TEST(Default2DOutputPlugin, WritesUgridHdf5WithExpectedDatasets) {
     // path. We instantiate a stack context via the SWMM SDK header.
     openswmm::SimulationContext ctx{};
     ASSERT_EQ(plugin.validate(ctx), 0);
-    ASSERT_EQ(plugin.prepare(ctx),  0);
+    ASSERT_EQ(plugin.prepare(ctx), 0);
 
     // Activate the global 2D mass balance so finalize() writes /mass_balance_2d.
-    ctx.mass_balance_2d.active        = true;
-    ctx.mass_balance_2d.init_storage  = 0.0;
-    ctx.mass_balance_2d.rainfall_in   = 10.0;
-    ctx.mass_balance_2d.final_storage = 10.0;  // closed, conservative → error ~0
+    ctx.mass_balance_2d.active = true;
+    ctx.mass_balance_2d.init_storage = 0.0;
+    ctx.mass_balance_2d.rainfall_in = 10.0;
+    ctx.mass_balance_2d.final_storage = 10.0; // closed, conservative → error ~0
 
     plugin.prepareMeshAndDatasets(mesh);
 
@@ -1587,17 +1813,13 @@ TEST(Default2DOutputPlugin, WritesUgridHdf5WithExpectedDatasets) {
     ASSERT_EQ(plugin.finalize(ctx), 0);
 
     // File should exist on disk
-    ASSERT_TRUE(fs::exists(h5_path))
-        << "Default2DOutputPlugin did not create " << h5_path;
+    ASSERT_TRUE(fs::exists(h5_path)) << "Default2DOutputPlugin did not create " << h5_path;
 
     // Open the file read-only and assert the documented UGRID datasets exist
-    hid_t file_id = H5Fopen(h5_path.string().c_str(), H5F_ACC_RDONLY,
-                             H5P_DEFAULT);
+    hid_t file_id = H5Fopen(h5_path.string().c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
     ASSERT_GE(file_id, 0) << "H5Fopen failed on " << h5_path;
 
-    auto exists = [file_id](const char* name) {
-        return H5Lexists(file_id, name, H5P_DEFAULT) > 0;
-    };
+    auto exists = [file_id](const char* name) { return H5Lexists(file_id, name, H5P_DEFAULT) > 0; };
     EXPECT_TRUE(exists("Mesh2"));
     EXPECT_TRUE(exists("Mesh2_node_x"));
     EXPECT_TRUE(exists("Mesh2_node_y"));
@@ -1609,6 +1831,8 @@ TEST(Default2DOutputPlugin, WritesUgridHdf5WithExpectedDatasets) {
     EXPECT_TRUE(exists("Mesh2_node_depth"));
     EXPECT_TRUE(exists("Mesh2_face_vx"));
     EXPECT_TRUE(exists("Mesh2_face_vy"));
+    EXPECT_TRUE(exists("Mesh2_face_rainfall"));
+    EXPECT_TRUE(exists("Mesh2_face_rain_cum"));
     EXPECT_TRUE(exists("Mesh2_face_continuity_err"));
     EXPECT_TRUE(exists("Mesh2_face_max_depth"));
     EXPECT_TRUE(exists("Mesh2_face_max_velocity"));
@@ -1641,6 +1865,24 @@ TEST(Default2DOutputPlugin, WritesUgridHdf5WithExpectedDatasets) {
         H5Dclose(ds);
     }
 
+    // /Mesh2_face_rain_cum is [1, n_tri] and carries the per-cell cumulative
+    // rainfall volume (m³) verbatim.
+    {
+        hid_t ds = H5Dopen2(file_id, "Mesh2_face_rain_cum", H5P_DEFAULT);
+        ASSERT_GE(ds, 0);
+        hid_t space = H5Dget_space(ds);
+        hsize_t dims[2] = {0, 0};
+        H5Sget_simple_extent_dims(space, dims, nullptr);
+        EXPECT_EQ(dims[0], 1u);
+        EXPECT_EQ(dims[1], static_cast<hsize_t>(n_tri));
+        std::vector<double> vals(n_tri, 0.0);
+        H5Dread(ds, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, vals.data());
+        EXPECT_NEAR(vals[0], 3.0, 1e-12);
+        EXPECT_NEAR(vals[1], 7.0, 1e-12);
+        H5Sclose(space);
+        H5Dclose(ds);
+    }
+
     // Envelope dataset is fixed [n_tri] (no time dimension) and holds the
     // values from the last update().
     {
@@ -1668,11 +1910,162 @@ TEST(Default2DOutputPlugin, WritesUgridHdf5WithExpectedDatasets) {
         hid_t attr = H5Aopen(grp, "continuity_error", H5P_DEFAULT);
         double err = 1.0;
         H5Aread(attr, H5T_NATIVE_DOUBLE, &err);
-        EXPECT_NEAR(err, 0.0, 1e-9);  // init+rainfall(10) − final(10) = 0
+        EXPECT_NEAR(err, 0.0, 1e-9); // init+rainfall(10) − final(10) = 0
         H5Aclose(attr);
         H5Gclose(grp);
     }
 
+    H5Fclose(file_id);
+    fs::remove(h5_path);
+}
+
+// ---------------------------------------------------------------------------
+// Issue #155 — the .2d.h5 must say how its (always-SI) coordinates relate to
+// the model's CRS. Without it, a consumer of a foot-CRS model reasonably reads
+// the metres as feet and renders the results ~0.3048x toward the CRS origin
+// while the .2dm-backed mesh, which never leaves model units, sits correctly.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/**
+ * @brief Read one scalar HDF5 string attribute in fixed- or variable-length form.
+ *
+ * Requires scalar string shape; an attribute array is not supported by the single-value buffers.
+ * Variable strings are copied then H5free_memory is called on successful non-null data; fixed
+ * strings receive a zero sentinel and stop at the first NUL. Closes temporary type/attribute ids,
+ * ignoring close status; does not own loc or throw a diagnostic for HDF5 errors.
+ *
+ * @param[in] loc Borrowed valid HDF5 file/group/dataset location with no concurrent close/mutation.
+ * @param[in] name Non-null scalar attribute name.
+ * @return Owned string, empty for absence, query/open/read error, non-string datatype or a stored
+ *     empty string.
+ */
+std::string readStringAttrForTest(hid_t loc, const char* name) {
+    if (H5Aexists(loc, name) <= 0)
+        return {};
+    hid_t attr = H5Aopen(loc, name, H5P_DEFAULT);
+    if (attr < 0)
+        return {};
+    hid_t type = H5Aget_type(attr);
+    std::string out;
+    if (type >= 0 && H5Tget_class(type) == H5T_STRING) {
+        if (H5Tis_variable_str(type) > 0) {
+            char* raw = nullptr;
+            if (H5Aread(attr, type, &raw) >= 0 && raw) {
+                out = raw;
+                H5free_memory(raw);
+            }
+        } else {
+            std::vector<char> buf(H5Tget_size(type) + 1, '\0');
+            if (H5Aread(attr, type, buf.data()) >= 0)
+                out = buf.data();
+        }
+    }
+    if (type >= 0)
+        H5Tclose(type);
+    H5Aclose(attr);
+    return out;
+}
+
+} // namespace
+
+TEST(Default2DOutputPlugin, DeclaresModelCrsAndCoordinateScale) {
+    namespace fs = std::filesystem;
+
+    MeshData mesh = makeUnitSquareMesh();
+    const fs::path h5_path = fs::temp_directory_path() / "openswmm_test_2d_crs.h5";
+    fs::remove(h5_path);
+
+    Default2DOutputPlugin plugin(h5_path.string());
+    ASSERT_EQ(plugin.initialize({}, nullptr), 0);
+
+    openswmm::SimulationContext ctx{};
+    ctx.spatial.crs = "EPSG:2249"; // NAD83 / Mass. Mainland (ftUS)
+    ASSERT_EQ(plugin.validate(ctx), 0);
+    ASSERT_EQ(plugin.prepare(ctx), 0);
+
+    // What SurfaceRouter2D::initialize() applied for a US-FLOW_UNITS project.
+    plugin.setMeshCoordinateScale(0.3048);
+    plugin.prepareMeshAndDatasets(mesh);
+    // finalize() closes the file. Without it the plugin still holds it open
+    // RDWR, and the fs::remove below throws on Windows.
+    ASSERT_EQ(plugin.finalize(ctx), 0);
+
+    hid_t file_id = H5Fopen(h5_path.string().c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+    ASSERT_GE(file_id, 0);
+
+    ASSERT_TRUE(H5Lexists(file_id, "crs", H5P_DEFAULT) > 0)
+        << "no /crs variable — consumers cannot tell metres from model units";
+
+    hid_t crs = H5Dopen2(file_id, "crs", H5P_DEFAULT);
+    ASSERT_GE(crs, 0);
+
+    EXPECT_EQ(readStringAttrForTest(crs, "model_crs"), "EPSG:2249");
+    EXPECT_EQ(readStringAttrForTest(crs, "units"), "m");
+
+    ASSERT_TRUE(H5Aexists(crs, "metres_per_model_unit") > 0);
+    {
+        hid_t attr = H5Aopen(crs, "metres_per_model_unit", H5P_DEFAULT);
+        double factor = 0.0;
+        ASSERT_GE(H5Aread(attr, H5T_NATIVE_DOUBLE, &factor), 0);
+        EXPECT_DOUBLE_EQ(factor, 0.3048);
+        H5Aclose(attr);
+    }
+    H5Dclose(crs);
+
+    // The mesh variables must point at it, or nothing leads a reader there.
+    // The attribute is `openswmm_crs`, NOT CF's `grid_mapping` — /crs is
+    // deliberately not a CF grid mapping (see the class docs and #155).
+    for (const char* name :
+         {"Mesh2", "Mesh2_node_x", "Mesh2_node_y", "Mesh2_face_x", "Mesh2_face_y"}) {
+        hid_t ds = H5Dopen2(file_id, name, H5P_DEFAULT);
+        ASSERT_GE(ds, 0) << name;
+        EXPECT_EQ(readStringAttrForTest(ds, "openswmm_crs"), "crs")
+            << name << " does not reference the /crs variable";
+        EXPECT_FALSE(H5Aexists(ds, "grid_mapping") > 0)
+            << name << " advertises a CF grid mapping /crs cannot honour";
+        H5Dclose(ds);
+    }
+
+    H5Fclose(file_id);
+    fs::remove(h5_path);
+}
+
+TEST(Default2DOutputPlugin, CrsVariableClaimsNothingWhenModelDeclaresNoCrs) {
+    namespace fs = std::filesystem;
+
+    MeshData mesh = makeUnitSquareMesh();
+    const fs::path h5_path = fs::temp_directory_path() / "openswmm_test_2d_crs_absent.h5";
+    fs::remove(h5_path);
+
+    Default2DOutputPlugin plugin(h5_path.string());
+    ASSERT_EQ(plugin.initialize({}, nullptr), 0);
+
+    openswmm::SimulationContext ctx{}; // no [OPTIONS] CRS
+    ASSERT_EQ(plugin.validate(ctx), 0);
+    ASSERT_EQ(plugin.prepare(ctx), 0);
+    // setMeshCoordinateScale deliberately not called (SI project / no 2D
+    // router wiring): the file must report an identity factor, not guess.
+    plugin.prepareMeshAndDatasets(mesh);
+    ASSERT_EQ(plugin.finalize(ctx), 0);
+
+    hid_t file_id = H5Fopen(h5_path.string().c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+    ASSERT_GE(file_id, 0);
+    hid_t crs = H5Dopen2(file_id, "crs", H5P_DEFAULT);
+    ASSERT_GE(crs, 0);
+
+    EXPECT_FALSE(H5Aexists(crs, "model_crs") > 0)
+        << "model_crs must be absent rather than empty when none was declared";
+
+    hid_t attr = H5Aopen(crs, "metres_per_model_unit", H5P_DEFAULT);
+    ASSERT_GE(attr, 0);
+    double factor = 0.0;
+    ASSERT_GE(H5Aread(attr, H5T_NATIVE_DOUBLE, &factor), 0);
+    EXPECT_DOUBLE_EQ(factor, 1.0);
+    H5Aclose(attr);
+
+    H5Dclose(crs);
     H5Fclose(file_id);
     fs::remove(h5_path);
 }

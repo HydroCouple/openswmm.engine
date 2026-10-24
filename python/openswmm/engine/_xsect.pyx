@@ -1,10 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright 2026 Caleb Buahin
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Cross-Section Geometry
 ======================
 
 :author: Caleb Buahin
 :copyright: Copyright (c) 2026 Caleb Buahin
-:license: MIT
+:license: Apache-2.0
 
 The :class:`XSectionGeometry` class exposes the engine's cross-section
 geometry kernels as a standalone reference implementation — the same code the
@@ -179,8 +195,11 @@ cdef class XSectionGeometry:
         rc = swmm_xsect_create(ishape, float(geom1), float(geom2),
                                float(geom3), float(geom4), us, &h)
         if rc != 0:
+            # Keep the native helper call outside the f-string so the catalog
+            # audit sees it with both pre-3.12 and newer Python tokenizers.
+            shape_label = _shape_repr(ishape)
             raise ValueError(
-                f"cannot build a {_shape_repr(ishape)} cross-section from "
+                f"cannot build a {shape_label} cross-section from "
                 f"geom=({geom1}, {geom2}, {geom3}, {geom4}) in {units!r} units"
             )
         self._h = h

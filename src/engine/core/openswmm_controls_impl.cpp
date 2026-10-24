@@ -1,13 +1,29 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file openswmm_controls_impl.cpp
- * @brief C API implementation — control rules and direct link control actions.
+ * @file      openswmm_controls_impl.cpp
+ * @brief     C API implementation — control rules and direct link control actions.
  *
  * @see include/openswmm/engine/openswmm_controls.h
  * @ingroup engine_api
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #include "openswmm_api_common.hpp"
@@ -22,56 +38,78 @@
 
 namespace {
 
-/// Parse the first whitespace-delimited token that follows the `RULE`
-/// keyword (case-insensitive). Returns an empty string when the input has
-/// no parseable `RULE <name>` prefix; the caller maps that to
-/// `SWMM_ERR_BADPARAM`.
+/**
+ * @brief Extract the first whitespace-delimited name following a leading RULE keyword.
+ *
+ * Does not parse quotes, comments or validate the full rule; name stops at C-locale whitespace.
+ *
+ * @param[in] rule_text Borrowed rule block; leading C-locale whitespace skipped and RULE matched
+ *     case-insensitively.
+ * @return Owned name token, or empty for missing keyword/name/keyword separator.
+ */
 std::string parse_rule_name(const std::string& rule_text) {
     const char* s = rule_text.c_str();
     const char* end = s + rule_text.size();
     // Skip leading whitespace.
-    while (s < end && std::isspace(static_cast<unsigned char>(*s))) ++s;
+    while (s < end && std::isspace(static_cast<unsigned char>(*s)))
+        ++s;
     // Match the literal "RULE" keyword case-insensitively.
     static constexpr char kKw[] = "RULE";
     constexpr int kKwLen = 4;
-    if (end - s < kKwLen) return {};
+    if (end - s < kKwLen)
+        return {};
     for (int i = 0; i < kKwLen; ++i) {
         if (std::toupper(static_cast<unsigned char>(s[i])) != kKw[i])
             return {};
     }
     s += kKwLen;
     // Require whitespace after the keyword so we don't match "RULES" etc.
-    if (s >= end || !std::isspace(static_cast<unsigned char>(*s))) return {};
+    if (s >= end || !std::isspace(static_cast<unsigned char>(*s)))
+        return {};
     // Skip whitespace between RULE and the name.
-    while (s < end && std::isspace(static_cast<unsigned char>(*s))) ++s;
+    while (s < end && std::isspace(static_cast<unsigned char>(*s)))
+        ++s;
     // Read the name token (until the next whitespace).
     const char* name_begin = s;
-    while (s < end && !std::isspace(static_cast<unsigned char>(*s))) ++s;
-    if (s == name_begin) return {};
+    while (s < end && !std::isspace(static_cast<unsigned char>(*s)))
+        ++s;
+    if (s == name_begin)
+        return {};
     return std::string(name_begin, static_cast<std::size_t>(s - name_begin));
 }
 
-/// Render a parser rejection as "line N: reason", degrading gracefully when
-/// either half is missing. Shared by validate_rule's errbuf and add_rule's
-/// engine-error string so both report failures identically.
+/**
+ * @brief Build a control-parser diagnostic with optional line prefix.
+ *
+ * @param[in] pe Borrowed parse error; positive line emits line N prefix.
+ * @return Owned message or generic rejection text when message is empty.
+ */
 std::string format_parse_error(const openswmm::controls::ParseError& pe) {
     std::string msg;
-    if (pe.line > 0) msg = "line " + std::to_string(pe.line) + ": ";
-    msg += pe.message.empty() ? "control-rule parser rejected the rule text"
-                              : pe.message;
+    if (pe.line > 0)
+        msg = "line " + std::to_string(pe.line) + ": ";
+    msg += pe.message.empty() ? "control-rule parser rejected the rule text" : pe.message;
     return msg;
 }
 
-/// Copy `src` into `buf` (capacity `buflen`), truncating as needed and always
-/// null-terminating. No-op when the caller passed no buffer.
+/**
+ * @brief Copy control text into an optional truncated NUL-terminated buffer.
+ *
+ * Truncates bytes without required-size reporting or UTF-8 boundary handling.
+ *
+ * @param[in] src Borrowed source with length<=INT_MAX, no overlap with destination.
+ * @param[out] buf Writable buflen-byte span, or NULL for no-op.
+ * @param[in] buflen Capacity including terminator; <=0 no-op.
+ */
 void copy_to_buffer(const std::string& src, char* buf, int buflen) {
-    if (!buf || buflen <= 0) return;
+    if (!buf || buflen <= 0)
+        return;
     const int n = std::min(static_cast<int>(src.size()), buflen - 1);
     std::memcpy(buf, src.c_str(), static_cast<std::size_t>(n));
     buf[n] = '\0';
 }
 
-}  // namespace
+} // namespace
 
 extern "C" {
 
@@ -81,7 +119,8 @@ extern "C" {
 
 SWMM_ENGINE_API int swmm_control_add_rule(SWMM_Engine engine, const char* rule_text) {
     CHECK_HANDLE(engine);
-    if (!rule_text) return SWMM_ERR_BADPARAM;
+    if (!rule_text)
+        return SWMM_ERR_BADPARAM;
 
     auto* eng = to_engine(engine);
     auto& ctx = eng->context();
@@ -116,11 +155,10 @@ SWMM_ENGINE_API int swmm_control_add_rule(SWMM_Engine engine, const char* rule_t
     // EXPRESSION lines) — nothing would be compiled, so storing it would leave
     // the rule count disagreeing with what the engine actually evaluates.
     if (rc <= 0) {
-        ctx.error_code    = SWMM_ERR_BADPARAM;
+        ctx.error_code = SWMM_ERR_BADPARAM;
         ctx.error_message =
-            "swmm_control_add_rule: " +
-            (rc == 0 ? std::string("no RULE block found in rule text")
-                     : format_parse_error(sandbox.lastParseError()));
+            "swmm_control_add_rule: " + (rc == 0 ? std::string("no RULE block found in rule text")
+                                                 : format_parse_error(sandbox.lastParseError()));
         return SWMM_ERR_BADPARAM;
     }
 
@@ -132,7 +170,8 @@ SWMM_ENGINE_API int swmm_control_add_rule(SWMM_Engine engine, const char* rule_t
 }
 
 SWMM_ENGINE_API int swmm_control_count(SWMM_Engine engine) {
-    if (!engine) return -1;
+    if (!engine)
+        return -1;
     return to_engine(engine)->context().control_rules.count();
 }
 
@@ -140,7 +179,8 @@ SWMM_ENGINE_API int swmm_control_get_rule(SWMM_Engine engine, int idx, char* buf
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.control_rules.count());
-    if (!buf || buflen <= 0) return SWMM_ERR_BADPARAM;
+    if (!buf || buflen <= 0)
+        return SWMM_ERR_BADPARAM;
 
     const auto& text = ctx.control_rules.rule_text[static_cast<std::size_t>(idx)];
     const int copy_len = std::min(static_cast<int>(text.size()), buflen - 1);
@@ -154,11 +194,13 @@ SWMM_ENGINE_API int swmm_control_get_id(SWMM_Engine engine, int idx, char* buf, 
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.control_rules.count());
-    if (!buf || buflen <= 0) return SWMM_ERR_BADPARAM;
+    if (!buf || buflen <= 0)
+        return SWMM_ERR_BADPARAM;
 
     const auto& text = ctx.control_rules.rule_text[static_cast<std::size_t>(idx)];
     const std::string name = parse_rule_name(text);
-    if (name.empty()) return SWMM_ERR_BADPARAM;
+    if (name.empty())
+        return SWMM_ERR_BADPARAM;
 
     const int copy_len = std::min(static_cast<int>(name.size()), buflen - 1);
     std::memcpy(buf, name.c_str(), static_cast<std::size_t>(copy_len));
@@ -178,35 +220,34 @@ SWMM_ENGINE_API int swmm_control_remove_rule(SWMM_Engine engine, int idx) {
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.control_rules.count());
-    ctx.control_rules.rule_text.erase(
-        ctx.control_rules.rule_text.begin() + static_cast<std::ptrdiff_t>(idx));
+    ctx.control_rules.rule_text.erase(ctx.control_rules.rule_text.begin() +
+                                      static_cast<std::ptrdiff_t>(idx));
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_control_find_references(SWMM_Engine engine,
-                                                 const char* object_name,
-                                                 int* rule_indices_out,
-                                                 int* n_inout) {
+SWMM_ENGINE_API int swmm_control_find_references(SWMM_Engine engine, const char* object_name,
+                                                 int* rule_indices_out, int* n_inout) {
     CHECK_HANDLE(engine);
-    if (!object_name || !n_inout) return SWMM_ERR_BADPARAM;
+    if (!object_name || !n_inout)
+        return SWMM_ERR_BADPARAM;
     const auto& ctx = to_engine(engine)->context();
 
     const auto hits = openswmm::edit::find_control_rule_refs(ctx, object_name);
     if (rule_indices_out) {
         const int cap = *n_inout;
         const int n_copy = std::min(cap, static_cast<int>(hits.size()));
-        for (int i = 0; i < n_copy; ++i) rule_indices_out[i] = hits[static_cast<std::size_t>(i)];
+        for (int i = 0; i < n_copy; ++i)
+            rule_indices_out[i] = hits[static_cast<std::size_t>(i)];
     }
     *n_inout = static_cast<int>(hits.size());
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_control_validate_rule(SWMM_Engine engine,
-                                                const char* rule_text,
-                                                char* errbuf, int buflen,
-                                                int* line_out) {
+SWMM_ENGINE_API int swmm_control_validate_rule(SWMM_Engine engine, const char* rule_text,
+                                               char* errbuf, int buflen, int* line_out) {
     CHECK_HANDLE(engine);
-    if (!rule_text) return SWMM_ERR_BADPARAM;
+    if (!rule_text)
+        return SWMM_ERR_BADPARAM;
 
     // Throwaway ControlEngine: parseRuleText mutates only its own rules_ /
     // pid_states_ vectors. Name resolution reads ctx.link_names /
@@ -222,15 +263,18 @@ SWMM_ENGINE_API int swmm_control_validate_rule(SWMM_Engine engine,
     if (rc <= 0) {
         const auto& pe = sandbox.lastParseError();
         // rc == 0 means nothing was rejected, so there is no offending line.
-        if (line_out) *line_out = (rc == 0) ? -1 : pe.line;
+        if (line_out)
+            *line_out = (rc == 0) ? -1 : pe.line;
         copy_to_buffer(rc == 0 ? std::string("no RULE block found in rule text")
                                : format_parse_error(pe),
                        errbuf, buflen);
         return SWMM_ERR_BADPARAM;
     }
 
-    if (line_out) *line_out = -1;
-    if (errbuf && buflen > 0) errbuf[0] = '\0';
+    if (line_out)
+        *line_out = -1;
+    if (errbuf && buflen > 0)
+        errbuf[0] = '\0';
     return SWMM_OK;
 }
 
@@ -238,7 +282,8 @@ SWMM_ENGINE_API int swmm_control_validate_rule(SWMM_Engine engine,
 // Direct control actions (without rules)
 // ============================================================================
 
-SWMM_ENGINE_API int swmm_control_set_link_setting(SWMM_Engine engine, int link_idx, double setting) {
+SWMM_ENGINE_API int swmm_control_set_link_setting(SWMM_Engine engine, int link_idx,
+                                                  double setting) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(link_idx >= 0 && link_idx < ctx.n_links());

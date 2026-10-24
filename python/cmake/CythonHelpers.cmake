@@ -118,6 +118,9 @@ function(add_cython_extension)
     # `datetime`'s namespace and breaking every later `datetime.date(...)`
     # call.  ${_gen_dir} only ever contains Cython output, never importable
     # top-level names that could shadow the stdlib.
+    # Shared extension layouts and declarations must invalidate consumers.
+    file(GLOB_RECURSE _pxd_deps CONFIGURE_DEPENDS
+         "${PROJECT_SOURCE_DIR}/openswmm/*.pxd")
     add_custom_command(
         OUTPUT  "${_cxx_out}"
         COMMAND ${OPENSWMM_CYTHON_EXECUTABLE}
@@ -127,7 +130,7 @@ function(add_cython_extension)
                 "${_pyx_abs}"
                 --output-file "${_cxx_out}"
         WORKING_DIRECTORY "${_gen_dir}"
-        DEPENDS "${_pyx_abs}"
+        DEPENDS "${_pyx_abs}" ${_pxd_deps}
         COMMENT "Cythonizing ${ACE_SOURCE} → ${ACE_NAME}.cxx"
         VERBATIM
     )

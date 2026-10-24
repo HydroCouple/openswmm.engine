@@ -1,0 +1,35 @@
+OpenSWMM Python Bindings
+Copyright 2026 HydroCouple Developers
+
+This product includes software developed by the OpenSWMM authors
+(https://github.com/HydroCouple/openswmm.engine).
+
+Licensed under the Apache License, Version 2.0. See the LICENSE file for the
+full license text.
+
+--------------------------------------------------------------------------------
+PUBLIC DOMAIN MATERIAL
+--------------------------------------------------------------------------------
+
+These bindings wrap, and binary distributions of this package embed, the
+OpenSWMM Engine. Portions of that engine are derived from the Storm Water
+Management Model (SWMM) developed and released by the United States
+Environmental Protection Agency (USEPA). That material was prepared by or for
+the United States Government and resides in the public domain: domestic
+copyright protection is not available for it under 17 USC § 105, and no
+copyright is claimed over it by the OpenSWMM authors.
+
+The Apache License, Version 2.0 applies to the original contributions of the
+OpenSWMM authors. It does not extend copyright to, and places no restriction
+on, the public domain material described above.
+
+The USEPA does not endorse this product, and the names "EPA", "USEPA", and
+"SWMM" are used solely to describe the origin of the public domain material.
+
+--------------------------------------------------------------------------------
+THIRD-PARTY COMPONENTS
+--------------------------------------------------------------------------------
+
+Binary wheels of this package may bundle third-party libraries required by the
+OpenSWMM Engine. Each such component remains subject to its own license terms,
+which accompany the component in the wheel.

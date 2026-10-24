@@ -1,0 +1,193 @@
+{
+  "tests": 16,
+  "failures": 0,
+  "disabled": 0,
+  "errors": 0,
+  "timestamp": "2026-10-06T11:26:55Z",
+  "time": "0.053s",
+  "name": "AllTests",
+  "testsuites": [
+    {
+      "name": "AquiferReceiving",
+      "tests": 13,
+      "failures": 0,
+      "disabled": 0,
+      "errors": 0,
+      "timestamp": "2026-10-06T11:26:55Z",
+      "time": "0.052s",
+      "testsuite": [
+        {
+          "name": "SaturatedAndSealedPublishValidZero",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_surface_aquifer_receiving.cpp",
+          "line": 30,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:55Z",
+          "time": "0s",
+          "classname": "AquiferReceiving"
+        },
+        {
+          "name": "PendingReservationsCannotBeSpentTwiceOrResetByRefresh",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_surface_aquifer_receiving.cpp",
+          "line": 37,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:55Z",
+          "time": "0s",
+          "classname": "AquiferReceiving"
+        },
+        {
+          "name": "PendingPositiveLinkReceiptReducesAllowance",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_surface_aquifer_receiving.cpp",
+          "line": 51,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:55Z",
+          "time": "0s",
+          "classname": "AquiferReceiving"
+        },
+        {
+          "name": "AcceptedDrainageCreatesCapacityAfterFiring",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_surface_aquifer_receiving.cpp",
+          "line": 56,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:55Z",
+          "time": "0s",
+          "classname": "AquiferReceiving"
+        },
+        {
+          "name": "AcceptedDeliveryClosesEachSoilAndClosureWithoutRejection",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_surface_aquifer_receiving.cpp",
+          "line": 64,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:55Z",
+          "time": "0s",
+          "classname": "AquiferReceiving"
+        },
+        {
+          "name": "RestartRetainsPendingReservationAndHeldCapacity",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_surface_aquifer_receiving.cpp",
+          "line": 126,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:55Z",
+          "time": "0.005s",
+          "classname": "AquiferReceiving"
+        },
+        {
+          "name": "ZeroColumnRemainsEmptyThroughFirings",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_surface_aquifer_receiving.cpp",
+          "line": 177,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:55Z",
+          "time": "0s",
+          "classname": "AquiferReceiving"
+        },
+        {
+          "name": "ProjectUnitsProduceTheSamePhysicalCapacity",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_surface_aquifer_receiving.cpp",
+          "line": 188,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:55Z",
+          "time": "0.028s",
+          "classname": "AquiferReceiving"
+        },
+        {
+          "name": "SealedUnsaturatedColumnCannotAcceptSurfaceDelivery",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_surface_aquifer_receiving.cpp",
+          "line": 211,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:55Z",
+          "time": "0s",
+          "classname": "AquiferReceiving"
+        },
+        {
+          "name": "ExternalOnlyRunWritesCapacityAndOffIsUnavailable",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_surface_aquifer_receiving.cpp",
+          "line": 218,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:55Z",
+          "time": "0.014s",
+          "classname": "AquiferReceiving"
+        },
+        {
+          "name": "DeepBulkColumnApproachesAnalyticGreenAmptIntake",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_surface_aquifer_receiving.cpp",
+          "line": 234,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:55Z",
+          "time": "0.003s",
+          "classname": "AquiferReceiving"
+        },
+        {
+          "name": "TopLayerWettingAndRisingTableReduceCapacity",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_surface_aquifer_receiving.cpp",
+          "line": 254,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:55Z",
+          "time": "0s",
+          "classname": "AquiferReceiving"
+        },
+        {
+          "name": "ZeroFrontHasFiniteAnalyticFirstIntervalIntake",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_surface_aquifer_receiving.cpp",
+          "line": 264,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:55Z",
+          "time": "0s",
+          "classname": "AquiferReceiving"
+        }
+      ]
+    },
+    {
+      "name": "AquiferOwnership",
+      "tests": 3,
+      "failures": 0,
+      "disabled": 0,
+      "errors": 0,
+      "timestamp": "2026-10-06T11:26:55Z",
+      "time": "0.001s",
+      "testsuite": [
+        {
+          "name": "MixedDefaultsSkipCoveredCellsAndExplicitConflictIsAtomic",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_surface_aquifer_receiving.cpp",
+          "line": 78,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:55Z",
+          "time": "0s",
+          "classname": "AquiferOwnership"
+        },
+        {
+          "name": "ExternalOnlyBankHasNoOrdinaryKernelState",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_surface_aquifer_receiving.cpp",
+          "line": 90,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:55Z",
+          "time": "0s",
+          "classname": "AquiferOwnership"
+        },
+        {
+          "name": "BulkPreviewAndAtomicAuthoredReplacementPreserveOrderingAndPresence",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_surface_aquifer_receiving.cpp",
+          "line": 162,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:55Z",
+          "time": "0.001s",
+          "classname": "AquiferOwnership"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,239 @@
+{
+  "baseline_max_abs_residual_m3": 0.9848338705665167,
+  "corrected_max_abs_residual_m3": 8.031227592686374e-15,
+  "ordinary_closure_controls_byte_identical": true,
+  "ordinary_control_count": 16,
+  "refinement": [
+    {
+      "law": 0,
+      "reference_dt": 0.00625,
+      "values": [
+        {
+          "dt": 0.2,
+          "head_error_m": 0.0028140134497247615,
+          "column_storage_error_m": 0.001266306048778143,
+          "max_theta_error": 0.0002458272898682168,
+          "water_residual_m3": -5.759281940243e-16
+        },
+        {
+          "dt": 0.1,
+          "head_error_m": 0.0012973423595212807,
+          "column_storage_error_m": 0.0005838040599044914,
+          "max_theta_error": 0.00011309412270532615,
+          "water_residual_m3": -2.92300905702092e-16
+        },
+        {
+          "dt": 0.05,
+          "head_error_m": 0.0005952439760477102,
+          "column_storage_error_m": 0.0002678597883384315,
+          "max_theta_error": 5.180273071525576e-05,
+          "water_residual_m3": -2.688821387764051e-16
+        },
+        {
+          "dt": 0.025,
+          "head_error_m": 0.0002521600944218605,
+          "column_storage_error_m": 0.00011347204210360173,
+          "max_theta_error": 2.193539896155894e-05,
+          "water_residual_m3": -8.664943762504151e-16
+        },
+        {
+          "dt": 0.00625,
+          "head_error_m": 0.0,
+          "column_storage_error_m": 0.0,
+          "max_theta_error": 0.0,
+          "water_residual_m3": -3.66720542821497e-15
+        }
+      ]
+    },
+    {
+      "law": 1,
+      "reference_dt": 0.00625,
+      "values": [
+        {
+          "dt": 0.2,
+          "head_error_m": 7.149719472510085e-05,
+          "column_storage_error_m": 3.217371946034886e-05,
+          "max_theta_error": 4.61535285241621e-05,
+          "water_residual_m3": -1.1188966420050406e-16
+        },
+        {
+          "dt": 0.1,
+          "head_error_m": 3.452187242536375e-05,
+          "column_storage_error_m": 1.5534833805563864e-05,
+          "max_theta_error": 2.228344610899491e-05,
+          "water_residual_m3": -3.139849491518021e-16
+        },
+        {
+          "dt": 0.05,
+          "head_error_m": 1.6093113215154276e-05,
+          "column_storage_error_m": 7.241896847587359e-06,
+          "max_theta_error": 1.0387574903625296e-05,
+          "water_residual_m3": -4.0939474033052647e-16
+        },
+        {
+          "dt": 0.025,
+          "head_error_m": 6.893392622941974e-06,
+          "column_storage_error_m": 3.1020249235680364e-06,
+          "max_theta_error": 4.4493868991413166e-06,
+          "water_residual_m3": -9.367506770274758e-17
+        },
+        {
+          "dt": 0.00625,
+          "head_error_m": 0.0,
+          "column_storage_error_m": 0.0,
+          "max_theta_error": 0.0,
+          "water_residual_m3": -1.1466522176206695e-15
+        }
+      ]
+    },
+    {
+      "law": 2,
+      "reference_dt": 0.00625,
+      "values": [
+        {
+          "dt": 0.2,
+          "head_error_m": 0.001989981205037017,
+          "column_storage_error_m": 0.0008954915215713677,
+          "max_theta_error": 0.000692807879762336,
+          "water_residual_m3": 2.243864816176e-15
+        },
+        {
+          "dt": 0.1,
+          "head_error_m": 0.0005077329040241718,
+          "column_storage_error_m": 0.0002284797937822658,
+          "max_theta_error": 0.00016133649586613785,
+          "water_residual_m3": -1.7520707107365752e-15
+        },
+        {
+          "dt": 0.05,
+          "head_error_m": 0.00016235926298646675,
+          "column_storage_error_m": 7.306166169840367e-05,
+          "max_theta_error": 5.0275290134405015e-05,
+          "water_residual_m3": 1.966309060019711e-15
+        },
+        {
+          "dt": 0.025,
+          "head_error_m": 7.264477299617766e-05,
+          "column_storage_error_m": 3.2690145068237086e-05,
+          "max_theta_error": 2.346041435941082e-05,
+          "water_residual_m3": -1.6106907474444654e-15
+        },
+        {
+          "dt": 0.00625,
+          "head_error_m": 0.0,
+          "column_storage_error_m": 0.0,
+          "max_theta_error": 0.0,
+          "water_residual_m3": -1.294103713078698e-15
+        }
+      ]
+    },
+    {
+      "law": 3,
+      "reference_dt": 0.00625,
+      "values": [
+        {
+          "dt": 0.2,
+          "head_error_m": 0.0004975005799214838,
+          "column_storage_error_m": 0.00022387523792311015,
+          "max_theta_error": 9.051959733719084e-05,
+          "water_residual_m3": -2.680147770384167e-16
+        },
+        {
+          "dt": 0.1,
+          "head_error_m": 0.00023814056404769524,
+          "column_storage_error_m": 0.00010716324266857313,
+          "max_theta_error": 4.3343133428963565e-05,
+          "water_residual_m3": 2.888314587501384e-16
+        },
+        {
+          "dt": 0.05,
+          "head_error_m": 0.00011055288739991731,
+          "column_storage_error_m": 4.9748794124615525e-05,
+          "max_theta_error": 2.012432773612627e-05,
+          "water_residual_m3": -5.707240235963695e-16
+        },
+        {
+          "dt": 0.025,
+          "head_error_m": 4.725809491712418e-05,
+          "column_storage_error_m": 2.1266140481757123e-05,
+          "max_theta_error": 8.603171276211352e-06,
+          "water_residual_m3": -6.696032617270475e-16
+        },
+        {
+          "dt": 0.00625,
+          "head_error_m": 0.0,
+          "column_storage_error_m": 0.0,
+          "max_theta_error": 0.0,
+          "water_residual_m3": 6.505213034913027e-17
+        }
+      ]
+    }
+  ],
+  "single_cell_cost": [
+    {
+      "law": 0,
+      "ks_m_per_s": 0.0001,
+      "parent_median_s": 0.012118042,
+      "corrected_median_s": 0.020874,
+      "ratio": 1.7225555085549298,
+      "corrected_us_per_cell_firing": 4.1748
+    },
+    {
+      "law": 0,
+      "ks_m_per_s": 0.01,
+      "parent_median_s": 0.006836042,
+      "corrected_median_s": 0.028502584,
+      "ratio": 4.169457121533192,
+      "corrected_us_per_cell_firing": 5.7005168
+    },
+    {
+      "law": 1,
+      "ks_m_per_s": 0.0001,
+      "parent_median_s": 0.00279825,
+      "corrected_median_s": 0.002783208,
+      "ratio": 0.9946244974537658,
+      "corrected_us_per_cell_firing": 0.5566416000000001
+    },
+    {
+      "law": 1,
+      "ks_m_per_s": 0.01,
+      "parent_median_s": 0.002756709,
+      "corrected_median_s": 0.002906125,
+      "ratio": 1.0542008605188287,
+      "corrected_us_per_cell_firing": 0.581225
+    },
+    {
+      "law": 2,
+      "ks_m_per_s": 0.0001,
+      "parent_median_s": 0.005393708,
+      "corrected_median_s": 0.00565325,
+      "ratio": 1.0481194013469028,
+      "corrected_us_per_cell_firing": 1.1306500000000002
+    },
+    {
+      "law": 2,
+      "ks_m_per_s": 0.01,
+      "parent_median_s": 0.003189292,
+      "corrected_median_s": 0.005741,
+      "ratio": 1.8000860379043373,
+      "corrected_us_per_cell_firing": 1.1481999999999999
+    },
+    {
+      "law": 3,
+      "ks_m_per_s": 0.0001,
+      "parent_median_s": 0.02039025,
+      "corrected_median_s": 0.020716459,
+      "ratio": 1.0159982834933363,
+      "corrected_us_per_cell_firing": 4.1432918
+    },
+    {
+      "law": 3,
+      "ks_m_per_s": 0.01,
+      "parent_median_s": 0.00838575,
+      "corrected_median_s": 0.021916333,
+      "ratio": 2.6135209134543715,
+      "corrected_us_per_cell_firing": 4.3832666
+    }
+  ],
+  "cost_limit": "Eight layers, one 4 m2 cell, five runs of 5000 forced 0.1 s firings; timings compare a failing parent to the corrected dynamics and are not an equal-trajectory or full-model speed estimate."
+}

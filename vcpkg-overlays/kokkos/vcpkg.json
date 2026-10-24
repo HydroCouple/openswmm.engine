@@ -1,6 +1,7 @@
 {
     "name": "kokkos",
     "version-string": "4.7.04",
+    "port-version": 1,
     "description": "Kokkos C++ Performance Portability Programming Ecosystem. Overlay port for OpenSWMM: Serial + OpenMP host backends by default (Phase 1); the optional `cuda` (Phase 2), `rocm`, and `sycl` (Phase 5) features build the CUDA/HIP/SYCL device backends.",
     "homepage": "https://github.com/kokkos/kokkos",
     "license": "Apache-2.0 WITH LLVM-exception",

@@ -1,12 +1,28 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file Node.cpp
- * @brief Node hydraulics — numerically identical to legacy node.c.
+ * @file      Node.cpp
+ * @brief     Node hydraulics — numerically identical to legacy node.c.
  *
  * @ingroup new_engine
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #include "Node.hpp"
@@ -31,21 +47,35 @@ namespace node {
 // otherwise the resize defaults (-1 curve / 0 a,b,c) for the degenerate case
 // (no side-table, or a non-storage node — callers gate on type[i]==STORAGE).
 namespace {
-struct StorageGeom { int curve; double a; double b; double c; StorageShape shape; };
+struct StorageGeom {
+    int curve;
+    double a;
+    double b;
+    double c;
+    StorageShape shape;
+};
 
-inline StorageGeom storageGeom(const NodeData& nodes, const NodeSubtypes* subs,
-                               std::size_t ui) {
+/**
+ * @brief Read storage geometry from the relational subtype side table.
+ *
+ * @param[in] nodes Unused compatibility argument; no node data is read.
+ * @param[in] subs Borrowed subtype table or nullptr; valid mapped rows must have aligned storage
+ *     arrays.
+ * @param[in] ui Valid global node index representable as int.
+ * @return A coefficient/shape copy, or curve=-1 and zero FUNCTIONAL coefficients if no storage row
+ *     exists.
+ */
+inline StorageGeom storageGeom(const NodeData& nodes, const NodeSubtypes* subs, std::size_t ui) {
     (void)nodes;
     if (subs != nullptr) {
         const int r = subs->storage_row(static_cast<int>(ui));
         if (r >= 0) {
             const auto ur = static_cast<std::size_t>(r);
-            return StorageGeom{ subs->storages.curve[ur], subs->storages.a[ur],
-                                subs->storages.b[ur], subs->storages.c[ur],
-                                subs->storages.shape[ur] };
+            return StorageGeom{subs->storages.curve[ur], subs->storages.a[ur], subs->storages.b[ur],
+                               subs->storages.c[ur], subs->storages.shape[ur]};
         }
     }
-    return StorageGeom{ -1, 0.0, 0.0, 0.0, StorageShape::FUNCTIONAL };
+    return StorageGeom{-1, 0.0, 0.0, 0.0, StorageShape::FUNCTIONAL};
 }
 
 // The four geometric shapes (CYLINDRICAL/CONICAL/PARABOLOID/PYRAMIDAL) reuse the
@@ -58,21 +88,46 @@ inline StorageGeom storageGeom(const NodeData& nodes, const NodeSubtypes* subs,
 // `curve >= 0` (tabular) is still checked FIRST by every caller, so shape is only
 // consulted for curve-less rows — that keeps the existing tabular/functional paths
 // bit-identical.
+/**
+ * @brief Identify storage shapes whose area law is quadratic rather than a power law.
+ *
+ * @param[in] g Storage geometry descriptor.
+ * @return True for CYLINDRICAL, CONICAL, PARABOLOID or PYRAMIDAL shape. Tabular precedence is
+ *     decided by the caller.
+ */
 inline bool isGeometric(const StorageGeom& g) {
     return storage_shape_is_geometric(g.shape);
 }
-}  // namespace
+} // namespace
 
 // ============================================================================
 // Per-element: getVolume
 // ============================================================================
 
-double getVolume(const NodeData& nodes, int idx, double depth,
-                 TableData* tables, int unit_sys, const NodeSubtypes* subs) {
-    if (depth <= 0.0) return 0.0;
+double getVolume(const NodeData& nodes, int idx, double depth, TableData* tables, int unit_sys,
+                 const NodeSubtypes* subs) {
+    if (depth <= 0.0)
+        return 0.0;
     auto ui = static_cast<std::size_t>(idx);
 
     if (nodes.type[ui] == NodeType::STORAGE) {
+        const int lr = subs ? subs->storage_row(idx) : -1;
+        if (lr >= 0 && !subs->storages.lid_state[lr].cells.empty()) {
+            const auto& state = subs->storages.lid_state[lr];
+            if (state.richards) {
+                const auto& surface = state.cells.front();
+                return std::clamp(depth - surface.bottom, 0., surface.top - surface.bottom) *
+                       surface.area * surface.porosity;
+            }
+            double volume = 0.0;
+            for (const auto& cell : subs->storages.lid_state[lr].cells) {
+                const double fraction =
+                    std::clamp((depth - cell.bottom) / (cell.top - cell.bottom), 0.0, 1.0);
+                volume +=
+                    fraction * cell.geometric_volume * std::max(0.0, cell.porosity - cell.theta);
+            }
+            return volume;
+        }
         // Clamp at fullDepth → fullVolume (matching legacy node.c lines 909-910)
         if (depth >= nodes.full_depth[ui] && nodes.full_volume[ui] > 0.0)
             return nodes.full_volume[ui];
@@ -85,8 +140,8 @@ double getVolume(const NodeData& nodes, int idx, double depth,
             // (matching legacy table_getStorageVolume in table.c)
             auto ci = static_cast<std::size_t>(g.curve);
             if (tables && ci < tables->tables.size()) {
-                double ucf_len  = ucf::Ucf[ucf::LENGTH][unit_sys];
-                double ucf_vol  = ucf::Ucf[ucf::VOLUME][unit_sys];
+                double ucf_len = ucf::Ucf[ucf::LENGTH][unit_sys];
+                double ucf_vol = ucf::Ucf[ucf::VOLUME][unit_sys];
                 double vol_disp = table_getStorageVolume(tables->tables[ci], depth * ucf_len);
                 return vol_disp / ucf_vol;
             }
@@ -120,15 +175,15 @@ double getVolume(const NodeData& nodes, int idx, double depth,
 
     // JUNCTION / OUTFALL / DIVIDER: linear V = fullVolume * (d / fullDepth)
     double fd = nodes.full_depth[ui];
-    if (fd <= 0.0) return 0.0;
+    if (fd <= 0.0)
+        return 0.0;
 
     // fullVolume for a junction = MIN_SURFAREA * fullDepth (legacy convention),
     // UNLESS an override has been stored (e.g. a Type-1 pump wet well, set in
     // SWMMEngine::initialize from the pump curve's max volume — matches legacy
     // pump_validate). full_volume is 0 before init, so fall back then.
-    double full_vol = nodes.full_volume[ui] > 0.0
-                          ? nodes.full_volume[ui]
-                          : constants::MIN_SURFAREA * fd;
+    double full_vol =
+        nodes.full_volume[ui] > 0.0 ? nodes.full_volume[ui] : constants::MIN_SURFAREA * fd;
     return full_vol * (depth / fd);
 }
 
@@ -136,15 +191,35 @@ double getVolume(const NodeData& nodes, int idx, double depth,
 // Per-element: getDepth (inverse of getVolume)
 // ============================================================================
 
-double getDepth(const NodeData& nodes, int idx, double volume,
-                TableData* tables, int unit_sys, const NodeSubtypes* subs) {
-    if (volume <= 0.0) return 0.0;
+double getDepth(const NodeData& nodes, int idx, double volume, TableData* tables, int unit_sys,
+                const NodeSubtypes* subs) {
+    if (volume < 0.0)
+        return 0.0;
     auto ui = static_cast<std::size_t>(idx);
 
     if (nodes.type[ui] == NodeType::STORAGE) {
+        const int lr = subs ? subs->storage_row(idx) : -1;
+        if (lr >= 0 && !subs->storages.lid_state[lr].cells.empty()) {
+            const auto& cells = subs->storages.lid_state[lr].cells;
+            if (subs->storages.lid_state[lr].richards) {
+                const auto& surface = cells.front();
+                return std::min(surface.top,
+                                surface.bottom + volume / (surface.area * surface.porosity));
+            }
+            for (auto i = cells.rbegin(); i != cells.rend(); ++i) {
+                const double capacity = i->geometric_volume * std::max(0.0, i->porosity - i->theta);
+                if (capacity > 0.0 && volume < capacity)
+                    return i->bottom + volume / capacity * (i->top - i->bottom);
+                volume -= capacity;
+            }
+            return nodes.full_depth[ui];
+        }
+        if (volume <= 0.0)
+            return 0.0;
         double fd = nodes.full_depth[ui];
         double fv = nodes.full_volume[ui];
-        if (fv > 0.0 && volume >= fv) return fd;
+        if (fv > 0.0 && volume >= fv)
+            return fd;
 
         // Geometry fetched lazily, only after the clamp early-out (as legacy did).
         const StorageGeom g = storageGeom(nodes, subs, ui);
@@ -156,11 +231,12 @@ double getDepth(const NodeData& nodes, int idx, double volume,
             if (tables && ci < tables->tables.size()) {
                 double ucf_len = ucf::Ucf[ucf::LENGTH][unit_sys];
                 double ucf_vol = ucf::Ucf[ucf::VOLUME][unit_sys];
-                double vol_disp = volume * ucf_vol;       // internal ft³ → display units
-                double d_disp   = table_getStorageDepth(tables->tables[ci], vol_disp);
-                return d_disp / ucf_len;                  // display units → ft
+                double vol_disp = volume * ucf_vol; // internal ft³ → display units
+                double d_disp = table_getStorageDepth(tables->tables[ci], vol_disp);
+                return d_disp / ucf_len; // display units → ft
             }
-            if (fv > 0.0) return fd * (volume / fv);     // fallback if no table
+            if (fv > 0.0)
+                return fd * (volume / fv); // fallback if no table
             return 0.0;
         }
 
@@ -184,12 +260,11 @@ double getDepth(const NodeData& nodes, int idx, double volume,
         // the only per-shape work here is the seed and the closed forms.
         auto newtonSolve = [&](double seed) {
             d = seed;
-            findroot::newton(0.0, fd * ucf_len, &d, 0.001,
-                [&](double y, double* f, double* df) {
-                    double yFt = y / ucf_len;
-                    *f  = getVolume(nodes, idx, yFt, tables, unit_sys, subs) * ucf_vol - v;
-                    *df = getSurfArea(nodes, idx, yFt, tables, unit_sys, subs) * ucf_vol / ucf_len;
-                });
+            findroot::newton(0.0, fd * ucf_len, &d, 0.001, [&](double y, double* f, double* df) {
+                double yFt = y / ucf_len;
+                *f = getVolume(nodes, idx, yFt, tables, unit_sys, subs) * ucf_vol - v;
+                *df = getSurfArea(nodes, idx, yFt, tables, unit_sys, subs) * ucf_vol / ucf_len;
+            });
         };
 
         if (isGeometric(g)) {
@@ -198,19 +273,19 @@ double getDepth(const NodeData& nodes, int idx, double volume,
             // these coefficients (e.g. a CYLINDRICAL row has a2 == 0, which would hit
             // the `v / (a0 + a1)` power-law case). Legacy node.c:855-861.
             switch (g.shape) {
-                case StorageShape::CYLINDRICAL:
-                    // area = a0 (constant); v = a0*d.  a0 = π·A·B > 0 by validation.
-                    d = v / a0;
-                    break;
-                case StorageShape::PARABOLOID:
-                    // area = a1*d; v = (a1/2)*d².  a1 = π·A·B/Z > 0 by validation.
-                    d = std::sqrt(2.0 * v / a1);
-                    break;
-                default:
-                    // CONICAL / PYRAMIDAL: cubic in d — seed with the prismatic guess
-                    // v/a0 and let Newton converge (node.c:857-860).
-                    newtonSolve(v / a0);
-                    break;
+            case StorageShape::CYLINDRICAL:
+                // area = a0 (constant); v = a0*d.  a0 = π·A·B > 0 by validation.
+                d = v / a0;
+                break;
+            case StorageShape::PARABOLOID:
+                // area = a1*d; v = (a1/2)*d².  a1 = π·A·B/Z > 0 by validation.
+                d = std::sqrt(2.0 * v / a1);
+                break;
+            default:
+                // CONICAL / PYRAMIDAL: cubic in d — seed with the prismatic guess
+                // v/a0 and let Newton converge (node.c:857-860).
+                newtonSolve(v / a0);
+                break;
             }
         } else if (a2 == 0.0) {
             // area = a0 + a1; v = (a0 + a1) * d              (node.c:825-829)
@@ -241,8 +316,8 @@ double getDepth(const NodeData& nodes, int idx, double volume,
             // mirrors that fix rather than the original quirk.
             newtonSolve(v / (a0 + a1));
         }
-        d /= ucf_len;                                       // node.c:861
-        return std::min(d, fd);                             // node.c:862-864
+        d /= ucf_len;           // node.c:861
+        return std::min(d, fd); // node.c:862-864
     }
 
     // JUNCTION / OUTFALL / DIVIDER: V = MIN_SURFAREA * d → d = V / MIN_SURFAREA
@@ -253,11 +328,23 @@ double getDepth(const NodeData& nodes, int idx, double volume,
 // Per-element: getSurfArea
 // ============================================================================
 
-double getSurfArea(const NodeData& nodes, int idx, double depth,
-                   TableData* tables, int unit_sys, const NodeSubtypes* subs) {
+double getSurfArea(const NodeData& nodes, int idx, double depth, TableData* tables, int unit_sys,
+                   const NodeSubtypes* subs) {
     auto ui = static_cast<std::size_t>(idx);
 
     if (nodes.type[ui] == NodeType::STORAGE) {
+        const int lr = subs ? subs->storage_row(idx) : -1;
+        if (lr >= 0 && !subs->storages.lid_state[lr].cells.empty()) {
+            const auto& cells = subs->storages.lid_state[lr].cells;
+            if (subs->storages.lid_state[lr].richards)
+                return cells.front().area * cells.front().porosity;
+            for (const auto& c : cells)
+                if (depth >= c.bottom && depth < c.top)
+                    return c.area * std::max(0.0, c.porosity - c.theta);
+            const auto& c = depth <= 0.0 ? cells.back() : cells.front();
+            return c.area * std::max(0.0, c.porosity - c.theta);
+        }
+
         const StorageGeom g = storageGeom(nodes, subs, ui);
         // Return RAW storage-curve area (no MIN_SURFAREA clamp here).
         //
@@ -273,7 +360,7 @@ double getSurfArea(const NodeData& nodes, int idx, double depth,
         if (g.curve >= 0) {
             auto ci = static_cast<std::size_t>(g.curve);
             if (tables && ci < tables->tables.size()) {
-                double ucf_len  = ucf::Ucf[ucf::LENGTH][unit_sys];
+                double ucf_len = ucf::Ucf[ucf::LENGTH][unit_sys];
                 // PARITY: legacy storage_getSurfArea (node.c) uses the
                 // EXTRAPOLATING table_lookupEx (table.c:469) — not the
                 // clamped table_lookup — and converts units with two
@@ -314,8 +401,8 @@ double getSurfArea(const NodeData& nodes, int idx, double depth,
 // Per-element: getPondedArea
 // ============================================================================
 
-double getPondedArea(const NodeData& nodes, int idx, double depth,
-                     TableData* tables, int unit_sys, const NodeSubtypes* subs) {
+double getPondedArea(const NodeData& nodes, int idx, double depth, TableData* tables, int unit_sys,
+                     const NodeSubtypes* subs) {
     auto ui = static_cast<std::size_t>(idx);
 
     if (depth <= nodes.full_depth[ui] || nodes.ponded_area[ui] == 0.0) {
@@ -324,7 +411,8 @@ double getPondedArea(const NodeData& nodes, int idx, double depth,
 
     // Flooded above rim — use the ponded area
     double a = nodes.ponded_area[ui];
-    if (a <= 0.0) a = getSurfArea(nodes, idx, nodes.full_depth[ui], tables, unit_sys, subs);
+    if (a <= 0.0)
+        a = getSurfArea(nodes, idx, nodes.full_depth[ui], tables, unit_sys, subs);
     return a;
 }
 
@@ -335,8 +423,17 @@ double getPondedArea(const NodeData& nodes, int idx, double depth,
 double getMaxOutflow(const NodeData& nodes, int idx, double q, double dt) {
     auto ui = static_cast<std::size_t>(idx);
 
-    double full_vol = constants::MIN_SURFAREA * nodes.full_depth[ui];
-    if (full_vol > 0.0) {
+    // Legacy node_getMaxOutflow (node.c:415-424) caps only nodes whose
+    // fullVolume is nonzero — storage units and Type-1 pump wet wells. A
+    // plain junction/outfall/divider has fullVolume identically 0 in legacy,
+    // so its conduits are NEVER capped, and the engine-internal full_volume
+    // convention (MIN_SURFAREA·fullDepth) must not leak into this cap.
+    // NodeData::rpt_full_volume IS legacy's Node.fullVolume, so test it
+    // directly — the old heuristic on full_volume capped a plain junction
+    // whose MIN_SURFAREA volume happened to clear the threshold, trimming a
+    // 1-ULP overflow contribution off its conduit's inflow
+    // (1710-2014-20year-r3's node 0 at routing step 6).
+    if (nodes.rpt_full_volume[ui] > 0.0) {
         double q_max = nodes.inflow[ui] + nodes.old_volume[ui] / dt;
         q = std::min(q, q_max);
     }
@@ -352,6 +449,28 @@ double getOverflow(double new_volume, double full_volume, double dt) {
         return (new_volume - full_volume) / dt;
     }
     return 0.0;
+}
+
+double storeVolume(const NodeData& nodes, int idx, double depth, double volume) {
+    auto ui = static_cast<std::size_t>(idx);
+    const double v = std::max(volume, 0.0);
+    // Storage: the curve volume. Outfall: a boundary, it stores nothing of
+    // its own (the routers never book it a volume), so the store is whatever
+    // was booked — 0 — rather than a MIN_SURFAREA bucket.
+    if (nodes.type[ui] == NodeType::STORAGE || nodes.type[ui] == NodeType::OUTFALL)
+        return v;
+    const double fd = nodes.full_depth[ui];
+    if (!(fd > 0.0))
+        return v;
+    double store = nodes.full_volume[ui] * (std::min(depth, fd) / fd);
+    if (depth > fd)
+        store += v; // ponded water above the rim
+    return store;
+}
+
+double storeVolume(const NodeData& nodes, int idx) {
+    auto ui = static_cast<std::size_t>(idx);
+    return storeVolume(nodes, idx, nodes.depth[ui], nodes.volume[ui]);
 }
 
 // ============================================================================
@@ -380,8 +499,8 @@ void computeVolumes(const NodeData& nodes, const double* depth, double* volume,
 // Batch: computeOverflows
 // ============================================================================
 
-void computeOverflows(const double* new_volume, const double* full_volume,
-                      double* overflow, double dt, int n) {
+void computeOverflows(const double* new_volume, const double* full_volume, double* overflow,
+                      double dt, int n) {
     if (dt <= 0.0) {
         std::fill(overflow, overflow + n, 0.0);
         return;

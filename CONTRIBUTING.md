@@ -43,7 +43,7 @@ openswmm.engine is a community-driven open source project. All contributors are 
 
 The Technical Manager is responsible for:
 
-- Maintaining the integrity and health of the `main`, `dev`, and `experimental` branches.
+- Maintaining the integrity and health of the `main`, `develop`, and `experimental` branches.
 - Setting and enforcing coding standards, testing requirements, and documentation guidelines.
 - Triaging issues and pull requests in a timely manner.
 - Making final decisions on merges, releases, and branch management.
@@ -65,7 +65,7 @@ The Technical Manager role is a single point of authority, which must be protect
 
 ## 4. Licensing, Intellectual Property & CLA
 
-openswmm.engine is released under the **MIT License**.
+openswmm.engine is released under the **Apache License, Version 2.0**. Attribution requirements are recorded in [NOTICE](./NOTICE), which also documents the USEPA SWMM material that resides in the public domain under 17 USC § 105.
 
 All contributors must sign the project **Contributor License Agreement (CLA)** before their pull request can be merged. The CLA is detailed in [CLA.md](./CLA.md). Key points:
 
@@ -83,9 +83,9 @@ The project uses [CLA Assistant](https://cla-assistant.io). When you open your f
 
 Once signed, the CLA covers all future contributions. You do not need to sign again.
 
-If your contribution includes third-party code or data, you are responsible for ensuring that the third-party license is compatible with MIT and that proper attribution is included in your submission.
+If your contribution includes third-party code or data, you are responsible for ensuring that the third-party license is compatible with the Apache License, Version 2.0 and that proper attribution is added to [NOTICE](./NOTICE).
 
-The full license text is available in [LICENSE](./LICENSE).
+The full license text is available in [LICENSE](./LICENSE), and required attribution notices in [NOTICE](./NOTICE).
 
 ---
 
@@ -179,11 +179,11 @@ Experimental APIs (clearly marked as such) carry no backward compatibility guara
 | Branch                    | Purpose                                                                                    |
 |---------------------------|--------------------------------------------------------------------------------------------|
 | `main`                    | Stable, production-ready code. Only receives merges from release candidates.              |
-| `dev`                     | Integration branch for ongoing development. All feature and bug-fix branches target here. |
+| `develop`                     | Integration branch for ongoing development. All feature and bug-fix branches target here. |
 | `experimental/<name>`     | Sandboxed branches for exploratory or major formulation changes. See Section 15.          |
-| `bugfix/<issue-id>-desc`  | Short-lived branches forked from `dev` to address specific bug reports.                   |
-| `feature/<name>`          | Short-lived branches for minor feature additions, forked from `dev`.                       |
-| `release/<version>`       | Release preparation branches (alpha → beta → rc) cut from `dev`.                          |
+| `bugfix/<issue-id>-desc`  | Short-lived branches forked from `develop` to address specific bug reports.                   |
+| `feature/<name>`          | Short-lived branches for minor feature additions, forked from `develop`.                       |
+| `release/<version>`       | Release preparation branches (alpha → beta → rc) cut from `develop`.                          |
 
 ---
 
@@ -192,13 +192,13 @@ Experimental APIs (clearly marked as such) carry no backward compatibility guara
 For small, well-scoped bug fixes and minor improvements, follow this workflow:
 
 1. **Open or reference an issue.** Verify the bug is reproducible and link the relevant issue number in all subsequent commits and pull requests.
-2. **Fork the `dev` branch.** Name your branch `bugfix/<issue-id>-short-description` (e.g., `bugfix/42-overflow-in-routing`).
+2. **Fork the `develop` branch.** Name your branch `bugfix/<issue-id>-short-description` (e.g., `bugfix/42-overflow-in-routing`).
 3. **Write a failing unit test first.** The test must demonstrate the defect before the fix is applied.
 4. **Implement the minimal fix.** Touch only the code necessary to resolve the issue. Do not refactor adjacent code.
 5. **Ensure all regression tests pass.** If a regression test fails as a result of your change, you must either:
    - Fix the regression, **or**
    - Provide a written, technically justified explanation for why the regression failure is acceptable (included in the pull request description).
-6. **Submit a pull request** against `dev` following the process described in Section 11.
+6. **Submit a pull request** against `develop` following the process described in Section 11.
 
 ---
 
@@ -222,7 +222,7 @@ Self-approvals are not permitted. The PR author may not count toward the communi
 
 Before requesting review, confirm that your PR:
 
-- [ ] Targets the correct branch (`dev` for bug fixes and features; see Section 15 for experimental work)
+- [ ] Targets the correct branch (`develop` for bug fixes and features; see Section 15 for experimental work)
 - [ ] CLA signed — first-time contributors must sign the [CLA](./CLA.md) before the PR can be merged
 - [ ] Includes a clear description of what was changed and why
 - [ ] References any related issues (e.g., `Closes #42`)
@@ -235,8 +235,8 @@ Before requesting review, confirm that your PR:
 ### Merge Policy
 
 - Merges into `main` are performed exclusively by the Technical Manager at release time.
-- Squash merging is preferred for `bugfix` and `feature` branches to keep the `dev` history clean.
-- Merge commits are used when integrating `dev` into a `release` branch to preserve the full history.
+- Squash merging is preferred for `bugfix` and `feature` branches to keep the `develop` history clean.
+- Merge commits are used when integrating `develop` into a `release` branch to preserve the full history.
 
 ---
 
@@ -325,7 +325,7 @@ Accepted proposals are implemented in a dedicated `experimental/<name>` branch. 
 
 - Rigorous **unit tests** covering the new formulation's behavior across the expected parameter space.
 - **Regression tests** as described in Section 17.
-- Code must compile cleanly and not break the existing test suite on the `dev` branch.
+- Code must compile cleanly and not break the existing test suite on the `develop` branch.
 - Implementation notes and algorithm descriptions must be maintained in Doxygen-compatible documentation.
 
 ### Step 4 — Peer Review (Strongly Encouraged)
@@ -342,7 +342,7 @@ See Section 17 for full details. At minimum, the experimental implementation mus
 
 ### Step 6 — Documentation & References
 
-Before a major formulation change can be merged into `dev`, the following documentation must be complete:
+Before a major formulation change can be merged into `develop`, the following documentation must be complete:
 
 - **Doxygen comments** on all new and modified public APIs, structs, and functions.
 - **Inline citations** linking to peer-reviewed references where the formulation is derived from published work.
@@ -417,7 +417,7 @@ Adding a third-party dependency increases the maintenance burden and risk surfac
 
 | Criterion                | Requirement                                                                                      |
 |--------------------------|--------------------------------------------------------------------------------------------------|
-| **License compatibility**| The dependency's license must be compatible with MIT (e.g., MIT, BSD, Apache 2.0). Copyleft licenses such as GPL are not permitted. |
+| **License compatibility**| The dependency's license must be compatible with the Apache License, Version 2.0 (e.g., Apache-2.0, MIT, BSD). Copyleft licenses such as GPL, and licenses incompatible with Apache-2.0 such as GPLv2-only, are not permitted. |
 | **Maintenance status**   | The dependency must be actively maintained with a responsive upstream community.                 |
 | **Stability**            | The dependency must have a stable, versioned API. Unpinned or volatile dependencies are not acceptable. |
 | **Binary footprint**     | Dependencies that substantially increase compiled binary size must be justified by proportional benefit. |

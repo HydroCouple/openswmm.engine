@@ -1,6 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file test_files_iface_gaps.cpp
- * @brief End-to-end tests for the remaining [FILES] interface slots:
+ * @file      test_files_iface_gaps.cpp
+ * @brief     End-to-end tests for the remaining [FILES] interface slots:
  *        USE/SAVE RUNOFF, USE/SAVE RDII, and the RAINFALL warning.
  *
  * @details Verifies plans/FILES_INTERFACE_GAP_CLOSURE_PLAN_2026-07-02.md:
@@ -22,9 +38,9 @@
  * @see Legacy: src/legacy/engine/runoff.c, rdii.c, rain.c
  * @ingroup engine_tests
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -50,6 +66,13 @@ namespace {
 
 // Rained-on model: gage + subcatchment draining to J1 → O1. One hour of
 // 1 in/hr rain, 5-minute wet step.
+/**
+ * @brief Build the wet-weather runoff interface comparison model.
+ *
+ * Returns literal text only; no file IO, parsing or simulation occurs.
+ * @return Owned two-hour CFS deck with a ten-acre fully impervious catchment, Horton rows, rain and
+ *     J1-to-O1 conduit.
+ */
 std::string runoff_model_inp() {
     return R"([OPTIONS]
 FLOW_UNITS           CFS
@@ -101,6 +124,13 @@ TS1  1:00  0.0
 
 // RDII model: same gage/rain, no subcatchment (isolates RDII), one unit
 // hydrograph group feeding J1 with 5 acres of sewershed.
+/**
+ * @brief Build the RDII interface comparison model.
+ *
+ * Returns literal text only; no file IO or computation of interface flows occurs.
+ * @return Owned two-hour CFS deck with J1/O1 conduit, rainfall, three UH components and five-acre
+ *     RDII assignment.
+ */
 std::string rdii_model_inp() {
     return R"([OPTIONS]
 FLOW_UNITS           CFS
@@ -149,6 +179,16 @@ TS1  1:00  0.0
 
 // Legacy-format TEXT RDII file: constant flow at J1, hourly step, covering
 // the whole simulation.
+/**
+ * @brief Build a legacy text RDII interface file for J1.
+ *
+ * Does not create a file or validate its acceptance by the reader.
+ *
+ * @param[in] flow_cfs Constant J1 flow in cfs copied into all dated records, without range
+ *     validation.
+ * @return Owned interface text with 3600 s interval, FLOW CFS header, and records spanning the
+ *     fixture run.
+ */
 std::string rdii_text_file(double flow_cfs) {
     std::ostringstream s;
     s << "SWMM5 RDII Interface File\n"
@@ -159,12 +199,29 @@ std::string rdii_text_file(double flow_cfs) {
          "1    - number of nodes\n"
          "J1\n"
          "Node  Year Mon Day Hr Min Sec Flow\n"
-         "J1  2026 01 01 00 00 00 " << flow_cfs << "\n"
-         "J1  2026 01 01 01 00 00 " << flow_cfs << "\n"
-         "J1  2026 01 01 02 00 00 " << flow_cfs << "\n";
+         "J1  2026 01 01 00 00 00 "
+      << flow_cfs
+      << "\n"
+         "J1  2026 01 01 01 00 00 "
+      << flow_cfs
+      << "\n"
+         "J1  2026 01 01 02 00 00 "
+      << flow_cfs << "\n";
     return s.str();
 }
 
+/**
+ * @brief Write fixture content to a caller-selected file.
+ *
+ * The parent directory must already exist. Uses ordinary text output mode. Asserts open success and
+ * returns early from this void helper on a fatal assertion. Subsequent write/close failures are not
+ * checked; the local stream closes at scope exit and no path/content storage is retained.
+ * Allocation exceptions can propagate.
+ *
+ * @param[in] path Borrowed destination path; an existing file is truncated/overwritten.
+ * @param[in] content Borrowed content copied verbatim through the output stream; no newline is
+ *     appended.
+ */
 void write_file(const std::string& path, const std::string& content) {
     std::ofstream f(path);
     ASSERT_TRUE(f.is_open()) << "cannot create " << path;
@@ -176,6 +233,12 @@ protected:
     SWMM_Engine engine_ = nullptr;
     std::vector<std::string> scratch_;
 
+    /**
+     * @brief Release the interface fixture engine and delete all registered scratch paths.
+     *
+     * Calls destroy_engine, then removes each recorded path with ignored error_code failures. Duplicate
+     * registrations are harmless; registered existing files are intentionally deleted.
+     */
     void TearDown() override {
         destroy_engine();
         for (const auto& p : scratch_) {
@@ -184,6 +247,12 @@ protected:
         }
     }
 
+    /**
+     * @brief Close and destroy a non-null interface fixture engine.
+     *
+     * Ignores close status and resets engine_ to null; borrowed context pointers expire. Does not
+     * remove scratch files or explicitly call end.
+     */
     void destroy_engine() {
         if (engine_) {
             swmm_engine_close(engine_);
@@ -192,12 +261,33 @@ protected:
         }
     }
 
+    /**
+     * @brief Register a current-directory path for teardown removal.
+     *
+     * Does not create the file or validate uniqueness. A later TearDown attempts to remove the
+     * registered path even if it existed before registration; current_path/allocation exceptions
+     * propagate.
+     *
+     * @param[in] name Filename/path appended to current_path; caller chooses a safe fixture-only
+     *     destination.
+     * @return Owned path string, also copied into scratch_.
+     */
     std::string scratch(const std::string& name) {
         auto p = (fs::current_path() / name).string();
         scratch_.push_back(p);
         return p;
     }
 
+    /**
+     * @brief Write, allocate, open and initialize an interface fixture.
+     *
+     * Caller must destroy an older engine_ before replacement. Fatal assertions check
+     * allocation/open/init; partial state remains owned for teardown. Does not start simulation and
+     * does not independently verify write helper success after its fatal return.
+     *
+     * @param[in] tag Stem for registered gaps_tag.inp/.rpt/.out paths in the current directory.
+     * @param[in] inp_text Borrowed deck text, written verbatim to the registered input path.
+     */
     void open_model(const std::string& tag, const std::string& inp_text) {
         const auto inp = scratch("gaps_" + tag + ".inp");
         const auto rpt = scratch("gaps_" + tag + ".rpt");
@@ -206,22 +296,38 @@ protected:
 
         engine_ = swmm_engine_create();
         ASSERT_NE(engine_, nullptr);
-        ASSERT_EQ(swmm_engine_open(engine_, inp.c_str(), rpt.c_str(),
-                                   out.c_str(), nullptr), SWMM_OK)
+        ASSERT_EQ(swmm_engine_open(engine_, inp.c_str(), rpt.c_str(), out.c_str(), nullptr),
+                  SWMM_OK)
             << "open failed: " << swmm_get_last_error_msg(engine_);
         ASSERT_EQ(swmm_engine_initialize(engine_), SWMM_OK);
     }
 
+    /**
+     * @brief Step an already started interface fixture to completion and end it.
+     *
+     * Requires live started engine_. Fatally asserts every step/end status; no iteration guard is
+     * applied. Leaves ended state and files for queries; teardown supplies close/destroy.
+     */
     void run_to_completion() {
         double elapsed = 0.0;
         for (;;) {
             int rc = swmm_engine_step(engine_, &elapsed);
             ASSERT_EQ(rc, SWMM_OK) << swmm_get_last_error_msg(engine_);
-            if (elapsed <= 0.0) break;
+            if (elapsed <= 0.0)
+                break;
         }
         ASSERT_EQ(swmm_engine_end(engine_), SWMM_OK);
     }
 
+    /**
+     * @brief Read a routing ledger component with a nonfatal status assertion.
+     *
+     * Requires a live engine_. Does not distinguish an error from a real zero in its return value; test
+     * failure carries the status evidence.
+     *
+     * @param[in] component Valid public routing-total selector for the ended/live fixture engine.
+     * @return Native routing ledger value, or initialized zero if rejection leaves output unchanged.
+     */
     double routing_total(int component) {
         double v = 0.0;
         EXPECT_EQ(swmm_get_routing_total(engine_, component, &v), SWMM_OK);
@@ -240,12 +346,11 @@ TEST_F(FilesIfaceGapsTest, RunoffSaveThenUse_ReproducesWetWeatherVolume) {
     open_model("rof_save", runoff_model_inp());
     ASSERT_EQ(swmm_files_set(engine_, "RUNOFF_MODE", "SAVE"), SWMM_OK);
     ASSERT_EQ(swmm_files_set(engine_, "RUNOFF_PATH", rof.c_str()), SWMM_OK);
-    ASSERT_EQ(swmm_engine_start(engine_, 1), SWMM_OK)
-        << swmm_get_last_error_msg(engine_);
+    ASSERT_EQ(swmm_engine_start(engine_, 1), SWMM_OK) << swmm_get_last_error_msg(engine_);
     run_to_completion();
     const double wet_save = routing_total(SWMM_ROUTING_WET_WEATHER);
     ASSERT_GT(wet_save, 0.0) << "SAVE run produced no runoff — bad fixture";
-    destroy_engine();   // close() finalizes the header step count
+    destroy_engine(); // close() finalizes the header step count
 
     ASSERT_TRUE(fs::exists(rof));
     ASSERT_GT(fs::file_size(rof), 28u);
@@ -254,8 +359,7 @@ TEST_F(FilesIfaceGapsTest, RunoffSaveThenUse_ReproducesWetWeatherVolume) {
     open_model("rof_use", runoff_model_inp());
     ASSERT_EQ(swmm_files_set(engine_, "RUNOFF_MODE", "USE"), SWMM_OK);
     ASSERT_EQ(swmm_files_set(engine_, "RUNOFF_PATH", rof.c_str()), SWMM_OK);
-    ASSERT_EQ(swmm_engine_start(engine_, 1), SWMM_OK)
-        << swmm_get_last_error_msg(engine_);
+    ASSERT_EQ(swmm_engine_start(engine_, 1), SWMM_OK) << swmm_get_last_error_msg(engine_);
     run_to_completion();
     const double wet_use = routing_total(SWMM_ROUTING_WET_WEATHER);
 
@@ -266,8 +370,7 @@ TEST_F(FilesIfaceGapsTest, RunoffSaveThenUse_ReproducesWetWeatherVolume) {
 TEST_F(FilesIfaceGapsTest, UseRunoff_MissingFileFailsStart) {
     open_model("rof_missing", runoff_model_inp());
     ASSERT_EQ(swmm_files_set(engine_, "RUNOFF_MODE", "USE"), SWMM_OK);
-    ASSERT_EQ(swmm_files_set(engine_, "RUNOFF_PATH",
-                             "no_such_runoff_file.rof"), SWMM_OK);
+    ASSERT_EQ(swmm_files_set(engine_, "RUNOFF_PATH", "no_such_runoff_file.rof"), SWMM_OK);
     EXPECT_NE(swmm_engine_start(engine_, 1), SWMM_OK)
         << "start() must fail when the runoff interface file cannot open";
 }
@@ -283,8 +386,7 @@ TEST_F(FilesIfaceGapsTest, RdiiSaveThenUse_ConservesRdiiVolume) {
     open_model("rdii_save", rdii_model_inp());
     ASSERT_EQ(swmm_files_set(engine_, "RDII_MODE", "SAVE"), SWMM_OK);
     ASSERT_EQ(swmm_files_set(engine_, "RDII_PATH", rdf.c_str()), SWMM_OK);
-    ASSERT_EQ(swmm_engine_start(engine_, 1), SWMM_OK)
-        << swmm_get_last_error_msg(engine_);
+    ASSERT_EQ(swmm_engine_start(engine_, 1), SWMM_OK) << swmm_get_last_error_msg(engine_);
     run_to_completion();
     const double rdii_save = routing_total(SWMM_ROUTING_RDII);
     ASSERT_GT(rdii_save, 0.0) << "SAVE run produced no RDII — bad fixture";
@@ -303,8 +405,7 @@ TEST_F(FilesIfaceGapsTest, RdiiSaveThenUse_ConservesRdiiVolume) {
     open_model("rdii_use", rdii_model_inp());
     ASSERT_EQ(swmm_files_set(engine_, "RDII_MODE", "USE"), SWMM_OK);
     ASSERT_EQ(swmm_files_set(engine_, "RDII_PATH", rdf.c_str()), SWMM_OK);
-    ASSERT_EQ(swmm_engine_start(engine_, 1), SWMM_OK)
-        << swmm_get_last_error_msg(engine_);
+    ASSERT_EQ(swmm_engine_start(engine_, 1), SWMM_OK) << swmm_get_last_error_msg(engine_);
     run_to_completion();
     const double rdii_use = routing_total(SWMM_ROUTING_RDII);
 
@@ -315,15 +416,14 @@ TEST_F(FilesIfaceGapsTest, RdiiSaveThenUse_ConservesRdiiVolume) {
 }
 
 TEST_F(FilesIfaceGapsTest, UseRdii_TextFormatOverridesComputation) {
-    const double kFlow = 1.0;   // cfs constant for the 2 h simulation
+    const double kFlow = 1.0; // cfs constant for the 2 h simulation
     const auto rdf = scratch("gaps_rdii_text.txt");
     write_file(rdf, rdii_text_file(kFlow));
 
     open_model("rdii_text", rdii_model_inp());
     ASSERT_EQ(swmm_files_set(engine_, "RDII_MODE", "USE"), SWMM_OK);
     ASSERT_EQ(swmm_files_set(engine_, "RDII_PATH", rdf.c_str()), SWMM_OK);
-    ASSERT_EQ(swmm_engine_start(engine_, 1), SWMM_OK)
-        << swmm_get_last_error_msg(engine_);
+    ASSERT_EQ(swmm_engine_start(engine_, 1), SWMM_OK) << swmm_get_last_error_msg(engine_);
     run_to_completion();
 
     // 1 cfs × 7200 s = 7200 ft³ — and NOT the UH-computed volume, proving
@@ -355,11 +455,9 @@ TEST_F(FilesIfaceGapsTest, UseRdii_GarbageFileFailsStart) {
 TEST_F(FilesIfaceGapsTest, RainfallSlot_WarnsButRuns) {
     open_model("rain_warn", runoff_model_inp());
     ASSERT_EQ(swmm_files_set(engine_, "RAINFALL_MODE", "USE"), SWMM_OK);
-    ASSERT_EQ(swmm_files_set(engine_, "RAINFALL_PATH", "collated.rff"),
-              SWMM_OK);
+    ASSERT_EQ(swmm_files_set(engine_, "RAINFALL_PATH", "collated.rff"), SWMM_OK);
     EXPECT_EQ(swmm_engine_start(engine_, 1), SWMM_OK)
-        << "unsupported RAINFALL slot must warn, not fail: "
-        << swmm_get_last_error_msg(engine_);
+        << "unsupported RAINFALL slot must warn, not fail: " << swmm_get_last_error_msg(engine_);
     run_to_completion();
     EXPECT_GT(routing_total(SWMM_ROUTING_WET_WEATHER), 0.0)
         << "run must proceed normally (gage data read directly)";

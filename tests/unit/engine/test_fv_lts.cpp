@@ -1,6 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file test_fv_lts.cpp
- * @brief Plan §6.12 — local time stepping: equivalence, tier-interface
+ * @file      test_fv_lts.cpp
+ * @brief     Plan §6.12 — local time stepping: equivalence, tier-interface
  *        conservation, fronts crossing tiers, and the dt-collapse relief.
  *
  * @details The gates here are deliberately split by what LTS is allowed to
@@ -18,9 +34,9 @@
  * @see plans/EXPLICIT_FV_KOKKOS_1D_SOLVER_PLAN.md §3.3, §6.12
  * @ingroup engine_fv
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -28,6 +44,10 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 #include <numeric>
 #include <vector>
 
@@ -45,27 +65,42 @@ namespace {
 ///
 /// @p dxfn maps cell index → Δx.
 template <class DxFn, class BedFn>
-Channel makeGradedChannel(const openswmm::XSectParams& xs, int n, DxFn dxfn,
-                          BedFn bedfn, double manning,
-                          double slot_celerity = 100.0) {
+/**
+ * @brief Build a closed FV channel with callback-defined nonuniform cell lengths and bed.
+ *
+ * Starts from makeWalledChannel then rewrites length-dependent metrics. Requires callbacks to be
+ * consistent across repeated calls, positive lengths and finite geometry; no validation/rollback is
+ * provided. No water state is seeded or advanced.
+ *
+ * @param[in] xs Cross-section parameters in native feet-based units.
+ * @param[in] n Strictly positive cell count, fitting index/storage limits.
+ * @param[in] dxfn Deterministic synchronous cell-index callable returning positive length in feet;
+ *     called repeatedly and not retained.
+ * @param[in] bedfn Deterministic synchronous elevation callable bed(x_ft) in feet; called at
+ *     centers/faces and not retained.
+ * @param[in] manning Uniform Manning roughness.
+ * @param[in] slot_celerity Positive geometry slot celerity in ft/s, default 100.
+ * @return Owned walled channel with recomputed center/face elevations, lengths and cell bed slopes;
+ *     ch.dx=0 marks nonuniform spacing.
+ */
+Channel makeGradedChannel(const openswmm::XSectParams& xs, int n, DxFn dxfn, BedFn bedfn,
+                          double manning, double slot_celerity = 100.0) {
     // Start from the uniform builder so the geometry, chain and cell→face maps
     // are constructed by exactly the code the other gates use, then restate the
     // lengths and the elevations that depend on them.
-    Channel ch = makeWalledChannel(xs, n, 1.0, [](double) { return 0.0; },
-                                   manning, slot_celerity);
+    Channel ch = makeWalledChannel(xs, n, 1.0, [](double) { return 0.0; }, manning, slot_celerity);
     ch.dx = 0.0;
 
     std::vector<double> xface(static_cast<std::size_t>(n) + 1, 0.0);
     for (int i = 0; i < n; ++i)
-        xface[static_cast<std::size_t>(i) + 1] =
-            xface[static_cast<std::size_t>(i)] + dxfn(i);
+        xface[static_cast<std::size_t>(i) + 1] = xface[static_cast<std::size_t>(i)] + dxfn(i);
 
     for (int i = 0; i < n; ++i) {
         const auto ui = static_cast<std::size_t>(i);
         const double dx = dxfn(i);
         const double xc = 0.5 * (xface[ui] + xface[ui + 1]);
-        ch.mesh.cell_dx[ui]   = dx;
-        ch.mesh.cell_zb[ui]   = bedfn(xc);
+        ch.mesh.cell_dx[ui] = dx;
+        ch.mesh.cell_zb[ui] = bedfn(xc);
         ch.mesh.cell_dzdx[ui] = (bedfn(xface[ui + 1]) - bedfn(xface[ui])) / dx;
     }
     // Face 0 is the upstream wall, face i the interface below cell i-1, face n
@@ -73,21 +108,47 @@ Channel makeGradedChannel(const openswmm::XSectParams& xs, int n, DxFn dxfn,
     for (int f = 0; f <= n; ++f) {
         const auto uf = static_cast<std::size_t>(f);
         ch.mesh.face_zb[uf] = bedfn(xface[uf]);
-        if (f == 0)      ch.mesh.face_dx[uf] = 0.5 * dxfn(0);
-        else if (f == n) ch.mesh.face_dx[uf] = 0.5 * dxfn(n - 1);
-        else             ch.mesh.face_dx[uf] = 0.5 * (dxfn(f - 1) + dxfn(f));
+        if (f == 0)
+            ch.mesh.face_dx[uf] = 0.5 * dxfn(0);
+        else if (f == n)
+            ch.mesh.face_dx[uf] = 0.5 * dxfn(n - 1);
+        else
+            ch.mesh.face_dx[uf] = 0.5 * (dxfn(f - 1) + dxfn(f));
     }
     return ch;
 }
 
-/// Δx profile of the §6.12 reference case: a long reach interrupted by a run of
-/// short pipes. The 100× length ratio is what a real network presents, and it
-/// is the ratio the plan's "one short pipe sets the step for 10,000" argument
-/// is about.
-double gradedDx(int i) { return (i >= 40 && i < 60) ? 5.0 : 200.0; }
+/**
+ * @brief Return the reference short-pipe segment length profile.
+ *
+ * This actual length ratio is40; no model arrays are read or mutated.
+ *
+ * @param[in] i Cell index; integer comparisons are defined even outside the intended0..99 fixture
+ *     range.
+ * @return 5 ft for40<=i<60, otherwise200 ft.
+ */
+double gradedDx(int i) {
+    return (i >= 40 && i < 60) ? 5.0 : 200.0;
+}
 
-double bedSlope(double x) { return 0.001 * (8000.0 - x); }
+/**
+ * @brief Evaluate the reference linearly sloping bed elevation.
+ *
+ * @param[in] x Physical downstream coordinate in feet.
+ * @return 0.001*(8000-x) in feet, using constant dimensionless slope-.001; no finite/range checks.
+ */
+double bedSlope(double x) {
+    return 0.001 * (8000.0 - x);
+}
 
+/**
+ * @brief Integrate cell water area over each nonuniform cell length.
+ *
+ * No bounds, sign or finite filtering occurs and state is unchanged.
+ *
+ * @param[in] ch Channel with n compatible area ft2 and length ft entries.
+ * @return Total cell-held water in ft3, zero for no cells; excludes all node storage.
+ */
 double totalVol(const Channel& ch) {
     double v = 0.0;
     for (int i = 0; i < ch.n; ++i)
@@ -98,25 +159,34 @@ double totalVol(const Channel& ch) {
 
 struct RunResult {
     std::vector<double> a, q;
-    double  vol_drift = 0.0;     ///< |V(t) − V(0)| / V(0)
-    long    substeps  = 0;
-    long    face_work = 0;       ///< face updates actually performed
-    int     tiers     = 1;
+    double vol_drift = 0.0; ///< |V(t) − V(0)| / V(0)
+    long substeps = 0;
+    long face_work = 0; ///< face updates actually performed
+    int tiers = 1;
 };
 
-/// Dam break in a closed (walled) graded reach: no inflow, no outflow, so the
-/// total volume is an exact invariant and any tier-interface leak shows up in
-/// it directly.
-RunResult runGradedDamBreak(int max_tiers, bool lts, double t_end,
-                            double dt_report = 5.0) {
-    Channel ch = makeGradedChannel(rectOpen(10.0, 20.0), 100, gradedDx,
-                                   bedSlope, 0.013);
+/**
+ * @brief Run the closed graded dam-break fixture and collect scheduling/work/conservation metrics.
+ *
+ * Uses100 nonuniform cells, width10 ft and initial left/right depths6/1 ft. Windows are not clipped
+ * at t_end, so a nonmultiple can advance beyond it. Assumes positive initial water for drift
+ * denominator; finalizes the local solver after sampling. No file output or separate error checks;
+ * solver exceptions propagate.
+ *
+ * @param[in] max_tiers Supported positive maximum local-timestep tier count.
+ * @param[in] lts Enable local tiering when true.
+ * @param[in] t_end Requested end in seconds; nonpositive performs no advances.
+ * @param[in] dt_report Strictly positive advance-window length in seconds, default 5.
+ * @return Owned final areas ft2/discharges CFS, accumulated substeps, maximum observed tier count,
+ *     flux work and relative cell-water drift.
+ */
+RunResult runGradedDamBreak(int max_tiers, bool lts, double t_end, double dt_report = 5.0) {
+    Channel ch = makeGradedChannel(rectOpen(10.0, 20.0), 100, gradedDx, bedSlope, 0.013);
     for (int i = 0; i < ch.n; ++i)
-        ch.state.cell_a[static_cast<std::size_t>(i)] =
-            10.0 * ((i < 50) ? 6.0 : 1.0);
+        ch.state.cell_a[static_cast<std::size_t>(i)] = 10.0 * ((i < 50) ? 6.0 : 1.0);
 
     openswmm::fv::FvOptions o = defaultOptions();
-    o.lts           = lts;
+    o.lts = lts;
     o.lts_max_tiers = max_tiers;
 
     openswmm::fv::ExplicitFvSolver s;
@@ -139,7 +209,7 @@ RunResult runGradedDamBreak(int max_tiers, bool lts, double t_end,
     return r;
 }
 
-}  // namespace
+} // namespace
 
 // ===========================================================================
 // §6.12(a) — equivalence
@@ -152,7 +222,7 @@ RunResult runGradedDamBreak(int max_tiers, bool lts, double t_end,
 // every gate in the rest of the suite depend on whether the option is on.
 TEST(FvLts, ASingleTierReproducesGlobalSteppingBitForBit) {
     const RunResult off = runGradedDamBreak(6, /*lts=*/false, 120.0);
-    const RunResult one = runGradedDamBreak(1, /*lts=*/true,  120.0);
+    const RunResult one = runGradedDamBreak(1, /*lts=*/true, 120.0);
     ASSERT_EQ(off.a.size(), one.a.size());
     for (std::size_t i = 0; i < off.a.size(); ++i) {
         EXPECT_EQ(one.a[i], off.a[i]) << "area differs at cell " << i;
@@ -167,16 +237,16 @@ TEST(FvLts, ASingleTierReproducesGlobalSteppingBitForBit) {
 // a dam break tiers legitimately, because the tier comes from the wave speed
 // √(gA/T), and a 5 ft column and a 1 ft column do not share one.)
 TEST(FvLts, AUniformStateOnAUniformMeshDoesNotTier) {
-    Channel ch = makeWalledChannel(rectOpen(10.0, 20.0), 60, 25.0,
-                                   [](double x) { return 0.001 * (1500.0 - x); },
-                                   0.013);
+    Channel ch = makeWalledChannel(
+        rectOpen(10.0, 20.0), 60, 25.0, [](double x) { return 0.001 * (1500.0 - x); }, 0.013);
     seedLevel(ch, 6.0);
     openswmm::fv::FvOptions o = defaultOptions();
     openswmm::fv::ExplicitFvSolver s;
     s.initialize(ch.mesh, ch.state, o);
     openswmm::fv::FvStepForcing f;
     f.n_nodes = 0;
-    for (double t = 0.0; t < 60.0; t += 5.0) s.advance(t, t + 5.0, f);
+    for (double t = 0.0; t < 60.0; t += 5.0)
+        s.advance(t, t + 5.0, f);
     EXPECT_EQ(s.lts_tiers(), 1) << "a lake at rest tiered against itself";
     s.finalize();
 }
@@ -193,8 +263,7 @@ TEST(FvLts, AUniformStateOnAUniformMeshDoesNotTier) {
 TEST(FvLts, TierInterfaceConservationIsExactAtEveryTierCount) {
     for (int K : {1, 2, 4, 6}) {
         const RunResult r = runGradedDamBreak(K, /*lts=*/true, 300.0);
-        EXPECT_LE(r.vol_drift, 1.0e-12)
-            << "volume drift at FV_LTS_MAX_TIERS=" << K;
+        EXPECT_LE(r.vol_drift, 1.0e-12) << "volume drift at FV_LTS_MAX_TIERS=" << K;
     }
 }
 
@@ -202,11 +271,9 @@ TEST(FvLts, TierInterfaceConservationIsExactAtEveryTierCount) {
 // a run that quietly collapsed to K = 1 would pass every one of them.
 TEST(FvLts, TieringIsGenuinelyActiveOnAGradedReach) {
     const RunResult r = runGradedDamBreak(6, /*lts=*/true, 300.0);
-    EXPECT_GE(r.tiers, 2)
-        << "a 100x length ratio produced no tier separation — the equivalence "
-           "and conservation gates would be vacuous";
-    std::printf("[fv-lts] graded reach: %d tiers, %ld substeps\n",
-                r.tiers, r.substeps);
+    EXPECT_GE(r.tiers, 2) << "a 100x length ratio produced no tier separation — the equivalence "
+                             "and conservation gates would be vacuous";
+    std::printf("[fv-lts] graded reach: %d tiers, %ld substeps\n", r.tiers, r.substeps);
 }
 
 // ===========================================================================
@@ -219,7 +286,7 @@ TEST(FvLts, TieringIsGenuinelyActiveOnAGradedReach) {
 // that the bulk distribution matches and the total is untouched.
 TEST(FvLts, TieredSolutionTracksGlobalStepping) {
     const RunResult glob = runGradedDamBreak(1, /*lts=*/false, 400.0);
-    const RunResult tier = runGradedDamBreak(6, /*lts=*/true,  400.0);
+    const RunResult tier = runGradedDamBreak(6, /*lts=*/true, 400.0);
     ASSERT_EQ(glob.a.size(), tier.a.size());
 
     // Bulk: volume that has crossed into the downstream half.
@@ -250,8 +317,8 @@ TEST(FvLts, TieredSolutionTracksGlobalStepping) {
 // cell has to receive every fine-side flux booked while it was not looking.
 // A leak here is silent — the front simply advances at the wrong speed.
 TEST(FvLts, WettingFrontCrossesTierBoundariesWithoutLoss) {
-    Channel ch = makeGradedChannel(rectOpen(10.0, 20.0), 100, gradedDx,
-                                   [](double) { return 0.0; }, 0.013);
+    Channel ch =
+        makeGradedChannel(rectOpen(10.0, 20.0), 100, gradedDx, [](double) { return 0.0; }, 0.013);
     // Water fills the reach up to the short-pipe run and no further, so the
     // front starts ON the tier boundary: it must cross into the fine tier and
     // back out into the coarse cells beyond it.
@@ -271,12 +338,10 @@ TEST(FvLts, WettingFrontCrossesTierBoundariesWithoutLoss) {
         for (int i = 0; i < ch.n; ++i) {
             const auto ui = static_cast<std::size_t>(i);
             ASSERT_GE(ch.state.cell_a[ui], 0.0) << "negative area at cell " << i;
-            ASSERT_FALSE(std::isnan(ch.state.cell_a[ui]))
-                << "NaN at cell " << i << " t=" << t;
+            ASSERT_FALSE(std::isnan(ch.state.cell_a[ui])) << "NaN at cell " << i << " t=" << t;
         }
     }
-    EXPECT_NEAR(totalVol(ch), v0, 1.0e-12 * v0)
-        << "the front lost water crossing a tier interface";
+    EXPECT_NEAR(totalVol(ch), v0, 1.0e-12 * v0) << "the front lost water crossing a tier interface";
     // It has to actually get there, or the test proves nothing.
     EXPECT_GT(ch.state.cell_a[static_cast<std::size_t>(62)], 0.0)
         << "the front never reached the coarse tier beyond the short pipes";
@@ -299,13 +364,104 @@ TEST(FvLts, WettingFrontCrossesTierBoundariesWithoutLoss) {
 // up as a ratio of one.
 TEST(FvLts, ShortPipesNoLongerSetTheWorkRateForTheWholeReach) {
     const RunResult glob = runGradedDamBreak(1, /*lts=*/false, 300.0);
-    const RunResult tier = runGradedDamBreak(6, /*lts=*/true,  300.0);
-    const double ratio = static_cast<double>(glob.face_work) /
-                         static_cast<double>(std::max(1L, tier.face_work));
+    const RunResult tier = runGradedDamBreak(6, /*lts=*/true, 300.0);
+    const double ratio =
+        static_cast<double>(glob.face_work) / static_cast<double>(std::max(1L, tier.face_work));
     std::printf("[fv-lts] face updates: global %ld vs tiered %ld (%.2fx); "
                 "base substeps %ld vs %ld\n",
-                glob.face_work, tier.face_work, ratio,
-                glob.substeps, tier.substeps);
-    EXPECT_GT(ratio, 1.5)
-        << "tiering did not reduce face work on a 40x graded reach";
+                glob.face_work, tier.face_work, ratio, glob.substeps, tier.substeps);
+    EXPECT_GT(ratio, 1.5) << "tiering did not reduce face work on a 40x graded reach";
+}
+
+// Exercise both coarse batches above the default worksharing threshold and
+// small fine-tier batches. UF reads its pre-tier gradient snapshot; no cell
+// may observe another cell's partially published update.
+TEST(FvLts, DueCellThreadsPreserveStateAndScheduleBits) {
+#ifndef _OPENMP
+    GTEST_SKIP() << "requires OpenMP";
+#else
+    if (omp_get_thread_limit() < 2)
+        GTEST_SKIP() << "requires at least two workers";
+    /** @cond */
+    struct RestoreThreads {
+        int count = omp_get_max_threads();
+        int dynamic = omp_get_dynamic();
+        /**
+         * @brief Restore the calling OpenMP task's saved thread-count and dynamic-team settings.
+         *
+         * Calls omp_set_num_threads(count) and omp_set_dynamic(dynamic) from captured values at scope exit.
+         * Does not terminate workers or synchronize concurrent tests; the surrounding test owns the OpenMP
+         * configuration interval.
+         */
+        ~RestoreThreads() {
+            omp_set_num_threads(count);
+            omp_set_dynamic(dynamic);
+        }
+    } restore;
+    /** @endcond */
+    omp_set_dynamic(0);
+    constexpr int n = 8192;
+    constexpr int advances = 8;
+    for (int uf : {0, 1}) {
+        std::vector<std::vector<double>> reference;
+        std::vector<openswmm::fv::INetworkSolver::RunStats> stats;
+        for (int nt : {1, 2, 4}) {
+            if (nt > omp_get_thread_limit())
+                continue;
+            omp_set_num_threads(nt);
+            int actual = 0;
+#pragma omp parallel
+            {
+#pragma omp single
+                actual = omp_get_num_threads();
+            }
+            ASSERT_EQ(actual, nt);
+            auto ch = makeGradedChannel(
+                rectOpen(10.0, 20.0), n,
+                [](int c) { return (c >= n / 2 - 8 && c < n / 2 + 8) ? 0.5 : 10.0; },
+                [](double) { return 0.0; }, 0.013);
+            for (int c = 0; c < n; ++c)
+                ch.state.cell_a[static_cast<std::size_t>(c)] = c < n / 2 ? 20.0 : 10.0;
+            auto opts = defaultOptions();
+            opts.lts = true;
+            opts.unsteady_friction = uf;
+            openswmm::fv::ExplicitFvSolver solver;
+            solver.initialize(ch.mesh, ch.state, opts);
+            openswmm::fv::FvStepForcing forcing;
+            forcing.n_nodes = 0;
+            for (int step = 0; step < advances; ++step) {
+                solver.advance(4.0 * step, 4.0 * (step + 1), forcing);
+                int field = 0;
+                for (const auto* values : {&ch.state.cell_a, &ch.state.cell_q, &ch.state.cell_h}) {
+                    if (nt == 1)
+                        reference.push_back(*values);
+                    else {
+                        const auto& expected = reference[3 * step + field];
+                        ASSERT_EQ(values->size(), expected.size());
+                        EXPECT_EQ(std::memcmp(values->data(), expected.data(),
+                                              values->size() * sizeof(double)),
+                                  0)
+                            << "threads " << nt << " UF " << uf << " advance " << step << " field "
+                            << field;
+                    }
+                    ++field;
+                }
+                const auto current = solver.run_stats();
+                if (nt == 1)
+                    stats.push_back(current);
+                else {
+                    EXPECT_EQ(current.nsteps, stats[step].nsteps);
+                    EXPECT_EQ(current.nflux, stats[step].nflux);
+                    EXPECT_EQ(current.n_macro_cycles, stats[step].n_macro_cycles);
+                    EXPECT_EQ(current.n_macro_rejected, stats[step].n_macro_rejected);
+                    EXPECT_EQ(std::memcmp(current.tier_cells, stats[step].tier_cells,
+                                          sizeof(current.tier_cells)),
+                              0);
+                }
+            }
+            EXPECT_GT(solver.run_stats().n_macro_cycles, 0);
+            solver.finalize();
+        }
+    }
+#endif
 }

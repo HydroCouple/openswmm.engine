@@ -34,7 +34,9 @@ Running a simulation
 
    solver
    error_handling
+   native_safety
    datetime
+   catalog
 
 Domain access
 =============
@@ -76,6 +78,25 @@ Pollutants, landuse, buildup/washoff, treatment.
 
    pollutants
    quality
+   initial_quality
+
+Transport processes
+===================
+
+Heat transport, water age, multi-species reactions, and
+process-component registration.
+
+.. toctree::
+   :maxdepth: 1
+
+   heat
+   water_age
+   reactions
+   process_components
+   transport
+   groundwater
+   surface_quality
+   binding_updates
 
 Outputs
 =======
@@ -87,6 +108,8 @@ balance, accumulated statistics.
    :maxdepth: 1
 
    output_reader
+   results
+   trace
    plotting
    hotstart
    massbalance
@@ -109,11 +132,12 @@ configure complex hydraulic infrastructure; spatial / CRS handling.
 2-D surface routing & data exchange
 ===================================
 
-Overlay a triangular mesh on the 1-D network and route the surface with a
-CVODE solver; persist results and observed data to a GeoPackage.
+Overlay a triangle/quad mesh on the 1-D network and route the surface with an
+explicit finite-volume solver; read saved HDF5 results through :doc:`results`.
 
 .. toctree::
    :maxdepth: 1
 
    2d
+   runtime_coupling
    geopackage

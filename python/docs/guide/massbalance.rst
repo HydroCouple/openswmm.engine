@@ -18,8 +18,8 @@ simulation. Reach the view via :attr:`Solver.mass_balance`:
             pass
 
         mb = s.mass_balance
-        print(mb.runoff_continuity_error)        # %
-        print(mb.routing_continuity_error)       # %
+        print(mb.runoff_continuity_error)        # fraction
+        print(mb.routing_continuity_error)       # fraction
 
 Reference: ``openswmm_massbalance.h``.
 
@@ -37,13 +37,13 @@ Continuity errors
      - Meaning
    * - ``runoff_continuity_error``
      - ``float``
-     - Runoff continuity error (%).
+     - Runoff continuity error (fraction).
    * - ``routing_continuity_error``
      - ``float``
-     - Flow routing continuity error (%).
+     - Flow routing continuity error (fraction).
    * - ``quality_continuity_error(pollutant)``
      - ``float``
-     - Per-pollutant quality continuity error (%); accepts id or index.
+     - Per-pollutant quality continuity error (fraction); accepts id or index.
 
 ----
 
@@ -115,3 +115,13 @@ See also
 * :doc:`output_reader` — read mass-balance data from a written ``.out``
   file without an active engine.
 * :doc:`error_handling`.
+
+Snapshot accounting
+===================
+
+The three ``MassBalance`` continuity-error accessors return fractions: 0.001
+means 0.1 percent. ``get_report_snapshot(solver)`` converts these to percentages
+in fields named ``continuity_error_pct`` and uses the current typed routing
+diagnostics. Its runoff record includes initial/final snow storage. Its routing
+record includes forcing inflow, coupling outflow and link-groundwater inflow.
+Forcing inflow is a subset of external inflow, so do not add those two totals.

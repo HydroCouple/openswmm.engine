@@ -1,6 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file Constants.hpp
- * @brief Global physical, numerical, and model constants for OpenSWMM Engine.
+ * @file      Constants.hpp
+ * @brief     Global physical, numerical, and model constants for OpenSWMM Engine.
  *
  * @details Consolidates all constants previously scattered across the engine
  *          into a single header. Organized by category:
@@ -15,9 +31,9 @@
  * @note Legacy reference: consts.h, enums.h
  * @ingroup engine_core
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_CONSTANTS_HPP
@@ -33,37 +49,37 @@ namespace constants {
 
 /// Gravitational acceleration (ft/s²).
 /// @see Legacy: GRAVITY in consts.h
-constexpr double GRAVITY       = 32.2;
+constexpr double GRAVITY = 32.2;
 
 /// sqrt(GRAVITY) — precomputed to avoid per-element std::sqrt in Froude calc.
-constexpr double SQRT_GRAVITY     = 5.67450438786;  // sqrt(32.2)
+constexpr double SQRT_GRAVITY = 5.67450438786; // sqrt(32.2)
 
 /// 1.0 / sqrt(GRAVITY) — multiply instead of divide in Froude computation.
-constexpr double INV_SQRT_GRAVITY = 0.17622692584;  // 1.0 / sqrt(32.2)
+constexpr double INV_SQRT_GRAVITY = 0.17622692584; // 1.0 / sqrt(32.2)
 
 /// Pi.
-constexpr double PI            = 3.141592654;
+constexpr double PI = 3.141592654;
 
 /// Manning's equation US customary unit factor (1.486).
 /// Q = (PHI/n) * A * R^(2/3) * S^(1/2) where PHI = 1.486 for US, 1.0 for SI.
 /// @see Legacy: PHI in consts.h
-constexpr double PHI           = 1.486;
+constexpr double PHI = 1.486;
 
 /// Manning's overland flow exponent (5/3).
 /// @see Legacy: MEXP in consts.h
-constexpr double MEXP          = 5.0 / 3.0;
+constexpr double MEXP = 5.0 / 3.0;
 
 /// Kinematic viscosity of water at 20°C (ft²/sec).
-constexpr double VISCOS        = 1.1e-5;
+constexpr double VISCOS = 1.1e-5;
 
 /// Seconds per day.
-constexpr double SEC_PER_DAY   = 86400.0;
+constexpr double SEC_PER_DAY = 86400.0;
 
 /// Feet per inch.
-constexpr double FT_PER_IN     = 1.0 / 12.0;
+constexpr double FT_PER_IN = 1.0 / 12.0;
 
 /// Inches per foot.
-constexpr double IN_PER_FT     = 12.0;
+constexpr double IN_PER_FT = 12.0;
 
 // ============================================================================
 // Numerical thresholds and tolerances
@@ -72,21 +88,28 @@ constexpr double IN_PER_FT     = 12.0;
 /// Minimum depth/area/flow threshold (ft or ft²).
 /// Values below this are treated as zero for numerical stability.
 /// @see Legacy: FUDGE in dynwave.c
-constexpr double FUDGE         = 0.0001;
+constexpr double FUDGE = 0.0001;
 
 /// Default minimum surface area (ft²) — approximately a 4-ft diameter manhole.
 /// @see Legacy: MIN_SURFAREA in consts.h
-constexpr double MIN_SURFAREA  = 12.566;  // 4*pi
+constexpr double MIN_SURFAREA = 12.566; // 4*pi
+
+/// Lateral-inflow floor (cfs): a node's external, dry-weather or groundwater
+/// inflow whose magnitude is below this is dropped to zero before it joins
+/// the node's lateral inflow.
+/// @see Legacy: FLOW_TOL in consts.h; routing.c addExternalInflows,
+///      addDryWeatherInflows, addGroundwaterInflows
+constexpr double FLOW_TOL = 0.00001;
 
 /// Minimum elevation drop for conduit slope computation (ft).
-constexpr double MIN_DELTA_Z   = 0.001;
+constexpr double MIN_DELTA_Z = 0.001;
 
 /// Tolerance for bounding state variables.
 /// @see Legacy: XTOL in gwater.c
-constexpr double XTOL          = 0.001;
+constexpr double XTOL = 0.001;
 
 /// Small positive number for underflow protection.
-constexpr double TINY          = 1.0e-6;
+constexpr double TINY = 1.0e-6;
 
 /// @brief Sentinel value for missing or invalid data.
 /// Used in getVariableValue() when a variable is out of range or not applicable.
@@ -98,33 +121,33 @@ static constexpr double MISSING = -1.0e10;
 
 /// Picard iteration under-relaxation factor.
 /// @see Legacy: OMEGA in dynwave.c
-constexpr double OMEGA         = 0.5;
+constexpr double OMEGA = 0.5;
 
 /// Default convergence tolerance for node depth change (ft).
 /// @see Legacy: HeadTol in globals.h
-constexpr double DEFAULT_HEAD_TOL  = 0.005;
+constexpr double DEFAULT_HEAD_TOL = 0.005;
 
 /// Default maximum Picard iterations per routing step.
 /// @see Legacy: MaxTrials in globals.h
-constexpr int    DEFAULT_MAX_TRIALS = 8;
+constexpr int DEFAULT_MAX_TRIALS = 8;
 
 /// Maximum conduit velocity (ft/s) — prevents numerical blowup.
 /// @see Legacy: MAXVELOCITY in dynwave.c
-constexpr double MAX_VELOCITY  = 50.0;
+constexpr double MAX_VELOCITY = 50.0;
 
 /// Absolute minimum routing timestep (s).
 /// @see Legacy: MINTIMESTEP in dynwave.c
-constexpr double MIN_TIMESTEP  = 0.001;
+constexpr double MIN_TIMESTEP = 0.001;
 
 /// EXTRAN surcharge crown cutoff fraction (depth/full_depth).
 /// Above this, the Preissmann slot or surcharge algorithm activates.
 constexpr double EXTRAN_CROWN_CUTOFF = 0.96;
 
 /// Preissmann slot crown cutoff fraction.
-constexpr double SLOT_CROWN_CUTOFF   = 0.985257;
+constexpr double SLOT_CROWN_CUTOFF = 0.985257;
 
 /// Preissmann slot width factor (slot_width = y_full * this factor).
-constexpr double SLOT_WIDTH_FACTOR   = 0.001;
+constexpr double SLOT_WIDTH_FACTOR = 0.001;
 
 // ============================================================================
 // ODE solver constants (RK45 Cash-Karp)
@@ -133,29 +156,29 @@ constexpr double SLOT_WIDTH_FACTOR   = 0.001;
 namespace ode {
 
 /// Maximum number of integration steps.
-constexpr int    MAX_STEPS     = 10000;
+constexpr int MAX_STEPS = 10000;
 
 /// Underflow protection for scaling.
-constexpr double ODE_TINY      = 1.0e-30;
+constexpr double ODE_TINY = 1.0e-30;
 
 /// Safety factor for step size adjustment.
-constexpr double SAFETY        = 0.9;
+constexpr double SAFETY = 0.9;
 
 /// Exponent for step increase.
-constexpr double PGROW         = -0.2;
+constexpr double PGROW = -0.2;
 
 /// Exponent for step decrease.
-constexpr double PSHRNK        = -0.25;
+constexpr double PSHRNK = -0.25;
 
 /// Error control threshold = (5/SAFETY)^(1/PGROW).
-constexpr double ERRCON        = 1.89e-4;
+constexpr double ERRCON = 1.89e-4;
 
 /// Groundwater ODE tolerance.
 /// @see Legacy: GWTOL in gwater.c
-constexpr double GWTOL         = 0.0001;
+constexpr double GWTOL = 0.0001;
 
 /// Runoff ODE tolerance.
-constexpr double ODETOL        = 0.0001;
+constexpr double ODETOL = 0.0001;
 
 } // namespace ode
 
@@ -171,35 +194,35 @@ constexpr double MIN_LINK_FLOW = 0.001;
 // ============================================================================
 
 /// Maximum alpha fraction for rectangular shapes.
-constexpr double RECT_ALFMAX   = 0.97;
+constexpr double RECT_ALFMAX = 0.97;
 
 /// Maximum alpha fraction for trapezoidal shapes.
-constexpr double TRAP_ALFMAX   = 0.98;
+constexpr double TRAP_ALFMAX = 0.98;
 
 /// Transect discretization table size.
-constexpr int    N_TRANSECT_TBL = 51;
+constexpr int N_TRANSECT_TBL = 51;
 
 /// Maximum number of cross-section shape types.
-constexpr int    MAX_SHAPES    = 26;
+constexpr int MAX_SHAPES = 26;
 
 // ============================================================================
 // Data structure constants
 // ============================================================================
 
 /// Number of flow classification bins.
-constexpr int    N_FLOW_CLASSES = 7;
+constexpr int N_FLOW_CLASSES = 7;
 
 /// Maximum past rain hours tracked per gage.
-constexpr int    MAX_PAST_RAIN = 48;
+constexpr int MAX_PAST_RAIN = 48;
 
 /// Number of time step histogram bins.
-constexpr int    N_TIME_BINS   = 5;
+constexpr int N_TIME_BINS = 5;
 
 /// Delphi-style date offset used by legacy datetime encoding.
 /// @see Legacy: DateDelta in datetime.c
 /// Needed for day-of-week computation: (floor(date) + DATE_DELTA) % 7
 /// gives 0=Sat with +1 → 1=Sun..7=Sat matching legacy datetime_dayOfWeek().
-constexpr int    DATE_DELTA    = 693594;
+constexpr int DATE_DELTA = 693594;
 
 } // namespace constants
 } // namespace openswmm

@@ -1,6 +1,6 @@
 /**
- * @file test_mathexpr.cpp
- * @brief Unit tests for the MathExpr parser and evaluator.
+ * @file      test_mathexpr.cpp
+ * @brief     Unit tests for the MathExpr parser and evaluator.
  *
  * @details Tests:
  *   - Parsing infix to postfix (shunting-yard)
@@ -13,6 +13,10 @@
  *
  * @see src/engine/math/MathExpr.hpp
  * @ingroup engine_math
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -108,8 +112,10 @@ TEST(MathExprEval, VariableLookup) {
     Expression expr;
     ASSERT_EQ(parse("x * 2 + y", expr), 0);
     double result = evaluate(expr, [](const std::string& name) {
-        if (name == "x") return 3.0;
-        if (name == "y") return 7.0;
+        if (name == "x")
+            return 3.0;
+        if (name == "y")
+            return 7.0;
         return 0.0;
     });
     EXPECT_DOUBLE_EQ(result, 13.0);
@@ -221,8 +227,10 @@ TEST(MathExprFast, BindVariables) {
 
     for (const auto& tok : expr.postfix) {
         if (tok.type == TokenType::VARIABLE) {
-            if (tok.var_name == "x") EXPECT_EQ(tok.var_idx, 0);
-            if (tok.var_name == "y") EXPECT_EQ(tok.var_idx, 1);
+            if (tok.var_name == "x")
+                EXPECT_EQ(tok.var_idx, 0);
+            if (tok.var_name == "y")
+                EXPECT_EQ(tok.var_idx, 1);
         }
     }
 }
@@ -251,15 +259,13 @@ TEST(MathExprFast, EvaluateFastGWExpression) {
     Expression expr;
     ASSERT_EQ(parse("0.001 * (HGW - HCB) ^ 2", expr), 0);
 
-    const char* gw_vars[] = {
-        "HGW", "HSW", "HCB", "HGS", "KS", "K",
-        "THETA", "PHI", "FI", "FU", "A"
-    };
+    const char* gw_vars[] = {"HGW",   "HSW", "HCB", "HGS", "KS", "K",
+                             "THETA", "PHI", "FI",  "FU",  "A"};
     bind_variables(expr, gw_vars, 11);
 
     double vars[11] = {};
-    vars[0] = 5.0;  // HGW
-    vars[2] = 2.0;  // HCB
+    vars[0] = 5.0; // HGW
+    vars[2] = 2.0; // HCB
     EXPECT_NEAR(evaluate_fast(expr, vars), 0.009, 1e-12);
 }
 
@@ -301,10 +307,14 @@ TEST(MathExprFast, ConsistencyWithEvaluate) {
 
     double r_fast = evaluate_fast(expr, vars);
     double r_std = evaluate(expr, [&](const std::string& name) {
-        if (name == "a") return 2.0;
-        if (name == "b") return 3.0;
-        if (name == "c") return 10.0;
-        if (name == "d") return 1.5;
+        if (name == "a")
+            return 2.0;
+        if (name == "b")
+            return 3.0;
+        if (name == "c")
+            return 10.0;
+        if (name == "d")
+            return 1.5;
         return 0.0;
     });
 
@@ -341,15 +351,13 @@ TEST(MathExprGW, DeepFlowExpression) {
     Expression expr;
     ASSERT_EQ(parse("0.0001 * HGW / HGS", expr), 0);
 
-    const char* gw_vars[] = {
-        "HGW", "HSW", "HCB", "HGS", "KS", "K",
-        "THETA", "PHI", "FI", "FU", "A"
-    };
+    const char* gw_vars[] = {"HGW",   "HSW", "HCB", "HGS", "KS", "K",
+                             "THETA", "PHI", "FI",  "FU",  "A"};
     bind_variables(expr, gw_vars, 11);
 
     double vars[11] = {};
-    vars[0] = 5.0;   // HGW
-    vars[3] = 10.0;  // HGS
+    vars[0] = 5.0;  // HGW
+    vars[3] = 10.0; // HGS
 
     EXPECT_NEAR(evaluate_fast(expr, vars), 0.0001 * 5.0 / 10.0, 1e-15);
 }
@@ -359,16 +367,14 @@ TEST(MathExprGW, LateralFlowWithExpAndStep) {
     ASSERT_EQ(parse("0.01 * step(HGW - HCB) * exp(-0.1 * (HGS - HGW))", expr), 0);
     EXPECT_TRUE(expr.valid);
 
-    const char* gw_vars[] = {
-        "HGW", "HSW", "HCB", "HGS", "KS", "K",
-        "THETA", "PHI", "FI", "FU", "A"
-    };
+    const char* gw_vars[] = {"HGW",   "HSW", "HCB", "HGS", "KS", "K",
+                             "THETA", "PHI", "FI",  "FU",  "A"};
     bind_variables(expr, gw_vars, 11);
 
     double vars[11] = {};
-    vars[0] = 5.0;   // HGW
-    vars[2] = 2.0;   // HCB
-    vars[3] = 10.0;  // HGS
+    vars[0] = 5.0;  // HGW
+    vars[2] = 2.0;  // HCB
+    vars[3] = 10.0; // HGS
 
     double expected = 0.01 * 1.0 * std::exp(-0.1 * (10.0 - 5.0));
     EXPECT_NEAR(evaluate_fast(expr, vars), expected, 1e-12);

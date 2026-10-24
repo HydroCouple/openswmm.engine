@@ -1,14 +1,31 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file ExternalContentReader.cpp
- * @brief Slice IO-8 — Part D content → SimulationContext slot hydration +
+ * @file      ExternalContentReader.cpp
+ * @brief     Slice IO-8 — Part D content → SimulationContext slot hydration +
  *        scratch-file materialisation.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #include "ExternalContentReader.hpp"
+#include "core/FileIO.hpp" // issue #7: UTF-8 paths on Windows
 #include "GpkgUtils.hpp"
 #include "formats/ClimateFormat.hpp"
 #include "formats/HotstartFormat.hpp"
@@ -45,29 +62,67 @@ using openswmm::FileMode;
 
 // Parse an ISO-8601 timestamp written by the writer ("YYYY-MM-DDTHH:MM:SSZ")
 // into an OADate value. Loose — we only support the writer's exact form.
+/**
+ * @brief Decode the writer's date/time text with permissive calendar scanning.
+ *
+ * Missing time fields default0 and trailing/mismatched suffixes are not rejected once three fields
+ * parse. Calendar validity follows datetime encoders; not a general ISO-8601 parser.
+ *
+ * @param[in] iso NULL or borrowed NUL-terminated YYYY-MM-DDTHH:MM:SSZ text; no timezone arithmetic.
+ * @return OADate from encoded date/time;0 for NULL or fewer than three parsed date fields.
+ */
 double isoToOaDate(const char* iso) {
-    if (!iso) return 0.0;
+    if (!iso)
+        return 0.0;
     int y = 0, mo = 0, d = 0, h = 0, mi = 0, s = 0;
-    if (std::sscanf(iso, "%d-%d-%dT%d:%d:%dZ",
-                     &y, &mo, &d, &h, &mi, &s) < 3)
+    if (std::sscanf(iso, "%d-%d-%dT%d:%d:%dZ", &y, &mo, &d, &h, &mi, &s) < 3)
         return 0.0;
     return datetime::encodeDate(y, mo, d) + datetime::encodeTime(h, mi, s);
 }
 
+/**
+ * @brief Request recursive UTF-8 scratch-directory creation while suppressing filesystem errors.
+ *
+ * Uses create_directories(error_code), ignoring its error and return. Later file writers determine
+ * whether materialization succeeded; no permissions or path-containment check.
+ *
+ * @param[in] dir Borrowed UTF-8 path; relative paths use process working directory.
+ */
 void ensureDir(const std::string& dir) {
     std::error_code ec;
-    fs::create_directories(dir, ec);
+    // utf8_path, not the implicit std::string -> fs::path conversion, which
+    // decodes in the ANSI code page on Windows (issue #7).
+    fs::create_directories(openswmm::io::utf8_path(dir), ec);
 }
 
-std::string joinScratch(const std::string& scratch_dir,
-                         const std::string& filename) {
-    fs::path p = fs::path(scratch_dir) / filename;
-    return p.string();
+/**
+ * @brief Join a UTF-8 scratch path and persisted filename with native path rules.
+ *
+ * Does not sanitize separators, parent traversal or absolute filenames; an absolute filename can
+ * replace scratch_dir. Does not create the file/directory.
+ *
+ * @param[in] scratch_dir Borrowed UTF-8 directory path.
+ * @param[in] filename Borrowed UTF-8 leaf/path; must be trusted or separately constrained when
+ *     containment is required.
+ * @return Owned UTF-8 joined path.
+ */
+std::string joinScratch(const std::string& scratch_dir, const std::string& filename) {
+    fs::path p = openswmm::io::utf8_path(scratch_dir) / openswmm::io::utf8_path(filename);
+    return openswmm::io::path_utf8(p);
 }
 
-void bindSlot(FilePathPair& slot,
-               const std::string& sentinel,
-               const std::string& scratch_path) {
+/**
+ * @brief Replace authoring provenance and effective path of one external-file slot.
+ *
+ * No resolution, existence check or file ownership transfer. String allocation can throw between
+ * assignments.
+ *
+ * @param[out] slot Borrowed slot; both strings are replaced and their old references invalidated.
+ * @param[in] sentinel Provenance token copied to original, normally a gpkg sentinel.
+ * @param[in] scratch_path Effective UTF-8 path/token copied to absolute, possibly with :column
+ *     suffix.
+ */
+void bindSlot(FilePathPair& slot, const std::string& sentinel, const std::string& scratch_path) {
     slot.original = sentinel;
     slot.absolute = scratch_path;
 }
@@ -76,221 +131,282 @@ void bindSlot(FilePathPair& slot,
 // Per-role materialise + hydrate
 // ============================================================================
 
-void hydrateTimeseries(sqlite3* db, SimulationContext& ctx,
-                       const std::string& sim, const std::string& scratch) {
+/**
+ * @brief Materialize imported series into scratch text files and bind their table slots.
+ *
+ * Selects imported_from_file series metadata, then all samples for each ID in ordinal order.
+ * Persisted source_filename is joined without path sanitization; caller must constrain it when
+ * containment matters. Duplicate metadata for an ID replaces earlier specifications in an unordered
+ * map. Copies raw values and OADate timestamps, creates missing TIMESERIES tables and appends
+ * optional :column to effective path. A materializer failure throws GpkgError; no rollback of
+ * earlier files/slots. Preparation/allocation can throw; step errors generally stop a query without
+ * separate reporting. Caller serializes access; no database/filesystem transaction or scratch
+ * cleanup.
+ *
+ * @param[in,out] db Borrowed open schema-compatible SQLite connection; all required Part D tables
+ *     must exist.
+ * @param[in,out] ctx Borrowed coherent model; registries must precede hydration; file slots are
+ *     changed incrementally.
+ * @param[in] sim Borrowed simulation key used to filter rows.
+ * @param[in] scratch Borrowed writable UTF-8 directory; existing target files can be
+ *     truncated/replaced.
+ */
+void hydrateTimeseries(sqlite3* db, SimulationContext& ctx, const std::string& sim,
+                       const std::string& scratch) {
     // Pull every series imported from file along with its original
     // source_filename so the scratch file has a recognisable name.
-    auto stmt = prepare(db,
-        "SELECT DISTINCT series_id, source_filename, source_column "
-        "FROM input_timeseries "
-        "WHERE simulation_id=? AND source='imported_from_file'");
+    auto stmt = prepare(db, "SELECT DISTINCT series_id, source_filename, source_column "
+                            "FROM input_timeseries "
+                            "WHERE simulation_id=? AND source='imported_from_file'");
     bind_text(stmt.get(), 1, sim);
 
-    struct Spec { std::string filename, column; };
+    struct Spec {
+        std::string filename, column;
+    };
     std::unordered_map<std::string, Spec> series_specs;
     while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
-        const char* sid = reinterpret_cast<const char*>(
-            sqlite3_column_text(stmt.get(), 0));
-        const char* fn  = reinterpret_cast<const char*>(
-            sqlite3_column_text(stmt.get(), 1));
-        const char* col = reinterpret_cast<const char*>(
-            sqlite3_column_text(stmt.get(), 2));
-        if (!sid) continue;
+        const char* sid = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 0));
+        const char* fn = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 1));
+        const char* col = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 2));
+        if (!sid)
+            continue;
         Spec s;
-        s.filename = fn  ? fn  : (std::string("ts_") + sid + ".dat");
-        s.column   = col ? col : "";
+        s.filename = fn ? fn : (std::string("ts_") + sid + ".dat");
+        s.column = col ? col : "";
         series_specs[sid] = std::move(s);
     }
 
     for (const auto& kv : series_specs) {
-        const std::string& sid  = kv.first;
-        const Spec&        spec = kv.second;
+        const std::string& sid = kv.first;
+        const Spec& spec = kv.second;
 
         // Load rows in ordinal order.
-        auto rs = prepare(db,
-            "SELECT timestamp, value FROM input_timeseries "
-            "WHERE simulation_id=? AND series_id=? "
-            "ORDER BY ordinal");
+        auto rs = prepare(db, "SELECT timestamp, value FROM input_timeseries "
+                              "WHERE simulation_id=? AND series_id=? "
+                              "ORDER BY ordinal");
         bind_text(rs.get(), 1, sim);
         bind_text(rs.get(), 2, sid);
 
         std::vector<formats::TimeseriesRow> rows;
         while (sqlite3_step(rs.get()) == SQLITE_ROW) {
             formats::TimeseriesRow r;
-            const char* ts = reinterpret_cast<const char*>(
-                sqlite3_column_text(rs.get(), 0));
+            const char* ts = reinterpret_cast<const char*>(sqlite3_column_text(rs.get(), 0));
             r.timestamp_oa = isoToOaDate(ts);
-            r.value        = sqlite3_column_double(rs.get(), 1);
+            r.value = sqlite3_column_double(rs.get(), 1);
             rows.push_back(r);
         }
 
         const std::string scratch_path = joinScratch(scratch, spec.filename);
         auto wr = formats::writeTimeseriesText(scratch_path, rows);
-        if (!wr.ok) throw GpkgError("timeseries materialise failed: " + wr.error);
+        if (!wr.ok)
+            throw GpkgError("timeseries materialise failed: " + wr.error);
 
         // Bind to the matching timeseries Table in ctx (create if absent).
         int t = ctx.find_timeseries(sid);
         if (t < 0) {
             t = ctx.tables.add(sid, TableType::TIMESERIES);
         }
-        std::string token = spec.column.empty()
-                              ? scratch_path
-                              : scratch_path + ":" + spec.column;
-        bindSlot(ctx.tables[t].file_path,
-                  "<gpkg:input_timeseries:" + sid + ">",
-                  token);
+        std::string token = spec.column.empty() ? scratch_path : scratch_path + ":" + spec.column;
+        bindSlot(ctx.tables[t].file_path, "<gpkg:input_timeseries:" + sid + ">", token);
     }
 }
 
-void hydrateRaingage(sqlite3* db, SimulationContext& ctx,
-                     const std::string& sim, const std::string& scratch) {
+/**
+ * @brief Materialize embedded gage observations and bind matching model-gage file slots.
+ *
+ * Orders samples by record_time, defaults NULL station to gage ID and emits raingage_ID.dat using
+ * retained rainfall units. Writes the file before checking model-gage existence, so unknown gages
+ * leave an unbound scratch file. Only file_path is changed; source type, filters and runtime
+ * rainfall state are not initialized. Preparation/allocation can throw; step errors generally stop
+ * a query without separate reporting. Caller serializes access; no database/filesystem transaction
+ * or scratch cleanup.
+ *
+ * @param[in,out] db Borrowed open schema-compatible SQLite connection; all required Part D tables
+ *     must exist.
+ * @param[in,out] ctx Borrowed coherent model; registries must precede hydration; file slots are
+ *     changed incrementally.
+ * @param[in] sim Borrowed simulation key used to filter rows.
+ * @param[in] scratch Borrowed writable UTF-8 directory; existing target files can be
+ *     truncated/replaced.
+ */
+void hydrateRaingage(sqlite3* db, SimulationContext& ctx, const std::string& sim,
+                     const std::string& scratch) {
     // Distinct gages with data rows.
-    auto stmt = prepare(db,
-        "SELECT DISTINCT gage_id FROM raingage_data WHERE simulation_id=?");
+    auto stmt = prepare(db, "SELECT DISTINCT gage_id FROM raingage_data WHERE simulation_id=?");
     bind_text(stmt.get(), 1, sim);
 
     std::vector<std::string> gages;
     while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
-        const char* g = reinterpret_cast<const char*>(
-            sqlite3_column_text(stmt.get(), 0));
-        if (g) gages.emplace_back(g);
+        const char* g = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 0));
+        if (g)
+            gages.emplace_back(g);
     }
 
     for (const auto& gid : gages) {
-        auto rs = prepare(db,
-            "SELECT record_time, rainfall_value, station_id "
-            "FROM raingage_data WHERE simulation_id=? AND gage_id=? "
-            "ORDER BY record_time");
+        auto rs = prepare(db, "SELECT record_time, rainfall_value, station_id "
+                              "FROM raingage_data WHERE simulation_id=? AND gage_id=? "
+                              "ORDER BY record_time");
         bind_text(rs.get(), 1, sim);
         bind_text(rs.get(), 2, gid);
 
         std::vector<formats::RaingageRow> rows;
         while (sqlite3_step(rs.get()) == SQLITE_ROW) {
             formats::RaingageRow r;
-            const char* ts = reinterpret_cast<const char*>(
-                sqlite3_column_text(rs.get(), 0));
+            const char* ts = reinterpret_cast<const char*>(sqlite3_column_text(rs.get(), 0));
             r.timestamp_oa = isoToOaDate(ts);
-            r.rainfall     = sqlite3_column_double(rs.get(), 1);
-            const char* st = reinterpret_cast<const char*>(
-                sqlite3_column_text(rs.get(), 2));
-            r.station_id   = st ? st : gid;
+            r.rainfall = sqlite3_column_double(rs.get(), 1);
+            const char* st = reinterpret_cast<const char*>(sqlite3_column_text(rs.get(), 2));
+            r.station_id = st ? st : gid;
             rows.push_back(r);
         }
 
-        const std::string scratch_path =
-            joinScratch(scratch, "raingage_" + gid + ".dat");
+        const std::string scratch_path = joinScratch(scratch, "raingage_" + gid + ".dat");
         auto wr = formats::writeRaingageStd(scratch_path, rows);
-        if (!wr.ok) throw GpkgError("raingage materialise failed: " + wr.error);
+        if (!wr.ok)
+            throw GpkgError("raingage materialise failed: " + wr.error);
 
         int g = ctx.gage_names.find(gid);
-        if (g < 0) continue;  // No matching gage in model — silently skip
+        if (g < 0)
+            continue; // No matching gage in model — silently skip
         if (static_cast<int>(ctx.gages.file_path.size()) <= g)
             ctx.gages.file_path.resize(static_cast<std::size_t>(g) + 1);
         bindSlot(ctx.gages.file_path[static_cast<std::size_t>(g)],
-                  "<gpkg:raingage_data:" + gid + ">",
-                  scratch_path);
+                 "<gpkg:raingage_data:" + gid + ">", scratch_path);
     }
 }
 
-void hydrateClimate(sqlite3* db, SimulationContext& ctx,
-                    const std::string& sim, const std::string& scratch) {
+/**
+ * @brief Materialize embedded climate rows as climate.csv and bind the temperature-file slot.
+ *
+ * No-op when no climate rows. Copies tmin/tmax, evaporation, wind, sky and humidity as stored
+ * without unit conversion; NULL numeric columns read as zero via SQLite. Orders dates lexically and
+ * uses the climate format writer. Does not select a climate source mode or load runtime climate
+ * state. Preparation/allocation can throw; step errors generally stop a query without separate
+ * reporting. Caller serializes access; no database/filesystem transaction or scratch cleanup.
+ *
+ * @param[in,out] db Borrowed open schema-compatible SQLite connection; all required Part D tables
+ *     must exist.
+ * @param[in,out] ctx Borrowed coherent model; registries must precede hydration; file slots are
+ *     changed incrementally.
+ * @param[in] sim Borrowed simulation key used to filter rows.
+ * @param[in] scratch Borrowed writable UTF-8 directory; existing target files can be
+ *     truncated/replaced.
+ */
+void hydrateClimate(sqlite3* db, SimulationContext& ctx, const std::string& sim,
+                    const std::string& scratch) {
     // Single climate file per simulation.
-    auto stmt = prepare(db,
-        "SELECT record_date, tmin, tmax, evaporation, "
-        "       wind_speed, sky_cover, humidity "
-        "FROM climate_data WHERE simulation_id=? ORDER BY record_date");
+    auto stmt = prepare(db, "SELECT record_date, tmin, tmax, evaporation, "
+                            "       wind_speed, sky_cover, humidity "
+                            "FROM climate_data WHERE simulation_id=? ORDER BY record_date");
     bind_text(stmt.get(), 1, sim);
 
     std::vector<formats::ClimateRow> rows;
     while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
         formats::ClimateRow r;
-        const char* d = reinterpret_cast<const char*>(
-            sqlite3_column_text(stmt.get(), 0));
-        r.record_date  = d ? d : "";
-        r.tmin         = sqlite3_column_double(stmt.get(), 1);
-        r.tmax         = sqlite3_column_double(stmt.get(), 2);
-        r.evaporation  = sqlite3_column_double(stmt.get(), 3);
-        r.wind_speed   = sqlite3_column_double(stmt.get(), 4);
-        r.sky_cover    = sqlite3_column_double(stmt.get(), 5);
-        r.humidity     = sqlite3_column_double(stmt.get(), 6);
+        const char* d = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 0));
+        r.record_date = d ? d : "";
+        r.tmin = sqlite3_column_double(stmt.get(), 1);
+        r.tmax = sqlite3_column_double(stmt.get(), 2);
+        r.evaporation = sqlite3_column_double(stmt.get(), 3);
+        r.wind_speed = sqlite3_column_double(stmt.get(), 4);
+        r.sky_cover = sqlite3_column_double(stmt.get(), 5);
+        r.humidity = sqlite3_column_double(stmt.get(), 6);
         rows.push_back(std::move(r));
     }
-    if (rows.empty()) return;
+    if (rows.empty())
+        return;
 
     const std::string scratch_path = joinScratch(scratch, "climate.csv");
     auto wr = formats::writeClimateCsv(scratch_path, rows);
-    if (!wr.ok) throw GpkgError("climate materialise failed: " + wr.error);
+    if (!wr.ok)
+        throw GpkgError("climate materialise failed: " + wr.error);
 
-    bindSlot(ctx.options.temp_file,
-              "<gpkg:climate_data>",
-              scratch_path);
+    bindSlot(ctx.options.temp_file, "<gpkg:climate_data>", scratch_path);
 }
 
-void hydrateRoutingInterface(sqlite3* db, SimulationContext& ctx,
-                              const std::string& sim,
-                              const std::string& scratch) {
+/**
+ * @brief Materialize embedded node routing-interface rows by role/direction and bind known slots.
+ *
+ * Builds sorted object/pollutant catalogues, labels all flow CFS and pollutants MG/L, and defaults
+ * missing pollutant samples0. Retained numeric values are not converted to these labels. Report
+ * step is0. RDII/INFLOWS/OUTFLOWS roles bind their path, with only RDII mode updated (SAVE exact
+ * else USE). Other roles still materialize files; subcatch/gage interfaces are not hydrated here.
+ * Multiple directions may overwrite the same role slot according to unordered query results.
+ * Preparation/allocation can throw; step errors generally stop a query without separate reporting.
+ * Caller serializes access; no database/filesystem transaction or scratch cleanup.
+ *
+ * @param[in,out] db Borrowed open schema-compatible SQLite connection; all required Part D tables
+ *     must exist.
+ * @param[in,out] ctx Borrowed coherent model; registries must precede hydration; file slots are
+ *     changed incrementally.
+ * @param[in] sim Borrowed simulation key used to filter rows.
+ * @param[in] scratch Borrowed writable UTF-8 directory; existing target files can be
+ *     truncated/replaced.
+ */
+void hydrateRoutingInterface(sqlite3* db, SimulationContext& ctx, const std::string& sim,
+                             const std::string& scratch) {
     // For each (role, direction) combination present in routing_interface_node,
     // assemble metadata + rows and materialise an interface text file.
     // Node-kind covers INFLOWS / OUTFLOWS / RDII.
-    auto roles = prepare(db,
-        "SELECT DISTINCT role, direction "
-        "FROM routing_interface_node WHERE simulation_id=?");
+    auto roles = prepare(db, "SELECT DISTINCT role, direction "
+                             "FROM routing_interface_node WHERE simulation_id=?");
     bind_text(roles.get(), 1, sim);
 
-    struct Combo { std::string role, dir; };
+    struct Combo {
+        std::string role, dir;
+    };
     std::vector<Combo> combos;
     while (sqlite3_step(roles.get()) == SQLITE_ROW) {
         Combo c;
-        const char* r = reinterpret_cast<const char*>(
-            sqlite3_column_text(roles.get(), 0));
-        const char* dr = reinterpret_cast<const char*>(
-            sqlite3_column_text(roles.get(), 1));
-        if (r)  c.role = r;
-        if (dr) c.dir  = dr;
+        const char* r = reinterpret_cast<const char*>(sqlite3_column_text(roles.get(), 0));
+        const char* dr = reinterpret_cast<const char*>(sqlite3_column_text(roles.get(), 1));
+        if (r)
+            c.role = r;
+        if (dr)
+            c.dir = dr;
         combos.push_back(std::move(c));
     }
 
     for (const auto& c : combos) {
         // Pollutant catalogue for this role/direction.
         formats::RoutingInterfaceMetadata meta;
-        meta.title           = "OpenSWMM " + c.role;
+        meta.title = "OpenSWMM " + c.role;
         meta.report_step_sec = 0;
-        meta.flow_units      = "CFS";
+        meta.flow_units = "CFS";
 
-        auto pstmt = prepare(db,
-            "SELECT DISTINCT pollutant_id FROM routing_interface_node_pollutants "
-            "WHERE simulation_id=? AND role=? AND direction=? "
-            "ORDER BY pollutant_id");
+        auto pstmt =
+            prepare(db, "SELECT DISTINCT pollutant_id FROM routing_interface_node_pollutants "
+                        "WHERE simulation_id=? AND role=? AND direction=? "
+                        "ORDER BY pollutant_id");
         bind_text(pstmt.get(), 1, sim);
         bind_text(pstmt.get(), 2, c.role);
         bind_text(pstmt.get(), 3, c.dir);
         while (sqlite3_step(pstmt.get()) == SQLITE_ROW) {
-            const char* p = reinterpret_cast<const char*>(
-                sqlite3_column_text(pstmt.get(), 0));
-            if (p) { meta.pollutant_ids.emplace_back(p);
-                     meta.pollutant_units.emplace_back("MG/L"); }
+            const char* p = reinterpret_cast<const char*>(sqlite3_column_text(pstmt.get(), 0));
+            if (p) {
+                meta.pollutant_ids.emplace_back(p);
+                meta.pollutant_units.emplace_back("MG/L");
+            }
         }
 
         // Object catalogue (node ids).
-        auto ostmt = prepare(db,
-            "SELECT DISTINCT node_id FROM routing_interface_node "
-            "WHERE simulation_id=? AND role=? AND direction=? "
-            "ORDER BY node_id");
+        auto ostmt = prepare(db, "SELECT DISTINCT node_id FROM routing_interface_node "
+                                 "WHERE simulation_id=? AND role=? AND direction=? "
+                                 "ORDER BY node_id");
         bind_text(ostmt.get(), 1, sim);
         bind_text(ostmt.get(), 2, c.role);
         bind_text(ostmt.get(), 3, c.dir);
         while (sqlite3_step(ostmt.get()) == SQLITE_ROW) {
-            const char* n = reinterpret_cast<const char*>(
-                sqlite3_column_text(ostmt.get(), 0));
-            if (n) meta.object_ids.emplace_back(n);
+            const char* n = reinterpret_cast<const char*>(sqlite3_column_text(ostmt.get(), 0));
+            if (n)
+                meta.object_ids.emplace_back(n);
         }
 
         // Data rows + pollutant child rows.
-        auto rstmt = prepare(db,
-            "SELECT node_id, record_time, flow_value "
-            "FROM routing_interface_node "
-            "WHERE simulation_id=? AND role=? AND direction=? "
-            "ORDER BY record_time, node_id");
+        auto rstmt = prepare(db, "SELECT node_id, record_time, flow_value "
+                                 "FROM routing_interface_node "
+                                 "WHERE simulation_id=? AND role=? AND direction=? "
+                                 "ORDER BY record_time, node_id");
         bind_text(rstmt.get(), 1, sim);
         bind_text(rstmt.get(), 2, c.role);
         bind_text(rstmt.get(), 3, c.dir);
@@ -298,61 +414,57 @@ void hydrateRoutingInterface(sqlite3* db, SimulationContext& ctx,
         std::vector<formats::RoutingInterfaceRow> rows;
         while (sqlite3_step(rstmt.get()) == SQLITE_ROW) {
             formats::RoutingInterfaceRow r;
-            const char* nid = reinterpret_cast<const char*>(
-                sqlite3_column_text(rstmt.get(), 0));
-            const char* ts  = reinterpret_cast<const char*>(
-                sqlite3_column_text(rstmt.get(), 1));
-            r.object_id    = nid ? nid : "";
+            const char* nid = reinterpret_cast<const char*>(sqlite3_column_text(rstmt.get(), 0));
+            const char* ts = reinterpret_cast<const char*>(sqlite3_column_text(rstmt.get(), 1));
+            r.object_id = nid ? nid : "";
             r.timestamp_oa = isoToOaDate(ts);
-            r.flow_value   = sqlite3_column_double(rstmt.get(), 2);
+            r.flow_value = sqlite3_column_double(rstmt.get(), 2);
 
             // Pollutant values in catalogue order.
             r.pollutant_values.resize(meta.pollutant_ids.size(), 0.0);
-            auto qstmt = prepare(db,
-                "SELECT pollutant_id, concentration "
-                "FROM routing_interface_node_pollutants "
-                "WHERE simulation_id=? AND role=? AND direction=? "
-                " AND node_id=? AND record_time=?");
+            auto qstmt = prepare(db, "SELECT pollutant_id, concentration "
+                                     "FROM routing_interface_node_pollutants "
+                                     "WHERE simulation_id=? AND role=? AND direction=? "
+                                     " AND node_id=? AND record_time=?");
             bind_text(qstmt.get(), 1, sim);
             bind_text(qstmt.get(), 2, c.role);
             bind_text(qstmt.get(), 3, c.dir);
             bind_text(qstmt.get(), 4, r.object_id);
             bind_text(qstmt.get(), 5, ts ? ts : "");
             while (sqlite3_step(qstmt.get()) == SQLITE_ROW) {
-                const char* pid = reinterpret_cast<const char*>(
-                    sqlite3_column_text(qstmt.get(), 0));
-                if (!pid) continue;
-                auto it = std::find(meta.pollutant_ids.begin(),
-                                     meta.pollutant_ids.end(),
-                                     std::string(pid));
+                const char* pid =
+                    reinterpret_cast<const char*>(sqlite3_column_text(qstmt.get(), 0));
+                if (!pid)
+                    continue;
+                auto it = std::find(meta.pollutant_ids.begin(), meta.pollutant_ids.end(),
+                                    std::string(pid));
                 if (it != meta.pollutant_ids.end()) {
-                    auto idx = static_cast<std::size_t>(
-                        it - meta.pollutant_ids.begin());
-                    r.pollutant_values[idx] =
-                        sqlite3_column_double(qstmt.get(), 1);
+                    auto idx = static_cast<std::size_t>(it - meta.pollutant_ids.begin());
+                    r.pollutant_values[idx] = sqlite3_column_double(qstmt.get(), 1);
                 }
             }
             rows.push_back(std::move(r));
         }
 
-        const std::string scratch_path = joinScratch(
-            scratch, "routing_" + c.role + "_" + c.dir + ".txt");
+        const std::string scratch_path =
+            joinScratch(scratch, "routing_" + c.role + "_" + c.dir + ".txt");
         auto wr = formats::writeRoutingInterfaceText(scratch_path, meta, rows);
         if (!wr.ok)
             throw GpkgError("routing interface materialise failed: " + wr.error);
 
         // Bind to the right ctx.files slot based on role + direction.
         FilePathPair* target = nullptr;
-        if      (c.role == "RDII")     target = &ctx.files.rdii_path;
-        else if (c.role == "INFLOWS")  target = &ctx.files.inflows_path;
-        else if (c.role == "OUTFLOWS") target = &ctx.files.outflows_path;
+        if (c.role == "RDII")
+            target = &ctx.files.rdii_path;
+        else if (c.role == "INFLOWS")
+            target = &ctx.files.inflows_path;
+        else if (c.role == "OUTFLOWS")
+            target = &ctx.files.outflows_path;
         if (target) {
-            bindSlot(*target,
-                      "<gpkg:routing_interface_node:" + c.role + ":" + c.dir + ">",
-                      scratch_path);
+            bindSlot(*target, "<gpkg:routing_interface_node:" + c.role + ":" + c.dir + ">",
+                     scratch_path);
             if (c.role == "RDII") {
-                ctx.files.rdii_mode = (c.dir == "SAVE") ? FileMode::SAVE
-                                                         : FileMode::USE;
+                ctx.files.rdii_mode = (c.dir == "SAVE") ? FileMode::SAVE : FileMode::USE;
             }
         }
     }
@@ -361,45 +473,99 @@ void hydrateRoutingInterface(sqlite3* db, SimulationContext& ctx,
     // schemas are in place, hydration is a future extension).
 }
 
-void hydrateHotstart(sqlite3* db, SimulationContext& ctx,
-                     const std::string& sim, const std::string& scratch) {
-    // Each row in hotstart_slots becomes one scratch HSF file.
-    auto stmt = prepare(db,
-        "SELECT slot_name, direction, save_datetime, format_version, "
-        "       flow_units, num_pollutants, status "
-        "FROM hotstart_slots WHERE simulation_id=? ORDER BY slot_name");
+/**
+ * @brief Materialize embedded legacy HSF slots or empty pending placeholders and bind file entries.
+ *
+ * Reads slots by name, probes newer metadata/HRT columns and defaults absent fields through SQLite.
+ * Reconstructs populated node/link snapshots in current registry order, skipping unknown state
+ * names and zero-filling missing records/concentrations. Raw runoff payload requires matching
+ * catchment count. Copies native legacy ft/cfs/ft3/state conventions and opaque runoff/tail bytes;
+ * unknown flow label defaults CFS. Format writer failures throw; pending placeholder open failure
+ * is ignored. Exact USE replaces the use path, every other direction appends a save entry with
+ * OADate time and requested save format. Does not restore live simulation state or validate all
+ * snapshot/model compatibility. Preparation/allocation can throw; step errors generally stop a
+ * query without separate reporting. Caller serializes access; no database/filesystem transaction or
+ * scratch cleanup.
+ *
+ * @param[in,out] db Borrowed open schema-compatible SQLite connection; all required Part D tables
+ *     must exist.
+ * @param[in,out] ctx Borrowed coherent model; registries must precede hydration; file slots are
+ *     changed incrementally.
+ * @param[in] sim Borrowed simulation key used to filter rows.
+ * @param[in] scratch Borrowed writable UTF-8 directory; existing target files can be
+ *     truncated/replaced.
+ */
+void hydrateHotstart(sqlite3* db, SimulationContext& ctx, const std::string& sim,
+                     const std::string& scratch) {
+    // Each row in hotstart_slots becomes one scratch HSF file. Files older
+    // than the SAVE HOTSTART format column read it as NULL (AUTO).
+    // Columns newer files carry; an older file reads them as NULL.
+    auto has_column = [&](const char* table, const char* column) {
+        bool has = false;
+        auto cols = prepare(db, std::string("PRAGMA table_info(") + table + ")");
+        while (sqlite3_step(cols.get()) == SQLITE_ROW)
+            has |= column_text(cols.get(), 1) == column;
+        return has;
+    };
+    auto col = [&](const char* column) {
+        return std::string(has_column("hotstart_slots", column) ? column : "NULL");
+    };
+    const bool has_hrt = has_column("hotstart_node_state", "hrt");
+    auto stmt = prepare(db, "SELECT slot_name, direction, save_datetime, format_version, "
+                            "       flow_units, num_pollutants, status, " +
+                                col("save_format") + ", " + col("num_subcatch") + ", " +
+                                col("num_landuses") + ", " + col("runoff_section") + ", " +
+                                col("tail_section") +
+                                " "
+                                "FROM hotstart_slots WHERE simulation_id=? ORDER BY slot_name");
     bind_text(stmt.get(), 1, sim);
 
     struct SlotMeta {
         std::string name, direction, flow_units, status;
         double save_datetime = 0.0;
-        int    format_version = 4;
-        int    num_pollutants = 0;
+        int format_version = 4;
+        int num_pollutants = 0;
+        HotstartFormat save_format = HotstartFormat::AUTO;
+        int num_subcatch = 0;
+        int num_landuses = 0;
+        std::string runoff_raw, tail_raw;
     };
     std::vector<SlotMeta> slots;
     while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
         SlotMeta s;
-        const char* n  = reinterpret_cast<const char*>(
-            sqlite3_column_text(stmt.get(), 0));
-        const char* dr = reinterpret_cast<const char*>(
-            sqlite3_column_text(stmt.get(), 1));
-        const char* fu = reinterpret_cast<const char*>(
-            sqlite3_column_text(stmt.get(), 4));
-        const char* st = reinterpret_cast<const char*>(
-            sqlite3_column_text(stmt.get(), 6));
-        s.name           = n  ? n  : "";
-        s.direction      = dr ? dr : "USE";
-        s.save_datetime  = sqlite3_column_double(stmt.get(), 2);
+        const char* n = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 0));
+        const char* dr = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 1));
+        const char* fu = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 4));
+        const char* st = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 6));
+        s.name = n ? n : "";
+        s.direction = dr ? dr : "USE";
+        s.save_datetime = sqlite3_column_double(stmt.get(), 2);
         s.format_version = sqlite3_column_int(stmt.get(), 3);
-        s.flow_units     = fu ? fu : "CFS";
+        s.flow_units = fu ? fu : "CFS";
         s.num_pollutants = sqlite3_column_int(stmt.get(), 5);
-        s.status         = st ? st : "pending";
+        s.status = st ? st : "pending";
+        const std::string sf = column_text(stmt.get(), 7);
+        if (sf == "LEGACY")
+            s.save_format = HotstartFormat::LEGACY;
+        else if (sf == "NATIVE")
+            s.save_format = HotstartFormat::NATIVE;
+        s.num_subcatch = sqlite3_column_int(stmt.get(), 8);
+        s.num_landuses = sqlite3_column_int(stmt.get(), 9);
+        auto bytes = [&](int c) {
+            const auto* p = static_cast<const char*>(sqlite3_column_blob(stmt.get(), c));
+            return p ? std::string(p, static_cast<std::size_t>(sqlite3_column_bytes(stmt.get(), c)))
+                     : std::string();
+        };
+        s.runoff_raw = bytes(10);
+        s.tail_raw = bytes(11);
         slots.push_back(std::move(s));
     }
 
-    static const char* sFlowUnits[] = {"CFS","GPM","MGD","CMS","LPS","MLD"};
+    static const char* sFlowUnits[] = {"CFS", "GPM", "MGD", "CMS", "LPS", "MLD"};
     auto flowUnitsIdx = [&](const std::string& u) -> int {
-        for (int i = 0; i < 6; ++i) if (u == sFlowUnits[i]) return i;
+        for (int i = 0; i < 6; ++i)
+            if (u == sFlowUnits[i])
+                return i;
         return 0;
     };
 
@@ -408,65 +574,79 @@ void hydrateHotstart(sqlite3* db, SimulationContext& ctx,
         // SAVE pending: bind the slot's path to a "pending" scratch file
         // placeholder (zero-byte) so callers see a non-empty token; the
         // engine output plugin will overwrite this after the run.
-        const std::string scratch_path =
-            joinScratch(scratch, s.name + ".hsf");
+        const std::string scratch_path = joinScratch(scratch, s.name + ".hsf");
 
         if (s.status != "populated") {
             // Create an empty placeholder so the path exists for the GUI.
-            std::FILE* fp = std::fopen(scratch_path.c_str(), "wb");
-            if (fp) std::fclose(fp);
+            std::FILE* fp = openswmm::io::fopen_utf8(scratch_path, "wb");
+            if (fp)
+                std::fclose(fp);
         } else {
             // Build a HotstartSnapshot from state rows.
             formats::HotstartSnapshot snap;
-            snap.header.file_stamp     = "SWMM5-HOTSTART4";
-            snap.header.file_version   = s.format_version;
-            snap.header.num_subcatch   = 0;
-            snap.header.num_landuses   = 0;
-            snap.header.num_pollut     = s.num_pollutants;
-            snap.header.flow_units     = flowUnitsIdx(s.flow_units);
+            snap.header.file_stamp = "SWMM5-HOTSTART4";
+            snap.header.file_version = s.format_version;
+            snap.header.num_subcatch = s.num_subcatch;
+            snap.header.num_landuses = s.num_landuses;
+            snap.runoff_raw = s.runoff_raw;
+            snap.tail_raw = s.tail_raw;
+            if (!snap.runoff_raw.empty() && s.num_subcatch != ctx.n_subcatches())
+                throw GpkgError("hotstart slot '" + s.name + "' holds " +
+                                std::to_string(s.num_subcatch) + " subcatchments, the model " +
+                                std::to_string(ctx.n_subcatches()));
+            snap.header.num_pollut = s.num_pollutants;
+            snap.header.flow_units = flowUnitsIdx(s.flow_units);
 
             // Node state — in ctx.node_names order so HSF index matches.
             const int n_nodes = ctx.node_names.size();
             snap.header.num_nodes = n_nodes;
             snap.node_state.resize(static_cast<std::size_t>(n_nodes));
-            for (auto& ns : snap.node_state)
-                ns.concentration.resize(static_cast<std::size_t>(
-                    s.num_pollutants));
+            for (std::size_t i = 0; i < snap.node_state.size(); ++i) {
+                auto& ns = snap.node_state[i];
+                ns.concentration.resize(static_cast<std::size_t>(s.num_pollutants));
+                // v4 files carry a residence time for every storage node.
+                ns.has_hrt = s.format_version >= 4 && i < ctx.nodes.type.size() &&
+                             ctx.nodes.type[i] == NodeType::STORAGE;
+            }
             {
-                auto ns = prepare(db,
-                    "SELECT node_id, depth, lateral_inflow, overflow "
-                    "FROM hotstart_node_state "
-                    "WHERE simulation_id=? AND slot_name=?");
+                auto ns =
+                    prepare(db, std::string("SELECT node_id, depth, lateral_inflow, overflow, ") +
+                                    (has_hrt ? "hrt " : "NULL ") +
+                                    "FROM hotstart_node_state "
+                                    "WHERE simulation_id=? AND slot_name=?");
                 bind_text(ns.get(), 1, sim);
                 bind_text(ns.get(), 2, s.name);
                 while (sqlite3_step(ns.get()) == SQLITE_ROW) {
-                    const char* nid = reinterpret_cast<const char*>(
-                        sqlite3_column_text(ns.get(), 0));
+                    const char* nid =
+                        reinterpret_cast<const char*>(sqlite3_column_text(ns.get(), 0));
                     int idx = ctx.node_names.find(nid ? nid : "");
-                    if (idx < 0 || idx >= n_nodes) continue;
+                    if (idx < 0 || idx >= n_nodes)
+                        continue;
                     auto& dst = snap.node_state[static_cast<std::size_t>(idx)];
-                    dst.depth          = sqlite3_column_double(ns.get(), 1);
+                    dst.depth = sqlite3_column_double(ns.get(), 1);
                     dst.lateral_inflow = sqlite3_column_double(ns.get(), 2);
-                    dst.overflow       = sqlite3_column_double(ns.get(), 3);
+                    dst.overflow = sqlite3_column_double(ns.get(), 3);
+                    dst.hrt = sqlite3_column_double(ns.get(), 4);
                 }
             }
             // Node pollutant state.
             if (s.num_pollutants > 0) {
-                auto ns = prepare(db,
-                    "SELECT node_id, pollutant_id, concentration "
-                    "FROM hotstart_node_pollutant_state "
-                    "WHERE simulation_id=? AND slot_name=?");
+                auto ns = prepare(db, "SELECT node_id, pollutant_id, concentration "
+                                      "FROM hotstart_node_pollutant_state "
+                                      "WHERE simulation_id=? AND slot_name=?");
                 bind_text(ns.get(), 1, sim);
                 bind_text(ns.get(), 2, s.name);
                 while (sqlite3_step(ns.get()) == SQLITE_ROW) {
-                    const char* nid = reinterpret_cast<const char*>(
-                        sqlite3_column_text(ns.get(), 0));
-                    const char* pid = reinterpret_cast<const char*>(
-                        sqlite3_column_text(ns.get(), 1));
+                    const char* nid =
+                        reinterpret_cast<const char*>(sqlite3_column_text(ns.get(), 0));
+                    const char* pid =
+                        reinterpret_cast<const char*>(sqlite3_column_text(ns.get(), 1));
                     int n_idx = ctx.node_names.find(nid ? nid : "");
                     int p_idx = ctx.pollutant_names.find(pid ? pid : "");
-                    if (n_idx < 0 || n_idx >= n_nodes) continue;
-                    if (p_idx < 0 || p_idx >= s.num_pollutants) continue;
+                    if (n_idx < 0 || n_idx >= n_nodes)
+                        continue;
+                    if (p_idx < 0 || p_idx >= s.num_pollutants)
+                        continue;
                     snap.node_state[static_cast<std::size_t>(n_idx)]
                         .concentration[static_cast<std::size_t>(p_idx)] =
                         sqlite3_column_double(ns.get(), 2);
@@ -478,48 +658,48 @@ void hydrateHotstart(sqlite3* db, SimulationContext& ctx,
             snap.header.num_links = n_links;
             snap.link_state.resize(static_cast<std::size_t>(n_links));
             for (auto& ls : snap.link_state)
-                ls.concentration.resize(static_cast<std::size_t>(
-                    s.num_pollutants));
+                ls.concentration.resize(static_cast<std::size_t>(s.num_pollutants));
             {
-                auto ls = prepare(db,
-                    "SELECT link_id, flow, depth, volume, setting, "
-                    "       target_setting, time_open, time_closed "
-                    "FROM hotstart_link_state "
-                    "WHERE simulation_id=? AND slot_name=?");
+                auto ls = prepare(db, "SELECT link_id, flow, depth, volume, setting, "
+                                      "       target_setting, time_open, time_closed "
+                                      "FROM hotstart_link_state "
+                                      "WHERE simulation_id=? AND slot_name=?");
                 bind_text(ls.get(), 1, sim);
                 bind_text(ls.get(), 2, s.name);
                 while (sqlite3_step(ls.get()) == SQLITE_ROW) {
-                    const char* lid = reinterpret_cast<const char*>(
-                        sqlite3_column_text(ls.get(), 0));
+                    const char* lid =
+                        reinterpret_cast<const char*>(sqlite3_column_text(ls.get(), 0));
                     int idx = ctx.link_names.find(lid ? lid : "");
-                    if (idx < 0 || idx >= n_links) continue;
+                    if (idx < 0 || idx >= n_links)
+                        continue;
                     auto& dst = snap.link_state[static_cast<std::size_t>(idx)];
-                    dst.flow           = sqlite3_column_double(ls.get(), 1);
-                    dst.depth          = sqlite3_column_double(ls.get(), 2);
-                    dst.volume         = sqlite3_column_double(ls.get(), 3);
-                    dst.setting        = sqlite3_column_double(ls.get(), 4);
+                    dst.flow = sqlite3_column_double(ls.get(), 1);
+                    dst.depth = sqlite3_column_double(ls.get(), 2);
+                    dst.volume = sqlite3_column_double(ls.get(), 3);
+                    dst.setting = sqlite3_column_double(ls.get(), 4);
                     dst.target_setting = sqlite3_column_double(ls.get(), 5);
-                    dst.time_open      = sqlite3_column_double(ls.get(), 6);
-                    dst.time_closed    = sqlite3_column_double(ls.get(), 7);
+                    dst.time_open = sqlite3_column_double(ls.get(), 6);
+                    dst.time_closed = sqlite3_column_double(ls.get(), 7);
                 }
             }
             // Link pollutant state.
             if (s.num_pollutants > 0) {
-                auto ls = prepare(db,
-                    "SELECT link_id, pollutant_id, concentration "
-                    "FROM hotstart_link_pollutant_state "
-                    "WHERE simulation_id=? AND slot_name=?");
+                auto ls = prepare(db, "SELECT link_id, pollutant_id, concentration "
+                                      "FROM hotstart_link_pollutant_state "
+                                      "WHERE simulation_id=? AND slot_name=?");
                 bind_text(ls.get(), 1, sim);
                 bind_text(ls.get(), 2, s.name);
                 while (sqlite3_step(ls.get()) == SQLITE_ROW) {
-                    const char* lid = reinterpret_cast<const char*>(
-                        sqlite3_column_text(ls.get(), 0));
-                    const char* pid = reinterpret_cast<const char*>(
-                        sqlite3_column_text(ls.get(), 1));
+                    const char* lid =
+                        reinterpret_cast<const char*>(sqlite3_column_text(ls.get(), 0));
+                    const char* pid =
+                        reinterpret_cast<const char*>(sqlite3_column_text(ls.get(), 1));
                     int l_idx = ctx.link_names.find(lid ? lid : "");
                     int p_idx = ctx.pollutant_names.find(pid ? pid : "");
-                    if (l_idx < 0 || l_idx >= n_links) continue;
-                    if (p_idx < 0 || p_idx >= s.num_pollutants) continue;
+                    if (l_idx < 0 || l_idx >= n_links)
+                        continue;
+                    if (p_idx < 0 || p_idx >= s.num_pollutants)
+                        continue;
                     snap.link_state[static_cast<std::size_t>(l_idx)]
                         .concentration[static_cast<std::size_t>(p_idx)] =
                         sqlite3_column_double(ls.get(), 2);
@@ -533,16 +713,14 @@ void hydrateHotstart(sqlite3* db, SimulationContext& ctx,
 
         // Bind to ctx.files slot.
         if (s.direction == "USE") {
-            bindSlot(ctx.files.hotstart_use_path,
-                      "<gpkg:hotstart_slots:" + s.name + ">",
-                      scratch_path);
+            bindSlot(ctx.files.hotstart_use_path, "<gpkg:hotstart_slots:" + s.name + ">",
+                     scratch_path);
         } else {
             openswmm::HotstartSaveEntry entry;
-            entry.path     = std::string{};
+            entry.path = std::string{};
             entry.datetime = s.save_datetime;
-            bindSlot(entry.path,
-                      "<gpkg:hotstart_slots:" + s.name + ">",
-                      scratch_path);
+            entry.format = s.save_format;
+            bindSlot(entry.path, "<gpkg:hotstart_slots:" + s.name + ">", scratch_path);
             ctx.files.hotstart_saves.push_back(std::move(entry));
             (void)save_slot_idx;
         }
@@ -556,30 +734,35 @@ void hydrateHotstart(sqlite3* db, SimulationContext& ctx,
 // ============================================================================
 
 std::string scratchDirFor(const std::string& gpkg_path) {
-    fs::path p(gpkg_path);
-    std::string stem = p.stem().string();
-    if (stem.empty()) stem = "gpkg";
+    // utf8_path/path_utf8, not fs::path(std::string)/.string(): the .gpkg path
+    // is UTF-8 and the narrow forms decode/encode in the ANSI code page, so a
+    // non-ASCII stem or parent came back mangled and the scratch dir landed
+    // somewhere else (issue #7).
+    const fs::path p = openswmm::io::utf8_path(gpkg_path);
+    std::string stem = openswmm::io::path_utf8(p.stem());
+    if (stem.empty())
+        stem = "gpkg";
     const std::string leaf = stem + ".scratch";
     // Emit a portable forward-slash path. fs::path::operator/ joins with the
     // native separator ('\\' on Windows), which would yield mixed separators
     // like "/tmp\\foo.scratch"; build the sibling path with '/' instead.
     const fs::path parent = p.parent_path();
-    if (parent.empty()) return leaf;
-    return parent.generic_string() + "/" + leaf;
+    if (parent.empty())
+        return leaf;
+    return openswmm::io::path_utf8(parent, /*generic=*/true) + "/" + leaf;
 }
 
-void read_external_content(sqlite3*               db,
-                            SimulationContext&     ctx,
-                            const std::string&     sim,
-                            const std::string&     scratch_dir) {
-    if (scratch_dir.empty()) return;
+void read_external_content(sqlite3* db, SimulationContext& ctx, const std::string& sim,
+                           const std::string& scratch_dir) {
+    if (scratch_dir.empty())
+        return;
     ensureDir(scratch_dir);
 
-    hydrateTimeseries        (db, ctx, sim, scratch_dir);
-    hydrateRaingage          (db, ctx, sim, scratch_dir);
-    hydrateClimate           (db, ctx, sim, scratch_dir);
-    hydrateRoutingInterface  (db, ctx, sim, scratch_dir);
-    hydrateHotstart          (db, ctx, sim, scratch_dir);
+    hydrateTimeseries(db, ctx, sim, scratch_dir);
+    hydrateRaingage(db, ctx, sim, scratch_dir);
+    hydrateClimate(db, ctx, sim, scratch_dir);
+    hydrateRoutingInterface(db, ctx, sim, scratch_dir);
+    hydrateHotstart(db, ctx, sim, scratch_dir);
 }
 
 } // namespace openswmm::gpkg

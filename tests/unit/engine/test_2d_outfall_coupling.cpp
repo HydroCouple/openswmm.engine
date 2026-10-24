@@ -1,6 +1,6 @@
 /**
- * @file test_2d_outfall_coupling.cpp
- * @brief End-to-end regression for two-way 1D↔2D OUTFALL coupling.
+ * @file      test_2d_outfall_coupling.cpp
+ * @brief     End-to-end regression for two-way 1D↔2D OUTFALL coupling.
  *
  * @details A terminal outfall's pipe discharge accumulates into the node's
  *          `inflow` accumulator (water arriving from the connecting conduit),
@@ -26,6 +26,10 @@
  *          are written to ./outfall_coupling_out/ (the test's working dir is the
  *          repo's tests/unit/engine/data), so a reviewer can inspect them — no
  *          temp files (project convention).
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -47,106 +51,139 @@ namespace fs = std::filesystem;
 
 namespace {
 
-/// A 1D junction fed by a steady 0.05 CMS inflow, draining through a circular
-/// conduit to a FREE outfall O1. O1 is coupled to vertex 0 of a flat 20×20 m,
-/// 2-triangle 2D patch with wall boundaries; the steady discharge ponds on the
-/// patch (gentle fill rate keeps the implicit 2D solver stable). All lengths in
-/// metres, flows in m³/s (CMS); the 2D solver is SI natively.
+/**
+ * @brief Construct the baseline SI outfall-to-surface deck.
+ *
+ * Coupling uses vertex zero with coefficient 0.7 and authored area 2.5 m2; no file writing, model
+ * validation or run occurs.
+ * @return Owned CMS/DYNWAVE half-hour deck with 0.05 m3/s inflow, 50 m pipe and two-triangle 20 m
+ *     square pan mapped at O1.
+ */
 std::string build_outfall_model() {
-    return
-        "[OPTIONS]\n"
-        "FLOW_UNITS           CMS\n"
-        "FLOW_ROUTING         DYNWAVE\n"
-        "START_DATE           01/01/2026\n"
-        "START_TIME           00:00:00\n"
-        "END_DATE             01/01/2026\n"
-        "END_TIME             00:30:00\n"
-        "REPORT_STEP          00:01:00\n"
-        "ROUTING_STEP         2\n"
-        "\n"
-        "[JUNCTIONS]\n"
-        ";;Name  Elev  MaxDepth  InitDepth  SurDepth  Aponded\n"
-        "J1      1.0   5.0       0          0         0\n"
-        "\n"
-        "[OUTFALLS]\n"
-        ";;Name  Elev  Type  Gated\n"
-        "O1      0.0   FREE  NO\n"
-        "\n"
-        "[CONDUITS]\n"
-        ";;Name  From  To  Length  Roughness  InOffset  OutOffset  InitFlow\n"
-        "C1      J1    O1  50.0    0.013      0         0          0\n"
-        "\n"
-        "[XSECTIONS]\n"
-        ";;Link  Shape     Geom1  Geom2  Geom3  Geom4  Barrels\n"
-        "C1      CIRCULAR  0.5    0      0      0      1\n"
-        "\n"
-        "[INFLOWS]\n"
-        ";;Node  Constituent  Tseries  Type  Mfactor  Sfactor  Baseline\n"
-        "J1      FLOW         \"\"       FLOW  1.0      1.0      0.05\n"
-        "\n"
-        "[2D_OPTIONS]\n"
-        "MAX_TIMESTEP     2\n"
-        "DRY_DEPTH        0.002\n"
-        "COUPLING_CD      0.7\n"
-        "REPORT_2D        NO\n"
-        "\n"
-        "[2D_VERTICES]\n"
-        ";;X      Y      Z\n"
-        " 0.0    0.0   0.0\n"   // v0 — coupled cell vertex
-        "20.0    0.0   0.0\n"   // v1
-        "20.0   20.0   0.0\n"   // v2
-        " 0.0   20.0   0.0\n"   // v3
-        "\n"
-        "[2D_TRIANGLES]\n"
-        ";;V1  V2  V3  MANNINGS_N\n"
-        "0     1   2   0.03\n"
-        "0     2   3   0.03\n"
-        "\n"
-        "[2D_VERTEX_NODE_MAP]\n"
-        ";;Vertex  Node  Cd   Area\n"
-        "0         O1    0.7  2.5\n";
+    return "[OPTIONS]\n"
+           "FLOW_UNITS           CMS\n"
+           "FLOW_ROUTING         DYNWAVE\n"
+           "START_DATE           01/01/2026\n"
+           "START_TIME           00:00:00\n"
+           "END_DATE             01/01/2026\n"
+           "END_TIME             00:30:00\n"
+           "REPORT_STEP          00:01:00\n"
+           "ROUTING_STEP         2\n"
+           "\n"
+           "[JUNCTIONS]\n"
+           ";;Name  Elev  MaxDepth  InitDepth  SurDepth  Aponded\n"
+           "J1      1.0   5.0       0          0         0\n"
+           "\n"
+           "[OUTFALLS]\n"
+           ";;Name  Elev  Type  Gated\n"
+           "O1      0.0   FREE  NO\n"
+           "\n"
+           "[CONDUITS]\n"
+           ";;Name  From  To  Length  Roughness  InOffset  OutOffset  InitFlow\n"
+           "C1      J1    O1  50.0    0.013      0         0          0\n"
+           "\n"
+           "[XSECTIONS]\n"
+           ";;Link  Shape     Geom1  Geom2  Geom3  Geom4  Barrels\n"
+           "C1      CIRCULAR  0.5    0      0      0      1\n"
+           "\n"
+           "[INFLOWS]\n"
+           ";;Node  Constituent  Tseries  Type  Mfactor  Sfactor  Baseline\n"
+           "J1      FLOW         \"\"       FLOW  1.0      1.0      0.05\n"
+           "\n"
+           "[2D_OPTIONS]\n"
+           "MAX_TIMESTEP     2\n"
+           "DRY_DEPTH        0.002\n"
+           "COUPLING_CD      0.7\n"
+           "REPORT_2D        NO\n"
+           "\n"
+           "[2D_VERTICES]\n"
+           ";;X      Y      Z\n"
+           " 0.0    0.0   0.0\n" // v0 — coupled cell vertex
+           "20.0    0.0   0.0\n" // v1
+           "20.0   20.0   0.0\n" // v2
+           " 0.0   20.0   0.0\n" // v3
+           "\n"
+           "[2D_TRIANGLES]\n"
+           ";;V1  V2  V3  MANNINGS_N\n"
+           "0     1   2   0.03\n"
+           "0     2   3   0.03\n"
+           "\n"
+           "[2D_VERTEX_NODE_MAP]\n"
+           ";;Vertex  Node  Cd   Area\n"
+           "0         O1    0.7  2.5\n";
 }
 
 struct RunResult {
-    bool   ok = false;
-    int    n_tri = 0;
-    double peak_depth = 0.0;     // max per-cell 2D depth over the run (m)
-    double cont_2d = 0.0;        // 2D surface continuity error (fraction)
-    double cont_routing = 0.0;   // 1D routing continuity error (fraction)
-    double outfall_in = 0.0;     // 2D ledger: 1D→2D outfall discharge (m³)
-    double outfall_out = 0.0;    // 2D ledger: 2D→pipe withdrawal (m³, ~0 here)
+    bool ok = false;
+    std::vector<std::string> warnings;
+    int n_tri = 0;
+    double peak_depth = 0.0;   // max per-cell 2D depth over the run (m)
+    double cont_2d = 0.0;      // 2D surface continuity error (fraction)
+    double cont_routing = 0.0; // 1D routing continuity error (fraction)
+    double outfall_in = 0.0;   // 2D ledger: 1D→2D outfall discharge (m³)
+    double outfall_out = 0.0;  // 2D ledger: 2D→pipe withdrawal (m³, ~0 here)
 };
 
-RunResult run_outfall_model(const fs::path& dir) {
+/**
+ * @brief Run a retained outfall fixture and collect peak depth and continuity ledgers.
+ *
+ * Owns/destroys engine and loops without a guard. Samples positive-time peak depth meters, copies
+ * warnings after initialization, then reads dimensionless continuity fractions and outfall exchange
+ * volumes m3. Write/getter/end/report/close statuses are unchecked; terminal-step peak may not be
+ * sampled. Files remain for review.
+ *
+ * @param[in] dir Existing writable artifact directory; this helper does not create it.
+ * @param[in] model Complete model text, default build_outfall_model; overwrites fixed
+ *     outfall_coupling artifacts.
+ * @return Owned result; ok=false on open/init/inactive/start refusal, otherwise true even after a
+ *     step error.
+ */
+RunResult run_outfall_model(const fs::path& dir, const std::string& model = build_outfall_model()) {
     RunResult r;
     const fs::path inp = dir / "outfall_coupling.inp";
     const fs::path rpt = dir / "outfall_coupling.rpt";
     const fs::path out = dir / "outfall_coupling.out";
-    { std::ofstream f(inp); f << build_outfall_model(); }
+    {
+        std::ofstream f(inp);
+        f << model;
+    }
 
     SWMM_Engine eng = swmm_engine_create();
-    if (swmm_engine_open(eng, inp.string().c_str(), rpt.string().c_str(),
-                         out.string().c_str(), nullptr) != SWMM_OK) {
-        swmm_engine_destroy(eng); return r;
+    if (swmm_engine_open(eng, inp.string().c_str(), rpt.string().c_str(), out.string().c_str(),
+                         nullptr) != SWMM_OK) {
+        swmm_engine_destroy(eng);
+        return r;
     }
     if (swmm_engine_initialize(eng) != SWMM_OK) {
-        swmm_engine_close(eng); swmm_engine_destroy(eng); return r;
+        swmm_engine_close(eng);
+        swmm_engine_destroy(eng);
+        return r;
     }
+    for (int i = 0; i < swmm_get_warning_count(eng); ++i)
+        r.warnings.emplace_back(swmm_get_warning_at(eng, i));
     int active = 0;
     swmm_2d_is_active(eng, &active);
-    if (!active) { swmm_engine_close(eng); swmm_engine_destroy(eng); return r; }
+    if (!active) {
+        swmm_engine_close(eng);
+        swmm_engine_destroy(eng);
+        return r;
+    }
     swmm_2d_triangle_count(eng, &r.n_tri);
 
     if (swmm_engine_start(eng, 1) != SWMM_OK) {
-        swmm_engine_close(eng); swmm_engine_destroy(eng); return r;
+        swmm_engine_close(eng);
+        swmm_engine_destroy(eng);
+        return r;
     }
 
     std::vector<double> depths(static_cast<std::size_t>(r.n_tri));
     double elapsed = 0.0;
     while (true) {
-        if (swmm_engine_step(eng, &elapsed) != SWMM_OK || elapsed <= 0.0) break;
+        if (swmm_engine_step(eng, &elapsed) != SWMM_OK || elapsed <= 0.0)
+            break;
         if (swmm_2d_get_depths_bulk(eng, depths.data()) == SWMM_OK) {
-            for (double d : depths) r.peak_depth = std::max(r.peak_depth, d);
+            for (double d : depths)
+                r.peak_depth = std::max(r.peak_depth, d);
         }
     }
 
@@ -155,10 +192,10 @@ RunResult run_outfall_model(const fs::path& dir) {
     swmm_get_routing_continuity_error(eng, &r.cont_routing);
 
     // 2D ledger terms (outfall_in proves the discharge actually reached 2D).
-    double init_s = 0, final_s = 0, rain = 0, c12 = 0, c21 = 0, ofin = 0,
-           ofout = 0, bin = 0, bout = 0, evap = 0;
-    swmm_2d_get_mass_balance(eng, &init_s, &final_s, &rain, &c12, &c21, &ofin,
-                             &ofout, &bin, &bout, &evap);
+    double init_s = 0, final_s = 0, rain = 0, c12 = 0, c21 = 0, ofin = 0, ofout = 0, bin = 0,
+           bout = 0, evap = 0;
+    swmm_2d_get_mass_balance(eng, &init_s, &final_s, &rain, &c12, &c21, &ofin, &ofout, &bin, &bout,
+                             &evap);
     r.outfall_in = ofin;
     r.outfall_out = ofout;
 
@@ -174,12 +211,67 @@ RunResult run_outfall_model(const fs::path& dir) {
 class OutfallCoupling2DTest : public ::testing::Test {
 protected:
     fs::path dir_;
+    /**
+     * @brief Create the reviewable outfall_coupling_out artifact directory.
+     *
+     * Sets dir_ relative to the test working directory and creates missing directories with the
+     * throwing filesystem overload. Existing files are retained; no engine or input file is created
+     * here.
+     */
     void SetUp() override {
         // User-visible output dir (working dir is tests/unit/engine/data).
         dir_ = fs::path("outfall_coupling_out");
         fs::create_directories(dir_);
     }
 };
+
+// Disconnected outfalls may remain in imported models and auto-generated maps.
+// Ignore all of their coupling rows, with one named warning per node, without
+// diluting a valid outfall's donor reservation or changing its hydraulic run.
+TEST_F(OutfallCoupling2DTest, DisconnectedOutfallMappingsWarnOnceAndDoNotChangeValidExchange) {
+    const auto baseline = run_outfall_model(dir_);
+    ASSERT_TRUE(baseline.ok);
+    for (const std::string mapping : {"vertex", "cell", "both", "only_disconnected"}) {
+        SCOPED_TRACE(mapping);
+        auto model = build_outfall_model();
+        const auto section = model.find("[OUTFALLS]\n") + std::string("[OUTFALLS]\n").size();
+        model.insert(section, "UNCONNECTED 0 FREE NO\n");
+        if (mapping == "vertex" || mapping == "both")
+            model += "1 UNCONNECTED 0.65 1\n2 UNCONNECTED 0.65 1\n";
+        if (mapping == "cell" || mapping == "both")
+            model += "[2D_TRIANGLE_NODE_MAP]\n0 UNCONNECTED 0.65 1\n";
+        if (mapping == "only_disconnected") {
+            const auto row = model.find("0         O1    0.7  2.5");
+            ASSERT_NE(row, std::string::npos);
+            model.replace(row, std::string("0         O1    0.7  2.5").size(),
+                          "0 UNCONNECTED 0.65 1");
+        }
+        const auto case_dir = dir_ / ("disconnected_" + mapping);
+        fs::create_directories(case_dir);
+        const auto result = run_outfall_model(case_dir, model);
+        ASSERT_TRUE(result.ok) << "disconnected coupling must not abort initialization/run";
+        ASSERT_EQ(result.n_tri, baseline.n_tri);
+        int warnings = 0;
+        for (const auto& warning : result.warnings) {
+            if (warning.find("2D coupling ignored for outfall 'UNCONNECTED'") == std::string::npos)
+                continue;
+            ++warnings;
+            EXPECT_NE(warning.find("no incident hydraulic link"), std::string::npos);
+        }
+        EXPECT_EQ(warnings, 1);
+        if (mapping == "only_disconnected") {
+            EXPECT_DOUBLE_EQ(result.peak_depth, 0.0);
+            EXPECT_DOUBLE_EQ(result.outfall_in, 0.0);
+            EXPECT_DOUBLE_EQ(result.outfall_out, 0.0);
+        } else {
+            EXPECT_DOUBLE_EQ(result.peak_depth, baseline.peak_depth);
+            EXPECT_DOUBLE_EQ(result.outfall_in, baseline.outfall_in);
+            EXPECT_DOUBLE_EQ(result.outfall_out, baseline.outfall_out);
+            EXPECT_DOUBLE_EQ(result.cont_2d, baseline.cont_2d);
+            EXPECT_DOUBLE_EQ(result.cont_routing, baseline.cont_routing);
+        }
+    }
+}
 
 // The bug regression: a coupled outfall's pipe discharge must reach the 2D mesh.
 // Pre-fix (read of nodes.outflow≈0) leaves the mesh dry and outfall_in at 0.
@@ -190,13 +282,12 @@ TEST_F(OutfallCoupling2DTest, OutfallDischargeReaches2DAndContinuityCloses) {
     ASSERT_EQ(r.n_tri, 2);
 
     // (1) The discharge wetted the 2D mesh. Pre-fix: ~0.
-    EXPECT_GT(r.peak_depth, 0.1)
-        << "outfall discharge did not reach the 2D mesh (peak depth "
-        << r.peak_depth << " m) — the transferOutfallDischarges bug is back";
+    EXPECT_GT(r.peak_depth, 0.1) << "outfall discharge did not reach the 2D mesh (peak depth "
+                                 << r.peak_depth
+                                 << " m) — the transferOutfallDischarges bug is back";
 
     // (2) The 2D ledger recorded the discharge under outfall_in. Pre-fix: ~0.
-    EXPECT_GT(r.outfall_in, 0.0)
-        << "2D mass balance recorded no outfall inflow";
+    EXPECT_GT(r.outfall_in, 0.0) << "2D mass balance recorded no outfall inflow";
 
     // Pure discharge run: no surface→pipe withdrawal expected.
     EXPECT_NEAR(r.outfall_out, 0.0, 1e-6 * std::max(r.outfall_in, 1.0))
@@ -204,8 +295,7 @@ TEST_F(OutfallCoupling2DTest, OutfallDischargeReaches2DAndContinuityCloses) {
 
     // (3) Both continuity ledgers close. The new outfall_in/outfall_out terms +
     //     the legacy-faithful 1D backflow booking keep each side conservative.
-    EXPECT_LT(std::abs(r.cont_2d), 0.05)
-        << "2D surface continuity error too large: " << r.cont_2d;
+    EXPECT_LT(std::abs(r.cont_2d), 0.05) << "2D surface continuity error too large: " << r.cont_2d;
     EXPECT_LT(std::abs(r.cont_routing), 0.05)
         << "1D routing continuity error too large: " << r.cont_routing;
 
@@ -243,118 +333,156 @@ TEST_F(OutfallCoupling2DTest, OutfallDischargeReaches2DAndContinuityCloses) {
 // it (free discharge when dry), so once the patch drains the outfall frees and
 // J1 empties. A two-phase inflow wets the patch, then stops so it drains; the
 // NORMAL_FLOW outflow edges let the ponded water leave the domain.
+/**
+ * @brief Construct the elevated-pan transient buried-outfall regression deck.
+ *
+ * Builds text only; the model must still be written, opened and run to exercise dry-film tailwater
+ * release.
+ * @return Owned one-hour CMS model with the mapped pan bed at 3 m, a ramped 0.05 m3/s initial
+ *     inflow and later shutoff.
+ */
 std::string build_buried_outfall_model() {
-    return
-        "[OPTIONS]\n"
-        "FLOW_UNITS           CMS\n"
-        "FLOW_ROUTING         DYNWAVE\n"
-        "START_DATE           01/01/2026\n"
-        "START_TIME           00:00:00\n"
-        "END_DATE             01/01/2026\n"
-        "END_TIME             01:00:00\n"
-        "REPORT_STEP          00:01:00\n"
-        "ROUTING_STEP         2\n"
-        "\n"
-        "[JUNCTIONS]\n"
-        ";;Name  Elev  MaxDepth  InitDepth  SurDepth  Aponded\n"
-        "J1      1.0   5.0       0          0         0\n"
-        "\n"
-        "[OUTFALLS]\n"
-        ";;Name  Elev  Type  Gated\n"
-        "O1      0.0   FREE  NO\n"
-        "\n"
-        "[CONDUITS]\n"
-        ";;Name  From  To  Length  Roughness  InOffset  OutOffset  InitFlow\n"
-        "C1      J1    O1  50.0    0.013      0         0          0\n"
-        "\n"
-        "[XSECTIONS]\n"
-        ";;Link  Shape     Geom1  Geom2  Geom3  Geom4  Barrels\n"
-        "C1      CIRCULAR  0.5    0      0      0      1\n"
-        "\n"
-        "[INFLOWS]\n"
-        ";;Node  Constituent  Tseries  Type  Mfactor  Sfactor  Baseline\n"
-        "J1      FLOW         IN_TS    FLOW  1.0      1.0\n"
-        "\n"
-        "[TIMESERIES]\n"
-        ";;Name  Time   Value      (0.05 CMS for 10 min, then off so the patch drains)\n"
-        "IN_TS   0:00   0.05\n"
-        "IN_TS   0:10   0.05\n"
-        "IN_TS   0:11   0.0\n"
-        "IN_TS   1:00   0.0\n"
-        "\n"
-        "[2D_OPTIONS]\n"
-        "MAX_TIMESTEP     2\n"
-        "DRY_DEPTH        0.002\n"
-        "COUPLING_CD      0.7\n"
-        "REPORT_2D        NO\n"
-        "\n"
-        "[2D_VERTICES]\n"
-        ";;X      Y      Z   (flat patch elevated 3 m above the outfall invert)\n"
-        " 0.0    0.0   3.0\n"   // v0 — coupled cell vertex (bed_z = 3 m > z_inv = 0)
-        "20.0    0.0   3.0\n"   // v1
-        "20.0   20.0   3.0\n"   // v2
-        " 0.0   20.0   3.0\n"   // v3
-        "\n"
-        "[2D_TRIANGLES]\n"
-        ";;V1  V2  V3  MANNINGS_N\n"
-        "0     1   2   0.03\n"   // T0
-        "0     2   3   0.03\n"   // T1
-        "\n"
-        "[2D_BOUNDARY_CONDITIONS]\n"
-        ";;TRI  EDGE  TYPE         SLOPE   (open edges away from v0 so the patch drains)\n"
-        "0      0     NORMAL_FLOW  0.05\n"   // T0 edge0 = v1-v2 (right, x=20)
-        "1      0     NORMAL_FLOW  0.05\n"   // T1 edge0 = v2-v3 (top,   y=20)
-        "\n"
-        "[2D_VERTEX_NODE_MAP]\n"
-        ";;Vertex  Node  Cd   Area\n"
-        "0         O1    0.7  2.5\n";
+    return "[OPTIONS]\n"
+           "FLOW_UNITS           CMS\n"
+           "FLOW_ROUTING         DYNWAVE\n"
+           "START_DATE           01/01/2026\n"
+           "START_TIME           00:00:00\n"
+           "END_DATE             01/01/2026\n"
+           "END_TIME             01:00:00\n"
+           "REPORT_STEP          00:01:00\n"
+           "ROUTING_STEP         2\n"
+           "\n"
+           "[JUNCTIONS]\n"
+           ";;Name  Elev  MaxDepth  InitDepth  SurDepth  Aponded\n"
+           "J1      1.0   5.0       0          0         0\n"
+           "\n"
+           "[OUTFALLS]\n"
+           ";;Name  Elev  Type  Gated\n"
+           "O1      0.0   FREE  NO\n"
+           "\n"
+           "[CONDUITS]\n"
+           ";;Name  From  To  Length  Roughness  InOffset  OutOffset  InitFlow\n"
+           "C1      J1    O1  50.0    0.013      0         0          0\n"
+           "\n"
+           "[XSECTIONS]\n"
+           ";;Link  Shape     Geom1  Geom2  Geom3  Geom4  Barrels\n"
+           "C1      CIRCULAR  0.5    0      0      0      1\n"
+           "\n"
+           "[INFLOWS]\n"
+           ";;Node  Constituent  Tseries  Type  Mfactor  Sfactor  Baseline\n"
+           "J1      FLOW         IN_TS    FLOW  1.0      1.0\n"
+           "\n"
+           "[TIMESERIES]\n"
+           ";;Name  Time   Value      (0.05 CMS for 10 min, then off so the patch drains)\n"
+           "IN_TS   0:00   0.05\n"
+           "IN_TS   0:10   0.05\n"
+           "IN_TS   0:11   0.0\n"
+           "IN_TS   1:00   0.0\n"
+           "\n"
+           "[2D_OPTIONS]\n"
+           "MAX_TIMESTEP     2\n"
+           "DRY_DEPTH        0.002\n"
+           "COUPLING_CD      0.7\n"
+           "REPORT_2D        NO\n"
+           "\n"
+           "[2D_VERTICES]\n"
+           ";;X      Y      Z   (flat patch elevated 3 m above the outfall invert)\n"
+           " 0.0    0.0   3.0\n" // v0 — coupled cell vertex (bed_z = 3 m > z_inv = 0)
+           "20.0    0.0   3.0\n" // v1
+           "20.0   20.0   3.0\n" // v2
+           " 0.0   20.0   3.0\n" // v3
+           "\n"
+           "[2D_TRIANGLES]\n"
+           ";;V1  V2  V3  MANNINGS_N\n"
+           "0     1   2   0.03\n" // T0
+           "0     2   3   0.03\n" // T1
+           "\n"
+           "[2D_BOUNDARY_CONDITIONS]\n"
+           ";;TRI  EDGE  TYPE         SLOPE   (open edges away from v0 so the patch drains)\n"
+           "0      0     NORMAL_FLOW  0.05\n" // T0 edge0 = v1-v2 (right, x=20)
+           "1      0     NORMAL_FLOW  0.05\n" // T1 edge0 = v2-v3 (top,   y=20)
+           "\n"
+           "[2D_VERTEX_NODE_MAP]\n"
+           ";;Vertex  Node  Cd   Area\n"
+           "0         O1    0.7  2.5\n";
 }
 
 struct BuriedRunResult {
-    bool   ok = false;
-    double peak_depth = 0.0;        // max per-cell 2D depth over the run (m)
-    double final_j1_depth = 0.0;    // upstream junction depth at the last step (m)
-    double final_o1_depth = 0.0;    // outfall node depth at the last step (m)
-    double final_cell_depth = 0.0;  // coupled-cell 2D depth at the last step (m)
+    bool ok = false;
+    double peak_depth = 0.0;       // max per-cell 2D depth over the run (m)
+    double final_j1_depth = 0.0;   // upstream junction depth at the last step (m)
+    double final_o1_depth = 0.0;   // outfall node depth at the last step (m)
+    double final_cell_depth = 0.0; // coupled-cell 2D depth at the last step (m)
     double cont_2d = 0.0;
     double cont_routing = 0.0;
 };
 
+/**
+ * @brief Run the buried-outfall regression and snapshot final depths.
+ *
+ * Requires a nonempty active triangle mesh and J1/O1. Steps without a guard, remembers
+ * triangle-zero depth after positive successful calls, then gets final J1/O1 project depths (meters
+ * for this CMS deck). Owns/destroys the engine; stream/getter/end/report/close failures are not
+ * separately surfaced and artifacts remain.
+ *
+ * @param[in] dir Existing writable artifact directory for overwritten fixed buried_outfall
+ *     .inp/.rpt/.out files.
+ * @return Owned peak/final depth meters and continuity fractions; ok=false on setup/lookup refusal,
+ *     otherwise true even after a step error.
+ */
 BuriedRunResult run_buried_outfall_model(const fs::path& dir) {
     BuriedRunResult r;
     const fs::path inp = dir / "buried_outfall.inp";
     const fs::path rpt = dir / "buried_outfall.rpt";
     const fs::path out = dir / "buried_outfall.out";
-    { std::ofstream f(inp); f << build_buried_outfall_model(); }
+    {
+        std::ofstream f(inp);
+        f << build_buried_outfall_model();
+    }
 
     SWMM_Engine eng = swmm_engine_create();
-    if (swmm_engine_open(eng, inp.string().c_str(), rpt.string().c_str(),
-                         out.string().c_str(), nullptr) != SWMM_OK) {
-        swmm_engine_destroy(eng); return r;
+    if (swmm_engine_open(eng, inp.string().c_str(), rpt.string().c_str(), out.string().c_str(),
+                         nullptr) != SWMM_OK) {
+        swmm_engine_destroy(eng);
+        return r;
     }
     if (swmm_engine_initialize(eng) != SWMM_OK) {
-        swmm_engine_close(eng); swmm_engine_destroy(eng); return r;
+        swmm_engine_close(eng);
+        swmm_engine_destroy(eng);
+        return r;
     }
     int active = 0;
     swmm_2d_is_active(eng, &active);
-    if (!active) { swmm_engine_close(eng); swmm_engine_destroy(eng); return r; }
+    if (!active) {
+        swmm_engine_close(eng);
+        swmm_engine_destroy(eng);
+        return r;
+    }
     int n_tri = 0;
     swmm_2d_triangle_count(eng, &n_tri);
     const int j1 = swmm_node_index(eng, "J1");
     const int o1 = swmm_node_index(eng, "O1");
-    if (j1 < 0 || o1 < 0) { swmm_engine_close(eng); swmm_engine_destroy(eng); return r; }
+    if (j1 < 0 || o1 < 0) {
+        swmm_engine_close(eng);
+        swmm_engine_destroy(eng);
+        return r;
+    }
 
     if (swmm_engine_start(eng, 1) != SWMM_OK) {
-        swmm_engine_close(eng); swmm_engine_destroy(eng); return r;
+        swmm_engine_close(eng);
+        swmm_engine_destroy(eng);
+        return r;
     }
 
     std::vector<double> depths(static_cast<std::size_t>(n_tri));
     double elapsed = 0.0;
     while (true) {
-        if (swmm_engine_step(eng, &elapsed) != SWMM_OK || elapsed <= 0.0) break;
+        if (swmm_engine_step(eng, &elapsed) != SWMM_OK || elapsed <= 0.0)
+            break;
         if (swmm_2d_get_depths_bulk(eng, depths.data()) == SWMM_OK) {
-            for (double d : depths) r.peak_depth = std::max(r.peak_depth, d);
-            r.final_cell_depth = depths[0];  // T0 contains coupled vertex v0
+            for (double d : depths)
+                r.peak_depth = std::max(r.peak_depth, d);
+            r.final_cell_depth = depths[0]; // T0 contains coupled vertex v0
         }
     }
     swmm_node_get_depth(eng, j1, &r.final_j1_depth);
@@ -380,8 +508,7 @@ TEST_F(OutfallCoupling2DTest, BuriedOutfallFreesAndJunctionDrainsWhenSurfaceDrie
 
     // (1) The storm wetted the patch above the dry threshold.
     EXPECT_GT(r.peak_depth, 0.002)
-        << "outfall discharge never wetted the patch (peak depth "
-        << r.peak_depth << " m)";
+        << "outfall discharge never wetted the patch (peak depth " << r.peak_depth << " m)";
 
     // (2) After the inflow stops the patch drains to a near-dry film.
     EXPECT_LT(r.final_cell_depth, 0.05)
@@ -391,17 +518,16 @@ TEST_F(OutfallCoupling2DTest, BuriedOutfallFreesAndJunctionDrainsWhenSurfaceDrie
     // (3) THE BUG: with the surface dry the outfall must use free discharge,
     //     NOT the phantom ~3 m bed tailwater, so the upstream junction drains.
     //     Pre-fix J1 is pinned at ~2 m (head 3 m − invert 1 m).
-    constexpr double bed_above_invert = 3.0;  // bed_z (3 m) − z_inv (0 m)
+    constexpr double bed_above_invert = 3.0; // bed_z (3 m) − z_inv (0 m)
     EXPECT_LT(r.final_j1_depth, 0.5)
         << "upstream junction did not drain (J1 depth " << r.final_j1_depth
         << " m) — the outfall is pinned by a phantom dry-film tailwater";
     EXPECT_LT(r.final_o1_depth, 0.5 * bed_above_invert)
-        << "outfall stage pinned near bed elevation (O1 depth "
-        << r.final_o1_depth << " m) instead of free discharge";
+        << "outfall stage pinned near bed elevation (O1 depth " << r.final_o1_depth
+        << " m) instead of free discharge";
 
     // (4) Both continuity ledgers still close.
-    EXPECT_LT(std::abs(r.cont_2d), 0.05)
-        << "2D surface continuity error too large: " << r.cont_2d;
+    EXPECT_LT(std::abs(r.cont_2d), 0.05) << "2D surface continuity error too large: " << r.cont_2d;
     EXPECT_LT(std::abs(r.cont_routing), 0.05)
         << "1D routing continuity error too large: " << r.cont_routing;
 
@@ -435,61 +561,62 @@ TEST_F(OutfallCoupling2DTest, BuriedOutfallFreesAndJunctionDrainsWhenSurfaceDrie
 TEST_F(OutfallCoupling2DTest, CarvedOutfallVertexStaysDryOnDryMesh) {
     const fs::path inp = dir_ / "carved_outfall.inp";
     const fs::path rpt = dir_ / "carved_outfall.rpt";
-    { std::ofstream f(inp); f <<
-        "[OPTIONS]\n"
-        "FLOW_UNITS           CMS\n"
-        "FLOW_ROUTING         DYNWAVE\n"
-        "START_DATE           01/01/2026\n"
-        "START_TIME           00:00:00\n"
-        "END_DATE             01/01/2026\n"
-        "END_TIME             00:10:00\n"
-        "REPORT_STEP          00:01:00\n"
-        "ROUTING_STEP         2\n"
-        "\n"
-        "[JUNCTIONS]\n"
-        ";;Name  Elev  MaxDepth  InitDepth  SurDepth  Aponded\n"
-        "J1      1.0   5.0       0          0         0\n"
-        "\n"
-        "[OUTFALLS]\n"
-        ";;Name  Elev  Type  Gated\n"
-        "O1      0.0   FREE  NO\n"
-        "\n"
-        "[CONDUITS]\n"
-        ";;Name  From  To  Length  Roughness  InOffset  OutOffset  InitFlow\n"
-        "C1      J1    O1  50.0    0.013      0         0          0\n"
-        "\n"
-        "[XSECTIONS]\n"
-        ";;Link  Shape     Geom1  Geom2  Geom3  Geom4  Barrels\n"
-        "C1      CIRCULAR  0.5    0      0      0      1\n"
-        "\n"
-        "[2D_OPTIONS]\n"
-        "MAX_TIMESTEP     2\n"
-        "DRY_DEPTH        0.002\n"
-        "COUPLING_CD      0.7\n"
-        "REPORT_2D        NO\n"
-        "\n"
-        // v0 is the outfall vertex, carved 2 m below the surrounding terrain
-        // (mimics a GUI mesh that stamps the pipe invert into the vertex).
-        "[2D_VERTICES]\n"
-        ";;X      Y      Z\n"
-        " 0.0    0.0   0.0\n"
-        "20.0    0.0   2.0\n"
-        "20.0   20.0   2.0\n"
-        " 0.0   20.0   2.0\n"
-        "\n"
-        "[2D_TRIANGLES]\n"
-        ";;V1  V2  V3  MANNINGS_N\n"
-        "0     1   2   0.03\n"
-        "0     2   3   0.03\n"
-        "\n"
-        "[2D_VERTEX_NODE_MAP]\n"
-        ";;Vertex  Node  Cd   Area\n"
-        "0         O1    0.7  2.5\n";
+    {
+        std::ofstream f(inp);
+        f << "[OPTIONS]\n"
+             "FLOW_UNITS           CMS\n"
+             "FLOW_ROUTING         DYNWAVE\n"
+             "START_DATE           01/01/2026\n"
+             "START_TIME           00:00:00\n"
+             "END_DATE             01/01/2026\n"
+             "END_TIME             00:10:00\n"
+             "REPORT_STEP          00:01:00\n"
+             "ROUTING_STEP         2\n"
+             "\n"
+             "[JUNCTIONS]\n"
+             ";;Name  Elev  MaxDepth  InitDepth  SurDepth  Aponded\n"
+             "J1      1.0   5.0       0          0         0\n"
+             "\n"
+             "[OUTFALLS]\n"
+             ";;Name  Elev  Type  Gated\n"
+             "O1      0.0   FREE  NO\n"
+             "\n"
+             "[CONDUITS]\n"
+             ";;Name  From  To  Length  Roughness  InOffset  OutOffset  InitFlow\n"
+             "C1      J1    O1  50.0    0.013      0         0          0\n"
+             "\n"
+             "[XSECTIONS]\n"
+             ";;Link  Shape     Geom1  Geom2  Geom3  Geom4  Barrels\n"
+             "C1      CIRCULAR  0.5    0      0      0      1\n"
+             "\n"
+             "[2D_OPTIONS]\n"
+             "MAX_TIMESTEP     2\n"
+             "DRY_DEPTH        0.002\n"
+             "COUPLING_CD      0.7\n"
+             "REPORT_2D        NO\n"
+             "\n"
+             // v0 is the outfall vertex, carved 2 m below the surrounding terrain
+             // (mimics a GUI mesh that stamps the pipe invert into the vertex).
+             "[2D_VERTICES]\n"
+             ";;X      Y      Z\n"
+             " 0.0    0.0   0.0\n"
+             "20.0    0.0   2.0\n"
+             "20.0   20.0   2.0\n"
+             " 0.0   20.0   2.0\n"
+             "\n"
+             "[2D_TRIANGLES]\n"
+             ";;V1  V2  V3  MANNINGS_N\n"
+             "0     1   2   0.03\n"
+             "0     2   3   0.03\n"
+             "\n"
+             "[2D_VERTEX_NODE_MAP]\n"
+             ";;Vertex  Node  Cd   Area\n"
+             "0         O1    0.7  2.5\n";
     }
 
     SWMM_Engine eng = swmm_engine_create();
-    ASSERT_EQ(swmm_engine_open(eng, inp.string().c_str(), rpt.string().c_str(),
-                               nullptr, nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(eng, inp.string().c_str(), rpt.string().c_str(), nullptr, nullptr),
+              SWMM_OK);
     ASSERT_EQ(swmm_engine_initialize(eng), SWMM_OK);
     int active = 0;
     swmm_2d_is_active(eng, &active);
@@ -508,24 +635,185 @@ TEST_F(OutfallCoupling2DTest, CarvedOutfallVertexStaysDryOnDryMesh) {
     }
     swmm_engine_end(eng);
 
-    double init_s = 0, final_s = 0, rain = 0, c12 = 0, c21 = 0, ofin = 0,
-           ofout = 0, bin = 0, bout = 0, evap = 0;
-    swmm_2d_get_mass_balance(eng, &init_s, &final_s, &rain, &c12, &c21, &ofin,
-                             &ofout, &bin, &bout, &evap);
+    double init_s = 0, final_s = 0, rain = 0, c12 = 0, c21 = 0, ofin = 0, ofout = 0, bin = 0,
+           bout = 0, evap = 0;
+    swmm_2d_get_mass_balance(eng, &init_s, &final_s, &rain, &c12, &c21, &ofin, &ofout, &bin, &bout,
+                             &evap);
     swmm_engine_close(eng);
     swmm_engine_destroy(eng);
 
     // THE BUG: with zero water anywhere, the outfall stage must stay at its
     // free (dry) condition. Pre-fix it is pinned at the phantom bed-relief
     // tailwater (~1.33 m here) for the entire run.
-    EXPECT_LT(max_o1_depth, 0.02)
-        << "outfall depth " << max_o1_depth << " m on a bone-dry model — "
-        << "phantom tailwater from the carved coupling vertex";
+    EXPECT_LT(max_o1_depth, 0.02) << "outfall depth " << max_o1_depth << " m on a bone-dry model — "
+                                  << "phantom tailwater from the carved coupling vertex";
 
     // No exchange in either direction, and the (empty) surface must not have
     // been drawn negative by phantom backflow.
     EXPECT_NEAR(ofin, 0.0, 1e-6);
     EXPECT_NEAR(ofout, 0.0, 1e-6);
-    EXPECT_GE(final_s, -1e-6)
-        << "2D storage went negative on a dry mesh (withdrawal from nothing)";
+    EXPECT_GE(final_s, -1e-6) << "2D storage went negative on a dry mesh (withdrawal from nothing)";
+}
+
+// Surface reservations are checked independently of the 1D hydraulic law.
+#include "2d/coupling/OutfallExchange.hpp"
+#include "2d/mesh/MeshBuilder.hpp"
+#include "2d/mesh/VertexReconstruction.hpp"
+#include "2d/solver/ExplicitInertialSolver.hpp"
+#include "hydraulics/SurfaceExchange.hpp"
+
+TEST(OutfallExchangeBudget, UnevenDonorsOverlappingOutfallsAndParallelLinks) {
+    using namespace openswmm;
+    using namespace openswmm::twoD;
+    for (int threads : {1, 4}) {
+        MeshData m;
+        m.resize_vertices(5);
+        m.vx = {0, 1, 0, -1, 0};
+        m.vy = {0, 0, 1, 0, -1};
+        m.resize_triangles(2);
+        m.set_triangle(0, 0, 1, 2);
+        m.set_triangle(1, 0, 3, 4);
+        buildMeshTopology(m);
+        buildVertexStencils(m);
+        SurfaceStateData s;
+        s.resize(2, 5);
+        s.volume = {.1, 1.};
+        s.transport.resize(1, 2, 0);
+        s.transport.cell_mass = {.2, 2.};
+        SolverOptions2D o;
+        o.num_threads = threads;
+        o.max_timestep = 1;
+        SimulationContext ctx;
+        ctx.nodes.resize(3);
+        ctx.links.resize(3);
+        for (int j = 0; j < 3; ++j) {
+            ctx.node_names.add("N" + std::to_string(j));
+            ctx.link_names.add("L" + std::to_string(j));
+        }
+        ctx.links.node1 = {2, 2, 2};
+        ctx.links.node2 = {0, 0, 1};
+        CouplingPoint a{};
+        a.vertex_idx = 0;
+        a.cell_idx = 0;
+        a.node_idx = 0;
+        a.is_outfall = true;
+        auto b = a;
+        b.node_idx = 1;
+        std::vector<CouplingPoint> points{a, b};
+        ctx.mass_balance_2d.init_storage = ctx.mass_balance_2d.final_storage = 1.1;
+        OutfallExchange exchange;
+        exchange.initialize(m, points, ctx);
+        const double ft3 = .3048 * .3048 * .3048;
+        o.flow_1d_to_2d = ft3;
+        exchange.prepare(m, s, o, ctx, 1);
+        EXPECT_NEAR(ctx.surface_outfall_link_limit[0] * ft3, .275, 1e-14);
+        EXPECT_NEAR(ctx.surface_outfall_link_limit[1] * ft3, .55, 1e-14);
+        const double q0 = boundSurfaceOutfallFlow(ctx, 0, -1000);
+        const double q1 = boundSurfaceOutfallFlow(ctx, 1, -1000);
+        const double q2 = boundSurfaceOutfallFlow(ctx, 2, -1000);
+        ctx.nodes.outflow[0] = -q0 - q1;
+        ctx.nodes.outflow[1] = -q2;
+        EXPECT_DOUBLE_EQ(boundSurfaceOutfallFlow(ctx, 0, 1000), 1000);
+        std::swap(ctx.links.node1[0], ctx.links.node2[0]);
+        EXPECT_NEAR(boundSurfaceOutfallFlow(ctx, 0, 1000) * ft3, .275, 1e-14);
+        std::swap(ctx.links.node1[0], ctx.links.node2[0]);
+        o.flow_1d_to_2d = ft3;
+        std::vector<double> ledger(2, 0);
+        ASSERT_TRUE(exchange.apply(m, s, o, ctx, 1, ledger));
+        EXPECT_NEAR(ledger[0] + ledger[1], -1.1, 1e-14);
+        EXPECT_NEAR(s.volume[0] + s.volume[1], 0, 1e-14);
+        EXPECT_NEAR(s.transport.lost_coupling[0], 2.2, 1e-14);
+        EXPECT_GE(s.volume[0], 0);
+        EXPECT_GE(s.volume[1], 0);
+        exchange.prepare(m, s, o, ctx, 1);
+        EXPECT_NEAR(boundSurfaceOutfallFlow(ctx, 0, -1000), 0, 1e-14);
+        // Reverse direction refills the surface. The next reservation sees
+        // the actual refill, not an estimated or stale source rate.
+        ctx.nodes.outflow[0] = ctx.nodes.outflow[1] = 0;
+        ctx.nodes.inflow[0] = .4 / ft3;
+        std::vector<double> conc{3, 3, 3};
+        ASSERT_TRUE(exchange.apply(m, s, o, ctx, 1, ledger, &conc));
+        EXPECT_NEAR(s.volume[0] + s.volume[1], .4, 1e-14);
+        EXPECT_NEAR(s.transport.gained_coupling[0], 1.2, 1e-14);
+        EXPECT_NEAR(ctx.mass_balance_2d.outfall_out, 1.1, 1e-14);
+        EXPECT_NEAR(ctx.mass_balance_2d.outfall_in, .4, 1e-14);
+        EXPECT_NEAR(ctx.mass_balance_2d.final_storage, .4, 1e-14);
+        EXPECT_NEAR(ctx.mass_balance_2d.error(), 0, 1e-14);
+        exchange.prepare(m, s, o, ctx, 1);
+        EXPECT_NEAR(ctx.surface_outfall_link_limit[0] * ft3, .1, 1e-14);
+        // Surface fluxes/sinks only see water left after the accepted debit.
+        s.infil_rate = {1., 1.};
+        s.evap_rate = {1., 1.};
+        ExplicitInertialSolver solver;
+        solver.initialize(m, s, o);
+        solver.advance(0, 1);
+        const double removed = (s.infil_applied[0] + s.infil_applied[1]) * .5 + s.evap_loss_total;
+        EXPECT_NEAR(s.volume[0] + s.volume[1] + removed, .4, 1e-12);
+    }
+}
+
+TEST_F(OutfallCoupling2DTest, ReverseFlowClosesSurfaceLedgerWithBatchedSteps) {
+    for (const std::string routing : {"DYNWAVE", "FV"})
+        for (int sync : {0, 6})
+            for (bool pressure : {false, true}) {
+                if (pressure && routing != "FV")
+                    continue;
+                const auto tag = "reverse_" + routing + "_" + std::to_string(sync) +
+                                 (pressure ? "_pressure" : "");
+                const auto inp = dir_ / (tag + ".inp");
+                const auto rpt = dir_ / (tag + ".rpt");
+                // The outfall sits above the receiving storage. Uneven initial cell
+                // depths expose the former stencil-total cap followed by a different
+                // slope-weighted scatter. Two barrels also exercise aggregate limits.
+                std::ofstream f(inp);
+                f << "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING " << routing
+                  << "\nFV_PRESSURIZED_IMPLICIT " << (pressure ? "YES" : "NO")
+                  << "\nSTART_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
+                     "END_DATE 01/01/2026\nEND_TIME 00:01:00\nREPORT_STEP 00:00:10\n"
+                     "ROUTING_STEP 2\nVARIABLE_STEP 0\nTHREADS 1\n"
+                     "[STORAGE]\nJ -2 10 0 FUNCTIONAL 10 0 0\n"
+                     "[OUTFALLS]\nO 0 FREE NO\n"
+                     "[CONDUITS]\nC J O 5 0.013 0 0\n"
+                     "[XSECTIONS]\nC CIRCULAR 1 0 0 0 2\n"
+                     "[2D_OPTIONS]\nBACKEND CPU\nREPORT_2D NO\nMAX_TIMESTEP 1\nLTS_TIERS 4\n"
+                     "COUPLING_SYNC "
+                  << sync
+                  << "\n"
+                     "[2D_VERTICES]\n0 0 0\n1 0 0\n0 1 0\n-1 0 0\n0 -1 0\n"
+                     "[2D_TRIANGLES]\n0 1 2 .03 .2\n0 3 4 .03 2\n"
+                     "[2D_VERTEX_NODE_MAP]\n0 O .7 1\n";
+                f.close();
+                auto eng = swmm_engine_create();
+                ASSERT_EQ(swmm_engine_open(eng, inp.string().c_str(), rpt.string().c_str(), nullptr,
+                                           nullptr),
+                          SWMM_OK);
+                ASSERT_EQ(swmm_engine_initialize(eng), SWMM_OK);
+                ASSERT_EQ(swmm_engine_start(eng, 0), SWMM_OK);
+                double elapsed = 0;
+                do {
+                    ASSERT_EQ(swmm_engine_step(eng, &elapsed), SWMM_OK);
+                } while (elapsed > 0);
+                ASSERT_EQ(swmm_engine_end(eng), SWMM_OK);
+                double initial = 0, stored = 0, in = 0, out = 0, err = 0;
+                swmm_2d_get_mass_balance(eng, &initial, &stored, nullptr, nullptr, nullptr, &in,
+                                         &out, nullptr, nullptr, nullptr);
+                swmm_2d_get_continuity_error(eng, &err);
+                EXPECT_GT(out, .01) << tag;
+                EXPECT_GE(stored, 0) << tag;
+                EXPECT_NEAR(initial + in - out - stored, 0, 1e-10) << tag;
+                EXPECT_NEAR(err, 0, 1e-10) << tag;
+                double received_1d = 0, emitted_1d = 0, err_1d = 0;
+                swmm_get_routing_total(eng, SWMM_ROUTING_EXTERNAL, &received_1d);
+                swmm_get_routing_total(eng, SWMM_ROUTING_OUTFLOW, &emitted_1d);
+                constexpr double ft3_to_m3 = .3048 * .3048 * .3048;
+                EXPECT_NEAR(received_1d * ft3_to_m3, out, 1e-10) << tag;
+                EXPECT_NEAR(emitted_1d * ft3_to_m3, in, 1e-10) << tag;
+                if (routing == "FV") {
+                    swmm_get_routing_continuity_error(eng, &err_1d);
+                    EXPECT_NEAR(err_1d, 0, 1e-10) << tag;
+                }
+                swmm_engine_report(eng);
+                swmm_engine_close(eng);
+                swmm_engine_destroy(eng);
+            }
 }

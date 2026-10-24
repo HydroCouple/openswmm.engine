@@ -1,0 +1,111 @@
+[TITLE]
+;;Issue #158 — CUMULATIVE rain gage. One subcatchment, one gage, no routing
+;;network beyond a free outfall, so the runoff hydrograph is the gage.
+
+[OPTIONS]
+FLOW_UNITS          	CFS
+INFILTRATION        	HORTON
+FLOW_ROUTING        	DYNWAVE
+LINK_OFFSETS        	DEPTH
+MIN_SLOPE           	0
+ALLOW_PONDING       	NO
+SKIP_STEADY_STATE   	NO
+
+START_DATE          	09/15/2026
+START_TIME          	00:00:00
+REPORT_START_DATE   	09/15/2026
+REPORT_START_TIME   	00:00:00
+END_DATE            	09/15/2026
+END_TIME            	10:00:00
+SWEEP_START         	01/01
+SWEEP_END           	12/31
+DRY_DAYS            	0
+REPORT_STEP         	00:05:00
+WET_STEP            	00:05:00
+DRY_STEP            	01:00:00
+ROUTING_STEP        	0:00:20
+RULE_STEP           	00:00:00
+
+INERTIAL_DAMPING    	PARTIAL
+NORMAL_FLOW_LIMITED 	BOTH
+FORCE_MAIN_EQUATION 	H-W
+VARIABLE_STEP       	0.75
+LENGTHENING_STEP    	0
+MIN_SURFAREA        	12.566
+MAX_TRIALS          	8
+HEAD_TOLERANCE      	0.005
+SYS_FLOW_TOL        	5
+LAT_FLOW_TOL        	5
+MINIMUM_STEP        	0.5
+THREADS             	1
+
+[EVAPORATION]
+;;Data Source   	Parameters
+;;--------------	----------------
+CONSTANT        	0.0
+DRY_ONLY        	NO
+
+[RAINGAGES]
+;;Name          	Format   	Interval	SCF     	Source
+;;--------------	---------	------	------	----------
+RAINGAGE_1      	CUMULATIVE	1:00    	1.0     	TIMESERIES	RAINSERIES_1
+
+[SUBCATCHMENTS]
+;;Name          	Rain Gage       	Outlet          	Area    	%Imperv 	Width   	%Slope  	CurbLen
+;;--------------	----------------	----------------	--------	--------	--------	--------	--------
+SUBCATCH_1      	RAINGAGE_1      	OUTFALL_1       	5       	100     	500     	0.5     	0
+
+[SUBAREAS]
+;;Subcatchment  	N-Imperv  	N-Perv    	S-Imperv  	S-Perv    	PctZero   	RouteTo
+;;--------------	----------	----------	----------	----------	----------	----------
+SUBCATCH_1      	0.01      	0.1       	0.05      	0.05      	25        	OUTLET
+
+[INFILTRATION]
+;;Subcatchment  	Param1    	Param2    	Param3    	Param4    	Param5
+;;--------------	----------	----------	----------	----------	----------
+SUBCATCH_1      	1         	0.5       	4         	7         	0
+
+[OUTFALLS]
+;;Name          	Elevation 	Type      	Stage Data      	Gated
+;;--------------	----------	----------	----------------	--------
+OUTFALL_1       	0         	FREE      	                	NO
+
+[TIMESERIES]
+;;Name          	Date      	Time      	Value
+;;--------------	----------	----------	----------
+RAINSERIES_1    	          	0         	0
+RAINSERIES_1    	          	1         	1
+RAINSERIES_1    	          	2         	2
+RAINSERIES_1    	          	3         	2
+RAINSERIES_1    	          	4         	2
+RAINSERIES_1    	          	5         	3
+RAINSERIES_1    	          	6         	4
+RAINSERIES_1    	          	7         	4
+RAINSERIES_1    	          	8         	4
+RAINSERIES_1    	          	9         	5
+RAINSERIES_1    	          	10        	6
+
+[REPORT]
+;;Reporting Options
+SUBCATCHMENTS	ALL
+NODES	ALL
+LINKS	ALL
+
+[MAP]
+DIMENSIONS	0.000	0.000	10000.000	10000.000
+Units     	None
+
+[COORDINATES]
+;;Node          	X-Coord           	Y-Coord
+;;--------------	------------------	------------------
+OUTFALL_1       	4508.441          	3545.184
+
+[Polygons]
+;;Subcatchment  	X-Coord           	Y-Coord
+;;--------------	------------------	------------------
+SUBCATCH_1      	3128.103          	6921.549
+
+[SYMBOLS]
+;;Gage          	X-Coord           	Y-Coord
+;;--------------	------------------	------------------
+RAINGAGE_1      	1946.375          	8391.261

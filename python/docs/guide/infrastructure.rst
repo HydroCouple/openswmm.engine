@@ -143,3 +143,94 @@ See also
 * :doc:`links` — irregular cross-sections via :attr:`Link.xsect`
   (``XSectShape.IRREGULAR`` references a transect id).
 * :doc:`error_handling`.
+
+
+Storage-node LIDs with ordered layers
+-------------------------------------
+
+Use ``LidType.NODE`` for an arbitrary ordered stack. A node remains a storage
+node; assigning the control synchronizes its maximum depth. All edits below
+are made before initialization, on an opened model containing storage ``S``
+and a link ``Underdrain`` connected to it::
+
+    from openswmm.engine import LidType, LidNodeLayer, LidNodeLayerKind as K
+
+    lids = solver.infrastructure.lids
+    lids.add("Column", LidType.NODE)
+    lids.set_layers("Column", [
+        LidNodeLayer(K.SURFACE, (6, 0.1)),
+        LidNodeLayer(K.MEDIA, (12, .45, .20, .08, 2, 10, 3)),
+        LidNodeLayer(K.MEDIA, (6, .40, .25, .10, 1, 8, 3)),
+        LidNodeLayer(K.AGGREGATE, (6, .40, 100)),
+        LidNodeLayer(K.BOTTOM, (.5, 0)),
+    ])
+    lids.assign_node("S", "Column", initial_saturation=10)
+    lids.set_outlet_anchor("Underdrain", 4, position="BOTTOM")
+    assert lids.node_assignment("S") == (lids.get_index("Column"), 10.0)
+
+Thickness and suction use inches or millimetres; conductivity and seepage
+use inches/hour or millimetres/hour. MEDIA and AGGREGATE rows can repeat
+without a fixed limit. SURFACE must be first and BOTTOM last when present.
+BOTTOM is a boundary, excluded from the one-based outlet layer numbering.
+Invalid stack replacements are atomic and leave the prior configuration
+unchanged, including node depths and outlet offsets.
+
+``get_layers(control)`` returns the authored rows, or normalized layers for
+a supported standard control. ``node_profile(node)`` returns runtime cell
+dictionaries with ``layer``, ``bottom``, ``top``, and ``moisture``. Bottom/top
+are heights above the storage invert in feet or metres; moisture is a
+volumetric fraction. The profile is empty before initialization. Node volume
+includes retained moisture plus mobile water.
+
+``remove_node(node)`` reverts to ordinary storage and removes connected
+anchors. ``set_outlet_anchor(link, 0)`` removes only that anchor. A link with
+two LID endpoints uses explicit offsets because the anchor syntax identifies
+only one endpoint. LID storage routing currently requires Dynamic Wave.
+Native hotstarts preserve the moisture profile and clogging history; use
+contributing subcatchments or external inflow for rainfall on the LID area.
+
+Layer pollutant treatment
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A NODE control can assign removal percentages, first-order decay rates, and
+optional ``R =`` (removal fraction) or ``C =`` (effluent concentration)
+expressions to each physical layer. For an existing pollutant ``TSS``::
+
+    from openswmm.engine import LidLayerTreatment
+
+    layers = lids.get_layers("Column")
+    lids.set_layers("Column", layers, treatments=[
+        LidLayerTreatment(2, "TSS", removal_percent=25,
+                          decay_per_day=1.5, expression="R = 0.2"),
+        LidLayerTreatment(3, "TSS", decay_per_day=0.5),
+    ])
+    rules = lids.get_treatments("Column")
+
+Layer numbers are one-based, top to bottom, including SURFACE. BOTTOM is a
+boundary and cannot receive pollutant treatment. Removal must be 0–100%; decay
+must be nonnegative and is expressed in 1/day. Blank expressions allow rates
+alone. Fixed removal is applied first, followed by the expression; for example,
+25% removal followed by ``R = 0.2`` gives 40% combined removal. Expressions use
+the existing treatment grammar and cannot create pollutant mass.
+
+Removal and expressions act at authored-layer exits, not at internal numerical
+subcells. Layer decay supplements pollutant background decay. First-order decay acts on
+resident retained mass; submerged layers
+contribute volume-weighted decay to the shared saturated storage reactor.
+An outlet drawing saturated water uses the removal rule of its physical layer.
+A surface bypass therefore does not pass through every media treatment rule.
+Concentrations use the pollutant's project units, ``DT`` is seconds, ``HRT`` is
+hours, and flow, depth and area use project units. ``V`` retains the existing
+expression engine's internal cubic-foot convention.
+
+``treatments=None`` (the default) preserves rules by layer position and kind.
+Pass the complete treatment list when reordering layers; ``treatments=[]``
+clears all rules. Layer geometry and treatment changes are validated together
+and rejected atomically. Configure them before initialization.
+
+INP files persist rules in ``[LID_LAYER_TREATMENT]`` as
+``Control Layer Pollutant RemovalPercent DecayPerDay [Expression]``. GeoPackage
+files preserve the same definitions; native V9 hotstarts also preserve retained
+pollutant masses. Layer pollutant routing currently requires
+``QUALITY_SOLVER LEGACY``. As with transient mixed-reactor routing, check quality
+continuity and routing-step convergence, particularly during rapid filling.

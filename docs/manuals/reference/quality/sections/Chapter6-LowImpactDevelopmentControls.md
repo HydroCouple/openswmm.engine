@@ -25,15 +25,15 @@ SWMM 5 can explicitly model the following types of LID practices:
 
 | LID Control Type | Description | Image |
 |---|---|---|
-| **Bio-retention Cells** | Depressions that contain vegetation grown in an engineered soil mixture placed above a gravel storage bed. They provide storage, infiltration and evaporation of both direct rainfall and runoff captured from surrounding areas. Street planters and bio-swales are common examples of bio-retention cells. | ![StreetPlanter](quality/media/media/image22.png) |
-| **Rain Gardens** | A type of bio-retention cell consisting of just the engineered soil layer with no gravel bed below it. | ![RainGarden](quality/media/media/image23.png) |
-| **Green Roofs** | Another variation of a bio-retention cell that have a soil layer above a thin layer of synthetic drainage mat material or coarse aggregate that conveys excess water draining through the soil layer off of the roof. | ![GreenRoof](quality/media/media/image24.png) |
-| **Infiltration Trenches** | Narrow ditches filled with gravel that intercept runoff from upslope impervious areas. They provide storage volume and additional time for captured runoff to infiltrate into the native soil below. | ![InfilTrench](quality/media/media/image25.png) |
-| **Continuous Permeable Pavement** | Street or parking areas paved with a porous concrete or asphalt mix that sits above a gravel storage layer. Rainfall passes through the pavement into the storage layer where it can infiltrate into the site's native soil. | ![PermPavement2.png](quality/media/media/image26.png)|
-| **Block Paver** | Systems consist of impervious paver blocks placed on a sand or pea gravel bed with a gravel storage layer below. Rainfall is captured in the open spaces between the blocks and conveyed to the storage zone where it can infiltrate into the site's native soil. | ![BlockPavers.png](quality/media/media/image27.png) |
-| **Rain Barrels** (or **Cisterns**) | Containers that collect roof runoff during storm events and can either release or re-use the rainwater during dry periods. | ![cistern](quality/media/media/image28.png) |
-| **Rooftop Disconnection** | Has roof downspouts discharge to pervious landscaped areas and lawns instead of directly into storm drains. It can also model roofs with directly connected drains that overflow onto pervious areas. | ![](quality/media/media/image29.png) |
-| **Vegetative Swales** | Channels or depressed areas with sloping sides covered with grass and other vegetation. They slow down the conveyance of collected runoff and allow it more time to infiltrate into the native soil. | ![VegSwale](quality/media/media/image30.png)|
+| **Bio-retention Cells** | Depressions that contain vegetation grown in an engineered soil mixture placed above a gravel storage bed. They provide storage, infiltration and evaporation of both direct rainfall and runoff captured from surrounding areas. Street planters and bio-swales are common examples of bio-retention cells. | ![Bio-retention cell layer stack](figures/png/quality_ch6_lid_bio_cell.png) |
+| **Rain Gardens** | A type of bio-retention cell consisting of just the engineered soil layer with no gravel bed below it. | ![Rain garden layer stack](figures/png/quality_ch6_lid_rain_garden.png) |
+| **Green Roofs** | Another variation of a bio-retention cell that have a soil layer above a thin layer of synthetic drainage mat material or coarse aggregate that conveys excess water draining through the soil layer off of the roof. | ![Green roof layer stack](figures/png/quality_ch6_lid_green_roof.png) |
+| **Infiltration Trenches** | Narrow ditches filled with gravel that intercept runoff from upslope impervious areas. They provide storage volume and additional time for captured runoff to infiltrate into the native soil below. | ![Infiltration trench layer stack](figures/png/quality_ch6_lid_infiltration_trench.png) |
+| **Continuous Permeable Pavement** | Street or parking areas paved with a porous concrete or asphalt mix that sits above a gravel storage layer. Rainfall passes through the pavement into the storage layer where it can infiltrate into the site's native soil. | ![Continuous permeable pavement layer stack](figures/png/quality_ch6_lid_permeable_pavement.png)|
+| **Block Paver** | Systems consist of impervious paver blocks placed on a sand or pea gravel bed with a gravel storage layer below. Rainfall is captured in the open spaces between the blocks and conveyed to the storage zone where it can infiltrate into the site's native soil. | ![Block paver layer stack](figures/png/quality_ch6_lid_block_paver.png) |
+| **Rain Barrels** (or **Cisterns**) | Containers that collect roof runoff during storm events and can either release or re-use the rainwater during dry periods. | ![Rain barrel layer stack](figures/png/quality_ch6_lid_rain_barrel.png) |
+| **Rooftop Disconnection** | Has roof downspouts discharge to pervious landscaped areas and lawns instead of directly into storm drains. It can also model roofs with directly connected drains that overflow onto pervious areas. | ![Rooftop disconnection layer stack](figures/png/quality_ch6_lid_rooftop_disconnection.png) |
+| **Vegetative Swales** | Channels or depressed areas with sloping sides covered with grass and other vegetation. They slow down the conveyance of collected runoff and allow it more time to infiltrate into the native soil. | ![Vegetative swale layer stack](figures/png/quality_ch6_lid_vegetative_swale.png)|
                              
 
 Bio-retention cells, infiltration trenches, and permeable pavement
@@ -110,7 +110,7 @@ the soil zone above it and loses water by infiltration into the
 underlying natural soil and by outflow through a perforated pipe
 underdrain system if present.
 
-   ![planter.bmp](quality/media/media/image31.png)    ![](quality/media/media/image32.png)
+   ![planter.bmp](quality/media/media/quality-image31.png)    ![](quality/media/media/quality-image32.png)
                                          
                   **(A)**                                              **(B)**
 
@@ -529,7 +529,7 @@ roof's drain system (see Figure 6-2). When the depth of ponded water
 *d<sub>1</sub>* is at or below the depression storage depth *D<sub>1</sub>* then no
 surface outflow occurs.
 
-![](quality/media/media/image33.png)
+![](quality/media/media/quality-image33.png)
 
 **Figure 6‑2 Flow path across the surface of a green roof**
 
@@ -625,7 +625,7 @@ surface area taken up by the impermeable paver blocks and where the
 porosity and permeability refer to the fine gravel used to fill the
 seams between blocks. For continuous systems *F<sub>4</sub>* would be 0.
 
-![](quality/media/media/image34.png "image34")
+![](quality/media/media/quality-image34.png "image34")
 <p><span id="_Toc454288779"
 class="anchor"></span><strong>Figure 6‑3 Representation of a permeable
 pavement system</strong></p>
@@ -829,7 +829,7 @@ dual drainage systems (both street flow and sewer flow), is to allow the
 overflow to contribute to the major (street) system and the roof drain
 flow to the minor (sewer) system.
 
-![](quality/media/media/image35.png "image35")
+![](quality/media/media/quality-image35.png "image35")
 <p><span id="_Toc454288780"
 class="anchor"></span><strong>Figure 6‑4 Representation of rooftop
 disconnection</strong></p>
@@ -885,7 +885,7 @@ user-supplied surface area occupied by the swale across its full height
 constant surface area throughout all layers, this equation accounts for
 a varying surface area as the depth of water in the swale changes.
 
-![](quality/media/media/image36.png "image36")
+![](quality/media/media/quality-image36.png "image36")
 <p><span id="_Toc454288781"
 class="anchor"></span><strong>Figure 6‑5 Representation of a vegetative
 swale</strong></p>
@@ -1018,9 +1018,12 @@ then clogging is ignored.
 
 ### 6.2.10 Underdrain Valve Controls
 
-The modern OpenSWMM engine extends the underdrain model of Equation 6-9
-with an optional two-threshold valve that allows an underdrain to open
-and close automatically in response to the head *h<sub>3</sub>* acting on it.
+Conventional SWMM LID underdrains support optional opening and closing
+thresholds, available since SWMM 5.1.013 (August 2018), together with an
+optional head-based discharge multiplier curve. See the
+[EPA release notes](https://github.com/USEPA/Stormwater-Management-Model/releases/tag/v5.1.13).
+The two-threshold control allows the underdrain to open and close
+automatically in response to the head *h<sub>3</sub>* acting on it.
 Two additional parameters, an opening head *h<sub>open</sub>* and a closing head
 *h<sub>close</sub>*, control the valve state, and the underdrain flow becomes:
 
@@ -1047,6 +1050,19 @@ line continuously open.
 LID type with an underdrain. The per-unit parameters `drain_hopen`,
 `drain_hclose`, and the valve state `drain_open` are defined in
 `src/engine/hydrology/LID.hpp`.
+
+Each conventional LID control has one underdrain definition and one
+opening/closing threshold pair; multiple physical pipes can be represented
+by that combined drain law. The optional control curve multiplies the
+nominal discharge in Equation 6-77 as a function of drain head.
+
+Storage-node LIDs instead connect to any number of ordinary hydraulic links
+at different elevations. Each controllable link can have independent
+control rules and partial valve openings. Dynamic Wave accounts for
+downstream head and permitted reverse flow, which changes storage and
+pollutant exposure within the layered facility. See
+@ref hydraulics_ref_lid_storage_formulation and
+@ref quality_ref_lid_storage_formulation for the hydraulic and mass balances.
 
 ### 6.2.11 Rain Barrel Rainfall Capture and Exfiltration
 
@@ -1150,7 +1166,7 @@ occupies its entire subcatchment. The inflow to LID1 comes from an
 upstream subcatchment and its surface overflow is routed to LID2. Its
 underdrain flow is sent to the same outlet location used by LID2.
 
-![LidOptions.png](quality/media/media/image37.png)
+![LidOptions.png](quality/media/media/quality-image37.png)
 
 **Figure 6‑6 Different options for placing LID controls**
 
@@ -1848,15 +1864,15 @@ surface inflow, soil layer percolation, and storage layer exfiltration.
 Figure 6-9 shows how the moisture level within each layer, as a
 percentage of its full storage capacity, varies with time.
 
-![](quality/media/media/image38.png)
+![](quality/media/media/quality-image38.png)
 
 **Figure 6‑7 Storm event used for the LID example**
 
-![](quality/media/media/image39.png)
+![](quality/media/media/quality-image39.png)
 
 **Figure 6‑8 Flux rates through the bio-retention cell with no underdrain**
 
-![](quality/media/media/image40.png)
+![](quality/media/media/quality-image40.png)
 
 **Figure 6‑9 Moisture levels in the bio-retention cell with no underdrain**
 
@@ -1932,13 +1948,164 @@ the total storm volume. If this flow is sent to a storm sewer which is
 typically the case, then the bio-retention cell can no longer be said to
 have fully captured and eliminated runoff from this 1-inch storm.
 
-![](quality/media/media/image41.png)
+![](quality/media/media/quality-image41.png)
 
 **Figure 6‑10 Moisture levels in the bio-retention cell with underdrain**
 
-![](quality/media/media/image42.png)
+![](quality/media/media/quality-image42.png)
 
 **Figure 6‑11 Flux rates through the bio-retention cell with underdrain**
 
 
 
+
+## 6.7 Storage-node LID transport and treatment {#quality_ref_lid_storage_formulation}
+
+**Open-Source SWMM 6 extension.** The preceding sections describe conventional
+subcatchment LIDs. A LID assigned to a network storage node also interacts
+with downstream heads, reversing links and controllable outlets. It uses
+Dynamic Wave routing with `QUALITY_SOLVER LEGACY`. Its retained-cell and
+shared mobile-water inventories are described in
+@ref hydraulics_ref_lid_storage_formulation. They do not imply independent
+saturated plug-flow reactors or separate ARD, MSX or heat layer reactors.
+
+### 6.7.1 Accepted water transfers carry mass
+
+Each retained numerical cell stores mass for every pollutant. Connected
+mobile water uses the existing mixed storage-node reactor. In consistent
+concentration/volume units, \f$C_j=M_j/V_j\f$. An accepted transfer
+\f$\Delta V\f$ debits its source by \f$\Delta M=C_{source}\Delta V\f$;
+the receiver gains the treated remainder. The same accepted volume is used
+in hydraulics and quality. Evaporation removes water but leaves solute;
+seepage and flooding carry their exported mass into the corresponding budgets.
+
+At an authored-layer exit, fixed removal \f$r\f$ gives
+\f$C_{exit}=(1-r)C_{source}\f$, with \f$0\leq r\leq1\f$.
+An optional `R = ...` expression applies a removal fraction to the remainder;
+`C = ...` supplies the remaining effluent concentration. Results are bounded
+so treatment cannot create mass. For example, 25% fixed removal followed by
+`R = 0.2` removes 40% in total. Removal/expressions act once at an authored
+layer exit, not at each of the five numerical MEDIA interfaces.
+
+### 6.7.2 Resident decay and a shared saturated reactor
+
+A retained cell's reaction update uses background plus layer first-order rates:
+
+\f[
+ M_j^{after}=M_j^{before}\exp[-(k_{bg}+k_{layer,j})\Delta t].
+\f]
+
+Rates and time must use consistent units; authored layer decay is in 1/day.
+For shared mobile water, the layer contribution is volume-weighted:
+
+\f[
+ k_m=k_{bg}+\frac{\sum_i k_{layer,i}V_{m,i}}{V_m}.
+\f]
+
+Only physically connected mobile volumes contribute. Surface ponding adds
+volume without a porous-layer rate. A saturated outlet applies the removal
+rule of its actual physical layer, using the shared mixed concentration.
+A surface bypass does not inherit all underlying treatment rows. Saturated
+layer reactions are therefore a weighted shared-reactor approximation,
+not serial plug flow. Reacted mass includes these losses and layer-exit removal.
+
+The synthetic tutorials use 2/day in porous layers, no background decay and
+no fixed removal. That rate has half-life \f$\ln(2)/2=0.347\f$ day, or 8.3 h.
+Longer exposure gives more modeled reaction directly from this assumption;
+it does not establish a field treatment mechanism. Hydraulic control tests
+explore exposure, bypass, release and remaining inventory under that law.
+
+### 6.7.3 Backflow and resaturation
+
+Signed hydraulic flow determines the donor and receiver. Reverse inflow
+enters its actual LID port; retained media wetting and mobile-water receipts
+receive the incoming mass. Water carrying a held outfall concentration
+(`OUTFALL_BACKFLOW_QUALITY LAST`) is an external pollutant source and must
+be counted as incoming mass. `ZERO` explicitly supplies clean boundary water.
+Inter-facility reversals are internal transfers when assessing the whole train.
+
+In the existing flow model, an incoming port in a cell intersected by the
+mobile table supplies the mobile reactor, even if that port is above the
+table. Only wholly exposed receivers capture into retained inventory. The
+accepted water destination also selects the mass destination; this transfer
+is not booked again as retained wetting. Partially submerged donors continue
+draining their retained excess with its donor concentration. Checking head
+increments as well as water and pollutant closure detects discontinuous
+retained/mobile partitioning that an end-of-run budget alone cannot detect.
+
+As the mobile table rises, retained/mobile adjustments debit and credit the
+same water and pollutant inventories. Full media resaturation and recession
+also reconcile modified Green–Ampt history as described in the hydraulic
+reference; changing this history does not itself create water or pollutant.
+A subsequent storm encounters remaining moisture and pollutant inventories.
+
+Zero-volume connections to LIDs use consistently solved current mobile
+mixtures for donor and receiver, including newly percolated water that drains
+within one routing step below the ordinary dry-volume threshold. Provisional
+coupled iterations restore inventories and counters; treatment is booked once.
+Hydraulic and quality ports use the same roundoff-tolerant physical interface
+rule. Failed mixture convergence emits a warning requiring inspection of
+continuity and routing-step sensitivity.
+
+### 6.7.4 Assessment and persistence
+
+For each constituent, over the same assessment horizon:
+
+\f[
+ M_{initial}+M_{incoming}=M_{outfall}+M_{flood}+M_{seep}
+                         +M_{reacted}+M_{stored,final}.
+\f]
+
+Final storage includes retained and mobile mass. Temporary storage is not
+removal, and lower concentration alone is not lower exported load. Count
+all receiving-water exits and bypasses; exported load integrates signed
+boundary transfers of flow times concentration with incoming/outgoing mass
+booked separately. Tracer half-export time is not mean hydraulic residence time.
+Use cumulative engine budgets when brief overflow is missed by coarse samples.
+
+Native V10 hotstarts preserve retained mass, moisture and infiltration history.
+Compatible pre-V10 restarts reconstruct missing history with a warning;
+configuration files preserve parameters rather than runtime inventory.
+Engine @ref engine_manual_lid_storage defines the treatment syntax, units
+and persistence. The GUI T9/T10 tutorials supply layer editing, chained
+active-control models and a reversal–resaturation–recession–second-storm test.
+The first-order kinetics and synthetic model dimensions need calibration
+before use as field predictions.
+
+
+### 6.7.1 Pollutant balances with the optional Richards column {#quality_ref_lid_richards}
+
+The preceding retained/shared-mobile equations describe the existing flow
+model. In Richards mode each porous numerical cell owns complete water W_i
+and pollutant mass M_i, including saturated cells. Surface ponding has a
+separate mixed inventory. Concentration is C_i = M_i/W_i while wet; dry
+surface solute is retained and redissolves with subsequent water supply.
+
+For each accepted directional water transfer DeltaV, donor mass is debited
+by the lesser of available mass and donor concentration times volume:
+
+\f[
+ \Delta M=\min(M_{donor},\Delta V\,C_{donor}),\qquad
+ M_{donor}^{new}=M_{donor}-\Delta M.
+\f]
+
+The recipient gains the transferred mass after any authored-layer exit
+removal/expression. Accepted chronological transfers come from the vertical
+solver and hydraulic port ledger; reversed transfers exchange donor and
+recipient roles. Fixed removal applies once when leaving a physical authored
+layer, not at every numerical face. A surface overflow does not receive all
+buried-layer removal rules. Evaporation retains solute.
+
+Cell reaction remains first order:
+\f$M_i^{after}=M_i^{before}\exp[-(k_{bg}+k_{layer})\Delta t]\f$.
+Richards saturated cells use their own layer rate rather than a
+volume-weighted shared mobile rate. The illustrative 2/day rate has an
+8.3-hour half-life; a larger reacted fraction with greater exposure follows
+from the assumed kinetics, not independent treatment validation.
+
+Check the sum of porous and surface inventories against external incoming,
+exported, reacted and remaining mass, including pollutant imported by
+reverse boundary flow. Hydrodynamic dispersion, sorption and new chemical
+kinetics are not supplied by selecting Richards. Water age, heat and MSX
+porous-cell adapters are pending and those options are rejected. Hydraulic
+storage/flux equations are in @ref hydraulics_ref_lid_richards.

@@ -1,6 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file test_runoff_interface_capi.cpp
- * @brief Unit tests for the Phase 1b runoff interface C API
+ * @file      test_runoff_interface_capi.cpp
+ * @brief     Unit tests for the Phase 1b runoff interface C API
  *        (``swmm_runoff_iface_open_write`` / ``_open_read`` /
  *        ``_save_step`` / ``_read_step`` / ``_close``).
  *
@@ -22,9 +38,9 @@
  * @see docs/C_API_BINDINGS_MCP_IMPROVEMENT_PLAN.md Phase 1b
  * @ingroup engine_tests
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -39,6 +55,14 @@ namespace {
 // Per-test temp file lifecycle helper — uses an absolute path under the
 // fixture data dir so the file lives next to the .out the simulation
 // produces (working dir is tests/unit/engine/data/ at runtime).
+/**
+ * @brief Form an absolute retained runoff-interface artifact filename.
+ *
+ * Filesystem current_path/allocation errors propagate and tag is not sanitized.
+ *
+ * @param[in] tag Controlled suffix in phase1b_tag.rfi beneath cwd.
+ * @return Owned current-directory native filename; no reservation, file creation or cleanup.
+ */
 std::string make_temp_iface_path(const std::string& tag) {
     namespace fs = std::filesystem;
     return (fs::current_path() / ("phase1b_" + tag + ".rfi")).string();
@@ -48,11 +72,23 @@ class RunoffIfaceCApiTest : public ::testing::Test {
 protected:
     SWMM_Engine engine_ = nullptr;
 
+    /**
+     * @brief Allocate the per-test engine handle and assert allocation succeeded.
+     *
+     * Leaves the handle unopen for this fixture; its teardown owns destruction. A fatal allocation
+     * assertion stops setup.
+     */
     void SetUp() override {
         engine_ = swmm_engine_create();
         ASSERT_NE(engine_, nullptr);
     }
 
+    /**
+     * @brief Close and destroy the fixture model, then clear its handle.
+     *
+     * Checks for null, ignores close status and releases partial state after setup/test failure. No
+     * simulation report is requested here.
+     */
     void TearDown() override {
         if (engine_) {
             swmm_engine_close(engine_);
@@ -61,12 +97,16 @@ protected:
         }
     }
 
+    /**
+     * @brief Open/initialize the fixed site-drainage model into the existing fixture handle.
+     *
+     * Requires live created engine_. Uses fixed site_drainage_model report/output paths and fatal
+     * open/initialize assertions, leaving partial state to fixture cleanup. Does not start a run;
+     * helper assertion return alone does not terminate the calling test.
+     */
     void open_and_init() {
-        ASSERT_EQ(swmm_engine_open(engine_,
-                                    "site_drainage_model.inp",
-                                    "site_drainage_model.rpt",
-                                    "site_drainage_model.out",
-                                    nullptr),
+        ASSERT_EQ(swmm_engine_open(engine_, "site_drainage_model.inp", "site_drainage_model.rpt",
+                                   "site_drainage_model.out", nullptr),
                   SWMM_OK)
             << "open failed: " << swmm_get_last_error_msg(engine_);
         ASSERT_EQ(swmm_engine_initialize(engine_), SWMM_OK);
@@ -78,10 +118,8 @@ protected:
 // ---------------------------------------------------------------------------
 
 TEST_F(RunoffIfaceCApiTest, RejectsNullEngine) {
-    EXPECT_EQ(swmm_runoff_iface_open_write(nullptr, "ignored.rfi"),
-              SWMM_ERR_BADHANDLE);
-    EXPECT_EQ(swmm_runoff_iface_open_read(nullptr, "ignored.rfi"),
-              SWMM_ERR_BADHANDLE);
+    EXPECT_EQ(swmm_runoff_iface_open_write(nullptr, "ignored.rfi"), SWMM_ERR_BADHANDLE);
+    EXPECT_EQ(swmm_runoff_iface_open_read(nullptr, "ignored.rfi"), SWMM_ERR_BADHANDLE);
     EXPECT_EQ(swmm_runoff_iface_save_step(nullptr, 1.0), SWMM_ERR_BADHANDLE);
     int has = -1;
     EXPECT_EQ(swmm_runoff_iface_read_step(nullptr, &has), SWMM_ERR_BADHANDLE);
@@ -90,12 +128,9 @@ TEST_F(RunoffIfaceCApiTest, RejectsNullEngine) {
 
 TEST_F(RunoffIfaceCApiTest, RejectsNullOrEmptyPath) {
     open_and_init();
-    EXPECT_EQ(swmm_runoff_iface_open_write(engine_, nullptr),
-              SWMM_ERR_BADPARAM);
-    EXPECT_EQ(swmm_runoff_iface_open_write(engine_, ""),
-              SWMM_ERR_BADPARAM);
-    EXPECT_EQ(swmm_runoff_iface_open_read(engine_, nullptr),
-              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_runoff_iface_open_write(engine_, nullptr), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_runoff_iface_open_write(engine_, ""), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_runoff_iface_open_read(engine_, nullptr), SWMM_ERR_BADPARAM);
 }
 
 TEST_F(RunoffIfaceCApiTest, CloseIsIdempotent) {
@@ -129,16 +164,17 @@ TEST_F(RunoffIfaceCApiTest, SaveThenReadRoundTrip) {
     ASSERT_EQ(swmm_engine_start(engine_, 1), SWMM_OK);
 
     const auto path = make_temp_iface_path("rt");
-    ASSERT_EQ(swmm_runoff_iface_open_write(engine_, path.c_str()), SWMM_OK)
-        << "open_write failed";
+    ASSERT_EQ(swmm_runoff_iface_open_write(engine_, path.c_str()), SWMM_OK) << "open_write failed";
 
     // Drive the simulation to completion — the engine auto-saves one
     // record per runoff substep from inside stepRunoff().
     double elapsed = 0.0;
     while (true) {
         int rc = swmm_engine_step(engine_, &elapsed);
-        if (rc != 0) break;
-        if (elapsed <= 0.0) break;
+        if (rc != 0)
+            break;
+        if (elapsed <= 0.0)
+            break;
     }
     ASSERT_EQ(swmm_engine_end(engine_), SWMM_OK);
     ASSERT_EQ(swmm_runoff_iface_close(engine_), SWMM_OK);
@@ -146,7 +182,7 @@ TEST_F(RunoffIfaceCApiTest, SaveThenReadRoundTrip) {
     // File should exist and be non-empty.
     ASSERT_TRUE(std::filesystem::exists(path));
     EXPECT_GT(std::filesystem::file_size(path),
-              static_cast<std::uintmax_t>(28))   // header is 28 bytes
+              static_cast<std::uintmax_t>(28)) // header is 28 bytes
         << "Expected at least one substep record beyond the header";
 
     // Reopen in READ mode and verify that swmm_runoff_iface_read_step
@@ -158,7 +194,8 @@ TEST_F(RunoffIfaceCApiTest, SaveThenReadRoundTrip) {
     int has = 0;
     for (;;) {
         ASSERT_EQ(swmm_runoff_iface_read_step(engine_, &has), SWMM_OK);
-        if (!has) break;
+        if (!has)
+            break;
         ++records_read;
         // Bail after a few thousand to keep the test fast even if EOF
         // detection regresses.
@@ -167,8 +204,7 @@ TEST_F(RunoffIfaceCApiTest, SaveThenReadRoundTrip) {
             break;
         }
     }
-    EXPECT_GT(records_read, 0)
-        << "Expected at least one record from the saved file";
+    EXPECT_GT(records_read, 0) << "Expected at least one record from the saved file";
 
     EXPECT_EQ(swmm_runoff_iface_close(engine_), SWMM_OK);
     std::error_code ec;

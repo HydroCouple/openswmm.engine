@@ -1,0 +1,21 @@
+automatic_CLOSED_FORM_dry True
+old_opt_out_CLOSED_FORM_dry False
+both_CLOSED_FORM_dry True
+automatic_CLOSED_FORM_ponded False
+old_opt_out_CLOSED_FORM_ponded False
+both_CLOSED_FORM_ponded True
+automatic_SIGMA_dry True
+old_opt_out_SIGMA_dry False
+both_SIGMA_dry True
+automatic_SIGMA_ponded False
+old_opt_out_SIGMA_ponded False
+both_SIGMA_ponded True
+automatic_ENSLAVED_dry True
+old_opt_out_ENSLAVED_dry False
+both_ENSLAVED_dry True
+automatic_ENSLAVED_ponded False
+old_opt_out_ENSLAVED_ponded False
+both_ENSLAVED_ponded True
+automatic_signed_link True
+explicit_legacy_link False
+10 named intentional changes; 20 cases

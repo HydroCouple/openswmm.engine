@@ -1,6 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file VfrClosure.hpp
- * @brief Volume–free-surface (VFR) closure for a planar-bed triangular cell.
+ * @file      VfrClosure.hpp
+ * @brief     Volume–free-surface (VFR) closure for a planar-bed triangular cell.
  *
  * @details Exact stage–storage relations for a cell whose bed is the plane
  *          through its three vertex elevations, after Begnudelli & Sanders
@@ -26,7 +42,7 @@
  *          monotone with η(V=0) slightly above z1. ε = 0 gives the exact
  *          (unregularized) relation, used by the render path.
  *
- *          Header-only, dependency-free (<cmath> only): shared by the CPU
+ *          Header-only, dependency-free (standard math only): shared by the CPU
  *          solvers, the flux calculator, the vertex render reconstruction and
  *          (eventually) the Kokkos kernels — the single source of truth for
  *          the closure.
@@ -34,9 +50,9 @@
  * @see plans/2d/2D_VFR_SOLVER_CLOSURE_PLAN.md
  * @ingroup engine_2d
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_2D_VFR_CLOSURE_HPP
@@ -58,25 +74,58 @@ namespace openswmm::twoD {
 /// in the pre-existing render closure (cellFreeSurfaceElevation).
 inline constexpr double kVfrFlatRelief = 1.0e-9;
 
-/// Sort three vertex elevations in place so z1 <= z2 <= z3.
+/**
+ * @brief Sort three vertex elevations in place so z1 <= z2 <= z3.
+ *
+ * @param[in,out] z1 First elevation in metres; becomes the minimum.
+ * @param[in,out] z2 Second elevation in metres; becomes the middle value.
+ * @param[in,out] z3 Third elevation in metres; becomes the maximum.
+ * @note References must refer to distinct finite scalar values. No allocation or shared state.
+ */
 OPENSWMM_KERNEL_FN void vfrSort3(double& z1, double& z2, double& z3) noexcept {
-    if (z1 > z2) { const double t = z1; z1 = z2; z2 = t; }
-    if (z2 > z3) { const double t = z2; z2 = z3; z3 = t; }
-    if (z1 > z2) { const double t = z1; z1 = z2; z2 = t; }
+    if (z1 > z2) {
+        const double t = z1;
+        z1 = z2;
+        z2 = t;
+    }
+    if (z2 > z3) {
+        const double t = z2;
+        z2 = z3;
+        z3 = t;
+    }
+    if (z1 > z2) {
+        const double t = z1;
+        z1 = z2;
+        z2 = t;
+    }
 }
 
-/// Wetted-area fraction A_wet/A of the planar-bed cell at stage @p eta.
-/// Piecewise C0, monotone from 0 (η ≤ z1) to 1 (η ≥ z3). This is dh̄/dη.
-/// Inputs must be sorted (z1 <= z2 <= z3).
-OPENSWMM_KERNEL_FN double vfrWetFraction(double z1, double z2, double z3,
-                             double eta) noexcept {
+/**
+ * @brief Wetted-area fraction A_wet/A of the planar-bed cell at stage @p eta. Piecewise C0,
+ * monotone from 0 (η ≤ z1) to 1 (η ≥ z3). This is dh̄/dη. Inputs must be sorted (z1 <= z2 <=
+ * z3).
+ *
+ * @param[in] z1 Finite minimum vertex elevation, m.
+ * @param[in] z2 Finite middle vertex elevation, m; z1 <= z2 <= z3.
+ * @param[in] z3 Finite maximum vertex elevation, m.
+ * @pre Elevations are already sorted; no input validation is performed.
+ * @param[in] eta Finite free-surface elevation, m in the same vertical datum.
+ * @return Dimensionless wetted-area fraction [0,1]; dry/flat thresholds follow kVfrFlatRelief.
+ * @note Pure scalar host/device calculation; no allocation, retained storage, or solver state
+ * mutation.
+ */
+OPENSWMM_KERNEL_FN double vfrWetFraction(double z1, double z2, double z3, double eta) noexcept {
     const double relief = z3 - z1;
-    if (relief < kVfrFlatRelief) return (eta > z1) ? 1.0 : 0.0;
-    if (eta <= z1) return 0.0;
-    if (eta >= z3) return 1.0;
+    if (relief < kVfrFlatRelief)
+        return (eta > z1) ? 1.0 : 0.0;
+    if (eta <= z1)
+        return 0.0;
+    if (eta >= z3)
+        return 1.0;
     if (eta <= z2) {
         const double d21 = z2 - z1;
-        if (d21 < kVfrFlatRelief) return 0.0;   // measure-zero band z1==z2
+        if (d21 < kVfrFlatRelief)
+            return 0.0; // measure-zero band z1==z2
         const double t = eta - z1;
         return t * t / (d21 * relief);
     }
@@ -86,33 +135,58 @@ OPENSWMM_KERNEL_FN double vfrWetFraction(double z1, double z2, double z3,
     return 1.0 - t * t / (relief * d32);
 }
 
-/// EXACT cell-mean depth h̄(η) of the planar-bed cell (per unit area; V = A·h̄).
-/// Returns 0 for η ≤ z1. Inputs must be sorted.
+/**
+ * @brief EXACT cell-mean depth h̄(η) of the planar-bed cell (per unit area; V = A·h̄). Returns 0
+ * for η ≤ z1. Inputs must be sorted.
+ *
+ * @param[in] z1 Finite minimum vertex elevation, m.
+ * @param[in] z2 Finite middle vertex elevation, m; z1 <= z2 <= z3.
+ * @param[in] z3 Finite maximum vertex elevation, m.
+ * @pre Elevations are already sorted; no input validation is performed.
+ * @param[in] eta Finite free-surface elevation, m in the same vertical datum.
+ * @return Nonnegative cell-mean depth, m, with no regularization.
+ * @note Pure scalar host/device calculation; no allocation, retained storage, or solver state
+ * mutation.
+ */
 OPENSWMM_KERNEL_FN double vfrMeanDepthFromEtaExact(double z1, double z2, double z3,
-                                       double eta) noexcept {
-    const double zbar   = (z1 + z2 + z3) / 3.0;
+                                                   double eta) noexcept {
+    const double zbar = (z1 + z2 + z3) / 3.0;
     const double relief = z3 - z1;
     if (relief < kVfrFlatRelief)
         return (eta > zbar) ? (eta - zbar) : 0.0;
-    if (eta <= z1) return 0.0;
-    if (eta >= z3) return eta - zbar;
+    if (eta <= z1)
+        return 0.0;
+    if (eta >= z3)
+        return eta - zbar;
     if (eta <= z2) {
         const double d21 = z2 - z1;
-        if (d21 < kVfrFlatRelief) return 0.0;   // measure-zero band z1==z2
+        if (d21 < kVfrFlatRelief)
+            return 0.0; // measure-zero band z1==z2
         const double t = eta - z1;
         return t * t * t / (3.0 * d21 * relief);
     }
     const double d32 = z3 - z2;
-    const double t   = z3 - eta;
+    const double t = z3 - eta;
     return (eta - zbar) + t * t * t / (3.0 * relief * d32);
 }
 
-/// Stage η_s at which the wetted-area fraction equals @p eps (0 < eps < 1).
-/// Inputs must be sorted and non-flat (z3 − z1 ≥ kVfrFlatRelief).
+/**
+ * @brief Stage η_s at which the wetted-area fraction equals @p eps (0 < eps < 1). Inputs must be
+ * sorted and non-flat (z3 − z1 ≥ kVfrFlatRelief).
+ *
+ * @param[in] z1 Finite minimum vertex elevation, m.
+ * @param[in] z2 Finite middle vertex elevation, m; z1 <= z2 <= z3.
+ * @param[in] z3 Finite maximum vertex elevation, m.
+ * @pre Elevations are already sorted; no input validation is performed.
+ * @param[in] eps Target wet fraction strictly in (0,1); requires nonflat relief.
+ * @return Stage in m at the requested wet fraction.
+ * @note Pure scalar host/device calculation; no allocation, retained storage, or solver state
+ * mutation.
+ */
 OPENSWMM_KERNEL_FN double vfrStageAtWetFraction(double z1, double z2, double z3,
-                                    double eps) noexcept {
+                                                double eps) noexcept {
     const double relief = z3 - z1;
-    const double d21    = z2 - z1;
+    const double d21 = z2 - z1;
     // Lower branch reaches wet fraction (z2−z1)/(z3−z1) at η = z2.
     if (eps <= d21 / relief)
         return z1 + std::sqrt(eps * d21 * relief);
@@ -120,13 +194,25 @@ OPENSWMM_KERNEL_FN double vfrStageAtWetFraction(double z1, double z2, double z3,
     return z3 - std::sqrt((1.0 - eps) * relief * d32);
 }
 
-/// Regularized cell-mean depth h̄(η): exact for η ≥ η_s (wet fraction ≥ eps),
-/// tangent-line continuation below (slope eps), clamped at 0. eps == 0 gives
-/// the exact relation. The EXACT inverse of vfrEtaFromMeanDepth for the same
-/// eps, so head ↔ volume seeding round-trips (hotstart, reinitialize).
-/// Inputs must be sorted.
-OPENSWMM_KERNEL_FN double vfrMeanDepthFromEta(double z1, double z2, double z3,
-                                  double eta, double eps) noexcept {
+/**
+ * @brief Regularized cell-mean depth h̄(η): exact for η ≥ η_s (wet fraction ≥ eps), tangent-line
+ * continuation below (slope eps), clamped at 0. eps == 0 gives the exact relation. The EXACT
+ * inverse of vfrEtaFromMeanDepth for the same eps, so head ↔ volume seeding round-trips
+ * (hotstart, reinitialize). Inputs must be sorted.
+ *
+ * @param[in] z1 Finite minimum vertex elevation, m.
+ * @param[in] z2 Finite middle vertex elevation, m; z1 <= z2 <= z3.
+ * @param[in] z3 Finite maximum vertex elevation, m.
+ * @pre Elevations are already sorted; no input validation is performed.
+ * @param[in] eta Finite free-surface elevation, m in the same vertical datum.
+ * @param[in] eps Dimensionless wet-area regularization floor in [0,1); nonpositive selects the
+ * exact closure.
+ * @return Nonnegative regularized mean depth, m; values below its dry intercept clamp to zero.
+ * @note Pure scalar host/device calculation; no allocation, retained storage, or solver state
+ * mutation.
+ */
+OPENSWMM_KERNEL_FN double vfrMeanDepthFromEta(double z1, double z2, double z3, double eta,
+                                              double eps) noexcept {
     const double relief = z3 - z1;
     if (eps <= 0.0 || relief < kVfrFlatRelief)
         return vfrMeanDepthFromEtaExact(z1, z2, z3, eta);
@@ -134,21 +220,35 @@ OPENSWMM_KERNEL_FN double vfrMeanDepthFromEta(double z1, double z2, double z3,
     if (eta >= eta_s)
         return vfrMeanDepthFromEtaExact(z1, z2, z3, eta);
     const double h_s = vfrMeanDepthFromEtaExact(z1, z2, z3, eta_s);
-    const double h   = h_s - eps * (eta_s - eta);
+    const double h = h_s - eps * (eta_s - eta);
     return (h > 0.0) ? h : 0.0;
 }
 
-/// Regularized free-surface elevation η(h̄) — the solver closure.
-///
-/// Exact VFR inverse while the wet fraction is ≥ eps; below that, the C¹
-/// tangent-line tail η = η_s − (h̄_s − h̄)/eps, which bounds dη/dh̄ by 1/eps
-/// (i.e. dη/dV ≤ 1/(εA)) and lands at η(0) = η_s − h̄_s/eps ∈ (z1, η_s).
-/// eps == 0 gives the exact relation with η(h̄ ≤ 0) = z1 (render use).
-/// Fully wet (h̄ ≥ z3 − z̄) reduces to the flat closure η = z̄ + h̄ exactly.
-/// Inputs must be sorted.
-OPENSWMM_KERNEL_FN double vfrEtaFromMeanDepth(double z1, double z2, double z3,
-                                  double mean_depth, double eps) noexcept {
-    const double zbar   = (z1 + z2 + z3) / 3.0;
+/**
+ * @brief Regularized free-surface elevation η(h̄) — the solver closure.
+ *
+ * Exact VFR inverse while the wet fraction is ≥ eps; below that, the C¹ tangent-line tail η =
+ * η_s − (h̄_s − h̄)/eps, which bounds dη/dh̄ by 1/eps (i.e. dη/dV ≤ 1/(εA)) and lands at η(0) =
+ * η_s − h̄_s/eps ∈ (z1, η_s). eps == 0 gives the exact relation with η(h̄ ≤ 0) = z1 (render
+ * use). Fully wet (h̄ ≥ z3 − z̄) reduces to the flat closure η = z̄ + h̄ exactly. Inputs must be
+ * sorted.
+ *
+ * @param[in] z1 Finite minimum vertex elevation, m.
+ * @param[in] z2 Finite middle vertex elevation, m; z1 <= z2 <= z3.
+ * @param[in] z3 Finite maximum vertex elevation, m.
+ * @pre Elevations are already sorted; no input validation is performed.
+ * @param[in] mean_depth Finite cell-mean water depth V/A, m; nonpositive values select the dry
+ * limit.
+ * @param[in] eps Dimensionless wet-area regularization floor in [0,1); nonpositive selects the
+ * exact closure.
+ * @return Free surface, m. The upper branch returns the last safeguarded Newton iterate after at
+ * most 64 iterations; there is no separate convergence status.
+ * @note Pure scalar host/device calculation; no allocation, retained storage, or solver state
+ * mutation.
+ */
+OPENSWMM_KERNEL_FN double vfrEtaFromMeanDepth(double z1, double z2, double z3, double mean_depth,
+                                              double eps) noexcept {
+    const double zbar = (z1 + z2 + z3) / 3.0;
     const double relief = z3 - z1;
 
     // Flat (or degenerate) cell: the flat closure is exact.
@@ -160,21 +260,23 @@ OPENSWMM_KERNEL_FN double vfrEtaFromMeanDepth(double z1, double z2, double z3,
     // switch-point evaluation below, which every cell would otherwise pay each
     // RHS. The fully-wet threshold z3−z̄ always exceeds the ε-tail depth h_s, so
     // reordering is exact (the two branches never overlap).
-    if (mean_depth >= z3 - zbar) return zbar + mean_depth;
+    if (mean_depth >= z3 - zbar)
+        return zbar + mean_depth;
 
     // Regularized tail: below the switch depth h_s the closure is linear.
     double eta_s = z1, h_s = 0.0;
     if (eps > 0.0) {
         eta_s = vfrStageAtWetFraction(z1, z2, z3, eps);
-        h_s   = vfrMeanDepthFromEtaExact(z1, z2, z3, eta_s);
+        h_s = vfrMeanDepthFromEtaExact(z1, z2, z3, eta_s);
         const double h = (mean_depth > 0.0) ? mean_depth : 0.0;
-        if (h <= h_s) return eta_s - (h_s - h) / eps;
+        if (h <= h_s)
+            return eta_s - (h_s - h) / eps;
     } else if (!(mean_depth > 0.0)) {
-        return z1;                                // exact relation, dry limit
+        return z1; // exact relation, dry limit
     }
 
     // Lower branch (z1 < η ≤ z2): closed-form cube root.
-    const double d21     = z2 - z1;
+    const double d21 = z2 - z1;
     const double h_at_z2 = d21 * d21 / (3.0 * relief);
     if (mean_depth <= h_at_z2)
         return z1 + std::cbrt(3.0 * mean_depth * d21 * relief);
@@ -182,46 +284,79 @@ OPENSWMM_KERNEL_FN double vfrEtaFromMeanDepth(double z1, double z2, double z3,
     // z2 == z3 (to rounding): the upper branch is an empty interval — the
     // fully-wet check above and h_at_z2 meet at R/3 — but 1-ulp slivers must
     // not reach the 1/(relief·d32) divisions below.
-    if (z3 - z2 < kVfrFlatRelief) return zbar + mean_depth;
+    if (z3 - z2 < kVfrFlatRelief)
+        return zbar + mean_depth;
 
     // Upper branch (z2 < η < z3): safeguarded Newton on the bracket [z2, z3].
     // h̄ is strictly increasing (dh̄/dη = A_wet/A > 0 here) so this converges
     // unconditionally. Mirrors the pre-existing render-path iteration.
-    const double d32   = z3 - z2;
+    const double d32 = z3 - z2;
     const double denom = 3.0 * relief * d32;
     double lo = z2, hi = z3;
-    double eta = zbar + mean_depth;                 // flat-closure initial guess
-    if (eta <= lo || eta >= hi) eta = 0.5 * (lo + hi);
+    double eta = zbar + mean_depth; // flat-closure initial guess
+    if (eta <= lo || eta >= hi)
+        eta = 0.5 * (lo + hi);
     for (int it = 0; it < 64; ++it) {
         const double dz3 = z3 - eta;
-        const double f   = (eta - zbar) + dz3 * dz3 * dz3 / denom - mean_depth;
-        if (f > 0.0) hi = eta; else lo = eta;
-        const double df = 1.0 - dz3 * dz3 / (relief * d32);   // A_wet/A
+        const double f = (eta - zbar) + dz3 * dz3 * dz3 / denom - mean_depth;
+        if (f > 0.0)
+            hi = eta;
+        else
+            lo = eta;
+        const double df = 1.0 - dz3 * dz3 / (relief * d32); // A_wet/A
         double next = (df > 1.0e-12) ? eta - f / df : 0.5 * (lo + hi);
-        if (next <= lo || next >= hi) next = 0.5 * (lo + hi); // safeguard
-        if (std::abs(next - eta) < 1.0e-12 * (1.0 + relief)) return next;
+        if (next <= lo || next >= hi)
+            next = 0.5 * (lo + hi); // safeguard
+        if (std::abs(next - eta) < 1.0e-12 * (1.0 + relief))
+            return next;
         eta = next;
     }
     return eta;
 }
 
-/// Dry-cell free surface of the regularized closure: η(V = 0). This is the
-/// value a dry cell's head must be seeded with under CELL_CLOSURE = VFR so
-/// that head → volume seeding (vfrMeanDepthFromEta) returns exactly 0.
-/// Inputs must be sorted.
+/**
+ * @brief Dry-cell free surface of the regularized closure: η(V = 0). This is the value a dry
+ * cell's head must be seeded with under CELL_CLOSURE = VFR so that head → volume seeding
+ * (vfrMeanDepthFromEta) returns exactly 0. Inputs must be sorted.
+ *
+ * @param[in] z1 Finite minimum vertex elevation, m.
+ * @param[in] z2 Finite middle vertex elevation, m; z1 <= z2 <= z3.
+ * @param[in] z3 Finite maximum vertex elevation, m.
+ * @pre Elevations are already sorted; no input validation is performed.
+ * @param[in] eps Dimensionless wet-area regularization floor in [0,1); nonpositive selects the
+ * exact closure.
+ * @return Dry regularized stage in m, consistent with zero-volume seeding.
+ * @note Pure scalar host/device calculation; no allocation, retained storage, or solver state
+ * mutation.
+ */
 OPENSWMM_KERNEL_FN double vfrDryEta(double z1, double z2, double z3, double eps) noexcept {
     return vfrEtaFromMeanDepth(z1, z2, z3, 0.0, eps);
 }
 
-/// dη/dh̄ of the regularized closure at stage @p eta: 1/max(w(η), eps).
-/// Divide by the cell area A to get dη/dV (the preconditioner chain-rule
-/// factor; equals 1/A for a fully wet cell, matching the flat closure).
-/// Inputs must be sorted.
-OPENSWMM_KERNEL_FN double vfrDEtaDMeanDepth(double z1, double z2, double z3,
-                                double eta, double eps) noexcept {
+/**
+ * @brief dη/dh̄ of the regularized closure at stage @p eta: 1/max(w(η), eps). Divide by the cell
+ * area A to get dη/dV (the preconditioner chain-rule factor; equals 1/A for a fully wet cell,
+ * matching the flat closure). Inputs must be sorted.
+ *
+ * @param[in] z1 Finite minimum vertex elevation, m.
+ * @param[in] z2 Finite middle vertex elevation, m; z1 <= z2 <= z3.
+ * @param[in] z3 Finite maximum vertex elevation, m.
+ * @pre Elevations are already sorted; no input validation is performed.
+ * @param[in] eta Finite free-surface elevation, m in the same vertical datum.
+ * @param[in] eps Dimensionless wet-area regularization floor in [0,1); nonpositive selects the
+ * exact closure.
+ * @return Dimensionless inverse slope; a final wet-fraction floor of 1e-12 caps the value at
+ * 1e12 even when eps is zero.
+ * @note Pure scalar host/device calculation; no allocation, retained storage, or solver state
+ * mutation.
+ */
+OPENSWMM_KERNEL_FN double vfrDEtaDMeanDepth(double z1, double z2, double z3, double eta,
+                                            double eps) noexcept {
     double w = vfrWetFraction(z1, z2, z3, eta);
-    if (w < eps) w = eps;
-    if (w < 1.0e-12) w = 1.0e-12;   // eps == 0 safety (exact relation, dry cell)
+    if (w < eps)
+        w = eps;
+    if (w < 1.0e-12)
+        w = 1.0e-12; // eps == 0 safety (exact relation, dry cell)
     return 1.0 / w;
 }
 

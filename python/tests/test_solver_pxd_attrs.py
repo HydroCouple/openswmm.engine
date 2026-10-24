@@ -1,4 +1,4 @@
-"""Solver cdef-class attribute drift test.
+"""Solver Cython source contracts: attribute declarations and GIL release.
 
 ``Solver`` is a ``cdef class`` whose attribute slots are declared in
 ``_solver.pxd``. Assigning an undeclared attribute (``self._foo = ...``)
@@ -64,6 +64,27 @@ def _declared_attrs(pxd_source: str) -> set[str]:
 
 
 class TestSolverPxdAttrs(unittest.TestCase):
+    def test_advancing_calls_release_gil(self):
+        """Keep native advancement outside the GIL independently of CPU speed.
+
+        Runtime concurrency tests compare results on every platform; this
+        source contract catches removal of either nogil block even on a
+        runner where parallel simulations cannot outperform serial ones.
+        """
+        body = _solver_class_body(_PYX.read_text())
+        for name in ("step", "stride"):
+            with self.subTest(method=name):
+                method = re.search(
+                    rf"^    def {name}\(.*?(?=^    def |\Z)", body, re.M | re.S
+                )
+                self.assertIsNotNone(method)
+                self.assertRegex(
+                    method.group(),
+                    rf"(?m)^            with nogil:\s*\n"
+                    rf"                rc = swmm_engine_{name}\(",
+                    f"Solver.{name} must release the GIL around its native call",
+                )
+
     def test_every_assigned_attr_is_declared(self):
         assigned = _assigned_attrs(_solver_class_body(_PYX.read_text()))
         declared = _declared_attrs(_PXD.read_text())

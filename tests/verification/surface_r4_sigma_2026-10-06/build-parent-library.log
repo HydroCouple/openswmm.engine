@@ -1,0 +1,4 @@
+[0/2] Re-checking globbed directories...
+[1/4] Building CXX object src/engine/CMakeFiles/openswmm_engine.dir/2d/subsurface/SubsurfaceSolver.cpp.o
+[2/4] Linking CXX shared library src/engine/libopenswmm.engine.6.0.0.dylib
+[3/4] Creating library symlink src/engine/libopenswmm.engine.6.dylib src/engine/libopenswmm.engine.dylib

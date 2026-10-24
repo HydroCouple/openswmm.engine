@@ -1,0 +1,45 @@
+--- a/plans/TWO_ZONE_GROUNDWATER_EXPLICIT_LTS_PLAN_2026-08-15.md
++++ b/plans/TWO_ZONE_GROUNDWATER_EXPLICIT_LTS_PLAN_2026-08-15.md
+@@ -649,13 +649,26 @@
+   gate 22 budgets it (<10% runtime on the canonical meshed benchmark with
+   GW enabled everywhere, target to confirm at review).
+ 
+-## 7. ET re-parameterization (draft §2.8 — carries over verbatim)
+-
+-Feddes-style smooth stress multiplier on PE applied at the top-of-column
+-boundary only; `UEF`/`LED` retired for kernel cells; `if (infil ≤ 0)` gate
+-removed; capillary rise supplies the demand from below (closure-appropriate
+-per §5.4 of the draft). Migration guidance obligation (draft decision 11)
+-stands.
++## 7. ET re-parameterization (R3 mesh implementation, 2026-10-05)
++
++The approved mesh ET implementation uses one atmospheric demand volume per
++cell. Actual surface evaporation spends it first; soil ET spends only the
++remaining accumulated past demand. Stress is evaluated once at the extraction
++site (SIGMA top layer, CLOSED_FORM bulk, ENSLAVED equilibrium surface).
++`WILTING_SUCTION` is a positive project length or Automatic 150 m. There is no
++infiltration-positive gate; capillary rise is an internal transfer. Kernel
++cells use these controls instead of lumped `UEF` / `LED`; ordinary lumped
++`[GROUNDWATER]` keeps those legacy controls.
++
++Automatic mesh ET resolves `BOTH`; explicit `NONE` is retained. New automatic
++link exchange uses `LINK_SEEPAGE DEFAULT`, resolving `TWO_WAY`; explicit old
++`AUTO` remains one-way and saves as `ONE_WAY`. See the required
++[migration guidance and evidence](SURFACE_PROCESS_R3_IMPLEMENTATION_2026-10-05.md).
++`M_LAYERS` remains the number of sigma soil layers; `LTS_TIERS` controls time
++cadences, and changing one does not change the other. Sigma advection remains
++first-order upwind. Shared demand for subcatchment/LID footprints and snow
++coverage still needs the R4/R5/UEB area interfaces; mesh budget qualification
++does not certify those paths.
+ 
+ ## 8. Configuration (D-UT8/D-UT9 — inside `model.i2d`)
+ 
+@@ -881,7 +894,7 @@
+ | 8 (m defaulting) | **Re-posed for σ grid:** fixed global `M_LAYERS 8` default + per-cell override (σ grid removes the α-scaling rationale since resolution is in σ, not z) — confirm |
+ | 9 (Dunne default-on?) | **Open** — recommend default-on within the kernel (it is the mass balance), with a compat flag |
+ | 10 (Darcy vs [GWF] default) | **Open** — Darcy default, [GWF] override wins (recommendation retained) |
+-| 11, 12 (ET retirement, infil gate) | **Open** — recommendations retained; migration guide obligatory | Scheduled 2026-10-04 to close in round R3 of `openswmm.gui/workplans/SURFACE_SUBSURFACE_PROGRAM_PLAN_2026-10-04.md`, together with the `GW_ET BOTH` default when an aquifer is present.
++| 11, 12 (ET retirement, infil gate) | **Mesh kernel implemented and qualified, 2026-10-05** after user approval of the R3 review. Shared surface-first demand, one stress and configurable wilting suction; migration guide is linked in §7. Lumped legacy controls remain; subcatchment/LID area adapters follow R4/R5. |
+ | 13 (centroid-in-polygon) | **Open** — sufficient for v1 (recommendation retained) |
+ | 14 (PER_SUBCATCH in v1) | **Answered:** yes — it is G1's vehicle |
+ | 16 (behaviour-driven framing) | **Answered:** yes (documentation stance) |

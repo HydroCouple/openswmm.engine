@@ -1,24 +1,43 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file InfraHandler.cpp
- * @brief Section handlers for [STREETS], [INLETS], [INLET_USAGE],
+ * @file      InfraHandler.cpp
+ * @brief     Section handlers for [STREETS], [INLETS], [INLET_USAGE],
  *        [ADJUSTMENTS], [EVENTS].
  *
  * @see InfraHandler.hpp
  * @ingroup engine_input
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #include "InfraHandler.hpp"
+#include "NodesHandler.hpp"
 #include "../Tokenizer.hpp"
+#include "../SectionParser.hpp"
 #include "../../core/SimulationContext.hpp"
 #include "../InputParseUtils.hpp"
 #include "../../core/DateTime.hpp"
 
 #include <algorithm>
 #include <charconv>
+#include <cstring>
 
 namespace openswmm::input {
 
@@ -26,17 +45,34 @@ namespace openswmm::input {
 // handle_streets()
 // ============================================================================
 
+/**
+ * @brief Append street cross-section definitions with optional back/gutter parameters.
+ *
+ * Requires ID crown-width curb-height cross-slope road-n; short rows skip. ASCII-insensitive
+ * duplicates append ERR_DUP_NAME and skip. Defaults zero gutter/back geometry and two sides; slopes
+ * remain authored percentages. Numeric parsing is permissive without full range checks; independent
+ * column appends may fail without rollback.
+ *
+ * @param[in,out] ctx Authored context stores/errors updated incrementally; caller maintains
+ *     coherent columns and serializes parsing.
+ * @param[in] lines Borrowed section rows, tokenized synchronously; stored strings copied and
+ *     physical values retained in authored project units.
+ */
 void handle_streets(SimulationContext& ctx, const std::vector<std::string>& lines) {
     // Format: ID  Tcrown  Hcurb  Sx  nRoad  (Hdep  Wg  Sides  Tback  Sback  nBack)
     for (const auto& line : lines) {
         auto tok = Tokenizer::tokenize(line);
-        if (tok.size() < 5) continue;
+        if (tok.size() < 5)
+            continue;
 
         // One definition line per street; a second definition in any case
         // spelling is a duplicate ID (legacy input.c parity, ERR 207).
         bool dup = false;
         for (const auto& existing : ctx.streets.names) {
-            if (ieq(existing, tok[0])) { dup = true; break; }
+            if (ieq(existing, tok[0])) {
+                dup = true;
+                break;
+            }
         }
         if (dup) {
             ctx.errors.push_back(format_error(ERR_DUP_NAME, tok[0]));
@@ -61,37 +97,265 @@ void handle_streets(SimulationContext& ctx, const std::vector<std::string>& line
 // handle_inlets()
 // ============================================================================
 
+namespace {
+
+/// Grate bar patterns, legacy inlet.c GrateTypeWords order.
+const char* const kGrateTypeWords[] = {"P_BAR-50",    "P_BAR-50x100", "P_BAR-30",   "CURVED_VANE",
+                                       "TILT_BAR-45", "TILT_BAR-30",  "RETICULINE", "GENERIC"};
+
+/// Curb-opening throat orientations, legacy inlet.c ThroatAngleWords order.
+const char* const kThroatWords[] = {"HORIZONTAL", "INCLINED", "VERTICAL"};
+
+/**
+ * @brief Find the first ASCII-insensitive token in a borrowed keyword array.
+ *
+ * @param[in] words Non-NULL array of n non-NULL NUL-terminated canonical words.
+ * @param[in] n Nonnegative keyword count.
+ * @param[in] w Borrowed complete keyword, not trimmed.
+ * @return First zero-based match or -1; no prefix or Unicode folding.
+ */
+int find_word(const char* const* words, int n, std::string_view w) {
+    for (int i = 0; i < n; ++i)
+        if (ieq(words[i], w))
+            return i;
+    return -1;
+}
+
+/**
+ * @brief Find the first ASCII-insensitive inlet-design identifier.
+ *
+ * @param[in] ctx Borrowed inlet names whose count fits int.
+ * @param[in] name Borrowed complete design ID.
+ * @return Design index or -1; linear scan, no type/parameter validation.
+ */
+int find_inlet_design(const SimulationContext& ctx, std::string_view name) {
+    for (int i = 0; i < ctx.inlets.count(); ++i)
+        if (ieq(ctx.inlets.names[static_cast<std::size_t>(i)], name))
+            return i;
+    return -1;
+}
+
+/// The optional tail shared by [INLET_USAGE] tokens 4-9 and
+/// [INLET_JUNCTIONS] tokens 6-11 (plan §2.3).
+struct UsageTail {
+    int num_inlets = 1;
+    int placement = 0; ///< 0=AUTOMATIC 1=ON_GRADE 2=ON_SAG
+    double clog_factor = 1.0;
+    double flow_limit = 0.0;
+    double local_depress = 0.0;
+    double local_width = 0.0;
+};
+
+/**
+ * @brief Parse optional inlet count, clogging, flow limit, geometry and placement.
+ *
+ * Requires count>=1, percent clog[0,99] (stored as 1-pct/100), flow/depression/width[0,1e30], known
+ * placement token. Numeric parsing is permissive and comparisons do not independently reject all
+ * NaNs. Physical values remain project flow/length units.
+ *
+ * @param[in,out] ctx Context errors receive first refusal diagnostic; no usage row is appended
+ *     here.
+ * @param[in] tok Borrowed tokenized usage/junction row.
+ * @param[in] first First optional-tail token; caller ensures first+5 cannot overflow size_t.
+ * @param[in,out] out Caller-initialized defaults, overwritten for supplied fields; partial changes
+ *     remain on false.
+ * @return True when all supplied checked tokens pass; false after first appended
+ *     ERR_NUMBER/ERR_KEYWORD.
+ */
+bool parse_inlet_usage_tail(SimulationContext& ctx, const std::vector<std::string>& tok,
+                            std::size_t first, UsageTail& out) {
+    auto num = [&](std::size_t k, double& v, double lo, double hi) {
+        v = to_double(tok[k], -1.0);
+        if (v < lo || v > hi) {
+            ctx.errors.push_back(format_error(ERR_NUMBER, tok[k]));
+            return false;
+        }
+        return true;
+    };
+
+    if (tok.size() > first) {
+        out.num_inlets = to_int(tok[first], 0);
+        if (out.num_inlets < 1) {
+            ctx.errors.push_back(format_error(ERR_NUMBER, tok[first]));
+            return false;
+        }
+    }
+    if (tok.size() > first + 1) {
+        double pct = 0.0;
+        if (!num(first + 1, pct, 0.0, 99.0))
+            return false;
+        out.clog_factor = 1.0 - pct / 100.0;
+    }
+    if (tok.size() > first + 2 && !num(first + 2, out.flow_limit, 0.0, 1.0e30))
+        return false;
+    if (tok.size() > first + 3 && !num(first + 3, out.local_depress, 0.0, 1.0e30))
+        return false;
+    if (tok.size() > first + 4 && !num(first + 4, out.local_width, 0.0, 1.0e30))
+        return false;
+    if (tok.size() > first + 5) {
+        static const char* const kPlacementWords[] = {"AUTOMATIC", "ON_GRADE", "ON_SAG"};
+        out.placement = find_word(kPlacementWords, 3, tok[first + 5]);
+        if (out.placement < 0) {
+            ctx.errors.push_back(format_error(ERR_KEYWORD, tok[first + 5]));
+            return false;
+        }
+    }
+    return true;
+}
+
+/**
+ * @brief Copy an already parsed optional tail into an allocated usage row.
+ *
+ * Does not resolve hosts/designs/street or resize statistics; flow limit and local geometry remain
+ * authored units.
+ *
+ * @param[in,out] u Aligned usage store; receives six parameter columns.
+ * @param[in] row Existing usage row index, unchecked.
+ * @param[in] t Borrowed parsed/defaulted values, not revalidated.
+ */
+void apply_usage_tail(InletUsageStore& u, int row, const UsageTail& t) {
+    const auto ur = static_cast<std::size_t>(row);
+    u.num_inlets[ur] = t.num_inlets;
+    u.placement[ur] = t.placement;
+    u.clog_factor[ur] = t.clog_factor;
+    u.flow_limit[ur] = t.flow_limit;
+    u.local_depress[ur] = t.local_depress;
+    u.local_width[ur] = t.local_width;
+}
+
+} // namespace
+
+/**
+ * @brief Append inlet designs or merge one GRATE/CURB pair into a combination.
+ *
+ * Validates recognized type, required positive dimensions, grate/throat keywords and GENERIC open
+ * fraction(0,1]/optional nonnegative splash. Unknown types/items/numbers append errors. Only a
+ * GRATE+CURB pair sharing an ASCII-insensitive name can merge; other duplicates refuse, and no
+ * COMBO keyword is parsed. CUSTOM retains curve ID for resolution. Keeps first nonempty object
+ * comment; no solver-unit conversion or complete finite/curve applicability validation.
+ *
+ * @param[in,out] ctx Authored context stores/errors updated incrementally; caller maintains
+ *     coherent columns and serializes parsing.
+ * @param[in] lines Borrowed section rows, tokenized synchronously; stored strings copied and
+ *     physical values retained in authored project units.
+ */
 void handle_inlets(SimulationContext& ctx, const std::vector<std::string>& lines) {
-    // Format varies by type:
+    // Format varies by type (legacy inlet.c:321-327):
     //   ID  GRATE       Length  Width  GrateType  (OpenArea)  (SplashVeloc)
     //   ID  CURB        Length  Height (ThroatType)
     //   ID  SLOTTED     Length  Width
     //   ID  DROP_GRATE  Length  Width  GrateType  (OpenArea)  (SplashVeloc)
     //   ID  DROP_CURB   Length  Height
     //   ID  CUSTOM      CurveID
-    for (const auto& line : lines) {
-        auto tok = Tokenizer::tokenize(line);
-        if (tok.size() < 3) continue;
+    // A GRATE line and a CURB line sharing one name are the legacy encoding of
+    // a combination inlet: the second line MERGES into the first row and
+    // retypes it COMBO (there is no COMBO keyword). Any other repeat of a name
+    // is a duplicate ID, as for [STREETS].
+    for (const auto& pl : parse_section(lines)) {
+        auto tok = Tokenizer::tokenize(pl.data);
+        if (tok.size() < 3)
+            continue;
 
-        std::string inlet_type = Tokenizer::to_upper(tok[1]);
-
-        ctx.inlets.names.push_back(std::string(tok[0]));
-        ctx.inlets.inlet_type.push_back(inlet_type);
-
-        if (inlet_type == "CUSTOM") {
-            // Custom inlet — tok[2] is curve ID, no numeric geometry
-            ctx.inlets.length.push_back(0.0);
-            ctx.inlets.width.push_back(0.0);
-            ctx.inlets.grate_type.push_back(std::string(tok[2])); // curve ID stored here
-            ctx.inlets.open_area.push_back(0.0);
-            ctx.inlets.splash_veloc.push_back(0.0);
-        } else {
-            ctx.inlets.length.push_back(tok.size() > 2 ? to_double(tok[2]) : 0.0);
-            ctx.inlets.width.push_back(tok.size() > 3 ? to_double(tok[3]) : 0.0);
-            ctx.inlets.grate_type.push_back(tok.size() > 4 ? std::string(tok[4]) : "");
-            ctx.inlets.open_area.push_back(tok.size() > 5 ? to_double(tok[5]) : 0.0);
-            ctx.inlets.splash_veloc.push_back(tok.size() > 6 ? to_double(tok[6]) : 0.0);
+        const std::string type = Tokenizer::to_upper(tok[1]);
+        const bool is_grate = (type == "GRATE" || type == "DROP_GRATE");
+        const bool is_curb = (type == "CURB" || type == "DROP_CURB");
+        const bool is_slotted = (type == "SLOTTED");
+        const bool is_custom = (type == "CUSTOM");
+        if (!is_grate && !is_curb && !is_slotted && !is_custom) {
+            ctx.errors.push_back(format_error(ERR_KEYWORD, tok[1]));
+            continue;
         }
+
+        // --- Duplicate name: merge a GRATE/CURB pair, reject anything else ---
+        const int prev = find_inlet_design(ctx, tok[0]);
+        if (prev >= 0) {
+            const std::string& prev_type = ctx.inlets.inlet_type[static_cast<std::size_t>(prev)];
+            const bool combo = (prev_type == "GRATE" && type == "CURB") ||
+                               (prev_type == "CURB" && type == "GRATE");
+            if (!combo) {
+                ctx.errors.push_back(format_error(ERR_DUP_NAME, tok[0]));
+                continue;
+            }
+        }
+
+        // --- Type-specific token count + range checks (legacy read*Params) ---
+        double length = 0.0, width = 0.0, open_area = 0.0, splash = 0.0;
+        int grate_type = -1, throat = 2; // default VERTICAL
+
+        if (is_grate || is_curb || is_slotted) {
+            const std::size_t need = is_grate ? 5u : 4u;
+            if (tok.size() < need) {
+                ctx.errors.push_back(format_error(ERR_ITEMS, tok[0]));
+                continue;
+            }
+            length = to_double(tok[2], -1.0);
+            width = to_double(tok[3], -1.0); // CURB/DROP_CURB: opening height
+            if (length <= 0.0) {
+                ctx.errors.push_back(format_error(ERR_NUMBER, tok[2]));
+                continue;
+            }
+            if (width <= 0.0) {
+                ctx.errors.push_back(format_error(ERR_NUMBER, tok[3]));
+                continue;
+            }
+        }
+        if (is_grate) {
+            grate_type = find_word(kGrateTypeWords, 8, tok[4]);
+            if (grate_type < 0) {
+                ctx.errors.push_back(format_error(ERR_KEYWORD, tok[4]));
+                continue;
+            }
+            if (grate_type == 7) { // GENERIC: open area is required
+                if (tok.size() < 6) {
+                    ctx.errors.push_back(format_error(ERR_ITEMS, tok[0]));
+                    continue;
+                }
+                open_area = to_double(tok[5], -1.0);
+                if (open_area <= 0.0 || open_area > 1.0) {
+                    ctx.errors.push_back(format_error(ERR_NUMBER, tok[5]));
+                    continue;
+                }
+                if (tok.size() > 6) {
+                    splash = to_double(tok[6], -1.0);
+                    if (splash < 0.0) {
+                        ctx.errors.push_back(format_error(ERR_NUMBER, tok[6]));
+                        continue;
+                    }
+                }
+            }
+        }
+        if (type == "CURB" && tok.size() > 4) { // DROP_CURB has no throat token
+            throat = find_word(kThroatWords, 3, tok[4]);
+            if (throat < 0) {
+                ctx.errors.push_back(format_error(ERR_KEYWORD, tok[4]));
+                continue;
+            }
+        }
+
+        // --- Write (new row, or merge into the existing half of a COMBO) ---
+        const int idx = (prev >= 0) ? prev : ctx.inlets.add_row(std::string(tok[0]), type);
+        const auto ui = static_cast<std::size_t>(idx);
+        if (prev >= 0)
+            ctx.inlets.inlet_type[ui] = "COMBO";
+
+        if (is_grate) {
+            ctx.inlets.length[ui] = length;
+            ctx.inlets.width[ui] = width;
+            ctx.inlets.grate_type[ui] = kGrateTypeWords[grate_type];
+            ctx.inlets.open_area[ui] = open_area;
+            ctx.inlets.splash_veloc[ui] = splash;
+        } else if (is_curb) {
+            ctx.inlets.curb_length[ui] = length;
+            ctx.inlets.curb_height[ui] = width;
+            ctx.inlets.curb_throat[ui] = throat;
+        } else if (is_slotted) {
+            ctx.inlets.length[ui] = length;
+            ctx.inlets.width[ui] = width;
+        } else { // CUSTOM — the curve is resolved in PostParseResolver
+            ctx.inlets.curve_id[ui] = std::string(tok[2]);
+        }
+        if (!pl.comment.empty() && ctx.inlets.comments[ui].empty())
+            ctx.inlets.comments[ui] = pl.comment;
     }
 }
 
@@ -99,51 +363,118 @@ void handle_inlets(SimulationContext& ctx, const std::vector<std::string>& lines
 // handle_inlet_usage()
 // ============================================================================
 
+/**
+ * @brief Append conduit-host inlet placements after parsing optional capture parameters.
+ *
+ * Known link and design are required immediately; unknown ones append ERR_NAME. Capture node may be
+ * unresolved, retaining its name for post-parse. Uses shared tail range checks, then appends usage
+ * with node_host=-1 and street_index=-1. Does not validate STREET/drop compatibility, duplicate
+ * hosts, topology or execute capture; post-parse resolves those.
+ *
+ * @param[in,out] ctx Authored context stores/errors updated incrementally; caller maintains
+ *     coherent columns and serializes parsing.
+ * @param[in] lines Borrowed section rows, tokenized synchronously; stored strings copied and
+ *     physical values retained in authored project units.
+ */
 void handle_inlet_usage(SimulationContext& ctx, const std::vector<std::string>& lines) {
     // Format: linkID  inletID  nodeID  (#Inlets  %Clog  Qmax  aLocal  wLocal  placement)
     for (const auto& line : lines) {
         auto tok = Tokenizer::tokenize(line);
-        if (tok.size() < 3) continue;
+        if (tok.size() < 3)
+            continue;
 
         const int link_idx = ctx.link_names.find(tok[0]);
-        if (link_idx < 0) continue;
-
-        // Find inlet design index by name (case-insensitive)
-        int design_idx = -1;
-        for (int i = 0; i < ctx.inlets.count(); ++i) {
-            if (ieq(ctx.inlets.names[static_cast<std::size_t>(i)], tok[1])) {
-                design_idx = i;
-                break;
-            }
+        if (link_idx < 0) {
+            ctx.errors.push_back(format_error(ERR_NAME, tok[0]));
+            continue;
         }
-        if (design_idx < 0) continue;
 
+        const int design_idx = find_inlet_design(ctx, tok[1]);
+        if (design_idx < 0) {
+            ctx.errors.push_back(format_error(ERR_NAME, tok[1]));
+            continue;
+        }
+
+        // The capture node may be declared after this section (legacy parsing
+        // is order-independent), so an unresolved name is deferred to
+        // PostParseResolver like the [INLET_JUNCTIONS] grammar's — ERR_NAME
+        // there if it never appears.
         const int node_idx = ctx.node_names.find(tok[2]);
-        if (node_idx < 0) continue;
 
-        int num_inlets = tok.size() > 3 ? to_int(tok[3], 1) : 1;
-        double pct_clog = tok.size() > 4 ? to_double(tok[4]) : 0.0;
-        double flow_limit = tok.size() > 5 ? to_double(tok[5]) : 0.0;
-        double a_local = tok.size() > 6 ? to_double(tok[6]) : 0.0;
-        double w_local = tok.size() > 7 ? to_double(tok[7]) : 0.0;
+        UsageTail tail;
+        if (!parse_inlet_usage_tail(ctx, tok, 3, tail))
+            continue;
 
-        int placement = 0; // AUTO
-        if (tok.size() > 8) {
-            std::string p = Tokenizer::to_upper(tok[8]);
-            if (p == "ON_GRADE") placement = 1;
-            else if (p == "ON_SAG") placement = 2;
+        // street_index stays -1 here: it is a property of the host conduit's
+        // cross-section and is resolved in PostParseResolver (plan §4.8).
+        const int row = ctx.inlet_usages.add_row(link_idx, -1, design_idx, node_idx);
+        apply_usage_tail(ctx.inlet_usages, row, tail);
+        if (node_idx < 0)
+            ctx.inlet_usages.pending_capture_name[static_cast<std::size_t>(row)] = tok[2];
+    }
+}
+
+// ============================================================================
+// handle_inlet_junctions()
+// ============================================================================
+
+/**
+ * @brief Create inlet-junction nodes and deferred design/capture usage references.
+ *
+ * Requires NAME ELEV RIM DESIGN CAPTURE and <=11 tokens; validates shared usage tail before
+ * registration. Duplicate node IDs refuse. Creates JUNCTION with virtual/inlet flags, nonnegative
+ * rim (zero derives later), retained comment and usage with both references deferred by name. Does
+ * not require design/capture to exist yet or validate approach conduits/mesh compatibility.
+ *
+ * @param[in,out] ctx Authored context stores/errors updated incrementally; caller maintains
+ *     coherent columns and serializes parsing.
+ * @param[in] lines Borrowed section rows, tokenized synchronously; stored strings copied and
+ *     physical values retained in authored project units.
+ */
+void handle_inlet_junctions(SimulationContext& ctx, const std::vector<std::string>& lines) {
+    // Format: Name Elev MaxDepth Inlet CaptureNode
+    //         (#Inlets %Clog Qmax aLocal wLocal Placement)
+    // Tokens 1-3 mirror [VIRTUAL_JUNCTIONS]; tokens 4-11 are the
+    // [INLET_USAGE] tail, so both grammars share parse_inlet_usage_tail.
+    for (const auto& pl : parse_section(lines)) {
+        auto tok = Tokenizer::tokenize(pl.data);
+        if (tok.size() < 5)
+            continue;
+
+        const std::string& name = tok[0];
+        if (tok.size() > 11) {
+            ctx.errors.push_back(format_error(ERR_IJ_EXTRA_TOKENS, name));
+            continue;
         }
 
-        ctx.inlet_usages.link_index.push_back(link_idx);
-        ctx.inlet_usages.design_index.push_back(design_idx);
-        ctx.inlet_usages.node_index.push_back(node_idx);
-        ctx.inlet_usages.num_inlets.push_back(num_inlets);
-        ctx.inlet_usages.placement.push_back(placement);
-        ctx.inlet_usages.clog_factor.push_back(1.0 - pct_clog / 100.0);
-        ctx.inlet_usages.flow_limit.push_back(flow_limit);
-        ctx.inlet_usages.local_depress.push_back(a_local);
-        ctx.inlet_usages.local_width.push_back(w_local);
-        ctx.inlet_usages.street_index.push_back(-1);
+        UsageTail tail;
+        if (!parse_inlet_usage_tail(ctx, tok, 5, tail))
+            continue;
+
+        const int idx = add_unique(ctx.node_names, name, ctx.errors);
+        if (idx < 0)
+            continue; // duplicate ID (ERR 207, legacy input.c parity)
+
+        ctx.nodes.grow_to(idx + 1);
+        ctx.node_subtypes.set_node_type(ctx.nodes, idx, NodeType::JUNCTION);
+        const auto ui = static_cast<std::size_t>(idx);
+        ctx.nodes.is_virtual[ui] = 1;
+        ctx.nodes.is_inlet[ui] = 1;
+        ctx.nodes.invert_elev[ui] = to_double(tok[1]);
+        // MaxDepth: the flood threshold above the street invert (plan D-E2);
+        // like a virtual junction's it is carried in rim_depth, and a missing
+        // or negative value collapses to 0 = derive from the street section.
+        ctx.nodes.rim_depth[ui] = std::max(0.0, to_double(tok[2]));
+        if (!pl.comment.empty())
+            ctx.nodes.comments[ui] = pl.comment;
+
+        // The design and the capture node may be declared after this section,
+        // so both names are resolved in PostParseResolver (623/625/627).
+        const int row = ctx.inlet_usages.add_row(-1, idx, -1, -1);
+        apply_usage_tail(ctx.inlet_usages, row, tail);
+        const auto ur = static_cast<std::size_t>(row);
+        ctx.inlet_usages.pending_design_name[ur] = tok[3];
+        ctx.inlet_usages.pending_capture_name[ur] = tok[4];
     }
 }
 
@@ -151,6 +482,20 @@ void handle_inlet_usage(SimulationContext& ctx, const std::vector<std::string>& 
 // handle_adjustments()
 // ============================================================================
 
+/**
+ * @brief Assign monthly climate multipliers/offsets or subcatchment pattern references.
+ *
+ * Keyword-prefix forms TEMP/EVAP/RAIN/CONDUCT need twelve values; conductivity<=0 defaults one.
+ * Temperature/evap offsets stay authored project units, rainfall/conductivity are factors.
+ * N-PERV/DSTORE/INFIL require currently known subcatchment and time-pattern names;
+ * unresolved/short/unknown rows silently skip. Grows assignment vectors but does not clear previous
+ * entries, apply adjustments, convert units or set runtime pattern flags.
+ *
+ * @param[in,out] ctx Authored context stores/errors updated incrementally; caller maintains
+ *     coherent columns and serializes parsing.
+ * @param[in] lines Borrowed section rows, tokenized synchronously; stored strings copied and
+ *     physical values retained in authored project units.
+ */
 void handle_adjustments(SimulationContext& ctx, const std::vector<std::string>& lines) {
     // Ensure subcatchment pattern vectors are sized
     const auto ns = static_cast<std::size_t>(ctx.subcatch_names.size());
@@ -163,53 +508,64 @@ void handle_adjustments(SimulationContext& ctx, const std::vector<std::string>& 
 
     for (const auto& line : lines) {
         auto tok = Tokenizer::tokenize(line);
-        if (tok.size() < 2) continue;
+        if (tok.size() < 2)
+            continue;
 
-        std::string keyword = Tokenizer::to_upper(tok[0]);
+        const std::string keyword = Tokenizer::to_upper(tok[0]);
+        // legacy climate_readAdjustments uses match(): the keyword is a
+        // case-insensitive PREFIX of the token, so the long spellings
+        // `TEMPERATURE`, `EVAPORATION`, `RAINFALL`, `CONDUCTIVITY` (what
+        // several corpus decks write) bind too. An exact compare dropped
+        // them silently (usgs-runoff's +0.01 mm/day July evaporation).
+        auto kw = [&](const char* k) {
+            const std::size_t n = std::strlen(k);
+            return keyword.size() >= n && keyword.compare(0, n, k) == 0;
+        };
 
         // Monthly arrays: TEMP, EVAP, RAIN, CONDUCT (need 13 tokens total)
-        if (keyword == "TEMP" && tok.size() >= 13) {
+        if (kw("TEMP") && tok.size() >= 13) {
             for (int i = 0; i < 12; ++i)
                 ctx.adjust_temp[i] = to_double(tok[static_cast<std::size_t>(i + 1)]);
-        }
-        else if (keyword == "EVAP" && tok.size() >= 13) {
+        } else if (kw("EVAP") && tok.size() >= 13) {
             for (int i = 0; i < 12; ++i)
                 ctx.adjust_evap[i] = to_double(tok[static_cast<std::size_t>(i + 1)]);
-        }
-        else if (keyword == "RAIN" && tok.size() >= 13) {
+        } else if (kw("RAIN") && tok.size() >= 13) {
             for (int i = 0; i < 12; ++i)
                 ctx.adjust_rain[i] = to_double(tok[static_cast<std::size_t>(i + 1)]);
-        }
-        else if (keyword == "CONDUCT" && tok.size() >= 13) {
+        } else if (kw("CONDUCT") && tok.size() >= 13) {
             for (int i = 0; i < 12; ++i) {
                 double v = to_double(tok[static_cast<std::size_t>(i + 1)]);
                 ctx.adjust_hydcon[i] = (v <= 0.0) ? 1.0 : v;
             }
         }
-        // Subcatchment pattern assignments: N-PERV, DSTORE, INFIL
-        else if (keyword == "N-PERV" && tok.size() >= 3) {
+        // Subcatchment pattern assignments: N-PERV, DSTORE, INFIL.
+        // The third token names a TIME PATTERN (legacy climate_readAdjustments
+        // resolves it with project_findObject(TIMEPATTERN, tok[2])), NOT a
+        // time series or curve: ctx.find_table_any searches only those two, so
+        // every per-subcatchment adjustment row bound -1 and was dropped in
+        // silence — session13-user5-sub-patterns ran its three adjusted
+        // subcatchments at HALF legacy's August infiltration.
+        else if (kw("N-PERV") && tok.size() >= 3) {
             const int si = ctx.subcatch_names.find(tok[1]);
-            const int pi = ctx.find_table_any(tok[2]);
+            const int pi = ctx.patterns.find(tok[2]);
             if (si >= 0 && pi >= 0) {
                 const auto usi = static_cast<std::size_t>(si);
                 if (usi >= ctx.subcatch_n_perv_pattern.size())
                     ctx.subcatch_n_perv_pattern.resize(usi + 1, -1);
                 ctx.subcatch_n_perv_pattern[usi] = pi;
             }
-        }
-        else if (keyword == "DSTORE" && tok.size() >= 3) {
+        } else if (kw("DSTORE") && tok.size() >= 3) {
             const int si = ctx.subcatch_names.find(tok[1]);
-            const int pi = ctx.find_table_any(tok[2]);
+            const int pi = ctx.patterns.find(tok[2]);
             if (si >= 0 && pi >= 0) {
                 const auto usi = static_cast<std::size_t>(si);
                 if (usi >= ctx.subcatch_d_store_pattern.size())
                     ctx.subcatch_d_store_pattern.resize(usi + 1, -1);
                 ctx.subcatch_d_store_pattern[usi] = pi;
             }
-        }
-        else if (keyword == "INFIL" && tok.size() >= 3) {
+        } else if (kw("INFIL") && tok.size() >= 3) {
             const int si = ctx.subcatch_names.find(tok[1]);
-            const int pi = ctx.find_table_any(tok[2]);
+            const int pi = ctx.patterns.find(tok[2]);
             if (si >= 0 && pi >= 0) {
                 const auto usi = static_cast<std::size_t>(si);
                 if (usi >= ctx.subcatch_infil_pattern.size())
@@ -220,21 +576,34 @@ void handle_adjustments(SimulationContext& ctx, const std::vector<std::string>& 
     }
 }
 
-
 // ============================================================================
 // handle_events()
 // ============================================================================
 
+/**
+ * @brief Append accepted routing-event date/time windows.
+ *
+ * Four tokens parse start/end as OADate dates plus day fractions; only start<end appends.
+ * Short/reversed/equal intervals skip silently. Permissive date/time helpers may yield sentinels;
+ * no sorting, overlap merge, simulation-range validation or event-clock reset here.
+ *
+ * @param[in,out] ctx Authored context stores/errors updated incrementally; caller maintains
+ *     coherent columns and serializes parsing.
+ * @param[in] lines Borrowed section rows, tokenized synchronously; stored strings copied and
+ *     physical values retained in authored project units.
+ */
 void handle_events(SimulationContext& ctx, const std::vector<std::string>& lines) {
     // Format: StartDate  StartTime  EndDate  EndTime
     for (const auto& line : lines) {
         auto tok = Tokenizer::tokenize(line);
-        if (tok.size() < 4) continue;
+        if (tok.size() < 4)
+            continue;
 
         double start = parse_date(tok[0]) + parse_time_day_fraction(tok[1]);
-        double end   = parse_date(tok[2]) + parse_time_day_fraction(tok[3]);
+        double end = parse_date(tok[2]) + parse_time_day_fraction(tok[3]);
 
-        if (start >= end) continue;
+        if (start >= end)
+            continue;
 
         ctx.events.push_back({start, end});
     }

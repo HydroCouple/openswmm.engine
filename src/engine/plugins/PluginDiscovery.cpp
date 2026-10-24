@@ -1,10 +1,26 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file PluginDiscovery.cpp
- * @brief Public filter-discovery facade — implementation.
+ * @file      PluginDiscovery.cpp
+ * @brief     Public filter-discovery facade — implementation.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #include "../../../include/openswmm/plugin_sdk/PluginDiscovery.hpp"
@@ -17,18 +33,19 @@
 namespace openswmm {
 
 std::vector<DiscoveredFilter> discover_all_filters() {
-    PluginFactory factory;  // constructor scans built-ins + on-disk libraries
+    PluginFactory factory; // constructor scans built-ins + on-disk libraries
     std::vector<DiscoveredFilter> out;
 
     for (const auto& c : factory.discovered_components()) {
-        if (!c.info) continue;
+        if (!c.info)
+            continue;
         for (auto& f : c.info->file_filters()) {
             DiscoveredFilter df;
-            df.plugin_id      = c.id;
+            df.plugin_id = c.id;
             df.plugin_version = c.version;
             df.plugin_caption = c.info->caption();
-            df.is_builtin     = c.is_builtin;   // Slice RC.3
-            df.filter         = std::move(f);
+            df.is_builtin = c.is_builtin; // Slice RC.3
+            df.filter = std::move(f);
             out.push_back(std::move(df));
         }
     }
@@ -48,10 +65,10 @@ std::vector<DiscoveredPlugin> discover_plugins_by_id() {
         DiscoveredPlugin* dp;
         if (it == idx.end()) {
             DiscoveredPlugin entry;
-            entry.plugin_id      = df.plugin_id;
+            entry.plugin_id = df.plugin_id;
             entry.plugin_version = df.plugin_version;
             entry.plugin_caption = df.plugin_caption;
-            entry.is_builtin     = df.is_builtin;   // Slice RC.3
+            entry.is_builtin = df.is_builtin; // Slice RC.3
             out.push_back(std::move(entry));
             idx.emplace(df.plugin_id, out.size() - 1);
             dp = &out.back();

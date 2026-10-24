@@ -16,9 +16,18 @@
 //   - New keyword array defined for surcharge method.
 //-----------------------------------------------------------------------------
 
+/**
+ * @file      keywords.h
+ * @brief     Keyword tables used by the legacy input parser.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com> (OpenSWMM maintenance and extensions)
+ * @copyright Copyright (c) 2026 Caleb Buahin. OpenSWMM contributions only; original EPA SWMM
+ *            credits are retained.
+ * @license   Apache-2.0 for OpenSWMM contributions; original EPA SWMM provenance is retained.
+ */
+
 #ifndef KEYWORDS_H
 #define KEYWORDS_H
-
 
 extern char* BuildupTypeWords[];
 extern char* CurveTypeWords[];
@@ -59,6 +68,7 @@ extern char* RuleKeyWords[];
 extern char* SectWords[];
 extern char* SnowmeltWords[];
 extern char* SurchargeWords[];
+extern char* BackflowQualWords[];
 extern char* TempKeyWords[];
 extern char* TransectKeyWords[];
 extern char* TreatTypeWords[];
@@ -68,6 +78,5 @@ extern char* VolUnitsWords2[];
 extern char* WashoffTypeWords[];
 extern char* WeirTypeWords[];
 extern char* XsectTypeWords[];
-
 
 #endif //KEYWORDS_H

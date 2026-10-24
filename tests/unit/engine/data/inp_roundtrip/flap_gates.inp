@@ -1,0 +1,85 @@
+[TITLE]
+InpWriter round-trip fixture: flap gates on structure links
+Every structure here carries Gated YES, and the orifices additionally exercise
+the columns the writer used to hardcode: O_BOT is a BOTTOM orifice (the writer
+printed a literal "SIDE" for every row) and both orifices carry a non-zero
+open/close time (the column was dropped entirely). The outlets cover BOTH
+rating layouts, because the Gated column sits at a different token index in
+each: TABULAR carries one rating column (the curve), FUNCTIONAL carries two.
+
+[OPTIONS]
+FLOW_UNITS           CFS
+INFILTRATION         HORTON
+FLOW_ROUTING         DYNWAVE
+START_DATE           01/01/2020
+START_TIME           00:00:00
+END_DATE             01/02/2020
+END_TIME             00:00:00
+REPORT_STEP          00:15:00
+WET_STEP             00:05:00
+DRY_STEP             01:00:00
+ROUTING_STEP         0:00:30
+MIN_SLOPE            0
+
+[EVAPORATION]
+CONSTANT   0.0
+DRY_ONLY   NO
+
+[JUNCTIONS]
+;;Name  Elev  MaxDepth  InitDepth  SurDepth  Aponded
+J1       12.0  5.0       0          0         0
+J2       11.0  5.0       0          0         0
+
+[OUTFALLS]
+;;Name  Elev  Type  StageData  Gated
+O1       9.0   FREE  *          YES
+O2       9.0   FREE  *          NO
+
+[CONDUITS]
+;;Name  FromNode  ToNode  Length  Roughness  InOffset  OutOffset
+C1       J1        J2      300.0   0.013      0         0
+
+[ORIFICES]
+;;Name  FromNode  ToNode  Type    Offset  Cd    Gated  CloseTime
+O_SIDE   J2        O1      SIDE    0.5     0.65  YES    1.5
+O_BOT    J2        O2      BOTTOM  0.0     0.60  NO     2.25
+
+[WEIRS]
+;;Name  FromNode  ToNode  Type        CrestHt  Cd    Gated  EC  Cd2  Sur
+W1       J2        O1      TRANSVERSE  1.0      3.33  YES    0   0    YES
+
+[OUTLETS]
+;;Name  FromNode  ToNode  Offset  Type              Rating       Gated
+L_TAB    J2        O1      0.0     TABULAR/HEAD      RC1          YES
+;;Name  FromNode  ToNode  Offset  Type              C1     C2     Gated
+L_FUN    J2        O2      0.0     FUNCTIONAL/HEAD   10.0   0.5    YES
+
+[LOSSES]
+;;Link  Kentry  Kexit  Kavg  FlapGate  Seepage
+C1       0       0      0     YES       0
+
+[CURVES]
+;;Name  Type    X-Value  Y-Value
+RC1      RATING  0.0      0.0
+RC1              1.0      5.0
+RC1              2.0      9.0
+
+[XSECTIONS]
+;;Link  Shape        Geom1  Geom2  Geom3  Geom4  Barrels
+C1       CIRCULAR     2.0    0      0      0      1
+O_SIDE   RECT_CLOSED  1.0    1.0    0      0
+O_BOT    RECT_CLOSED  1.0    1.0    0      0
+W1       RECT_OPEN    1.0    2.0    0      0
+
+[REPORT]
+INPUT       NO
+CONTROLS    NO
+NODES       ALL
+LINKS       ALL
+
+[COORDINATES]
+;;Node  X-Coord  Y-Coord
+J1       0.0      0.0
+J2       300.0    0.0
+O1       600.0    0.0
+O2       600.0    100.0

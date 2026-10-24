@@ -1,6 +1,6 @@
 /**
- * @file test_report_section.cpp
- * @brief Unit and regression tests for the [REPORT] section implementation.
+ * @file      test_report_section.cpp
+ * @brief     Unit and regression tests for the [REPORT] section implementation.
  *
  * @details Tests cover:
  *   - Parsing all [REPORT] keywords (handle_report)
@@ -16,6 +16,10 @@
  * @see src/engine/plugins/DefaultOutputPlugin.hpp
  * @see src/engine/plugins/DefaultReportPlugin.hpp
  * @ingroup engine_tests
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -46,11 +50,33 @@ namespace {
 static const std::string TMP = (fs::temp_directory_path() / "").string();
 
 // Helper: call handle_report with a list of raw lines
+/**
+ * @brief Apply raw REPORT rows directly through the maintained input handler.
+ *
+ * Delegates without adding section parsing or a return status; handler diagnostics remain in ctx.
+ * Does not write a file or run a simulation.
+ *
+ * @param[in,out] ctx Context whose report options/selections/diagnostics may change.
+ * @param[in] lines Owned-copy raw REPORT lines consumed synchronously.
+ */
 static void parse_report(SimulationContext& ctx, std::vector<std::string> lines) {
     openswmm::input::handle_report(ctx, lines);
 }
 
 // Helper: build a minimal context with named objects for resolver testing
+/**
+ * @brief Allocate named object stores needed by report-selection tests.
+ *
+ * Sets node invert zero/full depth 10 ft, conduit direction one/barrels one/length 100 ft, leaving
+ * other defaults. This is a selection/output fixture, not a connected validated hydraulic model;
+ * repeated use on nonempty registries is unsupported.
+ *
+ * @param[in,out] ctx Initially empty context whose node/link/subcatch stores and registries are
+ *     populated.
+ * @param[in] n_subcatch Nonnegative S0.. subcatchment count.
+ * @param[in] n_nodes Nonnegative N0.. junction count.
+ * @param[in] n_links Nonnegative L0.. conduit count; counts/products must fit indices.
+ */
 static void build_small_model(SimulationContext& ctx, int n_subcatch, int n_nodes, int n_links) {
     // Subcatchments
     for (int i = 0; i < n_subcatch; ++i) {
@@ -93,9 +119,9 @@ static void build_small_model(SimulationContext& ctx, int n_subcatch, int n_node
 TEST(ReportParserTest, DefaultsAreALL) {
     SimulationContext ctx;
     // No parsing — verify factory defaults
-    EXPECT_EQ(ctx.options.rpt_subcatchments, 1);  // ALL
-    EXPECT_EQ(ctx.options.rpt_nodes, 1);           // ALL
-    EXPECT_EQ(ctx.options.rpt_links, 1);           // ALL
+    EXPECT_EQ(ctx.options.rpt_subcatchments, 1); // ALL
+    EXPECT_EQ(ctx.options.rpt_nodes, 1);         // ALL
+    EXPECT_EQ(ctx.options.rpt_links, 1);         // ALL
     EXPECT_FALSE(ctx.options.rpt_disabled);
     EXPECT_FALSE(ctx.options.rpt_input);
     EXPECT_TRUE(ctx.options.rpt_continuity);
@@ -112,7 +138,7 @@ TEST(ReportParserTest, DisabledYes) {
 
 TEST(ReportParserTest, DisabledNo) {
     SimulationContext ctx;
-    ctx.options.rpt_disabled = true;  // set then unset
+    ctx.options.rpt_disabled = true; // set then unset
     parse_report(ctx, {"DISABLED  NO"});
     EXPECT_FALSE(ctx.options.rpt_disabled);
 }
@@ -147,9 +173,18 @@ TEST(ReportParserTest, AveragesYes) {
     EXPECT_TRUE(ctx.options.rpt_averages);
 }
 
+TEST(ReportParserTest, LinkStepsDefaultNoAndYes) {
+    SimulationContext ctx;
+    EXPECT_FALSE(ctx.options.rpt_link_steps);
+    parse_report(ctx, {"LINK_STEPS  YES"});
+    EXPECT_TRUE(ctx.options.rpt_link_steps);
+    parse_report(ctx, {"LINK_STEPS  NO"});
+    EXPECT_FALSE(ctx.options.rpt_link_steps);
+}
+
 TEST(ReportParserTest, SubcatchmentsAll) {
     SimulationContext ctx;
-    ctx.options.rpt_subcatchments = 0;  // start NONE
+    ctx.options.rpt_subcatchments = 0; // start NONE
     parse_report(ctx, {"SUBCATCHMENTS  ALL"});
     EXPECT_EQ(ctx.options.rpt_subcatchments, 1);
 }
@@ -163,7 +198,7 @@ TEST(ReportParserTest, SubcatchmentsNONE) {
 TEST(ReportParserTest, SubcatchmentsSOME) {
     SimulationContext ctx;
     parse_report(ctx, {"SUBCATCHMENTS  S1", "SUBCATCHMENTS  S2"});
-    EXPECT_EQ(ctx.options.rpt_subcatchments, 2);  // SOME
+    EXPECT_EQ(ctx.options.rpt_subcatchments, 2); // SOME
     ASSERT_EQ(ctx.options.rpt_subcatch_names.size(), 2u);
     EXPECT_EQ(ctx.options.rpt_subcatch_names[0], "S1");
     EXPECT_EQ(ctx.options.rpt_subcatch_names[1], "S2");
@@ -213,16 +248,16 @@ TEST(ReportParserTest, LinksSOME) {
 TEST(ReportParserTest, MultipleKeywordsInBlock) {
     SimulationContext ctx;
     parse_report(ctx, {
-        "DISABLED  NO",
-        "INPUT     YES",
-        "CONTINUITY YES",
-        "FLOWSTATS  YES",
-        "CONTROLS   NO",
-        "AVERAGES   YES",
-        "SUBCATCHMENTS  ALL",
-        "NODES          ALL",
-        "LINKS          ALL",
-    });
+                          "DISABLED  NO",
+                          "INPUT     YES",
+                          "CONTINUITY YES",
+                          "FLOWSTATS  YES",
+                          "CONTROLS   NO",
+                          "AVERAGES   YES",
+                          "SUBCATCHMENTS  ALL",
+                          "NODES          ALL",
+                          "LINKS          ALL",
+                      });
     EXPECT_FALSE(ctx.options.rpt_disabled);
     EXPECT_TRUE(ctx.options.rpt_input);
     EXPECT_TRUE(ctx.options.rpt_continuity);
@@ -248,27 +283,24 @@ TEST(ReportParserTest, CaseInsensitive) {
 TEST(ReportResolverTest, ALL_SetsAllFlags) {
     SimulationContext ctx;
     build_small_model(ctx, 3, 4, 2);
-    ctx.options.rpt_subcatchments = 1;  // ALL
+    ctx.options.rpt_subcatchments = 1; // ALL
     ctx.options.rpt_nodes = 1;
     ctx.options.rpt_links = 1;
 
     openswmm::input::resolve_cross_references(ctx);
 
     for (int i = 0; i < 3; ++i)
-        EXPECT_EQ(ctx.subcatches.rpt_flag[static_cast<std::size_t>(i)], 1)
-            << "subcatch " << i;
+        EXPECT_EQ(ctx.subcatches.rpt_flag[static_cast<std::size_t>(i)], 1) << "subcatch " << i;
     for (int i = 0; i < 4; ++i)
-        EXPECT_EQ(ctx.nodes.rpt_flag[static_cast<std::size_t>(i)], 1)
-            << "node " << i;
+        EXPECT_EQ(ctx.nodes.rpt_flag[static_cast<std::size_t>(i)], 1) << "node " << i;
     for (int i = 0; i < 2; ++i)
-        EXPECT_EQ(ctx.links.rpt_flag[static_cast<std::size_t>(i)], 1)
-            << "link " << i;
+        EXPECT_EQ(ctx.links.rpt_flag[static_cast<std::size_t>(i)], 1) << "link " << i;
 }
 
 TEST(ReportResolverTest, NONE_LeavesAllFlagsZero) {
     SimulationContext ctx;
     build_small_model(ctx, 3, 4, 2);
-    ctx.options.rpt_subcatchments = 0;  // NONE
+    ctx.options.rpt_subcatchments = 0; // NONE
     ctx.options.rpt_nodes = 0;
     ctx.options.rpt_links = 0;
 
@@ -299,16 +331,16 @@ TEST(ReportResolverTest, SOME_SetsOnlyNamedObjects) {
 
     openswmm::input::resolve_cross_references(ctx);
 
-    EXPECT_EQ(ctx.subcatches.rpt_flag[0], 1);  // S0 — named
-    EXPECT_EQ(ctx.subcatches.rpt_flag[1], 0);  // S1 — not named
-    EXPECT_EQ(ctx.subcatches.rpt_flag[2], 1);  // S2 — named
+    EXPECT_EQ(ctx.subcatches.rpt_flag[0], 1); // S0 — named
+    EXPECT_EQ(ctx.subcatches.rpt_flag[1], 0); // S1 — not named
+    EXPECT_EQ(ctx.subcatches.rpt_flag[2], 1); // S2 — named
 
-    EXPECT_EQ(ctx.nodes.rpt_flag[0], 0);  // N0
-    EXPECT_EQ(ctx.nodes.rpt_flag[1], 1);  // N1 — named
-    EXPECT_EQ(ctx.nodes.rpt_flag[2], 0);  // N2
-    EXPECT_EQ(ctx.nodes.rpt_flag[3], 0);  // N3
+    EXPECT_EQ(ctx.nodes.rpt_flag[0], 0); // N0
+    EXPECT_EQ(ctx.nodes.rpt_flag[1], 1); // N1 — named
+    EXPECT_EQ(ctx.nodes.rpt_flag[2], 0); // N2
+    EXPECT_EQ(ctx.nodes.rpt_flag[3], 0); // N3
 
-    EXPECT_EQ(ctx.links.rpt_flag[0], 1);  // ALL
+    EXPECT_EQ(ctx.links.rpt_flag[0], 1); // ALL
     EXPECT_EQ(ctx.links.rpt_flag[1], 1);
 }
 
@@ -320,8 +352,8 @@ TEST(ReportResolverTest, SOME_UnknownNameIgnored) {
 
     openswmm::input::resolve_cross_references(ctx);
 
-    EXPECT_EQ(ctx.subcatches.rpt_flag[0], 1);  // S0
-    EXPECT_EQ(ctx.subcatches.rpt_flag[1], 0);  // S1 (NONEXISTENT not found)
+    EXPECT_EQ(ctx.subcatches.rpt_flag[0], 1); // S0
+    EXPECT_EQ(ctx.subcatches.rpt_flag[1], 0); // S1 (NONEXISTENT not found)
 }
 
 // ============================================================================
@@ -332,15 +364,33 @@ class ReportInpRoundTripTest : public ::testing::Test {
 protected:
     std::string tmp_path_;
 
-    void SetUp() override {
-        tmp_path_ = TMP + "test_report_roundtrip.inp";
-    }
+    /**
+     * @brief Select the fixed report-test artifact filename.
+     *
+     * Assigns tmp_path_=TMP+"test_report_roundtrip.inp" without opening/removing it; caller assumes
+     * exclusive use of this fixed path.
+     */
+    void SetUp() override { tmp_path_ = TMP + "test_report_roundtrip.inp"; }
 
-    void TearDown() override {
-        std::remove(tmp_path_.c_str());
-    }
+    /**
+     * @brief Remove the fixed report-test artifact after the case.
+     *
+     * Calls remove on tmp_path_ and ignores removal status. Any writer/reader handles must already be
+     * closed by their scopes.
+     */
+    void TearDown() override { std::remove(tmp_path_.c_str()); }
 
     // Read the written .inp file back as text and extract [REPORT] section lines
+    /**
+     * @brief Read nonempty apparent data lines from the first REPORT section.
+     *
+     * Skips column-zero semicolon comments only, retains whitespace-only/indented comments and terminal
+     * CR. No row parsing or independent I/O status.
+     *
+     * @param[in] path Input/writer filename borrowed for a text-mode read.
+     * @return Owned unchanged lines after a column-zero [REPORT] header until the next column-zero
+     *     bracket, empty on absence/open failure.
+     */
     std::vector<std::string> extract_report_section(const std::string& path) {
         std::vector<std::string> lines;
         std::ifstream f(path);
@@ -351,7 +401,8 @@ protected:
                 in_section = true;
                 continue;
             }
-            if (in_section && !line.empty() && line[0] == '[') break;
+            if (in_section && !line.empty() && line[0] == '[')
+                break;
             if (in_section && !line.empty() && line[0] != ';')
                 lines.push_back(line);
         }
@@ -367,9 +418,9 @@ TEST_F(ReportInpRoundTripTest, AllKeywordsWritten) {
     ctx.options.rpt_flowstats = false;
     ctx.options.rpt_controls = true;
     ctx.options.rpt_averages = true;
-    ctx.options.rpt_subcatchments = 1;  // ALL
-    ctx.options.rpt_nodes = 0;          // NONE
-    ctx.options.rpt_links = 2;          // SOME
+    ctx.options.rpt_subcatchments = 1; // ALL
+    ctx.options.rpt_nodes = 0;         // NONE
+    ctx.options.rpt_links = 2;         // SOME
     ctx.options.rpt_link_names = {"C1", "C2"};
 
     int rc = openswmm::inp_writer::writeInpFile(ctx, tmp_path_);
@@ -378,14 +429,33 @@ TEST_F(ReportInpRoundTripTest, AllKeywordsWritten) {
     auto lines = extract_report_section(tmp_path_);
     // Flatten to single string for easy searching
     std::string text;
-    for (const auto& l : lines) text += l + "\n";
+    for (const auto& l : lines)
+        text += l + "\n";
 
-    EXPECT_NE(text.find("YES"), std::string::npos);  // DISABLED YES
+    EXPECT_NE(text.find("YES"), std::string::npos); // DISABLED YES
     EXPECT_NE(text.find("SUBCATCHMENTS"), std::string::npos);
     EXPECT_NE(text.find("ALL"), std::string::npos);
     EXPECT_NE(text.find("NONE"), std::string::npos);
     EXPECT_NE(text.find("C1"), std::string::npos);
     EXPECT_NE(text.find("C2"), std::string::npos);
+}
+
+TEST_F(ReportInpRoundTripTest, LinkStepsOmittedWhenOffOrSwmm5) {
+    SimulationContext ctx;
+    ASSERT_EQ(openswmm::inp_writer::writeInpFile(ctx, tmp_path_), 0);
+    std::string text;
+    for (const auto& l : extract_report_section(tmp_path_))
+        text += l + "\n";
+    EXPECT_EQ(text.find("LINK_STEPS"), std::string::npos); // default NO: not written
+
+    ctx.options.rpt_link_steps = true;
+    openswmm::inp_writer::InpWriteOptions o;
+    o.profile = openswmm::inp_writer::InpWriteOptions::Profile::Swmm5;
+    ASSERT_EQ(openswmm::inp_writer::writeInpFile(ctx, tmp_path_, nullptr, o), 0);
+    text.clear();
+    for (const auto& l : extract_report_section(tmp_path_))
+        text += l + "\n";
+    EXPECT_EQ(text.find("LINK_STEPS"), std::string::npos); // 5.x rejects the key
 }
 
 TEST_F(ReportInpRoundTripTest, ParseWrittenReportSection) {
@@ -397,9 +467,10 @@ TEST_F(ReportInpRoundTripTest, ParseWrittenReportSection) {
     ctx_write.options.rpt_flowstats = false;
     ctx_write.options.rpt_controls = true;
     ctx_write.options.rpt_averages = true;
-    ctx_write.options.rpt_subcatchments = 0;  // NONE
-    ctx_write.options.rpt_nodes = 1;          // ALL
-    ctx_write.options.rpt_links = 2;          // SOME
+    ctx_write.options.rpt_link_steps = true;
+    ctx_write.options.rpt_subcatchments = 0; // NONE
+    ctx_write.options.rpt_nodes = 1;         // ALL
+    ctx_write.options.rpt_links = 2;         // SOME
     ctx_write.options.rpt_link_names = {"Link1", "Link2"};
 
     int rc = openswmm::inp_writer::writeInpFile(ctx_write, tmp_path_);
@@ -417,9 +488,10 @@ TEST_F(ReportInpRoundTripTest, ParseWrittenReportSection) {
     EXPECT_EQ(ctx_read.options.rpt_flowstats, false);
     EXPECT_EQ(ctx_read.options.rpt_controls, true);
     EXPECT_EQ(ctx_read.options.rpt_averages, true);
-    EXPECT_EQ(ctx_read.options.rpt_subcatchments, 0);  // NONE
-    EXPECT_EQ(ctx_read.options.rpt_nodes, 1);           // ALL
-    EXPECT_EQ(ctx_read.options.rpt_links, 2);            // SOME
+    EXPECT_EQ(ctx_read.options.rpt_link_steps, true);
+    EXPECT_EQ(ctx_read.options.rpt_subcatchments, 0); // NONE
+    EXPECT_EQ(ctx_read.options.rpt_nodes, 1);         // ALL
+    EXPECT_EQ(ctx_read.options.rpt_links, 2);         // SOME
     ASSERT_EQ(ctx_read.options.rpt_link_names.size(), 2u);
     EXPECT_EQ(ctx_read.options.rpt_link_names[0], "Link1");
     EXPECT_EQ(ctx_read.options.rpt_link_names[1], "Link2");
@@ -433,13 +505,21 @@ class OutputPluginRptFlagTest : public ::testing::Test {
 protected:
     std::string out_path_;
 
-    void SetUp() override {
-        out_path_ = TMP + "test_rpt_flag.out";
-    }
+    /**
+     * @brief Select the fixed report-test artifact filename.
+     *
+     * Assigns out_path_=TMP+"test_rpt_flag.out" without opening/removing it; caller assumes exclusive
+     * use of this fixed path.
+     */
+    void SetUp() override { out_path_ = TMP + "test_rpt_flag.out"; }
 
-    void TearDown() override {
-        std::remove(out_path_.c_str());
-    }
+    /**
+     * @brief Remove the fixed report-test artifact after the case.
+     *
+     * Calls remove on out_path_ and ignores removal status. Any writer/reader handles must already be
+     * closed by their scopes.
+     */
+    void TearDown() override { std::remove(out_path_.c_str()); }
 };
 
 TEST_F(OutputPluginRptFlagTest, OnlyFlaggedObjectsWrittenToHeader) {
@@ -505,9 +585,9 @@ TEST_F(OutputPluginRptFlagTest, OnlyFlaggedObjectsWrittenToHeader) {
     std::fread(&n_pol, sizeof(int), 1, f);
 
     EXPECT_EQ(magic, 516114522);
-    EXPECT_EQ(n_sc, 1);   // Only S0 flagged
-    EXPECT_EQ(n_nd, 2);   // N0 and N2 flagged
-    EXPECT_EQ(n_lk, 1);   // Only L1 flagged
+    EXPECT_EQ(n_sc, 1); // Only S0 flagged
+    EXPECT_EQ(n_nd, 2); // N0 and N2 flagged
+    EXPECT_EQ(n_lk, 1); // Only L1 flagged
     EXPECT_EQ(n_pol, 0);
 
     std::fclose(f);
@@ -533,9 +613,9 @@ TEST_F(OutputPluginRptFlagTest, AllFlaggedWritesAllCounts) {
 
     int hdr[7];
     std::fread(hdr, sizeof(int), 7, f);
-    EXPECT_EQ(hdr[3], 2);  // n_subcatch
-    EXPECT_EQ(hdr[4], 3);  // n_nodes
-    EXPECT_EQ(hdr[5], 2);  // n_links
+    EXPECT_EQ(hdr[3], 2); // n_subcatch
+    EXPECT_EQ(hdr[4], 3); // n_nodes
+    EXPECT_EQ(hdr[5], 2); // n_links
     std::fclose(f);
 }
 
@@ -555,9 +635,9 @@ TEST_F(OutputPluginRptFlagTest, NoneFlaggedWritesZeroCounts) {
 
     int hdr[7];
     std::fread(hdr, sizeof(int), 7, f);
-    EXPECT_EQ(hdr[3], 0);  // n_subcatch
-    EXPECT_EQ(hdr[4], 0);  // n_nodes
-    EXPECT_EQ(hdr[5], 0);  // n_links
+    EXPECT_EQ(hdr[3], 0); // n_subcatch
+    EXPECT_EQ(hdr[4], 0); // n_nodes
+    EXPECT_EQ(hdr[5], 0); // n_links
     std::fclose(f);
 }
 
@@ -584,8 +664,7 @@ TEST(ReportPluginDisabledTest, DisabledWritesSummaryOk) {
     std::string content;
     {
         std::ifstream f(rpt_path);
-        content.assign((std::istreambuf_iterator<char>(f)),
-                        std::istreambuf_iterator<char>());
+        content.assign((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     }
 
     // With DISABLED=YES, continuity/flow stats/node/link/subcatch summaries skipped.
@@ -606,15 +685,15 @@ TEST(ReportEndToEndTest, ParseResolveAndOutputPlugin) {
 
     // Parse a [REPORT] section
     parse_report(ctx, {
-        "SUBCATCHMENTS  S0",
-        "SUBCATCHMENTS  S2",
-        "NODES          ALL",
-        "LINKS          NONE",
-    });
+                          "SUBCATCHMENTS  S0",
+                          "SUBCATCHMENTS  S2",
+                          "NODES          ALL",
+                          "LINKS          NONE",
+                      });
 
-    EXPECT_EQ(ctx.options.rpt_subcatchments, 2);  // SOME
-    EXPECT_EQ(ctx.options.rpt_nodes, 1);           // ALL
-    EXPECT_EQ(ctx.options.rpt_links, 0);           // NONE
+    EXPECT_EQ(ctx.options.rpt_subcatchments, 2); // SOME
+    EXPECT_EQ(ctx.options.rpt_nodes, 1);         // ALL
+    EXPECT_EQ(ctx.options.rpt_links, 0);         // NONE
 
     // Resolve to set per-object flags
     openswmm::input::resolve_cross_references(ctx);
@@ -641,9 +720,9 @@ TEST(ReportEndToEndTest, ParseResolveAndOutputPlugin) {
     ASSERT_NE(f, nullptr);
     int hdr[7];
     std::fread(hdr, sizeof(int), 7, f);
-    EXPECT_EQ(hdr[3], 2);  // 2 subcatchments (S0, S2)
-    EXPECT_EQ(hdr[4], 4);  // 4 nodes (ALL)
-    EXPECT_EQ(hdr[5], 0);  // 0 links (NONE)
+    EXPECT_EQ(hdr[3], 2); // 2 subcatchments (S0, S2)
+    EXPECT_EQ(hdr[4], 4); // 4 nodes (ALL)
+    EXPECT_EQ(hdr[5], 0); // 0 links (NONE)
     std::fclose(f);
     std::remove(out_path.c_str());
 }
@@ -708,9 +787,9 @@ TEST(ReportOutputFooterTest, FooterContainsMagicAndPeriods) {
     std::fclose(f);
 
     // footer[3] = n_periods, footer[4] = error_code, footer[5] = magic
-    EXPECT_EQ(footer[3], 3);          // 3 periods written
-    EXPECT_EQ(footer[4], 0);          // no error
-    EXPECT_EQ(footer[5], 516114522);  // magic number
+    EXPECT_EQ(footer[3], 3);         // 3 periods written
+    EXPECT_EQ(footer[4], 0);         // no error
+    EXPECT_EQ(footer[5], 516114522); // magic number
     std::remove(out_path.c_str());
 }
 

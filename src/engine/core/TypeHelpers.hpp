@@ -1,6 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file TypeHelpers.hpp
- * @brief Shared C↔internal type mapping utilities for node and link type enums.
+ * @file      TypeHelpers.hpp
+ * @brief     Shared C↔internal type mapping utilities for node and link type enums.
  *
  * @details The public C API uses SWMM_NodeType / SWMM_LinkType enums whose
  *          ordinal values differ from the internal NodeType / LinkType enums
@@ -10,9 +26,9 @@
  *
  * @ingroup engine_core
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_TYPE_HELPERS_HPP
@@ -29,23 +45,53 @@ namespace openswmm {
 // Node type mapping
 // ============================================================================
 
+/**
+ * @brief Translate a public C node type into its internal enum.
+ *
+ * Named mapping avoids relying on ordinal agreement between public and internal enums.
+ *
+ * @param[in] c_type A SWMM_NodeType enumerator; unknown integers are refused.
+ * @param[out] out_type Destination assigned only for a recognized C enumerator; preserved on
+ *     failure.
+ * @return True on conversion, false for an unknown code.
+ */
 inline bool c_to_internal_node_type(int c_type, NodeType& out_type) noexcept {
     switch (c_type) {
-        case SWMM_NODE_JUNCTION: out_type = NodeType::JUNCTION; return true;
-        case SWMM_NODE_OUTFALL:  out_type = NodeType::OUTFALL;  return true;
-        case SWMM_NODE_STORAGE:  out_type = NodeType::STORAGE;  return true;
-        case SWMM_NODE_DIVIDER:  out_type = NodeType::DIVIDER;  return true;
-        default: return false;
+    case SWMM_NODE_JUNCTION:
+        out_type = NodeType::JUNCTION;
+        return true;
+    case SWMM_NODE_OUTFALL:
+        out_type = NodeType::OUTFALL;
+        return true;
+    case SWMM_NODE_STORAGE:
+        out_type = NodeType::STORAGE;
+        return true;
+    case SWMM_NODE_DIVIDER:
+        out_type = NodeType::DIVIDER;
+        return true;
+    default:
+        return false;
     }
 }
 
+/**
+ * @brief Translate an internal node type into its public C enum.
+ *
+ * @param[in] type Internal NodeType value to translate.
+ * @return Matching SWMM_NODE_* code, or SWMM_NODE_JUNCTION for an unrecognized internal value.
+ */
 inline int internal_to_c_node_type(NodeType type) noexcept {
     switch (type) {
-        case NodeType::JUNCTION: return SWMM_NODE_JUNCTION;
-        case NodeType::OUTFALL:  return SWMM_NODE_OUTFALL;
-        case NodeType::DIVIDER:  return SWMM_NODE_DIVIDER;
-        case NodeType::STORAGE:  return SWMM_NODE_STORAGE;
-        default:                 return SWMM_NODE_JUNCTION;
+    case NodeType::JUNCTION:
+        return SWMM_NODE_JUNCTION;
+    case NodeType::OUTFALL:
+        return SWMM_NODE_OUTFALL;
+    case NodeType::DIVIDER:
+        return SWMM_NODE_DIVIDER;
+    case NodeType::STORAGE:
+        return SWMM_NODE_STORAGE;
+    default:
+        return SWMM_NODE_JUNCTION;
     }
 }
 
@@ -53,25 +99,58 @@ inline int internal_to_c_node_type(NodeType type) noexcept {
 // Link type mapping (C API and internal values match, but wrap for symmetry)
 // ============================================================================
 
+/**
+ * @brief Translate a public C link type into its internal enum.
+ *
+ * Named mapping avoids relying on ordinal agreement between public and internal enums.
+ *
+ * @param[in] c_type A SWMM_LinkType enumerator; unknown integers are refused.
+ * @param[out] out_type Destination assigned only for a recognized C enumerator; preserved on
+ *     failure.
+ * @return True on conversion, false for an unknown code.
+ */
 inline bool c_to_internal_link_type(int c_type, LinkType& out_type) noexcept {
     switch (c_type) {
-        case SWMM_LINK_CONDUIT: out_type = LinkType::CONDUIT; return true;
-        case SWMM_LINK_PUMP:    out_type = LinkType::PUMP;    return true;
-        case SWMM_LINK_ORIFICE: out_type = LinkType::ORIFICE; return true;
-        case SWMM_LINK_WEIR:    out_type = LinkType::WEIR;    return true;
-        case SWMM_LINK_OUTLET:  out_type = LinkType::OUTLET;  return true;
-        default: return false;
+    case SWMM_LINK_CONDUIT:
+        out_type = LinkType::CONDUIT;
+        return true;
+    case SWMM_LINK_PUMP:
+        out_type = LinkType::PUMP;
+        return true;
+    case SWMM_LINK_ORIFICE:
+        out_type = LinkType::ORIFICE;
+        return true;
+    case SWMM_LINK_WEIR:
+        out_type = LinkType::WEIR;
+        return true;
+    case SWMM_LINK_OUTLET:
+        out_type = LinkType::OUTLET;
+        return true;
+    default:
+        return false;
     }
 }
 
+/**
+ * @brief Translate an internal link type into its public C enum.
+ *
+ * @param[in] type Internal LinkType value to translate.
+ * @return Matching SWMM_LINK_* code, or SWMM_LINK_CONDUIT for an unrecognized internal value.
+ */
 inline int internal_to_c_link_type(LinkType type) noexcept {
     switch (type) {
-        case LinkType::CONDUIT: return SWMM_LINK_CONDUIT;
-        case LinkType::PUMP:    return SWMM_LINK_PUMP;
-        case LinkType::ORIFICE: return SWMM_LINK_ORIFICE;
-        case LinkType::WEIR:    return SWMM_LINK_WEIR;
-        case LinkType::OUTLET:  return SWMM_LINK_OUTLET;
-        default:                return SWMM_LINK_CONDUIT;
+    case LinkType::CONDUIT:
+        return SWMM_LINK_CONDUIT;
+    case LinkType::PUMP:
+        return SWMM_LINK_PUMP;
+    case LinkType::ORIFICE:
+        return SWMM_LINK_ORIFICE;
+    case LinkType::WEIR:
+        return SWMM_LINK_WEIR;
+    case LinkType::OUTLET:
+        return SWMM_LINK_OUTLET;
+    default:
+        return SWMM_LINK_CONDUIT;
     }
 }
 

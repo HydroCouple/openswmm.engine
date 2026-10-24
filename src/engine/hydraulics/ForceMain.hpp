@@ -1,6 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file ForceMain.hpp
- * @brief Force main friction — Hazen-Williams and Darcy-Weisbach.
+ * @file      ForceMain.hpp
+ * @brief     Force main friction — Hazen-Williams and Darcy-Weisbach.
  *
  * @details Alternative friction models for pressurised pipes. Called by
  *          DynamicWave solver when xsect type is FORCE_MAIN.
@@ -11,9 +27,9 @@
  * @note Legacy reference: src/legacy/engine/forcmain.c
  * @ingroup new_engine
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_FORCEMAIN_HPP
@@ -23,12 +39,9 @@ namespace openswmm {
 
 namespace forcemain {
 
-constexpr double VISCOS = 1.1e-5;  ///< Kinematic viscosity @ 20C (ft2/sec)
+constexpr double VISCOS = 1.1e-5; ///< Kinematic viscosity @ 20C (ft2/sec)
 
-enum class FrictionModel : int {
-    HAZEN_WILLIAMS = 0,
-    DARCY_WEISBACH = 1
-};
+enum class FrictionModel : int { HAZEN_WILLIAMS = 0, DARCY_WEISBACH = 1 };
 
 /**
  * @brief Compute friction slope for Hazen-Williams.
@@ -65,8 +78,7 @@ double getFricSlope_DW(double velocity, double hyd_rad, double roughness);
  * @param n_raw     Raw Manning's roughness (fallback if model unrecognized).
  * @returns Equivalent Manning's n.
  */
-double getEquivN(FrictionModel model, double r_bot, double y_full,
-                 double slope, double n_raw);
+double getEquivN(FrictionModel model, double r_bot, double y_full, double slope, double n_raw);
 
 /**
  * @brief Compute roughness adjustment factor for a force main (Gap #22).
@@ -105,9 +117,8 @@ double getFricFactor(double r_bot, double hrad, double re);
  * @param model      Hazen-Williams or Darcy-Weisbach.
  * @param count      Number of force mains.
  */
-void batchFricSlope(const double* velocity, const double* hyd_rad,
-                    const double* param, double* fric_slope,
-                    FrictionModel model, int count);
+void batchFricSlope(const double* velocity, const double* hyd_rad, const double* param,
+                    double* fric_slope, FrictionModel model, int count);
 
 } // namespace forcemain
 } // namespace openswmm

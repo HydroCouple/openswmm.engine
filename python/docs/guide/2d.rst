@@ -13,9 +13,9 @@
 
 .. currentmodule:: openswmm.engine
 
-The 2-D surface-routing module overlays a triangular mesh on the 1-D
-drainage network and advances the shallow-water surface state with a
-CVODE solver, exchanging flow with 1-D nodes at coupling points. The
+The 2-D surface-routing module overlays a mesh of triangles and quads on the
+1-D drainage network and advances the shallow-water surface state with an
+explicit solver, exchanging flow with 1-D nodes at coupling points. The
 :class:`~openswmm.engine._2d.Surface2D` view hangs off the Solver as a
 lazy attribute and addresses the live mesh:
 
@@ -26,10 +26,14 @@ lazy attribute and addresses the live mesh:
     with Solver("mesh_model.inp") as s:
         if HAS_2D and s.surface2d.is_active:
             surf = s.surface2d          # → Surface2D
-            surf.n_triangles            # mesh size
-            surf.get_depth(0)           # state at triangle 0
+            surf.n_cells                # triangles and quads
+            surf.get_depth(0)           # state at native cell 0
 
-Reference: ``openswmm_2d.h``.
+Reference: ``openswmm_2d.h``. See :doc:`runtime_coupling` for post-start
+water, heat/species sources, direct boundary setters and exact exchange times.
+Saved 2D HDF5 output is available independently through ``Results`` and
+``Output2DReader``; see :doc:`results` for mesh geometry, recorded fields,
+species, layered groundwater and diagnostic groups.
 
 ----
 
@@ -47,7 +51,7 @@ Quickstart
 
         # Drive the whole mesh with steady rain that survives every step.
         surf.force_rainfall_uniform(
-            30.0,                                  # mm/hr
+            30.0 * 0.001 / 3600.0,                 # 30 mm/hr converted to m/s
             mode=SurfaceForcingMode.OVERRIDE,
             persist=ForcingPersist.PERSIST,
         )
@@ -55,7 +59,7 @@ Quickstart
         for _ in s.steps():
             pass
 
-        depths = surf.get_depths()                 # numpy (n_triangles,)
+        depths = surf.get_depths()                 # numpy (n_cells,)
         mb = surf.get_mass_balance()
         print("continuity error:", mb["continuity_error"])
 
@@ -82,6 +86,10 @@ zero-based.
      - Scalar ``(x, y, z)`` for one vertex.
    * - ``set_vertex_z(idx, z)``
      - Set a vertex ground elevation.
+   * - ``set_vertex_z_bulk(z)``
+     - Set **every** vertex ground elevation in one call (one mesh rescan
+       instead of one per vertex; GIL released). ``len(z)`` must equal
+       ``n_vertices``.
    * - ``get_triangle_vertices(idx)``
      - ``(v0, v1, v2)`` vertex indices.
    * - ``get_triangle_area(idx)``
@@ -307,12 +315,17 @@ type is a :class:`SurfaceBoundaryType`: ``WALL`` (closed), ``NORMAL_FLOW``,
      - Cumulative flux across the edge.
    * - ``get_edge_bc_flow`` (runtime)
      - Instantaneous flow across the edge.
-   * - ``set_edge_bc_tseries_name``
-     - Name the timeseries driving a SPECIFIED_STAGE edge.
-   * - ``set_edge_bc_flow_tseries_name``
-     - Name the timeseries driving a SPECIFIED_FLOW edge.
-   * - ``set_edge_bc_rating_curve_name``
-     - Name the rating curve driving a RATING_CURVE edge.
+   * - ``get_edge_bc_tseries_name`` / ``set_edge_bc_tseries_name``
+     - Name the timeseries driving a SPECIFIED_STAGE edge; the getter
+       returns ``""`` when the slot is clear.
+   * - ``get_edge_bc_flow_tseries_name`` /
+       ``set_edge_bc_flow_tseries_name``
+     - Name the timeseries driving a SPECIFIED_FLOW edge; ``""`` when
+       clear.
+   * - ``get_edge_bc_rating_curve_name`` /
+       ``set_edge_bc_rating_curve_name``
+     - Name the rating curve driving a RATING_CURVE edge; ``""`` when
+       clear.
 
 Edge conveyance
 ---------------

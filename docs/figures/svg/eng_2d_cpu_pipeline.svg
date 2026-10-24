@@ -1,0 +1,171 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="665.1pt" height="268.858125pt" viewBox="0 0 665.1 268.858125" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:format>image/svg+xml</dc:format>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 268.858125
+L 665.1 268.858125
+L 665.1 0
+L 0 0
+z
+" style="fill: #fcfcfb"/>
+  </g>
+  <g id="axes_1">
+   <g id="patch_2">
+    <path d="M 6.651 121.912218
+L 166.275 121.912218
+Q 168.9354 121.912218 168.9354 119.570451
+L 168.9354 55.171846
+Q 168.9354 52.830078 166.275 52.830078
+L 6.651 52.830078
+Q 3.9906 52.830078 3.9906 55.171846
+L 3.9906 119.570451
+Q 3.9906 121.912218 6.651 121.912218
+z
+" clip-path="url(#pc2cd815aa3)" style="fill: #e7eff5; stroke: #56738a; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_3">
+    <path d="M 199.53 121.912218
+L 385.758 121.912218
+Q 388.4184 121.912218 388.4184 119.570451
+L 388.4184 55.171846
+Q 388.4184 52.830078 385.758 52.830078
+L 199.53 52.830078
+Q 196.8696 52.830078 196.8696 55.171846
+L 196.8696 119.570451
+Q 196.8696 121.912218 199.53 121.912218
+z
+" clip-path="url(#pc2cd815aa3)" style="fill: #e7eff5; stroke: #56738a; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_4">
+    <path d="M 428.9895 95.567334
+L 648.4725 95.567334
+Q 651.1329 95.567334 651.1329 93.225567
+L 651.1329 46.390218
+Q 651.1329 44.048451 648.4725 44.048451
+L 428.9895 44.048451
+Q 426.3291 44.048451 426.3291 46.390218
+L 426.3291 93.225567
+Q 426.3291 95.567334 428.9895 95.567334
+z
+" clip-path="url(#pc2cd815aa3)" style="fill: #d9ecdf; stroke: #56738a; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_5">
+    <path d="M 428.9895 168.747567
+L 648.4725 168.747567
+Q 651.1329 168.747567 651.1329 166.405799
+L 651.1329 119.570451
+Q 651.1329 117.228683 648.4725 117.228683
+L 428.9895 117.228683
+Q 426.3291 117.228683 426.3291 119.570451
+L 426.3291 166.405799
+Q 426.3291 168.747567 428.9895 168.747567
+z
+" clip-path="url(#pc2cd815aa3)" style="fill: #e7eff5; stroke: #56738a; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_6">
+    <path d="M 46.557 233.146172
+L 352.503 233.146172
+Q 355.1634 233.146172 355.1634 230.804404
+L 355.1634 175.187427
+Q 355.1634 172.84566 352.503 172.84566
+L 46.557 172.84566
+Q 43.8966 172.84566 43.8966 175.187427
+L 43.8966 230.804404
+Q 43.8966 233.146172 46.557 233.146172
+z
+" clip-path="url(#pc2cd815aa3)" style="fill: #fff0d1; stroke: #56738a; stroke-linejoin: miter"/>
+   </g>
+   <g id="text_1">
+    <text style="font-size: 9px; font-family: 'DejaVu Sans'" transform="translate(40.373859 76.804586)">Unique face transfer</text>
+    <text style="font-size: 9px; font-family: 'DejaVu Sans'" transform="translate(41.806125 89.854586)">[s₀ s₁ … sₙ] per face</text>
+    <text style="font-size: 9px; font-family: 'DejaVu Sans'" transform="translate(25.212375 102.904586)">Separate left / right buffers</text>
+   </g>
+   <g id="text_2">
+    <text style="font-size: 9px; font-family: 'DejaVu Sans'" transform="translate(228.357281 76.804586)">Cell-owned incidence gather</text>
+    <text style="font-size: 9px; font-family: 'DejaVu Sans'" transform="translate(235.738688 89.854586)">Up to 8 species per block</text>
+    <text style="font-size: 9px; font-family: 'DejaVu Sans'" transform="translate(215.627203 102.904586)">Same edge order for each species</text>
+   </g>
+   <g id="patch_7">
+    <path d="M 171.601077 87.371148
+Q 183.234407 87.371148 193.414292 87.371148
+" style="fill: none; stroke: #324e64; stroke-width: 1.3; stroke-linecap: round"/>
+    <path d="M 189.814292 85.571148
+L 193.414292 87.371148
+L 189.814292 89.171148
+" style="fill: none; stroke: #324e64; stroke-width: 1.3; stroke-linecap: round"/>
+   </g>
+   <g id="text_3">
+    <text style="font-size: 9px; font-family: 'DejaVu Sans'" transform="translate(512.429203 65.76633)">≥ 8 species</text>
+    <text style="font-size: 9px; font-family: 'DejaVu Sans'" transform="translate(469.114594 78.81633)">Gather row → apply its sources</text>
+   </g>
+   <g id="text_4">
+    <text style="font-size: 9px; font-family: 'DejaVu Sans'" transform="translate(512.429203 138.946562)">&lt; 8 species</text>
+    <text style="font-size: 9px; font-family: 'DejaVu Sans'" transform="translate(456.912562 151.996562)">Gather pass → separate source pass</text>
+   </g>
+   <g id="patch_8">
+    <path d="M 390.936638 83.702489
+Q 407.369819 77.127488 422.45356 71.092406
+" style="fill: none; stroke: #324e64; stroke-width: 1.3; stroke-linecap: round"/>
+    <path d="M 418.44251 70.758518
+L 422.45356 71.092406
+L 419.77982 74.100913
+" style="fill: none; stroke: #324e64; stroke-width: 1.3; stroke-linecap: round"/>
+   </g>
+   <g id="patch_9">
+    <path d="M 390.528055 106.321541
+Q 407.374394 122.498278 423.172369 137.668321
+" style="fill: none; stroke: #324e64; stroke-width: 1.3; stroke-linecap: round"/>
+    <path d="M 421.82243 133.876532
+L 423.172369 137.668321
+L 419.328974 136.473199
+" style="fill: none; stroke: #324e64; stroke-width: 1.3; stroke-linecap: round"/>
+   </g>
+   <g id="text_5">
+    <text style="font-size: 9px; font-family: 'DejaVu Sans'" transform="translate(94.873359 198.954353)">One cell water budget after face volume lands</text>
+    <text style="font-size: 9px; font-family: 'DejaVu Sans'" transform="translate(109.065938 212.004353)">Applied sinks and gross inflows retained</text>
+   </g>
+   <g id="patch_10">
+    <path d="M 357.496324 202.18091
+Q 392.410556 178.991766 426.114058 156.606757
+" style="fill: none; stroke: #324e64; stroke-width: 1.3; stroke-linecap: round"/>
+    <path d="M 422.11936 157.099088
+L 426.114058 156.606757
+L 424.111104 160.097914
+" style="fill: none; stroke: #324e64; stroke-width: 1.3; stroke-linecap: round"/>
+   </g>
+   <g id="patch_11">
+    <path d="M 356.991735 188.194517
+Q 392.409459 138.596669 426.982532 90.181642
+" style="fill: none; stroke: #324e64; stroke-width: 1.3; stroke-linecap: round"/>
+    <path d="M 423.425589 92.065296
+L 426.982532 90.181642
+L 426.355289 94.157389
+" style="fill: none; stroke: #324e64; stroke-width: 1.3; stroke-linecap: round"/>
+   </g>
+   <g id="text_6">
+    <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle" x="332.55" y="263.003706" transform="rotate(-0 332.55 263.003706)">Worker-private ledgers → fold after the parallel region • Public cell-mass layout unchanged</text>
+   </g>
+   <g id="text_7">
+    <text style="font-size: 12px; font-family: 'DejaVu Sans'; text-anchor: start" x="0" y="9.118125" transform="rotate(-0 0 9.118125)">CPU transport locality and conditional fusion</text>
+   </g>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="pc2cd815aa3">
+   <rect x="0" y="17.118125" width="665.1" height="251.74"/>
+  </clipPath>
+ </defs>
+</svg>

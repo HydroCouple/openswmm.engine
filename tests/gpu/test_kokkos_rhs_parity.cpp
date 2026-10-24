@@ -1,6 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file test_kokkos_rhs_parity.cpp
- * @brief Phase 1 parity check: Kokkos RHS vs. serial CPU RHS.
+ * @file      test_kokkos_rhs_parity.cpp
+ * @brief     Phase 1 parity check: Kokkos RHS vs. serial CPU RHS.
  *
  * @details Builds a small hand-made mesh + state and evaluates ydot = f(y)
  *          two ways — through the serial finite-volume pipeline in
@@ -24,9 +40,9 @@
  *
  * @ingroup engine_2d_gpu
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #include "../../src/engine/2d/data/MeshData.hpp"
@@ -47,26 +63,57 @@ using namespace openswmm::twoD;
 namespace {
 
 // Copy a host std::vector<double> into a fresh device DView.
+/**
+ * @brief Copy a host double vector into newly owned Kokkos memory.
+ *
+ * Requires initialized Kokkos. Empty inputs allocate an empty view without a copy.
+ * Allocations/backend errors propagate; returned view must be released before Kokkos finalization.
+ *
+ * @param[in] h Readable host values; storage is borrowed only during deep_copy.
+ * @param[in] name Non-null allocation label copied to a string.
+ * @return Reference-counted mutable device view with the same extent and values.
+ */
 gpu::DView toD(const std::vector<double>& h, const char* name) {
     gpu::DView d(std::string(name), h.size());
     if (!h.empty()) {
-        Kokkos::View<const double*, Kokkos::HostSpace,
-                     Kokkos::MemoryTraits<Kokkos::Unmanaged>> hv(h.data(), h.size());
+        Kokkos::View<const double*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> hv(
+            h.data(), h.size());
         Kokkos::deep_copy(d, hv);
     }
     return d;
 }
+/**
+ * @brief Copy a host index vector into newly owned Kokkos memory.
+ *
+ * Requires initialized Kokkos and release before finalization. Uses a temporary unmanaged host view
+ * only for synchronous deep_copy; no host pointer is retained.
+ *
+ * @param[in] h Readable host indices, unchanged.
+ * @param[in] name Non-null allocation label.
+ * @return Reference-counted const integer device view owning the copied allocation.
+ */
 gpu::CIView toI(const std::vector<int>& h, const char* name) {
     gpu::IView d(std::string(name), h.size());
     if (!h.empty()) {
-        Kokkos::View<const int*, Kokkos::HostSpace,
-                     Kokkos::MemoryTraits<Kokkos::Unmanaged>> hv(h.data(), h.size());
+        Kokkos::View<const int*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> hv(
+            h.data(), h.size());
         Kokkos::deep_copy(d, hv);
     }
     return d;
 }
 
 // Build a 4-triangle chain (0-1-2-3) with mixed interior/boundary edges.
+/**
+ * @brief Populate the synthetic four-triangle RHS parity inputs.
+ *
+ * Uses SI lengths/areas, rainfall and evaporation m/s, and coupling flux m3/s. Sets one restricted
+ * edge and a sub-regularization head difference. Geometry is synthetic and no general topology
+ * validation or time advancement occurs.
+ *
+ * @param[out] m Mesh resized/replaced with four cells, six vertices, neighbor/edge data and valid
+ *     vertex stencils.
+ * @param[out] s Surface state resized/replaced with mixed wet/dry heads and forcing.
+ */
 void buildMesh(MeshData& m, SurfaceStateData& s) {
     const int nt = 4, nv = 6;
     m.resize_vertices(nv);
@@ -76,26 +123,23 @@ void buildMesh(MeshData& m, SurfaceStateData& s) {
     // Centroids along x; arbitrary but distinct.
     const double cx[4] = {0.0, 1.0, 2.0, 3.0};
     for (int i = 0; i < nt; ++i) {
-        m.tri_cx[i]   = cx[i];
-        m.tri_cy[i]   = 0.0;
-        m.tri_cz[i]   = 10.0;          // ground elevation
+        m.tri_cx[i] = cx[i];
+        m.tri_cy[i] = 0.0;
+        m.tri_cz[i] = 10.0;            // ground elevation
         m.tri_area[i] = 2.0 + 0.1 * i; // positive, distinct
         m.mannings_n[i] = 0.03 + 0.005 * i;
     }
     // Neighbour chain: each interior edge links to the next cell; rest walls.
-    const int nbr[4][3] = {{ 1, -1, -1},
-                           { 0,  2, -1},
-                           { 1,  3, -1},
-                           { 2, -1, -1}};
+    const int nbr[4][3] = {{1, -1, -1}, {0, 2, -1}, {1, 3, -1}, {2, -1, -1}};
     for (int i = 0; i < nt; ++i) {
-        m.tri_nbr0[i] = nbr[i][0];
-        m.tri_nbr1[i] = nbr[i][1];
-        m.tri_nbr2[i] = nbr[i][2];
+        m.cell_neighbour(i, 0) = nbr[i][0];
+        m.cell_neighbour(i, 1) = nbr[i][1];
+        m.cell_neighbour(i, 2) = nbr[i][2];
         for (int e = 0; e < 3; ++e) {
             const int idx = i * 3 + e;
-            m.edge_length[idx]     = 1.0 + 0.25 * e;
-            m.edge_nx[idx]         = (e == 0) ? 1.0 : (e == 1 ? 0.0 : -0.7071);
-            m.edge_ny[idx]         = (e == 0) ? 0.0 : (e == 1 ? 1.0 :  0.7071);
+            m.edge_length[idx] = 1.0 + 0.25 * e;
+            m.edge_nx[idx] = (e == 0) ? 1.0 : (e == 1 ? 0.0 : -0.7071);
+            m.edge_ny[idx] = (e == 0) ? 0.0 : (e == 1 ? 1.0 : 0.7071);
             m.edge_conveyance[idx] = (i == 1 && e == 1) ? 0.5 : 1.0; // one restricted edge
         }
     }
@@ -103,12 +147,8 @@ void buildMesh(MeshData& m, SurfaceStateData& s) {
     // the node_head / vert_head diagnostic) is actually exercised. Arbitrary
     // but valid: triangle indices in [0, nt), weights per vertex sum to 1.
     const std::vector<std::vector<std::pair<int, double>>> sten = {
-        {{0, 1.0}},
-        {{0, 0.5}, {1, 0.5}},
-        {{1, 0.6}, {2, 0.4}},
-        {{2, 0.5}, {3, 0.5}},
-        {{3, 1.0}},
-        {{0, 0.25}, {3, 0.75}},
+        {{0, 1.0}},           {{0, 0.5}, {1, 0.5}}, {{1, 0.6}, {2, 0.4}},
+        {{2, 0.5}, {3, 0.5}}, {{3, 1.0}},           {{0, 0.25}, {3, 0.75}},
     };
     m.vert_stencil_ptr.assign(nv + 1, 0);
     m.vert_stencil_idx.clear();
@@ -118,8 +158,7 @@ void buildMesh(MeshData& m, SurfaceStateData& s) {
             m.vert_stencil_idx.push_back(pr.first);
             m.vert_stencil_wt.push_back(pr.second);
         }
-        m.vert_stencil_ptr[b + 1] =
-            m.vert_stencil_ptr[b] + static_cast<int>(sten[b].size());
+        m.vert_stencil_ptr[b + 1] = m.vert_stencil_ptr[b] + static_cast<int>(sten[b].size());
     }
 
     // Heads chosen so depths span dry (below dry_depth) to wet, and so the
@@ -127,20 +166,30 @@ void buildMesh(MeshData& m, SurfaceStateData& s) {
     // that exercises the regSqrt regularized branch. depth_i = head_i - tri_cz_i.
     const double head[4] = {10.50, 10.5003, 10.0005, 10.30};
     for (int i = 0; i < nt; ++i) {
-        s.head[i]  = head[i];
+        s.head[i] = head[i];
         s.depth[i] = std::max(head[i] - m.tri_cz[i], 0.0);
-        s.rainfall[i]      = 1.0e-6 * (i + 1);
+        s.rainfall[i] = 1.0e-6 * (i + 1);
         s.coupling_flux[i] = 2.0e-6 * (i + 1);
-        s.evap_rate[i]     = 5.0e-7 * (i + 1);
+        s.evap_rate[i] = 5.0e-7 * (i + 1);
     }
 }
 
 } // namespace
 
+/**
+ * @brief Compare serial and Kokkos volume-RHS pipelines and reconstruction diagnostics.
+ *
+ * Constructs the fixed mesh/state, evaluates serial gradients/flux/RHS, then owns a Kokkos
+ * ScopeGuard around allocation, evaluation, fence and host mirror copies. Compares RHS, four
+ * gradient fields and vertex heads with atol=1e-12, rtol=1e-10, printing each field and summary.
+ * Comparison does not explicitly reject NaNs because diff>tol is false for NaN. Exceptions/backend
+ * aborts are not converted to return codes; no model files are used.
+ * @return Zero when all recorded differences meet tolerance; one when any exceeds it.
+ */
 int main() {
     MeshData mesh;
     SurfaceStateData state;
-    SolverOptions2D opts;          // defaults: dry_depth=1e-3, limiter_epsilon=1e-6
+    SolverOptions2D opts; // defaults: dry_depth=1e-3, limiter_epsilon=1e-6
     buildMesh(mesh, state);
     const int nt = mesh.n_triangles();
 
@@ -155,10 +204,10 @@ int main() {
 
     // -------- Reference: serial CPU pipeline --------
     std::vector<double> ydot_ref(nt, 0.0);
-    std::vector<double> gx_ref, gy_ref, gxl_ref, gyl_ref;   // gradients
-    std::vector<double> vhead_ref(nv, 0.0);                 // node_head
+    std::vector<double> gx_ref, gy_ref, gxl_ref, gyl_ref; // gradients
+    std::vector<double> vhead_ref(nv, 0.0);               // node_head
     {
-        SurfaceStateData st = state;   // copy so the two paths don't share buffers
+        SurfaceStateData st = state; // copy so the two paths don't share buffers
         // Reconstruct (η, h̄) from the volume state y = V (mirrors
         // reconstructFromVolume; the same reconstruction the Kokkos unpack does).
         for (int i = 0; i < nt; ++i) {
@@ -166,7 +215,7 @@ int main() {
             const double v = std::max(y[i], 0.0);
             const double d = (A > 1.0e-30) ? v / A : 0.0;
             st.depth[i] = d;
-            st.head[i]  = mesh.tri_cz[i] + d;
+            st.head[i] = mesh.tri_cz[i] + d;
         }
         // Vertex reconstruction reference (mirrors reconstructVertexHeads;
         // computed inline so the test stays linked against only the CPU flux
@@ -181,8 +230,10 @@ int main() {
         computeLimitedGradients(mesh, st, opts.limiter_epsilon);
         computeEdgeFluxes(mesh, st, opts);
         assembleRHS(mesh, st, opts, ydot_ref.data());
-        gx_ref = st.grad_hx;   gy_ref = st.grad_hy;
-        gxl_ref = st.grad_hx_lim; gyl_ref = st.grad_hy_lim;
+        gx_ref = st.grad_hx;
+        gy_ref = st.grad_hy;
+        gxl_ref = st.grad_hx_lim;
+        gyl_ref = st.grad_hy_lim;
     }
 
     // -------- Kokkos pipeline --------
@@ -194,56 +245,56 @@ int main() {
         Kokkos::ScopeGuard guard;
 
         gpu::MeshViews mv;
-        mv.n_tri  = nt;
+        mv.n_tri = nt;
         mv.n_vert = mesh.n_vertices();
-        mv.tri_cz          = toD(mesh.tri_cz, "tri_cz");
-        mv.tri_area        = toD(mesh.tri_area, "tri_area");
-        mv.tri_cx          = toD(mesh.tri_cx, "tri_cx");
-        mv.tri_cy          = toD(mesh.tri_cy, "tri_cy");
-        mv.mannings_n      = toD(mesh.mannings_n, "mannings_n");
-        mv.tri_nbr0        = toI(mesh.tri_nbr0, "nbr0");
-        mv.tri_nbr1        = toI(mesh.tri_nbr1, "nbr1");
-        mv.tri_nbr2        = toI(mesh.tri_nbr2, "nbr2");
-        mv.edge_length     = toD(mesh.edge_length, "edge_length");
-        mv.edge_nx         = toD(mesh.edge_nx, "edge_nx");
-        mv.edge_ny         = toD(mesh.edge_ny, "edge_ny");
+        mv.tri_cz = toD(mesh.tri_cz, "tri_cz");
+        mv.tri_area = toD(mesh.tri_area, "tri_area");
+        mv.tri_cx = toD(mesh.tri_cx, "tri_cx");
+        mv.tri_cy = toD(mesh.tri_cy, "tri_cy");
+        mv.mannings_n = toD(mesh.mannings_n, "mannings_n");
+        mv.tri_nbr0 = toI(mesh.tri_nbr0, "nbr0");
+        mv.tri_nbr1 = toI(mesh.tri_nbr1, "nbr1");
+        mv.tri_nbr2 = toI(mesh.tri_nbr2, "nbr2");
+        mv.edge_length = toD(mesh.edge_length, "edge_length");
+        mv.edge_nx = toD(mesh.edge_nx, "edge_nx");
+        mv.edge_ny = toD(mesh.edge_ny, "edge_ny");
         mv.edge_conveyance = toD(mesh.edge_conveyance, "edge_conv");
-        mv.vert_ptr        = toI(mesh.vert_stencil_ptr, "vptr");
-        mv.vert_idx        = toI(mesh.vert_stencil_idx, "vidx");
-        mv.vert_wt         = toD(mesh.vert_stencil_wt, "vwt");
+        mv.vert_ptr = toI(mesh.vert_stencil_ptr, "vptr");
+        mv.vert_idx = toI(mesh.vert_stencil_idx, "vidx");
+        mv.vert_wt = toD(mesh.vert_stencil_wt, "vwt");
 
         gpu::StateViews sv;
-        sv.head          = gpu::DView("head", nt);
-        sv.depth         = gpu::DView("depth", nt);
-        sv.grad_hx       = gpu::DView("gx", nt);
-        sv.grad_hy       = gpu::DView("gy", nt);
-        sv.grad_hx_lim   = gpu::DView("gxl", nt);
-        sv.grad_hy_lim   = gpu::DView("gyl", nt);
-        sv.vert_head     = gpu::DView("vhead", mesh.n_vertices());
-        sv.edge_flux     = gpu::DView("eflux", static_cast<std::size_t>(nt) * 3);
-        sv.rainfall      = toD(state.rainfall, "rain");
+        sv.head = gpu::DView("head", nt);
+        sv.depth = gpu::DView("depth", nt);
+        sv.grad_hx = gpu::DView("gx", nt);
+        sv.grad_hy = gpu::DView("gy", nt);
+        sv.grad_hx_lim = gpu::DView("gxl", nt);
+        sv.grad_hy_lim = gpu::DView("gyl", nt);
+        sv.vert_head = gpu::DView("vhead", mesh.n_vertices());
+        sv.edge_flux = gpu::DView("eflux", static_cast<std::size_t>(nt) * 3);
+        sv.rainfall = toD(state.rainfall, "rain");
         sv.coupling_flux = toD(state.coupling_flux, "coup");
-        sv.evap_rate     = toD(state.evap_rate, "evap");
-        sv.precond_diag  = gpu::DView("pdiag", nt);
+        sv.evap_rate = toD(state.evap_rate, "evap");
+        sv.precond_diag = gpu::DView("pdiag", nt);
 
-        gpu::DView yv    = toD(y, "y");
+        gpu::DView yv = toD(y, "y");
         gpu::DView ydotv("ydot", nt);
 
-        gpu::evaluateRhs(mv, sv, yv, ydotv, opts.dry_depth, opts.limiter_epsilon,
-                         opts.flux_dh_eps);
+        gpu::evaluateRhs(mv, sv, yv, ydotv, opts.dry_depth, opts.limiter_epsilon, opts.flux_dh_eps);
         Kokkos::fence();
 
         auto pull = [](gpu::DView d, std::vector<double>& out) {
             auto h = Kokkos::create_mirror_view(d);
             Kokkos::deep_copy(h, d);
-            for (std::size_t i = 0; i < out.size(); ++i) out[i] = h(i);
+            for (std::size_t i = 0; i < out.size(); ++i)
+                out[i] = h(i);
         };
         pull(ydotv, ydot_gpu);
-        pull(sv.grad_hx,     gx_gpu);
-        pull(sv.grad_hy,     gy_gpu);
+        pull(sv.grad_hx, gx_gpu);
+        pull(sv.grad_hy, gy_gpu);
         pull(sv.grad_hx_lim, gxl_gpu);
         pull(sv.grad_hy_lim, gyl_gpu);
-        pull(sv.vert_head,   vhead_gpu);
+        pull(sv.vert_head, vhead_gpu);
     }
 
     // -------- Compare every field the serial path and the kernels share --------
@@ -253,10 +304,10 @@ int main() {
         const int before = failures;
         for (std::size_t i = 0; i < ref.size(); ++i) {
             const double diff = std::abs(gpu[i] - ref[i]);
-            const double tol  = atol + rtol * std::abs(ref[i]);
+            const double tol = atol + rtol * std::abs(ref[i]);
             if (diff > tol) {
-                std::printf("  %-10s[%zu]: ref=% .17e gpu=% .17e |diff|=% .3e FAIL\n",
-                            name, i, ref[i], gpu[i], diff);
+                std::printf("  %-10s[%zu]: ref=% .17e gpu=% .17e |diff|=% .3e FAIL\n", name, i,
+                            ref[i], gpu[i], diff);
                 ++failures;
             }
         }
@@ -264,14 +315,13 @@ int main() {
                     failures == before ? "ok" : "FAIL");
     };
 
-    compare("ydot",     ydot_ref,  ydot_gpu);
-    compare("grad_hx",  gx_ref,    gx_gpu);
-    compare("grad_hy",  gy_ref,    gy_gpu);
-    compare("grad_hx_l", gxl_ref,  gxl_gpu);
-    compare("grad_hy_l", gyl_ref,  gyl_gpu);
+    compare("ydot", ydot_ref, ydot_gpu);
+    compare("grad_hx", gx_ref, gx_gpu);
+    compare("grad_hy", gy_ref, gy_gpu);
+    compare("grad_hx_l", gxl_ref, gxl_gpu);
+    compare("grad_hy_l", gyl_ref, gyl_gpu);
     compare("vert_head", vhead_ref, vhead_gpu);
 
-    std::printf(failures == 0 ? "\nPARITY PASS\n" : "\nPARITY FAIL (%d)\n",
-                failures);
+    std::printf(failures == 0 ? "\nPARITY PASS\n" : "\nPARITY FAIL (%d)\n", failures);
     return failures == 0 ? 0 : 1;
 }

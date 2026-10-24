@@ -1,6 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file NodeSubtypes.hpp
- * @brief Relational (normalized) Structure-of-Arrays side-tables for node subtypes.
+ * @file      NodeSubtypes.hpp
+ * @brief     Relational (normalized) Structure-of-Arrays side-tables for node subtypes.
  *
  * @details Part of the relational node refactor (docs/relational/
  *          RELATIONAL_NODE_REFACTOR_PLAN.md). The wide `NodeData` struct
@@ -30,14 +46,15 @@
  * @see src/engine/hydraulics/XSectBatch.hpp — XSectGroups::build (batch pattern)
  * @ingroup engine_data
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_NODE_SUBTYPES_HPP
 #define OPENSWMM_ENGINE_NODE_SUBTYPES_HPP
 
+#include "LidNodeData.hpp"
 #include <algorithm>
 #include <vector>
 #include <cstdint>
@@ -57,74 +74,132 @@ namespace openswmm {
  *          `storage_*` / `exfil_*` fields of NodeData.
  */
 struct StorageData {
+    std::vector<LidNodeConfig> lid;
+    std::vector<LidNodeState> lid_state;
     /** @brief Base NodeData index this row belongs to (the join key). */
-    std::vector<int>         node_idx;
+    std::vector<int> node_idx;
 
     /** @brief Storage curve index into TableData (-1 = not tabulated). */
-    std::vector<int>         curve;
+    std::vector<int> curve;
     /** @brief Curve name for deferred resolution. */
     std::vector<std::string> curve_name;
     /** @brief Surface-area relation. Selects how a/b/c below are interpreted. */
     std::vector<StorageShape> shape;
     /** @brief Area coefficient A (legacy a1). FUNCTIONAL: `A·d^B`; geometric shapes:
      *  the linear term of `C + A·d + B·d²`. Derived from p1..p3 for the latter. */
-    std::vector<double>      a;
+    std::vector<double> a;
     /** @brief Area coefficient B (legacy a2). FUNCTIONAL: the exponent; geometric
      *  shapes: the quadratic term. */
-    std::vector<double>      b;
+    std::vector<double> b;
     /** @brief Area coefficient C (legacy a0). Baseline area at zero depth. */
-    std::vector<double>      c;
+    std::vector<double> c;
     /** @brief Raw shape parameter 1 — major axis / base length L (geometric shapes only).
      *  Kept alongside the derived a/b/c so `.inp`/`.gpkg` round-trip losslessly; legacy
      *  discards these, which is why a legacy model cannot rewrite its own shape params. */
-    std::vector<double>      p1;
+    std::vector<double> p1;
     /** @brief Raw shape parameter 2 — minor axis / base width W. */
-    std::vector<double>      p2;
+    std::vector<double> p2;
     /** @brief Raw shape parameter 3 — side slope Z (run/rise), or height for PARABOLOID. */
-    std::vector<double>      p3;
+    std::vector<double> p3;
     /** @brief Seepage rate (project units/day). */
-    std::vector<double>      seep_rate;
+    std::vector<double> seep_rate;
     /** @brief Fraction of potential evaporation realized (0-1). */
-    std::vector<double>      evap_frac;
+    std::vector<double> evap_frac;
     /** @brief Evaporation loss this timestep (ft3). */
-    std::vector<double>      evap_loss;
+    std::vector<double> evap_loss;
     /** @brief Exfiltration loss this timestep (ft3). */
-    std::vector<double>      exfil_loss;
+    std::vector<double> exfil_loss;
+    /** @brief Raw (uncapped) exfiltration rate this timestep (cfs), written by
+     *  ExfilSolver::computeAll and consumed by Router::initNodeFlows, which
+     *  applies legacy's single joint evap+exfil volume cap and books the final
+     *  exfil_loss volume. Kept as a rate so no dt round-trip perturbs bits. */
+    std::vector<double> exfil_rate;
     /** @brief Green-Ampt suction head for exfiltration. */
-    std::vector<double>      exfil_suction;
+    std::vector<double> exfil_suction;
     /** @brief Green-Ampt saturated conductivity for exfiltration. */
-    std::vector<double>      exfil_ksat;
+    std::vector<double> exfil_ksat;
     /** @brief Green-Ampt initial moisture deficit for exfiltration (0-1). */
-    std::vector<double>      exfil_imd;
+    std::vector<double> exfil_imd;
 
-    /** @brief Number of storage rows. */
+    /**
+     * @brief Count StorageData rows from the base-object join-key column.
+     * @return node_idx.size() converted to int; other column lengths are not checked.
+     */
     int count() const noexcept { return static_cast<int>(node_idx.size()); }
 
-    /** @brief Drop all rows (capacity retained). */
+    /**
+     * @brief Erase all StorageData rows while retaining vector capacities.
+     *
+     * Invalidates element references/iterators and removes owned nested state. Does not clear base
+     * objects or repair the enclosing reverse map.
+     */
     void clear() noexcept {
-        node_idx.clear(); curve.clear(); curve_name.clear();
+        node_idx.clear();
+        curve.clear();
+        curve_name.clear();
         shape.clear();
-        a.clear(); b.clear(); c.clear();
-        p1.clear(); p2.clear(); p3.clear();
-        seep_rate.clear(); evap_frac.clear(); evap_loss.clear(); exfil_loss.clear();
-        exfil_suction.clear(); exfil_ksat.clear(); exfil_imd.clear();
+        a.clear();
+        b.clear();
+        c.clear();
+        p1.clear();
+        p2.clear();
+        p3.clear();
+        seep_rate.clear();
+        evap_frac.clear();
+        evap_loss.clear();
+        exfil_loss.clear();
+        exfil_rate.clear();
+        exfil_suction.clear();
+        exfil_ksat.clear();
+        exfil_imd.clear();
+        lid.clear();
+        lid_state.clear();
     }
 
-    /** @brief Reserve capacity for `n` rows. */
+    /**
+     * @brief Request capacity for each StorageData column without changing row count.
+     *
+     * May invalidate column references/iterators. Allocation failure can leave different reserved
+     * capacities, while existing row values remain.
+     *
+     * @param[in] n Nonnegative anticipated row count; caller validates before conversion to size_t.
+     */
     void reserve(int n) {
         const auto un = static_cast<std::size_t>(n);
-        node_idx.reserve(un); curve.reserve(un); curve_name.reserve(un);
+        node_idx.reserve(un);
+        curve.reserve(un);
+        curve_name.reserve(un);
         shape.reserve(un);
-        a.reserve(un); b.reserve(un); c.reserve(un);
-        p1.reserve(un); p2.reserve(un); p3.reserve(un);
-        seep_rate.reserve(un); evap_frac.reserve(un);
-        evap_loss.reserve(un); exfil_loss.reserve(un);
-        exfil_suction.reserve(un); exfil_ksat.reserve(un); exfil_imd.reserve(un);
+        a.reserve(un);
+        b.reserve(un);
+        c.reserve(un);
+        p1.reserve(un);
+        p2.reserve(un);
+        p3.reserve(un);
+        seep_rate.reserve(un);
+        evap_frac.reserve(un);
+        evap_loss.reserve(un);
+        exfil_loss.reserve(un);
+        exfil_rate.reserve(un);
+        exfil_suction.reserve(un);
+        exfil_ksat.reserve(un);
+        exfil_imd.reserve(un);
+        lid.reserve(un);
+        lid_state.reserve(un);
     }
 
-    /** @brief Insert a default storage row for base node `i`, keeping `node_idx`
-     *  ascending; returns the inserted row index. Defaults match NodeData::resize.
-     *  Ascending parse inserts at the end (O(1)); edits may insert in the middle. */
+    /**
+     * @brief Insert a default StorageData row at the sorted base-object key position.
+     *
+     * Assumes ascending node_idx and aligned columns. Seeds FUNCTIONAL shape, curve=-1, zero
+     * coefficients/losses and default unassigned LID state. Does not update the enclosing reverse map,
+     * reject duplicate keys, enforce lifecycle or initialize solver caches. Allocation failure can
+     * leave partially inserted parallel columns.
+     *
+     * @param[in] i Nonnegative base-object index; caller ensures it exists, is of this subtype and is
+     *     absent from this table.
+     * @return Inserted dense row index; later dense rows shift up.
+     */
     int add_default(int i) {
         const auto p = static_cast<std::ptrdiff_t>(
             std::lower_bound(node_idx.begin(), node_idx.end(), i) - node_idx.begin());
@@ -144,13 +219,24 @@ struct StorageData {
         evap_frac.insert(evap_frac.begin() + p, 0.0);
         evap_loss.insert(evap_loss.begin() + p, 0.0);
         exfil_loss.insert(exfil_loss.begin() + p, 0.0);
+        exfil_rate.insert(exfil_rate.begin() + p, 0.0);
         exfil_suction.insert(exfil_suction.begin() + p, 0.0);
         exfil_ksat.insert(exfil_ksat.begin() + p, 0.0);
         exfil_imd.insert(exfil_imd.begin() + p, 0.0);
+        lid.insert(lid.begin() + p, LidNodeConfig{});
+        lid_state.insert(lid_state.begin() + p, LidNodeState{});
         return static_cast<int>(p);
     }
 
-    /** @brief Erase storage row `r` from every column. */
+    /**
+     * @brief Erase dense StorageData row data and shift later dense rows down.
+     *
+     * Erases every defined side-table column. Does not erase a base object, renumber stored base keys
+     * or rebuild the reverse map; enclosing maintenance handles those steps.
+     *
+     * @param[in] r Existing dense subtype-row index, NOT the base-object index; caller validates
+     *     bounds/alignment.
+     */
     void erase_at(int r) {
         const auto p = static_cast<std::ptrdiff_t>(r);
         node_idx.erase(node_idx.begin() + p);
@@ -167,9 +253,12 @@ struct StorageData {
         evap_frac.erase(evap_frac.begin() + p);
         evap_loss.erase(evap_loss.begin() + p);
         exfil_loss.erase(exfil_loss.begin() + p);
+        exfil_rate.erase(exfil_rate.begin() + p);
         exfil_suction.erase(exfil_suction.begin() + p);
         exfil_ksat.erase(exfil_ksat.begin() + p);
         exfil_imd.erase(exfil_imd.begin() + p);
+        lid.erase(lid.begin() + p);
+        lid_state.erase(lid_state.begin() + p);
     }
 };
 
@@ -183,54 +272,90 @@ struct StorageData {
  */
 struct OutfallData {
     /** @brief Base NodeData index this row belongs to (the join key). */
-    std::vector<int>         node_idx;
+    std::vector<int> node_idx;
 
     /** @brief Boundary condition type (FREE/NORMAL/FIXED/TIDAL/TIMESERIES). */
     std::vector<OutfallType> bc_type;
     /** @brief Fixed stage, or tidal/timeseries table index (per bc_type).
      *  For TIDAL/TIMESERIES an unresolved reference is -1 (never 0, which is a
      *  valid table index). */
-    std::vector<double>      param;
+    std::vector<double> param;
     /** @brief Stage-data table name for TIDAL/TIMESERIES, held for deferred
      *  name→index resolution in PostParseResolver (empty otherwise). */
     std::vector<std::string> param_name;
     /** @brief Flap gate present (0/1). */
-    std::vector<uint8_t>     has_flap_gate;
+    std::vector<uint8_t> has_flap_gate;
     /** @brief Subcatchment index to route discharge to (-1 = none). */
-    std::vector<int>         route_to;
+    std::vector<int> route_to;
     /** @brief Cached connected-conduit index (-1 = none). */
-    std::vector<int>         link_idx;
+    std::vector<int> link_idx;
     /** @brief Conduit offset at the outfall end. */
-    std::vector<double>      link_offset;
+    std::vector<double> link_offset;
     /** @brief Cached 2D surface head at the coupling point (sentinel -1e30). */
-    std::vector<double>      head_2d;
+    std::vector<double> head_2d;
     /** @brief Cached wet/dry ramp factor [0,1] for the 2D tailwater override
      *  (0 = dry → free discharge, 1 = wet → full tailwater); default 0. */
-    std::vector<double>      ramp_2d;
+    std::vector<double> ramp_2d;
 
-    /** @brief Number of outfall rows. */
+    /**
+     * @brief Count OutfallData rows from the base-object join-key column.
+     * @return node_idx.size() converted to int; other column lengths are not checked.
+     */
     int count() const noexcept { return static_cast<int>(node_idx.size()); }
 
-    /** @brief Drop all rows (capacity retained). */
+    /**
+     * @brief Erase all OutfallData rows while retaining vector capacities.
+     *
+     * Invalidates element references/iterators and removes owned nested state. Does not clear base
+     * objects or repair the enclosing reverse map.
+     */
     void clear() noexcept {
-        node_idx.clear(); bc_type.clear(); param.clear(); param_name.clear();
-        has_flap_gate.clear(); route_to.clear();
-        link_idx.clear(); link_offset.clear(); head_2d.clear();
+        node_idx.clear();
+        bc_type.clear();
+        param.clear();
+        param_name.clear();
+        has_flap_gate.clear();
+        route_to.clear();
+        link_idx.clear();
+        link_offset.clear();
+        head_2d.clear();
         ramp_2d.clear();
     }
 
-    /** @brief Reserve capacity for `n` rows. */
+    /**
+     * @brief Request capacity for each OutfallData column without changing row count.
+     *
+     * May invalidate column references/iterators. Allocation failure can leave different reserved
+     * capacities, while existing row values remain.
+     *
+     * @param[in] n Nonnegative anticipated row count; caller validates before conversion to size_t.
+     */
     void reserve(int n) {
         const auto un = static_cast<std::size_t>(n);
-        node_idx.reserve(un); bc_type.reserve(un); param.reserve(un);
+        node_idx.reserve(un);
+        bc_type.reserve(un);
+        param.reserve(un);
         param_name.reserve(un);
-        has_flap_gate.reserve(un); route_to.reserve(un);
-        link_idx.reserve(un); link_offset.reserve(un); head_2d.reserve(un);
+        has_flap_gate.reserve(un);
+        route_to.reserve(un);
+        link_idx.reserve(un);
+        link_offset.reserve(un);
+        head_2d.reserve(un);
         ramp_2d.reserve(un);
     }
 
-    /** @brief Insert a default outfall row for base node `i`, keeping `node_idx`
-     *  ascending; returns the inserted row index. Defaults match NodeData::resize. */
+    /**
+     * @brief Insert a default OutfallData row at the sorted base-object key position.
+     *
+     * Assumes ascending node_idx and aligned columns. Seeds FREE boundary, no route/link references, no
+     * flap gate, head_2d=-1e30 and zero ramp. Does not update the enclosing reverse map, reject
+     * duplicate keys, enforce lifecycle or initialize solver caches. Allocation failure can leave
+     * partially inserted parallel columns.
+     *
+     * @param[in] i Nonnegative base-object index; caller ensures it exists, is of this subtype and is
+     *     absent from this table.
+     * @return Inserted dense row index; later dense rows shift up.
+     */
     int add_default(int i) {
         const auto p = static_cast<std::ptrdiff_t>(
             std::lower_bound(node_idx.begin(), node_idx.end(), i) - node_idx.begin());
@@ -247,7 +372,15 @@ struct OutfallData {
         return static_cast<int>(p);
     }
 
-    /** @brief Erase outfall row `r` from every column. */
+    /**
+     * @brief Erase dense OutfallData row data and shift later dense rows down.
+     *
+     * Erases every defined side-table column. Does not erase a base object, renumber stored base keys
+     * or rebuild the reverse map; enclosing maintenance handles those steps.
+     *
+     * @param[in] r Existing dense subtype-row index, NOT the base-object index; caller validates
+     *     bounds/alignment.
+     */
     void erase_at(int r) {
         const auto p = static_cast<std::ptrdiff_t>(r);
         node_idx.erase(node_idx.begin() + p);
@@ -273,45 +406,82 @@ struct OutfallData {
  */
 struct DividerData {
     /** @brief Base NodeData index this row belongs to (the join key). */
-    std::vector<int>         node_idx;
+    std::vector<int> node_idx;
 
     /** @brief Diversion method (CUTOFF/OVERFLOW/TABULAR/WEIR). */
     std::vector<DividerType> method;
     /** @brief Cutoff flow for CUTOFF dividers. */
-    std::vector<double>      cutoff;
+    std::vector<double> cutoff;
     /** @brief Weir discharge coefficient for WEIR dividers. */
-    std::vector<double>      cd;
+    std::vector<double> cd;
     /** @brief Weir max depth for WEIR dividers. */
-    std::vector<double>      max_depth;
+    std::vector<double> max_depth;
     /** @brief Diversion curve index for TABULAR dividers (-1 = none). */
-    std::vector<int>         curve;
+    std::vector<int> curve;
     /** @brief Diversion link index (-1 = not set). */
-    std::vector<int>         link;
+    std::vector<int> link;
     /** @brief Diversion link name (deferred resolution). */
     std::vector<std::string> link_name;
     /** @brief Diversion curve name (deferred resolution, TABULAR only). */
     std::vector<std::string> curve_name;
 
-    /** @brief Number of divider rows. */
+    /**
+     * @brief Count DividerData rows from the base-object join-key column.
+     * @return node_idx.size() converted to int; other column lengths are not checked.
+     */
     int count() const noexcept { return static_cast<int>(node_idx.size()); }
 
-    /** @brief Drop all rows (capacity retained). */
+    /**
+     * @brief Erase all DividerData rows while retaining vector capacities.
+     *
+     * Invalidates element references/iterators and removes owned nested state. Does not clear base
+     * objects or repair the enclosing reverse map.
+     */
     void clear() noexcept {
-        node_idx.clear(); method.clear(); cutoff.clear();
-        cd.clear(); max_depth.clear(); curve.clear(); link.clear();
-        link_name.clear(); curve_name.clear();
+        node_idx.clear();
+        method.clear();
+        cutoff.clear();
+        cd.clear();
+        max_depth.clear();
+        curve.clear();
+        link.clear();
+        link_name.clear();
+        curve_name.clear();
     }
 
-    /** @brief Reserve capacity for `n` rows. */
+    /**
+     * @brief Request capacity for each DividerData column without changing row count.
+     *
+     * May invalidate column references/iterators. Allocation failure can leave different reserved
+     * capacities, while existing row values remain.
+     *
+     * @param[in] n Nonnegative anticipated row count; caller validates before conversion to size_t.
+     */
     void reserve(int n) {
         const auto un = static_cast<std::size_t>(n);
-        node_idx.reserve(un); method.reserve(un); cutoff.reserve(un);
-        cd.reserve(un); max_depth.reserve(un); curve.reserve(un); link.reserve(un);
-        link_name.reserve(un); curve_name.reserve(un);
+        node_idx.reserve(un);
+        method.reserve(un);
+        cutoff.reserve(un);
+        cd.reserve(un);
+        max_depth.reserve(un);
+        curve.reserve(un);
+        link.reserve(un);
+        link_name.reserve(un);
+        curve_name.reserve(un);
     }
 
-    /** @brief Insert a default divider row for base node `i`, keeping `node_idx`
-     *  ascending; returns the inserted row index. Defaults match NodeData::resize. */
+    /**
+     * @brief Insert a default DividerData row at the sorted base-object key position.
+     *
+     * Assumes ascending node_idx and aligned columns. Seeds CUTOFF method, unset curve/link references
+     * and zero parameters. Does not update the enclosing reverse map, reject duplicate keys, enforce
+     * lifecycle or initialize solver caches. Allocation failure can leave partially inserted parallel
+     * columns.
+     *
+     * @param[in] i Nonnegative base-object index; caller ensures it exists, is of this subtype and is
+     *     absent from this table.
+     * @return Inserted dense row index; later dense rows shift up.
+     */
     int add_default(int i) {
         const auto p = static_cast<std::ptrdiff_t>(
             std::lower_bound(node_idx.begin(), node_idx.end(), i) - node_idx.begin());
@@ -327,7 +497,15 @@ struct DividerData {
         return static_cast<int>(p);
     }
 
-    /** @brief Erase divider row `r` from every column. */
+    /**
+     * @brief Erase dense DividerData row data and shift later dense rows down.
+     *
+     * Erases every defined side-table column. Does not erase a base object, renumber stored base keys
+     * or rebuild the reverse map; enclosing maintenance handles those steps.
+     *
+     * @param[in] r Existing dense subtype-row index, NOT the base-object index; caller validates
+     *     bounds/alignment.
+     */
     void erase_at(int r) {
         const auto p = static_cast<std::ptrdiff_t>(r);
         node_idx.erase(node_idx.begin() + p);
@@ -355,14 +533,19 @@ struct DividerData {
  *          `node_idx`, this provides O(1) lookup in both directions.
  */
 struct NodeSubtypes {
-    StorageData      storages;
-    OutfallData      outfalls;
-    DividerData      dividers;
+    StorageData storages;
+    OutfallData outfalls;
+    DividerData dividers;
 
     /** @brief base node index → row in its subtype table (-1 for junctions). */
     std::vector<int> subtype_row;
 
-    /** @brief Drop all rows and the reverse map. */
+    /**
+     * @brief Erase all owned node subtype tables and reverse-map entries.
+     *
+     * Does not edit base NodeData rows; all borrowed subtype references/row indices must be
+     * re-resolved.
+     */
     void clear() noexcept {
         storages.clear();
         outfalls.clear();
@@ -371,37 +554,42 @@ struct NodeSubtypes {
     }
 
     /**
-     * @brief Recompute the reverse map (`subtype_row`) from the side-table rows.
+     * @brief Rebuild base node indices to dense subtype-row lookup.
      *
-     * @details Phase 4: the side-tables are the authoritative store (no longer
-     *          built from the wide arrays), so this only re-derives the O(1)
-     *          base→row index from each table's `node_idx`. Sizes `subtype_row`
-     *          to @p n_nodes (junctions and untyped nodes stay -1). Used after a
-     *          structural edit (insert/erase/convert) and as the end-of-parse /
-     *          hydraulics-init consistency pass. Does not touch row data.
+     * Replaces reverse map with -1 then writes each side-table row index. Does not validate
+     * duplicate/type-consistency or change table data; duplicate keys are overwritten by later visited
+     * tables. Invalid join keys cause unchecked indexing. Allocation exceptions propagate.
+     *
+     * @param[in] n_nodes Nonnegative total base-object count; every stored join key must be in
+     *     [0,count).
      */
     void rebuild_index(int n_nodes) {
         subtype_row.assign(static_cast<std::size_t>(n_nodes), -1);
         for (int r = 0; r < storages.count(); ++r)
-            subtype_row[static_cast<std::size_t>(storages.node_idx[static_cast<std::size_t>(r)])] = r;
+            subtype_row[static_cast<std::size_t>(storages.node_idx[static_cast<std::size_t>(r)])] =
+                r;
         for (int r = 0; r < outfalls.count(); ++r)
-            subtype_row[static_cast<std::size_t>(outfalls.node_idx[static_cast<std::size_t>(r)])] = r;
+            subtype_row[static_cast<std::size_t>(outfalls.node_idx[static_cast<std::size_t>(r)])] =
+                r;
         for (int r = 0; r < dividers.count(); ++r)
-            subtype_row[static_cast<std::size_t>(dividers.node_idx[static_cast<std::size_t>(r)])] = r;
+            subtype_row[static_cast<std::size_t>(dividers.node_idx[static_cast<std::size_t>(r)])] =
+                r;
     }
 
     /**
-     * @brief Set node @p i to @p t, creating/removing/moving its subtype row so
-     *        the side-table stays the single source of truth. Returns the new
-     *        subtype row (or -1 for JUNCTION). Also sets `nodes.type[i]`.
+     * @brief Change one base node type and maintain its dense side-table row.
      *
-     * @details Idempotent: re-setting the same subtype type returns the existing
-     *          row (parse duplicate lines, no-op). On a real type change the old
-     *          row is erased and a fresh default row inserted (keeping `node_idx`
-     *          ascending). Fresh ascending parse appends at the end in O(1); any
-     *          mid-table insert or erase triggers an O(n) `rebuild_index`. New
-     *          rows carry NodeData::resize defaults (so a converted node starts
-     *          clean, matching the legacy clear-then-apply-defaults path).
+     * Erases old row and inserts target defaults, preserving sorted join keys. End insertion updates
+     * one reverse entry; shifted rows trigger full rebuild. Does not perform higher-level conversion
+     * cleanup, topology validation, source rewiring or solver-cache refresh. Allocation failure is not
+     * transactional.
+     *
+     * @param[in,out] nodes Caller-owned aligned base NodeData store; this function changes its type
+     *     field.
+     * @param[in] i Existing nonnegative base-object index; no bounds check on the base store.
+     * @param[in] t Supported internal NodeType; caller validates enum and editable lifecycle.
+     * @return Dense target row, or -1 for JUNCTION/unrecognized no-row types. Same-type existing row
+     *     returns unchanged.
      */
     int set_node_type(NodeData& nodes, int i, NodeType t) {
         const auto ui = static_cast<std::size_t>(i);
@@ -411,15 +599,22 @@ struct NodeSubtypes {
         const NodeType old = nodes.type[ui];
         const int existing = subtype_row[ui];
         if (old == t && existing >= 0)
-            return existing;  // already this subtype with a row — idempotent.
+            return existing; // already this subtype with a row — idempotent.
 
         bool shifted = false;
-        if (existing >= 0) {  // remove the old subtype row (real re-type/convert).
+        if (existing >= 0) { // remove the old subtype row (real re-type/convert).
             switch (old) {
-                case NodeType::STORAGE: storages.erase_at(existing); break;
-                case NodeType::OUTFALL: outfalls.erase_at(existing); break;
-                case NodeType::DIVIDER: dividers.erase_at(existing); break;
-                default: break;
+            case NodeType::STORAGE:
+                storages.erase_at(existing);
+                break;
+            case NodeType::OUTFALL:
+                outfalls.erase_at(existing);
+                break;
+            case NodeType::DIVIDER:
+                dividers.erase_at(existing);
+                break;
+            default:
+                break;
             }
             shifted = true;
         }
@@ -428,40 +623,60 @@ struct NodeSubtypes {
 
         int row = -1;
         switch (t) {
-            case NodeType::STORAGE: row = storages.add_default(i);
-                                    if (row != storages.count() - 1) shifted = true; break;
-            case NodeType::OUTFALL: row = outfalls.add_default(i);
-                                    if (row != outfalls.count() - 1) shifted = true; break;
-            case NodeType::DIVIDER: row = dividers.add_default(i);
-                                    if (row != dividers.count() - 1) shifted = true; break;
-            case NodeType::JUNCTION:
-            default: break;  // no subtype row
+        case NodeType::STORAGE:
+            row = storages.add_default(i);
+            if (row != storages.count() - 1)
+                shifted = true;
+            break;
+        case NodeType::OUTFALL:
+            row = outfalls.add_default(i);
+            if (row != outfalls.count() - 1)
+                shifted = true;
+            break;
+        case NodeType::DIVIDER:
+            row = dividers.add_default(i);
+            if (row != dividers.count() - 1)
+                shifted = true;
+            break;
+        case NodeType::JUNCTION:
+        default:
+            break; // no subtype row
         }
 
         if (shifted) {
             rebuild_index(nodes.count());
             return (t == NodeType::JUNCTION) ? -1 : subtype_row[ui];
         }
-        subtype_row[ui] = row;  // O(1) ascending-parse / end-insert path
+        subtype_row[ui] = row; // O(1) ascending-parse / end-insert path
         return row;
     }
 
     /**
-     * @brief Drop node @p i's subtype row and renumber the join keys after a base
-     *        node erase. Call after `NodeData::erase_at(i)` (so @p n_after is the
-     *        new node count). Every `node_idx > i` shifts down by one.
+     * @brief Drop a deleted base node's subtype row and renumber later join keys.
+     *
+     * Drops only the first matching subtype row across storages/outfalls/dividers, decrements surviving
+     * keys above i and rebuilds the map. Does not perform the base erase or repair unrelated model
+     * references.
+     *
+     * @param[in] i Erased pre-deletion base-object index; call AFTER NodeData::erase_at(i).
+     * @param[in] n_after Nonnegative base count after erasure; surviving join keys must fit this count.
      */
     void erase_node(int i, int n_after) {
         // Erase the row whose node_idx == i (in whichever table holds it).
         auto drop = [i](auto& tbl) -> bool {
             for (int r = 0; r < tbl.count(); ++r)
-                if (tbl.node_idx[static_cast<std::size_t>(r)] == i) { tbl.erase_at(r); return true; }
+                if (tbl.node_idx[static_cast<std::size_t>(r)] == i) {
+                    tbl.erase_at(r);
+                    return true;
+                }
             return false;
         };
         drop(storages) || drop(outfalls) || drop(dividers);
 
         auto shift = [i](std::vector<int>& keys) {
-            for (auto& k : keys) if (k > i) --k;
+            for (auto& k : keys)
+                if (k > i)
+                    --k;
         };
         shift(storages.node_idx);
         shift(outfalls.node_idx);
@@ -470,8 +685,16 @@ struct NodeSubtypes {
         rebuild_index(n_after);
     }
 
-    /** @brief Storage side-table row for base node @p i, or -1 if @p i is not a
-     *  storage node (or the side-table is unbuilt). O(1). */
+    /**
+     * @brief Resolve a base node key into the storage side table.
+     *
+     * O(1), no allocation. Does not independently consult the base object type; correctness depends on
+     * coherent table maintenance.
+     *
+     * @param[in] i Base-object index; invalid/unbuilt/mismatched join keys yield -1.
+     * @return Dense storage row when reverse-map slot is in range and that table's stored key equals i;
+     *     otherwise -1.
+     */
     int storage_row(int i) const noexcept {
         if (i >= 0 && i < static_cast<int>(subtype_row.size())) {
             const int r = subtype_row[static_cast<std::size_t>(i)];
@@ -482,8 +705,16 @@ struct NodeSubtypes {
         return -1;
     }
 
-    /** @brief Outfall side-table row for base node @p i, or -1 if not an outfall
-     *  (or the side-table is unbuilt). O(1). */
+    /**
+     * @brief Resolve a base node key into the outfall side table.
+     *
+     * O(1), no allocation. Does not independently consult the base object type; correctness depends on
+     * coherent table maintenance.
+     *
+     * @param[in] i Base-object index; invalid/unbuilt/mismatched join keys yield -1.
+     * @return Dense outfall row when reverse-map slot is in range and that table's stored key equals i;
+     *     otherwise -1.
+     */
     int outfall_row(int i) const noexcept {
         if (i >= 0 && i < static_cast<int>(subtype_row.size())) {
             const int r = subtype_row[static_cast<std::size_t>(i)];
@@ -494,8 +725,16 @@ struct NodeSubtypes {
         return -1;
     }
 
-    /** @brief Divider side-table row for base node @p i, or -1 if not a divider
-     *  (or the side-table is unbuilt). O(1). */
+    /**
+     * @brief Resolve a base node key into the divider side table.
+     *
+     * O(1), no allocation. Does not independently consult the base object type; correctness depends on
+     * coherent table maintenance.
+     *
+     * @param[in] i Base-object index; invalid/unbuilt/mismatched join keys yield -1.
+     * @return Dense divider row when reverse-map slot is in range and that table's stored key equals i;
+     *     otherwise -1.
+     */
     int divider_row(int i) const noexcept {
         if (i >= 0 && i < static_cast<int>(subtype_row.size())) {
             const int r = subtype_row[static_cast<std::size_t>(i)];
@@ -507,6 +746,6 @@ struct NodeSubtypes {
     }
 };
 
-}  // namespace openswmm
+} // namespace openswmm
 
-#endif  // OPENSWMM_ENGINE_NODE_SUBTYPES_HPP
+#endif // OPENSWMM_ENGINE_NODE_SUBTYPES_HPP

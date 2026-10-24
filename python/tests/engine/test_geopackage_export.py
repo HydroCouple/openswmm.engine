@@ -15,6 +15,7 @@ tagged with that SRS, and that a node geometry blob carries it too.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import sqlite3
 import struct
 import unittest
@@ -47,6 +48,7 @@ class TestGeoPackageExport(EngineSolverCase):
         gpkg = os.path.join(artifact_dir(self), "model.gpkg")
         n_nodes = len(solver.nodes)
 
+        Path(gpkg).unlink(missing_ok=True)  # each run creates a fresh fixture
         solver.write_geopackage(gpkg, crs="EPSG:2284")
 
         # CRS landed on the spatial frame (the field the writer reads).
@@ -84,6 +86,7 @@ class TestGeoPackageExport(EngineSolverCase):
         solver = self.opened_solver()
         gpkg = os.path.join(artifact_dir(self), "model2.gpkg")
         solver.spatial.crs = "EPSG:4326"
+        Path(gpkg).unlink(missing_ok=True)
         solver.write_with_plugin(gpkg, GEOPACKAGE_PLUGIN_ID)
         con = sqlite3.connect(gpkg)
         try:

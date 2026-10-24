@@ -1,6 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file TimeseriesFormat.hpp
- * @brief SWMM-native timeseries text-file parser / materialiser.
+ * @file      TimeseriesFormat.hpp
+ * @brief     SWMM-native timeseries text-file parser / materialiser.
  *
  * @details Slice IO-6a.  Wire format (one row per line, whitespace or tab
  *          delimited):
@@ -19,9 +35,9 @@
  *
  * @ingroup engine_geopackage
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_GEOPACKAGE_TIMESERIES_FORMAT_HPP
@@ -42,17 +58,20 @@ namespace openswmm::gpkg::formats {
  * @returns FormatResult — `ok` on success; `error` carries open / parse
  *          diagnostics on failure.
  */
-FormatResult parseTimeseriesText(const std::string&          path,
-                                  std::vector<TimeseriesRow>& rows);
+FormatResult parseTimeseriesText(const std::string& path, std::vector<TimeseriesRow>& rows);
 
 /**
- * @brief Write rows back to a SWMM-native timeseries text file at `path`.
+ * @brief Overwrite dated time-series text from raw samples.
  *
- * @details Output uses `MM/DD/YYYY HH:MM:SS` followed by a fixed-precision
- *          value. Idempotent round-trip with `parseTimeseriesText`.
+ * Writes MM/DD/YYYY HH:MM:SS and six-decimal values. Does not transform units, sort/validate dates
+ * or values, create directories, atomically stage or propagate late fprintf/fclose errors.
+ *
+ * @param[in] path UTF-8 filesystem path; caller supplies parent directories and owns
+ *     destination/source lifetime.
+ * @param[in] rows Borrowed OADate/value samples, preserved in input order and source value units.
+ * @return Failure on open refusal, otherwise success.
  */
-FormatResult writeTimeseriesText(const std::string&                  path,
-                                  const std::vector<TimeseriesRow>&   rows);
+FormatResult writeTimeseriesText(const std::string& path, const std::vector<TimeseriesRow>& rows);
 
 } // namespace openswmm::gpkg::formats
 

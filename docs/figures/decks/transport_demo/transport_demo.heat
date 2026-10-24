@@ -1,0 +1,23 @@
+;; Heat transport configuration for the SWMMVis manual tutorial T7.
+;; Requires [OPTIONS] HEAT_TRANSPORT ON in transport_demo.inp, and the
+;; [TEMPERATURE] block there supplies air temperature and humidity.
+
+[HEAT_SOURCES]
+;;Source          Scope    Value (degC)
+EXTERNAL_INFLOW   GLOBAL   18.0
+INITIAL_STATE     GLOBAL   12.0
+
+[HEAT_FLUXES]
+SURFACE_EXCHANGE     ON
+RADIATIVE_EXCHANGE   ON
+
+[RADIATIVE_FLUXES]
+SHORTWAVE   GLOBAL   COMPUTED
+ALBEDO      GLOBAL   0.08
+SKY_VIEW    GLOBAL   0.90
+
+[SOLAR_RADIATION]
+LATITUDE    GLOBAL    41.7
+LONGITUDE   GLOBAL   -111.8
+TIMEZONE    GLOBAL    -7.0
+ELEVATION   GLOBAL   1380.0

@@ -1,14 +1,19 @@
 /**
- * @file VertexReconstruction.cpp
- * @brief Implementation of pseudo-Laplacian vertex stencil construction
+ * @file      VertexReconstruction.cpp
+ * @brief     Implementation of pseudo-Laplacian vertex stencil construction
  *        and head reconstruction.
  *
  * @see VertexReconstruction.hpp
  * @ingroup engine_2d
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include "VertexReconstruction.hpp"
 #include "VfrClosure.hpp"
+#include "QuadVfr.hpp"
 
 #include <vector>
 #include <cmath>
@@ -17,7 +22,13 @@
 #if defined(SWMM_USE_OPENMP)
 #include <omp.h>
 #else
-static inline int omp_get_max_threads() { return 1; }
+/**
+ * @brief Supply the serial worker-count fallback in builds without OpenMP.
+ * @return Exactly one. No state, allocation, or synchronization.
+ */
+static inline int omp_get_max_threads() {
+    return 1;
+}
 #endif
 
 namespace openswmm::twoD {
@@ -29,9 +40,9 @@ void buildVertexStencils(MeshData& mesh) {
     // Step 1: For each vertex, collect all triangles that share it
     std::vector<std::vector<int>> vert_triangles(nv);
     for (int t = 0; t < nt; ++t) {
-        vert_triangles[mesh.tri_v0[t]].push_back(t);
-        vert_triangles[mesh.tri_v1[t]].push_back(t);
-        vert_triangles[mesh.tri_v2[t]].push_back(t);
+        const int nvc = mesh.cell_vertex_count(t);
+        for (int k = 0; k < nvc; ++k)
+            vert_triangles[mesh.cell_vertex(t, k)].push_back(t);
     }
 
     // Step 2: Build CSR stencil
@@ -116,7 +127,8 @@ void buildVertexStencils(MeshData& mesh) {
             double dx = mesh.tri_cx[tris[i]] - xb;
             double dy = mesh.tri_cy[tris[i]] - yb;
             weights[i] = (1.0 / M) + lambda_x * dx + lambda_y * dy;
-            if (weights[i] < 0.0) weights[i] = 0.0;  // Clip extraneous weights
+            if (weights[i] < 0.0)
+                weights[i] = 0.0; // Clip extraneous weights
             w_sum += weights[i];
         }
 
@@ -143,9 +155,8 @@ void buildVertexStencils(MeshData& mesh) {
     mesh.vert_stencil_ptr[nv] = ptr;
 }
 
-
 void reconstructVertexHeads(const MeshData& mesh, SurfaceStateData& state,
-                             [[maybe_unused]] int nthreads) {
+                            [[maybe_unused]] int nthreads) {
     int nv = mesh.n_vertices();
 
     // CSR gather: each vertex reads its stencil's cell heads (read-only) and
@@ -153,7 +164,7 @@ void reconstructVertexHeads(const MeshData& mesh, SurfaceStateData& state,
 #pragma omp parallel for schedule(static) num_threads(nthreads)
     for (int b = 0; b < nv; ++b) {
         int start = mesh.vert_stencil_ptr[b];
-        int end   = mesh.vert_stencil_ptr[b + 1];
+        int end = mesh.vert_stencil_ptr[b + 1];
 
         double h = 0.0;
         for (int k = start; k < end; ++k) {
@@ -163,24 +174,56 @@ void reconstructVertexHeads(const MeshData& mesh, SurfaceStateData& state,
     }
 }
 
+double cellFreeSurfaceElevationOf(const MeshData& mesh, int t, double mean_depth) {
+    if (mesh.cell_vertex_count(t) == 4) {
+        // Quad: exact (eps = 0) B&S 2007 two-plane relation over the
+        // precomputed sub-triangle data (mesh/QuadVfr.hpp).
+        const auto u = static_cast<std::size_t>(t);
+        const double* zs = &mesh.quad_vfr_z[u * kQuadVfrZ];
+        if (!(mean_depth > 0.0))
+            return (zs[0] < zs[3]) ? zs[0] : zs[3];
+        return quadEtaFromMeanDepth(zs, mesh.quad_vfr_a[u * 2], mesh.quad_vfr_a[u * 2 + 1],
+                                    mean_depth, 0.0);
+    }
+    return cellFreeSurfaceElevation(mean_depth, mesh.vz[mesh.cell_vertex(t, 0)],
+                                    mesh.vz[mesh.cell_vertex(t, 1)],
+                                    mesh.vz[mesh.cell_vertex(t, 2)]);
+}
 
-double cellFreeSurfaceElevation(double mean_depth, double za, double zb,
-                                double zc) {
+double cellFreeSurfaceElevation(double mean_depth, double za, double zb, double zc) {
     // Delegates to the shared VFR closure (VfrClosure.hpp) with eps = 0 — the
     // EXACT relation, the same math this function carried before the solver
     // adopted the closure. Single source of truth: render and solver cannot
     // drift apart. (NaN mean_depth: !(NaN > 0) → lowest vertex, as before.)
     double z1 = za, z2 = zb, z3 = zc;
     vfrSort3(z1, z2, z3);
-    if (!(mean_depth > 0.0)) return z1;
+    if (!(mean_depth > 0.0))
+        return z1;
     return vfrEtaFromMeanDepth(z1, z2, z3, mean_depth, 0.0);
 }
 
-
-void reconstructVertexRenderDepths(const MeshData& mesh, SurfaceStateData& state,
-                                   double dry_depth,
-                                   [[maybe_unused]] int nthreads) {
+void reconstructVertexRenderDepths(const MeshData& mesh, SurfaceStateData& state, double dry_depth,
+                                   [[maybe_unused]] int nthreads,
+                                   std::vector<double>& eta_scratch) {
     const int nv = mesh.n_vertices();
+    const int nt = mesh.n_triangles();
+
+    // Each cell's free surface is a property of the CELL, not of the (vertex,
+    // cell) incidence: the per-incidence form re-ran the exact planar-bed
+    // closure (sort3 + cube root / Newton) about once per incident vertex,
+    // i.e. ~3x per cell per pass, and it was the single largest consumer in
+    // the profile. Evaluate it once per wet cell here, then gather. Dry cells
+    // are left untouched (the gather re-tests the same predicate) so the
+    // closure is never evaluated where the old code would not have evaluated
+    // it either.
+    eta_scratch.resize(static_cast<std::size_t>(nt));
+#pragma omp parallel for schedule(static) num_threads(nthreads)
+    for (int t = 0; t < nt; ++t) {
+        const double h = state.depth[t];
+        if (!(h >= dry_depth))
+            continue;
+        eta_scratch[static_cast<std::size_t>(t)] = cellFreeSurfaceElevationOf(mesh, t, h);
+    }
 
     // Per-vertex CSR gather over the stencil's cell LIST (topology only — the
     // pseudo-Laplacian weights are a solver concern). Each iteration writes
@@ -188,18 +231,18 @@ void reconstructVertexRenderDepths(const MeshData& mesh, SurfaceStateData& state
 #pragma omp parallel for schedule(static) num_threads(nthreads)
     for (int b = 0; b < nv; ++b) {
         const int start = mesh.vert_stencil_ptr[b];
-        const int end   = mesh.vert_stencil_ptr[b + 1];
+        const int end = mesh.vert_stencil_ptr[b + 1];
 
         double vsum = 0.0, wsum = 0.0, eta_max = 0.0;
-        bool   wet  = false;
+        bool wet = false;
         for (int k = start; k < end; ++k) {
-            const int    t = mesh.vert_stencil_idx[k];
+            const int t = mesh.vert_stencil_idx[k];
             const double h = state.depth[t];
-            if (!(h >= dry_depth)) continue;        // dry skip (NaN-robust)
-            const double eta = cellFreeSurfaceElevation(
-                h, mesh.vz[mesh.tri_v0[t]], mesh.vz[mesh.tri_v1[t]],
-                mesh.vz[mesh.tri_v2[t]]);
-            if (!std::isfinite(eta)) continue;      // nodata z must not spread
+            if (!(h >= dry_depth))
+                continue; // dry skip (NaN-robust)
+            const double eta = eta_scratch[static_cast<std::size_t>(t)];
+            if (!std::isfinite(eta))
+                continue; // nodata z must not spread
             // Wetted-contact gate: a cell votes at this vertex only if its
             // water surface actually reaches the vertex's corner (η above the
             // vertex bed). Without it a thin film pooled at the BASE of a
@@ -210,10 +253,14 @@ void reconstructVertexRenderDepths(const MeshData& mesh, SurfaceStateData& state
             // no-data sentinel, so excluding it is harmless. This gate is
             // also why no no-new-minima clamp exists: a mean over gated
             // contributors is already bounded below by min η_k > z_v.
-            if (!(eta > mesh.vz[b])) continue;
+            if (!(eta > mesh.vz[b]))
+                continue;
             vsum += h * eta;
             wsum += h;
-            if (!wet || eta > eta_max) { eta_max = eta; wet = true; }
+            if (!wet || eta > eta_max) {
+                eta_max = eta;
+                wet = true;
+            }
         }
 
         if (wsum > 0.0) {
@@ -221,11 +268,12 @@ void reconstructVertexRenderDepths(const MeshData& mesh, SurfaceStateData& state
             // No-new-maxima guard: a depth-weighted mean is already bounded by
             // the incident wet-cell etas; keep the clamp as a hard invariant in
             // case the weighting scheme ever changes.
-            if (eta_v > eta_max) eta_v = eta_max;
-            const double d = eta_v - mesh.vz[b];    // SIGNED depth (VFR)
+            if (eta_v > eta_max)
+                eta_v = eta_max;
+            const double d = eta_v - mesh.vz[b]; // SIGNED depth (VFR)
             state.vert_depth_signed[b] = std::isfinite(d) ? d : 0.0;
         } else {
-            state.vert_depth_signed[b] = 0.0;       // no wet incident cell
+            state.vert_depth_signed[b] = 0.0; // no wet incident cell
         }
     }
 }

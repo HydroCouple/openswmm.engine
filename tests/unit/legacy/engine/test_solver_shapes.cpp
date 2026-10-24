@@ -24,6 +24,16 @@
  *     C11      CIRCULAR     4.75                     89
  */
 
+/**
+ * @file      test_solver_shapes.cpp
+ * @brief     Tests for solver shapes.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com> (OpenSWMM maintenance and extensions)
+ * @copyright Copyright (c) 2026 Caleb Buahin. OpenSWMM contributions only; original EPA SWMM
+ *            credits are retained.
+ * @license   Apache-2.0 for OpenSWMM contributions; original EPA SWMM provenance is retained.
+ */
+
 #include <gtest/gtest.h>
 
 #include <array>
@@ -32,8 +42,8 @@
 #include "openswmm_solver.h"
 
 #define MODEL_INP "./hotstart/site_drainage_model.inp"
-#define SHAP_RPT  "./hotstart/_shap_test.rpt"
-#define SHAP_OUT  "./hotstart/_shap_test.out"
+#define SHAP_RPT "./hotstart/_shap_test.rpt"
+#define SHAP_OUT "./hotstart/_shap_test.out"
 
 // ============================================================
 // Fixture: model open so static geometry properties are readable
@@ -41,12 +51,21 @@
 
 class SolverShapeFixture : public ::testing::Test {
 protected:
-    void SetUp() override {
-        ASSERT_EQ(swmm_open(MODEL_INP, SHAP_RPT, SHAP_OUT), 0);
-    }
-    void TearDown() override {
-        swmm_close();
-    }
+    /**
+     * @brief Open the global legacy reference model for API assertions.
+     *
+     * Uses MODEL_INP and SHAP_RPT/SHAP_OUT artifact paths. Does not start or advance; global singleton
+     * use must be exclusive. Fatal GoogleTest assertions return from this hook on failure; any created
+     * handle remains owned by the fixture for teardown.
+     */
+    void SetUp() override { ASSERT_EQ(swmm_open(MODEL_INP, SHAP_RPT, SHAP_OUT), 0); }
+    /**
+     * @brief Close the process-global legacy project after the test.
+     *
+     * Releases partial/open/ended model files and statistics. This wrapper does not call swmm_end or
+     * assert close status.
+     */
+    void TearDown() override { swmm_close(); }
 };
 
 // ============================================================
@@ -85,9 +104,7 @@ TEST_F(SolverShapeFixture, TrapezoidalFullDepth_C2) {
 
 TEST_F(SolverShapeFixture, TrapezoidalFullDepth_3ft_Batch) {
     // C4, C5, C6, C8, C9, C10 are all TRAPEZOIDAL with depth 3.0 ft
-    static const std::array<const char*, 6> names = {
-        "C4", "C5", "C6", "C8", "C9", "C10"
-    };
+    static const std::array<const char*, 6> names = {"C4", "C5", "C6", "C8", "C9", "C10"};
     for (const char* name : names) {
         int idx = swmm_getIndex(swmm_LINK, name);
         ASSERT_GE(idx, 0) << "Link " << name << " not found";
@@ -101,12 +118,12 @@ TEST_F(SolverShapeFixture, TrapezoidalFullDepth_3ft_Batch) {
 // ============================================================
 
 TEST_F(SolverShapeFixture, LinkLengths) {
-    struct { const char* name; double len; } expected[] = {
-        {"C1", 185.0}, {"C2", 526.0}, {"C3", 109.0},
-        {"C4", 133.0}, {"C5", 207.0}, {"C6", 140.0},
-        {"C7",  95.0}, {"C8", 166.0}, {"C9", 320.0},
-        {"C10",145.0}, {"C11", 89.0}
-    };
+    struct {
+        const char* name;
+        double len;
+    } expected[] = {{"C1", 185.0}, {"C2", 526.0},  {"C3", 109.0}, {"C4", 133.0},
+                    {"C5", 207.0}, {"C6", 140.0},  {"C7", 95.0},  {"C8", 166.0},
+                    {"C9", 320.0}, {"C10", 145.0}, {"C11", 89.0}};
     for (const auto& e : expected) {
         int idx = swmm_getIndex(swmm_LINK, e.name);
         ASSERT_GE(idx, 0) << "Link " << e.name << " not found";
@@ -136,7 +153,9 @@ TEST_F(SolverShapeFixture, Connectivity_C1_J1_to_J5) {
     int c1 = swmm_getIndex(swmm_LINK, "C1");
     int j1 = swmm_getIndex(swmm_NODE, "J1");
     int j5 = swmm_getIndex(swmm_NODE, "J5");
-    ASSERT_GE(c1, 0); ASSERT_GE(j1, 0); ASSERT_GE(j5, 0);
+    ASSERT_GE(c1, 0);
+    ASSERT_GE(j1, 0);
+    ASSERT_GE(j5, 0);
     EXPECT_EQ(static_cast<int>(swmm_getValue(swmm_LINK_NODE1, c1)), j1);
     EXPECT_EQ(static_cast<int>(swmm_getValue(swmm_LINK_NODE2, c1)), j5);
 }
@@ -145,7 +164,9 @@ TEST_F(SolverShapeFixture, Connectivity_C3_J3_to_J4) {
     int c3 = swmm_getIndex(swmm_LINK, "C3");
     int j3 = swmm_getIndex(swmm_NODE, "J3");
     int j4 = swmm_getIndex(swmm_NODE, "J4");
-    ASSERT_GE(c3, 0); ASSERT_GE(j3, 0); ASSERT_GE(j4, 0);
+    ASSERT_GE(c3, 0);
+    ASSERT_GE(j3, 0);
+    ASSERT_GE(j4, 0);
     EXPECT_EQ(static_cast<int>(swmm_getValue(swmm_LINK_NODE1, c3)), j3);
     EXPECT_EQ(static_cast<int>(swmm_getValue(swmm_LINK_NODE2, c3)), j4);
 }
@@ -154,7 +175,9 @@ TEST_F(SolverShapeFixture, Connectivity_C6_J7_to_J6) {
     int c6 = swmm_getIndex(swmm_LINK, "C6");
     int j7 = swmm_getIndex(swmm_NODE, "J7");
     int j6 = swmm_getIndex(swmm_NODE, "J6");
-    ASSERT_GE(c6, 0); ASSERT_GE(j7, 0); ASSERT_GE(j6, 0);
+    ASSERT_GE(c6, 0);
+    ASSERT_GE(j7, 0);
+    ASSERT_GE(j6, 0);
     EXPECT_EQ(static_cast<int>(swmm_getValue(swmm_LINK_NODE1, c6)), j7);
     EXPECT_EQ(static_cast<int>(swmm_getValue(swmm_LINK_NODE2, c6)), j6);
 }
@@ -162,8 +185,10 @@ TEST_F(SolverShapeFixture, Connectivity_C6_J7_to_J6) {
 TEST_F(SolverShapeFixture, Connectivity_C11_J11_to_O1) {
     int c11 = swmm_getIndex(swmm_LINK, "C11");
     int j11 = swmm_getIndex(swmm_NODE, "J11");
-    int o1  = swmm_getIndex(swmm_NODE, "O1");
-    ASSERT_GE(c11, 0); ASSERT_GE(j11, 0); ASSERT_GE(o1, 0);
+    int o1 = swmm_getIndex(swmm_NODE, "O1");
+    ASSERT_GE(c11, 0);
+    ASSERT_GE(j11, 0);
+    ASSERT_GE(o1, 0);
     EXPECT_EQ(static_cast<int>(swmm_getValue(swmm_LINK_NODE1, c11)), j11);
     EXPECT_EQ(static_cast<int>(swmm_getValue(swmm_LINK_NODE2, c11)), o1);
 }
@@ -173,12 +198,12 @@ TEST_F(SolverShapeFixture, Connectivity_C11_J11_to_O1) {
 // ============================================================
 
 TEST_F(SolverShapeFixture, NodeElevations) {
-    struct { const char* name; double elev; } expected[] = {
-        {"J1",  4973.0}, {"J2",  4969.0}, {"J3",  4973.0},
-        {"J4",  4971.0}, {"J5",  4969.8}, {"J6",  4969.0},
-        {"J7",  4971.5}, {"J8",  4966.5}, {"J9",  4964.8},
-        {"J10", 4963.8}, {"J11", 4963.0}
-    };
+    struct {
+        const char* name;
+        double elev;
+    } expected[] = {{"J1", 4973.0}, {"J2", 4969.0},  {"J3", 4973.0}, {"J4", 4971.0},
+                    {"J5", 4969.8}, {"J6", 4969.0},  {"J7", 4971.5}, {"J8", 4966.5},
+                    {"J9", 4964.8}, {"J10", 4963.8}, {"J11", 4963.0}};
     for (const auto& e : expected) {
         int idx = swmm_getIndex(swmm_NODE, e.name);
         ASSERT_GE(idx, 0) << "Node " << e.name << " not found";
@@ -192,9 +217,8 @@ TEST_F(SolverShapeFixture, NodeElevations) {
 // ============================================================
 
 TEST_F(SolverShapeFixture, AllJunctionsAreJunctionType) {
-    static const char* junctions[] = {
-        "J1","J2","J3","J4","J5","J6","J7","J8","J9","J10","J11"
-    };
+    static const char* junctions[] = {"J1", "J2", "J3", "J4",  "J5", "J6",
+                                      "J7", "J8", "J9", "J10", "J11"};
     for (const char* name : junctions) {
         int idx = swmm_getIndex(swmm_NODE, name);
         ASSERT_GE(idx, 0) << name << " not found";
