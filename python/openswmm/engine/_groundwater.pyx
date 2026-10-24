@@ -90,7 +90,7 @@ cdef extern from "openswmm/engine/openswmm_gw2d.h":
 
 cdef extern from "openswmm/engine/openswmm_engine.h":
     enum:
-        SWMM_ERR_BADPARAM
+        SWMM_ERR_BUFSIZE
 
 cdef inline SWMM_Engine _h(view):
     return <SWMM_Engine><size_t>view._address()
@@ -500,8 +500,8 @@ class Groundwater(EngineView):
             for index in range(count):
                 while True:
                     rc=swmm_gw2d_boundary_get(_h(self),index,&row,t.p[0],t.size)
-                    # A short series buffer is refused (BADPARAM), never truncated: grow it.
-                    if rc!=SWMM_ERR_BADPARAM or t.size>=1024*1024:  # BADPARAM may also mean a bad key
+                    # A short series buffer is refused (BUFSIZE), never truncated: grow it.
+                    if rc!=SWMM_ERR_BUFSIZE:
                         _check(rc)
                         break
                     _tb_close(&t)

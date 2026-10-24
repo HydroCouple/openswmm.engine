@@ -939,7 +939,7 @@ SWMM_ENGINE_API int swmm_hotstart_saves_get_path(SWMM_Engine engine, int idx, ch
         return SWMM_ERR_BADPARAM;
     auto* e = hs_save_at(engine, idx);
     if (!e)
-        return SWMM_ERR_BADPARAM;
+        return SWMM_ERR_BADINDEX;
     fill_buf(buf, buflen, e->path);
     return SWMM_OK;
 }
@@ -951,7 +951,7 @@ SWMM_ENGINE_API int swmm_hotstart_saves_get_datetime(SWMM_Engine engine, int idx
         return SWMM_ERR_BADPARAM;
     auto* e = hs_save_at(engine, idx);
     if (!e)
-        return SWMM_ERR_BADPARAM;
+        return SWMM_ERR_BADINDEX;
     *datetime = e->datetime;
     return SWMM_OK;
 }
@@ -962,7 +962,7 @@ SWMM_ENGINE_API int swmm_hotstart_saves_set_path(SWMM_Engine engine, int idx, co
         return SWMM_ERR_BADPARAM;
     auto* e = hs_save_at(engine, idx);
     if (!e)
-        return SWMM_ERR_BADPARAM;
+        return SWMM_ERR_BADINDEX;
     e->path = path;
     return SWMM_OK;
 }
@@ -971,7 +971,7 @@ SWMM_ENGINE_API int swmm_hotstart_saves_set_datetime(SWMM_Engine engine, int idx
     CHECK_HANDLE(engine);
     auto* e = hs_save_at(engine, idx);
     if (!e)
-        return SWMM_ERR_BADPARAM;
+        return SWMM_ERR_BADINDEX;
     e->datetime = datetime;
     return SWMM_OK;
 }
@@ -982,7 +982,7 @@ SWMM_ENGINE_API int swmm_hotstart_saves_get_format(SWMM_Engine engine, int idx, 
         return SWMM_ERR_BADPARAM;
     auto* e = hs_save_at(engine, idx);
     if (!e)
-        return SWMM_ERR_BADPARAM;
+        return SWMM_ERR_BADINDEX;
     *format = static_cast<int>(e->format);
     return SWMM_OK;
 }
@@ -993,7 +993,7 @@ SWMM_ENGINE_API int swmm_hotstart_saves_set_format(SWMM_Engine engine, int idx, 
         return SWMM_ERR_BADPARAM;
     auto* e = hs_save_at(engine, idx);
     if (!e)
-        return SWMM_ERR_BADPARAM;
+        return SWMM_ERR_BADINDEX;
     e->format = static_cast<openswmm::HotstartFormat>(format);
     return SWMM_OK;
 }
@@ -1033,7 +1033,7 @@ SWMM_ENGINE_API int swmm_hotstart_saves_remove(SWMM_Engine engine, int idx) {
     CHECK_HANDLE(engine);
     auto& v = to_engine(engine)->context().files.hotstart_saves;
     if (idx < 0 || static_cast<std::size_t>(idx) >= v.size())
-        return SWMM_ERR_BADPARAM;
+        return SWMM_ERR_BADINDEX;
     v.erase(v.begin() + idx);
     return SWMM_OK;
 }

@@ -65,6 +65,7 @@ class ErrorCode(IntEnum):
     @cvar NUMERICAL: Numerical error (e.g., divergence).
     @cvar DEPENDENCY: Object has dependents that block the requested operation.
     @cvar CANCELLED: A caller cancelled a cancellable read-only operation.
+    @cvar BUFSIZE: An output buffer is too small for the value; nothing was written.
     @cvar INTERNAL: Internal/unspecified error.
     """
 
@@ -85,6 +86,7 @@ class ErrorCode(IntEnum):
     NUMERICAL = 14
     DEPENDENCY = 15
     CANCELLED = 16
+    BUFSIZE = 17
     INTERNAL = 99
 
 

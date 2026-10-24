@@ -126,13 +126,13 @@ SWMM_ENGINE_API int swmm_hotstart_saves_count(SWMM_Engine engine, int* count);
  *
  * @param[in] engine Non-null live engine with exclusive caller access. Scheduled-entry authoring
  *     APIs impose no lifecycle guard and do not write a file immediately.
- * @param[in] idx Zero-based existing SAVE HOTSTART slot index; invalid indices return BADPARAM
- *     rather than BADINDEX.
+ * @param[in] idx Zero-based existing SAVE HOTSTART slot index; an invalid index returns
+ *     SWMM_ERR_BADINDEX.
  * @param[out] buf Non-null caller-owned destination, NUL-terminated and silently truncated to
  *     buflen-1 bytes.
  * @param[in] buflen Positive buffer capacity in bytes, including NUL.
- * @return SWMM_OK; SWMM_ERR_BADHANDLE for null handle or SWMM_ERR_BADPARAM for an invalid required
- *     argument or slot.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null handle, SWMM_ERR_BADINDEX for an invalid slot or
+ *     SWMM_ERR_BADPARAM for an invalid required argument.
  */
 SWMM_ENGINE_API int swmm_hotstart_saves_get_path(SWMM_Engine engine, int idx, char* buf,
                                                  int buflen);
@@ -142,12 +142,12 @@ SWMM_ENGINE_API int swmm_hotstart_saves_get_path(SWMM_Engine engine, int idx, ch
  *
  * @param[in] engine Non-null live engine with exclusive caller access. Scheduled-entry authoring
  *     APIs impose no lifecycle guard and do not write a file immediately.
- * @param[in] idx Zero-based existing SAVE HOTSTART slot index; invalid indices return BADPARAM
- *     rather than BADINDEX.
+ * @param[in] idx Zero-based existing SAVE HOTSTART slot index; an invalid index returns
+ *     SWMM_ERR_BADINDEX.
  * @param[out] datetime Non-null destination for SWMM DateTime decimal days since 1899-12-30; 0
  *     denotes end of run.
- * @return SWMM_OK; SWMM_ERR_BADHANDLE for null handle or SWMM_ERR_BADPARAM for an invalid required
- *     argument or slot.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null handle, SWMM_ERR_BADINDEX for an invalid slot or
+ *     SWMM_ERR_BADPARAM for an invalid required argument.
  */
 SWMM_ENGINE_API int swmm_hotstart_saves_get_datetime(SWMM_Engine engine, int idx, double* datetime);
 
@@ -159,12 +159,12 @@ SWMM_ENGINE_API int swmm_hotstart_saves_get_datetime(SWMM_Engine engine, int idx
  *
  * @param[in] engine Non-null live engine with exclusive caller access. Scheduled-entry authoring
  *     APIs impose no lifecycle guard and do not write a file immediately.
- * @param[in] idx Zero-based existing SAVE HOTSTART slot index; invalid indices return BADPARAM
- *     rather than BADINDEX.
+ * @param[in] idx Zero-based existing SAVE HOTSTART slot index; an invalid index returns
+ *     SWMM_ERR_BADINDEX.
  * @param[in] path Non-null NUL-terminated path to copy; empty is permitted and clears the
  *     token/cached absolute path.
- * @return SWMM_OK; SWMM_ERR_BADHANDLE for null handle or SWMM_ERR_BADPARAM for an invalid required
- *     argument or slot.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null handle, SWMM_ERR_BADINDEX for an invalid slot or
+ *     SWMM_ERR_BADPARAM for an invalid required argument.
  */
 SWMM_ENGINE_API int swmm_hotstart_saves_set_path(SWMM_Engine engine, int idx, const char* path);
 
@@ -173,12 +173,11 @@ SWMM_ENGINE_API int swmm_hotstart_saves_set_path(SWMM_Engine engine, int idx, co
  *
  * @param[in] engine Non-null live engine with exclusive caller access. Scheduled-entry authoring
  *     APIs impose no lifecycle guard and do not write a file immediately.
- * @param[in] idx Zero-based existing SAVE HOTSTART slot index; invalid indices return BADPARAM
- *     rather than BADINDEX.
+ * @param[in] idx Zero-based existing SAVE HOTSTART slot index; an invalid index returns
+ *     SWMM_ERR_BADINDEX.
  * @param[in] datetime SWMM DateTime decimal days since 1899-12-30; 0 saves at run end. No
  *     finite/range/order validation is performed.
- * @return SWMM_OK; SWMM_ERR_BADHANDLE for null handle or SWMM_ERR_BADPARAM for an invalid required
- *     argument or slot.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null handle or SWMM_ERR_BADINDEX for an invalid slot.
  */
 SWMM_ENGINE_API int swmm_hotstart_saves_set_datetime(SWMM_Engine engine, int idx, double datetime);
 
@@ -203,11 +202,11 @@ SWMM_ENGINE_API int swmm_hotstart_saves_set_datetime(SWMM_Engine engine, int idx
  *
  * @param[in] engine Non-null live engine with exclusive caller access. Scheduled-entry authoring
  *     APIs impose no lifecycle guard and do not write a file immediately.
- * @param[in] idx Zero-based existing SAVE HOTSTART slot index; invalid indices return BADPARAM
- *     rather than BADINDEX.
+ * @param[in] idx Zero-based existing SAVE HOTSTART slot index; an invalid index returns
+ *     SWMM_ERR_BADINDEX.
  * @param[out] format Non-null destination for SWMM_HOTSTART_FORMAT_AUTO, LEGACY or NATIVE.
- * @return SWMM_OK; SWMM_ERR_BADHANDLE for null handle or SWMM_ERR_BADPARAM for an invalid required
- *     argument or slot.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null handle, SWMM_ERR_BADINDEX for an invalid slot or
+ *     SWMM_ERR_BADPARAM for an invalid required argument.
  */
 SWMM_ENGINE_API int swmm_hotstart_saves_get_format(SWMM_Engine engine, int idx, int* format);
 
@@ -218,12 +217,12 @@ SWMM_ENGINE_API int swmm_hotstart_saves_get_format(SWMM_Engine engine, int idx, 
  *
  * @param[in] engine Non-null live engine with exclusive caller access. Scheduled-entry authoring
  *     APIs impose no lifecycle guard and do not write a file immediately.
- * @param[in] idx Zero-based existing SAVE HOTSTART slot index; invalid indices return BADPARAM
- *     rather than BADINDEX.
+ * @param[in] idx Zero-based existing SAVE HOTSTART slot index; an invalid index returns
+ *     SWMM_ERR_BADINDEX.
  * @param[in] format SWMM_HOTSTART_FORMAT_AUTO (0), LEGACY (1) or NATIVE (2). Other values are
  *     refused.
- * @return SWMM_OK; SWMM_ERR_BADHANDLE for null handle or SWMM_ERR_BADPARAM for an invalid required
- *     argument or slot.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null handle, SWMM_ERR_BADINDEX for an invalid slot or
+ *     SWMM_ERR_BADPARAM for an invalid required argument.
  */
 SWMM_ENGINE_API int swmm_hotstart_saves_set_format(SWMM_Engine engine, int idx, int format);
 
@@ -270,10 +269,9 @@ SWMM_ENGINE_API int swmm_hotstart_saves_add(SWMM_Engine engine, const char* path
  *
  * @param[in] engine Non-null live engine with exclusive caller access. Scheduled-entry authoring
  *     APIs impose no lifecycle guard and do not write a file immediately.
- * @param[in] idx Zero-based existing SAVE HOTSTART slot index; invalid indices return BADPARAM
- *     rather than BADINDEX.
- * @return SWMM_OK; SWMM_ERR_BADHANDLE for null handle or SWMM_ERR_BADPARAM for an invalid required
- *     argument or slot.
+ * @param[in] idx Zero-based existing SAVE HOTSTART slot index; an invalid index returns
+ *     SWMM_ERR_BADINDEX.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null handle or SWMM_ERR_BADINDEX for an invalid slot.
  */
 SWMM_ENGINE_API int swmm_hotstart_saves_remove(SWMM_Engine engine, int idx);
 

@@ -39,12 +39,14 @@ std::string numeric(double x) {
  * @param[in] value Borrowed string including any embedded NUL; no overlap with destination.
  * @param[out] out Writable size-byte span; required capacity>value.size().
  * @param[in] size Positive capacity including final NUL.
- * @return OK after copying value.size()+1 source bytes, BADPARAM for NULL/nonpositive/short output with no
- *     writes.
+ * @return OK after copying value.size()+1 source bytes, BADPARAM for NULL/nonpositive output,
+ *     BUFSIZE for a short output; no writes on error.
  */
 int copy(const std::string& value, char* out, int size) {
-    if (!out || size <= 0 || value.size() >= static_cast<std::size_t>(size))
+    if (!out || size <= 0)
         return SWMM_ERR_BADPARAM;
+    if (value.size() >= static_cast<std::size_t>(size))
+        return SWMM_ERR_BUFSIZE;
     std::memcpy(out, value.c_str(), value.size() + 1);
     return SWMM_OK;
 }
@@ -696,27 +698,29 @@ SWMM_ENGINE_API int swmm_snow2d_get_row(SWMM_Engine engine, int section, int ind
                                         char* tag, int tag_capacity, char* pack, int pack_capacity,
                                         SWMM_MeshSnowOverrides* values) {
     CHECK_HANDLE(engine);
-    if (!cell || !tag || !pack || !values || index < 0 || tag_capacity <= 0 || pack_capacity <= 0)
+    if (!cell || !tag || !pack || !values || (section != 1 && section != 2) || tag_capacity <= 0 ||
+        pack_capacity <= 0)
         return SWMM_ERR_BADPARAM;
     const auto& config = to_engine(engine)->context().snowpacks.mesh_config;
     const openswmm::surface::MeshSnowRow* row = nullptr;
     std::string key;
     int c = -1;
-    if (section == 1 && index < int(config.defaults.size())) {
+    if (section == 1 && index >= 0 && index < int(config.defaults.size())) {
         auto it = config.defaults.begin();
         std::advance(it, index);
         key = it->first;
         row = &it->second;
     }
-    if (section == 2 && index < int(config.cells.size())) {
+    if (section == 2 && index >= 0 && index < int(config.cells.size())) {
         auto it = config.cells.begin();
         std::advance(it, index);
         c = it->first;
         row = &it->second;
     }
-    if (!row || key.size() >= std::size_t(tag_capacity) ||
-        row->pack.size() >= std::size_t(pack_capacity))
-        return SWMM_ERR_BADPARAM;
+    if (!row)
+        return SWMM_ERR_BADINDEX;
+    if (key.size() >= std::size_t(tag_capacity) || row->pack.size() >= std::size_t(pack_capacity))
+        return SWMM_ERR_BUFSIZE;
     const double nan = std::numeric_limits<double>::quiet_NaN();
     *values = {row->forest.value_or(nan),      row->drift.value_or(nan),
                row->ground_heat.value_or(nan), row->extinction_depth.value_or(nan),

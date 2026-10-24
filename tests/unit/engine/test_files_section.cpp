@@ -324,18 +324,24 @@ TEST_F(FilesApiTest, HotstartSavesClearEmptiesVector) {
     EXPECT_EQ(count, 0);
 }
 
-TEST_F(FilesApiTest, HotstartSavesOutOfRangeIsBadparam) {
+TEST_F(FilesApiTest, HotstartSavesOutOfRangeIsBadindex) {
     char buf[16];
     double dt;
-    EXPECT_EQ(swmm_hotstart_saves_get_path(engine, 0, buf, sizeof(buf)), SWMM_ERR_BADPARAM);
-    EXPECT_EQ(swmm_hotstart_saves_get_datetime(engine, 0, &dt), SWMM_ERR_BADPARAM);
-    EXPECT_EQ(swmm_hotstart_saves_set_path(engine, 0, "x"), SWMM_ERR_BADPARAM);
-    EXPECT_EQ(swmm_hotstart_saves_set_datetime(engine, 0, 0.0), SWMM_ERR_BADPARAM);
-    EXPECT_EQ(swmm_hotstart_saves_remove(engine, 0), SWMM_ERR_BADPARAM);
+    int fmt;
+    EXPECT_EQ(swmm_hotstart_saves_get_path(engine, 0, buf, sizeof(buf)), SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_hotstart_saves_get_datetime(engine, 0, &dt), SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_hotstart_saves_set_path(engine, 0, "x"), SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_hotstart_saves_set_datetime(engine, 0, 0.0), SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_hotstart_saves_get_format(engine, 0, &fmt), SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_hotstart_saves_set_format(engine, 0, SWMM_HOTSTART_FORMAT_AUTO),
+              SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_hotstart_saves_remove(engine, 0), SWMM_ERR_BADINDEX);
 
     ASSERT_EQ(swmm_hotstart_saves_add(engine, "a.hsf", 0.0), SWMM_OK);
-    EXPECT_EQ(swmm_hotstart_saves_get_path(engine, -1, buf, sizeof(buf)), SWMM_ERR_BADPARAM);
-    EXPECT_EQ(swmm_hotstart_saves_get_path(engine, 5, buf, sizeof(buf)), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_hotstart_saves_get_path(engine, -1, buf, sizeof(buf)), SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_hotstart_saves_get_path(engine, 5, buf, sizeof(buf)), SWMM_ERR_BADINDEX);
+    // A missing buffer is still a bad parameter.
+    EXPECT_EQ(swmm_hotstart_saves_get_path(engine, 0, nullptr, 0), SWMM_ERR_BADPARAM);
 }
 
 TEST_F(FilesApiTest, HotstartSavesSlotZeroSugarStillWorks) {

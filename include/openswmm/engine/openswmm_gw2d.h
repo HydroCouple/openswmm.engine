@@ -101,10 +101,11 @@ SWMM_ENGINE_API int swmm_gw2d_boundary_count(SWMM_Engine engine);
  * @param[in] index Zero-based authored boundary index.
  * @param[out] row Required destination for the complete boundary row in authored units.
  * @param[out] series Required destination for the complete series name, including NUL.
- * @param[in] series_len Positive byte capacity; a short buffer is refused without truncation.
- * @return SWMM_OK, SWMM_ERR_BADHANDLE for a null engine, or SWMM_ERR_BADPARAM for invalid
- * arguments. Invalid boundary indices return SWMM_ERR_BADINDEX; outputs remain unchanged on
- * error.
+ * @param[in] series_len Positive byte capacity; a short buffer returns SWMM_ERR_BUFSIZE without
+ * truncation.
+ * @return SWMM_OK, SWMM_ERR_BADHANDLE for a null engine, SWMM_ERR_BUFSIZE for a short series
+ * buffer, or SWMM_ERR_BADPARAM for invalid arguments. Invalid boundary indices return
+ * SWMM_ERR_BADINDEX; outputs remain unchanged on error.
  */
 SWMM_ENGINE_API int swmm_gw2d_boundary_get(SWMM_Engine engine, int index, SWMM_GwBoundary* row,
                                            char* series, int series_len);

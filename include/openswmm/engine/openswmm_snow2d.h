@@ -53,8 +53,9 @@ SWMM_ENGINE_API int swmm_snow2d_cells_count(SWMM_Engine engine);
  * @param[in] capacity Nonnegative byte capacity; must include the terminal NUL for copying.
  * @param[out] required Non-null slot for exact required bytes including NUL,
  * set before a short-buffer failure when section serialization succeeds.
- * @return SWMM_OK on success, SWMM_ERR_BADHANDLE for an invalid handle, or
- * SWMM_ERR_BADPARAM for invalid arguments. Output storage is caller-owned.
+ * @return SWMM_OK on success, SWMM_ERR_BADHANDLE for an invalid handle, SWMM_ERR_BUFSIZE when a
+ * buffer is shorter than *required, or SWMM_ERR_BADPARAM for invalid arguments. Output storage is
+ * caller-owned.
  * @note Returns newline-terminated body rows without section headers; no
  * partial successful truncation is allowed.
  */
@@ -78,9 +79,10 @@ typedef struct SWMM_MeshSnowOverrides {
  * @param[in] pack_capacity Positive pack-name capacity including the terminator.
  * @param[out] values Non-null override structure, with NaN for inherited fields.
  * SI values use W/m2 and m; slope/aspect are degrees and fraction/drift dimensionless.
- * @return SWMM_OK on success, SWMM_ERR_BADHANDLE for an invalid handle, or
- * SWMM_ERR_BADPARAM for invalid arguments. Output storage is caller-owned.
- * @note Invalid rows/sections and inadequate buffers return SWMM_ERR_BADPARAM.
+ * @return SWMM_OK on success, SWMM_ERR_BADHANDLE for an invalid handle, SWMM_ERR_BADINDEX for a
+ * row outside the section, SWMM_ERR_BUFSIZE when the tag or pack buffer is too short (nothing is
+ * written), or SWMM_ERR_BADPARAM for invalid arguments, including a section other than 1 or 2.
+ * Output storage is caller-owned.
  * The setter/parser maintains paired slope/aspect inheritance.
  */
 SWMM_ENGINE_API int swmm_snow2d_get_row(SWMM_Engine engine, int section, int row, int* cell,

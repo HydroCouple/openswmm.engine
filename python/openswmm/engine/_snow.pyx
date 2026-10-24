@@ -87,7 +87,7 @@ cdef extern from "openswmm/engine/openswmm_snow.h":
 
 cdef extern from "openswmm/engine/openswmm_engine.h":
     enum:
-        SWMM_ERR_BADPARAM
+        SWMM_ERR_BUFSIZE
 
 cdef SWMM_Engine _h(view) except NULL:
     if view._generation != view._owner.generation:
@@ -140,8 +140,8 @@ class Snow:
         try:
             while True:
                 rc=swmm_ueb_option_get(_h(self),_text(key),t.p[0],t.size)
-                # A short buffer is refused (BADPARAM), never truncated: grow it.
-                if rc!=SWMM_ERR_BADPARAM or t.size>=1024*1024:  # BADPARAM may also mean a bad key
+                # A short buffer is refused (BUFSIZE), never truncated: grow it.
+                if rc!=SWMM_ERR_BUFSIZE:
                     _check(rc)
                     break
                 _tb_close(&t)
@@ -262,8 +262,8 @@ class Snow:
         try:
             while True:
                 rc=swmm_climate_get_radiation_source(_h(self),channel,t.p[0],t.size)
-                # A short buffer is refused (BADPARAM), never truncated: grow it.
-                if rc!=SWMM_ERR_BADPARAM or t.size>=1024*1024:  # BADPARAM may also mean a bad key
+                # A short buffer is refused (BUFSIZE), never truncated: grow it.
+                if rc!=SWMM_ERR_BUFSIZE:
                     _check(rc)
                     break
                 _tb_close(&t)
@@ -287,8 +287,8 @@ class Snow:
         try:
             while True:
                 rc=swmm_climate_get_cloud(_h(self),&v,t.p[0],t.size)
-                # A short buffer is refused (BADPARAM), never truncated: grow it.
-                if rc!=SWMM_ERR_BADPARAM or t.size>=1024*1024:  # BADPARAM may also mean a bad key
+                # A short buffer is refused (BUFSIZE), never truncated: grow it.
+                if rc!=SWMM_ERR_BUFSIZE:
                     _check(rc)
                     break
                 _tb_close(&t)

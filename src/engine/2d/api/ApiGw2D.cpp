@@ -156,7 +156,7 @@ SWMM_ENGINE_API int swmm_gw2d_boundary_get(SWMM_Engine engine, int index, SWMM_G
         return SWMM_ERR_BADPARAM;
     const auto& b = cfg.boundaries[index];
     if (b.series.size() >= std::size_t(length))
-        return SWMM_ERR_BADPARAM;
+        return SWMM_ERR_BUFSIZE;
     *row = {b.cell, b.edge, b.head ? SWMM_GW2D_BOUNDARY_HEAD : SWMM_GW2D_BOUNDARY_FLOW, b.value};
     copy_to(b.series, series, length);
     return SWMM_OK;

@@ -8,7 +8,7 @@ cdef extern from "openswmm/engine/openswmm_2d.h":
     int swmm_2d_cell_count(SWMM_Engine,int*)
 cdef extern from "openswmm/engine/openswmm_engine.h":
     enum:
-        SWMM_ERR_BADPARAM
+        SWMM_ERR_BUFSIZE
 cdef extern from "openswmm/engine/openswmm_snow2d.h":
     ctypedef struct SWMM_MeshSnowLedger:
         double completed_s
@@ -127,8 +127,8 @@ class MeshSnow:
             for i in range(count):
                 while True:
                     rc=swmm_snow2d_get_row(h,which,i,&cell,t.p[0],t.size,t.p[1],t.size,&v)
-                    # A short buffer is refused (BADPARAM), never truncated: grow both.
-                    if rc!=SWMM_ERR_BADPARAM or t.size>=1024*1024:  # BADPARAM may also mean a bad key
+                    # A short buffer is refused (BUFSIZE), never truncated: grow both.
+                    if rc!=SWMM_ERR_BUFSIZE:
                         _check(rc)
                         break
                     _tb_close(&t)
