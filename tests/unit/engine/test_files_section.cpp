@@ -584,9 +584,11 @@ TEST_F(FilesApiTest, HotstartSavesFormatGetSetAndRange) {
 
     EXPECT_EQ(swmm_hotstart_saves_set_format(engine, 0, 3), SWMM_ERR_BADPARAM);
     EXPECT_EQ(swmm_hotstart_saves_set_format(engine, 0, -1), SWMM_ERR_BADPARAM);
-    EXPECT_EQ(swmm_hotstart_saves_set_format(engine, 1, SWMM_HOTSTART_FORMAT_LEGACY),
-              SWMM_ERR_BADPARAM);
-    EXPECT_EQ(swmm_hotstart_saves_get_format(engine, 1, &fmt), SWMM_ERR_BADPARAM);
+    for (const int idx : {-1, 1}) {
+        EXPECT_EQ(swmm_hotstart_saves_set_format(engine, idx, SWMM_HOTSTART_FORMAT_LEGACY),
+                  SWMM_ERR_BADINDEX);
+        EXPECT_EQ(swmm_hotstart_saves_get_format(engine, idx, &fmt), SWMM_ERR_BADINDEX);
+    }
     EXPECT_EQ(swmm_hotstart_saves_get_format(engine, 0, nullptr), SWMM_ERR_BADPARAM);
 }
 
