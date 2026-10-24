@@ -260,15 +260,17 @@ protected:
 
 // Cross-domain conservation on the marcher path: the volume the 1D receives
 // through the batch queue delivery equals the volume the marcher's live
-// exchange gave up — VARIABLE_STEP on, drain completed well before run end so
-// no queued volume is stranded at the final step.
+// exchange gave up — VARIABLE_STEP on, with rainfall ending well before run end
+// to reduce the final pending delivery volume.
 TEST_F(WindowlessCoupling2DTest, ReceivedEqualsGivenWindowless) {
     RunResult r = run(dir_, "windowless", 1.0, false);
     ASSERT_TRUE(r.ok);
     ASSERT_GT(r.given_2d_net, 1.0) << "fixture produced no exchange";
-    // 10× tighter than the window-path contract (0.5%): the two ledgers are
-    // integrated through independently-rounded C-API elapsed-time round-trips,
-    // which bounds how closely they can be compared.
+    // This fixture still integrates legacy display CMS (0.02832 per cfs),
+    // whereas the surface ledger uses geometric SI (0.3048³ per ft³). The
+    // ~1.11e-4 relative unit offset and final pending delivery are absorbed by
+    // this 5e-4 bound, not elapsed-time roundoff. The stricter, unit-aligned
+    // transfer ledger is checked in test_2d_coupling_conservation.cpp (#194).
     EXPECT_NEAR(r.received_1d, r.given_2d_net, 5.0e-4 * std::fabs(r.given_2d_net))
         << "1D received " << r.received_1d << " m³ vs 2D gave " << r.given_2d_net << " m³";
     EXPECT_LT(std::fabs(r.cont_2d), 0.5) << "2D continuity (%)";

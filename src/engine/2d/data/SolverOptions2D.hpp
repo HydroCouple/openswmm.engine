@@ -540,8 +540,8 @@ struct SolverOptions2D {
     // -----------------------------------------------------------------------
     double len_1d_to_2d = 1.0;  ///< 1D length → 2D length (ft→m, 0.3048)
     double len_2d_to_1d = 1.0;  ///< 2D length → 1D length (m→ft, 3.2808)
-    double vol_1d_to_2d = 1.0;  ///< 1D volume → 2D volume (ft³→m³, 0.02832)
-    double flow_1d_to_2d = 1.0; ///< 1D flow → 2D flow (ft³/s→m³/s, 0.02832)
+    double vol_1d_to_2d = 1.0;  ///< 1D volume → 2D volume (ft³→m³, exact 0.3048³)
+    double flow_1d_to_2d = 1.0; ///< 1D flow → 2D flow (ft³/s→m³/s, exact 0.3048³)
     double flow_2d_to_1d = 1.0; ///< 2D flow → 1D flow (m³/s→ft³/s, 35.315)
 
     /*! Runtime-only: resolved OpenMP thread count for the embarrassingly-
