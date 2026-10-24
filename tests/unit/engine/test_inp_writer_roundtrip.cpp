@@ -72,6 +72,7 @@
 #include "../../src/engine/core/InpWriter.hpp"
 
 #include <openswmm/engine/openswmm_engine.h>
+#include <openswmm/legacy/engine/openswmm_solver.h>
 #include <openswmm/engine/openswmm_links.h>
 #include <openswmm/engine/openswmm_nodes.h>
 #include <openswmm/engine/openswmm_subcatchments.h>
@@ -1599,4 +1600,25 @@ TEST(InpWriterRoundTrip, GuiAnnotationSectionsSurviveVerbatim) {
     ASSERT_EQ(profiles.size(), 1u) << "[PROFILES] row lost (wrong tag registered?)";
     EXPECT_NE(profiles[0].find("\"profileA        \""), std::string::npos)
         << "padding inside the quotes was reformatted away";
+}
+
+
+TEST(InpWriterRoundTrip, NormalFlowNeitherIsWrittenAsLegacyNone) {
+    SWMMEngine eng;
+    ASSERT_EQ(eng.open("warnerr_base.inp", data("_normal_flow_open.rpt").c_str(), nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_options_set(reinterpret_cast<SWMM_Engine>(&eng), "NORMAL_FLOW_LIMITED", "NEITHER"),
+              SWMM_OK);
+    const auto path = data("_normal_flow_none.inp");
+    ASSERT_EQ(openswmm::inp_writer::writeInpFile(eng.context(), path), 0);
+    const auto options = row(slurp(path), "OPTIONS", "NORMAL_FLOW_LIMITED");
+    ASSERT_GE(options.size(), 2u);
+    EXPECT_EQ(options[1], "NONE");
+
+    const int legacy_rc = swmm_open(path.c_str(), data("_normal_flow_legacy.rpt").c_str(),
+                                    data("_normal_flow_legacy.out").c_str());
+    swmm_close();
+    EXPECT_EQ(legacy_rc, 0) << slurp(data("_normal_flow_legacy.rpt"));
+    SWMMEngine reopened;
+    ASSERT_EQ(reopened.open(path.c_str(), data("_normal_flow_reopen.rpt").c_str(), nullptr), SWMM_OK);
+    EXPECT_EQ(reopened.context().options.normal_flow_ltd, 3);
 }

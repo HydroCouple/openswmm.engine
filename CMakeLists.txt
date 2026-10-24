@@ -102,6 +102,14 @@ option(OPENSWMM_BUILD_2D          "Build optional 2D surface routing module (exp
 option(OPENSWMM_2D_HDF5_OUTPUT    "With OPENSWMM_BUILD_2D: build the 2D HDF5 results writer ([2D_OPTIONS] OUTPUT_FILE; requires hdf5). OFF builds the 2D module without HDF5 (e.g. WebAssembly); OUTPUT_FILE is then ignored with a warning and 2D results are read through the swmm_2d_* API" ON)
 option(OPENSWMM_BUILD_GPU_PLUGIN  "Build the GPU/Kokkos surface-solver plugin (standalone, dlopen()ed at runtime — never linked into the core). ON by default: a from-source build gets the Kokkos-OpenMP plugin and runtime `auto` uses it (the `gpu` vcpkg feature is in default-features, supplying Kokkos). The portable base build/wheel turns this OFF explicitly and excludes the `gpu` feature (VCPKG_MANIFEST_NO_DEFAULT_FEATURES) to stay Kokkos-free; pip users get OpenMP via the separate `openswmm-gpu-omp` companion wheel. Backend selected via OPENSWMM_GPU_BACKEND (default omp)." ON)
 
+# Portable binaries by default. ON adds -mcpu=native to both engines on arm64,
+# tuning them for the build machine: on a host with SVE (Graviton3/4, Neoverse
+# N2/V2, Azure Cobalt) the compiler then emits SVE, and the libraries die with
+# SIGILL on CPUs without it (Graviton2, Ampere Altra, Apple Silicon VMs). That
+# is what broke the 6.0.0a4.dev1 aarch64 wheel. For local benchmarking only;
+# never for wheels or release packages.
+option(OPENSWMM_NATIVE_CPU        "Tune both engines for the build machine's CPU (arm64 -mcpu=native); the binaries are not portable" OFF)
+
 # HC-1 (2026-09-27): the HydroCouple component layer. OFF by default — the
 # engine has shipped without it and a from-source build should not suddenly
 # acquire a git fetch. Program plan D-C1 puts ONE `integrated2d` component

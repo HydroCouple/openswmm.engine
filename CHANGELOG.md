@@ -23,6 +23,13 @@ retroactive.
 
 ## [Unreleased]
 
+### Portable development wheels and legacy option parsing (2026-10-24)
+
+- ARM64 engine builds use the portable CPU baseline by default. Local builds can opt into `-mcpu=native` with `OPENSWMM_NATIVE_CPU=ON`. Linux base and OpenMP companion wheel builds now reject SVE/SME and AVX-512 instructions before the release gates can pass.
+- Legacy `[OPTIONS]` fields apply their original numeric, calendar, time and range rules, reporting ERROR 211 or 213 where legacy refuses the value. The legacy `atoi`/`atof` conversions, permissive clock forms, decimal-hour options and keyword matching remain accepted.
+- Saving `NORMAL_FLOW_LIMITED NEITHER` writes the EPA-compatible spelling `NONE`, which both engines reopen as no normal-flow limitation.
+- Windows wheel C API tests resolve symbols from the engine DLL imported by the bindings, including repaired wheels whose DLL names carry a hash. Looking them up on the Python extension itself failed the wheel test job despite successful engine builds.
+
 ### Return codes, display-unit round trips, cross-section messages (2026-10-24)
 
 - **A value written in display units reads back unchanged.** Setters convert from the model's display units to the internal US units and getters convert back, and the two roundings read 98.0 m back as 97.99999999999999 and 1.7 % as 1.7000000000000002. Setters now store the internal value whose display reads back exactly where one exists, and getters snap a converted value to the nearest 15-significant-digit decimal when it lies within two ulps of it. Any value written with up to 15 significant digits reads back exactly, and no value moves by more than two ulps, which is within the conversion's own error. Fields in US units with a factor of 1 are unchanged, and bulk getters do not snap.

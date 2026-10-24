@@ -115,15 +115,17 @@ set_target_properties(openswmm_legacy_engine
 )
 
 # Match the refactored engine's arm64 tuning flag (src/engine/CMakeLists.txt
-# enables -mcpu=native PRIVATE on openswmm_engine when the probe passes) so
-# legacy-vs-refactored wall-time comparisons stay flag-matched. FP semantics
-# are unaffected: the global -ffp-contract=off prevents FMA fusion.
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64" AND NOT MSVC)
+# adds -mcpu=native PRIVATE on openswmm_engine only with OPENSWMM_NATIVE_CPU,
+# which is off by default because the binaries then need the build machine's
+# CPU features) so legacy-vs-refactored wall-time comparisons stay
+# flag-matched. FP semantics are unaffected: the global -ffp-contract=off
+# prevents FMA fusion.
+if(OPENSWMM_NATIVE_CPU AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64" AND NOT MSVC)
     include(CheckCCompilerFlag)
     check_c_compiler_flag("-mcpu=native" OPENSWMM_LEGACY_HAVE_MCPU_NATIVE)
     if(OPENSWMM_LEGACY_HAVE_MCPU_NATIVE)
         target_compile_options(openswmm_legacy_engine PRIVATE -mcpu=native)
-        message(STATUS "OpenSWMM Legacy Engine: -mcpu=native enabled for arm64")
+        message(STATUS "OpenSWMM Legacy Engine: -mcpu=native (OPENSWMM_NATIVE_CPU)")
     endif()
 endif()
 

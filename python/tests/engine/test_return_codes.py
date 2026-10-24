@@ -26,8 +26,9 @@ except ImportError as _exc:  # pragma: no cover - environment dependent
     raise unittest.SkipTest(f"requires compiled engine: {_exc}")
 
 from tests._paths import SITE_DRAINAGE_INP, artifact_dir
+from tests._capi import load_engine_api
 
-_API = ct.CDLL(_extension.__file__)
+_API = load_engine_api(_extension)
 _H = ct.c_void_p
 LONG = "series_" + "é" * 1500  # 3,007 bytes: past every starting buffer
 

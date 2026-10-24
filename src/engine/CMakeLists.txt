@@ -195,16 +195,19 @@ else()
             # Enable AVX2 + FMA for SIMD acceleration (x86_64)
             target_compile_options(openswmm_engine PRIVATE -mavx2 -mfma)
         elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
-            # ARM64 (Apple Silicon / Graviton / Cortex-A): NEON is always
-            # available, but an explicit CPU target lets the compiler emit
-            # more aggressive auto-vectorised code for the inner hot loops
-            # (XSectBatch, DynamicWave momentum kernels). -mcpu=native when
-            # available, else a safe default baseline.
-            include(CheckCXXCompilerFlag)
-            check_cxx_compiler_flag("-mcpu=native" OPENSWMM_HAVE_MCPU_NATIVE)
-            if(OPENSWMM_HAVE_MCPU_NATIVE)
-                target_compile_options(openswmm_engine PRIVATE -mcpu=native)
-                message(STATUS "OpenSWMM Engine: -mcpu=native enabled for arm64")
+            # ARM64: NEON is part of the baseline ISA, so the default target
+            # already vectorises the hot loops (XSectBatch, DynamicWave
+            # momentum kernels). -mcpu=native is opt-in (OPENSWMM_NATIVE_CPU,
+            # root CMakeLists.txt): on an SVE build host it emits SVE, and the
+            # library then dies with SIGILL on CPUs without it.
+            if(OPENSWMM_NATIVE_CPU)
+                include(CheckCXXCompilerFlag)
+                check_cxx_compiler_flag("-mcpu=native" OPENSWMM_HAVE_MCPU_NATIVE)
+                if(OPENSWMM_HAVE_MCPU_NATIVE)
+                    target_compile_options(openswmm_engine PRIVATE -mcpu=native)
+                    message(STATUS "OpenSWMM Engine: -mcpu=native (OPENSWMM_NATIVE_CPU); "
+                                   "the library needs this machine's CPU features")
+                endif()
             endif()
         endif()
     elseif(MSVC)

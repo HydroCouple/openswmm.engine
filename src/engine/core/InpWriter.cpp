@@ -1941,7 +1941,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                                         "MODIFIED_GREEN_AMPT", "CURVE_NUMBER"};
         static const char* sRouting[] = {"STEADY", "KINWAVE", "DYNWAVE", "FV"};
         static const char* sInertial[] = {"NONE", "PARTIAL", "FULL"};
-        static const char* sNormFlow[] = {"SLOPE", "FROUDE", "BOTH", "NEITHER"};
+        static const char* sNormFlow[] = {"SLOPE", "FROUDE", "BOTH", "NONE"};
         static const char* sSurcharge[] = {"EXTRAN", "SLOT", "DYNAMIC_SLOT", "TPA"};
         static const char* sUnsteadyFriction[] = {"NONE", "VITKOVSKY"}; // issue #156
 
