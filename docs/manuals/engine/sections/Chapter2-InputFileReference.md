@@ -172,6 +172,7 @@ Three sections carry a keyword spelled `DISPERSION`, and they mean different thi
 | HEAD_TOLERANCE | number | 0 | Head change between trials, in project length units, below which the step has converged; 0 selects 0.005 ft (0.0015 m). |
 | MIN_SURFAREA | number | 0 | Minimum node surface area, in project units, used in depth updates; 0 selects 12.566 ft² (1.167 m²), a 4-ft manhole. |
 | MIN_SLOPE | number | 0 | Minimum conduit slope in percent; 0 imposes none, though the elevation drop is still floored at 0.001 ft (0.00035 m). |
+| SLOPE_WEIGHTING | YES / NO / TRUE / FALSE / 1 / 0 | — | Retired compatibility option with no solver effect. YES and NO also accept legacy prefix matches; other values are rejected. When supplied, the value is retained in the extension-options map and can be read through `swmm_options_get_ext()`. |
 | INERTIAL_DAMPING | NONE / PARTIAL / FULL | PARTIAL | Handling of the momentum inertial terms: kept in full (NONE), reduced toward critical flow and dropped when supercritical (PARTIAL), or dropped (FULL). Hydraulics §3.3.3. |
 | NORMAL_FLOW_LIMITED | SLOPE / FROUDE / BOTH / NEITHER | BOTH | Test that flags supercritical flow to be limited to normal flow: water-surface slope, Froude number, both, or neither. Hydraulics §3.3.4. |
 | NODE_CONTINUITY | EXPLICIT / SEMI_IMPLICIT | EXPLICIT | Node head update: the legacy two-branch formulation, or the unified semi-implicit one that folds flow gradients into the depth update. Hydraulics §3.5. |
