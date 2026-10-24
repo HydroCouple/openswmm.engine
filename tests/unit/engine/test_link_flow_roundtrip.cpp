@@ -20,8 +20,8 @@
  *        getters for the existing @ref swmm_link_set_initial_flow and
  *        @ref swmm_link_set_max_flow setters.
  *
- * @details The setters write to `ctx.links.flow[idx]` and
- *          `ctx.links.q_limit[idx]` respectively. The new getters read
+ * @details The setters write to `ctx.links.q0[idx]` (the authored initial
+ *          flow) and `ctx.links.q_limit[idx]` respectively. The getters read
  *          from those same SoA slots; tests assert bit-for-bit
  *          round-trip plus 0.0-default and negative-flow round-trip.
  *

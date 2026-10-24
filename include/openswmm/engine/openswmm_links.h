@@ -331,9 +331,11 @@ SWMM_ENGINE_API int swmm_link_set_offset_dn(SWMM_Engine engine, int idx, double 
  * @returns SWMM_OK on success, or an error code.
  *
  *
- * @note Permitted in BUILDING, OPENED or INITIALIZED; other states return SWMM_ERR_LIFECYCLE. A
- *     null engine returns SWMM_ERR_BADHANDLE. A failed link/pollutant index check returns
- *     SWMM_ERR_BADINDEX.
+ * @note Sets the authored initial flow (the [CONDUITS] InitFlow column), which
+ *     swmm_link_get_initial_flow() reads, the .inp writer saves and initialization turns into the
+ *     starting flow, depth and volume. Requires BUILDING or OPENED: after initialization the
+ *     starting state already exists, so other states return SWMM_ERR_LIFECYCLE. A null engine
+ *     returns SWMM_ERR_BADHANDLE. A failed link index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_link_set_initial_flow(SWMM_Engine engine, int idx, double flow);
 
@@ -353,9 +355,8 @@ SWMM_ENGINE_API int swmm_link_set_max_flow(SWMM_Engine engine, int idx, double f
 /**
  * @brief Get the initial flow in a link at simulation start.
  *
- * @details Symmetric getter for @ref swmm_link_set_initial_flow. Reads the
- *          same SoA slot the setter writes; safe to call in any
- *          post-construction engine state.
+ * @details Symmetric getter for @ref swmm_link_set_initial_flow: the authored
+ *          initial flow, in any post-construction engine state.
  *
  * @param[in] engine Engine handle.
  * @param[in] idx Zero-based link index.
@@ -365,8 +366,8 @@ SWMM_ENGINE_API int swmm_link_set_max_flow(SWMM_Engine engine, int idx, double f
  *
  *
  * @note flow may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
- *     failed link/pollutant index check returns SWMM_ERR_BADINDEX. Reads the current flow column;
- *     during a run it no longer represents an untouched original initial condition.
+ *     failed link index check returns SWMM_ERR_BADINDEX. The run does not change it; read the
+ *     current flow with swmm_link_get_flow().
  */
 SWMM_ENGINE_API int swmm_link_get_initial_flow(SWMM_Engine engine, int idx, double* flow);
 

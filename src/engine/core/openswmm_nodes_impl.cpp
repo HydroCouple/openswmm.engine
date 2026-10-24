@@ -233,9 +233,12 @@ SWMM_ENGINE_API int swmm_node_set_pond_area(SWMM_Engine engine, int idx, double 
 SWMM_ENGINE_API int swmm_node_set_initial_depth(SWMM_Engine engine, int idx, double depth) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
-    CHECK_INITIAL_COND(ctx);
+    // The authored initial condition: initialize() derives the starting depth, head and volume from
+    // it and the .inp writer saves it. Writing the current depth instead was lost at initialize();
+    // after initialize() the start state already exists, so the setter refuses (LIFECYCLE).
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
-    ctx.nodes.depth[static_cast<std::size_t>(idx)] =
+    ctx.nodes.init_depth[static_cast<std::size_t>(idx)] =
         to_internal(ctx, openswmm::ucf::LENGTH, depth); // units
     return SWMM_OK;
 }

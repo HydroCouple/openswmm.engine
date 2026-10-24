@@ -338,10 +338,13 @@ SWMM_ENGINE_API int swmm_link_set_offset_dn(SWMM_Engine engine, int idx, double 
 SWMM_ENGINE_API int swmm_link_set_initial_flow(SWMM_Engine engine, int idx, double flow) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
-    CHECK_INITIAL_COND(ctx);
+    // The authored initial condition (q0): initialize() sets the starting flow, depth and volume
+    // from it and the .inp writer saves it. Writing the current flow instead was lost at
+    // initialize(); after initialize() the start state already exists, so the setter refuses.
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
     // units: display FLOW -> internal cfs
-    ctx.links.flow[static_cast<std::size_t>(idx)] = to_internal(ctx, openswmm::ucf::FLOW, flow);
+    ctx.links.q0[static_cast<std::size_t>(idx)] = to_internal(ctx, openswmm::ucf::FLOW, flow);
     return SWMM_OK;
 }
 
@@ -364,7 +367,7 @@ SWMM_ENGINE_API int swmm_link_get_initial_flow(SWMM_Engine engine, int idx, doub
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
     // units: internal cfs -> display FLOW
     if (flow)
-        *flow = to_display(ctx, openswmm::ucf::FLOW, ctx.links.flow[static_cast<std::size_t>(idx)]);
+        *flow = to_display(ctx, openswmm::ucf::FLOW, ctx.links.q0[static_cast<std::size_t>(idx)]);
     return SWMM_OK;
 }
 
