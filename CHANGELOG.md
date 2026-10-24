@@ -23,6 +23,14 @@ retroactive.
 
 ## [Unreleased]
 
+### Bindings: option keys, catalog compatibility, long text (2026-10-24)
+
+- **Option keys are enumerable.** `swmm_options_key_count` / `swmm_options_key_at` list the standard `[OPTIONS]` keys, and `swmm_options_ext_key_count` / `swmm_options_ext_key_at` the extended keys an open model carries (with the 2D option keys when the model has a mesh). Python `SimulationOptions` and the extended-options view iterate them, so iteration and `len()` no longer come from a hand-kept list, which lacked six `FV_*` keys.
+- **The API catalog has a compatibility contract.** `catalog.json` carries a `revision` (now 2) and `renamed` / `removed` maps, and `gen_catalog.py` refuses to write a catalog that drops or renames a path without recording it and bumping the revision. `catalog.canonical()`, `lookup()`, `resolve()` and `members()` follow renames (warning once) and shared views (`surface2d.groundwater` is the `groundwater2d` service), and `catalog.require_revision()` lets a consumer name the revision it needs. `link.xsect` is catalogued as writable.
+- **`openswmm.engine.capabilities()`** reports the build: version, catalog revision, C export count, optional features (2D, GeoPackage, HDF5 2D output), threads, checkpoint features and process components.
+- **Python text reads are no longer truncated.** Native text getters cut text at the caller's buffer. The bindings now read through buffers that grow until the text fits, so IDs, tags, file names and user-flag text longer than the former 128- or 256-byte buffers come back whole, multi-byte UTF-8 included. A test keeps new fixed buffers out; `python/scripts/fixed_buffer_allow.json` lists the bounded ones.
+- CI runs the MCP server's and the gymnasium's catalog contract tests against a fresh engine build (`python_contracts.yml`, `downstream` job).
+
 ### Native hot start subcatchment state (2026-10-19)
 
 - **The native hot start file keeps the subcatchment surface.** A NATIVE `SAVE HOTSTART` file (and `swmm_hotstart_save`) held no subarea ponded depths and no pollutant or reaction-species buildup, ponded mass or runoff quality, so a continuation restarted the surface dry and clean. A version 16 block now carries them by name, with each land use's last sweep and the groundwater outflow, without rounding. Older native files still load, with a warning that their subcatchments start from the initial surface state.
