@@ -35,6 +35,7 @@
 
 #include <cstring>
 #include <algorithm>
+#include <cmath>
 
 /**
  * @brief Recover the internal engine pointer from an opaque public handle.
@@ -63,10 +64,47 @@ static inline openswmm::SWMMEngine* to_engine(SWMM_Engine e) noexcept {
 //   setter:  internal = display  * UCF_inv(q)    -> to_internal()
 //
 // Setters multiply by the precomputed reciprocal (UCF_inv / Qcf_inv) rather than
-// dividing by UCF — no runtime division at any boundary site. `q` is a
+// dividing by UCF — no runtime division at any boundary site. The two roundings
+// can leave a written value an ulp or two off when it is read back (98 m →
+// 97.99999999999999). Setters pick the internal value whose display reads back
+// unchanged where one exists (exact_inverse); for the rest, getters snap the
+// result to the nearest 15-significant-digit decimal within two ulps
+// (snap_display), so a value written with up to 15 significant digits always
+// reads back exactly. `q` is a
 // openswmm::ucf::Quantity code (LENGTH, FLOW, VOLUME, LANDAREA, RAINFALL,
 // EVAPRATE, RAINDEPTH, ...). Templated on the context type so the include of the
 // full SimulationContext definition is deferred to the impl translation units.
+
+/**
+ * @brief Snap a converted display value to the nearest 15-significant-digit decimal within two ulps.
+ *
+ * A value written in display units reaches internal units and comes back through two roundings, so
+ * it can read back an ulp or two off. No internal value avoids that for every input, so getters
+ * snap: a value written with up to 15 significant digits reads back exactly, and no value moves
+ * by more than two ulps, which is within the conversion's own error. Magnitudes outside
+ * [1e-8, 1e15), zero and non-finite values are returned unchanged.
+ *
+ * @param[in] v Display value computed from an internal one.
+ * @return The snapped value, or @p v.
+ */
+static inline double snap_display(double v) noexcept {
+    static constexpr double kPow10[23] = {1e0,  1e1,  1e2,  1e3,  1e4,  1e5,  1e6,  1e7,
+                                          1e8,  1e9,  1e10, 1e11, 1e12, 1e13, 1e14, 1e15,
+                                          1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22};
+    const double a = std::fabs(v);
+    if (!(a >= 1e-8 && a < 1e15))
+        return v;
+    // Scale to a 15-digit integer; correct log10 when it lands on the wrong side of a power of ten.
+    int k = 14 - static_cast<int>(std::floor(std::log10(a)));
+    double m = std::nearbyint(a * kPow10[k]);
+    if (m >= 1e15 && k > 0)
+        m = std::nearbyint(a * kPow10[--k]);
+    else if (m < 1e14 && k < 22)
+        m = std::nearbyint(a * kPow10[++k]);
+    const double r = std::copysign(m / kPow10[k], v); // powers up to 1e22 are exact
+    const double two_ulps = 2.0 * (std::nextafter(a, HUGE_VAL) - a);
+    return std::fabs(r - v) <= two_ulps ? r : v;
+}
 
 /**
  * @brief Scale an internal scalar to project display units.
@@ -77,10 +115,34 @@ static inline openswmm::SWMMEngine* to_engine(SWMM_Engine e) noexcept {
  * @param[in] ctx Borrowed context exposing flow-unit options.
  * @param[in] q Quantity code interpreted by ucf::UCF; caller selects the physical quantity.
  * @param[in] v Internal-unit value; no finite/range checks.
- * @return v*UCF(q,options).
+ * @return v*UCF(q,options), snapped by at most two ulps when UCF is not 1 (snap_display).
  */
 template <class Ctx> static inline double to_display(const Ctx& ctx, int q, double v) noexcept {
-    return v * openswmm::ucf::UCF(q, ctx.options);
+    const double f = openswmm::ucf::UCF(q, ctx.options);
+    return f == 1.0 ? v : snap_display(v * f);
+}
+
+/**
+ * @brief The internal value, within one ulp of @p internal, that a getter turns back into @p display.
+ *
+ * Getters return internal * factor. A setter's internal value comes from @p display through a
+ * reciprocal or a division, so internal * factor can differ from @p display by an ulp. This returns
+ * @p internal or one of its two floating-point neighbours, whichever reads back as @p display
+ * exactly; @p internal when none does (not every display value is reachable) or it is not finite.
+ *
+ * @param[in] internal Internal value derived from @p display.
+ * @param[in] factor Getter's multiplier from internal to display units.
+ * @param[in] display Value the caller wrote.
+ * @return The chosen internal value.
+ */
+static inline double exact_inverse(double internal, double factor, double display) noexcept {
+    if (internal * factor == display || !std::isfinite(internal))
+        return internal;
+    const double up = std::nextafter(internal, HUGE_VAL);
+    if (up * factor == display)
+        return up;
+    const double down = std::nextafter(internal, -HUGE_VAL);
+    return down * factor == display ? down : internal;
 }
 
 /**
@@ -92,10 +154,11 @@ template <class Ctx> static inline double to_display(const Ctx& ctx, int q, doub
  * @param[in] ctx Borrowed context exposing flow-unit options.
  * @param[in] q Quantity code interpreted by ucf::UCF_inv.
  * @param[in] v Project display-unit value; no finite/range checks.
- * @return v*UCF_inv(q,options).
+ * @return v*UCF_inv(q,options), nudged by at most one ulp so to_display() returns v (exact_inverse).
  */
 template <class Ctx> static inline double to_internal(const Ctx& ctx, int q, double v) noexcept {
-    return v * openswmm::ucf::UCF_inv(q, ctx.options);
+    return exact_inverse(v * openswmm::ucf::UCF_inv(q, ctx.options),
+                         openswmm::ucf::UCF(q, ctx.options), v);
 }
 
 #define CHECK_HANDLE(e)                                                                            \

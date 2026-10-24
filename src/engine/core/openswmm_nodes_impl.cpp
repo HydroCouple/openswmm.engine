@@ -223,9 +223,10 @@ SWMM_ENGINE_API int swmm_node_set_pond_area(SWMM_Engine engine, int idx, double 
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
-    // units: ponded area = LENGTH^2 (ft2/m2)
-    double fi = openswmm::ucf::UCF_inv(openswmm::ucf::LENGTH, ctx.options);
-    ctx.nodes.ponded_area[static_cast<std::size_t>(idx)] = area * fi * fi;
+    // units: ponded area = LENGTH^2 (ft2/m2); one factor both ways so the area reads back
+    const double f = openswmm::ucf::UCF(openswmm::ucf::LENGTH, ctx.options);
+    const double f2 = f * f;
+    ctx.nodes.ponded_area[static_cast<std::size_t>(idx)] = exact_inverse(area / f2, f2, area);
     return SWMM_OK;
 }
 
@@ -1148,8 +1149,10 @@ SWMM_ENGINE_API int swmm_node_get_ponded_area(SWMM_Engine engine, int idx, doubl
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
     // units: ponded area = LENGTH^2 (ft2/m2)
     if (area) {
-        double f = openswmm::ucf::UCF(openswmm::ucf::LENGTH, ctx.options);
-        *area = ctx.nodes.ponded_area[static_cast<std::size_t>(idx)] * f * f;
+        const double f = openswmm::ucf::UCF(openswmm::ucf::LENGTH, ctx.options);
+        const double f2 = f * f;
+        const double a = ctx.nodes.ponded_area[static_cast<std::size_t>(idx)];
+        *area = f2 == 1.0 ? a : snap_display(a * f2);
     }
     return SWMM_OK;
 }
