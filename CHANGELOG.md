@@ -23,6 +23,14 @@ retroactive.
 
 ## [Unreleased]
 
+### Return codes, display-unit round trips, cross-section messages (2026-10-24)
+
+- **A value written in display units reads back unchanged.** Setters convert from the model's display units to the internal US units and getters convert back, and the two roundings read 98.0 m back as 97.99999999999999 and 1.7 % as 1.7000000000000002. Setters now store the internal value whose display reads back exactly where one exists, and getters snap a converted value to the nearest 15-significant-digit decimal when it lies within two ulps of it. Any value written with up to 15 significant digits reads back exactly, and no value moves by more than two ulps, which is within the conversion's own error. Fields in US units with a factor of 1 are unchanged, and bulk getters do not snap.
+- **`SWMM_ERR_BUFSIZE` (17): a caller's buffer is too small for the value.** `swmm_ueb_option_get`, `swmm_climate_get_radiation_source`, `swmm_climate_get_cloud`, `swmm_snow2d_get_row`, `swmm_snow2d_get_configuration` and `swmm_gw2d_boundary_get` refuse a short buffer with it; they returned `SWMM_ERR_BADPARAM`, which also meant an unknown key, channel or argument, so a caller could not tell which. `swmm_snow2d_get_row` reports a row outside its section as `SWMM_ERR_BADINDEX`. Python has `ErrorCode.BUFSIZE`, and the bindings grow their buffer on it alone, raising any other code at once.
+- **An out-of-range `SAVE HOTSTART` slot is `SWMM_ERR_BADINDEX`** in `swmm_hotstart_saves_get_path`, `_get_datetime`, `_set_path`, `_set_datetime`, `_get_format`, `_set_format` and `_remove`; it was `SWMM_ERR_BADPARAM`.
+- **Cross-section errors name what is wrong.** A Geom1 of zero or less read `ERROR 211: invalid number .`, copying EPA SWMM's empty token without the line number SWMM prints with it. It now reads `ERROR 211: invalid number 0 for Geom1 of link C1 in [XSECTIONS] (must be > 0).`, and a shape whose dimensions do not fit together (a filled pipe filled above its crown) names the link and its four geometry values.
+- Python package version `6.0.0a4.dev3`.
+
 ### Bindings: option keys, catalog compatibility, long text (2026-10-24)
 
 - **Option keys are enumerable.** `swmm_options_key_count` / `swmm_options_key_at` list the standard `[OPTIONS]` keys, and `swmm_options_ext_key_count` / `swmm_options_ext_key_at` the extended keys an open model carries (with the 2D option keys when the model has a mesh). Python `SimulationOptions` and the extended-options view iterate them, so iteration and `len()` no longer come from a hand-kept list, which lacked six `FV_*` keys.
