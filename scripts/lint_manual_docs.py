@@ -278,7 +278,7 @@ def _documented_keys(chapter_text, section):
 OPTIONS_COVERAGE = [
     ("engine/input/handlers/OptionsHandler.cpp", r"^void handle_options\(",
      r'key\s*==\s*"([A-Z][A-Z0-9_]*)"', "[OPTIONS]"),
-    ("engine/2d/input/SectionHandlers2D.cpp", r"^bool is2DOptionKey\(",
+    ("engine/2d/input/SectionHandlers2D.cpp", r"^std::span<const char\* const> current2DOptionKeys\(",
      r'"([A-Z][A-Z0-9_]*)"', "[2D_OPTIONS]"),
     ("engine/2d/input/SectionHandlers2D.cpp", r"^bool is2DRetiredOptionKey\(",
      r'"([A-Z][A-Z0-9_]*)"', "[2D_OPTIONS]"),

@@ -565,6 +565,55 @@ SWMM_ENGINE_API int swmm_options_get_ext(SWMM_Engine engine, const char* key, ch
 SWMM_ENGINE_API int swmm_options_set_ext(SWMM_Engine engine, const char* key, const char* value);
 
 /**
+ * @brief Number of standard option keys accepted by swmm_options_get() and swmm_options_set().
+ *
+ * Keys are canonical spellings (aliases such as ROUTING_MODEL are omitted) and include the
+ * [REPORT] keys under their RPT_ prefix. The list is fixed for a build and needs no engine.
+ *
+ * @return Key count, always positive.
+ */
+SWMM_ENGINE_API int swmm_options_key_count(void);
+
+/**
+ * @brief Copy one standard option key by position.
+ *
+ * @param[in] index Zero-based position, less than swmm_options_key_count().
+ * @param[out] buf Non-null caller-owned buffer; success writes NUL-terminated text, silently
+ *     truncated to buflen-1 bytes.
+ * @param[in] buflen Positive buffer capacity in bytes, including the NUL terminator.
+ * @return SWMM_OK on success; SWMM_ERR_BADPARAM for an out-of-range index or invalid buffer.
+ */
+SWMM_ENGINE_API int swmm_options_key_at(int index, char* buf, int buflen);
+
+/**
+ * @brief Number of keys swmm_options_get_ext() currently accepts on this engine.
+ *
+ * With a 2D surface configured these are MESH_FILE and every current [2D_OPTIONS] key; they are
+ * followed by the generic extension keys stored on the model, in byte order. Generic keys can be
+ * added by swmm_options_set_ext(), so re-count after edits.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access.
+ * @param[out] count Non-null destination, written only on success.
+ * @return SWMM_OK on success; SWMM_ERR_BADHANDLE for null engine or SWMM_ERR_BADPARAM for null
+ *     count.
+ */
+SWMM_ENGINE_API int swmm_options_ext_key_count(SWMM_Engine engine, int* count);
+
+/**
+ * @brief Copy one key accepted by swmm_options_get_ext() by position.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access.
+ * @param[in] index Zero-based position, less than the swmm_options_ext_key_count() result.
+ * @param[out] buf Non-null caller-owned buffer; success writes NUL-terminated text, silently
+ *     truncated to buflen-1 bytes.
+ * @param[in] buflen Positive buffer capacity in bytes, including the NUL terminator.
+ * @return SWMM_OK on success; SWMM_ERR_BADHANDLE for null engine or SWMM_ERR_BADPARAM for an
+ *     out-of-range index or invalid buffer.
+ */
+SWMM_ENGINE_API int swmm_options_ext_key_at(SWMM_Engine engine, int index, char* buf,
+                                            int buflen);
+
+/**
  * @brief Copy the configured coordinate-reference-system string.
  *
  * Prefers the [OPTIONS] CRS and falls back to the spatial frame CRS (used by some non-INP input

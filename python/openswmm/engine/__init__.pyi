@@ -220,6 +220,8 @@ from ._enums import (
 
 HAS_GEOPACKAGE: bool
 
+from ._capabilities import capabilities as capabilities
+
 __all__: list[str]
 
 # Native climate, transport, writer and unit-system selectors.

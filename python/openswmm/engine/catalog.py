@@ -30,16 +30,27 @@ them, with type, access, units, lifecycle phases and wrapped C symbols.
 
     catalog.lookup("node.stats.max_depth")["units"]      # 'length'
     obj = catalog.resolve(solver, "node.stats", "J1")    # the live NodeStatsView
+
+Paths are a compatibility contract. Paths through a shared view resolve to the
+view's target (``surface2d.groundwater.cells`` is ``groundwater2d.cells``).
+``revision()`` increases whenever a path is renamed or removed; renamed paths
+keep working through :func:`lookup`, :func:`resolve` and :func:`members` with a
+``DeprecationWarning``, and removed ones fail with the reason. Consumers state
+the revision they were written against with :func:`require_revision`.
 """
 
 from __future__ import annotations
 
 import json
+import warnings
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-__all__ = ["load", "targets", "members", "lookup", "resolve", "unit_label", "UNIT_KINDS"]
+__all__ = [
+    "load", "targets", "members", "lookup", "resolve", "unit_label", "UNIT_KINDS",
+    "revision", "canonical", "require_revision",
+]
 
 _PATH = Path(__file__).with_name("catalog.json")
 
@@ -56,6 +67,86 @@ def _by_path() -> dict[str, dict[str, Any]]:
     return {m["path"]: m for m in load()["members"]}
 
 
+def revision() -> int:
+    """Catalog revision; it increases whenever a path is renamed or removed."""
+    return int(load().get("revision", 1))
+
+
+def require_revision(minimum: int, consumer: str = "this package") -> None:
+    """Raise ``RuntimeError`` when the installed catalog is older than *minimum*."""
+    if revision() < minimum:
+        raise RuntimeError(
+            f"{consumer} needs openswmm engine catalog revision {minimum} or newer; the "
+            f"installed openswmm has revision {revision()}. Upgrade or rebuild openswmm."
+        )
+
+
+def renamed_path(path: str, renamed: dict[str, str]) -> str | None:
+    """*path* with its longest renamed prefix replaced, or ``None`` if none applies."""
+    best = max((old for old in renamed if path == old or path.startswith(old + ".")),
+               key=len, default=None)
+    return None if best is None else renamed[best] + path[len(best):]
+
+
+def views_of(catalog: dict[str, Any]) -> dict[str, str]:
+    """Object-valued properties that expose another target: ``{path: view_target}``."""
+    return {m["path"]: m["view_target"] for m in catalog["members"] if "view_target" in m}
+
+
+def current_path(path: str, catalog: dict[str, Any],
+                 views: dict[str, str] | None = None) -> tuple[str, bool]:
+    """Spell *path* against *catalog*: ``(current path, whether a rename applied)``.
+
+    Renamed prefixes are replaced first; then a prefix that is a shared view
+    (``surface2d.groundwater`` exposes ``groundwater2d``) is replaced by its
+    target, so ``surface2d.groundwater.cells`` reads ``groundwater2d.cells``.
+    """
+    new = renamed_path(path, catalog.get("renamed", {}))
+    was_renamed = new is not None
+    path = new if was_renamed else path
+    views = views_of(catalog) if views is None else views
+    for _ in range(8):  # views can chain (coupling.groundwater -> coupling.surface)
+        parts = path.split(".")
+        for i in range(len(parts), 0, -1):
+            target = views.get(".".join(parts[:i]))
+            if target is not None:
+                rest = ".".join(parts[i:])
+                path = (rest if target == "solver" else f"{target}.{rest}") if rest else target
+                break
+        else:
+            break
+    return path, was_renamed
+
+
+@lru_cache(maxsize=1)
+def _views() -> dict[str, str]:
+    return views_of(load())
+
+
+_WARNED: set[str] = set()
+
+
+def canonical(path: str) -> str:
+    """The current spelling of a target or member *path*.
+
+    Shared views resolve silently; renamed paths warn once each with a
+    ``DeprecationWarning``.
+    """
+    current, was_renamed = current_path(path, load(), _views())
+    if was_renamed and path not in _WARNED:
+        _WARNED.add(path)
+        warnings.warn(f"engine catalog path {path!r} is now {current!r}",
+                      DeprecationWarning, stacklevel=3)
+    return current
+
+
+def _removed_reason(path: str) -> str | None:
+    for prefix, reason in load().get("removed", {}).items():
+        if path == prefix or path.startswith(prefix + "."):
+            return str(reason)
+    return None
+
+
 def targets() -> dict[str, dict[str, Any]]:
     """``{target name: entry}``; element targets carry ``collection`` and ``key``."""
     entries: dict[str, dict[str, Any]] = load()["targets"]
@@ -64,15 +155,19 @@ def targets() -> dict[str, dict[str, Any]]:
 
 def members(target: str | None = None) -> list[dict[str, Any]]:
     """Members of one target, or of all targets."""
+    if target is not None and target not in targets():
+        target = canonical(target)
     return [m for m in load()["members"] if target is None or m["target"] == target]
 
 
 def lookup(path: str) -> dict[str, Any]:
     """Return the member entry for a dotted *path* such as ``"node.depth"``."""
-    try:
-        return _by_path()[path]
-    except KeyError:
-        raise KeyError(f"{path!r} is not in the engine catalog") from None
+    entry = _by_path().get(path) or _by_path().get(canonical(path))
+    if entry is not None:
+        return entry
+    reason = _removed_reason(path)
+    suffix = f" (removed: {reason})" if reason else ""
+    raise KeyError(f"{path!r} is not in the engine catalog{suffix}")
 
 
 def resolve(solver: Any, target: str, key: int | str | None = None) -> Any:
@@ -82,6 +177,8 @@ def resolve(solver: Any, target: str, key: int | str | None = None) -> Any:
     *key* (id or index). Standalone roots (``builder``, ``output``, ...) are not
     reachable from a solver and raise ``KeyError``.
     """
+    if target not in targets():
+        target = canonical(target)
     entry = targets()[target]
     if "construct" in entry:
         raise KeyError(f"{target!r} is a standalone root; construct it directly")

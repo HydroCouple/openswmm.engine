@@ -150,6 +150,10 @@ cdef extern from "openswmm_model.h":
     cdef int swmm_options_set(SWMM_Engine e, const char* key, const char* value)
     cdef int swmm_options_get_ext(SWMM_Engine e, const char* key, char* buf, int buflen)
     cdef int swmm_options_set_ext(SWMM_Engine e, const char* key, const char* value)
+    cdef int swmm_options_key_count()
+    cdef int swmm_options_key_at(int index, char* buf, int buflen)
+    cdef int swmm_options_ext_key_count(SWMM_Engine e, int* count)
+    cdef int swmm_options_ext_key_at(SWMM_Engine e, int index, char* buf, int buflen)
     # External-file slots. `role` is the C enum SWMM_FilePathRole; the C++
     # header rejects an implicit int->enum conversion, so declare the enum
     # type here and cast at the call sites (see _model.pyx).

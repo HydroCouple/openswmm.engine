@@ -334,3 +334,21 @@ class TestEngineFeatureGaps(unittest.TestCase):
     def test_every_parsed_section_is_mapped(self):
         unmapped = [r["section"] for r in _gaps.analyse()["sections"] if r["class"] == "UNMAPPED"]
         self.assertEqual(unmapped, [])
+
+
+class TestOptionKeyList(unittest.TestCase):
+    """``kStandardOptionKeys`` (enumerated by ``swmm_options_key_at``) lists the first key of
+    every ``swmm_options_get`` branch, in branch order, so option iteration never drifts."""
+
+    def test_key_list_matches_getter_branches(self):
+        src = (_REPO_ROOT / "src" / "engine" / "core" / "openswmm_model_impl.cpp").read_text(
+            encoding="utf-8")
+        body = src[src.index("SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine"):
+                   src.index("SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine")]
+        branches = [re.findall(r'"([A-Z0-9_]+)"', cond)[0] for cond in re.findall(
+            r'if\s*\(\s*(k\s*==\s*"[A-Z0-9_]+"(?:\s*\|\|\s*k\s*==\s*"[A-Z0-9_]+")*)', body)]
+        start = src.index("kStandardOptionKeys[] = {")
+        listed = re.findall(r'"([A-Z0-9_]+)"', src[start:src.index("};", start)])
+        self.assertGreater(len(branches), 90)
+        self.assertEqual(listed, branches)
+

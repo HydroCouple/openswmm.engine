@@ -1399,48 +1399,6 @@ class SimulationOptions(MutableMapping):
         # Sub-namespace for the [OPTIONS_EXT] block.
         self.ext = _OptionsExtView(solver)
 
-    # MutableMapping requires __getitem__, __setitem__, __delitem__, __iter__,
-    # __len__. The underlying C API doesn't expose an iteration helper, so we
-    # implement the mapping protocol minimally: indexing and length, plus an
-    # ``iter`` over a small known-key set the schema documents. Iteration over
-    # *all* keys requires a future C API addition.
-    _KNOWN_KEYS = (
-        "FLOW_UNITS", "INFILTRATION", "FLOW_ROUTING", "LINK_OFFSETS",
-        "FORCE_MAIN_EQUATION", "IGNORE_RAINFALL", "IGNORE_SNOWMELT",
-        "IGNORE_GROUNDWATER", "IGNORE_RDII", "IGNORE_ROUTING",
-        "IGNORE_QUALITY", "ALLOW_PONDING", "SKIP_STEADY_STATE",
-        "SYS_FLOW_TOL", "LAT_FLOW_TOL", "START_DATE", "START_TIME",
-        "END_DATE", "END_TIME", "REPORT_START_DATE", "REPORT_START_TIME",
-        "SWEEP_START", "SWEEP_END", "DRY_DAYS", "REPORT_STEP",
-        "WET_STEP", "DRY_STEP", "ROUTING_STEP", "RULE_STEP", "MINIMUM_STEP",
-        "INERTIAL_DAMPING", "NORMAL_FLOW_LIMITED", "MIN_SURFAREA",
-        "MIN_SLOPE", "MAX_TRIALS", "HEAD_TOLERANCE", "THREADS",
-        "TEMPDIR",
-        # Explicit finite-volume solver (FLOW_ROUTING FV). Readable and
-        # writable under any routing model, so a script can configure the
-        # solver before selecting it.
-        "FV_CELL_LENGTH", "FV_MIN_CELLS", "FV_CFL", "FV_RIEMANN", "FV_ORDER",
-        "FV_LIMITER", "FV_SCALAR_SCHEME", "FV_TIME_INTEGRATION",
-        "FV_SLOT_CELERITY", "FV_DISPERSION", "FV_STRUCTURE_COUPLING",
-        "FV_COMPACTION", "FV_BACKEND", "FV_MIN_PARALLEL_CELLS",
-        "FV_LTS", "FV_LTS_MAX_TIERS", "FV_CFL_CENSUS_INTERVAL",
-        # Unsteady friction (issue #156): consumed by the FV (Phase 2) and
-        # dynamic wave (Phase 3) solvers.
-        "UNSTEADY_FRICTION", "UF_K3",
-        # TPA pressure closure (issue #156 Phase 4): FV solver.
-        "FV_PRESSURE_CLOSURE",
-        # Signed piezometric heads in the .out HEAD field (issue #156 O-6).
-        "REPORT_SIGNED_HEADS",
-        # DW surcharge method + TPA celerity (issue #156 Phase 5; adding
-        # SURCHARGE_METHOD also closes the long-standing known-keys gap).
-        "SURCHARGE_METHOD", "TPA_CELERITY",
-        # Physical constants (heat transport) and FV node feedback.
-        "WATER_DENSITY", "WATER_SPECIFIC_HEAT_CAPACITY", "WIND_FUNC_COEFF_A",
-        "WIND_FUNC_COEFF_B", "PRESSURE_RATIO", "FV_NODE_FEEDBACK_DT",
-        # Legacy / retired keywords: COMPATIBILITY round-trips verbatim;
-        # VIRTUAL_JUNCTION_MOMENTUM reads NONE and refuses FULL.
-        "COMPATIBILITY", "VIRTUAL_JUNCTION_MOMENTUM",
-    )
 
     def __getitem__(self, key: str) -> str:
         try:
@@ -1455,15 +1413,12 @@ class SimulationOptions(MutableMapping):
         raise TypeError("SWMM options cannot be deleted; assign an empty string instead")
 
     def __iter__(self):
-        for k in self._KNOWN_KEYS:
-            try:
-                self[k]
-            except KeyError:
-                continue
-            yield k
+        # Every standard key the engine accepts (canonical spellings, [REPORT]
+        # keys under their RPT_ prefix), in the engine's order.
+        return iter(_options_keys())
 
     def __len__(self) -> int:
-        return sum(1 for _ in self)
+        return swmm_options_key_count()
 
     def __contains__(self, key) -> bool:
         if not isinstance(key, str):
@@ -1536,11 +1491,34 @@ class _OptionsExtView(MutableMapping):
         raise TypeError("SWMM extended options cannot be deleted")
 
     def __iter__(self):
-        # No enumeration entry-point exposed by the C API yet.
-        return iter(())
+        # 2D keys first (when the model has a 2D surface), then stored extension keys.
+        return iter(_options_ext_keys(self._solver))
 
     def __len__(self) -> int:
-        return 0
+        cdef int n = 0
+        _check(swmm_options_ext_key_count(<SWMM_Engine><size_t>self._solver.handle, &n))
+        return n
+
+
+def _options_keys() -> tuple:
+    cdef char buf[256]
+    cdef int i
+    keys = []
+    for i in range(swmm_options_key_count()):
+        _check(swmm_options_key_at(i, buf, sizeof(buf)))
+        keys.append((<bytes>buf).decode('utf-8'))
+    return tuple(keys)
+
+
+def _options_ext_keys(solver) -> tuple:
+    cdef SWMM_Engine h = <SWMM_Engine><size_t>solver.handle
+    cdef int n = 0
+    cdef int i
+    _check(swmm_options_ext_key_count(h, &n))
+    keys = []
+    for i in range(n):
+        keys.append(_read_engine_index_string(h, i, swmm_options_ext_key_at))
+    return tuple(keys)
 
 
 def _options_get(solver, str key) -> str:

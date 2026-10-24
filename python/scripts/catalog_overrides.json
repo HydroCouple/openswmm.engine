@@ -1,4 +1,7 @@
 {
+ "revision": 2,
+ "renamed": {},
+ "removed": {},
  "element_names": {
   "nodes": "node",
   "links": "link",

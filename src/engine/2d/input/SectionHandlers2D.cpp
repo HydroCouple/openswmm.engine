@@ -613,7 +613,18 @@ bool is2DRetiredOptionKey(const std::string& key) {
  * @note Does not validate an option value or its runtime availability; no allocation/mutation.
  */
 bool is2DOptionKey(const std::string& key) {
-    static const char* kKeys[] = {
+    for (const char* k : current2DOptionKeys()) {
+        if (iequals(key, k))
+            return true;
+    }
+    return false;
+}
+
+/**
+ * @return Every current 2D option key in documentation order; process-owned, never empty.
+ */
+std::span<const char* const> current2DOptionKeys() {
+    static const char* const kKeys[] = {
         "MAX_TIMESTEP",
         "DRY_DEPTH",
         "COUPLING_CD",
@@ -669,11 +680,7 @@ bool is2DOptionKey(const std::string& key) {
         "HEAT_RADIATIVE_EXCHANGE",
         "BED_HEAT_MODEL",
     };
-    for (const char* k : kKeys) {
-        if (iequals(key, k))
-            return true;
-    }
-    return false;
+    return kKeys;
 }
 
 /**

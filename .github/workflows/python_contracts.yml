@@ -59,3 +59,54 @@ jobs:
           python python/scripts/test_staged_package.py "${{ runner.temp }}/openswmm-minimal"
           python/tests/minimal_features.py python/tests/engine/test_solver_pythonic.py
           python/tests/engine/test_transport.py python/tests/engine/test_trace.py -q
+
+  downstream:
+    name: MCP and gymnasium against this catalog
+    # The MCP server and gymnasium address the engine through catalog.json paths; this
+    # job runs their catalog contract tests on bindings built from this commit, so a
+    # catalog change that breaks them fails here rather than after a release.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+        with:
+          repository: HydroCouple/openswmm.mcp
+          ref: dev
+          path: downstream/openswmm.mcp
+      - uses: actions/checkout@v5
+        with:
+          repository: HydroCouple/openswmm.gymnasium
+          ref: dev
+          path: downstream/openswmm.gymnasium
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      - run: python -m pip install 'cmake>=4.3' ninja 'Cython>=3.0.12' numpy pytest
+      - name: Configure bindings (2D without HDF5, as in the WebAssembly build)
+        run: >-
+          cmake -S python -B build/python-downstream -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DOPENSWMM_BUILD_GPU_PLUGIN=OFF
+          -DOPENSWMM_WITH_HDF5=OFF
+          -DOPENSWMM_2D_HDF5_OUTPUT=OFF
+          -DPython_EXECUTABLE=$(which python)
+      - run: cmake --build build/python-downstream --parallel 2
+      - run: cmake --install build/python-downstream --prefix "${{ runner.temp }}/openswmm"
+      - name: Stage Python sources
+        run: python python/scripts/stage_python_sources.py "${{ runner.temp }}/openswmm"
+      - name: Install the downstream packages (without a published engine)
+        run: |
+          python -m pip install 'gymnasium>=1.0' 'pydantic>=2' 'pydantic-settings>=2' \
+            'platypus-opt>=1.2' 'fastmcp>=3.2,<4' pytest-asyncio
+          python -m pip install --no-deps -e downstream/openswmm.gymnasium -e downstream/openswmm.mcp
+      - name: MCP catalog contracts
+        working-directory: downstream/openswmm.mcp
+        env:
+          PYTHONPATH: ${{ runner.temp }}/openswmm
+        run: python -m pytest tests/unit/test_catalog_contract.py tests/unit/test_method_contract.py -q
+      - name: Gymnasium catalog contracts
+        working-directory: downstream/openswmm.gymnasium
+        env:
+          PYTHONPATH: ${{ runner.temp }}/openswmm
+        run: python -m pytest tests/unit/test_catalog_fields.py tests/unit/test_engine_capabilities.py -q
