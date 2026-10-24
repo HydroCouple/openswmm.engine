@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import re
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -330,6 +331,37 @@ class TestEngineFeatureGaps(unittest.TestCase):
             _gaps.load_allow = original
         self.assertIn(f"unjustified gap: {dropped}", problems)
         self.assertIn("stale allow-list entry: G1:NO_SUCH_SECTION", problems)
+
+    def test_stored_legacy_option_uses_existing_extension_api(self):
+        option = _gaps.option_keys()["OPTIONS"]["SLOPE_WEIGHTING"]
+        self.assertIn("ext_options", option["fields"])
+        self.assertTrue(option["reachable"])
+        self.assertEqual(option["via"], "swmm_options_get/set_ext")
+
+    def test_extension_storage_does_not_hide_an_unexposed_field(self):
+        parser = _gaps.SRC / "input" / "handlers" / "OptionsHandler.cpp"
+        fixture = '''
+            if (key == "STORED_COMPAT") {
+                opt.ext_options[key] = val;
+            } else if (key == "NEW_UNEXPOSED_FIELD") {
+                opt.audit_only_unexposed_field = 1;
+            }
+        '''
+        original = _gaps._text
+        with mock.patch.object(_gaps, "_text", side_effect=lambda path:
+                               fixture if path == parser else original(path)):
+            keys = _gaps.option_keys()["OPTIONS"]
+        self.assertTrue(keys["STORED_COMPAT"]["reachable"])
+        self.assertFalse(keys["NEW_UNEXPOSED_FIELD"]["reachable"])
+
+    def test_extension_storage_requires_both_api_paths(self):
+        original = _gaps._function_body
+        for missing in ("swmm_options_get_ext", "swmm_options_set_ext"):
+            with self.subTest(missing=missing):
+                with mock.patch.object(_gaps, "_function_body", side_effect=lambda text, name:
+                                       "" if name == missing else original(text, name)):
+                    option = _gaps.option_keys()["OPTIONS"]["SLOPE_WEIGHTING"]
+                self.assertFalse(option["reachable"])
 
     def test_every_parsed_section_is_mapped(self):
         unmapped = [r["section"] for r in _gaps.analyse()["sections"] if r["class"] == "UNMAPPED"]
