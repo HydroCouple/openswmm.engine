@@ -3008,3 +3008,11 @@ and nonempty groups are checked against authored edge connectivity, before
 runtime neighbours have been built. Triangle INP/sidecar/GeoPackage wall
 round trips are qualified. For quad wall edge 3, use INP: the existing
 GeoPackage boundary table restricts local edge indices to 0–2.
+
+For subsecond reports, use an explicit clock such as
+`REPORT_STEP 0:00:00.1`. Fractional clock seconds are preserved for
+`REPORT_STEP`, `WET_STEP` and `DRY_STEP`, including save/reopen. Bare numeric
+values for these options retain legacy decimal-hour semantics; for example,
+`REPORT_STEP 0.1` means six minutes. `ROUTING_STEP` retains its numeric-second
+convention. The Test 6 sensitivity runner verifies the actual native HDF5
+report grid before starting the long cases.

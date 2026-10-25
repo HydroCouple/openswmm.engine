@@ -527,3 +527,21 @@ TEST(OptionsParserTest, RefusedNumericAndDateValuesPreservePriorSettings) {
     EXPECT_DOUBLE_EQ(ctx.options.start_date, 43831.0 + 0.5 / 24.0);
     EXPECT_DOUBLE_EQ(ctx.options.variable_step, 0.8);
 }
+
+
+TEST(OptionsParserTest, ExplicitFractionalStepClocksPreserveLegacyHoursAndRuleBehavior) {
+    SimulationContext ctx;
+    parse(ctx, {"REPORT_STEP 0:00:00.1", "WET_STEP 0:00:00.25", "DRY_STEP 0:01:30.125"});
+    EXPECT_TRUE(ctx.errors.empty());
+    EXPECT_DOUBLE_EQ(ctx.options.report_step,.1);
+    EXPECT_DOUBLE_EQ(ctx.options.wet_step,.25);
+    EXPECT_DOUBLE_EQ(ctx.options.dry_step,90.125);
+    parse(ctx, {"REPORT_STEP 0.5", "RULE_STEP 0:00:00.4"});
+    EXPECT_DOUBLE_EQ(ctx.options.report_step,1800);
+    EXPECT_DOUBLE_EQ(ctx.options.rule_step,0);
+    for(const char* value : {"0:00:-0.1", "0:00:0.0", "0:00:0.1junk", "0:00:1.1e309"}) {
+        SimulationContext bad;
+        parse(bad,{std::string("REPORT_STEP ")+value});
+        EXPECT_FALSE(bad.errors.empty());
+    }
+}

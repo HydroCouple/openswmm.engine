@@ -202,13 +202,20 @@ template <std::size_t N> static void fmt_time(char (&buf)[N], double oadate) {
  * @param[in] secs Finite timestep seconds representable by lround and the derived int hour count;
  *     normally nonnegative.
  */
-template <std::size_t N> static void fmt_step(char (&buf)[N], double secs) {
+template <std::size_t N> static void fmt_step(char (&buf)[N], double secs, bool clock_fraction = false) {
     long r = std::lround(secs);
     if (secs == static_cast<double>(r)) {
         int ss = static_cast<int>(r % 60);
         int mm = static_cast<int>((r / 60) % 60);
         int hh = static_cast<int>(r / 3600);
         std::snprintf(buf, N, "%d:%02d:%02d", hh, mm, ss);
+    } else if (clock_fraction) {
+        const int h = static_cast<int>(secs / 3600.0);
+        const int m = static_cast<int>((secs - 3600.0 * h) / 60.0);
+        const double s = secs - 3600.0 * h - 60.0 * m;
+        char seconds[32];
+        std::snprintf(seconds, sizeof(seconds), "%.17g", s);
+        std::snprintf(buf, N, "%d:%02d:%s%s", h, m, s < 10 ? "0" : "", seconds);
     } else {
         std::snprintf(buf, N, "%.17g", secs);
     }
@@ -2057,11 +2064,11 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
         std::fprintf(f, "%-20s %s\n", "SWEEP_END", sb);
 
         std::fprintf(f, "%-20s %.17g\n", "DRY_DAYS", o.dry_days);
-        fmt_step(sb, o.report_step);
+        fmt_step(sb, o.report_step, true);
         std::fprintf(f, "%-20s %s\n", "REPORT_STEP", sb);
-        fmt_step(sb, o.wet_step);
+        fmt_step(sb, o.wet_step, true);
         std::fprintf(f, "%-20s %s\n", "WET_STEP", sb);
-        fmt_step(sb, o.dry_step);
+        fmt_step(sb, o.dry_step, true);
         std::fprintf(f, "%-20s %s\n", "DRY_STEP", sb);
         fmt_step(sb, o.routing_step);
         std::fprintf(f, "%-20s %s\n", "ROUTING_STEP", sb);

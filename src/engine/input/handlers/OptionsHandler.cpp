@@ -515,13 +515,34 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
                 opt.dry_days = value;
         } else if (key == "DRY_STEP" || key == "WET_STEP" || key == "REPORT_STEP" ||
                    key == "RULE_STEP") {
-            double days = 0.0;
-            if (!legacyTime(val, days) || !std::isfinite(days) ||
-                std::abs(days) > std::numeric_limits<int>::max() / datetime::SecsPerDay) {
-                ctx.errors.push_back(format_error(ERR_DATETIME, val));
-                continue;
+            double days = 0.0, step = 0.0;
+            // Explicit fractional seconds extend the clock spelling without
+            // changing legacy decimal-hour tokens or RULE_STEP truncation.
+            const auto last_colon = val.rfind(':');
+            const bool fractional_clock = key != "RULE_STEP" &&
+                last_colon != std::string::npos && val.find('.', last_colon) != std::string::npos;
+            if (fractional_clock) {
+                int h = 0, m = 0;
+                double seconds = 0.0;
+                char tail = 0;
+                if (std::sscanf(val.c_str(), "%d:%d:%lf%c", &h, &m, &seconds, &tail) != 3 ||
+                    h < 0 || m < 0 || seconds < 0 || !std::isfinite(seconds)) {
+                    ctx.errors.push_back(format_error(ERR_NUMBER, val));
+                    continue;
+                }
+                step = 3600.0 * h + 60.0 * m + seconds;
+                if (!std::isfinite(step) || step > std::numeric_limits<int>::max()) {
+                    ctx.errors.push_back(format_error(ERR_NUMBER, val));
+                    continue;
+                }
+            } else {
+                if (!legacyTime(val, days) || !std::isfinite(days) ||
+                    std::abs(days) > std::numeric_limits<int>::max() / datetime::SecsPerDay) {
+                    ctx.errors.push_back(format_error(ERR_DATETIME, val));
+                    continue;
+                }
+                step = legacyStepSeconds(days);
             }
-            const double step = legacyStepSeconds(days);
             if (key == "RULE_STEP" ? step < 0.0 : step <= 0.0) {
                 ctx.errors.push_back(format_error(ERR_NUMBER, val));
                 continue;
