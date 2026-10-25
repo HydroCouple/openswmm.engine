@@ -19,7 +19,9 @@
 #include "SolverOptions2D.hpp"
 
 #include <cctype>
+#include <cmath>
 #include <cstdio>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -204,18 +206,25 @@ inline std::vector<std::string> parseSpecies(const std::string& text) {
 }
 
 /**
- * @brief HH:MM:SS (REPORT_STEP spelling).
+ * @brief Preserve whole and fractional 2D cadence values.
  *
- * @param[in] seconds Report interval in seconds; positive values round to nearest whole second,
- * nonpositive and NaN become zero.
- * @pre Any positive value is finite and representable as long after adding 0.5; overflow is not
- * checked.
- * @return Owned HH:MM:SS string with hours allowed above 23. Formatting uses a bounded local
- * buffer; no shared storage or model mutation.
+ * @param[in] seconds Interval in seconds; nonpositive and NaN become zero.
+ * @return HH:MM:SS for representable whole seconds, otherwise roundtrippable
+ * numeric seconds. These 2D keys parse bare numbers as seconds. Formatting
+ * uses a bounded local buffer; no shared storage or model mutation.
  */
 inline std::string formatStep(double seconds) {
-    const long total = seconds > 0.0 ? static_cast<long>(seconds + 0.5) : 0L;
-    char buf[32];
+    char buf[64];
+    if (!(seconds > 0))
+        return "00:00:00";
+    // Fractional report/infiltration cadences must survive API and INP
+    // roundtrips. These 2D keys accept bare numeric seconds directly.
+    if (std::floor(seconds) != seconds ||
+        seconds >= static_cast<double>(std::numeric_limits<long>::max())) {
+        std::snprintf(buf, sizeof(buf), "%.17g", seconds);
+        return buf;
+    }
+    const long total = seconds > 0.0 ? static_cast<long>(seconds) : 0L;
     std::snprintf(buf, sizeof(buf), "%02ld:%02ld:%02ld", total / 3600, (total % 3600) / 60,
                   total % 60);
     return buf;

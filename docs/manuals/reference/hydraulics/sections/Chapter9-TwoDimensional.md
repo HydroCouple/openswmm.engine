@@ -2477,7 +2477,9 @@ CF/UGRID-aware reader. Four keys shape it:
   byte-shuffle filter, to the chunked time-varying datasets; 0 writes
   them uncompressed.
 - **`REPORT_2D_STEP`** — the cadence of the time-varying datasets, in
-  the `HH:MM:SS` spelling of `REPORT_STEP`. It must be a positive
+  `HH:MM:SS` or numeric seconds. Fractional values survive API queries
+  and INP save/reopen; numeric seconds also apply to `INFIL_STEP`.
+  It must be a positive
   multiple of `REPORT_STEP`; unset, the 2D file follows the report
   step.
 - **`REPORT_2D_VARIABLES`** — which dataset groups are written. The

@@ -370,18 +370,21 @@ TEST(Output2DOptions, TokenMaskRoundTrip) {
     EXPECT_FALSE(report2d::parseMask("VELOCITY BOGUS", m).empty());
     EXPECT_EQ(swmm_2d_output_variable_mask("BOGUS"), 0u);
     EXPECT_EQ(swmm_2d_output_variable_mask("DEFAULT"), report2d::DEFAULT_MASK);
-    EXPECT_EQ(swmm_2d_output_variable_count(),
-              15); // S7/G-O and P9: BUILDUP, GROUNDWATER, GW_DETAILED, HEAT
+    EXPECT_EQ(swmm_2d_output_variable_count(), 16);
     EXPECT_STREQ(swmm_2d_output_variable_name(0), "DEPTH");
     EXPECT_STREQ(swmm_2d_output_variable_name(10), "ENVELOPES");
     EXPECT_STREQ(swmm_2d_output_variable_name(11), "BUILDUP");
     EXPECT_STREQ(swmm_2d_output_variable_name(12), "GROUNDWATER");
     EXPECT_STREQ(swmm_2d_output_variable_name(13), "GW_DETAILED");
     EXPECT_STREQ(swmm_2d_output_variable_name(14), "HEAT");
+    EXPECT_STREQ(swmm_2d_output_variable_name(15), "TURBULENCE");
+    EXPECT_EQ(swmm_2d_output_variable_mask("TURBULENCE"),
+              report2d::DEPTH | report2d::TURBULENCE);
     EXPECT_NE(report2d::DEFAULT_MASK & report2d::BUILDUP, 0u);
     EXPECT_NE(report2d::DEFAULT_MASK & report2d::GROUNDWATER, 0u);
     EXPECT_EQ(report2d::DEFAULT_MASK & report2d::HEAT, 0u);
     EXPECT_EQ(report2d::DEFAULT_MASK & report2d::GW_DETAILED, 0u);
+    EXPECT_EQ(report2d::DEFAULT_MASK & report2d::TURBULENCE, 0u);
     EXPECT_STREQ(swmm_2d_output_variable_text(report2d::MINIMAL_MASK), "MINIMAL");
 
     // Defaults drop the solver diagnostics only.
@@ -432,6 +435,22 @@ TEST(Output2DOptions, ParseAndFormatKeys) {
 
     EXPECT_TRUE(is2DOptionKey("REPORT_2D_VARIABLES"));
     EXPECT_TRUE(is2DOptionKey("output_precision"));
+}
+
+TEST(Output2DOptions, FractionalCadenceRoundTrip) {
+    for (double seconds : {.1, .2, 1.25, 3600.123456789}) {
+        SolverOptions2D options;
+        const auto token = report2d::formatStep(seconds);
+        ASSERT_TRUE(parse2DOptionsLine({"REPORT_2D_STEP", token}, options, nullptr).empty());
+        EXPECT_DOUBLE_EQ(options.report_2d_step, seconds);
+        SWMM_Engine engine = swmm_engine_new();
+        ASSERT_NE(engine, nullptr);
+        ASSERT_EQ(swmm_options_set_ext(engine, "REPORT_2D_STEP", token.c_str()), SWMM_OK);
+        char value[128]{};
+        ASSERT_EQ(swmm_options_get_ext(engine, "REPORT_2D_STEP", value, sizeof value), SWMM_OK);
+        EXPECT_DOUBLE_EQ(std::stod(value), seconds);
+        swmm_engine_destroy(engine);
+    }
 }
 
 TEST(Output2DOptions, CApiExtRoundTripOnAModel) {
