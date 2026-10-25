@@ -130,10 +130,12 @@ void SurfaceRouter2D::drainPendingRows() {
     {
         const int n_edges = boundary_.size();
         for (const auto& r : pending_bc_rows_) {
-            if (r.tri < 0 || r.tri >= mesh_.n_triangles())
+            if (r.tri < 0 || r.tri >= mesh_.n_triangles() ||
+                r.edge < 0 || r.edge >= mesh_.cell_vertex_count(r.tri)) {
+                if (r.bc_type == 0 && r.param1 > 0)
+                    throw std::invalid_argument("WALL_DRAG names an invalid cell/edge.");
                 continue;
-            if (r.edge < 0 || r.edge >= mesh_.cell_vertex_count(r.tri))
-                continue;
+            }
             const int idx = MeshData::slot(r.tri, r.edge);
             if (idx < 0 || idx >= n_edges)
                 continue;
@@ -163,6 +165,7 @@ void SurfaceRouter2D::drainPendingRows() {
                 boundary_.edge_bc_rating_curve[idx] = -2;
                 break;
             case BoundaryType::WALL:
+                boundary_.edge_wall_drag[idx] = r.param1;
                 break;
             }
         }
@@ -218,6 +221,13 @@ void SurfaceRouter2D::drainPendingRows() {
             }
         }
 
+        // Authoring APIs run before buildMeshTopology. Classify actual
+        // exterior faces from this existing endpoint map, without consulting
+        // cell_nbr's still-default -1 values or rescanning the mesh per edit.
+        for (const auto& entry : edge_key_to_slots)
+            if (entry.second.size() == 1)
+                boundary_.edge_is_exterior[entry.second.front()] = 1;
+
         for (const auto& r : pending_edge_conveyance_rows_) {
             if (r.v_from < 0 || r.v_from >= mesh_.n_vertices() || r.v_to < 0 ||
                 r.v_to >= mesh_.n_vertices()) {
@@ -240,6 +250,8 @@ void SurfaceRouter2D::drainPendingRows() {
     // From here on the drained arrays are the live state (API mutators edit
     // them, not the pending rows) — tell the serialization collectors to read
     // the arrays instead of the now-stale rows.
+    options_.wall_drag_enabled = std::any_of(boundary_.edge_wall_drag.begin(),
+        boundary_.edge_wall_drag.end(), [](double c) { return c > 0; });
     options_.pending_rows_drained = true;
 }
 
@@ -1292,6 +1304,15 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
                           : " — the GPU/Kokkos plugin serves all-triangle "
                             "LOCAL_INERTIAL models only");
         thread_warnings_.emplace_back(buf);
+        if (options_.momentumPhysics()) {
+            std::snprintf(buf, sizeof buf,
+                "2D optional momentum: f=%.17g s^-1; turbulence=%s; Cs=%.17g; "
+                "filter=sqrt(cell area); interior Smagorinsky stress; selected quadratic wall traction; accepted cell velocities.",
+                options_.coriolisParameter(),
+                options_.turbulence == Turbulence2D::SMAGORINSKY ? "SMAGORINSKY" : "NONE",
+                options_.smagorinsky_cs);
+            thread_warnings_.emplace_back(buf);
+        }
     }
     options_.water_heat_capacity =
         ctx.options.heat_transport && ((options_.coupled_heat && state_.transport.temp_row >= 0) ||
@@ -2247,6 +2268,9 @@ void SurfaceRouter2D::refreshRenderFields() {
     // Output may be requested more often than the 30 s statistics cadence.
     // Refresh the derived RT0 velocity at the same state as the render fields.
     computeFaceVelocity(mesh_, state_, options_);
+    if (options_.momentumPhysics())
+        if (auto* cpu = dynamic_cast<ExplicitInertialSolver*>(solver_.get()))
+            cpu->publishMomentumVelocity();
     reconstructVertexHeads(mesh_, state_, options_.num_threads);
     refreshOutputGradients(mesh_, state_, options_);
     reconstructVertexRenderDepths(mesh_, state_, options_.dry_depth, options_.num_threads,
@@ -2749,6 +2773,9 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt, double t)
         // against are this batch's end-of-step values.
         computeCellContinuity(mesh_, state_, options_, dt);
         computeFaceVelocity(mesh_, state_, options_);
+        if (options_.momentumPhysics())
+            if (auto* cpu = dynamic_cast<ExplicitInertialSolver*>(solver_.get()))
+                cpu->publishMomentumVelocity();
         // The cumulative envelopes DO integrate over the refresh span: this
         // sample stands for the whole window in stat_cum_volume.
         state_.update_statistics(mesh_.tri_area, co_refresh_elapsed_, options_.num_threads);

@@ -30,6 +30,7 @@
 #define OPENSWMM_ENGINE_2D_SOLVER_OPTIONS_HPP
 
 #include <cstdint>
+#include <cmath>
 #include <string>
 #include <vector>
 
@@ -230,7 +231,8 @@ enum Var : unsigned {
     GW_DETAILED =
         1u << 13,    ///< G-O: Mesh2_face_gw_theta_sigma [time, layer, face] — m × nFace per step
     HEAT = 1u << 14, ///< Thermal temperatures, soil layers, and signed cumulative heat budgets
-    ALL_MASK = (1u << 15) - 1u,
+    TURBULENCE = 1u << 15, ///< Horizontal eddy viscosity and strain rate diagnostics
+    ALL_MASK = (1u << 16) - 1u,
     /// DEFAULT: everything a user renders or plots; solver diagnostics off.
     DEFAULT_MASK = DEPTH | VELOCITY | EDGE_FLUX | NODE_HEAD | SPECIES | RAINFALL | INFILTRATION |
                    ENVELOPES | BUILDUP | GROUNDWATER,
@@ -245,6 +247,9 @@ enum Var : unsigned {
  * Populated from [2D_OPTIONS] input section. Defaults are chosen for
  * typical urban drainage surface routing problems.
  */
+enum class Coriolis2D : int8_t { OFF = 0, LATITUDE = 1, CONSTANT_F = 2 };
+enum class Turbulence2D : int8_t { NONE = 0, SMAGORINSKY = 1 };
+
 struct SolverOptions2D {
     // Explicit opt-in. Unauthored fields are omitted by the writer.
     bool coupled_heat = false, heat_model_authored = false;
@@ -257,6 +262,22 @@ struct SolverOptions2D {
     double water_heat_capacity = 4186000.0;
     /// [2D_OPTIONS] MOMENTUM_EQUATION — momentum closure (see Momentum2D).
     Momentum2D momentum = Momentum2D::LOCAL_INERTIAL;
+    /// Optional horizontal momentum physics; CPU FULL_SWE, global timestep only.
+    Coriolis2D coriolis = Coriolis2D::OFF;
+    Turbulence2D turbulence = Turbulence2D::NONE;
+    double coriolis_latitude = 0.0, coriolis_f = 0.0, smagorinsky_cs = 0.10;
+    bool coriolis_latitude_set = false, coriolis_f_set = false;
+    /// Derived from authored WALL_DRAG edges; not a global input switch.
+    bool wall_drag_enabled = false;
+    bool momentumPhysics() const noexcept {
+        return wall_drag_enabled || coriolis != Coriolis2D::OFF || turbulence != Turbulence2D::NONE;
+    }
+    double coriolisParameter() const noexcept {
+        return coriolis == Coriolis2D::CONSTANT_F ? coriolis_f
+             : coriolis == Coriolis2D::LATITUDE
+                 ? 1.4584231711061317e-4 * std::sin(coriolis_latitude * 0.017453292519943295)
+                 : 0.0;
+    }
     /// [2D_OPTIONS] FRONT_REBUILD AUTO|YES|NO — rebuild the flux-active set
     /// as soon as a wetting front reaches the edge of the active halo instead
     /// of waiting for the fixed rebuild cadence (kRebuildEveryCycles macro

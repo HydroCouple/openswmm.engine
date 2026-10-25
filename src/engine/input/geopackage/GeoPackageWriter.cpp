@@ -2573,7 +2573,7 @@ void step_or_throw(sqlite3* db, sqlite3_stmt* stmt, const char* what) {
 const char* bc_type_token(const twoD::PendingBoundaryRow& r) {
     switch (static_cast<twoD::BoundaryType>(r.bc_type)) {
     case twoD::BoundaryType::WALL:
-        return "WALL";
+        return r.param1 > 0 ? "WALL_DRAG" : "WALL";
     case twoD::BoundaryType::NORMAL_FLOW:
         return "NORMAL_FLOW";
     case twoD::BoundaryType::SPECIFIED_STAGE:
@@ -2693,6 +2693,14 @@ static void write_options_2d(sqlite3* db, const SimulationContext& ctx, const st
     if (o.coupling_coeffs != 0)
         insert("2D_COUPLING_COEFFS",
                nodecoupling2d::formatValue(NodeCoupling2DKey::COEFFS, o.coupling_coeffs));
+    if (o.coriolis != twoD::Coriolis2D::OFF)
+        insert("2D_CORIOLIS", o.coriolis == twoD::Coriolis2D::LATITUDE ? "LATITUDE" : "CONSTANT_F");
+    if (o.coriolis_latitude_set) insert("2D_CORIOLIS_LATITUDE", fmt_g17(o.coriolis_latitude));
+    if (o.coriolis_f_set) insert("2D_CORIOLIS_F", fmt_g17(o.coriolis_f));
+    if (o.turbulence != twoD::Turbulence2D::NONE) insert("2D_TURBULENCE_MODEL", "SMAGORINSKY");
+    if (o.turbulence != twoD::Turbulence2D::NONE || o.smagorinsky_cs != .10)
+        insert("2D_SMAGORINSKY_CS", fmt_g17(o.smagorinsky_cs));
+    if (o.reconstruction_order != 1) insert("2D_RECONSTRUCTION_ORDER", std::to_string(o.reconstruction_order));
     insert("2D_MOMENTUM_EQUATION", o.momentum == twoD::Momentum2D::FULL_SWE ? "FULL_SWE"
                                    : o.momentum == twoD::Momentum2D::DIFFUSIVE_WAVE
                                        ? "DIFFUSIVE_WAVE"

@@ -54,7 +54,7 @@ struct PendingBoundaryRow {
     int tri = 0;
     int edge = 0;        ///< 0..2
     int bc_type = 0;     ///< openswmm::twoD::BoundaryType cast
-    double param1 = 0.0; ///< slope (NormalFlow) / head (Stage) / flow (Flow)
+    double param1 = 0.0; ///< slope / head / flow / Cw (WALL_DRAG)
     std::string name;    ///< TS name or curve name (TS_/Rating variants)
     std::string group;   ///< named group ("" = none)
 };

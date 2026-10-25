@@ -2310,6 +2310,20 @@ SWMM_ENGINE_API int swmm_2d_get_edge_bc_head(SWMM_Engine engine, int tri_idx, in
 SWMM_ENGINE_API int swmm_2d_set_edge_bc_head(SWMM_Engine engine, int tri_idx, int edge,
                                              double head);
 
+/** Author a boundary group token (empty clears), preserving the hydraulic prescription.
+ * OPENED/BUILDING only; nonempty names require an exterior edge and cannot
+ * contain whitespace or INP delimiters. Groups are organizational metadata.
+ */
+SWMM_ENGINE_API int swmm_2d_set_edge_bc_group(SWMM_Engine engine, int tri_idx, int edge, const char* group);
+
+/** Tangential WALL traction tau/rho=-Cw|ut|ut. Finite Cw>=0, zero free-slip.
+ * Getter uses a valid prepared mesh slot. Setter is authoring-only (OPENED/BUILDING);
+ * positive values require an exterior WALL edge. CPU FULL_SWE, LTS_TIERS 1,
+ * uncoupled hydraulics required when running. No density or 1/2 in Cw convention.
+ */
+SWMM_ENGINE_API int swmm_2d_get_edge_wall_drag(SWMM_Engine engine, int tri_idx, int edge, double* cw);
+SWMM_ENGINE_API int swmm_2d_set_edge_wall_drag(SWMM_Engine engine, int tri_idx, int edge, double cw);
+
 /**
  * @brief Get normal flow boundary slope for an edge.
  *  @ingroup engine_2d

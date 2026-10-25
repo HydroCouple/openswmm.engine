@@ -22,6 +22,8 @@
 #include "../../2d/SurfaceRouter2D.hpp"
 #include "../data/SolverOptions2D.hpp"
 #include "../data/Report2DVars.hpp"
+#include "../solver/MomentumPhysics2D.hpp"
+#include "../solver/InertialEdges.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -301,6 +303,11 @@ std::string Default2DOutputPlugin::configureOutput(const SolverOptions2D& opts,
         (opts.output_precision == OutputPrecision2D::FLOAT64) ? H5T_NATIVE_DOUBLE : H5T_IEEE_F32LE;
     compression_ = std::max(0, std::min(9, opts.output_compression));
     report_vars_ = (opts.report_2d_vars & report2d::ALL_MASK) | report2d::DEPTH;
+    momentum_velocity_ = opts.momentumPhysics();
+    mixing_enabled_ = opts.turbulence == Turbulence2D::SMAGORINSKY;
+    mixing_cs_ = opts.smagorinsky_cs;
+    mixing_dry_ = opts.dry_depth;
+    coriolis_f_ = opts.coriolisParameter();
     species_filter_ = opts.report_2d_species;
     species_rows_.clear();
 
@@ -625,6 +632,20 @@ void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
     // Written first so the `openswmm_crs = "crs"` attributes the mesh
     // variables carry resolve against a variable that already exists.
     writeCrsVariable();
+    writeDoubleAttr(file_id_, "coriolis_f_s-1", coriolis_f_);
+    writeStringAttr(file_id_, "turbulence_model", mixing_enabled_ ? "SMAGORINSKY" : "NONE");
+    if (mixing_enabled_) {
+        writeDoubleAttr(file_id_, "smagorinsky_cs", mixing_cs_);
+        writeStringAttr(file_id_, "smagorinsky_filter", "sqrt(cell area), SI metres");
+        writeStringAttr(file_id_, "turbulent_boundary_traction", "zero");
+    }
+    mixing_mesh_ = &mesh;
+    if (mixing_enabled_ && want(report2d::TURBULENCE)) {
+        mixing_edges_ = std::make_unique<InertialEdges>();
+        mixing_edges_->build(mesh);
+        mixing_diagnostics_ = std::make_unique<MomentumPhysics2D>();
+    }
+
 
     // Results-file size controls, recorded so readers and the parity tooling
     // can tell how the time-varying datasets were stored.
@@ -716,9 +737,13 @@ void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
         ds_face_infil_cum_ =
             createFaceDS("Mesh2_face_infil_cum", "cumulative infiltrated depth", "m");
     }
+    if (mixing_enabled_ && want(report2d::TURBULENCE)) {
+        ds_face_eddy_viscosity_ = createFaceDS("Mesh2_face_eddy_viscosity", "Smagorinsky horizontal eddy viscosity", "m2 s-1");
+        ds_face_strain_rate_ = createFaceDS("Mesh2_face_strain_rate", "horizontal strain rate magnitude", "s-1");
+    }
     if (want(report2d::VELOCITY)) {
-        ds_face_vx_ = createFaceDS("Mesh2_face_vx", "cell-centred velocity X (RT0)", "m s-1");
-        ds_face_vy_ = createFaceDS("Mesh2_face_vy", "cell-centred velocity Y (RT0)", "m s-1");
+        ds_face_vx_ = createFaceDS("Mesh2_face_vx", momentum_velocity_ ? "cell velocity X from conserved momentum" : "cell-centred velocity X (RT0)", "m s-1");
+        ds_face_vy_ = createFaceDS("Mesh2_face_vy", momentum_velocity_ ? "cell velocity Y from conserved momentum" : "cell-centred velocity Y (RT0)", "m s-1");
     }
     if (want(report2d::CONTINUITY))
         ds_face_continuity_err_ =
@@ -898,6 +923,21 @@ int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
             face(ds_snow_[k], snap.surface_snow[k]);
     }
 
+    if (mixing_diagnostics_ && mixing_edges_ && mixing_mesh_ &&
+        snap.surface_depth.size() == static_cast<std::size_t>(n_faces_) &&
+        snap.surface_face_vx.size() == snap.surface_depth.size() &&
+        snap.surface_face_vy.size() == snap.surface_depth.size()) {
+        mixing_edges_->refreshConveyance(*mixing_mesh_);
+        auto qx = snap.surface_face_vx, qy = snap.surface_face_vy;
+        for (std::size_t k = 0; k < qx.size(); ++k) {
+            qx[k] *= snap.surface_depth[k]; qy[k] *= snap.surface_depth[k];
+        }
+        std::vector<double> rx, ry;
+        mixing_diagnostics_->evaluate(*mixing_mesh_, *mixing_edges_, snap.surface_depth,
+            snap.surface_head, qx, qy, mixing_dry_, mixing_cs_, rx, ry);
+        face(ds_face_eddy_viscosity_, mixing_diagnostics_->viscosity);
+        face(ds_face_strain_rate_, mixing_diagnostics_->strain);
+    }
     face(ds_face_vx_, snap.surface_face_vx);
     face(ds_face_vy_, snap.surface_face_vy);
     face(ds_face_continuity_err_, snap.surface_continuity_err);
@@ -2078,6 +2118,8 @@ std::vector<hid_t*> Default2DOutputPlugin::checkpointDatasets() {
                             &ds_heat_lid_energy_,
                             &ds_heat_lid_capacity_,
                             &ds_heat_lid_ground_contact_,
+                            &ds_face_eddy_viscosity_,
+                            &ds_face_strain_rate_,
                             &ds_face_vx_,
                             &ds_face_vy_,
                             &ds_face_continuity_err_,
@@ -2161,6 +2203,11 @@ void Default2DOutputPlugin::closeDatasets() noexcept {
     closeDS(ds_heat_lid_energy_);
     closeDS(ds_heat_lid_capacity_);
     closeDS(ds_heat_lid_ground_contact_);
+    closeDS(ds_face_eddy_viscosity_);
+    closeDS(ds_face_strain_rate_);
+    mixing_diagnostics_.reset();
+    mixing_edges_.reset();
+    mixing_mesh_ = nullptr;
     closeDS(ds_face_vx_);
     closeDS(ds_face_vy_);
     closeDS(ds_face_continuity_err_);

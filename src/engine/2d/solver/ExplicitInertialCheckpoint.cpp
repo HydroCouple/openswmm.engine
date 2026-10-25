@@ -406,6 +406,7 @@ void rk2ForcingArchive(Archive& a, SurfaceStateData& surface, bool model) {
  * router/source/model views must be retained during subsequent serialization.
  */
 std::string ExplicitInertialSolver::checkpointBoundary() const {
+    if (opts_ && opts_->wall_drag_enabled) return "Wall drag checkpoint profile is not qualified.";
     if (!initialized_ || !common_stage_ || (!gw_ && !common_stage_->standaloneLocalBed()) ||
         second_order_ || !checkpoint_ready_ || !common_stage_->matches(mesh_, state_, gw_))
         return "CPU checkpoint requires an accepted attached first-order source marcher.";
@@ -1241,6 +1242,7 @@ void rk2SurfaceBoundaryArchive(Archive& a, BoundaryData& b,
  * Does not settle or repair invalid state.
  */
 std::string ExplicitInertialSolver::rk2CheckpointProfile() const {
+    if (opts_ && opts_->wall_drag_enabled) return "Wall drag checkpoint profile is not qualified.";
     if (!initialized_ || !second_order_ || !gw_ || common_stage_ || joint_checkpoint_ ||
         channel_ground_ || source_history_ || engine_source_history_ || engine_source_stream_ ||
         !checkpoint_ready_ || mode_ != Momentum2D::FULL_SWE || opts_->lts_tiers != 1 ||
@@ -1436,6 +1438,11 @@ std::string ExplicitInertialSolver::rk2CheckpointModel(const Rk2CheckpointBindin
       o.vol_1d_to_2d, o.flow_1d_to_2d, o.flow_2d_to_1d, o.num_threads, o.requested_threads,
       o.mesh_units_si, o.mesh_scaled_to_si, o.mesh_to_si_factor, o.pending_rows_drained,
       o.bc_flow_to_si_applied);
+    if (o.momentumPhysics()) {
+        std::string profile = "Coriolis and mimetic Smagorinsky v1";
+        a(profile, o.coriolis, o.coriolis_latitude, o.coriolis_f, o.coriolis_latitude_set,
+          o.coriolis_f_set, o.turbulence, o.smagorinsky_cs);
+    }
     if (o.theta_reference_step > 0.0) {
         std::string profile = "physical-time momentum smoothing v1";
         a(profile, o.theta_reference_step);

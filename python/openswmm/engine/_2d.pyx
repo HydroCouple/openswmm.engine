@@ -1865,6 +1865,20 @@ cdef class Surface2D:
         """
         _check(swmm_2d_set_edge_bc_head(self._h(), tri_idx, edge, head))
 
+    def get_edge_wall_drag(self, int tri_idx, int edge) -> float:
+        """Return dimensionless tangential WALL Cw (zero means free slip)."""
+        cdef double cw = 0.0
+        _check(swmm_2d_get_edge_wall_drag(self._h(), tri_idx, edge, &cw))
+        return cw
+
+    def set_edge_wall_drag(self, int tri_idx, int edge, double cw):
+        """Author selected exterior WALL drag before a run: tau/rho=-Cw|ut|ut.
+
+        Cw must be finite and nonnegative. CPU FULL_SWE, one tier and
+        uncoupled hydraulics are required to execute positive wall drag.
+        """
+        _check(swmm_2d_set_edge_wall_drag(self._h(), tri_idx, edge, cw))
+
     def get_edge_bc_slope(self, int tri_idx, int edge) -> float:
         """Return the boundary slope for a triangle edge.
 

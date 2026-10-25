@@ -507,6 +507,7 @@ if(OPENSWMM_BUILD_2D)
     # Explicit local-inertial marcher (the 2D integrator) + its unique-edge
     # CSR layout.
     list(APPEND OPENSWMM_2D_SOURCES 2d/solver/InertialEdges.cpp)
+    list(APPEND OPENSWMM_2D_SOURCES 2d/solver/MomentumPhysics2D.cpp)
     list(APPEND OPENSWMM_2D_SOURCES 2d/solver/ExplicitInertialSolver.cpp)
     list(APPEND OPENSWMM_2D_SOURCES 2d/solver/ExplicitInertialCheckpoint.cpp)
 

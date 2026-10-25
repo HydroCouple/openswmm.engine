@@ -696,7 +696,7 @@ static const char* bc2d_type_token(const twoD::PendingBoundaryRow& r) {
     case 4:
         return "RATING_CURVE";
     default:
-        return "WALL";
+        return r.param1 > 0 ? "WALL_DRAG" : "WALL";
     }
 }
 
@@ -1170,6 +1170,17 @@ static bool write2DSections(FILE* f, const SimulationContext& ctx, const std::st
         std::fprintf(f, "%-22s %s\n", "MOMENTUM_EQUATION", "FULL_SWE");
     else if (o.momentum == twoD::Momentum2D::DIFFUSIVE_WAVE)
         std::fprintf(f, "%-22s %s\n", "MOMENTUM_EQUATION", "DIFFUSIVE_WAVE");
+    if (o.coriolis != twoD::Coriolis2D::OFF)
+        std::fprintf(f, "%-22s %s\n", "CORIOLIS",
+                     o.coriolis == twoD::Coriolis2D::LATITUDE ? "LATITUDE" : "CONSTANT_F");
+    if (o.coriolis_latitude_set)
+        std::fprintf(f, "%-22s %.17g\n", "CORIOLIS_LATITUDE", o.coriolis_latitude);
+    if (o.coriolis_f_set)
+        std::fprintf(f, "%-22s %.17g\n", "CORIOLIS_F", o.coriolis_f);
+    if (o.turbulence != twoD::Turbulence2D::NONE)
+        std::fprintf(f, "%-22s %s\n", "TURBULENCE_MODEL", "SMAGORINSKY");
+    if (o.turbulence != twoD::Turbulence2D::NONE || o.smagorinsky_cs != 0.10)
+        std::fprintf(f, "%-22s %.17g\n", "SMAGORINSKY_CS", o.smagorinsky_cs);
     if (o.reconstruction_order != 1)
         std::fprintf(f, "%-22s %d\n", "RECONSTRUCTION_ORDER", o.reconstruction_order);
     if (o.front_rebuild >= 0)
@@ -1573,7 +1584,7 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
                 char p1[32];
                 if (!r.name.empty()) {
                     std::snprintf(p1, sizeof(p1), "%s", r.name.c_str());
-                } else if (r.bc_type == 0) { // WALL — no parameter
+                } else if (r.bc_type == 0 && r.param1 == 0) { // free-slip WALL
                     std::snprintf(p1, sizeof(p1), "*");
                 } else {
                     std::snprintf(p1, sizeof(p1), "%.17g", r.param1);

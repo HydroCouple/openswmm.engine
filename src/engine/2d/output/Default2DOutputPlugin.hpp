@@ -52,6 +52,8 @@ class SWMMEngine;
 }
 namespace openswmm::twoD {
 
+struct InertialEdges;
+class MomentumPhysics2D;
 struct MeshData;        // forward declaration
 struct SolverOptions2D; // forward declaration
 class SourceResultHistory;
@@ -478,6 +480,13 @@ private:
     hid_t ds_heat_lid_capacity_ = H5I_INVALID_HID;
     hid_t ds_heat_lid_ground_contact_ = H5I_INVALID_HID;
     void createThermalDatasets(const SimulationSnapshot& snap);
+    const MeshData* mixing_mesh_ = nullptr; // borrowed immutable prepared geometry
+    std::unique_ptr<InertialEdges> mixing_edges_;
+    std::unique_ptr<MomentumPhysics2D> mixing_diagnostics_;
+    bool mixing_enabled_ = false, momentum_velocity_ = false;
+    double mixing_cs_ = .1, mixing_dry_ = .001, coriolis_f_ = 0;
+    hid_t ds_face_eddy_viscosity_ = H5I_INVALID_HID;
+    hid_t ds_face_strain_rate_ = H5I_INVALID_HID;
     hid_t ds_face_vx_ = H5I_INVALID_HID;
     hid_t ds_face_vy_ = H5I_INVALID_HID;
     hid_t ds_face_continuity_err_ = H5I_INVALID_HID;

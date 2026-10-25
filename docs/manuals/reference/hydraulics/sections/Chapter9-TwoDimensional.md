@@ -2930,3 +2930,81 @@ with application to Voronoi polytopes." *The Computer Journal*, 24(2),
 167–172.
 
 <!-- source: docs/manuals/reference/hydraulics/sections/Chapter9-TwoDimensional.md:1473-1540 (retained entries); new entries cited from src/engine/2d/solver/SweKernels.hpp:17-47 (Audusse, Toro, Liang and Marche), src/engine/2d/solver/DiffusiveKernels.hpp:17-39 (Hunter), src/engine/2d/solver/ExplicitInertialSolver.cpp:1790-1795,1859-1861 (Barth–Jespersen, SSP-RK2), src/engine/2d/solver/InertialKernels.hpp:277-292 (Stelling and Duinmeijer) -->
+
+
+## Optional rotating flow and Smagorinsky horizontal mixing
+
+The CPU full shallow-water solver accepts the following `[2D_OPTIONS]` keys. Defaults preserve the existing solver path.
+
+| Key | Values and units | Default |
+| --- | --- | --- |
+| `CORIOLIS` | `OFF`, `LATITUDE`, `CONSTANT_F` | `OFF` |
+| `CORIOLIS_LATITUDE` | Finite degrees north, −90 to 90; required in latitude mode | Unset |
+| `CORIOLIS_F` | Finite signed s⁻¹; required in direct-parameter mode | Unset |
+| `TURBULENCE_MODEL` | `NONE`, `SMAGORINSKY` | `NONE` |
+| `SMAGORINSKY_CS` | Finite nonnegative dimensionless value | 0.10 |
+
+`UNSET` clears either optional Coriolis input through the extended option API. Inactive values can remain authored; the active mode selects the parameter. The input writer omits default process switches and preserves authored parameters. Generic extended-option access also makes the controls available to programmatic clients without changing C ABI option structures.
+
+Qualification is limited to CPU `FULL_SWE`, `LTS_TIERS 1`, first-order or second-order reconstruction. Unsupported momentum modes and coupled surface/source profiles produce a diagnostic. Inertial and diffusive-wave closures and accelerator kernels do not acquire these processes implicitly. A selected accelerator follows the established full-SWE CPU fallback policy.
+
+In a right-handed horizontal frame, Coriolis adds `(f hv, -f hu)` to the two momentum equations, with `f = 2 Ω sin(latitude)` and `Ω = 7.2921158553 × 10⁻⁵ s⁻¹`. Exact local momentum rotations are symmetrically composed around the hydrodynamic step. Isolated rotation preserves kinetic energy up to floating-point roundoff. This source integration is not a claim of exact geostrophic well-balancing; rotating pressure equilibria must be checked for convergence.
+
+For Smagorinsky, `Δ = sqrt(A)`, `νt = (Cs Δ)² |S|`, and
+
+`|S| = sqrt(2 ux² + 2 vy² + (uy + vx)²)`.
+
+The added term is the conservative depth-integrated stress divergence `div(2 h νt S)`. Unrestricted least-squares velocity gradients are separate from shock-limited MUSCL reconstruction. Shared-face gradients include an over-relaxed normal correction reproducing the centroid velocity difference on nonorthogonal cells. Face coefficients use interpolated cell viscosity, connected wet depth and conveyance. Each face transfers equal/opposite momentum; dry sills, holes and zero-conveyance edges transmit no turbulent momentum. Rank-deficient corner gradients borrow a connected complete stencil where available. Otherwise their cell gradient remains zero. Walls and open boundaries have zero turbulent traction; no wall-friction or wall-damping model is included.
+
+The mixing operator is integrated with SSP-RK2 at fixed water storage inside symmetric source splitting. Its timestep uses absolute row sums of the reconstructed face operator, including cross stresses. Nonlinear stage coefficients are reevaluated; a tighter bound or increasing kinetic energy retries the unpublished momentum substep. Viscosity is never clipped to meet a desired timestep. A mesh/state for which no dissipative admissible substep can be found is refused. Both stage checks and energy checks are necessary: conservation alone does not prove a skew-mesh stress discretization is accurate or dissipative.
+
+The optional global mode includes all cells in the schedule and evaluates exterior Riemann states at the same beginning-of-stage time as interior states. This prevents boundary splitting from generating a nonuniform flow in the uniform inertial-oscillation test. The disabled path retains its prior numerical behavior.
+
+`REPORT_2D_VARIABLES TURBULENCE` adds `Mesh2_face_eddy_viscosity` (m²/s) and `Mesh2_face_strain_rate` (s⁻¹) when mixing is enabled. They are computed from the accepted reported state. Root attributes record the effective `f`, turbulence model, coefficient and filter. Optional-process reported velocity comes from accepted cell momentum; edge fluxes continue to represent hydraulic transfers and boundary window means. No plugin snapshot or C ABI structure is enlarged by this output extension.
+
+A depth-averaged closure does not resolve vertical turbulence, nonhydrostatic pressure or three-dimensional obstacle wakes. Bed-generated mixing, dynamic Smagorinsky, scalar turbulent diffusivity and wall damping are separate future closures. Suggested coefficient sensitivity is 0.05, 0.10 and 0.20; mesh and timestep convergence remain necessary. Adding mixing does not automatically resolve the UK Test 6 gauge discrepancy.
+
+
+### Selective tangential wall friction
+
+`WALL` remains impermeable and free-slip. Select a solid exterior edge with
+`WALL_DRAG Cw` in `[2D_BOUNDARY_CONDITIONS]` to add tangential traction:
+
+```ini
+[2D_BOUNDARY_CONDITIONS]
+;; TRI EDGE TYPE       PARAM_1 PARAM_2 GROUP
+12     1    WALL_DRAG  0.01    *       THROAT
+```
+
+The example coefficient is a diagnostic value, not a material recommendation.
+The convention is `tau_t/rho = -Cw |u_t| u_t` (no factor of one half; Darcy
+friction factor `f` corresponds to `Cw=f/8`). `Cw` must be finite and
+nonnegative; zero is free-slip. It is independent of bed Manning roughness.
+The finite-volume force uses edge length times wetted wall height; VFR
+integrates the edge endpoint elevations against the current water surface.
+Only wall-parallel momentum is changed. Exact scalar drag decay, composed
+symmetrically over wall faces, removes kinetic energy without reversing the
+wall-parallel component in a single wall update. Normal impermeability and
+resolved pressure/form drag are retained. Do not also assign a duplicate
+empirical contraction/form-loss term for the same resolved geometry.
+
+Initial support: CPU `MOMENTUM_EQUATION FULL_SWE`, `LTS_TIERS 1`, orders 1/2,
+uncoupled surface hydraulics. Smagorinsky may be on or off. Its interior stress
+has zero exterior traction; `WALL_DRAG` supplies the selected wall traction
+once. Unsupported closures, coupling and wall checkpoint profiles are refused.
+Wall coefficients can be authored through `swmm_2d_get_edge_wall_drag` and
+`swmm_2d_set_edge_wall_drag` (OPENED/BUILDING only), and Python
+`Surface2D.get_edge_wall_drag` / `set_edge_wall_drag`. INP, mesh sidecars and
+GeoPackage preserve the prescription. Runtime wall edits are unsupported.
+
+The run log reports selected face count and cumulative wall energy removal
+divided by density, in m5/s2. A constant prescribed Cw is a partial-slip drag
+closure; it is not a smooth/rough log-law wall function or a resolved no-slip
+boundary layer. Mesh, timestep and coefficient sensitivity remain necessary.
+
+For authoring APIs, first call `swmm_2d_prepare_for_edit` (Python
+`Surface2D.prepare_for_edit()`) after opening the model. Positive wall drag
+and nonempty groups are checked against authored edge connectivity, before
+runtime neighbours have been built. Triangle INP/sidecar/GeoPackage wall
+round trips are qualified. For quad wall edge 3, use INP: the existing
+GeoPackage boundary table restricts local edge indices to 0–2.

@@ -258,6 +258,35 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens, SolverOpt
         else
             return "Unknown MOMENTUM_EQUATION: " + val +
                    " (expected LOCAL_INERTIAL|FULL_SWE|DIFFUSIVE_WAVE)";
+    } else if (iequals(key, "CORIOLIS")) {
+        if (iequals(val, "OFF")) opts.coriolis = Coriolis2D::OFF;
+        else if (iequals(val, "LATITUDE")) opts.coriolis = Coriolis2D::LATITUDE;
+        else if (iequals(val, "CONSTANT_F")) opts.coriolis = Coriolis2D::CONSTANT_F;
+        else return "Invalid CORIOLIS (OFF|LATITUDE|CONSTANT_F)";
+    } else if (iequals(key, "CORIOLIS_LATITUDE") || iequals(key, "CORIOLIS_F") ||
+               iequals(key, "SMAGORINSKY_CS")) {
+        if (iequals(val, "UNSET") && !iequals(key, "SMAGORINSKY_CS")) {
+            if (iequals(key, "CORIOLIS_LATITUDE")) opts.coriolis_latitude_set = false;
+            else opts.coriolis_f_set = false;
+            return {};
+        }
+        const double x = tryParseDouble(val, ok);
+        if (!ok || !std::isfinite(x)) return "Invalid finite value for " + key;
+        if (iequals(key, "CORIOLIS_LATITUDE")) {
+            if (x < -90 || x > 90) return "CORIOLIS_LATITUDE must be in [-90,90] degrees north";
+            opts.coriolis_latitude = x;
+            opts.coriolis_latitude_set = true;
+        } else if (iequals(key, "CORIOLIS_F")) {
+            opts.coriolis_f = x;
+            opts.coriolis_f_set = true;
+        } else {
+            if (x < 0) return "SMAGORINSKY_CS must be nonnegative";
+            opts.smagorinsky_cs = x;
+        }
+    } else if (iequals(key, "TURBULENCE_MODEL")) {
+        if (iequals(val, "NONE")) opts.turbulence = Turbulence2D::NONE;
+        else if (iequals(val, "SMAGORINSKY")) opts.turbulence = Turbulence2D::SMAGORINSKY;
+        else return "Invalid TURBULENCE_MODEL (NONE|SMAGORINSKY)";
     } else if (iequals(key, "FRONT_REBUILD")) {
         if (iequals(val, "AUTO"))
             opts.front_rebuild = -1;
@@ -640,6 +669,8 @@ std::span<const char* const> current2DOptionKeys() {
         "OUTPUT_FILE",
         "INTEGRATOR",
         "MOMENTUM_EQUATION",
+        "CORIOLIS", "CORIOLIS_LATITUDE", "CORIOLIS_F",
+        "TURBULENCE_MODEL", "SMAGORINSKY_CS",
         "RECONSTRUCTION_ORDER",
         "FRONT_REBUILD",
         "THETA",
@@ -782,6 +813,17 @@ std::string format2DOptionValue(const SolverOptions2D& opts, const std::string& 
         }
         return "LOCAL_INERTIAL";
     }
+    if (iequals(key, "CORIOLIS"))
+        return opts.coriolis == Coriolis2D::LATITUDE ? "LATITUDE" :
+               opts.coriolis == Coriolis2D::CONSTANT_F ? "CONSTANT_F" : "OFF";
+    auto exact = [](double x) { char value[32]; std::snprintf(value,sizeof value,"%.17g",x);return std::string(value); };
+    if (iequals(key, "CORIOLIS_LATITUDE"))
+        return opts.coriolis_latitude_set ? exact(opts.coriolis_latitude) : "UNSET";
+    if (iequals(key, "CORIOLIS_F"))
+        return opts.coriolis_f_set ? exact(opts.coriolis_f) : "UNSET";
+    if (iequals(key, "SMAGORINSKY_CS")) return exact(opts.smagorinsky_cs);
+    if (iequals(key, "TURBULENCE_MODEL"))
+        return opts.turbulence == Turbulence2D::SMAGORINSKY ? "SMAGORINSKY" : "NONE";
     if (iequals(key, "RECONSTRUCTION_ORDER"))
         return std::to_string(opts.reconstruction_order);
     if (iequals(key, "FRONT_REBUILD"))
@@ -1340,7 +1382,7 @@ parse2DBoundaryConditionsLine(const std::vector<std::string>& tokens,
                "triangle, 0..3 for a quad)";
 
     const std::string& type_tok = tokens[2];
-    if (iequals(type_tok, "WALL"))
+    if (iequals(type_tok, "WALL") || iequals(type_tok, "WALL_DRAG"))
         row.bc_type = static_cast<int>(BoundaryType::WALL);
     else if (iequals(type_tok, "NORMAL_FLOW"))
         row.bc_type = static_cast<int>(BoundaryType::NORMAL_FLOW);
@@ -1365,8 +1407,14 @@ parse2DBoundaryConditionsLine(const std::vector<std::string>& tokens,
     if (p1 == "*")
         p1.clear();
 
+    // WALL keeps its legacy ignored parameter. WALL_DRAG explicitly opts in.
+    if (iequals(type_tok, "WALL_DRAG")) {
+        row.param1 = tryParseDouble(p1, ok);
+        if (!ok || !std::isfinite(row.param1) || row.param1 < 0)
+            return "WALL_DRAG requires a finite nonnegative dimensionless Cw";
+    }
     // For Wall: PARAM_1 is irrelevant.
-    if (!p1.empty()) {
+    if (!p1.empty() && !iequals(type_tok, "WALL") && !iequals(type_tok, "WALL_DRAG")) {
         if (iequals(type_tok, "NORMAL_FLOW") || iequals(type_tok, "SPECIFIED_STAGE") ||
             iequals(type_tok, "SPECIFIED_FLOW")) {
             row.param1 = tryParseDouble(p1, ok);

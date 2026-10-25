@@ -22,6 +22,7 @@
 #include "../data/Report2DVars.hpp"
 
 #include <cmath>
+#include <cctype>
 #include <cstring>
 #include <cstdint>
 #include <algorithm>
@@ -1500,6 +1501,7 @@ static int prepareBoundaryEdit(openswmm::SWMMEngine* eng, openswmm::twoD::Surfac
     if (owner != router.boundary().runtime_owner.end() && !owner->second.empty())
         return SWMM_ERR_BADPARAM;
     if (router.isActive()) {
+        if (router.options().wall_drag_enabled) return SWMM_ERR_LIFECYCLE;
         if (!eng->runtimeUpdateAllowed() || !router.runtimeCpuAvailable())
             return SWMM_ERR_LIFECYCLE;
         router.prepareOneShotForcing(eng->context());
@@ -1570,6 +1572,8 @@ int swmm_2d_set_edge_bc_type(SWMM_Engine engine, int tri_idx, int edge, int bc_t
 
     router2d.boundary().edge_bc_type[openswmm::twoD::MeshData::slot(tri_idx, edge)] =
         static_cast<int8_t>(bc_type);
+    if (bc_type != SWMM_2D_BC_WALL)
+        router2d.boundary().edge_wall_drag[openswmm::twoD::MeshData::slot(tri_idx, edge)] = 0;
     router2d.invalidateBoundaryIndex();
     return SWMM_OK;
 }
@@ -1603,6 +1607,91 @@ int swmm_2d_set_edge_bc_head(SWMM_Engine engine, int tri_idx, int edge, double h
         const int slot = openswmm::twoD::MeshData::slot(tri_idx, edge);
         router2d.boundary().edge_bc_tseries[slot] = -1;
         router2d.boundary().edge_bc_tseries_name[slot].clear();
+    }
+    return SWMM_OK;
+}
+
+
+
+int swmm_2d_set_edge_bc_group(SWMM_Engine engine, int tri_idx, int edge, const char* group) {
+    GET_ENGINE(engine);
+    CHECK_2D_MESH(eng);
+    CHECK_TRI_IDX(tri_idx, router2d);
+    CHECK_EDGE_IDX(tri_idx, edge, router2d);
+    if (!group) return SWMM_ERR_BADPARAM;
+    if (router2d.isActive() || (eng->context().state != openswmm::EngineState::OPENED &&
+                              eng->context().state != openswmm::EngineState::BUILDING))
+        return SWMM_ERR_LIFECYCLE;
+    const int slot = openswmm::twoD::MeshData::slot(tri_idx, edge);
+    CHECK_BC_SIZED(router2d.boundary().edge_bc_type, slot);
+    if (group[0] && !router2d.boundary().edge_is_exterior[slot]) return SWMM_ERR_BADPARAM;
+    for (const char* c=group; *c; ++c)
+        if (std::isspace(static_cast<unsigned char>(*c)) || *c==';' || *c=='*' || *c=='[' || *c==']')
+            return SWMM_ERR_BADPARAM;
+    try {
+        auto& rows=router2d.pendingBCRows();
+        bool found=false;
+        for(auto& row:rows) if(row.tri==tri_idx && row.edge==edge) {
+            row.group=group; found=true;
+        }
+        if(found || !group[0]) return SWMM_OK;
+        openswmm::twoD::PendingBoundaryRow row;
+        row.tri=tri_idx; row.edge=edge; row.group=group;
+        const auto& b=router2d.boundary(); row.bc_type=b.edge_bc_type[slot];
+        switch(static_cast<openswmm::twoD::BoundaryType>(row.bc_type)) {
+        case openswmm::twoD::BoundaryType::WALL: row.param1=b.edge_wall_drag[slot]; break;
+        case openswmm::twoD::BoundaryType::NORMAL_FLOW: row.param1=b.edge_bed_slope[slot]; break;
+        case openswmm::twoD::BoundaryType::SPECIFIED_STAGE:
+            row.param1=b.edge_bc_head[slot]; row.name=b.edge_bc_tseries_name[slot]; break;
+        case openswmm::twoD::BoundaryType::SPECIFIED_FLOW:
+            row.param1=b.edge_bc_flow[slot]; row.name=b.edge_bc_flow_tseries_name[slot]; break;
+        case openswmm::twoD::BoundaryType::RATING_CURVE: row.name=b.edge_bc_rating_curve_name[slot]; break;
+        }
+        rows.push_back(std::move(row));
+        return SWMM_OK;
+    } catch (...) { return SWMM_ERR_NOMEM; }
+}
+
+int swmm_2d_get_edge_wall_drag(SWMM_Engine engine, int tri_idx, int edge, double* cw) {
+    GET_ENGINE(engine);
+    CHECK_2D_MESH(eng);
+    CHECK_TRI_IDX(tri_idx, router2d);
+    CHECK_EDGE_IDX(tri_idx, edge, router2d);
+    if (!cw) return SWMM_ERR_BADPARAM;
+    CHECK_BC_SIZED(router2d.boundary().edge_wall_drag, openswmm::twoD::MeshData::slot(tri_idx, edge));
+    *cw = router2d.boundary().edge_wall_drag[openswmm::twoD::MeshData::slot(tri_idx, edge)];
+    return SWMM_OK;
+}
+
+int swmm_2d_set_edge_wall_drag(SWMM_Engine engine, int tri_idx, int edge, double cw) {
+    GET_ENGINE(engine);
+    CHECK_2D_MESH(eng);
+    CHECK_TRI_IDX(tri_idx, router2d);
+    CHECK_EDGE_IDX(tri_idx, edge, router2d);
+    if (!std::isfinite(cw) || cw < 0) return SWMM_ERR_BADPARAM;
+    if (router2d.isActive() || (eng->context().state != openswmm::EngineState::OPENED &&
+                              eng->context().state != openswmm::EngineState::BUILDING))
+        return SWMM_ERR_LIFECYCLE;
+    const int slot = openswmm::twoD::MeshData::slot(tri_idx, edge);
+    CHECK_BC_SIZED(router2d.boundary().edge_wall_drag, slot);
+    if (cw > 0 && (!router2d.boundary().edge_is_exterior[slot] ||
+                  router2d.boundary().edge_bc_type[slot] != 0)) return SWMM_ERR_BADPARAM;
+    router2d.boundary().edge_wall_drag[slot] = cw;
+    // Preserve the authoring value when initialize re-drains retained rows.
+    if (router2d.boundary().edge_bc_type[slot] == 0 &&
+        router2d.boundary().edge_is_exterior[slot]) {
+        openswmm::twoD::PendingBoundaryRow row;
+        row.tri = tri_idx; row.edge = edge; row.param1 = cw;
+        auto& rows = router2d.pendingBCRows();
+        bool found = false;
+        for (auto& old : rows) if (old.tri == tri_idx && old.edge == edge) {
+            found = true;
+            row.group = old.group;
+            old.param1 = cw;
+            old.bc_type = 0;
+            old.name.clear();
+        }
+        if (!found) rows.push_back(std::move(row));
     }
     return SWMM_OK;
 }

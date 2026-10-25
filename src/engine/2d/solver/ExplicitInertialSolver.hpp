@@ -52,6 +52,7 @@
 
 #include "ISurfaceSolver.hpp"
 #include "InertialEdges.hpp"
+#include "MomentumPhysics2D.hpp"
 #include "../gw/GwSourceForcing.hpp"
 #include "../../transport/components/ReactionModule/ReactionIntegrator.hpp"
 #include "../data/SolverOptions2D.hpp" // Momentum2D
@@ -78,6 +79,10 @@ class EngineSourceResultHistory;
 
 class ExplicitInertialSolver final : public ISurfaceSolver {
 public:
+    /// Publish optional-process velocity from accepted conserved momentum,
+    /// using the internal negative-outflow display convention. No flux change.
+    void publishMomentumVelocity();
+
     /**
      * @brief Prepare the CPU finite-volume marcher from authoritative surface volume and
      * resolved model.
@@ -770,6 +775,12 @@ private:
      * clocks. No general finite checks/rollback or allocation in the cell loop.
      */
     void computeLimitedGradientsSwe();
+    MomentumPhysics2D momentum_physics_;
+    std::vector<int> wall_drag_slots_;
+    double wall_drag_energy_ = 0; ///< Cumulative kinetic energy removed / rho (m5/s2).
+    void applyMomentumPhysics(double seconds);
+    double runMomentumStep(double limit, double time);
+
     /**
      * @brief One SSP-RK2 (Heun) step of length dt over the active lists: two forward-Euler
      * substeps averaged with the start state; the ledgers that accumulated over both stages are

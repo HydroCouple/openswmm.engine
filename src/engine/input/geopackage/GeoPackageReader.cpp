@@ -17,6 +17,7 @@
 #include "2d/gw/GwTransportData.hpp"
 #endif
 #include <sstream>
+#include <cmath>
 #include "../../core/Constants.hpp"
 #include "ExternalContentReader.hpp"
 #include <stdexcept>
@@ -395,6 +396,32 @@ static void apply_option_2d(SimulationContext& ctx, const std::string& key,
         o->momentum = (val == "FULL_SWE")         ? twoD::Momentum2D::FULL_SWE
                       : (val == "DIFFUSIVE_WAVE") ? twoD::Momentum2D::DIFFUSIVE_WAVE
                                                   : twoD::Momentum2D::LOCAL_INERTIAL;
+    else if (key == "2D_CORIOLIS") {
+        if (val == "OFF") o->coriolis = twoD::Coriolis2D::OFF;
+        else if (val == "LATITUDE") o->coriolis = twoD::Coriolis2D::LATITUDE;
+        else if (val == "CONSTANT_F") o->coriolis = twoD::Coriolis2D::CONSTANT_F;
+        else throw std::runtime_error("Invalid 2D_CORIOLIS value");
+    } else if (key == "2D_TURBULENCE_MODEL") {
+        if (val == "NONE") o->turbulence = twoD::Turbulence2D::NONE;
+        else if (val == "SMAGORINSKY") o->turbulence = twoD::Turbulence2D::SMAGORINSKY;
+        else throw std::runtime_error("Invalid 2D_TURBULENCE_MODEL value");
+    } else if (key == "2D_CORIOLIS_LATITUDE" || key == "2D_CORIOLIS_F" || key == "2D_SMAGORINSKY_CS") {
+        std::size_t used = 0;
+        const double x = std::stod(val, &used);
+        if (!std::isfinite(x) || used != val.size()) throw std::runtime_error("Invalid " + key);
+        if (key == "2D_CORIOLIS_LATITUDE") {
+            if (std::abs(x) > 90) throw std::runtime_error("Invalid 2D_CORIOLIS_LATITUDE");
+            o->coriolis_latitude = x; o->coriolis_latitude_set = true;
+        } else if (key == "2D_CORIOLIS_F") {
+            o->coriolis_f = x; o->coriolis_f_set = true;
+        } else {
+            if (x < 0) throw std::runtime_error("Invalid 2D_SMAGORINSKY_CS");
+            o->smagorinsky_cs = x;
+        }
+    } else if (key == "2D_RECONSTRUCTION_ORDER") {
+        if (val != "1" && val != "2") throw std::runtime_error("Invalid 2D_RECONSTRUCTION_ORDER");
+        o->reconstruction_order = val == "2" ? 2 : 1;
+    }
     else if (key == "2D_BACKEND")
         o->backend = (val == "CPU")    ? twoD::Backend2D::CPU
                      : (val == "OMP")  ? twoD::Backend2D::OMP
@@ -2855,7 +2882,7 @@ static void read_dwf(sqlite3* db, SimulationContext& ctx, const std::string& sim
  * @return Internal WALL0, NORMAL_FLOW1, stage2, flow3, rating4, or -1 for unknown text.
  */
 static int bc_type_from_token(const std::string& tok) {
-    if (tok == "WALL")
+    if (tok == "WALL" || tok == "WALL_DRAG")
         return 0; // BoundaryType::WALL
     if (tok == "NORMAL_FLOW")
         return 1; // BoundaryType::NORMAL_FLOW
@@ -3082,7 +3109,13 @@ static void read_mesh_2d(sqlite3* db, SimulationContext& ctx, const std::string&
             row.bc_type = type;
             if (!column_is_null(stmt.get(), 3))
                 row.param1 = column_double(stmt.get(), 3);
-            row.name = column_text(stmt.get(), 4);
+            if (type == 0) {
+                if (column_text(stmt.get(), 2) == "WALL_DRAG") {
+                    if (column_is_null(stmt.get(), 3) || !std::isfinite(row.param1) || row.param1 < 0)
+                        throw std::runtime_error("WALL_DRAG requires finite nonnegative Cw");
+                } else row.param1 = 0; // retain legacy WALL semantics
+            }
+            row.name = type == 0 ? "" : column_text(stmt.get(), 4);
             row.group = column_text(stmt.get(), 5);
             ctx.twod_io.pending_bc->push_back(std::move(row));
         }

@@ -75,6 +75,11 @@ struct BoundaryData {
     /// Boundary condition type per edge (cast from BoundaryType)
     std::vector<int8_t> edge_bc_type;
 
+    /// Optional tangential wall drag: tau/rho = -Cw |ut| ut. Zero = free slip.
+    std::vector<double> edge_wall_drag;
+    /// Derived from authored connectivity before runtime topology exists.
+    std::vector<uint8_t> edge_is_exterior;
+
     /// Signed bed slope for NORMAL_FLOW edges (dimensionless).
     /// Positive values drain outward; negative values prescribe inward flow.
     /// A zero slope zeroes the Manning outflow — the edge behaves as a
@@ -221,6 +226,8 @@ struct BoundaryData {
         auto n = static_cast<std::size_t>(n_edges);
         edge_bc_type.assign(n, static_cast<int8_t>(BoundaryType::WALL));
         edge_bed_slope.assign(n, 0.0);
+        edge_wall_drag.assign(n, 0.0);
+        edge_is_exterior.assign(n, 0);
         edge_bc_head.assign(n, 0.0);
         edge_bc_tseries.assign(n, -1);
         edge_bc_tseries_name.resize(n);
