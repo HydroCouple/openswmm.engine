@@ -51,6 +51,7 @@ cdef extern from "openswmm_engine.h":
     cdef const char* swmm_error_message(int code)
 
     # --- Engine lifecycle ---
+    cdef const char* swmm_engine_abi_tag() noexcept nogil
     cdef SWMM_Engine swmm_engine_create()
     cdef int  swmm_engine_open(SWMM_Engine e, const char* inp, const char* rpt, const char* out, const char* input_plugin_lib)
     cdef int  swmm_engine_open_metadata(SWMM_Engine e, const char* inp)

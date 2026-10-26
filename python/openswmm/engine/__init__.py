@@ -178,7 +178,7 @@ Advanced forcing
 # =============================================================================
 # Engine lifecycle & errors
 # =============================================================================
-from ._solver import Solver, run, run_with_callback, GEOPACKAGE_PLUGIN_ID
+from ._solver import Solver, run, run_with_callback, GEOPACKAGE_PLUGIN_ID, abi_tag
 from ._exceptions import (
     EngineError,
     BadHandleError,
@@ -339,6 +339,7 @@ from ._enums import (
 )
 
 __all__ = [
+    "abi_tag",
     # --- DateTime conversion (SWMM DateTime <-> Python datetime) ---
     "oadate_to_datetime", "datetime_to_oadate", "datetime_api",
     # --- Engine lifecycle & errors ---

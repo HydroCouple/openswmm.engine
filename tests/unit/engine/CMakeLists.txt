@@ -81,6 +81,13 @@ function(add_gtest_unit TEST_NAME SOURCE_FILE)
 endfunction()
 
 # ---- Unit test targets ----
+add_gtest_unit(test_engine_abi test_engine_abi.cpp)
+add_test(NAME test_engine_abi_features
+    COMMAND ${CMAKE_COMMAND}
+        "-DENGINE_ROOT=${PROJECT_SOURCE_DIR}"
+        "-DEVIDENCE=${PROJECT_SOURCE_DIR}/tests/verification/extension_sdk_2026-10/feature-abi"
+        -P "${PROJECT_SOURCE_DIR}/tests/cmake/test_engine_abi_features.cmake")
+set_tests_properties(test_engine_abi_features PROPERTIES LABELS "unit;abi")
 add_gtest_unit(test_engine_outfall_export_receipts test_outfall_export_receipts.cpp)
 add_gtest_unit(test_engine_component_metadata test_component_metadata.cpp)
 # NOTE: Files are created as stubs initially. Implement when the corresponding

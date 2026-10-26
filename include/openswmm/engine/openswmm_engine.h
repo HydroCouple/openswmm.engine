@@ -202,6 +202,14 @@ typedef enum SWMM_ObjectType {
  */
 SWMM_ENGINE_API SWMM_Engine swmm_engine_create(void);
 
+/** @brief Identify the public C ABI compiled into the running engine image.
+ * @return Borrowed immutable UTF-8 tag, valid while the library remains loaded; never free it.
+ * @note Thread-safe, requires no engine handle and performs no allocation or file IO. Compare
+ * with OPENSWMM_ENGINE_ABI_TAG from the installed openswmm_abi_tag.h before passing native
+ * engine handles across a GUI/plugin/Python boundary. Public-header, optional-module or build-ABI changes
+ * automatically change the tag. Comment-only header changes may conservatively change it too. */
+SWMM_ENGINE_API const char *swmm_engine_abi_tag(void);
+
 /**
  * @brief Load a model and prepare its plugin configuration in SWMM_STATE_OPENED.
  *

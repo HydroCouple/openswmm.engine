@@ -97,6 +97,16 @@ from ._exceptions import (
 
 _SECONDS_PER_DAY = 86400.0
 
+
+def abi_tag() -> str:
+    """Return the immutable C ABI identity of the engine loaded by these bindings.
+
+    Compare it with a native host's engine identity before sharing handles.
+    This query creates no solver and is valid before opening a model.
+    The wheel's ``openswmm/engine/_abi.json`` records its expected build identity.
+    """
+    return swmm_engine_abi_tag().decode("utf-8")
+
 #: Registered id of the built-in GeoPackage model writer/reader plugin. Pass to
 #: :meth:`Solver.write_with_plugin` (or use :meth:`Solver.write_geopackage`).
 GEOPACKAGE_PLUGIN_ID = "org.hydrocouple.openswmm.plugins.geopackage"

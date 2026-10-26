@@ -128,6 +128,12 @@ if(OPENSWMM_ENGINE_INSTALL_PREFIX)
     add_library(openswmm::common         ALIAS OpenSWMMEngine::openswmm_common)
     add_library(openswmm::plugin_sdk     ALIAS OpenSWMMEngine::openswmm_plugin_sdk)
 
+    set(OPENSWMM_ENGINE_ABI_MANIFEST
+        "${OPENSWMM_ENGINE_INSTALL_PREFIX}/share/openswmm/engine-abi.json")
+    if(NOT EXISTS "${OPENSWMM_ENGINE_ABI_MANIFEST}")
+        message(FATAL_ERROR "The pre-built engine has no engine-owned ABI manifest. Rebuild and install the matching engine before compiling these bindings.")
+    endif()
+
     # A prebuilt engine carries its compiled feature set on the imported
     # target. Mirror those features when deciding which optional Python
     # extensions to build; otherwise a 2D engine wheel silently omits the

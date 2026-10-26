@@ -95,6 +95,9 @@ endif()
 # ---- Alias targets ----
 add_library(openswmm::engine ALIAS openswmm_engine)
 
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/EngineAbi.cmake)
+openswmm_configure_engine_abi()
+
 include(${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/GpuContract.cmake)
 openswmm_gpu_contract(openswmm_engine)
 
