@@ -1865,6 +1865,19 @@ cdef class Surface2D:
         """
         _check(swmm_2d_set_edge_bc_head(self._h(), tri_idx, edge, head))
 
+    def set_edge_bc_group(self, int tri_idx, int edge, str group):
+        """Author a boundary group token without changing its hydraulic condition.
+
+        Requires OPENED/BUILDING state and prepared boundary storage (call
+        ``prepare_for_edit()`` first). Nonempty names require an exterior edge
+        and cannot contain whitespace, INP delimiters or NUL. Empty clears the
+        group. Names are UTF-8 metadata and do not change boundary flow or drag.
+        """
+        if "\0" in group:
+            raise ValueError("Boundary group cannot contain NUL")
+        cdef bytes b = group.encode("utf-8")
+        _check(swmm_2d_set_edge_bc_group(self._h(), tri_idx, edge, b))
+
     def get_edge_wall_drag(self, int tri_idx, int edge) -> float:
         """Return dimensionless tangential WALL Cw (zero means free slip)."""
         cdef double cw = 0.0

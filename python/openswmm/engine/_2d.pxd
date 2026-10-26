@@ -171,6 +171,7 @@ cdef extern from "openswmm_2d.h":
     int swmm_2d_set_edge_bc_type(void* engine, int tri_idx, int edge, int bc_type)
     int swmm_2d_get_edge_bc_head(void* engine, int tri_idx, int edge, double* head)
     int swmm_2d_set_edge_bc_head(void* engine, int tri_idx, int edge, double head)
+    int swmm_2d_set_edge_bc_group(void* engine, int tri_idx, int edge, const char* group)
     int swmm_2d_get_edge_wall_drag(void* engine, int tri_idx, int edge, double* cw)
     int swmm_2d_set_edge_wall_drag(void* engine, int tri_idx, int edge, double cw)
     int swmm_2d_get_edge_bc_slope(void* engine, int tri_idx, int edge, double* slope)

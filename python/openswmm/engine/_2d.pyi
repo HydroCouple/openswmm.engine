@@ -1011,6 +1011,27 @@ class Surface2D:
         """
         ...
 
+    def set_edge_bc_group(self, tri_idx: int, edge: int, group: str) -> None:
+        """Author or clear a UTF-8 group token in OPENED/BUILDING state.
+
+        Call ``prepare_for_edit()`` first. Nonempty groups require an exterior
+        edge and cannot contain whitespace, INP delimiters or NUL. Hydraulic
+        boundary values are preserved; an empty name clears the group.
+        """
+        ...
+
+    def get_edge_wall_drag(self, tri_idx: int, edge: int) -> float:
+        """Return dimensionless tangential WALL Cw; zero means free slip."""
+        ...
+
+    def set_edge_wall_drag(self, tri_idx: int, edge: int, cw: float) -> None:
+        """Author finite nonnegative WALL Cw in OPENED/BUILDING state.
+
+        Requires prepared storage and an exterior WALL edge for positive Cw.
+        Positive drag runs with CPU FULL_SWE, one tier and uncoupled hydraulics.
+        """
+        ...
+
     def get_edge_bc_slope(self, tri_idx: int, edge: int) -> float:
         """Return the boundary slope for a triangle edge.
 

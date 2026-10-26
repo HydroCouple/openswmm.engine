@@ -22092,6 +22092,30 @@
    "params": []
   },
   {
+   "path": "surface2d.get_edge_wall_drag",
+   "target": "surface2d",
+   "name": "get_edge_wall_drag",
+   "form": "method",
+   "python": "Surface2D.get_edge_wall_drag",
+   "doc": "Return dimensionless tangential WALL Cw (zero means free slip).",
+   "c": [
+    "swmm_2d_get_edge_wall_drag"
+   ],
+   "returns": "float",
+   "params": [
+    {
+     "name": "tri_idx",
+     "type": "int",
+     "required": true
+    },
+    {
+     "name": "edge",
+     "type": "int",
+     "required": true
+    }
+   ]
+  },
+  {
    "path": "surface2d.get_head",
    "target": "surface2d",
    "name": "get_head",
@@ -23679,6 +23703,35 @@
    ]
   },
   {
+   "path": "surface2d.set_edge_bc_group",
+   "target": "surface2d",
+   "name": "set_edge_bc_group",
+   "form": "method",
+   "python": "Surface2D.set_edge_bc_group",
+   "doc": "Author a boundary group token without changing its hydraulic condition.",
+   "c": [
+    "swmm_2d_set_edge_bc_group"
+   ],
+   "returns": "None",
+   "params": [
+    {
+     "name": "tri_idx",
+     "type": "int",
+     "required": true
+    },
+    {
+     "name": "edge",
+     "type": "int",
+     "required": true
+    },
+    {
+     "name": "group",
+     "type": "str",
+     "required": true
+    }
+   ]
+  },
+  {
    "path": "surface2d.set_edge_bc_head",
    "target": "surface2d",
    "name": "set_edge_bc_head",
@@ -23847,6 +23900,35 @@
     },
     {
      "name": "conveyance",
+     "type": "float",
+     "required": true
+    }
+   ]
+  },
+  {
+   "path": "surface2d.set_edge_wall_drag",
+   "target": "surface2d",
+   "name": "set_edge_wall_drag",
+   "form": "method",
+   "python": "Surface2D.set_edge_wall_drag",
+   "doc": "Author selected exterior WALL drag before a run: tau/rho=-Cw|ut|ut.",
+   "c": [
+    "swmm_2d_set_edge_wall_drag"
+   ],
+   "returns": "None",
+   "params": [
+    {
+     "name": "tri_idx",
+     "type": "int",
+     "required": true
+    },
+    {
+     "name": "edge",
+     "type": "int",
+     "required": true
+    },
+    {
+     "name": "cw",
      "type": "float",
      "required": true
     }

@@ -81,7 +81,7 @@ PERSIST = dict(mode=SurfaceForcingMode.OVERRIDE, persist=ForcingPersist.PERSIST)
 def _open(name, text):
     _OUT.mkdir(parents=True, exist_ok=True)
     inp = _OUT / f"{name}.inp"
-    inp.write_text(text)
+    inp.write_text(text, encoding="utf-8")
     solver = Solver(inp, inp.with_suffix(".rpt"), inp.with_suffix(".out"))
     solver.open()
     return solver
@@ -275,6 +275,78 @@ def test_surface_coupling_flux_add_is_held():
         assert sw.total_volume - v0 == pytest.approx(q * area * dt, rel=1e-6)
     finally:
         _close(solver)
+
+
+
+def test_boundary_group_preserves_flow_and_roundtrips():
+    text = SURFACE_MODEL + "[2D_BOUNDARY_CONDITIONS]\n0 0 SPECIFIED_FLOW -0.02 * original\n"
+    solver = _open("edge_group", text)
+    path = _OUT / "edge_group_saved.inp"
+    try:
+        sw = solver.surface2d
+        sw.prepare_for_edit()
+        sw.set_edge_bc_group(0, 0, "café")
+        assert sw.get_edge_bc_type(0, 0) == SurfaceBoundaryType.SPECIFIED_FLOW
+        assert sw.get_edge_bc_flow(0, 0) == pytest.approx(-0.02)
+        solver.write(path)
+        assert "café" in path.read_text(encoding="utf-8")
+    finally:
+        _close(solver)
+    solver = _open("edge_group_reopened", path.read_text(encoding="utf-8"))
+    try:
+        sw = solver.surface2d
+        sw.prepare_for_edit()
+        assert sw.get_edge_bc_flow(0, 0) == pytest.approx(-0.02)
+        solver.write(path)
+        assert "café" in path.read_text(encoding="utf-8")
+        sw.set_edge_bc_group(0, 0, "")
+        solver.write(path)
+        assert "café" not in path.read_text(encoding="utf-8")
+        assert sw.get_edge_bc_flow(0, 0) == pytest.approx(-0.02)
+    finally:
+        _close(solver)
+
+
+def test_boundary_group_and_wall_drag_validate_authoring():
+    from openswmm.engine import BadParamError, StaleObjectError
+
+    solver = _open("edge_group_validation", SURFACE_MODEL)
+    try:
+        sw = solver.surface2d
+        sw.prepare_for_edit()
+        assert sw.get_edge_wall_drag(0, 0) == 0.0
+        sw.set_edge_wall_drag(0, 0, 0.02)
+        sw.set_edge_bc_group(0, 0, "THROAT")
+        assert sw.get_edge_bc_type(0, 0) == SurfaceBoundaryType.WALL
+        assert sw.get_edge_wall_drag(0, 0) == pytest.approx(0.02)
+        path = _OUT / "wall_group_saved.inp"
+        solver.write(path)
+        assert "THROAT" in path.read_text(encoding="utf-8")
+        for group in ("bad name", "bad;name", "bad*name", "[bad]", "bad\tname"):
+            with pytest.raises(BadParamError):
+                sw.set_edge_bc_group(0, 0, group)
+        with pytest.raises(ValueError):
+            sw.set_edge_bc_group(0, 0, "bad\0name")
+        # Local edge 1 is opposite vertex 1: the shared 0-to-2 diagonal.
+        with pytest.raises(BadParamError):
+            sw.set_edge_bc_group(0, 1, "INTERIOR")
+        for cell, edge in ((-1, 0), (2, 0), (0, 3)):
+            with pytest.raises(BadIndexError):
+                sw.set_edge_bc_group(cell, edge, "BAD_INDEX")
+        for cw in (-1, float("inf"), float("nan")):
+            with pytest.raises(BadParamError):
+                sw.set_edge_wall_drag(0, 0, cw)
+        assert sw.get_edge_wall_drag(0, 0) == pytest.approx(0.02)
+        sw.set_edge_wall_drag(0, 0, 0.0)
+        solver.initialize()
+        with pytest.raises(LifecycleError):
+            sw.set_edge_bc_group(0, 0, "TOO_LATE")
+        with pytest.raises(LifecycleError):
+            sw.set_edge_wall_drag(0, 0, 0.02)
+    finally:
+        _close(solver)
+    with pytest.raises(StaleObjectError):
+        sw.set_edge_bc_group(0, 0, "CLOSED")
 
 
 def test_surface_edge_bc_changes_between_steps():
