@@ -1110,3 +1110,159 @@ TEST(FvNetwork, AlgebraicJunctionFloodLedgerCloses) {
         << outflow << " vs in " << in_total;
     s.finalize();
 }
+
+// Dry-boundary activation and the numerical support of compacted sweeps.
+TEST(FvNetwork, DryStoragePortsRemainConservativeUnderCompaction) {
+    for (bool reversed : {false, true})
+    for (int mode : {0, 1, 2}) {
+        const auto integration = mode == 1 ? TimeIntegration::RK2 : TimeIntegration::EULER;
+        SCOPED_TRACE(std::string(reversed ? "reverse" : "forward") +
+                     (mode == 1 ? " RK2" : mode == 2 ? " LTS" : " Euler"));
+        auto make = [&] {
+            auto ch = makeNodedChannel(rectOpen(1., 10.), 256, 1.,
+                                      [](double) { return 0.; }, 0.);
+            ch.mesh.node_kind = {kNodeStorage, kNodeStorage};
+            ch.mesh.node_area = {10., 10.};
+            // A remote wet patch supplies a finite CFL step while both
+            // storage ports and their receiving cells start exactly dry.
+            ch.state.cell_a[128] = .1;
+            return ch;
+        };
+        auto plain = make(), packed = make();
+        FvOptions options = defaultOptions();
+        options.time_integration = integration;
+        options.lts = mode == 2;
+        options.lts_max_tiers = 3;
+        ExplicitFvSolver full, compact;
+        full.initialize(plain.mesh, plain.state, options);
+        options.compaction = true;
+        compact.initialize(packed.mesh, packed.state, options);
+        double lateral[2] = {reversed ? 0. : 1., reversed ? 1. : 0.};
+        FvStepForcing forcing;
+        forcing.node_lateral = lateral;
+        forcing.n_nodes = 2;
+        for (double start : {0., 2., 4.}) {
+            const double end = start + 2.;
+            ASSERT_EQ(full.advance(start, end, forcing), end);
+            ASSERT_EQ(compact.advance(start, end, forcing), end);
+            auto inventory = [](const Channel& c) {
+                double v = totalVolume(c);
+                for (double x : c.state.node_volume) v += x;
+                return v;
+            };
+            EXPECT_NEAR(inventory(plain), .1 + end, 1.e-10);
+            EXPECT_NEAR(inventory(packed), .1 + end, 1.e-10);
+            EXPECT_EQ(packed.state.cell_a, plain.state.cell_a);
+            EXPECT_EQ(packed.state.cell_q, plain.state.cell_q);
+            EXPECT_EQ(packed.state.node_volume, plain.state.node_volume);
+        }
+        EXPECT_GT(packed.state.cell_a[reversed ? 255 : 0], 0.);
+        EXPECT_LT(compact.run_stats().active_frac_max, .9);
+        if (mode == 2) EXPECT_GT(compact.run_stats().n_macro_cycles, 0);
+    }
+}
+
+// Isolate the two-stage support requirement without any storage or source.
+TEST(FvNetwork, Rk2DryFrontCompactionMatchesFullSweep) {
+    auto make = [] {
+        auto ch = makeWalledChannel(rectOpen(1., 10.), 256, 1.,
+                                   [](double) { return 0.; }, 0.);
+        ch.state.cell_a[128] = .1;
+        return ch;
+    };
+    auto plain = make(), packed = make();
+    FvOptions options = defaultOptions();
+    options.time_integration = TimeIntegration::RK2;
+    options.lts = false;
+    ExplicitFvSolver full, compact;
+    full.initialize(plain.mesh, plain.state, options);
+    options.compaction = true;
+    compact.initialize(packed.mesh, packed.state, options);
+    FvStepForcing forcing;
+    for (double start : {0., 2., 4.}) {
+        ASSERT_EQ(full.advance(start, start + 2., forcing), start + 2.);
+        ASSERT_EQ(compact.advance(start, start + 2., forcing), start + 2.);
+        EXPECT_NEAR(totalVolume(packed), .1, 1.e-12);
+        EXPECT_EQ(packed.state.cell_a, plain.state.cell_a);
+        EXPECT_EQ(packed.state.cell_q, plain.state.cell_q);
+    }
+    EXPECT_LT(compact.run_stats().active_frac_max, .9);
+}
+
+TEST(FvNetwork, CompactionHaloCrossesMultiwayJunctions) {
+    for (int degree : {2, 3, 8})
+    for (bool reverse : {false, true}) {
+        SCOPED_TRACE(std::to_string(degree) + (reverse ? " reversed" : " forward"));
+        auto make = [&] {
+            constexpr int count = 64;
+            auto ch = makeNodedChannel(rectOpen(1., 10.), degree * count, 1.,
+                                      [](double) { return 0.; }, 0.);
+            auto& m = ch.mesh;
+            // Split the straight fixture into separate walled arms. All
+            // selected arm ends meet a single zero-storage junction.
+            m.node_invert = {0.};
+            m.node_full_depth = {1.e6};
+            m.node_ponded_area = {0.};
+            m.node_kind = {kNodeJunction};
+            m.node_area = {openswmm::constants::MIN_SURFAREA};
+            m.node_vol_off = {-1};
+            m.node_vol_dmax = {0.};
+            m.node_vol_atop = {0.};
+            m.node_face_ptr = {0, degree};
+            m.node_face_idx.clear();
+            m.node_face_sign.clear();
+            m.node_face_zb.assign(degree, 0.);
+            m.chain_ptr = {0};
+            m.face_node[0] = -1;
+            m.face_node[ch.n] = -1;
+            for (int arm = 0; arm < degree; ++arm) {
+                const int first = arm * count, end = first + count;
+                int start_face = 0;
+                if (arm > 0) {
+                    m.face_cr[first] = -1;
+                    m.face_dx[first] = .5;
+                    start_face = m.n_faces();
+                    m.face_cl.push_back(-1); m.face_cr.push_back(first);
+                    m.face_node.push_back(-1); m.face_zb.push_back(0.);
+                    m.face_dx.push_back(.5);
+                    m.face_dir_l.push_back(1); m.face_dir_r.push_back(1);
+                    m.face_virtual.push_back(0); m.face_vj_node.push_back(-1);
+                    m.cell_face0[first] = start_face;
+                }
+                // Alternating orientations exercise both node-face signs.
+                const bool backwards = reverse && arm % 2 == 0;
+                const int port = backwards ? end : start_face;
+                m.face_node[port] = 0;
+                m.node_face_idx.push_back(port);
+                m.node_face_sign.push_back(backwards ? 1. : -1.);
+                m.chain_ptr.push_back(end);
+                for (int c = first; c < end; ++c) {
+                    m.cell_chain[c] = arm;
+                    m.cell_chain_pos[c] = c - first;
+                }
+            }
+            ch.state.resize(ch.n, 1, 0);
+            ch.state.node_head[0] = 0.;
+            ch.state.cell_a[reverse ? count - 3 : 2] = .1;
+            return ch;
+        };
+        auto plain = make(), packed = make();
+        FvOptions options = defaultOptions();
+        options.time_integration = TimeIntegration::RK2;
+        options.lts = false;
+        ExplicitFvSolver full, compact;
+        full.initialize(plain.mesh, plain.state, options);
+        options.compaction = true;
+        compact.initialize(packed.mesh, packed.state, options);
+        FvStepForcing forcing;
+        forcing.n_nodes = 1;
+        ASSERT_EQ(full.advance(0., 2., forcing), 2.);
+        ASSERT_EQ(compact.advance(0., 2., forcing), 2.);
+        EXPECT_EQ(packed.state.cell_a, plain.state.cell_a);
+        EXPECT_EQ(packed.state.cell_q, plain.state.cell_q);
+        EXPECT_EQ(compact.node_continuity_carry(), full.node_continuity_carry());
+        EXPECT_NEAR(totalVolume(packed) + compact.node_continuity_carry()[0], .1, 1.e-10);
+        EXPECT_LT(compact.run_stats().active_frac_max, .9);
+        EXPECT_GT(packed.state.cell_a[64], 0.);
+    }
+}

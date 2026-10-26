@@ -586,16 +586,26 @@ void ExplicitFvSolver::rebuildActiveLists() {
         if (nd < 0)
             continue;
         const auto un = static_cast<std::size_t>(nd);
-        if (state_->node_head[un] - mesh_->face_zb[uf] <= k::kDryDepth)
+        // Storage and prescribed-stage nodes can wet a dry port between
+        // rebuilds, including inside RK2 or an LTS cycle. Keep their receiving
+        // cells (and the normal propagation halo) active from the outset.
+        // Otherwise relaxOneNode can debit storage through an inactive face
+        // while updateCells skips its receiver, destroying the transferred water.
+        const bool independent_head =
+            !node_alg_[un] || (!mesh_->node_can_pond.empty() && mesh_->node_can_pond[un]);
+        if (!independent_head && state_->node_head[un] - mesh_->face_zb[uf] <= k::kDryDepth)
             continue;
         const int cell = (mesh_->face_cl[uf] >= 0) ? mesh_->face_cl[uf] : mesh_->face_cr[uf];
         if (cell >= 0)
             cell_active_[static_cast<std::size_t>(cell)] = 1;
     }
 
-    // Halo. A wet front advances at most CFL ≤ 1 cell per substep, so a halo of
-    // kRebuildInterval cells keeps a stale list conservative for exactly that
-    // many substeps. Every face the non-compacted run would give a NON-ZERO
+    // Each flux evaluation can wet one more cell. RK2 evaluates it twice per
+    // accepted step, so its numerical domain of dependence needs twice the
+    // halo before the next rebuild (even when the physical CFL is below one).
+    // Otherwise stage two can export water to an inactive receiving cell.
+    // The halo keeps a stale list conservative for kRebuildInterval steps.
+    // Every face the non-compacted run would give a NON-ZERO
     // flux is therefore in the list; the ones left out have two dry sides and
     // riemannFlux returns exactly 0.0 for those — which is what makes
     // compaction results-TRANSPARENT rather than merely close (§6.10).
@@ -609,7 +619,9 @@ void ExplicitFvSolver::rebuildActiveLists() {
     // silently becomes the entire downstream reach and compaction stops
     // compacting anything. Each level must expand by exactly one cell.
     halo_prev_.assign(cell_active_.begin(), cell_active_.end());
-    for (int level = 0; level < kRebuildInterval; ++level) {
+    const int halo_levels =
+        kRebuildInterval * (opts_.time_integration == TimeIntegration::RK2 ? 2 : 1);
+    for (int level = 0; level < halo_levels; ++level) {
         bool grew = false;
         for (int f = 0; f < nf; ++f) {
             const auto uf = static_cast<std::size_t>(f);
@@ -626,6 +638,31 @@ void ExplicitFvSolver::rebuildActiveLists() {
             if (halo_prev_[ur] && !cell_active_[ul]) {
                 cell_active_[ul] = 1;
                 grew = true;
+            }
+        }
+        // Ordinary junctions connect separate boundary faces, so a face-only
+        // halo stops at conduit ends. One node solve can send arriving water
+        // into any incident conduit; grow those receivers in the same level.
+        for (std::size_t un = 0; un < node_alg_.size(); ++un) {
+            if (!node_alg_[un])
+                continue;
+            const int begin = mesh_->node_face_ptr[un];
+            const int end = mesh_->node_face_ptr[un + 1];
+            bool connected = false;
+            for (int p = begin; p < end && !connected; ++p) {
+                const int f = mesh_->node_face_idx[static_cast<std::size_t>(p)];
+                const int c = mesh_->face_cl[f] >= 0 ? mesh_->face_cl[f] : mesh_->face_cr[f];
+                connected = c >= 0 && halo_prev_[static_cast<std::size_t>(c)];
+            }
+            if (!connected)
+                continue;
+            for (int p = begin; p < end; ++p) {
+                const int f = mesh_->node_face_idx[static_cast<std::size_t>(p)];
+                const int c = mesh_->face_cl[f] >= 0 ? mesh_->face_cl[f] : mesh_->face_cr[f];
+                if (c >= 0 && !cell_active_[static_cast<std::size_t>(c)]) {
+                    cell_active_[static_cast<std::size_t>(c)] = 1;
+                    grew = true;
+                }
             }
         }
         if (!grew)
@@ -3423,6 +3460,15 @@ void ExplicitFvSolver::rkAverage(const FvStepForcing& forcing) {
     avg_delta(flood_vol_, rk_flood_);
     avg_delta(cell_q_int_, rk_qint_);
     avg_delta(node_carry_, rk_carry_);
+    // Publish the accepted carry, not the unaveraged second-stage balance.
+    // settleAlgebraicNode treats any excess published volume as real water
+    // returning from ponding; a stale value would create it on the next step.
+    for (int n = 0; n < mesh_->n_nodes(); ++n) {
+        const auto un = static_cast<std::size_t>(n);
+        if (algebraicActive(n) &&
+            !(forcing.node_fixed_head && std::isfinite(forcing.node_fixed_head[un])))
+            state_->node_volume[un] = std::max(0.0, node_carry_[un]);
+    }
 
     // The regime latch travels with the state (issue #156 R4c) — the same
     // invariant saveState/restoreState carry for step rejection: h(A) must be
