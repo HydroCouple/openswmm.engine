@@ -586,6 +586,7 @@ if(OPENSWMM_BUILD_2D)
     # steady-slope rain/outflow ledger + normal depth, Froude clamp.
     add_gtest_unit(test_engine_2d_inertial_marcher test_2d_inertial_marcher.cpp)
     add_gtest_unit(test_engine_2d_cpu_correctness test_2d_cpu_correctness.cpp)
+    add_gtest_unit(test_engine_2d_swe_reconstruction test_2d_swe_reconstruction.cpp)
     add_gtest_unit(test_engine_2d_momentum_physics test_2d_momentum_physics.cpp)
     # Tiered LTS gates: exact conservation at every tier count through a
     # multiscale dam-break, K-tier ≈ global-dt equivalence, and the

@@ -767,12 +767,12 @@ private:
      * @brief Rebuild limited active-cell MUSCL gradients of eta, depth and x/y velocity.
      * @note Requires FULL_SWE second-order-sized scratch and valid prepared SI
      * head/depth/momentum/CSR. Zeroes active gradients first; depths<=10*dry retain zero. Fully
-     * connected wet interiors use Green-Gauss plus physical-boundary completion, shores use
-     * conditioned inverse-distance fitting of eta/depth to wet connected neighbors while
-     * velocity slope stays zero. Dry sills exclude neighbors; Barth-Jespersen bounds and face
-     * positivity jointly limit eta/depth. Inactive scratch is retained. Uses disjoint static
-     * cell workers; does not change canonical water/momentum/native inventories, receipts or
-     * clocks. No general finite checks/rollback or allocation in the cell loop.
+     * wet stencils use conditioned inverse-distance fitting of eta/depth/velocity.
+     * Dry sills exclude neighbors; shoreline velocity stays cell-centered. Bounds at connected
+     * face midpoints and vertex wet-cell rings limit velocity; face positivity jointly scales
+     * eta/depth. Vertex CSR is prepared in initialize(), before any checkpoint fingerprint.
+     * Allocates per-vertex bounds outside the cell loop; static workers write disjoint cells.
+     * Does not change water/momentum inventories, receipts, mesh identity or clocks.
      */
     void computeLimitedGradientsSwe();
     MomentumPhysics2D momentum_physics_;

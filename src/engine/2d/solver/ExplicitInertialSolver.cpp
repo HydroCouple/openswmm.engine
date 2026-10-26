@@ -50,6 +50,7 @@
 #include <string>    // std::to_string
 
 #include "../data/MeshData.hpp"
+#include "../mesh/VertexReconstruction.hpp"
 #include "../data/SolverOptions2D.hpp"
 #include "../data/SurfaceStateData.hpp"
 #include "../data/BoundaryData.hpp"
@@ -205,6 +206,8 @@ void ExplicitInertialSolver::initialize(MeshData& mesh, SurfaceStateData& state,
             second_order_ = false;
         }
         if (second_order_) {
+            if (mesh.vert_stencil_ptr.size() != std::size_t(mesh.n_vertices() + 1))
+                buildVertexStencils(mesh);
             const auto un = static_cast<std::size_t>(nt);
             gex_.assign(2 * un, 0.0);
             gey_.assign(2 * un, 0.0);
@@ -1774,6 +1777,17 @@ void ExplicitInertialSolver::refreshConveyance() {
 // ---------------------------------------------------------------------------
 void ExplicitInertialSolver::fireFacesSwe(const std::vector<int>& faces, double dt_f,
                                           bool global_step) {
+    // A finite water proposal can still exceed the pressure/kinetic-flux
+    // range of double precision. Refuse it before booking any face so a
+    // coupled RK2 trial rolls back instead of collapsing its timestep.
+    for (int i : active_cells_) {
+        const double h = state_->depth[i], qx = qcx_[i], qy = qcy_[i];
+        if (!(h >= 0) || !std::isfinite(state_->head[i]) || !std::isfinite(qx) ||
+            !std::isfinite(qy) || !std::isfinite(.5 * swe::kGravity * h * h) ||
+            (h > opts_->dry_depth && !std::isfinite((qx / h) * qx + (qy / h) * qy)))
+            throw std::runtime_error("FULL_SWE pressure or momentum exceeds finite range at cell " +
+                                     std::to_string(i));
+    }
     const auto& ed = edges_;
     const int na = static_cast<int>(faces.size());
     const double beta3 = opts_->exchange_beta / 3.0;
@@ -2179,6 +2193,9 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells, double
     reduction(| : front_breached)
     for (int k = 0; k < nc; ++k) {
         const int i = cells[static_cast<std::size_t>(k)];
+        // Keep the wall flux at the same Euler-stage state as interior faces.
+        const double wall_h0 = kSwe ? state_->depth[i] : 0;
+        const double wall_eta0 = kSwe ? state_->head[i] : 0;
         // ONE walk of this cell's CSR row: gather + clear its side of every
         // incident face accumulator, and (when the Perot reconstruction is
         // live) accumulate its discharge vector from the same face ids. The
@@ -2314,28 +2331,38 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells, double
         if constexpr (swe) {
             const double A = mesh_->tri_area[i];
             const double h_new = state_->depth[i];
-            // WALL boundary faces (every boundary slot without a non-WALL
-            // type) close the pressure balance: the mirror-state Riemann
-            // flux carries no mass but ½g·h² of normal momentum, without
-            // which a cell at rest beside a wall would accelerate away from
-            // it. Booked here at the cell's own cadence (the non-WALL types
-            // fire at tier 0 through boundaryFluxSwe).
-            if (h_new > dry) {
-                // WALL slots come from the CSR built in initialize() (F5):
-                // interior cells have an empty row instead of a neighbour
-                // + boundary-type scan on every firing.
+            if (wall_h0 > dry) {
+                static const bool muscl_off = std::getenv("OPENSWMM_2D_MUSCL_OFF") != nullptr;
+                const bool so = second_order_ && !muscl_off;
                 for (int w = wall_ptr_[i]; w < wall_ptr_[i + 1]; ++w) {
-                    const int slot = wall_slot_[static_cast<std::size_t>(w)];
+                    const int slot = wall_slot_[w];
                     const double nx = mesh_->edge_nx[slot], ny = mesh_->edge_ny[slot];
-                    const double ux = qcx_[i] / h_new, uy = qcy_[i] / h_new;
+                    double eta = wall_eta0, hf = wall_h0, ux = qcx_[i] / wall_h0,
+                           uy = qcy_[i] / wall_h0;
+                    if (so) {
+                        const double ax = mesh_->edge_mx[slot] - mesh_->tri_cx[i];
+                        const double ay = mesh_->edge_my[slot] - mesh_->tri_cy[i];
+                        const auto n = state_->depth.size();
+                        eta += gex_[i] * ax + gey_[i] * ay;
+                        hf = std::max(0., hf + gex_[n + i] * ax + gey_[n + i] * ay);
+                        ux += gux_[i] * ax + guy_[i] * ay;
+                        uy += gvx_[i] * ax + gvy_[i] * ay;
+                    }
                     const double un = ux * nx + uy * ny, ut = -ux * ny + uy * nx;
-                    // Mirror ghost: same depth, reversed normal velocity.
-                    const double qxg = h_new * (-un * nx - ut * ny);
-                    const double qyg = h_new * (-un * ny + ut * nx);
+                    const double ug = -un * nx - ut * ny, vg = -un * ny + ut * nx;
                     swe::FaceFlux F;
                     double cLx, cLy, cRx, cRy;
-                    if (swe::faceFlux(state_->head[i], h_new, qcx_[i], qcy_[i], state_->head[i],
-                                      h_new, qxg, qyg, nx, ny, dry, F, cLx, cLy, cRx, cRy)) {
+                    bool wet;
+                    if (so) {
+                        const double z = wall_eta0 - wall_h0, zf = eta - hf;
+                        wet =
+                            swe::faceFluxReconBed(eta, ux, uy, z, wall_h0, eta, ug, vg, z, wall_h0,
+                                                  nx, ny, dry, F, cLx, cLy, cRx, cRy, zf, zf);
+                    } else
+                        wet = swe::faceFlux(eta, wall_h0, qcx_[i], qcy_[i], eta, wall_h0,
+                                            wall_h0 * ug, wall_h0 * vg, nx, ny, dry, F, cLx, cLy,
+                                            cRx, cRy);
+                    if (wet) {
                         const double xdt = mesh_->edge_length[slot] * dt_c;
                         dmx += (-F.mx + cLx) * xdt;
                         dmy += (-F.my + cLy) * xdt;
@@ -2709,159 +2736,130 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells, double
     flushSourceLedgers();
 }
 
-// RECONSTRUCTION_ORDER 2: limited Green-Gauss gradients in connected wet
-// interiors; a conditioned wet-neighbour fit of eta and depth at shorelines.
-// Shoreline velocity stays cell-centered. Thin cells and insufficient wet
-// stencils stay first order. All face-midpoint depths remain nonnegative.
+// RECONSTRUCTION_ORDER 2: conditioned, linear-exact wet-neighbour gradients.
+// Bound velocity at both face midpoints and cell vertices. Thin cells,
+// ill-conditioned stencils and shoreline velocity retain first-order fallback.
 void ExplicitInertialSolver::computeLimitedGradientsSwe() {
-    const auto depth_offset = state_->depth.size();
+    const auto n = state_->depth.size();
     const auto& ed = edges_;
-    const int na = static_cast<int>(active_cells_.size());
     const double dry = opts_->dry_depth;
+    std::vector<std::array<double, 4>> vertex_bounds;
+    {
+        vertex_bounds.resize(mesh_->n_vertices());
 #pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
-    for (int k = 0; k < na; ++k) {
-        const int i = active_cells_[static_cast<std::size_t>(k)];
-        gex_[depth_offset + i] = gey_[depth_offset + i] = gex_[i] = gey_[i] = gux_[i] = guy_[i] =
-            gvx_[i] = gvy_[i] = 0.0;
-        const double hi = state_->depth[i];
-        if (hi <= 10.0 * dry)
-            continue;
-        const double ei = state_->head[i];
-        const double ui = qcx_[i] / hi, vi = qcy_[i] / hi;
-        const double wi[4] = {ei, ui, vi, hi};
-        double gx[4] = {}, gy[4] = {};
-        double wmin[4] = {ei, ui, vi, hi}, wmax[4] = {ei, ui, vi, hi};
-        const int begin = ed.cell_ptr[i], end = ed.cell_ptr[i + 1];
-        unsigned connected = 0;
-        int nfaces = 0;
-        bool shore = false;
-        for (int p = begin; p < end; ++p) {
-            const int e = ed.cell_edge[p];
-            const int j = (ed.cL[e] == i) ? ed.cR[e] : ed.cL[e];
-            const double hj = state_->depth[j];
-            if (hj <= dry || !cell_active_[j]) {
-                shore = true;
-                continue;
+        for (int v = 0; v < mesh_->n_vertices(); ++v) {
+            double ulo = 1e300, uhi = -1e300, vlo = 1e300, vhi = -1e300;
+            for (int p = mesh_->vert_stencil_ptr[v]; p < mesh_->vert_stencil_ptr[v + 1]; ++p) {
+                const int j = mesh_->vert_stencil_idx[p];
+                const double h = state_->depth[j];
+                if (!cell_active_[j] || h <= dry || state_->head[j] - mesh_->vz[v] <= dry)
+                    continue;
+                const double u = qcx_[j] / h, w = qcy_[j] / h;
+                ulo = std::min(ulo, u);
+                uhi = std::max(uhi, u);
+                vlo = std::min(vlo, w);
+                vhi = std::max(vhi, w);
             }
-            const double ej = state_->head[j];
-            const double sill = std::max(ei - hi, ej - hj);
-            // A wet neighbour behind a dry sill is not a sample of this
-            // cell's connected water surface or velocity field.
-            if (ei - sill <= dry || ej - sill <= dry) {
+            vertex_bounds[v] = {ulo, uhi, vlo, vhi};
+        }
+    }
+#pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
+    for (int k = 0; k < int(active_cells_.size()); ++k) {
+        const int i = active_cells_[k];
+        gex_[n + i] = gey_[n + i] = gex_[i] = gey_[i] = gux_[i] = guy_[i] = gvx_[i] = gvy_[i] = 0;
+        const double hi = state_->depth[i];
+        if (hi <= 10 * dry)
+            continue;
+        const double wi[4] = {state_->head[i], qcx_[i] / hi, qcy_[i] / hi, hi};
+        double lo[4] = {wi[0], wi[1], wi[2], wi[3]}, hiw[4] = {wi[0], wi[1], wi[2], wi[3]};
+        double xx = 0, xy = 0, yy = 0, bx[4] = {}, by[4] = {};
+        unsigned connected = 0;
+        int count = 0;
+        bool shore = false;
+        const int begin = ed.cell_ptr[i], end = ed.cell_ptr[i + 1];
+        for (int p = begin; p < end; ++p) {
+            const int e = ed.cell_edge[p], j = ed.cL[e] == i ? ed.cR[e] : ed.cL[e];
+            const double hj = state_->depth[j], ej = state_->head[j];
+            const double sill = std::max(wi[0] - hi, ej - hj);
+            if (hj <= dry || !cell_active_[j] || wi[0] - sill <= dry || ej - sill <= dry) {
                 shore = true;
                 continue;
             }
             connected |= 1u << (p - begin);
-            const double uj = qcx_[j] / hj, vj = qcy_[j] / hj;
-            const double sgn = static_cast<double>(ed.cell_sign[p]);
-            const double nx = sgn * ed.nx[e] * ed.xi[e], ny = sgn * ed.ny[e] * ed.xi[e];
-            const double w[4] = {0.5 * (ei + ej), 0.5 * (ui + uj), 0.5 * (vi + vj),
-                                 0.5 * (hi + hj)};
-            const double wj[4] = {ej, uj, vj, hj};
+            ++count;
+            const double dx = mesh_->tri_cx[j] - mesh_->tri_cx[i],
+                         dy = mesh_->tri_cy[j] - mesh_->tri_cy[i];
+            const double wt = 1 / (dx * dx + dy * dy);
+            xx += wt * dx * dx;
+            xy += wt * dx * dy;
+            yy += wt * dy * dy;
+            const double wj[4] = {ej, qcx_[j] / hj, qcy_[j] / hj, hj};
             for (int m = 0; m < 4; ++m) {
-                gx[m] += w[m] * nx;
-                gy[m] += w[m] * ny;
-                wmin[m] = std::min(wmin[m], wj[m]);
-                wmax[m] = std::max(wmax[m], wj[m]);
+                bx[m] += wt * dx * (wj[m] - wi[m]);
+                by[m] += wt * dy * (wj[m] - wi[m]);
+                lo[m] = std::min(lo[m], wj[m]);
+                hiw[m] = std::max(hiw[m], wj[m]);
             }
-            ++nfaces;
         }
-        if (nfaces == 0)
+        if (count < 2)
             continue;
-        const int nvc = mesh_->cell_vertex_count(i);
-        double phi[4] = {1.0, 1.0, 1.0, 1.0};
-        if (shore) {
-            if (nfaces < 2)
+        const double det = xx * yy - xy * xy;
+        // Retain the existing shoreline conditioning bound (condition number <98).
+        if (det <= 1e-2 * (xx + yy) * (xx + yy))
+            continue;
+        double gx[4] = {}, gy[4] = {}, phi[4] = {1, 1, 1, 1};
+        for (int m = 0; m < 4; ++m) {
+            if (shore && (m == 1 || m == 2))
                 continue;
-            // Fit eta and depth to connected wet neighbours. Inverse squared
-            // distance weighting makes the geometry test scale independent.
-            // Keep this extra work out of the fully wet interior path.
-            double xx = 0.0, xy = 0.0, yy = 0.0;
-            double bx[4] = {}, by[4] = {};
-            for (int p = begin; p < end; ++p) {
-                if (!(connected & (1u << (p - begin))))
-                    continue;
-                const int e = ed.cell_edge[p];
-                const int j = (ed.cL[e] == i) ? ed.cR[e] : ed.cL[e];
-                const double dx = mesh_->tri_cx[j] - mesh_->tri_cx[i];
-                const double dy = mesh_->tri_cy[j] - mesh_->tri_cy[i];
-                const double wt = 1.0 / (dx * dx + dy * dy);
-                xx += wt * dx * dx;
-                xy += wt * dx * dy;
-                yy += wt * dy * dy;
-                const double wj[4] = {state_->head[j], 0.0, 0.0, state_->depth[j]};
-                for (int m : {0, 3}) {
-                    bx[m] += wt * dx * (wj[m] - wi[m]);
-                    by[m] += wt * dy * (wj[m] - wi[m]);
-                }
-            }
-            const double det = xx * yy - xy * xy;
-            // Nearly opposite wet neighbours do not reliably constrain a
-            // transverse slope. Require a Gram-matrix condition number <98.
-            if (det <= 1e-2 * (xx + yy) * (xx + yy))
-                continue;
-            for (int m : {0, 3}) {
-                gx[m] = (yy * bx[m] - xy * by[m]) / det;
-                gy[m] = (xx * by[m] - xy * bx[m]) / det;
-            }
-            // A drying cell must export its own velocity. Extrapolating it
-            // from the remaining wet neighbours can remove water faster
-            // than momentum and accelerate the residual film.
-            gx[1] = gy[1] = gx[2] = gy[2] = 0.0;
-            phi[1] = phi[2] = 0.0;
-        } else {
-            // Physical boundary faces have no CSR entry: zero-gradient
-            // contribution w_i*n*length completes the Green-Gauss sum.
-            if (nfaces < nvc) {
-                for (int kk = 0; kk < nvc; ++kk) {
-                    if (mesh_->cell_neighbour(i, kk) >= 0)
-                        continue;
-                    const int slot = MeshData::slot(i, kk);
-                    const double nx = mesh_->edge_nx[slot] * mesh_->edge_length[slot];
-                    const double ny = mesh_->edge_ny[slot] * mesh_->edge_length[slot];
-                    for (int m = 0; m < 4; ++m) {
-                        gx[m] += wi[m] * nx;
-                        gy[m] += wi[m] * ny;
-                    }
-                }
-            }
-            const double inv_a = 1.0 / mesh_->tri_area[i];
-            for (int m = 0; m < 4; ++m) {
-                gx[m] *= inv_a;
-                gy[m] *= inv_a;
-            }
+            gx[m] = (yy * bx[m] - xy * by[m]) / det;
+            gy[m] = (xx * by[m] - xy * bx[m]) / det;
         }
+        // Keep the existing scalar BJ bounds, dry-sill exclusion and shoreline
+        // velocity fallback. Only the fully-wet geometric gradient changes.
         for (int p = begin; p < end; ++p) {
             if (!(connected & (1u << (p - begin))))
                 continue;
-            const double ax = ed.cell_arm_x[p], ay = ed.cell_arm_y[p];
             for (int m = 0; m < 4; ++m) {
-                const double wf = wi[m] + gx[m] * ax + gy[m] * ay;
-                phi[m] = std::min(phi[m], swe::bjLimiter(wi[m], wf, wmin[m], wmax[m]));
+                const double wf = wi[m] + gx[m] * ed.cell_arm_x[p] + gy[m] * ed.cell_arm_y[p];
+                phi[m] = std::min(phi[m], swe::bjLimiter(wi[m], wf, lo[m], hiw[m]));
             }
         }
-        // Connected interior faces are already bounded by positive wet
-        // depths. At shore/boundary cells also constrain the omitted faces,
-        // so clipping a negative face value cannot create a different depth
-        // polynomial. Scale eta with h to preserve a flat reconstructed bed.
-        if (nfaces < nvc) {
-            double positive_scale = 1.0;
-            for (int kk = 0; kk < nvc; ++kk) {
-                const int va = mesh_->cell_vertex(i, kk);
-                const int vb = mesh_->cell_vertex(i, (kk + 1) % nvc);
-                const double ax = .5 * (mesh_->vx[va] + mesh_->vx[vb]) - mesh_->tri_cx[i];
-                const double ay = .5 * (mesh_->vy[va] + mesh_->vy[vb]) - mesh_->tri_cy[i];
+        const int nvc = mesh_->cell_vertex_count(i);
+        if (!shore) {
+            for (int k = 0; k < nvc; ++k) {
+                const int v = mesh_->cell_vertex(i, k);
+                if (state_->head[i] - mesh_->vz[v] <= dry) {
+                    phi[1] = phi[2] = 0;
+                    break;
+                }
+                const double ax = mesh_->vx[v] - mesh_->tri_cx[i],
+                             ay = mesh_->vy[v] - mesh_->tri_cy[i];
+                const auto& b = vertex_bounds[v];
+                phi[1] =
+                    std::min(phi[1], swe::bjLimiter(wi[1], wi[1] + gx[1] * ax + gy[1] * ay,
+                                                    std::min(wi[1], b[0]), std::max(wi[1], b[1])));
+                phi[2] =
+                    std::min(phi[2], swe::bjLimiter(wi[2], wi[2] + gx[2] * ax + gy[2] * ay,
+                                                    std::min(wi[2], b[2]), std::max(wi[2], b[3])));
+            }
+        }
+        if (count < nvc) {
+            double positive = 1;
+            for (int e = 0; e < nvc; ++e) {
+                const int a = mesh_->cell_vertex(i, e), b = mesh_->cell_vertex(i, (e + 1) % nvc);
+                const double ax = .5 * (mesh_->vx[a] + mesh_->vx[b]) - mesh_->tri_cx[i];
+                const double ay = .5 * (mesh_->vy[a] + mesh_->vy[b]) - mesh_->tri_cy[i];
                 const double dh = phi[3] * (gx[3] * ax + gy[3] * ay);
                 if (dh < -hi)
-                    positive_scale = std::min(positive_scale, -hi / dh);
+                    positive = std::min(positive, -hi / dh);
             }
-            phi[3] *= positive_scale;
-            phi[0] *= positive_scale;
+            phi[0] *= positive;
+            phi[3] *= positive;
         }
-        gex_[depth_offset + i] = phi[3] * gx[3];
-        gey_[depth_offset + i] = phi[3] * gy[3];
         gex_[i] = phi[0] * gx[0];
         gey_[i] = phi[0] * gy[0];
+        gex_[n + i] = phi[3] * gx[3];
+        gey_[n + i] = phi[3] * gy[3];
         gux_[i] = phi[1] * gx[1];
         guy_[i] = phi[1] * gy[1];
         gvx_[i] = phi[2] * gx[2];
