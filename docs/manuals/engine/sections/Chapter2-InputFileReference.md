@@ -2393,6 +2393,18 @@ Solver
 | ADVECTION | YES / ON / TRUE / NO / OFF / FALSE | NO | Deprecated spelling of MOMENTUM_EQUATION FULL_SWE (2026-09-06). Still honoured so an old deck keeps its physics; a file load warns and names the replacement. |
 | BACKEND | AUTO / CPU / OMP / CUDA / HIP / SYCL | AUTO | Which marcher implementation runs the mesh. CPU is the built-in host marcher; OMP, CUDA, HIP and SYCL name a Kokkos plugin and bypass the mesh-size floors (an absent plugin or device falls back to CPU with a notice). AUTO picks a device plugin above the device floor, the OpenMP plugin above its own floor, else CPU. The OPENSWMM_2D_BACKEND environment variable overrides the key. |
 
+Optional rotating flow and horizontal mixing
+
+These processes require CPU FULL_SWE with LTS_TIERS 1 and uncoupled surface hydraulics; active groundwater, transport, heat, snow or 1D node coupling is refused. Defaults leave both processes disabled. See @ref hydraulics_ref_ch9_two_dimensional for the momentum sources, numerical qualification and limitations.
+
+| Keyword | Values | Default | Description |
+|---|---|---|---|
+| CORIOLIS | OFF / LATITUDE / CONSTANT_F | OFF | Selects no rotation, a Coriolis parameter computed from latitude, or a directly authored parameter. LATITUDE requires CORIOLIS_LATITUDE; CONSTANT_F requires CORIOLIS_F. |
+| CORIOLIS_LATITUDE | finite degrees north in [-90, 90] / UNSET | Unset | Latitude used in LATITUDE mode; UNSET clears the authored value. Inactive values remain stored. |
+| CORIOLIS_F | finite number, s⁻¹ / UNSET | Unset | Signed Coriolis parameter used in CONSTANT_F mode; UNSET clears the authored value. Inactive values remain stored. |
+| TURBULENCE_MODEL | NONE / SMAGORINSKY | NONE | Selects no horizontal mixing or conservative depth-integrated Smagorinsky momentum mixing. This does not add scalar turbulent diffusivity or a wall-damping model. |
+| SMAGORINSKY_CS | finite dimensionless number ≥ 0 | 0.10 | Smagorinsky coefficient, used with filter width equal to the square root of cell area; 0 gives zero eddy viscosity. Only active under TURBULENCE_MODEL SMAGORINSKY. |
+
 Time control
 
 | Keyword | Values | Default | Description |

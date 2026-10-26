@@ -198,6 +198,16 @@ class EventsView(MutableSequence[Event]):
 # ---------------------------------------------------------------------------
 
 
+def abi_tag() -> str:
+    """Return the immutable C ABI identity of the engine loaded by these bindings.
+
+    Compare it with a native host's engine identity before sharing handles.
+    This query creates no solver and is valid before opening a model.
+    The wheel's ``openswmm/engine/_abi.json`` records its expected build identity.
+    """
+    ...
+
+
 def run(
     inp: _PathLike,
     rpt: Optional[_PathLike] = None,

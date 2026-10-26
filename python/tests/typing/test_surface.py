@@ -86,11 +86,16 @@ from openswmm.engine import (
     WaterAgeSource,
     WeirType,
     XSectShape,
+    abi_tag,
     datetime_to_oadate,
     oadate_to_datetime,
     run,
     run_with_callback,
 )
+
+
+def check_engine_identity() -> str:
+    return abi_tag()
 
 
 def check_solver_lifecycle() -> None:
