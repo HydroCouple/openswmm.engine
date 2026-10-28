@@ -1694,6 +1694,15 @@ int SWMMEngine::start(int save_results) noexcept {
 
     save_results_ = save_results;
 
+    // Short runs still need one reporting period (legacy project_validate).
+    // Do this at start so options changed through the API after open/init
+    // also reach both the report clock and the output-file header.
+    const double duration = ctx_.options.totalDurationMs() / 1000.0;
+    if (duration > 0.0 && ctx_.options.report_step > duration) {
+        ctx_.options.report_step = duration;
+        ctx_.next_report_ms = 1000.0 * duration;
+    }
+
     // Legacy DoRouting (swmm5.c:748): DoRouting = (Nobjects[NODE] > 0 &&
     // !IgnoreRouting). Routing execution, statistics, mass balance, the
     // routing-step-size coarsening, and the outfall interface write are all
@@ -1758,7 +1767,8 @@ int SWMMEngine::start(int save_results) noexcept {
     // [FILES] SAVE/USE RUNOFF — auto-open the runoff interface file
     // (legacy runoff_open() → openRunoffFile()). If the C API already
     // opened one explicitly (swmm_runoff_iface_open_*), the slot defers.
-    if (ctx_.files.runoff_mode != FileMode::NONE && !ctx_.files.runoff_path.empty() &&
+    if (ctx_.n_subcatches() > 0 && ctx_.files.runoff_mode != FileMode::NONE &&
+        !ctx_.files.runoff_path.empty() &&
         !(runoff_iface_file_ && runoff_iface_file_->isOpen())) {
         const std::string& rp = !ctx_.files.runoff_path.absolute.empty()
                                     ? ctx_.files.runoff_path.absolute
@@ -2813,15 +2823,10 @@ void SWMMEngine::stepRunoff(double dt_routing) {
             ctx_.files.runoff_mode == FileMode::USE) {
             double file_dt = 0.0;
             if (!runoff_iface_file_->readResults(ctx_, &file_dt)) {
-                // Legacy ERR 327 (read beyond end of runoff interface
-                // file). Freeze the runoff clock at the simulation end so
-                // the last state holds and the loop cannot spin.
+                // Legacy ERR 327 is fatal: holding the last state would
+                // silently complete a simulation with missing runoff data.
                 ctx_.errors.push_back(format_error(ERR_RUNOFF_IFACE_EOF, ""));
-                emit_warning(SWMM_ERR_IO, "USE RUNOFF: attempting to read "
-                                          "beyond end of runoff interface file");
-                new_runoff_time_ = total_sec_clamp;
-                new_runoff_ms_ = ctx_.options.totalDurationMs();
-                break;
+                throw std::runtime_error(ctx_.errors.back());
             }
             if (file_dt <= 0.0)
                 file_dt = 1.0;

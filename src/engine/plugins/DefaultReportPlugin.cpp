@@ -965,6 +965,24 @@ void DefaultReportPlugin::write_preamble(std::FILE* f, const SimulationContext& 
 
     WRITE(f, "");
     WRITE(f, "");
+
+    // Scaling affects results even when [REPORT] INPUT is NO. Keep ordinary
+    // unscaled reports unchanged, but make configured scaling visible.
+    const bool scaled_rain = std::any_of(ctx.gages.scale_factor.begin(),
+        ctx.gages.scale_factor.end(), [](double factor) { return factor != 1.0; });
+    if (scaled_rain) {
+        WRITE(f, "************************");
+        WRITE(f, "Rainfall Scaling Factors");
+        WRITE(f, "************************");
+        WRITE(f, "Configured factors multiply rain gage input.");
+        std::fprintf(f, "\n  Rain Gage             Scale Factor");
+        std::fprintf(f, "\n  ----------------------------------");
+        for (int i = 0; i < ctx.n_gages(); ++i)
+            std::fprintf(f, "\n  %-20s %.17g", ctx.gage_names.name_of(i).c_str(),
+                         ctx.gages.scale_factor[static_cast<std::size_t>(i)]);
+        WRITE(f, "");
+        WRITE(f, "");
+    }
 }
 
 // ---------------------------------------------------------------------------

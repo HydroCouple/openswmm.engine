@@ -645,6 +645,35 @@ TEST_F(OutputPluginRptFlagTest, NoneFlaggedWritesZeroCounts) {
 // 5. DefaultReportPlugin — DISABLED gate
 // ============================================================================
 
+TEST(ReportPluginScalingTest, NonUnitGageFactorsAreVisibleWithoutInputSummary) {
+    const auto directory = fs::path(__FILE__).parent_path().parent_path().parent_path() /
+        "verification/reported_compatibility_2026-10-28/unit";
+    fs::create_directories(directory);
+    for (double factor : {1.0, 2.5}) {
+        SCOPED_TRACE(factor);
+        SimulationContext ctx;
+        ctx.gage_names.add("RG1");
+        ctx.gages.resize(1);
+        ctx.gages.scale_factor[0] = factor;
+        ctx.options.rpt_input = false;
+        const auto path = directory / (factor == 1.0 ? "unscaled.rpt" : "scaled.rpt");
+        DefaultReportPlugin report(path.string());
+        ASSERT_EQ(report.initialize({}, nullptr), 0);
+        ASSERT_EQ(report.validate(ctx), 0);
+        ASSERT_EQ(report.prepare(ctx), 0);
+        ASSERT_EQ(report.finalize(ctx), 0);
+        ASSERT_EQ(report.write_summary(ctx), 0);
+        std::ifstream input(path);
+        const std::string text((std::istreambuf_iterator<char>(input)), {});
+        const auto section = text.find("Rainfall Scaling Factors");
+        EXPECT_EQ(section != std::string::npos, factor != 1.0);
+        if (factor != 1.0) {
+            EXPECT_NE(text.find("RG1", section), std::string::npos);
+            EXPECT_NE(text.find("2.5", section), std::string::npos);
+        }
+    }
+}
+
 TEST(ReportPluginDisabledTest, DisabledWritesSummaryOk) {
     std::string rpt_path = TMP + "test_report_disabled.rpt";
     SimulationContext ctx;

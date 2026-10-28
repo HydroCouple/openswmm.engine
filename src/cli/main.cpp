@@ -53,16 +53,15 @@ static void print_version() {
  * Creates an engine, opens files, initializes and runs until step completion/error, prints progress
  * every 1000 successful advancing steps, then ends/reports/closes/destroys it. Report/output files
  * may be created or overwritten according to the engine API. Prints failures to stdout;
- * end/report/close status is ignored. Each successfully created handle is destroyed on every
+ * end/report/close failures preserve the first failure status. Each created handle is destroyed on every
  * explicit return path.
  *
  * @param[in] argc Process argument count including program name; help/version need one switch,
  *     simulation needs input and report paths.
  * @param[in] argv Borrowed null-terminated argument strings: input, report, optional binary output.
  *     Extra arguments are ignored; an omitted output path disables saved results.
- * @return Zero for help/version and after the stepping/finalization path, even if a step or
- *     finalization call fails. Returns 1 for argument/allocation failures, or the
- *     open/initialize/start error code.
+ * @return Zero for help/version or a successful simulation. Otherwise returns 1 for
+ *     argument/allocation failures, or the first failing engine call's error code.
  */
 int main(int argc, char* argv[]) {
 
@@ -154,16 +153,25 @@ int main(int argc, char* argv[]) {
     std::printf("\n... %ld steps completed.\n", step_count);
 
     // ---- End and report ----
-    swmm_engine_end(engine);
-    swmm_engine_report(engine);
+    int result = err;
+    const auto finalize_status = [&](int status, const char* phase) {
+        if (status != SWMM_OK) {
+            std::printf("Error %s: %s\n", phase, swmm_get_last_error_msg(engine));
+            if (result == SWMM_OK)
+                result = status;
+        }
+    };
+    finalize_status(swmm_engine_end(engine), "ending simulation");
+    finalize_status(swmm_engine_report(engine), "writing report");
 
     // ---- Close and destroy ----
-    swmm_engine_close(engine);
+    finalize_status(swmm_engine_close(engine), "closing simulation");
     swmm_engine_destroy(engine);
 
     // ---- Summary ----
     double run_time = std::difftime(std::time(nullptr), start);
-    std::printf("... OpenSWMM Engine completed in %.2f seconds.\n\n", run_time);
+    std::printf("... OpenSWMM Engine %s in %.2f seconds.\n\n",
+                result == SWMM_OK ? "completed" : "failed", run_time);
 
-    return 0;
+    return result;
 }

@@ -505,7 +505,23 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
             else
                 opt.routing_step = step;
         } else if (key == "MINIMUM_STEP") {
-            readLegacyNumber(ctx, val, opt.min_routing_step, 0.0);
+            if (val.find(':') == std::string::npos) {
+                readLegacyNumber(ctx, val, opt.min_routing_step, 0.0);
+            } else {
+                // GUI/API clock spelling, including fractional seconds.
+                int hours = 0, minutes = 0, consumed = 0;
+                double seconds = 0.0;
+                int fields = std::sscanf(val.c_str(), "%d:%d:%lf%n", &hours, &minutes,
+                                         &seconds, &consumed);
+                if (fields == 2)
+                    fields = std::sscanf(val.c_str(), "%d:%d%n", &hours, &minutes, &consumed);
+                if (fields < 2 || consumed != static_cast<int>(val.size()) || hours < 0 ||
+                    minutes < 0 || minutes >= 60 || !std::isfinite(seconds) ||
+                    seconds < 0.0 || seconds >= 60.0)
+                    ctx.errors.push_back(format_error(ERR_NUMBER, val));
+                else
+                    opt.min_routing_step = hours * 3600.0 + minutes * 60.0 + seconds;
+            }
         } else if (key == "DRY_DAYS") {
             // project_readOption deliberately uses atof, accepting numeric prefixes and junk as 0.
             const double value = std::atof(val.c_str());

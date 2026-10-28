@@ -46,6 +46,7 @@
 #include <gtest/gtest.h>
 
 #include <cstdio>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -373,6 +374,84 @@ TEST_F(FilesIfaceGapsTest, UseRunoff_MissingFileFailsStart) {
     ASSERT_EQ(swmm_files_set(engine_, "RUNOFF_PATH", "no_such_runoff_file.rof"), SWMM_OK);
     EXPECT_NE(swmm_engine_start(engine_, 1), SWMM_OK)
         << "start() must fail when the runoff interface file cannot open";
+}
+
+TEST_F(FilesIfaceGapsTest, RunoffFileIsUnusedWithoutSubcatchments) {
+    const std::string model = R"([OPTIONS]
+FLOW_UNITS CFS
+START_DATE 01/01/2026
+END_DATE 01/01/2026
+END_TIME 01:00:00
+[JUNCTIONS]
+J1 1 1
+[OUTFALLS]
+O1 0 FREE
+[CONDUITS]
+C1 J1 O1 100 0.013 0 0
+[XSECTIONS]
+C1 CIRCULAR 1 0 0 0 1
+[FILES]
+SAVE RUNOFF "missing-directory\runoff.bin"
+)";
+    open_model("rof_unused", model);
+    ASSERT_EQ(swmm_engine_start(engine_, 1), SWMM_OK) << swmm_get_last_error_msg(engine_);
+    run_to_completion();
+}
+
+TEST_F(FilesIfaceGapsTest, TruncatedRunoffFileFailsTheSimulationStep) {
+    const auto path = scratch("gaps_short_runoff.rof");
+    {
+        std::ofstream file(path, std::ios::binary);
+        const std::int32_t header[]{1, 0, 0, 1}; // one subcatchment, CFS, one record
+        const float record[]{60.0f, 0, 0, 0, 0, 0, 0, 0, 0};
+        file.write("SWMM5-RUNOFF", 12);
+        file.write(reinterpret_cast<const char*>(header), sizeof(header));
+        file.write(reinterpret_cast<const char*>(record), sizeof(record));
+    }
+    open_model("rof_short", runoff_model_inp());
+    ASSERT_EQ(swmm_files_set(engine_, "RUNOFF_MODE", "USE"), SWMM_OK);
+    ASSERT_EQ(swmm_files_set(engine_, "RUNOFF_PATH", path.c_str()), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(engine_, 1), SWMM_OK);
+    double elapsed = 0.0;
+    int status = SWMM_OK;
+    for (int step = 0; step < 100 && status == SWMM_OK; ++step)
+        status = swmm_engine_step(engine_, &elapsed);
+    EXPECT_NE(status, SWMM_OK);
+    EXPECT_NE(std::string(swmm_get_last_error_msg(engine_)).find("327"), std::string::npos);
+}
+
+TEST_F(FilesIfaceGapsTest, OverlongReportStepSetAfterInitializationSavesOnePeriod) {
+    open_model("long_report", runoff_model_inp());
+    ASSERT_EQ(swmm_options_set(engine_, "REPORT_STEP", "03:00:00"), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(engine_, 1), SWMM_OK);
+    run_to_completion();
+    destroy_engine();
+    std::ifstream output(scratch("gaps_long_report.out"), std::ios::binary);
+    ASSERT_TRUE(output);
+    output.seekg(-12, std::ios::end);
+    std::int32_t periods = -1;
+    output.read(reinterpret_cast<char*>(&periods), sizeof(periods));
+    ASSERT_TRUE(output);
+    EXPECT_EQ(periods, 1);
+}
+
+TEST_F(FilesIfaceGapsTest, ExactHourRetainsTheFinalReportingPeriod) {
+    auto model = runoff_model_inp();
+    const std::string end = "END_TIME             02:00:00";
+    const auto position = model.find(end);
+    ASSERT_NE(position, std::string::npos);
+    model.replace(position, end.size(), "END_TIME             01:00:00");
+    open_model("exact_hour", model);
+    ASSERT_EQ(swmm_engine_start(engine_, 1), SWMM_OK);
+    run_to_completion();
+    destroy_engine();
+    std::ifstream output(scratch("gaps_exact_hour.out"), std::ios::binary);
+    ASSERT_TRUE(output);
+    output.seekg(-12, std::ios::end);
+    std::int32_t periods = -1;
+    output.read(reinterpret_cast<char*>(&periods), sizeof(periods));
+    ASSERT_TRUE(output);
+    EXPECT_EQ(periods, 12); // 5-minute grid includes the exact 60-minute boundary.
 }
 
 // ---------------------------------------------------------------------------

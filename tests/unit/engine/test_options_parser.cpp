@@ -110,6 +110,30 @@ TEST(OptionsParserTest, MinimumStep) {
     EXPECT_DOUBLE_EQ(ctx.options.min_routing_step, 0.5);
 }
 
+TEST(OptionsParserTest, MinimumStepAcceptsClockAndFractionalSeconds) {
+    for (const auto& [value, seconds] : std::vector<std::pair<std::string, double>>{
+            {"2", 2.0}, {"0:00:02", 2.0}, {"0:00:00.125", 0.125},
+            {"0:02", 120.0}, {"1:02:03.5", 3723.5}}) {
+        SCOPED_TRACE(value);
+        SimulationContext ctx;
+        parse(ctx, {"MINIMUM_STEP " + value});
+        EXPECT_TRUE(ctx.errors.empty());
+        EXPECT_DOUBLE_EQ(ctx.options.min_routing_step, seconds);
+    }
+}
+
+TEST(OptionsParserTest, MinimumStepRejectsMalformedClockWithoutChangingValue) {
+    for (const std::string value : {"0:00:02junk", "0::02", "-1:00:00", "0:60:00",
+                                    "0:00:60", "0:00:nan", "0:00:-1"}) {
+        SCOPED_TRACE(value);
+        SimulationContext ctx;
+        const double before = ctx.options.min_routing_step;
+        parse(ctx, {"MINIMUM_STEP " + value});
+        EXPECT_EQ(ctx.errors.size(), 1u);
+        EXPECT_DOUBLE_EQ(ctx.options.min_routing_step, before);
+    }
+}
+
 // ============================================================================
 // Date separators — legacy datetime_strToDate accepts '-' as well as '/'
 // (`if (strchr(s,'-') || strchr(s,'/'))`, then `%d%c%d%c%d`), so a deck
@@ -422,7 +446,7 @@ TEST(OptionsParserTest, NumericAndDateErrorsMatchLegacy) {
         {"COMPATIBILITY 7", 205}, {"COMPATIBILITY 5junk", 205}, {"COMPATIBILITY 5", 0},
         {"OUTFALL_BACKFLOW_QUALITY BOGUS", 205}, {"OUTFALL_BACKFLOW_QUALITY LASTX", 0},
         {"MINIMUM_STEP abc", 211}, {"MINIMUM_STEP 1junk", 211},
-        {"MINIMUM_STEP -1", 211}, {"MINIMUM_STEP 0:00:01", 211},
+        {"MINIMUM_STEP -1", 211},
         {"MINIMUM_STEP 0", 0}, {"MINIMUM_STEP +0.5", 0},
         {"VARIABLE_STEP abc", 211}, {"VARIABLE_STEP -0.1", 211},
         {"VARIABLE_STEP 2.01", 211}, {"VARIABLE_STEP 0", 0}, {"VARIABLE_STEP 2", 0},
