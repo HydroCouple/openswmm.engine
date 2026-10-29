@@ -342,7 +342,10 @@ void meltThinPack(SnowSoA& soa, std::size_t first, double dt) {
     auto* melt = soa.imelt.data() + first;
     auto* age = soa.age.data();
     auto* out_age = soa.out_age.data();
+    // SIMD requires OpenMP 4.0; classic MSVC /openmp only supports 2.0.
+#if defined(_OPENMP) && _OPENMP >= 201307
 #pragma omp simd simdlen(2)
+#endif
     for (int i = 0; i < N_SUBAREAS; ++i) {
         double imelt = melt[i];
         imelt += (wsnow[i] + free_water[i]) / dt;
