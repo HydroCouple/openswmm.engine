@@ -409,6 +409,7 @@ void applyLinkQualityForcing(SimulationContext& ctx, int n_pollutants, double dt
  */
 void QualitySolver::init(int n_nodes, int n_links, int n_pollutants) {
     n_pollutants_ = n_pollutants;
+    fv_transport_ = {};
     (void)n_nodes;
     (void)n_links;
 }
@@ -538,6 +539,24 @@ void QualitySolver::assembleExternalLoads(SimulationContext& ctx, double dt) {
     addExtInflowLoads(ctx, dt);     // Direct [INFLOWS] CONCEN/MASS loads → nodes
     addCouplingLoads(ctx, dt);      // S3: 2D→1D junction drain (volume + mass)
     addQualityOnlyInflows(ctx, dt); // review D2 + gaining conduits
+
+    if (ctx.options.routing_model == RoutingModel::FV) {
+        // Gross carriers are required by every scalar family. A withdrawal
+        // removes an accepted mixture; it never shrinks a source numerator's carrier.
+        for(int i=0;i<ctx.n_nodes();++i) {
+            double q=ctx.nodes.user_lat_flow[i];
+            if(static_cast<std::size_t>(i)<ctx.forcing.node_lat_inflow_mode.size()) {
+                if(ctx.forcing.node_lat_inflow_mode[i]==ForcingMode::OVERRIDE)q=ctx.forcing.node_lat_inflow_value[i];
+                else if(ctx.forcing.node_lat_inflow_mode[i]==ForcingMode::ADD)q+=ctx.forcing.node_lat_inflow_value[i];
+            }
+            if(q>0) {
+                ctx.nodes.qual_vol_in[i]+=q*dt;
+                addAgeVolume(ctx,i,q,WaterAgeSource::EXTERNAL_INFLOW);
+                addTempVolume(ctx,i,q,HeatSource::EXTERNAL_INFLOW);
+            }
+        }
+        return;
+    }
 
     // legacy seeds the node's quality-inflow DENOMINATOR with the NET lateral
     // flow floored at zero — routing.c:480, Node.qualInflow =
@@ -816,6 +835,20 @@ void QualitySolver::execute(SimulationContext& ctx, double dt) {
         return;
 
     assembleExternalLoads(ctx, dt);
+    if (ctx.options.routing_model==RoutingModel::FV && fv_transport_.execute(ctx,dt)) {
+        updateUntreatedStorageHrt(ctx,dt);
+        if(transport::legacyReactionsActive(ctx)) {
+            transport::reactLegacyNodes(ctx,dt);
+            transport::reactLegacyLinks(ctx,dt);
+        } else fv_transport_.applyPollutantDecay(ctx,dt);
+        applyLinkQualityForcing(ctx,n_pollutants_,dt);
+        if(transport::heat::bedExchangeEnabled(ctx)) {
+            const int np=ctx.links.conc_n_pollutants,nm=ctx.reactions.n_species(),nt=np+nm;
+            if(np>0)transport::heat::applyBedSoluteExchange(ctx,ctx.links.conc.data(),np,0,nt,dt);
+            if(nm>0)transport::heat::applyBedSoluteExchange(ctx,ctx.reactions.msx_link_conc.data(),nm,np,nt,dt);
+        }
+        return;
+    }
     lidnode::prepareQuality(ctx, dt);
     msxlid::prepareNodes(ctx, dt);
     const bool coupled_lids =

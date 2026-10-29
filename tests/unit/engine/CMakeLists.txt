@@ -328,6 +328,16 @@ target_compile_definitions(test_engine_routing PRIVATE
     "BENCHMARK_DATA_DIR=\"${PROJECT_SOURCE_DIR}/tests/benchmarks\""
 )
 add_gtest_unit(test_engine_quality_routing  test_quality_routing.cpp)
+add_gtest_unit(test_engine_fv_conservative_mixing test_fv_conservative_mixing.cpp)
+add_gtest_unit(test_engine_fv_transport_allocations test_fv_transport_allocations.cpp)
+add_gtest_unit(test_engine_fv_accepted_water test_fv_accepted_water.cpp)
+add_gtest_unit(test_engine_fv_scalar_dry_inventory test_fv_scalar_dry_inventory.cpp)
+add_gtest_unit(test_engine_fv_dry_restart test_fv_dry_restart.cpp)
+target_compile_definitions(test_engine_fv_dry_restart PRIVATE
+    OPENSWMM_FV_DRY_RESTART_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output/fv_dry_restart")
+add_gtest_unit(test_engine_fv_conservative_quality test_fv_conservative_quality.cpp)
+target_compile_definitions(test_engine_fv_conservative_quality PRIVATE
+    OPENSWMM_FV_CONSERVATIVE_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output/fv_conservative_quality")
 target_compile_definitions(test_engine_quality_routing PRIVATE
     "BENCHMARK_DATA_DIR=\"${PROJECT_SOURCE_DIR}/tests/benchmarks\""
 )

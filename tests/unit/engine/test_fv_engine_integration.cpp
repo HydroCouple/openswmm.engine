@@ -40,6 +40,7 @@
 #include <string>
 #include <vector>
 
+#include "core/SWMMEngine.hpp"
 #include "openswmm/engine/openswmm_engine.h"
 #include "openswmm/engine/openswmm_model.h"
 
@@ -2313,4 +2314,182 @@ TEST(FvEngine, ALakeAtRestOverAnEmergedBankStaysAtRest) {
     EXPECT_LT(fv.peak_flow.at("C4"), 0.05) << "peak " << fv.peak_flow.at("C4") << " cfs in C4";
 
     EXPECT_LT(std::fabs(fv.continuity_pct), 0.05) << fv.continuity_pct;
+}
+
+// FV rates published at a routing boundary are means over the accepted window.
+// With changing sources and unequal windows, a second trapezoid invents a
+// reporting imbalance even when accepted source minus discharge equals storage.
+TEST(FvEngine, ReportedVolumesUseAcceptedWindows) {
+    const auto base = outDir() + "/accepted_window_totals";
+    std::ofstream file(base + ".inp");
+    file << "[OPTIONS]\nFLOW_UNITS CFS\nFLOW_ROUTING FV\n"
+            "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
+            "END_DATE 01/01/2026\nEND_TIME 00:03:00\n"
+            "REPORT_STEP 00:00:01\nROUTING_STEP 7\nVARIABLE_STEP 0\n"
+            "FV_MIN_CELLS 4\nFV_TIME_INTEGRATION EULER\nFV_LTS NO\n"
+            "[STORAGE]\nS 0 10 0 FUNCTIONAL 0 0 100\n"
+            "[OUTFALLS]\nO 0 FREE YES\n"
+            "[CONDUITS]\nC1 S O 100 0.013 0 0\n"
+            "[XSECTIONS]\nC1 RECT_OPEN 10 2 0 0\n"
+            "[INFLOWS]\nS FLOW P FLOW 1 1\n"
+            "[TIMESERIES]\nP 0:00 2\nP 0:01 10\nP 0:02 1\nP 0:03 7\n"
+            "[REPORT]\nNODES ALL\nLINKS ALL\n";
+    file.close();
+    openswmm::SWMMEngine engine;
+    ASSERT_EQ(engine.open((base + ".inp").c_str(), (base + ".rpt").c_str(),
+                          (base + ".out").c_str()), 0);
+    ASSERT_EQ(engine.initialize(), 0);
+    ASSERT_EQ(engine.start(1), 0);
+    auto& ctx = engine.context();
+    const int source = ctx.node_names.find("S");
+    ASSERT_GE(source, 0);
+    double supplied = 0.0, discharged = 0.0;
+    double received = ctx.nodes.volume[source];
+    double elapsed = 0.0;
+    int windows = 0;
+    do {
+        ctx.options.routing_step = (++windows % 2) ? 3.0 : 7.0;
+        const double before = ctx.current_time;
+        ASSERT_EQ(engine.step(&elapsed), 0);
+        const double dt = ctx.current_time - before;
+        supplied += ctx.nodes.lat_flow[source] * dt;
+        received += ctx.nodes.inflow[source] * dt;
+        discharged += ctx.nodes.outflow[source] * dt;
+        EXPECT_NEAR(ctx.mass_balance.routing_report[5], supplied, 1e-8);
+        EXPECT_NEAR(ctx.nodes.stat_total_inflow_vol[source], received, 1e-8);
+        EXPECT_NEAR(ctx.nodes.stat_total_outflow_vol[source], discharged, 1e-8);
+        // The source storage is an independently integrated control volume.
+        EXPECT_NEAR(received - discharged, ctx.nodes.volume[source], 1e-7);
+    } while (elapsed > 0.0);
+    ASSERT_GT(windows, 10);
+    ASSERT_GT(supplied, 100.0);
+    ASSERT_GT(discharged, 0.0);
+    ASSERT_EQ(engine.end(), 0);
+    EXPECT_NEAR(ctx.mass_balance.routing_report[8], ctx.mass_balance.routing_outflow, 1e-8);
+    ASSERT_EQ(engine.report(), 0);
+}
+
+TEST(FvEngine, VirtualJunctionTotalsUseTheSplicedFace) {
+    for (const std::string mode : {"EULER", "RK2", "LTS"}) {
+        const auto base = outDir() + "/virtual_face_totals_" + mode;
+        std::ofstream file(base + ".inp");
+        file << "[OPTIONS]\nFLOW_UNITS CFS\nFLOW_ROUTING FV\n"
+                "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
+                "END_DATE 01/01/2026\nEND_TIME 00:01:00\n"
+                "REPORT_STEP 00:00:01\nROUTING_STEP 3\nVARIABLE_STEP 0\n"
+                "FV_MIN_CELLS 4\nFV_TIME_INTEGRATION "
+             << (mode == "RK2" ? "RK2" : "EULER") << "\nFV_LTS "
+             << (mode == "LTS" ? "YES" : "NO") << "\n"
+                "[STORAGE]\nS 0 10 2 FUNCTIONAL 0 0 100\n"
+                "D 0 10 0.2 FUNCTIONAL 0 0 100\n"
+                "[OUTFALLS]\nO 0 FREE YES\n"
+                "[VIRTUAL_JUNCTIONS]\nV 0 10\n"
+                "[CONDUITS]\nC1 S V 100 0.013 0 0\nC2 V D 100 0.013 0 0\n"
+                "[XSECTIONS]\nC1 RECT_OPEN 10 2 0 0\nC2 RECT_OPEN 10 2 0 0\n"
+                "[REPORT]\nNODES ALL\nLINKS ALL\n";
+        file.close();
+        openswmm::SWMMEngine engine;
+        ASSERT_EQ(engine.open((base + ".inp").c_str(), (base + ".rpt").c_str(),
+                              (base + ".out").c_str()), 0);
+        ASSERT_EQ(engine.initialize(), 0);
+        ASSERT_EQ(engine.start(1), 0);
+        auto& ctx = engine.context();
+        const int vj = ctx.node_names.find("V");
+        const int downstream = ctx.node_names.find("D");
+        const int pipe = ctx.link_names.find("C2");
+        ASSERT_GE(vj, 0);
+        ASSERT_GE(downstream, 0);
+        ASSERT_GE(pipe, 0);
+        // O satisfies the model's outfall requirement but is disconnected;
+        // S--V--D is a closed system with an independent storage balance.
+        const double initial = ctx.nodes.volume[downstream] + ctx.links.volume[pipe];
+        double elapsed = 0.0;
+        do {
+            ASSERT_EQ(engine.step(&elapsed), 0);
+            EXPECT_DOUBLE_EQ(ctx.nodes.inflow[vj], ctx.nodes.outflow[vj]) << mode;
+            EXPECT_DOUBLE_EQ(ctx.nodes.volume[vj], 0.0);
+        } while (elapsed > 0.0);
+        const double transferred = ctx.nodes.stat_total_inflow_vol[vj];
+        const double gain = ctx.nodes.volume[downstream] + ctx.links.volume[pipe] - initial;
+        EXPECT_GT(gain, 1.0) << mode;
+        EXPECT_GE(transferred + 1e-7, std::fabs(gain)) << mode;
+        EXPECT_DOUBLE_EQ(transferred, ctx.nodes.stat_total_outflow_vol[vj]) << mode;
+        ASSERT_EQ(engine.end(), 0);
+        EXPECT_NEAR(ctx.mass_balance.routing_error(), 0.0, 1e-10) << mode;
+        ASSERT_EQ(engine.report(), 0);
+    }
+}
+
+TEST(FvEngine, ReversingStageOutfallBalancesAcceptedWater) {
+    // A rising downstream stage reverses a boundary within a routing window.
+    // FV integrates both directions; dropping the reverse receipt when the
+    // forward receipt is also nonzero used to lose up to 1.25 ft3 here.
+    for (const std::string mode : {"EULER", "RK2", "LTS"}) {
+        const auto base = outDir() + "/stage_reversal_balance_" + mode;
+        std::ofstream file(base + ".inp");
+        file.precision(17);
+        file << "[OPTIONS]\nFLOW_UNITS CFS\nFLOW_ROUTING FV\n"
+                "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
+                "END_DATE 01/01/2026\nEND_TIME 00:02:00\n"
+                "REPORT_STEP 00:00:01\nROUTING_STEP 0.25\nVARIABLE_STEP 0\n"
+                "FV_MIN_CELLS 4\nFV_CFL 0.09375\nFV_ORDER 1\n"
+                "FV_SLOT_CELERITY 25\nFV_PRESSURIZED_IMPLICIT NO\n"
+                "FV_TIME_INTEGRATION "
+             << (mode == "RK2" ? "RK2" : "EULER") << "\nFV_LTS "
+             << (mode == "LTS" ? "YES" : "NO") << "\n"
+                "[OUTFALLS]\nN0 25.50384 FIXED 29.50384 NO\n"
+                "N24 0 TIMESERIES LEVEL NO\n[VIRTUAL_JUNCTIONS]\n";
+        const double lengths[] = {39.5, 40.0, 39.9};
+        double distance = 0.0;
+        for (int i = 1; i < 24; ++i) {
+            distance += lengths[(i - 1) % 3];
+            file << 'N' << i << ' ' << 25.50384 - distance * 0.0267 << " 9\n";
+        }
+        file << "[CONDUITS]\n";
+        for (int i = 0; i < 24; ++i)
+            file << 'C' << i << " N" << i << " N" << i + 1 << ' ' << lengths[i % 3]
+                 << " 0.012857 0 0\n";
+        file << "[XSECTIONS]\n";
+        for (int i = 0; i < 24; ++i)
+            file << 'C' << i << " CIRCULAR 9 0 0 0 1\n";
+        file << "[TIMESERIES]\nLEVEL 0:00 0\nLEVEL 0:02 35\n"
+                "[REPORT]\nNODES ALL\nLINKS ALL\n";
+        file.close();
+        openswmm::SWMMEngine engine;
+        ASSERT_EQ(engine.open((base + ".inp").c_str(), (base + ".rpt").c_str(),
+                              (base + ".out").c_str()), 0);
+        ASSERT_EQ(engine.initialize(), 0);
+        ASSERT_EQ(engine.start(0), 0);
+        auto& ctx = engine.context();
+        double initial = 0.0;
+        for (double v : ctx.links.volume)
+            initial += v;
+        double elapsed = 0.0;
+        std::vector<double> accepted_reverse(ctx.n_nodes(), 0.0);
+        do {
+            const double before = ctx.current_time;
+            ASSERT_EQ(engine.step(&elapsed), 0) << engine.last_error_message();
+            const double dt = ctx.current_time - before;
+            for (int n = 0; n < ctx.n_nodes(); ++n)
+                if (ctx.nodes.type[n] == openswmm::NodeType::OUTFALL)
+                    accepted_reverse[n] += ctx.nodes.outflow[n] * dt * 0.028316846592;
+        } while (elapsed > 0.0);
+        ASSERT_EQ(engine.end(), 0);
+        double final = 0.0;
+        for (double v : ctx.links.volume)
+            final += v;
+        EXPECT_NEAR(final - initial,
+                    ctx.mass_balance.routing_external - ctx.mass_balance.routing_outflow, 1e-7)
+            << mode;
+        EXPECT_NEAR(ctx.mass_balance.routing_error(), 0.0, 1e-9) << mode;
+        bool reversed = false;
+        for (int n = 0; n < ctx.n_nodes(); ++n) {
+            EXPECT_NEAR(ctx.outfall_exports.reverse_m3[n], accepted_reverse[n], 1e-9)
+                << mode << " node " << n;
+            reversed |= ctx.outfall_exports.water_m3[n] > 0.0 &&
+                        ctx.outfall_exports.reverse_m3[n] > 0.0;
+        }
+        EXPECT_TRUE(reversed) << "fixture must exercise a reversing boundary: " << mode;
+        ASSERT_EQ(engine.report(), 0);
+    }
 }

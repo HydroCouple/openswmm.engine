@@ -301,6 +301,12 @@ enum class EngineState : int32_t {
  * @ingroup engine_core
  */
 struct StateAccessors {
+    /// Guard saves when a caller has no FV dry-inventory accessor.
+    std::function<bool()> has_fv_retained_dry_mass;
+    std::function<std::string()> get_fv_dry_state;
+    std::function<std::string(const std::string&,bool)> set_fv_dry_state;
+    std::function<std::vector<double>()> get_fv_retained_pollutant_mass;
+    std::function<std::vector<double>()> get_fv_retained_species_mass;
     std::function<std::vector<ChannelThermalRegion>()> get_channel_thermal_regions;
     // Each region appears once. Validate the complete batch before mutation.
     std::function<std::string(const std::vector<ChannelThermalIncrement>&)>
@@ -1247,12 +1253,11 @@ struct SimulationContext {
 
         /// The eleven routing flow terms above (dry weather, wet weather,
         /// groundwater, conduit GW, RDII, external, flooding, coupling out,
-        /// outflow, evaporation, seepage — in that order) accumulated as
-        /// legacy massbal_updateRoutingTotals does, for the printed Flow
-        /// Routing Continuity block only: each step's rate over half the step
-        /// at its start (the previous rate) and at its end. This lags the
-        /// exact ledger by half of the last step; the ledger above stays
-        /// exact so the cross-domain closure checks hold.
+        /// outflow, evaporation, seepage — in that order) for the printed
+        /// Flow Routing Continuity block. FV uses accepted-window volumes;
+        /// its published rates are already interval means. Other routing
+        /// models retain legacy half-step integration of previous/current
+        /// rates. The ledger above remains the exact cross-domain authority.
         std::array<double, 11> routing_report{};
 
         // User-forced volumes (diagnostic — subset of routing_external)

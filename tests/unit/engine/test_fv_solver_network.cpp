@@ -347,7 +347,7 @@ TEST(FvNetwork, VirtualJunctionIsIndistinguishableFromAnInteriorCut) {
         for (std::size_t j = 0; j < order.size(); ++j) {
             const auto uc = static_cast<std::size_t>(order[j]);
             const double x = (static_cast<double>(j) + 0.5) * dx;
-            const double eta = (x < 400.0) ? 9.0 : 6.5; // a step to propagate
+            const double eta = (x < 400.0) ? 12.0 : 10.5; // a step to propagate
             c.state.cell_a[uc] =
                 k::areaOfDepth(c.mesh.geom[0], std::max(0.0, eta - c.mesh.cell_zb[uc]));
             c.state.cell_q[uc] = 0.0;
@@ -361,6 +361,11 @@ TEST(FvNetwork, VirtualJunctionIsIndistinguishableFromAnInteriorCut) {
     for (bool reversed : {false, true}) {
         Channel plain = makeWalledChannel(xs, 2 * half, dx, bed, 0.02);
         seed(plain, identity);
+        // Beds range from about 9 to 10 ft. Keep both sides wet so this
+        // equivalence check actually evaluates fluxes and transports water.
+        ASSERT_GT(totalVolume(plain), 0.0);
+        ASSERT_GT(plain.state.cell_a.front(), 0.0);
+        ASSERT_GT(plain.state.cell_a.back(), 0.0);
         Channel split = makeSplitChannel(xs, half, dx, 0.02, reversed);
         const std::vector<int> order = physicalOrder(half, reversed);
         seed(split, order);
@@ -1264,5 +1269,46 @@ TEST(FvNetwork, CompactionHaloCrossesMultiwayJunctions) {
         EXPECT_NEAR(totalVolume(packed) + compact.node_continuity_carry()[0], .1, 1.e-10);
         EXPECT_LT(compact.run_stats().active_frac_max, .9);
         EXPECT_GT(packed.state.cell_a[64], 0.);
+    }
+}
+
+TEST(FvNetwork, Rk2AveragesScalarInventoryAcrossChangingSlotVolumes) {
+    // Scalar inventory is A*phi. Averaging concentrations directly loses
+    // inventory when the two RK stages have different cell water areas.
+    for (auto riemann : {RiemannSolver::HLL, RiemannSolver::HLLC}) {
+        constexpr int n = 60;
+        auto ch = makeWalledChannel(circular(9.0), n, 2.0, [](double) { return 0.0; }, 0.0, 25.0);
+        ch.state.resize(n, 0, 3);
+        for (int i = 0; i < n; ++i) {
+            ch.state.cell_a[i] = k::areaOfDepth(ch.mesh.geom[0], 8.95 + 0.15 * std::sin(0.2 * i));
+            ch.state.cell_q[i] = 10.0 * std::sin(0.3 * i);
+            ch.state.cell_phi[i] = 7.25;
+            ch.state.cell_phi[n + i] = i < n / 2 ? 20.0 : 2.0;
+            ch.state.cell_phi[2 * n + i] = 3.0 + 0.01 * i;
+        }
+        auto inventory = [&](int species) {
+            double mass = 0.0;
+            for (int i = 0; i < n; ++i)
+                mass += ch.state.cell_a[i] * ch.mesh.cell_dx[i] * ch.state.cell_phi[species * n + i];
+            return mass;
+        };
+        const double initial[] = {inventory(0), inventory(1), inventory(2)};
+        FvOptions options;
+        options.order = 1;
+        options.cfl = 0.1875;
+        options.slot_celerity = 25.0;
+        options.lts = false;
+        options.riemann = riemann;
+        options.time_integration = TimeIntegration::RK2;
+        ExplicitFvSolver solver;
+        solver.initialize(ch.mesh, ch.state, options);
+        FvStepForcing forcing;
+        for (double t = 0.0; t < 5.0; t += 0.25)
+            ASSERT_NEAR(solver.advance(t, t + 0.25, forcing), t + 0.25, 1e-10);
+        for (int species = 0; species < 3; ++species)
+            EXPECT_NEAR(inventory(species), initial[species], 1e-10 * initial[species])
+                << "riemann=" << static_cast<int>(riemann) << " species=" << species;
+        for (int i = 0; i < n; ++i)
+            EXPECT_NEAR(ch.state.cell_phi[i], 7.25, 1e-10);
     }
 }

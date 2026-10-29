@@ -188,7 +188,7 @@ std::string overTopModel(const std::string& closure, bool apex_sealed, double in
           "START_TIME           00:00:00\n"
           "END_DATE             01/01/2026\n"
           "END_TIME             00:30:00\n"
-          "REPORT_STEP          2\n"
+          "REPORT_STEP          00:00:02\n"
           "ROUTING_STEP         0.5\n"
           "FV_MIN_CELLS         6\n"
           "FV_SLOT_CELERITY     100\n"
@@ -493,6 +493,9 @@ TEST(FvTpa, SignedHeadsReachTheOutFile) {
                                                               "REPORT_SIGNED_HEADS  YES\n",
                                                               true));
     ASSERT_TRUE(on.ok);
+    const auto off = runDrawdown("tpa_dd_unsigned", overTopModel("FV_PRESSURE_CLOSURE  TPA\n",
+                                                               true));
+    ASSERT_TRUE(off.ok);
     // Minimum of the APEX node's HEAD series specifically — a global
     // minimum would trivially pick the outfall at elevation 0.
     auto min_out_head = [](const std::string& path) {
@@ -502,27 +505,38 @@ TEST(FvTpa, SignedHeadsReachTheOutFile) {
             return 1e9;
         const int periods = swmm_output_get_period_count(out);
         const int nn = swmm_output_get_node_count(out);
+        // Bare REPORT_STEP 2 means two HOURS, not two seconds. Require the
+        // intended 30-minute series so a header-only file cannot pass a gate.
+        EXPECT_EQ(periods, 900);
+        if (periods != 900) {
+            swmm_output_close(out);
+            return 1e9;
+        }
         double best = 1e9;
+        bool found = false;
         std::vector<float> series(static_cast<std::size_t>(periods), 0.0f);
         for (int n = 0; n < nn; ++n) {
             const char* id = swmm_output_get_node_id(out, n);
             if (!id || std::string(id) != "JS")
                 continue;
+            found = true;
             // Returns 0 on success (not a count).
-            if (swmm_output_get_node_series(out, n, SWMM_OUT_NODE_HEAD, 0, periods - 1,
-                                            series.data()) != 0)
+            const int rc = swmm_output_get_node_series(out, n, SWMM_OUT_NODE_HEAD, 0, periods - 1,
+                                                      series.data());
+            EXPECT_EQ(rc, 0);
+            if (rc != 0)
                 continue;
             for (int i = 0; i < periods; ++i)
                 best = std::min(best, static_cast<double>(series[static_cast<std::size_t>(i)]));
         }
+        EXPECT_TRUE(found) << "JS missing from node output";
         swmm_output_close(out);
         return best;
     };
     EXPECT_LT(min_out_head(outPath("tpa_dd_signed.out")), 5.8)
         << "signed vacuum did not reach the .out HEAD field";
-    // The unsigned control: the earlier sealed run (no option) must stay
-    // floored at the apex invert.
-    EXPECT_GE(min_out_head(outPath("tpa_dd_tpa.out")), 5.99)
+    // The independent unsigned control must stay floored at the apex invert.
+    EXPECT_GE(min_out_head(outPath("tpa_dd_unsigned.out")), 5.99)
         << "default-path .out heads went sub-invert — parity broken";
 }
 
@@ -555,7 +569,7 @@ std::string fillingSurgeDeck(const std::string& celerity, const std::string& ext
            "START_TIME           00:00:00\n"
            "END_DATE             01/01/2026\n"
            "END_TIME             00:02:00\n"
-           "REPORT_STEP          1\n"
+           "REPORT_STEP          00:00:01\n"
            "ROUTING_STEP         0.01\n"
            "MIN_SURFAREA         0.05\n"
            "INERTIAL_DAMPING     NONE\n"

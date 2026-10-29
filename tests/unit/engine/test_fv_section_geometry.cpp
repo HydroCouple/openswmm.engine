@@ -433,3 +433,37 @@ TEST(FvSectionGeometry, LegacyTableErrorAgainstTheExactSectionIsRecorded) {
         EXPECT_TRUE(std::isfinite(max_a) && std::isfinite(max_w) && std::isfinite(max_r)) << c.name;
     }
 }
+
+// The fused lookup must retain the separate native evaluations exactly,
+// including signed zero and the floating-point neighbors of panel/crown edges.
+TEST(FvSectionGeometry, FusedFrictionRadiusIsBitIdenticalAtPanelBoundaries) {
+    for (const Case& c : allCases()) {
+        for (int barrels : {1, 3}) {
+            for (double celerity : {25.0, 100.0, 1000.0}) {
+                const auto g = build(c, celerity, barrels);
+                const auto& table = g.closure_tbl;
+                auto check = [&](double h) {
+                    double radius = -1.0;
+                    const auto actual = k::closureEval(table, h, radius);
+                    const auto expected = k::closureEval(table, h);
+                    const auto r = k::closureHydRad(table, h);
+                    EXPECT_EQ(std::memcmp(&actual.a, &expected.a, sizeof(double)), 0) << c.name << " h=" << h;
+                    EXPECT_EQ(std::memcmp(&actual.t, &expected.t, sizeof(double)), 0) << c.name << " h=" << h;
+                    EXPECT_EQ(std::memcmp(&actual.i1, &expected.i1, sizeof(double)), 0) << c.name << " h=" << h;
+                    EXPECT_EQ(std::memcmp(&radius, &r, sizeof(double)), 0) << c.name << " h=" << h;
+                };
+                check(-1.0); check(-0.0); check(0.0);
+                check(std::nextafter(0.0, 1.0));
+                for (int i = 0; i <= openswmm::fv::kClosurePanels; ++i) {
+                    const double h = i * table.dh;
+                    check(h); check(std::nextafter(h, -INFINITY));
+                    check(std::nextafter(h, INFINITY));
+                    check(h + 0.37 * table.dh);
+                }
+                check(table.y_full); check(std::nextafter(table.y_full, 0.0));
+                check(std::nextafter(table.y_full, INFINITY));
+                check(table.y_full + 100.0);
+            }
+        }
+    }
+}

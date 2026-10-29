@@ -113,6 +113,11 @@ struct FvStepForcing {
 
     int n_nodes = 0;
     int n_links = 0;
+    /// Optional gross external withdrawal requests (cfs). Native CPU routing
+    /// refuses the unavailable share instead of accumulating negative water.
+    /// Null preserves callers without an external-withdrawal contract.
+    const double* node_withdrawal = nullptr;
+
 };
 
 /**

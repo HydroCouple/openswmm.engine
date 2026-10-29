@@ -483,6 +483,11 @@ bool HotStartManager::write_file(const HotStartFile& hs, const std::string& path
         if (!buf.good())
             return false;
     }
+    if(hs.header.version>=18u) {
+        if(hs.fv_dry_state.size()>64u*1024u*1024u || !write_pod(buf,static_cast<uint32_t>(hs.fv_dry_state.size())))return false;
+        buf.write(hs.fv_dry_state.data(),static_cast<std::streamsize>(hs.fv_dry_state.size()));
+        if(!buf.good())return false;
+    }
     // Compute CRC32 over the body
     const std::string body = buf.str();
     const uint32_t crc = crc32(reinterpret_cast<const uint8_t*>(body.data()), body.size());
@@ -554,7 +559,7 @@ bool HotStartManager::read_file(HotStartFile& hs, const std::string& path) {
     // Header
     if (!read_pod(is, hs.header.version))
         return false;
-    if (hs.header.version < 1u || hs.header.version > 17u) {
+    if (hs.header.version < 1u || hs.header.version > 18u) {
         tl_last_io_error = "Unsupported hot start version " + std::to_string(hs.header.version) +
                            " in '" + path + "'";
         return false;
@@ -836,12 +841,18 @@ bool HotStartManager::read_file(HotStartFile& hs, const std::string& path) {
     }
     if (hs.header.version >= 17u) {
         uint32_t size = 0;
-        if (!read_pod(is, size) || size == 0 || size > 64u * 1024u * 1024u || size > file_size)
+        if (!read_pod(is, size) || (size == 0 && hs.header.version < 18u) || size > 64u * 1024u * 1024u || size > file_size)
             return false;
         hs.gw_transport_state.resize(size);
         is.read(hs.gw_transport_state.data(), size);
         if (!is.good())
             return false;
+    }
+    if(hs.header.version>=18u) {
+        uint32_t size=0;
+        if(!read_pod(is,size)||size>64u*1024u*1024u||size>file_size)return false;
+        hs.fv_dry_state.resize(size);
+        if(size) {is.read(hs.fv_dry_state.data(),size);if(!is.good())return false;}
     }
     hs.path = path;
     return true;
@@ -1565,6 +1576,10 @@ void restoreAquiferBlock(const HotStartFile& hs, SimulationContext& ctx,
 
 HotStartFile* HotStartManager::save(const SimulationContext& ctx, const std::string& path) {
     tl_last_io_error.clear();
+    if(ctx.state_accessors.has_fv_retained_dry_mass && ctx.state_accessors.has_fv_retained_dry_mass() && !ctx.state_accessors.get_fv_dry_state) {
+        tl_last_io_error = "Hotstart cannot preserve retained FV dry scalar inventory; save after it remobilizes.";
+        return nullptr;
+    }
     if (!ctx.reactions.lid_controls.empty()) {
         tl_last_io_error = "LID reaction inventories require a full native engine checkpoint";
         return nullptr;
@@ -1704,6 +1719,7 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx, const std::str
     if (!hs->gw_interface.empty())
         hs->header.version = std::max(hs->header.version, 13u);
     try {
+        if(ctx.state_accessors.get_fv_dry_state)hs->fv_dry_state=ctx.state_accessors.get_fv_dry_state();
         if (ctx.state_accessors.get_snow_state)
             hs->snow_state = ctx.state_accessors.get_snow_state();
         if (!hs->snow_state.empty())
@@ -1719,6 +1735,7 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx, const std::str
         if (!hs->gw_transport_state.empty())
             hs->header.version = 17u;
 #endif
+        if(!hs->fv_dry_state.empty())hs->header.version=18u;
     } catch (const std::exception& e) {
         tl_last_io_error = e.what();
         delete hs;
@@ -1748,6 +1765,10 @@ HotStartFile* HotStartManager::save_with_engine_checkpoint(
     const groundwater::GWSolver* gw_solver, const std::string& path,
     const std::string& engine_checkpoint) {
     tl_last_io_error.clear();
+    if(ctx.state_accessors.has_fv_retained_dry_mass && ctx.state_accessors.has_fv_retained_dry_mass() && !ctx.state_accessors.get_fv_dry_state) {
+        tl_last_io_error = "Hotstart cannot preserve retained FV dry scalar inventory; save after it remobilizes.";
+        return nullptr;
+    }
     if (engine_checkpoint.empty() && !ctx.reactions.lid_controls.empty()) {
         tl_last_io_error = "LID reaction inventories require a full native engine checkpoint";
         return nullptr;
@@ -1889,6 +1910,7 @@ HotStartFile* HotStartManager::save_with_engine_checkpoint(
     if (!hs->gw_interface.empty())
         hs->header.version = std::max(hs->header.version, 13u);
     try {
+        if(ctx.state_accessors.get_fv_dry_state)hs->fv_dry_state=ctx.state_accessors.get_fv_dry_state();
         if (ctx.state_accessors.get_snow_state)
             hs->snow_state = ctx.state_accessors.get_snow_state();
         if (!hs->snow_state.empty())
@@ -1904,6 +1926,7 @@ HotStartFile* HotStartManager::save_with_engine_checkpoint(
         if (!hs->gw_transport_state.empty())
             hs->header.version = 17u;
 #endif
+        if(!hs->fv_dry_state.empty())hs->header.version=18u;
     } catch (const std::exception& e) {
         tl_last_io_error = e.what();
         delete hs;
@@ -1971,6 +1994,11 @@ int HotStartManager::apply(HotStartFile& hs, SimulationContext& ctx,
         if (warn_cb)
             warn_cb(tl_last_io_error);
         return -1;
+    }
+    if(!hs.fv_dry_state.empty() || ctx.state_accessors.set_fv_dry_state) {
+        const auto error=ctx.state_accessors.set_fv_dry_state
+            ?ctx.state_accessors.set_fv_dry_state(hs.fv_dry_state,false):"FV dry inventory accessor is unavailable.";
+        if(!error.empty()) {tl_last_io_error=error;hs.warnings.push_back(error);if(warn_cb)warn_cb(error);return -1;}
     }
     if (!hs.snow_state.empty()) {
         const std::string error = ctx.state_accessors.set_snow_state
@@ -2267,6 +2295,10 @@ int HotStartManager::apply(HotStartFile& hs, SimulationContext& ctx,
         }
     }
 #endif
+    if(ctx.state_accessors.set_fv_dry_state) {
+        const auto error=ctx.state_accessors.set_fv_dry_state(hs.fv_dry_state,true);
+        if(!error.empty()) {tl_last_io_error=error;return -1;}
+    }
     return missing;
 }
 

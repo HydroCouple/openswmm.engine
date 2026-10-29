@@ -921,6 +921,17 @@ int SWMMEngine::open(const char* inp_path, const char* rpt_path, const char* out
             return {};
         };
 
+        ctx_.state_accessors.has_fv_retained_dry_mass = [this]() {
+            return quality_.hasFvRetainedDryMass();
+        };
+        ctx_.state_accessors.get_fv_dry_state = [this]() {return quality_.fvDryRestartState(ctx_);};
+        ctx_.state_accessors.set_fv_dry_state = [this](const std::string& blob,bool apply) {
+            const auto error=quality_.restoreFvDryRestart(ctx_,blob,apply);
+            if(error.empty()&&apply)router_.restoreFvClassicState(ctx_);
+            return error;
+        };
+        ctx_.state_accessors.get_fv_retained_pollutant_mass = [this]() {return quality_.fvRetainedPollutantMass(ctx_);};
+        ctx_.state_accessors.get_fv_retained_species_mass = [this]() {return quality_.fvRetainedSpeciesMass(ctx_);};
         ctx_.state_accessors.get_surface_state = [this]() { return nativeSurfaceState(); };
         ctx_.state_accessors.set_surface_state = [this](const std::string& blob, bool apply) {
             return applyNativeSurfaceState(blob, apply);
@@ -2228,13 +2239,17 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
         // mass-balance accumulation. Runoff and its final-storage bookkeeping still
         // run every step.
         if (do_routing_) {
-            accumulateNodeRoutingTotals(dt_next / 2.0); // routing.c:227
+            // FV publishes accepted-window mean fluxes. Integrate those once
+            // over their own interval; legacy DW rates retain half-step totals.
+            const bool fv_window_totals = ctx_.options.routing_model == RoutingModel::FV;
+            if (!fv_window_totals)
+                accumulateNodeRoutingTotals(dt_next / 2.0); // routing.c:227
 #ifdef OPENSWMM_HAS_2D
             // Held source receipts contribute their full accepted volume to node
             // ordinary-node statistics as well as storage and wet-weather continuity.
             // Node LID total inflow records mobile hydraulic water after capture;
             // preserve that convention and expose whole admitted receipts separately.
-            if (source_delivery_)
+            if (source_delivery_ && !fv_window_totals)
                 for (int n = 0; n < ctx_.n_nodes(); ++n)
                     if (!lidnode::active(ctx_, n)) {
                         const double half_receipt = (source_delivery_->receipts()[n].rate -
@@ -2308,11 +2323,16 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
                 const double rate =
                     (dt_next > 0.0) ? (*routing_terms[k] - routing_before[k]) / dt_next : 0.0;
                 double& t = mbr.routing_report[static_cast<std::size_t>(k)];
-                t += routing_prev_rates_[static_cast<std::size_t>(k)] * half;
-                t += rate * half;
+                if (fv_window_totals) {
+                    t += *routing_terms[k] - routing_before[k];
+                } else {
+                    t += routing_prev_rates_[static_cast<std::size_t>(k)] * half;
+                    t += rate * half;
+                }
                 routing_prev_rates_[static_cast<std::size_t>(k)] = rate;
             }
-            accumulateNodeRoutingTotals(dt_next / 2.0); // routing.c:271
+            if (!fv_window_totals || !between_events_)
+                accumulateNodeRoutingTotals(fv_window_totals ? dt_next : dt_next / 2.0);
         }
 #ifdef OPENSWMM_HAS_2D
         if (surface_router_.runtimeActive() || exchange_target_ >= 0.0)
@@ -4783,6 +4803,7 @@ void SWMMEngine::stepGroundwater(double dt_runoff) noexcept {
  *
  */
 void SWMMEngine::stepRouting(double dt_routing) {
+    quality_.beginFvWindow();
     last_step_steady_ = false;
 
     // ================================================================
@@ -5132,6 +5153,8 @@ void SWMMEngine::stepRouting(double dt_routing) {
                                        non_conduit_fn, true)
                     : router_.step(ctx_, dt_routing, ctx_.climate_state.evap_rate, non_conduit_fn);
     }
+    if(ctx_.options.routing_model==RoutingModel::FV && ctx_.options.quality_solver==QualitySolverKind::LEGACY)
+        router_.acceptedQualityWater(ctx_,dt_routing,quality_.fvWater());
     lidnode::finishStep(ctx_);
     // Legacy counts a step as non-converging from the ACTUAL final Picard flag,
     // not merely from "used all MaxTrials" — a step converging on the last
@@ -5852,11 +5875,15 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
                 if (q_sys < 0.0)
                     ctx_.nodes.inflow[uj] = -q_sys;
             } else if (ctx_.options.routing_model == RoutingModel::FV) {
-                // FV books an outfall's boundary discharge in BOTH halves of
-                // its ledger (publishFv: face flux in, boundary flux out), so
-                // legacy's "both nonzero -> nothing" would drop it; FV keeps
-                // the direct rule: feeding the network when it only sends,
-                // discharging its inflow otherwise.
+                // FV integrates each direction separately. A boundary can
+                // reverse within a routing window, so both receipts can be
+                // positive. Preserve the gross discharge for quality/heat
+                // export and also book the accepted incoming water.
+                if (q_in > 0.0 && q_out > 0.0) {
+                    ctx_.mass_balance.routing_external += q_out * dt_routing;
+                    ctx_.mass_balance.step_ext_inflow += q_out;
+                    ctx_.outfall_exports.reverse_m3[uj] += q_out * dt_routing * 0.028316846592;
+                }
                 if (q_out > 0.0 && q_in <= 0.0) {
                     q_sys = -q_out;
                     ctx_.nodes.inflow[uj] = q_out;
@@ -5956,7 +5983,7 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
         // the SAME system-outflow classification as water, including a
         // non-DW terminal junction and unponded flooding. An OUTFALL-only
         // pass discarded all exported mass from ejemplo-epa's terminal 50.
-        if (quality_outflow > 0.0) {
+        if (quality_outflow > 0.0 && !quality_.fvTransportAccepted()) {
             auto& total = quality_flooding ? ctx_.mass_balance.qual_routing_flood
                                            : ctx_.mass_balance.qual_routing_outflow;
             for (int p = 0; p < np; ++p) {
@@ -5968,7 +5995,7 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
         }
         // Negative lateral flow withdraws the current mixed concentration.
         // Its water has already been booked by the inflow assembly.
-        if (ctx_.nodes.lat_flow[uj] < 0.0) {
+        if (ctx_.nodes.lat_flow[uj] < 0.0 && !quality_.fvTransportAccepted()) {
             for (int p = 0; p < np; ++p) {
                 const auto up = static_cast<std::size_t>(p);
                 ctx_.mass_balance.qual_routing_outflow[up] +=
@@ -11677,6 +11704,17 @@ void SWMMEngine::initMassBalance() noexcept {
                     m += ctx_.links.conc[idx] * ctx_.links.volume[uj];
             }
             ctx_.mass_balance.qual_routing_init[up] = m;
+        }
+    }
+
+    // A classic FV restart can carry disconnected scalar inventory in V18.
+    // It belongs to both opening storage and the current dry-storage ledger;
+    // subsequent remobilization books only its delta.
+    if(ctx_.state_accessors.get_fv_retained_pollutant_mass) {
+        const auto held=ctx_.state_accessors.get_fv_retained_pollutant_mass();
+        for(std::size_t p=0;p<held.size()&&p<ctx_.mass_balance.qual_routing_init.size();++p) {
+            ctx_.mass_balance.qual_routing_init[p]+=held[p];
+            ctx_.mass_balance.qual_routing_final_dry[p]=held[p];
         }
     }
 
