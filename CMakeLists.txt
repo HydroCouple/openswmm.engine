@@ -87,6 +87,18 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+# Bit-exact parity with the legacy engine needs FMA contraction off in BOTH
+# languages: legacy xsect.c is C. The platform presets set it; a configure
+# without a preset (bare cmake -S/-B, a local pip build) would otherwise get
+# clang/GCC's default contraction and the legacy kernels drift by 1 ulp.
+# MSVC's default /fp:precise already does not contract.
+foreach(_lang C CXX)
+    if(CMAKE_${_lang}_COMPILER_ID MATCHES "Clang|GNU"
+       AND NOT CMAKE_${_lang}_FLAGS MATCHES "-ffp-contract=off")
+        string(APPEND CMAKE_${_lang}_FLAGS " -ffp-contract=off")
+    endif()
+endforeach()
+
 # Modern feature options with namespacing
 option(OPENSWMM_BUILD_TESTS       "Build all tests (unit + regression). Convenience flag." OFF)
 option(OPENSWMM_BUILD_UNIT_TESTS  "Build unit tests only" OFF)
