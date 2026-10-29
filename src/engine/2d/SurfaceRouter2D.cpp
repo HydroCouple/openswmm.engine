@@ -2019,9 +2019,12 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // Seed the render-only vertex free surface so the first snapshot (before
     // any sync batch fires — e.g. a hotstart-restored wet state) already
     // carries a physically consistent field instead of the resize() zeros.
-    if (options_.momentum == Momentum2D::FULL_SWE)
+    if (options_.momentum == Momentum2D::FULL_SWE) {
         if (auto* cpu = dynamic_cast<ExplicitInertialSolver*>(solver_.get()))
             cpu->publishMomentumVelocity();
+    } else {
+        computeFaceVelocity(mesh_, state_, options_);
+    }
     reconstructVertexRenderDepths(mesh_, state_, options_.dry_depth, options_.num_threads,
                                   render_eta_);
     render_dirty_ = false;

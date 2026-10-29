@@ -561,7 +561,8 @@ void Default2DOutputPlugin::validateCheckpoint(hid_t file, const SimulationConte
         // Their historical availability cannot be inferred from the current
         // snapshot. NaN is the missing marker; infinity is still invalid.
         else if (name == "Mesh2_face_gw_infil_capacity" || name == "Mesh2_face_gw_infil_refresh" ||
-                 name == "Mesh2_face_et_stress")
+                 name == "Mesh2_face_et_stress" || name == "Mesh2_face_vx" ||
+                 name == "Mesh2_face_vy" || name == "Mesh2_face_max_velocity")
             missing.assign(n_faces_, 1);
         if (H5Tget_class(bt.id) == H5T_FLOAT || H5Tget_class(bt.id) == H5T_INTEGER)
             visitNumbers(b.id, {}, missing);

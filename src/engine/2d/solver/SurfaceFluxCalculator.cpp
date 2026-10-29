@@ -17,6 +17,7 @@
 #include <cmath>
 #include <algorithm>
 #include <cstdlib>
+#include <limits>
 
 #if defined(SWMM_USE_OPENMP)
 #include <omp.h>
@@ -402,58 +403,93 @@ void computeCellContinuity(const MeshData& mesh, SurfaceStateData& state,
 
 void computeFaceVelocity(const MeshData& mesh, SurfaceStateData& state,
                          const SolverOptions2D& opts) {
-    int nt = mesh.n_triangles();
-    constexpr double kQMax = 10.0; // clamp |b_e| against wet/dry-front spikes
+    const int nc = mesh.n_cells();
+    const double missing = std::numeric_limits<double>::quiet_NaN();
 
-    // Parallelise the OUTER per-cell loop only; each cell solves its own 2×2
-    // normal-equations system and writes only face_vx[i]/face_vy[i]. The inner
-    // accumulators (a00..b1) are loop-private. schedule(static) ⇒ bit-exact.
+    // Output diagnostic only: minimize sum A_e (n_e.u - Q_e/A_e)^2.
+    // Accumulating A_e*n*n and n*Q avoids dividing by tiny edge sections,
+    // and never divides by the whole-cell mean depth. Q keeps the internal
+    // inflow-positive sign; the API/output boundary converts to physical SI.
 #pragma omp parallel for schedule(static) num_threads(opts.num_threads)
-    for (int i = 0; i < nt; ++i) {
-        double depth = state.depth[i];
-        if (depth < opts.dry_depth) {
-            state.face_vx[i] = 0.0;
-            state.face_vy[i] = 0.0;
+    for (int i = 0; i < nc; ++i) {
+        const double depth = state.depth[i];
+        state.face_vx[i] = state.face_vy[i] = missing;
+        if (!std::isfinite(depth))
+            continue;
+        if (depth <= 0.0 || depth < opts.dry_depth) {
+            state.face_vx[i] = state.face_vy[i] = 0.0;
             continue;
         }
-
-        // Normal equations for N·q ≈ b: NᵀN (2×2 SPD) and Nᵀb.
-        double a00 = 0.0, a01 = 0.0, a11 = 0.0;
-        double b0 = 0.0, b1 = 0.0;
+        double a00 = 0.0, a01 = 0.0, a11 = 0.0, b0 = 0.0, b1 = 0.0;
+        bool known = true;
         for (int e = 0; e < mesh.cell_vertex_count(i); ++e) {
-            int idx = MeshData::slot(i, e);
-            double nx = mesh.edge_nx[idx];
-            double ny = mesh.edge_ny[idx];
-            double len = mesh.edge_length[idx];
-            if (len <= 1.0e-12)
+            const int idx = MeshData::slot(i, e);
+            const int j = mesh.cell_neighbour(i, e);
+            const double flow = state.edge_flux[idx];
+            const double length = mesh.edge_length[idx];
+            if (!std::isfinite(flow)) {
+                known = false;
+                break;
+            }
+            double eta = state.head[i];
+            double hf = depth;
+            if (j >= 0) {
+                eta = std::max(eta, state.head[j]);
+                hf = inertial::faceFlowDepth(eta, eta, mesh.edge_mz[idx]);
+            } else if (state.boundary &&
+                       static_cast<BoundaryType>(state.boundary->edge_bc_type[idx]) ==
+                           BoundaryType::SPECIFIED_STAGE) {
+                const double stage = state.boundary->edge_bc_head[idx];
+                eta = std::max(eta, stage);
+                // Match the stage-boundary closure: LI uses the centroid
+                // bed; DW uses the upwind cell/ghost depth for MEAN faces.
+                hf = opts.momentum == Momentum2D::DIFFUSIVE_WAVE
+                         ? (state.head[i] > stage ? depth
+                                                 : std::max(stage - mesh.tri_cz[i], 0.0))
+                         : inertial::faceFlowDepth(eta, eta, mesh.tri_cz[i]);
+            }
+            if (opts.face_reconstruction == FaceDepth2D::VFR_FACE) {
+                double zlo, zhi;
+                edgeEndpointZ(mesh, i, e, zlo, zhi);
+                hf = inertial::faceDepthFromEta(eta, zlo, zhi);
+            }
+            // Interior porosity scales the open cross section, just as it
+            // scales transported flow. Boundary flux laws do not use it.
+            const double porosity = j >= 0 ? mesh.edge_conveyance[idx] : 1.0;
+            const double area = length * hf * porosity;
+            if (!std::isfinite(area)) {
+                known = false;
+                break;
+            }
+            if (length <= 1e-12 || hf <= opts.dry_depth || area <= 0.0) {
+                // A nonzero time-averaged flow with no current wet section
+                // cannot define a contemporaneous velocity. Do not discard
+                // that constraint and pretend the remaining fit is complete.
+                if (flow != 0.0) {
+                    known = false;
+                    break;
+                }
                 continue;
-            double b = state.edge_flux[idx] / len; // m²/s normal speed
-            if (b > kQMax)
-                b = kQMax;
-            if (b < -kQMax)
-                b = -kQMax;
-            a00 += nx * nx;
-            a01 += nx * ny;
-            a11 += ny * ny;
-            b0 += nx * b;
-            b1 += ny * b;
+            }
+            const double nx = mesh.edge_nx[idx], ny = mesh.edge_ny[idx];
+            a00 += area * nx * nx;
+            a01 += area * nx * ny;
+            a11 += area * ny * ny;
+            b0 += nx * flow;
+            b1 += ny * flow;
         }
-
-        double det = a00 * a11 - a01 * a01;
-        if (std::abs(det) < 1.0e-12) {
-            state.face_vx[i] = 0.0;
-            state.face_vy[i] = 0.0;
+        const double det = a00 * a11 - a01 * a01;
+        const double trace = a00 + a11;
+        // Relative rank test is invariant under mesh/area scaling. One wet
+        // edge (or nearly parallel wet normals) does not determine a vector.
+        if (!known || !(det > 1e-10 * trace * trace))
             continue;
+        const double vx = (a11 * b0 - a01 * b1) / det;
+        const double vy = (a00 * b1 - a01 * b0) / det;
+        if (std::isfinite(vx) && std::isfinite(vy)) {
+            state.face_vx[i] = vx;
+            state.face_vy[i] = vy;
         }
-        double inv_det = 1.0 / det;
-        // Specific-discharge vector (m²/s).
-        double qx = (a11 * b0 - a01 * b1) * inv_det;
-        double qy = (-a01 * b0 + a00 * b1) * inv_det;
-
-        // Velocity (m/s) = specific discharge / depth.
-        double inv_depth = 1.0 / depth;
-        state.face_vx[i] = qx * inv_depth;
-        state.face_vy[i] = qy * inv_depth;
     }
 }
 

@@ -1160,6 +1160,9 @@ SWMM_ENGINE_API int swmm_2d_get_heads_bulk(SWMM_Engine engine, double* heads);
  * FULL_SWE uses accepted conserved cell momentum; other closures use the
  * engine's diagnostic reconstruction. Refreshes derived output fields when
  * stale, without advancing hydraulics. Dry cells have zero velocity.
+ * Non-FULL_SWE velocities use wetted-edge normal velocities. Paired NaNs
+ * mean a wet cell has no determinate velocity; dry cells return zero.
+ * Callers must not substitute zero or a mean-depth reconstruction for NaNs.
  * @param[in] engine Borrowed live engine handle. Serialize with stepping/edits.
  * @param[out] vx Required distinct caller-owned cell_count-double X array.
  * @param[out] vy Required distinct caller-owned cell_count-double Y array.

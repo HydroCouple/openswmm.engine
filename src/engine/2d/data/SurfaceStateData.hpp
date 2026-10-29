@@ -35,6 +35,7 @@
 #include <vector>
 #include <cstring>
 #include <cmath>
+#include <limits>
 #include <algorithm>
 #include <vector>
 
@@ -132,7 +133,8 @@ struct SurfaceStateData {
     /// readers stay negative-tolerant. NOT used by the solver.
     std::vector<double> vert_depth_signed;
 
-    // Cell-centred velocity (RT0 reconstruction from edge fluxes) — per triangle
+    // Output-only cell velocity: native FULL_SWE or wetted-edge reconstruction.
+    // Paired NaNs mark an unresolved wet-cell vector; dry cells carry zero.
     std::vector<double> face_vx; ///< Cell velocity X component (m/s)
     std::vector<double> face_vy; ///< Cell velocity Y component (m/s)
 
@@ -354,7 +356,7 @@ struct SurfaceStateData {
         old_depth.assign(nt, 0.0);
         old_volume.assign(nt, 0.0);
         stat_max_depth.assign(nt, 0.0);
-        stat_max_velocity.assign(nt, 0.0);
+        stat_max_velocity.assign(nt, std::numeric_limits<double>::quiet_NaN());
         stat_max_cont_err.assign(nt, 0.0);
         stat_cum_volume.assign(nt, 0.0);
         evap_loss_total = 0.0;
@@ -449,7 +451,8 @@ struct SurfaceStateData {
                 stat_max_depth[i] = depth[i];
 
             const double speed = std::sqrt(face_vx[i] * face_vx[i] + face_vy[i] * face_vy[i]);
-            if (speed > stat_max_velocity[i])
+            if (std::isfinite(speed) &&
+                (!std::isfinite(stat_max_velocity[i]) || speed > stat_max_velocity[i]))
                 stat_max_velocity[i] = speed;
 
             const double aerr = std::abs(cell_continuity_err[i]);

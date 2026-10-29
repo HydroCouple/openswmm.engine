@@ -2451,20 +2451,34 @@ fields only and enters no solver update.
 
 `FULL_SWE` cell velocities come from the accepted conserved cell momentum,
 including the initial snapshot and runs with all optional momentum processes
-disabled. Local-inertial and diffusive-wave cell velocities are diagnostics
-reconstructed from edge discharges and divided by cell-mean depth. In a
-partially wet VFR cell, that mean depth can be much smaller than the flow
-depth along its wet edges, so this diagnostic can become very large without
-a corresponding large edge-normal velocity. Water continuity alone does
-not establish velocity accuracy. Maximum depth and maximum speed are
-independent sampled envelopes; their peaks need not occur at the same time.
-Saved-result rendering uses the stored velocity fields when present, with
-edge reconstruction retained for sources that lack them. The bulk C API
-`swmm_2d_get_velocities_bulk` exposes the same physical Cartesian SI velocities.
-The GUI streams native `FULL_SWE` velocity before its matching depth packet,
-including velocity in the bounded history and sparse regional reads. Other
-live sources can continue reconstructing from depth and edge flux. No new
-speed cap or hydraulic dry-depth threshold is applied by these output rules.
+disabled. Local-inertial and diffusive-wave cell velocities are output-only
+area-weighted least-squares fits to wet edge-normal velocities. For edge
+volume flux Q and hydraulic cross-sectional area A, the fit minimizes
+`sum A (n dot u - Q/A)^2`. A uses the selected MEAN/VFR face depth, edge length
+and interior transmissivity; stage boundaries use their own closure depths.
+Accumulating `sum A n n^T` and `sum n Q` avoids division by tiny edge sections
+and by the whole-cell mean depth. There is no diagnostic discharge clip or
+speed cap. The fit is a representative vector and need not reproduce every
+edge flux exactly; original edge fluxes remain the conserved hydraulic data.
+
+Dry-cell vectors are zero. Wet-cell vectors are paired NaNs when wet edge
+normals cannot determine two components (relative determinant tolerance
+`1e-10 * trace^2`), input is nonfinite, or an accepted averaged flow has no
+currently wet section. NaN means unavailable, not zero velocity. Velocity
+maxima use finite samples only, retain NaN if none exist, and cannot bound
+speeds during unavailable intervals. Depth and speed envelopes are sampled
+independently; their peaks need not occur at the same time. Good water
+continuity alone does not establish velocity accuracy.
+
+Saved rendering uses available stored velocity arrays as authoritative,
+including their NaNs. Edge reconstruction is retained only for sources or
+frames without a stored pair. The bulk C API `swmm_2d_get_velocities_bulk`
+exposes the same physical Cartesian SI vectors and NaN convention. The GUI
+streams all three closures' vectors before the matching depth packet,
+including them in bounded history and sparse regional reads. Arrows and
+particles omit unavailable vectors and never borrow a neighboring vector
+into an unavailable cell. These output rules change no solver flux, momentum,
+wetting threshold, depth or water balance.
 
 Two distinct vertex reconstructions exist and must not be confused. The
 **solver** field is the pseudo-Laplacian stencil of Kumar et al. (2009),

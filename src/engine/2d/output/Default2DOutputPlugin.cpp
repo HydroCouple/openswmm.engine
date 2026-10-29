@@ -742,8 +742,13 @@ void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
         ds_face_strain_rate_ = createFaceDS("Mesh2_face_strain_rate", "horizontal strain rate magnitude", "s-1");
     }
     if (want(report2d::VELOCITY)) {
-        ds_face_vx_ = createFaceDS("Mesh2_face_vx", momentum_velocity_ ? "cell velocity X from conserved momentum" : "cell-centred velocity X (RT0)", "m s-1");
-        ds_face_vy_ = createFaceDS("Mesh2_face_vy", momentum_velocity_ ? "cell velocity Y from conserved momentum" : "cell-centred velocity Y (RT0)", "m s-1");
+        ds_face_vx_ = createFaceDS("Mesh2_face_vx", momentum_velocity_ ? "cell velocity X from conserved momentum" : "cell velocity X from wetted-edge normal velocities", "m s-1");
+        ds_face_vy_ = createFaceDS("Mesh2_face_vy", momentum_velocity_ ? "cell velocity Y from conserved momentum" : "cell velocity Y from wetted-edge normal velocities", "m s-1");
+        for (hid_t ds : {ds_face_vx_, ds_face_vy_}) {
+            writeStringAttr(ds, "reconstruction", momentum_velocity_ ? "conserved_cell_momentum"
+                : "wetted_edge_area_weighted_least_squares");
+            writeStringAttr(ds, "missing_value_meaning", "NaN: unavailable wet-cell velocity; dry cells are zero");
+        }
     }
     if (want(report2d::CONTINUITY))
         ds_face_continuity_err_ =
@@ -789,6 +794,8 @@ void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
             createFaceEnvelopeDataset("Mesh2_face_max_depth", "maximum overland flow depth", "m");
         ds_face_max_velocity_ = createFaceEnvelopeDataset(
             "Mesh2_face_max_velocity", "maximum cell velocity magnitude", "m s-1");
+        writeStringAttr(ds_face_max_velocity_, "sampling",
+            "maximum finite velocity samples; unavailable samples excluded; NaN if none");
         if (want(report2d::CONTINUITY))
             ds_face_max_continuity_err_ = createFaceEnvelopeDataset(
                 "Mesh2_face_max_continuity_err", "maximum absolute per-cell continuity residual",
