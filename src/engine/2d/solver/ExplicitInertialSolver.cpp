@@ -4145,7 +4145,8 @@ double ExplicitInertialSolver::boundaryFluxSwe(std::size_t k, int i, double dt_c
 }
 
 void ExplicitInertialSolver::publishMomentumVelocity() {
-    if (!initialized_ || !opts_->momentumPhysics()) return;
+    if (!initialized_ || mode_ != Momentum2D::FULL_SWE) return;
+#pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
     for (int i=0;i<mesh_->n_cells();++i) {
         const double h=state_->depth[i];
         state_->face_vx[i]=h>opts_->dry_depth ? -qcx_[i]/h : 0;

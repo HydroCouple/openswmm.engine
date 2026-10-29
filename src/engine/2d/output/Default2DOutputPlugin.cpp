@@ -303,7 +303,7 @@ std::string Default2DOutputPlugin::configureOutput(const SolverOptions2D& opts,
         (opts.output_precision == OutputPrecision2D::FLOAT64) ? H5T_NATIVE_DOUBLE : H5T_IEEE_F32LE;
     compression_ = std::max(0, std::min(9, opts.output_compression));
     report_vars_ = (opts.report_2d_vars & report2d::ALL_MASK) | report2d::DEPTH;
-    momentum_velocity_ = opts.momentumPhysics();
+    momentum_velocity_ = opts.momentum == Momentum2D::FULL_SWE;
     mixing_enabled_ = opts.turbulence == Turbulence2D::SMAGORINSKY;
     mixing_cs_ = opts.smagorinsky_cs;
     mixing_dry_ = opts.dry_depth;

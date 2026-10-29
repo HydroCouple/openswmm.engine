@@ -1155,6 +1155,22 @@ SWMM_ENGINE_API int swmm_2d_get_depths_bulk(SWMM_Engine engine, double* depths);
 SWMM_ENGINE_API int swmm_2d_get_heads_bulk(SWMM_Engine engine, double* heads);
 
 /**
+ * @brief Bulk cell velocity in physical Cartesian SI m/s, matching Mesh2_face_vx/vy.
+ *
+ * FULL_SWE uses accepted conserved cell momentum; other closures use the
+ * engine's diagnostic reconstruction. Refreshes derived output fields when
+ * stale, without advancing hydraulics. Dry cells have zero velocity.
+ * @param[in] engine Borrowed live engine handle. Serialize with stepping/edits.
+ * @param[out] vx Required distinct caller-owned cell_count-double X array.
+ * @param[out] vy Required distinct caller-owned cell_count-double Y array.
+ * No capacity is passed or checked.
+ * @return SWMM_OK on success; SWMM_ERR_BADHANDLE for a null handle;
+ * SWMM_ERR_BADPARAM for null arrays or inactive/no-mesh state;
+ * SWMM_ERR_LIFECYCLE for a parsed mesh before initialization.
+ */
+SWMM_ENGINE_API int swmm_2d_get_velocities_bulk(SWMM_Engine engine, double* vx, double* vy);
+
+/**
  * @brief Bulk get coupling fluxes for all triangles.
  *  @ingroup engine_2d
  *

@@ -2449,6 +2449,23 @@ the free surface limited by the Jawahar–Kamath (2000) limiter, whose
 regularization is `LIMITER_EPSILON`; the limiter affects the output
 fields only and enters no solver update.
 
+`FULL_SWE` cell velocities come from the accepted conserved cell momentum,
+including the initial snapshot and runs with all optional momentum processes
+disabled. Local-inertial and diffusive-wave cell velocities are diagnostics
+reconstructed from edge discharges and divided by cell-mean depth. In a
+partially wet VFR cell, that mean depth can be much smaller than the flow
+depth along its wet edges, so this diagnostic can become very large without
+a corresponding large edge-normal velocity. Water continuity alone does
+not establish velocity accuracy. Maximum depth and maximum speed are
+independent sampled envelopes; their peaks need not occur at the same time.
+Saved-result rendering uses the stored velocity fields when present, with
+edge reconstruction retained for sources that lack them. The bulk C API
+`swmm_2d_get_velocities_bulk` exposes the same physical Cartesian SI velocities.
+The GUI streams native `FULL_SWE` velocity before its matching depth packet,
+including velocity in the bounded history and sparse regional reads. Other
+live sources can continue reconstructing from depth and edge flux. No new
+speed cap or hydraulic dry-depth threshold is applied by these output rules.
+
 Two distinct vertex reconstructions exist and must not be confused. The
 **solver** field is the pseudo-Laplacian stencil of Kumar et al. (2009),
 built once from cell-centre geometry with Lagrange multipliers enforcing

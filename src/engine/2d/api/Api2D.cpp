@@ -841,6 +841,23 @@ int swmm_2d_get_heads_bulk(SWMM_Engine engine, double* heads) {
     return SWMM_OK;
 }
 
+int swmm_2d_get_velocities_bulk(SWMM_Engine engine, double* vx, double* vy) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    if (!vx || !vy || vx == vy)
+        return SWMM_ERR_BADPARAM;
+
+    router2d.refreshRenderFieldsIfStale();
+    const auto& s = router2d.state();
+    // Match the output boundary's physical sign; internal edge flux and
+    // reconstructed/display momentum have the opposite convention.
+    for (std::size_t i = 0; i < s.face_vx.size(); ++i) {
+        vx[i] = -s.face_vx[i];
+        vy[i] = -s.face_vy[i];
+    }
+    return SWMM_OK;
+}
+
 int swmm_2d_get_coupling_fluxes_bulk(SWMM_Engine engine, double* fluxes) {
     GET_ENGINE(engine);
     CHECK_2D_ACTIVE(eng);

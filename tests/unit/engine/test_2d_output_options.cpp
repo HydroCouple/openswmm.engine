@@ -475,6 +475,23 @@ TEST(Output2DOptions, CApiExtRoundTripOnAModel) {
 // Writer
 // ---------------------------------------------------------------------------
 
+TEST(Output2DWriter, VelocityMetadataIdentifiesEveryMomentumClosure) {
+    for (auto mode : {Momentum2D::LOCAL_INERTIAL, Momentum2D::FULL_SWE,
+                      Momentum2D::DIFFUSIVE_WAVE}) {
+        SolverOptions2D opts;
+        opts.momentum = mode;
+        const auto path = writeFile("velocity_mode_" + std::to_string(static_cast<int>(mode)),
+                                    opts, 30., 1, 30. / 86400.);
+        H5File file(path);
+        ASSERT_GE(file.id, 0);
+        const bool native = mode == Momentum2D::FULL_SWE;
+        EXPECT_EQ(file.dsAttr("Mesh2_face_vx", "long_name"),
+                  native ? "cell velocity X from conserved momentum" : "cell-centred velocity X (RT0)");
+        EXPECT_EQ(file.dsAttr("Mesh2_face_vy", "long_name"),
+                  native ? "cell velocity Y from conserved momentum" : "cell-centred velocity Y (RT0)");
+    }
+}
+
 TEST(Output2DWriter, DefaultIsFloat32AndDropsDiagnostics) {
     SolverOptions2D o; // defaults: FLOAT32, level 4, DEFAULT mask
     const fs::path p = writeFile("default", o, 300.0, 2, 300.0 / 86400.0);

@@ -55,6 +55,12 @@
 #include "2d/solver/InertialKernels.hpp"
 #include "2d/solver/SweKernels.hpp"
 #include "2d/solver/DiffusiveKernels.hpp"
+#include "2d/solver/SurfaceFluxCalculator.hpp"
+#include "2d/SurfaceRouter2D.hpp"
+#include "core/SimulationContext.hpp"
+#include "core/SWMMEngine.hpp"
+#include <openswmm/engine/openswmm_2d.h>
+#include <openswmm/engine/openswmm_engine.h>
 
 using namespace openswmm::twoD;
 
@@ -409,6 +415,158 @@ TEST(SweKernels, FaceFluxRestStateCancelsPerFace) {
 // ---------------------------------------------------------------------------
 // Marcher gates, both new closures.
 // ---------------------------------------------------------------------------
+TEST(MomentumModes, FullSwePublishesNativeVelocityWithoutOptionalPhysics) {
+    for (bool quads : {false, true})
+      for (double initial_u : {.3, 12.}) {
+        auto mesh = quads ? makeQuadGrid(2, 2, 1., [](double, double) { return 0.; })
+                         : makeTriGrid(2, 2, 1., [](double, double) { return 0.; });
+        auto state = makeState(mesh);
+        SolverOptions2D opts;
+        opts.momentum = Momentum2D::FULL_SWE;
+        opts.num_threads = 2;
+        for (int i = 0; i < mesh.n_cells(); ++i) {
+            state.depth[i] = state.head[i] = .01;
+            state.volume[i] = .01 * mesh.tri_area[i];
+            mesh.tri_init_u[i] = initial_u;
+            mesh.tri_init_v[i] = -.4;
+        }
+        state.volume[0] = 0.;
+        ExplicitInertialSolver solver;
+        solver.initialize(mesh, state, opts);
+        ASSERT_FALSE(opts.momentumPhysics());
+        // No published edge flux at initialization: RT0 cannot recover the
+        // authored momentum. The output must still show its native speed.
+        computeFaceVelocity(mesh, state, opts);
+        EXPECT_DOUBLE_EQ(state.face_vx[1], 0.);
+        solver.publishMomentumVelocity();
+        EXPECT_DOUBLE_EQ(state.face_vx[0], 0.);
+        EXPECT_DOUBLE_EQ(state.face_vy[0], 0.);
+        for (int i = 1; i < mesh.n_cells(); ++i) {
+            EXPECT_NEAR(state.face_vx[i], -initial_u, 1e-14);
+            EXPECT_NEAR(state.face_vy[i], .4, 1e-14);
+        }
+        const auto volume = state.volume;
+        const auto flux = state.edge_flux;
+        solver.publishMomentumVelocity();
+        EXPECT_EQ(state.volume, volume);
+        EXPECT_EQ(state.edge_flux, flux);
+    }
+}
+
+TEST(MomentumModes, FullSweWettingFrontDoesNotReportRiemannFluxAsCellMomentum) {
+    auto mesh = makeTriGrid(24, 3, .5, [](double, double) { return 0.; });
+    auto state = makeState(mesh);
+    SolverOptions2D opts;
+    opts.momentum = Momentum2D::FULL_SWE;
+    opts.face_reconstruction = FaceDepth2D::VFR_FACE;
+    opts.cfl_number = .5;
+    opts.lts_tiers = 1;
+    opts.dry_depth = opts.h_move = 1e-4;
+    for (int i = 0; i < mesh.n_cells(); ++i)
+        state.volume[i] = mesh.tri_cx[i] < 4. ? .06 * mesh.tri_area[i] : 0.;
+    ExplicitInertialSolver solver;
+    solver.initialize(mesh, state, opts);
+    solver.advance(0., .02);
+    computeFaceVelocity(mesh, state, opts);
+    constexpr int front = 17;
+    ASSERT_GT(state.depth[front], opts.dry_depth);
+    ASSERT_LT(state.depth[front], .003);
+    EXPECT_GT(std::hypot(state.face_vx[front], state.face_vy[front]), 5.);
+    const auto volume = state.volume;
+    const auto flux = state.edge_flux;
+    solver.publishMomentumVelocity();
+    EXPECT_GT(std::hypot(state.face_vx[front], state.face_vy[front]), .1);
+    EXPECT_LT(std::hypot(state.face_vx[front], state.face_vy[front]), 1.);
+    EXPECT_EQ(state.volume, volume);
+    EXPECT_EQ(state.edge_flux, flux);
+}
+
+TEST(MomentumModes, RouterPublishesNativeInitialAndRefreshedVelocity) {
+    SurfaceRouter2D router;
+    router.mesh() = makeTriGrid(2, 2, 1., [](double, double) { return 0.; });
+    auto& mesh = router.mesh();
+    std::fill(mesh.tri_init_depth.begin(), mesh.tri_init_depth.end(), .01);
+    std::fill(mesh.tri_init_u.begin(), mesh.tri_init_u.end(), .3);
+    std::fill(mesh.tri_init_v.begin(), mesh.tri_init_v.end(), -.4);
+    router.options().momentum = Momentum2D::FULL_SWE;
+    router.options().backend = Backend2D::CPU;
+    openswmm::SimulationContext ctx;
+    ctx.options.flow_units = openswmm::FlowUnits::CMS;
+    router.initialize(ctx);
+    ASSERT_TRUE(router.isActive());
+    for (int i = 0; i < mesh.n_cells(); ++i) {
+        EXPECT_NEAR(router.state().face_vx[i], -.3, 1e-14);
+        EXPECT_NEAR(router.state().face_vy[i], .4, 1e-14);
+    }
+    router.step(ctx, .001, 0.);
+    router.refreshRenderFieldsIfStale();
+    auto reconstructed = router.state();
+    computeFaceVelocity(mesh, reconstructed, router.options());
+    double difference = 0.;
+    for (int i = 0; i < mesh.n_cells(); ++i)
+        difference += std::hypot(reconstructed.face_vx[i] - router.state().face_vx[i],
+                                  reconstructed.face_vy[i] - router.state().face_vy[i]);
+    EXPECT_GT(difference, .01);
+    router.finalize(ctx);
+}
+
+TEST(MomentumModes, BulkVelocityApiMatchesPhysicalOutputAndRefreshesWithoutAdvancing) {
+    openswmm::SWMMEngine engine;
+    auto handle = reinterpret_cast<SWMM_Engine>(&engine);
+    auto& router = engine.surfaceRouter2D();
+    router.mesh() = makeTriGrid(2, 2, 1., [](double, double) { return 0.; });
+    auto& mesh = router.mesh();
+    std::fill(mesh.tri_init_depth.begin(), mesh.tri_init_depth.end(), .01);
+    std::fill(mesh.tri_init_u.begin(), mesh.tri_init_u.end(), .3);
+    std::fill(mesh.tri_init_v.begin(), mesh.tri_init_v.end(), -.4);
+    mesh.tri_init_depth[0] = 0.;
+    router.options().momentum = Momentum2D::FULL_SWE;
+    router.options().backend = Backend2D::CPU;
+    engine.context().options.flow_units = openswmm::FlowUnits::CMS;
+    std::vector<double> vx(mesh.n_cells()), vy(mesh.n_cells());
+    EXPECT_EQ(swmm_2d_get_velocities_bulk(nullptr, vx.data(), vy.data()), SWMM_ERR_BADHANDLE);
+    EXPECT_EQ(swmm_2d_get_velocities_bulk(handle, vx.data(), vy.data()), SWMM_ERR_LIFECYCLE);
+    router.initialize(engine.context());
+    EXPECT_EQ(swmm_2d_get_velocities_bulk(handle, nullptr, vy.data()), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_2d_get_velocities_bulk(handle, vx.data(), nullptr), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_2d_get_velocities_bulk(handle, vx.data(), vx.data()), SWMM_ERR_BADPARAM);
+    ASSERT_EQ(swmm_2d_get_velocities_bulk(handle, vx.data(), vy.data()), SWMM_OK);
+    EXPECT_DOUBLE_EQ(vx[0], 0.);
+    EXPECT_DOUBLE_EQ(vy[0], 0.);
+    for (int i = 1; i < mesh.n_cells(); ++i) {
+        EXPECT_NEAR(vx[i], .3, 1e-14);
+        EXPECT_NEAR(vy[i], -.4, 1e-14);
+    }
+    router.step(engine.context(), .001, 0.);
+    const auto volume = router.state().volume, head = router.state().head;
+    const auto flux = router.state().edge_flux;
+    ASSERT_EQ(swmm_2d_get_velocities_bulk(handle, vx.data(), vy.data()), SWMM_OK);
+    for (int i = 0; i < mesh.n_cells(); ++i) {
+        EXPECT_DOUBLE_EQ(vx[i], -router.state().face_vx[i]);
+        EXPECT_DOUBLE_EQ(vy[i], -router.state().face_vy[i]);
+    }
+    EXPECT_EQ(volume, router.state().volume);
+    EXPECT_EQ(head, router.state().head);
+    EXPECT_EQ(flux, router.state().edge_flux);
+    router.finalize(engine.context());
+}
+
+TEST(MomentumModes, NativeVelocityPublicationLeavesOtherClosuresUntouched) {
+    for (auto mode : {Momentum2D::LOCAL_INERTIAL, Momentum2D::DIFFUSIVE_WAVE}) {
+        auto mesh = makeTriGrid(2, 2, 1., [](double, double) { return 0.; });
+        auto state = makeState(mesh);
+        SolverOptions2D opts;
+        opts.momentum = mode;
+        ExplicitInertialSolver solver;
+        solver.initialize(mesh, state, opts);
+        std::fill(state.face_vx.begin(), state.face_vx.end(), 7.);
+        std::fill(state.face_vy.begin(), state.face_vy.end(), -8.);
+        solver.publishMomentumVelocity();
+        EXPECT_EQ(state.face_vx, std::vector<double>(mesh.n_cells(), 7.));
+        EXPECT_EQ(state.face_vy, std::vector<double>(mesh.n_cells(), -8.));
+    }
+}
+
 TEST(MomentumModes, LakeAtRestExactAllShapesAndClosures) {
     for (const auto mode : {Momentum2D::FULL_SWE, Momentum2D::DIFFUSIVE_WAVE}) {
         for (const auto closure : {CellClosure2D::FLAT, CellClosure2D::VFR}) {

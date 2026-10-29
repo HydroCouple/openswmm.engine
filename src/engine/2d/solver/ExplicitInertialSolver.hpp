@@ -79,7 +79,7 @@ class EngineSourceResultHistory;
 
 class ExplicitInertialSolver final : public ISurfaceSolver {
 public:
-    /// Publish optional-process velocity from accepted conserved momentum,
+    /// Publish FULL_SWE velocity from accepted conserved momentum,
     /// using the internal negative-outflow display convention. No flux change.
     void publishMomentumVelocity();
 
