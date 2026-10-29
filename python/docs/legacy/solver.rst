@@ -350,7 +350,7 @@ See also
 
 
 Junction chamber area (5.3.0)
-============================
+=============================
 
 Before starting the legacy solver, set a physical ordinary-junction area in
 project ft²/m² using the appended enum. Zero retains legacy behavior. The
