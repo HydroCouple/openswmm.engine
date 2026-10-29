@@ -99,6 +99,7 @@ cdef extern from "openswmm_2d.h":
     int swmm_2d_get_net_source(void* engine, int idx, double* net_source)
     int swmm_2d_get_depths_bulk(void* engine, double* depths) nogil
     int swmm_2d_get_heads_bulk(void* engine, double* heads) nogil
+    int swmm_2d_get_velocities_bulk(void* engine, double* vx, double* vy) nogil
     int swmm_2d_get_coupling_fluxes_bulk(void* engine, double* fluxes) nogil
     int swmm_2d_get_edge_flux_bulk(void* engine, double* flux) nogil
 

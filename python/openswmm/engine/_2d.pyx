@@ -1089,6 +1089,27 @@ cdef class Surface2D:
         _check(err)
         return arr
 
+    def get_velocities(self):
+        """Return physical Cartesian cell velocities as independent X/Y arrays.
+
+        Each float64 array has shape ``(n_cells,)`` and units m/s, matching
+        ``Mesh2_face_vx`` and ``Mesh2_face_vy``. FULL_SWE uses accepted cell
+        momentum; other closures use the native hydraulic reconstruction.
+        Dry cells return zero. Paired NaNs identify indeterminate wet-cell
+        velocities and are preserved. Refreshes derived fields without
+        advancing hydraulics; the GIL is released during the native call.
+        """
+        cdef int n = self.n_cells
+        cdef np.ndarray[double, ndim=1] vx = np.empty(n, dtype=np.float64)
+        cdef np.ndarray[double, ndim=1] vy = np.empty(n, dtype=np.float64)
+        cdef void* eng = self._h()
+        cdef int err
+        with self._owner._operation(<uintptr_t>eng):
+            with nogil:
+                err = swmm_2d_get_velocities_bulk(eng, <double*>vx.data, <double*>vy.data)
+        _check(err)
+        return vx, vy
+
     def get_coupling_fluxes(self):
         """Return coupling fluxes for all triangles as a NumPy array. The
         GIL is released during the C call.

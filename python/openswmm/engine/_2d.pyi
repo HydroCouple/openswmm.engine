@@ -511,6 +511,17 @@ class Surface2D:
         """
         ...
 
+    def get_velocities(self) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+        """Independent physical Cartesian X/Y velocity arrays in m/s.
+
+        Both float64 arrays have shape ``(n_cells,)`` and match native output.
+        FULL_SWE uses accepted momentum; other closures use native diagnostic
+        reconstruction. Dry cells return zero; indeterminate wet cells retain
+        paired NaNs. Refreshing does not advance hydraulics and releases the
+        GIL. Requires an initialized surface; stale views are rejected.
+        """
+        ...
+
     def get_coupling_fluxes(self) -> npt.NDArray[np.float64]:
         """Return coupling fluxes for all triangles as a NumPy array. GIL
         is released during the C call.
