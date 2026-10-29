@@ -47,7 +47,7 @@ Totals run(const std::string& path, bool legacy) {
     if (legacy) {
         EXPECT_EQ(swmm_open(path.c_str(), (path + ".legacy.rpt").c_str(), ""), 0);
         EXPECT_EQ(swmm_start(0), 0);
-        do { EXPECT_EQ(swmm_step(&t), 0); } while (t > 0);
+        do { const int code=swmm_step(&t); EXPECT_EQ(code,0); if(code) break; } while (t > 0);
         result.volume = swmm_getValue(swmm_NODE_VOLUME, 0);
         result.depth = swmm_getValue(swmm_NODE_DEPTH, 0);
         EXPECT_EQ(swmm_end(), 0);
@@ -60,7 +60,7 @@ Totals run(const std::string& path, bool legacy) {
         openswmm::SWMMEngine e;
         EXPECT_EQ(e.open(path.c_str(), (path + ".v6.rpt").c_str(), ""), 0);
         EXPECT_EQ(e.initialize(), 0); EXPECT_EQ(e.start(0), 0);
-        do { EXPECT_EQ(e.step(&t), 0); } while (t > 0);
+        do { const int code=e.step(&t); EXPECT_EQ(code,0) << e.context().error_message; if(code) break; } while (t > 0);
         result.volume=e.context().nodes.volume[0]; result.depth=e.context().nodes.depth[0];
         EXPECT_EQ(e.end(), 0); EXPECT_EQ(e.report(), 0);
         const auto& b=e.context().mass_balance;
@@ -173,6 +173,68 @@ TEST(JunctionStorage, AlternateDynamicWaveClosuresConservePhysicalInventory) {
             }
         }
     }
+}
+TEST(JunctionStorage, DefaultIterationSettingsCloseTypicalChambers) {
+    for (double area : {100.,12.566}) {
+        auto text=deck(area,10,false,false,"DYNWAVE",true);
+        const auto pos=text.find("J1 0 10 0");
+        text.replace(pos,std::string("J1 0 10 0").size(),"J1 0 10 4");
+        text += "[OPTIONS]\nMAX_TRIALS 8\nHEAD_TOLERANCE 0.005\n";
+        const auto path=file("defaults-"+std::to_string(area),text);
+        for (bool legacy : {false,true}) {
+            const auto t=run(path,legacy);
+            EXPECT_LT(std::abs(t.error),.1);
+        }
+    }
+}
+TEST(JunctionStorage, SmallConnectedChambersRetainTheirAuthoredArea) {
+    auto text=deck(.125,10,false,false,"DYNWAVE",true);
+    const auto p1=text.find("J1 0 10 0");
+    text.replace(p1,std::string("J1 0 10 0").size(),"J1 0 10 0.5");
+    const auto p2=text.find("J2 0 10 4");
+    text.replace(p2,std::string("J2 0 10 4").size(),"J2 0 10 0.5");
+    text += "[OPTIONS]\nROUTING_STEP 0.1\nMINIMUM_STEP 0.1\nMAX_TRIALS 60\nHEAD_TOLERANCE 0.0000000001\n";
+    const auto path=file("small-connected-chambers",text);
+    for(bool legacy : {false,true}) {
+        const auto t=run(path,legacy);
+        EXPECT_LT(std::abs(t.error),.1);
+        EXPECT_NEAR(t.volume,.125*t.depth,1e-8);
+        EXPECT_NEAR(t.final-t.initial,t.inflow-t.flood-t.outflow,.001*t.inflow);
+    }
+}
+TEST(JunctionStorage, SmallDynamicWaveChambersConserveAColdStart) {
+    auto text=deck(.125,10,false,false,"DYNWAVE",true);
+    const auto pos=text.find("J2 0 10 4");
+    text.replace(pos,std::string("J2 0 10 4").size(),"J2 0 10 0");
+    text += "[OPTIONS]\nROUTING_STEP 0.1\nMINIMUM_STEP 0.1\n";
+    const auto path=file("dw-small-cold-start",text);
+    for(bool legacy : {false,true}) {
+        const auto t=run(path,legacy);
+        EXPECT_LT(std::abs(t.error),.1);
+        EXPECT_NEAR(t.final-t.initial,t.inflow-t.flood-t.outflow,.001*t.inflow);
+    }
+}
+TEST(JunctionStorage, FiniteVolumeConservesASmallChamberColdStart) {
+    auto text=deck(.125,10,false,false,"FV",true);
+    const auto pos=text.find("J2 0 10 4");
+    text.replace(pos,std::string("J2 0 10 4").size(),"J2 0 10 0");
+    text += "[OPTIONS]\nFV_BACKEND CPU\nROUTING_STEP 0.1\nMINIMUM_STEP 0.1\n";
+    const auto t=run(file("fv-small-cold-start",text),false);
+    EXPECT_LT(std::abs(t.error),.1);
+    EXPECT_NEAR(t.final-t.initial,t.inflow-t.flood-t.outflow,.001*t.inflow);
+}
+TEST(JunctionStorage, UnresolvedSmallChamberRefusesAnUnbalancedTimeStep) {
+    const auto path=file("unresolved-small-chamber",deck(.125,10,false,false,"DYNWAVE",true));
+    openswmm::SWMMEngine e; ASSERT_EQ(e.open(path.c_str(),nullptr,nullptr),0);
+    ASSERT_EQ(e.initialize(),0); ASSERT_EQ(e.start(0),0);
+    double t=0; int code=0;
+    for (int k=0;k<600;++k) { code=e.step(&t); if(code || t<=0) break; }
+    EXPECT_NE(code,0);
+    EXPECT_NE(e.context().error_message.find("reduce ROUTING_STEP"),std::string::npos);
+    ASSERT_EQ(swmm_open(path.c_str(),(path+".legacy.rpt").c_str(),""),0);
+    ASSERT_EQ(swmm_start(0),0);code=0;
+    for(int k=0;k<600;++k) { code=swmm_step(&t);if(code || t<=0)break; }
+    EXPECT_NE(code,0); swmm_end();swmm_close();
 }
 TEST(JunctionStorage, UnqualifiedDynamicSlotRefusesPhysicalArea) {
     auto text=deck(100,10,false,false,"DYNWAVE",true);

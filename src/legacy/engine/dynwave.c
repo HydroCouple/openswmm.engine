@@ -83,10 +83,12 @@ static const int DEFAULT_MAXTRIALS = 8;           // Max. trials per time step
 //-----------------------------------------------------------------------------
 typedef struct {
     char converged;     // TRUE if iterations for a node done
+    int chamberFirst, chamberCount; // incident conduit slice for physical volume inversion
     double newSurfArea; // current surface area (ft2)
     double oldSurfArea; // previous surface area (ft2)
     double sumdqdh;     // sum of dqdh from adjoining links
     double dYdT;        // change in depth w.r.t. time (ft/sec)
+    double chamberResidual; // last physical-chamber head iteration movement (ft)
     double conduitLoss; // aggregate conduit loss charged to this node (cfs)
     double lossFactor;  // fraction affordable without drying below zero
     double conduitVolumeChange; // assigned change in adjacent conduit storage (ft3)
@@ -97,6 +99,7 @@ typedef struct {
 //-----------------------------------------------------------------------------
 static double VariableStep; // size of variable time step (sec)
 static TXnode* Xnode;       // extended nodal information
+static int* ChamberLinks;   // chamber incidence, absent for zero-area models
 
 static int HasConduitLosses; // evaporation or seepage possible this step
 static double Omega; // actual under-relaxation parameter
@@ -162,6 +165,30 @@ void dynwave_init() {
         Link[i].dqdh = 0.0;
     }
 
+    // Build only the incidence needed by physical chamber volume inversion.
+    {
+        int count = 0;
+        for (i = 0; i < Nobjects[LINK]; ++i) if (isTrueConduit(i)) {
+            if (Node[Link[i].node1].storageArea > 0.0) ++Xnode[Link[i].node1].chamberCount;
+            if (Node[Link[i].node2].storageArea > 0.0) ++Xnode[Link[i].node2].chamberCount;
+        }
+        for (i = 0; i < Nobjects[NODE]; ++i) {
+            Xnode[i].chamberFirst = count;
+            count += Xnode[i].chamberCount;
+            Xnode[i].chamberCount = 0;
+        }
+        ChamberLinks = count > 0 ? (int*)calloc(count, sizeof(int)) : NULL;
+        if (count > 0 && !ChamberLinks) {
+            report_writeErrorMsg(ERR_MEMORY, " Junction chamber incidence.");
+            return;
+        }
+        for (i = 0; i < Nobjects[LINK]; ++i) if (isTrueConduit(i)) {
+            int n1 = Link[i].node1, n2 = Link[i].node2;
+            if (Node[n1].storageArea > 0.0) ChamberLinks[Xnode[n1].chamberFirst + Xnode[n1].chamberCount++] = i;
+            if (Node[n2].storageArea > 0.0) ChamberLinks[Xnode[n2].chamberFirst + Xnode[n2].chamberCount++] = i;
+        }
+    }
+
     // --- set crown cutoff for finding top width of closed conduits
     if (SurchargeMethod == SLOT)
         CrownCutoff = SLOT_CROWN_CUTOFF;
@@ -176,6 +203,7 @@ void dynwave_init() {
  */
 void dynwave_close() {
     FREE(Xnode);
+    FREE(ChamberLinks);
 }
 
 /*!
@@ -258,6 +286,26 @@ int dynwave_execute(double tStep) {
 
             // --- check if link calculations can be skipped in next step
             findBypassedLinks();
+        }
+    }
+    // A tiny physical chamber can exhaust the fixed-step iteration budget.
+    // Refuse an unclosed water budget instead of accepting a clipped dry state.
+    {
+        int i;
+        for (i = 0; i < Nobjects[NODE]; ++i) if (Node[i].storageArea > 0.0) {
+            double dv = .5 * (Node[i].oldNetInflow + Node[i].inflow - Node[i].outflow) * tStep;
+            double residual = Node[i].oldVolume + dv - Xnode[i].conduitVolumeChange - Node[i].newVolume;
+            double tolerance = MAX(4.e-7 * (Node[i].storageArea + Xnode[i].newSurfArea + .5 * tStep * Xnode[i].sumdqdh),
+                                   MAX(1.e-8, .0005 * (fabs(dv) + fabs(Xnode[i].conduitVolumeChange))));
+            if (!(AllowPonding && Node[i].pondedArea > 0.0)) residual -= Node[i].overflow * tStep;
+            if (fabs(residual) > tolerance || Xnode[i].chamberResidual > MAX(FUDGE, MIN(HeadTol, DEFAULT_HEADTOL))) {
+                char detail[256];
+                snprintf(detail, sizeof(detail), "Physical junction %s: continuity residual %.9g ft3 (tolerance %.9g), head iteration change %.9g ft; reduce ROUTING_STEP or increase MAX_TRIALS.",
+                         Node[i].ID, residual, tolerance, Xnode[i].chamberResidual);
+                report_writeLine(detail);
+                report_writeErrorMsg(ERR_TIMESTEP, "");
+                return Steps;
+            }
         }
     }
     if (!converged)
@@ -561,6 +609,35 @@ void findNonConduitSurfArea(int i) {
  * and sumdqdh totals. Conduit barrel counts and evaporation/seepage losses
  * are included; outfall nodes do not share those losses.
  */
+// Area used only to partition a conduit's actual inventory between its
+// endpoints. A dry end owns no half-pipe water; equal shares of the whole
+// pipe change would force it to pay for storage created at its wet neighbour.
+static double chamberEndArea(TXsect* xsect, double depth) {
+    double slot = 0.0;
+    if (depth <= 0.0)
+        return 0.0;
+    if (depth < xsect->yFull)
+        return xsect_getAofY(xsect, depth);
+    if (SurchargeMethod == SLOT && !xsect_isOpen(xsect->type)) {
+        double ratio = depth / xsect->yFull;
+        slot = ratio > 1.78 ? 0.01 * xsect->wMax
+                           : xsect->wMax * 0.5423 * exp(-pow(ratio, 2.4));
+    }
+    return xsect->aFull + (depth - xsect->yFull) * slot;
+}
+
+static double chamberPipePartVolume(int node, double depth) {
+    double volume = 0.0;
+    int p;
+    for (p = 0; p < Xnode[node].chamberCount; ++p) {
+        int j = ChamberLinks[Xnode[node].chamberFirst + p];
+        double offset = Link[j].node1 == node ? Link[j].offset1 : Link[j].offset2;
+        volume += 0.5 * link_getLength(j) * Conduit[Link[j].subIndex].barrels *
+                  chamberEndArea(&Link[j].xsect, depth - offset);
+    }
+    return volume;
+}
+
 void updateNodeFlows(int i)
 //
 //  Input:   i = link index
@@ -604,18 +681,34 @@ void updateNodeFlows(int i)
     // Midpoint conduit flows exclude the change in the pipe's own inventory.
     // Physical chambers book their share explicitly, instead of treating a
     // crown-cutoff top width as additional real storage (issue #10 / USEPA #200).
-    if (isTrueConduit(i)) {
-        double delta = Link[i].newVolume - Link[i].oldVolume;
-        double share = (Node[n1].type != OUTFALL && Node[n2].type != OUTFALL) ? 0.5 : 1.0;
+    if (isTrueConduit(i) && (Node[n1].storageArea > 0.0 || Node[n2].storageArea > 0.0)) {
+        double old1 = chamberEndArea(&Link[i].xsect, Node[n1].oldDepth - Link[i].offset1);
+        double old2 = chamberEndArea(&Link[i].xsect, Node[n2].oldDepth - Link[i].offset2);
+        double now1 = chamberEndArea(&Link[i].xsect, Node[n1].newDepth - Link[i].offset1);
+        double now2 = chamberEndArea(&Link[i].xsect, Node[n2].newDepth - Link[i].offset2);
+        double oldShare = old1 + old2 > 0.0 ? old1 / (old1 + old2) : 0.5;
+        double newShare = now1 + now2 > 0.0 ? now1 / (now1 + now2) : 0.5;
         if (Node[n1].type != OUTFALL)
-            Xnode[n1].conduitVolumeChange += share * delta;
+            Xnode[n1].conduitVolumeChange += Node[n2].type == OUTFALL
+                ? Link[i].newVolume - Link[i].oldVolume
+                : newShare * Link[i].newVolume - oldShare * Link[i].oldVolume;
         if (Node[n2].type != OUTFALL)
-            Xnode[n2].conduitVolumeChange += share * delta;
+            Xnode[n2].conduitVolumeChange += Node[n1].type == OUTFALL
+                ? Link[i].newVolume - Link[i].oldVolume
+                : (1.0 - newShare) * Link[i].newVolume - (1.0 - oldShare) * Link[i].oldVolume;
     }
 
     // --- add surf. area contributions to upstream/downstream nodes
-    Xnode[Link[i].node1].newSurfArea += Link[i].surfArea1 * barrels;
-    Xnode[Link[i].node2].newSurfArea += Link[i].surfArea2 * barrels;
+    // EXTRAN's crown-cutoff width regularizes algebraic junction heads;
+    // a full closed pipe contributes no physical volume derivative.
+    if (!(Node[n1].storageArea > 0.0 && SurchargeMethod == EXTRAN && isTrueConduit(i) &&
+          !xsect_isOpen(Link[i].xsect.type) &&
+          Node[n1].newDepth - Link[i].offset1 >= Link[i].xsect.yFull))
+        Xnode[n1].newSurfArea += Link[i].surfArea1 * barrels;
+    if (!(Node[n2].storageArea > 0.0 && SurchargeMethod == EXTRAN && isTrueConduit(i) &&
+          !xsect_isOpen(Link[i].xsect.type) &&
+          Node[n2].newDepth - Link[i].offset2 >= Link[i].xsect.yFull))
+        Xnode[n2].newSurfArea += Link[i].surfArea2 * barrels;
 
     // --- update summed value of dqdh at each end node
     Xnode[Link[i].node1].sumdqdh += Link[i].dqdh;
@@ -728,7 +821,10 @@ int findNodeDepths(double dt) {
             yOld = Node[i].newDepth;
             setNodeDepth(i, dt);
             Xnode[i].converged = TRUE;
-            if (fabs(yOld - Node[i].newDepth) > HeadTol) {
+            if (Node[i].storageArea > 0.0)
+                Xnode[i].chamberResidual = fabs(yOld - Node[i].newDepth);
+            if (fabs(yOld - Node[i].newDepth) >
+                (Node[i].storageArea > 0.0 ? MIN(HeadTol, 1.e-7) : HeadTol)) {
                 Xnode[i].converged = FALSE;
             }
         }
@@ -795,14 +891,38 @@ void setNodeDepth(int i, double dt) {
         if (canPond && yLast > Node[i].fullDepth)
             current += (yLast - Node[i].fullDepth) * Node[i].pondedArea;
         denom = surfArea + 0.5 * dt * Xnode[i].sumdqdh;
-        if (Node[i].degree == 0 || denom <= 0.0) {
+        if (denom <= 0.0) {
             yNew = MAX(0.0, target) / Node[i].storageArea;
             if (canPond && target > capacity)
                 yNew = Node[i].fullDepth + (target - capacity) / Node[i].pondedArea;
+            else if (!canPond && target > capacity)
+                yNew = Node[i].fullDepth + Node[i].surDepth;
         } else {
             yNew = yLast + (target - current) / denom;
-            if (Steps > 0)
-                yNew = (1.0 - Omega) * yLast + Omega * yNew;
+            if (surfArea > 2.0 * Node[i].storageArea) {
+                // When pipe storage dominates, invert the actual local
+                // volume curve instead of jumping across its dry/crown bends.
+                double low = 0.0, high = Node[i].fullDepth + Node[i].surDepth;
+                double base = chamberPipePartVolume(i, yLast);
+                double jac = .5 * dt * Xnode[i].sumdqdh;
+                int trial;
+                if (canPond)
+                    high = MAX(Node[i].fullDepth, yLast + fabs(target-current) /
+                               MIN(Node[i].storageArea, Node[i].pondedArea) + 1.0);
+                yNew = MIN(high, MAX(low, yNew));
+                for (trial = 0; trial < 40; ++trial) {
+                    double volume = node_getVolume(i, yNew);
+                    double residual;
+                    if (canPond && yNew > Node[i].fullDepth)
+                        volume += (yNew - Node[i].fullDepth) * Node[i].pondedArea;
+                    residual = volume + chamberPipePartVolume(i,yNew) - base + jac*(yNew-yLast) - target;
+                    if (fabs(residual) <= 1.e-10 * MAX(1.0, fabs(target))) break;
+                    if (residual > 0.0) high = yNew; else low = yNew;
+                    yNew = .5*(low+high);
+                }
+                if (!canPond && yNew > Node[i].fullDepth + Node[i].surDepth - 1.e-8)
+                    yNew = Node[i].fullDepth + Node[i].surDepth;
+            }
         }
         yNew = MAX(0.0, yNew);
         yMax = Node[i].fullDepth + (canPond ? 0.0 : Node[i].surDepth);

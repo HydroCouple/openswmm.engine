@@ -84,6 +84,16 @@ static double checkNormalFlow(int j, double q, double y1, double y2, double a1, 
 * - omega (in): Under-relaxation parameter
 * - dt (in): Time step (sec)
 */
+// Momentum can use a FUDGE wetting depth, while physical chambers must
+// book only the water under the actual endpoint heads.
+static double chamberVolumeArea(int j, double a1, double a2) {
+    double y1 = MAX(0.0, Node[Link[j].node1].newDepth - Link[j].offset1);
+    double y2 = MAX(0.0, Node[Link[j].node2].newDepth - Link[j].offset2);
+    if (y1 < FUDGE) a1 = xsect_getAofY(&Link[j].xsect, y1);
+    if (y2 < FUDGE) a2 = xsect_getAofY(&Link[j].xsect, y2);
+    return .5 * (a1 + a2);
+}
+
 void dwflow_findConduitFlow(int linkIndex, int steps, double omega, double dt) {
     int k;                                  // index of conduit
     int n1, n2;                             // indexes of end nodes
@@ -202,6 +212,8 @@ void dwflow_findConduitFlow(int linkIndex, int steps, double omega, double dt) {
         Link[linkIndex].froude = 0.0;
         Link[linkIndex].newDepth = MIN(yMid, Link[linkIndex].xsect.yFull);
         Link[linkIndex].newVolume = Conduit[k].a1 * link_getLength(linkIndex) * barrels;
+        if (Node[n1].storageArea > 0.0 || Node[n2].storageArea > 0.0)
+            Link[linkIndex].newVolume = chamberVolumeArea(linkIndex, a1, a2) * link_getLength(linkIndex) * barrels;
         Link[linkIndex].newFlow = 0.0;
         return;
     }
@@ -381,6 +393,8 @@ void dwflow_findConduitFlow(int linkIndex, int steps, double omega, double dt) {
     //  aMid = MIN(aMid, xsect->aFull);  //Slot can have aMid > aFull
     Conduit[k].fullState = link_getFullState(a1, a2, xsect->aFull);
     Link[linkIndex].newVolume = aMid * link_getLength(linkIndex) * barrels;
+    if (Node[n1].storageArea > 0.0 || Node[n2].storageArea > 0.0)
+        Link[linkIndex].newVolume = chamberVolumeArea(linkIndex, a1, a2) * link_getLength(linkIndex) * barrels;
     Link[linkIndex].newFlow = q * barrels;
 }
 

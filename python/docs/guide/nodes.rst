@@ -89,6 +89,10 @@ Only ordinary junctions accept the property; invalid, negative and nonfinite
 values are rejected. Positive areas require dynamic wave or a qualified
 6.0.0 finite-volume path. Kinematic/steady routing refuses them. Above-rim
 ponding uses ``ponded_area``; surcharge depth does not lengthen the chamber.
+Finite-volume chambers require the CPU backend and zero surcharge depth.
+Dynamic-wave chambers support EXTRAN, SLOT and TPA; DYNAMIC_SLOT is refused.
+A timestep that cannot resolve the physical water budget stops with guidance
+to reduce ``ROUTING_STEP`` or increase ``MAX_TRIALS``.
 
 ----
 
@@ -385,5 +389,3 @@ See also
 * :doc:`links` — link wrappers follow the same pattern.
 * :doc:`output_reader` — node time-series after the run.
 * :doc:`error_handling` — every exception type referenced on this page.
-
-Positive chamber areas are not yet qualified with DYNAMIC_SLOT; select EXTRAN or SLOT instead.

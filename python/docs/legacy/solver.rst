@@ -368,3 +368,7 @@ updated 5.3.0 engine requires dynamic-wave routing for a positive area.
 This property is separate from PONDING_AREA and is not available in stock EPA
 5.2.4. Positive area stores chamber water through pipe surcharge up to the rim;
 above-rim ponding retains its separate area.
+
+EXTRAN and SLOT support positive areas; DYNAMIC_SLOT is refused. If the
+physical water budget cannot converge, reduce ROUTING_STEP or increase
+MAX_TRIALS as indicated by the engine diagnostic.
