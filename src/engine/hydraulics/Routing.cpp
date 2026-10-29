@@ -1023,7 +1023,8 @@ void Router::computeConduitLosses(SimulationContext& ctx, double dt, double evap
 
             // Limit the total to what is actually there. A volume-tracking
             // solver caps on the water it holds (legacy conduit_getLossRate
-            // under DW: newVolume / tstep); FV holds volume too, so capping
+            // under DW: newVolume / (barrels * tstep)); FV also tracks aggregate
+            // volume but loss rates are per barrel. Capping
             // it on |flow| meant standing water in a conduit with no flow
             // never evaporated at all. KINWAVE / STEADY cap on the CURRENT
             // solve's inflow (legacy passes qin*Qfull per barrel into
@@ -1037,7 +1038,7 @@ void Router::computeConduitLosses(SimulationContext& ctx, double dt, double evap
             // budget bounds it).
             double total = evap_loss + std::max(seep_loss, 0.0);
             if (total > 0.0 && (model_ == RouteModel::DYNWAVE || model_ == RouteModel::FV)) {
-                double q_avail = links.volume[uj] / dt;
+                double q_avail = links.volume[uj] / (dt * CD.barrels[ucr]);
                 if (total > q_avail && q_avail >= 0.0) {
                     double ratio = q_avail / total;
                     evap_loss *= ratio;

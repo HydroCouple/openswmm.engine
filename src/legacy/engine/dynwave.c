@@ -87,6 +87,8 @@ typedef struct {
     double oldSurfArea; // previous surface area (ft2)
     double sumdqdh;     // sum of dqdh from adjoining links
     double dYdT;        // change in depth w.r.t. time (ft/sec)
+    double conduitLoss; // aggregate conduit loss charged to this node (cfs)
+    double lossFactor;  // fraction affordable without drying below zero
 } TXnode;
 
 //-----------------------------------------------------------------------------
@@ -95,6 +97,7 @@ typedef struct {
 static double VariableStep; // size of variable time step (sec)
 static TXnode* Xnode;       // extended nodal information
 
+static int HasConduitLosses; // evaporation or seepage possible this step
 static double Omega; // actual under-relaxation parameter
 static int Steps;    // number of Picard iterations
 
@@ -112,6 +115,7 @@ static void findNonConduitFlow(int link, double dt);
 static void findNonConduitSurfArea(int link);
 static double getModPumpFlow(int link, double q, double dt);
 static void updateNodeFlows(int link);
+static void limitConduitLosses(double dt);
 static void updateConvergenceStats();
 
 static int findNodeDepths(double dt);
@@ -243,6 +247,8 @@ int dynwave_execute(double tStep) {
         // --- execute a routing step & check for nodal convergence
         initNodeStates();
         findLinkFlows(tStep);
+        if (HasConduitLosses)
+            limitConduitLosses(tStep);
         converged = findNodeDepths(tStep);
         Steps++;
         if (Steps > 1) {
@@ -298,7 +304,10 @@ void initRoutingStep() {
         Xnode[i].converged = FALSE;
         Xnode[i].dYdT = 0.0;
     }
+    HasConduitLosses = Evap.rate > 0.0;
     for (i = 0; i < Nobjects[LINK]; i++) {
+        if (Link[i].type == CONDUIT && Link[i].seepRate > 0.0)
+            HasConduitLosses = TRUE;
         Link[i].bypassed = FALSE;
         Link[i].surfArea1 = 0.0;
         Link[i].surfArea2 = 0.0;
@@ -334,6 +343,7 @@ void initNodeStates() {
             Node[i].outflow -= Node[i].newLatFlow;
         }
         Xnode[i].sumdqdh = 0.0;
+        Xnode[i].conduitLoss = 0.0;
     }
 }
 
@@ -604,6 +614,75 @@ void updateNodeFlows(int i)
         Xnode[n2].sumdqdh += Link[i].dqdh;
 }
 
+//=============================================================================
+
+/**
+ * @brief Limit conduit losses to the water their end nodes can supply.
+ *
+ * A conduit volume cap alone does not protect a dry end node: its share of
+ * seepage can exceed the inflow while the other end holds water. Aggregate
+ * all incident losses before sharing the available water, then use the more
+ * restrictive end's factor. Keep the accepted rates in the conduit so water
+ * quality and the routing ledger charge exactly the hydraulic loss.
+ */
+void limitConduitLosses(double dt) {
+    int i, j, k, n1, n2;
+    double rate, share, area, storageRate, available, factor, reduction;
+    int hasLoss = FALSE;
+    for (i = 0; i < Nobjects[NODE]; i++)
+        Xnode[i].conduitLoss = 0.0;
+    for (j = 0; j < Nobjects[LINK]; j++) {
+        if (Link[j].type != CONDUIT)
+            continue;
+        k = Link[j].subIndex;
+        rate = (Conduit[k].evapLossRate + Conduit[k].seepLossRate) * Conduit[k].barrels;
+        if (rate <= 0.0)
+            continue;
+        hasLoss = TRUE;
+        n1 = Link[j].node1;
+        n2 = Link[j].node2;
+        share = (Node[n1].type != OUTFALL && Node[n2].type != OUTFALL) ? 0.5 : 1.0;
+        if (Node[n1].type != OUTFALL)
+            Xnode[n1].conduitLoss += share * rate;
+        if (Node[n2].type != OUTFALL)
+            Xnode[n2].conduitLoss += share * rate;
+    }
+    if (!hasLoss)
+        return;
+    for (i = 0; i < Nobjects[NODE]; i++) {
+        Xnode[i].lossFactor = 1.0;
+        rate = Xnode[i].conduitLoss;
+        if (rate <= 0.0 || Node[i].type == OUTFALL)
+            continue;
+        area = MAX(Xnode[i].newSurfArea, MinSurfArea);
+        // FUDGE is a numerical wetting floor, not a renewable water supply.
+        // Enforce both the step's water budget and trapezoidal continuity.
+        available = Node[i].inflow - Node[i].outflow + rate;
+        storageRate = MAX(0.0, Node[i].oldDepth - FUDGE) * area / dt;
+        available = MIN(available + storageRate,
+                        available + Node[i].oldNetInflow + 2.0 * storageRate);
+        Xnode[i].lossFactor = MIN(1.0, MAX(0.0, available / rate));
+    }
+    for (j = 0; j < Nobjects[LINK]; j++) {
+        if (Link[j].type != CONDUIT)
+            continue;
+        k = Link[j].subIndex;
+        n1 = Link[j].node1;
+        n2 = Link[j].node2;
+        factor = MIN(Xnode[n1].lossFactor, Xnode[n2].lossFactor);
+        if (factor >= 1.0)
+            continue;
+        rate = (Conduit[k].evapLossRate + Conduit[k].seepLossRate) * Conduit[k].barrels;
+        reduction = rate * (1.0 - factor);
+        Conduit[k].evapLossRate *= factor;
+        Conduit[k].seepLossRate *= factor;
+        share = (Node[n1].type != OUTFALL && Node[n2].type != OUTFALL) ? 0.5 : 1.0;
+        if (Node[n1].type != OUTFALL)
+            Node[n1].outflow -= share * reduction;
+        if (Node[n2].type != OUTFALL)
+            Node[n2].outflow -= share * reduction;
+    }
+}
 //=============================================================================
 
 /**

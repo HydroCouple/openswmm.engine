@@ -1303,3 +1303,8 @@ if(OPENSWMM_BUILD_2D)
     target_compile_definitions(test_engine_portability_regressions PRIVATE
         OPENSWMM_PORTABILITY_OUT="${CMAKE_CURRENT_BINARY_DIR}/portability-output")
 endif()
+
+# OpenSWMM issue #2 / USEPA #216 and #234: conduit loss conservation.
+add_gtest_unit(test_engine_conduit_losses test_conduit_losses.cpp)
+target_compile_definitions(test_engine_conduit_losses PRIVATE
+    ISSUE2_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/manual/issue2_seepage")

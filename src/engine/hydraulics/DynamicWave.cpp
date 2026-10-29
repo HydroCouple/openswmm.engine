@@ -1508,6 +1508,8 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
                 // critical/normal depth by one iteration (e.g. extran1's free
                 // outfall 10208 read 0 while legacy had a non-zero yCrit),
                 // seeding a per-iteration divergence.
+                if (!losses_all_zero_)
+                    limitConduitLosses(ctx, dt);
                 openswmm::outfall::setAllOutfallDepths(ctx, dt);
 
                 // Step 5: flag nodes where AA must be skipped (non-smooth
@@ -2329,7 +2331,7 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
 // hit the dwflow.c:162 early return, so their stored loss rate is left
 // unchanged). Uses depth = 0.5*(oldDepth + newDepth) at the current iterate and
 // the FAITHFUL transect top width (xsect::getWofY via buildXSP), with the DW
-// volume cap = newVolume/tstep and legacy's per-component clamp order
+// volume cap = newVolume/(barrels*tstep) and per-component clamp order
 // (comp*q/total). The once-per-step Router::computeConduitLosses used the
 // start-of-step depth with NO flow-class gate, which (a) leaked a spurious
 // evap/seep loss onto dry/up-dry conduits (e.g. user2 TW01250) and (b) froze
@@ -2431,15 +2433,15 @@ void DWSolver::recomputeConduitLossOne(SimulationContext& ctx, double dt, int ci
                 }
             }
 
-            // DW volume cap (legacy link.c:1389): q = newVolume/tstep; if the
-            // total loss exceeds it, scale each component (comp*q/total order).
+            // Rates are per barrel; links.volume covers all barrels (USEPA #234).
+            // If loss exceeds per-barrel inventory/dt, scale both components.
             // G-X4: a GAINING conduit (seep_loss < 0) adds water rather than
             // taking it, so it is not part of what the conduit can afford —
             // the cap sees the losing components only, and the gain passes
             // through untouched (it is bounded by the aquifer instead).
             double total = evap_loss + std::max(seep_loss, 0.0);
             if (total > 0.0) {
-                const double q = links.volume[u] / dt;
+                const double q = links.volume[u] / (dt * CD.barrels[ucr]);
                 if (total > q) {
                     evap_loss = evap_loss * q / total;
                     if (seep_loss > 0.0)
@@ -3606,6 +3608,69 @@ void DWSolver::gatherConduitNodeFlows(SimulationContext& ctx) {
     }
 }
 
+// Limit losses after all conduit and structure flows have been gathered.
+// The FUDGE depth is a numerical wetting floor, not water that may be removed
+// again every step. Budget all incident losses together, and use the more
+// restrictive end's factor so neither end is charged unavailable water.
+void DWSolver::limitConduitLosses(SimulationContext& ctx, double dt) {
+    auto& nodes = ctx.nodes;
+    auto& CD = ctx.link_subtypes.conduits;
+    auto adjustable = [&](int j, int r) {
+        // A host-prescribed exchange is authoritative (applySeepageForcing).
+        const auto& modes = ctx.forcing.link_seepage_mode;
+        return (static_cast<std::size_t>(j) >= modes.size() ||
+                (modes[j] != ForcingMode::OVERRIDE && modes[j] != ForcingMode::ADD)) &&
+               CD.evap_loss_rate[r] + CD.seep_loss_rate[r] > 0.0;
+    };
+    std::fill(xnode_.conduit_loss.begin(), xnode_.conduit_loss.end(), 0.0);
+    for (int ci = 0; ci < n_conduits_; ++ci) {
+        const int j = tile_uj_[ci], r = tile_crow_[ci];
+        if (!adjustable(j, r))
+            continue;
+        const int n1 = tile_n1_[ci], n2 = tile_n2_[ci];
+        const double rate = (CD.evap_loss_rate[r] + CD.seep_loss_rate[r]) * tile_barrels_d_[ci];
+        const double share = (!node_tile_[n1].is_outfall && !node_tile_[n2].is_outfall) ? 0.5 : 1.0;
+        if (!node_tile_[n1].is_outfall)
+            xnode_.conduit_loss[n1] += share * rate;
+        if (!node_tile_[n2].is_outfall)
+            xnode_.conduit_loss[n2] += share * rate;
+    }
+    for (int i = 0; i < n_nodes_; ++i) {
+        xnode_.loss_factor[i] = 1.0;
+        const double rate = xnode_.conduit_loss[i];
+        if (rate <= 0.0 || node_tile_[i].is_outfall)
+            continue;
+        const double area = std::max(xnode_.new_surf_area[i], min_surf_area_);
+        const double storage_rate = std::max(0.0, nodes.old_depth[i] - FUDGE) * area / dt;
+        const double net = nodes.inflow[i] - nodes.outflow[i] + rate;
+        const double available =
+            std::min(net + storage_rate, net + nodes.old_net_inflow[i] + 2.0 * storage_rate);
+        xnode_.loss_factor[i] = std::min(1.0, std::max(0.0, available / rate));
+    }
+    for (int ci = 0; ci < n_conduits_; ++ci) {
+        const int j = tile_uj_[ci], r = tile_crow_[ci];
+        if (!adjustable(j, r))
+            continue;
+        const int n1 = tile_n1_[ci], n2 = tile_n2_[ci];
+        const double factor = std::min(xnode_.loss_factor[n1], xnode_.loss_factor[n2]);
+        if (factor >= 1.0)
+            continue;
+        const double rate = CD.evap_loss_rate[r] + CD.seep_loss_rate[r];
+        // Preserve a signed aquifer gain while reducing only losing terms.
+        const double positive = CD.evap_loss_rate[r] + std::max(0.0, CD.seep_loss_rate[r]);
+        const double scale =
+            CD.seep_loss_rate[r] >= 0.0 ? factor : (positive - rate * (1.0 - factor)) / positive;
+        CD.evap_loss_rate[r] *= scale;
+        if (CD.seep_loss_rate[r] > 0.0)
+            CD.seep_loss_rate[r] *= scale;
+        const double reduction = (rate * tile_barrels_d_[ci]) * (1.0 - factor);
+        const double share = (!node_tile_[n1].is_outfall && !node_tile_[n2].is_outfall) ? 0.5 : 1.0;
+        if (!node_tile_[n1].is_outfall)
+            nodes.outflow[n1] -= share * reduction;
+        if (!node_tile_[n2].is_outfall)
+            nodes.outflow[n2] -= share * reduction;
+    }
+}
 // ============================================================================
 // computeAASkipFlags -- identify nodes where Anderson acceleration is invalid
 // ============================================================================

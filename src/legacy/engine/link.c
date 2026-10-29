@@ -1375,10 +1375,10 @@ double conduit_getLossRate(int j, int routeModel, double q, double tstep) {
         // --- compute total loss rate
         totalLossRate = evapLossRate + seepLossRate;
 
-        // --- limit total loss rate to current volume for DW routing
-        //     or current link flow rate otherwise
+        // --- rates are per barrel; Link.newVolume covers all barrels.
+        //     Limit DW loss to per-barrel inventory, otherwise to flow.
         if (routeModel == DW)
-            q = Link[j].newVolume / tstep;
+            q = Link[j].newVolume / (tstep * Conduit[Link[j].subIndex].barrels);
         else
             q = ABS(q);
         if (totalLossRate > q) {

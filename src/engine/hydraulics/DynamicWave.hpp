@@ -145,6 +145,8 @@ struct DWNodeArrays {
     std::vector<double> old_surf_area; ///< Surface area from last non-surcharged state
     std::vector<double> sumdqdh;
     std::vector<double> dYdT;
+    std::vector<double> conduit_loss; ///< Incident net conduit loss (cfs)
+    std::vector<double> loss_factor; ///< Affordable fraction of conduit loss
     std::vector<uint8_t> converged;
     std::vector<uint8_t> is_surcharged; ///< TRUE when node depth > crown elevation
 
@@ -162,6 +164,8 @@ struct DWNodeArrays {
         old_surf_area.assign(n, 0.0);
         sumdqdh.assign(n, 0.0);
         dYdT.assign(n, 0.0);
+        conduit_loss.assign(n, 0.0);
+        loss_factor.assign(n, 1.0);
         converged.assign(n, 0);
         is_surcharged.assign(n, 0);
     }
@@ -750,6 +754,9 @@ private:
      *     and ConduitData row indices.
      */
     void recomputeConduitLossOne(SimulationContext& ctx, double dt, int ci);
+
+    /// Bound all incident natural losses by each end node's available water.
+    void limitConduitLosses(SimulationContext& ctx, double dt);
     /**
      * @brief Run the fused conduit Picard tail and publish each solved flow/sensitivity.
      *
