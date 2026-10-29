@@ -13,6 +13,8 @@
 
 #include <gtest/gtest.h>
 #include <cmath>
+#include <cstring>
+#include <stdexcept>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -480,4 +482,55 @@ TEST(OdeSolver, SIRTrajectoryMatchesBenchmark) {
     EXPECT_LT(max_err_S, 1e-3) << "SIR S max error " << max_err_S << " (benchmark: " << path << ")";
     EXPECT_LT(max_err_I, 1e-3) << "SIR I max error " << max_err_I;
     EXPECT_LT(max_err_R, 1e-3) << "SIR R max error " << max_err_R;
+}
+
+TEST(OdeSolver, TypedCallbackPreservesErasedValuesAndEveryEvaluation) {
+    for (int n : {1, 2, 7})
+        for (bool reverse : {false, true}) {
+            std::vector<double> typed(n, 1.), erased = typed, typed_trace, erased_trace;
+            auto callback = [n](std::vector<double>& trace) {
+                return [n, &trace](double t, const double* y, double* dy) {
+                    trace.push_back(t);
+                    for (int i = 0; i < n; ++i)
+                        trace.push_back(y[i]);
+                    for (int i = 0; i < n; ++i)
+                        dy[i] = -.03*(i+1)*y[i]*y[i] + .001*y[(i+1)%n] + .0001*t;
+                };
+            };
+            auto typed_rhs = callback(typed_trace);
+            openswmm::ode::DerivFunc erased_rhs = callback(erased_trace);
+            const double end = reverse ? -.5 : 25.;
+            const int a = openswmm::ode::integrateCallable(typed.data(), n, 0., end, 1e-10, end, typed_rhs);
+            const int b = openswmm::ode::integrate(erased.data(), n, 0., end, 1e-10, end, erased_rhs);
+            EXPECT_EQ(a, openswmm::ode::ODE_OK);
+            EXPECT_EQ(a, b);
+            EXPECT_EQ(0, std::memcmp(typed.data(), erased.data(), n*sizeof(double)));
+            ASSERT_EQ(typed_trace.size(), erased_trace.size());
+            EXPECT_EQ(0, std::memcmp(typed_trace.data(), erased_trace.data(), typed_trace.size()*sizeof(double)));
+        }
+    auto stiff = [](double, const double* y, double* dy) { dy[0] = -100*y[0]; };
+    double typed = 1., erased = 1.;
+    const int a = openswmm::ode::integrateCallable(&typed, 1, 1e20, 1e20+1e6, 1e-10, 1000., stiff);
+    const int b = openswmm::ode::integrate(&erased, 1, 1e20, 1e20+1e6, 1e-10, 1000., stiff);
+    EXPECT_EQ(a, openswmm::ode::ODE_MAX_STEPS);
+    EXPECT_EQ(a, b);
+    EXPECT_EQ(0, std::memcmp(&typed, &erased, sizeof(double)));
+    EXPECT_DOUBLE_EQ(typed, 1.);
+    for (bool concrete : {false, true}) {
+        int evaluations = 0;
+        auto throws = [&](double, const double* y, double* dy) {
+            if (++evaluations == 3)
+                throw std::runtime_error("ODE test refusal");
+            dy[0] = -y[0];
+        };
+        double value = 2.;
+        EXPECT_THROW({
+            if (concrete)
+                openswmm::ode::integrateCallable(&value, 1, 0., 1., 1e-8, 1., throws);
+            else
+                openswmm::ode::integrate(&value, 1, 0., 1., 1e-8, 1., throws);
+        }, std::runtime_error);
+        EXPECT_DOUBLE_EQ(value, 2.);
+        EXPECT_EQ(evaluations, 3);
+    }
 }

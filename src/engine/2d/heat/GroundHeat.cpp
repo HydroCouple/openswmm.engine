@@ -9,6 +9,7 @@
  * @license   Apache-2.0
  */
 
+#include "core/ProcessPerf.hpp"
 #include "GroundHeat.hpp"
 #include "../../hydrology/surface/MeshSnow.hpp"
 #include "../data/MeshData.hpp"
@@ -645,6 +646,7 @@ std::size_t GroundHeatState::boundaries(int i, double exposed,
  * engine calendar.
  */
 std::string GroundHeatState::conduct(int i, double dt, bool midpoint) {
+    perf::ProcessTimer process_timer(perf::ProcessPhase::heat_columns);
     auto& cell = cells[i];
     auto& c = cell.column;
     const auto& o = config->options;
@@ -652,16 +654,28 @@ std::string GroundHeatState::conduct(int i, double dt, bool midpoint) {
         return {};
     if (o.surface_thermal_bc == "SURFACE_WATER")
         return "SURFACE_WATER thermal boundary requires a reciprocal mesh ground-column contact.";
-    std::vector<ThermalBoundary> bc;
+    struct ConductScratch {
+        std::vector<ThermalBoundary> boundaries;
+        std::vector<ThermalStore> stores;
+        std::vector<ThermalContact> contacts;
+        ThermalContactScratch implicit;
+        ThermalMidpointScratch midpoint;
+    };
+    static thread_local ConductScratch scratch;
+    auto& bc = scratch.boundaries;
+    bc.clear();
     const double snow_fraction = snowContactFraction(i);
     const auto top_count = boundaries(i, 1 - snow_fraction, bc);
     const int snow_boundary =
         appendSnowContact(i, c.area * snow_fraction, bc) ? int(bc.size() - 1) : -1;
-    auto stores = c.stores();
+    auto& stores = scratch.stores;
+    c.stores(stores);
     for (std::size_t j = 0; j < stores.size(); ++j)
         stores[j].capacity = activeCapacity(i, j);
-    auto solved = midpoint ? solveThermalContactsRk2(stores, c.contacts(), bc, dt)
-                           : solveThermalContacts(stores, c.contacts(), bc, dt);
+    c.contacts(scratch.contacts);
+    auto& solved = midpoint
+                       ? solveThermalContactsRk2(stores, scratch.contacts, bc, dt, scratch.midpoint)
+                       : solveThermalContacts(stores, scratch.contacts, bc, dt, scratch.implicit);
     if (!solved.error.empty())
         return solved.error;
     for (std::size_t b = 0; b < solved.boundary_j.size(); ++b) {
@@ -677,7 +691,7 @@ std::string GroundHeatState::conduct(int i, double dt, bool midpoint) {
     }
     for (double energy : solved.contact_j)
         cell.vertical_absolute_j += std::abs(energy);
-    c.energy = std::move(solved.energy);
+    c.energy.swap(solved.energy);
     return {};
 }
 } // namespace openswmm::twoD

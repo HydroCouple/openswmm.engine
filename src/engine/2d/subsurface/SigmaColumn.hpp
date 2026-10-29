@@ -162,6 +162,24 @@ struct ColumnStep {
 void advanceColumn(const soil::Params& p, double* theta, int m, int stride,
                    ColumnStep& st) noexcept;
 
+/// Soil evaluations shared by trials of the same old column. Reprepare after any change to
+/// soil, old theta, layer count, L_old, capillary, forward_euler, or Euler grid velocity.
+/// No serialized state.
+struct ColumnPreparation {
+    std::vector<double> psi, conductivity, diffusivity, celerity, diffusion_bound;
+    bool fixed_velocity = false;
+    double dt_limit = 1.0e30;
+};
+
+/// Prepare reusable trial invariants. Same input preconditions as advanceColumn; m > 0.
+void prepareColumn(const soil::Params& p, const double* theta, int m, int stride,
+                   const ColumnStep& st, ColumnPreparation& prepared) noexcept;
+
+/// Advance using invariants prepared from exactly this old column and step inputs. L_new,
+/// boundary rates, layer inflows and capture receipts may differ between trials.
+void advanceColumn(const soil::Params& p, double* theta, int m, int stride, ColumnStep& st,
+                   const ColumnPreparation& prepared) noexcept;
+
 /**
  * @brief The explicit stability bound of a column, without advancing it (§2.3): `Δt_u ≤
  * C_col·min_j[ L·Δσ / ( c(θ_j) + |σ_j·L̇| + 2·D̄_j/(L·Δσ) ) ]` with celerity `c(θ) = dK/dθ`.

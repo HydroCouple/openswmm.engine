@@ -34,19 +34,23 @@ MODELS=()
 while IFS= read -r line; do
     [ -n "$line" ] && MODELS+=("$line")
 done < <(
-  # Underscore-prefixed decks and tests/output are gtest scratch/generated
-  # artifacts. Their presence depends on which suites ran and can include
-  # malformed inputs or features unsupported by the baseline. The C API
-  # round-trip fixture directory is generated outside tests/output, so exclude
-  # it explicitly as well.
-  find "$REPO/tests" -name '*.inp' -not -name '_*' \
-       -not -path '*/output/*' \
-       -not -path '*/test_capi_gap_closures_artifacts/*' \
-       -print0 \
+  # Use the authored, tracked census. An unrestricted find also traverses
+  # archived source snapshots and gtest-generated fixtures: the SoA Phase-0
+  # run found 9,891 candidates instead of the reviewed source decks. Newly
+  # added process decks are gated explicitly by tests/parity/MANIFEST.
+  git -C "$REPO" ls-files -- 'tests/*.inp' \
+  | while IFS= read -r model; do
+      if [[ "$model" == */_* || "$model" == */output/* || "$model" == */source_snapshot/* || "$model" == */test_capi_gap_closures_artifacts/* ]]; then
+          continue
+      fi
+      printf '%s\0' "$REPO/$model"
+    done \
   | xargs -0 grep -l -E '^\[2D_(TRIANGLES|MESH_FILE)\]' 2>/dev/null \
   | xargs grep -L -E '^\[2D_INFILTRATION|^\[2D_INITIAL_BED_QUALITY\]|^\[2D_(HEAT|GROUND_HEAT)|^[[:space:]]*(HEAT_MODEL|BED_HEAT_MODEL|THERMAL_MODEL)[[:space:]]' 2>/dev/null \
   | sort
 )
+
+[ ${#MODELS[@]} -gt 0 ] || { echo "No tracked 2D models found -- gate is unqualified" >&2; exit 2; }
 
 echo "G1 bitwise regression: ${#MODELS[@]} 2D models"
 echo "  baseline : $BASE_CLI"

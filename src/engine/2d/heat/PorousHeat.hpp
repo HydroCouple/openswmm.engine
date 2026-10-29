@@ -64,6 +64,28 @@ struct ThermalSolution {
     double algebraic_residual = 0;
     int iterations = 0;
 };
+// Caller-owned workspaces: inputs must not alias writable workspace/result storage.
+// One active call owns each workspace. Borrowed mutable results expire on reuse;
+// owning overloads below retain independent value semantics.
+struct ThermalContactScratch {
+    ThermalSolution result;
+    std::vector<double> diag, rhs, x, r, z, p, ap, energy;
+};
+struct ThermalMidpointScratch {
+    ThermalSolution result;
+    ThermalContactScratch implicit;
+    std::vector<long double> rate;
+    std::vector<ThermalStore> current;
+    std::vector<double> energy_correction, contact_correction, boundary_correction;
+};
+ThermalSolution& solveThermalContacts(const std::vector<ThermalStore>&,
+                                      const std::vector<ThermalContact>&,
+                                      const std::vector<ThermalBoundary>&, double seconds,
+                                      ThermalContactScratch&);
+ThermalSolution& solveThermalContactsRk2(const std::vector<ThermalStore>&,
+                                         const std::vector<ThermalContact>&,
+                                         const std::vector<ThermalBoundary>&, double seconds,
+                                         ThermalMidpointScratch&);
 // Backward Euler for a reciprocal thermal contact network. All stores are
 // finite; all contact receipts enter one store and leave the other. Inputs
 // are never modified, including on numerical refusal.
@@ -168,6 +190,7 @@ struct PorousHeatColumn {
      * allocate.
      */
     std::vector<ThermalStore> stores() const;
+    void stores(std::vector<ThermalStore>& result) const;
     /**
      * @brief Construct conductive contacts between consecutive fixed layers.
      * @return Owned contacts joining j-1 to j, with W/K conductance equal to area divided by the
@@ -176,6 +199,7 @@ struct PorousHeatColumn {
      * may allocate.
      */
     std::vector<ThermalContact> contacts() const;
+    void contacts(std::vector<ThermalContact>& result) const;
 };
 struct ThermalAdvection {
     std::string error;

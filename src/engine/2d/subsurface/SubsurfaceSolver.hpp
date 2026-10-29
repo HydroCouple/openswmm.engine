@@ -1140,6 +1140,7 @@ public:
      */
     double specificYieldOf(int cell) const noexcept;
     double unreservedDrainableWater(int cell) const noexcept;
+    double unreservedDrainableWater(int cell, double specific_yield) const noexcept;
     double pendingSaturatedMassExport(int cell, int species) const noexcept;
     // Internal R5 trial budget in SI, before accepting a new node receipt.
     // Separate ceilings; incoming pending water never finances a withdrawal.
@@ -1461,6 +1462,8 @@ public:
     std::string restoreTransportRestart(const std::string& bytes, bool apply);
 
 private:
+    double infiltrationStorageDeficit(int cell) const noexcept;
+    double infiltrationHeadroom(int cell, double deficit) const noexcept;
     friend class CommonSourceStage;
     friend class ExplicitInertialSolver;
     friend RichardsBedAcceptance acceptRichardsBedsAtFiring(SubsurfaceSolver&, SurfaceStateData&,
@@ -1770,11 +1773,11 @@ private:
      *
      * @param[in] i Valid prepared receiver cell index with consistent node/heat/bed ledgers.
      * @return Signed outward aquifer-to-node water m3 consumed through gather_fraction_ from
-     * every bed attached to the cell. Zeros the global bed_gathered_ scratch then records this
-     * gather's outgoing weights, matching layered contact outflow when active.
+     * every bed attached to the cell. Clears the previous gather's bed_gathered_ slots then
+     * records this gather's outgoing weights, matching layered contact outflow when active.
      * @note Also gathers paired pending LID direction/heat volumes. Does not change canonical
      * node/soil water or move native species itself. Requires serial gathers because shared
-     * scratch resets globally; array indices and producer invariants are unchecked. No
+     * scratch tracks the preceding cell; array indices and producer invariants are unchecked. No
      * allocation.
      */
     double gatherNode(int i) noexcept;
@@ -1950,6 +1953,23 @@ private:
     /// See coverage(). Rebuilt from the rows by every initialize(), so a
     /// restart reproduces it without a checkpoint field.
     std::vector<uint8_t> covered_;
+    /// Derived scratch owner; reconstructed from bed_gathered_ on checkpoint restore.
+    int bed_gathered_cell_ = -1;
+    bool et_boundary_ = false, et_caprise_ = false;
+    std::vector<int> reaction_rows_;
+
+    // Nonphysical, pointer-free work storage. Snapshots do not copy its capacity;
+    // assignment keeps the destination's workspace. Every used slot is reset or
+    // overwritten by its next firing; no checkpoint record includes these values.
+    struct CellScratch {
+        std::vector<double> receipt_mass;
+        std::vector<double> refund_mass, dunne_mass, excess_mass;
+        CellScratch() = default;
+        CellScratch(const CellScratch&) noexcept {}
+        CellScratch& operator=(const CellScratch&) noexcept { return *this; }
+        CellScratch(CellScratch&&) noexcept = default;
+        CellScratch& operator=(CellScratch&&) noexcept = default;
+    } cell_scratch_;
 };
 
 } // namespace openswmm::twoD

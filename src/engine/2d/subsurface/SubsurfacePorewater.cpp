@@ -9,6 +9,7 @@
  * @license   Apache-2.0
  */
 
+#include "core/ProcessPerf.hpp"
 #include "SubsurfaceSolver.hpp"
 #include "../data/SolverOptions2D.hpp"
 #include "../heat/PorewaterTransport.hpp"
@@ -87,6 +88,8 @@ std::string SubsurfaceSolver::initPorewater() {
  * hydraulic/thermal/native access. No water or time advance.
  */
 std::string SubsurfaceSolver::refreshSigmaPorewater(int i) {
+    perf::ProcessTimer process_timer(perf::ProcessPhase::gw_sigma_map);
+    perf::count(perf::ProcessCounter::sigma_map_refreshes);
     if (tr_.n_layers <= 0 || !heat_.active())
         return {};
     auto& cell = heat_.cells[i];
@@ -303,19 +306,31 @@ double SubsurfaceSolver::saturatedPorewaterMobileMass(int i, int r) const noexce
  * Requires exclusive compatible owner access.
  */
 void SubsurfaceSolver::fireGroundPorewaterSpecies(int i, const CellFlux& f) noexcept {
+    perf::ProcessTimer process_timer(perf::ProcessPhase::gw_species);
     auto& cell = heat_.cells[i];
     if (cell.failed || !cell.porewater.active())
         return;
     try {
+        struct PorewaterScratch {
+            PorewaterTransportScratch transport;
+            std::vector<double> water_change, moisture, new_sat;
+            std::vector<double> old_water, new_water, preset_water, water, weights;
+            std::vector<double> mass, retention, preset, input, withdrawal, reserved, dissolved;
+        };
+        static thread_local PorewaterScratch scratch;
         const auto& column = cell.column;
         const auto nl = column.theta.size();
         auto next = cell.porewater;
         const bool euler = opts_ && opts_->reconstruction_order == 2;
-        std::vector<double> water_change;
+        auto& water_change = scratch.water_change;
+        water_change.clear();
         if (euler)
             if (auto error = groundWaterIncrement(i, f, water_change); !error.empty())
                 throw std::runtime_error(error);
-        std::vector<double> moisture, new_sat;
+        auto& moisture = scratch.moisture;
+        auto& new_sat = scratch.new_sat;
+        moisture.clear();
+        new_sat.clear();
         if (auto error = projectGroundMoisture(state_, i, f.hg_final, column.depth_edges, moisture,
                                                &new_sat);
             !error.empty())
@@ -323,8 +338,14 @@ void SubsurfaceSolver::fireGroundPorewaterSpecies(int i, const CellFlux& f) noex
         auto new_column = column;
         if (auto error = new_column.setMoisture(moisture); !error.empty())
             throw std::runtime_error(error);
-        std::vector<double> old_water(nl), new_water(nl), preset_water(nl), water(nl),
-            weights = cell.saturated_water;
+        auto& old_water = scratch.old_water;
+        auto& new_water = scratch.new_water;
+        auto& preset_water = scratch.preset_water;
+        auto& water = scratch.water;
+        auto& weights = scratch.weights;
+        for (auto* values : {&old_water, &new_water, &preset_water, &water})
+            values->assign(nl, 0);
+        weights = cell.saturated_water;
         double total = std::accumulate(weights.begin(), weights.end(), 0.);
         if (!(total > 0)) {
             weights = new_sat;
@@ -355,9 +376,8 @@ void SubsurfaceSolver::fireGroundPorewaterSpecies(int i, const CellFlux& f) noex
         water.front() += f.infil_in - f.reject - f.et - f.dunne;
         water.back() -= f.deep;
         double node_volume = 0;
-        for (std::size_t b = 0; b < node_beds_.size(); ++b)
-            if (node_beds_[b].cell == i)
-                node_volume += heat_node_gathered_out_[b];
+        for (const auto b : cell_beds_[i])
+            node_volume += heat_node_gathered_out_[b];
         node_volume = std::max(node_volume, std::max(0., f.node_out));
         const bool link_packet = heat_link_out_volume_[i] > 0;
         const double implicit_link_volume = link_packet ? 0 : std::max(0., -f.link),
@@ -382,8 +402,15 @@ void SubsurfaceSolver::fireGroundPorewaterSpecies(int i, const CellFlux& f) noex
                              booked_link = consumePending(tr_.lout_mass[k]),
                              node_in = gatherNodeMass(i, r);
                 const double refund = f.refund_mass ? (*f.refund_mass)[r] : 0;
-                std::vector<double> mass(nl), retention(nl), preset(nl), input(nl), withdrawal(nl),
-                    reserved(euler ? nl : 0);
+                auto& mass = scratch.mass;
+                auto& retention = scratch.retention;
+                auto& preset = scratch.preset;
+                auto& input = scratch.input;
+                auto& withdrawal = scratch.withdrawal;
+                auto& reserved = scratch.reserved;
+                for (auto* values : {&mass, &retention, &preset, &input, &withdrawal})
+                    values->assign(nl, 0);
+                reserved.assign(euler ? nl : 0, 0);
                 double preset_mass = 0;
                 for (std::size_t j = 0; j < nl; ++j) {
                     mass[j] = next.mass[row + j];
@@ -404,11 +431,12 @@ void SubsurfaceSolver::fireGroundPorewaterSpecies(int i, const CellFlux& f) noex
                 input.front() += infil - refund;
                 withdrawal.front() += excess_volume + f.dunne + (r == tr_.age_row ? f.et : 0);
                 withdrawal.back() += f.deep;
-                auto advected = euler ? advectPorewaterEuler(old_water, retention, mass,
-                                                             water_change, water, input, withdrawal,
-                                                             cell.reserved_out_water, reserved)
-                                      : advectPorewater(old_water, new_water, retention, mass,
-                                                        water, input, withdrawal);
+                auto& advected =
+                    euler ? advectPorewaterEuler(old_water, retention, mass, water_change, water,
+                                                 input, withdrawal, cell.reserved_out_water,
+                                                 reserved, scratch.transport)
+                          : advectPorewater(old_water, new_water, retention, mass, water, input,
+                                            withdrawal, scratch.transport);
                 if (!advected.error.empty())
                     throw std::runtime_error(advected.error);
                 double donor = 0;
@@ -450,13 +478,12 @@ void SubsurfaceSolver::fireGroundPorewaterSpecies(int i, const CellFlux& f) noex
                     tr_.xacc_to_surface[k] += excess + dunne;
                 if (node_volume > 0 && !tr_.node_out_mass.empty()) {
                     const auto nn = tr_.node_out_mass.size() / tr_.n_species;
-                    for (std::size_t b = 0; b < node_beds_.size(); ++b)
-                        if (node_beds_[b].cell == i) {
-                            const int node = node_beds_[b].node;
-                            if (node >= 0 && std::size_t(node) < nn)
-                                tr_.node_out_mass[std::size_t(r) * nn + node] +=
-                                    donor * heat_node_gathered_out_[b];
-                        }
+                    for (const auto b : cell_beds_[i]) {
+                        const int node = node_beds_[b].node;
+                        if (node >= 0 && std::size_t(node) < nn)
+                            tr_.node_out_mass[std::size_t(r) * nn + node] +=
+                                donor * heat_node_gathered_out_[b];
+                    }
                 }
                 if (std::size_t(i) < runtime_sources_.cells.size())
                     for (auto index : runtime_sources_.cells[i]) {
@@ -472,7 +499,8 @@ void SubsurfaceSolver::fireGroundPorewaterSpecies(int i, const CellFlux& f) noex
                 // the physical layers and exactly matched by provider receipts.
                 if (edge_requested > 0 || std::size_t(i) < runtime_sources_.cells.size()) {
                     double requested = edge_requested, available = 0;
-                    std::vector<double> dissolved(nl);
+                    auto& dissolved = scratch.dissolved;
+                    dissolved.assign(nl, 0);
                     for (std::size_t j = 0; j < nl; ++j) {
                         if (euler) {
                             double remaining = mass[j] - reserved[j] - advected.withdrawn_mass[j];

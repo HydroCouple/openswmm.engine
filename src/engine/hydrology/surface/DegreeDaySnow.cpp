@@ -24,6 +24,7 @@
  * @license   Apache-2.0
  */
 
+#include "core/ProcessPerf.hpp"
 #include "DegreeDaySnow.hpp"
 #include "../../core/SimulationContext.hpp"
 #include "../../core/UnitConversion.hpp"
@@ -217,6 +218,7 @@ double DegreeDaySnow::rainMeltRate(double temp, double wind, double gamma, doubl
 
 void DegreeDaySnow::execute(SimulationContext& ctx, double dt, double temp, double wind,
                             double rainfall, double snowfall, double gamma, double ea) {
+    perf::ProcessTimer process_timer(perf::ProcessPhase::subcatch_snow);
     int n = soa_.n_subcatch;
     if (n == 0)
         return;
@@ -328,9 +330,42 @@ inline double meltSnowpack(SnowSoA& soa, std::size_t ui, double temp, double rme
 
 } // namespace
 
+namespace {
+// The three native subareas have independent stores. Resolve the unchanged
+// source ownership mask before entering this all-thin pack kernel.
+template<bool TrackAge>
+void meltThinPack(SnowSoA& soa, std::size_t first, double dt) {
+    auto* wsnow = soa.wsnow.data() + first;
+    auto* free_water = soa.fw.data() + first;
+    auto* cold = soa.coldc.data() + first;
+    auto* coverage = soa.asc.data() + first;
+    auto* melt = soa.imelt.data() + first;
+    auto* age = soa.age.data();
+    auto* out_age = soa.out_age.data();
+#pragma omp simd simdlen(2)
+    for (int i = 0; i < N_SUBAREAS; ++i) {
+        double imelt = melt[i];
+        imelt += (wsnow[i] + free_water[i]) / dt;
+        if constexpr (TrackAge) {
+            out_age[first + i] = age[first + i];
+            age[first + i] = 0.0;
+        }
+        wsnow[i] = 0.0;
+        free_water[i] = 0.0;
+        cold[i] = 0.0;
+        coverage[i] = 0.0;
+        melt[i] = 0.0 + imelt;
+        if constexpr (TrackAge)
+            if (!(melt[i] > 0.0))
+                out_age[first + i] = 0.0;
+    }
+}
+} // namespace
+
 void DegreeDaySnow::execute(SimulationContext& /*ctx*/, double dt, double temp, double wind,
                             const double* rainfall, const double* snowfall, double gamma,
                             double ea) {
+    perf::ProcessTimer process_timer(perf::ProcessPhase::subcatch_snow);
     int n = soa_.n_subcatch;
     if (n == 0)
         return;
@@ -345,6 +380,16 @@ void DegreeDaySnow::execute(SimulationContext& /*ctx*/, double dt, double temp, 
         // compute snowmelt over entire subcatchment when rain falling
         const double rmelt = rainMeltRate(temp, wind, gamma, ea, rain);
 
+        const auto first = static_cast<std::size_t>(j * N_SUBAREAS);
+        if (soa_.wsnow[first] <= 0.001 / 12.0 &&
+            soa_.wsnow[first + 1] <= 0.001 / 12.0 &&
+            soa_.wsnow[first + 2] <= 0.001 / 12.0) {
+            if (soa_.track_age)
+                meltThinPack<true>(soa_, first, dt);
+            else
+                meltThinPack<false>(soa_, first, dt);
+            continue;
+        }
         for (int i = SNOW_PLOWABLE; i <= SNOW_PERV; ++i) {
             auto ui = static_cast<std::size_t>(j * N_SUBAREAS + i);
             meltElement(ui, i, dt, temp, rain, snow, rmelt);

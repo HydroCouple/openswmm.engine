@@ -161,9 +161,6 @@ OPENSWMM_KERNEL_FN void hllcFlux(const FaceSide& L, const FaceSide& R, double& f
     double sl, sr;
     waveSpeeds(L, R, sl, sr);
     double fhl, fnl, ftl, fhr, fnr, ftr;
-    physicalFlux(L, fhl, fnl, ftl);
-    physicalFlux(R, fhr, fnr, ftr);
-
     // Contact speed (Toro Eq. 10.70) — falls back to the mean normal
     // velocity when the denominator degenerates (both sides at rest).
     const double dl = L.h * (L.un - sl), dr = R.h * (R.un - sr);
@@ -171,15 +168,19 @@ OPENSWMM_KERNEL_FN void hllcFlux(const FaceSide& L, const FaceSide& R, double& f
     sstar = (std::fabs(den) > 1.0e-14) ? (sl * dr - sr * dl) / den : 0.5 * (L.un + R.un);
 
     if (sl >= 0.0) {
+        physicalFlux(L, fhl, fnl, ftl);
         fh = fhl;
         fn = fnl;
         ft = ftl;
     } else if (sr <= 0.0) {
+        physicalFlux(R, fhr, fnr, ftr);
         fh = fhr;
         fn = fnr;
         ft = ftr;
     } else {
         // HLL middle state for mass and normal momentum.
+        physicalFlux(L, fhl, fnl, ftl);
+        physicalFlux(R, fhr, fnr, ftr);
         const double inv = 1.0 / (sr - sl);
         fh = (sr * fhl - sl * fhr + sl * sr * (R.h - L.h)) * inv;
         fn = (sr * fnl - sl * fnr + sl * sr * (R.h * R.un - L.h * L.un)) * inv;

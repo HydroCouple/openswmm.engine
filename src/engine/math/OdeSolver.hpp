@@ -109,6 +109,15 @@ using DerivFunc = std::function<void(double x, const double* y, double* dydx)>;
 int integrate(double* y, int n, double x1, double x2, double eps, double h1,
               const DerivFunc& derivs);
 
+/**
+ * @brief Integrate with a concrete synchronous derivative callable.
+ * @note Uses the same Cash-Karp arithmetic, adaptive controls, commit/return behavior and
+ * shared per-thread workspace as integrate(). The same non-reentrancy contract applies.
+ * No callback is retained or converted to std::function.
+ */
+template <typename F>
+int integrateCallable(double* y, int n, double x1, double x2, double eps, double h1, F&& derivs);
+
 // ============================================================================
 // Batch integrator (SoA, for vectorized subcatchment processing)
 // ============================================================================
@@ -148,5 +157,7 @@ int integrate_batch_2eq(double* y0, double* y1, int n_sys, double x1, double x2,
 
 } // namespace ode
 } // namespace openswmm
+
+#include "OdeSolverDetail.hpp"
 
 #endif // OPENSWMM_ODE_SOLVER_HPP

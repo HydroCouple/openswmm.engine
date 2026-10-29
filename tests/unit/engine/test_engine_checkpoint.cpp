@@ -4112,6 +4112,27 @@ void sameEngineHistory(const twoD::EngineSourceResultHistory& a,
     }
 }
 }
+TEST(EngineCheckpoint, AcceptedSourceHistoryLateRefusalPreservesColumnsAndCheckpointAnchor) {
+    SurfaceSession a;
+    ASSERT_NO_THROW(startClosedSpatial(a, "history-append-rollback", 2, .31, true));
+    twoD::EngineSourceResultHistory history;
+    ASSERT_EQ(a.engine.setEngineSourceResultHistory(history), "");
+    ASSERT_NO_THROW(step(a.engine));
+    const auto checkpoint = root() / "history-append-rollback-before.chk";
+    ASSERT_EQ(a.engine.saveCheckpoint(checkpoint.string()), "");
+    auto& columns = const_cast<std::map<std::string, twoD::SourceResultTable>&>(history.tables());
+    columns.at("boundaries").columns[0][0] = .5;
+    const auto invalid = history;
+    EXPECT_THROW(step(a.engine), std::runtime_error);
+    sameEngineHistory(history, invalid);
+    columns.at("boundaries").columns[0][0] = 0.;
+    SurfaceSession restored;
+    ASSERT_NO_THROW(startClosedSpatial(restored, "history-append-restored", 2, .31, true));
+    ASSERT_EQ(restored.engine.loadCheckpoint(checkpoint.string()), "");
+    ASSERT_EQ(restored.engine.resumeEngineSourceResultHistory(history), "");
+    ASSERT_NO_THROW(step(restored.engine));
+}
+
 TEST(EngineCheckpoint, AcceptedSourceHistoryPreservesEveryEngineStepAndExactContinuation) {
     for (int lid = 0; lid < 3; ++lid)
         for (double cadence : {.31, .7}) {

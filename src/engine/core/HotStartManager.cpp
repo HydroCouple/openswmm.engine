@@ -1098,6 +1098,30 @@ void restoreSpeciesBlock(const HotStartFile& hs, SimulationContext& ctx,
     }
 }
 
+#ifdef OPENSWMM_HAS_2D
+/** Copy between legacy species-major hotstart rows and live edge-major packets.
+ * Caller supplies distinct equal-sized vectors and coherent model-derived species/edge
+ * extents. No allocation, validation or independent rollback; empty/single-row copies
+ * retain their former representation. Loop order is legacy species then edge. */
+void copyAquiferFaceSides(const std::vector<double>& from, std::vector<double>& to,
+                          std::size_t species, bool legacy_to_runtime) noexcept {
+    if (species < 2 || from.empty()) {
+        std::copy(from.begin(), from.end(), to.begin());
+        return;
+    }
+    const auto edges = from.size() / species;
+    for (std::size_t row = 0; row < species; ++row)
+        for (std::size_t edge = 0; edge < edges; ++edge) {
+            const auto legacy = row * edges + edge;
+            const auto runtime = edge * species + row;
+            if (legacy_to_runtime)
+                to[runtime] = from[legacy];
+            else
+                to[legacy] = from[runtime];
+        }
+}
+#endif
+
 /**
  * @brief Copy active two-zone aquifer and pending surface-interface continuation state.
  *
@@ -1151,8 +1175,12 @@ bool captureAquiferBlock(const SimulationContext& ctx, HotStartFile& hs) {
     const auto* tr = ctx.twod_io.aquifer_transport;
     hs.gw_interface.push_back(tr ? tr->xacc_from_surface : std::vector<double>{});
     hs.gw_interface.push_back(tr ? tr->xacc_to_surface : std::vector<double>{});
-    hs.gw_interface.push_back(tr ? tr->sacc_L : std::vector<double>{});
-    hs.gw_interface.push_back(tr ? tr->sacc_R : std::vector<double>{});
+    for (const auto* side : {tr ? &tr->sacc_L : nullptr, tr ? &tr->sacc_R : nullptr}) {
+        std::vector<double> legacy(side ? side->size() : 0);
+        if (side)
+            copyAquiferFaceSides(*side, legacy, static_cast<std::size_t>(tr->n_species), false);
+        hs.gw_interface.push_back(std::move(legacy));
+    }
     hs.gw_interface.push_back(tr ? tr->nacc_mass : std::vector<double>{});
     hs.gw_interface.push_back(tr ? tr->lacc_mass : std::vector<double>{});
     hs.gw_interface.push_back(tr ? tr->node_out_mass : std::vector<double>{});
@@ -1508,8 +1536,13 @@ void restoreAquiferBlock(const HotStartFile& hs, SimulationContext& ctx,
                 warn(
                     "Hot start V12 lacks pending shared ET demand; atmospheric accounting begins with subsequent surface intervals.");
             for (std::size_t k = 0; k < targets.size(); ++k)
-                if (targets[k])
-                    *targets[k] = rows[k];
+                if (targets[k]) {
+                    if (tr && (targets[k] == &tr->sacc_L || targets[k] == &tr->sacc_R))
+                        copyAquiferFaceSides(rows[k], *targets[k],
+                                             static_cast<std::size_t>(tr->n_species), true);
+                    else
+                        *targets[k] = rows[k];
+                }
             if (router) {
                 router->restoreInfiltration(rows[26], rows[27][0]);
                 router->state().transport.cell_mass = rows[28];

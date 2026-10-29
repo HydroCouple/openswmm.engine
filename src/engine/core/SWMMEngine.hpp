@@ -1004,6 +1004,7 @@ private:
     inlet::InletSolver inlet_;                   ///< Street inlet capture
     std::vector<double> gw_frac_perv_;           ///< Per-subcatch pervious fraction for GW evap
     std::vector<double> gw_perv_evap_;           ///< Per-subcatch pervious evap rate (ft/sec)
+    std::vector<double> gw_lid_perv_area_, gw_lid_infil_vol_, gw_lid_perv_evap_vol_;
     /// U3 (track I-b, 2026-09-07): the 2D surface's per-subcatchment
     /// infiltration recharge, drained from SurfaceRouter2D once per runoff
     /// step (m³) and converted to the ft/sec-over-full-area rate the GW

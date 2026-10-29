@@ -839,8 +839,22 @@ struct ExplicitInertialSolverTestAccess {
     static std::vector<double> state(const ExplicitInertialSolver& s) {
         std::vector<double> values = s.qcx_;
         values.insert(values.end(), s.qcy_.begin(), s.qcy_.end());
-        for (const auto* row :
-             {&s.facc_L_, &s.facc_R_, &s.macc_x_L_, &s.macc_x_R_, &s.bc_accum_, &s.source_ledgers_})
+        // Keep the historical logical payload independent of private packet storage.
+        [&]<class Solver>(const Solver& solver) {
+            if constexpr (requires { solver.face_accum_; }) {
+                const auto stride = solver.face_accum_stride_;
+                const auto count = solver.face_accum_.size() / stride;
+                const std::size_t sides = stride == 6 ? 4 : 2;
+                for (std::size_t side = 0; side < sides; ++side)
+                    for (std::size_t e = 0; e < count; ++e)
+                        values.push_back(solver.face_accum_[e * stride + side]);
+            } else {
+                for (const auto* row : {&solver.facc_L_, &solver.facc_R_,
+                                       &solver.macc_x_L_, &solver.macc_x_R_})
+                    values.insert(values.end(), row->begin(), row->end());
+            }
+        }(s);
+        for (const auto* row : {&s.bc_accum_, &s.source_ledgers_})
             values.insert(values.end(), row->begin(), row->end());
         values.insert(values.end(), {double(s.substeps_run_), double(s.last_steps_), s.t_last_sync_,
                                      s.source_phase_end_});
@@ -11794,4 +11808,73 @@ TEST(CoupledGroundwaterRk2, OwnedSnowValidChecksumClockMutationRefusesBeforeInst
     EXPECT_EQ(rk2File(before), rk2File(after));
     ASSERT_EQ(b.solver.loadCheckpoint(good.string()), "");
     EXPECT_EQ(a.state.snow.saveCheckpoint(), b.state.snow.saveCheckpoint());
+}
+
+TEST(CoupledGroundwaterRk2, AtmosphericColumnsKeepShapeAndRefusalRecoveryIndependent) {
+    struct Owner {
+        CoupledRkRig water;
+        RkPorousOwner ground;
+        double elapsed = 0;
+        Owner(int layers, bool sigma, bool atmosphere) {
+            water.init(.1, 0, 0, .02, "NONE", GwClosure::SIGMA, SoilChar::GARDNER, 4);
+            initRkFiniteSurface(water, ground, sigma, layers, 2, 0, 20, -2);
+            water.opts.evaporation = 0;
+            water.opts.heat_surface = water.opts.heat_radiative = atmosphere;
+            water.state.heat.surface = water.state.heat.radiative = atmosphere;
+            auto& ctx = ground.context;
+            ctx.climate_state.temperature = 41;
+            ctx.climate_state.wind_speed = 3;
+            ctx.climate_state.humidity = 60;
+            ctx.options.wind_func_coeff_a = 1e-6;
+            ctx.options.wind_func_coeff_b = 0;
+            ctx.options.pressure_ratio = 1;
+            ctx.climate_state.radiation.shared_heat_forcing = true;
+            ctx.climate_state.radiation.longwave = 250;
+            ctx.heat_state.shortwave_now = 500;
+            ctx.heat_state.cloud_now = 0;
+            auto& rc = ctx.heat_config.radiative;
+            rc.emiss_water = 1; rc.emiss_landcover = 0; rc.lw_reflection = 0;
+            rc.sky_view = 1; rc.albedo = 0; rc.shade_factor = 0;
+        }
+        void advance() {
+            const double end = elapsed + .1;
+            if (water.solver.advance(elapsed, end) != end)
+                throw std::runtime_error("Atmospheric owner missed its endpoint.");
+            elapsed = end;
+        }
+        std::string save(const std::filesystem::path& path) {
+            const auto error = water.solver.saveCheckpoint(path.string());
+            if (!error.empty()) throw std::runtime_error(error);
+            return rk2File(path);
+        }
+    };
+    int index = 0;
+    for (int layers : {1, 33, 8}) {
+        const bool sigma = layers == 33;
+        Owner reference(layers, sigma, true);
+        for (int step = 0; step < 3; ++step) reference.advance();
+        const auto expected = reference.save(rk2Output("atmos-reuse-reference.chk"));
+        Owner other(33, true, false);
+        other.advance(); other.advance();
+        Owner small(1, false, true);
+        small.advance(); small.advance();
+        Owner actual(layers, sigma, true);
+        for (int step = 0; step < 3; ++step) actual.advance();
+        const auto saved = rk2Output("atmos-reuse-owner-" + std::to_string(index++) + ".chk");
+        EXPECT_EQ(actual.save(saved), expected);
+        Owner restored(layers, sigma, true);
+        ASSERT_EQ(restored.water.solver.loadCheckpoint(saved.string()), "");
+        EXPECT_EQ(restored.save(rk2Output("atmos-reuse-roundtrip.chk")), expected);
+        if (layers != 8) continue;
+        const double accepted = actual.water.state.transport.cell_mass[1];
+        actual.water.state.transport.cell_mass[1] = -300 * actual.water.state.volume[1];
+        const auto invalid = actual.save(rk2Output("atmos-reuse-invalid-before.chk"));
+        EXPECT_THROW(actual.water.solver.advance(actual.elapsed, actual.elapsed + .1),
+                     std::runtime_error);
+        EXPECT_EQ(actual.save(rk2Output("atmos-reuse-invalid-after.chk")), invalid);
+        actual.water.state.transport.cell_mass[1] = accepted;
+        actual.advance(); reference.advance();
+        EXPECT_EQ(actual.save(rk2Output("atmos-reuse-recovered.chk")),
+                  reference.save(rk2Output("atmos-reuse-recovery-reference.chk")));
+    }
 }

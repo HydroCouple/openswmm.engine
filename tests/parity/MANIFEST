@@ -87,3 +87,12 @@ tests/parity/corpus/decks/steady_quality.inp	STEADY routing + pollutant + age --
 # also sweeps it (it has a mesh) -- one deck, two nets, attribute once.
 tests/parity/corpus/decks/twod_coupled_quality.inp	DYNWAVE + coupled 2D pan with [POLLUTANTS], [2D_INITIAL_QUALITY] (* and TAG), DISPERSION -- the only deck where species cross the 1D<->2D coupling
 tests/parity/corpus/decks/twod_mixed_quality.inp	the same pan tessellated as one [2D_QUADS] cell + two triangles -- the only deck on the padded kMaxCellVerts=4 / edge-stride-4 layout; a movement in ONLY this deck is the quad path (added 2026-09-07, E1)
+
+# ---- SoA review process coverage (Phase 0, 2026-10-23) ---------------------
+# These close four process-path holes. The companion soa_review_baseline.py
+# gate also checks every 2D HDF5 dataset and profiling enabled/disabled.
+# Common-source ownership still requires an internal fixture; see its README.
+tests/benchmarks/generated/soa_review_2026-10/soa_sigma.inp	SIGMA moving-table groundwater column, infiltration and node exchange scheduling
+tests/benchmarks/generated/soa_review_2026-10/soa_gw_species_heat.inp	GW2D two conservative species, temperature, porous heat and lateral dispersion
+tests/benchmarks/generated/soa_review_2026-10/soa_ueb_mesh.inp	UEB snow on mesh, warm forcing and explicit shortwave/longwave series
+tests/benchmarks/generated/soa_review_2026-10/soa_richards_lid.inp	Richards LID node with native supply and dynamic-wave drainage

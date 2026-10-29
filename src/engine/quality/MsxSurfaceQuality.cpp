@@ -35,6 +35,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <optional>
 #include <string>
 
 #include "../core/DateTime.hpp"
@@ -552,16 +553,46 @@ struct SpeciesParams {
     std::vector<landuse::BuildupParams> bu;
     std::vector<landuse::WashoffParams> wo;
 };
+// Derived scratch only: refresh every active input and reset the workspace per call.
+// A nested call borrows fresh storage while the outer call retains its views.
+struct SurfaceScratch {
+    bool busy = false;
+    SpeciesParams params;
+    transport::RxWorkspace workspace;
+    std::vector<double> mixed, values, before, normalizer;
+    std::vector<ReactionExprForm> forms;
+    std::vector<RxExprSpan> expressions;
+    std::vector<uint8_t> wet_mask;
+};
+class SurfaceScratchLease {
+public:
+    SurfaceScratchLease() {
+        static thread_local SurfaceScratch retained;
+        if (retained.busy) {
+            fallback_.emplace();
+            scratch_ = &*fallback_;
+        } else {
+            scratch_ = &retained;
+        }
+        scratch_->busy = true;
+    }
+    ~SurfaceScratchLease() { scratch_->busy = false; }
+    SurfaceScratchLease(const SurfaceScratchLease&) = delete;
+    SurfaceScratchLease& operator=(const SurfaceScratchLease&) = delete;
+    SurfaceScratch& get() noexcept { return *scratch_; }
+private:
+    std::optional<SurfaceScratch> fallback_;
+    SurfaceScratch* scratch_;
+};
 /**
  * @brief Materialize shared-kernel buildup/washoff parameter tuples from native species arrays.
  * @param[in] s Stable parameter arrays covering every bu_type entry and matching landuse*species
  * layout.
- * @return Owning vectors of copied buildup and washoff parameters; no borrowed context storage.
+ * @param[out] p Refreshed owning parameter vectors; retained capacity, no borrowed context storage.
  * No validation or state mutation; allocation can throw. Caller retains this copy while a
  * speciesBlock borrows its vectors.
  */
-SpeciesParams speciesParams(const MsxSurfaceData& s) {
-    SpeciesParams p;
+void speciesParams(const MsxSurfaceData& s, SpeciesParams& p) {
     const std::size_t n = s.bu_type.size();
     p.bu.resize(n);
     p.wo.resize(n);
@@ -580,7 +611,7 @@ SpeciesParams speciesParams(const MsxSurfaceData& s) {
         wp.sweep_effic = s.wo_sweep_effic[k];
         wp.bmp_effic = s.wo_bmp_effic[k];
     }
-    return p;
+
 }
 /**
  * @brief Assemble a nonowning shared surface-kernel view of native species and ledgers.
@@ -636,7 +667,7 @@ surfacespecies::Block speciesBlock(SimulationContext& ctx, MsxSurfaceData& s,
  * failure warning.
  * @param[in] dt Positive finite runoff/reaction duration s, supplied by step after its positive
  * guard.
- * @return Owning subcatchment*species concentration-mass vector; enabled pools contain old
+ * @param[in,out] scratch Leased subcatchment*species concentration-mass vector; enabled pools contain old
  * ponded plus rainfall/runon mass, reacted only for successful finite admissible solve. Other
  * entries remain0.
  * @note Uses non-LID native area ft2, volume ft3 and28.317L/ft3; divides mass by litres for
@@ -645,13 +676,17 @@ surfacespecies::Block speciesBlock(SimulationContext& ctx, MsxSurfaceData& s,
  * Allocations, integrator or warning operations can throw after earlier ledger changes;
  * exclusive prepared context.
  */
-std::vector<double> reactPondedPools(SimulationContext& ctx, double dt) {
+void reactPondedPools(SimulationContext& ctx, double dt, SurfaceScratch& scratch) {
     auto& rx = ctx.reactions;
     auto& surface = rx.surface;
     const int ns = rx.n_species();
-    std::vector<double> mixed(surface.ponded_qual.size(), 0.0);
-    std::vector<double> species(static_cast<std::size_t>(ns)), before(species.size());
-    transport::RxWorkspace workspace;
+    auto& mixed = scratch.mixed;
+    mixed.assign(surface.ponded_qual.size(), 0.0);
+    auto& species = scratch.values;
+    auto& before = scratch.before;
+    species.assign(static_cast<std::size_t>(ns), 0.0);
+    before.assign(species.size(), 0.0);
+    auto& workspace = scratch.workspace;
     workspace.init(rx);
     const double area_factor = ucf::UCF(ucf::LANDAREA, ctx.options);
     constexpr double litres_per_ft3 = 28.317;
@@ -659,8 +694,10 @@ std::vector<double> reactPondedPools(SimulationContext& ctx, double dt) {
         const auto i = static_cast<std::size_t>(sc);
         if (!rx.wet_enabled(sc))
             continue;
-        auto forms = rx.subcatch_form;
-        auto expressions = rx.subcatch_expr;
+        auto& forms = scratch.forms;
+        auto& expressions = scratch.expressions;
+        forms = rx.subcatch_form;
+        expressions = rx.subcatch_expr;
         for (const auto& law : rx.wet_laws)
             if (law.subcatchment == sc) {
                 forms[law.species] = law.form;
@@ -722,7 +759,6 @@ std::vector<double> reactPondedPools(SimulationContext& ctx, double dt) {
             mixed[surface.sidx(sc, m)] = clamped * litres;
         }
     }
-    return mixed;
 }
 // React the inventory present at the beginning of the runoff step, before
 // accrual, sweeping and washoff. Values are declared species mass / AREA_UNITS,
@@ -740,17 +776,24 @@ std::vector<double> reactPondedPools(SimulationContext& ctx, double dt) {
  * allocation/integration/warning can throw after earlier accepted pools, no rollback. Exclusive
  * prepared arrays/context ownership.
  */
-void reactBuildup(SimulationContext& ctx, double dt) {
+void reactBuildup(SimulationContext& ctx, double dt, SurfaceScratch& scratch) {
     auto& rx = ctx.reactions;
     auto& s = rx.surface;
     if (rx.buildup_laws.empty())
         return;
     const int ns = rx.n_species();
-    transport::RxWorkspace ws;
+    auto& ws = scratch.workspace;
     ws.init(rx);
-    std::vector<double> y(ns), before(ns), normalizer(ns);
-    std::vector<ReactionExprForm> forms(ns);
-    std::vector<RxExprSpan> expr(ns);
+    auto& y = scratch.values;
+    auto& before = scratch.before;
+    auto& normalizer = scratch.normalizer;
+    auto& forms = scratch.forms;
+    auto& expr = scratch.expressions;
+    y.assign(ns, 0.0);
+    before.assign(ns, 0.0);
+    normalizer.assign(ns, 0.0);
+    forms.assign(ns, ReactionExprForm{});
+    expr.assign(ns, RxExprSpan{});
     for (int sc = 0; sc < ctx.n_subcatches(); ++sc)
         for (int lu = 0; lu < s.n_landuses; ++lu) {
             const auto cov = std::size_t(sc) * s.n_landuses + lu;
@@ -833,13 +876,17 @@ void step(SimulationContext& ctx, double dt_runoff, double old_runoff_time) {
     auto& s = ctx.reactions.surface;
     if (!s.active() || !(dt_runoff > 0.0))
         return;
-    const auto p = speciesParams(s);
-    auto b = speciesBlock(ctx, s, p);
-    reactBuildup(ctx, dt_runoff);
-    std::vector<double> reacted;
-    std::vector<uint8_t> wet_mask(static_cast<std::size_t>(ctx.n_subcatches()));
+    SurfaceScratchLease lease;
+    auto& scratch = lease.get();
+    speciesParams(s, scratch.params);
+    auto b = speciesBlock(ctx, s, scratch.params);
+    reactBuildup(ctx, dt_runoff, scratch);
+    auto& reacted = scratch.mixed;
+    reacted.clear();
+    auto& wet_mask = scratch.wet_mask;
+    wet_mask.assign(static_cast<std::size_t>(ctx.n_subcatches()), 0);
     if (ctx.reactions.has_subcatch_reactions()) {
-        reacted = reactPondedPools(ctx, dt_runoff);
+        reactPondedPools(ctx, dt_runoff, scratch);
         b.ponded_reacted_mass = &reacted;
         for (int sc = 0; sc < ctx.n_subcatches(); ++sc)
             wet_mask[sc] = ctx.reactions.wet_enabled(sc);
@@ -865,8 +912,10 @@ void bookPostLid(SimulationContext& ctx, double dt_runoff,
     auto& s = ctx.reactions.surface;
     if (!s.active() || ctx.n_subcatches() <= 0)
         return;
-    const auto p = speciesParams(s);
-    auto b = speciesBlock(ctx, s, p);
+    SurfaceScratchLease lease;
+    auto& scratch = lease.get();
+    speciesParams(s, scratch.params);
+    auto b = speciesBlock(ctx, s, scratch.params);
     surfacespecies::bookPostLid(ctx, b, dt_runoff, lid_infil_vol);
 }
 

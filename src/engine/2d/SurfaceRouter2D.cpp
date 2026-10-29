@@ -1973,7 +1973,7 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         // by one cadence step here, matching how the runoff module evaluates
         // at the start of a wet step.
         infil_.updateRates(mesh_, state_, infil_.stepSeconds(),
-                           surface::infiltrationFactors(ctx, 0.0));
+                           surface::infiltrationFactors(ctx, 0.0), options_.num_threads);
         if (subsurface_.active())
             subsurface_.publishInfiltration(state_, infil_.stepSeconds(), 0.0);
         infil_cum_applied_.assign(static_cast<std::size_t>(mesh_.n_triangles()), 0.0);
@@ -2496,7 +2496,8 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt, double t)
     if (infil_.active()) {
         infil_elapsed_ += dt;
         if (infil_elapsed_ >= infil_.stepSeconds()) {
-            infil_.updateRates(mesh_, state_, infil_elapsed_, surface::infiltrationFactors(ctx, t));
+            infil_.updateRates(mesh_, state_, infil_elapsed_, surface::infiltrationFactors(ctx, t),
+                               options_.num_threads);
             if (subsurface_.active())
                 subsurface_.publishInfiltration(state_, infil_.stepSeconds(),
                                                 common_stage_ ? sim_time_ : t);

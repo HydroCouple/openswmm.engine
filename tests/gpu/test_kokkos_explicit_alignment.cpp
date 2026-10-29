@@ -178,7 +178,13 @@ struct ExplicitInertialSolverTestAccess {
      *     units.
      */
     static std::vector<std::vector<double>> transfers(ExplicitInertialSolver& s) {
-        return {s.facc_L_, s.facc_R_, s.macc_x_L_, s.macc_x_R_, s.macc_y_L_, s.macc_y_R_, s.q_};
+        std::vector<std::vector<double>> rows(7);
+        const auto stride = s.face_accum_stride_;
+        for (std::size_t e = 0; e < s.face_accum_.size() / stride; ++e)
+            for (std::size_t side = 0; side < stride; ++side)
+                rows[side].push_back(s.face_accum_[e * stride + side]);
+        rows[6] = s.q_;
+        return rows;
     }
 };
 } // namespace openswmm::twoD

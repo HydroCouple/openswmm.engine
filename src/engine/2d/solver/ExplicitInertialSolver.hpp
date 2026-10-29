@@ -744,8 +744,8 @@ private:
     std::vector<int> wall_ptr_, wall_slot_;
     /// FULL_SWE momentum accumulators per face side (m⁴/s = m²·m²/s): the
     /// x/y momentum the face booked for cL / cR, gathered and cleared by the
-    /// cell exactly like facc_L_/facc_R_ (same writer, same cadence).
-    std::vector<double> macc_x_L_, macc_x_R_, macc_y_L_, macc_y_R_;
+    /// cell exactly like the two logical water sides (same writer, same cadence).
+    // Momentum packets share face_accum_ slots 2..5 in FULL_SWE.
     /// Momentum the last boundaryFluxSwe() call booked into qcx_/qcy_, so its
     /// caller can rescale it when the availability clamp shrinks the mass.
     /// Scalar: the boundary loop is serial (perimeter-sized).
@@ -976,7 +976,7 @@ private:
     // Tiered LTS. tier_[i] = k means cell i updates every 2^k base substeps
     // with Δt = 2^k·dt0; face tier = min of its incident cells so a face
     // always integrates at the finer cadence. Every face firing books the
-    // identical ±ΔM into facc_L_/facc_R_ (single writer per face); each cell
+    // identical ±ΔM into the two logical water sides (single writer per face); each cell
     // applies + clears its own side at its own firing — conservation across
     // tier interfaces is exact by construction.
     /// Rebuild scratch, held as members so a rebuild allocates nothing:
@@ -989,8 +989,12 @@ private:
 
     std::vector<uint8_t> tier_;      ///< per-cell tier
     std::vector<uint8_t> face_tier_; ///< per unique face
-    std::vector<double> facc_L_;     ///< pending ΔM for the cL side (m³)
-    std::vector<double> facc_R_;     ///< pending ΔM for the cR side (m³)
+    /// CPU-private face packets: [waterL,waterR] for LI/DW; FULL_SWE adds
+    /// [momentumXL,momentumXR,momentumYL,momentumYR]. Each logical side
+    /// retains its original writer, scalar arithmetic and gather/clear order.
+    /// Checkpoints stream the original separate logical vectors without transposing state.
+    std::vector<double> face_accum_;
+    std::size_t face_accum_stride_ = 2; ///< derived from momentum mode at initialize()
 
     // S1 — species mass rides the SAME face accumulators, with each face
     // holding adjacent rows at [e * n_species + s]. Booked in fireFaces
@@ -1052,6 +1056,9 @@ private:
     // constituent transfers are evaluated even when net water change is zero.
     // Returns false only when no source bookkeeping or volume change occurred.
     bool applyCellSources(int cell, double dt, double* boundary_donor = nullptr);
+    bool applyPlainCellSources(int cell, double dt);
+    // Selected only during an advance; external rebuild/settlement uses the full path.
+    bool plain_sources_ = false;
     bool applyRuntimeSources(int cell, double dt);
     struct CellSourceStep {
         double area_dt = 0, rain = 0, coupling = 0, available = 0, infil = 0, evap = 0, out = 0,

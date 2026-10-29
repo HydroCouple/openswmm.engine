@@ -12,18 +12,41 @@
 #include "LayerTransport.hpp"
 #include <cmath>
 #include <algorithm>
+#include <utility>
 namespace openswmm::twoD {
 LayerTransportResult solveLayerTransport(const std::vector<double>& capacity,
                                          const std::vector<double>& rhs,
                                          const std::vector<LayerTransportMove>& moves,
                                          bool signed_species) {
-    LayerTransportResult r;
+    LayerTransportScratch scratch;
+    solveLayerTransport(capacity, rhs, moves, scratch, signed_species);
+    return std::move(scratch.result);
+}
+const LayerTransportResult& solveLayerTransport(const std::vector<double>& capacity,
+                                               const std::vector<double>& rhs,
+                                               const std::vector<LayerTransportMove>& moves,
+                                               LayerTransportScratch& scratch,
+                                               bool signed_species) {
+    auto& r = scratch.result;
+    r.mass.clear();
+    r.concentration.clear();
+    r.transferred.clear();
+    r.error.clear();
     const int n = int(capacity.size());
     if (n == 0 || rhs.size() != capacity.size()) {
         r.error = "Layer transport shape differs";
         return r;
     }
-    std::vector<double> diagonal = capacity, upper(n, 0), lower(n, 0), b = rhs, dry(n, 0);
+    auto& diagonal = scratch.diagonal;
+    auto& upper = scratch.upper;
+    auto& lower = scratch.lower;
+    auto& b = scratch.b;
+    auto& dry = scratch.dry;
+    diagonal = capacity;
+    upper.assign(n, 0);
+    lower.assign(n, 0);
+    b = rhs;
+    dry.assign(n, 0);
     for (int i = 0; i < n; ++i)
         if (!std::isfinite(capacity[i]) || capacity[i] < 0 || !std::isfinite(rhs[i]) ||
             (!signed_species && rhs[i] < 0)) {
@@ -65,7 +88,7 @@ LayerTransportResult solveLayerTransport(const std::vector<double>& capacity,
             return r;
         }
     }
-    r.concentration.resize(n);
+    r.concentration.assign(n, 0);
     for (int i = n - 1; i >= 0; --i) {
         r.concentration[i] =
             (b[i] - (i + 1 < n ? upper[i] * r.concentration[i + 1] : 0)) / diagonal[i];
@@ -88,7 +111,20 @@ LayerTransportResult advanceLayerTransportEuler(const std::vector<double>& capac
                                                 const std::vector<LayerTransportMove>& moves,
                                                 bool signed_species,
                                                 const std::vector<double>* donor_available) {
-    LayerTransportResult r;
+    LayerTransportScratch scratch;
+    advanceLayerTransportEuler(capacity, initial, rhs, moves, scratch, signed_species, donor_available);
+    return std::move(scratch.result);
+}
+const LayerTransportResult& advanceLayerTransportEuler(
+    const std::vector<double>& capacity, const std::vector<double>& initial,
+    const std::vector<double>& rhs, const std::vector<LayerTransportMove>& moves,
+    LayerTransportScratch& scratch, bool signed_species,
+    const std::vector<double>* donor_available) {
+    auto& r = scratch.result;
+    r.mass.clear();
+    r.concentration.clear();
+    r.transferred.clear();
+    r.error.clear();
     const int n = int(capacity.size());
     if (n == 0 || initial.size() != capacity.size() || rhs.size() != capacity.size() ||
         (donor_available && donor_available->size() != capacity.size())) {
@@ -96,8 +132,13 @@ LayerTransportResult advanceLayerTransportEuler(const std::vector<double>& capac
         return r;
     }
     r.mass = rhs;
-    r.concentration.resize(n);
-    std::vector<double> requested(n, 0), remaining(n), scale(n, 1);
+    r.concentration.assign(n, 0);
+    auto& requested = scratch.requested;
+    auto& remaining = scratch.remaining;
+    auto& scale = scratch.scale;
+    requested.assign(n, 0);
+    remaining.resize(n);
+    scale.assign(n, 1);
     for (int i = 0; i < n; ++i) {
         if (!std::isfinite(capacity[i]) || capacity[i] < 0 || !std::isfinite(initial[i]) ||
             !std::isfinite(rhs[i]) || (!signed_species && (initial[i] < 0 || rhs[i] < 0))) {

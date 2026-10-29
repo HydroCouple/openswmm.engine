@@ -173,7 +173,7 @@ struct GWSoA {
 // GW solver
 // ============================================================================
 
-/** @brief Mutable two-zone groundwater state with scalar per-subcatchment RKF45.
+/** @brief Mutable two-zone groundwater state with independent scalar per-subcatchment RKF45.
  * One owning simulation thread serializes init/execute/state edits. Initialization
  * supplies defaults only; model loading must populate physical aquifer parameters
  * and compile/bind optional expressions before stepping. No transactional rollback
@@ -213,6 +213,9 @@ public:
      * GW/ET/deep outputs are ft/s, multiplied by full area for balance volumes. Custom
      * GWF K uses computed upper-percolation rate; A is passed as ctx.subcatches.area
      * multiplied by LANDAREA conversion as implemented, not independently normalized.
+     * Large batches may use the configured OpenMP team for independent aquifers;
+     * small batches and one-worker requests bypass parallel regions. Integration
+     * workspace is thread-local; the balance fold retains original subcatchment order.
      * Caller owns acceptable model/expression units and accepted-step invocation. */
     void execute(SimulationContext& ctx, double dt, double max_evap, const double* infil_rate,
                  const double* sw_head, const double* frac_perv, const double* perv_evap_rate,

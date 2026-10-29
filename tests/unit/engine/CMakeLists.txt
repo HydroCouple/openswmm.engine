@@ -279,7 +279,15 @@ add_gtest_unit(test_engine_massbalance      test_massbalance.cpp)
 # gap that left five of the six flags as parsed-but-dead no-ops).
 add_gtest_unit(test_engine_ignore_flags     test_ignore_flags.cpp)
 add_gtest_unit(test_engine_runoff           test_runoff.cpp)
+if(TARGET OpenMP::OpenMP_CXX)
+    target_link_libraries(test_engine_runoff PRIVATE OpenMP::OpenMP_CXX)
+    target_compile_definitions(test_engine_runoff PRIVATE SWMM_USE_OPENMP)
+endif()
 add_gtest_unit(test_engine_snow             test_snow.cpp)
+if(TARGET OpenMP::OpenMP_CXX)
+    target_link_libraries(test_engine_snow PRIVATE OpenMP::OpenMP_CXX)
+    target_compile_definitions(test_engine_snow PRIVATE SWMM_USE_OPENMP)
+endif()
 add_gtest_unit(test_engine_gage_scalefactor test_gage_scalefactor.cpp)
 add_gtest_unit(test_engine_subcatch_scale_factors test_subcatch_scale_factors.cpp)
 add_gtest_unit(test_engine_gage_attributes  test_gage_attributes.cpp)
@@ -309,6 +317,7 @@ target_compile_definitions(test_engine_lid PRIVATE
     "BENCHMARK_DATA_DIR=\"${PROJECT_SOURCE_DIR}/tests/benchmarks\""
 )
 add_gtest_unit(test_engine_groundwater      test_groundwater.cpp)
+add_gtest_unit(test_engine_groundwater_parallel test_groundwater_parallel.cpp)
 target_compile_definitions(test_engine_groundwater PRIVATE
     "BENCHMARK_DATA_DIR=\"${PROJECT_SOURCE_DIR}/tests/benchmarks\""
 )
@@ -585,6 +594,8 @@ if(OPENSWMM_BUILD_2D)
     # closed-basin conservation + positivity through a dam-break, Manning
     # steady-slope rain/outflow ledger + normal depth, Froude clamp.
     add_gtest_unit(test_engine_2d_inertial_marcher test_2d_inertial_marcher.cpp)
+    add_gtest_unit(test_engine_2d_timestep_reduction test_2d_timestep_reduction.cpp)
+    add_gtest_unit(test_engine_2d_plain_sources test_2d_plain_sources.cpp)
     add_gtest_unit(test_engine_2d_cpu_correctness test_2d_cpu_correctness.cpp)
     add_gtest_unit(test_engine_2d_swe_reconstruction test_2d_swe_reconstruction.cpp)
     add_gtest_unit(test_engine_2d_momentum_physics test_2d_momentum_physics.cpp)
@@ -751,6 +762,7 @@ if(OPENSWMM_BUILD_2D)
     add_gtest_unit(test_engine_source_water_delivery_bridge test_source_water_delivery_bridge.cpp)
     add_gtest_unit(test_engine_common_source_stage test_common_source_stage.cpp)
     add_gtest_unit(test_engine_sigma_conservation test_sigma_conservation.cpp)
+    add_gtest_unit(test_engine_sigma_porewater_map test_sigma_porewater_map.cpp)
     target_compile_definitions(test_engine_common_source_stage PRIVATE OPENSWMM_R4_STAGE_OUT="${PROJECT_SOURCE_DIR}/tests/verification/surface_r4_stage_2026-10-06/models")
     target_compile_definitions(test_engine_source_water_driver PRIVATE OPENSWMM_R4_WATER_OUT="${PROJECT_SOURCE_DIR}/tests/verification/surface_r4_water_2026-10-05/models")
     target_compile_definitions(test_engine_source_clock_groups PRIVATE OPENSWMM_R4_CLOCK_OUT="${PROJECT_SOURCE_DIR}/tests/verification/surface_r4_clocks_2026-10-05/models")
@@ -776,6 +788,10 @@ if(OPENSWMM_BUILD_2D)
     add_gtest_unit(test_engine_hydrothermal_config_api test_hydrothermal_config_api.cpp)
     add_gtest_unit(test_engine_mesh_heat test_mesh_heat.cpp)
     add_gtest_unit(test_engine_porous_heat test_porous_heat.cpp)
+    add_gtest_unit(test_engine_column_scratch test_column_scratch.cpp)
+    target_compile_definitions(test_engine_column_scratch PRIVATE
+        OPENSWMM_TEST_COLUMN_SCRATCH=1
+        OPENSWMM_COLUMN_SCRATCH_TEST_DIR="${PROJECT_SOURCE_DIR}/tests/output/column_scratch")
     add_gtest_unit(test_engine_ground_heat test_ground_heat.cpp)
     add_gtest_unit(test_engine_channel_heat_contacts test_channel_heat_contacts.cpp)
     target_compile_definitions(test_engine_ground_heat PRIVATE OPENSWMM_GROUND_HEAT_OUT="${PROJECT_SOURCE_DIR}/tests/output")
@@ -831,7 +847,7 @@ set_tests_properties(test_engine_perf_timers PROPERTIES ENVIRONMENT "OPENSWMM_PE
 add_test(NAME test_engine_perf_timers_disabled
     COMMAND ${CMAKE_COMMAND} -E env --unset=OPENSWMM_PERF
         $<TARGET_FILE:test_engine_perf_timers>
-        --gtest_filter=PerfCounters.DisabledProfilingDoesNotAccumulate)
+        --gtest_filter=PerfCounters.DisabledProfilingDoesNotAccumulate:ProcessPerf.DisabledProfilingDoesNotAccumulate)
 set_tests_properties(test_engine_perf_timers_disabled PROPERTIES LABELS "unit")
 add_gtest_unit(test_engine_fv_tpa_closure test_fv_tpa_closure.cpp)
 add_gtest_unit(test_engine_dw_tpa test_dw_tpa.cpp)
@@ -1218,6 +1234,16 @@ endif()
 
 add_gtest_unit(test_engine_lid_nodes test_lid_nodes.cpp)
 add_gtest_unit(test_engine_richards_column test_richards_column.cpp)
+add_gtest_unit(test_engine_richards_batch_parallel test_richards_batch_parallel.cpp)
+target_compile_definitions(test_engine_richards_batch_parallel PRIVATE
+    OPENSWMM_RICHARDS_BATCH_TEST_DIR="${PROJECT_SOURCE_DIR}/tests/output/richards_batch_parallel")
+if(NOT TARGET OpenMP::OpenMP_CXX)
+    find_package(OpenMP QUIET)
+endif()
+if(TARGET OpenMP::OpenMP_CXX)
+    target_link_libraries(test_engine_richards_batch_parallel PRIVATE OpenMP::OpenMP_CXX)
+    target_compile_definitions(test_engine_richards_batch_parallel PRIVATE OPENSWMM_TEST_HAS_OPENMP=1)
+endif()
 target_compile_definitions(test_engine_lid_nodes PRIVATE OPENSWMM_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 
 if(OPENSWMM_WITH_GEOPACKAGE)

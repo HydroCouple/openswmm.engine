@@ -9,7 +9,9 @@
  * @license   Apache-2.0
  */
 
+#include "core/ProcessPerf.hpp"
 #include "EngineSourceResultHistory.hpp"
+#include "ResultHistoryAppend.hpp"
 #include "CommonSourceStage.hpp"
 #include "../../core/SWMMEngine.hpp"
 #include <algorithm>
@@ -45,7 +47,7 @@ bool close(double a, double b) {
  * @param[in,out] t Prepared table to append.
  * @param[in] values Exactly t.columns.size() entries, in schema units/order.
  * @throws std::runtime_error On wrong value count before appending. Allocation errors can leave
- * an earlier-column prefix appended; callers build a private candidate rather than live history.
+ * an earlier-column prefix appended; callers use a private candidate or append rollback guard.
  */
 void row(SourceResultTable& t, std::initializer_list<double> values) {
     require(values.size() == t.columns.size(), "Engine source result row shape differs.");
@@ -351,13 +353,14 @@ EngineSourceResultHistory EngineSourceResultHistory::projection(const SWMMEngine
  * greater.
  * @return Empty after checkpoint capture, boundary projection and complete candidate validation;
  * diagnostic on refusal or caught standard exception, with history/physics unchanged.
- * @note Copies existing history before appending and offsets pending-row identifiers globally.
+ * @note Appends with rollback on refusal and offsets pending-row identifiers globally.
  * Detailed mode seeds source frame zero on first capture; intermediate source intervals are
  * captured through captureSourceInterval(). The engine remains borrowed and must outlive
  * recorder use. Checkpoint capture can settle associated output metadata; this method does not
  * advance physics.
  */
 std::string EngineSourceResultHistory::append(const SWMMEngine& e, double start) {
+    perf::ProcessTimer process_timer(perf::ProcessPhase::engine_source_results);
     try {
         require(e.surface_router_.commonSourceStage() &&
                     (e.source_delivery_ || e.surface_router_.subsurface().lidReceiptsEnabled()),
@@ -372,7 +375,6 @@ std::string EngineSourceResultHistory::append(const SWMMEngine& e, double start)
                       : start == 0 && e.ctx_.current_time == 0,
                 "Capture initial state and every accepted engine step exactly once.");
         auto current = projection(e, frame, start);
-        auto trial = *this;
         if (!frame) {
             current.detailed_ = detailed_;
             if (detailed_) {
@@ -380,14 +382,16 @@ std::string EngineSourceResultHistory::append(const SWMMEngine& e, double start)
                 if (!error.empty())
                     return error;
             }
-            trial = std::move(current);
-        } else {
+        } else
             require(sources_ == current.sources_ && nodes_ == current.nodes_ &&
                         outfall_returns_ == current.outfall_returns_ &&
                         lid_beds_ == current.lid_beds_ && start_date_ == current.start_date_,
                     "Engine source result identities changed.");
+        auto& target = frame ? *this : current;
+        ResultHistoryAppend transaction(target.tables_, target.boundary_);
+        if (frame) {
             for (const auto& [name, t] : current.tables_) {
-                auto& next = trial.tables_.at(name);
+                auto& next = target.tables_.at(name);
                 const double offset = double(next.rows());
                 for (std::size_t c = 0; c < t.columns.size(); ++c)
                     for (double v : t.columns[c])
@@ -395,12 +399,14 @@ std::string EngineSourceResultHistory::append(const SWMMEngine& e, double start)
                             c == 1 && name.starts_with("pending_") ? v + offset : v);
             }
         }
-        trial.boundary_ = std::move(bytes);
-        trial.engine_ = &e;
-        error = trial.validate();
+        transaction.replaceBoundary(bytes);
+        target.engine_ = &e;
+        error = target.validate();
         if (!error.empty())
             return error;
-        *this = std::move(trial);
+        transaction.commit();
+        if (!frame)
+            *this = std::move(current);
         return {};
     } catch (const std::exception& e) {
         return e.what();

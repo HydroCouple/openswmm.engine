@@ -357,3 +357,53 @@ TEST(RunoffMassBalance, PondedDepthConservation) {
     EXPECT_NEAR(balance_error, 0.0, 0.01 * total_inflow)
         << "Mass balance error: " << (balance_error / total_inflow * 100.0) << "%";
 }
+
+#include "RunoffParallelFixture.hpp"
+#include <thread>
+#include <exception>
+
+TEST(RunoffParallel, OrdinaryAndGuardedHistoriesMatchEveryFrame) {
+    for (const int n : {0, 127, 511, 512, 1031}) {
+        for (const bool si : {false, true}) {
+            for (int kind = 0; kind < 7; ++kind) {
+                const auto serial = runoff_parallel_fixture::history(n, 1, si, kind);
+                for (const int threads : {4, 8, 0, -1}) {
+                    SCOPED_TRACE(::testing::Message() << "n=" << n << " si=" << si
+                                 << " kind=" << kind << " threads=" << threads);
+                    EXPECT_EQ(serial, runoff_parallel_fixture::history(n, threads, si, kind));
+                }
+            }
+        }
+    }
+}
+
+TEST(RunoffParallel, InvalidSelectionRejectsBeforeMutation) {
+    runoff_parallel_fixture::Case f(1031, 4, false);
+    const auto opening = f.capture();
+    std::vector<int> short_owners(1030, -1);
+    EXPECT_THROW(f.solver.execute(f.ctx, 30., 0., 1., 1., -1, nullptr,
+                                 nullptr, nullptr, &short_owners), std::invalid_argument);
+    EXPECT_EQ(opening, f.capture());
+    std::vector<double> fractions(1031, .5);
+    EXPECT_THROW(f.solver.execute(f.ctx, 30., 0., 1., 1., -1, nullptr,
+                                 nullptr, &fractions), std::invalid_argument);
+    EXPECT_EQ(opening, f.capture());
+    f.completed[1].subcatch = 0;
+    EXPECT_THROW(f.solver.execute(f.ctx, 30., 0., 1., 1., -1, nullptr,
+                                 &f.completed), std::invalid_argument);
+    EXPECT_EQ(opening, f.capture());
+}
+
+TEST(RunoffParallel, IndependentOwnersOnTwoHostThreadsMatchSerial) {
+    const auto left = runoff_parallel_fixture::history(1031, 1, false, 0);
+    const auto right = runoff_parallel_fixture::history(512, 1, true, 1);
+    std::string actual_left, actual_right;
+    std::exception_ptr first, second;
+    std::thread a([&] { try { actual_left = runoff_parallel_fixture::history(1031, 4, false, 0); }
+                       catch (...) { first = std::current_exception(); } });
+    std::thread b([&] { try { actual_right = runoff_parallel_fixture::history(512, 4, true, 1); }
+                       catch (...) { second = std::current_exception(); } });
+    a.join(); b.join();
+    ASSERT_FALSE(first); ASSERT_FALSE(second);
+    EXPECT_EQ(left, actual_left); EXPECT_EQ(right, actual_right);
+}

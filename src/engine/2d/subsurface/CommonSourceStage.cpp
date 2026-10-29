@@ -9,6 +9,7 @@
  * @license   Apache-2.0
  */
 
+#include "core/ProcessPerf.hpp"
 #include "CommonSourceStage.hpp"
 #include "SubsurfaceSolver.hpp"
 #include "../data/MeshData.hpp"
@@ -777,16 +778,19 @@ std::string CommonSourceStage::checkpointBoundary() const {
  * water receipts are m3, times s and pollutant inventory native_concentration*m3.
  */
 std::string CommonSourceStage::advance(double start, double end) {
+    perf::ProcessTimer process_timer(perf::ProcessPhase::common_source);
     if (!mesh_ || !std::isfinite(end) || end <= start || start != completedEnd())
         return "Invalid common source interval.";
     const double dt = end - start;
     if (standalone_local_bed_) {
+        perf::count(perf::ProcessCounter::mesh_snow_copies);
         auto snow = surface_->snow;
         if (snow.active()) {
             if (!surface_->snow_context)
                 return "Mesh snow has no weather owner.";
-            const auto error = snow.advance(*surface_->snow_context, start, end, surface_->rainfall,
-                                            surface_->snow_catch);
+            const auto error = snow.advanceTrial(*surface_->snow_context, start, end,
+                                                 surface_->rainfall, surface_->snow_catch,
+                                                 &surface_->snow);
             if (!error.empty())
                 return error;
         }
@@ -820,6 +824,7 @@ std::string CommonSourceStage::advance(double start, double end) {
     } else if (surface_->runtime_sources.active() || surface_->runtime_forcings.active() ||
                gw_->runtimeSources().active())
         return "Common source runtime provider profile changed to an unsupported configuration.";
+    perf::count(perf::ProcessCounter::mesh_snow_copies);
     auto snow = surface_->snow;
     if (snow.active()) {
         if (!surface_->snow_context)
@@ -828,7 +833,8 @@ std::string CommonSourceStage::advance(double start, double end) {
         for (int i = 0; i < int(rain.size()); ++i)
             rain[i] = surface_->runtime_forcings.rate(1, i, rain[i]);
         const auto error =
-            snow.advance(*surface_->snow_context, start, end, rain, surface_->snow_catch);
+            snow.advanceTrial(*surface_->snow_context, start, end, rain, surface_->snow_catch,
+                              &surface_->snow);
         if (!error.empty())
             return error;
     }
@@ -1144,7 +1150,8 @@ std::string CommonSourceStage::advance(double start, double end) {
         else
             awarded[donor_index.at(key(a.request))] += a.maximum;
     }
-    auto bounded = credited.waterTrial();
+    // The credited snapshot has no remaining readers; transfer its owned state.
+    auto bounded = std::move(credited);
     const auto rate = [&](int j) {
         return std::nextafter(awarded[j] / donors_[j].area / .3048 / dt, 0.0);
     };

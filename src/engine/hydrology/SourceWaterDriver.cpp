@@ -10,6 +10,7 @@
  * @license   Apache-2.0
  */
 
+#include "core/ProcessPerf.hpp"
 #include "SourceWaterDriver.hpp"
 #include "../core/CompletedSourceArchive.hpp"
 #include "../core/SimulationContext.hpp"
@@ -251,10 +252,10 @@ double factor(const SimulationContext& c, int sc, const SourceForcingInterval& f
 }
 }
 struct SourceWaterDriver::State {
-    SimulationContext ctx;
+    std::shared_ptr<SimulationContext> ctx;
     RunoffSolver runoff;
     lid::LIDSolver lids;
-    surface::SourceSnow snow;
+    std::shared_ptr<surface::SourceSnow> snow = std::make_shared<surface::SourceSnow>();
     bool partitioned = false;
     bool hydraulic_returns = false;
     double hydraulic_return_end = 0;
@@ -268,15 +269,33 @@ struct SourceWaterDriver::State {
     std::vector<std::string> pollutant_names;
     std::vector<SourcePollutantLedger> pollutants;
     std::vector<std::vector<double>> runon_mass, return_mass; // pending paired transfers, conc*m3
-    /** @brief Copy the input context into private source ownership; leave kernels uninitialized.
-     * @param c Compatible stable model. Value containers copy, but raw external handle/
-     * callback references keep their original ownership and must not be published through
-     * this private state. Allocation failures propagate; no source advancement. */
-    explicit State(const SimulationContext& c) : ctx(c) {}
-    /** @brief Copy private histories while cloning LID water without report writers.
-     * @param s Compatible private accepted state; all value histories/ledgers/queues copy.
-     * Context external references retain their original ownership. Allocations and LID
-     * waterTrial qualification failures propagate; original state remains unchanged. */
+    /** @brief Own the initial context independently of the caller; kernels remain uninitialized.
+     * Raw external handles/callbacks retain their original ownership and must not publish
+     * through private source state. Allocation failures propagate before advancement. */
+    explicit State(const SimulationContext& c) : ctx(std::make_shared<SimulationContext>(c)) {}
+    /** @brief Detach a shared context snapshot before any context mutation.
+     * State copies share only unchanged context values. Advancement and checkpoint reads
+     * obtain private ownership here; initialization starts with an already unique owner.
+     * Allocation failures leave other snapshots unchanged. Caller serializes mutation
+     * with copying/borrowing, as required by the existing driver contract. */
+    SimulationContext& mutableContext() {
+        if (ctx.use_count() != 1)
+            ctx = std::make_shared<SimulationContext>(*ctx);
+        return *ctx;
+    }
+    /** @brief Detach the snow owner before mutation; immutable snapshots may share it.
+     * Active owners detach before trial callbacks or checkpoint reads. Inactive owners
+     * remain immutable: advance/checkpoint are no-ops and initialization is unique.
+     * Allocation failures leave the other snapshots unchanged. */
+    surface::SourceSnow& mutableSnow() {
+        if (snow.use_count() != 1)
+            snow = std::make_shared<surface::SourceSnow>(*snow);
+        return *snow;
+    }
+    /** @brief Copy histories while sharing unchanged private context and snow snapshots.
+     * LID water is cloned without report writers; other histories/ledgers/queues copy.
+     * Mutable context/snow owners detach before use. External handle/callback references
+     * retain their original ownership. Copy failures leave s unchanged. */
     State(const State& s)
         : ctx(s.ctx), runoff(s.runoff), lids(s.lids.waterTrial()), snow(s.snow),
           partitioned(s.partitioned), hydraulic_returns(s.hydraulic_returns),
@@ -291,9 +310,11 @@ SourceWaterDriver::~SourceWaterDriver() = default;
 SourceWaterDriver::SourceWaterDriver(SourceWaterDriver&&) noexcept = default;
 SourceWaterDriver& SourceWaterDriver::operator=(SourceWaterDriver&&) noexcept = default;
 SourceWaterDriver SourceWaterDriver::waterTrial() const {
+    perf::ProcessTimer process_timer(perf::ProcessPhase::source_trial);
     if (!state_ || trial_)
         throw std::logic_error("Source snapshot requires committed water state.");
     SourceWaterDriver copy;
+    perf::count(perf::ProcessCounter::water_trial_copies);
     copy.state_ = std::make_unique<State>(*state_);
     copy.clocks_ = clocks_;
     return copy;
@@ -305,14 +326,14 @@ const SourceWaterDriver::State& SourceWaterDriver::view(bool trial) const {
     return *s;
 }
 const surface::SourceSnow& SourceWaterDriver::snow(bool trial) const {
-    return view(trial).snow;
+    return *view(trial).snow;
 }
 const std::vector<double>& SourceWaterDriver::spatialFractions() const {
     return view(false).inside;
 }
 std::string SourceWaterDriver::configureSpatialCoverage(const std::vector<double>& fractions) {
     if (!state_ || trial_ || state_->partitioned ||
-        fractions.size() != static_cast<std::size_t>(state_->ctx.n_subcatches()))
+        fractions.size() != static_cast<std::size_t>(state_->ctx->n_subcatches()))
         return "Invalid or already configured completed spatial footprint partition.";
     for (const auto& g : clocks_.groups())
         if (g.completed_end != 0 || !g.pending.empty())
@@ -380,7 +401,7 @@ std::string SourceWaterDriver::creditOutfallReturns(double start, double end,
     if (!state_ || trial_ || !state_->hydraulic_returns || !std::isfinite(start) ||
         !std::isfinite(end) || start != state_->hydraulic_return_end || end <= start ||
         !std::isfinite(end - start) || volumes.size() != state_->runon.size() ||
-        end - state_->ctx.options.totalDurationMs() / 1000. > 1e-12 * std::max(1., end))
+        end - state_->ctx->options.totalDurationMs() / 1000. > 1e-12 * std::max(1., end))
         return "Outfall return requires the next finite accepted hydraulic interval and explicit water-only ownership.";
     const auto& s = *state_;
     for (const auto& g : clocks_.groups())
@@ -390,7 +411,7 @@ std::string SourceWaterDriver::creditOutfallReturns(double start, double end,
         const double v = volumes[sc];
         if (!std::isfinite(v) || v < 0 ||
             (v > 0 && (clocks_.groupForSubcatch(int(sc)) < 0 ||
-                       s.runoff.soa().area[sc] + s.ctx.subcatches.total_lid_area_ft2[sc] <= 0)) ||
+                       s.runoff.soa().area[sc] + s.ctx->subcatches.total_lid_area_ft2[sc] <= 0)) ||
             !std::isfinite(s.runon[sc] + v) || !std::isfinite(s.ledger[sc].outfall_return + v))
             return "Invalid outfall return volume or physical receiver.";
     }
@@ -407,7 +428,7 @@ std::string SourceWaterDriver::creditOutfallReturns(double start, double end,
     return {};
 }
 const SimulationContext& SourceWaterDriver::context(bool t) const {
-    return view(t).ctx;
+    return *view(t).ctx;
 }
 const RunoffSolver& SourceWaterDriver::runoff(bool t) const {
     return view(t).runoff;
@@ -475,7 +496,7 @@ double SourceWaterDriver::pendingVolume(int group, bool trial) const {
     const auto& s = view(trial);
     double v = 0;
     for (int sc : clocks_.groups().at(group).subcatches)
-        v += s.runon[sc] + s.pervious_return[sc] + s.runoff.pendingRoutingVolume(s.ctx, sc);
+        v += s.runon[sc] + s.pervious_return[sc] + s.runoff.pendingRoutingVolume(*s.ctx, sc);
     for (const auto& r : s.aquifer_returns)
         if (clocks_.groupForSubcatch(r.source) == group)
             v += r.volume;
@@ -535,7 +556,7 @@ std::string SourceWaterDriver::initialize(const SimulationContext& c, const std:
     auto s = std::make_unique<State>(c);
     s->hydraulic_returns = hydraulic_returns;
     try {
-        s->lids.init(s->ctx);
+        s->lids.init(*s->ctx);
         if (initial_lids) {
             if (initial_lids->numGroups() != s->lids.numGroups() ||
                 initial_lids->usageOrder() != s->lids.usageOrder())
@@ -552,13 +573,13 @@ std::string SourceWaterDriver::initialize(const SimulationContext& c, const std:
         // The ordinary LID initializer snaps near-full coverage to a rounded
         // LANDAREA denominator. Completed physical-area budgets use the actual
         // unit footprints, together with the reviewed non-LID area.
-        std::fill(s->ctx.subcatches.total_lid_area_ft2.begin(),
-                  s->ctx.subcatches.total_lid_area_ft2.end(), 0);
+        std::fill(s->ctx->subcatches.total_lid_area_ft2.begin(),
+                  s->ctx->subcatches.total_lid_area_ft2.end(), 0);
         for (const auto& [t, u] : s->lids.usageOrder()) {
             const auto& g = s->lids.group(t);
-            s->ctx.subcatches.total_lid_area_ft2[g.subcatch_idx[u]] += g.area[u];
+            s->ctx->subcatches.total_lid_area_ft2[g.subcatch_idx[u]] += g.area[u];
         }
-        s->runoff.init(s->ctx, areas);
+        s->runoff.init(*s->ctx, areas);
         std::vector<std::vector<int>> snow_groups;
         bool snow_active = false;
         for (const auto& g : clocks.groups()) {
@@ -570,10 +591,10 @@ std::string SourceWaterDriver::initialize(const SimulationContext& c, const std:
         if (snow_active)
             for (const auto& g : clocks.groups())
                 for (int sc : g.subcatches)
-                    s->ctx.subcatches.area[sc] =
-                        (s->runoff.soa().area[sc] + s->ctx.subcatches.total_lid_area_ft2[sc]) *
+                    s->ctx->subcatches.area[sc] =
+                        (s->runoff.soa().area[sc] + s->ctx->subcatches.total_lid_area_ft2[sc]) *
                         ucf::UCF(ucf::LANDAREA, c.options);
-        if (auto error = s->snow.initialize(s->ctx, snow_groups, s->runoff.soa().area);
+        if (auto error = s->snow->initialize(*s->ctx, snow_groups, s->runoff.soa().area);
             !error.empty())
             return error;
 
@@ -594,7 +615,7 @@ std::string SourceWaterDriver::initialize(const SimulationContext& c, const std:
                 if (hydraulic_returns && c.subcatches.outfall_runon_vol[sc] != 0)
                     return "Hydraulic source returns require empty initial outfall receipts.";
                 if (hydraulic_returns &&
-                    s->runoff.soa().area[sc] + s->ctx.subcatches.total_lid_area_ft2[sc] <= 0 &&
+                    s->runoff.soa().area[sc] + s->ctx->subcatches.total_lid_area_ft2[sc] <= 0 &&
                     std::find(c.node_subtypes.outfalls.route_to.begin(),
                               c.node_subtypes.outfalls.route_to.end(),
                               sc) != c.node_subtypes.outfalls.route_to.end())
@@ -658,11 +679,11 @@ void SourceWaterDriver::advance(State& s, const SourceForcingInterval& f,
                                 const RunoffSolver::InfiltrationBoundary* boundary,
                                 const BottomCeiling* ceiling) {
     const double dt = f.end - f.start;
-    auto& c = s.ctx;
+    auto& c = s.mutableContext();
     auto weather_input = f.sources;
-    if (s.snow.active())
-        s.snow.advance(c, clocks_.groupForSubcatch(weather_input.front().subcatch), f.start, f.end,
-                       weather_input);
+    if (s.snow->active())
+        s.mutableSnow().advance(c, clocks_.groupForSubcatch(weather_input.front().subcatch),
+                                f.start, f.end, weather_input);
 
     if (s.partitioned && !ceiling) {
         for (const auto& [t, u] : s.lids.usageOrder()) {
@@ -710,7 +731,17 @@ void SourceWaterDriver::advance(State& s, const SourceForcingInterval& f,
             }
         }
     std::erase_if(s.aquifer_returns, [&](const auto& q) { return selected(q.source); });
-    const auto incoming_runon = s.runon_mass, incoming_return = s.return_mass;
+    const auto openingMass = [&](const std::vector<std::vector<double>>& pending) {
+        if (np == 0 || weather_input.size() >= pending.size())
+            return pending;
+        std::vector<std::vector<double>> opening(pending.size());
+        for (std::size_t sc = 0; sc < pending.size(); ++sc)
+            if (weather_at[sc])
+                opening[sc] = pending[sc];
+        return opening;
+    };
+    const auto incoming_runon = openingMass(s.runon_mass),
+               incoming_return = openingMass(s.return_mass);
     std::vector<std::vector<double>> outlet_mass(c.n_subcatches(), std::vector<double>(np, 0));
     // Consume each pending volume once. Runon is distributed across the full
     // non-LID + LID footprint, so partial LID coverage cannot multiply it.
@@ -728,7 +759,7 @@ void SourceWaterDriver::advance(State& s, const SourceForcingInterval& f,
         std::fill(s.runon_mass[sc].begin(), s.runon_mass[sc].end(), 0);
         std::fill(s.return_mass[sc].begin(), s.return_mass[sc].end(), 0);
         double arrival = weather.rain * full;
-        if (s.snow.active() && c.subcatches.snowpack[sc] >= 0) {
+        if (s.snow->active() && c.subcatches.snowpack[sc] >= 0) {
             const double fi = s.runoff.soa().imperv_pct[sc];
             arrival = weather.rain * c.subcatches.total_lid_area_ft2[sc] +
                       s.runoff.soa().area[sc] * (fi * c.subcatches.snow_net_imperv[sc] +
@@ -978,6 +1009,7 @@ std::string SourceWaterDriver::stage(int group, double end, double completed_thr
                                      const RunoffSolver::InfiltrationBoundary* boundary,
                                      const BottomCeiling* ceiling,
                                      const ForcingTransform* forcing) {
+    perf::ProcessTimer process_timer(perf::ProcessPhase::source_trial);
     if (!state_)
         return "Source water driver is not initialized.";
     if (trial_)
@@ -985,7 +1017,13 @@ std::string SourceWaterDriver::stage(int group, double end, double completed_thr
     auto error = clocks_.stage(group, end, completed_through);
     if (!error.empty())
         return error;
-    trial_ = std::make_unique<State>(*state_);
+    perf::count(perf::ProcessCounter::source_stage_copies);
+    auto staged = std::make_unique<State>(*state_);
+    // Establish the trial owners before callbacks can borrow their mutable results.
+    staged->mutableContext();
+    if (staged->snow->active())
+        staged->mutableSnow();
+    trial_ = std::move(staged);
     pending_group_ = group;
     try {
         for (const auto& f : clocks_.groups()[group].pending) {
@@ -997,12 +1035,12 @@ std::string SourceWaterDriver::stage(int group, double end, double completed_thr
                     ends.push_back(q.available);
             std::sort(ends.begin(), ends.end());
             ends.erase(std::unique(ends.begin(), ends.end()), ends.end());
-            if (trial_->snow.active()) {
+            if (trial_->snow->active()) {
                 // UEB held windows stop at the same clock boundaries as native
                 // snow; weather intervals may also end sooner at gage changes.
                 double at = f.start;
                 while (at < f.end) {
-                    const double span = surface::ueb::nextSnowBoundary(trial_->ctx, at, f.end - at);
+                    const double span = surface::ueb::nextSnowBoundary(*trial_->ctx, at, f.end - at);
                     const double next = std::min(f.end, at + span);
                     if (!(next > at))
                         throw std::runtime_error("Snow source boundary failed to advance.");
@@ -1076,15 +1114,17 @@ void SourceWaterDriver::checkpoint(detail::CompletedSourceArchive& a, bool model
     if (!state_ || trial_)
         throw std::runtime_error("Source checkpoint requires committed water state.");
     auto& s = *state_;
-    auto& c = s.ctx;
+    auto& c = a.reading() ? s.mutableContext() : *s.ctx;
+    if (a.reading() && s.snow->active())
+        s.mutableSnow();
     auto& sub = c.subcatches;
     clocks_.checkpoint(a, model);
     s.runoff.checkpoint(a, model);
     s.lids.checkpoint(a, model);
-    s.snow.checkpoint(a, model, c);
-    if (!model && s.snow.active())
+    s.snow->checkpoint(a, model, c);
+    if (!model && s.snow->active())
         for (std::size_t g = 0; g < clocks_.groups().size(); ++g)
-            if (s.snow.ledgers()[g].end != clocks_.groups()[g].completed_end)
+            if (s.snow->ledgers()[g].end != clocks_.groups()[g].completed_end)
                 throw std::runtime_error("Snow source restart clocks differ.");
     if (model) {
         a(s.partitioned, s.inside, s.pollutant_names, c.options.flow_units,
@@ -1174,7 +1214,7 @@ void SourceWaterDriver::checkpoint(detail::CompletedSourceArchive& a, bool model
                 !std::isfinite(q.volume) || q.volume <= 0 ||
                 clocks_.groups()[group].completed_end - q.available >
                     1e-12 * std::max(1., q.available) ||
-                s.runoff.soa().area[q.source] + s.ctx.subcatches.total_lid_area_ft2[q.source] <= 0)
+                s.runoff.soa().area[q.source] + s.ctx->subcatches.total_lid_area_ft2[q.source] <= 0)
                 throw std::runtime_error("Invalid pending hydraulic source return checkpoint.");
             previous = q.available;
             pending[q.source] += q.volume;

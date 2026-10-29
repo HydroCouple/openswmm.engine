@@ -397,6 +397,11 @@ bool Infil2D::resolveImpl(const MeshData& mesh, const SimulationOptions& opts, s
 
 void Infil2D::updateRates(const MeshData& mesh, SurfaceStateData& state, double dt,
                           surface::InfilBank::Factors factors) {
+    updateRates(mesh, state, dt, factors, 1);
+}
+
+void Infil2D::updateRates(const MeshData& mesh, SurfaceStateData& state, double dt,
+                          surface::InfilBank::Factors factors, int num_threads) {
     (void)mesh;
     if (!active_ || dt <= 0.0)
         return;
@@ -404,17 +409,26 @@ void Infil2D::updateRates(const MeshData& mesh, SurfaceStateData& state, double 
     // §5.5.2: advance EVERY model-carrying cell, active or not — a cell that
     // sat inactive must not present full initial capacity when rain arrives.
     const std::size_t n = std::min(resolved_.size(), state.infil_rate.size());
-    for (std::size_t i = 0; i < n; ++i) {
+    const int threads = std::max(1, num_threads);
+    const auto update_cell = [&](std::size_t i) {
         const Infil2DRow& r = resolved_[i];
         if (!r.has_method)
-            continue;
+            return;
 
         if (bank_.owner(static_cast<int>(i)) == surface::InfilBank::Owner::EXTERNAL)
-            continue;
+            return;
         state.infil_rate[i] =
             bank_.rate(static_cast<int>(i), state.liquidRainfall(static_cast<int>(i)), 0.0,
                        state.depth[i], dt, factors);
-    }
+    };
+    if (threads > 1 && n >= 512) {
+        const auto count = static_cast<std::ptrdiff_t>(n);
+#pragma omp parallel for schedule(static) num_threads(threads)
+        for (std::ptrdiff_t i = 0; i < count; ++i)
+            update_cell(static_cast<std::size_t>(i));
+    } else
+        for (std::size_t i = 0; i < n; ++i)
+            update_cell(i);
 }
 
 void Infil2D::reset() {

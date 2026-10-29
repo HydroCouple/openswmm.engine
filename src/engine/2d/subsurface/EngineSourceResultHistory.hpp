@@ -142,7 +142,7 @@ private:
      * greater.
      * @return Empty after checkpoint capture, boundary projection and complete candidate validation;
      * diagnostic on refusal or caught standard exception, with history/physics unchanged.
-     * @note Copies existing history before appending and offsets pending-row identifiers globally.
+     * @note Appends with rollback on refusal and offsets pending-row identifiers globally.
      * Detailed mode seeds source frame zero on first capture; intermediate source intervals are
      * captured through captureSourceInterval(). The engine remains borrowed and must outlive
      * recorder use. Checkpoint capture can settle associated output metadata; this method does not

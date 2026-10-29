@@ -10,6 +10,7 @@
  * @license   Apache-2.0
  */
 
+#include "core/ProcessPerf.hpp"
 #include "LidNode.hpp"
 #include "LidNodeRichardsState.hpp"
 #include "../core/SimulationContext.hpp"
@@ -645,6 +646,7 @@ void initialize(SimulationContext& ctx) {
  */
 static void prepareStepImpl(SimulationContext& ctx, double dt, double evaporation,
                             bool mesh_prepared) {
+    perf::ProcessTimer process_timer(perf::ProcessPhase::lid_nodes);
     if (!(dt > 0.0))
         return;
     prepareRichardsStep(ctx, dt, evaporation, mesh_prepared);

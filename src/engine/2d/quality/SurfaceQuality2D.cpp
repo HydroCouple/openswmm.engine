@@ -30,6 +30,7 @@
  * @license   Apache-2.0
  */
 
+#include "core/ProcessPerf.hpp"
 #include "SurfaceQuality2D.hpp"
 
 #include <algorithm>
@@ -641,6 +642,7 @@ double SurfaceQuality2D::buildupPerArea(int c, int s) const noexcept {
 void SurfaceQuality2D::step(const SimulationContext& ctx, const MeshData& mesh,
                             SurfaceStateData& state, double dt_runoff, double abs_time,
                             bool is_raining) {
+    perf::ProcessTimer process_timer(perf::ProcessPhase::surface_quality);
     if (!active_ || !(dt_runoff > 0.0))
         return;
     auto& tr = state.transport;

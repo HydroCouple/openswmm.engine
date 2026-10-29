@@ -9,6 +9,7 @@
  * @license   Apache-2.0
  */
 
+#include "core/ProcessPerf.hpp"
 #include "UebSubcatchments.hpp"
 #include "SnowCheckpoint.hpp"
 #include "DegreeDaySnow.hpp"
@@ -263,6 +264,7 @@ double nextSnowBoundary(const SimulationContext& ctx, double elapsed, double pro
 std::string advanceSubcatchments(SimulationContext& ctx, snow::SnowSoA& soa, double date,
                                  double elapsed, double seconds, const double* rain,
                                  const double* snow) {
+    perf::ProcessTimer process_timer(perf::ProcessPhase::subcatch_snow);
     if (!ctx.snowpacks.runtime.active)
         return {};
     auto next = ctx.snowpacks.runtime;

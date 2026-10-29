@@ -10,6 +10,7 @@
  */
 
 #pragma once
+#include "../subsurface/LayerTransport.hpp"
 #include <string>
 #include <vector>
 namespace openswmm::twoD {
@@ -18,6 +19,26 @@ struct PorewaterAdvection {
     std::vector<double> mass, concentration, withdrawn_mass, vertical_water, vertical_mass;
     double external_mass = 0, water_residual = 0;
 };
+// Exclusive caller-owned workspace. No input may alias writable scratch/result
+// storage. Borrowed mutable results expire on reuse; owning APIs remain independent.
+struct PorewaterTransportScratch {
+    PorewaterAdvection result;
+    LayerTransportScratch transport;
+    std::vector<double> capacity, initial, diagonal, lower, upper, rhs, water;
+    std::vector<unsigned char> residue;
+    std::vector<LayerTransportMove> moves;
+};
+PorewaterAdvection& advectPorewater(
+    const std::vector<double>& old_water, const std::vector<double>& new_water,
+    const std::vector<double>& retention, const std::vector<double>& mass,
+    const std::vector<double>& external_water, const std::vector<double>& external_mass,
+    const std::vector<double>& withdrawal, PorewaterTransportScratch& scratch);
+PorewaterAdvection& advectPorewaterEuler(
+    const std::vector<double>& old_water, const std::vector<double>& retention,
+    const std::vector<double>& mass, const std::vector<double>& water_change,
+    const std::vector<double>& external_water, const std::vector<double>& external_mass,
+    const std::vector<double>& withdrawal, const std::vector<double>& reserved_water,
+    const std::vector<double>& reserved_mass, PorewaterTransportScratch& scratch);
 // Fixed physical layers, native concentration*m3 mass. Retention is the
 // equilibrium sorption capacity rho_bulk*Kd*bulk_volume (m3), zero for age.
 // External water is NET accepted water; external mass excludes the unknown

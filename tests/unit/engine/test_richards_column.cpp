@@ -11,6 +11,10 @@
 
 #include <gtest/gtest.h>
 #include "hydrology/RichardsColumn.hpp"
+#include "core/CompletedSourceArchive.hpp"
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <numeric>
 #include <cmath>
 using namespace openswmm::richards;
@@ -66,6 +70,64 @@ TEST(RichardsColumn, RetentionStorageInverseIncludingSaturation) {
         EXPECT_LE(theta(p, .45, h), .45);
         EXPECT_GE(conductivity(p, 1.e-5, h), 0);
         EXPECT_LE(conductivity(p, 1.e-5, h), 1.e-5);
+    }
+}
+TEST(RichardsColumn, ScratchReusePreservesMixedLaneClocksReceiptsAndRollback) {
+    openswmm::detail::CompletedSourceArchive history;
+    for (bool bounded : {false, true})
+      for (int count : {1, 65})
+        for (bool mixed_sizes : {false, true})
+            for (auto bottom : {Bottom::Sealed, Bottom::FreeDrainage, Bottom::Head}) {
+                std::vector<Column> columns;
+                columns.reserve(count);
+                for (int i = 0; i < count; ++i) {
+                    auto c = column(mixed_sizes && i % 2 ? 8 : 4, .2 + .1 * (i % 6));
+                    c.options.max_step = 2. + i % 5;
+                    c.water[0] = i % 3 ? .01 : 0.;
+                    c.inflow = i % 2 ? 1e-6 : 0.;
+                    c.cells[1].potential_et = 1e-7;
+                    c.bottom = bottom;
+                    c.bottom_K = 1e-5;
+                    c.bottom_distance = .1;
+                    c.bottom_head = i % 2 ? -1. : .2;
+                    if (bounded) {
+                        c.bottom_in_limit = i % 3 ? 1e-6 : 0.;
+                        c.bottom_out_limit = i % 3 ? 2e-6 : 0.;
+                    }
+                    columns.push_back(std::move(c));
+                }
+                std::vector<Column*> batch;
+                for (auto& c : columns) batch.push_back(&c);
+                for (double dt : {3., 7., 11.}) {
+                    auto reports = openswmm::richards::advance(batch, dt);
+                    ASSERT_EQ(reports.size(), columns.size());
+                    for (int i = 0; i < count; ++i) {
+                        auto& r = reports[i];
+                        ASSERT_TRUE(r.ok) << r.error;
+                        EXPECT_LE(r.bottom_inflow, columns[i].bottom_in_limit);
+                        EXPECT_LE(r.bottom_outflow, columns[i].bottom_out_limit);
+                        EXPECT_NEAR(r.balance, 0., 1e-9);
+                        history(columns[i].water, r.ok, r.error, r.accepted, r.rejected,
+                                r.rhs, r.newton, r.min_step, r.bottom_volume, r.evaporation,
+                                r.balance, r.bottom_outflow, r.bottom_inflow, r.inflow,
+                                r.bottom_out_limited, r.bottom_in_limited);
+                        history.sequence(r.transfers, [&](auto& t) { history(t.from,t.to,t.volume); });
+                    }
+                }
+                std::vector<std::vector<double>> saved;
+                for (auto& c : columns) saved.push_back(c.water);
+                columns.back().bottom_in_limit = -1.;
+                const auto failed = openswmm::richards::advance(batch, 1.);
+                for (int i = 0; i < count; ++i) {
+                    EXPECT_FALSE(failed[i].ok);
+                    EXPECT_EQ(columns[i].water, saved[i]);
+                }
+            }
+    if (const char* output = std::getenv("OPENSWMM_RICHARDS_SCRATCH_TEST_OUT")) {
+        std::filesystem::create_directories(output);
+        const auto bytes = history.bytes();
+        std::ofstream(std::filesystem::path(output) / "richards.bin", std::ios::binary)
+            .write(bytes.data(), bytes.size());
     }
 }
 TEST(RichardsColumn, HeldSurfaceSupplyAndEtAreIntegratedInsideTheOde) {

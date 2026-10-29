@@ -35,6 +35,7 @@
 #include "FileIO.hpp" // issue #7: UTF-8 paths on Windows
 #include "SimulationContext.hpp"
 #include "PerfTimers.hpp"
+#include "ProcessPerf.hpp"
 #include "UnitConversion.hpp"
 #include "../quality/SurfaceSpeciesKernel.hpp"
 #include "../quality/MsxSurfaceQuality.hpp"
@@ -200,6 +201,7 @@ SWMMEngine::~SWMMEngine() {
     if (ctx_.state == EngineState::RUNNING || ctx_.state == EngineState::ENDED) {
         close();
     }
+    perf::end_process_model(this, false);
 }
 
 // ============================================================================
@@ -678,6 +680,7 @@ int SWMMEngine::open(const char* inp_path, const char* rpt_path, const char* out
     // registration. Parsed authoring remains available through the public API.
     if (metadata_only_) {
         ctx_.state = EngineState::OPENED;
+        perf::begin_process_model(this);
         return SWMM_OK;
     }
 
@@ -1001,6 +1004,7 @@ int SWMMEngine::open(const char* inp_path, const char* rpt_path, const char* out
     }
 
     ctx_.state = EngineState::OPENED;
+    perf::begin_process_model(this);
     return SWMM_OK;
 }
 
@@ -1024,6 +1028,9 @@ int SWMMEngine::initialize() noexcept {
         set_error(SWMM_ERR_WRONG_STATE, "swmm_engine_initialize: must call open() first");
         return SWMM_ERR_WRONG_STATE;
     }
+    // Programmatic finalize enters here without open(); file-based and repeated
+    // initialization are already registered and this call is idempotent.
+    perf::begin_process_model(this);
 
 #ifndef OPENSWMM_HAS_2D
     if (!ctx_.reactions.subsurface_laws.empty()) {
@@ -4606,9 +4613,12 @@ void SWMMEngine::stepGroundwater(double dt_runoff) noexcept {
     gw_infil_rate_.assign(static_cast<std::size_t>(ns), 0.0);
     {
         const auto& rsoa = runoff_.soa();
-        std::vector<double> lid_perv_area(static_cast<std::size_t>(ns), 0.0);
-        std::vector<double> lid_infil_vol(static_cast<std::size_t>(ns), 0.0);
-        std::vector<double> lid_perv_evap_vol(static_cast<std::size_t>(ns), 0.0);
+        gw_lid_perv_area_.assign(static_cast<std::size_t>(ns), 0.0);
+        gw_lid_infil_vol_.assign(static_cast<std::size_t>(ns), 0.0);
+        gw_lid_perv_evap_vol_.assign(static_cast<std::size_t>(ns), 0.0);
+        auto& lid_perv_area = gw_lid_perv_area_;
+        auto& lid_infil_vol = gw_lid_infil_vol_;
+        auto& lid_perv_evap_vol = gw_lid_perv_evap_vol_;
         for (int t = 0; t < lid_.numGroups(); ++t) {
             const auto& g = lid_.group(t);
             for (int u = 0; u < g.count; ++u) {
@@ -8031,7 +8041,7 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
                 snap.gw2d_species_count = tr.active() ? tr.n_species : 0;
                 snap.gw2d_species_names = tr.active() ? &tr.row_names : nullptr;
                 snap.gw2d_transport_layers = tr.n_layers;
-                snap.gw2d_layer_mass = tr.layer_mass;
+                snap.gw2d_layer_mass.resize(tr.layer_mass.size());
                 snap.gw2d_layer_concentration.assign(tr.layer_mass.size(), 0);
                 for (int sp = 0; sp < tr.n_species; ++sp)
                     for (int layer = 0; layer < tr.n_layers; ++layer)
@@ -8045,8 +8055,12 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
                                 bulk *
                                 (g.theta_sigma[std::size_t(layer) * g.n_cells + cell] + partition);
                             const auto k = tr.layerIdx(sp, layer, cell);
+                            // Keep the public snapshot/HDF axes species, layer, face.
+                            const auto output_index =
+                                (std::size_t(sp) * tr.n_layers + layer) * g.n_cells + cell;
+                            snap.gw2d_layer_mass[output_index] = tr.layer_mass[k];
                             if (capacity > 0)
-                                snap.gw2d_layer_concentration[k] = tr.layer_mass[k] / capacity;
+                                snap.gw2d_layer_concentration[output_index] = tr.layer_mass[k] / capacity;
                         }
                 const auto& boundaries = gw.boundaries();
                 snap.gw2d_boundary_count = int(boundaries.size());
@@ -8969,6 +8983,7 @@ int SWMMEngine::close() noexcept {
     // on a DYNWAVE run would be noise the harness has to filter.
     if (perf::enabled() && perf::value(perf::n_fv_substep) > 0)
         perf::dump_fv();
+    perf::end_process_model(this);
 
     // Stop IO thread if still running (safe to call even if already stopped)
     io_thread_.stop();

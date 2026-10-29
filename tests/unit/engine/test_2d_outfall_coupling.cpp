@@ -661,6 +661,83 @@ TEST_F(OutfallCoupling2DTest, CarvedOutfallVertexStaysDryOnDryMesh) {
 #include "2d/mesh/VertexReconstruction.hpp"
 #include "2d/solver/ExplicitInertialSolver.hpp"
 #include "hydraulics/SurfaceExchange.hpp"
+#include "core/CompletedSourceArchive.hpp"
+#include <cstdlib>
+
+TEST(OutfallExchangeBudget, SpreadReceiversRefreshAfterWetChangesFailureAndReinitialization) {
+    using namespace openswmm;
+    using namespace openswmm::twoD;
+    MeshData mesh;
+    mesh.resize_vertices(5);
+    mesh.vx = {0, 1, 0, 1, 2};
+    mesh.vy = {0, 0, 1, 1, 0};
+    mesh.vz = {0, 0, 0, 3, 3};
+    mesh.resize_triangles(3);
+    mesh.set_triangle(0, 0, 1, 2);
+    mesh.set_triangle(1, 1, 3, 2);
+    mesh.set_triangle(2, 1, 4, 3);
+    buildMeshTopology(mesh);
+    buildVertexStencils(mesh);
+    SimulationContext ctx;
+    ctx.nodes.resize(3);
+    ctx.links.resize(2);
+    ctx.links.node1 = {2, 2};
+    ctx.links.node2 = {0, 1};
+    for (int i = 0; i < 2; ++i)
+        ctx.link_names.add("L" + std::to_string(i));
+    for (int i = 0; i < 3; ++i)
+        ctx.node_names.add("N" + std::to_string(i));
+    CouplingPoint a{};
+    a.vertex_idx = -1; a.cell_idx = 0; a.node_idx = 0; a.is_outfall = true; a.spread = 10.;
+    auto b = a;
+    b.cell_idx = 2; b.node_idx = 1; b.spread = 0.;
+    std::vector<CouplingPoint> points{a, b};
+    SolverOptions2D options;
+    options.flow_1d_to_2d = 1.;
+    OutfallExchange exchange;
+    detail::CompletedSourceArchive history;
+    for (int pass = 0; pass < 2; ++pass) {
+        if (pass) points[0].spread = 0.;
+        exchange.initialize(mesh, points, ctx);
+        for (int step = 0; step < 6; ++step) {
+            SurfaceStateData state;
+            state.resize(3, 5);
+            state.volume.assign(3, 1.);
+            state.depth.assign(3, step % 2 ? .1 : 0.);
+            state.transport.resize(1, 3, 0);
+            state.transport.cell_mass.assign(3, 2.);
+            exchange.prepare(mesh, state, options, ctx, 1.);
+            ctx.nodes.inflow = {.3, step == 0 ? 0. : .1, 0.};
+            ctx.nodes.outflow = {0., step == 2 ? 100. : 0., 0.};
+            std::vector<double> accumulated(2, 0.), cell_accumulated(3, 0.), conc(3, 3.);
+            if (step == 2)
+                EXPECT_THROW(exchange.apply(mesh, state, options, ctx, 1., accumulated,
+                                            &conc, &cell_accumulated), std::runtime_error);
+            else {
+                ASSERT_TRUE(exchange.apply(mesh, state, options, ctx, 1., accumulated,
+                                          &conc, &cell_accumulated));
+                if (!pass && step == 0) {
+                    EXPECT_DOUBLE_EQ(state.volume[1], 1.);
+                    EXPECT_DOUBLE_EQ(state.volume[2], 1.);
+                }
+                if (!pass && step == 1)
+                    EXPECT_GT(state.volume[1], 1.);
+                if (pass)
+                    EXPECT_DOUBLE_EQ(state.volume[1], 1.);
+            }
+            history(state.volume, state.head, state.depth, state.coupling_applied,
+                    state.transport.cell_mass, state.transport.gained_coupling,
+                    accumulated, cell_accumulated, ctx.mass_balance_2d.outfall_in,
+                    ctx.mass_balance_2d.outfall_out, ctx.mass_balance_2d.final_storage);
+        }
+    }
+    if (const char* output = std::getenv("OPENSWMM_OUTFALL_SCRATCH_TEST_OUT")) {
+        fs::create_directories(output);
+        const auto bytes = history.bytes();
+        std::ofstream(fs::path(output) / "spread.bin", std::ios::binary)
+            .write(bytes.data(), bytes.size());
+    }
+}
 
 TEST(OutfallExchangeBudget, UnevenDonorsOverlappingOutfallsAndParallelLinks) {
     using namespace openswmm;

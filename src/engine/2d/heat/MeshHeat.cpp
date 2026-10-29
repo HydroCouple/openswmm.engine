@@ -9,6 +9,7 @@
  * @license   Apache-2.0
  */
 
+#include "core/ProcessPerf.hpp"
 #include "MeshHeat.hpp"
 #include "../data/MeshData.hpp"
 #include "../data/SurfaceStateData.hpp"
@@ -267,7 +268,8 @@ ThermalSolution solveColumnMidpoint(const GroundColumnAssembly& a,
 ThermalSolution solveAtmosphericColumnMidpoint(GroundColumnAssembly& a,
                                                const std::vector<ThermalStore>& stores,
                                                const std::vector<ThermalContact>& contacts,
-                                               std::vector<ThermalBoundary> boundaries, double dt) {
+                                               std::vector<ThermalBoundary> boundaries, double dt,
+                                               ThermalContactScratch& scratch) {
     const auto refused = [](const char* message) {
         ThermalSolution out;
         out.error = message;
@@ -288,7 +290,8 @@ ThermalSolution solveAtmosphericColumnMidpoint(GroundColumnAssembly& a,
             "RK2 atmosphere requires a finite positive interval without surface latent evaporation.");
     boundaries[a.atmosphere] = {a.water, 0, 0, 0};
     // Validate every store and graph before using indices to form the work bound.
-    auto validated = solveThermalContacts(stores, contacts, boundaries, .5 * dt);
+    // Each borrowed solution is consumed before the next solve reuses this workspace.
+    const auto& validated = solveThermalContacts(stores, contacts, boundaries, .5 * dt, scratch);
     if (!validated.error.empty())
         return validated;
     std::vector<long double> rate(stores.size(), 0);
@@ -326,7 +329,7 @@ ThermalSolution solveAtmosphericColumnMidpoint(GroundColumnAssembly& a,
         if (!(power > 0) || !std::isfinite(power))
             return refused("Unrepresentable atmospheric response power.");
         probe_boundaries[a.atmosphere].power = power;
-        const auto probe = solveThermalContacts(homogeneous, contacts, probe_boundaries, half);
+        const auto& probe = solveThermalContacts(homogeneous, contacts, probe_boundaries, half, scratch);
         if (!probe.error.empty())
             return probe;
         const double response = probe.temperature[a.water] / power;
@@ -341,7 +344,7 @@ ThermalSolution solveAtmosphericColumnMidpoint(GroundColumnAssembly& a,
         bool retry = false;
         for (int step = 0; step < steps; ++step) {
             boundaries[a.atmosphere].power = 0;
-            const auto base = solveThermalContacts(current, contacts, boundaries, half);
+            const auto& base = solveThermalContacts(current, contacts, boundaries, half, scratch);
             if (!base.error.empty())
                 return base;
             const double tbase = base.temperature[a.water];
@@ -370,7 +373,7 @@ ThermalSolution solveAtmosphericColumnMidpoint(GroundColumnAssembly& a,
             const double middle = lo + .5 * (hi - lo);
             const auto flux = outward(*a.mesh_heat, a.cell, middle, 0);
             boundaries[a.atmosphere].power = -a.wet * flux.total();
-            const auto solved = solveThermalContacts(current, contacts, boundaries, half);
+            const auto& solved = solveThermalContacts(current, contacts, boundaries, half, scratch);
             if (!solved.error.empty())
                 return solved;
             const double end = 2 * solved.temperature[a.water] -
@@ -451,20 +454,35 @@ ThermalSolution solveAtmosphericColumnMidpoint(GroundColumnAssembly& a,
 double groundColumnStep(const MeshData& mesh, const SolverOptions2D& options, MeshHeatState& h,
                         int i, double mass, double volume, double evaporated, double dt,
                         bool midpoint) {
-    std::vector<ThermalStore> stores;
-    std::vector<ThermalContact> contacts;
-    std::vector<ThermalBoundary> boundaries;
+    perf::ProcessTimer process_timer(perf::ProcessPhase::heat_columns);
+    struct Scratch {
+        std::vector<ThermalStore> stores;
+        std::vector<ThermalContact> contacts;
+        std::vector<ThermalBoundary> boundaries;
+        ThermalContactScratch implicit;
+    };
+    thread_local Scratch scratch;
+    auto& stores = scratch.stores;
+    auto& contacts = scratch.contacts;
+    auto& boundaries = scratch.boundaries;
+    stores.clear();
+    contacts.clear();
+    boundaries.clear();
     const double channel = h.channel_footprint.empty() ? 0 : h.channel_footprint[i];
     auto assembled =
         appendGroundColumnSystem(mesh, options, h.groundOwner(i), i, &h, mass, volume, evaporated,
                                  dt, channel, stores, contacts, boundaries);
-    auto solved = midpoint && assembled.water >= 0 && (h.surface || h.radiative)
-                      ? solveAtmosphericColumnMidpoint(assembled, stores, contacts, boundaries, dt)
-                  : midpoint ? solveColumnMidpoint(assembled, stores, contacts, boundaries, dt)
-                             : solveThermalContacts(stores, contacts, boundaries, dt);
-    if (!solved.error.empty())
-        throw std::runtime_error(solved.error);
-    return commitGroundColumnSystem(assembled, solved);
+    const auto commit = [&](const ThermalSolution& solved) {
+        if (!solved.error.empty())
+            throw std::runtime_error(solved.error);
+        return commitGroundColumnSystem(assembled, solved);
+    };
+    if (!midpoint)
+        return commit(solveThermalContacts(stores, contacts, boundaries, dt, scratch.implicit));
+    return commit(assembled.water >= 0 && (h.surface || h.radiative)
+                      ? solveAtmosphericColumnMidpoint(assembled, stores, contacts, boundaries, dt,
+                                                       scratch.implicit)
+                      : solveColumnMidpoint(assembled, stores, contacts, boundaries, dt));
 }
 }
 /**
@@ -509,6 +527,13 @@ GroundColumnAssembly appendGroundColumnSystem(const MeshData& mesh, const Solver
     const auto& o = owner.config->options;
     if (channel_area < 0 || channel_area > c.area || !std::isfinite(channel_area))
         throw std::runtime_error("Channel thermal footprint exceeds its soil cell area.");
+    struct Scratch {
+        std::vector<ThermalContact> contacts;
+        std::vector<ThermalBoundary> ground;
+    };
+    thread_local Scratch scratch;
+    scratch.contacts.clear();
+    scratch.ground.clear();
     GroundColumnAssembly a;
     a.owner = &owner;
     a.mesh_heat = h;
@@ -581,12 +606,14 @@ GroundColumnAssembly appendGroundColumnSystem(const MeshData& mesh, const Solver
         stores.push_back({capacity, c.energy[j]});
     }
     a.first_contact = contacts.size();
-    if (o.conduction)
-        for (auto contact : c.contacts()) {
+    if (o.conduction) {
+        c.contacts(scratch.contacts);
+        for (auto contact : scratch.contacts) {
             contact.a += a.first_store;
             contact.b += a.first_store;
             contacts.push_back(contact);
         }
+    }
     a.vertical_count = contacts.size() - a.first_contact;
     if (h && volume > 0) {
         a.water = int(stores.size());
@@ -623,7 +650,7 @@ GroundColumnAssembly appendGroundColumnSystem(const MeshData& mesh, const Solver
     }
     a.contact_count = contacts.size() - a.first_contact;
     a.first_boundary = boundaries.size();
-    std::vector<ThermalBoundary> ground;
+    auto& ground = scratch.ground;
     const double snow_fraction = owner.snowContactFraction(i);
     const double exposed_fraction = std::max(0., 1 - (channel_area + lid_area) / c.area);
     const double bare_fraction = (1 - a.wet / c.area) * exposed_fraction;
@@ -1055,7 +1082,16 @@ double applyLocalBedSpecies(const MeshData& mesh, MeshHeatState& h, int i, int r
         // update; sequential pair updates would make the result depend on
         // layer order. Reserved accepted groundwater exports remain outside
         // the contact donor inventory until their owning gather settles them.
-        std::vector<double> qdt(nl, 0.0), active_mass(nl, 0.0), capacity(nl, 0.0);
+        struct BedSpeciesScratch {
+            std::vector<double> qdt, active_mass, capacity;
+        };
+        static thread_local BedSpeciesScratch scratch;
+        auto& qdt = scratch.qdt;
+        auto& active_mass = scratch.active_mass;
+        auto& capacity = scratch.capacity;
+        qdt.assign(nl, 0.0);
+        active_mass.assign(nl, 0.0);
+        capacity.assign(nl, 0.0);
         const auto base = std::size_t(r) * nl;
         double denominator = volume, numerator = mass;
         for (std::size_t j = 0; j < nl; ++j) {
@@ -1196,7 +1232,8 @@ double applyLocalBedSpeciesEuler(const MeshData& mesh, MeshHeatState& h, int i, 
                                                column.depth_edges[j]);
     if (!(overlap_total > 0) || rate == 0)
         return mass;
-    std::vector<double> delta(nl, 0);
+    static thread_local std::vector<double> delta;
+    delta.assign(nl, 0.0);
     double outgoing = 0;
     for (std::size_t j = 0; j < nl; ++j) {
         const double overlap = std::max(0., std::min(column.depth_edges[j + 1], sc.bed_thickness) -

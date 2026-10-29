@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <optional>
 
 namespace openswmm::msxlid {
 namespace {
@@ -51,6 +52,35 @@ double temperature(const SimulationContext& c, int node) {
                ? c.heat_state.node_temp[node]
                : c.reactions.default_temp_c;
 }
+// Derived scratch only: refresh every active input and reset the workspace per call.
+// A nested call borrows fresh storage while the outer call retains its views.
+struct PoolScratch {
+    bool busy = false;
+    std::vector<ReactionExprForm> forms;
+    std::vector<RxExprSpan> spans;
+    std::vector<double> values, before;
+    transport::RxWorkspace workspace;
+};
+class PoolScratchLease {
+public:
+    PoolScratchLease() {
+        static thread_local PoolScratch retained;
+        if (retained.busy) {
+            fallback_.emplace();
+            scratch_ = &*fallback_;
+        } else {
+            scratch_ = &retained;
+        }
+        scratch_->busy = true;
+    }
+    ~PoolScratchLease() { scratch_->busy = false; }
+    PoolScratchLease(const PoolScratchLease&) = delete;
+    PoolScratchLease& operator=(const PoolScratchLease&) = delete;
+    PoolScratch& get() noexcept { return *scratch_; }
+private:
+    std::optional<PoolScratch> fallback_;
+    PoolScratch* scratch_;
+};
 } // namespace
 /**
  * @brief React one finite native LID water pool through scoped compiled species laws.
@@ -90,8 +120,12 @@ bool reactPool(SimulationContext& c, int control, int layer, double volume, doub
     clamped.assign(ns, 0);
     if (!(volume > quality::ZERO_VOLUME) || !(dt > 0))
         return true;
-    std::vector<ReactionExprForm> forms(ns, ReactionExprForm::NONE);
-    std::vector<RxExprSpan> spans(ns);
+    PoolScratchLease lease;
+    auto& scratch = lease.get();
+    auto& forms = scratch.forms;
+    auto& spans = scratch.spans;
+    forms.assign(ns, ReactionExprForm::NONE);
+    spans.assign(ns, RxExprSpan{});
     bool any = false;
     for (int select : {0, layer})
         for (const auto& law : r.lid_laws)
@@ -102,12 +136,15 @@ bool reactPool(SimulationContext& c, int control, int layer, double volume, doub
             }
     if (!any)
         return true;
-    std::vector<double> values(ns), before(ns);
+    auto& values = scratch.values;
+    auto& before = scratch.before;
+    values.resize(ns);
+    before.resize(ns);
     for (int s = 0; s < ns; ++s)
         values[s] = before[s] = mass[s] / volume;
     double variables[int(RxHydVar::COUNT_)] = {};
     variables[int(RxHydVar::TEMP)] = temp;
-    transport::RxWorkspace work;
+    auto& work = scratch.workspace;
     work.init(r);
     const auto result =
         transport::ReactionIntegrator::step(r, forms, spans, dt, values.data(), variables, work);

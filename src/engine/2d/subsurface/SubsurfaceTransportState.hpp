@@ -112,7 +112,7 @@ struct SubsurfaceTransportState {
     // In LAYERED mode this is the canonical unsaturated inventory. The
     // public bulk field above is its derived sum, never a second owner.
     int n_layers = 0;
-    std::vector<double> layer_mass; ///< [(s*n_layers+j)*n_cells+c]
+    std::vector<double> layer_mass; ///< [(s*n_cells+c)*n_layers+j]
     // Above-table receiving slots are fixed at producer time. Water is a
     // routing split of nacc/lacc, not additional storage. The paired masses
     // live here instead of nacc_mass/lacc_mass until the owner fires.
@@ -121,15 +121,16 @@ struct SubsurfaceTransportState {
     std::vector<double> contact_node_mass, contact_link_mass; /**
      * @brief < layerIdx
      *
-     * @details Map a species/layer/cell triple into canonical layer-major storage.
+     * @details Map a species/layer/cell triple into owned species/cell/layer storage.
+     * Layer mass and its paired node/link contact masses share this index.
      * @param[in] s Valid zero-based species row.
      * @param[in] j Valid zero-based unsaturated layer in [0,n_layers), surface first.
      * @param[in] c Valid zero-based cell in [0,n_cells).
-     * @return size_t offset (s*n_layers+j)*n_cells+c; no bounds/overflow checks, allocation or
+     * @return size_t offset (s*n_cells+c)*n_layers+j; no bounds/overflow checks, allocation or
      * mutation.
      */
     std::size_t layerIdx(int s, int j, int c) const noexcept {
-        return (std::size_t(s) * n_layers + j) * n_cells + c;
+        return (std::size_t(s) * n_cells + c) * n_layers + j;
     }
     /**
      * @brief Refresh one derived unsaturated bulk inventory from canonical layers.
@@ -193,7 +194,7 @@ struct SubsurfaceTransportState {
     }
 
     // ---- cross-cadence accumulators (paired with the water's) -------------
-    /// Lateral Darcy face sides, `[s*ne + e]` — the twin of `eacc_L/eacc_R`,
+    /// Lateral Darcy face sides, `[e*n_species + s]` — the twin of `eacc_L/eacc_R`,
     /// gathered by the owning cell at ITS firing (GW plan §3.1).
     std::vector<double> sacc_L, sacc_R;
     /// `[s*n_cells+c]` mass the SURFACE handed down with its infiltration,
@@ -268,6 +269,14 @@ struct SubsurfaceTransportState {
         return static_cast<std::size_t>(s) * static_cast<std::size_t>(n_cells) +
                static_cast<std::size_t>(c);
     }
+
+    /** @brief Index a lateral species packet in edge-major owned storage.
+     * Requires valid species/edge indices and coherent model-derived extents.
+     * No ordering, inventory, allocation or validation side effect. */
+    std::size_t lateralIndex(int species, std::size_t edge) const noexcept {
+        return edge * static_cast<std::size_t>(n_species) + static_cast<std::size_t>(species);
+    }
+
 
     /**
      * @brief Allocate/reset the core two-zone transport arrays and ledgers.
@@ -392,7 +401,7 @@ struct SubsurfaceTransportState {
         }
         const auto ne = sacc_L.size() / (n_species > 0 ? static_cast<std::size_t>(n_species) : 1);
         for (std::size_t e = 0; e < ne; ++e) {
-            const auto k = static_cast<std::size_t>(s) * ne + e;
+            const auto k = lateralIndex(s, e);
             m += sacc_L[k] + sacc_R[k];
         }
         return m + inFlight1D(s); // T7.4
@@ -423,7 +432,7 @@ struct SubsurfaceTransportState {
                  unsat_mass[base + static_cast<std::size_t>(c)];
         const auto ne = sacc_L.size() / (n_species > 0 ? static_cast<std::size_t>(n_species) : 1);
         for (std::size_t e = 0; e < ne; ++e) {
-            const auto k = static_cast<std::size_t>(s) * ne + e;
+            const auto k = lateralIndex(s, e);
             m += sacc_L[k] + sacc_R[k];
         }
         // T7.4: the two 1D arrival accumulators are booked into

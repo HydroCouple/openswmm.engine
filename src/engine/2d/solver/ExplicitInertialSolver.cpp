@@ -28,6 +28,7 @@
  * @license   Apache-2.0
  */
 
+#include "core/ProcessPerf.hpp"
 #include "ExplicitInertialSolver.hpp"
 #include "../coupling/Rk2RuntimeSources.hpp"
 #include "core/FileIO.hpp" // issue #7: UTF-8 paths on Windows
@@ -39,6 +40,7 @@
 #include "../subsurface/EngineSourceResultStream.hpp"
 
 #include <algorithm>
+#include <cstddef>
 #include <memory>
 #include <cmath>
 #if defined(SWMM_USE_OPENMP)
@@ -55,6 +57,7 @@
 #include "../data/SurfaceStateData.hpp"
 #include "../data/BoundaryData.hpp"
 #include "InertialKernels.hpp"
+#include "../KernelPointers.hpp"
 // Inline the small SWE kernel chain in this CPU translation unit. Keep the
 // shared header's annotation unchanged for other backends and callers.
 #pragma push_macro("OPENSWMM_KERNEL_FN")
@@ -90,6 +93,90 @@ constexpr int kRebuildEveryCycles = 4;
 /// to cross a macro cycle of 2^(K−1) base substeps at CFL ½ (K = 4 ⇒ ~3–4
 /// cells). The breach flag then triggers the rebuild at the next cycle.
 constexpr int kFrontHaloRings = 5;
+/**
+ * @brief Fill integer lists in input order using fixed logical partitions.
+ * @param count Nonnegative prepared input extent.
+ * @param groups Positive number of primary destination lists.
+ * @param workers Positive requested worker count (nonpositive values use one).
+ * @param counts Reusable caller-owned partition counts/offsets; contents are scratch.
+ * @param group Stable group of each input, in [0,groups), or negative to skip it.
+ * @param value Value of each accepted input; called once per accepted item.
+ * @param output Mutable destination vector for each group; IncludeAll adds group `groups`.
+ * @note Caller owns the operation exclusively. Callbacks are nonthrowing and safe for
+ * concurrent disjoint input indices. Group is called twice and must retain its result;
+ * independent idempotent writes for that same index are allowed. Reads must not alias
+ * destination storage invalidated by resize. Output allocation occurs outside parallel
+ * regions. Fixed logical ranges preserve order even if the two teams have different sizes.
+ */
+template <bool IncludeAll, class Group, class Value, class Output>
+void compactOrdered(int count, int groups, int workers, std::vector<int>& counts,
+                    Group group, Value value, Output output) {
+    workers = std::max(1, workers);
+    const int columns = groups + (IncludeAll ? 1 : 0);
+    // Leave at least 128 bytes between the used portions of distinct partition rows.
+    const std::size_t stride = ((std::size_t(columns) + 31) / 32 + 1) * 32;
+    counts.assign(std::size_t(workers) * stride, 0);
+#if defined(SWMM_USE_OPENMP)
+#pragma omp parallel for schedule(static) num_threads(workers)
+#endif
+    for (int part = 0; part < workers; ++part) {
+        int* row = counts.data() + std::size_t(part) * stride;
+        const int begin = int(std::int64_t(count) * part / workers);
+        const int end = int(std::int64_t(count) * (part + 1) / workers);
+        for (int i = begin; i < end; ++i) {
+            const int g = group(i);
+            if (g >= 0) {
+                ++row[g];
+                if constexpr (IncludeAll)
+                    ++row[groups];
+            }
+        }
+    }
+    for (int g = 0; g < columns; ++g) {
+        int total = 0;
+        for (int part = 0; part < workers; ++part) {
+            int& entry = counts[std::size_t(part) * stride + g];
+            const int size = entry;
+            entry = total;
+            total += size;
+        }
+        output(g).resize(std::size_t(total));
+    }
+#if defined(SWMM_USE_OPENMP)
+#pragma omp parallel for schedule(static) num_threads(workers)
+#endif
+    for (int part = 0; part < workers; ++part) {
+        int* row = counts.data() + std::size_t(part) * stride;
+        const int begin = int(std::int64_t(count) * part / workers);
+        const int end = int(std::int64_t(count) * (part + 1) / workers);
+        for (int i = begin; i < end; ++i) {
+            const int g = group(i);
+            if (g >= 0) {
+                const int v = value(i);
+                output(g)[std::size_t(row[g]++)] = v;
+                if constexpr (IncludeAll)
+                    output(groups)[std::size_t(row[groups]++)] = v;
+            }
+        }
+    }
+}
+
+// Small/serial rebuilds retain their original single-pass loops.
+bool useParallelCompaction(int count, int workers) noexcept {
+#if defined(SWMM_USE_OPENMP)
+    return workers > 1 && count >= 65536;
+#else
+    (void)count;
+    (void)workers;
+    return false;
+#endif
+}
+std::vector<int>& compactionCounts() {
+    // Derived scratch, borrowed only until both parallel loops have joined.
+    // Keep it outside copied/serialized solver state and obtain it only on a parallel path.
+    static thread_local std::vector<int> counts;
+    return counts;
+}
 struct SurfaceLatentIntervalLimit : std::runtime_error {
     using std::runtime_error::runtime_error;
 };
@@ -163,8 +250,8 @@ void ExplicitInertialSolver::initialize(MeshData& mesh, SurfaceStateData& state,
     edges_.build(mesh);
     const auto ne = static_cast<std::size_t>(edges_.ne);
     q_.assign(ne, 0.0);
-    facc_L_.assign(ne, 0.0);
-    facc_R_.assign(ne, 0.0);
+    face_accum_stride_ = opts.momentum == Momentum2D::FULL_SWE ? 6 : 2;
+    face_accum_.assign(ne * face_accum_stride_, 0.0);
     face_tier_.assign(ne, 0);
 
     // Momentum closure (MOMENTUM_EQUATION). FULL_SWE carries cell momentum
@@ -172,16 +259,10 @@ void ExplicitInertialSolver::initialize(MeshData& mesh, SurfaceStateData& state,
     // per-cell slope its Δx² step bound needs.
     mode_ = opts.momentum;
     second_order_ = false;
-    macc_x_L_.clear();
-    macc_x_R_.clear();
-    macc_y_L_.clear();
-    macc_y_R_.clear();
+
     dw_slope_.clear();
     if (mode_ == Momentum2D::FULL_SWE) {
-        macc_x_L_.assign(ne, 0.0);
-        macc_x_R_.assign(ne, 0.0);
-        macc_y_L_.assign(ne, 0.0);
-        macc_y_R_.assign(ne, 0.0);
+
         // First-order Godunov with hydrostatic reconstruction is positivity-
         // preserving at Courant ≤ ½ on triangles/quads; the β-share is the
         // backstop, not the guarantee, so the bound is enforced here.
@@ -600,7 +681,7 @@ OPENSWMM_SOURCE_INLINE bool ExplicitInertialSolver::prepareCellSources(int i, do
         double exported = 0;
         for (int p = edges_.cell_ptr[i]; p < edges_.cell_ptr[i + 1]; ++p) {
             const int edge = edges_.cell_edge[p];
-            const double receipt = edges_.cell_sign[p] > 0 ? facc_L_[edge] : facc_R_[edge];
+            const double receipt = edges_.cell_sign[p] > 0 ? face_accum_[face_accum_stride_ * (edge)] : face_accum_[face_accum_stride_ * (edge) + 1];
             exported += std::max(0., -receipt);
         }
         donor_water = std::min(available, std::max(0., rk_stage_volume_[i] - exported));
@@ -810,6 +891,37 @@ ExplicitInertialSolver::applyCellSourceRow(int i, int r, double& mass,
         gw_->bookInfiltrationMass(i, gw_row_map_[r], mi);
 }
 
+// Water-only held sources; keep prepareCellSources() expression and booking order.
+bool ExplicitInertialSolver::applyPlainCellSources(int i, double dt) {
+    const double area = mesh_->tri_area[i];
+    const double area_dt = area * dt;
+    const double rain = std::max(0.0, state_->rainfall[i]) * area_dt;
+    const double coupling = state_->coupling_flux[i] * area_dt;
+    const double requested_infil =
+        std::max(0.0, infilSink(state_->infil_rate[i], state_->depth[i], opts_->dry_depth)) *
+        area_dt;
+    const double evap_demand = state_->evap_rate[i] * 1.;
+    const double requested_evap =
+        std::max(0.0, evapSink(evap_demand, state_->depth[i], opts_->dry_depth)) * area_dt;
+    if (rain == 0.0 && coupling == 0.0 && requested_infil == 0.0 && requested_evap == 0.0)
+        return false;
+    const double incoming = rain + std::max(coupling, 0.0) + 0.0;
+    const double available = std::max(0.0, state_->volume[i] + incoming);
+    const double requested_out = std::max(-coupling, 0.0);
+    const double requested = requested_infil + requested_evap + requested_out;
+    const double scale = requested > available && requested > 0.0 ? available / requested : 1.0;
+    const double infil = requested_infil * scale;
+    const double evap = requested_evap * scale;
+    const double out = requested_out * scale;
+    state_->infil_applied[i] += infil / area;
+    state_->coupling_applied[i] += std::max(coupling, 0.0) - out;
+    double* const local_ledger =
+        source_ledgers_.data() + static_cast<std::size_t>(sourceThread()) * source_ledger_stride_;
+    local_ledger[0] += evap;
+    state_->volume[i] = requested >= available ? 0.0 : available - requested;
+    return true;
+}
+
 /**
  * @brief Consume one accepted held cell-source tuple and then any ordinary runtime
  * prescriptions.
@@ -828,6 +940,8 @@ ExplicitInertialSolver::applyCellSourceRow(int i, int r, double& mass,
  * scratch.
  */
 bool ExplicitInertialSolver::applyCellSources(int i, double dt, double* boundary_donor) {
+    if (plain_sources_)
+        return applyPlainCellSources(i, dt);
     if (common_stage_ && common_stage_->ownsCell(i)) {
         // The common source stage owns mesh-only water bookkeeping, but the
         // shared surface/ground quality profile still needs its local bed
@@ -1142,11 +1256,11 @@ void ExplicitInertialSolver::settleAccumulators() {
         for (int p = ed.cell_ptr[i]; p < ed.cell_ptr[i + 1]; ++p) {
             const int e = ed.cell_edge[p];
             if (ed.cell_sign[p] > 0) {
-                pending += facc_L_[e];
-                facc_L_[e] = 0.0;
+                pending += face_accum_[face_accum_stride_ * (e)];
+                face_accum_[face_accum_stride_ * (e)] = 0.0;
             } else {
-                pending += facc_R_[e];
-                facc_R_[e] = 0.0;
+                pending += face_accum_[face_accum_stride_ * (e) + 1];
+                face_accum_[face_accum_stride_ * (e) + 1] = 0.0;
             }
         }
         // S1: settle the species side in the SAME sweep. A cell re-tiered
@@ -1182,20 +1296,20 @@ void ExplicitInertialSolver::settleAccumulators() {
         // deactivated between its firings would otherwise strand the momentum
         // of mass that has already been applied, and pick it up stale on
         // reactivation.
-        if (!macc_x_L_.empty()) {
+        if ((face_accum_stride_ == 6 && !face_accum_.empty())) {
             double dmx = 0.0, dmy = 0.0;
             for (int p = ed.cell_ptr[i]; p < ed.cell_ptr[i + 1]; ++p) {
                 const int e = ed.cell_edge[p];
                 if (ed.cell_sign[p] > 0) {
-                    dmx += macc_x_L_[e];
-                    macc_x_L_[e] = 0.0;
-                    dmy += macc_y_L_[e];
-                    macc_y_L_[e] = 0.0;
+                    dmx += face_accum_[face_accum_stride_ * (e) + 2];
+                    face_accum_[face_accum_stride_ * (e) + 2] = 0.0;
+                    dmy += face_accum_[face_accum_stride_ * (e) + 4];
+                    face_accum_[face_accum_stride_ * (e) + 4] = 0.0;
                 } else {
-                    dmx += macc_x_R_[e];
-                    macc_x_R_[e] = 0.0;
-                    dmy += macc_y_R_[e];
-                    macc_y_R_[e] = 0.0;
+                    dmx += face_accum_[face_accum_stride_ * (e) + 3];
+                    face_accum_[face_accum_stride_ * (e) + 3] = 0.0;
+                    dmy += face_accum_[face_accum_stride_ * (e) + 5];
+                    face_accum_[face_accum_stride_ * (e) + 5] = 0.0;
                 }
             }
             if (dmx != 0.0 || dmy != 0.0) {
@@ -1234,6 +1348,7 @@ void ExplicitInertialSolver::lazySourcesOnly(double t) {
 }
 
 void ExplicitInertialSolver::syncAndRebuild(double t) {
+    perf::ProcessTimer process_timer(perf::ProcessPhase::surface_rebuild);
     settleAccumulators();
     const double dt_lazy = t - t_last_sync_;
     const int nt = mesh_->n_triangles();
@@ -1336,9 +1451,15 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
         }
     }
     active_cells_.clear();
-    for (int i = 0; i < nt; ++i)
-        if (cell_active_[i])
-            active_cells_.push_back(i);
+    if (useParallelCompaction(nt, opts_->num_threads)) {
+        compactOrdered<false>(nt, 1, opts_->num_threads, compactionCounts(),
+            [&](int i) { return cell_active_[i] ? 0 : -1; }, [](int i) { return i; },
+            [&](int) -> std::vector<int>& { return active_cells_; });
+    } else {
+        for (int i = 0; i < nt; ++i)
+            if (cell_active_[i])
+                active_cells_.push_back(i);
+    }
     if (front_rebuild_) {
         // Outer ring of the halo: an active cell with an inactive neighbour.
 #pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
@@ -1424,6 +1545,7 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
     if (dt0_ >= 1.0e30)
         dt0_ = opts_->max_timestep; // fully quiescent
 
+    const bool parallel_tier_lists = useParallelCompaction(na, nthr);
     for (auto& v : cells_by_tier_)
         v.clear();
     for (auto& v : edges_by_tier_)
@@ -1443,7 +1565,7 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
                 tk = 0;
         }
         tier_[i] = static_cast<uint8_t>(tk);
-        if (!front_rebuild_)
+        if (!front_rebuild_ && !parallel_tier_lists)
             cells_by_tier_[static_cast<std::size_t>(tk)].push_back(i);
     }
     if (front_rebuild_) {
@@ -1482,8 +1604,15 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
             if (!changed)
                 break;
         }
-        for (const int i : active_cells_)
-            cells_by_tier_[static_cast<std::size_t>(tier_[i])].push_back(i);
+        if (!parallel_tier_lists)
+            for (const int i : active_cells_)
+                cells_by_tier_[static_cast<std::size_t>(tier_[i])].push_back(i);
+    }
+    if (parallel_tier_lists) {
+        compactOrdered<false>(na, K, nthr, compactionCounts(),
+            [&](int k) { return int(tier_[active_cells_[static_cast<std::size_t>(k)]]); },
+            [&](int k) { return active_cells_[static_cast<std::size_t>(k)]; },
+            [&](int k) -> std::vector<int>& { return cells_by_tier_[static_cast<std::size_t>(k)]; });
     }
 
     // Initial velocities may seed q before any active-face list exists.
@@ -1509,15 +1638,34 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
         }
     } else {
         active_faces_.clear();
-        for (int e = 0; e < edges_.ne; ++e) {
-            const int a = edges_.cL[e], b = edges_.cR[e];
-            if (cell_active_[a] && cell_active_[b]) {
-                const auto ft = std::min(tier_[a], tier_[b]);
-                face_tier_[e] = ft;
-                edges_by_tier_[ft].push_back(e);
-                active_faces_.push_back(e);
-            } else {
-                q_[e] = 0.0; // walled faces carry no stale momentum
+        if (useParallelCompaction(edges_.ne, nthr)) {
+            compactOrdered<true>(edges_.ne, K, nthr, compactionCounts(),
+                [&](int e) {
+                    const int a = edges_.cL[e], b = edges_.cR[e];
+                    if (cell_active_[a] && cell_active_[b])
+                        return int(std::min(tier_[a], tier_[b]));
+                    // Each pass owns this edge; the repeated zero is idempotent.
+                    q_[e] = 0.0;
+                    return -1;
+                },
+                [&](int e) {
+                    face_tier_[e] = std::min(tier_[edges_.cL[e]], tier_[edges_.cR[e]]);
+                    return e;
+                },
+                [&](int k) -> std::vector<int>& {
+                    return k == K ? active_faces_ : edges_by_tier_[static_cast<std::size_t>(k)];
+                });
+        } else {
+            for (int e = 0; e < edges_.ne; ++e) {
+                const int a = edges_.cL[e], b = edges_.cR[e];
+                if (cell_active_[a] && cell_active_[b]) {
+                    const auto ft = std::min(tier_[a], tier_[b]);
+                    face_tier_[e] = ft;
+                    edges_by_tier_[ft].push_back(e);
+                    active_faces_.push_back(e);
+                } else {
+                    q_[e] = 0.0; // walled faces carry no stale momentum
+                }
             }
         }
     }
@@ -1566,10 +1714,18 @@ void ExplicitInertialSolver::refreshDt0() {
     if (mode_ == Momentum2D::DIFFUSIVE_WAVE)
         refreshDiffusiveSlopes();
     double fresh = 1.0e30;
-#pragma omp parallel num_threads(opts_->num_threads)
+    const int nthr = std::max(1, opts_->num_threads);
+    // One 128-byte-separated partial per worker; unused slots retain the sentinel.
+    // Reuse rebuild scratch, which is not part of the checkpoint state.
+    constexpr std::size_t stride = 128 / sizeof(double);
+    rebuild_dt_partial_.assign(static_cast<std::size_t>(nthr) * stride, 1.0e30);
+#pragma omp parallel num_threads(nthr)
     {
-        // Manual min-reduction: MSVC's default /openmp is OpenMP 2.0, which
-        // lacks reduction(min:).
+#if defined(SWMM_USE_OPENMP)
+        const int tid = omp_get_thread_num();
+#else
+        const int tid = 0;
+#endif
         double local = 1.0e30;
 #pragma omp for schedule(static) nowait
         for (int k = 0; k < na; ++k) {
@@ -1592,18 +1748,18 @@ void ExplicitInertialSolver::refreshDt0() {
             if (dt < local)
                 local = dt;
         }
-#pragma omp critical
-        {
-            if (local < fresh)
-                fresh = local;
-        }
+        rebuild_dt_partial_[static_cast<std::size_t>(tid) * stride] = local;
     }
+    for (int tid = 0; tid < nthr; ++tid)
+        if (rebuild_dt_partial_[static_cast<std::size_t>(tid) * stride] < fresh)
+            fresh = rebuild_dt_partial_[static_cast<std::size_t>(tid) * stride];
     if (fresh < dt0_)
         dt0_ = fresh;
 }
 
 void ExplicitInertialSolver::fireFaces(const std::vector<int>& faces, double dt_f,
                                        bool global_step) {
+    perf::ProcessTimer process_timer(perf::ProcessPhase::surface_faces);
     switch (mode_) {
     case Momentum2D::FULL_SWE:
         fireFacesSwe(faces, dt_f, global_step);
@@ -1640,8 +1796,14 @@ void ExplicitInertialSolver::refreshDiffusiveSlopes() {
 void ExplicitInertialSolver::fireFacesInertial(const std::vector<int>& faces, double dt_f,
                                                bool global_step) {
     const auto& ed = edges_;
+    // Distinct owned vectors; these inputs stay read-only through face booking.
+    const double* OPENSWMM_RESTRICT head = state_->head.data();
+    const double* OPENSWMM_RESTRICT depth = state_->depth.data();
+    const double* OPENSWMM_RESTRICT volume = state_->volume.data();
     const int na = static_cast<int>(faces.size());
     const double theta = opts_->theta;
+    const double dry = opts_->dry_depth, froude_max = opts_->froude_max;
+    const bool advection = opts_->advection;
     const bool physical_time_blend = opts_->theta_reference_step > 0.0;
     const double blend =
         inertial::momentumBlendFraction(theta, dt_f, opts_->theta_reference_step);
@@ -1668,10 +1830,10 @@ void ExplicitInertialSolver::fireFacesInertial(const std::vector<int>& faces, do
         const double width = ed.xi[e] * ed.conveyance[e];
         const int a = ed.cL[e], b = ed.cR[e];
         const double hf =
-            vfr_face ? inertial::faceFlowDepthVfr(state_->head[a], state_->head[b], ed.ze_lo[e],
+            vfr_face ? inertial::faceFlowDepthVfr(head[a], head[b], ed.ze_lo[e],
                                                   ed.ze_hi[e])
-                     : inertial::faceFlowDepth(state_->head[a], state_->head[b], ed.zface[e]);
-        if (hf <= opts_->dry_depth) {
+                     : inertial::faceFlowDepth(head[a], head[b], ed.zface[e]);
+        if (hf <= dry) {
             q_[e] = 0.0;
             continue;
         }
@@ -1688,7 +1850,7 @@ void ExplicitInertialSolver::fireFacesInertial(const std::vector<int>& faces, do
             // arrival, first firing after activation) never under-damps.
             q_mag = std::max(q_mag, inertial::qMagnitude(qfx, qfy));
         }
-        double deta = state_->head[b] - state_->head[a];
+        double deta = head[b] - head[a];
         if (std::fabs(deta) < inertial::kEtaDeadband)
             deta = 0.0;
         const double slope = deta * ed.inv_dx_normal[e];
@@ -1696,9 +1858,9 @@ void ExplicitInertialSolver::fireFacesInertial(const std::vector<int>& faces, do
         // wet — a wet/dry front keeps the pure local-inertial law, whose
         // robustness there is the reason this scheme exists.
         double adv = 0.0;
-        if (opts_->advection && !qcx_.empty()) {
-            const double hL = state_->depth[a], hR = state_->depth[b];
-            if (hL > opts_->dry_depth && hR > opts_->dry_depth) {
+        if (advection && !qcx_.empty()) {
+            const double hL = depth[a], hR = depth[b];
+            if (hL > dry && hR > dry) {
                 const double unL = (qcx_[a] * ed.nx[e] + qcy_[a] * ed.ny[e]) / hL;
                 const double unR = (qcx_[b] * ed.nx[e] + qcy_[b] * ed.ny[e]) / hR;
                 adv = inertial::inertialAdvection(q_[e], unL, hL, unR, hR, ed.inv_dx_normal[e]);
@@ -1710,7 +1872,7 @@ void ExplicitInertialSolver::fireFacesInertial(const std::vector<int>& faces, do
         if (qn1 != 0.0)
             qn1 = inertial::inertialFaceUpdate(q_[e], qhat, hf, dt_f, slope, ed.n2_face[e], q_mag,
                                                adv);
-        qn1 = inertial::froudeCap(qn1, hf, opts_->froude_max);
+        qn1 = inertial::froudeCap(qn1, hf, froude_max);
 
         // Positivity at face cadence: this face may take at most a β/3 share
         // of its exporting cell's volume over the exporter's WHOLE cell cycle.
@@ -1722,7 +1884,7 @@ void ExplicitInertialSolver::fireFacesInertial(const std::vector<int>& faces, do
         const int refire = global_step ? 1 : (1 << (tier_[exp_cell] - face_tier_[e]));
         const double beta_share =
             (has_quads && mesh_->cell_vertex_count(exp_cell) == 4) ? beta4 : beta3;
-        const double budget = beta_share / refire * std::max(state_->volume[exp_cell], 0.0);
+        const double budget = beta_share / refire * std::max(volume[exp_cell], 0.0);
         const double take = std::fabs(qn1) * width * dt_f;
         if (take > budget)
             qn1 *= (take > 0.0) ? budget / take : 0.0;
@@ -1730,8 +1892,8 @@ void ExplicitInertialSolver::fireFacesInertial(const std::vector<int>& faces, do
 
         // Book the identical ±ΔM on both sides (single writer per face).
         const double dM = qn1 * width * dt_f; // positive = cL→cR
-        facc_L_[e] -= dM;
-        facc_R_[e] += dM;
+        face_accum_[face_accum_stride_ * (e)] -= dM;
+        face_accum_[face_accum_stride_ * (e) + 1] += dM;
 
         if (species)
             bookFaceSpecies(e, a, b, dM, hf, dt_f, global_step);
@@ -1789,6 +1951,10 @@ void ExplicitInertialSolver::fireFacesSwe(const std::vector<int>& faces, double 
                                      std::to_string(i));
     }
     const auto& ed = edges_;
+    // Distinct owned vectors; these inputs stay read-only through face booking.
+    const double* OPENSWMM_RESTRICT head = state_->head.data();
+    const double* OPENSWMM_RESTRICT depth = state_->depth.data();
+    const double* OPENSWMM_RESTRICT volume = state_->volume.data();
     const int na = static_cast<int>(faces.size());
     const double beta3 = opts_->exchange_beta / 3.0;
     const double beta4 = opts_->exchange_beta / 4.0;
@@ -1813,8 +1979,8 @@ void ExplicitInertialSolver::fireFacesSwe(const std::vector<int>& faces, double 
             // MUSCL: extrapolate eta, depth and velocity to the face.
             // Reconstructing depth with eta removes the artificial bed step
             // that otherwise remains even on a smooth, fully wet slope.
-            const double ha = state_->depth[a], hb = state_->depth[b];
-            const double za = state_->head[a] - ha, zb = state_->head[b] - hb;
+            const double ha = depth[a], hb = depth[b];
+            const double za = head[a] - ha, zb = head[b] - hb;
             // These are the same arms stored by InertialEdges::build().
             // Read the face midpoint directly instead of searching both CSR rows.
             const double axa = ed.mx[e] - mesh_->tri_cx[a];
@@ -1823,8 +1989,8 @@ void ExplicitInertialSolver::fireFacesSwe(const std::vector<int>& faces, double 
             const double ayb = ed.my[e] - mesh_->tri_cy[b];
             const double ua = (ha > dry) ? qcx_[a] / ha : 0.0, va = (ha > dry) ? qcy_[a] / ha : 0.0;
             const double ub = (hb > dry) ? qcx_[b] / hb : 0.0, vb = (hb > dry) ? qcy_[b] / hb : 0.0;
-            const double etaLf = state_->head[a] + gex_[a] * axa + gey_[a] * aya;
-            const double etaRf = state_->head[b] + gex_[b] * axb + gey_[b] * ayb;
+            const double etaLf = head[a] + gex_[a] * axa + gey_[a] * aya;
+            const double etaRf = head[b] + gex_[b] * axb + gey_[b] * ayb;
             const double uLf = ua + gux_[a] * axa + guy_[a] * aya;
             const double vLf = va + gvx_[a] * axa + gvy_[a] * aya;
             const double uRf = ub + gux_[b] * axb + guy_[b] * ayb;
@@ -1837,8 +2003,8 @@ void ExplicitInertialSolver::fireFacesSwe(const std::vector<int>& faces, double 
                                         ed.ny[e], dry, F, cLx, cLy, cRx, cRy, etaLf - hLf,
                                         etaRf - hRf);
         } else {
-            wet = swe::faceFlux(state_->head[a], state_->depth[a], qcx_[a], qcy_[a],
-                                state_->head[b], state_->depth[b], qcx_[b], qcy_[b], ed.nx[e],
+            wet = swe::faceFlux(head[a], depth[a], qcx_[a], qcy_[a],
+                                head[b], depth[b], qcx_[b], qcy_[b], ed.nx[e],
                                 ed.ny[e], dry, F, cLx, cLy, cRx, cRy);
         }
         // Dry-dry face: no flux, no correction (faceFlux zeroes both), so
@@ -1848,7 +2014,7 @@ void ExplicitInertialSolver::fireFacesSwe(const std::vector<int>& faces, double 
         if (!wet) {
             q_[e] = 0.0;
             if (species) {
-                const double hf0 = std::max(state_->head[a], state_->head[b]) - ed.zface[e];
+                const double hf0 = std::max(head[a], head[b]) - ed.zface[e];
                 bookFaceSpecies(e, a, b, 0.0, (hf0 > 0.0) ? hf0 : 0.0, dt_f, global_step);
             }
             continue;
@@ -1865,7 +2031,7 @@ void ExplicitInertialSolver::fireFacesSwe(const std::vector<int>& faces, double 
             const int refire = global_step ? 1 : (1 << (tier_[exp_cell] - face_tier_[e]));
             const double beta_share =
                 (has_quads && mesh_->cell_vertex_count(exp_cell) == 4) ? beta4 : beta3;
-            const double budget = beta_share / refire * std::max(state_->volume[exp_cell], 0.0);
+            const double budget = beta_share / refire * std::max(volume[exp_cell], 0.0);
             const double take = std::fabs(fh) * ed.xi[e] * dt_f;
             if (take > budget) {
                 const double lam = (take > 0.0) ? budget / take : 0.0;
@@ -1877,19 +2043,19 @@ void ExplicitInertialSolver::fireFacesSwe(const std::vector<int>& faces, double 
         q_[e] = fh;
         const double xdt = ed.xi[e] * dt_f;
         const double dM = fh * xdt; // m³, + = cL→cR
-        facc_L_[e] -= dM;
-        facc_R_[e] += dM;
+        face_accum_[face_accum_stride_ * (e)] -= dM;
+        face_accum_[face_accum_stride_ * (e) + 1] += dM;
         // Momentum: −flux + bed-slope correction on the exporter side, +flux
         // + correction on the receiver side (units m⁴/s).
-        macc_x_L_[e] += (-fmx + cLx) * xdt;
-        macc_y_L_[e] += (-fmy + cLy) * xdt;
-        macc_x_R_[e] += (fmx + cRx) * xdt;
-        macc_y_R_[e] += (fmy + cRy) * xdt;
+        face_accum_[face_accum_stride_ * (e) + 2] += (-fmx + cLx) * xdt;
+        face_accum_[face_accum_stride_ * (e) + 4] += (-fmy + cLy) * xdt;
+        face_accum_[face_accum_stride_ * (e) + 3] += (fmx + cRx) * xdt;
+        face_accum_[face_accum_stride_ * (e) + 5] += (fmy + cRy) * xdt;
 
         // Species ride the mass flux at the face depth the inertial law
         // would have used (dispersion conductance only).
         if (species) {
-            const double hf = std::max(state_->head[a], state_->head[b]) - ed.zface[e];
+            const double hf = std::max(head[a], head[b]) - ed.zface[e];
             bookFaceSpecies(e, a, b, dM, (hf > 0.0) ? hf : 0.0, dt_f, global_step);
         }
     }
@@ -1903,10 +2069,14 @@ void ExplicitInertialSolver::fireFacesSwe(const std::vector<int>& faces, double 
 void ExplicitInertialSolver::fireFacesDiffusive(const std::vector<int>& faces, double dt_f,
                                                 bool global_step) {
     const auto& ed = edges_;
+    // Distinct owned vectors; these inputs stay read-only through face booking.
+    const double* OPENSWMM_RESTRICT head = state_->head.data();
+    const double* OPENSWMM_RESTRICT volume = state_->volume.data();
     const int na = static_cast<int>(faces.size());
     const double beta3 = opts_->exchange_beta / 3.0;
     const double beta4 = opts_->exchange_beta / 4.0;
     const bool vfr_face = (opts_->face_reconstruction == FaceDepth2D::VFR_FACE);
+    const double dry = opts_->dry_depth, flux_dh_eps = opts_->flux_dh_eps;
     const bool species = species_on_;
     const bool has_quads = has_quads_;
 
@@ -1915,18 +2085,18 @@ void ExplicitInertialSolver::fireFacesDiffusive(const std::vector<int>& faces, d
         const int e = faces[static_cast<std::size_t>(k)];
         const int a = ed.cL[e], b = ed.cR[e];
         const double hf =
-            vfr_face ? inertial::faceFlowDepthVfr(state_->head[a], state_->head[b], ed.ze_lo[e],
+            vfr_face ? inertial::faceFlowDepthVfr(head[a], head[b], ed.ze_lo[e],
                                                   ed.ze_hi[e])
-                     : inertial::faceFlowDepth(state_->head[a], state_->head[b], ed.zface[e]);
-        if (hf <= opts_->dry_depth) {
+                     : inertial::faceFlowDepth(head[a], head[b], ed.zface[e]);
+        if (hf <= dry) {
             q_[e] = 0.0;
             continue;
         }
-        double deta = state_->head[b] - state_->head[a];
+        double deta = head[b] - head[a];
         if (std::fabs(deta) < inertial::kEtaDeadband)
             deta = 0.0;
         const double slope = deta * ed.inv_dx_normal[e];
-        const double s_eps = opts_->flux_dh_eps * ed.inv_dx_normal[e];
+        const double s_eps = flux_dh_eps * ed.inv_dx_normal[e];
         // n_face = sqrt(n2_face) precomputed per face (F7).
         double qn1 = diffusive::faceDischarge(hf, slope, ed.n_face[e], s_eps);
         qn1 *= mesh_->edge_conveyance[ed.slotL[e]];
@@ -1936,14 +2106,14 @@ void ExplicitInertialSolver::fireFacesDiffusive(const std::vector<int>& faces, d
         const int refire = global_step ? 1 : (1 << (tier_[exp_cell] - face_tier_[e]));
         const double beta_share =
             (has_quads && mesh_->cell_vertex_count(exp_cell) == 4) ? beta4 : beta3;
-        const double budget = beta_share / refire * std::max(state_->volume[exp_cell], 0.0);
+        const double budget = beta_share / refire * std::max(volume[exp_cell], 0.0);
         const double take = std::fabs(qn1) * ed.xi[e] * dt_f;
         if (take > budget)
             qn1 *= (take > 0.0) ? budget / take : 0.0;
         q_[e] = qn1;
         const double dM = qn1 * ed.xi[e] * dt_f;
-        facc_L_[e] -= dM;
-        facc_R_[e] += dM;
+        face_accum_[face_accum_stride_ * (e)] -= dM;
+        face_accum_[face_accum_stride_ * (e) + 1] += dM;
         if (species)
             bookFaceSpecies(e, a, b, dM, hf, dt_f, global_step);
     }
@@ -1957,6 +2127,7 @@ void ExplicitInertialSolver::bookFaceSpecies(int e, int a, int b, double dM, dou
     // before the divisions below — this runs once per face evaluation.
     if (!species_on_)
         return;
+    perf::ProcessTimer process_timer(perf::ProcessPhase::surface_species);
     const auto& ed = edges_;
     const double beta3 = opts_->exchange_beta / 3.0;
     const double beta4 = opts_->exchange_beta / 4.0;
@@ -2089,7 +2260,7 @@ void ExplicitInertialSolver::prepareChannelGround(double dt) {
             for (int p = edges_.cell_ptr[i]; p < edges_.cell_ptr[i + 1]; ++p) {
                 const int edge = edges_.cell_edge[p];
                 const bool left = edges_.cell_sign[p] > 0;
-                auto& dv = left ? facc_L_[edge] : facc_R_[edge];
+                auto& dv = left ? face_accum_[face_accum_stride_ * (edge)] : face_accum_[face_accum_stride_ * (edge) + 1];
                 volume += dv;
                 dv = 0;
                 auto& dm = (left ? sacc_L_ : sacc_R_)[std::size_t(edge) * ns + row];
@@ -2123,6 +2294,7 @@ void ExplicitInertialSolver::prepareChannelGround(double dt) {
 }
 
 void ExplicitInertialSolver::fireCells(const std::vector<int>& cells, double dt_c, bool tier0) {
+    perf::ProcessTimer process_timer(perf::ProcessPhase::surface_cells);
     if (tier0 && channel_ground_)
         prepareChannelGround(dt_c);
     if (tier0 && common_stage_) {
@@ -2132,7 +2304,7 @@ void ExplicitInertialSolver::fireCells(const std::vector<int>& cells, double dt_
             double flux = 0.0;
             for (int p = edges_.cell_ptr[i]; p < edges_.cell_ptr[i + 1]; ++p) {
                 const int e = edges_.cell_edge[p];
-                double& side = edges_.cell_sign[p] > 0 ? facc_L_[e] : facc_R_[e];
+                double& side = edges_.cell_sign[p] > 0 ? face_accum_[face_accum_stride_ * (e)] : face_accum_[face_accum_stride_ * (e) + 1];
                 flux += side;
                 side = 0.0;
             }
@@ -2207,24 +2379,24 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells, double
         for (int p = ed.cell_ptr[i]; p < ed.cell_ptr[i + 1]; ++p) {
             const int e = ed.cell_edge[p];
             if (ed.cell_sign[p] > 0) {
-                flux_m3 += facc_L_[e];
+                flux_m3 += face_accum_[face_accum_stride_ * (e)];
                 if (!preserve_face_water)
-                    facc_L_[e] = 0.0;
+                    face_accum_[face_accum_stride_ * (e)] = 0.0;
                 if constexpr (swe) {
-                    dmx += macc_x_L_[e];
-                    macc_x_L_[e] = 0.0;
-                    dmy += macc_y_L_[e];
-                    macc_y_L_[e] = 0.0;
+                    dmx += face_accum_[face_accum_stride_ * (e) + 2];
+                    face_accum_[face_accum_stride_ * (e) + 2] = 0.0;
+                    dmy += face_accum_[face_accum_stride_ * (e) + 4];
+                    face_accum_[face_accum_stride_ * (e) + 4] = 0.0;
                 }
             } else {
-                flux_m3 += facc_R_[e];
+                flux_m3 += face_accum_[face_accum_stride_ * (e) + 1];
                 if (!preserve_face_water)
-                    facc_R_[e] = 0.0;
+                    face_accum_[face_accum_stride_ * (e) + 1] = 0.0;
                 if constexpr (swe) {
-                    dmx += macc_x_R_[e];
-                    macc_x_R_[e] = 0.0;
-                    dmy += macc_y_R_[e];
-                    macc_y_R_[e] = 0.0;
+                    dmx += face_accum_[face_accum_stride_ * (e) + 3];
+                    face_accum_[face_accum_stride_ * (e) + 3] = 0.0;
+                    dmy += face_accum_[face_accum_stride_ * (e) + 5];
+                    face_accum_[face_accum_stride_ * (e) + 5] = 0.0;
                 }
             }
             if (perot) {
@@ -2239,7 +2411,7 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells, double
             double exported = 0;
             for (int p = ed.cell_ptr[i]; p < ed.cell_ptr[i + 1]; ++p) {
                 const int edge = ed.cell_edge[p];
-                exported += std::max(0., -(ed.cell_sign[p] > 0 ? facc_L_[edge] : facc_R_[edge]));
+                exported += std::max(0., -(ed.cell_sign[p] > 0 ? face_accum_[face_accum_stride_ * (edge)] : face_accum_[face_accum_stride_ * (edge) + 1]));
             }
             boundary_donor[i] = std::max(0., rk_stage_volume_[i] - exported);
         }
@@ -2258,6 +2430,7 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells, double
                 has_sources = prepareCellSources(i, dt_c, source);
         }
         if (species) {
+            perf::ProcessTimer species_timer(perf::ProcessPhase::surface_species_cells);
             auto& tr = state_->transport;
             const auto ns = static_cast<std::size_t>(tr.n_species);
             if constexpr (!kFuse) {
@@ -2308,9 +2481,9 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells, double
             for (int p = ed.cell_ptr[i]; p < ed.cell_ptr[i + 1]; ++p) {
                 const int edge = ed.cell_edge[p];
                 if (ed.cell_sign[p] > 0)
-                    facc_L_[edge] = 0;
+                    face_accum_[face_accum_stride_ * (edge)] = 0;
                 else
-                    facc_R_[edge] = 0;
+                    face_accum_[face_accum_stride_ * (edge) + 1] = 0;
             }
         inertial::cellEtaDepth(*mesh_, *opts_, i, state_->volume[i], state_->head[i],
                                state_->depth[i]);
@@ -2386,15 +2559,14 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells, double
     flushSourceLedgers();
 
     // Boundary edges owned by cells of this firing (serial: perimeter-sized).
+    perf::ProcessTimer boundary_timer(perf::ProcessPhase::surface_boundary);
     const bool vfr_face_bc = (opts_->face_reconstruction == FaceDepth2D::VFR_FACE);
-    for (std::size_t k = 0; k < bc_cell_.size(); ++k) {
+    for (std::size_t k = 0; tier0 && k < bc_cell_.size(); ++k) {
         const int i = bc_cell_[k];
         if (tier_[i] != 0 || !cell_active_[i])
             continue;
         // BC cells are pinned to tier 0, so they fire with every tier-0 list;
         // guard against double-firing when called for other tiers.
-        if (!tier0)
-            continue;
         const int idx = bc_slot_[k];
         const auto bt = static_cast<BoundaryType>(state_->boundary->edge_bc_type[idx]);
         const double L = mesh_->edge_length[idx];
@@ -2604,12 +2776,14 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells, double
         }
     }
 
+    boundary_timer.stop();
     // Live junction exchange at tier-0 cadence (windowless coupling): the
     // orifice law against LIVE 2D heads and the routing step's 1D heads.
     // Drains cap at the exchange-β share of the source cell; spills cap at
     // the node's stored volume for the whole advance (node_drawn_ ledger) —
     // the same water cannot spill twice within a routing step.
     if (!exch_.empty() && tier0 && state_->node_coupling && state_->nodes_1d) {
+        perf::ProcessTimer exchange_timer(perf::ProcessPhase::surface_exchange);
         const auto& pts = *state_->node_coupling;
         for (std::size_t k = 0; k < pts.size(); ++k) {
             const auto& cp = pts[k];
@@ -3253,6 +3427,7 @@ void ExplicitInertialSolver::runRk2Step(double interval, double start, unsigned 
             throw std::runtime_error("Coupled RK2 has an unqualified surface/source owner.");
         // Capture every owned numerical field. Borrowed owners are refused
         // above; the boundary receipt map is the sole writable borrowed view.
+        perf::count(perf::ProcessCounter::rk2_snapshots, 3);
         marcher0 = std::make_unique<ExplicitInertialSolver>(*this);
         surface0 = std::make_unique<SurfaceStateData>(*state_);
         ground0 = std::make_unique<SubsurfaceSolver>(*gw_);
@@ -3738,20 +3913,25 @@ std::string ExplicitInertialSolver::configureRk2Reactions(const SimulationContex
     return {};
 }
 void ExplicitInertialSolver::advanceRk2SurfaceReactions(double seconds) {
+    perf::ProcessTimer process_timer(perf::ProcessPhase::surface_reactions);
     if (rk_reacted_.empty() || !(seconds > 0))
         return;
     auto& tr = state_->transport;
     auto next = tr.cell_mass;
     auto loss = rk_reacted_;
+    const double decay_interval = rk_reactions_ ? .5 * seconds : seconds;
+    std::vector<double> decay_keep(tr.n_pollut);
+    for (int row = 0; row < tr.n_pollut; ++row)
+        decay_keep[row] = std::exp(-rk_decay_[row] * decay_interval);
     for (int cell = 0; cell < tr.n_cells; ++cell) {
         const double volume = state_->volume[cell];
         if (!(volume > opts_->dry_depth * mesh_->tri_area[cell]))
             continue;
-        const auto decay = [&](double interval) {
+        const auto decay = [&]() {
             for (int row = 0; row < tr.n_pollut; ++row)
-                next[tr.idx(row, cell)] *= std::exp(-rk_decay_[row] * interval);
+                next[tr.idx(row, cell)] *= decay_keep[row];
         };
-        decay(rk_reactions_ ? .5 * seconds : seconds);
+        decay();
         if (rk_reactions_) {
             const auto& rx = *rk_reactions_;
             std::vector<double> aqueous(rx.n_species()), pollutants(tr.n_pollut);
@@ -3771,7 +3951,7 @@ void ExplicitInertialSolver::advanceRk2SurfaceReactions(double seconds) {
             for (int species = 0; species < rx.n_species(); ++species)
                 if (rk_reaction_rows_[species] >= 0)
                     next[tr.idx(rk_reaction_rows_[species], cell)] = aqueous[species] * volume;
-            decay(.5 * seconds);
+            decay();
         }
         for (int row = 0; row < tr.n_pollut + tr.n_msx; ++row) {
             const auto k = tr.idx(row, cell);
@@ -4043,7 +4223,7 @@ void ExplicitInertialSolver::runMacroCycle(double dt0, int nsub, double time) {
         for (int i = 0; i < mesh_->n_triangles(); ++i)
             s += state_->volume[i];
         for (int e = 0; e < edges_.ne; ++e)
-            s += facc_L_[e] + facc_R_[e];
+            s += face_accum_[face_accum_stride_ * (e)] + face_accum_[face_accum_stride_ * (e) + 1];
         return s;
     };
 
@@ -4113,6 +4293,7 @@ double ExplicitInertialSolver::advance(double t_current, double t_target) {
     if (!std::isfinite(t_current) || !std::isfinite(t_target) || t_current != t_last_sync_ ||
         t_target < t_current)
         throw std::invalid_argument("Coupled RK2 requires its accepted completed clock.");
+    perf::count(perf::ProcessCounter::rk2_snapshots, 3);
     auto marcher = *this;
     auto surface = *state_;
     auto ground = *gw_;
@@ -4168,6 +4349,14 @@ double ExplicitInertialSolver::advanceImpl(double t_current, double t_target) {
     if (!initialized_ || t_target <= t_current)
         return t_target;
     refreshConveyance();
+    plain_sources_ = !second_order_ && !gw_ && !common_stage_ && !channel_ground_ &&
+                     state_->transport.n_species == 0 && !state_->heat.enabled &&
+                     !state_->snow.active() && state_->runtime_forcings.rows.empty() &&
+                     state_->runtime_sources.rows.empty() && state_->rk2_rain_pending.empty();
+    struct ResetPlainSources {
+        bool& selected;
+        ~ResetPlainSources() { selected = false; }
+    } reset_plain_sources{plain_sources_};
     if (common_stage_)
         checkpoint_ready_ = false;
 
@@ -4345,14 +4534,25 @@ double ExplicitInertialSolver::advanceImpl(double t_current, double t_target) {
     // otherwise publish a super-Froude flux inconsistent with the published
     // depths). Boundary slots carry the WINDOW-MEAN applied flux so the
     // router's −flux·dt_done booking recovers the exact ∫F_applied dt.
-    std::fill(state_->edge_flux.begin(), state_->edge_flux.end(), 0.0);
+    perf::ProcessTimer publish_timer(perf::ProcessPhase::surface_publish);
+    const int publish_threads = std::max(1, opts_->num_threads);
+    const std::size_t slots = state_->edge_flux.size();
+    if (publish_threads > 1 && slots >= 2048) {
+        const auto count = static_cast<std::ptrdiff_t>(slots);
+#pragma omp parallel for schedule(static) num_threads(publish_threads)
+        for (std::ptrdiff_t k = 0; k < count; ++k)
+            state_->edge_flux[static_cast<std::size_t>(k)] = 0.0;
+    } else
+        std::fill(state_->edge_flux.begin(), state_->edge_flux.end(), 0.0);
     const bool vfr_face = (opts_->face_reconstruction == FaceDepth2D::VFR_FACE);
     // Only the ACTIVE faces can carry flux: a face with an inactive side had
     // its q zeroed when the side deactivated, so the old full sweep spent
     // O(n_faces) recomputing a face depth and a Froude cap in order to publish
     // the zero the fill above already wrote. Identical output, and a quiescent
     // tail (active fraction reached 0.0 % in the storm run) now costs nothing.
-    for (const int e : active_faces_) {
+    // Each interior edge owns two unique output slots. Boundary slots follow
+    // after the team joins, retaining their window-mean publication order.
+    const auto publish_face = [&](int e) {
         double qp = 0.0;
         if (mode_ == Momentum2D::LOCAL_INERTIAL) {
             const double hf =
@@ -4369,12 +4569,21 @@ double ExplicitInertialSolver::advanceImpl(double t_current, double t_target) {
         const double F = qp * edges_.xi[e];
         state_->edge_flux[edges_.slotL[e]] = -F;
         state_->edge_flux[edges_.slotR[e]] = +F;
-    }
+    };
+    const int active_faces = static_cast<int>(active_faces_.size());
+    if (publish_threads > 1 && active_faces >= 2048) {
+#pragma omp parallel for schedule(static) num_threads(publish_threads)
+        for (int k = 0; k < active_faces; ++k)
+            publish_face(active_faces_[static_cast<std::size_t>(k)]);
+    } else
+        for (const int e : active_faces_)
+            publish_face(e);
     const double span = t_target - t_current;
     if (span > 0.0)
         for (std::size_t k = 0; k < bc_cell_.size(); ++k)
             state_->edge_flux[bc_slot_[k]] = bc_accum_[k] / span;
 
+    publish_timer.stop();
     refreshSourceResultBoundary();
     checkpoint_ready_ = true;
     return t_target;
@@ -4399,12 +4608,7 @@ void ExplicitInertialSolver::reinitialize(double /*t0*/) {
     // face momentum and pending transfers are stale — drop them.
     std::fill(q_.begin(), q_.end(), 0.0);
     std::fill(bc_q_.begin(), bc_q_.end(), 0.0);
-    std::fill(facc_L_.begin(), facc_L_.end(), 0.0);
-    std::fill(facc_R_.begin(), facc_R_.end(), 0.0);
-    std::fill(macc_x_L_.begin(), macc_x_L_.end(), 0.0);
-    std::fill(macc_x_R_.begin(), macc_x_R_.end(), 0.0);
-    std::fill(macc_y_L_.begin(), macc_y_L_.end(), 0.0);
-    std::fill(macc_y_R_.begin(), macc_y_R_.end(), 0.0);
+    std::fill(face_accum_.begin(), face_accum_.end(), 0.0);
     if (mode_ == Momentum2D::FULL_SWE) {
         std::fill(qcx_.begin(), qcx_.end(), 0.0);
         std::fill(qcy_.begin(), qcy_.end(), 0.0);
@@ -4592,12 +4796,7 @@ void ExplicitInertialSolver::finalize() {
     q_.clear();
     qcx_.clear();
     qcy_.clear();
-    facc_L_.clear();
-    facc_R_.clear();
-    macc_x_L_.clear();
-    macc_x_R_.clear();
-    macc_y_L_.clear();
-    macc_y_R_.clear();
+    face_accum_.clear();
     dw_slope_.clear();
     cell_active_.clear();
     active_cells_.clear();

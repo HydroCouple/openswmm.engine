@@ -24,6 +24,7 @@
  * @license   Apache-2.0
  */
 
+#include "core/ProcessPerf.hpp"
 #include "LID.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../core/DateTime.hpp"
@@ -1982,6 +1983,7 @@ LIDSolver LIDSolver::waterTrial() const {
 
 void LIDSolver::executeCompleted(double dt, double start, double recovery_factor,
                                  const std::vector<CompletedUnitInput>& inputs) {
+    perf::ProcessTimer process_timer(perf::ProcessPhase::lid);
     if (!std::isfinite(dt) || dt <= 0.0 || !std::isfinite(start) || start < 0.0 ||
         !std::isfinite(recovery_factor) || recovery_factor < 0.0)
         throw std::invalid_argument("Invalid completed LID interval.");
@@ -2021,6 +2023,7 @@ void LIDSolver::executeCompleted(double dt, double start, double recovery_factor
 
 void LIDSolver::execute(SimulationContext& ctx, double dt, double rainfall, double evap_rate,
                         const std::vector<int>* source_owners) {
+    perf::ProcessTimer process_timer(perf::ProcessPhase::lid);
     constexpr double MIN_RUNOFF = 2.31481e-8; // legacy consts.h (ft/s)
     if (source_owners && source_owners->size() != static_cast<std::size_t>(ctx.n_subcatches()))
         throw std::invalid_argument("Ordinary LID ownership requires a matching source map.");

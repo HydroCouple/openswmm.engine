@@ -53,8 +53,11 @@
  */
 
 #include <gtest/gtest.h>
+#include <bit>
+#include <cstdint>
 
 #include <cmath>
+#include <cstdlib>
 #include <algorithm>
 #include <numeric>
 #include <limits>
@@ -74,6 +77,7 @@
 #include <openswmm/engine/openswmm_model.h>
 
 #include "core/SWMMEngine.hpp"
+#include "core/ProcessPerf.hpp"
 #include "2d/SurfaceRouter2D.hpp" // G1-c item 2 gate reads the state
 #include "2d/subsurface/SubsurfaceSolver.hpp"
 
@@ -1473,6 +1477,61 @@ struct NodeTrialRig {
             throw std::runtime_error(error);
     }
 };
+
+TEST(AquiferInfiltration, PublishedHeadroomRetainsLiveSignedReceiptSummation) {
+    using openswmm::detail::CompletedSourceArchive;
+    CompletedSourceArchive archive;
+    for (auto closure : {GwClosure::CLOSED_FORM, GwClosure::ENSLAVED, GwClosure::SIGMA})
+        for (double pending : {-1., -0., 0., 1e-17, .1, 1.})
+            for (bool prescribed : {false, true})
+                for (double capacity : {0., .05}) {
+                    NodeTrialRig rig(3, closure);
+                    auto& s = rig.gw.state();
+                    ASSERT_EQ(static_cast<GwClosure>(s.closure[0]), closure);
+                    if (closure == GwClosure::SIGMA) {
+                        std::fill(s.theta_sigma.begin(), s.theta_sigma.end(), .2);
+                        s.hu[0] = .2 * (s.zs[0] - s.hg[0]);
+                    }
+                    s.xacc_from_surface[0] = pending;
+                    s.lacc[0] = .00037;
+                    s.nacc = {-.0001, .0002, -.0003};
+                    s.infil_capacity[0] = capacity;
+                    s.infil_remaining[0] = -7;
+                    if (prescribed && pending < 0 && capacity > 0)
+                        ASSERT_GT(rig.gw.infiltrationHeadroom(0), 0);
+                    for (double requested : {-1., -0., 0., 1e-300, 1e-17, .1, 1.,
+                                              std::numeric_limits<double>::infinity(),
+                                              std::numeric_limits<double>::quiet_NaN()}) {
+                        const double room = rig.gw.infiltrationHeadroom(0);
+                        const double old_remaining = s.infil_remaining[0];
+                        const double old_pending = s.xacc_from_surface[0];
+                        const double old_front = s.wetting_front[0];
+                        const bool admitted = requested > 0 && std::isfinite(requested) &&
+                                              (prescribed || capacity > 0);
+                        const double expected = admitted ? std::min(requested, room) : 0.;
+                        double taken = rig.gw.acceptSurfaceInfiltration(0, requested, prescribed);
+                        EXPECT_EQ(std::bit_cast<std::uint64_t>(taken),
+                                  std::bit_cast<std::uint64_t>(expected));
+                        if (admitted) {
+                            // Re-read canonical storage and the updated receipt sequence.
+                            const double fresh = rig.gw.infiltrationHeadroom(0);
+                            EXPECT_EQ(std::bit_cast<std::uint64_t>(s.infil_remaining[0]),
+                                      std::bit_cast<std::uint64_t>(fresh));
+                        } else {
+                            EXPECT_EQ(s.infil_remaining[0], old_remaining);
+                            EXPECT_EQ(s.xacc_from_surface[0], old_pending);
+                            EXPECT_EQ(s.wetting_front[0], old_front);
+                        }
+                        archive(taken, s.xacc_from_surface, s.wetting_front, s.infil_remaining,
+                                s.lacc, s.nacc, s.hg, s.hu, s.theta_sigma);
+                    }
+                }
+    const char* output = std::getenv("OPENSWMM_HEADROOM_TEST_OUT");
+    const auto folder = output ? fs::path(output) : kOutDir;
+    fs::create_directories(folder);
+    const auto bytes = archive.bytes();
+    std::ofstream(folder / "headroom-bits.bin", std::ios::binary).write(bytes.data(), bytes.size());
+}
 /**
  * @brief Build an owned Richards column for aquifer exchange trials.
  *
@@ -2484,4 +2543,294 @@ TEST(RichardsPendingSteps, ShortColumnStepsPreserveNaturalFastAndSlowGroundwater
     EXPECT_EQ(rig.gw.tierFirings(), (std::vector<long>{2, 1}));
     EXPECT_EQ(rig.gw.state().tier, (std::vector<uint8_t>{0, 1}));
     EXPECT_DOUBLE_EQ(rig.gw.cellCompletedTime(1), 2);
+}
+
+namespace {
+std::string bedState(SubsurfaceSolver& gw) {
+    openswmm::detail::CompletedSourceArchive archive;
+    gw.checkpoint(archive, false);
+    return archive.bytes();
+}
+
+void saveBedState(const std::string& name, SubsurfaceSolver& gw) {
+    const auto directory = kOutDir / "bed_lookup";
+    fs::create_directories(directory);
+    const auto bytes = bedState(gw);
+    std::ofstream(directory / (name + ".chk"), std::ios::binary).write(bytes.data(), bytes.size());
+}
+}
+
+TEST(AquiferBedLookup, InterleavedInactiveAndEmptyCellBedsSurviveRestoreAndRepeatedFirings) {
+    for (bool species : {false, true}) {
+        SCOPED_TRACE(species);
+        NodeTrialRig rig(12, GwClosure::CLOSED_FORM, 2, 10, .1, 1e-5, .1, 5);
+        // Cell 4 has no active beds; other cells have nonadjacent bed IDs.
+        rig.config.node_beds[4].exchange = false;
+        rig.config.node_beds[9].cell = -1;
+        std::vector<std::string> warnings;
+        ASSERT_EQ(rig.gw.initialize(rig.mesh, rig.edges, rig.options, {}, 12, rig.config,
+                                    warnings), "");
+        std::vector<double> concentrations(24, 3);
+        if (species) {
+            RowLayoutLite rows;
+            rows.n_species = rows.n_pollut = 2;
+            rows.names = {"A", "B"};
+            rig.gw.initTransport(rows, nullptr, {}, warnings);
+            auto& tr = rig.gw.transport();
+            for (int s = 0; s < 2; ++s)
+                for (int c = 0; c < 5; ++c) {
+                    tr.sat_mass[tr.idx(s, c)] = 2 * rig.gw.satVolume(c);
+                    tr.unsat_mass[tr.idx(s, c)] = 2 * rig.gw.unsatVolume(c);
+                    tr.init_mass[s] += tr.sat_mass[tr.idx(s, c)] + tr.unsat_mass[tr.idx(s, c)];
+                }
+            rig.gw.setNodeRowConc(concentrations.data(), 2);
+        }
+        openswmm::NodeData nodes;
+        nodes.resize(12);
+        nodes.volume.assign(12, 100);
+        for (int n = 0; n < 12; ++n)
+            nodes.invert_elev[n] = n % 2 ? -1 : -3;
+        SurfaceStateData surface;
+        surface.resize(5, 0);
+        rig.gw.state().dt_cell = {.25, .5, 1., .25, .5};
+        rig.gw.assignTiers(.25, 3);
+        rig.gw.sampleNodeExchange(&nodes, .25);
+        rig.gw.fireGwCells(0, .25, surface);
+        const auto checkpoint = bedState(rig.gw);
+        saveBedState(species ? "species_partial" : "water_partial", rig.gw);
+        auto reference = rig.gw;
+        const auto saved_surface = surface;
+        // Firing tier 1 ends on the bed-free cell, replacing the last gather.
+        rig.gw.fireGwCells(1, .5, surface);
+        openswmm::detail::CompletedSourceArchive restore(checkpoint);
+        ASSERT_NO_THROW(rig.gw.checkpoint(restore, false));
+        ASSERT_NO_THROW(restore.finish());
+        EXPECT_EQ(bedState(rig.gw), checkpoint);
+        surface = saved_surface;
+        auto reference_surface = saved_surface;
+        for (int tier : {2, 1, 0}) {
+            rig.gw.fireGwCells(tier, .25 * (1 << tier), surface);
+            reference.fireGwCells(tier, .25 * (1 << tier), reference_surface);
+            EXPECT_EQ(bedState(rig.gw), bedState(reference));
+        }
+        for (double pending : rig.gw.state().nacc)
+            EXPECT_DOUBLE_EQ(pending, 0);
+        if (species) {
+            const auto& tr = rig.gw.transport();
+            for (int s = 0; s < 2; ++s) {
+                const auto begin = tr.node_out_mass.begin() + s * 12;
+                EXPECT_NEAR(std::accumulate(begin, begin + 12, 0.), tr.lost_node[s], 1e-12);
+                EXPECT_DOUBLE_EQ(tr.node_out_mass[s * 12 + 4], 0);
+                EXPECT_DOUBLE_EQ(tr.node_out_mass[s * 12 + 9], 0);
+                EXPECT_GT(tr.gained_node[s], 0);
+                EXPECT_GT(tr.lost_node[s], 0);
+            }
+        }
+        saveBedState(species ? "species_complete" : "water_complete", rig.gw);
+    }
+}
+
+TEST(AquiferBedLookup, PerformanceWorkload) {
+    const char* mode = std::getenv("OPENSWMM_SOA_S1_BENCH");
+    if (!mode)
+        GTEST_SKIP() << "set OPENSWMM_SOA_S1_BENCH=dt or fire";
+    const bool dt_only = std::string(mode) == "dt";
+    ASSERT_TRUE(dt_only || std::string(mode) == "fire");
+    int cells = dt_only ? 2048 : 1024, repeats = 64;
+    if (const char* text = std::getenv("OPENSWMM_SOA_S1_REPEATS"))
+        repeats = std::stoi(text);
+    ASSERT_GT(repeats, 0);
+    NodeTrialRig rig(4 * cells, GwClosure::CLOSED_FORM, 2, 10, .01, 1e-6, .1, cells);
+    SurfaceStateData surface;
+    surface.resize(cells, 0);
+    rig.gw.assignTiers(.25, 1);
+    openswmm::NodeData nodes;
+    nodes.resize(4 * cells);
+    nodes.invert_elev.assign(4 * cells, -3);
+    nodes.volume.assign(4 * cells, 100);
+    openswmm::perf::reset_process();
+    for (int repeat = 0; repeat < repeats; ++repeat) {
+        if (dt_only)
+            rig.gw.refreshDtCell(rig.mesh, rig.edges);
+        else {
+            rig.gw.sampleNodeExchange(&nodes, .25);
+            rig.gw.fireGwCells(0, .25, surface, repeat * .25);
+        }
+    }
+    saveBedState(dt_only ? "bench_dt" : "bench_fire", rig.gw);
+    if (openswmm::perf::enabled())
+        openswmm::perf::dump_process();
+}
+
+TEST(AquiferBedLookup, RestoredNegativeZeroGatherIsClearedByTheNextCell) {
+    NodeTrialRig rig(2, GwClosure::CLOSED_FORM, 2, 10, .1, 1e-5, .1, 2);
+    SurfaceStateData surface;
+    surface.resize(2, 0);
+    rig.gw.state().dt_cell = {.25, .5};
+    rig.gw.assignTiers(.25, 2);
+    rig.gw.state().nacc[1] = -0.;
+    rig.gw.fireGwCells(1, .5, surface);
+    const auto checkpoint = bedState(rig.gw);
+    saveBedState("negative_zero_partial", rig.gw);
+    auto reference = rig.gw;
+    rig.gw.fireGwCells(0, .25, surface);
+    openswmm::detail::CompletedSourceArchive restore(checkpoint);
+    ASSERT_NO_THROW(rig.gw.checkpoint(restore, false));
+    ASSERT_NO_THROW(restore.finish());
+    rig.gw.fireGwCells(0, .25, surface);
+    reference.fireGwCells(0, .25, surface);
+    EXPECT_EQ(bedState(rig.gw), bedState(reference));
+    saveBedState("negative_zero_complete", rig.gw);
+}
+
+TEST(AquiferBedLookup, RetieringGrowShrinkPreservesOrderedCheckpointLists) {
+    NodeTrialRig rig(12, GwClosure::CLOSED_FORM, 2, 10, .1, 1e-5, .1, 5);
+    rig.gw.state().dt_cell = {.25, 4., 1., .5, 2.};
+    int step = 0;
+    for (int count : {1, 8, 2, 5, 1, 8}) {
+        rig.gw.assignTiers(.25, count);
+        EXPECT_EQ(rig.gw.tierCount(), count);
+        EXPECT_EQ(rig.gw.tierFirings(), std::vector<long>(count, 0));
+        std::vector<uint8_t> expected;
+        for (int tier : {0, 4, 2, 1, 3})
+            expected.push_back(static_cast<uint8_t>(std::min(tier, count - 1)));
+        EXPECT_EQ(rig.gw.state().tier, expected);
+        const auto saved = bedState(rig.gw);
+        rig.gw.assignTiers(.125, 3);
+        openswmm::detail::CompletedSourceArchive restore(saved);
+        ASSERT_NO_THROW(rig.gw.checkpoint(restore, false));
+        ASSERT_NO_THROW(restore.finish());
+        EXPECT_EQ(bedState(rig.gw), saved);
+        EXPECT_EQ(rig.gw.state().tier, expected);
+        saveBedState("retier_grow_shrink_" + std::to_string(step++), rig.gw);
+    }
+}
+
+TEST(AquiferBedLookup, ParallelDtAndIntakeMatchSerialAcrossClosuresAndSoils) {
+    constexpr int cells = 1027;
+    const SoilChar laws[] = {SoilChar::GARDNER, SoilChar::RUSSO, SoilChar::BROOKS_COREY,
+                             SoilChar::VAN_GENUCHTEN};
+    for (int threads : {1, 4, 8}) {
+        NodeTrialRig serial(3 * cells, GwClosure::SIGMA, 2, 10, .1, 1e-5, .1, cells),
+            parallel(3 * cells, GwClosure::SIGMA, 2, 10, .1, 1e-5, .1, cells);
+        parallel.options.num_threads = threads;
+        SurfaceStateData a, b;
+        a.resize(cells, 0);
+        b.resize(cells, 0);
+        for (auto* rig : {&serial, &parallel}) {
+            auto& state = rig->gw.state();
+            for (int i = 0; i < cells; ++i) {
+                state.closure[i] = static_cast<int8_t>(i % 3 == 0 ? GwClosure::SIGMA
+                                                      : i % 3 == 1 ? GwClosure::CLOSED_FORM
+                                                                   : GwClosure::ENSLAVED);
+                state.soil_char[i] = static_cast<int8_t>(laws[i % 4]);
+                state.psi_b[i] = .2;
+                state.lambda[i] = .5;
+                state.vg_n[i] = 2;
+                state.vg_L[i] = .5;
+                state.hg[i] = .5 + .1 * (i % 12);
+                const double theta = .2 + .005 * (i % 7);
+                state.hu[i] = theta * (state.zs[i] - state.hg[i]);
+                for (int j = 0; j < state.m_layers; ++j)
+                    state.theta_sigma[std::size_t(j) * cells + i] = theta;
+                state.xacc_from_surface[i] = i % 2 ? 1e-7 : -1e-7;
+            }
+            for (std::size_t n = 0; n < state.nacc.size(); ++n)
+                state.nacc[n] = n % 2 ? 1e-8 : -1e-8;
+        }
+        for (int step = 0; step < 3; ++step) {
+            for (int i = 0; i < cells; ++i)
+                a.depth[i] = b.depth[i] = i % 3 == step ? 0. : .01 * (i % 5);
+            serial.gw.refreshDtCell(serial.mesh, serial.edges);
+            parallel.gw.refreshDtCell(parallel.mesh, parallel.edges);
+            serial.gw.publishInfiltration(a, .25 * (step + 1), step);
+            parallel.gw.publishInfiltration(b, .25 * (step + 1), step);
+            EXPECT_EQ(a.infil_rate, b.infil_rate);
+            EXPECT_EQ(bedState(serial.gw), bedState(parallel.gw));
+            saveBedState("parallel_dt_intake_" + std::to_string(threads) + "_" +
+                             std::to_string(step), parallel.gw);
+        }
+    }
+}
+
+TEST(RichardsSurfaceSnapshots, PreservesUnusedFieldsAndUnselectedInfiltrationSlots) {
+    for (auto closure : {GwClosure::CLOSED_FORM, GwClosure::ENSLAVED, GwClosure::SIGMA})
+        for (int depth_count : {0, 1, 3}) {
+            NodeTrialRig rig(2, closure, 2, 1, 1, 0, 0, 3);
+            SurfaceStateData surface;
+            surface.resize(3, 0);
+            surface.depth.assign(depth_count, .25);
+            surface.infil_rate = {.12345, .23456, .34567};
+            surface.head = {11, 12, 13};
+            surface.volume = {4, 5, 6};
+            surface.grad_hx = {7, 8, 9};
+            surface.face_vx = {1, 2, 3};
+            surface.face_vy = {-1, -2, -3};
+            surface.rainfall = {.1, .2, .3};
+            surface.evap_rate = {.01, .02, .03};
+            surface.coupling_flux = {-4, 0, 4};
+            surface.infil_applied = {14, 15, 16};
+            const auto before = surface;
+            rig.gw.state().infil_interval[0] = 1;
+            auto column = trialColumn();
+            auto result = acceptRichardsBedsAtFiring(rig.gw, surface, 0, 1,
+                                                      {owner(0, column, -2.5)});
+            ASSERT_TRUE(result.error.empty()) << result.error;
+            EXPECT_EQ(surface.depth, before.depth);
+            EXPECT_EQ(surface.head, before.head);
+            EXPECT_EQ(surface.volume, before.volume);
+            EXPECT_EQ(surface.grad_hx, before.grad_hx);
+            EXPECT_EQ(surface.face_vx, before.face_vx);
+            EXPECT_EQ(surface.face_vy, before.face_vy);
+            EXPECT_EQ(surface.rainfall, before.rainfall);
+            EXPECT_EQ(surface.evap_rate, before.evap_rate);
+            EXPECT_EQ(surface.coupling_flux, before.coupling_flux);
+            EXPECT_EQ(surface.infil_applied, before.infil_applied);
+            EXPECT_EQ(surface.edge_flux, before.edge_flux);
+            EXPECT_DOUBLE_EQ(surface.infil_rate[0], rig.gw.state().infil_capacity[0]);
+            EXPECT_NE(surface.infil_rate[0], before.infil_rate[0]);
+            EXPECT_DOUBLE_EQ(surface.infil_rate[1], before.infil_rate[1]);
+            EXPECT_DOUBLE_EQ(surface.infil_rate[2], before.infil_rate[2]);
+        }
+}
+
+TEST(RichardsSurfaceSnapshots, NestedLateRefusalPreservesSurfaceAndRetryPublishesRates) {
+    NodeTrialRig rig(2, GwClosure::CLOSED_FORM, 2, 1, 1, 0, 0, 2);
+    SurfaceStateData surface;
+    surface.resize(2, 0);
+    surface.depth = {.25, .5};
+    surface.head = {11, 12};
+    surface.volume = {4, 5};
+    surface.rainfall = {.1, .2};
+    surface.infil_rate = {.12345, .23456};
+    rig.gw.state().dt_cell = {2, 2};
+    rig.gw.assignTiers(2, 1);
+    rig.gw.state().infil_interval = {1, 1};
+    rig.gw.state().nacc[1] = 10;
+    auto column = trialColumn();
+    const auto water = column.water;
+    const auto before_surface = surface;
+    openswmm::detail::CompletedSourceArchive before;
+    rig.gw.checkpoint(before, false);
+    auto bad = acceptRichardsBedsForTierAcrossSteps(rig.gw, surface, 0, 0, 2,
+        {.5, 1, 2}, {owner(0, column, -2.5)});
+    ASSERT_NE(bad.error.find("refunded"), std::string::npos) << bad.error;
+    EXPECT_EQ(column.water, water);
+    EXPECT_EQ(surface.depth, before_surface.depth);
+    EXPECT_EQ(surface.head, before_surface.head);
+    EXPECT_EQ(surface.volume, before_surface.volume);
+    EXPECT_EQ(surface.rainfall, before_surface.rainfall);
+    EXPECT_EQ(surface.infil_rate, before_surface.infil_rate);
+    openswmm::detail::CompletedSourceArchive after;
+    rig.gw.checkpoint(after, false);
+    EXPECT_EQ(before.bytes(), after.bytes());
+    rig.gw.state().nacc[1] = 0;
+    auto accepted = acceptRichardsBedsForTierAcrossSteps(rig.gw, surface, 0, 0, 2,
+        {.5, 1, 2}, {owner(0, column, -2.5)});
+    ASSERT_TRUE(accepted.error.empty()) << accepted.error;
+    EXPECT_EQ(surface.depth, before_surface.depth);
+    EXPECT_EQ(surface.head, before_surface.head);
+    EXPECT_EQ(surface.volume, before_surface.volume);
+    EXPECT_EQ(surface.rainfall, before_surface.rainfall);
+    EXPECT_EQ(surface.infil_rate, rig.gw.state().infil_capacity);
 }

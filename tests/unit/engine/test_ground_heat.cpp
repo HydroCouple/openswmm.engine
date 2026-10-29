@@ -44,6 +44,14 @@
 #include "2d/solver/InertialEdges.hpp"
 #include "platform_test_support.hpp"
 namespace {
+template <class State>
+std::size_t gwPacketIndex(const State& state, int species, std::size_t edge, std::size_t edges) {
+    if constexpr (requires { state.lateralIndex(species, edge); })
+        return state.lateralIndex(species, edge);
+    else
+        return static_cast<std::size_t>(species) * edges + edge;
+}
+
 namespace fs = std::filesystem;
 const fs::path out = fs::path(OPENSWMM_GROUND_HEAT_OUT) / "ground_heat";
 struct ScopedBackendRequest {
@@ -1653,7 +1661,7 @@ TEST(GroundHeat, AcceptedLateralGroundwaterFlowCarriesTheDonorTemperatureEnergy)
     ASSERT_NE(signed_volume, 0);
     const int donor = signed_volume < 0 ? 0 : 1, receiver = 1 - donor;
     const double volume = std::abs(signed_volume);
-    const auto mass_index = std::size_t(row) * std::size_t(edges.ne) + std::size_t(face);
+    const auto mass_index = gwPacketIndex(tr, row, std::size_t(face), std::size_t(edges.ne));
     const double donor_temp_volume = donor == 0 ? -tr.sacc_L[mass_index] : -tr.sacc_R[mass_index];
     const double donor_temperature = donor == 0 ? 10 : 20;
     const double expected_j = gw.heat().water_capacity * volume * donor_temperature;
@@ -1710,7 +1718,7 @@ TEST(GroundHeat, MechanicalDispersionCarriesTemperatureWithoutAddingNetWater) {
         volume * temp_left +
         alpha * volume * edges.inv_dx[std::size_t(face)] * (temp_left - temp_right);
     const std::size_t mass_index =
-        std::size_t(tr.temp_row) * std::size_t(edges.ne) + std::size_t(face);
+        gwPacketIndex(tr, tr.temp_row, std::size_t(face), std::size_t(edges.ne));
     const double accepted_temperature_volume = -tr.sacc_L[mass_index];
     EXPECT_GT(alpha, 0);
     EXPECT_GT(accepted_temperature_volume, 0);
@@ -1807,7 +1815,7 @@ TEST(GroundHeat, SkewedHeterogeneousFaceCarriesAdvectionAndDispersiveHeatConserv
     const double expected_temperature_volume =
         expected_volume * temp_left +
         alpha * expected_volume / centroid_distance * (temp_left - temp_right);
-    const std::size_t mass_index = std::size_t(tr.temp_row) * std::size_t(edges.ne);
+    const std::size_t mass_index = gwPacketIndex(tr, tr.temp_row, 0, std::size_t(edges.ne));
     EXPECT_NEAR(-tr.sacc_L[mass_index], expected_temperature_volume, 1e-12);
     gw.fireGwCells(0, dt, router.state(), dt);
     for (const auto& cell : gw.heat().cells)
@@ -2070,7 +2078,7 @@ TEST(GroundHeat, StaggeredLateralAdvectionAndDispersionReceiptsCloseAcrossCellTi
         double total = 0;
         const std::size_t ne = gw.state().eacc_L.size();
         for (std::size_t e = 0; e < ne; ++e) {
-            const std::size_t index = std::size_t(tr.temp_row) * ne + e;
+            const std::size_t index = gwPacketIndex(tr, tr.temp_row, e, ne);
             total += tr.sacc_L[index] + tr.sacc_R[index];
         }
         return total;

@@ -72,6 +72,25 @@
 namespace fs = std::filesystem;
 
 namespace {
+template <class State>
+std::vector<double> gwLayerLegacy(const State& state, const std::vector<double>& values) {
+    std::vector<double> result;
+    result.reserve(values.size());
+    for (int s = 0; s < state.n_species; ++s)
+        for (int layer = 0; layer < state.n_layers; ++layer)
+            for (int cell = 0; cell < state.n_cells; ++cell)
+                result.push_back(values[state.layerIdx(s, layer, cell)]);
+    return result;
+}
+
+template <class State>
+std::size_t gwPacketIndex(const State& state, int species, std::size_t edge, std::size_t edges) {
+    if constexpr (requires { state.lateralIndex(species, edge); })
+        return state.lateralIndex(species, edge);
+    else
+        return static_cast<std::size_t>(species) * edges + edge;
+}
+
 
 const fs::path kOutDir = fs::path(OPENSWMM_GW_TEST_OUT_DIR) / "gw_transport_kernel";
 
@@ -2582,7 +2601,7 @@ TEST(GwCompletion, LayerAndEdgeResultsPersistCanonicalInventoriesAndGrossReceipt
     ASSERT_TRUE(r.opened) << completionErrors(r);
     ASSERT_TRUE(run(r)) << completionErrors(r);
     const auto& gw = r.eng->surfaceRouter2D().subsurface();
-    const auto expected = gw.transport().layer_mass;
+    const auto expected = gwLayerLegacy(gw.transport(), gw.transport().layer_mass);
     const int ns = gw.transport().n_species, nl = gw.transport().n_layers,
               nc = gw.transport().n_cells;
     double water = -1, mass = -2, conc = -3;
@@ -2784,7 +2803,7 @@ TEST(GwCompletion, TransverseDispersivitySpreadsATracerAcrossAnOrthogonalDarcyFl
         // Their paired species packets expose diffusion before cell gathering.
         for (std::size_t e = 0; e < state.eacc_L.size(); ++e)
             if (std::abs(state.eacc_L[e]) < 1e-15)
-                transverse[mode] += std::abs(transport.sacc_L[e]);
+                transverse[mode] += std::abs(transport.sacc_L[gwPacketIndex(transport, 0, e, state.eacc_L.size())]);
         finish(r);
     }
     EXPECT_NEAR(transverse[0], 0, 1e-15);
@@ -3791,7 +3810,8 @@ TEST(GwSigmaPorous, ResultsKeepChemicalAndThermalLayerAxesIndependent) {
     Deck r = open("mapped_results", body);
     ASSERT_TRUE(r.opened);
     ASSERT_TRUE(run(r)) << completionErrors(r);
-    const auto expected = r.eng->surfaceRouter2D().subsurface().transport().layer_mass;
+    const auto& logical_transport = r.eng->surfaceRouter2D().subsurface().transport();
+    const auto expected = gwLayerLegacy(logical_transport, logical_transport.layer_mass);
     const auto& tr = r.eng->surfaceRouter2D().subsurface().transport();
     const int ns = tr.n_species, nc = tr.n_cells;
     finish(r);
@@ -4659,4 +4679,853 @@ TEST(GwCompletion, BulkPorewaterAgeLedgerAndClockSurviveComponentRestore) {
     }
     finish(a);
     finish(b);
+}
+
+TEST(GwCompletion, LayerReactorLateRefusalRetainsInventoryAndCanRetryAfterRebind) {
+    const std::string reactions =
+        "[REACTION_OPTIONS]\nSOLVER RK5\nRATE_UNITS SEC\nCOUPLING FULL\nATOL 1e-12\nRTOL 1e-10\n\n"
+        "[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n\n"
+        "[REACTION_SUBSURFACE]\n* SAT A RATE -.1*A\n* SAT B RATE .1*A\n"
+        "* LAYER 2 A RATE 1/(GW_THETA-GW_THETA)\n\n"
+        "[GW_INITIAL_QUALITY]\n* SAT A 7\n* UNSAT A 7\n\n";
+    Deck r = open("layer_reactor_late_refusal", layeredDeck(reactions));
+    ASSERT_TRUE(r.opened) << completionErrors(r);
+    ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK) << completionErrors(r);
+    auto& gw = r.eng->surfaceRouter2D().subsurface();
+    const auto& t = gw.transport();
+    const auto sat = t.sat_mass, unsat = t.unsat_mass, layer = t.layer_mass,
+               ledger = t.lost_reaction;
+    ASSERT_GT(t.n_layers, 1);
+    EXPECT_THROW(gw.advanceRk2Reactions(.1), std::runtime_error);
+    EXPECT_EQ(t.sat_mass, sat);
+    EXPECT_EQ(t.unsat_mass, unsat);
+    EXPECT_EQ(t.layer_mass, layer);
+    EXPECT_EQ(t.lost_reaction, ledger);
+    auto& ctx = r.eng->context();
+    ASSERT_EQ(ctx.reactions.subsurface_laws.size(), 3u);
+    ctx.reactions.subsurface_laws.back().compiled = ctx.reactions.subsurface_laws.front().compiled;
+    ASSERT_EQ(gw.initReactions(ctx), "");
+    auto expected = gw;
+    EXPECT_NO_THROW(gw.advanceRk2Reactions(.1));
+    EXPECT_NO_THROW(expected.advanceRk2Reactions(.1));
+    EXPECT_EQ(gw.transport().sat_mass, expected.transport().sat_mass);
+    EXPECT_EQ(gw.transport().layer_mass, expected.transport().layer_mass);
+    EXPECT_EQ(gw.transport().lost_reaction, expected.transport().lost_reaction);
+    EXPECT_LT(t.sat_mass[t.idx(t.rowIndex("A"), 0)], sat[t.idx(t.rowIndex("A"), 0)]);
+    finish(r);
+}
+
+// Embedded verbatim in the normal GW transport test; also used by the focused helper.
+#include <array>
+#include <bit>
+#include <chrono>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <memory>
+#include <numeric>
+#include <sstream>
+#include <stdexcept>
+#include <openswmm/engine/openswmm_engine.h>
+#include "core/CompletedSourceArchive.hpp"
+#include "core/HotStartManager.hpp"
+#include "core/SWMMEngine.hpp"
+#include "2d/SurfaceRouter2D.hpp"
+#include "2d/subsurface/SubsurfaceSolver.hpp"
+
+namespace gw_packet_fixture {
+using Archive = openswmm::detail::CompletedSourceArchive;
+using Transport = openswmm::twoD::SubsurfaceTransportState;
+namespace fs = std::filesystem;
+inline void require(bool value, const std::string& message) {
+    if (!value) throw std::runtime_error(message);
+}
+template <class State>
+std::size_t index(const State& state, int species, std::size_t edge, std::size_t edges) {
+    if constexpr (requires { state.lateralIndex(species, edge); })
+        return state.lateralIndex(species, edge);
+    else
+        return static_cast<std::size_t>(species) * edges + edge;
+}
+inline std::vector<double> legacy(const Transport& state, const std::vector<double>& side) {
+    std::vector<double> result(side.size());
+    const auto edges = state.n_species > 0 ? side.size() / state.n_species : 0;
+    for (int s = 0; s < state.n_species; ++s)
+        for (std::size_t e = 0; e < edges; ++e)
+            result[static_cast<std::size_t>(s) * edges + e] = side[index(state, s, e, edges)];
+    return result;
+}
+inline std::string encode(std::vector<double> values) {
+    Archive a;
+    a.fixed(values);
+    return a.bytes();
+}
+template <class A>
+void matrix(A& a, std::vector<double>& values, std::size_t species) {
+    if constexpr (requires { a.fixedColumnMajor(values, species); })
+        a.fixedColumnMajor(values, species);
+    else
+        a.fixed(values); // Baseline owns the old species-major vector already.
+}
+inline void budget(Archive& a) {
+    std::vector<double> row(8192);
+    for (int i = 0; i < 1024; ++i) a.sequence(row, [](double&) {});
+}
+inline void count(std::string& bytes, std::size_t offset, uint64_t value) {
+    require(offset + sizeof(value) <= bytes.size(), "bad fixture offset");
+    std::memcpy(bytes.data() + offset, &value, sizeof(value));
+}
+struct Result { std::string bytes; std::size_t cases = 0; };
+inline Result codecHistory() {
+    Archive history;
+    std::string magic = "L4_GW_CODEC_V1";
+    history(magic);
+    Result result;
+    for (int ns : {0, 1, 2, 3, 8}) for (int ne : {0, 1, 7, 33}) {
+        Transport state;
+        state.resize(ns, 3, ne);
+        const uint64_t bits[] = {0, uint64_t(1) << 63, 0x3ff123456789abcdULL,
+            0xbfc23456789abcdeULL, 0x7ff8000000000042ULL, 0x7ff0000000000000ULL,
+            0xfff0000000000000ULL, 1};
+        for (int s = 0; s < ns; ++s) for (int e = 0; e < ne; ++e) {
+            state.sacc_L[index(state, s, e, ne)] = std::bit_cast<double>(bits[(s + e) % 8]);
+            state.sacc_R[index(state, s, e, ne)] = std::bit_cast<double>(bits[(s + 2 * e + 3) % 8]);
+        }
+        auto left = legacy(state, state.sacc_L), right = legacy(state, state.sacc_R);
+        Archive oldWriter, newWriter;
+        oldWriter.fixed(left, right);
+        matrix(newWriter, state.sacc_L, ns);
+        matrix(newWriter, state.sacc_R, ns);
+        const auto wire = oldWriter.bytes();
+        require(wire == newWriter.bytes(), "matrix wire differs");
+        const auto second = sizeof(uint64_t) + left.size() * sizeof(double);
+        std::vector<std::pair<std::string, std::string>> inputs = {
+            {"valid", wire}, {"empty", ""}, {"short-count", wire.substr(0, 7)},
+            {"last-byte", wire.substr(0, wire.size() - 1)},
+            {"first-value", wire.substr(0, 8 + (left.empty() ? 0 : 3))},
+            {"second-count", wire.substr(0, second + 3)}, {"trailing", wire + 'x'}};
+        for (auto offset : {std::size_t(0), second}) {
+            auto bad = wire;
+            count(bad, offset, left.size() + 1);
+            inputs.emplace_back("larger-" + std::to_string(offset), bad);
+            if (!left.empty()) {
+                count(bad, offset, left.size() - 1);
+                inputs.emplace_back("smaller-" + std::to_string(offset), bad);
+            }
+        }
+        auto bad = wire;
+        count(bad, 0, 64 * 1024 * 1024 / 8 + 1);
+        inputs.emplace_back("oversized-budget", bad);
+        Archive prefix;
+        budget(prefix);
+        inputs.emplace_back("cumulative-budget", prefix.bytes() + wire + std::string(8192, '\0'));
+        for (auto [label, input] : inputs) {
+            auto expectedL = left, expectedR = right;
+            std::fill(expectedL.begin(), expectedL.end(), -1234.5);
+            std::fill(expectedR.begin(), expectedR.end(), -1234.5);
+            auto actual = state;
+            std::fill(actual.sacc_L.begin(), actual.sacc_L.end(), -1234.5);
+            std::fill(actual.sacc_R.begin(), actual.sacc_R.end(), -1234.5);
+            Archive oldReader(input), newReader(input);
+            std::string oldError, newError;
+            try {
+                if (label == "cumulative-budget") budget(oldReader);
+                oldReader.fixed(expectedL, expectedR);
+                oldReader.finish();
+            } catch (const std::exception& e) { oldError = e.what(); }
+            try {
+                if (label == "cumulative-budget") budget(newReader);
+                matrix(newReader, actual.sacc_L, ns);
+                matrix(newReader, actual.sacc_R, ns);
+                newReader.finish();
+            } catch (const std::exception& e) { newError = e.what(); }
+            auto actualL = legacy(actual, actual.sacc_L), actualR = legacy(actual, actual.sacc_R);
+            require(oldError == newError, "matrix diagnostic differs: " + label);
+            require(encode(actualL) == encode(expectedL) && encode(actualR) == encode(expectedR),
+                    "matrix partial prefix differs: " + label);
+            require((label == "valid") == oldError.empty(), "expected matrix refusal differs");
+            history(ns, ne, label, input, oldError, actualL, actualR);
+            ++result.cases;
+        }
+        Archive oldBudget, newBudget;
+        std::string oldError, newError;
+        try { budget(oldBudget); oldBudget.fixed(left, right); }
+        catch (const std::exception& e) { oldError = e.what(); }
+        try { budget(newBudget); matrix(newBudget, state.sacc_L, ns); matrix(newBudget, state.sacc_R, ns); }
+        catch (const std::exception& e) { newError = e.what(); }
+        require(oldError == newError && oldBudget.bytes() == newBudget.bytes(), "matrix write budget differs");
+        auto written = oldBudget.bytes();
+        history(ns, ne, oldError, written);
+    }
+    history(result.cases);
+    result.bytes = history.bytes();
+    return result;
+}
+inline Result storageHistory() {
+    Archive history;
+    Result result;
+    Transport state;
+    for (int ns : {0, 1, 8, 3, 2}) for (int ne : {0, 1, 33, 7}) {
+        state.resize(ns, 5, ne);
+        for (int s = 0; s < ns; ++s) {
+            for (int c = 0; c < state.n_cells; ++c) {
+                auto k = state.idx(s, c);
+                state.sat_mass[k] = .125 * (c + s + 1);
+                state.unsat_mass[k] = .03125 * (c - s);
+                state.xacc_from_surface[k] = .003 * (c + 1);
+                state.xacc_to_surface[k] = -.0007 * (s + 1);
+            }
+            for (int e = 0; e < ne; ++e) {
+                const auto k = index(state, s, e, ne);
+                state.sacc_L[k] = (e % 2 ? -1 : 1) * .00013 * (e + 3 * s);
+                state.sacc_R[k] = (e % 3 ? 1 : -1) * .00017 * (e + s + 1);
+            }
+        }
+        auto l = legacy(state, state.sacc_L), r = legacy(state, state.sacc_R);
+        for (int s = 0; s < ns; ++s) {
+            double expected = 0, ledgered = 0;
+            for (int c = 0; c < state.n_cells; ++c) {
+                const auto k = state.idx(s, c);
+                expected += state.sat_mass[k]; expected += state.unsat_mass[k];
+                expected += state.xacc_from_surface[k]; expected += state.xacc_to_surface[k];
+                ledgered += state.sat_mass[k] + state.unsat_mass[k];
+            }
+            for (int e = 0; e < ne; ++e) {
+                const auto k = static_cast<std::size_t>(s) * ne + e;
+                expected += l[k] + r[k]; ledgered += l[k] + r[k];
+            }
+            expected += state.inFlight1D(s); ledgered += state.inFlight1D(s);
+            auto actual = state.storage(s), actualLedgered = state.ledgeredStorage(s);
+            require(std::bit_cast<uint64_t>(actual) == std::bit_cast<uint64_t>(expected) &&
+                    std::bit_cast<uint64_t>(actualLedgered) == std::bit_cast<uint64_t>(ledgered),
+                    "logical storage order differs");
+            history(ns, ne, s, l, r, actual, actualLedgered);
+            ++result.cases;
+        }
+    }
+    state.clear();
+    require(state.n_species == 0 && state.sacc_L.empty() && state.sacc_R.empty(), "clear left packets");
+    result.bytes = history.bytes();
+    return result;
+}
+// Independent fixture writer derives V12/V13 from a public native V13 capture.
+// Verify the entire known final interface block before replacing it; preserve
+// every preceding field except the declared version and creation timestamp.
+inline void legacyFile(const openswmm::HotStartFile& captured, uint32_t version,
+                       const fs::path& path) {
+    require(captured.header.version == 13, "legacy fixture requires plain V13 capture");
+    std::ifstream file(captured.path, std::ios::binary);
+    std::string bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    auto rows = [](const auto& values, std::size_t extent) {
+        std::string result;
+        auto append = [&](const auto& value) {
+            result.append(reinterpret_cast<const char*>(&value), sizeof(value));
+        };
+        append(static_cast<uint32_t>(extent));
+        for (std::size_t k = 0; k < extent; ++k) {
+            append(static_cast<uint32_t>(values[k].size()));
+            for (double value : values[k]) append(value);
+        }
+        return result;
+    };
+    const auto tail = rows(captured.gw_interface, captured.gw_interface.size());
+    require(bytes.size() >= tail.size() + 32 &&
+            bytes.substr(bytes.size() - 4 - tail.size(), tail.size()) == tail,
+            "native fixture interface tail differs");
+    bytes.resize(bytes.size() - 4 - tail.size());
+    bytes += rows(captured.gw_interface, version == 12 ? 21 : 30);
+    std::memcpy(bytes.data() + 16, &version, sizeof(version));
+    const int64_t timestamp = 0;
+    std::memcpy(bytes.data() + 20, &timestamp, sizeof(timestamp));
+    uint32_t crc = 0xffffffffu;
+    for (unsigned char byte : bytes) {
+        crc ^= byte;
+        for (int bit = 0; bit < 8; ++bit)
+            crc = (crc & 1) ? (crc >> 1) ^ 0xedb88320u : crc >> 1;
+    }
+    crc ^= 0xffffffffu;
+    bytes.append(reinterpret_cast<const char*>(&crc), sizeof(crc));
+    std::ofstream output(path, std::ios::binary);
+    output.write(bytes.data(), bytes.size());
+    require(output.good(), "legacy fixture write failed");
+}
+// Native legacy interface test has no router or modern GW payload: a later V17
+// restore cannot overwrite and conceal an incorrect V12/V13 permutation.
+inline Result nativeHistory(const fs::path& dir) {
+    fs::create_directories(dir);
+    Archive history;
+    Result result;
+    for (int ns : {0, 1, 3, 8}) for (int ne : {0, 1, 7}) {
+        openswmm::SimulationContext source, target;
+        openswmm::twoD::SubsurfaceState sw, tw;
+        Transport st, tt;
+        for (auto* w : {&sw, &tw}) {
+            w->resize(3, 0); w->active = true;
+            w->zs.assign(3, 1); w->hg.assign(3, .25); w->hu.assign(3, .1);
+            w->eacc_L.assign(ne, 0); w->eacc_R.assign(ne, 0);
+        }
+        for (auto* t : {&st, &tt}) {
+            t->resize(ns, 3, ne);
+            for (int s = 0; s < ns; ++s) t->row_names.push_back("ROW" + std::to_string(s));
+        }
+        source.twod_io.aquifer_state = &sw; source.twod_io.aquifer_transport = &st;
+        target.twod_io.aquifer_state = &tw; target.twod_io.aquifer_transport = &tt;
+        for (int s = 0; s < ns; ++s) for (int e = 0; e < ne; ++e) {
+            st.sacc_L[index(st, s, e, ne)] = .03125 * (1 + e + 7 * s);
+            st.sacc_R[index(st, s, e, ne)] = -.125 * (3 + 2 * e + s);
+        }
+        if (ns && ne) {
+            st.sacc_L[index(st, 0, 0, ne)] = -0.;
+            st.sacc_R[index(st, ns - 1, ne - 1, ne)] = std::bit_cast<double>(0x7ff8000000000042ULL);
+        }
+        const auto stem = "native_" + std::to_string(ns) + "_" + std::to_string(ne);
+        std::unique_ptr<openswmm::HotStartFile> saved(
+            openswmm::HotStartManager::save(source, (dir / (stem + "_capture.hsf")).string()));
+        require(bool(saved), "native capture refused: " + openswmm::HotStartManager::last_io_error());
+        require(saved->gw_transport_state.empty() && saved->engine_checkpoint.empty() &&
+                saved->gw_interface.size() == 30, "native fixture has modern overwrite or wrong schema");
+        const auto l = legacy(st, st.sacc_L), r = legacy(st, st.sacc_R);
+        require(encode(saved->gw_interface[16]) == encode(l) && encode(saved->gw_interface[17]) == encode(r),
+                "native capture is not legacy species-major");
+        for (uint32_t version : {12, 13}) {
+            auto old = *saved;
+            old.header.version = version;
+            old.header.timestamp = 0;
+            old.gw_interface.resize(version == 12 ? 21 : 30);
+            const auto path = dir / (stem + "_v" + std::to_string(version) + ".hsf");
+            legacyFile(*saved, version, path);
+            std::unique_ptr<openswmm::HotStartFile> loaded(openswmm::HotStartManager::open(path.string()));
+            require(bool(loaded) && loaded->header.version == version, "native read/version refused");
+            std::fill(tt.sacc_L.begin(), tt.sacc_L.end(), -987);
+            std::fill(tt.sacc_R.begin(), tt.sacc_R.end(), -654);
+            require(openswmm::HotStartManager::apply(*loaded, target) == 0, "legacy native restore refused");
+            require(encode(legacy(tt, tt.sacc_L)) == encode(l) && encode(legacy(tt, tt.sacc_R)) == encode(r),
+                    "legacy native restore changed logical packets");
+            // All neighboring interface rows must still be copied exactly.
+            std::unique_ptr<openswmm::HotStartFile> recaptured(
+                openswmm::HotStartManager::save(target, (dir / (stem + "_recapture.hsf")).string()));
+            require(bool(recaptured), "native recapture refused");
+            for (std::size_t k = 0; k < old.gw_interface.size(); ++k)
+                require(encode(recaptured->gw_interface[k]) == encode(old.gw_interface[k]), "native neighboring row differs");
+            for (int damage : {0, 1, 2, 3}) {
+                auto bad = old;
+                if (damage == 0) bad.gw_interface[16].push_back(1);
+                if (damage == 1) bad.gw_interface[17].push_back(2);
+                if (damage == 2) bad.gw_interface[14].push_back(3);
+                if (damage == 3) {
+                    if (ns < 2) continue;
+                    std::swap(bad.gw_species[0], bad.gw_species[1]);
+                }
+                const auto beforeL = encode(tt.sacc_L), beforeR = encode(tt.sacc_R);
+                require(openswmm::HotStartManager::apply(bad, target) > 0, "bad native shape/order accepted");
+                require(encode(tt.sacc_L) == beforeL && encode(tt.sacc_R) == beforeR,
+                        "bad native interface changed packets");
+                auto error = openswmm::HotStartManager::last_io_error();
+                history(ns, ne, version, damage, error);
+            }
+            auto a = legacy(tt, tt.sacc_L), b = legacy(tt, tt.sacc_R);
+            history(ns, ne, version, a, b);
+            ++result.cases;
+        }
+        const auto before = encode(tt.sacc_L);
+        target.twod_io.aquifer_state = nullptr;
+        openswmm::HotStartManager::apply(*saved, target);
+        require(encode(tt.sacc_L) == before, "absent aquifer changed packets");
+        target.twod_io.aquifer_state = &tw; tw.active = false;
+        openswmm::HotStartManager::apply(*saved, target);
+        require(encode(tt.sacc_L) == before, "inactive aquifer changed packets");
+        source.twod_io.aquifer_transport = nullptr;
+        std::unique_ptr<openswmm::HotStartFile> noTransport(
+            openswmm::HotStartManager::save(source, (dir / (stem + "_no_transport.hsf")).string()));
+        require(bool(noTransport) && noTransport->gw_interface[16].empty() && noTransport->gw_interface[17].empty(),
+                "absent transport capture changed empty sides");
+    }
+    result.bytes = history.bytes();
+    return result;
+}
+inline void save(const fs::path& path, const std::string& bytes) {
+    fs::create_directories(path.parent_path());
+    std::ofstream file(path, std::ios::binary);
+    file.write(bytes.data(), bytes.size());
+    require(file.good(), "fixture output failed");
+}
+// Actual production face/cell calls on initialized generated meshes. No copy of
+// Darcy, species transport, dispersion, reservation or gathering equations.
+inline std::string deck(int n, int kind, int pollutants, bool layered, int threads) {
+    std::ostringstream out;
+    out << "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\n"
+           "START_DATE 01/01/2026\nEND_DATE 01/01/2026\nEND_TIME 00:01:00\n"
+           "ROUTING_STEP 1\nHEAT_TRANSPORT YES\nWATER_AGE ON\nTHREADS " << threads << "\n"
+           "[JUNCTIONS]\nJ1 -2 4 0 0 0\n[OUTFALLS]\nO1 -2.5 FREE NO\n"
+           "[CONDUITS]\nC1 J1 O1 30 .013 0 0 0\n[XSECTIONS]\nC1 CIRCULAR .5 0 0 0 1\n"
+           "[POLLUTANTS]\n";
+    for (int s = 0; s < pollutants; ++s)
+        out << "P" << s << " MG/L 0 0 0 0 NO * 0 0\n";
+    out << "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 3\nMAX_TIMESTEP 1\n"
+           "REPORT_2D NO\nTRANSPORT_AGE YES\n[2D_VERTICES]\n";
+    for (int y = 0; y <= n; ++y) for (int x = 0; x <= n; ++x)
+        out << x << ' ' << y << " 0\n";
+    const auto isQuad = [&](int x, int y) { return kind == 1 || (kind == 2 && (x + y) % 2 == 0); };
+    out << "[2D_TRIANGLES]\n";
+    for (int y = 0; y < n; ++y) for (int x = 0; x < n; ++x) if (!isQuad(x, y)) {
+        const int a = y * (n + 1) + x, b = a + 1, d = a + n + 1, c = d + 1;
+        out << a << ' ' << b << ' ' << c << " .03 0\n"
+            << a << ' ' << c << ' ' << d << " .03 0\n";
+    }
+    out << "[2D_QUADS]\n";
+    for (int y = 0; y < n; ++y) for (int x = 0; x < n; ++x) if (isQuad(x, y)) {
+        const int a = y * (n + 1) + x, b = a + 1, d = a + n + 1, c = d + 1;
+        out << a << ' ' << b << ' ' << c << ' ' << d << " .03 0\n";
+    }
+    int cells = 0;
+    for (int y = 0; y < n; ++y) for (int x = 0; x < n; ++x) cells += isQuad(x, y) ? 1 : 2;
+    out << "[2D_INFILTRATION_DEFAULTS]\n* CONSTANT 0 - - - -\n"
+           "[2D_AQUIFER_OPTIONS]\nCLOSURE " << (layered ? "SIGMA" : "CLOSED_FORM") <<
+           "\nM_LAYERS 4\nNODE_ENROLMENT ROWS\n[2D_AQUIFER]\n* 36 1 .45 .10 2 HG0 .3\n";
+    for (int c = 0; c < cells; ++c)
+        out << "CELL " << c + 1 << " 36 1 .45 .10 2 HG0 " << .3 + .001 * (c % 13) << '\n';
+    out << "[GW_TRANSPORT_OPTIONS]\nDISPERSION YES\nUNSAT_TRANSPORT " << (layered ? "LAYERED" : "BULK") <<
+           "\nTHERMAL_MODEL POROUS_EQUILIBRIUM\nCONDUCTION NO\n"
+           "[GW_INITIAL_QUALITY]\n* SAT __TEMPERATURE__ 20\n* UNSAT __TEMPERATURE__ 20\n"
+           "* SAT __WATER_AGE__ 3\n* UNSAT __WATER_AGE__ 1\n";
+    for (int s = 0; s < pollutants; ++s)
+        out << "* SAT P" << s << ' ' << 2 + s << "\n* UNSAT P" << s << ' ' << 1 + s << '\n';
+    out << "[2D_AQUIFER_BOUNDARIES]\nCELL 1 EDGE 2 FLOW CONST 0\n"
+           "[COORDINATES]\nJ1 0 0\nO1 100 100\n[REPORT]\nINPUT NO\n";
+    return out.str();
+}
+struct Rig {
+    openswmm::SWMMEngine engine;
+    explicit Rig(const fs::path& path, int n, int kind, int pollutants, bool layered, int threads) {
+        save(path, deck(n, kind, pollutants, layered, threads));
+        auto report = path; report.replace_extension(".rpt");
+        auto output = path; output.replace_extension(".out");
+        if (engine.open(path.string().c_str(), report.string().c_str(), output.string().c_str()) != SWMM_OK)
+            throw std::runtime_error("packet fixture open failed: " + std::string(engine.last_error_message()));
+        if (engine.initialize() != SWMM_OK)
+            throw std::runtime_error("packet fixture initialize failed: " + std::string(engine.last_error_message()));
+        auto& g = gw();
+        auto& t = g.transport();
+        require(t.n_species >= pollutants && t.age_row >= 0 && t.temp_row >= 0, "fixture row layout absent");
+        for (int c = 0; c < t.n_cells; ++c) {
+            for (int s = 0; s < pollutants; ++s)
+                t.sat_mass[t.idx(s, c)] = (1. + s + .125 * (c % 7)) * g.satVolume(c);
+            g.state().dt_cell[c] = c % 3 ? .008 : .002;
+        }
+        g.assignTiers(.002, 3);
+    }
+    openswmm::twoD::SubsurfaceSolver& gw() { return engine.surfaceRouter2D().subsurface(); }
+    std::string capture() {
+        auto copy = gw();
+        Archive a;
+        copy.checkpoint(a, false);
+        auto l = legacy(copy.transport(), copy.transport().sacc_L);
+        auto r = legacy(copy.transport(), copy.transport().sacc_R);
+        auto wire = a.bytes();
+        Archive result;
+        auto& surface = engine.surfaceRouter2D().state();
+        result(wire, l, r, surface.volume, surface.head, surface.depth, surface.transport.cell_mass);
+        return result.bytes();
+    }
+    void faces(int tier, double dt) { gw().fireGwFaces(tier, dt); }
+    void cells(int tier, double dt, double start) {
+        gw().fireGwCells(tier, dt, engine.surfaceRouter2D().state(), start);
+    }
+    void cycle(int step) {
+        for (int tier = 0; tier < 3; ++tier) if (step % (1 << tier) == 0) {
+            const auto dt = .002 * (1 << tier);
+            faces(tier, dt);
+            cells(tier, dt, step * .002 - dt);
+        }
+    }
+};
+inline Result engineHistory(const fs::path& dir) {
+    Result result;
+    Archive history;
+    for (int n : {1, 4}) for (int kind : {0, 1, 2}) for (bool layered : {false, true}) {
+        const auto tag = std::to_string(n) + "_" + std::to_string(kind) + "_" + std::to_string(layered);
+        Rig first(dir / (tag + "_a.inp"), n, kind, 3, layered, 1);
+        Rig second(dir / (tag + "_b.inp"), n, kind, 3, layered, 1);
+        auto capture = [&](std::string label) {
+            auto bytes = first.capture();
+            history(n, kind, layered, label, bytes);
+            ++result.cases;
+        };
+        capture("initialize");
+        first.faces(0, .002);
+        capture("pending-faces");
+        if (n > 1) {
+            const auto& t = first.gw().transport();
+            require(std::any_of(t.sacc_L.begin(), t.sacc_L.end(), [](double v) { return v != 0; }),
+                    "fixture did not exercise nonzero pending packets");
+            require(std::adjacent_find(first.gw().state().tier.begin(), first.gw().state().tier.end(),
+                                      std::not_equal_to<int>{}) != first.gw().state().tier.end(),
+                    "fixture lacks mixed tiers");
+        }
+        auto saved = first.gw().transportRestartState();
+        require(!saved.empty(), "modern restart fixture is inactive");
+        auto before = second.capture();
+        auto refusal = second.gw().restoreTransportRestart(saved.substr(0, saved.size() / 2), true);
+        require(!refusal.empty() && second.capture() == before, "truncated public restore changed target");
+        history(refusal);
+        require(second.gw().restoreTransportRestart(saved, false).empty() && second.capture() == before,
+                "validation-only public restore mutated target");
+        refusal = second.gw().restoreTransportRestart(saved, true);
+        require(refusal.empty(), "pending public restore refused: " + refusal);
+        require(second.capture() == first.capture(), "pending public restore differs");
+        if (!first.gw().transport().sacc_L.empty()) {
+            auto badSolver = first.gw();
+            auto& t = badSolver.transport();
+            t.sacc_L[index(t, t.n_species - 1, 0, first.gw().state().eacc_L.size())] =
+                std::bit_cast<double>(0x7ff8000000000042ULL);
+            const auto bad = badSolver.transportRestartState();
+            refusal = second.gw().restoreTransportRestart(bad, true);
+            require(!refusal.empty() && second.capture() == first.capture(), "nonfinite public restore changed target");
+            history(refusal);
+        } else { refusal.clear(); history(refusal); }
+        first.cells(0, .002, 0); second.cells(0, .002, 0);
+        capture("gather-first-tier");
+        for (int step = 2; step <= 12; ++step) {
+            first.cycle(step); second.cycle(step);
+            require(first.capture() == second.capture(), "restored evolving GW state differs");
+        }
+        capture("three-macrocycles");
+        auto copy = first.gw();
+        Archive model;
+        copy.checkpoint(model, true);
+        auto identity = model.bytes();
+        history(identity);
+    }
+    result.bytes = history.bytes();
+    return result;
+}
+}
+
+TEST(GwCompletion, LateralPacketCodecPreservesLegacyWireAndFailurePrefix) {
+    const auto result = gw_packet_fixture::codecHistory();
+    EXPECT_GT(result.cases, 200u);
+    if (const char* dir = std::getenv("OPENSWMM_GW_PACKET_TEST_OUT"))
+        gw_packet_fixture::save(std::filesystem::path(dir) / "codec.bin", result.bytes);
+}
+TEST(GwCompletion, LateralPacketStoragePreservesLogicalSummationOrder) {
+    const auto result = gw_packet_fixture::storageHistory();
+    EXPECT_EQ(result.cases, 56u);
+    if (const char* dir = std::getenv("OPENSWMM_GW_PACKET_TEST_OUT"))
+        gw_packet_fixture::save(std::filesystem::path(dir) / "storage.bin", result.bytes);
+}
+TEST(GwCompletion, LegacyV12V13LateralPacketsRestoreWithoutModernOverwrite) {
+    const auto dir = kOutDir / "l4_native";
+    const auto result = gw_packet_fixture::nativeHistory(dir);
+    EXPECT_EQ(result.cases, 24u);
+    if (const char* path = std::getenv("OPENSWMM_GW_PACKET_TEST_OUT"))
+        gw_packet_fixture::save(std::filesystem::path(path) / "native.bin", result.bytes);
+}
+TEST(GwCompletion, MixedTierLateralPacketsContinueExactlyAfterPublicRestart) {
+    const auto result = gw_packet_fixture::engineHistory(kOutDir / "l4_engine");
+    EXPECT_EQ(result.cases, 48u);
+    if (const char* dir = std::getenv("OPENSWMM_GW_PACKET_TEST_OUT"))
+        gw_packet_fixture::save(std::filesystem::path(dir) / "engine.bin", result.bytes);
+}
+
+// Requires the existing GW packet fixture, embedded earlier in the normal test.
+namespace gw_layer_fixture {
+using Archive = gw_packet_fixture::Archive;
+using Transport = gw_packet_fixture::Transport;
+using Rows = std::array<std::vector<double>, 3>;
+using gw_packet_fixture::require;
+namespace fs = std::filesystem;
+inline std::array<std::vector<double>*, 3> fields(Transport& t) {
+    return {&t.layer_mass, &t.contact_node_mass, &t.contact_link_mass};
+}
+inline Transport state(int ns, int nc, int nl) {
+    Transport t;
+    t.resize(ns, nc, 0); t.n_layers = nl;
+    for (auto* row : fields(t)) row->assign(std::size_t(ns) * nc * nl, 0);
+    t.contact_water.assign(std::size_t(nc) * nl, 0);
+    return t;
+}
+inline Rows legacy(Transport& t) {
+    Rows rows;
+    auto live = fields(t);
+    for (int which = 0; which < 3; ++which)
+        for (int s = 0; s < t.n_species; ++s)
+            for (int j = 0; j < t.n_layers; ++j)
+                for (int c = 0; c < t.n_cells; ++c)
+                    rows[which].push_back((*live[which])[t.layerIdx(s, j, c)]);
+    return rows;
+}
+inline std::string encode(Rows rows) {
+    Archive a;
+    for (auto& row : rows) a.fixed(row);
+    return a.bytes();
+}
+template <class A>
+void matrix(A& a, Transport& t) {
+    for (auto* row : fields(t)) {
+        if constexpr (requires { a.fixedColumnMajorBlocks(*row, std::size_t(0), std::size_t(0)); })
+            a.fixedColumnMajorBlocks(*row, std::size_t(t.n_species), std::size_t(t.n_layers));
+        else a.fixed(*row);
+    }
+}
+struct Result { std::string bytes; std::size_t cases = 0, writes = 0; };
+inline Result codecHistory() {
+    Archive history;
+    Result result;
+    std::string magic = "L6_LAYER_CODEC_V1";
+    history(magic);
+    for (int ns : {0, 1, 3, 8}) for (int nc : {0, 1, 5}) for (int nl : {0, 1, 2, 7}) {
+        auto t = state(ns, nc, nl);
+        auto live = fields(t);
+        const uint64_t bits[] = {0, uint64_t(1) << 63, 0x3ff123456789abcdULL,
+            0xbfc23456789abcdeULL, 0x7ff8000000000042ULL, 0x7ff0000000000000ULL,
+            0xfff0000000000000ULL, 1};
+        for (int which = 0; which < 3; ++which)
+            for (int s = 0; s < ns; ++s) for (int j = 0; j < nl; ++j) for (int c = 0; c < nc; ++c)
+                (*live[which])[t.layerIdx(s, j, c)] = std::bit_cast<double>(bits[(which + 3*s + 2*j + c) % 8]);
+        auto rows = legacy(t);
+        const auto wire = encode(rows);
+        Archive writer;
+        matrix(writer, t);
+        require(writer.bytes() == wire, "layer codec wire differs");
+        const auto stride = sizeof(uint64_t) + rows[0].size() * sizeof(double);
+        std::vector<std::pair<std::string, std::string>> inputs = {
+            {"valid", wire}, {"empty", ""}, {"short-count", wire.substr(0, 7)},
+            {"last-byte", wire.substr(0, wire.size()-1)},
+            {"first-value", wire.substr(0, 8 + (rows[0].empty() ? 0 : 3))},
+            {"second-count", wire.substr(0, stride+3)},
+            {"third-value", wire.substr(0, 2*stride+8+(rows[0].empty() ? 0 : 3))},
+            {"trailing", wire+'x'}};
+        for (std::size_t offset : {std::size_t(0), stride, 2*stride}) {
+            auto bad = wire;
+            gw_packet_fixture::count(bad, offset, rows[0].size()+1);
+            inputs.emplace_back("larger-"+std::to_string(offset), bad);
+            if (!rows[0].empty()) {
+                gw_packet_fixture::count(bad, offset, rows[0].size()-1);
+                inputs.emplace_back("smaller-"+std::to_string(offset), bad);
+            }
+        }
+        auto bad = wire;
+        gw_packet_fixture::count(bad, 0, 64*1024*1024/8+1);
+        inputs.emplace_back("oversized-budget", bad);
+        Archive prefix;
+        gw_packet_fixture::budget(prefix);
+        inputs.emplace_back("cumulative-budget", prefix.bytes()+wire+std::string(8192, '\0'));
+        for (auto [label, input] : inputs) {
+            auto expected = rows;
+            for (auto& row : expected) std::fill(row.begin(), row.end(), -1234.5);
+            auto actual = t;
+            for (auto* row : fields(actual)) std::fill(row->begin(), row->end(), -1234.5);
+            Archive oldReader(input), newReader(input);
+            std::string oldError, newError;
+            try {
+                if (label == "cumulative-budget") gw_packet_fixture::budget(oldReader);
+                for (auto& row : expected) oldReader.fixed(row);
+                oldReader.finish();
+            } catch (const std::exception& e) { oldError = e.what(); }
+            try {
+                if (label == "cumulative-budget") gw_packet_fixture::budget(newReader);
+                matrix(newReader, actual); newReader.finish();
+            } catch (const std::exception& e) { newError = e.what(); }
+            auto decoded = legacy(actual);
+            require(oldError == newError, "layer codec diagnostic differs: "+label);
+            require(encode(decoded) == encode(expected), "layer partial logical prefix differs: "+label);
+            const bool valid = label == "valid" || (label == "third-value" && rows[0].empty());
+            require(valid == oldError.empty(), "layer fixture expected refusal differs");
+            auto logical = encode(decoded);
+            history(ns, nc, nl, label, input, oldError, logical);
+            ++result.cases;
+        }
+        Archive oldBudget, newBudget;
+        std::string oldError, newError;
+        try { gw_packet_fixture::budget(oldBudget); for (auto& row : rows) oldBudget.fixed(row); }
+        catch (const std::exception& e) { oldError = e.what(); }
+        try { gw_packet_fixture::budget(newBudget); matrix(newBudget, t); }
+        catch (const std::exception& e) { newError = e.what(); }
+        require(oldError == newError && oldBudget.bytes() == newBudget.bytes(), "layer write budget differs");
+        auto written = oldBudget.bytes(); history(ns, nc, nl, oldError, written);
+        ++result.writes;
+    }
+    history(result.cases, result.writes);
+    result.bytes = history.bytes();
+    return result;
+}
+inline Result storageHistory() {
+    Archive history;
+    Result result;
+    for (int ns : {1, 3, 8}) for (int nc : {1, 5}) for (int nl : {1, 2, 7}) {
+        auto t = state(ns, nc, nl);
+        for (int s = 0; s < ns; ++s) {
+            for (int c = 0; c < nc; ++c) {
+                t.sat_mass[t.idx(s,c)] = .03125*(s+c+1);
+                for (int j = 0; j < nl; ++j) {
+                    auto k = t.layerIdx(s,j,c);
+                    t.layer_mass[k] = .017*(s+2*j+3*c+1);
+                    t.contact_node_mass[k] = .003*(3*s-j+c);
+                    t.contact_link_mass[k] = -.0013*(s+j-2*c);
+                }
+                double expected = 0;
+                for (int j = 0; j < nl; ++j) expected += .017*(s+2*j+3*c+1);
+                t.refreshUnsat(s,c);
+                require(std::bit_cast<uint64_t>(t.unsat_mass[t.idx(s,c)]) == std::bit_cast<uint64_t>(expected),
+                        "layer refresh sum order differs");
+            }
+            double inflight = 0;
+            for (int c = 0; c < nc; ++c) inflight += 0.;
+            for (int j = 0; j < nl; ++j) for (int c = 0; c < nc; ++c)
+                inflight += .003*(3*s-j+c) + -.0013*(s+j-2*c);
+            double storage = 0, ledgered = 0;
+            for (int c = 0; c < nc; ++c) {
+                auto k = t.idx(s,c);
+                storage += t.sat_mass[k]; storage += t.unsat_mass[k]; storage += 0.; storage += 0.;
+                ledgered += t.sat_mass[k]+t.unsat_mass[k];
+            }
+            storage += inflight; ledgered += inflight;
+            auto actualIn = t.inFlight1D(s), actual = t.storage(s), actualLedgered = t.ledgeredStorage(s);
+            require(std::bit_cast<uint64_t>(actualIn) == std::bit_cast<uint64_t>(inflight) &&
+                    std::bit_cast<uint64_t>(actual) == std::bit_cast<uint64_t>(storage) &&
+                    std::bit_cast<uint64_t>(actualLedgered) == std::bit_cast<uint64_t>(ledgered),
+                    "layer/contact logical storage order differs");
+            auto logical = encode(legacy(t));
+            history(ns, nc, nl, s, actualIn, actual, actualLedgered, logical);
+            ++result.cases;
+        }
+        t.clear();
+        require(t.layer_mass.empty() && t.contact_node_mass.empty() && t.contact_link_mass.empty(), "clear retained layers");
+    }
+    result.bytes = history.bytes();
+    return result;
+}
+struct Rig {
+    openswmm::SWMMEngine engine;
+    explicit Rig(const fs::path& path, int n, int pollutants, int layers, int threads, bool node = false) {
+        auto body = gw_packet_fixture::deck(n, 0, pollutants, true, threads);
+        auto at = body.find("M_LAYERS 4");
+        require(at != std::string::npos, "layer fixture missing option");
+        body.replace(at, 10, "M_LAYERS "+std::to_string(layers));
+        std::ostringstream seeds;
+        seeds << "[GW_INITIAL_QUALITY]\n";
+        for (int s = 0; s < pollutants; ++s) for (int j = 0; j < layers; ++j)
+            seeds << "* LAYER " << j+1 << " P" << s << ' ' << 1+s+.125*j << '\n'
+                  << "CELL 1 LAYER " << j+1 << " P" << s << ' ' << 1+s+.125*j+.03125 << '\n';
+        body.insert(body.find("[COORDINATES]"), seeds.str());
+        if (node) {
+            at = body.find("J1 -2 4 0 0 0");
+            require(at != std::string::npos, "layer fixture missing junction");
+            body.replace(at, 13, "J1 -.2 4 .4 0 0");
+            body.insert(body.find("[COORDINATES]"), "[2D_AQUIFER_NODE]\nJ1 1 KC 360 DC .05 AREA 1\n");
+        }
+        gw_packet_fixture::save(path, body);
+        auto report = path; report.replace_extension(".rpt");
+        auto output = path; output.replace_extension(".out");
+        if (engine.open(path.string().c_str(), report.string().c_str(), output.string().c_str()) != SWMM_OK)
+            throw std::runtime_error("layer fixture open failed: "+std::string(engine.last_error_message()));
+        if (engine.initialize() != SWMM_OK)
+            throw std::runtime_error("layer fixture initialize failed: "+std::string(engine.last_error_message()));
+        require(gw().transport().n_layers == layers, "layer fixture incorrect active extent");
+        for (int c = 0; c < gw().state().n_cells; ++c) gw().state().dt_cell[c] = c%3 ? .008 : .002;
+        gw().assignTiers(.002, 3);
+    }
+    openswmm::twoD::SubsurfaceSolver& gw() { return engine.surfaceRouter2D().subsurface(); }
+    std::string capture() {
+        auto copy = gw();
+        Archive a;
+        copy.checkpoint(a, false);
+        auto wire = a.bytes(), logical = encode(legacy(copy.transport()));
+        Archive result;
+        auto& t = copy.transport();
+        auto& surface = engine.surfaceRouter2D().state();
+        result(wire, logical, t.sat_mass, t.unsat_mass, surface.volume, surface.head,
+               surface.depth, surface.transport.cell_mass);
+        return result.bytes();
+    }
+    void cycle(int step) {
+        for (int tier = 0; tier < 3; ++tier) if (step%(1<<tier) == 0) {
+            const double dt = .002*(1<<tier);
+            gw().fireGwFaces(tier,dt);
+            gw().fireGwCells(tier,dt,engine.surfaceRouter2D().state(),step*.002-dt);
+        }
+    }
+};
+inline Result engineHistory(const fs::path& dir) {
+    Result result;
+    Archive history;
+    for (int n : {1,3}) for (int nl : {2,4,7}) {
+        const auto tag = std::to_string(n)+"_"+std::to_string(nl);
+        Rig a(dir/(tag+"_a.inp"),n,3,nl,1,true), b(dir/(tag+"_b.inp"),n,3,nl,1,true);
+        auto& gw = a.gw();
+        auto& tr = gw.transport();
+        require(tr.n_species == 5, "layer fixture needs pollutant, age and temperature rows");
+        auto capture = [&](std::string label) {
+            auto bytes = a.capture();
+            history(n,nl,label,bytes); ++result.cases;
+        };
+        capture("initialize");
+        auto nodes = a.engine.context().nodes;
+        const auto& options = a.engine.surfaceRouter2D().options();
+        nodes.depth[0] = .4/options.len_1d_to_2d;
+        nodes.volume[0] = 10/options.vol_1d_to_2d;
+        std::vector<double> concentration(nodes.invert_elev.size()*tr.n_species,0);
+        for (int s = 0; s < tr.n_species; ++s) concentration[s] = 3+s;
+        concentration[tr.temp_row] = 20; concentration[tr.age_row] = 9;
+        gw.setNodeRowConc(concentration.data(),tr.n_species);
+        gw.sampleNodeExchange(&nodes,.002,.002);
+        require(std::any_of(tr.contact_node_mass.begin(),tr.contact_node_mass.end(),[](double v){return v!=0;}),
+                "layer fixture did not book native node layer mass");
+        capture("pending-node");
+        std::vector<double> link(tr.n_species);
+        for (int s = 0; s < tr.n_species; ++s) link[s] = 7+s;
+        link[tr.temp_row] = 20; link[tr.age_row] = 11;
+        gw.bookLinkContact(tr.n_cells-1,.00002,link,-.01,-.5);
+        require(std::any_of(tr.contact_link_mass.begin(),tr.contact_link_mass.end(),[](double v){return v!=0;}),
+                "layer fixture did not book native link layer mass");
+        capture("pending-both");
+        const auto saved = gw.transportRestartState(), before = b.capture();
+        auto refusal = b.gw().restoreTransportRestart(saved.substr(0,saved.size()/2),true);
+        require(!refusal.empty() && b.capture()==before,"truncated layer public restore mutated target");
+        history(refusal);
+        require(b.gw().restoreTransportRestart(saved,false).empty() && b.capture()==before,
+                "layer validation-only restore changed target");
+        refusal = b.gw().restoreTransportRestart(saved,true);
+        require(refusal.empty(),"pending layer restore refused: "+refusal);
+        require(b.capture()==a.capture(),"pending node/link layer restore differs");
+        capture("restored");
+        for (int which : {1,2}) {
+            auto trial = gw;
+            auto& t = trial.transport();
+            (*fields(t)[which])[t.layerIdx(t.n_species-1,0,0)] =
+                std::bit_cast<double>(0x7ff8000000000042ULL);
+            const auto bad = trial.transportRestartState();
+            refusal = b.gw().restoreTransportRestart(bad,true);
+            require(!refusal.empty() && b.capture()==a.capture(),"nonfinite layer contact changed target");
+            history(which,refusal);
+        }
+        for (int step = 1; step <= 8; ++step) {
+            a.cycle(step); b.cycle(step);
+            require(a.capture()==b.capture(),"layer restored continuation differs");
+        }
+        capture("two-macrocycles");
+    }
+    result.bytes = history.bytes();
+    return result;
+}
+}
+
+TEST(GwCompletion, LayerColumnCodecPreservesLegacyWireAndFailurePrefixes) {
+    const auto result = gw_layer_fixture::codecHistory();
+    EXPECT_EQ(result.cases, 678u);
+    EXPECT_EQ(result.writes, 48u);
+    if (const char* dir = std::getenv("OPENSWMM_GW_LAYER_TEST_OUT"))
+        gw_packet_fixture::save(std::filesystem::path(dir)/"codec.bin", result.bytes);
+}
+TEST(GwCompletion, LayerAndNativeContactSumsRetainOriginalLogicalOrder) {
+    const auto result = gw_layer_fixture::storageHistory();
+    EXPECT_EQ(result.cases, 72u);
+    if (const char* dir = std::getenv("OPENSWMM_GW_LAYER_TEST_OUT"))
+        gw_packet_fixture::save(std::filesystem::path(dir)/"storage.bin", result.bytes);
+}
+TEST(GwCompletion, LayerColumnsPreserveBothPendingNativeSeamsAndPublicRestart) {
+    const auto result = gw_layer_fixture::engineHistory(kOutDir/"l6_native_layers");
+    EXPECT_EQ(result.cases,30u);
+    if (const char* dir = std::getenv("OPENSWMM_GW_LAYER_TEST_OUT"))
+        gw_packet_fixture::save(std::filesystem::path(dir)/"engine.bin",result.bytes);
 }

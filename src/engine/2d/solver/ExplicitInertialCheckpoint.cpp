@@ -526,8 +526,14 @@ void ExplicitInertialSolver::checkpointState(Archive& a) {
     const auto pins = pin_t0_;
     const bool telemetry_enabled = !telemetry_path_.empty();
     bool saved_telemetry = telemetry_enabled;
-    a.fixed(q_, qcx_, qcy_, facc_L_, facc_R_, macc_x_L_, macc_x_R_, macc_y_L_, macc_y_R_, sacc_L_,
-            sacc_R_, dw_slope_, cell_active_, tier_, face_tier_, pin_t0_, frontier_,
+    a.fixed(q_, qcx_, qcy_);
+    const std::size_t packet_face_count = face_accum_.size() / face_accum_stride_;
+    const std::size_t momentum_packet_count = face_accum_stride_ == 6 ? packet_face_count : 0;
+    for (std::size_t side = 0; side < 2; ++side)
+        a.fixedStrided(face_accum_, packet_face_count, side, face_accum_stride_);
+    for (std::size_t side = 2; side < 6; ++side)
+        a.fixedStrided(face_accum_, momentum_packet_count, side, face_accum_stride_);
+    a.fixed(sacc_L_, sacc_R_, dw_slope_, cell_active_, tier_, face_tier_, pin_t0_, frontier_,
             source_ledgers_, cells_by_tier_, edges_by_tier_);
     a(active_cells_, active_faces_, dt0_, t_last_sync_, source_phase_end_, cycles_since_rebuild_,
       accumulators_pending_, front_breach_, h_on_front_, exch_tau_, spill_deficit_, substeps_run_,
@@ -549,14 +555,23 @@ void ExplicitInertialSolver::checkpointState(Archive& a) {
     }
     if (pin_t0_ != pins || saved_telemetry != telemetry_enabled)
         throw std::runtime_error("CPU checkpoint pin/telemetry configuration differs.");
-    for (const auto* row :
-         {&q_, &qcx_, &qcy_, &facc_L_, &facc_R_, &macc_x_L_, &macc_x_R_, &macc_y_L_, &macc_y_R_,
-          &sacc_L_, &sacc_R_, &dw_slope_, &source_ledgers_})
+    for (const auto* row : {&q_, &qcx_, &qcy_})
         for (double v : *row)
             if (!std::isfinite(v))
                 throw std::runtime_error("Nonfinite CPU checkpoint state.");
-    for (const auto* row : {&facc_L_, &facc_R_, &macc_x_L_, &macc_x_R_, &macc_y_L_, &macc_y_R_,
-                            &sacc_L_, &sacc_R_, &source_ledgers_})
+    for (std::size_t side = 0; side < face_accum_stride_; ++side)
+        for (std::size_t e = 0; e < packet_face_count; ++e)
+            if (!std::isfinite(face_accum_[e * face_accum_stride_ + side]))
+                throw std::runtime_error("Nonfinite CPU checkpoint state.");
+    for (const auto* row : {&sacc_L_, &sacc_R_, &dw_slope_, &source_ledgers_})
+        for (double v : *row)
+            if (!std::isfinite(v))
+                throw std::runtime_error("Nonfinite CPU checkpoint state.");
+    for (std::size_t side = 0; side < face_accum_stride_; ++side)
+        for (std::size_t e = 0; e < packet_face_count; ++e)
+            if (face_accum_[e * face_accum_stride_ + side] != 0)
+                throw std::runtime_error("CPU checkpoint has unsettled transfers.");
+    for (const auto* row : {&sacc_L_, &sacc_R_, &source_ledgers_})
         for (double v : *row)
             if (v != 0)
                 throw std::runtime_error("CPU checkpoint has unsettled transfers.");

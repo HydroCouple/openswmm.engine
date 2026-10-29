@@ -9,6 +9,12 @@
  * @license   Apache-2.0
  */
 
+#include "core/ProcessPerf.hpp"
+#include "core/ThreadInfo.hpp"
+#include <exception>
+#ifdef SWMM_USE_OPENMP
+#include <omp.h>
+#endif
 #include "MeshSnow.hpp"
 #include "SnowCheckpoint.hpp"
 #include "../../core/CompletedSourceArchive.hpp"
@@ -189,6 +195,13 @@ std::string MeshSnow::initialize(SimulationContext& ctx,
 std::string MeshSnow::advance(SimulationContext& ctx, double start, double end,
                               const std::vector<double>& rain,
                               const std::vector<double>& catch_factor) {
+    return advanceTrial(ctx, start, end, rain, catch_factor, nullptr);
+}
+std::string MeshSnow::advanceTrial(SimulationContext& ctx, double start, double end,
+                                   const std::vector<double>& rain,
+                                   const std::vector<double>& catch_factor,
+                                   const MeshSnow* configuration) {
+    perf::ProcessTimer process_timer(perf::ProcessPhase::mesh_snow);
     if (!active())
         return {};
     if (!std::isfinite(start) || !std::isfinite(end) || start != completed_ || end <= start ||
@@ -202,10 +215,38 @@ std::string MeshSnow::advance(SimulationContext& ctx, double start, double end,
         completed_ = end;
         return {};
     }
-    auto candidate = *this;
-    if (auto error = candidate.advanceInPlace(ctx, start, end, rain, catch_factor); !error.empty())
+    if (configuration)
+        return advanceInPlace(*configuration, ctx, start, end, rain, catch_factor);
+    perf::count(perf::ProcessCounter::mesh_snow_copies);
+    MeshSnow candidate;
+    // Copy only mutable runtime; this owner supplies stable initialized configuration.
+    candidate.forcing_ = forcing_;
+    candidate.completed_ = completed_;
+    candidate.last_seconds_ = last_seconds_;
+    candidate.site_ = site_;
+    candidate.held_ = held_;
+    candidate.precipitation_ = precipitation_;
+    candidate.catch_ = catch_;
+    candidate.liquid_rate_ = liquid_rate_;
+    candidate.exposed_ = exposed_;
+    candidate.output_ = output_;
+    candidate.ledger_ = ledger_;
+    candidate.degree_day_ = degree_day_;
+    if (auto error = candidate.advanceInPlace(*this, ctx, start, end, rain, catch_factor);
+        !error.empty())
         return error;
-    *this = std::move(candidate);
+    forcing_ = std::move(candidate.forcing_);
+    completed_ = std::move(candidate.completed_);
+    last_seconds_ = std::move(candidate.last_seconds_);
+    site_ = std::move(candidate.site_);
+    held_ = std::move(candidate.held_);
+    precipitation_ = std::move(candidate.precipitation_);
+    catch_ = std::move(candidate.catch_);
+    liquid_rate_ = std::move(candidate.liquid_rate_);
+    exposed_ = std::move(candidate.exposed_);
+    output_ = std::move(candidate.output_);
+    ledger_ = std::move(candidate.ledger_);
+    degree_day_ = std::move(candidate.degree_day_);
     return {};
 }
 void MeshSnow::useAcceptedExposure() {
@@ -284,7 +325,8 @@ std::string MeshSnow::applyGroundContactEnergy(int cell, double soil_j) {
         ueb::closeHeld(held);
     return {};
 }
-std::string MeshSnow::advanceInPlace(SimulationContext& ctx, double start, double end,
+std::string MeshSnow::advanceInPlace(const MeshSnow& configuration, SimulationContext& ctx,
+                                     double start, double end,
                                      const std::vector<double>& rain,
                                      const std::vector<double>& catch_factor) {
     const auto& config = ctx.snowpacks.config;
@@ -293,65 +335,47 @@ std::string MeshSnow::advanceInPlace(SimulationContext& ctx, double start, doubl
         for (auto& column : held_)
             ueb::closeHeld(column);
     forcing_ = forcing_key;
-    for (int i : active_cells_) {
-        if (!std::isfinite(rain[i]) || rain[i] < 0 || !std::isfinite(catch_factor[i]) ||
-            catch_factor[i] < 0)
-            return "Invalid mesh snow precipitation.";
-        auto& held = held_[i];
-        auto& result = output_[i];
-        auto& book = ledger_[i];
-        result.melt_m = result.throughfall_m = result.sublim_m = 0;
-        if (precipitation_[i] != rain[i] || catch_[i] != catch_factor[i])
-            ueb::closeHeld(held);
-        const bool ground_contact = groundContactEnabled(i) && kind_[i] == SnowKind::Ueb;
-        if (ground_contact && held.pending())
-            ueb::closeHeld(held);
-        double at = start, covered_seconds = 0;
-        while (at < end - 1e-9) {
-            // Contact flux is resolved against the accepted snow cover for
-            // this forcing segment. Do not reuse a look-ahead prediction if
-            // a previous segment changed the covered area.
-            if (ground_contact && held.pending())
-                ueb::closeHeld(held);
-            const double date = ctx.options.start_date + at / 86400.;
-            double prescribed_qg = site_[i].ground_heat;
-            const double boundary = (std::floor((at + 1e-7) / step_) + 1) * step_;
-            double horizon = std::min(boundary - at, ctx.options.totalDurationMs() / 1000. - at);
-            if (!ctx.snowpacks.meteorology.empty()) {
-                const double hour =
-                    (ctx.options.start_date - std::floor(ctx.options.start_date)) * 86400. + at;
-                horizon = std::min(horizon, (std::floor((hour + 1e-5) / 3600.) + 1) * 3600. - hour);
-            }
-            if (snowTransientForcing(ctx))
-                horizon = std::min(horizon, end - at);
-            if (!(horizon > 0))
-                return "Mesh snow forcing ends before the requested interval.";
-            double dt = std::min(end - at, horizon);
-            if (kind_[i] == SnowKind::Ueb) {
-                if (!held.pending()) {
-                    ueb::Forcing forcing;
-                    if (auto error = climate::resolveUebForcing(
-                            ctx, date, horizon, geometry_[i].slope, geometry_[i].aspect, forcing,
-                            site_[i].pressure);
-                        !error.empty())
-                        return error;
-                    forcing.precipitation = rain[i] * horizon;
-                    forcing.snow_catch = catch_factor[i];
-                    auto site = site_[i];
-                    const bool modeled_contact =
-                        ground_contact && (held.accepted.cover > 0 || (forcing.precipitation > 0 &&
-                                                                       forcing.snow_fraction > 0));
-                    if (modeled_contact)
-                        site.ground_heat = 0;
-                    prescribed_qg = site.ground_heat;
-                    if (auto error = ueb::prepareHeld(held, config.parameters, site, forcing,
-                                                      depletion_curve_);
-                        !error.empty())
-                        return error;
-                }
-                dt = std::min(dt, held.duration - held.elapsed);
+#ifdef SWMM_USE_OPENMP
+    const int threads = configuration.active_cells_.size() >= 512 && ctx.options.num_threads != 1 &&
+                                !omp_in_parallel()
+                            ? (ctx.options.num_threads > 0 ? ctx.options.num_threads
+                                                          : threadinfo::ompMaxThreads())
+                            : 1;
+    if (threads > 1) {
+        const double span = end - start;
+        const double boundary =
+            (std::floor((start + 1e-7) / configuration.step_) + 1) * configuration.step_;
+        double horizon = std::min(boundary - start, ctx.options.totalDurationMs() / 1000. - start);
+        if (!ctx.snowpacks.meteorology.empty()) {
+            const double hour =
+                (ctx.options.start_date - std::floor(ctx.options.start_date)) * 86400. + start;
+            horizon = std::min(horizon, (std::floor((hour + 1e-5) / 3600.) + 1) * 3600. - hour);
+        }
+        if (snowTransientForcing(ctx))
+            horizon = std::min(horizon, span);
+        // Only consume an existing single UEB prediction. Preparing weather
+        // changes shared table cursors/radiation; contact and DD stay scalar.
+        const bool prepared = start < end - 1e-9 && !(start + span < end - 1e-9) &&
+            span <= horizon &&
+            std::all_of(configuration.active_cells_.begin(), configuration.active_cells_.end(),
+                        [&](int i) {
+                            return configuration.kind_[i] == SnowKind::Ueb &&
+                                   !configuration.groundContactEnabled(i) && held_[i].pending() &&
+                                   span <= held_[i].duration - held_[i].elapsed &&
+                                   std::isfinite(rain[i]) && rain[i] >= 0 &&
+                                   std::isfinite(catch_factor[i]) && catch_factor[i] >= 0 &&
+                                   precipitation_[i] == rain[i] && catch_[i] == catch_factor[i];
+                        });
+        if (prepared) {
+            auto consumeCell = [&](int i) -> std::string {
+                auto& held = held_[i];
+                auto& result = output_[i];
+                auto& book = ledger_[i];
+                result.melt_m = result.throughfall_m = result.sublim_m = 0;
+                const double dt = span, prescribed_qg = site_[i].ground_heat;
+                double covered_seconds = 0;
                 ueb::LumpedFluxes flux;
-                if (auto error = ueb::consumeHeld(held, dt, depletion_curve_, flux); !error.empty())
+                if (auto error = ueb::consumeHeld(held, dt, configuration.depletion_curve_, flux); !error.empty())
                     return error;
                 covered_seconds += flux.active_fraction * dt;
                 result.melt_m += flux.liquid;
@@ -365,11 +389,145 @@ std::string MeshSnow::advanceInPlace(SimulationContext& ctx, double start, doubl
                 result.Ts_C = held.accepted.point.history.empty()
                                   ? std::min(0., result.T_C)
                                   : held.accepted.point.history.back().surface;
-                book.precipitation += (flux.rain + flux.snow) * geometry_[i].area;
-                book.net_energy += flux.net_energy * geometry_[i].area;
+                book.precipitation += (flux.rain + flux.snow) * configuration.geometry_[i].area;
+                book.net_energy += flux.net_energy * configuration.geometry_[i].area;
                 book.prescribed_ground_energy +=
-                    prescribed_qg * flux.active_fraction * dt * geometry_[i].area / 1000.;
-                book.geometry_energy += flux.geometry_energy * geometry_[i].area;
+                    prescribed_qg * flux.active_fraction * dt * configuration.geometry_[i].area / 1000.;
+                book.geometry_energy += flux.geometry_energy * configuration.geometry_[i].area;
+                const double area = configuration.geometry_[i].area;
+                book.raw_precipitation += rain[i] * (end - start) * area;
+                book.liquid += (result.melt_m + result.throughfall_m) * area;
+                book.sublimation += result.sublim_m * area;
+                book.stored = result.swe_m * area;
+                if (configuration.kind_[i] == SnowKind::Ueb)
+                    book.stored_energy = representedEnergy(held) * area;
+                if (!std::isfinite(book.stored) ||
+                    std::abs(book.residual()) > 1e-10 * std::max(1., book.initial + book.precipitation))
+                    return "Mesh snow water balance failed for cell " + std::to_string(i + 1) + '.';
+                liquid_rate_[i] = (result.melt_m + result.throughfall_m) / (end - start);
+                exposed_[i] = std::clamp(1 - covered_seconds / (end - start), 0., 1.);
+                precipitation_[i] = rain[i];
+                catch_[i] = catch_factor[i];
+                return {};
+            };
+            const int count = static_cast<int>(configuration.active_cells_.size());
+            int failed_slot = count;
+            std::string failure;
+            std::exception_ptr exception;
+#pragma omp parallel for schedule(static) num_threads(threads)
+            for (int slot = 0; slot < count; ++slot) {
+                try {
+                    auto error = consumeCell(configuration.active_cells_[slot]);
+                    if (!error.empty()) {
+#pragma omp critical(openswmm_mesh_snow_failure)
+                        {
+                            if (slot < failed_slot) {
+                                failed_slot = slot;
+                                failure = std::move(error);
+                                exception = nullptr;
+                            }
+                        }
+                    }
+                } catch (...) {
+#pragma omp critical(openswmm_mesh_snow_failure)
+                    {
+                        if (slot < failed_slot) {
+                            failed_slot = slot;
+                            failure.clear();
+                            exception = std::current_exception();
+                        }
+                    }
+                }
+            }
+            // The caller publishes this private trial only on complete success.
+            if (exception)
+                std::rethrow_exception(exception);
+            if (!failure.empty())
+                return failure;
+            last_seconds_ = span;
+            completed_ = end;
+            return {};
+        }
+    }
+#endif
+    int melt_day = -1;
+    for (int i : configuration.active_cells_) {
+        if (!std::isfinite(rain[i]) || rain[i] < 0 || !std::isfinite(catch_factor[i]) ||
+            catch_factor[i] < 0)
+            return "Invalid mesh snow precipitation.";
+        auto& held = held_[i];
+        auto& result = output_[i];
+        auto& book = ledger_[i];
+        result.melt_m = result.throughfall_m = result.sublim_m = 0;
+        if (precipitation_[i] != rain[i] || catch_[i] != catch_factor[i])
+            ueb::closeHeld(held);
+        const bool ground_contact = configuration.groundContactEnabled(i) && configuration.kind_[i] == SnowKind::Ueb;
+        if (ground_contact && held.pending())
+            ueb::closeHeld(held);
+        double at = start, covered_seconds = 0;
+        while (at < end - 1e-9) {
+            // Contact flux is resolved against the accepted snow cover for
+            // this forcing segment. Do not reuse a look-ahead prediction if
+            // a previous segment changed the covered area.
+            if (ground_contact && held.pending())
+                ueb::closeHeld(held);
+            const double date = ctx.options.start_date + at / 86400.;
+            double prescribed_qg = site_[i].ground_heat;
+            const double boundary = (std::floor((at + 1e-7) / configuration.step_) + 1) * configuration.step_;
+            double horizon = std::min(boundary - at, ctx.options.totalDurationMs() / 1000. - at);
+            if (!ctx.snowpacks.meteorology.empty()) {
+                const double hour =
+                    (ctx.options.start_date - std::floor(ctx.options.start_date)) * 86400. + at;
+                horizon = std::min(horizon, (std::floor((hour + 1e-5) / 3600.) + 1) * 3600. - hour);
+            }
+            if (snowTransientForcing(ctx))
+                horizon = std::min(horizon, end - at);
+            if (!(horizon > 0))
+                return "Mesh snow forcing ends before the requested interval.";
+            double dt = std::min(end - at, horizon);
+            if (configuration.kind_[i] == SnowKind::Ueb) {
+                if (!held.pending()) {
+                    ueb::Forcing forcing;
+                    if (auto error = climate::resolveUebForcing(
+                            ctx, date, horizon, configuration.geometry_[i].slope, configuration.geometry_[i].aspect, forcing,
+                            site_[i].pressure);
+                        !error.empty())
+                        return error;
+                    forcing.precipitation = rain[i] * horizon;
+                    forcing.snow_catch = catch_factor[i];
+                    auto site = site_[i];
+                    const bool modeled_contact =
+                        ground_contact && (held.accepted.cover > 0 || (forcing.precipitation > 0 &&
+                                                                       forcing.snow_fraction > 0));
+                    if (modeled_contact)
+                        site.ground_heat = 0;
+                    prescribed_qg = site.ground_heat;
+                    if (auto error = ueb::prepareHeld(held, config.parameters, site, forcing,
+                                                      configuration.depletion_curve_);
+                        !error.empty())
+                        return error;
+                }
+                dt = std::min(dt, held.duration - held.elapsed);
+                ueb::LumpedFluxes flux;
+                if (auto error = ueb::consumeHeld(held, dt, configuration.depletion_curve_, flux); !error.empty())
+                    return error;
+                covered_seconds += flux.active_fraction * dt;
+                result.melt_m += flux.liquid;
+                result.throughfall_m += flux.throughfall;
+                result.sublim_m += flux.sublimation;
+                result.swe_m = held.accepted.water;
+                result.cover_frac = held.accepted.cover;
+                result.energy_kJm2 = held.accepted.point.energy;
+                result.albedo = flux.point.albedo;
+                result.T_C = ueb::bulkTemperature(held.accepted.point, config.parameters);
+                result.Ts_C = held.accepted.point.history.empty()
+                                  ? std::min(0., result.T_C)
+                                  : held.accepted.point.history.back().surface;
+                book.precipitation += (flux.rain + flux.snow) * configuration.geometry_[i].area;
+                book.net_energy += flux.net_energy * configuration.geometry_[i].area;
+                book.prescribed_ground_energy +=
+                    prescribed_qg * flux.active_fraction * dt * configuration.geometry_[i].area / 1000.;
+                book.geometry_energy += flux.geometry_energy * configuration.geometry_[i].area;
             } else {
                 climate::RadiationState weather;
                 if (auto error = climate::resolveRadiation(ctx, date, dt, weather); !error.empty())
@@ -385,7 +543,11 @@ std::string MeshSnow::advanceInPlace(SimulationContext& ctx, double start, doubl
                 forcing.gamma = ctx.climate_state.gamma;
                 const double temp = weather.temperature * 1.8 + 32;
                 forcing.ea = 8.1175e6 * std::exp(-7701.544 / (temp + 405.0265));
-                degree_day_.setMeltCoeffs(datetime::dayOfYear(date));
+                const int day = datetime::dayOfYear(date);
+                if (day != melt_day) {
+                    degree_day_.setMeltCoeffs(day);
+                    melt_day = day;
+                }
                 SnowOutputs flux;
                 const double before = result.cover_frac;
                 degree_day_.step(i * 3 + 2, forcing, flux);
@@ -394,16 +556,16 @@ std::string MeshSnow::advanceInPlace(SimulationContext& ctx, double start, doubl
                 result.throughfall_m += flux.throughfall_m;
                 result.swe_m = flux.swe_m;
                 result.cover_frac = flux.cover_frac;
-                book.precipitation += (forcing.rain_m + forcing.snow_m) * geometry_[i].area;
+                book.precipitation += (forcing.rain_m + forcing.snow_m) * configuration.geometry_[i].area;
             }
             at += dt;
         }
-        const double area = geometry_[i].area;
+        const double area = configuration.geometry_[i].area;
         book.raw_precipitation += rain[i] * (end - start) * area;
         book.liquid += (result.melt_m + result.throughfall_m) * area;
         book.sublimation += result.sublim_m * area;
         book.stored = result.swe_m * area;
-        if (kind_[i] == SnowKind::Ueb)
+        if (configuration.kind_[i] == SnowKind::Ueb)
             book.stored_energy = representedEnergy(held) * area;
         if (!std::isfinite(book.stored) ||
             std::abs(book.residual()) > 1e-10 * std::max(1., book.initial + book.precipitation))

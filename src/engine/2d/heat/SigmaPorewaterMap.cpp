@@ -44,7 +44,8 @@ std::string SigmaPorewaterMap::configure(int m, int ns, std::vector<Overlap> ent
                                          const std::vector<double>& held) {
     if (m <= 0 || ns <= 0 || int(partition.size()) != ns)
         return "Invalid SIGMA contact mapping layout.";
-    SigmaPorewaterMap next;
+    // Keep the prior buffers for the next call, while invalid input still leaves this map intact.
+    static thread_local SigmaPorewaterMap next;
     next.layers = m;
     next.species = ns;
     next.overlaps = std::move(entries);
@@ -67,7 +68,7 @@ std::string SigmaPorewaterMap::configure(int m, int ns, std::vector<Overlap> ent
         }
     if (auto error = next.rebase(canonical, held); !error.empty())
         return error;
-    *this = std::move(next);
+    std::swap(*this, next);
     return {};
 }
 /**
@@ -92,7 +93,11 @@ std::string SigmaPorewaterMap::rebase(const std::vector<double>& canonical,
     const int nr = layers + 1;
     if (canonical.size() != std::size_t(species) * nr || held.size() != std::size_t(species))
         return "SIGMA contact canonical shape differs.";
-    auto values = mass, claims = reserved;
+    // Every overlap is written by exactly one reactor below. Staging preserves refusal
+    // atomicity without copying the old derived values or reallocating on every rebase.
+    static thread_local std::vector<double> values, claims;
+    values.resize(mass.size());
+    claims.resize(reserved.size());
     for (int s = 0; s < species; ++s)
         for (int r = 0; r < nr; ++r) {
             const double total = canonical[std::size_t(s) * nr + r],
@@ -135,8 +140,8 @@ std::string SigmaPorewaterMap::rebase(const std::vector<double>& canonical,
             if (values[k] < claims[k] || claims[k] < 0)
                 return "SIGMA contact reservation cannot be partitioned.";
         }
-    mass = std::move(values);
-    reserved = std::move(claims);
+    mass.swap(values);
+    reserved.swap(claims);
     return {};
 }
 /**
@@ -235,8 +240,7 @@ std::string SigmaPorewaterMap::publish(SubsurfaceTransportState& tr, int cell) {
         for (std::size_t e = 0; e < overlaps.size(); ++e)
             held[s] += reserved[std::size_t(s) * overlaps.size() + e];
     }
-    auto next = *this;
-    if (auto error = next.rebase(canonical, held); !error.empty())
+    if (auto error = rebase(canonical, held); !error.empty())
         return error;
     for (int s = 0; s < species; ++s)
         if (s != tr.temp_row) {
@@ -249,8 +253,7 @@ std::string SigmaPorewaterMap::publish(SubsurfaceTransportState& tr, int cell) {
             }
             tr.refreshUnsat(s, cell);
         }
-    std::fill(next.pending.begin(), next.pending.end(), 0);
-    *this = std::move(next);
+    std::fill(pending.begin(), pending.end(), 0);
     return {};
 }
 } // namespace openswmm::twoD
