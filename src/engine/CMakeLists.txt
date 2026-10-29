@@ -312,11 +312,21 @@ endif()
 
 # ---- Export macros ----
 include(GenerateExportHeader)
+set(OPENSWMM_ENGINE_EXPORT_DOCUMENTATION [=[
+/**
+ * @file      openswmm_engine_export.h
+ * @brief     Build-generated visibility and deprecation macros for the engine API.
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
+ */
+]=])
 generate_export_header(openswmm_engine
     BASE_NAME            openswmm_engine
     EXPORT_MACRO_NAME    SWMM_ENGINE_API
     EXPORT_FILE_NAME     openswmm_engine_export.h
     STATIC_DEFINE        OPENSWMM_ENGINE_STATIC
+    CUSTOM_CONTENT_FROM_VARIABLE OPENSWMM_ENGINE_EXPORT_DOCUMENTATION
 )
 
 file(COPY ${CMAKE_CURRENT_BINARY_DIR}/openswmm_engine_export.h

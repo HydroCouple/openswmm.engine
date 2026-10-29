@@ -156,11 +156,21 @@ if(NOT WIN32)
         "Compiler supports -fvisibility=hidden (forced for legacy engine)" FORCE)
 endif()
 include(GenerateExportHeader)
+set(OPENSWMM_LEGACY_SOLVER_EXPORT_DOCUMENTATION [=[
+/**
+ * @file      openswmm_legacy_solver_export.h
+ * @brief     Build-generated visibility and deprecation macros for the legacy solver API.
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
+ */
+]=])
 generate_export_header(openswmm_legacy_engine
     BASE_NAME        openswmm_legacy_solver
     EXPORT_MACRO_NAME EXPORT_OPENSWMMCORE_SOLVER_API
     EXPORT_FILE_NAME openswmm_legacy_solver_export.h
     STATIC_DEFINE    SHARED_EXPORTS_BUILT_AS_STATIC
+    CUSTOM_CONTENT_FROM_VARIABLE OPENSWMM_LEGACY_SOLVER_EXPORT_DOCUMENTATION
 )
 
 # Copy generated export header to the canonical include location
