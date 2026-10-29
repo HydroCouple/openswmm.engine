@@ -1893,6 +1893,12 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
             warnings->push_back(s);
     };
 
+    if (stock5 && std::any_of(ctx.nodes.storage_area.begin(), ctx.nodes.storage_area.end(),
+                              [](double a) { return a > 0.0; })) {
+        note("Stock EPA SWMM cannot represent junction StorageArea. Use OpenSWMM 5.3.0 or 6.0.0; export refused to avoid dropping physical storage.");
+        return -1;
+    }
+
     if (swmm5 && !ctx.options.ignore_snow_melt && !ctx.options.ignore_2d &&
         ctx.snowpacks.mesh_config.mode != surface::MeshSnowConfig::Mode::No &&
         ctx.snowpacks.mesh_config.assigned()) {
@@ -3198,8 +3204,10 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
     // ordinary junctions (no [VIRTUAL_JUNCTIONS] / [INLET_JUNCTIONS] in 5.x).
     if (hasRegularJunction(ctx) || (swmm5 && (hasVirtualJunction(ctx) || hasInletJunction(ctx)))) {
         sec(f, "JUNCTIONS");
-        std::fprintf(f, ";;%-16s %-12s %-12s %-12s %-12s %-12s\n", "Name", "Elev", "MaxDepth",
-                     "InitDepth", "SurDepth", "Aponded");
+        const bool has_chamber = std::any_of(ctx.nodes.storage_area.begin(), ctx.nodes.storage_area.end(),
+                                             [](double area) { return area > 0.0; });
+        std::fprintf(f, ";;%-16s %-12s %-12s %-12s %-12s %-12s%s\n", "Name", "Elev", "MaxDepth",
+                     "InitDepth", "SurDepth", "Aponded", has_chamber ? " StorageArea" : "");
         std::fprintf(f, ";;%-16s %-12s %-12s %-12s %-12s %-12s\n", "----------------",
                      "------------", "------------", "------------", "------------",
                      "------------");
@@ -3227,10 +3235,13 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                     " (SWMM 5.x profile)");
                 continue;
             }
-            std::fprintf(f, "%-16s %.17g %.17g %.17g %.17g %.17g\n",
+            std::fprintf(f, "%-16s %.17g %.17g %.17g %.17g %.17g",
                          ctx.node_names.name_of(j).c_str(), ctx.nodes.invert_elev[u],
                          ctx.nodes.full_depth[u], ctx.nodes.init_depth[u], ctx.nodes.sur_depth[u],
                          ctx.nodes.ponded_area[u]);
+            if (ctx.nodes.storage_area[u] > 0.0)
+                std::fprintf(f, " %.17g", ctx.nodes.storage_area[u]);
+            std::fprintf(f, "\n");
         }
     }
 

@@ -89,6 +89,7 @@ typedef struct {
     double dYdT;        // change in depth w.r.t. time (ft/sec)
     double conduitLoss; // aggregate conduit loss charged to this node (cfs)
     double lossFactor;  // fraction affordable without drying below zero
+    double conduitVolumeChange; // assigned change in adjacent conduit storage (ft3)
 } TXnode;
 
 //-----------------------------------------------------------------------------
@@ -344,6 +345,7 @@ void initNodeStates() {
         }
         Xnode[i].sumdqdh = 0.0;
         Xnode[i].conduitLoss = 0.0;
+        Xnode[i].conduitVolumeChange = 0.0;
     }
 }
 
@@ -502,7 +504,7 @@ double getModPumpFlow(int i, double q, double dt) {
 
     // --- case where inlet node is a storage node:
     //     prevent node volume from going negative
-    if (Node[j].type == STORAGE)
+    if ((Node[j].type == STORAGE || Node[j].storageArea > 0.0))
         return node_getMaxOutflow(j, q, dt);
 
     // --- case where inlet is a non-storage node
@@ -544,9 +546,9 @@ void findNonConduitSurfArea(int i) {
         Link[i].surfArea1 = 0.0;
 
     Link[i].surfArea2 = Link[i].surfArea1;
-    if (Link[i].flowClass == UP_CRITICAL || Node[Link[i].node1].type == STORAGE)
+    if (Link[i].flowClass == UP_CRITICAL || (Node[Link[i].node1].type == STORAGE || Node[Link[i].node1].storageArea > 0.0))
         Link[i].surfArea1 = 0.0;
-    if (Link[i].flowClass == DN_CRITICAL || Node[Link[i].node2].type == STORAGE)
+    if (Link[i].flowClass == DN_CRITICAL || (Node[Link[i].node2].type == STORAGE || Node[Link[i].node2].storageArea > 0.0))
         Link[i].surfArea2 = 0.0;
 }
 
@@ -597,6 +599,18 @@ void updateNodeFlows(int i)
             if (Node[n2].type != OUTFALL)
                 Node[n2].outflow += conduitLossRate;
         }
+    }
+
+    // Midpoint conduit flows exclude the change in the pipe's own inventory.
+    // Physical chambers book their share explicitly, instead of treating a
+    // crown-cutoff top width as additional real storage (issue #10 / USEPA #200).
+    if (isTrueConduit(i)) {
+        double delta = Link[i].newVolume - Link[i].oldVolume;
+        double share = (Node[n1].type != OUTFALL && Node[n2].type != OUTFALL) ? 0.5 : 1.0;
+        if (Node[n1].type != OUTFALL)
+            Xnode[n1].conduitVolumeChange += share * delta;
+        if (Node[n2].type != OUTFALL)
+            Xnode[n2].conduitVolumeChange += share * delta;
     }
 
     // --- add surf. area contributions to upstream/downstream nodes
@@ -654,11 +668,13 @@ void limitConduitLosses(double dt) {
         rate = Xnode[i].conduitLoss;
         if (rate <= 0.0 || Node[i].type == OUTFALL)
             continue;
-        area = MAX(Xnode[i].newSurfArea, MinSurfArea);
+        area = Node[i].storageArea > 0.0 ? Xnode[i].newSurfArea : MAX(Xnode[i].newSurfArea, MinSurfArea);
         // FUDGE is a numerical wetting floor, not a renewable water supply.
         // Enforce both the step's water budget and trapezoidal continuity.
         available = Node[i].inflow - Node[i].outflow + rate;
-        storageRate = MAX(0.0, Node[i].oldDepth - FUDGE) * area / dt;
+        storageRate = Node[i].storageArea > 0.0
+                          ? (Node[i].oldVolume - Xnode[i].conduitVolumeChange) / dt
+                          : MAX(0.0, Node[i].oldDepth - FUDGE) * area / dt;
         available = MIN(available + storageRate,
                         available + Node[i].oldNetInflow + 2.0 * storageRate);
         Xnode[i].lossFactor = MIN(1.0, MAX(0.0, available / rate));
@@ -763,11 +779,47 @@ void setNodeDepth(int i, double dt) {
     yLast = Node[i].newDepth;
     Node[i].overflow = 0.0;
     surfArea = Xnode[i].newSurfArea;
-    surfArea = MAX(surfArea, MinSurfArea);
+    if (Node[i].storageArea == 0.0)
+        surfArea = MAX(surfArea, MinSurfArea);
 
     // --- determine average net flow volume into node over the time step
     dQ = Node[i].inflow - Node[i].outflow;
     dV = 0.5 * (Node[i].oldNetInflow + dQ) * dt;
+
+    if (Node[i].storageArea > 0.0) {
+        // Solve the actual chamber + half-pipe volume residual. The surface
+        // area is only an iteration Jacobian; it never creates chamber water.
+        double target = Node[i].oldVolume + dV - Xnode[i].conduitVolumeChange;
+        double current = node_getVolume(i, yLast);
+        double capacity = Node[i].fullVolume;
+        if (canPond && yLast > Node[i].fullDepth)
+            current += (yLast - Node[i].fullDepth) * Node[i].pondedArea;
+        denom = surfArea + 0.5 * dt * Xnode[i].sumdqdh;
+        if (Node[i].degree == 0 || denom <= 0.0) {
+            yNew = MAX(0.0, target) / Node[i].storageArea;
+            if (canPond && target > capacity)
+                yNew = Node[i].fullDepth + (target - capacity) / Node[i].pondedArea;
+        } else {
+            yNew = yLast + (target - current) / denom;
+            if (Steps > 0)
+                yNew = (1.0 - Omega) * yLast + Omega * yNew;
+        }
+        yNew = MAX(0.0, yNew);
+        yMax = Node[i].fullDepth + (canPond ? 0.0 : Node[i].surDepth);
+        if (!canPond && yNew >= yMax) {
+            yNew = yMax;
+            Node[i].overflow = MAX(0.0, target - capacity) / dt;
+        }
+        Node[i].newVolume = node_getVolume(i, yNew);
+        if (canPond && yNew > Node[i].fullDepth) {
+            Node[i].newVolume += (yNew - Node[i].fullDepth) * Node[i].pondedArea;
+            Node[i].overflow = MAX(0.0, Node[i].newVolume - MAX(Node[i].oldVolume, capacity)) / dt;
+        }
+        Node[i].newDepth = yNew;
+        Xnode[i].oldSurfArea = surfArea;
+        Xnode[i].dYdT = fabs(yNew - yOld) / dt;
+        return;
+    }
 
     // --- determine if node is EXTRAN surcharged
     if (SurchargeMethod == EXTRAN) {
@@ -776,7 +828,7 @@ void setNodeDepth(int i, double dt) {
             isSurcharged = FALSE;
 
         // --- closed storage units that are full are in surcharge
-        else if (Node[i].type == STORAGE) {
+        else if (Node[i].type == STORAGE || Node[i].storageArea > 0.0) {
             isSurcharged = (Node[i].surDepth > 0.0 && yLast > Node[i].fullDepth);
         }
 
@@ -789,7 +841,7 @@ void setNodeDepth(int i, double dt) {
     // or storage node is surcharged but there is not a flow change with response to head
     // An example is a storage node that has external inflows and outflows
     // but not connecting links.
-    if (!isSurcharged || (Node[i].type == STORAGE && Xnode[i].sumdqdh == 0.0)) {
+    if (!isSurcharged || ((Node[i].type == STORAGE || Node[i].storageArea > 0.0) && Xnode[i].sumdqdh == 0.0)) {
         dy = dV / surfArea;
         yNew = yOld + dy;
 

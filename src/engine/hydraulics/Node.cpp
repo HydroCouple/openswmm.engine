@@ -109,6 +109,8 @@ double getVolume(const NodeData& nodes, int idx, double depth, TableData* tables
     if (depth <= 0.0)
         return 0.0;
     auto ui = static_cast<std::size_t>(idx);
+    if (nodes.storage_area[ui] > 0.0)
+        return nodes.storage_area[ui] * std::clamp(depth, 0.0, nodes.full_depth[ui]);
 
     if (nodes.type[ui] == NodeType::STORAGE) {
         const int lr = subs ? subs->storage_row(idx) : -1;
@@ -196,6 +198,8 @@ double getDepth(const NodeData& nodes, int idx, double volume, TableData* tables
     if (volume < 0.0)
         return 0.0;
     auto ui = static_cast<std::size_t>(idx);
+    if (nodes.storage_area[ui] > 0.0)
+        return std::clamp(volume / nodes.storage_area[ui], 0.0, nodes.full_depth[ui]);
 
     if (nodes.type[ui] == NodeType::STORAGE) {
         const int lr = subs ? subs->storage_row(idx) : -1;
@@ -331,6 +335,8 @@ double getDepth(const NodeData& nodes, int idx, double volume, TableData* tables
 double getSurfArea(const NodeData& nodes, int idx, double depth, TableData* tables, int unit_sys,
                    const NodeSubtypes* subs) {
     auto ui = static_cast<std::size_t>(idx);
+    if (nodes.storage_area[ui] > 0.0)
+        return depth > nodes.full_depth[ui] ? 0.0 : nodes.storage_area[ui];
 
     if (nodes.type[ui] == NodeType::STORAGE) {
         const int lr = subs ? subs->storage_row(idx) : -1;

@@ -215,6 +215,7 @@ void lidState(Archive& a, LidNodeState& s, bool mesh, bool thermal, bool thermal
     X(full_depth)                                                                                  \
     X(init_depth)                                                                                  \
     X(sur_depth)                                                                                   \
+    X(storage_area)                                                                                \
     X(ponded_area)                                                                                 \
     X(is_virtual)                                                                                  \
     X(is_inlet)                                                                                    \
@@ -1260,6 +1261,8 @@ void Router::validateSessionStorage(const std::shared_ptr<RestartState>& s,
             require(!routed || lid.quality_old_water.size() == lid.cells.size(),
                     "Engine routed LID previous-water shape differs.");
             volume += lid.held_volume;
+        } else if (nodes.storage_area[n] > 0.0) {
+            volume += nodes.volume[n];
         } else if (nodes.full_depth[n] > 0) {
             const bool can_pond =
                 c.options.allow_ponding || (n < c.coupled_node.size() && c.coupled_node[n] != 0);

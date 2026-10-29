@@ -228,6 +228,8 @@ cdef extern from "openswmm_nodes.h":
     cdef int swmm_node_get_max_depth(SWMM_Engine e, int idx, double* depth)
     cdef int swmm_node_get_rim_depth(SWMM_Engine e, int idx, double* depth)
     cdef int swmm_node_get_surcharge_depth(SWMM_Engine e, int idx, double* depth)
+    cdef int swmm_node_get_storage_area(SWMM_Engine e, int idx, double* area)
+    cdef int swmm_node_set_storage_area(SWMM_Engine e, int idx, double area)
     cdef int swmm_node_get_ponded_area(SWMM_Engine e, int idx, double* area)
     cdef int swmm_node_get_initial_depth(SWMM_Engine e, int idx, double* depth)
     cdef int swmm_node_get_crown_elev(SWMM_Engine e, int idx, double* elev)

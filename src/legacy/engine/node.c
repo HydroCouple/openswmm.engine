@@ -159,6 +159,7 @@ void node_setParams(int j, int type, int k, double x[]) {
     Node[j].fullDepth = 0.0;
     Node[j].surDepth = 0.0;
     Node[j].pondedArea = 0.0;
+    Node[j].storageArea = 0.0;
     Node[j].degree = 0;
     Node[j].inlet = NO_INLET;
     switch (type) {
@@ -233,6 +234,11 @@ void node_validate(int nodeIndex) {
 
     if (Node[nodeIndex].type == DIVIDER)
         divider_validate(nodeIndex);
+
+    if (!isfinite(Node[nodeIndex].storageArea * Node[nodeIndex].fullDepth))
+        report_writeErrorMsg(ERR_NUMBER, Node[nodeIndex].ID);
+    if (Node[nodeIndex].storageArea > 0.0 && RouteModel != DW)
+        report_writeErrorMsg(ERR_KEYWORD, "Junction StorageArea requires DYNWAVE");
 
     // --- initialize dry weather inflows
     inflow = Node[nodeIndex].dwfInflow;
@@ -344,6 +350,8 @@ void node_initFlows(int nodeIndex, double tStep) {
 * \return Returns water depth at node (ft)
 */
 double node_getDepth(int nodeIndex, double v) {
+    if (Node[nodeIndex].storageArea > 0.0)
+        return MIN(Node[nodeIndex].fullDepth, MAX(0.0, v) / Node[nodeIndex].storageArea);
     switch (Node[nodeIndex].type) {
     case STORAGE:
         return storage_getDepth(nodeIndex, v);
@@ -360,6 +368,8 @@ double node_getDepth(int nodeIndex, double v) {
 * \return Returns volume of water stored at node (ft3)
 */
 double node_getVolume(int nodeIndex, double depth) {
+    if (Node[nodeIndex].storageArea > 0.0)
+        return Node[nodeIndex].storageArea * MAX(0.0, MIN(depth, Node[nodeIndex].fullDepth));
     switch (Node[nodeIndex].type) {
     case STORAGE:
         return storage_getVolume(nodeIndex, depth);
@@ -380,6 +390,8 @@ double node_getVolume(int nodeIndex, double depth) {
 * \return Returns surface area of water stored at node (ft2)
 */
 double node_getSurfArea(int j, double d) {
+    if (Node[j].storageArea > 0.0)
+        return d > Node[j].fullDepth ? 0.0 : Node[j].storageArea;
     switch (Node[j].type) {
     case STORAGE:
         return storage_getSurfArea(j, d);
@@ -621,6 +633,14 @@ int junc_readParams(int j, int k, char* tok[], int ntoks) {
     // --- add parameters to junction object
     Node[j].ID = id;
     node_setParams(j, JUNCTION, k, x);
+    if (ntoks > 6) {
+        double area;
+        if (!getDouble(tok[6], &area) || !isfinite(area) || area < 0.0)
+            return error_setInpError(ERR_NUMBER, tok[6]);
+        Node[j].storageArea = area / (UCF(LENGTH) * UCF(LENGTH));
+        if (!isfinite(Node[j].storageArea))
+            return error_setInpError(ERR_NUMBER, tok[6]);
+    }
     return 0;
 }
 

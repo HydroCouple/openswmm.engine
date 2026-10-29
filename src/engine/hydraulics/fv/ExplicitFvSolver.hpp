@@ -842,8 +842,8 @@ private:
     /**
      * @brief Invert the initialized node volume relation.
      *
-     * Table-top extension divides by node_vol_atop; pond extension divides by ponded_area, so positive
-     * slopes are required when those branches are reachable. Plateaus use the lower interpolation
+     * Table-top extension uses node_vol_atop when positive; a zero slope maps surplus
+     * to the flooding branch. Pond extension requires positive ponded_area. Plateaus use the lower interpolation
      * endpoint. No input validation, mutation or allocation.
      *
      * @param[in] node Valid initialized global node index.

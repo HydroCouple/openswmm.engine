@@ -1104,6 +1104,30 @@ int SWMMEngine::initialize() noexcept {
                                   : constants::MIN_SURFAREA;
         for (int i = 0; i < ctx_.n_nodes(); ++i) {
             const auto ui = static_cast<std::size_t>(i);
+            if (!std::isfinite(ctx_.nodes.storage_area[ui]) || ctx_.nodes.storage_area[ui] < 0.0 ||
+                !std::isfinite(ctx_.nodes.storage_area[ui] * ctx_.nodes.full_depth[ui])) {
+                set_error(SWMM_ERR_BADPARAM, "Junction StorageArea and chamber capacity must be finite and nonnegative");
+                return SWMM_ERR_BADPARAM;
+            }
+            if (ctx_.nodes.storage_area[ui] > 0.0) {
+                if (ctx_.nodes.type[ui] != NodeType::JUNCTION || ctx_.nodes.is_virtual[ui] ||
+                    ctx_.nodes.is_inlet[ui] || ctx_.options.routing_model == RoutingModel::KINWAVE ||
+                    ctx_.options.routing_model == RoutingModel::STEADY) {
+                    set_error(SWMM_ERR_BADPARAM, "Junction StorageArea requires an ordinary junction and DYNWAVE or supported FV routing");
+                    return SWMM_ERR_BADPARAM;
+                }
+                if (ctx_.options.routing_model == RoutingModel::DYNWAVE &&
+                    ctx_.options.surcharge_method == static_cast<int>(dynwave::SurchargeMethod::DYNAMIC_SLOT)) {
+                    set_error(SWMM_ERR_BADPARAM, "Junction StorageArea is not qualified with DYNAMIC_SLOT; use EXTRAN or SLOT");
+                    return SWMM_ERR_BADPARAM;
+                }
+                if (ctx_.options.routing_model == RoutingModel::FV && ctx_.nodes.sur_depth[ui] > 0.0) {
+                    set_error(SWMM_ERR_BADPARAM, "FV junction StorageArea does not support above-rim pressure allowance; use DYNWAVE or set SurDepth to zero");
+                    return SWMM_ERR_BADPARAM;
+                }
+                ctx_.nodes.full_volume[ui] = ctx_.nodes.storage_area[ui] * ctx_.nodes.full_depth[ui];
+                continue;
+            }
             if (ctx_.nodes.type[ui] == NodeType::STORAGE)
                 continue;
             const double fd = ctx_.nodes.full_depth[ui];
@@ -1159,7 +1183,7 @@ int SWMMEngine::initialize() noexcept {
     for (int i = 0; i < ctx_.n_nodes(); ++i) {
         auto ui = static_cast<std::size_t>(i);
         ctx_.nodes.rpt_full_volume[ui] =
-            (ctx_.nodes.type[ui] == NodeType::STORAGE) ? ctx_.nodes.full_volume[ui] : 0.0;
+            (ctx_.nodes.type[ui] == NodeType::STORAGE || ctx_.nodes.storage_area[ui] > 0.0) ? ctx_.nodes.full_volume[ui] : 0.0;
     }
 
     // Type-1 (volume-controlled) pumps: the inlet junction acts as a wet well
@@ -1187,7 +1211,7 @@ int SWMMEngine::initialize() noexcept {
             if (n1 < 0)
                 continue;
             auto un1 = static_cast<std::size_t>(n1);
-            if (ctx_.nodes.type[un1] == NodeType::STORAGE)
+            if (ctx_.nodes.type[un1] == NodeType::STORAGE || ctx_.nodes.storage_area[un1] > 0.0)
                 continue;
             // xMax = largest volume on the pump curve (legacy Pump.xMax). The
             // file-backed x_max field is unset for inline [CURVES], so read the
@@ -11560,6 +11584,8 @@ double SWMMEngine::reportedNodeVolume(int i) const noexcept {
 
 double SWMMEngine::reportedNodeVolume(int i, double depth, double volume) const noexcept {
     auto ui = static_cast<std::size_t>(i);
+    if (ctx_.nodes.storage_area[ui] > 0.0)
+        return volume;
     if (ctx_.nodes.type[ui] == NodeType::STORAGE)
         return volume + lidnode::heldVolume(ctx_, i); // mobile + retained LID water
     // Kinematic wave / steady flow: legacy setNewNodeState carries a

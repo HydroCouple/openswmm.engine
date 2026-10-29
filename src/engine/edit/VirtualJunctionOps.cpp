@@ -201,6 +201,7 @@ void vj_apply_derived_geometry(SimulationContext& ctx, int node_idx) {
     ctx.nodes.full_depth[ui] = ctx.links.xsect_y_full[static_cast<std::size_t>(j1)];
     ctx.nodes.sur_depth[ui] = 0.0;
     ctx.nodes.ponded_area[ui] = 0.0;
+    ctx.nodes.storage_area[ui] = 0.0;
     // rim_depth is deliberately NOT touched: it is user/split-supplied
     // rendering data, not derived geometry, and this runs on every load and
     // every set-virtual.

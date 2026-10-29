@@ -1370,7 +1370,7 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
             t.full_volume = nd.full_volume[ui];
             t.rpt_full_volume = nd.rpt_full_volume[ui];
             t.degree = nd.degree[ui];
-            t.is_storage = (nd.type[ui] == NodeType::STORAGE) ? 1 : 0;
+            t.is_storage = (nd.type[ui] == NodeType::STORAGE || nd.storage_area[ui] > 0.0) ? 1 : 0;
             t.is_outfall = (nd.type[ui] == NodeType::OUTFALL) ? 1 : 0;
             t.is_virtual = (ui < nd.is_virtual.size() && nd.is_virtual[ui]) ? 1 : 0;
         }
@@ -3640,8 +3640,20 @@ void DWSolver::limitConduitLosses(SimulationContext& ctx, double dt) {
         const double rate = xnode_.conduit_loss[i];
         if (rate <= 0.0 || node_tile_[i].is_outfall)
             continue;
-        const double area = std::max(xnode_.new_surf_area[i], min_surf_area_);
-        const double storage_rate = std::max(0.0, nodes.old_depth[i] - FUDGE) * area / dt;
+        const double area = nodes.storage_area[i] > 0.0 ? xnode_.new_surf_area[i] : std::max(xnode_.new_surf_area[i], min_surf_area_);
+        double storage_rate = std::max(0.0, nodes.old_depth[i] - FUDGE) * area / dt;
+        if (nodes.storage_area[i] > 0.0) {
+            double volume = nodes.old_volume[i];
+            for (int k = csr_row_[i]; k < csr_row_[i + 1]; ++k) {
+                const int link = csr_link_[k];
+                if (ctx.links.type[link] != LinkType::CONDUIT || ctx.links.xsect_shape[link] == XsectShape::DUMMY)
+                    continue;
+                const int other = ctx.links.node1[link] == i ? ctx.links.node2[link] : ctx.links.node1[link];
+                const double share = nodes.type[other] == NodeType::OUTFALL ? 1.0 : 0.5;
+                volume -= share * (ctx.links.volume[link] - ctx.links.old_volume[link]);
+            }
+            storage_rate = volume / dt;
+        }
         const double net = nodes.inflow[i] - nodes.outflow[i] + rate;
         const double available =
             std::min(net + storage_rate, net + nodes.old_net_inflow[i] + 2.0 * storage_rate);
@@ -3891,7 +3903,7 @@ void DWSolver::updateNodeDepthsTeam(SimulationContext& ctx, double dt, int step,
         // (see computeAASkipFlags for the enumerated conditions) or when the
         // residual is too large to trust the linear-convergence assumption
         // AA is built on.
-        if (use_anderson && step >= 1 && !aa_skip_[ui] && !lidnode::active(ctx, i)) {
+        if (use_anderson && step >= 1 && !aa_skip_[ui] && nodes.storage_area[ui] == 0.0 && !lidnode::active(ctx, i)) {
             double r_k = g_k - y_last; // residual at current iterate
 
             // Residual-magnitude safety gate. When |r_k| is many tolerances
@@ -4045,14 +4057,61 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt, int
     // MIN_SURFAREA storage smearing is the thing the feature removes; the
     // natural area is the correct continuity linearization and their
     // committed volume stays identically zero).
-    if (t.is_virtual == 0)
+    if (t.is_virtual == 0 && nodes.storage_area[ui] == 0.0)
         surf_area = std::max(surf_area, min_surf_area_);
-    else if (nodes.lat_flow[ui] != 0.0 && ui < vj_wet_floor_.size())
+    else if (t.is_virtual != 0 && nodes.lat_flow[ui] != 0.0 && ui < vj_wet_floor_.size())
         surf_area = std::max(surf_area, vj_wet_floor_[ui]);
 
     // --- Net flow volume change (trapezoidal averaging with previous step) ---
     double dQ = nodes.inflow[ui] - nodes.outflow[ui];
     double dV = 0.5 * (nodes.old_net_inflow[ui] + dQ) * dt;
+    if (nodes.storage_area[ui] > 0.0) {
+        // Midpoint conduit flows exclude pipe inventory. Solve the physical
+        // chamber + half-pipe volume residual exactly; the top-width tangent
+        // (including the EXTRAN crown cutoff) is only a Jacobian, not storage.
+        double target = nodes.old_volume[ui] + dV;
+        for (int k = csr_row_[ui]; k < csr_row_[ui + 1]; ++k) {
+            const int link = csr_link_[k];
+            if (ctx.links.type[link] != LinkType::CONDUIT ||
+                ctx.links.xsect_shape[link] == XsectShape::DUMMY)
+                continue;
+            const int other = ctx.links.node1[link] == node_idx ? ctx.links.node2[link] : ctx.links.node1[link];
+            const double share = nodes.type[other] == NodeType::OUTFALL ? 1.0 : 0.5;
+            target -= share * (ctx.links.volume[link] - ctx.links.old_volume[link]);
+        }
+        const double capacity = nodes.full_volume[ui];
+        double current = node::getVolume(nodes, node_idx, y_last);
+        if (can_pond && y_last > full_depth)
+            current += (y_last - full_depth) * t.ponded_area;
+        const double denom = surf_area + 0.5 * dt * xnode_.sumdqdh[ui];
+        double depth;
+        if (nodes.degree[ui] == 0 || denom <= 0.0) {
+            depth = std::max(0.0, target) / nodes.storage_area[ui];
+            if (can_pond && target > capacity)
+                depth = full_depth + (target - capacity) / t.ponded_area;
+        } else {
+            depth = y_last + (target - current) / denom;
+            if (step > 0)
+                depth = (1.0 - omega) * y_last + omega * depth;
+        }
+        depth = std::max(0.0, depth);
+        const double max_depth = full_depth + (can_pond ? 0.0 : t.sur_depth);
+        if (!can_pond && depth >= max_depth) {
+            depth = max_depth;
+            nodes.overflow[ui] = std::max(0.0, target - capacity) / dt;
+        }
+        nodes.volume[ui] = node::getVolume(nodes, node_idx, depth);
+        if (can_pond && depth > full_depth) {
+            nodes.volume[ui] += (depth - full_depth) * t.ponded_area;
+            nodes.overflow[ui] = std::max(0.0, nodes.volume[ui] - std::max(nodes.old_volume[ui], capacity)) / dt;
+        }
+        nodes.depth[ui] = depth;
+        nodes.head[ui] = t.invert_elev + depth;
+        xnode_.is_surcharged[ui] = !can_pond && depth > full_depth ? 1 : 0;
+        xnode_.old_surf_area[ui] = surf_area;
+        xnode_.dYdT[ui] = std::abs(depth - y_old) / dt;
+        return;
+    }
     if (lidnode::active(ctx, node_idx)) {
         // The moisture split, link port transfers and routing ledger all book
         // this step's accepted flux once. Solve continuity in volume directly:
@@ -4241,7 +4300,8 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt, int
         // =================================================================
 
         double denom = surf_area + 0.5 * dt * xnode_.sumdqdh[ui];
-        denom = std::max(denom, min_surf_area_);
+        if (nodes.storage_area[ui] == 0.0)
+            denom = std::max(denom, min_surf_area_);
 
         double dy = dV / denom;
         y_new = y_old + dy;

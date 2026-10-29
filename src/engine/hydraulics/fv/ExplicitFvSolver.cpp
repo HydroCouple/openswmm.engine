@@ -397,8 +397,15 @@ double ExplicitFvSolver::nodeDepthFromVolume(int node, double volume) const {
     const double dmax = mesh_->node_vol_dmax[un];
     const double dd = dmax / static_cast<double>(n - 1);
     const double vmax = mesh_->node_vol_tbl[static_cast<std::size_t>(off + n - 1)];
-    if (volume >= vmax)
-        return dmax + (volume - vmax) / mesh_->node_vol_atop[un];
+    if (volume >= vmax) {
+        const double atop = mesh_->node_vol_atop[un];
+        if (atop > 0.0)
+            return dmax + (volume - vmax) / atop;
+        // A physical chamber has no shaft storage above its rim. At exact
+        // capacity keep the rim head; surplus must enter applyNodeCapacity's
+        // flooding branch, without dividing by zero or inventing storage.
+        return volume == vmax ? dmax : full + mesh_->node_sur_depth[un] + 1.0;
+    }
 
     int lo = 0, hi = n - 1;
     while (hi - lo > 1) {

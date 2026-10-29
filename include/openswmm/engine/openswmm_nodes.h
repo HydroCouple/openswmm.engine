@@ -221,6 +221,12 @@ SWMM_ENGINE_API int swmm_node_set_max_depth(SWMM_Engine engine, int idx, double 
  */
 SWMM_ENGINE_API int swmm_node_set_surcharge_depth(SWMM_Engine engine, int idx, double depth);
 
+/** Physical ordinary-junction chamber area in project area units (ft2 or m2). Zero retains legacy behavior.
+ * Geometry edits only; nonfinite/negative values and virtual/inlet/nonjunction assignments fail. */
+SWMM_ENGINE_API int swmm_node_set_storage_area(SWMM_Engine engine, int idx, double area);
+/** Read authored junction storage area in project area units (ft2 or m2) (zero by default). */
+SWMM_ENGINE_API int swmm_node_get_storage_area(SWMM_Engine engine, int idx, double* area);
+
 /**
  * @brief Set the ponded surface area when depth exceeds the maximum.
  *

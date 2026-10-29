@@ -503,8 +503,8 @@ static void write_nodes(sqlite3* db, const SimulationContext& ctx, const std::st
     auto stmt =
         prepare(db, "INSERT INTO nodes (simulation_id, node_id, node_type, geom, "
                     "invert_elev, max_depth, init_depth, surcharge_depth, ponded_area, tag, "
-                    "is_virtual, rim_depth, is_inlet) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)");
+                    "is_virtual, rim_depth, is_inlet, storage_area) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
     auto st_stmt =
         prepare(db, "INSERT INTO storages (simulation_id, node_id, curve_name, shape, a, b, c, "
                     "p1, p2, p3, seep_rate, evap_frac, exfil_suction, exfil_ksat, exfil_imd) "
@@ -547,6 +547,7 @@ static void write_nodes(sqlite3* db, const SimulationContext& ctx, const std::st
         bind_double(stmt.get(), 7, safe_dbl(ctx.nodes.init_depth, i));
         bind_double(stmt.get(), 8, safe_dbl(ctx.nodes.sur_depth, i));
         bind_double(stmt.get(), 9, safe_dbl(ctx.nodes.ponded_area, i));
+        bind_double(stmt.get(), 14, safe_dbl(ctx.nodes.storage_area, i));
 
         const auto utag = static_cast<std::size_t>(i);
         if (utag < ctx.nodes.tags.size() && !ctx.nodes.tags[utag].empty())

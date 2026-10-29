@@ -1308,3 +1308,7 @@ endif()
 add_gtest_unit(test_engine_conduit_losses test_conduit_losses.cpp)
 target_compile_definitions(test_engine_conduit_losses PRIVATE
     ISSUE2_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/manual/issue2_seepage")
+
+add_gtest_unit(test_engine_junction_storage test_junction_storage.cpp)
+target_compile_definitions(test_engine_junction_storage PRIVATE
+    ISSUE10_OUTPUT_DIR="${PROJECT_SOURCE_DIR}/tests/verification/junction_storage_issue10/runs")

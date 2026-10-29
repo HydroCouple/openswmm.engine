@@ -444,3 +444,18 @@ Table H-2 Culvert coefficients
 - @subpage hydraulics_ref_ch10_planned — Chapter 10: Planned and Retired Formulations
 - @subpage hydraulics_ref_references — References
 - @subpage hydraulics_ref_appendix — Appendix
+
+
+## Physical junction chamber storage
+
+An ordinary junction may specify a constant StorageArea in project area units. Zero preserves historical junction routing. For positive area A and depth y below the rim, physical node volume is A·y and its depth derivative is A; incident conduit volume remains owned by the conduits. The chamber remains active above connected pipe crowns. Above the rim, shaft inventory is capped and configured surface ponding uses Aponded separately. Extra surcharge depth is a pressure allowance, not additional shaft height.
+
+MIN_SURFAREA supplies numerical stability under the compatibility path and must not substitute for a positive authored chamber area. Dynamic-wave water and quality balances, initial/final storage, and output volume include the physical chamber once. Finite-volume routing uses a physical node-volume closure, rather than an algebraic zero-storage junction. Unsupported routing modes/backends must refuse the configuration.
+
+For dynamic wave, a chamber balances its change in physical volume plus its share of the actual change in adjacent conduit volume against the time-integrated net inflow. The conduit top-width tangent is used to converge head, and does not create extra inventory at the crown cutoff. This volume residual is used for positive chambers under both EXPLICIT and SEMI_IMPLICIT node-continuity settings. Zero-area junctions retain their existing algorithms.
+
+For example, a junction with `MaxDepth = 10` and `StorageArea = 100` holds 400 ft³ at 4 ft depth in a US-unit model. An equivalent constant-area storage unit uses `FUNCTIONAL 0 0 100`. Both geometries have the same below-rim capacity; the ordinary junction retains its junction identity. Above-rim ponding, if enabled, uses the separately specified ponded area.
+
+See [OpenSWMM issue #10](https://github.com/HydroCouple/openswmm.engine/issues/10) and [USEPA issue #200](https://github.com/USEPA/Stormwater-Management-Model/issues/200) for the physical-area proposal.
+
+Physical junctions in finite-volume routing require the CPU backend and zero `SurDepth`; explicit ponding and rim flooding are supported. Above-rim pressure allowance requires dynamic wave. A selected device plugin refuses physical junctions until its closure is qualified. Positive chamber areas are not yet qualified with DYNAMIC_SLOT; select EXTRAN or SLOT instead.

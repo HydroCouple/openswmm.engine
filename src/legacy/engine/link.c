@@ -1509,7 +1509,8 @@ void pump_validate(int j, int k) {
     if (Pump[k].type == TYPE1_PUMP) {
         n1 = Link[j].node1;
         if (Node[n1].type != STORAGE)
-            Node[n1].fullVolume = MAX(Node[n1].fullVolume, Pump[k].xMax / UCF(VOLUME));
+            if (Node[n1].storageArea == 0.0)
+                Node[n1].fullVolume = MAX(Node[n1].fullVolume, Pump[k].xMax / UCF(VOLUME));
     }
 }
 

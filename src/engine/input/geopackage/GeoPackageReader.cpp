@@ -3183,6 +3183,17 @@ int read_model(sqlite3* db, SimulationContext& ctx, const std::string& simulatio
         ctx.gpkg_units_internal = true;
         read_options(db, ctx, simulation_id);
         read_nodes(db, ctx, simulation_id);
+        if (column_exists(db, "nodes", "storage_area")) {
+            auto areas = prepare(db, "SELECT node_id, storage_area FROM nodes WHERE simulation_id = ?");
+            bind_text(areas.get(), 1, simulation_id);
+            while (sqlite3_step(areas.get()) == SQLITE_ROW) {
+                const int n = ctx.node_names.find(column_text(areas.get(), 0));
+                const double a = column_double(areas.get(), 1);
+                if (n < 0 || !std::isfinite(a) || a < 0.0)
+                    throw std::runtime_error("Invalid junction storage area");
+                ctx.nodes.storage_area[n] = a;
+            }
+        }
         read_links(db, ctx, simulation_id);
         read_rain_gages(db, ctx, simulation_id);
         read_subcatchments(db, ctx, simulation_id);

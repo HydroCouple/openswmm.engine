@@ -281,7 +281,7 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx, const FvOptions& opts,
         uint8_t kind = kNodeJunction;
         if (ui < ctx.nodes.is_virtual.size() && ctx.nodes.is_virtual[ui])
             kind = kNodeVirtual;
-        else if (ctx.nodes.type[ui] == NodeType::STORAGE)
+        else if (ctx.nodes.type[ui] == NodeType::STORAGE || ctx.nodes.storage_area[ui] > 0.0)
             kind = kNodeStorage;
         else if (ctx.nodes.type[ui] == NodeType::OUTFALL)
             kind = kNodeOutfall;
@@ -309,7 +309,8 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx, const FvOptions& opts,
             const auto ui = static_cast<std::size_t>(i);
             if (mesh.node_kind[ui] != kNodeStorage)
                 continue;
-            double dmax = ctx.nodes.full_depth[ui] + ctx.nodes.sur_depth[ui];
+            double dmax = ctx.nodes.full_depth[ui] +
+                          (ctx.nodes.storage_area[ui] > 0.0 ? 0.0 : ctx.nodes.sur_depth[ui]);
             if (!(dmax > 0.0))
                 dmax = std::max(ctx.nodes.full_depth[ui], 1.0);
             mesh.node_vol_off[ui] = static_cast<int>(mesh.node_vol_tbl.size());
@@ -320,7 +321,7 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx, const FvOptions& opts,
                 mesh.node_vol_tbl.push_back(
                     node::getVolume(ctx.nodes, i, d, &ctx.tables, us, &ctx.node_subtypes));
             }
-            mesh.node_vol_atop[ui] =
+            mesh.node_vol_atop[ui] = ctx.nodes.storage_area[ui] > 0.0 ? 0.0 :
                 std::max(node::getSurfArea(ctx.nodes, i, dmax, &ctx.tables, us, &ctx.node_subtypes),
                          constants::MIN_SURFAREA);
         }

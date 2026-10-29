@@ -1479,6 +1479,7 @@ static void convert_inputs_to_internal(SimulationContext& ctx, int n_nodes, int 
         ctx.nodes.init_depth[ui] /= len;
         ctx.nodes.sur_depth[ui] /= len;
         ctx.nodes.ponded_area[ui] /= len2;
+        ctx.nodes.storage_area[ui] /= len2;
         ctx.nodes.rim_depth[ui] /= len; // display-only, but still a length
         if (ctx.nodes.type[ui] == NodeType::OUTFALL) {
             const int r = ctx.node_subtypes.outfall_row(i);
@@ -1621,6 +1622,7 @@ void convert_internal_to_display(SimulationContext& ctx) {
         ctx.nodes.init_depth[ui] *= len;
         ctx.nodes.sur_depth[ui] *= len;
         ctx.nodes.ponded_area[ui] *= area;
+        ctx.nodes.storage_area[ui] *= area;
         ctx.nodes.rim_depth[ui] *= len; // display-only, but still a length
         if (ctx.nodes.type[ui] == NodeType::OUTFALL) {
             const int r = ctx.node_subtypes.outfall_row(i);

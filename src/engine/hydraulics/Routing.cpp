@@ -47,6 +47,8 @@
 
 #include <cmath>
 #include <algorithm>
+#include <fstream>
+#include <iomanip>
 
 namespace openswmm {
 
@@ -1528,6 +1530,12 @@ void Router::initFv(SimulationContext& ctx) {
     }
 
     fv_solver_ = fv::makeNetworkSolver(fv_opts_, &fv_backend_, nc);
+    if (std::any_of(ctx.nodes.storage_area.begin(), ctx.nodes.storage_area.end(),
+                    [](double area) { return area > 0.0; }) &&
+        !dynamic_cast<fv::ExplicitFvSolver*>(fv_solver_.get())) {
+        throw std::runtime_error("Junction StorageArea requires the CPU finite-volume backend; select FV_BACKEND CPU");
+    }
+
 
     // The per-substep refresh is a callback into HydStructures, which a device
     // backend cannot reach. Say so rather than letting the option go quiet.

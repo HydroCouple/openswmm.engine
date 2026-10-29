@@ -61,6 +61,37 @@ Five idioms cover most use cases.
 
 ----
 
+Physical junction chamber area
+==============================
+
+``Node.storage_area`` is writable before initialization, in project area units
+(ft² or m²). Its default is zero, preserving legacy behavior. Positive values
+define real chamber volume below the rim, including above pipe crowns. They
+are independent of ``ponded_area`` and the numerical ``MIN_SURFAREA`` setting.
+
+Use the explicit lifecycle when editing geometry: the Solver context manager
+initializes and starts immediately.
+
+.. code-block:: python
+
+    s = Solver("model.inp")
+    try:
+        s.open()
+        s.nodes["J1"].storage_area = 12.566  # ft² in a US-unit project
+        s.initialize()
+        s.start()
+        # Step the simulation, then end/report/close as usual.
+    finally:
+        s.close()
+        s.destroy()
+
+Only ordinary junctions accept the property; invalid, negative and nonfinite
+values are rejected. Positive areas require dynamic wave or a qualified
+6.0.0 finite-volume path. Kinematic/steady routing refuses them. Above-rim
+ponding uses ``ponded_area``; surcharge depth does not lengthen the chamber.
+
+----
+
 Collection: :class:`Nodes`
 ==========================
 
@@ -354,3 +385,5 @@ See also
 * :doc:`links` — link wrappers follow the same pattern.
 * :doc:`output_reader` — node time-series after the run.
 * :doc:`error_handling` — every exception type referenced on this page.
+
+Positive chamber areas are not yet qualified with DYNAMIC_SLOT; select EXTRAN or SLOT instead.

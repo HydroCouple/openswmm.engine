@@ -596,6 +596,8 @@ struct NodeSubtypes {
         if (i >= static_cast<int>(subtype_row.size()))
             subtype_row.resize(static_cast<std::size_t>(i) + 1, -1);
 
+        if (t != NodeType::JUNCTION)
+            nodes.storage_area[ui] = 0.0;
         const NodeType old = nodes.type[ui];
         const int existing = subtype_row[ui];
         if (old == t && existing >= 0)

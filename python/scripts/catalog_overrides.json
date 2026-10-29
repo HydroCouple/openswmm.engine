@@ -61,9 +61,7 @@
    "class": "OutputReader",
    "construct": {
     "via": "new",
-    "args": [
-     "path"
-    ]
+    "args": ["path"]
    }
   },
   "surface_output": {
@@ -77,18 +75,14 @@
    "class": "GeoPackage",
    "construct": {
     "via": "new",
-    "args": [
-     "path"
-    ]
+    "args": ["path"]
    }
   },
   "hotstart": {
    "class": "HotStart",
    "construct": {
     "via": "open",
-    "args": [
-     "path"
-    ]
+    "args": ["path"]
    }
   },
   "xsect": {
@@ -224,6 +218,7 @@
   "xsect.full_section_factor": "section_factor",
   "xsect.max_area": "area",
   "xsect.max_width": "length",
-  "snow.step_seconds": "s"
+  "snow.step_seconds": "s",
+  "node.storage_area": "area"
  }
 }

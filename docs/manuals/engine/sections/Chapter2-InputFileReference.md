@@ -170,7 +170,7 @@ Three sections carry a keyword spelled `DISPERSION`, and they mean different thi
 |---|---|---|---|
 | MAX_TRIALS | number | 8 | Maximum trials per time step for the nodal head iteration to converge. |
 | HEAD_TOLERANCE | number | 0 | Head change between trials, in project length units, below which the step has converged; 0 selects 0.005 ft (0.0015 m). |
-| MIN_SURFAREA | number | 0 | Minimum node surface area, in project units, used in depth updates; 0 selects 12.566 ft² (1.167 m²), a 4-ft manhole. |
+| MIN_SURFAREA | number | 0 | Numerical stability area for legacy junction depth updates; 0 selects 12.566 ft² (1.167 m²). This is not the authored physical junction StorageArea. |
 | MIN_SLOPE | number | 0 | Minimum conduit slope in percent; 0 imposes none, though the elevation drop is still floored at 0.001 ft (0.00035 m). |
 | SLOPE_WEIGHTING | YES / NO / TRUE / FALSE / 1 / 0 | — | Retired compatibility option with no solver effect. YES and NO also accept legacy prefix matches; other values are rejected. When supplied, the value is retained in the extension-options map and can be read through `swmm_options_get_ext()`. |
 | INERTIAL_DAMPING | NONE / PARTIAL / FULL | PARTIAL | Handling of the momentum inertial terms: kept in full (NONE), reduced toward critical flow and dropped when supercritical (PARTIAL), or dropped (FULL). Hydraulics §3.3.3. |
@@ -1024,7 +1024,7 @@ Purpose:
 Identifies each junction node of the drainage system.  Junctions are points in space where channels and pipes connect together. For sewer systems they can be either connection fittings or manholes.
 
 Format:
-Name  Elev  (Ymax  Y0  Ysur  Apond)
+Name  Elev  (Ymax  Y0  Ysur  Apond  StorageArea)
 
 Parameters:
 Name    name assigned to junction node.
@@ -1033,8 +1033,23 @@ Ymax    depth from ground to invert elevation (ft or m) (default is 0).
 Y0    water depth at the start of the simulation (ft or m) (default is 0).
 Ysur    maximum additional pressure head above the ground elevation that the junction can sustain under surcharge conditions (ft or m) (default is 0).
 Apond    area subjected to surface ponding once water depth exceeds Ymax + Ysur  (ft2 or m2) (default is 0).
+StorageArea    physical constant-area junction chamber (ft2 or m2), optional seventh token; default 0 retains legacy behavior.
 
 Remarks:
+Positive StorageArea is supported by updated OpenSWMM 5.3.0 dynamic wave and qualified 6.0.0 dynamic-wave/finite-volume paths. It preserves the node's JUNCTION identity. Below the rim, physical volume is StorageArea times depth, including surcharge above pipe crowns. Shaft volume is capped at the rim; ponding adds separate above-rim volume using Apond. Ysur is pressure allowance and does not extend physical shaft volume. Omission or zero preserves prior behavior. Kinematic/steady routing rejects a positive area rather than ignoring it.
+
+Physical junctions in finite-volume routing require the CPU backend and zero `SurDepth`; explicit ponding and rim flooding are supported. Above-rim pressure allowance requires dynamic wave. A selected device plugin refuses physical junctions until its closure is qualified. Positive chamber areas are not yet qualified with DYNAMIC_SLOT; select EXTRAN or SLOT instead.
+
+MIN_SURFAREA remains the numerical stability area, not the physical chamber area. Explicit physical areas are not enlarged to that global value. Virtual/inlet junctions, storage nodes, outfalls and dividers do not accept this ordinary-junction parameter. Stock EPA export refuses positive StorageArea because older parsers can silently ignore the additional token. Use the OpenSWMM 5.3.0 compatibility profile instead.
+
+Example (US units):
+
+```text
+[JUNCTIONS]
+;;Name Elev MaxDepth InitDepth SurDepth Aponded StorageArea
+MH1    100  10       0         0        0       12.566
+```
+
 If Ymax is 0 then SWMM sets the junction’s maximum depth to the distance from its invert to the top of the highest connecting link.
 If the junction is part of a force main section of the system then set Ysur to the maximum pressure that the system can sustain.
 Surface ponding can only occur when Apond is non-zero and the ALLOW_PONDING analysis option is turned on.

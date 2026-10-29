@@ -98,6 +98,7 @@ CREATE TABLE IF NOT EXISTS nodes (
     init_depth      REAL,
     surcharge_depth REAL,
     ponded_area     REAL,
+    storage_area    REAL NOT NULL DEFAULT 0,
     tag             TEXT,
     -- Virtual junctions are JUNCTION-typed (node_type stays "JUNCTION"), so
     -- the flag needs its own column or a round-trip demotes them to plain
@@ -1468,6 +1469,7 @@ void create_schema(sqlite3* db) {
         if (!has)
             exec(db, std::string("ALTER TABLE ") + table + " ADD COLUMN " + column + " " + type);
     };
+    add_missing("nodes", "storage_area", "REAL NOT NULL DEFAULT 0");
     add_missing("hotstart_slots", "save_format", "TEXT CHECK(save_format IN ('LEGACY','NATIVE'))");
     add_missing("hotstart_slots", "num_subcatch", "INTEGER");
     add_missing("hotstart_slots", "num_landuses", "INTEGER");
