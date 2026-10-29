@@ -1185,9 +1185,13 @@ static bool write2DSections(FILE* f, const SimulationContext& ctx, const std::st
     if (o.coriolis_f_set)
         std::fprintf(f, "%-22s %.17g\n", "CORIOLIS_F", o.coriolis_f);
     if (o.turbulence != twoD::Turbulence2D::NONE)
-        std::fprintf(f, "%-22s %s\n", "TURBULENCE_MODEL", "SMAGORINSKY");
+        std::fprintf(f, "%-22s %s\n", "TURBULENCE_MODEL", twoD::turbulenceName(o.turbulence));
     if (o.turbulence != twoD::Turbulence2D::NONE || o.smagorinsky_cs != 0.10)
         std::fprintf(f, "%-22s %.17g\n", "SMAGORINSKY_CS", o.smagorinsky_cs);
+    if (o.eddy_viscosity_background != 0.0)
+        std::fprintf(f, "%-22s %.17g\n", "EDDY_VISCOSITY_BACKGROUND", o.eddy_viscosity_background);
+    if (o.turbulence == twoD::Turbulence2D::MIXING_LENGTH || o.mixing_length_coefficient != 0.5)
+        std::fprintf(f, "%-22s %.17g\n", "MIXING_LENGTH_COEFFICIENT", o.mixing_length_coefficient);
     if (o.reconstruction_order != 1)
         std::fprintf(f, "%-22s %d\n", "RECONSTRUCTION_ORDER", o.reconstruction_order);
     if (o.front_rebuild >= 0)

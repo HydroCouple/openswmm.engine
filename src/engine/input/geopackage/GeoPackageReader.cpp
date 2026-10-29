@@ -404,8 +404,10 @@ static void apply_option_2d(SimulationContext& ctx, const std::string& key,
     } else if (key == "2D_TURBULENCE_MODEL") {
         if (val == "NONE") o->turbulence = twoD::Turbulence2D::NONE;
         else if (val == "SMAGORINSKY") o->turbulence = twoD::Turbulence2D::SMAGORINSKY;
+        else if (val == "MIXING_LENGTH") o->turbulence = twoD::Turbulence2D::MIXING_LENGTH;
         else throw std::runtime_error("Invalid 2D_TURBULENCE_MODEL value");
-    } else if (key == "2D_CORIOLIS_LATITUDE" || key == "2D_CORIOLIS_F" || key == "2D_SMAGORINSKY_CS") {
+    } else if (key == "2D_CORIOLIS_LATITUDE" || key == "2D_CORIOLIS_F" || key == "2D_SMAGORINSKY_CS" ||
+               key == "2D_EDDY_VISCOSITY_BACKGROUND" || key == "2D_MIXING_LENGTH_COEFFICIENT") {
         std::size_t used = 0;
         const double x = std::stod(val, &used);
         if (!std::isfinite(x) || used != val.size()) throw std::runtime_error("Invalid " + key);
@@ -414,9 +416,15 @@ static void apply_option_2d(SimulationContext& ctx, const std::string& key,
             o->coriolis_latitude = x; o->coriolis_latitude_set = true;
         } else if (key == "2D_CORIOLIS_F") {
             o->coriolis_f = x; o->coriolis_f_set = true;
-        } else {
+        } else if (key == "2D_SMAGORINSKY_CS") {
             if (x < 0) throw std::runtime_error("Invalid 2D_SMAGORINSKY_CS");
             o->smagorinsky_cs = x;
+        } else if (key == "2D_EDDY_VISCOSITY_BACKGROUND") {
+            if (x < 0) throw std::runtime_error("Invalid 2D_EDDY_VISCOSITY_BACKGROUND");
+            o->eddy_viscosity_background = x;
+        } else {
+            if (x < 0) throw std::runtime_error("Invalid 2D_MIXING_LENGTH_COEFFICIENT");
+            o->mixing_length_coefficient = x;
         }
     } else if (key == "2D_RECONSTRUCTION_ORDER") {
         if (val != "1" && val != "2") throw std::runtime_error("Invalid 2D_RECONSTRUCTION_ORDER");

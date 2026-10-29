@@ -1457,6 +1457,15 @@ std::string ExplicitInertialSolver::rk2CheckpointModel(const Rk2CheckpointBindin
         std::string profile = "Coriolis and mimetic Smagorinsky v1";
         a(profile, o.coriolis, o.coriolis_latitude, o.coriolis_f, o.coriolis_latitude_set,
           o.coriolis_f_set, o.turbulence, o.smagorinsky_cs);
+        // Appended only when set, so existing momentum-physics identities are unchanged.
+        if (o.eddy_viscosity_background != 0.0) {
+            std::string background = "background eddy viscosity v1";
+            a(background, o.eddy_viscosity_background);
+        }
+        if (o.turbulence == Turbulence2D::MIXING_LENGTH) {
+            std::string length = "depth mixing length v1";
+            a(length, o.mixing_length_coefficient);
+        }
     }
     if (o.theta_reference_step > 0.0) {
         std::string profile = "physical-time momentum smoothing v1";

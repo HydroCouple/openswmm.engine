@@ -9,6 +9,8 @@
 #include "2d/input/SectionHandlers2D.hpp"
 #include "2d/data/SurfaceStateData.hpp"
 #include "2d/data/BoundaryData.hpp"
+#include <algorithm>
+#include <cmath>
 #include <numeric>
 
 using namespace openswmm::twoD;
@@ -20,7 +22,7 @@ struct ExplicitInertialSolverTestAccess {
 };
 }
 namespace {
-MeshData grid(int n, bool skew = false, bool quads = false) {
+MeshData grid(int n, bool skew = false, bool quads = false, double angle = 0) {
     MeshData m;
     m.resize_vertices((n + 1) * (n + 1));
     for (int y = 0; y <= n; ++y)
@@ -31,6 +33,12 @@ MeshData grid(int n, bool skew = false, bool quads = false) {
                       (skew && x && y && x < n && y < n ? .025 * std::sin(7 * x + 3 * y) / n : 0);
             m.vz[v] = 0;
         }
+    // Rigid rotation of the whole square about the origin (radians).
+    for (int v = 0; v < m.n_vertices() && angle != 0; ++v) {
+        const double x = m.vx[v], y = m.vy[v];
+        m.vx[v] = std::cos(angle) * x - std::sin(angle) * y;
+        m.vy[v] = std::sin(angle) * x + std::cos(angle) * y;
+    }
     m.resize_triangles((quads ? 1 : 2) * n * n);
     int t = 0;
     for (int y = 0; y < n; ++y)
@@ -52,7 +60,8 @@ struct Fields {
     InertialEdges edges;
     MomentumPhysics2D physics;
     std::vector<double> h, eta, x, y, rx, ry;
-    Fields(int n = 8, bool skew = false, bool quads = false) : m(grid(n, skew, quads)) {
+    Fields(int n = 8, bool skew = false, bool quads = false, double angle = 0)
+        : m(grid(n, skew, quads, angle)) {
         edges.build(m);
         h.assign(m.n_cells(), 1);
         eta = h;
@@ -79,6 +88,266 @@ TEST(MomentumPhysics, OptionsValidateAndRetainDisabledDefaults) {
         EXPECT_FALSE(parse2DOptionsLine({"SMAGORINSKY_CS", val}, o).empty());
     EXPECT_TRUE(parse2DOptionsLine({"SMAGORINSKY_CS", "0"}, o).empty());
     EXPECT_TRUE(parse2DOptionsLine({"TURBULENCE_MODEL", "SMAGORINSKY"}, o).empty());
+}
+
+TEST(MomentumPhysics, BackgroundViscosityParsesAndRoundTrips) {
+    SolverOptions2D o;
+    EXPECT_DOUBLE_EQ(o.eddy_viscosity_background, 0);
+    EXPECT_TRUE(is2DOptionKey("EDDY_VISCOSITY_BACKGROUND"));
+    const auto keys = current2DOptionKeys();
+    EXPECT_NE(std::find_if(keys.begin(), keys.end(),
+                           [](const char* k) { return std::string(k) == "EDDY_VISCOSITY_BACKGROUND"; }),
+              keys.end());
+    for (const auto* val : {"nan", "inf", "-0.001", "UNSET", "x"})
+        EXPECT_FALSE(parse2DOptionsLine({"EDDY_VISCOSITY_BACKGROUND", val}, o).empty()) << val;
+    EXPECT_DOUBLE_EQ(o.eddy_viscosity_background, 0);
+    ASSERT_TRUE(parse2DOptionsLine({"EDDY_VISCOSITY_BACKGROUND", "0.0123456789012345"}, o).empty());
+    SolverOptions2D back;
+    ASSERT_TRUE(parse2DOptionsLine({"EDDY_VISCOSITY_BACKGROUND",
+                                    format2DOptionValue(o, "EDDY_VISCOSITY_BACKGROUND")}, back).empty());
+    EXPECT_EQ(back.eddy_viscosity_background, o.eddy_viscosity_background);
+    EXPECT_EQ(format2DOptionValue(SolverOptions2D{}, "EDDY_VISCOSITY_BACKGROUND"), "0");
+}
+
+TEST(MomentumPhysics, BackgroundViscosityIsInactiveWithoutSmagorinsky) {
+    // Like SMAGORINSKY_CS, a stored background value is inert unless the
+    // turbulence model selects it: same convention as inactive Coriolis inputs.
+    auto m = grid(7, true);
+    SurfaceStateData a;
+    a.resize(m.n_cells(), m.n_vertices());
+    for (int i = 0; i < m.n_cells(); ++i) {
+        a.depth[i] = a.head[i] = m.tri_cx[i] < .5 ? .4 : .02;
+        a.volume[i] = a.depth[i] * m.tri_area[i];
+    }
+    auto b = a;
+    SolverOptions2D o;
+    o.momentum = Momentum2D::FULL_SWE;
+    o.lts_tiers = 1;
+    o.reconstruction_order = 2;
+    o.cfl_number = .4;
+    auto p = o;
+    p.eddy_viscosity_background = .01;
+    EXPECT_NO_THROW(makeSurfaceSolver(p, nullptr, m.n_cells(), true));
+    ExplicitInertialSolver x, y;
+    x.initialize(m, a, o);
+    y.initialize(m, b, p);
+    x.advance(0, .3);
+    y.advance(0, .3);
+    EXPECT_EQ(a.volume, b.volume);
+    EXPECT_EQ(ExplicitInertialSolverTestAccess::x(x), ExplicitInertialSolverTestAccess::x(y));
+    EXPECT_EQ(ExplicitInertialSolverTestAccess::y(x), ExplicitInertialSolverTestAccess::y(y));
+    SurfaceStateData c;
+    c.resize(m.n_cells(), m.n_vertices());
+    auto bad = p;
+    bad.eddy_viscosity_background = -1;
+    EXPECT_THROW(ExplicitInertialSolver{}.initialize(m, c, bad), std::invalid_argument);
+}
+
+TEST(MomentumPhysics, BackgroundViscosityIsAdditiveAndZeroIsBitIdentical) {
+    Fields f(12, true);
+    for (int i = 0; i < f.m.n_cells(); ++i) {
+        f.x[i] = std::sin(3 * f.m.tri_cy[i]) + f.m.tri_cx[i];
+        f.y[i] = std::cos(2 * f.m.tri_cx[i]);
+    }
+    const double bound0 = f.evaluate(.1);
+    const auto nu0 = f.physics.viscosity, rx0 = f.rx, ry0 = f.ry;
+    // Explicit zero background must not change a single bit.
+    EXPECT_EQ(f.physics.evaluate(f.m, f.edges, f.h, f.eta, f.x, f.y, 1e-8, .1, f.rx, f.ry, -1, 0), bound0);
+    EXPECT_EQ(f.physics.viscosity, nu0);
+    EXPECT_EQ(f.rx, rx0);
+    EXPECT_EQ(f.ry, ry0);
+    f.physics.evaluate(f.m, f.edges, f.h, f.eta, f.x, f.y, 1e-8, .1, f.rx, f.ry, -1, .02);
+    for (std::size_t i = 0; i < nu0.size(); ++i)
+        EXPECT_DOUBLE_EQ(f.physics.viscosity[i], .02 + nu0[i]);
+}
+
+TEST(MomentumPhysics, BackgroundViscosityDecaysCosineFlowAtAnalyticalRate) {
+    // u = U cos(pi xi) along a rotated square's xi axis, v = 0, constant h:
+    // zero traction on all four walls and du/dt = 2 nu u_xixi, so the
+    // amplitude decays exactly as exp(-2 nu pi^2 t) under div(2 h nu S).
+    const double nu = .01, T = 2.0, exact = -2 * nu * M_PI * M_PI;
+    for (double angle : {0.0, 64.0 * M_PI / 180}) {
+        double previous = 1;
+        for (int n : {16, 32}) {
+            Fields f(n, false, false, angle);
+            const double ex = std::cos(angle), ey = std::sin(angle);
+            std::vector<double> shape(f.m.n_cells());
+            for (int i = 0; i < f.m.n_cells(); ++i) {
+                const double xi = ex * f.m.tri_cx[i] + ey * f.m.tri_cy[i];
+                shape[i] = std::cos(M_PI * xi);
+                f.x[i] = shape[i] * ex;
+                f.y[i] = shape[i] * ey;
+            }
+            const double e0 = MomentumPhysics2D::energy(f.m, f.h, f.x, f.y, 1e-8);
+            f.physics.advance(f.m, f.edges, f.h, f.eta, f.x, f.y, 1e-8, 0, T, nu);
+            double num = 0, den = 0, px = 0, py = 0;
+            for (int i = 0; i < f.m.n_cells(); ++i) {
+                num += f.m.tri_area[i] * (f.x[i] * ex + f.y[i] * ey) * shape[i];
+                den += f.m.tri_area[i] * shape[i] * shape[i];
+                px += f.m.tri_area[i] * f.x[i];
+                py += f.m.tri_area[i] * f.y[i];
+            }
+            const double rate = std::log(num / den) / T;
+            const double error = std::abs(rate / exact - 1);
+            EXPECT_LT(error, n == 32 ? .02 : .06) << "n=" << n << " angle=" << angle;
+            EXPECT_LT(error, previous) << "refinement must reduce the decay-rate error";
+            previous = error;
+            EXPECT_NEAR(px, 0, 1e-12);
+            EXPECT_NEAR(py, 0, 1e-12);
+            EXPECT_LT(MomentumPhysics2D::energy(f.m, f.h, f.x, f.y, 1e-8), e0);
+        }
+    }
+}
+
+TEST(MomentumPhysics, BackgroundViscosityActsWithZeroSmagorinskyCoefficient) {
+    auto m = grid(7, true);
+    SurfaceStateData a;
+    a.resize(m.n_cells(), m.n_vertices());
+    for (int i = 0; i < m.n_cells(); ++i) {
+        a.depth[i] = a.head[i] = m.tri_cx[i] < .5 ? .4 : .02;
+        a.volume[i] = a.depth[i] * m.tri_area[i];
+    }
+    auto b = a;
+    SolverOptions2D o;
+    o.momentum = Momentum2D::FULL_SWE;
+    o.lts_tiers = 1;
+    o.reconstruction_order = 2;
+    o.cfl_number = .4;
+    o.turbulence = Turbulence2D::SMAGORINSKY;
+    o.smagorinsky_cs = 0;
+    auto p = o;
+    p.eddy_viscosity_background = .01;
+    ExplicitInertialSolver x, y;
+    x.initialize(m, a, o);
+    y.initialize(m, b, p);
+    x.advance(0, .3);
+    y.advance(0, .3);
+    const double va = std::accumulate(a.volume.begin(), a.volume.end(), 0.);
+    const double vb = std::accumulate(b.volume.begin(), b.volume.end(), 0.);
+    EXPECT_NEAR(va, vb, 1e-13);
+    // Cs = 0 previously skipped mixing; the background term must still act.
+    EXPECT_NE(ExplicitInertialSolverTestAccess::x(x), ExplicitInertialSolverTestAccess::x(y));
+}
+
+TEST(MixingLength, ParsesAndRoundTrips) {
+    SolverOptions2D o;
+    EXPECT_DOUBLE_EQ(o.mixing_length_coefficient, .5);
+    ASSERT_TRUE(parse2DOptionsLine({"TURBULENCE_MODEL", "MIXING_LENGTH"}, o).empty());
+    EXPECT_EQ(o.turbulence, Turbulence2D::MIXING_LENGTH);
+    EXPECT_TRUE(o.momentumPhysics());
+    EXPECT_EQ(format2DOptionValue(o, "TURBULENCE_MODEL"), "MIXING_LENGTH");
+    EXPECT_TRUE(is2DOptionKey("MIXING_LENGTH_COEFFICIENT"));
+    for (const auto* val : {"nan", "inf", "-0.1", "UNSET", "x"})
+        EXPECT_FALSE(parse2DOptionsLine({"MIXING_LENGTH_COEFFICIENT", val}, o).empty()) << val;
+    ASSERT_TRUE(parse2DOptionsLine({"MIXING_LENGTH_COEFFICIENT", "0.412345678901234"}, o).empty());
+    SolverOptions2D back;
+    ASSERT_TRUE(parse2DOptionsLine({"MIXING_LENGTH_COEFFICIENT",
+                                    format2DOptionValue(o, "MIXING_LENGTH_COEFFICIENT")}, back).empty());
+    EXPECT_EQ(back.mixing_length_coefficient, o.mixing_length_coefficient);
+}
+
+TEST(MixingLength, ViscosityIsWallCappedLengthSquaredTimesExactVorticity) {
+    // Affine velocity has exact least-squares gradients; depth varies per cell.
+    // On the unit square every exterior edge bounds the domain, so d = distance to the nearest side.
+    Fields f(16);
+    const double a = .3, b = -.7, c = .2, d = .5, omega = std::abs(c - b);
+    for (int i = 0; i < f.m.n_cells(); ++i) {
+        const double x = f.m.tri_cx[i], y = f.m.tri_cy[i];
+        f.h[i] = f.eta[i] = .2 + .1 * x + .05 * y;
+        f.x[i] = f.h[i] * (a * x + b * y);
+        f.y[i] = f.h[i] * (c * x + d * y);
+    }
+    // Cs is ignored once the depth mixing length is selected.
+    f.physics.evaluate(f.m, f.edges, f.h, f.eta, f.x, f.y, 1e-8, .3, f.rx, f.ry, -1, .001, .5);
+    const auto nu = f.physics.viscosity;
+    f.physics.evaluate(f.m, f.edges, f.h, f.eta, f.x, f.y, 1e-8, 0, f.rx, f.ry, -1, .001, .5);
+    EXPECT_EQ(f.physics.viscosity, nu);
+    int depth_limited = 0, wall_limited = 0;
+    for (int i = 0; i < f.m.n_cells(); ++i) {
+        const double x = f.m.tri_cx[i], y = f.m.tri_cy[i];
+        const double wall = std::min({x, 1 - x, y, 1 - y});
+        EXPECT_NEAR(f.physics.wall_distance[i], wall, 1e-12);
+        if (x < .1 || x > .9 || y < .1 || y > .9) continue; // full interior stencils only
+        const double l = std::min(.5 * f.h[i], MomentumPhysics2D::kappa * wall);
+        EXPECT_NEAR(nu[i], .001 + l * l * omega, 1e-12);
+        (l < .5 * f.h[i] ? wall_limited : depth_limited)++;
+    }
+    EXPECT_GT(depth_limited, 20);
+    EXPECT_GT(wall_limited, 20);
+}
+
+TEST(MixingLength, IrrotationalStrainCarriesNoMixingLengthViscosity) {
+    // A converging/accelerating potential flow (u = a x, v = -a y) has strain but no
+    // vorticity; the shear-based mixing length must not mix it (Smagorinsky does).
+    Fields f(12);
+    for (int i = 0; i < f.m.n_cells(); ++i) {
+        f.x[i] = .8 * f.m.tri_cx[i];
+        f.y[i] = -.8 * f.m.tri_cy[i];
+    }
+    f.physics.evaluate(f.m, f.edges, f.h, f.eta, f.x, f.y, 1e-8, 0, f.rx, f.ry, -1, 0, .5);
+    double smag = 0;
+    for (int i = 0; i < f.m.n_cells(); ++i)
+        if (f.m.tri_cx[i] > .1 && f.m.tri_cx[i] < .9 && f.m.tri_cy[i] > .1 && f.m.tri_cy[i] < .9)
+            EXPECT_NEAR(f.physics.viscosity[i], 0, 1e-13);
+    f.evaluate(.2);
+    for (int i = 0; i < f.m.n_cells(); ++i) smag = std::max(smag, f.physics.viscosity[i]);
+    EXPECT_GT(smag, 1e-4);
+}
+
+TEST(MixingLength, EddyViscosityConvergesUnderRefinementWhileSmagorinskyCollapses) {
+    // The reason for the closure: its length scale is the flow depth, not the cell.
+    auto interiorMedian = [](int n, double cs, double c) {
+        Fields f(n);
+        std::fill(f.h.begin(), f.h.end(), .3);
+        f.eta = f.h;
+        for (int i = 0; i < f.m.n_cells(); ++i)
+            f.x[i] = .3 * std::sin(2 * f.m.tri_cy[i]);
+        f.physics.evaluate(f.m, f.edges, f.h, f.eta, f.x, f.y, 1e-8, cs, f.rx, f.ry, -1, 0, c);
+        std::vector<double> nu;
+        for (int i = 0; i < f.m.n_cells(); ++i)
+            // Core where the wall cap is inactive (d > c h / kappa = 0.37); the capped
+            // branch is checked exactly in ViscosityIsWallCappedLengthSquaredTimesExactVorticity.
+            if (f.m.tri_cx[i] > .4 && f.m.tri_cx[i] < .6 && f.m.tri_cy[i] > .4 && f.m.tri_cy[i] < .6)
+                nu.push_back(f.physics.viscosity[i]);
+        std::nth_element(nu.begin(), nu.begin() + nu.size() / 2, nu.end());
+        return nu[nu.size() / 2];
+    };
+    const double ml32 = interiorMedian(32, 0, .5), ml64 = interiorMedian(64, 0, .5);
+    EXPECT_NEAR(ml64 / ml32, 1, .02);
+    EXPECT_LT(interiorMedian(64, .2, 0) / interiorMedian(16, .2, 0), .1);
+}
+
+TEST(MixingLength, FullSolverConservesActsAndIgnoresSmagorinskyCoefficient) {
+    auto m = grid(7, true);
+    SurfaceStateData a;
+    a.resize(m.n_cells(), m.n_vertices());
+    for (int i = 0; i < m.n_cells(); ++i) {
+        a.depth[i] = a.head[i] = m.tri_cx[i] < .5 ? .4 : .02;
+        a.volume[i] = a.depth[i] * m.tri_area[i];
+    }
+    auto b = a, c = a;
+    SolverOptions2D o;
+    o.momentum = Momentum2D::FULL_SWE;
+    o.lts_tiers = 1;
+    o.reconstruction_order = 2;
+    o.cfl_number = .4;
+    o.turbulence = Turbulence2D::SMAGORINSKY;
+    o.smagorinsky_cs = 0;
+    auto p = o, q = o;
+    p.turbulence = q.turbulence = Turbulence2D::MIXING_LENGTH;
+    p.smagorinsky_cs = .1;
+    q.smagorinsky_cs = .3;
+    ExplicitInertialSolver x, y, z;
+    x.initialize(m, a, o);
+    y.initialize(m, b, p);
+    z.initialize(m, c, q);
+    x.advance(0, .3);
+    y.advance(0, .3);
+    z.advance(0, .3);
+    EXPECT_NEAR(std::accumulate(b.volume.begin(), b.volume.end(), 0.),
+                std::accumulate(a.volume.begin(), a.volume.end(), 0.), 1e-13);
+    EXPECT_EQ(ExplicitInertialSolverTestAccess::x(y), ExplicitInertialSolverTestAccess::x(z));
+    EXPECT_NE(ExplicitInertialSolverTestAccess::x(x), ExplicitInertialSolverTestAccess::x(y));
 }
 
 TEST(MomentumPhysics, ExactInertialRotationAndHemispheres) {

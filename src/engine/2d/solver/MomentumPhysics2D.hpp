@@ -24,7 +24,11 @@ struct BoundaryData;
  */
 class MomentumPhysics2D {
 public:
-    std::vector<double> viscosity, strain;
+    std::vector<double> viscosity, strain, vorticity; ///< per cell: m2/s, |S| and |omega| in 1/s
+    /// Distance from each centroid to the nearest mesh boundary edge (m); built on
+    /// first use by the depth mixing length, which caps l = min(c h, kappa d).
+    std::vector<double> wall_distance;
+    static constexpr double kappa = 0.41;
     double last_limit = std::numeric_limits<double>::infinity();
     uint64_t substeps = 0, retries = 0;
 
@@ -40,14 +44,18 @@ public:
 
     static void rotate(std::vector<double>& qx, std::vector<double>& qy, double angle);
 
-    /** Evaluate conservative shared-face dq/dt. The explicit bound uses the
+    /** Evaluate conservative shared-face dq/dt. Cell viscosity is
+     * background + (cs*Delta)^2*|S| (m2/s), or background + l^2*|omega| with
+     * l = min(c*h, kappa*d_wall) when a depth_coefficient c > 0 selects the depth
+     * mixing length, unless fixed_viscosity >= 0 replaces it. The explicit bound uses the
      * absolute row sums of the actual velocity operator, including gradient
      * reconstruction and cross stresses. Dry or blocked faces are excluded.
      */
     double evaluate(const MeshData& m, const InertialEdges& edges, const std::vector<double>& h,
                     const std::vector<double>& eta, const std::vector<double>& qx,
                     const std::vector<double>& qy, double dry, double cs, std::vector<double>& rx,
-                    std::vector<double>& ry, double fixed_viscosity = -1);
+                    std::vector<double>& ry, double fixed_viscosity = -1, double background = 0,
+                    double depth_coefficient = 0);
 
     /** SSP-RK2 mixing at fixed water storage. Reevaluate nonlinear viscosity
      * at each stage; retry only momentum, before publishing it. Hydrodynamic
@@ -56,7 +64,11 @@ public:
      */
     void advance(const MeshData& m, const InertialEdges& edges, const std::vector<double>& h,
                  const std::vector<double>& eta, std::vector<double>& qx, std::vector<double>& qy,
-                 double dry, double cs, double seconds);
+                 double dry, double cs, double seconds, double background = 0,
+                 double depth_coefficient = 0);
+
+    /** Nearest-boundary-edge distance for every cell centroid (all exterior edges). */
+    void computeWallDistance(const MeshData& m);
 
     static double energy(const MeshData& m, const std::vector<double>& h,
                          const std::vector<double>& qx, const std::vector<double>& qy, double dry);

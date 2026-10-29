@@ -1306,11 +1306,11 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         thread_warnings_.emplace_back(buf);
         if (options_.momentumPhysics()) {
             std::snprintf(buf, sizeof buf,
-                "2D optional momentum: f=%.17g s^-1; turbulence=%s; Cs=%.17g; "
-                "filter=sqrt(cell area); interior Smagorinsky stress; selected quadratic wall traction; accepted cell velocities.",
-                options_.coriolisParameter(),
-                options_.turbulence == Turbulence2D::SMAGORINSKY ? "SMAGORINSKY" : "NONE",
-                options_.smagorinsky_cs);
+                "2D optional momentum: f=%.17g s^-1; turbulence=%s; Cs=%.17g; mixing-length c=%.17g; "
+                "background nu=%.17g m2/s; interior eddy-viscosity stress; selected quadratic wall traction; "
+                "accepted cell velocities.",
+                options_.coriolisParameter(), turbulenceName(options_.turbulence), options_.smagorinsky_cs,
+                options_.mixing_length_coefficient, options_.eddy_viscosity_background);
             thread_warnings_.emplace_back(buf);
         }
     }

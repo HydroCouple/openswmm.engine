@@ -2697,9 +2697,13 @@ static void write_options_2d(sqlite3* db, const SimulationContext& ctx, const st
         insert("2D_CORIOLIS", o.coriolis == twoD::Coriolis2D::LATITUDE ? "LATITUDE" : "CONSTANT_F");
     if (o.coriolis_latitude_set) insert("2D_CORIOLIS_LATITUDE", fmt_g17(o.coriolis_latitude));
     if (o.coriolis_f_set) insert("2D_CORIOLIS_F", fmt_g17(o.coriolis_f));
-    if (o.turbulence != twoD::Turbulence2D::NONE) insert("2D_TURBULENCE_MODEL", "SMAGORINSKY");
+    if (o.turbulence != twoD::Turbulence2D::NONE) insert("2D_TURBULENCE_MODEL", twoD::turbulenceName(o.turbulence));
     if (o.turbulence != twoD::Turbulence2D::NONE || o.smagorinsky_cs != .10)
         insert("2D_SMAGORINSKY_CS", fmt_g17(o.smagorinsky_cs));
+    if (o.eddy_viscosity_background != 0.0)
+        insert("2D_EDDY_VISCOSITY_BACKGROUND", fmt_g17(o.eddy_viscosity_background));
+    if (o.turbulence == twoD::Turbulence2D::MIXING_LENGTH || o.mixing_length_coefficient != 0.5)
+        insert("2D_MIXING_LENGTH_COEFFICIENT", fmt_g17(o.mixing_length_coefficient));
     if (o.reconstruction_order != 1) insert("2D_RECONSTRUCTION_ORDER", std::to_string(o.reconstruction_order));
     insert("2D_MOMENTUM_EQUATION", o.momentum == twoD::Momentum2D::FULL_SWE ? "FULL_SWE"
                                    : o.momentum == twoD::Momentum2D::DIFFUSIVE_WAVE

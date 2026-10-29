@@ -201,6 +201,8 @@ void ExplicitInertialSolver::initialize(MeshData& mesh, SurfaceStateData& state,
         }
     }
     opts.wall_drag_enabled = !wall_drag_slots_.empty();
+    if (!std::isfinite(opts.eddy_viscosity_background) || opts.eddy_viscosity_background < 0)
+        throw std::invalid_argument("EDDY_VISCOSITY_BACKGROUND must be finite and nonnegative.");
     if (opts.momentumPhysics()) {
         if (opts.momentum != Momentum2D::FULL_SWE || opts.lts_tiers != 1)
             throw std::invalid_argument("Coriolis/Smagorinsky/wall drag require FULL_SWE and LTS_TIERS 1.");
@@ -209,6 +211,7 @@ void ExplicitInertialSolver::initialize(MeshData& mesh, SurfaceStateData& state,
         if (opts.coriolis == Coriolis2D::CONSTANT_F && !opts.coriolis_f_set)
             throw std::invalid_argument("CORIOLIS CONSTANT_F requires CORIOLIS_F.");
         if (!std::isfinite(opts.coriolisParameter()) || !std::isfinite(opts.smagorinsky_cs) ||
+            !std::isfinite(opts.mixing_length_coefficient) || opts.mixing_length_coefficient < 0 ||
             opts.smagorinsky_cs < 0 || !std::isfinite(opts.coriolis_latitude) ||
             std::abs(opts.coriolis_latitude) > 90)
             throw std::invalid_argument("Invalid Coriolis/Smagorinsky parameters.");
@@ -216,9 +219,10 @@ void ExplicitInertialSolver::initialize(MeshData& mesh, SurfaceStateData& state,
             state.snow.active() || (state.node_coupling && !state.node_coupling->empty()))
             throw std::invalid_argument("Coriolis/Smagorinsky/wall drag currently require uncoupled surface hydraulics.");
         std::fprintf(stderr, "[openswmm 2D] optional momentum physics: f=%.17g s^-1, "
-                     "Smagorinsky=%s Cs=%.17g, filter=sqrt(cell area), CPU global stepping.\n",
-                     opts.coriolisParameter(), opts.turbulence == Turbulence2D::SMAGORINSKY ? "ON" : "OFF",
-                     opts.smagorinsky_cs);
+                     "turbulence=%s Cs=%.17g, mixing-length c=%.17g, background nu=%.17g m2/s, "
+                     "CPU global stepping.\n",
+                     opts.coriolisParameter(), turbulenceName(opts.turbulence), opts.smagorinsky_cs,
+                     opts.mixing_length_coefficient, opts.eddy_viscosity_background);
     }
     momentum_physics_ = MomentumPhysics2D{};
     mesh_ = &mesh;
@@ -4166,7 +4170,12 @@ void ExplicitInertialSolver::applyMomentumPhysics(double seconds) {
     MomentumPhysics2D::rotate(qcx_, qcy_, .5 * seconds * f);
     if (opts_->turbulence == Turbulence2D::SMAGORINSKY)
         momentum_physics_.advance(*mesh_, edges_, state_->depth, state_->head, qcx_, qcy_,
-                                 opts_->dry_depth, opts_->smagorinsky_cs, seconds);
+                                 opts_->dry_depth, opts_->smagorinsky_cs, seconds,
+                                 opts_->eddy_viscosity_background);
+    else if (opts_->turbulence == Turbulence2D::MIXING_LENGTH)
+        momentum_physics_.advance(*mesh_, edges_, state_->depth, state_->head, qcx_, qcy_,
+                                 opts_->dry_depth, 0, seconds, opts_->eddy_viscosity_background,
+                                 opts_->mixing_length_coefficient);
     MomentumPhysics2D::rotate(qcx_, qcy_, .5 * seconds * f);
     wall();
 }
@@ -4180,10 +4189,18 @@ double ExplicitInertialSolver::runMomentumStep(double limit, double time) {
     double dt = limit;
     const double f = std::abs(opts_->coriolisParameter());
     if (f > 0) dt = std::min(dt, .25 / f);
-    if (opts_->turbulence == Turbulence2D::SMAGORINSKY && opts_->smagorinsky_cs > 0) {
+    if (opts_->turbulence == Turbulence2D::SMAGORINSKY &&
+        (opts_->smagorinsky_cs > 0 || opts_->eddy_viscosity_background > 0)) {
         std::vector<double> rx, ry;
         dt = std::min(dt, momentum_physics_.evaluate(*mesh_, edges_, state_->depth, state_->head,
-                      qcx_, qcy_, opts_->dry_depth, opts_->smagorinsky_cs, rx, ry));
+                      qcx_, qcy_, opts_->dry_depth, opts_->smagorinsky_cs, rx, ry, -1,
+                      opts_->eddy_viscosity_background));
+    } else if (opts_->turbulence == Turbulence2D::MIXING_LENGTH &&
+               (opts_->mixing_length_coefficient > 0 || opts_->eddy_viscosity_background > 0)) {
+        std::vector<double> rx, ry;
+        dt = std::min(dt, momentum_physics_.evaluate(*mesh_, edges_, state_->depth, state_->head,
+                      qcx_, qcy_, opts_->dry_depth, 0, rx, ry, -1, opts_->eddy_viscosity_background,
+                      opts_->mixing_length_coefficient));
     }
     // Only momentum has changed during this trial; sources and their receipts
     // are untouched. Tighten the hydrodynamic CFL after the first split half.
@@ -4770,9 +4787,9 @@ void ExplicitInertialSolver::finalize() {
     if (initialized_ && !wall_drag_slots_.empty())
         std::fprintf(stderr, "[openswmm 2D] quadratic wall drag: %zu faces, energy removed/rho=%.17g m5/s2\n",
                      wall_drag_slots_.size(), wall_drag_energy_);
-    if (initialized_ && opts_ && opts_->turbulence == Turbulence2D::SMAGORINSKY)
-        std::fprintf(stderr, "[openswmm 2D] Smagorinsky: %llu mixing substeps, %llu retries, "
-                     "last diffusion bound %.17g s.\n",
+    if (initialized_ && opts_ && opts_->turbulence != Turbulence2D::NONE)
+        std::fprintf(stderr, "[openswmm 2D] %s mixing: %llu substeps, %llu retries, "
+                     "last diffusion bound %.17g s.\n", turbulenceName(opts_->turbulence),
                      static_cast<unsigned long long>(momentum_physics_.substeps),
                      static_cast<unsigned long long>(momentum_physics_.retries), momentum_physics_.last_limit);
     common_stage_ = nullptr;

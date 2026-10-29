@@ -248,7 +248,11 @@ enum Var : unsigned {
  * typical urban drainage surface routing problems.
  */
 enum class Coriolis2D : int8_t { OFF = 0, LATITUDE = 1, CONSTANT_F = 2 };
-enum class Turbulence2D : int8_t { NONE = 0, SMAGORINSKY = 1 };
+enum class Turbulence2D : int8_t { NONE = 0, SMAGORINSKY = 1, MIXING_LENGTH = 2 };
+/// [2D_OPTIONS] TURBULENCE_MODEL token for a closure.
+inline const char* turbulenceName(Turbulence2D t) noexcept {
+    return t == Turbulence2D::SMAGORINSKY ? "SMAGORINSKY" : t == Turbulence2D::MIXING_LENGTH ? "MIXING_LENGTH" : "NONE";
+}
 
 struct SolverOptions2D {
     // Explicit opt-in. Unauthored fields are omitted by the writer.
@@ -266,6 +270,14 @@ struct SolverOptions2D {
     Coriolis2D coriolis = Coriolis2D::OFF;
     Turbulence2D turbulence = Turbulence2D::NONE;
     double coriolis_latitude = 0.0, coriolis_f = 0.0, smagorinsky_cs = 0.10;
+    /// [2D_OPTIONS] EDDY_VISCOSITY_BACKGROUND — constant horizontal eddy
+    /// viscosity (m2/s) added to the closure's value; inactive (but kept)
+    /// under TURBULENCE_MODEL NONE, like SMAGORINSKY_CS.
+    double eddy_viscosity_background = 0.0;
+    /// [2D_OPTIONS] MIXING_LENGTH_COEFFICIENT — c in l = min(c*h, kappa*d_wall) for
+    /// TURBULENCE_MODEL MIXING_LENGTH (nu = l^2 |omega|); 0.5 is the depth-averaged
+    /// horizontal mixing length of Stansby (2003, 2006).
+    double mixing_length_coefficient = 0.5;
     bool coriolis_latitude_set = false, coriolis_f_set = false;
     /// Derived from authored WALL_DRAG edges; not a global input switch.
     bool wall_drag_enabled = false;

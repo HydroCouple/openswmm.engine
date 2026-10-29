@@ -2402,8 +2402,10 @@ These processes require CPU FULL_SWE with LTS_TIERS 1 and uncoupled surface hydr
 | CORIOLIS | OFF / LATITUDE / CONSTANT_F | OFF | Selects no rotation, a Coriolis parameter computed from latitude, or a directly authored parameter. LATITUDE requires CORIOLIS_LATITUDE; CONSTANT_F requires CORIOLIS_F. |
 | CORIOLIS_LATITUDE | finite degrees north in [-90, 90] / UNSET | Unset | Latitude used in LATITUDE mode; UNSET clears the authored value. Inactive values remain stored. |
 | CORIOLIS_F | finite number, s⁻¹ / UNSET | Unset | Signed Coriolis parameter used in CONSTANT_F mode; UNSET clears the authored value. Inactive values remain stored. |
-| TURBULENCE_MODEL | NONE / SMAGORINSKY | NONE | Selects no horizontal mixing or conservative depth-integrated Smagorinsky momentum mixing. This does not add scalar turbulent diffusivity or a wall-damping model. |
+| TURBULENCE_MODEL | NONE / SMAGORINSKY / MIXING_LENGTH | NONE | Selects no horizontal mixing, conservative depth-integrated Smagorinsky momentum mixing (filter width from cell area), or the same operator with a shear-based depth mixing length (vorticity times a length set by water depth, capped near boundaries). This does not add scalar turbulent diffusivity or a wall-damping model. |
 | SMAGORINSKY_CS | finite dimensionless number ≥ 0 | 0.10 | Smagorinsky coefficient, used with filter width equal to the square root of cell area; 0 gives zero eddy viscosity. Only active under TURBULENCE_MODEL SMAGORINSKY. |
+| EDDY_VISCOSITY_BACKGROUND | finite number ≥ 0, m²/s | 0 | Constant horizontal eddy viscosity ν0 added to the closure's eddy viscosity (SMAGORINSKY or MIXING_LENGTH). It is a user parameter, not a calibrated constant: it does not scale with depth, velocity or model size. Inactive under TURBULENCE_MODEL NONE; an inactive value remains stored. |
+| MIXING_LENGTH_COEFFICIENT | finite dimensionless number ≥ 0 | 0.5 | Coefficient c of the mixing length l = min(c·h, κ·d) used by TURBULENCE_MODEL MIXING_LENGTH, where h is the cell depth, κ = 0.41 and d the distance to the nearest mesh boundary edge; νt = ν0 + l² times the vorticity magnitude in each cell. The default 0.5 is the depth-averaged horizontal mixing length reported by Stansby (2003, 2006). Only active under MIXING_LENGTH; an inactive value remains stored. |
 
 Time control
 

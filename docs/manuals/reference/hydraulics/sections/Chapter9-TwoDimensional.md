@@ -2974,8 +2974,10 @@ The CPU full shallow-water solver accepts the following `[2D_OPTIONS]` keys. Def
 | `CORIOLIS` | `OFF`, `LATITUDE`, `CONSTANT_F` | `OFF` |
 | `CORIOLIS_LATITUDE` | Finite degrees north, −90 to 90; required in latitude mode | Unset |
 | `CORIOLIS_F` | Finite signed s⁻¹; required in direct-parameter mode | Unset |
-| `TURBULENCE_MODEL` | `NONE`, `SMAGORINSKY` | `NONE` |
+| `TURBULENCE_MODEL` | `NONE`, `SMAGORINSKY`, `MIXING_LENGTH` | `NONE` |
 | `SMAGORINSKY_CS` | Finite nonnegative dimensionless value | 0.10 |
+| `EDDY_VISCOSITY_BACKGROUND` | Finite nonnegative m²/s; inactive with `NONE` | 0 |
+| `MIXING_LENGTH_COEFFICIENT` | Finite nonnegative dimensionless value; active only with `MIXING_LENGTH` | 0.5 |
 
 `UNSET` clears either optional Coriolis input through the extended option API. Inactive values can remain authored; the active mode selects the parameter. The input writer omits default process switches and preserves authored parameters. Generic extended-option access also makes the controls available to programmatic clients without changing C ABI option structures.
 
@@ -2983,9 +2985,20 @@ Qualification is limited to CPU `FULL_SWE`, `LTS_TIERS 1`, first-order or second
 
 In a right-handed horizontal frame, Coriolis adds `(f hv, -f hu)` to the two momentum equations, with `f = 2 Ω sin(latitude)` and `Ω = 7.2921158553 × 10⁻⁵ s⁻¹`. Exact local momentum rotations are symmetrically composed around the hydrodynamic step. Isolated rotation preserves kinetic energy up to floating-point roundoff. This source integration is not a claim of exact geostrophic well-balancing; rotating pressure equilibria must be checked for convergence.
 
-For Smagorinsky, `Δ = sqrt(A)`, `νt = (Cs Δ)² |S|`, and
+For Smagorinsky, `Δ = sqrt(A)`, `νt = ν0 + (Cs Δ)² |S|`, and
 
 `|S| = sqrt(2 ux² + 2 vy² + (uy + vx)²)`.
+
+Here `ν0` is `EDDY_VISCOSITY_BACKGROUND`, a constant horizontal eddy viscosity. With `Cs = 0` it gives constant-viscosity mixing; under Froude similarity a physically equivalent value scales as length^1.5, so one value does not transfer between model scales.
+
+`TURBULENCE_MODEL MIXING_LENGTH` uses the same stress operator with a shear-based mixing length: `νt = ν0 + l² |ω|` with `l = min(c h, κ d)`, where `h` is the cell depth, `c` is `MIXING_LENGTH_COEFFICIENT`, `κ = 0.41`, `d` is the distance from the cell centroid to the nearest mesh boundary edge and `|ω| = |vx − uy|` uses the same least-squares gradients as `|S|`.
+
+- **Depth scale.** A horizontal mixing length tied to depth follows Stansby (2003), whose horizontal length is a multiple of the vertical mixing length; in depth-averaged form this is about half the depth (Stansby 2006), the default `c = 0.5`.
+- **Vorticity.** Mixing-length theory acts on shear. Using `|ω|` instead of `|S|` gives no eddy viscosity in irrotational strain, such as converging flow into a contraction, and keeps it in shear layers and curved jumps. A strain-based depth length put up to several m²/s of viscosity into a deep reservoir and its outlet during UK Test 6A development.
+- **Boundary cap.** `κ d` limits the length near walls, as in common depth-averaged mixing-length models. Here `d` is measured to every exterior edge, including open boundaries; there the cap only acts within about `c h/κ` (≈ 1.2 depths) of the edge.
+- **Mesh dependence.** `νt` depends on depth, distance and the flow, not on cell size, so refining a mesh converges toward a fixed eddy viscosity. The Smagorinsky value falls with cell area.
+
+The model has no transported state and no bed-generated term. It is intended for shallow flows, where horizontal eddies are limited by depth.
 
 The added term is the conservative depth-integrated stress divergence `div(2 h νt S)`. Unrestricted least-squares velocity gradients are separate from shock-limited MUSCL reconstruction. Shared-face gradients include an over-relaxed normal correction reproducing the centroid velocity difference on nonorthogonal cells. Face coefficients use interpolated cell viscosity, connected wet depth and conveyance. Each face transfers equal/opposite momentum; dry sills, holes and zero-conveyance edges transmit no turbulent momentum. Rank-deficient corner gradients borrow a connected complete stencil where available. Otherwise their cell gradient remains zero. Walls and open boundaries have zero turbulent traction; no wall-friction or wall-damping model is included.
 
@@ -2993,7 +3006,7 @@ The mixing operator is integrated with SSP-RK2 at fixed water storage inside sym
 
 The optional global mode includes all cells in the schedule and evaluates exterior Riemann states at the same beginning-of-stage time as interior states. This prevents boundary splitting from generating a nonuniform flow in the uniform inertial-oscillation test. The disabled path retains its prior numerical behavior.
 
-`REPORT_2D_VARIABLES TURBULENCE` adds `Mesh2_face_eddy_viscosity` (m²/s) and `Mesh2_face_strain_rate` (s⁻¹) when mixing is enabled. They are computed from the accepted reported state. Root attributes record the effective `f`, turbulence model, coefficient and filter. Optional-process reported velocity comes from accepted cell momentum; edge fluxes continue to represent hydraulic transfers and boundary window means. No plugin snapshot or C ABI structure is enlarged by this output extension.
+`REPORT_2D_VARIABLES TURBULENCE` adds `Mesh2_face_eddy_viscosity` (m²/s) and `Mesh2_face_strain_rate` (s⁻¹) when mixing is enabled. They are computed from the accepted reported state. Root attributes record the effective `f`, turbulence model, the Smagorinsky coefficient and filter or the mixing-length coefficient, and the background viscosity (`eddy_viscosity_background_m2ps`). Optional-process reported velocity comes from accepted cell momentum; edge fluxes continue to represent hydraulic transfers and boundary window means. No plugin snapshot or C ABI structure is enlarged by this output extension.
 
 A depth-averaged closure does not resolve vertical turbulence, nonhydrostatic pressure or three-dimensional obstacle wakes. Bed-generated mixing, dynamic Smagorinsky, scalar turbulent diffusivity and wall damping are separate future closures. Suggested coefficient sensitivity is 0.05, 0.10 and 0.20; mesh and timestep convergence remain necessary. Adding mixing does not automatically resolve the UK Test 6 gauge discrepancy.
 

@@ -23,12 +23,16 @@ double MomentumPhysics2D::evaluate(const MeshData& m, const InertialEdges& edges
                                    const std::vector<double>& h, const std::vector<double>& eta,
                                    const std::vector<double>& qx, const std::vector<double>& qy,
                                    double dry, double cs, std::vector<double>& rx,
-                                   std::vector<double>& ry, double fixed_viscosity) {
+                                   std::vector<double>& ry, double fixed_viscosity, double background,
+                                   double depth_coefficient) {
     const int n = m.n_cells();
     rx.assign(n, 0);
     ry.assign(n, 0);
     viscosity.assign(n, 0);
     strain.assign(n, 0);
+    vorticity.assign(n, 0);
+    if (depth_coefficient > 0 && static_cast<int>(wall_distance.size()) != n)
+        computeWallDistance(m);
     bound_x_.assign(n, 0);
     bound_y_.assign(n, 0);
     stencils_.assign(n, Stencil{});
@@ -83,7 +87,12 @@ double MomentumPhysics2D::evaluate(const MeshData& m, const InertialEdges& edges
             vy += st.gy[k] * v;
         }
         strain[i] = std::sqrt(2 * ux * ux + 2 * vy * vy + (uy + vx) * (uy + vx));
-        viscosity[i] = fixed_viscosity >= 0 ? fixed_viscosity : cs * cs * m.tri_area[i] * strain[i];
+        vorticity[i] = std::abs(vx - uy);
+        viscosity[i] = fixed_viscosity >= 0 ? fixed_viscosity
+                     : depth_coefficient > 0
+                         ? background + std::pow(std::min(depth_coefficient * h[i], kappa * wall_distance[i]), 2) *
+                                            vorticity[i]
+                         : background + cs * cs * m.tri_area[i] * strain[i];
         if (!std::isfinite(viscosity[i]))
             throw std::runtime_error("Nonfinite Smagorinsky viscosity.");
     }
@@ -114,7 +123,12 @@ double MomentumPhysics2D::evaluate(const MeshData& m, const InertialEdges& edges
             vy += st.gy[k] * v;
         }
         strain[i] = std::sqrt(2 * ux * ux + 2 * vy * vy + (uy + vx) * (uy + vx));
-        viscosity[i] = fixed_viscosity >= 0 ? fixed_viscosity : cs * cs * m.tri_area[i] * strain[i];
+        vorticity[i] = std::abs(vx - uy);
+        viscosity[i] = fixed_viscosity >= 0 ? fixed_viscosity
+                     : depth_coefficient > 0
+                         ? background + std::pow(std::min(depth_coefficient * h[i], kappa * wall_distance[i]), 2) *
+                                            vorticity[i]
+                         : background + cs * cs * m.tri_area[i] * strain[i];
     }
     for (int e = 0; e < edges.ne; ++e) {
         if (!connected_[e])
@@ -194,8 +208,9 @@ double MomentumPhysics2D::evaluate(const MeshData& m, const InertialEdges& edges
 void MomentumPhysics2D::advance(const MeshData& m, const InertialEdges& edges,
                                 const std::vector<double>& h, const std::vector<double>& eta,
                                 std::vector<double>& qx, std::vector<double>& qy, double dry,
-                                double cs, double seconds) {
-    if (seconds <= 0 || cs == 0)
+                                double cs, double seconds, double background,
+                                double depth_coefficient) {
+    if (seconds <= 0 || (cs == 0 && background == 0 && depth_coefficient == 0))
         return;
     struct Rollback {
         std::vector<double>& x;
@@ -211,7 +226,8 @@ void MomentumPhysics2D::advance(const MeshData& m, const InertialEdges& edges,
     } rollback{qx, qy, qx, qy};
     double elapsed = 0;
     while (elapsed < seconds) {
-        const double bound = evaluate(m, edges, h, eta, qx, qy, dry, cs, rx_, ry_);
+        const double bound =
+            evaluate(m, edges, h, eta, qx, qy, dry, cs, rx_, ry_, -1, background, depth_coefficient);
         double dt = std::min(seconds - elapsed, bound);
         const double e0 = energy(m, h, qx, qy, dry);
         bool accepted = false;
@@ -222,7 +238,8 @@ void MomentumPhysics2D::advance(const MeshData& m, const InertialEdges& edges,
                 tx_[j] += dt * rx_[j];
                 ty_[j] += dt * ry_[j];
             }
-            const double stage_bound = evaluate(m, edges, h, eta, tx_, ty_, dry, cs, sx_, sy_);
+            const double stage_bound =
+                evaluate(m, edges, h, eta, tx_, ty_, dry, cs, sx_, sy_, -1, background, depth_coefficient);
             if (dt <= stage_bound) {
                 for (std::size_t j = 0; j < tx_.size(); ++j) {
                     tx_[j] = .5 * (qx[j] + tx_[j] + dt * sx_[j]);
@@ -244,8 +261,30 @@ void MomentumPhysics2D::advance(const MeshData& m, const InertialEdges& edges,
         elapsed = dt == seconds - elapsed ? seconds : elapsed + dt;
         ++substeps;
     }
-    evaluate(m, edges, h, eta, qx, qy, dry, cs, rx_, ry_);
+    evaluate(m, edges, h, eta, qx, qy, dry, cs, rx_, ry_, -1, background, depth_coefficient);
     rollback.accepted = true;
+}
+
+void MomentumPhysics2D::computeWallDistance(const MeshData& m) {
+    std::vector<std::array<double, 4>> segments;
+    for (int c = 0; c < m.n_cells(); ++c)
+        for (int k = 0; k < m.cell_vertex_count(c); ++k)
+            if (m.cell_neighbour(c, k) < 0) {
+                int a, b;
+                m.cell_edge_vertices(c, k, a, b);
+                segments.push_back({m.vx[a], m.vy[a], m.vx[b], m.vy[b]});
+            }
+    wall_distance.assign(m.n_cells(), std::numeric_limits<double>::infinity());
+    for (int c = 0; c < m.n_cells(); ++c) {
+        const double px = m.tri_cx[c], py = m.tri_cy[c];
+        double best = std::numeric_limits<double>::infinity();
+        for (const auto& s : segments) {
+            const double dx = s[2] - s[0], dy = s[3] - s[1], len2 = dx * dx + dy * dy;
+            const double t = len2 > 0 ? std::clamp(((px - s[0]) * dx + (py - s[1]) * dy) / len2, 0.0, 1.0) : 0.0;
+            best = std::min(best, std::hypot(px - s[0] - t * dx, py - s[1] - t * dy));
+        }
+        wall_distance[c] = best;
+    }
 }
 
 double MomentumPhysics2D::energy(const MeshData& m, const std::vector<double>& h,

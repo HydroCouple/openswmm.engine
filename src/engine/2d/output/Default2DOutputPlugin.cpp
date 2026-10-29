@@ -304,8 +304,13 @@ std::string Default2DOutputPlugin::configureOutput(const SolverOptions2D& opts,
     compression_ = std::max(0, std::min(9, opts.output_compression));
     report_vars_ = (opts.report_2d_vars & report2d::ALL_MASK) | report2d::DEPTH;
     momentum_velocity_ = opts.momentum == Momentum2D::FULL_SWE;
-    mixing_enabled_ = opts.turbulence == Turbulence2D::SMAGORINSKY;
-    mixing_cs_ = opts.smagorinsky_cs;
+    mixing_enabled_ = opts.turbulence != Turbulence2D::NONE;
+    turbulence_name_ = turbulenceName(opts.turbulence);
+    // Same closure inputs the solver passes: Smagorinsky uses Cs, mixing length uses c.
+    mixing_cs_ = opts.turbulence == Turbulence2D::SMAGORINSKY ? opts.smagorinsky_cs : 0.0;
+    mixing_depth_coefficient_ =
+        opts.turbulence == Turbulence2D::MIXING_LENGTH ? opts.mixing_length_coefficient : 0.0;
+    mixing_background_ = opts.eddy_viscosity_background;
     mixing_dry_ = opts.dry_depth;
     coriolis_f_ = opts.coriolisParameter();
     species_filter_ = opts.report_2d_species;
@@ -633,10 +638,18 @@ void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
     // variables carry resolve against a variable that already exists.
     writeCrsVariable();
     writeDoubleAttr(file_id_, "coriolis_f_s-1", coriolis_f_);
-    writeStringAttr(file_id_, "turbulence_model", mixing_enabled_ ? "SMAGORINSKY" : "NONE");
+    writeStringAttr(file_id_, "turbulence_model", turbulence_name_);
     if (mixing_enabled_) {
-        writeDoubleAttr(file_id_, "smagorinsky_cs", mixing_cs_);
-        writeStringAttr(file_id_, "smagorinsky_filter", "sqrt(cell area), SI metres");
+        if (mixing_depth_coefficient_ > 0) {
+            writeDoubleAttr(file_id_, "mixing_length_coefficient", mixing_depth_coefficient_);
+            writeStringAttr(file_id_, "mixing_length",
+                            "min(coefficient * cell depth, 0.41 * distance to nearest boundary edge), "
+                            "SI metres; viscosity = background + length^2 * |vorticity|");
+        } else {
+            writeDoubleAttr(file_id_, "smagorinsky_cs", mixing_cs_);
+            writeStringAttr(file_id_, "smagorinsky_filter", "sqrt(cell area), SI metres");
+        }
+        writeDoubleAttr(file_id_, "eddy_viscosity_background_m2ps", mixing_background_);
         writeStringAttr(file_id_, "turbulent_boundary_traction", "zero");
     }
     mixing_mesh_ = &mesh;
@@ -738,7 +751,7 @@ void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
             createFaceDS("Mesh2_face_infil_cum", "cumulative infiltrated depth", "m");
     }
     if (mixing_enabled_ && want(report2d::TURBULENCE)) {
-        ds_face_eddy_viscosity_ = createFaceDS("Mesh2_face_eddy_viscosity", "Smagorinsky horizontal eddy viscosity", "m2 s-1");
+        ds_face_eddy_viscosity_ = createFaceDS("Mesh2_face_eddy_viscosity", "horizontal eddy viscosity (background plus closure)", "m2 s-1");
         ds_face_strain_rate_ = createFaceDS("Mesh2_face_strain_rate", "horizontal strain rate magnitude", "s-1");
     }
     if (want(report2d::VELOCITY)) {
@@ -941,7 +954,8 @@ int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
         }
         std::vector<double> rx, ry;
         mixing_diagnostics_->evaluate(*mixing_mesh_, *mixing_edges_, snap.surface_depth,
-            snap.surface_head, qx, qy, mixing_dry_, mixing_cs_, rx, ry);
+            snap.surface_head, qx, qy, mixing_dry_, mixing_cs_, rx, ry, -1, mixing_background_,
+            mixing_depth_coefficient_);
         face(ds_face_eddy_viscosity_, mixing_diagnostics_->viscosity);
         face(ds_face_strain_rate_, mixing_diagnostics_->strain);
     }
