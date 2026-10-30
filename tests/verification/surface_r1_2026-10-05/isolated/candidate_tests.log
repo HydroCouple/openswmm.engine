@@ -1,0 +1,21 @@
+Internal ctest changing into directory: /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/verification/surface_r1_2026-10-05/isolated/build
+Test project /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/verification/surface_r1_2026-10-05/isolated/build
+    Start  81: test_engine_transport_snow
+1/6 Test  #81: test_engine_transport_snow .........   Passed    0.35 sec
+    Start 120: test_engine_infiltration
+2/6 Test #120: test_engine_infiltration ...........   Passed    0.05 sec
+    Start 125: test_engine_snow
+3/6 Test #125: test_engine_snow ...................   Passed    0.09 sec
+    Start 197: test_engine_2d_infil
+4/6 Test #197: test_engine_2d_infil ...............   Passed    0.10 sec
+    Start 198: test_engine_2d_infil_integration
+5/6 Test #198: test_engine_2d_infil_integration ...   Passed    0.14 sec
+    Start 232: test_engine_surface_processes
+6/6 Test #232: test_engine_surface_processes ......   Passed    0.11 sec
+
+100% tests passed, 0 tests failed out of 6
+
+Label Time Summary:
+unit    =   0.84 sec*proc (6 tests)
+
+Total Test time (real) =   0.88 sec

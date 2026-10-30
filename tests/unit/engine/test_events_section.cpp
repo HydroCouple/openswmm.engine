@@ -1,6 +1,6 @@
 /**
- * @file test_events_section.cpp
- * @brief Unit tests for the [EVENTS] section — C API + InpWriter.
+ * @file      test_events_section.cpp
+ * @brief     Unit tests for the [EVENTS] section — C API + InpWriter.
  *
  * @details Slice CW (added 2026-05-21).  Covers:
  *          - swmm_events_count is zero on a fresh engine.
@@ -13,6 +13,10 @@
  * Engine state is kept minimal (one junction, one outfall, one conduit)
  * so swmm_model_write has a valid topology to serialise.  Mirrors the
  * style of test_files_section.cpp.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -35,18 +39,33 @@ class EventsApiTest : public ::testing::Test {
 protected:
     SWMM_Engine engine = nullptr;
 
+    /**
+     * @brief Create an editable J1-to-O1 conduit model for API edits.
+     *
+     * Allocates the fixture-owned handle, adds junction/outfall/L1 conduit and connects its endpoints.
+     * Does not yet set complete hydraulic geometry or initialize a simulation. Fatal assertions leave
+     * the partial model for teardown.
+     */
     void SetUp() override {
         engine = swmm_engine_new();
         ASSERT_NE(engine, nullptr);
         ASSERT_EQ(swmm_node_add(engine, "J1", SWMM_NODE_JUNCTION), SWMM_OK);
-        ASSERT_EQ(swmm_node_add(engine, "O1", SWMM_NODE_OUTFALL),  SWMM_OK);
-        ASSERT_EQ(swmm_link_add(engine, "L1", SWMM_LINK_CONDUIT),  SWMM_OK);
-        ASSERT_EQ(swmm_link_set_nodes(engine,
-                      swmm_link_index(engine, "L1"),
-                      swmm_node_index(engine, "J1"),
-                      swmm_node_index(engine, "O1")), SWMM_OK);
+        ASSERT_EQ(swmm_node_add(engine, "O1", SWMM_NODE_OUTFALL), SWMM_OK);
+        ASSERT_EQ(swmm_link_add(engine, "L1", SWMM_LINK_CONDUIT), SWMM_OK);
+        ASSERT_EQ(swmm_link_set_nodes(engine, swmm_link_index(engine, "L1"),
+                                      swmm_node_index(engine, "J1"), swmm_node_index(engine, "O1")),
+                  SWMM_OK);
     }
-    void TearDown() override { if (engine) swmm_engine_destroy(engine); }
+    /**
+     * @brief Destroy the fixture engine when allocation succeeded.
+     *
+     * Releases model resources through engine destruction; the member value is not reset and must not
+     * be reused after teardown.
+     */
+    void TearDown() override {
+        if (engine)
+            swmm_engine_destroy(engine);
+    }
 };
 
 // ---------------------------------------------------------------------------
@@ -127,9 +146,11 @@ TEST_F(EventsApiTest, RemoveShiftsIndices) {
 
     double s = 0.0, e = 0.0;
     EXPECT_EQ(swmm_events_get(engine, 0, &s, &e), SWMM_OK);
-    EXPECT_DOUBLE_EQ(s, 1.0); EXPECT_DOUBLE_EQ(e, 2.0);
+    EXPECT_DOUBLE_EQ(s, 1.0);
+    EXPECT_DOUBLE_EQ(e, 2.0);
     EXPECT_EQ(swmm_events_get(engine, 1, &s, &e), SWMM_OK);
-    EXPECT_DOUBLE_EQ(s, 5.0); EXPECT_DOUBLE_EQ(e, 6.0);
+    EXPECT_DOUBLE_EQ(s, 5.0);
+    EXPECT_DOUBLE_EQ(e, 6.0);
 }
 
 TEST_F(EventsApiTest, ClearEmptiesTheList) {
@@ -153,16 +174,17 @@ TEST_F(EventsApiTest, WriterEmitsEventsBlockWhenNonEmpty) {
     // the engine's encodeDate/decodeDate; we verify format-shape rather
     // than hardcoded date strings to stay calendar-arithmetic-agnostic.
     // 46036.5 has a 12:00 fractional component; 46100.25 → 06:00.
-    ASSERT_EQ(swmm_events_add(engine, 46036.0,  46036.5,  nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_events_add(engine, 46036.0, 46036.5, nullptr), SWMM_OK);
     ASSERT_EQ(swmm_events_add(engine, 46100.25, 46100.75, nullptr), SWMM_OK);
 
     auto path = (fs::temp_directory_path() / "events_block.inp").string();
     ASSERT_EQ(swmm_model_write(engine, path.c_str()), SWMM_OK);
 
     std::ifstream f(path);
-    std::stringstream ss; ss << f.rdbuf();
+    std::stringstream ss;
+    ss << f.rdbuf();
     const std::string content = ss.str();
-    f.close();   // Windows: release the handle before fs::remove.
+    f.close(); // Windows: release the handle before fs::remove.
 
     EXPECT_NE(content.find("[EVENTS]"), std::string::npos);
 
@@ -171,15 +193,14 @@ TEST_F(EventsApiTest, WriterEmitsEventsBlockWhenNonEmpty) {
     const auto evPos = content.find("[EVENTS]");
     ASSERT_NE(evPos, std::string::npos);
     const auto nextSec = content.find("\n[", evPos + 1);
-    const std::string evBlock = content.substr(
-        evPos, nextSec == std::string::npos ? std::string::npos
-                                            : nextSec - evPos);
+    const std::string evBlock =
+        content.substr(evPos, nextSec == std::string::npos ? std::string::npos : nextSec - evPos);
 
     // Two date+time pairs ⇒ at least four MM/DD/YYYY tokens in the block
     // (Start Date + End Date for each row).
     const std::regex dateRe(R"(\d{2}/\d{2}/\d{4})");
     auto dateBegin = std::sregex_iterator(evBlock.begin(), evBlock.end(), dateRe);
-    auto dateEnd   = std::sregex_iterator();
+    auto dateEnd = std::sregex_iterator();
     EXPECT_GE(std::distance(dateBegin, dateEnd), 4);
 
     // HH:MM resolution (legacy SWMM 5 parity).  The writer must truncate
@@ -189,9 +210,9 @@ TEST_F(EventsApiTest, WriterEmitsEventsBlockWhenNonEmpty) {
     EXPECT_EQ(evBlock.find(":00:00"), std::string::npos)
         << "InpWriter must truncate HH:MM:SS to HH:MM for legacy parity";
     // And the expected fractional times do appear:
-    EXPECT_NE(evBlock.find("12:00"), std::string::npos);   // row 1 end
-    EXPECT_NE(evBlock.find("06:00"), std::string::npos);   // row 2 start
-    EXPECT_NE(evBlock.find("18:00"), std::string::npos);   // row 2 end
+    EXPECT_NE(evBlock.find("12:00"), std::string::npos); // row 1 end
+    EXPECT_NE(evBlock.find("06:00"), std::string::npos); // row 2 start
+    EXPECT_NE(evBlock.find("18:00"), std::string::npos); // row 2 end
 
     fs::remove(path);
 }
@@ -201,7 +222,8 @@ TEST_F(EventsApiTest, WriterSkipsEventsBlockWhenEmpty) {
     ASSERT_EQ(swmm_model_write(engine, path.c_str()), SWMM_OK);
 
     std::ifstream f(path);
-    std::stringstream ss; ss << f.rdbuf();
+    std::stringstream ss;
+    ss << f.rdbuf();
     const std::string content = ss.str();
     f.close();
 

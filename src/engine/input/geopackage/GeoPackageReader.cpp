@@ -1,15 +1,30 @@
+#include "hydrology/LidNode.hpp"
 /**
- * @file GeoPackageReader.cpp
- * @brief Reads a GeoPackage file into a SimulationContext (all SWMM input sections).
+ * @file      GeoPackageReader.cpp
+ * @brief     Reads a GeoPackage file into a SimulationContext (all SWMM input sections).
  * @ingroup engine_geopackage
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include "GeoPackageReader.hpp"
+#include "ModelSupplement.hpp"
+#ifdef OPENSWMM_HAS_2D
+#include "2d/subsurface/SubsurfaceSections.hpp"
+#include "2d/gw/GwTransportSections.hpp"
+#include "2d/gw/GwTransportData.hpp"
+#endif
+#include <sstream>
+#include <cmath>
+#include "../../core/Constants.hpp"
 #include "ExternalContentReader.hpp"
 #include <stdexcept>
 #include "GpkgUtils.hpp"
 #include "GpkgGeometry.hpp"
 
+#include "core/NodeCoupling2D.hpp"
 #include "core/SimulationContext.hpp"
 #include "core/UnitConversion.hpp"
 #include "data/NodeData.hpp"
@@ -28,6 +43,7 @@
 #include "2d/data/SolverOptions2D.hpp"
 #include "2d/data/BoundaryData.hpp"
 #include "2d/data/PendingRows2D.hpp"
+#include "2d/data/Report2DVars.hpp"
 
 #include "core/DateTime.hpp"
 
@@ -41,6 +57,16 @@ namespace openswmm::gpkg {
 namespace {
 // Parse a timestamp string written by GeoPackageWriter back to an OADate.
 // Accepts "MM/DD/YYYY HH:MM" (absolute) or decimal-hours string (relative).
+/**
+ * @brief Decode a persisted time-series date or raw numeric timestamp.
+ *
+ * Slash scanning initializes absent fields to zero, ignores conversion count and does not parse
+ * seconds. Numeric parsing permits trailing characters and throws invalid_argument/out_of_range for
+ * an unreadable/unrepresentable prefix. Calendar validity follows datetime_encodeDate/Time.
+ *
+ * @param[in] s Borrowed timestamp; slash selects M/D/Y H:M scanning, otherwise std::stod.
+ * @return Raw OADate, with no simulation-start offset or unit scaling.
+ */
 static double parse_ts_timestamp(const std::string& s) {
     // The writer stores the raw OADate at full precision (%.17g). A "/" date
     // string is decoded defensively (legacy / hand-edited files), but the
@@ -58,62 +84,142 @@ static double parse_ts_timestamp(const std::string& s) {
 // Enum parsing helpers
 // ============================================================================
 
+/**
+ * @brief Translate an exact-case GeoPackage node token.
+ *
+ * No error is recorded for an unknown token.
+ *
+ * @param[in] s Borrowed uppercase schema token; no case folding or whitespace trimming.
+ * @return Recognized internal enum, otherwise JUNCTION.
+ */
 static NodeType parse_node_type(const std::string& s) {
-    if (s == "OUTFALL")  return NodeType::OUTFALL;
-    if (s == "DIVIDER")  return NodeType::DIVIDER;
-    if (s == "STORAGE")  return NodeType::STORAGE;
+    if (s == "OUTFALL")
+        return NodeType::OUTFALL;
+    if (s == "DIVIDER")
+        return NodeType::DIVIDER;
+    if (s == "STORAGE")
+        return NodeType::STORAGE;
     return NodeType::JUNCTION;
 }
 
+/**
+ * @brief Translate an exact-case GeoPackage link token.
+ *
+ * No error is recorded for an unknown token.
+ *
+ * @param[in] s Borrowed uppercase schema token; no case folding or whitespace trimming.
+ * @return Recognized internal enum, otherwise CONDUIT.
+ */
 static LinkType parse_link_type(const std::string& s) {
-    if (s == "PUMP")    return LinkType::PUMP;
-    if (s == "ORIFICE") return LinkType::ORIFICE;
-    if (s == "WEIR")    return LinkType::WEIR;
-    if (s == "OUTLET")  return LinkType::OUTLET;
+    if (s == "PUMP")
+        return LinkType::PUMP;
+    if (s == "ORIFICE")
+        return LinkType::ORIFICE;
+    if (s == "WEIR")
+        return LinkType::WEIR;
+    if (s == "OUTLET")
+        return LinkType::OUTLET;
     return LinkType::CONDUIT;
 }
 
+/**
+ * @brief Translate an exact-case GeoPackage outfall boundary token.
+ *
+ * No error is recorded for an unknown token.
+ *
+ * @param[in] s Borrowed uppercase schema token; no case folding or whitespace trimming.
+ * @return Recognized internal enum, otherwise FREE.
+ */
 static OutfallType parse_outfall_type(const std::string& s) {
-    if (s == "NORMAL")     return OutfallType::NORMAL;
-    if (s == "FIXED")      return OutfallType::FIXED;
-    if (s == "TIDAL")      return OutfallType::TIDAL;
-    if (s == "TIMESERIES") return OutfallType::TIMESERIES;
+    if (s == "NORMAL")
+        return OutfallType::NORMAL;
+    if (s == "FIXED")
+        return OutfallType::FIXED;
+    if (s == "TIDAL")
+        return OutfallType::TIDAL;
+    if (s == "TIMESERIES")
+        return OutfallType::TIMESERIES;
     return OutfallType::FREE;
 }
 
+/**
+ * @brief Translate an exact-case GeoPackage divider token.
+ *
+ * No error is recorded for an unknown token.
+ *
+ * @param[in] s Borrowed uppercase schema token; no case folding or whitespace trimming.
+ * @return Recognized internal enum, otherwise CUTOFF.
+ */
 static DividerType parse_divider_type(const std::string& s) {
-    if (s == "OVERFLOW") return DividerType::OVERFLOW_DIV;
-    if (s == "TABULAR")  return DividerType::TABULAR;
-    if (s == "WEIR")     return DividerType::WEIR;
+    if (s == "OVERFLOW")
+        return DividerType::OVERFLOW_DIV;
+    if (s == "TABULAR")
+        return DividerType::TABULAR;
+    if (s == "WEIR")
+        return DividerType::WEIR;
     return DividerType::CUTOFF;
 }
 
+/**
+ * @brief Translate an exact-case GeoPackage section shape token.
+ *
+ * No error is recorded for an unknown token. DUMMY is not a recognized branch and therefore also
+ * falls back to CIRCULAR.
+ *
+ * @param[in] s Borrowed uppercase schema token; no case folding or whitespace trimming.
+ * @return Recognized internal enum, otherwise CIRCULAR.
+ */
 static XsectShape parse_xsect_shape(const std::string& s) {
-    if (s == "CIRCULAR")        return XsectShape::CIRCULAR;
-    if (s == "FILLED_CIRCULAR") return XsectShape::FILLED_CIRCULAR;
-    if (s == "RECT_CLOSED")     return XsectShape::RECT_CLOSED;
-    if (s == "RECT_OPEN")       return XsectShape::RECT_OPEN;
-    if (s == "TRAPEZOIDAL")     return XsectShape::TRAPEZOIDAL;
-    if (s == "TRIANGULAR")      return XsectShape::TRIANGULAR;
-    if (s == "PARABOLIC")       return XsectShape::PARABOLIC;
-    if (s == "POWER")           return XsectShape::POWER;
-    if (s == "IRREGULAR")       return XsectShape::IRREGULAR;
-    if (s == "CUSTOM")          return XsectShape::CUSTOM;
-    if (s == "FORCE_MAIN")      return XsectShape::FORCE_MAIN;
-    if (s == "STREET")          return XsectShape::STREET_XSECT;
-    if (s == "EGGSHAPED")       return XsectShape::EGGSHAPED;
-    if (s == "HORSESHOE")       return XsectShape::HORSESHOE;
-    if (s == "GOTHIC")          return XsectShape::GOTHIC;
-    if (s == "CATENARY")        return XsectShape::CATENARY;
-    if (s == "SEMIELLIPTICAL")  return XsectShape::SEMIELLIPTICAL;
-    if (s == "BASKETHANDLE")    return XsectShape::BASKETHANDLE;
-    if (s == "SEMICIRCULAR")    return XsectShape::SEMICIRCULAR;
-    if (s == "MODBASKETHANDLE") return XsectShape::MODBASKETHANDLE;
-    if (s == "RECT_TRIANG")     return XsectShape::RECT_TRIANG;
-    if (s == "RECT_ROUND")      return XsectShape::RECT_ROUND;
-    if (s == "HORIZ_ELLIPSE")   return XsectShape::HORIZ_ELLIPSE;
-    if (s == "VERT_ELLIPSE")    return XsectShape::VERT_ELLIPSE;
-    if (s == "ARCH")            return XsectShape::ARCH;
+    if (s == "CIRCULAR")
+        return XsectShape::CIRCULAR;
+    if (s == "FILLED_CIRCULAR")
+        return XsectShape::FILLED_CIRCULAR;
+    if (s == "RECT_CLOSED")
+        return XsectShape::RECT_CLOSED;
+    if (s == "RECT_OPEN")
+        return XsectShape::RECT_OPEN;
+    if (s == "TRAPEZOIDAL")
+        return XsectShape::TRAPEZOIDAL;
+    if (s == "TRIANGULAR")
+        return XsectShape::TRIANGULAR;
+    if (s == "PARABOLIC")
+        return XsectShape::PARABOLIC;
+    if (s == "POWER")
+        return XsectShape::POWER;
+    if (s == "IRREGULAR")
+        return XsectShape::IRREGULAR;
+    if (s == "CUSTOM")
+        return XsectShape::CUSTOM;
+    if (s == "FORCE_MAIN")
+        return XsectShape::FORCE_MAIN;
+    if (s == "STREET")
+        return XsectShape::STREET_XSECT;
+    if (s == "EGGSHAPED")
+        return XsectShape::EGGSHAPED;
+    if (s == "HORSESHOE")
+        return XsectShape::HORSESHOE;
+    if (s == "GOTHIC")
+        return XsectShape::GOTHIC;
+    if (s == "CATENARY")
+        return XsectShape::CATENARY;
+    if (s == "SEMIELLIPTICAL")
+        return XsectShape::SEMIELLIPTICAL;
+    if (s == "BASKETHANDLE")
+        return XsectShape::BASKETHANDLE;
+    if (s == "SEMICIRCULAR")
+        return XsectShape::SEMICIRCULAR;
+    if (s == "MODBASKETHANDLE")
+        return XsectShape::MODBASKETHANDLE;
+    if (s == "RECT_TRIANG")
+        return XsectShape::RECT_TRIANG;
+    if (s == "RECT_ROUND")
+        return XsectShape::RECT_ROUND;
+    if (s == "HORIZ_ELLIPSE")
+        return XsectShape::HORIZ_ELLIPSE;
+    if (s == "VERT_ELLIPSE")
+        return XsectShape::VERT_ELLIPSE;
+    if (s == "ARCH")
+        return XsectShape::ARCH;
     return XsectShape::CIRCULAR;
 }
 
@@ -121,27 +227,65 @@ static XsectShape parse_xsect_shape(const std::string& s) {
 // Ensure capacity helpers (same pattern as handler code)
 // ============================================================================
 
+/**
+ * @brief Ensure primary storage can hold a zero-based import row.
+ *
+ * Grows base node columns and node X/Y coordinates, preserving prefixes. Does not grow node_has_xy,
+ * subtype/name registries or quality matrices. Allocation can throw after earlier columns have
+ * grown; borrowed element references may be invalidated.
+ *
+ * @param[in,out] ctx Borrowed context mutated in place; caller serializes access.
+ * @param[in] idx Nonnegative index with idx+1 representable as int; not validated here.
+ */
 static void ensure_node_capacity(SimulationContext& ctx, int idx) {
     ctx.nodes.grow_to(idx + 1);
     auto n = static_cast<size_t>(idx + 1);
-    if (ctx.spatial.node_x.size() < n) ctx.spatial.node_x.resize(n, 0.0);
-    if (ctx.spatial.node_y.size() < n) ctx.spatial.node_y.resize(n, 0.0);
+    if (ctx.spatial.node_x.size() < n)
+        ctx.spatial.node_x.resize(n, 0.0);
+    if (ctx.spatial.node_y.size() < n)
+        ctx.spatial.node_y.resize(n, 0.0);
 }
 
+/**
+ * @brief Ensure primary storage can hold a zero-based import row.
+ *
+ * Grows base link columns, intermediate vertex vectors and link X/Y coordinates. Does not allocate
+ * subtype/name registries or quality matrices. Allocation can throw after earlier columns have
+ * grown; borrowed element references may be invalidated.
+ *
+ * @param[in,out] ctx Borrowed context mutated in place; caller serializes access.
+ * @param[in] idx Nonnegative index with idx+1 representable as int; not validated here.
+ */
 static void ensure_link_capacity(SimulationContext& ctx, int idx) {
     ctx.links.grow_to(idx + 1);
     auto n = static_cast<size_t>(idx + 1);
-    if (ctx.spatial.link_vertices_x.size() < n) ctx.spatial.link_vertices_x.resize(n);
-    if (ctx.spatial.link_vertices_y.size() < n) ctx.spatial.link_vertices_y.resize(n);
-    if (ctx.spatial.link_x.size() < n) ctx.spatial.link_x.resize(n, 0.0);
-    if (ctx.spatial.link_y.size() < n) ctx.spatial.link_y.resize(n, 0.0);
+    if (ctx.spatial.link_vertices_x.size() < n)
+        ctx.spatial.link_vertices_x.resize(n);
+    if (ctx.spatial.link_vertices_y.size() < n)
+        ctx.spatial.link_vertices_y.resize(n);
+    if (ctx.spatial.link_x.size() < n)
+        ctx.spatial.link_x.resize(n, 0.0);
+    if (ctx.spatial.link_y.size() < n)
+        ctx.spatial.link_y.resize(n, 0.0);
 }
 
+/**
+ * @brief Ensure primary storage can hold a zero-based import row.
+ *
+ * Grows base subcatchment columns and polygon X/Y vectors. Does not add names or allocate
+ * pollutant/land-use matrices. Allocation can throw after earlier columns have grown; borrowed
+ * element references may be invalidated.
+ *
+ * @param[in,out] ctx Borrowed context mutated in place; caller serializes access.
+ * @param[in] idx Nonnegative index with idx+1 representable as int; not validated here.
+ */
 static void ensure_subcatch_capacity(SimulationContext& ctx, int idx) {
     ctx.subcatches.grow_to(idx + 1);
     auto n = static_cast<size_t>(idx + 1);
-    if (ctx.spatial.subcatch_polygon_x.size() < n) ctx.spatial.subcatch_polygon_x.resize(n);
-    if (ctx.spatial.subcatch_polygon_y.size() < n) ctx.spatial.subcatch_polygon_y.resize(n);
+    if (ctx.spatial.subcatch_polygon_x.size() < n)
+        ctx.spatial.subcatch_polygon_x.resize(n);
+    if (ctx.spatial.subcatch_polygon_y.size() < n)
+        ctx.spatial.subcatch_polygon_y.resize(n);
 }
 
 // ============================================================================
@@ -154,193 +298,470 @@ static void ensure_subcatch_capacity(SimulationContext& ctx, int idx) {
 // implemented locally because that parser TU only exists in 2D builds.
 // Silently ignored when the engine has no 2D module (ctx.twod_io.options
 // is null) or for unknown future keys.
+/**
+ * @brief Apply one recognized persisted 2D option to attached solver configuration.
+ *
+ * Copies option values and output path without opening a mesh/output file. Retired CVODE/ARKODE
+ * keys throw runtime_error. Enum tokens use their branch-specific defaults; no complete
+ * numerical/range validation occurs here. Earlier options remain changed on failure.
+ *
+ * @param[in,out] ctx Borrowed context; absent twod_io.options makes every key a no-op.
+ * @param[in] key Exact uppercase 2D option key; unknown keys and mesh-file provenance are ignored.
+ * @param[in] val Borrowed text; numeric options use std::stoi/stod prefix parsing and can throw.
+ */
 static void apply_option_2d(SimulationContext& ctx, const std::string& key,
                             const std::string& val) {
     auto* o = ctx.twod_io.options;
-    if (!o) return;
+    if (!o)
+        return;
 
-    if      (key == "2D_MAX_TIMESTEP")      o->max_timestep      = std::stod(val);
-    else if (key == "2D_DRY_DEPTH")         o->dry_depth         = std::stod(val);
-    else if (key == "2D_LIMITER_EPSILON")   o->limiter_epsilon   = std::stod(val);
-    else if (key == "2D_COUPLING_CD")       o->coupling_cd       = std::stod(val);
-    else if (key == "2D_COUPLING_SYNC")     o->coupling_sync     = std::stod(val);
-    else if (key == "2D_MIN_TIMESTEP"    || key == "2D_REL_TOLERANCE" ||
-             key == "2D_ABS_TOLERANCE"   || key == "2D_MAX_KRYLOV_DIM" ||
-             key == "2D_COUPLING_INTERVAL" || key == "2D_COUPLING_WINDOW" ||
-             key == "2D_ACTIVE_SET"      || key == "2D_ACTIVE_SET_HALO" ||
+    if (key == "2D_MAX_TIMESTEP")
+        o->max_timestep = std::stod(val);
+    else if (key == "2D_DRY_DEPTH")
+        o->dry_depth = std::stod(val);
+    else if (key == "2D_LIMITER_EPSILON")
+        o->limiter_epsilon = std::stod(val);
+    else if (key == "2D_COUPLING_CD")
+        o->coupling_cd = std::stod(val);
+    else if (key == "2D_COUPLING_SYNC")
+        o->coupling_sync = std::stod(val);
+    else if (key == "2D_MIN_TIMESTEP" || key == "2D_REL_TOLERANCE" || key == "2D_ABS_TOLERANCE" ||
+             key == "2D_MAX_KRYLOV_DIM" || key == "2D_COUPLING_INTERVAL" ||
+             key == "2D_COUPLING_WINDOW" || key == "2D_ACTIVE_SET" || key == "2D_ACTIVE_SET_HALO" ||
              key == "2D_MAX_CVODE_STEPS" || key == "2D_LINEAR_SOLVER" ||
              key == "2D_PRECONDITIONER") {
         // Retired with the CVODE/ARKODE stack (D2, 2026-07-29): same hard-
         // error policy as the .inp parser — a package authored for the
         // implicit solvers must not silently run different physics.
-        throw std::runtime_error(
-            "GeoPackage option '" + key + "' was retired with the "
-            "CVODE/ARKODE 2D solvers; re-save the package (the explicit "
-            "local-inertial marcher is the only 2D integrator).");
-    }
-    else if (key == "2D_RAINFALL_MODE") {
-        if      (val == "NATURAL_NEIGHBOUR") o->rainfall_mode = twoD::RainfallMode::NATURAL_NEIGHBOUR;
-        else if (val == "SYSTEM")            o->rainfall_mode = twoD::RainfallMode::SYSTEM;
-        else if (val == "NONE")              o->rainfall_mode = twoD::RainfallMode::NONE;
-    }
-    else if (key == "2D_FLUX_DH_EPS")   o->flux_dh_eps = std::stod(val);
+        throw std::runtime_error("GeoPackage option '" + key +
+                                 "' was retired with the "
+                                 "CVODE/ARKODE 2D solvers; re-save the package (the explicit "
+                                 "local-inertial marcher is the only 2D integrator).");
+    } else if (key == "2D_RAINFALL_MODE") {
+        if (val == "NATURAL_NEIGHBOUR")
+            o->rainfall_mode = twoD::RainfallMode::NATURAL_NEIGHBOUR;
+        else if (val == "NEAREST_NEIGHBOUR" || val == "NEAREST_NEIGHBOR")
+            o->rainfall_mode = twoD::RainfallMode::NEAREST_NEIGHBOUR;
+        else if (val == "SYSTEM")
+            o->rainfall_mode = twoD::RainfallMode::SYSTEM;
+        else if (val == "NONE")
+            o->rainfall_mode = twoD::RainfallMode::NONE;
+    } else if (key == "2D_FLUX_DH_EPS")
+        o->flux_dh_eps = std::stod(val);
     else if (key == "2D_CELL_CLOSURE")
-        o->cell_closure = (val == "VFR") ? twoD::CellClosure2D::VFR
-                                         : twoD::CellClosure2D::FLAT;
+        o->cell_closure = (val == "VFR") ? twoD::CellClosure2D::VFR : twoD::CellClosure2D::FLAT;
     else if (key == "2D_FACE_RECONSTRUCTION")
-        o->face_reconstruction = (val == "VFR_FACE")
-                                     ? twoD::FaceDepth2D::VFR_FACE
-                                     : twoD::FaceDepth2D::MEAN;
-    else if (key == "2D_VFR_MIN_WET_FRAC") o->vfr_min_wet_frac = std::stod(val);
-    else if (key == "2D_THETA")         o->theta        = std::stod(val);
-    else if (key == "2D_CFL_NUMBER")    o->cfl_number   = std::stod(val);
-    else if (key == "2D_H_MOVE")        o->h_move       = std::stod(val);
-    else if (key == "2D_LTS_TIERS")     o->lts_tiers    = std::stoi(val);
-    else if (key == "2D_FROUDE_MAX")    o->froude_max   = std::stod(val);
-    else if (key == "2D_ADVECTION")     o->advection = (val == "YES");
-    else if (key == "2D_COUPLING_AREA") o->coupling_area_auto = (val == "AUTO");
-    else if (key == "2D_REPORT_2D")     o->report_2d = (val == "YES");
+        o->face_reconstruction =
+            (val == "VFR_FACE") ? twoD::FaceDepth2D::VFR_FACE : twoD::FaceDepth2D::MEAN;
+    else if (key == "2D_VFR_MIN_WET_FRAC")
+        o->vfr_min_wet_frac = std::stod(val);
+    else if (key == "2D_THETA")
+        o->theta = std::stod(val);
+    else if (key == "2D_CFL_NUMBER")
+        o->cfl_number = std::stod(val);
+    else if (key == "2D_H_MOVE")
+        o->h_move = std::stod(val);
+    else if (key == "2D_LTS_TIERS")
+        o->lts_tiers = std::stoi(val);
+    else if (key == "2D_FROUDE_MAX")
+        o->froude_max = std::stod(val);
+    else if (key == "2D_ADVECTION")
+        o->advection = (val == "YES");
+    else if (key == "2D_COUPLING_AREA")
+        o->coupling_area_auto = (val == "AUTO");
+    else if (key == "2D_COUPLING_IN_FLOODING")
+        o->coupling_in_flooding = (val == "YES");
+    else if (key == "2D_COUPLING_LAW")
+        o->coupling_law = (val == "WEIR_ORIFICE") ? twoD::CouplingLaw2D::WEIR_ORIFICE
+                                                  : twoD::CouplingLaw2D::ORIFICE;
+    else if (key == "2D_COUPLING_HEAD")
+        o->coupling_head = (val == "VERTEX")             ? twoD::CouplingHead2D::VERTEX
+                           : (val == "STENCIL_WET_MEAN") ? twoD::CouplingHead2D::STENCIL_WET_MEAN
+                                                         : twoD::CouplingHead2D::CELL;
+    else if (key == "2D_COUPLING_POND_MODE")
+        o->coupling_pond_mode = (val == "CHAMBER")    ? twoD::CouplingPondMode2D::CHAMBER
+                                : (val == "TRACKING") ? twoD::CouplingPondMode2D::TRACKING
+                                                      : twoD::CouplingPondMode2D::FOOTPRINT;
+    else if (key == "2D_COUPLING_POND_RELAX")
+        o->coupling_pond_relax = std::stod(val);
+    else if (key == "2D_COUPLING_RIM_BAND")
+        o->coupling_rim_band = std::stod(val);
+    else if (key == "2D_COUPLING_EQUALIZE")
+        o->coupling_equalize = (val == "YES") ? 1 : 0;
+    else if (key == "2D_COUPLING_COEFFS") {
+        double preset = 0.0;
+        if (nodecoupling2d::parseValue(NodeCoupling2DKey::COEFFS, val, preset).empty())
+            o->coupling_coeffs = static_cast<int>(preset);
+    } else if (key == "2D_MOMENTUM_EQUATION")
+        o->momentum = (val == "FULL_SWE")         ? twoD::Momentum2D::FULL_SWE
+                      : (val == "DIFFUSIVE_WAVE") ? twoD::Momentum2D::DIFFUSIVE_WAVE
+                                                  : twoD::Momentum2D::LOCAL_INERTIAL;
+    else if (key == "2D_CORIOLIS") {
+        if (val == "OFF") o->coriolis = twoD::Coriolis2D::OFF;
+        else if (val == "LATITUDE") o->coriolis = twoD::Coriolis2D::LATITUDE;
+        else if (val == "CONSTANT_F") o->coriolis = twoD::Coriolis2D::CONSTANT_F;
+        else throw std::runtime_error("Invalid 2D_CORIOLIS value");
+    } else if (key == "2D_TURBULENCE_MODEL") {
+        if (val == "NONE") o->turbulence = twoD::Turbulence2D::NONE;
+        else if (val == "SMAGORINSKY") o->turbulence = twoD::Turbulence2D::SMAGORINSKY;
+        else if (val == "MIXING_LENGTH") o->turbulence = twoD::Turbulence2D::MIXING_LENGTH;
+        else throw std::runtime_error("Invalid 2D_TURBULENCE_MODEL value");
+    } else if (key == "2D_CORIOLIS_LATITUDE" || key == "2D_CORIOLIS_F" || key == "2D_SMAGORINSKY_CS" ||
+               key == "2D_EDDY_VISCOSITY_BACKGROUND" || key == "2D_MIXING_LENGTH_COEFFICIENT") {
+        std::size_t used = 0;
+        const double x = std::stod(val, &used);
+        if (!std::isfinite(x) || used != val.size()) throw std::runtime_error("Invalid " + key);
+        if (key == "2D_CORIOLIS_LATITUDE") {
+            if (std::abs(x) > 90) throw std::runtime_error("Invalid 2D_CORIOLIS_LATITUDE");
+            o->coriolis_latitude = x; o->coriolis_latitude_set = true;
+        } else if (key == "2D_CORIOLIS_F") {
+            o->coriolis_f = x; o->coriolis_f_set = true;
+        } else if (key == "2D_SMAGORINSKY_CS") {
+            if (x < 0) throw std::runtime_error("Invalid 2D_SMAGORINSKY_CS");
+            o->smagorinsky_cs = x;
+        } else if (key == "2D_EDDY_VISCOSITY_BACKGROUND") {
+            if (x < 0) throw std::runtime_error("Invalid 2D_EDDY_VISCOSITY_BACKGROUND");
+            o->eddy_viscosity_background = x;
+        } else {
+            if (x < 0) throw std::runtime_error("Invalid 2D_MIXING_LENGTH_COEFFICIENT");
+            o->mixing_length_coefficient = x;
+        }
+    } else if (key == "2D_RECONSTRUCTION_ORDER") {
+        if (val != "1" && val != "2") throw std::runtime_error("Invalid 2D_RECONSTRUCTION_ORDER");
+        o->reconstruction_order = val == "2" ? 2 : 1;
+    }
+    else if (key == "2D_BACKEND")
+        o->backend = (val == "CPU")    ? twoD::Backend2D::CPU
+                     : (val == "OMP")  ? twoD::Backend2D::OMP
+                     : (val == "CUDA") ? twoD::Backend2D::CUDA
+                     : (val == "HIP")  ? twoD::Backend2D::HIP
+                     : (val == "SYCL") ? twoD::Backend2D::SYCL
+                                       : twoD::Backend2D::AUTO;
+    else if (key == "2D_REPORT_2D")
+        o->report_2d = (val == "YES");
+    else if (key == "2D_OUTPUT_PRECISION")
+        o->output_precision = (val == "FLOAT64") ? twoD::OutputPrecision2D::FLOAT64
+                                                 : twoD::OutputPrecision2D::FLOAT32;
+    else if (key == "2D_OUTPUT_COMPRESSION")
+        o->output_compression = std::stoi(val);
+    else if (key == "2D_REPORT_2D_VARIABLES") {
+        unsigned mask = 0;
+        if (twoD::report2d::parseMask(val, mask).empty())
+            o->report_2d_vars = mask;
+    } else if (key == "2D_REPORT_2D_SPECIES")
+        o->report_2d_species = twoD::report2d::parseSpecies(val);
+    else if (key == "2D_REPORT_2D_STEP")
+        o->report_2d_step = std::stod(val);
+    // E2 process enables.
+    else if (key == "2D_INFILTRATION")
+        o->infiltration = (val == "AUTO") ? -1 : (val == "YES" ? 1 : 0);
+    else if (key == "2D_INFIL_DEFAULT_METHOD")
+        o->infil_default_method = (val == "NONE" || val.empty()) ? std::string() : val;
+    else if (key == "2D_INFIL_DESTINATION")
+        o->infil_destination = (val == "LOST" || val.empty()) ? std::string() : val;
+    else if (key == "2D_EVAPORATION")
+        o->evaporation = (val == "NO") ? 0 : (val == "CLIMATE" ? 2 : 1);
+    else if (key == "2D_TRANSPORT_POLLUTANTS")
+        o->transport_pollutants = (val != "NO");
+    else if (key == "2D_TRANSPORT_MSX")
+        o->transport_msx = (val != "NO");
+    else if (key == "2D_TRANSPORT_AGE")
+        o->transport_age = (val != "NO");
+    else if (key == "2D_TRANSPORT_TEMPERATURE")
+        o->transport_temperature = (val != "NO");
+    // U5 — groundwater page keys.
+    // AUTO / absent both mean "unset"; older files spelled ON|OFF.
+    else if (key == "2D_GROUNDWATER")
+        o->groundwater = (val == "AUTO" || val.empty())
+                             ? int8_t{-1}
+                             : ((val == "ON" || val == "YES") ? int8_t{1} : int8_t{0});
+    else if (key == "2D_GW_ET")
+        o->gw_et = val;
     // HDF5 results path — restoring it lets SWMMEngine::open re-create the
     // Default2DOutputPlugin (2D results always stream to HDF5, never gpkg).
-    else if (key == "2D_OUTPUT_FILE")   o->output_file = val;
-    else if (key == "2D_MESH_UNITS_SI") o->mesh_units_si = (val == "YES");
+    else if (key == "2D_OUTPUT_FILE")
+        o->output_file = val;
+    else if (key == "2D_MESH_UNITS_SI")
+        o->mesh_units_si = (val == "YES");
     // 2D_MESH_FILE_SOURCE is provenance only — intentionally NOT restored
     // into SolverOptions2D::mesh_file, otherwise SWMMEngine::open would
     // attempt a second external-file mesh load on top of the gpkg mesh.
 }
 
+/**
+ * @brief Restore scalar model, report, map and attached 2D options.
+ *
+ * Applies enum ordinals, YES flags, OADate dates, timestep seconds and comma-delimited report
+ * lists. Numeric conversions can throw; unknown ordinary keys are ignored or routed through
+ * apply_option_2d. No solver initialization or full option validation. Preparation/allocation can
+ * throw. SQLite step errors generally end the row loop without a distinct status; no local
+ * rollback.
+ *
+ * @param[in,out] db Borrowed open schema-compatible SQLite connection; no transaction ownership
+ *     transfer.
+ * @param[in,out] ctx Borrowed model mutated incrementally; caller supplies coherent prior
+ *     registries and serializes access.
+ * @param[in] sim_id Borrowed simulation catalogue key used to filter rows; not normalized.
+ */
 static void read_options(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
-    auto stmt = prepare(db,
-        "SELECT key, value FROM options WHERE simulation_id = ?");
+    auto stmt = prepare(db, "SELECT key, value FROM options WHERE simulation_id = ?");
     bind_text(stmt.get(), 1, sim_id);
 
     while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
         std::string key = column_text(stmt.get(), 0);
         std::string val = column_text(stmt.get(), 1);
 
-        if (key == "FLOW_UNITS") ctx.options.flow_units = static_cast<FlowUnits>(std::stoi(val));
-        else if (key == "INFILTRATION") ctx.options.infiltration = static_cast<InfiltrationModel>(std::stoi(val));
-        else if (key == "ROUTING_MODEL") ctx.options.routing_model = static_cast<RoutingModel>(std::stoi(val));
-        else if (key == "LINK_OFFSETS") ctx.options.link_offsets = std::stoi(val);
-        else if (key == "FORCE_MAIN_EQN") ctx.options.force_main_eqn = std::stoi(val);
-        else if (key == "ALLOW_PONDING") ctx.options.allow_ponding = (val == "YES");
-        else if (key == "IGNORE_RAINFALL") ctx.options.ignore_rainfall = (val == "YES");
-        else if (key == "IGNORE_SNOWMELT") ctx.options.ignore_snow_melt = (val == "YES");
+        if (key == "FLOW_UNITS")
+            ctx.options.flow_units = static_cast<FlowUnits>(std::stoi(val));
+        else if (key == "INFILTRATION")
+            ctx.options.infiltration = static_cast<InfiltrationModel>(std::stoi(val));
+        else if (key == "ROUTING_MODEL")
+            ctx.options.routing_model = static_cast<RoutingModel>(std::stoi(val));
+        else if (key == "LINK_OFFSETS")
+            ctx.options.link_offsets = std::stoi(val);
+        else if (key == "FORCE_MAIN_EQN")
+            ctx.options.force_main_eqn = std::stoi(val);
+        else if (key == "ALLOW_PONDING")
+            ctx.options.allow_ponding = (val == "YES");
+        else if (key == "IGNORE_RAINFALL")
+            ctx.options.ignore_rainfall = (val == "YES");
+        else if (key == "IGNORE_SNOWMELT")
+            ctx.options.ignore_snow_melt = (val == "YES");
         // Accept the normalized "IGNORE_GROUNDWATER" and the legacy short
         // "IGNORE_GW" spelling so pre-normalization .gpkg files still load.
-        else if (key == "IGNORE_GROUNDWATER" || key == "IGNORE_GW") ctx.options.ignore_groundwater = (val == "YES");
-        else if (key == "IGNORE_ROUTING") ctx.options.ignore_routing = (val == "YES");
-        else if (key == "IGNORE_QUALITY") ctx.options.ignore_quality = (val == "YES");
-        else if (key == "IGNORE_2D") ctx.options.ignore_2d = (val == "YES");
-        else if (key == "WET_STEP") ctx.options.wet_step = std::stod(val);
-        else if (key == "DRY_STEP") ctx.options.dry_step = std::stod(val);
-        else if (key == "ROUTING_STEP") ctx.options.routing_step = std::stod(val);
-        else if (key == "REPORT_STEP") ctx.options.report_step = std::stod(val);
-        else if (key == "START_DATE") ctx.options.start_date = std::stod(val);
-        else if (key == "END_DATE") ctx.options.end_date = std::stod(val);
-        else if (key == "REPORT_START") ctx.options.report_start = std::stod(val);
-        else if (key == "SWEEP_START") ctx.options.sweep_start = std::stoi(val);
-        else if (key == "SWEEP_END") ctx.options.sweep_end = std::stoi(val);
-        else if (key == "NODE_CONTINUITY") ctx.options.node_continuity = static_cast<NodeContinuity>(std::stoi(val));
-        else if (key == "ANDERSON_ACCEL") ctx.options.anderson_accel = (std::stoi(val) != 0);
-        else if (key == "SURCHARGE_METHOD") ctx.options.surcharge_method = std::stoi(val);
-        else if (key == "DPS_CELERITY") ctx.options.dps_target_celerity = std::stod(val);
-        else if (key == "DPS_ALPHA") ctx.options.dps_alpha = std::stod(val);
-        else if (key == "DPS_DECAY_TIME") ctx.options.dps_decay_time = std::stod(val);
-        else if (key == "INERTIAL_DAMPING") ctx.options.inertial_damping = std::stoi(val);
-        else if (key == "NORMAL_FLOW_LIMITED") ctx.options.normal_flow_ltd = std::stoi(val);
-        else if (key == "MAX_TRIALS") ctx.options.max_trials = std::stoi(val);
-        else if (key == "HEAD_TOLERANCE") ctx.options.head_tol = std::stod(val);
-        else if (key == "VARIABLE_STEP") ctx.options.variable_step = std::stod(val);
-        else if (key == "MINIMUM_STEP") ctx.options.min_routing_step = std::stod(val);
-        else if (key == "LENGTHENING_STEP") ctx.options.lengthening_step = std::stod(val);
-        else if (key == "MIN_SLOPE") ctx.options.min_slope = std::stod(val);
-        else if (key == "MIN_SURFAREA") ctx.options.min_surf_area = std::stod(val);
-        else if (key == "SYS_FLOW_TOL") ctx.options.sys_flow_tol = std::stod(val);
-        else if (key == "LAT_FLOW_TOL") ctx.options.lat_flow_tol = std::stod(val);
-        else if (key == "THREADS") ctx.options.num_threads = std::stoi(val);
-        else if (key == "DRY_DAYS") ctx.options.dry_days = std::stod(val);
-        else if (key == "IGNORE_RDII") ctx.options.ignore_rdii = (val == "YES");
-        else if (key == "RPT_DISABLED") ctx.options.rpt_disabled = (val == "YES");
-        else if (key == "RPT_INPUT") ctx.options.rpt_input = (val == "YES");
-        else if (key == "RPT_CONTINUITY") ctx.options.rpt_continuity = (val == "YES");
-        else if (key == "RPT_FLOWSTATS") ctx.options.rpt_flowstats = (val == "YES");
-        else if (key == "RPT_CONTROLS") ctx.options.rpt_controls = (val == "YES");
-        else if (key == "RPT_AVERAGES") ctx.options.rpt_averages = (val == "YES");
+        else if (key == "IGNORE_GROUNDWATER" || key == "IGNORE_GW")
+            ctx.options.ignore_groundwater = (val == "YES");
+        else if (key == "IGNORE_ROUTING")
+            ctx.options.ignore_routing = (val == "YES");
+        else if (key == "IGNORE_QUALITY")
+            ctx.options.ignore_quality = (val == "YES");
+        else if (key == "IGNORE_2D")
+            ctx.options.ignore_2d = (val == "YES");
+        else if (key == "WET_STEP")
+            ctx.options.wet_step = std::stod(val);
+        else if (key == "DRY_STEP")
+            ctx.options.dry_step = std::stod(val);
+        else if (key == "ROUTING_STEP")
+            ctx.options.routing_step = std::stod(val);
+        else if (key == "REPORT_STEP")
+            ctx.options.report_step = std::stod(val);
+        else if (key == "START_DATE")
+            ctx.options.start_date = std::stod(val);
+        else if (key == "END_DATE")
+            ctx.options.end_date = std::stod(val);
+        else if (key == "TOTAL_DURATION_MS")
+            ctx.options.total_duration_ms = std::stod(val);
+        else if (key == "REPORT_START")
+            ctx.options.report_start = std::stod(val);
+        else if (key == "SWEEP_START")
+            ctx.options.sweep_start = std::stoi(val);
+        else if (key == "SWEEP_END")
+            ctx.options.sweep_end = std::stoi(val);
+        else if (key == "NODE_CONTINUITY")
+            ctx.options.node_continuity = static_cast<NodeContinuity>(std::stoi(val));
+        else if (key == "ANDERSON_ACCEL")
+            ctx.options.anderson_accel = (std::stoi(val) != 0);
+        else if (key == "SURCHARGE_METHOD")
+            ctx.options.surcharge_method = std::stoi(val);
+        else if (key == "UNSTEADY_FRICTION")
+            ctx.options.unsteady_friction = std::stoi(val); // issue #156
+        else if (key == "UF_K3")
+            ctx.options.uf_k3 = std::stod(val);
+        else if (key == "FV_PRESSURE_CLOSURE")
+            ctx.options.fv.pressure_closure = std::stoi(val); // issue #156
+        else if (key == "REPORT_SIGNED_HEADS")
+            ctx.options.report_signed_heads = std::stoi(val); // issue #156
+        else if (key == "TPA_CELERITY")
+            ctx.options.tpa_celerity = std::stod(val); // issue #156
+        else if (key == "DPS_CELERITY")
+            ctx.options.dps_target_celerity = std::stod(val);
+        else if (key == "DPS_ALPHA")
+            ctx.options.dps_alpha = std::stod(val);
+        else if (key == "DPS_DECAY_TIME")
+            ctx.options.dps_decay_time = std::stod(val);
+        else if (key == "INERTIAL_DAMPING")
+            ctx.options.inertial_damping = std::stoi(val);
+        else if (key == "NORMAL_FLOW_LIMITED")
+            ctx.options.normal_flow_ltd = std::stoi(val);
+        else if (key == "MAX_TRIALS")
+            ctx.options.max_trials = std::stoi(val);
+        else if (key == "HEAD_TOLERANCE")
+            ctx.options.head_tol = std::stod(val);
+        else if (key == "VARIABLE_STEP")
+            ctx.options.variable_step = std::stod(val);
+        else if (key == "MINIMUM_STEP")
+            ctx.options.min_routing_step = std::stod(val);
+        else if (key == "LENGTHENING_STEP")
+            ctx.options.lengthening_step = std::stod(val);
+        else if (key == "MIN_SLOPE")
+            ctx.options.min_slope = std::stod(val);
+        else if (key == "MIN_SURFAREA")
+            ctx.options.min_surf_area = std::stod(val);
+        else if (key == "SYS_FLOW_TOL")
+            ctx.options.sys_flow_tol = std::stod(val);
+        else if (key == "LAT_FLOW_TOL")
+            ctx.options.lat_flow_tol = std::stod(val);
+        else if (key == "THREADS")
+            ctx.options.num_threads = std::stoi(val);
+        else if (key == "DRY_DAYS")
+            ctx.options.dry_days = std::stod(val);
+        else if (key == "IGNORE_RDII")
+            ctx.options.ignore_rdii = (val == "YES");
+        else if (key == "RPT_DISABLED")
+            ctx.options.rpt_disabled = (val == "YES");
+        else if (key == "RPT_INPUT")
+            ctx.options.rpt_input = (val == "YES");
+        else if (key == "RPT_CONTINUITY")
+            ctx.options.rpt_continuity = (val == "YES");
+        else if (key == "RPT_FLOWSTATS")
+            ctx.options.rpt_flowstats = (val == "YES");
+        else if (key == "RPT_CONTROLS")
+            ctx.options.rpt_controls = (val == "YES");
+        else if (key == "RPT_AVERAGES")
+            ctx.options.rpt_averages = (val == "YES");
+        else if (key == "RPT_LINK_STEPS")
+            ctx.options.rpt_link_steps = (val == "YES");
         else if (key == "RPT_SUBCATCHMENTS") {
-            if (val == "NONE") ctx.options.rpt_subcatchments = 0;
-            else if (val == "ALL") ctx.options.rpt_subcatchments = 1;
+            if (val == "NONE")
+                ctx.options.rpt_subcatchments = 0;
+            else if (val == "ALL")
+                ctx.options.rpt_subcatchments = 1;
             else {
                 ctx.options.rpt_subcatchments = 2;
-                std::string token; std::istringstream ss(val);
+                std::string token;
+                std::istringstream ss(val);
                 while (std::getline(ss, token, ','))
-                    if (!token.empty()) ctx.options.rpt_subcatch_names.push_back(token);
+                    if (!token.empty())
+                        ctx.options.rpt_subcatch_names.push_back(token);
             }
-        }
-        else if (key == "RPT_NODES") {
-            if (val == "NONE") ctx.options.rpt_nodes = 0;
-            else if (val == "ALL") ctx.options.rpt_nodes = 1;
+        } else if (key == "RPT_NODES") {
+            if (val == "NONE")
+                ctx.options.rpt_nodes = 0;
+            else if (val == "ALL")
+                ctx.options.rpt_nodes = 1;
             else {
                 ctx.options.rpt_nodes = 2;
-                std::string token; std::istringstream ss(val);
+                std::string token;
+                std::istringstream ss(val);
                 while (std::getline(ss, token, ','))
-                    if (!token.empty()) ctx.options.rpt_node_names.push_back(token);
+                    if (!token.empty())
+                        ctx.options.rpt_node_names.push_back(token);
             }
-        }
-        else if (key == "RPT_LINKS") {
-            if (val == "NONE") ctx.options.rpt_links = 0;
-            else if (val == "ALL") ctx.options.rpt_links = 1;
+        } else if (key == "RPT_LINKS") {
+            if (val == "NONE")
+                ctx.options.rpt_links = 0;
+            else if (val == "ALL")
+                ctx.options.rpt_links = 1;
             else {
                 ctx.options.rpt_links = 2;
-                std::string token; std::istringstream ss(val);
+                std::string token;
+                std::istringstream ss(val);
                 while (std::getline(ss, token, ','))
-                    if (!token.empty()) ctx.options.rpt_link_names.push_back(token);
+                    if (!token.empty())
+                        ctx.options.rpt_link_names.push_back(token);
             }
-        }
-        else if (key == "CRS") ctx.spatial.crs = val;
-        else if (key == "MAP_UNITS") ctx.spatial.map_units = val;
-        else if (key == "MAP_X1") ctx.spatial.map_x1 = std::stod(val);
-        else if (key == "MAP_Y1") ctx.spatial.map_y1 = std::stod(val);
-        else if (key == "MAP_X2") ctx.spatial.map_x2 = std::stod(val);
-        else if (key == "MAP_Y2") ctx.spatial.map_y2 = std::stod(val);
-        else if (key.rfind("2D_", 0) == 0) apply_option_2d(ctx, key, val);
+        } else if (key == "CRS")
+            ctx.spatial.crs = val;
+        else if (key == "MAP_UNITS")
+            ctx.spatial.map_units = val;
+        else if (key == "MAP_X1")
+            ctx.spatial.map_x1 = std::stod(val);
+        else if (key == "MAP_Y1")
+            ctx.spatial.map_y1 = std::stod(val);
+        else if (key == "MAP_X2")
+            ctx.spatial.map_x2 = std::stod(val);
+        else if (key == "MAP_Y2")
+            ctx.spatial.map_y2 = std::stod(val);
+        else if (key.rfind("2D_", 0) == 0)
+            apply_option_2d(ctx, key, val);
     }
 }
 
-static bool table_exists(sqlite3* db, const std::string& name);  // defined below
+static bool table_exists(sqlite3* db, const std::string& name); // defined below
 static bool column_exists(sqlite3* db, const std::string& table,
-                          const std::string& column);            // defined below
+                          const std::string& column); // defined below
 
+/**
+ * @brief Restore base nodes and relational storage, outfall and divider parameters.
+ *
+ * Creates/reuses names and subtype rows. Hydraulic depths/elevations stay ft and ponding area ft2;
+ * subtype raw geometry/exfiltration values retain authored conventions. Decodes point geometry
+ * without independent blob-size validation. Probes newer virtual/rim/inlet and storage-shape
+ * columns for older schemas. Curve/link/route references can remain unresolved; no network
+ * validation or storage-curve derivation. Preparation/allocation can throw. SQLite step errors
+ * generally end the row loop without a distinct status; no local rollback.
+ *
+ * @param[in,out] db Borrowed open schema-compatible SQLite connection; no transaction ownership
+ *     transfer.
+ * @param[in,out] ctx Borrowed model mutated incrementally; caller supplies coherent prior
+ *     registries and serializes access.
+ * @param[in] sim_id Borrowed simulation catalogue key used to filter rows; not normalized.
+ */
 static void read_nodes(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
     // --- base nodes (common columns + discriminator + geometry) ---
     {
-        auto stmt = prepare(db,
-            "SELECT node_id, node_type, geom, invert_elev, max_depth, init_depth, "
-            "surcharge_depth, ponded_area, tag "
-            "FROM nodes WHERE simulation_id = ? ORDER BY fid");
+        // is_virtual / rim_depth were appended after the schema shipped; an
+        // older .gpkg does not have the columns at all (SELECTing them fails
+        // outright, and the db is opened READONLY so we cannot ALTER it), so
+        // probe first. Absent means "no virtual junctions", which is exactly
+        // how such a file behaved before.
+        const bool has_virtual =
+            column_exists(db, "nodes", "is_virtual") && column_exists(db, "nodes", "rim_depth");
+        const bool has_inlet = has_virtual && column_exists(db, "nodes", "is_inlet");
+        auto stmt = prepare(
+            db, has_inlet ? "SELECT node_id, node_type, geom, invert_elev, max_depth, init_depth, "
+                            "surcharge_depth, ponded_area, tag, is_virtual, rim_depth, is_inlet "
+                            "FROM nodes WHERE simulation_id = ? ORDER BY fid"
+                : has_virtual
+                    ? "SELECT node_id, node_type, geom, invert_elev, max_depth, init_depth, "
+                      "surcharge_depth, ponded_area, tag, is_virtual, rim_depth "
+                      "FROM nodes WHERE simulation_id = ? ORDER BY fid"
+                    : "SELECT node_id, node_type, geom, invert_elev, max_depth, init_depth, "
+                      "surcharge_depth, ponded_area, tag "
+                      "FROM nodes WHERE simulation_id = ? ORDER BY fid");
         bind_text(stmt.get(), 1, sim_id);
         while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
             std::string name = column_text(stmt.get(), 0);
             int idx = ctx.node_names.find(name);
-            if (idx < 0) idx = ctx.node_names.add(name);
+            if (idx < 0)
+                idx = ctx.node_names.add(name);
             ensure_node_capacity(ctx, idx);
 
-            ctx.node_subtypes.set_node_type(ctx.nodes, idx, parse_node_type(column_text(stmt.get(), 1)));
+            ctx.node_subtypes.set_node_type(ctx.nodes, idx,
+                                            parse_node_type(column_text(stmt.get(), 1)));
 
             if (!column_is_null(stmt.get(), 2)) {
                 auto pt = decode_point(column_blob(stmt.get(), 2));
                 ctx.spatial.node_x[idx] = pt.x;
                 ctx.spatial.node_y[idx] = pt.y;
+                if (ctx.spatial.node_has_xy.size() < ctx.spatial.node_x.size())
+                    ctx.spatial.node_has_xy.resize(ctx.spatial.node_x.size(), 0);
+                ctx.spatial.node_has_xy[static_cast<std::size_t>(idx)] = 1; // G-X2
             }
             ctx.nodes.invert_elev[idx] = column_double(stmt.get(), 3);
-            ctx.nodes.full_depth[idx]  = column_double(stmt.get(), 4);
-            ctx.nodes.init_depth[idx]  = column_double(stmt.get(), 5);
-            ctx.nodes.sur_depth[idx]   = column_double(stmt.get(), 6);
+            ctx.nodes.full_depth[idx] = column_double(stmt.get(), 4);
+            ctx.nodes.init_depth[idx] = column_double(stmt.get(), 5);
+            ctx.nodes.sur_depth[idx] = column_double(stmt.get(), 6);
             ctx.nodes.ponded_area[idx] = column_double(stmt.get(), 7);
             if (!column_is_null(stmt.get(), 8)) {
                 const auto u = static_cast<std::size_t>(idx);
-                if (u >= ctx.nodes.tags.size()) ctx.nodes.tags.resize(u + 1);
+                if (u >= ctx.nodes.tags.size())
+                    ctx.nodes.tags.resize(u + 1);
                 ctx.nodes.tags[u] = column_text(stmt.get(), 8);
+            }
+            if (has_virtual) {
+                const auto u = static_cast<std::size_t>(idx);
+                ctx.nodes.is_virtual[u] =
+                    (!column_is_null(stmt.get(), 9) && column_int(stmt.get(), 9) != 0) ? 1 : 0;
+                if (!column_is_null(stmt.get(), 10))
+                    ctx.nodes.rim_depth[u] = column_double(stmt.get(), 10);
+                // The inlet-usage row (design + capture node) has no table in
+                // the schema, so a node read back as is_inlet has no usage and
+                // fails validation with 633 until one is assigned.
+                if (has_inlet)
+                    ctx.nodes.is_inlet[u] =
+                        (!column_is_null(stmt.get(), 11) && column_int(stmt.get(), 11) != 0) ? 1
+                                                                                             : 0;
             }
         }
     }
@@ -354,32 +775,34 @@ static void read_nodes(sqlite3* db, SimulationContext& ctx, const std::string& s
         // otherwise fall back to the pre-shape rule (curve_name set => TABULAR, else
         // FUNCTIONAL), which is exactly how such a file behaved before.
         const bool has_shape = column_exists(db, "storages", "shape");
-        auto stmt = prepare(db,
-            has_shape
-                ? "SELECT node_id, curve_name, a, b, c, seep_rate, evap_frac, "
-                  "exfil_suction, exfil_ksat, exfil_imd, shape, p1, p2, p3 "
-                  "FROM storages WHERE simulation_id = ?"
-                : "SELECT node_id, curve_name, a, b, c, seep_rate, evap_frac, "
-                  "exfil_suction, exfil_ksat, exfil_imd "
-                  "FROM storages WHERE simulation_id = ?");
+        auto stmt =
+            prepare(db, has_shape ? "SELECT node_id, curve_name, a, b, c, seep_rate, evap_frac, "
+                                    "exfil_suction, exfil_ksat, exfil_imd, shape, p1, p2, p3 "
+                                    "FROM storages WHERE simulation_id = ?"
+                                  : "SELECT node_id, curve_name, a, b, c, seep_rate, evap_frac, "
+                                    "exfil_suction, exfil_ksat, exfil_imd "
+                                    "FROM storages WHERE simulation_id = ?");
         bind_text(stmt.get(), 1, sim_id);
         auto& S = ctx.node_subtypes.storages;
         while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
-            const int r = ctx.node_subtypes.storage_row(ctx.node_names.find(column_text(stmt.get(), 0)));
-            if (r < 0) continue;
+            const int r =
+                ctx.node_subtypes.storage_row(ctx.node_names.find(column_text(stmt.get(), 0)));
+            if (r < 0)
+                continue;
             const auto ur = static_cast<std::size_t>(r);
-            if (!column_is_null(stmt.get(), 1)) S.curve_name[ur] = column_text(stmt.get(), 1);
-            S.a[ur]             = column_double(stmt.get(), 2);
-            S.b[ur]             = column_double(stmt.get(), 3);
-            S.c[ur]             = column_double(stmt.get(), 4);
-            S.seep_rate[ur]     = column_double(stmt.get(), 5);
-            S.evap_frac[ur]     = column_double(stmt.get(), 6);
+            if (!column_is_null(stmt.get(), 1))
+                S.curve_name[ur] = column_text(stmt.get(), 1);
+            S.a[ur] = column_double(stmt.get(), 2);
+            S.b[ur] = column_double(stmt.get(), 3);
+            S.c[ur] = column_double(stmt.get(), 4);
+            S.seep_rate[ur] = column_double(stmt.get(), 5);
+            S.evap_frac[ur] = column_double(stmt.get(), 6);
             S.exfil_suction[ur] = column_double(stmt.get(), 7);
-            S.exfil_ksat[ur]    = column_double(stmt.get(), 8);
-            S.exfil_imd[ur]     = column_double(stmt.get(), 9);
+            S.exfil_ksat[ur] = column_double(stmt.get(), 8);
+            S.exfil_imd[ur] = column_double(stmt.get(), 9);
 
-            StorageShape sshape = S.curve_name[ur].empty() ? StorageShape::FUNCTIONAL
-                                                           : StorageShape::TABULAR;
+            StorageShape sshape =
+                S.curve_name[ur].empty() ? StorageShape::FUNCTIONAL : StorageShape::TABULAR;
             if (has_shape) {
                 if (!column_is_null(stmt.get(), 10))
                     storage_shape_from_keyword(column_text(stmt.get(), 10), sshape);
@@ -393,66 +816,104 @@ static void read_nodes(sqlite3* db, SimulationContext& ctx, const std::string& s
 
     // --- outfalls child table → side-table (route_to resolved after subcatchments) ---
     {
-        auto stmt = prepare(db,
-            "SELECT node_id, outfall_type, param, has_flap_gate "
-            "FROM outfalls WHERE simulation_id = ?");
+        auto stmt = prepare(db, "SELECT node_id, outfall_type, param, has_flap_gate "
+                                "FROM outfalls WHERE simulation_id = ?");
         bind_text(stmt.get(), 1, sim_id);
         auto& O = ctx.node_subtypes.outfalls;
         while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
-            const int r = ctx.node_subtypes.outfall_row(ctx.node_names.find(column_text(stmt.get(), 0)));
-            if (r < 0) continue;
+            const int r =
+                ctx.node_subtypes.outfall_row(ctx.node_names.find(column_text(stmt.get(), 0)));
+            if (r < 0)
+                continue;
             const auto ur = static_cast<std::size_t>(r);
-            O.bc_type[ur]       = parse_outfall_type(column_text(stmt.get(), 1));
-            O.param[ur]         = column_double(stmt.get(), 2);
+            O.bc_type[ur] = parse_outfall_type(column_text(stmt.get(), 1));
+            O.param[ur] = column_double(stmt.get(), 2);
             O.has_flap_gate[ur] = column_int(stmt.get(), 3) != 0;
         }
     }
 
     // --- dividers child table → side-table ---
     {
-        auto stmt = prepare(db,
-            "SELECT node_id, divider_type, cutoff, cd, max_depth, curve_name, divider_link "
-            "FROM dividers WHERE simulation_id = ?");
+        auto stmt = prepare(
+            db, "SELECT node_id, divider_type, cutoff, cd, max_depth, curve_name, divider_link "
+                "FROM dividers WHERE simulation_id = ?");
         bind_text(stmt.get(), 1, sim_id);
         auto& D = ctx.node_subtypes.dividers;
         while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
-            const int r = ctx.node_subtypes.divider_row(ctx.node_names.find(column_text(stmt.get(), 0)));
-            if (r < 0) continue;
+            const int r =
+                ctx.node_subtypes.divider_row(ctx.node_names.find(column_text(stmt.get(), 0)));
+            if (r < 0)
+                continue;
             const auto ur = static_cast<std::size_t>(r);
-            D.method[ur]    = parse_divider_type(column_text(stmt.get(), 1));
-            D.cutoff[ur]    = column_double(stmt.get(), 2);
-            D.cd[ur]        = column_double(stmt.get(), 3);
+            D.method[ur] = parse_divider_type(column_text(stmt.get(), 1));
+            D.cutoff[ur] = column_double(stmt.get(), 2);
+            D.cd[ur] = column_double(stmt.get(), 3);
             D.max_depth[ur] = column_double(stmt.get(), 4);
-            if (!column_is_null(stmt.get(), 5)) D.curve_name[ur] = column_text(stmt.get(), 5);
-            if (!column_is_null(stmt.get(), 6)) D.link_name[ur]  = column_text(stmt.get(), 6);
+            if (!column_is_null(stmt.get(), 5))
+                D.curve_name[ur] = column_text(stmt.get(), 5);
+            if (!column_is_null(stmt.get(), 6))
+                D.link_name[ur] = column_text(stmt.get(), 6);
         }
     }
 }
 
 // Resolve outfall route_to (subcatchment NAME → index). Deferred: outfalls are
 // read before [SUBCATCHMENTS], so subcatch_names isn't populated until after.
+/**
+ * @brief Resolve persisted outfall-to-subcatchment routing after catchments are registered.
+ *
+ * Matches existing outfall nodes and stores the catchment lookup result, including -1 for an
+ * unknown target, without adding a diagnostic. Does not create objects or repair missing
+ * references. Preparation/allocation can throw. SQLite step errors generally end the row loop
+ * without a distinct status; no local rollback.
+ *
+ * @param[in,out] db Borrowed open schema-compatible SQLite connection; no transaction ownership
+ *     transfer.
+ * @param[in,out] ctx Borrowed model mutated incrementally; caller supplies coherent prior
+ *     registries and serializes access.
+ * @param[in] sim_id Borrowed simulation catalogue key used to filter rows; not normalized.
+ */
 static void resolve_outfall_route_to(sqlite3* db, SimulationContext& ctx,
                                      const std::string& sim_id) {
-    auto stmt = prepare(db,
-        "SELECT node_id, route_to FROM outfalls "
-        "WHERE simulation_id = ? AND route_to IS NOT NULL");
+    auto stmt = prepare(db, "SELECT node_id, route_to FROM outfalls "
+                            "WHERE simulation_id = ? AND route_to IS NOT NULL");
     bind_text(stmt.get(), 1, sim_id);
     auto& O = ctx.node_subtypes.outfalls;
     while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
-        const int r = ctx.node_subtypes.outfall_row(ctx.node_names.find(column_text(stmt.get(), 0)));
-        if (r < 0) continue;
-        O.route_to[static_cast<std::size_t>(r)] = ctx.subcatch_names.find(column_text(stmt.get(), 1));
+        const int r =
+            ctx.node_subtypes.outfall_row(ctx.node_names.find(column_text(stmt.get(), 0)));
+        if (r < 0)
+            continue;
+        O.route_to[static_cast<std::size_t>(r)] =
+            ctx.subcatch_names.find(column_text(stmt.get(), 1));
     }
 }
 
+/**
+ * @brief Restore relational link parameters, geometry and raw section shapes.
+ *
+ * Requires node registry first; endpoint lookups may yield -1. Replaces interior vertices and
+ * reverses their order when endpoint distances favor reversed geometry. Hydraulic
+ * lengths/offsets/flows stay ft/cfs, raw section dimensions stay authored units while derived
+ * section properties are recomputed with project-length scaling. Retains named
+ * custom/street/transect references for later resolution. Child tables populate subtype parameters;
+ * no complete connectivity validation. Preparation/allocation can throw. SQLite step errors
+ * generally end the row loop without a distinct status; no local rollback.
+ *
+ * @param[in,out] db Borrowed open schema-compatible SQLite connection; no transaction ownership
+ *     transfer.
+ * @param[in,out] ctx Borrowed model mutated incrementally; caller supplies coherent prior
+ *     registries and serializes access.
+ * @param[in] sim_id Borrowed simulation catalogue key used to filter rows; not normalized.
+ */
 static void read_links(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
     // Phase 7: slim base row; subtype config comes from the child tables below.
-    auto stmt = prepare(db,
-        "SELECT link_id, link_type, geom, from_node, to_node, offset1, offset2, "
-        "q0, q_limit, direction, "
-        "xsect_shape, xsect_geom1, xsect_geom2, xsect_geom3, xsect_geom4, xsect_curve, "
-        "has_flap_gate, tag "
-        "FROM links WHERE simulation_id = ? ORDER BY fid");
+    auto stmt =
+        prepare(db, "SELECT link_id, link_type, geom, from_node, to_node, offset1, offset2, "
+                    "q0, q_limit, direction, "
+                    "xsect_shape, xsect_geom1, xsect_geom2, xsect_geom3, xsect_geom4, xsect_curve, "
+                    "has_flap_gate, tag "
+                    "FROM links WHERE simulation_id = ? ORDER BY fid");
     bind_text(stmt.get(), 1, sim_id);
 
     while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
@@ -460,7 +921,8 @@ static void read_links(sqlite3* db, SimulationContext& ctx, const std::string& s
         std::string type_str = column_text(stmt.get(), 1);
 
         int idx = ctx.link_names.find(name);
-        if (idx < 0) idx = ctx.link_names.add(name);
+        if (idx < 0)
+            idx = ctx.link_names.add(name);
         ensure_link_capacity(ctx, idx);
 
         LinkType ltype = parse_link_type(type_str);
@@ -486,9 +948,8 @@ static void read_links(sqlite3* db, SimulationContext& ctx, const std::string& s
             bool reverse_to_match_link = false;
 
             // Keep interior vertex order consistent with node1 -> node2 direction.
-            if (ls.xs.size() >= 2 &&
-                n1 >= 0 && n1 < ctx.n_nodes() &&
-                n2 >= 0 && n2 < ctx.n_nodes()) {
+            if (ls.xs.size() >= 2 && n1 >= 0 && n1 < ctx.n_nodes() && n2 >= 0 &&
+                n2 < ctx.n_nodes()) {
                 const auto u1 = static_cast<std::size_t>(n1);
                 const auto u2 = static_cast<std::size_t>(n2);
 
@@ -525,7 +986,7 @@ static void read_links(sqlite3* db, SimulationContext& ctx, const std::string& s
 
         ctx.links.offset1[idx] = column_double(stmt.get(), 5);
         ctx.links.offset2[idx] = column_double(stmt.get(), 6);
-        ctx.links.q0[idx]      = column_double(stmt.get(), 7);
+        ctx.links.q0[idx] = column_double(stmt.get(), 7);
         ctx.links.q_limit[idx] = column_double(stmt.get(), 8);
         ctx.links.direction[idx] = column_int(stmt.get(), 9);
 
@@ -552,14 +1013,17 @@ static void read_links(sqlite3* db, SimulationContext& ctx, const std::string& s
         if (shp != XsectShape::IRREGULAR && shp != XsectShape::STREET_XSECT) {
             const int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
             const double inv_len = ucf::Ucf_inv[ucf::LENGTH][static_cast<std::size_t>(us)];
-            ctx.links.xsect_y_full[idx] = g1 * inv_len;   // geom1 (depth/diameter) — always a length
+            ctx.links.xsect_y_full[idx] = g1 * inv_len; // geom1 (depth/diameter) — always a length
             if (shp != XsectShape::CUSTOM)
-                ctx.links.xsect_w_max[idx] =
-                    (shp != XsectShape::FORCE_MAIN) ? g2 * inv_len : g2;   // geom2 (width); FM = H-W C
+                ctx.links.xsect_w_max[idx] = (shp != XsectShape::FORCE_MAIN)
+                                                 ? g2 * inv_len
+                                                 : g2; // geom2 (width); FM = H-W C
             ctx.links.xsect_y_bot[idx] =
                 (shp == XsectShape::RECT_TRIANG || shp == XsectShape::RECT_ROUND ||
-                 shp == XsectShape::MODBASKETHANDLE) ? g3 * inv_len : g3;  // geom3 (length only for these)
-            ctx.links.xsect_r_bot[idx] = g4;              // geom4 (dimensionless / not convert-scaled)
+                 shp == XsectShape::MODBASKETHANDLE)
+                    ? g3 * inv_len
+                    : g3;                    // geom3 (length only for these)
+            ctx.links.xsect_r_bot[idx] = g4; // geom4 (dimensionless / not convert-scaled)
         }
         // xsect named reference (IRREGULAR/STREET/CUSTOM): transect/street/
         // shape-curve NAME kept in pump_curve_name (resolve_cross_references
@@ -578,138 +1042,163 @@ static void read_links(sqlite3* db, SimulationContext& ctx, const std::string& s
         ctx.links.has_flap_gate[idx] = column_int(stmt.get(), 16) != 0;
         if (!column_is_null(stmt.get(), 17)) {
             const auto u = static_cast<std::size_t>(idx);
-            if (u >= ctx.links.tags.size()) ctx.links.tags.resize(u + 1);
+            if (u >= ctx.links.tags.size())
+                ctx.links.tags.resize(u + 1);
             ctx.links.tags[u] = column_text(stmt.get(), 17);
         }
     }
 
     // ---- Subtype child tables → side-tables (rows created above; GPKG stores
     //      display units and skips the global convert pass, so write verbatim) ----
-    {  // conduits
-        auto cs = prepare(db,
-            "SELECT link_id, roughness, length, xsect_barrels, xsect_culvert, "
-            "loss_inlet, loss_outlet, loss_avg, seep_rate FROM conduits "
-            "WHERE simulation_id = ?");
+    { // conduits
+        auto cs = prepare(db, "SELECT link_id, roughness, length, xsect_barrels, xsect_culvert, "
+                              "loss_inlet, loss_outlet, loss_avg, seep_rate FROM conduits "
+                              "WHERE simulation_id = ?");
         bind_text(cs.get(), 1, sim_id);
         auto& CD = ctx.link_subtypes.conduits;
         while (sqlite3_step(cs.get()) == SQLITE_ROW) {
             const int idx = ctx.link_names.find(column_text(cs.get(), 0));
             const int cr = (idx >= 0) ? ctx.link_subtypes.conduit_row(idx) : -1;
-            if (cr < 0) continue;
+            if (cr < 0)
+                continue;
             const auto u = (size_t)cr;
-            CD.roughness[u]    = column_double(cs.get(), 1);
-            CD.length[u]       = column_double(cs.get(), 2);
-            CD.barrels[u]      = column_int(cs.get(), 3);
+            CD.roughness[u] = column_double(cs.get(), 1);
+            CD.length[u] = column_double(cs.get(), 2);
+            CD.barrels[u] = column_int(cs.get(), 3);
             CD.culvert_code[u] = column_int(cs.get(), 4);
-            CD.loss_inlet[u]   = column_double(cs.get(), 5);
-            CD.loss_outlet[u]  = column_double(cs.get(), 6);
-            CD.loss_avg[u]     = column_double(cs.get(), 7);
-            CD.seep_rate[u]    = column_double(cs.get(), 8);
+            CD.loss_inlet[u] = column_double(cs.get(), 5);
+            CD.loss_outlet[u] = column_double(cs.get(), 6);
+            CD.loss_avg[u] = column_double(cs.get(), 7);
+            CD.seep_rate[u] = column_double(cs.get(), 8);
         }
     }
-    {  // pumps
-        auto ps = prepare(db,
-            "SELECT link_id, pump_curve, init_state, startup_depth, shutoff_depth "
-            "FROM pumps WHERE simulation_id = ?");
+    { // pumps
+        auto ps =
+            prepare(db, "SELECT link_id, pump_curve, init_state, startup_depth, shutoff_depth "
+                        "FROM pumps WHERE simulation_id = ?");
         bind_text(ps.get(), 1, sim_id);
         auto& PD = ctx.link_subtypes.pumps;
         while (sqlite3_step(ps.get()) == SQLITE_ROW) {
             const int idx = ctx.link_names.find(column_text(ps.get(), 0));
             const int pr = (idx >= 0) ? ctx.link_subtypes.pump_row(idx) : -1;
-            if (pr < 0) continue;
+            if (pr < 0)
+                continue;
             if (!column_is_null(ps.get(), 1))
                 ctx.links.pump_curve_name[idx] = column_text(ps.get(), 1);
             const auto u = (size_t)pr;
             PD.init_state[u] = (column_double(ps.get(), 2) > 0.5) ? uint8_t{1} : uint8_t{0};
-            PD.startup[u]    = column_double(ps.get(), 3);
-            PD.shutoff[u]    = column_double(ps.get(), 4);
+            PD.startup[u] = column_double(ps.get(), 3);
+            PD.shutoff[u] = column_double(ps.get(), 4);
         }
     }
-    {  // orifices
-        auto os = prepare(db,
-            "SELECT link_id, orientation, discharge_coeff, orate FROM orifices "
-            "WHERE simulation_id = ?");
+    { // orifices
+        auto os = prepare(db, "SELECT link_id, orientation, discharge_coeff, orate FROM orifices "
+                              "WHERE simulation_id = ?");
         bind_text(os.get(), 1, sim_id);
         auto& ORF = ctx.link_subtypes.orifices;
         while (sqlite3_step(os.get()) == SQLITE_ROW) {
             const int idx = ctx.link_names.find(column_text(os.get(), 0));
             const int orr = (idx >= 0) ? ctx.link_subtypes.orifice_row(idx) : -1;
-            if (orr < 0) continue;
+            if (orr < 0)
+                continue;
             const auto u = (size_t)orr;
             ORF.orifice_type[u] = (column_text(os.get(), 1) == std::string("SIDE")) ? 1.0 : 0.0;
-            ORF.cd[u]           = column_double(os.get(), 2);
-            ORF.orate[u]        = column_double(os.get(), 3);
+            ORF.cd[u] = column_double(os.get(), 2);
+            ORF.orate[u] = column_double(os.get(), 3);
         }
     }
-    {  // weirs
-        auto ws = prepare(db,
-            "SELECT link_id, weir_type, discharge_coeff, crest_height, end_contractions "
-            "FROM weirs WHERE simulation_id = ?");
+    { // weirs
+        auto ws = prepare(
+            db, "SELECT link_id, weir_type, discharge_coeff, crest_height, end_contractions "
+                "FROM weirs WHERE simulation_id = ?");
         bind_text(ws.get(), 1, sim_id);
         auto& WD = ctx.link_subtypes.weirs;
         while (sqlite3_step(ws.get()) == SQLITE_ROW) {
             const int idx = ctx.link_names.find(column_text(ws.get(), 0));
             const int wr = (idx >= 0) ? ctx.link_subtypes.weir_row(idx) : -1;
-            if (wr < 0) continue;
+            if (wr < 0)
+                continue;
             const auto u = (size_t)wr;
             const std::string wt = column_text(ws.get(), 1);
-            WD.weir_type[u] = (wt == "SIDEFLOW") ? 1.0 : (wt == "V-NOTCH") ? 2.0
-                            : (wt == "TRAPEZOIDAL") ? 3.0 : (wt == "ROADWAY") ? 4.0 : 0.0;
-            WD.cd[u]               = column_double(ws.get(), 2);
-            WD.crest_height[u]     = column_double(ws.get(), 3);
+            WD.weir_type[u] = (wt == "SIDEFLOW")      ? 1.0
+                              : (wt == "V-NOTCH")     ? 2.0
+                              : (wt == "TRAPEZOIDAL") ? 3.0
+                              : (wt == "ROADWAY")     ? 4.0
+                                                      : 0.0;
+            WD.cd[u] = column_double(ws.get(), 2);
+            WD.crest_height[u] = column_double(ws.get(), 3);
             WD.end_contractions[u] = static_cast<double>(column_int(ws.get(), 4));
         }
     }
-    {  // outlets
-        auto outs = prepare(db,
-            "SELECT link_id, rating_type, rating_curve, q_coeff, q_expon, crest_height "
-            "FROM outlets WHERE simulation_id = ?");
+    { // outlets
+        auto outs =
+            prepare(db, "SELECT link_id, rating_type, rating_curve, q_coeff, q_expon, crest_height "
+                        "FROM outlets WHERE simulation_id = ?");
         bind_text(outs.get(), 1, sim_id);
         auto& OUT = ctx.link_subtypes.outlets;
         while (sqlite3_step(outs.get()) == SQLITE_ROW) {
             const int idx = ctx.link_names.find(column_text(outs.get(), 0));
             const int olr = (idx >= 0) ? ctx.link_subtypes.outlet_row(idx) : -1;
-            if (olr < 0) continue;
+            if (olr < 0)
+                continue;
             const auto u = (size_t)olr;
             const std::string rt = column_text(outs.get(), 1);
-            OUT.outlet_type[u] = (rt == "FUNCTIONAL/DEPTH") ? 1.0 : (rt == "TABULAR/HEAD") ? 2.0
-                               : (rt == "TABULAR/DEPTH") ? 3.0 : 0.0;
-            if (!column_is_null(outs.get(), 2))      // TABULAR rating-curve NAME
+            OUT.outlet_type[u] = (rt == "FUNCTIONAL/DEPTH") ? 1.0
+                                 : (rt == "TABULAR/HEAD")   ? 2.0
+                                 : (rt == "TABULAR/DEPTH")  ? 3.0
+                                                            : 0.0;
+            if (!column_is_null(outs.get(), 2)) // TABULAR rating-curve NAME
                 ctx.links.pump_curve_name[idx] = column_text(outs.get(), 2);
-            OUT.coeff[u]        = column_double(outs.get(), 3);
-            OUT.expon[u]        = column_double(outs.get(), 4);
+            OUT.coeff[u] = column_double(outs.get(), 3);
+            OUT.expon[u] = column_double(outs.get(), 4);
             OUT.crest_height[u] = column_double(outs.get(), 5);
         }
     }
 }
 
+/**
+ * @brief Restore catchment polygons, drainage references and hydrology parameters.
+ *
+ * Requires node/gage registries. Clears each reused polygon and decodes all closed rings. Node outlet
+ * takes precedence; catchment outlet names are retained for forward resolution. Stored width is ft,
+ * slopes/routing fractions remain fractions, while area/infiltration/depression configuration
+ * retains authored units. Optional scaling columns default through existing grow behavior. Does not
+ * validate polygon topology or resolve every forward reference. Preparation/allocation can throw.
+ * SQLite step errors generally end the row loop without a distinct status; no local rollback.
+ *
+ * @param[in,out] db Borrowed open schema-compatible SQLite connection; no transaction ownership
+ *     transfer.
+ * @param[in,out] ctx Borrowed model mutated incrementally; caller supplies coherent prior
+ *     registries and serializes access.
+ * @param[in] sim_id Borrowed simulation catalogue key used to filter rows; not normalized.
+ */
 static void read_subcatchments(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
     // Scale factors were added after the initial subcatchments schema. Probe for
     // them so pre-existing .gpkg files (which lack the columns) still open; when
     // absent the SoA keeps its 1.0 default, a true no-op.
     const bool has_scale = column_exists(db, "subcatchments", "rain_scale_factor");
-    auto stmt = prepare(db,
-        has_scale
-            ? "SELECT subcatch_id, geom, outlet_node, outlet_subcatch, rain_gage, "
-              "area, width, slope, curb_length, frac_imperv, "
-              "n_imperv, n_perv, ds_imperv, ds_perv, pct_zero_imperv, "
-              "subarea_routing, pct_routed, "
-              "infil_model, infil_p1, infil_p2, infil_p3, infil_p4, infil_p5, tag, "
-              "rain_scale_factor, snow_scale_factor "
-              "FROM subcatchments WHERE simulation_id = ? ORDER BY fid"
-            : "SELECT subcatch_id, geom, outlet_node, outlet_subcatch, rain_gage, "
-              "area, width, slope, curb_length, frac_imperv, "
-              "n_imperv, n_perv, ds_imperv, ds_perv, pct_zero_imperv, "
-              "subarea_routing, pct_routed, "
-              "infil_model, infil_p1, infil_p2, infil_p3, infil_p4, infil_p5, tag "
-              "FROM subcatchments WHERE simulation_id = ? ORDER BY fid");
+    auto stmt = prepare(
+        db, has_scale ? "SELECT subcatch_id, geom, outlet_node, outlet_subcatch, rain_gage, "
+                        "area, width, slope, curb_length, frac_imperv, "
+                        "n_imperv, n_perv, ds_imperv, ds_perv, pct_zero_imperv, "
+                        "subarea_routing, pct_routed, "
+                        "infil_model, infil_p1, infil_p2, infil_p3, infil_p4, infil_p5, tag, "
+                        "rain_scale_factor, snow_scale_factor "
+                        "FROM subcatchments WHERE simulation_id = ? ORDER BY fid"
+                      : "SELECT subcatch_id, geom, outlet_node, outlet_subcatch, rain_gage, "
+                        "area, width, slope, curb_length, frac_imperv, "
+                        "n_imperv, n_perv, ds_imperv, ds_perv, pct_zero_imperv, "
+                        "subarea_routing, pct_routed, "
+                        "infil_model, infil_p1, infil_p2, infil_p3, infil_p4, infil_p5, tag "
+                        "FROM subcatchments WHERE simulation_id = ? ORDER BY fid");
     bind_text(stmt.get(), 1, sim_id);
 
     while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
         std::string name = column_text(stmt.get(), 0);
 
         int idx = ctx.subcatch_names.find(name);
-        if (idx < 0) idx = ctx.subcatch_names.add(name);
+        if (idx < 0)
+            idx = ctx.subcatch_names.add(name);
         ensure_subcatch_capacity(ctx, idx);
 
         // Reset polygon vertices for deterministic re-reads.
@@ -756,6 +1245,9 @@ static void read_subcatchments(sqlite3* db, SimulationContext& ctx, const std::s
         ctx.subcatches.ds_imperv[idx] = column_double(stmt.get(), 12);
         ctx.subcatches.ds_perv[idx] = column_double(stmt.get(), 13);
         ctx.subcatches.frac_imperv_no_store[idx] = column_double(stmt.get(), 14);
+        // The table stores only the fraction; recover the percent legacy
+        // multiplies by (see SubcatchData::pct_zero).
+        ctx.subcatches.pct_zero[idx] = ctx.subcatches.frac_imperv_no_store[idx] * 100.0;
         ctx.subcatches.subarea_routing[idx] = column_int(stmt.get(), 15);
         ctx.subcatches.pct_routed[idx] = column_double(stmt.get(), 16);
         ctx.subcatches.infil_model[idx] = column_int(stmt.get(), 17);
@@ -767,7 +1259,8 @@ static void read_subcatchments(sqlite3* db, SimulationContext& ctx, const std::s
 
         if (!column_is_null(stmt.get(), 23)) {
             const auto u = static_cast<std::size_t>(idx);
-            if (u >= ctx.subcatches.tags.size()) ctx.subcatches.tags.resize(u + 1);
+            if (u >= ctx.subcatches.tags.size())
+                ctx.subcatches.tags.resize(u + 1);
             ctx.subcatches.tags[u] = column_text(stmt.get(), 23);
         }
 
@@ -780,16 +1273,32 @@ static void read_subcatchments(sqlite3* db, SimulationContext& ctx, const std::s
     }
 }
 
+/**
+ * @brief Restore gage names, point geometry and recording/source metadata.
+ *
+ * Copies interval seconds, snow factor and source ordinal. Source name is retained and looked up
+ * immediately, possibly unresolved; external file content/filter hydration happens separately. Gage
+ * grow maintains aligned columns; no rainfall loading or format/range validation.
+ * Preparation/allocation can throw. SQLite step errors generally end the row loop without a
+ * distinct status; no local rollback.
+ *
+ * @param[in,out] db Borrowed open schema-compatible SQLite connection; no transaction ownership
+ *     transfer.
+ * @param[in,out] ctx Borrowed model mutated incrementally; caller supplies coherent prior
+ *     registries and serializes access.
+ * @param[in] sim_id Borrowed simulation catalogue key used to filter rows; not normalized.
+ */
 static void read_rain_gages(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
-    auto stmt = prepare(db,
-        "SELECT gage_id, geom, rain_type, rain_interval, snow_catch, data_source, source_name "
-        "FROM rain_gages WHERE simulation_id = ? ORDER BY fid");
+    auto stmt = prepare(
+        db, "SELECT gage_id, geom, rain_type, rain_interval, snow_catch, data_source, source_name "
+            "FROM rain_gages WHERE simulation_id = ? ORDER BY fid");
     bind_text(stmt.get(), 1, sim_id);
 
     while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
         std::string name = column_text(stmt.get(), 0);
         int idx = ctx.gage_names.find(name);
-        if (idx < 0) idx = ctx.gage_names.add(name);
+        if (idx < 0)
+            idx = ctx.gage_names.add(name);
 
         size_t n = static_cast<size_t>(idx + 1);
         // Size every gage SoA column (not just the ones written below) so the
@@ -797,7 +1306,10 @@ static void read_rain_gages(sqlite3* db, SimulationContext& ctx, const std::stri
         // n_gages — never reads past the end. count()==source.size() would
         // otherwise equal n_gages and skip resolve's guarded resize.
         ctx.gages.grow_to(idx + 1);
-        auto grow = [n](auto& vec) { if (vec.size() < n) vec.resize(n); };
+        auto grow = [n](auto& vec) {
+            if (vec.size() < n)
+                vec.resize(n);
+        };
         grow(ctx.spatial.gage_x);
         grow(ctx.spatial.gage_y);
 
@@ -824,10 +1336,24 @@ static void read_rain_gages(sqlite3* db, SimulationContext& ctx, const std::stri
     }
 }
 
+/**
+ * @brief Append persisted curve points grouped by ID in fid order.
+ *
+ * Nonempty IDs and contiguous grouped rows are required. Reuses an existing table or adds one using
+ * numeric type text; std::stoi can throw. Appends x/y values in retained curve units without
+ * clearing prior points, sorting, interpolation or validation. Empty curves have no standalone row.
+ * Preparation/allocation can throw. SQLite step errors generally end the row loop without a
+ * distinct status; no local rollback.
+ *
+ * @param[in,out] db Borrowed open schema-compatible SQLite connection; no transaction ownership
+ *     transfer.
+ * @param[in,out] ctx Borrowed model mutated incrementally; caller supplies coherent prior
+ *     registries and serializes access.
+ * @param[in] sim_id Borrowed simulation catalogue key used to filter rows; not normalized.
+ */
 static void read_curves(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
-    auto stmt = prepare(db,
-        "SELECT curve_id, curve_type, x_value, y_value "
-        "FROM curves WHERE simulation_id = ? ORDER BY fid");
+    auto stmt = prepare(db, "SELECT curve_id, curve_type, x_value, y_value "
+                            "FROM curves WHERE simulation_id = ? ORDER BY fid");
     bind_text(stmt.get(), 1, sim_id);
 
     std::string prev_name;
@@ -851,10 +1377,23 @@ static void read_curves(sqlite3* db, SimulationContext& ctx, const std::string& 
     }
 }
 
+/**
+ * @brief Append persisted time-series points grouped by ID in fid order.
+ *
+ * Requires nonempty grouped IDs. Reuses/adds tables and appends values without clearing prior
+ * samples; parse_ts_timestamp returns raw OADate without a start-date adjustment. Does not sort,
+ * validate chronology or load external files. Preparation/allocation can throw. SQLite step errors
+ * generally end the row loop without a distinct status; no local rollback.
+ *
+ * @param[in,out] db Borrowed open schema-compatible SQLite connection; no transaction ownership
+ *     transfer.
+ * @param[in,out] ctx Borrowed model mutated incrementally; caller supplies coherent prior
+ *     registries and serializes access.
+ * @param[in] sim_id Borrowed simulation catalogue key used to filter rows; not normalized.
+ */
 static void read_timeseries(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
-    auto stmt = prepare(db,
-        "SELECT series_id, timestamp, value "
-        "FROM input_timeseries WHERE simulation_id = ? ORDER BY fid");
+    auto stmt = prepare(db, "SELECT series_id, timestamp, value "
+                            "FROM input_timeseries WHERE simulation_id = ? ORDER BY fid");
     bind_text(stmt.get(), 1, sim_id);
 
     std::string prev_name;
@@ -877,34 +1416,63 @@ static void read_timeseries(sqlite3* db, SimulationContext& ctx, const std::stri
 
 // Backward-compat helpers (defined below, used by the quality readers).
 static bool table_exists(sqlite3* db, const std::string& name);
-static bool column_exists(sqlite3* db, const std::string& table,
-                          const std::string& column);
+static bool column_exists(sqlite3* db, const std::string& table, const std::string& column);
 
+/**
+ * @brief Restore pollutant definitions and immediate co-pollutant lookups.
+ *
+ * Copies declared concentration-unit ordinals and raw concentrations; converts decay from1/day
+ * to1/second. Probes optional RDII/DWF/initial concentration columns. Later pollutant names may not
+ * yet resolve as co-pollutants. Does not allocate every runtime quality matrix or grow every
+ * optional metadata column. Preparation/allocation can throw. SQLite step errors generally end the
+ * row loop without a distinct status; no local rollback.
+ *
+ * @param[in,out] db Borrowed open schema-compatible SQLite connection; no transaction ownership
+ *     transfer.
+ * @param[in,out] ctx Borrowed model mutated incrementally; caller supplies coherent prior
+ *     registries and serializes access.
+ * @param[in] sim_id Borrowed simulation catalogue key used to filter rows; not normalized.
+ */
 static void read_pollutants(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
     // ii_conc has been declared since the original schema but never bound;
     // dwf_conc/init_conc are iteration-4 columns — all three read via the
     // column_exists fallback so pre-existing .gpkg files still open.
-    const bool hasIi   = column_exists(db, "pollutants", "ii_conc");
-    const bool hasDwf  = column_exists(db, "pollutants", "dwf_conc");
+    const bool hasIi = column_exists(db, "pollutants", "ii_conc");
+    const bool hasDwf = column_exists(db, "pollutants", "dwf_conc");
     const bool hasInit = column_exists(db, "pollutants", "init_conc");
-    std::string sql =
-        "SELECT pollutant_id, units, rain_conc, gw_conc, decay_coeff, "
-        "snow_only, co_pollutant, co_fraction";
-    if (hasIi)   sql += ", ii_conc";
-    if (hasDwf)  sql += ", dwf_conc";
-    if (hasInit) sql += ", init_conc";
+    std::string sql = "SELECT pollutant_id, units, rain_conc, gw_conc, decay_coeff, "
+                      "snow_only, co_pollutant, co_fraction";
+    if (hasIi)
+        sql += ", ii_conc";
+    if (hasDwf)
+        sql += ", dwf_conc";
+    if (hasInit)
+        sql += ", init_conc";
     sql += " FROM pollutants WHERE simulation_id = ?";
     auto stmt = prepare(db, sql);
     bind_text(stmt.get(), 1, sim_id);
 
+    auto names = prepare(db, "SELECT pollutant_id FROM pollutants WHERE simulation_id=?");
+    bind_text(names.get(), 1, sim_id);
+    while (sqlite3_step(names.get()) == SQLITE_ROW) {
+        const auto name = column_text(names.get(), 0);
+        if (ctx.pollutant_names.find(name) < 0)
+            ctx.pollutant_names.add(name);
+    }
     while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
         std::string name = column_text(stmt.get(), 0);
         int idx = ctx.pollutant_names.find(name);
-        if (idx < 0) idx = ctx.pollutant_names.add(name);
+        if (idx < 0)
+            idx = ctx.pollutant_names.add(name);
 
         size_t n = static_cast<size_t>(idx + 1);
-        auto grow = [n](auto& vec) { if (vec.size() < n) vec.resize(n); };
+        auto grow = [n](auto& vec) {
+            if (vec.size() < n)
+                vec.resize(n);
+        };
         grow(ctx.pollutants.units);
+        ctx.pollutants.mwt.resize(n, 1.0);
+        ctx.pollutants.comments.resize(n);
         grow(ctx.pollutants.c_rain);
         grow(ctx.pollutants.c_gw);
         grow(ctx.pollutants.c_rdii);
@@ -912,13 +1480,17 @@ static void read_pollutants(sqlite3* db, SimulationContext& ctx, const std::stri
         grow(ctx.pollutants.init_conc);
         grow(ctx.pollutants.k_decay);
         grow(ctx.pollutants.snow_only);
-        grow(ctx.pollutants.co_pollut);
+        if (ctx.pollutants.co_pollut.size() < n)
+            ctx.pollutants.co_pollut.resize(n, -1);
         grow(ctx.pollutants.co_frac);
 
         ctx.pollutants.units[idx] = static_cast<MassUnits>(column_int(stmt.get(), 1));
         ctx.pollutants.c_rain[idx] = column_double(stmt.get(), 2);
         ctx.pollutants.c_gw[idx] = column_double(stmt.get(), 3);
-        ctx.pollutants.k_decay[idx] = column_double(stmt.get(), 4);
+        // Column is file units (1/day) — pre-KD1 files stored the deck
+        // value unconverted, which is the same unit, so both eras read
+        // correctly here.
+        ctx.pollutants.k_decay[idx] = column_double(stmt.get(), 4) / constants::SEC_PER_DAY;
         ctx.pollutants.snow_only[idx] = column_int(stmt.get(), 5) != 0;
 
         if (!column_is_null(stmt.get(), 6)) {
@@ -928,9 +1500,12 @@ static void read_pollutants(sqlite3* db, SimulationContext& ctx, const std::stri
         ctx.pollutants.co_frac[idx] = column_double(stmt.get(), 7);
 
         int c = 8;
-        if (hasIi)   ctx.pollutants.c_rdii[idx]    = column_double(stmt.get(), c++);
-        if (hasDwf)  ctx.pollutants.c_dwf[idx]     = column_double(stmt.get(), c++);
-        if (hasInit) ctx.pollutants.init_conc[idx] = column_double(stmt.get(), c++);
+        if (hasIi)
+            ctx.pollutants.c_rdii[idx] = column_double(stmt.get(), c++);
+        if (hasDwf)
+            ctx.pollutants.c_dwf[idx] = column_double(stmt.get(), c++);
+        if (hasInit)
+            ctx.pollutants.init_conc[idx] = column_double(stmt.get(), c++);
     }
 }
 
@@ -940,23 +1515,42 @@ static void read_pollutants(sqlite3* db, SimulationContext& ctx, const std::stri
 // have none of these tables.
 // ============================================================================
 
+/**
+ * @brief Restore land-use names and reset associated parameter/matrix dimensions.
+ *
+ * Optional table; names are registered before resizing land-use columns, which resets existing
+ * stored parameters. Positive pollutant/catchment counts cause buildup/washoff/coverage allocation.
+ * Copies raw sweep-day/removal settings without range validation. Caller should import into a fresh
+ * model to avoid discarding unrelated prior values. Preparation/allocation can throw. SQLite step
+ * errors generally end the row loop without a distinct status; no local rollback.
+ *
+ * @param[in,out] db Borrowed open schema-compatible SQLite connection; no transaction ownership
+ *     transfer.
+ * @param[in,out] ctx Borrowed model mutated incrementally; caller supplies coherent prior
+ *     registries and serializes access.
+ * @param[in] sim_id Borrowed simulation catalogue key used to filter rows; not normalized.
+ */
 static void read_landuses(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
-    if (!table_exists(db, "landuses")) return;
-    auto stmt = prepare(db,
-        "SELECT landuse_id, sweep_interval, sweep_removal, last_swept, comment "
-        "FROM landuses WHERE simulation_id = ? ORDER BY fid");
+    if (!table_exists(db, "landuses"))
+        return;
+    auto stmt = prepare(db, "SELECT landuse_id, sweep_interval, sweep_removal, last_swept, comment "
+                            "FROM landuses WHERE simulation_id = ? ORDER BY fid");
     bind_text(stmt.get(), 1, sim_id);
 
     // Two passes: LanduseData::resize() is assign-and-wipe, so collect all
     // rows first, size once, then fill.
-    struct Row { std::string name; double si, sr, ls; std::string comment; };
+    struct Row {
+        std::string name;
+        double si, sr, ls;
+        std::string comment;
+    };
     std::vector<Row> rows;
     while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
         Row r;
         r.name = column_text(stmt.get(), 0);
-        r.si   = column_double(stmt.get(), 1);
-        r.sr   = column_double(stmt.get(), 2);
-        r.ls   = column_double(stmt.get(), 3);
+        r.si = column_double(stmt.get(), 1);
+        r.sr = column_double(stmt.get(), 2);
+        r.ls = column_double(stmt.get(), 3);
         if (!column_is_null(stmt.get(), 4))
             r.comment = column_text(stmt.get(), 4);
         rows.push_back(std::move(r));
@@ -967,11 +1561,12 @@ static void read_landuses(sqlite3* db, SimulationContext& ctx, const std::string
     ctx.landuses.resize(ctx.landuse_names.size());
     for (const auto& r : rows) {
         const int idx = ctx.landuse_names.find(r.name);
-        if (idx < 0) continue;
+        if (idx < 0)
+            continue;
         auto u = static_cast<size_t>(idx);
         ctx.landuses.sweep_interval[u] = r.si;
-        ctx.landuses.sweep_removal[u]  = r.sr;
-        ctx.landuses.last_swept[u]     = r.ls;
+        ctx.landuses.sweep_removal[u] = r.sr;
+        ctx.landuses.last_swept[u] = r.ls;
         if (u < ctx.landuses.comments.size())
             ctx.landuses.comments[u] = r.comment;
     }
@@ -989,28 +1584,49 @@ static void read_landuses(sqlite3* db, SimulationContext& ctx, const std::string
     }
 }
 
+/**
+ * @brief Restore optional land-use/pollutant buildup and washoff coefficient rows.
+ *
+ * Requires positive registered counts and preallocated aligned coefficient matrices. Skips unknown
+ * names; unknown function tokens select NONE. Copies function-specific coefficients and numeric EXT
+ * reference slot as stored, with CURB versus AREA normalizer. No reference repair, finite checks or
+ * function-parameter validation. Preparation/allocation can throw. SQLite step errors generally end
+ * the row loop without a distinct status; no local rollback.
+ *
+ * @param[in,out] db Borrowed open schema-compatible SQLite connection; no transaction ownership
+ *     transfer.
+ * @param[in,out] ctx Borrowed model mutated incrementally; caller supplies coherent prior
+ *     registries and serializes access.
+ * @param[in] sim_id Borrowed simulation catalogue key used to filter rows; not normalized.
+ */
 static void read_buildup_washoff(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
     const int nLu = ctx.landuse_names.size();
-    const int np  = ctx.pollutant_names.size();
-    if (nLu <= 0 || np <= 0) return;
+    const int np = ctx.pollutant_names.size();
+    if (nLu <= 0 || np <= 0)
+        return;
 
     if (table_exists(db, "buildup")) {
-        auto stmt = prepare(db,
-            "SELECT landuse_id, pollutant_id, func_type, coeff1, coeff2, "
-            "coeff3, normalizer FROM buildup WHERE simulation_id = ?");
+        auto stmt = prepare(db, "SELECT landuse_id, pollutant_id, func_type, coeff1, coeff2, "
+                                "coeff3, normalizer FROM buildup WHERE simulation_id = ?");
         bind_text(stmt.get(), 1, sim_id);
         while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
             const int lu = ctx.landuse_names.find(column_text(stmt.get(), 0));
-            const int p  = ctx.pollutant_names.find(column_text(stmt.get(), 1));
-            if (lu < 0 || p < 0) continue;
+            const int p = ctx.pollutant_names.find(column_text(stmt.get(), 1));
+            if (lu < 0 || p < 0)
+                continue;
             const std::string ft = column_text(stmt.get(), 2);
             int t = 0;
-            if      (ft == "POW") t = 1;
-            else if (ft == "EXP") t = 2;
-            else if (ft == "SAT") t = 3;
-            else if (ft == "EXT") t = 4;
+            if (ft == "POW")
+                t = 1;
+            else if (ft == "EXP")
+                t = 2;
+            else if (ft == "SAT")
+                t = 3;
+            else if (ft == "EXT")
+                t = 4;
             auto idx = static_cast<size_t>(lu * np + p);
-            if (idx >= ctx.buildup.func_type.size()) continue;
+            if (idx >= ctx.buildup.func_type.size())
+                continue;
             ctx.buildup.func_type[idx] = t;
             ctx.buildup.coeff1[idx] = column_double(stmt.get(), 3);
             ctx.buildup.coeff2[idx] = column_double(stmt.get(), 4);
@@ -1020,83 +1636,131 @@ static void read_buildup_washoff(sqlite3* db, SimulationContext& ctx, const std:
         }
     }
     if (table_exists(db, "washoff")) {
-        auto stmt = prepare(db,
-            "SELECT landuse_id, pollutant_id, func_type, coeff, expon, "
-            "sweep_effic, bmp_effic FROM washoff WHERE simulation_id = ?");
+        auto stmt = prepare(db, "SELECT landuse_id, pollutant_id, func_type, coeff, expon, "
+                                "sweep_effic, bmp_effic FROM washoff WHERE simulation_id = ?");
         bind_text(stmt.get(), 1, sim_id);
         while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
             const int lu = ctx.landuse_names.find(column_text(stmt.get(), 0));
-            const int p  = ctx.pollutant_names.find(column_text(stmt.get(), 1));
-            if (lu < 0 || p < 0) continue;
+            const int p = ctx.pollutant_names.find(column_text(stmt.get(), 1));
+            if (lu < 0 || p < 0)
+                continue;
             const std::string ft = column_text(stmt.get(), 2);
             int t = 0;
-            if      (ft == "EXP") t = 1;
-            else if (ft == "RC")  t = 2;
-            else if (ft == "EMC") t = 3;
+            if (ft == "EXP")
+                t = 1;
+            else if (ft == "RC")
+                t = 2;
+            else if (ft == "EMC")
+                t = 3;
             auto idx = static_cast<size_t>(lu * np + p);
-            if (idx >= ctx.washoff.func_type.size()) continue;
+            if (idx >= ctx.washoff.func_type.size())
+                continue;
             ctx.washoff.func_type[idx] = t;
-            ctx.washoff.coeff[idx]       = column_double(stmt.get(), 3);
-            ctx.washoff.expon[idx]       = column_double(stmt.get(), 4);
+            ctx.washoff.coeff[idx] = column_double(stmt.get(), 3);
+            ctx.washoff.expon[idx] = column_double(stmt.get(), 4);
             ctx.washoff.sweep_effic[idx] = column_double(stmt.get(), 5);
-            ctx.washoff.bmp_effic[idx]   = column_double(stmt.get(), 6);
+            ctx.washoff.bmp_effic[idx] = column_double(stmt.get(), 6);
         }
     }
 }
 
-static void read_subcatch_coverages(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
-    if (!table_exists(db, "subcatch_coverages")) return;
+/**
+ * @brief Restore optional catchment land-use percentages and last-swept clocks.
+ *
+ * Requires positive registered counts. Resizes/reset coverage when stride or shape differs; skips
+ * unknown names. Copies percentages and available sweep clocks without sum, finite or range
+ * validation. Preparation/allocation can throw. SQLite step errors generally end the row loop
+ * without a distinct status; no local rollback.
+ *
+ * @param[in,out] db Borrowed open schema-compatible SQLite connection; no transaction ownership
+ *     transfer.
+ * @param[in,out] ctx Borrowed model mutated incrementally; caller supplies coherent prior
+ *     registries and serializes access.
+ * @param[in] sim_id Borrowed simulation catalogue key used to filter rows; not normalized.
+ */
+static void read_subcatch_coverages(sqlite3* db, SimulationContext& ctx,
+                                    const std::string& sim_id) {
+    if (!table_exists(db, "subcatch_coverages"))
+        return;
     const int nLu = ctx.landuse_names.size();
     const int nSc = ctx.subcatch_names.size();
-    if (nLu <= 0 || nSc <= 0) return;
+    if (nLu <= 0 || nSc <= 0)
+        return;
     if (ctx.subcatches.coverage_n_landuses != nLu ||
         static_cast<int>(ctx.subcatches.coverage.size()) != nSc * nLu)
         ctx.subcatches.resize_coverage(nSc, nLu);
 
-    auto stmt = prepare(db,
-        "SELECT subcatch_id, landuse_id, percent, last_swept "
-        "FROM subcatch_coverages WHERE simulation_id = ?");
+    auto stmt = prepare(db, "SELECT subcatch_id, landuse_id, percent, last_swept "
+                            "FROM subcatch_coverages WHERE simulation_id = ?");
     bind_text(stmt.get(), 1, sim_id);
     while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
-        const int s  = ctx.subcatch_names.find(column_text(stmt.get(), 0));
+        const int s = ctx.subcatch_names.find(column_text(stmt.get(), 0));
         const int lu = ctx.landuse_names.find(column_text(stmt.get(), 1));
-        if (s < 0 || lu < 0) continue;
-        auto idx = static_cast<size_t>(s) * static_cast<size_t>(nLu)
-                   + static_cast<size_t>(lu);
+        if (s < 0 || lu < 0)
+            continue;
+        auto idx = static_cast<size_t>(s) * static_cast<size_t>(nLu) + static_cast<size_t>(lu);
         ctx.subcatches.coverage[idx] = column_double(stmt.get(), 2);
         if (idx < ctx.subcatches.sweep_last_swept.size())
             ctx.subcatches.sweep_last_swept[idx] = column_double(stmt.get(), 3);
     }
 }
 
+/**
+ * @brief Restore optional initial surface pollutant buildup by catchment name.
+ *
+ * Requires positive catchment/pollutant counts. Reallocates quality matrices if shape differs;
+ * skips unknown names. Values remain authored pollutant mass per unit area and do not seed runoff
+ * concentrations here. Preparation/allocation can throw. SQLite step errors generally end the row
+ * loop without a distinct status; no local rollback.
+ *
+ * @param[in,out] db Borrowed open schema-compatible SQLite connection; no transaction ownership
+ *     transfer.
+ * @param[in,out] ctx Borrowed model mutated incrementally; caller supplies coherent prior
+ *     registries and serializes access.
+ * @param[in] sim_id Borrowed simulation catalogue key used to filter rows; not normalized.
+ */
 static void read_subcatch_loadings(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
-    if (!table_exists(db, "subcatch_loadings")) return;
-    const int np  = ctx.pollutant_names.size();
+    if (!table_exists(db, "subcatch_loadings"))
+        return;
+    const int np = ctx.pollutant_names.size();
     const int nSc = ctx.subcatch_names.size();
-    if (np <= 0 || nSc <= 0) return;
+    if (np <= 0 || nSc <= 0)
+        return;
     if (ctx.subcatches.conc_n_pollutants != np ||
         static_cast<int>(ctx.subcatches.conc.size()) != nSc * np)
         ctx.subcatches.resize_quality(np);
 
-    auto stmt = prepare(db,
-        "SELECT subcatch_id, pollutant_id, init_buildup "
-        "FROM subcatch_loadings WHERE simulation_id = ?");
+    auto stmt = prepare(db, "SELECT subcatch_id, pollutant_id, init_buildup "
+                            "FROM subcatch_loadings WHERE simulation_id = ?");
     bind_text(stmt.get(), 1, sim_id);
     while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
         const int s = ctx.subcatch_names.find(column_text(stmt.get(), 0));
         const int p = ctx.pollutant_names.find(column_text(stmt.get(), 1));
-        if (s < 0 || p < 0) continue;
-        auto idx = static_cast<size_t>(s) * static_cast<size_t>(np)
-                   + static_cast<size_t>(p);
-        if (idx < ctx.subcatches.conc.size())
-            ctx.subcatches.conc[idx] = column_double(stmt.get(), 2);
+        if (s < 0 || p < 0)
+            continue;
+        auto idx = static_cast<size_t>(s) * static_cast<size_t>(np) + static_cast<size_t>(p);
+        if (idx < ctx.subcatches.init_loading.size())
+            ctx.subcatches.init_loading[idx] = column_double(stmt.get(), 2);
     }
 }
 
+/**
+ * @brief Append persisted named pattern multipliers grouped in fid order.
+ *
+ * Requires nonempty grouped IDs and coherent name/type/factor columns. Appends existing factors
+ * without clearing, normalizing or checking the expected factor count. Type ordinal and
+ * dimensionless factors are copied as stored. Preparation/allocation can throw. SQLite step errors
+ * generally end the row loop without a distinct status; no local rollback.
+ *
+ * @param[in,out] db Borrowed open schema-compatible SQLite connection; no transaction ownership
+ *     transfer.
+ * @param[in,out] ctx Borrowed model mutated incrementally; caller supplies coherent prior
+ *     registries and serializes access.
+ * @param[in] sim_id Borrowed simulation catalogue key used to filter rows; not normalized.
+ */
 static void read_patterns(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
-    auto stmt = prepare(db,
-        "SELECT pattern_id, pattern_type, factor "
-        "FROM patterns WHERE simulation_id = ? ORDER BY fid");
+    auto stmt = prepare(db, "SELECT pattern_id, pattern_type, factor "
+                            "FROM patterns WHERE simulation_id = ? ORDER BY fid");
     bind_text(stmt.get(), 1, sim_id);
 
     std::string prev_name;
@@ -1123,22 +1787,35 @@ static void read_patterns(sqlite3* db, SimulationContext& ctx, const std::string
 // Climate read functions
 // ============================================================================
 
-/// Check if a table exists in the database (for backward compat with older .gpkg).
+/**
+ * @brief Query exact table-name presence in SQLite schema metadata.
+ *
+ * Preparation may throw; does not inspect views or validate columns.
+ *
+ * @param[in] db Borrowed open SQLite connection.
+ * @param[in] name Borrowed table name bound as data, not executable SQL.
+ * @return True only for a returned positive sqlite_master table count; false if step yields no row.
+ */
 static bool table_exists(sqlite3* db, const std::string& name) {
-    auto stmt = prepare(db,
-        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?");
+    auto stmt = prepare(db, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?");
     bind_text(stmt.get(), 1, name);
     if (sqlite3_step(stmt.get()) == SQLITE_ROW)
         return column_int(stmt.get(), 0) > 0;
     return false;
 }
 
-/// True if @p column exists on @p table. Used to read columns added in a later
-/// schema revision while still loading older GeoPackages that predate them.
-static bool column_exists(sqlite3* db, const std::string& table,
-                          const std::string& column) {
-    auto stmt = prepare(db,
-        "SELECT COUNT(*) FROM pragma_table_info(?) WHERE name=?");
+/**
+ * @brief Query column-name presence using bound pragma_table_info arguments.
+ *
+ * Preparation may throw; does not validate column type or constraints.
+ *
+ * @param[in] db Borrowed open SQLite connection.
+ * @param[in] table Borrowed table name bound as data.
+ * @param[in] column Borrowed column name bound as data.
+ * @return True for a returned positive count, false if no row/table/column.
+ */
+static bool column_exists(sqlite3* db, const std::string& table, const std::string& column) {
+    auto stmt = prepare(db, "SELECT COUNT(*) FROM pragma_table_info(?) WHERE name=?");
     bind_text(stmt.get(), 1, table);
     bind_text(stmt.get(), 2, column);
     if (sqlite3_step(stmt.get()) == SQLITE_ROW)
@@ -1146,31 +1823,65 @@ static bool column_exists(sqlite3* db, const std::string& table,
     return false;
 }
 
-/// Parse a comma-separated string of doubles into a fixed-size array.
+/**
+ * @brief Update up to n existing values from comma-delimited numeric prefixes.
+ *
+ * std::stod accepts trailing suffixes and nonfinite values; conversion exceptions are swallowed per
+ * token. Does not clear output, report bad tokens, validate units/ranges or guarantee
+ * locale-independent parsing.
+ *
+ * @param[in] csv Borrowed comma-separated source; extra tokens are ignored.
+ * @param[in,out] out Readable/writable n-double span; NULL only when n<=0. Missing/invalid tokens
+ *     preserve previous entries.
+ * @param[in] n Maximum entries to update; nonpositive values perform no writes.
+ */
 static void parse_csv_doubles(const std::string& csv, double* out, int n) {
     std::istringstream ss(csv);
     std::string token;
     for (int i = 0; i < n && std::getline(ss, token, ','); ++i) {
-        try { out[i] = std::stod(token); } catch (...) {}
+        try {
+            out[i] = std::stod(token);
+        } catch (...) {
+        }
     }
 }
 
-static void read_evaporation(sqlite3* db, SimulationContext& ctx,
-                              const std::string& sim_id) {
-    if (!table_exists(db, "evaporation")) return;
-    auto stmt = prepare(db,
-        "SELECT evap_type, evap_values, ts_name, pan_coeff, "
-        "recovery_pat, dry_only FROM evaporation WHERE simulation_id = ?");
+/**
+ * @brief Restore the first optional evaporation configuration row.
+ *
+ * Known exact type tokens update source selection; unrecognized types retain prior selection.
+ * Parses monthly/pan comma lists without resetting missing entries and retains curve/pattern names.
+ * Values keep project evaporation units; no source loading or reference resolution.
+ * Preparation/allocation can throw. SQLite step errors generally end the row loop without a
+ * distinct status; no local rollback.
+ *
+ * @param[in,out] db Borrowed open schema-compatible SQLite connection; no transaction ownership
+ *     transfer.
+ * @param[in,out] ctx Borrowed model mutated incrementally; caller supplies coherent prior
+ *     registries and serializes access.
+ * @param[in] sim_id Borrowed simulation catalogue key used to filter rows; not normalized.
+ */
+static void read_evaporation(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
+    if (!table_exists(db, "evaporation"))
+        return;
+    auto stmt = prepare(db, "SELECT evap_type, evap_values, ts_name, pan_coeff, "
+                            "recovery_pat, dry_only FROM evaporation WHERE simulation_id = ?");
     bind_text(stmt.get(), 1, sim_id);
 
-    if (sqlite3_step(stmt.get()) != SQLITE_ROW) return;
+    if (sqlite3_step(stmt.get()) != SQLITE_ROW)
+        return;
 
     std::string type_str = column_text(stmt.get(), 0);
-    if (type_str == "CONSTANT")         ctx.options.evap_type = 0;
-    else if (type_str == "MONTHLY")     ctx.options.evap_type = 1;
-    else if (type_str == "TIMESERIES")  ctx.options.evap_type = 2;
-    else if (type_str == "TEMPERATURE") ctx.options.evap_type = 3;
-    else if (type_str == "FILE")        ctx.options.evap_type = 4;
+    if (type_str == "CONSTANT")
+        ctx.options.evap_type = 0;
+    else if (type_str == "MONTHLY")
+        ctx.options.evap_type = 1;
+    else if (type_str == "TIMESERIES")
+        ctx.options.evap_type = 2;
+    else if (type_str == "TEMPERATURE")
+        ctx.options.evap_type = 3;
+    else if (type_str == "FILE")
+        ctx.options.evap_type = 4;
 
     if (!column_is_null(stmt.get(), 1))
         parse_csv_doubles(column_text(stmt.get(), 1), ctx.options.evap_values, 12);
@@ -1187,22 +1898,40 @@ static void read_evaporation(sqlite3* db, SimulationContext& ctx,
     ctx.options.evap_dry_only = column_int(stmt.get(), 5) != 0;
 }
 
-static void read_climate_settings(sqlite3* db, SimulationContext& ctx,
-                                   const std::string& sim_id) {
-    if (!table_exists(db, "climate_settings")) return;
-    auto stmt = prepare(db,
-        "SELECT temp_source, temp_ts_name, temp_file, temp_file_start, "
-        "wind_type, wind_speed, snow_divt, snow_ati_wt, snow_nrg_ratio, "
-        "snow_lat, snow_min_melt, snow_max_melt, adc_imperv, adc_perv "
-        "FROM climate_settings WHERE simulation_id = ?");
+/**
+ * @brief Restore the first optional temperature, wind and snow climate settings row.
+ *
+ * Copies authored temperature/elevation conventions, raw OADate file filter, DTLong minutes and
+ * monthly/depletion arrays. Probes optional location/temperature-unit columns. No climate-file
+ * loading, derived climate initialization or full numerical validation. Preparation/allocation can
+ * throw. SQLite step errors generally end the row loop without a distinct status; no local
+ * rollback.
+ *
+ * @param[in,out] db Borrowed open schema-compatible SQLite connection; no transaction ownership
+ *     transfer.
+ * @param[in,out] ctx Borrowed model mutated incrementally; caller supplies coherent prior
+ *     registries and serializes access.
+ * @param[in] sim_id Borrowed simulation catalogue key used to filter rows; not normalized.
+ */
+static void read_climate_settings(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
+    if (!table_exists(db, "climate_settings"))
+        return;
+    auto stmt = prepare(db, "SELECT temp_source, temp_ts_name, temp_file, temp_file_start, "
+                            "wind_type, wind_speed, snow_divt, snow_ati_wt, snow_nrg_ratio, "
+                            "snow_lat, snow_min_melt, snow_max_melt, adc_imperv, adc_perv "
+                            "FROM climate_settings WHERE simulation_id = ?");
     bind_text(stmt.get(), 1, sim_id);
 
-    if (sqlite3_step(stmt.get()) != SQLITE_ROW) return;
+    if (sqlite3_step(stmt.get()) != SQLITE_ROW)
+        return;
 
     std::string src = column_text(stmt.get(), 0);
-    if (src == "NONE")            ctx.options.temp_source = 0;
-    else if (src == "TIMESERIES") ctx.options.temp_source = 1;
-    else if (src == "FILE")       ctx.options.temp_source = 2;
+    if (src == "NONE")
+        ctx.options.temp_source = 0;
+    else if (src == "TIMESERIES")
+        ctx.options.temp_source = 1;
+    else if (src == "FILE")
+        ctx.options.temp_source = 2;
 
     if (!column_is_null(stmt.get(), 1))
         ctx.options.temp_ts_name = column_text(stmt.get(), 1);
@@ -1218,12 +1947,12 @@ static void read_climate_settings(sqlite3* db, SimulationContext& ctx,
     if (!column_is_null(stmt.get(), 5))
         parse_csv_doubles(column_text(stmt.get(), 5), ctx.options.wind_speed, 12);
 
-    ctx.options.snow_divt      = column_double(stmt.get(), 6);
-    ctx.options.snow_ati_wt    = column_double(stmt.get(), 7);
+    ctx.options.snow_divt = column_double(stmt.get(), 6);
+    ctx.options.snow_ati_wt = column_double(stmt.get(), 7);
     ctx.options.snow_nrg_ratio = column_double(stmt.get(), 8);
-    ctx.options.snow_lat       = column_double(stmt.get(), 9);
-    ctx.options.snow_min_melt  = column_double(stmt.get(), 10);
-    ctx.options.snow_max_melt  = column_double(stmt.get(), 11);
+    ctx.options.snow_lat = column_double(stmt.get(), 9);
+    ctx.options.snow_min_melt = column_double(stmt.get(), 10);
+    ctx.options.snow_max_melt = column_double(stmt.get(), 11);
 
     if (!column_is_null(stmt.get(), 12))
         parse_csv_doubles(column_text(stmt.get(), 12), ctx.options.adc_imperv, 10);
@@ -1234,33 +1963,45 @@ static void read_climate_settings(sqlite3* db, SimulationContext& ctx,
     // snow_elev / snow_dtlong were added in a later schema revision; read them
     // only when present so pre-revision GeoPackages still load.
     if (column_exists(db, "climate_settings", "snow_dtlong")) {
-        auto s2 = prepare(db,
-            "SELECT snow_elev, snow_dtlong FROM climate_settings "
-            "WHERE simulation_id = ?");
+        auto s2 = prepare(db, "SELECT snow_elev, snow_dtlong FROM climate_settings "
+                              "WHERE simulation_id = ?");
         bind_text(s2.get(), 1, sim_id);
         if (sqlite3_step(s2.get()) == SQLITE_ROW) {
-            ctx.options.snow_elev   = column_double(s2.get(), 0);
+            ctx.options.snow_elev = column_double(s2.get(), 0);
             ctx.options.snow_dtlong = column_double(s2.get(), 1);
         }
     }
 
     // temp_units added in a later schema revision; guard independently.
     if (column_exists(db, "climate_settings", "temp_units")) {
-        auto s3 = prepare(db,
-            "SELECT temp_units FROM climate_settings WHERE simulation_id = ?");
+        auto s3 = prepare(db, "SELECT temp_units FROM climate_settings WHERE simulation_id = ?");
         bind_text(s3.get(), 1, sim_id);
         if (sqlite3_step(s3.get()) == SQLITE_ROW)
             ctx.options.temp_units = column_int(s3.get(), 0);
     }
 }
 
-static void read_snowpacks(sqlite3* db, SimulationContext& ctx,
-                            const std::string& sim_id) {
-    if (!table_exists(db, "snowpacks")) return;
-    auto stmt = prepare(db,
-        "SELECT snowpack_id, surface_type, p1, p2, p3, p4, p5, p6, p7, "
-        "removal_subcatch FROM snowpacks WHERE simulation_id = ? "
-        "ORDER BY snowpack_id, surface_type");
+/**
+ * @brief Restore optional conventional snowpack surface/removal rows.
+ *
+ * Creates/reuses pack names and copies recognized PLOWABLE/IMPERVIOUS/PERVIOUS seven-value or
+ * REMOVAL six-value records in authored units. Unknown surface tokens can still create an empty
+ * named pack. Retains transfer target name without resolution; no UEB or runtime snow
+ * initialization. Preparation/allocation can throw. SQLite step errors generally end the row loop
+ * without a distinct status; no local rollback.
+ *
+ * @param[in,out] db Borrowed open schema-compatible SQLite connection; no transaction ownership
+ *     transfer.
+ * @param[in,out] ctx Borrowed model mutated incrementally; caller supplies coherent prior
+ *     registries and serializes access.
+ * @param[in] sim_id Borrowed simulation catalogue key used to filter rows; not normalized.
+ */
+static void read_snowpacks(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
+    if (!table_exists(db, "snowpacks"))
+        return;
+    auto stmt = prepare(db, "SELECT snowpack_id, surface_type, p1, p2, p3, p4, p5, p6, p7, "
+                            "removal_subcatch FROM snowpacks WHERE simulation_id = ? "
+                            "ORDER BY snowpack_id, surface_type");
     bind_text(stmt.get(), 1, sim_id);
 
     while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
@@ -1275,21 +2016,28 @@ static void read_snowpacks(sqlite3* db, SimulationContext& ctx,
 
         // Ensure capacity
         auto ui = static_cast<size_t>(idx + 1);
-        if (ctx.snowpacks.plowable.size() < ui) ctx.snowpacks.plowable.resize(ui);
-        if (ctx.snowpacks.impervious.size() < ui) ctx.snowpacks.impervious.resize(ui);
-        if (ctx.snowpacks.pervious.size() < ui) ctx.snowpacks.pervious.resize(ui);
-        if (ctx.snowpacks.removal.size() < ui) ctx.snowpacks.removal.resize(ui);
-        if (ctx.snowpacks.removal_subcatch.size() < ui) ctx.snowpacks.removal_subcatch.resize(ui);
+        if (ctx.snowpacks.plowable.size() < ui)
+            ctx.snowpacks.plowable.resize(ui);
+        if (ctx.snowpacks.impervious.size() < ui)
+            ctx.snowpacks.impervious.resize(ui);
+        if (ctx.snowpacks.pervious.size() < ui)
+            ctx.snowpacks.pervious.resize(ui);
+        if (ctx.snowpacks.removal.size() < ui)
+            ctx.snowpacks.removal.resize(ui);
+        if (ctx.snowpacks.removal_subcatch.size() < ui)
+            ctx.snowpacks.removal_subcatch.resize(ui);
 
         if (surface == "PLOWABLE" || surface == "IMPERVIOUS" || surface == "PERVIOUS") {
             std::array<double, 7> params{};
             for (int k = 0; k < 7; ++k)
                 params[static_cast<size_t>(k)] = column_double(stmt.get(), 2 + k);
-            if (surface == "PLOWABLE")        ctx.snowpacks.plowable[idx] = params;
-            else if (surface == "IMPERVIOUS") ctx.snowpacks.impervious[idx] = params;
-            else                              ctx.snowpacks.pervious[idx] = params;
-        }
-        else if (surface == "REMOVAL") {
+            if (surface == "PLOWABLE")
+                ctx.snowpacks.plowable[idx] = params;
+            else if (surface == "IMPERVIOUS")
+                ctx.snowpacks.impervious[idx] = params;
+            else
+                ctx.snowpacks.pervious[idx] = params;
+        } else if (surface == "REMOVAL") {
             std::array<double, 6> params{};
             for (int k = 0; k < 6; ++k)
                 params[static_cast<size_t>(k)] = column_double(stmt.get(), 2 + k);
@@ -1300,53 +2048,70 @@ static void read_snowpacks(sqlite3* db, SimulationContext& ctx,
     }
 }
 
-static void read_adjustments(sqlite3* db, SimulationContext& ctx,
-                              const std::string& sim_id) {
+/**
+ * @brief Restore optional monthly adjustments and catchment adjustment references.
+ *
+ * Comma parsing preserves missing/invalid entries. Named catchment assignments currently resolve
+ * pat_name through find_table_any, rather than the pattern registry; stores that resulting table
+ * index or skips unknown names. Copies authored temperature/evaporation offsets and dimensionless
+ * rain/conductivity factors without runtime application or validation. Preparation/allocation can
+ * throw. SQLite step errors generally end the row loop without a distinct status; no local
+ * rollback.
+ *
+ * @param[in,out] db Borrowed open schema-compatible SQLite connection; no transaction ownership
+ *     transfer.
+ * @param[in,out] ctx Borrowed model mutated incrementally; caller supplies coherent prior
+ *     registries and serializes access.
+ * @param[in] sim_id Borrowed simulation catalogue key used to filter rows; not normalized.
+ */
+static void read_adjustments(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
     // Monthly adjustments
     if (table_exists(db, "adjustments")) {
-        auto stmt = prepare(db,
-            "SELECT adjust_type, adj_values FROM adjustments WHERE simulation_id = ?");
+        auto stmt =
+            prepare(db, "SELECT adjust_type, adj_values FROM adjustments WHERE simulation_id = ?");
         bind_text(stmt.get(), 1, sim_id);
 
         while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
             std::string atype = column_text(stmt.get(), 0);
-            std::string vals  = column_text(stmt.get(), 1);
+            std::string vals = column_text(stmt.get(), 1);
 
-            if (atype == "TEMP")         parse_csv_doubles(vals, ctx.adjust_temp, 12);
-            else if (atype == "EVAP")    parse_csv_doubles(vals, ctx.adjust_evap, 12);
-            else if (atype == "RAIN")    parse_csv_doubles(vals, ctx.adjust_rain, 12);
-            else if (atype == "CONDUCT") parse_csv_doubles(vals, ctx.adjust_hydcon, 12);
+            if (atype == "TEMP")
+                parse_csv_doubles(vals, ctx.adjust_temp, 12);
+            else if (atype == "EVAP")
+                parse_csv_doubles(vals, ctx.adjust_evap, 12);
+            else if (atype == "RAIN")
+                parse_csv_doubles(vals, ctx.adjust_rain, 12);
+            else if (atype == "CONDUCT")
+                parse_csv_doubles(vals, ctx.adjust_hydcon, 12);
         }
     }
 
     // Subcatchment pattern adjustments
     if (table_exists(db, "subcatch_adjustments")) {
-        auto stmt = prepare(db,
-            "SELECT subcatch_id, adjust_type, pattern_id "
-            "FROM subcatch_adjustments WHERE simulation_id = ?");
+        auto stmt = prepare(db, "SELECT subcatch_id, adjust_type, pattern_id "
+                                "FROM subcatch_adjustments WHERE simulation_id = ?");
         bind_text(stmt.get(), 1, sim_id);
 
         while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
             std::string sc_name = column_text(stmt.get(), 0);
-            std::string atype   = column_text(stmt.get(), 1);
+            std::string atype = column_text(stmt.get(), 1);
             std::string pat_name = column_text(stmt.get(), 2);
 
             int si = ctx.subcatch_names.find(sc_name);
-            int pi = ctx.find_table_any(pat_name);
-            if (si < 0 || pi < 0) continue;
+            int pi = ctx.patterns.find(pat_name);
+            if (si < 0 || pi < 0)
+                continue;
 
             auto usi = static_cast<size_t>(si);
             if (atype == "N-PERV") {
                 if (ctx.subcatch_n_perv_pattern.size() <= usi)
                     ctx.subcatch_n_perv_pattern.resize(usi + 1, -1);
                 ctx.subcatch_n_perv_pattern[usi] = pi;
-            }
-            else if (atype == "DSTORE") {
+            } else if (atype == "DSTORE") {
                 if (ctx.subcatch_d_store_pattern.size() <= usi)
                     ctx.subcatch_d_store_pattern.resize(usi + 1, -1);
                 ctx.subcatch_d_store_pattern[usi] = pi;
-            }
-            else if (atype == "INFIL") {
+            } else if (atype == "INFIL") {
                 if (ctx.subcatch_infil_pattern.size() <= usi)
                     ctx.subcatch_infil_pattern.resize(usi + 1, -1);
                 ctx.subcatch_infil_pattern[usi] = pi;
@@ -1359,17 +2124,30 @@ static void read_adjustments(sqlite3* db, SimulationContext& ctx,
 // LID read functions
 // ============================================================================
 
-static void read_lid_controls(sqlite3* db, SimulationContext& ctx,
-                               const std::string& sim_id) {
-    if (!table_exists(db, "lid_controls")) return;
-    auto stmt = prepare(db,
-        "SELECT lid_id, layer_type, p1, p2, p3, p4, p5, p6, p7 "
-        "FROM lid_controls WHERE simulation_id = ? "
-        "ORDER BY lid_id, fid");
+/**
+ * @brief Restore optional conventional LID type and fixed-width layer records.
+ *
+ * Creates/reuses controls and copies raw authored SURFACE/SOIL/PAVEMENT/STORAGE/DRAIN/DRAINMAT
+ * parameters. Other layer tokens become lid_type. Does not read NODE stacks, pollutant removal
+ * lists or runtime unit water state here. Preparation/allocation can throw. SQLite step errors
+ * generally end the row loop without a distinct status; no local rollback.
+ *
+ * @param[in,out] db Borrowed open schema-compatible SQLite connection; no transaction ownership
+ *     transfer.
+ * @param[in,out] ctx Borrowed model mutated incrementally; caller supplies coherent prior
+ *     registries and serializes access.
+ * @param[in] sim_id Borrowed simulation catalogue key used to filter rows; not normalized.
+ */
+static void read_lid_controls(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
+    if (!table_exists(db, "lid_controls"))
+        return;
+    auto stmt = prepare(db, "SELECT lid_id, layer_type, p1, p2, p3, p4, p5, p6, p7 "
+                            "FROM lid_controls WHERE simulation_id = ? "
+                            "ORDER BY lid_id, fid");
     bind_text(stmt.get(), 1, sim_id);
 
     while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
-        std::string name  = column_text(stmt.get(), 0);
+        std::string name = column_text(stmt.get(), 0);
         std::string layer = column_text(stmt.get(), 1);
 
         int idx = ctx.lid_names.find(name);
@@ -1380,60 +2158,196 @@ static void read_lid_controls(sqlite3* db, SimulationContext& ctx,
 
         // Ensure capacity
         auto ui = static_cast<size_t>(idx + 1);
-        if (ctx.lid_controls.lid_type.size() < ui) ctx.lid_controls.lid_type.resize(ui);
-        if (ctx.lid_controls.surface.size() < ui)  ctx.lid_controls.surface.resize(ui);
-        if (ctx.lid_controls.soil.size() < ui)     ctx.lid_controls.soil.resize(ui);
-        if (ctx.lid_controls.pavement.size() < ui) ctx.lid_controls.pavement.resize(ui);
-        if (ctx.lid_controls.storage.size() < ui)  ctx.lid_controls.storage.resize(ui);
-        if (ctx.lid_controls.drain.size() < ui)    ctx.lid_controls.drain.resize(ui);
-        if (ctx.lid_controls.drainmat.size() < ui) ctx.lid_controls.drainmat.resize(ui);
+        if (ctx.lid_controls.lid_type.size() < ui)
+            ctx.lid_controls.lid_type.resize(ui);
+        if (ctx.lid_controls.surface.size() < ui)
+            ctx.lid_controls.surface.resize(ui);
+        if (ctx.lid_controls.soil.size() < ui)
+            ctx.lid_controls.soil.resize(ui);
+        if (ctx.lid_controls.pavement.size() < ui)
+            ctx.lid_controls.pavement.resize(ui);
+        if (ctx.lid_controls.storage.size() < ui)
+            ctx.lid_controls.storage.resize(ui);
+        if (ctx.lid_controls.drain.size() < ui)
+            ctx.lid_controls.drain.resize(ui);
+        if (ctx.lid_controls.drainmat.size() < ui)
+            ctx.lid_controls.drainmat.resize(ui);
 
         // Type code row (BC, RG, GR, etc.) has no meaningful p values
         if (layer == "SURFACE") {
             for (int k = 0; k < 5; ++k)
                 ctx.lid_controls.surface[idx][k] = column_double(stmt.get(), 2 + k);
-        }
-        else if (layer == "SOIL") {
+        } else if (layer == "SOIL") {
             for (int k = 0; k < 7; ++k)
                 ctx.lid_controls.soil[idx][k] = column_double(stmt.get(), 2 + k);
-        }
-        else if (layer == "PAVEMENT") {
+        } else if (layer == "PAVEMENT") {
             for (int k = 0; k < 6; ++k)
                 ctx.lid_controls.pavement[idx][k] = column_double(stmt.get(), 2 + k);
-        }
-        else if (layer == "STORAGE") {
+        } else if (layer == "STORAGE") {
             for (int k = 0; k < 4; ++k)
                 ctx.lid_controls.storage[idx][k] = column_double(stmt.get(), 2 + k);
-        }
-        else if (layer == "DRAIN") {
+        } else if (layer == "DRAIN") {
             for (int k = 0; k < 6; ++k)
                 ctx.lid_controls.drain[idx][k] = column_double(stmt.get(), 2 + k);
-        }
-        else if (layer == "DRAINMAT") {
+        } else if (layer == "DRAINMAT") {
             for (int k = 0; k < 3; ++k)
                 ctx.lid_controls.drainmat[idx][k] = column_double(stmt.get(), 2 + k);
-        }
-        else {
+        } else {
             // This is the LID type code row (e.g., "BC", "GR", etc.)
             ctx.lid_controls.lid_type[idx] = layer;
         }
     }
 }
 
-static void read_lid_usage(sqlite3* db, SimulationContext& ctx,
-                            const std::string& sim_id) {
-    if (!table_exists(db, "lid_usage")) return;
-    auto stmt = prepare(db,
-        "SELECT subcatch_id, lid_id, number, area, width, init_sat, "
-        "from_imperv, to_perv, rpt_file, drain_to, from_perv "
-        "FROM lid_usage WHERE simulation_id = ?");
+/**
+ * @brief Restore optional NODE LID layers, Richards configuration and network anchors.
+ *
+ * Resizes node-layer outer storage and appends rows. Requires prior LID/node/link registration and
+ * valid layer references; throws runtime_error on invalid kinds, Richards options/materials,
+ * assignments or outlet flags. Assignment saturation must be finite0..100 percent; removal percent
+ * converts to fraction. Outlet layer is only checked >=1 here. Prior appended records persist on
+ * failure; no runtime initialization. Preparation/allocation can throw. SQLite step errors
+ * generally end the row loop without a distinct status; no local rollback.
+ *
+ * @param[in,out] db Borrowed open schema-compatible SQLite connection; no transaction ownership
+ *     transfer.
+ * @param[in,out] ctx Borrowed model mutated incrementally; caller supplies coherent prior
+ *     registries and serializes access.
+ * @param[in] sim Borrowed simulation catalogue key used to filter rows; not normalized.
+ */
+static void read_lid_nodes(sqlite3* db, SimulationContext& ctx, const std::string& sim) {
+    ctx.lid_controls.node_layers.resize(ctx.lid_controls.count());
+    if (table_exists(db, "lid_node_layers")) {
+        auto stmt = prepare(
+            db,
+            "SELECT lid_id, kind, p1,p2,p3,p4,p5,p6,p7 FROM lid_node_layers WHERE simulation_id=? ORDER BY lid_id, ordinal");
+        bind_text(stmt.get(), 1, sim);
+        while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+            int c = ctx.lid_names.find(column_text(stmt.get(), 0));
+            int kind = column_int(stmt.get(), 1);
+            if (c < 0 || kind < 0 || kind > 3)
+                throw std::runtime_error("Invalid LID node layer reference");
+            LidNodeLayer row;
+            row.kind = static_cast<LidNodeLayerKind>(kind);
+            for (int k = 0; k < 7; ++k)
+                row.params[k] = column_double(stmt.get(), k + 2);
+            ctx.lid_controls.node_layers[c].push_back(row);
+        }
+    }
+    if (table_exists(db, "lid_richards_options")) {
+        auto stmt = prepare(
+            db,
+            "SELECT lid_id,cells,atol,rtol,max_step FROM lid_richards_options WHERE simulation_id=?");
+        bind_text(stmt.get(), 1, sim);
+        while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+            const int c = ctx.lid_names.find(column_text(stmt.get(), 0));
+            if (c < 0 || ctx.lid_controls.node_layers[c].empty())
+                throw std::runtime_error("Invalid LID Richards control");
+            richards::Options o{true, column_int(stmt.get(), 1), column_double(stmt.get(), 2),
+                                column_double(stmt.get(), 3), column_double(stmt.get(), 4)};
+            if (!richards::valid(o))
+                throw std::runtime_error("Invalid LID Richards numerical options");
+            ctx.lid_controls.node_layers[c].front().flow = o;
+        }
+    }
+    if (table_exists(db, "lid_richards_materials")) {
+        auto stmt = prepare(
+            db,
+            "SELECT lid_id,layer,theta_r,alpha,n,l,specific_storage FROM lid_richards_materials WHERE simulation_id=?");
+        bind_text(stmt.get(), 1, sim);
+        while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+            const int c = ctx.lid_names.find(column_text(stmt.get(), 0)),
+                      layer = column_int(stmt.get(), 1);
+            if (c < 0 || layer < 1 ||
+                layer > static_cast<int>(ctx.lid_controls.node_layers[c].size()))
+                throw std::runtime_error("Invalid LID Richards material reference");
+            auto& row = ctx.lid_controls.node_layers[c][layer - 1];
+            richards::Material p{column_double(stmt.get(), 2), column_double(stmt.get(), 3),
+                                 column_double(stmt.get(), 4), column_double(stmt.get(), 5),
+                                 column_double(stmt.get(), 6)};
+            if ((row.kind != LidNodeLayerKind::Media && row.kind != LidNodeLayerKind::Aggregate) ||
+                !richards::valid(p, row.params[1]))
+                throw std::runtime_error("Invalid LID Richards material");
+            row.retention = p;
+        }
+    }
+    if (table_exists(db, "lid_layer_treatment")) {
+        auto stmt = prepare(
+            db,
+            "SELECT lid_id,layer,pollutant,removal,decay,expression FROM lid_layer_treatment WHERE simulation_id=?");
+        bind_text(stmt.get(), 1, sim);
+        while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+            const int c = ctx.lid_names.find(column_text(stmt.get(), 0)),
+                      layer = column_int(stmt.get(), 1);
+            if (c < 0 || layer < 1 ||
+                layer > static_cast<int>(ctx.lid_controls.node_layers[c].size()) ||
+                ctx.lid_controls.node_layers[c][layer - 1].kind == LidNodeLayerKind::Bottom)
+                throw std::runtime_error("Invalid LID treatment layer");
+            LidLayerTreatment rule{column_text(stmt.get(), 2), column_double(stmt.get(), 3) / 100,
+                                   column_double(stmt.get(), 4), column_text(stmt.get(), 5)};
+            ctx.lid_controls.node_layers[c][layer - 1].treatment.push_back(std::move(rule));
+        }
+    }
+    if (table_exists(db, "lid_nodes")) {
+        const bool has_bottom = column_exists(db, "lid_nodes", "bottom_mode");
+        auto stmt = prepare(db, std::string("SELECT node_id,lid_id,initial_saturation,") +
+                                    (has_bottom ? "bottom_mode" : "0") +
+                                    " FROM lid_nodes WHERE simulation_id=?");
+        bind_text(stmt.get(), 1, sim);
+        while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+            int n = ctx.node_names.find(column_text(stmt.get(), 0));
+            int c = ctx.lid_names.find(column_text(stmt.get(), 1));
+            int r = ctx.node_subtypes.storage_row(n);
+            double sat = column_double(stmt.get(), 2);
+            int bottom = sqlite3_column_int(stmt.get(), 3);
+            if (r < 0 || c < 0 || !std::isfinite(sat) || sat < 0 || sat > 100 || bottom < 0 ||
+                bottom > 2)
+                throw std::runtime_error("Invalid LID node assignment");
+            ctx.node_subtypes.storages.lid[r] = {c, sat, static_cast<LidNodeBottom>(bottom)};
+        }
+    }
+    if (table_exists(db, "lid_node_outlets")) {
+        auto stmt =
+            prepare(db, "SELECT link_id,layer,top FROM lid_node_outlets WHERE simulation_id=?");
+        bind_text(stmt.get(), 1, sim);
+        while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+            int link = ctx.link_names.find(column_text(stmt.get(), 0));
+            int layer = column_int(stmt.get(), 1), top = column_int(stmt.get(), 2);
+            if (link < 0 || layer < 1 || top < 0 || top > 1)
+                throw std::runtime_error("Invalid LID node outlet");
+            ctx.lid_node_outlets.push_back({link, layer, top != 0});
+        }
+    }
+}
+
+/**
+ * @brief Append optional catchment LID deployment rows.
+ *
+ * Looks up catchment/control names, retaining -1 when unknown. Copies authored
+ * area/width/saturation/routing values and replicate count, with empty strings for NULL
+ * report/drain references. No shape/range validation, reference resolution or runtime unit
+ * initialization. Preparation/allocation can throw. SQLite step errors generally end the row loop
+ * without a distinct status; no local rollback.
+ *
+ * @param[in,out] db Borrowed open schema-compatible SQLite connection; no transaction ownership
+ *     transfer.
+ * @param[in,out] ctx Borrowed model mutated incrementally; caller supplies coherent prior
+ *     registries and serializes access.
+ * @param[in] sim_id Borrowed simulation catalogue key used to filter rows; not normalized.
+ */
+static void read_lid_usage(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
+    if (!table_exists(db, "lid_usage"))
+        return;
+    auto stmt = prepare(db, "SELECT subcatch_id, lid_id, number, area, width, init_sat, "
+                            "from_imperv, to_perv, rpt_file, drain_to, from_perv "
+                            "FROM lid_usage WHERE simulation_id = ?");
     bind_text(stmt.get(), 1, sim_id);
 
     while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
-        std::string sc_name  = column_text(stmt.get(), 0);
+        std::string sc_name = column_text(stmt.get(), 0);
         std::string lid_name = column_text(stmt.get(), 1);
 
-        int sc_idx  = ctx.subcatch_names.find(sc_name);
+        int sc_idx = ctx.subcatch_names.find(sc_name);
         int lid_idx = ctx.lid_names.find(lid_name);
 
         ctx.lid_usage.subcatch_index.push_back(sc_idx);
@@ -1452,38 +2366,52 @@ static void read_lid_usage(sqlite3* db, SimulationContext& ctx,
     }
 }
 
-static void read_rdii(sqlite3* db, SimulationContext& ctx,
-                      const std::string& sim_id) {
+/**
+ * @brief Restore optional RDII assignments, RTK hydrographs and decay configuration.
+ *
+ * Skips unknown assigned nodes and unknown response tokens. Unknown month tokens mean ALL (-1);
+ * gage-only rows are registered separately. Copies authored sewer area, peak-time hours and other
+ * retained coefficients. Older decay tables without snow columns retain default snow-off. No
+ * hydrograph generation or reference/range validation. Preparation/allocation can throw. SQLite
+ * step errors generally end the row loop without a distinct status; no local rollback.
+ *
+ * @param[in,out] db Borrowed open schema-compatible SQLite connection; no transaction ownership
+ *     transfer.
+ * @param[in,out] ctx Borrowed model mutated incrementally; caller supplies coherent prior
+ *     registries and serializes access.
+ * @param[in] sim_id Borrowed simulation catalogue key used to filter rows; not normalized.
+ */
+static void read_rdii(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
     // RDII assignments
     if (table_exists(db, "rdii_assignments")) {
-        auto stmt = prepare(db,
-            "SELECT node_name, uh_name, sewer_area "
-            "FROM rdii_assignments WHERE simulation_id = ?");
+        auto stmt = prepare(db, "SELECT node_name, uh_name, sewer_area "
+                                "FROM rdii_assignments WHERE simulation_id = ?");
         bind_text(stmt.get(), 1, sim_id);
         while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
             std::string node_name = column_text(stmt.get(), 0);
-            std::string uh_name   = column_text(stmt.get(), 1);
-            double area           = sqlite3_column_double(stmt.get(), 2);
+            std::string uh_name = column_text(stmt.get(), 1);
+            double area = sqlite3_column_double(stmt.get(), 2);
             int ni = ctx.node_names.find(node_name);
-            if (ni < 0) continue;
+            if (ni < 0)
+                continue;
             ctx.rdii_assigns.add(ni, uh_name, area);
         }
     }
 
     // Unit hydrographs (gage lines + parameter lines)
     if (table_exists(db, "unit_hydrographs")) {
-        auto stmt = prepare(db,
-            "SELECT uh_name, gage_name, month, response, r, t, k, dmax, drecov, dinit "
-            "FROM unit_hydrographs WHERE simulation_id = ?");
+        auto stmt =
+            prepare(db, "SELECT uh_name, gage_name, month, response, r, t, k, dmax, drecov, dinit "
+                        "FROM unit_hydrographs WHERE simulation_id = ?");
         bind_text(stmt.get(), 1, sim_id);
 
-        static const char* month_names[] = {"JAN","FEB","MAR","APR","MAY","JUN",
-                                            "JUL","AUG","SEP","OCT","NOV","DEC"};
+        static const char* month_names[] = {"JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+                                            "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
         while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
-            std::string uh_name   = column_text(stmt.get(), 0);
+            std::string uh_name = column_text(stmt.get(), 0);
             std::string gage_name = column_text(stmt.get(), 1);
             std::string month_str = column_text(stmt.get(), 2);
-            std::string resp_str  = column_text(stmt.get(), 3);
+            std::string resp_str = column_text(stmt.get(), 3);
 
             // Gage assignment line (response is NULL/empty)
             if (resp_str.empty() && !gage_name.empty()) {
@@ -1499,21 +2427,28 @@ static void read_rdii(sqlite3* db, SimulationContext& ctx,
             // Parse month
             e.month = -1; // ALL
             for (int m = 0; m < 12; ++m) {
-                if (month_str == month_names[m]) { e.month = m; break; }
+                if (month_str == month_names[m]) {
+                    e.month = m;
+                    break;
+                }
             }
 
             // Parse response
-            if (resp_str == "SHORT")       e.response = 0;
-            else if (resp_str == "MEDIUM") e.response = 1;
-            else if (resp_str == "LONG")   e.response = 2;
-            else continue;
+            if (resp_str == "SHORT")
+                e.response = 0;
+            else if (resp_str == "MEDIUM")
+                e.response = 1;
+            else if (resp_str == "LONG")
+                e.response = 2;
+            else
+                continue;
 
-            e.r      = sqlite3_column_double(stmt.get(), 4);
-            e.t      = sqlite3_column_double(stmt.get(), 5);
-            e.k      = sqlite3_column_double(stmt.get(), 6);
-            e.dmax   = sqlite3_column_double(stmt.get(), 7);
+            e.r = sqlite3_column_double(stmt.get(), 4);
+            e.t = sqlite3_column_double(stmt.get(), 5);
+            e.k = sqlite3_column_double(stmt.get(), 6);
+            e.dmax = sqlite3_column_double(stmt.get(), 7);
             e.drecov = sqlite3_column_double(stmt.get(), 8);
-            e.dinit  = sqlite3_column_double(stmt.get(), 9);
+            e.dinit = sqlite3_column_double(stmt.get(), 9);
             ctx.unit_hyds.add(e);
         }
     }
@@ -1523,31 +2458,35 @@ static void read_rdii(sqlite3* db, SimulationContext& ctx,
         // Snow columns are newer than the table itself — files written before
         // the degree-day snow model lack them and read as snow-off.
         const bool has_snow = column_exists(db, "rdii_decay", "snow_on");
-        auto stmt = prepare(db, has_snow
-            ? "SELECT uh_name, response, k_dep, k_0, k_T, T_ref, theta_rec, "
-              "T_freeze, snow_on, snow_T, snow_ddf "
-              "FROM rdii_decay WHERE simulation_id = ?"
-            : "SELECT uh_name, response, k_dep, k_0, k_T, T_ref, theta_rec, "
-              "T_freeze "
-              "FROM rdii_decay WHERE simulation_id = ?");
+        auto stmt =
+            prepare(db, has_snow ? "SELECT uh_name, response, k_dep, k_0, k_T, T_ref, theta_rec, "
+                                   "T_freeze, snow_on, snow_T, snow_ddf "
+                                   "FROM rdii_decay WHERE simulation_id = ?"
+                                 : "SELECT uh_name, response, k_dep, k_0, k_T, T_ref, theta_rec, "
+                                   "T_freeze "
+                                   "FROM rdii_decay WHERE simulation_id = ?");
         bind_text(stmt.get(), 1, sim_id);
         while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
             RDIIDecayEntry e{};
             e.uh_name = column_text(stmt.get(), 0);
             std::string resp = column_text(stmt.get(), 1);
-            if      (resp == "SHORT")  e.response = 0;
-            else if (resp == "MEDIUM") e.response = 1;
-            else if (resp == "LONG")   e.response = 2;
-            else continue;
-            e.k_dep     = sqlite3_column_double(stmt.get(), 2);
-            e.k_0       = sqlite3_column_double(stmt.get(), 3);
-            e.k_T       = sqlite3_column_double(stmt.get(), 4);
-            e.T_ref     = sqlite3_column_double(stmt.get(), 5);
+            if (resp == "SHORT")
+                e.response = 0;
+            else if (resp == "MEDIUM")
+                e.response = 1;
+            else if (resp == "LONG")
+                e.response = 2;
+            else
+                continue;
+            e.k_dep = sqlite3_column_double(stmt.get(), 2);
+            e.k_0 = sqlite3_column_double(stmt.get(), 3);
+            e.k_T = sqlite3_column_double(stmt.get(), 4);
+            e.T_ref = sqlite3_column_double(stmt.get(), 5);
             e.theta_rec = sqlite3_column_double(stmt.get(), 6);
-            e.T_freeze  = sqlite3_column_double(stmt.get(), 7);
+            e.T_freeze = sqlite3_column_double(stmt.get(), 7);
             if (has_snow) {
-                e.snow_on  = sqlite3_column_int(stmt.get(), 8) != 0;
-                e.snow_T   = sqlite3_column_double(stmt.get(), 9);
+                e.snow_on = sqlite3_column_int(stmt.get(), 8) != 0;
+                e.snow_T = sqlite3_column_double(stmt.get(), 9);
                 e.snow_ddf = sqlite3_column_double(stmt.get(), 10);
             }
             ctx.rdii_decay.add(e);
@@ -1555,17 +2494,32 @@ static void read_rdii(sqlite3* db, SimulationContext& ctx,
     }
 }
 
-static void read_treatment(sqlite3* db, SimulationContext& ctx,
-                            const std::string& sim_id) {
-    if (!table_exists(db, "treatment")) return;
-    auto stmt = prepare(db,
-        "SELECT node_id, pollutant_id, expression "
-        "FROM treatment WHERE simulation_id = ?");
+/**
+ * @brief Restore optional authored node/pollutant treatment expressions.
+ *
+ * Requires positive node/pollutant counts. Allocates treatment only when its node count is zero,
+ * then skips unknown/out-of-range names and absent expression slots. Copies expression text without
+ * compilation or dependency checks; a nonzero but stale matrix is not resized.
+ * Preparation/allocation can throw. SQLite step errors generally end the row loop without a
+ * distinct status; no local rollback.
+ *
+ * @param[in,out] db Borrowed open schema-compatible SQLite connection; no transaction ownership
+ *     transfer.
+ * @param[in,out] ctx Borrowed model mutated incrementally; caller supplies coherent prior
+ *     registries and serializes access.
+ * @param[in] sim_id Borrowed simulation catalogue key used to filter rows; not normalized.
+ */
+static void read_treatment(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
+    if (!table_exists(db, "treatment"))
+        return;
+    auto stmt = prepare(db, "SELECT node_id, pollutant_id, expression "
+                            "FROM treatment WHERE simulation_id = ?");
     bind_text(stmt.get(), 1, sim_id);
 
     int nn = ctx.n_nodes();
     int np = ctx.n_pollutants();
-    if (nn <= 0 || np <= 0) return;
+    if (nn <= 0 || np <= 0)
+        return;
 
     // Ensure treatment data is sized
     if (ctx.treatment.n_nodes == 0)
@@ -1574,11 +2528,12 @@ static void read_treatment(sqlite3* db, SimulationContext& ctx,
     while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
         std::string node_name = column_text(stmt.get(), 0);
         std::string poll_name = column_text(stmt.get(), 1);
-        std::string expr      = column_text(stmt.get(), 2);
+        std::string expr = column_text(stmt.get(), 2);
 
         int ni = ctx.node_names.find(node_name);
         int pi = ctx.pollutant_names.find(poll_name);
-        if (ni < 0 || pi < 0 || ni >= nn || pi >= np) continue;
+        if (ni < 0 || pi < 0 || ni >= nn || pi >= np)
+            continue;
 
         auto idx = static_cast<size_t>(ni * np + pi);
         if (idx < ctx.treatment.expressions.size())
@@ -1586,42 +2541,91 @@ static void read_treatment(sqlite3* db, SimulationContext& ctx,
     }
 }
 
+/**
+ * @brief Append optional external inflows for known nodes in fid order.
+ *
+ * Unknown nodes skip. NULL type defaults FLOW, NULL series/pattern become empty names;
+ * constituent/type, multipliers and baseline retain authored units. Names remain for later
+ * series/pattern binding; no rate conversion or current inflow calculation. Preparation/allocation
+ * can throw. SQLite step errors generally end the row loop without a distinct status; no local
+ * rollback.
+ *
+ * @param[in,out] db Borrowed open schema-compatible SQLite connection; no transaction ownership
+ *     transfer.
+ * @param[in,out] ctx Borrowed model mutated incrementally; caller supplies coherent prior
+ *     registries and serializes access.
+ * @param[in] sim_id Borrowed simulation catalogue key used to filter rows; not normalized.
+ */
 static void read_inflows(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
-    if (!table_exists(db, "inflows")) return;
-    auto stmt = prepare(db,
-        "SELECT node_id, constituent, timeseries, inflow_type, m_factor, s_factor, "
-        "baseline, pattern FROM inflows WHERE simulation_id = ? ORDER BY fid");
+    if (!table_exists(db, "inflows"))
+        return;
+    auto stmt =
+        prepare(db, "SELECT node_id, constituent, timeseries, inflow_type, m_factor, s_factor, "
+                    "baseline, pattern FROM inflows WHERE simulation_id = ? ORDER BY fid");
     bind_text(stmt.get(), 1, sim_id);
     while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
         const int ni = ctx.node_names.find(column_text(stmt.get(), 0));
-        if (ni < 0) continue;
+        if (ni < 0)
+            continue;
         std::string cons = column_text(stmt.get(), 1);
-        std::string ts   = column_is_null(stmt.get(), 2) ? std::string{} : column_text(stmt.get(), 2);
-        std::string type = column_is_null(stmt.get(), 3) ? std::string("FLOW") : column_text(stmt.get(), 3);
-        double mf   = column_double(stmt.get(), 4);
-        double sf   = column_double(stmt.get(), 5);
+        std::string ts = column_is_null(stmt.get(), 2) ? std::string{} : column_text(stmt.get(), 2);
+        std::string type =
+            column_is_null(stmt.get(), 3) ? std::string("FLOW") : column_text(stmt.get(), 3);
+        double mf = column_double(stmt.get(), 4);
+        double sf = column_double(stmt.get(), 5);
         double base = column_double(stmt.get(), 6);
-        std::string pat = column_is_null(stmt.get(), 7) ? std::string{} : column_text(stmt.get(), 7);
+        std::string pat =
+            column_is_null(stmt.get(), 7) ? std::string{} : column_text(stmt.get(), 7);
         ctx.ext_inflows.add(ni, cons, ts, type, mf, sf, base, pat);
     }
 }
 
+/**
+ * @brief Append optional raw control-rule blocks in ordinal order.
+ *
+ * Preserves multiline rule text without parsing, compilation, name extraction or execution.
+ * Existing rule blocks are retained. Preparation/allocation can throw. SQLite step errors generally
+ * end the row loop without a distinct status; no local rollback.
+ *
+ * @param[in,out] db Borrowed open schema-compatible SQLite connection; no transaction ownership
+ *     transfer.
+ * @param[in,out] ctx Borrowed model mutated incrementally; caller supplies coherent prior
+ *     registries and serializes access.
+ * @param[in] sim_id Borrowed simulation catalogue key used to filter rows; not normalized.
+ */
 static void read_controls(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
-    if (!table_exists(db, "control_rules")) return;
-    auto stmt = prepare(db,
-        "SELECT rule_text FROM control_rules WHERE simulation_id = ? ORDER BY ordinal");
+    if (!table_exists(db, "control_rules"))
+        return;
+    auto stmt =
+        prepare(db, "SELECT rule_text FROM control_rules WHERE simulation_id = ? ORDER BY ordinal");
     bind_text(stmt.get(), 1, sim_id);
     while (sqlite3_step(stmt.get()) == SQLITE_ROW)
         ctx.control_rules.rule_text.push_back(column_text(stmt.get(), 0));
 }
 
+/**
+ * @brief Append optional transect point groups and repeated cross-section metadata.
+ *
+ * Groups consecutive equal IDs in fid order; a repeated noncontiguous ID creates another transect.
+ * First row supplies roughness/banks/modifiers/comment; ordinal is not used to reorder points.
+ * Station/elevation dimensions remain authored units, with no profile validation or derived
+ * lookup-table generation. Preparation/allocation can throw. SQLite step errors generally end the
+ * row loop without a distinct status; no local rollback.
+ *
+ * @param[in,out] db Borrowed open schema-compatible SQLite connection; no transaction ownership
+ *     transfer.
+ * @param[in,out] ctx Borrowed model mutated incrementally; caller supplies coherent prior
+ *     registries and serializes access.
+ * @param[in] sim_id Borrowed simulation catalogue key used to filter rows; not normalized.
+ */
 static void read_transects(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
-    if (!table_exists(db, "transects")) return;
-    auto stmt = prepare(db,
-        "SELECT transect_id, ordinal, station, elevation, n_left, n_right, n_channel, "
-        "x_left_bank, x_right_bank, x_left_encroach, x_right_encroach, "
-        "x_factor, y_factor, length_factor, comment "
-        "FROM transects WHERE simulation_id = ? ORDER BY fid");
+    if (!table_exists(db, "transects"))
+        return;
+    auto stmt =
+        prepare(db, "SELECT transect_id, ordinal, station, elevation, n_left, n_right, n_channel, "
+                    "x_left_bank, x_right_bank, x_left_encroach, x_right_encroach, "
+                    "x_factor, y_factor, length_factor, comment "
+                    "FROM transects WHERE simulation_id = ? ORDER BY fid");
     bind_text(stmt.get(), 1, sim_id);
     auto& T = ctx.transects;
     std::string prev;
@@ -1654,20 +2658,215 @@ static void read_transects(sqlite3* db, SimulationContext& ctx, const std::strin
     }
 }
 
+// Street sections, inlet designs and inlet placements. Tables absent from a
+// .gpkg written before they existed → nothing read, exactly as before.
+/**
+ * @brief Append optional named street cross-section parameter rows.
+ *
+ * Copies authored dimensions, slopes and roughness without validation or preprocessing; NULL sides
+ * defaults2. Existing street records remain. Preparation/allocation can throw. SQLite step errors
+ * generally end the row loop without a distinct status; no local rollback.
+ *
+ * @param[in,out] db Borrowed open schema-compatible SQLite connection; no transaction ownership
+ *     transfer.
+ * @param[in,out] ctx Borrowed model mutated incrementally; caller supplies coherent prior
+ *     registries and serializes access.
+ * @param[in] sim_id Borrowed simulation catalogue key used to filter rows; not normalized.
+ */
+static void read_streets(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
+    if (!table_exists(db, "streets"))
+        return;
+    auto stmt = prepare(
+        db,
+        "SELECT street_id, t_crown, h_curb, sx, n_road, gutter_depres, gutter_width, "
+        "sides, back_width, back_slope, back_n FROM streets WHERE simulation_id = ? ORDER BY fid");
+    bind_text(stmt.get(), 1, sim_id);
+    auto& S = ctx.streets;
+    while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+        S.names.push_back(column_text(stmt.get(), 0));
+        S.t_crown.push_back(column_double(stmt.get(), 1));
+        S.h_curb.push_back(column_double(stmt.get(), 2));
+        S.sx.push_back(column_double(stmt.get(), 3));
+        S.n_road.push_back(column_double(stmt.get(), 4));
+        S.gutter_depres.push_back(column_double(stmt.get(), 5));
+        S.gutter_width.push_back(column_double(stmt.get(), 6));
+        S.sides.push_back(column_is_null(stmt.get(), 7) ? 2 : column_int(stmt.get(), 7));
+        S.back_width.push_back(column_double(stmt.get(), 8));
+        S.back_slope.push_back(column_double(stmt.get(), 9));
+        S.back_n.push_back(column_double(stmt.get(), 10));
+    }
+}
+
+/**
+ * @brief Append optional named inlet design rows and comments.
+ *
+ * Copies authored dimensions/splash velocity, open-area fraction and type strings; NULL strings
+ * become empty, NULL throat defaults2. Does not resolve custom curves or validate inlet
+ * shape/capture parameters. Preparation/allocation can throw. SQLite step errors generally end the
+ * row loop without a distinct status; no local rollback.
+ *
+ * @param[in,out] db Borrowed open schema-compatible SQLite connection; no transaction ownership
+ *     transfer.
+ * @param[in,out] ctx Borrowed model mutated incrementally; caller supplies coherent prior
+ *     registries and serializes access.
+ * @param[in] sim_id Borrowed simulation catalogue key used to filter rows; not normalized.
+ */
+static void read_inlets(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
+    if (!table_exists(db, "inlets"))
+        return;
+    auto stmt = prepare(
+        db, "SELECT inlet_id, inlet_type, length, width, grate_type, open_area, splash_veloc, "
+            "curb_length, curb_height, curb_throat, curve_id, comment "
+            "FROM inlets WHERE simulation_id = ? ORDER BY fid");
+    bind_text(stmt.get(), 1, sim_id);
+    auto txt = [&](int col) {
+        return column_is_null(stmt.get(), col) ? std::string{} : column_text(stmt.get(), col);
+    };
+    auto& I = ctx.inlets;
+    while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+        const int idx = I.add_row(column_text(stmt.get(), 0), column_text(stmt.get(), 1));
+        const auto u = static_cast<std::size_t>(idx);
+        I.length[u] = column_double(stmt.get(), 2);
+        I.width[u] = column_double(stmt.get(), 3);
+        I.grate_type[u] = txt(4);
+        I.open_area[u] = column_double(stmt.get(), 5);
+        I.splash_veloc[u] = column_double(stmt.get(), 6);
+        I.curb_length[u] = column_double(stmt.get(), 7);
+        I.curb_height[u] = column_double(stmt.get(), 8);
+        I.curb_throat[u] = column_is_null(stmt.get(), 9) ? 2 : column_int(stmt.get(), 9);
+        I.curve_id[u] = txt(10);
+        if (I.comments.size() < I.names.size())
+            I.comments.resize(I.names.size());
+        I.comments[u] = txt(11);
+    }
+}
+
+// [2D_NODE_COUPLING] rows, replayed through the section parser so the type /
+// key / value rules are the .inp ones. The node FK makes an unknown node
+// impossible in a well-formed file; one that still slips through is an error
+// rather than a row left on the parse-time deferral list.
+/**
+ * @brief Replay optional sparse node-to-2D coupling through the INP section parser.
+ *
+ * Requires node registry first. Preserves parser validation/diagnostics and parameter units. New
+ * unknown-node deferred rows are converted to ctx.errors then removed from the deferral list;
+ * earlier deferred rows remain. Does not require a loaded mesh or initialize coupling.
+ * Preparation/allocation can throw. SQLite step errors generally end the row loop without a
+ * distinct status; no local rollback.
+ *
+ * @param[in,out] db Borrowed open schema-compatible SQLite connection; no transaction ownership
+ *     transfer.
+ * @param[in,out] ctx Borrowed model mutated incrementally; caller supplies coherent prior
+ *     registries and serializes access.
+ * @param[in] sim_id Borrowed simulation catalogue key used to filter rows; not normalized.
+ */
+static void read_node_coupling_2d(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
+    if (!table_exists(db, "node_2d_coupling"))
+        return;
+    auto stmt = prepare(db, "SELECT node_id, coupling_type, params FROM node_2d_coupling "
+                            "WHERE simulation_id = ? ORDER BY fid");
+    bind_text(stmt.get(), 1, sim_id);
+    std::vector<std::string> lines;
+    while (sqlite3_step(stmt.get()) == SQLITE_ROW)
+        lines.push_back(column_text(stmt.get(), 0) + " " + column_text(stmt.get(), 1) + " " +
+                        column_text(stmt.get(), 2));
+    const auto deferred_before = ctx.deferred_section_rows.size();
+    nodecoupling2d::readSection(ctx, lines);
+    for (auto i = deferred_before; i < ctx.deferred_section_rows.size(); ++i)
+        ctx.errors.push_back("node_2d_coupling names an unknown node: " +
+                             ctx.deferred_section_rows[i].second);
+    ctx.deferred_section_rows.resize(deferred_before);
+}
+
+/**
+ * @brief Append resolvable optional node-host or link-host inlet placements.
+ *
+ * Host kind1 selects node, every other code selects link. Skips unknown host/design/capture
+ * references; first matching inlet name wins. NULL count defaults1 and placement0; percent clogged
+ * converts to1-percent/100 without range validation. Marks available host-node is_inlet flags.
+ * Other dimensions/flow limits retain authored units. Preparation/allocation can throw. SQLite step
+ * errors generally end the row loop without a distinct status; no local rollback.
+ *
+ * @param[in,out] db Borrowed open schema-compatible SQLite connection; no transaction ownership
+ *     transfer.
+ * @param[in,out] ctx Borrowed model mutated incrementally; caller supplies coherent prior
+ *     registries and serializes access.
+ * @param[in] sim_id Borrowed simulation catalogue key used to filter rows; not normalized.
+ */
+static void read_inlet_usage(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
+    if (!table_exists(db, "inlet_usage"))
+        return;
+    auto stmt =
+        prepare(db, "SELECT host_kind, host_id, inlet_id, capture_node, num_inlets, pct_clogged, "
+                    "flow_limit, local_depress, local_width, placement "
+                    "FROM inlet_usage WHERE simulation_id = ? ORDER BY fid");
+    bind_text(stmt.get(), 1, sim_id);
+    while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+        const int host_kind = column_int(stmt.get(), 0);
+        const std::string host = column_text(stmt.get(), 1);
+        const std::string design = column_text(stmt.get(), 2);
+        const int capture = ctx.node_names.find(column_text(stmt.get(), 3));
+        int di = -1;
+        for (int i = 0; i < ctx.inlets.count(); ++i)
+            if (ctx.inlets.names[static_cast<std::size_t>(i)] == design) {
+                di = i;
+                break;
+            }
+        const int host_node = (host_kind == 1) ? ctx.node_names.find(host) : -1;
+        const int host_link = (host_kind == 1) ? -1 : ctx.link_names.find(host);
+        // Unresolvable references are dropped, as the [INLET_USAGE] handler does.
+        if (di < 0 || capture < 0)
+            continue;
+        if (host_kind == 1 ? host_node < 0 : host_link < 0)
+            continue;
+        const int r = ctx.inlet_usages.add_row(host_link, host_node, di, capture);
+        const auto ur = static_cast<std::size_t>(r);
+        ctx.inlet_usages.num_inlets[ur] =
+            column_is_null(stmt.get(), 4) ? 1 : column_int(stmt.get(), 4);
+        ctx.inlet_usages.clog_factor[ur] = 1.0 - column_double(stmt.get(), 5) / 100.0;
+        ctx.inlet_usages.flow_limit[ur] = column_double(stmt.get(), 6);
+        ctx.inlet_usages.local_depress[ur] = column_double(stmt.get(), 7);
+        ctx.inlet_usages.local_width[ur] = column_double(stmt.get(), 8);
+        ctx.inlet_usages.placement[ur] =
+            column_is_null(stmt.get(), 9) ? 0 : column_int(stmt.get(), 9);
+        if (host_node >= 0) {
+            // The nodes table carries is_inlet; keep the two consistent.
+            const auto un = static_cast<std::size_t>(host_node);
+            if (un < ctx.nodes.is_inlet.size())
+                ctx.nodes.is_inlet[un] = 1;
+        }
+    }
+}
+
+/**
+ * @brief Append optional dry-weather inflows for known nodes in fid order.
+ *
+ * Unknown nodes skip; NULL pattern names become empty. Average retains authored flow/concentration
+ * units and up to four pattern references remain unresolved; no multiplier application or load
+ * calculation. Preparation/allocation can throw. SQLite step errors generally end the row loop
+ * without a distinct status; no local rollback.
+ *
+ * @param[in,out] db Borrowed open schema-compatible SQLite connection; no transaction ownership
+ *     transfer.
+ * @param[in,out] ctx Borrowed model mutated incrementally; caller supplies coherent prior
+ *     registries and serializes access.
+ * @param[in] sim_id Borrowed simulation catalogue key used to filter rows; not normalized.
+ */
 static void read_dwf(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
-    if (!table_exists(db, "dwf_inflows")) return;
-    auto stmt = prepare(db,
-        "SELECT node_id, constituent, avg_value, pat1, pat2, pat3, pat4 "
-        "FROM dwf_inflows WHERE simulation_id = ? ORDER BY fid");
+    if (!table_exists(db, "dwf_inflows"))
+        return;
+    auto stmt = prepare(db, "SELECT node_id, constituent, avg_value, pat1, pat2, pat3, pat4 "
+                            "FROM dwf_inflows WHERE simulation_id = ? ORDER BY fid");
     bind_text(stmt.get(), 1, sim_id);
     auto txt = [&](int col) {
         return column_is_null(stmt.get(), col) ? std::string{} : column_text(stmt.get(), col);
     };
     while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
         const int ni = ctx.node_names.find(column_text(stmt.get(), 0));
-        if (ni < 0) continue;
-        ctx.dwf_inflows.add(ni, column_text(stmt.get(), 1), column_double(stmt.get(), 2),
-                            txt(3), txt(4), txt(5), txt(6));
+        if (ni < 0)
+            continue;
+        ctx.dwf_inflows.add(ni, column_text(stmt.get(), 1), column_double(stmt.get(), 2), txt(3),
+                            txt(4), txt(5), txt(6));
     }
 }
 
@@ -1683,34 +2882,63 @@ static void read_dwf(sqlite3* db, SimulationContext& ctx, const std::string& sim
 // model is bit-identical to the same model read from .inp.
 // ============================================================================
 
+/**
+ * @brief Translate an exact-case persisted 2D boundary token.
+ *
+ * @param[in] tok Borrowed uppercase boundary token; TS_STAGE/TS_FLOW share specified-stage/flow
+ *     codes.
+ * @return Internal WALL0, NORMAL_FLOW1, stage2, flow3, rating4, or -1 for unknown text.
+ */
 static int bc_type_from_token(const std::string& tok) {
-    if (tok == "WALL")            return 0; // BoundaryType::WALL
-    if (tok == "NORMAL_FLOW")     return 1; // BoundaryType::NORMAL_FLOW
-    if (tok == "SPECIFIED_STAGE") return 2; // BoundaryType::SPECIFIED_STAGE
-    if (tok == "TS_STAGE")        return 2;
-    if (tok == "SPECIFIED_FLOW")  return 3; // BoundaryType::SPECIFIED_FLOW
-    if (tok == "TS_FLOW")         return 3;
-    if (tok == "RATING_CURVE")    return 4; // BoundaryType::RATING_CURVE
+    if (tok == "WALL" || tok == "WALL_DRAG")
+        return 0; // BoundaryType::WALL
+    if (tok == "NORMAL_FLOW")
+        return 1; // BoundaryType::NORMAL_FLOW
+    if (tok == "SPECIFIED_STAGE")
+        return 2; // BoundaryType::SPECIFIED_STAGE
+    if (tok == "TS_STAGE")
+        return 2;
+    if (tok == "SPECIFIED_FLOW")
+        return 3; // BoundaryType::SPECIFIED_FLOW
+    if (tok == "TS_FLOW")
+        return 3;
+    if (tok == "RATING_CURVE")
+        return 4; // BoundaryType::RATING_CURVE
     return -1;
 }
 
-static void read_mesh_2d(sqlite3* db, SimulationContext& ctx,
-                         const std::string& sim_id) {
-    if (!table_exists(db, "mesh_2d_vertices") ||
-        !table_exists(db, "mesh_2d_triangles"))
+/**
+ * @brief Restore optional authored 2D mesh geometry, coupling names and pending boundaries.
+ *
+ * Absent vertex/triangle tables or empty vertices produce no import. Without attached mesh, a
+ * populated table records a warning and skips. Checks count/max index contiguity and throws
+ * GpkgError on mismatch; schema uniqueness/nonnegative constraints remain required. Restores
+ * triangles then optional quads, raw map coordinates/elevations and authored depth units; ignores
+ * presentation geometry/bed/node columns. Coupling indices are range-filtered, names deferred,
+ * repeated triangle rows preserved with last-row scalar mirrors. Missing/NULL authored flags mean
+ * true. Unknown BC tokens skip; pending BC/conveyance append only when their destination pointers
+ * exist. Derived topology, units, name resolution and remaining validation occur at router
+ * initialization; partial mesh mutation persists on failure. Preparation/allocation can throw.
+ * SQLite step errors generally end the row loop without a distinct status; no local rollback.
+ *
+ * @param[in,out] db Borrowed open schema-compatible SQLite connection; no transaction ownership
+ *     transfer.
+ * @param[in,out] ctx Borrowed model mutated incrementally; caller supplies coherent prior
+ *     registries and serializes access.
+ * @param[in] sim_id Borrowed simulation catalogue key used to filter rows; not normalized.
+ */
+static void read_mesh_2d(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
+    if (!table_exists(db, "mesh_2d_vertices") || !table_exists(db, "mesh_2d_triangles"))
         return; // pre-2D GeoPackage — nothing to do
 
     // Engine built without the 2D module: surface a warning if this file
     // actually carries a mesh for the requested simulation, then skip.
     if (!ctx.twod_io.mesh) {
-        auto cnt = prepare(db,
-            "SELECT COUNT(*) FROM mesh_2d_vertices WHERE simulation_id = ?");
+        auto cnt = prepare(db, "SELECT COUNT(*) FROM mesh_2d_vertices WHERE simulation_id = ?");
         bind_text(cnt.get(), 1, sim_id);
-        if (sqlite3_step(cnt.get()) == SQLITE_ROW &&
-            column_int(cnt.get(), 0) > 0) {
-            ctx.warnings.push_back(
-                "WARNING: GeoPackage contains a 2D mesh but this engine "
-                "build has no 2D surface-routing module — mesh skipped.");
+        if (sqlite3_step(cnt.get()) == SQLITE_ROW && column_int(cnt.get(), 0) > 0) {
+            ctx.warnings.push_back("WARNING: GeoPackage contains a 2D mesh but this engine "
+                                   "build has no 2D surface-routing module — mesh skipped.");
         }
         return;
     }
@@ -1719,13 +2947,14 @@ static void read_mesh_2d(sqlite3* db, SimulationContext& ctx,
 
     // ---- vertices ----------------------------------------------------------
     {
-        auto cnt = prepare(db,
-            "SELECT COUNT(*), COALESCE(MAX(vertex_idx), -1) "
-            "FROM mesh_2d_vertices WHERE simulation_id = ?");
+        auto cnt = prepare(db, "SELECT COUNT(*), COALESCE(MAX(vertex_idx), -1) "
+                               "FROM mesh_2d_vertices WHERE simulation_id = ?");
         bind_text(cnt.get(), 1, sim_id);
-        if (sqlite3_step(cnt.get()) != SQLITE_ROW) return;
+        if (sqlite3_step(cnt.get()) != SQLITE_ROW)
+            return;
         const int n = column_int(cnt.get(), 0);
-        if (n == 0) return;
+        if (n == 0)
+            return;
         // Defensive against hand-edited files: vertex ordinals must form
         // the contiguous range [0, n) because triangle connectivity and
         // conveyance rows index into it positionally.
@@ -1734,16 +2963,16 @@ static void read_mesh_2d(sqlite3* db, SimulationContext& ctx,
                             "contiguous [0, n)");
         mesh.resize_vertices(n);
 
-        auto stmt = prepare(db,
-            "SELECT vertex_idx, x, y, z, tag FROM mesh_2d_vertices "
-            "WHERE simulation_id = ? ORDER BY vertex_idx");
+        auto stmt = prepare(db, "SELECT vertex_idx, x, y, z, tag FROM mesh_2d_vertices "
+                                "WHERE simulation_id = ? ORDER BY vertex_idx");
         bind_text(stmt.get(), 1, sim_id);
         while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
             const int i = column_int(stmt.get(), 0);
-            if (i < 0 || i >= n) continue;
-            mesh.vx[i]   = column_double(stmt.get(), 1);
-            mesh.vy[i]   = column_double(stmt.get(), 2);
-            mesh.vz[i]   = column_double(stmt.get(), 3);
+            if (i < 0 || i >= n)
+                continue;
+            mesh.vx[i] = column_double(stmt.get(), 1);
+            mesh.vy[i] = column_double(stmt.get(), 2);
+            mesh.vz[i] = column_double(stmt.get(), 3);
             mesh.vtag[i] = column_text(stmt.get(), 4);
         }
     }
@@ -1752,37 +2981,68 @@ static void read_mesh_2d(sqlite3* db, SimulationContext& ctx,
     // geom / bed_elev / coupled_node are derived presentation columns and
     // intentionally ignored; v0/v1/v2 + vertex x/y are canonical.
     {
-        auto cnt = prepare(db,
-            "SELECT COUNT(*), COALESCE(MAX(tri_idx), -1) "
-            "FROM mesh_2d_triangles WHERE simulation_id = ?");
+        auto cnt = prepare(db, "SELECT COUNT(*), COALESCE(MAX(tri_idx), -1) "
+                               "FROM mesh_2d_triangles WHERE simulation_id = ?");
         bind_text(cnt.get(), 1, sim_id);
-        if (sqlite3_step(cnt.get()) != SQLITE_ROW) return;
+        if (sqlite3_step(cnt.get()) != SQLITE_ROW)
+            return;
         const int n = column_int(cnt.get(), 0);
-        if (n == 0) return;
         if (column_int(cnt.get(), 1) != n - 1)
             throw GpkgError("mesh_2d_triangles: tri_idx values are not "
                             "contiguous [0, n)");
         mesh.resize_triangles(n);
 
         // init_depth was added 2026-08 (default 0 = dry); older files lack it.
-        const bool has_init_depth =
-            column_exists(db, "mesh_2d_triangles", "init_depth");
-        auto stmt = prepare(db, has_init_depth
-            ? "SELECT tri_idx, v0, v1, v2, mannings_n, tag, init_depth "
-              "FROM mesh_2d_triangles WHERE simulation_id = ? ORDER BY tri_idx"
-            : "SELECT tri_idx, v0, v1, v2, mannings_n, tag "
-              "FROM mesh_2d_triangles WHERE simulation_id = ? ORDER BY tri_idx");
+        const bool has_init_depth = column_exists(db, "mesh_2d_triangles", "init_depth");
+        auto stmt = prepare(
+            db, has_init_depth ? "SELECT tri_idx, v0, v1, v2, mannings_n, tag, init_depth "
+                                 "FROM mesh_2d_triangles WHERE simulation_id = ? ORDER BY tri_idx"
+                               : "SELECT tri_idx, v0, v1, v2, mannings_n, tag "
+                                 "FROM mesh_2d_triangles WHERE simulation_id = ? ORDER BY tri_idx");
         bind_text(stmt.get(), 1, sim_id);
         while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
             const int t = column_int(stmt.get(), 0);
-            if (t < 0 || t >= n) continue;
-            mesh.tri_v0[t]      = column_int(stmt.get(), 1);
-            mesh.tri_v1[t]      = column_int(stmt.get(), 2);
-            mesh.tri_v2[t]      = column_int(stmt.get(), 3);
-            mesh.mannings_n[t]  = column_double(stmt.get(), 4);
-            mesh.tri_tag[t]     = column_text(stmt.get(), 5);
+            if (t < 0 || t >= n)
+                continue;
+            mesh.set_triangle(t, column_int(stmt.get(), 1), column_int(stmt.get(), 2),
+                              column_int(stmt.get(), 3));
+            mesh.mannings_n[t] = column_double(stmt.get(), 4);
+            mesh.tri_tag[t] = column_text(stmt.get(), 5);
             if (has_init_depth)
                 mesh.tri_init_depth[t] = column_double(stmt.get(), 6);
+        }
+    }
+
+    // ---- quads (mixed meshes; absent in older files) -------------------------
+    // Cell index = n_triangles + quad_idx.
+    if (table_exists(db, "mesh_2d_quads")) {
+        auto cnt = prepare(db, "SELECT COUNT(*), COALESCE(MAX(quad_idx), -1) "
+                               "FROM mesh_2d_quads WHERE simulation_id = ?");
+        bind_text(cnt.get(), 1, sim_id);
+        if (sqlite3_step(cnt.get()) == SQLITE_ROW) {
+            const int nq = column_int(cnt.get(), 0);
+            if (nq > 0) {
+                if (column_int(cnt.get(), 1) != nq - 1)
+                    throw GpkgError("mesh_2d_quads: quad_idx values are not "
+                                    "contiguous [0, n)");
+                const int nt0 = mesh.n_triangles();
+                mesh.resize_triangles(nt0 + nq);
+                auto stmt =
+                    prepare(db, "SELECT quad_idx, v0, v1, v2, v3, mannings_n, tag, init_depth "
+                                "FROM mesh_2d_quads WHERE simulation_id = ? ORDER BY quad_idx");
+                bind_text(stmt.get(), 1, sim_id);
+                while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+                    const int q = column_int(stmt.get(), 0);
+                    if (q < 0 || q >= nq)
+                        continue;
+                    const int t = nt0 + q;
+                    mesh.set_quad(t, column_int(stmt.get(), 1), column_int(stmt.get(), 2),
+                                  column_int(stmt.get(), 3), column_int(stmt.get(), 4));
+                    mesh.mannings_n[t] = column_double(stmt.get(), 5);
+                    mesh.tri_tag[t] = column_text(stmt.get(), 6);
+                    mesh.tri_init_depth[t] = column_double(stmt.get(), 7);
+                }
+            }
         }
     }
 
@@ -1790,50 +3050,80 @@ static void read_mesh_2d(sqlite3* db, SimulationContext& ctx,
     // Restored as NAMES (indices stay -1): SurfaceRouter2D::initialize()
     // resolves them against ctx.node_names with the same unknown-node fatal
     // behavior as the inp path.
+    // CD/AREA authored flags: NULL or absent (older files) reads as authored —
+    // those writers stored an explicit value for every row.
+    auto authored = [](sqlite3_stmt* s, int col) {
+        return sqlite3_column_type(s, col) == SQLITE_NULL || column_int(s, col) != 0;
+    };
     if (table_exists(db, "mesh_2d_vertex_coupling")) {
-        auto stmt = prepare(db,
-            "SELECT vertex_idx, node_id, coupling_cd, coupling_area "
-            "FROM mesh_2d_vertex_coupling WHERE simulation_id = ?");
+        const bool flags = column_exists(db, "mesh_2d_vertex_coupling", "coupling_cd_set");
+        auto stmt =
+            prepare(db, std::string("SELECT vertex_idx, node_id, coupling_cd, coupling_area") +
+                            (flags ? ", coupling_cd_set, coupling_area_set" : ", NULL, NULL") +
+                            " FROM mesh_2d_vertex_coupling WHERE simulation_id = ?");
         bind_text(stmt.get(), 1, sim_id);
         while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
             const int i = column_int(stmt.get(), 0);
-            if (i < 0 || i >= mesh.n_vertices()) continue;
+            if (i < 0 || i >= mesh.n_vertices())
+                continue;
             mesh.vert_coupled_node_name[i] = column_text(stmt.get(), 1);
-            mesh.vert_coupling_cd[i]       = column_double(stmt.get(), 2);
-            mesh.vert_coupling_area[i]     = column_double(stmt.get(), 3);
+            mesh.vert_coupling_cd[i] = column_double(stmt.get(), 2);
+            mesh.vert_coupling_area[i] = column_double(stmt.get(), 3);
+            mesh.vert_coupling_cd_set[i] = authored(stmt.get(), 4) ? 1 : 0;
+            mesh.vert_coupling_area_set[i] = authored(stmt.get(), 5) ? 1 : 0;
         }
     }
+    // Every table row becomes a repeated-row coupling (several nodes may share
+    // a triangle); the per-triangle arrays mirror the last row of each.
     if (table_exists(db, "mesh_2d_triangle_coupling")) {
-        auto stmt = prepare(db,
-            "SELECT tri_idx, node_id, coupling_cd, coupling_area "
-            "FROM mesh_2d_triangle_coupling WHERE simulation_id = ?");
+        const bool flags = column_exists(db, "mesh_2d_triangle_coupling", "coupling_cd_set");
+        auto stmt =
+            prepare(db, std::string("SELECT tri_idx, node_id, coupling_cd, coupling_area") +
+                            (flags ? ", coupling_cd_set, coupling_area_set" : ", NULL, NULL") +
+                            " FROM mesh_2d_triangle_coupling WHERE simulation_id = ? ORDER BY fid");
         bind_text(stmt.get(), 1, sim_id);
+        mesh.tri_couplings.clear();
         while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
             const int t = column_int(stmt.get(), 0);
-            if (t < 0 || t >= mesh.n_triangles()) continue;
-            mesh.tri_coupled_node_name[t] = column_text(stmt.get(), 1);
-            mesh.tri_coupling_cd[t]       = column_double(stmt.get(), 2);
-            mesh.tri_coupling_area[t]     = column_double(stmt.get(), 3);
+            if (t < 0 || t >= mesh.n_triangles())
+                continue;
+            twoD::MeshData::TriCouplingRow row;
+            row.tri = t;
+            row.node_name = column_text(stmt.get(), 1);
+            row.cd = column_double(stmt.get(), 2);
+            row.area = column_double(stmt.get(), 3);
+            row.cd_set = authored(stmt.get(), 4);
+            row.area_set = authored(stmt.get(), 5);
+            mesh.tri_coupled_node_name[t] = row.node_name;
+            mesh.tri_coupling_cd[t] = row.cd;
+            mesh.tri_coupling_area[t] = row.area;
+            mesh.tri_couplings.push_back(std::move(row));
         }
     }
 
     // ---- boundary conditions → pending rows ----------------------------------
     if (ctx.twod_io.pending_bc && table_exists(db, "mesh_2d_boundary_conditions")) {
-        auto stmt = prepare(db,
-            "SELECT tri_idx, edge, bc_type, param1, ref_name, bc_group "
-            "FROM mesh_2d_boundary_conditions WHERE simulation_id = ? "
-            "ORDER BY tri_idx, edge");
+        auto stmt = prepare(db, "SELECT tri_idx, edge, bc_type, param1, ref_name, bc_group "
+                                "FROM mesh_2d_boundary_conditions WHERE simulation_id = ? "
+                                "ORDER BY tri_idx, edge");
         bind_text(stmt.get(), 1, sim_id);
         while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
             const int type = bc_type_from_token(column_text(stmt.get(), 2));
-            if (type < 0) continue; // unknown future token — skip
+            if (type < 0)
+                continue; // unknown future token — skip
             twoD::PendingBoundaryRow row;
-            row.tri     = column_int(stmt.get(), 0);
-            row.edge    = column_int(stmt.get(), 1);
+            row.tri = column_int(stmt.get(), 0);
+            row.edge = column_int(stmt.get(), 1);
             row.bc_type = type;
             if (!column_is_null(stmt.get(), 3))
                 row.param1 = column_double(stmt.get(), 3);
-            row.name  = column_text(stmt.get(), 4);
+            if (type == 0) {
+                if (column_text(stmt.get(), 2) == "WALL_DRAG") {
+                    if (column_is_null(stmt.get(), 3) || !std::isfinite(row.param1) || row.param1 < 0)
+                        throw std::runtime_error("WALL_DRAG requires finite nonnegative Cw");
+                } else row.param1 = 0; // retain legacy WALL semantics
+            }
+            row.name = type == 0 ? "" : column_text(stmt.get(), 4);
             row.group = column_text(stmt.get(), 5);
             ctx.twod_io.pending_bc->push_back(std::move(row));
         }
@@ -1841,14 +3131,13 @@ static void read_mesh_2d(sqlite3* db, SimulationContext& ctx,
 
     // ---- edge conveyance → pending rows --------------------------------------
     if (ctx.twod_io.pending_ec && table_exists(db, "mesh_2d_edge_conveyance")) {
-        auto stmt = prepare(db,
-            "SELECT v_from, v_to, conveyance FROM mesh_2d_edge_conveyance "
-            "WHERE simulation_id = ? ORDER BY v_from, v_to");
+        auto stmt = prepare(db, "SELECT v_from, v_to, conveyance FROM mesh_2d_edge_conveyance "
+                                "WHERE simulation_id = ? ORDER BY v_from, v_to");
         bind_text(stmt.get(), 1, sim_id);
         while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
             twoD::PendingEdgeConveyanceRow row;
-            row.v_from     = column_int(stmt.get(), 0);
-            row.v_to       = column_int(stmt.get(), 1);
+            row.v_from = column_int(stmt.get(), 0);
+            row.v_to = column_int(stmt.get(), 1);
             row.conveyance = column_double(stmt.get(), 2);
             ctx.twod_io.pending_ec->push_back(std::move(row));
         }
@@ -1859,9 +3148,8 @@ static void read_mesh_2d(sqlite3* db, SimulationContext& ctx,
 // Public API
 // ============================================================================
 
-int read_model(sqlite3* db, SimulationContext& ctx,
-                const std::string& simulation_id,
-                const std::string& scratch_dir) {
+int read_model(sqlite3* db, SimulationContext& ctx, const std::string& simulation_id,
+               const std::string& scratch_dir) {
     try {
         // Hard schema-version gate (no backward compatibility). The relational
         // node schema carries storages/outfalls/dividers child tables; a
@@ -1870,10 +3158,9 @@ int read_model(sqlite3* db, SimulationContext& ctx,
         // than silently misread.
         if (!table_exists(db, "storages") || !table_exists(db, "outfalls") ||
             !table_exists(db, "dividers")) {
-            ctx.errors.push_back(
-                "GeoPackage uses an unsupported (pre-relational) node schema: "
-                "missing storages/outfalls/dividers tables. Re-export the model "
-                "with this engine version.");
+            ctx.errors.push_back("GeoPackage uses an unsupported (pre-relational) node schema: "
+                                 "missing storages/outfalls/dividers tables. Re-export the model "
+                                 "with this engine version.");
             return -1;
         }
         // Phase 7: the link schema is normalized too — a slim `links` base plus
@@ -1884,10 +3171,9 @@ int read_model(sqlite3* db, SimulationContext& ctx,
         if (!table_exists(db, "conduits") || !table_exists(db, "pumps") ||
             !table_exists(db, "orifices") || !table_exists(db, "weirs") ||
             !table_exists(db, "outlets")) {
-            ctx.errors.push_back(
-                "GeoPackage uses an unsupported (pre-relational) link schema: "
-                "missing conduits/pumps/orifices/weirs/outlets tables. Re-export "
-                "the model with this engine version.");
+            ctx.errors.push_back("GeoPackage uses an unsupported (pre-relational) link schema: "
+                                 "missing conduits/pumps/orifices/weirs/outlets tables. Re-export "
+                                 "the model with this engine version.");
             return -1;
         }
 
@@ -1897,10 +3183,21 @@ int read_model(sqlite3* db, SimulationContext& ctx,
         ctx.gpkg_units_internal = true;
         read_options(db, ctx, simulation_id);
         read_nodes(db, ctx, simulation_id);
+        if (column_exists(db, "nodes", "storage_area")) {
+            auto areas = prepare(db, "SELECT node_id, storage_area FROM nodes WHERE simulation_id = ?");
+            bind_text(areas.get(), 1, simulation_id);
+            while (sqlite3_step(areas.get()) == SQLITE_ROW) {
+                const int n = ctx.node_names.find(column_text(areas.get(), 0));
+                const double a = column_double(areas.get(), 1);
+                if (n < 0 || !std::isfinite(a) || a < 0.0)
+                    throw std::runtime_error("Invalid junction storage area");
+                ctx.nodes.storage_area[n] = a;
+            }
+        }
         read_links(db, ctx, simulation_id);
         read_rain_gages(db, ctx, simulation_id);
         read_subcatchments(db, ctx, simulation_id);
-        resolve_outfall_route_to(db, ctx, simulation_id);  // needs subcatch_names
+        resolve_outfall_route_to(db, ctx, simulation_id); // needs subcatch_names
         read_curves(db, ctx, simulation_id);
         read_timeseries(db, ctx, simulation_id);
         read_pollutants(db, ctx, simulation_id);
@@ -1917,24 +3214,85 @@ int read_model(sqlite3* db, SimulationContext& ctx,
         read_adjustments(db, ctx, simulation_id);
         read_lid_controls(db, ctx, simulation_id);
         read_lid_usage(db, ctx, simulation_id);
+        read_lid_nodes(db, ctx, simulation_id);
         read_rdii(db, ctx, simulation_id);
         read_treatment(db, ctx, simulation_id);
         read_inflows(db, ctx, simulation_id);
         read_dwf(db, ctx, simulation_id);
         read_transects(db, ctx, simulation_id);
+        read_streets(db, ctx, simulation_id);
+        read_inlets(db, ctx, simulation_id);
+        read_inlet_usage(db, ctx, simulation_id);
+        read_node_coupling_2d(db, ctx, simulation_id);
         read_controls(db, ctx, simulation_id);
 
         // Part E — 2D mesh model definition. Options keys (2D_*) were
         // already applied by read_options above, so mesh_units_si is set
         // before SurfaceRouter2D::initialize() ever looks at it.
         read_mesh_2d(db, ctx, simulation_id);
+        if (!has_model_supplement(db, simulation_id) && table_exists(db, "surface_ownership_2d_input")) {
+            auto row = prepare(
+                db, "SELECT sections FROM surface_ownership_2d_input WHERE simulation_id=?");
+            bind_text(row.get(), 1, simulation_id);
+            if (sqlite3_step(row.get()) == SQLITE_ROW) {
+#ifndef OPENSWMM_HAS_2D
+                throw GpkgError("Reviewed surface ownership requires a 2D-enabled engine.");
+#else
+                if (!ctx.twod_io.aquifer || !ctx.twod_io.aquifer_nodes ||
+                    !ctx.twod_io.aquifer_links)
+                    throw GpkgError("Reviewed surface ownership requires a 2D-enabled engine.");
+                twoD::SubsurfaceConfig proposed;
+                twoD::GwTransportData groundwater;
+                std::vector<std::string> nodes, links;
+                input::SectionRegistry registry;
+                twoD::registerSubsurfaceSections(proposed, nodes, links, registry);
+                twoD::registerGwTransportSections(groundwater, registry);
+                std::istringstream lines(column_text(row.get(), 0));
+                std::string line, section;
+                std::vector<std::string> body;
+                auto flush = [&] {
+                    if (section.starts_with("REACTION_")) {
+                        ctx.embedded_component_sections.emplace_back(section, body);
+                        body.clear();
+                        return;
+                    }
+                    if (!section.empty()) {
+                        if (!registry.has(section))
+                            throw GpkgError("Unknown reviewed aquifer section: " + section);
+                        registry.dispatch(section, ctx, body);
+                        if (ctx.error_code)
+                            throw GpkgError(ctx.error_message);
+                    }
+                    body.clear();
+                };
+                while (std::getline(lines, line)) {
+                    if (!line.empty() && line.front() == '[') {
+                        flush();
+                        const auto end = line.find(']');
+                        if (end == std::string::npos)
+                            throw GpkgError("Invalid reviewed aquifer section.");
+                        section = line.substr(1, end - 1);
+                    } else
+                        body.push_back(line);
+                }
+                flush();
+                if (ctx.twod_io.gw)
+                    *ctx.twod_io.gw = std::move(groundwater);
+                *ctx.twod_io.aquifer = std::move(proposed);
+                *ctx.twod_io.aquifer_nodes = std::move(nodes);
+                *ctx.twod_io.aquifer_links = std::move(links);
+#endif
+            }
+        }
 
         // Slice IO-8 — hydrate external-file slots from Part D tables
         // and materialise scratch files. Skipped when no scratch_dir
         // was provided (callers that only need model definition).
+        read_model_supplement(db, ctx, simulation_id);
         read_external_content(db, ctx, simulation_id, scratch_dir);
         return 0;
-    } catch (const std::exception&) {
+    } catch (const std::exception& error) {
+        ctx.errors.push_back(error.what());
         return -1;
     }
 }

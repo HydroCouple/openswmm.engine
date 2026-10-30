@@ -88,6 +88,7 @@ class FvRoutingOptions(unittest.TestCase):
             self.assertEqual(s.options["FV_TIME_INTEGRATION"], "EULER")
             self.assertEqual(s.options["FV_BACKEND"], "AUTO")
             self.assertEqual(s.options["FV_COMPACTION"], "YES")
+            self.assertEqual(s.options["FV_NODE_FEEDBACK_DT"], "NO")
             self.assertEqual(int(s.options["FV_ORDER"]), 1)
             self.assertEqual(int(s.options["FV_MIN_CELLS"]), 4)
             self.assertAlmostEqual(float(s.options["FV_CELL_LENGTH"]), 0.0)
@@ -116,11 +117,9 @@ class FvRoutingOptions(unittest.TestCase):
                 "FV_TIME_INTEGRATION": "RK2",
                 "FV_STRUCTURE_COUPLING": "ROUTING_STEP",
                 "FV_COMPACTION": "NO",
+                "FV_NODE_FEEDBACK_DT": "YES",
                 "FV_BACKEND": "CPU",
                 "FV_MIN_PARALLEL_CELLS": "12345",
-                "FV_NODE_COUPLING": "EXPLICIT",
-                "FV_NODE_DT": "NONE",
-                "FV_NODE_PICARD": "3",
                 "FV_LTS": "NO",
                 "FV_LTS_MAX_TIERS": "5",
                 "FV_CFL_CENSUS_INTERVAL": "10",
@@ -152,11 +151,35 @@ class FvRoutingOptions(unittest.TestCase):
                 "FV_ORDER", "FV_LIMITER", "FV_SCALAR_SCHEME",
                 "FV_TIME_INTEGRATION", "FV_SLOT_CELERITY", "FV_DISPERSION",
                 "FV_STRUCTURE_COUPLING", "FV_COMPACTION", "FV_BACKEND",
-                "FV_MIN_PARALLEL_CELLS",
+                "FV_MIN_PARALLEL_CELLS", "FV_PRESSURE_CLOSURE",
                 "FV_LTS", "FV_LTS_MAX_TIERS", "FV_CFL_CENSUS_INTERVAL",
-                "FV_NODE_COUPLING", "FV_NODE_DT", "FV_NODE_PICARD",
+                "FV_NODE_FEEDBACK_DT",
+                # Accepted by swmm_options_get all along; listed since iteration is native
+                # (swmm_options_key_at) instead of a hand-kept Python list.
+                "FV_PRESSURIZED_IMPLICIT", "FV_NODE_COUPLING", "FV_NODE_DT",
+                "FV_NODE_PICARD", "FV_NODE_CELL_COUPLING", "FV_JUNCTION_MODEL",
             },
         )
+
+    def test_retired_node_keys_read_frozen_and_accept_writes(self):
+        # FV_NODE_COUPLING / FV_NODE_DT / FV_NODE_PICARD were retired
+        # 2026-08-29: the getter reports the behaviour that is now built in,
+        # and a write is accepted and ignored so older scripts keep running.
+        inp, rpt, out = _write_model(self)
+        s = Solver(inp, rpt, out)
+        s.open()
+        try:
+            frozen = {
+                "FV_NODE_COUPLING": ("SEMI_IMPLICIT", "EXPLICIT"),
+                "FV_NODE_DT": ("STABILITY", "NONE"),
+                "FV_NODE_PICARD": ("1", "3"),
+            }
+            for key, (value, attempt) in frozen.items():
+                self.assertEqual(s.options[key], value, msg=key)
+                s.options[key] = attempt          # must not raise
+                self.assertEqual(s.options[key], value, msg=key)
+        finally:
+            s.close()
 
     def test_invalid_enum_value_is_rejected(self):
         # A silent no-op here would leave a user believing they had selected a

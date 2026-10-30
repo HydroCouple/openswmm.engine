@@ -1,0 +1,58 @@
+{
+  "parent": "c5414e382fec4653648110186c0ba99d63005294",
+  "regression_tree": "c2dff1d46b417b334bdbca478e9b1f4db9c174f8",
+  "tests": 6,
+  "failures": 6,
+  "regression_source_sha256": "119c82b32acbdd15ed9c8a257a1814a5468d855967f515f3631df054f5fabba7",
+  "complete_baseline_cases_sha256": "ce65ad751e116b67b6b445c0f881c240fe19c1ba677234777bf915af33361613",
+  "cases": [
+    {
+      "name": "ClosedHighConductivityCannotCreateWaterOrSaturationExcess",
+      "failures": 329,
+      "first_failure": {
+        "failure": "/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.gui/tests/verification/surface_r4_2026-10-05/isolated/openswmm.engine/tests/unit/engine/test_sigma_conservation.cpp:32\nThe difference between s.continuityResidual() and 0 is 0.82892265005840515, which exceeds 2e-11, where\ns.continuityResidual() evaluates to 0.82892265005840515,\n0 evaluates to 0, and\n2e-11 evaluates to 1.9999999999999999e-11.\nGoogle Test trace:\n/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.gui/tests/verification/surface_r4_2026-10-05/isolated/openswmm.engine/tests/unit/engine/test_sigma_conservation.cpp:42: 1/1.000000/1.000000\n",
+        "type": ""
+      }
+    },
+    {
+      "name": "ClosedMovingTableAndEtSpendOnlyTheSameInitialWater",
+      "failures": 126,
+      "first_failure": {
+        "failure": "/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.gui/tests/verification/surface_r4_2026-10-05/isolated/openswmm.engine/tests/unit/engine/test_sigma_conservation.cpp:32\nThe difference between s.continuityResidual() and 0 is 0.82898167561056779, which exceeds 2e-11, where\ns.continuityResidual() evaluates to 0.82898167561056779,\n0 evaluates to 0, and\n2e-11 evaluates to 1.9999999999999999e-11.\n",
+        "type": ""
+      }
+    },
+    {
+      "name": "IntakeEtAndNumericalRejectionRemainPaired",
+      "failures": 209,
+      "first_failure": {
+        "failure": "/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.gui/tests/verification/surface_r4_2026-10-05/isolated/openswmm.engine/tests/unit/engine/test_sigma_conservation.cpp:32\nThe difference between s.continuityResidual() and 0 is 1.3960030624642072e-06, which exceeds 2e-11, where\ns.continuityResidual() evaluates to 1.3960030624642072e-06,\n0 evaluates to 0, and\n2e-11 evaluates to 1.9999999999999999e-11.\n",
+        "type": ""
+      }
+    },
+    {
+      "name": "SignedNodeAndLinkReceiptsShareMovingTableStorage",
+      "failures": 213,
+      "first_failure": {
+        "failure": "/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.gui/tests/verification/surface_r4_2026-10-05/isolated/openswmm.engine/tests/unit/engine/test_sigma_conservation.cpp:32\nThe difference between s.continuityResidual() and 0 is 0.83769426349846066, which exceeds 2e-11, where\ns.continuityResidual() evaluates to 0.83769426349846066,\n0 evaluates to 0, and\n2e-11 evaluates to 1.9999999999999999e-11.\n",
+        "type": ""
+      }
+    },
+    {
+      "name": "DeepLossCannotSpendWaterNeededForResidualStorage",
+      "failures": 3,
+      "first_failure": {
+        "failure": "/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.gui/tests/verification/surface_r4_2026-10-05/isolated/openswmm.engine/tests/unit/engine/test_sigma_conservation.cpp:84\nThe difference between r.gw.state().hg[0] and 0 is 0.90366295569233124, which exceeds 1e-12, where\nr.gw.state().hg[0] evaluates to 0.90366295569233124,\n0 evaluates to 0, and\n1e-12 evaluates to 9.9999999999999998e-13.\n",
+        "type": ""
+      }
+    },
+    {
+      "name": "UsAndSiInputsGiveTheSamePhysicalMovingTable",
+      "failures": 191,
+      "first_failure": {
+        "failure": "/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.gui/tests/verification/surface_r4_2026-10-05/isolated/openswmm.engine/tests/unit/engine/test_sigma_conservation.cpp:93\nThe difference between si.gw.state().hg[0] and us.gw.state().hg[0] is 1.0740297540223764e-12, which exceeds 1e-12, where\nsi.gw.state().hg[0] evaluates to 0.58140980073002491,\nus.gw.state().hg[0] evaluates to 0.58140980072895088, and\n1e-12 evaluates to 9.9999999999999998e-13.\n",
+        "type": ""
+      }
+    }
+  ]
+}

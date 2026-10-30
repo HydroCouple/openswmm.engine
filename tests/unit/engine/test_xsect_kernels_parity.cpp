@@ -1,6 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file test_xsect_kernels_parity.cpp
- * @brief Plan §5.1 gate 1/3 — the portable cross-section kernels agree with the
+ * @file      test_xsect_kernels_parity.cpp
+ * @brief     Plan §5.1 gate 1/3 — the portable cross-section kernels agree with the
  *        public accessors, and agree with themselves when their tables are
  *        rebound to different memory.
  *
@@ -29,9 +45,9 @@
  * @see plans/EXPLICIT_FV_KOKKOS_1D_SOLVER_PLAN.md §5.1, §6.8
  * @ingroup new_engine
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -56,110 +72,128 @@ namespace {
 /// off the shared table set, so they exercise a different pointer path (one a
 /// device backend rebinds separately).
 struct ShapeCase {
-    const char*   name;
-    XSectShape    shape;
-    double        p[4];
+    const char* name;
+    XSectShape shape;
+    double p[4];
 };
 
+/**
+ * @brief Borrow the fixed raw-parameter cross-section catalog.
+ *
+ * Excludes transect-backed irregular/custom/street shapes, whose table pointers use a different
+ * ownership path. No section is initialized by this accessor.
+ * @return Const reference to process-lifetime static cases; dimensional parameters use native feet.
+ */
 const std::vector<ShapeCase>& shapeCatalog() {
     static const std::vector<ShapeCase> cases = {
-        {"CIRCULAR",        XSectShape::CIRCULAR,        {3.0, 0, 0, 0}},
-        {"FORCE_MAIN",      XSectShape::FORCE_MAIN,      {3.0, 120.0, 0, 0}},
+        {"CIRCULAR", XSectShape::CIRCULAR, {3.0, 0, 0, 0}},
+        {"FORCE_MAIN", XSectShape::FORCE_MAIN, {3.0, 120.0, 0, 0}},
         {"FILLED_CIRCULAR", XSectShape::FILLED_CIRCULAR, {3.0, 0.5, 0, 0}},
-        {"EGGSHAPED",       XSectShape::EGGSHAPED,       {3.0, 0, 0, 0}},
-        {"HORSESHOE",       XSectShape::HORSESHOE,       {3.0, 0, 0, 0}},
-        {"GOTHIC",          XSectShape::GOTHIC,          {3.0, 0, 0, 0}},
-        {"CATENARY",        XSectShape::CATENARY,        {3.0, 0, 0, 0}},
-        {"SEMIELLIPTICAL",  XSectShape::SEMIELLIPTICAL,  {3.0, 0, 0, 0}},
-        {"BASKETHANDLE",    XSectShape::BASKETHANDLE,    {3.0, 0, 0, 0}},
-        {"SEMICIRCULAR",    XSectShape::SEMICIRCULAR,    {3.0, 0, 0, 0}},
-        {"HORIZ_ELLIPSE",   XSectShape::HORIZ_ELLIPSE,   {3.0, 4.0, 0, 0}},
-        {"VERT_ELLIPSE",    XSectShape::VERT_ELLIPSE,    {4.0, 3.0, 0, 0}},
-        {"ARCH",            XSectShape::ARCH,            {3.0, 4.0, 0, 0}},
-        {"RECT_CLOSED",     XSectShape::RECT_CLOSED,     {3.0, 4.0, 0, 0}},
-        {"RECT_OPEN",       XSectShape::RECT_OPEN,       {3.0, 4.0, 0, 0}},
-        {"RECT_TRIANG",     XSectShape::RECT_TRIANG,     {3.0, 4.0, 1.0, 0}},
-        {"RECT_ROUND",      XSectShape::RECT_ROUND,      {3.0, 4.0, 2.0, 0}},
-        {"MOD_BASKET",      XSectShape::MOD_BASKET,      {3.0, 4.0, 2.0, 0}},
-        {"TRAPEZOIDAL",     XSectShape::TRAPEZOIDAL,     {3.0, 4.0, 1.0, 1.5}},
-        {"TRIANGULAR",      XSectShape::TRIANGULAR,      {3.0, 4.0, 0, 0}},
-        {"PARABOLIC",       XSectShape::PARABOLIC,       {3.0, 4.0, 0, 0}},
-        {"POWERFUNC",       XSectShape::POWERFUNC,       {3.0, 4.0, 2.0, 0}},
+        {"EGGSHAPED", XSectShape::EGGSHAPED, {3.0, 0, 0, 0}},
+        {"HORSESHOE", XSectShape::HORSESHOE, {3.0, 0, 0, 0}},
+        {"GOTHIC", XSectShape::GOTHIC, {3.0, 0, 0, 0}},
+        {"CATENARY", XSectShape::CATENARY, {3.0, 0, 0, 0}},
+        {"SEMIELLIPTICAL", XSectShape::SEMIELLIPTICAL, {3.0, 0, 0, 0}},
+        {"BASKETHANDLE", XSectShape::BASKETHANDLE, {3.0, 0, 0, 0}},
+        {"SEMICIRCULAR", XSectShape::SEMICIRCULAR, {3.0, 0, 0, 0}},
+        {"HORIZ_ELLIPSE", XSectShape::HORIZ_ELLIPSE, {3.0, 4.0, 0, 0}},
+        {"VERT_ELLIPSE", XSectShape::VERT_ELLIPSE, {4.0, 3.0, 0, 0}},
+        {"ARCH", XSectShape::ARCH, {3.0, 4.0, 0, 0}},
+        {"RECT_CLOSED", XSectShape::RECT_CLOSED, {3.0, 4.0, 0, 0}},
+        {"RECT_OPEN", XSectShape::RECT_OPEN, {3.0, 4.0, 0, 0}},
+        {"RECT_TRIANG", XSectShape::RECT_TRIANG, {3.0, 4.0, 1.0, 0}},
+        {"RECT_ROUND", XSectShape::RECT_ROUND, {3.0, 4.0, 2.0, 0}},
+        {"MOD_BASKET", XSectShape::MOD_BASKET, {3.0, 4.0, 2.0, 0}},
+        {"TRAPEZOIDAL", XSectShape::TRAPEZOIDAL, {3.0, 4.0, 1.0, 1.5}},
+        {"TRIANGULAR", XSectShape::TRIANGULAR, {3.0, 4.0, 0, 0}},
+        {"PARABOLIC", XSectShape::PARABOLIC, {3.0, 4.0, 0, 0}},
+        {"POWERFUNC", XSectShape::POWERFUNC, {3.0, 4.0, 2.0, 0}},
     };
     return cases;
 }
 
-/// A table set whose pointers address INDEPENDENT copies of the geometry data.
-/// The copies are owned by a function-local static so they outlive every use,
-/// and they are deliberately allocated (not aliased) so a stale pointer or a
-/// wrong length cannot pass by accident.
+/**
+ * @brief Borrow a host table descriptor rebound to independently owned shared-table copies.
+ *
+ * Lazily copies each shared table by its recorded length and Amax by 26 entries; null/nonpositive
+ * tables retain the source pointer. Static initialization may throw. Returned descriptors borrow
+ * static vector buffers; no device transfer or geometry evaluation occurs.
+ * @return Const static descriptor whose cloned data remain alive for process lifetime.
+ */
 const XsectTables& rebound() {
     static std::vector<std::vector<double>> owned;
     static const XsectTables t = [] {
         const XsectTables& h = xsect::hostTables();
         XsectTables r = h;
         auto clone = [&](const double* src, int n) -> const double* {
-            if (!src || n <= 0) return src;
+            if (!src || n <= 0)
+                return src;
             owned.emplace_back(src, src + n);
             return owned.back().data();
         };
         // Every shared table, cloned through its own recorded length. Amax is
         // indexed by shape id (26 entries), not by a paired N_ count.
-        r.A_Circ          = clone(h.A_Circ,          h.N_A_Circ);
-        r.A_Egg           = clone(h.A_Egg,           h.N_A_Egg);
-        r.A_Horseshoe     = clone(h.A_Horseshoe,     h.N_A_Horseshoe);
-        r.A_Baskethandle  = clone(h.A_Baskethandle,  h.N_A_Baskethandle);
-        r.A_HorizEllipse  = clone(h.A_HorizEllipse,  h.N_A_HorizEllipse);
-        r.A_VertEllipse   = clone(h.A_VertEllipse,   h.N_A_VertEllipse);
-        r.A_Arch          = clone(h.A_Arch,          h.N_A_Arch);
+        r.A_Circ = clone(h.A_Circ, h.N_A_Circ);
+        r.A_Egg = clone(h.A_Egg, h.N_A_Egg);
+        r.A_Horseshoe = clone(h.A_Horseshoe, h.N_A_Horseshoe);
+        r.A_Baskethandle = clone(h.A_Baskethandle, h.N_A_Baskethandle);
+        r.A_HorizEllipse = clone(h.A_HorizEllipse, h.N_A_HorizEllipse);
+        r.A_VertEllipse = clone(h.A_VertEllipse, h.N_A_VertEllipse);
+        r.A_Arch = clone(h.A_Arch, h.N_A_Arch);
 
-        r.R_Circ          = clone(h.R_Circ,          h.N_R_Circ);
-        r.R_Egg           = clone(h.R_Egg,           h.N_R_Egg);
-        r.R_Horseshoe     = clone(h.R_Horseshoe,     h.N_R_Horseshoe);
-        r.R_Baskethandle  = clone(h.R_Baskethandle,  h.N_R_Baskethandle);
-        r.R_HorizEllipse  = clone(h.R_HorizEllipse,  h.N_R_HorizEllipse);
-        r.R_VertEllipse   = clone(h.R_VertEllipse,   h.N_R_VertEllipse);
-        r.R_Arch          = clone(h.R_Arch,          h.N_R_Arch);
+        r.R_Circ = clone(h.R_Circ, h.N_R_Circ);
+        r.R_Egg = clone(h.R_Egg, h.N_R_Egg);
+        r.R_Horseshoe = clone(h.R_Horseshoe, h.N_R_Horseshoe);
+        r.R_Baskethandle = clone(h.R_Baskethandle, h.N_R_Baskethandle);
+        r.R_HorizEllipse = clone(h.R_HorizEllipse, h.N_R_HorizEllipse);
+        r.R_VertEllipse = clone(h.R_VertEllipse, h.N_R_VertEllipse);
+        r.R_Arch = clone(h.R_Arch, h.N_R_Arch);
 
-        r.W_Circ          = clone(h.W_Circ,          h.N_W_Circ);
-        r.W_Egg           = clone(h.W_Egg,           h.N_W_Egg);
-        r.W_Horseshoe     = clone(h.W_Horseshoe,     h.N_W_Horseshoe);
-        r.W_BasketHandle  = clone(h.W_BasketHandle,  h.N_W_BasketHandle);
-        r.W_Gothic        = clone(h.W_Gothic,        h.N_W_Gothic);
-        r.W_Catenary      = clone(h.W_Catenary,      h.N_W_Catenary);
-        r.W_SemiEllip     = clone(h.W_SemiEllip,     h.N_W_SemiEllip);
-        r.W_SemiCirc      = clone(h.W_SemiCirc,      h.N_W_SemiCirc);
-        r.W_HorizEllipse  = clone(h.W_HorizEllipse,  h.N_W_HorizEllipse);
-        r.W_VertEllipse   = clone(h.W_VertEllipse,   h.N_W_VertEllipse);
-        r.W_Arch          = clone(h.W_Arch,          h.N_W_Arch);
+        r.W_Circ = clone(h.W_Circ, h.N_W_Circ);
+        r.W_Egg = clone(h.W_Egg, h.N_W_Egg);
+        r.W_Horseshoe = clone(h.W_Horseshoe, h.N_W_Horseshoe);
+        r.W_BasketHandle = clone(h.W_BasketHandle, h.N_W_BasketHandle);
+        r.W_Gothic = clone(h.W_Gothic, h.N_W_Gothic);
+        r.W_Catenary = clone(h.W_Catenary, h.N_W_Catenary);
+        r.W_SemiEllip = clone(h.W_SemiEllip, h.N_W_SemiEllip);
+        r.W_SemiCirc = clone(h.W_SemiCirc, h.N_W_SemiCirc);
+        r.W_HorizEllipse = clone(h.W_HorizEllipse, h.N_W_HorizEllipse);
+        r.W_VertEllipse = clone(h.W_VertEllipse, h.N_W_VertEllipse);
+        r.W_Arch = clone(h.W_Arch, h.N_W_Arch);
 
-        r.Y_Circ          = clone(h.Y_Circ,          h.N_Y_Circ);
-        r.Y_Egg           = clone(h.Y_Egg,           h.N_Y_Egg);
-        r.Y_Horseshoe     = clone(h.Y_Horseshoe,     h.N_Y_Horseshoe);
-        r.Y_BasketHandle  = clone(h.Y_BasketHandle,  h.N_Y_BasketHandle);
-        r.Y_Gothic        = clone(h.Y_Gothic,        h.N_Y_Gothic);
-        r.Y_Catenary      = clone(h.Y_Catenary,      h.N_Y_Catenary);
-        r.Y_SemiEllip     = clone(h.Y_SemiEllip,     h.N_Y_SemiEllip);
-        r.Y_SemiCirc      = clone(h.Y_SemiCirc,      h.N_Y_SemiCirc);
+        r.Y_Circ = clone(h.Y_Circ, h.N_Y_Circ);
+        r.Y_Egg = clone(h.Y_Egg, h.N_Y_Egg);
+        r.Y_Horseshoe = clone(h.Y_Horseshoe, h.N_Y_Horseshoe);
+        r.Y_BasketHandle = clone(h.Y_BasketHandle, h.N_Y_BasketHandle);
+        r.Y_Gothic = clone(h.Y_Gothic, h.N_Y_Gothic);
+        r.Y_Catenary = clone(h.Y_Catenary, h.N_Y_Catenary);
+        r.Y_SemiEllip = clone(h.Y_SemiEllip, h.N_Y_SemiEllip);
+        r.Y_SemiCirc = clone(h.Y_SemiCirc, h.N_Y_SemiCirc);
 
-        r.S_Circ          = clone(h.S_Circ,          h.N_S_Circ);
-        r.S_Egg           = clone(h.S_Egg,           h.N_S_Egg);
-        r.S_Horseshoe     = clone(h.S_Horseshoe,     h.N_S_Horseshoe);
-        r.S_BasketHandle  = clone(h.S_BasketHandle,  h.N_S_BasketHandle);
-        r.S_Gothic        = clone(h.S_Gothic,        h.N_S_Gothic);
-        r.S_Catenary      = clone(h.S_Catenary,      h.N_S_Catenary);
-        r.S_SemiEllip     = clone(h.S_SemiEllip,     h.N_S_SemiEllip);
-        r.S_SemiCirc      = clone(h.S_SemiCirc,      h.N_S_SemiCirc);
+        r.S_Circ = clone(h.S_Circ, h.N_S_Circ);
+        r.S_Egg = clone(h.S_Egg, h.N_S_Egg);
+        r.S_Horseshoe = clone(h.S_Horseshoe, h.N_S_Horseshoe);
+        r.S_BasketHandle = clone(h.S_BasketHandle, h.N_S_BasketHandle);
+        r.S_Gothic = clone(h.S_Gothic, h.N_S_Gothic);
+        r.S_Catenary = clone(h.S_Catenary, h.N_S_Catenary);
+        r.S_SemiEllip = clone(h.S_SemiEllip, h.N_S_SemiEllip);
+        r.S_SemiCirc = clone(h.S_SemiCirc, h.N_S_SemiCirc);
 
-        r.Amax            = clone(h.Amax, 26);
+        r.Amax = clone(h.Amax, 26);
         return r;
     }();
     return t;
 }
 
-/// 0 → just past full, so the depth sweep covers the dry end, the interior and
-/// the crown. 401 stations resolves the low-x quadratic-refinement branch of
-/// lookup_exact, which is the part most sensitive to indexing.
+/**
+ * @brief Create the inclusive 401-point depth sweep through full depth.
+ *
+ * Does not sample beyond the crown despite the older adjacent shorthand, clamp negative inputs or
+ * validate finiteness.
+ *
+ * @param[in] y_full Intended finite nonnegative full depth in feet.
+ * @return Owned depths y_full*i/400 for i=0..400, including zero and exactly full depth.
+ */
 std::vector<double> depthStations(double y_full) {
     std::vector<double> ys;
     ys.reserve(401);
@@ -168,7 +202,7 @@ std::vector<double> depthStations(double y_full) {
     return ys;
 }
 
-}  // namespace
+} // namespace
 
 // ---------------------------------------------------------------------------
 // The public accessors are the moved bodies.
@@ -178,8 +212,7 @@ TEST(XsectKernels, PublicAccessorsRouteThroughTheSharedBodies) {
     for (const ShapeCase& c : shapeCatalog()) {
         XSectParams xs{};
         double p[4] = {c.p[0], c.p[1], c.p[2], c.p[3]};
-        ASSERT_EQ(xsect::setParams(xs, static_cast<int>(c.shape), p, 1.0), 0)
-            << c.name;
+        ASSERT_EQ(xsect::setParams(xs, static_cast<int>(c.shape), p, 1.0), 0) << c.name;
         for (double y : depthStations(xs.y_full)) {
             EXPECT_EQ(ev.getAofY(xs, y), xsect::getAofY(xs, y)) << c.name << " y=" << y;
             EXPECT_EQ(ev.getWofY(xs, y), xsect::getWofY(xs, y)) << c.name << " y=" << y;
@@ -193,13 +226,12 @@ TEST(XsectKernels, PublicAccessorsRouteThroughTheSharedBodies) {
 // ---------------------------------------------------------------------------
 TEST(XsectKernels, ReboundTablesReproduceTheHostEvaluatorExactly) {
     const XsectEval& host = xsect::hostEval();
-    const XsectEval  dev{rebound()};
+    const XsectEval dev{rebound()};
 
     for (const ShapeCase& c : shapeCatalog()) {
         XSectParams xs{};
         double p[4] = {c.p[0], c.p[1], c.p[2], c.p[3]};
-        ASSERT_EQ(xsect::setParams(xs, static_cast<int>(c.shape), p, 1.0), 0)
-            << c.name;
+        ASSERT_EQ(xsect::setParams(xs, static_cast<int>(c.shape), p, 1.0), 0) << c.name;
 
         for (double y : depthStations(xs.y_full)) {
             EXPECT_EQ(dev.getAofY(xs, y), host.getAofY(xs, y)) << c.name << " A y=" << y;
@@ -262,21 +294,47 @@ namespace {
 #ifdef SWMM_XSECT_FAST_LOOKUP
 // §6's published envelope for the fast lookup, same figures as the tolerance
 // gate in test_xsect_parity.cpp.
+/**
+ * @brief Check batch/shared cross-section scalar parity for the active build mode.
+ *
+ * Fast lookup builds allow abs(diff)<=1e-8+1e-7*abs(shared); other builds require operator==
+ * equality. This helper returns an assertion result without asserting or mutating state. NaNs fail;
+ * equality mode accepts equal infinities.
+ *
+ * @param[in] batch Batch result in the same native geometric units as shared.
+ * @param[in] shared Reference shared-kernel result.
+ * @return AssertionSuccess for the active comparison, otherwise AssertionFailure with values and
+ *     tolerance context.
+ */
 ::testing::AssertionResult Agrees(double batch, double shared) {
     const double tol = 1e-8 + 1e-7 * std::fabs(shared);
-    if (std::fabs(batch - shared) <= tol) return ::testing::AssertionSuccess();
+    if (std::fabs(batch - shared) <= tol)
+        return ::testing::AssertionSuccess();
     return ::testing::AssertionFailure()
-        << "batch=" << batch << " shared=" << shared
-        << " |diff|=" << std::fabs(batch - shared) << " tol=" << tol;
+           << "batch=" << batch << " shared=" << shared << " |diff|=" << std::fabs(batch - shared)
+           << " tol=" << tol;
 }
 #else
+/**
+ * @brief Check batch/shared cross-section scalar parity for the active build mode.
+ *
+ * Fast lookup builds allow abs(diff)<=1e-8+1e-7*abs(shared); other builds require operator==
+ * equality. This helper returns an assertion result without asserting or mutating state. NaNs fail;
+ * equality mode accepts equal infinities.
+ *
+ * @param[in] batch Batch result in the same native geometric units as shared.
+ * @param[in] shared Reference shared-kernel result.
+ * @return AssertionSuccess for the active comparison, otherwise AssertionFailure with values and
+ *     tolerance context.
+ */
 ::testing::AssertionResult Agrees(double batch, double shared) {
-    if (batch == shared) return ::testing::AssertionSuccess();
+    if (batch == shared)
+        return ::testing::AssertionSuccess();
     return ::testing::AssertionFailure()
-        << "batch=" << batch << " shared=" << shared << " (ULP != 0)";
+           << "batch=" << batch << " shared=" << shared << " (ULP != 0)";
 }
 #endif
-}  // namespace
+} // namespace
 
 TEST(XSectSharedFormulas, BatchPathMatchesTheSharedKernels) {
     const XsectEval& ev = xsect::hostEval();
@@ -284,8 +342,7 @@ TEST(XSectSharedFormulas, BatchPathMatchesTheSharedKernels) {
     for (const ShapeCase& c : shapeCatalog()) {
         XSectParams xs{};
         double p[4] = {c.p[0], c.p[1], c.p[2], c.p[3]};
-        ASSERT_EQ(xsect::setParams(xs, static_cast<int>(c.shape), p, 1.0), 0)
-            << c.name;
+        ASSERT_EQ(xsect::setParams(xs, static_cast<int>(c.shape), p, 1.0), 0) << c.name;
 
         XSectGroups groups;
         groups.build(&xs, 1);
@@ -323,18 +380,21 @@ TEST(XSectSharedFormulas, BatchPathMatchesTheSharedKernels) {
 // TRIANGULAR (which no deck in either corpus contains) is covered by name.
 // ---------------------------------------------------------------------------
 TEST(XSectSharedFormulas, AnalyticShapeLeavesAreBitExactInEveryMode) {
-    struct Case { const char* name; XSectShape shape; double p[4]; };
+    struct Case {
+        const char* name;
+        XSectShape shape;
+        double p[4];
+    };
     const std::vector<Case> analytic = {
         {"TRAPEZOIDAL", XSectShape::TRAPEZOIDAL, {3.0, 4.0, 1.0, 1.5}},
-        {"TRIANGULAR",  XSectShape::TRIANGULAR,  {3.0, 4.0, 0, 0}},
+        {"TRIANGULAR", XSectShape::TRIANGULAR, {3.0, 4.0, 0, 0}},
     };
 
     const XsectEval& ev = xsect::hostEval();
     for (const Case& c : analytic) {
         XSectParams xs{};
         double p[4] = {c.p[0], c.p[1], c.p[2], c.p[3]};
-        ASSERT_EQ(xsect::setParams(xs, static_cast<int>(c.shape), p, 1.0), 0)
-            << c.name;
+        ASSERT_EQ(xsect::setParams(xs, static_cast<int>(c.shape), p, 1.0), 0) << c.name;
 
         XSectGroups groups;
         groups.build(&xs, 1);
@@ -361,7 +421,7 @@ TEST(XSectSharedFormulas, AnalyticShapeLeavesAreBitExactInEveryMode) {
 // XSectBatch.cpp is checked rather than trusted.
 // ---------------------------------------------------------------------------
 TEST(XSectSharedFormulas, RectAreaMatchesSimdPath) {
-    constexpr int kN = 257;   // not a multiple of any vector width
+    constexpr int kN = 257; // not a multiple of any vector width
     std::vector<double> depth(kN), w_max(kN), simd_a(kN);
     for (int k = 0; k < kN; ++k) {
         depth[k] = 0.01 * static_cast<double>(k) + 1e-7;
@@ -370,6 +430,5 @@ TEST(XSectSharedFormulas, RectAreaMatchesSimdPath) {
     xsect_batch::area_rect(depth.data(), w_max.data(), simd_a.data(), kN);
 
     for (int k = 0; k < kN; ++k)
-        EXPECT_EQ(simd_a[k], xsect::shape::rectAofY(depth[k], w_max[k]))
-            << "k=" << k;
+        EXPECT_EQ(simd_a[k], xsect::shape::rectAofY(depth[k], w_max[k])) << "k=" << k;
 }

@@ -1,18 +1,24 @@
 /**
- * @file test_geopackage.cpp
- * @brief Unit tests for GeoPackage round-trip: write + read all SWMM sections.
+ * @file      test_geopackage.cpp
+ * @brief     Unit tests for GeoPackage round-trip: write + read all SWMM sections.
  *
  * @details Verifies that all SWMM input sections survive a write -> read
  *          round-trip through GeoPackage format. Each section has its own
  *          test case, plus integration tests for full model round-trip.
  *
  * @ingroup engine_tests
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
 
 #include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <cstdio>
 
 #include "core/SimulationContext.hpp"
@@ -46,17 +52,36 @@ class GeoPackageTest : public ::testing::Test {
 protected:
     std::string db_path_;
 
+    /**
+     * @brief Select and remove the fixed temporary GeoPackage fixture path.
+     *
+     * Uses temp_directory_path()/test_openswmm.gpkg and ignores remove status. Filesystem path errors
+     * propagate; the fixed filename assumes no concurrent test process uses it. Does not create a
+     * database yet.
+     */
     void SetUp() override {
         db_path_ = (fs::temp_directory_path() / "test_openswmm.gpkg").string();
         // Remove any leftover from previous run
         std::remove(db_path_.c_str());
     }
 
-    void TearDown() override {
-        std::remove(db_path_.c_str());
-    }
+    /**
+     * @brief Remove the fixture GeoPackage path after each case.
+     *
+     * Ignores remove status; all owned database/statement objects must already be closed by their
+     * scopes. Uses the fixed path established by SetUp and does not clean arbitrary sidecars.
+     */
+    void TearDown() override { std::remove(db_path_.c_str()); }
 
     // Helper: create a fresh database with schema
+    /**
+     * @brief Open the fixture database and create the maintained GeoPackage schema.
+     *
+     * Requires SetUp to establish db_path_. Database/schema exceptions propagate; performs persistent
+     * file creation/schema mutations and no simulation.
+     * @return Owning DbPtr from open_database after create_schema completes; its deleter closes the
+     *     connection.
+     */
     DbPtr create_db() {
         auto db = open_database(db_path_);
         create_schema(db.get());
@@ -64,6 +89,17 @@ protected:
     }
 
     // Helper: build a minimal SimulationContext for testing
+    /**
+     * @brief Construct a rich in-memory context for GeoPackage persistence round trips.
+     *
+     * Includes EPSG:4326 metadata, coordinates/polygons and a link bend; coordinates are synthetic and
+     * not geodetically validated. Uses internal hydraulic state values and authored persistence fields,
+     * including nondefault S1 precipitation factors. Does not create a database, insert result rows or
+     * run a simulation; not every production model array is initialized for arbitrary physics use.
+     * @return Owned uninitialized context with GPM/DYNWAVE options, three junctions/outfall, three
+     *     conduits, two subcatchments, gage/series, curve, TSS, land-use
+     *     buildup/washoff/coverage/loading, pattern and tags.
+     */
     SimulationContext build_test_context() {
         SimulationContext ctx{};
 
@@ -112,8 +148,8 @@ protected:
                 ctx.node_subtypes.set_node_type(ctx.nodes, idx, NodeType::OUTFALL);
             ctx.nodes.invert_elev[idx] = 90.0;
             ctx.nodes.full_depth[idx] = 0.0;
-            ctx.node_subtypes.outfalls.bc_type[
-                static_cast<std::size_t>(outfall_row)] = OutfallType::FREE;
+            ctx.node_subtypes.outfalls.bc_type[static_cast<std::size_t>(outfall_row)] =
+                OutfallType::FREE;
         }
 
         // --- COORDINATES ---
@@ -157,7 +193,8 @@ protected:
             ctx.links.node2[idx] = i + 1;
             ctx.links.xsect_shape[idx] = XsectShape::CIRCULAR;
             ctx.links.xsect_y_full[idx] = 2.0;
-            ctx.links.xsect_geom1[idx] = 2.0;   // raw [XSECTIONS] geom1 (diameter), persisted by the gpkg
+            ctx.links.xsect_geom1[idx] =
+                2.0; // raw [XSECTIONS] geom1 (diameter), persisted by the gpkg
             C.roughness[cr] = 0.013;
             C.length[cr] = 400.0;
             C.barrels[cr] = 1;
@@ -291,42 +328,46 @@ protected:
             ctx.landuse_names.add("Com");
             ctx.landuses.resize(2);
             ctx.landuses.sweep_interval[0] = 7.0;
-            ctx.landuses.sweep_removal[0]  = 0.5;
-            ctx.landuses.last_swept[0]     = 2.0;
+            ctx.landuses.sweep_removal[0] = 0.5;
+            ctx.landuses.last_swept[0] = 2.0;
             ctx.landuses.sweep_interval[1] = 14.0;
 
             ctx.buildup.resize(2, 1);
-            ctx.buildup.func_type[0] = 1;    // Res/TSS POW
+            ctx.buildup.func_type[0] = 1; // Res/TSS POW
             ctx.buildup.coeff1[0] = 100.0;
             ctx.buildup.coeff2[0] = 2.0;
             ctx.buildup.coeff3[0] = 1.5;
-            ctx.buildup.normalizer[0] = 0;   // AREA
-            ctx.buildup.func_type[1] = 3;    // Com/TSS SAT
+            ctx.buildup.normalizer[0] = 0; // AREA
+            ctx.buildup.func_type[1] = 3;  // Com/TSS SAT
             ctx.buildup.coeff1[1] = 50.0;
-            ctx.buildup.normalizer[1] = 1;   // CURB
+            ctx.buildup.normalizer[1] = 1; // CURB
 
             ctx.washoff.resize(2, 1);
-            ctx.washoff.func_type[0] = 1;    // Res/TSS EXP
+            ctx.washoff.func_type[0] = 1; // Res/TSS EXP
             ctx.washoff.coeff[0] = 0.1;
             ctx.washoff.expon[0] = 1.2;
             ctx.washoff.sweep_effic[0] = 30.0;
             ctx.washoff.bmp_effic[0] = 15.0;
 
             ctx.subcatches.resize_coverage(2, 2);
-            ctx.subcatches.coverage[0 * 2 + 0] = 60.0;   // S1/Res
-            ctx.subcatches.coverage[0 * 2 + 1] = 40.0;   // S1/Com
-            ctx.subcatches.coverage[1 * 2 + 0] = 25.0;   // S2/Res
+            ctx.subcatches.coverage[0 * 2 + 0] = 60.0; // S1/Res
+            ctx.subcatches.coverage[0 * 2 + 1] = 40.0; // S1/Com
+            ctx.subcatches.coverage[1 * 2 + 0] = 25.0; // S2/Res
             ctx.subcatches.sweep_last_swept[0 * 2 + 0] = 1.0;
 
             ctx.subcatches.resize_quality(1);
-            ctx.subcatches.conc[0 * 1 + 0] = 1.5;        // S1/TSS loading
-            ctx.subcatches.conc[1 * 1 + 0] = 2.25;       // S2/TSS loading
+            // [LOADINGS] is an initial surface BUILDUP per unit area, and
+            // it lives in its own array — it used to be parked in `conc`,
+            // the reported washoff concentration, where nothing could read
+            // it back as a loading.
+            ctx.subcatches.init_loading[0 * 1 + 0] = 1.5;  // S1/TSS loading
+            ctx.subcatches.init_loading[1 * 1 + 0] = 2.25; // S2/TSS loading
         }
 
         // --- PATTERNS ---
         {
-            ctx.patterns.add("DWF_Pattern", 0, {1.0, 1.1, 1.2, 1.0, 0.9, 0.8,
-                                                 0.7, 0.8, 0.9, 1.0, 1.1, 1.2});
+            ctx.patterns.add("DWF_Pattern", 0,
+                             {1.0, 1.1, 1.2, 1.0, 0.9, 0.8, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2});
         }
 
         // --- TAGS --- (now per-index on the SoA; resolve name → idx)
@@ -334,19 +375,22 @@ protected:
             const int j1 = ctx.node_names.find("J1");
             if (j1 >= 0) {
                 const auto u = static_cast<std::size_t>(j1);
-                if (u >= ctx.nodes.tags.size()) ctx.nodes.tags.resize(u + 1);
+                if (u >= ctx.nodes.tags.size())
+                    ctx.nodes.tags.resize(u + 1);
                 ctx.nodes.tags[u] = "upstream";
             }
             const int c1 = ctx.link_names.find("C1");
             if (c1 >= 0) {
                 const auto u = static_cast<std::size_t>(c1);
-                if (u >= ctx.links.tags.size()) ctx.links.tags.resize(u + 1);
+                if (u >= ctx.links.tags.size())
+                    ctx.links.tags.resize(u + 1);
                 ctx.links.tags[u] = "trunk";
             }
             const int s1 = ctx.subcatch_names.find("S1");
             if (s1 >= 0) {
                 const auto u = static_cast<std::size_t>(s1);
-                if (u >= ctx.subcatches.tags.size()) ctx.subcatches.tags.resize(u + 1);
+                if (u >= ctx.subcatches.tags.size())
+                    ctx.subcatches.tags.resize(u + 1);
                 ctx.subcatches.tags[u] = "residential";
             }
         }
@@ -368,7 +412,8 @@ TEST_F(GeoPackageTest, CreateSchema) {
     EXPECT_GE(column_int(stmt.get(), 0), 3); // At least 3 default SRS entries
 
     // Verify application tables exist
-    auto stmt2 = prepare(db.get(), "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='nodes'");
+    auto stmt2 =
+        prepare(db.get(), "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='nodes'");
     ASSERT_EQ(sqlite3_step(stmt2.get()), SQLITE_ROW);
     EXPECT_EQ(column_int(stmt2.get(), 0), 1);
 }
@@ -416,6 +461,72 @@ TEST_F(GeoPackageTest, MultipolygonRoundTrip) {
     EXPECT_DOUBLE_EQ(mp.xs[1], 10.0);
 }
 
+TEST(GeoPackageMultipartGeometry, RetainsPartsHolesAndEmptyMembers) {
+    // Independently assemble WKB: two disjoint polygons, with a hole in the
+    // first. Ring winding deliberately matches, so nesting must be geometric.
+    const std::vector<double> x{0,100,100,0,0, 20,40,40,20,20, 200,250,250,200,200};
+    const std::vector<double> y{0,0,100,100,0, 20,20,40,40,20, 10,10,60,60,10};
+    std::vector<uint8_t> blob;
+    detail::write_gp_header(blob, 4326, 0, 0, 250, 100);
+    detail::append_u8(blob, 1);
+    detail::append_u32(blob, WKB_MULTIPOLYGON);
+    detail::append_u32(blob, 3); // includes an empty polygon before the islands
+    detail::append_u8(blob, 1);
+    detail::append_u32(blob, WKB_POLYGON);
+    detail::append_u32(blob, 0);
+    for (int part = 0; part < 2; ++part) {
+        detail::append_u8(blob, 1);
+        detail::append_u32(blob, WKB_POLYGON);
+        detail::append_u32(blob, part == 0 ? 2 : 1);
+        for (int ring = part == 0 ? 0 : 2; ring < (part == 0 ? 2 : 3); ++ring) {
+            detail::append_u32(blob, 5);
+            for (int i = ring * 5; i < ring * 5 + 5; ++i) {
+                detail::append_f64(blob, x[i]);
+                detail::append_f64(blob, y[i]);
+            }
+        }
+    }
+    const auto decoded = decode_multipolygon(blob);
+    EXPECT_EQ(decoded.xs, x);
+    EXPECT_EQ(decoded.ys, y);
+    const auto encoded = encode_multipolygon(x, y, 4326);
+    size_t offset = 45; // GP XY header (40), WKB order/type (5)
+    EXPECT_EQ(detail::read_val<uint32_t>(encoded.data(), offset), 2u);
+    offset += 5;
+    EXPECT_EQ(detail::read_val<uint32_t>(encoded.data(), offset), 2u); // hole retained
+    const auto roundtrip = decode_multipolygon(encoded);
+    EXPECT_EQ(roundtrip.xs, x);
+    EXPECT_EQ(roundtrip.ys, y);
+    EXPECT_TRUE(polygon::contains(x, y, 5, 5));
+    EXPECT_FALSE(polygon::contains(x, y, 30, 30));
+    EXPECT_TRUE(polygon::contains(x, y, 225, 30));
+    EXPECT_FALSE(polygon::contains(x, y, 150, 30));
+    auto truncated = blob;
+    truncated.pop_back();
+    EXPECT_THROW(decode_multipolygon(truncated), std::runtime_error);
+}
+
+TEST_F(GeoPackageTest, MultipartSubcatchmentSurvivesSaveReopen) {
+    auto ctx_out = build_test_context();
+    const auto sub = ctx_out.subcatch_names.find("S1");
+    ASSERT_GE(sub, 0);
+    ctx_out.spatial.subcatch_polygon_x[sub] =
+        {0,100,100,0,0, 20,40,40,20,20, 200,250,250,200,200};
+    ctx_out.spatial.subcatch_polygon_y[sub] =
+        {0,0,100,100,0, 20,20,40,40,20, 10,10,60,60,10};
+    const fs::path retained = fs::current_path() / "multipart_geometry";
+    fs::create_directories(retained);
+    const auto path = (retained / "subcatchment.gpkg").string();
+    std::remove(path.c_str());
+    ASSERT_EQ(write_to_file(path, ctx_out, "test_run"), 0);
+    SimulationContext ctx_in{};
+    ASSERT_EQ(read_from_file(path, ctx_in, "test_run"), 0);
+    const auto loaded = ctx_in.subcatch_names.find("S1");
+    ASSERT_GE(loaded, 0);
+    EXPECT_EQ(ctx_in.spatial.subcatch_polygon_x[loaded], ctx_out.spatial.subcatch_polygon_x[sub]);
+    EXPECT_EQ(ctx_in.spatial.subcatch_polygon_y[loaded], ctx_out.spatial.subcatch_polygon_y[sub]);
+}
+
 // ============================================================================
 // Section round-trip tests
 // ============================================================================
@@ -440,18 +551,20 @@ TEST_F(GeoPackageTest, OptionsRoundTrip) {
 // including snow_elev and snow_dtlong (added to the climate_settings schema).
 TEST_F(GeoPackageTest, ClimateSettingsRoundTrip) {
     auto ctx_out = build_test_context();
-    ctx_out.options.temp_source    = 1;        // TIMESERIES
-    ctx_out.options.temp_ts_name   = "TempTS";
-    ctx_out.options.temp_units     = 2;        // degF (newly round-tripped)
-    ctx_out.options.wind_type      = 0;        // MONTHLY
-    for (int i = 0; i < 12; ++i) ctx_out.options.wind_speed[i] = i + 1;
-    ctx_out.options.snow_divt      = 32.5;
-    ctx_out.options.snow_ati_wt    = 0.45;
+    ctx_out.options.temp_source = 1; // TIMESERIES
+    ctx_out.options.temp_ts_name = "TempTS";
+    ctx_out.options.temp_units = 2; // degF (newly round-tripped)
+    ctx_out.options.wind_type = 0;  // MONTHLY
+    for (int i = 0; i < 12; ++i)
+        ctx_out.options.wind_speed[i] = i + 1;
+    ctx_out.options.snow_divt = 32.5;
+    ctx_out.options.snow_ati_wt = 0.45;
     ctx_out.options.snow_nrg_ratio = 0.55;
-    ctx_out.options.snow_lat       = 40.5;
-    ctx_out.options.snow_elev      = 100.0;    // newly round-tripped
-    ctx_out.options.snow_dtlong    = 240.0;    // newly round-tripped (minutes)
-    for (int i = 0; i < 10; ++i) ctx_out.options.adc_imperv[i] = 1.0 - i * 0.1;
+    ctx_out.options.snow_lat = 40.5;
+    ctx_out.options.snow_elev = 100.0;   // newly round-tripped
+    ctx_out.options.snow_dtlong = 240.0; // newly round-tripped (minutes)
+    for (int i = 0; i < 10; ++i)
+        ctx_out.options.adc_imperv[i] = 1.0 - i * 0.1;
 
     ASSERT_EQ(write_to_file(db_path_, ctx_out, "clim"), 0);
 
@@ -488,6 +601,177 @@ TEST_F(GeoPackageTest, JunctionsRoundTrip) {
     EXPECT_DOUBLE_EQ(ctx_in.nodes.full_depth[j1], 6.0);
 }
 
+// Virtual junctions are JUNCTION-typed, so without dedicated columns a .gpkg
+// round-trip silently demoted them to plain junctions. The rendering-only rim
+// depth (the optional [VIRTUAL_JUNCTIONS] MaxDepth) rides along with the flag.
+TEST_F(GeoPackageTest, VirtualJunctionFlagAndRimRoundTrip) {
+    auto ctx_out = build_test_context();
+    const int j2 = ctx_out.node_names.find("J2");
+    ASSERT_GE(j2, 0);
+    const auto u2 = static_cast<std::size_t>(j2);
+    const auto n = static_cast<std::size_t>(ctx_out.node_names.size());
+    ctx_out.nodes.is_virtual.resize(n, 0);
+    ctx_out.nodes.rim_depth.resize(n, 0.0);
+    ctx_out.nodes.is_virtual[u2] = 1;
+    ctx_out.nodes.rim_depth[u2] = 4.25;
+
+    ASSERT_EQ(write_to_file(db_path_, ctx_out, "test_run"), 0);
+
+    SimulationContext ctx_in{};
+    ASSERT_EQ(read_from_file(db_path_, ctx_in, "test_run"), 0);
+
+    const int in2 = ctx_in.node_names.find("J2");
+    ASSERT_GE(in2, 0);
+    const auto ui2 = static_cast<std::size_t>(in2);
+    EXPECT_EQ(ctx_in.nodes.is_virtual[ui2], 1);
+    EXPECT_DOUBLE_EQ(ctx_in.nodes.rim_depth[ui2], 4.25);
+
+    const int in1 = ctx_in.node_names.find("J1");
+    ASSERT_GE(in1, 0);
+    EXPECT_EQ(ctx_in.nodes.is_virtual[static_cast<std::size_t>(in1)], 0);
+    EXPECT_DOUBLE_EQ(ctx_in.nodes.rim_depth[static_cast<std::size_t>(in1)], 0.0);
+}
+
+// [STREETS], [INLETS] and both inlet-placement grammars round-trip. A model
+// with an inlet junction re-reads with its usage row, so rule 633 holds.
+TEST_F(GeoPackageTest, StreetsInletsAndInletUsageRoundTrip) {
+    auto ctx_out = build_test_context();
+
+    auto& S = ctx_out.streets;
+    S.names.push_back("ST1");
+    S.t_crown.push_back(20.0);
+    S.h_curb.push_back(0.5);
+    S.sx.push_back(4.0);
+    S.n_road.push_back(0.016);
+    S.gutter_depres.push_back(0.167);
+    S.gutter_width.push_back(2.0);
+    S.sides.push_back(2);
+    S.back_width.push_back(10.0);
+    S.back_slope.push_back(4.0);
+    S.back_n.push_back(0.02);
+
+    auto& I = ctx_out.inlets;
+    const int combo = I.add_row("Combo1", "COMBO");
+    {
+        const auto u = static_cast<std::size_t>(combo);
+        I.length[u] = 2.0;
+        I.width[u] = 2.0;
+        I.grate_type[u] = "P_BAR-50";
+        I.curb_length[u] = 3.0;
+        I.curb_height[u] = 0.5;
+        I.curb_throat[u] = 0;
+        I.comments[u] = "combination inlet";
+    }
+    const int custom = I.add_row("Custom1", "CUSTOM");
+    I.curve_id[static_cast<std::size_t>(custom)] = "CAP1";
+
+    const int c1 = ctx_out.link_names.find("C1");
+    const int j1 = ctx_out.node_names.find("J1");
+    const int j2 = ctx_out.node_names.find("J2");
+    const int j3 = ctx_out.node_names.find("J3");
+    ASSERT_TRUE(c1 >= 0 && j1 >= 0 && j2 >= 0 && j3 >= 0);
+
+    // Conduit-hosted placement on C1, two 25 %-clogged inlets, ON_SAG, capture J3.
+    {
+        const int r = ctx_out.inlet_usages.add_row(c1, -1, combo, j3);
+        const auto ur = static_cast<std::size_t>(r);
+        ctx_out.inlet_usages.num_inlets[ur] = 2;
+        ctx_out.inlet_usages.clog_factor[ur] = 0.75;
+        ctx_out.inlet_usages.flow_limit[ur] = 1.5;
+        ctx_out.inlet_usages.local_depress[ur] = 0.1;
+        ctx_out.inlet_usages.local_width[ur] = 1.0;
+        ctx_out.inlet_usages.placement[ur] = 2;
+    }
+    // Inlet junction J2 (usage hosted by the node), capture J1.
+    {
+        const auto n = static_cast<std::size_t>(ctx_out.node_names.size());
+        ctx_out.nodes.is_virtual.resize(n, 0);
+        ctx_out.nodes.is_inlet.resize(n, 0);
+        ctx_out.nodes.rim_depth.resize(n, 0.0);
+        const auto u2 = static_cast<std::size_t>(j2);
+        ctx_out.nodes.is_virtual[u2] = 1;
+        ctx_out.nodes.is_inlet[u2] = 1;
+        ctx_out.nodes.rim_depth[u2] = 0.5;
+        ctx_out.inlet_usages.add_row(-1, j2, custom, j1);
+    }
+
+    ASSERT_EQ(write_to_file(db_path_, ctx_out, "test_run"), 0);
+    SimulationContext ctx_in{};
+    ASSERT_EQ(read_from_file(db_path_, ctx_in, "test_run"), 0);
+
+    ASSERT_EQ(ctx_in.streets.count(), 1);
+    EXPECT_EQ(ctx_in.streets.names[0], "ST1");
+    EXPECT_DOUBLE_EQ(ctx_in.streets.t_crown[0], 20.0);
+    EXPECT_DOUBLE_EQ(ctx_in.streets.sx[0], 4.0);
+    EXPECT_DOUBLE_EQ(ctx_in.streets.gutter_depres[0], 0.167);
+    EXPECT_EQ(ctx_in.streets.sides[0], 2);
+    EXPECT_DOUBLE_EQ(ctx_in.streets.back_n[0], 0.02);
+
+    ASSERT_EQ(ctx_in.inlets.count(), 2);
+    EXPECT_EQ(ctx_in.inlets.names[0], "Combo1");
+    EXPECT_EQ(ctx_in.inlets.inlet_type[0], "COMBO");
+    EXPECT_DOUBLE_EQ(ctx_in.inlets.length[0], 2.0);
+    EXPECT_EQ(ctx_in.inlets.grate_type[0], "P_BAR-50");
+    EXPECT_DOUBLE_EQ(ctx_in.inlets.curb_length[0], 3.0);
+    EXPECT_DOUBLE_EQ(ctx_in.inlets.curb_height[0], 0.5);
+    EXPECT_EQ(ctx_in.inlets.curb_throat[0], 0);
+    EXPECT_EQ(ctx_in.inlets.comments[0], "combination inlet");
+    EXPECT_EQ(ctx_in.inlets.inlet_type[1], "CUSTOM");
+    EXPECT_EQ(ctx_in.inlets.curve_id[1], "CAP1");
+
+    ASSERT_EQ(ctx_in.inlet_usages.count(), 2);
+    const int in_c1 = ctx_in.link_names.find("C1");
+    const int in_j2 = ctx_in.node_names.find("J2");
+    ASSERT_TRUE(in_c1 >= 0 && in_j2 >= 0);
+    const int rl = ctx_in.inlet_usages.find_by_link(in_c1);
+    ASSERT_GE(rl, 0);
+    {
+        const auto ur = static_cast<std::size_t>(rl);
+        EXPECT_EQ(ctx_in.inlet_usages.node_host[ur], -1);
+        EXPECT_EQ(ctx_in.inlet_usages.design_index[ur], 0);
+        EXPECT_EQ(ctx_in.node_names.name_of(ctx_in.inlet_usages.node_index[ur]), "J3");
+        EXPECT_EQ(ctx_in.inlet_usages.num_inlets[ur], 2);
+        EXPECT_NEAR(ctx_in.inlet_usages.clog_factor[ur], 0.75, 1e-12);
+        EXPECT_DOUBLE_EQ(ctx_in.inlet_usages.flow_limit[ur], 1.5);
+        EXPECT_DOUBLE_EQ(ctx_in.inlet_usages.local_depress[ur], 0.1);
+        EXPECT_DOUBLE_EQ(ctx_in.inlet_usages.local_width[ur], 1.0);
+        EXPECT_EQ(ctx_in.inlet_usages.placement[ur], 2);
+    }
+    const int rn = ctx_in.inlet_usages.find_by_node_host(in_j2);
+    ASSERT_GE(rn, 0);
+    {
+        const auto ur = static_cast<std::size_t>(rn);
+        EXPECT_EQ(ctx_in.inlet_usages.link_index[ur], -1);
+        EXPECT_EQ(ctx_in.inlet_usages.design_index[ur], 1);
+        EXPECT_EQ(ctx_in.node_names.name_of(ctx_in.inlet_usages.node_index[ur]), "J1");
+        EXPECT_EQ(ctx_in.inlet_usages.placement[ur], 0);
+    }
+    EXPECT_EQ(ctx_in.nodes.is_inlet[static_cast<std::size_t>(in_j2)], 1);
+    EXPECT_DOUBLE_EQ(ctx_in.nodes.rim_depth[static_cast<std::size_t>(in_j2)], 0.5);
+}
+
+// A .gpkg written before those two columns existed must still open, with no
+// virtual junctions and no rim depths — exactly how it behaved before.
+TEST_F(GeoPackageTest, LegacyGpkgWithoutVirtualColumnsOpens) {
+    using namespace openswmm::gpkg;
+
+    auto ctx_out = build_test_context();
+    ASSERT_EQ(write_to_file(db_path_, ctx_out, "legacy"), 0);
+    {
+        DbPtr db = open_database(db_path_);
+        for (const char* col : {"is_virtual", "rim_depth"})
+            exec(db.get(), std::string("ALTER TABLE nodes DROP COLUMN ") + col);
+    }
+
+    SimulationContext in{};
+    ASSERT_EQ(read_from_file(db_path_, in, "legacy"), 0)
+        << "reader must tolerate a .gpkg that predates the virtual-junction columns";
+    const int j2 = in.node_names.find("J2");
+    ASSERT_GE(j2, 0);
+    EXPECT_EQ(in.nodes.is_virtual[static_cast<std::size_t>(j2)], 0);
+    EXPECT_DOUBLE_EQ(in.nodes.rim_depth[static_cast<std::size_t>(j2)], 0.0);
+}
+
 TEST_F(GeoPackageTest, OutfallRoundTrip) {
     auto ctx_out = build_test_context();
     ASSERT_EQ(write_to_file(db_path_, ctx_out, "test_run"), 0);
@@ -498,8 +782,8 @@ TEST_F(GeoPackageTest, OutfallRoundTrip) {
     int o1 = ctx_in.node_names.find("O1");
     ASSERT_GE(o1, 0);
     EXPECT_EQ(ctx_in.nodes.type[o1], NodeType::OUTFALL);
-    EXPECT_EQ(ctx_in.node_subtypes.outfalls.bc_type[
-                  static_cast<std::size_t>(ctx_in.node_subtypes.outfall_row(o1))],
+    EXPECT_EQ(ctx_in.node_subtypes.outfalls
+                  .bc_type[static_cast<std::size_t>(ctx_in.node_subtypes.outfall_row(o1))],
               OutfallType::FREE);
     EXPECT_DOUBLE_EQ(ctx_in.nodes.invert_elev[o1], 90.0);
 }
@@ -510,15 +794,18 @@ TEST_F(GeoPackageTest, OutfallRoundTrip) {
 // route_to, divider cd/max_depth/curve/link).
 TEST_F(GeoPackageTest, NodeSubtypeChildTablesRoundTrip) {
     SimulationContext ctx{};
-    ctx.options.flow_units = FlowUnits::CFS;   // US: no unit conversion in play
+    ctx.options.flow_units = FlowUnits::CFS; // US: no unit conversion in play
     ctx.spatial.crs = "EPSG:4326";
 
     auto add_node = [&](const char* nm) {
         int idx = ctx.node_names.add(nm);
         const auto n = static_cast<std::size_t>(idx + 1);
-        ctx.nodes.type.resize(n); ctx.nodes.invert_elev.resize(n);
-        ctx.nodes.full_depth.resize(n); ctx.nodes.init_depth.resize(n);
-        ctx.nodes.sur_depth.resize(n); ctx.nodes.ponded_area.resize(n);
+        ctx.nodes.type.resize(n);
+        ctx.nodes.invert_elev.resize(n);
+        ctx.nodes.full_depth.resize(n);
+        ctx.nodes.init_depth.resize(n);
+        ctx.nodes.sur_depth.resize(n);
+        ctx.nodes.ponded_area.resize(n);
         ctx.nodes.type[static_cast<std::size_t>(idx)] = NodeType::JUNCTION;
         return idx;
     };
@@ -530,27 +817,44 @@ TEST_F(GeoPackageTest, NodeSubtypeChildTablesRoundTrip) {
     ctx.spatial.node_y = {0.0, 0.0, 0.0, 0.0};
 
     // A subcatchment for the outfall route_to target.
-    { int s = ctx.subcatch_names.add("S1");
-      const auto n = static_cast<std::size_t>(s + 1);
-      ctx.subcatches.outlet_node.resize(n, -1);
-      ctx.subcatches.outlet_subcatch.resize(n, -1);
-      ctx.subcatches.outlet_name.resize(n); }
+    {
+        int s = ctx.subcatch_names.add("S1");
+        const auto n = static_cast<std::size_t>(s + 1);
+        ctx.subcatches.outlet_node.resize(n, -1);
+        ctx.subcatches.outlet_subcatch.resize(n, -1);
+        ctx.subcatches.outlet_name.resize(n);
+    }
 
     auto& S = ctx.node_subtypes.storages;
-    const auto sr = static_cast<std::size_t>(ctx.node_subtypes.set_node_type(ctx.nodes, st, NodeType::STORAGE));
-    S.curve_name[sr] = "StoreCurve"; S.a[sr] = 1.5; S.b[sr] = 0.6; S.c[sr] = 2.5;
-    S.seep_rate[sr] = 0.1; S.evap_frac[sr] = 0.2;
-    S.exfil_suction[sr] = 3.0; S.exfil_ksat[sr] = 0.05; S.exfil_imd[sr] = 0.3;
+    const auto sr =
+        static_cast<std::size_t>(ctx.node_subtypes.set_node_type(ctx.nodes, st, NodeType::STORAGE));
+    S.curve_name[sr] = "StoreCurve";
+    S.a[sr] = 1.5;
+    S.b[sr] = 0.6;
+    S.c[sr] = 2.5;
+    S.seep_rate[sr] = 0.1;
+    S.evap_frac[sr] = 0.2;
+    S.exfil_suction[sr] = 3.0;
+    S.exfil_ksat[sr] = 0.05;
+    S.exfil_imd[sr] = 0.3;
 
     auto& O = ctx.node_subtypes.outfalls;
-    const auto orr = static_cast<std::size_t>(ctx.node_subtypes.set_node_type(ctx.nodes, of, NodeType::OUTFALL));
-    O.bc_type[orr] = OutfallType::FIXED; O.param[orr] = 12.5; O.has_flap_gate[orr] = 1;
+    const auto orr =
+        static_cast<std::size_t>(ctx.node_subtypes.set_node_type(ctx.nodes, of, NodeType::OUTFALL));
+    O.bc_type[orr] = OutfallType::FIXED;
+    O.param[orr] = 12.5;
+    O.has_flap_gate[orr] = 1;
     O.route_to[orr] = ctx.subcatch_names.find("S1");
 
     auto& D = ctx.node_subtypes.dividers;
-    const auto dr = static_cast<std::size_t>(ctx.node_subtypes.set_node_type(ctx.nodes, dv, NodeType::DIVIDER));
-    D.method[dr] = DividerType::WEIR; D.cutoff[dr] = 1.1; D.cd[dr] = 0.9; D.max_depth[dr] = 4.0;
-    D.curve_name[dr] = "DivCurve"; D.link_name[dr] = "DivLink";
+    const auto dr =
+        static_cast<std::size_t>(ctx.node_subtypes.set_node_type(ctx.nodes, dv, NodeType::DIVIDER));
+    D.method[dr] = DividerType::WEIR;
+    D.cutoff[dr] = 1.1;
+    D.cd[dr] = 0.9;
+    D.max_depth[dr] = 4.0;
+    D.curve_name[dr] = "DivCurve";
+    D.link_name[dr] = "DivLink";
 
     ASSERT_EQ(write_to_file(db_path_, ctx, "r"), 0);
     SimulationContext in{};
@@ -561,9 +865,13 @@ TEST_F(GeoPackageTest, NodeSubtypeChildTablesRoundTrip) {
     ASSERT_GE(in.node_subtypes.storage_row(ist), 0);
     const auto& IS = in.node_subtypes.storages;
     EXPECT_EQ(IS.curve_name[uis], "StoreCurve");
-    EXPECT_DOUBLE_EQ(IS.a[uis], 1.5); EXPECT_DOUBLE_EQ(IS.b[uis], 0.6); EXPECT_DOUBLE_EQ(IS.c[uis], 2.5);
-    EXPECT_DOUBLE_EQ(IS.seep_rate[uis], 0.1); EXPECT_DOUBLE_EQ(IS.evap_frac[uis], 0.2);
-    EXPECT_DOUBLE_EQ(IS.exfil_suction[uis], 3.0); EXPECT_DOUBLE_EQ(IS.exfil_ksat[uis], 0.05);
+    EXPECT_DOUBLE_EQ(IS.a[uis], 1.5);
+    EXPECT_DOUBLE_EQ(IS.b[uis], 0.6);
+    EXPECT_DOUBLE_EQ(IS.c[uis], 2.5);
+    EXPECT_DOUBLE_EQ(IS.seep_rate[uis], 0.1);
+    EXPECT_DOUBLE_EQ(IS.evap_frac[uis], 0.2);
+    EXPECT_DOUBLE_EQ(IS.exfil_suction[uis], 3.0);
+    EXPECT_DOUBLE_EQ(IS.exfil_ksat[uis], 0.05);
     EXPECT_DOUBLE_EQ(IS.exfil_imd[uis], 0.3);
 
     const int iof = in.node_names.find("OF1");
@@ -573,14 +881,15 @@ TEST_F(GeoPackageTest, NodeSubtypeChildTablesRoundTrip) {
     EXPECT_EQ(IO.bc_type[uio], OutfallType::FIXED);
     EXPECT_DOUBLE_EQ(IO.param[uio], 12.5);
     EXPECT_EQ(IO.has_flap_gate[uio], 1);
-    EXPECT_EQ(IO.route_to[uio], in.subcatch_names.find("S1"));  // name -> index resolved
+    EXPECT_EQ(IO.route_to[uio], in.subcatch_names.find("S1")); // name -> index resolved
 
     const int idv = in.node_names.find("DV1");
     const auto uid = static_cast<std::size_t>(in.node_subtypes.divider_row(idv));
     ASSERT_GE(in.node_subtypes.divider_row(idv), 0);
     const auto& ID = in.node_subtypes.dividers;
     EXPECT_EQ(ID.method[uid], DividerType::WEIR);
-    EXPECT_DOUBLE_EQ(ID.cutoff[uid], 1.1); EXPECT_DOUBLE_EQ(ID.cd[uid], 0.9);
+    EXPECT_DOUBLE_EQ(ID.cutoff[uid], 1.1);
+    EXPECT_DOUBLE_EQ(ID.cd[uid], 0.9);
     EXPECT_DOUBLE_EQ(ID.max_depth[uid], 4.0);
     EXPECT_EQ(ID.curve_name[uid], "DivCurve");
     EXPECT_EQ(ID.link_name[uid], "DivLink");
@@ -592,23 +901,30 @@ TEST_F(GeoPackageTest, NodeSubtypeChildTablesRoundTrip) {
 // area coefficients survive — the .gpkg must be as lossless as the .inp.
 TEST_F(GeoPackageTest, StorageShapeChildTableRoundTrip) {
     SimulationContext ctx{};
-    ctx.options.flow_units = FlowUnits::CFS;   // US: no unit conversion in play
+    ctx.options.flow_units = FlowUnits::CFS; // US: no unit conversion in play
     ctx.spatial.crs = "EPSG:4326";
 
-    struct Case { const char* name; StorageShape shape; double p1, p2, p3; };
+    struct Case {
+        const char* name;
+        StorageShape shape;
+        double p1, p2, p3;
+    };
     const Case cases[] = {
         {"SCYL", StorageShape::CYLINDRICAL, 30.0, 20.0, 0.0},
-        {"SCON", StorageShape::CONICAL,     30.0, 20.0, 2.5},
-        {"SPAR", StorageShape::PARABOLOID,  30.0, 20.0, 8.0},
-        {"SPYR", StorageShape::PYRAMIDAL,   30.0, 20.0, 2.5},
+        {"SCON", StorageShape::CONICAL, 30.0, 20.0, 2.5},
+        {"SPAR", StorageShape::PARABOLOID, 30.0, 20.0, 8.0},
+        {"SPYR", StorageShape::PYRAMIDAL, 30.0, 20.0, 2.5},
     };
 
     for (const auto& cse : cases) {
         const int idx = ctx.node_names.add(cse.name);
         const auto n = static_cast<std::size_t>(idx + 1);
-        ctx.nodes.type.resize(n); ctx.nodes.invert_elev.resize(n);
-        ctx.nodes.full_depth.resize(n); ctx.nodes.init_depth.resize(n);
-        ctx.nodes.sur_depth.resize(n); ctx.nodes.ponded_area.resize(n);
+        ctx.nodes.type.resize(n);
+        ctx.nodes.invert_elev.resize(n);
+        ctx.nodes.full_depth.resize(n);
+        ctx.nodes.init_depth.resize(n);
+        ctx.nodes.sur_depth.resize(n);
+        ctx.nodes.ponded_area.resize(n);
         ctx.spatial.node_x.push_back(static_cast<double>(idx));
         ctx.spatial.node_y.push_back(0.0);
 
@@ -616,10 +932,14 @@ TEST_F(GeoPackageTest, StorageShapeChildTableRoundTrip) {
         const auto sr = static_cast<std::size_t>(
             ctx.node_subtypes.set_node_type(ctx.nodes, idx, NodeType::STORAGE));
         S.shape[sr] = cse.shape;
-        S.p1[sr] = cse.p1; S.p2[sr] = cse.p2; S.p3[sr] = cse.p3;
+        S.p1[sr] = cse.p1;
+        S.p2[sr] = cse.p2;
+        S.p3[sr] = cse.p3;
         double a = 0, b = 0, c = 0;
         ASSERT_TRUE(storage_shape_coeffs(cse.shape, cse.p1, cse.p2, cse.p3, a, b, c));
-        S.a[sr] = a; S.b[sr] = b; S.c[sr] = c;
+        S.a[sr] = a;
+        S.b[sr] = b;
+        S.c[sr] = c;
     }
 
     ASSERT_EQ(write_to_file(db_path_, ctx, "shp"), 0);
@@ -659,9 +979,12 @@ TEST_F(GeoPackageTest, LegacyGpkgWithoutShapeColumnsFallsBack) {
     auto add_storage = [&](const char* nm, const char* curve) {
         const int idx = ctx.node_names.add(nm);
         const auto n = static_cast<std::size_t>(idx + 1);
-        ctx.nodes.type.resize(n); ctx.nodes.invert_elev.resize(n);
-        ctx.nodes.full_depth.resize(n); ctx.nodes.init_depth.resize(n);
-        ctx.nodes.sur_depth.resize(n); ctx.nodes.ponded_area.resize(n);
+        ctx.nodes.type.resize(n);
+        ctx.nodes.invert_elev.resize(n);
+        ctx.nodes.full_depth.resize(n);
+        ctx.nodes.init_depth.resize(n);
+        ctx.nodes.sur_depth.resize(n);
+        ctx.nodes.ponded_area.resize(n);
         ctx.spatial.node_x.push_back(static_cast<double>(idx));
         ctx.spatial.node_y.push_back(0.0);
         auto& S = ctx.node_subtypes.storages;
@@ -670,9 +993,14 @@ TEST_F(GeoPackageTest, LegacyGpkgWithoutShapeColumnsFallsBack) {
         // Write it as a geometric shape so, if the fallback DIDN'T fire, the columns
         // we drop would otherwise have said PYRAMIDAL — proving the fallback is real.
         S.shape[sr] = StorageShape::PYRAMIDAL;
-        S.p1[sr] = 30.0; S.p2[sr] = 20.0; S.p3[sr] = 2.5;
-        S.a[sr] = 250.0; S.b[sr] = 25.0; S.c[sr] = 600.0;
-        if (curve) S.curve_name[sr] = curve;
+        S.p1[sr] = 30.0;
+        S.p2[sr] = 20.0;
+        S.p3[sr] = 2.5;
+        S.a[sr] = 250.0;
+        S.b[sr] = 25.0;
+        S.c[sr] = 600.0;
+        if (curve)
+            S.curve_name[sr] = curve;
     };
     add_storage("SFUN", nullptr);
     add_storage("STAB", "SomeCurve");
@@ -706,7 +1034,7 @@ TEST_F(GeoPackageTest, LegacyGpkgWithoutShapeColumnsFallsBack) {
 // A .gpkg written before the precip scale-factor columns existed must still
 // open, with the reader defaulting both factors to 1.0 (a true no-op).
 TEST_F(GeoPackageTest, LegacyGpkgWithoutScaleColumnsDefaultsToOne) {
-    auto ctx_out = build_test_context();   // S1 has non-default factors
+    auto ctx_out = build_test_context(); // S1 has non-default factors
     ASSERT_EQ(write_to_file(db_path_, ctx_out, "legacy"), 0);
 
     {
@@ -732,19 +1060,23 @@ TEST_F(GeoPackageTest, LegacyGpkgWithoutScaleColumnsDefaultsToOne) {
 // rating-curve NAME path; pump/orifice are covered by extran6/extran3 parity too.
 TEST_F(GeoPackageTest, LinkSubtypeChildTablesRoundTrip) {
     SimulationContext ctx{};
-    ctx.options.flow_units = FlowUnits::CFS;   // US: no unit conversion in play
+    ctx.options.flow_units = FlowUnits::CFS; // US: no unit conversion in play
     ctx.spatial.crs = "EPSG:4326";
 
     auto add_node = [&](const char* nm) {
         int idx = ctx.node_names.add(nm);
         const auto n = static_cast<std::size_t>(idx + 1);
-        ctx.nodes.type.resize(n); ctx.nodes.invert_elev.resize(n);
-        ctx.nodes.full_depth.resize(n); ctx.nodes.init_depth.resize(n);
-        ctx.nodes.sur_depth.resize(n); ctx.nodes.ponded_area.resize(n);
+        ctx.nodes.type.resize(n);
+        ctx.nodes.invert_elev.resize(n);
+        ctx.nodes.full_depth.resize(n);
+        ctx.nodes.init_depth.resize(n);
+        ctx.nodes.sur_depth.resize(n);
+        ctx.nodes.ponded_area.resize(n);
         ctx.nodes.type[static_cast<std::size_t>(idx)] = NodeType::JUNCTION;
         return idx;
     };
-    for (const char* nm : {"N0","N1","N2","N3","N4","N5"}) add_node(nm);
+    for (const char* nm : {"N0", "N1", "N2", "N3", "N4", "N5"})
+        add_node(nm);
     ctx.spatial.node_x = {0.0, 1.0, 2.0, 3.0, 4.0, 5.0};
     ctx.spatial.node_y = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
 
@@ -752,46 +1084,73 @@ TEST_F(GeoPackageTest, LinkSubtypeChildTablesRoundTrip) {
         int idx = ctx.link_names.add(nm);
         const auto n = static_cast<std::size_t>(idx + 1);
         ctx.links.type.resize(n);
-        ctx.links.node1.resize(n); ctx.links.node2.resize(n);
-        ctx.links.offset1.resize(n); ctx.links.offset2.resize(n);
-        ctx.links.q0.resize(n); ctx.links.q_limit.resize(n);
+        ctx.links.node1.resize(n);
+        ctx.links.node2.resize(n);
+        ctx.links.offset1.resize(n);
+        ctx.links.offset2.resize(n);
+        ctx.links.q0.resize(n);
+        ctx.links.q_limit.resize(n);
         ctx.links.direction.resize(n, 1);
-        ctx.links.xsect_shape.resize(n); ctx.links.xsect_geom1.resize(n);
-        ctx.links.xsect_geom2.resize(n); ctx.links.xsect_geom3.resize(n);
-        ctx.links.xsect_geom4.resize(n); ctx.links.xsect_curve.resize(n, -1);
-        ctx.links.has_flap_gate.resize(n); ctx.links.pump_curve_name.resize(n);
-        ctx.spatial.link_vertices_x.resize(n); ctx.spatial.link_vertices_y.resize(n);
-        ctx.spatial.link_x.resize(n); ctx.spatial.link_y.resize(n);
+        ctx.links.xsect_shape.resize(n);
+        ctx.links.xsect_geom1.resize(n);
+        ctx.links.xsect_geom2.resize(n);
+        ctx.links.xsect_geom3.resize(n);
+        ctx.links.xsect_geom4.resize(n);
+        ctx.links.xsect_curve.resize(n, -1);
+        ctx.links.has_flap_gate.resize(n);
+        ctx.links.pump_curve_name.resize(n);
+        ctx.spatial.link_vertices_x.resize(n);
+        ctx.spatial.link_vertices_y.resize(n);
+        ctx.spatial.link_x.resize(n);
+        ctx.spatial.link_y.resize(n);
         const int row = ctx.link_subtypes.set_link_type(ctx.links, idx, t);
-        ctx.links.node1[idx] = n1; ctx.links.node2[idx] = n2;
+        ctx.links.node1[idx] = n1;
+        ctx.links.node2[idx] = n2;
         return std::make_pair(idx, static_cast<std::size_t>(row));
     };
 
-    auto [pi, pr]  = add_link("PMP", LinkType::PUMP, 0, 1);
+    auto [pi, pr] = add_link("PMP", LinkType::PUMP, 0, 1);
     ctx.links.pump_curve_name[pi] = "PumpCurve";
-    { auto& P = ctx.link_subtypes.pumps;
-      P.init_state[pr] = 1; P.startup[pr] = 2.5; P.shutoff[pr] = 1.5; }
+    {
+        auto& P = ctx.link_subtypes.pumps;
+        P.init_state[pr] = 1;
+        P.startup[pr] = 2.5;
+        P.shutoff[pr] = 1.5;
+    }
 
     auto [oi, orr] = add_link("ORF", LinkType::ORIFICE, 1, 2);
-    { auto& O = ctx.link_subtypes.orifices;
-      O.orifice_type[orr] = 1.0;  // SIDE
-      O.cd[orr] = 0.65; O.orate[orr] = 3600.0; }
+    {
+        auto& O = ctx.link_subtypes.orifices;
+        O.orifice_type[orr] = 1.0; // SIDE
+        O.cd[orr] = 0.65;
+        O.orate[orr] = 3600.0;
+    }
 
-    auto [wi, wr]  = add_link("WER", LinkType::WEIR, 2, 3);
-    { auto& W = ctx.link_subtypes.weirs;
-      W.weir_type[wr] = 3.0;  // TRAPEZOIDAL
-      W.cd[wr] = 3.33; W.crest_height[wr] = 1.25; W.end_contractions[wr] = 2.0; }
+    auto [wi, wr] = add_link("WER", LinkType::WEIR, 2, 3);
+    {
+        auto& W = ctx.link_subtypes.weirs;
+        W.weir_type[wr] = 3.0; // TRAPEZOIDAL
+        W.cd[wr] = 3.33;
+        W.crest_height[wr] = 1.25;
+        W.end_contractions[wr] = 2.0;
+    }
 
-    auto [fi, fr]  = add_link("OLF", LinkType::OUTLET, 3, 4);
-    { auto& U = ctx.link_subtypes.outlets;
-      U.outlet_type[fr] = 0.0;  // FUNCTIONAL/HEAD
-      U.coeff[fr] = 2.5; U.expon[fr] = 0.6; U.crest_height[fr] = 0.75; }
+    auto [fi, fr] = add_link("OLF", LinkType::OUTLET, 3, 4);
+    {
+        auto& U = ctx.link_subtypes.outlets;
+        U.outlet_type[fr] = 0.0; // FUNCTIONAL/HEAD
+        U.coeff[fr] = 2.5;
+        U.expon[fr] = 0.6;
+        U.crest_height[fr] = 0.75;
+    }
 
-    auto [ti, tr]  = add_link("OLT", LinkType::OUTLET, 4, 5);
-    ctx.links.pump_curve_name[ti] = "RatingCurve";  // TABULAR rating-curve NAME
-    { auto& U = ctx.link_subtypes.outlets;
-      U.outlet_type[tr] = 3.0;  // TABULAR/DEPTH
-      U.crest_height[tr] = 0.5; }
+    auto [ti, tr] = add_link("OLT", LinkType::OUTLET, 4, 5);
+    ctx.links.pump_curve_name[ti] = "RatingCurve"; // TABULAR rating-curve NAME
+    {
+        auto& U = ctx.link_subtypes.outlets;
+        U.outlet_type[tr] = 3.0; // TABULAR/DEPTH
+        U.crest_height[tr] = 0.5;
+    }
 
     ASSERT_EQ(write_to_file(db_path_, ctx, "r"), 0);
     SimulationContext in{};
@@ -809,14 +1168,14 @@ TEST_F(GeoPackageTest, LinkSubtypeChildTablesRoundTrip) {
     const int iorf = in.link_names.find("ORF");
     ASSERT_GE(in.link_subtypes.orifice_row(iorf), 0);
     const auto uor = static_cast<std::size_t>(in.link_subtypes.orifice_row(iorf));
-    EXPECT_DOUBLE_EQ(in.link_subtypes.orifices.orifice_type[uor], 1.0);  // SIDE round-trips
+    EXPECT_DOUBLE_EQ(in.link_subtypes.orifices.orifice_type[uor], 1.0); // SIDE round-trips
     EXPECT_DOUBLE_EQ(in.link_subtypes.orifices.cd[uor], 0.65);
     EXPECT_DOUBLE_EQ(in.link_subtypes.orifices.orate[uor], 3600.0);
 
     const int iwer = in.link_names.find("WER");
     ASSERT_GE(in.link_subtypes.weir_row(iwer), 0);
     const auto uwr = static_cast<std::size_t>(in.link_subtypes.weir_row(iwer));
-    EXPECT_DOUBLE_EQ(in.link_subtypes.weirs.weir_type[uwr], 3.0);  // TRAPEZOIDAL round-trips
+    EXPECT_DOUBLE_EQ(in.link_subtypes.weirs.weir_type[uwr], 3.0); // TRAPEZOIDAL round-trips
     EXPECT_DOUBLE_EQ(in.link_subtypes.weirs.cd[uwr], 3.33);
     EXPECT_DOUBLE_EQ(in.link_subtypes.weirs.crest_height[uwr], 1.25);
     EXPECT_DOUBLE_EQ(in.link_subtypes.weirs.end_contractions[uwr], 2.0);
@@ -824,7 +1183,7 @@ TEST_F(GeoPackageTest, LinkSubtypeChildTablesRoundTrip) {
     const int iolf = in.link_names.find("OLF");
     ASSERT_GE(in.link_subtypes.outlet_row(iolf), 0);
     const auto ufr = static_cast<std::size_t>(in.link_subtypes.outlet_row(iolf));
-    EXPECT_DOUBLE_EQ(in.link_subtypes.outlets.outlet_type[ufr], 0.0);  // FUNCTIONAL/HEAD
+    EXPECT_DOUBLE_EQ(in.link_subtypes.outlets.outlet_type[ufr], 0.0); // FUNCTIONAL/HEAD
     EXPECT_DOUBLE_EQ(in.link_subtypes.outlets.coeff[ufr], 2.5);
     EXPECT_DOUBLE_EQ(in.link_subtypes.outlets.expon[ufr], 0.6);
     EXPECT_DOUBLE_EQ(in.link_subtypes.outlets.crest_height[ufr], 0.75);
@@ -832,8 +1191,8 @@ TEST_F(GeoPackageTest, LinkSubtypeChildTablesRoundTrip) {
     const int iolt = in.link_names.find("OLT");
     ASSERT_GE(in.link_subtypes.outlet_row(iolt), 0);
     const auto utr = static_cast<std::size_t>(in.link_subtypes.outlet_row(iolt));
-    EXPECT_DOUBLE_EQ(in.link_subtypes.outlets.outlet_type[utr], 3.0);  // TABULAR/DEPTH
-    EXPECT_EQ(in.links.pump_curve_name[iolt], "RatingCurve");  // rating-curve NAME round-trips
+    EXPECT_DOUBLE_EQ(in.link_subtypes.outlets.outlet_type[utr], 3.0); // TABULAR/DEPTH
+    EXPECT_EQ(in.links.pump_curve_name[iolt], "RatingCurve"); // rating-curve NAME round-trips
 }
 
 TEST_F(GeoPackageTest, CoordinatesRoundTrip) {
@@ -904,12 +1263,10 @@ TEST_F(GeoPackageTest, VerticesFollowNodeToNodeOrder) {
 
     // Store C2 geometry in reverse direction: node2 -> interior -> node1.
     auto db = open_database(db_path_);
-    auto rev_geom = encode_linestring(
-        std::vector<double>{3000.0, 2500.0, 2000.0},
-        std::vector<double>{5000.0, 5100.0, 5000.0},
-        4326);
-    auto upd = prepare(db.get(),
-        "UPDATE links SET geom = ? WHERE simulation_id = ? AND link_id = ?");
+    auto rev_geom = encode_linestring(std::vector<double>{3000.0, 2500.0, 2000.0},
+                                      std::vector<double>{5000.0, 5100.0, 5000.0}, 4326);
+    auto upd =
+        prepare(db.get(), "UPDATE links SET geom = ? WHERE simulation_id = ? AND link_id = ?");
     bind_blob(upd.get(), 1, rev_geom.data(), static_cast<int>(rev_geom.size()));
     bind_text(upd.get(), 2, "test_run");
     bind_text(upd.get(), 3, "C2");
@@ -1007,8 +1364,9 @@ TEST_F(GeoPackageTest, PolygonBuffersAreRebuiltOnRead) {
     // Remove S2 geometry from DB so reader should leave an empty polygon,
     // not stale values from a prior context state.
     auto db = open_database(db_path_);
-    auto upd = prepare(db.get(),
-        "UPDATE subcatchments SET geom = NULL WHERE simulation_id = ? AND subcatch_id = ?");
+    auto upd =
+        prepare(db.get(),
+                "UPDATE subcatchments SET geom = NULL WHERE simulation_id = ? AND subcatch_id = ?");
     bind_text(upd.get(), 1, "test_run");
     bind_text(upd.get(), 2, "S2");
     ASSERT_EQ(sqlite3_step(upd.get()), SQLITE_DONE);
@@ -1116,21 +1474,21 @@ TEST_F(GeoPackageTest, QualityTablesRoundTrip) {
     ASSERT_EQ(np, 1);
     ASSERT_EQ(ctx_in.buildup.n_landuses, 2);
     ASSERT_EQ(ctx_in.buildup.n_pollutants, 1);
-    EXPECT_EQ(ctx_in.buildup.func_type[res * np + 0], 1);      // POW
+    EXPECT_EQ(ctx_in.buildup.func_type[res * np + 0], 1); // POW
     EXPECT_DOUBLE_EQ(ctx_in.buildup.coeff1[res * np + 0], 100.0);
     EXPECT_DOUBLE_EQ(ctx_in.buildup.coeff2[res * np + 0], 2.0);
     EXPECT_DOUBLE_EQ(ctx_in.buildup.coeff3[res * np + 0], 1.5);
     EXPECT_EQ(ctx_in.buildup.normalizer[res * np + 0], 0);
-    EXPECT_EQ(ctx_in.buildup.func_type[com * np + 0], 3);      // SAT
+    EXPECT_EQ(ctx_in.buildup.func_type[com * np + 0], 3); // SAT
     EXPECT_EQ(ctx_in.buildup.normalizer[com * np + 0], 1);
 
     ASSERT_EQ(ctx_in.washoff.n_landuses, 2);
-    EXPECT_EQ(ctx_in.washoff.func_type[res * np + 0], 1);      // EXP
+    EXPECT_EQ(ctx_in.washoff.func_type[res * np + 0], 1); // EXP
     EXPECT_DOUBLE_EQ(ctx_in.washoff.coeff[res * np + 0], 0.1);
     EXPECT_DOUBLE_EQ(ctx_in.washoff.expon[res * np + 0], 1.2);
     EXPECT_DOUBLE_EQ(ctx_in.washoff.sweep_effic[res * np + 0], 30.0);
     EXPECT_DOUBLE_EQ(ctx_in.washoff.bmp_effic[res * np + 0], 15.0);
-    EXPECT_EQ(ctx_in.washoff.func_type[com * np + 0], 0);      // NONE
+    EXPECT_EQ(ctx_in.washoff.func_type[com * np + 0], 0); // NONE
 
     const int s1 = ctx_in.subcatch_names.find("S1");
     const int s2 = ctx_in.subcatch_names.find("S2");
@@ -1145,8 +1503,8 @@ TEST_F(GeoPackageTest, QualityTablesRoundTrip) {
     EXPECT_DOUBLE_EQ(ctx_in.subcatches.sweep_last_swept[s1 * nLu + res], 1.0);
 
     ASSERT_EQ(ctx_in.subcatches.conc_n_pollutants, 1);
-    EXPECT_DOUBLE_EQ(ctx_in.subcatches.conc[s1 * np + 0], 1.5);
-    EXPECT_DOUBLE_EQ(ctx_in.subcatches.conc[s2 * np + 0], 2.25);
+    EXPECT_DOUBLE_EQ(ctx_in.subcatches.init_loading[s1 * np + 0], 1.5);
+    EXPECT_DOUBLE_EQ(ctx_in.subcatches.init_loading[s2 * np + 0], 2.25);
 }
 
 TEST_F(GeoPackageTest, PatternsRoundTrip) {
@@ -1159,7 +1517,10 @@ TEST_F(GeoPackageTest, PatternsRoundTrip) {
     // Find pattern by name (PatternData.names is a plain vector)
     int pat = -1;
     for (int k = 0; k < static_cast<int>(ctx_in.patterns.names.size()); ++k) {
-        if (ctx_in.patterns.names[k] == "DWF_Pattern") { pat = k; break; }
+        if (ctx_in.patterns.names[k] == "DWF_Pattern") {
+            pat = k;
+            break;
+        }
     }
     ASSERT_GE(pat, 0);
     EXPECT_EQ(ctx_in.patterns.types[pat], 0); // MONTHLY
@@ -1202,19 +1563,20 @@ TEST_F(GeoPackageTest, TopologyTablesPopulated) {
     auto db = open_database(db_path_, SQLITE_OPEN_READONLY);
 
     // Check node_links
-    auto stmt = prepare(db.get(),
-        "SELECT count(*) FROM node_links WHERE simulation_id = 'test_run'");
+    auto stmt =
+        prepare(db.get(), "SELECT count(*) FROM node_links WHERE simulation_id = 'test_run'");
     ASSERT_EQ(sqlite3_step(stmt.get()), SQLITE_ROW);
     EXPECT_EQ(column_int(stmt.get(), 0), 3); // 3 conduits
 
     // Check subcatch_routing
-    auto stmt2 = prepare(db.get(),
-        "SELECT count(*) FROM subcatch_routing WHERE simulation_id = 'test_run'");
+    auto stmt2 =
+        prepare(db.get(), "SELECT count(*) FROM subcatch_routing WHERE simulation_id = 'test_run'");
     ASSERT_EQ(sqlite3_step(stmt2.get()), SQLITE_ROW);
     EXPECT_EQ(column_int(stmt2.get(), 0), 2); // 2 subcatchments
 
     // Verify upstream trace works
-    auto stmt3 = prepare(db.get(),
+    auto stmt3 = prepare(
+        db.get(),
         "SELECT from_node FROM node_links WHERE simulation_id = 'test_run' AND to_node = 'J2'");
     ASSERT_EQ(sqlite3_step(stmt3.get()), SQLITE_ROW);
     EXPECT_EQ(column_text(stmt3.get(), 0), "J1");
@@ -1237,8 +1599,7 @@ TEST_F(GeoPackageTest, MultipleSimulationRuns) {
 
     // Verify both coexist
     auto db = open_database(db_path_, SQLITE_OPEN_READONLY);
-    auto stmt = prepare(db.get(),
-        "SELECT count(DISTINCT simulation_id) FROM nodes");
+    auto stmt = prepare(db.get(), "SELECT count(DISTINCT simulation_id) FROM nodes");
     ASSERT_EQ(sqlite3_step(stmt.get()), SQLITE_ROW);
     EXPECT_EQ(column_int(stmt.get(), 0), 2);
 
@@ -1264,23 +1625,26 @@ TEST_F(GeoPackageTest, FeatureTablesRegistered) {
     auto db = open_database(db_path_, SQLITE_OPEN_READONLY);
 
     // Check gpkg_contents
-    auto stmt = prepare(db.get(),
-        "SELECT count(*) FROM gpkg_contents WHERE data_type = 'features'");
+    auto stmt =
+        prepare(db.get(), "SELECT count(*) FROM gpkg_contents WHERE data_type = 'features'");
     ASSERT_EQ(sqlite3_step(stmt.get()), SQLITE_ROW);
     EXPECT_EQ(column_int(stmt.get(), 0), 4); // nodes, links, subcatchments, rain_gages
 
     // Check gpkg_geometry_columns
-    auto stmt2 = prepare(db.get(),
-        "SELECT geometry_type_name FROM gpkg_geometry_columns WHERE table_name = 'nodes'");
+    auto stmt2 =
+        prepare(db.get(),
+                "SELECT geometry_type_name FROM gpkg_geometry_columns WHERE table_name = 'nodes'");
     ASSERT_EQ(sqlite3_step(stmt2.get()), SQLITE_ROW);
     EXPECT_EQ(column_text(stmt2.get(), 0), "POINT");
 
-    auto stmt3 = prepare(db.get(),
-        "SELECT geometry_type_name FROM gpkg_geometry_columns WHERE table_name = 'links'");
+    auto stmt3 =
+        prepare(db.get(),
+                "SELECT geometry_type_name FROM gpkg_geometry_columns WHERE table_name = 'links'");
     ASSERT_EQ(sqlite3_step(stmt3.get()), SQLITE_ROW);
     EXPECT_EQ(column_text(stmt3.get(), 0), "LINESTRING");
 
-    auto stmt4 = prepare(db.get(),
+    auto stmt4 = prepare(
+        db.get(),
         "SELECT geometry_type_name FROM gpkg_geometry_columns WHERE table_name = 'subcatchments'");
     ASSERT_EQ(sqlite3_step(stmt4.get()), SQLITE_ROW);
     EXPECT_EQ(column_text(stmt4.get(), 0), "MULTIPOLYGON");
@@ -1299,7 +1663,7 @@ TEST(GeoPackagePluginInfoTest, Metadata) {
     EXPECT_EQ(info.version(), "1.0.0");
     EXPECT_EQ(info.vendor(), "HydroCouple");
     EXPECT_FALSE(info.url().empty());
-    EXPECT_EQ(info.license_type(), "MIT");
+    EXPECT_EQ(info.license_type(), "Apache-2.0");
     EXPECT_FALSE(info.license_text().empty());
     EXPECT_TRUE(info.has_input());
     EXPECT_TRUE(info.has_output());
@@ -1372,6 +1736,13 @@ TEST(GeoPackagePluginInfoTest, FactoryCreatesReportPlugin) {
 // is still emitted into the openswmm_geopackage STATIC archive that this
 // test links, so a local forward declaration is sufficient to call it from
 // the test executable without re-exporting it for third-party consumers.
+/**
+ * @brief Borrow the hidden GeoPackage compatibility-factory metadata singleton.
+ *
+ * This local declaration permits the statically linked test to call the hidden symbol; supported
+ * engine discovery uses the registered built-in factory. No new component is allocated.
+ * @return Non-owning IPluginComponentInfo pointer to the GeoPackage singleton; never delete.
+ */
 extern "C" openswmm::IPluginComponentInfo* openswmm_plugin_info(void);
 
 TEST(GeoPackagePluginInfoTest, CExportFunction) {
@@ -1392,6 +1763,13 @@ class GeoPackageCApiTest : public ::testing::Test {
 protected:
     std::string db_path_;
 
+    /**
+     * @brief Create the fixed temporary C API GeoPackage fixture using the C++ writer.
+     *
+     * Selects temp_directory_path()/test_capi.gpkg, ignores prior-file removal status, builds the
+     * minimal context and calls write_to_file with run_1. Writer/filesystem exceptions propagate; the
+     * fixed name assumes exclusive test-process use. Does not preinsert simulation result rows.
+     */
     void SetUp() override {
         db_path_ = (fs::temp_directory_path() / "test_capi.gpkg").string();
         std::remove(db_path_.c_str());
@@ -1400,11 +1778,24 @@ protected:
         write_to_file(db_path_, ctx, "run_1");
     }
 
-    void TearDown() override {
-        std::remove(db_path_.c_str());
-    }
+    /**
+     * @brief Remove the C API fixture database after its case.
+     *
+     * Ignores removal status; database/read handles must be released by their owning scopes before
+     * cleanup. Does not clean arbitrary auxiliary files.
+     */
+    void TearDown() override { std::remove(db_path_.c_str()); }
 
     // Minimal context with results pre-inserted for read tests
+    /**
+     * @brief Build the minimal two-junction/one-conduit C API readback context.
+     *
+     * Despite older ordinary comments, this builder creates neither an outfall nor result rows.
+     * Intended for persistence/read API tests, with only the explicit model fields populated; does not
+     * run the engine.
+     * @return Owned uninitialized context with numeric flow-unit code 1, EPSG:4326 metadata, J1/J2
+     *     coordinates and one 400 ft circular conduit.
+     */
     SimulationContext build_test_context_for_capi() {
         SimulationContext ctx{};
         ctx.options.flow_units = static_cast<FlowUnits>(1);
@@ -1501,12 +1892,12 @@ TEST_F(GeoPackageCApiTest, TransactionCommit) {
 
     EXPECT_EQ(swmm_gpkg_begin(gpkg), SWMM_GPKG_OK);
 
-    int sid = swmm_gpkg_create_observed_series(
-        gpkg, "test_series_txn", "depth", "NODE", "J1", "Test", "m");
+    int sid = swmm_gpkg_create_observed_series(gpkg, "test_series_txn", "depth", "NODE", "J1",
+                                               "Test", "m");
     EXPECT_GE(sid, 0);
 
-    EXPECT_EQ(swmm_gpkg_write_observed_value(
-        gpkg, sid, "2026-01-01T00:00:00Z", 1.0, "A"), SWMM_GPKG_OK);
+    EXPECT_EQ(swmm_gpkg_write_observed_value(gpkg, sid, "2026-01-01T00:00:00Z", 1.0, "A"),
+              SWMM_GPKG_OK);
 
     EXPECT_EQ(swmm_gpkg_commit(gpkg), SWMM_GPKG_OK);
 
@@ -1520,13 +1911,13 @@ TEST_F(GeoPackageCApiTest, TransactionRollback) {
     SWMM_Gpkg gpkg = swmm_gpkg_open(db_path_.c_str());
     ASSERT_NE(gpkg, nullptr);
 
-    int sid = swmm_gpkg_create_observed_series(
-        gpkg, "test_series_rb", "depth", "NODE", "J1", "Test", "m");
+    int sid = swmm_gpkg_create_observed_series(gpkg, "test_series_rb", "depth", "NODE", "J1",
+                                               "Test", "m");
     EXPECT_GE(sid, 0);
 
     EXPECT_EQ(swmm_gpkg_begin(gpkg), SWMM_GPKG_OK);
-    EXPECT_EQ(swmm_gpkg_write_observed_value(
-        gpkg, sid, "2026-01-01T00:00:00Z", 99.0, nullptr), SWMM_GPKG_OK);
+    EXPECT_EQ(swmm_gpkg_write_observed_value(gpkg, sid, "2026-01-01T00:00:00Z", 99.0, nullptr),
+              SWMM_GPKG_OK);
     EXPECT_EQ(swmm_gpkg_rollback(gpkg), SWMM_GPKG_OK);
 
     // Should have 0 values after rollback
@@ -1539,18 +1930,14 @@ TEST_F(GeoPackageCApiTest, BulkWriteObservedValues) {
     SWMM_Gpkg gpkg = swmm_gpkg_open(db_path_.c_str());
     ASSERT_NE(gpkg, nullptr);
 
-    int sid = swmm_gpkg_create_observed_series(
-        gpkg, "bulk_flow", "flow", "LINK", "C1", "Sensor", "CMS");
+    int sid =
+        swmm_gpkg_create_observed_series(gpkg, "bulk_flow", "flow", "LINK", "C1", "Sensor", "CMS");
     EXPECT_GE(sid, 0);
 
     // Prepare vectors
-    const char* timestamps[] = {
-        "2026-01-15T08:00:00Z",
-        "2026-01-15T09:00:00Z",
-        "2026-01-15T10:00:00Z",
-        "2026-01-15T11:00:00Z",
-        "2026-01-15T12:00:00Z"
-    };
+    const char* timestamps[] = {"2026-01-15T08:00:00Z", "2026-01-15T09:00:00Z",
+                                "2026-01-15T10:00:00Z", "2026-01-15T11:00:00Z",
+                                "2026-01-15T12:00:00Z"};
     double values[] = {1.5, 2.3, 1.8, 3.1, 2.7};
     const char* flags[] = {"A", "A", "P", "A", "E"};
 
@@ -1569,8 +1956,8 @@ TEST_F(GeoPackageCApiTest, BulkWriteNullFlags) {
     SWMM_Gpkg gpkg = swmm_gpkg_open(db_path_.c_str());
     ASSERT_NE(gpkg, nullptr);
 
-    int sid = swmm_gpkg_create_observed_series(
-        gpkg, "noflag_series", "depth", "NODE", "J1", "Sensor", "m");
+    int sid = swmm_gpkg_create_observed_series(gpkg, "noflag_series", "depth", "NODE", "J1",
+                                               "Sensor", "m");
     EXPECT_GE(sid, 0);
 
     const char* timestamps[] = {"2026-01-01T00:00:00Z", "2026-01-01T01:00:00Z"};
@@ -1591,15 +1978,12 @@ TEST_F(GeoPackageCApiTest, BulkReadObservedValues) {
     ASSERT_NE(gpkg, nullptr);
 
     // Write some data
-    int sid = swmm_gpkg_create_observed_series(
-        gpkg, "read_test", "flow", "LINK", "C1", "Gauge", "CMS");
+    int sid =
+        swmm_gpkg_create_observed_series(gpkg, "read_test", "flow", "LINK", "C1", "Gauge", "CMS");
     EXPECT_GE(sid, 0);
 
-    const char* timestamps[] = {
-        "2026-03-01T00:00:00Z",
-        "2026-03-01T01:00:00Z",
-        "2026-03-01T02:00:00Z"
-    };
+    const char* timestamps[] = {"2026-03-01T00:00:00Z", "2026-03-01T01:00:00Z",
+                                "2026-03-01T02:00:00Z"};
     double write_vals[] = {10.0, 20.0, 30.0};
 
     swmm_gpkg_begin(gpkg);
@@ -1608,7 +1992,7 @@ TEST_F(GeoPackageCApiTest, BulkReadObservedValues) {
 
     // Bulk read back
     double read_vals[3] = {};
-    char ts_buf[3 * 32] = {};  // 3 timestamps, 32 chars each
+    char ts_buf[3 * 32] = {}; // 3 timestamps, 32 chars each
     int n = swmm_gpkg_read_observed_values(gpkg, sid, ts_buf, 32, read_vals, 3);
     EXPECT_EQ(n, 3);
     EXPECT_DOUBLE_EQ(read_vals[0], 10.0);
@@ -1632,16 +2016,19 @@ TEST_F(GeoPackageCApiTest, ReadResultTimeseries) {
     {
         auto db = open_database(db_path_);
         // Create a simulation entry
-        exec(db.get(),
+        exec(
+            db.get(),
             "INSERT OR REPLACE INTO simulations (simulation_id, name, created_at, engine_version, status) "
             "VALUES ('run_1', 'test', '2026-01-01', '6.0.0', 'completed')");
         // Insert result rows
-        auto var_stmt = prepare(db.get(),
+        auto var_stmt = prepare(
+            db.get(),
             "SELECT variable_id FROM variables WHERE name = 'depth' AND object_type = 'NODE'");
         ASSERT_EQ(sqlite3_step(var_stmt.get()), SQLITE_ROW);
         int vid = column_int(var_stmt.get(), 0);
 
-        auto ins = prepare(db.get(),
+        auto ins = prepare(
+            db.get(),
             "INSERT INTO result_timeseries (simulation_id, object_type, object_id, variable_id, elapsed_time, value) "
             "VALUES ('run_1', 'NODE', 'J1', ?, ?, ?)");
         double test_times[] = {0.0, 60.0, 120.0, 180.0};
@@ -1667,8 +2054,7 @@ TEST_F(GeoPackageCApiTest, ReadResultTimeseries) {
     // Bulk read
     double times[10] = {};
     double values[10] = {};
-    int n = swmm_gpkg_read_result_ts(gpkg, "run_1", "NODE", "J1", "depth",
-                                      times, values, 10);
+    int n = swmm_gpkg_read_result_ts(gpkg, "run_1", "NODE", "J1", "depth", times, values, 10);
     EXPECT_EQ(n, 4);
     EXPECT_DOUBLE_EQ(times[0], 0.0);
     EXPECT_DOUBLE_EQ(times[2], 120.0);
@@ -1682,18 +2068,19 @@ TEST_F(GeoPackageCApiTest, ReadSummary) {
     // Insert a summary value via C++ API
     {
         auto db = open_database(db_path_);
-        exec(db.get(),
+        exec(
+            db.get(),
             "INSERT OR REPLACE INTO simulations (simulation_id, name, created_at, engine_version, status) "
             "VALUES ('run_1', 'test', '2026-01-01', '6.0.0', 'completed')");
-        auto var_stmt = prepare(db.get(),
+        auto var_stmt = prepare(
+            db.get(),
             "SELECT variable_id FROM variables WHERE name = 'max_depth' AND object_type = 'NODE'");
         ASSERT_EQ(sqlite3_step(var_stmt.get()), SQLITE_ROW);
         int vid = column_int(var_stmt.get(), 0);
 
-        auto ins = prepare(db.get(),
-            "INSERT OR REPLACE INTO result_summary "
-            "(simulation_id, object_type, object_id, variable_id, value) "
-            "VALUES ('run_1', 'NODE', 'J1', ?, 3.14)");
+        auto ins = prepare(db.get(), "INSERT OR REPLACE INTO result_summary "
+                                     "(simulation_id, object_type, object_id, variable_id, value) "
+                                     "VALUES ('run_1', 'NODE', 'J1', ?, 3.14)");
         bind_int(ins.get(), 1, vid);
         sqlite3_step(ins.get());
     }
@@ -1702,8 +2089,7 @@ TEST_F(GeoPackageCApiTest, ReadSummary) {
     ASSERT_NE(gpkg, nullptr);
 
     double val = 0.0;
-    EXPECT_EQ(swmm_gpkg_read_summary(gpkg, "run_1", "NODE", "J1", "max_depth", &val),
-              SWMM_GPKG_OK);
+    EXPECT_EQ(swmm_gpkg_read_summary(gpkg, "run_1", "NODE", "J1", "max_depth", &val), SWMM_GPKG_OK);
     EXPECT_DOUBLE_EQ(val, 3.14);
 
     // Non-existent variable
@@ -1721,9 +2107,324 @@ TEST_F(GeoPackageCApiTest, QueryHelpers) {
     int vars = swmm_gpkg_variable_count(gpkg);
     EXPECT_GE(vars, 20);
 
-    int nodes = swmm_gpkg_query_int(gpkg,
-        "SELECT count(*) FROM nodes WHERE simulation_id = 'run_1'");
+    int nodes =
+        swmm_gpkg_query_int(gpkg, "SELECT count(*) FROM nodes WHERE simulation_id = 'run_1'");
     EXPECT_EQ(nodes, 2);
 
     swmm_gpkg_close(gpkg);
+}
+
+// ============================================================================
+// Species variables — quality results reaching the GeoPackage
+//
+// `populate_default_variables()` carries a FIXED list of hydraulic variables.
+// Species names are model-dependent and so cannot live there, and nothing
+// registered them: every `lookup_variable(species_name, ...)` in update()
+// returned −1 and every species row was dropped on the floor. Not just water
+// age — POLLUTANTS TOO. A user reading a .gpkg saw a complete hydraulic
+// record and no quality at all, with no error anywhere.
+//
+// Observation paths (each falsifiable on its own):
+//  - SpeciesAreRegisteredAsVariables: the registration itself, per object
+//    type, with the age row's units read back (the .out cannot express HOURS;
+//    the GeoPackage's free-text units column can, so it must).
+//  - SpeciesRowsReachResultTimeseries: the DEFECT gate — a species value put
+//    into a snapshot must come back out of result_timeseries. Reads through
+//    the join a consumer would use, not through the plugin's own cache.
+//  - IgnoreQualityRegistersNoSpecies: the bypass leg.
+//  - SpeciesCollidingWithHydraulicVariableFailsPrepare: the trap. `variables`
+//    is UNIQUE(name, object_type), so a pollutant named "depth" would resolve
+//    to the HYDRAULIC depth variable and write concentrations into its
+//    series. The gate asserts the failure AND that the hydraulic row is
+//    untouched.
+// ============================================================================
+
+namespace {
+
+/// One `variables` row, or `found == false`.
+struct SpeciesVarRow {
+    bool found = false;
+    std::string category;
+    std::string units;
+};
+
+/**
+ * @brief Query variable category/units for a bound species/object-type pair.
+ *
+ * Owns local connection/statement lifetimes. Helper database/prepare/bind exceptions propagate;
+ * sqlite3_step errors are treated like no row and have no separate status. Does not modify
+ * model/result tables.
+ *
+ * @param[in] path Database path opened through the fixture database helper.
+ * @param[in] name Variable name bound as SQL parameter 1.
+ * @param[in] obj_type Object type bound as SQL parameter 2.
+ * @return Owned first matching category/units with found=true, otherwise default found=false.
+ */
+SpeciesVarRow query_species_variable(const std::string& path, const std::string& name,
+                                     const std::string& obj_type) {
+    SpeciesVarRow row;
+    auto db = open_database(path);
+    auto stmt = prepare(db.get(),
+                        "SELECT category, units FROM variables WHERE name = ? AND object_type = ?");
+    bind_text(stmt.get(), 1, name);
+    bind_text(stmt.get(), 2, obj_type);
+    if (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+        row.found = true;
+        row.category = column_text(stmt.get(), 0);
+        row.units = column_text(stmt.get(), 1);
+    }
+    return row;
+}
+
+/**
+ * @brief Count rows labelled QUALITY in the persisted variables table.
+ *
+ * Owns local connection/statement; database/prepare errors can propagate. Query errors are not
+ * separately distinguished from the sentinel; no table mutation occurs.
+ *
+ * @param[in] path Database path containing the variables table, opened through fixture helpers.
+ * @return Count from the first SQL row, or -1 when sqlite3_step does not return a row.
+ */
+int count_quality_variables(const std::string& path) {
+    auto db = open_database(path);
+    auto stmt = prepare(db.get(), "SELECT count(*) FROM variables WHERE category = 'QUALITY'");
+    return sqlite3_step(stmt.get()) == SQLITE_ROW ? column_int(stmt.get(), 0) : -1;
+}
+
+} // namespace
+
+TEST_F(GeoPackageTest, SpeciesAreRegisteredAsVariables) {
+    SimulationContext ctx = build_test_context();
+    // What SWMMEngine::open() builds: pollutants, then the reserved age row.
+    ctx.reported_species_names = {"TSS", "__WATER_AGE__"};
+
+    GeoPackageOutputPlugin plugin;
+    ASSERT_EQ(plugin.initialize({db_path_, "run_species"}, nullptr), 0);
+    ASSERT_EQ(plugin.validate(ctx), 0);
+    ASSERT_EQ(plugin.prepare(ctx), 0);
+    ASSERT_EQ(plugin.finalize(ctx), 0);
+
+    // 2 species x 3 object types. Asserted as a COUNT first so a partial
+    // registration reads as "3 of 6" rather than as a confusing miss below.
+    EXPECT_EQ(count_quality_variables(db_path_), 6);
+
+    for (const char* obj : {"NODE", "LINK", "SUBCATCH"}) {
+        auto tss = query_species_variable(db_path_, "TSS", obj);
+        EXPECT_TRUE(tss.found) << "TSS unregistered for " << obj << " — every " << obj
+                               << " TSS row will be dropped";
+        EXPECT_EQ(tss.category, "QUALITY");
+        EXPECT_EQ(tss.units, "mg/L");
+
+        auto age = query_species_variable(db_path_, "__WATER_AGE__", obj);
+        EXPECT_TRUE(age.found) << "water age unregistered for " << obj;
+        // The units razor. The binary .out has no HOURS slot in its 3-value
+        // concentration enum, which is why the NAME carries the meaning
+        // there. Here the column is free text, so hours can simply be said.
+        EXPECT_EQ(age.units, "hours") << "the age variable reports '" << age.units
+                                      << "' — a consumer would read hours as a concentration";
+    }
+}
+
+TEST_F(GeoPackageTest, SpeciesRowsReachResultTimeseries) {
+    SimulationContext ctx = build_test_context();
+    ctx.reported_species_names = {"TSS", "__WATER_AGE__"};
+
+    GeoPackageOutputPlugin plugin;
+    ASSERT_EQ(plugin.initialize({db_path_, "run_species"}, nullptr), 0);
+    ASSERT_EQ(plugin.validate(ctx), 0);
+    ASSERT_EQ(plugin.prepare(ctx), 0);
+
+    // A snapshot carrying ONLY quality: update()'s hydraulic writes are each
+    // size-guarded, so leaving those vectors empty keeps the gate pointed at
+    // the species path alone.
+    const int nN = ctx.node_names.size();
+    ASSERT_GT(nN, 0);
+    const std::vector<std::string>& node_ids = ctx.node_names.names();
+
+    SimulationSnapshot snap{};
+    snap.sim_time = 60.0;
+    snap.node_count = nN;
+    snap.pollut_count = 2; // the REPORTED stride
+    snap.node_ids = &node_ids;
+    snap.pollut_names = &ctx.reported_species_names;
+    snap.node_quality.assign(static_cast<std::size_t>(nN) * 2, 0.0);
+    snap.node_quality[0] = 42.0; // node 0, TSS
+    snap.node_quality[1] = 2.5;  // node 0, age (hours)
+
+    ASSERT_EQ(plugin.update(snap), 0);
+    ASSERT_EQ(plugin.finalize(ctx), 0);
+
+    // Read back the way a consumer does: join result_timeseries to variables
+    // BY NAME. Before species were registered this query returned no rows.
+    auto db = open_database(db_path_);
+    auto stmt =
+        prepare(db.get(), "SELECT rt.value FROM result_timeseries rt "
+                          "JOIN variables v ON v.variable_id = rt.variable_id "
+                          "WHERE v.name = ? AND v.object_type = 'NODE' AND rt.object_id = ?");
+    bind_text(stmt.get(), 1, std::string("TSS"));
+    bind_text(stmt.get(), 2, node_ids[0]);
+    ASSERT_EQ(sqlite3_step(stmt.get()), SQLITE_ROW)
+        << "no TSS row for " << node_ids[0]
+        << " — the species timeseries never reached the GeoPackage";
+    EXPECT_DOUBLE_EQ(sqlite3_column_double(stmt.get(), 0), 42.0);
+
+    auto stmt2 =
+        prepare(db.get(), "SELECT rt.value FROM result_timeseries rt "
+                          "JOIN variables v ON v.variable_id = rt.variable_id "
+                          "WHERE v.name = ? AND v.object_type = 'NODE' AND rt.object_id = ?");
+    bind_text(stmt2.get(), 1, std::string("__WATER_AGE__"));
+    bind_text(stmt2.get(), 2, node_ids[0]);
+    ASSERT_EQ(sqlite3_step(stmt2.get()), SQLITE_ROW) << "no water-age row";
+    EXPECT_DOUBLE_EQ(sqlite3_column_double(stmt2.get(), 0), 2.5);
+}
+
+TEST_F(GeoPackageTest, IgnoreQualityRegistersNoSpeciesVariables) {
+    SimulationContext ctx = build_test_context();
+    ctx.reported_species_names = {"TSS", "__WATER_AGE__"};
+    ctx.options.ignore_quality = true; // mirrors DefaultOutputPlugin's bypass
+
+    GeoPackageOutputPlugin plugin;
+    ASSERT_EQ(plugin.initialize({db_path_, "run_ignore"}, nullptr), 0);
+    ASSERT_EQ(plugin.validate(ctx), 0);
+    ASSERT_EQ(plugin.prepare(ctx), 0);
+    ASSERT_EQ(plugin.finalize(ctx), 0);
+
+    EXPECT_EQ(count_quality_variables(db_path_), 0);
+}
+
+TEST_F(GeoPackageTest, SpeciesCollidingWithHydraulicVariableFailsPrepare) {
+    SimulationContext ctx = build_test_context();
+    // "depth" is a built-in NODE/LINK variable. UNIQUE(name, object_type)
+    // means an ignored insert would leave lookup_variable("depth", "NODE")
+    // pointing at the HYDRAULIC row, and concentrations would be written into
+    // the depth series — a corrupted result rather than a missing one.
+    ctx.reported_species_names = {"depth"};
+
+    GeoPackageOutputPlugin plugin;
+    ASSERT_EQ(plugin.initialize({db_path_, "run_collide"}, nullptr), 0);
+    ASSERT_EQ(plugin.validate(ctx), 0);
+    EXPECT_EQ(plugin.prepare(ctx), -1)
+        << "a species colliding with a built-in variable must not be accepted";
+    EXPECT_NE(std::string(plugin.last_error_message()).find("depth"), std::string::npos)
+        << "the error must name the colliding species: " << plugin.last_error_message();
+
+    // And the hydraulic variable it collided with must be untouched.
+    //
+    // Why this refuses rather than skipping the species: measured under a
+    // tolerate-the-collision build, a species value of 99999.0 came back out
+    // of result_timeseries joined to the variable whose category is STATE —
+    // i.e. into the node DEPTH series a consumer reads. The corruption is
+    // real, not theoretical. It cannot be asserted here (prepare() fails, so
+    // update() never runs), which is exactly why the number is recorded.
+    auto depth = query_species_variable(db_path_, "depth", "NODE");
+    ASSERT_TRUE(depth.found);
+    EXPECT_EQ(depth.category, "STATE")
+        << "the built-in depth variable was overwritten by the species";
+}
+
+// ===========================================================================
+// LINK_OFFSETS=ELEVATION
+//
+// Engine-level on purpose: the defect lives in resolve_cross_references, which
+// the data-level read_from_file tests above never run.
+//
+// Under ELEVATION the offsets in an .inp are ELEVATIONS, and the resolver
+// rewrites each as a depth above its node invert. A GeoPackage stores those
+// RESOLVED depths — it is the engine's canonical internal store, which is why
+// convert_inputs_to_internal is skipped for it. Running the ELEVATION pass
+// again on reopen subtracted the node invert a SECOND time and the negative
+// result clamped to zero, so every offset in the model collapsed onto its node
+// invert on the first .gpkg round trip.
+// ===========================================================================
+
+#include <openswmm/engine/openswmm_engine.h>
+#include <openswmm/engine/openswmm_model.h>
+
+namespace {
+
+constexpr const char* kGpkgPluginId = "org.hydrocouple.openswmm.plugins.geopackage";
+
+/// The InOffset/OutOffset columns of a [CONDUITS] row in a written .inp.
+///
+/// Asserted through the FILE rather than through swmm_link_get_offset_*,
+/// because those getters hand back the AUTHORED offset — they undo the very
+/// normalisation under test, so they report the right answer either way. The
+/// file is what a user reopens and what the defect actually destroyed.
+struct Offsets {
+    double up, dn;
+};
+
+/**
+ * @brief Read authored conduit inlet/outlet offsets from a saved input file.
+ *
+ * Recognizes CONDUITS section text, skips blanks/comments and stops matching when another header
+ * appears. Missing row records ADD_FAILURE and returns {-1,-1}; extraction status is not checked
+ * for a found row. Does not convert units or modify the file.
+ *
+ * @param[in] inp_path Readable text input path; open failure records a nonfatal expectation.
+ * @param[in] link Exact conduit identifier to locate after stripping semicolon comments.
+ * @return Parsed up/dn offsets in authored deck units; fields start at -1, so malformed/partial
+ *     rows may return one or both sentinel values.
+ */
+Offsets conduit_offsets(const std::string& inp_path, const std::string& link) {
+    std::ifstream in(inp_path);
+    EXPECT_TRUE(in.good()) << "cannot read " << inp_path;
+    std::string line;
+    bool in_conduits = false;
+    while (std::getline(in, line)) {
+        const std::string t = line.substr(0, line.find(';'));
+        std::istringstream ls(t);
+        std::string first;
+        if (!(ls >> first))
+            continue;
+        if (first.front() == '[') {
+            in_conduits = (t.find("[CONDUITS]") != std::string::npos);
+            continue;
+        }
+        if (!in_conduits || first != link)
+            continue;
+        std::string n1, n2, len, rough;
+        Offsets o{-1.0, -1.0};
+        ls >> n1 >> n2 >> len >> rough >> o.up >> o.dn;
+        return o;
+    }
+    ADD_FAILURE() << "no [CONDUITS] row for " << link << " in " << inp_path;
+    return {-1.0, -1.0};
+}
+
+} // namespace
+
+TEST(GeoPackageElevationOffsets, ElevationOffsetsSurviveAGpkgRoundTrip) {
+    const std::string src = "inp_roundtrip/elevation_offsets.inp";
+    const std::string gpkg = "inp_roundtrip/_elevation_offsets.gpkg";
+    const std::string back = "inp_roundtrip/_elevation_offsets_back.inp";
+    std::remove(gpkg.c_str());
+    std::remove(back.c_str());
+
+    // .inp -> .gpkg
+    SWMM_Engine a = swmm_engine_create();
+    ASSERT_NE(a, nullptr);
+    ASSERT_EQ(swmm_engine_open(a, src.c_str(), nullptr, nullptr, nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_model_write_with_plugin(a, gpkg.c_str(), kGpkgPluginId), SWMM_OK);
+    swmm_engine_close(a);
+    swmm_engine_destroy(a);
+
+    // .gpkg -> .inp
+    SWMM_Engine b = swmm_engine_create();
+    ASSERT_NE(b, nullptr);
+    ASSERT_EQ(swmm_engine_open(b, gpkg.c_str(), nullptr, nullptr, kGpkgPluginId), SWMM_OK);
+    ASSERT_EQ(swmm_model_write(b, back.c_str()), SWMM_OK);
+    swmm_engine_close(b);
+    swmm_engine_destroy(b);
+
+    // The fixture authors ELEVATIONS, and the file is written back under an
+    // ELEVATION header, so the elevations must come back unchanged. The defect
+    // collapsed each one onto its node invert (102.0 -> 100.0, 99.5 -> 98.0).
+    const Offsets c1 = conduit_offsets(back, "C1");
+    EXPECT_NEAR(c1.up, 102.0, 1e-6) << "upstream offset collapsed onto J1's invert";
+    EXPECT_NEAR(c1.dn, 99.5, 1e-6) << "downstream offset collapsed onto J2's invert";
+
+    const Offsets c2 = conduit_offsets(back, "C2");
+    EXPECT_NEAR(c2.up, 98.5, 1e-6);
+    EXPECT_NEAR(c2.dn, 90.0, 1e-6);
 }

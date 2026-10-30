@@ -1,0 +1,42 @@
+[OPTIONS]
+FLOW_UNITS           CFS
+FLOW_ROUTING         FV
+LINK_OFFSETS         DEPTH
+ALLOW_PONDING        NO
+START_DATE           01/01/2026
+START_TIME           00:00:00
+END_DATE             01/01/2026
+END_TIME             01:00:00
+REPORT_STEP          0:01:00
+ROUTING_STEP         1
+MIN_SURFAREA         0
+FV_SLOT_CELERITY     50
+
+[JUNCTIONS]
+;;Name  Elev   MaxDepth InitDepth SurDepth Aponded
+J0      150.0  40.0  0  0  0
+MID     130.0  40.0  0  0  0
+
+[OUTFALLS]
+;;Name  Elev   Type  Gated
+OF      105.0  FREE  NO
+
+[CONDUITS]
+;;Name  From  To   Length  N      Z1  Z2
+C1      J0    MID  100.0   0.013  0   0
+C2      MID   OF   100.0   0.013  0   0
+
+[XSECTIONS]
+;;Link  Shape     G1   G2  G3  G4  Barrels
+C1      CIRCULAR  8.0  0   0   0   1
+C2      CIRCULAR  8.0  0   0   0   1
+
+[DWF]
+;;Node  Param  Value
+J0      FLOW   0.6
+
+[COORDINATES]
+;;Node  X      Y
+J0      0.0    0.0
+MID     100.0  0.0
+OF      200.0  0.0

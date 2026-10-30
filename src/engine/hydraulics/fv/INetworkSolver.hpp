@@ -1,6 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file INetworkSolver.hpp
- * @brief Backend-neutral interface for the explicit FV 1D network integrator.
+ * @file      INetworkSolver.hpp
+ * @brief     Backend-neutral interface for the explicit FV 1D network integrator.
  *
  * @details Modeled directly on 2d/solver/ISurfaceSolver.hpp so the two solver
  *          families are reviewable side by side:
@@ -16,9 +32,14 @@
  * @see plans/EXPLICIT_FV_KOKKOS_1D_SOLVER_PLAN.md §4
  * @ingroup engine_fv
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
+ */
+
+/**
+ * @defgroup engine_fv Finite-volume network hydraulics
+ * @brief Backend-neutral network solver interfaces, finite-volume kernels, options and mesh assembly. Individual APIs describe internal hydraulic units, caller-owned buffers and accepted-step publication.
  */
 
 #ifndef OPENSWMM_ENGINE_FV_I_NETWORK_SOLVER_HPP
@@ -35,8 +56,13 @@ struct FvOptions;
 /// and results pulled back after. Kept as a flat struct so the plugin ABI can
 /// pass it across the C boundary unchanged.
 struct FvStepForcing {
-    /// Lateral inflow at each regular node (cfs), as assembled by
-    /// SWMMEngine::assembleLateralInflows. Indexed by node.
+    /// Lateral inflow at each node (cfs), as assembled by
+    /// SWMMEngine::assembleLateralInflows. Indexed by node. May be nonzero at
+    /// a kNodeVirtual node too: the in-tree solver splits it half/half into
+    /// the two cells adjoining the node's spliced face (node_vj_face) as a
+    /// zero-momentum area source, and a device backend must do the same —
+    /// a virtual junction owns no faces, so any node-side integration of the
+    /// value silently drops the water.
     const double* node_lateral = nullptr;
 
     /// Prescribed head at boundary-controlled nodes (ft, absolute elevation);
@@ -44,9 +70,26 @@ struct FvStepForcing {
     /// continuity equation. Indexed by node. Outfalls arrive here.
     const double* node_fixed_head = nullptr;
 
+    /// Per-incident-link donation limit (cfs) for finite surface reservoirs.
+    /// Null/infinite entries preserve unlimited ordinary stage boundaries.
+    const double* node_source_max = nullptr;
+
     /// Non-conduit (pump/orifice/weir/outlet) link flows in cfs, signed
     /// positive from node1 to node2. Indexed by link; conduits are ignored.
+    ///
+    /// DUMMY-xsect conduits are the exception: they are structure links
+    /// (mesh.struct_is_dummy) but their discharge is not a head relation the
+    /// engine can evaluate outside the solver — it is whatever arrives at the
+    /// upstream node. The solver derives it from its own fluxes and ignores
+    /// this array for them; `link_q_cap` carries the only thing it cannot know.
     const double* structure_flow = nullptr;
+
+    /// Upper bound on the pass-through discharge of each DUMMY link (cfs),
+    /// indexed by link: the FLOW_LIMIT from [CONDUITS], or 0 when a control
+    /// rule has closed the link. Negative means unlimited. Only DUMMY entries
+    /// are read. Legacy applies both gates in the same order — setting first,
+    /// then the limit (computeNonConduitFlowOne, HydStructures.cpp:1196-1212).
+    const double* link_q_cap = nullptr;
 
     /// Distributed conduit loss rate per unit length (ft²/s, positive = loss)
     /// from evaporation and seepage. Indexed by conduit row.
@@ -66,10 +109,15 @@ struct FvStepForcing {
     /// clamps to ROUTING_STEP, since the structure equations live in the
     /// engine, not the kernels.
     void (*refresh)(void* user, double t_elapsed) = nullptr;
-    void*  refresh_user = nullptr;
+    void* refresh_user = nullptr;
 
     int n_nodes = 0;
     int n_links = 0;
+    /// Optional gross external withdrawal requests (cfs). Native CPU routing
+    /// refuses the unavailable share instead of accumulating negative water.
+    /// Null preserves callers without an external-withdrawal contract.
+    const double* node_withdrawal = nullptr;
+
 };
 
 /**
@@ -86,18 +134,54 @@ struct FvStepForcing {
  */
 class INetworkSolver {
 public:
+    /**
+     * @brief Destroy a concrete backend through the network-solver interface.
+     *
+     * Router owns the implementation via unique_ptr. Backend destructor handles its owned resources;
+     * referenced mesh/state/options remain externally owned.
+     */
     virtual ~INetworkSolver() = default;
 
-    /// One-time setup. @p mesh, @p state and @p opts must outlive the solver.
+    /**
+     * @brief Bind and initialize a concrete backend for one network model.
+     *
+     * One-time setup in the abstract lifecycle; concrete backend defines validation/allocation failures
+     * and initial workspace. Caller serializes initialize/advance/reinitialize/finalize and does not
+     * resize bound stores during active use.
+     *
+     * @param[in,out] mesh Borrowed validated topology/geometry; must outlive solver use until
+     *     finalize/destruction.
+     * @param[in,out] state Borrowed aligned hydraulic state updated by subsequent advance calls; must
+     *     outlive solver use.
+     * @param[in] opts Borrowed solver options whose lifetime covers solver use.
+     */
     virtual void initialize(NetworkMeshData& mesh, NetworkStateData& state,
                             const FvOptions& opts) = 0;
 
-    /// Advance from @p t_current to @p t_target (s), substepping at the CFL
-    /// limit. @return the time actually reached (== t_target on success).
-    virtual double advance(double t_current, double t_target,
-                           const FvStepForcing& forcing) = 0;
+    /**
+     * @brief Advance bound network state across one requested routing window.
+     *
+     * Concrete backend chooses CFL substeps and failure/partial-state behavior. Caller must check
+     * reached time before publishing full-window receipts; this interface offers no automatic rollback
+     * or exception barrier.
+     *
+     * @param[in] t_current Finite elapsed start seconds consistent with the backend's current state.
+     * @param[in] t_target Finite target elapsed seconds>=t_current.
+     * @param[in] forcing Borrowed forcing and referenced spans valid for all internal substeps;
+     *     optional refresh callback may update its backing arrays synchronously.
+     * @return Elapsed time actually reached; successful full-window advance returns t_target.
+     */
+    virtual double advance(double t_current, double t_target, const FvStepForcing& forcing) = 0;
 
-    /// Reinitialize at @p t0 after external state edits (hot start, API writes).
+    /**
+     * @brief Refresh backend state after caller edits the bound hydraulic arrays.
+     *
+     * Used for hotstart/runtime edits after initialization. Concrete backend determines workspace
+     * resets and validation failures; does not imply ownership transfer or rebuild of externally owned
+     * mesh.
+     *
+     * @param[in] t0 Finite elapsed restart seconds corresponding to externally supplied state.
+     */
     virtual void reinitialize(double t0) = 0;
 
     /// Release all backend resources.
@@ -109,32 +193,76 @@ public:
     /// Last internal substep size (s).
     virtual double last_step_size() const noexcept = 0;
 
-    /// CFL-limited step the solver would take next, from its most recent
-    /// census. Router::getAdaptiveStep publishes this as the routing-step
-    /// suggestion.
+    /**
+     * @brief Read the next CFL step suggestion from the latest backend census.
+     * @return Suggested seconds interpreted by Router adaptive routing; concrete backend defines values
+     *     before initialization or after finalize.
+     */
     virtual double suggested_step() const noexcept = 0;
 
     /// Cumulative statistics over the whole run — what the "FV Solver
     /// Statistics" report block reads.
     struct RunStats {
-        long   nsteps      = 0;    ///< explicit substeps
-        long   nflux       = 0;    ///< face flux evaluations
-        double last_h      = 0.0;  ///< last substep (s)
-        double avg_h       = 0.0;  ///< sim-time / nsteps (s)
-        double min_h       = 0.0;  ///< smallest substep taken (s)
+        long nsteps = 0;     ///< explicit substeps
+        long nflux = 0;      ///< face flux evaluations
+        double last_h = 0.0; ///< last substep (s)
+        double avg_h = 0.0;  ///< sim-time / nsteps (s)
+        double min_h = 0.0;  ///< smallest substep taken (s)
 
         // Work-list compaction telemetry. Negative fractions mean "not
         // populated" (compaction disabled or never sampled).
-        double active_frac_min  = -1.0;
+        double active_frac_min = -1.0;
         double active_frac_mean = -1.0;
-        double active_frac_max  = -1.0;
+        double active_frac_max = -1.0;
 
-        long   tier_cells[8] = {0}; ///< cumulative rebuild-sampled cells per LTS tier
-        int    n_tiers       = 0;   ///< populated tier count (≤ 8)
+        long tier_cells[8] = {0}; ///< cumulative rebuild-sampled cells per LTS tier
+        int n_tiers = 0;          ///< populated tier count (≤ 8)
+
+        // dt-argmin attribution (slot program R0): which regime owned the
+        // binding CFL element, counted once per census (global path) or
+        // re-tier (LTS path). Answers "who sets the step" without a trace.
+        long dt_argmin_pressurized = 0; ///< h ≥ y_full (slot celerity)
+        long dt_argmin_band = 0;        ///< y_crown ≤ h < y_full (mouth)
+        long dt_argmin_free = 0;        ///< open-channel cell
+        long dt_argmin_node = 0;        ///< node storage / feedback bound
+
+        // LTS macro cycles that ran vs were rejected. The tier histogram
+        // above is filled by assignTiers whether or not a cycle ever fires,
+        // so these are what say tiering ENGAGED rather than was assigned.
+        long n_macro_cycles = 0;
+        long n_macro_rejected = 0;
     };
 
     /// Read cumulative statistics. Default: zeros (backend has no counters).
     virtual RunStats run_stats() const noexcept { return {}; }
+
+    /// Worst offender of a diverged advance() (issue #156 R3). The substep
+    /// retry loop shrinks dt away from CFL violations, but a dt-INDEPENDENT
+    /// amplification fails all retries identically and the loop then accepts
+    /// the diverged step — after which nothing downstream said a word: the
+    /// published heads stay under the engine's absurd-value bound for a long
+    /// time while the physics is garbage (P6 finding F3: 30 of 118 study
+    /// series beyond 10x the observed range, every run status OK).
+    struct Divergence {
+        int link = -1;              ///< engine link index of the offender
+        double value = 0.0;         ///< offending magnitude (internal units)
+        const char* what = nullptr; ///< "velocity (ft/s)" | "depth (ft)"
+    };
+
+    /**
+     * @brief Report the last advance's worst physical-bound/nonfinite offender when supported.
+     *
+     * Returned what pointer is borrowed backend-defined text; caller must respect concrete
+     * implementation lifetime. Does not run another advance or repair state.
+     *
+     * @param[out] d Populated only when backend returns true; default implementation leaves destination
+     *     unchanged.
+     * @return True for a reported offender; default false for backends without this check.
+     */
+    virtual bool divergence(Divergence& d) const noexcept {
+        (void)d;
+        return false;
+    }
 
     /// True once initialize() has completed and the solver is ready.
     virtual bool is_initialized() const noexcept = 0;

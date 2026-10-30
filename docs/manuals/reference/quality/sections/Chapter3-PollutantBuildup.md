@@ -91,7 +91,7 @@ figures.) Even in data collected as carefully as in the San Jose study,
 the scatter (not shown in the report) is considerable. Thus, the choice
 of the best functional form is not obvious.
 
-![](quality/media/media/image8.png "Sartor&amp;Boyd.bmp")
+![](quality/media/media/quality-image8.png "Sartor&amp;Boyd.bmp")
 <p><span id="_Toc454288765"
 class="anchor"></span><strong>Figure 3‑1 Accumulation of solids on urban
 streets versus time (Sartor and Boyd, 1972)</strong></p>
@@ -104,7 +104,7 @@ previously in section 2.3. SWMM's Land Use object is used to identify a
 particular type of land use and to store the buildup (and washoff)
 functions for each SWMM Pollutant.
 
-![](quality/media/media/image9.png)
+![](quality/media/media/quality-image9.png)
 
 **Figure 3‑2 Buildup of street solids in San Jose (from Pitt, 1979)**
 
@@ -196,7 +196,7 @@ available at the beginning of any storm event.
 | *N<sub>B</sub>* | time exponent | | |
 
 
-![](quality/media/media/image10.png "image10")
+![](quality/media/media/quality-image10.png "image10")
 <p><span id="_Toc454288767"
 class="anchor"></span><strong>Figure 3‑3 Comparison of buildup equations
 for a hypothetical pollutant</strong></p>
@@ -256,7 +256,7 @@ If a dry period of length *∆t* occurs before the start of the next
 storm, then the amount of buildup available, *b2*, is found by
 evaluating the buildup function at time *t2* = *t1* + *∆t*.
 
-![](quality/media/media/image11.png "image11")
+![](quality/media/media/quality-image11.png "image11")
 <p><span id="_Toc454288768"
 class="anchor"></span><strong>Figure 3‑4 Evolution of buildup after a
 storm event</strong></p>

@@ -1,6 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file DefaultOutputPlugin.cpp
- * @brief DefaultOutputPlugin — SWMM 5.x binary .out file writer.
+ * @file      DefaultOutputPlugin.cpp
+ * @brief     DefaultOutputPlugin — SWMM 5.x binary .out file writer.
  *
  * @details Writes the standard SWMM 5.x binary output format:
  *   - Header: magic, version, flow units, object counts
@@ -15,26 +31,30 @@
  * @see DefaultOutputPlugin.hpp
  * @ingroup engine_plugins
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #include "DefaultOutputPlugin.hpp"
+#include "../hydrology/surface/NativeSnow.hpp"
+#include "../../../include/openswmm/engine/openswmm_output.h"
+#include <limits>
+#include "core/FileIO.hpp" // issue #7: UTF-8 paths on Windows
 #include "../../../include/openswmm/plugin_sdk/PluginState.hpp"
 #include "../../../include/openswmm/plugin_sdk/SimulationSnapshot.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
 
+#include <cctype>
 #include <cstring>
 #include <cmath>
+#include <string>
 
 namespace openswmm {
 
 DefaultOutputPlugin::DefaultOutputPlugin(std::string out_path)
-    : out_path_(std::move(out_path))
-    , state_(PluginState::LOADED)
-{}
+    : out_path_(std::move(out_path)), state_(PluginState::LOADED) {}
 
 int DefaultOutputPlugin::initialize(const std::vector<std::string>& /*init_args*/,
                                     const IPluginComponentInfo* /*info*/) {
@@ -49,24 +69,85 @@ int DefaultOutputPlugin::validate(const SimulationContext& /*ctx*/) {
     return 0;
 }
 
+namespace {
+
+/// E1 (2026-10-14): unit code for a reactions-component species column.
+/// Reported index `p` sits past the pollutants AND the reserved rows; the
+/// species unit string is the [REACTION_SPECIES] token (MG, UG, COUNT —
+/// a trailing "/L" is tolerated). Anything else — a WALL species' mass per
+/// area, say — writes 0 like the reserved rows do: the .out unit field is a
+/// 3-value concentration enum, and readers key on the NAME.
+/** @brief Map a reported reactions-species concentration token to a SWMM unit code.
+ * @param ctx Compatible species registry with valid reported indices/units arrays.
+ * @param p Reported quality-column ordinal after pollutants and any reserved
+ * water-age/temperature columns. Negative/out-of-reported-range resolves to zero.
+ * @return MG/L, UG/L or counts/L code after bytewise uppercase and optional /L
+ * suffix removal; unknown/nonconcentration/reserved tokens return zero. Names
+ * remain necessary to distinguish hours/temperature/wall units from concentrations. */
+int msxUnitCode(const openswmm::SimulationContext& ctx, int p) {
+    const auto& rx = ctx.reactions;
+    int m = p - ctx.n_pollutants() - (ctx.options.water_age ? 1 : 0) -
+            (ctx.options.heat_transport ? 1 : 0);
+    if (m < 0 || static_cast<std::size_t>(m) >= rx.reported_species.size())
+        return 0;
+    m = rx.reported_species[static_cast<std::size_t>(m)];
+    std::string u = rx.species_units[static_cast<std::size_t>(m)];
+    for (auto& c : u)
+        c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    if (u.size() > 2 && u.compare(u.size() - 2, 2, "/L") == 0)
+        u.erase(u.size() - 2);
+    if (u == "MG")
+        return static_cast<int>(openswmm::MassUnits::MG_PER_L);
+    if (u == "UG")
+        return static_cast<int>(openswmm::MassUnits::UG_PER_L);
+    if (u == "COUNT")
+        return static_cast<int>(openswmm::MassUnits::COUNTS_PER_L);
+    return 0;
+}
+
+/// Output-stream buffer size. 1 MB: large enough that a 500k-element
+/// header is a handful of writes, small enough to be irrelevant next to
+/// the model itself.
+constexpr std::size_t kOutputBufferBytes = 1u << 20;
+} // namespace
+
 int DefaultOutputPlugin::prepare(const SimulationContext& ctx) {
     // Open binary output file
-    out_file_ = std::fopen(out_path_.c_str(), "w+b");
+    out_file_ = checkpoint_fresh_ ? io::checkpointOpenOutput(io::utf8_path(out_path_))
+                                  : io::fopen_utf8(out_path_, "w+b");
     if (!out_file_) {
         last_error_ = "Cannot open output file: " + out_path_;
         return -1;
     }
+
+    // Every scalar in the header and in every report period is its own fwrite —
+    // writeInt4/writeReal4/writeReal8 below — so a 500k-element model issues
+    // millions of calls, each taking the FILE lock and testing the buffer. The
+    // default buffer is a few kilobytes; a 1 MB one cuts the flush count by
+    // orders of magnitude for the cost of one allocation. Must be set before
+    // any I/O on the stream, which is why it sits immediately after fopen.
+    //
+    // Failure is not an error: setvbuf declining just leaves the default
+    // buffer, and the file is still perfectly writable.
+    std::setvbuf(out_file_, nullptr, _IOFBF, kOutputBufferBytes);
 
     // Per-timestep results arrive pre-converted to display units (engine
     // boundary). Only the static-object header below is written from the
     // SimulationContext (internal units), so retain just the length / land-area
     // factors it needs.
     flow_units_code_ = static_cast<int>(ctx.options.flow_units);
-    ucf_length_      = ucf::UCF(ucf::LENGTH,   ctx.options);
-    ucf_landarea_    = ucf::UCF(ucf::LANDAREA, ctx.options);
+    ucf_length_ = ucf::UCF(ucf::LENGTH, ctx.options);
 
     // Write header
     writeHeader(ctx);
+    if (checkpoint_fresh_) {
+        try {
+            checkpoint_header_ = readPrefix();
+        } catch (const std::exception& e) {
+            last_error_ = e.what();
+            return -1;
+        }
+    }
 
     step_count_ = 0;
     n_periods_ = 0;
@@ -75,7 +156,8 @@ int DefaultOutputPlugin::prepare(const SimulationContext& ctx) {
 }
 
 int DefaultOutputPlugin::update(const SimulationSnapshot& snapshot) {
-    if (!out_file_) return -1;
+    if (!out_file_)
+        return -1;
     state_ = PluginState::UPDATING;
 
     // The snapshot arrives already in project display units (the engine applies
@@ -93,21 +175,43 @@ int DefaultOutputPlugin::update(const SimulationSnapshot& snapshot) {
     // -----------------------------------------------------------------------
     for (int j = 0; j < snapshot.subcatch_count; ++j) {
         auto uj = static_cast<std::size_t>(j);
-        if (uj < subcatch_rpt_flag_.size() && !subcatch_rpt_flag_[uj]) continue;
-        writeReal4(static_cast<float>(uj < snapshot.subcatch.rainfall.size()   ? snapshot.subcatch.rainfall[uj]   : 0.0)); // [0] RAINFALL
-        writeReal4(static_cast<float>(uj < snapshot.subcatch.snow_depth.size() ? snapshot.subcatch.snow_depth[uj] : 0.0)); // [1] SNOWDEPTH
-        writeReal4(static_cast<float>(uj < snapshot.subcatch.evap.size()       ? snapshot.subcatch.evap[uj]       : 0.0)); // [2] EVAP
-        writeReal4(static_cast<float>(uj < snapshot.subcatch.infil.size()      ? snapshot.subcatch.infil[uj]      : 0.0)); // [3] INFIL
-        writeReal4(static_cast<float>(uj < snapshot.subcatch.runoff.size()     ? snapshot.subcatch.runoff[uj]     : 0.0)); // [4] RUNOFF
-        writeReal4(static_cast<float>(uj < snapshot.subcatch.gw_flow.size()    ? snapshot.subcatch.gw_flow[uj]    : 0.0)); // [5] GW_FLOW
-        writeReal4(static_cast<float>(uj < snapshot.subcatch.gw_elev.size()    ? snapshot.subcatch.gw_elev[uj]    : 0.0)); // [6] GW_ELEV
-        writeReal4(static_cast<float>(uj < snapshot.subcatch.soil_moist.size() ? snapshot.subcatch.soil_moist[uj] : 0.0)); // [7] SOIL_MOIST (dimensionless)
+        if (uj < subcatch_rpt_flag_.size() && !subcatch_rpt_flag_[uj])
+            continue;
+        writeReal4(static_cast<float>(uj < snapshot.subcatch.rainfall.size()
+                                          ? snapshot.subcatch.rainfall[uj]
+                                          : 0.0)); // [0] RAINFALL
+        writeReal4(static_cast<float>(uj < snapshot.subcatch.snow_depth.size()
+                                          ? snapshot.subcatch.snow_depth[uj]
+                                          : 0.0)); // [1] SNOWDEPTH
+        writeReal4(static_cast<float>(
+            uj < snapshot.subcatch.evap.size() ? snapshot.subcatch.evap[uj] : 0.0)); // [2] EVAP
+        writeReal4(static_cast<float>(
+            uj < snapshot.subcatch.infil.size() ? snapshot.subcatch.infil[uj] : 0.0)); // [3] INFIL
+        writeReal4(static_cast<float>(uj < snapshot.subcatch.runoff.size()
+                                          ? snapshot.subcatch.runoff[uj]
+                                          : 0.0)); // [4] RUNOFF
+        writeReal4(static_cast<float>(uj < snapshot.subcatch.gw_flow.size()
+                                          ? snapshot.subcatch.gw_flow[uj]
+                                          : 0.0)); // [5] GW_FLOW
+        writeReal4(static_cast<float>(uj < snapshot.subcatch.gw_elev.size()
+                                          ? snapshot.subcatch.gw_elev[uj]
+                                          : 0.0)); // [6] GW_ELEV
+        writeReal4(static_cast<float>(uj < snapshot.subcatch.soil_moist.size()
+                                          ? snapshot.subcatch.soil_moist[uj]
+                                          : 0.0)); // [7] SOIL_MOIST (dimensionless)
         // [8..] Pollutant washoff concentrations
         for (int p = 0; p < n_polluts_; ++p) {
             auto qi = uj * static_cast<std::size_t>(n_polluts_) + static_cast<std::size_t>(p);
             writeReal4(static_cast<float>(
                 qi < snapshot.subcatch_quality.size() ? snapshot.subcatch_quality[qi] : 0.0));
         }
+        if (snow_process_)
+            for (int field = 0; field < SubcatchSnapshot::snow_process_count; ++field) {
+                const auto i = uj * SubcatchSnapshot::snow_process_count + field;
+                writeReal4(static_cast<float>(i < snapshot.subcatch.snow_process.size()
+                                                  ? snapshot.subcatch.snow_process[i]
+                                                  : std::numeric_limits<double>::quiet_NaN()));
+            }
     }
 
     // -----------------------------------------------------------------------
@@ -116,13 +220,23 @@ int DefaultOutputPlugin::update(const SimulationSnapshot& snapshot) {
     // -----------------------------------------------------------------------
     for (int j = 0; j < snapshot.node_count; ++j) {
         auto uj = static_cast<std::size_t>(j);
-        if (uj < node_rpt_flag_.size() && !node_rpt_flag_[uj]) continue;
-        writeReal4(static_cast<float>(uj < snapshot.nodes.depth.size()          ? snapshot.nodes.depth[uj]          : 0.0)); // [0] DEPTH
-        writeReal4(static_cast<float>(uj < snapshot.nodes.head.size()           ? snapshot.nodes.head[uj]           : 0.0)); // [1] HEAD
-        writeReal4(static_cast<float>(uj < snapshot.nodes.volume.size()         ? snapshot.nodes.volume[uj]         : 0.0)); // [2] VOLUME
-        writeReal4(static_cast<float>(uj < snapshot.nodes.lateral_inflow.size() ? snapshot.nodes.lateral_inflow[uj] : 0.0)); // [3] LATFLOW
-        writeReal4(static_cast<float>(uj < snapshot.nodes.total_inflow.size()   ? snapshot.nodes.total_inflow[uj]   : 0.0)); // [4] INFLOW
-        writeReal4(static_cast<float>(uj < snapshot.nodes.overflow.size()       ? snapshot.nodes.overflow[uj]       : 0.0)); // [5] OVERFLOW
+        if (uj < node_rpt_flag_.size() && !node_rpt_flag_[uj])
+            continue;
+        writeReal4(static_cast<float>(uj < snapshot.nodes.depth.size() ? snapshot.nodes.depth[uj]
+                                                                       : 0.0)); // [0] DEPTH
+        writeReal4(static_cast<float>(uj < snapshot.nodes.head.size() ? snapshot.nodes.head[uj]
+                                                                      : 0.0)); // [1] HEAD
+        writeReal4(static_cast<float>(uj < snapshot.nodes.volume.size() ? snapshot.nodes.volume[uj]
+                                                                        : 0.0)); // [2] VOLUME
+        writeReal4(static_cast<float>(uj < snapshot.nodes.lateral_inflow.size()
+                                          ? snapshot.nodes.lateral_inflow[uj]
+                                          : 0.0)); // [3] LATFLOW
+        writeReal4(static_cast<float>(uj < snapshot.nodes.total_inflow.size()
+                                          ? snapshot.nodes.total_inflow[uj]
+                                          : 0.0)); // [4] INFLOW
+        writeReal4(static_cast<float>(uj < snapshot.nodes.overflow.size()
+                                          ? snapshot.nodes.overflow[uj]
+                                          : 0.0)); // [5] OVERFLOW
         // [6..] Pollutant concentrations
         for (int p = 0; p < n_polluts_; ++p) {
             auto qi = uj * static_cast<std::size_t>(n_polluts_) + static_cast<std::size_t>(p);
@@ -138,12 +252,21 @@ int DefaultOutputPlugin::update(const SimulationSnapshot& snapshot) {
     // -----------------------------------------------------------------------
     for (int j = 0; j < snapshot.link_count; ++j) {
         auto uj = static_cast<std::size_t>(j);
-        if (uj < link_rpt_flag_.size() && !link_rpt_flag_[uj]) continue;
-        writeReal4(static_cast<float>(uj < snapshot.links.flow.size()     ? snapshot.links.flow[uj]     : 0.0)); // [0] FLOW (direction pre-applied)
-        writeReal4(static_cast<float>(uj < snapshot.links.depth.size()    ? snapshot.links.depth[uj]    : 0.0)); // [1] DEPTH
-        writeReal4(static_cast<float>(uj < snapshot.links.velocity.size() ? snapshot.links.velocity[uj] : 0.0)); // [2] VELOCITY (direction pre-applied)
-        writeReal4(static_cast<float>(uj < snapshot.links.volume.size()   ? snapshot.links.volume[uj]   : 0.0)); // [3] VOLUME
-        writeReal4(static_cast<float>(uj < snapshot.links.capacity.size() ? snapshot.links.capacity[uj] : 0.0)); // [4] CAPACITY (dimensionless)
+        if (uj < link_rpt_flag_.size() && !link_rpt_flag_[uj])
+            continue;
+        writeReal4(static_cast<float>(uj < snapshot.links.flow.size()
+                                          ? snapshot.links.flow[uj]
+                                          : 0.0)); // [0] FLOW (direction pre-applied)
+        writeReal4(static_cast<float>(uj < snapshot.links.depth.size() ? snapshot.links.depth[uj]
+                                                                       : 0.0)); // [1] DEPTH
+        writeReal4(static_cast<float>(uj < snapshot.links.velocity.size()
+                                          ? snapshot.links.velocity[uj]
+                                          : 0.0)); // [2] VELOCITY (direction pre-applied)
+        writeReal4(static_cast<float>(uj < snapshot.links.volume.size() ? snapshot.links.volume[uj]
+                                                                        : 0.0)); // [3] VOLUME
+        writeReal4(static_cast<float>(uj < snapshot.links.capacity.size()
+                                          ? snapshot.links.capacity[uj]
+                                          : 0.0)); // [4] CAPACITY (dimensionless)
         // [5..] Pollutant concentrations
         for (int p = 0; p < n_polluts_; ++p) {
             auto qi = uj * static_cast<std::size_t>(n_polluts_) + static_cast<std::size_t>(p);
@@ -157,23 +280,29 @@ int DefaultOutputPlugin::update(const SimulationSnapshot& snapshot) {
     // All already in display units (temperature converted in the boundary too).
     // -----------------------------------------------------------------------
     float sys[MAX_SYS_RESULTS] = {};
-    sys[0]  = static_cast<float>(snapshot.sys_temperature); // SYS_TEMPERATURE
-    sys[1]  = static_cast<float>(snapshot.sys_rainfall);    // SYS_RAINFALL
-    sys[2]  = static_cast<float>(snapshot.sys_snow_depth);  // SYS_SNOWDEPTH
-    sys[3]  = static_cast<float>(snapshot.sys_infil);       // SYS_INFIL
-    sys[4]  = static_cast<float>(snapshot.sys_runoff);      // SYS_RUNOFF
-    sys[5]  = static_cast<float>(snapshot.sys_dw_inflow);   // SYS_DWFLOW
-    sys[6]  = static_cast<float>(snapshot.sys_gw_inflow);   // SYS_GWFLOW
-    sys[7]  = static_cast<float>(snapshot.sys_ii_inflow);   // SYS_IIFLOW
-    sys[8]  = static_cast<float>(snapshot.sys_ext_inflow);  // SYS_EXFLOW
-    sys[9]  = sys[4] + sys[5] + sys[6] + sys[7] + sys[8];   // SYS_INFLOW (sum)
-    sys[10] = static_cast<float>(snapshot.sys_flooding);    // SYS_FLOODING
-    sys[11] = static_cast<float>(snapshot.sys_outflow);     // SYS_OUTFLOW
-    sys[12] = static_cast<float>(snapshot.sys_storage);     // SYS_STORAGE
-    sys[13] = static_cast<float>(snapshot.sys_evap);        // SYS_EVAP
-    sys[14] = static_cast<float>(snapshot.sys_pet);         // SYS_PET
+    sys[0] = static_cast<float>(snapshot.sys_temperature); // SYS_TEMPERATURE
+    sys[1] = static_cast<float>(snapshot.sys_rainfall);    // SYS_RAINFALL
+    sys[2] = static_cast<float>(snapshot.sys_snow_depth);  // SYS_SNOWDEPTH
+    sys[3] = static_cast<float>(snapshot.sys_infil);       // SYS_INFIL
+    sys[4] = static_cast<float>(snapshot.sys_runoff);      // SYS_RUNOFF
+    sys[5] = static_cast<float>(snapshot.sys_dw_inflow);   // SYS_DWFLOW
+    sys[6] = static_cast<float>(snapshot.sys_gw_inflow);   // SYS_GWFLOW
+    sys[7] = static_cast<float>(snapshot.sys_ii_inflow);   // SYS_IIFLOW
+    sys[8] = static_cast<float>(snapshot.sys_ext_inflow);  // SYS_EXFLOW
+    sys[9] = sys[4] + sys[5] + sys[6] + sys[7] + sys[8];   // SYS_INFLOW (sum)
+    sys[10] = static_cast<float>(snapshot.sys_flooding);   // SYS_FLOODING
+    sys[11] = static_cast<float>(snapshot.sys_outflow);    // SYS_OUTFLOW
+    sys[12] = static_cast<float>(snapshot.sys_storage);    // SYS_STORAGE
+    sys[13] = static_cast<float>(snapshot.sys_evap);       // SYS_EVAP
+    sys[14] = static_cast<float>(snapshot.sys_pet);        // SYS_PET
 
     std::fwrite(sys, sizeof(float), MAX_SYS_RESULTS, out_file_);
+
+    // Push the completed period to disk so a live reader (OutputReader::
+    // openLive / swmm_output_open_live) can count it from the file size.
+    // Runs on the IO thread; one write(2) per report step. The 1 MB stdio
+    // buffer still batches the per-element fwrites inside the period.
+    std::fflush(out_file_);
 
     ++n_periods_;
     ++step_count_;
@@ -191,7 +320,7 @@ int DefaultOutputPlugin::finalize(const SimulationContext& /*ctx*/) {
     writeInt4(static_cast<int>(input_start_pos_));
     writeInt4(static_cast<int>(output_start_pos_));
     writeInt4(n_periods_);
-    writeInt4(0);  // error code
+    writeInt4(0); // error code
     writeInt4(MAGIC_NUMBER);
 
     std::fclose(out_file_);
@@ -207,23 +336,38 @@ int DefaultOutputPlugin::finalize(const SimulationContext& /*ctx*/) {
 void DefaultOutputPlugin::writeHeader(const SimulationContext& ctx) {
     // Cache per-object report flags
     subcatch_rpt_flag_ = ctx.subcatches.rpt_flag;
-    node_rpt_flag_     = ctx.nodes.rpt_flag;
-    link_rpt_flag_     = ctx.links.rpt_flag;
+    node_rpt_flag_ = ctx.nodes.rpt_flag;
+    link_rpt_flag_ = ctx.links.rpt_flag;
 
     // Count only objects with rpt_flag set (matches legacy output.c:169-171)
     n_subcatch_ = 0;
-    for (const auto& f : subcatch_rpt_flag_) if (f) ++n_subcatch_;
+    for (const auto& f : subcatch_rpt_flag_)
+        if (f)
+            ++n_subcatch_;
     n_nodes_ = 0;
-    for (const auto& f : node_rpt_flag_) if (f) ++n_nodes_;
+    for (const auto& f : node_rpt_flag_)
+        if (f)
+            ++n_nodes_;
     n_links_ = 0;
-    for (const auto& f : link_rpt_flag_) if (f) ++n_links_;
+    for (const auto& f : link_rpt_flag_)
+        if (f)
+            ++n_links_;
     // IGNORE_QUALITY: drop all pollutant columns from the binary .out file so
     // OutputReader reads zero pollutants (legacy output.c:150 NumPolluts = 0).
-    n_polluts_ = ctx.options.ignore_quality ? 0 : ctx.n_pollutants();
+    // A2b: the pollutant column block reports pollutants AND, when
+    // [OPTIONS] WATER_AGE is on, a trailing __WATER_AGE__ pseudo-column.
+    // ctx.reported_species_names is the single naming/count truth shared
+    // with the snapshot builder (which strides its quality vectors by the
+    // same number) — striding by n_pollutants() here would truncate the
+    // block and misalign every consumer.
+    n_polluts_ = ctx.options.ignore_quality ? 0 : ctx.n_reported_species();
 
-    n_subcatch_vars_ = 8 + n_polluts_;  // rainfall..soilmoist + pollutants
-    n_node_vars_ = 6 + n_polluts_;      // depth..overflow + pollutants
-    n_link_vars_ = 5 + n_polluts_;      // flow..capacity + pollutants
+    snow_process_ = surface::hasUebSnow(ctx);
+    n_subcatch_vars_ = 8 + n_polluts_ +
+                       (snow_process_ ? SubcatchSnapshot::snow_process_count
+                                      : 0); // rainfall..soilmoist + pollutants
+    n_node_vars_ = 6 + n_polluts_;          // depth..overflow + pollutants
+    n_link_vars_ = 5 + n_polluts_;          // flow..capacity + pollutants
 
     // Magic, version, flow units, counts
     writeInt4(MAGIC_NUMBER);
@@ -252,32 +396,58 @@ void DefaultOutputPlugin::writeHeader(const SimulationContext& ctx) {
             writeID(ctx.link_names.name_of(j).c_str());
     }
     for (int p = 0; p < n_polluts_; ++p)
-        writeID(ctx.pollutant_names.name_of(p).c_str());
+        writeID(ctx.reported_species_names[static_cast<std::size_t>(p)].c_str());
 
     // Pollutant concentration unit codes
     for (int p = 0; p < n_polluts_; ++p) {
-        writeInt4(static_cast<int>(ctx.pollutants.units[static_cast<std::size_t>(p)]));
+        // A RESERVED pseudo-column has no MassUnits member: water age is
+        // HOURS, temperature is degC, and the .out unit field is a 3-value
+        // concentration enum with no slot for either. Those columns write
+        // MG_PER_L's code and readers key on the NAME
+        // (swmm_output_get_pollut_id), not the unit code — a format decision
+        // rather than widening the enum, which would break every existing
+        // reader.
+        //
+        // Keyed on the INDEX, not on the name. reported_species_names is
+        // pollutants first, then the reserved rows, so anything at or past
+        // n_pollutants() has no entry in ctx.pollutants.units. Testing for
+        // "__WATER_AGE__" by name got this right only while age was the sole
+        // reserved species: adding __TEMPERATURE__ sent the unit lookup off
+        // the end of an EMPTY units vector on a heat-only deck (no
+        // [POLLUTANTS]) and segfaulted the writer.
+        const bool is_reserved = (p >= ctx.n_pollutants());
+        writeInt4(is_reserved
+                      ? msxUnitCode(ctx, p)
+                      : static_cast<int>(ctx.pollutants.units[static_cast<std::size_t>(p)]));
     }
 
     // Input data start
     input_start_pos_ = std::ftell(out_file_);
 
-    // Subcatchment input: area (converting to display units)
+    // Subcatchment input: area, in display units (acres / hectares).
+    // Legacy output.c:245-252 writes `Subcatch[j].area * UCF(LANDAREA)`
+    // because legacy stores the area in ft2. v6 stores it in DISPLAY units
+    // already — CatchmentHandler.cpp:159 keeps the [SUBCATCHMENTS] token
+    // verbatim, and every other consumer multiplies by ACRES_TO_FT2 to get
+    // ft2 — so applying UCF(LANDAREA) here divided every area by 43560.
     writeInt4(1);
-    writeInt4(1);  // INPUT_AREA code
+    writeInt4(1); // INPUT_AREA code
     for (int j = 0; j < ctx.n_subcatches(); ++j) {
         auto uj = static_cast<std::size_t>(j);
-        if (uj >= subcatch_rpt_flag_.size() || !subcatch_rpt_flag_[uj]) continue;
-        writeReal4(static_cast<float>(
-            ctx.subcatches.area[uj] * ucf_landarea_));
+        if (uj >= subcatch_rpt_flag_.size() || !subcatch_rpt_flag_[uj])
+            continue;
+        writeReal4(static_cast<float>(ctx.subcatches.area[uj]));
     }
 
     // Node input: type, invert, max depth
     writeInt4(3);
-    writeInt4(0); writeInt4(2); writeInt4(4);
+    writeInt4(0);
+    writeInt4(2);
+    writeInt4(4);
     for (int j = 0; j < ctx.n_nodes(); ++j) {
         auto uj = static_cast<std::size_t>(j);
-        if (uj >= node_rpt_flag_.size() || !node_rpt_flag_[uj]) continue;
+        if (uj >= node_rpt_flag_.size() || !node_rpt_flag_[uj])
+            continue;
         writeInt4(static_cast<int>(ctx.nodes.type[uj]));
         writeReal4(static_cast<float>(ctx.nodes.invert_elev[uj] * ucf_length_));
         writeReal4(static_cast<float>(ctx.nodes.full_depth[uj] * ucf_length_));
@@ -286,10 +456,15 @@ void DefaultOutputPlugin::writeHeader(const SimulationContext& ctx) {
     // Link input: type, offset1, offset2, max depth, length
     // Special handling for pumps and outlets (matching legacy)
     writeInt4(5);
-    writeInt4(0); writeInt4(6); writeInt4(7); writeInt4(4); writeInt4(8);
+    writeInt4(0);
+    writeInt4(6);
+    writeInt4(7);
+    writeInt4(4);
+    writeInt4(8);
     for (int j = 0; j < ctx.n_links(); ++j) {
         auto uj = static_cast<std::size_t>(j);
-        if (uj >= link_rpt_flag_.size() || !link_rpt_flag_[uj]) continue;
+        if (uj >= link_rpt_flag_.size() || !link_rpt_flag_[uj])
+            continue;
         auto lt = ctx.links.type[uj];
         writeInt4(static_cast<int>(lt));
 
@@ -317,7 +492,8 @@ void DefaultOutputPlugin::writeHeader(const SimulationContext& ctx) {
             // Length (conduit only)
             if (lt == LinkType::CONDUIT) {
                 const int cr = ctx.link_subtypes.conduit_row(j);
-                const double len = (cr >= 0) ? ctx.link_subtypes.conduits.length[static_cast<size_t>(cr)] : 0.0;
+                const double len =
+                    (cr >= 0) ? ctx.link_subtypes.conduits.length[static_cast<size_t>(cr)] : 0.0;
                 writeReal4(static_cast<float>(len * ucf_length_));
             } else
                 writeReal4(0.0f);
@@ -326,16 +502,23 @@ void DefaultOutputPlugin::writeHeader(const SimulationContext& ctx) {
 
     // Variable codes
     writeInt4(n_subcatch_vars_);
-    for (int v = 0; v < n_subcatch_vars_; ++v) writeInt4(v);
+    for (int v = 0; v < 8 + n_polluts_; ++v)
+        writeInt4(v);
+    if (snow_process_)
+        for (int v = 0; v < SubcatchSnapshot::snow_process_count; ++v)
+            writeInt4(SWMM_OUT_SUBCATCH_SNOW_SWE + v);
 
     writeInt4(n_node_vars_);
-    for (int v = 0; v < n_node_vars_; ++v) writeInt4(v);
+    for (int v = 0; v < n_node_vars_; ++v)
+        writeInt4(v);
 
     writeInt4(n_link_vars_);
-    for (int v = 0; v < n_link_vars_; ++v) writeInt4(v);
+    for (int v = 0; v < n_link_vars_; ++v)
+        writeInt4(v);
 
     writeInt4(MAX_SYS_RESULTS);
-    for (int v = 0; v < MAX_SYS_RESULTS; ++v) writeInt4(v);
+    for (int v = 0; v < MAX_SYS_RESULTS; ++v)
+        writeInt4(v);
 
     // Report start date and step
     writeReal8(ctx.options.start_date);

@@ -1,0 +1,341 @@
+{
+  "merged_engine_sha256": "42fa9a1992d9b8c499aead9af4005f65581df153a740dcfc9b43abcdf95b0df1",
+  "scope": "Mixed working tree compatibility check; unrelated source changes and LTO differ from the isolated candidate. P0a/P0b bit-identity claims use the isolated snapshots only.",
+  "depth_capacity_abs_tolerance": 1e-12,
+  "volume_relative_tolerance": 1e-10,
+  "fixtures": [
+    {
+      "deck": "control_constant_si.inp",
+      "bit_identical": false,
+      "max_depth_m": 1.2698175844150228e-15,
+      "max_capacity_m_s": 8.019284428130088e-19,
+      "max_cumulative_depth_m": 7.528699885739343e-16,
+      "max_volume_m3": 3.2240876635114546e-13,
+      "passes_compatibility_tolerances": true
+    },
+    {
+      "deck": "conductivity_constant_si.inp",
+      "bit_identical": false,
+      "max_depth_m": 3.309852392163748e-15,
+      "max_capacity_m_s": 0.0,
+      "max_cumulative_depth_m": 6.776263578034403e-21,
+      "max_volume_m3": 4.440892098500626e-16,
+      "passes_compatibility_tolerances": true
+    },
+    {
+      "deck": "recovery_constant_si.inp",
+      "bit_identical": false,
+      "max_depth_m": 1.2698175844150228e-15,
+      "max_capacity_m_s": 8.019284428130088e-19,
+      "max_cumulative_depth_m": 7.528699885739343e-16,
+      "max_volume_m3": 3.2240876635114546e-13,
+      "passes_compatibility_tolerances": true
+    },
+    {
+      "deck": "control_constant_us.inp",
+      "bit_identical": false,
+      "max_depth_m": 1.1171619185290638e-15,
+      "max_capacity_m_s": 3.6337713437209485e-19,
+      "max_cumulative_depth_m": 3.5735303605122226e-16,
+      "max_volume_m3": 1.27675647831893e-14,
+      "passes_compatibility_tolerances": true
+    },
+    {
+      "deck": "conductivity_constant_us.inp",
+      "bit_identical": false,
+      "max_depth_m": 2.518818487118324e-15,
+      "max_capacity_m_s": 0.0,
+      "max_cumulative_depth_m": 0.0,
+      "max_volume_m3": 0.0,
+      "passes_compatibility_tolerances": true
+    },
+    {
+      "deck": "recovery_constant_us.inp",
+      "bit_identical": false,
+      "max_depth_m": 1.1171619185290638e-15,
+      "max_capacity_m_s": 3.6337713437209485e-19,
+      "max_cumulative_depth_m": 3.5735303605122226e-16,
+      "max_volume_m3": 1.27675647831893e-14,
+      "passes_compatibility_tolerances": true
+    },
+    {
+      "deck": "control_curve_number_si.inp",
+      "bit_identical": false,
+      "max_depth_m": 1.491862189340054e-16,
+      "max_capacity_m_s": 2.0328790734103208e-19,
+      "max_cumulative_depth_m": 4.163336342344337e-17,
+      "max_volume_m3": 2.7533531010703882e-14,
+      "passes_compatibility_tolerances": true
+    },
+    {
+      "deck": "conductivity_curve_number_si.inp",
+      "bit_identical": false,
+      "max_depth_m": 1.491862189340054e-16,
+      "max_capacity_m_s": 2.0328790734103208e-19,
+      "max_cumulative_depth_m": 4.163336342344337e-17,
+      "max_volume_m3": 2.7533531010703882e-14,
+      "passes_compatibility_tolerances": true
+    },
+    {
+      "deck": "recovery_curve_number_si.inp",
+      "bit_identical": false,
+      "max_depth_m": 2.1510571102112408e-16,
+      "max_capacity_m_s": 2.0328790734103208e-19,
+      "max_cumulative_depth_m": 4.163336342344337e-17,
+      "max_volume_m3": 2.842170943040401e-14,
+      "passes_compatibility_tolerances": true
+    },
+    {
+      "deck": "control_curve_number_us.inp",
+      "bit_identical": false,
+      "max_depth_m": 4.163336342344337e-16,
+      "max_capacity_m_s": 2.541098841762901e-19,
+      "max_cumulative_depth_m": 5.551115123125783e-17,
+      "max_volume_m3": 3.774758283725532e-15,
+      "passes_compatibility_tolerances": true
+    },
+    {
+      "deck": "conductivity_curve_number_us.inp",
+      "bit_identical": false,
+      "max_depth_m": 4.163336342344337e-16,
+      "max_capacity_m_s": 2.541098841762901e-19,
+      "max_cumulative_depth_m": 5.551115123125783e-17,
+      "max_volume_m3": 3.774758283725532e-15,
+      "passes_compatibility_tolerances": true
+    },
+    {
+      "deck": "recovery_curve_number_us.inp",
+      "bit_identical": false,
+      "max_depth_m": 6.175615574477433e-16,
+      "max_capacity_m_s": 2.541098841762901e-19,
+      "max_cumulative_depth_m": 5.551115123125783e-17,
+      "max_volume_m3": 3.774758283725532e-15,
+      "passes_compatibility_tolerances": true
+    },
+    {
+      "deck": "control_green_ampt_si.inp",
+      "bit_identical": false,
+      "max_depth_m": 4.926614671774132e-16,
+      "max_capacity_m_s": 4.3198680309969317e-19,
+      "max_cumulative_depth_m": 7.632783294297951e-17,
+      "max_volume_m3": 3.197442310920451e-14,
+      "passes_compatibility_tolerances": true
+    },
+    {
+      "deck": "conductivity_green_ampt_si.inp",
+      "bit_identical": false,
+      "max_depth_m": 7.494005416219807e-16,
+      "max_capacity_m_s": 2.0413494028828638e-19,
+      "max_cumulative_depth_m": 8.153200337090993e-17,
+      "max_volume_m3": 6.394884621840902e-14,
+      "passes_compatibility_tolerances": true
+    },
+    {
+      "deck": "recovery_green_ampt_si.inp",
+      "bit_identical": false,
+      "max_depth_m": 9.325873406851315e-15,
+      "max_capacity_m_s": 4.3198680309969317e-19,
+      "max_cumulative_depth_m": 2.42861286636753e-16,
+      "max_volume_m3": 1.4210854715202004e-13,
+      "passes_compatibility_tolerances": true
+    },
+    {
+      "deck": "control_green_ampt_us.inp",
+      "bit_identical": false,
+      "max_depth_m": 5.759281940243e-16,
+      "max_capacity_m_s": 2.185345003916095e-19,
+      "max_cumulative_depth_m": 6.245004513516506e-17,
+      "max_volume_m3": 2.6645352591003757e-15,
+      "passes_compatibility_tolerances": true
+    },
+    {
+      "deck": "conductivity_green_ampt_us.inp",
+      "bit_identical": false,
+      "max_depth_m": 4.371503159461554e-16,
+      "max_capacity_m_s": 4.751854834096625e-19,
+      "max_cumulative_depth_m": 9.71445146547012e-17,
+      "max_volume_m3": 5.440092820663267e-15,
+      "passes_compatibility_tolerances": true
+    },
+    {
+      "deck": "recovery_green_ampt_us.inp",
+      "bit_identical": false,
+      "max_depth_m": 6.217248937900877e-15,
+      "max_capacity_m_s": 2.185345003916095e-19,
+      "max_cumulative_depth_m": 1.2628786905111156e-15,
+      "max_volume_m3": 1.7763568394002505e-14,
+      "passes_compatibility_tolerances": true
+    },
+    {
+      "deck": "control_horton_si.inp",
+      "bit_identical": false,
+      "max_depth_m": 4.996003610813204e-16,
+      "max_capacity_m_s": 7.115076756936123e-20,
+      "max_cumulative_depth_m": 6.245004513516506e-17,
+      "max_volume_m3": 1.687538997430238e-14,
+      "passes_compatibility_tolerances": true
+    },
+    {
+      "deck": "conductivity_horton_si.inp",
+      "bit_identical": false,
+      "max_depth_m": 5.065392549852277e-16,
+      "max_capacity_m_s": 0.0,
+      "max_cumulative_depth_m": 1.734723475976807e-18,
+      "max_volume_m3": 1.1102230246251565e-16,
+      "passes_compatibility_tolerances": true
+    },
+    {
+      "deck": "recovery_horton_si.inp",
+      "bit_identical": false,
+      "max_depth_m": 4.996003610813204e-16,
+      "max_capacity_m_s": 7.115076756936123e-20,
+      "max_cumulative_depth_m": 6.245004513516506e-17,
+      "max_volume_m3": 1.687538997430238e-14,
+      "passes_compatibility_tolerances": true
+    },
+    {
+      "deck": "control_horton_us.inp",
+      "bit_identical": false,
+      "max_depth_m": 7.28583859910259e-16,
+      "max_capacity_m_s": 1.4336032632279033e-19,
+      "max_cumulative_depth_m": 8.673617379884035e-17,
+      "max_volume_m3": 3.1086244689504383e-15,
+      "passes_compatibility_tolerances": true
+    },
+    {
+      "deck": "conductivity_horton_us.inp",
+      "bit_identical": false,
+      "max_depth_m": 9.922618282587337e-16,
+      "max_capacity_m_s": 0.0,
+      "max_cumulative_depth_m": 0.0,
+      "max_volume_m3": 0.0,
+      "passes_compatibility_tolerances": true
+    },
+    {
+      "deck": "recovery_horton_us.inp",
+      "bit_identical": false,
+      "max_depth_m": 7.28583859910259e-16,
+      "max_capacity_m_s": 1.4336032632279033e-19,
+      "max_cumulative_depth_m": 8.673617379884035e-17,
+      "max_volume_m3": 3.1086244689504383e-15,
+      "passes_compatibility_tolerances": true
+    },
+    {
+      "deck": "control_modified_green_ampt_si.inp",
+      "bit_identical": false,
+      "max_depth_m": 4.926614671774132e-16,
+      "max_capacity_m_s": 4.3198680309969317e-19,
+      "max_cumulative_depth_m": 7.632783294297951e-17,
+      "max_volume_m3": 3.197442310920451e-14,
+      "passes_compatibility_tolerances": true
+    },
+    {
+      "deck": "conductivity_modified_green_ampt_si.inp",
+      "bit_identical": false,
+      "max_depth_m": 7.494005416219807e-16,
+      "max_capacity_m_s": 2.0413494028828638e-19,
+      "max_cumulative_depth_m": 8.153200337090993e-17,
+      "max_volume_m3": 6.394884621840902e-14,
+      "passes_compatibility_tolerances": true
+    },
+    {
+      "deck": "recovery_modified_green_ampt_si.inp",
+      "bit_identical": false,
+      "max_depth_m": 9.325873406851315e-15,
+      "max_capacity_m_s": 4.3198680309969317e-19,
+      "max_cumulative_depth_m": 2.42861286636753e-16,
+      "max_volume_m3": 1.4210854715202004e-13,
+      "passes_compatibility_tolerances": true
+    },
+    {
+      "deck": "control_modified_green_ampt_us.inp",
+      "bit_identical": false,
+      "max_depth_m": 5.759281940243e-16,
+      "max_capacity_m_s": 2.185345003916095e-19,
+      "max_cumulative_depth_m": 6.245004513516506e-17,
+      "max_volume_m3": 2.6645352591003757e-15,
+      "passes_compatibility_tolerances": true
+    },
+    {
+      "deck": "conductivity_modified_green_ampt_us.inp",
+      "bit_identical": false,
+      "max_depth_m": 4.371503159461554e-16,
+      "max_capacity_m_s": 4.751854834096625e-19,
+      "max_cumulative_depth_m": 9.71445146547012e-17,
+      "max_volume_m3": 5.440092820663267e-15,
+      "passes_compatibility_tolerances": true
+    },
+    {
+      "deck": "recovery_modified_green_ampt_us.inp",
+      "bit_identical": false,
+      "max_depth_m": 6.217248937900877e-15,
+      "max_capacity_m_s": 2.185345003916095e-19,
+      "max_cumulative_depth_m": 1.2628786905111156e-15,
+      "max_volume_m3": 1.7763568394002505e-14,
+      "passes_compatibility_tolerances": true
+    },
+    {
+      "deck": "control_modified_horton_si.inp",
+      "bit_identical": false,
+      "max_depth_m": 6.522560269672795e-16,
+      "max_capacity_m_s": 4.743384504624082e-20,
+      "max_cumulative_depth_m": 6.938893903907228e-18,
+      "max_volume_m3": 3.552713678800501e-15,
+      "passes_compatibility_tolerances": true
+    },
+    {
+      "deck": "conductivity_modified_horton_si.inp",
+      "bit_identical": false,
+      "max_depth_m": 9.853229343548264e-16,
+      "max_capacity_m_s": 0.0,
+      "max_cumulative_depth_m": 0.0,
+      "max_volume_m3": 0.0,
+      "passes_compatibility_tolerances": true
+    },
+    {
+      "deck": "recovery_modified_horton_si.inp",
+      "bit_identical": false,
+      "max_depth_m": 6.522560269672795e-16,
+      "max_capacity_m_s": 4.743384504624082e-20,
+      "max_cumulative_depth_m": 6.938893903907228e-18,
+      "max_volume_m3": 3.552713678800501e-15,
+      "passes_compatibility_tolerances": true
+    },
+    {
+      "deck": "control_modified_horton_us.inp",
+      "bit_identical": false,
+      "max_depth_m": 6.314393452555578e-16,
+      "max_capacity_m_s": 2.202285662861181e-19,
+      "max_cumulative_depth_m": 8.673617379884035e-17,
+      "max_volume_m3": 4.884981308350689e-15,
+      "passes_compatibility_tolerances": true
+    },
+    {
+      "deck": "conductivity_modified_horton_us.inp",
+      "bit_identical": false,
+      "max_depth_m": 3.400058012914542e-16,
+      "max_capacity_m_s": 0.0,
+      "max_cumulative_depth_m": 0.0,
+      "max_volume_m3": 0.0,
+      "passes_compatibility_tolerances": true
+    },
+    {
+      "deck": "recovery_modified_horton_us.inp",
+      "bit_identical": false,
+      "max_depth_m": 6.314393452555578e-16,
+      "max_capacity_m_s": 2.202285662861181e-19,
+      "max_cumulative_depth_m": 8.673617379884035e-17,
+      "max_volume_m3": 4.884981308350689e-15,
+      "passes_compatibility_tolerances": true
+    },
+    {
+      "deck": "monthly_constant_si.inp",
+      "bit_identical": true,
+      "max_depth_m": 0.0,
+      "max_capacity_m_s": 0.0,
+      "max_cumulative_depth_m": 0.0,
+      "max_volume_m3": 0.0,
+      "passes_compatibility_tolerances": true
+    }
+  ]
+}

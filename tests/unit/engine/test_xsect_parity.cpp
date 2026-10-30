@@ -1,6 +1,6 @@
 /**
- * @file test_xsect_parity.cpp
- * @brief Golden numerical-parity harness: new xsect:: vs legacy xsect.c.
+ * @file      test_xsect_parity.cpp
+ * @brief     Golden numerical-parity harness: new xsect:: vs legacy xsect.c.
  *
  * @details Links the legacy SWMM cross-section code (compiled into
  *          openswmm_legacy_engine) and diffs it against the new C++
@@ -22,18 +22,28 @@
  *          arrays. They are verified end-to-end in tests/regression instead.
  *
  * @ingroup engine_hydraulics
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <cstdint>
+#include <limits>
+#include <utility>
 #include <string>
 #include <vector>
 
 #include "../../src/engine/hydraulics/XSectBatch.hpp"
 #include "../../src/engine/hydraulics/xsect_tables.hpp"
 #include "../../src/engine/hydraulics/XSectLookup.hpp"
+#include "../../src/engine/hydraulics/XSectKernels.hpp"
+#include "../../src/engine/hydraulics/Transect.hpp"
+#include "../../src/engine/core/SimulationContext.hpp"
 
 using namespace openswmm;
 
@@ -47,9 +57,9 @@ using namespace openswmm;
 extern "C" {
 
 struct LegacyTXsect {
-    int    type;
-    int    culvertCode;
-    int    transect;
+    int type;
+    int culvertCode;
+    int transect;
     double yFull;
     double wMax;
     double ywMax;
@@ -65,17 +75,144 @@ struct LegacyTXsect {
 
 // Legacy functions have C linkage (compiled as C). Declared with our replica
 // struct, which is ABI-identical to the library's TXsect.
-int    xsect_setParams(LegacyTXsect* xsect, int type, double p[], double ucf);
-int    xsect_isOpen(int type);
+/**
+ * @brief Initialize legacy cross-section geometry for parity comparison.
+ *
+ * Caller supplies valid pointers and required shape tables/globals. Failure can leave partial
+ * struct/parameter changes; no handle ownership is transferred.
+ *
+ * @param[in,out] xsect Writable ABI-compatible legacy geometry struct, retained by the caller.
+ * @param[in] type Legacy shape identifier; these tests use self-contained formula/table shapes.
+ * @param[in,out] p Writable shape-parameter array, conventionally four doubles; some shapes
+ *     derive/replace p[2].
+ * @param[in] ucf Positive authoring-length conversion factor; dimensional inputs are divided into
+ *     internal feet.
+ * @return Nonzero on accepted geometry, zero on rejected dimensions/unsupported shape.
+ */
+int xsect_setParams(LegacyTXsect* xsect, int type, double p[], double ucf);
+/**
+ * @brief Query the legacy open-channel shape flag.
+ *
+ * @param[in] type Valid legacy shape-table index; not bounds checked by the implementation.
+ * @return One for a shape marked open, zero otherwise.
+ */
+int xsect_isOpen(int type);
+/**
+ * @brief Read legacy area at maximum conveyance.
+ *
+ * Requires any shape-specific referenced project geometry to remain available.
+ *
+ * @param[in] xsect Borrowed initialized ABI-compatible legacy geometry.
+ * @return Maximum-flow area in ft2.
+ */
 double xsect_getAmax(LegacyTXsect* xsect);
+/**
+ * @brief Call the legacy xsect_getSofA geometry reference.
+ *
+ * Input limits, clamping and iteration behavior follow the legacy shape-specific implementation. No
+ * test-local validation or ownership transfer occurs.
+ *
+ * @param[in] xsect Borrowed initialized ABI-compatible legacy geometry; referenced project globals
+ *     must remain available.
+ * @param[in] area Wetted area in ft2.
+ * @return Section factor in the legacy shape convention.
+ */
 double xsect_getSofA(LegacyTXsect* xsect, double area);
+/**
+ * @brief Call the legacy xsect_getYofA geometry reference.
+ *
+ * Input limits, clamping and iteration behavior follow the legacy shape-specific implementation. No
+ * test-local validation or ownership transfer occurs.
+ *
+ * @param[in] xsect Borrowed initialized ABI-compatible legacy geometry; referenced project globals
+ *     must remain available.
+ * @param[in] area Wetted area in ft2.
+ * @return Depth in feet.
+ */
 double xsect_getYofA(LegacyTXsect* xsect, double area);
+/**
+ * @brief Call the legacy xsect_getRofA geometry reference.
+ *
+ * Input limits, clamping and iteration behavior follow the legacy shape-specific implementation. No
+ * test-local validation or ownership transfer occurs.
+ *
+ * @param[in] xsect Borrowed initialized ABI-compatible legacy geometry; referenced project globals
+ *     must remain available.
+ * @param[in] area Wetted area in ft2.
+ * @return Hydraulic radius in feet.
+ */
 double xsect_getRofA(LegacyTXsect* xsect, double area);
+/**
+ * @brief Call the legacy xsect_getAofS geometry reference.
+ *
+ * Input limits, clamping and iteration behavior follow the legacy shape-specific implementation. No
+ * test-local validation or ownership transfer occurs.
+ *
+ * @param[in] xsect Borrowed initialized ABI-compatible legacy geometry; referenced project globals
+ *     must remain available.
+ * @param[in] sFactor Section factor in the legacy shape convention.
+ * @return Wetted area in ft2.
+ */
 double xsect_getAofS(LegacyTXsect* xsect, double sFactor);
+/**
+ * @brief Call the legacy xsect_getdSdA geometry reference.
+ *
+ * Input limits, clamping and iteration behavior follow the legacy shape-specific implementation. No
+ * test-local validation or ownership transfer occurs.
+ *
+ * @param[in] xsect Borrowed initialized ABI-compatible legacy geometry; referenced project globals
+ *     must remain available.
+ * @param[in] area Wetted area in ft2.
+ * @return Section-factor derivative with respect to area.
+ */
 double xsect_getdSdA(LegacyTXsect* xsect, double area);
+/**
+ * @brief Call the legacy xsect_getAofY geometry reference.
+ *
+ * Input limits, clamping and iteration behavior follow the legacy shape-specific implementation. No
+ * test-local validation or ownership transfer occurs.
+ *
+ * @param[in] xsect Borrowed initialized ABI-compatible legacy geometry; referenced project globals
+ *     must remain available.
+ * @param[in] y Depth in feet.
+ * @return Wetted area in ft2.
+ */
 double xsect_getAofY(LegacyTXsect* xsect, double y);
+/**
+ * @brief Call the legacy xsect_getRofY geometry reference.
+ *
+ * Input limits, clamping and iteration behavior follow the legacy shape-specific implementation. No
+ * test-local validation or ownership transfer occurs.
+ *
+ * @param[in] xsect Borrowed initialized ABI-compatible legacy geometry; referenced project globals
+ *     must remain available.
+ * @param[in] y Depth in feet.
+ * @return Hydraulic radius in feet.
+ */
 double xsect_getRofY(LegacyTXsect* xsect, double y);
+/**
+ * @brief Call the legacy xsect_getWofY geometry reference.
+ *
+ * Input limits, clamping and iteration behavior follow the legacy shape-specific implementation. No
+ * test-local validation or ownership transfer occurs.
+ *
+ * @param[in] xsect Borrowed initialized ABI-compatible legacy geometry; referenced project globals
+ *     must remain available.
+ * @param[in] y Depth in feet.
+ * @return Surface width in feet.
+ */
 double xsect_getWofY(LegacyTXsect* xsect, double y);
+/**
+ * @brief Call the legacy xsect_getYcrit geometry reference.
+ *
+ * Input limits, clamping and iteration behavior follow the legacy shape-specific implementation. No
+ * test-local validation or ownership transfer occurs.
+ *
+ * @param[in] xsect Borrowed initialized ABI-compatible legacy geometry; referenced project globals
+ *     must remain available.
+ * @param[in] q Discharge in cfs.
+ * @return Critical depth in feet.
+ */
 double xsect_getYcrit(LegacyTXsect* xsect, double q);
 
 } // extern "C"
@@ -87,22 +224,31 @@ double xsect_getYcrit(LegacyTXsect* xsect, double q);
 namespace {
 
 // Copy a fully-populated legacy TXsect into the new XSectParams (1:1 fields).
+/**
+ * @brief Copy corresponding legacy cross-section fields into a new-engine parameter value.
+ *
+ * No initialization/validation or lookup occurs; unassigned XSectParams members retain their
+ * default values.
+ *
+ * @param[in] L Borrowed populated legacy struct; numeric units are retained field for field.
+ * @return Owned XSectParams with copied type, culvert/transect and geometry values.
+ */
 XSectParams fromLegacy(const LegacyTXsect& L) {
     XSectParams xs;
-    xs.type         = L.type;
+    xs.type = L.type;
     xs.culvert_code = L.culvertCode;
-    xs.transect     = L.transect;
+    xs.transect = L.transect;
     xs.y_full = L.yFull;
-    xs.w_max  = L.wMax;
+    xs.w_max = L.wMax;
     xs.yw_max = L.ywMax;
     xs.a_full = L.aFull;
     xs.r_full = L.rFull;
     xs.s_full = L.sFull;
-    xs.s_max  = L.sMax;
-    xs.y_bot  = L.yBot;
-    xs.a_bot  = L.aBot;
-    xs.s_bot  = L.sBot;
-    xs.r_bot  = L.rBot;
+    xs.s_max = L.sMax;
+    xs.y_bot = L.yBot;
+    xs.a_bot = L.aBot;
+    xs.s_bot = L.sBot;
+    xs.r_bot = L.rBot;
     return xs;
 }
 
@@ -111,68 +257,96 @@ XSectParams fromLegacy(const LegacyTXsect& L) {
 constexpr double kAbsTol = 1e-8;
 constexpr double kRelTol = 1e-7;
 
+/**
+ * @brief Compare a new result to its legacy reference using combined tolerances.
+ *
+ * Passes when abs(legacy-neu)<=1e-8+1e-7*abs(legacy); failure includes values, difference and
+ * tolerance. NaN comparisons fail.
+ *
+ * @param[in] legacy Reference value in the compared quantity units.
+ * @param[in] neu Candidate value in those same units.
+ * @return GoogleTest assertion result with an owned failure diagnostic when unequal.
+ */
 ::testing::AssertionResult Close(double legacy, double neu) {
     double diff = std::fabs(legacy - neu);
-    double tol  = kAbsTol + kRelTol * std::fabs(legacy);
-    if (diff <= tol) return ::testing::AssertionSuccess();
+    double tol = kAbsTol + kRelTol * std::fabs(legacy);
+    if (diff <= tol)
+        return ::testing::AssertionSuccess();
     return ::testing::AssertionFailure()
-        << "legacy=" << legacy << " new=" << neu
-        << " |diff|=" << diff << " tol=" << tol;
+           << "legacy=" << legacy << " new=" << neu << " |diff|=" << diff << " tol=" << tol;
 }
 
 // One self-contained shape case (no global-array dependencies).
 struct ShapeCase {
     const char* name;
-    int         type;
-    double      p[4];
+    int type;
+    double p[4];
 };
 
 // Shapes whose legacy setParams is self-contained (baked tables / formulas).
 // Excludes IRREGULAR/CUSTOM/STREET (need globals).
+/**
+ * @brief Return representative shapes whose legacy setup needs no project globals.
+ *
+ * Does not mutate project state; static allocation exceptions may propagate.
+ * @return Borrowed static case vector, valid for the process lifetime; excludes
+ *     irregular/custom/street.
+ */
 const std::vector<ShapeCase>& selfContainedShapes() {
     static const std::vector<ShapeCase> cases = {
-        {"CIRCULAR",        static_cast<int>(XSectShape::CIRCULAR),        {3.0, 0, 0, 0}},
-        {"FORCE_MAIN",      static_cast<int>(XSectShape::FORCE_MAIN),      {3.0, 130.0, 0, 0}},
+        {"CIRCULAR", static_cast<int>(XSectShape::CIRCULAR), {3.0, 0, 0, 0}},
+        {"FORCE_MAIN", static_cast<int>(XSectShape::FORCE_MAIN), {3.0, 130.0, 0, 0}},
         {"FILLED_CIRCULAR", static_cast<int>(XSectShape::FILLED_CIRCULAR), {3.0, 0.75, 0, 0}},
-        {"RECT_CLOSED",     static_cast<int>(XSectShape::RECT_CLOSED),     {3.0, 4.0, 0, 0}},
-        {"RECT_OPEN_s0",    static_cast<int>(XSectShape::RECT_OPEN),       {3.0, 4.0, 0.0, 0}},
-        {"RECT_OPEN_s1",    static_cast<int>(XSectShape::RECT_OPEN),       {3.0, 4.0, 1.0, 0}},
-        {"RECT_OPEN_s2",    static_cast<int>(XSectShape::RECT_OPEN),       {3.0, 4.0, 2.0, 0}},
-        {"RECT_TRIANG",     static_cast<int>(XSectShape::RECT_TRIANG),     {3.0, 4.0, 1.0, 0}},
-        {"RECT_ROUND",      static_cast<int>(XSectShape::RECT_ROUND),      {3.0, 4.0, 2.5, 0}},
-        {"MOD_BASKET",      static_cast<int>(XSectShape::MOD_BASKET),      {3.0, 4.0, 2.5, 0}},
-        {"TRAPEZOIDAL",     static_cast<int>(XSectShape::TRAPEZOIDAL),     {2.0, 3.0, 1.0, 1.5}},
-        {"TRIANGULAR",      static_cast<int>(XSectShape::TRIANGULAR),      {2.0, 4.0, 0, 0}},
-        {"PARABOLIC",       static_cast<int>(XSectShape::PARABOLIC),       {2.0, 6.0, 0, 0}},
-        {"POWERFUNC",       static_cast<int>(XSectShape::POWERFUNC),       {2.0, 5.0, 2.0, 0}},
-        {"EGGSHAPED",       static_cast<int>(XSectShape::EGGSHAPED),       {3.0, 0, 0, 0}},
-        {"HORSESHOE",       static_cast<int>(XSectShape::HORSESHOE),       {3.0, 0, 0, 0}},
-        {"GOTHIC",          static_cast<int>(XSectShape::GOTHIC),          {3.0, 0, 0, 0}},
-        {"CATENARY",        static_cast<int>(XSectShape::CATENARY),        {3.0, 0, 0, 0}},
-        {"SEMIELLIPTICAL",  static_cast<int>(XSectShape::SEMIELLIPTICAL),  {3.0, 0, 0, 0}},
-        {"BASKETHANDLE",    static_cast<int>(XSectShape::BASKETHANDLE),    {3.0, 0, 0, 0}},
-        {"SEMICIRCULAR",    static_cast<int>(XSectShape::SEMICIRCULAR),    {3.0, 0, 0, 0}},
-        {"HORIZ_ELLIPSE",   static_cast<int>(XSectShape::HORIZ_ELLIPSE),   {3.0, 4.5, 0, 0}},
-        {"VERT_ELLIPSE",    static_cast<int>(XSectShape::VERT_ELLIPSE),    {4.5, 3.0, 0, 0}},
-        {"ARCH",            static_cast<int>(XSectShape::ARCH),            {3.0, 4.0, 0, 0}},
+        {"RECT_CLOSED", static_cast<int>(XSectShape::RECT_CLOSED), {3.0, 4.0, 0, 0}},
+        {"RECT_OPEN_s0", static_cast<int>(XSectShape::RECT_OPEN), {3.0, 4.0, 0.0, 0}},
+        {"RECT_OPEN_s1", static_cast<int>(XSectShape::RECT_OPEN), {3.0, 4.0, 1.0, 0}},
+        {"RECT_OPEN_s2", static_cast<int>(XSectShape::RECT_OPEN), {3.0, 4.0, 2.0, 0}},
+        {"RECT_TRIANG", static_cast<int>(XSectShape::RECT_TRIANG), {3.0, 4.0, 1.0, 0}},
+        {"RECT_ROUND", static_cast<int>(XSectShape::RECT_ROUND), {3.0, 4.0, 2.5, 0}},
+        {"MOD_BASKET", static_cast<int>(XSectShape::MOD_BASKET), {3.0, 4.0, 2.5, 0}},
+        {"TRAPEZOIDAL", static_cast<int>(XSectShape::TRAPEZOIDAL), {2.0, 3.0, 1.0, 1.5}},
+        {"TRIANGULAR", static_cast<int>(XSectShape::TRIANGULAR), {2.0, 4.0, 0, 0}},
+        {"PARABOLIC", static_cast<int>(XSectShape::PARABOLIC), {2.0, 6.0, 0, 0}},
+        {"POWERFUNC", static_cast<int>(XSectShape::POWERFUNC), {2.0, 5.0, 2.0, 0}},
+        {"EGGSHAPED", static_cast<int>(XSectShape::EGGSHAPED), {3.0, 0, 0, 0}},
+        {"HORSESHOE", static_cast<int>(XSectShape::HORSESHOE), {3.0, 0, 0, 0}},
+        {"GOTHIC", static_cast<int>(XSectShape::GOTHIC), {3.0, 0, 0, 0}},
+        {"CATENARY", static_cast<int>(XSectShape::CATENARY), {3.0, 0, 0, 0}},
+        {"SEMIELLIPTICAL", static_cast<int>(XSectShape::SEMIELLIPTICAL), {3.0, 0, 0, 0}},
+        {"BASKETHANDLE", static_cast<int>(XSectShape::BASKETHANDLE), {3.0, 0, 0, 0}},
+        {"SEMICIRCULAR", static_cast<int>(XSectShape::SEMICIRCULAR), {3.0, 0, 0, 0}},
+        {"HORIZ_ELLIPSE", static_cast<int>(XSectShape::HORIZ_ELLIPSE), {3.0, 4.5, 0, 0}},
+        {"VERT_ELLIPSE", static_cast<int>(XSectShape::VERT_ELLIPSE), {4.5, 3.0, 0, 0}},
+        {"ARCH", static_cast<int>(XSectShape::ARCH), {3.0, 4.0, 0, 0}},
     };
     return cases;
 }
 
 // Dense depth-fraction sweep — dense near 0 (small-area branches) and near
 // the crown (near-full branches).
+/**
+ * @brief Return depth fractions densely sampling dry and near-crown behavior.
+ *
+ * Does not mutate project state; static allocation exceptions may propagate.
+ * @return Borrowed static vector of normalized depth/full-depth fractions in (0,1], valid for
+ *     process lifetime.
+ */
 const std::vector<double>& depthFractions() {
-    static const std::vector<double> f = {
-        1e-4, 1e-3, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5,
-        0.6, 0.7, 0.8, 0.9, 0.95, 0.98, 0.99, 0.999, 1.0
-    };
+    static const std::vector<double> f = {1e-4, 1e-3, 0.005, 0.01, 0.02,  0.05, 0.1,
+                                          0.2,  0.3,  0.4,   0.5,  0.6,   0.7,  0.8,
+                                          0.9,  0.95, 0.98,  0.99, 0.999, 1.0};
     return f;
 }
 
+/**
+ * @brief Return normalized area samples for inverse geometry comparisons.
+ *
+ * Does not mutate project state; static allocation exceptions may propagate.
+ * @return Borrowed static vector of area/full-area fractions in (0,1], valid for process lifetime.
+ */
 const std::vector<double>& areaFractions() {
-    static const std::vector<double> f = {
-        1e-4, 1e-3, 0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99, 1.0
-    };
+    static const std::vector<double> f = {1e-4, 1e-3, 0.01, 0.05, 0.1,  0.25,
+                                          0.5,  0.75, 0.9,  0.95, 0.99, 1.0};
     return f;
 }
 
@@ -361,16 +535,16 @@ TEST(XSectSetParamsParity, AnalyticShapeFields) {
 
         SCOPED_TRACE(c.name);
         EXPECT_TRUE(Close(L.yFull, N.y_full)) << "y_full";
-        EXPECT_TRUE(Close(L.wMax,  N.w_max))  << "w_max";
+        EXPECT_TRUE(Close(L.wMax, N.w_max)) << "w_max";
         EXPECT_TRUE(Close(L.ywMax, N.yw_max)) << "yw_max";
         EXPECT_TRUE(Close(L.aFull, N.a_full)) << "a_full";
         EXPECT_TRUE(Close(L.rFull, N.r_full)) << "r_full";
         EXPECT_TRUE(Close(L.sFull, N.s_full)) << "s_full";
-        EXPECT_TRUE(Close(L.sMax,  N.s_max))  << "s_max";
-        EXPECT_TRUE(Close(L.yBot,  N.y_bot))  << "y_bot";
-        EXPECT_TRUE(Close(L.aBot,  N.a_bot))  << "a_bot";
-        EXPECT_TRUE(Close(L.sBot,  N.s_bot))  << "s_bot";
-        EXPECT_TRUE(Close(L.rBot,  N.r_bot))  << "r_bot";
+        EXPECT_TRUE(Close(L.sMax, N.s_max)) << "s_max";
+        EXPECT_TRUE(Close(L.yBot, N.y_bot)) << "y_bot";
+        EXPECT_TRUE(Close(L.aBot, N.a_bot)) << "a_bot";
+        EXPECT_TRUE(Close(L.sBot, N.s_bot)) << "s_bot";
+        EXPECT_TRUE(Close(L.rBot, N.r_bot)) << "r_bot";
     }
 }
 
@@ -384,7 +558,7 @@ TEST(XSectBatchParity, AreasHydRadWidths) {
     int n = static_cast<int>(shapes.size());
 
     std::vector<LegacyTXsect> L(static_cast<std::size_t>(n));
-    std::vector<XSectParams>  N(static_cast<std::size_t>(n));
+    std::vector<XSectParams> N(static_cast<std::size_t>(n));
     for (int i = 0; i < n; ++i) {
         double p[4] = {shapes[i].p[0], shapes[i].p[1], shapes[i].p[2], shapes[i].p[3]};
         ASSERT_TRUE(xsect_setParams(&L[static_cast<std::size_t>(i)], shapes[i].type, p, 1.0))
@@ -408,8 +582,8 @@ TEST(XSectBatchParity, AreasHydRadWidths) {
             double y = depths[ui];
             SCOPED_TRACE(std::string(shapes[i].name) + " frac=" + std::to_string(frac));
             EXPECT_TRUE(Close(xsect_getAofY(&L[ui], y), areas[ui])) << "batch area";
-            EXPECT_TRUE(Close(xsect_getRofY(&L[ui], y), hyd[ui]))   << "batch hydrad";
-            EXPECT_TRUE(Close(xsect_getWofY(&L[ui], y), wid[ui]))   << "batch width";
+            EXPECT_TRUE(Close(xsect_getRofY(&L[ui], y), hyd[ui])) << "batch hydrad";
+            EXPECT_TRUE(Close(xsect_getWofY(&L[ui], y), wid[ui])) << "batch width";
         }
     }
 }
@@ -434,55 +608,103 @@ namespace {
 
 // Bit-exact comparison (ULP == 0). +0.0 and -0.0 count as equal (0 ULP);
 // value-equal doubles are 0 ULP apart, everything else reports its ULP gap.
+/**
+ * @brief Compute the local binary64 representable-value gap diagnostic.
+ *
+ * Assumes 64-bit IEEE double representation and a subtraction result representable in int64_t.
+ * Arbitrary NaN or extremely distant values are outside the diagnostic contract; this helper is not
+ * a floating-point total ordering.
+ *
+ * @param[in] a First binary64 value; intended for finite same-scale geometry results.
+ * @param[in] b Second binary64 value; equal values, including signed zeros, return zero.
+ * @return Absolute signed-integer encoding distance after sign-order remapping.
+ */
 long long ulpGap(double a, double b) {
-    if (a == b) return 0;                       // includes +0.0 == -0.0
+    if (a == b)
+        return 0; // includes +0.0 == -0.0
     std::int64_t ia, ib;
     std::memcpy(&ia, &a, sizeof(ia));
     std::memcpy(&ib, &b, sizeof(ib));
-    if (ia < 0) ia = static_cast<std::int64_t>(0x8000000000000000ULL) - ia;
-    if (ib < 0) ib = static_cast<std::int64_t>(0x8000000000000000ULL) - ib;
+    if (ia < 0)
+        ia = static_cast<std::int64_t>(0x8000000000000000ULL) - ia;
+    if (ib < 0)
+        ib = static_cast<std::int64_t>(0x8000000000000000ULL) - ib;
     std::int64_t d = ia - ib;
     return d < 0 ? -d : d;
 }
 
+/**
+ * @brief Compare legacy and new results using numeric equality.
+ *
+ * Accepts signed zeros as equal, and infinities when equal. NaNs fail. Failure includes hexadecimal
+ * values and the local ulpGap diagnostic.
+ *
+ * @param[in] legacy Reference value in the compared quantity units.
+ * @param[in] neu Candidate value in those same units.
+ * @return GoogleTest assertion result with an owned failure diagnostic when unequal.
+ */
 ::testing::AssertionResult BitEq(double legacy, double neu) {
-    if (legacy == neu) return ::testing::AssertionSuccess();   // ULP == 0
-    return ::testing::AssertionFailure()
-        << std::hexfloat << "legacy=" << legacy << " new=" << neu
-        << std::defaultfloat << " ulp=" << ulpGap(legacy, neu);
+    if (legacy == neu)
+        return ::testing::AssertionSuccess(); // ULP == 0
+    return ::testing::AssertionFailure() << std::hexfloat << "legacy=" << legacy << " new=" << neu
+                                         << std::defaultfloat << " ulp=" << ulpGap(legacy, neu);
 }
 
 // A unit-scale legacy TXsect so xsect_get{A,R,W}ofY act as legacy lookup() on the
 // raw table (scale == 1, yFull == 1). Only the fields the circular/tabulated
 // getters read are set.
+/**
+ * @brief Build minimal unit-scaled legacy lookup geometry.
+ *
+ * Other geometry fields remain zero; unsuitable as a general fully initialized cross section.
+ *
+ * @param[in] type Legacy shape whose tested depth getters use only the populated fields.
+ * @return Zero-initialized legacy value with requested type and yFull/aFull/rFull/wMax all one.
+ */
 LegacyTXsect unitLegacy(int type) {
     LegacyTXsect L{};
-    L.type  = type;
+    L.type = type;
     L.yFull = 1.0;
     L.aFull = 1.0;
     L.rFull = 1.0;
-    L.wMax  = 1.0;
+    L.wMax = 1.0;
     return L;
 }
 
 // Shapes whose getAofY/getRofY/getWofY route entirely through lookup() — the
 // set in scope for the ULP==0 mandate (circular + shared-table shapes).
+/**
+ * @brief Return shapes included in the bit-exact lookup-table comparison scope.
+ *
+ * Does not mutate project state; static allocation exceptions may propagate.
+ * @return Borrowed static circular/force-main/shared-table case vector, valid for process lifetime.
+ */
 const std::vector<ShapeCase>& lookupBasedShapes() {
     static const std::vector<ShapeCase> cases = {
-        {"CIRCULAR",      static_cast<int>(XSectShape::CIRCULAR),      {3.0, 0,     0, 0}},
-        {"FORCE_MAIN",    static_cast<int>(XSectShape::FORCE_MAIN),    {3.0, 130.0, 0, 0}},
-        {"EGGSHAPED",     static_cast<int>(XSectShape::EGGSHAPED),     {3.0, 0,     0, 0}},
-        {"HORSESHOE",     static_cast<int>(XSectShape::HORSESHOE),     {3.0, 0,     0, 0}},
-        {"BASKETHANDLE",  static_cast<int>(XSectShape::BASKETHANDLE),  {3.0, 0,     0, 0}},
-        {"HORIZ_ELLIPSE", static_cast<int>(XSectShape::HORIZ_ELLIPSE), {3.0, 4.5,   0, 0}},
-        {"VERT_ELLIPSE",  static_cast<int>(XSectShape::VERT_ELLIPSE),  {4.5, 3.0,   0, 0}},
-        {"ARCH",          static_cast<int>(XSectShape::ARCH),          {3.0, 4.0,   0, 0}},
+        {"CIRCULAR", static_cast<int>(XSectShape::CIRCULAR), {3.0, 0, 0, 0}},
+        {"FORCE_MAIN", static_cast<int>(XSectShape::FORCE_MAIN), {3.0, 130.0, 0, 0}},
+        {"EGGSHAPED", static_cast<int>(XSectShape::EGGSHAPED), {3.0, 0, 0, 0}},
+        {"HORSESHOE", static_cast<int>(XSectShape::HORSESHOE), {3.0, 0, 0, 0}},
+        {"BASKETHANDLE", static_cast<int>(XSectShape::BASKETHANDLE), {3.0, 0, 0, 0}},
+        {"HORIZ_ELLIPSE", static_cast<int>(XSectShape::HORIZ_ELLIPSE), {3.0, 4.5, 0, 0}},
+        {"VERT_ELLIPSE", static_cast<int>(XSectShape::VERT_ELLIPSE), {4.5, 3.0, 0, 0}},
+        {"ARCH", static_cast<int>(XSectShape::ARCH), {3.0, 4.0, 0, 0}},
     };
     return cases;
 }
 
 // Adversarial normalized-x set in [0, 1]: every table node k/50, x = 1.0, the
 // nextafter neighbors of each node, and tiny x exercising the i<2 quadratic path.
+/**
+ * @brief Generate normalized table arguments around knots and tiny-depth branches.
+ *
+ * Does not read a table or invoke a geometry query; caller chooses a count consistent with the
+ * target table.
+ *
+ * @param[in] n_items Table node count greater than one, used to generate k/(n_items-1).
+ * @return Owned non-deduplicated argument vector filtered to (0,1], with knot nextafter neighbors
+ *     and tiny fixed values.
+ */
 std::vector<double> adversarialX(int n_items) {
     std::vector<double> xs;
     for (int k = 0; k <= n_items - 1; ++k) {
@@ -491,10 +713,13 @@ std::vector<double> adversarialX(int n_items) {
         xs.push_back(std::nextafter(x, 0.0));
         xs.push_back(std::nextafter(x, 1.0));
     }
-    for (double t : {1e-9, 1e-8, 1e-7, 1e-6, 1e-5, 1e-4, 1e-3}) xs.push_back(t);
+    for (double t : {1e-9, 1e-8, 1e-7, 1e-6, 1e-5, 1e-4, 1e-3})
+        xs.push_back(t);
     xs.push_back(1.0);
     std::vector<double> out;
-    for (double x : xs) if (x > 0.0 && x <= 1.0) out.push_back(x);  // lookup domain
+    for (double x : xs)
+        if (x > 0.0 && x <= 1.0)
+            out.push_back(x); // lookup domain
     return out;
 }
 
@@ -509,23 +734,26 @@ std::vector<double> adversarialX(int n_items) {
 // exact core). Configure with -DOPENSWMM_FAST_XSECT_LOOKUP=OFF to hold the batch
 // path to ULP==0.
 #ifdef SWMM_XSECT_FAST_LOOKUP
-#  define BATCH_EQ(legacy, got) Close((legacy), (got))
+#define BATCH_EQ(legacy, got) Close((legacy), (got))
 #else
-#  define BATCH_EQ(legacy, got) BitEq((legacy), (got))
+#define BATCH_EQ(legacy, got) BitEq((legacy), (got))
 #endif
 
 // (§7.1 bullet 1) lookup_exact vs legacy lookup() for A_Circ / R_Circ / W_Circ.
 TEST(XSectBitExact, LookupCircularTablesVsLegacy) {
     using namespace xsect_tables;
-    LegacyTXsect La = unitLegacy(static_cast<int>(XSectShape::CIRCULAR));  // area  -> A_Circ
-    LegacyTXsect Lr = La;                                                  // hydrad-> R_Circ
-    LegacyTXsect Lw = La;                                                  // width -> W_Circ
+    LegacyTXsect La = unitLegacy(static_cast<int>(XSectShape::CIRCULAR)); // area  -> A_Circ
+    LegacyTXsect Lr = La;                                                 // hydrad-> R_Circ
+    LegacyTXsect Lw = La;                                                 // width -> W_Circ
 
     for (double x : adversarialX(N_A_Circ)) {
         SCOPED_TRACE("x=" + std::to_string(x));
-        EXPECT_TRUE(BitEq(xsect_getAofY(&La, x), xsect::lookup_exact(x, A_Circ, N_A_Circ))) << "A_Circ";
-        EXPECT_TRUE(BitEq(xsect_getRofY(&Lr, x), xsect::lookup_exact(x, R_Circ, N_R_Circ))) << "R_Circ";
-        EXPECT_TRUE(BitEq(xsect_getWofY(&Lw, x), xsect::lookup_exact(x, W_Circ, N_W_Circ))) << "W_Circ";
+        EXPECT_TRUE(BitEq(xsect_getAofY(&La, x), xsect::lookup_exact(x, A_Circ, N_A_Circ)))
+            << "A_Circ";
+        EXPECT_TRUE(BitEq(xsect_getRofY(&Lr, x), xsect::lookup_exact(x, R_Circ, N_R_Circ)))
+            << "R_Circ";
+        EXPECT_TRUE(BitEq(xsect_getWofY(&Lw, x), xsect::lookup_exact(x, W_Circ, N_W_Circ)))
+            << "W_Circ";
     }
 }
 
@@ -539,13 +767,15 @@ TEST(XSectBitExact, ScalarGettersVsLegacy) {
         XSectParams N = fromLegacy(L);
 
         std::vector<double> ys;
-        for (int k = 0; k <= 50; ++k) ys.push_back(L.yFull * (static_cast<double>(k) / 50.0));
+        for (int k = 0; k <= 50; ++k)
+            ys.push_back(L.yFull * (static_cast<double>(k) / 50.0));
         ys.push_back(0.0);
         ys.push_back(L.yFull);
         ys.push_back(std::nextafter(L.yFull, 0.0));
-        ys.push_back(std::nextafter(L.yFull, L.yFull * 2.0));   // surcharge (y > yFull)
+        ys.push_back(std::nextafter(L.yFull, L.yFull * 2.0)); // surcharge (y > yFull)
         ys.push_back(L.yFull * 1.5);
-        for (double t : {1e-9, 1e-7, 1e-5, 1e-3}) ys.push_back(L.yFull * t);
+        for (double t : {1e-9, 1e-7, 1e-5, 1e-3})
+            ys.push_back(L.yFull * t);
 
         for (double y : ys) {
             SCOPED_TRACE(std::string(c.name) + " y=" + std::to_string(y));
@@ -564,7 +794,7 @@ TEST(XSectBitExact, BatchKernelsVsLegacy) {
     int n = static_cast<int>(shapes.size());
 
     std::vector<LegacyTXsect> L(static_cast<std::size_t>(n));
-    std::vector<XSectParams>  N(static_cast<std::size_t>(n));
+    std::vector<XSectParams> N(static_cast<std::size_t>(n));
     for (int i = 0; i < n; ++i) {
         auto ui = static_cast<std::size_t>(i);
         double p[4] = {shapes[i].p[0], shapes[i].p[1], shapes[i].p[2], shapes[i].p[3]};
@@ -577,8 +807,8 @@ TEST(XSectBitExact, BatchKernelsVsLegacy) {
 
     // Depth fractions spanning dry, quadratic-refinement, mid, exactly-full, and
     // surcharge — each link uses its own yFull so a single frac hits every shape.
-    std::vector<double> fracs = {0.0, 1e-9, 1e-5, 1e-3, 0.02, 0.04, 0.1, 0.5,
-                                 0.9, 0.98, 0.999, 1.0, 1.25};
+    std::vector<double> fracs = {0.0, 1e-9, 1e-5, 1e-3,  0.02, 0.04, 0.1,
+                                 0.5, 0.9,  0.98, 0.999, 1.0,  1.25};
 
     std::vector<double> depths(static_cast<std::size_t>(n));
     std::vector<double> areas(static_cast<std::size_t>(n)), hyd(static_cast<std::size_t>(n));
@@ -592,17 +822,17 @@ TEST(XSectBitExact, BatchKernelsVsLegacy) {
         groups.computeAreas(depths.data(), areas.data(), n);
         groups.computeHydRad(depths.data(), hyd.data(), n);
         groups.computeWidths(depths.data(), wid.data(), n);
-        groups.computeAreaAndHydRad(depths.data(), fa.data(), fr.data(), n);  // fused kernel
+        groups.computeAreaAndHydRad(depths.data(), fa.data(), fr.data(), n); // fused kernel
 
         for (int i = 0; i < n; ++i) {
             auto ui = static_cast<std::size_t>(i);
             double y = depths[ui];
             SCOPED_TRACE(std::string(shapes[i].name) + " frac=" + std::to_string(frac));
             EXPECT_TRUE(BATCH_EQ(xsect_getAofY(&L[ui], y), areas[ui])) << "batch area";
-            EXPECT_TRUE(BATCH_EQ(xsect_getRofY(&L[ui], y), hyd[ui]))   << "batch hydrad";
-            EXPECT_TRUE(BATCH_EQ(xsect_getWofY(&L[ui], y), wid[ui]))   << "batch width";
-            EXPECT_TRUE(BATCH_EQ(xsect_getAofY(&L[ui], y), fa[ui]))    << "fused area";
-            EXPECT_TRUE(BATCH_EQ(xsect_getRofY(&L[ui], y), fr[ui]))    << "fused hydrad";
+            EXPECT_TRUE(BATCH_EQ(xsect_getRofY(&L[ui], y), hyd[ui])) << "batch hydrad";
+            EXPECT_TRUE(BATCH_EQ(xsect_getWofY(&L[ui], y), wid[ui])) << "batch width";
+            EXPECT_TRUE(BATCH_EQ(xsect_getAofY(&L[ui], y), fa[ui])) << "fused area";
+            EXPECT_TRUE(BATCH_EQ(xsect_getRofY(&L[ui], y), fr[ui])) << "fused hydrad";
         }
     }
 }
@@ -620,22 +850,25 @@ TEST(XSectBitExact, GoldenHashCircularKernels) {
     std::vector<double> depth(M), yfull(M), afull(M), rfull(M), wmax(M);
     for (int k = 0; k < M; ++k) {
         auto uk = static_cast<std::size_t>(k);
-        double yf = 1.0 + 0.01 * k;                 // varied full depth
+        double yf = 1.0 + 0.01 * k; // varied full depth
         yfull[uk] = yf;
-        afull[uk] = 0.7853981633974483 * yf * yf;   // pi/4 * D^2
+        afull[uk] = 0.7853981633974483 * yf * yf; // pi/4 * D^2
         rfull[uk] = 0.25 * yf;
-        wmax[uk]  = yf;
-        depth[uk] = yf * (static_cast<double>(k) / (M - 1)) * 1.2;  // 0 .. 1.2*yf (surcharge)
+        wmax[uk] = yf;
+        depth[uk] = yf * (static_cast<double>(k) / (M - 1)) * 1.2; // 0 .. 1.2*yf (surcharge)
     }
     std::vector<double> area(M), hyd(M), wid(M);
-    xsect_batch::area_hydrad_circular(depth.data(), yfull.data(), afull.data(),
-                                      rfull.data(), area.data(), hyd.data(), M);
+    xsect_batch::area_hydrad_circular(depth.data(), yfull.data(), afull.data(), rfull.data(),
+                                      area.data(), hyd.data(), M);
     xsect_batch::width_circular(depth.data(), yfull.data(), wmax.data(), wid.data(), M);
 
     auto fnv1a = [](const std::vector<double>& v, std::uint64_t h) {
         const auto* p = reinterpret_cast<const unsigned char*>(v.data());
         std::size_t nbytes = v.size() * sizeof(double);
-        for (std::size_t i = 0; i < nbytes; ++i) { h ^= p[i]; h *= 1099511628211ULL; }
+        for (std::size_t i = 0; i < nbytes; ++i) {
+            h ^= p[i];
+            h *= 1099511628211ULL;
+        }
         return h;
     };
     std::uint64_t h = 1469598103934665603ULL;
@@ -645,12 +878,12 @@ TEST(XSectBitExact, GoldenHashCircularKernels) {
 
     // The golden depends on the lookup variant the engine was built with.
 #ifdef SWMM_XSECT_FAST_LOOKUP
-    constexpr std::uint64_t kGolden = 0x4bb6291e0b8b9381ULL;  // fast reciprocal-multiply lookup
+    constexpr std::uint64_t kGolden = 0x4bb6291e0b8b9381ULL; // fast reciprocal-multiply lookup
 #else
-    constexpr std::uint64_t kGolden = 0xfcd310e47838c666ULL;  // bit-exact divide form
+    constexpr std::uint64_t kGolden = 0xfcd310e47838c666ULL; // bit-exact divide form
 #endif
-    EXPECT_EQ(h, kGolden) << "circular-kernel golden hash drift — actual=0x"
-                          << std::hex << h << std::dec
+    EXPECT_EQ(h, kGolden) << "circular-kernel golden hash drift — actual=0x" << std::hex << h
+                          << std::dec
                           << " (recompute golden if the kernel math changed; see plan §7.2)";
 }
 
@@ -663,16 +896,17 @@ TEST(XSectBitExact, GoldenHashCircularKernels) {
 // ============================================================================
 TEST(XSectFastMode, LookupFastWithinTolerance) {
     using namespace xsect_tables;
-    LegacyTXsect La = unitLegacy(static_cast<int>(XSectShape::CIRCULAR));  // -> A_Circ
-    LegacyTXsect Lr = La;                                                  // -> R_Circ
-    LegacyTXsect Lw = La;                                                  // -> W_Circ
+    LegacyTXsect La = unitLegacy(static_cast<int>(XSectShape::CIRCULAR)); // -> A_Circ
+    LegacyTXsect Lr = La;                                                 // -> R_Circ
+    LegacyTXsect Lw = La;                                                 // -> W_Circ
 
     double max_rel = 0.0, max_abs = 0.0;
     auto check = [&](double legacy, double fast) {
-        EXPECT_TRUE(Close(legacy, fast));                    // the §6 gate (abs 1e-8/rel 1e-7)
+        EXPECT_TRUE(Close(legacy, fast)); // the §6 gate (abs 1e-8/rel 1e-7)
         double d = std::fabs(legacy - fast);
         max_abs = std::max(max_abs, d);
-        if (std::fabs(legacy) > 0.0) max_rel = std::max(max_rel, d / std::fabs(legacy));
+        if (std::fabs(legacy) > 0.0)
+            max_rel = std::max(max_rel, d / std::fabs(legacy));
     };
     for (double x : adversarialX(N_A_Circ)) {
         SCOPED_TRACE("x=" + std::to_string(x));
@@ -686,4 +920,495 @@ TEST(XSectFastMode, LookupFastWithinTolerance) {
     RecordProperty("fast_lookup_max_rel", std::to_string(max_rel));
     RecordProperty("fast_lookup_max_abs", std::to_string(max_abs));
     EXPECT_LT(max_rel, 1e-6) << "fast-lookup rel deviation regressed; max_rel=" << max_rel;
+}
+
+// ============================================================================
+// Lookup-acceleration identity gate — plans/XSECT_LOOKUP_ACCEL_PLAN.md Phase 1/2.
+//
+// A1 (bucket LUT), A2 (fused tabulated pair) and A3 (transect-grouped element
+// order) are the plan's BIT-EXACT set: each is a pure restatement of how the
+// existing arithmetic is reached, never of the arithmetic itself. That claim is
+// only worth anything if it is pinned, so these tests keep the pre-change forms
+// compiled — plain bisection, two separate lookup passes, the unsorted element
+// order — and assert memcmp-level equality against them, not a tolerance.
+//
+// Note this holds in the SWMM_XSECT_FAST_LOOKUP build too (unlike the
+// legacy-parity checks above, which relax there): both sides of every
+// comparison here are the SAME lookup variant, so the fast mode's ULP
+// deviation from legacy cancels out and the identity is exact either way.
+// ============================================================================
+
+namespace {
+
+using openswmm::xsect::LocateLut;
+using openswmm::xsect::LutId;
+
+// Values that stress the bracket logic: every table node, both nextafter
+// neighbours of each node, cell midpoints, and points outside the value range
+// (which locate() resolves through its own clamps).
+/**
+ * @brief Generate inverse-lookup arguments around table ordinates and clamps.
+ *
+ * No monotonicity/finite validation is performed; target lookup applies its own bounds behavior.
+ *
+ * @param[in] t Readable array of at least n table entries; borrowed only for this call.
+ * @param[in] n Nonnegative entry count.
+ * @return Owned non-deduplicated values including ordinates, nextafter neighbors, midpoints and
+ *     fixed out-of-range probes.
+ */
+std::vector<double> adversarialTableValues(const double* t, int n) {
+    std::vector<double> v;
+    for (int k = 0; k < n; ++k) {
+        v.push_back(t[k]);
+        v.push_back(std::nextafter(t[k], -1e300));
+        v.push_back(std::nextafter(t[k], 1e300));
+        if (k + 1 < n)
+            v.push_back(0.5 * (t[k] + t[k + 1]));
+    }
+    for (double x : {-1.0, -1e-300, 0.0, 1e-300, 1.0, 1.5, 2.0, 1e6})
+        v.push_back(x);
+    return v;
+}
+
+// A handful of real transect tables, built by the shipped builder from
+// station/elevation data (a V notch, a wide flood plain with a deep channel,
+// a near-trapezoid, and an asymmetric section) — NOT hand-written tables, so
+// the flat spans and clustered rows a real transect produces are exercised.
+struct TestTransect {
+    openswmm::transect::TransectData td;
+};
+
+/**
+ * @brief Build and retain four representative synthetic transect tables.
+ *
+ * First call builds V-notch, floodplain, trapezoid and asymmetric station/elevation profiles with
+ * fixed roughness. No project file IO or legacy globals are needed.
+ * @return Borrowed static vector of owned built transects, valid for process lifetime.
+ */
+const std::vector<TestTransect>& testTransects() {
+    static const std::vector<TestTransect> tts = [] {
+        std::vector<TestTransect> out;
+        const std::vector<std::pair<std::vector<double>, std::vector<double>>> sections = {
+            {{0, 5, 10}, {10, 0, 10}},                                 // V notch
+            {{0, 40, 45, 50, 55, 60, 100}, {12, 10, 2, 0, 2, 10, 12}}, // flood plain
+            {{0, 2, 12, 14}, {6, 0, 0, 6}},                            // trapezoid
+            {{0, 3, 9, 30, 33}, {8, 1.5, 0, 4, 9}},                    // asymmetric
+        };
+        for (std::size_t i = 0; i < sections.size(); ++i) {
+            TestTransect tt;
+            tt.td.name = "T" + std::to_string(i);
+            tt.td.stations = sections[i].first;
+            tt.td.elevations = sections[i].second;
+            tt.td.n_channel = 0.03;
+            tt.td.n_left = 0.05;
+            tt.td.n_right = 0.05;
+            tt.td.x_left_bank = sections[i].first.front();
+            tt.td.x_right_bank = sections[i].first.back();
+            openswmm::transect::buildTables(tt.td);
+            out.push_back(std::move(tt));
+        }
+        return out;
+    }();
+    return tts;
+}
+
+} // namespace
+
+// A1 — the bucket map returns locate()'s index, not merely a nearby one. This
+// is the whole basis of the bit-exactness claim: same index in, same
+// interpolation arithmetic out.
+TEST(XSectAccel, BucketLutReturnsIdenticalIndex) {
+    struct Case {
+        const char* name;
+        const double* t;
+        int n;
+    };
+    using namespace xsect_tables;
+    const std::vector<Case> tables = {
+        {"Y_Gothic", Y_Gothic, N_Y_Gothic},
+        {"Y_Catenary", Y_Catenary, N_Y_Catenary},
+        {"Y_SemiEllip", Y_SemiEllip, N_Y_SemiEllip},
+        {"Y_SemiCirc", Y_SemiCirc, N_Y_SemiCirc},
+        {"A_HorizEllipse", A_HorizEllipse, N_A_HorizEllipse},
+        {"A_VertEllipse", A_VertEllipse, N_A_VertEllipse},
+        {"A_Arch", A_Arch, N_A_Arch},
+        {"S_Circ", S_Circ, N_S_Circ},
+        {"S_Egg", S_Egg, N_S_Egg},
+        {"S_Horseshoe", S_Horseshoe, N_S_Horseshoe},
+        {"S_Gothic", S_Gothic, N_S_Gothic},
+        {"S_Catenary", S_Catenary, N_S_Catenary},
+        {"S_SemiEllip", S_SemiEllip, N_S_SemiEllip},
+        {"S_BasketHandle", S_BasketHandle, N_S_BasketHandle},
+        {"S_SemiCirc", S_SemiCirc, N_S_SemiCirc},
+    };
+
+    int checked = 0;
+    for (const auto& c : tables) {
+        SCOPED_TRACE(c.name);
+        LocateLut lut{};
+        openswmm::xsect::build_invlookup_lut(lut, c.t, c.n);
+        ASSERT_GT(lut.scale, 0.0) << "no map built for " << c.name;
+        const int jLast = lut.j_last;
+        for (double y : adversarialTableValues(c.t, jLast + 1)) {
+            EXPECT_EQ(openswmm::xsect::locate_lut(y, c.t, jLast, lut),
+                      openswmm::xsect::locate_bisect(y, c.t, jLast))
+                << "y=" << y;
+            ++checked;
+        }
+    }
+    // NaN resolves to index 0 in plain bisection (every `y >= t[j]` is false);
+    // the map must not diverge there either.
+    for (const auto& c : tables) {
+        LocateLut lut{};
+        openswmm::xsect::build_invlookup_lut(lut, c.t, c.n);
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        EXPECT_EQ(openswmm::xsect::locate_lut(nan, c.t, lut.j_last, lut),
+                  openswmm::xsect::locate_bisect(nan, c.t, lut.j_last))
+            << c.name;
+    }
+    EXPECT_GT(checked, 2000);
+}
+
+// A1 — same, on real transect area tables (the getYofA IRREGULAR path).
+TEST(XSectAccel, BucketLutIdenticalOnTransectTables) {
+    for (const auto& tt : testTransects()) {
+        SCOPED_TRACE(tt.td.name);
+        ASSERT_GT(tt.td.a_full, 0.0);
+        ASSERT_GT(tt.td.area_lut.scale, 0.0) << "no map built for this transect";
+        const int jLast = tt.td.area_lut.j_last;
+        for (double y : adversarialTableValues(tt.td.area_tbl, jLast + 1)) {
+            EXPECT_EQ(openswmm::xsect::locate_lut(y, tt.td.area_tbl, jLast, tt.td.area_lut),
+                      openswmm::xsect::locate_bisect(y, tt.td.area_tbl, jLast))
+                << "y=" << y;
+        }
+    }
+}
+
+// A1 — the interpolated value, not just the index: invLookup with and without
+// the map, ULP == 0. Covers the S-tables' two-row top truncation, which is
+// resolved outside locate() and so must be unaffected by the map.
+TEST(XSectAccel, InvLookupWithMapIsBitIdentical) {
+    const xsect::XsectEval& ev = xsect::hostEval();
+    struct Case {
+        const char* name;
+        const double* t;
+        int n;
+        LutId id;
+    };
+    using namespace xsect_tables;
+    const std::vector<Case> tables = {
+        {"Y_Gothic", Y_Gothic, N_Y_Gothic, LutId::Y_Gothic},
+        {"Y_Catenary", Y_Catenary, N_Y_Catenary, LutId::Y_Catenary},
+        {"Y_SemiEllip", Y_SemiEllip, N_Y_SemiEllip, LutId::Y_SemiEllip},
+        {"Y_SemiCirc", Y_SemiCirc, N_Y_SemiCirc, LutId::Y_SemiCirc},
+        {"A_HorizEllipse", A_HorizEllipse, N_A_HorizEllipse, LutId::A_HorizEllipse},
+        {"A_VertEllipse", A_VertEllipse, N_A_VertEllipse, LutId::A_VertEllipse},
+        {"A_Arch", A_Arch, N_A_Arch, LutId::A_Arch},
+        {"S_Circ", S_Circ, N_S_Circ, LutId::S_Circ},
+        {"S_Egg", S_Egg, N_S_Egg, LutId::S_Egg},
+        {"S_Horseshoe", S_Horseshoe, N_S_Horseshoe, LutId::S_Horseshoe},
+        {"S_Gothic", S_Gothic, N_S_Gothic, LutId::S_Gothic},
+        {"S_Catenary", S_Catenary, N_S_Catenary, LutId::S_Catenary},
+        {"S_SemiEllip", S_SemiEllip, N_S_SemiEllip, LutId::S_SemiEllip},
+        {"S_BasketHandle", S_BasketHandle, N_S_BasketHandle, LutId::S_BasketHandle},
+        {"S_SemiCirc", S_SemiCirc, N_S_SemiCirc, LutId::S_SemiCirc},
+    };
+    for (const auto& c : tables) {
+        SCOPED_TRACE(c.name);
+        const LocateLut* lut = xsect::hostTables().lut(c.id);
+        ASSERT_NE(lut, nullptr);
+        for (double y : adversarialTableValues(c.t, c.n)) {
+            EXPECT_TRUE(BitEq(ev.invLookup(y, c.t, c.n, nullptr), ev.invLookup(y, c.t, c.n, lut)))
+                << "y=" << y;
+        }
+    }
+    for (const auto& tt : testTransects()) {
+        SCOPED_TRACE(tt.td.name);
+        const int n = openswmm::transect::N_TRANSECT_TBL;
+        for (double y : adversarialTableValues(tt.td.area_tbl, n)) {
+            EXPECT_TRUE(BitEq(ev.invLookup(y, tt.td.area_tbl, n, nullptr),
+                              ev.invLookup(y, tt.td.area_tbl, n, &tt.td.area_lut)))
+                << "y=" << y;
+        }
+    }
+}
+
+// A1 — end to end through the dispatchers the solvers actually call, against an
+// evaluator with the maps unbound (`luts == nullptr`), which is exactly the
+// pre-change code path.
+TEST(XSectAccel, DispatchersBitIdenticalWithAndWithoutMaps) {
+    xsect::XsectTables no_luts = xsect::hostTables();
+    no_luts.luts = nullptr;
+    const xsect::XsectEval bisecting{no_luts};
+    const xsect::XsectEval& mapped = xsect::hostEval();
+
+    for (const auto& c : selfContainedShapes()) {
+        SCOPED_TRACE(c.name);
+        LegacyTXsect L{};
+        xsect_setParams(&L, c.type, const_cast<double*>(c.p), 1.0);
+        const XSectParams xs = fromLegacy(L);
+        for (double f : areaFractions()) {
+            const double a = f * xs.a_full;
+            EXPECT_TRUE(BitEq(bisecting.getYofA(xs, a), mapped.getYofA(xs, a))) << "f=" << f;
+            EXPECT_TRUE(BitEq(bisecting.getRofA(xs, a), mapped.getRofA(xs, a))) << "f=" << f;
+        }
+        for (double f : areaFractions()) {
+            const double s = f * xs.s_full;
+            EXPECT_TRUE(BitEq(bisecting.getAofS(xs, s), mapped.getAofS(xs, s))) << "f=" << f;
+        }
+        for (double f : depthFractions()) {
+            const double y = f * xs.y_full;
+            EXPECT_TRUE(BitEq(bisecting.getAofY(xs, y), mapped.getAofY(xs, y))) << "f=" << f;
+        }
+    }
+
+    // The transect path: same comparison, with the per-link map bound or not.
+    for (const auto& tt : testTransects()) {
+        SCOPED_TRACE(tt.td.name);
+        XSectParams xs;
+        xs.type = static_cast<int>(XSectShape::IRREGULAR);
+        xs.y_full = tt.td.y_full;
+        xs.a_full = tt.td.a_full;
+        xs.r_full = tt.td.r_full;
+        xs.w_max = tt.td.w_max;
+        xs.area_tbl = tt.td.area_tbl;
+        xs.hrad_tbl = tt.td.hrad_tbl;
+        xs.width_tbl = tt.td.width_tbl;
+        xs.transect_tbl_size = openswmm::transect::N_TRANSECT_TBL;
+        XSectParams xs_mapped = xs;
+        xs_mapped.area_lut = &tt.td.area_lut;
+        for (double f : areaFractions()) {
+            const double a = f * xs.a_full;
+            EXPECT_TRUE(BitEq(mapped.getYofA(xs, a), mapped.getYofA(xs_mapped, a))) << "f=" << f;
+        }
+    }
+}
+
+// A2 — the fused area+hyd-radius pass against the two separate passes it
+// replaces, over a batch of links deliberately chasing DIFFERENT transects.
+TEST(XSectAccel, FusedTabulatedPairIsBitIdentical) {
+    const auto& tts = testTransects();
+    ASSERT_FALSE(tts.empty());
+    constexpr int kLinks = 97; // prime: no alignment with 4 transects
+    constexpr int n = openswmm::transect::N_TRANSECT_TBL;
+
+    std::vector<double> depth(kLinks), nrm(kLinks), afull(kLinks), rfull(kLinks);
+    std::vector<const double*> ta(kLinks), tb(kLinks);
+    for (int k = 0; k < kLinks; ++k) {
+        const auto& td = tts[static_cast<std::size_t>(k) % tts.size()].td;
+        const auto uk = static_cast<std::size_t>(k);
+        // Sweep depth from below zero (the y<=0 guard) through surcharge.
+        depth[uk] = td.y_full * (-0.05 + 1.15 * static_cast<double>(k) / (kLinks - 1));
+        nrm[uk] = td.y_full;
+        afull[uk] = td.a_full;
+        rfull[uk] = td.r_full;
+        ta[uk] = td.area_tbl;
+        tb[uk] = td.hrad_tbl;
+    }
+#ifdef SWMM_XSECT_FAST_LOOKUP
+    for (int k = 0; k < kLinks; ++k) { // the kernels take 1/y_full here
+        auto uk = static_cast<std::size_t>(k);
+        nrm[uk] = (nrm[uk] > 0.0) ? 1.0 / nrm[uk] : 0.0;
+    }
+#endif
+
+    std::vector<double> ref_a(kLinks), ref_b(kLinks), got_a(kLinks), got_b(kLinks);
+    xsect_batch::perlink_tabulated(depth.data(), nrm.data(), afull.data(), ta.data(), n,
+                                   ref_a.data(), kLinks);
+    xsect_batch::perlink_tabulated(depth.data(), nrm.data(), rfull.data(), tb.data(), n,
+                                   ref_b.data(), kLinks);
+    xsect_batch::perlink_tabulated_pair(depth.data(), nrm.data(), afull.data(), rfull.data(),
+                                        ta.data(), tb.data(), n, got_a.data(), got_b.data(),
+                                        kLinks);
+    EXPECT_EQ(0, std::memcmp(ref_a.data(), got_a.data(), ref_a.size() * sizeof(double)));
+    EXPECT_EQ(0, std::memcmp(ref_b.data(), got_b.data(), ref_b.size() * sizeof(double)));
+    for (int k = 0; k < kLinks; ++k) { // per-element message on failure
+        auto uk = static_cast<std::size_t>(k);
+        EXPECT_TRUE(BitEq(ref_a[uk], got_a[uk])) << "area k=" << k;
+        EXPECT_TRUE(BitEq(ref_b[uk], got_b[uk])) << "hydrad k=" << k;
+    }
+
+    // A missing table on one side must still behave like the unfused pair.
+    ta[3] = nullptr;
+    tb[7] = nullptr;
+    xsect_batch::perlink_tabulated(depth.data(), nrm.data(), afull.data(), ta.data(), n,
+                                   ref_a.data(), kLinks);
+    xsect_batch::perlink_tabulated(depth.data(), nrm.data(), rfull.data(), tb.data(), n,
+                                   ref_b.data(), kLinks);
+    xsect_batch::perlink_tabulated_pair(depth.data(), nrm.data(), afull.data(), rfull.data(),
+                                        ta.data(), tb.data(), n, got_a.data(), got_b.data(),
+                                        kLinks);
+    EXPECT_EQ(0, std::memcmp(ref_a.data(), got_a.data(), ref_a.size() * sizeof(double)));
+    EXPECT_EQ(0, std::memcmp(ref_b.data(), got_b.data(), ref_b.size() * sizeof(double)));
+}
+
+// A3 — the reordering is only sound because the tabulated kernels are
+// elementwise. Feed the same links in two different orders and require each
+// link's result to be identical, which is precisely what the init-time sort
+// relies on.
+TEST(XSectAccel, TabulatedKernelsArePositionIndependent) {
+    const auto& tts = testTransects();
+    constexpr int kLinks = 64;
+    constexpr int n = openswmm::transect::N_TRANSECT_TBL;
+
+    std::vector<double> depth(kLinks), nrm(kLinks), afull(kLinks), rfull(kLinks);
+    std::vector<const double*> ta(kLinks), tb(kLinks);
+    for (int k = 0; k < kLinks; ++k) {
+        // Interleave transects, the ordering the sort exists to undo.
+        const auto& td = tts[static_cast<std::size_t>(k) % tts.size()].td;
+        const auto uk = static_cast<std::size_t>(k);
+        depth[uk] = td.y_full * (0.02 + 0.96 * static_cast<double>(k) / (kLinks - 1));
+        nrm[uk] = td.y_full;
+        afull[uk] = td.a_full;
+        rfull[uk] = td.r_full;
+        ta[uk] = td.area_tbl;
+        tb[uk] = td.hrad_tbl;
+    }
+#ifdef SWMM_XSECT_FAST_LOOKUP
+    for (int k = 0; k < kLinks; ++k) {
+        auto uk = static_cast<std::size_t>(k);
+        nrm[uk] = (nrm[uk] > 0.0) ? 1.0 / nrm[uk] : 0.0;
+    }
+#endif
+
+    std::vector<double> a0(kLinks), b0(kLinks);
+    xsect_batch::perlink_tabulated_pair(depth.data(), nrm.data(), afull.data(), rfull.data(),
+                                        ta.data(), tb.data(), n, a0.data(), b0.data(), kLinks);
+
+    // Group by transect — exactly the permutation sortGroupByTransect applies.
+    std::vector<int> order(kLinks);
+    for (int k = 0; k < kLinks; ++k)
+        order[static_cast<std::size_t>(k)] = k;
+    std::stable_sort(order.begin(), order.end(), [&](int l, int r) {
+        return (l % static_cast<int>(tts.size())) < (r % static_cast<int>(tts.size()));
+    });
+    std::vector<double> pd(kLinks), pn(kLinks), pa(kLinks), pr(kLinks);
+    std::vector<const double*> pta(kLinks), ptb(kLinks);
+    for (int k = 0; k < kLinks; ++k) {
+        const auto uk = static_cast<std::size_t>(k);
+        const auto us = static_cast<std::size_t>(order[uk]);
+        pd[uk] = depth[us];
+        pn[uk] = nrm[us];
+        pa[uk] = afull[us];
+        pr[uk] = rfull[us];
+        pta[uk] = ta[us];
+        ptb[uk] = tb[us];
+    }
+    std::vector<double> a1(kLinks), b1(kLinks);
+    xsect_batch::perlink_tabulated_pair(pd.data(), pn.data(), pa.data(), pr.data(), pta.data(),
+                                        ptb.data(), n, a1.data(), b1.data(), kLinks);
+    for (int k = 0; k < kLinks; ++k) {
+        const auto uk = static_cast<std::size_t>(k);
+        const auto us = static_cast<std::size_t>(order[uk]);
+        EXPECT_TRUE(BitEq(a0[us], a1[uk])) << "area, permuted position " << k;
+        EXPECT_TRUE(BitEq(b0[us], b1[uk])) << "hydrad, permuted position " << k;
+    }
+}
+
+// A3 — the reordering itself, not just the property it leans on.
+//
+// `sortGroupByTransect` permutes FOURTEEN parallel arrays. Permuting the table
+// pointers while leaving (say) `a_full` behind would silently scale each link's
+// area by another link's full area — every kernel would still run, every
+// per-element result would still be "some valid number", and
+// TabulatedKernelsArePositionIndependent above would still pass, because it
+// tests the kernels rather than the permutation. So this test checks the two
+// things that can actually break: that the group really is grouped by transect
+// afterwards, and that each element's parameters still belong to ITS link.
+TEST(XSectAccel, TransectSortKeepsEveryParallelArrayWithItsLink) {
+    const auto& tts = testTransects();
+    ASSERT_GE(tts.size(), 3u);
+
+    // Links deal round-robin from the transect deck, so the pre-sort order
+    // interleaves — the arrangement the sort exists to undo. A prime link count
+    // keeps the cycle from lining up with the group boundaries.
+    constexpr int kLinks = 23;
+    SimulationContext ctx;
+    ctx.links.resize(kLinks);
+    ctx.transect_tables.resize(3);
+    for (std::size_t t = 0; t < ctx.transect_tables.size(); ++t)
+        ctx.transect_tables[t] = tts[t].td;
+
+    std::vector<XSectParams> params(kLinks);
+    std::vector<int> curve_of_link(kLinks);
+    for (int k = 0; k < kLinks; ++k) {
+        const int ti = k % static_cast<int>(ctx.transect_tables.size());
+        curve_of_link[static_cast<std::size_t>(k)] = ti;
+        ctx.links.xsect_curve[static_cast<std::size_t>(k)] = ti;
+        params[static_cast<std::size_t>(k)].type = static_cast<int>(XSectShape::IRREGULAR);
+        // Deliberately WRONG-but-distinct seed values: attachTransectTables
+        // overwrites them from the transect, so if the sort moved an element's
+        // tables without moving its scalars the mismatch shows up below.
+        params[static_cast<std::size_t>(k)].y_full = 1.0 + k;
+        params[static_cast<std::size_t>(k)].a_full = 100.0 + k;
+    }
+
+    XSectGroups groups;
+    groups.build(params.data(), kLinks);
+    groups.attachTransectTables(ctx);
+
+    const ShapeGroup* g = groups.findGroup(XSectShape::IRREGULAR);
+    ASSERT_NE(g, nullptr);
+    ASSERT_EQ(g->count, kLinks);
+
+    // 1. The group is actually grouped: transect indices are non-decreasing.
+    for (int k = 1; k < g->count; ++k) {
+        const int prev =
+            curve_of_link[static_cast<std::size_t>(g->link_idx[static_cast<std::size_t>(k - 1)])];
+        const int cur =
+            curve_of_link[static_cast<std::size_t>(g->link_idx[static_cast<std::size_t>(k)])];
+        EXPECT_LE(prev, cur) << "group not sorted by transect at position " << k;
+    }
+    // And it really was a reorder, not a no-op on an already-sorted input.
+    bool reordered = false;
+    for (int k = 0; k < g->count; ++k)
+        if (g->link_idx[static_cast<std::size_t>(k)] != k) {
+            reordered = true;
+            break;
+        }
+    EXPECT_TRUE(reordered) << "input was already grouped — this test proves nothing";
+
+    // 2. Every element still carries ITS OWN link's data. link_idx is the only
+    //    thing tying a slot back to a link, so each array is checked against
+    //    the transect that link references.
+    for (int k = 0; k < g->count; ++k) {
+        const auto uk = static_cast<std::size_t>(k);
+        const int link = g->link_idx[uk];
+        const auto& td = ctx.transect_tables[static_cast<std::size_t>(
+            curve_of_link[static_cast<std::size_t>(link)])];
+        SCOPED_TRACE("slot " + std::to_string(k) + " -> link " + std::to_string(link));
+        EXPECT_EQ(g->area_tables[uk], td.area_tbl);
+        EXPECT_EQ(g->hrad_tables[uk], td.hrad_tbl);
+        EXPECT_EQ(g->width_tables[uk], td.width_tbl);
+        EXPECT_DOUBLE_EQ(g->y_full[uk], td.y_full);
+        EXPECT_DOUBLE_EQ(g->a_full[uk], td.a_full);
+        EXPECT_DOUBLE_EQ(g->r_full[uk], td.r_full);
+        EXPECT_DOUBLE_EQ(g->w_max[uk], td.w_max);
+        EXPECT_DOUBLE_EQ(g->inv_y_full[uk], 1.0 / td.y_full);
+    }
+
+    // 3. End to end: the batch area a link gets must equal what the per-element
+    //    accessor computes for that link's own transect. This is the assertion
+    //    that fails if the permutation ever pairs a link with another's table.
+    std::vector<double> depths(kLinks), areas(kLinks, -1.0);
+    for (int k = 0; k < kLinks; ++k) {
+        const auto& td = ctx.transect_tables[static_cast<std::size_t>(
+            curve_of_link[static_cast<std::size_t>(k)])];
+        depths[static_cast<std::size_t>(k)] = 0.37 * td.y_full;
+    }
+    groups.computeAreas(depths.data(), areas.data(), kLinks);
+
+    for (int k = 0; k < kLinks; ++k) {
+        const auto uk = static_cast<std::size_t>(k);
+        const auto& td = ctx.transect_tables[static_cast<std::size_t>(curve_of_link[uk])];
+        XSectParams ref{};
+        ref.type = static_cast<int>(XSectShape::IRREGULAR);
+        ref.y_full = td.y_full;
+        ref.a_full = td.a_full;
+        ref.area_tbl = td.area_tbl;
+        ref.area_lut = &td.area_lut;
+        ref.transect_tbl_size = openswmm::transect::N_TRANSECT_TBL;
+        EXPECT_TRUE(BATCH_EQ(xsect::getAofY(ref, depths[uk]), areas[uk]))
+            << "link " << k << " got another link's geometry";
+    }
 }

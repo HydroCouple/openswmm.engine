@@ -8,6 +8,17 @@
 //
 //   Geometry functions for custom cross-section shapes.
 //-----------------------------------------------------------------------------
+
+/**
+ * @file      shape.c
+ * @brief     Geometry tables for custom cross-section shapes.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com> (OpenSWMM maintenance and extensions)
+ * @copyright Copyright (c) 2026 Caleb Buahin. OpenSWMM contributions only; original EPA SWMM
+ *            credits are retained.
+ * @license   Apache-2.0 for OpenSWMM contributions; original EPA SWMM provenance is retained.
+ */
+
 #define _CRT_SECURE_NO_DEPRECATE
 
 #include <math.h>
@@ -27,27 +38,26 @@ static double Ptotal;
 //-----------------------------------------------------------------------------
 //  Local functions
 //-----------------------------------------------------------------------------
-static int computeShapeTables(TShape *shape, TTable *curve);
-static void getSmax(TShape *shape);
-static int normalizeShapeTables(TShape *shape);
-static int getNextInterval(TTable *curve, double y, double yLast, double wLast,
-                           double *y1, double *y2, double *w1, double *w2,
-                           double *wMax);
+static int computeShapeTables(TShape* shape, TTable* curve);
+static void getSmax(TShape* shape);
+static int normalizeShapeTables(TShape* shape);
+static int getNextInterval(TTable* curve, double y, double yLast, double wLast, double* y1,
+                           double* y2, double* w1, double* w2, double* wMax);
 static double getWidth(double y, double y1, double y2, double w1, double w2);
 static double getArea(double y, double w, double y1, double w1);
 static double getPerim(double y, double w, double y1, double w1);
 
 //=============================================================================
 
-int shape_validate(TShape *shape, TTable *curve)
-//
-//  Input:   shape = pointer to a custom x-section TShape object
-//           curve = pointer to shape's table of width v. height
-//  Output:  returns TRUE if successful. FALSE if not
-//  Purpose: computes the entries in a custom x-section shape's geometry
-//           tables from its user-supplied width v. height curve.
-//
-{
+/**
+ * @brief Computes the entries in a custom x-section shape's geometry tables from its user-supplied
+ *        width v. height curve.
+ *
+ * @param shape Pointer to a custom x-section TShape object.
+ * @param curve Pointer to shape's table of width v. height.
+ * @return TRUE if successful. FALSE if not.
+ */
+int shape_validate(TShape* shape, TTable* curve) {
     if (!computeShapeTables(shape, curve)) {
         return FALSE;
     }
@@ -61,19 +71,18 @@ int shape_validate(TShape *shape, TTable *curve)
 
 //=============================================================================
 
-int computeShapeTables(TShape *shape, TTable *curve)
-//
-//  Input:   shape = pointer to a TShape object
-//           curve = pointer to shape's table of width v. depth
-//  Output:  returns TRUE if successful. FALSE if not
-//  Purpose: computes the entries in a shape's geometry tables from
-//           the shape's width v. height curve normalized with repsect
-//           to full height.
-//
-//  Note:    the shape curve is a user-supplied table of width v. height
-//           for a custom x-section of unit height.
-{
-    int    i, n;
+/**
+ * @brief Computes the entries in a shape's geometry tables from the shape's width v. height curve
+ *        normalized with repsect to full height.
+ *
+ * @param shape Pointer to a TShape object.
+ * @param curve Pointer to shape's table of width v. depth.
+ * @return TRUE if successful. FALSE if not.
+ * @note The shape curve is a user-supplied table of width v. height for a custom x-section of unit
+ *       height.
+ */
+int computeShapeTables(TShape* shape, TTable* curve) {
+    int i, n;
     double dy, y, y1, y2, w, w1, w2;
     double yLast, wLast, wMax;
 
@@ -116,15 +125,15 @@ int computeShapeTables(TShape *shape, TTable *curve)
 
     // --- determine number of entries & interval size in geom. tables
     shape->nTbl = N_SHAPE_TBL;
-    n           = shape->nTbl - 1;
-    dy          = 1.0 / (double)(n);
+    n = shape->nTbl - 1;
+    dy = 1.0 / (double)(n);
 
     // --- initialize geometry tables
-    shape->areaTbl[0]  = 0.0;
-    shape->hradTbl[0]  = 0.0;
+    shape->areaTbl[0] = 0.0;
+    shape->hradTbl[0] = 0.0;
     shape->widthTbl[0] = w1;
-    Ptotal             = w1;
-    Atotal             = 0.0;
+    Ptotal = w1;
+    Atotal = 0.0;
 
     // --- fill in rest of geometry tables
     y = 0.0;
@@ -134,7 +143,7 @@ int computeShapeTables(TShape *shape, TTable *curve)
         // --- advance to next relative height level
         yLast = y;
         wLast = w;
-        y     = y + dy;
+        y = y + dy;
 
         // --- do not allow height to exceed 1.0
         if (fabs(y - 1.0) < TINY) {
@@ -144,8 +153,7 @@ int computeShapeTables(TShape *shape, TTable *curve)
         // --- if height exceeds current shape curve interval,
         //     move to next interval of shape curve
         if (y > y2) {
-            if (!getNextInterval(curve, y, yLast, wLast, &y1, &y2, &w1, &w2,
-                                 &wMax)) {
+            if (!getNextInterval(curve, y, yLast, wLast, &y1, &y2, &w1, &w2, &wMax)) {
                 return FALSE;
             }
 
@@ -165,7 +173,7 @@ int computeShapeTables(TShape *shape, TTable *curve)
 
         // --- update table values
         shape->widthTbl[i] = w;
-        shape->areaTbl[i]  = Atotal;
+        shape->areaTbl[i] = Atotal;
         if (Ptotal > 0.0) {
             shape->hradTbl[i] = Atotal / Ptotal;
         } else {
@@ -186,16 +194,14 @@ int computeShapeTables(TShape *shape, TTable *curve)
 
 //=============================================================================
 
-void getSmax(TShape *shape)
-//
-//  Input:   shape = pointer to a TShape object
-//  Output:  none
-//  Purpose: computes the max. section factor and corresponding area
-//           for a shape of unit height.
-//
-{
-    int    i;
-    int    n = shape->nTbl - 1;
+/**
+ * @brief Computes the max. section factor and corresponding area for a shape of unit height.
+ *
+ * @param shape Pointer to a TShape object.
+ */
+void getSmax(TShape* shape) {
+    int i;
+    int n = shape->nTbl - 1;
     double sf;
 
     shape->sMax = 0.0;
@@ -213,18 +219,18 @@ void getSmax(TShape *shape)
 
 //=============================================================================
 
-int normalizeShapeTables(TShape *shape)
-//
-//  Input:   shape = pointer to a TShape object
-//  Output:  returns TRUE if successful. FALSE if not
-//  Purpose: normalizes a shape's area tables to its full (or max.) condition.
-//
-{
-    int    i;
-    int    n     = shape->nTbl - 1;    // highest table entry index
-    double aFull = shape->aFull;       // area when full
-    double rFull = shape->rFull;       // hyd. radius when full
-    double wMax  = shape->wMax;        // max. width
+/**
+ * @brief Normalizes a shape's area tables to its full (or max.) condition.
+ *
+ * @param shape Pointer to a TShape object.
+ * @return TRUE if successful. FALSE if not.
+ */
+int normalizeShapeTables(TShape* shape) {
+    int i;
+    int n = shape->nTbl - 1;     // highest table entry index
+    double aFull = shape->aFull; // area when full
+    double rFull = shape->rFull; // hyd. radius when full
+    double wMax = shape->wMax;   // max. width
 
     // --- check that normalizing factors are non-zero
     if (aFull == 0.0 || rFull == 0.0 || wMax == 0.0) {
@@ -243,9 +249,24 @@ int normalizeShapeTables(TShape *shape)
 
 //=============================================================================
 
-int getNextInterval(TTable *curve, double y, double yLast, double wLast,
-                    double *y1, double *y2, double *w1, double *w2,
-                    double *wMax)
+/**
+ * @brief Advance a unit-height shape curve interval to contain a target height.
+ * @param[in,out] curve Non-null borrowed shape table; its iteration cursor advances.
+ * @param[in] y Target geometry-table height relative to a shape of unit full height.
+ * @param[in] yLast Previous geometry-table height; updated only as a local copy.
+ * @param[in] wLast Previous geometry-table width; updated only as a local copy.
+ * @param[in,out] y1 Non-null current interval start height.
+ * @param[in,out] y2 Non-null current interval end height; capped at one on exhaustion.
+ * @param[in,out] w1 Non-null width at the current interval start.
+ * @param[in,out] w2 Non-null width at the current interval end.
+ * @param[in,out] wMax Non-null maximum width seen so far.
+ * @return TRUE after finding/ending the interval, FALSE for descending heights
+ * or a negative next width. Pointer outputs may be partly advanced on FALSE.
+ * @post Accumulates shared Atotal and Ptotal for crossed curve pieces.
+ * All output slots are caller-owned, distinct and not retained.
+ */
+int getNextInterval(TTable* curve, double y, double yLast, double wLast, double* y1, double* y2,
+                    double* w1, double* w2, double* wMax)
 //
 //  Input:   curve = pointer to a user-supplied shape curve table
 //           y = current height in a geometry table
@@ -304,18 +325,17 @@ int getNextInterval(TTable *curve, double y, double yLast, double wLast,
 
 //=============================================================================
 
-double getWidth(double y, double y1, double y2, double w1, double w2)
-//
-//  Input:   y = height along a shape curve
-//           y1 = height at start of a shape curve interval
-//           y2 = height at end of a shape curve interval
-//           w1 = width at start of a shape curve interval
-//           w2 = width at end of a shape curve interval
-//  Output:  returns the width corresponding to height y
-//  Purpose: interpolates a width within a given height interval along a
-//           x-section's shape curve.
-//
-{
+/**
+ * @brief Interpolates a width within a given height interval along a x-section's shape curve.
+ *
+ * @param[in] y Height along a shape curve.
+ * @param[in] y1 Height at start of a shape curve interval.
+ * @param[in] y2 Height at end of a shape curve interval.
+ * @param[in] w1 Width at start of a shape curve interval.
+ * @param[in] w2 Width at end of a shape curve interval.
+ * @return The width corresponding to height y.
+ */
+double getWidth(double y, double y1, double y2, double w1, double w2) {
     if (y2 == y1) {
         return w2;
     }
@@ -325,16 +345,16 @@ double getWidth(double y, double y1, double y2, double w1, double w2)
 
 //=============================================================================
 
-double getArea(double y, double w, double y1, double w1)
-//
-//  Input:   y = height along a shape curve
-//           w = width that corresponds to y
-//           y1 = height at start of a shape curve interval
-//           w1 = width at start of a shape curve interval
-//  Output:  returns the area within the trapezoid formed by the input points
-//  Purpose: computes the area of an interval along a x-section's shape curve.
-//
-{
+/**
+ * @brief Computes the area of an interval along a x-section's shape curve.
+ *
+ * @param[in] y Height along a shape curve.
+ * @param[in] w Width that corresponds to y.
+ * @param[in] y1 Height at start of a shape curve interval.
+ * @param[in] w1 Width at start of a shape curve interval.
+ * @return The area within the trapezoid formed by the input points.
+ */
+double getArea(double y, double w, double y1, double w1) {
     double wMin, wMax;
 
     if (w > w1) {
@@ -350,18 +370,17 @@ double getArea(double y, double w, double y1, double w1)
 
 //=============================================================================
 
-double getPerim(double y, double w, double y1, double w1)
-//
-//  Input:   y = height along a shape curve
-//           w = width that corresponds to y
-//           y1 = height at start of a shape curve interval
-//           w1 = width at start of a shape curve interval
-//  Output:  returns the length of the sides of the trapezoid formed by the
-//           input points
-//  Purpose: computes the length of the wetted perimeter contributed by an
-//           interval along a x-section's shape curve.
-//
-{
+/**
+ * @brief Computes the length of the wetted perimeter contributed by an interval along a
+ *        x-section's shape curve.
+ *
+ * @param[in] y Height along a shape curve.
+ * @param[in] w Width that corresponds to y.
+ * @param[in] y1 Height at start of a shape curve interval.
+ * @param[in] w1 Width at start of a shape curve interval.
+ * @return The length of the sides of the trapezoid formed by the input points.
+ */
+double getPerim(double y, double w, double y1, double w1) {
     double dy = y - y1;
     double dw = fabs(w - w1) / 2.0;
 

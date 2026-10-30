@@ -1,6 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file test_inp_writer_relative_paths.cpp
- * @brief Slice IO-4 verification — InpWriter always emits external-file
+ * @file      test_inp_writer_relative_paths.cpp
+ * @brief     Slice IO-4 verification — InpWriter always emits external-file
  *        paths relative to the destination directory.
  *
  * @details Covers the contract documented in
@@ -19,9 +35,9 @@
  *          the file directly and compare against expectations. Files are
  *          overwritten on each run; no temporary directory is used.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -47,26 +63,57 @@ namespace {
 // Reviewable test-output directory (CLAUDE.md §4.1). Resolved at runtime
 // relative to the test binary's CWD, then anchored to the source tree's
 // tests/unit/engine/data/io4_roundtrip/ folder.
+/**
+ * @brief Locate/create the retained relative-path writer artifact directory.
+ *
+ * Searches at most eight parents from cwd for the data-tree marker, then creates the target even if
+ * the search fails. Existing artifacts remain; filesystem/allocation errors propagate and cwd is
+ * unchanged.
+ * @return Path ending tests/unit/engine/data/io4_roundtrip under the found or last searched
+ *     ancestor.
+ */
 fs::path testDataDir() {
     fs::path here = fs::current_path();
     // Walk up looking for the openswmm.engine root marker.
     for (int i = 0; i < 8 && !fs::exists(here / "tests/unit/engine/data"); ++i) {
-        if (here.has_parent_path()) here = here.parent_path();
+        if (here.has_parent_path())
+            here = here.parent_path();
     }
     fs::path dir = here / "tests/unit/engine/data/io4_roundtrip";
     fs::create_directories(dir);
     return dir;
 }
 
+/**
+ * @brief Collect an entire fixture file into owned text.
+ *
+ * Uses ordinary text mode and its platform newline rules. The local stream closes on return; no
+ * model state is touched and no borrowed buffer is returned. Default stream exception settings
+ * apply; allocation exceptions may propagate.
+ *
+ * @param[in] p Borrowed input filename used for this synchronous open/read.
+ * @return Owned string collected from the stream; empty can mean an empty file or failure to open.
+ *     Partial read failures have no separate status.
+ */
 std::string readFile(const fs::path& p) {
     std::ifstream in(p);
-    std::stringstream ss; ss << in.rdbuf();
+    std::stringstream ss;
+    ss << in.rdbuf();
     return ss.str();
 }
 
 // Build a context whose external-file slots all have `.absolute` set (as
 // if the resolver pass had run) to a known anchor `/proj/sub`. The
 // destination directory is chosen per-test to exercise the rebase math.
+/**
+ * @brief Create synthetic external-file slots resolved against a fixed project anchor.
+ *
+ * Mixes authored relative/absolute tokens and USE/SAVE modes, then runs
+ * resolve_external_file_slots. No referenced file is created or read by this helper. The root-name
+ * adaptation makes same-volume rebasing tests portable; context is not a complete hydraulic model.
+ * @return Owned context with input anchor /proj/sub on cwd's root/drive and resolved
+ *     rainfall/runoff/RDII/inflow/outflow/hotstart slots.
+ */
 SimulationContext makeResolvedContext() {
     SimulationContext ctx;
     // On Windows a rootless POSIX-absolute anchor like "/proj/sub" lives on a
@@ -79,11 +126,11 @@ SimulationContext makeResolvedContext() {
     ctx.inp_file_path = root + "/proj/sub/model.inp";
     ctx.files.rainfall_mode = FileMode::USE;
     ctx.files.rainfall_path = std::string("rain.dat");
-    ctx.files.runoff_mode   = FileMode::SAVE;
-    ctx.files.runoff_path   = std::string("./out/runoff.bin");
-    ctx.files.rdii_mode     = FileMode::USE;
-    ctx.files.rdii_path     = std::string("../shared/rdii.dat");
-    ctx.files.inflows_path  = std::string(root + "/abs/inflows.dat");
+    ctx.files.runoff_mode = FileMode::SAVE;
+    ctx.files.runoff_path = std::string("./out/runoff.bin");
+    ctx.files.rdii_mode = FileMode::USE;
+    ctx.files.rdii_path = std::string("../shared/rdii.dat");
+    ctx.files.inflows_path = std::string(root + "/abs/inflows.dat");
     ctx.files.outflows_path = std::string("outflows.dat");
     ctx.files.hotstart_use_path = std::string("../in/restart.hsf");
 
@@ -107,8 +154,7 @@ TEST(InpWriterRelativePaths, FilesBlockRebasedReviewable) {
     auto ctx = makeResolvedContext();
     const fs::path dst = testDataDir() / "files_rebased.inp";
     std::vector<std::string> warnings;
-    ASSERT_EQ(openswmm::inp_writer::writeInpFile(ctx, dst.string(),
-                                                  &warnings), 0);
+    ASSERT_EQ(openswmm::inp_writer::writeInpFile(ctx, dst.string(), &warnings), 0);
 
     const std::string content = readFile(dst);
     const auto files_begin = content.find("[FILES]");
@@ -119,8 +165,7 @@ TEST(InpWriterRelativePaths, FilesBlockRebasedReviewable) {
     // lines that appear earlier in the file.
     const auto files_end = content.find("\n[", files_begin + 1);
     const std::string files_block = content.substr(
-        files_begin,
-        files_end == std::string::npos ? std::string::npos : files_end - files_begin);
+        files_begin, files_end == std::string::npos ? std::string::npos : files_end - files_begin);
 
     // dst_dir is `tests/unit/engine/data/io4_roundtrip` (an absolute
     // path on the test machine). Every `.absolute` was set against
@@ -134,7 +179,8 @@ TEST(InpWriterRelativePaths, FilesBlockRebasedReviewable) {
         std::istringstream is(files_block);
         std::string line;
         while (std::getline(is, line))
-            if (line.find(needle) != std::string::npos) return line;
+            if (line.find(needle) != std::string::npos)
+                return line;
         return {};
     };
 
@@ -183,11 +229,10 @@ TEST(InpWriterRelativePaths, CrossVolumeFallbackProducesWarning) {
     // never ran (no warning, token rebased). On POSIX the destination has no
     // root_name, so any drive letter is cross-volume; on Windows we avoid
     // colliding with dst's real drive.
-    const std::string dst_root = dst.root_name().string();  // "" on POSIX, "D:" on Win
+    const std::string dst_root = dst.root_name().string(); // "" on POSIX, "D:" on Win
     const char foreign_drive =
         (!dst_root.empty() && (dst_root[0] == 'Z' || dst_root[0] == 'z')) ? 'Y' : 'Z';
-    const std::string foreign_token =
-        std::string(1, foreign_drive) + ":/data/rain.dat";
+    const std::string foreign_token = std::string(1, foreign_drive) + ":/data/rain.dat";
     ctx.files.rainfall_path.original = foreign_token;
     ctx.files.rainfall_path.absolute = foreign_token;
 
@@ -196,8 +241,7 @@ TEST(InpWriterRelativePaths, CrossVolumeFallbackProducesWarning) {
     // to that anchor, so the rebase is impossible: the writer must emit the
     // absolute form verbatim and surface a warning.
     std::vector<std::string> warnings;
-    ASSERT_EQ(openswmm::inp_writer::writeInpFile(ctx, dst.string(),
-                                                  &warnings), 0);
+    ASSERT_EQ(openswmm::inp_writer::writeInpFile(ctx, dst.string(), &warnings), 0);
     const std::string content = readFile(dst);
     // The foreign-volume token *should still appear* — cross-volume rebase is
     // impossible against the destination anchor, so the writer emits the
@@ -208,9 +252,9 @@ TEST(InpWriterRelativePaths, CrossVolumeFallbackProducesWarning) {
     EXPECT_FALSE(warnings.empty());
     bool found_warn = false;
     for (const auto& w : warnings) {
-        if (w.find("volume") != std::string::npos
-            || w.find("relative") != std::string::npos) {
-            found_warn = true; break;
+        if (w.find("volume") != std::string::npos || w.find("relative") != std::string::npos) {
+            found_warn = true;
+            break;
         }
     }
     EXPECT_TRUE(found_warn) << "expected a volume/relative-form warning";
@@ -226,8 +270,7 @@ TEST(InpWriterRelativePaths, WriteAbsolutePathsOptOutEmitsAbsoluteVerbatim) {
 
     const fs::path dst = testDataDir() / "write_absolute_opt_out.inp";
     std::vector<std::string> warnings;
-    ASSERT_EQ(openswmm::inp_writer::writeInpFile(ctx, dst.string(),
-                                                  &warnings), 0);
+    ASSERT_EQ(openswmm::inp_writer::writeInpFile(ctx, dst.string(), &warnings), 0);
     const std::string content = readFile(dst);
 
     // The opt-out emits the absolute (resolved) form. rainfall_path was
@@ -253,14 +296,13 @@ TEST(InpWriterRelativePaths, ProgrammaticRelativeTokensPassThrough) {
     // rebase against.
     SimulationContext ctx;
     ctx.files.rainfall_mode = FileMode::USE;
-    ctx.files.rainfall_path = std::string("rain.dat");  // op= clears .absolute
+    ctx.files.rainfall_path = std::string("rain.dat"); // op= clears .absolute
 
     const fs::path dst = testDataDir() / "programmatic_relative.inp";
     std::vector<std::string> warnings;
-    ASSERT_EQ(openswmm::inp_writer::writeInpFile(ctx, dst.string(),
-                                                  &warnings), 0);
+    ASSERT_EQ(openswmm::inp_writer::writeInpFile(ctx, dst.string(), &warnings), 0);
     const std::string content = readFile(dst);
-    EXPECT_NE(content.find("RAINFALL"),  std::string::npos);
+    EXPECT_NE(content.find("RAINFALL"), std::string::npos);
     EXPECT_NE(content.find("\"rain.dat\""), std::string::npos);
     EXPECT_TRUE(warnings.empty());
 }
@@ -275,8 +317,7 @@ TEST(InpWriterRelativePaths, ProgrammaticAbsoluteTokensRebased) {
 
     const fs::path dst = testDataDir() / "programmatic_absolute.inp";
     std::vector<std::string> warnings;
-    ASSERT_EQ(openswmm::inp_writer::writeInpFile(ctx, dst.string(),
-                                                  &warnings), 0);
+    ASSERT_EQ(openswmm::inp_writer::writeInpFile(ctx, dst.string(), &warnings), 0);
     const std::string content = readFile(dst);
     // dst_dir is io4_roundtrip/ on the local machine. The relative form
     // back to /some/abs/rain.dat traverses many `..` levels — assert
@@ -300,8 +341,7 @@ TEST(InpWriterRelativePaths, OptionOmittedWhenDefault) {
 
     const fs::path dst = testDataDir() / "option_default_omitted.inp";
     std::vector<std::string> warnings;
-    ASSERT_EQ(openswmm::inp_writer::writeInpFile(ctx, dst.string(),
-                                                  &warnings), 0);
+    ASSERT_EQ(openswmm::inp_writer::writeInpFile(ctx, dst.string(), &warnings), 0);
     const std::string content = readFile(dst);
     EXPECT_EQ(content.find("WRITE_ABSOLUTE_PATHS"), std::string::npos);
 }

@@ -1,6 +1,6 @@
 /**
- * @file test_routing.cpp
- * @brief Unit tests for hydraulic routing — DW solver, Preissmann slot, CFL,
+ * @file      test_routing.cpp
+ * @brief     Unit tests for hydraulic routing — DW solver, Preissmann slot, CFL,
  *        force main friction, cross-section geometry, node hydraulics.
  *
  * @details Tests:
@@ -16,10 +16,14 @@
  * @see src/engine/hydraulics/DynamicWave.hpp
  * @see src/engine/hydraulics/Routing.hpp
  * @ingroup engine_hydraulics
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #ifdef _MSC_VER
-#  define _USE_MATH_DEFINES
+#define _USE_MATH_DEFINES
 #endif
 #include <gtest/gtest.h>
 #include <cmath>
@@ -37,7 +41,7 @@
 #include "core/SimulationContext.hpp"
 
 #ifndef BENCHMARK_DATA_DIR
-#  define BENCHMARK_DATA_DIR ""
+#define BENCHMARK_DATA_DIR ""
 #endif
 
 using namespace openswmm;
@@ -148,6 +152,13 @@ protected:
     std::vector<XSectParams> params_;
     XSectGroups groups_;
 
+    /**
+     * @brief Build four cross-section shape groups for routing geometry comparisons.
+     *
+     * Owns circular 2/3 ft, closed rectangular 3-by-4 ft and trapezoidal 2-ft-deep/3-ft-bottom/1:1
+     * geometry, initialized with conversion factor one. Ignores setParams statuses and builds grouped
+     * lookup indices; no hydraulic network or simulation is run.
+     */
     void SetUp() override {
         // Create a small network: 4 conduits
         params_.resize(4);
@@ -187,8 +198,7 @@ TEST_F(RoutingGeometryTest, BatchAreasMatchAnalytical) {
 
         for (int i = 0; i < 4; ++i) {
             double area_elem = xsect::getAofY(params_[i], depths[i]);
-            EXPECT_NEAR(areas_batch[i], area_elem, 1e-10)
-                << "Link " << i << " at frac=" << frac;
+            EXPECT_NEAR(areas_batch[i], area_elem, 1e-10) << "Link " << i << " at frac=" << frac;
         }
     }
 }
@@ -204,8 +214,7 @@ TEST_F(RoutingGeometryTest, BatchHydRadMatchesAnalytical) {
 
     for (int i = 0; i < 4; ++i) {
         double hrad_elem = xsect::getRofY(params_[i], depths[i]);
-        EXPECT_NEAR(hrad_batch[i], hrad_elem, 1e-10)
-            << "Link " << i;
+        EXPECT_NEAR(hrad_batch[i], hrad_elem, 1e-10) << "Link " << i;
     }
 }
 
@@ -220,8 +229,7 @@ TEST_F(RoutingGeometryTest, BatchWidthsMatchAnalytical) {
 
     for (int i = 0; i < 4; ++i) {
         double width_elem = xsect::getWofY(params_[i], depths[i]);
-        EXPECT_NEAR(widths_batch[i], width_elem, 1e-10)
-            << "Link " << i;
+        EXPECT_NEAR(widths_batch[i], width_elem, 1e-10) << "Link " << i;
     }
 }
 
@@ -231,10 +239,10 @@ TEST_F(RoutingGeometryTest, BatchWidthsMatchAnalytical) {
 
 TEST(RoutingCircular, AreaAtQuarterFull) {
     XSectParams xs;
-    double p[4] = {4.0, 0, 0, 0};  // D=4ft
+    double p[4] = {4.0, 0, 0, 0}; // D=4ft
     xsect::setParams(xs, static_cast<int>(XSectShape::CIRCULAR), p, 1.0);
 
-    double y = 1.0;  // quarter full (y/D = 0.25)
+    double y = 1.0; // quarter full (y/D = 0.25)
     double a = xsect::getAofY(xs, y);
 
     // Analytical: A = R²(θ - sinθcosθ) where θ = acos(1 - y/R)
@@ -250,11 +258,11 @@ TEST(RoutingCircular, HydRadAtHalfFull) {
     double p[4] = {4.0, 0, 0, 0};
     xsect::setParams(xs, static_cast<int>(XSectShape::CIRCULAR), p, 1.0);
 
-    double r = xsect::getRofY(xs, 2.0);  // half full
+    double r = xsect::getRofY(xs, 2.0); // half full
 
     // At half full: R_hyd = D/4 (exact for semicircle)
     // A = πD²/8, P = πD/2, R = A/P = D/4
-    EXPECT_NEAR(r, 1.0, 0.02);  // D/4 = 4/4 = 1.0
+    EXPECT_NEAR(r, 1.0, 0.02); // D/4 = 4/4 = 1.0
 }
 
 // ============================================================================
@@ -267,10 +275,10 @@ TEST(ManningsEquation, FullPipeVelocity) {
     double n = 0.013;
     double S = 0.01;
     double D = 2.0;
-    double R_full = D / 4.0;  // 0.5 ft
+    double R_full = D / 4.0; // 0.5 ft
     double PHI = 1.486;
 
-    double V = PHI / n * std::pow(R_full, 2.0/3.0) * std::sqrt(S);
+    double V = PHI / n * std::pow(R_full, 2.0 / 3.0) * std::sqrt(S);
 
     // Q = V * A = V * pi*D²/4
     double A_full = 3.14159265 / 4.0 * D * D;
@@ -290,17 +298,17 @@ TEST(ManningsEquation, FullPipeVelocity) {
 
 TEST(SectionFactor, CircularAtFull) {
     XSectParams xs;
-    double p[4] = {3.0, 0, 0, 0};  // D=3ft
+    double p[4] = {3.0, 0, 0, 0}; // D=3ft
     xsect::setParams(xs, static_cast<int>(XSectShape::CIRCULAR), p, 1.0);
 
     // S_full = A_full * R_full^(2/3)
-    double expected = xs.a_full * std::pow(xs.r_full, 2.0/3.0);
+    double expected = xs.a_full * std::pow(xs.r_full, 2.0 / 3.0);
     EXPECT_NEAR(xs.s_full, expected, 0.01 * expected);
 }
 
 TEST(SectionFactor, RectangularAtFull) {
     XSectParams xs;
-    double p[4] = {2.0, 5.0, 0, 0};  // 2ft x 5ft
+    double p[4] = {2.0, 5.0, 0, 0}; // 2ft x 5ft
     xsect::setParams(xs, static_cast<int>(XSectShape::RECT_CLOSED), p, 1.0);
 
     // RECT_CLOSED: when full, the crown is wetted, so the perimeter includes
@@ -308,7 +316,7 @@ TEST(SectionFactor, RectangularAtFull) {
     // (Matches legacy xsect_setParams; the old open-channel R = w*y/(w+2y) was
     // a parity bug.)
     double R = 10.0 / 14.0;
-    double expected = xs.a_full * std::pow(R, 2.0/3.0);
+    double expected = xs.a_full * std::pow(R, 2.0 / 3.0);
     EXPECT_NEAR(xs.s_full, expected, 0.01 * expected);
 }
 
@@ -328,13 +336,13 @@ TEST(ForceMain, HazenWilliamsPositive) {
 }
 
 TEST(ForceMain, HazenWilliamsHigherVelocityMoreFriction) {
-    double Sf_low  = forcemain::getFricSlope_HW(1.0, 0.5, 100.0);
+    double Sf_low = forcemain::getFricSlope_HW(1.0, 0.5, 100.0);
     double Sf_high = forcemain::getFricSlope_HW(5.0, 0.5, 100.0);
     EXPECT_GT(Sf_high, Sf_low);
 }
 
 TEST(ForceMain, HazenWilliamsHigherC_LessFriction) {
-    double Sf_low_c  = forcemain::getFricSlope_HW(3.0, 0.5, 80.0);
+    double Sf_low_c = forcemain::getFricSlope_HW(3.0, 0.5, 80.0);
     double Sf_high_c = forcemain::getFricSlope_HW(3.0, 0.5, 150.0);
     EXPECT_GT(Sf_low_c, Sf_high_c);
 }
@@ -351,26 +359,25 @@ TEST(ForceMain, DarcyWeisbachPositive) {
 }
 
 TEST(ForceMain, DarcyWeisbachHigherVelocityMoreFriction) {
-    double Sf_low  = forcemain::getFricSlope_DW(1.0, 0.5, 0.001);
+    double Sf_low = forcemain::getFricSlope_DW(1.0, 0.5, 0.001);
     double Sf_high = forcemain::getFricSlope_DW(5.0, 0.5, 0.001);
     EXPECT_GT(Sf_high, Sf_low);
 }
 
 TEST(ForceMain, DarcyWeisbachRougherPipeMoreFriction) {
     double Sf_smooth = forcemain::getFricSlope_DW(3.0, 0.5, 0.0001);
-    double Sf_rough  = forcemain::getFricSlope_DW(3.0, 0.5, 0.01);
+    double Sf_rough = forcemain::getFricSlope_DW(3.0, 0.5, 0.01);
     EXPECT_GT(Sf_rough, Sf_smooth);
 }
 
 TEST(ForceMain, BatchMatchesSingle) {
     const int N = 4;
-    double vel[N]   = {1.0, 2.0, 3.0, 4.0};
-    double hrad[N]  = {0.5, 0.5, 0.5, 0.5};
+    double vel[N] = {1.0, 2.0, 3.0, 4.0};
+    double hrad[N] = {0.5, 0.5, 0.5, 0.5};
     double param[N] = {100.0, 100.0, 100.0, 100.0};
-    double sf[N]    = {};
+    double sf[N] = {};
 
-    forcemain::batchFricSlope(vel, hrad, param, sf,
-                              forcemain::FrictionModel::HAZEN_WILLIAMS, N);
+    forcemain::batchFricSlope(vel, hrad, param, sf, forcemain::FrictionModel::HAZEN_WILLIAMS, N);
 
     for (int i = 0; i < N; ++i) {
         double expected = forcemain::getFricSlope_HW(vel[i], hrad[i], param[i]);
@@ -384,19 +391,20 @@ TEST(ForceMain, BatchMatchesSingle) {
 
 TEST(XSectGeometry, CircularAreaAtHalfDepth) {
     XSectParams xs;
-    double p[4] = {4.0, 0, 0, 0};  // D=4ft
+    double p[4] = {4.0, 0, 0, 0}; // D=4ft
     xsect::setParams(xs, static_cast<int>(XSectShape::CIRCULAR), p, 1.0);
 
     // At half depth (y=2ft), area = (pi*D^2/4) * (theta - sin(theta)) / (2*pi)
     // where theta = pi (180 deg) → area = pi*D^2/8 = pi*16/8 = 2*pi ≈ 6.283
     double a = xsect::getAofY(xs, 2.0);
-    double expected = M_PI * 4.0;  // pi * r^2 / 2 = pi * 4 / 2... Actually A = pi*R^2 at half = pi*4/2 = 2pi
+    double expected =
+        M_PI * 4.0; // pi * r^2 / 2 = pi * 4 / 2... Actually A = pi*R^2 at half = pi*4/2 = 2pi
     EXPECT_NEAR(a, xs.a_full / 2.0, 0.01 * xs.a_full);
 }
 
 TEST(XSectGeometry, CircularFullArea) {
     XSectParams xs;
-    double p[4] = {3.0, 0, 0, 0};  // D=3ft
+    double p[4] = {3.0, 0, 0, 0}; // D=3ft
     xsect::setParams(xs, static_cast<int>(XSectShape::CIRCULAR), p, 1.0);
 
     // Full area = pi*D^2/4 = pi*9/4 ≈ 7.069
@@ -415,7 +423,7 @@ TEST(XSectGeometry, CircularFullHydRadius) {
 
 TEST(XSectGeometry, RectOpenArea) {
     XSectParams xs;
-    double p[4] = {3.0, 10.0, 0, 0};  // 3ft deep, 10ft wide
+    double p[4] = {3.0, 10.0, 0, 0}; // 3ft deep, 10ft wide
     xsect::setParams(xs, static_cast<int>(XSectShape::RECT_OPEN), p, 1.0);
 
     // Full area = w * y = 30
@@ -425,7 +433,7 @@ TEST(XSectGeometry, RectOpenArea) {
 
 TEST(XSectGeometry, TrapezoidalArea) {
     XSectParams xs;
-    double p[4] = {3.0, 10.0, 2.0, 2.0};  // yFull=3, wBot=10, slope1=2, slope2=2
+    double p[4] = {3.0, 10.0, 2.0, 2.0}; // yFull=3, wBot=10, slope1=2, slope2=2
     xsect::setParams(xs, static_cast<int>(XSectShape::TRAPEZOIDAL), p, 1.0);
 
     // m = (2+2)/2 = 2, A = (wBot + m*y) * y = (10 + 2*3)*3 = 48
@@ -434,7 +442,7 @@ TEST(XSectGeometry, TrapezoidalArea) {
 
 TEST(XSectGeometry, TriangularArea) {
     XSectParams xs;
-    double p[4] = {2.0, 4.0, 0, 0};  // yFull=2, top width=4 → slope=2
+    double p[4] = {2.0, 4.0, 0, 0}; // yFull=2, top width=4 → slope=2
     xsect::setParams(xs, static_cast<int>(XSectShape::TRIANGULAR), p, 1.0);
 
     // Full area = slope * y^2 = 2 * 4 = 8... actually triangle: A = wTop*y/2 = 4*2/2 = 4
@@ -494,12 +502,11 @@ TEST(NodeHydraulics, StorageFunctionalVolume) {
     nodes.resize(1);
     nodes.full_depth[0] = 10.0;
     NodeSubtypes subs;
-    const auto sr = static_cast<std::size_t>(
-        subs.set_node_type(nodes, 0, NodeType::STORAGE));
-    subs.storages.curve[sr] = -1;  // functional
-    subs.storages.a[sr] = 1000.0;  // A coefficient
-    subs.storages.b[sr] = 0.0;     // B exponent → A = 1000 * y^0 = 1000
-    subs.storages.c[sr] = 0.0;     // C constant
+    const auto sr = static_cast<std::size_t>(subs.set_node_type(nodes, 0, NodeType::STORAGE));
+    subs.storages.curve[sr] = -1; // functional
+    subs.storages.a[sr] = 1000.0; // A coefficient
+    subs.storages.b[sr] = 0.0;    // B exponent → A = 1000 * y^0 = 1000
+    subs.storages.c[sr] = 0.0;    // C constant
 
     // V = integral of A dy from 0 to y
     // With A = 1000 (constant), V = 1000 * y
@@ -512,8 +519,7 @@ TEST(NodeHydraulics, StorageSurfAreaFunctional) {
     nodes.resize(1);
     nodes.full_depth[0] = 10.0;
     NodeSubtypes subs;
-    const auto sr = static_cast<std::size_t>(
-        subs.set_node_type(nodes, 0, NodeType::STORAGE));
+    const auto sr = static_cast<std::size_t>(subs.set_node_type(nodes, 0, NodeType::STORAGE));
     subs.storages.curve[sr] = -1;
     subs.storages.a[sr] = 500.0;
     subs.storages.b[sr] = 0.0;
@@ -566,7 +572,7 @@ TEST(DPS, PreissmannNumberDecay) {
     double P_at_r = (P_hat_0 - 1.0) * std::exp(-10.0 * r / r) + 1.0;
     // exp(-10) ≈ 4.54e-5, so P_at_r ≈ 1 + 499*4.54e-5 ≈ 1.0227
     EXPECT_NEAR(P_at_r, 1.0 + (P_hat_0 - 1.0) * std::exp(-10.0), 1e-10);
-    EXPECT_LT(P_at_r, 1.03);  // close to 1
+    EXPECT_LT(P_at_r, 1.03); // close to 1
 
     // At t - t_s → ∞: P_hat → 1
     double P_inf = (P_hat_0 - 1.0) * std::exp(-10.0 * 100.0 / r) + 1.0;
@@ -590,6 +596,14 @@ protected:
     std::vector<XSectParams> params_;
     DWSolver solver;
 
+    /**
+     * @brief Build a two-conduit dynamic-wave context for acceleration skip-flag tests.
+     *
+     * Creates two junctions and one outfall at 100/99/98 ft inverts, dry initial state, two-foot
+     * circular conduits and explicit crown elevations. Owns shape parameters/groups and conduit subtype
+     * geometry. Uses the kernel XSectShape enum for circular grouping, preserving nonzero geometry
+     * needed by surcharge tests; solver initialization is deferred to initSolver.
+     */
     void SetUp() override {
         // 3 nodes: J0 (junction), J1 (junction), O2 (outfall)
         ctx.nodes.resize(3);
@@ -609,9 +623,9 @@ protected:
         ctx.nodes.init_depth[2] = 0.0;
 
         // Crown elevations: invert + conduit diameter (2 ft pipes)
-        ctx.nodes.crown_elev[0] = 102.0;  // 100 + 2
-        ctx.nodes.crown_elev[1] = 101.0;  // 99 + 2
-        ctx.nodes.crown_elev[2] = 100.0;  // 98 + 2
+        ctx.nodes.crown_elev[0] = 102.0; // 100 + 2
+        ctx.nodes.crown_elev[1] = 101.0; // 99 + 2
+        ctx.nodes.crown_elev[2] = 100.0; // 98 + 2
 
         // 2 conduits: C0 (J0→J1), C1 (J1→O2)
         ctx.links.resize(2);
@@ -620,9 +634,10 @@ protected:
                 ctx.link_subtypes.set_link_type(ctx.links, i, LinkType::CONDUIT));
             auto& C = ctx.link_subtypes.conduits;
             ctx.links.xsect_shape[i] = XsectShape::CIRCULAR;
+            ctx.links.xsect_batch_shape[i] = static_cast<int>(XSectShape::CIRCULAR);
             ctx.links.xsect_y_full[i] = 2.0;
-            ctx.links.xsect_a_full[i] = M_PI;  // π·1²
-            ctx.links.xsect_r_full[i] = 0.5;   // full-flow hyd. radius D/4 (2 ft pipe)
+            ctx.links.xsect_a_full[i] = M_PI; // π·1²
+            ctx.links.xsect_r_full[i] = 0.5;  // full-flow hyd. radius D/4 (2 ft pipe)
             ctx.links.xsect_w_max[i] = 2.0;
             C.roughness[cr] = 0.013;
             C.length[cr] = 400.0;
@@ -632,19 +647,34 @@ protected:
             C.loss_outlet[cr] = 0.0;
             C.loss_avg[cr] = 0.0;
         }
-        ctx.links.node1[0] = 0;  ctx.links.node2[0] = 1;
-        ctx.links.node1[1] = 1;  ctx.links.node2[1] = 2;
+        ctx.links.node1[0] = 0;
+        ctx.links.node2[0] = 1;
+        ctx.links.node1[1] = 1;
+        ctx.links.node2[1] = 2;
 
-        // Build cross-section geometry tables
+        // Build cross-section geometry tables. setParams takes the KERNEL
+        // shape code (XSectShape, CIRCULAR = 1); the data enum's CIRCULAR is
+        // 0 = kernel DUMMY, which put these conduits in no shape group, so
+        // the geometry kernels computed zero area at every depth and the
+        // surcharge tests passed on a dry solve.
         params_.resize(2);
         double p[4] = {2.0, 0, 0, 0};
-        xsect::setParams(params_[0], static_cast<int>(XsectShape::CIRCULAR), p, 1.0);
-        xsect::setParams(params_[1], static_cast<int>(XsectShape::CIRCULAR), p, 1.0);
+        xsect::setParams(params_[0], static_cast<int>(XSectShape::CIRCULAR), p, 1.0);
+        xsect::setParams(params_[1], static_cast<int>(XSectShape::CIRCULAR), p, 1.0);
         groups_.build(params_.data(), 2);
     }
 
-    void initSolver(SurchargeMethod method,
-                    NodeContinuity nc = NodeContinuity::EXPLICIT) {
+    /**
+     * @brief Initialize the acceleration-test solver with selected surcharge and continuity modes.
+     *
+     * Requires SetUp-owned three-node/two-link context and groups. Enables Anderson acceleration and
+     * initializes the solver; all borrowed geometry/context storage must remain alive through
+     * execution.
+     *
+     * @param[in] method Requested surcharge algorithm.
+     * @param[in] nc Requested node continuity treatment, default EXPLICIT.
+     */
+    void initSolver(SurchargeMethod method, NodeContinuity nc = NodeContinuity::EXPLICIT) {
         solver.surcharge_method = method;
         solver.node_continuity = nc;
         solver.anderson_accel = true;
@@ -685,12 +715,12 @@ TEST_F(AASkipFlagTest, ExtranSurchargedSkips) {
     ctx.nodes.depth[0] = crown0 + 1.0;
     ctx.nodes.old_depth[0] = crown0 + 1.0;
     ctx.nodes.head[0] = ctx.nodes.invert_elev[0] + crown0 + 1.0;
-    ctx.nodes.lat_flow[0] = 100.0;  // strong inflow to maintain surcharge
+    ctx.nodes.lat_flow[0] = 100.0; // strong inflow to maintain surcharge
 
     // Pre-set is_surcharged so first iteration's skip flag is computed
     solver.nodeSurchargedFlag(0) = 1;
 
-    ctx.nodes.depth[1] = 0.5;  // below crown
+    ctx.nodes.depth[1] = 0.5; // below crown
     ctx.nodes.old_depth[1] = 0.5;
     ctx.nodes.head[1] = ctx.nodes.invert_elev[1] + 0.5;
 
@@ -741,7 +771,7 @@ TEST_F(AASkipFlagTest, DPSActiveSkipsEndNodes) {
     initSolver(SurchargeMethod::DYNAMIC_SLOT);
 
     // Set depths above crown to trigger DPS geometry activation
-    double crown = ctx.links.xsect_y_full[0];  // 2.0 ft
+    double crown = ctx.links.xsect_y_full[0]; // 2.0 ft
     ctx.nodes.depth[0] = crown + 0.5;
     ctx.nodes.old_depth[0] = crown + 0.5;
     ctx.nodes.head[0] = ctx.nodes.invert_elev[0] + crown + 0.5;
@@ -770,7 +800,7 @@ TEST_F(AASkipFlagTest, SlotNearKinkSkipsEndNodes) {
     // SLOT method: conduit depth near 0.985*yFull → skip AA for end nodes
     initSolver(SurchargeMethod::SLOT);
 
-    double yFull = ctx.links.xsect_y_full[0];  // 2.0 ft
+    double yFull = ctx.links.xsect_y_full[0]; // 2.0 ft
     // Set node depths so conduit midpoint ≈ 0.99 * yFull (inside [0.98, 1.02] band)
     double d_near_kink = 0.99 * yFull;
     ctx.nodes.depth[0] = d_near_kink;
@@ -800,7 +830,7 @@ TEST_F(AASkipFlagTest, SlotFarFromKinkNoSkip) {
 
     // Set shallow depths (50% of yFull — far from 0.98-1.02 band)
     for (int i = 0; i < 3; ++i) {
-        ctx.nodes.depth[i] = 1.0;  // 50% of yFull=2.0
+        ctx.nodes.depth[i] = 1.0; // 50% of yFull=2.0
         ctx.nodes.old_depth[i] = 1.0;
         ctx.nodes.head[i] = ctx.nodes.invert_elev[i] + 1.0;
     }
@@ -819,8 +849,8 @@ TEST_F(AASkipFlagTest, SlotKinkStillSkipsUnderSemiImplicit) {
     // under EXPLICIT.
     initSolver(SurchargeMethod::SLOT, NodeContinuity::SEMI_IMPLICIT);
 
-    double yFull = ctx.links.xsect_y_full[0];      // 2.0 ft
-    double d_near_kink = 0.99 * yFull;             // ratio 0.99 ∈ [0.98, 1.02]
+    double yFull = ctx.links.xsect_y_full[0]; // 2.0 ft
+    double d_near_kink = 0.99 * yFull;        // ratio 0.99 ∈ [0.98, 1.02]
     ctx.nodes.depth[0] = d_near_kink;
     ctx.nodes.old_depth[0] = d_near_kink;
     ctx.nodes.head[0] = ctx.nodes.invert_elev[0] + d_near_kink;
@@ -833,7 +863,10 @@ TEST_F(AASkipFlagTest, SlotKinkStillSkipsUnderSemiImplicit) {
     ctx.nodes.old_depth[2] = 0.5;
     ctx.nodes.head[2] = ctx.nodes.invert_elev[2] + 0.5;
 
-    solver.execute(ctx, 10.0);
+    // A short step: the flags are formed from the LAST iteration's
+    // mid-depth, and over 10 s the pipes drain the 1 ft head drops far
+    // enough (mid ratio 0.95) to leave the [0.98, 1.02] band.
+    solver.execute(ctx, 1.0);
 
     const auto& flags = solver.aaSkipFlags();
     // C0 (J0→J1) midpoint near the slot kink → both end nodes still skipped
@@ -915,12 +948,12 @@ TEST(DPS, DeltaAsFromDhs) {
     // Head-first form of Eq. 19: dAs = T_s · dhs, where T_s = g·A_C·P²/c_pT².
     // In the link-node solver, dhs is set by the node-depth update and dAs
     // is the derived slot-storage increment.
-    double c_pT = 25.0 * 3.28084;  // m/s → ft/s
+    double c_pT = 25.0 * 3.28084; // m/s → ft/s
     double c_pT_sq = c_pT * c_pT;
-    double A_C = 7.069;            // 3ft diameter circular pipe: π·D²/4
-    double g = 32.174;             // ft/s²
+    double A_C = 7.069; // 3ft diameter circular pipe: π·D²/4
+    double g = 32.174;  // ft/s²
     double P = 100.0;
-    double dhs = 0.01;             // ft  (driven by node continuity)
+    double dhs = 0.01; // ft  (driven by node continuity)
 
     double T_s = g * A_C * P * P / c_pT_sq;
     double dAs = T_s * dhs;
@@ -939,18 +972,18 @@ TEST(DPS, DeltaAsFromDhs) {
 
 TEST(DPS, InitialPreissmannNumber) {
     // Eq. 23: P_hat_0 = c_pT / (alpha * c_g)
-    double c_pT = 25.0 * 3.28084;  // ft/s
+    double c_pT = 25.0 * 3.28084; // ft/s
     double alpha = 3.0;
 
     // Circular pipe D=3ft: A_full = pi*9/4, T_w = 3ft
     double A_full = M_PI * 9.0 / 4.0;
     double T_w = 3.0;
-    double l_D = A_full / T_w;  // hydraulic depth
-    double c_g = std::sqrt(32.174 * l_D);  // gravity-wave celerity
+    double l_D = A_full / T_w;            // hydraulic depth
+    double c_g = std::sqrt(32.174 * l_D); // gravity-wave celerity
 
     double P_hat_0 = c_pT / (alpha * c_g);
 
-    EXPECT_GT(P_hat_0, 1.0);  // c_pT >> c_g for this pipe size
+    EXPECT_GT(P_hat_0, 1.0); // c_pT >> c_g for this pipe size
     // For D=3ft pipe: c_g ≈ 8.7 ft/s, c_pT ≈ 82 ft/s → P_hat_0 ≈ 82/(3*8.7) ≈ 3.14
     EXPECT_GT(P_hat_0, 2.0);
 }
@@ -969,7 +1002,7 @@ TEST(DPS, AsAccumulationFromDhs) {
     double T_s = g * A_C * P * P / c_pT_sq;
 
     for (int i = 0; i < 5; ++i) {
-        double dhs = 0.002;       // a 2 mm head rise per iter
+        double dhs = 0.002; // a 2 mm head rise per iter
         double dAs = T_s * dhs;
         hs += dhs;
         As += dAs;
@@ -987,19 +1020,19 @@ TEST(DPS, DepressurizationHysteresis) {
     DPSLinkArrays dps;
     dps.resize(1);
     dps.As[0] = 0.01;
-    dps.hs[0] = -0.001;  // negative from depressurization
+    dps.hs[0] = -0.001; // negative from depressurization
 
     if (dps.hs[0] < 0.0 && dps.As[0] > 0.0) {
         dps.hs[0] = 0.0;
     }
     EXPECT_NEAR(dps.hs[0], 0.0, 1e-15);
-    EXPECT_GT(dps.As[0], 0.0);  // As still positive — residual conserved
+    EXPECT_GT(dps.As[0], 0.0); // As still positive — residual conserved
 }
 
 TEST(DPS, FullDepressurizationResets) {
     DPSLinkArrays dps;
     dps.resize(1);
-    dps.As[0] = -0.001;  // fully depressurized
+    dps.As[0] = -0.001; // fully depressurized
     dps.hs[0] = 0.0;
 
     if (dps.As[0] <= 0.0) {
@@ -1012,7 +1045,7 @@ TEST(DPS, FullDepressurizationResets) {
 
 TEST(DPS, PreissmannNumberClampedAboveOne) {
     // P must always be >= 1 (c_p <= c_pT)
-    double P_face1 = 0.5;  // hypothetical underflow
+    double P_face1 = 0.5; // hypothetical underflow
     double P_face2 = 0.8;
     double P = 0.5 * (P_face1 + P_face2);
     P = std::max(P, 1.0);
@@ -1053,20 +1086,20 @@ TEST_F(AASkipFlagTest, DPS_AsAccumulatesPositively) {
     // the slot.)
     initSolver(SurchargeMethod::DYNAMIC_SLOT);
 
-    const double crown = ctx.links.xsect_y_full[0];  // 2.0 ft
+    const double crown = ctx.links.xsect_y_full[0]; // 2.0 ft
 
     auto surchargeChain = [&](double above) {
         for (int i = 0; i < 2; ++i) {
-            ctx.nodes.depth[i]     = crown + above;
+            ctx.nodes.depth[i] = crown + above;
             ctx.nodes.old_depth[i] = crown + above;
-            ctx.nodes.head[i]      = ctx.nodes.invert_elev[i] + crown + above;
-            ctx.nodes.sur_depth[i] = 10.0;   // permit head above crown
+            ctx.nodes.head[i] = ctx.nodes.invert_elev[i] + crown + above;
+            ctx.nodes.sur_depth[i] = 10.0; // permit head above crown
         }
-        ctx.nodes.lat_flow[0] = 50.0;        // sustained inflow keeps the
-        ctx.nodes.lat_flow[1] = 30.0;        // conduit pressurized
-        ctx.nodes.depth[2]     = 0.5;        // free outfall drains downstream
+        ctx.nodes.lat_flow[0] = 50.0; // sustained inflow keeps the
+        ctx.nodes.lat_flow[1] = 30.0; // conduit pressurized
+        ctx.nodes.depth[2] = 0.5;     // free outfall drains downstream
         ctx.nodes.old_depth[2] = 0.5;
-        ctx.nodes.head[2]      = ctx.nodes.invert_elev[2] + 0.5;
+        ctx.nodes.head[2] = ctx.nodes.invert_elev[2] + 0.5;
     };
 
     surchargeChain(0.5);
@@ -1101,8 +1134,8 @@ TEST_F(AASkipFlagTest, DPS_PastAsInvariantUnderPDecay) {
 
     auto setUniformHead = [&](double head) {
         for (int i = 0; i < 3; ++i) {
-            ctx.nodes.head[i]      = head;
-            ctx.nodes.depth[i]     = head - ctx.nodes.invert_elev[i];
+            ctx.nodes.head[i] = head;
+            ctx.nodes.depth[i] = head - ctx.nodes.invert_elev[i];
             ctx.nodes.old_depth[i] = head - ctx.nodes.invert_elev[i];
             ctx.nodes.sur_depth[i] = 10.0;
         }
@@ -1122,7 +1155,7 @@ TEST_F(AASkipFlagTest, DPS_PastAsInvariantUnderPDecay) {
     }
 
     const double As_after_decay = solver.dpsState().As[0];
-    const double P_after_decay  = solver.dpsState().P[0];
+    const double P_after_decay = solver.dpsState().P[0];
 
     // P should have decayed toward 1 if it started higher.
     EXPECT_GE(P_after_decay, 1.0);
@@ -1140,7 +1173,7 @@ TEST_F(AASkipFlagTest, DPS_PastAsInvariantUnderPDecay) {
 
 TEST(DPS, CFL_WithPressureCelerity) {
     // CFL: dt = L / (|U| + c_p), where c_p = c_pT / P
-    double c_pT = 25.0 * 3.28084;  // ft/s
+    double c_pT = 25.0 * 3.28084; // ft/s
     double P = 10.0;
     double c_p = c_pT / P;
     double velocity = 3.0;
@@ -1182,35 +1215,57 @@ struct KWBenchRow {
     double Q_n_cfs;
 };
 
+/**
+ * @brief Read benchmark depth/area/discharge columns from a simple CSV.
+ *
+ * Skips blank/comment lines and the first noncomment header, ignores unused R/S columns, and drops
+ * incomplete rows. std::stod exceptions propagate for malformed selected fields; quoting/column
+ * schema is not validated.
+ *
+ * @param[in] path Borrowed CSV filename.
+ * @return Owned rows with depth ft, area ft2 and discharge cfs; empty on open failure.
+ */
 static std::vector<KWBenchRow> load_kw_bench(const std::string& path) {
     std::vector<KWBenchRow> rows;
     std::ifstream f(path);
-    if (!f.is_open()) return rows;
+    if (!f.is_open())
+        return rows;
     std::string line;
     bool header_seen = false;
     while (std::getline(f, line)) {
-        if (line.empty() || line[0] == '#') continue;
-        if (!header_seen) { header_seen = true; continue; }  // skip column header
+        if (line.empty() || line[0] == '#')
+            continue;
+        if (!header_seen) {
+            header_seen = true;
+            continue;
+        } // skip column header
         std::istringstream ss(line);
         std::string tok;
         KWBenchRow row{};
         // columns: d_n_ft, A_n_ft2, R_n_ft, S_n_ft83, Q_n_cfs
-        if (!std::getline(ss, tok, ',')) continue; row.d_n_ft  = std::stod(tok);
-        if (!std::getline(ss, tok, ',')) continue; row.A_n_ft2 = std::stod(tok);
-        if (!std::getline(ss, tok, ',')) continue; // R_n_ft (unused)
-        if (!std::getline(ss, tok, ',')) continue; // S_n_ft83 (unused)
-        if (!std::getline(ss, tok, ',')) continue; row.Q_n_cfs = std::stod(tok);
+        if (!std::getline(ss, tok, ','))
+            continue;
+        row.d_n_ft = std::stod(tok);
+        if (!std::getline(ss, tok, ','))
+            continue;
+        row.A_n_ft2 = std::stod(tok);
+        if (!std::getline(ss, tok, ','))
+            continue; // R_n_ft (unused)
+        if (!std::getline(ss, tok, ','))
+            continue; // S_n_ft83 (unused)
+        if (!std::getline(ss, tok, ','))
+            continue;
+        row.Q_n_cfs = std::stod(tok);
         rows.push_back(row);
     }
     return rows;
 }
 
-}  // namespace
+} // namespace
 
 TEST(KWSolverSteadyState, NormalDepthRecovered) {
-    const std::string csv_path =
-        std::string(BENCHMARK_DATA_DIR)
-        + "/manufactured/kinwave-normal-depth-rect-open/reference.csv";
+    const std::string csv_path = std::string(BENCHMARK_DATA_DIR) +
+                                 "/manufactured/kinwave-normal-depth-rect-open/reference.csv";
 
     auto rows = load_kw_bench(csv_path);
     if (rows.empty()) {
@@ -1218,17 +1273,17 @@ TEST(KWSolverSteadyState, NormalDepthRecovered) {
     }
 
     // Channel parameters
-    const double PHI    = 1.486;
+    const double PHI = 1.486;
     const double n_mann = 0.013;
-    const double slope  = 0.001;
-    const double w      = 10.0;
+    const double slope = 0.001;
+    const double w = 10.0;
     const double y_full = 5.0;
-    const double beta   = PHI * std::sqrt(slope) / n_mann;
+    const double beta = PHI * std::sqrt(slope) / n_mann;
 
     // Arbitrary conduit geometry for the time-marching coefficients;
     // at steady state these cancel and do not affect the zero-residual result.
     const double length = 500.0;
-    const double dt     = 60.0;
+    const double dt = 60.0;
 
     // Build cross-section — setParams fills a_full, r_full, s_full, s_max
     XSectParams xs{};
@@ -1255,14 +1310,13 @@ TEST(KWSolverSteadyState, NormalDepthRecovered) {
             << "Manning Q_n mismatch vs CSV at d_n=" << row.d_n_ft << " ft";
 
         // Pre-load steady-state ICs: inlet and outlet both at normal depth
-        solver.q1_[0]  = Q_n;
-        solver.a1_[0]  = A_n;
-        solver.q2_[0]  = Q_n;
-        solver.a2_[0]  = A_n;
+        solver.q1_[0] = Q_n;
+        solver.a1_[0] = A_n;
+        solver.q2_[0] = Q_n;
+        solver.a2_[0] = A_n;
         solver.q_in_[0] = Q_n;
 
-        solver.solveConduit(0, xs, q_full, a_full, xs.s_full,
-                            beta, length, dt, 0.0);
+        solver.solveConduit(0, xs, q_full, a_full, xs.s_full, beta, length, dt, 0.0);
 
         max_q_err = std::max(max_q_err, std::fabs(solver.q_out_[0] - Q_n));
         max_a_err = std::max(max_a_err, std::fabs(solver.a_out_[0] - A_n));
@@ -1309,8 +1363,8 @@ TEST(KWSolverSteadyState, NormalDepthRecovered) {
 // volume-tracking regressions, not precise conservation.
 TEST(KWSolverTransient, StepInflowMassBalance) {
     const std::string csv_path =
-        std::string(BENCHMARK_DATA_DIR)
-        + "/manufactured/kinwave-step-inflow-rectangular-conduit/reference.csv";
+        std::string(BENCHMARK_DATA_DIR) +
+        "/manufactured/kinwave-step-inflow-rectangular-conduit/reference.csv";
 
     // Load channel parameters from benchmark CSV (single data row, header-only skip)
     double Q_in = 50.0, W = 10.0, slope = 0.001, n_mann = 0.013, length = 500.0;
@@ -1326,33 +1380,56 @@ TEST(KWSolverTransient, StepInflowMassBalance) {
         std::string line;
         bool header_seen = false;
         while (std::getline(f, line)) {
-            if (line.empty() || line[0] == '#') continue;
-            if (!header_seen) { header_seen = true; continue; }
+            if (line.empty() || line[0] == '#')
+                continue;
+            if (!header_seen) {
+                header_seen = true;
+                continue;
+            }
             std::istringstream ss(line);
             std::string tok;
             // columns: Q_in_cfs, channel_width_ft, bed_slope, n_mann,
             //          channel_length_ft, dt_s, n_steps, ...
-            if (!std::getline(ss, tok, ',')) break; Q_in    = std::stod(tok);
-            if (!std::getline(ss, tok, ',')) break; W       = std::stod(tok);
-            if (!std::getline(ss, tok, ',')) break; slope   = std::stod(tok);
-            if (!std::getline(ss, tok, ',')) break; n_mann  = std::stod(tok);
-            if (!std::getline(ss, tok, ',')) break; length  = std::stod(tok);
-            if (!std::getline(ss, tok, ',')) break; dt      = std::stod(tok);
-            if (!std::getline(ss, tok, ',')) break; n_steps = std::stoi(tok);
-            if (!std::getline(ss, tok, ',')) break; // ss_check_step (metadata only)
-            if (!std::getline(ss, tok, ',')) break; ss_tol_rel = std::stod(tok);
-            if (!std::getline(ss, tok, ',')) break; massbal_tol_rel = std::stod(tok);
+            if (!std::getline(ss, tok, ','))
+                break;
+            Q_in = std::stod(tok);
+            if (!std::getline(ss, tok, ','))
+                break;
+            W = std::stod(tok);
+            if (!std::getline(ss, tok, ','))
+                break;
+            slope = std::stod(tok);
+            if (!std::getline(ss, tok, ','))
+                break;
+            n_mann = std::stod(tok);
+            if (!std::getline(ss, tok, ','))
+                break;
+            length = std::stod(tok);
+            if (!std::getline(ss, tok, ','))
+                break;
+            dt = std::stod(tok);
+            if (!std::getline(ss, tok, ','))
+                break;
+            n_steps = std::stoi(tok);
+            if (!std::getline(ss, tok, ','))
+                break; // ss_check_step (metadata only)
+            if (!std::getline(ss, tok, ','))
+                break;
+            ss_tol_rel = std::stod(tok);
+            if (!std::getline(ss, tok, ','))
+                break;
+            massbal_tol_rel = std::stod(tok);
             break;
         }
     }
 
     // Build cross-section (RECT_OPEN, W=10 ft, y_full=5 ft)
-    const double PHI    = 1.486;                       // US Manning coefficient
-    const double beta   = PHI * std::sqrt(slope) / n_mann;
+    const double PHI = 1.486; // US Manning coefficient
+    const double beta = PHI * std::sqrt(slope) / n_mann;
     const double y_full = 5.0;
 
     XSectParams xs{};
-    const double p[4] = { y_full, W, 0.0, 0.0 };
+    const double p[4] = {y_full, W, 0.0, 0.0};
     xsect::setParams(xs, static_cast<int>(XSectShape::RECT_OPEN), p, 1.0);
 
     const double q_full = beta * xs.s_full;
@@ -1362,37 +1439,35 @@ TEST(KWSolverTransient, StepInflowMassBalance) {
     // S_n = Q_in / beta;  A_n = getAofS(xs, S_n)
     const double s_n = Q_in / beta;
     const double A_n = xsect::getAofS(xs, s_n);
-    const double Q_n = beta * xsect::getSofA(xs, A_n);  // should equal Q_in closely
+    const double Q_n = beta * xsect::getSofA(xs, A_n); // should equal Q_in closely
 
-    ASSERT_NEAR(Q_n, Q_in, 1e-3 * Q_in)
-        << "Manning normal depth Q_n does not match Q_in to 0.1%";
+    ASSERT_NEAR(Q_n, Q_in, 1e-3 * Q_in) << "Manning normal depth Q_n does not match Q_in to 0.1%";
 
     kinwave::KWSolver solver;
     solver.init(1, XSectGroups{});
 
     // Initial state: at rest
-    solver.q1_[0]  = 0.0;
-    solver.a1_[0]  = 0.0;
-    solver.q2_[0]  = 0.0;
-    solver.a2_[0]  = 0.0;
+    solver.q1_[0] = 0.0;
+    solver.a1_[0] = 0.0;
+    solver.q2_[0] = 0.0;
+    solver.a2_[0] = 0.0;
     solver.q_in_[0] = 0.0;
 
-    double V_in  = 0.0;   // cumulative inflow volume (ft^3)
-    double V_out = 0.0;   // cumulative outflow volume (ft^3)
+    double V_in = 0.0;  // cumulative inflow volume (ft^3)
+    double V_out = 0.0; // cumulative outflow volume (ft^3)
 
     for (int step = 0; step < n_steps; ++step) {
         // Apply step inflow
         solver.q_in_[0] = Q_in;
 
-        solver.solveConduit(0, xs, q_full, a_full, xs.s_full,
-                            beta, length, dt, 0.0);
+        solver.solveConduit(0, xs, q_full, a_full, xs.s_full, beta, length, dt, 0.0);
 
-        V_in  += Q_in * dt;
+        V_in += Q_in * dt;
         V_out += solver.q_out_[0] * dt;
 
         // Advance state for next step
         solver.q1_[0] = solver.q_in_[0];
-        solver.a1_[0] = A_n;              // upstream at normal depth
+        solver.a1_[0] = A_n; // upstream at normal depth
         solver.q2_[0] = solver.q_out_[0];
         solver.a2_[0] = solver.a_out_[0];
     }
@@ -1410,12 +1485,10 @@ TEST(KWSolverTransient, StepInflowMassBalance) {
     //    residual should be formed against the actual final storage, not A_n*L.
     const double delta_stored = V_in - V_out;
     const double final_stored_volume = 0.5 * (solver.a_in_[0] + solver.a_out_[0]) * length;
-    const double massbal_err  = std::abs(delta_stored - final_stored_volume);
-    EXPECT_GT(delta_stored, 0.0)
-        << "Negative stored volume implies mass loss (V_out > V_in)";
+    const double massbal_err = std::abs(delta_stored - final_stored_volume);
+    EXPECT_GT(delta_stored, 0.0) << "Negative stored volume implies mass loss (V_out > V_in)";
     EXPECT_LT(massbal_err / V_in, massbal_tol_rel)
-        << "Mass balance error " << massbal_err
-        << " ft^3 exceeds " << (100.0 * massbal_tol_rel)
+        << "Mass balance error " << massbal_err << " ft^3 exceeds " << (100.0 * massbal_tol_rel)
         << "% of V_in=" << V_in << " ft^3";
 }
 
@@ -1427,10 +1500,13 @@ TEST(KWSolverTransient, StepInflowMassBalance) {
 // ============================================================================
 
 TEST(ForceMain, FrictionReferenceCurvesBenchmark) {
-    std::string path = std::string(BENCHMARK_DATA_DIR)
-        + "/manufactured/forcemain-friction-reference-curves/reference.csv";
+    std::string path = std::string(BENCHMARK_DATA_DIR) +
+                       "/manufactured/forcemain-friction-reference-curves/reference.csv";
 
-    struct Row { std::string model; double v, R, param, Sf_ref; };
+    struct Row {
+        std::string model;
+        double v, R, param, Sf_ref;
+    };
     std::vector<Row> rows;
     {
         std::ifstream in(path);
@@ -1440,17 +1516,20 @@ TEST(ForceMain, FrictionReferenceCurvesBenchmark) {
         std::string line;
         bool header_seen = false;
         while (std::getline(in, line)) {
-            if (line.empty() || line[0] == '#') continue;
-            if (!header_seen) { header_seen = true; continue; }
+            if (line.empty() || line[0] == '#')
+                continue;
+            if (!header_seen) {
+                header_seen = true;
+                continue;
+            }
             std::istringstream ss(line);
             std::string tok;
             std::vector<std::string> cols;
             while (std::getline(ss, tok, ','))
                 cols.push_back(tok);
             if (cols.size() >= 5)
-                rows.push_back({cols[0],
-                    std::stod(cols[1]), std::stod(cols[2]),
-                    std::stod(cols[3]), std::stod(cols[4])});
+                rows.push_back({cols[0], std::stod(cols[1]), std::stod(cols[2]), std::stod(cols[3]),
+                                std::stod(cols[4])});
         }
     }
     if (rows.empty()) {
@@ -1465,11 +1544,9 @@ TEST(ForceMain, FrictionReferenceCurvesBenchmark) {
             Sf_computed = forcemain::getFricSlope_DW(row.v, row.R, row.param);
 
         double rel_err = std::abs(Sf_computed - row.Sf_ref) / row.Sf_ref;
-        EXPECT_LT(rel_err, 1e-10)
-            << row.model << " v=" << row.v << " R=" << row.R
-            << " param=" << row.param
-            << " computed=" << Sf_computed << " ref=" << row.Sf_ref
-            << " rel_err=" << rel_err;
+        EXPECT_LT(rel_err, 1e-10) << row.model << " v=" << row.v << " R=" << row.R
+                                  << " param=" << row.param << " computed=" << Sf_computed
+                                  << " ref=" << row.Sf_ref << " rel_err=" << rel_err;
     }
 }
 
@@ -1488,10 +1565,12 @@ TEST(ForceMain, FrictionReferenceCurvesBenchmark) {
 
 TEST(DWSolverGVF, BackwaterM1Benchmark) {
     const std::string csv_path =
-        std::string(BENCHMARK_DATA_DIR)
-        + "/manufactured/dynwave-gvf-backwater-m1/reference.csv";
+        std::string(BENCHMARK_DATA_DIR) + "/manufactured/dynwave-gvf-backwater-m1/reference.csv";
 
-    struct Row { std::string node; double x_ft, z_inv_ft, y_gvf_ft; };
+    struct Row {
+        std::string node;
+        double x_ft, z_inv_ft, y_gvf_ft;
+    };
     std::vector<Row> rows;
     {
         std::ifstream in(csv_path);
@@ -1501,17 +1580,20 @@ TEST(DWSolverGVF, BackwaterM1Benchmark) {
         std::string line;
         bool header_seen = false;
         while (std::getline(in, line)) {
-            if (line.empty() || line[0] == '#') continue;
-            if (!header_seen) { header_seen = true; continue; }
+            if (line.empty() || line[0] == '#')
+                continue;
+            if (!header_seen) {
+                header_seen = true;
+                continue;
+            }
             std::istringstream ss(line);
             std::string tok;
             std::vector<std::string> cols;
             while (std::getline(ss, tok, ','))
                 cols.push_back(tok);
             if (cols.size() >= 4)
-                rows.push_back({cols[0],
-                    std::stod(cols[1]), std::stod(cols[2]),
-                    std::stod(cols[3])});
+                rows.push_back(
+                    {cols[0], std::stod(cols[1]), std::stod(cols[2]), std::stod(cols[3])});
         }
     }
     if (rows.size() < 6) {
@@ -1519,13 +1601,13 @@ TEST(DWSolverGVF, BackwaterM1Benchmark) {
     }
 
     // ---- Channel parameters ----
-    const double PHI    = 1.486;
+    const double PHI = 1.486;
     const double n_mann = 0.013;
-    const double S0     = 0.001;
-    const double b      = 5.0;    // channel width (ft)
-    const double y_full = 4.0;    // full depth (ft) — large to prevent surcharge
-    const double L      = 200.0;  // conduit length (ft)
-    const double Q      = 10.0;   // steady inflow (cfs)
+    const double S0 = 0.001;
+    const double b = 5.0;      // channel width (ft)
+    const double y_full = 4.0; // full depth (ft) — large to prevent surcharge
+    const double L = 200.0;    // conduit length (ft)
+    const double Q = 10.0;     // steady inflow (cfs)
 
     // ---- Cross-section geometry (same for all 5 conduits) ----
     XSectParams xs{};
@@ -1538,17 +1620,17 @@ TEST(DWSolverGVF, BackwaterM1Benchmark) {
     groups.build(xparams.data(), 5);
 
     // ---- Conveyance parameters ----
-    const double beta         = PHI * std::sqrt(S0) / n_mann;
+    const double beta = PHI * std::sqrt(S0) / n_mann;
     const double rough_factor = openswmm::constants::GRAVITY * (n_mann / PHI) * (n_mann / PHI);
-    const double q_full       = beta * xs.s_full;
+    const double q_full = beta * xs.s_full;
 
     // ---- Reference depths from CSV ----
     // rows[0..4] = J0..J4 (junctions), rows[5] = J5 (fixed outfall BC)
     // y_n_mann: Manning normal depth (provenance.yaml: 0.781692 ft); used for
     // tolerance only — the J0 GVF depth (0.792075 ft) is 1.3% above y_n because
     // the M1 profile asymptotes toward y_n as reach length → ∞.
-    const double y_n_mann = 0.781692;      // Manning normal depth (ft)
-    const double y_d      = rows[5].y_gvf_ft;  // downstream fixed stage
+    const double y_n_mann = 0.781692;    // Manning normal depth (ft)
+    const double y_d = rows[5].y_gvf_ft; // downstream fixed stage
 
     // ---- Build SimulationContext: 6 nodes, 5 conduits ----
     SimulationContext ctx;
@@ -1560,12 +1642,12 @@ TEST(DWSolverGVF, BackwaterM1Benchmark) {
 
     for (int i = 0; i < 6; ++i) {
         ctx.nodes.invert_elev[i] = z_inv[i];
-        ctx.nodes.full_depth[i]  = 100.0;       // large — no overtopping
-        ctx.nodes.crown_elev[i]  = z_inv[i] + 100.0;  // prevent spurious surcharge
-        ctx.nodes.type[i]        = NodeType::JUNCTION;
-        ctx.nodes.depth[i]       = y_n_mann;
-        ctx.nodes.old_depth[i]   = y_n_mann;
-        ctx.nodes.head[i]        = z_inv[i] + y_n_mann;
+        ctx.nodes.full_depth[i] = 100.0;            // large — no overtopping
+        ctx.nodes.crown_elev[i] = z_inv[i] + 100.0; // prevent spurious surcharge
+        ctx.nodes.type[i] = NodeType::JUNCTION;
+        ctx.nodes.depth[i] = y_n_mann;
+        ctx.nodes.old_depth[i] = y_n_mann;
+        ctx.nodes.head[i] = z_inv[i] + y_n_mann;
     }
 
     // J5 is the fixed-stage outfall (downstream BC)
@@ -1573,14 +1655,14 @@ TEST(DWSolverGVF, BackwaterM1Benchmark) {
         const auto orow = static_cast<std::size_t>(
             ctx.node_subtypes.set_node_type(ctx.nodes, 5, NodeType::OUTFALL));
         auto& O = ctx.node_subtypes.outfalls;
-        O.bc_type[orow]     = OutfallType::FIXED;
-        O.param[orow]       = y_d;  // stage = invert(0) + y_d = y_d
-        O.link_idx[orow]    = 4;    // last conduit L4 (J4→J5)
+        O.bc_type[orow] = OutfallType::FIXED;
+        O.param[orow] = y_d;  // stage = invert(0) + y_d = y_d
+        O.link_idx[orow] = 4; // last conduit L4 (J4→J5)
         O.link_offset[orow] = 0.0;
     }
-    ctx.nodes.depth[5]            = y_d;
-    ctx.nodes.old_depth[5]        = y_d;
-    ctx.nodes.head[5]             = z_inv[5] + y_d;
+    ctx.nodes.depth[5] = y_d;
+    ctx.nodes.old_depth[5] = y_d;
+    ctx.nodes.head[5] = z_inv[5] + y_d;
 
     // Constant lateral inflow at J0
     ctx.nodes.lat_flow[0] = Q;
@@ -1590,27 +1672,27 @@ TEST(DWSolverGVF, BackwaterM1Benchmark) {
         const auto cr = static_cast<std::size_t>(
             ctx.link_subtypes.set_link_type(ctx.links, i, LinkType::CONDUIT));
         auto& C = ctx.link_subtypes.conduits;
-        ctx.links.xsect_shape[i]        = XsectShape::RECT_OPEN;
-        ctx.links.xsect_batch_shape[i]  = static_cast<int>(XSectShape::RECT_OPEN);
-        ctx.links.xsect_y_full[i]       = xs.y_full;
-        ctx.links.xsect_a_full[i]       = xs.a_full;
-        ctx.links.xsect_w_max[i]        = xs.w_max;
-        ctx.links.xsect_r_full[i]       = xs.r_full;
-        ctx.links.xsect_s_full[i]       = xs.s_full;
-        ctx.links.xsect_s_max[i]        = xs.s_max;
-        C.beta[cr]                      = beta;
-        C.rough_factor[cr]              = rough_factor;
-        C.q_full[cr]                    = q_full;
-        C.q_max[cr]                     = q_full;
-        C.length[cr]                    = L;
-        C.mod_length[cr]                = L;
-        C.slope[cr]                     = S0;
-        C.roughness[cr]                 = n_mann;
-        C.barrels[cr]                   = 1;
-        ctx.links.node1[i]              = i;
-        ctx.links.node2[i]              = i + 1;
-        ctx.links.flow[i]               = Q;
-        ctx.links.old_flow[i]           = Q;
+        ctx.links.xsect_shape[i] = XsectShape::RECT_OPEN;
+        ctx.links.xsect_batch_shape[i] = static_cast<int>(XSectShape::RECT_OPEN);
+        ctx.links.xsect_y_full[i] = xs.y_full;
+        ctx.links.xsect_a_full[i] = xs.a_full;
+        ctx.links.xsect_w_max[i] = xs.w_max;
+        ctx.links.xsect_r_full[i] = xs.r_full;
+        ctx.links.xsect_s_full[i] = xs.s_full;
+        ctx.links.xsect_s_max[i] = xs.s_max;
+        C.beta[cr] = beta;
+        C.rough_factor[cr] = rough_factor;
+        C.q_full[cr] = q_full;
+        C.q_max[cr] = q_full;
+        C.length[cr] = L;
+        C.mod_length[cr] = L;
+        C.slope[cr] = S0;
+        C.roughness[cr] = n_mann;
+        C.barrels[cr] = 1;
+        ctx.links.node1[i] = i;
+        ctx.links.node2[i] = i + 1;
+        ctx.links.flow[i] = Q;
+        ctx.links.old_flow[i] = Q;
     }
 
     // ---- Initialize DWSolver ----
@@ -1619,12 +1701,12 @@ TEST(DWSolverGVF, BackwaterM1Benchmark) {
     solver.init(6, 5, groups, ctx);
 
     // ---- Run 120 steps at dt=30 s (T=3600 s ≈ 18 wave travel times) ----
-    const double dt      = 30.0;
-    const int    n_steps = 120;
+    const double dt = 30.0;
+    const int n_steps = 120;
 
     for (int step = 0; step < n_steps; ++step) {
-        ctx.nodes.save_state();   // depth → old_depth, net_inflow → old_net_inflow
-        ctx.links.save_state();   // flow  → old_flow
+        ctx.nodes.save_state(); // depth → old_depth, net_inflow → old_net_inflow
+        ctx.links.save_state(); // flow  → old_flow
         solver.execute(ctx, dt);
         // Restore constant lateral inflow (save_state copies but does not zero it)
         ctx.nodes.lat_flow[0] = Q;
@@ -1636,9 +1718,7 @@ TEST(DWSolverGVF, BackwaterM1Benchmark) {
     for (int i = 0; i < 5; ++i) {
         EXPECT_NEAR(ctx.nodes.depth[i], rows[i].y_gvf_ft, tol)
             << rows[i].node << " (x=" << rows[i].x_ft << " ft)"
-            << "  depth=" << ctx.nodes.depth[i]
-            << "  ref="   << rows[i].y_gvf_ft
-            << "  tol="   << tol;
+            << "  depth=" << ctx.nodes.depth[i] << "  ref=" << rows[i].y_gvf_ft << "  tol=" << tol;
     }
 }
 
@@ -1667,13 +1747,27 @@ TEST(DWSolverGVF, BackwaterM1Benchmark) {
 // the solver's current (known-imperfect) dry-bed behaviour, and a DISABLED test
 // carrying the true analytical targets (it auto-enables when the wet/dry front
 // handling is fixed). See README.md and docs/TODO_LEGACY_ALIGNMENT.md.
-static void runRitterDryBed(double tol_dam_ft, double tol_l1_ft,
-                            double tol_front_ft) {
+/**
+ * @brief Compare the dynamic-wave dry-bed strip against supplied Ritter error bounds.
+ *
+ * Reads the fixed manufactured CSV, skips the case if unavailable/too short, builds fifty
+ * frictionless 5-ft rectangular conduits with a one-foot reservoir and executes sixteen 0.5 s
+ * steps. Checks reference row coverage at 2/4/6/8 s and nonfatally compares depth/front metrics.
+ * Different callers supply regression versus analytic targets; this helper does not claim analytic
+ * accuracy beyond those explicit tolerances. Numeric CSV errors can throw; no fixture files are
+ * written.
+ *
+ * @param[in] tol_dam_ft Nonnegative absolute dam-station depth tolerance in feet.
+ * @param[in] tol_l1_ft Positive allowed mean absolute wet-reference depth error in feet.
+ * @param[in] tol_front_ft Nonnegative absolute wet-front location tolerance in feet.
+ */
+static void runRitterDryBed(double tol_dam_ft, double tol_l1_ft, double tol_front_ft) {
     const std::string csv_path =
-        std::string(BENCHMARK_DATA_DIR)
-        + "/manufactured/dw-ritter-drybed-strip/reference.csv";
+        std::string(BENCHMARK_DATA_DIR) + "/manufactured/dw-ritter-drybed-strip/reference.csv";
 
-    struct RefRow { double t_s, xi_ft, h_ft, u_fps; };
+    struct RefRow {
+        double t_s, xi_ft, h_ft, u_fps;
+    };
     std::vector<RefRow> ref;
     {
         std::ifstream in(csv_path);
@@ -1683,16 +1777,20 @@ static void runRitterDryBed(double tol_dam_ft, double tol_l1_ft,
         std::string line;
         bool header_seen = false;
         while (std::getline(in, line)) {
-            if (line.empty() || line[0] == '#') continue;
-            if (!header_seen) { header_seen = true; continue; }
+            if (line.empty() || line[0] == '#')
+                continue;
+            if (!header_seen) {
+                header_seen = true;
+                continue;
+            }
             std::istringstream ss(line);
             std::string tok;
             std::vector<std::string> cols;
             while (std::getline(ss, tok, ','))
                 cols.push_back(tok);
             if (cols.size() >= 4)
-                ref.push_back({std::stod(cols[0]), std::stod(cols[1]),
-                               std::stod(cols[2]), std::stod(cols[3])});
+                ref.push_back({std::stod(cols[0]), std::stod(cols[1]), std::stod(cols[2]),
+                               std::stod(cols[3])});
         }
     }
     if (ref.size() < 200) {
@@ -1700,17 +1798,17 @@ static void runRitterDryBed(double tol_dam_ft, double tol_l1_ft,
     }
 
     // ── Channel parameters ────────────────────────────────────────────────
-    const double h0     = 1.0;    // ft  (initial reservoir depth)
-    const double b      = 5.0;    // ft  (channel width)
-    const double y_full = 4.0;    // ft  (full depth — large to prevent surcharge)
-    const double dx     = 5.0;    // ft  (conduit length / node spacing)
-    const double x_d    = 125.0;  // ft  (dam location)
-    const int    N_cond = 50;
-    const int    N_node = N_cond + 1;   // 51
-    const double dt     = 0.5;    // s
-    const double g      = openswmm::constants::GRAVITY;  // 32.2 ft/s²
-    const double c0     = std::sqrt(g * h0);              // 5.6745 ft/s
-    const double FUDGE  = openswmm::constants::FUDGE;    // 0.0001 ft
+    const double h0 = 1.0;     // ft  (initial reservoir depth)
+    const double b = 5.0;      // ft  (channel width)
+    const double y_full = 4.0; // ft  (full depth — large to prevent surcharge)
+    const double dx = 5.0;     // ft  (conduit length / node spacing)
+    const double x_d = 125.0;  // ft  (dam location)
+    const int N_cond = 50;
+    const int N_node = N_cond + 1;                   // 51
+    const double dt = 0.5;                           // s
+    const double g = openswmm::constants::GRAVITY;   // 32.2 ft/s²
+    const double c0 = std::sqrt(g * h0);             // 5.6745 ft/s
+    const double FUDGE = openswmm::constants::FUDGE; // 0.0001 ft
 
     // ── Cross-section geometry ────────────────────────────────────────────
     XSectParams xs{};
@@ -1729,14 +1827,14 @@ static void runRitterDryBed(double tol_dam_ft, double tol_l1_ft,
     for (int i = 0; i < N_node; ++i) {
         auto ui = static_cast<std::size_t>(i);
         ctx.nodes.invert_elev[ui] = 0.0;
-        ctx.nodes.full_depth[ui]  = 100.0;
-        ctx.nodes.crown_elev[ui]  = 100.0;
-        ctx.nodes.type[ui]        = NodeType::JUNCTION;
+        ctx.nodes.full_depth[ui] = 100.0;
+        ctx.nodes.crown_elev[ui] = 100.0;
+        ctx.nodes.type[ui] = NodeType::JUNCTION;
         // Reservoir side (x ≤ x_d): h0; dry side: FUDGE
         double d0 = (i * dx <= x_d) ? h0 : FUDGE;
-        ctx.nodes.depth[ui]       = d0;
-        ctx.nodes.old_depth[ui]   = d0;
-        ctx.nodes.head[ui]        = d0;  // invert_elev = 0
+        ctx.nodes.depth[ui] = d0;
+        ctx.nodes.old_depth[ui] = d0;
+        ctx.nodes.head[ui] = d0; // invert_elev = 0
     }
 
     // Node 0: FIXED stage outfall — infinite upstream reservoir at h0
@@ -1744,9 +1842,9 @@ static void runRitterDryBed(double tol_dam_ft, double tol_l1_ft,
         const auto orow = static_cast<std::size_t>(
             ctx.node_subtypes.set_node_type(ctx.nodes, 0, NodeType::OUTFALL));
         auto& O = ctx.node_subtypes.outfalls;
-        O.bc_type[orow]     = OutfallType::FIXED;
-        O.param[orow]       = h0;    // stage (ft); ucf_len = 1.0 for CFS
-        O.link_idx[orow]    = 0;     // conduit 0 connects here
+        O.bc_type[orow] = OutfallType::FIXED;
+        O.param[orow] = h0;   // stage (ft); ucf_len = 1.0 for CFS
+        O.link_idx[orow] = 0; // conduit 0 connects here
         O.link_offset[orow] = 0.0;
     }
 
@@ -1757,8 +1855,8 @@ static void runRitterDryBed(double tol_dam_ft, double tol_l1_ft,
         const auto orow = static_cast<std::size_t>(
             ctx.node_subtypes.set_node_type(ctx.nodes, 50, NodeType::OUTFALL));
         auto& O = ctx.node_subtypes.outfalls;
-        O.bc_type[orow]     = OutfallType::FREE;
-        O.link_idx[orow]    = N_cond - 1;  // conduit 49
+        O.bc_type[orow] = OutfallType::FREE;
+        O.link_idx[orow] = N_cond - 1; // conduit 49
         O.link_offset[orow] = 0.0;
     }
 
@@ -1768,27 +1866,27 @@ static void runRitterDryBed(double tol_dam_ft, double tol_l1_ft,
         const auto cr = static_cast<std::size_t>(
             ctx.link_subtypes.set_link_type(ctx.links, i, LinkType::CONDUIT));
         auto& C = ctx.link_subtypes.conduits;
-        ctx.links.xsect_shape[ui]       = XsectShape::RECT_OPEN;
+        ctx.links.xsect_shape[ui] = XsectShape::RECT_OPEN;
         ctx.links.xsect_batch_shape[ui] = static_cast<int>(XSectShape::RECT_OPEN);
-        ctx.links.xsect_y_full[ui]      = xs.y_full;
-        ctx.links.xsect_a_full[ui]      = xs.a_full;
-        ctx.links.xsect_w_max[ui]       = xs.w_max;
-        ctx.links.xsect_r_full[ui]      = xs.r_full;
-        ctx.links.xsect_s_full[ui]      = xs.s_full;
-        ctx.links.xsect_s_max[ui]       = xs.s_max;
-        C.beta[cr]                      = 0.0;  // PHI*sqrt(S0)/n: S0=0 → 0
-        C.rough_factor[cr]              = 0.0;  // GRAVITY*(n/PHI)^2: n=0 → 0
-        C.roughness[cr]                 = 0.0;
-        C.q_full[cr]                    = 0.0;
-        C.q_max[cr]                     = 0.0;
-        C.length[cr]                    = dx;
-        C.mod_length[cr]                = dx;
-        C.slope[cr]                     = 0.0;
-        C.barrels[cr]                   = 1;
-        ctx.links.node1[ui]             = i;
-        ctx.links.node2[ui]             = i + 1;
-        ctx.links.flow[ui]              = 0.0;
-        ctx.links.old_flow[ui]          = 0.0;
+        ctx.links.xsect_y_full[ui] = xs.y_full;
+        ctx.links.xsect_a_full[ui] = xs.a_full;
+        ctx.links.xsect_w_max[ui] = xs.w_max;
+        ctx.links.xsect_r_full[ui] = xs.r_full;
+        ctx.links.xsect_s_full[ui] = xs.s_full;
+        ctx.links.xsect_s_max[ui] = xs.s_max;
+        C.beta[cr] = 0.0;         // PHI*sqrt(S0)/n: S0=0 → 0
+        C.rough_factor[cr] = 0.0; // GRAVITY*(n/PHI)^2: n=0 → 0
+        C.roughness[cr] = 0.0;
+        C.q_full[cr] = 0.0;
+        C.q_max[cr] = 0.0;
+        C.length[cr] = dx;
+        C.mod_length[cr] = dx;
+        C.slope[cr] = 0.0;
+        C.barrels[cr] = 1;
+        ctx.links.node1[ui] = i;
+        ctx.links.node2[ui] = i + 1;
+        ctx.links.flow[ui] = 0.0;
+        ctx.links.old_flow[ui] = 0.0;
     }
 
     // ── Initialise and run ────────────────────────────────────────────────
@@ -1797,22 +1895,23 @@ static void runRitterDryBed(double tol_dam_ft, double tol_l1_ft,
     solver.init(N_node, N_cond, groups, ctx);
 
     // 16 steps × 0.5 s = 8 s total; compare at steps 4, 8, 12, 16
-    const int n_steps    = 16;
-    const int check_each = 4;  // every 2 s
+    const int n_steps = 16;
+    const int check_each = 4; // every 2 s
 
     // Tolerances (tol_dam_ft, tol_l1_ft, tol_front_ft) are supplied by the
     // caller. The Preissmann implicit scheme cannot resolve the Ritter
     // rarefaction origin (SKIP_DRY freezes the wet/dry front), so the baseline
     // caller pins generous regression thresholds while the analytical caller
     // carries the true targets. See README.md for details.
-    const double h_wet_tol     = 0.01;   // exclude near-dry nodes from L1
+    const double h_wet_tol = 0.01; // exclude near-dry nodes from L1
 
     for (int step = 1; step <= n_steps; ++step) {
         ctx.nodes.save_state();
         ctx.links.save_state();
         solver.execute(ctx, dt);
 
-        if (step % check_each != 0) continue;
+        if (step % check_each != 0)
+            continue;
 
         const double t = step * dt;
 
@@ -1834,8 +1933,8 @@ static void runRitterDryBed(double tol_dam_ft, double tol_l1_ft,
                 }
             }
         }
-        ASSERT_EQ(matched, N_node) << "Expected " << N_node
-            << " reference rows for t=" << t << " s";
+        ASSERT_EQ(matched, N_node)
+            << "Expected " << N_node << " reference rows for t=" << t << " s";
 
         // ── Dam-station spot check: node 25 (xi = 0) ────────────────────
         // Regression check: depth must be within [0, h0] and not diverge.
@@ -1849,31 +1948,31 @@ static void runRitterDryBed(double tol_dam_ft, double tol_l1_ft,
 
         // ── L1(h) over wet reference nodes ───────────────────────────────
         double l1_sum = 0.0;
-        int    l1_cnt = 0;
+        int l1_cnt = 0;
         for (int i = 0; i < N_node; ++i) {
             auto ui = static_cast<std::size_t>(i);
             double hr = ref_h[ui];
-            if (hr <= h_wet_tol) continue;
+            if (hr <= h_wet_tol)
+                continue;
             l1_sum += std::fabs(ctx.nodes.depth[ui] - hr);
             ++l1_cnt;
         }
         if (l1_cnt > 0) {
             double l1_h = l1_sum / l1_cnt;
-            EXPECT_LT(l1_h, tol_l1_ft)
-                << "L1(h) wet region at t=" << t << " s"
-                << "  l1=" << l1_h << " ft  tol=" << tol_l1_ft << " ft";
+            EXPECT_LT(l1_h, tol_l1_ft) << "L1(h) wet region at t=" << t << " s"
+                                       << "  l1=" << l1_h << " ft  tol=" << tol_l1_ft << " ft";
         }
 
         // ── Front position error ─────────────────────────────────────────
         // Analytical front: xi_f = 2*c0*t  →  node index = (x_d + xi_f)/dx
         const double xi_front_ref = 2.0 * c0 * t;
-        const double x_front_ref  = x_d + xi_front_ref;  // absolute
+        const double x_front_ref = x_d + xi_front_ref; // absolute
         // Solver front: first node where depth drops below h_wet_tol
-        double x_front_solver = x_d + xi_front_ref;  // fallback
+        double x_front_solver = x_d + xi_front_ref; // fallback
         for (int i = N_node - 1; i >= 0; --i) {
             auto ui = static_cast<std::size_t>(i);
             if (ctx.nodes.depth[ui] > h_wet_tol) {
-                x_front_solver = dx * (i + 0.5);  // midpoint of last wet cell
+                x_front_solver = dx * (i + 0.5); // midpoint of last wet cell
                 break;
             }
         }
@@ -1900,4 +1999,645 @@ TEST(DWSolverRitter, DryBedRegressionBaseline) {
 // becomes a genuine Ritter analytical check.
 TEST(DWSolverRitter, DISABLED_DryBedMatchesRitterAnalytical) {
     runRitterDryBed(/*tol_dam_ft=*/0.10, /*tol_l1_ft=*/0.05, /*tol_front_ft=*/15.0);
+}
+
+// Accepted hydraulic component restart, separately from legacy seed hot-start.
+#include "core/CompletedSourceArchive.hpp"
+#include "core/DateTime.hpp"
+#include "hydraulics/TimestepController.hpp"
+#include "hydrology/LidNode.hpp"
+#include <filesystem>
+#include <cstdlib>
+#include <cstring>
+namespace {
+/**
+ * @brief Create the hydraulic-restart evidence directory.
+ *
+ * Does not change current directory or delete prior evidence. Directory/path exceptions propagate.
+ * @return Owned SWMM_R4_HYDRAULIC_OUT path when present, otherwise the source-relative
+ *     verification/hydraulic_restart directory.
+ */
+std::filesystem::path hydraulicArtifacts() {
+    const char* configured = std::getenv("SWMM_R4_HYDRAULIC_OUT");
+    auto dir = configured ? std::filesystem::path(configured)
+                          : std::filesystem::path(__FILE__).parent_path() /
+                                "../../verification/hydraulic_restart";
+    std::filesystem::create_directories(dir);
+    return dir;
+}
+/**
+ * @brief Read hydraulic checkpoint bytes without interpreting the archive.
+ *
+ * No IO status is asserted; local stream closes at return and allocation exceptions propagate.
+ *
+ * @param[in] p Borrowed binary source path.
+ * @return Owned full/partial bytes, empty when empty or unopenable.
+ */
+std::string hydraulicBytes(const std::filesystem::path& p) {
+    std::ifstream f(p, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(f), {});
+}
+/**
+ * @brief Overwrite one hydraulic checkpoint evidence file with exact bytes.
+ *
+ * Uses binary truncation and ignores open/write/close status. Does not parse or validate archive
+ * contents.
+ *
+ * @param[in] p Borrowed destination filename; parent directory must exist.
+ * @param[in] bytes Borrowed binary payload written with explicit length, including embedded NULs.
+ */
+void hydraulicFile(const std::filesystem::path& p, const std::string& bytes) {
+    std::ofstream f(p, std::ios::binary);
+    f.write(bytes.data(), bytes.size());
+}
+/**
+ * @brief Build the owned storage/conduit/outfall hydraulic restart profile.
+ *
+ * Uses internal feet/ft3/cfs, one six-barrel AB link, ponding and Anderson acceleration. LID mode
+ * initializes layered state; plain mode seeds 100 ft2 storage and 300 ft3 full volumes. Caller
+ * initializes a Router afterward. Selectors and geometry are not validated here; no
+ * files/simulation are run.
+ *
+ * @param[in] method Native surcharge selector assigned to options.
+ * @param[in] lids Install NODE LID storage geometry/outlets instead of plain storage when true.
+ * @param[in] richards Enable Richards flow/material options on LID layers when lids is true.
+ * @param[in] backwater Use 2.15 ft fixed outfall stage instead of 0.2 ft.
+ * @param[in] continuity NodeContinuity enum value cast from this native integer selector.
+ * @param[in] uf Native unsteady-friction selector.
+ * @return Owned three-node/three-conduit context with two-second routing and 3.5-second report
+ *     cadence.
+ */
+SimulationContext hydraulicModel(int method, bool lids, bool richards = false,
+                                 bool backwater = false, int continuity = 1, int uf = 0) {
+    SimulationContext c;
+    c.options.start_date = datetime::encodeDate(2026, 10, 9);
+    c.current_date = c.options.start_date;
+    c.options.routing_step = 2;
+    c.options.min_routing_step = .05;
+    c.options.report_step = 3.5;
+    c.next_report_ms = 3500;
+    c.options.surcharge_method = method;
+    c.options.max_trials = 20;
+    c.options.allow_ponding = true;
+    c.options.anderson_accel = true;
+    c.options.node_continuity = static_cast<NodeContinuity>(continuity);
+    c.options.unsteady_friction = uf;
+    c.nodes.resize(3);
+    c.node_names.try_add("A");
+    c.node_names.try_add("B");
+    c.node_names.try_add("O");
+    for (int i = 0; i < 2; ++i) {
+        c.node_subtypes.set_node_type(c.nodes, i, NodeType::STORAGE);
+        auto r = c.node_subtypes.storage_row(i);
+        c.node_subtypes.storages.c[r] = 100;
+        c.node_subtypes.storages.evap_frac[r] = .8;
+        c.nodes.full_depth[i] = 3;
+        c.nodes.sur_depth[i] = 10;
+        c.nodes.ponded_area[i] = 150;
+        c.nodes.init_depth[i] = c.nodes.depth[i] = lids ? 0 : 2.2 - .3 * i;
+        c.nodes.head[i] = c.nodes.depth[i];
+        c.nodes.crown_elev[i] = 1.5;
+        c.nodes.degree[i] = 2;
+    }
+    int out = c.node_subtypes.set_node_type(c.nodes, 2, NodeType::OUTFALL);
+    c.node_subtypes.outfalls.bc_type[out] = OutfallType::FIXED;
+    c.node_subtypes.outfalls.param[out] = backwater ? 2.15 : .2;
+    c.nodes.depth[2] = c.nodes.head[2] = c.node_subtypes.outfalls.param[out];
+    c.nodes.full_depth[2] = 3;
+    c.nodes.crown_elev[2] = 1.5;
+    c.nodes.degree[2] = 2;
+    c.links.resize(3);
+    c.link_names.try_add("AO");
+    c.link_names.try_add("BO");
+    c.link_names.try_add("AB");
+    for (int j = 0; j < 3; ++j) {
+        int row = c.link_subtypes.set_link_type(c.links, j, LinkType::CONDUIT);
+        auto& cd = c.link_subtypes.conduits;
+        c.links.node1[j] = j == 1 ? 1 : 0;
+        c.links.node2[j] = j == 2 ? 1 : 2;
+        c.links.offset1[j] = lids ? .75 : 0;
+        c.links.offset2[j] = j == 2 ? c.links.offset1[j] : 0;
+        c.links.xsect_shape[j] = XsectShape::CIRCULAR;
+        c.links.xsect_y_full[j] = lids ? .1 : 1.5;
+        cd.length[row] = cd.true_length[row] = cd.mod_length[row] = lids ? 10 : 100;
+        cd.roughness[row] = .013;
+        cd.barrels[row] = j == 2 ? 6 : 1;
+        cd.slope[row] = .01;
+    }
+    if (lids) {
+        c.lid_names.try_add("Stack");
+        c.lid_controls.names = {"Stack"};
+        c.lid_controls.lid_type = {"NODE"};
+        c.lid_controls.node_layers.resize(1);
+        LidNodeLayer surface;
+        surface.kind = LidNodeLayerKind::Surface;
+        surface.params = {6, .1};
+        LidNodeLayer media;
+        media.kind = LidNodeLayerKind::Media;
+        media.params = {12, .45, .2, .08, 2, 10, 3};
+        LidNodeLayer aggregate;
+        aggregate.kind = LidNodeLayerKind::Aggregate;
+        aggregate.params = {6, .4, 100};
+        LidNodeLayer bottom;
+        bottom.kind = LidNodeLayerKind::Bottom;
+        bottom.params = {.5, 0};
+        if (richards) {
+            surface.flow = {true, 4, 1.e-7, 1.e-5, 30};
+            media.retention = aggregate.retention = {.03, 2, 1.6, .5, 1.e-4};
+        }
+        c.lid_controls.node_layers[0] = {surface, media, aggregate, bottom};
+        for (auto& lid : c.node_subtypes.storages.lid)
+            lid = {0, 10};
+        c.lid_node_outlets = {{0, 2, false}, {1, 2, false}};
+        lidnode::initialize(c);
+    } else {
+        for (int i = 0; i < 2; ++i)
+            c.nodes.volume[i] = 100 * c.nodes.depth[i];
+        for (int i = 0; i < 2; ++i)
+            c.nodes.full_volume[i] = c.nodes.rpt_full_volume[i] = 300;
+    }
+    return c;
+}
+/**
+ * @brief Initialize dynamic-wave routing and checkpointable link statistics.
+ *
+ * Requires storage subtype and geometry rows. Uses native US table conversion, selects one DW
+ * thread, enables link step statistics and checkpointing. Context and router must remain alive
+ * together; no simulation clock advance occurs.
+ *
+ * @param[in,out] r Caller-owned router initialized/bound to the context.
+ * @param[in,out] c Owned consistent hydraulicModel context; storage full volumes/depths/heads are
+ *     recomputed.
+ */
+void hydraulicInitialize(Router& r, SimulationContext& c) {
+    for (int n : c.node_subtypes.storages.node_idx) {
+        c.nodes.full_volume[n] = 0;
+        c.nodes.full_volume[n] = c.nodes.rpt_full_volume[n] =
+            node::getVolume(c.nodes, n, c.nodes.full_depth[n], &c.tables, 0, &c.node_subtypes);
+        c.nodes.depth[n] =
+            node::getDepth(c.nodes, n, c.nodes.volume[n], &c.tables, 0, &c.node_subtypes);
+        c.nodes.head[n] = c.nodes.invert_elev[n] + c.nodes.depth[n];
+    }
+    r.init(c, RouteModel::DYNWAVE);
+    r.setDWNumThreads(1);
+    r.enableLinkStepStats(c);
+    r.enableCheckpointing(c);
+}
+/**
+ * @brief Execute and accept one forced hydraulic continuation boundary.
+ *
+ * Saves old state, consumes queued volumes into coupling rates, prepares/finishes node LIDs, steps
+ * hydraulics, accumulates stats and advances clocks/report schedule before accepting boundary. Does
+ * not return a separate convergence status or roll back exceptions; valid positive adaptive
+ * timestep is required for divisions.
+ *
+ * @param[in,out] r Initialized checkpoint-enabled router bound to c.
+ * @param[in,out] c Consistent live three-node restart context mutated in place.
+ * @param[in] k Forcing ordinal controlling wet/dry inflow, ET/infiltration changes and periodic
+ *     queued producer volumes.
+ * @return Accepted routing duration in seconds, min(2,getAdaptiveStep(...)); intended strictly
+ *     positive.
+ */
+double hydraulicStep(Router& r, SimulationContext& c, int k) {
+    const double dt = std::min(2., r.getAdaptiveStep(c, 2, .75));
+    r.beginCheckpointStep(c, dt);
+    c.nodes.save_state();
+    c.links.save_state();
+    c.climate_state.evap_rate = k >= 28 ? .00002 : 0;
+    c.climate_state.infil_factor = k >= 40 ? .8 : 1;
+    // Distinct lanes and wet/dry forcing, plus carried producer volumes. The
+    // hydraulic component owns these buffers, not the producer's scheduler.
+    for (int i = 0; i < 2; ++i) {
+        c.nodes.coupling_volume[i] = c.nodes.coupling_queue[i];
+        c.nodes.coupling_queue[i] = 0;
+        c.nodes.coupling_inflow[i] = c.nodes.coupling_volume[i] / dt;
+        c.nodes.lat_flow[i] = (k < 35 ? (i ? .3 : .6) : 0) + c.nodes.coupling_inflow[i];
+    }
+    lidnode::prepareStep(c, dt, c.climate_state.evap_rate);
+    r.step(c, dt, c.climate_state.evap_rate);
+    lidnode::finishStep(c);
+    r.accumulateLinkStepStats(c, dt, true);
+    for (int i = 0; i < 2; ++i)
+        c.nodes.coupling_queue[i] = k % 4 == 1 ? .017 * (i + 1) : 0;
+    hydraulics::TimestepController::advance(c, dt);
+    if (c.elapsed_ms >= c.next_report_ms)
+        c.next_report_ms += 3500;
+    r.acceptCheckpointBoundary(c);
+    return dt;
+}
+/**
+ * @brief Compute reflected CRC-32 of a hydraulic checkpoint payload.
+ *
+ * Does not parse or modify the payload.
+ *
+ * @param[in] bytes Borrowed binary payload interpreted as unsigned bytes.
+ * @return CRC-32 using polynomial 0xedb88320 and initial/final complement.
+ */
+uint32_t hydraulicCrc(const std::string& bytes) {
+    uint32_t crc = ~uint32_t(0);
+    for (unsigned char c : bytes) {
+        crc ^= c;
+        for (int k = 0; k < 8; ++k)
+            crc = (crc >> 1) ^ ((crc & 1) ? 0xedb88320u : 0u);
+    }
+    return ~crc;
+}
+// Edit the explicit clock/first node-state fields while preserving the CRC.
+/**
+ * @brief Forge clock/node semantic errors while retaining a matching payload CRC.
+ *
+ * Decodes export receipt vectors to locate fixed clock/first-node offsets, then edits raw payload.
+ * Requires the fixture archive layout and sufficient row/vector storage; no bounds checks make this
+ * safe for arbitrary input. Decode/allocation errors can throw; no file is written.
+ *
+ * @param[in] file Borrowed complete known-layout archive bytes, not a filename.
+ * @param[in] variant Selector 0..8 mutating negative/zero/future clocks, NaN diagnostics, invalid
+ *     node depth/shape or invalid bool byte; other values only re-encode.
+ * @return Owned mutated hydraulic archive bytes.
+ */
+std::string hydraulicMutant(const std::string& file, int variant) {
+    using A = detail::CompletedSourceArchive;
+    A in(file);
+    std::string magic, model, payload;
+    uint32_t version, crc;
+    in(magic, version, model, crc, payload);
+    in.finish();
+    // Export receipts precede the clocks and vary in size with the model.
+    // Skip their serialized vectors before mutating clock and node fields.
+    A prefix(payload);
+    std::vector<double> water, reverse, heat, pollutants;
+    prefix(water, reverse, heat, pollutants);
+    A receipts;
+    receipts(water, reverse, heat, pollutants);
+    const auto clock = receipts.bytes().size();
+    auto put = [&](std::size_t off, double value) {
+        std::memcpy(payload.data() + clock + off, &value, sizeof(value));
+    };
+    const std::size_t firstRow =
+        clock + 9 * sizeof(double) + sizeof(bool); // eight leading doubles, flag, step span
+    if (variant == 0)
+        put(0, -1);
+    if (variant == 1)
+        put(sizeof(double), 0);
+    if (variant == 2)
+        put(3 * sizeof(double), 1.e30);
+    if (variant == 3)
+        put(7 * sizeof(double), std::numeric_limits<double>::quiet_NaN());
+    if (variant == 4)
+        put(firstRow - clock + sizeof(uint64_t), -1); // node depth
+    if (variant == 5)
+        put(firstRow - clock + sizeof(uint64_t), std::numeric_limits<double>::infinity());
+    if (variant == 6)
+        put(firstRow - clock + sizeof(uint64_t), .5); // head/depth mismatch
+    if (variant == 7) {
+        uint64_t size = 999;
+        std::memcpy(payload.data() + firstRow, &size, sizeof(size));
+    }
+    if (variant == 8)
+        payload[clock + 8 * sizeof(double)] = char(2); // invalid bool representation
+    crc = hydraulicCrc(payload);
+    A out;
+    out(magic, version, model, crc, payload);
+    return out.bytes();
+}
+/**
+ * @brief Replace one expected unique double encoding and recompute the archive CRC.
+ *
+ * Records nonfatal missing/duplicate-pattern failures. Duplicate matches still replace only the
+ * first; intended use requires a unique pattern so incidental bytes are not modified. Native
+ * encoding/layout and successful archive decoding are preconditions; exceptions propagate.
+ *
+ * @param[in] file Borrowed full hydraulic archive bytes, not a filename.
+ * @param[in] oldValue Native double bit pattern expected exactly once in the payload.
+ * @param[in] newValue Replacement double bit pattern copied without numeric validation.
+ * @return Owned changed archive, or original bytes when no pattern is found.
+ */
+std::string hydraulicStateDouble(const std::string& file, double oldValue, double newValue) {
+    using A = detail::CompletedSourceArchive;
+    A in(file);
+    std::string magic, model, payload;
+    uint32_t version, crc;
+    in(magic, version, model, crc, payload);
+    in.finish();
+    std::string pattern(reinterpret_cast<const char*>(&oldValue), sizeof(oldValue));
+    auto offset = payload.find(pattern);
+    EXPECT_NE(offset, std::string::npos);
+    if (offset == std::string::npos)
+        return file;
+    EXPECT_EQ(payload.find(pattern, offset + 1), std::string::npos);
+    std::memcpy(payload.data() + offset, &newValue, sizeof(newValue));
+    crc = hydraulicCrc(payload);
+    A out;
+    out(magic, version, model, crc, payload);
+    return out.bytes();
+}
+}
+
+TEST(HydraulicCheckpoint, ConduitSurchargeAndAdaptiveContinuationAreExact) {
+    for (int method = 0; method < 4; ++method)
+        for (int continuity = 0; continuity < 2; ++continuity)
+            for (int uf = 0; uf < 2; ++uf) {
+                const auto key =
+                    std::to_string(method) + std::to_string(continuity) + std::to_string(uf);
+                SCOPED_TRACE(key);
+                auto a = hydraulicModel(method, false, false, false, continuity, uf);
+                Router ra;
+                hydraulicInitialize(ra, a);
+                for (int k = 0; k < 18; ++k)
+                    hydraulicStep(ra, a, k);
+                ASSERT_GT(std::abs(a.links.flow[0]), 0);
+                ASSERT_GT(a.links.stat_lstep_time[0], 0);
+                const auto path = hydraulicArtifacts() / ("conduit-" + key + ".chk");
+                ASSERT_EQ(ra.saveCheckpoint(a, path.string()), "");
+                auto b = hydraulicModel(method, false, false, false, continuity, uf);
+                Router rb;
+                hydraulicInitialize(rb, b);
+                ASSERT_EQ(rb.loadCheckpoint(b, path.string()), "");
+                ASSERT_EQ(b.links.flow, a.links.flow);
+                ASSERT_EQ(b.nodes.old_volume, a.nodes.old_volume);
+                const auto other = hydraulicArtifacts() / ("conduit-restored-" + key + ".chk");
+                ASSERT_EQ(rb.saveCheckpoint(b, other.string()), "");
+                ASSERT_EQ(hydraulicBytes(path), hydraulicBytes(other));
+                for (int k = 18; k < 65; ++k) {
+                    ASSERT_EQ(hydraulicStep(ra, a, k), hydraulicStep(rb, b, k));
+                    ASSERT_EQ(ra.lastStepConverged(), rb.lastStepConverged());
+                    ASSERT_EQ(a.nodes.depth, b.nodes.depth);
+                    ASSERT_EQ(a.links.flow, b.links.flow);
+                }
+                ASSERT_EQ(ra.saveCheckpoint(a, path.string()), "");
+                ASSERT_EQ(rb.saveCheckpoint(b, other.string()), "");
+                EXPECT_EQ(hydraulicBytes(path), hydraulicBytes(other));
+            }
+}
+TEST(HydraulicCheckpoint, NodeLidRetainedMobileBackwaterAndPortsContinueExactly) {
+    for (bool richards : {false, true})
+        for (bool backwater : {false, true}) {
+            SCOPED_TRACE(std::to_string(richards) + "/" + std::to_string(backwater));
+            auto a = hydraulicModel(0, true, richards, backwater);
+            Router ra;
+            hydraulicInitialize(ra, a);
+            double initial = a.node_subtypes.storages.lid_state[0].held_volume;
+            for (int k = 0; k < 18; ++k)
+                hydraulicStep(ra, a, k);
+            const auto& s = a.node_subtypes.storages.lid_state[0];
+            ASSERT_NE(s.held_volume, initial);
+            ASSERT_GT(s.treated_volume, 0);
+            if (richards)
+                ASSERT_GT(s.richards_report.accepted, 0);
+            else
+                ASSERT_GT(s.surface_infil.F, 0);
+            if (backwater)
+                ASSERT_FALSE(s.quality_ports.empty());
+            ASSERT_NE(a.nodes.coupling_queue[0], 0);
+            const auto path = hydraulicArtifacts() / ("lid-" + std::to_string(richards) +
+                                                      std::to_string(backwater) + ".chk");
+            ASSERT_EQ(ra.saveCheckpoint(a, path.string()), "");
+            auto b = hydraulicModel(0, true, richards, backwater);
+            Router rb;
+            hydraulicInitialize(rb, b);
+            ASSERT_EQ(rb.loadCheckpoint(b, path.string()), "");
+            const auto other = hydraulicArtifacts() / ("lid-restored-" + std::to_string(richards) +
+                                                       std::to_string(backwater) + ".chk");
+            ASSERT_EQ(rb.saveCheckpoint(b, other.string()), "");
+            ASSERT_EQ(hydraulicBytes(path), hydraulicBytes(other));
+            for (int k = 18; k < 65; ++k) {
+                ASSERT_EQ(hydraulicStep(ra, a, k), hydraulicStep(rb, b, k));
+                ASSERT_EQ(a.nodes.volume, b.nodes.volume);
+                ASSERT_EQ(a.links.flow, b.links.flow);
+                ASSERT_EQ(a.node_subtypes.storages.lid_state[0].held_volume,
+                          b.node_subtypes.storages.lid_state[0].held_volume);
+            }
+            ASSERT_EQ(ra.saveCheckpoint(a, path.string()), "");
+            ASSERT_EQ(rb.saveCheckpoint(b, other.string()), "");
+            EXPECT_EQ(hydraulicBytes(path), hydraulicBytes(other));
+        }
+}
+TEST(HydraulicCheckpoint, NodeLidThermalEnergySurvivesRestore) {
+    auto a = hydraulicModel(0, true, true, true);
+    Router ra;
+    hydraulicInitialize(ra, a);
+    auto& source = a.node_subtypes.storages.lid_state[0];
+    source.thermal_energy.resize(source.cells.size());
+    for (std::size_t i = 0; i < source.thermal_energy.size(); ++i)
+        source.thermal_energy[i] = (static_cast<double>(i) - 1.5) * 1234.5;
+    source.thermal_ground_contact_j.resize(source.cells.size());
+    for (std::size_t i = 0; i < source.thermal_ground_contact_j.size(); ++i)
+        source.thermal_ground_contact_j[i] = 857.375 + static_cast<double>(i) * 31.25;
+    const auto path = hydraulicArtifacts() / "lid-thermal-state.chk";
+    ASSERT_EQ(ra.saveCheckpoint(a, path.string()), "");
+
+    auto b = hydraulicModel(0, true, true, true);
+    Router rb;
+    hydraulicInitialize(rb, b);
+    const auto corrupt = hydraulicArtifacts() / "lid-thermal-state-corrupt.chk";
+    hydraulicFile(corrupt, hydraulicStateDouble(hydraulicBytes(path), source.thermal_energy.front(),
+                                                std::numeric_limits<double>::quiet_NaN()));
+    const auto before = hydraulicArtifacts() / "lid-thermal-state-before.chk";
+    const auto after = hydraulicArtifacts() / "lid-thermal-state-after.chk";
+    ASSERT_EQ(rb.saveCheckpoint(b, before.string()), "");
+    EXPECT_FALSE(rb.loadCheckpoint(b, corrupt.string()).empty());
+    const auto corrupt_contact = hydraulicArtifacts() / "lid-thermal-contact-corrupt.chk";
+    hydraulicFile(corrupt_contact, hydraulicStateDouble(hydraulicBytes(path),
+                                                        source.thermal_ground_contact_j.front(),
+                                                        std::numeric_limits<double>::quiet_NaN()));
+    EXPECT_FALSE(rb.loadCheckpoint(b, corrupt_contact.string()).empty());
+    ASSERT_EQ(rb.saveCheckpoint(b, after.string()), "");
+    EXPECT_EQ(hydraulicBytes(before), hydraulicBytes(after));
+    ASSERT_EQ(rb.loadCheckpoint(b, path.string()), "");
+    EXPECT_EQ(b.node_subtypes.storages.lid_state[0].thermal_energy, source.thermal_energy);
+    EXPECT_EQ(b.node_subtypes.storages.lid_state[0].thermal_ground_contact_j,
+              source.thermal_ground_contact_j);
+    const auto restored = hydraulicArtifacts() / "lid-thermal-state-restored.chk";
+    ASSERT_EQ(rb.saveCheckpoint(b, restored.string()), "");
+    EXPECT_EQ(hydraulicBytes(path), hydraulicBytes(restored));
+}
+TEST(HydraulicCheckpoint, InvalidNodeLidThermalEnergyIsRefusedBeforePublication) {
+    auto c = hydraulicModel(0, true, true, true);
+    Router r;
+    hydraulicInitialize(r, c);
+    const auto path = hydraulicArtifacts() / "lid-thermal-invalid.chk";
+    hydraulicFile(path, "preserve prior checkpoint");
+    auto& energy = c.node_subtypes.storages.lid_state[0].thermal_energy;
+    energy = {1};
+    EXPECT_FALSE(r.saveCheckpoint(c, path.string()).empty());
+    EXPECT_EQ(hydraulicBytes(path), "preserve prior checkpoint");
+    energy.assign(c.node_subtypes.storages.lid_state[0].cells.size(), 0);
+    energy[0] = std::numeric_limits<double>::quiet_NaN();
+    EXPECT_FALSE(r.saveCheckpoint(c, path.string()).empty());
+    EXPECT_EQ(hydraulicBytes(path), "preserve prior checkpoint");
+    energy.assign(c.node_subtypes.storages.lid_state[0].cells.size(), 0);
+    auto& receipt = c.node_subtypes.storages.lid_state[0].thermal_ground_contact_j;
+    receipt = {1};
+    EXPECT_FALSE(r.saveCheckpoint(c, path.string()).empty());
+    EXPECT_EQ(hydraulicBytes(path), "preserve prior checkpoint");
+    receipt.assign(c.node_subtypes.storages.lid_state[0].cells.size(), 0);
+    receipt[0] = std::numeric_limits<double>::quiet_NaN();
+    EXPECT_FALSE(r.saveCheckpoint(c, path.string()).empty());
+    EXPECT_EQ(hydraulicBytes(path), "preserve prior checkpoint");
+}
+TEST(HydraulicCheckpoint, InvalidRestorePreservesFreshStateAndCanRetry) {
+    auto a = hydraulicModel(0, true, true, true);
+    Router ra;
+    hydraulicInitialize(ra, a);
+    for (int k = 0; k < 8; ++k)
+        hydraulicStep(ra, a, k);
+    auto good = hydraulicArtifacts() / "good.chk", bad = hydraulicArtifacts() / "bad.chk";
+    ASSERT_EQ(ra.saveCheckpoint(a, good.string()), "");
+    auto bytes = hydraulicBytes(good);
+    for (int variant = 0; variant < 14; ++variant) {
+        SCOPED_TRACE(variant);
+        auto b = hydraulicModel(0, true, true, true);
+        Router rb;
+        hydraulicInitialize(rb, b);
+        auto before = hydraulicArtifacts() / "fresh-before.chk",
+             after = hydraulicArtifacts() / "fresh-after.chk";
+        ASSERT_EQ(rb.saveCheckpoint(b, before.string()), "");
+        auto altered = bytes;
+        if (variant < 9)
+            altered = hydraulicMutant(bytes, variant);
+        if (variant == 9)
+            altered.back() ^= 1;
+        if (variant == 10)
+            altered.resize(altered.size() - 3);
+        if (variant == 11)
+            altered += 'x';
+        if (variant == 12)
+            b.lid_controls.node_layers[0][1].retention.alpha = 3;
+        if (variant == 13)
+            b.links.offset1[0] += .1;
+        if (variant < 12)
+            ASSERT_TRUE(altered != bytes);
+        hydraulicFile(bad, altered);
+        EXPECT_FALSE(rb.loadCheckpoint(b, bad.string()).empty());
+        if (variant == 12)
+            b.lid_controls.node_layers[0][1].retention.alpha = 2;
+        if (variant == 13)
+            b.links.offset1[0] -= .1;
+        ASSERT_EQ(rb.saveCheckpoint(b, after.string()), "");
+        EXPECT_TRUE(hydraulicBytes(before) == hydraulicBytes(after));
+        EXPECT_EQ(rb.loadCheckpoint(b, good.string()), "");
+    }
+}
+TEST(HydraulicCheckpoint, InconsistentRichardsStoragePressureAndMoistureAreAtomic) {
+    auto a = hydraulicModel(0, true, true, true);
+    Router ra;
+    hydraulicInitialize(ra, a);
+    for (int k = 0; k < 8; ++k)
+        hydraulicStep(ra, a, k);
+    auto good = hydraulicArtifacts() / "richards-consistency-good.chk",
+         bad = hydraulicArtifacts() / "richards-consistency-bad.chk";
+    ASSERT_EQ(ra.saveCheckpoint(a, good.string()), "");
+    auto bytes = hydraulicBytes(good);
+    const auto& s = a.node_subtypes.storages.lid_state[0];
+    for (auto values : {std::pair{s.held_volume, s.held_volume + 1},
+                        std::pair{s.richards_pressure[1], s.richards_pressure[1] + 1},
+                        std::pair{s.richards_water[1], s.richards_water[1] + 1},
+                        std::pair{s.cells[1].theta, -.01}}) {
+        auto b = hydraulicModel(0, true, true, true);
+        Router rb;
+        hydraulicInitialize(rb, b);
+        auto before = hydraulicArtifacts() / "richards-consistency-before.chk",
+             after = hydraulicArtifacts() / "richards-consistency-after.chk";
+        ASSERT_EQ(rb.saveCheckpoint(b, before.string()), "");
+        hydraulicFile(bad, hydraulicStateDouble(bytes, values.first, values.second));
+        EXPECT_FALSE(rb.loadCheckpoint(b, bad.string()).empty());
+        ASSERT_EQ(rb.saveCheckpoint(b, after.string()), "");
+        EXPECT_EQ(hydraulicBytes(before), hydraulicBytes(after));
+        EXPECT_EQ(rb.loadCheckpoint(b, good.string()), "");
+    }
+}
+TEST(HydraulicCheckpoint, InitialRestoreAndUnrelatedDestinationPreservation) {
+    auto a = hydraulicModel(0, true);
+    Router ra;
+    hydraulicInitialize(ra, a);
+    auto path = hydraulicArtifacts() / "initial.chk",
+         other = hydraulicArtifacts() / "initial-restored.chk";
+    ASSERT_EQ(ra.saveCheckpoint(a, path.string()), "");
+    auto b = hydraulicModel(0, true);
+    Router rb;
+    hydraulicInitialize(rb, b);
+    ASSERT_EQ(rb.loadCheckpoint(b, path.string()), "");
+    ASSERT_EQ(rb.saveCheckpoint(b, other.string()), "");
+    EXPECT_EQ(hydraulicBytes(path), hydraulicBytes(other));
+    auto protectedFile = hydraulicArtifacts() / "unrelated.txt";
+    hydraulicFile(protectedFile, "preserve me");
+    EXPECT_FALSE(ra.saveCheckpoint(a, protectedFile.string()).empty());
+    EXPECT_EQ(hydraulicBytes(protectedFile), "preserve me");
+}
+TEST(HydraulicCheckpoint, RefusesUnclosedReplayNonfiniteAndCallbackBoundaries) {
+    auto c = hydraulicModel(0, true);
+    Router r;
+    hydraulicInitialize(r, c);
+    auto before = hydraulicArtifacts() / "guard-before.chk";
+    auto after = hydraulicArtifacts() / "guard-after.chk";
+    ASSERT_EQ(r.saveCheckpoint(c, before.string()), "");
+    EXPECT_THROW(r.step(c, 0), std::runtime_error);
+    EXPECT_THROW(r.step(c, -1), std::runtime_error);
+    EXPECT_THROW(r.step(c, std::numeric_limits<double>::quiet_NaN()), std::runtime_error);
+    EXPECT_THROW(r.step(c, 1, 0, [](SimulationContext&, double, int) {}), std::runtime_error);
+    c.current_time = 1;
+    EXPECT_THROW(r.step(c, 1), std::runtime_error);
+    c.current_time = 0;
+    ASSERT_EQ(r.saveCheckpoint(c, after.string()), "");
+    EXPECT_EQ(hydraulicBytes(before), hydraulicBytes(after));
+    r.beginCheckpointStep(c, 1);
+    c.nodes.save_state();
+    c.links.save_state();
+    c.nodes.lat_flow[0] = .6;
+    lidnode::prepareStep(c, 1, 0);
+    r.step(c, 1);
+    EXPECT_FALSE(r.saveCheckpoint(c, after.string()).empty());
+    EXPECT_THROW(r.step(c, 1), std::runtime_error);
+    EXPECT_THROW(r.acceptCheckpointBoundary(c), std::runtime_error);
+    hydraulics::TimestepController::advance(c, 1);
+    EXPECT_THROW(r.acceptCheckpointBoundary(c), std::runtime_error);
+    lidnode::finishStep(c);
+    EXPECT_NO_THROW(r.acceptCheckpointBoundary(c));
+    EXPECT_THROW(r.acceptCheckpointBoundary(c), std::runtime_error);
+    ASSERT_EQ(r.saveCheckpoint(c, after.string()), "");
+    EXPECT_NE(hydraulicBytes(before), hydraulicBytes(after));
+}
+TEST(HydraulicCheckpoint, FailedRichardsPreparationCannotSaveAndRestoreRecovers) {
+    auto c = hydraulicModel(0, true, true);
+    Router r;
+    hydraulicInitialize(r, c);
+    auto good = hydraulicArtifacts() / "failed-preparation-good.chk";
+    auto recovered = hydraulicArtifacts() / "failed-preparation-restored.chk";
+    ASSERT_EQ(r.saveCheckpoint(c, good.string()), "");
+    auto before = hydraulicBytes(good);
+    r.beginCheckpointStep(c, 1);
+    c.nodes.lat_flow[0] = std::numeric_limits<double>::infinity();
+    EXPECT_THROW(lidnode::prepareStep(c, 1, 0), std::runtime_error);
+    EXPECT_FALSE(r.saveCheckpoint(c, good.string()).empty());
+    EXPECT_EQ(hydraulicBytes(good), before);
+    EXPECT_THROW(r.beginCheckpointStep(c, 1), std::runtime_error);
+    EXPECT_THROW(r.acceptCheckpointBoundary(c), std::runtime_error);
+    ASSERT_EQ(r.loadCheckpoint(c, good.string()), "");
+    ASSERT_EQ(r.saveCheckpoint(c, recovered.string()), "");
+    EXPECT_EQ(hydraulicBytes(recovered), before);
+    EXPECT_NO_THROW(hydraulicStep(r, c, 0));
+}
+TEST(HydraulicCheckpoint, UnqualifiedProfilesFailBeforeAttachment) {
+    for (int variant = 0; variant < 7; ++variant) {
+        auto c = hydraulicModel(0, true);
+        Router r;
+        r.init(c, RouteModel::DYNWAVE);
+        if (variant == 0)
+            c.options.water_age = true;
+        if (variant == 1)
+            c.options.heat_transport = true;
+        if (variant == 2)
+            c.nodes.is_virtual[0] = 1;
+        if (variant == 3)
+            c.nodes.aquifer2d_bed.assign(3, 1);
+        if (variant == 4)
+            c.node_subtypes.outfalls.bc_type[0] = OutfallType::TIMESERIES;
+        if (variant == 5)
+            c.links.type[0] = LinkType::ORIFICE;
+        if (variant == 6)
+            c.pollutant_names.try_add("X");
+        EXPECT_THROW(r.enableCheckpointing(c), std::runtime_error);
+        EXPECT_FALSE(
+            r.saveCheckpoint(c, (hydraulicArtifacts() / "unqualified.chk").string()).empty());
+    }
 }

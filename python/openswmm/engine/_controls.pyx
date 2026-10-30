@@ -1,10 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright 2026 Caleb Buahin
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Control rules (Pythonic v1 surface)
 ===================================
 
 :author: Caleb Buahin
 :copyright: Copyright (c) 2026 Caleb Buahin
-:license: MIT
+:license: Apache-2.0
 
 The :class:`Controls` view, reached via ``solver.controls``, behaves as
 a :class:`MutableSequence` of :class:`ControlRule` records over the
@@ -79,12 +95,10 @@ class Controls(MutableSequence):
         if not 0 <= idx < n:
             raise IndexError(idx)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef char id_buf[64]
-        cdef char text_buf[4096]
-        _check(swmm_control_get_id(h, idx, id_buf, 64))
-        _check(swmm_control_get_rule(h, idx, text_buf, 4096))
-        return ControlRule(id=id_buf.decode('utf-8'),
-                           text=text_buf.decode('utf-8'))
+        return ControlRule(
+            id=_read_engine_index_string(h, idx, swmm_control_get_id),
+            text=_read_engine_index_string(h, idx, swmm_control_get_rule),
+        )
 
     def __setitem__(self, idx, value):
         # The C API has no per-rule replace; emulate by rebuilding.

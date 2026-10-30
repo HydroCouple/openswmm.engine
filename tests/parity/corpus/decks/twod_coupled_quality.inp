@@ -1,0 +1,88 @@
+;; Bit-identity corpus deck -- overland transport S1-S3 on a coupled surface.
+;;
+;; Added 2026-09-02. Every other 2D deck in the tree carries no [POLLUTANTS],
+;; so the trackI census could not observe S1 (species on the marcher), S2
+;; (rain concentration, dispersion) or S3 (the coupling tuple) -- lesson 225.
+;; This deck reaches all three: a pan seeded at 4 mg/L Cu (1 mg/L on the FAR
+;; tag, so there is a gradient to disperse at 0.05 m2/s) drains through J1 to
+;; O1, so J1's Cu column in the .out is the coupling tuple made visible. No
+;; rain: the S2 rain-concentration path has its own unit gate.
+;;
+;; EXPECT THIS DECK TO MOVE on any overland-transport change. It moved on the
+;; round that added it (base had no S1-S3: J1 read 0 Cu; the section names
+;; below were silently ignored at rc 0).
+
+[TITLE]
+Overland transport: coupled pan with species and dispersion
+
+[OPTIONS]
+FLOW_UNITS           CMS
+FLOW_ROUTING         DYNWAVE
+START_DATE           01/01/2026
+START_TIME           00:00:00
+END_DATE             01/01/2026
+END_TIME             00:30:00
+REPORT_STEP          00:01:00
+WET_STEP             00:01:00
+DRY_STEP             00:01:00
+ROUTING_STEP         5
+ALLOW_PONDING        NO
+
+[POLLUTANTS]
+;;Name  Units  Crain  Cgw  Crdii  Kdecay
+Cu      MG/L   2.0    0    0      0
+
+[JUNCTIONS]
+;;Name  Elev  MaxDepth  InitDepth  SurDepth  Aponded
+J1      0.0   1.0       0          0         0
+
+[OUTFALLS]
+;;Name  Elev   Type  Gated
+O1      -0.5   FREE  NO
+
+[CONDUITS]
+;;Name  From  To  Length  N      Zin  Zout  Q0
+C1      J1    O1  30.0    0.013  0    0     0
+
+[XSECTIONS]
+;;Link  Shape     Geom1  Geom2  Geom3  Geom4  Barrels
+C1      CIRCULAR  0.3    0      0      0      1
+
+[2D_OPTIONS]
+INTEGRATOR       EXPLICIT
+LTS_TIERS        2
+MAX_TIMESTEP     5
+DRY_DEPTH        0.001
+COUPLING_CD      0.7
+DISPERSION       0.05
+REPORT_2D        NO
+
+[2D_VERTICES]
+;;X     Y     Z
+ 0.0    0.0   1.0
+10.0    0.0   1.0
+10.0   10.0   1.0
+ 0.0   10.0   1.0
+ 5.0    5.0   1.0
+
+[2D_TRIANGLES]
+;;V1  V2  V3  N     INIT_DEPTH  TAG
+0     1   4   0.03  0.5         PAN
+1     2   4   0.03  0.5         PAN
+2     3   4   0.03  0.5         FAR
+3     0   4   0.03  0.5         FAR
+
+[2D_VERTEX_NODE_MAP]
+;;Vertex  Node  Cd   Area
+0         J1    0.7  1.0
+
+[2D_INITIAL_QUALITY]
+;;'*' SPECIES CONC  |  TAG NAME SPECIES CONC  |  CELL N SPECIES CONC
+*     Cu   4.0
+TAG   FAR  Cu  1.0
+
+[REPORT]
+INPUT      NO
+CONTINUITY YES
+NODES      ALL
+LINKS      ALL

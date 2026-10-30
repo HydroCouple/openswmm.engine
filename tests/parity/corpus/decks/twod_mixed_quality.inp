@@ -1,0 +1,89 @@
+;; Bit-identity corpus deck -- the twod_coupled_quality pan on a MIXED mesh.
+;;
+;; Added 2026-09-07 (E1). twod_coupled_quality is all-triangle, so the padded
+;; kMaxCellVerts = 4 layout ([2D_QUADS], edge stride 4, Mesh2_face_nv) had no
+;; observer in this corpus. Same 10 m pan, same J1 outlet, same Cu seeding
+;; (4 mg/L, 1 mg/L on FAR, dispersion 0.05) -- only the tessellation differs:
+;; one quad on the left half, two triangles on the right. The pair localises
+;; a movement to the quad/stride-4 path versus the marcher itself.
+;;
+;; EXPECT THIS DECK TO MOVE with twod_coupled_quality on any overland change;
+;; a movement in ONLY this deck is the stride-4 / quad path.
+
+[TITLE]
+Overland transport: coupled pan with species on a mixed tri/quad mesh
+
+[OPTIONS]
+FLOW_UNITS           CMS
+FLOW_ROUTING         DYNWAVE
+START_DATE           01/01/2026
+START_TIME           00:00:00
+END_DATE             01/01/2026
+END_TIME             00:30:00
+REPORT_STEP          00:01:00
+WET_STEP             00:01:00
+DRY_STEP             00:01:00
+ROUTING_STEP         5
+ALLOW_PONDING        NO
+
+[POLLUTANTS]
+;;Name  Units  Crain  Cgw  Crdii  Kdecay
+Cu      MG/L   2.0    0    0      0
+
+[JUNCTIONS]
+;;Name  Elev  MaxDepth  InitDepth  SurDepth  Aponded
+J1      0.0   1.0       0          0         0
+
+[OUTFALLS]
+;;Name  Elev   Type  Gated
+O1      -0.5   FREE  NO
+
+[CONDUITS]
+;;Name  From  To  Length  N      Zin  Zout  Q0
+C1      J1    O1  30.0    0.013  0    0     0
+
+[XSECTIONS]
+;;Link  Shape     Geom1  Geom2  Geom3  Geom4  Barrels
+C1      CIRCULAR  0.3    0      0      0      1
+
+[2D_OPTIONS]
+INTEGRATOR       EXPLICIT
+LTS_TIERS        2
+MAX_TIMESTEP     5
+DRY_DEPTH        0.001
+COUPLING_CD      0.7
+DISPERSION       0.05
+REPORT_2D        NO
+
+[2D_VERTICES]
+;;X     Y     Z
+ 0.0    0.0   1.0
+10.0    0.0   1.0
+10.0   10.0   1.0
+ 0.0   10.0   1.0
+ 5.0    0.0   1.0
+ 5.0   10.0   1.0
+
+[2D_TRIANGLES]
+;;V1  V2  V3  N     INIT_DEPTH  TAG
+4     1   2   0.03  0.5         PAN
+4     2   5   0.03  0.5         FAR
+
+[2D_QUADS]
+;;V1  V2  V3  V4  N     INIT_DEPTH  TAG
+0     4   5   3   0.03  0.5         PAN
+
+[2D_VERTEX_NODE_MAP]
+;;Vertex  Node  Cd   Area
+0         J1    0.7  1.0
+
+[2D_INITIAL_QUALITY]
+;;'*' SPECIES CONC  |  TAG NAME SPECIES CONC  |  CELL N SPECIES CONC
+*     Cu   4.0
+TAG   FAR  Cu  1.0
+
+[REPORT]
+INPUT      NO
+CONTINUITY YES
+NODES      ALL
+LINKS      ALL

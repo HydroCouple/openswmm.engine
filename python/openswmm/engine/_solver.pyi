@@ -1,10 +1,29 @@
+
+from ._coupling import Coupling
+from ._groundwater import Groundwater
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright 2026 Caleb Buahin
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Engine Lifecycle (Pythonic v1 surface)
 ======================================
 
 :author: Caleb Buahin
 :copyright: Copyright (c) 2026 Caleb Buahin
-:license: MIT
+:license: Apache-2.0
 
 Type stubs for :mod:`openswmm.engine._solver`.
 """
@@ -17,23 +36,31 @@ from typing import TYPE_CHECKING, Any, Callable, Iterator, NamedTuple, Optional,
 from ._enums import EngineState, FlowUnits
 
 if TYPE_CHECKING:
+    from ._results import Results
     # Imports for type-checking only — avoids cycles at runtime because the
     # collection modules import Solver themselves.
     from ._2d import Surface2D
     from ._climate import Climate
+    from ._checkpoint import Checkpoints
+    from ._snow import Snow
     from ._controls import Controls
     from ._edit import ModelEditor
     from ._forcing import Forcing
     from ._gages import Gages
+    from ._heat import Heat
     from ._hotstart import SaveSchedule
     from ._infrastructure import Infrastructure
     from ._inflows import Inflows
+    from ._initial_quality import InitialQuality
     from ._links import Links
     from ._massbalance import MassBalance
     from ._nodes import Nodes
     from ._pollutants import Pollutants
+    from ._process_components import ProcessComponents
     from ._quality import Quality
+    from ._reactions import Reactions
     from ._spatial import Spatial
+    from ._water_age import WaterAge
     from ._statistics import Statistics
     from ._subcatchments import Aquifers, Snowpacks, Subcatchments
     from ._tables import Patterns, Tables
@@ -171,6 +198,16 @@ class EventsView(MutableSequence[Event]):
 # ---------------------------------------------------------------------------
 
 
+def abi_tag() -> str:
+    """Return the immutable C ABI identity of the engine loaded by these bindings.
+
+    Compare it with a native host's engine identity before sharing handles.
+    This query creates no solver and is valid before opening a model.
+    The wheel's ``openswmm/engine/_abi.json`` records its expected build identity.
+    """
+    ...
+
+
 def run(
     inp: _PathLike,
     rpt: Optional[_PathLike] = None,
@@ -201,6 +238,9 @@ def run_with_callback(
 # ---------------------------------------------------------------------------
 
 
+from ._transport import Transport, ThreadInfo, EffectiveThreads, TransportCell
+from ._enums import TransportDomain, TransportClass, InpProfile
+
 class Solver:
     """SWMM engine lifecycle manager.
 
@@ -216,6 +256,17 @@ class Solver:
                 if elapsed >= timedelta(hours=24):
                     break
     """
+    def write_staged(self, final_path: _PathLike, mapper: Callable[[str, int], _PathLike | None]) -> None: ...
+    def write_compat(self, path: _PathLike, profile: InpProfile) -> None: ...
+
+    @property
+    def thread_info(self) -> ThreadInfo: ...
+    def effective_threads(self, requested: int = ...) -> EffectiveThreads: ...
+    @property
+    def transport_matrix(self) -> dict[TransportDomain, dict[TransportClass, TransportCell]]: ...
+    @property
+    def transport(self) -> Transport: ...
+
 
     def __init__(
         self,
@@ -230,8 +281,17 @@ class Solver:
     def create(self) -> None: ...
     def set_lenient_open(self, on: bool = ...) -> None: ...
     def open(self, plugin_lib: Optional[_PathLike] = None) -> None: ...
+    def open_metadata(self) -> None: ...
     def initialize(self) -> None: ...
     def start(self, save_results: bool = True) -> None: ...
+    def open_results(self, *, surface: Optional[_PathLike] = ..., live: bool = ...) -> "Results":
+        """Open independent results after end(); live=True opens only 1D output."""
+        ...
+    def advance_to(self, seconds: float) -> timedelta: ...
+    @property
+    def coupling(self) -> Coupling: ...
+    @property
+    def groundwater2d(self) -> Groundwater: ...
     def step(self) -> timedelta: ...
     def stride(self, n_steps: int) -> timedelta: ...
     def end(self) -> None: ...
@@ -358,11 +418,25 @@ class Solver:
     @property
     def climate(self) -> "Climate": ...
     @property
+    def checkpoints(self) -> "Checkpoints": ...
+    @property
+    def snow(self) -> "Snow": ...
+    @property
     def infrastructure(self) -> "Infrastructure": ...
     @property
     def spatial(self) -> "Spatial": ...
     @property
     def quality(self) -> "Quality": ...
+    @property
+    def initial_quality(self) -> "InitialQuality": ...
+    @property
+    def reactions(self) -> "Reactions": ...
+    @property
+    def heat(self) -> "Heat": ...
+    @property
+    def water_age(self) -> "WaterAge": ...
+    @property
+    def process_components(self) -> "ProcessComponents": ...
     @property
     def statistics(self) -> "Statistics": ...
     @property

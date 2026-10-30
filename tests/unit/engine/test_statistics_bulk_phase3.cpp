@@ -1,6 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file test_statistics_bulk_phase3.cpp
- * @brief Unit tests for the Phase 3 statistics-bulk C API additions —
+ * @file      test_statistics_bulk_phase3.cpp
+ * @brief     Unit tests for the Phase 3 statistics-bulk C API additions —
  *        @ref swmm_stat_node_max_overflow_bulk,
  *        @ref swmm_stat_node_vol_flooded_bulk,
  *        @ref swmm_stat_node_time_flooded_bulk, and
@@ -15,9 +31,9 @@
  * @see docs/C_API_BINDINGS_MCP_IMPROVEMENT_PLAN.md Phase 3 — Statistics batch
  * @ingroup engine_tests
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -37,14 +53,20 @@ protected:
     int n_nodes_ = 0;
     int n_subs_ = 0;
 
+    /**
+     * @brief Run the drainage model to its end boundary and retain cumulative statistics.
+     *
+     * Creates/opens/initializes/starts with output, stops stepping at nonzero status or elapsed
+     * completion, then asserts end and positive node/subcatchment counts. Step failure itself is not
+     * separately asserted by the loop; the final state is only as complete as that attempted run. Fatal
+     * GoogleTest assertions return from this hook on failure; any created handle remains owned by the
+     * fixture for teardown.
+     */
     void SetUp() override {
         engine_ = swmm_engine_create();
         ASSERT_NE(engine_, nullptr);
-        ASSERT_EQ(swmm_engine_open(engine_,
-                                    "site_drainage_model.inp",
-                                    "site_drainage_model.rpt",
-                                    "site_drainage_model.out",
-                                    nullptr),
+        ASSERT_EQ(swmm_engine_open(engine_, "site_drainage_model.inp", "site_drainage_model.rpt",
+                                   "site_drainage_model.out", nullptr),
                   SWMM_OK)
             << "open failed: " << swmm_get_last_error_msg(engine_);
         ASSERT_EQ(swmm_engine_initialize(engine_), SWMM_OK);
@@ -57,8 +79,10 @@ protected:
         double elapsed = 0.0;
         while (true) {
             int rc = swmm_engine_step(engine_, &elapsed);
-            if (rc != 0) break;
-            if (elapsed <= 0.0) break;
+            if (rc != 0)
+                break;
+            if (elapsed <= 0.0)
+                break;
         }
         ASSERT_EQ(swmm_engine_end(engine_), SWMM_OK);
 
@@ -68,6 +92,12 @@ protected:
         ASSERT_GT(n_subs_, 0);
     }
 
+    /**
+     * @brief Close and destroy the fixture model, then clear its handle.
+     *
+     * Checks for null, ignores close status and releases partial state after setup/test failure. No
+     * simulation report is requested here.
+     */
     void TearDown() override {
         if (engine_) {
             swmm_engine_close(engine_);
@@ -84,8 +114,7 @@ protected:
 
 TEST_F(StatsBulkPhase3Test, NodeMaxOverflowBulkMatchesScalar) {
     std::vector<double> bulk(n_nodes_, -42.0);
-    ASSERT_EQ(swmm_stat_node_max_overflow_bulk(engine_, bulk.data(), n_nodes_),
-              SWMM_OK);
+    ASSERT_EQ(swmm_stat_node_max_overflow_bulk(engine_, bulk.data(), n_nodes_), SWMM_OK);
     for (int i = 0; i < n_nodes_; ++i) {
         double scalar = -1.0;
         ASSERT_EQ(swmm_stat_node_max_overflow(engine_, i, &scalar), SWMM_OK);
@@ -95,8 +124,7 @@ TEST_F(StatsBulkPhase3Test, NodeMaxOverflowBulkMatchesScalar) {
 
 TEST_F(StatsBulkPhase3Test, NodeVolFloodedBulkMatchesScalar) {
     std::vector<double> bulk(n_nodes_, -42.0);
-    ASSERT_EQ(swmm_stat_node_vol_flooded_bulk(engine_, bulk.data(), n_nodes_),
-              SWMM_OK);
+    ASSERT_EQ(swmm_stat_node_vol_flooded_bulk(engine_, bulk.data(), n_nodes_), SWMM_OK);
     for (int i = 0; i < n_nodes_; ++i) {
         double scalar = -1.0;
         ASSERT_EQ(swmm_stat_node_vol_flooded(engine_, i, &scalar), SWMM_OK);
@@ -106,8 +134,7 @@ TEST_F(StatsBulkPhase3Test, NodeVolFloodedBulkMatchesScalar) {
 
 TEST_F(StatsBulkPhase3Test, NodeTimeFloodedBulkMatchesScalar) {
     std::vector<double> bulk(n_nodes_, -42.0);
-    ASSERT_EQ(swmm_stat_node_time_flooded_bulk(engine_, bulk.data(), n_nodes_),
-              SWMM_OK);
+    ASSERT_EQ(swmm_stat_node_time_flooded_bulk(engine_, bulk.data(), n_nodes_), SWMM_OK);
     for (int i = 0; i < n_nodes_; ++i) {
         double scalar = -1.0;
         ASSERT_EQ(swmm_stat_node_time_flooded(engine_, i, &scalar), SWMM_OK);
@@ -117,8 +144,7 @@ TEST_F(StatsBulkPhase3Test, NodeTimeFloodedBulkMatchesScalar) {
 
 TEST_F(StatsBulkPhase3Test, SubcatchMaxRunoffBulkMatchesScalar) {
     std::vector<double> bulk(n_subs_, -42.0);
-    ASSERT_EQ(swmm_stat_subcatch_max_runoff_bulk(engine_, bulk.data(), n_subs_),
-              SWMM_OK);
+    ASSERT_EQ(swmm_stat_subcatch_max_runoff_bulk(engine_, bulk.data(), n_subs_), SWMM_OK);
     for (int i = 0; i < n_subs_; ++i) {
         double scalar = -1.0;
         ASSERT_EQ(swmm_stat_subcatch_max_runoff(engine_, i, &scalar), SWMM_OK);
@@ -135,8 +161,7 @@ TEST_F(StatsBulkPhase3Test, LinkMaxVelocityBulkMatchesScalar) {
     const int n_links = swmm_link_count(engine_);
     ASSERT_GT(n_links, 0);
     std::vector<double> bulk(n_links, -42.0);
-    ASSERT_EQ(swmm_stat_link_max_velocity_bulk(engine_, bulk.data(), n_links),
-              SWMM_OK);
+    ASSERT_EQ(swmm_stat_link_max_velocity_bulk(engine_, bulk.data(), n_links), SWMM_OK);
     for (int i = 0; i < n_links; ++i) {
         double scalar = -1.0;
         ASSERT_EQ(swmm_stat_link_max_velocity(engine_, i, &scalar), SWMM_OK);
@@ -147,8 +172,7 @@ TEST_F(StatsBulkPhase3Test, LinkMaxVelocityBulkMatchesScalar) {
 TEST_F(StatsBulkPhase3Test, LinkMaxFillingBulkMatchesScalar) {
     const int n_links = swmm_link_count(engine_);
     std::vector<double> bulk(n_links, -42.0);
-    ASSERT_EQ(swmm_stat_link_max_filling_bulk(engine_, bulk.data(), n_links),
-              SWMM_OK);
+    ASSERT_EQ(swmm_stat_link_max_filling_bulk(engine_, bulk.data(), n_links), SWMM_OK);
     for (int i = 0; i < n_links; ++i) {
         double scalar = -1.0;
         ASSERT_EQ(swmm_stat_link_max_filling(engine_, i, &scalar), SWMM_OK);
@@ -159,8 +183,7 @@ TEST_F(StatsBulkPhase3Test, LinkMaxFillingBulkMatchesScalar) {
 TEST_F(StatsBulkPhase3Test, LinkVolFlowBulkMatchesScalar) {
     const int n_links = swmm_link_count(engine_);
     std::vector<double> bulk(n_links, -42.0);
-    ASSERT_EQ(swmm_stat_link_vol_flow_bulk(engine_, bulk.data(), n_links),
-              SWMM_OK);
+    ASSERT_EQ(swmm_stat_link_vol_flow_bulk(engine_, bulk.data(), n_links), SWMM_OK);
     for (int i = 0; i < n_links; ++i) {
         double scalar = -1.0;
         ASSERT_EQ(swmm_stat_link_vol_flow(engine_, i, &scalar), SWMM_OK);
@@ -171,8 +194,7 @@ TEST_F(StatsBulkPhase3Test, LinkVolFlowBulkMatchesScalar) {
 TEST_F(StatsBulkPhase3Test, LinkSurchargeTimeBulkMatchesScalar) {
     const int n_links = swmm_link_count(engine_);
     std::vector<double> bulk(n_links, -42.0);
-    ASSERT_EQ(swmm_stat_link_surcharge_time_bulk(engine_, bulk.data(), n_links),
-              SWMM_OK);
+    ASSERT_EQ(swmm_stat_link_surcharge_time_bulk(engine_, bulk.data(), n_links), SWMM_OK);
     for (int i = 0; i < n_links; ++i) {
         double scalar = -1.0;
         ASSERT_EQ(swmm_stat_link_surcharge_time(engine_, i, &scalar), SWMM_OK);
@@ -183,18 +205,12 @@ TEST_F(StatsBulkPhase3Test, LinkSurchargeTimeBulkMatchesScalar) {
 TEST_F(StatsBulkPhase3Test, LinkStatsBulksRejectBadParams) {
     const int n_links = swmm_link_count(engine_);
     std::vector<double> v(n_links, 0.0);
-    EXPECT_EQ(swmm_stat_link_max_velocity_bulk(engine_, nullptr, n_links),
-              SWMM_ERR_BADPARAM);
-    EXPECT_EQ(swmm_stat_link_max_filling_bulk(engine_, nullptr, n_links),
-              SWMM_ERR_BADPARAM);
-    EXPECT_EQ(swmm_stat_link_vol_flow_bulk(engine_, nullptr, n_links),
-              SWMM_ERR_BADPARAM);
-    EXPECT_EQ(swmm_stat_link_surcharge_time_bulk(engine_, nullptr, n_links),
-              SWMM_ERR_BADPARAM);
-    EXPECT_EQ(swmm_stat_link_max_velocity_bulk(engine_, v.data(), 0),
-              SWMM_ERR_BADPARAM);
-    EXPECT_EQ(swmm_stat_link_max_velocity_bulk(nullptr, v.data(), n_links),
-              SWMM_ERR_BADHANDLE);
+    EXPECT_EQ(swmm_stat_link_max_velocity_bulk(engine_, nullptr, n_links), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_stat_link_max_filling_bulk(engine_, nullptr, n_links), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_stat_link_vol_flow_bulk(engine_, nullptr, n_links), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_stat_link_surcharge_time_bulk(engine_, nullptr, n_links), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_stat_link_max_velocity_bulk(engine_, v.data(), 0), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_stat_link_max_velocity_bulk(nullptr, v.data(), n_links), SWMM_ERR_BADHANDLE);
 }
 
 TEST_F(StatsBulkPhase3Test, LinkStatsAreNonNegative) {
@@ -239,34 +255,24 @@ TEST_F(StatsBulkPhase3Test, AllStatsAreNonNegative) {
 // ---------------------------------------------------------------------------
 
 TEST_F(StatsBulkPhase3Test, RejectsNullBuffer) {
-    EXPECT_EQ(swmm_stat_node_max_overflow_bulk(engine_, nullptr, n_nodes_),
-              SWMM_ERR_BADPARAM);
-    EXPECT_EQ(swmm_stat_node_vol_flooded_bulk(engine_, nullptr, n_nodes_),
-              SWMM_ERR_BADPARAM);
-    EXPECT_EQ(swmm_stat_node_time_flooded_bulk(engine_, nullptr, n_nodes_),
-              SWMM_ERR_BADPARAM);
-    EXPECT_EQ(swmm_stat_subcatch_max_runoff_bulk(engine_, nullptr, n_subs_),
-              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_stat_node_max_overflow_bulk(engine_, nullptr, n_nodes_), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_stat_node_vol_flooded_bulk(engine_, nullptr, n_nodes_), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_stat_node_time_flooded_bulk(engine_, nullptr, n_nodes_), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_stat_subcatch_max_runoff_bulk(engine_, nullptr, n_subs_), SWMM_ERR_BADPARAM);
 }
 
 TEST_F(StatsBulkPhase3Test, RejectsNonPositiveCount) {
     std::vector<double> v(n_nodes_, 0.0);
-    EXPECT_EQ(swmm_stat_node_max_overflow_bulk(engine_, v.data(), 0),
-              SWMM_ERR_BADPARAM);
-    EXPECT_EQ(swmm_stat_node_max_overflow_bulk(engine_, v.data(), -3),
-              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_stat_node_max_overflow_bulk(engine_, v.data(), 0), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_stat_node_max_overflow_bulk(engine_, v.data(), -3), SWMM_ERR_BADPARAM);
 }
 
 TEST_F(StatsBulkPhase3Test, RejectsNullEngine) {
     std::vector<double> v(std::max(n_nodes_, n_subs_), 0.0);
-    EXPECT_EQ(swmm_stat_node_max_overflow_bulk(nullptr, v.data(), n_nodes_),
-              SWMM_ERR_BADHANDLE);
-    EXPECT_EQ(swmm_stat_node_vol_flooded_bulk(nullptr, v.data(), n_nodes_),
-              SWMM_ERR_BADHANDLE);
-    EXPECT_EQ(swmm_stat_node_time_flooded_bulk(nullptr, v.data(), n_nodes_),
-              SWMM_ERR_BADHANDLE);
-    EXPECT_EQ(swmm_stat_subcatch_max_runoff_bulk(nullptr, v.data(), n_subs_),
-              SWMM_ERR_BADHANDLE);
+    EXPECT_EQ(swmm_stat_node_max_overflow_bulk(nullptr, v.data(), n_nodes_), SWMM_ERR_BADHANDLE);
+    EXPECT_EQ(swmm_stat_node_vol_flooded_bulk(nullptr, v.data(), n_nodes_), SWMM_ERR_BADHANDLE);
+    EXPECT_EQ(swmm_stat_node_time_flooded_bulk(nullptr, v.data(), n_nodes_), SWMM_ERR_BADHANDLE);
+    EXPECT_EQ(swmm_stat_subcatch_max_runoff_bulk(nullptr, v.data(), n_subs_), SWMM_ERR_BADHANDLE);
 }
 
 // ---------------------------------------------------------------------------
@@ -277,8 +283,7 @@ TEST_F(StatsBulkPhase3Test, OversizedCountClippedAtN) {
     constexpr double kSentinel = -42.0;
     const int oversize = n_nodes_ + 5;
     std::vector<double> v(oversize, kSentinel);
-    ASSERT_EQ(swmm_stat_node_max_overflow_bulk(engine_, v.data(), oversize),
-              SWMM_OK);
+    ASSERT_EQ(swmm_stat_node_max_overflow_bulk(engine_, v.data(), oversize), SWMM_OK);
     for (int i = n_nodes_; i < oversize; ++i) {
         EXPECT_EQ(v[i], kSentinel) << "tail index " << i;
     }

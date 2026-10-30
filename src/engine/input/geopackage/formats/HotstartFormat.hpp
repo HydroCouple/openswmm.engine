@@ -1,6 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file HotstartFormat.hpp
- * @brief Legacy HSF v4 binary hot-start file — parser / materialiser.
+ * @file      HotstartFormat.hpp
+ * @brief     Legacy HSF v4 binary hot-start file — parser / materialiser.
  *
  * @details Slice IO-6e. Implements the routing-state portion of the
  *          EPA-SWMM hot-start file (`saveRouting`/`readRouting` in
@@ -17,14 +33,11 @@
  *            (`volume`, `target_setting`, `time_open`, `time_closed`)
  *            have no HSF counterpart and round-trip through HSF as 0.0.
  *
- *          The subcatchment-runoff portion of the legacy file
- *          (saveRunoff/readRunoff) carries conditional fields whose
- *          presence depends on per-subcatchment groundwater / snowpack
- *          configuration. That portion is **out of scope for IO-6e**;
- *          this slice covers the routing-state half so the GeoPackage
- *          materialiser can round-trip a USE-direction hot-start used to
- *          seed routing-only restart scenarios. A follow-up slice
- *          extends to runoff state when the subcatchment editor lands.
+ *          - The subcatchment-runoff section (saveRunoff/readRunoff),
+ *            whose length depends on the model (`HsfLayout`), and anything
+ *            after the link records (an OpenSWMM trailer) are carried
+ *            verbatim, so a file round-trips byte for byte. A v4 file's
+ *            per-storage-node residence time float is decoded.
  *
  *          Endianness: HSF is written little-endian on all SWMM5
  *          platforms.  We rely on the SWMM5 convention (no byte-swapping)
@@ -32,9 +45,9 @@
  *
  * @ingroup engine_geopackage
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_GEOPACKAGE_HOTSTART_FORMAT_HPP
@@ -47,29 +60,43 @@
 namespace openswmm::gpkg::formats {
 
 /**
- * @brief Parse an HSF v4 file into a `HotstartSnapshot`.
+ * @brief Read legacy-layout hot-start records and preserve raw runoff/trailer bytes.
  *
- * @details Populates `header.{num_*,flow_units,file_version,file_stamp}`,
- *          `node_state[]`, and `link_state[]`. `subcatch_state[]` is left
- *          empty (see header doc — runoff state is out of scope for this
- *          slice).
+ * Reads a 15-byte SWMM5 stamp and six native int32 counts in the v4-compatible layout regardless of
+ * parsed suffix. Caller supplies nonnegative representable counts/size products and matching
+ * storage layout; the parser has no global count/memory or finite-value cap. Native floats store
+ * feet/cfs and concentrations; runoff/trailer retained verbatim, subcatch_state not decoded. No
+ * checksum/model-fingerprint validation or whole-destination rollback; allocation/callback
+ * exceptions can escape.
  *
- * @param path      Filesystem path to the HSF file.
- * @param snapshot  Output snapshot (existing content is overwritten).
+ * @param[in] path UTF-8 filesystem path; caller supplies parent directories and owns
+ *     destination/source lifetime.
+ * @param[in,out] snapshot Destination overwritten incrementally, with prior/partial fields retained
+ *     on failure; caller normally starts fresh.
+ * @param[in] layout Borrowed model-dependent runoff-length callback and storage-node mask; correct
+ *     aligned dimensions required to locate routing records.
+ * @return Failure on guarded open/stamp/count/read/layout refusal; otherwise success.
  */
-FormatResult parseHotstartHsf(const std::string&  path,
-                               HotstartSnapshot&  snapshot);
+FormatResult parseHotstartHsf(const std::string& path, HotstartSnapshot& snapshot,
+                              const HsfLayout& layout = {});
 
 /**
- * @brief Write a `HotstartSnapshot` to an HSF v4 file at `path`.
+ * @brief Write retained legacy hot-start routing records and opaque raw sections.
  *
- * @details Header counts must already match the lengths of the per-object
- *          state vectors; mismatches return a `FormatResult` with `ok=false`
- *          rather than writing a corrupt file. Subcatchment runoff state
- *          is not written — the slice's scope is routing-only round-trip.
+ * Checks node/link vector counts and pollutant widths before opening. Writes v2..v4 stamp according
+ * to file_version, otherwise v4, using the same six-count native layout; empty runoff writes
+ * subcatch count zero. Values narrow to native floats; HRT is written whenever has_hrt even if
+ * version is older, so caller supplies compatible flags. Ignores derived overflow/volume/timing
+ * fields. Direct truncation, no atomic stage, finite validation or CRC; trailer preserved.
+ *
+ * @param[in] path UTF-8 filesystem path; caller supplies parent directories and owns
+ *     destination/source lifetime.
+ * @param[in] snapshot Coherent header/counts and node/link concentration arrays, with matching
+ *     runoff bytes and storage HRT flags.
+ * @return Failure on guarded shape/open/write refusal; success after attempted close (close errors
+ *     ignored).
  */
-FormatResult writeHotstartHsf(const std::string&        path,
-                               const HotstartSnapshot&   snapshot);
+FormatResult writeHotstartHsf(const std::string& path, const HotstartSnapshot& snapshot);
 
 } // namespace openswmm::gpkg::formats
 

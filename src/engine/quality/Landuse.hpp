@@ -1,6 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file Landuse.hpp
- * @brief Pollutant buildup and washoff per land use — batch SoA.
+ * @file      Landuse.hpp
+ * @brief     Pollutant buildup and washoff per land use — batch SoA.
  *
  * @details Each subcatchment can have multiple land uses, each with per-
  *          pollutant buildup and washoff functions. The buildup/washoff
@@ -17,14 +33,15 @@
  *            - Rating curve: W = k * Q^n
  *            - EMC: W = constant concentration
  *
- *          All models are applied identically per element — vectorisable.
+ *          LanduseSolver below is a simplified flat-array analytic helper. The complete
+ *          coverage-weighted production runoff operator lives in SurfaceSpeciesKernel.
  *
  * @note Legacy reference: src/legacy/engine/landuse.c, surfqual.c
  * @ingroup new_engine
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_LANDUSE_HPP
@@ -42,20 +59,9 @@ namespace landuse {
 // Buildup/washoff function types
 // ============================================================================
 
-enum class BuildupType : int {
-    NONE     = 0,
-    POWER    = 1,
-    EXPON    = 2,
-    SATUR    = 3,
-    EXTERNAL = 4
-};
+enum class BuildupType : int { NONE = 0, POWER = 1, EXPON = 2, SATUR = 3, EXTERNAL = 4 };
 
-enum class WashoffType : int {
-    NONE    = 0,
-    EXPON   = 1,
-    RATING  = 2,
-    EMC     = 3
-};
+enum class WashoffType : int { NONE = 0, EXPON = 1, RATING = 2, EMC = 3 };
 
 // ============================================================================
 // Per (landuse × pollutant) buildup/washoff parameters — SoA
@@ -63,9 +69,9 @@ enum class WashoffType : int {
 
 struct BuildupParams {
     BuildupType type = BuildupType::NONE;
-    double coeff[3] = {};     ///< c0 (max), c1 (rate), c2 (exponent)
-    double max_days = 0.0;    ///< Time to reach max buildup
-    int    normalizer = 0;    ///< 0=PER_AREA, 1=PER_CURB
+    double coeff[3] = {};  ///< c0 (max), c1 (rate), c2 (exponent)
+    double max_days = 0.0; ///< Time to reach max buildup
+    int normalizer = 0;    ///< 0=PER_AREA, 1=PER_CURB
 };
 
 struct WashoffParams {
@@ -92,11 +98,21 @@ struct SurfaceQualitySoA {
     /// Washoff concentration [subcatch * n_pollutants + pollutant] (mass/vol)
     std::vector<double> washoff_conc;
 
-    /// Index into buildup array for (subcatch, landuse, pollutant)
+    /**
+     * @brief Index into buildup array for (subcatch, landuse, pollutant)
+     *
+     * @details Flatten a complete subcatchment/landuse/pollutant buildup coordinate.
+     * @param[in] sc Valid nonnegative subcatchment index.
+     * @param[in] lu Valid landuse below n_landuses.
+     * @param[in] p Valid pollutant below n_pollutants.
+     * @return (sc*n_landuses+lu)*n_pollutants+p; products must fit int for the
+     * n_landuses*n_pollutants intermediate. No bounds/overflow checks, allocation or state
+     * mutation.
+     */
     std::size_t bu_idx(int sc, int lu, int p) const {
-        return static_cast<std::size_t>(sc) * static_cast<std::size_t>(n_landuses * n_pollutants)
-             + static_cast<std::size_t>(lu) * static_cast<std::size_t>(n_pollutants)
-             + static_cast<std::size_t>(p);
+        return static_cast<std::size_t>(sc) * static_cast<std::size_t>(n_landuses * n_pollutants) +
+               static_cast<std::size_t>(lu) * static_cast<std::size_t>(n_pollutants) +
+               static_cast<std::size_t>(p);
     }
 
     void resize(int n_sc, int n_lu, int n_poll);
@@ -114,33 +130,37 @@ public:
      * @brief Batch compute buildup for all subcatchments.
      *
      * @details For each (subcatch, pollutant):
-     *   1. Convert current buildup to equivalent days (inverse function)
-     *   2. Add timestep: days += dt / 86400
-     *   3. Recompute buildup mass (forward function)
-     *   All three steps are vectorisable (pow/exp/division).
+     * 1. Convert current buildup to equivalent days (inverse function)
+     * 2. Add timestep: days += dt / 86400
+     * 3. Recompute buildup mass (forward function) All three steps are vectorisable
+     * (pow/exp/division).
+     *
+     * @param[in] area Unused compatibility pointer, may be null; no normalization performed
+     * here.
+     * @param[in] curb_length Unused compatibility pointer, may be null.
+     * @note This helper currently uses only landuse-zero parameters and flat
+     * subcatchment/pollutant state indexing. The complete coverage-weighted accepted runoff
+     * operator is surfacespecies::step; source definition documents simplified behavior and
+     * nontransactional state updates.
      */
-    void computeBuildup(SurfaceQualitySoA& sq,
-                        const double* area, const double* curb_length,
+    void computeBuildup(SurfaceQualitySoA& sq, const double* area, const double* curb_length,
                         double dt, int n_subcatch);
 
     /**
      * @brief Batch compute washoff for all subcatchments.
      *
-     * @details For each (subcatch, pollutant):
-     *   EMC: conc = coeff (constant — trivially vectorisable)
-     *   Exponential: conc = k * Q^n * B / (Q * A) (vectorisable)
-     *   Rating: conc = k * (Q*A)^(n-1) (vectorisable)
+     * @details For each (subcatch, pollutant): EMC: conc = coeff (constant — trivially
+     * vectorisable) Exponential: conc = k * Q^n * B / (Q * A) (vectorisable) Rating: conc = k *
+     * (Q*A)^(n-1) (vectorisable)
      */
-    void computeWashoff(SurfaceQualitySoA& sq,
-                        const double* runoff, const double* area,
+    void computeWashoff(SurfaceQualitySoA& sq, const double* runoff, const double* area,
                         int n_subcatch);
 
     /**
      * @brief Apply co-pollutant washoff fractions.
      *
-     * @details After primary washoff is computed, for each pollutant p with
-     *          a co-pollutant k: washoff[p] += co_frac[p] * washoff[k].
-     *          Matches legacy landuse_getCoPollutLoad().
+     * @details After primary washoff is computed, for each pollutant p with a co-pollutant k:
+     * washoff[p] += co_frac[p] * washoff[k]. Matches legacy landuse_getCoPollutLoad().
      *
      * @param sq           Surface quality SoA (washoff_conc modified in-place).
      * @param runoff       Runoff rate per subcatchment (for mass rate conversion).
@@ -149,10 +169,8 @@ public:
      * @param co_frac      Co-pollutant fraction per pollutant.
      * @param n_subcatch   Number of subcatchments.
      */
-    void applyCoPollutant(SurfaceQualitySoA& sq,
-                          const double* runoff, const double* area,
-                          const int* co_pollut, const double* co_frac,
-                          int n_subcatch);
+    void applyCoPollutant(SurfaceQualitySoA& sq, const double* runoff, const double* area,
+                          const int* co_pollut, const double* co_frac, int n_subcatch);
 
     /// Per (landuse × pollutant) parameters. Index: [lu * n_pollutants + p]
     std::vector<BuildupParams> buildup_params;

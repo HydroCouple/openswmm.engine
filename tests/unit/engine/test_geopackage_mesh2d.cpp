@@ -1,6 +1,6 @@
 /**
- * @file test_geopackage_mesh2d.cpp
- * @brief Unit tests for GeoPackage 2D mesh persistence (Part E).
+ * @file      test_geopackage_mesh2d.cpp
+ * @brief     Unit tests for GeoPackage 2D mesh persistence (Part E).
  *
  * @details Round-trips the 2D model definition — mesh geometry, triangle
  *          connectivity, boundary conditions, edge conveyance, 1D-2D
@@ -14,6 +14,10 @@
  *          non-2D builds.
  *
  * @ingroup engine_tests
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -26,6 +30,8 @@
 #include "core/SimulationContext.hpp"
 #include "data/NodeData.hpp"
 #include "2d/data/MeshData.hpp"
+#include "2d/subsurface/SubsurfaceData.hpp"
+#include "2d/gw/GwTransportData.hpp"
 #include "2d/data/SolverOptions2D.hpp"
 #include "2d/data/BoundaryData.hpp"
 #include "2d/data/PendingRows2D.hpp"
@@ -47,19 +53,26 @@ protected:
     std::string db_path_;
 
     // Write-side 2D model storage (stand-in for SurfaceRouter2D's members).
-    twoD::MeshData                              mesh_;
-    twoD::SolverOptions2D                       opts_;
-    twoD::BoundaryData                          boundary_;
-    std::vector<twoD::PendingBoundaryRow>       pending_bc_;
+    twoD::MeshData mesh_;
+    twoD::SolverOptions2D opts_;
+    twoD::BoundaryData boundary_;
+    std::vector<twoD::PendingBoundaryRow> pending_bc_;
     std::vector<twoD::PendingEdgeConveyanceRow> pending_ec_;
 
     // Read-side storage for the round-trip comparison.
-    twoD::MeshData                              mesh_in_;
-    twoD::SolverOptions2D                       opts_in_;
-    twoD::BoundaryData                          boundary_in_;
-    std::vector<twoD::PendingBoundaryRow>       pending_bc_in_;
+    twoD::MeshData mesh_in_;
+    twoD::SolverOptions2D opts_in_;
+    twoD::BoundaryData boundary_in_;
+    std::vector<twoD::PendingBoundaryRow> pending_bc_in_;
     std::vector<twoD::PendingEdgeConveyanceRow> pending_ec_in_;
 
+    /**
+     * @brief Select a case-specific temporary GeoPackage path and remove stale sidecars.
+     *
+     * Builds test_openswmm_mesh2d_<case>.gpkg under temp_directory_path then calls remove_db_files.
+     * Per-case naming reduces cross-case lock/file leakage; concurrent copies of the same case still
+     * require isolation. Does not create/open a database.
+     */
     void SetUp() override {
         // Unique file per test, plus sidecar cleanup. A single shared path let
         // one test's leftover rows/locks bleed into the next on Windows (where
@@ -67,26 +80,42 @@ protected:
         // the rollback test then observed a previous test's rows, and the test
         // after it failed to open with "database is locked". Per-test isolation
         // removes that coupling; on POSIX it is simply harmless.
-        const ::testing::TestInfo* info =
-            ::testing::UnitTest::GetInstance()->current_test_info();
+        const ::testing::TestInfo* info = ::testing::UnitTest::GetInstance()->current_test_info();
         db_path_ = (fs::temp_directory_path() /
                     ("test_openswmm_mesh2d_" + std::string(info->name()) + ".gpkg"))
                        .string();
         remove_db_files();
     }
 
-    void TearDown() override {
-        remove_db_files();
-    }
+    /**
+     * @brief Remove the case GeoPackage and its recognized sidecars.
+     *
+     * Delegates to remove_db_files; all local database/statement owners must have released handles
+     * before cleanup. Does not retain the database as an artifact.
+     */
+    void TearDown() override { remove_db_files(); }
 
     // std::remove on the .gpkg alone leaves the WAL sidecars behind; clear all
     // three so a stale -wal can never resurrect a prior test's contents.
+    /**
+     * @brief Remove the case database and SQLite WAL/shared-memory sidecars.
+     *
+     * Calls remove for db_path_, db_path_+-wal and db_path_+-shm, ignoring statuses. Requires all
+     * connection/statement owners to have closed handles; does not remove arbitrary parent directories.
+     */
     void remove_db_files() {
         std::remove(db_path_.c_str());
         std::remove((db_path_ + "-wal").c_str());
         std::remove((db_path_ + "-shm").c_str());
     }
 
+    /**
+     * @brief Open the case GeoPackage path and create the maintained schema.
+     *
+     * Requires setup to establish db_path_. Does not remove existing data itself; open/schema
+     * exceptions propagate and persistent changes are not rolled back by this helper.
+     * @return Owning SQLite connection whose DbPtr deleter closes it.
+     */
     DbPtr create_db() {
         auto db = open_database(db_path_);
         create_schema(db.get());
@@ -95,25 +124,42 @@ protected:
 
     // Minimal 1D context: three named nodes (write_nodes uses safe accessors,
     // so name entries alone are enough to materialise FK-able node rows).
+    /**
+     * @brief Build a persistence context borrowing the fixture's write-side 2D model arrays.
+     *
+     * Fixture members must outlive all writer uses of the returned context. Name entries supply
+     * safe-accessor FK node rows without full hydraulic initialization. Does not construct geometry,
+     * run physics or transfer member ownership.
+     * @return Owned CMS context with J1/J3/O1 names and non-owning twod_io pointers to
+     *     mesh_/opts_/boundary_/pending rows.
+     */
     SimulationContext build_ctx_out() {
         SimulationContext ctx{};
         ctx.options.flow_units = FlowUnits::CMS;
         ctx.node_names.add("J1");
         ctx.node_names.add("J3");
         ctx.node_names.add("O1");
-        ctx.twod_io.mesh       = &mesh_;
-        ctx.twod_io.options    = &opts_;
-        ctx.twod_io.boundary   = &boundary_;
+        ctx.twod_io.mesh = &mesh_;
+        ctx.twod_io.options = &opts_;
+        ctx.twod_io.boundary = &boundary_;
         ctx.twod_io.pending_bc = &pending_bc_;
         ctx.twod_io.pending_ec = &pending_ec_;
         return ctx;
     }
 
+    /**
+     * @brief Build a read destination context borrowing fixture-owned 2D storage.
+     *
+     * Reader writes through those pointers; fixture members must outlive context/read use. Does not
+     * copy write-side data, set CMS explicitly or initialize hydraulic runtime.
+     * @return Owned default context with twod_io pointers to read-side mesh/options/boundary/pending
+     *     arrays.
+     */
     SimulationContext build_ctx_in() {
         SimulationContext ctx{};
-        ctx.twod_io.mesh       = &mesh_in_;
-        ctx.twod_io.options    = &opts_in_;
-        ctx.twod_io.boundary   = &boundary_in_;
+        ctx.twod_io.mesh = &mesh_in_;
+        ctx.twod_io.options = &opts_in_;
+        ctx.twod_io.boundary = &boundary_in_;
         ctx.twod_io.pending_bc = &pending_bc_in_;
         ctx.twod_io.pending_ec = &pending_ec_in_;
         return ctx;
@@ -125,6 +171,13 @@ protected:
     //   |  /  |
     //   |/ t0 |
     //   0 --- 1
+    /**
+     * @brief Populate write-side authored mesh fields for GeoPackage round-trip tests.
+     *
+     * Despite the historical name, numeric coordinates span10-by-10 m under the CMS write context;
+     * vertex beds are10..11.5 m. Creates two triangles with Manning.03/.045, initial depth.25/0 m and
+     * VT0/T1 tags. Deliberately does not build derived topology; persisted fields alone are under test.
+     */
     void makeUnitSquareMesh() {
         mesh_.resize_vertices(4);
         mesh_.vx = {0.0, 10.0, 10.0, 0.0};
@@ -133,17 +186,28 @@ protected:
         mesh_.vtag[0] = "VT0";
 
         mesh_.resize_triangles(2);
-        mesh_.tri_v0 = {0, 0};
-        mesh_.tri_v1 = {1, 2};
-        mesh_.tri_v2 = {2, 3};
+        mesh_.set_triangle(0, 0, 1, 2);
+        mesh_.set_triangle(1, 0, 2, 3);
         mesh_.mannings_n = {0.03, 0.045};
         mesh_.tri_init_depth = {0.25, 0.0};
         mesh_.tri_tag[1] = "T1";
     }
 
+    /**
+     * @brief Count rows in a trusted fixture table.
+     *
+     * prepare helper exceptions propagate, temporary statement is RAII-owned and no database mutation
+     * occurs.
+     *
+     * @param[in] db Borrowed valid open SQLite connection.
+     * @param[in] table Trusted SQL table identifier interpolated directly after FROM; must not contain
+     *     untrusted SQL text.
+     * @return Row count for SQLITE_ROW, otherwise -1; no separate step-error diagnostic.
+     */
     int count_rows(sqlite3* db, const std::string& table) {
         auto stmt = prepare(db, "SELECT COUNT(*) FROM " + table);
-        if (sqlite3_step(stmt.get()) != SQLITE_ROW) return -1;
+        if (sqlite3_step(stmt.get()) != SQLITE_ROW)
+            return -1;
         return column_int(stmt.get(), 0);
     }
 };
@@ -173,20 +237,39 @@ TEST_F(GeoPackageMesh2DTest, MeshRoundTripMinimal) {
         EXPECT_DOUBLE_EQ(mesh_in_.vx[i], mesh_.vx[i]) << "vx[" << i << "]";
         EXPECT_DOUBLE_EQ(mesh_in_.vy[i], mesh_.vy[i]) << "vy[" << i << "]";
         EXPECT_DOUBLE_EQ(mesh_in_.vz[i], mesh_.vz[i]) << "vz[" << i << "]";
-        EXPECT_EQ(mesh_in_.vtag[i], mesh_.vtag[i])    << "vtag[" << i << "]";
+        EXPECT_EQ(mesh_in_.vtag[i], mesh_.vtag[i]) << "vtag[" << i << "]";
     }
     for (int t = 0; t < 2; ++t) {
-        EXPECT_EQ(mesh_in_.tri_v0[t], mesh_.tri_v0[t]);
-        EXPECT_EQ(mesh_in_.tri_v1[t], mesh_.tri_v1[t]);
-        EXPECT_EQ(mesh_in_.tri_v2[t], mesh_.tri_v2[t]);
+        EXPECT_EQ(mesh_in_.cell_vertex(t, 0), mesh_.cell_vertex(t, 0));
+        EXPECT_EQ(mesh_in_.cell_vertex(t, 1), mesh_.cell_vertex(t, 1));
+        EXPECT_EQ(mesh_in_.cell_vertex(t, 2), mesh_.cell_vertex(t, 2));
         EXPECT_DOUBLE_EQ(mesh_in_.mannings_n[t], mesh_.mannings_n[t]);
         EXPECT_DOUBLE_EQ(mesh_in_.tri_init_depth[t], mesh_.tri_init_depth[t]);
         EXPECT_EQ(mesh_in_.tri_tag[t], mesh_.tri_tag[t]);
     }
     // Derived topology is NOT persisted — it stays at the resize defaults
     // until SurfaceRouter2D::initialize() rebuilds it.
-    EXPECT_EQ(mesh_in_.tri_nbr0[0], -1);
+    EXPECT_EQ(mesh_in_.cell_neighbour(0, 0), -1);
 }
+
+#ifndef OPENSWMM_HAS_2D
+TEST_F(GeoPackageMesh2DTest, ReviewedAquiferSectionsRefuseWithout2DModule) {
+    makeUnitSquareMesh();
+    auto ctx = build_ctx_out();
+    {
+        auto db = create_db();
+        write_model(db.get(), ctx, kSimId);
+        exec(db.get(), "INSERT INTO surface_ownership_2d_input (simulation_id, sections) "
+                       "VALUES ('run_1','[2D_AQUIFER_OPTIONS]')");
+    }
+    auto ctx_in = build_ctx_in();
+    auto db = open_database(db_path_, SQLITE_OPEN_READONLY);
+    EXPECT_EQ(read_model(db.get(), ctx_in, kSimId, ""), -1);
+    ASSERT_FALSE(ctx_in.errors.empty());
+    EXPECT_NE(ctx_in.errors.back().find("Reviewed surface ownership requires a 2D-enabled engine."),
+              std::string::npos);
+}
+#endif
 
 // ---------------------------------------------------------------------------
 // SolverOptions2D round-trip via the options key-value table
@@ -195,26 +278,27 @@ TEST_F(GeoPackageMesh2DTest, MeshRoundTripMinimal) {
 TEST_F(GeoPackageMesh2DTest, OptionsRoundTrip2D) {
     makeUnitSquareMesh();
 
-    opts_.max_timestep      = 5.5;
-    opts_.dry_depth         = 0.002;
-    opts_.limiter_epsilon   = 2.0e-7;   // would be destroyed by %.6f formatting
-    opts_.flux_dh_eps       = 7.0e-12;  // ditto — g17 formatting must preserve it
-    opts_.coupling_cd       = 0.71;
-    opts_.report_2d         = false;
+    opts_.max_timestep = 5.5;
+    opts_.dry_depth = 0.002;
+    opts_.limiter_epsilon = 2.0e-7; // would be destroyed by %.6f formatting
+    opts_.flux_dh_eps = 7.0e-12;    // ditto — g17 formatting must preserve it
+    opts_.coupling_cd = 0.71;
+    opts_.report_2d = false;
+    opts_.rainfall_mode = twoD::RainfallMode::NEAREST_NEIGHBOUR;
     // Closure keys.
-    opts_.cell_closure        = twoD::CellClosure2D::VFR;
+    opts_.cell_closure = twoD::CellClosure2D::VFR;
     opts_.face_reconstruction = twoD::FaceDepth2D::VFR_FACE;
-    opts_.vfr_min_wet_frac    = 0.025;
+    opts_.vfr_min_wet_frac = 0.025;
     // Explicit-marcher keys (D2: the marcher is the only 2D integrator).
-    opts_.theta             = 0.65;
-    opts_.cfl_number        = 0.45;
-    opts_.h_move            = 0.007;
-    opts_.lts_tiers         = 6;
-    opts_.froude_max        = 2.25;
+    opts_.theta = 0.65;
+    opts_.cfl_number = 0.45;
+    opts_.h_move = 0.007;
+    opts_.lts_tiers = 6;
+    opts_.froude_max = 2.25;
     opts_.coupling_area_auto = true;
-    opts_.output_file       = "results/run.h5";
-    opts_.mesh_units_si     = true;
-    opts_.mesh_file         = "meshes/site.2dm";  // provenance only
+    opts_.output_file = "results/run.h5";
+    opts_.mesh_units_si = true;
+    opts_.mesh_file = "meshes/site.2dm"; // provenance only
 
     auto ctx = build_ctx_out();
     {
@@ -228,20 +312,21 @@ TEST_F(GeoPackageMesh2DTest, OptionsRoundTrip2D) {
         ASSERT_EQ(read_model(db.get(), ctx_in, kSimId, ""), 0);
     }
 
-    EXPECT_DOUBLE_EQ(opts_in_.max_timestep,    5.5);
-    EXPECT_DOUBLE_EQ(opts_in_.dry_depth,       0.002);
+    EXPECT_DOUBLE_EQ(opts_in_.max_timestep, 5.5);
+    EXPECT_DOUBLE_EQ(opts_in_.dry_depth, 0.002);
     EXPECT_DOUBLE_EQ(opts_in_.limiter_epsilon, 2.0e-7);
-    EXPECT_DOUBLE_EQ(opts_in_.flux_dh_eps,     7.0e-12);
-    EXPECT_DOUBLE_EQ(opts_in_.coupling_cd,     0.71);
+    EXPECT_DOUBLE_EQ(opts_in_.flux_dh_eps, 7.0e-12);
+    EXPECT_DOUBLE_EQ(opts_in_.coupling_cd, 0.71);
     EXPECT_FALSE(opts_in_.report_2d);
-    EXPECT_EQ(opts_in_.cell_closure,        twoD::CellClosure2D::VFR);
+    EXPECT_EQ(opts_in_.rainfall_mode, twoD::RainfallMode::NEAREST_NEIGHBOUR);
+    EXPECT_EQ(opts_in_.cell_closure, twoD::CellClosure2D::VFR);
     EXPECT_EQ(opts_in_.face_reconstruction, twoD::FaceDepth2D::VFR_FACE);
     EXPECT_DOUBLE_EQ(opts_in_.vfr_min_wet_frac, 0.025);
-    EXPECT_DOUBLE_EQ(opts_in_.theta,        0.65);
-    EXPECT_DOUBLE_EQ(opts_in_.cfl_number,   0.45);
-    EXPECT_DOUBLE_EQ(opts_in_.h_move,       0.007);
-    EXPECT_EQ(opts_in_.lts_tiers,           6);
-    EXPECT_DOUBLE_EQ(opts_in_.froude_max,   2.25);
+    EXPECT_DOUBLE_EQ(opts_in_.theta, 0.65);
+    EXPECT_DOUBLE_EQ(opts_in_.cfl_number, 0.45);
+    EXPECT_DOUBLE_EQ(opts_in_.h_move, 0.007);
+    EXPECT_EQ(opts_in_.lts_tiers, 6);
+    EXPECT_DOUBLE_EQ(opts_in_.froude_max, 2.25);
     EXPECT_TRUE(opts_in_.coupling_area_auto);
     // 2D results always live in the HDF5 file — the path must round-trip so
     // SWMMEngine::open re-creates the Default2DOutputPlugin.
@@ -268,8 +353,8 @@ TEST_F(GeoPackageMesh2DTest, BCAndConveyanceRoundTrip) {
     pending_bc_.push_back({1, 1, 3, 0.0, "FlowTS", ""});     // TS_FLOW
     pending_bc_.push_back({1, 2, 4, 0.0, "RC1", "GrpB"});    // RATING_CURVE + group
 
-    pending_ec_.push_back({0, 2, 0.5});   // interior diagonal edge
-    pending_ec_.push_back({3, 0, 0.75});  // boundary edge, reversed order
+    pending_ec_.push_back({0, 2, 0.5});  // interior diagonal edge
+    pending_ec_.push_back({3, 0, 0.75}); // boundary edge, reversed order
 
     auto ctx = build_ctx_out();
     {
@@ -286,24 +371,23 @@ TEST_F(GeoPackageMesh2DTest, BCAndConveyanceRoundTrip) {
     ASSERT_EQ(pending_bc_in_.size(), pending_bc_.size());
     // Reader orders by (tri_idx, edge) — same order the rows were authored.
     for (size_t i = 0; i < pending_bc_.size(); ++i) {
-        EXPECT_EQ(pending_bc_in_[i].tri,     pending_bc_[i].tri)     << "row " << i;
-        EXPECT_EQ(pending_bc_in_[i].edge,    pending_bc_[i].edge)    << "row " << i;
+        EXPECT_EQ(pending_bc_in_[i].tri, pending_bc_[i].tri) << "row " << i;
+        EXPECT_EQ(pending_bc_in_[i].edge, pending_bc_[i].edge) << "row " << i;
         EXPECT_EQ(pending_bc_in_[i].bc_type, pending_bc_[i].bc_type) << "row " << i;
-        EXPECT_EQ(pending_bc_in_[i].name,    pending_bc_[i].name)    << "row " << i;
-        EXPECT_EQ(pending_bc_in_[i].group,   pending_bc_[i].group)   << "row " << i;
+        EXPECT_EQ(pending_bc_in_[i].name, pending_bc_[i].name) << "row " << i;
+        EXPECT_EQ(pending_bc_in_[i].group, pending_bc_[i].group) << "row " << i;
         if (pending_bc_[i].name.empty()) {
-            EXPECT_DOUBLE_EQ(pending_bc_in_[i].param1, pending_bc_[i].param1)
-                << "row " << i;
+            EXPECT_DOUBLE_EQ(pending_bc_in_[i].param1, pending_bc_[i].param1) << "row " << i;
         }
     }
 
     ASSERT_EQ(pending_ec_in_.size(), 2u);
     // Pairs are normalised v_from < v_to and ordered by (v_from, v_to).
     EXPECT_EQ(pending_ec_in_[0].v_from, 0);
-    EXPECT_EQ(pending_ec_in_[0].v_to,   2);
+    EXPECT_EQ(pending_ec_in_[0].v_to, 2);
     EXPECT_DOUBLE_EQ(pending_ec_in_[0].conveyance, 0.5);
     EXPECT_EQ(pending_ec_in_[1].v_from, 0);
-    EXPECT_EQ(pending_ec_in_[1].v_to,   3);
+    EXPECT_EQ(pending_ec_in_[1].v_to, 3);
     EXPECT_DOUBLE_EQ(pending_ec_in_[1].conveyance, 0.75);
 }
 
@@ -318,8 +402,8 @@ TEST_F(GeoPackageMesh2DTest, ConveyanceFallbackFromMeshSlots) {
     // slot t1/e2 (opposite v3... local edge e connects v[(e+1)%3], v[(e+2)%3]).
     // t0 = (0,1,2): e2 connects v0,v1; e0 connects v1,v2; e1 connects v2,v0.
     // t1 = (0,2,3): e2 connects v0,v2 — the mirror of t0/e1.
-    mesh_.edge_conveyance[0 * 3 + 1] = 0.4;
-    mesh_.edge_conveyance[1 * 3 + 2] = 0.4;
+    mesh_.edge_conveyance[twoD::MeshData::slot(0, 1)] = 0.4;
+    mesh_.edge_conveyance[twoD::MeshData::slot(1, 2)] = 0.4;
 
     auto ctx = build_ctx_out();
     {
@@ -335,7 +419,7 @@ TEST_F(GeoPackageMesh2DTest, ConveyanceFallbackFromMeshSlots) {
     }
     ASSERT_EQ(pending_ec_in_.size(), 1u);
     EXPECT_EQ(pending_ec_in_[0].v_from, 0);
-    EXPECT_EQ(pending_ec_in_[0].v_to,   2);
+    EXPECT_EQ(pending_ec_in_[0].v_to, 2);
     EXPECT_DOUBLE_EQ(pending_ec_in_[0].conveyance, 0.4);
 }
 
@@ -346,11 +430,11 @@ TEST_F(GeoPackageMesh2DTest, ConveyanceFallbackFromMeshSlots) {
 TEST_F(GeoPackageMesh2DTest, CouplingMapsRoundTrip) {
     makeUnitSquareMesh();
     mesh_.vert_coupled_node_name[0] = "J1";
-    mesh_.vert_coupling_cd[0]       = 0.7;
-    mesh_.vert_coupling_area[0]     = 2.5;
-    mesh_.tri_coupled_node_name[1]  = "J3";
-    mesh_.tri_coupling_cd[1]        = 0.55;
-    mesh_.tri_coupling_area[1]      = 4.0;
+    mesh_.vert_coupling_cd[0] = 0.7;
+    mesh_.vert_coupling_area[0] = 2.5;
+    mesh_.tri_coupled_node_name[1] = "J3";
+    mesh_.tri_coupling_cd[1] = 0.55;
+    mesh_.tri_coupling_area[1] = 4.0;
 
     auto ctx = build_ctx_out();
     {
@@ -367,16 +451,157 @@ TEST_F(GeoPackageMesh2DTest, CouplingMapsRoundTrip) {
     // Names restored (indices stay -1 — resolution is initialize()'s job,
     // identical to the inp path).
     EXPECT_EQ(mesh_in_.vert_coupled_node_name[0], "J1");
-    EXPECT_DOUBLE_EQ(mesh_in_.vert_coupling_cd[0],   0.7);
+    EXPECT_DOUBLE_EQ(mesh_in_.vert_coupling_cd[0], 0.7);
     EXPECT_DOUBLE_EQ(mesh_in_.vert_coupling_area[0], 2.5);
     EXPECT_EQ(mesh_in_.vert_coupled_node[0], -1);
     EXPECT_TRUE(mesh_in_.vert_coupled_node_name[1].empty());
 
     EXPECT_EQ(mesh_in_.tri_coupled_node_name[1], "J3");
-    EXPECT_DOUBLE_EQ(mesh_in_.tri_coupling_cd[1],   0.55);
+    EXPECT_DOUBLE_EQ(mesh_in_.tri_coupling_cd[1], 0.55);
     EXPECT_DOUBLE_EQ(mesh_in_.tri_coupling_area[1], 4.0);
     EXPECT_EQ(mesh_in_.tri_coupled_node[1], -1);
     EXPECT_TRUE(mesh_in_.tri_coupled_node_name[0].empty());
+}
+
+// ---------------------------------------------------------------------------
+// Repeated-row triangle coupling (two nodes on one triangle) and the CD/AREA
+// authored flags survive the round trip.
+// ---------------------------------------------------------------------------
+
+TEST_F(GeoPackageMesh2DTest, RepeatedTriangleRowsAndAuthoredFlagsRoundTrip) {
+    makeUnitSquareMesh();
+    mesh_.vert_coupled_node_name[0] = "J1"; // CD authored, AREA defaulted
+    mesh_.vert_coupling_cd[0] = 0.7;
+    mesh_.vert_coupling_cd_set[0] = 1;
+    mesh_.vert_coupled_node_name[2] = "J3"; // nothing authored
+    twoD::MeshData::TriCouplingRow a, b;
+    a.tri = 1;
+    a.node_name = "J1";
+    a.cd = 0.6;
+    a.cd_set = true;
+    a.area = 1.5;
+    a.area_set = true;
+    b.tri = 1;
+    b.node_name = "J3"; // defaults, unauthored
+    mesh_.tri_couplings = {a, b};
+
+    auto ctx = build_ctx_out();
+    {
+        auto db = create_db();
+        write_model(db.get(), ctx, kSimId);
+    }
+    auto ctx_in = build_ctx_in();
+    {
+        auto db = open_database(db_path_, SQLITE_OPEN_READONLY);
+        ASSERT_EQ(read_model(db.get(), ctx_in, kSimId, ""), 0);
+    }
+
+    EXPECT_EQ(mesh_in_.vert_coupling_cd_set[0], 1);
+    EXPECT_EQ(mesh_in_.vert_coupling_area_set[0], 0);
+    EXPECT_EQ(mesh_in_.vert_coupling_cd_set[2], 0);
+    EXPECT_EQ(mesh_in_.vert_coupling_area_set[2], 0);
+    ASSERT_EQ(mesh_in_.tri_couplings.size(), 2u) << "a second node on one triangle was dropped";
+    EXPECT_EQ(mesh_in_.tri_couplings[0].node_name, "J1");
+    EXPECT_DOUBLE_EQ(mesh_in_.tri_couplings[0].cd, 0.6);
+    EXPECT_DOUBLE_EQ(mesh_in_.tri_couplings[0].area, 1.5);
+    EXPECT_TRUE(mesh_in_.tri_couplings[0].cd_set);
+    EXPECT_TRUE(mesh_in_.tri_couplings[0].area_set);
+    EXPECT_EQ(mesh_in_.tri_couplings[1].node_name, "J3");
+    EXPECT_FALSE(mesh_in_.tri_couplings[1].cd_set);
+    EXPECT_FALSE(mesh_in_.tri_couplings[1].area_set);
+}
+
+// A file whose triangle-coupling table is keyed by triangle alone is rebuilt
+// on the next save, keeping its rows; rows written before the authored-flag
+// columns read back as authored.
+TEST_F(GeoPackageMesh2DTest, OldTriangleCouplingTableMigrates) {
+    makeUnitSquareMesh();
+    mesh_.vert_coupled_node_name[0] = "J1";
+    mesh_.vert_coupling_cd[0] = 0.7;
+    auto ctx = build_ctx_out();
+    {
+        auto db = create_db();
+        write_model(db.get(), ctx, kSimId);
+        // Recreate the pre-repeated-row table with one row, flags absent.
+        exec(db.get(), "PRAGMA foreign_keys=OFF");
+        exec(db.get(), "DROP TABLE mesh_2d_triangle_coupling");
+        exec(db.get(),
+             "CREATE TABLE mesh_2d_triangle_coupling ("
+             "fid INTEGER PRIMARY KEY AUTOINCREMENT, simulation_id TEXT NOT NULL, "
+             "tri_idx INTEGER NOT NULL, node_id TEXT NOT NULL, "
+             "coupling_cd REAL NOT NULL DEFAULT 0.65, "
+             "coupling_area REAL NOT NULL DEFAULT 1.0, "
+             "UNIQUE(simulation_id, tri_idx), "
+             "FOREIGN KEY (simulation_id, tri_idx) REFERENCES "
+             "mesh_2d_triangles(simulation_id, tri_idx) ON DELETE CASCADE ON UPDATE CASCADE, "
+             "FOREIGN KEY (simulation_id, node_id) REFERENCES "
+             "nodes(simulation_id, node_id) ON DELETE CASCADE ON UPDATE CASCADE)");
+        exec(db.get(), "INSERT INTO mesh_2d_triangle_coupling "
+                       "(simulation_id, tri_idx, node_id, coupling_cd, coupling_area) "
+                       "VALUES ('run_1', 1, 'J3', 0.55, 4.0)");
+        exec(db.get(), "UPDATE mesh_2d_vertex_coupling SET coupling_cd_set=NULL, "
+                       "coupling_area_set=NULL");
+        exec(db.get(), "PRAGMA foreign_keys=ON");
+    }
+    {
+        auto db = open_database(db_path_);
+        create_schema(db.get()); // what a save does first
+        auto sql = prepare(db.get(), "SELECT sql FROM sqlite_master WHERE type='table' "
+                                     "AND name='mesh_2d_triangle_coupling'");
+        ASSERT_EQ(sqlite3_step(sql.get()), SQLITE_ROW);
+        EXPECT_EQ(column_text(sql.get(), 0).find("UNIQUE(simulation_id, tri_idx)"),
+                  std::string::npos);
+        sql.reset();
+        EXPECT_EQ(count_rows(db.get(), "mesh_2d_triangle_coupling"), 1) << "migration lost the row";
+        exec(db.get(), "INSERT INTO mesh_2d_triangle_coupling "
+                       "(simulation_id, tri_idx, node_id) VALUES ('run_1', 1, 'J1')");
+    }
+    auto ctx_in = build_ctx_in();
+    {
+        auto db = open_database(db_path_, SQLITE_OPEN_READONLY);
+        ASSERT_EQ(read_model(db.get(), ctx_in, kSimId, ""), 0);
+    }
+    EXPECT_EQ(mesh_in_.vert_coupling_cd_set[0], 1) << "NULL flag must read as authored";
+    EXPECT_EQ(mesh_in_.vert_coupling_area_set[0], 1);
+    ASSERT_EQ(mesh_in_.tri_couplings.size(), 2u);
+    EXPECT_EQ(mesh_in_.tri_couplings[0].node_name, "J3");
+    EXPECT_DOUBLE_EQ(mesh_in_.tri_couplings[0].cd, 0.55);
+    EXPECT_TRUE(mesh_in_.tri_couplings[0].cd_set);
+    EXPECT_EQ(mesh_in_.tri_couplings[1].node_name, "J1");
+}
+
+TEST_F(GeoPackageMesh2DTest, OptionsRoundTripFloodingMomentumBackend) {
+    makeUnitSquareMesh();
+    opts_.coupling_in_flooding = true;
+    opts_.momentum = twoD::Momentum2D::DIFFUSIVE_WAVE;
+    opts_.backend = twoD::Backend2D::CPU;
+    opts_.coupling_law = twoD::CouplingLaw2D::WEIR_ORIFICE;
+    opts_.coupling_head = twoD::CouplingHead2D::STENCIL_WET_MEAN;
+    opts_.coupling_coeffs = 3; // RUBINATO2017_UPPER
+    opts_.coupling_pond_mode = twoD::CouplingPondMode2D::CHAMBER;
+    opts_.coupling_pond_relax = 15.0;
+    opts_.coupling_rim_band = 0.02;
+    opts_.coupling_equalize = 1;
+    auto ctx = build_ctx_out();
+    {
+        auto db = create_db();
+        write_model(db.get(), ctx, kSimId);
+    }
+    auto ctx_in = build_ctx_in();
+    {
+        auto db = open_database(db_path_, SQLITE_OPEN_READONLY);
+        ASSERT_EQ(read_model(db.get(), ctx_in, kSimId, ""), 0);
+    }
+    EXPECT_TRUE(opts_in_.coupling_in_flooding);
+    EXPECT_EQ(opts_in_.momentum, twoD::Momentum2D::DIFFUSIVE_WAVE);
+    EXPECT_EQ(opts_in_.backend, twoD::Backend2D::CPU);
+    EXPECT_EQ(opts_in_.coupling_law, twoD::CouplingLaw2D::WEIR_ORIFICE);
+    EXPECT_EQ(opts_in_.coupling_head, twoD::CouplingHead2D::STENCIL_WET_MEAN);
+    EXPECT_EQ(opts_in_.coupling_coeffs, 3);
+    EXPECT_EQ(opts_in_.coupling_pond_mode, twoD::CouplingPondMode2D::CHAMBER);
+    EXPECT_DOUBLE_EQ(opts_in_.coupling_pond_relax, 15.0);
+    EXPECT_DOUBLE_EQ(opts_in_.coupling_rim_band, 0.02);
+    EXPECT_EQ(opts_in_.coupling_equalize, 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -388,14 +613,17 @@ TEST_F(GeoPackageMesh2DTest, PostInitUnscaleWrite) {
     // Simulate the state after SurfaceRouter2D::initialize() on a US-units
     // project: coordinates were scaled ft→m in place.
     const double ft_to_m = 0.3048;
-    for (auto& v : mesh_.vx) v *= ft_to_m;
-    for (auto& v : mesh_.vy) v *= ft_to_m;
-    for (auto& v : mesh_.vz) v *= ft_to_m;
+    for (auto& v : mesh_.vx)
+        v *= ft_to_m;
+    for (auto& v : mesh_.vy)
+        v *= ft_to_m;
+    for (auto& v : mesh_.vz)
+        v *= ft_to_m;
     mesh_.vert_coupled_node_name[0] = "J1";
-    mesh_.vert_coupling_area[0]     = 2.5 * ft_to_m * ft_to_m;
+    mesh_.vert_coupling_area[0] = 2.5 * ft_to_m * ft_to_m;
     opts_.mesh_scaled_to_si = true;
-    opts_.len_1d_to_2d      = ft_to_m;
-    opts_.len_2d_to_1d      = 1.0 / ft_to_m;
+    opts_.len_1d_to_2d = ft_to_m;
+    opts_.len_2d_to_1d = 1.0 / ft_to_m;
 
     auto ctx = build_ctx_out();
     {
@@ -433,8 +661,7 @@ TEST_F(GeoPackageMesh2DTest, Inactive2DNoOp) {
         write_model(db.get(), ctx, kSimId);
         EXPECT_EQ(count_rows(db.get(), "mesh_2d_vertices"), 0);
         EXPECT_EQ(count_rows(db.get(), "mesh_2d_triangles"), 0);
-        auto stmt = prepare(db.get(),
-            "SELECT COUNT(*) FROM options WHERE key LIKE '2D_%'");
+        auto stmt = prepare(db.get(), "SELECT COUNT(*) FROM options WHERE key LIKE '2D_%'");
         ASSERT_EQ(sqlite3_step(stmt.get()), SQLITE_ROW);
         EXPECT_EQ(column_int(stmt.get(), 0), 0);
     }
@@ -456,7 +683,8 @@ TEST_F(GeoPackageMesh2DTest, MeshBearingFileIntoNull2DContextWarns) {
     }
     bool warned = false;
     for (const auto& w : ctx_in.warnings)
-        if (w.find("2D mesh") != std::string::npos) warned = true;
+        if (w.find("2D mesh") != std::string::npos)
+            warned = true;
     EXPECT_TRUE(warned);
 }
 
@@ -501,3 +729,53 @@ TEST_F(GeoPackageMesh2DTest, NodeDeleteCascadesCoupling) {
         EXPECT_EQ(count_rows(db.get(), "mesh_2d_vertices"), 4);
     }
 }
+
+#ifdef OPENSWMM_HAS_2D
+TEST_F(GeoPackageMesh2DTest, GroundwaterLayersAndHydraulicEdgeRoundTripWithoutSurfaceOwners) {
+    makeUnitSquareMesh();
+    auto ctx = build_ctx_out();
+    twoD::SubsurfaceConfig aquifer;
+    twoD::GwTransportData quality;
+    std::vector<std::string> nodes, links;
+    aquifer.options.authored = true;
+    aquifer.options.closure = twoD::GwClosure::SIGMA;
+    aquifer.rows.emplace_back();
+    aquifer.rows.back().Ks = .12345678901234567;
+    aquifer.boundaries.push_back({0, 0, false, .00012345678901234567, {}});
+    quality.options.authored = true;
+    quality.options.unsat_transport = "LAYERED";
+    twoD::GwInitialQualityRow initial;
+    initial.zone = twoD::GwZone::LAYER;
+    initial.layer = 2;
+    initial.species = "TSS";
+    initial.value = 7.123456789012345;
+    quality.initial_quality.push_back(initial);
+    ctx.twod_io.aquifer = &aquifer;
+    ctx.twod_io.aquifer_nodes = &nodes;
+    ctx.twod_io.aquifer_links = &links;
+    ctx.twod_io.gw = &quality;
+    {
+        auto db = create_db();
+        write_model(db.get(), ctx, kSimId);
+    }
+    auto restored = build_ctx_in();
+    twoD::SubsurfaceConfig aquifer_in;
+    twoD::GwTransportData quality_in;
+    restored.twod_io.aquifer = &aquifer_in;
+    restored.twod_io.aquifer_nodes = &nodes;
+    restored.twod_io.aquifer_links = &links;
+    restored.twod_io.gw = &quality_in;
+    {
+        auto db = open_database(db_path_, SQLITE_OPEN_READONLY);
+        ASSERT_EQ(read_model(db.get(), restored, kSimId, ""), 0);
+    }
+    ASSERT_EQ(aquifer_in.rows.size(), 1);
+    ASSERT_EQ(aquifer_in.boundaries.size(), 1);
+    EXPECT_DOUBLE_EQ(aquifer_in.rows[0].Ks, aquifer.rows[0].Ks);
+    EXPECT_DOUBLE_EQ(aquifer_in.boundaries[0].value, aquifer.boundaries[0].value);
+    EXPECT_EQ(quality_in.options.unsat_transport, "LAYERED");
+    ASSERT_EQ(quality_in.initial_quality.size(), 1);
+    EXPECT_EQ(quality_in.initial_quality[0].layer, 2);
+    EXPECT_DOUBLE_EQ(quality_in.initial_quality[0].value, initial.value);
+}
+#endif

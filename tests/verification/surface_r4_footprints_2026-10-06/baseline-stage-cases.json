@@ -1,0 +1,54 @@
+{
+  "tests": 2,
+  "failures": 2,
+  "disabled": 0,
+  "errors": 0,
+  "timestamp": "2026-10-06T10:48:37Z",
+  "time": "0.003s",
+  "name": "AllTests",
+  "testsuites": [
+    {
+      "name": "CommonSourceStage",
+      "tests": 2,
+      "failures": 2,
+      "disabled": 0,
+      "errors": 0,
+      "timestamp": "2026-10-06T10:48:37Z",
+      "time": "0.003s",
+      "testsuite": [
+        {
+          "name": "PartialInsideSourcesKeepOutsideLossAndWeatherSeparate",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_common_source_stage.cpp",
+          "line": 467,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:48:37Z",
+          "time": "0.003s",
+          "classname": "CommonSourceStage",
+          "failures": [
+            {
+              "failure": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_common_source_stage.cpp:470\nExpected equality of these values:\n  m.stage.initialize(m.mesh,m.surface,m.options,m.gw,m.sources,m.preview)\n    Which is: \"Common source stage requires fully inside, non-lumped sources in its clock groups.\"\n  \"\"\n",
+              "type": ""
+            }
+          ]
+        },
+        {
+          "name": "ConnectedOutsideOnlyPeerKeepsItsNativePath",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_common_source_stage.cpp",
+          "line": 480,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:48:37Z",
+          "time": "0s",
+          "classname": "CommonSourceStage",
+          "failures": [
+            {
+              "failure": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_common_source_stage.cpp:482\nExpected equality of these values:\n  m.stage.initialize(m.mesh,m.surface,m.options,m.gw,m.sources,m.preview)\n    Which is: \"Every member of a common source clock group needs reviewed inside shares.\"\n  \"\"\n",
+              "type": ""
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

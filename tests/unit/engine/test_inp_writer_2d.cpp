@@ -1,6 +1,6 @@
 /**
- * @file test_inp_writer_2d.cpp
- * @brief End-to-end tests for InpWriter [2D_*] section emission.
+ * @file      test_inp_writer_2d.cpp
+ * @brief     End-to-end tests for InpWriter [2D_*] section emission.
  *
  * @details Drives everything through the public C API: open a 2D .inp,
  *          (optionally) initialize, swmm_model_write, reopen the emitted
@@ -14,15 +14,22 @@
  *          carry the 2D module for the [2D_*] parse + initialize path).
  *
  * @ingroup engine_tests
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
 
 #include <cstdio>
+#include <cstdlib>
+#include "core/FileIO.hpp"
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_model.h>
@@ -93,17 +100,49 @@ REPORT_2D           NO
 0      2   0.5
 )INP";
 
+/**
+ * @brief Replace the first literal text occurrence in an owned fixture copy.
+ *
+ * @param[in] s Input string copied/moved by value, then modified privately.
+ * @param[in] from Exact substring; empty matches position0.
+ * @param[in] to Replacement text inserted once.
+ * @return Owned modified string, or unchanged copy if from is absent; callers' original strings are
+ *     unchanged.
+ */
 std::string replace(std::string s, const std::string& from, const std::string& to) {
     auto pos = s.find(from);
-    if (pos != std::string::npos) s.replace(pos, from.size(), to);
+    if (pos != std::string::npos)
+        s.replace(pos, from.size(), to);
     return s;
 }
 
+/**
+ * @brief Write fixture content to a caller-selected file.
+ *
+ * The parent directory must already exist. Uses ordinary text output mode. Open failure is not
+ * reported by this helper. Subsequent write/close failures are not checked; the local stream closes
+ * at scope exit and no path/content storage is retained. Allocation exceptions can propagate.
+ *
+ * @param[in] p Borrowed destination path; an existing file is truncated/overwritten.
+ * @param[in] text Borrowed content copied verbatim through the output stream; no newline is
+ *     appended.
+ */
 void write_file(const fs::path& p, const std::string& text) {
     std::ofstream f(p);
     f << text;
 }
 
+/**
+ * @brief Collect an entire fixture file into owned text.
+ *
+ * Uses ordinary text mode and its platform newline rules. The local stream closes on return; no
+ * model state is touched and no borrowed buffer is returned. Default stream exception settings
+ * apply; allocation exceptions may propagate.
+ *
+ * @param[in] p Borrowed input filename used for this synchronous open/read.
+ * @return Owned string collected from the stream; empty can mean an empty file or failure to open.
+ *     Partial read failures have no separate status.
+ */
 std::string read_file(const fs::path& p) {
     std::ifstream f(p);
     std::stringstream ss;
@@ -119,18 +158,52 @@ protected:
     SWMM_Engine eng_a_ = nullptr;
     SWMM_Engine eng_b_ = nullptr;
 
+    /**
+     * @brief Create the input-writer test artifact directory selected by environment.
+     *
+     * When OPENSWMM_WRITER_TEST_OUTPUT exists, decodes it as UTF-8 and appends the current case name;
+     * otherwise uses a fixed openswmm_inpwriter2d_test temporary path. Creates missing directories,
+     * retaining prior contents; filesystem errors propagate. No engine is created here.
+     */
     void SetUp() override {
-        dir_ = fs::temp_directory_path() / "openswmm_inpwriter2d_test";
+        const char* retained = std::getenv("OPENSWMM_WRITER_TEST_OUTPUT");
+        dir_ = retained ? openswmm::io::utf8_path(std::string(retained)) /
+                              testing::UnitTest::GetInstance()->current_test_info()->name()
+                        : fs::temp_directory_path() / "openswmm_inpwriter2d_test";
         fs::create_directories(dir_);
     }
 
+    /**
+     * @brief Close/destroy both input-writer engines and conditionally remove artifacts.
+     *
+     * Cleans non-null eng_a_/eng_b_, ignoring statuses. Recursively removes dir_ through an ignored
+     * error code only when OPENSWMM_WRITER_TEST_OUTPUT is absent at teardown; an environment change
+     * between setup/teardown changes this retention choice.
+     */
     void TearDown() override {
-        if (eng_a_) { swmm_engine_close(eng_a_); swmm_engine_destroy(eng_a_); }
-        if (eng_b_) { swmm_engine_close(eng_b_); swmm_engine_destroy(eng_b_); }
+        if (eng_a_) {
+            swmm_engine_close(eng_a_);
+            swmm_engine_destroy(eng_a_);
+        }
+        if (eng_b_) {
+            swmm_engine_close(eng_b_);
+            swmm_engine_destroy(eng_b_);
+        }
         std::error_code ec;
-        fs::remove_all(dir_, ec);
+        if (!std::getenv("OPENSWMM_WRITER_TEST_OUTPUT"))
+            fs::remove_all(dir_, ec);
     }
 
+    /**
+     * @brief Create/open a 2D input fixture while leaving lifecycle at opened state.
+     *
+     * Does not initialize/start or attach the handle automatically to eng_a_/eng_b_; callers establish
+     * that ownership explicitly.
+     *
+     * @param[in] inp Readable input file path; report/output paths are empty strings.
+     * @return Owned created handle even after a nonfatal open/create expectation fails; caller must
+     *     close/destroy any non-null handle.
+     */
     SWMM_Engine open_engine(const fs::path& inp) {
         SWMM_Engine e = swmm_engine_create();
         EXPECT_NE(e, nullptr);
@@ -140,6 +213,17 @@ protected:
     }
 
     // Compare the full 2D model definition of two initialized engines.
+    /**
+     * @brief Compare selected 2D mesh fields through the public API.
+     *
+     * Asserts equal vertex/triangle counts, vertex coordinates to1e-9, triangle connectivity/neighbors
+     * exactly and roughness/initial depth/conveyance to1e-12. Does not compare every2D option,
+     * boundary/map field or quadrilateral corner; fatal API/count assertions return only from this
+     * helper. No model mutation occurs.
+     *
+     * @param[in] a Live parsed/initialized reference engine with compatible triangle-only fixture mesh.
+     * @param[in] b Live parsed/initialized comparison engine in the same unit/lifecycle representation.
+     */
     void expect_same_2d_model(SWMM_Engine a, SWMM_Engine b) {
         int nva = -1, nvb = -1, nta = -1, ntb = -1;
         ASSERT_EQ(swmm_2d_vertex_count(a, &nva), 0);
@@ -227,6 +311,158 @@ TEST_F(InpWriter2DTest, InlineRoundTrip) {
 }
 
 // ---------------------------------------------------------------------------
+// Mixed triangle/quad mesh round-trip (2D_TRI_QUAD_MESH_PLAN §2.4): the
+// [2D_QUADS] section, the triangles-then-quads cell index, a BC row on a
+// quad's 4th edge, a conveyance row on a quad–quad edge, INIT_DEPTH/TAG on a
+// quad — all survive write → reopen. The bulk edge arrays report stride 4.
+// ---------------------------------------------------------------------------
+
+namespace {
+const char* k2DMixedSections = R"INP(
+[2D_OPTIONS]
+MAX_TIMESTEP        5
+REPORT_2D           NO
+MOMENTUM_EQUATION   FULL_SWE
+
+[2D_VERTICES]
+;;X     Y     Z
+0       0     10
+10      0     10.2
+20      0     10.4
+30      0     10.6
+0       10    10.1
+10      10    10.3
+20      10    10.5
+30      10    10.7
+
+[2D_TRIANGLES]
+;;V1  V2  V3  MANNINGS_N  INIT_DEPTH  TAG
+0     1   5   0.03        0.25        cap
+0     5   4   0.03
+
+[2D_QUADS]
+;;V1  V2  V3  V4  MANNINGS_N  INIT_DEPTH  TAG
+1     2   6   5   0.02        0.10        street
+2     3   7   6   0.025       0.0         street
+
+[2D_VERTEX_NODE_MAP]
+0  J1  0.7  2.5
+
+[2D_BOUNDARY_CONDITIONS]
+;;TRI EDGE TYPE          PARAM_1
+3     3    NORMAL_FLOW   0.01
+
+[2D_EDGE_CONVEYANCE]
+;;FROM TO  CONVEYANCE
+2      6   0.5
+)INP";
+} // namespace
+
+TEST_F(InpWriter2DTest, MixedTriQuadRoundTrip) {
+    const fs::path inp_a = dir_ / "mixed_a.inp";
+    write_file(inp_a, replace(k1DBase, "{FLOW_UNITS}", "CMS") + k2DMixedSections);
+
+    eng_a_ = open_engine(inp_a);
+    ASSERT_EQ(swmm_engine_initialize(eng_a_), 0);
+    int active = 0;
+    ASSERT_EQ(swmm_2d_is_active(eng_a_, &active), 0);
+    ASSERT_EQ(active, 1);
+
+    int nc = 0, nq = 0, stride = 0;
+    ASSERT_EQ(swmm_2d_cell_count(eng_a_, &nc), 0);
+    ASSERT_EQ(swmm_2d_quad_count(eng_a_, &nq), 0);
+    ASSERT_EQ(swmm_2d_edge_stride(eng_a_, &stride), 0);
+    EXPECT_EQ(nc, 4);
+    EXPECT_EQ(nq, 2);
+    EXPECT_EQ(stride, 4);
+    // Cell 2 is the first quad (triangles first), edge 3 = (v[0], v[1]) = (1, 2).
+    int v[4], nv = 0;
+    ASSERT_EQ(swmm_2d_cell_get_vertices(eng_a_, 2, v, &nv), 0);
+    EXPECT_EQ(nv, 4);
+    EXPECT_EQ(v[0], 1);
+    EXPECT_EQ(v[1], 2);
+    EXPECT_EQ(v[2], 6);
+    EXPECT_EQ(v[3], 5);
+    int v0, v1, v2;
+    EXPECT_NE(swmm_2d_triangle_get_vertices(eng_a_, 2, &v0, &v1, &v2), 0); // quad refused
+    EXPECT_EQ(swmm_2d_triangle_get_vertices(eng_a_, 0, &v0, &v1, &v2), 0);
+    int n[4];
+    ASSERT_EQ(swmm_2d_cell_get_neighbours(eng_a_, 2, n, &nv), 0);
+    // Quad 2's edge 0 = (v1, v2) = (2, 6) → shared with quad 3; edge 2 = (5, 1) → triangle 0.
+    EXPECT_EQ(n[0], 3);
+    EXPECT_EQ(n[2], 0);
+    // Conveyance on the quad–quad edge landed on BOTH slots.
+    double k23 = 0.0, k32 = 0.0;
+    ASSERT_EQ(swmm_2d_get_edge_conveyance(eng_a_, 2, 0, &k23), 0);
+    EXPECT_NEAR(k23, 0.5, 1e-12);
+    int nn[4];
+    ASSERT_EQ(swmm_2d_cell_get_neighbours(eng_a_, 3, nn, &nv), 0);
+    int back = -1;
+    for (int k = 0; k < nv; ++k)
+        if (nn[k] == 2)
+            back = k;
+    ASSERT_GE(back, 0);
+    ASSERT_EQ(swmm_2d_get_edge_conveyance(eng_a_, 3, back, &k32), 0);
+    EXPECT_NEAR(k32, 0.5, 1e-12);
+    // Edge index 3 is valid on a quad, invalid on a triangle.
+    int bt = -1;
+    EXPECT_EQ(swmm_2d_get_edge_bc_type(eng_a_, 3, 3, &bt), 0);
+    EXPECT_EQ(bt, 1); // NORMAL_FLOW
+    EXPECT_NE(swmm_2d_get_edge_bc_type(eng_a_, 0, 3, &bt), 0);
+
+    const fs::path inp_b = dir_ / "mixed_b.inp";
+    ASSERT_EQ(swmm_model_write(eng_a_, inp_b.string().c_str()), 0);
+    const std::string text = read_file(inp_b);
+    EXPECT_NE(text.find("[2D_QUADS]"), std::string::npos);
+    EXPECT_NE(text.find("MOMENTUM_EQUATION      FULL_SWE"), std::string::npos);
+    EXPECT_LT(text.find("[2D_TRIANGLES]"), text.find("[2D_QUADS]"));
+
+    eng_b_ = open_engine(inp_b);
+    ASSERT_EQ(swmm_engine_initialize(eng_b_), 0);
+    int nc_b = 0, nq_b = 0;
+    ASSERT_EQ(swmm_2d_cell_count(eng_b_, &nc_b), 0);
+    ASSERT_EQ(swmm_2d_quad_count(eng_b_, &nq_b), 0);
+    EXPECT_EQ(nc_b, nc);
+    EXPECT_EQ(nq_b, nq);
+    for (int c = 0; c < nc; ++c) {
+        int va[4], vb[4], nva = 0, nvb = 0, na[4], nb[4];
+        ASSERT_EQ(swmm_2d_cell_get_vertices(eng_a_, c, va, &nva), 0);
+        ASSERT_EQ(swmm_2d_cell_get_vertices(eng_b_, c, vb, &nvb), 0);
+        ASSERT_EQ(nva, nvb);
+        ASSERT_EQ(swmm_2d_cell_get_neighbours(eng_a_, c, na, &nva), 0);
+        ASSERT_EQ(swmm_2d_cell_get_neighbours(eng_b_, c, nb, &nvb), 0);
+        for (int k = 0; k < nva; ++k) {
+            EXPECT_EQ(va[k], vb[k]);
+            EXPECT_EQ(na[k], nb[k]);
+        }
+        double ma, mb, da, db;
+        ASSERT_EQ(swmm_2d_triangle_get_mannings(eng_a_, c, &ma), 0);
+        ASSERT_EQ(swmm_2d_triangle_get_mannings(eng_b_, c, &mb), 0);
+        EXPECT_NEAR(ma, mb, 1e-12);
+        ASSERT_EQ(swmm_2d_triangle_get_init_depth(eng_a_, c, &da), 0);
+        ASSERT_EQ(swmm_2d_triangle_get_init_depth(eng_b_, c, &db), 0);
+        EXPECT_NEAR(da, db, 1e-12);
+        for (int e = 0; e < nva; ++e) {
+            double ka, kb;
+            ASSERT_EQ(swmm_2d_get_edge_conveyance(eng_a_, c, e, &ka), 0);
+            ASSERT_EQ(swmm_2d_get_edge_conveyance(eng_b_, c, e, &kb), 0);
+            EXPECT_NEAR(ka, kb, 1e-12) << "conveyance " << c << "/" << e;
+            int ta = -1, tb = -1;
+            ASSERT_EQ(swmm_2d_get_edge_bc_type(eng_a_, c, e, &ta), 0);
+            ASSERT_EQ(swmm_2d_get_edge_bc_type(eng_b_, c, e, &tb), 0);
+            EXPECT_EQ(ta, tb) << "bc type " << c << "/" << e;
+        }
+    }
+    char buf[64];
+    ASSERT_EQ(swmm_2d_get_triangle_tag(eng_b_, 2, buf, sizeof buf), 0);
+    EXPECT_STREQ(buf, "street");
+    // Momentum option round-tripped through the generic option getter.
+    char opt[64];
+    ASSERT_EQ(swmm_options_get_ext(eng_b_, "MOMENTUM_EQUATION", opt, sizeof(opt)), 0);
+    EXPECT_STREQ(opt, "FULL_SWE");
+}
+
+// ---------------------------------------------------------------------------
 // INIT_DEPTH seeds the solver state: total volume = depth * area at start,
 // and the mass-balance ledger opens with it as initial storage (not error).
 // ---------------------------------------------------------------------------
@@ -282,10 +518,10 @@ TEST_F(InpWriter2DTest, UnitsHeaderPreventsDoubleScaling) {
 }
 
 // ---------------------------------------------------------------------------
-// Pure-1D model emits no [2D_*] text at all
+// A model without mesh preserves draft options without emitting mesh geometry
 // ---------------------------------------------------------------------------
 
-TEST_F(InpWriter2DTest, No2DModelEmitsNothing) {
+TEST_F(InpWriter2DTest, NoMeshModelPreservesDraftOptions) {
     const fs::path inp_a = dir_ / "plain.inp";
     write_file(inp_a, replace(k1DBase, "{FLOW_UNITS}", "CMS"));
 
@@ -293,7 +529,15 @@ TEST_F(InpWriter2DTest, No2DModelEmitsNothing) {
     const fs::path inp_b = dir_ / "plain_out.inp";
     ASSERT_EQ(swmm_model_write(eng_a_, inp_b.string().c_str()), 0);
 
-    EXPECT_EQ(read_file(inp_b).find("[2D_"), std::string::npos);
+    const auto text = read_file(inp_b);
+    EXPECT_NE(text.find("[2D_OPTIONS]"), std::string::npos);
+    EXPECT_EQ(text.find("[2D_VERTICES]"), std::string::npos);
+    EXPECT_EQ(text.find("[2D_TRIANGLES]"), std::string::npos);
+    EXPECT_EQ(text.find("[2D_QUADS]"), std::string::npos);
+    eng_b_ = open_engine(inp_b);
+    int active = -1;
+    ASSERT_EQ(swmm_2d_is_active(eng_b_, &active), 0);
+    EXPECT_EQ(active, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -305,8 +549,8 @@ TEST_F(InpWriter2DTest, MeshFileReferencePreserved) {
     write_file(mesh_2dm, k2DSections); // .2dm uses the same section grammar
 
     const fs::path inp_a = dir_ / "ext.inp";
-    write_file(inp_a, replace(k1DBase, "{FLOW_UNITS}", "CMS") +
-                          "\n[2D_MESH_FILE]\nFILE mesh_ext.2dm\n");
+    write_file(inp_a,
+               replace(k1DBase, "{FLOW_UNITS}", "CMS") + "\n[2D_MESH_FILE]\nFILE mesh_ext.2dm\n");
 
     eng_a_ = open_engine(inp_a);
     ASSERT_EQ(swmm_engine_initialize(eng_a_), 0); // 2D accessors need active module
@@ -331,6 +575,118 @@ TEST_F(InpWriter2DTest, MeshFileReferencePreserved) {
 }
 
 // ---------------------------------------------------------------------------
+// Mesh-reference policy on Save-As to a DIFFERENT directory.
+//
+// Two regimes, and only one of them re-anchors:
+//   * mesh loaded    → the sidecar travels with the .inp, so the reference stays
+//                      a bare relative name and Save-As must NOT write back into
+//                      the source folder.
+//   * mesh NOT loaded → nothing is written, so the reference must be re-anchored
+//                      or the saved model silently opens 1D-only.
+// MeshFileReferencePreserved above writes to the same directory and so cannot
+// distinguish any of this.
+// ---------------------------------------------------------------------------
+
+// Extract the FILE token from the [2D_MESH_FILE] block.
+/**
+ * @brief Extract the first column-zero FILE value after a mesh-file header.
+ *
+ * Starts at the first literal [2D_MESH_FILE] substring and scans onward without stopping at later
+ * sections. Does not require a word boundary after FILE, decode quotes or trim trailing whitespace;
+ * intended for controlled writer output.
+ *
+ * @param[in] text Complete input text expected in canonical writer layout.
+ * @return Owned remainder after FILE and leading spaces/tabs, or empty for absent header/value.
+ */
+static std::string mesh_file_token(const std::string& text) {
+    const auto at = text.find("[2D_MESH_FILE]");
+    if (at == std::string::npos)
+        return {};
+    std::istringstream is(text.substr(at));
+    std::string line;
+    while (std::getline(is, line)) {
+        if (line.rfind("FILE", 0) != 0)
+            continue;
+        const auto sp = line.find_first_not_of(" \t", 4);
+        return (sp == std::string::npos) ? std::string{} : line.substr(sp);
+    }
+    return {};
+}
+
+TEST_F(InpWriter2DTest, MeshTravelsWithSaveAsAndLeavesSourceUntouched) {
+    const fs::path src_dir = dir_ / "src";
+    const fs::path dst_dir = dir_ / "saveas";
+    fs::create_directories(src_dir);
+    fs::create_directories(dst_dir);
+
+    const fs::path mesh_2dm = src_dir / "mesh_ext.2dm";
+    write_file(mesh_2dm, k2DSections);
+    const std::string source_mesh_before = read_file(mesh_2dm);
+
+    const fs::path inp_a = src_dir / "ext.inp";
+    write_file(inp_a,
+               replace(k1DBase, "{FLOW_UNITS}", "CMS") + "\n[2D_MESH_FILE]\nFILE mesh_ext.2dm\n");
+
+    eng_a_ = open_engine(inp_a);
+    ASSERT_EQ(swmm_engine_initialize(eng_a_), 0);
+
+    const fs::path inp_b = dst_dir / "ext_out.inp";
+    ASSERT_EQ(swmm_model_write(eng_a_, inp_b.string().c_str()), 0);
+
+    const std::string tok = mesh_file_token(read_file(inp_b));
+    ASSERT_FALSE(tok.empty()) << "no FILE token in [2D_MESH_FILE]";
+    EXPECT_FALSE(fs::path(tok).is_absolute()) << "mesh reference leaked an absolute path: " << tok;
+    EXPECT_EQ(tok.find(".."), std::string::npos)
+        << "mesh travels with the .inp, so the reference must stay local: " << tok;
+
+    // The sidecar came along, and the ORIGINAL was not overwritten.
+    EXPECT_TRUE(fs::exists(dst_dir / "mesh_ext.2dm"))
+        << "sidecar must be written next to the destination .inp";
+    EXPECT_EQ(read_file(mesh_2dm), source_mesh_before)
+        << "Save-As must not write back into the source directory";
+
+    eng_b_ = open_engine(inp_b);
+    ASSERT_EQ(swmm_engine_initialize(eng_b_), 0);
+    int nvb = -1;
+    ASSERT_EQ(swmm_2d_vertex_count(eng_b_, &nvb), 0);
+    EXPECT_EQ(nvb, 4) << "saved model lost its external mesh";
+}
+
+TEST_F(InpWriter2DTest, UnloadableMeshReferenceReanchoredOnSaveAs) {
+    const fs::path src_dir = dir_ / "src_missing";
+    const fs::path dst_dir = dir_ / "saveas_missing";
+    fs::create_directories(src_dir);
+    fs::create_directories(dst_dir);
+
+    // Reference a .2dm that does not exist. A strict open rejects the model
+    // outright; the editor path (lenient open — what the GUI uses) keeps it
+    // loadable with no mesh in memory, so nothing will be written alongside
+    // the destination. That is exactly the case the re-anchor exists for.
+    const fs::path inp_a = src_dir / "ext.inp";
+    write_file(inp_a, replace(k1DBase, "{FLOW_UNITS}", "CMS") +
+                          "\n[2D_MESH_FILE]\nFILE absent_mesh.2dm\n");
+
+    eng_a_ = swmm_engine_create();
+    ASSERT_NE(eng_a_, nullptr);
+    swmm_engine_set_lenient_open(eng_a_, 1);
+    ASSERT_EQ(swmm_engine_open(eng_a_, inp_a.string().c_str(), "", "", nullptr), 0);
+
+    const fs::path inp_b = dst_dir / "ext_out.inp";
+    ASSERT_EQ(swmm_model_write(eng_a_, inp_b.string().c_str()), 0);
+
+    const std::string tok = mesh_file_token(read_file(inp_b));
+    ASSERT_FALSE(tok.empty()) << "no FILE token in [2D_MESH_FILE]";
+    EXPECT_EQ(tok.rfind("..", 0), 0u)
+        << "dangling mesh reference was not re-anchored on Save-As: " << tok;
+    EXPECT_NE(tok.find("absent_mesh.2dm"), std::string::npos);
+
+    // The re-anchored token must name the ORIGINAL location, so dropping the
+    // mesh back where it always was makes the saved model whole again.
+    const fs::path resolved = fs::weakly_canonical(dst_dir / fs::path(tok));
+    EXPECT_EQ(resolved, fs::weakly_canonical(src_dir / "absent_mesh.2dm"));
+}
+
+// ---------------------------------------------------------------------------
 // 2D option keys set through swmm_options_set_ext reach the solver options
 // and persist through swmm_model_write (GUI tab-6 wiring fix)
 // ---------------------------------------------------------------------------
@@ -344,9 +700,13 @@ TEST_F(InpWriter2DTest, ExtOptions2DRouteToSolverAndPersist) {
     // Set exactly like the GUI's 2D Surface Routing tab does.
     ASSERT_EQ(swmm_options_set_ext(eng_a_, "DRY_DEPTH", "0.005"), 0);
     ASSERT_EQ(swmm_options_set_ext(eng_a_, "THETA", "0.9"), 0);
+    ASSERT_EQ(swmm_options_set_ext(eng_a_, "THETA_REFERENCE_STEP", "0.125"), 0);
     ASSERT_EQ(swmm_options_set_ext(eng_a_, "LTS_TIERS", "6"), 0);
     // Invalid values are rejected (parse2DOptionsLine validation).
     EXPECT_NE(swmm_options_set_ext(eng_a_, "DRY_DEPTH", "not_a_number"), 0);
+    for (const char* invalid : {"-1", "nan", "inf", "1e999", "bad"})
+        EXPECT_NE(swmm_options_set_ext(eng_a_, "THETA_REFERENCE_STEP", invalid), 0);
+    EXPECT_NE(swmm_options_set_ext(eng_a_, "THETA", "nan"), 0);
     // Retired CVODE-stack keys are hard errors (D2, 2026-07-29).
     EXPECT_NE(swmm_options_set_ext(eng_a_, "LINEAR_SOLVER", "GMRES"), 0);
     EXPECT_NE(swmm_options_set_ext(eng_a_, "MAX_CVODE_STEPS", "500"), 0);
@@ -358,6 +718,8 @@ TEST_F(InpWriter2DTest, ExtOptions2DRouteToSolverAndPersist) {
     EXPECT_STREQ(buf, "0.005");
     ASSERT_EQ(swmm_options_get_ext(eng_a_, "THETA", buf, sizeof(buf)), 0);
     EXPECT_STREQ(buf, "0.9");
+    ASSERT_EQ(swmm_options_get_ext(eng_a_, "THETA_REFERENCE_STEP", buf, sizeof(buf)), 0);
+    EXPECT_STREQ(buf, "0.125");
 
     // The edits persist: the emitted [2D_OPTIONS] carries them...
     const fs::path inp_b = dir_ / "opt_out.inp";
@@ -366,14 +728,15 @@ TEST_F(InpWriter2DTest, ExtOptions2DRouteToSolverAndPersist) {
     const auto dd = text.find("DRY_DEPTH");
     ASSERT_NE(dd, std::string::npos);
     const std::string dd_line = text.substr(dd, text.find('\n', dd) - dd);
-    EXPECT_NE(dd_line.find("0.005"), std::string::npos)
-        << "DRY_DEPTH line was: " << dd_line;
+    EXPECT_NE(dd_line.find("0.005"), std::string::npos) << "DRY_DEPTH line was: " << dd_line;
     // ...retired keys are never written back...
     EXPECT_EQ(text.find("LINEAR_SOLVER"), std::string::npos);
     EXPECT_EQ(text.find("MAX_CVODE_STEPS"), std::string::npos);
 
     // ...and survive a reload.
     eng_b_ = open_engine(inp_b);
+    ASSERT_EQ(swmm_options_get_ext(eng_b_, "THETA_REFERENCE_STEP", buf, sizeof(buf)), 0);
+    EXPECT_STREQ(buf, "0.125");
     ASSERT_EQ(swmm_options_get_ext(eng_b_, "DRY_DEPTH", buf, sizeof(buf)), 0);
     EXPECT_STREQ(buf, "0.005");
     ASSERT_EQ(swmm_options_get_ext(eng_b_, "LTS_TIERS", buf, sizeof(buf)), 0);
@@ -395,7 +758,7 @@ TEST_F(InpWriter2DTest, ExtOptions2DRouteToSolverAndPersist) {
 
 TEST_F(InpWriter2DTest, MeshFileSettableViaExtApiWithoutInMemoryMesh) {
     const fs::path mesh_2dm = dir_ / "mesh_api.2dm";
-    write_file(mesh_2dm, k2DSections);            // valid external mesh on disk
+    write_file(mesh_2dm, k2DSections); // valid external mesh on disk
     const std::string mesh_before = read_file(mesh_2dm);
 
     // 1D-only model: the engine carries no 2D mesh in memory.
@@ -411,7 +774,7 @@ TEST_F(InpWriter2DTest, MeshFileSettableViaExtApiWithoutInMemoryMesh) {
 
     // Save: the reference is emitted even though no mesh is in memory, and
     // the geometry is NOT inlined.
-    const fs::path inp_b = dir_ / "api_out.inp";  // same dir → relative ref holds
+    const fs::path inp_b = dir_ / "api_out.inp"; // same dir → relative ref holds
     ASSERT_EQ(swmm_model_write(eng_a_, inp_b.string().c_str()), 0);
     const std::string text = read_file(inp_b);
     EXPECT_NE(text.find("[2D_MESH_FILE]"), std::string::npos);
@@ -448,8 +811,8 @@ TEST_F(InpWriter2DTest, ExternalMeshMutationsPersistOnSave) {
     write_file(mesh_2dm, k2DSections);
 
     const fs::path inp_a = dir_ / "mut.inp";
-    write_file(inp_a, replace(k1DBase, "{FLOW_UNITS}", "CMS") +
-                          "\n[2D_MESH_FILE]\nFILE mesh_mut.2dm\n");
+    write_file(inp_a,
+               replace(k1DBase, "{FLOW_UNITS}", "CMS") + "\n[2D_MESH_FILE]\nFILE mesh_mut.2dm\n");
 
     eng_a_ = open_engine(inp_a);
     ASSERT_EQ(swmm_engine_initialize(eng_a_), 0);
@@ -528,6 +891,95 @@ TEST_F(InpWriter2DTest, CouplingCdAreaApiRoundTrip) {
 }
 
 // ---------------------------------------------------------------------------
+// Map rows carry only what was authored: a row without CD/AREA tokens is
+// written without them (so COUPLING_CD and the area default keep governing
+// after a reload), and API edits count as authored and survive the save.
+// ---------------------------------------------------------------------------
+
+namespace {
+// Data rows of `section` in an .inp text, comment lines dropped, each split
+// into whitespace tokens.
+/**
+ * @brief Collect tokenized rows under matching column-zero section headers.
+ *
+ * Ignores column-zero ;; lines only; single-semicolon/indented comments and trailing inline
+ * comments can become tokens. Does not normalize case or parse numeric values; intended for
+ * canonical writer output.
+ *
+ * @param[in] text Complete input text, unchanged.
+ * @param[in] section Section-header prefix, normally bracketed exact section name.
+ * @return Owned nonempty whitespace-token rows from all matching sections.
+ */
+std::vector<std::vector<std::string>> section_rows(const std::string& text,
+                                                   const std::string& section) {
+    std::vector<std::vector<std::string>> rows;
+    std::istringstream in(text);
+    std::string line;
+    bool inside = false;
+    while (std::getline(in, line)) {
+        if (!line.empty() && line[0] == '[') {
+            inside = (line.rfind(section, 0) == 0);
+            continue;
+        }
+        if (!inside || line.rfind(";;", 0) == 0)
+            continue;
+        std::istringstream ls(line);
+        std::vector<std::string> tok;
+        for (std::string t; ls >> t;)
+            tok.push_back(t);
+        if (!tok.empty())
+            rows.push_back(tok);
+    }
+    return rows;
+}
+} // namespace
+
+TEST_F(InpWriter2DTest, CouplingRowsWriteOnlyAuthoredTokens) {
+    const fs::path inp_a = dir_ / "authored_a.inp";
+    write_file(inp_a, replace(k1DBase, "{FLOW_UNITS}", "CMS") +
+                          replace(k2DSections, "0  J1  0.7  2.5", "0  J1"));
+    eng_a_ = open_engine(inp_a);
+
+    // Vertex 0 stays unauthored, vertex 1 gets only an AREA through the API,
+    // vertex 2 is coupled through the API with nothing else, and a triangle
+    // row is added with both values.
+    ASSERT_EQ(swmm_2d_set_vertex_coupled_node(eng_a_, 1, "J1"), 0);
+    ASSERT_EQ(swmm_2d_set_vertex_coupling_area(eng_a_, 1, 3.0), 0);
+    ASSERT_EQ(swmm_2d_set_vertex_coupled_node(eng_a_, 2, "J1"), 0);
+    ASSERT_EQ(swmm_2d_add_triangle_coupling(eng_a_, 1, "J1", 0.55, 1.5), 0);
+
+    const fs::path inp_b = dir_ / "authored_b.inp";
+    ASSERT_EQ(swmm_model_write(eng_a_, inp_b.string().c_str()), 0);
+    const std::string text = read_file(inp_b);
+
+    const auto vrows = section_rows(text, "[2D_VERTEX_NODE_MAP]");
+    ASSERT_EQ(vrows.size(), 3u) << text;
+    EXPECT_EQ(vrows[0], (std::vector<std::string>{"0", "J1"}))
+        << "an unauthored row must not gain CD/AREA tokens";
+    ASSERT_EQ(vrows[1].size(), 4u)
+        << "an API AREA under a defaulted CD writes COUPLING_CD positionally";
+    EXPECT_EQ(vrows[1][0], "1");
+    EXPECT_EQ(vrows[1][1], "J1");
+    EXPECT_DOUBLE_EQ(std::stod(vrows[1][2]), 0.7);
+    EXPECT_DOUBLE_EQ(std::stod(vrows[1][3]), 3.0);
+    EXPECT_EQ(vrows[2], (std::vector<std::string>{"2", "J1"}));
+    const auto trows = section_rows(text, "[2D_TRIANGLE_NODE_MAP]");
+    ASSERT_EQ(trows.size(), 1u) << text;
+    ASSERT_EQ(trows[0].size(), 4u);
+    EXPECT_EQ(trows[0][0], "1");
+    EXPECT_EQ(trows[0][1], "J1");
+    EXPECT_DOUBLE_EQ(std::stod(trows[0][2]), 0.55);
+    EXPECT_DOUBLE_EQ(std::stod(trows[0][3]), 1.5);
+
+    eng_b_ = open_engine(inp_b);
+    double cd = 0.0, area = 0.0;
+    ASSERT_EQ(swmm_2d_get_vertex_coupling_cd(eng_b_, 1, &cd), 0);
+    ASSERT_EQ(swmm_2d_get_vertex_coupling_area(eng_b_, 1, &area), 0);
+    EXPECT_NEAR(cd, 0.7, 1e-12);
+    EXPECT_NEAR(area, 3.0, 1e-12) << "API AREA edit must survive the save";
+}
+
+// ---------------------------------------------------------------------------
 // GeoPackage end-to-end: open .inp → write .gpkg via plugin → reopen .gpkg
 // ---------------------------------------------------------------------------
 
@@ -542,8 +994,7 @@ TEST_F(InpWriter2DTest, GeoPackageWriteReopenEndToEnd) {
     const char* kGpkgId = "org.hydrocouple.openswmm.plugins.geopackage";
     int rc = swmm_model_write_with_plugin(eng_a_, gpkg.string().c_str(), kGpkgId);
     if (rc != 0) {
-        GTEST_SKIP() << "geopackage plugin unavailable in this build (rc="
-                     << rc << ")";
+        GTEST_SKIP() << "geopackage plugin unavailable in this build (rc=" << rc << ")";
     }
 
     eng_b_ = swmm_engine_create();

@@ -1,0 +1,9 @@
+# Sweep artifacts and the compiled driver — regenerated, never committed.
+# _results holds the results.jsonl behind the audit's numbers; it is evidence,
+# not source, and runs to tens of megabytes. Keep it on disk for review, out of
+# the history.
+_sweep*
+_results/
+probes/_*
+rt_write
+__pycache__/

@@ -1,6 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file TableData.cpp
- * @brief File-backed I/O, cache management, validation, and multicolumn
+ * @file      TableData.cpp
+ * @brief     File-backed I/O, cache management, validation, and multicolumn
  *        lookup for Table/TableData.
  *
  * @details All value data uses flat row-major layout:
@@ -10,12 +26,13 @@
  * @see TableData.hpp
  * @ingroup engine_data
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #include "TableData.hpp"
+#include "core/FileIO.hpp" // issue #7: UTF-8 paths on Windows
 #include "../core/DateTime.hpp"
 #include "../core/ErrorCodes.hpp"
 #include "../core/charconv_compat.hpp"
@@ -36,58 +53,78 @@ namespace openswmm {
 namespace {
 
 /**
- * @brief Detect whether a file line looks like a CSV header (contains
- *        non-numeric comma/tab separated tokens with at least one alpha char).
+ * @brief Heuristically identify a delimited text header.
+ *
+ * Does not parse quotes or distinguish alphabetic data from headers.
+ *
+ * @param[in] line Non-NULL readable NUL-terminated line; scan stops at CR/LF.
+ * @return True only when comma/tab and an ASCII letter both occur before the line end.
  */
 bool looks_like_csv_header(const char* line) {
     bool has_delim = false;
     bool has_alpha = false;
     for (const char* p = line; *p && *p != '\n' && *p != '\r'; ++p) {
-        if (*p == ',' || *p == '\t') has_delim = true;
-        if ((*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z')) has_alpha = true;
+        if (*p == ',' || *p == '\t')
+            has_delim = true;
+        if ((*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z'))
+            has_alpha = true;
     }
     return has_delim && has_alpha;
 }
 
 /**
- * @brief Split a line by comma or tab, trimming whitespace from each token.
+ * @brief Split one unquoted comma-or-tab line and trim ASCII spaces.
+ *
+ * No quoted-field/escaped delimiter support. Interior empty fields are retained; a final delimiter
+ * does not add an empty trailing field. Allocation can throw.
+ *
+ * @param[in] line Non-NULL NUL-terminated text; any comma anywhere selects comma delimiter,
+ *     otherwise tab.
+ * @return Owned field strings up to CR/LF/NUL, with leading/trailing spaces removed.
  */
 std::vector<std::string> split_csv_line(const char* line) {
     std::vector<std::string> tokens;
     char delim = ',';
-    if (std::strchr(line, ',') == nullptr) delim = '\t';
+    if (std::strchr(line, ',') == nullptr)
+        delim = '\t';
 
     const char* p = line;
     while (*p && *p != '\n' && *p != '\r') {
-        while (*p == ' ') ++p;
+        while (*p == ' ')
+            ++p;
         const char* start = p;
-        while (*p && *p != delim && *p != '\n' && *p != '\r') ++p;
+        while (*p && *p != delim && *p != '\n' && *p != '\r')
+            ++p;
         const char* end = p;
-        while (end > start && *(end - 1) == ' ') --end;
+        while (end > start && *(end - 1) == ' ')
+            --end;
         tokens.emplace_back(start, end);
-        if (*p == delim) ++p;
+        if (*p == delim)
+            ++p;
     }
     return tokens;
 }
 
 /**
- * @brief Parse a datetime from a single string token.
- *        Handles: "YYYY-MM-DD HH:MM:SS", "MM/DD/YYYY HH:MM", date-only, etc.
- * @returns OADate (days since 12/30/1899) as double, or -1.0 on failure.
+ * @brief Parse supported CSV date/time prefixes into OADate.
+ *
+ * At least H:M selects time form; absent seconds initialize0. Prefix parsing permits trailing text
+ * and calendar validity follows encoders; no timezone conversion.
+ *
+ * @param[in] tok Borrowed YYYY-MM-DD or M/D/Y text, optionally space H:M[:S].
+ * @return Encoded OADate or -1 when no supported date prefix scans.
  */
 double parse_csv_datetime(const std::string& tok) {
     int month = 0, day = 0, year = 0;
     int hour = 0, minute = 0, second = 0;
 
-    if (std::sscanf(tok.c_str(), "%d-%d-%d %d:%d:%d",
-                    &year, &month, &day, &hour, &minute, &second) >= 5) {
-        return datetime::encodeDate(year, month, day)
-             + datetime::encodeTime(hour, minute, second);
+    if (std::sscanf(tok.c_str(), "%d-%d-%d %d:%d:%d", &year, &month, &day, &hour, &minute,
+                    &second) >= 5) {
+        return datetime::encodeDate(year, month, day) + datetime::encodeTime(hour, minute, second);
     }
-    if (std::sscanf(tok.c_str(), "%d/%d/%d %d:%d:%d",
-                    &month, &day, &year, &hour, &minute, &second) >= 5) {
-        return datetime::encodeDate(year, month, day)
-             + datetime::encodeTime(hour, minute, second);
+    if (std::sscanf(tok.c_str(), "%d/%d/%d %d:%d:%d", &month, &day, &year, &hour, &minute,
+                    &second) >= 5) {
+        return datetime::encodeDate(year, month, day) + datetime::encodeTime(hour, minute, second);
     }
     if (std::sscanf(tok.c_str(), "%d-%d-%d", &year, &month, &day) == 3) {
         return datetime::encodeDate(year, month, day);
@@ -99,8 +136,19 @@ double parse_csv_datetime(const std::string& tok) {
 }
 
 /**
- * @brief Parse a legacy SWMM .dat line: "MM/DD/YYYY  H:MM  value [value ...]"
- * @returns Number of value columns parsed. Fills x_out and vals_out.
+ * @brief Parse a M/D/Y H:M[:S] line followed by numeric values.
+ *
+ * Uses prefix calendar scans and from_chars_double; no complete-tail, finite, chronological or unit
+ * validation. Allocation can leave a parsed prefix; x_out remains prior value when date/time
+ * scanning fails.
+ *
+ * @param[in] line Non-NULL NUL-terminated input line; date/time whitespace tokens each at most31
+ *     scanned bytes.
+ * @param[out] x_out OADate destination assigned once date/time parse, even when no numeric values
+ *     follow.
+ * @param[out] vals_out Cleared immediately and appended with parsed numeric values until line end
+ *     or first conversion error.
+ * @return Number of appended values (must fit int),0 for missing/malformed tokens or no values.
  */
 int parse_dat_line(const char* line, double& x_out, std::vector<double>& vals_out) {
     vals_out.clear();
@@ -111,21 +159,25 @@ int parse_dat_line(const char* line, double& x_out, std::vector<double>& vals_ou
         return 0;
 
     int month = 0, day = 0, year = 0;
-    if (std::sscanf(date_str, "%d/%d/%d", &month, &day, &year) != 3) return 0;
+    if (std::sscanf(date_str, "%d/%d/%d", &month, &day, &year) != 3)
+        return 0;
 
     int hour = 0, minute = 0, second = 0;
-    if (std::sscanf(time_str, "%d:%d:%d", &hour, &minute, &second) < 2) return 0;
+    if (std::sscanf(time_str, "%d:%d:%d", &hour, &minute, &second) < 2)
+        return 0;
 
-    x_out = datetime::encodeDate(year, month, day)
-          + datetime::encodeTime(hour, minute, second);
+    x_out = datetime::encodeDate(year, month, day) + datetime::encodeTime(hour, minute, second);
 
     const char* p = line + offset;
     while (*p) {
-        while (*p == ' ' || *p == '\t') ++p;
-        if (*p == '\n' || *p == '\r' || *p == '\0') break;
+        while (*p == ' ' || *p == '\t')
+            ++p;
+        if (*p == '\n' || *p == '\r' || *p == '\0')
+            break;
         double v = 0.0;
         auto [np, ec] = openswmm::from_chars_double(p, p + std::strlen(p), v);
-        if (ec != std::errc{}) break;
+        if (ec != std::errc{})
+            break;
         vals_out.push_back(v);
         p = np;
     }
@@ -144,17 +196,17 @@ int parse_dat_line(const char* line, double& x_out, std::vector<double>& vals_ou
  * @param row_offsets Output: row_offsets[k] = byte offset of row (k * INDEX_STRIDE).
  * @returns           Total number of data rows.
  */
-std::size_t count_and_index_rows(std::FILE* fp, long data_start,
-                                 std::vector<long>& row_offsets) {
+std::size_t count_and_index_rows(std::FILE* fp, long data_start, std::vector<long>& row_offsets) {
     std::fseek(fp, data_start, SEEK_SET);
     row_offsets.clear();
-    row_offsets.push_back(data_start);  // row 0 starts at data_start
+    row_offsets.push_back(data_start); // row 0 starts at data_start
 
     std::size_t count = 0;
     char buf[1024];
     while (true) {
         long line_start = std::ftell(fp);
-        if (!std::fgets(buf, sizeof(buf), fp)) break;
+        if (!std::fgets(buf, sizeof(buf), fp))
+            break;
         if (buf[0] == ';' || buf[0] == '\n' || buf[0] == '\r' || buf[0] == '#')
             continue;
         ++count;
@@ -178,10 +230,8 @@ std::size_t count_and_index_rows(std::FILE* fp, long data_start,
  * @param y_out     Output: values [num_rows * ncols], row-major.
  * @returns         Number of rows actually read.
  */
-std::size_t read_rows_flat(std::FILE* fp, bool is_csv, int ncols,
-                           std::size_t max_rows,
-                           std::vector<double>& x_out,
-                           std::vector<double>& y_out) {
+std::size_t read_rows_flat(std::FILE* fp, bool is_csv, int ncols, std::size_t max_rows,
+                           std::vector<double>& x_out, std::vector<double>& y_out) {
     x_out.clear();
     y_out.clear();
 
@@ -194,10 +244,12 @@ std::size_t read_rows_flat(std::FILE* fp, bool is_csv, int ncols,
 
         if (is_csv) {
             auto tokens = split_csv_line(buf);
-            if (tokens.empty()) continue;
+            if (tokens.empty())
+                continue;
 
             double dt = parse_csv_datetime(tokens[0]);
-            if (dt < 0.0) continue;
+            if (dt < 0.0)
+                continue;
 
             x_out.push_back(dt);
             for (int c = 0; c < ncols; ++c) {
@@ -213,7 +265,8 @@ std::size_t read_rows_flat(std::FILE* fp, bool is_csv, int ncols,
             double xv = 0.0;
             std::vector<double> vals;
             int nv = parse_dat_line(buf, xv, vals);
-            if (nv == 0) continue;
+            if (nv == 0)
+                continue;
 
             x_out.push_back(xv);
             for (int c = 0; c < ncols; ++c) {
@@ -226,13 +279,20 @@ std::size_t read_rows_flat(std::FILE* fp, bool is_csv, int ncols,
 }
 
 /**
- * @brief Detect whether column IDs are numeric ("1","2",...) or named headers.
+ * @brief Determine column-selector mode using only the first requested ID.
+ *
+ * Does not inspect later selectors, trim whitespace or validate header membership.
+ *
+ * @param[in] column_ids Borrowed selectors; empty list means numeric/default mode.
+ * @return False for empty list or a fully parsed first int, true if first selector is
+ *     nonnumeric/out-of-int-range.
  */
 bool has_named_columns(const std::vector<std::string>& column_ids) {
-    if (column_ids.empty()) return false;
+    if (column_ids.empty())
+        return false;
     int dummy = 0;
-    auto [p, ec] = std::from_chars(column_ids[0].data(),
-                                   column_ids[0].data() + column_ids[0].size(), dummy);
+    auto [p, ec] =
+        std::from_chars(column_ids[0].data(), column_ids[0].data() + column_ids[0].size(), dummy);
     return (ec != std::errc{} || p != column_ids[0].data() + column_ids[0].size());
 }
 
@@ -243,8 +303,10 @@ bool has_named_columns(const std::vector<std::string>& column_ids) {
 // ============================================================================
 
 /**
- * @brief Format a DateTime value as "MM/DD/YYYY HH:MM:SS" for error messages.
- *        Matches legacy report_writeTseriesErrorMsg() output.
+ * @brief Format an OADate as the legacy date/time diagnostic spelling.
+ *
+ * @param[in] dt OADate value supported by datetime decodeDate/decodeTime.
+ * @return Owned MM/DD/YYYY HH:MM:SS text; formatting performs no time-zone conversion.
  */
 static std::string format_datetime(double dt) {
     int y, m, d, h, mi, s;
@@ -264,8 +326,7 @@ static std::string format_datetime(double dt) {
  * @param bad_idx Output: index of first violation (-1 if monotonic).
  * @returns       true if strictly non-decreasing.
  */
-static bool check_monotonicity(const double* x, std::size_t n,
-                               double& dx_min, int& bad_idx) {
+static bool check_monotonicity(const double* x, std::size_t n, double& dx_min, int& bad_idx) {
     dx_min = 1.0e30;
     bad_idx = -1;
     for (std::size_t i = 1; i < n; ++i) {
@@ -274,7 +335,8 @@ static bool check_monotonicity(const double* x, std::size_t n,
             bad_idx = static_cast<int>(i);
             return false;
         }
-        if (dx > 0.0 && dx < dx_min) dx_min = dx;
+        if (dx > 0.0 && dx < dx_min)
+            dx_min = dx;
     }
     return true;
 }
@@ -307,28 +369,30 @@ TableValidation validate_table(Table& tbl) {
         double bdx_min = 1.0e30;
         int bad_idx = -1;
         if (!tbl.first_boundary.empty()) {
-            check_monotonicity(tbl.first_boundary.x.data(),
-                               tbl.first_boundary.num_rows(), bdx_min, bad_idx);
+            check_monotonicity(tbl.first_boundary.x.data(), tbl.first_boundary.num_rows(), bdx_min,
+                               bad_idx);
             if (bad_idx >= 0) {
                 result.valid = false;
-                result.errors.push_back(is_ts
-                    ? format_error(seq_err, tbl.id,
-                          "at " + format_datetime(tbl.first_boundary.x[bad_idx]))
-                    : format_error(seq_err, tbl.id));
+                result.errors.push_back(
+                    is_ts ? format_error(seq_err, tbl.id,
+                                         "at " + format_datetime(tbl.first_boundary.x[bad_idx]))
+                          : format_error(seq_err, tbl.id));
             }
-            if (bdx_min < tbl.dx_min || tbl.dx_min == 0.0) tbl.dx_min = bdx_min;
+            if (bdx_min < tbl.dx_min || tbl.dx_min == 0.0)
+                tbl.dx_min = bdx_min;
         }
         if (!tbl.last_boundary.empty()) {
-            check_monotonicity(tbl.last_boundary.x.data(),
-                               tbl.last_boundary.num_rows(), bdx_min, bad_idx);
+            check_monotonicity(tbl.last_boundary.x.data(), tbl.last_boundary.num_rows(), bdx_min,
+                               bad_idx);
             if (bad_idx >= 0) {
                 result.valid = false;
-                result.errors.push_back(is_ts
-                    ? format_error(seq_err, tbl.id,
-                          "at " + format_datetime(tbl.last_boundary.x[bad_idx]))
-                    : format_error(seq_err, tbl.id));
+                result.errors.push_back(
+                    is_ts ? format_error(seq_err, tbl.id,
+                                         "at " + format_datetime(tbl.last_boundary.x[bad_idx]))
+                          : format_error(seq_err, tbl.id));
             }
-            if (bdx_min < tbl.dx_min || tbl.dx_min == 0.0) tbl.dx_min = bdx_min;
+            if (bdx_min < tbl.dx_min || tbl.dx_min == 0.0)
+                tbl.dx_min = bdx_min;
         }
 
         // Cross-boundary ordering
@@ -339,8 +403,8 @@ TableValidation validate_table(Table& tbl) {
         }
 
         // Boundary y-size consistency
-        std::size_t expected = tbl.first_boundary.num_rows() *
-            static_cast<std::size_t>(tbl.first_boundary.num_cols);
+        std::size_t expected =
+            tbl.first_boundary.num_rows() * static_cast<std::size_t>(tbl.first_boundary.num_cols);
         if (!tbl.first_boundary.empty() && tbl.first_boundary.y.size() != expected) {
             result.valid = false;
             result.errors.push_back(format_error(ERR_TABLE_COL_MISMATCH, tbl.id));
@@ -360,10 +424,9 @@ TableValidation validate_table(Table& tbl) {
 
         if (bad_idx >= 0) {
             result.valid = false;
-            result.errors.push_back(is_ts
-                ? format_error(seq_err, tbl.id,
-                      "at " + format_datetime(tbl.x[bad_idx]))
-                : format_error(seq_err, tbl.id));
+            result.errors.push_back(
+                is_ts ? format_error(seq_err, tbl.id, "at " + format_datetime(tbl.x[bad_idx]))
+                      : format_error(seq_err, tbl.id));
         }
     }
 
@@ -397,12 +460,23 @@ TableValidation validate_table(Table& tbl) {
 // ============================================================================
 // table_open_file
 // ============================================================================
+// NOTE (2026-08-17): this streaming, sliding-cache reader (and its
+// column_ids/column_map/table_lookup_column/table_step_column companions)
+// has no callers. The multi-column series feature was implemented with an
+// eager parse-once cache instead — see src/engine/input/MultiColumnSeriesFile
+// and plans/MULTICOLUMN_SERIES_SINGLE_READ_2026-08-17.md (decision D1):
+// runtime consumers copy their column into their own x/y arrays, so wiring
+// this streaming path would have changed every lookup call site for no
+// footprint win at current model sizes. Left in place per repo guidelines
+// (do not delete pre-existing dead code).
 
 bool table_open_file(Table& tbl, std::size_t boundary_rows) {
-    if (tbl.file_path.empty()) return false;
+    if (tbl.file_path.empty())
+        return false;
 
-    std::FILE* fp = std::fopen(tbl.file_path.c_str(), "r");
-    if (!fp) return false;
+    std::FILE* fp = openswmm::io::fopen_utf8(tbl.file_path, "r");
+    if (!fp)
+        return false;
 
     tbl.file_handle = fp;
     tbl.is_file_based = true;
@@ -422,8 +496,8 @@ bool table_open_file(Table& tbl, std::size_t boundary_rows) {
     bool is_csv = false;
 
     while (std::fgets(first_line, sizeof(first_line), fp)) {
-        if (first_line[0] == ';' || first_line[0] == '#' ||
-            first_line[0] == '\n' || first_line[0] == '\r') {
+        if (first_line[0] == ';' || first_line[0] == '#' || first_line[0] == '\n' ||
+            first_line[0] == '\r') {
             pre_data_pos = std::ftell(fp);
             continue;
         }
@@ -448,7 +522,8 @@ bool table_open_file(Table& tbl, std::size_t boundary_rows) {
         double xv = 0.0;
         std::vector<double> vals;
         int ncols = parse_dat_line(first_line, xv, vals);
-        if (ncols == 0) ncols = 1;
+        if (ncols == 0)
+            ncols = 1;
 
         tbl.column_ids.clear();
         tbl.column_map.clear();
@@ -461,7 +536,8 @@ bool table_open_file(Table& tbl, std::size_t boundary_rows) {
     }
 
     int ncols = static_cast<int>(tbl.column_ids.size());
-    if (ncols == 0) ncols = 1;
+    if (ncols == 0)
+        ncols = 1;
     tbl.num_cols = ncols;
 
     // Count total data rows and build sparse byte-offset index
@@ -471,8 +547,7 @@ bool table_open_file(Table& tbl, std::size_t boundary_rows) {
     std::fseek(fp, tbl.data_start_offset, SEEK_SET);
     std::size_t first_n = std::min(boundary_rows, tbl.total_rows);
     tbl.first_boundary.num_cols = ncols;
-    read_rows_flat(fp, is_csv, ncols, first_n,
-                   tbl.first_boundary.x, tbl.first_boundary.y);
+    read_rows_flat(fp, is_csv, ncols, first_n, tbl.first_boundary.x, tbl.first_boundary.y);
 
     // ---- Read last boundary ----
     if (tbl.total_rows > boundary_rows) {
@@ -501,8 +576,7 @@ bool table_open_file(Table& tbl, std::size_t boundary_rows) {
             }
         }
         tbl.last_boundary.num_cols = ncols;
-        read_rows_flat(fp, is_csv, ncols, boundary_rows,
-                       tbl.last_boundary.x, tbl.last_boundary.y);
+        read_rows_flat(fp, is_csv, ncols, boundary_rows, tbl.last_boundary.x, tbl.last_boundary.y);
     } else {
         tbl.last_boundary = tbl.first_boundary;
     }
@@ -524,12 +598,14 @@ bool table_open_file(Table& tbl, std::size_t boundary_rows) {
 // ============================================================================
 
 std::size_t table_load_cache(Table& tbl, std::size_t start_row) {
-    if (!tbl.file_handle || !tbl.is_file_based) return 0;
+    if (!tbl.file_handle || !tbl.is_file_based)
+        return 0;
 
     bool is_csv = has_named_columns(tbl.column_ids);
 
     int ncols = tbl.num_cols;
-    if (ncols == 0) ncols = 1;
+    if (ncols == 0)
+        ncols = 1;
 
     // Seek to start_row using the row-offset index for O(1) positioning
     {
@@ -559,8 +635,7 @@ std::size_t table_load_cache(Table& tbl, std::size_t start_row) {
     }
 
     tbl.cache.num_cols = ncols;
-    std::size_t rows = read_rows_flat(tbl.file_handle, is_csv, ncols,
-                                      tbl.num_cache_rows,
+    std::size_t rows = read_rows_flat(tbl.file_handle, is_csv, ncols, tbl.num_cache_rows,
                                       tbl.cache.x, tbl.cache.y);
     tbl.cache.file_row_start = start_row;
 
@@ -585,33 +660,35 @@ namespace {
  * @param n          Output: number of rows.
  * @param cursor_idx Output: cursor position (row-relative to returned arrays).
  * @returns          true if data is available.
+  * @param[in,out] tbl Valid aligned table; file-backed lookup may seek/reload cache.
+ * @param[in] x_query Finite independent variable in stored x units, used for cache placement.
  */
-bool prepare_lookup(Table& tbl, double x_query,
-                    const double*& x_data, const double*& y_base,
+bool prepare_lookup(Table& tbl, double x_query, const double*& x_data, const double*& y_base,
                     int& stride, int& n, int& cursor_idx) {
 
     if (tbl.is_file_based) {
         if (tbl.cache.empty() || tbl.total_rows == 0) {
             table_load_cache(tbl, 0);
         }
-        if (tbl.cache.empty()) return false;
+        if (tbl.cache.empty())
+            return false;
 
         // Check if x_query is outside cache window
         if (x_query < tbl.cache.x.front() || x_query > tbl.cache.x.back()) {
             std::size_t target_row = 0;
             if (tbl.x_max > tbl.x_min && tbl.total_rows > 1) {
-                double frac = std::clamp(
-                    (x_query - tbl.x_min) / (tbl.x_max - tbl.x_min), 0.0, 1.0);
-                target_row = static_cast<std::size_t>(
-                    frac * static_cast<double>(tbl.total_rows - 1));
+                double frac = std::clamp((x_query - tbl.x_min) / (tbl.x_max - tbl.x_min), 0.0, 1.0);
+                target_row =
+                    static_cast<std::size_t>(frac * static_cast<double>(tbl.total_rows - 1));
             }
             std::size_t half = tbl.num_cache_rows / 2;
             std::size_t start = (target_row > half) ? target_row - half : 0;
             table_load_cache(tbl, start);
-            if (tbl.cache.empty()) return false;
+            if (tbl.cache.empty())
+                return false;
         }
 
-        n      = static_cast<int>(tbl.cache.num_rows());
+        n = static_cast<int>(tbl.cache.num_rows());
         stride = tbl.cache.num_cols;
         x_data = tbl.cache.x.data();
         y_base = tbl.cache.y.data();
@@ -623,7 +700,8 @@ bool prepare_lookup(Table& tbl, double x_query,
 
     // In-memory
     n = static_cast<int>(tbl.x.size());
-    if (n == 0) return false;
+    if (n == 0)
+        return false;
 
     stride = tbl.num_cols;
     x_data = tbl.x.data();
@@ -646,21 +724,22 @@ double table_lookup_column(Table& tbl, int col_idx, double x_query) {
     if (!prepare_lookup(tbl, x_query, x_data, y_base, stride, n, idx))
         return 0.0;
 
-    if (col_idx < 0 || col_idx >= stride) col_idx = 0;
-    if (n == 1) return y_base[col_idx];
+    if (col_idx < 0 || col_idx >= stride)
+        col_idx = 0;
+    if (n == 1)
+        return y_base[col_idx];
 
     // Clamp below
     if (x_query <= x_data[0]) {
-        tbl.cursor.index = tbl.is_file_based
-            ? static_cast<int>(tbl.cache.file_row_start) : 0;
+        tbl.cursor.index = tbl.is_file_based ? static_cast<int>(tbl.cache.file_row_start) : 0;
         tbl.cursor.direction = +1;
         return y_base[col_idx];
     }
 
     // Clamp above
     if (x_query >= x_data[n - 1]) {
-        tbl.cursor.index = tbl.is_file_based
-            ? static_cast<int>(tbl.cache.file_row_start) + n - 1 : n - 1;
+        tbl.cursor.index =
+            tbl.is_file_based ? static_cast<int>(tbl.cache.file_row_start) + n - 1 : n - 1;
         tbl.cursor.direction = -1;
         return y_base[static_cast<std::size_t>(n - 1) * stride + col_idx];
     }
@@ -676,13 +755,13 @@ double table_lookup_column(Table& tbl, int col_idx, double x_query) {
         tbl.cursor.direction = -1;
     }
 
-    tbl.cursor.index = tbl.is_file_based
-        ? static_cast<int>(tbl.cache.file_row_start) + idx : idx;
+    tbl.cursor.index = tbl.is_file_based ? static_cast<int>(tbl.cache.file_row_start) + idx : idx;
 
     const double dx = x_data[idx + 1] - x_data[idx];
     const double y0 = y_base[static_cast<std::size_t>(idx) * stride + col_idx];
     const double y1 = y_base[static_cast<std::size_t>(idx + 1) * stride + col_idx];
-    if (dx <= 0.0) return y0;
+    if (dx <= 0.0)
+        return y0;
     const double t = (x_query - x_data[idx]) / dx;
     return y0 + t * (y1 - y0);
 }
@@ -699,19 +778,20 @@ double table_step_column(Table& tbl, int col_idx, double x_query) {
     if (!prepare_lookup(tbl, x_query, x_data, y_base, stride, n, idx))
         return 0.0;
 
-    if (col_idx < 0 || col_idx >= stride) col_idx = 0;
-    if (n == 1) return y_base[col_idx];
+    if (col_idx < 0 || col_idx >= stride)
+        col_idx = 0;
+    if (n == 1)
+        return y_base[col_idx];
 
     if (x_query < x_data[0]) {
-        tbl.cursor.index = tbl.is_file_based
-            ? static_cast<int>(tbl.cache.file_row_start) : 0;
+        tbl.cursor.index = tbl.is_file_based ? static_cast<int>(tbl.cache.file_row_start) : 0;
         tbl.cursor.direction = +1;
         return 0.0;
     }
 
     if (x_query >= x_data[n - 1]) {
-        tbl.cursor.index = tbl.is_file_based
-            ? static_cast<int>(tbl.cache.file_row_start) + n - 1 : n - 1;
+        tbl.cursor.index =
+            tbl.is_file_based ? static_cast<int>(tbl.cache.file_row_start) + n - 1 : n - 1;
         tbl.cursor.direction = -1;
         return y_base[static_cast<std::size_t>(n - 1) * stride + col_idx];
     }
@@ -727,8 +807,7 @@ double table_step_column(Table& tbl, int col_idx, double x_query) {
         tbl.cursor.direction = -1;
     }
 
-    tbl.cursor.index = tbl.is_file_based
-        ? static_cast<int>(tbl.cache.file_row_start) + idx : idx;
+    tbl.cursor.index = tbl.is_file_based ? static_cast<int>(tbl.cache.file_row_start) + idx : idx;
 
     return y_base[static_cast<std::size_t>(idx) * stride + col_idx];
 }

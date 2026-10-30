@@ -1,13 +1,16 @@
-/*!
- * \file swmm_output.c
- * \brief Source code providing an API for reading SWMM binary output files.
- * \author Colleen Barr (US EPA - ORD/NHEERL)
- * \author  Michael E. Tryby (US EPA - ORD/NHEERL) (Modified)
- * \author  Bryant McDonnell (Modified)
- * \author  Caleb Buahin  (US EPA ORD/CESER/WID) (Modified)
- * \date Created: 2017-08-25
- * \date Last edited: 2024-10-17
- * \todo Add support for reading results even if the simulation has not completed.
+/**
+ * @file      swmm_output.c
+ * @brief     Source code providing an API for reading SWMM binary output files.
+ * @author    Colleen Barr (US EPA - ORD/NHEERL)
+ * @author    Michael E. Tryby (US EPA - ORD/NHEERL) (Modified)
+ * @author    Bryant McDonnell (Modified)
+ * @author    Caleb Buahin  (US EPA ORD/CESER/WID) (Modified)
+ * @date      Created: 2017-08-25
+ * @date      Last edited: 2024-10-17
+ * @todo Add support for reading results even if the simulation has not completed.
+ * @copyright Copyright (c) 2026 Caleb Buahin. OpenSWMM contributions only; original EPA SWMM
+ *            credits are retained.
+ * @license   Apache-2.0 for OpenSWMM contributions; original EPA SWMM provenance is retained.
  */
 
 #include <stdio.h>
@@ -26,13 +29,13 @@
  */
 #define F_OFF __int64
 #else
-  #include <sys/types.h>
-  #include <unistd.h>
+#include <sys/types.h>
+#include <unistd.h>
 /*!
  * \def F_OFF
  * \brief 8 byte / 64 bit integer for large file support on Unix-like systems
  */
-  #define F_OFF off_t
+#define F_OFF off_t
 #endif
 
 /*!
@@ -54,7 +57,7 @@
 #define RECORDSIZE 4
 
 /*!
- * \def DATASIZE
+ * \def DATESIZE
  * \brief Dates are stored as 8 byte word size
  */
 #define DATESIZE 8
@@ -75,16 +78,15 @@
  * \struct IDentry
  * \brief Structure for element names
  */
-struct IDentry
-{
+struct IDentry {
     /*! \brief Pointer to element name */
-    char *IDname;
+    char* IDname;
     /*! \brief Length of element name */
     int length;
 };
 
 /*!
- * \typedef IDentry
+ * \typedef idEntry
  */
 typedef struct IDentry idEntry;
 
@@ -92,16 +94,15 @@ typedef struct IDentry idEntry;
  * \struct data
  * \brief Structure for SWMM binary output file data
  */
-typedef struct
-{
+typedef struct {
     /*! \brief File path/name */
     char name[MAXFILENAME + 1];
 
     /*! \brief File pointer */
-    FILE *file;
+    FILE* file;
 
     /*! \brief Array of pointers to element names */
-    struct IDentry *elementNames;
+    struct IDentry* elementNames;
 
     /*! \brief Number of reporting periods */
     long Nperiods;
@@ -125,43 +126,43 @@ typedef struct
     int SubcatchVars;
 
     /*! \brief Indexes/enum codes of node reporting variables */
-    int *SubcatchVarIndexes;
+    int* SubcatchVarIndexes;
 
     /*! \brief Number of subcatchment properties */
     int SubcatchProperties;
 
     /*! \brief Indexes/enum codes of subcatchment properties */
-    int *SubcatchPropertyIndexes;
+    int* SubcatchPropertyIndexes;
 
     /*! \brief Number of node reporting variables */
     int NodeVars;
 
     /*! \brief Indexes/enum codes of node reporting variables */
-    int *NodeVarIndexes;
+    int* NodeVarIndexes;
 
     /*! \brief Number of node properties */
     int NodeProperties;
 
     /*! \brief Indexes/enum codes of node properties */
-    int *NodePropertyIndexes;
+    int* NodePropertyIndexes;
 
     /*! \brief Number of link reporting variables */
     int LinkVars;
 
     /*! \brief Indexes/enum codes of link reporting variables */
-    int *LinkVarIndexes;
+    int* LinkVarIndexes;
 
     /*! \brief Number of link properties */
     int LinkProperties;
 
     /*! \brief Indexes/enum codes of link properties */
-    int *LinkPropertyIndexes;
+    int* LinkPropertyIndexes;
 
     /*! \brief Number of system reporting variables */
     int SysVars;
 
     /*! \brief Indexes/enum codes of system reporting variables */
-    int *SysVarIndexes;
+    int* SysVarIndexes;
 
     /*! \brief Start date of simulation */
     double StartDate;
@@ -182,143 +183,208 @@ typedef struct
     F_OFF BytesPerPeriod;
 
     /*! \brief Pointer to error manager handle */
-    error_handle_t *error_handle;
+    error_handle_t* error_handle;
 } data_t;
 
 //-----------------------------------------------------------------------------
 //   Local functions
 //-----------------------------------------------------------------------------
 
-/*!
- * \brief Error lookup function
- * \param[in] errcode Error code
- * \param[out] errmsg Error message
- * \param[in] length Length of error message
+/**
+ * @brief Copy an output-API lookup message into a fixed-size destination.
+ *
+ * Copies at most the fixed message width without changing a handle. The lookup table supplies
+ * bounded literal messages; caller storage is borrowed and not retained.
+ *
+ * @param[in] errcode Output warning/error code; unrecognized values produce an empty string.
+ * @param[out] errmsg Non-null writable ERR_MAXMSG-byte destination (256 bytes).
+ * @param[in] length Compatibility capacity argument, ignored; actual writable capacity must still
+ *     be ERR_MAXMSG.
  */
-void errorLookup(int errcode, char *errmsg, int length);
+void errorLookup(int errcode, char* errmsg, int length);
 
-/*!
- * \brief Validate the output file
- * \param[in] p_data Pointer to data structure
- * \return Error code
+/**
+ * @brief Read the output epilogue and validate its matching magic numbers/results count.
+ *
+ * Seeks/reads change the stream position but are not checked. A structurally readable completed
+ * file is required; this is not a complete corrupt/truncated-file validator. Does not compare the
+ * magic against a separate expected constant.
+ *
+ * @param[in,out] p_data Non-null initialized metadata with a readable FILE stream; receives
+ *     ID/property/result offsets and Nperiods.
+ * @return ERR435 when leading/trailing magic values differ, ERR436 when no periods exist, WARN10
+ *     when the saved run error is nonzero, otherwise zero.
  */
-int validateFile(data_t *p_data);
+int validateFile(data_t* p_data);
 
-/*!
- * \brief Initialize element names
- * \param[in] p_data Pointer to data structure
+/**
+ * @brief Allocate and load the concatenated subcatchment/node/link/pollutant ID table.
+ *
+ * Allocates the table and each zero-terminated ID string; the handle owns them until SMO_close.
+ * Seeks and allocation/read outcomes are unchecked. Calling again without releasing the old table
+ * leaks it; callers normally invoke this lazily only when elementNames is null.
+ *
+ * @param[in,out] p_data Non-null opened metadata with valid counts/IDPos and no previously
+ *     allocated elementNames table.
  */
-void initElementNames(data_t *p_data);
+void initElementNames(data_t* p_data);
 
-/*!
- * \brief Get time value
- * \param[in] p_data Pointer to data structure
- * \param[in] timeIndex Time index
- * \return Time value
+/**
+ * @brief Read one saved absolute simulation date from its period record.
+ *
+ * Uses the byte stride and result start stored in metadata. Seek/read errors are ignored; caller
+ * must provide a valid completed readable file and serialize stream access.
+ *
+ * @param[in,out] p_data Non-null opened reader; metadata is read, FILE position changes.
+ * @param[in] timeIndex Unchecked zero-based saved period index within Nperiods.
+ * @return File-stored double date in legacy SWMM decimal days; an unsuccessful read can leave the
+ *     result indeterminate.
  */
-double getTimeValue(data_t *p_data, int timeIndex);
+double getTimeValue(data_t* p_data, int timeIndex);
 
-/*!
- * \brief Get subcatchment value
- * \param[in] p_data Pointer to data structure
- * \param[in] timeIndex Time index
- * \param[in] subcatchIndex Subcatchment index
- * \param[in] attr Subcatchment attribute
- * \return Subcatchment value
+/**
+ * @brief Read a single subcatchment attribute by direct binary-record offset.
+ *
+ * No bounds, seek or read validation is performed. Requires a well-formed readable completed file
+ * and exclusive stream access during the call.
+ *
+ * @param[in,out] p_data Non-null opened reader with valid offsets/counts; FILE position changes.
+ * @param[in] timeIndex Unchecked zero-based saved period below Nperiods.
+ * @param[in] subcatchIndex Unchecked zero-based subcatchment index strictly below its count.
+ * @param[in] attr Unchecked stored subcatchment variable position, including pollutant slots; not
+ *     translated through saved variable codes.
+ * @return File-stored float in its original attribute units; an incomplete read can leave the value
+ *     indeterminate.
  */
-float getSubcatchValue(data_t *p_data, int timeIndex, int subcatchIndex, SMO_subcatchAttribute attr);
+float getSubcatchValue(data_t* p_data, int timeIndex, int subcatchIndex,
+                       SMO_subcatchAttribute attr);
 
-/*!
- * \brief Get node value
- * \param[in] p_data Pointer to data structure
- * \param[in] timeIndex Time index
- * \param[in] nodeIndex Node index
- * \param[in] attr Node attribute
- * \return Node value
+/**
+ * @brief Read a single node attribute by direct binary-record offset.
+ *
+ * No bounds, seek or read validation is performed. Requires a well-formed readable completed file
+ * and exclusive stream access during the call.
+ *
+ * @param[in,out] p_data Non-null opened reader with valid offsets/counts; FILE position changes.
+ * @param[in] timeIndex Unchecked zero-based saved period below Nperiods.
+ * @param[in] nodeIndex Unchecked zero-based node index strictly below its count.
+ * @param[in] attr Unchecked stored node variable position, including pollutant slots; not
+ *     translated through saved variable codes.
+ * @return File-stored float in its original attribute units; an incomplete read can leave the value
+ *     indeterminate.
  */
-float getNodeValue(data_t *p_data, int timeIndex, int nodeIndex, SMO_nodeAttribute attr);
+float getNodeValue(data_t* p_data, int timeIndex, int nodeIndex, SMO_nodeAttribute attr);
 
-/*!
- * \brief Get link value
- * \param[in] p_data Pointer to data structure
- * \param[in] timeIndex Time index
- * \param[in] linkIndex Link index
- * \param[in] attr Link attribute
- * \return Link value
+/**
+ * @brief Read a single link attribute by direct binary-record offset.
+ *
+ * No bounds, seek or read validation is performed. Requires a well-formed readable completed file
+ * and exclusive stream access during the call.
+ *
+ * @param[in,out] p_data Non-null opened reader with valid offsets/counts; FILE position changes.
+ * @param[in] timeIndex Unchecked zero-based saved period below Nperiods.
+ * @param[in] linkIndex Unchecked zero-based link index strictly below its count.
+ * @param[in] attr Unchecked stored link variable position, including pollutant slots; not
+ *     translated through saved variable codes.
+ * @return File-stored float in its original attribute units; an incomplete read can leave the value
+ *     indeterminate.
  */
-float getLinkValue(data_t *p_data, int timeIndex, int linkIndex, SMO_linkAttribute attr);
+float getLinkValue(data_t* p_data, int timeIndex, int linkIndex, SMO_linkAttribute attr);
 
-/*!
- * \brief Get system value
- * \param[in] p_data Pointer to data structure
- * \param[in] timeIndex Time index
- * \param[in] attr System attribute
- * \return System value
+/**
+ * @brief Read a single system attribute by direct binary-record offset.
+ *
+ * No bounds, seek or read validation is performed. Requires a well-formed readable completed file
+ * and exclusive stream access during the call.
+ *
+ * @param[in,out] p_data Non-null opened reader with valid offsets/counts; FILE position changes.
+ * @param[in] timeIndex Unchecked zero-based saved period below Nperiods.
+ * @param[in] attr Unchecked stored system variable position, including pollutant slots; not
+ *     translated through saved variable codes.
+ * @return File-stored float in its original attribute units; an incomplete read can leave the value
+ *     indeterminate.
  */
-float getSystemValue(data_t *p_data, int timeIndex, SMO_systemAttribute attr);
+float getSystemValue(data_t* p_data, int timeIndex, SMO_systemAttribute attr);
 
-/*!
- * \brief Open file for reading with error handling
- * \param[in] f Pointer to file pointer
- * \param[in] name File path/name
- * \param[in] mode File mode
- * \return Error
- * \note This function is a wrapper for fopen
+/**
+ * @brief Open a C stream through the platform-specific fopen interface.
+ *
+ * The caller owns any returned stream and must fclose it; an existing stream stored in *f is
+ * overwritten without closing.
+ *
+ * @param[out] f Non-null writable stream pointer; receives the new stream or null.
+ * @param[in] name Non-null null-terminated path, borrowed for the call.
+ * @param[in] mode Non-null C stdio mode string, borrowed for the call.
+ * @return Zero on success; Microsoft fopen_s error on MSVC, otherwise -1 if fopen returned null.
  */
-int _fopen(FILE **f, const char *name, const char *mode);
+int _fopen(FILE** f, const char* name, const char* mode);
 
-/*!
- * \brief Seek to position in file with error handling
- * \param[in] stream Pointer to file stream
- * \param[in] offset Offset from whence
- * \param[in] whence Position in file
- * \return Error
- * \note This function is a wrapper for fseek
+/**
+ * @brief Seek a stream using the platform large-file offset implementation.
+ *
+ * @param[in,out] stream Non-null open stream whose position is changed.
+ * @param[in] offset Signed byte offset relative to whence.
+ * @param[in] whence SEEK_SET, SEEK_CUR or SEEK_END.
+ * @return Underlying _fseeki64/fseeko status: zero on success, nonzero on failure. No output-API
+ *     handle error is recorded.
  */
-int _fseek(FILE *stream, F_OFF offset, int whence);
+int _fseek(FILE* stream, F_OFF offset, int whence);
 
-/*!
- * \brief Get current position in file with error handling
- * \param[in] stream Pointer to file stream
- * \return Current position in file
- * \note This function is a wrapper for ftell
+/**
+ * @brief Read the current stream byte position using large-file offsets.
+ *
+ * @param[in] stream Non-null open stream.
+ * @return Underlying _ftelli64/ftello position, or -1 on failure; no handle error is recorded.
  */
-F_OFF _ftell(FILE *stream);
+F_OFF _ftell(FILE* stream);
 
-/*!
- * \brief Allocate memory for float array
- * \param[in] n Number of elements
- * \return Pointer to float array
+/**
+ * @brief Allocate uninitialized float array storage.
+ *
+ * Caller releases with free or SMO_free. Negative counts convert to an unsigned allocation size;
+ * callers must prevent them.
+ *
+ * @param[in] n Nonnegative element count; no sign or multiplication-overflow checks are performed.
+ * @return malloc-owned storage for n elements, or null on failure. For n == 0, follows
+ *     implementation-defined malloc(0) behavior.
  */
-float *newFloatArray(int n);
+float* newFloatArray(int n);
 
-/*!
- * \brief Allocate memory for integer array
- * \param[in] n Number of elements
- * \return Pointer to integer array
+/**
+ * @brief Allocate uninitialized int array storage.
+ *
+ * Caller releases with free or SMO_free. Negative counts convert to an unsigned allocation size;
+ * callers must prevent them.
+ *
+ * @param[in] n Nonnegative element count; no sign or multiplication-overflow checks are performed.
+ * @return malloc-owned storage for n elements, or null on failure. For n == 0, follows
+ *     implementation-defined malloc(0) behavior.
  */
-int *newIntArray(int n);
+int* newIntArray(int n);
 
-/*!
- * \brief Allocate memory for character array
- * \param[in] n Number of elements
- * \return Pointer to character array
+/**
+ * @brief Allocate uninitialized char array storage.
+ *
+ * Caller releases with free or SMO_free. Negative counts convert to an unsigned allocation size;
+ * callers must prevent them.
+ *
+ * @param[in] n Nonnegative element count; no sign or multiplication-overflow checks are performed.
+ * @return malloc-owned storage for n elements, or null on failure. For n == 0, follows
+ *     implementation-defined malloc(0) behavior.
  */
-char *newCharArray(int n);
+char* newCharArray(int n);
 
-/*!
- * \copydoc SMO_init
+/**
+ * @see Declaration contract for SMO_init().
  */
-int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_init(SMO_Handle *p_handle)
-{
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_init(SMO_Handle* p_handle) {
     int errorcode = 0;
-    data_t *priv_data = NULL;
+    data_t* priv_data = NULL;
 
     // // Allocate memory for private data
-    priv_data = (data_t *)calloc(1, sizeof(data_t));
+    priv_data = (data_t*)calloc(1, sizeof(data_t));
 
-    if (priv_data != NULL)
-    {
+    if (priv_data != NULL) {
 
         priv_data->elementNames = NULL;
         priv_data->file = NULL;
@@ -333,30 +399,27 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_init(SMO_Handle *p_handle)
         priv_data->error_handle = new_error_manager(errorLookup);
 
         *p_handle = priv_data;
-    }
-    else
+    } else
         errorcode = -1;
 
     // TODO: Need to handle errors during initialization better.
     return errorcode;
 }
 
-/*!
- * \copydoc SMO_open
+/**
+ * @see Declaration contract for SMO_open().
  */
-int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_open(SMO_Handle p_handle, const char *path)
-{
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_open(SMO_Handle p_handle, const char* path) {
     int err, errorcode = 0;
     F_OFF offset;
 
-    data_t *p_data;
+    data_t* p_data;
 
-    p_data = (data_t *)p_handle;
+    p_data = (data_t*)p_handle;
 
     if (p_data == NULL)
         return -1;
-    else
-    {
+    else {
 
 #ifdef _MSC_VER
         strncpy_s(p_data->name, MAXFILENAME, path, MAXFILENAME);
@@ -373,8 +436,7 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_open(SMO_Handle p_handle, const char *pat
             errorcode = err;
 
         // If a warning is encountered read file header
-        if (errorcode < 400)
-        {
+        if (errorcode < 400) {
             // --- otherwise read additional parameters from start of file
             _fseek(p_data->file, 3 * RECORDSIZE, SEEK_SET);
             fread(&(p_data->Nsubcatch), RECORDSIZE, 1, p_data->file);
@@ -385,39 +447,40 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_open(SMO_Handle p_handle, const char *pat
             // Read number properties for each object type
             _fseek(p_data->file, p_data->ObjPropPos, SEEK_SET);
             fread(&(p_data->SubcatchProperties), RECORDSIZE, 1, p_data->file);
-            if (p_data->SubcatchProperties > 0)
-            {
+            if (p_data->SubcatchProperties > 0) {
                 if (p_data->SubcatchPropertyIndexes != NULL)
                     free(p_data->SubcatchPropertyIndexes);
 
                 p_data->SubcatchPropertyIndexes = newIntArray(p_data->SubcatchProperties);
-                fread(p_data->SubcatchPropertyIndexes, RECORDSIZE, p_data->SubcatchProperties, p_data->file);
+                fread(p_data->SubcatchPropertyIndexes, RECORDSIZE, p_data->SubcatchProperties,
+                      p_data->file);
             }
 
-            offset = ftell(p_data->file) + p_data->Nsubcatch * p_data->SubcatchProperties * RECORDSIZE;
+            offset =
+                ftell(p_data->file) + p_data->Nsubcatch * p_data->SubcatchProperties * RECORDSIZE;
             _fseek(p_data->file, offset, SEEK_SET);
 
             fread(&(p_data->NodeProperties), RECORDSIZE, 1, p_data->file);
-            if (p_data->NodeProperties > 0)
-            {
+            if (p_data->NodeProperties > 0) {
                 if (p_data->NodePropertyIndexes != NULL)
                     free(p_data->NodePropertyIndexes);
 
                 p_data->NodePropertyIndexes = newIntArray(p_data->NodeProperties);
-                fread(p_data->NodePropertyIndexes, RECORDSIZE, p_data->NodeProperties, p_data->file);
+                fread(p_data->NodePropertyIndexes, RECORDSIZE, p_data->NodeProperties,
+                      p_data->file);
             }
 
             offset = ftell(p_data->file) + p_data->Nnodes * p_data->NodeProperties * RECORDSIZE;
             _fseek(p_data->file, offset, SEEK_SET);
 
             fread(&(p_data->LinkProperties), RECORDSIZE, 1, p_data->file);
-            if (p_data->LinkProperties > 0)
-            {
+            if (p_data->LinkProperties > 0) {
                 if (p_data->LinkPropertyIndexes != NULL)
                     free(p_data->LinkPropertyIndexes);
 
                 p_data->LinkPropertyIndexes = newIntArray(p_data->LinkProperties);
-                fread(p_data->LinkPropertyIndexes, RECORDSIZE, p_data->LinkProperties, p_data->file);
+                fread(p_data->LinkPropertyIndexes, RECORDSIZE, p_data->LinkProperties,
+                      p_data->file);
             }
 
             offset = ftell(p_data->file) + p_data->Nlinks * p_data->LinkProperties * RECORDSIZE;
@@ -425,8 +488,7 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_open(SMO_Handle p_handle, const char *pat
 
             // Read number & codes of computed variables
             fread(&(p_data->SubcatchVars), RECORDSIZE, 1, p_data->file); // # Subcatch variables
-            if (p_data->SubcatchVars > 0)
-            {
+            if (p_data->SubcatchVars > 0) {
                 if (p_data->SubcatchVarIndexes != NULL)
                     free(p_data->SubcatchVarIndexes);
 
@@ -435,8 +497,7 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_open(SMO_Handle p_handle, const char *pat
             }
 
             fread(&(p_data->NodeVars), RECORDSIZE, 1, p_data->file); // # Node variables
-            if (p_data->NodeVars > 0)
-            {
+            if (p_data->NodeVars > 0) {
                 if (p_data->NodeVarIndexes != NULL)
                     free(p_data->NodeVarIndexes);
 
@@ -445,8 +506,7 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_open(SMO_Handle p_handle, const char *pat
             }
 
             fread(&(p_data->LinkVars), RECORDSIZE, 1, p_data->file); // # Link variables
-            if (p_data->LinkVars > 0)
-            {
+            if (p_data->LinkVars > 0) {
                 if (p_data->LinkVarIndexes != NULL)
                     free(p_data->LinkVarIndexes);
 
@@ -455,8 +515,7 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_open(SMO_Handle p_handle, const char *pat
             }
 
             fread(&(p_data->SysVars), RECORDSIZE, 1, p_data->file); // # System variables
-            if (p_data->SysVars > 0)
-            {
+            if (p_data->SysVars > 0) {
                 if (p_data->SysVarIndexes != NULL)
                     free(p_data->SysVarIndexes);
 
@@ -474,16 +533,14 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_open(SMO_Handle p_handle, const char *pat
             // period
             p_data->BytesPerPeriod =
                 DATESIZE +
-                (p_data->Nsubcatch * p_data->SubcatchVars +
-                 p_data->Nnodes * p_data->NodeVars +
+                (p_data->Nsubcatch * p_data->SubcatchVars + p_data->Nnodes * p_data->NodeVars +
                  p_data->Nlinks * p_data->LinkVars + p_data->SysVars) *
                     RECORDSIZE;
         }
     }
     // If error close the binary file (but don't free the handle --
     // the caller owns it and will call SMO_close)
-    if (errorcode > 400)
-    {
+    if (errorcode > 400) {
         set_error(p_data->error_handle, errorcode);
         if (p_data->file != NULL) {
             fclose(p_data->file);
@@ -494,25 +551,21 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_open(SMO_Handle p_handle, const char *pat
     return errorcode;
 }
 
-/*!
- * \copydoc SMO_close
+/**
+ * @see Declaration contract for SMO_close().
  */
-int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_close(SMO_Handle *p_handle)
-{
-    data_t *p_data;
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_close(SMO_Handle* p_handle) {
+    data_t* p_data;
     int i, n, errorcode = 0;
 
-    p_data = (data_t *)*p_handle;
+    p_data = (data_t*)*p_handle;
 
     if (p_data == NULL)
         errorcode = -1;
 
-    else
-    {
-        if (p_data->elementNames != NULL)
-        {
-            n = p_data->Nsubcatch + p_data->Nnodes + p_data->Nlinks +
-                p_data->Npolluts;
+    else {
+        if (p_data->elementNames != NULL) {
+            n = p_data->Nsubcatch + p_data->Nnodes + p_data->Nlinks + p_data->Npolluts;
 
             for (i = 0; i < n; i++)
                 free(p_data->elementNames[i].IDname);
@@ -521,52 +574,44 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_close(SMO_Handle *p_handle)
             p_data->elementNames = NULL;
         }
 
-        if (p_data->SubcatchVarIndexes != NULL)
-        {
+        if (p_data->SubcatchVarIndexes != NULL) {
             free(p_data->SubcatchVarIndexes);
             p_data->SubcatchVarIndexes = NULL;
         }
 
-        if (p_data->NodeVarIndexes != NULL)
-        {
+        if (p_data->NodeVarIndexes != NULL) {
             free(p_data->NodeVarIndexes);
             p_data->NodeVarIndexes = NULL;
         }
 
-        if (p_data->LinkVarIndexes != NULL)
-        {
+        if (p_data->LinkVarIndexes != NULL) {
             free(p_data->LinkVarIndexes);
             p_data->LinkVarIndexes = NULL;
         }
 
-        if (p_data->SysVarIndexes != NULL)
-        {
+        if (p_data->SysVarIndexes != NULL) {
             free(p_data->SysVarIndexes);
             p_data->SysVarIndexes = NULL;
         }
 
-        if (p_data->SubcatchPropertyIndexes != NULL)
-        {
+        if (p_data->SubcatchPropertyIndexes != NULL) {
             free(p_data->SubcatchPropertyIndexes);
             p_data->SubcatchPropertyIndexes = NULL;
         }
 
-        if (p_data->NodePropertyIndexes != NULL)
-        {
+        if (p_data->NodePropertyIndexes != NULL) {
             free(p_data->NodePropertyIndexes);
             p_data->NodePropertyIndexes = NULL;
         }
 
-        if (p_data->LinkPropertyIndexes != NULL)
-        {
+        if (p_data->LinkPropertyIndexes != NULL) {
             free(p_data->LinkPropertyIndexes);
             p_data->LinkPropertyIndexes = NULL;
         }
 
         dst_error_manager(p_data->error_handle);
 
-        if (p_data->file != NULL)
-        {
+        if (p_data->file != NULL) {
             fclose(p_data->file);
             p_data->file = NULL;
         }
@@ -579,20 +624,18 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_close(SMO_Handle *p_handle)
     return errorcode;
 }
 
-/*!
- * \copydoc SMO_getVersion
+/**
+ * @see Declaration contract for SMO_getVersion().
  */
-int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getVersion(SMO_Handle p_handle, int *version)
-{
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getVersion(SMO_Handle p_handle, int* version) {
     int errorcode = 0;
-    data_t *p_data;
+    data_t* p_data;
 
-    p_data = (data_t *)p_handle;
+    p_data = (data_t*)p_handle;
 
     if (p_data == NULL)
         return -1;
-    else
-    {
+    else {
         fseek(p_data->file, 1 * RECORDSIZE, SEEK_SET);
         if (fread(version, RECORDSIZE, 1, p_data->file) != 1)
             errorcode = ERR436;
@@ -601,16 +644,16 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getVersion(SMO_Handle p_handle, int *vers
     return set_error(p_data->error_handle, errorcode);
 }
 
-/*!
- * \copydoc SM0_getProjectSize
+/**
+ * @see Declaration contract for SMO_getProjectSize().
  */
-int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getProjectSize(SMO_Handle p_handle, int **elementCount, int *length)
-{
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getProjectSize(SMO_Handle p_handle, int** elementCount,
+                                                      int* length) {
     int errorcode = 0;
-    int *temp;
-    data_t *p_data;
+    int* temp;
+    data_t* p_data;
 
-    p_data = (data_t *)p_handle;
+    p_data = (data_t*)p_handle;
 
     *elementCount = NULL;
     *length = NELEMENTTYPES;
@@ -619,8 +662,7 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getProjectSize(SMO_Handle p_handle, int *
         errorcode = -1;
     else if (MEMCHECK(temp = newIntArray(*length)))
         errorcode = 414;
-    else
-    {
+    else {
         temp[0] = p_data->Nsubcatch;
         temp[1] = p_data->Nnodes;
         temp[2] = p_data->Nlinks;
@@ -633,17 +675,16 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getProjectSize(SMO_Handle p_handle, int *
     return set_error(p_data->error_handle, errorcode);
 }
 
-/*!
- * \copydoc SMO_getUnits
+/**
+ * @see Declaration contract for SMO_getUnits().
  */
-int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getUnits(SMO_Handle p_handle, int **unitFlag, int *length)
-{
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getUnits(SMO_Handle p_handle, int** unitFlag, int* length) {
     int errorcode = 0;
-    int *temp;
+    int* temp;
     F_OFF offset;
-    data_t *p_data;
+    data_t* p_data;
 
-    p_data = (data_t *)p_handle;
+    p_data = (data_t*)p_handle;
 
     *unitFlag = NULL;
     if (p_data->Npolluts > 0)
@@ -651,14 +692,13 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getUnits(SMO_Handle p_handle, int **unitF
     else
         *length = 3;
 
-    p_data = (data_t *)p_handle;
+    p_data = (data_t*)p_handle;
 
     if (p_data == NULL)
         errorcode = -1;
     else if (MEMCHECK(temp = newIntArray(*length)))
         errorcode = 414;
-    else
-    {
+    else {
         // Set flow units flag
         fseek(p_data->file, 2 * RECORDSIZE, SEEK_SET);
         fread(&temp[1], RECORDSIZE, 1, p_data->file);
@@ -672,8 +712,7 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getUnits(SMO_Handle p_handle, int **unitF
         // Set conc units flag
         if (p_data->Npolluts == 0)
             temp[2] = SMO_NONE;
-        else
-        {
+        else {
             offset = p_data->ObjPropPos - (p_data->Npolluts * RECORDSIZE);
             _fseek(p_data->file, offset, SEEK_SET);
             fread(&temp[2], RECORDSIZE, p_data->Npolluts, p_data->file);
@@ -684,22 +723,20 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getUnits(SMO_Handle p_handle, int **unitF
     return set_error(p_data->error_handle, errorcode);
 }
 
-/*!
- * \copydoc SMO_getFlowUnits
+/**
+ * @see Declaration contract for SMO_getFlowUnits().
  */
-int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getFlowUnits(SMO_Handle p_handle, int *unitFlag)
-{
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getFlowUnits(SMO_Handle p_handle, int* unitFlag) {
     int errorcode = 0;
-    data_t *p_data;
+    data_t* p_data;
 
     *unitFlag = -1;
 
-    p_data = (data_t *)p_handle;
+    p_data = (data_t*)p_handle;
 
     if (p_data == NULL)
         return -1;
-    else
-    {
+    else {
         fseek(p_data->file, 2 * RECORDSIZE, SEEK_SET);
         fread(unitFlag, RECORDSIZE, 1, p_data->file);
     }
@@ -707,24 +744,23 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getFlowUnits(SMO_Handle p_handle, int *un
     return set_error(p_data->error_handle, errorcode);
 }
 
-/*!
- * \copydoc SMO_getPollutantUnits
+/**
+ * @see Declaration contract for SMO_getPollutantUnits().
  */
-int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getPollutantUnits(SMO_Handle p_handle, int **unitFlag, int *length)
-{
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getPollutantUnits(SMO_Handle p_handle, int** unitFlag,
+                                                         int* length) {
     int errorcode = 0;
-    int *temp;
+    int* temp;
     F_OFF offset;
-    data_t *p_data;
+    data_t* p_data;
 
-    p_data = (data_t *)p_handle;
+    p_data = (data_t*)p_handle;
 
     if (p_data == NULL)
         errorcode = -1;
     else if (MEMCHECK(temp = newIntArray(p_data->Npolluts)))
         errorcode = 414;
-    else
-    {
+    else {
         offset = p_data->ObjPropPos - (p_data->Npolluts * RECORDSIZE);
         _fseek(p_data->file, offset, SEEK_SET);
         fread(temp, RECORDSIZE, p_data->Npolluts, p_data->file);
@@ -736,17 +772,16 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getPollutantUnits(SMO_Handle p_handle, in
     return set_error(p_data->error_handle, errorcode);
 }
 
-/*!
- * \copydoc SMO_getStartDate
+/**
+ * @see Declaration contract for SMO_getStartDate().
  */
-int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getStartDate(SMO_Handle p_handle, double *date)
-{
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getStartDate(SMO_Handle p_handle, double* date) {
     int errorcode = 0;
-    data_t *p_data;
+    data_t* p_data;
 
     *date = -1.0;
 
-    p_data = (data_t *)p_handle;
+    p_data = (data_t*)p_handle;
 
     if (p_data == NULL)
         errorcode = -1;
@@ -756,24 +791,21 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getStartDate(SMO_Handle p_handle, double 
     return set_error(p_data->error_handle, errorcode);
 }
 
-/*!
- * \copydoc SMO_getTimes
+/**
+ * @see Declaration contract for SMO_getTimes().
  */
-int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getTimes(SMO_Handle p_handle, SMO_time code, int *time)
-{
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getTimes(SMO_Handle p_handle, SMO_time code, int* time) {
     int errorcode = 0;
-    data_t *p_data;
+    data_t* p_data;
 
     *time = -1;
 
-    p_data = (data_t *)p_handle;
+    p_data = (data_t*)p_handle;
 
     if (p_data == NULL)
         errorcode = -1;
-    else
-    {
-        switch (code)
-        {
+    else {
+        switch (code) {
         case SMO_reportStep:
             *time = p_data->ReportStep;
             break;
@@ -788,33 +820,26 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getTimes(SMO_Handle p_handle, SMO_time co
     return set_error(p_data->error_handle, errorcode);
 }
 
-/*!
- * \copydoc SMO_getElementName
+/**
+ * @see Declaration contract for SMO_getElementName().
  */
-int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getElementName(
-    SMO_Handle p_handle,
-    SMO_elementType type,
-    int index,
-    char **name,
-    int *length)
-{
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getElementName(SMO_Handle p_handle, SMO_elementType type,
+                                                      int index, char** name, int* length) {
     int idx = -1, errorcode = 0;
-    data_t *p_data;
+    data_t* p_data;
 
-    p_data = (data_t *)p_handle;
+    p_data = (data_t*)p_handle;
 
     if (p_data == NULL)
         errorcode = 410;
     else if (p_data->file == NULL)
         errorcode = ERR411;
-    else
-    {
+    else {
         // Initialize the name array if necessary
         if (p_data->elementNames == NULL)
             initElementNames(p_data);
 
-        switch (type)
-        {
+        switch (type) {
         case SMO_subcatch:
             if (index < 0 || index >= p_data->Nsubcatch)
                 errorcode = ERR423;
@@ -840,29 +865,23 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getElementName(
             if (index < 0 || index >= p_data->Npolluts)
                 errorcode = ERR423;
             else
-                idx = p_data->Nsubcatch + p_data->Nnodes + p_data->Nlinks +
-                      index;
+                idx = p_data->Nsubcatch + p_data->Nnodes + p_data->Nlinks + index;
             break;
 
         default:
             errorcode = ERR421;
         }
 
-        if (!errorcode)
-        {
+        if (!errorcode) {
             *length = p_data->elementNames[idx].length;
             *name = newCharArray(*length + 1);
             // Writes IDname and an additional null character to name
 
 #ifdef _MSC_VER
-            strncpy_s(
-                *name,
-                (*length + 1) * sizeof(char),
-                p_data->elementNames[idx].IDname,
-                (*length + 1) * sizeof(char));
+            strncpy_s(*name, (*length + 1) * sizeof(char), p_data->elementNames[idx].IDname,
+                      (*length + 1) * sizeof(char));
 #else
-            strncpy(*name, p_data->elementNames[idx].IDname,
-                    (*length + 1) * sizeof(char));
+            strncpy(*name, p_data->elementNames[idx].IDname, (*length + 1) * sizeof(char));
 #endif
         }
     }
@@ -870,26 +889,22 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getElementName(
     return set_error(p_data->error_handle, errorcode);
 }
 
-/*!
- * \copydoc SMO_getNumVars
+/**
+ * @see Declaration contract for SMO_getNumVars().
  */
-int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getNumVars(
-    SMO_Handle p_handle,
-    SMO_elementType type,
-    int *count)
-{
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getNumVars(SMO_Handle p_handle, SMO_elementType type,
+                                                  int* count) {
     int errorcode = 0;
-    data_t *p_data;
+    data_t* p_data;
 
     *count = -1;
 
-    p_data = (data_t *)p_handle;
+    p_data = (data_t*)p_handle;
 
     if (p_data == NULL)
         errorcode = -1;
     else
-        switch (type)
-        {
+        switch (type) {
         case SMO_subcatch:
             *count = p_data->SubcatchVars;
             break;
@@ -909,23 +924,22 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getNumVars(
     return set_error(p_data->error_handle, errorcode);
 }
 
-/*!
- * \copydoc SMO_getVarCode
+/**
+ * @see Declaration contract for SMO_getVarCode().
  */
-int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getVarCode(SMO_Handle p_handle, SMO_elementType type, int varIndex, int *varCode)
-{
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getVarCode(SMO_Handle p_handle, SMO_elementType type,
+                                                  int varIndex, int* varCode) {
     int errorcode = 0;
-    int *temp = NULL;
-    data_t *p_data = NULL;
+    int* temp = NULL;
+    data_t* p_data = NULL;
     *varCode = -1;
 
-    p_data = (data_t *)p_handle;
+    p_data = (data_t*)p_handle;
 
     if (p_data == NULL)
         errorcode = -1;
     else
-        switch (type)
-        {
+        switch (type) {
         case SMO_subcatch:
             if (varIndex < 0 || varIndex >= p_data->SubcatchVars)
                 errorcode = ERR423;
@@ -960,22 +974,21 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getVarCode(SMO_Handle p_handle, SMO_eleme
     return set_error(p_data->error_handle, errorcode);
 }
 
-/*!
- * \copydoc SMO_getVarCodes
+/**
+ * @see Declaration contract for SMO_getVarCodes().
  */
-int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getVarCodes(SMO_Handle p_handle, SMO_elementType type, int **varCodes, int *size)
-{
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getVarCodes(SMO_Handle p_handle, SMO_elementType type,
+                                                   int** varCodes, int* size) {
     int errorcode = 0;
-    int *temp = NULL;
-    data_t *p_data = NULL;
+    int* temp = NULL;
+    data_t* p_data = NULL;
 
-    p_data = (data_t *)p_handle;
+    p_data = (data_t*)p_handle;
 
     if (p_data == NULL)
         errorcode = -1;
     else
-        switch (type)
-        {
+        switch (type) {
         case SMO_subcatch:
             *size = p_data->SubcatchVars;
             temp = p_data->SubcatchVarIndexes;
@@ -996,8 +1009,7 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getVarCodes(SMO_Handle p_handle, SMO_elem
             errorcode = ERR421;
         }
 
-    if (!errorcode)
-    {
+    if (!errorcode) {
         *varCodes = newIntArray(*size);
         for (int i = 0; i < *size; i++)
             (*varCodes)[i] = temp[i];
@@ -1006,23 +1018,22 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getVarCodes(SMO_Handle p_handle, SMO_elem
     return set_error(p_data->error_handle, errorcode);
 }
 
-/*!
- * \copydoc SMO_getNumProperties
+/**
+ * @see Declaration contract for SMO_getNumProperties().
  */
-int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getNumProperties(SMO_Handle p_handle, SMO_elementType type, int *count)
-{
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getNumProperties(SMO_Handle p_handle, SMO_elementType type,
+                                                        int* count) {
     int errorcode = 0;
-    data_t *p_data;
+    data_t* p_data;
 
     *count = -1;
 
-    p_data = (data_t *)p_handle;
+    p_data = (data_t*)p_handle;
 
     if (p_data == NULL)
         errorcode = -1;
     else
-        switch (type)
-        {
+        switch (type) {
         case SMO_subcatch:
             *count = p_data->SubcatchProperties;
             break;
@@ -1039,23 +1050,22 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getNumProperties(SMO_Handle p_handle, SMO
     return set_error(p_data->error_handle, errorcode);
 }
 
-/*!
- * \copydoc SMO_getPropertyCode
+/**
+ * @see Declaration contract for SMO_getPropertyCode().
  */
-int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getPropertyCode(SMO_Handle p_handle, SMO_elementType type, int propertyIndex, int *propertyCode)
-{
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getPropertyCode(SMO_Handle p_handle, SMO_elementType type,
+                                                       int propertyIndex, int* propertyCode) {
     int errorcode = 0;
-    int *temp = NULL;
-    data_t *p_data = NULL;
+    int* temp = NULL;
+    data_t* p_data = NULL;
     *propertyCode = -1;
 
-    p_data = (data_t *)p_handle;
+    p_data = (data_t*)p_handle;
 
     if (p_data == NULL)
         errorcode = -1;
     else
-        switch (type)
-        {
+        switch (type) {
         case SMO_subcatch:
             if (propertyIndex < 0 || propertyIndex >= p_data->SubcatchProperties)
                 errorcode = ERR423;
@@ -1078,30 +1088,28 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getPropertyCode(SMO_Handle p_handle, SMO_
             errorcode = ERR421;
         }
 
-    if (!errorcode)
-    {
+    if (!errorcode) {
         *propertyCode = temp[propertyIndex];
     }
 
     return set_error(p_data->error_handle, errorcode);
 }
 
-/*!
- * \copydoc SMO_getPropertyCodes
+/**
+ * @see Declaration contract for SMO_getPropertyCodes().
  */
-int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getPropertyCodes(SMO_Handle p_handle, SMO_elementType type, int **propertyCodes, int *size)
-{
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getPropertyCodes(SMO_Handle p_handle, SMO_elementType type,
+                                                        int** propertyCodes, int* size) {
     int errorcode = 0;
-    int *temp = NULL;
-    data_t *p_data = NULL;
+    int* temp = NULL;
+    data_t* p_data = NULL;
 
-    p_data = (data_t *)p_handle;
+    p_data = (data_t*)p_handle;
 
     if (p_data == NULL)
         errorcode = -1;
     else
-        switch (type)
-        {
+        switch (type) {
         case SMO_subcatch:
             *size = p_data->SubcatchProperties;
             temp = p_data->SubcatchPropertyIndexes;
@@ -1118,8 +1126,7 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getPropertyCodes(SMO_Handle p_handle, SMO
             errorcode = ERR421;
         }
 
-    if (!errorcode)
-    {
+    if (!errorcode) {
         *propertyCodes = newIntArray(*size);
         for (int i = 0; i < *size; i++)
             (*propertyCodes)[i] = temp[i];
@@ -1128,40 +1135,32 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getPropertyCodes(SMO_Handle p_handle, SMO
     return set_error(p_data->error_handle, errorcode);
 }
 
-/*!
- * \copydoc SMO_getSubcatchSeries
+/**
+ * @see Declaration contract for SMO_getSubcatchSeries().
  */
-int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getSubcatchSeries(
-    SMO_Handle p_handle,
-    int subcatchIndex,
-    SMO_subcatchAttribute attr,
-    int startPeriod,
-    int endPeriod,
-    float **outValueArray,
-    int *length)
-{
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getSubcatchSeries(SMO_Handle p_handle, int subcatchIndex,
+                                                         SMO_subcatchAttribute attr,
+                                                         int startPeriod, int endPeriod,
+                                                         float** outValueArray, int* length) {
     int k, len, errorcode = 0;
-    float *temp;
-    data_t *p_data;
+    float* temp;
+    data_t* p_data;
 
-    p_data = (data_t *)p_handle;
+    p_data = (data_t*)p_handle;
 
     if (p_data == NULL)
         errorcode = -1;
     else if (subcatchIndex < 0 || subcatchIndex > p_data->Nsubcatch)
         errorcode = ERR423;
-    else if (startPeriod < 0 || startPeriod >= p_data->Nperiods ||
-             endPeriod <= startPeriod)
+    else if (startPeriod < 0 || startPeriod >= p_data->Nperiods || endPeriod <= startPeriod)
         errorcode = ERR422;
     // Check memory for outValues
     else if MEMCHECK (temp = newFloatArray(len = endPeriod - startPeriod))
         errorcode = ERR411;
-    else
-    {
+    else {
         // loop over and build time series
         for (k = 0; k < len; k++)
-            temp[k] =
-                getSubcatchValue(p_data, startPeriod + k, subcatchIndex, attr);
+            temp[k] = getSubcatchValue(p_data, startPeriod + k, subcatchIndex, attr);
 
         *outValueArray = temp;
         *length = len;
@@ -1170,39 +1169,34 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getSubcatchSeries(
     return set_error(p_data->error_handle, errorcode);
 }
 
-/*!
- * \copydoc SMO_getPropertyValue
+/**
+ * @see Declaration contract for SMO_getPropertyValue().
  */
-int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getPropertyValue(
-    SMO_Handle p_handle,
-    SMO_elementType type,
-    int propertyIndex,
-    int elementIndex,
-    float *value)
-{
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getPropertyValue(SMO_Handle p_handle, SMO_elementType type,
+                                                        int propertyIndex, int elementIndex,
+                                                        float* value) {
     int errorcode = 0;
     F_OFF offset;
 
-    data_t *p_data;
+    data_t* p_data;
 
-    p_data = (data_t *)p_handle;
+    p_data = (data_t*)p_handle;
 
     if (p_data == NULL)
         errorcode = -1;
-    else
-    {
+    else {
         offset = p_data->ObjPropPos;
 
-        switch (type)
-        {
+        switch (type) {
         case SMO_subcatch:
             if (propertyIndex < 0 || propertyIndex >= p_data->SubcatchProperties)
                 errorcode = ERR423;
             else if (elementIndex < 0 || elementIndex >= p_data->Nsubcatch)
                 errorcode = ERR423;
-            else
-            {
-                offset += (1 + p_data->SubcatchProperties + elementIndex * p_data->SubcatchProperties + propertyIndex) * RECORDSIZE;
+            else {
+                offset += (1 + p_data->SubcatchProperties +
+                           elementIndex * p_data->SubcatchProperties + propertyIndex) *
+                          RECORDSIZE;
                 _fseek(p_data->file, offset, SEEK_SET);
                 fread(value, RECORDSIZE, 1, p_data->file);
             }
@@ -1212,10 +1206,13 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getPropertyValue(
                 errorcode = ERR423;
             else if (elementIndex < 0 || elementIndex >= p_data->Nnodes)
                 errorcode = ERR423;
-            else
-            {
-                offset += (1 + p_data->SubcatchProperties + p_data->Nsubcatch * p_data->SubcatchProperties) * RECORDSIZE;
-                offset += (1 + p_data->NodeProperties + elementIndex * p_data->NodeProperties + propertyIndex) * RECORDSIZE;
+            else {
+                offset += (1 + p_data->SubcatchProperties +
+                           p_data->Nsubcatch * p_data->SubcatchProperties) *
+                          RECORDSIZE;
+                offset += (1 + p_data->NodeProperties + elementIndex * p_data->NodeProperties +
+                           propertyIndex) *
+                          RECORDSIZE;
                 _fseek(p_data->file, offset, SEEK_SET);
                 fread(value, RECORDSIZE, 1, p_data->file);
             }
@@ -1226,11 +1223,15 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getPropertyValue(
                 errorcode = ERR423;
             else if (elementIndex < 0 || elementIndex >= p_data->Nlinks)
                 errorcode = ERR423;
-            else
-            {
-                offset += (1 + p_data->SubcatchProperties + p_data->Nsubcatch * p_data->SubcatchProperties) * RECORDSIZE;
-                offset += (1 + p_data->NodeProperties + p_data->Nnodes * p_data->NodeProperties) * RECORDSIZE;
-                offset += (1 + p_data->LinkProperties + elementIndex * p_data->LinkProperties + propertyIndex) * RECORDSIZE;
+            else {
+                offset += (1 + p_data->SubcatchProperties +
+                           p_data->Nsubcatch * p_data->SubcatchProperties) *
+                          RECORDSIZE;
+                offset += (1 + p_data->NodeProperties + p_data->Nnodes * p_data->NodeProperties) *
+                          RECORDSIZE;
+                offset += (1 + p_data->LinkProperties + elementIndex * p_data->LinkProperties +
+                           propertyIndex) *
+                          RECORDSIZE;
                 _fseek(p_data->file, offset, SEEK_SET);
                 fread(value, RECORDSIZE, 1, p_data->file);
             }
@@ -1244,52 +1245,48 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getPropertyValue(
     return set_error(p_data->error_handle, errorcode);
 }
 
-/*!
- * \copydoc SMO_getPropertyValue
+/**
+ * @see Declaration contract for SMO_getPropertyValues().
  */
-int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getPropertyValues(
-    SMO_Handle p_handle,
-    SMO_elementType type,
-    int elementIndex,
-    float **outValueArray,
-    int *length
-)
-{
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getPropertyValues(SMO_Handle p_handle, SMO_elementType type,
+                                                         int elementIndex, float** outValueArray,
+                                                         int* length) {
     int errorcode = 0;
     F_OFF offset;
 
-    data_t *p_data;
+    data_t* p_data;
 
-    p_data = (data_t *)p_handle;
+    p_data = (data_t*)p_handle;
 
     if (p_data == NULL)
         errorcode = -1;
-    else
-    {
-        switch (type)
-        {
+    else {
+        switch (type) {
         case SMO_subcatch:
             if (elementIndex < 0 || elementIndex >= p_data->Nsubcatch)
                 errorcode = ERR423;
-            else
-            {
+            else {
                 *outValueArray = newFloatArray(p_data->SubcatchProperties);
                 *length = p_data->SubcatchProperties;
-                offset = p_data->ObjPropPos + (1 + p_data->SubcatchProperties + elementIndex * p_data->SubcatchProperties) * RECORDSIZE;
+                offset = p_data->ObjPropPos + (1 + p_data->SubcatchProperties +
+                                               elementIndex * p_data->SubcatchProperties) *
+                                                  RECORDSIZE;
                 _fseek(p_data->file, offset, SEEK_SET);
-                fread(*outValueArray, RECORDSIZE,  p_data->SubcatchProperties, p_data->file);
+                fread(*outValueArray, RECORDSIZE, p_data->SubcatchProperties, p_data->file);
             }
             break;
         case SMO_node:
             if (elementIndex < 0 || elementIndex >= p_data->Nnodes)
                 errorcode = ERR423;
-            else
-            {
+            else {
                 *outValueArray = newFloatArray(p_data->NodeProperties);
                 *length = p_data->NodeProperties;
 
-                offset = p_data->ObjPropPos + (1 + p_data->SubcatchProperties + p_data->Nsubcatch * p_data->SubcatchProperties) * RECORDSIZE;
-                offset += (1 + p_data->NodeProperties + elementIndex * p_data->NodeProperties) * RECORDSIZE;
+                offset = p_data->ObjPropPos + (1 + p_data->SubcatchProperties +
+                                               p_data->Nsubcatch * p_data->SubcatchProperties) *
+                                                  RECORDSIZE;
+                offset += (1 + p_data->NodeProperties + elementIndex * p_data->NodeProperties) *
+                          RECORDSIZE;
                 _fseek(p_data->file, offset, SEEK_SET);
                 fread(*outValueArray, RECORDSIZE, p_data->NodeProperties, p_data->file);
             }
@@ -1297,14 +1294,17 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getPropertyValues(
         case SMO_link:
             if (elementIndex < 0 || elementIndex >= p_data->Nlinks)
                 errorcode = ERR423;
-            else
-            {
+            else {
                 *outValueArray = newFloatArray(p_data->LinkProperties);
                 *length = p_data->LinkProperties;
 
-                offset = p_data->ObjPropPos + (1 + p_data->SubcatchProperties + p_data->Nsubcatch * p_data->SubcatchProperties) * RECORDSIZE;
-                offset += (1 + p_data->NodeProperties + p_data->Nnodes * p_data->NodeProperties) * RECORDSIZE;
-                offset += (1 + p_data->LinkProperties + elementIndex * p_data->LinkProperties) * RECORDSIZE;
+                offset = p_data->ObjPropPos + (1 + p_data->SubcatchProperties +
+                                               p_data->Nsubcatch * p_data->SubcatchProperties) *
+                                                  RECORDSIZE;
+                offset += (1 + p_data->NodeProperties + p_data->Nnodes * p_data->NodeProperties) *
+                          RECORDSIZE;
+                offset += (1 + p_data->LinkProperties + elementIndex * p_data->LinkProperties) *
+                          RECORDSIZE;
                 _fseek(p_data->file, offset, SEEK_SET);
                 fread(*outValueArray, RECORDSIZE, p_data->LinkProperties, p_data->file);
             }
@@ -1317,31 +1317,29 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getPropertyValues(
     return set_error(p_data->error_handle, errorcode);
 }
 
-/*!
- * \copydoc SMO_getNodeSeries
+/**
+ * @see Declaration contract for SMO_getNodeSeries().
  */
 int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getNodeSeries(SMO_Handle p_handle, int nodeIndex,
-                                             SMO_nodeAttribute attr, int startPeriod, int endPeriod,
-                                             float **outValueArray, int *length)
-{
+                                                     SMO_nodeAttribute attr, int startPeriod,
+                                                     int endPeriod, float** outValueArray,
+                                                     int* length) {
     int k, len, errorcode = 0;
-    float *temp;
-    data_t *p_data;
+    float* temp;
+    data_t* p_data;
 
-    p_data = (data_t *)p_handle;
+    p_data = (data_t*)p_handle;
 
     if (p_data == NULL)
         errorcode = -1;
     else if (nodeIndex < 0 || nodeIndex > p_data->Nnodes)
         errorcode = ERR423;
-    else if (startPeriod < 0 || startPeriod >= p_data->Nperiods ||
-             endPeriod <= startPeriod)
+    else if (startPeriod < 0 || startPeriod >= p_data->Nperiods || endPeriod <= startPeriod)
         errorcode = ERR422;
     // Check memory for outValues
     else if MEMCHECK (temp = newFloatArray(len = endPeriod - startPeriod))
         errorcode = ERR411;
-    else
-    {
+    else {
         // loop over and build time series
         for (k = 0; k < len; k++)
             temp[k] = getNodeValue(p_data, startPeriod + k, nodeIndex, attr);
@@ -1353,31 +1351,29 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getNodeSeries(SMO_Handle p_handle, int no
     return set_error(p_data->error_handle, errorcode);
 }
 
-/*!
- * \copydoc SMO_getLinkSeries
+/**
+ * @see Declaration contract for SMO_getLinkSeries().
  */
 int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getLinkSeries(SMO_Handle p_handle, int linkIndex,
-                                             SMO_linkAttribute attr, int startPeriod, int endPeriod,
-                                             float **outValueArray, int *length)
-{
+                                                     SMO_linkAttribute attr, int startPeriod,
+                                                     int endPeriod, float** outValueArray,
+                                                     int* length) {
     int k, len, errorcode = 0;
-    float *temp;
-    data_t *p_data;
+    float* temp;
+    data_t* p_data;
 
-    p_data = (data_t *)p_handle;
+    p_data = (data_t*)p_handle;
 
     if (p_data == NULL)
         errorcode = -1;
     else if (linkIndex < 0 || linkIndex > p_data->Nlinks)
         errorcode = ERR423;
-    else if (startPeriod < 0 || startPeriod >= p_data->Nperiods ||
-             endPeriod <= startPeriod)
+    else if (startPeriod < 0 || startPeriod >= p_data->Nperiods || endPeriod <= startPeriod)
         errorcode = ERR422;
     // Check memory for outValues
     else if MEMCHECK (temp = newFloatArray(len = endPeriod - startPeriod))
         errorcode = ERR411;
-    else
-    {
+    else {
         // loop over and build time series
         for (k = 0; k < len; k++)
             temp[k] = getLinkValue(p_data, startPeriod + k, linkIndex, attr);
@@ -1389,28 +1385,27 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getLinkSeries(SMO_Handle p_handle, int li
     return set_error(p_data->error_handle, errorcode);
 }
 
-/*!
- * \Copydoc SMO_getSystemSeries
+/**
+ * @see Declaration contract for SMO_getSystemSeries().
  */
-int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getSystemSeries(SMO_Handle p_handle, SMO_systemAttribute attr,
-                                               int startPeriod, int endPeriod, float **outValueArray, int *length)
-{
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getSystemSeries(SMO_Handle p_handle,
+                                                       SMO_systemAttribute attr, int startPeriod,
+                                                       int endPeriod, float** outValueArray,
+                                                       int* length) {
     int k, len, errorcode = 0;
-    float *temp;
-    data_t *p_data;
+    float* temp;
+    data_t* p_data;
 
-    p_data = (data_t *)p_handle;
+    p_data = (data_t*)p_handle;
 
     if (p_data == NULL)
         errorcode = -1;
-    else if (startPeriod < 0 || startPeriod >= p_data->Nperiods ||
-             endPeriod <= startPeriod)
+    else if (startPeriod < 0 || startPeriod >= p_data->Nperiods || endPeriod <= startPeriod)
         errorcode = ERR423;
     // Check memory for outValues
     else if MEMCHECK (temp = newFloatArray(len = endPeriod - startPeriod))
         errorcode = ERR411;
-    else
-    {
+    else {
         // loop over and build time series
         for (k = 0; k < len; k++)
             temp[k] = getSystemValue(p_data, startPeriod + k, attr);
@@ -1422,17 +1417,17 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getSystemSeries(SMO_Handle p_handle, SMO_
     return set_error(p_data->error_handle, errorcode);
 }
 
-/*!
- * \copydoc SMO_getSubcatchAttribute
+/**
+ * @see Declaration contract for SMO_getSubcatchAttribute().
  */
 int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getSubcatchAttribute(SMO_Handle p_handle, int periodIndex,
-                                                    SMO_subcatchAttribute attr, float **outValueArray, int *length)
-{
+                                                            SMO_subcatchAttribute attr,
+                                                            float** outValueArray, int* length) {
     int k, errorcode = 0;
-    float *temp;
-    data_t *p_data;
+    float* temp;
+    data_t* p_data;
 
-    p_data = (data_t *)p_handle;
+    p_data = (data_t*)p_handle;
 
     if (p_data == NULL)
         errorcode = -1;
@@ -1441,8 +1436,7 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getSubcatchAttribute(SMO_Handle p_handle,
     // Check memory for outValues
     else if MEMCHECK (temp = newFloatArray(p_data->Nsubcatch))
         errorcode = ERR411;
-    else
-    {
+    else {
         // loop over and pull result
         for (k = 0; k < p_data->Nsubcatch; k++)
             temp[k] = getSubcatchValue(p_data, periodIndex, k, attr);
@@ -1454,17 +1448,17 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getSubcatchAttribute(SMO_Handle p_handle,
     return set_error(p_data->error_handle, errorcode);
 }
 
-/*!
- * \copydoc SMO_getNodeAttribute
+/**
+ * @see Declaration contract for SMO_getNodeAttribute().
  */
 int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getNodeAttribute(SMO_Handle p_handle, int periodIndex,
-                                                SMO_nodeAttribute attr, float **outValueArray, int *length)
-{
+                                                        SMO_nodeAttribute attr,
+                                                        float** outValueArray, int* length) {
     int k, errorcode = 0;
-    float *temp;
-    data_t *p_data;
+    float* temp;
+    data_t* p_data;
 
-    p_data = (data_t *)p_handle;
+    p_data = (data_t*)p_handle;
 
     if (p_data == NULL)
         errorcode = -1;
@@ -1473,8 +1467,7 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getNodeAttribute(SMO_Handle p_handle, int
     // Check memory for outValues
     else if MEMCHECK (temp = newFloatArray(p_data->Nnodes))
         errorcode = ERR411;
-    else
-    {
+    else {
         // loop over and pull result
         for (k = 0; k < p_data->Nnodes; k++)
             temp[k] = getNodeValue(p_data, periodIndex, k, attr);
@@ -1486,17 +1479,17 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getNodeAttribute(SMO_Handle p_handle, int
     return set_error(p_data->error_handle, errorcode);
 }
 
-/*!
- * \copydoc SMO_getLinkAttribute
+/**
+ * @see Declaration contract for SMO_getLinkAttribute().
  */
 int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getLinkAttribute(SMO_Handle p_handle, int periodIndex,
-                                                SMO_linkAttribute attr, float **outValueArray, int *length)
-{
+                                                        SMO_linkAttribute attr,
+                                                        float** outValueArray, int* length) {
     int k, errorcode = 0;
-    float *temp;
-    data_t *p_data;
+    float* temp;
+    data_t* p_data;
 
-    p_data = (data_t *)p_handle;
+    p_data = (data_t*)p_handle;
 
     if (p_data == NULL)
         errorcode = -1;
@@ -1505,8 +1498,7 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getLinkAttribute(SMO_Handle p_handle, int
     // Check memory for outValues
     else if MEMCHECK (temp = newFloatArray(p_data->Nlinks))
         errorcode = ERR411;
-    else
-    {
+    else {
         // loop over and pull result
         for (k = 0; k < p_data->Nlinks; k++)
             temp[k] = getLinkValue(p_data, periodIndex, k, attr);
@@ -1518,17 +1510,17 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getLinkAttribute(SMO_Handle p_handle, int
     return set_error(p_data->error_handle, errorcode);
 }
 
-/*!
- * \copydoc SMO_getSystemAttribute
+/**
+ * @see Declaration contract for SMO_getSystemAttribute().
  */
 int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getSystemAttribute(SMO_Handle p_handle, int periodIndex,
-                                                  SMO_systemAttribute attr, float **outValueArray, int *length)
-{
+                                                          SMO_systemAttribute attr,
+                                                          float** outValueArray, int* length) {
     int errorcode = 0;
-    float *temp;
-    data_t *p_data;
+    float* temp;
+    data_t* p_data;
 
-    p_data = (data_t *)p_handle;
+    p_data = (data_t*)p_handle;
 
     if (p_data == NULL)
         errorcode = -1;
@@ -1536,8 +1528,7 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getSystemAttribute(SMO_Handle p_handle, i
         errorcode = ERR422;
     else if MEMCHECK (temp = newFloatArray(1))
         errorcode = ERR411;
-    else
-    {
+    else {
         // don't need to loop since there's only one system
         temp[0] = getSystemValue(p_data, periodIndex, attr);
 
@@ -1548,18 +1539,18 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getSystemAttribute(SMO_Handle p_handle, i
     return set_error(p_data->error_handle, errorcode);
 }
 
-/*!
- * \copydoc SMO_getSubcatchResult
+/**
+ * @see Declaration contract for SMO_getSubcatchResult().
  */
 int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getSubcatchResult(SMO_Handle p_handle, int periodIndex,
-                                                 int subcatchIndex, float **outValueArray, int *arrayLength)
-{
+                                                         int subcatchIndex, float** outValueArray,
+                                                         int* arrayLength) {
     int errorcode = 0;
-    float *temp;
+    float* temp;
     F_OFF offset;
-    data_t *p_data;
+    data_t* p_data;
 
-    p_data = (data_t *)p_handle;
+    p_data = (data_t*)p_handle;
 
     if (p_data == NULL)
         errorcode = -1;
@@ -1569,11 +1560,9 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getSubcatchResult(SMO_Handle p_handle, in
         errorcode = ERR423;
     else if MEMCHECK (temp = newFloatArray(p_data->SubcatchVars))
         errorcode = ERR411;
-    else
-    {
+    else {
         // --- compute offset into output file
-        offset = p_data->ResultsPos + (periodIndex)*p_data->BytesPerPeriod +
-                 2 * RECORDSIZE;
+        offset = p_data->ResultsPos + (periodIndex)*p_data->BytesPerPeriod + 2 * RECORDSIZE;
         // add offset for subcatchment
         offset += (subcatchIndex * p_data->SubcatchVars) * RECORDSIZE;
 
@@ -1587,18 +1576,18 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getSubcatchResult(SMO_Handle p_handle, in
     return set_error(p_data->error_handle, errorcode);
 }
 
-/*!
- * \copydoc SMO_getNodeResult
+/**
+ * @see Declaration contract for SMO_getNodeResult().
  */
 int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getNodeResult(SMO_Handle p_handle, int periodIndex,
-                                             int nodeIndex, float **outValueArray, int *arrayLength)
-{
+                                                     int nodeIndex, float** outValueArray,
+                                                     int* arrayLength) {
     int errorcode = 0;
-    float *temp;
+    float* temp;
     F_OFF offset;
-    data_t *p_data;
+    data_t* p_data;
 
-    p_data = (data_t *)p_handle;
+    p_data = (data_t*)p_handle;
 
     if (p_data == NULL)
         errorcode = -1;
@@ -1608,15 +1597,12 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getNodeResult(SMO_Handle p_handle, int pe
         errorcode = ERR423;
     else if MEMCHECK (temp = newFloatArray(p_data->NodeVars))
         errorcode = ERR411;
-    else
-    {
+    else {
         // calculate byte offset to start time for series
-        offset = p_data->ResultsPos + (periodIndex)*p_data->BytesPerPeriod +
-                 2 * RECORDSIZE;
+        offset = p_data->ResultsPos + (periodIndex)*p_data->BytesPerPeriod + 2 * RECORDSIZE;
         // add offset for subcatchment and node
-        offset += (p_data->Nsubcatch * p_data->SubcatchVars +
-                   nodeIndex * p_data->NodeVars) *
-                  RECORDSIZE;
+        offset +=
+            (p_data->Nsubcatch * p_data->SubcatchVars + nodeIndex * p_data->NodeVars) * RECORDSIZE;
 
         _fseek(p_data->file, offset, SEEK_SET);
         fread(temp, RECORDSIZE, p_data->NodeVars, p_data->file);
@@ -1628,18 +1614,18 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getNodeResult(SMO_Handle p_handle, int pe
     return set_error(p_data->error_handle, errorcode);
 }
 
-/*!
- * \copydoc SMO_getLinkResult
+/**
+ * @see Declaration contract for SMO_getLinkResult().
  */
 int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getLinkResult(SMO_Handle p_handle, int periodIndex,
-                                             int linkIndex, float **outValueArray, int *arrayLength)
-{
+                                                     int linkIndex, float** outValueArray,
+                                                     int* arrayLength) {
     int errorcode = 0;
-    float *temp;
+    float* temp;
     F_OFF offset;
-    data_t *p_data;
+    data_t* p_data;
 
-    p_data = (data_t *)p_handle;
+    p_data = (data_t*)p_handle;
 
     if (p_data == NULL)
         errorcode = -1;
@@ -1649,16 +1635,13 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getLinkResult(SMO_Handle p_handle, int pe
         errorcode = ERR423;
     else if MEMCHECK (temp = newFloatArray(p_data->LinkVars))
         errorcode = ERR411;
-    else
-    {
+    else {
         // calculate byte offset to start time for series
-        offset = p_data->ResultsPos + (periodIndex)*p_data->BytesPerPeriod +
-                 2 * RECORDSIZE;
+        offset = p_data->ResultsPos + (periodIndex)*p_data->BytesPerPeriod + 2 * RECORDSIZE;
         // add offset for subcatchment and node and link
-        offset +=
-            (p_data->Nsubcatch * p_data->SubcatchVars +
-             p_data->Nnodes * p_data->NodeVars + linkIndex * p_data->LinkVars) *
-            RECORDSIZE;
+        offset += (p_data->Nsubcatch * p_data->SubcatchVars + p_data->Nnodes * p_data->NodeVars +
+                   linkIndex * p_data->LinkVars) *
+                  RECORDSIZE;
 
         _fseek(p_data->file, offset, SEEK_SET);
         fread(temp, RECORDSIZE, p_data->LinkVars, p_data->file);
@@ -1670,19 +1653,19 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getLinkResult(SMO_Handle p_handle, int pe
     return set_error(p_data->error_handle, errorcode);
 }
 
-/*!
- * \copydoc SMO_getSystemResult
+/**
+ * @see Declaration contract for SMO_getSystemResult().
  */
 int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getSystemResult(SMO_Handle p_handle, int periodIndex,
-                                               int dummyIndex, float **outValueArray, int *arrayLength)
-{
+                                                       int dummyIndex, float** outValueArray,
+                                                       int* arrayLength) {
     (void)dummyIndex;
     int errorcode = 0;
-    float *temp = NULL;
+    float* temp = NULL;
     F_OFF offset;
-    data_t *p_data = NULL;
+    data_t* p_data = NULL;
 
-    p_data = (data_t *)p_handle;
+    p_data = (data_t*)p_handle;
 
     if (p_data == NULL)
         errorcode = -1;
@@ -1692,12 +1675,10 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getSystemResult(SMO_Handle p_handle, int 
         errorcode = ERR411;
     {
         // calculate byte offset to start time for series
-        offset = p_data->ResultsPos + (periodIndex)*p_data->BytesPerPeriod +
-                 2 * RECORDSIZE;
+        offset = p_data->ResultsPos + (periodIndex)*p_data->BytesPerPeriod + 2 * RECORDSIZE;
         // add offset for subcatchment and node and link (system starts after
         // the last link)
-        offset += (p_data->Nsubcatch * p_data->SubcatchVars +
-                   p_data->Nnodes * p_data->NodeVars +
+        offset += (p_data->Nsubcatch * p_data->SubcatchVars + p_data->Nnodes * p_data->NodeVars +
                    p_data->Nlinks * p_data->LinkVars) *
                   RECORDSIZE;
 
@@ -1711,44 +1692,39 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_getSystemResult(SMO_Handle p_handle, int 
     return set_error(p_data->error_handle, errorcode);
 }
 
-/*!
- * \copydoc SM0_free
+/**
+ * @see Declaration contract for SMO_free().
  */
-void EXPORT_OPENSWMMCORE_OUTPUT_API SMO_free(void **array)
-{
-    if (array != NULL)
-    {
+void EXPORT_OPENSWMMCORE_OUTPUT_API SMO_free(void** array) {
+    if (array != NULL) {
         free(*array);
         *array = NULL;
     }
 }
 
-/*!
- * \copydoc SMO_clearError
+/**
+ * @see Declaration contract for SMO_clearError().
  */
-void EXPORT_OPENSWMMCORE_OUTPUT_API SMO_clearError(SMO_Handle p_handle)
-{
-    data_t *p_data;
+void EXPORT_OPENSWMMCORE_OUTPUT_API SMO_clearError(SMO_Handle p_handle) {
+    data_t* p_data;
 
-    p_data = (data_t *)p_handle;
+    p_data = (data_t*)p_handle;
     clear_error(p_data->error_handle);
 }
 
-/*!
- * \copydoc SMO_checkError
+/**
+ * @see Declaration contract for SMO_checkError().
  */
-int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_checkError(SMO_Handle p_handle, char **msg_buffer)
-{
+int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_checkError(SMO_Handle p_handle, char** msg_buffer) {
     int errorcode = 0;
-    char *temp = NULL;
-    data_t *p_data;
+    char* temp = NULL;
+    data_t* p_data;
 
-    p_data = (data_t *)p_handle;
+    p_data = (data_t*)p_handle;
 
     if (p_data == NULL)
         return -1;
-    else
-    {
+    else {
         errorcode = p_data->error_handle->error_status;
         if (errorcode)
             temp = check_error(p_data->error_handle);
@@ -1759,30 +1735,25 @@ int EXPORT_OPENSWMMCORE_OUTPUT_API SMO_checkError(SMO_Handle p_handle, char **ms
     return errorcode;
 }
 
-/*!
- * \brief Takes error code and returns error message
- * \param[in] errcode Error code
- * \param[out] dest_msg Destination message buffer
- * \param[in] dest_len Length of destination message buffer
+/**
+ * @see Local declaration contract for errorLookup().
  */
-void errorLookup(int errcode, char *dest_msg, int dest_len)
-{
+void errorLookup(int errcode, char* dest_msg, int dest_len) {
     (void)dest_len;
     char msg[ERR_MAXMSG];
 
-    switch (errcode)
-    {
+    switch (errcode) {
 #ifdef _MSC_VER
-#define ERR(code, string)                               \
-    case code:                                          \
-        strncpy_s(msg, ERR_MAXMSG, string, ERR_MAXMSG); \
+#define ERR(code, string)                                                                          \
+    case code:                                                                                     \
+        strncpy_s(msg, ERR_MAXMSG, string, ERR_MAXMSG);                                            \
         break;
 #include "messages.txt"
 #undef ERR
 #else
-#define ERR(code, string)    \
-    case code:               \
-        strcpy(msg, string); \
+#define ERR(code, string)                                                                          \
+    case code:                                                                                     \
+        strcpy(msg, string);                                                                       \
         break;
 #include "messages.txt"
 #undef ERR
@@ -1809,13 +1780,10 @@ void errorLookup(int errcode, char *dest_msg, int dest_len)
  * \{
  */
 
-/*!
- * \brief Validates the SWMM binary output file
- * \param[in] p_data Pointer to data_t structure
- * \return Error code
+/**
+ * @see Local declaration contract for validateFile().
  */
-int validateFile(data_t *p_data)
-{
+int validateFile(data_t* p_data) {
     INT4 magic1, magic2, errcode;
     int errorcode = 0;
 
@@ -1845,43 +1813,35 @@ int validateFile(data_t *p_data)
     return errorcode;
 }
 
-/*!
- * \brief Initializes the element names array in the data_t structure
- * \param[in] p_data Pointer to data_t structure
+/**
+ * @see Local declaration contract for initElementNames().
  */
-void initElementNames(data_t *p_data)
-{
+void initElementNames(data_t* p_data) {
     int j, numNames;
 
-    numNames =
-        p_data->Nsubcatch + p_data->Nnodes + p_data->Nlinks + p_data->Npolluts;
+    numNames = p_data->Nsubcatch + p_data->Nnodes + p_data->Nlinks + p_data->Npolluts;
 
     // allocate memory for array of idEntries
-    p_data->elementNames = (idEntry *)calloc(numNames, sizeof(idEntry));
+    p_data->elementNames = (idEntry*)calloc(numNames, sizeof(idEntry));
 
     // Position the file to the start of the ID entries
     _fseek(p_data->file, p_data->IDPos, SEEK_SET);
 
-    for (j = 0; j < numNames; j++)
-    {
+    for (j = 0; j < numNames; j++) {
         fread(&(p_data->elementNames[j].length), RECORDSIZE, 1, p_data->file);
 
         p_data->elementNames[j].IDname =
-            (char *)calloc(p_data->elementNames[j].length + 1, sizeof(char));
+            (char*)calloc(p_data->elementNames[j].length + 1, sizeof(char));
 
-        fread(p_data->elementNames[j].IDname, sizeof(char),
-              p_data->elementNames[j].length, p_data->file);
+        fread(p_data->elementNames[j].IDname, sizeof(char), p_data->elementNames[j].length,
+              p_data->file);
     }
 }
 
-/*!
- * \brief Gets the value of a particular time index
- * \param[in] p_data Pointer to data_t structure
- * \param[in] timeIndex Time index
- * \return Time value at the given indexes
+/**
+ * @see Local declaration contract for getTimeValue().
  */
-double getTimeValue(data_t *p_data, int timeIndex)
-{
+double getTimeValue(data_t* p_data, int timeIndex) {
 
     F_OFF offset;
     double value;
@@ -1896,24 +1856,17 @@ double getTimeValue(data_t *p_data, int timeIndex)
     return value;
 }
 
-/*!
- * \brief Gets the value of a particular subcatchment attribute at a given time index
- * \param[in] p_data Pointer to data_t structure
- * \param[in] timeIndex Time index
- * \param[in] subcatchIndex Subcatchment index
- * \param[in] attr Subcatchment attribute
- * \return Subcatchment value at the given indexes
+/**
+ * @see Local declaration contract for getSubcatchValue().
  */
-float getSubcatchValue(data_t *p_data, int timeIndex, int subcatchIndex,
-                       SMO_subcatchAttribute attr)
-{
+float getSubcatchValue(data_t* p_data, int timeIndex, int subcatchIndex,
+                       SMO_subcatchAttribute attr) {
 
     F_OFF offset;
     float value;
 
     // --- compute offset into output file
-    offset = p_data->ResultsPos + timeIndex * p_data->BytesPerPeriod +
-             2 * RECORDSIZE;
+    offset = p_data->ResultsPos + timeIndex * p_data->BytesPerPeriod + 2 * RECORDSIZE;
     // offset for subcatch
     offset += RECORDSIZE * (subcatchIndex * p_data->SubcatchVars + attr);
 
@@ -1924,27 +1877,19 @@ float getSubcatchValue(data_t *p_data, int timeIndex, int subcatchIndex,
     return value;
 }
 
-/*!
- * \brief Gets the value of a particular node attribute at a given time index
- * \param[in] p_data Pointer to data_t structure
- * \param[in] timeIndex Time index
- * \param[in] nodeIndex Node index
- * \param[in] attr Node attribute
- * \return Node value at the given indexes
+/**
+ * @see Local declaration contract for getNodeValue().
  */
-float getNodeValue(data_t *p_data, int timeIndex, int nodeIndex,
-                   SMO_nodeAttribute attr)
-{
+float getNodeValue(data_t* p_data, int timeIndex, int nodeIndex, SMO_nodeAttribute attr) {
 
     F_OFF offset;
     float value;
 
     // --- compute offset into output file
-    offset = p_data->ResultsPos + timeIndex * p_data->BytesPerPeriod +
-             2 * RECORDSIZE;
+    offset = p_data->ResultsPos + timeIndex * p_data->BytesPerPeriod + 2 * RECORDSIZE;
     // offset for node
-    offset += RECORDSIZE * (p_data->Nsubcatch * p_data->SubcatchVars +
-                            nodeIndex * p_data->NodeVars + attr);
+    offset += RECORDSIZE *
+              (p_data->Nsubcatch * p_data->SubcatchVars + nodeIndex * p_data->NodeVars + attr);
 
     // --- re-position the file and read the result
     _fseek(p_data->file, offset, SEEK_SET);
@@ -1953,28 +1898,20 @@ float getNodeValue(data_t *p_data, int timeIndex, int nodeIndex,
     return value;
 }
 
-/*!
- * \brief Gets the value of a particular link attribute at a given time index
- * \param[in] p_data Pointer to data_t structure
- * \param[in] timeIndex Time index
- * \param[in] linkIndex Link index
- * \param[in] attr Link attribute
- * \return Link value at the given indexes
+/**
+ * @see Local declaration contract for getLinkValue().
  */
-float getLinkValue(data_t *p_data, int timeIndex, int linkIndex,
-                   SMO_linkAttribute attr)
-{
+float getLinkValue(data_t* p_data, int timeIndex, int linkIndex, SMO_linkAttribute attr) {
 
     F_OFF offset;
     float value;
 
     // --- compute offset into output file
-    offset = p_data->ResultsPos + timeIndex * p_data->BytesPerPeriod +
-             2 * RECORDSIZE;
+    offset = p_data->ResultsPos + timeIndex * p_data->BytesPerPeriod + 2 * RECORDSIZE;
     // offset for link
-    offset += RECORDSIZE * (p_data->Nsubcatch * p_data->SubcatchVars +
-                            p_data->Nnodes * p_data->NodeVars +
-                            linkIndex * p_data->LinkVars + attr);
+    offset +=
+        RECORDSIZE * (p_data->Nsubcatch * p_data->SubcatchVars + p_data->Nnodes * p_data->NodeVars +
+                      linkIndex * p_data->LinkVars + attr);
 
     // --- re-position the file and read the result
     _fseek(p_data->file, offset, SEEK_SET);
@@ -1983,26 +1920,20 @@ float getLinkValue(data_t *p_data, int timeIndex, int linkIndex,
     return value;
 }
 
-/*!
- * \brief Gets the value of a particular system attribute at a given time index
- * \param[in] p_data Pointer to data_t structure
- * \param[in] timeIndex Time index
- * \param[in] attr System attribute
- * \return System value at the given indexes
+/**
+ * @see Local declaration contract for getSystemValue().
  */
-float getSystemValue(data_t *p_data, int timeIndex, SMO_systemAttribute attr)
-{
+float getSystemValue(data_t* p_data, int timeIndex, SMO_systemAttribute attr) {
 
     F_OFF offset;
     float value;
 
     // --- compute offset into output file
-    offset = p_data->ResultsPos + timeIndex * p_data->BytesPerPeriod +
-             2 * RECORDSIZE;
+    offset = p_data->ResultsPos + timeIndex * p_data->BytesPerPeriod + 2 * RECORDSIZE;
     //  offset for system
-    offset += RECORDSIZE * (p_data->Nsubcatch * p_data->SubcatchVars +
-                            p_data->Nnodes * p_data->NodeVars +
-                            p_data->Nlinks * p_data->LinkVars + attr);
+    offset +=
+        RECORDSIZE * (p_data->Nsubcatch * p_data->SubcatchVars + p_data->Nnodes * p_data->NodeVars +
+                      p_data->Nlinks * p_data->LinkVars + attr);
 
     // --- re-position the file and read the result
     _fseek(p_data->file, offset, SEEK_SET);
@@ -2011,16 +1942,10 @@ float getSystemValue(data_t *p_data, int timeIndex, SMO_systemAttribute attr)
     return value;
 }
 
-/*!
- * \brief Wrapper function for opening file to account for different fopen functions on different platforms
- * \param[in] f Pointer to file pointer
- * \param[in] name File name
- * \param[in] mode File mode
- * \return Error code
- * \note fopen_s is part of C++11 standard
+/**
+ * @see Local declaration contract for _fopen().
  */
-int _fopen(FILE **f, const char *name, const char *mode)
-{
+int _fopen(FILE** f, const char* name, const char* mode) {
     int ret = 0;
 #ifdef _MSC_VER
     ret = (int)fopen_s(f, name, mode);
@@ -2032,15 +1957,10 @@ int _fopen(FILE **f, const char *name, const char *mode)
     return ret;
 }
 
-/*!
- * \brief Wrapper function for fseek to account for different fseek functions on different platforms
- * \param[in] stream Pointer to file stream
- * \param[in] offset Offset value
- * \param[in] whence Whence value
- * \return Error code
+/**
+ * @see Local declaration contract for _fseek().
  */
-int _fseek(FILE *stream, F_OFF offset, int whence)
-{
+int _fseek(FILE* stream, F_OFF offset, int whence) {
 #ifdef _MSC_VER
 #define FSEEK64 _fseeki64
 #else
@@ -2050,13 +1970,10 @@ int _fseek(FILE *stream, F_OFF offset, int whence)
     return FSEEK64(stream, offset, whence);
 }
 
-/*!
- * \brief Wrapper function for ftell to account for different ftell functions on different platforms
- * \param[in] stream Pointer to file stream
- * \return Error code
+/**
+ * @see Local declaration contract for _ftell().
  */
-F_OFF _ftell(FILE *stream)
-{
+F_OFF _ftell(FILE* stream) {
 #ifdef _MSC_VER
 #define FTELL64 _ftelli64
 #else
@@ -2065,43 +1982,37 @@ F_OFF _ftell(FILE *stream)
     return FTELL64(stream);
 }
 
-/*!
- * \brief Creates a new float array of size n
- * \param[in] n Size of the array
- * \return Pointer to the float array
+/**
+ * @see Local declaration contract for newFloatArray().
  */
-float *newFloatArray(int n)
+float* newFloatArray(int n)
 //
 //  Warning: Caller must free memory allocated by this function.
 //
 {
-    return (float *)malloc((n) * sizeof(float));
+    return (float*)malloc((n) * sizeof(float));
 }
 
-/*!
- * \brief Creates a new int array of size n
- * \param[in] n Size of the array
- * \return Pointer to the int array
+/**
+ * @see Local declaration contract for newIntArray().
  */
-int *newIntArray(int n)
+int* newIntArray(int n)
 //
 //  Warning: Caller must free memory allocated by this function.
 //
 {
-    return (int *)malloc((n) * sizeof(int));
+    return (int*)malloc((n) * sizeof(int));
 }
 
-/*!
- * \brief Creates a new char array of size n
- * \param[in] n Size of the array
- * \return Pointer to the char array
+/**
+ * @see Local declaration contract for newCharArray().
  */
-char *newCharArray(int n)
+char* newCharArray(int n)
 //
 //  Warning: Caller must free memory allocated by this function.
 //
 {
-    return (char *)malloc((n) * sizeof(char));
+    return (char*)malloc((n) * sizeof(char));
 }
 
 /*!

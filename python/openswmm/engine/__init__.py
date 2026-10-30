@@ -1,10 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright 2026 Caleb Buahin
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 openswmm.engine
 ===============
 
 :author: Caleb Buahin
 :copyright: Copyright (c) 2026 Caleb Buahin
-:license: MIT
+:license: Apache-2.0
 
 Cython bindings for the OpenSWMM Engine 6.0 C API.
 
@@ -58,6 +74,21 @@ The package is split by domain to mirror the C header organisation:
    * - :class:`Quality`
      - ``openswmm_quality.h``
      - Landuse, buildup, washoff, treatment
+   * - :class:`InitialQuality`
+     - ``openswmm_initial_quality.h``
+     - ``[INITIAL_QUALITY]`` per-element starting concentrations
+   * - :class:`Reactions`
+     - ``openswmm_reactions.h``
+     - Multi-species reaction system: species, coefficients, terms, expressions
+   * - :class:`Heat`
+     - ``openswmm_heat.h``
+     - Heat-transport fluxes, solar/cloud forcing, inlet temperatures
+   * - :class:`WaterAge`
+     - ``openswmm_water_age.h``
+     - ``[WATER_AGE_SOURCES]`` per-pathway source ages
+   * - :class:`ProcessComponents`
+     - ``openswmm_process_components.h``
+     - ``[PROCESS_COMPONENTS]`` registrations and config-file bindings
    * - :class:`Tables`
      - ``openswmm_tables.h``
      - Time series, curves, patterns
@@ -93,11 +124,9 @@ Quick start
     with Solver("model.inp", "model.rpt", "model.out") as s:
         nodes = Nodes(s)
         links = Links(s)
-        while s.state == EngineState.RUNNING:
-            if s.step() != 0:
-                break
-            depths = nodes.get_depths_bulk()  # numpy array
-            flows  = links.get_flows_bulk()   # numpy array
+        for elapsed in s.steps():
+            depths = nodes.depths
+            flows = links.flows
 
 Programmatic model building
 ----------------------------
@@ -119,9 +148,7 @@ Programmatic model building
 
     solver = m.to_solver()
     solver.start()
-    while solver.state == EngineState.RUNNING:
-        if solver.step() != 0:
-            break
+    for elapsed in solver.steps():
         pass
     solver.end()
     solver.destroy()
@@ -151,7 +178,7 @@ Advanced forcing
 # =============================================================================
 # Engine lifecycle & errors
 # =============================================================================
-from ._solver import Solver, run, run_with_callback, GEOPACKAGE_PLUGIN_ID
+from ._solver import Solver, run, run_with_callback, GEOPACKAGE_PLUGIN_ID, abi_tag
 from ._exceptions import (
     EngineError,
     BadHandleError,
@@ -165,6 +192,7 @@ from ._exceptions import (
     NumericalError,
     CRSError,
     DependencyError,
+    GeoPackageError,
     StaleObjectError,
 )
 
@@ -203,17 +231,40 @@ from ._hotstart import HotStart
 from ._massbalance import MassBalance
 from ._statistics import Statistics
 from ._output_reader import OutputReader
+from ._output2d import Output2DReader
+from ._results import Results, ResultField, SeriesField, SurfaceField, SurfaceResults, ResultMesh
+from ._capabilities import capabilities
 
 # =============================================================================
 # Hydrology, water quality, and time-varying inputs
 # =============================================================================
 from ._pollutants import Pollutants
 from ._quality import Quality
+from ._initial_quality import InitialQuality, InitialQualityEntry
 from ._tables import Tables, Patterns
 from ._inflows import Inflows
 from ._controls import Controls
 from ._forcing import Forcing
 from ._climate import Climate
+from ._snow import Snow
+from ._checkpoint import Checkpoints
+
+# =============================================================================
+# Transport processes — heat, water age, reactions, process components
+# =============================================================================
+from ._heat import Heat, HeatNodeOverride, HeatLidMaterial, HeatElementValue, HeatSnapshot
+from ._water_age import WaterAge, WaterAgeOverride
+from ._reactions import (
+    Reactions,
+    ReactionSpecies,
+    ReactionCoefficient,
+    ReactionTerm,
+    ReactionInitialEntry,
+    ReactionHydVar,
+    ReactionFunction,
+    ExpressionDiagnostic,
+)
+from ._process_components import ProcessComponents, ProcessComponent
 
 # =============================================================================
 # Spatial / infrastructure / 2D
@@ -225,15 +276,21 @@ from ._spatial import Spatial
 # Optional extensions (require specific build flags)
 # =============================================================================
 try:
-    from ._2d import Surface2D
+    from ._2d import (Surface2D, Infiltration2DView, Infil2DDefaults,
+                      Infil2DRow, Infil2DCell, InitialQuality2D, BoundaryQuality2D)
+    from ._snow2d import MeshSnow
     HAS_2D = True
-except ImportError:
+except ModuleNotFoundError as error:
+    if error.name != __name__ + "._2d":
+        raise
     HAS_2D = False
 
 try:
     from ._geopackage import GeoPackage
     HAS_GEOPACKAGE = True
-except ImportError:
+except ModuleNotFoundError as error:
+    if error.name != __name__ + "._geopackage":
+        raise
     HAS_GEOPACKAGE = False
 
 # =============================================================================
@@ -256,22 +313,33 @@ from ._enums import (
     # Water quality / LID
     ConcentrationUnits, BuildupFunc, WashoffFunc, LidType,
     # Hydrology parameters
-    AquiferParam,
+    AquiferParam, GwfType,
     # Output variables
     OutSubcatchVar, OutNodeVar, OutLinkVar, OutSystemVar,
     # Forcing & patterns
     ForcingMode, ForcingTarget, ForcingType, ForcingPersist, PatternType,
     # 2D surface routing
     SurfaceForcingMode, SurfaceBoundaryType,
+    SurfaceInfilMethod, SurfaceInfilDest, NodeCoupling2DType,
     # Nodes / editing
     DividerType, RefType,
     # Tables / model files
     TableType, FilePathRole, UserFlagType,
+    # Transport processes — heat, water age, reactions
+    HeatFluxModule, HeatShortwaveMode, HeatRadiativeParam, HeatSolarParam,
+    HeatCloudParam, HeatSourceKind, HeatSedimentParam, HeatAttr, HeatOverrideScope,
+    GroundHeatValue, GroundHeatLayerValue, ChannelGroundValue,
+    WaterAgeSource,
+    ReactionScope, ReactionExprForm,
+    # Street inlets
+    InletType, GrateType, ThroatType, InletCurveKind,
+    InletPlacement, InletHostKind,
     # Mass-balance totals
     RunoffTotal, RoutingTotal,
 )
 
 __all__ = [
+    "abi_tag",
     # --- DateTime conversion (SWMM DateTime <-> Python datetime) ---
     "oadate_to_datetime", "datetime_to_oadate", "datetime_api",
     # --- Engine lifecycle & errors ---
@@ -280,7 +348,7 @@ __all__ = [
     "BadHandleError", "BadIndexError", "BadParamError",
     "LifecycleError", "HotStartError", "PluginError",
     "FileError", "ParseError", "NumericalError",
-    "CRSError", "DependencyError", "StaleObjectError",
+    "CRSError", "DependencyError", "GeoPackageError", "StaleObjectError",
     # --- Programmatic model building & editing ---
     "ModelBuilder", "ModelEditor", "ImpactEntry", "ConversionResult",
     # --- Geometry helpers ---
@@ -296,13 +364,23 @@ __all__ = [
     "Nodes", "Links", "Subcatchments", "Gages",
     "Aquifers", "Snowpacks",
     # --- Simulation state & I/O ---
-    "HotStart", "MassBalance", "Statistics", "OutputReader",
+    "HotStart", "MassBalance", "Statistics", "OutputReader", "Output2DReader",
+    "Results", "ResultField", "SeriesField", "SurfaceField", "SurfaceResults", "ResultMesh",
+    "capabilities",
     # --- Hydrology, water quality, and time-varying inputs ---
     "Pollutants", "Quality", "Tables", "Patterns", "Inflows", "Controls", "Forcing",
-    "Climate",
+    "Climate", "Snow", "MeshSnow", "Checkpoints", "InitialQuality", "InitialQualityEntry",
+    # --- Transport processes — heat, water age, reactions ---
+    "Heat", "HeatNodeOverride", "HeatLidMaterial", "HeatElementValue", "HeatSnapshot",
+    "WaterAge", "WaterAgeOverride",
+    "Reactions", "ReactionSpecies", "ReactionCoefficient", "ReactionTerm",
+    "ReactionInitialEntry", "ReactionHydVar", "ReactionFunction",
+    "ExpressionDiagnostic",
+    "ProcessComponents", "ProcessComponent",
     # --- Spatial / infrastructure / 2D ---
     "Infrastructure", "Spatial",
     "Surface2D", "HAS_2D",
+    "Infiltration2DView", "Infil2DDefaults", "Infil2DRow", "Infil2DCell",
     # --- Optional extensions ---
     "HAS_GEOPACKAGE",
     # --- Enumerations: lifecycle / errors ---
@@ -314,17 +392,94 @@ __all__ = [
     # --- Enumerations: hydrology ---
     "InfilModel", "GageDataSource", "GageRainType",
     # --- Enumerations: water quality / LID ---
-    "ConcentrationUnits", "BuildupFunc", "WashoffFunc", "LidType",
+    "ConcentrationUnits", "BuildupFunc", "WashoffFunc", "LidType", "LidNodeLayer", "LidNodeLayerKind", "LidLayerTreatment",
     # --- Enumerations: hydrology parameters ---
-    "AquiferParam",
+    "AquiferParam", "GwfType",
     # --- Enumerations: output variables ---
     "OutSubcatchVar", "OutNodeVar", "OutLinkVar", "OutSystemVar",
     # --- Enumerations: forcing & patterns ---
     "ForcingMode", "ForcingTarget", "ForcingType", "ForcingPersist", "PatternType",
     # --- Enumerations: 2D surface routing ---
     "SurfaceForcingMode", "SurfaceBoundaryType",
+    "SurfaceInfilMethod", "SurfaceInfilDest", "NodeCoupling2DType",
     "DividerType", "RefType",
     "TableType", "FilePathRole", "UserFlagType",
+    # --- Enumerations: transport processes ---
+    "HeatFluxModule", "HeatShortwaveMode", "HeatRadiativeParam", "HeatSolarParam",
+    "HeatCloudParam", "HeatSourceKind", "HeatSedimentParam", "HeatAttr",
+    "HeatOverrideScope", "GroundHeatValue", "GroundHeatLayerValue",
+    "ChannelGroundValue", "WaterAgeSource",
+    "ReactionScope", "ReactionExprForm",
+    # --- Enumerations: street inlets ---
+    "InletType", "GrateType", "ThroatType", "InletCurveKind",
+    "InletPlacement", "InletHostKind",
     # --- Enumerations: mass-balance totals ---
     "RunoffTotal", "RoutingTotal",
 ]
+
+# Native climate, transport, writer and unit-system selectors.
+from ._enums import (
+    Heat2DValue as Heat2DValue, EvapPreviewStatus as EvapPreviewStatus, EvapType as EvapType, TempSource as TempSource, WindType as WindType, HumidityType as HumidityType, HumidityVar as HumidityVar, HeatElemKind as HeatElemKind, InpProfile as InpProfile, TransportDispersionMode as TransportDispersionMode, UnitSystem as UnitSystem
+)
+__all__ += ['EvapType', 'TempSource', 'WindType', 'HumidityType', 'HumidityVar', 'HeatElemKind', 'InpProfile', 'TransportDispersionMode', 'UnitSystem']
+
+from ._transport import (Transport as Transport, ThreadInfo as ThreadInfo, EffectiveThreads as EffectiveThreads, TransportCell as TransportCell, TransportRow as TransportRow, ConduitDispersion as ConduitDispersion, transport_domain_name as transport_domain_name, transport_class_name as transport_class_name)
+from ._enums import (TransportDomain as TransportDomain, TransportClass as TransportClass, TransportState as TransportState)
+__all__ += ['Transport', 'ThreadInfo', 'EffectiveThreads', 'TransportCell', 'TransportRow', 'ConduitDispersion', 'transport_domain_name', 'transport_class_name', 'TransportDomain', 'TransportClass', 'TransportState']
+
+if not HAS_2D:
+    __all__ = [name for name in __all__ if name not in {
+        "Surface2D", "Infiltration2DView", "Infil2DDefaults", "Infil2DRow", "Infil2DCell", "MeshSnow"}]
+if HAS_GEOPACKAGE:
+    __all__.append("GeoPackage")
+
+from ._process_components import KnownProcessComponent as KnownProcessComponent
+from ._process_components import ComponentLibrary as ComponentLibrary
+__all__ += ["KnownProcessComponent", "ComponentLibrary"]
+
+from ._enums import (CellScope as CellScope, GroundwaterSoil as GroundwaterSoil, GroundwaterClosure as GroundwaterClosure, GroundwaterVariable as GroundwaterVariable, GroundwaterLedger as GroundwaterLedger, GroundwaterZone as GroundwaterZone, GroundwaterSpeciesLedger as GroundwaterSpeciesLedger)
+__all__ += ['CellScope', 'GroundwaterSoil', 'GroundwaterClosure', 'GroundwaterVariable', 'GroundwaterLedger', 'GroundwaterZone', 'GroundwaterSpeciesLedger']
+if HAS_2D:
+    from ._groundwater import Groundwater, AquiferRow, AquiferNode, AquiferLink
+    __all__ += ["Groundwater", "AquiferRow", "AquiferNode", "AquiferLink"]
+
+from ._enums import GroundwaterTransportZone as GroundwaterTransportZone
+__all__.append("GroundwaterTransportZone")
+if HAS_2D:
+    from ._gw_transport import (GroundwaterTransport, GroundwaterParameters, GroundwaterSorption, GroundwaterInitialQuality, GroundwaterBoundary, GroundwaterSource, GroundwaterSourceTerm)
+    __all__ += ['GroundwaterTransport', 'GroundwaterParameters', 'GroundwaterSorption', 'GroundwaterInitialQuality', 'GroundwaterBoundary', 'GroundwaterSource', 'GroundwaterSourceTerm']
+
+if HAS_2D:
+    from ._surface_quality import (SurfaceQuality, SurfaceCoverage, SurfaceLoading, SurfaceCurbLength)
+    __all__ += ['SurfaceQuality', 'SurfaceCoverage', 'SurfaceLoading', 'SurfaceCurbLength']
+
+# Independent offline flow tracing.
+from ._trace import (
+    FlowTracer as FlowTracer,
+    TraceNode as TraceNode,
+    TraceLink as TraceLink,
+    TraceOptions as TraceOptions,
+    TraceInfo as TraceInfo,
+    TraceNodeAverage as TraceNodeAverage,
+    TraceLinkAverage as TraceLinkAverage,
+    TraceValue as TraceValue,
+    TraceSummary as TraceSummary,
+    TraceResult as TraceResult,
+    TraceError as TraceError,
+)
+from ._enums import (
+    TraceStatus as TraceStatus,
+    TraceDirection as TraceDirection,
+    TraceNodeFlags as TraceNodeFlags,
+    TraceFlags as TraceFlags,
+    TraceTerminal as TraceTerminal,
+)
+__all__ += ['FlowTracer', 'TraceNode', 'TraceLink', 'TraceOptions', 'TraceInfo', 'TraceNodeAverage', 'TraceLinkAverage', 'TraceValue', 'TraceSummary', 'TraceResult', 'TraceError', 'TraceStatus', 'TraceDirection', 'TraceNodeFlags', 'TraceFlags', 'TraceTerminal']
+
+from ._lid_nodes import LidNodeLayer as LidNodeLayer, LidNodeLayerKind as LidNodeLayerKind, LidLayerTreatment as LidLayerTreatment
+
+if HAS_2D:
+    from ._coupling import Coupling, DomainSources, RuntimeSource, SourceReceipt, BoundaryReceipt, CouplingFrame, RuntimeBoundary, RuntimeForcing, RuntimeClear
+    __all__ += ["Coupling", "DomainSources", "RuntimeSource", "SourceReceipt", "BoundaryReceipt", "CouplingFrame", "RuntimeBoundary", "RuntimeForcing", "RuntimeClear"]
+
+__all__ += ['EvapPreviewStatus', 'Heat2DValue']

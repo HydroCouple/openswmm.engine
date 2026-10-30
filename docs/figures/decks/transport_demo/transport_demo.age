@@ -1,0 +1,6 @@
+;; Water-age source ages for the SWMMVis manual tutorial T7.
+;; Values are in HOURS. Requires [OPTIONS] WATER_AGE ON in transport_demo.inp.
+
+[WATER_AGE_SOURCES]
+EXTERNAL_INFLOW   GLOBAL   0.5
+INITIAL_STATE     GLOBAL   6.0

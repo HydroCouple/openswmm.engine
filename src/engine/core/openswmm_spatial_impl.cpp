@@ -1,16 +1,37 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file openswmm_spatial_impl.cpp
- * @brief C API implementation — spatial frame: CRS, coordinates, vertices, polygons.
+ * @file      openswmm_spatial_impl.cpp
+ * @brief     C API implementation — spatial frame: CRS, coordinates, vertices, polygons.
  *
  * @see include/openswmm/engine/openswmm_spatial.h
  * @ingroup engine_api
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #include "openswmm_api_common.hpp"
+
+#include <cctype>
+#include <cmath>
+#include <string>
+#include <vector>
 #include "../../../include/openswmm/engine/openswmm_spatial.h"
 
 extern "C" {
@@ -21,15 +42,24 @@ extern "C" {
 
 SWMM_ENGINE_API int swmm_spatial_set_crs(SWMM_Engine engine, const char* crs) {
     CHECK_HANDLE(engine);
-    if (!crs) return SWMM_ERR_BADPARAM;
+    if (!crs)
+        return SWMM_ERR_BADPARAM;
     auto& ctx = to_engine(engine)->context();
+    // The CRS is held in two places: the spatial frame (this API, the
+    // GeoPackage reader/writer, hot-start headers) and the [OPTIONS] table
+    // (swmm_get_crs, swmm_options_set("CRS"), and the .inp writer). The .inp
+    // reader fills both; this setter used to fill only the frame, so a caller
+    // that reprojected coordinates and then saved the model wrote the NEW
+    // coordinates under the OLD `CRS` line. Keep both in step.
     ctx.spatial.crs = crs;
+    ctx.options.crs = crs;
     return SWMM_OK;
 }
 
 SWMM_ENGINE_API int swmm_spatial_get_crs(SWMM_Engine engine, char* buf, int buflen) {
     CHECK_HANDLE(engine);
-    if (!buf || buflen <= 0) return SWMM_ERR_BADPARAM;
+    if (!buf || buflen <= 0)
+        return SWMM_ERR_BADPARAM;
     const auto& ctx = to_engine(engine)->context();
     const auto& crs = ctx.spatial.crs;
     const int copy_len = std::min(static_cast<int>(crs.size()), buflen - 1);
@@ -49,6 +79,20 @@ SWMM_ENGINE_API int swmm_spatial_set_node_coord(SWMM_Engine engine, int idx, dou
     const auto ui = static_cast<std::size_t>(idx);
     ctx.spatial.node_x[ui] = x;
     ctx.spatial.node_y[ui] = y;
+    if (ctx.spatial.node_has_xy.size() < ctx.spatial.node_x.size())
+        ctx.spatial.node_has_xy.resize(ctx.spatial.node_x.size(), 0);
+    ctx.spatial.node_has_xy[ui] = 1; // G-X2
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_spatial_node_has_coord(SWMM_Engine engine, int idx, int* present) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    if (!present)
+        return SWMM_ERR_BADPARAM;
+    const auto ui = static_cast<std::size_t>(idx);
+    *present = ui < ctx.spatial.node_has_xy.size() && ctx.spatial.node_has_xy[ui] ? 1 : 0;
     return SWMM_OK;
 }
 
@@ -57,25 +101,31 @@ SWMM_ENGINE_API int swmm_spatial_get_node_coord(SWMM_Engine engine, int idx, dou
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
     const auto ui = static_cast<std::size_t>(idx);
-    if (x) *x = ctx.spatial.node_x[ui];
-    if (y) *y = ctx.spatial.node_y[ui];
+    if (x)
+        *x = ctx.spatial.node_x[ui];
+    if (y)
+        *y = ctx.spatial.node_y[ui];
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_spatial_get_node_coords_bulk(SWMM_Engine engine, double* x_buf, double* y_buf, int count) {
+SWMM_ENGINE_API int swmm_spatial_get_node_coords_bulk(SWMM_Engine engine, double* x_buf,
+                                                      double* y_buf, int count) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
-    if (!x_buf || !y_buf || count <= 0) return SWMM_ERR_BADPARAM;
+    if (!x_buf || !y_buf || count <= 0)
+        return SWMM_ERR_BADPARAM;
     const int n = std::min(count, ctx.n_nodes());
     std::copy(ctx.spatial.node_x.begin(), ctx.spatial.node_x.begin() + n, x_buf);
     std::copy(ctx.spatial.node_y.begin(), ctx.spatial.node_y.begin() + n, y_buf);
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_spatial_set_node_coords_bulk(SWMM_Engine engine, const double* x_buf, const double* y_buf, int count) {
+SWMM_ENGINE_API int swmm_spatial_set_node_coords_bulk(SWMM_Engine engine, const double* x_buf,
+                                                      const double* y_buf, int count) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
-    if (!x_buf || !y_buf || count <= 0) return SWMM_ERR_BADPARAM;
+    if (!x_buf || !y_buf || count <= 0)
+        return SWMM_ERR_BADPARAM;
     const int n = std::min(count, ctx.n_nodes());
     std::copy(x_buf, x_buf + n, ctx.spatial.node_x.begin());
     std::copy(y_buf, y_buf + n, ctx.spatial.node_y.begin());
@@ -101,8 +151,10 @@ SWMM_ENGINE_API int swmm_spatial_get_link_coord(SWMM_Engine engine, int idx, dou
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
     const auto ui = static_cast<std::size_t>(idx);
-    if (x) *x = ctx.spatial.link_x[ui];
-    if (y) *y = ctx.spatial.link_y[ui];
+    if (x)
+        *x = ctx.spatial.link_x[ui];
+    if (y)
+        *y = ctx.spatial.link_y[ui];
     return SWMM_OK;
 }
 
@@ -110,11 +162,13 @@ SWMM_ENGINE_API int swmm_spatial_get_link_coord(SWMM_Engine engine, int idx, dou
 // Link vertices (polyline)
 // ============================================================================
 
-SWMM_ENGINE_API int swmm_spatial_set_link_vertices(SWMM_Engine engine, int idx, const double* x, const double* y, int count) {
+SWMM_ENGINE_API int swmm_spatial_set_link_vertices(SWMM_Engine engine, int idx, const double* x,
+                                                   const double* y, int count) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
-    if (count > 0 && (!x || !y)) return SWMM_ERR_BADPARAM;
+    if (count > 0 && (!x || !y))
+        return SWMM_ERR_BADPARAM;
     const auto ui = static_cast<std::size_t>(idx);
     ctx.spatial.link_vertices_x[ui].assign(x, x + count);
     ctx.spatial.link_vertices_y[ui].assign(y, y + count);
@@ -129,18 +183,20 @@ SWMM_ENGINE_API int swmm_spatial_get_link_vertex_count(SWMM_Engine engine, int i
     const int interior_count = static_cast<int>(ctx.spatial.link_vertices_x[ui].size());
     const int from_node = ctx.links.node1[ui];
     const int to_node = ctx.links.node2[ui];
-    const int endpoint_count =
-        ((from_node >= 0 && from_node < ctx.n_nodes()) ? 1 : 0) +
-        ((to_node >= 0 && to_node < ctx.n_nodes()) ? 1 : 0);
-    if (count) *count = interior_count + endpoint_count;
+    const int endpoint_count = ((from_node >= 0 && from_node < ctx.n_nodes()) ? 1 : 0) +
+                               ((to_node >= 0 && to_node < ctx.n_nodes()) ? 1 : 0);
+    if (count)
+        *count = interior_count + endpoint_count;
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_spatial_get_link_vertices(SWMM_Engine engine, int idx, double* x, double* y, int max_count) {
+SWMM_ENGINE_API int swmm_spatial_get_link_vertices(SWMM_Engine engine, int idx, double* x,
+                                                   double* y, int max_count) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
-    if (!x || !y || max_count <= 0) return SWMM_ERR_BADPARAM;
+    if (!x || !y || max_count <= 0)
+        return SWMM_ERR_BADPARAM;
     const auto ui = static_cast<std::size_t>(idx);
     const auto& vx = ctx.spatial.link_vertices_x[ui];
     const auto& vy = ctx.spatial.link_vertices_y[ui];
@@ -175,7 +231,8 @@ SWMM_ENGINE_API int swmm_spatial_get_link_vertices(SWMM_Engine engine, int idx, 
 // Subcatchment coordinates (centroid)
 // ============================================================================
 
-SWMM_ENGINE_API int swmm_spatial_set_subcatch_coord(SWMM_Engine engine, int idx, double x, double y) {
+SWMM_ENGINE_API int swmm_spatial_set_subcatch_coord(SWMM_Engine engine, int idx, double x,
+                                                    double y) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
@@ -185,13 +242,16 @@ SWMM_ENGINE_API int swmm_spatial_set_subcatch_coord(SWMM_Engine engine, int idx,
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_spatial_get_subcatch_coord(SWMM_Engine engine, int idx, double* x, double* y) {
+SWMM_ENGINE_API int swmm_spatial_get_subcatch_coord(SWMM_Engine engine, int idx, double* x,
+                                                    double* y) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
     const auto ui = static_cast<std::size_t>(idx);
-    if (x) *x = ctx.spatial.subcatch_x[ui];
-    if (y) *y = ctx.spatial.subcatch_y[ui];
+    if (x)
+        *x = ctx.spatial.subcatch_x[ui];
+    if (y)
+        *y = ctx.spatial.subcatch_y[ui];
     return SWMM_OK;
 }
 
@@ -199,30 +259,37 @@ SWMM_ENGINE_API int swmm_spatial_get_subcatch_coord(SWMM_Engine engine, int idx,
 // Subcatchment polygon
 // ============================================================================
 
-SWMM_ENGINE_API int swmm_spatial_set_subcatch_polygon(SWMM_Engine engine, int idx, const double* x, const double* y, int count) {
+SWMM_ENGINE_API int swmm_spatial_set_subcatch_polygon(SWMM_Engine engine, int idx, const double* x,
+                                                      const double* y, int count) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
-    if (count > 0 && (!x || !y)) return SWMM_ERR_BADPARAM;
+    if (count > 0 && (!x || !y))
+        return SWMM_ERR_BADPARAM;
     const auto ui = static_cast<std::size_t>(idx);
     ctx.spatial.subcatch_polygon_x[ui].assign(x, x + count);
     ctx.spatial.subcatch_polygon_y[ui].assign(y, y + count);
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_spatial_get_subcatch_polygon_count(SWMM_Engine engine, int idx, int* count) {
+SWMM_ENGINE_API int swmm_spatial_get_subcatch_polygon_count(SWMM_Engine engine, int idx,
+                                                            int* count) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
-    if (count) *count = static_cast<int>(ctx.spatial.subcatch_polygon_x[static_cast<std::size_t>(idx)].size());
+    if (count)
+        *count =
+            static_cast<int>(ctx.spatial.subcatch_polygon_x[static_cast<std::size_t>(idx)].size());
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_spatial_get_subcatch_polygon(SWMM_Engine engine, int idx, double* x, double* y, int max_count) {
+SWMM_ENGINE_API int swmm_spatial_get_subcatch_polygon(SWMM_Engine engine, int idx, double* x,
+                                                      double* y, int max_count) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
-    if (!x || !y || max_count <= 0) return SWMM_ERR_BADPARAM;
+    if (!x || !y || max_count <= 0)
+        return SWMM_ERR_BADPARAM;
     const auto ui = static_cast<std::size_t>(idx);
     const auto& px = ctx.spatial.subcatch_polygon_x[ui];
     const auto& py = ctx.spatial.subcatch_polygon_y[ui];
@@ -251,9 +318,142 @@ SWMM_ENGINE_API int swmm_spatial_get_gage_coord(SWMM_Engine engine, int idx, dou
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
     const auto ui = static_cast<std::size_t>(idx);
-    if (x) *x = ctx.spatial.gage_x[ui];
-    if (y) *y = ctx.spatial.gage_y[ui];
+    if (x)
+        *x = ctx.spatial.gage_x[ui];
+    if (y)
+        *y = ctx.spatial.gage_y[ui];
     return SWMM_OK;
 }
 
 } /* extern "C" */
+
+// ---------------------------------------------------------------------------
+// [MAP] and annotation sections
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/**
+ * @brief Canonicalize one supported annotation-section token.
+ *
+ * No whitespace trimming, Unicode folding or normalization between singular/plural profile
+ * spellings. Allocation can throw.
+ *
+ * @param[in] section NULL or borrowed NUL-terminated text; uppercased with C-locale byte rules.
+ * @return Static LABELS/BACKDROP/PROFILE/PROFILES string, otherwise NULL; never free.
+ */
+const char* annotation_tag(const char* section) {
+    if (section == nullptr)
+        return nullptr;
+    std::string up(section);
+    for (auto& c : up)
+        c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    for (const char* tag : {"LABELS", "BACKDROP", "PROFILE", "PROFILES"})
+        if (up == tag)
+            return tag;
+    return nullptr;
+}
+
+} // namespace
+
+SWMM_ENGINE_API int swmm_spatial_get_map_dimensions(SWMM_Engine engine, double* x1, double* y1,
+                                                    double* x2, double* y2) {
+    CHECK_HANDLE(engine);
+    const auto& sp = to_engine(engine)->context().spatial;
+    if (x1)
+        *x1 = sp.map_x1;
+    if (y1)
+        *y1 = sp.map_y1;
+    if (x2)
+        *x2 = sp.map_x2;
+    if (y2)
+        *y2 = sp.map_y2;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_spatial_set_map_dimensions(SWMM_Engine engine, double x1, double y1,
+                                                    double x2, double y2) {
+    CHECK_HANDLE(engine);
+    if (!std::isfinite(x1) || !std::isfinite(y1) || !std::isfinite(x2) || !std::isfinite(y2))
+        return SWMM_ERR_BADPARAM;
+    auto& sp = to_engine(engine)->context().spatial;
+    sp.map_x1 = x1;
+    sp.map_y1 = y1;
+    sp.map_x2 = x2;
+    sp.map_y2 = y2;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_spatial_get_map_units(SWMM_Engine engine, char* buf, int buflen) {
+    CHECK_HANDLE(engine);
+    if (buf == nullptr || buflen <= 0)
+        return SWMM_ERR_BADPARAM;
+    const std::string& u = to_engine(engine)->context().spatial.map_units;
+    const auto n = std::min(static_cast<std::size_t>(buflen - 1), u.size());
+    std::memcpy(buf, u.data(), n);
+    buf[n] = '\0';
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_spatial_set_map_units(SWMM_Engine engine, const char* units) {
+    CHECK_HANDLE(engine);
+    if (units == nullptr)
+        return SWMM_ERR_BADPARAM;
+    std::string u(units);
+    for (auto& c : u)
+        c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    to_engine(engine)->context().spatial.map_units = std::move(u);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_spatial_get_annotation(SWMM_Engine engine, const char* section, char* buf,
+                                                int buflen, int* required) {
+    CHECK_HANDLE(engine);
+    const char* tag = annotation_tag(section);
+    if (tag == nullptr)
+        return SWMM_ERR_BADPARAM;
+    const auto& all = to_engine(engine)->context().passthrough_sections;
+    std::string text;
+    if (const auto it = all.find(tag); it != all.end())
+        for (std::size_t i = 0; i < it->second.size(); ++i) {
+            if (i)
+                text += '\n';
+            text += it->second[i];
+        }
+    if (required)
+        *required = static_cast<int>(text.size() + 1);
+    if (buf == nullptr)
+        return SWMM_OK;
+    if (buflen <= 0)
+        return SWMM_ERR_BADPARAM;
+    const auto n = std::min(static_cast<std::size_t>(buflen - 1), text.size());
+    std::memcpy(buf, text.data(), n);
+    buf[n] = '\0';
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_spatial_set_annotation(SWMM_Engine engine, const char* section,
+                                                const char* text) {
+    CHECK_HANDLE(engine);
+    const char* tag = annotation_tag(section);
+    if (tag == nullptr)
+        return SWMM_ERR_BADPARAM;
+    auto& all = to_engine(engine)->context().passthrough_sections;
+    if (text == nullptr || *text == '\0') {
+        all.erase(tag);
+        return SWMM_OK;
+    }
+    std::vector<std::string> lines;
+    std::string cur;
+    for (const char* p = text; *p; ++p) {
+        if (*p == '\n') {
+            lines.push_back(std::move(cur));
+            cur.clear();
+        } else if (*p != '\r')
+            cur += *p;
+    }
+    if (!cur.empty())
+        lines.push_back(std::move(cur));
+    all[tag] = std::move(lines);
+    return SWMM_OK;
+}

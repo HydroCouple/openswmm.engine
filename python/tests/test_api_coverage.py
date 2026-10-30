@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import re
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -63,21 +64,16 @@ _CYTHON_DIR = _PYTHON_DIR / "openswmm" / "engine"
 # Keep this in sync with the ``intentional`` rows in
 # ``plans/parity/overrides.tsv``.
 # ---------------------------------------------------------------------------
-KNOWN_UNBOUND: frozenset[str] = frozenset({
-    # Error introspection — Python raises a typed ``EngineError`` instead of
-    # polling C-level last-error state, so these are never called directly.
-    # (The lenient-open accumulator API — swmm_get_error_count/at and
-    # swmm_get_warning_count/at — *is* bound, via ``Solver.open_errors`` /
-    # ``Solver.open_warnings``; only the single-shot last-error accessors and
-    # the static code→string lookup remain served by the exception layer.)
-    "swmm_error_message",
-    "swmm_get_last_error",
-    "swmm_get_last_error_msg",
-    # Current simulation time — declared in _common.pxd but intentionally not
-    # called; ``Solver.current_datetime`` derives it as start_datetime +
-    # elapsed (the C func returns elapsed seconds, not an OADate).
-    "swmm_get_current_time",
-})
+import importlib.util
+_spec = importlib.util.spec_from_file_location(
+    "_api_drift_audit", _PYTHON_DIR / "scripts/api_drift_audit.py")
+_audit = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_audit)
+KNOWN_UNBOUND = _audit.KNOWN_UNBOUND
+collect_c_functions = _audit.collect_c_functions
+collect_pyx_tokens = _audit.collect_pyx_tokens
+collect_pxd_functions = _audit.collect_pxd_functions
+executable_cython = _audit.executable_cython
 
 
 # Regex to extract C API symbol names from header declarations.  A declaration
@@ -98,69 +94,33 @@ _CDEF_EXTERN = re.compile(r"cdef\s+extern\b")
 
 
 def _collect_c_symbols() -> set[str]:
-    """Return every C API symbol declared with ``SWMM_ENGINE_API``."""
-    assert _HEADER_GLOB.is_dir(), (
-        f"Header directory not found: {_HEADER_GLOB}.  Has the project "
-        f"layout changed?")
-    symbols: set[str] = set()
-    for header in sorted(_HEADER_GLOB.glob("*.h")):
-        if header.name.endswith("_export.h"):
-            continue
-        lines = header.read_text(encoding="utf-8").splitlines()
-        i = 0
-        while i < len(lines):
-            if lines[i].lstrip().startswith(_EXPORT_PREFIX):
-                buf = [lines[i]]
-                while ";" not in lines[i] and i + 1 < len(lines):
-                    i += 1
-                    buf.append(lines[i])
-                joined = re.sub(r"\s+", " ", " ".join(buf))
-                m = _C_FUNC_TOKEN.search(joined)
-                if m:
-                    symbols.add(m.group(1))
-            i += 1
-    return symbols
+    return set(collect_c_functions())
 
 
 def _collect_pyx_uses() -> set[str]:
-    """Return every ``swmm_*`` symbol *used* from ``.pyx`` sources.
-
-    "Used" = referenced outside of ``cdef extern`` declaration blocks and
-    outside of ``#`` comments — i.e. an actual call site or function-pointer
-    reference in the Python-facing layer.
-    """
-    assert _CYTHON_DIR.is_dir(), (
-        f"Cython source directory not found: {_CYTHON_DIR}.")
-    uses: set[str] = set()
-    for path in sorted(_CYTHON_DIR.glob("*.pyx")):
-        in_extern = False
-        extern_indent = 0
-        for raw in path.read_text(encoding="utf-8").splitlines():
-            code = raw.split("#", 1)[0]           # drop line comments
-            stripped = code.strip()
-            if _CDEF_EXTERN.match(stripped):
-                in_extern = True
-                extern_indent = len(code) - len(code.lstrip())
-                continue
-            if in_extern:
-                # extern block ends at the next non-blank line whose indent
-                # returns to <= the block-header indent.
-                if stripped and (len(code) - len(code.lstrip())) <= extern_indent:
-                    in_extern = False
-                else:
-                    continue
-            for m in _SWMM_TOKEN.finditer(code):
-                uses.add(m.group(1))
-    return uses
+    return collect_pyx_tokens()
 
 
 def _collect_pxd_decls() -> set[str]:
-    """Return every ``swmm_*`` symbol declared in ``.pxd`` extern blocks."""
-    decls: set[str] = set()
-    for path in sorted(_CYTHON_DIR.glob("*.pxd")):
-        for m in _SWMM_TOKEN.finditer(path.read_text(encoding="utf-8")):
-            decls.add(m.group(1))
-    return decls
+    return collect_pxd_functions()
+
+
+def test_collector_distinguishes_declarations_comments_and_helpers():
+    source = '\n'.join([
+        '"""swmm_doc_only()"""',
+        '# swmm_comment_only()',
+        'cdef extern from "swmm_header.h":',
+        '    int swmm_decl_only(int x)',
+        '',
+        'cdef inline int helper():',
+        '    return swmm_real_call(1)',
+        'callback = swmm_function_pointer',
+        'text = "swmm_string_only()"',
+    ])
+    uses = set(_SWMM_TOKEN.findall(executable_cython(source)))
+    assert uses == {"swmm_real_call", "swmm_function_pointer"}
+    decls = set(_SWMM_TOKEN.findall(executable_cython(source, declarations=True)))
+    assert decls == {"swmm_decl_only"}
 
 
 # ---------------------------------------------------------------------------
@@ -170,6 +130,54 @@ def _collect_pxd_decls() -> set[str]:
 
 class TestApiCoverage(unittest.TestCase):
     """Drift guards for the C API ↔ Cython binding surface."""
+
+    def test_detailed_coverage_report_accounts_for_every_public_function(self):
+        import contextlib
+        import io
+        import json
+        from unittest.mock import patch
+        output = io.StringIO()
+        with patch('sys.argv', ['api_drift_audit.py', '--json', '--coverage']), contextlib.redirect_stdout(output):
+            self.assertEqual(_audit.main(), 0)
+        report = json.loads(output.getvalue())
+        bindings = report['function_bindings']
+        self.assertEqual(set(bindings), set(collect_c_functions()))
+        for name, binding in bindings.items():
+            self.assertIn(binding['status'], {'bound', 'intentional'})
+            if binding['status'] == 'bound':
+                self.assertTrue(binding['python_members'], name)
+        self.assertEqual(sum(row['functions'] for row in report['header_coverage'].values()), len(bindings))
+
+    def test_callgraph_tracks_helpers_and_member_scopes(self):
+        from unittest.mock import patch
+        from tests._paths import artifact_dir
+
+        sources = Path(artifact_dir(self))
+        (sources / "_wrapper.pyx").write_text(
+            '\n'.join([
+                '"""class Fake: swmm_doc_only()"""',
+                'cdef extern from "header.h":',
+                '    int swmm_decl_only(int x)',
+                '',
+                'cdef class Probe:',
+                '    def read(self):',
+                '        # swmm_comment_only()',
+                '        text = "swmm_string_only()"',
+                '        callback = swmm_function_pointer',
+                '        return swmm_real_call(1)',
+            ]), encoding="utf-8",
+        )
+        (sources / "_helper.pxd").write_text(
+            'cdef inline int helper():\n    return swmm_helper_call(1)\n',
+            encoding="utf-8",
+        )
+        with patch.object(_audit, "ENGINE", sources):
+            graph = _audit.pyx_callgraph()
+        self.assertEqual(graph, {
+            "swmm_real_call": {("_wrapper", "Probe", "read")},
+            "swmm_function_pointer": {("_wrapper", "Probe", "read")},
+            "swmm_helper_call": {("_helper", "", "helper")},
+        })
 
     def test_extraction_finds_a_large_surface(self):
         """Sanity: if either side returns near-zero symbols the regexes
@@ -267,3 +275,147 @@ class TestPrintSummary(unittest.TestCase):
         print(f"    of which allowlisted:          {len(KNOWN_UNBOUND):>4}")
         print(f"    of which unjustified:          {len(unjustified):>4}")
         print(f"  Declared in .pxd but not called: {len(declared_not_called):>4}")
+
+
+# ---------------------------------------------------------------------------
+# Public surface: every member declared in a .pyi stub is implemented in the
+# matching .pyx/.py class (directly or through a base class). Other bindings
+# (the WebAssembly package) mirror the API from the stubs, so a stub member
+# with no implementation would be copied as a phantom.
+# ---------------------------------------------------------------------------
+_surface_spec = importlib.util.spec_from_file_location(
+    "_python_surface", _PYTHON_DIR / "scripts/python_surface.py")
+_surface = importlib.util.module_from_spec(_surface_spec)
+_surface_spec.loader.exec_module(_surface)
+
+
+class TestPublicSurface(unittest.TestCase):
+    def test_every_stub_member_is_implemented(self):
+        missing = _surface.check()
+        self.assertEqual(missing, [], "stub members without an implementation:\n  - "
+                         + "\n  - ".join(missing))
+
+    def test_surface_covers_the_main_classes(self):
+        surface = _surface.collect()
+        self.assertIn("Solver", surface["_solver"]["classes"])
+        self.assertIn("step", surface["_solver"]["classes"]["Solver"]["members"])
+        self.assertIn("__len__", surface["_nodes"]["classes"]["Nodes"]["members"])
+
+
+# ---------------------------------------------------------------------------
+# Engine input features vs C API: every section/option key the parsers accept
+# is reachable through some C function, or its absence is justified in
+# scripts/engine_feature_gaps_allow.json. Text only.
+# ---------------------------------------------------------------------------
+_gaps_spec = importlib.util.spec_from_file_location(
+    "_engine_feature_gaps", _PYTHON_DIR / "scripts/engine_feature_gaps.py")
+_gaps = importlib.util.module_from_spec(_gaps_spec)
+_gaps_spec.loader.exec_module(_gaps)
+
+
+class TestEngineFeatureGaps(unittest.TestCase):
+    def test_every_gap_is_justified(self):
+        problems = _gaps.check()
+        self.assertEqual(problems, [], "\n  - ".join(["engine feature gaps:"] + problems))
+
+    def test_gate_reports_unlisted_and_stale_entries(self):
+        allow = _gaps.load_allow()
+        dropped = sorted(allow)[0]
+        trimmed = {k: v for k, v in allow.items() if k != dropped}
+        trimmed["G1:NO_SUCH_SECTION"] = "stale on purpose"
+        original = _gaps.load_allow
+        _gaps.load_allow = lambda: trimmed
+        try:
+            problems = _gaps.check()
+        finally:
+            _gaps.load_allow = original
+        self.assertIn(f"unjustified gap: {dropped}", problems)
+        self.assertIn("stale allow-list entry: G1:NO_SUCH_SECTION", problems)
+
+    def test_stored_legacy_option_uses_existing_extension_api(self):
+        option = _gaps.option_keys()["OPTIONS"]["SLOPE_WEIGHTING"]
+        self.assertIn("ext_options", option["fields"])
+        self.assertTrue(option["reachable"])
+        self.assertEqual(option["via"], "swmm_options_get/set_ext")
+
+    def test_extension_storage_does_not_hide_an_unexposed_field(self):
+        parser = _gaps.SRC / "input" / "handlers" / "OptionsHandler.cpp"
+        fixture = '''
+            if (key == "STORED_COMPAT") {
+                opt.ext_options[key] = val;
+            } else if (key == "NEW_UNEXPOSED_FIELD") {
+                opt.audit_only_unexposed_field = 1;
+            }
+        '''
+        original = _gaps._text
+        with mock.patch.object(_gaps, "_text", side_effect=lambda path:
+                               fixture if path == parser else original(path)):
+            keys = _gaps.option_keys()["OPTIONS"]
+        self.assertTrue(keys["STORED_COMPAT"]["reachable"])
+        self.assertFalse(keys["NEW_UNEXPOSED_FIELD"]["reachable"])
+
+    def test_extension_storage_requires_both_api_paths(self):
+        original = _gaps._function_body
+        for missing in ("swmm_options_get_ext", "swmm_options_set_ext"):
+            with self.subTest(missing=missing):
+                with mock.patch.object(_gaps, "_function_body", side_effect=lambda text, name:
+                                       "" if name == missing else original(text, name)):
+                    option = _gaps.option_keys()["OPTIONS"]["SLOPE_WEIGHTING"]
+                self.assertFalse(option["reachable"])
+
+    def test_every_parsed_section_is_mapped(self):
+        unmapped = [r["section"] for r in _gaps.analyse()["sections"] if r["class"] == "UNMAPPED"]
+        self.assertEqual(unmapped, [])
+
+
+class TestOptionKeyList(unittest.TestCase):
+    """``kStandardOptionKeys`` (enumerated by ``swmm_options_key_at``) lists the first key of
+    every ``swmm_options_get`` branch, in branch order, so option iteration never drifts."""
+
+    def test_key_list_matches_getter_branches(self):
+        src = (_REPO_ROOT / "src" / "engine" / "core" / "openswmm_model_impl.cpp").read_text(
+            encoding="utf-8")
+        body = src[src.index("SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine"):
+                   src.index("SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine")]
+        branches = [re.findall(r'"([A-Z0-9_]+)"', cond)[0] for cond in re.findall(
+            r'if\s*\(\s*(k\s*==\s*"[A-Z0-9_]+"(?:\s*\|\|\s*k\s*==\s*"[A-Z0-9_]+")*)', body)]
+        start = src.index("kStandardOptionKeys[] = {")
+        listed = re.findall(r'"([A-Z0-9_]+)"', src[start:src.index("};", start)])
+        self.assertGreater(len(branches), 90)
+        self.assertEqual(listed, branches)
+
+
+def _fixed_text_buffers() -> dict[str, int]:
+    """``{"<module>.pyx::<function>::<buffer>": line}`` for every ``cdef char x[N]``."""
+    found: dict[str, int] = {}
+    for pyx in sorted((_PYTHON_DIR / "openswmm" / "engine").glob("*.pyx")):
+        lines = pyx.read_text(encoding="utf-8").split("\n")
+        for i, line in enumerate(lines):
+            m = re.match(r"(\s*)cdef char (\w+)\[\w+\]", line)
+            if not m:
+                continue
+            function = "?"
+            for prev in reversed(lines[:i]):
+                d = re.match(r"(\s*)(?:cpdef|cdef|def)\s+(?:[\w*]+\s+)*(\w+)\s*\(", prev)
+                if d and len(d.group(1)) < len(m.group(1)):
+                    function = d.group(2)
+                    break
+            found[f"{pyx.name}::{function}::{m.group(2)}"] = i + 1
+    return found
+
+
+class TestFixedBuffers(unittest.TestCase):
+    """Native text getters silently truncate; bindings read them through growing buffers
+    (``_read_engine_*`` or ``_TextBufs`` in ``_common.pxd``). A fixed ``char[N]`` is allowed
+    only where ``scripts/fixed_buffer_allow.json`` gives the reason it cannot lose data."""
+
+    def test_every_fixed_buffer_is_justified(self):
+        import json
+
+        allow = json.loads((_PYTHON_DIR / "scripts" / "fixed_buffer_allow.json").read_text(
+            encoding="utf-8"))
+        found = _fixed_text_buffers()
+        unjustified = sorted(f"{k} (line {v})" for k, v in found.items() if k not in allow)
+        stale = sorted(k for k in allow if k not in found)
+        self.assertEqual(unjustified, [], "fixed text buffers: use a growing reader")
+        self.assertEqual(stale, [], "allow-list entries with no matching buffer")

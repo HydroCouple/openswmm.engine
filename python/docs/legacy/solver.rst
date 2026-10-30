@@ -347,3 +347,28 @@ See also
 * :doc:`../guide/solver` — the modern v6 ``Solver`` (recommended).
 * :doc:`../migration/swmm5_to_swmm6` — translate this code to
   OpenSWMM 6.
+
+
+Junction chamber area (5.3.0)
+=============================
+
+Before starting the legacy solver, set a physical ordinary-junction area in
+project ft²/m² using the appended enum. Zero retains legacy behavior. The
+updated 5.3.0 engine requires dynamic-wave routing for a positive area.
+
+.. code-block:: python
+
+    from openswmm.legacy.engine import Solver, SWMMObjects, SWMMNodeProperties
+
+    with Solver("model.inp") as s:  # opens, but does not start
+        s.set_value(SWMMObjects.NODE, SWMMNodeProperties.STORAGE_AREA, "J1", 12.566)
+        assert s.get_value(SWMMObjects.NODE, SWMMNodeProperties.STORAGE_AREA, "J1") == 12.566
+        # Start/iterate normally after the geometry edit.
+
+This property is separate from PONDING_AREA and is not available in stock EPA
+5.2.4. Positive area stores chamber water through pipe surcharge up to the rim;
+above-rim ponding retains its separate area.
+
+EXTRAN and SLOT support positive areas; DYNAMIC_SLOT is refused. If the
+physical water budget cannot converge, reduce ROUTING_STEP or increase
+MAX_TRIALS as indicated by the engine diagnostic.

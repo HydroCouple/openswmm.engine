@@ -47,14 +47,19 @@ set_target_properties(test_engine_regression PROPERTIES
     CXX_STANDARD_REQUIRED ON
 )
 
-# Each reference model becomes a parameterized test case
+# Each reference model becomes a parameterized test case. The models are
+# located relative to the working directory set here, so the whole suite goes
+# silently empty if that directory is wrong. Deliberately NO --gtest_filter:
+# an empty parameter list leaves the suite uninstantiated, and gtest's
+# GoogleTestVerification.UninstantiatedParameterizedTestSuite check then fails
+# the run. Filtering that check out is what previously let this test report
+# "Passed" while executing zero test cases.
 add_test(
-    NAME    regression_example1
+    NAME    regression_suite
     COMMAND $<TARGET_FILE:test_engine_regression>
-            --gtest_filter=RegressionTest/RegressionTest*
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
 )
-set_tests_properties(regression_example1 PROPERTIES LABELS "regression")
+set_tests_properties(regression_suite PROPERTIES LABELS "regression")
 
 add_custom_command(TARGET test_engine_regression POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy

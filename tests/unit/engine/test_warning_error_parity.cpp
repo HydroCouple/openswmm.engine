@@ -16,6 +16,15 @@
  * they are reviewable and committed, not written to a temp dir.
  */
 
+/**
+ * @file      test_warning_error_parity.cpp
+ * @brief     Tests for warning error parity.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
+ */
+
 #include <gtest/gtest.h>
 
 #include <cstdio>
@@ -31,13 +40,24 @@ namespace {
 // plugin writes the .rpt (warnings recorded at open time reach the report via
 // prepare()/write_summary()). If the open fails, the engine writes the error
 // report itself. Returns the open() code; captures the produced .rpt text.
-int open_model(const std::string& inp, const std::string& rpt,
-               std::string& rpt_text) {
+/**
+ * @brief Open and optionally run a warning/error fixture, then read its report.
+ *
+ * Creates and closes a handle but does not destroy it, matching the current test helper lifetime.
+ * Steps without a guard if setup succeeds, ignores end/report/close statuses and retains artifacts.
+ * No separate report-read status or caller access to the created handle is provided.
+ *
+ * @param[in] inp Existing input filename.
+ * @param[in] rpt Report destination, potentially overwritten.
+ * @param[out] rpt_text Replaced with report text; empty/partial on read failure.
+ * @return Original swmm_engine_open status only; later initialize/start/step/report failures do not
+ *     replace it.
+ */
+int open_model(const std::string& inp, const std::string& rpt, std::string& rpt_text) {
     SWMM_Engine e = swmm_engine_create();
     const int rc = swmm_engine_open(e, inp.c_str(), rpt.c_str(), nullptr, nullptr);
     if (rc == SWMM_OK) {
-        if (swmm_engine_initialize(e) == SWMM_OK &&
-            swmm_engine_start(e, 0) == SWMM_OK) {
+        if (swmm_engine_initialize(e) == SWMM_OK && swmm_engine_start(e, 0) == SWMM_OK) {
             double elapsed = 0.0;
             while (swmm_engine_step(e, &elapsed) == SWMM_OK && elapsed > 0.0) {
             }
@@ -54,28 +74,47 @@ int open_model(const std::string& inp, const std::string& rpt,
     return rc;
 }
 
+/**
+ * @brief Check a case-sensitive text fragment without modifying either string.
+ *
+ * @param[in] hay Borrowed text to search.
+ * @param[in] needle Borrowed substring; an empty substring always matches.
+ * @return True when std::string::find locates needle, false otherwise.
+ */
 bool contains(const std::string& hay, const std::string& needle) {
     return hay.find(needle) != std::string::npos;
 }
 
-}  // namespace
+} // namespace
 
 // A subcatchment whose gage and outlet are '*' references no defined object.
 // Legacy raises a fatal ERROR 209; the refactored engine must fail the open and
 // write the error to the .rpt.
 TEST(WarningErrorParity, UndefinedOutletIsFatal209) {
     std::string rpt_text;
-    const int rc = open_model("warnerr_undefined_outlet.inp",
-                              "warnerr_undefined_outlet.rpt", rpt_text);
+    const int rc =
+        open_model("warnerr_undefined_outlet.inp", "warnerr_undefined_outlet.rpt", rpt_text);
     EXPECT_EQ(rc, SWMM_ERR_PARSE);
     EXPECT_TRUE(contains(rpt_text, "ERROR 209")) << rpt_text;
+}
+
+// An [OPTIONS] keyword value legacy does not know refuses the deck with
+// ERROR 205 (legacy project_readOption). FLOW_UNITS FURLONGS used to open and
+// run as CFS.
+TEST(WarningErrorParity, UnknownFlowUnitsIsFatal205) {
+    std::string rpt_text;
+    const int rc =
+        open_model("warnerr_bad_flow_units.inp", "warnerr_bad_flow_units.rpt", rpt_text);
+    EXPECT_EQ(rc, SWMM_ERR_PARSE);
+    EXPECT_TRUE(contains(rpt_text, "ERROR 205")) << rpt_text;
+    EXPECT_TRUE(contains(rpt_text, "FURLONGS")) << rpt_text;
 }
 
 // An unrecognized section must produce a warning in the .rpt but still open.
 TEST(WarningErrorParity, UnknownSectionWarnsInReport) {
     std::string rpt_text;
-    const int rc = open_model("warnerr_unknown_section.inp",
-                              "warnerr_unknown_section.rpt", rpt_text);
+    const int rc =
+        open_model("warnerr_unknown_section.inp", "warnerr_unknown_section.rpt", rpt_text);
     EXPECT_EQ(rc, 0);
     EXPECT_TRUE(contains(rpt_text, "Unknown section")) << rpt_text;
     EXPECT_TRUE(contains(rpt_text, "BOGUS_SECTION")) << rpt_text;
@@ -94,13 +133,13 @@ TEST(WarningErrorParity, CleanModelHasNoDiagnostics) {
 // Runtime step/geometry warnings 05/06/07/08 must be recorded during open.
 TEST(WarningErrorParity, RuntimeWarningsRecorded) {
     std::string rpt_text;
-    const int rc = open_model("warnerr_runtime_warnings.inp",
-                              "warnerr_runtime_warnings.rpt", rpt_text);
+    const int rc =
+        open_model("warnerr_runtime_warnings.inp", "warnerr_runtime_warnings.rpt", rpt_text);
     EXPECT_EQ(rc, 0);
-    EXPECT_TRUE(contains(rpt_text, "WARNING 05")) << rpt_text;  // min slope used
-    EXPECT_TRUE(contains(rpt_text, "WARNING 06")) << rpt_text;  // dry step increased
-    EXPECT_TRUE(contains(rpt_text, "WARNING 07")) << rpt_text;  // routing step reduced
-    EXPECT_TRUE(contains(rpt_text, "WARNING 08")) << rpt_text;  // elev drop exceeds length
+    EXPECT_TRUE(contains(rpt_text, "WARNING 05")) << rpt_text; // min slope used
+    EXPECT_TRUE(contains(rpt_text, "WARNING 06")) << rpt_text; // dry step increased
+    EXPECT_TRUE(contains(rpt_text, "WARNING 07")) << rpt_text; // routing step reduced
+    EXPECT_TRUE(contains(rpt_text, "WARNING 08")) << rpt_text; // elev drop exceeds length
 }
 
 // ===========================================================================
@@ -124,6 +163,16 @@ namespace {
 
 // Lenient-open the fixture WITHOUT running the lifecycle. Empty rpt/out paths
 // mirror the editor load (no report written). Caller owns the engine.
+/**
+ * @brief Create/open the fixture in lenient post-parse mode.
+ *
+ * Records create/open expectations, ignores lenient-mode setter status and passes empty
+ * report/output paths. Caller destroys the handle. Does not initialize/start and does not make
+ * fatal syntax/file errors recoverable.
+ *
+ * @param[in] inp Non-null existing input filename.
+ * @return Caller-owned handle, potentially null/partially opened after nonfatal failure.
+ */
 SWMM_Engine open_lenient(const char* inp) {
     SWMM_Engine e = swmm_engine_create();
     EXPECT_NE(e, nullptr);
@@ -133,7 +182,7 @@ SWMM_Engine open_lenient(const char* inp) {
     return e;
 }
 
-}  // namespace
+} // namespace
 
 // A lenient open of the broken model reaches OPENED with all parsed objects
 // intact (2 nodes J1/O1, 1 link C1) and leaves the single last-error slot
@@ -159,7 +208,8 @@ TEST(LenientOpen, AccumulatedErrorsAreQueryable) {
     for (int i = 0; i < n; ++i) {
         const char* msg = swmm_get_error_at(e, i);
         ASSERT_NE(msg, nullptr);
-        if (msg[0] != '\0') any_msg = true;
+        if (msg[0] != '\0')
+            any_msg = true;
     }
     EXPECT_TRUE(any_msg) << "a recorded error must carry a message";
     EXPECT_STREQ(swmm_get_error_at(e, n), "");
@@ -174,11 +224,10 @@ TEST(LenientOpen, AccumulatedErrorsAreQueryable) {
 TEST(LenientOpen, ErrorsClearedOnNextOpen) {
     SWMM_Engine e = swmm_engine_create();
     swmm_engine_set_lenient_open(e, 1);
-    ASSERT_EQ(swmm_engine_open(e, "warnerr_undefined_outlet.inp", "", "", nullptr),
-              SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(e, "warnerr_undefined_outlet.inp", "", "", nullptr), SWMM_OK);
     ASSERT_GE(swmm_get_error_count(e), 1);
-    ASSERT_EQ(swmm_engine_close(e), SWMM_OK);  // lifecycle: reopen requires CLOSED
-    ASSERT_GE(swmm_get_error_count(e), 1);     // close() alone does not clear them
+    ASSERT_EQ(swmm_engine_close(e), SWMM_OK); // lifecycle: reopen requires CLOSED
+    ASSERT_GE(swmm_get_error_count(e), 1);    // close() alone does not clear them
     ASSERT_EQ(swmm_engine_open(e, "warnerr_base.inp", "", "", nullptr), SWMM_OK);
     EXPECT_EQ(swmm_get_error_count(e), 0);
     swmm_engine_destroy(e);
@@ -189,8 +238,7 @@ TEST(LenientOpen, ErrorsClearedOnNextOpen) {
 // and the single last-error slot IS set (unlike the lenient path).
 TEST(LenientOpen, StrictOpenStillFailsButRecordsErrors) {
     SWMM_Engine e = swmm_engine_create();
-    const int rc = swmm_engine_open(e, "warnerr_undefined_outlet.inp", "", "",
-                                    nullptr);
+    const int rc = swmm_engine_open(e, "warnerr_undefined_outlet.inp", "", "", nullptr);
     EXPECT_EQ(rc, SWMM_ERR_PARSE);
     EXPECT_GE(swmm_get_error_count(e), 1);
     EXPECT_STRNE(swmm_get_last_error_msg(e), "");
@@ -213,7 +261,8 @@ TEST(LenientOpen, MissingExternalMeshOpensWithErrorRecorded) {
     ASSERT_GE(n, 1) << "the broken mesh reference must be recorded";
     bool mentions_mesh = false;
     for (int i = 0; i < n; ++i)
-        if (contains(swmm_get_error_at(e, i), "2D_MESH_FILE")) mentions_mesh = true;
+        if (contains(swmm_get_error_at(e, i), "2D_MESH_FILE"))
+            mentions_mesh = true;
     EXPECT_TRUE(mentions_mesh);
     swmm_engine_destroy(e);
 }
@@ -222,13 +271,12 @@ TEST(LenientOpen, MissingExternalMeshOpensWithErrorRecorded) {
 // degradation is an editor-only concession.
 TEST(LenientOpen, MissingExternalMeshStillFailsStrictOpen) {
     SWMM_Engine e = swmm_engine_create();
-    const int rc = swmm_engine_open(e, "warnerr_missing_mesh_file.inp", "", "",
-                                    nullptr);
+    const int rc = swmm_engine_open(e, "warnerr_missing_mesh_file.inp", "", "", nullptr);
     EXPECT_EQ(rc, SWMM_ERR_PARSE);
     EXPECT_TRUE(contains(swmm_get_last_error_msg(e), "2D_MESH_FILE"));
     swmm_engine_destroy(e);
 }
-#endif  // OPENSWMM_HAS_2D
+#endif // OPENSWMM_HAS_2D
 
 // The accessors are null-handle safe (the GUI may query a handle whose open
 // failed): counts are 0, messages are "", and the setter is a no-op.
@@ -237,5 +285,88 @@ TEST(LenientOpen, AccessorsAreNullHandleSafe) {
     EXPECT_EQ(swmm_get_warning_count(nullptr), 0);
     EXPECT_STREQ(swmm_get_error_at(nullptr, 0), "");
     EXPECT_STREQ(swmm_get_warning_at(nullptr, 0), "");
-    swmm_engine_set_lenient_open(nullptr, 1);  // must not crash
+    swmm_engine_set_lenient_open(nullptr, 1); // must not crash
+}
+
+// ===========================================================================
+// Post-open failure teardown — a run that fails AFTER open() must still
+// surface its root cause. Two contracts:
+//   (a) end()/report() called on the unconditional teardown path must NOT
+//       clobber swmm_get_last_error_msg with wrong-state complaints.
+//   (b) close() must flush the cause into the .rpt, which previously carried
+//       only the "[Report interrupted]" footer with no reason.
+// ===========================================================================
+
+namespace {
+
+/**
+ * @brief Collect an entire fixture file into owned text.
+ *
+ * Uses ordinary text mode and its platform newline rules. The local stream closes on return; no
+ * model state is touched and no borrowed buffer is returned. Default stream exception settings
+ * apply; allocation exceptions may propagate.
+ *
+ * @param[in] path Borrowed input filename used for this synchronous open/read.
+ * @return Owned string collected from the stream; empty can mean an empty file or failure to open.
+ *     Partial read failures have no separate status.
+ */
+std::string read_file(const std::string& path) {
+    std::ifstream f(path);
+    std::stringstream ss;
+    ss << f.rdbuf();
+    return ss.str();
+}
+
+} // namespace
+
+// USE HOTSTART names a missing file: open() succeeds, initialize() fails.
+// This site records its message ONLY via set_error (never in ctx.errors), so
+// it exercises the close()-time append too.
+TEST(PostOpenFailure, InitializeFailureSurvivesTeardown) {
+    std::remove("warnerr_bad_hotstart.rpt");
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e, "warnerr_bad_hotstart.inp", "warnerr_bad_hotstart.rpt", nullptr,
+                               nullptr),
+              SWMM_OK);
+    const int irc = swmm_engine_initialize(e);
+    ASSERT_NE(irc, SWMM_OK);
+    const std::string cause = swmm_get_last_error_msg(e);
+    EXPECT_TRUE(contains(cause, "USE HOTSTART")) << cause;
+
+    swmm_engine_end(e);
+    swmm_engine_report(e);
+    EXPECT_EQ(swmm_get_last_error(e), irc);
+    EXPECT_EQ(std::string(swmm_get_last_error_msg(e)), cause);
+
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+
+    const std::string rpt_text = read_file("warnerr_bad_hotstart.rpt");
+    EXPECT_TRUE(contains(rpt_text, cause)) << rpt_text;
+}
+
+// USE INFLOWS names a missing routing interface file: open() and initialize()
+// succeed, start() fails. The cause must survive teardown and reach the .rpt.
+TEST(PostOpenFailure, StartFailureSurvivesTeardown) {
+    std::remove("warnerr_bad_iface.rpt");
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_EQ(
+        swmm_engine_open(e, "warnerr_bad_iface.inp", "warnerr_bad_iface.rpt", nullptr, nullptr),
+        SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
+    const int src = swmm_engine_start(e, 0);
+    ASSERT_NE(src, SWMM_OK);
+    const std::string cause = swmm_get_last_error_msg(e);
+    EXPECT_TRUE(contains(cause, "routing interface")) << cause;
+
+    swmm_engine_end(e);
+    swmm_engine_report(e);
+    EXPECT_EQ(swmm_get_last_error(e), src);
+    EXPECT_EQ(std::string(swmm_get_last_error_msg(e)), cause);
+
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+
+    const std::string rpt_text = read_file("warnerr_bad_iface.rpt");
+    EXPECT_TRUE(contains(rpt_text, cause)) << rpt_text;
 }

@@ -15,7 +15,7 @@ from openswmm import solver
 
 
 class TestSubcatchmentEnumCoverage(unittest.TestCase):
-    """Verify all 48 subcatchment enum members exist and map to expected C values.
+    """Verify all 57 subcatchment enum members exist and map to expected C values.
 
     The C header (openswmm_solver.h) defines swmm_SubcatchProperty starting
     at 200 for AREA.  Each subsequent member increments by 1.
@@ -90,9 +90,14 @@ class TestSubcatchmentEnumCoverage(unittest.TestCase):
         self.assertEqual(solver.SWMMSubcatchmentProperties.GW_MOISTURE.value, 249)
         self.assertEqual(solver.SWMMSubcatchmentProperties.SNOW_COLDC.value, 254)
 
+    def test_scale_factor_properties(self):
+        """Per-subcatchment rain/snow scale factors (255-256)."""
+        self.assertEqual(solver.SWMMSubcatchmentProperties.RAIN_SCALE_FACTOR.value, 255)
+        self.assertEqual(solver.SWMMSubcatchmentProperties.SNOW_SCALE_FACTOR.value, 256)
+
     def test_total_enum_member_count(self):
-        """All 55 subcatchment properties should be present."""
-        self.assertEqual(len(solver.SWMMSubcatchmentProperties), 55)
+        """All 57 subcatchment properties should be present."""
+        self.assertEqual(len(solver.SWMMSubcatchmentProperties), 57)
 
 
 class TestSystemEnumCoverage(unittest.TestCase):

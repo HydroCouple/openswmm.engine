@@ -1,7 +1,11 @@
 /**
- * @file GeoPackageSchema.cpp
- * @brief DDL implementation for the OpenSWMM GeoPackage schema.
+ * @file      GeoPackageSchema.cpp
+ * @brief     DDL implementation for the OpenSWMM GeoPackage schema.
  * @ingroup engine_geopackage
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include "GeoPackageSchema.hpp"
@@ -94,7 +98,20 @@ CREATE TABLE IF NOT EXISTS nodes (
     init_depth      REAL,
     surcharge_depth REAL,
     ponded_area     REAL,
+    storage_area    REAL NOT NULL DEFAULT 0,
     tag             TEXT,
+    -- Virtual junctions are JUNCTION-typed (node_type stays "JUNCTION"), so
+    -- the flag needs its own column or a round-trip demotes them to plain
+    -- junctions. rim_depth is the rendering-only ground depth that goes with
+    -- it (the optional [VIRTUAL_JUNCTIONS] MaxDepth); both are NULL in files
+    -- written before they existed and the reader treats that as 0.
+    is_virtual      INTEGER,
+    rim_depth       REAL,
+    -- Inlet junctions are virtual junctions that also carry a street inlet.
+    -- The flag round-trips here; the inlet USAGE row it needs ([INLETS] design
+    -- + capture node) has no GeoPackage table, so a .gpkg round-trip preserves
+    -- the flag but not the inlet assignment.
+    is_inlet        INTEGER,
     UNIQUE(simulation_id, node_id)
 );
 
@@ -240,7 +257,7 @@ CREATE TABLE IF NOT EXISTS orifices (
     link_id         TEXT NOT NULL,
     orientation     TEXT,                -- SIDE | BOTTOM
     discharge_coeff REAL,
-    orate           REAL,                -- open/close rate (s)
+    orate           REAL,                -- open/close rate (HOURS, as parsed)
     PRIMARY KEY (simulation_id, link_id),
     FOREIGN KEY (simulation_id, link_id)
         REFERENCES links(simulation_id, link_id)
@@ -617,6 +634,38 @@ CREATE TABLE IF NOT EXISTS lid_controls (
     UNIQUE(simulation_id, lid_id, layer_type)
 );
 
+-- Ordered NODE layers use an ordinal key so repeated layer kinds are retained.
+CREATE TABLE IF NOT EXISTS lid_node_layers (
+    simulation_id TEXT NOT NULL, lid_id TEXT NOT NULL, ordinal INTEGER NOT NULL,
+    kind INTEGER NOT NULL, p1 REAL, p2 REAL, p3 REAL, p4 REAL, p5 REAL, p6 REAL, p7 REAL,
+    PRIMARY KEY(simulation_id, lid_id, ordinal)
+);
+CREATE TABLE IF NOT EXISTS lid_layer_treatment (
+    simulation_id TEXT NOT NULL, lid_id TEXT NOT NULL, layer INTEGER NOT NULL,
+    pollutant TEXT NOT NULL, removal REAL NOT NULL, decay REAL NOT NULL, expression TEXT NOT NULL,
+    PRIMARY KEY(simulation_id,lid_id,layer,pollutant)
+);
+CREATE TABLE IF NOT EXISTS lid_nodes (
+    simulation_id TEXT NOT NULL, node_id TEXT NOT NULL, lid_id TEXT NOT NULL,
+    initial_saturation REAL NOT NULL,
+    bottom_mode INTEGER NOT NULL DEFAULT 0 CHECK(bottom_mode IN (0,1,2)),
+    PRIMARY KEY(simulation_id, node_id)
+);
+CREATE TABLE IF NOT EXISTS lid_richards_options (
+    simulation_id TEXT NOT NULL, lid_id TEXT NOT NULL,
+    cells INTEGER NOT NULL, atol REAL NOT NULL, rtol REAL NOT NULL, max_step REAL NOT NULL,
+    PRIMARY KEY(simulation_id,lid_id)
+);
+CREATE TABLE IF NOT EXISTS lid_richards_materials (
+    simulation_id TEXT NOT NULL, lid_id TEXT NOT NULL, layer INTEGER NOT NULL,
+    theta_r REAL NOT NULL, alpha REAL NOT NULL, n REAL NOT NULL, l REAL NOT NULL, specific_storage REAL NOT NULL,
+    PRIMARY KEY(simulation_id,lid_id,layer)
+);
+CREATE TABLE IF NOT EXISTS lid_node_outlets (
+    simulation_id TEXT NOT NULL, link_id TEXT NOT NULL, layer INTEGER NOT NULL,
+    top INTEGER NOT NULL, PRIMARY KEY(simulation_id, link_id)
+);
+
 -- LID usage assignments (one row per subcatchment-LID pair)
 CREATE TABLE IF NOT EXISTS lid_usage (
     fid             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -720,6 +769,66 @@ CREATE TABLE IF NOT EXISTS transects (
 CREATE INDEX IF NOT EXISTS idx_transects_lookup ON transects(simulation_id, transect_id, ordinal);
 )SQL";
 static_assert(sizeof(PART_A4_DDL) <= 16380, "MSVC C2026: split this DDL chunk");
+
+// Part A5: street sections, inlet designs and inlet placements. Values are
+// stored as the engine holds them after open (user units as read, cross slope
+// in percent) — the convention the [STREETS]/[INLETS] handlers and InpWriter
+// share. Usage rows cover both grammars: [INLET_USAGE] (host_kind 0, host_id =
+// conduit) and [INLET_JUNCTIONS] (host_kind 1, host_id = the inlet junction),
+// so a model with an inlet junction re-reads with its usage and passes rule 633.
+static const char PART_A5_DDL[] = R"SQL(
+CREATE TABLE IF NOT EXISTS streets (
+    fid             INTEGER PRIMARY KEY AUTOINCREMENT,
+    simulation_id   TEXT NOT NULL,
+    street_id       TEXT NOT NULL,
+    t_crown         REAL NOT NULL,
+    h_curb          REAL NOT NULL,
+    sx              REAL NOT NULL,      -- cross slope, percent
+    n_road          REAL NOT NULL,
+    gutter_depres   REAL,
+    gutter_width    REAL,
+    sides           INTEGER,
+    back_width      REAL,
+    back_slope      REAL,
+    back_n          REAL
+);
+CREATE INDEX IF NOT EXISTS idx_streets_lookup ON streets(simulation_id, street_id);
+
+CREATE TABLE IF NOT EXISTS inlets (
+    fid             INTEGER PRIMARY KEY AUTOINCREMENT,
+    simulation_id   TEXT NOT NULL,
+    inlet_id        TEXT NOT NULL,
+    inlet_type      TEXT NOT NULL,      -- GRATE/CURB/COMBO/SLOTTED/DROP_GRATE/DROP_CURB/CUSTOM
+    length          REAL,               -- grate or slotted length
+    width           REAL,
+    grate_type      TEXT,
+    open_area       REAL,               -- GENERIC grates
+    splash_veloc    REAL,
+    curb_length     REAL,
+    curb_height     REAL,
+    curb_throat     INTEGER,            -- 0 HORIZONTAL, 1 INCLINED, 2 VERTICAL
+    curve_id        TEXT,               -- CUSTOM capture curve NAME
+    comment         TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_inlets_lookup ON inlets(simulation_id, inlet_id);
+
+CREATE TABLE IF NOT EXISTS inlet_usage (
+    fid             INTEGER PRIMARY KEY AUTOINCREMENT,
+    simulation_id   TEXT NOT NULL,
+    host_kind       INTEGER NOT NULL,   -- 0 conduit ([INLET_USAGE]), 1 inlet junction ([INLET_JUNCTIONS])
+    host_id         TEXT NOT NULL,      -- conduit or node NAME
+    inlet_id        TEXT NOT NULL,
+    capture_node    TEXT NOT NULL,
+    num_inlets      INTEGER,
+    pct_clogged     REAL,
+    flow_limit      REAL,
+    local_depress   REAL,
+    local_width     REAL,
+    placement       INTEGER             -- 0 AUTOMATIC, 1 ON_GRADE, 2 ON_SAG
+);
+CREATE INDEX IF NOT EXISTS idx_inlet_usage_lookup ON inlet_usage(simulation_id, host_kind, host_id);
+)SQL";
+static_assert(sizeof(PART_A5_DDL) <= 16380, "MSVC C2026: split this DDL chunk");
 
 // ============================================================================
 // Part B: Simulation Results & Reports
@@ -855,6 +964,11 @@ CREATE TABLE IF NOT EXISTS hotstart_slots (
     num_pollutants  INTEGER NOT NULL,
     captured_at     TEXT,                                -- ISO8601; NULL until populated
     status          TEXT NOT NULL DEFAULT 'pending',     -- 'pending' | 'populated'
+    save_format     TEXT CHECK(save_format IN ('LEGACY','NATIVE')), -- SAVE keyword; NULL = AUTO
+    num_subcatch    INTEGER,                             -- header count; NULL = 0
+    num_landuses    INTEGER,                             -- header count; NULL = 0
+    runoff_section  BLOB,                                -- subcatchment section, verbatim
+    tail_section    BLOB,                                -- bytes after the links, verbatim
     PRIMARY KEY (simulation_id, slot_name),
     FOREIGN KEY (simulation_id)
         REFERENCES simulations(simulation_id)
@@ -869,6 +983,7 @@ CREATE TABLE IF NOT EXISTS hotstart_node_state (
     depth           REAL NOT NULL,
     lateral_inflow  REAL,
     overflow        REAL,
+    hrt             REAL,                                -- storage residence time (v4)
     PRIMARY KEY (simulation_id, slot_name, node_id),
     FOREIGN KEY (simulation_id, slot_name)
         REFERENCES hotstart_slots(simulation_id, slot_name)
@@ -1167,6 +1282,41 @@ CREATE INDEX IF NOT EXISTS idx_mesh2d_tri_v1 ON mesh_2d_triangles(simulation_id,
 CREATE INDEX IF NOT EXISTS idx_mesh2d_tri_v2 ON mesh_2d_triangles(simulation_id, v2);
 
 -- ----------------------------------------------------------------------------
+-- 2D mesh quadrilaterals (mixed tri-quad meshes, 2D_TRI_QUAD_MESH_PLAN
+-- 2026-09-06). quad_idx is the 0-based index WITHIN the quads; the engine
+-- cell index is n_triangles + quad_idx (cells are triangles first, then
+-- quads). Absent in older files (all-triangle).
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS mesh_2d_quads (
+    fid             INTEGER PRIMARY KEY AUTOINCREMENT,
+    simulation_id   TEXT NOT NULL,
+    quad_idx        INTEGER NOT NULL,
+    geom            BLOB,
+    v0              INTEGER NOT NULL,
+    v1              INTEGER NOT NULL,
+    v2              INTEGER NOT NULL,
+    v3              INTEGER NOT NULL,
+    mannings_n      REAL NOT NULL DEFAULT 0.035,
+    init_depth      REAL NOT NULL DEFAULT 0,
+    tag             TEXT,
+    bed_elev        REAL,
+    coupled_node    TEXT,
+    UNIQUE(simulation_id, quad_idx),
+    FOREIGN KEY (simulation_id, v0)
+        REFERENCES mesh_2d_vertices(simulation_id, vertex_idx)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (simulation_id, v1)
+        REFERENCES mesh_2d_vertices(simulation_id, vertex_idx)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (simulation_id, v2)
+        REFERENCES mesh_2d_vertices(simulation_id, vertex_idx)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (simulation_id, v3)
+        REFERENCES mesh_2d_vertices(simulation_id, vertex_idx)
+        ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+-- ----------------------------------------------------------------------------
 -- Per-edge boundary conditions; canonical (tri_idx, edge) form matching
 -- [2D_BOUNDARY_CONDITIONS]. Rows exist only for non-default edges (absent
 -- row == WALL). bc_type uses the .inp grammar tokens (WALL | NORMAL_FLOW |
@@ -1235,7 +1385,31 @@ CREATE TABLE IF NOT EXISTS mesh_2d_vertex_coupling (
 );
 CREATE INDEX IF NOT EXISTS idx_mesh2d_vc_node
     ON mesh_2d_vertex_coupling(simulation_id, node_id);
+)SQL";
+static_assert(sizeof(MESH_2D_DDL) <= 16380, "MSVC C2026: split this DDL chunk");
 
+// [2D_NODE_COUPLING]: per-node coupling type, a node attribute kept with or
+// without a mesh. params holds the authored KEY=VALUE tokens as written in
+// the section (empty when none).
+static const char* NODE_2D_COUPLING_DDL = R"SQL(
+CREATE TABLE IF NOT EXISTS node_2d_coupling (
+    fid             INTEGER PRIMARY KEY AUTOINCREMENT,
+    simulation_id   TEXT NOT NULL,
+    node_id         TEXT NOT NULL,
+    coupling_type   TEXT NOT NULL,
+    params          TEXT NOT NULL DEFAULT '',
+    UNIQUE(simulation_id, node_id),
+    FOREIGN KEY (simulation_id, node_id)
+        REFERENCES nodes(simulation_id, node_id)
+        ON DELETE CASCADE ON UPDATE CASCADE
+);
+)SQL";
+
+// Repeated-row [2D_TRIANGLE_NODE_MAP]: one table row per coupling row, as
+// the model holds them (several nodes may couple to one triangle). Files
+// written before this were keyed by triangle alone; create_schema() rebuilds
+// those in place.
+static const char* MESH_2D_TRI_COUPLING_DDL = R"SQL(
 CREATE TABLE IF NOT EXISTS mesh_2d_triangle_coupling (
     fid             INTEGER PRIMARY KEY AUTOINCREMENT,
     simulation_id   TEXT NOT NULL,
@@ -1243,7 +1417,6 @@ CREATE TABLE IF NOT EXISTS mesh_2d_triangle_coupling (
     node_id         TEXT NOT NULL,
     coupling_cd     REAL NOT NULL DEFAULT 0.65,
     coupling_area   REAL NOT NULL DEFAULT 1.0,
-    UNIQUE(simulation_id, tri_idx),
     FOREIGN KEY (simulation_id, tri_idx)
         REFERENCES mesh_2d_triangles(simulation_id, tri_idx)
         ON DELETE CASCADE ON UPDATE CASCADE,
@@ -1254,7 +1427,6 @@ CREATE TABLE IF NOT EXISTS mesh_2d_triangle_coupling (
 CREATE INDEX IF NOT EXISTS idx_mesh2d_tc_node
     ON mesh_2d_triangle_coupling(simulation_id, node_id);
 )SQL";
-static_assert(sizeof(MESH_2D_DDL) <= 16380, "MSVC C2026: split this DDL chunk");
 
 // ============================================================================
 // Implementation
@@ -1270,18 +1442,82 @@ void create_schema(sqlite3* db) {
     exec(db, PART_A2_DDL);
     exec(db, PART_A3_DDL);
     exec(db, PART_A4_DDL);
+    exec(db, PART_A5_DDL);
+    // Saving into an older database retains all simulations and gives their
+    // old LID assignments the unchanged bottom behavior.
+    bool has_bottom = false;
+    auto columns = prepare(db, "PRAGMA table_info(lid_nodes)");
+    while (sqlite3_step(columns.get()) == SQLITE_ROW)
+        has_bottom |= column_text(columns.get(), 1) == "bottom_mode";
+    columns.reset();
+    if (!has_bottom)
+        exec(
+            db,
+            "ALTER TABLE lid_nodes ADD COLUMN bottom_mode INTEGER NOT NULL DEFAULT 0 CHECK(bottom_mode IN (0,1,2))");
     exec(db, PART_B_DDL);
     exec(db, PART_C_DDL);
     exec(db, PART_D_DDL);
+    // Older databases lack the newer hot-start columns. Their rows read back
+    // as they were written: format AUTO (NULL), no subcatchment section, no
+    // trailer, no residence times.
+    auto add_missing = [&](const char* table, const char* column, const char* type) {
+        bool has = false;
+        auto cols = prepare(db, std::string("PRAGMA table_info(") + table + ")");
+        while (sqlite3_step(cols.get()) == SQLITE_ROW)
+            has |= column_text(cols.get(), 1) == column;
+        cols.reset();
+        if (!has)
+            exec(db, std::string("ALTER TABLE ") + table + " ADD COLUMN " + column + " " + type);
+    };
+    add_missing("nodes", "storage_area", "REAL NOT NULL DEFAULT 0");
+    add_missing("hotstart_slots", "save_format", "TEXT CHECK(save_format IN ('LEGACY','NATIVE'))");
+    add_missing("hotstart_slots", "num_subcatch", "INTEGER");
+    add_missing("hotstart_slots", "num_landuses", "INTEGER");
+    add_missing("hotstart_slots", "runoff_section", "BLOB");
+    add_missing("hotstart_slots", "tail_section", "BLOB");
+    add_missing("hotstart_node_state", "hrt", "REAL");
     exec(db, MESH_2D_DDL);
+    // An older triangle-coupling table is keyed by triangle alone and would
+    // refuse a second node on the same triangle: rebuild it without that
+    // key, keeping its rows.
+    {
+        std::string sql;
+        auto old = prepare(db, "SELECT sql FROM sqlite_master WHERE type='table' "
+                               "AND name='mesh_2d_triangle_coupling'");
+        if (sqlite3_step(old.get()) == SQLITE_ROW)
+            sql = column_text(old.get(), 0);
+        old.reset();
+        if (sql.find("UNIQUE(simulation_id, tri_idx),") != std::string::npos) {
+            exec(db,
+                 "ALTER TABLE mesh_2d_triangle_coupling RENAME TO mesh_2d_triangle_coupling_v1");
+            exec(db, MESH_2D_TRI_COUPLING_DDL);
+            exec(db, "INSERT INTO mesh_2d_triangle_coupling "
+                     "(fid, simulation_id, tri_idx, node_id, coupling_cd, coupling_area) "
+                     "SELECT fid, simulation_id, tri_idx, node_id, coupling_cd, coupling_area "
+                     "FROM mesh_2d_triangle_coupling_v1");
+            exec(db, "DROP TABLE mesh_2d_triangle_coupling_v1");
+        }
+    }
+    exec(db, MESH_2D_TRI_COUPLING_DDL);
+    // Whether CD / AREA were authored (1) or are defaults (0). NULL — files
+    // written before these columns — reads as authored: their writers stored
+    // an explicit value for every row.
+    add_missing("mesh_2d_vertex_coupling", "coupling_cd_set", "INTEGER");
+    add_missing("mesh_2d_vertex_coupling", "coupling_area_set", "INTEGER");
+    add_missing("mesh_2d_triangle_coupling", "coupling_cd_set", "INTEGER");
+    add_missing("mesh_2d_triangle_coupling", "coupling_area_set", "INTEGER");
+    exec(db, NODE_2D_COUPLING_DDL);
+    exec(
+        db,
+        "CREATE TABLE IF NOT EXISTS surface_ownership_2d_input (simulation_id TEXT PRIMARY KEY, sections TEXT NOT NULL)");
 }
 
-void register_crs(sqlite3* db, int srs_id, const std::string& org,
-                  int org_id, const std::string& srs_name, const std::string& wkt) {
-    auto stmt = prepare(db,
-        "INSERT OR IGNORE INTO gpkg_spatial_ref_sys "
-        "(srs_name, srs_id, organization, organization_coordsys_id, definition) "
-        "VALUES (?, ?, ?, ?, ?)");
+void register_crs(sqlite3* db, int srs_id, const std::string& org, int org_id,
+                  const std::string& srs_name, const std::string& wkt) {
+    auto stmt =
+        prepare(db, "INSERT OR IGNORE INTO gpkg_spatial_ref_sys "
+                    "(srs_name, srs_id, organization, organization_coordsys_id, definition) "
+                    "VALUES (?, ?, ?, ?, ?)");
     bind_text(stmt.get(), 1, srs_name);
     bind_int(stmt.get(), 2, srs_id);
     bind_text(stmt.get(), 3, org);
@@ -1291,14 +1527,14 @@ void register_crs(sqlite3* db, int srs_id, const std::string& org,
 }
 
 void register_feature_table(sqlite3* db, const std::string& table_name,
-                            const std::string& geom_type, int srs_id,
-                            const std::string& identifier, const std::string& description,
-                            double min_x, double min_y, double max_x, double max_y) {
+                            const std::string& geom_type, int srs_id, const std::string& identifier,
+                            const std::string& description, double min_x, double min_y,
+                            double max_x, double max_y) {
     // gpkg_contents
-    auto stmt = prepare(db,
-        "INSERT OR REPLACE INTO gpkg_contents "
-        "(table_name, data_type, identifier, description, min_x, min_y, max_x, max_y, srs_id) "
-        "VALUES (?, 'features', ?, ?, ?, ?, ?, ?, ?)");
+    auto stmt = prepare(
+        db, "INSERT OR REPLACE INTO gpkg_contents "
+            "(table_name, data_type, identifier, description, min_x, min_y, max_x, max_y, srs_id) "
+            "VALUES (?, 'features', ?, ?, ?, ?, ?, ?, ?)");
     bind_text(stmt.get(), 1, table_name);
     bind_text(stmt.get(), 2, identifier);
     bind_text(stmt.get(), 3, description);
@@ -1310,10 +1546,9 @@ void register_feature_table(sqlite3* db, const std::string& table_name,
     sqlite3_step(stmt.get());
 
     // gpkg_geometry_columns
-    auto stmt2 = prepare(db,
-        "INSERT OR REPLACE INTO gpkg_geometry_columns "
-        "(table_name, column_name, geometry_type_name, srs_id, z, m) "
-        "VALUES (?, 'geom', ?, ?, 0, 0)");
+    auto stmt2 = prepare(db, "INSERT OR REPLACE INTO gpkg_geometry_columns "
+                             "(table_name, column_name, geometry_type_name, srs_id, z, m) "
+                             "VALUES (?, 'geom', ?, ?, 0, 0)");
     bind_text(stmt2.get(), 1, table_name);
     bind_text(stmt2.get(), 2, geom_type);
     bind_int(stmt2.get(), 3, srs_id);
@@ -1321,60 +1556,62 @@ void register_feature_table(sqlite3* db, const std::string& table_name,
 }
 
 void populate_default_variables(sqlite3* db) {
-    auto stmt = prepare(db,
-        "INSERT OR IGNORE INTO variables (name, object_type, category, units, description) "
-        "VALUES (?, ?, ?, ?, ?)");
+    auto stmt = prepare(
+        db, "INSERT OR IGNORE INTO variables (name, object_type, category, units, description) "
+            "VALUES (?, ?, ?, ?, ?)");
 
-    struct VarDef { const char *name, *obj, *cat, *units, *desc; };
+    struct VarDef {
+        const char *name, *obj, *cat, *units, *desc;
+    };
     static const VarDef defs[] = {
         // --- NODE ---
-        {"depth",           "NODE", "STATE", "m",    "Water depth above invert"},
-        {"head",            "NODE", "STATE", "m",    "Hydraulic head"},
-        {"volume",          "NODE", "STATE", "m3",   "Stored water volume"},
-        {"lateral_inflow",  "NODE", "STATE", "CMS",  "Lateral inflow rate"},
-        {"total_inflow",    "NODE", "STATE", "CMS",  "Total inflow rate"},
-        {"overflow",        "NODE", "STATE", "CMS",  "Overflow rate"},
-        {"max_depth",       "NODE", "STAT",  "m",    "Maximum water depth"},
-        {"max_overflow",    "NODE", "STAT",  "CMS",  "Maximum overflow rate"},
-        {"time_flooded",    "NODE", "STAT",  "hours","Duration of flooding"},
+        {"depth", "NODE", "STATE", "m", "Water depth above invert"},
+        {"head", "NODE", "STATE", "m", "Hydraulic head"},
+        {"volume", "NODE", "STATE", "m3", "Stored water volume"},
+        {"lateral_inflow", "NODE", "STATE", "CMS", "Lateral inflow rate"},
+        {"total_inflow", "NODE", "STATE", "CMS", "Total inflow rate"},
+        {"overflow", "NODE", "STATE", "CMS", "Overflow rate"},
+        {"max_depth", "NODE", "STAT", "m", "Maximum water depth"},
+        {"max_overflow", "NODE", "STAT", "CMS", "Maximum overflow rate"},
+        {"time_flooded", "NODE", "STAT", "hours", "Duration of flooding"},
         // --- LINK ---
-        {"flow",            "LINK", "STATE", "CMS",  "Flow rate"},
-        {"depth",           "LINK", "STATE", "m",    "Flow depth"},
-        {"velocity",        "LINK", "STATE", "m/s",  "Flow velocity"},
-        {"volume",          "LINK", "STATE", "m3",   "Stored volume"},
-        {"capacity",        "LINK", "STATE", "-",    "Full-flow capacity fraction"},
-        {"froude",          "LINK", "STATE", "-",    "Froude number"},
-        {"max_flow",        "LINK", "STAT",  "CMS",  "Maximum flow rate"},
-        {"max_velocity",    "LINK", "STAT",  "m/s",  "Maximum flow velocity"},
-        {"max_filling",     "LINK", "STAT",  "frac", "Maximum depth/full depth"},
-        {"time_surcharged", "LINK", "STAT",  "hours","Duration of surcharge"},
+        {"flow", "LINK", "STATE", "CMS", "Flow rate"},
+        {"depth", "LINK", "STATE", "m", "Flow depth"},
+        {"velocity", "LINK", "STATE", "m/s", "Flow velocity"},
+        {"volume", "LINK", "STATE", "m3", "Stored volume"},
+        {"capacity", "LINK", "STATE", "-", "Full-flow capacity fraction"},
+        {"froude", "LINK", "STATE", "-", "Froude number"},
+        {"max_flow", "LINK", "STAT", "CMS", "Maximum flow rate"},
+        {"max_velocity", "LINK", "STAT", "m/s", "Maximum flow velocity"},
+        {"max_filling", "LINK", "STAT", "frac", "Maximum depth/full depth"},
+        {"time_surcharged", "LINK", "STAT", "hours", "Duration of surcharge"},
         // --- SUBCATCH ---
-        {"rainfall",        "SUBCATCH", "STATE", "mm/hr", "Rainfall intensity"},
-        {"snow_depth",      "SUBCATCH", "STATE", "mm",    "Snow depth"},
-        {"evap_loss",       "SUBCATCH", "STATE", "mm",    "Evaporation loss"},
-        {"infil_loss",      "SUBCATCH", "STATE", "mm",    "Infiltration loss"},
-        {"runoff",          "SUBCATCH", "STATE", "CMS",   "Runoff flow rate"},
-        {"gw_flow",         "SUBCATCH", "STATE", "CMS",   "Groundwater outflow"},
-        {"gw_elev",         "SUBCATCH", "STATE", "m",     "Groundwater elevation"},
-        {"soil_moist",      "SUBCATCH", "STATE", "-",     "Soil moisture"},
-        {"precip_volume",   "SUBCATCH", "STAT",  "m3",    "Total precipitation volume"},
-        {"runoff_volume",   "SUBCATCH", "STAT",  "m3",    "Total runoff volume"},
+        {"rainfall", "SUBCATCH", "STATE", "mm/hr", "Rainfall intensity"},
+        {"snow_depth", "SUBCATCH", "STATE", "mm", "Snow depth"},
+        {"evap_loss", "SUBCATCH", "STATE", "mm", "Evaporation loss"},
+        {"infil_loss", "SUBCATCH", "STATE", "mm", "Infiltration loss"},
+        {"runoff", "SUBCATCH", "STATE", "CMS", "Runoff flow rate"},
+        {"gw_flow", "SUBCATCH", "STATE", "CMS", "Groundwater outflow"},
+        {"gw_elev", "SUBCATCH", "STATE", "m", "Groundwater elevation"},
+        {"soil_moist", "SUBCATCH", "STATE", "-", "Soil moisture"},
+        {"precip_volume", "SUBCATCH", "STAT", "m3", "Total precipitation volume"},
+        {"runoff_volume", "SUBCATCH", "STAT", "m3", "Total runoff volume"},
         // --- SYSTEM ---
-        {"air_temp",        "SYSTEM", "CLIMATE", "C",     "Air temperature"},
-        {"rainfall",        "SYSTEM", "CLIMATE", "mm/hr", "System rainfall"},
-        {"snow_depth",      "SYSTEM", "CLIMATE", "mm",    "System snow depth"},
-        {"infil",           "SYSTEM", "STATE",   "mm/hr", "Total infiltration rate"},
-        {"runoff",          "SYSTEM", "STATE",   "CMS",   "Total runoff flow"},
-        {"dw_inflow",       "SYSTEM", "STATE",   "CMS",   "Total dry weather inflow"},
-        {"gw_inflow",       "SYSTEM", "STATE",   "CMS",   "Total groundwater inflow"},
-        {"ii_inflow",       "SYSTEM", "STATE",   "CMS",   "Total RDII inflow"},
-        {"ext_inflow",      "SYSTEM", "STATE",   "CMS",   "Total external inflow"},
-        {"total_inflow",    "SYSTEM", "STATE",   "CMS",   "Total lateral inflow"},
-        {"flooding",        "SYSTEM", "STATE",   "CMS",   "Total flooding"},
-        {"outflow",         "SYSTEM", "STATE",   "CMS",   "Total outflow"},
-        {"storage",         "SYSTEM", "STATE",   "m3",    "Total storage volume"},
-        {"evap",            "SYSTEM", "STATE",   "mm/day","Total evaporation rate"},
-        {"pet",             "SYSTEM", "STATE",   "mm/day","Potential evapotranspiration"},
+        {"air_temp", "SYSTEM", "CLIMATE", "C", "Air temperature"},
+        {"rainfall", "SYSTEM", "CLIMATE", "mm/hr", "System rainfall"},
+        {"snow_depth", "SYSTEM", "CLIMATE", "mm", "System snow depth"},
+        {"infil", "SYSTEM", "STATE", "mm/hr", "Total infiltration rate"},
+        {"runoff", "SYSTEM", "STATE", "CMS", "Total runoff flow"},
+        {"dw_inflow", "SYSTEM", "STATE", "CMS", "Total dry weather inflow"},
+        {"gw_inflow", "SYSTEM", "STATE", "CMS", "Total groundwater inflow"},
+        {"ii_inflow", "SYSTEM", "STATE", "CMS", "Total RDII inflow"},
+        {"ext_inflow", "SYSTEM", "STATE", "CMS", "Total external inflow"},
+        {"total_inflow", "SYSTEM", "STATE", "CMS", "Total lateral inflow"},
+        {"flooding", "SYSTEM", "STATE", "CMS", "Total flooding"},
+        {"outflow", "SYSTEM", "STATE", "CMS", "Total outflow"},
+        {"storage", "SYSTEM", "STATE", "m3", "Total storage volume"},
+        {"evap", "SYSTEM", "STATE", "mm/day", "Total evaporation rate"},
+        {"pet", "SYSTEM", "STATE", "mm/day", "Potential evapotranspiration"},
     };
 
     for (const auto& v : defs) {

@@ -1,10 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright 2026 Caleb Buahin
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Programmatic Model Building
 ============================
 
 :author: Caleb Buahin
 :copyright: Copyright (c) 2026 Caleb Buahin
-:license: MIT
+:license: Apache-2.0
 
 The :class:`ModelBuilder` class creates a SWMM model entirely through the API
 without requiring a ``.inp`` file. Objects are added and configured while the
@@ -42,6 +58,9 @@ from datetime import datetime
 
 from ._common cimport *
 from ._solver cimport Solver
+from ._access import NativeAccess, register_owner
+from ._exceptions import BadHandleError
+from ._enums import ErrorCode
 from ._dates import datetime_to_oadate, oadate_to_datetime
 
 
@@ -69,6 +88,8 @@ cdef class ModelBuilder:
         solver = m.to_solver()
     """
 
+    cdef object __weakref__
+    cdef object _access
     cdef SWMM_Engine _handle
     # ``_generation`` mirrors :attr:`Solver._generation`: container-level
     # editors (``builder.tables.add_curve``, ``builder.transects.add``, …)
@@ -78,6 +99,7 @@ cdef class ModelBuilder:
     cdef long long _generation
 
     def __init__(self):
+        self._access = NativeAccess()
         self._handle = swmm_engine_new()
         if self._handle == NULL:
             raise MemoryError("Failed to create engine in BUILDING state")
@@ -345,7 +367,7 @@ cdef class ModelBuilder:
         @raise EngineError: On C API failure.
         """
         cdef bytes b = path.encode('utf-8')
-        _check(swmm_model_write(self._handle, b))
+        _check_engine(swmm_model_write(self._handle, b), self._handle)
 
     # =========================================================================
     # Title management
@@ -371,9 +393,7 @@ cdef class ModelBuilder:
         @rtype: str
         @raise EngineError: On C API failure.
         """
-        cdef char buf[1024]
-        _check(swmm_title_get_line(self._handle, index, buf, 1024))
-        return buf.decode('utf-8')
+        return _read_engine_index_string(self._handle, index, swmm_title_get_line)
 
     def add_title_line(self, str line):
         """Append a new line to the C{[TITLE]} section.
@@ -421,11 +441,21 @@ cdef class ModelBuilder:
         @return: The underlying C engine pointer cast to an integer.
         @rtype: int
         """
-        return <size_t>self._handle
+        self._access.check()
+        return register_owner(self, <size_t>self._handle)
+
+    def _operation(self, expected=0):
+        return self._access.operation(self, expected)
 
     # =========================================================================
     # Conversion to Solver
     # =========================================================================
+
+    @property
+    def transport(self):
+        """ARD transport configuration and authored boundary/source rows."""
+        from ._transport import Transport
+        return Transport(self)
 
     def to_solver(self) -> Solver:
         """Transfer ownership of the engine handle to a L{Solver}.
@@ -436,13 +466,17 @@ cdef class ModelBuilder:
         @return: A new L{Solver} wrapping this model's engine.
         @rtype: L{Solver}
         """
-        cdef Solver s = Solver.__new__(Solver)
+        self._access.require_idle()
+        if self._handle == NULL:
+            raise BadHandleError(ErrorCode.BADHANDLE, "Builder ownership has already been transferred")
+        cdef Solver s = Solver()
         s._handle = self._handle
         s._elapsed = 0.0
         s._inp = ""
         s._rpt = ""
         s._out = ""
         self._handle = NULL
+        self._generation += 1
         return s
 
     # =========================================================================
@@ -459,9 +493,7 @@ cdef class ModelBuilder:
         @raise EngineError: On C API failure.
         """
         cdef bytes b = key.encode('utf-8')
-        cdef char buf[256]
-        _check(swmm_options_get(self._handle, b, buf, 256))
-        return buf.decode('utf-8')
+        return _read_engine_key_string(self._handle, b, swmm_options_get)
 
     def set_option(self, str key, str value):
         """Set a model option.
@@ -493,11 +525,7 @@ cdef class ModelBuilder:
         @raise EngineError: On C API failure (e.g. unknown role/owner).
         """
         cdef bytes b_owner = owner.encode('utf-8')
-        cdef char abs_buf[512]
-        cdef char orig_buf[512]
-        _check(swmm_file_path_get(self._handle, <SWMM_FilePathRole>role, b_owner,
-                                  abs_buf, 512, orig_buf, 512))
-        return (abs_buf.decode('utf-8'), orig_buf.decode('utf-8'))
+        return _read_engine_file_path(self._handle, <SWMM_FilePathRole>role, b_owner)
 
     def set_file_path(self, int role, str new_path, str owner="") -> None:
         """Set the original token for an external-file slot.
@@ -528,9 +556,7 @@ cdef class ModelBuilder:
         @raise EngineError: On C API failure.
         """
         cdef bytes b = key.encode('utf-8')
-        cdef char buf[256]
-        _check(swmm_options_get_ext(self._handle, b, buf, 256))
-        return buf.decode('utf-8')
+        return _read_engine_key_string(self._handle, b, swmm_options_get_ext)
 
     def set_option_ext(self, str key, str value):
         """Set an extended model option.
@@ -555,9 +581,7 @@ cdef class ModelBuilder:
         @rtype: str
         @raise EngineError: On C API failure.
         """
-        cdef char buf[256]
-        _check(swmm_get_crs(self._handle, buf, 256))
-        return buf.decode('utf-8')
+        return _read_engine_string(self._handle, swmm_get_crs)
 
     # =========================================================================
     # Typed time-control properties (datetime)
@@ -753,12 +777,18 @@ cdef class ModelBuilder:
         @rtype: tuple[str, int, str]
         @raise EngineError: If C{index} is out of range.
         """
-        cdef char name_buf[128]
-        cdef char desc_buf[512]
+        cdef _TextBufs tb
         cdef int t = 0
-        _check(swmm_userflag_def_get(self._handle, index, name_buf, 128,
-                                     &t, desc_buf, 512))
-        return (name_buf.decode('utf-8'), t, desc_buf.decode('utf-8'))
+        _tb_open(&tb, 2)
+        try:
+            while True:
+                _check(swmm_userflag_def_get(self._handle, index, tb.p[0], tb.size,
+                                             &t, tb.p[1], tb.size))
+                if not _tb_retry(&tb):
+                    break
+            return (_tb_str(&tb, 0), t, _tb_str(&tb, 1))
+        finally:
+            _tb_close(&tb)
 
     def get_userflag_value(self, str obj_type, str obj_name, str flag_name):
         """Return the flag value assigned to a specific object, as a string.
@@ -780,13 +810,20 @@ cdef class ModelBuilder:
         cdef bytes b_type = obj_type.encode('utf-8')
         cdef bytes b_name = obj_name.encode('utf-8')
         cdef bytes b_flag = flag_name.encode('utf-8')
-        cdef char buf[512]
+        cdef _TextBufs t
         cdef int found = 0
-        _check(swmm_userflag_value_get(self._handle, b_type, b_name, b_flag,
-                                       buf, 512, &found))
-        if not found:
-            return None
-        return buf.decode('utf-8')
+        _tb_open(&t, 1)
+        try:
+            while True:
+                _check(swmm_userflag_value_get(self._handle, b_type, b_name, b_flag,
+                                               t.p[0], t.size, &found))
+                if not found:
+                    return None
+                if not _tb_retry(&t):
+                    break
+            return _tb_str(&t, 0)
+        finally:
+            _tb_close(&t)
 
     def set_userflag_value(self, str obj_type, str obj_name, str flag_name,
                            str value):
@@ -860,10 +897,7 @@ cdef class ModelBuilder:
         @rtype: tuple
         @raise EngineError: On C API failure.
         """
-        cdef char path_buf[4096]
-        cdef char args_buf[4096]
-        _check(swmm_plugin_get(self._handle, idx, path_buf, 4096, args_buf, 4096))
-        return path_buf.decode('utf-8'), args_buf.decode('utf-8')
+        return _read_engine_plugin(self._handle, idx)
 
     def plugin_set(self, str path_or_id, str args=""):
         """Add or replace a [PLUGINS] row keyed by path/id.
@@ -912,9 +946,7 @@ cdef class ModelBuilder:
         @raise EngineError: On C API failure.
         """
         cdef bytes b = key.encode('utf-8')
-        cdef char buf[4096]
-        _check(swmm_files_get(self._handle, b, buf, 4096))
-        return buf.decode('utf-8')
+        return _read_engine_key_string(self._handle, b, swmm_files_get)
 
     def files_set(self, str key, str value):
         """Write one [FILES] field by key.
@@ -948,5 +980,5 @@ cdef class ModelBuilder:
         """
         cdef bytes b_path = path.encode('utf-8')
         cdef bytes b_plugin = output_plugin_id.encode('utf-8')
-        _check(swmm_model_write_with_plugin(self._handle, b_path, b_plugin))
+        _check_engine(swmm_model_write_with_plugin(self._handle, b_path, b_plugin), self._handle)
 

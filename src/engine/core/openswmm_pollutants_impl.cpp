@@ -1,16 +1,35 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file openswmm_pollutants_impl.cpp
- * @brief C API implementation — pollutant identity, creation, properties, quality injection.
+ * @file      openswmm_pollutants_impl.cpp
+ * @brief     C API implementation — pollutant identity, creation, properties, quality injection.
  *
  * @see include/openswmm/engine/openswmm_pollutants.h
  * @ingroup engine_api
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
+#include <cmath>
 #include "openswmm_api_common.hpp"
+#include <cctype>
+#include "Constants.hpp"
 #include "../../../include/openswmm/engine/openswmm_pollutants.h"
 
 namespace {
@@ -19,19 +38,34 @@ namespace {
 /// [rows x (np_old+1)] with existing entries preserved (pollutant is the
 /// fast dimension, so the stride changes and rows re-pack back-to-front).
 template <typename T>
+/**
+ * @brief Append a default-valued column to an aligned row-major pollutant matrix.
+ *
+ * Moves old values backward in-place after resize to preserve row contents. Shape mismatch is
+ * silently ignored; borrowed references may invalidate. Allocation/element-copy exceptions can
+ * leave resized or partially moved values; no unit conversion.
+ *
+ * @param[in,out] v Borrowed matrix; resized only when its length exactly equals rows*np_old and
+ *     fits int.
+ * @param[in] rows Positive row count; nonpositive performs no work.
+ * @param[in] np_old Nonnegative old stride; rows*np_old and np_old+1 must be representable.
+ * @param[in] def Copied default for the new final entry in every row.
+ */
 void insert_pollut_column(std::vector<T>& v, int rows, int np_old, T def = {}) {
-    if (rows <= 0 || np_old < 0) return;
-    if (static_cast<int>(v.size()) != rows * np_old) return;
+    if (rows <= 0 || np_old < 0)
+        return;
+    if (static_cast<int>(v.size()) != rows * np_old)
+        return;
     const int np_new = np_old + 1;
     v.resize(static_cast<std::size_t>(rows) * static_cast<std::size_t>(np_new), def);
     for (int r = rows - 1; r >= 0; --r) {
         for (int p = np_old - 1; p >= 0; --p)
-            v[static_cast<std::size_t>(r) * static_cast<std::size_t>(np_new)
-              + static_cast<std::size_t>(p)] =
-                v[static_cast<std::size_t>(r) * static_cast<std::size_t>(np_old)
-                  + static_cast<std::size_t>(p)];
-        v[static_cast<std::size_t>(r) * static_cast<std::size_t>(np_new)
-          + static_cast<std::size_t>(np_old)] = def;
+            v[static_cast<std::size_t>(r) * static_cast<std::size_t>(np_new) +
+              static_cast<std::size_t>(p)] =
+                v[static_cast<std::size_t>(r) * static_cast<std::size_t>(np_old) +
+                  static_cast<std::size_t>(p)];
+        v[static_cast<std::size_t>(r) * static_cast<std::size_t>(np_new) +
+          static_cast<std::size_t>(np_old)] = def;
     }
 }
 
@@ -44,19 +78,23 @@ extern "C" {
 // ============================================================================
 
 SWMM_ENGINE_API int swmm_pollutant_count(SWMM_Engine engine) {
-    if (!engine) return -1;
+    if (!engine)
+        return -1;
     return to_engine(engine)->context().n_pollutants();
 }
 
 SWMM_ENGINE_API int swmm_pollutant_index(SWMM_Engine engine, const char* id) {
-    if (!engine || !id) return -1;
+    if (!engine || !id)
+        return -1;
     return to_engine(engine)->context().pollutant_names.find(id);
 }
 
 SWMM_ENGINE_API const char* swmm_pollutant_id(SWMM_Engine engine, int idx) {
-    if (!engine) return nullptr;
+    if (!engine)
+        return nullptr;
     const auto& ctx = to_engine(engine)->context();
-    if (idx < 0 || idx >= ctx.n_pollutants()) return nullptr;
+    if (idx < 0 || idx >= ctx.n_pollutants())
+        return nullptr;
     return ctx.pollutant_names.name_of(idx).c_str();
 }
 
@@ -66,14 +104,14 @@ SWMM_ENGINE_API const char* swmm_pollutant_id(SWMM_Engine engine, int idx) {
 
 SWMM_ENGINE_API int swmm_pollutant_add(SWMM_Engine engine, const char* id, int units) {
     CHECK_HANDLE(engine);
-    if (!id) return SWMM_ERR_BADPARAM;
+    if (!id)
+        return SWMM_ERR_BADPARAM;
 
     auto& ctx = to_engine(engine)->context();
     // Pollutants may be added during programmatic construction (BUILDING) or
     // on a model opened from an .inp (OPENED) — mirroring swmm_landuse_add
     // (iteration 4; previously BUILDING-only).
-    if (ctx.state != openswmm::EngineState::BUILDING &&
-        ctx.state != openswmm::EngineState::OPENED)
+    if (ctx.state != openswmm::EngineState::BUILDING && ctx.state != openswmm::EngineState::OPENED)
         return SWMM_ERR_LIFECYCLE;
 
     // Check for duplicate ID
@@ -107,35 +145,35 @@ SWMM_ENGINE_API int swmm_pollutant_add(SWMM_Engine engine, const char* id, int u
     // sized for the old count so existing entries survive.
     if (ctx.buildup.n_pollutants == np_old && ctx.buildup.n_landuses > 0) {
         const int rows = ctx.buildup.n_landuses;
-        insert_pollut_column(ctx.buildup.func_type,  rows, np_old);
-        insert_pollut_column(ctx.buildup.coeff1,     rows, np_old);
-        insert_pollut_column(ctx.buildup.coeff2,     rows, np_old);
-        insert_pollut_column(ctx.buildup.coeff3,     rows, np_old);
+        insert_pollut_column(ctx.buildup.func_type, rows, np_old);
+        insert_pollut_column(ctx.buildup.coeff1, rows, np_old);
+        insert_pollut_column(ctx.buildup.coeff2, rows, np_old);
+        insert_pollut_column(ctx.buildup.coeff3, rows, np_old);
         insert_pollut_column(ctx.buildup.normalizer, rows, np_old);
         ctx.buildup.n_pollutants = n;
     }
     if (ctx.washoff.n_pollutants == np_old && ctx.washoff.n_landuses > 0) {
         const int rows = ctx.washoff.n_landuses;
-        insert_pollut_column(ctx.washoff.func_type,   rows, np_old);
-        insert_pollut_column(ctx.washoff.coeff,       rows, np_old);
-        insert_pollut_column(ctx.washoff.expon,       rows, np_old);
+        insert_pollut_column(ctx.washoff.func_type, rows, np_old);
+        insert_pollut_column(ctx.washoff.coeff, rows, np_old);
+        insert_pollut_column(ctx.washoff.expon, rows, np_old);
         insert_pollut_column(ctx.washoff.sweep_effic, rows, np_old);
-        insert_pollut_column(ctx.washoff.bmp_effic,   rows, np_old);
+        insert_pollut_column(ctx.washoff.bmp_effic, rows, np_old);
         ctx.washoff.n_pollutants = n;
     }
     if (ctx.treatment.n_pollutants == np_old && ctx.treatment.n_nodes > 0) {
         const int rows = ctx.treatment.n_nodes;
         insert_pollut_column(ctx.treatment.expressions, rows, np_old);
-        insert_pollut_column(ctx.treatment.compiled,    rows, np_old);
+        insert_pollut_column(ctx.treatment.compiled, rows, np_old);
         ctx.treatment.cin.resize(un, 0.0);
         ctx.treatment.removal.resize(un, -1.0);
         ctx.treatment.n_pollutants = n;
     }
     if (ctx.subcatches.conc_n_pollutants == np_old && ctx.n_subcatches() > 0) {
         const int rows = ctx.n_subcatches();
-        insert_pollut_column(ctx.subcatches.conc,         rows, np_old);
-        insert_pollut_column(ctx.subcatches.conc_old,     rows, np_old);
-        insert_pollut_column(ctx.subcatches.ponded_qual,  rows, np_old);
+        insert_pollut_column(ctx.subcatches.conc, rows, np_old);
+        insert_pollut_column(ctx.subcatches.conc_old, rows, np_old);
+        insert_pollut_column(ctx.subcatches.ponded_qual, rows, np_old);
         insert_pollut_column(ctx.subcatches.washoff_load, rows, np_old);
         ctx.subcatches.conc_n_pollutants = n;
     }
@@ -148,24 +186,67 @@ SWMM_ENGINE_API int swmm_pollutant_add(SWMM_Engine engine, const char* id, int u
 
 SWMM_ENGINE_API int swmm_pollutant_rename(SWMM_Engine engine, int idx, const char* new_id) {
     CHECK_HANDLE(engine);
-    if (!new_id || new_id[0] == '\0') return SWMM_ERR_BADPARAM;
+    if (!new_id || new_id[0] == '\0')
+        return SWMM_ERR_BADPARAM;
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_pollutants());
 
     const std::string prev = ctx.pollutant_names.name_of(idx);
-    if (prev == new_id) return SWMM_OK;
-    if (!ctx.pollutant_names.rename(idx, new_id)) return SWMM_ERR_BADPARAM;
+    if (prev == new_id)
+        return SWMM_OK;
+    if (!ctx.pollutant_names.rename(idx, new_id))
+        return SWMM_ERR_BADPARAM;
 
     // Follow the name-stored references ([INFLOWS]/[DWF] constituent
     // strings — the same set ObjectDeleter cascades on delete). Everything
     // else (co-pollutant, LID removals, buildup/washoff, treatment) is
     // index/positional and unaffected.
     const std::string next = new_id;
+    auto upper = [](std::string value) {
+        for (auto& ch : value)
+            ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+        return value;
+    };
+    const auto old_upper = upper(prev);
+    for (auto& stack : ctx.lid_controls.node_layers)
+        for (auto& layer : stack)
+            for (auto& rule : layer.treatment) {
+                if (upper(rule.pollutant) == old_upper)
+                    rule.pollutant = next;
+                auto& expr = rule.expression;
+                for (std::size_t i = 0; i < expr.size();) {
+                    if (!std::isalpha(static_cast<unsigned char>(expr[i])) && expr[i] != '_') {
+                        ++i;
+                        continue;
+                    }
+                    const auto begin = i++;
+                    while (i < expr.size() &&
+                           (std::isalnum(static_cast<unsigned char>(expr[i])) || expr[i] == '_'))
+                        ++i;
+                    if (begin > 0 && std::isdigit(static_cast<unsigned char>(expr[begin - 1])))
+                        continue;
+                    const auto word = upper(expr.substr(begin, i - begin));
+                    const std::string reserved =
+                        " C R DT HRT Q V D AREA EXP LOG LN SQRT MIN MAX ABS SGN STEP ";
+                    std::string replacement;
+                    if (word == "C_" + old_upper || word == "R_" + old_upper)
+                        replacement = word.substr(0, 2) + next;
+                    else if (word == old_upper &&
+                             reserved.find(" " + word + " ") == std::string::npos)
+                        replacement = next;
+                    if (!replacement.empty()) {
+                        expr.replace(begin, i - begin, replacement);
+                        i = begin + replacement.size();
+                    }
+                }
+            }
     for (auto& c : ctx.ext_inflows.constituent)
-        if (c == prev) c = next;
+        if (c == prev)
+            c = next;
     for (auto& c : ctx.dwf_inflows.constituent)
-        if (c == prev) c = next;
+        if (c == prev)
+            c = next;
     return SWMM_OK;
 }
 
@@ -177,7 +258,9 @@ SWMM_ENGINE_API int swmm_pollutant_set_kdecay(SWMM_Engine engine, int idx, doubl
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_pollutants());
-    ctx.pollutants.k_decay[static_cast<std::size_t>(idx)] = k;
+    // The API speaks deck units (1/day) — the header's contract all
+    // along; storage is 1/sec (KD1), like legacy's swmm_POLLUT_KDECAY.
+    ctx.pollutants.k_decay[static_cast<std::size_t>(idx)] = k / openswmm::constants::SEC_PER_DAY;
     return SWMM_OK;
 }
 
@@ -214,11 +297,11 @@ SWMM_ENGINE_API int swmm_pollutant_set_units(SWMM_Engine engine, int idx, int un
     auto& ctx = to_engine(engine)->context();
     // Units define how every stored/reported concentration is read; only
     // meaningful while still building the model (pre-start), like init_conc.
-    if (ctx.state != openswmm::EngineState::BUILDING &&
-        ctx.state != openswmm::EngineState::OPENED)
+    if (ctx.state != openswmm::EngineState::BUILDING && ctx.state != openswmm::EngineState::OPENED)
         return SWMM_ERR_LIFECYCLE;
     CHECK_INDEX(idx >= 0 && idx < ctx.n_pollutants());
-    if (units < 0 || units > 2) return SWMM_ERR_BADPARAM;
+    if (units < 0 || units > 2)
+        return SWMM_ERR_BADPARAM;
     ctx.pollutants.units[static_cast<std::size_t>(idx)] = static_cast<openswmm::MassUnits>(units);
     return SWMM_OK;
 }
@@ -227,7 +310,8 @@ SWMM_ENGINE_API int swmm_pollutant_get_units(SWMM_Engine engine, int idx, int* u
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_pollutants());
-    if (units) *units = static_cast<int>(ctx.pollutants.units[static_cast<std::size_t>(idx)]);
+    if (units)
+        *units = static_cast<int>(ctx.pollutants.units[static_cast<std::size_t>(idx)]);
     return SWMM_OK;
 }
 
@@ -239,7 +323,9 @@ SWMM_ENGINE_API int swmm_pollutant_get_kdecay(SWMM_Engine engine, int idx, doubl
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_pollutants());
-    if (k) *k = ctx.pollutants.k_decay[static_cast<std::size_t>(idx)];
+    if (k)
+        *k = ctx.pollutants.k_decay[static_cast<std::size_t>(idx)] *
+             openswmm::constants::SEC_PER_DAY;
     return SWMM_OK;
 }
 
@@ -247,7 +333,8 @@ SWMM_ENGINE_API int swmm_pollutant_get_rain_conc(SWMM_Engine engine, int idx, do
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_pollutants());
-    if (conc) *conc = ctx.pollutants.c_rain[static_cast<std::size_t>(idx)];
+    if (conc)
+        *conc = ctx.pollutants.c_rain[static_cast<std::size_t>(idx)];
     return SWMM_OK;
 }
 
@@ -255,7 +342,8 @@ SWMM_ENGINE_API int swmm_pollutant_get_gw_conc(SWMM_Engine engine, int idx, doub
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_pollutants());
-    if (conc) *conc = ctx.pollutants.c_gw[static_cast<std::size_t>(idx)];
+    if (conc)
+        *conc = ctx.pollutants.c_gw[static_cast<std::size_t>(idx)];
     return SWMM_OK;
 }
 
@@ -263,7 +351,8 @@ SWMM_ENGINE_API int swmm_pollutant_get_init_conc(SWMM_Engine engine, int idx, do
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_pollutants());
-    if (conc) *conc = ctx.pollutants.init_conc[static_cast<std::size_t>(idx)];
+    if (conc)
+        *conc = ctx.pollutants.init_conc[static_cast<std::size_t>(idx)];
     return SWMM_OK;
 }
 
@@ -279,7 +368,8 @@ SWMM_ENGINE_API int swmm_pollutant_get_rdii_conc(SWMM_Engine engine, int idx, do
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_pollutants());
-    if (conc) *conc = ctx.pollutants.c_rdii[static_cast<std::size_t>(idx)];
+    if (conc)
+        *conc = ctx.pollutants.c_rdii[static_cast<std::size_t>(idx)];
     return SWMM_OK;
 }
 
@@ -295,7 +385,8 @@ SWMM_ENGINE_API int swmm_pollutant_get_dwf_conc(SWMM_Engine engine, int idx, dou
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_pollutants());
-    if (conc) *conc = ctx.pollutants.c_dwf[static_cast<std::size_t>(idx)];
+    if (conc)
+        *conc = ctx.pollutants.c_dwf[static_cast<std::size_t>(idx)];
     return SWMM_OK;
 }
 
@@ -303,6 +394,9 @@ SWMM_ENGINE_API int swmm_pollutant_set_mwt(SWMM_Engine engine, int idx, double m
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_pollutants());
+    if (!std::isfinite(mwt) || mwt <= 0.0)
+        return SWMM_ERR_BADPARAM;
+    ctx.pollutants.mwt.resize(ctx.n_pollutants(), 1.0);
     ctx.pollutants.mwt[static_cast<std::size_t>(idx)] = mwt;
     return SWMM_OK;
 }
@@ -311,11 +405,14 @@ SWMM_ENGINE_API int swmm_pollutant_get_mwt(SWMM_Engine engine, int idx, double* 
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_pollutants());
-    if (mwt) *mwt = ctx.pollutants.mwt[static_cast<std::size_t>(idx)];
+    if (mwt)
+        *mwt = static_cast<std::size_t>(idx) < ctx.pollutants.mwt.size()
+                   ? ctx.pollutants.mwt[static_cast<std::size_t>(idx)] : 1.0;
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_pollutant_set_co_pollutant(SWMM_Engine engine, int idx, int co_idx, double frac) {
+SWMM_ENGINE_API int swmm_pollutant_set_co_pollutant(SWMM_Engine engine, int idx, int co_idx,
+                                                    double frac) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_pollutants());
@@ -324,12 +421,15 @@ SWMM_ENGINE_API int swmm_pollutant_set_co_pollutant(SWMM_Engine engine, int idx,
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_pollutant_get_co_pollutant(SWMM_Engine engine, int idx, int* co_idx, double* frac) {
+SWMM_ENGINE_API int swmm_pollutant_get_co_pollutant(SWMM_Engine engine, int idx, int* co_idx,
+                                                    double* frac) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_pollutants());
-    if (co_idx) *co_idx = ctx.pollutants.co_pollut[static_cast<std::size_t>(idx)];
-    if (frac)   *frac   = ctx.pollutants.co_frac[static_cast<std::size_t>(idx)];
+    if (co_idx)
+        *co_idx = ctx.pollutants.co_pollut[static_cast<std::size_t>(idx)];
+    if (frac)
+        *frac = ctx.pollutants.co_frac[static_cast<std::size_t>(idx)];
     return SWMM_OK;
 }
 
@@ -345,7 +445,8 @@ SWMM_ENGINE_API int swmm_pollutant_get_snow_only(SWMM_Engine engine, int idx, in
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_pollutants());
-    if (flag) *flag = ctx.pollutants.snow_only[static_cast<std::size_t>(idx)] ? 1 : 0;
+    if (flag)
+        *flag = ctx.pollutants.snow_only[static_cast<std::size_t>(idx)] ? 1 : 0;
     return SWMM_OK;
 }
 
@@ -353,23 +454,27 @@ SWMM_ENGINE_API int swmm_pollutant_get_snow_only(SWMM_Engine engine, int idx, in
 // Runtime quality injection
 // ============================================================================
 
-SWMM_ENGINE_API int swmm_node_set_quality(SWMM_Engine engine, int node_idx, int pollut_idx, double conc) {
+SWMM_ENGINE_API int swmm_node_set_quality(SWMM_Engine engine, int node_idx, int pollut_idx,
+                                          double conc) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(node_idx >= 0 && node_idx < ctx.n_nodes());
     CHECK_INDEX(pollut_idx >= 0 && pollut_idx < ctx.n_pollutants());
     const auto np = static_cast<std::size_t>(ctx.n_pollutants());
-    ctx.nodes.conc[static_cast<std::size_t>(node_idx) * np + static_cast<std::size_t>(pollut_idx)] = conc;
+    ctx.nodes.conc[static_cast<std::size_t>(node_idx) * np + static_cast<std::size_t>(pollut_idx)] =
+        conc;
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_link_set_quality(SWMM_Engine engine, int link_idx, int pollut_idx, double conc) {
+SWMM_ENGINE_API int swmm_link_set_quality(SWMM_Engine engine, int link_idx, int pollut_idx,
+                                          double conc) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(link_idx >= 0 && link_idx < ctx.n_links());
     CHECK_INDEX(pollut_idx >= 0 && pollut_idx < ctx.n_pollutants());
     const auto np = static_cast<std::size_t>(ctx.n_pollutants());
-    ctx.links.conc[static_cast<std::size_t>(link_idx) * np + static_cast<std::size_t>(pollut_idx)] = conc;
+    ctx.links.conc[static_cast<std::size_t>(link_idx) * np + static_cast<std::size_t>(pollut_idx)] =
+        conc;
     return SWMM_OK;
 }
 

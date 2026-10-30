@@ -1,11 +1,27 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file HydrologyHandler.hpp
- * @brief Section handlers for hydrology-related input sections.
+ * @file      HydrologyHandler.hpp
+ * @brief     Section handlers for hydrology-related input sections.
  * @ingroup engine_input
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_HYDROLOGY_HANDLER_HPP
@@ -14,7 +30,9 @@
 #include <vector>
 #include <string>
 
-namespace openswmm { struct SimulationContext; }
+namespace openswmm {
+struct SimulationContext;
+}
 
 namespace openswmm::input {
 
@@ -26,6 +44,10 @@ void handle_temperature(SimulationContext& ctx, const std::vector<std::string>& 
 
 /** @brief Parse [SNOWPACKS] into SnowpackStore + snowpack_names. */
 void handle_snowpacks(SimulationContext& ctx, const std::vector<std::string>& lines);
+void handle_ueb_options(SimulationContext& ctx, const std::vector<std::string>& lines);
+void handle_mesh_snow_options(SimulationContext&, const std::vector<std::string>&);
+void handle_mesh_snow_defaults(SimulationContext&, const std::vector<std::string>&);
+void handle_mesh_snow_cells(SimulationContext&, const std::vector<std::string>&);
 
 /** @brief Parse [AQUIFERS] into AquiferStore + aquifer_names. */
 void handle_aquifers(SimulationContext& ctx, const std::vector<std::string>& lines);

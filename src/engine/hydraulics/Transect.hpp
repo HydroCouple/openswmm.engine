@@ -1,6 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file Transect.hpp
- * @brief Irregular transect cross-section geometry (HEC-2 style).
+ * @file      Transect.hpp
+ * @brief     Irregular transect cross-section geometry (HEC-2 style).
  *
  * @details Processes station-elevation pairs into tabulated A/R/W arrays
  *          that can be used by the XSectBatch lookup system. Each transect
@@ -10,9 +26,9 @@
  * @note Legacy reference: src/legacy/engine/transect.c
  * @ingroup new_engine
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_TRANSECT_HPP
@@ -21,7 +37,11 @@
 #include <vector>
 #include <string>
 
+#include "XSectLookup.hpp"
+
 namespace openswmm {
+
+struct TransectStore; // engine/data/InfraData.hpp
 
 namespace transect {
 
@@ -29,32 +49,37 @@ constexpr int N_TRANSECT_TBL = 51;
 
 struct TransectData {
     std::string name;
-    double n_left   = 0.0;   ///< Left overbank Manning's n
-    double n_right  = 0.0;   ///< Right overbank Manning's n
-    double n_channel = 0.0;  ///< Main channel Manning's n
-    double length_factor = 1.0;  ///< Main-channel / flood-plain length ratio (Lfactor)
+    double n_left = 0.0;        ///< Left overbank Manning's n
+    double n_right = 0.0;       ///< Right overbank Manning's n
+    double n_channel = 0.0;     ///< Main channel Manning's n
+    double length_factor = 1.0; ///< Main-channel / flood-plain length ratio (Lfactor)
 
     // Station-elevation pairs
-    std::vector<double> stations;    ///< x positions (ft)
-    std::vector<double> elevations;  ///< y elevations (ft)
+    std::vector<double> stations;   ///< x positions (ft)
+    std::vector<double> elevations; ///< y elevations (ft)
 
-    double x_left_bank  = 0.0;  ///< Left bank station
-    double x_right_bank = 0.0;  ///< Right bank station
+    double x_left_bank = 0.0;  ///< Left bank station
+    double x_right_bank = 0.0; ///< Right bank station
 
     // Computed geometry tables (normalized)
     double y_full = 0.0;
-    double w_max  = 0.0;
+    double w_max = 0.0;
     double a_full = 0.0;
     double r_full = 0.0;
     // CUSTOM shapes only (legacy TShape.sMax/aMax, shape.c getSmax): max
     // section factor and its area for a shape of UNIT height, computed on the
     // unnormalized tables. Scaled by yFull in the caller (xsect.c:685-686).
-    double s_max  = 0.0;
-    double a_max  = 0.0;
+    double s_max = 0.0;
+    double a_max = 0.0;
 
-    double area_tbl[N_TRANSECT_TBL]  = {};
-    double hrad_tbl[N_TRANSECT_TBL]  = {};
+    double area_tbl[N_TRANSECT_TBL] = {};
+    double hrad_tbl[N_TRANSECT_TBL] = {};
     double width_tbl[N_TRANSECT_TBL] = {};
+
+    /// Bucket map over `area_tbl`, used by getYofA's invLookup (plan
+    /// XSECT_LOOKUP_ACCEL A1). Rebuilt by the two table builders below; stays
+    /// disabled (and callers bisect as before) if either bails out early.
+    xsect::LocateLut area_lut;
 };
 
 /**
@@ -66,8 +91,16 @@ struct TransectData {
  *
  * @param td  [in/out] TransectData with stations/elevations filled.
  *            On output, tables and full-depth properties are set.
+ * @param add_end_walls  Close the section with vertical walls up to the
+ *            highest station before tabulating, as legacy transect_validate
+ *            does for a [TRANSECTS] section. A STREET section is already
+ *            closed by its own points (transect_createStreetTransect calls
+ *            createTables directly), and adding walls there shifts every
+ *            station index — which moves the `k == Nstations - 1` split in
+ *            getFlow and so changes the composite-roughness flow the hyd.
+ *            radius table is solved from. Pass false for streets.
  */
-void buildTables(TransectData& td);
+void buildTables(TransectData& td, bool add_end_walls = true);
 
 /**
  * @brief Build tabulated geometry from a CUSTOM shape curve.
@@ -82,8 +115,29 @@ void buildTables(TransectData& td);
  * @param curve_y   Normalized width values (w/wMax) from shape curve.
  * @param n_pts     Number of curve points.
  */
-void buildCustomTables(TransectData& td, double y_full,
-                       const double* curve_x, const double* curve_y, int n_pts);
+void buildCustomTables(TransectData& td, double y_full, const double* curve_x,
+                       const double* curve_y, int n_pts);
+
+/**
+ * @brief Build one transect's geometry tables from the raw [TRANSECTS] store.
+ *
+ * @details Copies the store entry into @p td, applies the legacy parse-time
+ *          transforms (Station = x·Xfactor/UCF; Elev = (y + Yfactor)/UCF with
+ *          Yfactor = y_factor/UCF; banks = (x/UCF)·Xfactor — see
+ *          transect.c::setParams/addStation) to the COPY only, then calls
+ *          buildTables(). The store itself stays raw/display so [TRANSECTS]
+ *          round-trips losslessly. Shared by PostParseResolver (per-store
+ *          resolve pass) and swmm_link_set_xsect (IRREGULAR assignment of a
+ *          transect added after open) — the two must stay bit-identical.
+ *
+ * @param ts          Raw transect store.
+ * @param index       Store row to build.
+ * @param ucf_length  UCF(LENGTH) for the model's unit system.
+ * @param td          [out] Built tables.
+ * @return false when the entry has no valid channel Manning's n (caller
+ *         reports the error); true on success.
+ */
+bool buildFromStore(const TransectStore& ts, int index, double ucf_length, TransectData& td);
 
 } // namespace transect
 } // namespace openswmm

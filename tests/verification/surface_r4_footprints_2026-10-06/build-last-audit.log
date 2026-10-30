@@ -1,0 +1,21 @@
+[0/2] Re-checking globbed directories...
+[1/21] Building CXX object src/engine/CMakeFiles/openswmm_engine.dir/2d/subsurface/CommonSourceStage.cpp.o
+[2/21] Linking CXX shared library src/engine/libopenswmm.engine.6.0.0.dylib
+[3/21] Creating library symlink src/engine/libopenswmm.engine.6.dylib src/engine/libopenswmm.engine.dylib
+[4/21] Linking CXX executable bin/Release/test_engine_surface_ownership
+[5/21] Linking CXX executable bin/Release/test_engine_2d_inertial_marcher
+[6/21] Linking CXX executable bin/Release/test_engine_runoff
+[7/21] Linking CXX executable bin/Release/test_engine_surface_exchange
+[8/21] Linking CXX executable bin/Release/test_engine_lid
+[9/21] Linking CXX executable bin/Release/test_engine_surface_aquifer_receiving
+[10/21] Linking CXX executable bin/Release/test_engine_surface_et_budget
+[11/21] Linking CXX executable bin/Release/test_engine_source_clock_groups
+[12/21] Linking CXX executable bin/Release/test_engine_sigma_conservation
+[13/21] Linking CXX executable bin/Release/test_engine_source_water_driver
+[14/21] Linking CXX executable bin/Release/test_engine_gw_source_forcing
+[15/21] Linking CXX executable bin/Release/test_engine_runtime_coupling_api
+[16/21] Linking CXX executable tests/verification/gw2d_gates/gw2d_gates
+[17/21] Linking CXX executable bin/Release/test_engine_lid_nodes
+[18/21] Linking CXX executable bin/Release/test_engine_gw_transport_kernel
+[19/21] Building CXX object tests/unit/engine/CMakeFiles/test_engine_common_source_stage.dir/test_common_source_stage.cpp.o
+[20/21] Linking CXX executable bin/Release/test_engine_common_source_stage

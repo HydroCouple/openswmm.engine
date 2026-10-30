@@ -1,6 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file Treatment.hpp
- * @brief Treatment expression evaluator for water quality.
+ * @file      Treatment.hpp
+ * @brief     Treatment expression evaluator for water quality.
  *
  * @details Evaluates user-defined treatment expressions at nodes to modify
  *          pollutant concentrations. Expressions can reference:
@@ -24,9 +40,9 @@
  * @note Legacy reference: src/legacy/engine/treatmnt.c, mathexpr.c
  * @ingroup new_engine
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_TREATMENT_HPP
@@ -44,38 +60,38 @@ namespace treatment {
 // ============================================================================
 
 enum class TokenType : int {
-    NUMBER    = 0,
-    VARIABLE  = 1,
-    ADD       = 2,
-    SUB       = 3,
-    MUL       = 4,
-    DIV       = 5,
-    POW       = 6,
-    NEG       = 7,   ///< Unary negation
-    FUNC_EXP  = 8,
-    FUNC_LOG  = 9,
+    NUMBER = 0,
+    VARIABLE = 1,
+    ADD = 2,
+    SUB = 3,
+    MUL = 4,
+    DIV = 5,
+    POW = 6,
+    NEG = 7, ///< Unary negation
+    FUNC_EXP = 8,
+    FUNC_LOG = 9,
     FUNC_SQRT = 10,
-    FUNC_MIN  = 11,
-    FUNC_MAX  = 12,
-    FUNC_ABS  = 13,
-    FUNC_SGN  = 14,
-    FUNC_STEP = 15,  ///< Heaviside step
-    LPAREN    = 16,  ///< Left parenthesis (parser internal, never in output)
-    RPAREN    = 17,  ///< Right parenthesis (parser internal, never in output)
-    COMMA     = 18   ///< Comma separator for min/max (parser internal)
+    FUNC_MIN = 11,
+    FUNC_MAX = 12,
+    FUNC_ABS = 13,
+    FUNC_SGN = 14,
+    FUNC_STEP = 15, ///< Heaviside step
+    LPAREN = 16,    ///< Left parenthesis (parser internal, never in output)
+    RPAREN = 17,    ///< Right parenthesis (parser internal, never in output)
+    COMMA = 18      ///< Comma separator for min/max (parser internal)
 };
 
 enum class TreatVar : int {
-    C        = 0,   ///< Current concentration (this pollutant)
-    R        = 1,   ///< Removal fraction (this pollutant, unused in expressions)
-    DT       = 2,   ///< Timestep (sec)
-    HRT      = 3,   ///< Hydraulic residence time (hours, per legacy convention)
-    Q        = 4,   ///< Flow rate in user units (Q*UCF(FLOW), matching legacy pvFLOW)
-    V        = 5,   ///< Volume (ft3 or m3)
-    D        = 6,   ///< Depth in user units (y*UCF(LENGTH), matching legacy pvDEPTH)
-    C_POLLUT = 7,   ///< Concentration of another pollutant (uses pollut_ref)
-    R_POLLUT = 8,   ///< Removal fraction of another pollutant (uses pollut_ref, co-treatment)
-    AREA     = 9    ///< Node surface area in user units² ((a1+a2)/2*UCF(LENGTH)², matching legacy pvAREA)
+    C = 0,        ///< Current concentration (this pollutant)
+    R = 1,        ///< Removal fraction (this pollutant, unused in expressions)
+    DT = 2,       ///< Timestep (sec)
+    HRT = 3,      ///< Hydraulic residence time (hours, per legacy convention)
+    Q = 4,        ///< Flow rate in user units (Q*UCF(FLOW), matching legacy pvFLOW)
+    V = 5,        ///< Volume (ft3 or m3)
+    D = 6,        ///< Depth in user units (y*UCF(LENGTH), matching legacy pvDEPTH)
+    C_POLLUT = 7, ///< Concentration of another pollutant (uses pollut_ref)
+    R_POLLUT = 8, ///< Removal fraction of another pollutant (uses pollut_ref, co-treatment)
+    AREA = 9 ///< Node surface area in user units² ((a1+a2)/2*UCF(LENGTH)², matching legacy pvAREA)
 };
 
 // ============================================================================
@@ -84,9 +100,9 @@ enum class TreatVar : int {
 
 struct Token {
     TokenType type = TokenType::NUMBER;
-    double    value = 0.0;        ///< For NUMBER tokens
-    TreatVar  var = TreatVar::C;  ///< For VARIABLE tokens
-    int       pollut_ref = -1;    ///< Pollutant index for C_POLLUT/R_POLLUT
+    double value = 0.0;         ///< For NUMBER tokens
+    TreatVar var = TreatVar::C; ///< For VARIABLE tokens
+    int pollut_ref = -1;        ///< Pollutant index for C_POLLUT/R_POLLUT
 };
 
 // ============================================================================
@@ -94,9 +110,9 @@ struct Token {
 // ============================================================================
 
 struct TreatExpr {
-    std::vector<Token> tokens;   ///< Postfix (RPN) token list
-    int pollutant_idx = -1;      ///< Which pollutant this expression applies to
-    bool is_removal = false;     ///< True if expression computes R (removal), false if C
+    std::vector<Token> tokens; ///< Postfix (RPN) token list
+    int pollutant_idx = -1;    ///< Which pollutant this expression applies to
+    bool is_removal = false;   ///< True if expression computes R (removal), false if C
 };
 
 // ============================================================================
@@ -106,18 +122,16 @@ struct TreatExpr {
 /**
  * @brief Parse a treatment expression string into postfix tokens.
  *
- * @details The expression string should be of the form "C = ..." or "R = ...".
- *          The parser determines whether this is a concentration or removal
- *          equation from the left-hand side, then parses the right-hand side
- *          (after the '=') into a postfix token sequence using the
- *          Shunting-yard algorithm.
+ * @details The expression string should be of the form "C = ..." or "R = ...". The parser
+ * determines whether this is a concentration or removal equation from the left-hand side, then
+ * parses the right-hand side (after the '=') into a postfix token sequence using the
+ * Shunting-yard algorithm.
  *
- *          Supported operators: + - * / ^ (standard precedence)
- *          Supported functions: exp, log, sqrt, min, max, abs, sgn, step
- *          Supported variables: C, R, DT, HRT, Q, V, D, AREA
+ * Supported operators: + - * / ^ (standard precedence) Supported functions: exp, log, sqrt, min,
+ * max, abs, sgn, step Supported variables: C, R, DT, HRT, Q, V, D, AREA
  *
- * @param expr_str  Full expression string (e.g., "R = 1.0 - exp(-0.5 * HRT)").
- * @param result    [out] Parsed expression with is_removal set.
+ * - Argument expr_str: Full expression string (e.g., "R = 1.0 - exp(-0.5 * HRT)").
+ * - Argument result: [out] Parsed expression with is_removal set.
  * @returns 0 on success, -1 on parse error.
  */
 int parse(const std::string& expr_str, TreatExpr& result);
@@ -125,9 +139,9 @@ int parse(const std::string& expr_str, TreatExpr& result);
 /**
  * @brief Parse with pollutant name resolution for co-treatment.
  *
- * @param expr_str     Full expression string.
- * @param result       [out] Parsed expression.
- * @param pollut_names Pollutant name → index resolver. Returns -1 if not found.
+ * - Argument expr_str: Full expression string.
+ * - Argument result: [out] Parsed expression.
+ * - Argument pollut_lookup: Pollutant name → index resolver. Returns -1 if not found.
  * @returns 0 on success, -1 on parse error.
  */
 int parse(const std::string& expr_str, TreatExpr& result,
@@ -136,77 +150,84 @@ int parse(const std::string& expr_str, TreatExpr& result,
 /**
  * @brief Validate a treatment expression without touching engine state.
  *
- * @details Diagnostic peer of parse() for editors: same grammar, but
- *          reports a human-readable message and character position on
- *          failure. Stricter than parse() in one deliberate way — unknown
- *          characters are an error here, where the tokenizer silently
- *          skips them. Ends with a parse() cross-check so the verdict can
- *          never drift ahead of what the engine accepts.
+ * @details Diagnostic peer of parse() for editors: same grammar, but reports a human-readable
+ * message and character position on failure. Stricter than parse() in one deliberate way —
+ * unknown characters are an error here, where the tokenizer silently skips them. Ends with a
+ * parse() cross-check so the verdict can never drift ahead of what the engine accepts.
  *
- * @param expr_str  Full expression string ("R = ..." / "C = ...").
- * @param[out] msg  Failure diagnostic (empty on success).
- * @param[out] col  0-based character offset of the error, or -1 when the
- *                  position is not attributable.
+ * - Argument expr_str: Full expression string ("R = ..." / "C = ...").
+ * - Argument msg (out): Failure diagnostic (empty on success).
+ * - Argument col (out): 0-based character offset of the error, or -1 when the position is not
+ * attributable.
  * @returns 0 when valid, -1 otherwise.
  */
 int validate(const std::string& expr_str, std::string& msg, int& col);
 
 /**
+ * @brief Parse a treatment expression, resolving pollutant references against a name table.
+ *
+ * @details The deck-compile path holds the pollutant NAMES, not a free function, so this is the
+ * overload it needs. Without it no deck-authored pollutant reference resolves at all — neither a
+ * bare name (legacy's `project_findObject(POLLUT, s)` branch, treatmnt.c:313) nor the R_xxx
+ * co-treatment form.
+ */
+int parse(const std::string& expr_str, TreatExpr& result,
+          const std::vector<std::string>& pollut_names);
+
+/**
  * @brief Evaluate a treatment expression with given variable values.
  *
- * @param expr   Parsed expression.
- * @param c      Current concentration.
- * @param dt     Timestep (sec).
- * @param hrt    Hydraulic residence time (hours).
- * @param q      Flow rate.
- * @param v      Volume.
- * @param d      Depth.
+ * - Original argument expr: Parsed expression.
+ * - Original argument c: Current concentration.
+ * - Original argument dt: Timestep (sec).
+ * - Original argument hrt: Hydraulic residence time (hours).
+ * - Original argument q: Flow rate.
+ * - Original argument v: Volume.
+ * - Original argument d: Depth.
  * @returns Computed value (concentration or removal fraction).
  */
-double evaluate(const TreatExpr& expr, double c, double dt,
-                double hrt, double q, double v, double d, double area = 0.0);
+double evaluate(const TreatExpr& expr, double c, double dt, double hrt, double q, double v,
+                double d, double area = 0.0);
 
 /**
  * @brief Evaluate with co-treatment support (R_pollutant references).
  *
- * @param expr       Parsed expression.
- * @param c          Concentration for this pollutant.
- * @param dt         Timestep (sec).
- * @param hrt        HRT (hours).
- * @param q          Flow rate in user units.
- * @param v          Volume.
- * @param d          Depth in user units.
- * @param cin        Inflow concentrations for all pollutants.
- * @param removal    Removal fractions for all pollutants (-1=not computed).
- * @param n_pollut   Number of pollutants.
- * @param area       Node surface area in user units² (Gap #16, legacy pvAREA).
+ * - Argument expr: Parsed expression.
+ * - Argument c: Concentration for this pollutant.
+ * - Argument dt: Timestep (sec).
+ * - Argument hrt: HRT (hours).
+ * - Argument q: Flow rate in user units.
+ * - Argument v: Volume.
+ * - Argument d: Depth in user units.
+ * - Argument cin: Inflow concentrations for all pollutants.
+ * - Argument removal: Removal fractions for all pollutants (-1=not computed).
+ * - Argument n_pollut: Number of pollutants.
+ * - Argument area: Node surface area in user units² (Gap #16, legacy pvAREA).
  * @returns Computed value.
  */
-double evaluate(const TreatExpr& expr, double c, double dt,
-                double hrt, double q, double v, double d,
-                const double* cin, const double* removal, int n_pollut,
-                double area = 0.0);
+double evaluate(const TreatExpr& expr, double c, double dt, double hrt, double q, double v,
+                double d, const double* cin, const double* removal, int n_pollut, double area = 0.0,
+                const double* cpollut = nullptr);
 
 /**
  * @brief Apply treatment at a node for one pollutant.
  *
- * @details For a removal equation (R=): the expression result is clamped to
- *          [0,1] and the output concentration is c_in * (1 - R).
- *          For a concentration equation (C=): the expression result is clamped
- *          to [0, c_in] and the output concentration is the expression result.
- *          This matches the legacy treatmnt.c behavior.
+ * @details For a removal equation (R=): the expression result is clamped to [0,1] and the output
+ * concentration is c_in * (1 - R). For a concentration equation (C=): the expression result is
+ * clamped to [0, c_in] and the output concentration is the expression result. This matches the
+ * legacy treatmnt.c behavior.
  *
- * @param expr    Treatment expression.
- * @param c_in    Inflow/current concentration (Cin for R=, node conc for C=).
- * @param dt      Timestep (sec).
- * @param hrt     Hydraulic residence time (hours).
- * @param q       Flow.
- * @param v       Volume.
- * @param d       Depth.
+ * - Argument expr: Treatment expression.
+ * - Argument c_in: Inflow/current concentration (Cin for R=, node conc for C=).
+ * - Argument dt: Timestep (sec).
+ * - Argument hrt: Hydraulic residence time (hours).
+ * - Argument q: Flow.
+ * - Argument v: Volume.
+ * - Argument d: Depth.
  * @returns Treated concentration.
  */
-double applyTreatment(const TreatExpr& expr, double c_in, double dt,
-                      double hrt, double q, double v, double d, double area = 0.0);
+double applyTreatment(const TreatExpr& expr, double c_in, double dt, double hrt, double q, double v,
+                      double d, double area = 0.0);
 
 } // namespace treatment
 } // namespace openswmm

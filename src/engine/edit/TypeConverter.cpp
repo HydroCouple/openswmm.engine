@@ -1,14 +1,31 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file TypeConverter.cpp
- * @brief In-place node and link type conversion.
+ * @file      TypeConverter.cpp
+ * @brief     In-place node and link type conversion.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #include "TypeConverter.hpp"
 #include "../core/TypeHelpers.hpp"
+#include "VirtualJunctionOps.hpp"
 
 namespace openswmm::edit {
 
@@ -22,26 +39,44 @@ namespace openswmm::edit {
 // default row (matching the legacy clear-old-then-apply-defaults behavior) — so
 // these helpers only record which logical fields the conversion cleared, for the
 // cascade report. The field-name lists are preserved exactly from the legacy path.
+/**
+ * @brief Append the logical outfall fields discarded by subtype conversion.
+ *
+ * Field-name metadata only; does not edit a node or validate its subtype.
+ *
+ * @param[in,out] cleared Owned string sink; old entries retained. Actual subtype-row erasure is
+ *     performed separately.
+ */
 static void record_cleared_outfall(std::vector<std::string>& cleared) {
-    cleared.insert(cleared.end(), {
-        "outfall_type", "outfall_param", "outfall_has_flap_gate",
-        "outfall_route_to", "outfall_link_idx", "outfall_link_offset"
-    });
+    cleared.insert(cleared.end(), {"outfall_type", "outfall_param", "outfall_has_flap_gate",
+                                   "outfall_route_to", "outfall_link_idx", "outfall_link_offset"});
 }
 
+/**
+ * @brief Append the logical storage fields discarded by subtype conversion.
+ *
+ * Field-name metadata only; does not edit a node or validate its subtype.
+ *
+ * @param[in,out] cleared Owned string sink; old entries retained. Actual subtype-row erasure is
+ *     performed separately.
+ */
 static void record_cleared_storage(std::vector<std::string>& cleared) {
-    cleared.insert(cleared.end(), {
-        "storage_curve", "storage_a", "storage_b", "storage_c",
-        "storage_seep_rate", "storage_evap_frac",
-        "exfil_suction", "exfil_ksat", "exfil_imd"
-    });
+    cleared.insert(cleared.end(),
+                   {"storage_curve", "storage_a", "storage_b", "storage_c", "storage_seep_rate",
+                    "storage_evap_frac", "exfil_suction", "exfil_ksat", "exfil_imd"});
 }
 
+/**
+ * @brief Append the logical divider fields discarded by subtype conversion.
+ *
+ * Field-name metadata only; does not edit a node or validate its subtype.
+ *
+ * @param[in,out] cleared Owned string sink; old entries retained. Actual subtype-row erasure is
+ *     performed separately.
+ */
 static void record_cleared_divider(std::vector<std::string>& cleared) {
-    cleared.insert(cleared.end(), {
-        "divider_type", "divider_cutoff", "divider_cd", "divider_max_depth",
-        "divider_curve", "divider_link"
-    });
+    cleared.insert(cleared.end(), {"divider_type", "divider_cutoff", "divider_cd",
+                                   "divider_max_depth", "divider_curve", "divider_link"});
 }
 
 ConversionResult convert_node(SimulationContext& ctx, int idx, NodeType new_type) {
@@ -51,26 +86,44 @@ ConversionResult convert_node(SimulationContext& ctx, int idx, NodeType new_type
     NodeData& nd = ctx.nodes;
     const NodeType old_type = nd.type[ui];
 
+    const int storage_row = ctx.node_subtypes.storage_row(idx);
+    if (storage_row >= 0 && ctx.node_subtypes.storages.lid[storage_row].control >= 0) {
+        result.cleared_fields.push_back("lid_control");
+        auto& anchors = ctx.lid_node_outlets;
+        anchors.erase(std::remove_if(anchors.begin(), anchors.end(),
+                                     [&](const auto& a) {
+                                         return ctx.links.node1[a.link] == idx ||
+                                                ctx.links.node2[a.link] == idx;
+                                     }),
+                      anchors.end());
+    }
+
     // Record the old type-specific fields cleared by the conversion.
     switch (old_type) {
-        case NodeType::OUTFALL:  record_cleared_outfall(result.cleared_fields); break;
-        case NodeType::STORAGE:  record_cleared_storage(result.cleared_fields); break;
-        case NodeType::DIVIDER:
-            // Warn for any divider whose diversion link points to this node
-            // (preserves the legacy scan; node_idx-ascending rows match the
-            // legacy ascending node scan order).
-            for (int r = 0; r < ctx.node_subtypes.dividers.count(); ++r) {
-                const int dn = ctx.node_subtypes.dividers.node_idx[static_cast<std::size_t>(r)];
-                if (dn == idx) continue;
-                if (ctx.node_subtypes.dividers.link[static_cast<std::size_t>(r)] == idx) {
-                    result.warnings.push_back(
-                        "Node " + ctx.node_names.name_of(dn) +
-                        ": divider_link reference cleared because source node changed type");
-                }
+    case NodeType::OUTFALL:
+        record_cleared_outfall(result.cleared_fields);
+        break;
+    case NodeType::STORAGE:
+        record_cleared_storage(result.cleared_fields);
+        break;
+    case NodeType::DIVIDER:
+        // Warn for any divider whose diversion link points to this node
+        // (preserves the legacy scan; node_idx-ascending rows match the
+        // legacy ascending node scan order).
+        for (int r = 0; r < ctx.node_subtypes.dividers.count(); ++r) {
+            const int dn = ctx.node_subtypes.dividers.node_idx[static_cast<std::size_t>(r)];
+            if (dn == idx)
+                continue;
+            if (ctx.node_subtypes.dividers.link[static_cast<std::size_t>(r)] == idx) {
+                result.warnings.push_back(
+                    "Node " + ctx.node_names.name_of(dn) +
+                    ": divider_link reference cleared because source node changed type");
             }
-            record_cleared_divider(result.cleared_fields);
-            break;
-        default: break;
+        }
+        record_cleared_divider(result.cleared_fields);
+        break;
+    default:
+        break;
     }
 
     // New-type warnings (new defaults are applied by set_node_type below).
@@ -101,9 +154,15 @@ ConversionResult convert_node(SimulationContext& ctx, int idx, NodeType new_type
 
     // Converting a virtual junction to any other type clears the virtual
     // flag (the zero-storage contract only exists for JUNCTION-typed nodes).
+    // vj_clear_virtual also promotes the rendering rim depth back to the real
+    // full depth, so the converted node keeps the surface it was drawn at.
+    // An inlet junction also loses its inlet flag and its usage row there.
     if (ui < nd.is_virtual.size() && nd.is_virtual[ui]) {
-        nd.is_virtual[ui] = 0;
+        const bool was_inlet = ui < nd.is_inlet.size() && nd.is_inlet[ui] != 0;
+        vj_clear_virtual(ctx, idx);
         result.cleared_fields.push_back("is_virtual");
+        if (was_inlet)
+            result.cleared_fields.push_back("is_inlet");
     }
 
     // Move the subtype row and set nd.type (single source of truth). Erases the
@@ -116,47 +175,76 @@ ConversionResult convert_node(SimulationContext& ctx, int idx, NodeType new_type
 // Link conversion
 // ============================================================================
 
-static void clear_conduit_fields(LinkData& ld, std::size_t ui,
-                                  std::vector<std::string>& cleared) {
+/**
+ * @brief Clear shared conduit fields and record discarded subtype metadata.
+ *
+ * Subtype side-table rows are removed separately by set_link_type(). Conduit resets section
+ * geometry to empty circular and clears flap gate.
+ *
+ * @param[in,out] ld Caller-owned aligned base link store; unused by the structure-only metadata
+ *     helper.
+ * @param[in] ui Valid base-link index; unused by the structure-only metadata helper.
+ * @param[in,out] cleared Owned cleared-field-name sink retaining prior entries.
+ */
+static void clear_conduit_fields(LinkData& ld, std::size_t ui, std::vector<std::string>& cleared) {
     // Phase 6: conduit config lives in ConduitData and is dropped when
     // set_link_type erases the old row. Only the shared base cross-section /
     // flap-gate fields are reset here.
-    ld.xsect_shape[ui]      = XsectShape::CIRCULAR;
-    ld.xsect_y_full[ui]     = 0.0;
-    ld.xsect_a_full[ui]     = 0.0;
-    ld.xsect_w_max[ui]      = 0.0;
-    ld.xsect_curve[ui]      = -1;
-    ld.xsect_r_full[ui]     = 0.0;
-    ld.xsect_s_full[ui]     = 0.0;
-    ld.xsect_s_max[ui]      = 0.0;
-    ld.xsect_y_bot[ui]      = 0.0;
-    ld.xsect_a_bot[ui]      = 0.0;
-    ld.xsect_s_bot[ui]      = 0.0;
-    ld.xsect_r_bot[ui]      = 0.0;
-    ld.xsect_yw_max[ui]     = 0.0;
-    ld.xsect_batch_shape[ui]= 0;
-    ld.has_flap_gate[ui]    = 0;
-    cleared.insert(cleared.end(), {
-        "xsect_shape", "xsect_y_full", "roughness", "length", "slope",
-        "barrels", "loss_inlet", "loss_outlet", "loss_avg", "has_flap_gate", "seep_rate"
-    });
+    ld.xsect_shape[ui] = XsectShape::CIRCULAR;
+    ld.xsect_y_full[ui] = 0.0;
+    ld.xsect_a_full[ui] = 0.0;
+    ld.xsect_w_max[ui] = 0.0;
+    ld.xsect_curve[ui] = -1;
+    ld.xsect_r_full[ui] = 0.0;
+    ld.xsect_s_full[ui] = 0.0;
+    ld.xsect_s_max[ui] = 0.0;
+    ld.xsect_y_bot[ui] = 0.0;
+    ld.xsect_a_bot[ui] = 0.0;
+    ld.xsect_s_bot[ui] = 0.0;
+    ld.xsect_r_bot[ui] = 0.0;
+    ld.xsect_yw_max[ui] = 0.0;
+    ld.xsect_batch_shape[ui] = 0;
+    ld.has_flap_gate[ui] = 0;
+    cleared.insert(cleared.end(),
+                   {"xsect_shape", "xsect_y_full", "roughness", "length", "slope", "barrels",
+                    "loss_inlet", "loss_outlet", "loss_avg", "has_flap_gate", "seep_rate"});
 }
 
-static void clear_pump_fields(LinkData& ld, std::size_t ui,
-                               std::vector<std::string>& cleared) {
+/**
+ * @brief Clear shared pump fields and record discarded subtype metadata.
+ *
+ * Subtype side-table rows are removed separately by set_link_type(). Pump clears shared curve-name
+ * token.
+ *
+ * @param[in,out] ld Caller-owned aligned base link store; unused by the structure-only metadata
+ *     helper.
+ * @param[in] ui Valid base-link index; unused by the structure-only metadata helper.
+ * @param[in,out] cleared Owned cleared-field-name sink retaining prior entries.
+ */
+static void clear_pump_fields(LinkData& ld, std::size_t ui, std::vector<std::string>& cleared) {
     // Phase 6: pump config lives in PumpData (dropped by set_link_type); only
     // the shared base pump_curve_name is reset here.
     ld.pump_curve_name[ui] = {};
-    cleared.insert(cleared.end(), {
-        "pump_curve", "pump_init_state", "pump_startup", "pump_shutoff"
-    });
+    cleared.insert(cleared.end(),
+                   {"pump_curve", "pump_init_state", "pump_startup", "pump_shutoff"});
 }
 
+/**
+ * @brief Record discarded structure metadata.
+ *
+ * Subtype side-table rows are removed separately by set_link_type(). Does not mutate ld.
+ *
+ * @param[in,out] ld Caller-owned aligned base link store; unused by the structure-only metadata
+ *     helper.
+ * @param[in] ui Valid base-link index; unused by the structure-only metadata helper.
+ * @param[in,out] cleared Owned cleared-field-name sink retaining prior entries.
+ */
 static void clear_structure_fields(LinkData& ld, std::size_t ui,
-                                    std::vector<std::string>& cleared) {
+                                   std::vector<std::string>& cleared) {
     // Phase 6: orifice/weir/outlet config lives in the side-tables (dropped by
     // set_link_type) — name-list only.
-    (void)ld; (void)ui;
+    (void)ld;
+    (void)ui;
     cleared.insert(cleared.end(), {"crest_height", "cd", "param1", "param2", "orate"});
 }
 
@@ -169,30 +257,28 @@ ConversionResult convert_link(SimulationContext& ctx, int idx, LinkType new_type
 
     // Clear old type-specific fields
     switch (old_type) {
-        case LinkType::CONDUIT: {
-            if (ld.xsect_shape[ui] == XsectShape::IRREGULAR ||
-                ld.xsect_shape[ui] == XsectShape::CUSTOM)
-                result.warnings.push_back("Transect/shape-curve reference cleared");
-            const int ccr = ctx.link_subtypes.conduit_row(idx);
-            const int cbarrels = (ccr >= 0)
-                ? ctx.link_subtypes.conduits.barrels[static_cast<std::size_t>(ccr)] : 1;
-            if (cbarrels > 1)
-                result.warnings.push_back(
-                    "Multi-barrel property (barrels=" +
-                    std::to_string(cbarrels) + ") discarded");
-            clear_conduit_fields(ld, ui, result.cleared_fields);
-            break;
-        }
-        case LinkType::PUMP:
-            result.warnings.push_back(
-                "Pump curve reference cleared; set conduit length after conversion");
-            clear_pump_fields(ld, ui, result.cleared_fields);
-            break;
-        case LinkType::ORIFICE:
-        case LinkType::WEIR:
-        case LinkType::OUTLET:
-            clear_structure_fields(ld, ui, result.cleared_fields);
-            break;
+    case LinkType::CONDUIT: {
+        if (ld.xsect_shape[ui] == XsectShape::IRREGULAR || ld.xsect_shape[ui] == XsectShape::CUSTOM)
+            result.warnings.push_back("Transect/shape-curve reference cleared");
+        const int ccr = ctx.link_subtypes.conduit_row(idx);
+        const int cbarrels =
+            (ccr >= 0) ? ctx.link_subtypes.conduits.barrels[static_cast<std::size_t>(ccr)] : 1;
+        if (cbarrels > 1)
+            result.warnings.push_back("Multi-barrel property (barrels=" + std::to_string(cbarrels) +
+                                      ") discarded");
+        clear_conduit_fields(ld, ui, result.cleared_fields);
+        break;
+    }
+    case LinkType::PUMP:
+        result.warnings.push_back(
+            "Pump curve reference cleared; set conduit length after conversion");
+        clear_pump_fields(ld, ui, result.cleared_fields);
+        break;
+    case LinkType::ORIFICE:
+    case LinkType::WEIR:
+    case LinkType::OUTLET:
+        clear_structure_fields(ld, ui, result.cleared_fields);
+        break;
     }
 
     // Move the subtype row and set ld.type[ui] (single source of truth): erases
@@ -205,34 +291,40 @@ ConversionResult convert_link(SimulationContext& ctx, int idx, LinkType new_type
     // (barrels=1, pump curve/init/startup/shutoff/type, orifice/weir type=0)
     // already match. xsect_shape / xsect_y_full stay on base LinkData.
     switch (new_type) {
-        case LinkType::CONDUIT: {
-            ld.xsect_shape[ui]  = XsectShape::CIRCULAR;
-            ld.xsect_y_full[ui] = 1.0;
-            const int cr = ctx.link_subtypes.conduit_row(idx);
-            if (cr >= 0) ctx.link_subtypes.conduits.roughness[static_cast<std::size_t>(cr)] = 0.013;  // seed 0.01
-            if (cr < 0 || ctx.link_subtypes.conduits.length[static_cast<std::size_t>(cr)] <= 0.0)
-                result.warnings.push_back("Conduit length is 0; set a valid length before initializing");
-            break;
-        }
-        case LinkType::PUMP:
-            // PumpData defaults already seeded by add_default.
-            result.warnings.push_back("Pump curve is unset (-1); assign a pump curve before initializing");
-            break;
-        case LinkType::ORIFICE: {
-            const int orr = ctx.link_subtypes.orifice_row(idx);
-            if (orr >= 0) ctx.link_subtypes.orifices.cd[static_cast<std::size_t>(orr)] = 0.65;  // seed 0.0
-            break;
-        }
-        case LinkType::WEIR: {
-            const int wr = ctx.link_subtypes.weir_row(idx);
-            if (wr >= 0) ctx.link_subtypes.weirs.cd[static_cast<std::size_t>(wr)] = 3.33;  // seed 0.0
-            break;
-        }
-        case LinkType::OUTLET: {
-            const int olr = ctx.link_subtypes.outlet_row(idx);
-            if (olr >= 0) ctx.link_subtypes.outlets.coeff[static_cast<std::size_t>(olr)] = 1.0;  // seed 0.0
-            break;
-        }
+    case LinkType::CONDUIT: {
+        ld.xsect_shape[ui] = XsectShape::CIRCULAR;
+        ld.xsect_y_full[ui] = 1.0;
+        const int cr = ctx.link_subtypes.conduit_row(idx);
+        if (cr >= 0)
+            ctx.link_subtypes.conduits.roughness[static_cast<std::size_t>(cr)] = 0.013; // seed 0.01
+        if (cr < 0 || ctx.link_subtypes.conduits.length[static_cast<std::size_t>(cr)] <= 0.0)
+            result.warnings.push_back(
+                "Conduit length is 0; set a valid length before initializing");
+        break;
+    }
+    case LinkType::PUMP:
+        // PumpData defaults already seeded by add_default.
+        result.warnings.push_back(
+            "Pump curve is unset (-1); assign a pump curve before initializing");
+        break;
+    case LinkType::ORIFICE: {
+        const int orr = ctx.link_subtypes.orifice_row(idx);
+        if (orr >= 0)
+            ctx.link_subtypes.orifices.cd[static_cast<std::size_t>(orr)] = 0.65; // seed 0.0
+        break;
+    }
+    case LinkType::WEIR: {
+        const int wr = ctx.link_subtypes.weir_row(idx);
+        if (wr >= 0)
+            ctx.link_subtypes.weirs.cd[static_cast<std::size_t>(wr)] = 3.33; // seed 0.0
+        break;
+    }
+    case LinkType::OUTLET: {
+        const int olr = ctx.link_subtypes.outlet_row(idx);
+        if (olr >= 0)
+            ctx.link_subtypes.outlets.coeff[static_cast<std::size_t>(olr)] = 1.0; // seed 0.0
+        break;
+    }
     }
 
     return result;

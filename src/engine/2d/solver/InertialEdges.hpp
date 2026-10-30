@@ -1,36 +1,52 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file InertialEdges.hpp
- * @brief Unique interior-edge structure for the local-inertial momentum DOFs.
+ * @file      InertialEdges.hpp
+ * @brief     Unique interior-edge structure for the local-inertial momentum DOFs.
  *
  * @details Phase 2 of docs/IMEX_LOCAL_INERTIAL_IMPLEMENTATION_PLAN.md. The
  *          diffusive-wave path stores edges redundantly per cell
- *          (MeshData edge arrays are flat [tri*3+edge]); the local-inertial
+ *          (MeshData edge arrays are flat [cell*kMaxCellVerts+edge]); the local-inertial
  *          scheme instead carries ONE prognostic discharge q per shared
  *          interior edge (the conservation invariant: a single antisymmetric
  *          flux per edge). This builds that canonical unique-edge enumeration
  *          plus a per-cell CSR incidence so the continuity divergence
- *          dV_i/dt = −Σ_e sign_i(e)·q_e·ξ_e is a race-free per-cell gather
+ *          dV_i/dt = −Σ_e sign_i(e)·q_e·ψ_e·ξ_e is a race-free per-cell gather
  *          (bit-identical under OpenMP, like the rest of the 2D pipeline).
  *
  *          Orientation: each interior edge is stored once with cL = min(t,nbr),
  *          cR = max(t,nbr). q_e > 0 means flow cL→cR. So q_e is OUTFLOW from cL
  *          (sign +1) and INFLOW to cR (sign −1).
  *
- *          Boundary edges (nbr < 0) carry NO q DOF here. Non-Wall boundary
- *          types are applied as explicit mass sources/sinks on the owning
- *          cell via SurfaceFluxCalculator::boundaryEdgeFlux (plan §3:
- *          prescribed boundaries stay explicit — no boundary momentum DOF).
+ *          Boundary edges (nbr < 0) carry no q DOF in this interior-edge layout.
+ *          Solvers handle them separately through prepared source/sink fluxes
+ *          or their own prognostic stage-boundary momentum state.
  *
  * @ingroup engine_2d
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_2D_INERTIAL_EDGES_HPP
 #define OPENSWMM_ENGINE_2D_INERTIAL_EDGES_HPP
 
+#include <cstdint>
 #include <vector>
 
 namespace openswmm::twoD {
@@ -38,50 +54,90 @@ namespace openswmm::twoD {
 struct MeshData;
 
 /**
- * @brief Canonical unique interior-edge layout + per-cell incidence for the
- *        local-inertial scheme.
+ * @brief Canonical unique interior-edge layout + per-cell incidence for the local-inertial
+ * scheme.
  */
 struct InertialEdges {
-    int ne = 0;                       ///< number of interior (q-carrying) edges
+    int ne = 0; ///< number of interior (q-carrying) edges
 
     // Per-edge arrays (size ne), oriented cL→cR (cL = min(t,nbr), cR = max).
-    std::vector<int>    cL, cR;       ///< incident cell indices
-    std::vector<double> xi;           ///< edge length ξ (m)
-    std::vector<double> inv_dx;       ///< 1 / centroid-to-centroid distance (1/m)
-    std::vector<double> zface;        ///< max(tri_cz[cL], tri_cz[cR]) interface bed (m) — MEAN face mode
+    std::vector<int> cL, cR;        ///< incident cell indices
+    std::vector<double> xi;         ///< geometric edge length ξ (m), unchanged by conveyance
+    std::vector<double> conveyance; ///< face transmissivity ψ in [0, 1], separate from CFL geometry
+    std::vector<double> inv_dx;     ///< 1 / centroid-to-centroid distance (1/m)
+    std::vector<double> zface; ///< max(tri_cz[cL], tri_cz[cR]) interface bed (m) — MEAN face mode
     /// Shared edge's TRUE endpoint bed elevations, sorted ze_lo ≤ ze_hi (m).
     /// Used by FACE_RECONSTRUCTION = VFR_FACE to evaluate the B&S Eq. 14
     /// wetted-edge depth so thin crests block at their real elevation instead
     /// of the centroid-diluted zface (same endpoint rule as the boundary
     /// path's edgeEndpointZ — both incident cells see the identical pair).
     std::vector<double> ze_lo, ze_hi;
-    std::vector<int>    slotL, slotR; ///< flat mesh edge slots [tri*3+e] for writeback
+    std::vector<int> slotL, slotR; ///< flat mesh edge slots [cell*kMaxCellVerts+e] for writeback
 
     // Explicit-marcher extension (ExplicitInertialSolver). Precomputed here so
     // the per-substep kernels stay pure arithmetic.
-    std::vector<double> nx, ny;       ///< unit normal, oriented cL→cR
-    std::vector<double> mx, my;       ///< edge midpoint (m)
+    std::vector<double> nx, ny; ///< unit normal, oriented cL→cR
+    std::vector<double> mx, my; ///< edge midpoint (m)
     /// 1 / face-normal projected centroid distance: |(c⃗_R−c⃗_L)·n̂|, floored at
     /// 0.3·|c⃗_R−c⃗_L| against near-degenerate pairs. The projection is the
     /// correct gradient arm under cell-size disparity; the raw centroid chord
     /// (inv_dx above) overestimates slopes on non-orthogonal triangle pairs.
     std::vector<double> inv_dx_normal;
-    std::vector<double> n2_face;      ///< (½(n_L+n_R))² Manning coefficient
-    /// Per-CELL characteristic length L_char = 2A/ξ_max (smallest altitude, m)
-    /// for the CFL step bound dt = α·L_char/√(g·h).
+    std::vector<double> n2_face; ///< (½(n_L+n_R))² Manning coefficient
+    std::vector<double> n_face;  ///< ½(n_L+n_R) — sqrt(n2_face) precomputed for the diffusive law
+    /// Per-CELL characteristic length (m) for the CFL step bound
+    /// dt = α·L_char/√(g·h): √(2A/Σξ·inv_dx_normal) from the discrete wave
+    /// operator; isolated cells fall back to 2A/ξ_max (triangle) or
+    /// 2·min centroid→edge distance (quad).
     std::vector<double> cell_lchar;
+    /// Per-CELL positivity length 2A/P (P = full perimeter, boundary edges
+    /// included; Δx/2 for a square). The FULL_SWE Godunov update uses
+    /// dt = α·(2A/P)/(√(gh)+|u|): α = 1 is the linear stability limit and
+    /// α = ½ the Audusse–Bristeau positivity bound (Σ_faces outflow ≤ ½·V).
+    std::vector<double> cell_lpos;
 
     // Per-cell CSR incidence for the conservative continuity gather. For cell i,
     // the incident edges are cell_edge[cell_ptr[i] .. cell_ptr[i+1]) with sign
     // cell_sign (+1 if i==cL, −1 if i==cR). Then
-    //   dV_i/dt (flux part) = − Σ cell_sign · q[edge] · ξ[edge].
-    std::vector<int>    cell_ptr;     ///< [n_triangles + 1] CSR row pointers
-    std::vector<int>    cell_edge;    ///< incident edge id
-    std::vector<double> cell_sign;    ///< +1 (i==cL) / −1 (i==cR)
+    //   dV_i/dt (flux part) = − Σ cell_sign · q[edge] · ψ[edge] · ξ[edge].
+    std::vector<int> cell_ptr;  ///< [n_triangles + 1] CSR row pointers
+    std::vector<int> cell_edge; ///< incident edge id
+    /// +1 (i==cL) / −1 (i==cR). int8: the value is only ever branched on and
+    /// multiplied by exactly ±1, and as a double it cost 8 bytes of gather
+    /// traffic per CSR entry in the two hottest cell loops.
+    std::vector<int8_t> cell_sign;
+    /// Perot arm (m⃗_e − c⃗_i) per CSR entry — the vector fireCells multiplies
+    /// the signed face discharge by. Precomputed because the cell loop had to
+    /// gather mx[e]/my[e] (scattered by face id) and subtract the centroid on
+    /// every firing of every cell.
+    std::vector<double> cell_arm_x, cell_arm_y;
 
-    /// Build the structure from mesh topology. O(n_triangles).
+    /**
+     * @brief Build the structure from mesh topology. O(n_triangles).
+     *
+     * @param[in] mesh Stable built SI mixed-cell mesh with valid finite positive geometry,
+     * nonnegative Manning roughness and reciprocal interior neighbors. Per-cell and padded
+     * edge/vertex arrays must span n_triangles()/n_edge_slots(); self-neighbors and missing
+     * mirror edges are unsupported.
+     * @note Clears/rebuilds owned edge arrays, CSR incidences and characteristic/positivity
+     * lengths. Canonical q orientation is lower cell index to higher; all exposed vector
+     * references are invalidated. No topology/finite validation is performed. Allocation failure
+     * can leave a partially rebuilt structure and stale ne/CSR metadata; use exclusive access
+     * and do not consume after failure. The mesh is borrowed only during building; no mesh
+     * pointers or references are retained.
+     */
     void build(const MeshData& mesh);
 
+    /// Refresh canonical face factors from the symmetric mesh slots, including runtime API edits.
+    /// Requires the topology used by build(); returns whether any factor changed. Geometry and
+    /// characteristic lengths stay untouched. Missing factors default to unrestricted flow.
+    bool refreshConveyance(const MeshData& mesh);
+
+    /**
+     * @brief Test whether the built layout has any interior discharge edges.
+     * @return ne == 0; isolated mesh cells may still exist with valid boundary/CFL geometry.
+     * This does not validate arrays or prove a previous build completed successfully.
+     */
     bool empty() const noexcept { return ne == 0; }
 };
 

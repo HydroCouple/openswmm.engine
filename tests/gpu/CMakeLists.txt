@@ -1,41 +1,47 @@
-# ============================================================================
-# Phase 1 Kokkos RHS parity test — standalone (Kokkos only, no SUNDIALS)
-# ============================================================================
-#
-# Deliberately self-contained so it can be configured/built on its own against
-# just a Kokkos install, independent of the main engine build and of the
-# (harder) SUNDIALS-with-Kokkos dependency:
-#
-#   cmake -S tests/gpu -B build/gpu-parity -DKokkos_ROOT=<kokkos-prefix>
-#   cmake --build build/gpu-parity
-#   ./build/gpu-parity/test_kokkos_rhs_parity     # exit 0 = parity pass
-#
-# NOTE: a Release build is required. A vcpkg Debug Kokkos can fail to resolve
-# the imported library location (and the debug lib is missing a
-# SharedAllocationRecord symbol the release headers reference), so this file
-# defaults CMAKE_BUILD_TYPE to Release when the caller leaves it unset.
-#
-# It compiles the serial reference (SurfaceFluxCalculator.cpp — header-only
-# deps, no SUNDIALS) and the Kokkos kernels into one executable and compares
-# ydot AND the diagnostic fields (vert_head, gradients) element-wise.
-
-cmake_minimum_required(VERSION 3.20)
-project(openswmm_gpu_parity CXX)
-
-if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
-    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+# Build against the current production CPU reference, including its thermal,
+# source and checkpoint dependencies. Configure from the repository root with
+# -DOPENSWMM_BUILD_GPU_TESTS=ON -DOPENSWMM_BUILD_UNIT_TESTS=ON.
+cmake_minimum_required(VERSION 3.21)
+if(NOT TARGET openswmm_engine)
+    message(FATAL_ERROR "Configure the engine root with OPENSWMM_BUILD_GPU_TESTS=ON and OPENSWMM_BUILD_UNIT_TESTS=ON; the parity tests require the current production CPU reference.")
 endif()
-
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
+if(NOT OPENSWMM_BUILD_2D OR NOT OPENSWMM_BUILD_GPU_PLUGIN OR OPENSWMM_GPU_BACKEND STREQUAL "stub")
+    message(FATAL_ERROR "GPU tests require 2D and a non-stub Kokkos plugin")
+endif()
 find_package(Kokkos REQUIRED)
+set(_engine "${PROJECT_SOURCE_DIR}/src/engine")
+set(_solver "${_engine}/2d/gpu/ExplicitKokkosSurfaceSolver.cpp")
+add_executable(test_kokkos_explicit_alignment test_kokkos_explicit_alignment.cpp "${_solver}")
+target_include_directories(test_kokkos_explicit_alignment PRIVATE
+    "${_engine}" "${PROJECT_SOURCE_DIR}/include" "${PROJECT_SOURCE_DIR}/include/openswmm/engine")
+target_link_libraries(test_kokkos_explicit_alignment PRIVATE Kokkos::kokkos
+    $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>)
+if(OPENSWMM_GPU_BACKEND STREQUAL "omp")
+    target_compile_definitions(test_kokkos_explicit_alignment PRIVATE OPENSWMM_GPU_EXECSPACE_OPENMP)
+else()
+    string(TOUPPER "${OPENSWMM_GPU_BACKEND}" _backend)
+    target_compile_definitions(test_kokkos_explicit_alignment PRIVATE "OPENSWMM_GPU_EXECSPACE_${_backend}")
+endif()
+if(WIN32 AND OPENSWMM_GPU_BACKEND STREQUAL "cuda")
+    enable_language(CUDA)
+    set_source_files_properties(test_kokkos_explicit_alignment.cpp "${_solver}" PROPERTIES LANGUAGE CUDA)
+    set_target_properties(test_kokkos_explicit_alignment PROPERTIES CUDA_STANDARD 20 CUDA_STANDARD_REQUIRED ON CUDA_SEPARABLE_COMPILATION ON)
+    target_compile_options(test_kokkos_explicit_alignment PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/Zc:preprocessor>)
+endif()
+if(MSVC)
+    target_compile_options(test_kokkos_explicit_alignment PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/fp:strict>)
+    if(OPENSWMM_GPU_BACKEND STREQUAL "omp")
+        target_compile_options(test_kokkos_explicit_alignment PRIVATE /openmp:llvm)
+    endif()
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(test_kokkos_explicit_alignment PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-fast-math;-ffp-contract=off>)
+endif()
+openswmm_stage_test_runtime_deps(test_kokkos_explicit_alignment)
+add_test(NAME kokkos_explicit_alignment COMMAND test_kokkos_explicit_alignment)
+set_tests_properties(kokkos_explicit_alignment PROPERTIES ENVIRONMENT "OMP_NUM_THREADS=4;OMP_PROC_BIND=false" LABELS "gpu;parity")
+add_test(NAME kokkos_explicit_alignment_one_thread COMMAND test_kokkos_explicit_alignment)
+set_tests_properties(kokkos_explicit_alignment_one_thread PROPERTIES ENVIRONMENT "OMP_NUM_THREADS=1;OMP_PROC_BIND=false" LABELS "gpu;parity")
 
-add_executable(test_kokkos_rhs_parity
-    test_kokkos_rhs_parity.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/engine/2d/solver/SurfaceFluxCalculator.cpp)
-
-target_link_libraries(test_kokkos_rhs_parity PRIVATE Kokkos::kokkos)
-
-enable_testing()
-add_test(NAME kokkos_rhs_parity COMMAND test_kokkos_rhs_parity)
+add_test(NAME kokkos_explicit_alignment_profiling COMMAND test_kokkos_explicit_alignment)
+set_tests_properties(kokkos_explicit_alignment_profiling PROPERTIES
+    ENVIRONMENT "OMP_NUM_THREADS=2;OMP_PROC_BIND=false;OPENSWMM_PERF=1" LABELS "gpu;parity")

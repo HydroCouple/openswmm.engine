@@ -1,0 +1,52 @@
+[TITLE]
+Time-only rain gage series alignment probe (START_TIME 06:00)
+
+[OPTIONS]
+FLOW_UNITS           CFS
+INFILTRATION         HORTON
+FLOW_ROUTING         KINWAVE
+START_DATE           01/01/2007
+START_TIME           06:00:00
+REPORT_START_DATE    01/01/2007
+REPORT_START_TIME    06:00:00
+END_DATE             01/01/2007
+END_TIME             18:00:00
+REPORT_STEP          00:05:00
+WET_STEP             00:05:00
+DRY_STEP             00:05:00
+ROUTING_STEP         0:00:30
+
+[RAINGAGES]
+;;Name           Format    Interval SCF      Source
+RG1              INTENSITY 1:00     1.0      TIMESERIES TSRAIN
+
+[SUBCATCHMENTS]
+;;Name           Rain Gage        Outlet           Area     %Imperv  Width    %Slope   CurbLen
+S1               RG1              O1               10       100      500      0.5      0
+
+[SUBAREAS]
+;;Subcatchment   N-Imperv   N-Perv     S-Imperv   S-Perv     PctZero    RouteTo
+S1               0.01       0.1        0.05       0.05       100        OUTLET
+
+[INFILTRATION]
+;;Subcatchment   MaxRate    MinRate    Decay      DryTime    MaxInfil
+S1               3.0        0.5        4          7          0
+
+[OUTFALLS]
+;;Name           Elevation  Type       Stage Data       Gated
+O1               0.0        FREE                        NO
+
+[TIMESERIES]
+;;Name           Date       Time       Value
+TSRAIN                      0:00       0.0
+TSRAIN                      1:00       1.0
+TSRAIN                      2:00       2.0
+TSRAIN                      3:00       0.5
+TSRAIN                      4:00       0.0
+
+[REPORT]
+INPUT      NO
+CONTROLS   NO
+SUBCATCHMENTS ALL
+NODES ALL
+LINKS ALL

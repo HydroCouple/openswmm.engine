@@ -1,0 +1,26 @@
+agree_pass True
+agree_vj True
+steep_pass True
+slot_capped True
+slot_uncapped True
+vj_fv_invert_collision True
+vj_fv_steep_datum True
+sdm_fv_o1 True
+sdm_fv_o2 True
+sdm_fv_o2_superbee True
+storage_bucket_fv True
+force_legacy True
+force_ard True
+orif_legacy True
+sdm_struct_dw_ard True
+snow_parity True
+age_legacy True
+age_ard True
+age_lard True
+heat_parity True
+heat_lard True
+si_dw_quality True
+steady_quality True
+twod_coupled_quality True
+twod_mixed_quality True
+25/25 outputs byte-identical

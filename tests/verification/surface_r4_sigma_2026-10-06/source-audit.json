@@ -1,0 +1,31 @@
+{
+  "head": "c5414e382fec4653648110186c0ba99d63005294",
+  "task_source_tree": "699dda3b2c84fb98589c2dd5396165d760c2ca3e",
+  "build_source_path": "/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.gui/tests/verification/surface_r4_2026-10-05/isolated/openswmm.engine",
+  "files": {
+    "src/engine/2d/subsurface/SubsurfaceSolver.cpp": "50da7ce5d47954975c23d7dbb367885c9638f7b2599e8d9f1ca36b31f656ef1c",
+    "src/engine/2d/subsurface/CommonSourceStage.cpp": "71c21358750fca799e7e2a1d0feefb7931f590749294a248c11a29a7d9471da6",
+    "src/engine/2d/subsurface/SigmaColumn.hpp": "d0eb8e6530b782703aca33d6f77adfdc2298e0ff35915e453ddaf2130fba9cfa",
+    "tests/unit/engine/test_common_source_stage.cpp": "9cc31b9bcb5c7c09cd0f4cf4ef00b02a340b9e087448a6dba0223fc0ee506af4",
+    "tests/unit/engine/CMakeLists.txt": "9b5e5eae7e682f52ea2f9305d9972b8d9e0f1ea707acc0957744b2923f6b42ae",
+    "src/engine/2d/subsurface/SubsurfaceSolver.hpp": "4857782dd0f848f42c6a52df9f67625e61d681e945ec172173d2584f1909399b",
+    "tests/unit/engine/test_sigma_conservation.cpp": "38d68fe3494ffdfecc06cd4d192721f3a3c42b0d5f95d0bcb78007c7d8c8188e",
+    "plans/SURFACE_PROCESS_R4_SIGMA_CONSERVATION_2026-10-06.md": "1927a336612b539174c6991dbe37f8cec90c557316054621d61183331c8cabb5"
+  },
+  "unchanged_controls": {
+    "src/engine/hydrology/LidNode.cpp": "be39f712e3c9cac90757725b7ee5a9693d9db9ba47ed5b186404cfccef6a7b25",
+    "src/engine/hydrology/RichardsColumn.cpp": "b2c40217f37d455704f6586831dfc1beac46dfce5942fe383d2650cf95a8bcdc",
+    "src/engine/2d/subsurface/SigmaColumn.cpp": "9fb1e5373cef6bc853ebaa00a3cb4b0d1eb48c7e7ba1f8b967e94a910b8cb6d1",
+    "src/engine/hydraulics/Node.cpp": "2c335ff503d842ffb83ac28890a1c7f0981363f5a823a7d87f5654146b0149a2"
+  },
+  "final_documentation_sha256": {
+    "plans/SURFACE_PROCESS_R4_SIGMA_CONSERVATION_2026-10-06.md": "f38102d606300b0e1a1011dc882170e322b1ae8b30f756e133c640280fa3ee8c",
+    "tests/verification/surface_r4_sigma_2026-10-06/README.md": "da44be0011df06b9f3261f4e8e9012d9c62a978ed3cceb32407ca83ced46f92a"
+  },
+  "qualification_runner_sha256": {
+    "tests/verification/surface_r4_sigma_2026-10-06/prepare_source.py": "4dd77cec68bfd1eea1ed88cd6a9e3712f901d9d61789993409fa8fa95c76d1f9",
+    "tests/verification/surface_r4_sigma_2026-10-06/run_tests.py": "0c24e2fb1a57dc52ec0d13ddf29334596466db738bd91d53f70a5b0c5528ce62",
+    "tests/verification/surface_r4_sigma_2026-10-06/sigma_probe.cpp": "418cdda75fefabeda6ba8040060ffa2463ec081f3a5d04b5df328354125f5db0",
+    "tests/verification/surface_r4_sigma_2026-10-06/qualification_probe.cpp": "da19b7b6eccd7be23f5bcedc1684c320d5ab3fba406c7e0ff018c02fcdd03c4d"
+  }
+}

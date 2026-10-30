@@ -1,10 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright 2026 Caleb Buahin
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Enumerations
 ============
 
 :author: Caleb Buahin
 :copyright: Copyright (c) 2026 Caleb Buahin
-:license: MIT
+:license: Apache-2.0
 
 Integer-backed enums mirroring the C API enum definitions in
 ``openswmm_engine.h``. These are pure Python (no Cython required)
@@ -18,7 +34,7 @@ and can be used for type-safe comparisons:
         ...
 """
 
-from enum import IntEnum
+from enum import IntEnum, IntFlag
 
 
 # =============================================================================
@@ -48,6 +64,8 @@ class ErrorCode(IntEnum):
     @cvar CRS: Coordinate reference system error.
     @cvar NUMERICAL: Numerical error (e.g., divergence).
     @cvar DEPENDENCY: Object has dependents that block the requested operation.
+    @cvar CANCELLED: A caller cancelled a cancellable read-only operation.
+    @cvar BUFSIZE: An output buffer is too small for the value; nothing was written.
     @cvar INTERNAL: Internal/unspecified error.
     """
 
@@ -67,6 +85,8 @@ class ErrorCode(IntEnum):
     CRS = 13
     NUMERICAL = 14
     DEPENDENCY = 15
+    CANCELLED = 16
+    BUFSIZE = 17
     INTERNAL = 99
 
 
@@ -510,6 +530,7 @@ class LidType(IntEnum):
     RAIN_BARREL = 5
     ROOFTOP_DISCONN = 6
     VEGETATIVE_SWALE = 7
+    NODE = 8
 
 
 class AquiferParam(IntEnum):
@@ -552,6 +573,18 @@ class AquiferParam(IntEnum):
     UPPER_MOISTURE = 11
 
 
+class GwfType(IntEnum):
+    """Which of a subcatchment's two C{[GWF]} custom groundwater flow
+    expressions (C{Subcatchments.get_gwf_expression} / C{set_gwf_expression}).
+
+    @cvar LATERAL: Added to the standard A1/A2/A3 lateral groundwater flow.
+    @cvar DEEP: Replaces the standard deep-percolation term.
+    """
+
+    LATERAL = 0
+    DEEP = 1
+
+
 # =============================================================================
 # Output variables
 # =============================================================================
@@ -579,6 +612,16 @@ class OutSubcatchVar(IntEnum):
     GW_ELEV = 6
     SOIL_MOIST = 7
     POLLUT_BASE = 8
+    SNOW_SWE = 65536
+    SNOW_ENERGY = 65537
+    SNOW_SURFACE_TEMP = 65538
+    SNOW_BULK_TEMP = 65539
+    SNOW_ALBEDO = 65540
+    SNOW_COVER = 65541
+    SNOW_MELT = 65542
+    SNOW_INPUT = 65543
+    SNOW_SUBLIMATION = 65544
+    SNOW_TIME = 65545
 
 
 class OutNodeVar(IntEnum):
@@ -622,38 +665,42 @@ class OutLinkVar(IntEnum):
 
 
 class OutSystemVar(IntEnum):
-    """System-wide output result variable indices.
+    """System-wide output result variable indices (the .out writer's slot order).
 
     @cvar TEMPERATURE: Air temperature.
     @cvar RAINFALL: System-wide rainfall rate.
     @cvar SNOW_DEPTH: Average snow depth.
-    @cvar EVAP: System-wide evaporation rate.
     @cvar INFIL: System-wide infiltration rate.
     @cvar RUNOFF: System-wide runoff rate.
     @cvar DW_INFLOW: Dry-weather inflow rate.
     @cvar GW_INFLOW: Groundwater inflow rate.
-    @cvar LAT_INFLOW: Total lateral inflow rate.
+    @cvar RDII_INFLOW: RDII inflow rate.
+    @cvar EXT_INFLOW: External (direct) inflow rate.
+    @cvar TOTAL_INFLOW: Total lateral inflow rate.
     @cvar FLOODING: Total flooding rate.
     @cvar OUTFLOW: Total outfall outflow rate.
     @cvar STORAGE: Total network storage volume.
-    @cvar EVAP_TOTAL: Actual evaporation rate.
+    @cvar EVAP: Evaporation rate.
     @cvar PET: Potential evapotranspiration rate.
+    @cvar LAT_INFLOW: Deprecated alias of TOTAL_INFLOW.
     """
 
     TEMPERATURE = 0
     RAINFALL = 1
     SNOW_DEPTH = 2
-    EVAP = 3
-    INFIL = 4
-    RUNOFF = 5
-    DW_INFLOW = 6
-    GW_INFLOW = 7
-    LAT_INFLOW = 8
-    FLOODING = 9
-    OUTFLOW = 10
-    STORAGE = 11
-    EVAP_TOTAL = 12
-    PET = 13
+    INFIL = 3
+    RUNOFF = 4
+    DW_INFLOW = 5
+    GW_INFLOW = 6
+    RDII_INFLOW = 7
+    EXT_INFLOW = 8
+    TOTAL_INFLOW = 9
+    FLOODING = 10
+    OUTFLOW = 11
+    STORAGE = 12
+    EVAP = 13
+    PET = 14
+    LAT_INFLOW = 9
 
 
 # =============================================================================
@@ -734,6 +781,8 @@ class RunoffTotal(IntEnum):
     SNOWREMOV = 4
     INITSTORE = 5
     FINALSTORE = 6
+    INITSNOW = 7
+    FINALSNOW = 8
 
 
 class RoutingTotal(IntEnum):
@@ -752,8 +801,8 @@ class RoutingTotal(IntEnum):
     @cvar FINAL_STORAGE: Final network storage.
     @cvar FORCING_INFLOW: Runtime-API forced lateral inflow (e.g.
         flow injected via Nodes.set_lateral_inflow / transient
-        ForcingData). Distinct from EXTERNAL which only counts INP
-        [INFLOWS]-derived inflow.
+        ForcingData). A subset of EXTERNAL, which also includes authored
+        inflows, interface-file inflow, and 2D coupling inflow.
     """
 
     DRY_WEATHER = 0
@@ -768,6 +817,8 @@ class RoutingTotal(IntEnum):
     INIT_STORAGE = 9
     FINAL_STORAGE = 10
     FORCING_INFLOW = 11
+    LINK_GW_INFLOW = 13
+    COUPLING_OUT = 12
 
 
 # =============================================================================
@@ -833,6 +884,11 @@ class ForcingType(IntEnum):
     SUBCATCH_SNOWFALL = 10
     CLIMATE_EVAP = 11
     LINK_QUALITY = 12
+    ELEM_AIR_TEMPERATURE = 13
+    ELEM_HUMIDITY = 14
+    ELEM_WIND_SPEED = 15
+    ELEM_SHORTWAVE = 16
+    LINK_SEEPAGE = 17
 
 
 class ForcingPersist(IntEnum):
@@ -890,6 +946,68 @@ class SurfaceBoundaryType(IntEnum):
     RATING_CURVE = 4
 
 
+class NodeCoupling2DType(IntEnum):
+    """Per-node 1D-2D coupling structure type (C{[2D_NODE_COUPLING]}).
+
+    Mirrors C{SWMM_NodeCoupling2DType} in C{openswmm_2d.h}.
+
+    @cvar NONE: Not coupleable; map rows naming the node are ignored.
+    @cvar MANHOLE: Manhole (default for junctions and dividers).
+    @cvar GRATE: Grate inlet.
+    @cvar CURB: Curb opening.
+    @cvar OPEN: Open-top storage under the mesh (storage default).
+    @cvar OUTFALL: Tailwater and discharge delivery (outfall default).
+    """
+
+    NONE = 0
+    MANHOLE = 1
+    GRATE = 2
+    CURB = 3
+    OPEN = 4
+    OUTFALL = 5
+
+
+class SurfaceInfilMethod(IntEnum):
+    """Per-cell 2D infiltration method (C{[2D_INFILTRATION*]}).
+
+    Mirrors the C{SWMM_INFIL2D_*} codes in C{openswmm_infil2d.h} and
+    C{openswmm::InfilModel}. Distinct from the 1D L{InfilModel} only in that
+    it also carries C{CONSTANT}, which has no legacy C{[INFILTRATION]} token.
+
+    @cvar HORTON: Original Horton model.
+    @cvar MOD_HORTON: Modified Horton model (linear decay).
+    @cvar GREEN_AMPT: Green-Ampt model.
+    @cvar MOD_GREEN_AMPT: Modified Green-Ampt model (M{F} not reset).
+    @cvar CURVE_NUMBER: SCS Curve Number model.
+    @cvar CONSTANT: Constant rate, capacity-bounded. 2D only.
+    """
+
+    HORTON = 0
+    MOD_HORTON = 1
+    GREEN_AMPT = 2
+    MOD_GREEN_AMPT = 3
+    CURVE_NUMBER = 4
+    CONSTANT = 5
+
+
+class SurfaceInfilDest(IntEnum):
+    """Destination of water infiltrated out of a 2D mesh cell.
+
+    Mirrors the C{SWMM_INFIL2D_DEST_*} codes in C{openswmm_infil2d.h} and
+    C{openswmm::twoD::Infil2DDest}. Only L{LOST} is routed in this release
+    (plan decision D-I4); the other two parse so the grammar is stable and
+    are rejected at validation.
+
+    @cvar LOST: Leaves the domain; booked to the C{infil_out} ledger row.
+    @cvar SUBCATCH_AQUIFER: Reserved — legacy subcatchment aquifer.
+    @cvar AQUIFER_2D: Reserved — the two-zone 2D groundwater kernel.
+    """
+
+    LOST = 0
+    SUBCATCH_AQUIFER = 1
+    AQUIFER_2D = 2
+
+
 # =============================================================================
 # Object references (model editing)
 # =============================================================================
@@ -916,6 +1034,21 @@ class RefType(IntEnum):
     TABLE = 4
     TRANSECT = 5
     INLET_USAGE = 6
+    EXT_INFLOW = 7
+    DWF_INFLOW = 8
+    RDII_ASSIGN = 9
+    TREATMENT = 10
+    LID_USAGE = 11
+    SNOWPACK = 12
+    HYDROGRAPH = 13
+    POLLUTANT = 14
+    PATTERN = 15
+    AQUIFER = 16
+    LID_CONTROL = 17
+    STREET = 18
+    INLET_DESIGN = 19
+    LANDUSE = 20
+    CONTROL_RULE = 21
 
 
 class TableType(IntEnum):
@@ -982,6 +1115,9 @@ class FilePathRole(IntEnum):
     HOTSTART_SAVE = 8
     RAINGAGE_DATA = 9
     TIMESERIES_DATA = 10
+    MESH_2D = 11
+    OUTPUT_2D = 12
+    LID_REPORT = 13
 
 
 class UserFlagType(IntEnum):
@@ -999,3 +1135,696 @@ class UserFlagType(IntEnum):
     INTEGER = 1
     REAL = 2
     STRING = 3
+
+
+# =============================================================================
+# Transport processes — heat, water age, reactions
+# =============================================================================
+
+class HeatFluxModule(IntEnum):
+    """Independently toggleable heat-flux modules (C{[HEAT_FLUXES]}).
+
+    Mirrors C{SWMM_HeatFluxModule} in C{openswmm_heat.h}.
+
+    @cvar SURFACE_EXCHANGE: Latent + sensible surface exchange.
+    @cvar RADIATIVE_EXCHANGE: Shortwave + longwave radiation.
+    @cvar LAYER_CONDUCTION: LID vertical conduction.
+    @cvar SEDIMENT_EXCHANGE: Channel sediment and hyporheic exchange.
+    """
+
+    SURFACE_EXCHANGE = 0
+    RADIATIVE_EXCHANGE = 1
+    LAYER_CONDUCTION = 2
+    SEDIMENT_EXCHANGE = 3
+
+
+class HeatShortwaveMode(IntEnum):
+    """Where incoming shortwave radiation comes from.
+
+    Mirrors C{SWMM_HeatShortwaveMode}. The three are mutually exclusive in
+    effect — exactly one is read — but switching modes does B{not} erase the
+    other modes' stored settings.
+
+    @cvar CONSTANT: Fixed W/m2, from C{HeatRadiativeParam.SHORTWAVE}.
+    @cvar TIMESERIES: A measured record bound by name.
+    @cvar COMPUTED: Solar position + Bird clear-sky model. Requires both
+        latitude and longitude to have been set explicitly.
+    """
+
+    CONSTANT = 0
+    TIMESERIES = 1
+    COMPUTED = 2
+
+
+class HeatRadiativeParam(IntEnum):
+    """C{[RADIATIVE_FLUXES]} scalar parameters.
+
+    Mirrors C{SWMM_HeatRadiativeParam}.
+
+    @cvar SHORTWAVE: Incoming shortwave, W/m2. Writable only in
+        C{HeatShortwaveMode.CONSTANT}.
+    @cvar ALBEDO: Water reflectance Rs, [0, 1].
+    @cvar SHADE_FACTOR: Shading fraction fs, [0, 1].
+    @cvar SKY_VIEW: Sky-view fraction fsky, [0, 1].
+    @cvar EMISS_WATER: Water emissivity, [0, 1].
+    @cvar EMISS_LANDCOVER: Land-cover emissivity, [0, 1].
+    @cvar ATM_EMISS_COEFF: Brunt atmospheric-emissivity coefficient, [0, 1].
+    @cvar LW_REFLECTION: Longwave reflection RL, [0, 1].
+    @cvar LANDCOVER_TEMPERATURE: Celsius; NaN restores air-temperature inheritance.
+    """
+
+    SHORTWAVE = 0
+    ALBEDO = 1
+    SHADE_FACTOR = 2
+    SKY_VIEW = 3
+    EMISS_WATER = 4
+    EMISS_LANDCOVER = 5
+    ATM_EMISS_COEFF = 6
+    LW_REFLECTION = 7
+    LANDCOVER_TEMPERATURE = 8
+
+
+class HeatSolarParam(IntEnum):
+    """C{[SOLAR_RADIATION]} parameters, consulted under
+    C{HeatShortwaveMode.COMPUTED} only.
+
+    Mirrors C{SWMM_HeatSolarParam}.
+
+    @cvar LATITUDE: Degrees, +N, [-90, 90].
+    @cvar LONGITUDE: Degrees, +E, [-180, 180].
+    @cvar TIMEZONE: Hours from UTC, +E.
+    @cvar ELEVATION: Metres, [-500, 9000]; below sea level is legal.
+    @cvar TURBIDITY_380: Bird aerosol optical depth at 380 nm.
+    @cvar TURBIDITY_500: Bird aerosol optical depth at 500 nm.
+    @cvar PRECIP_WATER: Precipitable water, cm.
+    @cvar OZONE: Ozone column, cm.
+    @cvar GROUND_ALBEDO: B{Land} albedo [0, 1] — not the water's
+        C{HeatRadiativeParam.ALBEDO}.
+    """
+
+    LATITUDE = 0
+    LONGITUDE = 1
+    TIMEZONE = 2
+    ELEVATION = 3
+    TURBIDITY_380 = 4
+    TURBIDITY_500 = 5
+    PRECIP_WATER = 6
+    OZONE = 7
+    GROUND_ALBEDO = 8
+
+
+class HeatCloudParam(IntEnum):
+    """C{[CLOUD_COVER]} parameters.
+
+    Mirrors C{SWMM_HeatCloudParam}.
+
+    @cvar FRACTION: Cloud fraction C, [0, 1] — a fraction, not a percent.
+    @cvar SW_ATTEN_K: Kasten-Czeplak shortwave attenuation k.
+    @cvar SW_ATTEN_N: Kasten-Czeplak shortwave attenuation n.
+    @cvar LW_CLOUD_K: Bolz longwave cloud coefficient k_lw.
+    """
+
+    FRACTION = 0
+    SW_ATTEN_K = 1
+    SW_ATTEN_N = 2
+    LW_CLOUD_K = 3
+
+
+class HeatSedimentParam(IntEnum):
+    """C{[SEDIMENT_EXCHANGE]} GLOBAL parameters (bed zone beneath conduits).
+
+    Mirrors C{SWMM_HeatSedimentParam}.
+
+    @cvar THERMAL_DIFFUSIVITY: Bed thermal diffusivity, m2/s, > 0.
+    @cvar SOLUTE_DIFFUSIVITY: Bed solute diffusivity, m2/s, >= 0.
+    @cvar BED_THICKNESS: Bed layer thickness, m, > 0.
+    @cvar GROUND_DEPTH: Depth to the deep-ground boundary, m, > 0.
+    @cvar GROUND_TEMPERATURE: Deep-ground temperature, degC (constant spelling).
+    @cvar HYPORHEIC_VELOCITY: Exchange velocity, m/s, >= 0.
+    @cvar DENSITY: Bed bulk density, kg/m3, > 0.
+    @cvar SPECIFIC_HEAT: Bed specific heat, J/kg/K, > 0.
+    @cvar INITIAL_TEMPERATURE: Initial bed temperature, degC.
+    @cvar GROUND_SOURCE: Dimensionless selector: 0 prescribed, 1 finite mesh contacts.
+    """
+
+    THERMAL_DIFFUSIVITY = 0
+    SOLUTE_DIFFUSIVITY = 1
+    BED_THICKNESS = 2
+    GROUND_DEPTH = 3
+    GROUND_TEMPERATURE = 4
+    HYPORHEIC_VELOCITY = 5
+    DENSITY = 6
+    SPECIFIC_HEAT = 7
+    INITIAL_TEMPERATURE = 8
+    MESH_POROSITY = 9
+    GROUND_SOURCE = 10
+
+
+class HeatAttr(IntEnum):
+    """Heat attributes that take per-element overrides.
+
+    Mirrors C{SWMM_HeatAttr}: the C{[RADIATIVE_FLUXES]} attributes, then the
+    C{[SEDIMENT_EXCHANGE]} ones (LINK or TAG scope only).
+    """
+
+    ALBEDO = 0
+    SHADE_FACTOR = 1
+    SKY_VIEW = 2
+    EMISS_WATER = 3
+    EMISS_LANDCOVER = 4
+    LANDCOVER_TEMPERATURE = 5
+    THERMAL_DIFFUSIVITY = 6
+    SOLUTE_DIFFUSIVITY = 7
+    BED_THICKNESS = 8
+    GROUND_DEPTH = 9
+    GROUND_TEMPERATURE = 10
+    HYPORHEIC_VELOCITY = 11
+    SEDIMENT_DENSITY = 12
+    SEDIMENT_SPECIFIC_HEAT = 13
+    MESH_POROSITY = 14
+    GROUND_SOURCE = 15
+
+
+class HeatOverrideScope(IntEnum):
+    """Scope of a per-element heat override row. Mirrors C{SWMM_HeatOverrideScope}."""
+
+    TAG = 1
+    NODE = 2
+    LINK = 3
+    CELL2D = 6
+    MESH_TAG = 7
+
+
+class GroundHeatValue(IntEnum):
+    """Canonical soil heat fields returned by :meth:`Heat.ground_values`."""
+
+    ENERGY = 0
+    CAPACITY = 1
+    TEMPERATURE = 2
+    INITIAL_ENERGY = 3
+    ADVECTIVE_ENERGY = 4
+    SOURCE_ENERGY = 5
+    SURFACE_ENERGY = 6
+    DEEP_ENERGY = 7
+    LATENT_ENERGY = 8
+    LATERAL_ENERGY = 9
+    WATER_CONTACT_ENERGY = 10
+    RESIDUAL = 11
+    NORMALIZED_RESIDUAL = 12
+    PENDING_LATERAL = 13
+    CHANNEL_CONTACT = 14
+    LID_CONTACT = 15
+
+
+class GroundHeatLayerValue(IntEnum):
+    """Fixed-depth soil layer fields returned by :meth:`Heat.ground_layers`."""
+
+    TOP = 0
+    BOTTOM = 1
+    TEMPERATURE = 2
+    ENERGY = 3
+    CAPACITY = 4
+    MOISTURE = 5
+    CONDUCTIVITY = 6
+    SATURATED_WATER = 7
+
+
+class ChannelGroundValue(IntEnum):
+    """Mapped channel/soil result fields returned by :class:`Heat`."""
+
+    BED_TEMPERATURE = 0
+    ATMOSPHERIC_ENERGY = 1
+    TO_SOIL_ENERGY = 2
+    WATER_INCREMENT = 3
+    INTERVAL_COUNT = 4
+
+
+class HeatSourceKind(IntEnum):
+    """C{[HEAT_SOURCES]} water sources.
+
+    Mirrors C{SWMM_HeatSourceKind} (and C{openswmm::HeatSource}). Only
+    C{DWF} and C{EXTERNAL_INFLOW} accept node-scope overrides — the H1 scope
+    rule, refused rather than silently deferred.
+
+    @cvar RAINFALL: Washoff runoff.
+    @cvar DWF: Dry-weather flow.
+    @cvar GW: Groundwater.
+    @cvar RDII: Rainfall-derived infiltration and inflow.
+    @cvar EXTERNAL_INFLOW: C{[INFLOWS]}.
+    @cvar IFACE: Interface file.
+    @cvar INITIAL_STATE: Water present at t = 0.
+    """
+
+    RAINFALL = 0
+    DWF = 1
+    GW = 2
+    RDII = 3
+    EXTERNAL_INFLOW = 4
+    IFACE = 5
+    INITIAL_STATE = 6
+
+
+class WaterAgeSource(IntEnum):
+    """C{[WATER_AGE_SOURCES]} pathways.
+
+    Mirrors C{SWMM_WaterAgeSource}. The C enum's trailing C{COUNT = 7}
+    sentinel is deliberately not reproduced — C{len(WaterAgeSource)} is the
+    count. Only C{DWF} and C{EXTERNAL_INFLOW} accept node-scope overrides
+    (the A1a scope rule).
+
+    @cvar RAINFALL: Rainfall-derived water.
+    @cvar DWF: Dry-weather flow.
+    @cvar GW: Groundwater.
+    @cvar RDII: Rainfall-derived infiltration and inflow.
+    @cvar EXTERNAL_INFLOW: C{[INFLOWS]}.
+    @cvar IFACE: Interface file.
+    @cvar INITIAL_STATE: Water present at t = 0.
+    """
+
+    RAINFALL = 0
+    DWF = 1
+    GW = 2
+    RDII = 3
+    EXTERNAL_INFLOW = 4
+    IFACE = 5
+    INITIAL_STATE = 6
+
+
+class ReactionScope(IntEnum):
+    """Identifier-resolution vocabulary for reaction-expression validation.
+
+    Mirrors the C{SWMM_RXN_SCOPE_*} macros in C{openswmm_reactions.h}.
+
+    @cvar TERM: Intermediate-term scope. References to B{all} terms resolve;
+        the forward-only ordering rule is enforced at file-apply time, where
+        ordinal position exists.
+    @cvar PIPE: Conduit (flowing) reaction scope.
+    @cvar TANK: Storage-unit (mixed) reaction scope.
+    """
+
+    TERM = 0
+    PIPE = 1
+    TANK = 2
+    SUBSURFACE = 3
+    SUBCATCHMENT = 4
+
+
+class ReactionExprForm(IntEnum):
+    """Form of a species' reaction expression.
+
+    Mirrors the C{SWMM_RXN_FORM_*} macros (and C{ReactionExprForm}).
+
+    @cvar NONE: No expression in this scope; also the value that B{clears}
+        one through C{Reactions.set_expression}.
+    @cvar RATE: Rate expression, C{dC/dt = f(...)}.
+    @cvar EQUIL: Equilibrium expression, C{0 = f(...)}.
+    @cvar FORMULA: Explicit formula, C{C = f(...)}.
+    """
+
+    NONE = 0
+    RATE = 1
+    EQUIL = 2
+    FORMULA = 3
+
+
+class InletType(IntEnum):
+    """Street-inlet design type (C{[INLETS]} token 2).
+
+    Mirrors C{SWMM_InletType}. C{COMBO} has no keyword in the .inp grammar:
+    legacy encodes a combination inlet as a C{GRATE} line and a C{CURB} line
+    sharing one name, which the parser merges into a single COMBO design.
+
+    @cvar GRATE: Grate inlet in the gutter.
+    @cvar CURB: Curb-opening inlet.
+    @cvar COMBO: Grate plus curb opening (written back as two lines).
+    @cvar SLOTTED: Slotted drain.
+    @cvar DROP_GRATE: Grate inlet in a drainage channel (RECT_OPEN/TRAPEZOIDAL).
+    @cvar DROP_CURB: Curb opening in a drainage channel; always solved on-sag.
+    @cvar CUSTOM: Capture from a user DIVERSION or RATING curve.
+    """
+
+    GRATE = 0
+    CURB = 1
+    COMBO = 2
+    SLOTTED = 3
+    DROP_GRATE = 4
+    DROP_CURB = 5
+    CUSTOM = 6
+
+
+class GrateType(IntEnum):
+    """Grate bar pattern (HEC-22 Table 4-6). Mirrors C{SWMM_GrateType}.
+
+    @cvar P_BAR_50: Parallel bars at 50 mm spacing.
+    @cvar P_BAR_50x100: Parallel bars at 50 mm with 100 mm cross bars.
+    @cvar P_BAR_30: Parallel bars at 30 mm spacing.
+    @cvar CURVED_VANE: Curved vane grate.
+    @cvar TILT_BAR_45: 45-degree tilt bar grate.
+    @cvar TILT_BAR_30: 30-degree tilt bar grate.
+    @cvar RETICULINE: Reticuline (honeycomb) grate.
+    @cvar GENERIC: User-supplied open-area fraction and splash-over velocity.
+    """
+
+    P_BAR_50 = 0
+    P_BAR_50x100 = 1
+    P_BAR_30 = 2
+    CURVED_VANE = 3
+    TILT_BAR_45 = 4
+    TILT_BAR_30 = 5
+    RETICULINE = 6
+    GENERIC = 7
+
+
+class ThroatType(IntEnum):
+    """Curb-opening throat orientation. Mirrors C{SWMM_ThroatType}.
+
+    Sets the orifice head of a curb-opening inlet operating on sag. The
+    C{[INLETS]} C{DROP_CURB} form has no throat token; VERTICAL is used.
+
+    @cvar HORIZONTAL: Horizontal throat.
+    @cvar INCLINED: Inclined throat.
+    @cvar VERTICAL: Vertical throat (the .inp default).
+    """
+
+    HORIZONTAL = 0
+    INCLINED = 1
+    VERTICAL = 2
+
+
+class InletCurveKind(IntEnum):
+    """Capture-curve kind of a C{CUSTOM} inlet design.
+
+    Mirrors C{SWMM_InletCurveKind}. The C{[INLETS]} grammar carries no kind
+    token — the named curve's own C{[CURVES]} type is the authority, so the
+    engine re-derives this when the model is validated.
+
+    @cvar NONE: Not resolved yet (the curve has not been seen).
+    @cvar DIVERSION: Captured flow as a function of approach flow.
+    @cvar RATING: Captured flow as a function of water depth.
+    """
+
+    NONE = 0
+    DIVERSION = 1
+    RATING = 2
+
+
+class InletPlacement(IntEnum):
+    """Inlet placement mode (C{[INLET_USAGE]} token 9).
+
+    Mirrors C{SWMM_InletPlacement}.
+
+    @cvar AUTOMATIC: On-sag at a network sink, on-grade otherwise. For an
+        inlet junction the test is slope-based (both attached street conduits
+        fall toward the node).
+    @cvar ON_GRADE: Continuous-slope capture (HEC-22 4-16..4-25).
+    @cvar ON_SAG: Sag-point capture: weir/orifice on ponded depth.
+    """
+
+    AUTOMATIC = 0
+    ON_GRADE = 1
+    ON_SAG = 2
+
+
+class InletHostKind(IntEnum):
+    """What an inlet-usage row is attached to. Mirrors C{SWMM_InletHostKind}.
+
+    @cvar LINK: A conduit — the row came from / is written to C{[INLET_USAGE]}.
+    @cvar NODE: An inlet junction — C{[INLET_JUNCTIONS]}.
+    """
+
+    LINK = 0
+    NODE = 1
+
+
+class EvapType(IntEnum):
+    """Codes matching the native ``SWMM_EvapType`` enumeration."""
+
+    CONSTANT = 0
+    MONTHLY = 1
+    TIMESERIES = 2
+    TEMPERATURE = 3
+    FILE = 4
+
+
+class TempSource(IntEnum):
+    """Codes matching the native ``SWMM_TempSource`` enumeration."""
+
+    NONE = 0
+    TIMESERIES = 1
+    FILE = 2
+
+
+class WindType(IntEnum):
+    """Codes matching the native ``SWMM_WindType`` enumeration."""
+
+    MONTHLY = 0
+    FILE = 1
+
+
+class HumidityType(IntEnum):
+    """Codes matching the native ``SWMM_HumidityType`` enumeration."""
+
+    CONSTANT = 0
+    MONTHLY = 1
+    TIMESERIES = 2
+
+
+class HumidityVar(IntEnum):
+    """Codes matching the native ``SWMM_HumidityVar`` enumeration."""
+
+    RELATIVE = 0
+    DEWPOINT = 1
+
+
+class HeatElemKind(IntEnum):
+    """Codes matching the native ``SWMM_HeatElemKind`` enumeration."""
+
+    NODE = 0
+    LINK = 1
+
+
+class InpProfile(IntEnum):
+    """Codes matching the native ``SWMM_InpProfile`` enumeration."""
+
+    FULL = 0
+    SWMM5 = 1
+    SWMM5_STOCK = 2
+
+
+class TransportDispersionMode(IntEnum):
+    """Codes matching the native ``SWMM_TransportDispersionMode`` enumeration."""
+
+    OFF = 0
+    FISCHER = 1
+    VALUE = 2
+
+
+class UnitSystem(IntEnum):
+    """Codes matching the native ``SWMM_UnitSystem`` enumeration."""
+
+    UNITS_US = 0
+    UNITS_SI = 1
+
+
+class TransportDomain(IntEnum):
+    """Domain axis of the engine transport capability matrix."""
+    RUNOFF = 0
+    GROUNDWATER = 1
+    NETWORK_1D = 2
+    SURFACE_2D = 3
+
+
+class TransportClass(IntEnum):
+    """Species class axis of the engine transport capability matrix."""
+    POLLUTANTS = 0
+    MSX = 1
+    AGE = 2
+    TEMPERATURE = 3
+
+
+class TransportState(IntEnum):
+    """Availability of a process, with a diagnostic reason when disabled."""
+    ENABLED = 0
+    DISABLED_BY_USER = 1
+    UNAVAILABLE = 2
+
+
+class CellScope(IntEnum):
+    """Native SWMM_GW2D_SCOPE selectors."""
+    GLOBAL = 0
+    TAG = 1
+    CELL = 2
+
+
+class GroundwaterSoil(IntEnum):
+    """Native SWMM_GW2D_SOIL selectors."""
+    RUSSO = 0
+    GARDNER = 1
+    BROOKS_COREY = 2
+    VAN_GENUCHTEN = 3
+
+
+class GroundwaterClosure(IntEnum):
+    """Native SWMM_GW2D_CLOSURE selectors."""
+    AUTO = -1
+    CLOSED_FORM = 0
+    ENSLAVED = 1
+    SIGMA = 2
+
+
+class GroundwaterVariable(IntEnum):
+    """Native SWMM_GW2D_VAR selectors."""
+    HG = 0
+    HU = 1
+    TABLE_EL = 2
+    Q0 = 3
+    QLAT = 4
+    QNODE = 5
+    QDEEP = 6
+    QET = 7
+    DUNNE = 8
+    QPLUS = 9
+    DT_CELL = 10
+    TIER = 11
+    CLOSURE = 12
+    QLINK = 13
+    INFIL_CAPACITY = 14
+    INFIL_REMAINING = 15
+    INFIL_REFRESH = 16
+    INFIL_PENDING = 17
+    REJECT = 18
+    REJECT_CUM = 19
+    DUNNE_CUM = 20
+    ET_PENDING = 21
+    ET_POTENTIAL_CUM = 22
+    ET_SURFACE_CUM = 23
+    ET_SOIL_CUM = 24
+    ET_UNUSED_CUM = 25
+    ET_SURFACE = 26
+    ET_POTENTIAL = 27
+    ET_STRESS = 28
+    ET_REFRESH = 29
+
+
+class GroundwaterLedger(IntEnum):
+    """Native SWMM_GW2D_LED selectors."""
+    RECHARGE = 0
+    LATERAL = 1
+    DEEP = 2
+    NODE = 3
+    DUNNE = 4
+    CAPRISE = 5
+    ET = 6
+    INFIL_IN = 7
+    INIT_STORAGE = 8
+    STORAGE = 9
+    LINK = 10
+    SOURCE_IN = 11
+    SOURCE_OUT = 12
+    REJECT = 13
+    BOUNDARY_IN = 14
+    BOUNDARY_OUT = 15
+
+
+class GroundwaterZone(IntEnum):
+    """Native SWMM_GW2D_ZONE selectors."""
+    SAT = 0
+    UNSAT = 1
+
+
+class GroundwaterSpeciesLedger(IntEnum):
+    """Native SWMM_GW2D_SPL selectors."""
+    INIT = 0
+    STORAGE = 1
+    INFIL_IN = 2
+    NODE_IN = 3
+    LINK_IN = 4
+    LATERAL_NET = 5
+    DEEP_OUT = 6
+    NODE_OUT = 7
+    LINK_OUT = 8
+    DUNNE_OUT = 9
+    ET_OUT = 10
+    REACTED = 11
+    RESIDUAL = 12
+    SOURCE_IN = 13
+    SOURCE_OUT = 14
+    BOUNDARY_IN = 15
+    BOUNDARY_OUT = 16
+    BOUNDARY_FLUX_IN = 17
+    BOUNDARY_FLUX_OUT = 18
+    AGE_GENERATED = 19
+
+
+class GroundwaterTransportZone(IntEnum):
+    """Authoring zones; LAYER uses an explicit one-based layer index."""
+    SAT = 0
+    UNSAT = 1
+    LAYER = 2
+
+
+class TraceStatus(IntEnum):
+    """Return codes for the independent tracing API."""
+    OK = 0
+    INVALID = -1
+    IO = -2
+    MISMATCH = -3
+    CANCELLED = -4
+    SOLVER = -5
+    NO_HDF5 = -6
+
+
+class TraceDirection(IntEnum):
+    DOWNSTREAM = 0
+    UPSTREAM = 1
+
+
+class TraceNodeFlags(IntFlag):
+    PONDING = 1
+    EXTERNAL_EXCHANGE = 2
+    ROUTED_OUTFALL = 4
+    UNKNOWN_LOSSES = 8
+
+
+class TraceFlags(IntFlag):
+    UNREACHABLE = 1
+    NO_DIRECTION = 2
+    REVERSAL = 4
+    UNKNOWN_TIME = 8
+    PARTIAL_TIME = 16
+    TRAPPED = 32
+    APPROXIMATE = 64
+
+
+class TraceTerminal(IntEnum):
+    OUTFALL = 0
+    LOSS = 1
+    SOURCE = 2
+    RETAINED = 3
+    UNRESOLVED = 4
+    CIRCULATION = 5
+
+
+class EvapPreviewStatus(IntEnum):
+    """Codes matching native SWMM_EvapPreviewStatus."""
+    AVAILABLE = 0
+    HELD = 1
+    MISSING = 2
+    ESTIMATED = 3
+
+
+class Heat2DValue(IntEnum):
+    """Codes matching native SWMM_Heat2DValue."""
+    WATER_TEMPERATURE = 0
+    BED_TEMPERATURE = 1
+    BED_ENERGY = 2
+    BED_CAPACITY = 3
+    ATMOSPHERIC_ENERGY = 4
+    RADIATIVE_ENERGY = 5
+    SENSIBLE_ENERGY = 6
+    LATENT_ENERGY = 7
+    DEEP_ENERGY = 8
+    WATER_TO_BED_ENERGY = 9
+    WATER_THERMAL_INCREMENT = 10
+    ACCEPTED_EVAPORATION = 11
+    THERMAL_RESIDUAL = 12

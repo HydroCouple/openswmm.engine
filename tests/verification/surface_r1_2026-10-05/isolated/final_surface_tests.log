@@ -1,0 +1,29 @@
+Running main() from /Users/calebbuahin/Documents/Projects/vcpkg/buildtrees/gtest/src/v1.15.2-41f5afb119.clean/googletest/src/gtest_main.cc
+[==========] Running 10 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 10 tests from SurfaceProcesses
+[ RUN      ] SurfaceProcesses.SubcatchmentAndCellAgreeThroughWetDryWetEventsBothUnitSystems
+[       OK ] SurfaceProcesses.SubcatchmentAndCellAgreeThroughWetDryWetEventsBothUnitSystems (1 ms)
+[ RUN      ] SurfaceProcesses.ConstantCellMatchesPhysicalRateAndSharedSingleElementBothUnits
+[       OK ] SurfaceProcesses.ConstantCellMatchesPhysicalRateAndSharedSingleElementBothUnits (0 ms)
+[ RUN      ] SurfaceProcesses.ExternalOwnerKeepsPublishedRateAndKernelStateUntouched
+[       OK ] SurfaceProcesses.ExternalOwnerKeepsPublishedRateAndKernelStateUntouched (0 ms)
+[ RUN      ] SurfaceProcesses.InfiltrationPackRestoresContinuationForEveryStatefulMethod
+[       OK ] SurfaceProcesses.InfiltrationPackRestoresContinuationForEveryStatefulMethod (0 ms)
+[ RUN      ] SurfaceProcesses.SnowContractPacksEveryTransientFieldAndBalancesPointElement
+[       OK ] SurfaceProcesses.SnowContractPacksEveryTransientFieldAndBalancesPointElement (0 ms)
+[ RUN      ] SurfaceProcesses.SnowpackAssignmentValidationAndRenameAreAtomic
+[       OK ] SurfaceProcesses.SnowpackAssignmentValidationAndRenameAreAtomic (2 ms)
+[ RUN      ] SurfaceProcesses.ClearingParsedSnowpackSurvivesSaveAndReopenAndRuntimeEditIsRejected
+[       OK ] SurfaceProcesses.ClearingParsedSnowpackSurvivesSaveAndReopenAndRuntimeEditIsRejected (9 ms)
+[ RUN      ] SurfaceProcesses.MeshMonthlyFactorsUseEvaluationClockAcrossYearAndMonthBoundary
+[       OK ] SurfaceProcesses.MeshMonthlyFactorsUseEvaluationClockAcrossYearAndMonthBoundary (0 ms)
+[ RUN      ] SurfaceProcesses.ConstantConductivityFactorScalesCapacityOnceInBothUnitSystems
+[       OK ] SurfaceProcesses.ConstantConductivityFactorScalesCapacityOnceInBothUnitSystems (0 ms)
+[ RUN      ] SurfaceProcesses.SoilRecoveryFactorChangesDryStateAndNextStormCapacityForAllFiveMethods
+[       OK ] SurfaceProcesses.SoilRecoveryFactorChangesDryStateAndNextStormCapacityForAllFiveMethods (0 ms)
+[----------] 10 tests from SurfaceProcesses (12 ms total)
+
+[----------] Global test environment tear-down
+[==========] 10 tests from 1 test suite ran. (13 ms total)
+[  PASSED  ] 10 tests.

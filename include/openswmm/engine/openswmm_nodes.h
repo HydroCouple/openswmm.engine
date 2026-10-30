@@ -1,6 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file openswmm_nodes.h
- * @brief OpenSWMM Engine — Node C API.
+ * @file      openswmm_nodes.h
+ * @brief     OpenSWMM Engine — Node C API.
  *
  * @details Node add (BUILDING state), geometry setters, state get/set,
  *          lateral inflow injection (RUNNING), bulk access, quality.
@@ -8,9 +24,9 @@
  * @ingroup engine_api
  * @see openswmm_engine.h
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_NODES_H
@@ -31,9 +47,9 @@ extern "C" {
  */
 typedef enum SWMM_NodeType {
     SWMM_NODE_JUNCTION = 0, /**< Standard junction node. */
-    SWMM_NODE_OUTFALL  = 1, /**< Outfall boundary node. */
-    SWMM_NODE_STORAGE  = 2, /**< Storage unit (pond, tank, etc.). */
-    SWMM_NODE_DIVIDER  = 3  /**< Flow divider. */
+    SWMM_NODE_OUTFALL = 1,  /**< Outfall boundary node. */
+    SWMM_NODE_STORAGE = 2,  /**< Storage unit (pond, tank, etc.). */
+    SWMM_NODE_DIVIDER = 3   /**< Flow divider. */
 } SWMM_NodeType;
 
 /* =========================================================================
@@ -42,26 +58,69 @@ typedef enum SWMM_NodeType {
 
 /**
  * @brief Get the total number of nodes in the model.
- * @param engine  Engine handle.
+ * @param[in] engine Engine handle.
  * @returns Number of nodes, or -1 on error.
  */
 SWMM_ENGINE_API int swmm_node_count(SWMM_Engine engine);
 
 /**
  * @brief Look up a node's zero-based index by its string identifier.
- * @param engine  Engine handle.
- * @param id      Null-terminated node identifier.
+ * @param[in] engine Engine handle.
+ * @param[in] id Null-terminated node identifier.
  * @returns Zero-based index, or -1 if not found.
  */
 SWMM_ENGINE_API int swmm_node_index(SWMM_Engine engine, const char* id);
 
 /**
  * @brief Get the string identifier of a node by index.
- * @param engine  Engine handle.
- * @param idx     Zero-based node index.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index.
  * @returns Null-terminated string owned by the engine, or NULL on error.
+ *
+ *
+ * @note Borrowed ID storage may be invalidated by name/topology edits, close/reopen or engine
+ *     destruction; copy it when retaining it across operations.
  */
 SWMM_ENGINE_API const char* swmm_node_id(SWMM_Engine engine, int idx);
+
+/** Cumulative committed 1D outfall transfers, independent of REPORT_START.
+ * Positive exports have already left SWMM: consumers must not withdraw them
+ * again. Reverse water is retained separately and is not a one-way export.
+ * SI water is m3; heat is J relative to 0 degC using model rho/cp. Pollutant
+ * arrays use kg for MG/L and UG/L, and counts for #/L. Read units first.
+ * Flags: 1 external water, 2 LEGACY pollutant loads, 4 native heat.
+ * Route-to-subcatchment and native 2D-owned outfalls are refused.
+ * No MSX or ARD/LARD mass capability is implied by these receipts.
+ */
+typedef struct SWMM_OutfallExportReceipt {
+    double exported_m3;
+    double reversed_m3;
+    double exported_heat_j;
+    unsigned flags;
+} SWMM_OutfallExportReceipt;
+/**
+ * @brief Read committed external 1D outfall exports without withdrawing water again.
+ *
+ * Requires an outfall with no route-to-subcatchment and no native surface-owned exchange.
+ * Cumulative committed transfers are independent of REPORT_START; exported water already left SWMM.
+ * Flags 1/2/4 indicate external water/LEGACY pollutant/native heat capability. No MSX or ARD/LARD
+ * amount capability is implied.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access.
+ * @param[in] idx Zero-based node index in [0,swmm_node_count(engine)).
+ * @param[out] receipt Non-null water/heat/availability record: exported and separately reversed
+ *     water in m3, sensible heat in J relative to 0 degrees C using model rho/cp, and capability
+ *     flags.
+ * @param[out] pollutant_amounts Caller-owned array of count amounts in pollutant order; required
+ *     only when count>0. MG/L and UG/L pollutants use kg; #/L uses counts.
+ * @param[in] count Must equal the current model pollutant count exactly, including zero.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine or SWMM_ERR_BADINDEX for invalid node index.
+ *     SWMM_ERR_BADPARAM refuses wrong outputs/count or ineligible node ownership;
+ *     SWMM_ERR_LIFECYCLE indicates uninitialized receipt arrays.
+ */
+SWMM_ENGINE_API int swmm_node_get_export_receipt(SWMM_Engine engine, int idx,
+                                                 SWMM_OutfallExportReceipt* receipt,
+                                                 double* pollutant_amounts, int count);
 
 /* =========================================================================
  * Creation (BUILDING or OPENED — "editable" states)
@@ -80,11 +139,15 @@ SWMM_ENGINE_API const char* swmm_node_id(SWMM_Engine engine, int idx);
  *          The node is appended to the model's node list and its index
  *          equals the previous count.
  *
- * @param engine  Engine handle.
- * @param id      Unique null-terminated identifier for the new node.
- * @param type    Node type (see @ref SWMM_NodeType).
+ * @param[in] engine Engine handle.
+ * @param[in] id Unique null-terminated identifier for the new node.
+ * @param[in] type Node type (see @ref SWMM_NodeType).
  * @returns SWMM_OK on success, SWMM_ERR_LIFECYCLE if not in an editable
  *          state, or another error code.
+ *
+ *
+ * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE.
  */
 SWMM_ENGINE_API int swmm_node_add(SWMM_Engine engine, const char* id, int type);
 
@@ -105,9 +168,13 @@ SWMM_ENGINE_API int swmm_node_add(SWMM_Engine engine, const char* id, int type);
  *          requires renumbering every link / subcatch / control / report
  *          reference and is tracked separately.
  *
- * @param engine  Engine handle.
- * @param id      Expected tail identifier (null-terminated).
+ * @param[in] engine Engine handle.
+ * @param[in] id Expected tail identifier (null-terminated).
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE.
  */
 SWMM_ENGINE_API int swmm_node_pop_last(SWMM_Engine engine, const char* id);
 
@@ -117,30 +184,48 @@ SWMM_ENGINE_API int swmm_node_pop_last(SWMM_Engine engine, const char* id);
 
 /**
  * @brief Set a node's invert elevation.
- * @param engine  Engine handle.
- * @param idx     Zero-based node index.
- * @param elev    Invert elevation in project length units.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index.
+ * @param[in] elev Invert elevation in project length units.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE. A failed node/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_node_set_invert_elev(SWMM_Engine engine, int idx, double elev);
 
 /**
  * @brief Set a node's maximum depth (distance from invert to crown).
- * @param engine  Engine handle.
- * @param idx     Zero-based node index.
- * @param depth   Maximum depth in project length units.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index.
+ * @param[in] depth Maximum depth in project length units.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE. A failed node/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_node_set_max_depth(SWMM_Engine engine, int idx, double depth);
 
 /**
  * @brief Set the allowed surcharge depth above the node's crown.
- * @param engine  Engine handle.
- * @param idx     Zero-based node index.
- * @param depth   Surcharge depth in project length units.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index.
+ * @param[in] depth Surcharge depth in project length units.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE. A failed node/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_node_set_surcharge_depth(SWMM_Engine engine, int idx, double depth);
+
+/** Physical ordinary-junction chamber area in project area units (ft2 or m2). Zero retains legacy behavior.
+ * Geometry edits only; nonfinite/negative values and virtual/inlet/nonjunction assignments fail. */
+SWMM_ENGINE_API int swmm_node_set_storage_area(SWMM_Engine engine, int idx, double area);
+/** Read authored junction storage area in project area units (ft2 or m2) (zero by default). */
+SWMM_ENGINE_API int swmm_node_get_storage_area(SWMM_Engine engine, int idx, double* area);
 
 /**
  * @brief Set the ponded surface area when depth exceeds the maximum.
@@ -148,21 +233,57 @@ SWMM_ENGINE_API int swmm_node_set_surcharge_depth(SWMM_Engine engine, int idx, d
  * @details When ponding is modeled, excess water is stored on the surface
  *          using this area. Set to 0 to disable ponding at this node.
  *
- * @param engine  Engine handle.
- * @param idx     Zero-based node index.
- * @param area    Ponded area in project area units (e.g., ft² or m²).
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index.
+ * @param[in] area Ponded area in project area units (e.g., ft² or m²).
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE. A failed node/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_node_set_pond_area(SWMM_Engine engine, int idx, double area);
 
 /**
  * @brief Set a node's initial water depth at simulation start.
- * @param engine  Engine handle.
- * @param idx     Zero-based node index.
- * @param depth   Initial depth in project length units.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index.
+ * @param[in] depth Initial depth in project length units.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note Sets the authored initial condition, which swmm_node_get_initial_depth() reads, the .inp
+ *     writer saves and initialization turns into the starting depth, head and volume. Requires
+ *     BUILDING or OPENED: after initialization the starting state already exists, so other states
+ *     return SWMM_ERR_LIFECYCLE (swmm_node_set_depth() changes a running depth). A null engine
+ *     returns SWMM_ERR_BADHANDLE. A failed node index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_node_set_initial_depth(SWMM_Engine engine, int idx, double depth);
+
+/**
+ * @brief Set a node's rendering-only rim (ground) depth above the invert.
+ *
+ * @details RENDERING ONLY — no hydraulics, routing, reporting or output-file
+ *          code reads this value, so setting it can never change a result.
+ *          It exists for virtual junctions, whose max depth is derived (always
+ *          the shared pipe crown): without it every viewer drawing a ground
+ *          line collapses the surface to the crown at each break point. It is
+ *          the optional third token of a [VIRTUAL_JUNCTIONS] row.
+ *
+ *          On other node types the value is simply carried; renderers use the
+ *          real max depth there. Pass 0 to clear it ("unset" — renderers fall
+ *          back to the max depth). Negative values are clamped to 0.
+ *
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index.
+ * @param[in] depth Rim depth above the invert in project length units.
+ * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE. A failed node/pollutant index check returns SWMM_ERR_BADINDEX.
+ */
+SWMM_ENGINE_API int swmm_node_set_rim_depth(SWMM_Engine engine, int idx, double depth);
 
 /* =========================================================================
  * Geometry getters
@@ -170,10 +291,14 @@ SWMM_ENGINE_API int swmm_node_set_initial_depth(SWMM_Engine engine, int idx, dou
 
 /**
  * @brief Get the type of a node.
- * @param engine  Engine handle.
- * @param idx     Zero-based node index.
- * @param[out] type  Receives the node type (see @ref SWMM_NodeType).
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index.
+ * @param[out] type Receives the node type (see @ref SWMM_NodeType).
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note type may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
+ *     failed node/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_node_get_type(SWMM_Engine engine, int idx, int* type);
 
@@ -185,10 +310,14 @@ SWMM_ENGINE_API int swmm_node_get_type(SWMM_Engine engine, int idx, int* type);
  *          cross-section (INP section [VIRTUAL_JUNCTIONS]; refactored engine
  *          only).
  *
- * @param engine  Engine handle.
- * @param idx     Zero-based node index.
- * @param[out] is_virtual  Receives 1 if the node is a virtual junction, else 0.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index.
+ * @param[out] is_virtual Receives 1 if the node is a virtual junction, else 0.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note is_virtual may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
+ *     failed node/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_node_is_virtual(SWMM_Engine engine, int idx, int* is_virtual);
 
@@ -200,15 +329,21 @@ SWMM_ENGINE_API int swmm_node_is_virtual(SWMM_Engine engine, int idx, int* is_vi
  *          depth, zero ponded area). Clearing always succeeds for a virtual
  *          node. BUILDING or OPENED state only.
  *
- * @param engine       Engine handle.
- * @param idx          Zero-based node index (must be a JUNCTION to set).
- * @param make_virtual 1 to set, 0 to clear.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index (must be a JUNCTION to set).
+ * @param[in] make_virtual 1 to set, 0 to clear.
  * @returns SWMM_OK on success; SWMM_ERR_LIFECYCLE / SWMM_ERR_BADHANDLE /
  *          SWMM_ERR_BADINDEX / SWMM_ERR_BADPARAM for generic failures; or a
  *          distinct rule code on a violated usage rule so callers can render
  *          actionable messages: 609 = not exactly two conduits, 611 =
  *          cross-section mismatch, 613 = nonzero offset at the node, 617 =
- *          a lateral inflow source targets the node.
+ *          the node is a 2D surface-coupling point. Point lateral inflows
+ *          ([INFLOWS], [DWF], RDII, subcatchment outlets, LID drains, the
+ *          runtime lateral-inflow API) are permitted at a virtual junction.
+ *
+ *
+ * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE. A failed node/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_node_set_virtual(SWMM_Engine engine, int idx, int make_virtual);
 
@@ -217,37 +352,121 @@ SWMM_ENGINE_API int swmm_node_set_virtual(SWMM_Engine engine, int idx, int make_
  *
  * @details Read-only: evaluates the same structural rules that
  *          swmm_node_set_virtual() enforces (exactly two attached conduits of
- *          identical cross-section, zero offsets, no lateral inflow sources,
- *          dynamic-wave routing) without changing any state and without
+ *          identical cross-section, zero offsets, no 2D surface coupling,
+ *          dynamic-wave or FV routing) without changing any state and without
  *          requiring the node to currently be a JUNCTION — so callers can
  *          offer "convert to virtual junction" only when it would succeed.
  *
- * @param engine         Engine handle.
- * @param idx            Zero-based node index.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index.
  * @param[out] rule_code Receives 0 when the node satisfies every rule, else
  *                       the distinct ERR_VJ_* rule code (see
  *                       swmm_node_set_virtual) identifying the violated rule.
  * @returns SWMM_OK on success, or an error code for a bad handle/index.
+ *
+ *
+ * @note rule_code may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
+ *     failed node/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_node_virtual_eligible(SWMM_Engine engine, int idx, int* rule_code);
 
+/* -------------------------------------------------------------------------
+ * Inlet junctions (2026-09-05). An inlet junction is a virtual junction
+ * (is_virtual = 1) that additionally carries is_inlet = 1, sits between two
+ * STREET conduits (or RECT_OPEN/TRAPEZOIDAL for drop-inlet designs), owns one
+ * inlet-usage row (swmm_inlet_usage_set with SWMM_INLET_HOST_NODE) naming the
+ * inlet design and the capture node, and — unlike a plain virtual junction —
+ * is NOT sealed: it floods above the street section's full depth (or the
+ * [INLET_JUNCTIONS] MaxDepth when supplied) and receives the capture node's
+ * overflow back as street flow.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * @brief Read whether a node carries the inlet-junction marker.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access.
+ * @param[in] idx Zero-based node index in [0,swmm_node_count(engine)).
+ * @param[out] is_inlet Optional destination: 1 when marked inlet, otherwise 0.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine or SWMM_ERR_BADINDEX for invalid node index.
+ */
+SWMM_ENGINE_API int swmm_node_is_inlet(SWMM_Engine engine, int idx, int* is_inlet);
+
+/**
+ * @brief Evaluate inlet-junction topology rules without changing the node.
+ *
+ * A topology refusal is reported in rule_code while the API returns SWMM_OK; inspect the code
+ * separately.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access.
+ * @param[in] idx Zero-based node index in [0,swmm_node_count(engine)).
+ * @param[in] for_drop_inlet 0 evaluates the street-inlet profile; nonzero evaluates drop-inlet
+ *     eligibility.
+ * @param[out] rule_code Optional destination: 0 for eligible, otherwise the specific
+ *     inlet/virtual-junction validation code.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine or SWMM_ERR_BADINDEX for invalid node index.
+ */
+SWMM_ENGINE_API int swmm_node_inlet_eligible(SWMM_Engine engine, int idx, int for_drop_inlet,
+                                             int* rule_code);
+
+/**
+ * @brief Enable or disable inlet-junction authoring on an editable node.
+ *
+ * Validates through the inlet-junction edit helper before applying the requested marker. Treat a
+ * nonzero returned rule code as a refused edit.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access.
+ * @param[in] idx Zero-based node index in [0,swmm_node_count(engine)).
+ * @param[in] make_inlet 0 clears the marker; nonzero requests inlet conversion under current
+ *     topology rules.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine or SWMM_ERR_BADINDEX for invalid node index.
+ *     SWMM_ERR_LIFECYCLE outside BUILDING/OPENED; SWMM_ERR_BADPARAM for a non-junction target, or a
+ *     specific inlet/virtual-junction rule code.
+ */
+SWMM_ENGINE_API int swmm_node_set_inlet(SWMM_Engine engine, int idx, int make_inlet);
+
 /**
  * @brief Get a node's invert elevation.
- * @param engine  Engine handle.
- * @param idx     Zero-based node index.
- * @param[out] elev  Receives the invert elevation in project length units.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index.
+ * @param[out] elev Receives the invert elevation in project length units.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note elev may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
+ *     failed node/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_node_get_invert_elev(SWMM_Engine engine, int idx, double* elev);
 
 /**
  * @brief Get a node's maximum depth.
- * @param engine  Engine handle.
- * @param idx     Zero-based node index.
- * @param[out] depth  Receives the maximum depth in project length units.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index.
+ * @param[out] depth Receives the maximum depth in project length units.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note depth may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
+ *     failed node/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_node_get_max_depth(SWMM_Engine engine, int idx, double* depth);
+
+/**
+ * @brief Get a node's rendering-only rim (ground) depth above the invert.
+ *
+ * @details See swmm_node_set_rim_depth(). 0 means unset: a renderer drawing a
+ *          ground line should fall back to swmm_node_get_max_depth(), which
+ *          for a virtual junction is the pipe crown.
+ *
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index.
+ * @param[out] depth Receives the rim depth in project length units, or 0.
+ * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note depth may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
+ *     failed node/pollutant index check returns SWMM_ERR_BADINDEX.
+ */
+SWMM_ENGINE_API int swmm_node_get_rim_depth(SWMM_Engine engine, int idx, double* depth);
 
 /* =========================================================================
  * Hydraulic state getters/setters
@@ -255,37 +474,54 @@ SWMM_ENGINE_API int swmm_node_get_max_depth(SWMM_Engine engine, int idx, double*
 
 /**
  * @brief Get the current water depth at a node.
- * @param engine  Engine handle.
- * @param idx     Zero-based node index.
- * @param[out] depth  Receives depth in project length units.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index.
+ * @param[out] depth Receives depth in project length units.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note depth may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
+ *     failed node/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_node_get_depth(SWMM_Engine engine, int idx, double* depth);
 
 /**
  * @brief Set the water depth at a node (runtime override).
- * @param engine  Engine handle (RUNNING state).
- * @param idx     Zero-based node index.
- * @param depth   New depth in project length units.
+ * @param[in] engine Engine handle (RUNNING state).
+ * @param[in] idx Zero-based node index.
+ * @param[in] depth New depth in project length units.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note Requires RUNNING; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE. A failed node/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_node_set_depth(SWMM_Engine engine, int idx, double depth);
 
 /**
  * @brief Get the current hydraulic head at a node (invert + depth).
- * @param engine  Engine handle.
- * @param idx     Zero-based node index.
- * @param[out] head  Receives the head in project length units.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index.
+ * @param[out] head Receives the head in project length units.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note head may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
+ *     failed node/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_node_get_head(SWMM_Engine engine, int idx, double* head);
 
 /**
  * @brief Get the current stored water volume at a node.
- * @param engine  Engine handle.
- * @param idx     Zero-based node index.
- * @param[out] volume  Receives the volume in project volume units.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index.
+ * @param[out] volume Receives the volume in project volume units.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note volume may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
+ *     failed node/pollutant index check returns SWMM_ERR_BADINDEX. Includes active storage-node LID
+ *     held water in addition to the node water volume.
  */
 SWMM_ENGINE_API int swmm_node_get_volume(SWMM_Engine engine, int idx, double* volume);
 
@@ -296,10 +532,14 @@ SWMM_ENGINE_API int swmm_node_get_volume(SWMM_Engine engine, int idx, double* vo
  *          inflows) as opposed to the total inflow which includes upstream
  *          link contributions.
  *
- * @param engine  Engine handle.
- * @param idx     Zero-based node index.
- * @param[out] inflow  Receives the lateral inflow in project flow units.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index.
+ * @param[out] inflow Receives the lateral inflow in project flow units.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note inflow may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
+ *     failed node/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_node_get_lateral_inflow(SWMM_Engine engine, int idx, double* inflow);
 
@@ -309,19 +549,27 @@ SWMM_ENGINE_API int swmm_node_get_lateral_inflow(SWMM_Engine engine, int idx, do
  * @details Overflow occurs when the water depth exceeds the node's maximum
  *          depth and ponding is not enabled (or the ponded area is exceeded).
  *
- * @param engine  Engine handle.
- * @param idx     Zero-based node index.
- * @param[out] overflow  Receives the overflow rate in project flow units.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index.
+ * @param[out] overflow Receives the overflow rate in project flow units.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note overflow may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
+ *     failed node/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_node_get_overflow(SWMM_Engine engine, int idx, double* overflow);
 
 /**
- * @brief Get the total inflow to a node (lateral + upstream links).
- * @param engine  Engine handle.
- * @param idx     Zero-based node index.
- * @param[out] inflow  Receives the total inflow in project flow units.
- * @returns SWMM_OK on success, or an error code.
+ * @brief Read the current assembled lateral-inflow field.
+ *
+ * Despite the historical name, this wrapper reads lat_flow only; upstream link contributions are
+ * not added. It is equivalent to swmm_node_get_lateral_inflow().
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access.
+ * @param[in] idx Zero-based node index in [0,swmm_node_count(engine)).
+ * @param[out] inflow Optional destination in project display flow units.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine or SWMM_ERR_BADINDEX for invalid node index.
  */
 SWMM_ENGINE_API int swmm_node_get_inflow(SWMM_Engine engine, int idx, double* inflow);
 
@@ -330,46 +578,49 @@ SWMM_ENGINE_API int swmm_node_get_inflow(SWMM_Engine engine, int idx, double* in
  * ========================================================================= */
 
 /**
- * @brief Override the lateral inflow at a node for the current timestep.
+ * @brief Set a persistent runtime user lateral-inflow contribution.
  *
- * @details Applied for one timestep only; call each step to sustain.
- *          This replaces any externally defined inflows (DWF, RDII, etc.)
- *          for this node during the current step.
+ * Stores user_lat_flow, not the current assembled lat_flow. Runtime forcing OVERRIDE/ADD can
+ * overlay it; ordinary DWF/RDII/input contributions are assembled separately. The value persists
+ * across steps and does not replace all authored inflows. No finite/range validation is applied.
  *
- * @param engine  Engine handle (RUNNING state).
- * @param idx     Zero-based node index.
- * @param flow    Lateral inflow in project flow units.
- * @returns SWMM_OK on success, or an error code.
+ * @param[in] engine Non-null RUNNING engine.
+ * @param[in] idx Zero-based node index in [0,swmm_node_count(engine)).
+ * @param[in] flow Signed project display flow, converted to internal flow and retained until
+ *     changed; zero stops this contribution.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine or SWMM_ERR_BADINDEX for invalid node index.
+ *     SWMM_ERR_LIFECYCLE outside RUNNING.
  */
 SWMM_ENGINE_API int swmm_node_set_lateral_inflow(SWMM_Engine engine, int idx, double flow);
 
 /**
- * @brief Set a persistent quality mass flux at a node (mass/sec).
+ * @brief Set a persistent additive runtime pollutant amount-rate contribution.
  *
- * @details The mass flux is applied additively at each routing step,
- *          converting to a concentration delta: C += (mass_rate * dt) / volume.
- *          The value persists until the user explicitly changes it (analogous
- *          to swmm_node_set_lateral_inflow for flow). Set to 0.0 to stop.
+ * Persists until replaced, then contributes at routing steps. Negative extraction is subject to the
+ * quality loader available-mass clamp; this setter itself does not validate a finite/range value.
  *
- * @param engine        Engine handle (RUNNING state).
- * @param node_idx      Zero-based node index.
- * @param pollutant_idx Zero-based pollutant index.
- * @param mass_rate     Mass flux in mass/sec (project mass units).
- * @returns SWMM_OK on success, or an error code.
+ * @param[in] engine Non-null RUNNING engine.
+ * @param[in] node_idx Zero-based existing node index.
+ * @param[in] pollutant_idx Zero-based existing pollutant index.
+ * @param[in] mass_rate Raw internal concentration-unit*ft3/s amount rate; passed to the quality
+ *     loader without a project-mass conversion. Zero stops the retained contribution.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_LIFECYCLE outside RUNNING or
+ *     SWMM_ERR_BADINDEX for invalid node/pollutant.
  */
 SWMM_ENGINE_API int swmm_node_set_quality_mass_flux(SWMM_Engine engine, int node_idx,
-                                                     int pollutant_idx, double mass_rate);
+                                                    int pollutant_idx, double mass_rate);
 
 /**
- * @brief Set a fixed head boundary condition at a node.
+ * @brief Set an outfall fixed-head boundary retained in its subtype row.
  *
- * @details Useful for outfall nodes or real-time coupled boundary conditions.
- *          Applied for the current timestep only.
+ * Sets the outfall type to FIXED and stores its stage parameter; it is not automatically reset
+ * after one step. Does not check input finiteness or supply a per-boundary clear operation.
  *
- * @param engine  Engine handle (RUNNING state).
- * @param idx     Zero-based node index.
- * @param head    Head boundary in project length units.
- * @returns SWMM_OK on success, or an error code.
+ * @param[in] engine Non-null RUNNING engine.
+ * @param[in] idx Zero-based node index in [0,swmm_node_count(engine)).
+ * @param[in] head Datum head in project display length units, converted to internal length.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine or SWMM_ERR_BADINDEX for invalid node index.
+ *     SWMM_ERR_LIFECYCLE outside RUNNING or SWMM_ERR_BADPARAM for a non-outfall.
  */
 SWMM_ENGINE_API int swmm_node_set_head_boundary(SWMM_Engine engine, int idx, double head);
 
@@ -379,14 +630,18 @@ SWMM_ENGINE_API int swmm_node_set_head_boundary(SWMM_Engine engine, int idx, dou
 
 /**
  * @brief Get the pollutant concentration at a node.
- * @param engine        Engine handle.
- * @param node_idx      Zero-based node index.
- * @param pollutant_idx Zero-based pollutant index.
- * @param[out] conc     Receives the concentration in pollutant units.
+ * @param[in] engine Engine handle.
+ * @param[in] node_idx Zero-based node index.
+ * @param[in] pollutant_idx Zero-based pollutant index.
+ * @param[out] conc Receives the concentration in pollutant units.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note conc may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
+ *     failed node/pollutant index check returns SWMM_ERR_BADINDEX.
  */
-SWMM_ENGINE_API int swmm_node_get_quality(SWMM_Engine engine, int node_idx,
-                                           int pollutant_idx, double* conc);
+SWMM_ENGINE_API int swmm_node_get_quality(SWMM_Engine engine, int node_idx, int pollutant_idx,
+                                          double* conc);
 
 /* =========================================================================
  * Storage Node API
@@ -394,19 +649,28 @@ SWMM_ENGINE_API int swmm_node_get_quality(SWMM_Engine engine, int node_idx,
 
 /**
  * @brief Assign a storage curve (depth vs. area) to a storage node.
- * @param engine     Engine handle.
- * @param idx        Zero-based node index (must be SWMM_NODE_STORAGE).
- * @param curve_idx  Zero-based curve index (from swmm_curve_add()).
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index (must be SWMM_NODE_STORAGE).
+ * @param[in] curve_idx Zero-based curve index (from swmm_curve_add()).
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE. A failed node/pollutant index check returns SWMM_ERR_BADINDEX. For an
+ *     existing node with no matching subtype row, the subtype assignment is a successful no-op.
  */
 SWMM_ENGINE_API int swmm_node_set_storage_curve(SWMM_Engine engine, int idx, int curve_idx);
 
 /**
  * @brief Get the storage curve index assigned to a storage node.
- * @param engine         Engine handle.
- * @param idx            Zero-based node index.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index.
  * @param[out] curve_idx Receives the curve index, or -1 if functional.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note curve_idx may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
+ *     failed node/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_node_get_storage_curve(SWMM_Engine engine, int idx, int* curve_idx);
 
@@ -416,25 +680,37 @@ SWMM_ENGINE_API int swmm_node_get_storage_curve(SWMM_Engine engine, int idx, int
  * @details Defines the depth–area relationship using a power-law equation
  *          instead of a tabular curve.
  *
- * @param engine  Engine handle.
- * @param idx     Zero-based node index (must be SWMM_NODE_STORAGE).
- * @param a       Coefficient a.
- * @param b       Exponent b.
- * @param c       Constant c.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index (must be SWMM_NODE_STORAGE).
+ * @param[in] a Coefficient a.
+ * @param[in] b Exponent b.
+ * @param[in] c Constant c.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE. A failed node/pollutant index check returns SWMM_ERR_BADINDEX. For an
+ *     existing node with no matching subtype row, the subtype assignment is a successful no-op.
  */
-SWMM_ENGINE_API int swmm_node_set_storage_functional(SWMM_Engine engine, int idx, double a, double b, double c);
+SWMM_ENGINE_API int swmm_node_set_storage_functional(SWMM_Engine engine, int idx, double a,
+                                                     double b, double c);
 
 /**
  * @brief Get functional storage parameters.
- * @param engine  Engine handle.
- * @param idx     Zero-based node index.
- * @param[out] a  Receives coefficient a.
- * @param[out] b  Receives exponent b.
- * @param[out] c  Receives constant c.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index.
+ * @param[out] a Receives coefficient a.
+ * @param[out] b Receives exponent b.
+ * @param[out] c Receives constant c.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note a may be NULL to suppress that output. b may be NULL to suppress that output. c may be NULL
+ *     to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A failed node/pollutant
+ *     index check returns SWMM_ERR_BADINDEX.
  */
-SWMM_ENGINE_API int swmm_node_get_storage_functional(SWMM_Engine engine, int idx, double* a, double* b, double* c);
+SWMM_ENGINE_API int swmm_node_get_storage_functional(SWMM_Engine engine, int idx, double* a,
+                                                     double* b, double* c);
 
 /**
  * @brief Storage-unit surface-area relation codes.
@@ -445,12 +721,14 @@ SWMM_ENGINE_API int swmm_node_get_storage_functional(SWMM_Engine engine, int idx
  *          takes the a/b/c power-law coefficients.
  */
 typedef enum {
-    SWMM_STORAGE_TABULAR     = 0,  /**< Area vs. depth from a curve. */
-    SWMM_STORAGE_FUNCTIONAL  = 1,  /**< Area = c + a*d^b. */
-    SWMM_STORAGE_CYLINDRICAL = 2,  /**< Elliptical cylinder: p1 = major axis, p2 = minor axis. */
-    SWMM_STORAGE_CONICAL     = 3,  /**< Elliptical cone: p1, p2 = base axes, p3 = side slope. */
-    SWMM_STORAGE_PARABOLOID  = 4,  /**< Elliptical paraboloid: p1, p2 = top axes, p3 = height (≠ 0). */
-    SWMM_STORAGE_PYRAMIDAL   = 5   /**< Rectangular pyramid: p1 = length, p2 = width, p3 = side slope. */
+    SWMM_STORAGE_TABULAR = 0,     /**< Area vs. depth from a curve. */
+    SWMM_STORAGE_FUNCTIONAL = 1,  /**< Area = c + a*d^b. */
+    SWMM_STORAGE_CYLINDRICAL = 2, /**< Elliptical cylinder: p1 = major axis, p2 = minor axis. */
+    SWMM_STORAGE_CONICAL = 3,     /**< Elliptical cone: p1, p2 = base axes, p3 = side slope. */
+    SWMM_STORAGE_PARABOLOID =
+        4, /**< Elliptical paraboloid: p1, p2 = top axes, p3 = height (≠ 0). */
+    SWMM_STORAGE_PYRAMIDAL =
+        5 /**< Rectangular pyramid: p1 = length, p2 = width, p3 = side slope. */
 } SWMM_StorageShape;
 
 /**
@@ -462,19 +740,28 @@ typedef enum {
  *          SWMM_STORAGE_FUNCTIONAL also detaches the curve. Use
  *          swmm_node_set_storage_curve() to make a node TABULAR.
  *
- * @param engine  Engine handle.
- * @param idx     Zero-based node index (must be SWMM_NODE_STORAGE).
- * @param shape   A SWMM_StorageShape code.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index (must be SWMM_NODE_STORAGE).
+ * @param[in] shape A SWMM_StorageShape code.
  * @returns SWMM_OK on success, SWMM_ERR_BADPARAM if @p shape is not a valid code.
+ *
+ *
+ * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE. A failed node/pollutant index check returns SWMM_ERR_BADINDEX. For an
+ *     existing node with no matching subtype row, the subtype assignment is a successful no-op.
  */
 SWMM_ENGINE_API int swmm_node_set_storage_shape(SWMM_Engine engine, int idx, int shape);
 
 /**
  * @brief Get a storage node's surface-area relation.
- * @param engine      Engine handle.
- * @param idx         Zero-based node index.
- * @param[out] shape  Receives a SWMM_StorageShape code.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index.
+ * @param[out] shape Receives a SWMM_StorageShape code.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note shape may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
+ *     failed node/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_node_get_storage_shape(SWMM_Engine engine, int idx, int* shape);
 
@@ -489,44 +776,70 @@ SWMM_ENGINE_API int swmm_node_get_storage_shape(SWMM_Engine engine, int idx, int
  *          Validity (mirrors the legacy solver): p1 > 0, p2 > 0, p3 >= 0, and p3 != 0
  *          for SWMM_STORAGE_PARABOLOID.
  *
- * @param engine  Engine handle.
- * @param idx     Zero-based node index (must be SWMM_NODE_STORAGE).
- * @param p1      Major axis / base length.
- * @param p2      Minor axis / base width.
- * @param p3      Side slope (run/rise), or height for SWMM_STORAGE_PARABOLOID.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index (must be SWMM_NODE_STORAGE).
+ * @param[in] p1 Major axis / base length.
+ * @param[in] p2 Minor axis / base width.
+ * @param[in] p3 Side slope (run/rise), or height for SWMM_STORAGE_PARABOLOID.
  * @returns SWMM_OK on success; SWMM_ERR_BADPARAM if the node's shape is not geometric
  *          or the dimensions are invalid.
+ *
+ *
+ * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE. A failed node/pollutant index check returns SWMM_ERR_BADINDEX. For an
+ *     existing node with no matching subtype row, the subtype assignment is a successful no-op.
  */
-SWMM_ENGINE_API int swmm_node_set_storage_geometry(SWMM_Engine engine, int idx,
-                                                   double p1, double p2, double p3);
+SWMM_ENGINE_API int swmm_node_set_storage_geometry(SWMM_Engine engine, int idx, double p1,
+                                                   double p2, double p3);
 
 /**
  * @brief Get the raw dimensions of a geometric storage shape.
- * @param engine   Engine handle.
- * @param idx      Zero-based node index.
- * @param[out] p1  Receives the major axis / base length.
- * @param[out] p2  Receives the minor axis / base width.
- * @param[out] p3  Receives the side slope / height.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index.
+ * @param[out] p1 Receives the major axis / base length.
+ * @param[out] p2 Receives the minor axis / base width.
+ * @param[out] p3 Receives the side slope / height.
  * @returns SWMM_OK on success, or an error code. Returns zeros for a non-geometric shape.
+ *
+ *
+ * @note p1 may be NULL to suppress that output. p2 may be NULL to suppress that output. p3 may be
+ *     NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A failed
+ *     node/pollutant index check returns SWMM_ERR_BADINDEX.
  */
-SWMM_ENGINE_API int swmm_node_get_storage_geometry(SWMM_Engine engine, int idx,
-                                                   double* p1, double* p2, double* p3);
+SWMM_ENGINE_API int swmm_node_get_storage_geometry(SWMM_Engine engine, int idx, double* p1,
+                                                   double* p2, double* p3);
 
 /**
- * @brief Set the seepage rate for a storage node.
- * @param engine  Engine handle.
- * @param idx     Zero-based node index (must be SWMM_NODE_STORAGE).
- * @param rate    Seepage rate in project length/time units.
- * @returns SWMM_OK on success, or an error code.
+ * @brief Set a constant seepage (exfiltration) rate for a storage node.
+ * @details The constant-rate form of storage exfiltration, as a [STORAGE] row
+ *          ending in a bare Ksat: sets the exfiltration Ksat to @p rate with
+ *          zero suction and IMD, replacing any Green-Ampt parameters (see
+ *          swmm_node_set_exfil_params). A rate of 0 turns exfiltration off.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index (must be SWMM_NODE_STORAGE).
+ * @param[in] rate Seepage rate, in/hr (US) or mm/hr (SI); must be >= 0.
+ * @returns SWMM_OK on success; SWMM_ERR_BADPARAM on a negative rate.
+ *
+ *
+ * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE. A failed node/pollutant index check returns SWMM_ERR_BADINDEX. For an
+ *     existing node with no matching subtype row, the subtype assignment is a successful no-op.
  */
 SWMM_ENGINE_API int swmm_node_set_storage_seep_rate(SWMM_Engine engine, int idx, double rate);
 
 /**
- * @brief Get the seepage rate for a storage node.
- * @param engine     Engine handle.
- * @param idx        Zero-based node index.
- * @param[out] rate  Receives the seepage rate.
+ * @brief Get the constant seepage (exfiltration) rate of a storage node.
+ * @details The exfiltration Ksat when exfiltration uses its constant-rate form
+ *          (zero suction and IMD); 0 when it uses Green-Ampt parameters or is
+ *          off, and for a node that is not storage.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index.
+ * @param[out] rate Receives the rate, in/hr (US) or mm/hr (SI).
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note rate may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
+ *     failed node/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_node_get_storage_seep_rate(SWMM_Engine engine, int idx, double* rate);
 
@@ -536,25 +849,37 @@ SWMM_ENGINE_API int swmm_node_get_storage_seep_rate(SWMM_Engine engine, int idx,
  * @details Exfiltration models soil infiltration losses from the bottom and
  *          banks of a storage unit using the Green–Ampt method.
  *
- * @param engine   Engine handle.
- * @param idx      Zero-based node index (must be SWMM_NODE_STORAGE).
- * @param suction  Soil capillary suction head (project length units).
- * @param ksat     Saturated hydraulic conductivity (project length/time).
- * @param imd      Initial moisture deficit (fraction: 0–1).
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index (must be SWMM_NODE_STORAGE).
+ * @param[in] suction Soil capillary suction head (project length units).
+ * @param[in] ksat Saturated hydraulic conductivity (project length/time).
+ * @param[in] imd Initial moisture deficit (fraction: 0–1).
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE. A failed node/pollutant index check returns SWMM_ERR_BADINDEX. For an
+ *     existing node with no matching subtype row, the subtype assignment is a successful no-op.
  */
-SWMM_ENGINE_API int swmm_node_set_exfil_params(SWMM_Engine engine, int idx, double suction, double ksat, double imd);
+SWMM_ENGINE_API int swmm_node_set_exfil_params(SWMM_Engine engine, int idx, double suction,
+                                               double ksat, double imd);
 
 /**
  * @brief Get Green–Ampt exfiltration parameters for a storage node.
- * @param engine        Engine handle.
- * @param idx           Zero-based node index.
- * @param[out] suction  Receives the suction head.
- * @param[out] ksat     Receives the saturated hydraulic conductivity.
- * @param[out] imd      Receives the initial moisture deficit.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index.
+ * @param[out] suction Receives the suction head.
+ * @param[out] ksat Receives the saturated hydraulic conductivity.
+ * @param[out] imd Receives the initial moisture deficit.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note suction may be NULL to suppress that output. ksat may be NULL to suppress that output. imd
+ *     may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A failed
+ *     node/pollutant index check returns SWMM_ERR_BADINDEX.
  */
-SWMM_ENGINE_API int swmm_node_get_exfil_params(SWMM_Engine engine, int idx, double* suction, double* ksat, double* imd);
+SWMM_ENGINE_API int swmm_node_get_exfil_params(SWMM_Engine engine, int idx, double* suction,
+                                               double* ksat, double* imd);
 
 /* =========================================================================
  * Outfall Node API
@@ -565,55 +890,83 @@ SWMM_ENGINE_API int swmm_node_get_exfil_params(SWMM_Engine engine, int idx, doub
  *
  * @details Common types: 0=FREE, 1=NORMAL, 2=FIXED, 3=TIDAL, 4=TIMESERIES.
  *
- * @param engine  Engine handle.
- * @param idx     Zero-based node index (must be SWMM_NODE_OUTFALL).
- * @param type    Outfall type code.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index (must be SWMM_NODE_OUTFALL).
+ * @param[in] type Outfall type code.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE. A failed node/pollutant index check returns SWMM_ERR_BADINDEX. For an
+ *     existing node with no matching subtype row, the subtype assignment is a successful no-op.
  */
 SWMM_ENGINE_API int swmm_node_set_outfall_type(SWMM_Engine engine, int idx, int type);
 
 /**
  * @brief Get the outfall boundary condition type.
- * @param engine     Engine handle.
- * @param idx        Zero-based node index.
- * @param[out] type  Receives the outfall type code.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index.
+ * @param[out] type Receives the outfall type code.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note type may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
+ *     failed node/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_node_get_outfall_type(SWMM_Engine engine, int idx, int* type);
 
 /**
  * @brief Set a fixed outfall stage (for FIXED type outfalls).
- * @param engine  Engine handle.
- * @param idx     Zero-based node index (must be SWMM_NODE_OUTFALL).
- * @param stage   Fixed stage elevation in project length units.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index (must be SWMM_NODE_OUTFALL).
+ * @param[in] stage Fixed stage elevation in project length units.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE. A failed node/pollutant index check returns SWMM_ERR_BADINDEX. For an
+ *     existing node with no matching subtype row, the subtype assignment is a successful no-op.
  */
 SWMM_ENGINE_API int swmm_node_set_outfall_stage(SWMM_Engine engine, int idx, double stage);
 
 /**
  * @brief Assign a tidal curve to an outfall (for TIDAL type outfalls).
- * @param engine     Engine handle.
- * @param idx        Zero-based node index (must be SWMM_NODE_OUTFALL).
- * @param curve_idx  Zero-based curve index defining hour-of-day vs. stage.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index (must be SWMM_NODE_OUTFALL).
+ * @param[in] curve_idx Zero-based curve index defining hour-of-day vs. stage.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE. A failed node/pollutant index check returns SWMM_ERR_BADINDEX. For an
+ *     existing node with no matching subtype row, the subtype assignment is a successful no-op.
  */
 SWMM_ENGINE_API int swmm_node_set_outfall_tidal(SWMM_Engine engine, int idx, int curve_idx);
 
 /**
  * @brief Assign a time series to an outfall (for TIMESERIES type outfalls).
- * @param engine  Engine handle.
- * @param idx     Zero-based node index (must be SWMM_NODE_OUTFALL).
- * @param ts_idx  Zero-based time series index defining time vs. stage.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index (must be SWMM_NODE_OUTFALL).
+ * @param[in] ts_idx Zero-based time series index defining time vs. stage.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE. A failed node/pollutant index check returns SWMM_ERR_BADINDEX. For an
+ *     existing node with no matching subtype row, the subtype assignment is a successful no-op.
  */
 SWMM_ENGINE_API int swmm_node_set_outfall_timeseries(SWMM_Engine engine, int idx, int ts_idx);
 
 /**
  * @brief Get the outfall stage parameter (fixed stage, or current computed stage).
- * @param engine      Engine handle.
- * @param idx         Zero-based node index.
- * @param[out] param  Receives the outfall parameter value.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index.
+ * @param[out] param Receives the outfall parameter value.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note param may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
+ *     failed node/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_node_get_outfall_param(SWMM_Engine engine, int idx, double* param);
 
@@ -626,10 +979,15 @@ SWMM_ENGINE_API int swmm_node_get_outfall_param(SWMM_Engine engine, int idx, dou
  *          @ref SWMM_ERR_BADPARAM if the outfall type is not TIDAL, so the
  *          caller can distinguish "unassigned" from a genuine index of 0.
  *
- * @param engine          Engine handle.
- * @param idx             Zero-based node index.
- * @param[out] curve_idx  Receives the zero-based curve index.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index.
+ * @param[out] curve_idx Receives the zero-based curve index.
  * @returns SWMM_OK on success; SWMM_ERR_BADPARAM if outfall type != TIDAL.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A failed node/pollutant index check returns
+ *     SWMM_ERR_BADINDEX. curve_idx must be non-null and the outfall type must be TIDAL; otherwise
+ *     returns SWMM_ERR_BADPARAM.
  */
 SWMM_ENGINE_API int swmm_node_get_outfall_tidal(SWMM_Engine engine, int idx, int* curve_idx);
 
@@ -640,10 +998,15 @@ SWMM_ENGINE_API int swmm_node_get_outfall_tidal(SWMM_Engine engine, int idx, int
  *          @ref SWMM_ERR_BADPARAM unless the outfall is currently of
  *          TIMESERIES type.
  *
- * @param engine       Engine handle.
- * @param idx          Zero-based node index.
- * @param[out] ts_idx  Receives the zero-based time-series index.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index.
+ * @param[out] ts_idx Receives the zero-based time-series index.
  * @returns SWMM_OK on success; SWMM_ERR_BADPARAM if outfall type != TIMESERIES.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A failed node/pollutant index check returns
+ *     SWMM_ERR_BADINDEX. ts_idx must be non-null and the outfall type must be TIMESERIES; otherwise
+ *     returns SWMM_ERR_BADPARAM.
  */
 SWMM_ENGINE_API int swmm_node_get_outfall_timeseries(SWMM_Engine engine, int idx, int* ts_idx);
 
@@ -652,19 +1015,28 @@ SWMM_ENGINE_API int swmm_node_get_outfall_timeseries(SWMM_Engine engine, int idx
  *
  * @details A flap gate prevents reverse flow through the outfall.
  *
- * @param engine    Engine handle.
- * @param idx       Zero-based node index (must be SWMM_NODE_OUTFALL).
- * @param has_gate  Non-zero to enable flap gate; zero to disable.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index (must be SWMM_NODE_OUTFALL).
+ * @param[in] has_gate Non-zero to enable flap gate; zero to disable.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE. A failed node/pollutant index check returns SWMM_ERR_BADINDEX. For an
+ *     existing node with no matching subtype row, the subtype assignment is a successful no-op.
  */
 SWMM_ENGINE_API int swmm_node_set_outfall_flap_gate(SWMM_Engine engine, int idx, int has_gate);
 
 /**
  * @brief Get whether a flap gate exists at the outfall.
- * @param engine        Engine handle.
- * @param idx           Zero-based node index.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index.
  * @param[out] has_gate Receives 1 if flap gate present, 0 otherwise.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note has_gate may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
+ *     failed node/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_node_get_outfall_flap_gate(SWMM_Engine engine, int idx, int* has_gate);
 
@@ -681,27 +1053,36 @@ SWMM_ENGINE_API int swmm_node_get_outfall_flap_gate(SWMM_Engine engine, int idx,
  *          type[i] == @ref SWMM_NODE_DIVIDER.
  */
 typedef enum SWMM_DividerType {
-    SWMM_DIVIDER_CUTOFF      = 0, /**< Flow above cutoff is diverted. */
-    SWMM_DIVIDER_OVERFLOW    = 1, /**< Diverted flow = max link capacity exceedance. */
-    SWMM_DIVIDER_TABULAR     = 2, /**< Diverted flow looked up on a curve. */
-    SWMM_DIVIDER_WEIR        = 3  /**< Weir equation governs diversion. */
+    SWMM_DIVIDER_CUTOFF = 0,   /**< Flow above cutoff is diverted. */
+    SWMM_DIVIDER_OVERFLOW = 1, /**< Diverted flow = max link capacity exceedance. */
+    SWMM_DIVIDER_TABULAR = 2,  /**< Diverted flow looked up on a curve. */
+    SWMM_DIVIDER_WEIR = 3      /**< Weir equation governs diversion. */
 } SWMM_DividerType;
 
 /**
  * @brief Set the divider method for a flow-divider node.
- * @param engine  Engine handle.
- * @param idx     Zero-based node index (must be SWMM_NODE_DIVIDER).
- * @param type    Divider type code (see @ref SWMM_DividerType).
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index (must be SWMM_NODE_DIVIDER).
+ * @param[in] type Divider type code (see @ref SWMM_DividerType).
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE. A failed node/pollutant index check returns SWMM_ERR_BADINDEX. For an
+ *     existing node with no matching subtype row, the subtype assignment is a successful no-op.
  */
 SWMM_ENGINE_API int swmm_node_set_divider_type(SWMM_Engine engine, int idx, int type);
 
 /**
  * @brief Get the divider method for a flow-divider node.
- * @param engine     Engine handle.
- * @param idx        Zero-based node index.
- * @param[out] type  Receives the divider type code.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index.
+ * @param[out] type Receives the divider type code.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note type may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
+ *     failed node/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_node_get_divider_type(SWMM_Engine engine, int idx, int* type);
 
@@ -711,73 +1092,105 @@ SWMM_ENGINE_API int swmm_node_get_divider_type(SWMM_Engine engine, int idx, int*
 
 /**
  * @brief Get the surcharge depth above the node's crown.
- * @param engine      Engine handle.
- * @param idx         Zero-based node index.
- * @param[out] depth  Receives the surcharge depth in project length units.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index.
+ * @param[out] depth Receives the surcharge depth in project length units.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note depth may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
+ *     failed node/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_node_get_surcharge_depth(SWMM_Engine engine, int idx, double* depth);
 
 /**
  * @brief Get the ponded area at a node.
- * @param engine     Engine handle.
- * @param idx        Zero-based node index.
- * @param[out] area  Receives the ponded area in project area units.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index.
+ * @param[out] area Receives the ponded area in project area units.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note area may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
+ *     failed node/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_node_get_ponded_area(SWMM_Engine engine, int idx, double* area);
 
 /**
  * @brief Get the initial depth at a node.
- * @param engine      Engine handle.
- * @param idx         Zero-based node index.
- * @param[out] depth  Receives the initial depth in project length units.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index.
+ * @param[out] depth Receives the initial depth in project length units.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note depth may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
+ *     failed node/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_node_get_initial_depth(SWMM_Engine engine, int idx, double* depth);
 
 /**
  * @brief Get the crown elevation (invert + max depth) at a node.
- * @param engine     Engine handle.
- * @param idx        Zero-based node index.
- * @param[out] elev  Receives the crown elevation in project length units.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index.
+ * @param[out] elev Receives the crown elevation in project length units.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note elev may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
+ *     failed node/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_node_get_crown_elev(SWMM_Engine engine, int idx, double* elev);
 
 /**
  * @brief Get the full (maximum) stored volume at a node.
- * @param engine    Engine handle.
- * @param idx       Zero-based node index.
- * @param[out] vol  Receives the full volume in project volume units.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index.
+ * @param[out] vol Receives the full volume in project volume units.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note vol may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A failed
+ *     node/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_node_get_full_volume(SWMM_Engine engine, int idx, double* vol);
 
 /**
  * @brief Get the cumulative water losses at a node (evaporation + exfiltration).
- * @param engine       Engine handle.
- * @param idx          Zero-based node index.
- * @param[out] losses  Receives the loss volume in project volume units.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index.
+ * @param[out] losses Receives the loss volume in project volume units.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note losses may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
+ *     failed node/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_node_get_losses(SWMM_Engine engine, int idx, double* losses);
 
 /**
  * @brief Get the total outflow from a node through downstream links.
- * @param engine        Engine handle.
- * @param idx           Zero-based node index.
- * @param[out] outflow  Receives the outflow in project flow units.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index.
+ * @param[out] outflow Receives the outflow in project flow units.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note outflow may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
+ *     failed node/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_node_get_outflow(SWMM_Engine engine, int idx, double* outflow);
 
 /**
  * @brief Get the degree (number of connected links) of a node.
- * @param engine       Engine handle.
- * @param idx          Zero-based node index.
- * @param[out] degree  Receives the number of links connected to this node.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index.
+ * @param[out] degree Receives the number of links connected to this node.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note degree may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A
+ *     failed node/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_node_get_degree(SWMM_Engine engine, int idx, int* degree);
 
@@ -787,37 +1200,53 @@ SWMM_ENGINE_API int swmm_node_get_degree(SWMM_Engine engine, int idx, int* degre
 
 /**
  * @brief Get the maximum depth recorded at a node during the simulation.
- * @param engine    Engine handle (ENDED or RUNNING state).
- * @param idx       Zero-based node index.
- * @param[out] val  Receives the maximum depth in project length units.
+ * @param[in] engine Engine handle (ENDED or RUNNING state).
+ * @param[in] idx Zero-based node index.
+ * @param[out] val Receives the maximum depth in project length units.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note val may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A failed
+ *     node/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_node_get_stat_max_depth(SWMM_Engine engine, int idx, double* val);
 
 /**
  * @brief Get the maximum overflow rate recorded at a node.
- * @param engine    Engine handle.
- * @param idx       Zero-based node index.
- * @param[out] val  Receives the maximum overflow in project flow units.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index.
+ * @param[out] val Receives the maximum overflow in project flow units.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note val may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A failed
+ *     node/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_node_get_stat_max_overflow(SWMM_Engine engine, int idx, double* val);
 
 /**
  * @brief Get the total flood volume at a node over the simulation.
- * @param engine    Engine handle.
- * @param idx       Zero-based node index.
- * @param[out] val  Receives the flooded volume in project volume units.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index.
+ * @param[out] val Receives the flooded volume in project volume units.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note val may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A failed
+ *     node/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_node_get_stat_vol_flooded(SWMM_Engine engine, int idx, double* val);
 
 /**
  * @brief Get the total time a node was flooded during the simulation.
- * @param engine    Engine handle.
- * @param idx       Zero-based node index.
- * @param[out] val  Receives the flooded duration in hours.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based node index.
+ * @param[out] val Receives the flooded duration in seconds.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note val may be NULL to suppress that output. A null engine returns SWMM_ERR_BADHANDLE. A failed
+ *     node/pollutant index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_node_get_stat_time_flooded(SWMM_Engine engine, int idx, double* val);
 
@@ -827,68 +1256,106 @@ SWMM_ENGINE_API int swmm_node_get_stat_time_flooded(SWMM_Engine engine, int idx,
 
 /**
  * @brief Get depths for all nodes in a single call.
- * @param engine  Engine handle.
- * @param[out] buf  Caller-allocated buffer of at least @p count doubles.
- * @param count     Number of elements (should equal swmm_node_count()).
+ * @param[in] engine Engine handle.
+ * @param[out] buf Caller-allocated buffer of at least @p count doubles.
+ * @param[in] count Number of elements (should equal swmm_node_count()).
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A null buffer or nonpositive count returns
+ *     SWMM_ERR_BADPARAM. Only min(count,node count) entries are copied; any buffer tail is
+ *     unchanged.
  */
 SWMM_ENGINE_API int swmm_node_get_depths_bulk(SWMM_Engine engine, double* buf, int count);
 
 /**
  * @brief Get hydraulic heads for all nodes in a single call.
- * @param engine  Engine handle.
- * @param[out] buf  Caller-allocated buffer of at least @p count doubles.
- * @param count     Number of elements.
+ * @param[in] engine Engine handle.
+ * @param[out] buf Caller-allocated buffer of at least @p count doubles.
+ * @param[in] count Number of elements.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A null buffer or nonpositive count returns
+ *     SWMM_ERR_BADPARAM. Only min(count,node count) entries are copied; any buffer tail is
+ *     unchanged.
  */
 SWMM_ENGINE_API int swmm_node_get_heads_bulk(SWMM_Engine engine, double* buf, int count);
 
 /**
- * @brief Get total inflows for all nodes in a single call.
- * @param engine  Engine handle.
- * @param[out] buf  Caller-allocated buffer of at least @p count doubles.
- * @param count     Number of elements.
- * @returns SWMM_OK on success, or an error code.
+ * @brief Copy a prefix of the assembled lateral-inflow field.
+ *
+ * Reads lat_flow only, without adding upstream link contributions; equivalent to
+ * swmm_node_get_lateral_inflows_bulk().
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access.
+ * @param[out] buf Non-null caller-owned array of count doubles in project display flow units.
+ * @param[in] count Positive capacity/requested prefix length; writes min(count,node count) values
+ *     and leaves any remaining entries unchanged.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine or SWMM_ERR_BADPARAM for null buf/count<=0.
  */
 SWMM_ENGINE_API int swmm_node_get_inflows_bulk(SWMM_Engine engine, double* buf, int count);
 
 /**
  * @brief Get overflow rates for all nodes in a single call.
- * @param engine  Engine handle.
- * @param[out] buf  Caller-allocated buffer of at least @p count doubles.
- * @param count     Number of elements.
+ * @param[in] engine Engine handle.
+ * @param[out] buf Caller-allocated buffer of at least @p count doubles.
+ * @param[in] count Number of elements.
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A null buffer or nonpositive count returns
+ *     SWMM_ERR_BADPARAM. Only min(count,node count) entries are copied; any buffer tail is
+ *     unchanged.
  */
 SWMM_ENGINE_API int swmm_node_get_overflows_bulk(SWMM_Engine engine, double* buf, int count);
 
 /**
  * @brief Set depths for all nodes in a single call (runtime override).
- * @param engine  Engine handle (RUNNING state).
- * @param buf     Array of depth values, one per node.
- * @param count   Number of elements (should equal swmm_node_count()).
+ * @param[in] engine Engine handle (RUNNING state).
+ * @param[in] buf Array of depth values, one per node.
+ * @param[in] count Number of elements (should equal swmm_node_count()).
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note Requires RUNNING; other states return SWMM_ERR_LIFECYCLE. A null engine returns
+ *     SWMM_ERR_BADHANDLE. A null buffer or nonpositive count returns SWMM_ERR_BADPARAM. Only
+ *     min(count,node count) entries are copied; any buffer tail is unchanged.
  */
 SWMM_ENGINE_API int swmm_node_set_depths_bulk(SWMM_Engine engine, const double* buf, int count);
 
 /**
- * @brief Set lateral inflows for all nodes in a single call (runtime override).
- * @param engine  Engine handle (RUNNING state).
- * @param buf     Array of lateral inflow values, one per node.
- * @param count   Number of elements.
- * @returns SWMM_OK on success, or an error code.
+ * @brief Overwrite a prefix of the current assembled lateral-inflow field.
+ *
+ * Writes lat_flow directly, unlike the persistent user_lat_flow scalar setter. Subsequent inflow
+ * assembly may replace these values. Does not check finite values or promise a persistent forcing
+ * prescription.
+ *
+ * @param[in] engine Non-null RUNNING engine.
+ * @param[in] buf Non-null borrowed array of count project display flow values, converted and copied
+ *     synchronously.
+ * @param[in] count Positive requested prefix length; uses min(count,node count).
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_LIFECYCLE outside RUNNING or
+ *     SWMM_ERR_BADPARAM for null buf/count<=0.
  */
-SWMM_ENGINE_API int swmm_node_set_lat_inflows_bulk(SWMM_Engine engine, const double* buf, int count);
+SWMM_ENGINE_API int swmm_node_set_lat_inflows_bulk(SWMM_Engine engine, const double* buf,
+                                                   int count);
 
 /**
  * @brief Get pollutant concentrations at all nodes for one pollutant.
- * @param engine        Engine handle.
- * @param pollutant_idx Zero-based pollutant index.
- * @param[out] buf      Caller-allocated buffer of at least @p count doubles.
- * @param count         Number of elements (should equal swmm_node_count()).
+ * @param[in] engine Engine handle.
+ * @param[in] pollutant_idx Zero-based pollutant index.
+ * @param[out] buf Caller-allocated buffer of at least @p count doubles.
+ * @param[in] count Number of elements (should equal swmm_node_count()).
  * @returns SWMM_OK on success, or an error code.
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A failed node/pollutant index check returns
+ *     SWMM_ERR_BADINDEX. A null buffer or nonpositive count returns SWMM_ERR_BADPARAM. Only
+ *     min(count,node count) entries are copied; any buffer tail is unchanged.
  */
-SWMM_ENGINE_API int swmm_node_get_quality_bulk(SWMM_Engine engine, int pollutant_idx,
-                                                    double* buf, int count);
+SWMM_ENGINE_API int swmm_node_get_quality_bulk(SWMM_Engine engine, int pollutant_idx, double* buf,
+                                               int count);
 
 /**
  * @brief Get current stored volumes for all nodes in a single call.
@@ -898,13 +1365,18 @@ SWMM_ENGINE_API int swmm_node_get_quality_bulk(SWMM_Engine engine, int pollutant
  *          Used by the MCP server's per-node info builders and the
  *          `mass_balance` resource.
  *
- * @param engine     Engine handle.
- * @param[out] buf   Caller-allocated buffer of at least @p count doubles.
- * @param count      Number of elements. If smaller than @c swmm_node_count()
+ * @param[in] engine Engine handle.
+ * @param[out] buf Caller-allocated buffer of at least @p count doubles.
+ * @param[in] count Number of elements. If smaller than @c swmm_node_count()
  *                   only the first @c min(count, n_nodes) entries are written.
  * @returns @c SWMM_OK on success; @c SWMM_ERR_BADHANDLE if @p engine is
  *          invalid; @c SWMM_ERR_BADPARAM if @p buf is NULL or @p count <= 0.
  * @since 6.0.0
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A null buffer or nonpositive count returns
+ *     SWMM_ERR_BADPARAM. Only min(count,node count) entries are copied; any buffer tail is
+ *     unchanged. Includes active storage-node LID held water in addition to the node water volume.
  */
 SWMM_ENGINE_API int swmm_node_get_volumes_bulk(SWMM_Engine engine, double* buf, int count);
 
@@ -913,11 +1385,16 @@ SWMM_ENGINE_API int swmm_node_get_volumes_bulk(SWMM_Engine engine, double* buf, 
  *
  * @details Single-pass bulk variant of @ref swmm_node_get_outflow.
  *
- * @param engine     Engine handle.
- * @param[out] buf   Caller-allocated buffer of at least @p count doubles.
- * @param count      Number of elements.
+ * @param[in] engine Engine handle.
+ * @param[out] buf Caller-allocated buffer of at least @p count doubles.
+ * @param[in] count Number of elements.
  * @returns @c SWMM_OK on success, or an error code (see @ref swmm_node_get_volumes_bulk).
  * @since 6.0.0
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A null buffer or nonpositive count returns
+ *     SWMM_ERR_BADPARAM. Only min(count,node count) entries are copied; any buffer tail is
+ *     unchanged.
  */
 SWMM_ENGINE_API int swmm_node_get_outflows_bulk(SWMM_Engine engine, double* buf, int count);
 
@@ -926,11 +1403,16 @@ SWMM_ENGINE_API int swmm_node_get_outflows_bulk(SWMM_Engine engine, double* buf,
  *
  * @details Single-pass bulk variant of @ref swmm_node_get_losses.
  *
- * @param engine     Engine handle.
- * @param[out] buf   Caller-allocated buffer of at least @p count doubles.
- * @param count      Number of elements.
+ * @param[in] engine Engine handle.
+ * @param[out] buf Caller-allocated buffer of at least @p count doubles.
+ * @param[in] count Number of elements.
  * @returns @c SWMM_OK on success, or an error code.
  * @since 6.0.0
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A null buffer or nonpositive count returns
+ *     SWMM_ERR_BADPARAM. Only min(count,node count) entries are copied; any buffer tail is
+ *     unchanged.
  */
 SWMM_ENGINE_API int swmm_node_get_losses_bulk(SWMM_Engine engine, double* buf, int count);
 
@@ -940,11 +1422,16 @@ SWMM_ENGINE_API int swmm_node_get_losses_bulk(SWMM_Engine engine, double* buf, i
  * @details Single-pass bulk variant of @ref swmm_node_get_lateral_inflow.
  *          The matching setter is @ref swmm_node_set_lat_inflows_bulk.
  *
- * @param engine     Engine handle.
- * @param[out] buf   Caller-allocated buffer of at least @p count doubles.
- * @param count      Number of elements.
+ * @param[in] engine Engine handle.
+ * @param[out] buf Caller-allocated buffer of at least @p count doubles.
+ * @param[in] count Number of elements.
  * @returns @c SWMM_OK on success, or an error code.
  * @since 6.0.0
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A null buffer or nonpositive count returns
+ *     SWMM_ERR_BADPARAM. Only min(count,node count) entries are copied; any buffer tail is
+ *     unchanged.
  */
 SWMM_ENGINE_API int swmm_node_get_lateral_inflows_bulk(SWMM_Engine engine, double* buf, int count);
 
@@ -963,11 +1450,11 @@ SWMM_ENGINE_API int swmm_node_get_lateral_inflows_bulk(SWMM_Engine engine, doubl
  *          callers should choose a stride that comfortably accommodates the
  *          longest ID in their model.
  *
- * @param engine   Engine handle.
+ * @param[in] engine Engine handle.
  * @param[out] buf Caller-allocated buffer of @c stride*count bytes.
- * @param stride   Per-ID slot size in bytes (must be > 1 to allow at least
+ * @param[in] stride Per-ID slot size in bytes (must be > 1 to allow at least
  *                 one character plus the NUL).
- * @param count    Number of IDs to read.
+ * @param[in] count Number of IDs to read.
  * @returns @c SWMM_OK on success; @c SWMM_ERR_BADHANDLE if @p engine is
  *          invalid; @c SWMM_ERR_BADPARAM if @p buf is NULL, @p stride < 2,
  *          or @p count <= 0.
@@ -986,50 +1473,107 @@ SWMM_ENGINE_API int swmm_node_get_lateral_inflows_bulk(SWMM_Engine engine, doubl
  *
  * @see swmm_node_id
  * @since 6.0.0
+ *
+ *
+ * @note A null engine returns SWMM_ERR_BADHANDLE. A null buffer or nonpositive count returns
+ *     SWMM_ERR_BADPARAM. Only min(count,node count) entries are copied; any buffer tail is
+ *     unchanged.
  */
-SWMM_ENGINE_API int swmm_node_get_ids_bulk(SWMM_Engine engine,
-                                            char* buf,
-                                            int stride,
-                                            int count);
+SWMM_ENGINE_API int swmm_node_get_ids_bulk(SWMM_Engine engine, char* buf, int stride, int count);
 
 /* =========================================================================
  * Outfall-to-subcatchment routing
  * ========================================================================= */
 
-/** @brief Set outfall route-to subcatchment index (-1 = none). */
+/**
+ * @brief Set an outfall route-to subcatchment index directly.
+ *
+ * No lifecycle guard is imposed. For a valid node without an outfall subtype this is a successful
+ * no-op; it does not convert the node into an outfall.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access.
+ * @param[in] idx Zero-based node index in [0,swmm_node_count(engine)).
+ * @param[in] subcatch_idx Subcatchment index to store, or -1 for no routing. This wrapper does not
+ *     validate the supplied subcatchment index.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine or SWMM_ERR_BADINDEX for invalid node index.
+ */
 SWMM_ENGINE_API int swmm_node_set_outfall_route_to(SWMM_Engine engine, int idx, int subcatch_idx);
 
-/** @brief Get outfall route-to subcatchment index (-1 = none). */
+/**
+ * @brief Read the outfall route-to subcatchment index.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access.
+ * @param[in] idx Zero-based node index in [0,swmm_node_count(engine)).
+ * @param[out] subcatch_idx Optional destination: stored subcatchment index, or -1 when
+ *     unset/non-outfall.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine or SWMM_ERR_BADINDEX for invalid node index.
+ */
 SWMM_ENGINE_API int swmm_node_get_outfall_route_to(SWMM_Engine engine, int idx, int* subcatch_idx);
 
 /* =========================================================================
  * Depth from volume (inverse of getVolume)
  * ========================================================================= */
 
-/** @brief Compute depth from volume for a node (inverse of volume-depth curve). */
-SWMM_ENGINE_API int swmm_node_get_depth_from_volume(SWMM_Engine engine, int idx,
-                                                      double volume, double* depth);
+/**
+ * @brief Evaluate node depth from a supplied display-unit water volume.
+ *
+ * Uses the configured node subtype, storage coefficients/curve and project unit system. Does not
+ * change stored volume/depth or validate input finiteness in this wrapper.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access.
+ * @param[in] idx Zero-based node index in [0,swmm_node_count(engine)).
+ * @param[in] volume Water volume in project display volume units; converted internally before
+ *     evaluating storage geometry.
+ * @param[out] depth Optional destination for depth in project display length units; NULL skips the
+ *     calculation.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine or SWMM_ERR_BADINDEX for invalid node index.
+ */
+SWMM_ENGINE_API int swmm_node_get_depth_from_volume(SWMM_Engine engine, int idx, double volume,
+                                                    double* depth);
 
-/** @brief Rename the node at `idx` to `newId`.
- *  Returns SWMM_ERR_BADPARAM if newId is null, empty, already in use, or
- *  idx is out of range. */
+/**
+ * @brief Rename a node in the editable name index.
+ *
+ * Keeps numeric node indices. Borrowed ID pointers can be invalidated; the wrapper changes the name
+ * index and does not itself rewrite arbitrary stored text references.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access.
+ * @param[in] idx Zero-based node index in [0,swmm_node_count(engine)).
+ * @param[in] newId Non-null, nonempty NUL-terminated new ID; copied internally and required to be
+ *     unique in the node index.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine or SWMM_ERR_BADINDEX for invalid node index.
+ *     SWMM_ERR_LIFECYCLE outside BUILDING/OPENED or SWMM_ERR_BADPARAM for invalid/duplicate ID.
+ */
 SWMM_ENGINE_API int swmm_node_rename(SWMM_Engine engine, int idx, const char* newId);
 
 /* =========================================================================
  * Tag — free-form string label from the INP `[TAGS]` section
  * ========================================================================= */
 
-/** @brief Read the tag string into `buf` (NUL-terminated, truncated to
- *  `buflen-1` chars if necessary). Returns empty string when the node has
- *  no tag. */
-SWMM_ENGINE_API int swmm_node_get_tag(SWMM_Engine engine, int idx,
-                                       char* buf, int buflen);
+/**
+ * @brief Copy a node free-form tag.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access.
+ * @param[in] idx Zero-based node index in [0,swmm_node_count(engine)).
+ * @param[out] buf Non-null caller-owned text buffer; empty when no tag exists, NUL-terminated and
+ *     silently truncated to buflen-1 bytes.
+ * @param[in] buflen Positive buffer capacity in bytes including NUL.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine or SWMM_ERR_BADINDEX for invalid node index.
+ *     SWMM_ERR_BADPARAM for null buf/nonpositive capacity.
+ */
+SWMM_ENGINE_API int swmm_node_get_tag(SWMM_Engine engine, int idx, char* buf, int buflen);
 
-/** @brief Set or clear the node's tag. Pass null or empty string to clear.
- *  Tag persists across `swmm_node_rename` (it is keyed by index, not name).
- *  Writes are honoured in any engine lifecycle state. */
-SWMM_ENGINE_API int swmm_node_set_tag(SWMM_Engine engine, int idx,
-                                       const char* tag);
+/**
+ * @brief Copy or clear a node free-form tag without changing topology.
+ *
+ * No lifecycle guard is imposed. Tags are keyed by node index and persist through node rename.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access.
+ * @param[in] idx Zero-based node index in [0,swmm_node_count(engine)).
+ * @param[in] tag Borrowed NUL-terminated tag to copy; NULL/empty clears it.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine or SWMM_ERR_BADINDEX for invalid node index.
+ */
+SWMM_ENGINE_API int swmm_node_set_tag(SWMM_Engine engine, int idx, const char* tag);
 
 #ifdef __cplusplus
 } /* extern "C" */
