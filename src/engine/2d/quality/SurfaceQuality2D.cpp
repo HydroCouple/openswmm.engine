@@ -31,6 +31,7 @@
  */
 
 #include "core/ProcessPerf.hpp"
+#include "core/PolygonRings.hpp"
 #include "SurfaceQuality2D.hpp"
 
 #include <algorithm>
@@ -543,11 +544,7 @@ std::vector<std::string> SurfaceQuality2D::resolve(const SimulationContext& ctx,
                     continue;
                 const double x = mesh.tri_cx[static_cast<std::size_t>(c)] * inv;
                 const double y = mesh.tri_cy[static_cast<std::size_t>(c)] * inv;
-                bool in = false;
-                for (std::size_t i = 0, j = xs.size() - 1; i < xs.size(); j = i++)
-                    if (((ys[i] > y) != (ys[j] > y)) &&
-                        (x < (xs[j] - xs[i]) * (y - ys[i]) / (ys[j] - ys[i]) + xs[i]))
-                        in = !in;
+                const bool in = polygon::contains(xs, ys, x, y);
                 if (in)
                     names.insert(ctx.subcatch_names.name_of(sub));
             }

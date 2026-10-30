@@ -35,6 +35,9 @@
 #ifndef OPENSWMM_GPKG_GEOMETRY_HPP
 #define OPENSWMM_GPKG_GEOMETRY_HPP
 
+#include "core/PolygonRings.hpp"
+
+#include <algorithm>
 #include <vector>
 #include <cstdint>
 #include <cstring>
@@ -234,10 +237,11 @@ inline std::vector<uint8_t> encode_linestring(const std::vector<double>& xs,
 }
 
 /**
- * @brief Encode a single exterior ring in MULTIPOLYGON form.
+ * @brief Encode closed-ring spatial coordinates in MULTIPOLYGON form.
  *
  * Little-endian native 32-bit/IEEE-double representation required. Appends the first point when
- * last XY is not exactly equal to first; one polygon/ring only, no holes. No coordinate finiteness,
+ * last XY is not exactly equal to first. Closed rings delimit parts and holes; containment determines
+ * their nesting. No coordinate finiteness,
  * minimum point count, topology or ring orientation validation. Allocation failures propagate.
  *
  * @param[in] xs Borrowed X coordinates; count must fit the encoded uint32 length including any
@@ -257,39 +261,53 @@ inline std::vector<uint8_t> encode_multipolygon(const std::vector<double>& xs,
         detail::append_u32(buf, 0);
         return buf;
     }
-    // Ensure ring closure
-    bool closed = (xs.front() == xs.back() && ys.front() == ys.back());
-    uint32_t n_pts = static_cast<uint32_t>(xs.size()) + (closed ? 0 : 1);
+    const auto rings = polygon::rings(xs, ys);
+    // Containment depth identifies exteriors (even) and holes (odd), without
+    // relying on ring winding. Valid polygon rings do not cross each other.
+    std::vector<int> depth(rings.size(), 0), parent(rings.size(), -1);
+    for (size_t i = 0; i < rings.size(); ++i)
+        for (size_t j = 0; j < rings.size(); ++j)
+            if (i != j && polygon::contains(xs, ys, rings[j], xs[rings[i].first],
+                                            ys[rings[i].first]))
+                ++depth[i];
+    for (size_t i = 0; i < rings.size(); ++i)
+        if (depth[i] % 2)
+            for (size_t j = 0; j < rings.size(); ++j)
+                if (depth[j] == depth[i] - 1 &&
+                    polygon::contains(xs, ys, rings[j], xs[rings[i].first], ys[rings[i].first])) {
+                    parent[i] = static_cast<int>(j);
+                    break;
+                }
 
-    double min_x = xs[0], max_x = xs[0], min_y = ys[0], max_y = ys[0];
-    for (size_t i = 1; i < xs.size(); ++i) {
-        min_x = std::min(min_x, xs[i]);
-        max_x = std::max(max_x, xs[i]);
-        min_y = std::min(min_y, ys[i]);
-        max_y = std::max(max_y, ys[i]);
-    }
-
+    const auto minmax_x = std::minmax_element(xs.begin(), xs.end());
+    const auto minmax_y = std::minmax_element(ys.begin(), ys.end());
     std::vector<uint8_t> buf;
-    buf.reserve(8 + 32 + 50 + n_pts * 16);
-    detail::write_gp_header(buf, srs_id, min_x, min_y, max_x, max_y);
-
-    // WKB MULTIPOLYGON
+    detail::write_gp_header(buf, srs_id, *minmax_x.first, *minmax_y.first,
+                            *minmax_x.second, *minmax_y.second);
     detail::append_u8(buf, WKB_LITTLE_ENDIAN);
     detail::append_u32(buf, WKB_MULTIPOLYGON);
-    detail::append_u32(buf, 1); // 1 polygon
-
-    // WKB POLYGON
-    detail::append_u8(buf, WKB_LITTLE_ENDIAN);
-    detail::append_u32(buf, WKB_POLYGON);
-    detail::append_u32(buf, 1); // 1 ring
-    detail::append_u32(buf, n_pts);
-    for (size_t i = 0; i < xs.size(); ++i) {
-        detail::append_f64(buf, xs[i]);
-        detail::append_f64(buf, ys[i]);
-    }
-    if (!closed) {
-        detail::append_f64(buf, xs.front());
-        detail::append_f64(buf, ys.front());
+    const auto polygon_count = std::count_if(depth.begin(), depth.end(),
+                                             [](int d) { return d % 2 == 0; });
+    detail::append_u32(buf, static_cast<uint32_t>(polygon_count));
+    const auto write_ring = [&](polygon::Ring ring) {
+        detail::append_u32(buf, static_cast<uint32_t>(ring.count + 1));
+        for (size_t k = 0; k <= ring.count; ++k) {
+            const auto v = ring.first + k % ring.count;
+            detail::append_f64(buf, xs[v]);
+            detail::append_f64(buf, ys[v]);
+        }
+    };
+    for (size_t i = 0; i < rings.size(); ++i) {
+        if (depth[i] % 2)
+            continue;
+        detail::append_u8(buf, WKB_LITTLE_ENDIAN);
+        detail::append_u32(buf, WKB_POLYGON);
+        detail::append_u32(buf, 1 + static_cast<uint32_t>(
+            std::count(parent.begin(), parent.end(), static_cast<int>(i))));
+        write_ring(rings[i]);
+        for (size_t j = 0; j < rings.size(); ++j)
+            if (parent[j] == static_cast<int>(i))
+                write_ring(rings[j]);
     }
     return buf;
 }
@@ -365,7 +383,7 @@ struct DecodedLinestring {
 };
 
 struct DecodedMultipolygon {
-    // Outer ring of the first polygon only (sufficient for SWMM subcatchments)
+    // All rings, explicitly closed and concatenated (exterior, holes, next polygon).
     std::vector<double> xs, ys;
     int32_t srs_id = 0;
 };
@@ -501,9 +519,9 @@ inline DecodedLinestring decode_linestring(const std::vector<uint8_t>& blob) {
  * @brief Decode MULTIPOLYGON coordinates from a prevalidated native-endian GP blob.
  *
  * Reads native 32-bit/double values and ignores WKB byte-order markers; compatible little-endian
- * encoding is required. Only first polygon/first exterior ring is read; holes/later polygons are
- * ignored, and inner polygon type is not validated. No payload bounds/count-budget check is
- * implemented; do not pass unvalidated truncated or excessive-count blobs.
+ * encoding is required. All polygon rings are retained as concatenated, explicitly closed rings. Member
+ * counts are checked against the available payload. The top-level header still requires a
+ * prevalidated native-endian blob.
  * @throws
  * std::runtime_error For checked GP-header or top-level WKB-type mismatch; allocations may also
  * throw.
@@ -522,20 +540,32 @@ inline DecodedMultipolygon decode_multipolygon(const std::vector<uint8_t>& blob)
     uint32_t n_polys = detail::read_val<uint32_t>(blob.data(), offset);
     if (n_polys == 0)
         return mp;
-    // Read first polygon
-    offset += 1; // polygon byte order
-    uint32_t poly_type = detail::read_val<uint32_t>(blob.data(), offset);
-    (void)poly_type;
-    uint32_t n_rings = detail::read_val<uint32_t>(blob.data(), offset);
-    if (n_rings == 0)
-        return mp;
-    // Read first ring (outer ring)
-    uint32_t n_pts = detail::read_val<uint32_t>(blob.data(), offset);
-    mp.xs.resize(n_pts);
-    mp.ys.resize(n_pts);
-    for (uint32_t i = 0; i < n_pts; ++i) {
-        mp.xs[i] = detail::read_val<double>(blob.data(), offset);
-        mp.ys[i] = detail::read_val<double>(blob.data(), offset);
+    const auto require = [&](size_t bytes) {
+        if (offset > blob.size() || bytes > blob.size() - offset)
+            throw std::runtime_error("Truncated WKB MULTIPOLYGON");
+    };
+    for (uint32_t p = 0; p < n_polys; ++p) {
+        require(9);
+        offset += 1; // native little-endian polygon byte order
+        const auto poly_type = detail::read_val<uint32_t>(blob.data(), offset);
+        if (poly_type != WKB_POLYGON)
+            throw std::runtime_error("Expected WKB POLYGON member");
+        const auto n_rings = detail::read_val<uint32_t>(blob.data(), offset);
+        for (uint32_t r = 0; r < n_rings; ++r) {
+            require(4);
+            const auto n_pts = detail::read_val<uint32_t>(blob.data(), offset);
+            if (n_pts > (blob.size() - offset) / (2 * sizeof(double)))
+                throw std::runtime_error("Truncated WKB polygon ring");
+            const auto first = mp.xs.size();
+            for (uint32_t i = 0; i < n_pts; ++i) {
+                mp.xs.push_back(detail::read_val<double>(blob.data(), offset));
+                mp.ys.push_back(detail::read_val<double>(blob.data(), offset));
+            }
+            if (n_pts && (mp.xs.back() != mp.xs[first] || mp.ys.back() != mp.ys[first])) {
+                mp.xs.push_back(mp.xs[first]);
+                mp.ys.push_back(mp.ys[first]);
+            }
+        }
     }
     return mp;
 }

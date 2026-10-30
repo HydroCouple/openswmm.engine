@@ -1159,7 +1159,7 @@ static void read_links(sqlite3* db, SimulationContext& ctx, const std::string& s
 /**
  * @brief Restore catchment polygons, drainage references and hydrology parameters.
  *
- * Requires node/gage registries. Clears each reused polygon and decodes its first ring. Node outlet
+ * Requires node/gage registries. Clears each reused polygon and decodes all closed rings. Node outlet
  * takes precedence; catchment outlet names are retained for forward resolution. Stored width is ft,
  * slopes/routing fractions remain fractions, while area/infiltration/depression configuration
  * retains authored units. Optional scaling columns default through existing grow behavior. Does not

@@ -27,6 +27,7 @@
 #include "solver/SurfaceSolverFactory.hpp"
 #endif
 #include "../core/Constants.hpp"
+#include "../core/PolygonRings.hpp"
 #include "../core/DateTime.hpp"
 #include "../core/NodeCoupling2D.hpp"
 #include "coupling/PondModel.hpp"
@@ -1672,13 +1673,7 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
                         return false;
                     const auto& xs = px[sub];
                     const auto& ys = py[sub];
-                    bool in = false;
-                    for (std::size_t i = 0, j = xs.size() - 1; i < xs.size(); j = i++) {
-                        if (((ys[i] > y) != (ys[j] > y)) &&
-                            (x < (xs[j] - xs[i]) * (y - ys[i]) / (ys[j] - ys[i]) + xs[i]))
-                            in = !in;
-                    }
-                    return in;
+                    return polygon::contains(xs, ys, x, y);
                 };
                 // The mesh is SI metres here; the polygons are in the project's
                 // authored map units, which for a US-units project are feet

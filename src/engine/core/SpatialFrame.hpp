@@ -218,7 +218,8 @@ struct SpatialFrame {
     // Subcatchment polygon vertices
     // -----------------------------------------------------------------------
 
-    /** @brief Per-subcatchment polygon X vertices. */
+    /** @brief Per-subcatchment X vertices. Multiple rings are concatenated with
+     * explicit closures; the final ring may be open. */
     std::vector<std::vector<double>> subcatch_polygon_x;
 
     /** @brief Per-subcatchment polygon Y vertices. */
