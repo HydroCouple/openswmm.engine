@@ -1207,7 +1207,9 @@ std::vector<std::string> resolveSubsurface(SimulationContext& ctx, const MeshDat
     // G-X2: auto-enrolment — every node whose coordinates fall in a cell
     // and that no row names gets a direct-Darcy bed over the cell's area.
     // Rows override (their bed, or their EXCHANGE NO). Nodes without
-    // coordinates are simply not in any cell.
+    // coordinates are simply not in any cell. Outfalls are boundaries, not
+    // manholes: one that discharges onto the mesh books its net node flow as
+    // surface water, so an aquifer draw there overdraws the surface budget.
     if (cfg.options.node_auto && errs.empty()) {
         std::vector<char> named(static_cast<std::size_t>(ctx.n_nodes()), 0);
         for (const auto& b : cfg.node_beds)
@@ -1215,7 +1217,8 @@ std::vector<std::string> resolveSubsurface(SimulationContext& ctx, const MeshDat
                 named[static_cast<std::size_t>(b.node)] = 1;
         int enrolled = 0;
         for (int ni = 0; ni < ctx.n_nodes(); ++ni) {
-            if (named[static_cast<std::size_t>(ni)])
+            const auto ui = static_cast<std::size_t>(ni);
+            if (named[ui] || (ui < ctx.nodes.type.size() && ctx.nodes.type[ui] == NodeType::OUTFALL))
                 continue;
             const int c = locateNode(ni);
             if (c < 0)

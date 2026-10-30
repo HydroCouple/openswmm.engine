@@ -894,6 +894,39 @@ TEST(Aquifer2D, ExchangeNoOptsANodeOutAndRoundTrips) {
     finish(r);
 }
 
+// An outfall that discharges onto the mesh is a surface boundary, not a
+// manhole: the outfall exchange books the node's net flow as water to or from
+// the surface, so an aquifer draw there read as a withdrawal from the dry cell
+// and stopped the run ("1D outfall exceeded its reserved surface water
+// budget", the Bellinge deck at step 4). The draw is capped by the node's
+// inflow and delivered a step later, so a falling trickle (dry weather flow)
+// is what overdraws it. Auto-enrolment leaves outfalls out.
+TEST(Aquifer2D, OutfallsInsideTheMeshAreNotEnrolled) {
+    std::string body = manholeDeck("", "");
+    const std::string far = "O1  40.0  40.0\n";
+    body.replace(body.find(far), far.size(), "O1  1.0  8.0\n");
+    const std::string steady = "IN1  0:00  0.5\nIN1  1:00  0.5\n";
+    body.replace(body.find(steady), steady.size(), "IN1  0:00  0.002\nIN1  0:10  0.0\n");
+    body.insert(body.find("[REPORT]\nINPUT NO\n"), "[2D_VERTEX_NODE_MAP]\n3 O1 0.65 1\n\n");
+    DeckRun r = openDeck("enrol_outfall", body);
+    ASSERT_TRUE(r.opened);
+    ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK);
+    int n = -1;
+    ASSERT_EQ(swmm_gw2d_node_count(r.e, &n), SWMM_OK);
+    EXPECT_EQ(n, 1) << "only J1 enrols; O1 sits in cell 2";
+    char name[32] = {0};
+    ASSERT_EQ(swmm_gw2d_node_get(r.e, 0, name, 32, nullptr, nullptr, nullptr, nullptr), SWMM_OK);
+    EXPECT_STREQ(name, "J1");
+    ASSERT_EQ(swmm_engine_start(r.e, 1), SWMM_OK);
+    r.started = true;
+    double elapsed = 0.0;
+    int rc = SWMM_OK;
+    while ((rc = swmm_engine_step(r.e, &elapsed)) == SWMM_OK && elapsed > 0.0) {
+    }
+    EXPECT_EQ(rc, SWMM_OK) << "the run stopped at " << elapsed << " days";
+    finish(r);
+}
+
 // ---------------------------------------------------------------------------
 // G-X2 — the one-owner rule. A storage unit with Green-Ampt exfiltration
 // (Ksat 50 mm/h) inside a cell: enrolled, its exfiltration is silenced and
