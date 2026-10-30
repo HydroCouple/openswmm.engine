@@ -708,6 +708,7 @@ static const char* bc2d_type_token(const twoD::PendingBoundaryRow& r) {
 }
 
 static void emit2DMeshSections(FILE* f, const SimulationContext& ctx);
+static void emit2DModelSections(FILE* f, const SimulationContext& ctx);
 
 #ifdef OPENSWMM_HAS_2D
 // ---- [2D_INFILTRATION_OPTIONS] / _DEFAULTS / [2D_INFILTRATION] (plan §5.5) --
@@ -1366,18 +1367,22 @@ static bool write2DSections(FILE* f, const SimulationContext& ctx, const std::st
                 std::fprintf(sf, ";; OpenSWMM 2D mesh — written by the engine "
                                  "alongside the .inp save.\n");
                 emit2DMeshSections(sf, ctx);
-                if (sidecar.commit())
+                if (sidecar.commit()) {
+                    emit2DModelSections(f, ctx);
                     return true;
+                }
             }
             if (warnings)
                 warnings->push_back(sidecar.error());
             return false;
         }
+        emit2DModelSections(f, ctx);
         return true;
     }
 
     if (has_mesh)
         emit2DMeshSections(f, ctx);
+    emit2DModelSections(f, ctx);
     return true;
 }
 
@@ -1391,9 +1396,8 @@ static bool write2DSections(FILE* f, const SimulationContext& ctx, const std::st
  * @brief Emit current mesh geometry and associated authored spatial sections to one stream.
  *
  * Requires non-NULL twod_io.mesh/options and aligned valid mesh indices. Writes geometry, maps,
- * boundary/conveyance/initial quality plus supported infiltration/GW/surface-quality/aquifer
- * authoring. Coordinates remain stored units; emits SI marker when mesh_units_si or
- * mesh_scaled_to_si. Caller chooses inline INP or external mesh stream once. Does not advance
+ * boundary/conveyance/initial quality plus infiltration authoring. Coordinates remain stored
+ * units; emits SI marker when mesh_units_si or mesh_scaled_to_si. Caller chooses inline INP or external mesh stream once. Does not advance
  * solvers, rebase nested GW FILE paths or check individual fprintf errors.
  *
  * @param[in,out] f Borrowed non-NULL writable FILE stream; caller owns flush/error checks/close and
@@ -1667,13 +1671,25 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
     // whichever single destination this function was pointed at. THE ONLY CALL
     // SITE — see emit2DInfilSections.
     emit2DInfilSections(f, ctx);
+#endif
+}
 
+/**
+ * @brief Emit the 2D model sections that the reader takes from the main .inp only.
+ *
+ * [GW_*], [2D_COVERAGES]/[2D_LOADINGS]/[2D_CURB_LENGTH] and [2D_AQUIFER*]. Always the main .inp
+ * stream, after the mesh sections or the [2D_MESH_FILE] reference; never the mesh sidecar, whose
+ * reader ignores them.
+ *
+ * @param[in,out] f Borrowed non-NULL writable main .inp stream; caller owns flush/error checks.
+ * @param[in] ctx Borrowed coherent authored model and nonowning twod_io attachments.
+ */
+static void emit2DModelSections(FILE* f, const SimulationContext& ctx) {
+#ifdef OPENSWMM_HAS_2D
     // ---- U4 (2026-09-07) — [GW_*] subsurface transport --------------------
-    // Written to the MAIN .inp, never the mesh sidecar: these are model
-    // physics, not per-cell mesh geometry, and [2D_QUADS] must already be in
-    // hand before a [GW_*] CELL/EDGE row can be read (D-A15) — which the
-    // section order here guarantees, since the mesh sections precede this
-    // call in write2DSections.
+    // Model physics, not per-cell mesh geometry. [2D_QUADS] must already be in
+    // hand before a [GW_*] CELL/EDGE row can be read (D-A15): the mesh
+    // sections, or the [2D_MESH_FILE] reference, precede this call.
     emitGwTransportSections(f, ctx);
     emitSurfaceQualitySections(f, ctx); // S7
 
@@ -1690,6 +1706,9 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
         if (!aq.empty())
             std::fputs(aq.c_str(), f);
     }
+#else
+    (void)f;
+    (void)ctx;
 #endif
 }
 

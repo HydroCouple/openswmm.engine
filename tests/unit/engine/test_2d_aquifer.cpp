@@ -74,7 +74,9 @@
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_forcing.h> // G-X4
 #include <openswmm/engine/openswmm_gw2d.h>
+#include <openswmm/engine/openswmm_gw_transport.h>
 #include <openswmm/engine/openswmm_model.h>
+#include <openswmm/engine/openswmm_sq2d.h>
 
 #include "core/SWMMEngine.hpp"
 #include "core/ProcessPerf.hpp"
@@ -439,6 +441,67 @@ TEST(Aquifer2D, SectionsRoundTripThroughTheWriter) {
     ASSERT_EQ(swmm_gw2d_row_get_property(r2.e, 0, "HG0", &hg0_1), SWMM_OK);
     EXPECT_DOUBLE_EQ(hg0_1, hg0_0);
     finish(r2);
+}
+
+// An external mesh file carries geometry and the per-cell mesh sections only;
+// the reader takes the aquifer, [GW_*] and mesh land-use rows from the .inp
+// alone. The writer used to put them in the .2dm, so the next open dropped
+// them and a second save lost them for good (the Bellinge groundwater deck).
+TEST(Aquifer2D, ModelSectionsSurviveTwoSavesWithAnExternalMesh) {
+    const fs::path dir = kOutDir / "ext_mesh";
+    fs::create_directories(dir);
+    {
+        std::ofstream f(dir / "pan.2dm");
+        f << "[2D_VERTICES]\n0.0 0.0 -10.0\n10.0 0.0 -10.0\n10.0 10.0 -10.0\n0.0 10.0 -10.0\n\n"
+             "[2D_TRIANGLES]\n0 1 2 0.03 0.0 PAD\n0 2 3 0.03 0.0\n";
+    }
+    {
+        std::ofstream f(dir / "model.inp");
+        f << "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\n"
+             "START_DATE 01/01/2026\nSTART_TIME 00:00:00\nEND_DATE 01/01/2026\n"
+             "END_TIME 00:30:00\nREPORT_STEP 00:01:00\nROUTING_STEP 5\n\n"
+             "[JUNCTIONS]\nJ1 0.0 3.0 0 0 0\n\n[OUTFALLS]\nO1 -1.0 FREE NO\n\n"
+             "[CONDUITS]\nC1 J1 O1 30.0 0.013 0 0 0\n\n[XSECTIONS]\nC1 CIRCULAR 0.5 0 0 0 1\n\n"
+             "[POLLUTANTS]\nP1 MG/L 0 0 0 0 NO * 0 0 0\n\n[LANDUSES]\nPad 0 0 0\n\n"
+             "[WASHOFF]\nPad P1 EXP 0.1 1.0 0 0\n\n"
+             "[2D_OPTIONS]\nMAX_TIMESTEP 5\nREPORT_2D NO\n\n[2D_MESH_FILE]\nFILE pan.2dm\n\n"
+             "[2D_COVERAGES]\nTAG PAD Pad 100\n\n[2D_LOADINGS]\nTAG PAD P1 50\n\n"
+             "[2D_AQUIFER]\n*  36.0  4.0  0.45  0.10  2.0  HG0 1.0\n\n"
+             "[2D_AQUIFER_NODE]\nJ1  AUTO  EXCHANGE NO\n\n"
+             "[GW_SOURCES]\nW1  CELL 2  FLOW 0.0005  P1 CONC 100\n";
+    }
+    const auto counts = [](SWMM_Engine e) {
+        int rows = -1, beds = -1, cov = -1, load = -1;
+        swmm_gw2d_row_count(e, &rows);
+        swmm_gw2d_node_count(e, &beds);
+        swmm_2d_coverage_count(e, &cov);
+        swmm_2d_loading_count(e, &load);
+        return std::vector<int>{rows, beds, swmm_gw_source_count(e), cov, load};
+    };
+    const std::vector<int> want{1, 1, 1, 1, 1}; // aquifer, bed, source, coverage, loading
+
+    fs::path inp = dir / "model.inp";
+    for (const char* pass : {"saved1", "saved2"}) {
+        SCOPED_TRACE(pass);
+        DeckRun r = openFile(inp, std::string("ext_") + pass);
+        ASSERT_TRUE(r.opened);
+        EXPECT_EQ(counts(r.e), want) << "rows lost on the way into " << pass;
+        fs::create_directories(dir / pass);
+        inp = dir / pass / "model.inp";
+        ASSERT_EQ(swmm_model_write(r.e, inp.string().c_str()), SWMM_OK);
+        finish(r);
+        const std::string text = readAll(inp), mesh = readAll(dir / pass / "pan.2dm");
+        for (const char* sec : {"[2D_AQUIFER]", "[2D_AQUIFER_NODE]", "[GW_SOURCES]",
+                                "[2D_COVERAGES]", "[2D_LOADINGS]"}) {
+            EXPECT_NE(text.find(sec), std::string::npos) << sec << " missing from the .inp";
+            EXPECT_EQ(mesh.find(sec), std::string::npos) << sec << " written to the .2dm";
+        }
+        EXPECT_NE(mesh.find("PAD"), std::string::npos) << "the cell tag stays with the mesh";
+    }
+    DeckRun r = openFile(inp, "ext_reopened");
+    ASSERT_TRUE(r.opened);
+    EXPECT_EQ(counts(r.e), want) << "rows lost after two saves";
+    finish(r);
 }
 
 // ---------------------------------------------------------------------------
