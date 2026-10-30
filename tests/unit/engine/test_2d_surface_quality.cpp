@@ -476,6 +476,41 @@ TEST(SurfaceQuality2D_S7, LedgerClosesUnderRainWithSweepingAndBmp) {
     close(r);
 }
 
+// With no buildup function, washoff is not limited by the store, and a step
+// that washes off more than the cell holds books only the excess as buildup.
+// The legacy subcatchment rule (landuse.c) books the whole step, counting the
+// initial store twice; on the mesh that left the Bellinge washoff summary
+// 38 kg out.
+TEST(SurfaceQuality2D_S7, LedgerClosesWhenWashoffOverdrawsANoBuildupStore) {
+    DeckOpts o;
+    o.node = "J1";
+    o.z_pan = 5.0;
+    o.h0 = 0.0;
+    o.rain = true;
+    o.quality = "\n[POLLUTANTS]\nTSS  MG/L  0  0  0  0  NO  *  0.0  0  0\n"
+                "\n[LANDUSES]\nLU1  0  0  0\n"
+                "\n[WASHOFF]\nLU1  TSS  EXP  50  1.0  0  0\n";
+    o.coverages = "\n[2D_COVERAGES]\n*  LU1  100\n\n[2D_LOADINGS]\n*  TSS  10\n";
+    o.end_time = "04:00:00";
+    DeckRun r = run("_s7_nobuildup_overdraw", deck(o));
+    ASSERT_TRUE(r.ok) << "open rc " << r.rc_open;
+    const auto& router = cpp(r.e).surfaceRouter2D();
+    const auto& sq = router.surfaceQuality();
+    ASSERT_TRUE(sq.active());
+    const auto& mesh = router.mesh();
+    double final_store = 0.0;
+    for (int c = 0; c < sq.nCells(); ++c)
+        final_store +=
+            sq.buildupPerArea(c, 0) * mesh.tri_area[static_cast<std::size_t>(c)] / 4046.8564224;
+    const double lhs = sq.ledInitBuildup()[0] + sq.ledBuildup()[0] - sq.ledWashoff()[0] -
+                       sq.ledBmp()[0] - sq.ledSweeping()[0];
+    const double scale = sq.ledInitBuildup()[0] + sq.ledBuildup()[0];
+    ASSERT_GT(sq.ledInitBuildup()[0], 0.0);
+    EXPECT_GT(sq.ledBuildup()[0], 0.0) << "the washoff must overdraw the store, else this is vacuous";
+    EXPECT_NEAR(lhs, final_store, 1e-10 * scale) << "init + net - washed - BMP - swept == store";
+    close(r);
+}
+
 // ---------------------------------------------------------------------------
 // 4. Ownership warnings.
 // ---------------------------------------------------------------------------
