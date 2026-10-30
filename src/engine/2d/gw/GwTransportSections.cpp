@@ -951,12 +951,15 @@ std::vector<std::string> resolveGwTransport(SimulationContext& ctx, const MeshDa
         if (r.by_xy) {
             // Nearest cell centroid — the same rule the mesh editor uses to
             // place a picked point, and cell-generic (centroids are true-area).
+            // From the vertices: this runs at open, before MeshBuilder fills
+            // tri_cx/tri_cy, which are still zero here.
             int best = -1;
             double best_d2 = 0.0;
             for (int c = 0; c < n_cells; ++c) {
-                const auto uc = static_cast<std::size_t>(c);
-                const double dx = mesh.tri_cx[uc] - r.x;
-                const double dy = mesh.tri_cy[uc] - r.y;
+                double cx = 0.0, cy = 0.0;
+                mesh.cell_centroid_xy(c, cx, cy);
+                const double dx = cx - r.x;
+                const double dy = cy - r.y;
                 const double d2 = dx * dx + dy * dy;
                 if (best < 0 || d2 < best_d2) {
                     best = c;

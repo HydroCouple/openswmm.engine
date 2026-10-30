@@ -432,6 +432,22 @@ TEST(GwTransportAuthoring, SpeciesAndSeriesAreResolved) {
     }
 }
 
+// [GW_SOURCES] XY takes the nearest cell centroid. It was resolved at open,
+// before the mesh builder fills the centroids, so every XY source landed in
+// the first cell (the Bellinge well). (5, 5) is the centroid of the quad.
+TEST(GwTransportAuthoring, XySourceLandsInTheNearestCell) {
+    DeckRun r =
+        openDeck("xy_source", deck("[GW_SOURCES]\nWell XY 5 5 FLOW 0.001 Cu CONC 10\n\n"));
+    ASSERT_TRUE(r.opened) << r.eng->context().error_message;
+    char name[32] = {0}, tag[32] = {0}, series[32] = {0};
+    int scope = -1, cell = -1;
+    double flow = 0.0;
+    ASSERT_EQ(swmm_gw_source_get(r.e, 0, name, 32, &scope, tag, 32, &cell, &flow, series, 32),
+              SWMM_OK);
+    EXPECT_EQ(cell, 1) << "the quad, zero-based cell 1, holds (5, 5)";
+    finish(r);
+}
+
 // ---------------------------------------------------------------------------
 // G4 — one warning, results unchanged
 // ---------------------------------------------------------------------------

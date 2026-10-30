@@ -175,8 +175,7 @@ bool buildMeshTopologyCancellable(MeshData& mesh, const std::function<bool(int)>
             double x2 = mesh.vx[v2], y2 = mesh.vy[v2], z2 = mesh.vz[v2];
 
             // Centroid
-            mesh.tri_cx[t] = (x0 + x1 + x2) / 3.0;
-            mesh.tri_cy[t] = (y0 + y1 + y2) / 3.0;
+            mesh.cell_centroid_xy(t, mesh.tri_cx[t], mesh.tri_cy[t]);
             mesh.tri_cz[t] = (z0 + z1 + z2) / 3.0;
 
             // Area via cross product: 0.5 * ||(v1-v0) × (v2-v0)||
@@ -201,17 +200,7 @@ bool buildMeshTopologyCancellable(MeshData& mesh, const std::function<bool(int)>
                 0.5 * ((x[2] - x[0]) * (y[3] - y[0]) - (x[3] - x[0]) * (y[2] - y[0]));
             const double a1 = std::abs(a1s), a2 = std::abs(a2s);
             const double area = a1 + a2;
-            const double c1x = (x[0] + x[1] + x[2]) / 3.0;
-            const double c1y = (y[0] + y[1] + y[2]) / 3.0;
-            const double c2x = (x[0] + x[2] + x[3]) / 3.0;
-            const double c2y = (y[0] + y[2] + y[3]) / 3.0;
-            if (area > 0.0) {
-                mesh.tri_cx[t] = (a1 * c1x + a2 * c2x) / area;
-                mesh.tri_cy[t] = (a1 * c1y + a2 * c2y) / area;
-            } else {
-                mesh.tri_cx[t] = 0.25 * (x[0] + x[1] + x[2] + x[3]);
-                mesh.tri_cy[t] = 0.25 * (y[0] + y[1] + y[2] + y[3]);
-            }
+            mesh.cell_centroid_xy(t, mesh.tri_cx[t], mesh.tri_cy[t]);
             mesh.tri_cz[t] = 0.25 * (z[0] + z[1] + z[2] + z[3]);
             mesh.tri_area[t] = area;
         }
