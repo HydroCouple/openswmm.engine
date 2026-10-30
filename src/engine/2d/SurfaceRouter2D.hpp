@@ -898,6 +898,22 @@ public:
      */
     const GwTransportData& gwTransport() const noexcept { return gw_; }
     /**
+     * @brief Follow a pollutant rename into every authored 2D and groundwater row.
+     *
+     * Updates [2D_LOADINGS], [2D_INITIAL_QUALITY], [2D_INITIAL_BED_QUALITY], [2D_BOUNDARY_QUALITY],
+     * [GW_SORPTION], [GW_INITIAL_QUALITY], [GW_BOUNDARY_QUALITY], [GW_SOURCES] species terms and
+     * REPORT_2D_SPECIES. Names compare case-insensitively, as the readers resolve them.
+     * @param[in] from Previous pollutant name.
+     * @param[in] to New pollutant name.
+     */
+    void renameSpecies(const std::string& from, const std::string& to);
+    /**
+     * @brief Follow a land-use rename into the [2D_COVERAGES] rows.
+     * @param[in] from Previous land-use name; compared case-insensitively.
+     * @param[in] to New land-use name.
+     */
+    void renameLandUse(const std::string& from, const std::string& to);
+    /**
      * @brief S7: cell coverages / buildup / washoff / sweeping (authoring + state).
      *
      * @details Borrow the owned land-use coverage/buildup/washoff/sweeping authoring and runtime

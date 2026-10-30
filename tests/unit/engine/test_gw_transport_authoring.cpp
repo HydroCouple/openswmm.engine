@@ -52,6 +52,8 @@
 #include <openswmm/engine/openswmm_2d.h>
 #include <openswmm/engine/openswmm_gw_transport.h>
 #include <openswmm/engine/openswmm_model.h>
+#include <openswmm/engine/openswmm_pollutants.h>
+#include <openswmm/engine/openswmm_quality.h>
 
 #include "core/SWMMEngine.hpp"
 
@@ -446,6 +448,39 @@ TEST(GwTransportAuthoring, XySourceLandsInTheNearestCell) {
               SWMM_OK);
     EXPECT_EQ(cell, 1) << "the quad, zero-based cell 1, holds (5, 5)";
     finish(r);
+}
+
+// Renaming a pollutant or land use must reach every 2D and groundwater row that
+// names it; a stale name makes the saved file refuse to open (unknown species).
+TEST(GwTransportAuthoring, RenamesReachEvery2DAndGroundwaterRow) {
+    DeckRun r = openDeck(
+        "rename",
+        deck("[LANDUSES]\nPad 0 0 0\n\n[WASHOFF]\nPad Cu EXP 0.1 1.0 0 0\n\n"
+             "[2D_COVERAGES]\nTAG PAN Pad 100\n\n[2D_LOADINGS]\nTAG PAN Cu 50\n\n"
+             "[2D_INITIAL_QUALITY]\n*  Cu  2.0\n\n[2D_BOUNDARY_QUALITY]\n0 0 Cu 1.0\n\n"
+             "[GW_SORPTION]\n*  Cu  0.5\n\n[GW_INITIAL_QUALITY]\n*  SAT  Cu  1.0\n\n"
+             "[GW_SOURCES]\nWell CELL 1 FLOW 0.001 Cu CONC 10\n\n",
+             "REPORT_2D_SPECIES Cu\n"));
+    ASSERT_TRUE(r.opened) << r.eng->context().error_message;
+    ASSERT_EQ(swmm_pollutant_rename(r.e, 0, "Zn"), SWMM_OK);
+    ASSERT_EQ(swmm_landuse_rename(r.e, 0, "Lot"), SWMM_OK);
+    const fs::path saved = kOutDir / "rename_saved.inp";
+    ASSERT_EQ(swmm_model_write(r.e, saved.string().c_str()), SWMM_OK);
+    finish(r);
+
+    const std::string text = readAll(saved);
+    for (const char* sec : {"[2D_COVERAGES]", "[2D_LOADINGS]", "[2D_INITIAL_QUALITY]",
+                            "[2D_BOUNDARY_QUALITY]", "[GW_SORPTION]", "[GW_INITIAL_QUALITY]",
+                            "[GW_SOURCES]", "[2D_OPTIONS]"}) {
+        const std::string body = section(text, sec);
+        EXPECT_EQ(body.find("Cu"), std::string::npos) << sec << " kept the old pollutant:\n" << body;
+        EXPECT_EQ(body.find("Pad"), std::string::npos) << sec << " kept the old land use";
+    }
+    EXPECT_NE(section(text, "[2D_COVERAGES]").find("Lot"), std::string::npos);
+    EXPECT_NE(section(text, "[GW_SOURCES]").find("Zn"), std::string::npos);
+    DeckRun again = openDeck("rename_reopen", text);
+    EXPECT_TRUE(again.opened) << again.eng->context().error_message;
+    finish(again);
 }
 
 // ---------------------------------------------------------------------------

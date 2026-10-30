@@ -4144,4 +4144,49 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
     mb.final_storage = storage;
 }
 
+
+namespace {
+bool sameName(const std::string& a, const std::string& b) {
+    return a.size() == b.size() &&
+           std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
+               return std::toupper(static_cast<unsigned char>(x)) ==
+                      std::toupper(static_cast<unsigned char>(y));
+           });
+}
+} // namespace
+
+void SurfaceRouter2D::renameSpecies(const std::string& from, const std::string& to) {
+    const auto follow = [&](std::string& name) {
+        if (sameName(name, from))
+            name = to;
+    };
+    for (auto& r : surface_quality_.loading_rows)
+        follow(r.species);
+    for (auto& r : pending_iq_rows_)
+        follow(r.species);
+    for (auto& r : pending_ibq_rows_)
+        follow(r.species);
+    for (auto& r : pending_bq_rows_)
+        follow(r.species);
+    for (auto& r : gw_.sorption)
+        follow(r.species);
+    for (auto& r : gw_.initial_quality)
+        follow(r.species);
+    for (auto& r : gw_.boundary_quality)
+        follow(r.species);
+    for (auto& src : gw_.sources)
+        for (auto& t : src.species)
+            follow(t.species);
+    gw_.invalidateAuthoringIndexes(); // the initial-quality index is keyed by species
+    for (auto& name : options_.report_2d_species)
+        follow(name);
+}
+
+void SurfaceRouter2D::renameLandUse(const std::string& from, const std::string& to) {
+    for (auto& r : surface_quality_.coverage_rows)
+        for (auto& use : r.uses)
+            if (sameName(use.first, from))
+                use.first = to;
+}
+
 } // namespace openswmm::twoD
