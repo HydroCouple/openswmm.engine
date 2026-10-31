@@ -588,8 +588,12 @@ void QualitySolver::assembleExternalLoads(SimulationContext& ctx, double dt) {
             // legacy floors), not from re-summing the quality-side parts.
             if (!(ui < qual_vol_lat_neg_.size() && qual_vol_lat_neg_[ui] < 0.0))
                 continue;
+            // lat_flow carries the signed 2D coupling too; take it back out.
+            const double coupling =
+                ui < nodes.coupling_inflow.size() ? nodes.coupling_inflow[ui] : 0.0;
             const double lat_net_pos =
-                (ui < nodes.lat_flow.size()) ? std::max(0.0, nodes.lat_flow[ui]) * dt : 0.0;
+                (ui < nodes.lat_flow.size()) ? std::max(0.0, nodes.lat_flow[ui] - coupling) * dt
+                                             : 0.0;
             const double corr = lat_net_pos - qual_vol_lat_[ui];
             if (corr < 0.0)
                 nodes.qual_vol_in[ui] += corr;

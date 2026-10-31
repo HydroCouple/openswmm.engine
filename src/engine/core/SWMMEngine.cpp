@@ -5994,14 +5994,19 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
             transport::bookMsxSystemOutflow(ctx_, j, quality_outflow, quality_flooding, dt_routing);
         }
         // Negative lateral flow withdraws the current mixed concentration.
-        // Its water has already been booked by the inflow assembly.
-        if (ctx_.nodes.lat_flow[uj] < 0.0 && !quality_.fvTransportAccepted()) {
+        // Its water has already been booked by the inflow assembly. The 1D ->
+        // 2D spill never entered the quality denominator, so it leaves in
+        // full; the rest of the lateral flow keeps legacy's net rule.
+        const double spill = std::max(0.0, -ctx_.nodes.coupling_inflow[uj]);
+        const double lat_withdrawal =
+            spill + std::max(0.0, -(ctx_.nodes.lat_flow[uj] - ctx_.nodes.coupling_inflow[uj]));
+        if (lat_withdrawal > 0.0 && !quality_.fvTransportAccepted()) {
             for (int p = 0; p < np; ++p) {
                 const auto up = static_cast<std::size_t>(p);
                 ctx_.mass_balance.qual_routing_outflow[up] +=
-                    -ctx_.nodes.lat_flow[uj] * ctx_.nodes.conc[uj * np + up] * dt_routing;
+                    lat_withdrawal * ctx_.nodes.conc[uj * np + up] * dt_routing;
             }
-            transport::bookMsxSystemOutflow(ctx_, j, -ctx_.nodes.lat_flow[uj], false, dt_routing);
+            transport::bookMsxSystemOutflow(ctx_, j, lat_withdrawal, false, dt_routing);
         }
 
         // Storage losses are separate volumes (legacy removeStorageLosses,
