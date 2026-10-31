@@ -832,6 +832,25 @@ void registerGwTransportSections(GwTransportData& gw, input::SectionRegistry& re
  * advance time. Errors may coexist with loaded/ resolved mutations; allocation/file exceptions
  * can propagate. Exclusive authoring/resolve access.
  */
+int nearestCell(const MeshData& mesh, double x, double y) {
+    // Nearest cell centroid — the same rule the mesh editor uses to place a
+    // picked point, and cell-generic (centroids are true-area). From the
+    // vertices: XY rows resolve at open, before MeshBuilder fills
+    // tri_cx/tri_cy, which are still zero there.
+    int best = -1;
+    double best_d2 = 0.0;
+    for (int c = 0; c < mesh.n_cells(); ++c) {
+        double cx = 0.0, cy = 0.0;
+        mesh.cell_centroid_xy(c, cx, cy);
+        const double d2 = (cx - x) * (cx - x) + (cy - y) * (cy - y);
+        if (best < 0 || d2 < best_d2) {
+            best = c;
+            best_d2 = d2;
+        }
+    }
+    return best;
+}
+
 std::vector<std::string> resolveGwTransport(SimulationContext& ctx, const MeshData& mesh,
                                             GwTransportData& gw) {
     std::vector<std::string> errs;
@@ -949,23 +968,7 @@ std::vector<std::string> resolveGwTransport(SimulationContext& ctx, const MeshDa
     }
     for (auto& r : gw.sources) {
         if (r.by_xy) {
-            // Nearest cell centroid — the same rule the mesh editor uses to
-            // place a picked point, and cell-generic (centroids are true-area).
-            // From the vertices: this runs at open, before MeshBuilder fills
-            // tri_cx/tri_cy, which are still zero here.
-            int best = -1;
-            double best_d2 = 0.0;
-            for (int c = 0; c < n_cells; ++c) {
-                double cx = 0.0, cy = 0.0;
-                mesh.cell_centroid_xy(c, cx, cy);
-                const double dx = cx - r.x;
-                const double dy = cy - r.y;
-                const double d2 = dx * dx + dy * dy;
-                if (best < 0 || d2 < best_d2) {
-                    best = c;
-                    best_d2 = d2;
-                }
-            }
+            const int best = nearestCell(mesh, r.x, r.y);
             if (best < 0)
                 errs.push_back("[GW_SOURCES] '" + r.name +
                                "' XY cannot be placed: the mesh has no cells.");

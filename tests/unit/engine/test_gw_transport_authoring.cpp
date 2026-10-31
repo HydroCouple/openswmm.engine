@@ -43,6 +43,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -448,6 +449,41 @@ TEST(GwTransportAuthoring, XySourceLandsInTheNearestCell) {
               SWMM_OK);
     EXPECT_EQ(cell, 1) << "the quad, zero-based cell 1, holds (5, 5)";
     finish(r);
+}
+
+// An XY source's authored location can be read back and set through the API,
+// so an editor can show and keep it instead of saving it as CELL.
+TEST(GwTransportAuthoring, XyLocationReadsBackAndSets) {
+    DeckRun r = openDeck("xy_api", deck("[GW_SOURCES]\nWell XY 15 2 FLOW 0.001 Cu CONC 10\n"
+                                        "Pump CELL 1 FLOW -0.001\n\n"));
+    ASSERT_TRUE(r.opened) << r.eng->context().error_message;
+    int by_xy = -1;
+    double x = 0.0, y = 0.0;
+    ASSERT_EQ(swmm_gw_source_xy_get(r.e, 0, &by_xy, &x, &y), SWMM_OK);
+    EXPECT_EQ(by_xy, 1);
+    EXPECT_DOUBLE_EQ(x, 15.0);
+    EXPECT_DOUBLE_EQ(y, 2.0);
+    ASSERT_EQ(swmm_gw_source_xy_get(r.e, 1, &by_xy, &x, &y), SWMM_OK);
+    EXPECT_EQ(by_xy, 0) << "a CELL row is not XY";
+    EXPECT_EQ(swmm_gw_source_xy_get(r.e, 2, &by_xy, &x, &y), SWMM_ERR_BADINDEX);
+
+    // Moving the CELL row to (5, 5) makes it XY and places it in the quad.
+    ASSERT_EQ(swmm_gw_source_xy_set(r.e, 1, 5.0, 5.0), SWMM_OK);
+    char name[32] = {0}, tag[32] = {0}, series[32] = {0};
+    int scope = -1, cell = -1;
+    double flow = 0.0;
+    ASSERT_EQ(swmm_gw_source_get(r.e, 1, name, 32, &scope, tag, 32, &cell, &flow, series, 32),
+              SWMM_OK);
+    EXPECT_EQ(cell, 1);
+    EXPECT_DOUBLE_EQ(flow, -0.001) << "only the location changes";
+    EXPECT_EQ(swmm_gw_source_xy_set(r.e, 1, std::nan(""), 5.0), SWMM_ERR_BADPARAM);
+
+    const fs::path saved = kOutDir / "xy_api_saved.inp";
+    ASSERT_EQ(swmm_model_write(r.e, saved.string().c_str()), SWMM_OK);
+    finish(r);
+    const std::string rows = section(readAll(saved), "[GW_SOURCES]");
+    EXPECT_NE(rows.find("XY 15 2"), std::string::npos) << rows;
+    EXPECT_NE(rows.find("XY 5 5"), std::string::npos) << rows;
 }
 
 // Renaming a pollutant or land use must reach every 2D and groundwater row that
