@@ -1704,6 +1704,9 @@ class GroundwaterVariable(IntEnum):
     ET_POTENTIAL = 27
     ET_STRESS = 28
     ET_REFRESH = 29
+    COMPLETED_TIME = 30
+    PENDING_IN = 31
+    PENDING_OUT = 32
 
 
 class GroundwaterLedger(IntEnum):

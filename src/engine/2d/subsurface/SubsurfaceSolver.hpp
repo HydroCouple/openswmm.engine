@@ -30,7 +30,7 @@
  * | `assignTiers` | every `syncAndRebuild` | Δt_g / Δt_u per cell → tier lists |
  * | `fireGwFaces(tier, dt)` | face phase of a due tier | lateral Darcy → ±ΔV side accumulators |
  * | `fireGwCells(tier, dt)` | cell phase of a due tier | gather, closure, node/deep/ET/Dunne |
- * | `settle()` | before any re-tier | flush every accumulator |
+ * | `settle()` | before any re-tier | preserve flux accumulators; compact pending surface cells |
  *
  * **G-A** — a GW cell's tier comes only from `min(Δt_g, Δt_u)`. The surface's
  * pin-to-tier-0 rule for coupling cells is deliberately NOT applied here: a
@@ -77,12 +77,15 @@
 #include "../gw/GwSourceForcing.hpp"
 #include "../gw/GwBoundaryForcing.hpp"
 #include "SubsurfaceData.hpp"
+#include "GwClockTelemetry.hpp"
+#include "GwClockState.hpp"
 #include "SubsurfaceTransportState.hpp"
 #include "../coupling/RuntimeCoupling.hpp" // T7.1
 
 #include <algorithm>
 #include "../heat/GroundHeat.hpp"
 #include <string>
+#include <limits>
 #include <vector>
 
 namespace openswmm::detail {
@@ -420,7 +423,7 @@ public:
      * that separately. General finite input/result validation is absent and noexcept
      * callbacks/helpers must not throw.
      */
-    double bookLinkGain(int cell, int species, double vol) noexcept {
+    double bookLinkGain(int cell, int species, double vol) {
         if (!tr_.active() || !(vol > 0.0) || cell < 0 || cell >= tr_.n_cells || species < 0 ||
             species >= tr_.n_species)
             return 0.0;
@@ -432,8 +435,8 @@ public:
         const double mob = tr_.dissolvedFraction(species, cell, state_.theta_s[u]);
         double m = vol * (tr_.sat_mass[k] / v) * mob;
         if (heat_.active() && species == tr_.temp_row) {
-            heat_link_out_volume_[u] += vol;
-            bookPresetHeatOut(cell, vol, m);
+            bookClockAmount(cell, GwSlot::heat_link_volume, heat_link_out_volume_, u, vol);
+            bookPresetHeatOut(cell, vol, m, true);
         }
         if (!tr_.signedRow(species)) {
             const double avail =
@@ -442,8 +445,8 @@ public:
         }
         if (m == 0.0)
             return 0.0;
-        bookPresetPorewaterOut(cell, species, m);
-        tr_.lout_mass[k] += m;
+        bookPresetPorewaterOut(cell, species, m, true);
+        bookClockAmount(cell, GwSlot::link_export, tr_.lout_mass, k, m);
         if (tr_.n_layers > 0 && heat_.active())
             refreshSigmaPorewaterReservations(cell);
         return m;
@@ -475,7 +478,7 @@ public:
      * water or set the shared pending flag. Requires allocated matching arrays and exclusive
      * access to the addressed cell/row slot; independent slots may be produced separately.
      */
-    void bookInfiltrationMass(int cell, int species, double mass) noexcept;
+    void bookInfiltrationMass(int cell, int species, double mass);
     /**
      * @brief Internal reviewed-source ownership. Must bind before pending exchange.
      *
@@ -670,7 +673,8 @@ public:
      * nodes.
      */
     void fireGwCells(int tier, double dt, SurfaceStateData& surf, double time = 0.0,
-                     double accepted_end = -1.0);
+                     double accepted_end = -1.0,
+                     GwFiringOrigin origin = GwFiringOrigin::direct);
     /**
      * @brief Borrow mutable copied runtime source prescriptions, receipts and derived lookups.
      * @return Solver-owned RuntimeSources reference. Caller retains no ownership and must
@@ -809,6 +813,8 @@ public:
      * here.
      */
     const std::vector<long>& tierFirings() const noexcept { return tier_firings_; }
+    /// Optional process-local cadence observations; never part of restart state.
+    const GwClockTelemetry& clockTelemetry() const noexcept { return clock_telemetry_; }
 
     // ---- surface ↔ subsurface --------------------------------------------
 
@@ -824,7 +830,7 @@ public:
      * mass or canonical storage is changed. Independent cells can be booked concurrently;
      * competing producers must serialize access to the same slot.
      */
-    void bookInfiltrationFromSurface(int cell, double vol_m3) noexcept;
+    void bookInfiltrationFromSurface(int cell, double vol_m3);
     /**
      * @brief Publish the aquifer's held rate; publication never restores spent storage.
      *
@@ -859,7 +865,7 @@ public:
      * accepted water with species/provenance and updates surface storage; no whole coupled
      * transaction occurs.
      */
-    double acceptSurfaceInfiltration(int cell, double requested, bool prescribed = false) noexcept;
+    double acceptSurfaceInfiltration(int cell, double requested, bool prescribed = false);
     /**
      * @brief Compute current unreserved unsaturated receiver capacity.
      * @param[in] cell Zero-based receiver cell; inactive or uncovered cells return zero.
@@ -898,7 +904,7 @@ public:
      * producer access, including the shared pending flag; not a thread-safe cell-only producer
      * interface.
      */
-    void bookLinkSeepage(int cell, double vol_m3) noexcept;
+    void bookLinkSeepage(int cell, double vol_m3);
     /**
      * @brief Accepted leaking reach, with a linear bed elevation over its clipped length. Splits
      * water and producer quality at actual SIGMA interfaces.
@@ -1027,7 +1033,7 @@ public:
      * or set the shared pending flag. Requires allocated matching arrays and exclusive access to
      * the addressed cell/row slot; independent slots may be produced separately.
      */
-    void bookLinkSeepageMass(int cell, int species, double mass) noexcept;
+    void bookLinkSeepageMass(int cell, int species, double mass);
 
     /**
      * @brief Node ↔ aquifer exchange, evaluated at tier-0 cadence against the batch-frozen 1D
@@ -1339,6 +1345,26 @@ public:
      * or engine calendar update occurs.
      */
     void checkpoint(detail::CompletedSourceArchive&, bool model); // internal accepted-boundary IO
+    bool independentClock() const noexcept { return active() && options_.independent_clock; }
+    void prepareClock(double initial_time = 0.0);
+    void advanceClock(double end, SurfaceStateData& surface, bool gw_only, bool finish = false,
+                      const std::function<void()>& publish = {});
+    void landClockCells(std::span<const int> mesh_cells, SurfaceStateData& surface);
+    void refreshClockAfterEdit(SurfaceStateData&);
+    void setProducerEnd(double time) noexcept { producer_end_ = time; }
+    const GwClockState* clockState() const noexcept {
+        return clock_state_ ? &*clock_state_ : nullptr;
+    }
+    std::pair<double, double> pendingClockWater(int cell, double through = 1e30) const;
+    int clockRung(int cell) const;
+    bool hasClockReceipts() const;
+    // A1 prototype, bulk paired intakes only. Other producer slots must be
+    // staged by their owners. A negative producer horizon admits no intake.
+    void fireClockIntakeCell(int cell, double end, double producer_through, SurfaceStateData&);
+    // Optional adjunct to the native kernel state archive, for an independently
+    // scheduled owner. Dense clock IDs follow covered cells in mesh order.
+    // Does not fire or alter the legacy checkpoint format.
+    void checkpointIndependentClock(detail::CompletedSourceArchive&, GwClock&);
     /**
      * @brief Serialize qualified groundwater identity or completed mutable owner state.
      * - Argument model (in): True writes model identity; false writes/reads mutable state
@@ -1462,6 +1488,28 @@ public:
     std::string restoreTransportRestart(const std::string& bytes, bool apply);
 
 private:
+    struct IndependentOwner;
+    std::optional<GwClockState> clock_state_;
+    double producer_end_ = 0.0;
+    double clock_cutoff_ = -1.0;
+    void refreshCellBound(int cell, const MeshData&, const InertialEdges&);
+    void fireGwFaceList(std::span<const int>, double dt, std::span<const double> elapsed);
+    void bookClockAmount(int cell, GwSlot slot, std::vector<double>& field, std::size_t index,
+                         double amount) {
+        if (clock_state_ && amount != 0 &&
+            !(source_owned_[cell] && (slot == GwSlot::surface || slot == GwSlot::surface_mass)))
+            recordClockAmount(cell, slot, index, amount, producer_end_);
+        field[index] += amount;
+    }
+    void recordClockAmount(int cell, GwSlot slot, std::size_t index, double amount, double end);
+    double takeClockAmount(int cell, GwSlot slot, std::vector<double>& field, std::size_t index,
+                           bool peek = false) {
+        if (!clock_state_)
+            return peek ? field[index] * gather_fraction_ : consumePending(field[index]);
+        return takeDatedAmount(cell, slot, field, index, peek);
+    }
+    double takeDatedAmount(int cell, GwSlot slot, std::vector<double>& field, std::size_t index,
+                           bool peek);
     double infiltrationStorageDeficit(int cell) const noexcept;
     double infiltrationHeadroom(int cell, double deficit) const noexcept;
     friend class CommonSourceStage;
@@ -1567,9 +1615,12 @@ private:
      * Requires serial firing because bed scratch, provider diagnostics, partial-gather fraction
      * and reaction workspace are shared.
      */
-    void fireCell(int i, double dt, SurfaceStateData& surf, double time);
+    void fireCell(int i, double dt, SurfaceStateData& surf, double time,
+                  GwFiringOrigin origin = GwFiringOrigin::direct,
+                  double intake_through = std::numeric_limits<double>::infinity());
     void fireGwCellList(const std::vector<int>&, double dt, SurfaceStateData&, double time,
-                        double accepted_end);
+                        double accepted_end, GwFiringOrigin origin = GwFiringOrigin::direct,
+                        double intake_through = std::numeric_limits<double>::infinity());
     std::vector<bool> source_owned_;
     std::vector<std::string> source_species_;
     std::vector<double> source_cell_end_;
@@ -1634,7 +1685,10 @@ private:
         std::vector<double>* dunne_mass = nullptr;
         std::vector<double>* excess_mass = nullptr;
         double reject = 0.0; ///< column rejection, out of the unsaturated zone
+        const std::vector<double>* eligible_intake_mass =
+            nullptr; // completed bulk intake at this knot
     };
+    double takeInfiltrationMass(int cell, int species, const CellFlux&);
     std::vector<std::string> transport_units_;
     struct GroundReactor {
         std::vector<ReactionExprForm> forms;
@@ -1792,6 +1846,11 @@ private:
     void markPendingSurface(int i) noexcept;
 
     void publishCellInfiltration(int, SurfaceStateData&, double interval, double time);
+    struct ClockBudget { double in, out, room_in, room_out; };
+    std::vector<ClockBudget> clockBudgets(int cell, double through) const;
+    double clockAmount(int cell, GwSlot field, const std::vector<double>& values,
+                       std::size_t index, double through) const;
+    double clockAccuracyLimit(int cell) const;
     std::vector<std::vector<std::size_t>> cell_beds_;
     RuntimeSources runtime_sources_;
     std::vector<GwResolvedBoundary> boundaries_;
@@ -1818,7 +1877,7 @@ private:
      * water capacity. Refusal flags thermal failure; caller checks it. Does not book hydraulic
      * water itself.
      */
-    void bookPresetHeatOut(int cell, double volume, double temperature_volume) noexcept;
+    void bookPresetHeatOut(int cell, double volume, double temperature_volume, bool external = false);
     /**
      * @brief Conduct a groundwater-owned column jointly with its persistent Richards LID stores.
      * - Argument cell (in): Prepared physical cell index, called i in source.
@@ -1839,7 +1898,7 @@ private:
      * thermal failure. Does not book water or debit canonical inventory. Requires serial
      * compatible producer state.
      */
-    void bookPresetPorewaterOut(int cell, int species, double mass) noexcept;
+    void bookPresetPorewaterOut(int cell, int species, double mass, bool external = false);
     /**
      * @brief Read unreserved dissolved native inventory in a physical saturated zone.
      * - Argument cell (in): Prepared cell index.
@@ -1936,6 +1995,7 @@ private:
     std::vector<std::vector<int>> faces_by_tier_;
     std::vector<uint8_t> face_tier_;
     std::vector<long> tier_firings_;
+    GwClockTelemetry clock_telemetry_;
     std::vector<int> pending_surface_;
     std::vector<uint8_t> pending_flag_;
     std::vector<int> cell_nface_;           ///< incident GW faces per cell

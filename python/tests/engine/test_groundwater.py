@@ -92,6 +92,38 @@ def test_groundwater_runtime_mixed_cells(tmp_path, sigma):
         cleanup(solver)
 
 
+def test_independent_clock_stats_match_signed_tier_histogram(tmp_path):
+    solver = open_model(tmp_path)
+    try:
+        gw = solver.surface2d.groundwater
+        gw.options['GW_CLOCK'] = 'INDEPENDENT'
+        gw.options['GW_MAX_STEP'] = '4'
+        gw.options['CLOSURE'] = 'CLOSED_FORM'
+        gw.options['NODE_ENROLMENT'] = 'ROWS'
+        gw.add_row(CellScope.GLOBAL, 36, 0.5, 0.45, 0.1, 2)
+        gw.set_row_property(0, 'HG0', 0.2)
+        solver.initialize()
+        solver.start(False)
+        for _ in range(10):
+            solver.step()
+        stats = gw.clock_stats
+        assert stats['independent']
+        assert stats['occupied_rungs'] >= 1
+        assert len(gw.tier_histogram) == stats['last_rung'] - stats['first_rung'] + 1
+        for rung in gw.cells(GroundwaterVariable.TIER):
+            assert gw.tier_histogram[int(rung) - stats['first_rung']] > 0
+        assert stats['closures']['CLOSED_FORM']['firings'] > 0
+        assert len(stats['closures']['CLOSED_FORM']['budget_exceedance']) == 5
+        assert stats['closures']['CLOSED_FORM']['max_return_depth'] >= 0
+        assert (gw.cells(GroundwaterVariable.COMPLETED_TIME) > 0).all()
+        for var in (GroundwaterVariable.PENDING_IN, GroundwaterVariable.PENDING_OUT):
+            assert (gw.cells(var) >= 0).all()
+        assert gw.clock_stats == stats
+        solver.end()
+    finally:
+        cleanup(solver)
+
+
 def test_authored_edges_and_layer_inventory(tmp_path):
     from openswmm.engine import GroundwaterBoundary, GroundwaterInitialQuality, GroundwaterTransportZone
     solver = open_model(tmp_path)

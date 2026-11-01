@@ -5,6 +5,7 @@ SI (metres, seconds, cubic metres); species concentrations use mass per cubic
 metre of zone water. Edit before initialize and read active state after start.
 """
 from libc.stdlib cimport malloc, free
+from libc.stdint cimport uint32_t, uint64_t
 from dataclasses import dataclass
 from collections.abc import MutableMapping
 import numpy as np
@@ -16,6 +17,22 @@ from ._enums import (CellScope, GroundwaterVariable, GroundwaterLedger,
                      GroundwaterZone, GroundwaterSpeciesLedger)
 
 cdef extern from "openswmm/engine/openswmm_gw2d.h":
+    ctypedef struct SWMM_GwClockStats:
+        uint32_t struct_size
+        int independent
+        int first_rung
+        int last_rung
+        int occupied_rungs
+        uint64_t firings[3]
+        uint64_t subcycled_firings[3]
+        uint64_t budget_firings[3]
+        double mean_elapsed[3]
+        double max_elapsed[3]
+        double max_budget_excess_in[3]
+        double max_budget_excess_out[3]
+        uint64_t budget_exceedance[3][5]
+        double max_return_depth[3]
+    int swmm_gw2d_get_clock_stats(SWMM_Engine, SWMM_GwClockStats*) nogil
     ctypedef struct SWMM_GwExecutionStatus:
         unsigned int struct_size
         int active
@@ -412,6 +429,29 @@ class Groundwater(EngineView):
         cdef double value=0
         _check(swmm_gw2d_get_continuity_error(_h(self), &value))
         return value
+
+    @property
+    def clock_stats(self):
+        """Clock mode, signed histogram range, and independent updates by closure.
+
+        Elapsed intervals are seconds. The first tier_histogram entry belongs
+        to first_rung in independent mode. Physical counts include forcing cuts.
+        """
+        cdef SWMM_GwClockStats status
+        status.struct_size = sizeof(SWMM_GwClockStats)
+        _check(swmm_gw2d_get_clock_stats(_h(self), &status))
+        closures = {}
+        if status.independent:
+            for i, name in enumerate(("CLOSED_FORM", "ENSLAVED", "SIGMA")):
+                closures[name] = dict(firings=status.firings[i], subcycled_firings=status.subcycled_firings[i],
+                                      budget_firings=status.budget_firings[i], mean_elapsed=status.mean_elapsed[i],
+                                      max_elapsed=status.max_elapsed[i],
+                                      max_budget_excess_in=status.max_budget_excess_in[i],
+                                      max_budget_excess_out=status.max_budget_excess_out[i],
+                                      max_return_depth=status.max_return_depth[i],
+                                      budget_exceedance=[status.budget_exceedance[i][j] for j in range(5)])
+        return dict(independent=bool(status.independent), first_rung=status.first_rung,
+                    last_rung=status.last_rung, occupied_rungs=status.occupied_rungs, closures=closures)
 
     @property
     def tier_histogram(self):

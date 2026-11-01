@@ -247,6 +247,20 @@ std::string SubsurfaceSolver::retainLidReceipts(double start, double end,
                 }
             }
     }
+    // Only publish independently dated thermal reservations after every
+    // producer trial above has succeeded and its rollback window has closed.
+    if (clock_state_ && heat_.active())
+        for (const auto& old : snapshots) {
+            const auto base = std::size_t(old.cell) * old.water.size();
+            for (std::size_t j = 0; j < old.water.size(); ++j) {
+                const double water = heat_preset_out_water_[base + j] - old.water[j];
+                const double joules = heat_preset_out_j_[base + j] - old.joules[j];
+                if (water)
+                    recordClockAmount(old.cell, GwSlot::prepaid_water, base + j, water, end);
+                if (joules)
+                    recordClockAmount(old.cell, GwSlot::prepaid_heat, base + j, joules, end);
+            }
+        }
     for (const auto& r : rows) {
         const auto joules = heat_.active()
                                 ? heat_receipts.at(r.bed)

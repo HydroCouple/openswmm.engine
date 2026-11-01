@@ -81,8 +81,9 @@ void SubsurfaceSolver::fireLayerSpecies(int cell, const CellFlux& f) {
         donor_available[sat] = std::max(0., initial[sat] - pendingSaturatedMassExport(cell, s));
         const double lateral = gatherLateralMass(cell, s);
         rhs[sat] += lateral;
-        tr_.net_lateral[s] += lateral;
-        const double infil = consumePending(tr_.xacc_from_surface[k]);
+        if (!independentClock())
+            tr_.net_lateral[s] += lateral;
+        const double infil = takeInfiltrationMass(cell, s, f);
         // Rejected infiltration retains its producer's composition. It has
         // never entered a soil reactor and cannot acquire resident solute.
         const double refund =
@@ -90,14 +91,17 @@ void SubsurfaceSolver::fireLayerSpecies(int cell, const CellFlux& f) {
                           : (f.infil_in > 0 ? infil * std::min(1., f.reject / f.infil_in) : 0);
         rhs[0] += infil - refund;
         tr_.gained_infil[s] += infil;
-        const double node = gatherNodeMass(cell, s), link = consumePending(tr_.lacc_mass[k]);
+        const double node = gatherNodeMass(cell, s),
+                     link = takeClockAmount(cell, GwSlot::link_mass, tr_.lacc_mass, k);
         rhs[sat] += node + link;
         tr_.gained_node[s] += node;
         tr_.gained_link[s] += link;
         for (int j = 0; j < layers; ++j) {
             const auto q = tr_.layerIdx(s, j, cell);
-            const double from_node = consumePending(tr_.contact_node_mass[q]);
-            const double from_link = consumePending(tr_.contact_link_mass[q]);
+            const double from_node =
+                takeClockAmount(cell, GwSlot::contact_node_mass, tr_.contact_node_mass, q);
+            const double from_link =
+                takeClockAmount(cell, GwSlot::contact_link_mass, tr_.contact_link_mass, q);
             rhs[j] += from_node + from_link;
             tr_.gained_node[s] += from_node;
             tr_.gained_link[s] += from_link;
@@ -116,7 +120,7 @@ void SubsurfaceSolver::fireLayerSpecies(int cell, const CellFlux& f) {
                 row.mass_in[s] += pulse.mass[s];
                 row.flux_in[s] += pulse.flux_in[s];
             }
-        const double prepaid_link = consumePending(tr_.lout_mass[k]);
+        const double prepaid_link = takeClockAmount(cell, GwSlot::link_export, tr_.lout_mass, k);
         rhs[sat] -= prepaid_link;
         tr_.lost_link[s] += prepaid_link;
         // Independent sinks may use current saturated mobile inventory,

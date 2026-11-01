@@ -38,7 +38,7 @@ constexpr double kPsiEps = 1.0e-12;
 /// Floor on the column thickness so `L → 0` (water table at the surface)
 /// divides by something finite. A millimetre of column is already the Dunne
 /// regime, where the saturated update takes over.
-constexpr double kLMin = 1.0e-3;
+constexpr double kLMin = kRechargeLengthFloor;
 /// Se is kept strictly inside (0, 1] so `Se^(1/m)` and its inverse stay finite.
 constexpr double kSeMin = 1.0e-8;
 
@@ -297,6 +297,24 @@ double rechargeQ0(const Params& p, double L, double hu) noexcept {
     const double C = Kbar / hu_eq_se;
     const double q = C * (hu_eq_se - hu_se);
     return std::isfinite(q) ? q : 0.0;
+}
+
+double rechargeQ0AtLength(const Params& p, double L, double hu) noexcept {
+    if (!(L > 0))
+        return 0.;
+    if (L >= kLMin)
+        return rechargeQ0(p, L, hu);
+    const double span = std::max(p.theta_s - p.theta_r, 1e-12);
+    const double equilibrium =
+        p.law == SoilChar::GARDNER ? -std::expm1(-p.alpha * L) / p.alpha : saturationIntegral(p, L);
+    // Same rate floor as the legacy law, but never invent the water or
+    // residual storage belonging to the missing part of a millimetre.
+    const double rate = p.law == SoilChar::GARDNER
+                            ? p.Ks / (kLMin * -std::expm1(-p.alpha * kLMin))
+                            : conductivity(p, .5 * kLMin) / saturationIntegral(p, kLMin);
+    const double disequilibrium = (p.theta_r * L + span * equilibrium - hu) / span;
+    const double q = rate * disequilibrium;
+    return std::isfinite(q) ? q : 0.;
 }
 
 double alphaL(const Params& p, double L) noexcept {

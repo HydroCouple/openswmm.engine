@@ -3823,6 +3823,44 @@ TEST(GroundHeat, SigmaChemistryAndFixedThermalLayersShareActualChannelContacts) 
     }
 }
 
+TEST(GroundHeat, IndependentSigmaTemperatureViewUsesTheCommittedTablePosition) {
+    for (double temperature : {-3., 17.}) {
+        const auto extra = "[2D_AQUIFER_OPTIONS]\nGW_CLOCK INDEPENDENT\nGW_MAX_STEP 10\n"
+                           "[GW_TRANSPORT_OPTIONS]\nUNSAT_TRANSPORT LAYERED\nTHERMAL_LAYERS 7\n"
+                           "[GW_INITIAL_QUALITY]\n* SAT __TEMPERATURE__ " +
+                           std::to_string(temperature) + "\n* UNSAT __TEMPERATURE__ " +
+                           std::to_string(temperature) + "\n";
+        Model m("independent-sigma-temperature-" + std::to_string(temperature), "SIGMA", .5, false,
+                extra);
+        ASSERT_NE(m.e, nullptr);
+        ASSERT_EQ(m.start(), SWMM_OK);
+        auto& gw = m.router().subsurface();
+        auto& tr = gw.transport();
+        const auto initial = gw.state().hg;
+        gw.prepareClock();
+        gw.setProducerEnd(5.);
+        gw.bookLinkSeepage(0, .01);
+        gw.bookLinkSeepageMass(0, tr.temp_row, .01 * temperature);
+        gw.advanceClock(5., m.router().state(), false);
+        EXPECT_NE(gw.state().hg, initial);
+        const auto snapshot = gw.transportRestartState();
+        for (int cell = 0; cell < gw.state().n_cells; ++cell) {
+            const auto k = tr.idx(tr.temp_row, cell);
+            ASSERT_GT(gw.unsatVolume(cell), 0.);
+            EXPECT_NEAR(tr.unsat_mass[k] / gw.unsatVolume(cell), temperature, 1e-8);
+            EXPECT_NEAR(tr.sat_mass[k] / gw.satVolume(cell), temperature, 1e-8);
+            for (int layer = 0; layer < tr.n_layers; ++layer) {
+                const double volume =
+                    gw.state().area[cell] * (gw.state().zs[cell] - gw.state().hg[cell]) /
+                    tr.n_layers * gw.state().theta_sigma[std::size_t(layer) * tr.n_cells + cell];
+                EXPECT_NEAR(tr.layer_mass[tr.layerIdx(tr.temp_row, layer, cell)] / volume,
+                            temperature, 1e-8);
+            }
+        }
+        EXPECT_EQ(gw.transportRestartState(), snapshot);
+    }
+}
+
 TEST(GroundHeat, TemperatureOnlySigmaKeepsEnergyWithItsThermalOwnerAcrossRestart) {
     for (int thermal : {3, 7}) {
         const auto extra = "[GW_TRANSPORT_OPTIONS]\nUNSAT_TRANSPORT LAYERED\nTHERMAL_LAYERS " +

@@ -490,6 +490,25 @@ int swmm_coupling_apply_frame(SWMM_Engine h, const SWMM_CouplingFrame* f) {
         // physics belonging to the old prescription, then commit by moves.
         eng->flushRuntimeCouplingBoundary(f->source_count || f->boundary_count ||
                                           f->forcing_count || f->clear_count);
+        if (next[1] && router.subsurface().independentClock()) {
+            std::vector<int> affected;
+            for (const auto& [domain, id, cell] : source_keys) {
+                if (domain != 1)
+                    continue;
+                if (cell >= 0)
+                    affected.push_back(cell);
+                else {
+                    const auto& old = sources(*eng, 1);
+                    for (const auto& source : old.rows)
+                        if (source.id == id)
+                            affected.push_back(source.cell);
+                }
+            }
+            for (const auto& [domain, cell, edge] : edge_keys)
+                if (domain == 1)
+                    affected.push_back(cell);
+            router.subsurface().landClockCells(affected, router.state());
+        }
         for (int d = 0; d < 2; ++d)
             if (next[d])
                 next[d]->syncReceipts(sources(*eng, d));
@@ -508,6 +527,8 @@ int swmm_coupling_apply_frame(SWMM_Engine h, const SWMM_CouplingFrame* f) {
         for (int d = 0; d < 2; ++d)
             if (next[d])
                 sources(*eng, d) = std::move(*next[d]);
+        if (next[1] && router.subsurface().independentClock())
+            router.subsurface().refreshClockAfterEdit(router.state());
         if (bc) {
             router.boundary() = std::move(*bc);
             tr.runtime_bc_conc = std::move(*concentrations);

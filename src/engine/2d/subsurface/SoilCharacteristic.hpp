@@ -86,6 +86,9 @@
 
 namespace openswmm::twoD::soil {
 
+/// Existing recharge-rate regularization length; it is not extra column storage.
+inline constexpr double kRechargeLengthFloor = 1.0e-3;
+
 /// The parameters one cell's law needs, gathered so the kernels take one
 /// argument and the SoA gather happens once per firing.
 struct Params {
@@ -214,6 +217,18 @@ double equilibriumStorage(const Params& p, double L) noexcept;
  * singular/nonfinite computed rates.
  */
 double rechargeQ0(const Params& p, double L, double hu) noexcept;
+
+/**
+ * @brief Recharge with actual column storage and the existing bounded rate coefficient.
+ * @param[in] p Validated retention/conductivity parameters in SI.
+ * @param[in] L Actual nonnegative column thickness, m.
+ * @param[in] hu Actual bulk water depth in that column, m.
+ * @return Signed water flux m/s. For L below kRechargeLengthFloor, only the
+ * rate coefficient uses the floor; residual water and equilibrium use L.
+ * Zero for a collapsed column. At/above the floor this is bit-identical to
+ * rechargeQ0(), whose legacy geometry remains available to SHARED/backends.
+ */
+double rechargeQ0AtLength(const Params& p, double L, double hu) noexcept;
 
 /**
  * @brief The ENSLAVED reduction: `hᵤ` algebraic in `h_g` — the storage at which `rechargeQ0`

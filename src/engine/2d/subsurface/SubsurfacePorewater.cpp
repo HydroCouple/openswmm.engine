@@ -188,7 +188,7 @@ std::string SubsurfaceSolver::refreshPorewaterContactLedger() {
  * exclusive producer access; a late unexpected reservation refusal can leave earlier
  * reservations, so caller checks failure/stages its transaction.
  */
-void SubsurfaceSolver::bookPresetPorewaterOut(int i, int r, double target) noexcept {
+void SubsurfaceSolver::bookPresetPorewaterOut(int i, int r, double target, bool external) {
     if (!heat_.active() || tr_.n_layers > 0 || r == tr_.temp_row || !(target > 0))
         return;
     auto& cell = heat_.cells[i];
@@ -247,6 +247,8 @@ void SubsurfaceSolver::bookPresetPorewaterOut(int i, int r, double target) noexc
             fail();
             return;
         }
+        if (external && clock_state_)
+            recordClockAmount(i, GwSlot::prepaid_mass, base + j, adjusted, producer_end_);
         porewater_preset_out_[base + j] += adjusted;
     }
 }
@@ -365,8 +367,8 @@ void SubsurfaceSolver::fireGroundPorewaterSpecies(int i, const CellFlux& f) noex
             weights[j] /= total;
             // Heat owns the one water decomposition. Read its next accepted
             // slice without consuming it before the heat owner uses it.
-            double pending = heat_preset_out_water_[water_base + j];
-            preset_water[j] = consumePending(pending);
+            preset_water[j] = takeClockAmount(i, GwSlot::prepaid_water, heat_preset_out_water_,
+                                              water_base + j, true);
             preset_volume += preset_water[j];
         }
         const double body = f.lateral - f.node_out + f.link + f.source_in - f.source_out +
@@ -379,7 +381,8 @@ void SubsurfaceSolver::fireGroundPorewaterSpecies(int i, const CellFlux& f) noex
         for (const auto b : cell_beds_[i])
             node_volume += heat_node_gathered_out_[b];
         node_volume = std::max(node_volume, std::max(0., f.node_out));
-        const bool link_packet = heat_link_out_volume_[i] > 0;
+        const bool link_packet =
+            takeClockAmount(i, GwSlot::heat_link_volume, heat_link_out_volume_, i, true) > 0;
         const double implicit_link_volume = link_packet ? 0 : std::max(0., -f.link),
                      excess_volume = f.reject - f.paired_refund;
         for (int r = 0; r < tr_.n_species; ++r)
@@ -397,9 +400,10 @@ void SubsurfaceSolver::fireGroundPorewaterSpecies(int i, const CellFlux& f) noex
                         edge_requested += pulse.flux_out[r];
                     }
                 const double lateral = gatherLateralMass(i, r),
-                             infil = consumePending(tr_.xacc_from_surface[k]);
-                const double link_in = consumePending(tr_.lacc_mass[k]),
-                             booked_link = consumePending(tr_.lout_mass[k]),
+                             infil = takeInfiltrationMass(i, r, f);
+                const double link_in = takeClockAmount(i, GwSlot::link_mass, tr_.lacc_mass, k),
+                             booked_link =
+                                 takeClockAmount(i, GwSlot::link_export, tr_.lout_mass, k),
                              node_in = gatherNodeMass(i, r);
                 const double refund = f.refund_mass ? (*f.refund_mass)[r] : 0;
                 auto& mass = scratch.mass;
@@ -417,7 +421,8 @@ void SubsurfaceSolver::fireGroundPorewaterSpecies(int i, const CellFlux& f) noex
                     retention[j] = next.retention[row + j];
                     if (euler)
                         reserved[j] = next.reserved_out[row + j];
-                    preset[j] = consumePending(porewater_preset_out_[base + j]);
+                    preset[j] =
+                        takeClockAmount(i, GwSlot::prepaid_mass, porewater_preset_out_, base + j);
                     preset_mass += preset[j];
                 }
                 const double incoming = source + edge_mass + edge_flux + lateral + link_in -
@@ -461,7 +466,8 @@ void SubsurfaceSolver::fireGroundPorewaterSpecies(int i, const CellFlux& f) noex
                         edge.flux_in[r] += pulse.flux_in[r];
                     }
                 tr_.gained_source[r] += source;
-                tr_.net_lateral[r] += lateral;
+                if (!independentClock())
+                    tr_.net_lateral[r] += lateral;
                 tr_.gained_infil[r] += infil;
                 tr_.gained_link[r] += link_in;
                 tr_.lost_link[r] += link_out;

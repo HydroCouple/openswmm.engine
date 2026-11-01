@@ -84,10 +84,20 @@ bool meshLidRestartUnsupported(const SimulationContext& ctx) {
  * @param[in] ctx Borrowed coherent model with live optional 2D attachments; no mutation.
  * @return Router needsTransportRestart result, or false without an attached/compiled 2D router.
  */
+bool independentGroundwaterRestart(const SimulationContext& ctx) {
+#ifdef OPENSWMM_HAS_2D
+    return ctx.twod_io.surface_router &&
+           ctx.twod_io.surface_router->subsurface().independentClock();
+#else
+    (void)ctx;
+    return false;
+#endif
+}
 bool layeredGroundwaterRestart(const SimulationContext& ctx) {
 #ifdef OPENSWMM_HAS_2D
     return ctx.twod_io.surface_router &&
-           ctx.twod_io.surface_router->subsurface().needsTransportRestart();
+           (ctx.twod_io.surface_router->subsurface().needsTransportRestart() ||
+            ctx.twod_io.surface_router->subsurface().independentClock());
 #else
     (void)ctx;
     return false;
@@ -488,6 +498,9 @@ bool HotStartManager::write_file(const HotStartFile& hs, const std::string& path
         buf.write(hs.fv_dry_state.data(),static_cast<std::streamsize>(hs.fv_dry_state.size()));
         if(!buf.good())return false;
     }
+    if (hs.header.version == 19u &&
+        (hs.engine_checkpoint.empty() || hs.gw_transport_state.empty() ||
+         !write_pod(buf, uint32_t{1}))) return false;
     // Compute CRC32 over the body
     const std::string body = buf.str();
     const uint32_t crc = crc32(reinterpret_cast<const uint8_t*>(body.data()), body.size());
@@ -559,7 +572,7 @@ bool HotStartManager::read_file(HotStartFile& hs, const std::string& path) {
     // Header
     if (!read_pod(is, hs.header.version))
         return false;
-    if (hs.header.version < 1u || hs.header.version > 18u) {
+    if (hs.header.version < 1u || hs.header.version > 19u) {
         tl_last_io_error = "Unsupported hot start version " + std::to_string(hs.header.version) +
                            " in '" + path + "'";
         return false;
@@ -854,6 +867,13 @@ bool HotStartManager::read_file(HotStartFile& hs, const std::string& path) {
         hs.fv_dry_state.resize(size);
         if(size) {is.read(hs.fv_dry_state.data(),size);if(!is.good())return false;}
     }
+    if (hs.header.version == 19u) {
+        uint32_t clock_schema = 0;
+        if (!read_pod(is, clock_schema) || clock_schema != 1 || hs.engine_checkpoint.empty() ||
+            hs.gw_transport_state.empty())
+            return false;
+    }
+
     hs.path = path;
     return true;
 }
@@ -1584,6 +1604,11 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx, const std::str
         tl_last_io_error = "LID reaction inventories require a full native engine checkpoint";
         return nullptr;
     }
+    if (independentGroundwaterRestart(ctx)) {
+        tl_last_io_error =
+            "Independent groundwater hotstart needs the complete routing and surface clocks. Start a checkpoint session or configure a native SAVE HOTSTART before starting the run.";
+        return nullptr;
+    }
     if (coupledThermalRestartUnsupported(ctx)) {
         tl_last_io_error =
             "Coupled mesh/ground heat hotstart requires its thermal energy restart extension";
@@ -1773,6 +1798,11 @@ HotStartFile* HotStartManager::save_with_engine_checkpoint(
         tl_last_io_error = "LID reaction inventories require a full native engine checkpoint";
         return nullptr;
     }
+    if (engine_checkpoint.empty() && independentGroundwaterRestart(ctx)) {
+        tl_last_io_error =
+            "Independent groundwater hotstart needs a prepared complete engine checkpoint.";
+        return nullptr;
+    }
     if (engine_checkpoint.empty() && coupledThermalRestartUnsupported(ctx)) {
         tl_last_io_error =
             "Coupled mesh/ground heat hotstart requires its thermal energy restart extension";
@@ -1934,7 +1964,8 @@ HotStartFile* HotStartManager::save_with_engine_checkpoint(
     }
     if (!engine_checkpoint.empty()) {
         hs->engine_checkpoint = engine_checkpoint;
-        hs->header.version = std::max(hs->header.version, 15u);
+        hs->header.version =
+            std::max(hs->header.version, independentGroundwaterRestart(ctx) ? 19u : 15u);
     }
     if (!write_file(*hs, path)) {
         delete hs;

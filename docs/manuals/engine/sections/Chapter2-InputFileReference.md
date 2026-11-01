@@ -3084,10 +3084,24 @@ Parameters:
 | MODE | MESH / PER_SUBCATCH | MESH | MESH runs one aquifer cell under every mesh cell. PER_SUBCATCH runs one degenerate cell per subcatchment with no lateral flow, exchanging with the outlet node. |
 | DUNNE | YES / TRUE / 1 / NO / FALSE / 0 | YES | Saturation-excess transfer from the aquifer to the surface cell above it. Exists for comparison runs; NO breaks the mass balance between the two domains. |
 | GW_ET | NONE / CAPILLARY_RISE / BOUNDARY_ET / BOTH | NONE | Subsurface evapotranspiration: capillary rise from the water table, removal at the top of the unsaturated column, both, or neither. |
+| GW_CLOCK | SHARED / INDEPENDENT | SHARED | SHARED schedules groundwater on the surface time steps. The experimental INDEPENDENT mode schedules each aquifer cell from its stability limit and elapsed simulation time. It requires first-order CPU integration. |
+| GW_BASE_STEP | Positive seconds | 1 | Base interval for the independent clock. Cell periods are powers of two times this interval. Stiff cells can take shorter steps. |
+| GW_BUDGET_FRACTION | (0,1] | 0.5 | Fraction of directional storage/head room consumed before an independent update. |
+| GW_HEAD_TOLERANCE | (0,1) | 0.05 | Relative head-change budget, with a fixed 0.01 m head floor. |
+| GW_MAX_STEP | Positive seconds | 3600 | Maximum elapsed groundwater step. Its own period constraint is separate from physical and accuracy check allowances. Long surface intervals can contain internal groundwater checks that gather previously completed receipts. |
+| GW_BINDS_SURFACE_DT | YES / NO | YES under SHARED, NO under INDEPENDENT | YES includes the groundwater stability limit when selecting the surface step. SHARED always includes this limit. |
 | LINK_SEEPAGE | AUTO / NONE / TWO_WAY | AUTO | AUTO delivers conduit seepage to the aquifer cells crossed by the conduit, weighted by the length in each cell. NONE leaves seepage as a system loss. TWO_WAY uses a signed conductance law, allowing a conduit below the water table to gain water. Per-conduit overrides are set in [2D_AQUIFER_LINKS]. |
 
 Remarks:
 Authoring any [2D_AQUIFER_OPTIONS], [2D_AQUIFER], [2D_AQUIFER_NODE] or [2D_AQUIFER_LINKS] row turns the kernel on unless [2D_OPTIONS] GROUNDWATER NO is set. A value of GW_ET spelled in [2D_OPTIONS] is folded into this section when the model opens. The writer emits only the keys that differ from their defaults.
+
+With the independent clock, reported groundwater head is the last completed cell state. Water received since that update is included in storage and continuity. Incoming and outgoing transfers have separate budgets; layered contacts use the room in their receiving layer. The native head-rate estimate includes internal column recharge as well as lateral and boundary flow and deep loss. `GW_HEAD_TOLERANCE` controls a scheduling budget, rather than guaranteeing a global solution error. Accuracy limits alone never shorten the groundwater period below `GW_BASE_STEP`; physical stability can require shorter steps. Use a smaller base interval when rapid exchange needs finer accuracy.
+
+For CLOSED_FORM columns thinner than 1 mm, INDEPENDENT computes recharge from the actual column storage geometry while retaining the existing 1 mm rate-coefficient guard. SHARED retains the legacy length floor in both calculations, so terminal filling transfers can differ between the modes.
+
+The CPU marcher targets absolute producer checks at the base cadence when base or shorter groundwater periods are occupied, and for the first coupled check before delivered rates are known. An authored `GW_MAX_STEP` that selects a period below the base also refines these producer checks to that ceiling-selected period. This keeps an entire producer packet from being concentrated into the last of several finer groundwater updates. Physical stiffness alone retains internal subcycling and the base producer cadence. Infiltration capacity is refreshed at absolute `INFIL_STEP` crossings and after cell updates.
+
+Clock statistics report budget-triggered updates, maximum incoming/outgoing budget exceedance in m³, exceedance histograms and the largest single-update return depth in m. Histogram bins count scheduler detections; physical firing counts include forcing-knot subintervals. Checkpoints preserve receipt-rate limits, rebuild per-cell deadline ordering, and validate scheduling-policy identity along with clock tolerances. In a CLOSED_FORM cell, the independent clock settles the soil column before releasing excess water at the ground surface. `INDEPENDENT` remains experimental: the complete accuracy, convergence and event-performance qualification is still open. `SHARED` remains the default.
 
 The kernel is described in hydrology Chapter 9 (mesh groundwater).
 

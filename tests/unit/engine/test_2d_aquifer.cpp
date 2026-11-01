@@ -72,6 +72,7 @@
 #include <vector>
 
 #include <openswmm/engine/openswmm_engine.h>
+#include <openswmm/engine/openswmm_coupling.h>
 #include <openswmm/engine/openswmm_forcing.h> // G-X4
 #include <openswmm/engine/openswmm_gw2d.h>
 #include <openswmm/engine/openswmm_gw_transport.h>
@@ -1203,6 +1204,483 @@ TEST(Aquifer2D, ConduitSeepageIsSharedByTheLengthOverTheMesh) {
     EXPECT_GT(o.seep_1d, 1.0e-3);
     EXPECT_EQ(o.led_link, 0.0);
     EXPECT_EQ(o.pending, 0.0);
+}
+
+TEST(Aquifer2D, IndependentLateralLedgersCloseWithOneEndpointStillPending) {
+    for (const char* profile : {"CLOSED_FORM", "SIGMA", "CLOSED_FORM_HEAT", "SIGMA_HEAT"}) {
+        const bool thermal = std::string(profile).ends_with("_HEAT");
+        const char* closure =
+            std::string(profile).starts_with("CLOSED_FORM") ? "CLOSED_FORM" : "SIGMA";
+        for (const char* transport : {"BULK", "LAYERED"}) {
+            if (std::string(closure) == "CLOSED_FORM" && std::string(transport) == "LAYERED")
+                continue; // This combination is refused by the transport contract.
+            SCOPED_TRACE(std::string(profile) + "/" + transport);
+            std::string aquifer =
+                "[2D_AQUIFER_OPTIONS]\nGW_CLOCK INDEPENDENT\nNODE_ENROLMENT ROWS\n"
+                "M_LAYERS 4\nCLOSURE " +
+                std::string(closure) +
+                "\n[2D_AQUIFER]\nCELL 1 36 4 .45 .1 2 HG0 1\n"
+                "CELL 2 36 4 .45 .1 2 HG0 1.2\n"
+                "[POLLUTANTS]\nDye MG/L 0 0 0 0\n"
+                "[GW_TRANSPORT_OPTIONS]\nUNSAT_TRANSPORT " +
+                std::string(transport) + "\n[GW_INITIAL_QUALITY]\n* SAT Dye 2\n* UNSAT Dye 2\n";
+            if (thermal)
+                aquifer +=
+                    "[GW_TRANSPORT_OPTIONS]\nTHERMAL_MODEL POROUS_EQUILIBRIUM\n"
+                    "CONDUCTION NO\n[GW_TRANSPORT_PARAMS]\n* 2650 880 2 0 .5 0 0 0 .065\n"
+                    "[GW_INITIAL_QUALITY]\n* SAT __TEMPERATURE__ 10\n* UNSAT __TEMPERATURE__ 10\n";
+            auto body = deck(aquifer, "", 0.0);
+            if (thermal)
+                body.insert(body.find("[OPTIONS]\n") + std::string("[OPTIONS]\n").size(),
+                            "HEAT_TRANSPORT YES\n");
+            auto r =
+                openDeck("clock-pending-ledger-" + std::string(profile) + "-" + transport, body);
+            ASSERT_TRUE(r.opened);
+            ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK);
+            ASSERT_EQ(swmm_engine_start(r.e, 0), SWMM_OK);
+            r.started = true;
+            auto& surface = r.eng->surfaceRouter2D();
+            auto& gw = surface.subsurface();
+            auto& state = gw.state();
+            gw.prepareClock();
+            gw.advanceClock(.125, surface.state(), false);
+            ASSERT_EQ(gw.cellCompletedTime(0), 0.0);
+            ASSERT_EQ(gw.cellCompletedTime(1), 0.0);
+            const int edited[] = {0};
+            gw.landClockCells(edited, surface.state());
+            EXPECT_EQ(gw.cellCompletedTime(0), .125);
+            EXPECT_EQ(gw.cellCompletedTime(1), 0.0);
+            const auto sum = [](const auto& a) { return std::accumulate(a.begin(), a.end(), 0.); };
+            ASSERT_GT(std::abs(sum(state.eacc_L) + sum(state.eacc_R)), 1e-8);
+            EXPECT_NEAR(state.led_lateral, 0., 1e-12);
+            EXPECT_NEAR(state.continuityResidual(), 0., 1e-12);
+            ASSERT_EQ(gw.transport().n_species, thermal ? 2 : 1);
+            EXPECT_NEAR(gw.transport().net_lateral[0], 0., 1e-12);
+            EXPECT_NEAR(gw.transport().residual(0), 0., 1e-12);
+            const auto snapshot = gw.transportRestartState();
+            auto old = snapshot;
+            const std::string profile = "OpenSWMM independent groundwater v6";
+            const auto position = old.find(profile);
+            ASSERT_NE(position, std::string::npos);
+            old[position + profile.size() - 1] = '5';
+            EXPECT_FALSE(gw.restoreTransportRestart(old, false).empty());
+            EXPECT_FALSE(gw.restoreTransportRestart(old, true).empty());
+            EXPECT_EQ(gw.transportRestartState(), snapshot);
+            ASSERT_TRUE(gw.restoreTransportRestart(snapshot, true).empty());
+            EXPECT_EQ(gw.transportRestartState(), snapshot);
+            // Read-only accounting must neither gather the neighbour nor
+            // consume its pending receipt, and must also close after gather.
+            gw.landClockCells(std::array{1}, surface.state());
+            EXPECT_NEAR(state.continuityResidual(), 0., 1e-12);
+            EXPECT_NEAR(gw.transport().residual(0), 0., 1e-12);
+            finish(r);
+        }
+    }
+}
+
+TEST(Aquifer2D, IndependentBulkColumnReturnsOnlyWaterBeyondItsFullStorage) {
+    constexpr double end = 1.0 / 256.0;
+    for (double inflow : {0.0, 0.001}) {
+        auto r = openDeck(
+            inflow == 0 ? "clock-internal-recharge" : "clock-real-excess",
+            deck("[2D_AQUIFER_OPTIONS]\nGW_CLOCK INDEPENDENT\nNODE_ENROLMENT ROWS\nGW_ET NONE\n"
+                 "[2D_AQUIFER]\nCELL 1 360 1 .45 .1 2 HG0 .99925 "
+                 "SOIL_CHAR GARDNER CLOSURE CLOSED_FORM\n"
+                 "[POLLUTANTS]\nDye MG/L 0 0 0 0\n"
+                 "[GW_TRANSPORT_OPTIONS]\nTRANSPORT_POLLUTANTS YES\n",
+                 "", 0.0));
+        ASSERT_TRUE(r.opened);
+        ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK);
+        ASSERT_EQ(swmm_engine_start(r.e, 0), SWMM_OK);
+        r.started = true;
+        auto& surface = r.eng->surfaceRouter2D();
+        auto& gw = surface.subsurface();
+        auto& cell = gw.state();
+        // A full thin column cannot recharge downward. Only the external
+        // receipt can add water to the surface or collapse this column.
+        cell.hu[0] = cell.theta_s[0] * (cell.zs[0] - cell.hg[0]);
+        const double capacity = cell.area[0] * cell.theta_s[0] * cell.zs[0];
+        auto& tracer = gw.transport();
+        ASSERT_EQ(tracer.n_species, 1);
+        constexpr double concentration = 2.0;
+        tracer.sat_mass[0] = concentration * gw.satVolume(0);
+        tracer.unsat_mass[0] = concentration * gw.unsatVolume(0);
+        const double initial_unsat_mass = tracer.unsat_mass[0];
+        gw.prepareClock();
+        gw.refreshClockAfterEdit(surface.state());
+        gw.setProducerEnd(end);
+        gw.bookLinkSeepage(0, inflow);
+        gw.bookLinkSeepageMass(0, 0, concentration * inflow);
+        gw.advanceClock(end, surface.state(), false, true);
+        EXPECT_DOUBLE_EQ(cell.led_recharge, 0.);
+        EXPECT_NEAR(cell.dunne_cumulative[0], inflow, 1e-12);
+        EXPECT_NEAR(cell.xacc_to_surface[0], inflow, 1e-12);
+        EXPECT_NEAR(gw.satVolume(0) + gw.unsatVolume(0), capacity, 1e-12);
+        EXPECT_NEAR(tracer.xacc_to_surface[0], concentration * inflow, 1e-12);
+        EXPECT_NEAR(tracer.unsat_mass[0], inflow > 0 ? 0. : initial_unsat_mass, 1e-12);
+        EXPECT_NEAR(tracer.sat_mass[0] + tracer.unsat_mass[0] + tracer.xacc_to_surface[0],
+                    concentration * (capacity + inflow), 1e-12);
+        finish(r);
+    }
+}
+
+TEST(Aquifer2D, IndependentPartlyFilledColumnSettlesRechargeBeforeReleasingRealExcess) {
+    constexpr double end = 1. / 256, concentration = 2.;
+    for (bool fill : {false, true}) {
+        auto r =
+            openDeck(fill ? "clock-partial-overflow" : "clock-partial-recharge",
+                     deck("[2D_AQUIFER_OPTIONS]\nGW_CLOCK INDEPENDENT\nGW_ET NONE\n"
+                          "NODE_ENROLMENT ROWS\n[2D_AQUIFER]\n"
+                          "CELL 1 360 1 .45 .1 2 HG0 .9985 SOIL_CHAR GARDNER CLOSURE CLOSED_FORM\n"
+                          "[POLLUTANTS]\nDye MG/L 0 0 0 0\n",
+                          "", 0.));
+        ASSERT_TRUE(r.opened);
+        ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK);
+        ASSERT_EQ(swmm_engine_start(r.e, 0), SWMM_OK);
+        r.started = true;
+        auto& surface = r.eng->surfaceRouter2D();
+        auto& gw = surface.subsurface();
+        auto& state = gw.state();
+        state.hu[0] = .4 * (state.zs[0] - state.hg[0]);
+        auto& tr = gw.transport();
+        tr.sat_mass[0] = concentration * gw.satVolume(0);
+        tr.unsat_mass[0] = concentration * gw.unsatVolume(0);
+        const double water = gw.satVolume(0) + gw.unsatVolume(0);
+        const double capacity = state.theta_s[0] * state.zs[0] * state.area[0];
+        const double inflow = fill ? capacity - water + .001 : 0.;
+        gw.prepareClock();
+        gw.setProducerEnd(end);
+        gw.bookLinkSeepage(0, inflow);
+        gw.bookLinkSeepageMass(0, 0, concentration * inflow);
+        gw.advanceClock(end, surface.state(), false, true);
+        EXPECT_GT(state.led_recharge, 0.);
+        EXPECT_NEAR(state.dunne_cumulative[0], fill ? .001 : 0., 1e-12);
+        EXPECT_DOUBLE_EQ(state.reject_cumulative[0], 0.);
+        EXPECT_NEAR(gw.satVolume(0) + gw.unsatVolume(0) + state.xacc_to_surface[0], water + inflow,
+                    1e-12);
+        EXPECT_NEAR(tr.sat_mass[0] + tr.unsat_mass[0] + tr.xacc_to_surface[0],
+                    concentration * (water + inflow), 1e-12);
+        if (fill) {
+            EXPECT_DOUBLE_EQ(state.hu[0], 0.);
+            EXPECT_NEAR(tr.xacc_to_surface[0], concentration * .001, 1e-12);
+        }
+        finish(r);
+    }
+}
+
+TEST(Aquifer2D, IndependentCollapsedColumnKeepsTopRefundsWithTheirDonor) {
+    using namespace openswmm::twoD;
+    constexpr double end = 1. / 256, intake = .00002, inflow = .001;
+    auto r = openDeck("clock-collapse-donor-refund",
+                      deck("[2D_AQUIFER_OPTIONS]\nGW_CLOCK INDEPENDENT\nGW_ET NONE\n"
+                           "NODE_ENROLMENT ROWS\n[2D_AQUIFER]\n"
+                           "CELL 1 360 1 .45 .1 2 HG0 .99925 CLOSURE CLOSED_FORM\n"
+                           "[POLLUTANTS]\nDye MG/L 0 0 0 0\n",
+                           "", 0.));
+    ASSERT_TRUE(r.opened);
+    ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(r.e, 0), SWMM_OK);
+    r.started = true;
+    auto& surface = r.eng->surfaceRouter2D();
+    auto& gw = surface.subsurface();
+    auto& state = gw.state();
+    ASSERT_TRUE(gw.configureSourceReceipts({0}).empty());
+    // Accepted top water may still be pending when another producer fills
+    // the receiver. Its numerical refund must retain the original donor.
+    SurfaceIntakeReceipt receipt;
+    receipt.request.cell = 0;
+    receipt.request.source = "pending-donor";
+    receipt.end = end;
+    receipt.volume = intake;
+    receipt.mass = {3. * intake};
+    gw.retainSourceReceipt(receipt);
+    gw.bookInfiltrationFromSurface(0, intake);
+    gw.bookInfiltrationMass(0, 0, receipt.mass[0]);
+    state.hu[0] = state.theta_s[0] * (state.zs[0] - state.hg[0]);
+    auto& tr = gw.transport();
+    tr.sat_mass[0] = 2. * gw.satVolume(0);
+    tr.unsat_mass[0] = 2. * gw.unsatVolume(0);
+    const double water = gw.satVolume(0) + gw.unsatVolume(0);
+    gw.prepareClock();
+    gw.setProducerEnd(end);
+    gw.bookLinkSeepage(0, inflow);
+    gw.bookLinkSeepageMass(0, 0, 2. * inflow);
+    gw.advanceClock(end, surface.state(), false, true);
+    double refunds = 0., emergence = 0., mass = 0.;
+    for (const auto& returned : gw.sourceReturns()) {
+        mass += returned.mass[0];
+        if (returned.kind == SurfaceReturnKind::NUMERICAL_REFUND) {
+            refunds += returned.volume;
+            EXPECT_EQ(returned.intake.request.source, receipt.request.source);
+            EXPECT_NEAR(returned.mass[0], 3. * returned.volume, 1e-12);
+        } else {
+            emergence += returned.volume;
+            EXPECT_NEAR(returned.mass[0], 2. * returned.volume, 1e-12);
+        }
+    }
+    EXPECT_NEAR(refunds, intake, 1e-12);
+    EXPECT_NEAR(emergence, inflow, 1e-12);
+    EXPECT_NEAR(gw.satVolume(0) + gw.unsatVolume(0) + refunds + emergence,
+                water + intake + inflow, 1e-12);
+    EXPECT_NEAR(tr.sat_mass[0] + tr.unsat_mass[0] + mass,
+                2. * (water + inflow) + 3. * intake, 1e-12);
+    finish(r);
+}
+
+TEST(Aquifer2D, ThinRechargePreservesActualEquilibriumAndLegacyRatesAboveTheFloor) {
+    using namespace openswmm::twoD;
+    for (auto law :
+         {SoilChar::GARDNER, SoilChar::RUSSO, SoilChar::BROOKS_COREY, SoilChar::VAN_GENUCHTEN}) {
+        soil::Params p;
+        p.law = law;
+        for (double length : {1e-7, .0005}) {
+            EXPECT_NEAR(soil::rechargeQ0AtLength(p, length, soil::equilibriumStorage(p, length)),
+                        0., 1e-12);
+            EXPECT_GT(soil::rechargeQ0AtLength(p, length, p.theta_r * length), 0.);
+            EXPECT_LE(soil::rechargeQ0AtLength(p, length, p.theta_s * length), 0.);
+        }
+        for (double length : {.001, .01, 1.})
+            for (double theta : {.1, .3, .45})
+                EXPECT_DOUBLE_EQ(soil::rechargeQ0AtLength(p, length, theta * length),
+                                 soil::rechargeQ0(p, length, theta * length));
+    }
+}
+
+TEST(Aquifer2D, IndependentThinFullColumnDoesNotDrainIntoAnInventedMillimetre) {
+    for (const char* law : {"GARDNER", "RUSSO", "BROOKS_COREY", "VAN_GENUCHTEN"})
+        for (double length : {.00075, .0000005}) {
+            SCOPED_TRACE(std::string(law) + "/" + std::to_string(length));
+            auto r =
+                openDeck("clock-thin-full-" + std::string(law) + std::to_string(length),
+                         deck("[2D_AQUIFER_OPTIONS]\nGW_CLOCK INDEPENDENT\n"
+                              "NODE_ENROLMENT ROWS\nGW_ET NONE\n[2D_AQUIFER]\n"
+                              "CELL 1 360 1 .45 .1 2 HG0 .99925 CLOSURE CLOSED_FORM SOIL_CHAR " +
+                                  std::string(law) + "\n",
+                              "", 0.));
+            ASSERT_TRUE(r.opened);
+            ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK);
+            ASSERT_EQ(swmm_engine_start(r.e, 0), SWMM_OK);
+            r.started = true;
+            auto& surface = r.eng->surfaceRouter2D();
+            auto& gw = surface.subsurface();
+            auto& state = gw.state();
+            state.hg[0] = state.zs[0] - length;
+            state.hu[0] = state.theta_s[0] * (state.zs[0] - state.hg[0]);
+            const double head = state.hg[0], column = state.hu[0], water = state.liveStorage();
+            gw.prepareClock();
+            gw.advanceClock(1. / 256, surface.state(), false, true);
+            // Full storage is above hydrostatic equilibrium. With capillary
+            // rise disabled and no forcing there is no downward recharge.
+            EXPECT_DOUBLE_EQ(state.q0_last[0], 0.);
+            EXPECT_DOUBLE_EQ(state.hg[0], head);
+            EXPECT_DOUBLE_EQ(state.hu[0], column);
+            EXPECT_DOUBLE_EQ(state.dunne_cumulative[0], 0.);
+            EXPECT_DOUBLE_EQ(state.reject_cumulative[0], 0.);
+            EXPECT_NEAR(state.liveStorage(), water, 1e-12);
+            finish(r);
+        }
+}
+
+TEST(Aquifer2D, IndependentColumnDrainageWakesWithoutExternalReceipts) {
+    auto r = openDeck(
+        "clock-column-drainage",
+        deck(
+            "[2D_AQUIFER_OPTIONS]\nGW_CLOCK INDEPENDENT\nGW_HEAD_TOLERANCE .0001\nNODE_ENROLMENT ROWS\nM_LAYERS 4\n"
+            "[2D_AQUIFER]\n* 36 1 .45 .1 2 HG0 .5 CLOSURE SIGMA\n",
+            "", 0.));
+    ASSERT_TRUE(r.opened);
+    ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(r.e, 0), SWMM_OK);
+    r.started = true;
+    auto& surface = r.eng->surfaceRouter2D();
+    auto& gw = surface.subsurface();
+    const auto before = gw.state().hg;
+    const double water = gw.state().liveStorage();
+    gw.prepareClock();
+    EXPECT_EQ(gw.pendingClockWater(0).first, 0.);
+    EXPECT_EQ(gw.pendingClockWater(0).second, 0.);
+    EXPECT_EQ(gw.clockRung(0), 0);
+    gw.advanceClock(1., surface.state(), false);
+    EXPECT_EQ(gw.cellCompletedTime(0), 1.);
+    EXPECT_GT(gw.state().hg[0], before[0]);
+    EXPECT_GT(gw.state().led_recharge, 0.);
+    EXPECT_NEAR(gw.state().liveStorage(), water, 1e-12);
+    finish(r);
+}
+
+TEST(Aquifer2D, IndependentBaseRungCapsWetProducerChecks) {
+    for (const char* ceiling : {"3600", "1", ".0625"}) {
+        SCOPED_TRACE(ceiling);
+        auto r =
+            openDeck("clock-base-producer-" + std::string(ceiling),
+                     deck("[2D_AQUIFER_OPTIONS]\nGW_CLOCK INDEPENDENT\nGW_HEAD_TOLERANCE .0001\n"
+                          "GW_MAX_STEP " +
+                              std::string(ceiling) +
+                              "\nNODE_ENROLMENT ROWS\nM_LAYERS 4\n[2D_AQUIFER]\n"
+                              "* 36 1 .45 .1 2 HG0 .5 CLOSURE SIGMA\n",
+                          "INFILTRATION NO\n", .01));
+        ASSERT_TRUE(r.opened);
+        ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK);
+        ASSERT_EQ(swmm_engine_start(r.e, 0), SWMM_OK);
+        r.started = true;
+        double actual = 0;
+        ASSERT_EQ(swmm_coupling_advance_to(r.e, 5., &actual), SWMM_OK);
+        const auto& gw = r.eng->surfaceRouter2D().subsurface();
+        ASSERT_NE(gw.clockState(), nullptr);
+        const double producer = gw.clockState()->schedule->producerStep();
+        EXPECT_EQ(gw.clockState()->firings[2], std::llround(10 / producer));
+        EXPECT_LE(gw.clockState()->maximum[2], producer);
+        finish(r);
+    }
+}
+
+TEST(Aquifer2D, IndependentBudgetsIgnoreFutureReceiptsAndKeepOpposingTransfers) {
+    auto r = openDeck(
+        "clock-directional-budget",
+        deck(aquiferSection(
+                 "CLOSURE ENSLAVED HG0 1",
+                 "GW_CLOCK INDEPENDENT\nGW_HEAD_TOLERANCE 0.000001\nNODE_ENROLMENT ROWS\n"),
+             "", 0.));
+    ASSERT_TRUE(r.opened);
+    ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(r.e, 0), SWMM_OK);
+    r.started = true;
+    auto& surface = r.eng->surfaceRouter2D();
+    auto& gw = surface.subsurface();
+    gw.prepareClock();
+    gw.setProducerEnd(100.);
+    gw.bookLinkSeepage(0, .01);
+    gw.bookLinkSeepage(0, -.01);
+    EXPECT_DOUBLE_EQ(gw.pendingClockWater(0, 1.).first, 0.);
+    EXPECT_DOUBLE_EQ(gw.pendingClockWater(0, 1.).second, 0.);
+    gw.advanceClock(1., surface.state(), false);
+    EXPECT_DOUBLE_EQ(gw.cellCompletedTime(0), 0.);
+    gw.setProducerEnd(2.);
+    gw.bookLinkSeepage(0, .002);
+    gw.bookLinkSeepage(0, -.002);
+    EXPECT_NEAR(gw.pendingClockWater(0, 2.).first, .002, 1e-15);
+    EXPECT_NEAR(gw.pendingClockWater(0, 2.).second, .002, 1e-15);
+    gw.advanceClock(2., surface.state(), false);
+    EXPECT_DOUBLE_EQ(gw.cellCompletedTime(0), 2.);
+    EXPECT_NEAR(gw.pendingClockWater(0).first, .01, 1e-15);
+    EXPECT_NEAR(gw.pendingClockWater(0).second, .01, 1e-15);
+    EXPECT_EQ(gw.clockState()->budget_firings[1], 1);
+    EXPECT_GT(gw.clockState()->excess_in[1], 0.);
+    EXPECT_GT(gw.clockState()->excess_out[1], 0.);
+    EXPECT_GE(gw.clockState()->schedule->rung(0), 0); // accuracy alone is never stiff
+    finish(r);
+}
+
+TEST(Aquifer2D, IndependentLayerContactUsesItsReceivingLayerBudget) {
+    auto r = openDeck(
+        "clock-layer-budget",
+        deck(
+            aquiferSection("CLOSURE SIGMA HG0 .5",
+                           "GW_CLOCK INDEPENDENT\nNODE_ENROLMENT ROWS\nM_LAYERS 2\n") +
+                "[POLLUTANTS]\nDye MG/L 0 0 0 0\n[GW_TRANSPORT_OPTIONS]\nUNSAT_TRANSPORT LAYERED\nTRANSPORT_POLLUTANTS YES\n",
+            "", 0.));
+    ASSERT_TRUE(r.opened);
+    ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(r.e, 0), SWMM_OK);
+    r.started = true;
+    auto& surface = r.eng->surfaceRouter2D();
+    auto& gw = surface.subsurface();
+    auto& s = gw.state();
+    auto& tr = gw.transport();
+    ASSERT_EQ(tr.n_layers, 2);
+    const double dzA = (s.zs[0] - s.hg[0]) * s.area[0] / tr.n_layers;
+    s.theta_sigma[0] = s.theta_s[0] - 1e-6;
+    s.hu[0] = 0;
+    tr.unsat_mass[0] = 0;
+    constexpr double concentration = 2.;
+    for (int j = 0; j < tr.n_layers; ++j) {
+        const double water = s.theta_sigma[j * s.n_cells] * dzA;
+        s.hu[0] += water / s.area[0];
+        tr.layer_mass[tr.layerIdx(0, j, 0)] = water * concentration;
+        tr.unsat_mass[0] += water * concentration;
+    }
+    tr.sat_mass[0] = gw.satVolume(0) * concentration;
+    const auto mass = [&] {
+        const auto sum = [](const auto& values) { return std::accumulate(values.begin(), values.end(), 0.); };
+        return sum(tr.sat_mass) + sum(tr.unsat_mass) + sum(tr.sacc_L) + sum(tr.sacc_R) + sum(tr.xacc_to_surface);
+    };
+    const double water0 = s.liveStorage(), mass0 = mass();
+    gw.prepareClock();
+    gw.setProducerEnd(1.);
+    const double volume = .75e-6 * dzA;
+    const double contact = s.z_bed[0] + s.zs[0] - .01;
+    gw.bookLinkContact(0, volume, {concentration}, contact, contact);
+    gw.advanceClock(1., surface.state(), false);
+    EXPECT_EQ(gw.cellCompletedTime(0), 1.);
+    EXPECT_EQ(gw.clockState()->budget_firings[2], 1);
+    EXPECT_GT(gw.clockState()->excess_in[2], 0.);
+    EXPECT_NEAR(s.liveStorage(), water0 + volume, 1e-12);
+    EXPECT_NEAR(mass(), mass0 + concentration * volume, 1e-12);
+    finish(r);
+}
+
+TEST(Aquifer2D, RuntimeBoundaryEditLandsOnlyTheEditedIndependentCell) {
+    auto r = openDeck("clock-runtime-edit", deck(aquiferSection(
+        "CLOSURE ENSLAVED", "GW_CLOCK INDEPENDENT\nGW_MAX_STEP 1000\nNODE_ENROLMENT ROWS\n")));
+    ASSERT_TRUE(r.opened);
+    ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(r.e, 0), SWMM_OK);
+    r.started = true;
+    double actual = 0;
+    ASSERT_EQ(swmm_coupling_advance_to(r.e, 1., &actual), SWMM_OK);
+    ASSERT_DOUBLE_EQ(actual, 1.);
+    double held = -1.;
+    ASSERT_EQ(swmm_gw2d_get_cell(r.e, 0, SWMM_GW2D_VAR_COMPLETED_TIME, &held), SWMM_OK);
+    EXPECT_EQ(held, 0.);
+    const int ns = r.eng->surfaceRouter2D().subsurface().transport().n_species;
+    std::vector<double> concentrations(ns, 0.);
+    ASSERT_NE(swmm_gw2d_set_runtime_boundary(r.e, 0, 15, 2, .0001, concentrations.data(),ns), SWMM_OK);
+    ASSERT_EQ(swmm_gw2d_get_cell(r.e, 0, SWMM_GW2D_VAR_COMPLETED_TIME, &held), SWMM_OK);
+    EXPECT_EQ(held, 0.);
+    ASSERT_EQ(swmm_gw2d_set_runtime_boundary(r.e, 0, 0, 2, .0001, concentrations.data(),ns), SWMM_OK);
+    ASSERT_EQ(swmm_gw2d_get_cell(r.e, 0, SWMM_GW2D_VAR_COMPLETED_TIME, &held), SWMM_OK);
+    EXPECT_EQ(held, actual);
+    ASSERT_EQ(swmm_gw2d_get_cell(r.e, 1, SWMM_GW2D_VAR_COMPLETED_TIME, &held), SWMM_OK);
+    EXPECT_EQ(held, 0.);
+    finish(r);
+}
+
+TEST(Aquifer2D, ClockOptionsRoundTripAndSharedAlwaysBindsTheSurface) {
+    auto r = openDeck("clock-options", deck(aquiferSection("CLOSURE ENSLAVED")));
+    ASSERT_TRUE(r.opened);
+    char value[64]{};
+    ASSERT_EQ(swmm_gw2d_option_set(r.e, "GW_BINDS_SURFACE_DT", "NO"), SWMM_OK);
+    ASSERT_EQ(swmm_gw2d_option_get(r.e, "GW_BINDS_SURFACE_DT", value, sizeof(value)), SWMM_OK);
+    EXPECT_STREQ(value, "YES");
+    ASSERT_EQ(swmm_gw2d_option_set(r.e, "GW_CLOCK", "INDEPENDENT"), SWMM_OK);
+    ASSERT_EQ(swmm_gw2d_option_get(r.e, "GW_BINDS_SURFACE_DT", value, sizeof(value)), SWMM_OK);
+    EXPECT_STREQ(value, "NO");
+    ASSERT_EQ(swmm_gw2d_option_set(r.e, "GW_BASE_STEP", "0.12500001234567891"), SWMM_OK);
+    ASSERT_EQ(swmm_gw2d_option_set(r.e, "GW_MAX_STEP", "13.5"), SWMM_OK);
+    ASSERT_EQ(swmm_gw2d_option_set(r.e, "GW_BUDGET_FRACTION", "0.12345678912345678"), SWMM_OK);
+    ASSERT_EQ(swmm_gw2d_option_set(r.e, "GW_HEAD_TOLERANCE", "0.012345678912345678"), SWMM_OK);
+    EXPECT_NE(swmm_gw2d_option_set(r.e, "GW_BUDGET_FRACTION", "1.01"), SWMM_OK);
+    EXPECT_NE(swmm_gw2d_option_set(r.e, "GW_BUDGET_FRACTION", "0"), SWMM_OK);
+    EXPECT_NE(swmm_gw2d_option_set(r.e, "GW_HEAD_TOLERANCE", "1"), SWMM_OK);
+    EXPECT_NE(swmm_gw2d_option_set(r.e, "GW_HEAD_TOLERANCE", "nan"), SWMM_OK);
+    EXPECT_NE(swmm_gw2d_option_set(r.e, "GW_MAX_STEP", "0"), SWMM_OK);
+    EXPECT_NE(swmm_gw2d_option_set(r.e, "GW_BASE_STEP", "nan"), SWMM_OK);
+    EXPECT_NE(swmm_gw2d_option_set(r.e, "GW_CLOCK", "AUTO"), SWMM_OK);
+    for (const char* binding : {"NO", "YES"}) {
+        ASSERT_EQ(swmm_gw2d_option_set(r.e, "GW_BINDS_SURFACE_DT", binding), SWMM_OK);
+        const auto path = kOutDir / (std::string("clock-options-") + binding + "-saved.inp");
+        ASSERT_EQ(swmm_model_write(r.e, path.string().c_str()), SWMM_OK);
+        auto again = openDeck(std::string("clock-options-reopened-") + binding, readAll(path));
+        ASSERT_TRUE(again.opened);
+        for (const char* key : {"GW_CLOCK", "GW_BASE_STEP", "GW_MAX_STEP", "GW_BINDS_SURFACE_DT", "GW_BUDGET_FRACTION", "GW_HEAD_TOLERANCE"}) {
+            char original[64]{};
+            ASSERT_EQ(swmm_gw2d_option_get(r.e, key, original, sizeof(original)), SWMM_OK);
+            ASSERT_EQ(swmm_gw2d_option_get(again.e, key, value, sizeof(value)), SWMM_OK);
+            EXPECT_STREQ(original, value) << key;
+        }
+        finish(again);
+    }
+    finish(r);
 }
 
 TEST(Aquifer2D, LinkSeepageOptionRoundTripsAndPreservesLegacyAuto) { // G-X3
@@ -2800,6 +3278,73 @@ TEST(AquiferBedLookup, RetieringGrowShrinkPreservesOrderedCheckpointLists) {
         EXPECT_EQ(rig.gw.state().tier, expected);
         saveBedState("retier_grow_shrink_" + std::to_string(step++), rig.gw);
     }
+}
+
+TEST(AquiferClockTelemetry, HistogramsSeparateUnboundedLimitsAndUseExactBinEdges) {
+    GwClockTelemetry profile;
+    profile.reset(4, true);
+    profile.bounds(0, 1, 16);
+    profile.bounds(1, 4, 1);
+    profile.bounds(2, 1e30, 1e30);
+    profile.bounds(3, 1, 1e30);
+    profile.rebuilt({1, 1, 0, 1}, {0, 2, 0, 1});
+    EXPECT_EQ(profile.rebuilds, 1);
+    EXPECT_EQ(profile.closures[0].zone_ratio[1], 1);
+    EXPECT_EQ(profile.closures[2].zone_ratio[4], 1);
+    EXPECT_EQ(profile.closures[1].u_unbounded, 1);
+    EXPECT_EQ(profile.closures[0].both_unbounded, 0); // uncovered cells excluded
+    profile.fired(0, 0, 0, .5, 1, GwFiringOrigin::macro);
+    profile.fired(0, 0, .5, .25, 1, GwFiringOrigin::tail);
+    profile.fired(1, 2, 0, .75, 1e30, GwFiringOrigin::direct);
+    EXPECT_EQ(profile.closures[0].overfire[2], 2);
+    EXPECT_EQ(profile.closures[2].unbounded, 1);
+    EXPECT_DOUBLE_EQ(profile.closures[0].elapsed, .75);
+    EXPECT_DOUBLE_EQ(profile.closures[0].max_elapsed, .5);
+    EXPECT_EQ(profile.cells[0].firings, 2);
+    EXPECT_EQ(profile.origins, (std::array<GwClockTelemetry::Count, 4>{1, 1, 1, 0}));
+    EXPECT_DOUBLE_EQ(profile.end - profile.start, .75);
+    profile.reset(4, false);
+    profile.bounds(0, 1, 2);
+    profile.rebuilt({1, 1, 0, 1}, {0, 2, 0, 1});
+    profile.fired(0, 0, 0, 1, 2, GwFiringOrigin::tail);
+    profile.batch(0);
+    EXPECT_TRUE(profile.cells.empty());
+    EXPECT_EQ(profile.rebuilds, 0);
+    EXPECT_EQ(profile.closures[0].firings, 0);
+    EXPECT_EQ(profile.tier_batches[0], 0);
+}
+
+TEST(AquiferClockTelemetry, CountsSurviveRetieringAndDoNotEnterCheckpointBytes) {
+    NodeTrialRig rig(0, GwClosure::CLOSED_FORM, 2, 10, .1, 1e-5, .1, 2);
+    SurfaceStateData surface;
+    surface.resize(2, 0);
+    rig.gw.state().dt_cell = {1., 4.};
+    rig.gw.assignTiers(1, 3);
+    rig.gw.fireGwCells(0, 1, surface, 0, -1, GwFiringOrigin::macro);
+    rig.gw.fireGwCells(2, 4, surface, 0, -1, GwFiringOrigin::macro);
+    rig.gw.fireGwCells(0, .25, surface, 4, -1, GwFiringOrigin::tail);
+    const auto before = bedState(rig.gw);
+    const auto& profile = rig.gw.clockTelemetry();
+    if (openswmm::perf::enabled()) {
+        EXPECT_EQ(profile.cells[0].firings, 2);
+        EXPECT_EQ(profile.cells[1].firings, 1);
+        EXPECT_EQ(profile.tier_batches[0], 2);
+        EXPECT_EQ(profile.tier_batches[2], 1);
+        EXPECT_EQ(profile.origins[static_cast<int>(GwFiringOrigin::tail)], 1);
+    } else {
+        EXPECT_FALSE(profile.active());
+    }
+    rig.gw.assignTiers(.5, 2);
+    EXPECT_EQ(rig.gw.tierFirings(), (std::vector<long>{0, 0}));
+    if (openswmm::perf::enabled()) {
+        EXPECT_EQ(profile.cells[0].firings, 2);
+        EXPECT_EQ(profile.tier_batches[2], 1);
+    }
+    openswmm::detail::CompletedSourceArchive restore(before);
+    rig.gw.checkpoint(restore, false);
+    restore.finish();
+    EXPECT_EQ(bedState(rig.gw), before);
+    saveBedState("clock_telemetry_checkpoint", rig.gw);
 }
 
 TEST(AquiferBedLookup, ParallelDtAndIntakeMatchSerialAcrossClosuresAndSoils) {

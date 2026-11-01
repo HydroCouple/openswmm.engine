@@ -1933,9 +1933,12 @@ int SWMMEngine::start(int save_results) noexcept {
     hotstart_save_done_.assign(ctx_.files.hotstart_saves.size(), 0);
 
     ctx_.state = EngineState::RUNNING;
-    const bool wants_native_hotstart =
-        !pending_hotstart_checkpoint_.empty() ||
-        (ctx_.options.heat_transport && !ctx_.files.hotstart_saves.empty());
+    bool date_native_snapshot = ctx_.options.heat_transport;
+#ifdef OPENSWMM_HAS_2D
+    date_native_snapshot |= surface_router_.subsurface().independentClock();
+#endif
+    const bool wants_native_hotstart = !pending_hotstart_checkpoint_.empty() ||
+                                       (date_native_snapshot && !ctx_.files.hotstart_saves.empty());
     if (wants_native_hotstart) {
         hotstart_checkpoint_error_ = prepareNativeHotstartCheckpointing();
         if (!hotstart_checkpoint_error_.empty()) {
@@ -2462,7 +2465,20 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
         std::fill(ctx_.gages.api_rainfall.begin(), ctx_.gages.api_rainfall.end(), -1.0);
 
 #ifdef OPENSWMM_HAS_2D
-        surface_router_.expireRuntime(runtimeCouplingTime());
+        const double completed = runtimeCouplingTime();
+        auto& ground = surface_router_.subsurface();
+        std::vector<int> expired_cells;
+        if (ground.independentClock())
+            for (const auto& source : ground.runtimeSources().rows)
+                if (source.enabled && source.until <= completed)
+                    expired_cells.push_back(source.cell);
+        if (!expired_cells.empty()) {
+            flushRuntimeCouplingBoundary();
+            ground.landClockCells(expired_cells, surface_router_.state());
+        }
+        surface_router_.expireRuntime(completed);
+        if (!expired_cells.empty())
+            ground.refreshClockAfterEdit(surface_router_.state());
 #endif
         runtime_pipeline_ = false;
         // Fire step-end callback
@@ -8848,20 +8864,24 @@ void SWMMEngine::writeHotstartSave(const HotstartSaveEntry& entry) {
     const bool lid_restart =
         std::any_of(ctx_.node_subtypes.storages.lid.begin(), ctx_.node_subtypes.storages.lid.end(),
                     [](const auto& c) { return c.control >= 0; });
+    bool full_continuation = ctx_.options.heat_transport;
+#ifdef OPENSWMM_HAS_2D
+    full_continuation |= surface_router_.subsurface().independentClock();
+#endif
     const bool native =
         entry.format == HotstartFormat::NATIVE ||
-        (entry.format == HotstartFormat::AUTO && (lid_restart || ctx_.options.heat_transport));
+        (entry.format == HotstartFormat::AUTO && (lid_restart || full_continuation));
     int rc = 0;
     if (native) {
         std::unique_ptr<HotStartFile> hs;
         // As swmm_hotstart_save: the V15 file when a full engine checkpoint
         // is attached, otherwise the record-based one (which refuses coupled
         // mesh/ground heat with its own message).
-        if (ctx_.options.heat_transport && checkpoint_enabled_) {
+        if (full_continuation && checkpoint_enabled_) {
             std::string snapshot;
             const std::string error = checkpointBytes(snapshot, false);
             if (!error.empty()) {
-                ctx_.warnings.push_back("SAVE HOTSTART: coupled heat state was not saved: " +
+                ctx_.warnings.push_back("SAVE HOTSTART: incomplete native continuation: " +
                                         error);
                 return;
             }

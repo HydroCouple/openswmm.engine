@@ -35,6 +35,7 @@
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
 #include "../core/PerfTimers.hpp"
+#include "../core/ProcessPerf.hpp"
 #include "../core/ThreadInfo.hpp"
 #include "../hydrology/Gage.hpp"
 #include "../transport/components/ReactionModule/ReactionArdBinding.hpp" // S4
@@ -1377,7 +1378,7 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
             static_cast<int>(ctx.nodes.invert_elev.size()), runtime_aquifer, ctx.warnings);
         if (!aq_err.empty())
             throw std::runtime_error(aq_err);
-        marcher->setSubsurface(&subsurface_);
+        marcher->setSubsurface(&subsurface_, ctx.options.totalDurationMs() / 1000.);
         // G-X1 (2026-09-19): the aquifer's node beds sample the 1D heads
         // through `state_.nodes_1d`, which only the orifice coupling used to
         // publish — a bed under a node with no [2D_VERTEX_NODE_MAP] entry
@@ -1983,6 +1984,7 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // no coupling points simply reports zeros, which is the true answer.
     coupling_cum_applied_.assign(static_cast<std::size_t>(mesh_.n_triangles()), 0.0);
 
+    subsurface_.prepareClock();
     active_ = true;
     sim_time_ = 0.0;
     gage_rate_.clear();
@@ -3236,6 +3238,7 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_
     // Exchange volumes booked per batch are delivered to the 1D through the
     // queue spread (uniform rate over the batch span).
     pending_dt_ += routing_dt;
+    subsurface_.setProducerEnd(sim_time_ + pending_dt_);
     last_t_ = t;
     // G-X3 (2026-09-19): this routing step's conduit seepage, exactly as
     // updateRoutingMassBalance books it into `routing_seep_loss` (the same
@@ -3618,6 +3621,10 @@ void SurfaceRouter2D::finalize(SimulationContext& ctx) {
             mb.solver_tier_cells[k] = s.tier_cells[k];
         solver_->finalize();
     }
+    if (active_ && perf::enabled() &&
+        perf::process_attribution_valid.load(std::memory_order_relaxed))
+        subsurface_.clockTelemetry().dump(subsurface_.coverage(),
+                                          std::getenv("OPENSWMM_GW_CLOCK_CELLS") != nullptr);
 #endif
     // S2 telemetry: a face whose dispersive exchange was capped is a face
     // where D·dt/d² exceeded the explicit limit — the physics stayed bounded

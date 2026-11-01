@@ -1611,6 +1611,43 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
             }
         }
 
+#ifdef OPENSWMM_HAS_2D
+        if (const auto* router = ctx.twod_io.surface_router) {
+            const auto& gw = router->subsurface();
+            if (const auto* clock = gw.clockState()) {
+                std::set<int> rungs;
+                for (int i : clock->cells)
+                    rungs.insert(gw.clockRung(i));
+                std::fprintf(f, "\n\n  2D Aquifer Clock (INDEPENDENT)\n  Occupied rungs:");
+                for (int k : rungs)
+                    std::fprintf(f, " %d", k);
+                std::fprintf(
+                    f,
+                    "\n  Closure           Firings     Subcycled    Mean step (s)    Max step (s)");
+                const char* names[] = {"CLOSED_FORM", "ENSLAVED", "SIGMA"};
+                for (int k = 0; k < 3; ++k)
+                    std::fprintf(f, "\n  %-12s %12llu %12llu %16.6g %15.6g", names[k],
+                                 static_cast<unsigned long long>(clock->firings[k]),
+                                 static_cast<unsigned long long>(clock->subcycles[k]),
+                                 clock->firings[k] ? clock->elapsed[k] / clock->firings[k] : 0.,
+                                 clock->maximum[k]);
+                std::fprintf(f,
+                             "\n  Stability / rung period (<1, <2, <4, <8, <16, >=16, unbounded):");
+                for (auto count : clock->stability_to_period)
+                    std::fprintf(f, " %llu", static_cast<unsigned long long>(count));
+                const auto total = clock->firings[0] + clock->firings[1] + clock->firings[2];
+                const auto early = clock->budget_firings[0] + clock->budget_firings[1] + clock->budget_firings[2];
+                std::fprintf(f, "\n  Budget-triggered firings (%%)  %.6g\n", total ? 100. * early / total : 0.);
+                for (int k = 0; k < 3; ++k) {
+                    std::fprintf(f, "  %s max budget exceedance in/out (m3): %.9g %.9g; bins:", names[k], clock->excess_in[k], clock->excess_out[k]);
+                    std::fprintf(f, " max return depth (m): %.9g;", clock->max_return_depth[k]);
+                    for (auto count : clock->budget_exceedance[k])
+                        std::fprintf(f, " %llu", static_cast<unsigned long long>(count));
+                    std::fprintf(f, "\n");
+                }
+            }
+        }
+#endif
         // 1D <-> 2D Exchange Reconciliation — the coupled-loop ledger books
         // spill as Flooding Loss and drain as external inflow, so the plain
         // flow-routing continuity above double-counts exchanged water as both

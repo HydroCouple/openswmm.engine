@@ -140,6 +140,10 @@ struct GwSubcatchShare {
 
 /// `[2D_AQUIFER_OPTIONS]`. Defaults are the plan's starred values.
 struct GwOptions {
+    bool independent_clock = false;
+    bool binds_surface_dt = false;             // SHARED always includes groundwater stability
+    double base_step = 1.0, max_step = 3600.0; // seconds
+    double budget_fraction = 0.5, head_tolerance = 0.05;
     SoilChar soil_char = SoilChar::RUSSO;
     GwClosure closure = GwClosure::AUTO;
     int m_layers = 8;               ///< σ layers under closure B (global default)

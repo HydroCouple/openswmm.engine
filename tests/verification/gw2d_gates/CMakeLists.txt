@@ -34,3 +34,13 @@ if(MSVC)
 endif()
 
 add_test(NAME gw2d_gates COMMAND $<TARGET_FILE:gw2d_gates>)
+
+# A1.3 uses real two-zone cell, Darcy face, node and tracer kernels with a
+# scripted clock. No independent-clock hook is enabled in the surface solver.
+add_executable(gw2d_clock_gate gw_clock_gate.cpp)
+target_compile_features(gw2d_clock_gate PRIVATE cxx_std_20)
+target_compile_definitions(gw2d_clock_gate PRIVATE OPENSWMM_HAS_2D)
+target_include_directories(gw2d_clock_gate PRIVATE ${PROJECT_SOURCE_DIR}/src/engine ${PROJECT_SOURCE_DIR}/include)
+target_link_libraries(gw2d_clock_gate PRIVATE $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>)
+add_test(NAME gw2d_clock_gate COMMAND $<TARGET_FILE:gw2d_clock_gate>
+    "${PROJECT_SOURCE_DIR}/tests/output/gw2d_clock_gate")

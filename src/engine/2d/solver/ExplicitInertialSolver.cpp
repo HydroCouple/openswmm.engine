@@ -1334,6 +1334,8 @@ void ExplicitInertialSolver::settleAccumulators() {
 }
 
 void ExplicitInertialSolver::lazySourcesOnly(double t) {
+    if (gw_ && gw_->independentClock())
+        gw_->setProducerEnd(t);
     const double dt_lazy = t - t_last_sync_;
     if (dt_lazy <= 0.0)
         return;
@@ -1352,6 +1354,8 @@ void ExplicitInertialSolver::lazySourcesOnly(double t) {
 }
 
 void ExplicitInertialSolver::syncAndRebuild(double t) {
+    if (gw_ && gw_->independentClock())
+        gw_->setProducerEnd(t);
     perf::ProcessTimer process_timer(perf::ProcessPhase::surface_rebuild);
     settleAccumulators();
     const double dt_lazy = t - t_last_sync_;
@@ -1542,7 +1546,9 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
     // wet cell's (or a whole domain with a dry surface, where dt0 fell back
     // to MAX_TIMESTEP) landed on rung 0 and fired beyond its own bound. The
     // scan is the one refreshDtCell() already does for assignTiers() below.
-    if (gw_) {
+    if (gw_ && gw_->independentClock())
+        gw_->prepareClock(t);
+    if (gw_ && (!gw_->independentClock() || gw_->options().binds_surface_dt)) {
         gw_->refreshDtCell(*mesh_, edges_);
         dt0_ = std::min(dt0_, std::min(gw_->minDtCell(), opts_->max_timestep));
     }
@@ -1685,7 +1691,15 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
     // silently different number. (D-N1's runtime tier count would let the
     // ladder grow to `gw_->requiredTiers(dt0_)`; it is deliberately not taken
     // here — see the handoff.)
-    if (gw_) { // refreshDtCell() ran above, before dt0_ was fixed
+    if (gw_ && gw_->independentClock()) {
+        const auto nonzero = [](double x) { return x != 0.; };
+        gw_quiescent_ = active_cells_.empty() && gw_->nodeBeds().empty() && !common_stage_ &&
+                        !state_->heat.enabled && !state_->snow.active() &&
+                        state_->runtime_sources.rows.empty() &&
+                        std::none_of(state_->rainfall.begin(), state_->rainfall.end(), nonzero) &&
+                        std::none_of(state_->evap_rate.begin(), state_->evap_rate.end(), nonzero);
+    }
+    if (gw_ && !gw_->independentClock()) { // refreshDtCell() ran above, before dt0_ was fixed
         gw_->assignTiers(dt0_, static_cast<int>(cells_by_tier_.size()));
     }
 
@@ -4230,7 +4244,28 @@ double ExplicitInertialSolver::runMomentumStep(double limit, double time) {
     return dt;
 }
 
+void ExplicitInertialSolver::atGroundwaterCheck(double end, const std::function<void()>& publish) {
+    const bool finish = gw_end_time_ > 0 && std::abs(end - gw_end_time_) <=
+                                                64 * std::numeric_limits<double>::epsilon() *
+                                                    std::max(1., gw_end_time_);
+    gw_->setProducerEnd(end);
+    // The hydraulic producer samples the held head at the start of its
+    // interval. Reserve the transfer now, but its dated water/species slots
+    // can only be consumed when the producer reaches end.
+    if (state_->nodes_1d)
+        gw_->sampleNodeExchange(state_->nodes_1d, end - gw_->clockState()->schedule->time(), end);
+    gw_->advanceClock(end, *state_,
+                      gw_quiescent_ && gw_->pendingSurfaceCells().empty() &&
+                          !gw_->hasClockReceipts(),
+                      false, [&] {
+                          publish();
+                          if (finish)
+                              lazySourcesOnly(end);
+                      });
+}
+
 void ExplicitInertialSolver::runMacroCycle(double dt0, int nsub, double time) {
+    const bool independent = gw_ && gw_->independentClock();
     const int K = static_cast<int>(cells_by_tier_.size());
     static const bool dbg_invariant = [] {
         const char* e = std::getenv("OPENSWMM_2D_MARCHER_CHECK");
@@ -4259,7 +4294,7 @@ void ExplicitInertialSolver::runMacroCycle(double dt0, int nsub, double time) {
             // the SAME ladder. Its tier lists are its own (G-A), so a GW face
             // fires here only if the groundwater's stability step put it on
             // rung k — the two domains share the cadence, not the criterion.
-            if (gw_)
+            if (gw_ && !independent)
                 gw_->fireGwFaces(k, (1 << k) * dt0);
         }
         if (dbg_invariant) {
@@ -4270,25 +4305,32 @@ void ExplicitInertialSolver::runMacroCycle(double dt0, int nsub, double time) {
                              "s=%d d=%.6e\n",
                              s, inv1 - inv0);
         }
-        for (int k = 0; k < K; ++k) {
-            if ((s + 1) % (1 << k))
-                continue;
-            if (k == 0)
-                source_phase_end_ = time + (s + 1) * dt0;
-            if (!cells_by_tier_[k].empty() || k == 0)
-                fireCells(cells_by_tier_[k], (1 << k) * dt0, k == 0);
-            // The GW cells of this rung fire AFTER the surface cells of the
-            // same rung, so a cell that infiltrated in this substep hands the
-            // water down within the substep rather than a rung later.
-            if (gw_)
-                gw_->fireGwCells(k, (1 << k) * dt0, *state_, time + (s + 1 - (1 << k)) * dt0,
-                                 common_stage_ ? source_phase_end_ : -1.0);
-        }
-        // Node exchange is sampled at tier-0 cadence against the batch-frozen
-        // 1D heads, exactly like the surface's junction exchange, and booked
-        // into the GW cells' accumulators (G-B) rather than applied directly.
-        if (gw_ && state_->nodes_1d)
-            gw_->sampleNodeExchange(state_->nodes_1d, dt0, time + (s + 1) * dt0);
+        const auto publish = [&] {
+            for (int k = 0; k < K; ++k) {
+                if ((s + 1) % (1 << k))
+                    continue;
+                if (k == 0)
+                    source_phase_end_ = time + (s + 1) * dt0;
+                if (!cells_by_tier_[k].empty() || k == 0)
+                    fireCells(cells_by_tier_[k], (1 << k) * dt0, k == 0);
+                // The GW cells of this rung fire AFTER the surface cells of the
+                // same rung, so a cell that infiltrated in this substep hands the
+                // water down within the substep rather than a rung later.
+                if (gw_ && !independent)
+                    gw_->fireGwCells(k, (1 << k) * dt0, *state_, time + (s + 1 - (1 << k)) * dt0,
+                                     common_stage_ ? source_phase_end_ : -1.0,
+                                     GwFiringOrigin::macro);
+            }
+            // Node exchange is sampled at tier-0 cadence against the batch-frozen
+            // 1D heads, exactly like the surface's junction exchange, and booked
+            // into the GW cells' accumulators (G-B) rather than applied directly.
+            if (gw_ && !independent && state_->nodes_1d)
+                gw_->sampleNodeExchange(state_->nodes_1d, dt0, time + (s + 1) * dt0);
+        };
+        if (independent)
+            atGroundwaterCheck(time + (s + 1) * dt0, publish);
+        else
+            publish();
         captureSourceResults();
         if (dbg_invariant) {
             const double inv2 = invariant();
@@ -4419,7 +4461,24 @@ double ExplicitInertialSolver::advanceImpl(double t_current, double t_target) {
         }
         const int K = static_cast<int>(cells_by_tier_.size());
         const int nsub_full = 1 << (K - 1);
-        const double remaining = t_target - t;
+        double target = t_target;
+        if (gw_ && gw_->independentClock() && !gw_quiescent_ &&
+            (gw_->clockState()->schedule->needsBaseCheck() ||
+             gw_->clockState()->schedule->time() == 0.)) {
+            // The authored base is also the check cadence for accuracy-rung
+            // zero. Waiting a longer wet producer step defeats that limit
+            // just as it withholds receipts from a negative physical rung.
+            // Bound the first coupled check too: no delivered receipt rate
+            // exists yet to select a rung for an initially strong producer.
+            // A deliberately finer authored ceiling must refine delivery
+            // too. Otherwise an entire producer packet is concentrated in
+            // the last of several fine GW steps, spoiling convergence.
+            const double p = gw_->clockState()->schedule->producerStep();
+            const double next = (std::floor(t / p) + 1) * p;
+            if (dt0_ > p && next > t)
+                target = std::min(target, next);
+        }
+        const double remaining = target - t;
 
         // G1-c item 2 (2026-09-19): a quiescent SURFACE no longer strides
         // the window when an aquifer is live — the groundwater's lateral
@@ -4430,12 +4489,14 @@ double ExplicitInertialSolver::advanceImpl(double t_current, double t_target) {
         // froze the water table in place.
         if (active_cells_.empty() && !(gw_ && gw_->active())) {
             // Quiescent: stride the window; the lazy tier keeps accumulating.
-            t = t_target;
+            t = target;
             last_dt_ = remaining;
             // Lazy rain/spill can wet an inactive cell during this stride.
             // Reconsider activation at the next entry; no macro cycles ran
             // to advance the normal rebuild cadence.
             cycles_since_rebuild = kRebuildEveryCycles;
+            if (t < t_target)
+                continue;
             break;
         }
 
@@ -4466,7 +4527,7 @@ double ExplicitInertialSolver::advanceImpl(double t_current, double t_target) {
         // which cost an O(n_cells + n_faces) re-tiering, forced a full
         // syncAndRebuild on the next entry, and — because the leftover has
         // no floor — fired degenerate substeps (down to ~1e-13 s when the
-        // macro path's `t += nsub*dt0` landed 1 ulp short of t_target).
+        // macro path's `t += nsub*dt0` landed 1 ulp short of target).
         // Firing the union lists directly is the same arithmetic in the
         // same order (the collapsed tier-0 lists WERE these lists) and
         // leaves the tiering intact, so the rebuild keeps its own cadence.
@@ -4474,21 +4535,23 @@ double ExplicitInertialSolver::advanceImpl(double t_current, double t_target) {
             // Sub-ulp residue (macro landing shortfall): land without
             // firing physics on a span below any numerical significance.
             const double clock_ulp = 8 * std::numeric_limits<double>::epsilon() *
-                                     std::max({1., std::abs(t), std::abs(t_target)});
-            if (!common_stage_ && remaining <= dt0_ * 1.0e-9 &&
+                                     std::max({1., std::abs(t), std::abs(target)});
+            if (!(gw_ && gw_->independentClock()) && !common_stage_ && remaining <= dt0_ * 1.0e-9 &&
                 (!(second_order_ && gw_) || remaining <= clock_ulp)) {
                 if (second_order_ && gw_) {
                     // Numerical landing only: no physical interval is replayed.
                     // Both owners adopt the same representable accepted clock.
-                    source_phase_end_ = t_target;
-                    gw_->source_firing_end_ = t_target;
+                    source_phase_end_ = target;
+                    gw_->source_firing_end_ = target;
                     if (state_->snow.active())
-                        state_->snow.reanchorCompletedEnd(t_target);
+                        state_->snow.reanchorCompletedEnd(target);
                     for (int i = 0; i < gw_->state_.n_cells; ++i)
                         if (gw_->covers(i))
-                            gw_->cell_completed_[i] = t_target;
+                            gw_->cell_completed_[i] = target;
                 }
-                t = t_target;
+                t = target;
+                if (t < t_target)
+                    continue;
                 break;
             }
             settleAccumulators();
@@ -4508,18 +4571,27 @@ double ExplicitInertialSolver::advanceImpl(double t_current, double t_target) {
                 // advanced at all — no lateral flow, no node exchange.
                 // Every GW tier fires once at the tail step, the same
                 // collapse the surface lists get.
-                if (gw_)
+                const bool independent = gw_ && gw_->independentClock();
+                if (gw_ && !independent)
                     for (int k = 0; k < Kgw; ++k)
                         gw_->fireGwFaces(k, dt_tail);
-                source_phase_end_ = s + 1 == nt ? t_target : t + (s + 1) * dt_tail;
-                fireCells(active_cells_, dt_tail, /*tier0=*/true);
-                if (gw_) {
-                    for (int k = 0; k < Kgw; ++k)
-                        gw_->fireGwCells(k, dt_tail, *state_, t + s * dt_tail,
-                                         common_stage_ ? source_phase_end_ : -1.0);
-                    if (state_->nodes_1d)
-                        gw_->sampleNodeExchange(state_->nodes_1d, dt_tail, source_phase_end_);
-                }
+                source_phase_end_ = s + 1 == nt ? target : t + (s + 1) * dt_tail;
+                const auto publish = [&] {
+                    fireCells(active_cells_, dt_tail, true);
+                    if (gw_) {
+                        if (!independent)
+                            for (int k = 0; k < Kgw; ++k)
+                                gw_->fireGwCells(k, dt_tail, *state_, t + s * dt_tail,
+                                                 common_stage_ ? source_phase_end_ : -1.,
+                                                 GwFiringOrigin::tail);
+                        if (!independent && state_->nodes_1d)
+                            gw_->sampleNodeExchange(state_->nodes_1d, dt_tail, source_phase_end_);
+                    }
+                };
+                if (independent)
+                    atGroundwaterCheck(source_phase_end_, publish);
+                else
+                    publish();
                 captureSourceResults();
                 ++substeps_run_;
                 ++last_steps_;
@@ -4527,7 +4599,9 @@ double ExplicitInertialSolver::advanceImpl(double t_current, double t_target) {
             accumulators_pending_ = false; // every side just gathered
             last_dt_ = dt_tail;
             ++cycles_since_rebuild;
-            t = t_target; // exact landing — no 1-ulp re-entry
+            t = target; // exact landing — no 1-ulp re-entry
+            if (t < t_target)
+                continue;
             break;
         }
     }
@@ -4544,6 +4618,14 @@ double ExplicitInertialSolver::advanceImpl(double t_current, double t_target) {
             lazySourcesOnly(t_target);
         }
     }
+
+    // Only the completed outer target can end the simulation. A macro
+    // landing one ulp below it can still have a residual tail. Forcing the
+    // held cells at both would integrate two final intervals.
+    if (gw_ && gw_->independentClock() && gw_end_time_ > 0 &&
+        std::abs(t_target - gw_end_time_) <=
+            64 * std::numeric_limits<double>::epsilon() * std::max(1., gw_end_time_))
+        gw_->advanceClock(t_target, *state_, false, true);
 
     // Publish the flux picture the router's output/ledger contract reads
     // (MOMENTUM INERTIAL: no DW recompute). Interior faces re-limit q against

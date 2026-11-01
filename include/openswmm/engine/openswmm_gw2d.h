@@ -53,6 +53,7 @@
 #define OPENSWMM_GW2D_H
 
 #include "openswmm_engine.h"
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -211,6 +212,9 @@ SWMM_ENGINE_API int swmm_gw2d_boundary_species(SWMM_Engine engine, int index, in
 #define SWMM_GW2D_VAR_ET_POTENTIAL 27 /**< Potential demand at last surface interval (m s-1) */
 #define SWMM_GW2D_VAR_ET_STRESS 28    /**< Single extraction-site moisture stress factor (1) */
 #define SWMM_GW2D_VAR_ET_REFRESH 29   /**< Last completed demand interval end since start (s) */
+#define SWMM_GW2D_VAR_COMPLETED_TIME 30 /**< Last committed groundwater state (elapsed seconds). */
+#define SWMM_GW2D_VAR_PENDING_IN 31     /**< Pending incoming water (m3). */
+#define SWMM_GW2D_VAR_PENDING_OUT 32    /**< Pending water withdrawals and soil ET demand (m3). */
 
 /* ---- Ledger selectors (m3, cumulative) ---------------------------------- */
 
@@ -835,6 +839,22 @@ SWMM_ENGINE_API int swmm_gw2d_get_continuity_error(SWMM_Engine engine, double* v
  */
 SWMM_ENGINE_API int swmm_gw2d_get_tier_histogram(SWMM_Engine engine, long* out, int len,
                                                  int* written);
+
+/** Independent clock statistics. Closure order is CLOSED_FORM, ENSLAVED, SIGMA.
+ * Set struct_size before calling. For SHARED, independent is zero and the
+ * legacy tier histogram retains its original semantics. For INDEPENDENT,
+ * histogram entry j counts scheduled batches on signed rung first_rung+j.
+ * Firings count individual physical cell updates including forcing knots. */
+typedef struct SWMM_GwClockStats {
+    uint32_t struct_size;
+    int independent, first_rung, last_rung, occupied_rungs;
+    uint64_t firings[3], subcycled_firings[3], budget_firings[3];
+    double mean_elapsed[3], max_elapsed[3];
+    double max_budget_excess_in[3], max_budget_excess_out[3]; /* m3, per compartment */
+    uint64_t budget_exceedance[3][5]; /* exceedance/budget: 0, <=.25, <=.5, <=1, >1 */
+    double max_return_depth[3]; /* m on the surface twin, one physical cell update */
+} SWMM_GwClockStats;
+SWMM_ENGINE_API int swmm_gw2d_get_clock_stats(SWMM_Engine engine, SWMM_GwClockStats* stats);
 
 /* Optional recharge execution status. These flags describe the pure operator,
  * never full groundwater/device execution. Counters are process-local; component

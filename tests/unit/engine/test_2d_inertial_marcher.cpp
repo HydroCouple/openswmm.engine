@@ -11878,3 +11878,134 @@ TEST(CoupledGroundwaterRk2, AtmosphericColumnsKeepShapeAndRefusalRecoveryIndepen
                   reference.save(rk2Output("atmos-reuse-recovery-reference.chk")));
     }
 }
+
+TEST(IndependentGroundwaterClock, TwelveRungsCloseWaterAndTracerAtVariableRoutingEnds) {
+    auto mesh = makeGridMesh(18, 1, 1., [](double, double) { return 2.; });
+    auto surface = makeState(mesh);
+    SolverOptions2D options;
+    options.lts_tiers = 4;
+    options.max_timestep = .2;
+    options.groundwater = 1;
+    options.len_1d_to_2d = options.vol_1d_to_2d = 1;
+    seedSurface(mesh, options, surface, 2.01);
+    RowLayoutLite rows;
+    rows.n_pollut = rows.n_species = 1;
+    rows.names = {"conservative"};
+    surface.transport.resize(1, mesh.n_cells(), 0);
+    surface.transport.row_names = rows.names;
+    surface.transport.n_pollut = 1;
+    for (int i = 0; i < mesh.n_cells(); ++i)
+        surface.transport.cell_mass[i] = .2 * surface.volume[i];
+    openswmm::NodeData node;
+    node.resize(1);
+    node.depth[0] = 1.5;
+    node.volume[0] = 10;
+    surface.nodes_1d = &node;
+    SubsurfaceConfig config;
+    config.options.authored = config.options.independent_clock = true;
+    config.options.node_auto = false;
+    config.options.max_step = 8192;
+    config.options.gw_et = "NONE";
+    for (int i = 0; i < mesh.n_cells(); ++i) {
+        GwAquiferRow r;
+        r.scope = 2;
+        r.cell = i;
+        r.Ks = std::ldexp(.2, -(i / 2));
+        r.zs = 2;
+        r.hg0 = 1 + .0001 * (i % 2);
+        r.theta_s = .45;
+        r.theta_r = .1;
+        r.alpha = 2;
+        r.closure_set = true;
+        r.closure = GwClosure::ENSLAVED;
+        config.rows.push_back(r);
+    }
+    config.node_beds.push_back({0, 2, .0001, .1, .1});
+    ExplicitInertialSolver solver;
+    solver.initialize(mesh, surface, options);
+    SubsurfaceSolver gw;
+    std::vector<std::string> warnings;
+    ASSERT_EQ("", gw.initialize(mesh, solver.inertialEdges(), options, {}, 1, config, warnings));
+    gw.initTransport(rows, nullptr, {}, warnings);
+    double concentration = .2;
+    gw.setNodeRowConc(&concentration, 1);
+    auto& tr = gw.transport();
+    for (int i = 0; i < mesh.n_cells(); ++i) {
+        tr.sat_mass[i] = gw.satVolume(i) * (.2 + i * .001);
+        tr.unsat_mass[i] = gw.unsatVolume(i) * .2;
+    }
+    solver.setSubsurface(&gw, 6.);
+    solver.refreshSubsurfaceRows();
+    gw.publishInfiltration(surface, 1., 0.);
+    gw.prepareClock();
+    std::set<int> occupied;
+    for (int i = 0; i < mesh.n_cells(); ++i)
+        occupied.insert(gw.clockRung(i));
+    ASSERT_GE(occupied.size(), 12u);
+    const auto sum = [](const auto& v) { return std::accumulate(v.begin(), v.end(), 0.); };
+    double node_mass = 2;
+    auto water = [&] {
+        return gw.state().liveStorage() - sum(gw.state().nacc) + node.volume[0] +
+               sum(surface.volume);
+    };
+    auto mass = [&] {
+        return node_mass + sum(surface.transport.cell_mass) + sum(tr.unsat_mass) +
+               sum(tr.sat_mass) + sum(tr.sacc_L) + sum(tr.sacc_R) + sum(tr.nacc_mass) +
+               sum(tr.xacc_from_surface) + sum(tr.xacc_to_surface);
+    };
+    const double w0 = water(), m0 = mass();
+    double start = 0;
+    for (double end : {1., 1.375, 2.375, 3., 4., 4.75, 5., 6.}) {
+        gw.resetNodeExchangeVolumes();
+        if (start >= 2.375)
+            options.max_timestep = .05;
+        const double exported = tr.node_out_mass[0];
+        solver.advance(start, end);
+        double transfer = gw.nodeExchangeVolumes()[0];
+        node.volume[0] += transfer;
+        node_mass += std::min(0., transfer) * concentration + (tr.node_out_mass[0] - exported);
+        EXPECT_NEAR(water(), w0, 1e-12) << end;
+        EXPECT_NEAR(mass(), m0, 1e-12) << end;
+        EXPECT_EQ(gw.clockState()->schedule->time(), end);
+        if (end == 1.)
+            EXPECT_EQ(gw.cellCompletedTime(mesh.n_cells() - 1), 0.);
+        start = end;
+    }
+    EXPECT_GT(std::abs(gw.state().led_node), 0.);
+    EXPECT_GT(gw.state().led_infil_in, 0.);
+    EXPECT_EQ(gw.cellCompletedTime(mesh.n_cells() - 1), 6.);
+    EXPECT_LT(solver.last_step_size(), .051);
+}
+
+TEST(IndependentGroundwaterClock, FastSurfaceDoesNotForceTheSlowAquiferAtWindowEnds) {
+    auto mesh = makeGridMesh(1, 1, 1., [](double, double) { return 2.; });
+    auto surface = makeState(mesh);
+    SolverOptions2D opts;
+    opts.max_timestep = .05;
+    opts.groundwater = 1;
+    opts.lts_tiers = 3;
+    seedSurface(mesh, opts, surface, 2.01);
+    ExplicitInertialSolver solver;
+    solver.initialize(mesh, surface, opts);
+    SubsurfaceConfig config;
+    config.options.authored = config.options.independent_clock = true;
+    config.options.gw_et = "NONE";
+    config.options.closure = GwClosure::ENSLAVED;
+    GwAquiferRow r;
+    r.zs = 2;
+    r.hg0 = 1;
+    r.theta_s = .45;
+    r.theta_r = .1;
+    r.Ks = 1e-7;
+    r.alpha = 2;
+    config.rows = {r};
+    SubsurfaceSolver gw;
+    std::vector<std::string> warnings;
+    ASSERT_EQ(gw.initialize(mesh, solver.inertialEdges(), opts, {}, 0, config, warnings), "");
+    solver.setSubsurface(&gw, 4100.);
+    for (int start = 0; start < 4100; ++start)
+        solver.advance(start, start + 1);
+    ASSERT_EQ(gw.clockRung(0), 11);
+    ASSERT_EQ(gw.clockState()->firings[int(GwClosure::ENSLAVED)], 6u);
+    EXPECT_EQ(gw.cellCompletedTime(0), 4100.);
+}

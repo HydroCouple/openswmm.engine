@@ -1269,6 +1269,9 @@ private:
     /// surface twin is. Cross-cadence volume rides the same ±Δ side
     /// accumulators the surface faces use (G-B).
     SubsurfaceSolver* gw_ = nullptr;
+    double gw_end_time_ = -1;
+    bool gw_quiescent_ = false;
+    void atGroundwaterCheck(double end, const std::function<void()>& publish);
 
 public:
     /**
@@ -1282,7 +1285,7 @@ public:
      * @note Requires exclusive completed owner boundary. Replacing a running owner with pending
      * receipts is unsupported without the enclosing coordinated transaction.
      */
-    void setSubsurface(SubsurfaceSolver* gw) noexcept { gw_ = gw; }
+    void setSubsurface(SubsurfaceSolver* gw, double end = -1) noexcept { gw_ = gw; gw_end_time_ = end; }
     /**
      * @brief Rebuild exact-name native surface-to-groundwater row mapping after owners are
      * prepared.

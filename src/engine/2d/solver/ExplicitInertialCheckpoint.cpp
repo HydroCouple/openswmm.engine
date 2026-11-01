@@ -535,6 +535,8 @@ void ExplicitInertialSolver::checkpointState(Archive& a) {
         a.fixedStrided(face_accum_, momentum_packet_count, side, face_accum_stride_);
     a.fixed(sacc_L_, sacc_R_, dw_slope_, cell_active_, tier_, face_tier_, pin_t0_, frontier_,
             source_ledgers_, cells_by_tier_, edges_by_tier_);
+    if (gw_ && gw_->independentClock())
+        a(gw_quiescent_);
     a(active_cells_, active_faces_, dt0_, t_last_sync_, source_phase_end_, cycles_since_rebuild_,
       accumulators_pending_, front_breach_, h_on_front_, exch_tau_, spill_deficit_, substeps_run_,
       face_passes_, last_steps_, last_dt_, active_frac_min_, active_frac_max_, active_frac_sum_,

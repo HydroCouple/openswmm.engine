@@ -242,7 +242,19 @@ SWMM_ENGINE_API int swmm_gw2d_option_get(SWMM_Engine engine, const char* key, ch
         return std::string(t);
     };
     std::string v;
-    if (ieq(key, "SOIL_CHAR"))
+    if (ieq(key, "GW_CLOCK"))
+        v = o.independent_clock ? "INDEPENDENT" : "SHARED";
+    else if (ieq(key, "GW_BASE_STEP"))
+        v = num(o.base_step);
+    else if (ieq(key, "GW_MAX_STEP"))
+        v = num(o.max_step);
+    else if (ieq(key, "GW_BUDGET_FRACTION"))
+        v = num(o.budget_fraction);
+    else if (ieq(key, "GW_HEAD_TOLERANCE"))
+        v = num(o.head_tolerance);
+    else if (ieq(key, "GW_BINDS_SURFACE_DT"))
+        v = yn(!o.independent_clock || o.binds_surface_dt);
+    else if (ieq(key, "SOIL_CHAR"))
         v = soilCharToken(o.soil_char);
     else if (ieq(key, "CLOSURE"))
         v = gwClosureToken(o.closure);
@@ -798,7 +810,8 @@ namespace {
  * @return Raw state value, including NaN if present; zero for an unknown selector.
  * @note Caller validates the cell and decides whether nonfinite output is permitted. Read-only.
  */
-double cellVar(const openswmm::twoD::SubsurfaceState& st, std::size_t u, int var, bool& ok) {
+double cellVar(const SubsurfaceSolver& gw, std::size_t u, int var, bool& ok) {
+    const auto& st = gw.state();
     ok = true;
     switch (var) {
     case SWMM_GW2D_VAR_HG:
@@ -824,7 +837,13 @@ double cellVar(const openswmm::twoD::SubsurfaceState& st, std::size_t u, int var
     case SWMM_GW2D_VAR_DT_CELL:
         return st.dt_cell[u];
     case SWMM_GW2D_VAR_TIER:
-        return static_cast<double>(st.tier[u]);
+        return gw.clockRung(static_cast<int>(u));
+    case SWMM_GW2D_VAR_COMPLETED_TIME:
+        return gw.cellCompletedTime(static_cast<int>(u));
+    case SWMM_GW2D_VAR_PENDING_IN:
+        return gw.pendingClockWater(static_cast<int>(u)).first;
+    case SWMM_GW2D_VAR_PENDING_OUT:
+        return gw.pendingClockWater(static_cast<int>(u)).second;
     case SWMM_GW2D_VAR_CLOSURE:
         return static_cast<double>(st.closure[u]);
     case SWMM_GW2D_VAR_QLINK:
@@ -875,7 +894,7 @@ SWMM_ENGINE_API int swmm_gw2d_get_cell(SWMM_Engine engine, int cell, int var, do
     if (!value || cell < 0 || cell >= st.n_cells)
         return SWMM_ERR_BADPARAM;
     bool ok = false;
-    const double v = cellVar(st, static_cast<std::size_t>(cell), var, ok);
+    const double v = cellVar(gw, static_cast<std::size_t>(cell), var, ok);
     if (!ok)
         return SWMM_ERR_BADPARAM;
     if (!std::isfinite(v))
@@ -892,7 +911,7 @@ SWMM_ENGINE_API int swmm_gw2d_get_cell_bulk(SWMM_Engine engine, int var, double*
         return SWMM_ERR_BADPARAM;
     bool ok = true;
     for (int i = 0; i < st.n_cells && ok; ++i)
-        out[i] = cellVar(st, static_cast<std::size_t>(i), var, ok);
+        out[i] = cellVar(gw, static_cast<std::size_t>(i), var, ok);
     if (!ok)
         return SWMM_ERR_BADPARAM;
     if (written)
@@ -1188,11 +1207,60 @@ SWMM_ENGINE_API int swmm_gw2d_get_continuity_error(SWMM_Engine engine, double* v
     return SWMM_OK;
 }
 
+SWMM_ENGINE_API int swmm_gw2d_get_clock_stats(SWMM_Engine engine, SWMM_GwClockStats* out) {
+    AQ_SOLVER(engine);
+    if (!out || out->struct_size != sizeof(*out))
+        return SWMM_ERR_BADPARAM;
+    SWMM_GwClockStats result{};
+    result.struct_size = sizeof(result);
+    if (const auto* clock = gw.clockState()) {
+        result.independent = 1;
+        std::set<int> occupied;
+        for (int cell : clock->cells)
+            occupied.insert(gw.clockRung(cell));
+        result.occupied_rungs = static_cast<int>(occupied.size());
+        result.first_rung = *occupied.begin();
+        result.last_rung = *occupied.rbegin();
+        if (!clock->rung_batches.empty()) {
+            result.first_rung = std::min(result.first_rung, clock->rung_batches.begin()->first);
+            result.last_rung = std::max(result.last_rung, clock->rung_batches.rbegin()->first);
+        }
+        for (int k = 0; k < 3; ++k) {
+            result.firings[k] = clock->firings[k];
+            result.subcycled_firings[k] = clock->subcycles[k];
+            result.budget_firings[k] = clock->budget_firings[k];
+            result.max_budget_excess_in[k] = clock->excess_in[k];
+            result.max_budget_excess_out[k] = clock->excess_out[k];
+            result.max_return_depth[k] = clock->max_return_depth[k];
+            std::copy(clock->budget_exceedance[k].begin(), clock->budget_exceedance[k].end(), result.budget_exceedance[k]);
+            result.max_elapsed[k] = clock->maximum[k];
+            result.mean_elapsed[k] = clock->firings[k] ? clock->elapsed[k] / clock->firings[k] : 0.;
+        }
+    }
+    *out = result;
+    return SWMM_OK;
+}
+
 SWMM_ENGINE_API int swmm_gw2d_get_tier_histogram(SWMM_Engine engine, long* out, int len,
                                                  int* written) {
     AQ_SOLVER(engine);
     if (!out || len <= 0)
         return SWMM_ERR_BADPARAM;
+    if (const auto* clock = gw.clockState()) {
+        SWMM_GwClockStats stats{};
+        stats.struct_size = sizeof(stats);
+        const int status = swmm_gw2d_get_clock_stats(engine, &stats);
+        if (status != SWMM_OK)
+            return status;
+        const int n = std::min(len, stats.last_rung - stats.first_rung + 1);
+        for (int j = 0; j < n; ++j) {
+            auto it = clock->rung_batches.find(stats.first_rung + j);
+            out[j] = it == clock->rung_batches.end() ? 0 : it->second;
+        }
+        if (written)
+            *written = n;
+        return SWMM_OK;
+    }
     const auto& f = gw.tierFirings();
     const int n = std::min(len, static_cast<int>(f.size()));
     for (int i = 0; i < n; ++i)
