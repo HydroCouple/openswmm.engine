@@ -68,6 +68,18 @@ and GOTHIC's own width and area tables disagree with *each other* by up to
 439% near the invert. An arc/line boundary has no interpolation step to
 carry any of that error.
 
+Under `XSECT_GEOMETRY EXACT` only CIRCULAR and FORCE_MAIN are compiled this
+way. `LegacyShapeBoundary` can also rebuild the ten tabulated shapes from their
+own width tables, but that polyline is consistently smaller than the shape's
+catalogue area at full depth — measured at standard sizes: EGG −4.5%,
+HORSESHOE −1.8%, GOTHIC −2.7%, CATENARY −5.6%, SEMIELLIPTICAL −4.0%,
+BASKETHANDLE −8.3%, SEMICIRCULAR −3.1%, ARCH −3.2%, HORIZ/VERT_ELLIPSE −5.1%.
+The full values that set full flow come from the catalogue, so compiling those
+shapes would leave the two disagreeing (a jump in area at the crown, visible as
+continuity error); taking the full values from the polyline instead would cut
+their capacity by 4–12%. They stay on their LEGACY tables until there is better
+source geometry for them than a 21–26-point width table.
+
 ## 2. Why I₁ needs no depth quadrature
 
 The Preissmann/FV solvers need `I₁(y) = ∫₀ʸ A(η) dη`, the first moment of

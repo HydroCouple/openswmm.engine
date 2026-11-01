@@ -50,6 +50,14 @@
  *          not a shared built-in table, so "compiling the built-in" does not
  *          apply to them).
  *
+ * @note PostParseResolver uses this only for CIRCULAR and FORCE_MAIN. The
+ *       width-table reconstructions below come out 2-8% smaller in area than
+ *       each shape's catalogue size at full depth, so under EXACT those shapes
+ *       stay on their LEGACY tables (see the exact_circle note in
+ *       PostParseResolver.cpp and docs/dev/cheb_section.md). They remain here
+ *       for the tests that measure that gap and for a later, better-sourced
+ *       reconstruction.
+ *
  * @note Whether a returned boundary should be treated as an open channel is
  *       answered by the SAME classification `xsect::isOpen(int)` already
  *       uses (RECT_OPEN/TRAPEZOIDAL/TRIANGULAR/PARABOLIC/POWERFUNC/IRREGULAR)

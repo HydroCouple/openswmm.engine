@@ -14,11 +14,14 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <string>
 
 #include <openswmm/engine/openswmm_engine.h>
+#include <openswmm/engine/openswmm_links.h>
+#include <openswmm/engine/openswmm_xsect.h>
 
 namespace fs = std::filesystem;
 
@@ -96,4 +99,97 @@ TEST(XsectGeometryOption, RefusesToChangeOnceTheModelIsOpen) {
 
     swmm_engine_close(e);
     swmm_engine_destroy(e);
+}
+
+namespace {
+
+/// One CIRCULAR, one FORCE_MAIN and one EGG conduit of the same 1 ft size, each
+/// to its own outfall, under the given XSECT_GEOMETRY.
+std::string writeShapes(const std::string& mode) {
+    const std::string d = std::string(OPENSWMM_FV_TEST_OUT_DIR) + "/options_api";
+    std::error_code ec;
+    fs::create_directories(d, ec);
+    const std::string path = d + "/xsect_geometry_shapes_" + mode + ".inp";
+    std::ofstream os(path);
+    os << "[OPTIONS]\nFLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\nXSECT_GEOMETRY " << mode << "\n"
+          "START_DATE 01/01/2026\nSTART_TIME 00:00:00\nEND_DATE 01/01/2026\nEND_TIME 00:10:00\n"
+          "REPORT_STEP 00:05:00\nROUTING_STEP 5\n\n"
+          "[JUNCTIONS]\nJ0 41.0 12.0 0 0 0\n\n"
+          "[OUTFALLS]\nOC 40.0 FREE NO\nOF 40.0 FREE NO\nOE 40.0 FREE NO\n\n"
+          "[CONDUITS]\nCIRC J0 OC 1000 0.013 0 0 0 0\nFMAIN J0 OF 1000 0.013 0 0 0 0\n"
+          "EGG J0 OE 1000 0.013 0 0 0 0\n\n"
+          "[XSECTIONS]\nCIRC CIRCULAR 1 0 0 0 1\nFMAIN FORCE_MAIN 1 130 0 0 1\n"
+          "EGG EGG 1 0 0 0 1\n\n"
+          "[REPORT]\nINPUT NO\nCONTROLS NO\n";
+    return path;
+}
+
+struct Full {
+    double a_full = 0, r_full = 0, s_full = 0;  // what the engine stores (full flow = s_full * beta)
+    double a_at_full = 0, s_at_full = 0;         // the routed geometry, read at full depth
+    double a_half = 0;                           // the routed geometry at half depth
+};
+
+Full fullOf(SWMM_Engine e, const char* id) {
+    Full f;
+    SWMM_XSect xs = nullptr;
+    EXPECT_EQ(swmm_link_create_xsect(e, swmm_link_index(e, id), &xs), SWMM_OK) << id;
+    if (!xs) return f;
+    double y_full = 0, w_max = 0, a_max = 0;
+    swmm_xsect_full_properties(xs, &y_full, &f.a_full, &f.r_full, &w_max, &f.s_full, &a_max);
+    swmm_xsect_area_of_depth(xs, y_full, &f.a_at_full);
+    swmm_xsect_sectfactor_of_area(xs, f.a_at_full, &f.s_at_full);
+    swmm_xsect_area_of_depth(xs, 0.5 * y_full, &f.a_half);
+    swmm_xsect_free(xs);
+    return f;
+}
+
+/// Opens the shape deck under @p mode and reads all three conduits.
+void readShapes(const std::string& mode, Full& circ, Full& fmain, Full& egg) {
+    const std::string inp = writeShapes(mode);
+    const std::string base = inp.substr(0, inp.size() - 4);
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_NE(e, nullptr);
+    ASSERT_EQ(swmm_engine_open(e, inp.c_str(), (base + ".rpt").c_str(), (base + ".out").c_str(),
+                               nullptr),
+              SWMM_OK);
+    circ = fullOf(e, "CIRC");
+    fmain = fullOf(e, "FMAIN");
+    egg = fullOf(e, "EGG");
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+}
+
+}  // namespace
+
+// Under EXACT a circle's full values must describe the circle the solver routes
+// through — and a FORCE_MAIN is that same circle, so its section factor is the
+// Manning A*R^(2/3), not LEGACY's Hazen-Williams A*R^0.63 (issue #166), and its
+// full flow equals a CIRCULAR pipe's of the same size.
+TEST(XsectGeometryOption, ExactCirclesTakeTheirFullValuesFromTheCompiledCircle) {
+    Full circ, fmain, egg;
+    readShapes("EXACT", circ, fmain, egg);
+    for (const Full* f : {&circ, &fmain}) {
+        EXPECT_NEAR(f->a_full, f->a_at_full, 1e-9 * f->a_at_full);
+        EXPECT_NEAR(f->s_full, f->s_at_full, 1e-9 * f->s_at_full);
+    }
+    EXPECT_NEAR(fmain.s_full, circ.s_full, 1e-12 * circ.s_full);
+    // pi/4 * D^2 * (D/4)^(2/3) for D = 1 ft
+    EXPECT_NEAR(circ.s_full, 0.25 * 3.14159265358979 * std::pow(0.25, 2.0 / 3.0), 1e-6);
+}
+
+// The tabulated shapes stay on their LEGACY tables under EXACT: their width-table
+// reconstruction is 2-8% smaller than the catalogue, so EXACT must leave them
+// exactly as LEGACY evaluates them.
+TEST(XsectGeometryOption, ExactLeavesTabulatedShapesOnTheirLegacyTables) {
+    Full circL, fmainL, eggL, circE, fmainE, eggE;
+    readShapes("LEGACY", circL, fmainL, eggL);
+    readShapes("EXACT", circE, fmainE, eggE);
+    EXPECT_EQ(eggE.a_full, eggL.a_full);
+    EXPECT_EQ(eggE.s_full, eggL.s_full);
+    EXPECT_EQ(eggE.a_half, eggL.a_half);
+    EXPECT_EQ(eggE.a_at_full, eggL.a_at_full);
+    // and under LEGACY nothing changes: the force main keeps its LEGACY factor
+    EXPECT_GT(fmainL.s_full, circL.s_full * 1.04)
+        << "LEGACY must keep EPA's A*R^0.63 for FORCE_MAIN (5.2% high at 1 ft)";
 }

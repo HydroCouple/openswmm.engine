@@ -1739,13 +1739,18 @@ retroactive.
   a coordinate change removing the square-root singularities a round
   invert or crown otherwise introduces) for constant-time evaluation in the
   hot loop. `[OPTIONS] XSECT_GEOMETRY LEGACY | EXACT` (default `LEGACY`)
-  additionally routes every built-in rounded shape (EGG, HORSESHOE, GOTHIC,
-  ARCH, ...) through the same compiled path, replacing EPA's interpolated
-  shape tables (21 to 51 points, depending on shape and field) — measured to carry large low-fill error (up to 41%
-  area error below 5% of full depth for the 51-point CUSTOM table; several
-  hundred percent relative error in the lowest panel of the 51-point
-  CIRCULAR table) — with the exact reconstruction; this deliberately breaks
-  bit-parity with legacy EPA SWMM results for those shapes, is alpha/
+  additionally routes CIRCULAR and FORCE_MAIN conduits through the same
+  compiled path as a true circle, replacing EPA's 51-point circular tables
+  (several hundred percent relative area error in their lowest panel), and
+  takes their full area, hydraulic radius and section factor from that
+  circle — so a force main's full flow is the Manning one, not the
+  Hazen-Williams A·R^0.63 of #166. The other rounded shapes (EGG, HORSESHOE,
+  ARCH, the ellipses, ...) stay on their LEGACY tables under EXACT: rebuilt
+  from EPA's 21–26-point width tables they come out 2–8% smaller in area
+  than their catalogue sizes, so compiling them would either leave their
+  full values disagreeing with the routed geometry or cut their capacity by
+  4–12%. This deliberately breaks bit-parity with legacy EPA SWMM results
+  for circular conduits under EXACT, is alpha/
   experimental, and is opt-in (`LEGACY` is unaffected and remains the
   default). `swmm_link_set_polygon()` / `swmm_link_get_polygon()` let a
   conduit's boundary be changed mid-run (sediment deposition, a CIPP

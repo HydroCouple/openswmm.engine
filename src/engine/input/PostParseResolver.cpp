@@ -3694,9 +3694,10 @@ void resolve_cross_references(SimulationContext& ctx) {
     // and w_max from the [XSECTIONS] section — skipping them leaves a_full=0
     // which causes zero flow for all orifices.
     //
-    // Under XSECT_GEOMETRY EXACT, a handful of self-contained shapes also get
-    // compiled to a Chebyshev boundary here (see LegacyShapeBoundary.hpp for
-    // which ones, and why the rest are left on LEGACY). Memoized by (batch
+    // Under XSECT_GEOMETRY EXACT, CIRCULAR and FORCE_MAIN conduits also get
+    // compiled to a Chebyshev boundary here (see the exact_circle note below
+    // for why the other shapes LegacyShapeBoundary can rebuild are left on
+    // LEGACY). Memoized by (batch
     // shape, y_full, w_max) — the only inputs buildLegacyBoundary reads —
     // so every link sharing a diameter/height shares one compiled section,
     // same as the POLYGON and CUSTOM memoization above.
@@ -3862,7 +3863,20 @@ void resolve_cross_references(SimulationContext& ctx) {
                         ucf::Ucf[ucf::RAINDEPTH][static_cast<std::size_t>(us)];
                 }
 
-                if (ctx.options.xsect_geometry == XsectGeometryMode::EXACT) {
+                // EXACT compiles only CIRCULAR and FORCE_MAIN. Those are rebuilt
+                // as a true circle; the tabulated shapes LegacyShapeBoundary can
+                // also rebuild come from EPA's 21-26-point width tables, and that
+                // polyline comes out 2-8% smaller in area than each shape's own
+                // catalogue (egg -4.5%, basket-handle -8.3%, standard ellipse
+                // -5.1%, measured at full depth). Compiling them would leave the
+                // full values below (from the catalogue) disagreeing with the
+                // geometry the solver routes through; taking the full values from
+                // the polyline instead would cut their capacity by 4-12%. So they
+                // stay on their LEGACY tables until there is better source
+                // geometry for them.
+                const bool exact_circle = xs.type == static_cast<int>(XSectShape::CIRCULAR) ||
+                                          xs.type == static_cast<int>(XSectShape::FORCE_MAIN);
+                if (ctx.options.xsect_geometry == XsectGeometryMode::EXACT && exact_circle) {
                     const int batch_shape = xs.type;
                     const auto key = std::tuple<int, double, double>{
                         batch_shape, xs.y_full, xs.w_max};
@@ -3888,6 +3902,20 @@ void resolve_cross_references(SimulationContext& ctx) {
                             // silently keep the LEGACY path (xsect_cheb_idx
                             // stays -1) rather than failing the whole model.
                         }
+                    }
+                    // The full values must describe the geometry the solver
+                    // routes through, as they do for POLYGON. setParams' values
+                    // are the LEGACY ones, and for FORCE_MAIN its section factor
+                    // is the Hazen-Williams A*R^0.63 (issue #166), so full flow
+                    // would come out 5-8% high for small mains under EXACT too.
+                    const int ci = ctx.links.xsect_cheb_idx[uj];
+                    if (ci >= 0 && static_cast<std::size_t>(ci) < ctx.cheb_sections.size()) {
+                        const auto& cs = ctx.cheb_sections[static_cast<std::size_t>(ci)];
+                        a_full = cs.a_full;
+                        r_full = cs.r_full;
+                        s_full = cs.s_full;
+                        s_max = cs.s_max;
+                        yw_max = cs.yw_max;
                     }
                 }
             } else {
