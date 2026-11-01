@@ -467,13 +467,13 @@ def test_reactive_edge_changed_forcing_preserves_target_and_mesh_output(tmp_path
         checkpoint, before, after = [tmp_path / name for name in ('source.chk', 'before.chk', 'after.chk')]
         source.checkpoints.save(checkpoint)
         target.checkpoints.save(before)
-        mesh = tmp_path / 'target/mesh.h5'
-        prefix = mesh.read_bytes()
+        # Mesh checkpoints embed the full output prefix. Read the closed snapshot
+        # rather than reopening the live, exclusively locked HDF5 writer on Windows.
+        before_bytes = before.read_bytes()
         with pytest.raises(FileError):
             target.checkpoints.restore(checkpoint)
-        assert mesh.read_bytes() == prefix
         target.checkpoints.save(after)
-        assert after.read_bytes() == before.read_bytes()
+        assert after.read_bytes() == before_bytes
         assert target.elapsed.total_seconds() == 0
     finally:
         cleanup(source)

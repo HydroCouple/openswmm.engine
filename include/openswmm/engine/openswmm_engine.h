@@ -139,9 +139,10 @@ typedef enum SWMM_ErrorCode {
     SWMM_ERR_NUMERICAL = 14,
     SWMM_ERR_DEPENDENCY = 15, /**< Object has dependents that would be affected by deletion. */
     SWMM_ERR_CANCELLED = 16,  /**< A caller cancelled a cancellable read-only operation. */
-    SWMM_ERR_GEOMETRY    = 17,  /**< Cross-section geometry is invalid, or cannot be
-                                 *   changed at run time in the active routing model.
-                                 *   @see swmm_link_set_polygon. */
+    SWMM_ERR_BUFSIZE = 17,    /**< A caller's output buffer is too small for the value; nothing
+                                   was written. Retry with a larger buffer. */
+    SWMM_ERR_GEOMETRY = 18,   /**< Cross-section geometry is invalid, or cannot be changed at run
+                                   time in the active routing model. @see swmm_link_set_polygon. */
     SWMM_ERR_INTERNAL = 99
 } SWMM_ErrorCode;
 
@@ -202,6 +203,14 @@ typedef enum SWMM_ObjectType {
  *     swmm_engine_destroy(); close active resources first when explicit teardown is needed.
  */
 SWMM_ENGINE_API SWMM_Engine swmm_engine_create(void);
+
+/** @brief Identify the public C ABI compiled into the running engine image.
+ * @return Borrowed immutable UTF-8 tag, valid while the library remains loaded; never free it.
+ * @note Thread-safe, requires no engine handle and performs no allocation or file IO. Compare
+ * with OPENSWMM_ENGINE_ABI_TAG from the installed openswmm_abi_tag.h before passing native
+ * engine handles across a GUI/plugin/Python boundary. Public-header, optional-module or build-ABI changes
+ * automatically change the tag. Comment-only header changes may conservatively change it too. */
+SWMM_ENGINE_API const char *swmm_engine_abi_tag(void);
 
 /**
  * @brief Load a model and prepare its plugin configuration in SWMM_STATE_OPENED.

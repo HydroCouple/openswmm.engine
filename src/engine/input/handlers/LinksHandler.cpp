@@ -595,7 +595,9 @@ void handle_xsections(SimulationContext& ctx, const std::vector<std::string>& li
         }
         // Legacy xsect_setParams (xsect.c:233) refuses Geom1 <= 0 for every
         // shape but DUMMY, and link.c:250 reports it as ERR_NUMBER with an
-        // empty token. (CUSTOM's own Geom1 test is link.c:226.)
+        // empty token, relying on the line number it prints. v6 reports parse
+        // errors without one, so the message names the value, the column and
+        // the link. (CUSTOM's own Geom1 test is link.c:226.)
         // POLYGON's Geom1 is a Scale, not a full height; 0/blank is
         // documented as "no scale given" and resolves to 1.0
         // (PostParseResolver: `if (scale <= 0.0) scale = 1.0`), so the
@@ -605,7 +607,9 @@ void handle_xsections(SimulationContext& ctx, const std::vector<std::string>& li
             ctx.links.xsect_shape[idx] != XsectShape::CUSTOM &&
             ctx.links.xsect_shape[idx] != XsectShape::DUMMY &&
             ctx.links.xsect_shape[idx] != XsectShape::POLYGON && !(to_double(tok[2]) > 0.0)) {
-            ctx.errors.push_back(format_error(ERR_NUMBER, ""));
+            ctx.errors.push_back(
+                format_error(ERR_NUMBER, tok[2],
+                             "for Geom1 of link " + tok[0] + " in [XSECTIONS] (must be > 0)"));
             continue;
         }
 

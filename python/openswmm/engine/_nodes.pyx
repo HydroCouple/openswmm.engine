@@ -463,9 +463,8 @@ cdef class Node:
         @rtype: str
         """
         _check_fresh(self)
-        cdef char buf[256]
-        _check(swmm_node_get_tag(_h(self._solver), self._index, buf, 256))
-        return buf.decode('utf-8')
+        return _read_engine_index_string(_h(self._solver), self._index,
+                                         swmm_node_get_tag)
 
     @tag.setter
     def tag(self, value) -> None:
@@ -648,6 +647,19 @@ cdef class Node:
     def surcharge_depth(self, double value) -> None:
         _check_fresh(self)
         _check(swmm_node_set_surcharge_depth(_h(self._solver), self._index, value))
+
+    @property
+    def storage_area(self) -> float:
+        """Physical junction chamber area (ft2/m2); zero retains legacy behavior."""
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_node_get_storage_area(_h(self._solver), self._index, &v))
+        return v
+
+    @storage_area.setter
+    def storage_area(self, double value) -> None:
+        _check_fresh(self)
+        _check(swmm_node_set_storage_area(_h(self._solver), self._index, value))
 
     @property
     def ponded_area(self) -> float:

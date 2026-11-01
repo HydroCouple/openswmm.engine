@@ -35,6 +35,7 @@
 #include "FileIO.hpp" // issue #7: UTF-8 paths on Windows
 #include "SimulationContext.hpp"
 #include "PerfTimers.hpp"
+#include "ProcessPerf.hpp"
 #include "UnitConversion.hpp"
 #include "../quality/SurfaceSpeciesKernel.hpp"
 #include "../quality/MsxSurfaceQuality.hpp"
@@ -200,6 +201,7 @@ SWMMEngine::~SWMMEngine() {
     if (ctx_.state == EngineState::RUNNING || ctx_.state == EngineState::ENDED) {
         close();
     }
+    perf::end_process_model(this, false);
 }
 
 // ============================================================================
@@ -678,6 +680,7 @@ int SWMMEngine::open(const char* inp_path, const char* rpt_path, const char* out
     // registration. Parsed authoring remains available through the public API.
     if (metadata_only_) {
         ctx_.state = EngineState::OPENED;
+        perf::begin_process_model(this);
         return SWMM_OK;
     }
 
@@ -918,6 +921,17 @@ int SWMMEngine::open(const char* inp_path, const char* rpt_path, const char* out
             return {};
         };
 
+        ctx_.state_accessors.has_fv_retained_dry_mass = [this]() {
+            return quality_.hasFvRetainedDryMass();
+        };
+        ctx_.state_accessors.get_fv_dry_state = [this]() {return quality_.fvDryRestartState(ctx_);};
+        ctx_.state_accessors.set_fv_dry_state = [this](const std::string& blob,bool apply) {
+            const auto error=quality_.restoreFvDryRestart(ctx_,blob,apply);
+            if(error.empty()&&apply)router_.restoreFvClassicState(ctx_);
+            return error;
+        };
+        ctx_.state_accessors.get_fv_retained_pollutant_mass = [this]() {return quality_.fvRetainedPollutantMass(ctx_);};
+        ctx_.state_accessors.get_fv_retained_species_mass = [this]() {return quality_.fvRetainedSpeciesMass(ctx_);};
         ctx_.state_accessors.get_surface_state = [this]() { return nativeSurfaceState(); };
         ctx_.state_accessors.set_surface_state = [this](const std::string& blob, bool apply) {
             return applyNativeSurfaceState(blob, apply);
@@ -1001,6 +1015,7 @@ int SWMMEngine::open(const char* inp_path, const char* rpt_path, const char* out
     }
 
     ctx_.state = EngineState::OPENED;
+    perf::begin_process_model(this);
     return SWMM_OK;
 }
 
@@ -1024,6 +1039,9 @@ int SWMMEngine::initialize() noexcept {
         set_error(SWMM_ERR_WRONG_STATE, "swmm_engine_initialize: must call open() first");
         return SWMM_ERR_WRONG_STATE;
     }
+    // Programmatic finalize enters here without open(); file-based and repeated
+    // initialization are already registered and this call is idempotent.
+    perf::begin_process_model(this);
 
 #ifndef OPENSWMM_HAS_2D
     if (!ctx_.reactions.subsurface_laws.empty()) {
@@ -1097,6 +1115,30 @@ int SWMMEngine::initialize() noexcept {
                                   : constants::MIN_SURFAREA;
         for (int i = 0; i < ctx_.n_nodes(); ++i) {
             const auto ui = static_cast<std::size_t>(i);
+            if (!std::isfinite(ctx_.nodes.storage_area[ui]) || ctx_.nodes.storage_area[ui] < 0.0 ||
+                !std::isfinite(ctx_.nodes.storage_area[ui] * ctx_.nodes.full_depth[ui])) {
+                set_error(SWMM_ERR_BADPARAM, "Junction StorageArea and chamber capacity must be finite and nonnegative");
+                return SWMM_ERR_BADPARAM;
+            }
+            if (ctx_.nodes.storage_area[ui] > 0.0) {
+                if (ctx_.nodes.type[ui] != NodeType::JUNCTION || ctx_.nodes.is_virtual[ui] ||
+                    ctx_.nodes.is_inlet[ui] || ctx_.options.routing_model == RoutingModel::KINWAVE ||
+                    ctx_.options.routing_model == RoutingModel::STEADY) {
+                    set_error(SWMM_ERR_BADPARAM, "Junction StorageArea requires an ordinary junction and DYNWAVE or supported FV routing");
+                    return SWMM_ERR_BADPARAM;
+                }
+                if (ctx_.options.routing_model == RoutingModel::DYNWAVE &&
+                    ctx_.options.surcharge_method == static_cast<int>(dynwave::SurchargeMethod::DYNAMIC_SLOT)) {
+                    set_error(SWMM_ERR_BADPARAM, "Junction StorageArea is not qualified with DYNAMIC_SLOT; use EXTRAN or SLOT");
+                    return SWMM_ERR_BADPARAM;
+                }
+                if (ctx_.options.routing_model == RoutingModel::FV && ctx_.nodes.sur_depth[ui] > 0.0) {
+                    set_error(SWMM_ERR_BADPARAM, "FV junction StorageArea does not support above-rim pressure allowance; use DYNWAVE or set SurDepth to zero");
+                    return SWMM_ERR_BADPARAM;
+                }
+                ctx_.nodes.full_volume[ui] = ctx_.nodes.storage_area[ui] * ctx_.nodes.full_depth[ui];
+                continue;
+            }
             if (ctx_.nodes.type[ui] == NodeType::STORAGE)
                 continue;
             const double fd = ctx_.nodes.full_depth[ui];
@@ -1152,7 +1194,7 @@ int SWMMEngine::initialize() noexcept {
     for (int i = 0; i < ctx_.n_nodes(); ++i) {
         auto ui = static_cast<std::size_t>(i);
         ctx_.nodes.rpt_full_volume[ui] =
-            (ctx_.nodes.type[ui] == NodeType::STORAGE) ? ctx_.nodes.full_volume[ui] : 0.0;
+            (ctx_.nodes.type[ui] == NodeType::STORAGE || ctx_.nodes.storage_area[ui] > 0.0) ? ctx_.nodes.full_volume[ui] : 0.0;
     }
 
     // Type-1 (volume-controlled) pumps: the inlet junction acts as a wet well
@@ -1180,7 +1222,7 @@ int SWMMEngine::initialize() noexcept {
             if (n1 < 0)
                 continue;
             auto un1 = static_cast<std::size_t>(n1);
-            if (ctx_.nodes.type[un1] == NodeType::STORAGE)
+            if (ctx_.nodes.type[un1] == NodeType::STORAGE || ctx_.nodes.storage_area[un1] > 0.0)
                 continue;
             // xMax = largest volume on the pump curve (legacy Pump.xMax). The
             // file-backed x_max field is unset for inline [CURVES], so read the
@@ -1697,6 +1739,15 @@ int SWMMEngine::start(int save_results) noexcept {
 
     save_results_ = save_results;
 
+    // Short runs still need one reporting period (legacy project_validate).
+    // Do this at start so options changed through the API after open/init
+    // also reach both the report clock and the output-file header.
+    const double duration = ctx_.options.totalDurationMs() / 1000.0;
+    if (duration > 0.0 && ctx_.options.report_step > duration) {
+        ctx_.options.report_step = duration;
+        ctx_.next_report_ms = 1000.0 * duration;
+    }
+
     // Legacy DoRouting (swmm5.c:748): DoRouting = (Nobjects[NODE] > 0 &&
     // !IgnoreRouting). Routing execution, statistics, mass balance, the
     // routing-step-size coarsening, and the outfall interface write are all
@@ -1761,7 +1812,8 @@ int SWMMEngine::start(int save_results) noexcept {
     // [FILES] SAVE/USE RUNOFF — auto-open the runoff interface file
     // (legacy runoff_open() → openRunoffFile()). If the C API already
     // opened one explicitly (swmm_runoff_iface_open_*), the slot defers.
-    if (ctx_.files.runoff_mode != FileMode::NONE && !ctx_.files.runoff_path.empty() &&
+    if (ctx_.n_subcatches() > 0 && ctx_.files.runoff_mode != FileMode::NONE &&
+        !ctx_.files.runoff_path.empty() &&
         !(runoff_iface_file_ && runoff_iface_file_->isOpen())) {
         const std::string& rp = !ctx_.files.runoff_path.absolute.empty()
                                     ? ctx_.files.runoff_path.absolute
@@ -1884,9 +1936,12 @@ int SWMMEngine::start(int save_results) noexcept {
     hotstart_save_done_.assign(ctx_.files.hotstart_saves.size(), 0);
 
     ctx_.state = EngineState::RUNNING;
-    const bool wants_native_hotstart =
-        !pending_hotstart_checkpoint_.empty() ||
-        (ctx_.options.heat_transport && !ctx_.files.hotstart_saves.empty());
+    bool date_native_snapshot = ctx_.options.heat_transport;
+#ifdef OPENSWMM_HAS_2D
+    date_native_snapshot |= surface_router_.subsurface().independentClock();
+#endif
+    const bool wants_native_hotstart = !pending_hotstart_checkpoint_.empty() ||
+                                       (date_native_snapshot && !ctx_.files.hotstart_saves.empty());
     if (wants_native_hotstart) {
         hotstart_checkpoint_error_ = prepareNativeHotstartCheckpointing();
         if (!hotstart_checkpoint_error_.empty()) {
@@ -2190,13 +2245,17 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
         // mass-balance accumulation. Runoff and its final-storage bookkeeping still
         // run every step.
         if (do_routing_) {
-            accumulateNodeRoutingTotals(dt_next / 2.0); // routing.c:227
+            // FV publishes accepted-window mean fluxes. Integrate those once
+            // over their own interval; legacy DW rates retain half-step totals.
+            const bool fv_window_totals = ctx_.options.routing_model == RoutingModel::FV;
+            if (!fv_window_totals)
+                accumulateNodeRoutingTotals(dt_next / 2.0); // routing.c:227
 #ifdef OPENSWMM_HAS_2D
             // Held source receipts contribute their full accepted volume to node
             // ordinary-node statistics as well as storage and wet-weather continuity.
             // Node LID total inflow records mobile hydraulic water after capture;
             // preserve that convention and expose whole admitted receipts separately.
-            if (source_delivery_)
+            if (source_delivery_ && !fv_window_totals)
                 for (int n = 0; n < ctx_.n_nodes(); ++n)
                     if (!lidnode::active(ctx_, n)) {
                         const double half_receipt = (source_delivery_->receipts()[n].rate -
@@ -2270,11 +2329,16 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
                 const double rate =
                     (dt_next > 0.0) ? (*routing_terms[k] - routing_before[k]) / dt_next : 0.0;
                 double& t = mbr.routing_report[static_cast<std::size_t>(k)];
-                t += routing_prev_rates_[static_cast<std::size_t>(k)] * half;
-                t += rate * half;
+                if (fv_window_totals) {
+                    t += *routing_terms[k] - routing_before[k];
+                } else {
+                    t += routing_prev_rates_[static_cast<std::size_t>(k)] * half;
+                    t += rate * half;
+                }
                 routing_prev_rates_[static_cast<std::size_t>(k)] = rate;
             }
-            accumulateNodeRoutingTotals(dt_next / 2.0); // routing.c:271
+            if (!fv_window_totals || !between_events_)
+                accumulateNodeRoutingTotals(fv_window_totals ? dt_next : dt_next / 2.0);
         }
 #ifdef OPENSWMM_HAS_2D
         if (surface_router_.runtimeActive() || exchange_target_ >= 0.0)
@@ -2404,7 +2468,20 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
         std::fill(ctx_.gages.api_rainfall.begin(), ctx_.gages.api_rainfall.end(), -1.0);
 
 #ifdef OPENSWMM_HAS_2D
-        surface_router_.expireRuntime(runtimeCouplingTime());
+        const double completed = runtimeCouplingTime();
+        auto& ground = surface_router_.subsurface();
+        std::vector<int> expired_cells;
+        if (ground.independentClock())
+            for (const auto& source : ground.runtimeSources().rows)
+                if (source.enabled && source.until <= completed)
+                    expired_cells.push_back(source.cell);
+        if (!expired_cells.empty()) {
+            flushRuntimeCouplingBoundary();
+            ground.landClockCells(expired_cells, surface_router_.state());
+        }
+        surface_router_.expireRuntime(completed);
+        if (!expired_cells.empty())
+            ground.refreshClockAfterEdit(surface_router_.state());
 #endif
         runtime_pipeline_ = false;
         // Fire step-end callback
@@ -2816,15 +2893,10 @@ void SWMMEngine::stepRunoff(double dt_routing) {
             ctx_.files.runoff_mode == FileMode::USE) {
             double file_dt = 0.0;
             if (!runoff_iface_file_->readResults(ctx_, &file_dt)) {
-                // Legacy ERR 327 (read beyond end of runoff interface
-                // file). Freeze the runoff clock at the simulation end so
-                // the last state holds and the loop cannot spin.
+                // Legacy ERR 327 is fatal: holding the last state would
+                // silently complete a simulation with missing runoff data.
                 ctx_.errors.push_back(format_error(ERR_RUNOFF_IFACE_EOF, ""));
-                emit_warning(SWMM_ERR_IO, "USE RUNOFF: attempting to read "
-                                          "beyond end of runoff interface file");
-                new_runoff_time_ = total_sec_clamp;
-                new_runoff_ms_ = ctx_.options.totalDurationMs();
-                break;
+                throw std::runtime_error(ctx_.errors.back());
             }
             if (file_dt <= 0.0)
                 file_dt = 1.0;
@@ -4604,9 +4676,12 @@ void SWMMEngine::stepGroundwater(double dt_runoff) noexcept {
     gw_infil_rate_.assign(static_cast<std::size_t>(ns), 0.0);
     {
         const auto& rsoa = runoff_.soa();
-        std::vector<double> lid_perv_area(static_cast<std::size_t>(ns), 0.0);
-        std::vector<double> lid_infil_vol(static_cast<std::size_t>(ns), 0.0);
-        std::vector<double> lid_perv_evap_vol(static_cast<std::size_t>(ns), 0.0);
+        gw_lid_perv_area_.assign(static_cast<std::size_t>(ns), 0.0);
+        gw_lid_infil_vol_.assign(static_cast<std::size_t>(ns), 0.0);
+        gw_lid_perv_evap_vol_.assign(static_cast<std::size_t>(ns), 0.0);
+        auto& lid_perv_area = gw_lid_perv_area_;
+        auto& lid_infil_vol = gw_lid_infil_vol_;
+        auto& lid_perv_evap_vol = gw_lid_perv_evap_vol_;
         for (int t = 0; t < lid_.numGroups(); ++t) {
             const auto& g = lid_.group(t);
             for (int u = 0; u < g.count; ++u) {
@@ -4747,6 +4822,7 @@ void SWMMEngine::stepGroundwater(double dt_runoff) noexcept {
  *
  */
 void SWMMEngine::stepRouting(double dt_routing) {
+    quality_.beginFvWindow();
     last_step_steady_ = false;
 
     // ================================================================
@@ -5096,6 +5172,8 @@ void SWMMEngine::stepRouting(double dt_routing) {
                                        non_conduit_fn, true)
                     : router_.step(ctx_, dt_routing, ctx_.climate_state.evap_rate, non_conduit_fn);
     }
+    if(ctx_.options.routing_model==RoutingModel::FV && ctx_.options.quality_solver==QualitySolverKind::LEGACY)
+        router_.acceptedQualityWater(ctx_,dt_routing,quality_.fvWater());
     lidnode::finishStep(ctx_);
     // Legacy counts a step as non-converging from the ACTUAL final Picard flag,
     // not merely from "used all MaxTrials" — a step converging on the last
@@ -5817,11 +5895,15 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
                 if (q_sys < 0.0)
                     ctx_.nodes.inflow[uj] = -q_sys;
             } else if (ctx_.options.routing_model == RoutingModel::FV) {
-                // FV books an outfall's boundary discharge in BOTH halves of
-                // its ledger (publishFv: face flux in, boundary flux out), so
-                // legacy's "both nonzero -> nothing" would drop it; FV keeps
-                // the direct rule: feeding the network when it only sends,
-                // discharging its inflow otherwise.
+                // FV integrates each direction separately. A boundary can
+                // reverse within a routing window, so both receipts can be
+                // positive. Preserve the gross discharge for quality/heat
+                // export and also book the accepted incoming water.
+                if (q_in > 0.0 && q_out > 0.0) {
+                    ctx_.mass_balance.routing_external += q_out * dt_routing;
+                    ctx_.mass_balance.step_ext_inflow += q_out;
+                    ctx_.outfall_exports.reverse_m3[uj] += q_out * dt_routing * 0.028316846592;
+                }
                 if (q_out > 0.0 && q_in <= 0.0) {
                     q_sys = -q_out;
                     ctx_.nodes.inflow[uj] = q_out;
@@ -5921,7 +6003,7 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
         // the SAME system-outflow classification as water, including a
         // non-DW terminal junction and unponded flooding. An OUTFALL-only
         // pass discarded all exported mass from ejemplo-epa's terminal 50.
-        if (quality_outflow > 0.0) {
+        if (quality_outflow > 0.0 && !quality_.fvTransportAccepted()) {
             auto& total = quality_flooding ? ctx_.mass_balance.qual_routing_flood
                                            : ctx_.mass_balance.qual_routing_outflow;
             for (int p = 0; p < np; ++p) {
@@ -5932,14 +6014,19 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
             transport::bookMsxSystemOutflow(ctx_, j, quality_outflow, quality_flooding, dt_routing);
         }
         // Negative lateral flow withdraws the current mixed concentration.
-        // Its water has already been booked by the inflow assembly.
-        if (ctx_.nodes.lat_flow[uj] < 0.0) {
+        // Its water has already been booked by the inflow assembly. The 1D ->
+        // 2D spill never entered the quality denominator, so it leaves in
+        // full; the rest of the lateral flow keeps legacy's net rule.
+        const double spill = std::max(0.0, -ctx_.nodes.coupling_inflow[uj]);
+        const double lat_withdrawal =
+            spill + std::max(0.0, -(ctx_.nodes.lat_flow[uj] - ctx_.nodes.coupling_inflow[uj]));
+        if (lat_withdrawal > 0.0 && !quality_.fvTransportAccepted()) {
             for (int p = 0; p < np; ++p) {
                 const auto up = static_cast<std::size_t>(p);
                 ctx_.mass_balance.qual_routing_outflow[up] +=
-                    -ctx_.nodes.lat_flow[uj] * ctx_.nodes.conc[uj * np + up] * dt_routing;
+                    lat_withdrawal * ctx_.nodes.conc[uj * np + up] * dt_routing;
             }
-            transport::bookMsxSystemOutflow(ctx_, j, -ctx_.nodes.lat_flow[uj], false, dt_routing);
+            transport::bookMsxSystemOutflow(ctx_, j, lat_withdrawal, false, dt_routing);
         }
 
         // Storage losses are separate volumes (legacy removeStorageLosses,
@@ -8030,7 +8117,7 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
                 snap.gw2d_species_count = tr.active() ? tr.n_species : 0;
                 snap.gw2d_species_names = tr.active() ? &tr.row_names : nullptr;
                 snap.gw2d_transport_layers = tr.n_layers;
-                snap.gw2d_layer_mass = tr.layer_mass;
+                snap.gw2d_layer_mass.resize(tr.layer_mass.size());
                 snap.gw2d_layer_concentration.assign(tr.layer_mass.size(), 0);
                 for (int sp = 0; sp < tr.n_species; ++sp)
                     for (int layer = 0; layer < tr.n_layers; ++layer)
@@ -8044,8 +8131,12 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
                                 bulk *
                                 (g.theta_sigma[std::size_t(layer) * g.n_cells + cell] + partition);
                             const auto k = tr.layerIdx(sp, layer, cell);
+                            // Keep the public snapshot/HDF axes species, layer, face.
+                            const auto output_index =
+                                (std::size_t(sp) * tr.n_layers + layer) * g.n_cells + cell;
+                            snap.gw2d_layer_mass[output_index] = tr.layer_mass[k];
                             if (capacity > 0)
-                                snap.gw2d_layer_concentration[k] = tr.layer_mass[k] / capacity;
+                                snap.gw2d_layer_concentration[output_index] = tr.layer_mass[k] / capacity;
                         }
                 const auto& boundaries = gw.boundaries();
                 snap.gw2d_boundary_count = int(boundaries.size());
@@ -8792,20 +8883,24 @@ void SWMMEngine::writeHotstartSave(const HotstartSaveEntry& entry) {
     const bool lid_restart =
         std::any_of(ctx_.node_subtypes.storages.lid.begin(), ctx_.node_subtypes.storages.lid.end(),
                     [](const auto& c) { return c.control >= 0; });
+    bool full_continuation = ctx_.options.heat_transport;
+#ifdef OPENSWMM_HAS_2D
+    full_continuation |= surface_router_.subsurface().independentClock();
+#endif
     const bool native =
         entry.format == HotstartFormat::NATIVE ||
-        (entry.format == HotstartFormat::AUTO && (lid_restart || ctx_.options.heat_transport));
+        (entry.format == HotstartFormat::AUTO && (lid_restart || full_continuation));
     int rc = 0;
     if (native) {
         std::unique_ptr<HotStartFile> hs;
         // As swmm_hotstart_save: the V15 file when a full engine checkpoint
         // is attached, otherwise the record-based one (which refuses coupled
         // mesh/ground heat with its own message).
-        if (ctx_.options.heat_transport && checkpoint_enabled_) {
+        if (full_continuation && checkpoint_enabled_) {
             std::string snapshot;
             const std::string error = checkpointBytes(snapshot, false);
             if (!error.empty()) {
-                ctx_.warnings.push_back("SAVE HOTSTART: coupled heat state was not saved: " +
+                ctx_.warnings.push_back("SAVE HOTSTART: incomplete native continuation: " +
                                         error);
                 return;
             }
@@ -8983,6 +9078,7 @@ int SWMMEngine::close() noexcept {
     // on a DYNWAVE run would be noise the harness has to filter.
     if (perf::enabled() && perf::value(perf::n_fv_substep) > 0)
         perf::dump_fv();
+    perf::end_process_model(this);
 
     // Stop IO thread if still running (safe to call even if already stopped)
     io_thread_.stop();
@@ -11559,6 +11655,8 @@ double SWMMEngine::reportedNodeVolume(int i) const noexcept {
 
 double SWMMEngine::reportedNodeVolume(int i, double depth, double volume) const noexcept {
     auto ui = static_cast<std::size_t>(i);
+    if (ctx_.nodes.storage_area[ui] > 0.0)
+        return volume;
     if (ctx_.nodes.type[ui] == NodeType::STORAGE)
         return volume + lidnode::heldVolume(ctx_, i); // mobile + retained LID water
     // Kinematic wave / steady flow: legacy setNewNodeState carries a
@@ -11650,6 +11748,17 @@ void SWMMEngine::initMassBalance() noexcept {
                     m += ctx_.links.conc[idx] * ctx_.links.volume[uj];
             }
             ctx_.mass_balance.qual_routing_init[up] = m;
+        }
+    }
+
+    // A classic FV restart can carry disconnected scalar inventory in V18.
+    // It belongs to both opening storage and the current dry-storage ledger;
+    // subsequent remobilization books only its delta.
+    if(ctx_.state_accessors.get_fv_retained_pollutant_mass) {
+        const auto held=ctx_.state_accessors.get_fv_retained_pollutant_mass();
+        for(std::size_t p=0;p<held.size()&&p<ctx_.mass_balance.qual_routing_init.size();++p) {
+            ctx_.mass_balance.qual_routing_init[p]+=held[p];
+            ctx_.mass_balance.qual_routing_final_dry[p]=held[p];
         }
     }
 

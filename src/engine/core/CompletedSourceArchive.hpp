@@ -80,6 +80,85 @@ public:
      *     lengths.
      */
     template <class... T> void fixed(T&... values) { (fixedOne(values), ...); }
+    /** @brief Visit one fixed logical double vector inside interleaved owned storage.
+     * @param[in,out] value Stable owned buffer; indexed elements must exist for every row.
+     * @param extent Logical vector count, encoded exactly like fixed(vector<double>).
+     * @param first First logical element's index; unused for zero extent.
+     * @param stride Positive element stride; caller supplies a valid indexed layout.
+     * Charges the same logical allocation budget and preserves fixed-vector read diagnostics.
+     * Read failure can leave earlier logical elements mutated; no independent rollback. */
+    void fixedStrided(std::vector<double>& value, std::size_t extent,
+                      std::size_t first, std::size_t stride) {
+        uint64_t size = extent;
+        field(size);
+        allocate(size, sizeof(double));
+        if (reading_) {
+            if (size > bytes_.size() - offset_)
+                fail();
+            if (size != extent)
+                throw std::runtime_error(
+                    "Checkpoint vector shape differs: saved " + std::to_string(size) + ", model " +
+                    std::to_string(extent) + ", offset " + std::to_string(offset_) + ".");
+        }
+        for (std::size_t i = 0; i < extent; ++i)
+            field(value[first + i * stride]);
+    }
+    /** @brief Stream a row-major owned double matrix in legacy column-major wire order.
+     * columns is the stable model-derived row width, not decoded input. Nonempty
+     * matrices with columns>=2 must have a size divisible by columns. Empty or
+     * single-column storage uses fixed() directly, including the empty zero-width case.
+     * Preserves one vector count, allocation budget, diagnostics and partial-prefix
+     * mutation. Does not resize, allocate a transpose or provide independent rollback. */
+    void fixedColumnMajor(std::vector<double>& value, std::size_t columns) {
+        if (value.empty() || columns < 2) {
+            fixed(value);
+            return;
+        }
+        uint64_t size = value.size();
+        field(size);
+        allocate(size, sizeof(double));
+        if (reading_) {
+            if (size > bytes_.size() - offset_)
+                fail();
+            if (size != value.size())
+                throw std::runtime_error(
+                    "Checkpoint vector shape differs: saved " + std::to_string(size) + ", model " +
+                    std::to_string(value.size()) + ", offset " + std::to_string(offset_) + ".");
+        }
+        const std::size_t rows = value.size() / columns;
+        for (std::size_t column = 0; column < columns; ++column)
+            for (std::size_t row = 0; row < rows; ++row)
+                field(value[row * columns + column]);
+    }
+    /** @brief Stream equal owned row-major matrix blocks in legacy block/column/row order.
+     * blocks and columns are stable prepared-model extents, never decoded input.
+     * A nonempty multi-column buffer requires positive blocks and a size divisible
+     * by blocks*columns. Empty/single-column buffers retain fixed() semantics.
+     * One original vector count/budget/shape diagnostic and partial logical prefix
+     * are preserved. Does not resize, allocate a transpose or roll back on failure. */
+    void fixedColumnMajorBlocks(std::vector<double>& value, std::size_t blocks,
+                                std::size_t columns) {
+        if (value.empty() || columns < 2) {
+            fixed(value);
+            return;
+        }
+        uint64_t size = value.size();
+        field(size);
+        allocate(size, sizeof(double));
+        if (reading_) {
+            if (size > bytes_.size() - offset_)
+                fail();
+            if (size != value.size())
+                throw std::runtime_error(
+                    "Checkpoint vector shape differs: saved " + std::to_string(size) + ", model " +
+                    std::to_string(value.size()) + ", offset " + std::to_string(offset_) + ".");
+        }
+        const std::size_t rows = value.size() / (blocks * columns);
+        for (std::size_t block = 0; block < blocks; ++block)
+            for (std::size_t column = 0; column < columns; ++column)
+                for (std::size_t row = 0; row < rows; ++row)
+                    field(value[(block * rows + row) * columns + column]);
+    }
     template <class T, class F>
     /**
      * @brief Visit a vector count and then each element through a supplied visitor.

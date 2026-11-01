@@ -9,9 +9,14 @@
  * @license   Apache-2.0
  */
 
+#include "core/ProcessPerf.hpp"
 #include "RichardsColumn.hpp"
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <cstddef>
+#include <exception>
+#include "core/ThreadInfo.hpp"
 #include <limits>
 #include <map>
 #include <numeric>
@@ -76,11 +81,31 @@ double reservedRate(double limit, double spent, double step) {
         rate = std::nextafter(rate, 0.0);
     return rate;
 }
-struct Batch {
+template<bool Packed> struct Batch {
     int n, lanes;
     std::vector<Column*> columns;
     std::vector<double> y, volume, lower_bound;
     std::vector<Report*> reports;
+    std::vector<double> head, K, f, fp, residual, lo, di, up, delta, perturbed, epsilon;
+    std::vector<uint8_t> done;
+    enum Coefficient { Area, Z, Dz, ThetaS, Ks, Wilting, PotentialEt,
+                       ThetaR, Alpha, N, L, SpecificStorage, CoefficientCount };
+    std::vector<double> coefficients;
+    /** @brief Read private cell-major lanes, or retain the borrowed small-batch view.
+     * Packed coefficients are frozen by construction for this advance only. Returning
+     * a value in the packed case leaves the numerical expressions and material API
+     * unchanged; the compiler can keep just the fields used by each caller. */
+    decltype(auto) cellAt(int k, int a) const {
+        if constexpr (Packed) {
+            const auto i = static_cast<std::size_t>(k * lanes + a);
+            const auto field = [&](Coefficient p) { return coefficients[p * y.size() + i]; };
+            return Cell{volume[i], field(Area), field(Z), field(Dz), field(ThetaS), field(Ks),
+                        field(Wilting), field(PotentialEt),
+                        {field(ThetaR), field(Alpha), field(N), field(L), field(SpecificStorage)}};
+        } else {
+            return static_cast<const Cell&>(columns[a]->cells[k]);
+        }
+    }
     /** @brief Pack borrowed compatible columns and report targets into cell-major lanes.
      * @param c Nonempty vector of nonnull borrowed columns with the same cell count,
      * validated geometry/water, and counts/products fitting int; copied pointer vector
@@ -94,12 +119,25 @@ struct Batch {
         y.resize(n * lanes);
         volume.resize(y.size());
         lower_bound.resize(y.size());
+        for (auto* scratch : {&head, &K, &f, &fp, &residual, &lo, &di, &up, &delta,
+                              &perturbed, &epsilon})
+            scratch->resize(y.size());
+        done.resize(lanes);
+        if constexpr (Packed)
+            coefficients.resize(CoefficientCount * y.size());
         for (int k = 0; k < n; ++k)
             for (int a = 0; a < lanes; ++a) {
                 const auto& cell = columns[a]->cells[k];
                 const int i = k * lanes + a;
                 y[i] = columns[a]->water[k];
                 volume[i] = cell.volume;
+                if constexpr (Packed) {
+                    const double values[] = {cell.area, cell.z, cell.dz, cell.theta_s, cell.Ks,
+                        cell.wilting, cell.potential_et, cell.material.theta_r, cell.material.alpha,
+                        cell.material.n, cell.material.l, cell.material.specific_storage};
+                    for (int p = 0; p < CoefficientCount; ++p)
+                        coefficients[p * y.size() + i] = values[p];
+                }
                 lower_bound[i] = k ? cell.material.theta_r * cell.volume : 0.0;
             }
     }
@@ -122,10 +160,11 @@ struct Batch {
      * sizes/materials; intermediate nonfinite results are handled by the solver later. */
     void rhs(const std::vector<double>& w, std::vector<double>& f,
              std::vector<double>* faces = nullptr, std::vector<double>* et = nullptr,
-             const std::vector<bool>* inactive = nullptr, const BoundaryRates* rates = nullptr,
+             const std::vector<uint8_t>* inactive = nullptr, const BoundaryRates* rates = nullptr,
              std::vector<int>* limited = nullptr) {
         f.assign(w.size(), 0.0);
-        std::vector<double> head(w.size()), K(w.size());
+        head.assign(w.size(), 0.0);
+        K.assign(w.size(), 0.0);
         if (faces)
             faces->assign(n * lanes, 0.0);
         if (et)
@@ -143,7 +182,7 @@ struct Batch {
                 if (inactive && (*inactive)[a])
                     continue;
                 const int i = k * lanes + a;
-                const auto& c = columns[a]->cells[k];
+                const auto& c = cellAt(k, a);
                 head[i] = c.z + (k ? pressure(c.material, c.theta_s, w[i] / c.volume)
                                    : std::max(0.0, w[i]) / (c.area * c.theta_s));
                 K[i] = k ? conductivity(c.material, c.Ks, head[i] - c.z) : 0.0;
@@ -161,8 +200,8 @@ struct Batch {
                 if (inactive && (*inactive)[a])
                     continue;
                 const int i = k * lanes + a, j = i + lanes;
-                const auto& c = columns[a]->cells[k];
-                const auto& d = columns[a]->cells[k + 1];
+                const auto& c = cellAt(k, a);
+                const auto& d = cellAt(k + 1, a);
                 const double area = std::min(c.area, d.area);
                 double conductance = 0.0;
                 // Arithmetic conductivity within a material follows openRE
@@ -190,7 +229,7 @@ struct Batch {
                 continue;
             const int i = (n - 1) * lanes + a;
             const auto& col = *columns[a];
-            const auto& c = col.cells.back();
+            const auto& c = cellAt(n - 1, a);
             const double area = col.bottom_area > 0 ? col.bottom_area : c.area;
             double q = 0.0;
             if (col.bottom == Bottom::FreeDrainage)
@@ -221,17 +260,18 @@ struct Batch {
      * @param steps Nonnegative finite per-lane seconds; zero lanes succeed unchanged.
      * @param[out] out Reassigned solution/last trial iterate, distinct from start.
      * @param rates Optional lane-sized directional bottom caps m3/s.
-     * @return One success flag per lane; false retains a last trial iterate which must
+     * @param[out] success One success flag per lane; false retains a last trial iterate which must
      * not be accepted. Uses up to 35 Newton iterations, three-color finite-difference
      * tridiagonal Jacobians and lower-bound damping. Updates report RHS/Newton counts;
      * does not write column water, reservations or accepted flux ledgers. Allocation
      * exceptions propagate. Callers decide retry/rollback and validate error estimates. */
-    std::vector<bool> implicit(const std::vector<double>& start, const std::vector<double>& steps,
-                               std::vector<double>& out, const BoundaryRates* rates = nullptr) {
+    void implicit(const std::vector<double>& start, const std::vector<double>& steps,
+                  std::vector<double>& out, std::vector<uint8_t>& success,
+                  const BoundaryRates* rates = nullptr) {
         out = start;
-        std::vector<bool> done(lanes, false), success(lanes, false);
-        std::vector<double> f, fp, residual(y.size()), lo(y.size()), di(y.size()), up(y.size()),
-            delta(y.size()), perturbed, epsilon(y.size());
+        done.assign(lanes, false);
+        success.assign(lanes, false);
+        std::fill(residual.begin(), residual.end(), 0.0);
         for (int a = 0; a < lanes; ++a)
             if (steps[a] == 0)
                 done[a] = success[a] = true;
@@ -273,7 +313,7 @@ struct Batch {
                             // Resolve the narrow saturated storage branch rather than
                             // perturbing across it with a fixed moisture increment.
                             const double wet_distance =
-                                std::abs(out[i] - columns[a]->cells[k].theta_s * volume[i]);
+                                std::abs(out[i] - cellAt(k, a).theta_s * volume[i]);
                             epsilon[i] =
                                 1.e-8 * (k ? std::max(wet_distance, 1.e-4 * volume[i]) : volume[i]);
                             perturbed[i] += epsilon[i];
@@ -335,7 +375,6 @@ struct Batch {
                         out[k * lanes + a] += damping * delta[k * lanes + a];
                 }
         }
-        return success;
     }
     /** @brief Integrate this packed group with independent adaptive lane clocks.
      * @param dt Finite positive interval seconds; columns/options/budgets already validated.
@@ -349,15 +388,17 @@ struct Batch {
      * clock or reservation owner is committed by this internal trial operation. */
     void run(double dt) {
         std::vector<double> time(lanes, 0), step(lanes), full, half, two, f, faces1, faces2, et1,
-            et2;
+            et2, h;
+        std::vector<uint8_t> good(lanes), good1(lanes), good2(lanes), inactive(lanes);
+        std::vector<int> limited1, limited2;
+        BoundaryRates full_rates, half_rates, second_rates;
         for (int a = 0; a < lanes; ++a)
             step[a] = std::min(dt, columns[a]->options.max_step);
         const bool bounded = std::any_of(columns.begin(), columns.end(), [](const auto* c) {
             return std::isfinite(c->bottom_out_limit) || std::isfinite(c->bottom_in_limit);
         });
-        auto rates = [&](const std::vector<double>& steps,
+        auto rates = [&](BoundaryRates& b, const std::vector<double>& steps,
                          const std::vector<double>* first_faces = nullptr) {
-            BoundaryRates b;
             b.out.resize(lanes);
             b.in.resize(lanes);
             for (int a = 0; a < lanes; ++a) {
@@ -368,7 +409,6 @@ struct Batch {
                 b.in[a] = reservedRate(columns[a]->bottom_in_limit,
                                        reports[a]->bottom_inflow + std::max(0., -first), steps[a]);
             }
-            return b;
         };
         int attempts = 0;
         while (*std::min_element(time.begin(), time.end()) < dt) {
@@ -381,25 +421,22 @@ struct Batch {
             }
             for (int a = 0; a < lanes; ++a)
                 step[a] = std::min(step[a], std::max(0.0, dt - time[a]));
-            BoundaryRates full_rates, half_rates, second_rates;
             if (bounded)
-                full_rates = rates(step);
-            auto good = implicit(y, step, full, bounded ? &full_rates : nullptr);
-            auto h = step;
+                rates(full_rates, step);
+            implicit(y, step, full, good, bounded ? &full_rates : nullptr);
+            h = step;
             for (auto& v : h)
                 v *= 0.5;
             if (bounded)
-                half_rates = rates(h);
-            auto good1 = implicit(y, h, half, bounded ? &half_rates : nullptr);
-            std::vector<bool> inactive(lanes);
+                rates(half_rates, h);
+            implicit(y, h, half, good1, bounded ? &half_rates : nullptr);
             for (int a = 0; a < lanes; ++a)
                 inactive[a] = step[a] == 0;
-            std::vector<int> limited1, limited2;
             if (bounded) {
                 rhs(half, f, &faces1, &et1, &inactive, &half_rates, &limited1);
-                second_rates = rates(h, &faces1);
+                rates(second_rates, h, &faces1);
             }
-            auto good2 = implicit(half, h, two, bounded ? &second_rates : nullptr);
+            implicit(half, h, two, good2, bounded ? &second_rates : nullptr);
             if (!bounded)
                 rhs(half, f, &faces1, &et1, &inactive);
             rhs(two, f, &faces2, &et2, &inactive, bounded ? &second_rates : nullptr,
@@ -492,6 +529,7 @@ struct Batch {
 };
 }
 std::vector<Report> advance(std::vector<Column*>& columns, double dt) {
+    perf::ProcessTimer process_timer(perf::ProcessPhase::richards);
     std::vector<Report> reports(columns.size());
     if (!std::isfinite(dt) || dt <= 0) {
         for (auto& r : reports) {
@@ -543,27 +581,92 @@ std::vector<Report> advance(std::vector<Column*>& columns, double dt) {
     std::map<std::size_t, std::vector<std::size_t>> groups;
     for (std::size_t a = 0; a < trial.size(); ++a)
         groups[trial[a].cells.size()].push_back(a);
-    for (const auto& [size, ids] : groups)
-        for (std::size_t first = 0; first < ids.size(); first += 64) {
-            std::vector<Column*> c;
-            std::vector<Report*> r;
-            const auto last = std::min(ids.size(), first + 64);
-            for (auto j = first; j < last; ++j) {
-                const auto id = ids[j];
-                c.push_back(&trial[id]);
-                r.push_back(&reports[id]);
-            }
-            Batch(std::move(c), std::move(r)).run(dt);
-            for (auto j = first; j < last; ++j)
-                if (!reports[ids[j]].ok) {
-                    for (auto& report : reports) {
-                        report.ok = false;
-                        if (report.error.empty())
-                            report.error = "Richards batch rolled back";
-                    }
-                    return reports;
+    // Only parallel jobs pack coefficients; serial batches retain borrowed cells.
+    const auto runBatch = [&](std::vector<Column*> c, std::vector<Report*> r, bool packed) {
+        if (packed && c.size() >= 8)
+            Batch<true>(std::move(c), std::move(r)).run(dt);
+        else
+            Batch<false>(std::move(c), std::move(r)).run(dt);
+    };
+    bool parallel_complete = false;
+#ifdef SWMM_USE_OPENMP
+    // Small calls retain the original serial group walk. All jobs below work on
+    // distinct trial columns/reports; only the ordered fold can publish a result.
+    if (trial.size() >= 256 && threadinfo::ompMaxThreads() > 1) {
+        struct Job {
+            const std::vector<std::size_t>* ids;
+            std::size_t first, last;
+            std::exception_ptr exception;
+        };
+        std::vector<Job> jobs;
+        for (const auto& [size, ids] : groups)
+            for (std::size_t first = 0; first < ids.size(); first += 64)
+                jobs.push_back({&ids, first, std::min(ids.size(), first + 64), {}});
+        const int threads = static_cast<int>(std::min<std::size_t>(
+            jobs.size(), static_cast<std::size_t>(threadinfo::ompMaxThreads())));
+#pragma omp parallel for schedule(static) num_threads(threads)
+        for (std::ptrdiff_t index = 0; index < static_cast<std::ptrdiff_t>(jobs.size()); ++index) {
+            auto& job = jobs[index];
+            try {
+                std::vector<Column*> c;
+                std::vector<Report*> r;
+                for (auto j = job.first; j < job.last; ++j) {
+                    const auto id = (*job.ids)[j];
+                    c.push_back(&trial[id]);
+                    r.push_back(&reports[id]);
                 }
+                runBatch(std::move(c), std::move(r), true);
+            } catch (...) {
+                job.exception = std::current_exception();
+            }
         }
+        for (std::size_t index = 0; index < jobs.size(); ++index) {
+            const auto& job = jobs[index];
+            if (job.exception)
+                std::rethrow_exception(job.exception);
+            bool failed = false;
+            for (auto j = job.first; j < job.last; ++j)
+                failed = failed || !reports[(*job.ids)[j]].ok;
+            if (failed) {
+                // Serial execution would not have visited these later jobs. Keep
+                // its exact report prefix, including default counters/receipts.
+                for (auto later = index + 1; later < jobs.size(); ++later)
+                    for (auto j = jobs[later].first; j < jobs[later].last; ++j)
+                        reports[(*jobs[later].ids)[j]] = Report{};
+                for (auto& report : reports) {
+                    report.ok = false;
+                    if (report.error.empty())
+                        report.error = "Richards batch rolled back";
+                }
+                return reports;
+            }
+        }
+        parallel_complete = true;
+    }
+#endif
+    if (!parallel_complete) {
+        for (const auto& [size, ids] : groups)
+            for (std::size_t first = 0; first < ids.size(); first += 64) {
+                std::vector<Column*> c;
+                std::vector<Report*> r;
+                const auto last = std::min(ids.size(), first + 64);
+                for (auto j = first; j < last; ++j) {
+                    const auto id = ids[j];
+                    c.push_back(&trial[id]);
+                    r.push_back(&reports[id]);
+                }
+                runBatch(std::move(c), std::move(r), false);
+                for (auto j = first; j < last; ++j)
+                    if (!reports[ids[j]].ok) {
+                        for (auto& report : reports) {
+                            report.ok = false;
+                            if (report.error.empty())
+                                report.error = "Richards batch rolled back";
+                        }
+                        return reports;
+                    }
+            }
+    }
     for (std::size_t a = 0; a < trial.size(); ++a)
         columns[a]->water = std::move(trial[a].water);
     return reports;

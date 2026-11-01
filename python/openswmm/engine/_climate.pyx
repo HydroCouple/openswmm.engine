@@ -123,9 +123,7 @@ class Climate:
     @property
     def temp_timeseries(self) -> str:
         """Temperature time-series id (empty if none)."""
-        cdef char buf[256]
-        _check(swmm_climate_get_temp_timeseries(_ch(self._solver), buf, sizeof(buf)))
-        return (<bytes>buf).decode('utf-8')
+        return _read_engine_string(_ch(self._solver), swmm_climate_get_temp_timeseries)
 
     @temp_timeseries.setter
     def temp_timeseries(self, value) -> None:
@@ -213,9 +211,7 @@ class Climate:
     @property
     def evap_timeseries(self) -> str:
         """Evaporation time-series id (empty if none)."""
-        cdef char buf[256]
-        _check(swmm_climate_get_evap_timeseries(_ch(self._solver), buf, sizeof(buf)))
-        return (<bytes>buf).decode('utf-8')
+        return _read_engine_string(_ch(self._solver), swmm_climate_get_evap_timeseries)
 
     @evap_timeseries.setter
     def evap_timeseries(self, value) -> None:
@@ -234,9 +230,7 @@ class Climate:
     @property
     def evap_recovery(self) -> str:
         """Soil-moisture recovery pattern id (empty if none)."""
-        cdef char buf[256]
-        _check(swmm_climate_get_evap_recovery(_ch(self._solver), buf, sizeof(buf)))
-        return (<bytes>buf).decode('utf-8')
+        return _read_engine_string(_ch(self._solver), swmm_climate_get_evap_recovery)
 
     @evap_recovery.setter
     def evap_recovery(self, value) -> None:
@@ -301,9 +295,7 @@ class Climate:
     @property
     def humidity_timeseries(self) -> str:
         """Humidity time-series id (empty if none). Setting it selects TIMESERIES."""
-        cdef char buf[256]
-        _check(swmm_climate_get_humidity_timeseries(_ch(self._solver), buf, sizeof(buf)))
-        return (<bytes>buf).decode('utf-8')
+        return _read_engine_string(_ch(self._solver), swmm_climate_get_humidity_timeseries)
 
     @humidity_timeseries.setter
     def humidity_timeseries(self, value) -> None:
@@ -420,8 +412,6 @@ class Climate:
         cdef SWMM_EvapPreviewSummary summary
         cdef vector[SWMM_EvapPreviewSample] samples
         cdef char diagnostic[4096]
-        cdef char absolute[4096]
-        cdef char original[4096]
         cdef int count = 0, rc, i
         cdef bytes evap_ts, temp_ts, climate_path
         diagnostic[0] = 0
@@ -434,7 +424,7 @@ class Climate:
             unknown = values.keys() - known
             if unknown:
                 raise ValueError(f"Unknown evaporation preview fields: {sorted(unknown)}")
-            _check(swmm_file_path_get(handle, <SWMM_FilePathRole>7, b'', absolute, 4096, original, 4096))
+            absolute = _read_engine_file_path(handle, <SWMM_FilePathRole>7, b'')[0]
             draft.evap_type = index(values.get('evap_type', self.evap_type))
             draft.temp_source = index(values.get('temp_source', self.temp_source))
             draft.climate_file_start = values.get('climate_file_start', self.temp_file_start)
@@ -454,7 +444,7 @@ class Climate:
                 draft.adjust_temperature[i] = arrays[3][i]
             strings = [values.get('evap_timeseries', self.evap_timeseries),
                        values.get('temp_timeseries', self.temp_timeseries),
-                       values.get('climate_file_path', (<bytes>absolute).decode('utf-8'))]
+                       values.get('climate_file_path', absolute)]
             if any('\0' in value for value in strings):
                 raise ValueError("Preview source strings must not contain NUL")
             evap_ts, temp_ts, climate_path = [value.encode('utf-8') for value in strings]

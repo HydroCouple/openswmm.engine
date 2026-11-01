@@ -1111,6 +1111,89 @@ TEST(QualityLedgerSeamTest, SummaryAndLedgerAgreeAndCarryTheKnownMass) {
            "received none.";
 }
 
+// The load summaries follow legacy statsrpt.c: kg for SI, lbs for US, LogN
+// (log10 of the count) for a count pollutant. The Link Pollutant Load Summary
+// printed "lbs" values for SI runs and raw counts under "#", and the Washoff
+// Summary said "lbs" over kg values. The deck's only conduit carries all of
+// its load to the outfall, so the link row must equal the Outfall Loading
+// Summary, whose conversion was already the legacy one.
+TEST(QualityLedgerSeamTest, SiLoadSummariesUseKgAndLogN) {
+    std::string deck = kSeamQualInp;
+    const auto swap = [&deck](const std::string& from, const std::string& to) {
+        const auto at = deck.find(from);
+        ASSERT_NE(at, std::string::npos) << from;
+        deck.replace(at, from.size(), to);
+    };
+    swap("FLOW_UNITS           CFS", "FLOW_UNITS           CMS");
+    swap("TSS     MG/L   0.0    0.0  0.0    0.0\n",
+         "TSS     MG/L   0.0    0.0  0.0    0.0\nFC      #/L    0.0    0.0  0.0    0.0\n");
+    swap("RES        TSS        EMC   100.0  0.0    0.0         0.0\n",
+         "RES        TSS        EMC   100.0  0.0    0.0         0.0\n"
+         "RES        FC         EMC   1000.0 0.0    0.0         0.0\n");
+    const std::string inp = forcedOutPath("qual_seam_si.inp");
+    const std::string rpt = forcedOutPath("qual_seam_si.rpt");
+    std::ofstream(inp) << deck;
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_NE(e, nullptr);
+    ASSERT_EQ(swmm_engine_open(e, inp.c_str(), rpt.c_str(),
+                               forcedOutPath("qual_seam_si.out").c_str(), nullptr),
+              0)
+        << swmm_get_last_error_msg(e);
+    ASSERT_EQ(swmm_engine_initialize(e), 0) << swmm_get_last_error_msg(e);
+    ASSERT_EQ(swmm_engine_start(e, 1), 0) << swmm_get_last_error_msg(e);
+    double elapsed = 0.0;
+    int guard = 0;
+    do {
+        ASSERT_EQ(swmm_engine_step(e, &elapsed), 0) << swmm_get_last_error_msg(e);
+    } while (elapsed > 0.0 && ++guard < 100000);
+    ASSERT_EQ(swmm_engine_end(e), 0) << swmm_get_last_error_msg(e);
+    ASSERT_EQ(swmm_engine_report(e), 0) << swmm_get_last_error_msg(e);
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+    std::ifstream fin(rpt);
+    std::stringstream ss;
+    ss << fin.rdbuf();
+    const std::string text = ss.str();
+
+    // The whitespace-separated tokens of the first line in `block` starting with `lead`.
+    const auto row = [&text](const std::string& block, const std::string& lead) {
+        std::vector<std::string> tokens;
+        const auto at = text.find(block);
+        if (at == std::string::npos)
+            return tokens;
+        std::istringstream in(text.substr(at + block.size())); // past the title line
+        std::string line;
+        while (std::getline(in, line)) {
+            std::istringstream words(line);
+            std::string first;
+            words >> first;
+            if (first != lead)
+                continue;
+            tokens.push_back(first);
+            for (std::string w; words >> w;)
+                tokens.push_back(w);
+            break;
+        }
+        return tokens;
+    };
+    const std::vector<std::string> units{"Subcatchment", "kg", "LogN"};
+    EXPECT_EQ(row("Subcatchment Washoff Summary", "Subcatchment"), units);
+    EXPECT_EQ(row("Link Pollutant Load Summary", "Link"),
+              (std::vector<std::string>{"Link", "kg", "LogN"}));
+
+    const auto link = row("Link Pollutant Load Summary", "CN");
+    const auto outfall = row("Outfall Loading Summary", "OF");
+    ASSERT_EQ(link.size(), 3u);
+    ASSERT_GE(outfall.size(), 7u);
+    const double tss_link = std::atof(link[1].c_str()), fc_link = std::atof(link[2].c_str());
+    const double tss_out = std::atof(outfall[outfall.size() - 2].c_str());
+    const double fc_out = std::atof(outfall.back().c_str());
+    ASSERT_GT(tss_out, 0.0) << "the deck shed no TSS — deck, not report";
+    EXPECT_NEAR(tss_link, tss_out, 0.01 * tss_out) << "link kg vs outfall kg";
+    EXPECT_NEAR(fc_link, fc_out, 0.01) << "link LogN vs outfall LogN";
+    EXPECT_LT(fc_link, 30.0) << "a count load is printed as log10, not the raw count";
+}
+
 namespace {
 /**
  * @brief Start/run/end a fixed terminal-outflow or flood pollutant fixture.

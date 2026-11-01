@@ -37,6 +37,7 @@
 #define OPENSWMM_ROUTING_HPP
 
 #include "XSectBatch.hpp"
+#include "../quality/FvTransportWater.hpp"
 #include "KinematicWave.hpp"
 #include "DynamicWave.hpp"
 #include "Divider.hpp"
@@ -99,6 +100,9 @@ void applyConduitLengthening(SimulationContext& ctx, RouteModel model);
  */
 class Router {
 public:
+    /// Project classic restart volumes/flows onto the existing FV mesh once.
+    /// Preserves conduit inventory; does not restore subgrid transient history.
+    void restoreFvClassicState(SimulationContext& ctx);
     /**
      * @brief Initialize routing groups, solver state and the selected model dispatch.
      *
@@ -139,6 +143,9 @@ public:
      * @return DW Picard iteration count, KW effort, one for steady flow, or FV internal operator-step
      *     count; zero can indicate an absent FV solver.
      */
+    /// Publish an accepted native CPU FV water graph for conservative quality.
+    void acceptedQualityWater(const SimulationContext& ctx, double dt, quality::FvTransportWater& out) const;
+
     int step(SimulationContext& ctx, double dt, double evap_rate = 0.0,
              dynwave::DWSolver::NonConduitFlowFunc non_conduit_fn = nullptr);
 

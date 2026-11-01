@@ -138,7 +138,8 @@ SWMM_ENGINE_API int swmm_subcatch_set_slope(SWMM_Engine engine, int idx, double 
     // module and the [SUBCATCHMENTS] parser both store it as a fraction
     // (ctx.subcatches.slope = %Slope / 100), so convert here to match — and to
     // stay consistent with swmm_subcatch_set_imperv_pct, which divides likewise.
-    ctx.subcatches.slope[static_cast<std::size_t>(idx)] = slope / 100.0;
+    ctx.subcatches.slope[static_cast<std::size_t>(idx)] =
+        exact_inverse(slope / 100.0, 100.0, slope);
     return SWMM_OK;
 }
 
@@ -147,7 +148,8 @@ SWMM_ENGINE_API int swmm_subcatch_set_imperv_pct(SWMM_Engine engine, int idx, do
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
-    ctx.subcatches.frac_imperv[static_cast<std::size_t>(idx)] = pct / 100.0;
+    ctx.subcatches.frac_imperv[static_cast<std::size_t>(idx)] =
+        exact_inverse(pct / 100.0, 100.0, pct);
     return SWMM_OK;
 }
 
@@ -157,7 +159,8 @@ SWMM_ENGINE_API int swmm_subcatch_set_zero_imperv_pct(SWMM_Engine engine, int id
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
     ctx.subcatches.pct_zero[static_cast<std::size_t>(idx)] = pct;
-    ctx.subcatches.frac_imperv_no_store[static_cast<std::size_t>(idx)] = pct / 100.0;
+    ctx.subcatches.frac_imperv_no_store[static_cast<std::size_t>(idx)] =
+        exact_inverse(pct / 100.0, 100.0, pct);
     return SWMM_OK;
 }
 
@@ -292,7 +295,7 @@ SWMM_ENGINE_API int swmm_subcatch_get_imperv_pct(SWMM_Engine engine, int idx, do
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
     if (pct)
-        *pct = ctx.subcatches.frac_imperv[static_cast<std::size_t>(idx)] * 100.0;
+        *pct = snap_display(ctx.subcatches.frac_imperv[static_cast<std::size_t>(idx)] * 100.0);
     return SWMM_OK;
 }
 
@@ -301,7 +304,8 @@ SWMM_ENGINE_API int swmm_subcatch_get_zero_imperv_pct(SWMM_Engine engine, int id
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
     if (pct)
-        *pct = ctx.subcatches.frac_imperv_no_store[static_cast<std::size_t>(idx)] * 100.0;
+        *pct = snap_display(ctx.subcatches.frac_imperv_no_store[static_cast<std::size_t>(idx)] *
+                            100.0);
     return SWMM_OK;
 }
 
@@ -333,7 +337,7 @@ SWMM_ENGINE_API int swmm_subcatch_get_slope(SWMM_Engine engine, int idx, double*
     // divides the incoming percentage by 100, so the getter must multiply back by 100
     // to round-trip — matching the symmetric swmm_subcatch_get/set_imperv_pct pair.
     if (s)
-        *s = ctx.subcatches.slope[static_cast<std::size_t>(idx)] * 100.0;
+        *s = snap_display(ctx.subcatches.slope[static_cast<std::size_t>(idx)] * 100.0);
     return SWMM_OK;
 }
 

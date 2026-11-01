@@ -31,14 +31,14 @@ class TestErrorCode(unittest.TestCase):
             "OUTFILE": 4, "PARSE": 5, "LIFECYCLE": 6, "BADHANDLE": 7,
             "BADINDEX": 8, "BADPARAM": 9, "PLUGIN": 10, "IO": 11,
             "HOTSTART": 12, "CRS": 13, "NUMERICAL": 14, "DEPENDENCY": 15,
-            "CANCELLED": 16, "INTERNAL": 99,
-            "GEOMETRY": 17,
+            "CANCELLED": 16, "BUFSIZE": 17, "INTERNAL": 99,
+            "GEOMETRY": 18,
         }
         for name, val in expected.items():
             self.assertEqual(ErrorCode[name].value, val)
 
     def test_member_count(self):
-        self.assertEqual(len(ErrorCode), 19)
+        self.assertEqual(len(ErrorCode), 20)
 
 
 # ---------------------------------------------------------------------------

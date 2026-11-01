@@ -294,9 +294,7 @@ class Transects:
         @rtype: str
         """
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef char buf[1024]
-        _check(swmm_transect_get_comments(h, idx, buf, 1024))
-        return buf.decode('utf-8')
+        return _read_engine_index_string(h, idx, swmm_transect_get_comments)
 
     def set_comments(self, int idx, str text) -> None:
         """Set the descriptive comment string for the transect at C{idx}."""
@@ -556,10 +554,8 @@ class Inlets:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int idx = key if isinstance(key, int) else self.get_index(key)
         cdef SWMM_InletDesign d
-        cdef char curve[64]
         _check(swmm_inlet_get_design(h, idx, &d))
-        memcpy(curve, d.curve_id, sizeof(curve))
-        curve[sizeof(curve) - 1] = 0
+        d.curve_id[sizeof(d.curve_id) - 1] = 0
         return {
             "type": InletType(d.type),
             "grate_length": d.grate_length,
@@ -572,7 +568,7 @@ class Inlets:
             "throat": ThroatType(d.throat),
             "slot_length": d.slot_length,
             "slot_width": d.slot_width,
-            "curve_id": curve.decode('utf-8'),
+            "curve_id": d.curve_id.decode('utf-8'),
             "curve_kind": InletCurveKind(d.curve_kind),
         }
 
@@ -634,9 +630,7 @@ class Inlets:
         """
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int idx = key if isinstance(key, int) else self.get_index(key)
-        cdef char buf[1024]
-        _check(swmm_inlet_get_comment(h, idx, buf, sizeof(buf)))
-        return buf.decode('utf-8')
+        return _read_engine_index_string(h, idx, swmm_inlet_get_comment)
 
     def set_comment(self, key, str text) -> None:
         """Set the free-text description of an inlet design.

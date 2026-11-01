@@ -689,7 +689,7 @@ TEST(InletJunctionIO, Swmm5ProfileDowngradesInletJunction) {
     for (const auto& tok : rows("JUNCTIONS"))
         if (tok[0] == "IJ1") {
             ij1_junction = true;
-            EXPECT_EQ(tok.at(2), "0.5000");
+            EXPECT_DOUBLE_EQ(std::stod(tok.at(2)), 0.5);
         }
     EXPECT_TRUE(ij1_junction) << txt;
     // ...and its inlet rides on the approach conduit C_UP with the same design,

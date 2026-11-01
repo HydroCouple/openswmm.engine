@@ -68,6 +68,8 @@
 #include "../InputParseUtils.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <cstdlib>
 #include <charconv>
 #include <string>
 #include <string_view>
@@ -167,6 +169,16 @@ void handle_junctions(SimulationContext& ctx, const std::vector<std::string>& li
         if (negative_param)
             continue;
 
+        double area = 0.0;
+        if (tok.size() > 6) {
+            char* end = nullptr;
+            area = std::strtod(tok[6].c_str(), &end);
+            if (end == tok[6].c_str() || *end != '\0' || !std::isfinite(area) || area < 0.0) {
+                ctx.errors.push_back(format_error(ERR_NUMBER, tok[6]));
+                continue;
+            }
+        }
+        ctx.nodes.storage_area[idx] = area;
         ctx.node_subtypes.set_node_type(ctx.nodes, idx, NodeType::JUNCTION);
         ctx.nodes.invert_elev[idx] = to_double(tok[1]); // Elev
         if (tok.size() > 2)

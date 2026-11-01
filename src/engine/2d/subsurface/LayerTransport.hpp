@@ -26,6 +26,22 @@ struct LayerTransportResult {
     std::vector<double> mass, concentration, transferred;
     std::string error;
 };
+// Reusable private column workspace. Inputs to the overloads below must not
+// alias this storage. Results remain valid until the next use of this scratch;
+// the caller must provide exclusive access for the complete call.
+struct LayerTransportScratch {
+    LayerTransportResult result;
+    std::vector<double> diagonal, upper, lower, b, dry, requested, remaining, scale;
+};
+const LayerTransportResult& solveLayerTransport(
+    const std::vector<double>& capacity, const std::vector<double>& rhs,
+    const std::vector<LayerTransportMove>& moves, LayerTransportScratch& scratch,
+    bool signed_species = false);
+const LayerTransportResult& advanceLayerTransportEuler(
+    const std::vector<double>& capacity, const std::vector<double>& initial,
+    const std::vector<double>& rhs, const std::vector<LayerTransportMove>& moves,
+    LayerTransportScratch& scratch, bool signed_species = false,
+    const std::vector<double>* donor_available = nullptr);
 /**
  * @brief Conservative, positivity-preserving implicit donor transport on a column chain. rhs
  * holds mass after already-paired incoming/outgoing receipts; capacity is the final

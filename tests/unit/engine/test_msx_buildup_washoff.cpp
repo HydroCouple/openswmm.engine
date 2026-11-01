@@ -458,7 +458,7 @@ TEST(MsxBuildupWashoff, RoundTripThroughWriterAndCApi) {
         const std::string t = ss.str();
         EXPECT_NE(t.find("LU1              X                POW"), std::string::npos) << t;
         EXPECT_NE(t.find("LU1              X                EMC"), std::string::npos) << t;
-        EXPECT_NE(t.find("S1               X                    7.2500"), std::string::npos) << t;
+
     }
     // Reopen: same values back, and the initial loading seeds the store.
     SWMM_Engine e2 = swmm_engine_create();
@@ -466,6 +466,9 @@ TEST(MsxBuildupWashoff, RoundTripThroughWriterAndCApi) {
               SWMM_OK);
     int ft = -1;
     double co = 0, ex = 0, sw = 0, bm = 0;
+    double loading = 0;
+    ASSERT_EQ(swmm_subcatch_get_initial_loading(e2, 0, 1, &loading), SWMM_OK);
+    EXPECT_DOUBLE_EQ(loading, 7.25);
     ASSERT_EQ(swmm_washoff_get(e2, 0, 1, &ft, &co, &ex, &sw, &bm), SWMM_OK);
     EXPECT_EQ(ft, 3);
     EXPECT_DOUBLE_EQ(co, 55.0);

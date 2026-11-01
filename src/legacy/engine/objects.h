@@ -496,6 +496,7 @@ typedef struct {
     double initDepth;        // initial storage level (ft)
     double fullDepth;        // dist. from invert to surface (ft)
     double surDepth;         // added depth under surcharge (ft)
+    double storageArea;      // physical junction chamber area (ft2), zero = legacy
     double pondedArea;       // area filled by ponded water (ft2)
     TExtInflow* extInflow;   // pointer to external inflow data
     TDwfInflow* dwfInflow;   // pointer to dry weather flow inflow data

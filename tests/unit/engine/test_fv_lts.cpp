@@ -465,3 +465,67 @@ TEST(FvLts, DueCellThreadsPreserveStateAndScheduleBits) {
     }
 #endif
 }
+
+// LTS scratch must survive interleaved solvers, resizing and node removal.
+TEST(FvLts, ReinitializationPreservesSparseAndDenseFirings) {
+    ExplicitFvSolver reused;
+    for (const int n : {4096, 257, 8192, 63, 4096}) {
+        const bool storage = n >= 4096;
+        auto initial = storage
+            ? makeNodedChannel(rectOpen(10.0, 20.0), n, 20.0,
+                               [](double) { return 0.0; }, 0.013)
+            : makeWalledChannel(rectOpen(10.0, 20.0), n, 20.0,
+                                [](double) { return 0.0; }, 0.013);
+        for (int c = 0; c < n; ++c) {
+            initial.mesh.cell_dx[c] = (c >= n / 2 && c < n / 2 + 4) ? 0.5 : 20.0;
+            initial.state.cell_a[c] = c < n / 2 ? 20.0 : 10.0;
+        }
+        for (int f = 0; f < initial.mesh.n_faces(); ++f) {
+            const int l = initial.mesh.face_cl[f], r = initial.mesh.face_cr[f];
+            initial.mesh.face_dx[f] = 0.5 * ((l >= 0 ? initial.mesh.cell_dx[l] : 0.0) +
+                                            (r >= 0 ? initial.mesh.cell_dx[r] : 0.0));
+        }
+        if (storage) {
+            initial.mesh.node_kind = {kNodeStorage, kNodeStorage};
+            initial.state.node_head = {2.0, 1.0};
+            for (int j = 0; j < 2; ++j)
+                initial.state.node_volume[j] =
+                    initial.mesh.node_area[j] * initial.state.node_head[j];
+        }
+        const auto volume = [](const Channel& ch) {
+            return totalVol(ch) + std::accumulate(ch.state.node_volume.begin(),
+                                                  ch.state.node_volume.end(), 0.0);
+        };
+        auto a = initial, b = initial;
+        auto opts = defaultOptions();
+        opts.lts = true;
+        reused.initialize(a.mesh, a.state, opts);
+        ExplicitFvSolver fresh;
+        fresh.initialize(b.mesh, b.state, opts);
+        FvStepForcing forcing;
+        forcing.n_nodes = initial.mesh.n_nodes();
+        for (int j = 0; j < 3; ++j) {
+            const double start = 10.0 * j, end = 10.0 * (j + 1);
+            ASSERT_EQ(reused.advance(start, end, forcing), end);
+            ASSERT_EQ(fresh.advance(start, end, forcing), end);
+            for (const auto fields : {std::pair{&a.state.cell_a, &b.state.cell_a},
+                                      std::pair{&a.state.cell_q, &b.state.cell_q},
+                                      std::pair{&a.state.cell_h, &b.state.cell_h},
+                                      std::pair{&a.state.node_head, &b.state.node_head},
+                                      std::pair{&a.state.node_volume, &b.state.node_volume}}) {
+                ASSERT_EQ(fields.first->size(), fields.second->size());
+                if (!fields.first->empty())
+                    EXPECT_EQ(std::memcmp(fields.first->data(), fields.second->data(),
+                                          fields.first->size() * sizeof(double)), 0);
+            }
+            EXPECT_EQ(reused.run_stats().nsteps, fresh.run_stats().nsteps);
+            EXPECT_EQ(reused.run_stats().nflux, fresh.run_stats().nflux);
+            EXPECT_EQ(reused.run_stats().n_macro_cycles, fresh.run_stats().n_macro_cycles);
+            EXPECT_EQ(reused.run_stats().n_macro_rejected, fresh.run_stats().n_macro_rejected);
+            EXPECT_NEAR(volume(a), volume(initial), 1.e-8 * volume(initial));
+        }
+        EXPECT_GT(reused.run_stats().n_macro_cycles, 0);
+        reused.finalize();
+        fresh.finalize();
+    }
+}

@@ -221,6 +221,12 @@ SWMM_ENGINE_API int swmm_node_set_max_depth(SWMM_Engine engine, int idx, double 
  */
 SWMM_ENGINE_API int swmm_node_set_surcharge_depth(SWMM_Engine engine, int idx, double depth);
 
+/** Physical ordinary-junction chamber area in project area units (ft2 or m2). Zero retains legacy behavior.
+ * Geometry edits only; nonfinite/negative values and virtual/inlet/nonjunction assignments fail. */
+SWMM_ENGINE_API int swmm_node_set_storage_area(SWMM_Engine engine, int idx, double area);
+/** Read authored junction storage area in project area units (ft2 or m2) (zero by default). */
+SWMM_ENGINE_API int swmm_node_get_storage_area(SWMM_Engine engine, int idx, double* area);
+
 /**
  * @brief Set the ponded surface area when depth exceeds the maximum.
  *
@@ -246,9 +252,11 @@ SWMM_ENGINE_API int swmm_node_set_pond_area(SWMM_Engine engine, int idx, double 
  * @returns SWMM_OK on success, or an error code.
  *
  *
- * @note Permitted in BUILDING, OPENED or INITIALIZED; other states return SWMM_ERR_LIFECYCLE. A
- *     null engine returns SWMM_ERR_BADHANDLE. A failed node/pollutant index check returns
- *     SWMM_ERR_BADINDEX.
+ * @note Sets the authored initial condition, which swmm_node_get_initial_depth() reads, the .inp
+ *     writer saves and initialization turns into the starting depth, head and volume. Requires
+ *     BUILDING or OPENED: after initialization the starting state already exists, so other states
+ *     return SWMM_ERR_LIFECYCLE (swmm_node_set_depth() changes a running depth). A null engine
+ *     returns SWMM_ERR_BADHANDLE. A failed node index check returns SWMM_ERR_BADINDEX.
  */
 SWMM_ENGINE_API int swmm_node_set_initial_depth(SWMM_Engine engine, int idx, double depth);
 

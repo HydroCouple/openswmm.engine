@@ -277,3 +277,99 @@ TEST(CouplingPonds, KokkosCapMatchesCpu) {
     EXPECT_NEAR(omp.drained, cpu.drained, 1e-6 * cpu.drained);
     EXPECT_NEAR(omp.peak_depth, cpu.peak_depth, 1e-9);
 }
+
+namespace {
+
+/**
+ * @brief Run the pond deck with one pollutant and return its 1D quality and flow ledgers.
+ * @param[in] tag Safe retained kOut basename.
+ * @param[in] text Complete deck, written to kOut.
+ * @param[out] spilled 1D-to-2D spill volume m3.
+ * @param[out] flow Signed 1D flow routing continuity error fraction.
+ * @return Signed 1D quality continuity error fraction for pollutant 0, or NaN on setup refusal.
+ */
+double qualityContinuity(const std::string& tag, const std::string& text, double& spilled,
+                         double& flow) {
+    fs::create_directories(kOut);
+    const fs::path inp = kOut / (tag + ".inp");
+    {
+        std::ofstream f(inp);
+        f << text;
+    }
+    SWMM_Engine e = swmm_engine_create();
+    double error = std::nan("");
+    spilled = 0.0;
+    flow = 0.0;
+    if (swmm_engine_open(e, inp.string().c_str(), (kOut / (tag + ".rpt")).string().c_str(), "",
+                         nullptr) == SWMM_OK &&
+        swmm_engine_initialize(e) == SWMM_OK && swmm_engine_start(e, 0) == SWMM_OK) {
+        double elapsed = 0.0;
+        while (swmm_engine_step(e, &elapsed) == SWMM_OK && elapsed > 0.0) {
+        }
+        swmm_engine_end(e);
+        swmm_2d_get_mass_balance(e, nullptr, nullptr, nullptr, &spilled, nullptr, nullptr,
+                                 nullptr, nullptr, nullptr, nullptr);
+        swmm_get_quality_continuity_error(e, 0, &error);
+        swmm_get_routing_continuity_error(e, &flow);
+        swmm_engine_report(e);
+        swmm_engine_close(e);
+    }
+    swmm_engine_destroy(e);
+    return error;
+}
+
+/**
+ * @brief Insert text right after a section header of the pond deck.
+ * @param[in] text Deck text.
+ * @param[in] header Exact header line including the newline.
+ * @param[in] rows Rows to add.
+ * @return Deck with rows added (the header is added at the end when absent).
+ */
+std::string addRows(std::string text, const std::string& header, const std::string& rows) {
+    const auto at = text.find(header);
+    if (at == std::string::npos)
+        return text + "\n" + header + rows;
+    return text.insert(at + header.size(), rows);
+}
+
+} // namespace
+
+// One source concentration, so the pollutant mass must follow the water: the
+// quality ledger's error tracks the flow ledger's (2 points allows the
+// withdrawal below to concentrate the node, which legacy keeps).
+//
+// A surcharged junction spills to the patch while its own external inflow is
+// still larger than the spill, so its NET lateral flow stays positive. The
+// spill never enters the quality mix's inflow volume, so its mass must still
+// leave the 1D ledger in full; booking only a negative net lateral flow lost it.
+TEST(CouplingPonds, SpillUnderALargerInflowLeavesTheQualityLedger) {
+    std::string text = addRows(deck(""), "[INFLOWS]\n", "J1 P1 C_TS CONCEN 1.0 1.0\n");
+    text = addRows(text, "[TIMESERIES]\n", "C_TS 0:00 100.0\nC_TS 0:40 100.0\n");
+    text = addRows(text, "[POLLUTANTS]\n", "P1 MG/L 0 0 0 0\n");
+    double spilled = 0.0, flow = 0.0;
+    const double error = qualityContinuity("quality_spill_under_inflow", text, spilled, flow);
+    ASSERT_FALSE(std::isnan(error));
+    ASSERT_GT(spilled, 1.0) << "fixture never spilled";
+    EXPECT_LT(std::fabs(error - flow), 0.02)
+        << "1D quality continuity " << 100.0 * error << " %, flow " << 100.0 * flow << " %";
+}
+
+// The same spill at a junction that also has a withdrawal and a larger dry
+// weather flow. The withdrawal shrinks the mix's inflow volume (legacy's
+// floored net lateral); the spill must not shrink it too, or its mass both
+// stays in the pipes and leaves the ledger.
+TEST(CouplingPonds, SpillBesideAWithdrawalIsBookedOnce) {
+    std::string text = deck("");
+    const auto inflow = text.find("J1 FLOW IN_TS FLOW 1.0 1.0\n");
+    ASSERT_NE(inflow, std::string::npos);
+    text.replace(inflow, std::string("J1 FLOW IN_TS FLOW 1.0 1.0\n").size(),
+                 "J1 FLOW \"\" FLOW 1.0 1.0 -0.005\n");
+    text = addRows(text, "[DWF]\n", "J1 FLOW 0.09\nJ1 P1 100.0\n");
+    text = addRows(text, "[POLLUTANTS]\n", "P1 MG/L 0 0 0 0\n");
+    double spilled = 0.0, flow = 0.0;
+    const double error = qualityContinuity("quality_spill_beside_withdrawal", text, spilled, flow);
+    ASSERT_FALSE(std::isnan(error));
+    ASSERT_GT(spilled, 1.0) << "fixture never spilled";
+    EXPECT_LT(std::fabs(error - flow), 0.02)
+        << "1D quality continuity " << 100.0 * error << " %, flow " << 100.0 * flow << " %";
+}

@@ -2667,3 +2667,380 @@ TEST(SnowEngineIntegration,
         swmm_engine_destroy(h);
     }
 }
+
+#include "core/CompletedSourceArchive.hpp"
+#include "core/SimulationContext.hpp"
+#include "core/DateTime.hpp"
+#include "hydrology/surface/MeshSnow.hpp"
+#include <filesystem>
+#include <fstream>
+#include <stdexcept>
+#include <type_traits>
+
+namespace snow_trial_test {
+struct Fixture {
+    openswmm::SimulationContext context;
+    openswmm::surface::MeshSnow snow;
+    std::vector<double> rain, catch_factor;
+    int mode, count;
+
+    Fixture(int model, int cells) : mode(model), count(cells) {
+        using namespace openswmm;
+        context.options.ignore_snow_melt = false;
+        context.options.start_date = datetime::encodeDate(2026, 1, 1);
+        context.options.end_date = context.options.start_date + 14;
+        context.climate_state.temperature = 22;
+        context.climate_state.temperature_src = 22;
+        context.climate_state.snow_divt = 32;
+        context.climate_state.humidity = 75;
+        for (int month = 0; month < 12; ++month) {
+            context.options.humidity[month] = 75;
+            context.options.wind_speed[month] = 2;
+        }
+        context.heat_config.cloud.configured = true;
+        context.heat_config.cloud.fraction = .5;
+        context.snowpack_names.add("DD");
+        context.snowpack_names.add("UEB");
+        context.snowpacks.names = {"DD", "UEB"};
+        context.snowpacks.pervious.assign(2, std::array<double, 7>{.02, .06, 32, .1, 6, .6, 0});
+        context.snowpacks.config.model = surface::SnowKind::DegreeDay;
+        context.snowpacks.config.packs[1].model = surface::SnowKind::Ueb;
+        context.snowpacks.config.site = surface::ClimateSite{45, -120, -8, 1000};
+        context.snowpacks.mesh_config.step = 1800;
+        context.snowpacks.mesh_config.defaults["*"].pack = model == 1 ? "UEB" : "DD";
+        std::vector<surface::MeshSnowGeometry> geometry;
+        for (int i = 0; i < cells; ++i) {
+            geometry.push_back({"snow_trial_vegetation_region_" + std::to_string(i % 5),
+                                50. + 7 * (i % 13), double(i % 4) * 3, double(i % 6) * 45});
+            if (model == 2)
+                context.snowpacks.mesh_config.cells[i].pack = i % 3 == 1 ? "UEB" :
+                                                               i % 3 == 2 ? "NONE" : "DD";
+        }
+        auto error = snow.initialize(context, geometry);
+        if (!error.empty())
+            throw std::runtime_error(error);
+        std::vector<unsigned char> contact(cells, 0);
+        for (int i = 0; i < cells; ++i)
+            if (snow.owns(i) && snow.kind(i) == surface::SnowKind::Ueb && i % 2)
+                contact[i] = 1;
+        error = snow.setGroundContactMask(contact);
+        if (!error.empty())
+            throw std::runtime_error(error);
+        rain.assign(cells, 1e-7);
+        catch_factor.assign(cells, 1.2);
+    }
+
+    int lastOwned() const {
+        for (int i = count - 1; i >= 0; --i)
+            if (snow.owns(i))
+                return i;
+        return -1;
+    }
+    std::string step(double seconds = 30) {
+        const double start = snow.completedEnd();
+        return snow.advance(context, start, start + seconds, rain, catch_factor);
+    }
+    std::string configurationBytes() const {
+        openswmm::detail::CompletedSourceArchive a;
+        auto identity = snow.configurationIdentity();
+        auto geometry = snow.geometry();
+        auto curve = snow.depletionCurve();
+        auto mask = snow.groundContactMask();
+        bool active = snow.active(), has_ueb = snow.hasUeb();
+        a(identity, curve, mask, active, has_ueb);
+        a.sequence(geometry, [&](auto& g) { a(g.tag, g.area, g.slope, g.aspect); });
+        for (int i = 0; i < count; ++i) {
+            auto kind = snow.kind(i);
+            bool owned = snow.owns(i);
+            a(kind, owned);
+        }
+        return a.bytes();
+    }
+};
+
+inline void write(const std::filesystem::path& path, const std::string& bytes) {
+    std::ofstream output(path, std::ios::binary);
+    output.write(bytes.data(), std::streamsize(bytes.size()));
+    output.close();
+    if (!output.good())
+        throw std::runtime_error("Cannot write snow trial evidence.");
+}
+static_assert(std::is_nothrow_move_assignable_v<openswmm::surface::MeshSnow>);
+static_assert(std::is_nothrow_move_assignable_v<openswmm::snow::DegreeDaySnow>);
+}
+
+
+TEST(MeshSnow, RuntimeTrialPreservesConfigurationAndCompleteRefusalRecoveryHistory) {
+    using namespace openswmm;
+    detail::CompletedSourceArchive history;
+    std::string magic = "Mesh snow runtime trial history v1";
+    history(magic);
+    for (int mode : {0, 1, 2})
+        for (int count : {1, 8, 0, 2, 33, 1, 8, 1}) {
+            snow_trial_test::Fixture f(mode, count);
+            const auto immutable = f.configurationBytes();
+            std::string anchor;
+            for (int stage = 0; stage < 12; ++stage) {
+                SCOPED_TRACE(std::to_string(mode) + ":" + std::to_string(count) + ":" +
+                             std::to_string(stage));
+                auto before = f.snow.saveCheckpoint();
+                auto metadata_before = f.configurationBytes();
+                auto rain = f.rain, catch_factor = f.catch_factor;
+                auto start = f.snow.completedEnd();
+                std::string error;
+                const int last = f.lastOwned();
+                if (stage == 1)
+                    error = f.step(300);
+                else if (stage == 2)
+                    error = f.snow.advance(f.context, start + 1, start + 300, rain, catch_factor);
+                else if (stage == 3) {
+                    if (last >= 0)
+                        rain[last] = -1;
+                    error = f.snow.advance(f.context, start, start + 300, rain, catch_factor);
+                } else if (stage == 4) {
+                    error = f.step(300);
+                    anchor = f.snow.saveCheckpoint();
+                } else if (stage == 5) {
+                    if (last >= 0)
+                        catch_factor[last] = std::numeric_limits<double>::quiet_NaN();
+                    error = f.snow.advance(f.context, start, start + 300, rain, catch_factor);
+                } else if (stage == 6) {
+                    f.context.forcing.climate_temperature_mode = ForcingMode::OVERRIDE;
+                    f.context.forcing.climate_temperature_value = 35;
+                    f.context.forcing.climate_temperature_persist = ForcingPersist::RESET;
+                    f.rain.assign(count, 2e-7);
+                    f.catch_factor.assign(count, 1.1);
+                    error = f.step(300);
+                } else if (stage == 7) {
+                    f.context.forcing.climate_temperature_mode = ForcingMode::NONE;
+                    error = f.step(300);
+                } else if (stage == 8) {
+                    error = f.snow.advance(f.context, start,
+                                          std::nextafter(start, std::numeric_limits<double>::infinity()),
+                                          rain, catch_factor);
+                } else if (stage == 9)
+                    error = f.snow.restoreCheckpoint(before.empty() ? "invalid" :
+                                                     before.substr(0, before.size() - 1));
+                else if (stage == 10)
+                    error = f.snow.restoreCheckpoint(anchor);
+                else if (stage == 11) {
+                    error = f.snow.restoreCheckpoint(anchor, true);
+                    if (error.empty())
+                        error = f.step(300);
+                }
+                auto after = f.snow.saveCheckpoint();
+                bool refusal = stage == 9 || (last >= 0 && (stage == 2 || stage == 3 || stage == 5));
+                if (refusal) {
+                    EXPECT_FALSE(error.empty());
+                    EXPECT_EQ(after, before);
+                } else {
+                    EXPECT_TRUE(error.empty()) << error;
+                    if (stage == 0)
+                        EXPECT_EQ(after, before);
+                    if (stage == 10)
+                        EXPECT_EQ(after, anchor);
+                }
+                EXPECT_EQ(f.configurationBytes(), immutable);
+                for (const auto& ledger : f.snow.ledgers())
+                    EXPECT_NEAR(ledger.residual(), 0, 1e-9);
+                auto metadata_after = f.configurationBytes();
+                history(mode, count, stage, refusal, start, error, metadata_before, before,
+                        metadata_after, after);
+            }
+        }
+    if (const char* output = std::getenv("OPENSWMM_SNOW_TRIAL_TEST_OUT")) {
+        std::filesystem::create_directories(output);
+        snow_trial_test::write(std::filesystem::path(output) / "runtime-trial.bin",
+                               history.bytes());
+    }
+}
+
+#include "SnowHeldFixture.hpp"
+#include <future>
+namespace {
+void saveHeldRegression(const char* name,const std::string& bytes) {
+    if (const char* directory=std::getenv("OPENSWMM_SNOW_HELD_TEST_OUT")) {
+        std::filesystem::create_directories(directory);
+        snow_held_test::write(std::filesystem::path(directory)/name,bytes);
+    }
+}
+}
+TEST(MeshSnow, PreparedUebConsumptionMatchesAllScalarGuardsAndTinyTail) {
+    openswmm::detail::CompletedSourceArchive a;
+    for(int kind:{0,1,2,3,4,5,8,9}) {
+        snow_held_test::Case serial(512,1,0,kind),parallel(512,4,0,kind);
+        auto expected=serial.history(),actual=parallel.history();
+        ASSERT_EQ(expected,actual)<<kind;
+        a(kind,actual);
+    }
+    saveHeldRegression("held-guards.bin",a.bytes());
+}
+TEST(MeshSnow, PreparedUebRefusalRetainsOwnerAndChoosesFirstCell) {
+    openswmm::detail::CompletedSourceArchive a;
+    for(int kind:{6,7}) {
+        snow_held_test::Case serial(513,1,0,kind),parallel(513,4,0,kind);
+        auto expected=serial.history(),actual=parallel.history();
+        ASSERT_EQ(expected,actual)<<kind;
+        a(kind,actual);
+    }
+    saveHeldRegression("held-refusals.bin",a.bytes());
+}
+TEST(MeshSnow, PreparedUebOwnersAdvanceIndependentlyOnHostThreads) {
+    auto run=[](int threads) {
+        snow_held_test::Case f(512,threads,0,0);
+        return f.history();
+    };
+    auto expected=run(1);
+    auto first=std::async(std::launch::async,run,4);
+    auto second=std::async(std::launch::async,run,4);
+    auto a=first.get(),b=second.get();
+    ASSERT_EQ(expected,a);ASSERT_EQ(expected,b);
+    saveHeldRegression("held-independent.bin",a);
+}
+
+
+TEST(SnowSourceOwnership, SnapshotsStayIndependentAcrossAdvanceAndCheckpointReads) {
+    for (const std::string model : {"DEGREE_DAY", "UEB"}) {
+        SCOPED_TRACE(model);
+        const auto stem = "_source_snow_snapshots_" + model;
+        writeNativeSnowDeck((stem + ".inp").c_str(), model);
+        SWMMEngine engine;
+        ASSERT_EQ(engine.open((stem + ".inp").c_str(), (stem + ".rpt").c_str(), nullptr), 0);
+        ASSERT_EQ(engine.initialize(), 0);
+        runoff::SourceWaterDriver original;
+        ASSERT_EQ(original.initialize(engine.context(), {0}, {}), "");
+        ASSERT_TRUE(original.snow().active());
+        using Snapshot = std::pair<std::string, std::string>;
+        std::vector<std::array<std::string, 3>> history;
+        const auto capture = [&](const char* tag, runoff::SourceWaterDriver& source) -> Snapshot {
+            detail::CompletedSourceArchive identity, runtime;
+            source.checkpoint(identity, true);
+            source.checkpoint(runtime, false);
+            history.push_back({tag, identity.bytes(), runtime.bytes()});
+            return {identity.bytes(), runtime.bytes()};
+        };
+        const auto before = capture("original", original);
+        auto first = original.waterTrial();
+        auto second = original.waterTrial();
+        EXPECT_EQ(capture("first_initial", first), before);
+        EXPECT_EQ(capture("second_initial", second), before);
+        const surface::SourceSnow* borrowed_trial = nullptr;
+        runoff::SourceWaterDriver::ForcingTransform observe = [&](auto&) {
+            if (!borrowed_trial)
+                borrowed_trial = &first.snow(true);
+        };
+        ASSERT_EQ(first.stage(0, 317, 317, nullptr, nullptr, &observe), "");
+        ASSERT_NE(borrowed_trial, nullptr);
+        ASSERT_EQ(borrowed_trial->ledgers().size(), 1u);
+        EXPECT_EQ(borrowed_trial->ledgers()[0].end, 317);
+        EXPECT_EQ(borrowed_trial->ledgers()[0].liquid, first.snow(true).ledgers()[0].liquid);
+        EXPECT_EQ(borrowed_trial->ledgers()[0].stored, first.snow(true).ledgers()[0].stored);
+        EXPECT_EQ(borrowed_trial->state().wsnow, first.snow(true).state().wsnow);
+        EXPECT_EQ(borrowed_trial->state().fw, first.snow(true).state().fw);
+        EXPECT_GT(borrowed_trial->ledgers()[0].liquid, 0);
+        EXPECT_EQ(capture("original_during_trial", original), before);
+        EXPECT_EQ(capture("second_during_trial", second), before);
+        first.cancel();
+        EXPECT_EQ(capture("first_cancelled", first), before);
+        ASSERT_EQ(first.stage(0, 317, 317), "");
+        ASSERT_EQ(first.commit(), "");
+        const auto after = capture("first_committed", first);
+        EXPECT_NE(after.second, before.second);
+        EXPECT_EQ(capture("original_after_commit", original), before);
+        EXPECT_EQ(capture("second_before_read", second), before);
+        detail::CompletedSourceArchive model_read(after.first);
+        second.checkpoint(model_read, true);
+        model_read.finish();
+        EXPECT_EQ(capture("second_model_restored", second), before);
+        detail::CompletedSourceArchive restored(after.second);
+        second.checkpoint(restored, false);
+        restored.finish();
+        EXPECT_EQ(capture("second_restored", second), after);
+        EXPECT_EQ(capture("original_after_read", original), before);
+        auto refused = original.waterTrial();
+        ASSERT_GT(after.second.size(), 1u);
+        detail::CompletedSourceArchive truncated(after.second.substr(0, after.second.size() - 1));
+        EXPECT_THROW(refused.checkpoint(truncated, false), std::runtime_error);
+        EXPECT_EQ(capture("original_after_refusal", original), before);
+        EXPECT_EQ(capture("first_after_refusal", first), after);
+        EXPECT_EQ(capture("second_after_refusal", second), after);
+        detail::CompletedSourceArchive retry(after.second);
+        refused.checkpoint(retry, false);
+        retry.finish();
+        EXPECT_EQ(capture("refused_retry", refused), after);
+        if (const char* output = std::getenv("OPENSWMM_SOURCE_SNOW_HISTORY")) {
+            detail::CompletedSourceArchive archive;
+            std::string magic = "C1 source snow fork history v1", saved_model = model;
+            archive(magic, saved_model, history);
+            std::filesystem::create_directories(output);
+            std::ofstream out(std::filesystem::path(output) / (model + ".bin"), std::ios::binary);
+            out.write(archive.bytes().data(), archive.bytes().size());
+            ASSERT_TRUE(out.good());
+        }
+    }
+}
+
+#include <bit>
+#include <cstdint>
+TEST(SnowDegreeDayMelt, ThinNativePacksPreserveMasksThresholdAndOptionalAge) {
+    for (int count : {1,33})
+        for (bool track_age : {false,true}) {
+            DegreeDaySnow solver;
+            solver.init(count);
+            auto& s=solver.state();
+            s.track_age=track_age;
+            const double threshold=.001/12.;
+            for (int j=0;j<count;++j) {
+                const auto first=std::size_t(3*j);
+                s.wsnow[first]=-0.;s.fw[first]=-0.;s.imelt[first]=-0.;
+                s.wsnow[first+1]=threshold;
+                s.fw[first+2]=.00004;
+                for(int k=0;k<3;++k) {
+                    s.coldc[first+k]=.125;
+                    s.asc[first+k]=.75;
+                    s.age[first+k]=17.+k;
+                    s.out_age[first+k]=99.;
+                }
+            }
+            if(count>1) {
+                s.enabled[1]=0;
+                s.external[2]=true;
+                s.external.resize(3);
+                s.wsnow[9]=std::nextafter(threshold,std::numeric_limits<double>::infinity());
+            }
+            if(!track_age) {s.age.clear();s.out_age.clear();}
+            const auto before=s;
+            SimulationContext context;
+            std::vector<double> zero(count,0.);
+            solver.execute(context,8.,45.,0.,zero.data(),zero.data());
+            for(int j=0;j<count;++j) {
+                const bool masked=j==1||j==2;
+                for(int k=0;k<3;++k) {
+                    const auto i=std::size_t(3*j+k);
+                    if(masked) {
+                        EXPECT_EQ(std::bit_cast<uint64_t>(s.wsnow[i]),std::bit_cast<uint64_t>(before.wsnow[i]));
+                        EXPECT_EQ(std::bit_cast<uint64_t>(s.fw[i]),std::bit_cast<uint64_t>(before.fw[i]));
+                        EXPECT_DOUBLE_EQ(s.coldc[i],before.coldc[i]);
+                        EXPECT_DOUBLE_EQ(s.asc[i],before.asc[i]);
+                        if(track_age) {EXPECT_DOUBLE_EQ(s.age[i],before.age[i]);EXPECT_DOUBLE_EQ(s.out_age[i],before.out_age[i]);}
+                        continue;
+                    }
+                    if(j==3&&k==0) {
+                        EXPECT_EQ(std::bit_cast<uint64_t>(s.wsnow[i]),std::bit_cast<uint64_t>(before.wsnow[i]));
+                        continue;
+                    }
+                    EXPECT_DOUBLE_EQ(s.wsnow[i],0.);
+                    EXPECT_DOUBLE_EQ(s.fw[i],0.);
+                    EXPECT_DOUBLE_EQ(s.coldc[i],0.);
+                    EXPECT_DOUBLE_EQ(s.asc[i],0.);
+                    EXPECT_NEAR(8.*s.imelt[i],before.wsnow[i]+before.fw[i],1.e-20);
+                    if(k==0) EXPECT_EQ(std::bit_cast<uint64_t>(s.imelt[i]),uint64_t{0});
+                    if(track_age) {
+                        EXPECT_DOUBLE_EQ(s.age[i],0.);
+                        EXPECT_DOUBLE_EQ(s.out_age[i],k==0?0.:before.age[i]);
+                    }
+                }
+            }
+            if(!track_age) {EXPECT_TRUE(s.age.empty());EXPECT_TRUE(s.out_age.empty());}
+        }
+}

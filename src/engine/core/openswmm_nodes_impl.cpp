@@ -218,23 +218,51 @@ SWMM_ENGINE_API int swmm_node_set_surcharge_depth(SWMM_Engine engine, int idx, d
     return SWMM_OK;
 }
 
+SWMM_ENGINE_API int swmm_node_set_storage_area(SWMM_Engine engine, int idx, double area) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    if (!std::isfinite(area) || area < 0.0 || ctx.nodes.type[idx] != openswmm::NodeType::JUNCTION ||
+        ctx.nodes.is_virtual[idx] || ctx.nodes.is_inlet[idx]) return SWMM_ERR_BADPARAM;
+    const double f = openswmm::ucf::UCF(openswmm::ucf::LENGTH, ctx.options);
+    const double internal_area = area / (f*f);
+    if (!std::isfinite(internal_area)) return SWMM_ERR_BADPARAM;
+    ctx.nodes.storage_area[idx] = exact_inverse(internal_area, f*f, area);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_node_get_storage_area(SWMM_Engine engine, int idx, double* area) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    if (!area) return SWMM_ERR_BADPARAM;
+    const double f = openswmm::ucf::UCF(openswmm::ucf::LENGTH, ctx.options);
+    *area = ctx.nodes.storage_area[idx] * (f*f);
+    return SWMM_OK;
+}
+
 SWMM_ENGINE_API int swmm_node_set_pond_area(SWMM_Engine engine, int idx, double area) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
-    // units: ponded area = LENGTH^2 (ft2/m2)
-    double fi = openswmm::ucf::UCF_inv(openswmm::ucf::LENGTH, ctx.options);
-    ctx.nodes.ponded_area[static_cast<std::size_t>(idx)] = area * fi * fi;
+    // units: ponded area = LENGTH^2 (ft2/m2); one factor both ways so the area reads back
+    const double f = openswmm::ucf::UCF(openswmm::ucf::LENGTH, ctx.options);
+    const double f2 = f * f;
+    ctx.nodes.ponded_area[static_cast<std::size_t>(idx)] = exact_inverse(area / f2, f2, area);
     return SWMM_OK;
 }
 
 SWMM_ENGINE_API int swmm_node_set_initial_depth(SWMM_Engine engine, int idx, double depth) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
-    CHECK_INITIAL_COND(ctx);
+    // The authored initial condition: initialize() derives the starting depth, head and volume from
+    // it and the .inp writer saves it. Writing the current depth instead was lost at initialize();
+    // after initialize() the start state already exists, so the setter refuses (LIFECYCLE).
+    CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
-    ctx.nodes.depth[static_cast<std::size_t>(idx)] =
+    ctx.nodes.init_depth[static_cast<std::size_t>(idx)] =
         to_internal(ctx, openswmm::ucf::LENGTH, depth); // units
     return SWMM_OK;
 }
@@ -1148,8 +1176,10 @@ SWMM_ENGINE_API int swmm_node_get_ponded_area(SWMM_Engine engine, int idx, doubl
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
     // units: ponded area = LENGTH^2 (ft2/m2)
     if (area) {
-        double f = openswmm::ucf::UCF(openswmm::ucf::LENGTH, ctx.options);
-        *area = ctx.nodes.ponded_area[static_cast<std::size_t>(idx)] * f * f;
+        const double f = openswmm::ucf::UCF(openswmm::ucf::LENGTH, ctx.options);
+        const double f2 = f * f;
+        const double a = ctx.nodes.ponded_area[static_cast<std::size_t>(idx)];
+        *area = f2 == 1.0 ? a : snap_display(a * f2);
     }
     return SWMM_OK;
 }

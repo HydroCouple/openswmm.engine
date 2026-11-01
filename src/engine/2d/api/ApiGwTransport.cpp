@@ -646,6 +646,41 @@ SWMM_ENGINE_API int swmm_gw_source_scale_set(SWMM_Engine engine, int idx, double
     return SWMM_OK;
 }
 
+SWMM_ENGINE_API int swmm_gw_source_xy_get(SWMM_Engine engine, int idx, int* by_xy, double* x,
+                                          double* y) {
+    GW_GET(engine);
+    if (idx < 0 || idx >= static_cast<int>(gw.sources.size()))
+        return SWMM_ERR_BADINDEX;
+    const auto& r = gw.sources[static_cast<std::size_t>(idx)];
+    if (by_xy)
+        *by_xy = r.by_xy ? 1 : 0;
+    if (r.by_xy && x)
+        *x = r.x;
+    if (r.by_xy && y)
+        *y = r.y;
+    return SWMM_OK;
+}
+SWMM_ENGINE_API int swmm_gw_source_xy_set(SWMM_Engine engine, int idx, double x, double y) {
+    GW_GET(engine);
+    GW_EDITABLE(eng);
+    if (idx < 0 || idx >= static_cast<int>(gw.sources.size()))
+        return SWMM_ERR_BADINDEX;
+    if (!std::isfinite(x) || !std::isfinite(y))
+        return SWMM_ERR_BADPARAM;
+    const int cell = openswmm::twoD::nearestCell(eng->surfaceRouter2D().mesh(), x, y);
+    if (cell < 0)
+        return SWMM_ERR_BADPARAM;
+    auto& r = gw.sources[static_cast<std::size_t>(idx)];
+    r.scope = GwScope::CELL;
+    r.tag.clear();
+    r.cell = cell;
+    r.by_xy = true;
+    r.x = x;
+    r.y = y;
+    gw.options.authored = true;
+    return SWMM_OK;
+}
+
 SWMM_ENGINE_API int swmm_gw_source_remove(SWMM_Engine engine, int idx) {
     GW_GET(engine);
     GW_EDITABLE(eng);

@@ -198,7 +198,9 @@ private:
     MeshData* mesh_ = nullptr;
     SurfaceStateData* state_ = nullptr;
     SolverOptions2D* opts_ = nullptr;
+    void refreshConveyance(); ///< Upload changed face factors and refresh LI cell discharge.
     InertialEdges edges_; ///< host CSR build; mirrored below
+    DView d_conveyance_;  ///< mutable ψ, separate from immutable edge geometry
 
     // ---- device geometry (const after initialize) -------------------------
     DView d_tri_area_, d_tri_cz_, d_tri_cx_, d_tri_cy_, d_vz_, d_vx_, d_vy_;

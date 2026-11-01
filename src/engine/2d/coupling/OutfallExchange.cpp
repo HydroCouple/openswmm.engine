@@ -9,6 +9,7 @@
  * @license   Apache-2.0
  */
 
+#include "core/ProcessPerf.hpp"
 #include "OutfallExchange.hpp"
 #include "../../core/SimulationContext.hpp"
 #include "../../core/CompletedSourceArchive.hpp"
@@ -38,6 +39,7 @@ namespace openswmm::twoD {
 void OutfallExchange::initialize(const MeshData& mesh, const std::vector<CouplingPoint>& cps,
                                  SimulationContext& ctx) {
     points_.clear();
+    recv_.clear();
     nodes_.clear();
     pending_.clear();
     prepared_dt_ = 0;
@@ -199,8 +201,13 @@ bool OutfallExchange::apply(const MeshData& mesh, SurfaceStateData& state,
                             const SolverOptions2D& opts, SimulationContext& ctx, double dt,
                             std::vector<double>& accumulated, const std::vector<double>* node_conc,
                             std::vector<double>* cell_accumulated) {
+    perf::ProcessTimer process_timer(perf::ProcessPhase::outfall);
     bool changed = false;
     auto& tr = state.transport;
+    struct ResetReceivers {
+        std::vector<int>& cells;
+        ~ResetReceivers() { cells.clear(); }
+    } reset_receivers{recv_};
     for (const auto& p : points_) {
         const double node_volume =
             (ctx.nodes.inflow[p.node] - ctx.nodes.outflow[p.node]) * opts.flow_1d_to_2d * dt;
@@ -216,7 +223,8 @@ bool OutfallExchange::apply(const MeshData& mesh, SurfaceStateData& state,
         // SPREAD: a discharge lands on the own cells plus every cell in the
         // radius that is wet or no higher than the highest own cell (area-
         // weighted); a withdrawal draws on the own cells' reservations.
-        std::vector<int> recv;
+        auto& recv = recv_;
+        recv.clear();
         if (volume > 0 && !p.spread.empty())
             for (std::size_t j = 0; j < p.spread.size(); ++j) {
                 const int c = p.spread[j];

@@ -27,6 +27,7 @@
 #include "solver/SurfaceSolverFactory.hpp"
 #endif
 #include "../core/Constants.hpp"
+#include "../core/PolygonRings.hpp"
 #include "../core/DateTime.hpp"
 #include "../core/NodeCoupling2D.hpp"
 #include "coupling/PondModel.hpp"
@@ -34,6 +35,7 @@
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
 #include "../core/PerfTimers.hpp"
+#include "../core/ProcessPerf.hpp"
 #include "../core/ThreadInfo.hpp"
 #include "../hydrology/Gage.hpp"
 #include "../transport/components/ReactionModule/ReactionArdBinding.hpp" // S4
@@ -130,10 +132,12 @@ void SurfaceRouter2D::drainPendingRows() {
     {
         const int n_edges = boundary_.size();
         for (const auto& r : pending_bc_rows_) {
-            if (r.tri < 0 || r.tri >= mesh_.n_triangles())
+            if (r.tri < 0 || r.tri >= mesh_.n_triangles() ||
+                r.edge < 0 || r.edge >= mesh_.cell_vertex_count(r.tri)) {
+                if (r.bc_type == 0 && r.param1 > 0)
+                    throw std::invalid_argument("WALL_DRAG names an invalid cell/edge.");
                 continue;
-            if (r.edge < 0 || r.edge >= mesh_.cell_vertex_count(r.tri))
-                continue;
+            }
             const int idx = MeshData::slot(r.tri, r.edge);
             if (idx < 0 || idx >= n_edges)
                 continue;
@@ -163,6 +167,7 @@ void SurfaceRouter2D::drainPendingRows() {
                 boundary_.edge_bc_rating_curve[idx] = -2;
                 break;
             case BoundaryType::WALL:
+                boundary_.edge_wall_drag[idx] = r.param1;
                 break;
             }
         }
@@ -218,6 +223,13 @@ void SurfaceRouter2D::drainPendingRows() {
             }
         }
 
+        // Authoring APIs run before buildMeshTopology. Classify actual
+        // exterior faces from this existing endpoint map, without consulting
+        // cell_nbr's still-default -1 values or rescanning the mesh per edit.
+        for (const auto& entry : edge_key_to_slots)
+            if (entry.second.size() == 1)
+                boundary_.edge_is_exterior[entry.second.front()] = 1;
+
         for (const auto& r : pending_edge_conveyance_rows_) {
             if (r.v_from < 0 || r.v_from >= mesh_.n_vertices() || r.v_to < 0 ||
                 r.v_to >= mesh_.n_vertices()) {
@@ -240,6 +252,8 @@ void SurfaceRouter2D::drainPendingRows() {
     // From here on the drained arrays are the live state (API mutators edit
     // them, not the pending rows) — tell the serialization collectors to read
     // the arrays instead of the now-stale rows.
+    options_.wall_drag_enabled = std::any_of(boundary_.edge_wall_drag.begin(),
+        boundary_.edge_wall_drag.end(), [](double c) { return c > 0; });
     options_.pending_rows_drained = true;
 }
 
@@ -1092,7 +1106,7 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
 #endif
 
     // Attach the per-edge boundary conditions to the state so the flux kernels
-    // (serial computeEdgeFluxes and the Kokkos RHS) apply them at boundary
+    // (CPU and Kokkos explicit marchers) apply them at boundary
     // edges instead of walling them. Non-owning: boundary_ outlives state_.
     state_.boundary = &boundary_;
 
@@ -1292,6 +1306,15 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
                           : " — the GPU/Kokkos plugin serves all-triangle "
                             "LOCAL_INERTIAL models only");
         thread_warnings_.emplace_back(buf);
+        if (options_.momentumPhysics()) {
+            std::snprintf(buf, sizeof buf,
+                "2D optional momentum: f=%.17g s^-1; turbulence=%s; Cs=%.17g; mixing-length c=%.17g; "
+                "background nu=%.17g m2/s; interior eddy-viscosity stress; selected quadratic wall traction; "
+                "accepted cell velocities.",
+                options_.coriolisParameter(), turbulenceName(options_.turbulence), options_.smagorinsky_cs,
+                options_.mixing_length_coefficient, options_.eddy_viscosity_background);
+            thread_warnings_.emplace_back(buf);
+        }
     }
     options_.water_heat_capacity =
         ctx.options.heat_transport && ((options_.coupled_heat && state_.transport.temp_row >= 0) ||
@@ -1355,7 +1378,7 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
             static_cast<int>(ctx.nodes.invert_elev.size()), runtime_aquifer, ctx.warnings);
         if (!aq_err.empty())
             throw std::runtime_error(aq_err);
-        marcher->setSubsurface(&subsurface_);
+        marcher->setSubsurface(&subsurface_, ctx.options.totalDurationMs() / 1000.);
         // G-X1 (2026-09-19): the aquifer's node beds sample the 1D heads
         // through `state_.nodes_1d`, which only the orifice coupling used to
         // publish — a bed under a node with no [2D_VERTEX_NODE_MAP] entry
@@ -1651,13 +1674,7 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
                         return false;
                     const auto& xs = px[sub];
                     const auto& ys = py[sub];
-                    bool in = false;
-                    for (std::size_t i = 0, j = xs.size() - 1; i < xs.size(); j = i++) {
-                        if (((ys[i] > y) != (ys[j] > y)) &&
-                            (x < (xs[j] - xs[i]) * (y - ys[i]) / (ys[j] - ys[i]) + xs[i]))
-                            in = !in;
-                    }
-                    return in;
+                    return polygon::contains(xs, ys, x, y);
                 };
                 // The mesh is SI metres here; the polygons are in the project's
                 // authored map units, which for a US-units project are feet
@@ -1952,7 +1969,7 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         // by one cadence step here, matching how the runoff module evaluates
         // at the start of a wet step.
         infil_.updateRates(mesh_, state_, infil_.stepSeconds(),
-                           surface::infiltrationFactors(ctx, 0.0));
+                           surface::infiltrationFactors(ctx, 0.0), options_.num_threads);
         if (subsurface_.active())
             subsurface_.publishInfiltration(state_, infil_.stepSeconds(), 0.0);
         infil_cum_applied_.assign(static_cast<std::size_t>(mesh_.n_triangles()), 0.0);
@@ -1967,6 +1984,7 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // no coupling points simply reports zeros, which is the true answer.
     coupling_cum_applied_.assign(static_cast<std::size_t>(mesh_.n_triangles()), 0.0);
 
+    subsurface_.prepareClock();
     active_ = true;
     sim_time_ = 0.0;
     gage_rate_.clear();
@@ -1998,6 +2016,12 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // Seed the render-only vertex free surface so the first snapshot (before
     // any sync batch fires — e.g. a hotstart-restored wet state) already
     // carries a physically consistent field instead of the resize() zeros.
+    if (options_.momentum == Momentum2D::FULL_SWE) {
+        if (auto* cpu = dynamic_cast<ExplicitInertialSolver*>(solver_.get()))
+            cpu->publishMomentumVelocity();
+    } else {
+        computeFaceVelocity(mesh_, state_, options_);
+    }
     reconstructVertexRenderDepths(mesh_, state_, options_.dry_depth, options_.num_threads,
                                   render_eta_);
     render_dirty_ = false;
@@ -2245,8 +2269,13 @@ bool SurfaceRouter2D::refreshDue(const SimulationContext& ctx, double dt) const 
  */
 void SurfaceRouter2D::refreshRenderFields() {
     // Output may be requested more often than the 30 s statistics cadence.
-    // Refresh the derived RT0 velocity at the same state as the render fields.
-    computeFaceVelocity(mesh_, state_, options_);
+    // FULL_SWE owns cell momentum; reconstructing its velocity from Riemann
+    // mass fluxes would turn wetting-front transfers into spurious cell speeds.
+    if (auto* cpu = dynamic_cast<ExplicitInertialSolver*>(solver_.get());
+        cpu && options_.momentum == Momentum2D::FULL_SWE)
+        cpu->publishMomentumVelocity();
+    else
+        computeFaceVelocity(mesh_, state_, options_);
     reconstructVertexHeads(mesh_, state_, options_.num_threads);
     refreshOutputGradients(mesh_, state_, options_);
     reconstructVertexRenderDepths(mesh_, state_, options_.dry_depth, options_.num_threads,
@@ -2472,7 +2501,8 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt, double t)
     if (infil_.active()) {
         infil_elapsed_ += dt;
         if (infil_elapsed_ >= infil_.stepSeconds()) {
-            infil_.updateRates(mesh_, state_, infil_elapsed_, surface::infiltrationFactors(ctx, t));
+            infil_.updateRates(mesh_, state_, infil_elapsed_, surface::infiltrationFactors(ctx, t),
+                               options_.num_threads);
             if (subsurface_.active())
                 subsurface_.publishInfiltration(state_, infil_.stepSeconds(),
                                                 common_stage_ ? sim_time_ : t);
@@ -2748,7 +2778,11 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt, double t)
         // THIS batch, and the flux/source rates the residual is measured
         // against are this batch's end-of-step values.
         computeCellContinuity(mesh_, state_, options_, dt);
-        computeFaceVelocity(mesh_, state_, options_);
+        if (auto* cpu = dynamic_cast<ExplicitInertialSolver*>(solver_.get());
+            cpu && options_.momentum == Momentum2D::FULL_SWE)
+            cpu->publishMomentumVelocity();
+        else
+            computeFaceVelocity(mesh_, state_, options_);
         // The cumulative envelopes DO integrate over the refresh span: this
         // sample stands for the whole window in stat_cum_volume.
         state_.update_statistics(mesh_.tri_area, co_refresh_elapsed_, options_.num_threads);
@@ -3204,6 +3238,7 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_
     // Exchange volumes booked per batch are delivered to the 1D through the
     // queue spread (uniform rate over the batch span).
     pending_dt_ += routing_dt;
+    subsurface_.setProducerEnd(sim_time_ + pending_dt_);
     last_t_ = t;
     // G-X3 (2026-09-19): this routing step's conduit seepage, exactly as
     // updateRoutingMassBalance books it into `routing_seep_loss` (the same
@@ -3586,6 +3621,10 @@ void SurfaceRouter2D::finalize(SimulationContext& ctx) {
             mb.solver_tier_cells[k] = s.tier_cells[k];
         solver_->finalize();
     }
+    if (active_ && perf::enabled() &&
+        perf::process_attribution_valid.load(std::memory_order_relaxed))
+        subsurface_.clockTelemetry().dump(subsurface_.coverage(),
+                                          std::getenv("OPENSWMM_GW_CLOCK_CELLS") != nullptr);
 #endif
     // S2 telemetry: a face whose dispersive exchange was capped is a face
     // where D·dt/d² exceeded the explicit limit — the physics stayed bounded
@@ -4110,6 +4149,51 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
         mb.external_out += row.receipt.water_out;
     }
     mb.final_storage = storage;
+}
+
+
+namespace {
+bool sameName(const std::string& a, const std::string& b) {
+    return a.size() == b.size() &&
+           std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
+               return std::toupper(static_cast<unsigned char>(x)) ==
+                      std::toupper(static_cast<unsigned char>(y));
+           });
+}
+} // namespace
+
+void SurfaceRouter2D::renameSpecies(const std::string& from, const std::string& to) {
+    const auto follow = [&](std::string& name) {
+        if (sameName(name, from))
+            name = to;
+    };
+    for (auto& r : surface_quality_.loading_rows)
+        follow(r.species);
+    for (auto& r : pending_iq_rows_)
+        follow(r.species);
+    for (auto& r : pending_ibq_rows_)
+        follow(r.species);
+    for (auto& r : pending_bq_rows_)
+        follow(r.species);
+    for (auto& r : gw_.sorption)
+        follow(r.species);
+    for (auto& r : gw_.initial_quality)
+        follow(r.species);
+    for (auto& r : gw_.boundary_quality)
+        follow(r.species);
+    for (auto& src : gw_.sources)
+        for (auto& t : src.species)
+            follow(t.species);
+    gw_.invalidateAuthoringIndexes(); // the initial-quality index is keyed by species
+    for (auto& name : options_.report_2d_species)
+        follow(name);
+}
+
+void SurfaceRouter2D::renameLandUse(const std::string& from, const std::string& to) {
+    for (auto& r : surface_quality_.coverage_rows)
+        for (auto& use : r.uses)
+            if (sameName(use.first, from))
+                use.first = to;
 }
 
 } // namespace openswmm::twoD

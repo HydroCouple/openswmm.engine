@@ -334,7 +334,7 @@ void limitSpeciesFluxes(const SpeciesKernelView& v, int species, double dt) {
         const double a_new = std::max(0.0, state_->cell_a[uc] + dt * dA * inv_dx);
         anew_[uc] = a_new;
         const double m = state_->cell_a[uc] * state_->cell_phi[cbase + uc] + dt * dm * inv_dx;
-        td_[uc] = (a_new > k::kDryArea) ? m / a_new : state_->cell_phi[cbase + uc];
+        td_[uc] = (a_new > 0.0) ? m / a_new : state_->cell_phi[cbase + uc];
     }
 
     rplus_.assign(static_cast<std::size_t>(nc), 1.0);

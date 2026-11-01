@@ -109,6 +109,100 @@ class CatalogSourceContract(unittest.TestCase):
         self.assertEqual(src.unit_label("flow", "US"), "flow")
 
 
+def _source(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _mini(paths: dict[str, list[str]], views: dict[str, str] | None = None, revision: int = 1,
+          renamed: dict | None = None, removed: dict | None = None) -> dict:
+    """A tiny catalog: ``{target: [member names]}`` plus optional view properties."""
+    members = [{"path": f"{t}.{n}", "target": t, "name": n, "form": "property"}
+               for t, names in paths.items() for n in names]
+    for path, target in (views or {}).items():
+        owner, _, name = path.rpartition(".")
+        members.append({"path": path, "target": owner, "name": name, "form": "property",
+                        "view_target": target})
+    return {"revision": revision, "renamed": renamed or {}, "removed": removed or {},
+            "targets": {t: {} for t in paths}, "members": members}
+
+
+class CatalogCompatibilityContract(unittest.TestCase):
+    """Paths may move only through a shared view, a ``renamed`` prefix or a ``removed`` entry."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.gen = _source("gen_catalog", _GENERATOR)
+        cls.cat = _source("_catalog_contract_src", _CATALOG.with_suffix(".py"))
+
+    def test_committed_catalog_carries_the_contract_fields(self):
+        data = json.loads(_CATALOG.read_text(encoding="utf-8"))
+        self.assertGreaterEqual(data["revision"], 2)
+        self.assertIsInstance(data["renamed"], dict)
+        self.assertIsInstance(data["removed"], dict)
+
+    def test_a_silent_removal_is_refused(self):
+        old = _mini({"a": ["x", "y"]})
+        problems = self.gen.contract_problems(old, _mini({"a": ["x"]}))
+        self.assertTrue(any("a.y" in p for p in problems), problems)
+        self.assertTrue(any("bump 'revision'" in p for p in problems), problems)
+
+    def test_removed_entries_need_a_revision_bump(self):
+        old = _mini({"a": ["x", "y"]})
+        same = _mini({"a": ["x"]}, removed={"a.y": "superseded by a.x"})
+        self.assertTrue(any("bump" in p for p in self.gen.contract_problems(old, same)))
+        bumped = _mini({"a": ["x"]}, revision=2, removed={"a.y": "superseded by a.x"})
+        self.assertEqual(self.gen.contract_problems(old, bumped), [])
+
+    def test_a_rename_needs_an_existing_replacement(self):
+        old = _mini({"a": ["x"]})
+        good = _mini({"b": ["x"]}, revision=2, renamed={"a": "b"})
+        self.assertEqual(self.gen.contract_problems(old, good), [])
+        bad = _mini({"c": ["x"]}, revision=2, renamed={"a": "b"})
+        self.assertTrue(any("does not exist" in p for p in self.gen.contract_problems(old, bad)))
+
+    def test_a_target_moved_behind_a_shared_view_still_resolves(self):
+        # The 2026-10 move of surface2d.groundwater.* to groundwater2d.*.
+        old = _mini({"s": [], "s.g": ["cells"]})
+        new = _mini({"s": [], "g2": ["cells"]}, views={"s.g": "g2"}, revision=2)
+        self.assertEqual(self.gen.contract_problems(old, new), [])
+        self.assertEqual(self.cat.current_path("s.g.cells", new), ("g2.cells", False))
+
+    def test_shared_view_paths_resolve_without_a_warning(self):
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            self.assertEqual(self.cat.canonical("surface2d.groundwater.cells"),
+                             "groundwater2d.cells")
+            self.assertEqual(self.cat.canonical("surface2d.groundwater"), "groundwater2d")
+            self.assertEqual(self.cat.lookup("surface2d.groundwater.cells")["path"],
+                             "groundwater2d.cells")
+            self.assertTrue(self.cat.members("surface2d.groundwater.transport"))
+
+    def test_renamed_paths_warn_once_and_removed_paths_explain(self):
+        fake = _mini({"b": ["x"]}, revision=3, renamed={"a": "b"}, removed={"z": "gone in 6.1"})
+        cat = _source("_catalog_rename_src", _CATALOG.with_suffix(".py"))
+        cat.load = lambda: fake
+        with self.assertWarns(DeprecationWarning):
+            self.assertEqual(cat.lookup("a.x")["path"], "b.x")
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            cat.lookup("a.x")  # second use: no warning
+        with self.assertRaisesRegex(KeyError, "gone in 6.1"):
+            cat.lookup("z.q")
+
+    def test_require_revision(self):
+        self.cat.require_revision(2, "test")
+        with self.assertRaisesRegex(RuntimeError, "needs openswmm engine catalog revision"):
+            self.cat.require_revision(10**6, "test")
+
+
 @unittest.skipIf(_engine is None, "compiled openswmm.engine not installed")
 class CatalogRuntimeContract(unittest.TestCase):
     def test_members_exist_on_runtime_classes(self):

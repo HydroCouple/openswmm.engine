@@ -247,6 +247,9 @@ SWMM_ENGINE_API int swmm_pollutant_rename(SWMM_Engine engine, int idx, const cha
     for (auto& c : ctx.dwf_inflows.constituent)
         if (c == prev)
             c = next;
+#ifdef OPENSWMM_HAS_2D
+    to_engine(engine)->surfaceRouter2D().renameSpecies(prev, next);
+#endif
     return SWMM_OK;
 }
 

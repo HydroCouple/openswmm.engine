@@ -167,12 +167,20 @@ cdef class HotStart:
     @property
     def crs(self) -> Optional[str]:
         """CRS string captured in the file, or ``None`` if absent."""
-        cdef char buf[256]
-        cdef int rc = swmm_hotstart_get_crs(self._handle, buf, 256)
-        if rc != 0:
-            return None
-        s = buf.decode('utf-8')
-        return s or None
+        cdef _TextBufs t
+        cdef int rc
+        _tb_open(&t, 1)
+        try:
+            while True:
+                rc = swmm_hotstart_get_crs(self._handle, t.p[0], t.size)
+                if rc != 0:
+                    return None
+                if not _tb_retry(&t):
+                    break
+            s = _tb_str(&t, 0)
+            return s or None
+        finally:
+            _tb_close(&t)
 
     @property
     def node_count(self) -> int:
@@ -287,12 +295,11 @@ class SaveSchedule(MutableSequence):
         if not 0 <= idx < n:
             raise IndexError(idx)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef char buf[512]
-        _check(swmm_hotstart_saves_get_path(h, idx, buf, 512))
+        path = _read_engine_index_string(h, idx, swmm_hotstart_saves_get_path)
         cdef double when = 0.0
         _check(swmm_hotstart_saves_get_datetime(h, idx, &when))
         return SaveScheduleEntry(
-            when=oadate_to_datetime(when), path=buf.decode('utf-8'))
+            when=oadate_to_datetime(when), path=path)
 
     def __setitem__(self, idx, value):
         if not isinstance(idx, int):

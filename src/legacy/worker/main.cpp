@@ -27,6 +27,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 
 // Emit the engine's real error message for `rc`, falling back to `context` if
 // the engine has no text for it. swmm_getError translates the global ErrorCode
@@ -66,6 +67,14 @@ static void emitEngineError(int rc, const char* context) {
  *     successful stepping. Final end/close/mass-balance errors do not affect exit status.
  */
 int main(int argc, char* argv[]) {
+    if (argc == 2 && std::string(argv[1]) == "--features") {
+#ifdef OPENSWMM_JUNCTION_STORAGE
+        std::printf("{\"schema_version\":1,\"junction_storage\":true}\n");
+#else
+        std::printf("{\"schema_version\":1,\"junction_storage\":false}\n");
+#endif
+        return 0;
+    }
     // Validate arguments. The optional 4th argument is the progress emit
     // interval in milliseconds (wall clock); the GUI passes its progressTickMs
     // preference. Omitted/invalid → default ~1 Hz; 0 → emit every step.

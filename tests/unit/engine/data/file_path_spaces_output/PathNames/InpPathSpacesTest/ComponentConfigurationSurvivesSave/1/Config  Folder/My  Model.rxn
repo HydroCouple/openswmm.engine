@@ -1,0 +1,16 @@
+;; Reaction system configuration — written by OpenSWMM.
+
+[REACTION_OPTIONS]
+SOLVER     RK5
+COUPLING   NONE
+RATE_UNITS HR
+AREA_UNITS FT2
+PATTERN_TIMESTEP 3600
+TIMESTEP   0
+ATOL       1e-06
+RTOL       0.0001
+TEMPERATURE 20
+
+[REACTION_SPECIES]
+;;Kind     Name             Units            [Atol]       [Rtol]
+BULK       A                MG

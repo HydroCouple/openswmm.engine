@@ -160,6 +160,7 @@ struct NodeData {
      * @see Legacy: Node[i].pondedArea
      */
     std::vector<double> ponded_area;
+    std::vector<double> storage_area; ///< Physical junction area (ft2); zero retains legacy behavior.
 
     /**
      * @brief Virtual-junction flag (0 = regular node, 1 = virtual junction).
@@ -772,6 +773,7 @@ struct NodeData {
         init_depth.assign(un, 0.0);
         sur_depth.assign(un, 0.0);
         ponded_area.assign(un, 0.0);
+        storage_area.assign(un, 0.0);
         is_virtual.assign(un, 0);
         is_inlet.assign(un, 0);
         rim_depth.assign(un, 0.0);
@@ -873,6 +875,7 @@ struct NodeData {
         g(init_depth, 0.0);
         g(sur_depth, 0.0);
         g(ponded_area, 0.0);
+        g(storage_area, 0.0);
         g(is_virtual, static_cast<uint8_t>(0));
         g(is_inlet, static_cast<uint8_t>(0));
         g(rim_depth, 0.0);
@@ -978,6 +981,7 @@ struct NodeData {
         r(init_depth);
         r(sur_depth);
         r(ponded_area);
+        r(storage_area);
         r(is_virtual);
         r(is_inlet);
         r(rim_depth);
@@ -1070,6 +1074,7 @@ struct NodeData {
         e(init_depth);
         e(sur_depth);
         e(ponded_area);
+        e(storage_area);
         e(is_virtual);
         e(is_inlet);
         e(rim_depth);
@@ -1235,6 +1240,7 @@ struct NodeData {
         init_depth.shrink_to_fit();
         sur_depth.shrink_to_fit();
         ponded_area.shrink_to_fit();
+        storage_area.shrink_to_fit();
         is_virtual.shrink_to_fit();
         is_inlet.shrink_to_fit();
         rim_depth.shrink_to_fit();

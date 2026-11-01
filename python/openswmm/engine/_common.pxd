@@ -51,6 +51,7 @@ cdef extern from "openswmm_engine.h":
     cdef const char* swmm_error_message(int code)
 
     # --- Engine lifecycle ---
+    cdef const char* swmm_engine_abi_tag() noexcept nogil
     cdef SWMM_Engine swmm_engine_create()
     cdef int  swmm_engine_open(SWMM_Engine e, const char* inp, const char* rpt, const char* out, const char* input_plugin_lib)
     cdef int  swmm_engine_open_metadata(SWMM_Engine e, const char* inp)
@@ -150,6 +151,10 @@ cdef extern from "openswmm_model.h":
     cdef int swmm_options_set(SWMM_Engine e, const char* key, const char* value)
     cdef int swmm_options_get_ext(SWMM_Engine e, const char* key, char* buf, int buflen)
     cdef int swmm_options_set_ext(SWMM_Engine e, const char* key, const char* value)
+    cdef int swmm_options_key_count()
+    cdef int swmm_options_key_at(int index, char* buf, int buflen)
+    cdef int swmm_options_ext_key_count(SWMM_Engine e, int* count)
+    cdef int swmm_options_ext_key_at(SWMM_Engine e, int index, char* buf, int buflen)
     # External-file slots. `role` is the C enum SWMM_FilePathRole; the C++
     # header rejects an implicit int->enum conversion, so declare the enum
     # type here and cast at the call sites (see _model.pyx).
@@ -223,6 +228,8 @@ cdef extern from "openswmm_nodes.h":
     cdef int swmm_node_get_max_depth(SWMM_Engine e, int idx, double* depth)
     cdef int swmm_node_get_rim_depth(SWMM_Engine e, int idx, double* depth)
     cdef int swmm_node_get_surcharge_depth(SWMM_Engine e, int idx, double* depth)
+    cdef int swmm_node_get_storage_area(SWMM_Engine e, int idx, double* area)
+    cdef int swmm_node_set_storage_area(SWMM_Engine e, int idx, double area)
     cdef int swmm_node_get_ponded_area(SWMM_Engine e, int idx, double* area)
     cdef int swmm_node_get_initial_depth(SWMM_Engine e, int idx, double* depth)
     cdef int swmm_node_get_crown_elev(SWMM_Engine e, int idx, double* elev)
@@ -1828,6 +1835,76 @@ cdef inline tuple _read_engine_plugin(SWMM_Engine engine, int index):
             free(args)
         size *= 2
     raise ValueError("Engine plugin field exceeds 64 MiB")
+
+
+# Growing UTF-8 buffers for getters with several text outputs (or extra arguments).
+# Native getters NUL-terminate and silently truncate to buflen-1 bytes, so an
+# output that fills its buffer may be cut: every buffer is doubled and the
+# (read-only) getter called again. Never use this for a call with side effects.
+#
+#     cdef _TextBufs t
+#     _tb_open(&t, 2)
+#     try:
+#         while True:
+#             _check(swmm_x_get(h, i, t.p[0], t.size, t.p[1], t.size, &value))
+#             if not _tb_retry(&t):
+#                 break
+#         return _tb_str(&t, 0), _tb_str(&t, 1), value
+#     finally:
+#         _tb_close(&t)
+ctypedef struct _TextBufs:
+    char* p[6]
+    int n
+    int size
+
+
+cdef inline int _tb_alloc(_TextBufs* b) except -1:
+    cdef int i
+    for i in range(b.n):
+        b.p[i] = <char*>malloc(b.size)
+        if b.p[i] == NULL:
+            raise MemoryError()
+        b.p[i][0] = 0
+    return 0
+
+
+cdef inline int _tb_open(_TextBufs* b, int n) except -1:
+    cdef int i
+    if n < 1 or n > 6:
+        raise ValueError("_tb_open supports 1 to 6 buffers")
+    for i in range(6):
+        b.p[i] = NULL
+    b.n = n
+    b.size = 256
+    return _tb_alloc(b)
+
+
+cdef inline void _tb_close(_TextBufs* b) noexcept:
+    cdef int i
+    for i in range(b.n):
+        free(b.p[i])
+        b.p[i] = NULL
+
+
+cdef inline bint _tb_retry(_TextBufs* b) except -1:
+    """True, with every buffer doubled, when any output may have been truncated."""
+    cdef int i
+    cdef bint full = False
+    for i in range(b.n):
+        if strlen(b.p[i]) >= <size_t>(b.size - 1):
+            full = True
+    if not full:
+        return False
+    _tb_close(b)
+    if b.size >= 64 * 1024 * 1024:
+        raise ValueError("Engine string exceeds 64 MiB")
+    b.size *= 2
+    _tb_alloc(b)
+    return True
+
+
+cdef inline str _tb_str(_TextBufs* b, int i):
+    return (<bytes>b.p[i]).decode('utf-8')
 
 
 # Function-pointer typedefs for the polymorphic ``_resolve_index`` helper —

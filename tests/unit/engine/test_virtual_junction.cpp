@@ -528,7 +528,13 @@ TEST(VirtualJunction, RimDepthParsesAndRoundTrips) {
     const auto vj_end = text.find('[', vj_pos + 1);
     const std::string section = text.substr(vj_pos, vj_end - vj_pos);
     EXPECT_NE(section.find("MaxDepth"), std::string::npos) << section;
-    EXPECT_NE(section.find("4.0000"), std::string::npos) << section;
+    const auto row_pos = section.find("\nMID ");
+    ASSERT_NE(row_pos, std::string::npos);
+    std::istringstream row(section.substr(row_pos));
+    std::string name;
+    double elevation = 0, written_rim = 0;
+    ASSERT_TRUE(row >> name >> elevation >> written_rim);
+    EXPECT_NEAR(written_rim, 4.0, 1e-12);
     destroy(e);
 
     // Re-open the written file: the rim survives and the crown is unchanged.
@@ -604,8 +610,14 @@ TEST(VirtualJunction, RimDepthSurvivesMetricRoundTrip) {
     const auto vj_pos = text.find("[VIRTUAL_JUNCTIONS]");
     ASSERT_NE(vj_pos, std::string::npos);
     const auto vj_end = text.find('[', vj_pos + 1);
-    EXPECT_NE(text.substr(vj_pos, vj_end - vj_pos).find("4.0000"), std::string::npos)
-        << text.substr(vj_pos, vj_end - vj_pos);
+    const std::string section = text.substr(vj_pos, vj_end - vj_pos);
+    const auto row_pos = section.find("\nMID ");
+    ASSERT_NE(row_pos, std::string::npos);
+    std::istringstream row(section.substr(row_pos));
+    std::string name;
+    double elevation = 0, written_rim = 0;
+    ASSERT_TRUE(row >> name >> elevation >> written_rim);
+    EXPECT_NEAR(written_rim, 4.0, 1e-12);
     destroy(e);
 }
 

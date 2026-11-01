@@ -22,6 +22,8 @@
 #include "../../2d/SurfaceRouter2D.hpp"
 #include "../data/SolverOptions2D.hpp"
 #include "../data/Report2DVars.hpp"
+#include "../solver/MomentumPhysics2D.hpp"
+#include "../solver/InertialEdges.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -301,6 +303,16 @@ std::string Default2DOutputPlugin::configureOutput(const SolverOptions2D& opts,
         (opts.output_precision == OutputPrecision2D::FLOAT64) ? H5T_NATIVE_DOUBLE : H5T_IEEE_F32LE;
     compression_ = std::max(0, std::min(9, opts.output_compression));
     report_vars_ = (opts.report_2d_vars & report2d::ALL_MASK) | report2d::DEPTH;
+    momentum_velocity_ = opts.momentum == Momentum2D::FULL_SWE;
+    mixing_enabled_ = opts.turbulence != Turbulence2D::NONE;
+    turbulence_name_ = turbulenceName(opts.turbulence);
+    // Same closure inputs the solver passes: Smagorinsky uses Cs, mixing length uses c.
+    mixing_cs_ = opts.turbulence == Turbulence2D::SMAGORINSKY ? opts.smagorinsky_cs : 0.0;
+    mixing_depth_coefficient_ =
+        opts.turbulence == Turbulence2D::MIXING_LENGTH ? opts.mixing_length_coefficient : 0.0;
+    mixing_background_ = opts.eddy_viscosity_background;
+    mixing_dry_ = opts.dry_depth;
+    coriolis_f_ = opts.coriolisParameter();
     species_filter_ = opts.report_2d_species;
     species_rows_.clear();
 
@@ -625,6 +637,28 @@ void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
     // Written first so the `openswmm_crs = "crs"` attributes the mesh
     // variables carry resolve against a variable that already exists.
     writeCrsVariable();
+    writeDoubleAttr(file_id_, "coriolis_f_s-1", coriolis_f_);
+    writeStringAttr(file_id_, "turbulence_model", turbulence_name_);
+    if (mixing_enabled_) {
+        if (mixing_depth_coefficient_ > 0) {
+            writeDoubleAttr(file_id_, "mixing_length_coefficient", mixing_depth_coefficient_);
+            writeStringAttr(file_id_, "mixing_length",
+                            "min(coefficient * cell depth, 0.41 * distance to nearest boundary edge), "
+                            "SI metres; viscosity = background + length^2 * |vorticity|");
+        } else {
+            writeDoubleAttr(file_id_, "smagorinsky_cs", mixing_cs_);
+            writeStringAttr(file_id_, "smagorinsky_filter", "sqrt(cell area), SI metres");
+        }
+        writeDoubleAttr(file_id_, "eddy_viscosity_background_m2ps", mixing_background_);
+        writeStringAttr(file_id_, "turbulent_boundary_traction", "zero");
+    }
+    mixing_mesh_ = &mesh;
+    if (mixing_enabled_ && want(report2d::TURBULENCE)) {
+        mixing_edges_ = std::make_unique<InertialEdges>();
+        mixing_edges_->build(mesh);
+        mixing_diagnostics_ = std::make_unique<MomentumPhysics2D>();
+    }
+
 
     // Results-file size controls, recorded so readers and the parity tooling
     // can tell how the time-varying datasets were stored.
@@ -716,9 +750,18 @@ void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
         ds_face_infil_cum_ =
             createFaceDS("Mesh2_face_infil_cum", "cumulative infiltrated depth", "m");
     }
+    if (mixing_enabled_ && want(report2d::TURBULENCE)) {
+        ds_face_eddy_viscosity_ = createFaceDS("Mesh2_face_eddy_viscosity", "horizontal eddy viscosity (background plus closure)", "m2 s-1");
+        ds_face_strain_rate_ = createFaceDS("Mesh2_face_strain_rate", "horizontal strain rate magnitude", "s-1");
+    }
     if (want(report2d::VELOCITY)) {
-        ds_face_vx_ = createFaceDS("Mesh2_face_vx", "cell-centred velocity X (RT0)", "m s-1");
-        ds_face_vy_ = createFaceDS("Mesh2_face_vy", "cell-centred velocity Y (RT0)", "m s-1");
+        ds_face_vx_ = createFaceDS("Mesh2_face_vx", momentum_velocity_ ? "cell velocity X from conserved momentum" : "cell velocity X from wetted-edge normal velocities", "m s-1");
+        ds_face_vy_ = createFaceDS("Mesh2_face_vy", momentum_velocity_ ? "cell velocity Y from conserved momentum" : "cell velocity Y from wetted-edge normal velocities", "m s-1");
+        for (hid_t ds : {ds_face_vx_, ds_face_vy_}) {
+            writeStringAttr(ds, "reconstruction", momentum_velocity_ ? "conserved_cell_momentum"
+                : "wetted_edge_area_weighted_least_squares");
+            writeStringAttr(ds, "missing_value_meaning", "NaN: unavailable wet-cell velocity; dry cells are zero");
+        }
     }
     if (want(report2d::CONTINUITY))
         ds_face_continuity_err_ =
@@ -728,8 +771,8 @@ void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
         // Edge flux [nTime, nFace, stride]
         ds_edge_flux_ = createUnlimitedDataset("Mesh2_edge_flux", 3, zero3, edge_chunk);
         writeStringAttr(ds_edge_flux_, "long_name", "normal flux through cell edges");
-        // Volumetric edge flux F_e = -q·n_e·L_e (see SurfaceFluxCalculator
-        // computeEdgeFluxes, which derives the m3/s dimensioning). Matches the
+        // Volumetric edge flux F_e = -ψ·q·n_e·L_e, as published by the explicit
+        // marcher after conveyance and availability limiting. Matches the
         // m3 s-1 units of the continuity-residual datasets that sum these fluxes.
         writeStringAttr(ds_edge_flux_, "units", "m3 s-1");
         writeStringAttr(ds_edge_flux_, "mesh", "Mesh2");
@@ -764,6 +807,8 @@ void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
             createFaceEnvelopeDataset("Mesh2_face_max_depth", "maximum overland flow depth", "m");
         ds_face_max_velocity_ = createFaceEnvelopeDataset(
             "Mesh2_face_max_velocity", "maximum cell velocity magnitude", "m s-1");
+        writeStringAttr(ds_face_max_velocity_, "sampling",
+            "maximum finite velocity samples; unavailable samples excluded; NaN if none");
         if (want(report2d::CONTINUITY))
             ds_face_max_continuity_err_ = createFaceEnvelopeDataset(
                 "Mesh2_face_max_continuity_err", "maximum absolute per-cell continuity residual",
@@ -898,6 +943,22 @@ int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
             face(ds_snow_[k], snap.surface_snow[k]);
     }
 
+    if (mixing_diagnostics_ && mixing_edges_ && mixing_mesh_ &&
+        snap.surface_depth.size() == static_cast<std::size_t>(n_faces_) &&
+        snap.surface_face_vx.size() == snap.surface_depth.size() &&
+        snap.surface_face_vy.size() == snap.surface_depth.size()) {
+        mixing_edges_->refreshConveyance(*mixing_mesh_);
+        auto qx = snap.surface_face_vx, qy = snap.surface_face_vy;
+        for (std::size_t k = 0; k < qx.size(); ++k) {
+            qx[k] *= snap.surface_depth[k]; qy[k] *= snap.surface_depth[k];
+        }
+        std::vector<double> rx, ry;
+        mixing_diagnostics_->evaluate(*mixing_mesh_, *mixing_edges_, snap.surface_depth,
+            snap.surface_head, qx, qy, mixing_dry_, mixing_cs_, rx, ry, -1, mixing_background_,
+            mixing_depth_coefficient_);
+        face(ds_face_eddy_viscosity_, mixing_diagnostics_->viscosity);
+        face(ds_face_strain_rate_, mixing_diagnostics_->strain);
+    }
     face(ds_face_vx_, snap.surface_face_vx);
     face(ds_face_vy_, snap.surface_face_vy);
     face(ds_face_continuity_err_, snap.surface_continuity_err);
@@ -2078,6 +2139,8 @@ std::vector<hid_t*> Default2DOutputPlugin::checkpointDatasets() {
                             &ds_heat_lid_energy_,
                             &ds_heat_lid_capacity_,
                             &ds_heat_lid_ground_contact_,
+                            &ds_face_eddy_viscosity_,
+                            &ds_face_strain_rate_,
                             &ds_face_vx_,
                             &ds_face_vy_,
                             &ds_face_continuity_err_,
@@ -2161,6 +2224,11 @@ void Default2DOutputPlugin::closeDatasets() noexcept {
     closeDS(ds_heat_lid_energy_);
     closeDS(ds_heat_lid_capacity_);
     closeDS(ds_heat_lid_ground_contact_);
+    closeDS(ds_face_eddy_viscosity_);
+    closeDS(ds_face_strain_rate_);
+    mixing_diagnostics_.reset();
+    mixing_edges_.reset();
+    mixing_mesh_ = nullptr;
     closeDS(ds_face_vx_);
     closeDS(ds_face_vy_);
     closeDS(ds_face_continuity_err_);

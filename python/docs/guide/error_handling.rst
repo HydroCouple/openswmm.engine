@@ -92,7 +92,9 @@ every documented ``SWMM_ERR_*`` to the corresponding subclass:
    * - :class:`EngineError`
      - :exc:`Exception`
      - Base class. Catches everything above; also raised directly for
-       :attr:`ErrorCode.NOMEM` and :attr:`ErrorCode.INTERNAL`.
+       :attr:`ErrorCode.NOMEM`, :attr:`ErrorCode.BUFSIZE` (which the bindings
+       handle by growing their buffer, so it rarely reaches you) and
+       :attr:`ErrorCode.INTERNAL`.
 
 Every instance carries three attributes:
 

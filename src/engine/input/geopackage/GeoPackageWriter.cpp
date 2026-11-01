@@ -503,8 +503,8 @@ static void write_nodes(sqlite3* db, const SimulationContext& ctx, const std::st
     auto stmt =
         prepare(db, "INSERT INTO nodes (simulation_id, node_id, node_type, geom, "
                     "invert_elev, max_depth, init_depth, surcharge_depth, ponded_area, tag, "
-                    "is_virtual, rim_depth, is_inlet) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)");
+                    "is_virtual, rim_depth, is_inlet, storage_area) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
     auto st_stmt =
         prepare(db, "INSERT INTO storages (simulation_id, node_id, curve_name, shape, a, b, c, "
                     "p1, p2, p3, seep_rate, evap_frac, exfil_suction, exfil_ksat, exfil_imd) "
@@ -547,6 +547,7 @@ static void write_nodes(sqlite3* db, const SimulationContext& ctx, const std::st
         bind_double(stmt.get(), 7, safe_dbl(ctx.nodes.init_depth, i));
         bind_double(stmt.get(), 8, safe_dbl(ctx.nodes.sur_depth, i));
         bind_double(stmt.get(), 9, safe_dbl(ctx.nodes.ponded_area, i));
+        bind_double(stmt.get(), 14, safe_dbl(ctx.nodes.storage_area, i));
 
         const auto utag = static_cast<std::size_t>(i);
         if (utag < ctx.nodes.tags.size() && !ctx.nodes.tags[utag].empty())
@@ -2573,7 +2574,7 @@ void step_or_throw(sqlite3* db, sqlite3_stmt* stmt, const char* what) {
 const char* bc_type_token(const twoD::PendingBoundaryRow& r) {
     switch (static_cast<twoD::BoundaryType>(r.bc_type)) {
     case twoD::BoundaryType::WALL:
-        return "WALL";
+        return r.param1 > 0 ? "WALL_DRAG" : "WALL";
     case twoD::BoundaryType::NORMAL_FLOW:
         return "NORMAL_FLOW";
     case twoD::BoundaryType::SPECIFIED_STAGE:
@@ -2693,6 +2694,18 @@ static void write_options_2d(sqlite3* db, const SimulationContext& ctx, const st
     if (o.coupling_coeffs != 0)
         insert("2D_COUPLING_COEFFS",
                nodecoupling2d::formatValue(NodeCoupling2DKey::COEFFS, o.coupling_coeffs));
+    if (o.coriolis != twoD::Coriolis2D::OFF)
+        insert("2D_CORIOLIS", o.coriolis == twoD::Coriolis2D::LATITUDE ? "LATITUDE" : "CONSTANT_F");
+    if (o.coriolis_latitude_set) insert("2D_CORIOLIS_LATITUDE", fmt_g17(o.coriolis_latitude));
+    if (o.coriolis_f_set) insert("2D_CORIOLIS_F", fmt_g17(o.coriolis_f));
+    if (o.turbulence != twoD::Turbulence2D::NONE) insert("2D_TURBULENCE_MODEL", twoD::turbulenceName(o.turbulence));
+    if (o.turbulence != twoD::Turbulence2D::NONE || o.smagorinsky_cs != .10)
+        insert("2D_SMAGORINSKY_CS", fmt_g17(o.smagorinsky_cs));
+    if (o.eddy_viscosity_background != 0.0)
+        insert("2D_EDDY_VISCOSITY_BACKGROUND", fmt_g17(o.eddy_viscosity_background));
+    if (o.turbulence == twoD::Turbulence2D::MIXING_LENGTH || o.mixing_length_coefficient != 0.5)
+        insert("2D_MIXING_LENGTH_COEFFICIENT", fmt_g17(o.mixing_length_coefficient));
+    if (o.reconstruction_order != 1) insert("2D_RECONSTRUCTION_ORDER", std::to_string(o.reconstruction_order));
     insert("2D_MOMENTUM_EQUATION", o.momentum == twoD::Momentum2D::FULL_SWE ? "FULL_SWE"
                                    : o.momentum == twoD::Momentum2D::DIFFUSIVE_WAVE
                                        ? "DIFFUSIVE_WAVE"

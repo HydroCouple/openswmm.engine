@@ -91,16 +91,21 @@ inline std::vector<PendingBoundaryRow> collectBCRows(const std::vector<PendingBo
     if (!boundary)
         return rows;
 
+    std::unordered_map<int, std::string> groups;
+    if (pending)
+        for (const auto& p : *pending) groups[MeshData::slot(p.tri,p.edge)] = p.group;
     const int n = boundary->size();
     for (int idx = 0; idx < n; ++idx) {
         const auto type = static_cast<BoundaryType>(boundary->edge_bc_type[idx]);
-        if (type == BoundaryType::WALL)
+        if (type == BoundaryType::WALL && boundary->edge_wall_drag[idx] == 0 &&
+            (groups.find(idx) == groups.end() || groups.at(idx).empty()))
             continue;
 
         PendingBoundaryRow r;
         r.tri = MeshData::slot_cell(idx);
         r.edge = MeshData::slot_local(idx);
         r.bc_type = static_cast<int>(type);
+        if (auto it = groups.find(idx); it != groups.end()) r.group = it->second;
 
         switch (type) {
         case BoundaryType::NORMAL_FLOW:
@@ -122,28 +127,12 @@ inline std::vector<PendingBoundaryRow> collectBCRows(const std::vector<PendingBo
             r.name = boundary->edge_bc_rating_curve_name[idx];
             break;
         case BoundaryType::WALL:
+            r.param1 = boundary->edge_wall_drag[idx];
             break;
         }
         rows.push_back(std::move(r));
     }
 
-    // Re-attach the authored GROUP labels (organizational metadata that
-    // BoundaryData does not carry) from the retained pending rows.
-    if (pending && !pending->empty() && !rows.empty()) {
-        std::unordered_map<int, const std::string*> groups;
-        groups.reserve(pending->size());
-        for (const auto& p : *pending) {
-            if (!p.group.empty())
-                groups[MeshData::slot(p.tri, p.edge)] = &p.group;
-        }
-        if (!groups.empty()) {
-            for (auto& r : rows) {
-                auto it = groups.find(MeshData::slot(r.tri, r.edge));
-                if (it != groups.end())
-                    r.group = *it->second;
-            }
-        }
-    }
     return rows;
 }
 

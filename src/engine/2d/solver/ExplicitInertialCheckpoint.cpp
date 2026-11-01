@@ -406,6 +406,7 @@ void rk2ForcingArchive(Archive& a, SurfaceStateData& surface, bool model) {
  * router/source/model views must be retained during subsequent serialization.
  */
 std::string ExplicitInertialSolver::checkpointBoundary() const {
+    if (opts_ && opts_->wall_drag_enabled) return "Wall drag checkpoint profile is not qualified.";
     if (!initialized_ || !common_stage_ || (!gw_ && !common_stage_->standaloneLocalBed()) ||
         second_order_ || !checkpoint_ready_ || !common_stage_->matches(mesh_, state_, gw_))
         return "CPU checkpoint requires an accepted attached first-order source marcher.";
@@ -525,9 +526,17 @@ void ExplicitInertialSolver::checkpointState(Archive& a) {
     const auto pins = pin_t0_;
     const bool telemetry_enabled = !telemetry_path_.empty();
     bool saved_telemetry = telemetry_enabled;
-    a.fixed(q_, qcx_, qcy_, facc_L_, facc_R_, macc_x_L_, macc_x_R_, macc_y_L_, macc_y_R_, sacc_L_,
-            sacc_R_, dw_slope_, cell_active_, tier_, face_tier_, pin_t0_, frontier_,
+    a.fixed(q_, qcx_, qcy_);
+    const std::size_t packet_face_count = face_accum_.size() / face_accum_stride_;
+    const std::size_t momentum_packet_count = face_accum_stride_ == 6 ? packet_face_count : 0;
+    for (std::size_t side = 0; side < 2; ++side)
+        a.fixedStrided(face_accum_, packet_face_count, side, face_accum_stride_);
+    for (std::size_t side = 2; side < 6; ++side)
+        a.fixedStrided(face_accum_, momentum_packet_count, side, face_accum_stride_);
+    a.fixed(sacc_L_, sacc_R_, dw_slope_, cell_active_, tier_, face_tier_, pin_t0_, frontier_,
             source_ledgers_, cells_by_tier_, edges_by_tier_);
+    if (gw_ && gw_->independentClock())
+        a(gw_quiescent_);
     a(active_cells_, active_faces_, dt0_, t_last_sync_, source_phase_end_, cycles_since_rebuild_,
       accumulators_pending_, front_breach_, h_on_front_, exch_tau_, spill_deficit_, substeps_run_,
       face_passes_, last_steps_, last_dt_, active_frac_min_, active_frac_max_, active_frac_sum_,
@@ -548,14 +557,23 @@ void ExplicitInertialSolver::checkpointState(Archive& a) {
     }
     if (pin_t0_ != pins || saved_telemetry != telemetry_enabled)
         throw std::runtime_error("CPU checkpoint pin/telemetry configuration differs.");
-    for (const auto* row :
-         {&q_, &qcx_, &qcy_, &facc_L_, &facc_R_, &macc_x_L_, &macc_x_R_, &macc_y_L_, &macc_y_R_,
-          &sacc_L_, &sacc_R_, &dw_slope_, &source_ledgers_})
+    for (const auto* row : {&q_, &qcx_, &qcy_})
         for (double v : *row)
             if (!std::isfinite(v))
                 throw std::runtime_error("Nonfinite CPU checkpoint state.");
-    for (const auto* row : {&facc_L_, &facc_R_, &macc_x_L_, &macc_x_R_, &macc_y_L_, &macc_y_R_,
-                            &sacc_L_, &sacc_R_, &source_ledgers_})
+    for (std::size_t side = 0; side < face_accum_stride_; ++side)
+        for (std::size_t e = 0; e < packet_face_count; ++e)
+            if (!std::isfinite(face_accum_[e * face_accum_stride_ + side]))
+                throw std::runtime_error("Nonfinite CPU checkpoint state.");
+    for (const auto* row : {&sacc_L_, &sacc_R_, &dw_slope_, &source_ledgers_})
+        for (double v : *row)
+            if (!std::isfinite(v))
+                throw std::runtime_error("Nonfinite CPU checkpoint state.");
+    for (std::size_t side = 0; side < face_accum_stride_; ++side)
+        for (std::size_t e = 0; e < packet_face_count; ++e)
+            if (face_accum_[e * face_accum_stride_ + side] != 0)
+                throw std::runtime_error("CPU checkpoint has unsettled transfers.");
+    for (const auto* row : {&sacc_L_, &sacc_R_, &source_ledgers_})
         for (double v : *row)
             if (v != 0)
                 throw std::runtime_error("CPU checkpoint has unsettled transfers.");
@@ -1241,6 +1259,7 @@ void rk2SurfaceBoundaryArchive(Archive& a, BoundaryData& b,
  * Does not settle or repair invalid state.
  */
 std::string ExplicitInertialSolver::rk2CheckpointProfile() const {
+    if (opts_ && opts_->wall_drag_enabled) return "Wall drag checkpoint profile is not qualified.";
     if (!initialized_ || !second_order_ || !gw_ || common_stage_ || joint_checkpoint_ ||
         channel_ground_ || source_history_ || engine_source_history_ || engine_source_stream_ ||
         !checkpoint_ready_ || mode_ != Momentum2D::FULL_SWE || opts_->lts_tiers != 1 ||
@@ -1436,6 +1455,20 @@ std::string ExplicitInertialSolver::rk2CheckpointModel(const Rk2CheckpointBindin
       o.vol_1d_to_2d, o.flow_1d_to_2d, o.flow_2d_to_1d, o.num_threads, o.requested_threads,
       o.mesh_units_si, o.mesh_scaled_to_si, o.mesh_to_si_factor, o.pending_rows_drained,
       o.bc_flow_to_si_applied);
+    if (o.momentumPhysics()) {
+        std::string profile = "Coriolis and mimetic Smagorinsky v1";
+        a(profile, o.coriolis, o.coriolis_latitude, o.coriolis_f, o.coriolis_latitude_set,
+          o.coriolis_f_set, o.turbulence, o.smagorinsky_cs);
+        // Appended only when set, so existing momentum-physics identities are unchanged.
+        if (o.eddy_viscosity_background != 0.0) {
+            std::string background = "background eddy viscosity v1";
+            a(background, o.eddy_viscosity_background);
+        }
+        if (o.turbulence == Turbulence2D::MIXING_LENGTH) {
+            std::string length = "depth mixing length v1";
+            a(length, o.mixing_length_coefficient);
+        }
+    }
     if (o.theta_reference_step > 0.0) {
         std::string profile = "physical-time momentum smoothing v1";
         a(profile, o.theta_reference_step);

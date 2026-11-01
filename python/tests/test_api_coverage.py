@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import re
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -331,6 +332,90 @@ class TestEngineFeatureGaps(unittest.TestCase):
         self.assertIn(f"unjustified gap: {dropped}", problems)
         self.assertIn("stale allow-list entry: G1:NO_SUCH_SECTION", problems)
 
+    def test_stored_legacy_option_uses_existing_extension_api(self):
+        option = _gaps.option_keys()["OPTIONS"]["SLOPE_WEIGHTING"]
+        self.assertIn("ext_options", option["fields"])
+        self.assertTrue(option["reachable"])
+        self.assertEqual(option["via"], "swmm_options_get/set_ext")
+
+    def test_extension_storage_does_not_hide_an_unexposed_field(self):
+        parser = _gaps.SRC / "input" / "handlers" / "OptionsHandler.cpp"
+        fixture = '''
+            if (key == "STORED_COMPAT") {
+                opt.ext_options[key] = val;
+            } else if (key == "NEW_UNEXPOSED_FIELD") {
+                opt.audit_only_unexposed_field = 1;
+            }
+        '''
+        original = _gaps._text
+        with mock.patch.object(_gaps, "_text", side_effect=lambda path:
+                               fixture if path == parser else original(path)):
+            keys = _gaps.option_keys()["OPTIONS"]
+        self.assertTrue(keys["STORED_COMPAT"]["reachable"])
+        self.assertFalse(keys["NEW_UNEXPOSED_FIELD"]["reachable"])
+
+    def test_extension_storage_requires_both_api_paths(self):
+        original = _gaps._function_body
+        for missing in ("swmm_options_get_ext", "swmm_options_set_ext"):
+            with self.subTest(missing=missing):
+                with mock.patch.object(_gaps, "_function_body", side_effect=lambda text, name:
+                                       "" if name == missing else original(text, name)):
+                    option = _gaps.option_keys()["OPTIONS"]["SLOPE_WEIGHTING"]
+                self.assertFalse(option["reachable"])
+
     def test_every_parsed_section_is_mapped(self):
         unmapped = [r["section"] for r in _gaps.analyse()["sections"] if r["class"] == "UNMAPPED"]
         self.assertEqual(unmapped, [])
+
+
+class TestOptionKeyList(unittest.TestCase):
+    """``kStandardOptionKeys`` (enumerated by ``swmm_options_key_at``) lists the first key of
+    every ``swmm_options_get`` branch, in branch order, so option iteration never drifts."""
+
+    def test_key_list_matches_getter_branches(self):
+        src = (_REPO_ROOT / "src" / "engine" / "core" / "openswmm_model_impl.cpp").read_text(
+            encoding="utf-8")
+        body = src[src.index("SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine"):
+                   src.index("SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine")]
+        branches = [re.findall(r'"([A-Z0-9_]+)"', cond)[0] for cond in re.findall(
+            r'if\s*\(\s*(k\s*==\s*"[A-Z0-9_]+"(?:\s*\|\|\s*k\s*==\s*"[A-Z0-9_]+")*)', body)]
+        start = src.index("kStandardOptionKeys[] = {")
+        listed = re.findall(r'"([A-Z0-9_]+)"', src[start:src.index("};", start)])
+        self.assertGreater(len(branches), 90)
+        self.assertEqual(listed, branches)
+
+
+def _fixed_text_buffers() -> dict[str, int]:
+    """``{"<module>.pyx::<function>::<buffer>": line}`` for every ``cdef char x[N]``."""
+    found: dict[str, int] = {}
+    for pyx in sorted((_PYTHON_DIR / "openswmm" / "engine").glob("*.pyx")):
+        lines = pyx.read_text(encoding="utf-8").split("\n")
+        for i, line in enumerate(lines):
+            m = re.match(r"(\s*)cdef char (\w+)\[\w+\]", line)
+            if not m:
+                continue
+            function = "?"
+            for prev in reversed(lines[:i]):
+                d = re.match(r"(\s*)(?:cpdef|cdef|def)\s+(?:[\w*]+\s+)*(\w+)\s*\(", prev)
+                if d and len(d.group(1)) < len(m.group(1)):
+                    function = d.group(2)
+                    break
+            found[f"{pyx.name}::{function}::{m.group(2)}"] = i + 1
+    return found
+
+
+class TestFixedBuffers(unittest.TestCase):
+    """Native text getters silently truncate; bindings read them through growing buffers
+    (``_read_engine_*`` or ``_TextBufs`` in ``_common.pxd``). A fixed ``char[N]`` is allowed
+    only where ``scripts/fixed_buffer_allow.json`` gives the reason it cannot lose data."""
+
+    def test_every_fixed_buffer_is_justified(self):
+        import json
+
+        allow = json.loads((_PYTHON_DIR / "scripts" / "fixed_buffer_allow.json").read_text(
+            encoding="utf-8"))
+        found = _fixed_text_buffers()
+        unjustified = sorted(f"{k} (line {v})" for k, v in found.items() if k not in allow)
+        stale = sorted(k for k in allow if k not in found)
+        self.assertEqual(unjustified, [], "fixed text buffers: use a growing reader")
+        self.assertEqual(stale, [], "allow-list entries with no matching buffer")

@@ -16,6 +16,7 @@ from openswmm.engine import (
     LifecycleError, FileError, CellScope, GroundwaterClosure,
 )
 from tests._paths import ARTIFACTS_DIR
+from tests._capi import load_engine_api
 from tests.engine._groundwater_cases import MODEL, cleanup
 
 
@@ -34,7 +35,7 @@ REPORT_2D_VARIABLES ALL
 REPORT_2D_STEP 00:02:00
 OUTPUT_PRECISION FLOAT64
 TRANSPORT_POLLUTANTS YES''')
-    path.write_text(text)
+    path.write_text(text, encoding='utf-8')
     solver = Solver(path, path.with_suffix('.rpt'), path.with_suffix('.out'))
     try:
         solver.open()
@@ -160,7 +161,7 @@ def test_native_reader_errors_lifecycle_and_serialized_threads(saved):
 
 def test_c_api_validates_buffers_and_bounds_before_writing(saved):
     import openswmm.engine._output2d as extension
-    api = ct.CDLL(extension.__file__)
+    api = load_engine_api(extension)
     handle = ct.c_void_p()
     api.swmm_output2d_open.argtypes = [ct.c_char_p, ct.POINTER(ct.c_void_p)]
     api.swmm_output2d_close.argtypes = [ct.c_void_p]

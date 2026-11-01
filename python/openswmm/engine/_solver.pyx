@@ -97,6 +97,16 @@ from ._exceptions import (
 
 _SECONDS_PER_DAY = 86400.0
 
+
+def abi_tag() -> str:
+    """Return the immutable C ABI identity of the engine loaded by these bindings.
+
+    Compare it with a native host's engine identity before sharing handles.
+    This query creates no solver and is valid before opening a model.
+    The wheel's ``openswmm/engine/_abi.json`` records its expected build identity.
+    """
+    return swmm_engine_abi_tag().decode("utf-8")
+
 #: Registered id of the built-in GeoPackage model writer/reader plugin. Pass to
 #: :meth:`Solver.write_with_plugin` (or use :meth:`Solver.write_geopackage`).
 GEOPACKAGE_PLUGIN_ID = "org.hydrocouple.openswmm.plugins.geopackage"
@@ -336,20 +346,26 @@ cdef class Solver:
         from ._results import Results
         from pathlib import Path
         self._access.require_idle()
-        cdef char absolute[65536]
-        cdef char original[65536]
+        cdef _TextBufs t
         cdef int status
         if self._handle != NULL:
             if not live and self.state not in (EngineState.ENDED, EngineState.CLOSED):
                 raise LifecycleError(ErrorCode.LIFECYCLE, 'Call end() before opening saved results, or use live=True for 1D output')
             if surface is None and not live:
-                status = swmm_file_path_get(self._handle, <SWMM_FilePathRole>12, b'',
-                                            absolute, 65536, original, 65536)
-                if status == 0:
-                    configured = absolute.decode('utf-8') or original.decode('utf-8')
-                    if configured:
-                        candidate = Path(configured)
-                        surface = candidate if candidate.is_absolute() else Path(self._inp).resolve().parent / candidate
+                _tb_open(&t, 2)
+                try:
+                    while True:
+                        status = swmm_file_path_get(self._handle, <SWMM_FilePathRole>12, b'',
+                                                    t.p[0], t.size, t.p[1], t.size)
+                        if status != 0 or not _tb_retry(&t):
+                            break
+                    if status == 0:
+                        configured = _tb_str(&t, 0) or _tb_str(&t, 1)
+                        if configured:
+                            candidate = Path(configured)
+                            surface = candidate if candidate.is_absolute() else Path(self._inp).resolve().parent / candidate
+                finally:
+                    _tb_close(&t)
         return Results.open(self._out or None, surface=surface, live=live)
 
     def initialize(self) -> None:
@@ -1399,48 +1415,6 @@ class SimulationOptions(MutableMapping):
         # Sub-namespace for the [OPTIONS_EXT] block.
         self.ext = _OptionsExtView(solver)
 
-    # MutableMapping requires __getitem__, __setitem__, __delitem__, __iter__,
-    # __len__. The underlying C API doesn't expose an iteration helper, so we
-    # implement the mapping protocol minimally: indexing and length, plus an
-    # ``iter`` over a small known-key set the schema documents. Iteration over
-    # *all* keys requires a future C API addition.
-    _KNOWN_KEYS = (
-        "FLOW_UNITS", "INFILTRATION", "FLOW_ROUTING", "LINK_OFFSETS",
-        "FORCE_MAIN_EQUATION", "IGNORE_RAINFALL", "IGNORE_SNOWMELT",
-        "IGNORE_GROUNDWATER", "IGNORE_RDII", "IGNORE_ROUTING",
-        "IGNORE_QUALITY", "ALLOW_PONDING", "SKIP_STEADY_STATE",
-        "SYS_FLOW_TOL", "LAT_FLOW_TOL", "START_DATE", "START_TIME",
-        "END_DATE", "END_TIME", "REPORT_START_DATE", "REPORT_START_TIME",
-        "SWEEP_START", "SWEEP_END", "DRY_DAYS", "REPORT_STEP",
-        "WET_STEP", "DRY_STEP", "ROUTING_STEP", "RULE_STEP", "MINIMUM_STEP",
-        "INERTIAL_DAMPING", "NORMAL_FLOW_LIMITED", "MIN_SURFAREA",
-        "MIN_SLOPE", "MAX_TRIALS", "HEAD_TOLERANCE", "THREADS",
-        "TEMPDIR",
-        # Explicit finite-volume solver (FLOW_ROUTING FV). Readable and
-        # writable under any routing model, so a script can configure the
-        # solver before selecting it.
-        "FV_CELL_LENGTH", "FV_MIN_CELLS", "FV_CFL", "FV_RIEMANN", "FV_ORDER",
-        "FV_LIMITER", "FV_SCALAR_SCHEME", "FV_TIME_INTEGRATION",
-        "FV_SLOT_CELERITY", "FV_DISPERSION", "FV_STRUCTURE_COUPLING",
-        "FV_COMPACTION", "FV_BACKEND", "FV_MIN_PARALLEL_CELLS",
-        "FV_LTS", "FV_LTS_MAX_TIERS", "FV_CFL_CENSUS_INTERVAL",
-        # Unsteady friction (issue #156): consumed by the FV (Phase 2) and
-        # dynamic wave (Phase 3) solvers.
-        "UNSTEADY_FRICTION", "UF_K3",
-        # TPA pressure closure (issue #156 Phase 4): FV solver.
-        "FV_PRESSURE_CLOSURE",
-        # Signed piezometric heads in the .out HEAD field (issue #156 O-6).
-        "REPORT_SIGNED_HEADS",
-        # DW surcharge method + TPA celerity (issue #156 Phase 5; adding
-        # SURCHARGE_METHOD also closes the long-standing known-keys gap).
-        "SURCHARGE_METHOD", "TPA_CELERITY",
-        # Physical constants (heat transport) and FV node feedback.
-        "WATER_DENSITY", "WATER_SPECIFIC_HEAT_CAPACITY", "WIND_FUNC_COEFF_A",
-        "WIND_FUNC_COEFF_B", "PRESSURE_RATIO", "FV_NODE_FEEDBACK_DT",
-        # Legacy / retired keywords: COMPATIBILITY round-trips verbatim;
-        # VIRTUAL_JUNCTION_MOMENTUM reads NONE and refuses FULL.
-        "COMPATIBILITY", "VIRTUAL_JUNCTION_MOMENTUM",
-    )
 
     def __getitem__(self, key: str) -> str:
         try:
@@ -1455,15 +1429,12 @@ class SimulationOptions(MutableMapping):
         raise TypeError("SWMM options cannot be deleted; assign an empty string instead")
 
     def __iter__(self):
-        for k in self._KNOWN_KEYS:
-            try:
-                self[k]
-            except KeyError:
-                continue
-            yield k
+        # Every standard key the engine accepts (canonical spellings, [REPORT]
+        # keys under their RPT_ prefix), in the engine's order.
+        return iter(_options_keys())
 
     def __len__(self) -> int:
-        return sum(1 for _ in self)
+        return swmm_options_key_count()
 
     def __contains__(self, key) -> bool:
         if not isinstance(key, str):
@@ -1536,11 +1507,34 @@ class _OptionsExtView(MutableMapping):
         raise TypeError("SWMM extended options cannot be deleted")
 
     def __iter__(self):
-        # No enumeration entry-point exposed by the C API yet.
-        return iter(())
+        # 2D keys first (when the model has a 2D surface), then stored extension keys.
+        return iter(_options_ext_keys(self._solver))
 
     def __len__(self) -> int:
-        return 0
+        cdef int n = 0
+        _check(swmm_options_ext_key_count(<SWMM_Engine><size_t>self._solver.handle, &n))
+        return n
+
+
+def _options_keys() -> tuple:
+    cdef char buf[256]
+    cdef int i
+    keys = []
+    for i in range(swmm_options_key_count()):
+        _check(swmm_options_key_at(i, buf, sizeof(buf)))
+        keys.append((<bytes>buf).decode('utf-8'))
+    return tuple(keys)
+
+
+def _options_ext_keys(solver) -> tuple:
+    cdef SWMM_Engine h = <SWMM_Engine><size_t>solver.handle
+    cdef int n = 0
+    cdef int i
+    _check(swmm_options_ext_key_count(h, &n))
+    keys = []
+    for i in range(n):
+        keys.append(_read_engine_index_string(h, i, swmm_options_ext_key_at))
+    return tuple(keys)
 
 
 def _options_get(solver, str key) -> str:
@@ -1595,7 +1589,7 @@ class UserFlags(MutableMapping):
         cdef bytes b = (<str>key).encode('utf-8')
         cdef int iv = 0
         cdef double dv = 0.0
-        cdef char sbuf[512]
+        cdef _TextBufs t
         cdef int found = 0
         # Try bool first, then int, then real, then string (the scalar
         # store is the MODEL-scoped per-object value). If all four fail
@@ -1609,9 +1603,16 @@ class UserFlags(MutableMapping):
         rc = swmm_userflag_get_real(h, b, &dv)
         if rc == 0:
             return float(dv)
-        rc = swmm_userflag_value_get(h, b"MODEL", b"", b, sbuf, 512, &found)
-        if rc == 0 and found:
-            return sbuf.decode('utf-8')
+        _tb_open(&t, 1)
+        try:
+            while True:
+                rc = swmm_userflag_value_get(h, b"MODEL", b"", b, t.p[0], t.size, &found)
+                if rc != 0 or not found or not _tb_retry(&t):
+                    break
+            if rc == 0 and found:
+                return _tb_str(&t, 0)
+        finally:
+            _tb_close(&t)
         raise KeyError(key)
 
     def __setitem__(self, key, value):
@@ -1712,15 +1713,21 @@ class UserFlags(MutableMapping):
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int n = 0
         cdef int t = 0
-        cdef char name_buf[128]
-        cdef char desc_buf[512]
+        cdef _TextBufs tb
         _check(swmm_userflag_def_count(h, &n))
         out = []
-        for i in range(n):
-            _check(swmm_userflag_def_get(h, i, name_buf, 128, &t,
-                                         desc_buf, 512))
-            out.append(UserFlagDef(name_buf.decode('utf-8'), t,
-                                   desc_buf.decode('utf-8')))
+        _tb_open(&tb, 2)
+        try:
+            for i in range(n):
+                while True:
+                    _check(swmm_userflag_def_get(h, i, tb.p[0], tb.size, &t,
+                                                 tb.p[1], tb.size))
+                    if not _tb_retry(&tb):
+                        break
+                out.append(UserFlagDef(_tb_str(&tb, 0), t,
+                                       _tb_str(&tb, 1)))
+        finally:
+            _tb_close(&tb)
         return out
 
     # -- [USER_FLAG_VALUES] per-object values -------------------------------
@@ -1746,13 +1753,20 @@ class UserFlags(MutableMapping):
         cdef bytes b_type = obj_type.encode('utf-8')
         cdef bytes b_name = obj_name.encode('utf-8')
         cdef bytes b_flag = flag_name.encode('utf-8')
-        cdef char buf[512]
+        cdef _TextBufs t
         cdef int found = 0
-        _check(swmm_userflag_value_get(h, b_type, b_name, b_flag,
-                                       buf, 512, &found))
-        if not found:
-            return None
-        return buf.decode('utf-8')
+        _tb_open(&t, 1)
+        try:
+            while True:
+                _check(swmm_userflag_value_get(h, b_type, b_name, b_flag,
+                                               t.p[0], t.size, &found))
+                if not found:
+                    return None
+                if not _tb_retry(&t):
+                    break
+            return _tb_str(&t, 0)
+        finally:
+            _tb_close(&t)
 
     def set_value(self, str obj_type, str obj_name, str flag_name,
                   str value) -> None:

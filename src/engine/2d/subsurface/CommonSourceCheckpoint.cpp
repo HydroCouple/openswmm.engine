@@ -177,8 +177,6 @@ void meshStateImpl(Archive& a, SurfaceStateData& s) {
                                    &s.grad_hy_lim,
                                    &s.vert_head,
                                    &s.vert_depth_signed,
-                                   &s.face_vx,
-                                   &s.face_vy,
                                    &s.cell_continuity_err,
                                    &s.edge_flux,
                                    &s.rainfall,
@@ -195,12 +193,20 @@ void meshStateImpl(Archive& a, SurfaceStateData& s) {
                                    &s.old_depth,
                                    &s.old_volume,
                                    &s.stat_max_depth,
-                                   &s.stat_max_velocity,
                                    &s.stat_max_cont_err,
                                    &s.stat_cum_volume})
             for (double v : *values)
                 if (!std::isfinite(v))
                     throw std::runtime_error("Nonfinite s checkpoint state.");
+        // Output-only velocity may be unavailable. Canonical water, fluxes,
+        // momentum and transport above must remain finite.
+        for (std::size_t i = 0; i < s.face_vx.size(); ++i)
+            if (!((std::isfinite(s.face_vx[i]) && std::isfinite(s.face_vy[i])) ||
+                  (std::isnan(s.face_vx[i]) && std::isnan(s.face_vy[i]))))
+                throw std::runtime_error("Invalid checkpoint velocity pair.");
+        for (double v : s.stat_max_velocity)
+            if (!std::isfinite(v) && !std::isnan(v))
+                throw std::runtime_error("Invalid checkpoint velocity envelope.");
         for (const auto* values :
              {&t.cell_mass, &t.lost_infiltration, &t.lost_boundary, &t.gained_external,
               &t.lost_external, &t.lost_coupling, &t.exch_mass, &t.exch_spill, &t.gained_rainfall,

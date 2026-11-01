@@ -37,6 +37,7 @@
 #include <vector>
 #include <string>
 #include <cstdint>
+#include <cmath>
 
 namespace openswmm::twoD {
 
@@ -116,11 +117,11 @@ struct MeshData {
     std::vector<double> quad_vfr_a;
 
     /// Per-edge conveyance factor in [0, 1], flat 2D [cell * kMaxCellVerts + k].
-    /// Default 1.0 (unrestricted) for every edge.  Multiplies the
-    /// diffusion-wave flux in SurfaceFluxCalculator::computeEdgeFluxes
-    /// (the last factor before edge_flux is stored).  Symmetric: for
-    /// an interior edge shared by triangles A and B, the slots
-    /// [A*3 + e_A] and [B*3 + e_B] must carry the same value;
+    /// Default 1.0 (unrestricted) for every edge. Scales transported and
+    /// reported interior face flux; zero blocks exchange. The explicit local-inertial
+    /// solvers keep ψ separate from geometric width and CFL lengths.
+    /// Symmetric: an interior edge's two MeshData::slot(cell, edge) entries
+    /// must carry the same value;
     /// SurfaceRouter2D::initialize enforces this when draining the
     /// [2D_EDGE_CONVEYANCE] pending rows.  See §11A of
     /// docs/2dModelStrategy.md.
@@ -301,6 +302,40 @@ struct MeshData {
      */
     int cell_vertex(int c, int k) const noexcept {
         return cell_v[static_cast<std::size_t>(slot(c, k))];
+    }
+    /**
+     * @brief Area centroid of one cell from its vertex coordinates.
+     * @param[in] c Zero-based cell in [0,n_cells()); unchecked.
+     * @param[out] x,y Centroid in the vertex coordinate units. A quad takes the area-weighted
+     * centroid of its sub-triangles (v0,v1,v2) and (v0,v2,v3), or the vertex mean at zero area.
+     * @note Needs only vertices and topology, so it is valid before MeshBuilder fills
+     * tri_cx/tri_cy (which it does with this function).
+     */
+    void cell_centroid_xy(int c, double& x, double& y) const noexcept {
+        if (cell_vertex_count(c) == 3) {
+            const int v0 = cell_vertex(c, 0), v1 = cell_vertex(c, 1), v2 = cell_vertex(c, 2);
+            x = (vx[v0] + vx[v1] + vx[v2]) / 3.0;
+            y = (vy[v0] + vy[v1] + vy[v2]) / 3.0;
+            return;
+        }
+        double px[4], py[4];
+        for (int k = 0; k < 4; ++k) {
+            const int v = cell_vertex(c, k);
+            px[k] = vx[v];
+            py[k] = vy[v];
+        }
+        const double a1 =
+            std::abs(0.5 * ((px[1] - px[0]) * (py[2] - py[0]) - (px[2] - px[0]) * (py[1] - py[0])));
+        const double a2 =
+            std::abs(0.5 * ((px[2] - px[0]) * (py[3] - py[0]) - (px[3] - px[0]) * (py[2] - py[0])));
+        const double area = a1 + a2;
+        if (area > 0.0) {
+            x = (a1 * ((px[0] + px[1] + px[2]) / 3.0) + a2 * ((px[0] + px[2] + px[3]) / 3.0)) / area;
+            y = (a1 * ((py[0] + py[1] + py[2]) / 3.0) + a2 * ((py[0] + py[2] + py[3]) / 3.0)) / area;
+        } else {
+            x = 0.25 * (px[0] + px[1] + px[2] + px[3]);
+            y = 0.25 * (py[0] + py[1] + py[2] + py[3]);
+        }
     }
     /**
      * @brief Read one mixed-cell topology field.

@@ -42,6 +42,7 @@
 #ifndef OPENSWMM_QUALITY_ROUTING_HPP
 #define OPENSWMM_QUALITY_ROUTING_HPP
 
+#include "FvQualityTransport.hpp"
 #include <vector>
 
 namespace openswmm {
@@ -162,6 +163,14 @@ public:
      * - Argument dt: Timestep (seconds).
      */
     void execute(SimulationContext& ctx, double dt);
+    FvTransportWater& fvWater() noexcept {return fv_transport_.water;}
+    bool fvTransportAccepted() const noexcept {return fv_transport_.accepted();}
+    bool hasFvRetainedDryMass() const noexcept {return fv_transport_.hasRetainedDryMass();}
+    std::string fvDryRestartState(const SimulationContext& ctx) const {return fv_transport_.dryRestartState(ctx);}
+    std::string restoreFvDryRestart(SimulationContext& ctx,const std::string& blob,bool apply) {return fv_transport_.restoreDryRestart(ctx,blob,apply);}
+    std::vector<double> fvRetainedPollutantMass(const SimulationContext& ctx) const {return fv_transport_.retainedPollutantMass(ctx);}
+    std::vector<double> fvRetainedSpeciesMass(const SimulationContext& ctx) const {return fv_transport_.retainedSpeciesMass(ctx);}
+    void beginFvWindow() noexcept {fv_transport_.beginWindow();}
 
     /**
      * @brief Stage 1 of execute() only: reset the assembly arrays and run the external-load
@@ -222,6 +231,7 @@ public:
 
 private:
     int n_pollutants_ = 0;
+    FvQualityTransport fv_transport_;
     /// Per-node LATERAL carrier volume added into qual_vol_in this step, so
     /// the mixing denominator can be corrected to legacy's form afterwards
     /// (routing.c:480 seeds quality inflow with MAX(0, NET lateral flow)).

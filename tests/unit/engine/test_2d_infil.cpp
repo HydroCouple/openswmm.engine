@@ -44,6 +44,11 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <cstdlib>
+#include "core/CompletedSourceArchive.hpp"
 #include <string>
 #include <vector>
 
@@ -884,4 +889,76 @@ TEST(Infil2DDryCellTest, HortonRecoversCapacityAcrossADryWindow) {
         << " m/s and one with recovery disabled " << stale
         << " m/s — Infil2D::updateRates is not advancing Horton recovery on a "
            "dry cell";
+}
+
+TEST(Infil2DParallel, MixedMethodsAndOwnersRetainEverySerialHistoryBit) {
+    constexpr int cells = 1027;
+    MeshData mesh;
+    mesh.resize_triangles(cells);
+    const auto options = siOptions();
+    for (int threads : {1, 4, 8}) {
+        Infil2D serial;
+        serial.defaults().push_back({"*", rowOf(InfilModel::HORTON, 90, 10, 2, 4)});
+        std::vector<uint8_t> owners(cells, 0);
+        for (int i = 0; i < cells; ++i) {
+            if (i % 11 == 0) {
+                owners[i] = 1;
+                continue;
+            }
+            Infil2DRow row;
+            switch (i % 6) {
+            case 0: row = rowOf(InfilModel::HORTON, 90, 10, 2, 4); break;
+            case 1: row = rowOf(InfilModel::MOD_HORTON, 90, 10, 2, 4); break;
+            case 2: row = rowOf(InfilModel::GREEN_AMPT, 80, 8, .3); break;
+            case 3: row = rowOf(InfilModel::MOD_GREEN_AMPT, 80, 8, .3); break;
+            case 4: row = rowOf(InfilModel::CURVE_NUM, 70, 0, 4); break;
+            case 5: row = rowOf(InfilModel::CONSTANT, 20); break;
+            }
+            if (i % 13 == 0)
+                row.has_method = false;
+            serial.overrides().push_back({i, row});
+        }
+        serial.setAquiferOwners(owners);
+        std::string error;
+        ASSERT_TRUE(serial.resolve(mesh, options, error)) << error;
+        auto parallel = serial;
+        auto a = makeState(mesh, .02, 0.), b = a;
+        openswmm::detail::CompletedSourceArchive archive;
+        for (int step = 0; step < 9; ++step) {
+            for (int i = 0; i < cells; ++i) {
+                a.rainfall[i] = b.rainfall[i] = step % 3 == 0 ? 0. : mmhrToMs(10 + i % 45);
+                a.depth[i] = b.depth[i] = i % 5 == 0 ? -0. : .001 * (i % 31);
+            }
+            const surface::InfilBank::Factors factors{.8 + .1 * (step % 3), 1.};
+            serial.updateRates(mesh, a, 75. * (1 + step % 2), factors);
+            parallel.updateRates(mesh, b, 75. * (1 + step % 2), factors, threads);
+            const auto same = [](const std::vector<double>& x, const std::vector<double>& y) {
+                ASSERT_EQ(x.size(), y.size());
+                if (!x.empty())
+                    EXPECT_EQ(std::memcmp(x.data(), y.data(), x.size() * sizeof(double)), 0);
+            };
+            same(a.infil_rate, b.infil_rate);
+            same(serial.cumulative(), parallel.cumulative());
+            auto rates = b.infil_rate, cumulative = parallel.cumulative();
+            archive(rates, cumulative);
+            for (int i = 0; i < cells; ++i) {
+                int am = -1, bm = -1;
+                double av[6] = {}, bv[6] = {};
+                serial.bank().pack(i, am, av);
+                parallel.bank().pack(i, bm, bv);
+                EXPECT_EQ(am, bm);
+                EXPECT_EQ(std::memcmp(av, bv, sizeof av), 0);
+                archive(bm);
+                for (double& value : bv)
+                    archive(value);
+            }
+        }
+        if (const char* output = std::getenv("OPENSWMM_INFIL_PARALLEL_TEST_OUT")) {
+            std::filesystem::create_directories(output);
+            const auto bytes = archive.bytes();
+            std::ofstream(std::filesystem::path(output) /
+                              ("infil_threads_" + std::to_string(threads) + ".bin"),
+                          std::ios::binary).write(bytes.data(), bytes.size());
+        }
+    }
 }

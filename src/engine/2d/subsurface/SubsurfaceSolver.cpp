@@ -58,6 +58,7 @@
  * @license   Apache-2.0
  */
 
+#include "core/ProcessPerf.hpp"
 #include "SubsurfaceSolver.hpp"
 #include "../coupling/Rk2RuntimeSources.hpp"
 #include "GroundwaterDispersion.hpp"
@@ -79,6 +80,7 @@
 #include <limits>
 #include <numeric>
 #include <stdexcept>
+#include <utility>
 
 namespace openswmm::twoD {
 
@@ -308,12 +310,14 @@ std::string SubsurfaceSolver::initialize(const MeshData& mesh, const InertialEdg
     boundaries_.clear();
     cell_boundaries_.clear();
     state_ = SubsurfaceState{};
+    clock_telemetry_.reset(0, false);
     heat_.clear();
     heat_link_out_volume_.clear();
     heat_preset_out_j_.clear();
     heat_preset_out_water_.clear();
     heat_node_out_volume_.clear();
     heat_node_gathered_out_.clear();
+    clock_state_.reset();
     heat_faces_.clear();
     heat_pending_left_.clear();
     heat_pending_right_.clear();
@@ -323,8 +327,12 @@ std::string SubsurfaceSolver::initialize(const MeshData& mesh, const InertialEdg
         return {};
 
     options_ = cfg.options;
+    if (options_.independent_clock && opts.reconstruction_order == 2)
+        return "GW_CLOCK INDEPENDENT requires first-order groundwater integration (RECONSTRUCTION_ORDER 1).";
     if (options_.gw_et == "AUTO")
         options_.gw_et = options_.per_subcatch ? "NONE" : "BOTH";
+    et_boundary_ = options_.gw_et == "BOUNDARY_ET" || options_.gw_et == "BOTH";
+    et_caprise_ = options_.gw_et == "CAPILLARY_RISE" || options_.gw_et == "BOTH";
     if (options_.link_seepage == GwLinkMode::DEFAULT)
         options_.link_seepage = options_.per_subcatch ? GwLinkMode::AUTO : GwLinkMode::TWO_WAY;
     options_.wilting_suction =
@@ -341,6 +349,7 @@ std::string SubsurfaceSolver::initialize(const MeshData& mesh, const InertialEdg
         return "2D aquifer: M_LAYERS must be in [2, 128].";
 
     state_.resize(n, options_.m_layers);
+    clock_telemetry_.reset(n, perf::enabled());
     resolveRows(mesh, uf, cfg, warnings);
     resolveClosures(warnings);
 
@@ -417,6 +426,7 @@ std::string SubsurfaceSolver::initialize(const MeshData& mesh, const InertialEdg
     node_pending_down_.assign(node_beds_.size(), 0.0);
     node_pending_up_ = node_pending_down_;
     bed_gathered_.assign(node_beds_.size(), 0.0); // T7.4
+    bed_gathered_cell_ = -1;
     node_exchange_vol_.assign(static_cast<std::size_t>(std::max(0, n_nodes)), 0.0);
     node_drawn_gw_ = node_exchange_vol_; // G-X1
     drain_cap_binds_ = 0;                // G-W1b
@@ -483,137 +493,157 @@ std::string SubsurfaceSolver::initialize(const MeshData& mesh, const InertialEdg
 // ---------------------------------------------------------------------------
 
 void SubsurfaceSolver::refreshDtCell(const MeshData& mesh, const InertialEdges& edges) {
+    perf::ProcessTimer process_timer(perf::ProcessPhase::gw_dt);
     if (!state_.active)
         return;
     const int n = state_.n_cells;
-    const int ne = static_cast<int>(state_.eacc_L.size());
-    const bool has_lat = ne > 0 && static_cast<int>(edges.cell_ptr.size()) == n + 1;
+    const int threads = opts_ ? std::max(1, opts_->num_threads) : 1;
+    if (threads > 1 && n >= 512) {
+#pragma omp parallel for schedule(static) num_threads(threads)
+        for (int i = 0; i < n; ++i)
+            refreshCellBound(i, mesh, edges);
+    } else
+        for (int i = 0; i < n; ++i)
+            refreshCellBound(i, mesh, edges);
+    clock_telemetry_.rebuilt(covered_, state_.closure);
+}
 
-    for (int i = 0; i < n; ++i) {
-        const auto u = static_cast<std::size_t>(i);
-        const double A = std::max(state_.area[u], kTiny);
-        const double zs = state_.zs[u];
-        const double L = std::max(zs - state_.hg[u], kTiny);
-        const soil::Params p = paramsOf(i);
+void SubsurfaceSolver::refreshCellBound(int i, const MeshData& mesh, const InertialEdges& edges) {
+    const int n = state_.n_cells;
+    const bool has_lat = !state_.eacc_L.empty() && static_cast<int>(edges.cell_ptr.size()) == n + 1;
+    const auto u = static_cast<std::size_t>(i);
+    const double A = std::max(state_.area[u], kTiny);
+    const double zs = state_.zs[u];
+    const double L = std::max(zs - state_.hg[u], kTiny);
+    const soil::Params p = paramsOf(i);
 
-        // --- Δt_g: explicit diffusion on the saturated head ---------------
-        // A cell's transmissivity sum over its faces; the drainable storage
-        // A·Sy is the capacitance. `T` uses the WETTER of the pair with a
-        // floor, so an empty aquifer does not report an infinite step and
-        // then take one.
-        double sumT = 0.0;
-        if (has_lat) {
-            const int b0 = edges.cell_ptr[u];
-            const int b1 = edges.cell_ptr[u + 1];
-            for (int k = b0; k < b1; ++k) {
-                const int e = edges.cell_edge[static_cast<std::size_t>(k)];
-                const auto eu = static_cast<std::size_t>(e);
-                const int j = (edges.cL[eu] == i) ? edges.cR[eu] : edges.cL[eu];
-                const auto ju = static_cast<std::size_t>(j);
-                if (!covered_[u] || !covered_[ju])
-                    continue; // no-flow face
-                const double Ke = harmonic(state_.Ks[u], state_.Ks[ju]);
-                const double Te = std::max({state_.hg[u], state_.hg[ju], 0.01 * zs});
-                sumT += Ke * Te * edges.xi[eu] * edges.inv_dx[eu];
-            }
+    // --- Δt_g: explicit diffusion on the saturated head ---------------
+    // A cell's transmissivity sum over its faces; the drainable storage
+    // A·Sy is the capacitance. `T` uses the WETTER of the pair with a
+    // floor, so an empty aquifer does not report an infinite step and
+    // then take one.
+    double sumT = 0.0;
+    if (has_lat) {
+        const int b0 = edges.cell_ptr[u];
+        const int b1 = edges.cell_ptr[u + 1];
+        for (int k = b0; k < b1; ++k) {
+            const int e = edges.cell_edge[static_cast<std::size_t>(k)];
+            const auto eu = static_cast<std::size_t>(e);
+            const int j = (edges.cL[eu] == i) ? edges.cR[eu] : edges.cL[eu];
+            const auto ju = static_cast<std::size_t>(j);
+            if (!covered_[u] || !covered_[ju])
+                continue; // no-flow face
+            const double Ke = harmonic(state_.Ks[u], state_.Ks[ju]);
+            const double Te = std::max({state_.hg[u], state_.hg[ju], 0.01 * zs});
+            sumT += Ke * Te * edges.xi[eu] * edges.inv_dx[eu];
         }
+    }
+    if (u < cell_boundaries_.size())
+        for (auto id : cell_boundaries_[u]) {
+            const auto& edge = boundaries_[id];
+            if (!edge.head)
+                continue;
+            double outside = std::abs(edge.signal.constant - state_.z_bed[u]);
+            for (double value : edge.signal.ordinates())
+                outside = std::max(outside, std::abs(value - state_.z_bed[u]));
+            // Conservative bound on the unconfined head-flux derivative,
+            // including a prescribed level above the aquifer top. A boundary
+            // cannot bypass the same explicit storage/flux stability gate.
+            sumT += state_.Ks[u] * edge.length / edge.distance * (2 * zs + outside);
+        }
+    if (clock_state_ && u < runtime_sources_.cells.size()) {
+        for (auto key : runtime_sources_.cells[u]) {
+            const auto& boundary = runtime_sources_.rows[key];
+            if (boundary.boundary_edge < 0 || !std::isfinite(boundary.boundary_head))
+                continue;
+            const auto slot = MeshData::slot(i, boundary.boundary_edge);
+            const double outside = std::abs(boundary.boundary_head - state_.z_bed[u]);
+            sumT +=
+                state_.Ks[u] * mesh.edge_length[slot] / mesh.edge_dist_c[slot] * (2 * zs + outside);
+        }
+    }
+    // Deep loss is a linear sink with rate c_loss/z_s; the node exchange
+    // conductance is folded in where a bed sits on this cell.
+    double lin = state_.c_loss[u] / std::max(zs, kTiny) * A;
+    for (const auto id : cell_beds_[u]) {
+        const auto& b = node_beds_[id];
+        lin += (b.Kc > 0.0 && b.dC > 0.0) ? b.Kc * b.area / b.dC
+                                          : state_.Ks[u] * b.area / std::max(0.5 * zs, kTiny);
+    }
+    const double Sy = std::max(state_.theta_s[u] - state_.theta_r[u], kSyFloor);
+    const double den = sumT + lin;
+    double dt_g = 1.0e30;
+    if (den > kTiny)
+        dt_g = options_.c_gw * A * Sy / den;
+
+    // --- Δt_u: the column's own bound --------------------------------
+    double dt_u = 1.0e30;
+    const auto cl = static_cast<GwClosure>(state_.closure[u]);
+    if (cl == GwClosure::SIGMA) {
+        // L̇ is unknown before the step; use the previous firing's table
+        // velocity implied by q0_last, which is the term that actually
+        // drives it.
+        const double Ldot = -state_.q0_last[u] / Sy;
+        dt_u = sigma::columnDtLimit(p, &state_.theta_sigma[u], state_.m_layers, n, L, Ldot,
+                                    options_.c_col, options_.capillary_diff);
+    } else if (cl == GwClosure::CLOSED_FORM) {
+        // The closed form is a relaxation ẏ = −C·(y − y*); its stiffness
+        // is C = −∂q₀/∂hᵤ. Taken numerically so every soil law is
+        // covered by one expression rather than four differentiations.
+        const double hu = state_.hu[u];
+        const double d = std::max(1.0e-6 * std::max(hu, 1.0e-3), 1.0e-9);
+        const double C = (soil::rechargeQ0(p, L, hu) - soil::rechargeQ0(p, L, hu + d)) / d;
+        if (C > kTiny)
+            dt_u = options_.c_col / C;
+    }
+    // ENSLAVED has no unsaturated state, so no unsaturated step bound —
+    // that is the whole point of the reduction.
+
+    clock_telemetry_.bounds(i, dt_g, dt_u);
+    const double hg = state_.hg[u];
+    double dt_solute = 1e30;
+    if (tr_.active() && tr_.dispersion_on && hg > kTiny && !options_.per_subcatch) {
+        dispersion::GradientFit fit;
+        const double head = state_.z_bed[u] + hg;
+        for (int p = edges.cell_ptr[u]; p < edges.cell_ptr[u + 1]; ++p) {
+            const int e = edges.cell_edge[p], other = edges.cL[e] == i ? edges.cR[e] : edges.cL[e];
+            if (!covered_[other])
+                continue;
+            fit.add(mesh.tri_cx[other] - mesh.tri_cx[u], mesh.tri_cy[other] - mesh.tri_cy[u],
+                    state_.z_bed[other] + state_.hg[other] - head);
+        }
+        const auto g = fit.value();
+        double speed = state_.Ks[u] * std::hypot(g[0], g[1]) / state_.theta_s[u];
         if (u < cell_boundaries_.size())
             for (auto id : cell_boundaries_[u]) {
-                const auto& edge = boundaries_[id];
-                if (!edge.head)
-                    continue;
-                double outside = std::abs(edge.signal.constant - state_.z_bed[u]);
-                for (double value : edge.signal.ordinates())
-                    outside = std::max(outside, std::abs(value - state_.z_bed[u]));
-                // Conservative bound on the unconfined head-flux derivative,
-                // including a prescribed level above the aquifer top. A boundary
-                // cannot bypass the same explicit storage/flux stability gate.
-                sumT += state_.Ks[u] * edge.length / edge.distance * (2 * zs + outside);
+                const auto& b = boundaries_[id];
+                double maximum = std::abs(b.signal.constant - (b.head ? head : 0));
+                for (double v : b.signal.ordinates())
+                    maximum = std::max(maximum, std::abs(v - (b.head ? head : 0)));
+                speed = std::max(speed,
+                                 b.head ? state_.Ks[u] * maximum / (state_.theta_s[u] * b.distance)
+                                        : maximum / (state_.theta_s[u] * hg * b.length));
             }
-        // Deep loss is a linear sink with rate c_loss/z_s; the node exchange
-        // conductance is folded in where a bed sits on this cell.
-        double lin = state_.c_loss[u] / std::max(zs, kTiny) * A;
-        for (const auto& b : node_beds_) {
-            if (b.cell != i)
+        const double diffusion = tr_.D_m[u] + std::max(tr_.alpha_L[u], tr_.alpha_T[u]) * speed;
+        double sum = 0;
+        for (int p = edges.cell_ptr[u]; p < edges.cell_ptr[u + 1]; ++p) {
+            const int e = edges.cell_edge[p],
+                      other = edges.cL[e] == i ? edges.cR[e] : edges.cL[e];
+            if (!covered_[other] || state_.hg[other] <= kTiny)
                 continue;
-            lin += (b.Kc > 0.0 && b.dC > 0.0) ? b.Kc * b.area / b.dC
-                                              : state_.Ks[u] * b.area / std::max(0.5 * zs, kTiny);
+            const double distance = 1 / edges.inv_dx_normal[e];
+            // Extra factor bounds the explicitly deferred skew correction.
+            const double skew = std::max(1., edges.inv_dx_normal[e] / edges.inv_dx[e]);
+            sum += diffusion * edges.xi[e] * skew / distance;
         }
-        const double Sy = std::max(state_.theta_s[u] - state_.theta_r[u], kSyFloor);
-        const double den = sumT + lin;
-        double dt_g = 1.0e30;
-        if (den > kTiny)
-            dt_g = options_.c_gw * A * Sy / den;
-
-        // --- Δt_u: the column's own bound --------------------------------
-        double dt_u = 1.0e30;
-        const auto cl = static_cast<GwClosure>(state_.closure[u]);
-        if (cl == GwClosure::SIGMA) {
-            // L̇ is unknown before the step; use the previous firing's table
-            // velocity implied by q0_last, which is the term that actually
-            // drives it.
-            const double Ldot = -state_.q0_last[u] / Sy;
-            dt_u = sigma::columnDtLimit(p, &state_.theta_sigma[u], state_.m_layers, n, L, Ldot,
-                                        options_.c_col, options_.capillary_diff);
-        } else if (cl == GwClosure::CLOSED_FORM) {
-            // The closed form is a relaxation ẏ = −C·(y − y*); its stiffness
-            // is C = −∂q₀/∂hᵤ. Taken numerically so every soil law is
-            // covered by one expression rather than four differentiations.
-            const double hu = state_.hu[u];
-            const double d = std::max(1.0e-6 * std::max(hu, 1.0e-3), 1.0e-9);
-            const double C = (soil::rechargeQ0(p, L, hu) - soil::rechargeQ0(p, L, hu + d)) / d;
-            if (C > kTiny)
-                dt_u = options_.c_col / C;
-        }
-        // ENSLAVED has no unsaturated state, so no unsaturated step bound —
-        // that is the whole point of the reduction.
-
-        const double hg = state_.hg[u];
-        double dt_solute = 1e30;
-        if (tr_.active() && tr_.dispersion_on && hg > kTiny && !options_.per_subcatch) {
-            dispersion::GradientFit fit;
-            const double head = state_.z_bed[u] + hg;
-            for (int p = edges.cell_ptr[u]; p < edges.cell_ptr[u + 1]; ++p) {
-                const int e = edges.cell_edge[p],
-                          other = edges.cL[e] == i ? edges.cR[e] : edges.cL[e];
-                if (!covered_[other])
-                    continue;
-                fit.add(mesh.tri_cx[other] - mesh.tri_cx[u], mesh.tri_cy[other] - mesh.tri_cy[u],
-                        state_.z_bed[other] + state_.hg[other] - head);
-            }
-            const auto g = fit.value();
-            double speed = state_.Ks[u] * std::hypot(g[0], g[1]) / state_.theta_s[u];
-            if (u < cell_boundaries_.size())
-                for (auto id : cell_boundaries_[u]) {
-                    const auto& b = boundaries_[id];
-                    double maximum = std::abs(b.signal.constant - (b.head ? head : 0));
-                    for (double v : b.signal.ordinates())
-                        maximum = std::max(maximum, std::abs(v - (b.head ? head : 0)));
-                    speed = std::max(speed, b.head ? state_.Ks[u] * maximum /
-                                                         (state_.theta_s[u] * b.distance)
-                                                   : maximum / (state_.theta_s[u] * hg * b.length));
-                }
-            const double diffusion = tr_.D_m[u] + std::max(tr_.alpha_L[u], tr_.alpha_T[u]) * speed;
-            double sum = 0;
-            for (int p = edges.cell_ptr[u]; p < edges.cell_ptr[u + 1]; ++p) {
-                const int e = edges.cell_edge[p],
-                          other = edges.cL[e] == i ? edges.cR[e] : edges.cL[e];
-                if (!covered_[other] || state_.hg[other] <= kTiny)
-                    continue;
-                const double distance = 1 / edges.inv_dx_normal[e];
-                // Extra factor bounds the explicitly deferred skew correction.
-                const double skew = std::max(1., edges.inv_dx_normal[e] / edges.inv_dx[e]);
-                sum += diffusion * edges.xi[e] * skew / distance;
-            }
-            if (sum > 0)
-                dt_solute = std::min(.5, tr_.c_diff) * A / sum;
-        }
-        state_.dt_cell[u] = std::min({dt_g, dt_u, dt_solute});
-        if (heat_.active() && !heat_.cells[u].column.energy.empty())
-            state_.dt_cell[u] = std::min(state_.dt_cell[u], heat_.config->options.thermal_max_step);
-        if (u < heat_dt_.size())
-            state_.dt_cell[u] = std::min(state_.dt_cell[u], heat_dt_[u]);
+        if (sum > 0)
+            dt_solute = std::min(.5, tr_.c_diff) * A / sum;
     }
+    state_.dt_cell[u] = std::min({dt_g, dt_u, dt_solute});
+    if (heat_.active() && !heat_.cells[u].column.energy.empty())
+        state_.dt_cell[u] = std::min(state_.dt_cell[u], heat_.config->options.thermal_max_step);
+    if (u < heat_dt_.size())
+        state_.dt_cell[u] = std::min(state_.dt_cell[u], heat_dt_[u]);
 }
 
 int SubsurfaceSolver::requiredTiers(double dt0) const noexcept {
@@ -633,8 +663,12 @@ void SubsurfaceSolver::assignTiers(double dt0, int n_tiers) {
     if (!state_.active)
         return;
     const int K = std::max(1, n_tiers);
-    cells_by_tier_.assign(static_cast<std::size_t>(K), {});
-    faces_by_tier_.assign(static_cast<std::size_t>(K), {});
+    cells_by_tier_.resize(static_cast<std::size_t>(K));
+    faces_by_tier_.resize(static_cast<std::size_t>(K));
+    for (auto& cells : cells_by_tier_)
+        cells.clear();
+    for (auto& faces : faces_by_tier_)
+        faces.clear();
     tier_firings_.assign(static_cast<std::size_t>(K), 0);
 
     for (int i = 0; i < state_.n_cells; ++i) {
@@ -681,6 +715,7 @@ void SubsurfaceSolver::assignTiers(double dt0, int n_tiers) {
 // ---------------------------------------------------------------------------
 
 void SubsurfaceSolver::fireGwFaces(int tier, double dt) {
+    perf::ProcessTimer process_timer(perf::ProcessPhase::gw_faces);
     if (!state_.active)
         return;
     if (tr_.n_layers > 0 && heat_.active())
@@ -692,17 +727,63 @@ void SubsurfaceSolver::fireGwFaces(int tier, double dt) {
             }
     if (!tierHasFaces(tier))
         return;
-    const auto& list = faces_by_tier_[static_cast<std::size_t>(tier)];
+    fireGwFaceList(faces_by_tier_[static_cast<std::size_t>(tier)], dt, {});
+}
+
+void SubsurfaceSolver::fireGwFaceList(std::span<const int> list, double shared_dt,
+                                      std::span<const double> elapsed) {
     const InertialEdges& E = *edges_;
+    // Yield is unchanged throughout this tier. Reservations below remain live:
+    // each preceding face may have promised more of the donor's water.
+    static thread_local std::vector<double> face_yield;
+    const double unset_yield = std::numeric_limits<double>::quiet_NaN();
+    if (elapsed.empty() || list.size() * 2 >= std::size_t(state_.n_cells)) {
+        face_yield.assign(state_.n_cells, unset_yield);
+    } else {
+        face_yield.resize(state_.n_cells);
+        for (int e : list)
+            face_yield[E.cL[e]] = face_yield[E.cR[e]] = unset_yield;
+    }
+
+    // Canonical heads and native masses do not change during a face tier.
+    // Physical export reservations do change and are intentionally read below per face.
+    const bool disperse = tr_.active() && tr_.dispersion_on;
+    static thread_local std::vector<double> face_concentration;
+    static thread_local std::vector<std::array<double, 2>> face_gradient, face_stencil;
+    static thread_local std::vector<dispersion::Tensor> face_coefficient;
+    static thread_local std::vector<unsigned char> concentration_valid, gradient_valid,
+        stencil_valid, coefficient_valid;
+    if (disperse) {
+        const auto values = std::size_t(state_.n_cells) * (tr_.n_species + 1);
+        face_concentration.resize(values);
+        face_gradient.resize(values);
+        face_stencil.resize(values);
+        face_coefficient.resize(state_.n_cells);
+        concentration_valid.assign(values, 0);
+        gradient_valid.assign(values, 0);
+        stencil_valid.assign(values, 0);
+        coefficient_valid.assign(state_.n_cells, 0);
+    }
+    const auto face_index = [&](int cell, int species) {
+        return std::size_t(species + 1) * state_.n_cells + cell;
+    };
 
     const auto concentration = [&](int cell, int species) {
+        const auto k = face_index(cell, species);
+        if (concentration_valid[k])
+            return face_concentration[k];
         const double water = satVolume(cell);
-        if (!(water > 0))
-            return 0.;
-        return tr_.sat_mass[tr_.idx(species, cell)] *
-               tr_.dissolvedFraction(species, cell, state_.theta_s[cell]) / water;
+        face_concentration[k] =
+            !(water > 0) ? 0.
+                         : tr_.sat_mass[tr_.idx(species, cell)] *
+                               tr_.dissolvedFraction(species, cell, state_.theta_s[cell]) / water;
+        concentration_valid[k] = 1;
+        return face_concentration[k];
     };
     const auto gradient = [&](int cell, int species) {
+        const auto k = face_index(cell, species);
+        if (gradient_valid[k])
+            return face_gradient[k];
         dispersion::GradientFit fit;
         const auto value = [&](int c) {
             return species < 0 ? state_.z_bed[c] + state_.hg[c] : concentration(c, species);
@@ -729,9 +810,31 @@ void SubsurfaceSolver::fireGwFaces(int tier, double dt) {
                             boundary.signal.at(time) /
                                 (state_.Ks[cell] * state_.hg[cell] * boundary.length));
             }
-        return fit.value();
+        face_gradient[k] = fit.value();
+        gradient_valid[k] = 1;
+        return face_gradient[k];
     };
-    for (const int e : list) {
+    const auto stencil = [&](int cell, int species) {
+        const auto k = face_index(cell, species);
+        if (!stencil_valid[k]) {
+            auto& range = face_stencil[k];
+            range = {std::numeric_limits<double>::infinity(),
+                     -std::numeric_limits<double>::infinity()};
+            for (int p = E.cell_ptr[cell]; p < E.cell_ptr[cell + 1]; ++p) {
+                const int e = E.cell_edge[p], other = E.cL[e] == cell ? E.cR[e] : E.cL[e];
+                if (!covered_[other] || !(satVolume(other) > 0))
+                    continue;
+                const double c = concentration(other, species);
+                range[0] = std::min(range[0], c);
+                range[1] = std::max(range[1], c);
+            }
+            stencil_valid[k] = 1;
+        }
+        return face_stencil[k];
+    };
+    for (std::size_t slot = 0; slot < list.size(); ++slot) {
+        const int e = list[slot];
+        const double dt = elapsed.empty() ? shared_dt : elapsed[slot];
         const auto eu = static_cast<std::size_t>(e);
         const auto l = static_cast<std::size_t>(E.cL[eu]);
         const auto r = static_cast<std::size_t>(E.cR[eu]);
@@ -757,10 +860,12 @@ void SubsurfaceSolver::fireGwFaces(int tier, double dt) {
         // drainable water in one step. The share is split across the donor's
         // own faces so a cell with many wet neighbours cannot be emptied
         // several times over within one firing.
-        const double Sy = std::max(specificYieldOf(int(don)), kSyFloor);
+        if (std::isnan(face_yield[don]))
+            face_yield[don] = specificYieldOf(int(don));
+        const double Sy = std::max(face_yield[don], kSyFloor);
         const int nf = std::max(1, cell_nface_[don]);
         double cap = std::min(kFaceShare * T * Sy * state_.area[don] / static_cast<double>(nf),
-                              unreservedDrainableWater(int(don))) /
+                              unreservedDrainableWater(int(don), face_yield[don])) /
                      std::max(dt, kTiny);
         if (lid_receipts_enabled_) {
             NodeWaterBudget budget;
@@ -783,7 +888,6 @@ void SubsurfaceSolver::fireGwFaces(int tier, double dt) {
         if (tr_.active() && vol != 0.0) {
             const double vd = satVolume(static_cast<int>(don));
             if (vd > 0.0) {
-                const auto ne = static_cast<std::size_t>(E.ne);
                 for (int s = 0; s < tr_.n_species; ++s) {
                     const double m_don = tr_.sat_mass[tr_.idx(s, static_cast<int>(don))];
                     const bool layered_porewater = tr_.n_layers == 0 && heat_.active() &&
@@ -828,7 +932,7 @@ void SubsurfaceSolver::fireGwFaces(int tier, double dt) {
                     }
                     bookPresetPorewaterOut(int(don), s, dm);
                     const double sgn = (vol > 0.0) ? 1.0 : -1.0;
-                    const auto k = static_cast<std::size_t>(s) * ne + eu;
+                    const auto k = tr_.lateralIndex(s, eu);
                     tr_.sacc_L[k] -= sgn * dm;
                     tr_.sacc_R[k] += sgn * dm;
                 }
@@ -851,6 +955,8 @@ void SubsurfaceSolver::fireGwFaces(int tier, double dt) {
                 const double dl = armL[0] * nx + armL[1] * ny, dr = -armR[0] * nx - armR[1] * ny;
                 const auto headL = gradient(int(l), -1), headR = gradient(int(r), -1);
                 const auto coefficient = [&](std::size_t cell, const std::array<double, 2>& head) {
+                    if (coefficient_valid[cell])
+                        return face_coefficient[cell];
                     const double theta = state_.theta_s[cell], factor = -state_.Ks[cell] / theta;
                     auto tensor =
                         dispersion::tensor(factor * head[0], factor * head[1], tr_.alpha_L[cell],
@@ -859,10 +965,11 @@ void SubsurfaceSolver::fireGwFaces(int tier, double dt) {
                     tensor.xx *= section;
                     tensor.xy *= section;
                     tensor.yy *= section;
+                    face_coefficient[cell] = tensor;
+                    coefficient_valid[cell] = 1;
                     return tensor;
                 };
                 {
-                    const auto ne = static_cast<std::size_t>(E.ne);
                     const int nf_r = std::max(1, cell_nface_[r]);
                     const int nf_l = std::max(1, cell_nface_[l]);
                     for (int s = 0; s < tr_.n_species; ++s) {
@@ -928,16 +1035,11 @@ void SubsurfaceSolver::fireGwFaces(int tier, double dt) {
                         // tensor cross terms can exchange across equal face
                         // concentrations, so a two-point gap is not a bound.
                         double low = std::min(ca, cb), high = std::max(ca, cb);
-                        for (int cell : {int(l), int(r)})
-                            for (int p = E.cell_ptr[cell]; p < E.cell_ptr[cell + 1]; ++p) {
-                                const int e = E.cell_edge[p],
-                                          other = E.cL[e] == cell ? E.cR[e] : E.cL[e];
-                                if (!covered_[other] || !(satVolume(other) > 0))
-                                    continue;
-                                const double c = concentration(other, s);
-                                low = std::min(low, c);
-                                high = std::max(high, c);
-                            }
+                        for (int cell : {int(l), int(r)}) {
+                            const auto range = stencil(cell, s);
+                            low = std::min(low, range[0]);
+                            high = std::max(high, range[1]);
+                        }
                         const double capacityL =
                             va / tr_.dissolvedFraction(s, int(l), state_.theta_s[l]);
                         const double capacityR =
@@ -974,7 +1076,7 @@ void SubsurfaceSolver::fireGwFaces(int tier, double dt) {
                             dMd = (dMd > 0.0) ? cap : -cap;
                             ++tr_.dispersion_limiter_binds;
                         }
-                        const auto k = static_cast<std::size_t>(s) * ne + eu;
+                        const auto k = tr_.lateralIndex(s, eu);
                         bookPresetPorewaterOut(int(dMd > 0 ? l : r), s, std::abs(dMd));
                         tr_.sacc_L[k] -= dMd;
                         tr_.sacc_R[k] += dMd;
@@ -998,14 +1100,13 @@ double SubsurfaceSolver::gatherLateralMass(int i, int s) noexcept {
     const auto u = static_cast<std::size_t>(i);
     if (u + 1 >= E.cell_ptr.size())
         return 0.0;
-    const auto ne = static_cast<std::size_t>(E.ne);
     double m = 0.0;
     const int b0 = E.cell_ptr[u];
     const int b1 = E.cell_ptr[u + 1];
     for (int k = b0; k < b1; ++k) {
         const auto ku = static_cast<std::size_t>(k);
         const auto eu = static_cast<std::size_t>(E.cell_edge[ku]);
-        const auto j = static_cast<std::size_t>(s) * ne + eu;
+        const auto j = tr_.lateralIndex(s, eu);
         if (E.cell_sign[ku] > 0) {
             m += consumePending(tr_.sacc_L[j]);
         } else {
@@ -1047,6 +1148,7 @@ void SubsurfaceSolver::resetNodeExchangeVolumes() noexcept {
 }
 
 void SubsurfaceSolver::sampleNodeExchange(const NodeData* nodes, double dt, double end) {
+    perf::ProcessTimer process_timer(perf::ProcessPhase::gw_node_exchange);
     if (!state_.active || node_beds_.empty() || nodes == nullptr)
         return;
     const double l12 = opts_ ? opts_->len_1d_to_2d : 1.0;
@@ -1212,24 +1314,27 @@ void SubsurfaceSolver::sampleNodeExchange(const NodeData* nodes, double dt, doub
                     continue;
                 const int layer = contactLayer(bed.cell, contact);
                 if (layer >= 0)
-                    tr_.contact_node_mass[tr_.layerIdx(sp, layer, bed.cell)] += v_2d * c;
+                    bookClockAmount(bed.cell, GwSlot::contact_node_mass, tr_.contact_node_mass,
+                                    tr_.layerIdx(sp, layer, bed.cell), v_2d * c);
                 else
-                    tr_.nacc_mass[static_cast<std::size_t>(sp) * nb + b] += v_2d * c;
+                    bookClockAmount(bed.cell, GwSlot::node_mass, tr_.nacc_mass,
+                                    static_cast<std::size_t>(sp) * nb + b, v_2d * c);
             }
         }
         if (tr_.n_layers > 0 && vol > 0)
-            tr_.contact_node_out[b] += vol;
+            bookClockAmount(bed.cell, GwSlot::contact_node_out, tr_.contact_node_out, b, vol);
         if (heat_.active() && vol > 0)
-            heat_node_out_volume_[b] += vol;
+            bookClockAmount(bed.cell, GwSlot::heat_node_volume, heat_node_out_volume_, b, vol);
         if (vol < 0) {
             const int layer = contactLayer(bed.cell, contact);
             if (layer >= 0)
-                tr_.contact_water[std::size_t(layer) * state_.n_cells + ci] -= vol;
+                bookClockAmount(bed.cell, GwSlot::contact_water, tr_.contact_water,
+                                std::size_t(layer) * state_.n_cells + ci, -vol);
         }
-        state_.nacc[b] += vol; // gathered at the GW firing
-        if (lid_receipts_enabled_) {
-            node_pending_down_[b] += std::max(0., -vol);
-            node_pending_up_[b] += std::max(0., vol);
+        bookClockAmount(bed.cell, GwSlot::node, state_.nacc, b, vol); // gathered at the GW firing
+        if (lid_receipts_enabled_ || clock_state_) {
+            bookClockAmount(bed.cell, GwSlot::bed_down, node_pending_down_, b, std::max(0., -vol));
+            bookClockAmount(bed.cell, GwSlot::bed_up, node_pending_up_, b, std::max(0., vol));
         }
         bed_exchange_cum_[b] += vol; // G-O: the per-bed series
         if (mobile_lid_bed_[b]) {
@@ -1257,23 +1362,21 @@ double SubsurfaceSolver::gatherNodeMass(int i, int s) noexcept {
         return 0.0;
     const auto nb = node_beds_.size();
     double m = 0.0;
-    for (std::size_t b = 0; b < nb; ++b) {
-        if (node_beds_[b].cell != i)
-            continue;
+    for (const auto b : cell_beds_[i]) {
         const auto k = static_cast<std::size_t>(s) * nb + b;
-        m += consumePending(tr_.nacc_mass[k]);
+        m += takeClockAmount(i, GwSlot::node_mass, tr_.nacc_mass, k);
     }
     return m;
 }
 
-void SubsurfaceSolver::bookLinkSeepageMass(int cell, int species, double mass) noexcept {
+void SubsurfaceSolver::bookLinkSeepageMass(int cell, int species, double mass) {
     if (!tr_.active() || mass == 0.0)
         return;
     if (cell < 0 || cell >= tr_.n_cells)
         return;
     if (species < 0 || species >= tr_.n_species)
         return;
-    tr_.lacc_mass[tr_.idx(species, cell)] += mass;
+    bookClockAmount(cell, GwSlot::link_mass, tr_.lacc_mass, tr_.idx(species, cell), mass);
 }
 
 // G-W1 (2026-09-21): the single owner of specific yield.
@@ -1366,8 +1469,14 @@ double SubsurfaceSolver::specificYieldOf(int cell) const noexcept {
  * Read-only and allocation-free; requires stable producer ledgers.
  */
 double SubsurfaceSolver::unreservedDrainableWater(int cell) const noexcept {
+    return unreservedDrainableWater(cell, specificYieldOf(cell));
+}
+
+double SubsurfaceSolver::unreservedDrainableWater(int cell, double specific_yield) const noexcept {
     const auto u = std::size_t(cell);
-    double reserved = (tr_.n_layers > 0 ? tr_.contact_link_out[u] : std::max(0., -state_.lacc[u])) +
+    double reserved = (tr_.n_layers > 0 ? tr_.contact_link_out[u]
+                       : clock_state_   ? clock_state_->link_out[u]
+                                        : std::max(0., -state_.lacc[u])) +
                       pendingLidUp(cell);
     if (!state_.eacc_L.empty())
         for (int p = edges_->cell_ptr[u]; p < edges_->cell_ptr[u + 1]; ++p) {
@@ -1375,15 +1484,15 @@ double SubsurfaceSolver::unreservedDrainableWater(int cell) const noexcept {
             reserved +=
                 std::max(0., -(edges_->cell_sign[p] > 0 ? state_.eacc_L[e] : state_.eacc_R[e]));
         }
-    if (!lid_receipts_enabled_)
+    if (!lid_receipts_enabled_ && !clock_state_)
         for (int b : cell_beds_[u])
             reserved += tr_.n_layers > 0 ? tr_.contact_node_out[b] : std::max(0., state_.nacc[b]);
-    return std::max(0., specificYieldOf(cell) * state_.hg[u] * state_.area[u] - reserved);
+    return std::max(0., specific_yield * state_.hg[u] * state_.area[u] - reserved);
 }
 /**
  * @brief Sum nonnegative queued saturated native inventory exports.
  * @param[in] cell Valid prepared cell with matching edge CSR; unchecked.
- * @param[in] species Valid transport row with consistent species-major lateral arrays;
+ * @param[in] species Valid transport row with consistent edge-major lateral arrays;
  * unchecked.
  * @return Reserved native inventory from lout_mass and this cell's outward lateral side packets.
  * Negative values are excluded from the reservation, including signed-row negative receipts.
@@ -1391,12 +1500,12 @@ double SubsurfaceSolver::unreservedDrainableWater(int cell) const noexcept {
  * extents. Caller pairs this with the same stable transport/hydraulic producer state.
  */
 double SubsurfaceSolver::pendingSaturatedMassExport(int cell, int species) const noexcept {
-    const auto u = std::size_t(cell), ne = state_.eacc_L.size();
+    const auto u = std::size_t(cell);
     double reserved =
         tr_.lout_mass.empty() ? 0 : std::max(0., tr_.lout_mass[tr_.idx(species, cell)]);
     if (!tr_.sacc_L.empty())
         for (int p = edges_->cell_ptr[u]; p < edges_->cell_ptr[u + 1]; ++p) {
-            const auto e = std::size_t(edges_->cell_edge[p]), k = std::size_t(species) * ne + e;
+            const auto e = std::size_t(edges_->cell_edge[p]), k = tr_.lateralIndex(species, e);
             reserved += std::max(0., -(edges_->cell_sign[p] > 0 ? tr_.sacc_L[k] : tr_.sacc_R[k]));
         }
     return reserved;
@@ -1478,7 +1587,7 @@ std::string SubsurfaceSolver::nodeWaterBudget(int cell, double interval,
     for (int b : cell_beds_[u]) {
         if (!std::isfinite(state_.nacc[b]))
             return "Nonfinite pending node trial water.";
-        if (!lid_receipts_enabled_)
+        if (!lid_receipts_enabled_ && !clock_state_)
             claimed += std::max(0.0, state_.nacc[b]);
     }
     NodeWaterBudget proposed{state_.z_bed[u] + state_.hg[u], std::max(0.0, donor - claimed),
@@ -1502,19 +1611,27 @@ double SubsurfaceSolver::gatherNode(int i) noexcept {
     // deck. Tying the weights to the gather makes them exact by
     // construction, because they ARE the volumes that produced this
     // firing's `node_out`.
-    std::fill(bed_gathered_.begin(), bed_gathered_.end(), 0.0);
-    for (std::size_t b = 0; b < node_beds_.size(); ++b) {
-        if (node_beds_[b].cell != i)
-            continue;
-        const double take = consumePending(state_.nacc[b]);
+    // Retain the globally zeroed scratch representation, including checkpoints,
+    // by clearing just the previous gather's slots before writing this cell's.
+    if (bed_gathered_cell_ >= 0)
+        for (const auto b : cell_beds_[bed_gathered_cell_])
+            bed_gathered_[b] = 0.0;
+    bed_gathered_cell_ = i;
+    for (const auto b : cell_beds_[i]) {
+        const double take = takeClockAmount(i, GwSlot::node, state_.nacc, b);
         if (heat_.active())
-            heat_node_gathered_out_[b] = consumePending(heat_node_out_volume_[b]);
-        if (lid_receipts_enabled_) {
-            consumePending(node_pending_down_[b]);
-            consumePending(node_pending_up_[b]);
+            heat_node_gathered_out_[b] =
+                takeClockAmount(i, GwSlot::heat_node_volume, heat_node_out_volume_, b);
+        double gross_out = 0.;
+        if (lid_receipts_enabled_ || clock_state_) {
+            takeClockAmount(i, GwSlot::bed_down, node_pending_down_, b);
+            gross_out = takeClockAmount(i, GwSlot::bed_up, node_pending_up_, b);
         }
         if (b < bed_gathered_.size())
-            bed_gathered_[b] = tr_.n_layers > 0 ? consumePending(tr_.contact_node_out[b]) : take;
+            bed_gathered_[b] =
+                tr_.n_layers > 0
+                    ? takeClockAmount(i, GwSlot::contact_node_out, tr_.contact_node_out, b)
+                    : (clock_state_ && !richards_bed_owned_[b] ? gross_out : take);
         v += take;
     }
     return v;
@@ -1730,14 +1847,15 @@ double SubsurfaceSolver::pollutantDecay(int s,
     return (u < pollut_decay.size()) ? pollut_decay[u] : 0.0;
 }
 
-void SubsurfaceSolver::bookInfiltrationMass(int cell, int species, double mass) noexcept {
+void SubsurfaceSolver::bookInfiltrationMass(int cell, int species, double mass) {
     if (!tr_.active() || mass == 0.0)
         return;
     if (cell < 0 || cell >= tr_.n_cells)
         return;
     if (species < 0 || species >= tr_.n_species)
         return;
-    tr_.xacc_from_surface[tr_.idx(species, cell)] += mass;
+    bookClockAmount(cell, GwSlot::surface_mass, tr_.xacc_from_surface, tr_.idx(species, cell),
+                    mass);
 }
 
 std::string SubsurfaceSolver::configureSourceReceipts(const std::vector<int>& cells) {
@@ -1794,6 +1912,10 @@ double SubsurfaceSolver::takeToSurfaceMass(int cell, int species) noexcept {
 double SubsurfaceSolver::infiltrationHeadroom(int cell) const noexcept {
     if (!state_.active || !covers(cell))
         return 0.0;
+    return infiltrationHeadroom(cell, infiltrationStorageDeficit(cell));
+}
+
+double SubsurfaceSolver::infiltrationStorageDeficit(int cell) const noexcept {
     const auto u = static_cast<std::size_t>(cell);
     const double L = std::max(0.0, state_.zs[u] - state_.hg[u]);
     double col = state_.hu[u];
@@ -1808,10 +1930,17 @@ double SubsurfaceSolver::infiltrationHeadroom(int cell) const noexcept {
     if (cl == GwClosure::SIGMA)
         deficit = std::min(deficit, std::max(0.0, state_.theta_s[u] - state_.theta_sigma[u]) * L /
                                         state_.m_layers * state_.area[u]);
-    double pending = std::max(0.0, state_.xacc_from_surface[u]) +
-                     (tr_.n_layers > 0 ? std::max(0., state_.lacc[u] + tr_.contact_link_out[u])
-                                       : std::max(0.0, state_.lacc[u])) +
-                     pendingLidDown(cell);
+    return deficit;
+}
+
+double SubsurfaceSolver::infiltrationHeadroom(int cell, double deficit) const noexcept {
+    const auto u = static_cast<std::size_t>(cell);
+    double pending =
+        std::max(0.0, state_.xacc_from_surface[u]) +
+        (tr_.n_layers > 0
+             ? std::max(0., state_.lacc[u] + tr_.contact_link_out[u])
+             : std::max(0.0, state_.lacc[u] + (clock_state_ ? clock_state_->link_out[u] : 0.))) +
+        pendingLidDown(cell);
     // PER_SUBCATCH sizes no lateral accumulators: there is no lateral flow.
     if (!state_.eacc_L.empty())
         for (int p = edges_->cell_ptr[u]; p < edges_->cell_ptr[u + 1]; ++p) {
@@ -1819,7 +1948,7 @@ double SubsurfaceSolver::infiltrationHeadroom(int cell) const noexcept {
             pending +=
                 std::max(0.0, edges_->cell_sign[p] > 0 ? state_.eacc_L[e] : state_.eacc_R[e]);
         }
-    if (!lid_receipts_enabled_)
+    if (!lid_receipts_enabled_ && !clock_state_)
         for (const auto b : cell_beds_[u])
             pending += tr_.n_layers > 0 ? std::max(0., tr_.contact_node_out[b] - state_.nacc[b])
                                         : std::max(0.0, -state_.nacc[b]);
@@ -1827,10 +1956,19 @@ double SubsurfaceSolver::infiltrationHeadroom(int cell) const noexcept {
 }
 
 void SubsurfaceSolver::publishInfiltration(SurfaceStateData& surf, double interval, double time) {
+    if (time > 0 && independentClock())
+        return; // absolute producer-check crossings publish the independent capacity
+    perf::ProcessTimer process_timer(perf::ProcessPhase::gw_infiltration);
     if (!state_.active || !(interval > 0.0))
         return;
-    for (int i = 0; i < state_.n_cells; ++i)
-        publishCellInfiltration(i, surf, interval, time);
+    const int threads = opts_ ? std::max(1, opts_->num_threads) : 1;
+    if (threads > 1 && state_.n_cells >= 512) {
+#pragma omp parallel for schedule(static) num_threads(threads)
+        for (int i = 0; i < state_.n_cells; ++i)
+            publishCellInfiltration(i, surf, interval, time);
+    } else
+        for (int i = 0; i < state_.n_cells; ++i)
+            publishCellInfiltration(i, surf, interval, time);
 }
 
 /**
@@ -1904,24 +2042,26 @@ double SubsurfaceSolver::sourceInfiltrationCapacity(int i, double pond,
 }
 
 double SubsurfaceSolver::acceptSurfaceInfiltration(int cell, double requested,
-                                                   bool prescribed) noexcept {
+                                                   bool prescribed) {
     if (!(requested > 0.0) || !std::isfinite(requested) || !covers(cell) || !state_.active)
         return 0.0;
     const auto u = static_cast<std::size_t>(cell);
     if (!prescribed && (!(state_.Ks[u] > 0.0) || !(state_.infil_capacity[u] > 0.0) ||
                         !std::isfinite(state_.infil_capacity[u])))
         return 0.0;
-    const double take = std::min(requested, infiltrationHeadroom(cell));
-    state_.xacc_from_surface[u] += take;
+    // Booking changes pending receipts, but not this firing's physical storage.
+    const double deficit = infiltrationStorageDeficit(cell);
+    const double take = std::min(requested, infiltrationHeadroom(cell, deficit));
+    bookClockAmount(cell, GwSlot::surface, state_.xacc_from_surface, u, take);
     state_.wetting_front[u] += take / state_.area[u];
-    state_.infil_remaining[u] = infiltrationHeadroom(cell);
+    state_.infil_remaining[u] = infiltrationHeadroom(cell, deficit);
     return take;
 }
 
-void SubsurfaceSolver::bookInfiltrationFromSurface(int cell, double vol_m3) noexcept {
+void SubsurfaceSolver::bookInfiltrationFromSurface(int cell, double vol_m3) {
     if (!state_.active || !covers(cell))
         return;
-    state_.xacc_from_surface[static_cast<std::size_t>(cell)] += vol_m3;
+    bookClockAmount(cell, GwSlot::surface, state_.xacc_from_surface, cell, vol_m3);
     // Cell-local booking is called concurrently by the surface marcher.
     // settle() does not use the obsolete pending flag; do not race on it.
 }
@@ -1929,12 +2069,14 @@ void SubsurfaceSolver::bookInfiltrationFromSurface(int cell, double vol_m3) noex
 // G-X3 (2026-09-19): conduit seepage lands in the saturated zone of the
 // cells the conduit crosses. Booked per routing step, gathered per firing —
 // the same cross-cadence accumulator the surface infiltration uses.
-void SubsurfaceSolver::bookLinkSeepage(int cell, double vol_m3) noexcept {
+void SubsurfaceSolver::bookLinkSeepage(int cell, double vol_m3) {
     if (!state_.active || !covers(cell))
         return;
-    state_.lacc[static_cast<std::size_t>(cell)] += vol_m3;
+    bookClockAmount(cell, GwSlot::link, state_.lacc, cell, vol_m3);
     if (tr_.n_layers > 0 && vol_m3 < 0)
-        tr_.contact_link_out[cell] -= vol_m3;
+        bookClockAmount(cell, GwSlot::contact_link_out, tr_.contact_link_out, cell, -vol_m3);
+    else if (clock_state_ && vol_m3 < 0)
+        bookClockAmount(cell, GwSlot::contact_link_out, clock_state_->link_out, cell, -vol_m3);
     accumulators_pending_ = true;
 }
 
@@ -1978,10 +2120,12 @@ void SubsurfaceSolver::bookLinkContact(int cell, double volume,
         const int layer =
             contactLayer(cell, begin + (end - begin) * (.5 * (cuts[i] + cuts[i - 1])));
         if (layer >= 0)
-            tr_.contact_water[std::size_t(layer) * state_.n_cells + cell] += v;
+            bookClockAmount(cell, GwSlot::contact_water, tr_.contact_water,
+                            std::size_t(layer) * state_.n_cells + cell, v);
         for (int s = 0; s < tr_.n_species; ++s) {
             if (layer >= 0)
-                tr_.contact_link_mass[tr_.layerIdx(s, layer, cell)] += v * concentration[s];
+                bookClockAmount(cell, GwSlot::contact_link_mass, tr_.contact_link_mass,
+                                tr_.layerIdx(s, layer, cell), v * concentration[s]);
             else
                 bookLinkSeepageMass(cell, s, v * concentration[s]);
         }
@@ -2051,7 +2195,7 @@ void SubsurfaceSolver::bookSurfaceEt(int cell, double dt, double rate, double su
     const auto u = static_cast<std::size_t>(cell);
     const double potential = std::max(0.0, rate) * state_.area[u] * dt;
     const double taken = std::clamp(surface, 0.0, potential);
-    state_.et_pending[u] += potential - taken;
+    bookClockAmount(cell, GwSlot::et, state_.et_pending, u, potential - taken);
     state_.et_potential_cumulative[u] += potential;
     state_.et_surface_cumulative[u] += taken;
     state_.et_surface_last[u] = taken / (state_.area[u] * dt);
@@ -2085,7 +2229,7 @@ void SubsurfaceSolver::bookAreaEt(int cell, double dt, double potential, double 
         throw std::invalid_argument("Invalid completed atmospheric area budget.");
     const auto u = static_cast<std::size_t>(cell);
     soil = std::min(soil, std::max(0.0, potential - evaporation));
-    state_.et_pending[u] += soil;
+    bookClockAmount(cell, GwSlot::et, state_.et_pending, u, soil);
     state_.et_potential_cumulative[u] += potential;
     state_.et_surface_cumulative[u] += evaporation;
     state_.et_unused_cumulative[u] += std::max(0.0, potential - evaporation - soil);
@@ -2094,7 +2238,8 @@ void SubsurfaceSolver::bookAreaEt(int cell, double dt, double potential, double 
     state_.et_refresh[u] = (std::isfinite(state_.et_refresh[u]) ? state_.et_refresh[u] : 0.0) + dt;
 }
 
-void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double time) {
+void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double time,
+                                GwFiringOrigin origin, double intake_through) {
     if (tr_.n_layers > 0 && heat_.active())
         heat_.refreshView(i, tr_);
     const auto u = static_cast<std::size_t>(i);
@@ -2112,7 +2257,20 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
 
     // Verify the paired queue before any cell/face gather. Unpaired or future
     // receipts cannot be consumed by an owned cell's groundwater firing.
+    if (clock_state_)
+        clock_cutoff_ = intake_through;
     const bool paired = source_owned_[u];
+    // A producer horizon is supplied only by the independent bulk-intake
+    // prototype. Keep future water and species in the canonical reservation
+    // slots. Each dated tuple moves in full at the first eligible cut; the
+    // proportional gather is still appropriate for continuous lateral flux.
+    const double cutoff = intake_through; // exact physical knot supplied by the caller
+    const bool dated_intake = paired && std::isfinite(intake_through);
+    bool later_intake = false;
+    double eligible_water = 0;
+    std::vector<double> eligible_mass;
+    if (dated_intake)
+        eligible_mass.assign(tr_.n_species, 0);
     if (paired) {
         if (!std::isfinite(time) || time < 0 || !std::isfinite(dt) || dt <= 0 ||
             !std::isfinite(time + dt))
@@ -2123,15 +2281,25 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
             throw std::runtime_error(
                 "Source receipt pollutant layout changed before groundwater firing.");
         double volume = 0;
-        std::vector<double> mass(tr_.n_species, 0);
+        auto& mass = cell_scratch_.receipt_mass;
+        mass.assign(tr_.n_species, 0);
         for (const auto& r : source_receipts_[u]) {
             if (int(r.mass.size()) != tr_.n_species)
                 throw std::runtime_error("Source receipt mass layout differs from groundwater.");
-            if (r.end > source_firing_end_)
+            if (!dated_intake && r.end > source_firing_end_)
                 throw std::runtime_error("Future source receipt in groundwater firing.");
             volume += r.volume;
             for (int p = 0; p < tr_.n_species; ++p)
                 mass[p] += r.mass[p];
+            if (dated_intake) {
+                if (r.end > cutoff)
+                    later_intake = true;
+                else {
+                    eligible_water += r.volume;
+                    for (int p = 0; p < tr_.n_species; ++p)
+                        eligible_mass[p] += r.mass[p];
+                }
+            }
         }
         const auto close = [](double a, double b) {
             return std::abs(a - b) <= 1e-12 * std::max({1.0, std::abs(a), std::abs(b)});
@@ -2150,7 +2318,7 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
         for (int b : cell_beds_[u]) {
             auto& pending = lid_receipts_[b];
             for (const auto& r : pending)
-                if (r.end <= time + dt) {
+                if (r.end <= time + dt && (!clock_state_ || r.end <= clock_cutoff_)) {
                     if (heat_.active() && !r.heat_applied)
                         throw std::runtime_error(
                             "Groundwater firing reached a Mesh LID interval before its thermal receipt was applied.");
@@ -2160,9 +2328,11 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
                 throw std::runtime_error(
                     "Nonfinite accepted LID heat receipt in groundwater firing.");
             for (const auto& r : pending)
-                if (r.end <= time + dt)
+                if (r.end <= time + dt && (!clock_state_ || r.end <= clock_cutoff_))
                     state_.nacc[b] += r.up - r.down;
-            std::erase_if(pending, [&](const auto& r) { return r.end <= time + dt; });
+            std::erase_if(pending, [&](const auto& r) {
+                return r.end <= time + dt && (!clock_state_ || r.end <= clock_cutoff_);
+            });
         }
     // --- gather the accumulated cross-cadence volumes ---------------------
     const bool runtime_rk2 =
@@ -2176,20 +2346,34 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
         }
     const double lat_vol = gatherLateral(i); // m³, + in
     const double node_vol = gatherNode(i);   // m³, + OUT
-    const double future_lid_up = pendingLidUp(i);
-    double infil_vol = consumePending(state_.xacc_from_surface[u]); // m³, + in
+
+    const double infil_vol = dated_intake
+                                 ? (later_intake ? eligible_water : state_.xacc_from_surface[u])
+                                 : takeClockAmount(i, GwSlot::surface, state_.xacc_from_surface, u);
+    if (dated_intake) {
+        state_.xacc_from_surface[u] -= infil_vol; // later tuples stay reserved
+        if (!later_intake)
+            for (int p = 0; p < tr_.n_species; ++p)
+                eligible_mass[p] = tr_.xacc_from_surface[tr_.idx(p, i)];
+    }
     // G-X3: conduit seepage delivered to this cell since its last firing —
     // a saturated-zone inflow, so it rides the table update with the
     // lateral and node volumes and shares their storage coefficient.
-    const double link_vol = consumePending(state_.lacc[u]); // m³, + in
+    const double link_vol = takeClockAmount(i, GwSlot::link, state_.lacc, u); // m³, + in
     state_.qlink_last[u] = link_vol / dt;
     state_.led_link += link_vol;
     const double link_out =
-        tr_.n_layers > 0 ? consumePending(tr_.contact_link_out[u]) : std::max(0., -link_vol);
+        tr_.n_layers > 0 ? takeClockAmount(i, GwSlot::contact_link_out, tr_.contact_link_out, u)
+        : clock_state_   ? takeClockAmount(i, GwSlot::contact_link_out, clock_state_->link_out, u)
+                         : std::max(0., -link_vol);
+    const double future_lid_up =
+        pendingLidUp(i) +
+        (clock_state_ ? (tr_.n_layers ? tr_.contact_link_out[u] : clock_state_->link_out[u]) : 0.);
     std::vector<double> contact_depth(tr_.n_layers);
     double contact_volume = 0;
     for (int j = 0; j < tr_.n_layers; ++j) {
-        const double v = consumePending(tr_.contact_water[std::size_t(j) * n + u]);
+        const double v =
+            takeClockAmount(i, GwSlot::contact_water, tr_.contact_water, std::size_t(j) * n + u);
         contact_depth[j] = v / A;
         contact_volume += v;
     }
@@ -2202,10 +2386,11 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     state_.led_infil_in += infil_vol;
 
     // Surface-cadence demand has already paid actual surface evaporation.
-    const bool et_boundary = (options_.gw_et == "BOUNDARY_ET" || options_.gw_et == "BOTH");
-    const bool et_caprise = (options_.gw_et == "CAPILLARY_RISE" || options_.gw_et == "BOTH");
-    const double budget = options_.per_subcatch ? std::max(0.0, surf.exposedEvaporation(i)) * A * dt
-                                                : consumePending(state_.et_pending[u]);
+    const bool et_boundary = et_boundary_;
+    const bool et_caprise = et_caprise_;
+    const double budget = options_.per_subcatch
+                              ? std::max(0.0, surf.exposedEvaporation(i)) * A * dt
+                              : takeClockAmount(i, GwSlot::et, state_.et_pending, u);
     double q_et = et_boundary ? budget / (A * dt) : 0.0;
     if (et_boundary && cl != GwClosure::SIGMA) {
         const double Se = L0 > kTiny ? std::clamp((state_.hu[u] / L0 - state_.theta_r[u]) /
@@ -2300,7 +2485,7 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
 
     // --- 2. saturated explicit FV update ----------------------------------
     double q_deep = state_.c_loss[u] * hg0 / std::max(zs, kTiny);
-    if (lid_receipts_enabled_ || runtime_rk2) {
+    if (lid_receipts_enabled_ || runtime_rk2 || clock_state_) {
         const double donor = cl == GwClosure::ENSLAVED
                                  ? std::max(0., ts * hg0 + soil::equilibriumStorage(p, L0) -
                                                     soil::equilibriumStorage(p, zs)) *
@@ -2545,7 +2730,11 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     if (cl != GwClosure::ENSLAVED && q0 < 0.0)
         state_.led_caprise += -q0 * A * dt;
     state_.led_deep += state_.qdeep_last[u] * A * dt;
-    state_.led_lateral += lat_vol;
+    // Independent storage readers include both edge receipts. Gathering an
+    // internal packet changes its owner, not the domain's net inflow. Booking
+    // it again leaves a false residual until the other endpoint catches up.
+    if (!independentClock())
+        state_.led_lateral += lat_vol;
     state_.led_node += state_.qnode_last[u] * dt;
 
     // --- 3-4. the unsaturated zone sees the CLAMPED table ------------------
@@ -2554,6 +2743,7 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
 
     sigma::ColumnTransfers column_transfers;
     if (cl == GwClosure::SIGMA) {
+        perf::SigmaEvaluations sigma_evaluations;
         // A post-sweep height correction cannot spend a negative surplus
         // when the predicted column collapses to a saturated, zero-yield
         // profile. Settle the table with the actual bounded bottom transfer
@@ -2569,11 +2759,14 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
         // replacing that Euler velocity by an endpoint-dependent subflow.
         const bool euler = sigma_stage;
         const double grid_rate = -(hg1 - hg0) / dt;
+        static thread_local sigma::ColumnPreparation column_preparation;
+        int trial_count = 0;
         double external =
             (saturated_exchange + source.in - source.out + boundary_in - boundary_out) / A -
             state_.qdeep_last[u] * dt;
         const double tolerance = 1e-15 * std::max({1.0, zs, std::abs(external)});
         const auto evaluate = [&](double h, bool capture = false) {
+            sigma_evaluations.evaluate();
             trial = original;
             cs = {};
             cs.L_old = L0;
@@ -2591,7 +2784,16 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
                 cs.transfers = &column_transfers;
             cs.wilting_suction = options_.wilting_suction;
             cs.capillary = options_.capillary_diff;
-            sigma::advanceColumn(p, trial.data(), state_.m_layers, 1, cs);
+            // Most firings need only one trial, or one trial plus its receipt capture.
+            // Avoid preparing unused invariants on those paths.
+            if (++trial_count <= 2) {
+                sigma::advanceColumn(p, trial.data(), state_.m_layers, 1, cs);
+            } else {
+                if (trial_count == 3)
+                    sigma::prepareColumn(p, original.data(), state_.m_layers, 1, cs,
+                                         column_preparation);
+                sigma::advanceColumn(p, trial.data(), state_.m_layers, 1, cs, column_preparation);
+            }
             if (euler)
                 for (double& theta : trial)
                     theta = rk2SigmaView(theta, p.theta_r, p.theta_s);
@@ -2680,6 +2882,23 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
         // `theta_bot` is the slab content the saturated update above paired
         // with `Sy = θ_s − theta_bot`. The two MUST be the same number.
         double hu1 = state_.hu[u] + (q_in - q_et - q0) * dt + theta_bot * dL;
+        if (clock_state_ && dunne_vol > 0.0 && hu1 < 0.0) {
+            // At the surface L1 is zero. Settle the bulk column's shortfall
+            // before releasing saturation excess or lowering the table.
+            const double retained = std::min(dunne_vol, -hu1 * A);
+            dunne_vol -= retained;
+            hu1 += retained / A;
+        }
+        if (clock_state_ && L1 == 0. && hu1 > 0.) {
+            // A collapsed column has no remaining store. Its positive
+            // remainder beyond this firing's top intake is saturation
+            // excess, including the slab left by the yield floor. Keep
+            // top rejection on its existing path so paired refunds retain
+            // their original donor and composition.
+            const double top = std::min(hu1, std::max(0., infil_vol) / A);
+            dunne_vol += (hu1 - top) * A;
+            hu1 = top;
+        }
         const double hu_max = ts * L1;
         if (hu1 > hu_max) {
             rejected = (hu1 - hu_max) / dt;
@@ -2753,7 +2972,9 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     // Consume the same fraction as the existing water/mass gathers. Keep
     // residual tuples until the next knot/firing, even across source intervals.
     const double paired_refund = paired ? std::min(reject_vol, infil_vol) : 0;
-    std::vector<double> refund_mass, dunne_mass, excess_mass;
+    auto& refund_mass = cell_scratch_.refund_mass;
+    auto& dunne_mass = cell_scratch_.dunne_mass;
+    auto& excess_mass = cell_scratch_.excess_mass;
     std::vector<SurfaceReturnReceipt> refunds;
     double return_ready = paired ? source_firing_end_ : time + dt;
     if (paired) {
@@ -2762,10 +2983,12 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
         excess_mass.assign(tr_.n_species, 0);
         const double fraction = infil_vol > 0 ? paired_refund / infil_vol : 0;
         for (auto& pending : source_receipts_[u]) {
+            if (dated_intake && pending.end > cutoff)
+                continue;
             auto consumed = pending;
-            consumed.volume = consumePending(pending.volume);
+            consumed.volume = dated_intake ? std::exchange(pending.volume, 0.) : consumePending(pending.volume);
             for (int p = 0; p < tr_.n_species; ++p)
-                consumed.mass[p] = consumePending(pending.mass[p]);
+                consumed.mass[p] = dated_intake ? std::exchange(pending.mass[p], 0.) : consumePending(pending.mass[p]);
             return_ready = std::max(return_ready, consumed.end);
             if (fraction > 0 && consumed.volume > 0) {
                 SurfaceReturnReceipt r;
@@ -2790,6 +3013,8 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     // so mass can never travel on a volume the water gave back.
     if (tr_.active()) {
         CellFlux f;
+        if (dated_intake)
+            f.eligible_intake_mass = &eligible_mass;
         if (tr_.n_layers > 0 || (heat_.active() && sigma_stage))
             f.column = &column_transfers;
         f.boundary_in = boundary_in;
@@ -2802,11 +3027,10 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
         f.v_uns0 = hu_pre * A;
         f.lateral = lat_vol;
         f.node_out = state_.qnode_last[u] * dt;
-        if (tr_.n_layers > 0) {
+        if (tr_.n_layers > 0 || clock_state_) {
             f.node_out = 0;
-            for (std::size_t b = 0; b < node_beds_.size(); ++b)
-                if (node_beds_[b].cell == i)
-                    f.node_out += std::max(0., bed_gathered_[b]);
+            for (const auto b : cell_beds_[u])
+                f.node_out += std::max(0., bed_gathered_[b]);
             f.node_in = f.node_out - state_.qnode_last[u] * dt;
         }
         f.lid_in_j = lid_in_j;
@@ -2870,6 +3094,15 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
         source_cell_end_[u] = time + dt;
     state_.hg[u] = hg1;
     cell_completed_[u] = time + dt;
+    if (independentClock() && tr_.n_layers > 0 && heat_.active()) {
+        // The thermal solve precedes the table commit. Rebase the derived
+        // SIGMA overlaps on the accepted length before publishing held views;
+        // using the old length makes temperature-volume inconsistent with
+        // the hydraulic water volume until the next face or contact refresh.
+        if (auto error = refreshSigmaPorewater(i); !error.empty())
+            throw std::runtime_error(error);
+        heat_.refreshView(i, tr_);
+    }
     // Drying recovers the equivalent wetting-front depth in proportion to
     // the newly created column deficit; no second time constant is authored.
     const double deficit_before = std::max(0.0, ts * L0 - hu_pre);
@@ -2892,6 +3125,18 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     }
     if (state_.infil_interval[u] > 0.0)
         publishCellInfiltration(i, surf, state_.infil_interval[u], time + dt);
+    if (clock_state_) {
+        const auto k = static_cast<std::size_t>(cl);
+        ++clock_state_->firings[k];
+        if (clock_state_->budget_active[u])
+            ++clock_state_->budget_firings[k];
+        if (clockRung(i) < 0)
+            ++clock_state_->subcycles[k];
+        clock_state_->elapsed[k] += dt;
+        clock_state_->maximum[k] = std::max(clock_state_->maximum[k], dt);
+        clock_state_->max_return_depth[k] = std::max(clock_state_->max_return_depth[k], (physical_return + reject_vol - paired_refund) / A);
+    }
+    clock_telemetry_.fired(i, static_cast<int>(cl), time, dt, state_.dt_cell[u], origin);
 }
 
 // ---------------------------------------------------------------------------
@@ -3120,7 +3365,7 @@ std::string SubsurfaceSolver::initHeat(SimulationContext& ctx, const GwTransport
  * native packet itself. Requires stable prepared matching arrays and serial producer access; no
  * allocation or exception reporting.
  */
-void SubsurfaceSolver::bookPresetHeatOut(int i, double volume, double temperature_volume) noexcept {
+void SubsurfaceSolver::bookPresetHeatOut(int i, double volume, double temperature_volume, bool external) {
     if (!heat_.active() || !(volume > 0) || i < 0 || std::size_t(i) >= heat_.cells.size())
         return;
     auto& cell = heat_.cells[i];
@@ -3174,6 +3419,11 @@ void SubsurfaceSolver::bookPresetHeatOut(int i, double volume, double temperatur
             // though the hydraulic/thermal column gathers its volume at the next
             // tier firing. Reserve its producer-time sensible energy now so an
             // intervening surface/ground contact cannot spend that packet again.
+            if (external && clock_state_) {
+                recordClockAmount(i, GwSlot::prepaid_heat, base + j, reserved, producer_end_);
+                recordClockAmount(i, GwSlot::prepaid_water, base + j, volume * (sat[j] / total),
+                                  producer_end_);
+            }
             heat_preset_out_j_[base + j] += part;
             heat_preset_out_water_[base + j] += volume * (sat[j] / total);
             cell.reserved_out_water[j] += volume * (sat[j] / total);
@@ -3206,8 +3456,8 @@ std::string SubsurfaceSolver::conductGroundWithLids(int i, double dt) {
     auto& ground = heat_.cells[std::size_t(i)];
     auto& soil = ground.column;
     std::vector<int> beds;
-    for (std::size_t b = 0; b < node_beds_.size(); ++b)
-        if (richards_bed_owned_[b] && node_beds_[b].cell == i)
+    for (const auto b : cell_beds_[i])
+        if (richards_bed_owned_[b])
             beds.push_back(int(b));
     if (beds.empty())
         return heat_.conduct(i, dt);
@@ -3482,16 +3732,16 @@ void SubsurfaceSolver::fireGroundHeatSpecies(int i, const CellFlux& f) noexcept 
                 edge_mass += pulse.mass[r];
                 edge_heat += pulse.flux_in[r] - pulse.flux_out[r];
             }
-        const double lateral = gatherLateralMass(i, r),
-                     infil = consumePending(tr_.xacc_from_surface[k]);
-        const double link_in = consumePending(tr_.lacc_mass[k]), node_in = gatherNodeMass(i, r);
-        const bool link_packet = consumePending(heat_link_out_volume_[i]) > 0;
-        const double booked_link = consumePending(tr_.lout_mass[k]);
+        const double lateral = gatherLateralMass(i, r), infil = takeInfiltrationMass(i, r, f);
+        const double link_in = takeClockAmount(i, GwSlot::link_mass, tr_.lacc_mass, k),
+                     node_in = gatherNodeMass(i, r);
+        const bool link_packet =
+            takeClockAmount(i, GwSlot::heat_link_volume, heat_link_out_volume_, i) > 0;
+        const double booked_link = takeClockAmount(i, GwSlot::link_export, tr_.lout_mass, k);
         const double implicit_link_volume = link_packet ? 0 : std::max(0., -f.link);
         double node_volume = 0;
-        for (std::size_t b = 0; b < node_beds_.size(); ++b)
-            if (node_beds_[b].cell == i)
-                node_volume += heat_node_gathered_out_[b];
+        for (const auto b : cell_beds_[i])
+            node_volume += heat_node_gathered_out_[b];
         node_volume = std::max(node_volume, std::max(0., f.node_out));
         const double refund = f.refund_mass ? (*f.refund_mass)[r] : 0;
         const double excess_volume = f.reject - f.paired_refund;
@@ -3522,9 +3772,10 @@ void SubsurfaceSolver::fireGroundHeatSpecies(int i, const CellFlux& f) noexcept 
         std::vector<double> preset(weights.size()), preset_water(weights.size());
         double preset_total = 0, preset_water_total = 0;
         for (std::size_t j = 0; j < weights.size(); ++j) {
-            preset[j] = consumePending(heat_preset_out_j_[base + j]);
+            preset[j] = takeClockAmount(i, GwSlot::prepaid_heat, heat_preset_out_j_, base + j);
             preset_total += preset[j];
-            preset_water[j] = consumePending(heat_preset_out_water_[base + j]);
+            preset_water[j] =
+                takeClockAmount(i, GwSlot::prepaid_water, heat_preset_out_water_, base + j);
             preset_water_total += preset_water[j];
         }
         const double body_water = f.lateral + f.node_in - f.node_out + f.link + f.source_in -
@@ -3539,8 +3790,10 @@ void SubsurfaceSolver::fireGroundHeatSpecies(int i, const CellFlux& f) noexcept 
                 const double volume = f.column->contacts[layer] * state_.area[i];
                 contact_volume += volume;
                 const auto q = tr_.layerIdx(r, layer, i);
-                const double mn = consumePending(tr_.contact_node_mass[q]),
-                             ml = consumePending(tr_.contact_link_mass[q]);
+                const double mn = takeClockAmount(i, GwSlot::contact_node_mass,
+                                                  tr_.contact_node_mass, q),
+                             ml = takeClockAmount(i, GwSlot::contact_link_mass,
+                                                  tr_.contact_link_mass, q);
                 contact_node += mn;
                 contact_link += ml;
                 const double top = f.column->old_length * layer / tr_.n_layers,
@@ -3608,7 +3861,8 @@ void SubsurfaceSolver::fireGroundHeatSpecies(int i, const CellFlux& f) noexcept 
                 tr_.boundary_flux_out[r] += pulse.flux_out[r];
             }
         tr_.gained_source[r] += source;
-        tr_.net_lateral[r] += lateral;
+        if (!independentClock())
+            tr_.net_lateral[r] += lateral;
         tr_.gained_infil[r] += infil;
         tr_.gained_link[r] += link_in + contact_link;
         tr_.lost_link[r] += link_out;
@@ -3625,13 +3879,12 @@ void SubsurfaceSolver::fireGroundHeatSpecies(int i, const CellFlux& f) noexcept 
             tr_.xacc_to_surface[k] += excess + dunne;
         if (node_volume > 0 && !tr_.node_out_mass.empty()) {
             const auto nn = tr_.node_out_mass.size() / tr_.n_species;
-            for (std::size_t b = 0; b < node_beds_.size(); ++b)
-                if (node_beds_[b].cell == i) {
-                    const int node = node_beds_[b].node;
-                    if (node >= 0 && std::size_t(node) < nn)
-                        tr_.node_out_mass[std::size_t(r) * nn + node] +=
-                            donor * heat_node_gathered_out_[b];
-                }
+            for (const auto b : cell_beds_[i]) {
+                const int node = node_beds_[b].node;
+                if (node >= 0 && std::size_t(node) < nn)
+                    tr_.node_out_mass[std::size_t(r) * nn + node] +=
+                        donor * heat_node_gathered_out_[b];
+            }
         }
         if (std::size_t(i) < runtime_sources_.cells.size())
             for (auto index : runtime_sources_.cells[i]) {
@@ -3670,6 +3923,7 @@ void SubsurfaceSolver::fireGroundHeatSpecies(int i, const CellFlux& f) noexcept 
 }
 
 void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) {
+    perf::ProcessTimer process_timer(perf::ProcessPhase::gw_species);
     if (tr_.n_layers > 0) {
         fireLayerSpecies(i, f);
         if (heat_.active()) {
@@ -3797,11 +4051,12 @@ void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) {
         //     that (the water's `led_lateral` behaves identically).
         const double lat_m = gatherLateralMass(i, s);
         msat += lat_m;
-        tr_.net_lateral[us] += lat_m;
+        if (!independentClock())
+            tr_.net_lateral[us] += lat_m;
 
         // (2) infiltration the surface handed down, with the mass the water
         //     was carrying when it left the surface cell.
-        const double in_m = consumePending(tr_.xacc_from_surface[k]);
+        const double in_m = takeInfiltrationMass(i, s, f);
         if (in_m != 0.0) {
             const double accepted = f.refund_mass ? in_m - (*f.refund_mass)[us] : in_m;
             muns += (f.refund_mass && !tr_.signedRow(s)) ? std::max(0., accepted) : accepted;
@@ -3817,7 +4072,7 @@ void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) {
         //     booking a second removal there would be the classic
         //     double-count. A GAINING pipe draws water out, and that water
         //     leaves at the cell's own concentration.
-        const double link_in_m = consumePending(tr_.lacc_mass[k]);
+        const double link_in_m = takeClockAmount(i, GwSlot::link_mass, tr_.lacc_mass, k);
         if (link_in_m != 0.0) {
             msat += link_in_m;
             tr_.gained_link[us] += link_in_m;
@@ -3826,7 +4081,8 @@ void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) {
         // The router booked what it delivered (at this cell's dissolved
         // saturated concentration when the water left); the cell debits
         // exactly that, so the aquifer gives what the network received.
-        const double out_m = tr_.lout_mass.empty() ? 0.0 : consumePending(tr_.lout_mass[k]);
+        const double out_m =
+            tr_.lout_mass.empty() ? 0.0 : takeClockAmount(i, GwSlot::link_export, tr_.lout_mass, k);
         if (out_m != 0.0) {
             double dm = out_m;
             if (!tr_.signedRow(s) && dm > msat) {
@@ -3888,13 +4144,10 @@ void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) {
                 // what each one drew — a cell can carry more than one.
                 const auto nn = tr_.node_out_mass.size() / static_cast<std::size_t>(tr_.n_species);
                 double drew = 0.0;
-                for (std::size_t b = 0; b < node_beds_.size(); ++b)
-                    if (node_beds_[b].cell == i)
-                        drew += std::max(bed_gathered_[b], 0.0);
+                for (const auto b : cell_beds_[i])
+                    drew += std::max(bed_gathered_[b], 0.0);
                 if (drew > 0.0) {
-                    for (std::size_t b = 0; b < node_beds_.size(); ++b) {
-                        if (node_beds_[b].cell != i)
-                            continue;
+                    for (const auto b : cell_beds_[i]) {
                         const double share = std::max(bed_gathered_[b], 0.0) / drew;
                         const auto ni = static_cast<std::size_t>(node_beds_[b].node);
                         if (ni < nn)
@@ -3980,16 +4233,23 @@ void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) {
         //     from the saturated zone, the column's rejection from the
         //     unsaturated one. Reviewed refunds bypass mixing and remain in
         //     paired source receipts; ordinary cells use takeToSurfaceMass.
-        double up = 0.0;
+        const double top_mass = take(muns, f.reject - f.paired_refund, v_uns, mob_uns);
+        double return_store = v_sat;
+        if (clock_state_ && state_.closure[uc] == static_cast<int8_t>(GwClosure::CLOSED_FORM) &&
+            f.hg_final == state_.zs[uc]) {
+            // The bulk column has disappeared. After paying its rejection,
+            // the remaining inventory belongs to the full saturated store.
+            msat += std::exchange(muns, 0.0);
+            return_store = f.hg_final * ts_cell * state_.area[uc] + f.dunne;
+        }
+        const double table_mass = take(msat, f.dunne, return_store, mob_sat);
+        double up;
         if (f.refund_mass) {
-            (*f.dunne_mass)[us] = take(msat, f.dunne, v_sat, mob_sat);
-            (*f.excess_mass)[us] = take(muns, f.reject - f.paired_refund, v_uns, mob_uns);
-            up = (*f.refund_mass)[us] + (*f.dunne_mass)[us] + (*f.excess_mass)[us];
+            (*f.dunne_mass)[us] = table_mass;
+            (*f.excess_mass)[us] = top_mass;
+            up = (*f.refund_mass)[us] + table_mass + top_mass;
         } else {
-            if (f.dunne > 0.0)
-                up += take(msat, f.dunne, v_sat, mob_sat);
-            if (f.reject > 0.0)
-                up += take(muns, f.reject, v_uns, mob_uns);
+            up = table_mass + top_mass;
             if (up != 0.0)
                 tr_.xacc_to_surface[k] += up;
         }
@@ -4084,7 +4344,7 @@ void SubsurfaceSolver::fireGwRk2Cells(double dt, SurfaceStateData& surface, doub
                                        dt * row.rates[r]))
                         throw std::runtime_error("RK2 groundwater species proposal overflow.");
             }
-        fireCell(cell, dt, surface, time);
+        fireCell(cell, dt, surface, time, GwFiringOrigin::rk2);
         if (heat_.active() && heat_.cells[cell].failed)
             throw std::runtime_error(heat_.cells[cell].error.empty()
                                          ? "Coupled RK2 thermal stage failed."
@@ -4098,6 +4358,7 @@ void SubsurfaceSolver::fireGwRk2Cells(double dt, SurfaceStateData& surface, doub
     }
     if (!tier_firings_.empty())
         ++tier_firings_[0];
+    clock_telemetry_.batch(0);
 }
 void SubsurfaceSolver::advanceRk2Heat(double seconds, double sample_time) {
     if (!heat_.active() || !(seconds > 0))
@@ -4112,8 +4373,20 @@ void SubsurfaceSolver::advanceRk2Heat(double seconds, double sample_time) {
             heat_.refreshView(i, tr_);
         }
 }
+void SubsurfaceSolver::fireClockIntakeCell(int i, double end, double through,
+                                           SurfaceStateData& surf) {
+    if (i < 0 || i >= state_.n_cells || !covers(i) || !source_owned_[i] || tr_.n_layers ||
+        heat_.active() || lid_receipts_enabled_ || !std::isfinite(end) || !std::isfinite(through) ||
+        through > end || !(end > cell_completed_[i]) || cell_completed_[i] != source_cell_end_[i])
+        throw std::invalid_argument("Independent intake needs a valid bulk paired cell interval.");
+    source_firing_end_ = end;
+    const double start = cell_completed_[i];
+    fireGwCellList({i}, end - start, surf, start, end, GwFiringOrigin::direct, through);
+    cell_completed_[i] = end; // canonical endpoint, even if start+(end-start) rounded
+}
+
 void SubsurfaceSolver::fireGwCells(int tier, double dt, SurfaceStateData& surf, double time,
-                                   double accepted_end) {
+                                   double accepted_end, GwFiringOrigin origin) {
     if (state_.active && tierHasCells(tier))
         for (const int i : cells_by_tier_[static_cast<std::size_t>(tier)])
             for (const auto b : cell_beds_[i])
@@ -4123,9 +4396,10 @@ void SubsurfaceSolver::fireGwCells(int tier, double dt, SurfaceStateData& surf, 
     source_firing_end_ = accepted_end >= 0 ? accepted_end : time + dt;
     if (!state_.active || !tierHasCells(tier))
         return;
-    fireGwCellList(cells_by_tier_[static_cast<std::size_t>(tier)], dt, surf, time, accepted_end);
+    fireGwCellList(cells_by_tier_[static_cast<std::size_t>(tier)], dt, surf, time, accepted_end, origin);
     if (tier < static_cast<int>(tier_firings_.size()))
         ++tier_firings_[static_cast<std::size_t>(tier)];
+    clock_telemetry_.batch(tier);
 }
 /**
  * @brief Fire selected groundwater cells, splitting project forcing at knots and flow reversals.
@@ -4146,19 +4420,24 @@ void SubsurfaceSolver::fireGwCells(int tier, double dt, SurfaceStateData& surf, 
  * exclusive coupled-owner access.
  */
 void SubsurfaceSolver::fireGwCellList(const std::vector<int>& cells, double dt,
-                                      SurfaceStateData& surf, double time, double accepted_end) {
+                                      SurfaceStateData& surf, double time, double accepted_end,
+                                      GwFiringOrigin origin, double intake_through) {
+    perf::ProcessTimer process_timer(perf::ProcessPhase::gw_cells);
     prepareRechargeBatch(cells);
     for (const int i : cells) {
         const auto u = static_cast<std::size_t>(i);
-        const bool exact = accepted_end >= 0 && (source_owned_[u] || lid_receipts_enabled_);
+        const bool exact =
+            accepted_end >= 0 && (clock_state_ || source_owned_[u] || lid_receipts_enabled_);
         const double cell_time =
             exact ? (source_owned_[u] ? source_cell_end_[u] : cell_completed_[u]) : time;
         const double cell_dt = exact ? accepted_end - cell_time : dt;
         if ((u >= cell_sources_.size() || cell_sources_[u].empty()) &&
             (u >= cell_boundaries_.size() || cell_boundaries_[u].empty())) {
-            fireCell(i, cell_dt, surf, cell_time);
+            fireCell(i, cell_dt, surf, cell_time, origin, intake_through);
             if (exact)
                 source_cell_end_[u] = accepted_end;
+            if (clock_state_)
+                cell_completed_[u] = accepted_end;
             continue;
         }
         const double end = exact ? accepted_end : time + dt;
@@ -4201,9 +4480,13 @@ void SubsurfaceSolver::fireGwCellList(const std::vector<int>& cells, double dt,
             // the unused portion until its chronological subinterval.
             gather_fraction_ =
                 j + 1 == knots.size() ? 1.0 : (knots[j] - knots[j - 1]) / (end - knots[j - 1]);
-            fireCell(i, knots[j] - knots[j - 1], surf, knots[j - 1]);
+            const double cutoff =
+                std::isfinite(intake_through) ? std::min(intake_through, knots[j]) : intake_through;
+            fireCell(i, knots[j] - knots[j - 1], surf, knots[j - 1], origin, cutoff);
             if (exact)
                 source_cell_end_[u] = knots[j];
+            if (clock_state_)
+                cell_completed_[u] = knots[j];
         }
         gather_fraction_ = 1.0;
     }
@@ -4265,6 +4548,8 @@ void SubsurfaceSolver::prepareRechargeBatch(const std::vector<int>& cells) {
         const double length = state_.zs[cell] - state_.hg[cell];
         if (!(length > 0))
             continue;
+        if (independentClock() && length < soil::kRechargeLengthFloor)
+            continue; // legacy extension law floors storage as well as its rate
         const auto p = paramsOf(cell);
         OpenSwmmGwRechargeInputV1 v{};
         v.struct_size = sizeof(v);
@@ -4306,13 +4591,17 @@ void SubsurfaceSolver::prepareRechargeBatch(const std::vector<int>& cells) {
  * @param[in] p Stable resolved soil parameters in SI, with valid constitutive-law domain.
  * @param[in] length Finite positive unsaturated length m matching the current cell state.
  * @return Raw signed recharge m/s, positive down and negative capillary rise. A cached extension
- * value is used only when evaluator/slot are valid and every immutable input matches exactly;
- * otherwise soil::rechargeQ0() computes from current hu. No storage, front, ledgers or cache is
+ * value is used only when evaluator/slot are valid and every immutable input matches exactly.
+ * Independent sub-millimetre columns use rechargeQ0AtLength() on the CPU so the legacy
+ * extension's rate floor cannot invent storage. Other uncached rows use rechargeQ0().
+ * No storage, front, ledgers or cache is
  * changed.
  * @note noexcept and allocation-free; caller supplies valid physical state and parameter bounds.
  */
 double SubsurfaceSolver::rawRecharge(int cell, const soil::Params& p,
                                      double length) const noexcept {
+    if (independentClock() && length < soil::kRechargeLengthFloor)
+        return soil::rechargeQ0AtLength(p, length, state_.hu[cell]);
     const int slot = recharge_backend_.evaluate && std::size_t(cell) < recharge_slots_.size()
                          ? recharge_slots_[cell]
                          : -1;

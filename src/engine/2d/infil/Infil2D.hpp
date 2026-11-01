@@ -314,6 +314,11 @@ public:
      */
     void updateRates(const MeshData& mesh, SurfaceStateData& state, double dt,
                      surface::InfilBank::Factors factors = {1.0, 1.0});
+    /// Same cell-local updates with a configured worker count. Distinct prepared
+    /// bank entries may advance concurrently; source/configuration arrays stay
+    /// stable and same-entry/lifecycle operations remain exclusive.
+    void updateRates(const MeshData& mesh, SurfaceStateData& state, double dt,
+                     surface::InfilBank::Factors factors, int num_threads);
 
     /**
      * @brief Borrow the canonical mutable per-cell infiltration bank.

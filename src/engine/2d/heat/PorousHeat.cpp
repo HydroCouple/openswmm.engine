@@ -47,38 +47,49 @@ long double dot(const std::vector<double>& a, const std::vector<double>& b) {
         result += static_cast<long double>(a[i]) * b[i];
     return result;
 }
+void clearThermalSolution(ThermalSolution& out) {
+    out.error.clear();
+    out.interval_limit = false;
+    out.energy.clear();
+    out.temperature.clear();
+    out.contact_j.clear();
+    out.boundary_j.clear();
+    out.algebraic_residual = 0;
+    out.iterations = 0;
 }
-/**
- * @brief Solve reciprocal heat contacts by backward Euler and diagonal-preconditioned CG.
- * @param[in] stores Finite heat stores: positive finite capacity J/K and finite energy J. Inputs
- * are read-only; temperatures are energy/capacity in degrees C relative to the energy datum.
- * @param[in] contacts Reciprocal connections with distinct in-range store indices and finite
- * nonnegative conductance W/K. Positive returned contact receipts move from a to b.
- * @param[in] boundaries In-range store indices, finite nonnegative conductance W/K, finite
- * prescribed temperature degrees C and finite signed power W. Positive receipts enter the store.
- * @param[in] dt Finite strictly positive interval in seconds; boundaries remain fixed
- * throughout.
- * @return Owned solution with empty error on success, final energy J/temperature degrees C,
- * contact and boundary receipts J in input order, iteration count and equation residual J. On
- * numerical/physical refusal error is nonempty; other fields may be partial and must not be
- * published. Allocation failures propagate. All inputs remain unchanged.
- * @note Conjugate-gradient work is bounded by min(4096,4*n+64) iterations, with a 1e-13 relative
- * preconditioned-norm scale. Energies are updated from equal/opposite receipts, then
- * temperatures are recovered from those conservative energies; algebraic_residual measures their
- * solve defect.
- */
-ThermalSolution solveThermalContacts(const std::vector<ThermalStore>& stores,
-                                     const std::vector<ThermalContact>& contacts,
-                                     const std::vector<ThermalBoundary>& boundaries, double dt) {
-    ThermalSolution out;
-    const auto refused = [&](const char* message) {
+}
+namespace {
+template <bool Reset>
+#if defined(_MSC_VER)
+__forceinline
+#elif defined(__GNUC__) || defined(__clang__)
+inline __attribute__((always_inline))
+#else
+inline
+#endif
+ThermalSolution& solveThermalContactsImpl(const std::vector<ThermalStore>& stores,
+                                          const std::vector<ThermalContact>& contacts,
+                                          const std::vector<ThermalBoundary>& boundaries, double dt,
+                                          ThermalContactScratch& scratch) {
+    auto& out = scratch.result;
+    if constexpr (Reset)
+        clearThermalSolution(out);
+    const auto refused = [&](const char* message) -> ThermalSolution& {
         out.error = message;
         return out;
     };
     if (!(dt > 0) || !std::isfinite(dt))
         return refused("Thermal step must be finite and positive.");
     const auto n = stores.size();
-    std::vector<double> diag(n), rhs(n), x(n), r(n), z(n), p(n), ap(n);
+    auto& diag = scratch.diag;
+    auto& rhs = scratch.rhs;
+    auto& x = scratch.x;
+    auto& r = scratch.r;
+    auto& z = scratch.z;
+    auto& p = scratch.p;
+    auto& ap = scratch.ap;
+    for (auto* values : {&diag, &rhs, &x, &r, &z, &p, &ap})
+        values->assign(n, 0);
     for (std::size_t i = 0; i < n; ++i) {
         if (!(stores[i].capacity > 0) || !std::isfinite(stores[i].capacity) ||
             !std::isfinite(stores[i].energy))
@@ -162,7 +173,8 @@ ThermalSolution solveThermalContacts(const std::vector<ThermalStore>& stores,
     }
     if (!std::isfinite(rz) || rz > tolerance)
         return refused("Thermal implicit solve did not converge; reduce the thermal step.");
-    std::vector<double> energy;
+    auto& energy = scratch.energy;
+    energy.clear();
     energy.reserve(n);
     for (const auto& s : stores)
         energy.push_back(s.energy);
@@ -188,9 +200,42 @@ ThermalSolution solveThermalContacts(const std::vector<ThermalStore>& stores,
             std::max(out.algebraic_residual, std::abs(energy[i] - stores[i].capacity * x[i]));
         x[i] = energy[i] / stores[i].capacity;
     }
-    out.energy = std::move(energy);
-    out.temperature = std::move(x);
+    out.energy.swap(energy);
+    out.temperature.swap(x);
     return out;
+}
+} // namespace
+/**
+ * @brief Solve reciprocal heat contacts by backward Euler and diagonal-preconditioned CG.
+ * @param[in] stores Finite heat stores: positive finite capacity J/K and finite energy J. Inputs
+ * are read-only; temperatures are energy/capacity in degrees C relative to the energy datum.
+ * @param[in] contacts Reciprocal connections with distinct in-range store indices and finite
+ * nonnegative conductance W/K. Positive returned contact receipts move from a to b.
+ * @param[in] boundaries In-range store indices, finite nonnegative conductance W/K, finite
+ * prescribed temperature degrees C and finite signed power W. Positive receipts enter the store.
+ * @param[in] dt Finite strictly positive interval in seconds; boundaries remain fixed
+ * throughout.
+ * @return Owned solution with empty error on success, final energy J/temperature degrees C,
+ * contact and boundary receipts J in input order, iteration count and equation residual J. On
+ * numerical/physical refusal error is nonempty; other fields may be partial and must not be
+ * published. Allocation failures propagate. All inputs remain unchanged.
+ * @note Conjugate-gradient work is bounded by min(4096,4*n+64) iterations, with a 1e-13 relative
+ * preconditioned-norm scale. Energies are updated from equal/opposite receipts, then
+ * temperatures are recovered from those conservative energies; algebraic_residual measures their
+ * solve defect.
+ */
+ThermalSolution solveThermalContacts(const std::vector<ThermalStore>& stores,
+                                     const std::vector<ThermalContact>& contacts,
+                                     const std::vector<ThermalBoundary>& boundaries, double dt) {
+    ThermalContactScratch scratch;
+    solveThermalContactsImpl<false>(stores, contacts, boundaries, dt, scratch);
+    return std::move(scratch.result);
+}
+ThermalSolution& solveThermalContacts(const std::vector<ThermalStore>& stores,
+                                      const std::vector<ThermalContact>& contacts,
+                                      const std::vector<ThermalBoundary>& boundaries, double dt,
+                                      ThermalContactScratch& scratch) {
+    return solveThermalContactsImpl<true>(stores, contacts, boundaries, dt, scratch);
 }
 /**
  * @brief Solve reciprocal heat contacts by bounded implicit-midpoint subdivisions.
@@ -214,14 +259,25 @@ ThermalSolution solveThermalContacts(const std::vector<ThermalStore>& stores,
 ThermalSolution solveThermalContactsRk2(const std::vector<ThermalStore>& stores,
                                         const std::vector<ThermalContact>& contacts,
                                         const std::vector<ThermalBoundary>& boundaries, double dt) {
-    const auto refused = [](const char* message) {
-        ThermalSolution result;
-        result.error = message;
-        return result;
+    ThermalMidpointScratch scratch;
+    solveThermalContactsRk2(stores, contacts, boundaries, dt, scratch);
+    return std::move(scratch.result);
+}
+ThermalSolution& solveThermalContactsRk2(const std::vector<ThermalStore>& stores,
+                                         const std::vector<ThermalContact>& contacts,
+                                         const std::vector<ThermalBoundary>& boundaries, double dt,
+                                         ThermalMidpointScratch& scratch) {
+    auto& out = scratch.result;
+    clearThermalSolution(out);
+    const auto refused = [&](const char* message) -> ThermalSolution& {
+        clearThermalSolution(out);
+        out.error = message;
+        return out;
     };
     if (!(dt > 0) || !std::isfinite(dt))
         return refused("Thermal step must be finite and positive.");
-    std::vector<long double> rate(stores.size(), 0);
+    auto& rate = scratch.rate;
+    rate.assign(stores.size(), 0);
     for (const auto& store : stores)
         if (!(store.capacity > 0) || !std::isfinite(store.capacity) ||
             !std::isfinite(store.energy) || !std::isfinite(store.energy / store.capacity))
@@ -247,30 +303,34 @@ ThermalSolution solveThermalContactsRk2(const std::vector<ThermalStore>& stores,
         divisions = std::max(divisions, std::ceil(static_cast<long double>(dt) * rate[i] /
                                                   (2.L * stores[i].capacity)));
     if (!std::isfinite(divisions) || divisions > 65536) {
-        auto out = refused("Thermal midpoint subdivision limit exceeded; reduce the step.");
-        out.interval_limit = true;
-        return out;
+        auto& limit = refused("Thermal midpoint subdivision limit exceeded; reduce the step.");
+        limit.interval_limit = true;
+        return limit;
     }
     const int steps = int(divisions);
     const double half = .5 * (dt / steps);
     if (!(half > 0))
         return refused("Thermal midpoint interval is below the representable step.");
-    auto current = stores;
-    ThermalSolution out;
+    auto& current = scratch.current;
+    current = stores;
     out.contact_j.assign(contacts.size(), 0);
     out.boundary_j.assign(boundaries.size(), 0);
     // Small reciprocal receipts must survive repeated updates of a much
     // larger soil energy. Keep the original one-step arithmetic unchanged.
-    std::vector<double> energy_correction(steps > 1 ? stores.size() : 0, 0),
-        contact_correction(steps > 1 ? contacts.size() : 0, 0),
-        boundary_correction(steps > 1 ? boundaries.size() : 0, 0);
+    auto& energy_correction = scratch.energy_correction;
+    auto& contact_correction = scratch.contact_correction;
+    auto& boundary_correction = scratch.boundary_correction;
+    energy_correction.assign(steps > 1 ? stores.size() : 0, 0);
+    contact_correction.assign(steps > 1 ? contacts.size() : 0, 0);
+    boundary_correction.assign(steps > 1 ? boundaries.size() : 0, 0);
     const auto add = [](double& value, double increment, double& correction) {
         const double adjusted = increment - correction, next = value + adjusted;
         correction = (next - value) - adjusted;
         value = next;
     };
     for (int step = 0; step < steps; ++step) {
-        const auto middle = solveThermalContacts(current, contacts, boundaries, half);
+        const auto& middle =
+            solveThermalContacts(current, contacts, boundaries, half, scratch.implicit);
         if (!middle.error.empty())
             return refused(middle.error.c_str());
         // (C + h L/2) Tmid = Eold + h forcing/2. Twice the
@@ -383,19 +443,28 @@ std::string PorousHeatColumn::setMoisture(const std::vector<double>& water) {
 }
 std::vector<ThermalStore> PorousHeatColumn::stores() const {
     std::vector<ThermalStore> result;
+    stores(result);
+    return result;
+}
+void PorousHeatColumn::stores(std::vector<ThermalStore>& result) const {
+    result.clear();
     result.reserve(energy.size());
     for (std::size_t j = 0; j < energy.size(); ++j)
         result.push_back({capacity[j], energy[j]});
-    return result;
 }
 std::vector<ThermalContact> PorousHeatColumn::contacts() const {
     std::vector<ThermalContact> result;
+    contacts(result);
+    return result;
+}
+void PorousHeatColumn::contacts(std::vector<ThermalContact>& result) const {
+    result.clear();
+    result.reserve(energy.empty() ? 0 : energy.size() - 1);
     for (std::size_t j = 1; j < energy.size(); ++j) {
         const double resistance = .5 * (depth_edges[j] - depth_edges[j - 1]) / conductivity[j - 1] +
                                   .5 * (depth_edges[j + 1] - depth_edges[j]) / conductivity[j];
         result.push_back({int(j - 1), int(j), area / resistance});
     }
-    return result;
 }
 /**
  * @brief Reconstruct conservative layer water fluxes and apply implicit upwind heat advection.

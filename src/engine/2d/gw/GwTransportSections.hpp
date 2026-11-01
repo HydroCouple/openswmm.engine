@@ -185,6 +185,14 @@ std::string parseGwSourcesLine(const std::vector<std::string>& tokens,
 void registerGwTransportSections(GwTransportData& gw, input::SectionRegistry& registry);
 
 /**
+ * @brief The cell whose centroid is nearest to (x, y): the [GW_SOURCES] XY rule.
+ * @param[in] mesh Mesh with vertices and topology loaded; centroids need not be built yet.
+ * @param[in] x,y Point in the mesh's coordinate units.
+ * @return Zero-based cell index, first minimum on ties, or -1 for a mesh with no cells.
+ */
+int nearestCell(const MeshData& mesh, double x, double y);
+
+/**
  * @brief Validate the authored rows against the model and the species registry, once the mesh
  * and the species are final.
  *

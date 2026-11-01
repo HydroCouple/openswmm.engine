@@ -95,6 +95,9 @@ endif()
 # ---- Alias targets ----
 add_library(openswmm::engine ALIAS openswmm_engine)
 
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/EngineAbi.cmake)
+openswmm_configure_engine_abi()
+
 include(${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/GpuContract.cmake)
 openswmm_gpu_contract(openswmm_engine)
 
@@ -195,16 +198,19 @@ else()
             # Enable AVX2 + FMA for SIMD acceleration (x86_64)
             target_compile_options(openswmm_engine PRIVATE -mavx2 -mfma)
         elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
-            # ARM64 (Apple Silicon / Graviton / Cortex-A): NEON is always
-            # available, but an explicit CPU target lets the compiler emit
-            # more aggressive auto-vectorised code for the inner hot loops
-            # (XSectBatch, DynamicWave momentum kernels). -mcpu=native when
-            # available, else a safe default baseline.
-            include(CheckCXXCompilerFlag)
-            check_cxx_compiler_flag("-mcpu=native" OPENSWMM_HAVE_MCPU_NATIVE)
-            if(OPENSWMM_HAVE_MCPU_NATIVE)
-                target_compile_options(openswmm_engine PRIVATE -mcpu=native)
-                message(STATUS "OpenSWMM Engine: -mcpu=native enabled for arm64")
+            # ARM64: NEON is part of the baseline ISA, so the default target
+            # already vectorises the hot loops (XSectBatch, DynamicWave
+            # momentum kernels). -mcpu=native is opt-in (OPENSWMM_NATIVE_CPU,
+            # root CMakeLists.txt): on an SVE build host it emits SVE, and the
+            # library then dies with SIGILL on CPUs without it.
+            if(OPENSWMM_NATIVE_CPU)
+                include(CheckCXXCompilerFlag)
+                check_cxx_compiler_flag("-mcpu=native" OPENSWMM_HAVE_MCPU_NATIVE)
+                if(OPENSWMM_HAVE_MCPU_NATIVE)
+                    target_compile_options(openswmm_engine PRIVATE -mcpu=native)
+                    message(STATUS "OpenSWMM Engine: -mcpu=native (OPENSWMM_NATIVE_CPU); "
+                                   "the library needs this machine's CPU features")
+                endif()
             endif()
         endif()
     elseif(MSVC)
@@ -306,11 +312,21 @@ endif()
 
 # ---- Export macros ----
 include(GenerateExportHeader)
+set(OPENSWMM_ENGINE_EXPORT_DOCUMENTATION [=[
+/**
+ * @file      openswmm_engine_export.h
+ * @brief     Build-generated visibility and deprecation macros for the engine API.
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
+ */
+]=])
 generate_export_header(openswmm_engine
     BASE_NAME            openswmm_engine
     EXPORT_MACRO_NAME    SWMM_ENGINE_API
     EXPORT_FILE_NAME     openswmm_engine_export.h
     STATIC_DEFINE        OPENSWMM_ENGINE_STATIC
+    CUSTOM_CONTENT_FROM_VARIABLE OPENSWMM_ENGINE_EXPORT_DOCUMENTATION
 )
 
 file(COPY ${CMAKE_CURRENT_BINARY_DIR}/openswmm_engine_export.h
@@ -504,6 +520,7 @@ if(OPENSWMM_BUILD_2D)
     # Explicit local-inertial marcher (the 2D integrator) + its unique-edge
     # CSR layout.
     list(APPEND OPENSWMM_2D_SOURCES 2d/solver/InertialEdges.cpp)
+    list(APPEND OPENSWMM_2D_SOURCES 2d/solver/MomentumPhysics2D.cpp)
     list(APPEND OPENSWMM_2D_SOURCES 2d/solver/ExplicitInertialSolver.cpp)
     list(APPEND OPENSWMM_2D_SOURCES 2d/solver/ExplicitInertialCheckpoint.cpp)
 

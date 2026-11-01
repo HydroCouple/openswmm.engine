@@ -20,6 +20,7 @@
 #include "core/FileIO.hpp"
 #include "plugins/DefaultReportPlugin.hpp"
 #include <openswmm/engine/openswmm_checkpoint.h>
+#include <openswmm/engine/openswmm_gw2d.h>
 #include <openswmm/engine/openswmm_model.h>
 #include <openswmm/engine/openswmm_snow.h>
 #include <openswmm/engine/openswmm_2d.h>
@@ -4112,6 +4113,27 @@ void sameEngineHistory(const twoD::EngineSourceResultHistory& a,
     }
 }
 }
+TEST(EngineCheckpoint, AcceptedSourceHistoryLateRefusalPreservesColumnsAndCheckpointAnchor) {
+    SurfaceSession a;
+    ASSERT_NO_THROW(startClosedSpatial(a, "history-append-rollback", 2, .31, true));
+    twoD::EngineSourceResultHistory history;
+    ASSERT_EQ(a.engine.setEngineSourceResultHistory(history), "");
+    ASSERT_NO_THROW(step(a.engine));
+    const auto checkpoint = root() / "history-append-rollback-before.chk";
+    ASSERT_EQ(a.engine.saveCheckpoint(checkpoint.string()), "");
+    auto& columns = const_cast<std::map<std::string, twoD::SourceResultTable>&>(history.tables());
+    columns.at("boundaries").columns[0][0] = .5;
+    const auto invalid = history;
+    EXPECT_THROW(step(a.engine), std::runtime_error);
+    sameEngineHistory(history, invalid);
+    columns.at("boundaries").columns[0][0] = 0.;
+    SurfaceSession restored;
+    ASSERT_NO_THROW(startClosedSpatial(restored, "history-append-restored", 2, .31, true));
+    ASSERT_EQ(restored.engine.loadCheckpoint(checkpoint.string()), "");
+    ASSERT_EQ(restored.engine.resumeEngineSourceResultHistory(history), "");
+    ASSERT_NO_THROW(step(restored.engine));
+}
+
 TEST(EngineCheckpoint, AcceptedSourceHistoryPreservesEveryEngineStepAndExactContinuation) {
     for (int lid = 0; lid < 3; ++lid)
         for (double cadence : {.31, .7}) {
@@ -11196,6 +11218,90 @@ TEST(EngineCheckpoint,
     ASSERT_EQ(swmm_checkpoint_start_session(&e, &options), SWMM_OK)
         << swmm_checkpoint_last_error_msg();
 }
+TEST(EngineCheckpoint, IndependentGroundwaterSnapshotsAndHeldReadsPreserveUninterruptedRun) {
+    SWMMEngine continuous, saved, restored, hot;
+    const auto setup = [](SWMMEngine& eng, const char* name) {
+        managedSurfaceOpen(eng, name, 0, 0, 0, false);
+        auto& opts = eng.surfaceRouter2D().aquiferConfig().options;
+        opts.independent_clock = true;
+        opts.max_step = 4;
+    };
+    auto session = managedOptions(0);
+    int serial = 0;
+    for (auto* eng : {&continuous, &saved, &restored}) {
+        const auto name = "independent-clock-session-" + std::to_string(serial++);
+        ASSERT_NO_THROW(setup(*eng, name.c_str()));
+        ASSERT_EQ(swmm_checkpoint_start_session(eng, &session), SWMM_OK)
+            << swmm_checkpoint_last_error_msg();
+    }
+    ASSERT_NO_THROW(until(continuous, 1.2));
+    ASSERT_NO_THROW(until(saved, 1.2));
+    SWMM_GwClockStats stats{};
+    stats.struct_size = sizeof(stats);
+    ASSERT_EQ(swmm_gw2d_get_clock_stats(&saved, &stats), SWMM_OK);
+    EXPECT_EQ(stats.independent, 1);
+    double held = 0;
+    ASSERT_EQ(swmm_gw2d_get_cell(&saved, 0, SWMM_GW2D_VAR_COMPLETED_TIME, &held), SWMM_OK);
+    EXPECT_LT(held, saved.context().current_time);
+    for (int var = 0; var <= SWMM_GW2D_VAR_PENDING_OUT; ++var) {
+        double value = 0;
+        const int status = swmm_gw2d_get_cell(&saved, 0, var, &value);
+        // Feddes stress is undefined until this held cell has evaluated ET.
+        if (var == SWMM_GW2D_VAR_ET_STRESS && status == SWMM_ERR_LIFECYCLE) continue;
+        ASSERT_EQ(status, SWMM_OK) << var;
+    }
+    const auto cp = root() / "independent-clock-held.chk",
+               hs = root() / "independent-clock-held.hsf";
+    ASSERT_EQ(swmm_checkpoint_save(&saved, cp.string().c_str()), SWMM_OK)
+        << swmm_checkpoint_last_error_msg();
+    ASSERT_EQ(swmm_hotstart_save(&saved, hs.string().c_str()), SWMM_OK)
+        << swmm_hotstart_last_io_error();
+    ASSERT_EQ(swmm_checkpoint_restore(&restored, cp.string().c_str()), SWMM_OK)
+        << swmm_checkpoint_last_error_msg();
+    ASSERT_NO_THROW(setup(hot, "independent-clock-hsf"));
+    ASSERT_EQ(hot.initialize(), SWMM_OK);
+    SWMM_HotStart file = nullptr;
+    ASSERT_EQ(swmm_hotstart_open(hs.string().c_str(), &file), SWMM_OK)
+        << swmm_hotstart_last_io_error();
+    ASSERT_EQ(swmm_hotstart_apply(&hot, file), SWMM_OK);
+    ASSERT_EQ(swmm_hotstart_close(file), SWMM_OK);
+    ASSERT_EQ(hot.start(0), SWMM_OK) << hot.context().error_message;
+    for (auto* eng : {&saved, &restored, &hot})
+        ASSERT_EQ(eng->context().current_time, continuous.context().current_time);
+    for (int j = 0; j < 10; ++j) {
+        for (auto* eng : {&continuous, &saved, &restored, &hot})
+            ASSERT_NO_THROW(step(*eng));
+        for (auto* eng : {&saved, &restored, &hot}) {
+            EXPECT_EQ(eng->surfaceRouter2D().subsurface().transportRestartState(),
+                      continuous.surfaceRouter2D().subsurface().transportRestartState());
+            EXPECT_EQ(eng->surfaceRouter2D().state().volume,
+                      continuous.surfaceRouter2D().state().volume);
+        }
+    }
+}
+TEST(EngineCheckpoint, IndependentGroundwaterRejectsDifferentBudgetPolicy) {
+    for (const bool fraction : {false, true}) {
+        SWMMEngine a, b;
+        int serial = 0;
+        for (auto* eng : {&a, &b}) {
+            const auto name = "independent-policy-" + std::to_string(fraction) + "-" + std::to_string(serial++);
+            ASSERT_NO_THROW(managedSurfaceOpen(*eng, name, 0, 0, 0, false));
+            auto& options = eng->surfaceRouter2D().aquiferConfig().options;
+            options.independent_clock = true;
+            if (eng == &b)
+                (fraction ? options.budget_fraction : options.head_tolerance) = .1;
+            auto session = managedOptions(0);
+            ASSERT_EQ(swmm_checkpoint_start_session(eng, &session), SWMM_OK);
+        }
+        ASSERT_NO_THROW(until(a, 1.2));
+        const auto cp = root() / ("independent-policy-" + std::to_string(fraction) + ".chk");
+        ASSERT_EQ(swmm_checkpoint_save(&a, cp.string().c_str()), SWMM_OK);
+        const auto before = b.surfaceRouter2D().subsurface().transportRestartState();
+        EXPECT_NE(swmm_checkpoint_restore(&b, cp.string().c_str()), SWMM_OK);
+        EXPECT_EQ(b.surfaceRouter2D().subsurface().transportRestartState(), before);
+    }
+}
+
 TEST(EngineCheckpoint, ManagedSessionMeshOnlyOwnsItsStageAndRefusesUnqualifiedJournal) {
     SWMMEngine e;
     ASSERT_NO_THROW(managedSurfaceOpen(e, "managed-mesh-only", 0, 0, 0, false));

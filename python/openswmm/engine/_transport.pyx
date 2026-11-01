@@ -6,7 +6,7 @@ native API currently resolves these rows only during model open.
 """
 from dataclasses import dataclass
 from typing import NamedTuple
-from ._common cimport SWMM_Engine, _check
+from ._common cimport SWMM_Engine, _check, _read_engine_string, _TextBufs, _tb_open, _tb_retry, _tb_str, _tb_close
 from ._enums import TransportDispersionMode, TransportDomain, TransportClass, TransportState
 
 cdef extern from "openswmm/engine/openswmm_transport.h":
@@ -221,17 +221,22 @@ class Transport:
         """
         cdef int count=0, index=0, is_ts=0
         cdef double value=0
-        cdef char element[256]
-        cdef char species[256]
-        cdef char series[256]
+        cdef _TextBufs t
         cdef SWMM_Engine h = _h(self._owner)
         _check(swmm_transport_boundary_count(h, &count))
         rows = []
-        for index in range(count):
-            _check(swmm_transport_get_boundary(h, index, element, 256, species, 256,
-                                                 &is_ts, &value, series, 256))
-            rows.append(TransportRow(element.decode('utf-8'), species.decode('utf-8'),
-                        bool(is_ts), value, series.decode('utf-8')))
+        _tb_open(&t, 3)
+        try:
+            for index in range(count):
+                while True:
+                    _check(swmm_transport_get_boundary(h, index, t.p[0], t.size, t.p[1], t.size,
+                                                         &is_ts, &value, t.p[2], t.size))
+                    if not _tb_retry(&t):
+                        break
+                rows.append(TransportRow(_tb_str(&t, 0), _tb_str(&t, 1),
+                            bool(is_ts), value, _tb_str(&t, 2)))
+        finally:
+            _tb_close(&t)
         return tuple(rows)
 
     @property
@@ -242,25 +247,28 @@ class Transport:
         """
         cdef int count=0, index=0, is_ts=0
         cdef double value=0
-        cdef char element[256]
-        cdef char species[256]
-        cdef char series[256]
+        cdef _TextBufs t
         cdef SWMM_Engine h = _h(self._owner)
         _check(swmm_transport_source_count(h, &count))
         rows = []
-        for index in range(count):
-            _check(swmm_transport_get_source(h, index, element, 256, species, 256,
-                                                 &is_ts, &value, series, 256))
-            rows.append(TransportRow(element.decode('utf-8'), species.decode('utf-8'),
-                        bool(is_ts), value, series.decode('utf-8')))
+        _tb_open(&t, 3)
+        try:
+            for index in range(count):
+                while True:
+                    _check(swmm_transport_get_source(h, index, t.p[0], t.size, t.p[1], t.size,
+                                                         &is_ts, &value, t.p[2], t.size))
+                    if not _tb_retry(&t):
+                        break
+                rows.append(TransportRow(_tb_str(&t, 0), _tb_str(&t, 1),
+                            bool(is_ts), value, _tb_str(&t, 2)))
+        finally:
+            _tb_close(&t)
         return tuple(rows)
 
     @property
     def detailed_output(self):
         """[TRANSPORT_OPTIONS] DETAILED_OUTPUT path ('' when off)."""
-        cdef char buf[4096]
-        _check(swmm_transport_get_detailed_output(_h(self._owner), buf, 4096))
-        return buf.decode('utf-8')
+        return _read_engine_string(_h(self._owner), swmm_transport_get_detailed_output)
 
     @detailed_output.setter
     def detailed_output(self, value):

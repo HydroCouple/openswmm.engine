@@ -113,6 +113,8 @@ void InertialEdges::build(const MeshData& mesh) {
         }
     }
     ne = static_cast<int>(cL.size());
+    conveyance.assign(static_cast<std::size_t>(ne), 1.0);
+    refreshConveyance(mesh);
 
     // Per-cell characteristic length for the CFL bound, derived from the
     // ACTUAL discrete wave operator instead of a geometric proxy. The face
@@ -192,6 +194,17 @@ void InertialEdges::build(const MeshData& mesh) {
             cell_arm_y[pos] = my[eid] - mesh.tri_cy[t];
         }
     }
+}
+
+bool InertialEdges::refreshConveyance(const MeshData& mesh) {
+    bool changed = false;
+    for (int e = 0; e < ne; ++e) {
+        const auto slot = static_cast<std::size_t>(slotL[e]);
+        const double factor = slot < mesh.edge_conveyance.size() ? mesh.edge_conveyance[slot] : 1.0;
+        changed |= conveyance[e] != factor;
+        conveyance[e] = factor;
+    }
+    return changed;
 }
 
 } // namespace openswmm::twoD

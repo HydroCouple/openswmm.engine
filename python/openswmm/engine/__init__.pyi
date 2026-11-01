@@ -36,6 +36,7 @@ water quality, spatial data, and GeoPackage I/O.
 from ._coupling import Coupling as Coupling, DomainSources as DomainSources, RuntimeSource as RuntimeSource, SourceReceipt as SourceReceipt, BoundaryReceipt as BoundaryReceipt, CouplingFrame as CouplingFrame, RuntimeBoundary as RuntimeBoundary, RuntimeForcing as RuntimeForcing, RuntimeClear as RuntimeClear
 from ._solver import (
     Solver as Solver,
+    abi_tag as abi_tag,
     run as run,
     run_with_callback as run_with_callback,
 )
@@ -220,7 +221,10 @@ from ._enums import (
     RunoffTotal as RunoffTotal,
 )
 
+HAS_2D: bool
 HAS_GEOPACKAGE: bool
+
+from ._capabilities import capabilities as capabilities
 
 __all__: list[str]
 

@@ -777,12 +777,18 @@ cdef class ModelBuilder:
         @rtype: tuple[str, int, str]
         @raise EngineError: If C{index} is out of range.
         """
-        cdef char name_buf[128]
-        cdef char desc_buf[512]
+        cdef _TextBufs tb
         cdef int t = 0
-        _check(swmm_userflag_def_get(self._handle, index, name_buf, 128,
-                                     &t, desc_buf, 512))
-        return (name_buf.decode('utf-8'), t, desc_buf.decode('utf-8'))
+        _tb_open(&tb, 2)
+        try:
+            while True:
+                _check(swmm_userflag_def_get(self._handle, index, tb.p[0], tb.size,
+                                             &t, tb.p[1], tb.size))
+                if not _tb_retry(&tb):
+                    break
+            return (_tb_str(&tb, 0), t, _tb_str(&tb, 1))
+        finally:
+            _tb_close(&tb)
 
     def get_userflag_value(self, str obj_type, str obj_name, str flag_name):
         """Return the flag value assigned to a specific object, as a string.
@@ -804,13 +810,20 @@ cdef class ModelBuilder:
         cdef bytes b_type = obj_type.encode('utf-8')
         cdef bytes b_name = obj_name.encode('utf-8')
         cdef bytes b_flag = flag_name.encode('utf-8')
-        cdef char buf[512]
+        cdef _TextBufs t
         cdef int found = 0
-        _check(swmm_userflag_value_get(self._handle, b_type, b_name, b_flag,
-                                       buf, 512, &found))
-        if not found:
-            return None
-        return buf.decode('utf-8')
+        _tb_open(&t, 1)
+        try:
+            while True:
+                _check(swmm_userflag_value_get(self._handle, b_type, b_name, b_flag,
+                                               t.p[0], t.size, &found))
+                if not found:
+                    return None
+                if not _tb_retry(&t):
+                    break
+            return _tb_str(&t, 0)
+        finally:
+            _tb_close(&t)
 
     def set_userflag_value(self, str obj_type, str obj_name, str flag_name,
                            str value):

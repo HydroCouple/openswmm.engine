@@ -95,6 +95,46 @@ positive face-depth polynomial and shoreline cell velocity described in
 @ref hydraulics_ref_ch9_two_dimensional are part of the numerical method,
 not dispensable work to remove from a profile.
 
+### 7.3.1 Units and pending 1D/2D transfers
+
+The 1D engine stores hydraulic volume in ft³ and flow in ft³/s for every
+project. The surface solver and its mass-balance API use geometric SI.
+Three conversion conventions coexist for compatibility:
+
+| Quantity or boundary | ft³ to m³ factor | Source and purpose |
+|---|---|---|
+| Legacy project display volume and CMS flow | `0.02832` | `core/UnitConversion.hpp`, `UCF(VOLUME)` for SI and `Qcf[CMS]`; preserves SWMM5 reports and public getter conventions |
+| Legacy SI weir calculation | `0.028317` | `hydraulics/HydStructures.cpp`, `M3perFT3`; preserves legacy weir arithmetic |
+| Geometric 1D/2D exchange | `0.3048³ = 0.028316846592` | `2d/SurfaceRouter2D.cpp`; used for native hydraulic volumes and flows crossing the surface interface |
+
+Thus a CMS flow returned by `swmm_node_get_lateral_inflow()` must be
+multiplied by `0.3048³ / UCF(FLOW, options)` before integration against
+the surface ledger. In CMS, directly integrating the display flow gives
+a factor of `0.02832 / 0.3048³ = 1.0001113615525568` relative to geometric
+SI, a difference of approximately 0.011%. Convert native 1D routing
+totals from ft³ with `0.3048³` for that comparison; report display volumes
+use the legacy factor instead. This convention is preserved by design.
+
+Exchange is staggered. The surface ledger books a transfer when the
+surface gives up or receives water; `assembleLateralInflows()` delivers
+the corresponding signed native volume to the network on later routing
+steps. At the observation time, pending transfer is
+`sum(nodes.coupling_queue + nodes.coupling_volume) * 0.3048³` in m³.
+For a fixture whose only lateral flow is coupling, the transfer contract is
+
+```
+delivered_1d_m3 + pending_1d_m3
+    = coupling_2d_to_1d_out_m3 - coupling_1d_to_2d_in_m3
+```
+
+Read pending storage before engine teardown. The separate 1D routing and
+2D continuity reports are domain budgets; pending delivery is not included
+in the routing final node/link storage. A combined system budget must
+account for it explicitly, particularly when a run ends during active
+exchange. The strict fixture in `test_2d_coupling_conservation.cpp` checks
+this transfer ledger to relative `1e-10` (issue #194); it does not assert
+that the entire hydraulic model has that continuity accuracy.
+
 ## 7.4 CPU work and memory layout
 
 **Remove repeated scalar overhead.** The current worker's source-ledger

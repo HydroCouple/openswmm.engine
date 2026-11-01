@@ -45,6 +45,7 @@
 #include "../SurfaceRouter2D.hpp"
 #include "../../input/SectionRegistry.hpp"
 
+#include <span>
 #include <string>
 #include <vector>
 
@@ -322,6 +323,15 @@ std::string parse2DInfiltrationLine(const std::vector<std::string>& tokens, Infi
  * @note Does not validate an option value or its runtime availability; no allocation/mutation.
  */
 bool is2DOptionKey(const std::string& key);
+
+/**
+ * @brief Every current [2D_OPTIONS] key accepted by is2DOptionKey, in documentation order.
+ *
+ * Enumerated by swmm_options_ext_key_count / swmm_options_ext_key_at.
+ *
+ * @return Process-owned key list; retired keys excluded. No allocation or mutation.
+ */
+std::span<const char* const> current2DOptionKeys();
 
 /**
  * @brief True when @p key (case-insensitive) is a [2D_OPTIONS] parameter retired with the

@@ -98,6 +98,18 @@ TEST(WarningErrorParity, UndefinedOutletIsFatal209) {
     EXPECT_TRUE(contains(rpt_text, "ERROR 209")) << rpt_text;
 }
 
+// An [OPTIONS] keyword value legacy does not know refuses the deck with
+// ERROR 205 (legacy project_readOption). FLOW_UNITS FURLONGS used to open and
+// run as CFS.
+TEST(WarningErrorParity, UnknownFlowUnitsIsFatal205) {
+    std::string rpt_text;
+    const int rc =
+        open_model("warnerr_bad_flow_units.inp", "warnerr_bad_flow_units.rpt", rpt_text);
+    EXPECT_EQ(rc, SWMM_ERR_PARSE);
+    EXPECT_TRUE(contains(rpt_text, "ERROR 205")) << rpt_text;
+    EXPECT_TRUE(contains(rpt_text, "FURLONGS")) << rpt_text;
+}
+
 // An unrecognized section must produce a warning in the .rpt but still open.
 TEST(WarningErrorParity, UnknownSectionWarnsInReport) {
     std::string rpt_text;

@@ -10,6 +10,7 @@
  * @license   Apache-2.0
  */
 
+#include "core/ProcessPerf.hpp"
 #include "SubsurfaceSolver.hpp"
 #include "LayerTransport.hpp"
 #include "../data/SolverOptions2D.hpp"
@@ -39,6 +40,7 @@ namespace openswmm::twoD {
  * acceptance for RK2.
  */
 void SubsurfaceSolver::fireLayerSpecies(int cell, const CellFlux& f) {
+    perf::ProcessTimer process_timer(perf::ProcessPhase::gw_species);
     if (!f.column || int(f.column->new_water.size()) != tr_.n_layers)
         throw std::runtime_error("Layer chemistry has no accepted SIGMA water receipt.");
     const auto& water = *f.column;
@@ -46,13 +48,24 @@ void SubsurfaceSolver::fireLayerSpecies(int cell, const CellFlux& f) {
     const double area = state_.area[cell];
     const bool euler = opts_ && opts_->reconstruction_order == 2;
     const double dz = (euler ? water.old_length : water.new_length) / layers;
+    struct ColumnScratch {
+        std::vector<double> capacity, rhs, initial, donor_available;
+        std::vector<LayerTransportMove> moves;
+        LayerTransportScratch transport;
+    };
+    // This synchronous column path is nonreentrant; all results are consumed
+    // before reuse. The solver and reaction workspace still require exclusive access.
+    static thread_local ColumnScratch scratch;
     for (int s = 0; s < tr_.n_species; ++s) {
         if (heat_.active() && s == tr_.temp_row)
             continue; // thermal energy has one fixed-depth owner
         const auto k = tr_.idx(s, cell);
         const bool intensive = s == tr_.age_row || s == tr_.temp_row;
         const double partition = intensive ? 0 : tr_.kd[k] * tr_.rho_b[cell];
-        std::vector<double> capacity(layers + 1), rhs(layers + 1);
+        auto& capacity = scratch.capacity;
+        auto& rhs = scratch.rhs;
+        capacity.resize(layers + 1);
+        rhs.resize(layers + 1);
         for (int j = 0; j < layers; ++j) {
             capacity[j] =
                 area * ((euler ? water.old_water[j] : water.new_water[j]) + partition * dz);
@@ -61,13 +74,16 @@ void SubsurfaceSolver::fireLayerSpecies(int cell, const CellFlux& f) {
         capacity[sat] = (euler ? f.v_sat0 / state_.theta_s[cell] : area * f.hg_final) *
                         (state_.theta_s[cell] + partition);
         rhs[sat] = tr_.sat_mass[k];
-        const auto initial = rhs;
-        auto donor_available = initial;
+        auto& initial = scratch.initial;
+        auto& donor_available = scratch.donor_available;
+        initial = rhs;
+        donor_available = initial;
         donor_available[sat] = std::max(0., initial[sat] - pendingSaturatedMassExport(cell, s));
         const double lateral = gatherLateralMass(cell, s);
         rhs[sat] += lateral;
-        tr_.net_lateral[s] += lateral;
-        const double infil = consumePending(tr_.xacc_from_surface[k]);
+        if (!independentClock())
+            tr_.net_lateral[s] += lateral;
+        const double infil = takeInfiltrationMass(cell, s, f);
         // Rejected infiltration retains its producer's composition. It has
         // never entered a soil reactor and cannot acquire resident solute.
         const double refund =
@@ -75,14 +91,17 @@ void SubsurfaceSolver::fireLayerSpecies(int cell, const CellFlux& f) {
                           : (f.infil_in > 0 ? infil * std::min(1., f.reject / f.infil_in) : 0);
         rhs[0] += infil - refund;
         tr_.gained_infil[s] += infil;
-        const double node = gatherNodeMass(cell, s), link = consumePending(tr_.lacc_mass[k]);
+        const double node = gatherNodeMass(cell, s),
+                     link = takeClockAmount(cell, GwSlot::link_mass, tr_.lacc_mass, k);
         rhs[sat] += node + link;
         tr_.gained_node[s] += node;
         tr_.gained_link[s] += link;
         for (int j = 0; j < layers; ++j) {
             const auto q = tr_.layerIdx(s, j, cell);
-            const double from_node = consumePending(tr_.contact_node_mass[q]);
-            const double from_link = consumePending(tr_.contact_link_mass[q]);
+            const double from_node =
+                takeClockAmount(cell, GwSlot::contact_node_mass, tr_.contact_node_mass, q);
+            const double from_link =
+                takeClockAmount(cell, GwSlot::contact_link_mass, tr_.contact_link_mass, q);
             rhs[j] += from_node + from_link;
             tr_.gained_node[s] += from_node;
             tr_.gained_link[s] += from_link;
@@ -101,7 +120,7 @@ void SubsurfaceSolver::fireLayerSpecies(int cell, const CellFlux& f) {
                 row.mass_in[s] += pulse.mass[s];
                 row.flux_in[s] += pulse.flux_in[s];
             }
-        const double prepaid_link = consumePending(tr_.lout_mass[k]);
+        const double prepaid_link = takeClockAmount(cell, GwSlot::link_export, tr_.lout_mass, k);
         rhs[sat] -= prepaid_link;
         tr_.lost_link[s] += prepaid_link;
         // Independent sinks may use current saturated mobile inventory,
@@ -140,7 +159,8 @@ void SubsurfaceSolver::fireLayerSpecies(int cell, const CellFlux& f) {
                 row.receipt.requested_mass[s] -= wanted;
                 row.receipt.applied_mass[s] -= wanted * scale;
             }
-        std::vector<LayerTransportMove> moves;
+        auto& moves = scratch.moves;
+        moves.clear();
         const auto face = [&](int j, double depth) {
             const double amount = area * depth;
             if (amount > 0)
@@ -191,9 +211,10 @@ void SubsurfaceSolver::fireLayerSpecies(int cell, const CellFlux& f) {
                 rhs[j] += f.dt * capacity[j];
             tr_.generated_age[s] += production;
         }
-        const auto result = euler ? advanceLayerTransportEuler(capacity, initial, rhs, moves,
-                                                               tr_.signedRow(s), &donor_available)
-                                  : solveLayerTransport(capacity, rhs, moves, tr_.signedRow(s));
+        const auto& result =
+            euler ? advanceLayerTransportEuler(capacity, initial, rhs, moves, scratch.transport,
+                                               tr_.signedRow(s), &donor_available)
+                  : solveLayerTransport(capacity, rhs, moves, scratch.transport, tr_.signedRow(s));
         if (!result.error.empty())
             throw std::runtime_error("SIGMA chemistry: " + result.error);
         tr_.sat_mass[k] = result.mass[sat];
@@ -221,12 +242,11 @@ void SubsurfaceSolver::fireLayerSpecies(int cell, const CellFlux& f) {
             tr_.xacc_to_surface[k] += up;
         if (f.node_out > 0 && !tr_.node_out_mass.empty()) {
             double total = 0;
-            for (std::size_t b = 0; b < node_beds_.size(); ++b)
-                if (node_beds_[b].cell == cell)
-                    total += std::max(0., bed_gathered_[b]);
+            for (const auto b : cell_beds_[cell])
+                total += std::max(0., bed_gathered_[b]);
             const auto count = tr_.node_out_mass.size() / tr_.n_species;
-            for (std::size_t b = 0; b < node_beds_.size(); ++b)
-                if (node_beds_[b].cell == cell && total > 0)
+            for (const auto b : cell_beds_[cell])
+                if (total > 0)
                     tr_.node_out_mass[std::size_t(s) * count + node_beds_[b].node] +=
                         result.transferred[node_out] * std::max(0., bed_gathered_[b]) / total;
         }

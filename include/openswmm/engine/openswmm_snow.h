@@ -69,9 +69,9 @@ SWMM_ENGINE_API int swmm_snow_set_step(SWMM_Engine engine, double seconds);
  * @param[in] key Non-null null-terminated UEB key, accepted by uebOptionValue().
  * @param[out] value Non-null writable string buffer; receives the complete value and terminator.
  * @param[in] capacity Positive byte capacity including the terminator; insufficient
- * capacity is an error and does not produce a truncated successful result.
- * @return SWMM_OK on success, SWMM_ERR_BADHANDLE for an invalid handle, or
- * SWMM_ERR_BADPARAM for invalid arguments. Output storage is caller-owned.
+ * capacity returns SWMM_ERR_BUFSIZE and writes nothing.
+ * @return SWMM_OK on success, SWMM_ERR_BADHANDLE for an invalid handle, SWMM_ERR_BUFSIZE for a
+ * short buffer, or SWMM_ERR_BADPARAM for invalid arguments. Output storage is caller-owned.
  * @note Unknown keys return SWMM_ERR_BADPARAM. Reads authored configuration.
  */
 SWMM_ENGINE_API int swmm_ueb_option_get(SWMM_Engine engine, const char* key, char* value,
@@ -250,9 +250,10 @@ SWMM_ENGINE_API int swmm_climate_set_radiation(SWMM_Engine engine,
  * @param[in] channel 0 shortwave time series, 1 longwave time series, 2 met-file path.
  * @param[out] value Non-null writable string buffer.
  * @param[in] capacity Positive byte capacity including the terminator; insufficient capacity
- * returns SWMM_ERR_BADPARAM.
- * @return SWMM_OK on success, SWMM_ERR_BADHANDLE for an invalid handle, or
- * SWMM_ERR_BADPARAM for invalid arguments. Output storage is caller-owned.
+ * returns SWMM_ERR_BUFSIZE and writes nothing.
+ * @return SWMM_OK on success, SWMM_ERR_BADHANDLE for an invalid handle, SWMM_ERR_BUFSIZE for a
+ * short buffer, or SWMM_ERR_BADPARAM for invalid arguments (including an unknown channel).
+ * Output storage is caller-owned.
  * @note Binds text only; change the source mode separately with
  * swmm_climate_set_radiation(). The returned text is copied and output storage is not retained.
  */
@@ -304,9 +305,10 @@ typedef struct SWMM_ClimateCloudConfig {
  * @param[out] config Non-null configuration: mode 0 default, 1 constant or 2 series,
  * fraction dimensionless and attenuation coefficients in their authored convention.
  * @param[out] series Non-null writable name buffer; empty when no valid series binding exists.
- * @param[in] capacity Positive byte capacity including the terminator; a short buffer fails.
- * @return SWMM_OK on success, SWMM_ERR_BADHANDLE for an invalid handle, or
- * SWMM_ERR_BADPARAM for invalid arguments. Output storage is caller-owned.
+ * @param[in] capacity Positive byte capacity including the terminator; a short buffer returns
+ * SWMM_ERR_BUFSIZE and writes nothing.
+ * @return SWMM_OK on success, SWMM_ERR_BADHANDLE for an invalid handle, SWMM_ERR_BUFSIZE for a
+ * short buffer, or SWMM_ERR_BADPARAM for invalid arguments. Output storage is caller-owned.
  * @note The config structure is assigned only after the series text fits.
  */
 SWMM_ENGINE_API int swmm_climate_get_cloud(SWMM_Engine engine, SWMM_ClimateCloudConfig* config,

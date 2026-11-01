@@ -170,6 +170,8 @@ inline void read_model_supplement(sqlite3* db, SimulationContext& ctx,
             // relational dates are authoritative for a partial section replay.
             if (section == "OPTIONS") ctx.options.report_start = reportStart;
         }
+        else if (section == "2D_OPTIONS" && !ctx.twod_io.options)
+            ctx.warnings.push_back("[2D_OPTIONS] ignored: no 2D options storage is attached");
         else throw GpkgError("Unsupported saved model section: " + section);
         body.clear();
     };

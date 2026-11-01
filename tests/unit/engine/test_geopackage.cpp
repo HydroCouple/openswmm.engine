@@ -461,6 +461,72 @@ TEST_F(GeoPackageTest, MultipolygonRoundTrip) {
     EXPECT_DOUBLE_EQ(mp.xs[1], 10.0);
 }
 
+TEST(GeoPackageMultipartGeometry, RetainsPartsHolesAndEmptyMembers) {
+    // Independently assemble WKB: two disjoint polygons, with a hole in the
+    // first. Ring winding deliberately matches, so nesting must be geometric.
+    const std::vector<double> x{0,100,100,0,0, 20,40,40,20,20, 200,250,250,200,200};
+    const std::vector<double> y{0,0,100,100,0, 20,20,40,40,20, 10,10,60,60,10};
+    std::vector<uint8_t> blob;
+    detail::write_gp_header(blob, 4326, 0, 0, 250, 100);
+    detail::append_u8(blob, 1);
+    detail::append_u32(blob, WKB_MULTIPOLYGON);
+    detail::append_u32(blob, 3); // includes an empty polygon before the islands
+    detail::append_u8(blob, 1);
+    detail::append_u32(blob, WKB_POLYGON);
+    detail::append_u32(blob, 0);
+    for (int part = 0; part < 2; ++part) {
+        detail::append_u8(blob, 1);
+        detail::append_u32(blob, WKB_POLYGON);
+        detail::append_u32(blob, part == 0 ? 2 : 1);
+        for (int ring = part == 0 ? 0 : 2; ring < (part == 0 ? 2 : 3); ++ring) {
+            detail::append_u32(blob, 5);
+            for (int i = ring * 5; i < ring * 5 + 5; ++i) {
+                detail::append_f64(blob, x[i]);
+                detail::append_f64(blob, y[i]);
+            }
+        }
+    }
+    const auto decoded = decode_multipolygon(blob);
+    EXPECT_EQ(decoded.xs, x);
+    EXPECT_EQ(decoded.ys, y);
+    const auto encoded = encode_multipolygon(x, y, 4326);
+    size_t offset = 45; // GP XY header (40), WKB order/type (5)
+    EXPECT_EQ(detail::read_val<uint32_t>(encoded.data(), offset), 2u);
+    offset += 5;
+    EXPECT_EQ(detail::read_val<uint32_t>(encoded.data(), offset), 2u); // hole retained
+    const auto roundtrip = decode_multipolygon(encoded);
+    EXPECT_EQ(roundtrip.xs, x);
+    EXPECT_EQ(roundtrip.ys, y);
+    EXPECT_TRUE(polygon::contains(x, y, 5, 5));
+    EXPECT_FALSE(polygon::contains(x, y, 30, 30));
+    EXPECT_TRUE(polygon::contains(x, y, 225, 30));
+    EXPECT_FALSE(polygon::contains(x, y, 150, 30));
+    auto truncated = blob;
+    truncated.pop_back();
+    EXPECT_THROW(decode_multipolygon(truncated), std::runtime_error);
+}
+
+TEST_F(GeoPackageTest, MultipartSubcatchmentSurvivesSaveReopen) {
+    auto ctx_out = build_test_context();
+    const auto sub = ctx_out.subcatch_names.find("S1");
+    ASSERT_GE(sub, 0);
+    ctx_out.spatial.subcatch_polygon_x[sub] =
+        {0,100,100,0,0, 20,40,40,20,20, 200,250,250,200,200};
+    ctx_out.spatial.subcatch_polygon_y[sub] =
+        {0,0,100,100,0, 20,20,40,40,20, 10,10,60,60,10};
+    const fs::path retained = fs::current_path() / "multipart_geometry";
+    fs::create_directories(retained);
+    const auto path = (retained / "subcatchment.gpkg").string();
+    std::remove(path.c_str());
+    ASSERT_EQ(write_to_file(path, ctx_out, "test_run"), 0);
+    SimulationContext ctx_in{};
+    ASSERT_EQ(read_from_file(path, ctx_in, "test_run"), 0);
+    const auto loaded = ctx_in.subcatch_names.find("S1");
+    ASSERT_GE(loaded, 0);
+    EXPECT_EQ(ctx_in.spatial.subcatch_polygon_x[loaded], ctx_out.spatial.subcatch_polygon_x[sub]);
+    EXPECT_EQ(ctx_in.spatial.subcatch_polygon_y[loaded], ctx_out.spatial.subcatch_polygon_y[sub]);
+}
+
 // ============================================================================
 // Section round-trip tests
 // ============================================================================

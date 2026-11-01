@@ -99,6 +99,12 @@ void armMsxRoutingLedger(SimulationContext& ctx) {
     auto& led = rx.msx_ledger;
     if (!led.armed || led.init.size() != uns) {
         led.arm(uns);
+        if(ctx.state_accessors.get_fv_retained_species_mass) {
+            const auto held=ctx.state_accessors.get_fv_retained_species_mass();
+            for(std::size_t s=0;s<uns&&s<held.size();++s)if(!rx.species_is_wall[s]) {
+                led.init[s]+=held[s];led.final_dry[s]=held[s];
+            }
+        }
         for (int i = 0; i < nn; ++i)
             for (std::size_t s = 0; s < uns; ++s)
                 if (!rx.species_is_wall[s])

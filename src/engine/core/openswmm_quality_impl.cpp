@@ -149,9 +149,15 @@ SWMM_ENGINE_API int swmm_landuse_rename(SWMM_Engine engine, int idx, const char*
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_landuses());
-    // Land uses are referenced positionally (matrix dimensions) — the name
-    // registry is the only holder of the name.
-    return ctx.landuse_names.rename(idx, new_id) ? SWMM_OK : SWMM_ERR_BADPARAM;
+    // Land uses are referenced positionally (matrix dimensions); only the
+    // [2D_COVERAGES] rows hold the name as text.
+    const std::string prev = ctx.landuse_names.name_of(idx);
+    if (!ctx.landuse_names.rename(idx, new_id))
+        return SWMM_ERR_BADPARAM;
+#ifdef OPENSWMM_HAS_2D
+    to_engine(engine)->surfaceRouter2D().renameLandUse(prev, new_id);
+#endif
+    return SWMM_OK;
 }
 
 // ============================================================================

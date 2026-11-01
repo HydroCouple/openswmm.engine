@@ -184,6 +184,32 @@ std::string parseAquiferOptionsLine(const std::vector<std::string>& tokens, GwOp
     const std::string& k = tokens[0];
     const std::string& v = tokens[1];
 
+    if (iequals(k, "GW_CLOCK")) {
+        if (!iequals(v, "SHARED") && !iequals(v, "INDEPENDENT"))
+            return "GW_CLOCK must be SHARED or INDEPENDENT: " + v;
+        opts.independent_clock = iequals(v, "INDEPENDENT");
+        return {};
+    }
+    if (iequals(k, "GW_BASE_STEP") || iequals(k, "GW_MAX_STEP")) {
+        double seconds = 0;
+        if (!num(v, seconds) || seconds <= 0)
+            return k + " must be a finite positive duration in seconds: " + v;
+        (iequals(k, "GW_BASE_STEP") ? opts.base_step : opts.max_step) = seconds;
+        return {};
+    }
+    if (iequals(k, "GW_BINDS_SURFACE_DT")) {
+        if (!boolTok(v, opts.binds_surface_dt))
+            return "GW_BINDS_SURFACE_DT must be YES or NO: " + v;
+        return {};
+    }
+    if (iequals(k, "GW_BUDGET_FRACTION") || iequals(k, "GW_HEAD_TOLERANCE")) {
+        double value = 0;
+        const bool fraction = iequals(k, "GW_BUDGET_FRACTION");
+        if (!num(v, value) || value <= 0 || value > 1 || (!fraction && value == 1))
+            return k + (fraction ? " must be in (0,1]: " : " must be in (0,1): ") + v;
+        (fraction ? opts.budget_fraction : opts.head_tolerance) = value;
+        return {};
+    }
     if (iequals(k, "SOIL_CHAR")) {
         if (!parseSoilChar(v, opts.soil_char))
             return "unknown SOIL_CHAR: " + v;
@@ -1207,7 +1233,9 @@ std::vector<std::string> resolveSubsurface(SimulationContext& ctx, const MeshDat
     // G-X2: auto-enrolment — every node whose coordinates fall in a cell
     // and that no row names gets a direct-Darcy bed over the cell's area.
     // Rows override (their bed, or their EXCHANGE NO). Nodes without
-    // coordinates are simply not in any cell.
+    // coordinates are simply not in any cell. Outfalls are boundaries, not
+    // manholes: one that discharges onto the mesh books its net node flow as
+    // surface water, so an aquifer draw there overdraws the surface budget.
     if (cfg.options.node_auto && errs.empty()) {
         std::vector<char> named(static_cast<std::size_t>(ctx.n_nodes()), 0);
         for (const auto& b : cfg.node_beds)
@@ -1215,7 +1243,8 @@ std::vector<std::string> resolveSubsurface(SimulationContext& ctx, const MeshDat
                 named[static_cast<std::size_t>(b.node)] = 1;
         int enrolled = 0;
         for (int ni = 0; ni < ctx.n_nodes(); ++ni) {
-            if (named[static_cast<std::size_t>(ni)])
+            const auto ui = static_cast<std::size_t>(ni);
+            if (named[ui] || (ui < ctx.nodes.type.size() && ctx.nodes.type[ui] == NodeType::OUTFALL))
                 continue;
             const int c = locateNode(ni);
             if (c < 0)
@@ -1935,10 +1964,28 @@ void writeSubsurfaceSections(const SubsurfaceConfig& cfg,
         std::string body;
         auto kv = [&body](const char* k, const std::string& v) {
             body += k;
-            body.append(std::max<std::size_t>(1, 18 - std::strlen(k)), ' ');
+            const auto length = std::strlen(k);
+            body.append(length < 18 ? 18 - length : 1, ' ');
             body += v;
             body += '\n';
         };
+        if (cfg.options.independent_clock)
+            kv("GW_CLOCK", "INDEPENDENT");
+        const auto clock_seconds = [](double seconds) {
+            char text[32];
+            std::snprintf(text, sizeof(text), "%.17g", seconds);
+            return std::string(text);
+        };
+        if (cfg.options.base_step != d.base_step)
+            kv("GW_BASE_STEP", clock_seconds(cfg.options.base_step));
+        if (cfg.options.max_step != d.max_step)
+            kv("GW_MAX_STEP", clock_seconds(cfg.options.max_step));
+        if (cfg.options.budget_fraction != d.budget_fraction)
+            kv("GW_BUDGET_FRACTION", clock_seconds(cfg.options.budget_fraction));
+        if (cfg.options.head_tolerance != d.head_tolerance)
+            kv("GW_HEAD_TOLERANCE", clock_seconds(cfg.options.head_tolerance));
+        if (cfg.options.binds_surface_dt)
+            kv("GW_BINDS_SURFACE_DT", "YES");
         if (cfg.options.soil_char != d.soil_char)
             kv("SOIL_CHAR", soilCharToken(cfg.options.soil_char));
         if (cfg.options.closure != d.closure)

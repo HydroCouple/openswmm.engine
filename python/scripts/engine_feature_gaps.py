@@ -268,6 +268,8 @@ def _branch_fields(text: str, key_re: str) -> dict[str, set[str]]:
             fields.add(".".join(parts[-2:]))  # e.g. fv.limiter, or water_density
         fields |= {".".join(p.strip() for p in path.split(".")[-2:]) for path in re.findall(
             r"&\s*" + _ROOT_OBJ + r"\s*\.\s*((?:\w+\s*\.\s*)*\w+)", branch)}
+        if re.search(_ROOT_OBJ + r"\s*\.\s*ext_options\s*\[\s*key\s*\]\s*=", branch):
+            fields.add("ext_options")
         fields.discard("sets_limiter")
         out.setdefault(m.group(1), set()).update(
             f for f in fields if not f.split(".")[-1].startswith("sets_"))
@@ -321,11 +323,17 @@ def option_keys() -> dict[str, dict[str, dict]]:
                 return True, "swmm_options_get/set"
             if any(f'"{n}"' in set_ext and f'"{n}"' in get_ext for n in names):
                 return True, "swmm_options_get/set_ext"
+            if ("ext_options" in fields and _touches(get_ext, "ext_options")
+                    and re.search(r"\bext\s*\.\s*find\s*\(\s*key\s*\)", get_ext)
+                    and re.search(r"\.\s*ext_options\s*\[\s*key\s*\]\s*=", set_ext)):
+                return True, "swmm_options_get/set_ext"
         if prefix:  # typed accessor pair, e.g. swmm_transport_get/set_target_dx
             low = key.lower()
             if f"{prefix}get_{low}" in funcs and f"{prefix}set_{low}" in funcs:
                 return True, f"{prefix}get/set_{low}"
-        touched = sorted(f for f in fields if _touches(impl, f))
+        # A map touch alone does not prove access to a parser's key: require both
+        # generic extension paths above rather than an unrelated map read/write.
+        touched = sorted(f for f in fields if f != "ext_options" and _touches(impl, f))
         if touched:
             return True, "field " + ", ".join(touched)
         return False, ""

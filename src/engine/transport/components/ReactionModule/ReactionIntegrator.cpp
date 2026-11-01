@@ -283,6 +283,11 @@ void luSolve(const std::vector<double>& a, const std::vector<int>& piv, int n, c
  * after system dimension changes and provides exclusive workspace per simultaneous solve.
  */
 void RxWorkspace::init(const ReactionData& rx) {
+    // Reinitialization starts fresh even when the vector capacities are retained.
+    jac_valid_ = false;
+    jac_age_ = 0;
+    lu_valid_ = false;
+    lu_scale_ = 0.0;
     n_ = rx.n_species();
     const auto un = static_cast<std::size_t>(n_);
     terms_.assign(rx.term_expr.size(), 0.0);

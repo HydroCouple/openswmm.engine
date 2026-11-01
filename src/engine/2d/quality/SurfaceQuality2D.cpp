@@ -30,6 +30,8 @@
  * @license   Apache-2.0
  */
 
+#include "core/ProcessPerf.hpp"
+#include "core/PolygonRings.hpp"
 #include "SurfaceQuality2D.hpp"
 
 #include <algorithm>
@@ -542,11 +544,7 @@ std::vector<std::string> SurfaceQuality2D::resolve(const SimulationContext& ctx,
                     continue;
                 const double x = mesh.tri_cx[static_cast<std::size_t>(c)] * inv;
                 const double y = mesh.tri_cy[static_cast<std::size_t>(c)] * inv;
-                bool in = false;
-                for (std::size_t i = 0, j = xs.size() - 1; i < xs.size(); j = i++)
-                    if (((ys[i] > y) != (ys[j] > y)) &&
-                        (x < (xs[j] - xs[i]) * (y - ys[i]) / (ys[j] - ys[i]) + xs[i]))
-                        in = !in;
+                const bool in = polygon::contains(xs, ys, x, y);
                 if (in)
                     names.insert(ctx.subcatch_names.name_of(sub));
             }
@@ -641,6 +639,7 @@ double SurfaceQuality2D::buildupPerArea(int c, int s) const noexcept {
 void SurfaceQuality2D::step(const SimulationContext& ctx, const MeshData& mesh,
                             SurfaceStateData& state, double dt_runoff, double abs_time,
                             bool is_raining) {
+    perf::ProcessTimer process_timer(perf::ProcessPhase::surface_quality);
     if (!active_ || !(dt_runoff > 0.0))
         return;
     auto& tr = state.transport;
@@ -797,7 +796,12 @@ void SurfaceQuality2D::step(const SimulationContext& ctx, const MeshData& mesh,
                     }
                     const double washed_user = w_row * 1000.0 * mcf * dt_runoff;
                     if (P.bu_type == 0 && washed_user > B * norm) {
-                        led_bu_[us] += washed_user; // "no buildup function" ledger branch
+                        // No buildup function: washoff is not limited by the
+                        // store. Book only the mass beyond it; the store itself
+                        // is already in the initial or earlier buildup terms.
+                        // (Legacy landuse.c books the whole step, counting the
+                        // store twice; the subcatchment kernel keeps that.)
+                        led_bu_[us] += washed_user - B * norm;
                         B = 0.0;
                     } else if (capped) {
                         B = 0.0;

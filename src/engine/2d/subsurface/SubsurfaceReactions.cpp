@@ -10,6 +10,7 @@
  * @license   Apache-2.0
  */
 
+#include "core/ProcessPerf.hpp"
 #include "SubsurfaceSolver.hpp"
 #include "../data/SolverOptions2D.hpp"
 #include "../../core/SimulationContext.hpp"
@@ -47,6 +48,7 @@ void SubsurfaceSolver::publishNodeConcentrations(const SimulationContext& ctx) {
 }
 std::string SubsurfaceSolver::initReactions(SimulationContext& ctx) {
     reactions_ = nullptr;
+    reaction_rows_.clear();
     reactors_.clear();
     reaction_identity_.clear();
     const auto& rx = ctx.reactions;
@@ -110,11 +112,15 @@ std::string SubsurfaceSolver::initReactions(SimulationContext& ctx) {
                         }
             }
     reactions_ = &rx;
+    reaction_rows_.resize(rx.n_species());
+    for (int s = 0; s < rx.n_species(); ++s)
+        reaction_rows_[s] = tr_.rowIndex(rx.species_name[s]);
     reaction_workspace_.init(rx);
     reaction_identity_ = transport::serializeReactionSystem(ctx);
     return {};
 }
 void SubsurfaceSolver::reactCell(int cell, double dt, double hg) {
+    perf::ProcessTimer process_timer(perf::ProcessPhase::gw_reactions);
     if (!reactions_ || reactors_.empty())
         return;
     if (heat_.active() && tr_.n_layers == 0) {
@@ -123,13 +129,20 @@ void SubsurfaceSolver::reactCell(int cell, double dt, double hg) {
     }
     const auto& rx = *reactions_;
     const int count = rx.n_species();
-    std::vector<int> rows(count);
-    for (int s = 0; s < count; ++s)
-        rows[s] = tr_.rowIndex(rx.species_name[s]);
+    const auto& rows = reaction_rows_;
     const int stores = tr_.n_layers > 0 ? tr_.n_layers + 1 : 2;
     // Stage all zones together so a later reactor failure cannot publish
     // half of this cell's reaction step.
-    std::vector<double> staged(std::size_t(stores) * count), ledger(count, 0);
+    struct ReactionScratch {
+        std::vector<double> staged, ledger, aqueous, capacities, scale, pollutants;
+    };
+    // This synchronous column path is nonreentrant; all results are consumed
+    // before reuse. The solver and reaction workspace still require exclusive access.
+    static thread_local ReactionScratch scratch;
+    auto& staged = scratch.staged;
+    auto& ledger = scratch.ledger;
+    staged.assign(std::size_t(stores) * count, 0);
+    ledger.assign(count, 0);
     const double area = state_.area[cell], length = std::max(0., state_.zs[cell] - hg);
     const int temp = tr_.temp_row;
     for (int zone = 0; zone < stores; ++zone) {
@@ -150,8 +163,14 @@ void SubsurfaceSolver::reactCell(int cell, double dt, double hg) {
                 return tr_.layer_mass[tr_.layerIdx(row, zone - 1, cell)];
             return tr_.unsat_mass[tr_.idx(row, cell)];
         };
-        std::vector<double> aqueous(count), capacities(count), scale(count),
-            pollutants(tr_.n_pollut);
+        auto& aqueous = scratch.aqueous;
+        auto& capacities = scratch.capacities;
+        auto& scale = scratch.scale;
+        auto& pollutants = scratch.pollutants;
+        aqueous.assign(count, 0);
+        capacities.assign(count, 0);
+        scale.assign(count, 0);
+        pollutants.assign(tr_.n_pollut, 0);
         for (int s = 0; s < count; ++s) {
             const int row = rows[s];
             if (row < 0)
@@ -218,6 +237,7 @@ void SubsurfaceSolver::reactCell(int cell, double dt, double hg) {
 }
 
 void SubsurfaceSolver::reactPorewaterCell(int cell, double dt, double hg) {
+    perf::ProcessTimer process_timer(perf::ProcessPhase::gw_reactions);
     auto& thermal = heat_.cells[cell];
     auto& pore = thermal.porewater;
     if (thermal.failed)
@@ -236,9 +256,7 @@ void SubsurfaceSolver::reactPorewaterCell(int cell, double dt, double hg) {
             for (auto form : reactors_[std::size_t(cell) * 2 + zone].forms)
                 if (form != ReactionExprForm::NONE && form != ReactionExprForm::RATE)
                     shared_rates = false;
-    std::vector<int> rows(count);
-    for (int s = 0; s < count; ++s)
-        rows[s] = tr_.rowIndex(rx.species_name[s]);
+    const auto& rows = reaction_rows_;
     auto staged = pore.mass;
     std::vector<double> ledger(count, 0);
     for (std::size_t j = 0; j < nl; ++j) {

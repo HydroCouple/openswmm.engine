@@ -229,6 +229,51 @@ OPENSWMM_KERNEL_FN ClosureEval closureEval(const FvClosure& c, double h) noexcep
 }
 
 /**
+ * @brief Evaluate closure area/width/integral and friction radius at one depth.
+ *
+ * Shares the panel locate while retaining the separate closureEval/closureHydRad
+ * arithmetic, including the linear radius interpolation. No persistent cache,
+ * allocation or geometry modification; intended for a cell's post-update closure.
+ *
+ * @param[in] c Initialized immutable closure, as required by closureEval.
+ * @param[in] h Finite depth in ft; dry and above-crown conventions are unchanged.
+ * @param[out] radius Per-barrel hydraulic radius in ft; must not alias c.
+ * @return Aggregate area, width and hydrostatic integral in native units.
+ */
+OPENSWMM_KERNEL_FN ClosureEval closureEval(const FvClosure& c, double h, double& radius) noexcept {
+    ClosureEval e;
+    radius = 0.0;
+    if (h <= 0.0)
+        return e;
+    if (h >= c.y_full) {
+        radius = c.r_full;
+        const double d = h - c.y_full;
+        e.a = c.a_crown + c.t_slot * d;
+        e.t = c.t_slot;
+        e.i1 = c.i1_crown + c.a_crown * d + 0.5 * c.t_slot * d * d;
+        return e;
+    }
+    if (c.kind == kClosurePolynomial) {
+        e.a = (c.c2 * h + c.c1) * h;
+        const double p = c.p0 + c.p1 * h;
+        radius = (p > 0.0) ? (c.c2 * h + c.c1) * h / p : 0.0;
+        e.t = 2.0 * c.c2 * h + c.c1;
+        e.i1 = (c.c2 * h / 3.0 + 0.5 * c.c1) * h * h;
+        return e;
+    }
+    int i;
+    double t;
+    closureLocate(c, h, i, t);
+    radius = c.R[i] + t * (c.R[i + 1] - c.R[i]);
+    double a, dadh, idh;
+    closureHermite(c, i, t, a, dadh, idh);
+    e.a = a;
+    e.t = (dadh > 0.0) ? dadh : 0.0;
+    e.i1 = c.I1[i] + idh;
+    return e;
+}
+
+/**
  * @brief Evaluate the closure flow area.
  *
  * Uses the same polynomial/cubic or above-crown slot area as closureEval; no table ownership or

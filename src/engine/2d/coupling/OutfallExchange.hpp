@@ -74,6 +74,7 @@ private:
         double bed_ref = 0;
     };
     std::vector<Point> points_;
+    std::vector<int> recv_; ///< Reused SPREAD scratch; empty outside apply(), not checkpointed.
     std::vector<int> nodes_; ///< distinct outfall nodes of points_
     std::vector<int> degree_;
     std::vector<double> node_area_, node_reserved_;

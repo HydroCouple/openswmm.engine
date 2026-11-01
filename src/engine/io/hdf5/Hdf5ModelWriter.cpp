@@ -269,7 +269,7 @@ void write_root_attrs(hid_t file, const SimulationContext& ctx, int us) {
 void write_nodes(hid_t file, const SimulationContext& ctx, const UnitWords& u) {
     const int n = ctx.n_nodes();
     std::vector<std::string> name(static_cast<std::size_t>(n)), type, tag, comment;
-    std::vector<double> invert, full, init, sur, ponded;
+    std::vector<double> invert, full, init, sur, ponded, storage_area;
     type.reserve(name.size());
     tag.reserve(name.size());
     comment.reserve(name.size());
@@ -290,6 +290,7 @@ void write_nodes(hid_t file, const SimulationContext& ctx, const UnitWords& u) {
         init.push_back(at(ctx.nodes.init_depth, i));
         sur.push_back(at(ctx.nodes.sur_depth, i));
         ponded.push_back(at(ctx.nodes.ponded_area, i));
+        storage_area.push_back(at(ctx.nodes.storage_area, i));
     }
 
     Handle g = checked_group(file, "nodes");
@@ -303,6 +304,7 @@ void write_nodes(hid_t file, const SimulationContext& ctx, const UnitWords& u) {
     checked_column(g.get(), "sur_depth", sur, u.length, "surcharge depth above ground");
     checked_column(g.get(), "ponded_area", ponded, std::string(u.length) + "^2",
                  "ponded surface area when flooded");
+    checked_column(g.get(), "storage_area", storage_area, std::string(u.length) + "^2", "physical junction chamber area");
     checked_column(g.get(), "tag", tag, "user tag");
     checked_column(g.get(), "comment", comment, "authored comment");
 }

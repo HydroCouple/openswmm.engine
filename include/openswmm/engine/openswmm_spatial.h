@@ -304,6 +304,8 @@ SWMM_ENGINE_API int swmm_spatial_get_subcatch_coord(SWMM_Engine engine, int idx,
 
 /**
  * @brief Set the polygon boundary vertices for a subcatchment.
+ * @details Multiple rings are concatenated, each closed by repeating its first
+ * XY vertex. The final ring may be open. Even/odd containment defines holes.
  * @param[in] engine Engine handle.
  * @param[in] idx Zero-based subcatchment index.
  * @param[in] x Array of polygon vertex X coordinates.
@@ -336,7 +338,9 @@ SWMM_ENGINE_API int swmm_spatial_get_subcatch_polygon_count(SWMM_Engine engine, 
                                                             int* count);
 
 /**
- * @brief Get the polygon boundary vertices for a subcatchment.
+ * @brief Get all polygon boundary rings for a subcatchment.
+ * @details Multiple rings are concatenated with explicit closing XY vertices;
+ * the last ring may be open. Counts include repeated closing vertices.
  * @param[in] engine Engine handle.
  * @param[in] idx Zero-based subcatchment index.
  * @param[out] x Caller-allocated buffer for X coordinates.

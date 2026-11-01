@@ -58,6 +58,7 @@
 #include "../input/InputReader.hpp"
 #include "../core/SimulationContext.hpp"
 #include <sstream>
+#include "../input/Tokenizer.hpp"
 #ifdef OPENSWMM_HAS_2D
 #include "../2d/SurfaceRouter2D.hpp"
 #include "../2d/input/SectionHandlers2D.hpp"
@@ -71,15 +72,41 @@ namespace openswmm {
 void DefaultInputPlugin::registerContextSections(SimulationContext& ctx) {
 #ifdef OPENSWMM_HAS_2D
     auto* r = ctx.twod_io.surface_router;
-    if (!r)
+    const auto& io = ctx.twod_io;
+    if (r) {
+        twoD::register2DSections(r->mesh(), r->options(), r->pendingBCRows(),
+            r->pendingEdgeConveyanceRows(), r->pendingInitialQualityRows(),
+            r->pendingInitialBedQualityRows(), r->pendingBoundaryQualityRows(), registry_);
+        twoD::registerGwTransportSections(r->gwTransport(), registry_);
+        twoD::registerSurfaceQualitySections(r->surfaceQuality(), registry_);
+        twoD::registerSubsurfaceSections(r->aquiferConfig(), r->aquiferNodeNames(),
+                                        r->aquiferLinkNames(), registry_);
         return;
-    twoD::register2DSections(r->mesh(), r->options(), r->pendingBCRows(),
-        r->pendingEdgeConveyanceRows(), r->pendingInitialQualityRows(),
-        r->pendingInitialBedQualityRows(), r->pendingBoundaryQualityRows(), registry_);
-    twoD::registerGwTransportSections(r->gwTransport(), registry_);
-    twoD::registerSurfaceQualitySections(r->surfaceQuality(), registry_);
-    twoD::registerSubsurfaceSections(r->aquiferConfig(), r->aquiferNodeNames(),
-                                    r->aquiferLinkNames(), registry_);
+    }
+    if (io.options) {
+        // Detached persistence contexts carry authored storage without a running router.
+        registry_.register_custom("2D_OPTIONS", [options = io.options](
+                                                  SimulationContext& model,
+                                                  const std::vector<std::string>& lines) {
+            for (const auto& line : lines) {
+                const auto tokens = input::Tokenizer::tokenize(line);
+                if (tokens.empty())
+                    continue;
+                const auto error = twoD::parse2DOptionsLine(tokens, *options, &model.warnings);
+                if (!error.empty()) {
+                    model.error_code = 5; // SWMM_ERR_PARSE
+                    model.error_message = "[2D] " + error + " — line: " + line;
+                    return;
+                }
+            }
+        });
+    }
+    if (io.gw)
+        twoD::registerGwTransportSections(*io.gw, registry_);
+    if (io.surface_quality)
+        twoD::registerSurfaceQualitySections(*io.surface_quality, registry_);
+    if (io.aquifer && io.aquifer_nodes && io.aquifer_links)
+        twoD::registerSubsurfaceSections(*io.aquifer, *io.aquifer_nodes, *io.aquifer_links, registry_);
 #else
     (void)ctx;
 #endif

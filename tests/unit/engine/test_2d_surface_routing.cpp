@@ -1011,6 +1011,7 @@ TEST(FaceVelocity, ReconstructsUniformField) {
     //   edge_flux_e = (q · n_e) · L_e.
     const double qx = 0.3, qy = -0.2, depth = 0.5;
     std::fill(state.depth.begin(), state.depth.end(), depth);
+    std::fill(state.head.begin(), state.head.end(), depth);
     for (int i = 0; i < mesh.n_triangles(); ++i)
         for (int e = 0; e < 3; ++e) {
             int idx = MeshData::slot(i, e);
@@ -1436,6 +1437,23 @@ TEST(SurfaceState, UpdateStatisticsTracksVelocityAndContinuityEnvelopes) {
     EXPECT_NEAR(state.stat_max_velocity[1], 2.0, 1e-12); // raised
     EXPECT_NEAR(state.stat_max_cont_err[0], 2.0, 1e-12); // retained
     EXPECT_NEAR(state.stat_max_cont_err[1], 3.0, 1e-12); // raised
+}
+
+TEST(SurfaceState, VelocityEnvelopesExcludeUnavailableSamples) {
+    SurfaceStateData state;
+    state.resize(2, 1);
+    const double missing = std::numeric_limits<double>::quiet_NaN();
+    state.face_vx = {missing, 0.0};
+    state.face_vy = {missing, 0.0};
+    state.update_statistics({1.0, 1.0}, 1.0);
+    EXPECT_TRUE(std::isnan(state.stat_max_velocity[0]));
+    EXPECT_EQ(state.stat_max_velocity[1], 0.0); // A valid still/dry cell.
+    state.face_vx[0] = 3.; state.face_vy[0] = 4.;
+    state.update_statistics({1.0, 1.0}, 1.0);
+    EXPECT_EQ(state.stat_max_velocity[0], 5.0);
+    state.face_vx[0] = state.face_vy[0] = missing;
+    state.update_statistics({1.0, 1.0}, 1.0);
+    EXPECT_EQ(state.stat_max_velocity[0], 5.0);
 }
 
 TEST(SurfaceState, ClearResetForcings) {

@@ -596,6 +596,9 @@ struct NodeSubtypes {
         if (i >= static_cast<int>(subtype_row.size()))
             subtype_row.resize(static_cast<std::size_t>(i) + 1, -1);
 
+        // Contexts sized column by column may omit storage_area; unsized means no chamber.
+        if (t != NodeType::JUNCTION && ui < nodes.storage_area.size())
+            nodes.storage_area[ui] = 0.0;
         const NodeType old = nodes.type[ui];
         const int existing = subtype_row[ui];
         if (old == t && existing >= 0)

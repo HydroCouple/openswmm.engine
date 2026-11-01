@@ -133,8 +133,48 @@ double columnDtLimit(const soil::Params& p, const double* theta, int m, int stri
 
 // ---------------------------------------------------------------------------
 
-void advanceColumn(const soil::Params& p, double* theta, int m, int stride,
-                   ColumnStep& st) noexcept {
+void prepareColumn(const soil::Params& p, const double* theta, int m, int stride,
+                   const ColumnStep& st, ColumnPreparation& prepared) noexcept {
+    prepared.psi.resize(m);
+    prepared.conductivity.resize(m);
+    prepared.diffusivity.resize(m);
+    prepared.celerity.resize(m);
+    prepared.diffusion_bound.resize(m);
+    const double dsig = 1.0 / static_cast<double>(m);
+    const double dz = std::max(std::max(st.L_old, 0.0), kLMin) * dsig;
+    for (int j = 0; j < m; ++j) {
+        const double th = std::clamp(at(theta, j, stride), p.theta_r, p.theta_s);
+        const double span = std::max(p.theta_s - p.theta_r, 1.0e-9);
+        const double se = std::clamp((th - p.theta_r) / span, 1.0e-8, 1.0);
+        const double dse = 1.0e-3;
+        const double se_hi = std::min(se + dse, 1.0);
+        const double se_lo = std::max(se - dse, 1.0e-8);
+        const double k_hi = soil::conductivity(p, soil::suctionAtSaturation(p, se_hi));
+        const double k_lo = soil::conductivity(p, soil::suctionAtSaturation(p, se_lo));
+        prepared.celerity[j] =
+            std::fabs(k_hi - k_lo) / std::max((se_hi - se_lo) * span, 1.0e-12);
+        prepared.psi[j] = soil::suctionAtSaturation(p, se);
+        prepared.conductivity[j] = soil::conductivity(p, prepared.psi[j]);
+        prepared.diffusivity[j] = st.capillary ? soil::diffusivity(p, prepared.psi[j]) : 0.0;
+        prepared.diffusion_bound[j] =
+            st.capillary ? 2.0 * prepared.diffusivity[j] / std::max(dz, 1.0e-12) : 0.0;
+    }
+    prepared.fixed_velocity = st.forward_euler;
+    if (prepared.fixed_velocity) {
+        double lim = 1.0e30;
+        for (int j = 0; j < m; ++j) {
+            const double sig = (static_cast<double>(j) + 0.5) * dsig;
+            const double grid = std::fabs(sig * st.grid_rate);
+            const double denom = prepared.celerity[j] + grid + prepared.diffusion_bound[j];
+            if (denom > kTiny)
+                lim = std::min(lim, dz / denom);
+        }
+        prepared.dt_limit = std::max(1.0, 1.0e-6) * lim;
+    }
+}
+
+static void advancePreparedColumn(const soil::Params& p, double* theta, int m, int stride,
+                                  ColumnStep& st, const ColumnPreparation* prepared) noexcept {
     if (m <= 0 || !(st.dt > 0.0))
         return;
 
@@ -143,7 +183,23 @@ void advanceColumn(const soil::Params& p, double* theta, int m, int stride,
     const double L1 = std::max(st.L_new, 0.0);
     const double Ldot = st.forward_euler ? st.grid_rate : (L1 - L0) / st.dt;
 
-    st.dt_limit = columnDtLimit(p, theta, m, stride, L0, Ldot, 1.0, st.capillary);
+    if (!prepared) {
+        st.dt_limit = columnDtLimit(p, theta, m, stride, L0, Ldot, 1.0, st.capillary);
+    } else if (prepared->fixed_velocity) {
+        st.dt_limit = prepared->dt_limit;
+    } else {
+        // Non-Euler trial heights change Ldot; only the soil terms are invariant.
+        const double dz = std::max(L0, kLMin) * dsig;
+        double lim = 1.0e30;
+        for (int j = 0; j < m; ++j) {
+            const double sig = (static_cast<double>(j) + 0.5) * dsig;
+            const double grid = std::fabs(sig * Ldot);
+            const double denom = prepared->celerity[j] + grid + prepared->diffusion_bound[j];
+            if (denom > kTiny)
+                lim = std::min(lim, dz / denom);
+        }
+        st.dt_limit = std::max(1.0, 1.0e-6) * lim;
+    }
 
     // ---- 1. w_j from the OLD geometry. w is the conserved quantity; θ is a
     //         derived view of it, and it is re-derived from the NEW L at the
@@ -190,7 +246,7 @@ void advanceColumn(const soil::Params& p, double* theta, int m, int stride,
         const double sig_f = static_cast<double>(jf) * dsig;
 
         // (a) gravity — downward, donor is the layer above.
-        double flux = soil::conductivity(p, psiOf(th_up));
+        double flux = prepared ? prepared->conductivity[up] : soil::conductivity(p, psiOf(th_up));
 
         // (b) grid motion, upwinded on its own sign. The face moves at
         //     ż = σ_f·L̇; the relative flux is −θ_donor·ż, so L̇ > 0 (faces
@@ -201,8 +257,8 @@ void advanceColumn(const soil::Params& p, double* theta, int m, int stride,
 
         // (c) capillary diffusion, harmonic-mean D̄ across the face.
         if (st.capillary) {
-            const double d_up = soil::diffusivity(p, psiOf(th_up));
-            const double d_dn = soil::diffusivity(p, psiOf(th_dn));
+            const double d_up = prepared ? prepared->diffusivity[up] : soil::diffusivity(p, psiOf(th_up));
+            const double d_dn = prepared ? prepared->diffusivity[dn] : soil::diffusivity(p, psiOf(th_dn));
             const double dbar = harmonic(d_up, d_dn);
             flux -= dbar * (th_dn - th_up) / std::max(L0 * dsig, 1.0e-12);
         }
@@ -222,7 +278,7 @@ void advanceColumn(const soil::Params& p, double* theta, int m, int stride,
         // ET is limited by what the top layer holds above residual, and by
         // the Feddes stress at its own suction — no `if (infil <= 0)` gate.
         const double avail = std::max(th_top - p.theta_r, 0.0) * dz0 / st.dt;
-        const double psi_top = psiOf(th_top);
+        const double psi_top = prepared ? prepared->psi[0] : psiOf(th_top);
         // The reviewed wilting suction is a shared SI model parameter.
         const double psi_w = st.wilting_suction;
         const double stress = soil::feddesStress(psi_top, psi_w);
@@ -345,6 +401,16 @@ void advanceColumn(const soil::Params& p, double* theta, int m, int stride,
     for (int j = 0; j < m; ++j)
         at(theta, j, stride) = dz1 > 0.0 ? w_new[static_cast<std::size_t>(j)] / dz1 : p.theta_s;
     st.theta_bot = at(theta, m - 1, stride);
+}
+
+void advanceColumn(const soil::Params& p, double* theta, int m, int stride,
+                   ColumnStep& st) noexcept {
+    advancePreparedColumn(p, theta, m, stride, st, nullptr);
+}
+
+void advanceColumn(const soil::Params& p, double* theta, int m, int stride, ColumnStep& st,
+                   const ColumnPreparation& prepared) noexcept {
+    advancePreparedColumn(p, theta, m, stride, st, &prepared);
 }
 
 } // namespace openswmm::twoD::sigma

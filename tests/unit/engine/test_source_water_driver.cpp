@@ -1786,3 +1786,144 @@ TEST(SourceWaterDriver, ProviderWeatherFailureLeavesPrivateStateAndClockRetryabl
     EXPECT_NEAR(d.ledgers()[0].rain, .01 / ft2, 1e-14);
     EXPECT_NEAR(d.balanceResidual(0), 0, 1e-14);
 }
+
+
+#include "core/CompletedSourceArchive.hpp"
+
+TEST(SourceWaterDriver, ContextSnapshotsStayIndependentAcrossAdvanceAndCheckpointReads) {
+    auto c = model(1);
+    SourceWaterDriver original;
+    ASSERT_EQ(original.initialize(c, {0}, areas(c)), "");
+    const double private_area = original.context().subcatches.area[0];
+    c.subcatches.area[0] *= 2;
+    EXPECT_DOUBLE_EQ(original.context().subcatches.area[0], private_area);
+    using Snapshot = std::pair<std::string, std::string>;
+    std::vector<std::array<std::string, 3>> history;
+    const auto capture = [&](const char* tag, SourceWaterDriver& source) -> Snapshot {
+        detail::CompletedSourceArchive identity, runtime;
+        source.checkpoint(identity, true);
+        source.checkpoint(runtime, false);
+        history.push_back({tag, identity.bytes(), runtime.bytes()});
+        return {identity.bytes(), runtime.bytes()};
+    };
+    const auto before = capture("original", original);
+    auto first = original.waterTrial();
+    auto second = original.waterTrial();
+    EXPECT_EQ(capture("first_initial", first), before);
+    EXPECT_EQ(capture("second_initial", second), before);
+    const SimulationContext* borrowed_trial = nullptr;
+    SourceWaterDriver::ForcingTransform observe = [&](auto&) {
+        borrowed_trial = &first.context(true);
+    };
+    ASSERT_EQ(first.stage(0, 1, 1, &sealed, nullptr, &observe), "");
+    ASSERT_NE(borrowed_trial, nullptr);
+    EXPECT_EQ(borrowed_trial->subcatches.rainfall, first.context(true).subcatches.rainfall);
+    EXPECT_EQ(borrowed_trial->subcatches.runoff, first.context(true).subcatches.runoff);
+    EXPECT_EQ(borrowed_trial->subcatches.stat_precip_vol,
+              first.context(true).subcatches.stat_precip_vol);
+    EXPECT_EQ(capture("original_during_trial", original), before);
+    EXPECT_EQ(capture("second_during_trial", second), before);
+    first.cancel();
+    EXPECT_EQ(capture("first_cancelled", first), before);
+    ASSERT_EQ(first.stage(0, 1, 1, &sealed), "");
+    ASSERT_EQ(first.commit(), "");
+    const auto after = capture("first_committed", first);
+    EXPECT_NE(after.second, before.second);
+    EXPECT_EQ(capture("original_after_commit", original), before);
+    EXPECT_EQ(capture("second_before_read", second), before);
+    detail::CompletedSourceArchive restored(after.second);
+    second.checkpoint(restored, false);
+    restored.finish();
+    EXPECT_EQ(capture("second_restored", second), after);
+    EXPECT_EQ(capture("original_after_read", original), before);
+    auto refused = original.waterTrial();
+    ASSERT_GT(after.second.size(), 1u);
+    detail::CompletedSourceArchive truncated(after.second.substr(0, after.second.size() - 1));
+    EXPECT_THROW(refused.checkpoint(truncated, false), std::runtime_error);
+    EXPECT_EQ(capture("original_after_refusal", original), before);
+    EXPECT_EQ(capture("first_after_refusal", first), after);
+    EXPECT_EQ(capture("second_after_refusal", second), after);
+    detail::CompletedSourceArchive retry(after.second);
+    refused.checkpoint(retry, false);
+    retry.finish();
+    EXPECT_EQ(capture("refused_retry", refused), after);
+    if (const char* output = std::getenv("OPENSWMM_SOURCE_CONTEXT_HISTORY")) {
+        detail::CompletedSourceArchive archive;
+        std::string magic = "C1 context fork history v1";
+        archive(magic, history);
+        std::filesystem::create_directories(output);
+        std::ofstream out(std::filesystem::path(output) / "forks.bin", std::ios::binary);
+        out.write(archive.bytes().data(), archive.bytes().size());
+        ASSERT_TRUE(out.good());
+    }
+}
+
+TEST(SourceWaterDriver, SelectedQualityTrialsPreserveOtherGroupsQueuedReturnsAndPools) {
+    auto c = model(6);
+    c.pollutant_names.try_add("Dissolved"); c.pollutant_names.try_add("Counts");
+    c.pollutants.resize_pollutants(2);
+    c.pollutants.c_rain = {7, 23};
+    c.pollutants.units[1] = MassUnits::COUNTS_PER_L;
+    c.options.ignore_quality = false;
+    for (int sc = 0; sc < 6; ++sc) {
+        c.subcatches.frac_imperv[sc] = .4;
+        c.subcatches.pct_zero[sc] = 50;
+        c.subcatches.n_perv[sc] = c.subcatches.n_imperv[sc] = 0;
+    }
+    for (int sc : {0, 2, 4}) {
+        c.subcatches.outlet_subcatch[sc] = sc + 1;
+        addLid(c, sc, "RB", .25, 0, 0, 0, 1);
+    }
+    lid::LIDSolver initial; initial.init(c);
+    auto& barrels = initial.group(int(lid::LIDType::RAIN_BARREL));
+    std::fill(barrels.stor_covered.begin(), barrels.stor_covered.end(), 1);
+    SourceWaterDriver d;
+    ASSERT_EQ(d.initialize(c, {0, 2, 4}, areas(c), &initial), "");
+    ASSERT_EQ(d.clocks().groups().size(), 3u);
+    for (int group = 0; group < 3; ++group) {
+        ASSERT_EQ(d.stage(group, 1, 1, &sealed), "");
+        ASSERT_EQ(d.commit(), "");
+    }
+    const auto peers = [&] {
+        detail::CompletedSourceArchive archive;
+        for (int group : {0, 2}) {
+            double end = d.clocks().groups()[group].completed_end;
+            archive(group, end);
+            for (int p = 0; p < 2; ++p) {
+                double pending = d.pendingPollutantMass(group, p);
+                EXPECT_GT(pending, 0);
+                archive(pending);
+            }
+        }
+        for (auto b : d.pollutants())
+            if (b.source < 2 || b.source >= 4)
+                archive(b.source, b.type, b.unit, b.layers, b.rain,
+                        b.spatial_infiltration, b.outside_infiltration, b.outlet,
+                        b.removed, b.surface_mass, b.drain_mass, b.impervious_mass,
+                        b.pervious_mass, b.aquifer_return, b.pending_routing, b.incoming);
+        return archive.bytes();
+    };
+    const auto opening_peers = peers();
+    ASSERT_EQ(d.stage(1, 2, 2, &sealed), "");
+    d.cancel();
+    EXPECT_EQ(peers(), opening_peers);
+    SourceWaterDriver::ForcingTransform refuse = [](auto&) {
+        throw std::runtime_error("Selected quality trial refusal");
+    };
+    EXPECT_FALSE(d.stage(1, 2, 2, &sealed, nullptr, &refuse).empty());
+    EXPECT_EQ(peers(), opening_peers);
+    ASSERT_EQ(d.stage(1, 2, 2, &sealed), "");
+    ASSERT_EQ(d.commit(), "");
+    EXPECT_EQ(peers(), opening_peers);
+    detail::CompletedSourceArchive identity, runtime;
+    d.checkpoint(identity, true); d.checkpoint(runtime, false);
+    SourceWaterDriver restored;
+    ASSERT_EQ(restored.initialize(c, {0, 2, 4}, areas(c), &initial), "");
+    detail::CompletedSourceArchive model_reader(identity.bytes()), state_reader(runtime.bytes());
+    restored.checkpoint(model_reader, true); model_reader.finish();
+    restored.checkpoint(state_reader, false); state_reader.finish();
+    detail::CompletedSourceArchive model_again, state_again;
+    restored.checkpoint(model_again, true); restored.checkpoint(state_again, false);
+    EXPECT_EQ(identity.bytes(), model_again.bytes());
+    EXPECT_EQ(runtime.bytes(), state_again.bytes());
+}

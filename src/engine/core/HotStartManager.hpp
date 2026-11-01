@@ -178,6 +178,7 @@ struct HotStartFile {
     std::string snow_state; ///< V14: native degree-day and UEB accepted/held states
     std::string
         engine_checkpoint; ///< V15: complete accepted engine/2D state for qualified native restarts (may be empty from V16)
+    std::string fv_dry_state; ///< V18: named disconnected FV scalar inventories
     std::string gw_transport_state; ///< V17: canonical SIGMA chemistry, edge receipts and clocks
     std::string
         surface_state; ///< V16: subcatchment ponded water, groundwater flow and surface quality (StateAccessors::get_surface_state)
@@ -380,7 +381,7 @@ public:
     /**
      * @brief Capture a native hot start with an optional complete engine-session checkpoint.
      *
-     * Chooses feature-dependent versions through V17; nonempty engine payload promotes at least V15 and
+     * Chooses feature-dependent versions through V18; nonempty engine payload promotes at least V15 and
      * is limited to 512 MiB. Payload must come from the matching initialized model and qualified
      * session snapshot, not arbitrary bytes. Empty payload refuses configurations needing full restart
      * state. Native file write is direct truncation, without atomic staging. Allocation/other
@@ -615,7 +616,7 @@ private:
     /**
      * @brief Read and check a native hot-start file into an existing representation.
      *
-     * Reads entire file into memory, supports versions 1..17 and native numeric representation. String
+     * Reads entire file into memory, supports versions 1..18 and native numeric representation. String
      * lengths are bounded at 4096 bytes including stored NUL; embedded engine payload bounded at 512
      * MiB. Checks serialized shape bounds where implemented, without proving model compatibility or
      * opaque payload semantics. Allocation exceptions can propagate.

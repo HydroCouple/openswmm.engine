@@ -385,9 +385,12 @@ its home is the aquifer's `led_node`.
 
 **Which nodes exchange.** `NODE_ENROLMENT AUTO` (default) enrols every node
 whose `[COORDINATES]` fall in a mesh cell with a direct-Darcy bed over the
-cell's area unless a `[2D_AQUIFER_NODE]` row names it; a row overrides with its
-own bed (cell given explicitly, 1-based, or as `CELL AUTO`) or opts out with
-`EXCHANGE NO`; `ROWS` limits exchange to the authored rows. One bed per node
+cell's area unless a `[2D_AQUIFER_NODE]` row names it. Outfalls are left out:
+an outfall that discharges onto the mesh books its net node flow as surface
+water, so an aquifer draw there would be taken from the surface cell. A row
+overrides with its own bed (cell given explicitly, 1-based, or as
+`CELL AUTO`) or opts out with `EXCHANGE NO`; `ROWS` limits exchange to the
+authored rows. One bed per node
 is enforced; a bed off the mesh is a warning and the node exchanges with
 nothing. A storage node with a bed has its `[STORAGE]` exfiltration switched
 off, since both would lose the same water twice.
@@ -618,7 +621,7 @@ it is \f$m \times\f$ the cell count per step and off by default.
 | Mode | `MODE PER_SUBCATCH` | Today: the mesh kernel with lateral topology removed; the one-cell-per-subcatchment vehicle is not in the code | \status{Experimental} |
 | Deep loss | Linear \f$c_{loss} h_g / z_s\f$ | Chapter 5's (5-21) form | \status{Implemented} |
 | Deep loss | `[GWF] DEEP` expression | Named in the design record only | \status{Planned} |
-| Node exchange | `NODE_ENROLMENT AUTO` | Every node inside the mesh, direct Darcy over the cell area | \status{Implemented} |
+| Node exchange | `NODE_ENROLMENT AUTO` | Every node inside the mesh except outfalls, direct Darcy over the cell area | \status{Implemented} |
 | Node exchange | `NODE_ENROLMENT ROWS` | Authored `[2D_AQUIFER_NODE]` rows only | \status{Implemented} |
 | Node exchange | Semi-confining bed (`KC`, `DC`) | MODFLOW-River config b conductance | \status{Implemented} |
 | Conduit seepage | `LINK_SEEPAGE AUTO` | Length-weighted delivery of `[LOSSES]` seepage into crossed cells | \status{Implemented} |

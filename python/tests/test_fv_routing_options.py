@@ -154,6 +154,10 @@ class FvRoutingOptions(unittest.TestCase):
                 "FV_MIN_PARALLEL_CELLS", "FV_PRESSURE_CLOSURE",
                 "FV_LTS", "FV_LTS_MAX_TIERS", "FV_CFL_CENSUS_INTERVAL",
                 "FV_NODE_FEEDBACK_DT",
+                # Accepted by swmm_options_get all along; listed since iteration is native
+                # (swmm_options_key_at) instead of a hand-kept Python list.
+                "FV_PRESSURIZED_IMPLICIT", "FV_NODE_COUPLING", "FV_NODE_DT",
+                "FV_NODE_PICARD", "FV_NODE_CELL_COUPLING", "FV_JUNCTION_MODEL",
             },
         )
 

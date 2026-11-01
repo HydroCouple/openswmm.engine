@@ -24,10 +24,12 @@
  * @license   Apache-2.0
  */
 
+#include "core/ProcessPerf.hpp"
 #include "Groundwater.hpp"
 #include "../core/Constants.hpp"
 #include "../core/DateTime.hpp"
 #include "../core/SimulationContext.hpp"
+#include "../core/ThreadInfo.hpp"
 #include "../core/UnitConversion.hpp"
 #include "../math/OdeSolver.hpp"
 #include <cmath>
@@ -278,11 +280,18 @@ static void getDxDt(GWContext& c, double /*t*/, const double* x, double* dxdt) {
 void GWSolver::execute(SimulationContext& ctx, double dt, double max_evap, const double* infil_rate,
                        const double* sw_head, const double* frac_perv, const double* perv_evap_rate,
                        int evap_pattern_month) {
+    perf::ProcessTimer process_timer(perf::ProcessPhase::groundwater);
     int n = soa_.n_subcatch;
     if (n == 0)
         return;
 
-    for (int i = 0; i < n; ++i) {
+    // Request inlining to avoid a per-aquifer call boundary in the serial
+    // and OpenMP worker loops; scalar operations are unchanged.
+    const auto update = [&](int i)
+#if defined(__GNUC__) || defined(__clang__)
+        __attribute__((always_inline))
+#endif
+    {
         auto ui = static_cast<std::size_t>(i);
 
         // Skip subcatches without groundwater
@@ -291,14 +300,14 @@ void GWSolver::execute(SimulationContext& ctx, double dt, double max_evap, const
             soa_.upper_evap[ui] = 0.0;
             soa_.lower_evap[ui] = 0.0;
             soa_.deep_loss[ui] = 0.0;
-            continue;
+            return;
         }
         // Legacy gwater_getGroundwater: `if (FracPerv <= 0.0) return;` — a
         // fully impervious subcatchment's aquifer is never updated at all
         // (no fluxes, no flow, no statistics); its flow stays at its last
         // value, which is 0.
         if (frac_perv[i] <= 0.0)
-            continue;
+            return;
 
         // --- Build per-subcatchment context (matching legacy shared vars) ---
         GWContext c;
@@ -382,7 +391,7 @@ void GWSolver::execute(SimulationContext& ctx, double dt, double max_evap, const
         double x[2] = {theta_0, lower_d_0};
 
         // Legacy ignores ODE return code; match that behavior
-        ode::integrate(x, 2, 0.0, dt, GWTOL, dt,
+        ode::integrateCallable(x, 2, 0.0, dt, GWTOL, dt,
                        [&c](double t, const double* y, double* dydx) { getDxDt(c, t, y, dydx); });
 
         // --- Bound state variables (matching legacy) ---
@@ -417,6 +426,22 @@ void GWSolver::execute(SimulationContext& ctx, double dt, double max_evap, const
         soa_.upper_evap[ui] = c.upper_evap;
         soa_.lower_evap[ui] = c.lower_evap;
         soa_.deep_loss[ui] = c.deep_loss;
+    };
+#ifdef SWMM_USE_OPENMP
+    const int threads = n >= 512 ? (ctx.options.num_threads > 0 ? ctx.options.num_threads
+                                                              : threadinfo::ompMaxThreads())
+                                 : 1;
+    if (threads > 1) {
+        // Per-aquifer inputs/context are stable and state writes are disjoint.
+        // RKF45 scratch is thread-local; balance booking follows the implicit join.
+#pragma omp parallel for schedule(static) num_threads(threads)
+        for (int i = 0; i < n; ++i)
+            update(i);
+    } else
+#endif
+    {
+        for (int i = 0; i < n; ++i)
+            update(i);
     }
 
     // --- Accumulate GW mass balance totals (matching legacy updateMassBal) ---

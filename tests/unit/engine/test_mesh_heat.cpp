@@ -17,6 +17,7 @@
 #include <string>
 #include <cmath>
 #include <optional>
+#include <limits>
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_2d.h>
 #include <openswmm/engine/openswmm_heat.h>
@@ -1629,4 +1630,318 @@ TEST(MeshHeat, ChannelThermalBindingsUpdateActualLegacyArdAndLardStoresAtomicall
             EXPECT_DOUBLE_EQ(refused[k].temperature, after[k].temperature);
         ASSERT_EQ(swmm_engine_end(m.e), SWMM_OK);
     }
+}
+
+TEST(MeshHeat, ColumnWorkspaceReusePreservesShapeFailureRecoveryAndModeChanges) {
+    using namespace openswmm::twoD;
+    checkpoint::Archive history;
+    std::string magic = "Mesh column caller history v1";
+    history(magic);
+    const std::array<int, 9> sizes{1, 2, 8, 33, 2, 1, 17, 8, 1};
+    int records = 0;
+    for (int pass = 0; pass < 2; ++pass) {
+        for (std::size_t row = 0; row < sizes.size(); ++row) {
+            int n = sizes[pass == 0 ? row : sizes.size() - row - 1];
+            LocalHeat f("column-workspace-" + std::to_string(pass) + "-" + std::to_string(row));
+            ASSERT_NE(f.model.e, nullptr);
+            f.options.bed_heat_model = 2;
+            ASSERT_EQ(swmm_gw_transport_option_set(f.model.e, "THERMAL_LAYERS",
+                                                     std::to_string(n).c_str()), SWMM_OK);
+            ASSERT_EQ(swmm_gw_transport_option_set(f.model.e, "SURFACE_THERMAL_BC",
+                                                     row % 3 == 0 ? "ADIABATIC" : "FIXED 4"),
+                      SWMM_OK);
+            ASSERT_EQ(swmm_gw_transport_option_set(f.model.e, "DEEP_THERMAL_BC",
+                                                     row % 3 == 2 ? "FIXED_TEMP -10" : "ADIABATIC"),
+                      SWMM_OK);
+            auto& sediment = f.model.ctx().heat_config.sediment;
+            sediment.initial_temp = -5;
+            sediment.has_initial_temp = true;
+            ASSERT_TRUE(f.initialize().empty());
+            auto& h = f.state.heat;
+            auto& cell = h.standalone_ground.cells[0];
+            auto& column = cell.column;
+            ASSERT_EQ(column.energy.size(), std::size_t(n));
+            auto identity = checkpoint::meshHeatModelIdentity(h);
+            const auto step = [&](std::string label, double mass, double volume,
+                                  double dt, bool midpoint) {
+                double value = applyMeshHeatCell(f.mesh(), f.options, h, 0, mass, volume,
+                                                        0, dt, midpoint);
+                history(pass, row, n, identity, label, mass, volume, dt, midpoint, value);
+                checkpoint::meshHeat(history, h);
+                history(h.ground_column_seconds);
+                ++records;
+                return value;
+            };
+            EXPECT_TRUE(std::isfinite(step("be-wet", 100, 5, 60, false)));
+            ASSERT_EQ(h.failures[0], 0) << cell.error;
+
+            const auto accepted = column.energy;
+            const double capacity = column.capacity.back();
+            column.capacity.back() = -1;
+            EXPECT_DOUBLE_EQ(step("partial-assembly-refusal", 100, 5, 60, false), 100);
+            EXPECT_EQ(h.failures[0], 1);
+            EXPECT_EQ(column.energy, accepted);
+            EXPECT_EQ(cell.error, "Accepted groundwater export leaves no active thermal capacity in its soil layer.");
+            column.capacity.back() = capacity;
+            h.failures[0] = 0;
+            cell.error.clear();
+            EXPECT_TRUE(std::isfinite(step("assembly-recovery", 100, 5, 60, false)));
+            ASSERT_EQ(h.failures[0], 0) << cell.error;
+
+            const double energy = column.energy.back();
+            column.energy.back() = std::numeric_limits<double>::infinity();
+            const auto refused_energy = column.energy;
+            EXPECT_DOUBLE_EQ(step("solver-refusal", 100, 5, 60, false), 100);
+            EXPECT_EQ(h.failures[0], 1);
+            EXPECT_EQ(column.energy, refused_energy);
+            EXPECT_EQ(cell.error, "Thermal stores require finite energy and positive capacity.");
+            column.energy.back() = energy;
+            h.failures[0] = 0;
+            cell.error.clear();
+            std::vector<ThermalStore> stores;
+            std::vector<ThermalContact> contacts;
+            std::vector<ThermalBoundary> boundaries;
+            const auto assembled = appendGroundColumnSystem(
+                f.mesh(), f.options, h.standalone_ground, 0, &h, 20e-12, 1e-12, 0, 60,
+                0, stores, contacts, boundaries);
+            ASSERT_FALSE(h.surface);
+            ASSERT_FALSE(h.radiative);
+            ASSERT_GE(assembled.water, 0);
+            const auto stiff = solveThermalContactsRk2(stores, contacts, boundaries, 60);
+            ASSERT_TRUE(stiff.interval_limit) << stiff.error;
+            int neighbour = -1;
+            for (const auto& contact : contacts) {
+                if (contact.conductance > 0 &&
+                    (contact.a == assembled.water || contact.b == assembled.water)) {
+                    const int other = contact.a == assembled.water ? contact.b : contact.a;
+                    if (neighbour >= 0)
+                        ASSERT_EQ(other, neighbour);
+                    neighbour = other;
+                }
+            }
+            ASSERT_GE(neighbour, 0);
+            EXPECT_TRUE(std::isfinite(step("rk-stiff-pair", 20e-12, 1e-12, 60, true)));
+            ASSERT_EQ(h.failures[0], 0) << cell.error;
+            EXPECT_DOUBLE_EQ(step("dry", 0, 0, 60, pass != 0), 0);
+            ASSERT_EQ(h.failures[0], 0) << cell.error;
+            EXPECT_TRUE(std::isfinite(step("be-after-rk", 100, 5, .25, false)));
+            ASSERT_EQ(h.failures[0], 0) << cell.error;
+        }
+    }
+    ASSERT_EQ(records, 126);
+    const auto bytes = history.bytes();
+    std::ofstream stream(out / "column-workspace-history.bin", std::ios::binary);
+    stream.write(bytes.data(), std::streamsize(bytes.size()));
+    ASSERT_TRUE(stream.good());
+}
+
+TEST(MeshHeat, ColumnProducerReusePreservesPrefixesDisabledConductionAndRefusals) {
+    using namespace openswmm::twoD;
+    checkpoint::Archive history;
+    std::string magic = "Mesh column producer history v1";
+    history(magic);
+    const std::array<int, 8> sizes{1, 8, 33, 2, 1, 17, 8, 1};
+    int records = 0;
+    for (std::size_t row = 0; row < sizes.size(); ++row) {
+        int n = sizes[row];
+        LocalHeat f("column-producer-" + std::to_string(row));
+        ASSERT_NE(f.model.e, nullptr);
+        f.options.bed_heat_model = 2;
+        ASSERT_EQ(swmm_gw_transport_option_set(f.model.e, "THERMAL_LAYERS",
+                                                 std::to_string(n).c_str()), SWMM_OK);
+        ASSERT_EQ(swmm_gw_transport_option_set(f.model.e, "CONDUCTION", "YES"), SWMM_OK);
+        ASSERT_EQ(swmm_gw_transport_option_set(f.model.e, "SURFACE_THERMAL_BC", "FIXED 4"),
+                  SWMM_OK);
+        ASSERT_EQ(swmm_gw_transport_option_set(f.model.e, "DEEP_THERMAL_BC", "FIXED_TEMP -10"),
+                  SWMM_OK);
+        ASSERT_TRUE(f.initialize().empty());
+        auto& h = f.state.heat;
+        auto& owner = h.standalone_ground;
+        auto& column = owner.cells[0].column;
+        ASSERT_EQ(owner.config, f.model.ctx().twod_io.gw);
+        auto& controls = f.model.ctx().twod_io.gw->options;
+        ASSERT_EQ(column.energy.size(), std::size_t(n));
+        const auto snapshot = [&] {
+            checkpoint::Archive state;
+            auto identity = checkpoint::meshHeatModelIdentity(h);
+            state(identity);
+            checkpoint::meshHeat(state, h);
+            state(h.ground_column_seconds);
+            return state.bytes();
+        };
+        for (int stage = 0; stage < 7; ++stage) {
+            bool enabled = stage != 1 && stage != 6;
+            bool fixed = stage != 2 && stage != 6;
+            bool wet = stage == 1 || stage == 4 || stage == 5;
+            controls.conduction = enabled;
+            controls.surface_thermal_bc = fixed ? "FIXED" : "ADIABATIC";
+            controls.deep_thermal_bc = fixed ? "FIXED_TEMP" : "ADIABATIC";
+            owner.prepareAt(0);
+            std::vector<ThermalStore> stores{{2, -3}, {5, 7}};
+            if (row % 2)
+                stores.push_back({11, 13});
+            std::vector<ThermalContact> contacts{{0, 1, 17}};
+            std::vector<ThermalBoundary> boundaries{{1, 19, 23, 29}};
+            int prefix = int(stores.size());
+            const double capacity = column.capacity.back();
+            if (stage == 3)
+                column.capacity.back() = -1;
+            auto before = snapshot();
+            double channel = stage == 5 ? 2 * column.area : 0;
+            double volume = wet ? 5 : 0, mass = wet ? 100 : 0;
+            const bool expected_refusal = stage == 3 || stage == 5;
+            bool refused = false;
+            std::string error;
+            GroundColumnAssembly assembled;
+            try {
+                assembled = appendGroundColumnSystem(
+                    f.mesh(), f.options, owner, 0, wet ? &h : nullptr, mass, volume, 0, 60,
+                    channel, stores, contacts, boundaries);
+            } catch (const std::runtime_error& exception) {
+                refused = true;
+                error = exception.what();
+            }
+            EXPECT_EQ(refused, expected_refusal) << stage;
+            if (stage == 3)
+                EXPECT_EQ(error, "Accepted groundwater export leaves no active thermal capacity in its soil layer.");
+            else if (stage == 5)
+                EXPECT_EQ(error, "Channel thermal footprint exceeds its soil cell area.");
+            else {
+                ASSERT_FALSE(refused) << error;
+                EXPECT_EQ(assembled.owner, &owner);
+                EXPECT_EQ(assembled.mesh_heat, wet ? &h : nullptr);
+                EXPECT_EQ(assembled.first_store, prefix);
+                EXPECT_EQ(assembled.soil_count, n);
+                EXPECT_EQ(assembled.water, wet ? prefix + n : -1);
+                EXPECT_EQ(assembled.first_contact, 1u);
+                EXPECT_EQ(assembled.vertical_count, enabled ? std::size_t(n - 1) : 0u);
+                EXPECT_EQ(assembled.first_boundary, 1u);
+                EXPECT_EQ(assembled.top_count, enabled && fixed && !wet ? 1u : 0u);
+                EXPECT_EQ(assembled.ground_count, enabled && fixed ? (wet ? 1u : 2u) : 0u);
+                EXPECT_EQ(boundaries.size(), 1u + assembled.ground_count + (wet ? 1u : 0u));
+            }
+            EXPECT_DOUBLE_EQ(stores[0].capacity, 2);
+            EXPECT_DOUBLE_EQ(stores[0].energy, -3);
+            EXPECT_EQ(contacts[0].a, 0);
+            EXPECT_EQ(contacts[0].b, 1);
+            EXPECT_DOUBLE_EQ(contacts[0].conductance, 17);
+            EXPECT_EQ(boundaries[0].store, 1);
+            EXPECT_DOUBLE_EQ(boundaries[0].power, 29);
+            auto after = snapshot();
+            EXPECT_EQ(after, before);
+            auto identity = checkpoint::meshHeatModelIdentity(h);
+            history(row, n, stage, enabled, fixed, wet, prefix, channel, mass, volume,
+                    refused, error, identity, before, after);
+            history.sequence(stores, [&](auto& value) { history(value.capacity, value.energy); });
+            history.sequence(contacts, [&](auto& value) {
+                history(value.a, value.b, value.conductance);
+            });
+            history.sequence(boundaries, [&](auto& value) {
+                history(value.store, value.conductance, value.temperature, value.power);
+            });
+            if (!refused) {
+                history(assembled.cell, assembled.first_store, assembled.soil_count,
+                        assembled.water, assembled.first_contact, assembled.vertical_count,
+                        assembled.contact_count, assembled.first_boundary, assembled.top_count,
+                        assembled.ground_count, assembled.atmosphere, assembled.snow_boundary,
+                        assembled.mass, assembled.volume, assembled.evaporated, assembled.seconds,
+                        assembled.wet, assembled.temperature, assembled.slope,
+                        assembled.water_initial_j, assembled.flux0.radiation,
+                        assembled.flux0.sensible, assembled.flux0.latent,
+                        assembled.flux1.radiation, assembled.flux1.sensible,
+                        assembled.flux1.latent);
+                EXPECT_TRUE(assembled.lids.empty());
+            }
+            column.capacity.back() = capacity;
+            ++records;
+        }
+    }
+    ASSERT_EQ(records, 56);
+    const auto bytes = history.bytes();
+    std::ofstream stream(out / "column-producer-history.bin", std::ios::binary);
+    stream.write(bytes.data(), std::streamsize(bytes.size()));
+    ASSERT_TRUE(stream.good());
+}
+
+TEST(MeshHeat, InterleavedFiniteBedColumnsPreserveInactiveLayerAndSpeciesInventories) {
+    namespace td = openswmm::twoD;
+    const auto solve = [](int nl, bool inactive, bool euler, bool sigma) {
+        LocalHeat f("finite-bed-interleaved");
+        if (!f.model.e) throw std::runtime_error("Finite bed fixture did not open.");
+        auto& sediment = f.model.ctx().heat_config.sediment;
+        sediment.bed_thickness = 1;
+        sediment.solute_diffusivity = .0001;
+        sediment.hyporheic_velocity = .0002;
+        td::GwTransportData config;
+        td::GroundHeatState ground;
+        ground.context = &f.model.ctx();
+        ground.config = &config;
+        ground.cells.resize(2);
+        td::ThermalMaterial material;
+        std::vector<double> edges(nl + 1), theta(nl, .3), temperature(nl, 10);
+        for (int j = 0; j <= nl; ++j) edges[j] = double(j) / nl;
+        if (inactive)
+            for (int j = 1; j < nl; j += 2) theta[j] = 0;
+        for (auto& cell : ground.cells) {
+            auto error = cell.column.initialize(50, edges, material, theta, temperature);
+            if (!error.empty()) throw std::runtime_error(error);
+            cell.saturated_water.assign(nl, 0);
+            cell.reserved_out_water.assign(nl, 0);
+            error = cell.porewater.initialize(cell.column, cell.saturated_water,
+                                               {0, 0, 0}, {2, 4, 0}, {.001, 0, 0}, 1, 2);
+            if (!error.empty()) throw std::runtime_error(error);
+            if (sigma) {
+                std::vector<td::SigmaPorewaterMap::Overlap> overlap;
+                for (int j = 0; j < nl; ++j)
+                    for (int reactor : {0, 1})
+                        overlap.push_back({j, reactor, .5 * theta[j] * 50 *
+                                                (edges[j + 1] - edges[j]),
+                                           .5 * 50 * (edges[j + 1] - edges[j])});
+                error = cell.porewater.sigma.configure(1, 3, std::move(overlap),
+                                                       {.001, 0, 0}, {1, 1, 2, 2, 0, 0},
+                                                       {0, 0, 0});
+                if (!error.empty()) throw std::runtime_error(error);
+                cell.porewater.refreshSigmaView();
+            }
+        }
+        td::MeshHeatState heat;
+        heat.context = &f.model.ctx();
+        heat.enabled = heat.bed = heat.ground_column = true;
+        heat.aquifer_ground = &ground;
+        heat.aquifer_owned = {1, 1};
+        heat.hyporheic_eligible = {1, 0};
+        heat.channel_footprint = {0, 0};
+        heat.failures = {0, 0};
+        heat.bed_species = 3; heat.bed_age_row = 1; heat.bed_temp_row = 2;
+        std::array<double, 2> surface{5, 7};
+        for (int step = 0; step < 6; ++step) {
+            const int row = step % 2;
+            surface[row] = euler
+                ? td::applyLocalBedSpeciesEuler(f.mesh(), heat, 0, row, surface[row], 5, .1)
+                : td::applyLocalBedSpecies(f.mesh(), heat, 0, row, surface[row], 5, .1);
+            if (!std::isfinite(surface[row]) || surface[row] < 0 || heat.failures[0])
+                throw std::runtime_error("Finite bed contact unexpectedly refused.");
+        }
+        // These writers include physical, SIGMA and contact receipts plus model inventories.
+        td::checkpoint::Archive archive;
+        auto ground_model = td::checkpoint::groundHeatModelIdentity(ground);
+        auto mesh_model = td::checkpoint::meshHeatModelIdentity(heat);
+        archive(ground_model, mesh_model, surface);
+        td::checkpoint::groundHeat(archive, ground, false);
+        td::checkpoint::meshHeat(archive, heat);
+        return archive.bytes();
+    };
+    for (bool euler : {false, true})
+        for (bool sigma : {false, true})
+            for (int nl : {1, 8, 33}) {
+                SCOPED_TRACE(euler);
+                SCOPED_TRACE(sigma);
+                SCOPED_TRACE(nl);
+                const auto reference = solve(nl, true, euler, sigma);
+                for (int other : {33, 1, 8}) {
+                    solve(other, false, !euler, !sigma);
+                    solve(other, false, euler, sigma);
+                }
+                EXPECT_EQ(solve(nl, true, euler, sigma), reference);
+            }
 }

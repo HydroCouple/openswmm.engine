@@ -245,6 +245,7 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& s
     d_slotL_ = devCopy("slotL", edges_.slotL);
     d_slotR_ = devCopy("slotR", edges_.slotR);
     d_xi_ = devCopy("xi", edges_.xi);
+    d_conveyance_ = devCopy("conveyance", edges_.conveyance);
     d_inv_dx_ = devCopy("inv_dx_normal", edges_.inv_dx_normal);
     d_zface_ = devCopy("zface", edges_.zface);
     d_ze_lo_ = devCopy("ze_lo", edges_.ze_lo);
@@ -440,7 +441,9 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& s
                 const double qay = hdep(a) * mesh.tri_init_v[a];
                 const double qbx = hdep(b) * mesh.tri_init_u[b];
                 const double qby = hdep(b) * mesh.tri_init_v[b];
-                qh[e] = 0.5 * ((qax + qbx) * edges_.nx[e] + (qay + qby) * edges_.ny[e]);
+                qh[e] = edges_.conveyance[e] > 0.0
+                            ? 0.5 * ((qax + qbx) * edges_.nx[e] + (qay + qby) * edges_.ny[e])
+                            : 0.0;
             }
             devRefresh(d_q_, qh);
             if (have_perot_) {
@@ -451,7 +454,8 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& s
                     double sx = 0.0, sy = 0.0;
                     for (int p = ed.cell_ptr[i]; p < ed.cell_ptr[i + 1]; ++p) {
                         const int e = ed.cell_edge[p];
-                        const double fq = static_cast<double>(ed.cell_sign[p]) * qh[e] * ed.xi[e];
+                        const double fq = static_cast<double>(ed.cell_sign[p]) * qh[e] * ed.xi[e] *
+                                          ed.conveyance[e];
                         sx += fq * (ed.mx[e] - mesh.tri_cx[i]);
                         sy += fq * (ed.my[e] - mesh.tri_cy[i]);
                     }
@@ -816,6 +820,53 @@ void ExplicitKokkosSurfaceSolver::collapseToGlobalDt() {
 // Marching kernels
 // ===========================================================================
 
+void ExplicitKokkosSurfaceSolver::refreshConveyance() {
+    if (!edges_.refreshConveyance(*mesh_))
+        return;
+    devRefresh(d_conveyance_, edges_.conveyance);
+    auto conv = d_conveyance_, q = d_q_;
+    Kokkos::parallel_for(
+        "close_faces", Kokkos::RangePolicy<ExecSpace>(0, edges_.ne), KOKKOS_LAMBDA(int e) {
+            if (conv(e) == 0.0)
+                q(e) = 0.0;
+        });
+    if (!have_perot_)
+        return;
+    auto ptr = d_cell_ptr_, edge = d_cell_edge_;
+    auto sign = d_sign_, xi = d_xi_, mx = d_mx_, my = d_my_;
+    auto cx = d_tri_cx_, cy = d_tri_cy_, area = d_tri_area_;
+    auto qcx = d_qcx_, qcy = d_qcy_;
+    Kokkos::parallel_for(
+        "refresh_cell_discharge", Kokkos::RangePolicy<ExecSpace>(0, mesh_->n_cells()),
+        KOKKOS_LAMBDA(int i) {
+            double sx = 0.0, sy = 0.0;
+            for (int p = ptr(i); p < ptr(i + 1); ++p) {
+                const int e = edge(p);
+                const double f = sign(p) * q(e) * xi(e) * conv(e);
+                sx += f * (mx(e) - cx(i));
+                sy += f * (my(e) - cy(i));
+            }
+            qcx(i) = sx / area(i);
+            qcy(i) = sy / area(i);
+        });
+    auto cells = d_bc_cell_, slots = d_bc_slot_, vertices = d_cell_v_;
+    auto bc_q = d_bc_q_, length = d_edge_length_, vx = d_vx_, vy = d_vy_;
+    const int nbc = static_cast<int>(bc_cell_host_.size());
+    // Serial perimeter pass: several boundary slots can belong to the same cell.
+    Kokkos::parallel_for(
+        "refresh_boundary_discharge", Kokkos::RangePolicy<ExecSpace>(0, 1), KOKKOS_LAMBDA(int) {
+            for (int k = 0; k < nbc; ++k) {
+                const int i = cells(k), slot = slots(k), edge = slot % kMaxCellVerts;
+                const int va = vertices(i * kMaxCellVerts + (edge + 1) % 3);
+                const int vb = vertices(i * kMaxCellVerts + (edge + 2) % 3);
+                const double mx = 0.5 * (vx(va) + vx(vb)), my = 0.5 * (vy(va) + vy(vb));
+                const double fo = -bc_q(k) * length(slot), inv_a = 1.0 / area(i);
+                qcx(i) += fo * (mx - cx(i)) * inv_a;
+                qcy(i) += fo * (my - cy(i)) * inv_a;
+            }
+        });
+}
+
 void ExplicitKokkosSurfaceSolver::fireFaces(int k, double dt_f, bool global_step) {
     const int lo = global_step ? 0 : ftier_off_[k];
     const int hi = global_step ? ftier_off_[K_] : ftier_off_[k + 1];
@@ -825,7 +876,7 @@ void ExplicitKokkosSurfaceSolver::fireFaces(int k, double dt_f, bool global_step
     auto cLv = d_cL_, cRv = d_cR_;
     auto head = d_head_, vol = d_volume_;
     auto qv = d_q_, faccL = d_faccL_, faccR = d_faccR_;
-    auto zface = d_zface_, inv_dx = d_inv_dx_, n2 = d_n2_, xi = d_xi_;
+    auto zface = d_zface_, inv_dx = d_inv_dx_, n2 = d_n2_, xi = d_xi_, conv = d_conveyance_;
     auto ze_lo = d_ze_lo_, ze_hi = d_ze_hi_;
     auto nxv = d_nx_, nyv = d_ny_;
     auto qcx = d_qcx_, qcy = d_qcy_;
@@ -845,6 +896,11 @@ void ExplicitKokkosSurfaceSolver::fireFaces(int k, double dt_f, bool global_step
     Kokkos::parallel_for(
         "fireFaces", Kokkos::RangePolicy<ExecSpace>(lo, hi), KOKKOS_LAMBDA(int idx) {
             const int e = list(idx);
+            if (conv(e) == 0.0) {
+                qv(e) = 0.0;
+                return;
+            }
+            const double width = xi(e) * conv(e);
             const int a = cLv(e), b = cRv(e);
             const double hf = vfr_face
                                   ? inertial::faceFlowDepthVfr(head(a), head(b), ze_lo(e), ze_hi(e))
@@ -889,12 +945,12 @@ void ExplicitKokkosSurfaceSolver::fireFaces(int k, double dt_f, bool global_step
             const int refire = global_step ? 1 : (1 << (tier(exp_cell) - ftier(e)));
             const double vmax = vol(exp_cell) > 0.0 ? vol(exp_cell) : 0.0;
             const double budget = beta_share / refire * vmax;
-            const double take = std::fabs(qn1) * xi(e) * dt_f;
+            const double take = std::fabs(qn1) * width * dt_f;
             if (take > budget)
                 qn1 *= (take > 0.0) ? budget / take : 0.0;
             qv(e) = qn1;
 
-            const double dM = qn1 * xi(e) * dt_f;
+            const double dM = qn1 * width * dt_f;
             faccL(e) -= dM;
             faccR(e) += dM;
         });
@@ -913,7 +969,7 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
     auto evap_app = d_evap_applied_;
     auto infil_app = d_infil_applied_;
     auto coup_app = d_coupling_applied_;
-    auto qv = d_q_, xi = d_xi_, mx = d_mx_, my = d_my_;
+    auto qv = d_q_, xi = d_xi_, mx = d_mx_, my = d_my_, conv = d_conveyance_;
     auto qcx = d_qcx_, qcy = d_qcy_;
     auto area = d_tri_area_, cz = d_tri_cz_, cx = d_tri_cx_, cy = d_tri_cy_;
     auto vz = d_vz_;
@@ -954,7 +1010,7 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
                     double sx = 0.0, sy = 0.0;
                     for (int p = ptr(i); p < ptr(i + 1); ++p) {
                         const int e = edge(p);
-                        const double f = sign(p) * qv(e) * xi(e);
+                        const double f = sign(p) * qv(e) * xi(e) * conv(e);
                         sx += f * (mx(e) - cx(i));
                         sy += f * (my(e) - cy(i));
                     }
@@ -1371,7 +1427,7 @@ void ExplicitKokkosSurfaceSolver::publishAndCopyBack(double t_current, double t_
     {
         auto ef = d_edge_flux_;
         auto cLv = d_cL_, cRv = d_cR_, slotL = d_slotL_, slotR = d_slotR_;
-        auto head = d_head_, zface = d_zface_, qv = d_q_, xi = d_xi_;
+        auto head = d_head_, zface = d_zface_, qv = d_q_, xi = d_xi_, conv = d_conveyance_;
         auto ze_lo = d_ze_lo_, ze_hi = d_ze_hi_;
         const bool vfr_face = (opts_->face_reconstruction == FaceDepth2D::VFR_FACE);
         const double dry = opts_->dry_depth;
@@ -1385,7 +1441,7 @@ void ExplicitKokkosSurfaceSolver::publishAndCopyBack(double t_current, double t_
                 double qp = 0.0;
                 if (hf > dry)
                     qp = inertial::froudeCap(qv(e), hf, fr_max);
-                const double F = qp * xi(e);
+                const double F = qp * xi(e) * conv(e);
                 ef(slotL(e)) = -F;
                 ef(slotR(e)) = +F;
             });
@@ -1463,6 +1519,7 @@ double ExplicitKokkosSurfaceSolver::advance(double t_current, double t_target) {
     // profilers (nsys via the nvtx connector, kernel-logger). No-ops when no
     // tool is loaded.
     Kokkos::Profiling::pushRegion("openswmm_2d_advance_push");
+    refreshConveyance();
     pushForcings();
     pushNodeState();
     Kokkos::deep_copy(d_bc_accum_, 0.0);

@@ -39,6 +39,7 @@
 #ifndef OPENSWMM_ENGINE_FV_EXPLICIT_FV_SOLVER_HPP
 #define OPENSWMM_ENGINE_FV_EXPLICIT_FV_SOLVER_HPP
 
+#include "AcceptedWaterVolumes.hpp"
 #include <array>
 #include <cstdint>
 #include <vector>
@@ -219,6 +220,23 @@ public:
      *     advance/init.
      */
     const std::vector<double>& node_exchange() const noexcept { return node_exch_; }
+
+    /// Enable optional water-transfer observations after initialize(). Disabled
+    /// runs allocate/record nothing. Changing this invalidates borrowed rows.
+    void trackAcceptedWater(bool enabled) {
+        water_tracking_ = enabled;
+        if (enabled && mesh_)
+            water_.resize(mesh_->n_faces(), mesh_->struct_link.size(), mesh_->n_cells(), mesh_->n_nodes());
+        else water_ = {};
+        save_water_ = water_; rk_water_ = water_;
+    }
+    const AcceptedWaterVolumes& acceptedWater() const noexcept { return water_; }
+    void requireConservativeNodeBalance(bool enabled) noexcept {conservative_node_balance_=enabled;}
+    std::vector<double>& withdrawalRates() noexcept { return withdrawal_rates_; }
+    const std::vector<double>& withdrawalRates() const noexcept { return withdrawal_rates_; }
+    const std::vector<double>& unmetWithdrawalVolumes() const noexcept { return unmet_withdrawal_; }
+
+
 
     /**
      * @brief Borrow the signed numerical node-continuity carry.
@@ -830,7 +848,7 @@ private:
      *     dt; must match the imminent node update.
      */
     template <class ArrivedFn>
-    void refreshDummyFlows(double dt, const FvStepForcing& forcing, ArrivedFn&& arrived);
+    void refreshDummyFlows(double dt, const FvStepForcing& forcing, ArrivedFn&& arrived, bool book_receipts = true);
 
     /**
      * @brief Read a DUMMY-derived node source with an empty-array fast path.
@@ -845,8 +863,8 @@ private:
     /**
      * @brief Invert the initialized node volume relation.
      *
-     * Table-top extension divides by node_vol_atop; pond extension divides by ponded_area, so positive
-     * slopes are required when those branches are reachable. Plateaus use the lower interpolation
+     * Table-top extension uses node_vol_atop when positive; a zero slope maps surplus
+     * to the flooding branch. Pond extension requires positive ponded_area. Plateaus use the lower interpolation
      * endpoint. No input validation, mutation or allocation.
      *
      * @param[in] node Valid initialized global node index.
@@ -918,10 +936,11 @@ private:
      * @param[in] u Consistent conveyance velocity in ft/s.
      * @param[in] h Friction depth in ft; TPA callers use y_full to retain the full-pipe law.
      * @param[in] dt Positive finite timestep in seconds matching the current flux/source window.
+     * @param[in] radius Hydraulic radius evaluated at h in ft, from the current closure.
      * @return Damped discharge in ft3/s; force-main zero velocity is unchanged.
      */
     double frictionFor(const FvGeometry& g, double roughness, double rough_factor, double q,
-                       double u, double h, double dt) const;
+                       double u, double h, double dt, double radius) const;
 
     /**
      * @brief Apply ponding or sealed surcharge/flood capacity to an integrated node bucket.
@@ -1258,8 +1277,11 @@ private:
      * @param[in] uc Valid initialized cell index owned by the calling worker.
      * @param[in] g The cell immutable initialized geometry.
      * @param[in] h Current native depth in ft, consistent with state.cell_h and regime.
+     * @param[out] radius Optional non-aliasing output for the current friction radius;
+     *     TPA uses full depth. Null leaves the existing closure-only path unchanged.
      */
-    void cacheClosure(std::size_t uc, const FvGeometry& g, double h) noexcept;
+    void cacheClosure(std::size_t uc, const FvGeometry& g, double h,
+                      double* radius = nullptr) noexcept;
 
     /// Unsteady-friction convective term c·sgn(Vⁿ)·|∂V/∂x|ⁿ per cell
     /// (issue #156). Precomputed from a consistent old-state snapshot before
@@ -1331,6 +1353,18 @@ private:
                                      ///< report publishes; equals ∫Q dt in
                                      ///< open channels but not in the slot
 
+    bool water_tracking_ = false;
+    bool conservative_node_balance_ = false;
+    std::vector<double> withdrawal_rates_, unmet_withdrawal_, save_unmet_, rk_unmet_;
+    void bookFaceWater(int face, double dt);
+    void bookSpliceReceipt(std::size_t vj, double flux, double dt);
+    double capWithdrawal(std::size_t node, double balance, double dt, const FvStepForcing& forcing);
+
+    AcceptedWaterVolumes water_, save_water_, rk_water_;
+    void bookStructureWater(double dt, const FvStepForcing& forcing);
+    double algebraicAvailableWater(std::size_t node, double dt, double pending,
+                                   const std::vector<double>& cell_scales) const;
+
     // Node scratch.
     std::vector<double> node_exch_; ///< ∫(net inflow) dt over the routing step
     std::vector<double> node_in_, node_out_;
@@ -1344,6 +1378,7 @@ private:
     // doing something interesting. Re-censusing the POST-step state and rolling
     // back when it disagrees is the principled fix; a heuristic fill-rate cap
     // is not, because the stiffness ratio depends on FV_SLOT_CELERITY.
+    std::vector<double> save_dummy_, rk_dummy_;
     std::vector<double> save_cell_a_, save_cell_q_, save_cell_phi_;
     std::vector<double> save_node_vol_, save_node_head_;
     std::vector<double> save_exch_, save_in_, save_out_, save_flood_, save_qint_, save_carry_;

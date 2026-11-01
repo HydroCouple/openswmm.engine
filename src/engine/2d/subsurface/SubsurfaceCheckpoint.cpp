@@ -10,6 +10,7 @@
  */
 
 #include "SubsurfaceSolver.hpp"
+#include "GwClock.hpp"
 #include "../data/MeshData.hpp"
 #include "../data/SolverOptions2D.hpp"
 #include "../solver/InertialEdges.hpp"
@@ -78,6 +79,27 @@ void signal(detail::CompletedSourceArchive& a, GwSourceSignal& s) {
  */
 void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a, bool model) {
     checkpoint(a, model, nullptr);
+}
+
+void SubsurfaceSolver::checkpointIndependentClock(detail::CompletedSourceArchive& a,
+                                                  GwClock& clock) {
+    if (clock.cellCount() != std::size_t(std::count(covered_.begin(), covered_.end(), uint8_t{1})))
+        throw std::runtime_error("Independent groundwater clock coverage differs from the kernel.");
+    clock.checkpoint(a);
+    const bool kernel_saved_times = needsTransportRestart() || lid_receipts_enabled_;
+    int id = 0;
+    for (std::size_t i = 0; i < covered_.size(); ++i) {
+        if (!covered_[i])
+            continue;
+        const double completed = clock.completed(id++);
+        // The legacy bulk profile does not carry cell_completed_. The clock
+        // record is authoritative there; richer profiles must agree with it.
+        if (a.reading() && !kernel_saved_times)
+            cell_completed_[i] = completed;
+        else if (cell_completed_[i] != completed)
+            throw std::runtime_error(
+                "Independent groundwater clock differs from the committed kernel time.");
+    }
 }
 /**
  * @brief Archive qualified groundwater identity or completed hydraulic/native/physical receipt
@@ -188,6 +210,10 @@ void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a, bool model,
                 }
             }
         }
+        if (independentClock()) {
+            std::string profile = "Independent groundwater model v6 actual thin-column storage";
+            a(profile, o.base_step, o.max_step, o.binds_surface_dt, o.budget_fraction, o.head_tolerance);
+        }
         if (recharge_backend_.evaluate) {
             std::string operator_profile = "host OpenMP CLOSED_FORM recharge v1";
             a(operator_profile);
@@ -213,7 +239,10 @@ void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a, bool model,
     a(s.led_recharge, s.led_lateral, s.led_deep, s.led_node, s.led_reject, s.led_dunne,
       s.led_caprise, s.led_et, s.led_infil_in, s.led_link, s.led_subcatch_in, s.led_init_storage,
       s.led_final_storage, s.led_source_in, s.led_source_out);
-    a.fixed(t.sat_mass, t.unsat_mass, t.sacc_L, t.sacc_R, t.xacc_from_surface, t.xacc_to_surface,
+    a.fixed(t.sat_mass, t.unsat_mass);
+    a.fixedColumnMajor(t.sacc_L, static_cast<std::size_t>(t.n_species));
+    a.fixedColumnMajor(t.sacc_R, static_cast<std::size_t>(t.n_species));
+    a.fixed(t.xacc_from_surface, t.xacc_to_surface,
             t.nacc_mass, t.lacc_mass, t.node_out_mass, t.lost_deep, t.lost_node, t.lost_link,
             t.lost_dunne, t.lost_et, t.gained_infil, t.gained_node, t.gained_link, t.net_lateral,
             t.gained_source, t.lost_source, t.lost_reaction, t.init_mass, t.internal_recharge);
@@ -222,6 +251,17 @@ void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a, bool model,
       faces_by_tier_, face_tier_, tier_firings_, pending_surface_, pending_flag_, drain_cap_binds_,
       node_refunds_, accumulators_pending_);
     a.fixed(source_cell_end_, bed_exchange_cum_, bed_gathered_, node_drawn_gw_, node_exchange_vol_);
+    if (a.reading()) {
+        // Only the last gathered cell can have nonzero weights. Reconstruct
+        // its owner without changing the checkpoint layout; -0 also needs
+        // clearing to preserve the former whole-array fill byte for byte.
+        bed_gathered_cell_ = -1;
+        for (std::size_t b = 0; b < bed_gathered_.size(); ++b)
+            if (bed_gathered_[b] != 0 || std::signbit(bed_gathered_[b])) {
+                bed_gathered_cell_ = node_beds_[b].cell;
+                break;
+            }
+    }
     a.sequence(
         source_receipts_, [&](auto& rows) { a.sequence(rows, [&](auto& r) { intake(a, r); }); },
         true);
@@ -232,8 +272,11 @@ void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a, bool model,
         if (a.reading() && profile != transport_profile)
             throw std::runtime_error("Unsupported groundwater transport restart profile.");
         a(s.led_boundary_in, s.led_boundary_out, source_completed_end_);
-        a.fixed(t.layer_mass, t.contact_water, t.contact_node_out, t.contact_link_out,
-                t.contact_node_mass, t.contact_link_mass, t.boundary_in, t.boundary_out,
+        a.fixedColumnMajorBlocks(t.layer_mass, std::size_t(t.n_species), std::size_t(t.n_layers));
+        a.fixed(t.contact_water, t.contact_node_out, t.contact_link_out);
+        a.fixedColumnMajorBlocks(t.contact_node_mass, std::size_t(t.n_species), std::size_t(t.n_layers));
+        a.fixedColumnMajorBlocks(t.contact_link_mass, std::size_t(t.n_species), std::size_t(t.n_layers));
+        a.fixed(t.boundary_in, t.boundary_out,
                 t.boundary_flux_in, t.boundary_flux_out, t.lout_mass, t.link_gain_shortfall,
                 cell_completed_);
         a(t.generated_age, t.gained_contact);
@@ -563,9 +606,20 @@ void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a, bool model,
             for (double v : *values)
                 if (std::isinf(v))
                     fail();
+        for (const auto* values : {&t.sat_mass, &t.unsat_mass})
+            for (double v : *values)
+                if (!std::isfinite(v))
+                    throw std::runtime_error("Nonfinite t checkpoint state.");
+        // Retain original logical species/edge first-error order on the new storage.
+        const auto face_count = t.sacc_L.size() /
+                                (t.n_species > 0 ? static_cast<std::size_t>(t.n_species) : 1);
+        for (const auto* values : {&t.sacc_L, &t.sacc_R})
+            for (int species = 0; species < t.n_species; ++species)
+                for (std::size_t edge = 0; edge < face_count; ++edge)
+                    if (!std::isfinite((*values)[t.lateralIndex(species, edge)]))
+                        throw std::runtime_error("Nonfinite t checkpoint state.");
         for (const auto* values :
-             {&t.sat_mass,          &t.unsat_mass,      &t.sacc_L,           &t.sacc_R,
-              &t.xacc_from_surface, &t.xacc_to_surface, &t.nacc_mass,        &t.lacc_mass,
+             {&t.xacc_from_surface, &t.xacc_to_surface, &t.nacc_mass,        &t.lacc_mass,
               &t.node_out_mass,     &t.lost_deep,       &t.lost_node,        &t.lost_link,
               &t.lost_dunne,        &t.lost_et,         &t.gained_infil,     &t.gained_node,
               &t.gained_link,       &t.net_lateral,     &t.gained_source,    &t.lost_source,
@@ -685,34 +739,137 @@ void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a, bool model,
             if (c < 0 || c >= s.n_cells)
                 fail();
     }
+    if (independentClock()) {
+        if (!clock_state_)
+            throw std::runtime_error("Independent aquifer clock was not initialized.");
+        auto& state = *clock_state_;
+        checkpointIndependentClock(a, *state.schedule);
+        a.fixed(state.link_out);
+        a.fixed(state.receipt_limit);
+        if (!lid_receipts_enabled_)
+            a.fixed(node_pending_up_, node_pending_down_);
+        a(producer_end_, state.firings, state.subcycles, state.elapsed, state.maximum,
+          state.stability_to_period, state.budget_firings, state.excess_in, state.excess_out,
+          state.budget_exceedance, state.max_return_depth);
+        if (a.reading()) {
+            for (int cell : state.cells)
+                if (!(state.receipt_limit[cell] >= 0) || !std::isfinite(state.receipt_limit[cell]))
+                    throw std::runtime_error("Invalid groundwater receipt-rate limit.");
+            for (int k = 0; k < 3; ++k)
+                if (state.budget_firings[k] > state.firings[k] || !(state.excess_in[k] >= 0) ||
+                    !(state.excess_out[k] >= 0) || !std::isfinite(state.excess_in[k]) || !std::isfinite(state.excess_out[k]) ||
+                    !(state.max_return_depth[k] >= 0) || !std::isfinite(state.max_return_depth[k]))
+                    throw std::runtime_error("Invalid groundwater budget telemetry.");
+        }
+        std::vector<std::pair<int, long>> batches(state.rung_batches.begin(),
+                                                  state.rung_batches.end());
+        a(batches);
+        if (a.reading()) {
+            state.rung_batches.clear();
+            for (auto [rung, n] : batches)
+                if (n <= 0 || !std::isfinite(state.schedule->period(rung)) ||
+                    state.schedule->period(rung) <= 0 ||
+                    !state.rung_batches.emplace(rung, n).second)
+                    throw std::runtime_error("Invalid independent clock histogram.");
+        }
+        a.sequence(
+            state.receipts,
+            [&](auto& row) {
+                a.sequence(row, [&](auto& slot) {
+                    a(slot.field, slot.index, slot.packets);
+                    if (a.reading()) {
+                        if (slot.field < GwSlot::surface || slot.field >= GwSlot::count ||
+                            slot.packets.empty())
+                            throw std::runtime_error(
+                                "Invalid independent groundwater receipt slot.");
+                        double prev = -1;
+                        for (auto [end, amount] : slot.packets) {
+                            if (!(end > prev) || !std::isfinite(end) || !std::isfinite(amount))
+                                throw std::runtime_error("Invalid dated groundwater receipt.");
+                            prev = end;
+                        }
+                    }
+                });
+            },
+            true);
+        if (a.reading()) {
+            state.pending_slots = 0;
+            const std::array<const std::vector<double>*, static_cast<std::size_t>(GwSlot::count)>
+                fields{&s.xacc_from_surface,
+                       &t.xacc_from_surface,
+                       &s.et_pending,
+                       &s.nacc,
+                       &t.nacc_mass,
+                       &s.lacc,
+                       &t.lacc_mass,
+                       &t.lout_mass,
+                       &t.contact_water,
+                       &t.contact_node_mass,
+                       &t.contact_link_mass,
+                       &t.contact_node_out,
+                       t.n_layers ? &t.contact_link_out : &state.link_out,
+                       &node_pending_down_,
+                       &node_pending_up_,
+                       &heat_link_out_volume_,
+                       &heat_node_out_volume_,
+                       &heat_preset_out_j_,
+                       &heat_preset_out_water_,
+                       &porewater_preset_out_};
+            for (std::size_t cell = 0; cell < state.receipts.size(); ++cell) {
+                const auto& row = state.receipts[cell];
+                if (!covered_[cell] && !row.empty())
+                    throw std::runtime_error("Receipts on uncovered aquifer cell.");
+                std::set<std::pair<GwSlot, std::size_t>> seen;
+                for (const auto& slot : row) {
+                    const auto& values = *fields[static_cast<std::size_t>(slot.field)];
+                    if (slot.index >= values.size() || !seen.emplace(slot.field, slot.index).second)
+                        throw std::runtime_error(
+                            "Invalid or duplicate groundwater accumulator index.");
+                    if (slot.field >= GwSlot::prepaid_heat)
+                        continue; // includes internal GW faces
+                    double booked = 0;
+                    for (const auto& packet : slot.packets)
+                        booked += packet.second;
+                    if (!std::isfinite(booked) ||
+                        std::abs(booked - values[slot.index]) >
+                            1e-12 * std::max({1., std::abs(booked), std::abs(values[slot.index])}))
+                        throw std::runtime_error(
+                            "Dated groundwater receipts differ from their accumulator.");
+                }
+                state.pending_slots += row.size();
+            }
+        }
+    }
 }
 
 std::string SubsurfaceSolver::transportRestartState() const {
-    if (!needsTransportRestart())
+    if (!needsTransportRestart() && !independentClock())
         return {};
     auto copy = *this;
     detail::CompletedSourceArchive model, state, envelope;
     copy.checkpoint(model, true);
     copy.checkpoint(state, false);
     auto identity = model.bytes(), payload = state.bytes();
-    std::string profile = "OpenSWMM groundwater transport v1";
+    std::string profile = independentClock() ? "OpenSWMM independent groundwater v6"
+                                             : "OpenSWMM groundwater transport v1";
     envelope(profile, identity, payload);
     return envelope.bytes();
 }
 std::string SubsurfaceSolver::restoreTransportRestart(const std::string& bytes, bool apply) {
     try {
         if (bytes.empty()) {
-            if (needsTransportRestart())
+            if (needsTransportRestart() || independentClock())
                 return "Hotstart lacks groundwater boundary, layer, ledger or shared-source clock state.";
             return {};
         }
-        if (!needsTransportRestart())
+        if (!needsTransportRestart() && !independentClock())
             return "Hotstart groundwater transport profile differs from this model.";
         detail::CompletedSourceArchive envelope(bytes);
         std::string profile, identity, payload;
         envelope(profile, identity, payload);
         envelope.finish();
-        if (profile != "OpenSWMM groundwater transport v1")
+        if (profile != (independentClock() ? "OpenSWMM independent groundwater v6"
+                                           : "OpenSWMM groundwater transport v1"))
             return "Unknown groundwater transport hotstart profile.";
         auto trial = *this;
         detail::CompletedSourceArchive model;

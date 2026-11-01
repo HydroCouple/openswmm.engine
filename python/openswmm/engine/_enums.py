@@ -65,6 +65,7 @@ class ErrorCode(IntEnum):
     @cvar NUMERICAL: Numerical error (e.g., divergence).
     @cvar DEPENDENCY: Object has dependents that block the requested operation.
     @cvar CANCELLED: A caller cancelled a cancellable read-only operation.
+    @cvar BUFSIZE: An output buffer is too small for the value; nothing was written.
     @cvar GEOMETRY: Cross-section geometry is invalid, or cannot be
         changed in the current state.
     @cvar INTERNAL: Internal/unspecified error.
@@ -87,7 +88,8 @@ class ErrorCode(IntEnum):
     NUMERICAL = 14
     DEPENDENCY = 15
     CANCELLED = 16
-    GEOMETRY = 17
+    BUFSIZE = 17
+    GEOMETRY = 18
     INTERNAL = 99
 
 
@@ -1727,6 +1729,9 @@ class GroundwaterVariable(IntEnum):
     ET_POTENTIAL = 27
     ET_STRESS = 28
     ET_REFRESH = 29
+    COMPLETED_TIME = 30
+    PENDING_IN = 31
+    PENDING_OUT = 32
 
 
 class GroundwaterLedger(IntEnum):

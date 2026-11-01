@@ -25,7 +25,7 @@
  *          interior edge (the conservation invariant: a single antisymmetric
  *          flux per edge). This builds that canonical unique-edge enumeration
  *          plus a per-cell CSR incidence so the continuity divergence
- *          dV_i/dt = −Σ_e sign_i(e)·q_e·ξ_e is a race-free per-cell gather
+ *          dV_i/dt = −Σ_e sign_i(e)·q_e·ψ_e·ξ_e is a race-free per-cell gather
  *          (bit-identical under OpenMP, like the rest of the 2D pipeline).
  *
  *          Orientation: each interior edge is stored once with cL = min(t,nbr),
@@ -61,10 +61,11 @@ struct InertialEdges {
     int ne = 0; ///< number of interior (q-carrying) edges
 
     // Per-edge arrays (size ne), oriented cL→cR (cL = min(t,nbr), cR = max).
-    std::vector<int> cL, cR;    ///< incident cell indices
-    std::vector<double> xi;     ///< edge length ξ (m)
-    std::vector<double> inv_dx; ///< 1 / centroid-to-centroid distance (1/m)
-    std::vector<double> zface;  ///< max(tri_cz[cL], tri_cz[cR]) interface bed (m) — MEAN face mode
+    std::vector<int> cL, cR;        ///< incident cell indices
+    std::vector<double> xi;         ///< geometric edge length ξ (m), unchanged by conveyance
+    std::vector<double> conveyance; ///< face transmissivity ψ in [0, 1], separate from CFL geometry
+    std::vector<double> inv_dx;     ///< 1 / centroid-to-centroid distance (1/m)
+    std::vector<double> zface; ///< max(tri_cz[cL], tri_cz[cR]) interface bed (m) — MEAN face mode
     /// Shared edge's TRUE endpoint bed elevations, sorted ze_lo ≤ ze_hi (m).
     /// Used by FACE_RECONSTRUCTION = VFR_FACE to evaluate the B&S Eq. 14
     /// wetted-edge depth so thin crests block at their real elevation instead
@@ -98,7 +99,7 @@ struct InertialEdges {
     // Per-cell CSR incidence for the conservative continuity gather. For cell i,
     // the incident edges are cell_edge[cell_ptr[i] .. cell_ptr[i+1]) with sign
     // cell_sign (+1 if i==cL, −1 if i==cR). Then
-    //   dV_i/dt (flux part) = − Σ cell_sign · q[edge] · ξ[edge].
+    //   dV_i/dt (flux part) = − Σ cell_sign · q[edge] · ψ[edge] · ξ[edge].
     std::vector<int> cell_ptr;  ///< [n_triangles + 1] CSR row pointers
     std::vector<int> cell_edge; ///< incident edge id
     /// +1 (i==cL) / −1 (i==cR). int8: the value is only ever branched on and
@@ -126,6 +127,11 @@ struct InertialEdges {
      * pointers or references are retained.
      */
     void build(const MeshData& mesh);
+
+    /// Refresh canonical face factors from the symmetric mesh slots, including runtime API edits.
+    /// Requires the topology used by build(); returns whether any factor changed. Geometry and
+    /// characteristic lengths stay untouched. Missing factors default to unrestricted flow.
+    bool refreshConveyance(const MeshData& mesh);
 
     /**
      * @brief Test whether the built layout has any interior discharge edges.

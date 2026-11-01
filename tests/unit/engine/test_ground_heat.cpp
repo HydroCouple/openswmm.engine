@@ -44,6 +44,14 @@
 #include "2d/solver/InertialEdges.hpp"
 #include "platform_test_support.hpp"
 namespace {
+template <class State>
+std::size_t gwPacketIndex(const State& state, int species, std::size_t edge, std::size_t edges) {
+    if constexpr (requires { state.lateralIndex(species, edge); })
+        return state.lateralIndex(species, edge);
+    else
+        return static_cast<std::size_t>(species) * edges + edge;
+}
+
 namespace fs = std::filesystem;
 const fs::path out = fs::path(OPENSWMM_GROUND_HEAT_OUT) / "ground_heat";
 struct ScopedBackendRequest {
@@ -1653,7 +1661,7 @@ TEST(GroundHeat, AcceptedLateralGroundwaterFlowCarriesTheDonorTemperatureEnergy)
     ASSERT_NE(signed_volume, 0);
     const int donor = signed_volume < 0 ? 0 : 1, receiver = 1 - donor;
     const double volume = std::abs(signed_volume);
-    const auto mass_index = std::size_t(row) * std::size_t(edges.ne) + std::size_t(face);
+    const auto mass_index = gwPacketIndex(tr, row, std::size_t(face), std::size_t(edges.ne));
     const double donor_temp_volume = donor == 0 ? -tr.sacc_L[mass_index] : -tr.sacc_R[mass_index];
     const double donor_temperature = donor == 0 ? 10 : 20;
     const double expected_j = gw.heat().water_capacity * volume * donor_temperature;
@@ -1710,7 +1718,7 @@ TEST(GroundHeat, MechanicalDispersionCarriesTemperatureWithoutAddingNetWater) {
         volume * temp_left +
         alpha * volume * edges.inv_dx[std::size_t(face)] * (temp_left - temp_right);
     const std::size_t mass_index =
-        std::size_t(tr.temp_row) * std::size_t(edges.ne) + std::size_t(face);
+        gwPacketIndex(tr, tr.temp_row, std::size_t(face), std::size_t(edges.ne));
     const double accepted_temperature_volume = -tr.sacc_L[mass_index];
     EXPECT_GT(alpha, 0);
     EXPECT_GT(accepted_temperature_volume, 0);
@@ -1807,7 +1815,7 @@ TEST(GroundHeat, SkewedHeterogeneousFaceCarriesAdvectionAndDispersiveHeatConserv
     const double expected_temperature_volume =
         expected_volume * temp_left +
         alpha * expected_volume / centroid_distance * (temp_left - temp_right);
-    const std::size_t mass_index = std::size_t(tr.temp_row) * std::size_t(edges.ne);
+    const std::size_t mass_index = gwPacketIndex(tr, tr.temp_row, 0, std::size_t(edges.ne));
     EXPECT_NEAR(-tr.sacc_L[mass_index], expected_temperature_volume, 1e-12);
     gw.fireGwCells(0, dt, router.state(), dt);
     for (const auto& cell : gw.heat().cells)
@@ -2070,7 +2078,7 @@ TEST(GroundHeat, StaggeredLateralAdvectionAndDispersionReceiptsCloseAcrossCellTi
         double total = 0;
         const std::size_t ne = gw.state().eacc_L.size();
         for (std::size_t e = 0; e < ne; ++e) {
-            const std::size_t index = std::size_t(tr.temp_row) * ne + e;
+            const std::size_t index = gwPacketIndex(tr, tr.temp_row, e, ne);
             total += tr.sacc_L[index] + tr.sacc_R[index];
         }
         return total;
@@ -3812,6 +3820,44 @@ TEST(GroundHeat, SigmaChemistryAndFixedThermalLayersShareActualChannelContacts) 
         EXPECT_NEAR(tr.ledgeredStorage(dye) + channel(), initial, 1e-9);
         EXPECT_NEAR(tr.residual(dye), 0, 1e-9);
         EXPECT_NEAR(poreMass(gw.heat(), dye), tr.ledgeredStorage(dye), 1e-9);
+    }
+}
+
+TEST(GroundHeat, IndependentSigmaTemperatureViewUsesTheCommittedTablePosition) {
+    for (double temperature : {-3., 17.}) {
+        const auto extra = "[2D_AQUIFER_OPTIONS]\nGW_CLOCK INDEPENDENT\nGW_MAX_STEP 10\n"
+                           "[GW_TRANSPORT_OPTIONS]\nUNSAT_TRANSPORT LAYERED\nTHERMAL_LAYERS 7\n"
+                           "[GW_INITIAL_QUALITY]\n* SAT __TEMPERATURE__ " +
+                           std::to_string(temperature) + "\n* UNSAT __TEMPERATURE__ " +
+                           std::to_string(temperature) + "\n";
+        Model m("independent-sigma-temperature-" + std::to_string(temperature), "SIGMA", .5, false,
+                extra);
+        ASSERT_NE(m.e, nullptr);
+        ASSERT_EQ(m.start(), SWMM_OK);
+        auto& gw = m.router().subsurface();
+        auto& tr = gw.transport();
+        const auto initial = gw.state().hg;
+        gw.prepareClock();
+        gw.setProducerEnd(5.);
+        gw.bookLinkSeepage(0, .01);
+        gw.bookLinkSeepageMass(0, tr.temp_row, .01 * temperature);
+        gw.advanceClock(5., m.router().state(), false);
+        EXPECT_NE(gw.state().hg, initial);
+        const auto snapshot = gw.transportRestartState();
+        for (int cell = 0; cell < gw.state().n_cells; ++cell) {
+            const auto k = tr.idx(tr.temp_row, cell);
+            ASSERT_GT(gw.unsatVolume(cell), 0.);
+            EXPECT_NEAR(tr.unsat_mass[k] / gw.unsatVolume(cell), temperature, 1e-8);
+            EXPECT_NEAR(tr.sat_mass[k] / gw.satVolume(cell), temperature, 1e-8);
+            for (int layer = 0; layer < tr.n_layers; ++layer) {
+                const double volume =
+                    gw.state().area[cell] * (gw.state().zs[cell] - gw.state().hg[cell]) /
+                    tr.n_layers * gw.state().theta_sigma[std::size_t(layer) * tr.n_cells + cell];
+                EXPECT_NEAR(tr.layer_mass[tr.layerIdx(tr.temp_row, layer, cell)] / volume,
+                            temperature, 1e-8);
+            }
+        }
+        EXPECT_EQ(gw.transportRestartState(), snapshot);
     }
 }
 

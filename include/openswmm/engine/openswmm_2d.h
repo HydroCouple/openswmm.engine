@@ -1155,6 +1155,25 @@ SWMM_ENGINE_API int swmm_2d_get_depths_bulk(SWMM_Engine engine, double* depths);
 SWMM_ENGINE_API int swmm_2d_get_heads_bulk(SWMM_Engine engine, double* heads);
 
 /**
+ * @brief Bulk cell velocity in physical Cartesian SI m/s, matching Mesh2_face_vx/vy.
+ *
+ * FULL_SWE uses accepted conserved cell momentum; other closures use the
+ * engine's diagnostic reconstruction. Refreshes derived output fields when
+ * stale, without advancing hydraulics. Dry cells have zero velocity.
+ * Non-FULL_SWE velocities use wetted-edge normal velocities. Paired NaNs
+ * mean a wet cell has no determinate velocity; dry cells return zero.
+ * Callers must not substitute zero or a mean-depth reconstruction for NaNs.
+ * @param[in] engine Borrowed live engine handle. Serialize with stepping/edits.
+ * @param[out] vx Required distinct caller-owned cell_count-double X array.
+ * @param[out] vy Required distinct caller-owned cell_count-double Y array.
+ * No capacity is passed or checked.
+ * @return SWMM_OK on success; SWMM_ERR_BADHANDLE for a null handle;
+ * SWMM_ERR_BADPARAM for null arrays or inactive/no-mesh state;
+ * SWMM_ERR_LIFECYCLE for a parsed mesh before initialization.
+ */
+SWMM_ENGINE_API int swmm_2d_get_velocities_bulk(SWMM_Engine engine, double* vx, double* vy);
+
+/**
  * @brief Bulk get coupling fluxes for all triangles.
  *  @ingroup engine_2d
  *
@@ -2309,6 +2328,20 @@ SWMM_ENGINE_API int swmm_2d_get_edge_bc_head(SWMM_Engine engine, int tri_idx, in
  */
 SWMM_ENGINE_API int swmm_2d_set_edge_bc_head(SWMM_Engine engine, int tri_idx, int edge,
                                              double head);
+
+/** Author a boundary group token (empty clears), preserving the hydraulic prescription.
+ * OPENED/BUILDING only; nonempty names require an exterior edge and cannot
+ * contain whitespace or INP delimiters. Groups are organizational metadata.
+ */
+SWMM_ENGINE_API int swmm_2d_set_edge_bc_group(SWMM_Engine engine, int tri_idx, int edge, const char* group);
+
+/** Tangential WALL traction tau/rho=-Cw|ut|ut. Finite Cw>=0, zero free-slip.
+ * Getter uses a valid prepared mesh slot. Setter is authoring-only (OPENED/BUILDING);
+ * positive values require an exterior WALL edge. CPU FULL_SWE, LTS_TIERS 1,
+ * uncoupled hydraulics required when running. No density or 1/2 in Cw convention.
+ */
+SWMM_ENGINE_API int swmm_2d_get_edge_wall_drag(SWMM_Engine engine, int tri_idx, int edge, double* cw);
+SWMM_ENGINE_API int swmm_2d_set_edge_wall_drag(SWMM_Engine engine, int tri_idx, int edge, double cw);
 
 /**
  * @brief Get normal flow boundary slope for an edge.

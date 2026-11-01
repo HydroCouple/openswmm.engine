@@ -16,7 +16,8 @@
  *          (via the forcing API) which drains into a coupled junction J1 that has
  *          NO other lateral inflow, so J1's lateral inflow IS the coupling. Running
  *          with VARIABLE_STEP, the integrated 1D-received coupling volume
- *          (Σ lateral_inflow·dt) must equal the 2D-given net coupling volume
+ *          (Σ lateral_inflow·dt, aligned to geometric SI) plus pending exchange
+ *          must equal the 2D-given net coupling volume
  *          (coupling_2d_to_1d_out − coupling_1d_to_2d_in from swmm_2d_get_mass_balance)
  *          to tight tolerance. Pre-fix this gap opens up with the timestep variation.
  *
@@ -36,6 +37,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <string>
 #include <vector>
 
@@ -45,9 +47,14 @@
 #include <openswmm/engine/openswmm_forcing.h>
 #include <openswmm/engine/openswmm_massbalance.h>
 
+#include "core/SWMMEngine.hpp"
+#include "core/UnitConversion.hpp"
+
 namespace fs = std::filesystem;
 
 namespace {
+
+constexpr double ft3_to_m3 = 0.3048 * 0.3048 * 0.3048;
 
 // Flat 10×10 m 2D patch whose bed sits at z = 1.0 m = the crown of coupled
 // junction J1 (invert 0, MaxDepth 1.0). J1 drains through a 0.3 m pipe to free
@@ -119,7 +126,8 @@ std::string build_model(const std::string& extra_2d_options = "") {
 
 struct RunResult {
     bool ok = false;
-    double received_1d = 0.0;  // ∫ lateral_inflow(J1)·dt over the run (m³)
+    double received_1d = 0.0; // ∫ lateral_inflow(J1)·dt, geometric SI (m³)
+    double pending_1d = 0.0;  // queued exchange not yet delivered to 1D (m³)
     double given_2d_net = 0.0; // coupling_2d_to_1d_out − coupling_1d_to_2d_in (m³)
     double cont_2d = 0.0;
     double cont_routing = 0.0;
@@ -136,8 +144,9 @@ struct RunResult {
 /**
  * @brief Run the coupling-conservation fixture and collect water-bookkeeping diagnostics.
  *
- * Forces 0.001 m/s rain until prior elapsed reaches 600 s, steps without a cap and integrates
- * positive-time J1 lateral flow. Copies per-cell applied coupling before end, then reads gross/net
+ * Forces rain until prior elapsed reaches 600 s, steps without a cap and integrates
+ * positive-time J1 lateral flow in geometric SI. Copies pending native exchange and per-cell
+ * applied coupling before end, then reads gross/net
  * coupling and routing totals afterward. Step error can still produce ok=true;
  * stream/forcing/getter/end/report/close statuses are unchecked. Owns/destroys engine; native
  * routing volumes are ft3 even for this CMS project.
@@ -145,11 +154,12 @@ struct RunResult {
  * @param[in] dir Existing writable artifact directory.
  * @param[in] extra_2d_options Raw options passed to build_model.
  * @param[in] tag Safe basename for overwritten retained .inp/.rpt/.out.
+ * @param[in] rain_rate Rainfall m/s during the first ten minutes; zero for the dry control.
  * @return Owned SI surface/network receipt volumes, native routing-total volumes, step durations
  *     seconds and continuity fractions; ok=false only on setup/active/node/start refusal.
  */
 RunResult run(const fs::path& dir, const std::string& extra_2d_options = "",
-              const std::string& tag = "coupling_conservation") {
+              const std::string& tag = "coupling_conservation", double rain_rate = 0.001) {
     RunResult r;
     const fs::path inp = dir / (tag + ".inp");
     const fs::path rpt = dir / (tag + ".rpt");
@@ -185,7 +195,12 @@ RunResult run(const fs::path& dir, const std::string& extra_2d_options = "",
     }
 
     constexpr double RAIN_OFF_S = 600.0; // rain the patch for the first 10 min
-    constexpr double RAIN_RATE = 0.001;  // m/s (fills above the crown, then drains)
+    const auto& c = static_cast<openswmm::SWMMEngine*>(eng)->context();
+    // The getter reports legacy project units (CMS uses 0.02832), whereas
+    // SurfaceRouter2D exchanges geometric SI using exact 0.3048³. Undo the
+    // display conversion before integrating so both ledgers use the same units.
+    const double display_to_exact_cms =
+        ft3_to_m3 / openswmm::ucf::UCF(openswmm::ucf::FLOW, c.options);
 
     double elapsed = 0.0, prev_elapsed = 0.0;
     while (true) {
@@ -193,7 +208,7 @@ RunResult run(const fs::path& dir, const std::string& extra_2d_options = "",
         // ponded surface drains through the coupled inlet. OVERRIDE+PERSIST so it
         // holds across steps until changed.
         const double t_s = elapsed * 86400.0;
-        const double rain = (t_s < RAIN_OFF_S) ? RAIN_RATE : 0.0;
+        const double rain = (t_s < RAIN_OFF_S) ? rain_rate : 0.0;
         swmm_2d_force_rainfall_uniform(eng, rain, SWMM_FORCING_OVERRIDE, SWMM_FORCING_PERSIST);
 
         if (swmm_engine_step(eng, &elapsed) != SWMM_OK || elapsed <= 0.0)
@@ -207,10 +222,15 @@ RunResult run(const fs::path& dir, const std::string& extra_2d_options = "",
             ++r.n_steps;
         }
 
-        double lat = 0.0; // project flow units (CMS = m³/s); + = into J1 (2D→1D drain)
+        double lat = 0.0; // legacy display CMS; + = into J1 (2D→1D drain)
         if (swmm_node_get_lateral_inflow(eng, j1, &lat) == SWMM_OK)
-            r.received_1d += lat * dt_s;
+            r.received_1d += lat * display_to_exact_cms * dt_s;
     }
+
+    // The 2D ledger books exchange when produced; 1D receives it later.
+    // Include both delivery paths' signed, in-flight volumes before teardown.
+    for (std::size_t n = 0; n < c.nodes.coupling_queue.size(); ++n)
+        r.pending_1d += (c.nodes.coupling_queue[n] + c.nodes.coupling_volume[n]) * ft3_to_m3;
 
     // C1: the signed per-cell abstraction, summed over every cell. Read
     // BEFORE swmm_engine_end — the 2D solver-state accessors are guarded by
@@ -262,10 +282,13 @@ protected:
     }
 };
 
-// The exchange volume the 1D node receives must equal the volume the 2D side gave
-// up, even though VARIABLE_STEP makes the consuming dt differ from the producing
-// dt. Carrying the exchange as a per-window volume (the fix) makes these match;
+// The exchange volume the 1D node receives plus pending delivery must equal the
+// volume the 2D side gave up, even though VARIABLE_STEP makes the consuming dt
+// differ from the producing dt. Carrying a per-window volume makes these match;
 // the old rate-based carry left a Σ Q·Δdt gap.
+//
+// Issue #194: compare geometric SI volumes and account for in-flight storage.
+// The display-unit offset (~1.11e-4) and pending volume both exceed the new gate.
 TEST_F(CouplingConservation2DTest, ReceivedEqualsGivenUnderVariableStep) {
     RunResult r = run(dir_);
 
@@ -275,13 +298,14 @@ TEST_F(CouplingConservation2DTest, ReceivedEqualsGivenUnderVariableStep) {
     ASSERT_GT(std::abs(r.given_2d_net), 1.0)
         << "no meaningful 2D→1D exchange occurred (net " << r.given_2d_net << " m³)";
 
-    // Cross-domain conservation: 1D-received ≈ 2D-given. The only admissible
-    // discrepancy is the single-step boundary term (the last window's exchange,
-    // ~0 once the patch has drained), so the match is tight.
-    const double rel = std::abs(r.received_1d - r.given_2d_net) / std::abs(r.given_2d_net);
-    EXPECT_LT(rel, 0.005) << "1D-received (" << r.received_1d << " m³) != 2D-given ("
-                          << r.given_2d_net << " m³); rel err " << rel
-                          << " — coupling not volume-conservative under VARIABLE_STEP";
+    // Keep pending delivery explicit instead of hiding it in a loose tolerance.
+    ASSERT_GT(r.pending_1d, 0.0) << "fixture must exercise in-flight exchange";
+    const double rel = std::abs(r.received_1d + r.pending_1d - r.given_2d_net) /
+                       std::abs(r.given_2d_net);
+    EXPECT_LT(rel, 1e-10) << "1D-received (" << r.received_1d << " m³) + pending ("
+                         << r.pending_1d << " m³) != 2D-given (" << r.given_2d_net
+                         << " m³); rel err " << rel
+                         << " — coupling not volume-conservative under VARIABLE_STEP";
 
     // Both domains' own continuity must also stay closed.
     EXPECT_LT(std::abs(r.cont_2d), 0.05) << "2D continuity error: " << r.cont_2d;
@@ -294,8 +318,9 @@ TEST_F(CouplingConservation2DTest, ReceivedEqualsGivenUnderVariableStep) {
         << " s) — variable-step coupling path not exercised";
 
     std::ofstream csv(dir_ / "coupling_conservation_massbalance.csv");
-    csv << "metric,value\n"
+    csv << std::setprecision(17) << "metric,value\n"
         << "received_1d_m3," << r.received_1d << "\n"
+        << "pending_1d_m3," << r.pending_1d << "\n"
         << "given_2d_net_m3," << r.given_2d_net << "\n"
         << "rel_err," << rel << "\n"
         << "dt_min_s," << r.dt_min << "\n"
@@ -303,6 +328,16 @@ TEST_F(CouplingConservation2DTest, ReceivedEqualsGivenUnderVariableStep) {
         << "n_steps," << r.n_steps << "\n"
         << "continuity_2d_frac," << r.cont_2d << "\n"
         << "continuity_routing_frac," << r.cont_routing << "\n";
+}
+
+TEST_F(CouplingConservation2DTest, ZeroRainHasNoExchange) {
+    const RunResult r = run(dir_, "", "zero_rain", 0.0);
+    ASSERT_TRUE(r.ok);
+    EXPECT_GT(r.n_steps, 0);
+    EXPECT_DOUBLE_EQ(r.received_1d, 0.0);
+    EXPECT_DOUBLE_EQ(r.pending_1d, 0.0);
+    EXPECT_DOUBLE_EQ(r.c12, 0.0);
+    EXPECT_DOUBLE_EQ(r.c21, 0.0);
 }
 
 // ---------------------------------------------------------------------------

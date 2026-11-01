@@ -17,6 +17,10 @@
 #include "2d/data/SurfaceStateData.hpp"
 #include "2d/data/SolverOptions2D.hpp"
 #include <cmath>
+#include <bit>
+#include <cstdint>
+#include <cstring>
+#include <limits>
 using namespace openswmm::twoD;
 namespace {
 constexpr auto laws = {SoilChar::GARDNER, SoilChar::RUSSO, SoilChar::BROOKS_COREY,
@@ -517,4 +521,124 @@ TEST(SigmaConservation, ImplicitLayerBreakthroughConvergesToIndependentRetardedC
         EXPECT_GT(errors[0] / errors[1], 1.8);
         EXPECT_GT(errors[1] / errors[2], 1.8);
     }
+}
+
+TEST(SigmaConservation, PreparedTrialsMatchEveryOutputBitAcrossLawsAndMovingGeometries) {
+    const auto exact = [](double a, double b) {
+        EXPECT_EQ(std::bit_cast<std::uint64_t>(a), std::bit_cast<std::uint64_t>(b));
+    };
+    const auto vector_exact = [&](const auto& a, const auto& b) {
+        ASSERT_EQ(a.size(), b.size());
+        for (std::size_t j = 0; j < a.size(); ++j)
+            exact(a[j], b[j]);
+    };
+    sigma::ColumnPreparation prepared;
+    for (auto law : laws)
+        for (bool capillary : {false, true})
+            for (bool euler : {false, true})
+                for (int m : {1, 4, 12})
+                    for (double velocity : {-.2, -0., 0., .2})
+                    for (double old_length : {0., .0001, .5, 2.}) {
+                        SCOPED_TRACE(std::to_string(int(law)) + "/" + std::to_string(capillary) +
+                                     "/" + std::to_string(euler) + "/" + std::to_string(m) +
+                                     "/" + std::to_string(old_length));
+                        soil::Params p;
+                        p.law = law;
+                        p.Ks = .01;
+                        // Strided old state includes clamped endpoints and untouched padding.
+                        std::vector<double> original(3 * m, -123.);
+                        for (int j = 0; j < m; ++j)
+                            original[3 * j] = p.theta_r - .02 +
+                                              (p.theta_s - p.theta_r + .04) * (j + .5) / m;
+                        sigma::ColumnStep inputs;
+                        inputs.L_old = old_length;
+                        inputs.dt = .1;
+                        inputs.forward_euler = euler;
+                        inputs.grid_rate = velocity;
+                        inputs.capillary = capillary;
+                        inputs.q_in = .02;
+                        inputs.q_et = .003;
+                        inputs.q0_phys = -.001;
+                        std::vector<double> contacts(m, .00001);
+                        inputs.layer_inflow = &contacts;
+                        sigma::prepareColumn(p, original.data(), m, 3, inputs, prepared);
+                        // Reuse one preparation across falling, rising and collapsed trials.
+                        for (bool capture : {false, true})
+                        for (double handover : {-1., .2})
+                        for (double length : {0., .0001, .05, .5, 1., 2., 3.}) {
+                            auto plain = original, cached = original;
+                            auto a = inputs, b = inputs;
+                            a.L_new = b.L_new = length;
+                            a.handover_theta = b.handover_theta = handover;
+                            sigma::ColumnTransfers ar, br;
+                            if (capture) {
+                                a.transfers = &ar;
+                                b.transfers = &br;
+                            }
+                            sigma::advanceColumn(p, plain.data(), m, 3, a);
+                            sigma::advanceColumn(p, cached.data(), m, 3, b, prepared);
+                            vector_exact(plain, cached);
+                            const double av[] = {a.f_top, a.rejected, a.f_bot, a.et_taken,
+                                                 a.theta_bot, a.dt_limit, a.overflow_to_sat,
+                                                 a.deficit_from_sat, a.et_stress};
+                            const double bv[] = {b.f_top, b.rejected, b.f_bot, b.et_taken,
+                                                 b.theta_bot, b.dt_limit, b.overflow_to_sat,
+                                                 b.deficit_from_sat, b.et_stress};
+                            for (int k = 0; k < 9; ++k)
+                                exact(av[k], bv[k]);
+                            exact(ar.old_length, br.old_length);
+                            exact(ar.new_length, br.new_length);
+                            exact(ar.infiltration, br.infiltration);
+                            exact(ar.evaporation, br.evaporation);
+                            vector_exact(ar.old_water, br.old_water);
+                            vector_exact(ar.new_water, br.new_water);
+                            vector_exact(ar.faces, br.faces);
+                            vector_exact(ar.compression, br.compression);
+                            vector_exact(ar.support, br.support);
+                            vector_exact(ar.grid, br.grid);
+                            vector_exact(ar.contacts, br.contacts);
+                        }
+                    }
+}
+
+TEST(SigmaLayerTransport, ReusedWorkspaceRetainsFreshPartialOutputsAfterRefusal) {
+    LayerTransportScratch scratch;
+    const auto same = [](const LayerTransportResult& a, const LayerTransportResult& b) {
+        EXPECT_EQ(a.error, b.error);
+        for (const auto pair : {std::pair{&a.mass, &b.mass},
+                                std::pair{&a.concentration, &b.concentration},
+                                std::pair{&a.transferred, &b.transferred}}) {
+            ASSERT_EQ(pair.first->size(), pair.second->size());
+            if (!pair.first->empty())
+                EXPECT_EQ(std::memcmp(pair.first->data(), pair.second->data(),
+                                      pair.first->size() * sizeof(double)), 0);
+        }
+    };
+    for (int n : {1, 65, 8, 2, 1})
+        for (bool euler : {false, true})
+            for (bool signed_species : {false, true})
+                for (int refusal : {0, 1, 2, 3, 0}) {
+                    SCOPED_TRACE(n);
+                    SCOPED_TRACE(euler);
+                    SCOPED_TRACE(signed_species);
+                    SCOPED_TRACE(refusal);
+                    std::vector<double> capacity(n, 1.), initial(n, -0.), rhs(n, -0.),
+                        donor(n, 0.);
+                    std::vector<LayerTransportMove> moves;
+                    if (refusal == 1)
+                        capacity.back() = std::numeric_limits<double>::quiet_NaN();
+                    if (refusal == 2)
+                        rhs.pop_back();
+                    if (refusal == 3)
+                        moves.push_back({n - 1, -1, -1.});
+                    const auto expected =
+                        euler ? advanceLayerTransportEuler(capacity, initial, rhs, moves,
+                                                             signed_species, &donor)
+                              : solveLayerTransport(capacity, rhs, moves, signed_species);
+                    const auto& actual =
+                        euler ? advanceLayerTransportEuler(capacity, initial, rhs, moves, scratch,
+                                                             signed_species, &donor)
+                              : solveLayerTransport(capacity, rhs, moves, scratch, signed_species);
+                    same(actual, expected);
+                }
 }

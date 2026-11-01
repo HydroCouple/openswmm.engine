@@ -9,7 +9,9 @@
  * @license   Apache-2.0
  */
 
+#include "core/ProcessPerf.hpp"
 #include "SourceResultHistory.hpp"
+#include "ResultHistoryAppend.hpp"
 #include "CommonSourceStage.hpp"
 #include "SubsurfaceSolver.hpp"
 #include "../data/SurfaceStateData.hpp"
@@ -30,7 +32,7 @@ constexpr std::size_t maxValues = 8 * 1024 * 1024;
  * @param[in] extra Optional trailing values for a capability-dependent schema extension.
  * @throws std::runtime_error When values.size()+extra.size() differs from the column count,
  * before any append. Allocation failure can leave earlier columns appended; caller uses a
- * private trial.
+ * private trial or append rollback guard.
  * @note Does not validate signs, units, identities or equal starting column lengths.
  */
 void row(SourceResultTable& t, std::initializer_list<double> values,
@@ -281,7 +283,7 @@ void SourceResultHistory::initializeIdentity(const CommonSourceStage& stage) {
  * receiver clocks, intake/refund/ET receipts and pending queues without consuming them. Converts
  * 1D source water ft3 to m3; existing pollutant amounts are already native_concentration*m3.
  * Missing donor identity, short mass vectors or allocation can throw after earlier table
- * appends; use a private candidate. Requires live prepared pointers and consistent extents;
+ * appends; use a private candidate or append rollback guard. Requires live prepared pointers and consistent extents;
  * never advances the stage.
  */
 void SourceResultHistory::appendRows(const CommonSourceStage& stage, std::size_t frame,
@@ -427,7 +429,7 @@ SourceResultHistory SourceResultHistory::projection(const CommonSourceStage& sta
  * @param[in] stage Stable prepared completed-boundary stage. After initial attachment, the exact
  * same stage address and frozen model must be supplied; it must outlive subsequent recorder
  * calls.
- * @return Empty after publishing a fully validated copied history; diagnostic on
+ * @return Empty after publishing a fully validated append; diagnostic on
  * checkpoint/model, identity, interval ordering or validation refusal, or a caught standard
  * exception. History and physics remain unchanged on failure. Nonstandard exceptions are not
  * translated.
@@ -437,6 +439,7 @@ SourceResultHistory SourceResultHistory::projection(const CommonSourceStage& sta
  * is read-only.
  */
 std::string SourceResultHistory::append(const CommonSourceStage& stage) {
+    perf::ProcessTimer process_timer(perf::ProcessPhase::source_results);
     try {
         const auto error = stage.checkpointBoundary();
         if (!error.empty())
@@ -451,18 +454,25 @@ std::string SourceResultHistory::append(const CommonSourceStage& stage) {
             (frame == 0 && stage.completedEnd() != 0) ||
             (frame > 0 && stage.completedEnd() <= start))
             return "Capture initial state and every accepted source interval exactly once.";
-        auto trial =
-            *this; // Qualification recorder: strong failure guarantee, not the optimized production writer.
-        if (frame == 0)
-            trial.initializeIdentity(stage);
-        trial.appendRows(stage, frame, start);
-        const auto anchor = stage.checkpointBytes(trial.boundary_);
+        SourceResultHistory initial;
+        if (frame == 0) {
+            initial = *this;
+            initial.initializeIdentity(stage);
+        }
+        auto& target = frame ? *this : initial;
+        ResultHistoryAppend transaction(target.tables_, target.boundary_);
+        target.appendRows(stage, frame, start);
+        std::string bytes;
+        const auto anchor = stage.checkpointBytes(bytes);
         if (!anchor.empty())
             return anchor;
-        const auto invalid = trial.validate();
+        transaction.replaceBoundary(bytes);
+        const auto invalid = target.validate();
         if (!invalid.empty())
             return invalid;
-        *this = std::move(trial);
+        transaction.commit();
+        if (frame == 0)
+            *this = std::move(initial);
         return {};
     } catch (const std::exception& e) {
         return e.what();

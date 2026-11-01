@@ -14,6 +14,17 @@
 #include <algorithm>
 #include <cmath>
 namespace openswmm::twoD {
+namespace {
+void clearPorewaterAdvection(PorewaterAdvection& out) {
+    out.error.clear();
+    out.mass.clear();
+    out.concentration.clear();
+    out.withdrawn_mass.clear();
+    out.vertical_water.clear();
+    out.vertical_mass.clear();
+    out.external_mass = out.water_residual = 0;
+}
+}
 /**
  * @brief Compute explicit fixed-layer porewater transport from accepted physical water tangents.
  * @param[in] old_water Finite nonnegative beginning water m3 per layer.
@@ -46,8 +57,21 @@ PorewaterAdvection advectPorewaterEuler(
     const std::vector<double>& external_water, const std::vector<double>& external_mass,
     const std::vector<double>& withdrawal, const std::vector<double>& reserved_water,
     const std::vector<double>& reserved_mass) {
-    const auto refused = [](const char* message) {
-        PorewaterAdvection out;
+    PorewaterTransportScratch scratch;
+    advectPorewaterEuler(old_water, retention, mass, change, external_water, external_mass,
+                         withdrawal, reserved_water, reserved_mass, scratch);
+    return std::move(scratch.result);
+}
+PorewaterAdvection& advectPorewaterEuler(
+    const std::vector<double>& old_water, const std::vector<double>& retention,
+    const std::vector<double>& mass, const std::vector<double>& change,
+    const std::vector<double>& external_water, const std::vector<double>& external_mass,
+    const std::vector<double>& withdrawal, const std::vector<double>& reserved_water,
+    const std::vector<double>& reserved_mass, PorewaterTransportScratch& scratch) {
+    auto& out = scratch.result;
+    clearPorewaterAdvection(out);
+    const auto refused = [&](const char* message) -> PorewaterAdvection& {
+        clearPorewaterAdvection(out);
         out.error = message;
         return out;
     };
@@ -57,7 +81,13 @@ PorewaterAdvection advectPorewaterEuler(
         (!reserved_water.empty() && reserved_water.size() != n) ||
         (!reserved_mass.empty() && reserved_mass.size() != n))
         return refused("Euler porewater layer shapes differ.");
-    std::vector<double> capacity(n), initial(n), rhs(n), water(n + 1, 0);
+    auto& capacity = scratch.capacity;
+    auto& initial = scratch.initial;
+    auto& rhs = scratch.rhs;
+    auto& water = scratch.water;
+    for (auto* values : {&capacity, &initial, &rhs})
+        values->assign(n, 0);
+    water.assign(n + 1, 0);
     double scale = 0;
     for (std::size_t j = 0; j < n; ++j) {
         const double held_water = reserved_water.empty() ? 0 : reserved_water[j],
@@ -82,7 +112,8 @@ PorewaterAdvection advectPorewaterEuler(
     }
     if (std::abs(water.back()) > 1e-10 * scale + 1e-12)
         return refused("Euler porewater increments do not close the physical water balance.");
-    std::vector<LayerTransportMove> moves;
+    auto& moves = scratch.moves;
+    moves.clear();
     moves.reserve(2 * n - 1);
     for (std::size_t j = 1; j < n; ++j) {
         const int from = int(water[j] >= 0 ? j - 1 : j), to = int(water[j] >= 0 ? j : j - 1);
@@ -90,12 +121,16 @@ PorewaterAdvection advectPorewaterEuler(
     }
     for (std::size_t j = 0; j < n; ++j)
         moves.push_back({int(j), -1, withdrawal[j]});
-    auto result = advanceLayerTransportEuler(capacity, initial, rhs, moves);
+    auto& result = scratch.transport.result;
+    // Lend the retained output buffers to the child solve, then take them back.
+    // This also restores their ownership before a child refusal is returned.
+    out.mass.swap(result.mass);
+    out.concentration.swap(result.concentration);
+    advanceLayerTransportEuler(capacity, initial, rhs, moves, scratch.transport);
+    out.mass.swap(result.mass);
+    out.concentration.swap(result.concentration);
     if (!result.error.empty())
         return refused(result.error.c_str());
-    PorewaterAdvection out;
-    out.mass = std::move(result.mass);
-    out.concentration = std::move(result.concentration);
     out.water_residual = water.back();
     out.vertical_water.assign(water.begin() + 1, water.end() - 1);
     for (std::size_t j = 1; j < n; ++j)
@@ -111,36 +146,30 @@ PorewaterAdvection advectPorewaterEuler(
     }
     return out;
 }
-/**
- * @brief Solve conservative implicit upwind porewater transport on fixed physical layers.
- * @param[in] old_water Finite nonnegative beginning water m3 per layer.
- * @param[in] new_water Finite nonnegative endpoint water m3 per layer.
- * @param[in] retention Finite nonnegative equilibrium sorption capacity m3 per layer, zero for
- * age.
- * @param[in] mass Nonempty finite nonnegative beginning native_concentration*m3 inventory;
- * defines n.
- * @param[in] external_water Finite signed net accepted external water m3 per layer, including
- * actual physical transfers rather than pure moving-grid handover.
- * @param[in] external_mass Finite signed paired external inventory, excluding unknown implicit
- * withdrawals. mass+external_mass must be nonnegative for every layer.
- * @param[in] withdrawal Finite nonnegative implicit dissolved outgoing volumes m3, n entries.
- * @return Owned result with empty error on success: n final masses/equilibrium concentrations
- * and withdrawn masses, n-1 downward-positive water/mass transfers, net external inventory and
- * bottom water closure residual. Nonempty error reports refusal with no partial solution; inputs
- * remain unchanged. Allocation errors propagate.
- * @note All input vectors have n entries. Interior water balance must close within 1e-10
- * absolute transfer scale + 1e-12 m3. The tridiagonal M-matrix uses new water plus retention and
- * outgoing volumes. A zero-capacity dry layer retains immobile residue conservatively with zero
- * dissolved concentration; a throughflowing zero-end-water layer needs no artificial pore
- * volume.
- */
-PorewaterAdvection
-advectPorewater(const std::vector<double>& old_water, const std::vector<double>& new_water,
-                const std::vector<double>& retention, const std::vector<double>& mass,
-                const std::vector<double>& external_water, const std::vector<double>& external_mass,
-                const std::vector<double>& withdrawal) {
-    const auto refused = [](const char* message) {
-        PorewaterAdvection out;
+namespace {
+struct ImplicitPorewaterScratch {
+    PorewaterAdvection result;
+    std::vector<double> capacity, diagonal, lower, upper, rhs, water;
+    std::vector<unsigned char> residue;
+};
+template <bool Reset, class Scratch>
+#if defined(_MSC_VER)
+__forceinline
+#elif defined(__GNUC__) || defined(__clang__)
+inline __attribute__((always_inline))
+#else
+inline
+#endif
+PorewaterAdvection& advectPorewaterImpl(
+    const std::vector<double>& old_water, const std::vector<double>& new_water,
+    const std::vector<double>& retention, const std::vector<double>& mass,
+    const std::vector<double>& external_water, const std::vector<double>& external_mass,
+    const std::vector<double>& withdrawal, Scratch& scratch) {
+    auto& out = scratch.result;
+    if constexpr (Reset)
+        clearPorewaterAdvection(out);
+    const auto refused = [&](const char* message) -> PorewaterAdvection& {
+        clearPorewaterAdvection(out);
         out.error = message;
         return out;
     };
@@ -148,7 +177,15 @@ advectPorewater(const std::vector<double>& old_water, const std::vector<double>&
     if (!n || old_water.size() != n || new_water.size() != n || retention.size() != n ||
         external_water.size() != n || external_mass.size() != n || withdrawal.size() != n)
         return refused("Porewater transport layer shapes differ.");
-    std::vector<double> capacity(n), diagonal(n), lower(n, 0), upper(n, 0), rhs(n), water(n + 1, 0);
+    auto& capacity = scratch.capacity;
+    auto& diagonal = scratch.diagonal;
+    auto& lower = scratch.lower;
+    auto& upper = scratch.upper;
+    auto& rhs = scratch.rhs;
+    auto& water = scratch.water;
+    for (auto* values : {&capacity, &diagonal, &lower, &upper, &rhs})
+        values->assign(n, 0);
+    water.assign(n + 1, 0);
     double volume_scale = 0;
     for (std::size_t j = 0; j < n; ++j) {
         for (double value : {old_water[j], new_water[j], retention[j], mass[j], withdrawal[j]})
@@ -179,7 +216,8 @@ advectPorewater(const std::vector<double>& old_water, const std::vector<double>&
             upper[j - 1] -= q;
         }
     }
-    std::vector<unsigned char> residue(n, 0);
+    auto& residue = scratch.residue;
+    residue.assign(n, 0);
     for (std::size_t j = 0; j < n; ++j) {
         if (!std::isfinite(diagonal[j]) || !std::isfinite(rhs[j]))
             return refused("Porewater transport system overflow.");
@@ -201,7 +239,13 @@ advectPorewater(const std::vector<double>& old_water, const std::vector<double>&
         diagonal[j] -= f * upper[j - 1];
         rhs[j] -= f * rhs[j - 1];
     }
-    std::vector<double> concentration(n), out_mass(n), withdrawn(n), vertical_mass(n - 1);
+    auto& concentration = out.concentration;
+    auto& out_mass = out.mass;
+    auto& withdrawn = out.withdrawn_mass;
+    auto& vertical_mass = out.vertical_mass;
+    for (auto* values : {&concentration, &out_mass, &withdrawn})
+        values->assign(n, 0);
+    vertical_mass.assign(n - 1, 0);
     for (std::size_t j = n; j-- > 0;) {
         if (!(diagonal[j] > 0) || !std::isfinite(diagonal[j]))
             return refused("Invalid implicit porewater donor capacity.");
@@ -233,14 +277,51 @@ advectPorewater(const std::vector<double>& old_water, const std::vector<double>&
     }
     if (!std::isfinite(external_total))
         return refused("Porewater transport receipt overflow.");
-    PorewaterAdvection out;
-    out.mass = std::move(out_mass);
-    out.concentration = std::move(concentration);
-    out.withdrawn_mass = std::move(withdrawn);
-    out.vertical_mass = std::move(vertical_mass);
     out.vertical_water.assign(water.begin() + 1, water.end() - 1);
     out.external_mass = external_total;
     out.water_residual = water.back();
     return out;
+}
+} // namespace
+/**
+ * @brief Solve conservative implicit upwind porewater transport on fixed physical layers.
+ * @param[in] old_water Finite nonnegative beginning water m3 per layer.
+ * @param[in] new_water Finite nonnegative endpoint water m3 per layer.
+ * @param[in] retention Finite nonnegative equilibrium sorption capacity m3 per layer, zero for
+ * age.
+ * @param[in] mass Nonempty finite nonnegative beginning native_concentration*m3 inventory;
+ * defines n.
+ * @param[in] external_water Finite signed net accepted external water m3 per layer, including
+ * actual physical transfers rather than pure moving-grid handover.
+ * @param[in] external_mass Finite signed paired external inventory, excluding unknown implicit
+ * withdrawals. mass+external_mass must be nonnegative for every layer.
+ * @param[in] withdrawal Finite nonnegative implicit dissolved outgoing volumes m3, n entries.
+ * @return Owned result with empty error on success: n final masses/equilibrium concentrations
+ * and withdrawn masses, n-1 downward-positive water/mass transfers, net external inventory and
+ * bottom water closure residual. Nonempty error reports refusal with no partial solution; inputs
+ * remain unchanged. Allocation errors propagate.
+ * @note All input vectors have n entries. Interior water balance must close within 1e-10
+ * absolute transfer scale + 1e-12 m3. The tridiagonal M-matrix uses new water plus retention and
+ * outgoing volumes. A zero-capacity dry layer retains immobile residue conservatively with zero
+ * dissolved concentration; a throughflowing zero-end-water layer needs no artificial pore
+ * volume.
+ */
+PorewaterAdvection
+advectPorewater(const std::vector<double>& old_water, const std::vector<double>& new_water,
+                const std::vector<double>& retention, const std::vector<double>& mass,
+                const std::vector<double>& external_water, const std::vector<double>& external_mass,
+                const std::vector<double>& withdrawal) {
+    ImplicitPorewaterScratch scratch;
+    advectPorewaterImpl<false>(old_water, new_water, retention, mass, external_water, external_mass,
+                              withdrawal, scratch);
+    return std::move(scratch.result);
+}
+PorewaterAdvection& advectPorewater(
+    const std::vector<double>& old_water, const std::vector<double>& new_water,
+    const std::vector<double>& retention, const std::vector<double>& mass,
+    const std::vector<double>& external_water, const std::vector<double>& external_mass,
+    const std::vector<double>& withdrawal, PorewaterTransportScratch& scratch) {
+    return advectPorewaterImpl<true>(old_water, new_water, retention, mass, external_water,
+                                    external_mass, withdrawal, scratch);
 }
 } // namespace openswmm::twoD

@@ -1375,10 +1375,10 @@ double conduit_getLossRate(int j, int routeModel, double q, double tstep) {
         // --- compute total loss rate
         totalLossRate = evapLossRate + seepLossRate;
 
-        // --- limit total loss rate to current volume for DW routing
-        //     or current link flow rate otherwise
+        // --- rates are per barrel; Link.newVolume covers all barrels.
+        //     Limit DW loss to per-barrel inventory, otherwise to flow.
         if (routeModel == DW)
-            q = Link[j].newVolume / tstep;
+            q = Link[j].newVolume / (tstep * Conduit[Link[j].subIndex].barrels);
         else
             q = ABS(q);
         if (totalLossRate > q) {
@@ -1509,7 +1509,8 @@ void pump_validate(int j, int k) {
     if (Pump[k].type == TYPE1_PUMP) {
         n1 = Link[j].node1;
         if (Node[n1].type != STORAGE)
-            Node[n1].fullVolume = MAX(Node[n1].fullVolume, Pump[k].xMax / UCF(VOLUME));
+            if (Node[n1].storageArea == 0.0)
+                Node[n1].fullVolume = MAX(Node[n1].fullVolume, Pump[k].xMax / UCF(VOLUME));
     }
 }
 

@@ -46,6 +46,11 @@ set(_engine_modules
     _checkpoint
 )
 
+if(OPENSWMM_ENGINE_ABI_MANIFEST)
+    install(FILES "${OPENSWMM_ENGINE_ABI_MANIFEST}"
+        DESTINATION openswmm/engine RENAME _abi.json)
+endif()
+
 foreach(_mod IN LISTS _engine_modules)
     add_cython_extension(
         NAME        ${_mod}

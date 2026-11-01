@@ -479,6 +479,10 @@ SWMM_ENGINE_API const char* swmm_error_message(int code) {
         return "Numerical instability (fatal)";
     case SWMM_ERR_CANCELLED:
         return "Operation cancelled by caller";
+    case SWMM_ERR_BUFSIZE:
+        return "Output buffer too small for the value";
+    case SWMM_ERR_GEOMETRY:
+        return "Invalid cross-section geometry, or a change the routing model cannot make";
     case SWMM_ERR_INTERNAL:
         return "Internal engine error";
     // Virtual-junction rule codes (ErrorCodes.hpp ERR_VJ_*)

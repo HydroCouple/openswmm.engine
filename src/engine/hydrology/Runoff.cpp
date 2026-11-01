@@ -38,6 +38,8 @@
  * @license   Apache-2.0
  */
 
+#include "core/ProcessPerf.hpp"
+#include "core/ThreadInfo.hpp"
 #include "Runoff.hpp"
 #include "Gage.hpp"
 #include "../core/Constants.hpp"
@@ -49,6 +51,7 @@
 #include <cmath>
 #include <algorithm>
 #include <stdexcept>
+#include <exception>
 
 #if defined(SWMM_USE_OPENMP)
 #include <omp.h>
@@ -309,6 +312,7 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
                            const std::vector<RunoffSourceForcing>* source_forcing,
                            const std::vector<double>* spatial_fractions,
                            const std::vector<int>* source_owners) {
+    perf::ProcessTimer process_timer(perf::ProcessPhase::runoff);
     int n = soa_.n_subcatch;
     if (source_forcing) {
         if (!std::isfinite(dt) || dt <= 0.0 || ctx.n_subcatches() != n)
@@ -416,10 +420,15 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
     // Matches legacy subcatch_getRunoff() → getSubareaRunoff() chain exactly.
     // Infiltration and evaporation are computed INSIDE the per-subarea loop
     // to replicate the legacy's loss-limiting and inflow-subtraction order.
-    for (int slot = 0; slot < count; ++slot) {
+#if defined(__GNUC__) || defined(__clang__)
+#define OPENSWMM_RUNOFF_CELL_INLINE __attribute__((always_inline))
+#else
+#define OPENSWMM_RUNOFF_CELL_INLINE
+#endif
+    auto processSource = [&](int slot) OPENSWMM_RUNOFF_CELL_INLINE {
         const int i = source(slot);
         if (source_owners && (*source_owners)[i] >= 0)
-            continue;
+            return;
         auto ui = static_cast<std::size_t>(i);
         double fi = soa_.imperv_pct[ui];
         double fp = 1.0 - fi;
@@ -890,6 +899,43 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         // Runoff is stored in subcatches.runoff[i]; routing picks it up via
         // interpolateRunoffToNodes() → nodes.runoff_inflow[] → assembleLateralInflows().
         (void)0;
+    };
+#undef OPENSWMM_RUNOFF_CELL_INLINE
+#ifdef SWMM_USE_OPENMP
+    // Ordinary native sources own disjoint reservoir/infiltration/report rows.
+    // Weather preparation precedes this loop; downstream publication follows its join.
+    const bool ordinary = !source_forcing && !boundary && !spatial_fractions &&
+                          (ctx.options.ignore_snow_melt || ctx.snowpacks.plowable.empty());
+    const int threads = ordinary && count >= 512 && !omp_in_parallel()
+                            ? (ctx.options.num_threads > 0 ? ctx.options.num_threads
+                                                          : threadinfo::ompMaxThreads())
+                            : 1;
+    if (threads > 1) {
+        std::exception_ptr failure;
+        int failed_slot = count;
+#pragma omp parallel for schedule(static) num_threads(threads)
+        for (int slot = 0; slot < count; ++slot) {
+            try {
+                processSource(slot);
+            } catch (...) {
+                // Exceptions cannot cross an OpenMP region. Propagate the first
+                // source-indexed failure after all workers have joined.
+#pragma omp critical(openswmm_runoff_failure)
+                {
+                    if (slot < failed_slot) {
+                        failed_slot = slot;
+                        failure = std::current_exception();
+                    }
+                }
+            }
+        }
+        if (failure)
+            std::rethrow_exception(failure);
+    } else
+#endif
+    {
+        for (int slot = 0; slot < count; ++slot)
+            processSource(slot);
     }
 }
 

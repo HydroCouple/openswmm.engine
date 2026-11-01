@@ -340,6 +340,7 @@ class SWMMNodeProperties(Enum):
     POLLUTANT_CONCENTRATION = swmm_NodeProperty.swmm_NODE_POLLUTANT_CONCENTRATION # Pollutant concentration
     POLLUTANT_LATERAL_MASS_FLUX = swmm_NodeProperty.swmm_NODE_POLLUTANT_LATMASS_FLUX # Pollutant inflow concentration
     OUTFLOW = swmm_NodeProperty.swmm_NODE_OUTFLOW
+    STORAGE_AREA = swmm_NodeProperty.swmm_NODE_STORAGE_AREA
 
 class SWMMLinkProperties(Enum):
     """Enumeration of SWMM link properties.

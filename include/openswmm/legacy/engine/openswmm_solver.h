@@ -269,6 +269,8 @@ typedef enum {
  * \enum swmm_NodeProperty
  * \brief Enumeration of node properties used in SWMM5
  */
+#define OPENSWMM_JUNCTION_STORAGE 1
+
 typedef enum {
     /*! \brief Node type */
     swmm_NODE_TYPE = 300,
@@ -302,6 +304,7 @@ typedef enum {
     swmm_NODE_POLLUTANT_LATMASS_FLUX,
     /*! \brief Total outflow */
     swmm_NODE_OUTFLOW,
+    swmm_NODE_STORAGE_AREA, /*!< Physical junction chamber area in project ft2/m2 */
 } swmm_NodeProperty;
 
 /*!

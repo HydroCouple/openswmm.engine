@@ -499,7 +499,7 @@ void StructureSolver::computePumpFlowK(SimulationContext& ctx, double dt,
         // Limit pump flow to prevent inlet node from going dry
         // (matching legacy getModPumpFlow in dynwave.c lines 445-486)
         if (q > 0.0) {
-            if (nodes.type[un1] == NodeType::STORAGE ||
+            if (nodes.type[un1] == NodeType::STORAGE || nodes.storage_area[un1] > 0.0 ||
                 pumps_.curve_type[uk] == 1 /* TYPE1 pump, legacy node_getMaxOutflow */) {
                 // Storage node (or TYPE1 pump on any node): cap q so node
                 // volume doesn't go negative. Legacy uses oldVolume (the

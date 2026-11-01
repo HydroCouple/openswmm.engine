@@ -194,27 +194,25 @@ void computeCellContinuity(const MeshData& mesh, SurfaceStateData& state,
                            const SolverOptions2D& opts, double dt);
 
 /**
- * @brief Reconstruct cell-centred velocity (vx, vy) from edge fluxes (RT0).
+ * @brief Reconstruct diagnostic cell velocity from wetted-edge normal velocities.
  *
- * For each wet cell, solves the nv×2 least-squares system N·q ≈ b in closed form via the normal
- * equations (NᵀN)·q = Nᵀb, where each row of N is the outward edge normal and b_e = edge_flux_e
- * / edge_length_e is the depth-integrated normal speed (m²/s). The resulting specific-discharge
- * vector is divided by cell depth to give velocity (m/s). Dry cells (depth < dry_depth) get zero
- * velocity. Mirrors the GUI RT0 reconstruction (swmm2dresultslayer.cpp applyCurrentFlux_)
- * without its scene-space Y-flip.
+ * Minimizes sum A_e (n_e.u - Q_e/A_e)^2 over each cell's three/four edges,
+ * where A_e is hydraulic depth times edge length and interior transmissivity.
+ * Uses VFR endpoint geometry or MEAN depths, including stage-boundary closure
+ * rules. Area weights avoid magnifying tiny wet sections. There is no division
+ * by cell-average depth, discharge clip or speed cap. FULL_SWE output must use
+ * its conserved cell momentum instead of this diagnostic.
  *
- * @param mesh  Mesh geometry (edge normals, lengths).
- * @param state Surface state (reads edge_flux, depth; writes face_vx/face_vy).
- * @param opts  Solver options (dry_depth).
+ * Dry cells get zero. Wet cells with rank-deficient normals, nonfinite input,
+ * or nonzero flow across a currently dry section get paired NaNs (unavailable).
+ * The relative determinant tolerance is 1e-10 * trace^2. API and file readers
+ * must retain unavailable values rather than substituting a legacy velocity.
  *
- * @note Uses each cell's three/four actual edges. Edges of length <= 1e-12 m are skipped and
- * edge_flux/length is clipped to [-10,10] m2/s before the normal equations. Degenerate normals
- * (|determinant| < 1e-12) give zero velocity. The implementation uses edge_flux/length with
- * outward normals directly, so its sign follows the stored flux convention. It performs no
- * additional sign conversion or volume reconstruction. Positive finite dry_depth and prepared
- * consistent arrays are required; cells at exactly the threshold are solved. OpenMP uses
- * opts.num_threads and exclusive face_vx/face_vy writes; no allocation or input validation
- * occurs.
+ * @param mesh Prepared SI geometry, topology and interior conveyance.
+ * @param state Stable depth/head/edge flow and optional boundary state; writes
+ * only preallocated face_vx/face_vy. Sign follows internal edge flux.
+ * @param opts Validated face reconstruction, momentum, dry depth and threads.
+ * @note Allocation-free O(cells), exclusive per-cell writes, static OpenMP loop.
  */
 void computeFaceVelocity(const MeshData& mesh, SurfaceStateData& state,
                          const SolverOptions2D& opts);

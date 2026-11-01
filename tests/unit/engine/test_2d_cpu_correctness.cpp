@@ -11,6 +11,12 @@
  */
 
 #include <gtest/gtest.h>
+#include <cstdint>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <ostream>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -21,6 +27,8 @@
 #include "2d/solver/InertialKernels.hpp"
 #include "2d/solver/SweKernels.hpp"
 #include "2d/subsurface/SubsurfaceSolver.hpp"
+#include "core/CompletedSourceArchive.hpp"
+#include <limits>
 using namespace openswmm::twoD;
 namespace openswmm::twoD {
 // Inspect the scheduling invariant without making debug state a public API.
@@ -185,8 +193,15 @@ struct ExplicitInertialSolverTestAccess {
      */
     static void bookFaceVolume(ExplicitInertialSolver& s, int edge, double volume, double dt) {
         const int a = s.edges_.cL[edge], b = s.edges_.cR[edge];
-        s.facc_L_[edge] -= volume;
-        s.facc_R_[edge] += volume;
+        [&]<class Solver>(Solver& solver) {
+            if constexpr (requires { solver.face_accum_; }) {
+                solver.face_accum_[edge * solver.face_accum_stride_] -= volume;
+                solver.face_accum_[edge * solver.face_accum_stride_ + 1] += volume;
+            } else {
+                solver.facc_L_[edge] -= volume;
+                solver.facc_R_[edge] += volume;
+            }
+        }(s);
         s.bookFaceSpecies(edge, a, b, volume, 0., dt, true);
         s.accumulators_pending_ = true;
     }
@@ -200,6 +215,118 @@ struct ExplicitInertialSolverTestAccess {
      *     consistent for the requested operation.
      */
     static void settle(ExplicitInertialSolver& s) { s.settleAccumulators(); }
+    // Test-only logical view: no production aliases or cached strided views.
+    template <class Solver> static auto packetRows(const Solver& s) {
+        std::array<std::vector<double>, 6> rows;
+        if constexpr (requires { s.face_accum_; }) {
+            const auto stride = s.face_accum_stride_;
+            for (std::size_t side = 0; side < stride; ++side)
+                for (std::size_t e = 0; e < s.face_accum_.size() / stride; ++e)
+                    rows[side].push_back(s.face_accum_[e * stride + side]);
+        } else {
+            rows = {s.facc_L_, s.facc_R_, s.macc_x_L_, s.macc_x_R_,
+                    s.macc_y_L_, s.macc_y_R_};
+        }
+        return rows;
+    }
+    template <class Solver> static void seedPackets(Solver& s, bool nonfinite = false) {
+        auto rows = packetRows(s);
+        for (std::size_t side = 0; side < rows.size(); ++side)
+            for (std::size_t e = 0; e < rows[side].size(); ++e)
+                rows[side][e] = (e + side) % 7 == 0 ? -0.0 :
+                    (side % 2 ? 1.0 : -1.0) * (side + 1) * (e + 1) * 0x1p-30;
+        if (nonfinite && !rows[0].empty())
+            rows[0][0] = std::numeric_limits<double>::quiet_NaN();
+        if constexpr (requires { s.face_accum_; }) {
+            for (std::size_t side = 0; side < s.face_accum_stride_; ++side)
+                for (std::size_t e = 0; e < rows[side].size(); ++e)
+                    s.face_accum_[e * s.face_accum_stride_ + side] = rows[side][e];
+        } else {
+            s.facc_L_ = rows[0]; s.facc_R_ = rows[1];
+            s.macc_x_L_ = rows[2]; s.macc_x_R_ = rows[3];
+            s.macc_y_L_ = rows[4]; s.macc_y_R_ = rows[5];
+        }
+        s.accumulators_pending_ = true;
+    }
+    static void firePackets(ExplicitInertialSolver& s, double dt) {
+        s.fireFaces(s.active_faces_, dt, true);
+    }
+    static void rebindFixtureState(ExplicitInertialSolver& s, SurfaceStateData& state) {
+        s.state_ = &state;
+    }
+    static bool livePackets(const ExplicitInertialSolver& s) { return s.initialized_; }
+    static bool hasTierMix(const ExplicitInertialSolver& s) {
+        int minimum = 1000, maximum = -1;
+        for (int i : s.active_cells_) {
+            minimum = std::min(minimum, int(s.tier_[i]));
+            maximum = std::max(maximum, int(s.tier_[i]));
+        }
+        return minimum < maximum;
+    }
+    static int macroSubsteps(const ExplicitInertialSolver& s) {
+        return 1 << (s.cells_by_tier_.size() - 1);
+    }
+    static double macroSpan(const ExplicitInertialSolver& s) {
+        return macroSubsteps(s) * s.dt0_;
+    }
+    static long macroFaceVisits(const ExplicitInertialSolver& s) {
+        long count = 0;
+        for (std::size_t k = 0; k < s.edges_by_tier_.size(); ++k)
+            count += s.edges_by_tier_[k].size() * (macroSubsteps(s) >> k);
+        return count;
+    }
+    static bool allCellsInactive(const ExplicitInertialSolver& s) {
+        return std::all_of(s.cell_active_.begin(), s.cell_active_.end(),
+                           [](auto value) { return value == 0; });
+    }
+    static bool orderedLists(const ExplicitInertialSolver& s) {
+        std::vector<int> active, faces;
+        decltype(s.cells_by_tier_) cells(s.cells_by_tier_.size());
+        decltype(s.edges_by_tier_) edges(s.edges_by_tier_.size());
+        for (int i = 0; i < s.mesh_->n_cells(); ++i)
+            if (s.cell_active_[i]) {
+                active.push_back(i);
+                cells[s.tier_[i]].push_back(i);
+            }
+        for (int e = 0; e < s.edges_.ne; ++e) {
+            const int a = s.edges_.cL[e], b = s.edges_.cR[e];
+            if (s.cell_active_[a] && s.cell_active_[b]) {
+                const auto tier = std::min(s.tier_[a], s.tier_[b]);
+                if (s.face_tier_[e] != tier)
+                    return false;
+                faces.push_back(e);
+                edges[tier].push_back(e);
+            } else if (s.q_[e] != 0.0) {
+                return false;
+            }
+        }
+        return active == s.active_cells_ && cells == s.cells_by_tier_ &&
+               faces == s.active_faces_ && edges == s.edges_by_tier_;
+    }
+    static std::string orderedListsFrame(ExplicitInertialSolver& s) {
+        openswmm::detail::CompletedSourceArchive a;
+        a(s.dt0_, s.cell_active_, s.active_cells_, s.tier_, s.cells_by_tier_,
+          s.face_tier_, s.edges_by_tier_, s.active_faces_, s.q_,
+          s.state_->volume, s.state_->depth, s.state_->head, s.qcx_, s.qcy_);
+        return a.bytes();
+    }
+    // Internal-state framing is deliberately separate from public restart qualification.
+    static std::pair<std::string, std::string> packetArchive(ExplicitInertialSolver& s) {
+        openswmm::detail::CompletedSourceArchive a;
+        std::string error;
+        try { s.checkpointState(a); }
+        catch (const std::exception& e) { error = e.what(); }
+        return {a.bytes(), error};
+    }
+    static std::pair<std::string, std::string> readPacketArchive(
+            ExplicitInertialSolver& s, std::string bytes) {
+        openswmm::detail::CompletedSourceArchive a(std::move(bytes));
+        std::string error;
+        try { s.checkpointState(a); a.finish(); }
+        catch (const std::exception& e) { error = e.what(); }
+        return {packetArchive(s).first, error};
+    }
+
     /**
      * @brief Book a prescribed interior transfer and immediately settle pending accumulators.
      *
@@ -1303,4 +1430,406 @@ TEST(Cpu2DCorrectness, SecondOrderShorelineKeepsConnectedWetFaceAccuracy) {
             }
             EXPECT_GT(checked, 3);
         }
+}
+
+// Shared fixture definitions are embedded verbatim in the normal unit source.
+#include <bit>
+#include <cstdint>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <limits>
+#include <stdexcept>
+#include "core/CompletedSourceArchive.hpp"
+#include "2d/heat/MeshCheckpointState.hpp"
+
+namespace face_accum_fixture {
+using Archive = openswmm::detail::CompletedSourceArchive;
+using Rows = std::array<std::vector<double>, 6>;
+using Access = openswmm::twoD::ExplicitInertialSolverTestAccess;
+using namespace openswmm::twoD;
+
+inline void require(bool value, const std::string& message) {
+    if (!value) throw std::runtime_error(message);
+}
+inline std::string encodeRows(Rows rows) {
+    Archive a;
+    for (auto& row : rows) a.fixed(row);
+    return a.bytes();
+}
+inline Rows unpack(const std::vector<double>& packed, std::size_t n, std::size_t stride) {
+    Rows rows;
+    for (std::size_t side = 0; side < stride; ++side)
+        for (std::size_t e = 0; e < n; ++e)
+            rows[side].push_back(packed[e * stride + side]);
+    return rows;
+}
+inline void pack(const Rows& rows, std::vector<double>& packed, std::size_t stride) {
+    for (std::size_t side = 0; side < stride; ++side)
+        for (std::size_t e = 0; e < rows[side].size(); ++e)
+            packed[e * stride + side] = rows[side][e];
+}
+template <class A>
+void packedFields(A& a, std::vector<double>& packed, std::size_t n, std::size_t stride) {
+    if constexpr (requires { a.fixedStrided(packed, n, std::size_t(0), stride); }) {
+        for (std::size_t side = 0; side < 6; ++side)
+            a.fixedStrided(packed, side < stride ? n : 0, side, stride);
+    } else {
+        // The baseline owns separate vectors. Preserve partial decode on a later exception.
+        auto rows = unpack(packed, n, stride);
+        try { for (auto& row : rows) a.fixed(row); }
+        catch (...) { pack(rows, packed, stride); throw; }
+        pack(rows, packed, stride);
+    }
+}
+inline void consumeBudget(Archive& a) {
+    // No-element visitor charges 64MiB using only 8KiB of count headers.
+    std::vector<double> budget(8192);
+    for (int i = 0; i < 1024; ++i)
+        a.sequence(budget, [](double&) {});
+}
+inline std::string budgetPrefix() {
+    Archive a;
+    consumeBudget(a);
+    return a.bytes();
+}
+inline void overwriteCount(std::string& bytes, std::size_t offset, uint64_t value) {
+    require(offset + sizeof(value) <= bytes.size(), "fixture count offset");
+    std::memcpy(bytes.data() + offset, &value, sizeof(value));
+}
+struct CodecResult { std::string records; std::size_t cases = 0; };
+inline CodecResult codecHistory() {
+    Archive history;
+    std::string magic = "L1_FACE_CODEC_V1";
+    history(magic);
+    CodecResult result;
+    for (std::size_t stride : {2, 6})
+        for (std::size_t n : {0, 1, 8, 33, 257}) {
+            Rows source;
+            const uint64_t bits[] = {0, uint64_t(1) << 63, 0x3ff123456789abcdULL,
+                0xbfc23456789abcdeULL, 0x7ff8000000000042ULL, 0x7ff0000000000000ULL,
+                0xfff0000000000000ULL, 1};
+            for (std::size_t side = 0; side < stride; ++side)
+                for (std::size_t e = 0; e < n; ++e)
+                    source[side].push_back(std::bit_cast<double>(bits[(side + e) % 8]));
+            const auto wire = encodeRows(source);
+            std::vector<double> packed(n * stride);
+            pack(source, packed, stride);
+            Archive writer;
+            packedFields(writer, packed, n, stride);
+            require(writer.bytes() == wire, "logical wire differs");
+            std::array<std::size_t, 6> offsets{};
+            std::size_t offset = 0;
+            for (std::size_t side = 0; side < 6; ++side) {
+                offsets[side] = offset;
+                offset += sizeof(uint64_t) + source[side].size() * sizeof(double);
+            }
+            std::vector<std::pair<std::string, std::string>> inputs = {
+                {"valid", wire}, {"empty", ""}, {"short-count", wire.substr(0, 7)},
+                {"last-byte", wire.substr(0, wire.size() - 1)},
+                {"mid-field", wire.substr(0, 8 + (n ? 3 : 0))},
+                {"later-count", wire.substr(0, offsets[3] + 3)}, {"trailing", wire + 'x'}};
+            for (std::size_t side : {0, 3, 5}) {
+                auto bad = wire;
+                overwriteCount(bad, offsets[side], source[side].size() + 1);
+                inputs.emplace_back("larger-" + std::to_string(side), bad);
+                if (!source[side].empty()) {
+                    overwriteCount(bad, offsets[side], source[side].size() - 1);
+                    inputs.emplace_back("smaller-" + std::to_string(side), bad);
+                }
+            }
+            auto oversized = wire;
+            overwriteCount(oversized, 0, 64 * 1024 * 1024 / 8 + 1);
+            inputs.emplace_back("oversized-budget", oversized);
+            // Padding lets each no-element sequence pass its original count<=remaining test.
+            inputs.emplace_back("cumulative-budget", budgetPrefix() + wire + std::string(8192, '\0'));
+            for (auto [label, input] : inputs) {
+                Rows legacy = source;
+                for (auto& row : legacy) for (double& v : row) v = -1234.5;
+                std::vector<double> actual(n * stride + 2, -1234.5);
+                actual[n * stride] = -0.0; actual[n * stride + 1] = 0x1.1234p+30;
+                auto guards = std::string(reinterpret_cast<const char*>(actual.data() + n * stride), 16);
+                Archive oldReader(input), newReader(input);
+                std::string oldError, newError;
+                const bool budget = label == "cumulative-budget";
+                try {
+                    if (budget) consumeBudget(oldReader);
+                    for (auto& row : legacy) oldReader.fixed(row);
+                    oldReader.finish();
+                } catch (const std::exception& e) { oldError = e.what(); }
+                try {
+                    if (budget) consumeBudget(newReader);
+                    packedFields(newReader, actual, n, stride);
+                    newReader.finish();
+                } catch (const std::exception& e) { newError = e.what(); }
+                require(oldError == newError, "codec diagnostic differs: " + label);
+                auto decoded = unpack(actual, n, stride);
+                auto logical = encodeRows(decoded);
+                require(logical == encodeRows(legacy), "codec partial-prefix differs: " + label);
+                require(std::string(reinterpret_cast<const char*>(actual.data() + n * stride), 16) == guards,
+                        "untouched codec guard differs");
+                require((label == "valid") == oldError.empty(), "codec expected refusal differs");
+                history(stride, n, label, input, oldError, logical, guards);
+                ++result.cases;
+            }
+            // Write-budget behavior must match too, including already-written count headers.
+            Archive oldWriter, newWriter;
+            std::string oldError, newError;
+            try { consumeBudget(oldWriter); for (auto& row : source) oldWriter.fixed(row); }
+            catch (const std::exception& e) { oldError = e.what(); }
+            try { consumeBudget(newWriter); packedFields(newWriter, packed, n, stride); }
+            catch (const std::exception& e) { newError = e.what(); }
+            require(oldError == newError && oldWriter.bytes() == newWriter.bytes(), "write-budget differs");
+            auto written = oldWriter.bytes();
+            history(stride, n, oldError, written);
+        }
+    history(result.cases);
+    result.records = history.bytes();
+    return result;
+}
+
+inline MeshData faceGrid(int n, bool quad) {
+    MeshData m;
+    m.resize_vertices((n + 1) * (n + 1));
+    for (int y = 0; y <= n; ++y) for (int x = 0; x <= n; ++x) {
+        const int v = y * (n + 1) + x;
+        m.vx[v] = x; m.vy[v] = y;
+        m.vz[v] = 0.001 * x + 0.0007 * y;
+    }
+    m.resize_triangles((quad ? 1 : 2) * n * n);
+    int c = 0;
+    for (int y = 0; y < n; ++y) for (int x = 0; x < n; ++x) {
+        int a = y * (n + 1) + x, b = a + 1, d = a + n + 1, e = d + 1;
+        if (quad) m.set_quad(c++, a, b, e, d);
+        else { m.set_triangle(c++, a, b, e); m.set_triangle(c++, a, e, d); }
+    }
+    buildMeshTopology(m);
+    return m;
+}
+inline SurfaceStateData faceState(const MeshData& m) {
+    SurfaceStateData state;
+    state.resize(m.n_cells(), m.n_vertices());
+    for (int i = 0; i < m.n_cells(); ++i)
+        state.volume[i] = (0.2 + (i % 11) * .003) * m.tri_area[i];
+    return state;
+}
+inline SolverOptions2D faceOptions(Momentum2D mode, int threads) {
+    SolverOptions2D options;
+    options.num_threads = threads; options.momentum = mode;
+    options.max_timestep = .005; options.lts_tiers = 4; options.cfl_number = .4;
+    return options;
+}
+struct EngineResult { std::string records; std::size_t contexts = 0, stages = 0; };
+inline EngineResult engineHistory() {
+    Archive header;
+    std::string magic = "L1_FACE_ENGINE_V1";
+    header(magic);
+    EngineResult result;
+    result.records = header.bytes();
+    auto append = [&](std::string bytes) {
+        Archive frame;
+        frame(bytes);
+        result.records += frame.bytes();
+    };
+    ExplicitInertialSolver solver;
+    for (int threads : {1, 4, 8}) for (bool quad : {false, true})
+        for (int n : {1, 8, 2, 33, 1})
+            for (auto mode : {Momentum2D::LOCAL_INERTIAL, Momentum2D::FULL_SWE,
+                              Momentum2D::DIFFUSIVE_WAVE}) {
+                auto mesh = faceGrid(n, quad);
+                auto state = faceState(mesh);
+                auto options = faceOptions(mode, threads);
+                if (n == 33) {
+                    options.max_timestep = 1;
+                    for (int i = 0; i < mesh.n_cells(); ++i)
+                        state.volume[i] = (mesh.tri_cx[i] < 4 ? .3 : .0041) * mesh.tri_area[i];
+                }
+                solver.initialize(mesh, state, options);
+                ++result.contexts;
+                auto capture = [&](std::string label, ExplicitInertialSolver& owner,
+                                   SurfaceStateData& canonical, std::string refusal = {}) {
+                    auto rows = Access::packetRows(owner);
+                    Archive surface;
+                    checkpoint::meshState(surface, canonical);
+                    auto [wire, error] = Access::livePackets(owner) ? Access::packetArchive(owner) :
+                        std::pair<std::string, std::string>{};
+                    auto logical = encodeRows(rows);
+                    auto canonicalBytes = surface.bytes();
+                    Archive record;
+                    uint8_t kind = 0;
+                    record(kind, threads, quad, n, mode, label, logical, canonicalBytes,
+                           wire, error, refusal);
+                    append(record.bytes());
+                    ++result.stages;
+                };
+                capture("initialize", solver, state);
+                Access::rebuild(solver);
+                capture("prepared", solver, state);
+                Access::seedPackets(solver);
+                capture("six-lane-seed", solver, state);
+                const auto untouched = Access::packetArchive(solver);
+                {
+                    auto trial = solver;
+                    auto trialState = state;
+                    Access::rebindFixtureState(trial, trialState);
+                    Access::settle(trial);
+                    capture("copy-settle", trial, trialState);
+                }
+                require(Access::packetArchive(solver) == untouched, "copy changed original packets");
+                Access::settle(solver);
+                capture("settle", solver, state);
+                Access::firePackets(solver, .0001);
+                Access::firePackets(solver, .0002);
+                capture("two-firings-pending", solver, state);
+                Access::rebuild(solver);
+                capture("rebuild-settles", solver, state);
+                double firstEnd = .02;
+                const auto before = solver.run_stats();
+                long expectedFaces = 0;
+                int expectedSubsteps = 0;
+                if (n == 33) {
+                    require(Access::hasTierMix(solver), "fixture has no heterogeneous tiers");
+                    Access::refresh(solver);
+                    firstEnd = Access::macroSpan(solver);
+                    expectedFaces = Access::macroFaceVisits(solver);
+                    expectedSubsteps = Access::macroSubsteps(solver);
+                }
+                solver.advance(0, firstEnd);
+                if (n == 33) {
+                    const auto after = solver.run_stats();
+                    require(after.nsteps - before.nsteps == expectedSubsteps,
+                            "fixture did not run exactly one full macrocycle");
+                    require(after.nrhs - before.nrhs == expectedFaces,
+                            "fixture face visits do not follow heterogeneous tier cadence");
+                }
+                capture("first-advance", solver, state);
+                const double end = firstEnd + .021;
+                solver.advance(firstEnd, end);
+                capture("second-advance", solver, state);
+                const auto clean = Access::packetArchive(solver);
+                require(clean.second.empty(), "accepted internal state archive refused: " + clean.second);
+                {
+                    auto trial = solver;
+                    auto trialState = state;
+                    Access::rebindFixtureState(trial, trialState);
+                    auto truncated = clean.first.substr(0, clean.first.size() - 1);
+                    auto refused = Access::readPacketArchive(trial, truncated);
+                    require(!refused.second.empty(), "truncated internal state accepted");
+                    capture("private-refusal-trial", trial, trialState, refused.second);
+                    auto restored = Access::readPacketArchive(trial, clean.first);
+                    require(restored.second.empty(), "exact private restore refused");
+                    require(Access::packetArchive(trial) == clean, "exact private restore differs");
+                    capture("private-restore", trial, trialState);
+                }
+                require(Access::packetArchive(solver) == clean, "private refusal changed original");
+                Access::seedPackets(solver, true);
+                capture("nonfinite-refusal", solver, state);
+                if (Access::edges(solver).ne > 0)
+                    require(Access::packetArchive(solver).second == "Nonfinite CPU checkpoint state.",
+                            "nonfinite packet diagnostic differs");
+                solver.reinitialize(end);
+                capture("reinitialize-drops", solver, state);
+                std::fill(state.volume.begin(), state.volume.end(), 0.0);
+                solver.reinitialize(end); // authoritative external volume edit reconstructs depths
+                Access::seedPackets(solver);
+                Access::rebuildAt(solver, end);
+                require(Access::allCellsInactive(solver), "all-dry fixture retained active cells");
+                for (const auto& row : Access::packetRows(solver))
+                    for (double value : row) require(value == 0, "deactivation stranded a packet");
+                capture("deactivate-rebuild", solver, state);
+                Access::seedPackets(solver);
+                solver.finalize();
+                capture("finalize-settles-clears", solver, state);
+                for (const auto& row : Access::packetRows(solver))
+                    require(row.empty(), "finalize retained packets");
+            }
+    Archive footer;
+    uint8_t kind = 1;
+    footer(kind, result.contexts, result.stages);
+    append(footer.bytes());
+    return result;
+}
+inline void saveRecords(const std::filesystem::path& path, const std::string& bytes) {
+    std::filesystem::create_directories(path.parent_path());
+    require(!std::filesystem::exists(path), "refuse existing fixture output");
+    std::ofstream out(path, std::ios::binary);
+    out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    require(bool(out), "fixture output failed");
+}
+} // namespace face_accum_fixture
+
+TEST(Cpu2DCorrectness, FaceAccumulatorLogicalWireAndPartialFailures) {
+    const auto result = face_accum_fixture::codecHistory();
+    EXPECT_GT(result.cases, 100u);
+    if (const char* dir = std::getenv("OPENSWMM_FACE_ACCUM_TEST_OUT"))
+        face_accum_fixture::saveRecords(std::filesystem::path(dir) / "codec.bin", result.records);
+}
+TEST(Cpu2DCorrectness, FaceAccumulatorSixLaneLifecycleHistory) {
+    const auto result = face_accum_fixture::engineHistory();
+    EXPECT_EQ(result.contexts, 90u);
+    EXPECT_EQ(result.stages, 90u * 15u);
+    if (const char* dir = std::getenv("OPENSWMM_FACE_ACCUM_TEST_OUT"))
+        face_accum_fixture::saveRecords(std::filesystem::path(dir) / "engine.bin", result.records);
+}
+
+namespace ordered_lists_fixture {
+using Access = openswmm::twoD::ExplicitInertialSolverTestAccess;
+void seed(const MeshData& mesh, SurfaceStateData& state, int stage) {
+    for (int i = 0; i < mesh.n_cells(); ++i) {
+        const bool wet = stage % 4 == 0 || stage % 4 == 3 ||
+                         (stage % 4 == 1 && mesh.tri_cx[i] < 2);
+        state.volume[i] = wet ? (.01 + (i % 5) * .02) * mesh.tri_area[i] : 0.0;
+    }
+}
+void capture(std::ostream& output, const std::string& bytes) {
+    const std::uint64_t size = bytes.size();
+    output.write(reinterpret_cast<const char*>(&size), sizeof(size));
+    output.write(bytes.data(), bytes.size());
+    if (!output)
+        throw std::runtime_error("ordered-list fixture output failed");
+}
+void history(std::ostream* output) {
+    for (bool quad : {false, true})
+        for (bool front : {false, true})
+            for (int threads : {1, 4, 8}) {
+                auto mesh = grid(quad ? 256 : 192, quad);
+                auto water = state(mesh, .1);
+                auto opts = options(threads, 4);
+                opts.front_rebuild = front;
+                opts.momentum = front ? Momentum2D::FULL_SWE : Momentum2D::LOCAL_INERTIAL;
+                ExplicitInertialSolver solver;
+                solver.initialize(mesh, water, opts);
+                for (int stage = 0; stage < 4; ++stage) {
+                    Access::markActiveFaces(solver);
+                    seed(mesh, water, stage);
+                    // The scheduler seeds from depth; use the production closure resync
+                    // after editing volumes. This retains the prior active face momentum.
+                    solver.resyncFromVolumes(0.0);
+                    Access::rebuildAt(solver, 0.0);
+                    int active = 0;
+                    for (int i = 0; i < mesh.n_cells(); ++i)
+                        active += Access::active(solver, i);
+                    if ((stage == 2 && active != 0) ||
+                        ((stage == 0 || stage == 3) && active != mesh.n_cells()) ||
+                        (stage == 1 && (active <= 0 || active >= mesh.n_cells() / 4)))
+                        throw std::runtime_error("fixture activity transition was not exercised");
+                    if ((stage == 0 || stage == 3) && !Access::hasTierMix(solver))
+                        throw std::runtime_error("fixture did not exercise multiple tiers");
+                    if (!Access::orderedLists(solver))
+                        throw std::runtime_error("ordered scheduler lists differ from serial oracle");
+                    if (output)
+                        capture(*output, Access::orderedListsFrame(solver));
+                }
+            }
+}
+}
+
+TEST(Cpu2DCorrectness, OrderedCompactionKeepsLargeSchedulerLists) {
+    std::ofstream output;
+    if (const char* directory = std::getenv("OPENSWMM_ORDERED_LISTS_TEST_OUT")) {
+        std::filesystem::create_directories(directory);
+        output.open(std::filesystem::path(directory) / "history.bin", std::ios::binary);
+        ASSERT_TRUE(output);
+    }
+    ASSERT_NO_THROW(ordered_lists_fixture::history(output.is_open() ? &output : nullptr));
 }

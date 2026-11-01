@@ -23,6 +23,30 @@ retroactive.
 
 ## [Unreleased]
 
+### Portable development wheels and legacy option parsing (2026-10-24)
+
+- ARM64 engine builds use the portable CPU baseline by default. Local builds can opt into `-mcpu=native` with `OPENSWMM_NATIVE_CPU=ON`. Linux base and OpenMP companion wheel builds now reject SVE/SME and AVX-512 instructions before the release gates can pass.
+- Legacy `[OPTIONS]` fields apply their original numeric, calendar, time and range rules, reporting ERROR 211 or 213 where legacy refuses the value. The legacy `atoi`/`atof` conversions, permissive clock forms, decimal-hour options and keyword matching remain accepted.
+- Saving `NORMAL_FLOW_LIMITED NEITHER` writes the EPA-compatible spelling `NONE`, which both engines reopen as no normal-flow limitation.
+- Windows wheel C API tests resolve symbols from the engine DLL imported by the bindings, including repaired wheels whose DLL names carry a hash. Looking them up on the Python extension itself failed the wheel test job despite successful engine builds.
+
+### Return codes, display-unit round trips, cross-section messages (2026-10-24)
+
+- **A value written in display units reads back unchanged.** Setters convert from the model's display units to the internal US units and getters convert back, and the two roundings read 98.0 m back as 97.99999999999999 and 1.7 % as 1.7000000000000002. Setters now store the internal value whose display reads back exactly where one exists, and getters snap a converted value to the nearest 15-significant-digit decimal when it lies within two ulps of it. Any value written with up to 15 significant digits reads back exactly, and no value moves by more than two ulps, which is within the conversion's own error. Fields in US units with a factor of 1 are unchanged, and bulk getters do not snap.
+- **`SWMM_ERR_BUFSIZE` (17): a caller's buffer is too small for the value.** `swmm_ueb_option_get`, `swmm_climate_get_radiation_source`, `swmm_climate_get_cloud`, `swmm_snow2d_get_row`, `swmm_snow2d_get_configuration` and `swmm_gw2d_boundary_get` refuse a short buffer with it; they returned `SWMM_ERR_BADPARAM`, which also meant an unknown key, channel or argument, so a caller could not tell which. `swmm_snow2d_get_row` reports a row outside its section as `SWMM_ERR_BADINDEX`. Python has `ErrorCode.BUFSIZE`, and the bindings grow their buffer on it alone, raising any other code at once.
+- **An out-of-range `SAVE HOTSTART` slot is `SWMM_ERR_BADINDEX`** in `swmm_hotstart_saves_get_path`, `_get_datetime`, `_set_path`, `_set_datetime`, `_get_format`, `_set_format` and `_remove`; it was `SWMM_ERR_BADPARAM`.
+- **Cross-section errors name what is wrong.** A Geom1 of zero or less read `ERROR 211: invalid number .`, copying EPA SWMM's empty token without the line number SWMM prints with it. It now reads `ERROR 211: invalid number 0 for Geom1 of link C1 in [XSECTIONS] (must be > 0).`, and a shape whose dimensions do not fit together (a filled pipe filled above its crown) names the link and its four geometry values.
+- **Initial node depth and link flow are the authored values.** `swmm_node_set_initial_depth` wrote the current depth and `swmm_link_set_initial_flow` the current flow, while initialization starts the run from the authored values (`[JUNCTIONS]` InitDepth, `[CONDUITS]` InitFlow) and the `.inp` writer saves those. A value set before initialization was therefore lost, and `swmm_link_get_initial_flow` read the current flow instead of the deck's. Both setters now set the authored value, the getter reads it, and setting either after initialization returns `SWMM_ERR_LIFECYCLE`; it used to be accepted and only partly applied, changing the depth or flow but not the volume.
+- Python package version `6.0.0a4.dev2`.
+
+### Bindings: option keys, catalog compatibility, long text (2026-10-24)
+
+- **Option keys are enumerable.** `swmm_options_key_count` / `swmm_options_key_at` list the standard `[OPTIONS]` keys, and `swmm_options_ext_key_count` / `swmm_options_ext_key_at` the extended keys an open model carries (with the 2D option keys when the model has a mesh). Python `SimulationOptions` and the extended-options view iterate them, so iteration and `len()` no longer come from a hand-kept list, which lacked six `FV_*` keys.
+- **The API catalog has a compatibility contract.** `catalog.json` carries a `revision` (now 2) and `renamed` / `removed` maps, and `gen_catalog.py` refuses to write a catalog that drops or renames a path without recording it and bumping the revision. `catalog.canonical()`, `lookup()`, `resolve()` and `members()` follow renames (warning once) and shared views (`surface2d.groundwater` is the `groundwater2d` service), and `catalog.require_revision()` lets a consumer name the revision it needs. `link.xsect` is catalogued as writable.
+- **`openswmm.engine.capabilities()`** reports the build: version, catalog revision, C export count, optional features (2D, GeoPackage, HDF5 2D output), threads, checkpoint features and process components.
+- **Python text reads are no longer truncated.** Native text getters cut text at the caller's buffer. The bindings now read through buffers that grow until the text fits, so IDs, tags, file names and user-flag text longer than the former 128- or 256-byte buffers come back whole, multi-byte UTF-8 included. A test keeps new fixed buffers out; `python/scripts/fixed_buffer_allow.json` lists the bounded ones.
+- CI runs the MCP server's and the gymnasium's catalog contract tests against a fresh engine build (`python_contracts.yml`, `downstream` job).
+
 ### Native hot start subcatchment state (2026-10-19)
 
 - **The native hot start file keeps the subcatchment surface.** A NATIVE `SAVE HOTSTART` file (and `swmm_hotstart_save`) held no subarea ponded depths and no pollutant or reaction-species buildup, ponded mass or runoff quality, so a continuation restarted the surface dry and clean. A version 16 block now carries them by name, with each land use's last sweep and the groundwater outflow, without rounding. Older native files still load, with a warning that their subcatchments start from the initial surface state.

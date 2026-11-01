@@ -52,6 +52,7 @@
 
 #include "ISurfaceSolver.hpp"
 #include "InertialEdges.hpp"
+#include "MomentumPhysics2D.hpp"
 #include "../gw/GwSourceForcing.hpp"
 #include "../../transport/components/ReactionModule/ReactionIntegrator.hpp"
 #include "../data/SolverOptions2D.hpp" // Momentum2D
@@ -78,6 +79,10 @@ class EngineSourceResultHistory;
 
 class ExplicitInertialSolver final : public ISurfaceSolver {
 public:
+    /// Publish FULL_SWE velocity from accepted conserved momentum,
+    /// using the internal negative-outflow display convention. No flux change.
+    void publishMomentumVelocity();
+
     /**
      * @brief Prepare the CPU finite-volume marcher from authoritative surface volume and
      * resolved model.
@@ -712,9 +717,11 @@ private:
     SurfaceStateData* state_ = nullptr;
     SolverOptions2D* opts_ = nullptr;
 
+    void refreshConveyance(); ///< Synchronize runtime LI factors and reconstructed cell discharge.
     InertialEdges edges_;
     /// Per unique interior face (m²/s). LOCAL_INERTIAL: the prognostic face
-    /// discharge. FULL_SWE / DIFFUSIVE_WAVE: the last evaluated face mass
+    /// discharge per open width; transported flux is q * xi * conveyance.
+    /// FULL_SWE / DIFFUSIVE_WAVE: the last evaluated face mass
     /// flux per unit width (diagnostic — published as edge_flux).
     std::vector<double> q_;
     /// LOCAL_INERTIAL: Perot cell discharge vector (θ < 1 / ADVECTION).
@@ -737,8 +744,8 @@ private:
     std::vector<int> wall_ptr_, wall_slot_;
     /// FULL_SWE momentum accumulators per face side (m⁴/s = m²·m²/s): the
     /// x/y momentum the face booked for cL / cR, gathered and cleared by the
-    /// cell exactly like facc_L_/facc_R_ (same writer, same cadence).
-    std::vector<double> macc_x_L_, macc_x_R_, macc_y_L_, macc_y_R_;
+    /// cell exactly like the two logical water sides (same writer, same cadence).
+    // Momentum packets share face_accum_ slots 2..5 in FULL_SWE.
     /// Momentum the last boundaryFluxSwe() call booked into qcx_/qcy_, so its
     /// caller can rescale it when the availability clamp shrinks the mass.
     /// Scalar: the boundary loop is serial (perimeter-sized).
@@ -760,14 +767,20 @@ private:
      * @brief Rebuild limited active-cell MUSCL gradients of eta, depth and x/y velocity.
      * @note Requires FULL_SWE second-order-sized scratch and valid prepared SI
      * head/depth/momentum/CSR. Zeroes active gradients first; depths<=10*dry retain zero. Fully
-     * connected wet interiors use Green-Gauss plus physical-boundary completion, shores use
-     * conditioned inverse-distance fitting of eta/depth to wet connected neighbors while
-     * velocity slope stays zero. Dry sills exclude neighbors; Barth-Jespersen bounds and face
-     * positivity jointly limit eta/depth. Inactive scratch is retained. Uses disjoint static
-     * cell workers; does not change canonical water/momentum/native inventories, receipts or
-     * clocks. No general finite checks/rollback or allocation in the cell loop.
+     * wet stencils use conditioned inverse-distance fitting of eta/depth/velocity.
+     * Dry sills exclude neighbors; shoreline velocity stays cell-centered. Bounds at connected
+     * face midpoints and vertex wet-cell rings limit velocity; face positivity jointly scales
+     * eta/depth. Vertex CSR is prepared in initialize(), before any checkpoint fingerprint.
+     * Allocates per-vertex bounds outside the cell loop; static workers write disjoint cells.
+     * Does not change water/momentum inventories, receipts, mesh identity or clocks.
      */
     void computeLimitedGradientsSwe();
+    MomentumPhysics2D momentum_physics_;
+    std::vector<int> wall_drag_slots_;
+    double wall_drag_energy_ = 0; ///< Cumulative kinetic energy removed / rho (m5/s2).
+    void applyMomentumPhysics(double seconds);
+    double runMomentumStep(double limit, double time);
+
     /**
      * @brief One SSP-RK2 (Heun) step of length dt over the active lists: two forward-Euler
      * substeps averaged with the start state; the ledgers that accumulated over both stages are
@@ -843,7 +856,8 @@ private:
      * @note Uses prepared SI geometry and live cell state, limits outgoing m3 by exchange_beta
      * divided by triangle/quad face count and refire ratio, updates q_ m2/s, adds equal-opposite
      * facc m3, and books native advective/dispersion packets from the final accepted water
-     * transfer. Dry face depth resets q_ and skips transfer. Applies Froude cap after the
+     * transfer. Dry or zero-conveyance faces reset q_ and skip exchange; ψ scales flux,
+     * limiter volume and Perot discharge without changing CFL geometry. Applies Froude cap after the
      * inertial update. Updates cumulative face work and pending flag. Does not gather canonical
      * cell volume/native state, advance clocks, validate all finite inputs or roll back side
      * packets. Requires exclusive outer scheduling, matching per-face/native/momentum shapes and
@@ -962,7 +976,7 @@ private:
     // Tiered LTS. tier_[i] = k means cell i updates every 2^k base substeps
     // with Δt = 2^k·dt0; face tier = min of its incident cells so a face
     // always integrates at the finer cadence. Every face firing books the
-    // identical ±ΔM into facc_L_/facc_R_ (single writer per face); each cell
+    // identical ±ΔM into the two logical water sides (single writer per face); each cell
     // applies + clears its own side at its own firing — conservation across
     // tier interfaces is exact by construction.
     /// Rebuild scratch, held as members so a rebuild allocates nothing:
@@ -975,8 +989,12 @@ private:
 
     std::vector<uint8_t> tier_;      ///< per-cell tier
     std::vector<uint8_t> face_tier_; ///< per unique face
-    std::vector<double> facc_L_;     ///< pending ΔM for the cL side (m³)
-    std::vector<double> facc_R_;     ///< pending ΔM for the cR side (m³)
+    /// CPU-private face packets: [waterL,waterR] for LI/DW; FULL_SWE adds
+    /// [momentumXL,momentumXR,momentumYL,momentumYR]. Each logical side
+    /// retains its original writer, scalar arithmetic and gather/clear order.
+    /// Checkpoints stream the original separate logical vectors without transposing state.
+    std::vector<double> face_accum_;
+    std::size_t face_accum_stride_ = 2; ///< derived from momentum mode at initialize()
 
     // S1 — species mass rides the SAME face accumulators, with each face
     // holding adjacent rows at [e * n_species + s]. Booked in fireFaces
@@ -1038,6 +1056,9 @@ private:
     // constituent transfers are evaluated even when net water change is zero.
     // Returns false only when no source bookkeeping or volume change occurred.
     bool applyCellSources(int cell, double dt, double* boundary_donor = nullptr);
+    bool applyPlainCellSources(int cell, double dt);
+    // Selected only during an advance; external rebuild/settlement uses the full path.
+    bool plain_sources_ = false;
     bool applyRuntimeSources(int cell, double dt);
     struct CellSourceStep {
         double area_dt = 0, rain = 0, coupling = 0, available = 0, infil = 0, evap = 0, out = 0,
@@ -1248,6 +1269,9 @@ private:
     /// surface twin is. Cross-cadence volume rides the same ±Δ side
     /// accumulators the surface faces use (G-B).
     SubsurfaceSolver* gw_ = nullptr;
+    double gw_end_time_ = -1;
+    bool gw_quiescent_ = false;
+    void atGroundwaterCheck(double end, const std::function<void()>& publish);
 
 public:
     /**
@@ -1261,7 +1285,7 @@ public:
      * @note Requires exclusive completed owner boundary. Replacing a running owner with pending
      * receipts is unsupported without the enclosing coordinated transaction.
      */
-    void setSubsurface(SubsurfaceSolver* gw) noexcept { gw_ = gw; }
+    void setSubsurface(SubsurfaceSolver* gw, double end = -1) noexcept { gw_ = gw; gw_end_time_ = end; }
     /**
      * @brief Rebuild exact-name native surface-to-groundwater row mapping after owners are
      * prepared.

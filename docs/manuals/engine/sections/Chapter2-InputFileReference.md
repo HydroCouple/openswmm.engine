@@ -170,8 +170,9 @@ Three sections carry a keyword spelled `DISPERSION`, and they mean different thi
 |---|---|---|---|
 | MAX_TRIALS | number | 8 | Maximum trials per time step for the nodal head iteration to converge. |
 | HEAD_TOLERANCE | number | 0 | Head change between trials, in project length units, below which the step has converged; 0 selects 0.005 ft (0.0015 m). |
-| MIN_SURFAREA | number | 0 | Minimum node surface area, in project units, used in depth updates; 0 selects 12.566 ft² (1.167 m²), a 4-ft manhole. |
+| MIN_SURFAREA | number | 0 | Numerical stability area for legacy junction depth updates; 0 selects 12.566 ft² (1.167 m²). This is not the authored physical junction StorageArea. |
 | MIN_SLOPE | number | 0 | Minimum conduit slope in percent; 0 imposes none, though the elevation drop is still floored at 0.001 ft (0.00035 m). |
+| SLOPE_WEIGHTING | YES / NO / TRUE / FALSE / 1 / 0 | — | Retired compatibility option with no solver effect. YES and NO also accept legacy prefix matches; other values are rejected. When supplied, the value is retained in the extension-options map and can be read through `swmm_options_get_ext()`. |
 | INERTIAL_DAMPING | NONE / PARTIAL / FULL | PARTIAL | Handling of the momentum inertial terms: kept in full (NONE), reduced toward critical flow and dropped when supercritical (PARTIAL), or dropped (FULL). Hydraulics §3.3.3. |
 | NORMAL_FLOW_LIMITED | SLOPE / FROUDE / BOTH / NEITHER | BOTH | Test that flags supercritical flow to be limited to normal flow: water-surface slope, Froude number, both, or neither. Hydraulics §3.3.4. |
 | NODE_CONTINUITY | EXPLICIT / SEMI_IMPLICIT | EXPLICIT | Node head update: the legacy two-branch formulation, or the unified semi-implicit one that folds flow gradients into the depth update. Hydraulics §3.5. |
@@ -1024,7 +1025,7 @@ Purpose:
 Identifies each junction node of the drainage system.  Junctions are points in space where channels and pipes connect together. For sewer systems they can be either connection fittings or manholes.
 
 Format:
-Name  Elev  (Ymax  Y0  Ysur  Apond)
+Name  Elev  (Ymax  Y0  Ysur  Apond  StorageArea)
 
 Parameters:
 Name    name assigned to junction node.
@@ -1033,8 +1034,23 @@ Ymax    depth from ground to invert elevation (ft or m) (default is 0).
 Y0    water depth at the start of the simulation (ft or m) (default is 0).
 Ysur    maximum additional pressure head above the ground elevation that the junction can sustain under surcharge conditions (ft or m) (default is 0).
 Apond    area subjected to surface ponding once water depth exceeds Ymax + Ysur  (ft2 or m2) (default is 0).
+StorageArea    physical constant-area junction chamber (ft2 or m2), optional seventh token; default 0 retains legacy behavior.
 
 Remarks:
+Positive StorageArea is supported by updated OpenSWMM 5.3.0 dynamic wave and qualified 6.0.0 dynamic-wave/finite-volume paths. It preserves the node's JUNCTION identity. Below the rim, physical volume is StorageArea times depth, including surcharge above pipe crowns. Shaft volume is capped at the rim; ponding adds separate above-rim volume using Apond. Ysur is pressure allowance and does not extend physical shaft volume. Omission or zero preserves prior behavior. Kinematic/steady routing rejects a positive area rather than ignoring it. Physical chamber continuity uses a tighter internal head tolerance. If a small chamber cannot resolve its water budget within the configured routing step and trial limit, the run stops; reduce ROUTING_STEP or increase MAX_TRIALS instead of increasing the physical area to stabilize the calculation.
+
+Physical junctions in finite-volume routing require the CPU backend and zero `SurDepth`; explicit ponding and rim flooding are supported. Above-rim pressure allowance requires dynamic wave. A selected device plugin refuses physical junctions until its closure is qualified. Positive chamber areas are not yet qualified with DYNAMIC_SLOT; select EXTRAN or SLOT instead.
+
+MIN_SURFAREA remains the numerical stability area, not the physical chamber area. Explicit physical areas are not enlarged to that global value. Virtual/inlet junctions, storage nodes, outfalls and dividers do not accept this ordinary-junction parameter. Stock EPA export refuses positive StorageArea because older parsers can silently ignore the additional token. Use the OpenSWMM 5.3.0 compatibility profile instead.
+
+Example (US units):
+
+```text
+[JUNCTIONS]
+;;Name Elev MaxDepth InitDepth SurDepth Aponded StorageArea
+MH1    100  10       0         0        0       12.566
+```
+
 If Ymax is 0 then SWMM sets the junction’s maximum depth to the distance from its invert to the top of the highest connecting link.
 If the junction is part of a force main section of the system then set Ysur to the maximum pressure that the system can sustain.
 Surface ponding can only occur when Apond is non-zero and the ALLOW_PONDING analysis option is turned on.
@@ -2415,6 +2431,20 @@ Solver
 | ADVECTION | YES / ON / TRUE / NO / OFF / FALSE | NO | Deprecated spelling of MOMENTUM_EQUATION FULL_SWE (2026-09-06). Still honoured so an old deck keeps its physics; a file load warns and names the replacement. |
 | BACKEND | AUTO / CPU / OMP / CUDA / HIP / SYCL | AUTO | Which marcher implementation runs the mesh. CPU is the built-in host marcher; OMP, CUDA, HIP and SYCL name a Kokkos plugin and bypass the mesh-size floors (an absent plugin or device falls back to CPU with a notice). AUTO picks a device plugin above the device floor, the OpenMP plugin above its own floor, else CPU. The OPENSWMM_2D_BACKEND environment variable overrides the key. |
 
+Optional rotating flow and horizontal mixing
+
+These processes require CPU FULL_SWE with LTS_TIERS 1 and uncoupled surface hydraulics; active groundwater, transport, heat, snow or 1D node coupling is refused. Defaults leave both processes disabled. See @ref hydraulics_ref_ch9_two_dimensional for the momentum sources, numerical qualification and limitations.
+
+| Keyword | Values | Default | Description |
+|---|---|---|---|
+| CORIOLIS | OFF / LATITUDE / CONSTANT_F | OFF | Selects no rotation, a Coriolis parameter computed from latitude, or a directly authored parameter. LATITUDE requires CORIOLIS_LATITUDE; CONSTANT_F requires CORIOLIS_F. |
+| CORIOLIS_LATITUDE | finite degrees north in [-90, 90] / UNSET | Unset | Latitude used in LATITUDE mode; UNSET clears the authored value. Inactive values remain stored. |
+| CORIOLIS_F | finite number, s⁻¹ / UNSET | Unset | Signed Coriolis parameter used in CONSTANT_F mode; UNSET clears the authored value. Inactive values remain stored. |
+| TURBULENCE_MODEL | NONE / SMAGORINSKY / MIXING_LENGTH | NONE | Selects no horizontal mixing, conservative depth-integrated Smagorinsky momentum mixing (filter width from cell area), or the same operator with a shear-based depth mixing length (vorticity times a length set by water depth, capped near boundaries). This does not add scalar turbulent diffusivity or a wall-damping model. |
+| SMAGORINSKY_CS | finite dimensionless number ≥ 0 | 0.10 | Smagorinsky coefficient, used with filter width equal to the square root of cell area; 0 gives zero eddy viscosity. Only active under TURBULENCE_MODEL SMAGORINSKY. |
+| EDDY_VISCOSITY_BACKGROUND | finite number ≥ 0, m²/s | 0 | Constant horizontal eddy viscosity ν0 added to the closure's eddy viscosity (SMAGORINSKY or MIXING_LENGTH). It is a user parameter, not a calibrated constant: it does not scale with depth, velocity or model size. Inactive under TURBULENCE_MODEL NONE; an inactive value remains stored. |
+| MIXING_LENGTH_COEFFICIENT | finite dimensionless number ≥ 0 | 0.5 | Coefficient c of the mixing length l = min(c·h, κ·d) used by TURBULENCE_MODEL MIXING_LENGTH, where h is the cell depth, κ = 0.41 and d the distance to the nearest mesh boundary edge; νt = ν0 + l² times the vorticity magnitude in each cell. The default 0.5 is the depth-averaged horizontal mixing length reported by Stansby (2003, 2006). Only active under MIXING_LENGTH; an inactive value remains stored. |
+
 Time control
 
 | Keyword | Values | Default | Description |
@@ -3077,10 +3107,24 @@ Parameters:
 | MODE | MESH / PER_SUBCATCH | MESH | MESH runs one aquifer cell under every mesh cell. PER_SUBCATCH runs one degenerate cell per subcatchment with no lateral flow, exchanging with the outlet node. |
 | DUNNE | YES / TRUE / 1 / NO / FALSE / 0 | YES | Saturation-excess transfer from the aquifer to the surface cell above it. Exists for comparison runs; NO breaks the mass balance between the two domains. |
 | GW_ET | NONE / CAPILLARY_RISE / BOUNDARY_ET / BOTH | NONE | Subsurface evapotranspiration: capillary rise from the water table, removal at the top of the unsaturated column, both, or neither. |
+| GW_CLOCK | SHARED / INDEPENDENT | SHARED | SHARED schedules groundwater on the surface time steps. The experimental INDEPENDENT mode schedules each aquifer cell from its stability limit and elapsed simulation time. It requires first-order CPU integration. |
+| GW_BASE_STEP | Positive seconds | 1 | Base interval for the independent clock. Cell periods are powers of two times this interval. Stiff cells can take shorter steps. |
+| GW_BUDGET_FRACTION | (0,1] | 0.5 | Fraction of directional storage/head room consumed before an independent update. |
+| GW_HEAD_TOLERANCE | (0,1) | 0.05 | Relative head-change budget, with a fixed 0.01 m head floor. |
+| GW_MAX_STEP | Positive seconds | 3600 | Maximum elapsed groundwater step. Its own period constraint is separate from physical and accuracy check allowances. Long surface intervals can contain internal groundwater checks that gather previously completed receipts. |
+| GW_BINDS_SURFACE_DT | YES / NO | YES under SHARED, NO under INDEPENDENT | YES includes the groundwater stability limit when selecting the surface step. SHARED always includes this limit. |
 | LINK_SEEPAGE | AUTO / NONE / TWO_WAY | AUTO | AUTO delivers conduit seepage to the aquifer cells crossed by the conduit, weighted by the length in each cell. NONE leaves seepage as a system loss. TWO_WAY uses a signed conductance law, allowing a conduit below the water table to gain water. Per-conduit overrides are set in [2D_AQUIFER_LINKS]. |
 
 Remarks:
 Authoring any [2D_AQUIFER_OPTIONS], [2D_AQUIFER], [2D_AQUIFER_NODE] or [2D_AQUIFER_LINKS] row turns the kernel on unless [2D_OPTIONS] GROUNDWATER NO is set. A value of GW_ET spelled in [2D_OPTIONS] is folded into this section when the model opens. The writer emits only the keys that differ from their defaults.
+
+With the independent clock, reported groundwater head is the last completed cell state. Water received since that update is included in storage and continuity. Incoming and outgoing transfers have separate budgets; layered contacts use the room in their receiving layer. The native head-rate estimate includes internal column recharge as well as lateral and boundary flow and deep loss. `GW_HEAD_TOLERANCE` controls a scheduling budget, rather than guaranteeing a global solution error. Accuracy limits alone never shorten the groundwater period below `GW_BASE_STEP`; physical stability can require shorter steps. Use a smaller base interval when rapid exchange needs finer accuracy.
+
+For CLOSED_FORM columns thinner than 1 mm, INDEPENDENT computes recharge from the actual column storage geometry while retaining the existing 1 mm rate-coefficient guard. SHARED retains the legacy length floor in both calculations, so terminal filling transfers can differ between the modes.
+
+The CPU marcher targets absolute producer checks at the base cadence when base or shorter groundwater periods are occupied, and for the first coupled check before delivered rates are known. An authored `GW_MAX_STEP` that selects a period below the base also refines these producer checks to that ceiling-selected period. This keeps an entire producer packet from being concentrated into the last of several finer groundwater updates. Physical stiffness alone retains internal subcycling and the base producer cadence. Infiltration capacity is refreshed at absolute `INFIL_STEP` crossings and after cell updates.
+
+Clock statistics report budget-triggered updates, maximum incoming/outgoing budget exceedance in m³, exceedance histograms and the largest single-update return depth in m. Histogram bins count scheduler detections; physical firing counts include forcing-knot subintervals. Checkpoints preserve receipt-rate limits, rebuild per-cell deadline ordering, and validate scheduling-policy identity along with clock tolerances. In a CLOSED_FORM cell, the independent clock settles the soil column before releasing excess water at the ground surface. `INDEPENDENT` remains experimental: the complete accuracy, convergence and event-performance qualification is still open. `SHARED` remains the default.
 
 The kernel is described in hydrology Chapter 9 (mesh groundwater).
 

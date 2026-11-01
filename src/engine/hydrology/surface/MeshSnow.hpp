@@ -17,6 +17,9 @@
 namespace openswmm {
 struct SimulationContext;
 }
+namespace openswmm::twoD {
+class CommonSourceStage;
+}
 namespace openswmm::surface {
 struct MeshSnowGeometry {
     std::string tag;
@@ -82,7 +85,8 @@ public:
      * @return Empty on accepted internal replacement, otherwise diagnostic retaining this
      * owner. Inactive returns immediately without validating inputs. A span<=1e-9seconds
      * only reanchors completedEnd, retaining prior outputs/rates/exposure/lastSeconds.
-     * Ordinary work copies this owner, splits held windows at snow/hour/transient boundaries,
+     * Ordinary work copies mutable runtime while borrowing stable initialized configuration,
+     * splits held windows at snow/hour/transient boundaries,
      * then checks per-cell water balance. Copy/solver exceptions can propagate; context
      * or caller side effects are outside rollback. External source bookkeeping follows
      * only after accepted return. Serialize changes to forcing/configuration and contact. */
@@ -253,7 +257,17 @@ public:
     const std::vector<ueb::HeldState>& columns() const { return held_; }
 
 private:
-    /** @brief Mutate a private owner over one qualified completed interval.
+    friend class openswmm::twoD::CommonSourceStage;
+    // A nonnull configuration is the unchanged owner from which this private
+    // stage trial was copied. The stage discards this trial on any later refusal.
+    // Public advance passes null and retains its own runtime rollback copy.
+    std::string advanceTrial(SimulationContext& context, double start, double end,
+                             const std::vector<double>& precipitation_ms,
+                             const std::vector<double>& snow_catch,
+                             const MeshSnow* configuration);
+    /** @brief Mutate a private runtime trial over one qualified completed interval.
+     * @param configuration Stable initialized original owner, borrowed only during this call.
+     * Its geometry, assignments, contact mask, step and depletion curve are read-only.
      * @param[in,out] context Matching initialized weather configuration; shared cursors/
      * radiation output can change and are not part of internal candidate rollback.
      * @param start Finite exact old completed seconds.
@@ -267,7 +281,8 @@ private:
      * calendar coefficient. Accumulates effective and raw water, physical and geometric
      * energy separately, then checks per-cell water closure. Caller discards candidate
      * on failure and pairs external water/energy stores only after public advance succeeds. */
-    std::string advanceInPlace(SimulationContext& context, double start, double end,
+    std::string advanceInPlace(const MeshSnow& configuration, SimulationContext& context,
+                               double start, double end,
                                const std::vector<double>& precipitation_ms,
                                const std::vector<double>& snow_catch);
     std::string identity_;

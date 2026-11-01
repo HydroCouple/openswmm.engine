@@ -478,6 +478,32 @@ SWMM_ENGINE_API int swmm_gw_source_scale_get(SWMM_Engine engine, int idx, double
  */
 SWMM_ENGINE_API int swmm_gw_source_scale_set(SWMM_Engine engine, int idx, double value);
 /**
+ * @brief Read whether a source is located by XY and its authored coordinates.
+ * @param[in] engine Borrowed live engine handle; not retained by this call.
+ * @param[in] idx Zero-based source row index.
+ * @param[out] by_xy Optional slot: 1 for a row authored or set as `XY x y`, else 0.
+ * @param[out] x Optional slot for the authored X (project map units); left unchanged when the
+ * row is not XY.
+ * @param[out] y Optional slot for the authored Y, likewise.
+ * @return SWMM_OK, SWMM_ERR_BADHANDLE, or SWMM_ERR_BADINDEX for an invalid row.
+ * @note swmm_gw_source_get reports an XY row as CELL scope with its resolved cell.
+ */
+SWMM_ENGINE_API int swmm_gw_source_xy_get(SWMM_Engine engine, int idx, int* by_xy, double* x,
+                                          double* y);
+/**
+ * @brief Locate a source by XY coordinates.
+ * @param[in] engine Borrowed live engine handle; not retained by this call.
+ * @param[in] idx Zero-based source row index.
+ * @param[in] x Finite X in project map units.
+ * @param[in] y Finite Y in project map units.
+ * @return SWMM_OK, SWMM_ERR_BADHANDLE, SWMM_ERR_BADINDEX for an invalid row, or
+ * SWMM_ERR_BADPARAM for non-finite coordinates or a mesh with no cells.
+ * @note Places the row in the cell with the nearest centroid, as an authored `XY x y` row is,
+ * and keeps it XY for the writer; flow, scale and species terms are unchanged. Requires an
+ * editable BUILDING or OPENED model; later states return SWMM_ERR_LIFECYCLE.
+ */
+SWMM_ENGINE_API int swmm_gw_source_xy_set(SWMM_Engine engine, int idx, double x, double y);
+/**
  * @brief Remove one authored groundwater named-source row.
  * @param[in] engine Borrowed live engine handle; not retained by this call.
  * @param[in] idx Zero-based current row index; later indices shift on removal.

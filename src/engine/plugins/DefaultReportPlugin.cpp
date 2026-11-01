@@ -986,6 +986,24 @@ void DefaultReportPlugin::write_preamble(std::FILE* f, const SimulationContext& 
 
     WRITE(f, "");
     WRITE(f, "");
+
+    // Scaling affects results even when [REPORT] INPUT is NO. Keep ordinary
+    // unscaled reports unchanged, but make configured scaling visible.
+    const bool scaled_rain = std::any_of(ctx.gages.scale_factor.begin(),
+        ctx.gages.scale_factor.end(), [](double factor) { return factor != 1.0; });
+    if (scaled_rain) {
+        WRITE(f, "************************");
+        WRITE(f, "Rainfall Scaling Factors");
+        WRITE(f, "************************");
+        WRITE(f, "Configured factors multiply rain gage input.");
+        std::fprintf(f, "\n  Rain Gage             Scale Factor");
+        std::fprintf(f, "\n  ----------------------------------");
+        for (int i = 0; i < ctx.n_gages(); ++i)
+            std::fprintf(f, "\n  %-20s %.17g", ctx.gage_names.name_of(i).c_str(),
+                         ctx.gages.scale_factor[static_cast<std::size_t>(i)]);
+        WRITE(f, "");
+        WRITE(f, "");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1024,6 +1042,11 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
     const double cont_vcf2 = si_report ? 2.4466 / 86400.0 : 0.64632 / 86400.0;
     const double cont_mass = ucf::Ucf[ucf::MASS][cont_us]; // mg -> lb | kg
     const char* load_word = si_report ? "kg" : "lbs";
+    // A count pollutant's loads print as LOG10 under "LogN" (legacy statsrpt.c).
+    const auto isCount = [&ctx](int p) {
+        return p >= 0 && static_cast<std::size_t>(p) < ctx.pollutants.units.size() &&
+               ctx.pollutants.units[static_cast<std::size_t>(p)] == MassUnits::COUNTS_PER_L;
+    };
     const char* depth_word = du.depth_word; // in | mm (rainfall/runoff depth)
 
     bool has_rdii = !ctx.rdii_assigns.node_idx.empty();
@@ -1609,6 +1632,43 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
             }
         }
 
+#ifdef OPENSWMM_HAS_2D
+        if (const auto* router = ctx.twod_io.surface_router) {
+            const auto& gw = router->subsurface();
+            if (const auto* clock = gw.clockState()) {
+                std::set<int> rungs;
+                for (int i : clock->cells)
+                    rungs.insert(gw.clockRung(i));
+                std::fprintf(f, "\n\n  2D Aquifer Clock (INDEPENDENT)\n  Occupied rungs:");
+                for (int k : rungs)
+                    std::fprintf(f, " %d", k);
+                std::fprintf(
+                    f,
+                    "\n  Closure           Firings     Subcycled    Mean step (s)    Max step (s)");
+                const char* names[] = {"CLOSED_FORM", "ENSLAVED", "SIGMA"};
+                for (int k = 0; k < 3; ++k)
+                    std::fprintf(f, "\n  %-12s %12llu %12llu %16.6g %15.6g", names[k],
+                                 static_cast<unsigned long long>(clock->firings[k]),
+                                 static_cast<unsigned long long>(clock->subcycles[k]),
+                                 clock->firings[k] ? clock->elapsed[k] / clock->firings[k] : 0.,
+                                 clock->maximum[k]);
+                std::fprintf(f,
+                             "\n  Stability / rung period (<1, <2, <4, <8, <16, >=16, unbounded):");
+                for (auto count : clock->stability_to_period)
+                    std::fprintf(f, " %llu", static_cast<unsigned long long>(count));
+                const auto total = clock->firings[0] + clock->firings[1] + clock->firings[2];
+                const auto early = clock->budget_firings[0] + clock->budget_firings[1] + clock->budget_firings[2];
+                std::fprintf(f, "\n  Budget-triggered firings (%%)  %.6g\n", total ? 100. * early / total : 0.);
+                for (int k = 0; k < 3; ++k) {
+                    std::fprintf(f, "  %s max budget exceedance in/out (m3): %.9g %.9g; bins:", names[k], clock->excess_in[k], clock->excess_out[k]);
+                    std::fprintf(f, " max return depth (m): %.9g;", clock->max_return_depth[k]);
+                    for (auto count : clock->budget_exceedance[k])
+                        std::fprintf(f, " %llu", static_cast<unsigned long long>(count));
+                    std::fprintf(f, "\n");
+                }
+            }
+        }
+#endif
         // 1D <-> 2D Exchange Reconciliation — the coupled-loop ledger books
         // spill as Flooding Loss and drain as external inflow, so the plain
         // flow-routing continuity above double-counts exchanged water as both
@@ -2521,7 +2581,7 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
             auto up = static_cast<std::size_t>(p);
             MassUnits mu =
                 (up < ctx.pollutants.units.size()) ? ctx.pollutants.units[up] : MassUnits::MG_PER_L;
-            std::fprintf(f, "%14s", (mu == MassUnits::COUNTS_PER_L) ? "#" : "lbs");
+            std::fprintf(f, "%14s", (mu == MassUnits::COUNTS_PER_L) ? "LogN" : load_word);
         }
         std::fprintf(f, " \n  ----------------------------------");
         for (int p = 1; p < np; ++p)
@@ -2546,7 +2606,8 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
                         k < ms_wo.led_subcatch_load.size() ? ms_wo.led_subcatch_load[k] : 0.0;
                 }
                 sys_loads[up] += load_lbs;
-                std::fprintf(f, "%14.3f", load_lbs);
+                std::fprintf(f, "%14.3f",
+                             isCount(p) && load_lbs > 0.0 ? std::log10(load_lbs) : load_lbs);
             }
         }
 
@@ -2555,8 +2616,10 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
         for (int p = 1; p < np; ++p)
             std::fprintf(f, "--------------");
         std::fprintf(f, "\n  System                        ");
-        for (int p = 0; p < np; ++p)
-            std::fprintf(f, "%14.3f", sys_loads[static_cast<std::size_t>(p)]);
+        for (int p = 0; p < np; ++p) {
+            const double x = sys_loads[static_cast<std::size_t>(p)];
+            std::fprintf(f, "%14.3f", isCount(p) && x > 0.0 ? std::log10(x) : x);
+        }
 
         WRITE(f, "");
         WRITE(f, "");
@@ -3662,12 +3725,13 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
 
     // =====================================================================
     // Link Pollutant Load Summary — Gap #64, matches legacy writeLinkLoads()
-    // stat_total_load is in ft³ × mg/L; convert to lbs: × 28.317/453592
+    // stat_total_load is in ft³ × concentration; legacy prints totalLoad ×
+    // LperFT3 × Pollut.mcf: lbs (US) or kg (SI), and LOG10 of the count for a
+    // count pollutant.
     // =====================================================================
     if (route_rpt && ctx.n_pollutants() > 0 && !opt.ignore_quality) {
         int nl = ctx.n_links();
         int np = ctx.n_pollutants();
-        // conversion: CFS × mg/L × sec × (28.317 L/ft³) / (453592 mg/lb) = lbs
         static constexpr double LT_PER_FT3 = 28.317;
         // Per-pollutant unit and conversion
         std::vector<double> mass_cf(static_cast<std::size_t>(np));
@@ -3676,16 +3740,10 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
             auto up = static_cast<std::size_t>(p);
             MassUnits mu =
                 (up < ctx.pollutants.units.size()) ? ctx.pollutants.units[up] : MassUnits::MG_PER_L;
-            if (mu == MassUnits::COUNTS_PER_L) {
-                unit_str[up] = "#";
-                mass_cf[up] = 1.0;
-            } else if (mu == MassUnits::UG_PER_L) {
-                unit_str[up] = "lbs";
-                mass_cf[up] = LT_PER_FT3 / 453592000.0;
-            } else {
-                unit_str[up] = "lbs";
-                mass_cf[up] = LT_PER_FT3 / 453592.0;
-            }
+            unit_str[up] = (mu == MassUnits::COUNTS_PER_L) ? "LogN" : load_word;
+            mass_cf[up] = LT_PER_FT3 * ((mu == MassUnits::MG_PER_L)   ? cont_mass
+                                        : (mu == MassUnits::UG_PER_L) ? cont_mass / 1000.0
+                                                                      : 1.0);
         }
 
         WRITE(f, "***************************");
@@ -3713,9 +3771,12 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
             for (int p = 0; p < np; ++p) {
                 auto up = static_cast<std::size_t>(p);
                 auto idx = uj * static_cast<std::size_t>(np) + up;
-                double raw =
-                    (idx < ctx.links.stat_total_load.size()) ? ctx.links.stat_total_load[idx] : 0.0;
-                std::fprintf(f, "%14.3f", raw * mass_cf[up]);
+                double x = ((idx < ctx.links.stat_total_load.size()) ? ctx.links.stat_total_load[idx]
+                                                                      : 0.0) *
+                           mass_cf[up];
+                if (isCount(p) && x > 0.0)
+                    x = std::log10(x);
+                std::fprintf(f, x < 10000.0 ? "%14.3f" : "%14.3e", x);
             }
         }
 

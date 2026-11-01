@@ -202,13 +202,20 @@ template <std::size_t N> static void fmt_time(char (&buf)[N], double oadate) {
  * @param[in] secs Finite timestep seconds representable by lround and the derived int hour count;
  *     normally nonnegative.
  */
-template <std::size_t N> static void fmt_step(char (&buf)[N], double secs) {
+template <std::size_t N> static void fmt_step(char (&buf)[N], double secs, bool clock_fraction = false) {
     long r = std::lround(secs);
     if (secs == static_cast<double>(r)) {
         int ss = static_cast<int>(r % 60);
         int mm = static_cast<int>((r / 60) % 60);
         int hh = static_cast<int>(r / 3600);
         std::snprintf(buf, N, "%d:%02d:%02d", hh, mm, ss);
+    } else if (clock_fraction) {
+        const int h = static_cast<int>(secs / 3600.0);
+        const int m = static_cast<int>((secs - 3600.0 * h) / 60.0);
+        const double s = secs - 3600.0 * h - 60.0 * m;
+        char seconds[32];
+        std::snprintf(seconds, sizeof(seconds), "%.17g", s);
+        std::snprintf(buf, N, "%d:%02d:%s%s", h, m, s < 10 ? "0" : "", seconds);
     } else {
         std::snprintf(buf, N, "%.17g", secs);
     }
@@ -696,11 +703,12 @@ static const char* bc2d_type_token(const twoD::PendingBoundaryRow& r) {
     case 4:
         return "RATING_CURVE";
     default:
-        return "WALL";
+        return r.param1 > 0 ? "WALL_DRAG" : "WALL";
     }
 }
 
 static void emit2DMeshSections(FILE* f, const SimulationContext& ctx);
+static void emit2DModelSections(FILE* f, const SimulationContext& ctx);
 
 #ifdef OPENSWMM_HAS_2D
 // ---- [2D_INFILTRATION_OPTIONS] / _DEFAULTS / [2D_INFILTRATION] (plan §5.5) --
@@ -1170,6 +1178,21 @@ static bool write2DSections(FILE* f, const SimulationContext& ctx, const std::st
         std::fprintf(f, "%-22s %s\n", "MOMENTUM_EQUATION", "FULL_SWE");
     else if (o.momentum == twoD::Momentum2D::DIFFUSIVE_WAVE)
         std::fprintf(f, "%-22s %s\n", "MOMENTUM_EQUATION", "DIFFUSIVE_WAVE");
+    if (o.coriolis != twoD::Coriolis2D::OFF)
+        std::fprintf(f, "%-22s %s\n", "CORIOLIS",
+                     o.coriolis == twoD::Coriolis2D::LATITUDE ? "LATITUDE" : "CONSTANT_F");
+    if (o.coriolis_latitude_set)
+        std::fprintf(f, "%-22s %.17g\n", "CORIOLIS_LATITUDE", o.coriolis_latitude);
+    if (o.coriolis_f_set)
+        std::fprintf(f, "%-22s %.17g\n", "CORIOLIS_F", o.coriolis_f);
+    if (o.turbulence != twoD::Turbulence2D::NONE)
+        std::fprintf(f, "%-22s %s\n", "TURBULENCE_MODEL", twoD::turbulenceName(o.turbulence));
+    if (o.turbulence != twoD::Turbulence2D::NONE || o.smagorinsky_cs != 0.10)
+        std::fprintf(f, "%-22s %.17g\n", "SMAGORINSKY_CS", o.smagorinsky_cs);
+    if (o.eddy_viscosity_background != 0.0)
+        std::fprintf(f, "%-22s %.17g\n", "EDDY_VISCOSITY_BACKGROUND", o.eddy_viscosity_background);
+    if (o.turbulence == twoD::Turbulence2D::MIXING_LENGTH || o.mixing_length_coefficient != 0.5)
+        std::fprintf(f, "%-22s %.17g\n", "MIXING_LENGTH_COEFFICIENT", o.mixing_length_coefficient);
     if (o.reconstruction_order != 1)
         std::fprintf(f, "%-22s %d\n", "RECONSTRUCTION_ORDER", o.reconstruction_order);
     if (o.front_rebuild >= 0)
@@ -1344,18 +1367,22 @@ static bool write2DSections(FILE* f, const SimulationContext& ctx, const std::st
                 std::fprintf(sf, ";; OpenSWMM 2D mesh — written by the engine "
                                  "alongside the .inp save.\n");
                 emit2DMeshSections(sf, ctx);
-                if (sidecar.commit())
+                if (sidecar.commit()) {
+                    emit2DModelSections(f, ctx);
                     return true;
+                }
             }
             if (warnings)
                 warnings->push_back(sidecar.error());
             return false;
         }
+        emit2DModelSections(f, ctx);
         return true;
     }
 
     if (has_mesh)
         emit2DMeshSections(f, ctx);
+    emit2DModelSections(f, ctx);
     return true;
 }
 
@@ -1369,9 +1396,8 @@ static bool write2DSections(FILE* f, const SimulationContext& ctx, const std::st
  * @brief Emit current mesh geometry and associated authored spatial sections to one stream.
  *
  * Requires non-NULL twod_io.mesh/options and aligned valid mesh indices. Writes geometry, maps,
- * boundary/conveyance/initial quality plus supported infiltration/GW/surface-quality/aquifer
- * authoring. Coordinates remain stored units; emits SI marker when mesh_units_si or
- * mesh_scaled_to_si. Caller chooses inline INP or external mesh stream once. Does not advance
+ * boundary/conveyance/initial quality plus infiltration authoring. Coordinates remain stored
+ * units; emits SI marker when mesh_units_si or mesh_scaled_to_si. Caller chooses inline INP or external mesh stream once. Does not advance
  * solvers, rebase nested GW FILE paths or check individual fprintf errors.
  *
  * @param[in,out] f Borrowed non-NULL writable FILE stream; caller owns flush/error checks/close and
@@ -1573,7 +1599,7 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
                 char p1[32];
                 if (!r.name.empty()) {
                     std::snprintf(p1, sizeof(p1), "%s", r.name.c_str());
-                } else if (r.bc_type == 0) { // WALL — no parameter
+                } else if (r.bc_type == 0 && r.param1 == 0) { // free-slip WALL
                     std::snprintf(p1, sizeof(p1), "*");
                 } else {
                     std::snprintf(p1, sizeof(p1), "%.17g", r.param1);
@@ -1645,13 +1671,25 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
     // whichever single destination this function was pointed at. THE ONLY CALL
     // SITE — see emit2DInfilSections.
     emit2DInfilSections(f, ctx);
+#endif
+}
 
+/**
+ * @brief Emit the 2D model sections that the reader takes from the main .inp only.
+ *
+ * [GW_*], [2D_COVERAGES]/[2D_LOADINGS]/[2D_CURB_LENGTH] and [2D_AQUIFER*]. Always the main .inp
+ * stream, after the mesh sections or the [2D_MESH_FILE] reference; never the mesh sidecar, whose
+ * reader ignores them.
+ *
+ * @param[in,out] f Borrowed non-NULL writable main .inp stream; caller owns flush/error checks.
+ * @param[in] ctx Borrowed coherent authored model and nonowning twod_io attachments.
+ */
+static void emit2DModelSections(FILE* f, const SimulationContext& ctx) {
+#ifdef OPENSWMM_HAS_2D
     // ---- U4 (2026-09-07) — [GW_*] subsurface transport --------------------
-    // Written to the MAIN .inp, never the mesh sidecar: these are model
-    // physics, not per-cell mesh geometry, and [2D_QUADS] must already be in
-    // hand before a [GW_*] CELL/EDGE row can be read (D-A15) — which the
-    // section order here guarantees, since the mesh sections precede this
-    // call in write2DSections.
+    // Model physics, not per-cell mesh geometry. [2D_QUADS] must already be in
+    // hand before a [GW_*] CELL/EDGE row can be read (D-A15): the mesh
+    // sections, or the [2D_MESH_FILE] reference, precede this call.
     emitGwTransportSections(f, ctx);
     emitSurfaceQualitySections(f, ctx); // S7
 
@@ -1664,10 +1702,13 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
         twoD::writeSubsurfaceSections(
             *ctx.twod_io.aquifer, ctx.twod_io.aquifer_nodes ? *ctx.twod_io.aquifer_nodes : kNoNames,
             ctx.twod_io.aquifer_links ? *ctx.twod_io.aquifer_links : kNoNames, // G-X4
-            aq);
+            aq, true);
         if (!aq.empty())
             std::fputs(aq.c_str(), f);
     }
+#else
+    (void)f;
+    (void)ctx;
 #endif
 }
 
@@ -1871,6 +1912,12 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
             warnings->push_back(s);
     };
 
+    if (stock5 && std::any_of(ctx.nodes.storage_area.begin(), ctx.nodes.storage_area.end(),
+                              [](double a) { return a > 0.0; })) {
+        note("Stock EPA SWMM cannot represent junction StorageArea. Use OpenSWMM 5.3.0 or 6.0.0; export refused to avoid dropping physical storage.");
+        return -1;
+    }
+
     if (swmm5 && !ctx.options.ignore_snow_melt && !ctx.options.ignore_2d &&
         ctx.snowpacks.mesh_config.mode != surface::MeshSnowConfig::Mode::No &&
         ctx.snowpacks.mesh_config.assigned()) {
@@ -1941,7 +1988,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                                         "MODIFIED_GREEN_AMPT", "CURVE_NUMBER"};
         static const char* sRouting[] = {"STEADY", "KINWAVE", "DYNWAVE", "FV"};
         static const char* sInertial[] = {"NONE", "PARTIAL", "FULL"};
-        static const char* sNormFlow[] = {"SLOPE", "FROUDE", "BOTH", "NEITHER"};
+        static const char* sNormFlow[] = {"SLOPE", "FROUDE", "BOTH", "NONE"};
         static const char* sSurcharge[] = {"EXTRAN", "SLOT", "DYNAMIC_SLOT", "TPA"};
         static const char* sUnsteadyFriction[] = {"NONE", "VITKOVSKY"}; // issue #156
 
@@ -2046,11 +2093,11 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
         std::fprintf(f, "%-20s %s\n", "SWEEP_END", sb);
 
         std::fprintf(f, "%-20s %.17g\n", "DRY_DAYS", o.dry_days);
-        fmt_step(sb, o.report_step);
+        fmt_step(sb, o.report_step, true);
         std::fprintf(f, "%-20s %s\n", "REPORT_STEP", sb);
-        fmt_step(sb, o.wet_step);
+        fmt_step(sb, o.wet_step, true);
         std::fprintf(f, "%-20s %s\n", "WET_STEP", sb);
-        fmt_step(sb, o.dry_step);
+        fmt_step(sb, o.dry_step, true);
         std::fprintf(f, "%-20s %s\n", "DRY_STEP", sb);
         fmt_step(sb, o.routing_step);
         std::fprintf(f, "%-20s %s\n", "ROUTING_STEP", sb);
@@ -3176,8 +3223,10 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
     // ordinary junctions (no [VIRTUAL_JUNCTIONS] / [INLET_JUNCTIONS] in 5.x).
     if (hasRegularJunction(ctx) || (swmm5 && (hasVirtualJunction(ctx) || hasInletJunction(ctx)))) {
         sec(f, "JUNCTIONS");
-        std::fprintf(f, ";;%-16s %-12s %-12s %-12s %-12s %-12s\n", "Name", "Elev", "MaxDepth",
-                     "InitDepth", "SurDepth", "Aponded");
+        const bool has_chamber = std::any_of(ctx.nodes.storage_area.begin(), ctx.nodes.storage_area.end(),
+                                             [](double area) { return area > 0.0; });
+        std::fprintf(f, ";;%-16s %-12s %-12s %-12s %-12s %-12s%s\n", "Name", "Elev", "MaxDepth",
+                     "InitDepth", "SurDepth", "Aponded", has_chamber ? " StorageArea" : "");
         std::fprintf(f, ";;%-16s %-12s %-12s %-12s %-12s %-12s\n", "----------------",
                      "------------", "------------", "------------", "------------",
                      "------------");
@@ -3205,10 +3254,13 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                     " (SWMM 5.x profile)");
                 continue;
             }
-            std::fprintf(f, "%-16s %.17g %.17g %.17g %.17g %.17g\n",
+            std::fprintf(f, "%-16s %.17g %.17g %.17g %.17g %.17g",
                          ctx.node_names.name_of(j).c_str(), ctx.nodes.invert_elev[u],
                          ctx.nodes.full_depth[u], ctx.nodes.init_depth[u], ctx.nodes.sur_depth[u],
                          ctx.nodes.ponded_area[u]);
+            if (ctx.nodes.storage_area[u] > 0.0)
+                std::fprintf(f, " %.17g", ctx.nodes.storage_area[u]);
+            std::fprintf(f, "\n");
         }
     }
 

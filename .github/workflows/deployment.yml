@@ -291,6 +291,10 @@ jobs:
           # CIBW_ENVIRONMENT_MACOS is read early and applied uniformly.
           CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET=11.0 VCPKG_ROOT=${{ github.workspace }}/vcpkg
 
+      - name: Check wheels for CPU-specific instructions
+        if: runner.os == 'Linux'
+        run: python3 scripts/check_wheel_isa.py wheelhouse/*.whl
+
       - name: Upload Python wheels
         if: always()
         uses: actions/upload-artifact@v5
@@ -359,6 +363,10 @@ jobs:
           VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
           VCPKG_REF: ${{ env.VCPKG_REF }}
           CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET=11.0 VCPKG_ROOT=${{ github.workspace }}/vcpkg
+
+      - name: Check wheels for CPU-specific instructions
+        if: runner.os == 'Linux'
+        run: python3 scripts/check_wheel_isa.py wheelhouse/*.whl
 
       - name: Upload companion wheels
         if: always()

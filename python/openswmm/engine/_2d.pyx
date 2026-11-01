@@ -44,7 +44,8 @@ from ._enums import (SurfaceForcingMode, ForcingPersist, SurfaceBoundaryType,
                      SurfaceInfilMethod, SurfaceInfilDest, NodeCoupling2DType)
 
 
-from ._common cimport _check
+from ._common cimport (_check, _read_engine_index_string, _TextBufs, _tb_open,
+                       _tb_retry, _tb_str, _tb_close)
 from ._access import resolve_owner
 from ._exceptions import StaleObjectError, raise_for_code
 
@@ -568,9 +569,7 @@ cdef class Surface2D:
         @rtype: str
         @raise EngineError: If the C API call fails.
         """
-        cdef char buf[256]
-        _check(swmm_2d_get_vertex_tag(self._h(), idx, buf, 256))
-        return buf.decode('utf-8')
+        return _read_engine_index_string(self._h(), idx, swmm_2d_get_vertex_tag)
 
     def set_vertex_tag(self, int idx, str tag) -> None:
         """Set the descriptive tag of a vertex (C{[2D_VERTICES]} TAG).
@@ -720,9 +719,7 @@ cdef class Surface2D:
         @rtype: str
         @raise EngineError: If the C API call fails.
         """
-        cdef char buf[256]
-        _check(swmm_2d_get_triangle_tag(self._h(), idx, buf, 256))
-        return buf.decode('utf-8')
+        return _read_engine_index_string(self._h(), idx, swmm_2d_get_triangle_tag)
 
     def set_triangle_tag(self, int idx, str tag) -> None:
         """Set the descriptive tag of a triangle (C{[2D_TRIANGLES]} TAG).
@@ -1092,6 +1089,27 @@ cdef class Surface2D:
         _check(err)
         return arr
 
+    def get_velocities(self):
+        """Return physical Cartesian cell velocities as independent X/Y arrays.
+
+        Each float64 array has shape ``(n_cells,)`` and units m/s, matching
+        ``Mesh2_face_vx`` and ``Mesh2_face_vy``. FULL_SWE uses accepted cell
+        momentum; other closures use the native hydraulic reconstruction.
+        Dry cells return zero. Paired NaNs identify indeterminate wet-cell
+        velocities and are preserved. Refreshes derived fields without
+        advancing hydraulics; the GIL is released during the native call.
+        """
+        cdef int n = self.n_cells
+        cdef np.ndarray[double, ndim=1] vx = np.empty(n, dtype=np.float64)
+        cdef np.ndarray[double, ndim=1] vy = np.empty(n, dtype=np.float64)
+        cdef void* eng = self._h()
+        cdef int err
+        with self._owner._operation(<uintptr_t>eng):
+            with nogil:
+                err = swmm_2d_get_velocities_bulk(eng, <double*>vx.data, <double*>vy.data)
+        _check(err)
+        return vx, vy
+
     def get_coupling_fluxes(self):
         """Return coupling fluxes for all triangles as a NumPy array. The
         GIL is released during the C call.
@@ -1146,12 +1164,19 @@ cdef class Surface2D:
         """
         cdef void* eng = self._h()
         cdef int count = 0, index
-        cdef char name[512]
+        cdef _TextBufs t
         _check(swmm_2d_species_count(eng, &count))
         names = []
-        for index in range(count):
-            _check(swmm_2d_species_name(eng, index, name, 512))
-            names.append(name.decode('utf-8'))
+        _tb_open(&t, 1)
+        try:
+            for index in range(count):
+                while True:
+                    _check(swmm_2d_species_name(eng, index, t.p[0], t.size))
+                    if not _tb_retry(&t):
+                        break
+                names.append(_tb_str(&t, 0))
+        finally:
+            _tb_close(&t)
         return tuple(names)
 
     def concentrations(self, int species):
@@ -1706,15 +1731,21 @@ cdef class Surface2D:
         cdef void* h = self._h()
         cdef int count = 0, index, scope = 0, cell = -1
         cdef double conc = 0
-        cdef char tag[512]
-        cdef char species[512]
+        cdef _TextBufs t
         _check(swmm_2d_initial_quality_count(h, &count))
         rows = []
-        for index in range(count):
-            _check(swmm_2d_get_initial_quality(h, index, &scope, tag, 512, &cell,
-                                               species, 512, &conc))
-            rows.append(InitialQuality2D(scope, tag.decode('utf-8'), cell,
-                                         species.decode('utf-8'), conc))
+        _tb_open(&t, 2)
+        try:
+            for index in range(count):
+                while True:
+                    _check(swmm_2d_get_initial_quality(h, index, &scope, t.p[0], t.size,
+                                                       &cell, t.p[1], t.size, &conc))
+                    if not _tb_retry(&t):
+                        break
+                rows.append(InitialQuality2D(scope, _tb_str(&t, 0), cell,
+                                             _tb_str(&t, 1), conc))
+        finally:
+            _tb_close(&t)
         return tuple(rows)
 
     def set_initial_quality(self, str species, double conc, *, tag=None, cell=None):
@@ -1739,15 +1770,21 @@ cdef class Surface2D:
         cdef void* h = self._h()
         cdef int count = 0, index, scope = 0, cell = -1
         cdef double conc = 0
-        cdef char tag[512]
-        cdef char species[512]
+        cdef _TextBufs t
         _check(swmm_2d_initial_bed_quality_count(h, &count))
         rows = []
-        for index in range(count):
-            _check(swmm_2d_get_initial_bed_quality(h, index, &scope, tag, 512, &cell,
-                                               species, 512, &conc))
-            rows.append(InitialQuality2D(scope, tag.decode('utf-8'), cell,
-                                         species.decode('utf-8'), conc))
+        _tb_open(&t, 2)
+        try:
+            for index in range(count):
+                while True:
+                    _check(swmm_2d_get_initial_bed_quality(h, index, &scope, t.p[0], t.size,
+                                                           &cell, t.p[1], t.size, &conc))
+                    if not _tb_retry(&t):
+                        break
+                rows.append(InitialQuality2D(scope, _tb_str(&t, 0), cell,
+                                             _tb_str(&t, 1), conc))
+        finally:
+            _tb_close(&t)
         return tuple(rows)
 
     def set_initial_bed_quality(self, str species, double conc, *, tag=None, cell=None):
@@ -1781,12 +1818,20 @@ cdef class Surface2D:
         cdef void* h = self._h()
         cdef int count = 0, index, cell = 0, edge = 0
         cdef double conc = 0
-        cdef char species[512]
+        cdef _TextBufs t
         _check(swmm_2d_boundary_quality_count(h, &count))
         rows = []
-        for index in range(count):
-            _check(swmm_2d_get_boundary_quality(h, index, &cell, &edge, species, 512, &conc))
-            rows.append(BoundaryQuality2D(cell, edge, species.decode('utf-8'), conc))
+        _tb_open(&t, 1)
+        try:
+            for index in range(count):
+                while True:
+                    _check(swmm_2d_get_boundary_quality(h, index, &cell, &edge,
+                                                        t.p[0], t.size, &conc))
+                    if not _tb_retry(&t):
+                        break
+                rows.append(BoundaryQuality2D(cell, edge, _tb_str(&t, 0), conc))
+        finally:
+            _tb_close(&t)
         return tuple(rows)
 
     def set_boundary_quality(self, int cell, int edge, str species, double conc):
@@ -1840,6 +1885,33 @@ cdef class Surface2D:
         @raise EngineError: If the C API rejects the assignment.
         """
         _check(swmm_2d_set_edge_bc_head(self._h(), tri_idx, edge, head))
+
+    def set_edge_bc_group(self, int tri_idx, int edge, str group):
+        """Author a boundary group token without changing its hydraulic condition.
+
+        Requires OPENED/BUILDING state and prepared boundary storage (call
+        ``prepare_for_edit()`` first). Nonempty names require an exterior edge
+        and cannot contain whitespace, INP delimiters or NUL. Empty clears the
+        group. Names are UTF-8 metadata and do not change boundary flow or drag.
+        """
+        if "\0" in group:
+            raise ValueError("Boundary group cannot contain NUL")
+        cdef bytes b = group.encode("utf-8")
+        _check(swmm_2d_set_edge_bc_group(self._h(), tri_idx, edge, b))
+
+    def get_edge_wall_drag(self, int tri_idx, int edge) -> float:
+        """Return dimensionless tangential WALL Cw (zero means free slip)."""
+        cdef double cw = 0.0
+        _check(swmm_2d_get_edge_wall_drag(self._h(), tri_idx, edge, &cw))
+        return cw
+
+    def set_edge_wall_drag(self, int tri_idx, int edge, double cw):
+        """Author selected exterior WALL drag before a run: tau/rho=-Cw|ut|ut.
+
+        Cw must be finite and nonnegative. CPU FULL_SWE, one tier and
+        uncoupled hydraulics are required to execute positive wall drag.
+        """
+        _check(swmm_2d_set_edge_wall_drag(self._h(), tri_idx, edge, cw))
 
     def get_edge_bc_slope(self, int tri_idx, int edge) -> float:
         """Return the boundary slope for a triangle edge.
@@ -1934,8 +2006,7 @@ cdef class Surface2D:
         """Return the timeseries name driving a SPECIFIED_STAGE edge.
 
         The mirror of L{set_edge_bc_tseries_name}, so an edit can be read
-        back and verified. Names longer than the internal buffer are
-        truncated.
+        back and verified.
 
         @param tri_idx: Triangle index.
         @type tri_idx: int
@@ -1946,10 +2017,17 @@ cdef class Surface2D:
         @rtype: str
         @raise EngineError: If the C API call fails.
         """
-        cdef char buf[256]
-        _check(swmm_2d_get_edge_bc_tseries_name(
-            self._h(), tri_idx, edge, buf, 256))
-        return buf.decode('utf-8')
+        cdef _TextBufs t
+        _tb_open(&t, 1)
+        try:
+            while True:
+                _check(swmm_2d_get_edge_bc_tseries_name(
+                    self._h(), tri_idx, edge, t.p[0], t.size))
+                if not _tb_retry(&t):
+                    break
+            return _tb_str(&t, 0)
+        finally:
+            _tb_close(&t)
 
     def set_edge_bc_flow_tseries_name(self, int tri_idx, int edge, str name):
         """Set the timeseries name driving a SPECIFIED_FLOW edge.
@@ -1982,10 +2060,17 @@ cdef class Surface2D:
         @rtype: str
         @raise EngineError: If the C API call fails.
         """
-        cdef char buf[256]
-        _check(swmm_2d_get_edge_bc_flow_tseries_name(
-            self._h(), tri_idx, edge, buf, 256))
-        return buf.decode('utf-8')
+        cdef _TextBufs t
+        _tb_open(&t, 1)
+        try:
+            while True:
+                _check(swmm_2d_get_edge_bc_flow_tseries_name(
+                    self._h(), tri_idx, edge, t.p[0], t.size))
+                if not _tb_retry(&t):
+                    break
+            return _tb_str(&t, 0)
+        finally:
+            _tb_close(&t)
 
     def set_edge_bc_rating_curve_name(self, int tri_idx, int edge, str name):
         """Set the rating-curve name driving a RATING_CURVE edge.
@@ -2019,10 +2104,17 @@ cdef class Surface2D:
         @rtype: str
         @raise EngineError: If the C API call fails.
         """
-        cdef char buf[256]
-        _check(swmm_2d_get_edge_bc_rating_curve_name(
-            self._h(), tri_idx, edge, buf, 256))
-        return buf.decode('utf-8')
+        cdef _TextBufs t
+        _tb_open(&t, 1)
+        try:
+            while True:
+                _check(swmm_2d_get_edge_bc_rating_curve_name(
+                    self._h(), tri_idx, edge, t.p[0], t.size))
+                if not _tb_retry(&t):
+                    break
+            return _tb_str(&t, 0)
+        finally:
+            _tb_close(&t)
 
     # ------------------------------------------------------------------
     # Edge conveyance factor (§11A of docs/2dModelStrategy.md)
@@ -2222,18 +2314,25 @@ class Infil2DDefaults(MutableMapping):
         """Return the authored tags in file order (C{'*'} may be anywhere)."""
         cdef void* eng = <void*><uintptr_t>self._address()
         cdef int n = 0
-        cdef char buf[256]
+        cdef _TextBufs t
         cdef int i
         _check(swmm_infil2d_defaults_count(eng, &n))
         out = []
-        for i in range(n):
-            _check(swmm_infil2d_get_default_tag(eng, i, buf, 256))
-            out.append(buf.decode("utf-8"))
+        _tb_open(&t, 1)
+        try:
+            for i in range(n):
+                while True:
+                    _check(swmm_infil2d_get_default_tag(eng, i, t.p[0], t.size))
+                    if not _tb_retry(&t):
+                        break
+                out.append(_tb_str(&t, 0))
+        finally:
+            _tb_close(&t)
         return out
 
     def __iter__(self):
-        # Materialised deliberately: a generator would put the C{char[256]}
-        # scratch buffer in a closure, which Cython cannot do.
+        # Materialised deliberately: a generator would put the C text
+        # buffer in a closure, which Cython cannot do.
         return iter(self._tags())
 
     def __getitem__(self, key):

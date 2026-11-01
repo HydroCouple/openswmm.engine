@@ -1,0 +1,15 @@
+diff --git a/core/src/OpenMP/Kokkos_OpenMP_Instance.hpp b/core/src/OpenMP/Kokkos_OpenMP_Instance.hpp
+--- a/core/src/OpenMP/Kokkos_OpenMP_Instance.hpp
++++ b/core/src/OpenMP/Kokkos_OpenMP_Instance.hpp
+@@ -119,7 +119,10 @@ inline bool execute_in_serial(OpenMP const& space = OpenMP()) {
+ // The default value returned by `omp_get_max_active_levels` with gcc version
+ // lower than 11.1.0 is 2147483647 instead of 1.
++// OpenSWMM builds MSVC's OpenMP backend with /openmp:llvm, whose runtime
++// supports omp_get_max_active_levels even though _OPENMP remains 200203.
++// Avoid the deprecated query on that toolchain without changing the GCC path.
+ #if (!defined(KOKKOS_COMPILER_GNU) || KOKKOS_COMPILER_GNU >= 1110) && \
+-    _OPENMP >= 201511
++    (_OPENMP >= 201511 || defined(KOKKOS_COMPILER_MSVC))
+   bool is_nested = omp_get_max_active_levels() > 1;
+ #else
+   bool is_nested = static_cast<bool>(omp_get_nested());

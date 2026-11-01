@@ -23,7 +23,9 @@
 #include "2d/mesh/MeshBuilder.hpp"
 #include "2d/data/SurfaceStateData.hpp"
 #include "core/SimulationContext.hpp"
+#include "core/SWMMEngine.hpp"
 #include "core/DateTime.hpp"
+#include "core/ProcessPerf.hpp"
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -2839,6 +2841,30 @@ TEST(CommonSourceStage, SourceHistoryRefusesSkippedDuplicateTrialAndChangedModel
     EXPECT_FALSE(late.append(m.stage).empty());
     EXPECT_TRUE(late.tables().empty());
 }
+TEST(CommonSourceStage, SourceHistoryLateRefusalPreservesColumnsAndCheckpointAnchor) {
+    Model m;
+    mixedPollutants(m);
+    m.attach();
+    SourceResultHistory history;
+    ASSERT_EQ(history.append(m.stage), "");
+    const auto checkpoint = restartPath("history-append-rollback-before");
+    ASSERT_EQ(m.stage.saveCheckpoint(checkpoint.string()), "");
+    ASSERT_EQ(m.stage.advance(0, .5), "");
+    auto& columns = const_cast<std::map<std::string, SourceResultTable>&>(history.tables());
+    columns.at("boundaries").columns[0][0] = .5;
+    const auto invalid = history;
+    EXPECT_FALSE(history.append(m.stage).empty());
+    resultEqual(history, invalid);
+    columns.at("boundaries").columns[0][0] = 0.;
+    Model restored;
+    mixedPollutants(restored);
+    restored.attach();
+    ASSERT_EQ(restored.stage.loadCheckpoint(checkpoint.string()), "");
+    ASSERT_EQ(history.resume(restored.stage), "");
+    ASSERT_EQ(restored.stage.advance(0, .5), "");
+    ASSERT_EQ(history.append(restored.stage), "");
+    EXPECT_EQ(history.tables().at("boundaries").rows(), 2u);
+}
 #ifdef OPENSWMM_HAS_HDF5_MODEL
 TEST(CommonSourceStage, OutfallSourceHistoryContinuesPendingQueuesAcrossExactComponentRestart) {
     for (auto closure : {GwClosure::CLOSED_FORM, GwClosure::SIGMA})
@@ -5121,4 +5147,321 @@ TEST(RichardsCommonSource, BindingAndCheckpointCannotLoseJointOwnershipOrMutateS
     }
     EXPECT_FALSE(shared.stage.saveCheckpoint(path.string()).empty());
     EXPECT_EQ(restartBytes(path), "preserved");
+}
+
+// Internal Phase-0 workload: ordinary .inp loading deliberately refuses this
+// ownership profile. Keep it alongside the reviewed conservation fixture.
+TEST(CommonSourcePerf, CompletedIntervals) {
+    const char* output = std::getenv("OPENSWMM_SOA_BENCH_OUTPUT");
+    if (!output)
+        GTEST_SKIP() << "set OPENSWMM_SOA_BENCH_OUTPUT to a retained results directory";
+    const auto directory = std::filesystem::path(output);
+    std::filesystem::create_directories(directory);
+    int repetitions = 32;
+    if (const char* repeat_text = std::getenv("OPENSWMM_SOA_BENCH_REPEATS"))
+        repetitions = std::stoi(repeat_text);
+    ASSERT_GT(repetitions, 0);
+    perf::reset_process();
+    for (int repeat = 0; repeat < repetitions; ++repeat) {
+        Model m;
+        m.setup(true, 16);
+        m.attach(true);
+        for (double end : {.3, 1., 2.125, 4.}) {
+            ASSERT_DOUBLE_EQ(m.marcher.advance(m.stage.completedEnd(), end), end);
+            EXPECT_NEAR(m.gw.state().continuityResidual(), 0, 2e-11);
+            for (int sc = 0; sc < 2; ++sc)
+                EXPECT_NEAR(m.sources.balanceResidual(sc), 0, 1e-10);
+        }
+        m.marcher.finalize();
+        if (repeat + 1 == repetitions)
+            ASSERT_EQ(m.stage.saveCheckpoint((directory / "common_source.chk").string()), "");
+    }
+    if (perf::enabled())
+        perf::dump_process();
+}
+
+TEST(CommonSourcePerf, RecordedIntervals) {
+    const char* output = std::getenv("OPENSWMM_HISTORY_BENCH_OUTPUT");
+    if (!output)
+        GTEST_SKIP() << "set OPENSWMM_HISTORY_BENCH_OUTPUT to a retained results directory";
+    const auto directory = std::filesystem::path(output);
+    std::filesystem::create_directories(directory);
+    int repetitions = 512;
+    if (const char* text = std::getenv("OPENSWMM_HISTORY_BENCH_REPEATS"))
+        repetitions = std::stoi(text);
+    ASSERT_GT(repetitions, 0);
+    Model m;
+    mixedPollutants(m);
+    m.attach();
+    SourceResultHistory history;
+    ASSERT_EQ(history.append(m.stage), "");
+    perf::reset_process();
+    for (int i = 0; i < repetitions; ++i) {
+        ASSERT_EQ(m.stage.advance(m.stage.completedEnd(), .5 * (i + 1)), "");
+        ASSERT_EQ(history.append(m.stage), "");
+    }
+    detail::CompletedSourceArchive state;
+    auto sources = history.sourceNames(), pollutants = history.pollutantNames(),
+         units = history.pollutantMassUnits();
+    state(sources, pollutants, units);
+    for (const auto& [name, table] : history.tables()) {
+        auto key = name;
+        auto fields = table.fields, field_units = table.units;
+        auto columns = table.columns;
+        state(key, fields, field_units, columns);
+    }
+    auto bytes = state.bytes();
+    std::ofstream(directory / "history.bin", std::ios::binary).write(bytes.data(), bytes.size());
+    ASSERT_EQ(m.stage.saveCheckpoint((directory / "history.chk").string()), "");
+    if (perf::enabled())
+        perf::dump_process();
+}
+
+TEST(CommonSourcePerf, EngineProfilingRegistrationHandlesFailureReopenAndDestruction) {
+    if (!perf::enabled())
+        GTEST_SKIP() << "run with OPENSWMM_PERF=1";
+    const auto directory = std::filesystem::path(OPENSWMM_R4_STAGE_OUT) / "perf-lifecycle";
+    std::filesystem::create_directories(directory);
+    const auto input = (directory / "model.inp").string();
+    std::ofstream(input) << "[OPTIONS]\nFLOW_UNITS CMS\n[JUNCTIONS]\nJ 0 1\n";
+    const auto report = (directory / "model.rpt").string();
+    EXPECT_TRUE(perf::process_models.empty());
+    SWMMEngine a;
+    ASSERT_EQ(a.open(input.c_str(), report.c_str(), nullptr, nullptr, true), 0);
+    ASSERT_EQ(perf::process_models.size(), 1u);
+    {
+        SWMMEngine failed;
+        EXPECT_NE(failed.open((input + ".missing").c_str(), nullptr, nullptr, nullptr, true), 0);
+        EXPECT_EQ(perf::process_models.size(), 1u);
+        EXPECT_TRUE(perf::process_attribution_valid.load());
+    }
+    {
+        SWMMEngine b;
+        ASSERT_EQ(b.open(input.c_str(), (report + ".b").c_str(), nullptr, nullptr, true), 0);
+        EXPECT_EQ(perf::process_models.size(), 2u);
+        EXPECT_FALSE(perf::process_attribution_valid.load());
+        // OPENED instances do not call close() in the existing engine
+        // destructor, so the explicit profiling cleanup must release b.
+    }
+    EXPECT_EQ(perf::process_models.size(), 1u);
+    EXPECT_FALSE(perf::process_attribution_valid.load());
+    EXPECT_EQ(a.close(), 0);
+    EXPECT_EQ(a.close(), 0);
+    EXPECT_TRUE(perf::process_models.empty());
+    ASSERT_EQ(a.open(input.c_str(), report.c_str(), nullptr, nullptr, true), 0);
+    EXPECT_TRUE(perf::process_attribution_valid.load());
+    EXPECT_EQ(a.close(), 0);
+    EXPECT_TRUE(perf::process_models.empty());
+}
+
+namespace {
+bool cellScratchPaired(int mode) { return mode>=1 && mode<=3; }
+
+void cellScratchSetup(Model& m,int mode,int cells) {
+    AtmosphericInput a;
+    a.ks=1e-6; // Keep the controlled fixed-cadence surface mixture wet.
+    if (mode>=3)
+        a.closure=GwClosure::SIGMA;
+    if (mode==2 || mode==3 || mode==4)
+        mixedPollutants(m,cells,a);
+    else
+        m.setup(false,cells,false,false,false,a);
+    ASSERT_FALSE(::testing::Test::HasFatalFailure());
+    if (mode==3 || mode==4) {
+        RowLayoutLite rows;
+        rows.n_species=rows.n_pollut=2;
+        rows.names={"Dissolved","Counts"};
+        GwTransportData data;
+        data.options.unsat_transport="LAYERED";
+        std::vector<std::string> warnings;
+        m.gw.initTransport(rows,&data,{},warnings);
+        ASSERT_GT(m.gw.transport().n_layers,0);
+    }
+    if (cellScratchPaired(mode))
+        m.attach();
+}
+
+std::string cellScratchBytes(SubsurfaceSolver& gw,SurfaceStateData& surface) {
+    detail::CompletedSourceArchive a;
+    gw.checkpoint(a,false);
+    a(surface.volume,surface.head,surface.depth,surface.infil_rate,
+      surface.infil_applied,surface.coupling_applied,surface.transport.cell_mass);
+    return a.bytes();
+}
+
+void cellScratchLoad(SubsurfaceSolver& gw,SurfaceStateData& surface,std::string bytes) {
+    detail::CompletedSourceArchive a(std::move(bytes));
+    gw.checkpoint(a,false);
+    a(surface.volume,surface.head,surface.depth,surface.infil_rate,
+      surface.infil_applied,surface.coupling_applied,surface.transport.cell_mass);
+    a.finish();
+}
+
+void cellScratchStep(Model& m,int mode,double& time) {
+    const double end=time+.5;
+    if (cellScratchPaired(mode))
+        ASSERT_EQ(m.stage.advance(time,end),"");
+    m.gw.fireGwCells(0,.5,m.surface,time);
+    time=end;
+}
+}
+
+TEST(CommonSourceStage, GroundwaterCopiesMovesAndZeroLayerReusePreserveAcceptedState) {
+    static_assert(std::is_nothrow_move_assignable_v<SubsurfaceSolver>);
+    detail::CompletedSourceArchive history;
+    std::string magic="C9 cell scratch ownership history v1";
+    history(magic);
+    for (int mode : {0,1,2,3,4})
+        for (int cells : {1,17}) {
+            SCOPED_TRACE(std::to_string(mode)+":"+std::to_string(cells));
+            Model m;
+            cellScratchSetup(m,mode,cells);
+            ASSERT_FALSE(::testing::Test::HasFatalFailure());
+            double time=0;
+            for (int warm=0; warm<3; ++warm)
+                cellScratchStep(m,mode,time);
+            ASSERT_FALSE(::testing::Test::HasFatalFailure());
+            if (cellScratchPaired(mode))
+                ASSERT_EQ(m.stage.advance(time,time+.5),"");
+            auto before=cellScratchBytes(m.gw,m.surface);
+            std::string tag="accepted_before";
+            history(mode,cells,tag,before);
+            auto copied=m.gw, assigned=m.gw;
+            auto copied_surface=m.surface, assigned_surface=m.surface;
+            EXPECT_EQ(cellScratchBytes(copied,copied_surface),before);
+            assigned.fireGwCells(0,.5,assigned_surface,time);
+            assigned=m.gw; // overwrite a solver that already holds warmed work storage
+            assigned_surface=m.surface;
+            auto moved=std::move(copied);
+            m.gw.fireGwCells(0,.5,m.surface,time);
+            moved.fireGwCells(0,.5,copied_surface,time);
+            assigned.fireGwCells(0,.5,assigned_surface,time);
+            auto expected=cellScratchBytes(m.gw,m.surface);
+            tag="original";history(mode,cells,tag,expected);
+            auto bytes=cellScratchBytes(moved,copied_surface);
+            EXPECT_EQ(bytes,expected);tag="move_constructed";history(mode,cells,tag,bytes);
+            bytes=cellScratchBytes(assigned,assigned_surface);
+            EXPECT_EQ(bytes,expected);tag="copy_assigned";history(mode,cells,tag,bytes);
+            auto move_assigned=m.gw;
+            move_assigned=std::move(assigned);
+            bytes=cellScratchBytes(move_assigned,assigned_surface);
+            EXPECT_EQ(bytes,expected);tag="move_assigned";history(mode,cells,tag,bytes);
+            // Exercise the ordinary zero-transport-layer SIGMA path after
+            // assigning over a previously warmed, possibly layered owner.
+            Model water;
+            cellScratchSetup(water,5,cells);
+            ASSERT_FALSE(::testing::Test::HasFatalFailure());
+            ASSERT_EQ(water.gw.transport().n_layers,0);
+            auto water_surface=water.surface;
+            move_assigned=water.gw;
+            water.gw.fireGwCells(0,.5,water.surface,0);
+            move_assigned.fireGwCells(0,.5,water_surface,0);
+            expected=cellScratchBytes(water.gw,water.surface);
+            tag="zero_layer_reference";history(mode,cells,tag,expected);
+            bytes=cellScratchBytes(move_assigned,water_surface);
+            EXPECT_EQ(bytes,expected);tag="zero_layer_reused";history(mode,cells,tag,bytes);
+        }
+    if (const char* output=std::getenv("OPENSWMM_CELL_SCRATCH_HISTORY")) {
+        std::filesystem::create_directories(output);
+        auto bytes=history.bytes();
+        std::ofstream file(std::filesystem::path(output)/"ownership.bin",std::ios::binary);
+        file.write(bytes.data(),bytes.size());
+        ASSERT_TRUE(file.good());
+    }
+}
+
+// The stage advances its private mesh snow trial in place. A late refusal after
+// earlier cells changed that trial must leave the published owners unchanged.
+#include "2d/heat/MeshHeat.hpp"
+namespace stage_snow_trial {
+struct Rig {
+    Model m;
+    SimulationContext weather;
+    explicit Rig(bool local) {
+        const auto ok = [](const std::string& e) { if (!e.empty()) throw std::runtime_error(e); };
+        m.setup(true, 3);
+        if (local) {
+            m.context = SimulationContext{};
+            m.context.options.heat_transport = true;
+            auto& sediment = m.context.heat_config.sediment;
+            sediment.bed_thickness = 1; sediment.mesh_porosity = .3;
+            sediment.sed_density = 2650; sediment.sed_specific_heat = 850;
+            sediment.has_initial_temp = true; sediment.initial_temp = 10;
+            m.options.coupled_heat = true; m.options.bed_heat_model = 1;
+            m.options.heat_surface = m.options.heat_radiative = 0;
+            auto& t = m.surface.transport; t.resize(1, 3, 0); t.n_pollut = 0;
+            t.temp_row = 0; t.row_names = {"__TEMPERATURE__"};
+            for (int i = 0; i < 3; ++i) t.cell_mass[i] = 10 * m.surface.volume[i];
+            ok(initializeMeshHeat(m.context, m.mesh, m.surface, m.options));
+            m.gw = SubsurfaceSolver{}; m.sources = runoff::SourceWaterDriver{};
+            ok(m.sources.initialize(m.context, {}, {}));
+            m.preview.objects.clear(); m.preview.shares.clear();
+            m.preview.mesh_weather_area = m.mesh.tri_area;
+        }
+        weather.options.ignore_snow_melt = false;
+        weather.options.start_date = datetime::encodeDate(2026, 1, 1);
+        weather.options.end_date = weather.options.start_date + 14;
+        weather.options.total_duration_ms = 14 * 86400000.;
+        weather.climate_state.temperature = weather.climate_state.temperature_src = 22;
+        weather.climate_state.snow_divt = 32; weather.climate_state.humidity = 75;
+        for (int month = 0; month < 12; ++month) {
+            weather.options.humidity[month] = 75; weather.options.wind_speed[month] = 2;
+        }
+        weather.heat_config.cloud.configured = true; weather.heat_config.cloud.fraction = .5;
+        weather.snowpack_names.add("DD"); weather.snowpack_names.add("UEB");
+        weather.snowpacks.names = {"DD", "UEB"};
+        weather.snowpacks.pervious.assign(2, std::array<double, 7>{.02, .06, 32, .1, 6, .6, 0});
+        weather.snowpacks.config.model = surface::SnowKind::DegreeDay;
+        weather.snowpacks.config.packs[1].model = surface::SnowKind::Ueb;
+        weather.snowpacks.config.site = surface::ClimateSite{45, -120, -8, 1000};
+        weather.snowpacks.mesh_config.step = 1800;
+        weather.snowpacks.mesh_config.defaults["*"].pack = "UEB";
+        std::vector<surface::MeshSnowGeometry> geometry;
+        for (int i = 0; i < 3; ++i) {
+            geometry.push_back({"trial-" + std::to_string(i), m.preview.mesh_weather_area[i], 0, 0});
+            // Local cells are DD, UEB, unassigned: cell 0 changes before cell 1 refuses.
+            if (local) weather.snowpacks.mesh_config.cells[i].pack = i == 0 ? "DD" : i == 1 ? "UEB" : "NONE";
+        }
+        m.surface.snow_context = &weather;
+        ok(m.surface.snow.initialize(weather, geometry));
+        m.surface.rainfall.assign(3, 1e-7); m.surface.snow_catch.assign(3, 1.2);
+        ok(m.stage.initialize(m.mesh, m.surface, m.options, m.gw, m.sources, m.preview, local));
+    }
+    std::string step() { return m.stage.advance(m.stage.completedEnd(), m.stage.completedEnd() + .1); }
+    std::string save(const std::string& name) {
+        const auto path = restartPath(name);
+        return m.stage.saveCheckpoint(path.string()).empty() ? restartBytes(path) : std::string{};
+    }
+};
+}
+TEST(CommonSourceStage, MeshSnowTrialLateRefusalKeepsPublishedOwnersAndContinuesExactly) {
+    for (const bool local : {false, true}) {
+        const std::string tag = local ? "snow-trial-local" : "snow-trial-full";
+        stage_snow_trial::Rig r(local);
+        ASSERT_TRUE(r.m.surface.snow.active());
+        ASSERT_EQ(r.m.gw.active(), !local);
+        for (int i = 0; i < 3; ++i) ASSERT_EQ(r.step(), "");
+        const auto before = r.save(tag + "-before");
+        const auto snow = r.m.surface.snow.saveCheckpoint();
+        ASSERT_FALSE(before.empty());
+        if (local) {
+            ASSERT_TRUE(r.m.surface.snow.owns(0) && r.m.surface.snow.owns(1) && !r.m.surface.snow.owns(2));
+            r.m.surface.snow_catch[1] = -1;
+            EXPECT_EQ(r.step(), "Invalid mesh snow precipitation.");
+            r.m.surface.snow_catch[1] = 1.2;
+        } else {
+            const double value = r.m.surface.volume.back();
+            r.m.surface.volume.back() = -1;
+            EXPECT_EQ(r.step(), "Common source mesh water/forcing is invalid.");
+            r.m.surface.volume.back() = value;
+        }
+        EXPECT_EQ(r.m.surface.snow.saveCheckpoint(), snow);
+        EXPECT_EQ(r.save(tag + "-after-repair"), before);
+        stage_snow_trial::Rig reference(local);
+        ASSERT_EQ(reference.m.stage.loadCheckpoint(restartPath(tag + "-before").string()), "");
+        ASSERT_EQ(r.step(), "");
+        ASSERT_EQ(reference.step(), "");
+        EXPECT_NE(r.m.surface.snow.saveCheckpoint(), snow);
+        EXPECT_EQ(r.save(tag + "-continued"), reference.save(tag + "-reference"));
+    }
 }

@@ -1373,6 +1373,8 @@ int EXPORT_OPENSWMMCORE_SOLVER_API swmm_setValue(int property, int index, double
         if (!IsStartedFlag && index >= 0 && index < Nobjects[SUBCATCH])
             Subcatch[index].rptFlag = (value > 0.0);
         return 0;
+    case swmm_NODE_STORAGE_AREA:
+        return setNodeValue(property, index, -1, -1, value);
     case swmm_NODE_LATFLOW:
         setNodeLatFlow(index, value);
         return 0;
@@ -2244,6 +2246,13 @@ int setNodeValue(int property, int index, int subIndex, int pollutantIndex, doub
                 return 0;
             } else
                 return ERR_API_PROPERTY_VALUE;
+        case swmm_NODE_STORAGE_AREA:
+            if (!isfinite(value) || value < 0.0 || Node[index].type != JUNCTION ||
+                (value > 0.0 && RouteModel != DW) ||
+                !isfinite(value / (UCF(LENGTH) * UCF(LENGTH))))
+                return ERR_API_PROPERTY_VALUE;
+            Node[index].storageArea = value / (UCF(LENGTH) * UCF(LENGTH));
+            return 0;
         case swmm_NODE_PONDED_AREA:
             if (value >= 0.0) {
                 Node[index].pondedArea = value / UCF(LANDAREA);
@@ -2647,6 +2656,8 @@ static double getNodeValue(int property, int index, int subIndex, int pollutantI
             return (node->rptFlag > 0);
         case swmm_NODE_SURCHARGE_DEPTH:
             return node->surDepth * UCF(LENGTH);
+        case swmm_NODE_STORAGE_AREA:
+            return node->storageArea * UCF(LENGTH) * UCF(LENGTH);
         case swmm_NODE_PONDED_AREA:
             return node->pondedArea * UCF(LANDAREA);
         case swmm_NODE_INITIAL_DEPTH:
