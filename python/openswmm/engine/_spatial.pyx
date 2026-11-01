@@ -259,7 +259,12 @@ class Spatial:
         _check(swmm_spatial_set_subcatch_coord(h, i, x, y))
 
     def subcatchment_polygon(self, sub):
-        """Return the boundary polygon of *sub* as an ``(N, 2)`` array."""
+        """Return all boundary rings as a flat ``(N, 2)`` array.
+
+        Rings are concatenated and closed by repeating their first XY vertex;
+        the last ring may be open. Counts include repeated closing vertices.
+        Even/odd containment defines holes. The returned array is an owned copy.
+        """
         cdef int i = _resolve_subcatch(self._solver, sub)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int n = 0
@@ -271,7 +276,11 @@ class Spatial:
         return np.column_stack((xs, ys))
 
     def set_subcatchment_polygon(self, sub, polygon) -> None:
-        """Set the boundary polygon of *sub* from an ``(N, 2)`` array."""
+        """Set concatenated boundary rings from an ``(N, 2)`` array.
+
+        Close each ring by repeating its first XY vertex before starting the
+        next ring; the final ring may be open. Even/odd containment defines holes.
+        """
         cdef int i = _resolve_subcatch(self._solver, sub)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef np.ndarray[double, ndim=2] arr = np.ascontiguousarray(

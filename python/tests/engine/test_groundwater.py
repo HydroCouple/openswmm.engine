@@ -96,6 +96,8 @@ def test_independent_clock_stats_match_signed_tier_histogram(tmp_path):
     solver = open_model(tmp_path)
     try:
         gw = solver.surface2d.groundwater
+        assert {'GW_CLOCK', 'GW_BASE_STEP', 'GW_MAX_STEP', 'GW_BUDGET_FRACTION',
+                'GW_HEAD_TOLERANCE', 'GW_BINDS_SURFACE_DT'} <= set(gw.options)
         gw.options['GW_CLOCK'] = 'INDEPENDENT'
         gw.options['GW_MAX_STEP'] = '4'
         gw.options['CLOSURE'] = 'CLOSED_FORM'

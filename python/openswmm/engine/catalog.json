@@ -19267,7 +19267,7 @@
    "name": "set_subcatchment_polygon",
    "form": "method",
    "python": "Spatial.set_subcatchment_polygon",
-   "doc": "Set the boundary polygon of *sub* from an (N, 2) array.",
+   "doc": "Set concatenated boundary rings from an (N, 2) array.",
    "c": [
     "swmm_spatial_set_subcatch_polygon",
     "swmm_subcatch_count",
@@ -19314,7 +19314,7 @@
    "name": "subcatchment_polygon",
    "form": "method",
    "python": "Spatial.subcatchment_polygon",
-   "doc": "Return the boundary polygon of *sub* as an (N, 2) array.",
+   "doc": "Return all boundary rings as a flat (N, 2) array.",
    "c": [
     "swmm_spatial_get_subcatch_polygon",
     "swmm_spatial_get_subcatch_polygon_count",

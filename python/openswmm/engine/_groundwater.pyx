@@ -147,7 +147,9 @@ class AquiferLink:
 class AquiferOptions(EngineView, MutableMapping):
     """Text options using the native INP key/value spellings."""
     _keys = ('SOIL_CHAR', 'CLOSURE', 'M_LAYERS', 'CAPILLARY_DIFF', 'C_GW', 'C_COL',
-             'FORCE_CLOSED_FORM', 'MODE', 'DUNNE', 'GW_ET', 'NODE_ENROLMENT', 'LINK_SEEPAGE')
+             'FORCE_CLOSED_FORM', 'MODE', 'DUNNE', 'GW_ET', 'NODE_ENROLMENT', 'LINK_SEEPAGE',
+             'GW_CLOCK', 'GW_BASE_STEP', 'GW_MAX_STEP', 'GW_BUDGET_FRACTION',
+             'GW_HEAD_TOLERANCE', 'GW_BINDS_SURFACE_DT')
     def __len__(self):
         return len(self._keys)
     def __iter__(self):

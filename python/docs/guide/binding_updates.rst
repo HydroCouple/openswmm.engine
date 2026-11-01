@@ -32,9 +32,8 @@ Run the maintained checks from the repository root:
    python -m pytest python/tests/test_api_coverage.py python/tests/test_enum_drift.py python/tests/test_solver_pxd_attrs.py
 
 ``--json --coverage`` includes per-header totals and each public C function's
-Python member mapping. Five C convenience/error functions intentionally use
-Python-native equivalents: ``swmm_get_last_error``, ``swmm_get_last_error_msg``,
-``swmm_get_current_time``, ``swmm_coupling_set_source`` and
+Python member mapping. Three C convenience functions intentionally use
+Python-native equivalents: ``swmm_get_current_time``, ``swmm_coupling_set_source`` and
 ``swmm_coupling_advance_to``. These exclusions remain checked against drift.
 The machine-readable engine catalog also includes the standalone
 ``surface_output`` reader root.
