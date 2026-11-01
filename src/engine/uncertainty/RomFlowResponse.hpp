@@ -49,6 +49,7 @@ namespace openswmm::uncertainty {
 /// (outfall or inactive node, phi = 0).
 struct FlowEdge {
     int up = -1, dn = -1;
+    int link = -1;     ///< engine link index (diagnostics and per-member storage ratings)
     bool conduit = true;
     double q  = 0.0;   ///< |Q| (conduits; source term)
     double ju = 0.0;   ///< conduit dQ/dh_up

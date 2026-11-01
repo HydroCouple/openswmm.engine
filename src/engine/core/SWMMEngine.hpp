@@ -749,7 +749,7 @@ public:
     int& rom1dModeCountOverride() noexcept { return rom1d_k_modes_override_; }
     /// Internal A/B hook: quasi-static residual of the Manning channel (default on). Set before initialize().
     bool& rom1dQuasiStatic() noexcept { return rom1d_qsr_; }
-    /// Diagnostic: Gauss-Seidel sweeps of the last additive-channel step (max over planes).
+    /// Diagnostic: solver passes of the last additive-channel step (1 since the direct solve).
     int rom1dAdditiveSweeps() const noexcept { return rom1d_add_sweeps_; }
     /// Diagnostic: number of additive-channel planes on the last step (H19).
     int rom1dAdditivePlanes() const noexcept { return rom1d_add_np_; }
@@ -759,6 +759,20 @@ public:
     const std::vector<double>& rom1dModeRates() const noexcept { return rom1d_h18_rates_; }
     /// Diagnostic: node storage S (ft^2) of the last H18 assembly, active space.
     const std::vector<double>& rom1dStorage() const noexcept { return rom1d_h18_S_; }
+    /// Diagnostics: the oriented flow-response edges (H17/H19) and the additive
+    /// channel state (P planes × active nodes) of the last step.
+    const std::vector<uncertainty::FlowEdge>& rom1dFlowEdges() const noexcept { return rom1d_fs_edges_; }
+    const std::vector<double>& rom1dAdditiveState() const noexcept { return rom1d_add_state_; }
+    /// Diagnostics: the storage nodes whose members carry their own level
+    /// (active indices), and those levels relative to the main run
+    /// (nodes x members, ft) after the last step. ADDITIVE_CHANNEL.md §7.
+    const std::vector<int>& rom1dStorageMemberNodes() const noexcept { return rom1d_nl_nodes_; }
+    const std::vector<double>& rom1dStorageMemberLevels() const noexcept { return rom1d_nl_y_; }
+    /// Diagnostic: per-member correction field (members x active nodes, ft).
+    const std::vector<double>& rom1dMemberCorrection() const noexcept { return rom1d_corr_; }
+    /// Per-member storage and rim levels (default OFF: stable on the threshold gate, not yet on
+    /// Bellinge's coupled storage, 2026-10-24). Set before the first step.
+    bool& rom1dStorageMembersEnabled() noexcept { return rom1d_nl_enabled_; }
     /// Diagnostic: conductance Laplacian Lc (ft^2/s) of the last H18 assembly, active space.
     const uncertainty::CsrGraph& rom1dConductance() const noexcept { return rom1d_h18_Lc_; }
     /// Diagnostic: the last flow-response field phi per active node (H17).
@@ -790,6 +804,24 @@ private:
     void computeRom1dStorage() noexcept;
     /** @brief H19: advance every additive plane one backward-Euler step and hand them to the ROM. */
     void stepRom1dAdditiveChannel(double dt) noexcept;
+    /** @brief Per-member levels at storage nodes with real outlet ratings, and
+     *  one correction field per member for what the shared planes mis-deliver
+     *  downstream (ADDITIVE_CHANNEL.md §7). Called by stepRom1dAdditiveChannel. */
+    void stepRom1dStorageMembers(double dt, const std::vector<std::vector<double>>& q,
+                                 const std::vector<std::vector<double>>& kap) noexcept;
+    std::vector<uncertainty::FlowEdge> rom1d_fs_dry_edges_;   ///< dry pipes with a member-range secant (rain channel only)
+    std::vector<uncertainty::FlowEdge> rom1d_add_edges_;      ///< the rain channel's edges: flowing links + dry pipes
+    bool rom1d_nl_init_ = false;
+    bool rom1d_nl_enabled_ = false;  ///< per-member storage/rim levels: off until stable on Bellinge (ADDITIVE_CHANNEL.md §7)
+    std::vector<int> rom1d_nl_nodes_;                     ///< active indices of storage nodes
+    std::vector<double> rom1d_nl_y_;                      ///< nodes x members, level above the main run (ft)
+    std::vector<std::vector<double>> rom1d_nl_link_dq_;   ///< per link: members' extra outflow (cfs), storage out-links only
+    std::vector<double> rom1d_corr_;                      ///< members x active nodes (ft)
+    std::vector<char> rom1d_nl_struct_;                   ///< storage node with a structure link
+    std::vector<int> rom1d_cp_of_active_;                 ///< coupling point per active node (-1 none)
+    std::vector<char> rom1d_rom_pinned_;                  ///< ROM pin mask: spilling, minus per-member nodes
+    std::vector<char> rom1d_corr_pinned_;
+    uncertainty::AdditiveSystem rom1d_corr_sys_;
     std::vector<double> rom1d_fs_relay_;   ///< H18: per-link head relay (1 - Froude gate) from the flow response
     std::vector<double> rom1d_h18_wsym_, rom1d_h18_diag_, rom1d_h18_S_, rom1d_h18_rates_, rom1d_h18_tmp_;
     uncertainty::CsrGraph rom1d_h18_Lc_;

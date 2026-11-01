@@ -31,29 +31,38 @@ using openswmm::uncertainty::csr_matvec;
 
 bool DeviationOperator2D::invertSpd_(std::vector<double>& G, std::size_t nk,
                                      std::vector<double>& Ginv) {
-    Ginv.assign(nk * nk, 0.0);
-    for (std::size_t i = 0; i < nk; ++i) Ginv[i * nk + i] = 1.0;
-    for (std::size_t c = 0; c < nk; ++c) {
-        std::size_t piv = c;
-        for (std::size_t r = c + 1; r < nk; ++r)
-            if (std::abs(G[r * nk + c]) > std::abs(G[piv * nk + c])) piv = r;
-        if (std::abs(G[piv * nk + c]) < 1e-300) return false;
-        if (piv != c)
-            for (std::size_t j = 0; j < nk; ++j) {
-                std::swap(G[c * nk + j], G[piv * nk + j]);
-                std::swap(Ginv[c * nk + j], Ginv[piv * nk + j]);
-            }
-        const double inv = 1.0 / G[c * nk + c];
-        for (std::size_t j = 0; j < nk; ++j) { G[c * nk + j] *= inv; Ginv[c * nk + j] *= inv; }
-        for (std::size_t r = 0; r < nk; ++r) {
-            if (r == c) continue;
-            const double f = G[r * nk + c];
-            if (f == 0.0) continue;
-            for (std::size_t j = 0; j < nk; ++j) {
-                G[r * nk + j]    -= f * G[c * nk + j];
-                Ginv[r * nk + j] -= f * Ginv[c * nk + j];
-            }
+    // Cholesky G = R·Rᵀ (lower R), then Ginv = R⁻ᵀ·R⁻¹. Symmetric and
+    // backward-stable on an SPD matrix, unlike the Gauss-Jordan it replaces
+    // (2026-10-23), which had no symmetry to lean on when the Gram's entries
+    // span many orders of magnitude (depth-weighted trial space, few wet cells).
+    std::vector<double>& R = G;    // factor in place
+    for (std::size_t j = 0; j < nk; ++j) {
+        double d = R[j * nk + j];
+        for (std::size_t k = 0; k < j; ++k) d -= R[j * nk + k] * R[j * nk + k];
+        if (!(d > 0.0)) return false;
+        const double rjj = std::sqrt(d);
+        R[j * nk + j] = rjj;
+        for (std::size_t i = j + 1; i < nk; ++i) {
+            double v = R[i * nk + j];
+            for (std::size_t k = 0; k < j; ++k) v -= R[i * nk + k] * R[j * nk + k];
+            R[i * nk + j] = v / rjj;
         }
+    }
+    // Ginv = R⁻ᵀ R⁻¹: solve R·Y = I column by column (forward), then Rᵀ·X = Y (back).
+    Ginv.assign(nk * nk, 0.0);
+    std::vector<double> col(nk);
+    for (std::size_t c = 0; c < nk; ++c) {
+        for (std::size_t i = 0; i < nk; ++i) {
+            double v = (i == c) ? 1.0 : 0.0;
+            for (std::size_t k = 0; k < i; ++k) v -= R[i * nk + k] * col[k];
+            col[i] = v / R[i * nk + i];
+        }
+        for (std::size_t ii = nk; ii-- > 0;) {
+            double v = col[ii];
+            for (std::size_t k = ii + 1; k < nk; ++k) v -= R[k * nk + ii] * col[k];
+            col[ii] = v / R[ii * nk + ii];
+        }
+        for (std::size_t i = 0; i < nk; ++i) Ginv[i * nk + c] = col[i];
     }
     return true;
 }
@@ -88,10 +97,19 @@ bool DeviationOperator2D::assemble(const MeshData& mesh,
     std::vector<double> w_cell;
     if (h_cell != nullptr) {
         w_cell.assign(static_cast<std::size_t>(n), 1.0);
-        double h_sum = 0.0;
-        for (int t = 0; t < n; ++t)
-            h_sum += std::max(h_cell[static_cast<std::size_t>(t)], 0.0);
-        const double h_mean = h_sum / static_cast<double>(n);
+        // h̄ over the WET cells, floored at the dry threshold: on a mesh where
+        // 12 of 155,688 cells are wet (Bellinge, onset of rain) the all-cell
+        // mean is ~1e-5 m and (h/h̄)^{5/3} spans 17 orders of magnitude, which
+        // the projected operator could not hold (eigenvalue −0.43/s, members
+        // grew 1e14 in 20 min). The wet mean keeps the contrast at what the
+        // wet cells themselves show.
+        const double h_dry = similarity_floor > 0.0 ? similarity_floor : 1.0e-3;
+        double h_sum = 0.0; int n_wet = 0;
+        for (int t = 0; t < n; ++t) {
+            const double h_t = std::max(h_cell[static_cast<std::size_t>(t)], 0.0);
+            if (h_t > h_dry) { h_sum += h_t; ++n_wet; }
+        }
+        const double h_mean = n_wet > 0 ? std::max(h_sum / static_cast<double>(n_wet), h_dry) : 0.0;
         if (h_mean > 1.0e-9) {
             const double inv_h53 = 1.0 / std::pow(h_mean, 5.0 / 3.0);
             for (int t = 0; t < n; ++t) {
@@ -283,8 +301,14 @@ bool DeviationOperator2D::assemble(const MeshData& mesh,
     }
     GinvArea.clear();
 
-    // Relative coordinates, Galerkin in the trial space span(H·P):
-    //   A = (HP)ᵀ·L·(HP),  G = (HP)ᵀ(HP),  M = G⁻¹·A.
+    // Relative coordinates, Galerkin in the trial space span(H·P), in the
+    // cell-VOLUME inner product (2026-10-23; before: plain inner product):
+    //   A_v = (HP)ᵀ·A·L·(HP) = (HP)ᵀ·B·(HP),  G = (HP)ᵀ·A·(HP),  M = G⁻¹·A_v.
+    // B's symmetric part is the face dissipation (with skew_advection), so
+    // the energy (HP δa)ᵀ A (HP δa) cannot grow whatever the depth contrast;
+    // the plain inner product had no such bound on Bellinge's 233:1 cell
+    // areas. On a uniform mesh the two coincide, so the plane and channel
+    // calibrations are unchanged by construction.
     const double fl = similarity_floor > 0.0 ? similarity_floor : 1.0e-3;
     std::vector<double> hf(nn), hp(nn, 0.0);
     for (std::size_t t = 0; t < nn; ++t) hf[t] = std::max(similarity_h[t], fl);
@@ -297,7 +321,7 @@ bool DeviationOperator2D::assemble(const MeshData& mesh,
             const double* Pp = &basis.P[p * nn];
             double a = 0.0, g = 0.0;
             for (std::size_t t = 0; t < nn; ++t) {
-                const double hpp = hf[t] * Pp[t];
+                const double hpp = mesh.tri_area[t] * hf[t] * Pp[t];
                 a += hpp * y[t];
                 g += hpp * hp[t];
             }
@@ -307,6 +331,7 @@ bool DeviationOperator2D::assemble(const MeshData& mesh,
     }
     // G is SPD (H floored positive, P orthonormal columns); k is O(10-100).
     if (!invertSpd_(G, nk, Ginv)) return false;
+    GramWeight.assign(mesh.tri_area.begin(), mesh.tri_area.begin() + static_cast<std::ptrdiff_t>(nn));
     for (std::size_t p = 0; p < nk; ++p)
         for (std::size_t q = 0; q < nk; ++q) {
             double s = 0.0;

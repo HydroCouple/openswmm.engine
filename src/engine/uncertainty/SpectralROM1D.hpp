@@ -279,6 +279,14 @@ struct SpectralROM1D {
     /// Psi: n_planes x n_nodes (row-major); kappa: n_ensemble x n_planes. Copied.
     void setAdditivePlanes(int n_planes, const double* psi, const double* kappa);
 
+    /// Per-member additive correction (n_ensemble x n_nodes, row-major), added
+    /// to member i's head next to sum_p kappa_ip * Psi_p. It carries what the
+    /// shared planes cannot: deviations that are not kappa times one shape,
+    /// such as a storage node whose outlet starts at a threshold (each member's
+    /// own level, docs/uncertainty/ADDITIVE_CHANNEL.md §7). Copied; nullptr clears.
+    void setMemberAdditive(const double* corr);
+    bool hasMemberAdditive() const noexcept { return !add_member_.empty(); }
+
     /// Per-mode rates (1/s, length n_kept) used in place of the basis
     /// eigenvalues by advance(). Cleared by every successful rebuild.
     void setModeRates(const double* rates);
@@ -476,6 +484,15 @@ struct SpectralROM1D {
      * @param active_node  Active ROM node index (0..n_nodes-1).
      * @return Reconstructed head (≥ 0).
      */
+    /**
+     * @brief As reconstructHead() but ignoring setPinnedNodes(): at a spilling
+     *        node it returns the head the member's deviation would give if the
+     *        rim did not hold it, i.e. the member's extra water expressed as a
+     *        level. The 2D coupling drives each member's spill with this; the
+     *        pinned value would make every member spill identically (Bellinge,
+     *        real storm: 2D coverage 0.23 with the pinned head).
+     */
+    double reconstructHeadUnpinned(int member, int active_node) const noexcept;
     double reconstructHead(int member, int active_node) const noexcept;
 
     /// Deterministic head the deviations are taken against at @p active_node
@@ -498,6 +515,7 @@ struct SpectralROM1D {
      *        stop spilling are not represented; see VALIDATION.md.
      */
     void setPinnedNodes(const std::vector<char>* pinned_active) noexcept { pinned_ = pinned_active; }
+
     bool isPinned(int active_node) const noexcept {
         return pinned_ && static_cast<std::size_t>(active_node) < pinned_->size()
                && (*pinned_)[static_cast<std::size_t>(active_node)] != 0;
@@ -527,6 +545,7 @@ private:
     std::vector<double> qsr_r_, qsr_mm1_;
     std::size_t add_np_ = 0;                    ///< H19 additive planes
     std::vector<double> add_psi_, add_kappa_;   ///< H19 Psi (P x n) and kappa (M x P)
+    std::vector<double> add_member_;            ///< per-member correction (M x n), empty when none
 
     std::vector<double> soft_u_;             ///< Fixed shuffled-strata percentiles u_i.
     std::vector<double> soft_z_;             ///< probit(u_i) — normal/lognormal coefficient.

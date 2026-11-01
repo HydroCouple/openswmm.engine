@@ -113,6 +113,10 @@ struct DeviationOperator2D {
     const double* similarity_h = nullptr;
     double similarity_floor = 1.0e-3;
     std::vector<double> Ginv; ///< k×k row-major, set by assemble() when similarity_h != null.
+    /// Cell weights of the inner product Ginv belongs to (the cell areas: the
+    /// relative Gram is volume-weighted since 2026-10-23). Pass with Ginv to
+    /// SpectralROM::setRelativeGram so its projections use the same inner product.
+    std::vector<double> GramWeight;
 
     // ---- set by assemble() ----
 

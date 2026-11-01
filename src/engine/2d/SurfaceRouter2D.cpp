@@ -2406,6 +2406,7 @@ void SurfaceRouter2D::refreshROMOperator() {
         rom_->setAdditiveOperator({});
     }
     rom_operator_.similarity_h = rom_->relative_deviation ? state_.depth.data() : nullptr;
+    rom_operator_.skew_advection = rom_->relative_deviation;   // energy-stable with the volume form
     const bool ok = rom_operator_.assemble(
         mesh_, *rom_basis_, D_scale, state_.depth.data(),
         state_.face_vx.data(), state_.face_vy.data(), rom_ground_w_.data());
@@ -2413,8 +2414,8 @@ void SurfaceRouter2D::refreshROMOperator() {
 
     rom_->setReducedOperator(rom_operator_.M);
     // Relative mode's forcing projections need the same Gram matrix.
-    rom_->setRelativeGram(rom_operator_.similarity_h ? rom_operator_.Ginv
-                                                     : std::vector<double>{});
+    rom_->setRelativeGram(rom_operator_.similarity_h ? rom_operator_.Ginv : std::vector<double>{},
+                          rom_operator_.similarity_h ? rom_operator_.GramWeight : std::vector<double>{});
 
     // PR H15: with a spatially correlated Manning field (MANNINGS_CORR_LEN),
     // one shared operator cannot carry the per-member roughness. Assemble one

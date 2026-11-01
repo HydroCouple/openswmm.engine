@@ -221,6 +221,25 @@ public:
     void scatterHeldSurfArea(SimulationContext& ctx,
                              double* node_new_surf_area, int link_idx);
 
+    /// @brief Flow (signed, node1 → node2) of one orifice, weir or outlet if
+    ///        node @p node_idx's depth were shifted by @p dy, with every field
+    ///        the flow routine writes restored afterwards: the deterministic
+    ///        state is left bit-identical. Returns NaN for any other link
+    ///        type (pumps switch, conduits are not structures). Used by the
+    ///        uncertainty sidecar to take the secant of a structure's rating
+    ///        over the head range its ensemble spans.
+    double flowAtShiftedDepth(SimulationContext& ctx, int link_idx, int node_idx, double dy);
+    /// Pump flow (cfs) from its curve at inlet depth `depth_ft`, with the
+    /// startup/shutoff depths judged at that depth (no hysteresis memory).
+    /// Pure: reads only. Depth curves (PUMP2, PUMP4); NaN for volume, head
+    /// and ideal pumps, whose flow is not a function of the inlet depth alone.
+    double pumpFlowAtDepth(const SimulationContext& ctx, int link_idx, double depth_ft) const;
+    /// True when a pump's flow and its on/off follow from its inlet depth alone:
+    /// a depth curve (PUMP2/PUMP4) with a startup or shutoff depth. A pump
+    /// with neither is switched by control rules (or always on), which a
+    /// per-member level cannot reproduce.
+    bool pumpDepthRated(int link_idx) const;
+
 private:
     friend class openswmm::SWMMEngine;
     PumpGroup    pumps_;

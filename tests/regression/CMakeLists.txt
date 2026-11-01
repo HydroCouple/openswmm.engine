@@ -266,6 +266,17 @@ if(OPENSWMM_BUILD_2D)
     set_tests_properties(regression_soft_rain_coverage PROPERTIES LABELS "regression")
     openswmm_stage_test_runtime_deps(test_soft_rain_coverage)
 
+    # ---- Basin behind a weir: per-member storage levels vs brute-force MC ----
+    # docs/uncertainty/ADDITIVE_CHANNEL.md §7. Two scenarios (main run spills /
+    # stops just below the crest), 2 x 21 MC runs + 4 ROM runs, under a minute.
+    add_executable(test_storage_threshold_coverage test_storage_threshold_coverage.cpp)
+    target_link_libraries(test_storage_threshold_coverage PRIVATE GTest::gtest GTest::gtest_main openswmm_engine)
+    target_include_directories(test_storage_threshold_coverage PRIVATE ${PROJECT_SOURCE_DIR}/include ${PROJECT_SOURCE_DIR}/src/engine)
+    set_target_properties(test_storage_threshold_coverage PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+    add_test(NAME regression_storage_threshold_coverage COMMAND $<TARGET_FILE:test_storage_threshold_coverage>)
+    set_tests_properties(regression_storage_threshold_coverage PROPERTIES LABELS "regression")
+    openswmm_stage_test_runtime_deps(test_storage_threshold_coverage)
+
     # ---- SP3: correlated soft-rain ROM vs correlated MC (CL-1e / SR-5b) ------
     # Needs CorrelatedFieldGenerator (2D-only compiled) for its MC reference, so
     # it stays inside this 2D block.

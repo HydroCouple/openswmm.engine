@@ -874,7 +874,7 @@ TEST(DeviationOperator2D, ManningElasticityScalesTheFixedPointExactlyAndOneIsBit
 
 namespace {
 
-struct TwoChannelOps { std::vector<double> plain, rel, ginv; };
+struct TwoChannelOps { std::vector<double> plain, rel, ginv, wt; };
 
 TwoChannelOps twoChannelOps(const MeshData& mesh, const MeshEigenBasis& basis,
                             const std::vector<double>& h, const std::vector<double>& u,
@@ -886,7 +886,7 @@ TwoChannelOps twoChannelOps(const MeshData& mesh, const MeshEigenBasis& basis,
     o.plain = op.M;
     op.similarity_h = h.data();
     EXPECT_TRUE(op.assemble(mesh, basis, 1.7, h.data(), u.data(), v.data(), gw.data()));
-    o.rel = op.M; o.ginv = op.Ginv;
+    o.rel = op.M; o.ginv = op.Ginv; o.wt = op.GramWeight;
     return o;
 }
 
@@ -915,7 +915,7 @@ TEST(DeviationOperator2D, TwoChannelRainOnlyReproducesTheAbsoluteRom) {
     make(abs_rom); make(two);
     abs_rom.setReducedOperator(ops.plain);
     two.relative_deviation = true;
-    two.setReducedOperator(ops.rel); two.setRelativeGram(ops.ginv); two.setAdditiveOperator(ops.plain);
+    two.setReducedOperator(ops.rel); two.setRelativeGram(ops.ginv, ops.wt); two.setAdditiveOperator(ops.plain);
     ASSERT_TRUE(two.twoChannel());
     for (int step = 0; step < 8; ++step) {
         abs_rom.advance(30.0, 1.0, rain.data(), nullptr, h.data());
@@ -947,7 +947,7 @@ TEST(DeviationOperator2D, TwoChannelManningOnlyLeavesTheAdditiveChannelEmpty) {
     SpectralROM two;
     h15MakeRom(two, basis, M, mann, h, nullptr);
     two.relative_deviation = true;
-    two.setReducedOperator(ops.rel); two.setRelativeGram(ops.ginv); two.setAdditiveOperator(ops.plain);
+    two.setReducedOperator(ops.rel); two.setRelativeGram(ops.ginv, ops.wt); two.setAdditiveOperator(ops.plain);
     for (int step = 0; step < 8; ++step) two.advance(30.0, 1.0, nullptr, nullptr, h.data());
     for (double a : two.a_add) EXPECT_EQ(a, 0.0);
     double max_a = 0.0;
@@ -977,4 +977,43 @@ TEST(DeviationOperator2D, GalerkinRelativeOperatorReducesToPlainForUniformDepth)
     double scale = 0.0;
     for (double x : plain) scale = std::max(scale, std::fabs(x));
     EXPECT_LT(maxAbsDiff(plain, op.M), 1e-10 * scale);
+}
+
+TEST(DeviationOperator2D, TwoChannelManningTargetDoesNotDependOnCellArea) {
+    // The relative Gram is volume-weighted (2026-10-23), so the Manning target
+    // G⁻¹·(HP)ᵀ·(h ⊙ 1) must be projected in the same inner product. A plain
+    // projection scaled the target by one over the cell area: the W3 plane's
+    // 12.5 m² cells gave a band 12.5x narrow (0.109 against 1.360). The same
+    // mesh at 10 m and 100 m across (cell areas 100x apart) must give the same
+    // target fraction field.
+    std::vector<std::vector<double>> frac(2);
+    const double domains[2] = {10.0, 100.0};
+    for (int d = 0; d < 2; ++d) {
+        auto mesh = makeStructuredMesh(6, domains[d]);
+        MeshEigenBasis basis;
+        std::vector<double> u, v, gw, h;
+        h15Fixture(mesh, u, v, gw, h);
+        for (int i = 0; i < mesh.n_triangles(); ++i)
+            gw[static_cast<std::size_t>(i)] = mesh.tri_cx[static_cast<std::size_t>(i)] < 0.1 * domains[d] ? 0.25 : 0.0;
+        ASSERT_TRUE(basis.build(mesh, 8, gw.data()));
+        const auto ops = twoChannelOps(mesh, basis, h, u, v, gw);
+        const int M = 9;
+        std::vector<double> mann(static_cast<std::size_t>(M));
+        for (int i = 0; i < M; ++i) mann[static_cast<std::size_t>(i)] = 0.8 + 0.4 * (i + 0.5) / M;
+        SpectralROM two;
+        h15MakeRom(two, basis, M, mann, h, nullptr);
+        two.relative_deviation = true;
+        two.setReducedOperator(ops.rel); two.setRelativeGram(ops.ginv, ops.wt); two.setAdditiveOperator(ops.plain);
+        two.advance(30.0, 1.0, nullptr, nullptr, h.data());
+        const auto nt = static_cast<std::size_t>(mesh.n_triangles());
+        frac[static_cast<std::size_t>(d)].assign(nt, 0.0);
+        for (int j = 0; j < two.n_kept; ++j)
+            for (std::size_t t = 0; t < nt; ++t)
+                frac[static_cast<std::size_t>(d)][t] += basis.P[static_cast<std::size_t>(j) * nt + t] * two.b_coarse[static_cast<std::size_t>(j)];
+    }
+    double mean = 0.0;
+    for (double f : frac[0]) mean += f;
+    mean /= static_cast<double>(frac[0].size());
+    EXPECT_NEAR(mean, 1.0, 0.5) << "the target is the constant fraction 1, projected";
+    EXPECT_LT(maxAbsDiff(frac[0], frac[1]), 1e-8);
 }

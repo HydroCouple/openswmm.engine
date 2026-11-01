@@ -176,7 +176,9 @@ struct SpectralROM {
 
     /// Relative mode: install G⁻¹ = ((HP)ᵀ(HP))⁻¹ (k×k row-major) from the
     /// same DeviationOperator2D assembly that produced the reduced operator.
-    void setRelativeGram(const std::vector<double>& Ginv);
+    /// weight: the cell weights of Ginv's inner product (DeviationOperator2D::GramWeight);
+    /// empty = plain. The Manning target is projected in the same inner product.
+    void setRelativeGram(const std::vector<double>& Ginv, const std::vector<double>& weight = {});
 
     /// Relative mode only: the depth (m) below which h_det is floored when
     /// converting an absolute forcing to a fractional rate. A dry cell's
@@ -661,6 +663,39 @@ struct SpectralROM {
     /// when not installed). reducedOperatorAdd() is the additive channel's.
     const std::vector<double>& reducedOperator() const noexcept { return reduced_M_; }
     const std::vector<double>& reducedOperatorAdd() const noexcept { return reduced_M_add_; }
+    /// Diagnostics: cumulative exchange deviation (m³) of member i at coupling
+    /// point cp since the last seed(); 0 when never coupled.
+    /// Diagnostics: the pond-level deviation (m) of member i at coupling point
+    /// cp: its exchanged volume over the pond footprint's area.
+    double couplingResidual(std::size_t cp, int member) const noexcept {
+        const auto k = cp * static_cast<std::size_t>(n_ensemble) + static_cast<std::size_t>(member);
+        if (k >= coupling_vol_.size() || cp >= pond_area_.size() || !(pond_area_[cp] > 0.0)) return 0.0;
+        return -coupling_vol_[k] / pond_area_[cp];
+    }
+    /// Diagnostics: the pond footprint (cell indices) of coupling point cp.
+    const std::vector<int>& pondCells(std::size_t cp) const { return pond_cells_.at(cp); }
+    /// Pond area (m^2) of coupling point cp from the last applyCouplingFlux.
+    double pondArea(std::size_t cp) const noexcept { return cp < pond_area_.size() ? pond_area_[cp] : 0.0; }
+    /// Member i's water depth (m) at coupling point cp's cell, the level the
+    /// exchange sees: deterministic depth plus the member's modal deviations,
+    /// minus the member's exchanged volume over the pond. -1 when unknown.
+    double memberCouplingDepth(std::size_t cp, int member) const noexcept;
+    /// Deterministic water depth (m) at coupling point cp's cell, -1 when unknown.
+    double detCouplingDepth(std::size_t cp) const noexcept {
+        if (cp >= coupling_cell_.size() || coupling_cell_[cp] < 0) return -1.0;
+        return std::max(h_det_last_[static_cast<std::size_t>(coupling_cell_[cp])], 0.0);
+    }
+    /// Exchange volumes (m^3, deviation from the deterministic exchange,
+    /// positive into the pipe) per coupling point × member, computed by the
+    /// 1D ROM where a member carries its own manhole level
+    /// (ADDITIVE_CHANNEL.md §8). Booked by the next applyCouplingFlux instead
+    /// of the local orifice law, then cleared, so both sides move the same
+    /// water. NaN entries: computed locally as before.
+    void setExternalCouplingVolume(std::vector<double> vol) { ext_vol_ = std::move(vol); }
+    double couplingVolume(std::size_t cp, int member) const noexcept {
+        const auto k = cp * static_cast<std::size_t>(n_ensemble) + static_cast<std::size_t>(member);
+        return k < coupling_vol_.size() ? coupling_vol_[k] : 0.0;
+    }
 
 private:
     std::vector<double> reduced_M_;   ///< k×k row-major (1/s); empty = diagonal path.
@@ -676,6 +711,32 @@ private:
     std::vector<double> reduced_M_add_;   ///< additive-channel operator (k×k); empty = off
     std::vector<double> add_ginv_;        ///< volume-Gram inverse for the additive projection; empty = plain
     std::vector<double> add_proj_buf_;    ///< k scratch: G⁻¹·P[:,c]·A_c for one coupling point
+    /// Cumulative exchange DEVIATION per coupling point and member,
+    /// [cp * n_ensemble + i], m³, + = drained from the surface into that
+    /// member's manhole beyond the deterministic exchange; spread over the
+    /// pond footprint (pond_cells_). Reset by seed().
+    std::vector<double> coupling_vol_;
+    /// Pond footprint per coupling point: the cells the exchanged volume of a
+    /// member spreads over, and their total area. The k smooth modes cannot
+    /// hold a pond (projected, a member's exchanged volume landed on the
+    /// near-constant mode and spread over the whole 35 km² mesh), and one cell
+    /// cannot either (the volume stood as a column on the manhole's cell while
+    /// the members filled the cells around it). The footprint is the
+    /// deterministic pond around the coupling cell: the connected cells deeper
+    /// than pond_depth, at most pond_max_cells of them, always including the
+    /// coupling cell. A member's volume V raises the whole footprint's level
+    /// by V / area, which is how a still pond answers extra water; the
+    /// exchange sees the same level, so the member's pond reaches its
+    /// manhole level and the exchange equalises. Recomputed every exchange
+    /// from the deterministic depth; the volumes are kept, so a growing or
+    /// shrinking pond re-spreads them without loss. The 2D analogue of the 1D
+    /// quasi-static residual (H17). Reset by seed().
+    std::vector<std::vector<int>> pond_cells_;
+    std::vector<double> pond_area_;
+    std::vector<int> coupling_cell_;          ///< cell index per coupling point of the last call
+    std::vector<double> ext_vol_;             ///< external exchange volumes (cp × member), consumed once
+    double pond_depth = 0.01;      ///< m: a cell belongs to a pond when deeper than this
+    int    pond_max_cells = 5000;  ///< cap: a footprint never spans a whole flooded plain
     std::vector<double> reduced_A_add_;
     std::vector<double> reduced_g_add_;
     openswmm::uncertainty::BatchPropagator reduced_batch_add_;
@@ -756,6 +817,7 @@ private:
     /// 1/max(h_det, relative_depth_floor) in relative mode, exactly 1.0 otherwise.
     std::vector<double> rel_w_;
     std::vector<double> rel_ginv_;     ///< G⁻¹ for relative mode (k×k); empty = identity.
+    std::vector<double> rel_wt_;       ///< cell weights of rel_ginv_'s inner product; empty = plain
     std::vector<double> rel_tmp_;      ///< k scratch for applyGinv_().
     /// In place v ← G⁻¹·v (no-op unless relative mode has a Gram installed).
     void applyGinv_(double* v);

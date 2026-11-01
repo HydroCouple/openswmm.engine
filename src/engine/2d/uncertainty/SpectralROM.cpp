@@ -342,6 +342,9 @@ void SpectralROM::seed(const double* h_full) {
     // computeQuantiles() until the next advance() supplies a fresh reference.
     std::fill(a_ensemble.begin(), a_ensemble.end(), 0.0);
     std::fill(a_add.begin(), a_add.end(), 0.0);
+    coupling_vol_.clear();
+    pond_cells_.clear();
+    pond_area_.clear();
     h_det_last_.assign(h_full, h_full + static_cast<std::size_t>(n_tri));
 }
 
@@ -360,11 +363,14 @@ void SpectralROM::setAdditiveOperator(const std::vector<double>& M_in,
     add_ginv_ = M_in.empty() ? std::vector<double>{} : Ginv_in;
 }
 
-void SpectralROM::setRelativeGram(const std::vector<double>& Ginv) {
+void SpectralROM::setRelativeGram(const std::vector<double>& Ginv, const std::vector<double>& weight) {
     const auto kk = static_cast<std::size_t>(n_kept) * static_cast<std::size_t>(n_kept);
     if (!Ginv.empty() && Ginv.size() != kk)
         throw std::invalid_argument("SpectralROM::setRelativeGram: size mismatch");
+    if (!weight.empty() && weight.size() != static_cast<std::size_t>(n_tri))
+        throw std::invalid_argument("SpectralROM::setRelativeGram: weight size mismatch");
     rel_ginv_ = Ginv;
+    rel_wt_ = Ginv.empty() ? std::vector<double>{} : weight;
 }
 
 void SpectralROM::applyGinv_(double* v) {
@@ -421,8 +427,13 @@ void SpectralROM::advance(double dt, double K_eff, const double* rainfall,
         if (relative_deviation && !rel_ginv_.empty()) {
             // Two-channel: reduced coordinates of the constant fraction
             // field f = 1 in the weighted Galerkin space, G⁻¹·Pᵀ(h ⊙ h).
-            for (std::size_t t = 0; t < nt; ++t)
-                dot_b += Pj[t] * Hw[t] * Hw[t];
+            // In the Gram's own inner product: a volume-weighted Gram with a
+            // plain projection scaled the target by one over the cell area
+            // (W3 plane: 12.5 m² cells, band 12.5x narrow, 2026-10-24).
+            if (rel_wt_.size() == nt)
+                for (std::size_t t = 0; t < nt; ++t) dot_b += rel_wt_[t] * Pj[t] * Hw[t] * Hw[t];
+            else
+                for (std::size_t t = 0; t < nt; ++t) dot_b += Pj[t] * Hw[t] * Hw[t];
         } else if (relative_deviation) {
             // Original H16 (no Gram): the constant field itself.
             for (std::size_t t = 0; t < nt; ++t)
@@ -993,6 +1004,29 @@ void SpectralROM::computeQuantiles(const double* h_det, bool parametric_tails) {
         }
     };
 
+    // Pond-level deviations from the coupling exchange (see pond_cells_):
+    // per cell, the sum over the footprints that contain it.
+    std::vector<double> pond_dev;           // [t * M + i], only for cells in a footprint
+    std::vector<int> pond_slot(nt, -1);
+    if (coupling_vol_.size() == pond_area_.size() * M_sz && !pond_area_.empty()) {
+        int n_slots = 0;
+        for (std::size_t k = 0; k < pond_cells_.size(); ++k)
+            for (int c : pond_cells_[k])
+                if (pond_slot[static_cast<std::size_t>(c)] < 0) pond_slot[static_cast<std::size_t>(c)] = n_slots++;
+        pond_dev.assign(static_cast<std::size_t>(n_slots) * M_sz, 0.0);
+        for (std::size_t k = 0; k < pond_cells_.size(); ++k) {
+            if (!(pond_area_[k] > 0.0)) continue;
+            for (int c : pond_cells_[k]) {
+                double* row = &pond_dev[static_cast<std::size_t>(pond_slot[static_cast<std::size_t>(c)]) * M_sz];
+                for (std::size_t i = 0; i < M_sz; ++i) row[i] -= coupling_vol_[k * M_sz + i] / pond_area_[k];
+            }
+        }
+    }
+    auto has_resid = [&](std::size_t t) { return pond_slot[t] >= 0; };
+    auto residual_at = [&](std::size_t t, std::size_t i) -> double {
+        return pond_dev[static_cast<std::size_t>(pond_slot[t]) * M_sz + i];
+    };
+
     if (rom_quantile_naive) {
         for (std::size_t t = 0; t < nt; ++t) {
             const double h_det_t = h_det[t];
@@ -1009,8 +1043,9 @@ void SpectralROM::computeQuantiles(const double* h_det, bool parametric_tails) {
                     delta += basis->P[j * nt + t] * ai[j];
                     if (two_ch) delta_add += basis->P[j * nt + t] * a_add[static_cast<std::size_t>(i) * nk + j];
                 }
-                const double h = relative_deviation ? h_det_t * (1.0 + delta) + delta_add
-                                                     : h_det_t + delta;
+                double h = relative_deviation ? h_det_t * (1.0 + delta) + delta_add
+                                              : h_det_t + delta;
+                if (has_resid(t)) h += residual_at(t, static_cast<std::size_t>(i));
                 sort_buf_[static_cast<std::size_t>(i)] = std::max(h, 0.0);
             }
 
@@ -1059,11 +1094,14 @@ void SpectralROM::computeQuantiles(const double* h_det, bool parametric_tails) {
         if (relative_deviation) {
             const double* radd = two_ch_q ? &recon_add_buf_[t * M_sz] : nullptr;
             for (std::size_t i = 0; i < M_sz; ++i)
-                row[i] = std::max(h_det_t * (1.0 + row[i]) + (radd ? radd[i] : 0.0), 0.0);
+                row[i] = h_det_t * (1.0 + row[i]) + (radd ? radd[i] : 0.0);
         } else {
             for (std::size_t i = 0; i < M_sz; ++i)
-                row[i] = std::max(h_det_t + row[i], 0.0);
+                row[i] = h_det_t + row[i];
         }
+        if (has_resid(t))
+            for (std::size_t i = 0; i < M_sz; ++i) row[i] += residual_at(t, i);
+        for (std::size_t i = 0; i < M_sz; ++i) row[i] = std::max(row[i], 0.0);
 
         if (want_exceed) p_exceed[t] = exceedFraction(row);
 
@@ -1108,6 +1146,37 @@ void SpectralROM::applyCouplingFlux(
     const auto n_cps = cps.size();
     coupling_unc_output.q_min.assign(n_cps, 0.0);
     coupling_unc_output.q_max.assign(n_cps, 0.0);
+    const auto M_sz = static_cast<std::size_t>(n_ensemble);
+    if (coupling_vol_.size() != n_cps * M_sz) coupling_vol_.assign(n_cps * M_sz, 0.0);
+    // Pond footprints from the current deterministic depth (see pond_cells_).
+    pond_cells_.assign(n_cps, {});
+    pond_area_.assign(n_cps, 0.0);
+    coupling_cell_.assign(n_cps, -1);
+    for (std::size_t k = 0; k < n_cps; ++k) if (!cps[k].is_outfall) coupling_cell_[k] = cps[k].cell_idx;
+    const bool have_ext = ext_vol_.size() == n_cps * M_sz;
+    {
+        std::vector<int> mark(nt, -1), queue;
+        for (std::size_t k = 0; k < n_cps; ++k) {
+            if (cps[k].is_outfall || cps[k].cell_idx < 0) continue;
+            auto& fp = pond_cells_[k];
+            const int c0 = cps[k].cell_idx;
+            queue.assign(1, c0); mark[static_cast<std::size_t>(c0)] = static_cast<int>(k);
+            for (std::size_t q = 0; q < queue.size() && static_cast<int>(fp.size()) < pond_max_cells; ++q) {
+                const int c = queue[q];
+                fp.push_back(c);
+                pond_area_[k] += mesh.tri_area[static_cast<std::size_t>(c)];
+                if (c != c0 && !(h_det_last_[static_cast<std::size_t>(c)] > pond_depth)) continue;
+                if (c == c0 && !(h_det_last_[static_cast<std::size_t>(c)] > pond_depth)) continue;   // dry manhole cell: the cell alone
+                for (int e = 0; e < mesh.cell_vertex_count(c); ++e) {
+                    const int nb = mesh.cell_neighbour(c, e);
+                    if (nb < 0 || mark[static_cast<std::size_t>(nb)] == static_cast<int>(k)) continue;
+                    if (!(h_det_last_[static_cast<std::size_t>(nb)] > pond_depth)) continue;
+                    mark[static_cast<std::size_t>(nb)] = static_cast<int>(k);
+                    queue.push_back(nb);
+                }
+            }
+        }
+    }
 
     for (std::size_t cp_idx = 0; cp_idx < n_cps; ++cp_idx) {
         const auto& cp = cps[cp_idx];
@@ -1130,6 +1199,10 @@ void SpectralROM::applyCouplingFlux(
         // only move towards equalisation and never past it, so the update is
         // stable for any dt, unlike the explicit form whose slope dQ/dh grows
         // without bound as dh -> 0.
+        // The level that moves with the exchange is the pond's, over its whole
+        // footprint (pond_area_); the deterministic reference uses the same
+        // area, so identical members still exchange identically.
+        const double A_pond = pond_area_[cp_idx] > 0.0 ? pond_area_[cp_idx] : tri_area;
         auto orifice_Q = [&](double h_old, double h_1d, double cd_mult_i) -> double {
             const double c = cp.cd * cd_mult_i * cp.area;
             if (c <= 0.0) return 0.0;
@@ -1137,17 +1210,17 @@ void SpectralROM::applyCouplingFlux(
             auto resid = [&](double h) {
                 const double dh = (cell_z + h) - h_1d;
                 const double q  = (dh >= 0.0 ? 1.0 : -1.0) * c * std::sqrt(G2 * std::abs(dh));
-                return h - h_old + q * dt / tri_area;
+                return h - h_old + q * dt / A_pond;
             };
             double lo, hi;
             if (h_old >= h_eq) { lo = std::max(h_eq, 0.0); hi = h_old; }   // draining
             else               { lo = h_old;               hi = h_eq;  }   // inflow
-            if (resid(lo) > 0.0) return (h_old - lo) * tri_area / dt;     // empties the cell
+            if (resid(lo) > 0.0) return (h_old - lo) * A_pond / dt;      // empties the pond
             for (int it = 0; it < 60; ++it) {
                 const double mid = 0.5 * (lo + hi);
                 if (resid(mid) > 0.0) hi = mid; else lo = mid;
             }
-            return (h_old - 0.5 * (lo + hi)) * tri_area / dt;
+            return (h_old - 0.5 * (lo + hi)) * A_pond / dt;
         };
 
         // Deterministic reference: the same law at the deterministic state.
@@ -1190,10 +1263,15 @@ void SpectralROM::applyCouplingFlux(
             // Per-member 1D head: the current deterministic head plus this
             // member's 1D deviation (deviation form; never the member's
             // absolute 1D reconstruction, whose reference may lag the head
-            // the 2D step used by one routing step).
+            // the 2D step used by one routing step). The member's pond level
+            // is bounded by this head through the implicit exchange on the
+            // pond footprint, so no manhole drawdown is needed (a node-storage
+            // drawdown, tried 2026-10-22, divided by the ~0.1 m² a surcharged
+            // manhole has once its pipes run full and starved real ponds).
             double h_1d_abs = h_1d_det;
+            double* vol_ic = &coupling_vol_[cp_idx * M_sz + ui];
             if (active_1d_idx >= 0)
-                h_1d_abs += (rom1d->reconstructHead(i, active_1d_idx)
+                h_1d_abs += (rom1d->reconstructHeadUnpinned(i, active_1d_idx)
                              - rom1d->detHead(active_1d_idx)) * rom1d_head_scale;
 
             // Reconstruct per-member depth at the coupling cell. PR H16:
@@ -1208,8 +1286,19 @@ void SpectralROM::applyCouplingFlux(
             }
             double h_2d = relative_deviation ? h_2d_det * (1.0 + delta_2d) + delta_add
                                               : h_2d_det + delta_2d;
-            h_2d = std::max(h_2d, 0.0);
+            h_2d = std::max(h_2d - coupling_vol_[cp_idx * M_sz + ui] / A_pond, 0.0);
 
+            // A member whose manhole level the 1D ROM carries supplies the
+            // exchanged volume itself (it removed the same water from the
+            // manhole); book that, so both sides move the same water.
+            const double ext = have_ext ? ext_vol_[cp_idx * M_sz + ui] : std::numeric_limits<double>::quiet_NaN();
+            if (std::isfinite(ext)) {
+                const double Qe = Q_det + ext / dt;
+                if (Qe < q_min_cp) q_min_cp = Qe;
+                if (Qe > q_max_cp) q_max_cp = Qe;
+                *vol_ic += ext;
+                continue;
+            }
             const double Q = orifice_Q(h_2d, h_1d_abs, cd_mult[ui]);
 
             // Track absolute per-member flux bounds (diagnostic output).
@@ -1219,12 +1308,10 @@ void SpectralROM::applyCouplingFlux(
             // Apply only the deviation from the deterministic flux to δa.
             // Coupling exchange is additive: the additive channel in
             // two-channel mode, the single coefficient set otherwise.
-            const double delta_h = -(Q - Q_det) * dt / tri_area;
-            double* target = aadd ? aadd : ai;
-            if (vol_proj && aadd)
-                for (std::size_t j = 0; j < nk; ++j) target[j] += add_proj_buf_[j] * delta_h;
-            else
-                for (std::size_t j = 0; j < nk; ++j) target[j] += basis->P[j * nt + ci] * delta_h;
+            // The deviation is kept as a volume spread over the pond footprint
+            // (see pond_cells_): no modal injection, no single-cell column.
+            *vol_ic += (Q - Q_det) * dt;
+            (void)ai; (void)aadd;
         }
 
         // Commit bounds for this coupling point (guard against no-flux case).
@@ -1233,6 +1320,29 @@ void SpectralROM::applyCouplingFlux(
             coupling_unc_output.q_max[cp_idx] = q_max_cp;
         }
     }
+    ext_vol_.clear();   // consumed once
+}
+
+double SpectralROM::memberCouplingDepth(std::size_t cp, int member) const noexcept {
+    if (!is_ready() || cp >= coupling_cell_.size() || coupling_cell_[cp] < 0 ||
+        member < 0 || member >= n_ensemble || cp >= pond_area_.size() || !(pond_area_[cp] > 0.0))
+        return -1.0;
+    const auto nt = static_cast<std::size_t>(n_tri);
+    const auto nk = static_cast<std::size_t>(n_kept);
+    const auto ci = static_cast<std::size_t>(coupling_cell_[cp]);
+    const auto ui = static_cast<std::size_t>(member);
+    const double* ai = &a_ensemble[ui * nk];
+    const double* aadd = twoChannel() ? &a_add[ui * nk] : nullptr;
+    double d2 = 0.0, da = 0.0;
+    for (std::size_t j = 0; j < nk; ++j) {
+        d2 += basis->P[j * nt + ci] * ai[j];
+        if (aadd) da += basis->P[j * nt + ci] * aadd[j];
+    }
+    const double h_det = std::max(h_det_last_[ci], 0.0);
+    const double h = relative_deviation ? h_det * (1.0 + d2) + da : h_det + d2;
+    const auto M = static_cast<std::size_t>(n_ensemble);
+    const double vol = (cp * M + ui < coupling_vol_.size()) ? coupling_vol_[cp * M + ui] : 0.0;
+    return std::max(h - vol / pond_area_[cp], 0.0);
 }
 
 } // namespace openswmm::twoD

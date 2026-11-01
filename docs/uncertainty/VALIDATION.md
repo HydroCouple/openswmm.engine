@@ -3625,6 +3625,22 @@ spread-only `[SOFT_RAINFALL_GRID]` (one member rank for both), 50 members,
 Data and scripts: `SWMM6/data/bellinge_demo/`,
 `scripts/uncertainty/bellinge_flood/`.
 
+> **Retraction (2026-10-24): the Monte Carlo reference below never perturbed
+> the rain.** `mc_prepare.py` scaled the fourth `[RAINGAGES]` column, which is
+> the snow catch factor; the engine applies it to snowfall only (`Gage.cpp`).
+> Rain is scaled by the FILE format's trailing factor (`MM * r`). Every member
+> in `mc/` and `mc_v2/` therefore had the main run's 5.560 ha·m of rain, and
+> varied roughness only. Every rain-related verdict in this section is void:
+> the basin bands "1–3 m against 5–13 mm", the 1D "conservative, 2.8×", the 2D
+> street scores and the P(>20 cm) reliability table. The corrected members
+> (`mc_v3/`, precipitation 3.73–7.39 ha·m) give, for the run of 2026-10-23
+> (`demo_v2`): 1D all manholes 0.959 / 1.43, calibrated; trunk transect
+> 0.856 / 1.60. Per storage node the band ranges from 50× too wide (G72R83B,
+> a pipe over a raised end) to 3× too narrow (the G71F trunk storages).
+> The same day a second defect was found in the 2D Manning channel (fix 7):
+> its volume-weighted Gram was paired with a plain projection, scaling every
+> 2D Manning band by one over the cell area. Both are re-measured in §9.
+
 ## 1. Five defects found by three reference-free checks
 
 Before any Monte Carlo, three invariants that need no reference were checked
@@ -3640,6 +3656,10 @@ regime any registered test enters.
 | 3 | Explicit per-step orifice exchange | overshoot where manhole and street levels nearly agree (dQ/dh ∝ 1/√\|dh\|) | implicit exchange over the step (bisection, fixed 60 iterations) | `CouplingFluxImplicitExchangeNeverOvershoots` (fails on the explicit mutation) |
 | 4 | 2D quantiles on the router's own elapsed-time cadence | saved median lagged the saved depth by up to one report step (≈2 m on the rising limb) | `SurfaceRouter2D::refreshROMQuantiles()` at `output_due` | — (engine wiring) |
 | 5 | Additive channel's reduced operator | coefficients grew 15 → 7.6 × 10¹¹ between 05:45 and 07:00 | energy-stable form, §2 | `EnergyStableFormHasNoGrowingModeOnConvergingFlow` |
+| 7 | Manning channel's relative Galerkin operator (H16 form, plain inner product) at the onset of rain: 12 of 155,688 cells wet, depth weights spanning 17 orders of magnitude | eigenvalue −0.43/s at 05:25; coefficients 17 → 5 × 10¹⁴ in 20 min | same energy-stable treatment: volume inner product + skew advection on the H·P trial space; depth-weight mean over wet cells floored at the dry depth; Gram inverted by Cholesky instead of Gauss-Jordan. Identical on uniform meshes, so the plane and channel calibrations are unchanged by construction | existing operator tests; probe `rom_operator_probe` (coefficients ≤ 0.2 through the onset) |
+| 8 | Exchange projected onto the k smooth modes: a pond cannot be held by them, so a member's exchanged volume landed on the near-constant mode and spread over the mesh (earlier, the uniform 1.3 cm dry-cell band; under the real storm, coverage 0.27 at width 0.04×). A first fix kept the volume as a column on the manhole's own cell: coverage 0.31, band 2 m at the manhole cell and none on the cells around it | 2D bands far too narrow at the ponds | the exchanged volume of each member is kept out of the modes and spread over the deterministic pond around the manhole (connected cells deeper than 1 cm, at most 5,000), raising its level by volume / pond area, as a still pond does; the exchange is solved on that same area for member and reference alike (`SpectralROM::pond_cells_`, `coupling_vol_`). The 2D analogue of the 1D quasi-static residual (H17) | `CouplingFluxSpreadsExchangeOverPondFootprint`; the coupling tests read the pond level via `couplingResidual()` |
+| 6 | One-way coupling: a member's manhole level never fell as it poured water onto the street | q95 of 10⁵ m over 73,000 cells by 07:40 | first fixed with a manhole-storage drawdown; REMOVED (2026-10-24): a surcharged manhole's storage is ~0.1 m² once its pipes run full, so the drawdown starved real ponds. The pond footprint (8) and the implicit exchange already bound a member's pond at its own manhole level | — |
+| 9 | Structures linearised at the deterministic state: a weir or flow brake just below the level at which it starts has zero local slope (and links with no flow were skipped altogether), so the rainfall channel saw closed outlets and let each member's extra water pile up in the basins behind them | G72R basins: 2–4 m rain band against 5–13 mm in the Monte Carlo; the over-wide upper members then spilled onto dry streets | each orifice, weir and outlet enters the flow response with the secant of its rating over the head range the members span, (Q(h+σ) − Q(h−σ))/2σ with σ the upstream half-band, or its tangent if larger; evaluated by `StructureSolver::flowAtShiftedDepth`, which restores every field it touches | `StructureSecantKeepsDeterministicRunBitIdentical` (Example 8; fails when the link flow is not restored; asserts that non-flowing structures enter the operator) |
 
 Fixes 1–3 and 5 change the coupled path and the additive operator, so the
 W3/W4 2D cells and the 1D gates are to be re-measured before this merges
@@ -3743,23 +3763,22 @@ overflow probabilities at spilling nodes can be read as probabilities. The
 depth bands are rankings with the stated bias. The manhole overflow
 probabilities at surcharged, non-spilling nodes are overstated.
 
-## 5. Rain on the mesh over-accumulates (deterministic engine, not the sidecar)
+## 5. The model copy carried a 30× rainfall scale factor (retraction)
 
-The first full run used the model's `RAINFALL_MODE NATURAL_NEIGHBOUR`. Its own
-2D continuity block counts 22.3 × 10⁶ m³ of rainfall on the 34.9 km² mesh by
-10:00 — 640 mm — against 19–24 mm recorded at the two gages by then. The
-instantaneous mesh intensity matches the gage (≈ 210 mm/h at the 06:21 peak),
-so the rate is right and the accumulated volume is wrong, by a factor that
-grows through the storm (HDF5 `Mesh2_face_rain_cum` mean 19 mm at 06:01 vs
-4.1 mm at the gage; 54 vs 13 at 06:21; 101 vs 18 at 07:41). The result was a
-flat lake at 17.4 m over the whole trunk, 1,000 ha deeper than 20 cm. This is
-a defect in the marcher's rain accounting (volume applied per sub-step is the
-obvious candidate), outside the sidecar, reported to the model's authors and
-not touched here. The demonstration uses `RAINFALL_MODE NONE`, the engine's
-documented choice for models whose subcatchments already carry the storm to
-the sewer: the surface then floods only from what the sewer spills (0.64 ×
-10⁶ m³ spilled, 0.17 × 10⁶ m³ drained back, 0.51 × 10⁶ m³ left on the ground
-at 10:00; about 50 ha deeper than 20 cm, 4.3 m in the F74 pond).
+The first runs reported here used a copy of the model whose `[RAINGAGES]`
+lines end in `MM * 30`. The engine's FILE format takes an optional trailing
+scale factor (`CatchmentHandler.cpp`, "Build 5.3.0+, parity with legacy
+gage.c"; `*` is the omitted start date), so every gage was multiplied by 30:
+the 1D runoff continuity shows 617 mm of precipitation by 10:00 against 19–24
+mm at the gages, and with rain on the mesh the 2D surface received 640 mm and
+became a flat lake 5 m deep. The original model
+(`SWMM_inp/Bellinge/7_SWMM/BellingeSWMM_v021_nopervious.inp`) ends in `MM`.
+What an earlier draft of this section called a rain-accounting defect in the
+2D marcher was this factor; there is no such defect. The engine's own
+`RAINFALL_MODE NONE` remains the right setting for a model whose
+subcatchments already carry the storm to the sewer. Sections 3, 4 and 6 are
+re-measured below under the real storm (`demo_v2.inp`); the earlier numbers
+describe a 1,740 mm storm and are kept only where marked.
 
 A second configuration finding: a spread-only `[SOFT_RAINFALL_GRID]` on the
 rainless mesh still forced the members (79 % of dry cells carried a 1–2 cm
@@ -3791,3 +3810,37 @@ The "possible" zone (P > 5 %) is wide on the rising limb and converges on the
 deterministic extent afterwards. 1D: at 07:00, 44 manholes overflow in ≥ 95 %
 of members, 720 are uncertain (5–95 %), 247 in ≤ 5 %. Whether those 720 are
 real or over-wide surcharged bands is what §4's Monte Carlo decides.
+
+## 9. Re-measured against a Monte Carlo that perturbs the rain (2026-10-26)
+
+Reference: `mc_v3/`, 10 members, Latin hypercube in (Manning ×0.82–1.18, rain
+×0.67–1.33). The rain is scaled by the gage file's trailing factor, and each
+member's report shows its precipitation scaled exactly (3.73–7.39 ha·m against
+5.56). Window 05:00–10:00, coverage / median width ratio.
+
+| | `demo_v2` (2026-10-23) | `demo_v4` (2026-10-26) |
+|---|---|---|
+| 1D, all manholes | 0.959 / 1.43, calibrated | 0.957 / 1.40, calibrated |
+| 1D, trunk transect | 0.856 / 1.60, conservative | 0.814 / 1.26, calibrated |
+| 2D street depth | ranking, width 0.001–0.005 | 0.698 / 0.21, ranking |
+| P(depth > 20 cm), Brier (no-skill) | 0.049 (0.106) | 0.041 (0.106) |
+
+`demo_v4` adds the direct solve of the additive channel, the dry-pipe secant
+(rain channel only), and the fix to the 2D Manning target (§ retraction). It
+has per-member storage levels off. The 2D street bands are still about five times too narrow.
+
+Storage nodes (median band against MC 5–95 span, m), `demo_v4`:
+
+| Node | Outlet | MC | Sidecar |
+|---|---|---|---|
+| G72R83B | pipe over a raised end | 0.062 | 3.00 (50× wide) |
+| G71F090 | weir | 0.084 | 1.41 (17× wide) |
+| G72R150 / G72R70B | flow brake, offline pond | 0.454 | 3.45 / 3.28 (7× wide) |
+| G80F13P | pump | 0.633 | 4.31 (7× wide) |
+| G72R33B | weir + flow brake | 0.531 | 0.91 |
+| G71F04R / G71F05R / G71F68Y | trunk storage | 0.25–0.30 | 0.12–0.17 (2× narrow) |
+| G80F66Y | two weirs | 0.577 | 0.08 (7× narrow) |
+| G72R520 | weir + flow brake | 0.275 | 0.06 (5× narrow) |
+
+Per-member storage levels (ADDITIVE_CHANNEL.md §7) target exactly these nodes,
+but they are not yet stable on this network.

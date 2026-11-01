@@ -1,3 +1,4 @@
+#include <limits>
 // SPDX-License-Identifier: Apache-2.0
 //
 // Copyright 2026 Caleb Buahin
@@ -1361,6 +1362,68 @@ void StructureSolver::computeNonConduitFlowOne(SimulationContext& ctx, double dt
             break;
         default: break;
     }
+}
+
+double StructureSolver::flowAtShiftedDepth(SimulationContext& ctx, int link_idx,
+                                           int node_idx, double dy) {
+    const auto uj = static_cast<std::size_t>(link_idx);
+    const auto un = static_cast<std::size_t>(node_idx);
+    const LinkType t = ctx.links.type[uj];
+    if (t != LinkType::ORIFICE && t != LinkType::WEIR && t != LinkType::OUTLET)
+        return std::numeric_limits<double>::quiet_NaN();
+    const int k = (uj < nc_group_k_.size()) ? nc_group_k_[uj] : -1;
+    if (k < 0) return std::numeric_limits<double>::quiet_NaN();
+    const auto uk = static_cast<std::size_t>(k);
+    // Save everything the flow routines write (computeOrificeFlowK /
+    // computeWeirFlowK / computeOutletFlowK) and the shifted depth.
+    const double d0 = ctx.nodes.depth[un];
+    const double l_depth = ctx.links.depth[uj], l_dqdh = ctx.links.dqdh[uj], l_flow = ctx.links.flow[uj];
+    const FlowClass l_class = ctx.links.flow_class[uj];
+    const double sa = (t == LinkType::ORIFICE) ? orifices_.surf_area[uk]
+                    : (t == LinkType::WEIR)    ? weirs_.surf_area[uk] : 0.0;
+    std::vector<double> scratch(static_cast<std::size_t>(ctx.n_nodes()), 0.0);
+    ctx.nodes.depth[un] = std::max(d0 + dy, 0.0);
+    computeNonConduitFlowOne(ctx, 0.0, scratch.data(), link_idx);
+    const double q = ctx.links.flow[uj];
+    ctx.nodes.depth[un] = d0;
+    ctx.links.depth[uj] = l_depth; ctx.links.dqdh[uj] = l_dqdh; ctx.links.flow[uj] = l_flow;
+    ctx.links.flow_class[uj] = l_class;
+    if (t == LinkType::ORIFICE) orifices_.surf_area[uk] = sa;
+    else if (t == LinkType::WEIR) weirs_.surf_area[uk] = sa;
+    return q;
+}
+
+bool StructureSolver::pumpDepthRated(int link_idx) const {
+    const auto uj = static_cast<std::size_t>(link_idx);
+    const int k = (uj < nc_group_k_.size()) ? nc_group_k_[uj] : -1;
+    if (k < 0 || static_cast<std::size_t>(k) >= pumps_.curve_type.size()) return false;
+    const auto uk = static_cast<std::size_t>(k);
+    const int ct = pumps_.curve_type[uk];
+    return (ct == 2 || ct == 4) && (pumps_.y_on[uk] > 0.0 || pumps_.y_off[uk] > 0.0);
+}
+
+double StructureSolver::pumpFlowAtDepth(const SimulationContext& ctx, int link_idx, double depth_ft) const {
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    const auto uj = static_cast<std::size_t>(link_idx);
+    if (uj >= ctx.links.type.size() || ctx.links.type[uj] != LinkType::PUMP) return nan;
+    const int k = (uj < nc_group_k_.size()) ? nc_group_k_[uj] : -1;
+    if (k < 0) return nan;
+    const auto uk = static_cast<std::size_t>(k);
+    const int ct = pumps_.curve_type[uk], ci = pumps_.curve_idx[uk];
+    if ((ct != 2 && ct != 4) || ci < 0 || static_cast<std::size_t>(ci) >= ctx.tables.tables.size()) return nan;
+    double setting = ctx.links.setting[uj];
+    if (pumps_.y_off[uk] > 0.0 && depth_ft < pumps_.y_off[uk]) setting = 0.0;
+    if (pumps_.y_on[uk] > 0.0 && depth_ft > pumps_.y_on[uk]) setting = 1.0;
+    if (!(setting > 0.0)) return 0.0;
+    const int fu = static_cast<int>(ctx.options.flow_units);
+    const double ucf_flow = ucf::Qcf[fu];
+    const double ucf_len = ucf::Ucf[ucf::LENGTH][ucf::getUnitSystem(fu)];
+    const Table& tbl = ctx.tables.tables[static_cast<std::size_t>(ci)];
+    const double x = std::max(depth_ft, 0.0) * ucf_len;
+    double q = 0.0;
+    if (ct == 2) q = table_intervalLookup(tbl, x);
+    else q = table_lookupEx(tbl, tbl.x.empty() ? x : std::min(x, tbl.x.back()));
+    return std::max(q, 0.0) / ucf_flow * setting;
 }
 
 void StructureSolver::scatterHeldSurfArea(SimulationContext& ctx,

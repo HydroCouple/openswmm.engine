@@ -448,6 +448,12 @@ void SpectralROM1D::computeQuantiles(const double* h_det_active,
             }
         }
     }
+    if (add_member_.size() == M * nn) {
+        for (std::size_t t = 0; t < nn; ++t) {
+            double* row = &recon_buf_[t * M];
+            for (std::size_t i = 0; i < M; ++i) row[i] += add_member_[i * nn + t];
+        }
+    }
 
     // Spilling nodes: every member sits at the deterministic head (see
     // setPinnedNodes()). Applied after every deviation term, before the
@@ -743,6 +749,12 @@ void SpectralROM1D::setAdditivePlanes(int n_planes, const double* psi, const dou
     add_kappa_.assign(kappa, kappa + M * add_np_);
 }
 
+void SpectralROM1D::setMemberAdditive(const double* corr) {
+    if (corr == nullptr) { add_member_.clear(); return; }
+    const auto n = static_cast<std::size_t>(n_ensemble) * static_cast<std::size_t>(n_nodes);
+    add_member_.assign(corr, corr + n);
+}
+
 void SpectralROM1D::setModeRates(const double* rates) {
     if (rates == nullptr) { mode_rates_.clear(); return; }
     mode_rates_.assign(rates, rates + n_kept);
@@ -768,6 +780,26 @@ double SpectralROM1D::reconstructHead(int member, int active_node) const noexcep
     if (add_np_ > 0 && add_psi_.size() == add_np_ * nn &&
         add_kappa_.size() == static_cast<std::size_t>(n_ensemble) * add_np_)
         for (std::size_t p = 0; p < add_np_; ++p) h += add_kappa_[ui * add_np_ + p] * add_psi_[p * nn + uk];
+    if (add_member_.size() == static_cast<std::size_t>(n_ensemble) * nn) h += add_member_[ui * nn + uk];
+    return std::max(h, 0.0);
+}
+
+double SpectralROM1D::reconstructHeadUnpinned(int member, int active_node) const noexcept {
+    auto ui = static_cast<std::size_t>(member);
+    auto uk = static_cast<std::size_t>(active_node);
+    auto nk = static_cast<std::size_t>(n_kept);
+    auto nn = static_cast<std::size_t>(n_nodes);
+    const double* ai = &a_ensemble[ui * nk];
+    double h = h_det_last_[uk];   // deterministic reference (last advance/seed)
+    for (std::size_t j = 0; j < nk; ++j) {
+        if (!mode_active[j]) continue;
+        h += basis->P[j * nn + uk] * ai[j];
+    }
+    if (qsr_r_.size() == nn && ui < qsr_mm1_.size()) h += qsr_mm1_[ui] * qsr_r_[uk];
+    if (add_np_ > 0 && add_psi_.size() == add_np_ * nn &&
+        add_kappa_.size() == static_cast<std::size_t>(n_ensemble) * add_np_)
+        for (std::size_t p = 0; p < add_np_; ++p) h += add_kappa_[ui * add_np_ + p] * add_psi_[p * nn + uk];
+    if (add_member_.size() == static_cast<std::size_t>(n_ensemble) * nn) h += add_member_[ui * nn + uk];
     return std::max(h, 0.0);
 }
 

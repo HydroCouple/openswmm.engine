@@ -375,7 +375,8 @@ RomBands runRomRung(Rung rung, const MeshData& mesh0,
                              vel_u.data(), vel_v.data(), ground_w.data()))
                 return out;   // ok stays false
             rom.setReducedOperator(op.M);
-            rom.setRelativeGram(op.similarity_h ? op.Ginv : std::vector<double>{});
+            rom.setRelativeGram(op.similarity_h ? op.Ginv : std::vector<double>{},
+                                op.similarity_h ? op.GramWeight : std::vector<double>{});
         }
 
         rom.advance(kRep, K_legacy, /*rainfall=*/nullptr,

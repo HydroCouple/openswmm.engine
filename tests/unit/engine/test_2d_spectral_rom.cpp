@@ -1212,17 +1212,21 @@ TEST(SpectralROM, CouplingFluxUsesROM1DHeadsPerMember) {
     std::vector<double> a_seed(f.rom.a_ensemble);
     f.rom.applyCouplingFlux(cps, node_heads.data(), f.mesh, dt, &rom1d);
 
-    double a0_rom1d   = f.rom.a_ensemble[0];
-    double aEnd_rom1d = f.rom.a_ensemble[static_cast<std::size_t>((M-1) * nk)];
+    // The exchange lives at the coupling cell as a per-member residual (see
+    // SpectralROM::coupling_resid_), not in the modal coefficients.
+    double a0_rom1d   = f.rom.couplingResidual(0, 0);
+    double aEnd_rom1d = f.rom.couplingResidual(0, M - 1);
     EXPECT_GT(std::abs(aEnd_rom1d - a0_rom1d), 1.0e-10)
-        << "per-member h_1d should open coefficient spread between member 0 and M-1";
+        << "per-member h_1d should open a residual spread between member 0 and M-1";
 
     // ---- Path B: without rom1d — same h_1d for all members ----
     f.rom.a_ensemble = a_seed;  // reset
     f.rom.applyCouplingFlux(cps, node_heads.data(), f.mesh, dt, nullptr);
 
-    double a0_det   = f.rom.a_ensemble[0];
-    double aEnd_det = f.rom.a_ensemble[static_cast<std::size_t>((M-1) * nk)];
+    f.rom.seed(h2d.data());   // clears the residuals too
+    f.rom.applyCouplingFlux(cps, node_heads.data(), f.mesh, dt, nullptr);
+    double a0_det   = f.rom.couplingResidual(0, 0);
+    double aEnd_det = f.rom.couplingResidual(0, M - 1);
     EXPECT_NEAR(a0_det, aEnd_det, 1.0e-12)
         << "deterministic head should give identical coupling delta for all members";
 }
@@ -1295,13 +1299,9 @@ TEST(SpectralROM, CouplingFluxConvertsRom1dFeetToMetres) {
     B.memberDeviation(0.05);
     B.f.rom.applyCouplingFlux(B.cps, m_heads.data(), B.f.mesh, 10.0, &B.rom1d, 1.0);
     double worst = 0.0, scale = 0.0;
-    for (std::size_t k = 0; k < A.f.rom.a_add.size(); ++k) {
-        worst = std::max(worst, std::abs(A.f.rom.a_add[k] - B.f.rom.a_add[k]));
-        scale = std::max(scale, std::abs(B.f.rom.a_add[k]));
-    }
-    for (std::size_t k = 0; k < A.f.rom.a_ensemble.size(); ++k) {
-        worst = std::max(worst, std::abs(A.f.rom.a_ensemble[k] - B.f.rom.a_ensemble[k]));
-        scale = std::max(scale, std::abs(B.f.rom.a_ensemble[k]));
+    for (int i = 0; i < A.f.rom.n_ensemble; ++i) {
+        worst = std::max(worst, std::abs(A.f.rom.couplingResidual(0, i) - B.f.rom.couplingResidual(0, i)));
+        scale = std::max(scale, std::abs(B.f.rom.couplingResidual(0, i)));
     }
     EXPECT_GT(scale, 1.0e-6) << "fixture must move the members, or the comparison proves nothing";
     EXPECT_LT(worst, 1.0e-9 * scale) << "feet run must equal the metre run after conversion";
@@ -1325,6 +1325,68 @@ TEST(SpectralROM, CouplingFluxZeroPerturbationAddsNothing) {
     EXPECT_EQ(r.maxChange(a0, add0), 0.0);
 }
 
+// Pond footprint: a member's exchanged volume raises the whole deterministic
+// pond around the manhole by volume / pond area (a still pond's response), and
+// stays on the manhole's own cell when that cell is dry. Before: one-cell
+// column (Bellinge 2026-10-23: band 2 m at the manhole cell, none around it)
+// or spread over the whole mesh by the smooth modes.
+TEST(SpectralROM, CouplingFluxSpreadsExchangeOverPondFootprint) {
+    for (bool wet : {true, false}) {
+        CouplingRig r(wet ? 0.05 : 0.0);
+        const double z = r.f.mesh.tri_cz[0];
+        std::vector<double> heads(5, z + (wet ? 0.05 : -0.2));   // det manhole at street level / below
+        r.rom1d.seed(heads.data());
+        r.memberDeviation(0.02);                                  // member i: manhole 2i cm higher
+        const int M = r.f.rom.n_ensemble, nt = r.f.rom.n_tri;
+        for (int step = 0; step < 50; ++step)
+            r.f.rom.applyCouplingFlux(r.cps, heads.data(), r.f.mesh, 10.0, &r.rom1d, 1.0);
+        const auto& fp = r.f.rom.pondCells(0);
+        if (wet) {
+            EXPECT_EQ(static_cast<int>(fp.size()), nt) << "an all-wet mesh is one pond";
+        } else {
+            ASSERT_EQ(fp.size(), 1u);
+            EXPECT_EQ(fp[0], 0) << "a dry manhole cell keeps its water";
+        }
+        const double dev_top = r.f.rom.couplingResidual(0, M - 1);
+        EXPECT_GT(dev_top, 0.0) << "the highest member's manhole must have poured water onto the street"
+                                << " (wet=" << wet << ", footprint " << fp.size() << ", cd " << r.cps[0].cd
+                                << ", 1D dev of top member " << (r.rom1d.reconstructHead(M - 1, 0) - r.rom1d.detHead(0)) << ")";
+        std::vector<double> hdet(static_cast<std::size_t>(nt), wet ? 0.05 : 0.0);
+        r.f.rom.computeQuantiles(hdet.data());
+        // Every footprint cell carries the same band; outside it, none.
+        std::vector<char> in(static_cast<std::size_t>(nt), 0);
+        for (int c : fp) in[static_cast<std::size_t>(c)] = 1;
+        double band0 = r.f.rom.q95[static_cast<std::size_t>(fp[0])] - r.f.rom.q05[static_cast<std::size_t>(fp[0])];
+        EXPECT_GT(band0, 0.0);
+        for (int t = 0; t < nt; ++t) {
+            const double b = r.f.rom.q95[static_cast<std::size_t>(t)] - r.f.rom.q05[static_cast<std::size_t>(t)];
+            if (in[static_cast<std::size_t>(t)]) EXPECT_NEAR(b, band0, 1e-12) << "cell " << t;
+            else EXPECT_NEAR(b, 0.0, 1e-12) << "cell " << t;
+        }
+    }
+}
+
+// A spilling manhole is pinned to its rim for the 1D band, but each member
+// must still spill its own extra water: the exchange uses the unpinned head.
+// With the pinned head every member spilled identically and the street band
+// vanished (Bellinge, real storm: 2D coverage 0.23).
+TEST(SpectralROM, CouplingFluxSpillsMemberWaterAtPinnedManhole) {
+    CouplingRig r(0.0);
+    const double z = r.f.mesh.tri_cz[0];
+    std::vector<double> heads(5, z);                  // deterministic manhole at the street (spilling)
+    r.rom1d.seed(heads.data());
+    r.memberDeviation(0.02);
+    std::vector<char> pinned(5, 0); pinned[0] = 1;
+    r.rom1d.setPinnedNodes(&pinned);
+    const int M = r.f.rom.n_ensemble;
+    EXPECT_EQ(r.rom1d.reconstructHead(M - 1, 0), r.rom1d.detHead(0)) << "the 1D band stays pinned";
+    EXPECT_GT(r.rom1d.reconstructHeadUnpinned(M - 1, 0), r.rom1d.detHead(0));
+    for (int step = 0; step < 20; ++step)
+        r.f.rom.applyCouplingFlux(r.cps, heads.data(), r.f.mesh, 10.0, &r.rom1d, 1.0);
+    EXPECT_GT(r.f.rom.couplingResidual(0, M - 1), r.f.rom.couplingResidual(0, 0) + 1e-6)
+        << "members with more water must spill more onto the street";
+}
+
 // Stability: where manhole and street levels are nearly equal the orifice slope
 // dQ/dh grows like 1/sqrt|dh|, and an explicit per-step update overshoots and
 // grows. Integrated implicitly, a member whose manhole sits a fixed amount above
@@ -1339,15 +1401,8 @@ TEST(SpectralROM, CouplingFluxImplicitExchangeNeverOvershoots) {
     const int M = r.f.rom.n_ensemble;
     const auto nk = static_cast<std::size_t>(r.f.rom.n_kept);
     const auto nt = static_cast<std::size_t>(r.f.rom.n_tri);
-    auto cellDev = [&](int i) {
-        double d = 0.0;
-        for (std::size_t j = 0; j < nk; ++j) {
-            d += r.f.rom.basis->P[j * nt] * r.f.rom.a_ensemble[static_cast<std::size_t>(i) * nk + j];
-            if (!r.f.rom.a_add.empty())
-                d += r.f.rom.basis->P[j * nt] * r.f.rom.a_add[static_cast<std::size_t>(i) * nk + j];
-        }
-        return d;
-    };
+    auto cellDev = [&](int i) { return r.f.rom.couplingResidual(0, i); };
+    (void)nk; (void)nt;
     for (int step = 0; step < 400; ++step) {
         r.f.rom.applyCouplingFlux(r.cps, heads.data(), r.f.mesh, 60.0, &r.rom1d, 1.0);
         for (int i = 0; i < M; ++i) {

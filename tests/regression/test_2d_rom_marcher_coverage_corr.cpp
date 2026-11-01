@@ -430,7 +430,8 @@ RomBands runRomRung(Rung rung, const MeshData& mesh0, const MeshEigenBasis& basi
                              ground_w.data()))
                 return out;
             rom.setReducedOperator(op.M);
-            rom.setRelativeGram(op.similarity_h ? op.Ginv : std::vector<double>{});
+            rom.setRelativeGram(op.similarity_h ? op.Ginv : std::vector<double>{},
+                                op.similarity_h ? op.GramWeight : std::vector<double>{});
             if (in.mann_field && in.per_member) {
                 const int nt = mesh0.n_triangles();
                 const auto kk = static_cast<std::size_t>(op.k) * static_cast<std::size_t>(op.k);

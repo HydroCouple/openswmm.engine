@@ -1214,3 +1214,73 @@ TEST(SwmmEngine1DRomLifecycle, PerModeRatesBuildStorageBasisAndBand) {
     swmm_engine_close(h);
     swmm_engine_destroy(h);
 }
+
+// ============================================================================
+// Structure secant conductance (2026-10-24)
+// ============================================================================
+//
+// The flow response gives each orifice, weir and outlet the secant of its
+// rating over the head range the ensemble spans, evaluated by shifting the
+// upstream node's depth inside the live engine (StructureSolver::
+// flowAtShiftedDepth) and restoring every field the flow routine writes.
+// Two properties: the deterministic run stays bit-identical with the sidecar
+// on, and a structure that is not flowing still enters the operator when the
+// members' heads reach its rating.
+#ifdef REGRESSION_DATA_DIR
+namespace {
+struct Ex8Run { std::vector<double> head, flow; int still_struct_edges = 0; bool ok = false; };
+
+Ex8Run runExample8(const fs::path& dir, const std::string& tag, bool with_rom) {
+    Ex8Run r;
+    std::ifstream src(std::string(REGRESSION_DATA_DIR) + "/Example8.inp");
+    std::stringstream ss; ss << src.rdbuf();
+    std::string inp = ss.str();
+    if (with_rom) {
+        const std::string anchor = "[SUBCATCHMENTS]";
+        const auto at = inp.find(anchor);
+        if (at == std::string::npos) return r;
+        inp.insert(at, "[SOFT_RAINGAGES]\nRainGage  NORMAL  CV  0.20\n\n");
+        inp += "\n[UNCERTAINTY]\n1D  MANNINGS_N  0.20\n";
+    }
+    const fs::path p_inp = dir / (tag + ".inp"), p_rpt = dir / (tag + ".rpt"), p_out = dir / (tag + ".out");
+    { std::ofstream f(p_inp); f << inp; }
+    SWMM_Engine eng = swmm_engine_create();
+    if (swmm_engine_open(eng, p_inp.string().c_str(), p_rpt.string().c_str(), p_out.string().c_str(), nullptr) != SWMM_OK ||
+        swmm_engine_initialize(eng) != SWMM_OK || swmm_engine_start(eng, 0) != SWMM_OK) {
+        swmm_engine_destroy(eng);
+        return r;
+    }
+    auto* e = static_cast<openswmm::SWMMEngine*>(eng);
+    double elapsed = 0.0;
+    int n = 0;
+    while (swmm_engine_step(eng, &elapsed) == SWMM_OK && elapsed > 0.0 && ++n < 200000) {
+        if (!with_rom) continue;
+        for (const auto& fe : e->rom1dFlowEdges())
+            if (!fe.conduit && fe.q < 1.0e-6 && fe.d > 0.0) ++r.still_struct_edges;
+    }
+    const auto& ctx = e->context();
+    r.head.assign(ctx.nodes.head.begin(), ctx.nodes.head.begin() + ctx.n_nodes());
+    r.flow.assign(ctx.links.flow.begin(), ctx.links.flow.begin() + ctx.n_links());
+    swmm_engine_end(eng);
+    swmm_engine_close(eng);
+    swmm_engine_destroy(eng);
+    r.ok = true;
+    return r;
+}
+}  // namespace
+
+TEST(SwmmEngine1DRomLifecycle, StructureSecantKeepsDeterministicRunBitIdentical) {
+    const fs::path dir = fs::temp_directory_path() / "openswmm_secant_ex8";
+    fs::create_directories(dir);
+    const Ex8Run off = runExample8(dir, "off", false);
+    const Ex8Run on  = runExample8(dir, "on", true);
+    ASSERT_TRUE(off.ok);
+    ASSERT_TRUE(on.ok);
+    ASSERT_EQ(off.head.size(), on.head.size());
+    for (std::size_t i = 0; i < off.head.size(); ++i) EXPECT_EQ(off.head[i], on.head[i]) << "node " << i;
+    for (std::size_t j = 0; j < off.flow.size(); ++j) EXPECT_EQ(off.flow[j], on.flow[j]) << "link " << j;
+    EXPECT_GT(on.still_struct_edges, 0)
+        << "no non-flowing structure ever entered the operator: the secant path was not exercised";
+}
+#endif
+

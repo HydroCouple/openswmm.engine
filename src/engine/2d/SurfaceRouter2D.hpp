@@ -591,6 +591,8 @@ public:
     /// Diagnostics for operator probes: the grounding weights the reduced
     /// operator and basis share, and the diffusivity scale it is assembled with.
     const std::vector<double>& romGroundWeights() const noexcept { return rom_ground_w_; }
+    /// Diagnostics: the live 1D-2D coupling points, in the order the ROM sees them.
+    const std::vector<CouplingPoint>& nodeCouplingPoints() const noexcept { return node_coupling_points_; }
     double romDiffusivityScale() const { return computeKEff() * options_.rom_diffusivity_scale; }
 
     /// Register the 1D network ROM so coupling fluxes use each member's own

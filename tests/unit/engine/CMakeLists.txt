@@ -449,6 +449,8 @@ if(OPENSWMM_BUILD_2D)
     # 1D network spectral ROM lifecycle: build/advance/quantile/CSV through
     # the real engine, and the HSnapshot-driven weighted-Laplacian re-solve.
     add_gtest_unit(test_engine_1d_rom_lifecycle test_engine_1d_rom_lifecycle.cpp)
+    target_compile_definitions(test_engine_1d_rom_lifecycle PRIVATE
+        "REGRESSION_DATA_DIR=\"${PROJECT_SOURCE_DIR}/tests/regression/data\"")
 
     # SR-2c deterministic gridded rainfall: the HDF5 grid-plane reader
     # (GridFileReader) writes its own fixture files with the raw HDF5 C API,
