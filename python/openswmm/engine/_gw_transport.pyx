@@ -49,6 +49,8 @@ cdef extern from "openswmm/engine/openswmm_gw_transport.h":
     int swmm_gw_source_set(SWMM_Engine engine, const char* name, int scope, const char* tag, int cell, double flow, const char* flow_ts)
     int swmm_gw_source_scale_get(SWMM_Engine engine, int idx, double* value)
     int swmm_gw_source_scale_set(SWMM_Engine engine, int idx, double value)
+    int swmm_gw_source_xy_get(SWMM_Engine engine, int idx, int* by_xy, double* x, double* y)
+    int swmm_gw_source_xy_set(SWMM_Engine engine, int idx, double x, double y)
     int swmm_gw_source_remove(SWMM_Engine engine, int idx)
     int swmm_gw_source_species_count(SWMM_Engine engine, int src_idx)
     int swmm_gw_source_species_get(SWMM_Engine engine, int src_idx, int term_idx, char* species_buf, int species_len, char* kind_buf, int kind_len, double* value, char* ts_buf, int ts_len)
@@ -367,6 +369,27 @@ class GroundwaterTransport(EngineView):
         The multiplier applies to flow and MASS terms; CONC is unchanged.
         """
         _check(swmm_gw_source_scale_set(_h(self), source_index, value))
+
+    def source_xy(self, int source_index):
+        """Return authored (X, Y) in project map units, or None for a non-XY source.
+
+        The native sources table reports an XY source as CELL scope with its
+        resolved cell. This accessor preserves its original map coordinates.
+        """
+        cdef int by_xy = 0
+        cdef double x = 0
+        cdef double y = 0
+        _check(swmm_gw_source_xy_get(_h(self), source_index, &by_xy, &x, &y))
+        return (x, y) if by_xy else None
+
+    def set_source_xy(self, int source_index, double x, double y):
+        """Locate a source by finite X/Y coordinates in project map units.
+
+        Requires BUILDING or OPENED and a mesh with cells. The nearest cell
+        centroid selects the CELL scope; the writer retains XY coordinates.
+        Flow, scale and species terms remain unchanged.
+        """
+        _check(swmm_gw_source_xy_set(_h(self), source_index, x, y))
 
     def source_species(self, int source_index):
         """Immutable authored row snapshots in native order."""

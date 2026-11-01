@@ -7912,6 +7912,35 @@
    ]
   },
   {
+   "path": "groundwater2d.transport.set_source_xy",
+   "target": "groundwater2d.transport",
+   "name": "set_source_xy",
+   "form": "method",
+   "python": "GroundwaterTransport.set_source_xy",
+   "doc": "Locate a source by finite X/Y coordinates in project map units.",
+   "c": [
+    "swmm_gw_source_xy_set"
+   ],
+   "returns": "None",
+   "params": [
+    {
+     "name": "source_index",
+     "type": "int",
+     "required": true
+    },
+    {
+     "name": "x",
+     "type": "float",
+     "required": true
+    },
+    {
+     "name": "y",
+     "type": "float",
+     "required": true
+    }
+   ]
+  },
+  {
    "path": "groundwater2d.transport.sorption",
    "target": "groundwater2d.transport",
    "name": "sorption",
@@ -7956,6 +7985,25 @@
     "swmm_gw_source_species_get"
    ],
    "returns": "tuple[GroundwaterSourceTerm, ...]",
+   "params": [
+    {
+     "name": "source_index",
+     "type": "int",
+     "required": true
+    }
+   ]
+  },
+  {
+   "path": "groundwater2d.transport.source_xy",
+   "target": "groundwater2d.transport",
+   "name": "source_xy",
+   "form": "method",
+   "python": "GroundwaterTransport.source_xy",
+   "doc": "Return authored (X, Y) in project map units, or None for a non-XY source.",
+   "c": [
+    "swmm_gw_source_xy_get"
+   ],
+   "returns": "tuple[float, float] | None",
    "params": [
     {
      "name": "source_index",
