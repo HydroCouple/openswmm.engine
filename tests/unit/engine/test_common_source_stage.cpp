@@ -5306,6 +5306,56 @@ void cellScratchStep(Model& m,int mode,double& time) {
 }
 }
 
+TEST(CommonSourceStage, IndependentClockSnapshotsDeepCopyAndMoveWithoutRelocation) {
+    static_assert(std::is_nothrow_move_constructible_v<GwClockStateOwner>);
+    static_assert(std::is_nothrow_move_assignable_v<GwClockStateOwner>);
+    static_assert(std::is_nothrow_move_assignable_v<SubsurfaceSolver>);
+    GwClockState state;
+    state.cells = {0};
+    state.receipts = {{{GwSlot::surface, 0, {{1., 2.}}}}};
+    state.pending_slots = 1;
+    state.rung_batches[2] = 3;
+    const std::vector<double> bounds{2.};
+    state.schedule.emplace(GwClock::Options{0., 1., 4., 1.}, bounds,
+                           std::vector<GwClock::Face>{});
+    GwClockStateOwner original;
+    EXPECT_FALSE(original);
+    original.emplace(std::move(state));
+    auto copied = original;
+    GwClockStateOwner assigned;
+    assigned = original;
+    EXPECT_NE(&*original, &*copied);
+    EXPECT_NE(&*original, &*assigned);
+    EXPECT_NE(&*original->schedule, &*copied->schedule);
+    EXPECT_EQ(assigned->receipts[0][0].packets[0].second, 2.);
+    EXPECT_EQ(assigned->rung_batches.at(2), 3);
+    copied->cells[0] = 99;
+    copied->receipts[0][0].packets[0].second = 7.;
+    copied->rung_batches[2] = 8;
+    copied->schedule.reset();
+    EXPECT_EQ(original->cells[0], 0);
+    EXPECT_EQ(original->receipts[0][0].packets[0].second, 2.);
+    EXPECT_EQ(original->rung_batches.at(2), 3);
+    EXPECT_TRUE(original->schedule);
+    EXPECT_EQ(original->pending_slots, 1u);
+    const auto* address = &*original;
+    auto moved = std::move(original);
+    EXPECT_FALSE(original);
+    EXPECT_EQ(&*moved, address);
+    assigned = std::move(moved); // replace another engaged clock owner
+    EXPECT_FALSE(moved);
+    EXPECT_EQ(&*assigned, address);
+    original = assigned;
+    EXPECT_NE(&*original, address);
+    original->rung_batches[2] = 9;
+    EXPECT_EQ(assigned->rung_batches.at(2), 3);
+    assigned.reset();
+    EXPECT_FALSE(assigned);
+    original = assigned; // copying an empty owner clears the destination
+    EXPECT_FALSE(original);
+    EXPECT_FALSE(GwClockStateOwner(assigned));
+}
+
 TEST(CommonSourceStage, GroundwaterCopiesMovesAndZeroLayerReusePreserveAcceptedState) {
     static_assert(std::is_nothrow_move_assignable_v<SubsurfaceSolver>);
     detail::CompletedSourceArchive history;

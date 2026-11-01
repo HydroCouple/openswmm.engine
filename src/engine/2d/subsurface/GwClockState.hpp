@@ -4,6 +4,7 @@
 #include <array>
 #include <cstdint>
 #include <map>
+#include <memory>
 
 namespace openswmm::twoD {
 // Canonical accumulator values still include every accepted reservation. These
@@ -55,5 +56,35 @@ struct GwClockState {
     // <4, <8, <16, >=16, and unbounded previous stability.
     std::array<std::uint64_t, 7> stability_to_period{};
     std::map<int, long> rung_batches;
+};
+
+// MSVC map/set moves can allocate sentinel nodes. Keep the optional clock
+// behind an owning pointer so accepted solver publication remains nonthrowing;
+// trial copies still deep-copy every schedule, receipt and histogram entry.
+class GwClockStateOwner {
+public:
+    GwClockStateOwner() = default;
+    GwClockStateOwner(const GwClockStateOwner& other)
+        : state_(other.state_ ? std::make_unique<GwClockState>(*other.state_) : nullptr) {}
+    GwClockStateOwner& operator=(const GwClockStateOwner& other) {
+        if (this != &other)
+            state_ = other.state_ ? std::make_unique<GwClockState>(*other.state_) : nullptr;
+        return *this;
+    }
+    GwClockStateOwner(GwClockStateOwner&&) noexcept = default;
+    GwClockStateOwner& operator=(GwClockStateOwner&&) noexcept = default;
+
+    explicit operator bool() const noexcept { return bool(state_); }
+    GwClockState& operator*() noexcept { return *state_; }
+    const GwClockState& operator*() const noexcept { return *state_; }
+    GwClockState* operator->() noexcept { return state_.get(); }
+    const GwClockState* operator->() const noexcept { return state_.get(); }
+    void reset() noexcept { state_.reset(); }
+    void emplace(GwClockState&& state) {
+        state_ = std::make_unique<GwClockState>(std::move(state));
+    }
+
+private:
+    std::unique_ptr<GwClockState> state_;
 };
 }

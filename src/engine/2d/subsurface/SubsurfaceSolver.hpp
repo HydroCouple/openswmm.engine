@@ -1489,7 +1489,7 @@ public:
 
 private:
     struct IndependentOwner;
-    std::optional<GwClockState> clock_state_;
+    GwClockStateOwner clock_state_;
     double producer_end_ = 0.0;
     double clock_cutoff_ = -1.0;
     void refreshCellBound(int cell, const MeshData&, const InertialEdges&);
