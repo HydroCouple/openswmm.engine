@@ -1,0 +1,87 @@
+--- a/src/engine/2d/solver/ExplicitInertialSolver.cpp
++++ b/src/engine/2d/solver/ExplicitInertialSolver.cpp
+@@ -1,3 +1,5 @@
++#include <fstream>
++#include <iomanip>
+ /**
+  * @file      ExplicitInertialSolver.cpp
+  * @brief     Implementation of the explicit local-inertial FV marcher with
+@@ -4245,6 +4247,9 @@
+ }
+ 
+ void ExplicitInertialSolver::atGroundwaterCheck(double end, const std::function<void()>& publish) {
++    static std::ofstream control_checks("producer_checks.csv");
++    control_checks << std::setprecision(17) << end << ',' << gw_->clockState()->schedule->margin() << '\n';
++
+     const bool finish = gw_end_time_ > 0 && std::abs(end - gw_end_time_) <=
+                                                 64 * std::numeric_limits<double>::epsilon() *
+                                                     std::max(1., gw_end_time_);
+@@ -4462,6 +4467,15 @@
+         const int K = static_cast<int>(cells_by_tier_.size());
+         const int nsub_full = 1 << (K - 1);
+         double target = t_target;
++        if (const char* control_step = std::getenv("GW_CONTROL_STEP")) {
++            const double step = std::stod(control_step);
++            if (!(step > 0 && step <= gw_->options().base_step))
++                throw std::invalid_argument("Invalid controlled producer step");
++            const double next = (std::floor(t / step) + 1) * step;
++            if (next > t)
++                target = std::min(target, next);
++        }
++
+         if (gw_ && gw_->independentClock() && !gw_quiescent_ && dt0_ > gw_->options().base_step &&
+             gw_->clockState()->schedule->hasFineCells()) {
+             const double p = gw_->options().base_step;
+--- a/src/engine/2d/subsurface/SubsurfaceSolver.cpp
++++ b/src/engine/2d/subsurface/SubsurfaceSolver.cpp
+@@ -1,3 +1,5 @@
++#include <fstream>
++#include <iomanip>
+ // SPDX-License-Identifier: Apache-2.0
+ //
+ // Copyright 2026 Caleb Buahin
+@@ -2695,6 +2697,7 @@
+     // Clamp with the books kept. A negative table means the sinks asked for
+     // more than the aquifer holds; give back what was not there rather than
+     // silently creating it.
++    double control_raw_dunne = 0, control_retained = 0;
+     double dunne_vol = 0.0;
+     if (ens_dunne >= 0.0) {
+         dunne_vol = ens_dunne; // ENSLAVED: exact, above
+@@ -2878,10 +2881,12 @@
+         // `theta_bot` is the slab content the saturated update above paired
+         // with `Sy = θ_s − theta_bot`. The two MUST be the same number.
+         double hu1 = state_.hu[u] + (q_in - q_et - q0) * dt + theta_bot * dL;
++        control_raw_dunne = dunne_vol;
+         if (clock_state_ && dunne_vol > 0.0 && hu1 < 0.0) {
+             // At the surface L1 is zero. Settle the bulk column's shortfall
+             // before releasing saturation excess or lowering the table.
+             const double retained = std::min(dunne_vol, -hu1 * A);
++            control_retained = retained;
+             dunne_vol -= retained;
+             hu1 += retained / A;
+         }
+@@ -3112,6 +3117,23 @@
+         clock_state_->elapsed[k] += dt;
+         clock_state_->maximum[k] = std::max(clock_state_->maximum[k], dt);
+         clock_state_->max_return_depth[k] = std::max(clock_state_->max_return_depth[k], (physical_return + reject_vol - paired_refund) / A);
++    }
++
++    const char* control = std::getenv("GW_CONTROL_COMMITS");
++    if (control && (physical_return > 0 || std::string_view(control) == "all")) {
++        static std::ofstream out("commits.csv");
++        static const bool header = [&] {
++            out << "cell,closure,start,end,hg0,hg1,hu0,hu1,sy,area,thickness,porosity,intake,lateral,node,link,source_net,boundary_net,et,deep,raw_dunne,retained,dunne,reject,water_error\n";
++            return true;
++        }();
++        (void)header;
++        const double external = infil_vol + lat_vol - state_.qnode_last[u]*dt + link_vol + source.in-source.out + boundary_in-boundary_out - (state_.qet_last[u]+state_.qdeep_last[u])*A*dt;
++        const double error = (ts*(hg1-hg0)+state_.hu[u]-hu_pre)*A + physical_return+reject_vol-external;
++        out << std::setprecision(17) << i << ',' << int(cl) << ',' << time << ',' << time+dt << ','
++            << hg0 << ',' << hg1 << ',' << hu_pre << ',' << state_.hu[u] << ',' << Sy << ',' << A << ',' << zs << ',' << ts << ','
++            << infil_vol << ',' << lat_vol << ',' << state_.qnode_last[u]*dt << ',' << link_vol << ',' << source.in-source.out << ','
++            << boundary_in-boundary_out << ',' << state_.qet_last[u]*A*dt << ',' << state_.qdeep_last[u]*A*dt << ','
++            << control_raw_dunne << ',' << control_retained << ',' << physical_return << ',' << reject_vol << ',' << error << '\n';
+     }
+     clock_telemetry_.fired(i, static_cast<int>(cl), time, dt, state_.dt_cell[u], origin);
+ }
