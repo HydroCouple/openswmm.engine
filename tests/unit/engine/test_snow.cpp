@@ -28,6 +28,7 @@
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_heat.h>
 #include <openswmm/engine/openswmm_snow.h>
+#include <openswmm/engine/openswmm_subcatchments.h>
 #include <openswmm/engine/openswmm_snow2d.h>
 #include <openswmm/engine/openswmm_hotstart.h>
 
@@ -3043,4 +3044,24 @@ TEST(SnowDegreeDayMelt, ThinNativePacksPreserveMasksThresholdAndOptionalAge) {
             }
             if(!track_age) {EXPECT_TRUE(s.age.empty());EXPECT_TRUE(s.out_age.empty());}
         }
+}
+
+TEST(SnowRemovalReview, InputAndApiRejectInvalidFractionsWithoutChangingValidState) {
+    for (const char* fractions : {"0 0.6 0.6 0 0 0", "0 -0.1 0 0 0 0", "0 0.2 0.3 0 0 0"}) {
+        std::ofstream("_snow_review_validation.inp") <<
+            "[OPTIONS]\nFLOW_UNITS CFS\nFLOW_ROUTING NONE\nSTART_DATE 01/01/2026\n"
+            "END_DATE 01/01/2026\nEND_TIME 01:00:00\n[SNOWPACKS]\nSP REMOVAL " << fractions << "\n";
+        auto e = swmm_engine_create();
+        const int result = swmm_engine_open(e, "_snow_review_validation.inp", "_snow_review_validation.rpt", nullptr, nullptr);
+        if (std::string(fractions) == "0 0.2 0.3 0 0 0") {
+            ASSERT_EQ(result, SWMM_OK);
+            auto& ctx = static_cast<openswmm::SWMMEngine*>(e)->context();
+            const auto before = ctx.snowpacks.removal[0];
+            EXPECT_EQ(swmm_snowpack_set_removal(e, 0, 0, .6, .6, 0, 0, 0), SWMM_ERR_BADPARAM);
+            EXPECT_EQ(ctx.snowpacks.removal[0], before);
+        } else {
+            EXPECT_NE(result, SWMM_OK);
+        }
+        swmm_engine_destroy(e);
+    }
 }

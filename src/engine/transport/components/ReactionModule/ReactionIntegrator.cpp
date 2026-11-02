@@ -39,6 +39,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 #include "ReactionExpression.hpp"
 
@@ -152,8 +153,7 @@ void evalRates(const ReactionData& rx, const std::vector<RxExprSpan>& spans, con
 
 /**
  * @brief Weighted RMS error norm against per-species atol/rtol. `idx`/`count` describe the
- * ACTIVE GROUP (group-local y/e views) — under COUPLING NONE the group is a single species, and
- * iterating the full RATE set here would read past the group-local arrays.
+ * packed RATE system; algebraic rows are excluded from its error norm.
  *
  * @details Compute species-tolerance weighted RMS local integration error.
  * @param[in] rx Covered species atol/rtol arrays and positive global tolerance fallbacks.
@@ -309,7 +309,12 @@ void RxWorkspace::init(const ReactionData& rx) {
     res_.assign(un, 0.0);
     res2_.assign(un, 0.0);
     dy_.assign(un, 0.0);
-    grp_out_.assign(un, 0.0);
+    alg_jac_.assign(un * un, 0.0);
+    alg_lu_.assign(un * un, 0.0);
+    alg_piv_.assign(un, 0);
+    alg_res_.assign(un, 0.0);
+    alg_res2_.assign(un, 0.0);
+    alg_dy_.assign(un, 0.0);
 
     rate_idx_.clear();
     equil_idx_.clear();
@@ -475,39 +480,101 @@ RxStepReport ReactionIntegrator::step(const ReactionData& rx,
         return true;
     };
 
+    const auto projectAlgebraic = [&]() -> bool {
+        // EQUIL: joint damped Newton on {expr_s = 0} ------------------
+        const auto& eidx = ws.equil_idx_;
+        const int ne = static_cast<int>(eidx.size());
+        if (ne > 0) {
+            auto residual = [&](double* out) {
+                evalTerms(rx, species, hydvar, pollutants, ws.terms_, ws.term_needed_, coefficients);
+                RxEvalEnv env{species, coefficients, ws.terms_.data(), hydvar, pollutants};
+                for (int k = 0; k < ne; ++k)
+                    out[k] = evalReactionExpression(
+                        rx.token_pool,
+                        spans[static_cast<std::size_t>(eidx[static_cast<std::size_t>(k)])], env);
+            };
+            bool converged = false;
+            for (int it = 0; it < kNewtonMax; ++it) {
+                ++rep.newton_iters;
+                residual(ws.alg_res_.data());
+                if (!finiteAll(ws.alg_res_.data(), static_cast<std::size_t>(ne))) {
+                    rep.ok = false;
+                    rep.error = "non-finite equilibrium residual";
+                    return false;
+                }
+                double rn = 0.0;
+                for (int k = 0; k < ne; ++k)
+                    rn = std::max(rn, std::fabs(ws.alg_res_[static_cast<std::size_t>(k)]));
+                if (rn < rx.atol) {
+                    converged = true;
+                    break;
+                }
+                // FD Jacobian wrt the EQUIL species.
+                for (int c = 0; c < ne; ++c) {
+                    const int sc = eidx[static_cast<std::size_t>(c)];
+                    const double save = species[sc];
+                    const double dy = kFdEps * std::max(1.0, std::fabs(save));
+                    species[sc] = save + dy;
+                    residual(ws.alg_res2_.data());
+                    species[sc] = save;
+                    for (int r = 0; r < ne; ++r)
+                        ws.alg_jac_[static_cast<std::size_t>(r * ne + c)] =
+                            (ws.alg_res2_[static_cast<std::size_t>(r)] -
+                             ws.alg_res_[static_cast<std::size_t>(r)]) /
+                            dy;
+                }
+                for (std::size_t k = 0; k < static_cast<std::size_t>(ne * ne); ++k)
+                    ws.alg_lu_[k] = ws.alg_jac_[k];
+                if (!luFactor(ws.alg_lu_, ws.alg_piv_, ne))
+                    break;
+                luSolve(ws.alg_lu_, ws.alg_piv_, ne, ws.alg_res_.data(), ws.alg_dy_.data());
+                // Damped line search (halving) on the max-residual norm.
+                double lambda = 1.0;
+                for (int ls = 0; ls < 8; ++ls) {
+                    for (int k = 0; k < ne; ++k)
+                        species[eidx[static_cast<std::size_t>(k)]] -=
+                            lambda * ws.alg_dy_[static_cast<std::size_t>(k)];
+                    residual(ws.alg_res2_.data());
+                    double rn2 = 0.0;
+                    for (int k = 0; k < ne; ++k)
+                        rn2 = std::max(rn2, std::fabs(ws.alg_res2_[static_cast<std::size_t>(k)]));
+                    if (rn2 < rn)
+                        break;
+                    for (int k = 0; k < ne; ++k) // undo, halve
+                        species[eidx[static_cast<std::size_t>(k)]] +=
+                            lambda * ws.alg_dy_[static_cast<std::size_t>(k)];
+                    lambda *= 0.5;
+                }
+            }
+            if (!converged) {
+                rep.ok = false;
+                rep.error = "EQUIL Newton failed to converge";
+                return false;
+            }
+        }
+
+        // FORMULA: declaration order, current values ------------------
+        if (!ws.formula_idx_.empty()) {
+            for (const int s : ws.formula_idx_) {
+                evalTerms(rx, species, hydvar, pollutants, ws.terms_, ws.term_needed_, coefficients);
+                RxEvalEnv env{species, coefficients, ws.terms_.data(), hydvar, pollutants};
+                species[s] =
+                    evalReactionExpression(rx.token_pool, spans[static_cast<std::size_t>(s)], env);
+            }
+        }
+
+        return finiteAll(species, static_cast<std::size_t>(n));
+    };
+
     // ---- 1. RATE integration -------------------------------------------
     const auto& ridx = ws.rate_idx_;
     const std::size_t nr = ridx.size();
     if (nr > 0) {
-        const bool coupled = (rx.coupling == ReactionCoupling::FULL) || nr == 1;
-        // COUPLING NONE with nr > 1: integrate one species at a time with
-        // the others frozen (MSX semantics). Realized by running the same
-        // machinery once per species with a 1-entry index view — but to
-        // stay allocation-free we freeze OTHER rate species inside f by
-        // restoring them after each evaluation; start-of-step snapshot:
-        for (int s2 = 0; s2 < n; ++s2)
-            ws.y0_[static_cast<std::size_t>(s2)] = species[s2];
-        auto freeze_others = [&](std::size_t active) {
-            if (coupled)
-                return;
-            for (std::size_t k = 0; k < nr; ++k)
-                if (k != active)
-                    species[ridx[k]] = ws.y0_[static_cast<std::size_t>(ridx[k])];
-        };
-        // Each group's result is STAGED here, not written straight back into
-        // `species`: under COUPLING NONE the next group's freeze_others()
-        // restores every other species from the start-of-step snapshot, which
-        // would otherwise wipe the group just finished (leaving all but the
-        // last species unintegrated). Published once, after every group.
-        for (std::size_t k = 0; k < nr; ++k)
-            ws.grp_out_[static_cast<std::size_t>(ridx[k])] =
-                ws.y0_[static_cast<std::size_t>(ridx[k])];
-
-        const std::size_t groups = coupled ? 1 : nr;
-        for (std::size_t g = 0; g < groups && rep.ok; ++g) {
-            // Active index set for this group.
-            const std::size_t gb = coupled ? 0 : g;
-            const std::size_t gn = coupled ? nr : 1;
+        // RATE variables always form one ODE system. COUPLING controls
+        // algebraic projection inside its RHS, as in EPANET-MSX.
+        {
+            const std::size_t gb = 0;
+            const std::size_t gn = nr;
 
             // The cache is keyed to this group's state and index view.
             ws.jac_valid_ = false;
@@ -524,7 +591,13 @@ RxStepReport ReactionIntegrator::step(const ReactionData& rx,
                     ws.ytmp_[k] = y[k];
                 for (std::size_t k = 0; k < gn; ++k)
                     species[ridx[gb + k]] = ws.ytmp_[k];
-                freeze_others(coupled ? static_cast<std::size_t>(-1) : gb);
+                if (rx.coupling == ReactionCoupling::FULL && !projectAlgebraic()) {
+                    rep.ok = false;
+                    if (rep.error.empty())
+                        rep.error = "non-finite species state during algebraic projection";
+                    std::fill(out, out + gn, std::numeric_limits<double>::quiet_NaN());
+                    return;
+                }
                 evalRates(rx, spans, species, hydvar, pollutants, ws.terms_, ridx, factor,
                           ws.rates_.data(), kinetic_scale, ws.term_needed_, coefficients, contexts);
                 for (std::size_t k = 0; k < gn; ++k)
@@ -686,7 +759,12 @@ RxStepReport ReactionIntegrator::step(const ReactionData& rx,
                         // was computed before the sweep and is intact.)
                         for (std::size_t k = 0; k < gn; ++k)
                             species[ridx[gb + k]] = y[k];
-                        freeze_others(coupled ? static_cast<std::size_t>(-1) : gb);
+                        if (rx.coupling == ReactionCoupling::FULL && !projectAlgebraic()) {
+                            rep.ok = false;
+                            if (rep.error.empty())
+                                rep.error = "algebraic projection failed after RATE Jacobian evaluation";
+                            return rep;
+                        }
                     }
 
                     if (rx.solver == ReactionSolverKind::ROS2) {
@@ -841,94 +919,20 @@ RxStepReport ReactionIntegrator::step(const ReactionData& rx,
                     }
                 }
             }
-            // Stage the group result; see the grp_out_ note above.
             if (rep.ok)
-                for (std::size_t k = 0; k < gn; ++k)
-                    ws.grp_out_[static_cast<std::size_t>(ridx[gb + k])] = ws.y_[k];
+                for (std::size_t k = 0; k < nr; ++k)
+                    species[ridx[k]] = ws.y_[k];
         }
-        // Publish every group at once, after the last freeze_others().
-        if (rep.ok)
-            for (std::size_t k = 0; k < nr; ++k)
-                species[ridx[k]] = ws.grp_out_[static_cast<std::size_t>(ridx[k])];
     }
     if (!rep.ok)
         return rep;
 
-    // ---- 2. EQUIL: joint damped Newton on {expr_s = 0} ------------------
-    const auto& eidx = ws.equil_idx_;
-    const int ne = static_cast<int>(eidx.size());
-    if (ne > 0) {
-        auto residual = [&](double* out) {
-            evalTerms(rx, species, hydvar, pollutants, ws.terms_, ws.term_needed_, coefficients);
-            RxEvalEnv env{species, coefficients, ws.terms_.data(), hydvar, pollutants};
-            for (int k = 0; k < ne; ++k)
-                out[k] = evalReactionExpression(
-                    rx.token_pool,
-                    spans[static_cast<std::size_t>(eidx[static_cast<std::size_t>(k)])], env);
-        };
-        bool converged = false;
-        for (int it = 0; it < kNewtonMax; ++it) {
-            ++rep.newton_iters;
-            residual(ws.res_.data());
-            double rn = 0.0;
-            for (int k = 0; k < ne; ++k)
-                rn = std::max(rn, std::fabs(ws.res_[static_cast<std::size_t>(k)]));
-            if (rn < rx.atol) {
-                converged = true;
-                break;
-            }
-            // FD Jacobian wrt the EQUIL species.
-            for (int c = 0; c < ne; ++c) {
-                const int sc = eidx[static_cast<std::size_t>(c)];
-                const double save = species[sc];
-                const double dy = kFdEps * std::max(1.0, std::fabs(save));
-                species[sc] = save + dy;
-                residual(ws.res2_.data());
-                species[sc] = save;
-                for (int r = 0; r < ne; ++r)
-                    ws.jac_[static_cast<std::size_t>(r * ne + c)] =
-                        (ws.res2_[static_cast<std::size_t>(r)] -
-                         ws.res_[static_cast<std::size_t>(r)]) /
-                        dy;
-            }
-            for (std::size_t k = 0; k < static_cast<std::size_t>(ne * ne); ++k)
-                ws.lu_[k] = ws.jac_[k];
-            if (!luFactor(ws.lu_, ws.piv_, ne))
-                break;
-            luSolve(ws.lu_, ws.piv_, ne, ws.res_.data(), ws.dy_.data());
-            // Damped line search (halving) on the max-residual norm.
-            double lambda = 1.0;
-            for (int ls = 0; ls < 8; ++ls) {
-                for (int k = 0; k < ne; ++k)
-                    species[eidx[static_cast<std::size_t>(k)]] -=
-                        lambda * ws.dy_[static_cast<std::size_t>(k)];
-                residual(ws.res2_.data());
-                double rn2 = 0.0;
-                for (int k = 0; k < ne; ++k)
-                    rn2 = std::max(rn2, std::fabs(ws.res2_[static_cast<std::size_t>(k)]));
-                if (rn2 < rn)
-                    break;
-                for (int k = 0; k < ne; ++k) // undo, halve
-                    species[eidx[static_cast<std::size_t>(k)]] +=
-                        lambda * ws.dy_[static_cast<std::size_t>(k)];
-                lambda *= 0.5;
-            }
-        }
-        if (!converged) {
-            rep.ok = false;
-            rep.error = "EQUIL Newton failed to converge";
-            return rep;
-        }
-    }
-
-    // ---- 3. FORMULA: declaration order, current values ------------------
-    if (!ws.formula_idx_.empty()) {
-        for (const int s : ws.formula_idx_) {
-            evalTerms(rx, species, hydvar, pollutants, ws.terms_, ws.term_needed_, coefficients);
-            RxEvalEnv env{species, coefficients, ws.terms_.data(), hydvar, pollutants};
-            species[s] =
-                evalReactionExpression(rx.token_pool, spans[static_cast<std::size_t>(s)], env);
-        }
+    // Always publish algebraic values for the accepted end-of-step RATE state.
+    if (!projectAlgebraic()) {
+        rep.ok = false;
+        if (rep.error.empty())
+            rep.error = "non-finite species state after algebraic projection";
+        return rep;
     }
 
     if (!finiteAll(species, static_cast<std::size_t>(n))) {

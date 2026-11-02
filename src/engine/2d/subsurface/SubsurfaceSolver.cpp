@@ -570,7 +570,8 @@ void SubsurfaceSolver::refreshCellBound(int i, const MeshData& mesh, const Inert
         lin += (b.Kc > 0.0 && b.dC > 0.0) ? b.Kc * b.area / b.dC
                                           : state_.Ks[u] * b.area / std::max(0.5 * zs, kTiny);
     }
-    const double Sy = std::max(state_.theta_s[u] - state_.theta_r[u], kSyFloor);
+    const auto closure = static_cast<GwClosure>(state_.closure[u]);
+    const double Sy = specificYield(u, p, state_.theta_s[u], L, closure, nullptr);
     const double den = sumT + lin;
     double dt_g = 1.0e30;
     if (den > kTiny)
@@ -1178,9 +1179,9 @@ void SubsurfaceSolver::sampleNodeExchange(const NodeData* nodes, double dt, doub
         // An unsaturated receiving bed is disconnected from the table:
         // its leakage driver ends at the bed, and it cannot drain SAT upward.
         const double contact = nodes->invert_elev[ni] * l12 - bed.dC;
-        const double receiver = tr_.n_layers > 0 ? std::max(h_gw, contact) : h_gw;
+        const double receiver = std::max(h_gw, contact);
         double Q = cond * (receiver - h_pipe) * lid_bed_factor_[b];
-        if (tr_.n_layers > 0 && h_gw < contact && Q > 0)
+        if (h_gw < contact && Q > 0)
             Q = 0; // m³/s, + out of the aquifer
         const double requested = Q * dt;
         if (Q > 0.0) {

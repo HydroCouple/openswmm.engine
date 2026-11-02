@@ -145,6 +145,31 @@ struct ChainFixture {
     }
 };
 
+TEST(ArdDispersionKernel, UnequalCellLengthsAndAreasConserveMass) {
+    ChainFixture f(3, 1, 1);
+    f.mesh.cell_dx = {1, 2, 7};
+    f.state.cell_a = {1, 3, 0.5};
+    f.state.cell_phi = {10, 0, 2};
+    const auto mass = [&]() {
+        double total = 0;
+        for (int i = 0; i < 3; ++i)
+            total += f.mesh.cell_dx[i] * f.state.cell_a[i] * f.state.cell_phi[i];
+        return total;
+    };
+    const double initial = mass();
+    auto view = f.view();
+    const std::vector<double> dispersion = {0.1, 0.5, 2};
+    view.cell_dispersion = &dispersion;
+    for (int step = 0; step < 20; ++step) {
+        fvk::dispersionSolve(view, 10);
+        EXPECT_NEAR(mass(), initial, 1e-11);
+        for (double value : f.state.cell_phi) {
+            EXPECT_GE(value, 0);
+            EXPECT_LE(value, 10);
+        }
+    }
+}
+
 TEST(ArdDispersionKernel, UniformArrayBitwiseMatchesScalar) {
     constexpr int kM = 32;
     constexpr double kD = 0.7;

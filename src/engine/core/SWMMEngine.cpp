@@ -27,6 +27,7 @@
  */
 
 #include "SWMMEngine.hpp"
+#include "../transport/InitialQualitySeeds.hpp"
 #include "../hydrology/surface/NativeSnow.hpp"
 #include "../../../include/openswmm/engine/openswmm_snow.h"
 #include "../hydraulics/SurfaceExchange.hpp"
@@ -1929,6 +1930,22 @@ int SWMMEngine::start(int save_results) noexcept {
         ctx_.nodes.stat_total_inflow_vol[static_cast<std::size_t>(j)] =
             ctx_.nodes.volume[static_cast<std::size_t>(j)];
 
+    for (const auto& entry : ctx_.files.hotstart_saves) {
+        if (entry.format == HotstartFormat::LEGACY &&
+            (ctx_.options.water_age || ctx_.options.heat_transport || ctx_.runtime_coupling_used)) {
+            set_error(CFFI_ERR_HOTSTART,
+                      "LEGACY SAVE HOTSTART cannot preserve age, heat or runtime coupling; use NATIVE.");
+            return CFFI_ERR_HOTSTART;
+        }
+        if (ctx_.options.quality_solver != QualitySolverKind::LEGACY &&
+            (ctx_.options.water_age || ctx_.options.heat_transport || ctx_.n_pollutants() > 0 ||
+             ctx_.reactions.configured)) {
+            set_error(CFFI_ERR_HOTSTART,
+                      "SAVE HOTSTART does not yet preserve ARD/LAGRANGIAN solver inventories; use a supported engine checkpoint session.");
+            return CFFI_ERR_HOTSTART;
+        }
+    }
+
     // No dated SAVE HOTSTART row has been written in this run yet.
     hotstart_save_done_.assign(ctx_.files.hotstart_saves.size(), 0);
 
@@ -1942,10 +1959,10 @@ int SWMMEngine::start(int save_results) noexcept {
     if (wants_native_hotstart) {
         hotstart_checkpoint_error_ = prepareNativeHotstartCheckpointing();
         if (!hotstart_checkpoint_error_.empty()) {
-            if (!pending_hotstart_checkpoint_.empty()) {
-                set_error(CFFI_ERR_HOTSTART, hotstart_checkpoint_error_.c_str());
-                return CFFI_ERR_HOTSTART;
-            }
+            set_error(CFFI_ERR_HOTSTART,
+                      ("SAVE/USE HOTSTART cannot preserve the complete active state: " +
+                       hotstart_checkpoint_error_).c_str());
+            return CFFI_ERR_HOTSTART;
         } else if (!pending_hotstart_checkpoint_.empty()) {
             auto snapshot = std::move(pending_hotstart_checkpoint_);
             const auto error = loadCheckpointBytes(std::move(snapshot));
@@ -8870,7 +8887,8 @@ void SWMMEngine::writeHotstartSave(const HotstartSaveEntry& entry) {
 #endif
     const bool native =
         entry.format == HotstartFormat::NATIVE ||
-        (entry.format == HotstartFormat::AUTO && (lid_restart || full_continuation));
+        (entry.format == HotstartFormat::AUTO &&
+         (lid_restart || full_continuation || ctx_.options.water_age));
     int rc = 0;
     if (native) {
         std::unique_ptr<HotStartFile> hs;
@@ -10646,6 +10664,15 @@ void SWMMEngine::initHydrology() noexcept {
 void SWMMEngine::initQuality() noexcept {
     // 7. Quality solver
     quality_.init(ctx_.n_nodes(), ctx_.n_links(), ctx_.n_pollutants());
+
+    // Heat checkpoints can occur on a hydrology boundary before the first
+    // quality routing call. Seed the complete thermal layout at initialize.
+    if (ctx_.options.heat_transport) {
+        const double initial = ctx_.heat_config.global_temp[static_cast<int>(HeatSource::INITIAL_STATE)];
+        ctx_.heat_state.resize(ctx_.n_nodes(), ctx_.n_links(), initial);
+        transport::applyInitialTempOverrides(ctx_);
+        ctx_.heat_state.legacy_seeded = true;
+    }
 
     // Seed initial concentrations from [POLLUTANTS] Cinit. A wet node/link
     // starts at the pollutant's initial concentration, a dry one at zero —

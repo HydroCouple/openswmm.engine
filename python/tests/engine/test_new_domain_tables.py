@@ -89,7 +89,7 @@ Pump CELL 1 FLOW -0.001
         transport.set_source_scale(0, 2.5)
         transport.set_source_xy(0, 5.0, 5.0)
         assert transport.source_xy(0) == (5.0, 5.0)
-        assert transport.sources[0] == replace(before, cell=1)  # quad centroid
+        assert transport.sources[0] == replace(before, cell=1, x=5.0, y=5.0)  # quad centroid
         assert transport.source_species(0) == terms
         assert transport.source_scale(0) == 2.5
         assert transport.source_xy(1) is None
@@ -103,6 +103,15 @@ Pump CELL 1 FLOW -0.001
             with pytest.raises(BadParamError):
                 transport.set_source_xy(0, x, y)
             assert transport.source_xy(0) == (5.0, 5.0)
+
+        row = transport.sources[0]
+        assert row.by_xy and (row.x, row.y) == (5.0, 5.0)
+        transport.set_source(replace(row, flow=0.25))
+        assert transport.source_xy(0) == (5.0, 5.0)
+        assert transport.sources[0] == replace(row, flow=0.25)
+        with pytest.raises(BadParamError):
+            transport.set_source(replace(row, flow=99, x=float('nan')))
+        assert transport.sources[0] == replace(row, flow=0.25)
 
         saved = tmp_path / 'saved_xy.inp'
         solver.write(saved)

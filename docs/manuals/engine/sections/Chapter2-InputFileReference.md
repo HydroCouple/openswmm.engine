@@ -316,10 +316,12 @@ SAVE    OUTFLOWS                Fname
 Parameters:
 Fname     is the name of an interface file.
 Date Time  is the optional date (month/day/year) and time (hours:minutes:seconds) at which a Hot Start file is saved: the file is written from the state at the end of the first time step that reaches that moment, and not at all if the run ends first. Without it the file is saved at the end of the run.
-LEGACY / NATIVE  (OpenSWMM extension) is the optional file format of a saved Hot Start file. LEGACY is the EPA SWMM 5 format, which holds subcatchment, node and link state; OpenSWMM applies all of it when it reads one. NATIVE is the OpenSWMM format, which also holds water age, reaction species, LID units at storage nodes and the 2D aquifer, but not link control settings, node lateral inflows or subcatchment buildup — see @ref engine_manual_ch3_files. Without the keyword a SWMM 5 file is written, or a native one when the model has LID units at storage nodes.
+LEGACY / NATIVE  (OpenSWMM extension) is the optional file format of a saved Hot Start file. LEGACY is the EPA SWMM 5 format, which holds subcatchment, node and link state; OpenSWMM applies all of it when it reads one. NATIVE is the OpenSWMM format, which also holds water age, reaction species, LID units at storage nodes and the 2D aquifer, but not link control settings, node lateral inflows or subcatchment buildup — see @ref engine_manual_ch3_files. Without the keyword a SWMM 5 file is written, or a native one when water age, heat transport, an independent groundwater clock or LID units at storage nodes require it.
 
 Remarks:
 Refer to @ref engine_manual_ch3_files for a description of interface files. Rainfall, Runoff, and RDII files can either be used or saved in a run, but not both. A run can both use and save a Hot Start file (with different names).
+A LEGACY save is refused when age, heat, LID-layer scalars, UEB snow, an active 2D surface or runtime coupling would be lost. Record-format NATIVE saves cannot preserve heat, conventional LID-layer scalars or ARD/LAGRANGIAN transport inventories; those combinations require a qualified full engine checkpoint. CLI SAVE HOTSTART requests using ARD/LAGRANGIAN transport currently fail explicitly. Thermal CLI saves also fail if a full checkpoint cannot be prepared. An unsupported save never replaces an existing restart file.
+
 USE HOTSTART reads either format, recognising it from the file itself. The format keyword must follow the date and time when both are given. Any other word in its place is ignored with a warning, and the default format is used. A row with exactly a date after the file name and one more item must give a valid date and time, or it is an error (ERROR 213), as in EPA SWMM. EPA SWMM 5 ignores the keyword, so a row carrying it still opens there, but it then also ignores a date and time on the same row and saves at the end of the run; export to SWMM 5 omits the keyword. A NATIVE file cannot be read by EPA SWMM 5. A GeoPackage stores the format choice but embeds only SWMM 5 format Hot Start files; it gives them back unchanged, subcatchment state included.
 Enclose the external file name in double quotes if it contains spaces and include its full path if it resides in a different directory than the SWMM input file. 
 
@@ -3727,7 +3729,7 @@ Parameters:
 | Parameter | Meaning | Units / values | Default |
 |---|---|---|---|
 | `SOLVER` | Integrator for the RATE species. RK5 is explicit and cheapest for non-stiff kinetics; ROS2 and BDF2 are implicit and are the remedy when RK5 reports its substep cap. | EUL, RK5, ROS2 or BDF2 | RK5 |
-| `COUPLING` | NONE integrates one RATE species at a time with the others frozen at their start-of-step values (EPANET-MSX semantics); FULL integrates all RATE species simultaneously. A system with a single RATE species is always coupled. | NONE or FULL | NONE |
+| `COUPLING` | RATE species always integrate simultaneously. NONE updates EQUIL/FORMULA species at the end of the reaction step; FULL also updates them at every intermediate rate evaluation (EPANET-MSX coupling semantics). | NONE or FULL | NONE |
 | `RATE_UNITS` | Time unit of every RATE expression. The evaluated rate is multiplied by 1, 1/60, 1/3600 or 1/86400 to give a per-second rate. | SEC, MIN, HR or DAY | HR |
 | `AREA_UNITS` | Area basis for WALL geometry and dry buildup density. | FT2, M2 or CM2 | FT2 |
 | `WALL_GEOMETRY` | Enable contact-area geometry and AV. Requires FULL coupling for WALL species. | YES or NO | NO |

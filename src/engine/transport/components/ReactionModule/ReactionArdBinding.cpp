@@ -72,12 +72,11 @@ struct ArdScratch {
 };
 
 /**
- * @brief Borrow the process-wide ARD reaction workspace.
- * @return Static nonowned ArdScratch reference, process lifetime. Mutable use unsynchronized,
- * caller serializes all reactArdStage calls across models.
+ * @brief Borrow the thread-local ARD reaction workspace.
+ * @return Static nonowned ArdScratch reference, thread lifetime. Mutable use is confined to the calling thread.
  */
 ArdScratch& scratch() {
-    static ArdScratch s;
+    static thread_local ArdScratch s;
     return s;
 }
 

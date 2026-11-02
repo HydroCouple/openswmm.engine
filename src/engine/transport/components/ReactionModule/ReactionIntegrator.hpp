@@ -24,9 +24,9 @@
  * @details Semantics (MSX conventions, reactions plan §2/§3):
  *          per step of length dt on one element's local species block:
  *            1. RATE species integrate dφ/dt = expr · unit_factor with the
- *               configured solver. COUPLING FULL integrates the RATE set
- *               as one system; COUPLING NONE integrates each RATE species
- *               with every other species frozen at start-of-step values.
+ *               configured solver as one system. COUPLING FULL refreshes
+ *               EQUIL/FORMULA values at each RHS evaluation; NONE holds
+ *               those algebraic values until the end of the step.
  *            2. EQUIL species solve the joint algebraic system
  *               {expr_s = 0} by damped Newton (FD Jacobian, step-halving
  *               line search, absolute-residual atol convergence, hard iteration cap).
@@ -107,7 +107,10 @@ private:
     std::vector<int> piv_;
     std::vector<int> rate_idx_, equil_idx_, formula_idx_;
     std::vector<double> res_, res2_, dy_; ///< Newton
-    std::vector<double> grp_out_;         ///< staged per-group RATE results
+    // Algebraic projection must not overwrite the implicit RATE Jacobian,
+    // factorization or Newton iteration vectors during an RHS evaluation.
+    std::vector<double> alg_jac_, alg_lu_, alg_res_, alg_res2_, alg_dy_;
+    std::vector<int> alg_piv_;
 
     // FD-Jacobian / LU reuse across substeps. The Jacobian costs `gn` extra
     // RHS evaluations, each of which re-evaluates every term and rate

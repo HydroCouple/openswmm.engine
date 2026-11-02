@@ -197,3 +197,44 @@ two build directories with genuinely different engine libraries —
 prudence rather than as a measured requirement; nothing here says it holds
 under a different compiler, `-ffast-math`, or a deck closer to a numerical
 boundary.
+
+## Report selection and upstream qualification
+
+`[REPORT] NODES` and `LINKS` now select the objects stored in binary `.out`
+files. The parity corpus explicitly requests `NODES ALL` and `LINKS ALL` so
+object selection cannot hide changed numerical series. Keep report-selection
+behavior in dedicated output-format tests. Binary identity compares a fixed
+layout; comparisons across releases with different layouts must decode and
+compare matching object IDs, variable codes, report times and units.
+
+EPA comparison code is in `tests/regression/test_upstream_epa.cpp`; its input
+decks are source fixtures under `tests/regression/data/epa_reference/`.
+Generate reference outputs locally using unmodified EPA v5.2.4, commit
+`7952ca837988b1c32f791812eccc9fd64547e093`, and retain the source commit,
+input hashes and output hashes alongside those local outputs. Run the stock
+`runswmm` executable on `conservative_tracer.inp` and `impervious_rain.inp`,
+naming the output files `conservative_tracer.epa-5.2.4.out` and
+`impervious_rain.epa-5.2.4.out`.
+
+Set the CMake cache path or environment variable `OPENSWMM_EPA_REFERENCE_DIR`
+to that directory to run the comparisons. An empty path explicitly skips them;
+a supplied directory with missing reference files fails. Generated outputs,
+audit summaries and provenance records stay local and are not versioned.
+
+The tracer compares hydraulic and quality output; the rain case compares
+subcatchment hydrology. Local audits found hydraulic storage differences on
+the rain case and differences in hydrology, stored volume and quality on
+Example1 beyond the normal pointwise regression band. These remain
+unqualified. Agreement with the bundled legacy engine does not establish
+upstream EPA equivalence.
+
+The legacy fork's behavior changes must be considered separately from that
+reference: SLOT conveyance area (`83fb139b`), conduit loss budgets
+(`40f439a8`), physical junction chambers and the extra JUNCTIONS field
+(`e5f96a48`, `9648837f`), zero-valued transect roughness inheritance
+(`ee8e8da1`), optional outfall backflow quality, single-point rain gages, and
+the restored stock washoff guard (`4721d7e8`). SLOT and added input options
+need their own intentional-deviation cases. Changes affecting ordinary decks
+need attribution against pinned stock output before broad EPA compatibility
+claims are made. Keep source/version and output hashes together in local provenance;
+fork-generated output cannot replace an EPA reference.

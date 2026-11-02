@@ -582,3 +582,36 @@ TEST(HeatTransportTest, SaveKeepsHeatTransport) {
            "silently disabled the feature (the A1a defect).";
     swmm_engine_destroy(e2);
 }
+
+TEST(HeatTransportReview, UniformTemperatureSurvivesDryStartupAcrossSolvers) {
+    write_file("_ht_review_uniform.heat", heat_cfg(18, 18, 18));
+    for (const char* solver : {"LEGACY", "EULERIAN_ARD", "LAGRANGIAN"}) {
+        SCOPED_TRACE(solver);
+        write_deck("_ht_review_uniform.inp", std::string("HEAT_TRANSPORT ON\nQUALITY_SOLVER ") + solver + "\n",
+                   "org.hydrocouple.openswmm.heat config=\"_ht_review_uniform.heat\"", false, 1, 0);
+        std::ifstream input("_ht_review_uniform.inp");
+        std::string text((std::istreambuf_iterator<char>(input)), {});
+        input.close();
+        for (const std::string initial : {"10 1.5", "10 1.5"}) {
+            const auto at = text.find(initial);
+            ASSERT_NE(at, std::string::npos);
+            text.replace(at, initial.size(), "10 0");
+        }
+        write_file("_ht_review_uniform.inp", text);
+        auto e = swmm_engine_create();
+        ASSERT_EQ(swmm_engine_open(e, "_ht_review_uniform.inp", "_ht_review_uniform.rpt", "_ht_review_uniform.out", nullptr), SWMM_OK);
+        ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
+        ASSERT_EQ(swmm_engine_start(e, 0), SWMM_OK);
+        auto& ctx = as_cpp_engine(e).context();
+        double elapsed = 0;
+        do {
+            ASSERT_EQ(swmm_engine_step(e, &elapsed), SWMM_OK);
+            for (int link = 0; link < ctx.n_links(); ++link)
+                if (ctx.links.volume[link] > 1e-6)
+                    EXPECT_NEAR(ctx.heat_state.link_temp[link], 18, 1e-7) << "time " << elapsed;
+            if (elapsed > 0 && ctx.current_time < 1200)
+                EXPECT_NEAR(ctx.heat_state.node_temp.back(), 18, 1e-7) << "time " << elapsed;
+        } while (elapsed > 0);
+        swmm_engine_destroy(e);
+    }
+}

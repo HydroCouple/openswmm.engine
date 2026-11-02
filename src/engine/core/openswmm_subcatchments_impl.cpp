@@ -1746,6 +1746,9 @@ SWMM_ENGINE_API int swmm_snowpack_set_removal(SWMM_Engine engine, int idx, doubl
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.snowpacks.count());
+    const double values[] = {dsnow, fout, fimp, fperv, fimelt, fsubcatch};
+    if (!openswmm::SnowpackStore::validRemoval(values))
+        return SWMM_ERR_BADPARAM;
     auto& r = ctx.snowpacks.removal[static_cast<std::size_t>(idx)];
     r[0] = dsnow;
     r[1] = fout;

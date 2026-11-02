@@ -155,3 +155,9 @@ uses `solver.write_staged(final_path, mapper)`; publication and rollback remain
 the caller's responsibility. See the
 [editing and live-output guide](python/guide/binding_updates.html) and
 [native-call safety guide](python/guide/native_safety.html) for the contracts.
+
+Dynamic I/O plugins must export `openswmm_plugin_abi_tag` in addition to
+`openswmm_plugin_info`. Include `<openswmm/plugin_sdk/PluginAbi.hpp>` and invoke
+`OPENSWMM_DECLARE_PLUGIN_ABI()` once in the plugin source. The loader compares
+the installed SDK/build identity before calling the C++ factory. Rebuild older
+plugins against the matching installed engine SDK after this ABI change.

@@ -39,3 +39,9 @@ J0      FLOW   0.6
 J0      0.0    0.0
 MID     100.0  0.0
 OF      200.0  0.0
+
+[REPORT]
+
+NODES ALL
+
+LINKS ALL

@@ -53,3 +53,7 @@ J0      TSS          ""          CONCEN  1.0      1.0      12.5
 INPUT NO
 CONTINUITY YES
 FLOWSTATS YES
+
+NODES ALL
+
+LINKS ALL

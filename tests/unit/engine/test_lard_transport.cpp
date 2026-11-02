@@ -492,3 +492,47 @@ TEST(LardTransportTest, OrificePassthroughDeliversTheSteadySignal) {
 }
 
 } // namespace
+
+TEST(LardTransportReview, FillingStorageMixingUsesEachQualitySubstepsWaterVolume) {
+    for (double quality_step : {10., 5., 1.}) {
+        openswmm::SimulationContext ctx;
+        ctx.node_names.add("Storage");
+        ctx.pollutant_names.add("Tracer");
+        ctx.allocate_objects();
+        ctx.options.quality_step = quality_step;
+        ctx.nodes.type[0] = openswmm::NodeType::STORAGE;
+        ctx.nodes.old_volume[0] = 10;
+        ctx.nodes.volume[0] = 20;
+        ctx.nodes.qual_vol_in[0] = 10;
+        ctx.nodes.qual_mass_in[0] = 10; // 1 ft3/s at concentration 10, for 10 s.
+        openswmm::lard::LagrangianSolver solver;
+        solver.step(ctx, 10);
+        EXPECT_NEAR(ctx.nodes.conc[0], 5, 1e-10) << "quality step " << quality_step;
+    }
+}
+
+TEST(LardTransportReview, PollutantOnlyChannelsExposeSpeciesWithoutThermalRegions) {
+    openswmm::SimulationContext ctx;
+    ctx.node_names.add("J");
+    ctx.node_names.add("Out");
+    ctx.link_names.add("C");
+    ctx.pollutant_names.add("Tracer");
+    ctx.allocate_objects();
+    ctx.links.node1[0] = 0;
+    ctx.links.node2[0] = 1;
+    ctx.links.type[0] = openswmm::LinkType::CONDUIT;
+    ctx.links.volume[0] = ctx.links.old_volume[0] = 10;
+    ctx.links.depth[0] = 1;
+    ctx.links.conc[0] = 5;
+    openswmm::lard::LagrangianSolver solver;
+    solver.step(ctx, 1);
+    EXPECT_TRUE(solver.thermalRegions(ctx).empty());
+    const auto regions = solver.speciesRegions(ctx);
+    ASSERT_EQ(regions.size(), 1u);
+    openswmm::ChannelSpeciesIncrement increment;
+    increment.link = 0;
+    increment.region = 0;
+    increment.concentration_delta = {1};
+    EXPECT_TRUE(solver.applySpeciesIncrements(ctx, {increment}).empty());
+    EXPECT_NEAR(ctx.links.conc[0], 6, 1e-12);
+}

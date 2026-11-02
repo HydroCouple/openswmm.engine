@@ -66,12 +66,11 @@ struct BindingScratch {
 };
 
 /**
- * @brief Borrow the process-wide legacy/LARD reaction-binding workspace.
- * @return Static nonowned BindingScratch reference, process lifetime. No synchronization for
- * mutable use; serialize all reactElements/reactSpeciesBlock calls across models.
+ * @brief Borrow the thread-local legacy/LARD reaction-binding workspace.
+ * @return Static nonowned BindingScratch reference, thread lifetime. Mutable use is confined to the calling thread.
  */
 BindingScratch& scratch() {
-    static BindingScratch s;
+    static thread_local BindingScratch s;
     return s;
 }
 

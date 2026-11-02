@@ -38,6 +38,7 @@
 #include <filesystem>
 #include <cstdio>
 #include <cstdlib>
+#include <stdexcept>
 
 #include "../../include/openswmm/engine/openswmm_engine.h"
 #include "../../include/openswmm/legacy/engine/openswmm_solver.h"
@@ -62,7 +63,7 @@ struct RegressionParams {
  *
  * @param[in] data_dir Prefix concatenated directly with each known filename; include a trailing
  *     separator.
- * @return Owned records for existing Example1/2/3 and SlotSurcharge decks, preserving table order;
+ * @return Owned records for required Example1 and SlotSurcharge decks, preserving table order;
  *     may be empty.
  */
 static std::vector<RegressionParams> LoadRegressionCases(const std::string& data_dir) {
@@ -74,8 +75,6 @@ static std::vector<RegressionParams> LoadRegressionCases(const std::string& data
         double rel_tol;
     } known[] = {
         {"Example1", "Example1.inp", 0.001, 0.001},
-        {"Example2", "Example2.inp", 0.001, 0.001},
-        {"Example3", "Example3.inp", 0.001, 0.001},
         // SURCHARGE_METHOD SLOT — the only coverage of the Preissmann-slot
         // conveyance-area momentum path (issue #144). The looser tolerance is
         // measured, not guessed: the two engines run this model to 0.0073 cfs
@@ -85,9 +84,9 @@ static std::vector<RegressionParams> LoadRegressionCases(const std::string& data
     };
     for (const auto& c : known) {
         std::string path = data_dir + c.file;
-        if (fs::exists(path)) {
-            cases.push_back({c.name, path, c.abs_tol, c.rel_tol});
-        }
+        if (!fs::is_regular_file(path))
+            throw std::runtime_error("Missing required regression deck: " + path);
+        cases.push_back({c.name, path, c.abs_tol, c.rel_tol});
     }
     return cases;
 }

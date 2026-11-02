@@ -38,6 +38,7 @@
 #include "../io/Hdf5Mutex.hpp"
 #endif
 #endif
+#include "../transport/components/LidLayerCommon.hpp"
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -1156,6 +1157,8 @@ struct SWMMEngine::RestartState {
     HeatState heat;
     BedZoneState bed;
     bool heat_profile = false;
+    bool layer_profile = false;
+    LidLayerSpeciesState lid_layers;
     bool rk2_profile = false;
     bool reaction_profile = false;
     ReactionData reaction;
@@ -1212,6 +1215,9 @@ struct SWMMEngine::RestartState {
         RUNOFF_ENGINE(COPY)
 #undef COPY
         heat_profile = e.ctx_.options.heat_transport;
+        layer_profile = heat_profile || e.ctx_.options.water_age;
+        if (layer_profile)
+            lid_layers = e.ctx_.lid_layer_state;
 #ifdef OPENSWMM_HAS_2D
         rk2_profile = e.surface_router_.standaloneRk2Checkpointing();
 #endif
@@ -1361,6 +1367,9 @@ struct SWMMEngine::RestartState {
             heatState(a, heat);
             bedZoneState(a, bed);
         }
+        if (layer_profile)
+            a(lid_layers.n_units, lid_layers.n_species, lid_layers.group_offset,
+              lid_layers.value, lid_layers.vol_prev, lid_layers.drain_value, lid_layers.inflow_value);
         if (reaction_profile) {
             detail::reactionState(a, reaction);
             a(ard_attempted, ard_bytes, lard_bytes);
@@ -1425,6 +1434,27 @@ struct SWMMEngine::RestartState {
                     "Reaction sweeping-clock shape differs.");
             finite(subcatch.sweep_last_swept);
             finite(subcatch.sweep_last_date);
+        }
+        if (layer_profile) {
+            const auto offsets = transport::buildOffsets(e.lid_);
+            const int units = offsets.empty() ? 0 : offsets.back();
+            require(lid_layers.n_units == units &&
+                        (units == 0 || (lid_layers.n_species == static_cast<int>(LidSpecies::COUNT_) &&
+                                       lid_layers.group_offset == offsets)),
+                    "Engine LID-layer checkpoint layout differs.");
+            const auto rows = std::size_t(lid_layers.n_units) * LidLayerSpeciesState::kLayerCount;
+            const auto scalars = std::size_t(lid_layers.n_units) * std::size_t(lid_layers.n_species);
+            require(lid_layers.value.size() == rows * lid_layers.n_species &&
+                        lid_layers.vol_prev.size() == rows &&
+                        lid_layers.drain_value.size() == scalars &&
+                        lid_layers.inflow_value.size() == scalars,
+                    "Engine LID-layer checkpoint shape differs.");
+            finite(lid_layers.value);
+            finite(lid_layers.vol_prev);
+            finite(lid_layers.drain_value);
+            finite(lid_layers.inflow_value);
+            for (double water : lid_layers.vol_prev)
+                require(water >= 0, "Negative LID-layer checkpoint water.");
         }
         if (heat_profile) {
             const auto same_size = [&](const auto& saved, std::size_t model, const char* message) {
@@ -1813,6 +1843,8 @@ struct SWMMEngine::RestartState {
                 row[i] = tops[at++];
         e.ctx_.climate_state = climate;
         e.ctx_.dt_controls_remaining = controls_remaining;
+        if (layer_profile)
+            e.ctx_.lid_layer_state = std::move(lid_layers);
         if (heat_profile) {
             e.ctx_.heat_state = std::move(heat);
             e.ctx_.bed_state = std::move(bed);
@@ -2547,7 +2579,9 @@ std::string SWMMEngine::checkpointBytes(std::string& result, bool include_output
             version += 40;
 #endif
         if (ctx_.options.heat_transport)
-            version += 80;
+            version += 180;
+        else if (ctx_.options.water_age)
+            version += 100;
         if (ctx_.reactions.configured)
             version += 1000;
         require(error.empty(), error.c_str());
@@ -3021,7 +3055,9 @@ std::string SWMMEngine::loadCheckpointBytes(std::string checkpoint,
             expected_version += 6;
 #endif
         if (ctx_.options.heat_transport)
-            expected_version += 80;
+            expected_version += 180;
+        else if (ctx_.options.water_age)
+            expected_version += 100;
         if (ctx_.reactions.configured)
             expected_version += 1000;
         require(magic == magicName && version == expected_version && model == checkpoint_model_ &&

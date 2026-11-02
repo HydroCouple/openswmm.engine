@@ -65,6 +65,9 @@ class GroundwaterSource:
     cell: int = 0
     flow: float = 0.0
     flow_timeseries: str = ''
+    by_xy: bool = False
+    x: float = 0.0
+    y: float = 0.0
 
 
 @dataclass(frozen=True)

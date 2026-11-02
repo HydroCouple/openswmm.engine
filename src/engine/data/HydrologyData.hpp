@@ -38,6 +38,7 @@
 #include <vector>
 #include <string>
 #include <array>
+#include <cmath>
 
 #include "../core/FilePathPair.hpp"
 
@@ -57,6 +58,17 @@ namespace openswmm {
  * @ingroup engine_data
  */
 struct SnowpackStore {
+    static bool validRemoval(const double* values) {
+        double sum = 0;
+        for (int i = 0; i < 6; ++i) {
+            if (!std::isfinite(values[i]) || values[i] < 0)
+                return false;
+            if (i)
+                sum += values[i];
+        }
+        return sum <= 1 + 1e-12;
+    }
+
     // Derived at report time from accepted native and completed source owners.
     // Not restart state; it is rebuilt after every run/resume.
     std::vector<std::pair<std::string, double>> report_values;

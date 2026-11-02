@@ -165,10 +165,10 @@ class TestSystemEnumCoverage(unittest.TestCase):
 
 
 class TestNodeEnumCoverage(unittest.TestCase):
-    """Verify all 16 node enum members are present (TYPE..OUTFLOW, 300-315)."""
+    """Verify all 17 node enum members are present (TYPE..STORAGE_AREA, 300-316)."""
 
     def test_node_enum_count(self):
-        self.assertEqual(len(solver.SWMMNodeProperties), 16)
+        self.assertEqual(len(solver.SWMMNodeProperties), 17)
 
 
 class TestLinkEnumCoverage(unittest.TestCase):

@@ -101,7 +101,9 @@ typedef struct SWMM_CouplingFrame {
  * become `provider/<provider>/<id>`. Boundary/forcing ownership is exclusive until clear/expiry.
  * Duplicate or conflicting entries are refused before publication. Accepted changes flush prior
  * pending physics, preserve cumulative receipts and record the prescription; native authored
- * settings resume after clear.
+ * settings resume after clear. Common-source checkpoint profiles currently refuse
+ * surface boundary concentration tuples with SWMM_ERR_PLUGIN; supplied quality is
+ * never silently discarded.
  *
  * @param[in] engine Non-null RUNNING engine with a supported CPU mesh backend. Call between steps
  *     or from a permitted step callback.

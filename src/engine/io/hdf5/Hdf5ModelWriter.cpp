@@ -30,6 +30,7 @@
 #include "core/NativeModelBundle.hpp"
 
 #include "core/SimulationContext.hpp"
+#include "core/AtomicOutputFile.hpp"
 #include "core/UnitConversion.hpp"
 #include "data/StorageGeometry.hpp" // storage_shape_keyword
 #include "input/PostParseResolver.hpp"
@@ -1097,7 +1098,13 @@ int write_model(const std::string& path, const SimulationContext& ctx_internal,
     }
     const SimulationContext& ctx = (needs_display || needs_authored) ? copy : ctx_internal;
 
-    Handle file(H5Fcreate(path.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT),
+    io::AtomicOutputFile output(io::utf8_path(path), true);
+    const auto staging = output.externalWriterPath();
+    if (staging.empty()) {
+        if (warnings) warnings->push_back(output.error());
+        return 1;
+    }
+    Handle file(H5Fcreate(io::path_utf8(staging).c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT),
                 Handle::Kind::File);
     if (!file) {
         if (warnings)
@@ -1136,6 +1143,11 @@ int write_model(const std::string& path, const SimulationContext& ctx_internal,
     }
     if (H5Fflush(file.get(), H5F_SCOPE_GLOBAL) < 0) {
         if (warnings) warnings->push_back("HDF5: cannot flush model configuration");
+        return 1;
+    }
+    file = Handle{};
+    if (!output.commit()) {
+        if (warnings) warnings->push_back(output.error());
         return 1;
     }
     return 0;

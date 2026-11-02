@@ -1383,3 +1383,58 @@ TEST(HotStartLegacyRoutingTest, NativeSplitRunRestoresSurfaceAndLedgers) {
 } /* legacy-routing regression namespace */
 
 } /* anonymous namespace */
+
+TEST(HotStartReview, UnsupportedStateRefusesBeforeReplacingExistingFile) {
+    std::filesystem::create_directories("hotstart_review");
+    const std::string path = "hotstart_review/last_good.hsf";
+    const std::string previous = "last valid restart";
+    for (int feature = 0; feature < 4; ++feature) {
+        auto ctx = make_test_context();
+        if (feature == 0) ctx.options.heat_transport = true;
+        if (feature == 1) {
+            ctx.options.water_age = true;
+            ctx.options.quality_solver = openswmm::QualitySolverKind::LAGRANGIAN;
+        }
+        if (feature == 2) ctx.lid_layer_state.n_units = ctx.lid_layer_state.n_species = 1;
+        if (feature == 3) ctx.runtime_coupling_used = true;
+        std::ofstream(path, std::ios::binary) << previous;
+        EXPECT_NE(HotStartManager::save_legacy_routing(path, ctx), 0);
+        if (feature != 3) {
+            EXPECT_EQ(HotStartManager::save(ctx, path), nullptr);
+            EXPECT_EQ(HotStartManager::save(ctx, nullptr, nullptr, path), nullptr);
+        }
+        std::ifstream file(path, std::ios::binary);
+        const std::string actual((std::istreambuf_iterator<char>(file)), {});
+        EXPECT_EQ(actual, previous);
+        EXPECT_FALSE(HotStartManager::last_io_error().empty());
+    }
+}
+
+TEST(HotStartReview, AutoFormatPreservesLegacySolverWaterAge) {
+    std::filesystem::create_directories("hotstart_review");
+    const std::string input = "hotstart_review/age-save.inp";
+    const std::string restart = "hotstart_review/age-use.inp";
+    const std::string file = "hotstart_review/age-native.hsf";
+    // FILES paths are relative to the input file's directory.
+    std::ofstream(input) << splitRunDeck("02:00:00", "00:00:00", "SAVE HOTSTART \"age-native.hsf\"")
+                         << "\n[OPTIONS]\nWATER_AGE ON\n";
+    std::ofstream(restart) << splitRunDeck("03:00:00", "02:00:00", "USE HOTSTART \"age-native.hsf\"")
+                           << "\n[OPTIONS]\nWATER_AGE ON\n";
+    openswmm::SWMMEngine source, target;
+    ASSERT_EQ(source.open(input.c_str(), "hotstart_review/age-save.rpt", nullptr), SWMM_OK);
+    ASSERT_EQ(source.initialize(), SWMM_OK);
+    ASSERT_EQ(source.start(0), SWMM_OK);
+    double elapsed = 0;
+    do { ASSERT_EQ(source.step(&elapsed), SWMM_OK); } while (elapsed > 0);
+    ASSERT_EQ(source.end(), SWMM_OK);
+    std::unique_ptr<HotStartFile> saved(HotStartManager::open(file));
+    ASSERT_NE(saved, nullptr) << HotStartManager::last_io_error();
+    EXPECT_GE(saved->header.version, 3u);
+    ASSERT_EQ(target.open(restart.c_str(), "hotstart_review/age-use.rpt", nullptr), SWMM_OK);
+    ASSERT_EQ(target.initialize(), SWMM_OK);
+    ASSERT_EQ(target.start(0), SWMM_OK);
+    EXPECT_EQ(source.context().water_age_state.node_age, target.context().water_age_state.node_age);
+    EXPECT_EQ(source.context().water_age_state.link_age, target.context().water_age_state.link_age);
+    EXPECT_GT(*std::max_element(source.context().water_age_state.link_age.begin(),
+                               source.context().water_age_state.link_age.end()), 0);
+}

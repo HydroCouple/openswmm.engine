@@ -5,10 +5,15 @@ LAYER zones use a one-based layer number. Source flow is m³/s; parameter rows
 use SI thermal/material units, and sorption uses L/kg and 1/day.
 """
 from dataclasses import dataclass
+from libc.math cimport isfinite
+from ._exceptions import BadParamError
 from collections.abc import MutableMapping
 from ._access import EngineView
 from ._common cimport SWMM_Engine, _check, _TextBufs, _tb_open, _tb_retry, _tb_str, _tb_close
-from ._enums import CellScope, GroundwaterTransportZone
+from ._enums import CellScope, GroundwaterTransportZone, ErrorCode
+
+cdef extern from "openswmm/engine/openswmm_2d.h":
+    int swmm_2d_cell_count(SWMM_Engine engine, int* count)
 
 cdef extern from "openswmm/engine/openswmm_gw_transport.h":
     ctypedef struct SWMM_GwParams:
@@ -120,6 +125,9 @@ class GroundwaterSource:
     cell: int = 0
     flow: float = 0.0
     flow_timeseries: str = ''
+    by_xy: bool = False
+    x: float = 0.0
+    y: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -326,6 +334,8 @@ class GroundwaterTransport(EngineView):
     def sources(self):
         """Immutable authored row snapshots in native order."""
         cdef SWMM_Engine h = _h(self)
+        cdef int by_xy=0
+        cdef double x=0, y=0
         cdef int scope=0
         cdef int cell=0
         cdef double flow=0
@@ -341,7 +351,9 @@ class GroundwaterTransport(EngineView):
                     _check(swmm_gw_source_get(h, index, t.p[0], t.size, &scope, t.p[1], t.size, &cell, &flow, t.p[2], t.size))
                     if not _tb_retry(&t):
                         break
-                rows.append(GroundwaterSource(_tb_str(&t, 0), CellScope(scope), _tb_str(&t, 1), cell, flow, _tb_str(&t, 2)))
+                x = y = 0
+                _check(swmm_gw_source_xy_get(h, index, &by_xy, &x, &y))
+                rows.append(GroundwaterSource(_tb_str(&t, 0), CellScope(scope), _tb_str(&t, 1), cell, flow, _tb_str(&t, 2), bool(by_xy), x, y))
         finally:
             _tb_close(&t)
         return tuple(rows)
@@ -351,7 +363,20 @@ class GroundwaterTransport(EngineView):
         cdef bytes name = row.name.encode('utf-8')
         cdef bytes tag = row.tag.encode('utf-8')
         cdef bytes flow_timeseries = row.flow_timeseries.encode('utf-8')
-        _check(swmm_gw_source_set(_h(self), name, int(CellScope(row.scope)), tag, row.cell, row.flow, flow_timeseries))
+        cdef SWMM_Engine h = _h(self)
+        cdef int count = 0
+        cdef int index = -1
+        if row.by_xy:
+            _check(swmm_2d_cell_count(h, &count))
+            if (CellScope(row.scope) != CellScope.CELL or count == 0 or
+                    not isfinite(row.x) or not isfinite(row.y)):
+                raise BadParamError(ErrorCode.BADPARAM, "XY sources require CELL scope, a mesh and finite coordinates")
+        _check(swmm_gw_source_set(h, name, int(CellScope(row.scope)), tag, row.cell, row.flow, flow_timeseries))
+        if row.by_xy:
+            for index, source in enumerate(self.sources):
+                if source.name == row.name:
+                    _check(swmm_gw_source_xy_set(h, index, row.x, row.y))
+                    break
 
     def remove_source(self, int index):
         """Remove a row; subsequent indices shift."""

@@ -388,7 +388,7 @@ void startStructures(SWMMEngine& e, const std::string& name, int mode = 0, int l
  * @param[in] checkpoint Enable session checkpointing after start when true.
  */
 void startRunoff(SWMMEngine& e, const std::string& name, int method = 0, int rain = 0,
-                 int node_lid = 0, bool checkpoint = true) {
+                 int node_lid = 0, bool checkpoint = true, bool thermal = false) {
     SWMMEngine authored;
     startStructures(authored, name, method % 4, node_lid, 0, false);
     if (authored.close())
@@ -439,6 +439,11 @@ void startRunoff(SWMMEngine& e, const std::string& name, int method = 0, int rai
     deck += rain == 0 ? "4" : ".04";
     deck +=
         "\n[PATTERNS]\nMonth MONTHLY .8 1.2 1 1 1 1 1 1 1 1 1 1\n[ADJUSTMENTS]\nRAIN .9 1.2 1 1 1 1 1 1 1 1 1 1\nINFIL A Month\nN-PERV B Month\nDSTORE D Month\n";
+    if (thermal) {
+        write(p.string() + ".heat", "[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 18\nEXTERNAL_INFLOW GLOBAL 18\n");
+        deck += "[OPTIONS]\nHEAT_TRANSPORT ON\n[PROCESS_COMPONENTS]\norg.hydrocouple.openswmm.heat config=\"" +
+                p.string() + ".heat\"\n";
+    }
     write(p.string() + ".inp", deck);
     if (e.open((p.string() + ".inp").c_str(), (p.string() + ".rpt").c_str(), nullptr))
         throw std::runtime_error("runoff open: " + e.context().error_message + " " +
@@ -13563,5 +13568,54 @@ TEST(EngineCheckpoint, NetworkPollutantsRefuseBorrowedOrMissingRowPublisherAtomi
         ASSERT_EQ(e.saveCheckpoint(after.string()), "");
         EXPECT_TRUE(bytes(before) == bytes(after));
     }
+}
+#endif
+
+TEST(EngineCheckpoint, ConventionalLidLayerScalarsSurviveThermalRestart) {
+    SWMMEngine source, target;
+    ASSERT_NO_THROW(startRunoff(source, "review-lid-thermal-source", 0, 0, 0, true, true));
+    ASSERT_NO_THROW(startRunoff(target, "review-lid-thermal-target", 0, 0, 0, true, true));
+    while (source.context().current_time < 47)
+        ASSERT_NO_THROW(step(source));
+    auto& layers = source.context().lid_layer_state;
+    ASSERT_TRUE(layers.active());
+    for (std::size_t i = 0; i < layers.value.size(); ++i)
+        layers.value[i] = 1 + i * .25;
+    const auto saved = root() / "review-lid-thermal.chk";
+    ASSERT_EQ(source.saveCheckpoint(saved.string()), "");
+    ASSERT_EQ(target.loadCheckpoint(saved.string()), "");
+    const auto& restored = target.context().lid_layer_state;
+    EXPECT_EQ(restored.value, layers.value);
+    EXPECT_EQ(restored.vol_prev, layers.vol_prev);
+    EXPECT_EQ(restored.drain_value, layers.drain_value);
+    EXPECT_EQ(restored.inflow_value, layers.inflow_value);
+    ASSERT_NO_THROW(step(source));
+    ASSERT_NO_THROW(step(target));
+    EXPECT_EQ(source.context().lid_layer_state.value, target.context().lid_layer_state.value);
+    compare(source, target, "review-lid-thermal-continued");
+}
+
+#ifdef OPENSWMM_HAS_2D
+TEST(EngineCheckpoint, RuntimeThermalBoundaryQualityRefusesAtomicallyInsteadOfDiscardingTuple) {
+    SurfaceSession session;
+    ASSERT_NO_THROW(session.start("review-boundary-heat-tuple", 0, 1, 0, 0, true, false,
+                                  false, -1, false, 0, false, "mesh water driver revision 1",
+                                  true, 0, 0, false, 0, true));
+    auto& router = session.engine.surfaceRouter2D();
+    ASSERT_TRUE(router.runtimeBoundaryCheckpointing());
+    const int count = router.state().transport.n_species;
+    ASSERT_GT(count, 0);
+    const std::vector<double> concentration(count, 18);
+    SWMM_CouplingBoundary row{sizeof(row), 0, 0, exterior(session.engine, 0), 1, .75,
+                              count, concentration.data()};
+    SWMM_CouplingFrame frame{sizeof(frame), 1, "review-quality", 0, nullptr, 1, &row,
+                             0, nullptr, 0, nullptr};
+    const auto owners = router.boundary().runtime_owner;
+    const auto quality = router.state().transport.runtime_bc_conc;
+    const double time = session.engine.context().current_time;
+    EXPECT_EQ(swmm_coupling_apply_frame(&session.engine, &frame), SWMM_ERR_PLUGIN);
+    EXPECT_EQ(router.boundary().runtime_owner, owners);
+    EXPECT_EQ(router.state().transport.runtime_bc_conc, quality);
+    EXPECT_DOUBLE_EQ(session.engine.context().current_time, time);
 }
 #endif

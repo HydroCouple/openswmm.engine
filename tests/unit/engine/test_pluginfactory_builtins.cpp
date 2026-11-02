@@ -42,6 +42,7 @@
 
 #include <openswmm/plugin_sdk/PluginDiscovery.hpp>
 
+#include "plugins/PluginFactory.hpp"
 #include <algorithm>
 #include <string>
 #include <vector>
@@ -154,3 +155,17 @@ TEST(PluginFactoryBuiltins, NonBuiltinDefaultIsFalseForAccidentalScanHits) {
     openswmm::DiscoveredPlugin fresh;
     EXPECT_FALSE(fresh.is_builtin);
 }
+
+#ifdef TEST_IO_ABI_0
+TEST(PluginFactoryBuiltins, DynamicPluginsRequireMatchingAbiBeforeFactoryCall) {
+    openswmm::PluginFactory factory;
+    for (const char* path : {TEST_IO_ABI_0, TEST_IO_ABI_1}) {
+        std::string warning;
+        EXPECT_EQ(factory.load_library(path, [&](const std::string& text) { warning = text; }), nullptr);
+        EXPECT_NE(warning.find("ABI tag"), std::string::npos);
+    }
+    auto* info = factory.load_library(TEST_IO_ABI_2);
+    ASSERT_NE(info, nullptr);
+    EXPECT_EQ(info->id(), "test.current-plugin-abi");
+}
+#endif

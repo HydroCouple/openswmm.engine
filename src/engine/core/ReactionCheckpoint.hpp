@@ -30,8 +30,14 @@ namespace openswmm::detail {
 inline bool checkpointReactionComponents(const SimulationContext& c) {
     return std::all_of(c.process_component_specs.begin(), c.process_component_specs.end(),
                        [&](const auto& p) {
+                           if (!p.args.empty())
+                               return false;
+                           // Heat configuration and all carried thermal state are
+                           // included in the engine model/state archives.
+                           if (p.id == "org.hydrocouple.openswmm.heat")
+                               return c.options.heat_transport;
                            return p.id == "org.hydrocouple.openswmm.reactions" &&
-                                  c.reactions.configured && c.reactions.compiled && p.args.empty();
+                                  c.reactions.configured && c.reactions.compiled;
                        });
 }
 /**

@@ -27,6 +27,7 @@
  */
 
 #include "PluginFactory.hpp"
+#include <openswmm_abi_tag.h>
 #include "BuiltinPluginInfos.hpp"
 
 // Slice RC.1 — GeoPackage is registered as an explicit built-in so it
@@ -338,6 +339,18 @@ IPluginComponentInfo* PluginFactory::load_library(const std::string& path,
                 return nullptr;
         }
         // Not a component either — silently skip, as before.
+        platform_unload(handle);
+        return nullptr;
+    }
+
+    // Probe a C string before calling any C++ interface from the library.
+    using AbiFn = const char* (*)();
+    auto abi_fn = reinterpret_cast<AbiFn>(platform_sym(handle, "openswmm_plugin_abi_tag"));
+    const char* abi = abi_fn ? abi_fn() : nullptr;
+    if (!abi || std::strcmp(abi, OPENSWMM_ENGINE_ABI_TAG) != 0) {
+        if (warn_cb)
+            warn_cb("PluginFactory: incompatible or missing plugin ABI tag in '" + path +
+                    "'; rebuild the plugin against this engine SDK.");
         platform_unload(handle);
         return nullptr;
     }

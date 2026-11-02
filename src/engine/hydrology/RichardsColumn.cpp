@@ -667,6 +667,23 @@ std::vector<Report> advance(std::vector<Column*>& columns, double dt) {
                     }
             }
     }
+    for (std::size_t a = 0; a < trial.size(); ++a) {
+        const auto& col = trial[a];
+        const auto& report = reports[a];
+        const double initial = std::accumulate(columns[a]->water.begin(), columns[a]->water.end(), 0.0);
+        const double final = std::accumulate(col.water.begin(), col.water.end(), 0.0);
+        const double scale = std::max({std::abs(initial), std::abs(final),
+                                      std::abs(report.inflow), std::abs(report.bottom_volume),
+                                      std::abs(report.evaporation)});
+        const double tolerance = 16 * (col.options.atol * col.cells.size() + col.options.rtol * scale);
+        if (!std::isfinite(report.balance) || std::abs(report.balance) > tolerance) {
+            for (auto& result : reports) {
+                result.ok = false;
+                result.error = "Richards water balance exceeded integration tolerance; batch rolled back";
+            }
+            return reports;
+        }
+    }
     for (std::size_t a = 0; a < trial.size(); ++a)
         columns[a]->water = std::move(trial[a].water);
     return reports;

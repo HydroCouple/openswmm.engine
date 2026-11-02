@@ -1677,23 +1677,10 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
             rowx("2D -> 1D Drain ...........", drain_1d);
             rowx("Net 1D -> 2D .............", spill_1d - drain_1d);
 
-            // Flow-routing continuity with the exchange internal: remove the
-            // drain from external inflow and the spill from whichever outflow
-            // category carries it.
-            //
-            // C2: the spill now lives in routing_coupling_out by default, and
-            // only in routing_flooding under COUPLING_IN_FLOODING. Subtracting
-            // it from the SUM of the two is correct in both groupings and
-            // needs no branch — the category it is not in contributes zero.
-            const double in_adj = mb1.routing_dry_weather + mb1.routing_wet_weather +
-                                  mb1.routing_gw_inflow + mb1.routing_link_gw_inflow // G-X4
-                                  + mb1.routing_rdii + (mb1.routing_external - drain_1d) +
-                                  mb1.routing_init_storage;
-            const double out_adj = (mb1.routing_flooding + mb1.routing_coupling_out - spill_1d) +
-                                   mb1.routing_outflow + mb1.routing_evap_loss +
-                                   mb1.routing_seep_loss + mb1.routing_final_storage;
-            const double err_adj = (in_adj > 0.0) ? (in_adj - out_adj) / in_adj : 0.0;
-            std::fprintf(f, "\n  Flow Continuity w/ Exchange Internal (%%) %8.3f", err_adj * 100.0);
+            // A combined-system continuity calculation must include both
+            // domains' inventories. Removing exchange terms from the 1D
+            // ledger alone does not produce a combined-system error.
+
         }
     }
 

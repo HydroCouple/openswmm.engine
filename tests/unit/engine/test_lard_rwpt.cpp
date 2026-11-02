@@ -478,3 +478,40 @@ TEST(LardRwptTest, ExplicitOffMatchesOmittedKeyBitwise) {
 }
 
 } // namespace
+
+TEST(LardRwptReview, DispersionIsInvariantToConcentrationOffsetIncludingNegativeTemperatures) {
+    openswmm::SimulationContext ctx;
+    openswmm::lard::SegmentStore a, b;
+    a.resize(1, 1);
+    b.resize(1, 1);
+    for (double value : {0., 10., 2., 5.}) {
+        const double shifted = value - 20;
+        a.push_front(0, 10, &value);
+        b.push_front(0, 10, &shifted);
+    }
+    openswmm::lard::RwptDispersion da, db;
+    da.resize(1);
+    db.resize(1);
+    std::vector<double> delta_a(1), delta_b(1);
+    double mass_a = 0, mass_b = 0;
+    for (int k = 0; k < a.count(0); ++k) {
+        mass_a += a.seg_volume(0, k) * a.seg_conc(0, k, 0);
+        mass_b += b.seg_volume(0, k) * b.seg_conc(0, k, 0);
+    }
+    bool changed = false;
+    for (int step = 0; step < 20; ++step) {
+        da.disperse(ctx, a, 0, 1, 1, .3, .013, 0, 1, 1, step, 42, delta_a);
+        db.disperse(ctx, b, 0, 1, 1, .3, .013, 0, 1, 1, step, 42, delta_b);
+    }
+    double after_a = 0, after_b = 0;
+    const double original[] = {5, 2, 10, 0};
+    for (int k = 0; k < a.count(0); ++k) {
+        EXPECT_NEAR(a.seg_conc(0, k, 0) - b.seg_conc(0, k, 0), 20, 1e-10);
+        after_a += a.seg_volume(0, k) * a.seg_conc(0, k, 0);
+        after_b += b.seg_volume(0, k) * b.seg_conc(0, k, 0);
+        changed |= std::abs(a.seg_conc(0, k, 0) - original[k]) > 1e-6;
+    }
+    EXPECT_TRUE(changed);
+    EXPECT_NEAR(after_a, mass_a, 1e-10);
+    EXPECT_NEAR(after_b, mass_b, 1e-10);
+}

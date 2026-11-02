@@ -115,6 +115,21 @@ add_gtest_unit(test_engine_plugin_lifecycle      test_plugin_lifecycle.cpp)
 add_gtest_unit(test_engine_plugin_filter_invariant test_plugin_filter_invariant.cpp)
 # Slice RC.5 — GeoPackage explicit-builtin registration + is_builtin flag.
 add_gtest_unit(test_engine_pluginfactory_builtins test_pluginfactory_builtins.cpp)
+if(NOT EMSCRIPTEN)
+    foreach(_abi RANGE 0 2)
+        add_library(test_io_abi_${_abi} SHARED fake_io_abi_plugin.cpp)
+        target_include_directories(test_io_abi_${_abi} PRIVATE "${PROJECT_SOURCE_DIR}/include"
+            "${PROJECT_BINARY_DIR}/src/engine")
+        target_compile_definitions(test_io_abi_${_abi} PRIVATE TEST_PLUGIN_ABI=${_abi})
+        set_target_properties(test_io_abi_${_abi} PROPERTIES
+            LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/io-abi-fakes"
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/io-abi-fakes")
+        add_dependencies(test_engine_pluginfactory_builtins test_io_abi_${_abi})
+        target_compile_definitions(test_engine_pluginfactory_builtins PRIVATE
+            TEST_IO_ABI_${_abi}="$<TARGET_FILE:test_io_abi_${_abi}>")
+    endforeach()
+endif()
+
 # Slice QA-01.4 — per-node summary stats read from a SWMM_Output handle.
 add_gtest_unit(test_engine_output_node_stats     test_output_node_stats.cpp)
 add_gtest_unit(test_engine_output_system_vars    test_output_system_vars.cpp)

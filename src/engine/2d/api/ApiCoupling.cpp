@@ -326,6 +326,11 @@ int swmm_coupling_apply_frame(SWMM_Engine h, const SWMM_CouplingFrame* f) {
             if (!in.kind && in.species_count != 0)
                 return SWMM_ERR_BADPARAM;
             if (in.domain == 0) {
+                // The common-source checkpoint profile cannot serialize runtime
+                // boundary quality yet. Refuse the transaction before publication
+                // instead of accepting and silently discarding its tuple.
+                if (in.kind && in.species_count && router.runtimeBoundaryCheckpointing())
+                    return SWMM_ERR_PLUGIN;
                 if (!bc) {
                     bc = router.boundary();
                     concentrations = tr.runtime_bc_conc;

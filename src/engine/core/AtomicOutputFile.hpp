@@ -154,7 +154,30 @@ public:
      * parent-directory durability guarantee.
      * @return True only after successful publication; false for missing stream or an IO/rename refusal.
      */
+    // Hand the exclusively reserved staging path to a library with its own
+    // file API (for example HDF5). Close that writer before commit().
+    std::filesystem::path externalWriterPath() {
+        if (!file_)
+            return {};
+        const int result = std::fclose(file_);
+        file_ = nullptr;
+        if (result != 0) {
+            fail("close staging stream", systemError());
+            return {};
+        }
+        external_writer_ = true;
+        return staging_;
+    }
+
     bool commit() {
+        if (external_writer_) {
+            external_writer_ = false;
+            file_ = fopen_path(staging_, "r+b");
+            if (!file_) {
+                fail("reopen completed output", systemError());
+                return false;
+            }
+        }
         if (!file_)
             return false;
         bool ok = std::ferror(file_) == 0;
@@ -198,6 +221,7 @@ public:
     }
 
 private:
+    bool external_writer_ = false;
     /**
      * @brief Capture errno as a generic error or synthesize IO failure.
      *

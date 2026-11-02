@@ -44,3 +44,9 @@ J_IN    0.0    0.0
 VJ_A    100.0  0.0
 VJ_B    200.0  0.0
 O_OUT   300.0  0.0
+
+[REPORT]
+
+NODES ALL
+
+LINKS ALL

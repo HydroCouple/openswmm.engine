@@ -279,7 +279,7 @@ public:
     std::vector<ChannelSpeciesRegion> speciesRegions(const SimulationContext& ctx) const {
         std::vector<ChannelSpeciesRegion> out;
         const auto layout = rowLayout(ctx);
-        if (!initialized_ || layout.temp_row < 0)
+        if (!initialized_ || layout.ns <= 0)
             return out;
         std::vector<double> mean(layout.ns);
         for (int link = 0; link < ctx.n_links(); ++link) {
@@ -325,13 +325,13 @@ public:
     std::string applySpeciesIncrements(SimulationContext& ctx,
                                        const std::vector<ChannelSpeciesIncrement>& updates) {
         const auto layout = rowLayout(ctx);
-        if (!initialized_ || layout.temp_row < 0)
+        if (!initialized_ || layout.ns <= 0)
             return "LARD channel species state is unavailable.";
         for (const auto& u : updates) {
             if (u.link < 0 || u.link >= ctx.n_links() || u.region != 0 ||
                 u.concentration_delta.size() != std::size_t(layout.ns))
                 return "LARD species increment has an invalid channel region or row count.";
-            if (u.concentration_delta[layout.temp_row] != 0)
+            if (layout.temp_row >= 0 && u.concentration_delta[layout.temp_row] != 0)
                 return "LARD species update cannot modify the temperature row.";
             std::vector<double> mean(layout.ns);
             store_.mean_conc(u.link, mean.data());
@@ -463,7 +463,7 @@ public:
         const double dt = dt_routing / static_cast<double>(nsub);
         const double frac = 1.0 / static_cast<double>(nsub);
         for (int sub = 0; sub < nsub; ++sub)
-            substep(ctx, dt, frac);
+            substep(ctx, dt, frac, sub * frac);
 
         // H2/H3/H6b under LARD: surface + radiative fluxes and the bed
         // pair, once per routing step (the ARD slot), applied to the
@@ -495,7 +495,7 @@ public:
      * can leave partial stores/ledgers on exception; exclusive once-per-subinterval chronology
      * and stable hydraulic/source owner required.
      */
-    void substep(SimulationContext& ctx, double dt, double frac) {
+    void substep(SimulationContext& ctx, double dt, double frac, double start_fraction = 0.0) {
         const SpeciesRowLayout L = rowLayout(ctx);
         const int np = L.np;
         const int ns = L.ns;
@@ -555,8 +555,10 @@ public:
             // nodes.volume in legacy's convention, 0 for a junction below
             // its rim, but the store this solver mixes into is the water
             // the continuity equation attributes to the node.
-            const double v_old =
+            const double routing_old =
                 node::storeVolume(nodes, n, nodes.old_depth[un], nodes.old_volume[un]);
+            const double routing_new = node::storeVolume(nodes, n);
+            const double v_old = routing_old + start_fraction * (routing_new - routing_old);
             const double v_in = node_vol_in_[un];
             // OUTFALL_BACKFLOW_QUALITY ZERO: an outfall taking no volume
             // inflow this substep is a fresh boundary — its held state
@@ -639,7 +641,7 @@ public:
                 if (is_msx && !zero_bf)
                     m += transport::reactionBoosterMass(ctx, n, s - L.msx_first, m, denom,
                                                         v_in + nodes.qual_vol_in[un] * frac);
-                const double st_new = zero_bf ? 0.0 : ((denom > 1.0e-12) ? m / denom : st_old);
+                const double st_new = (zero_bf && !is_temp) ? 0.0 : ((denom > 1.0e-12) ? m / denom : st_old);
                 if (is_age)
                     ws.node_age[un] = st_new;
                 else if (is_temp)

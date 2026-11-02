@@ -54,9 +54,12 @@ def public_api_fingerprint(headers: Path = HEADERS) -> str:
     enums, structures, macros or comments all invalidate the previous identity.
     Generated ABI/export headers and private implementation headers are excluded.
     """
+    paths = [path for path in headers.glob("*.h") if path.name not in HEADER_EXCLUDE]
+    sdk = headers.parent / "plugin_sdk"
+    paths.extend(path for path in sdk.rglob("*") if path.suffix in {".h", ".hpp"})
     inventory = "".join(
-        f"{path.name}\n{hashlib.sha256(path.read_bytes()).hexdigest()}\n"
-        for path in sorted(headers.glob("*.h")) if path.name not in HEADER_EXCLUDE
+        f"{path.relative_to(headers.parents[1]).as_posix()}\n{hashlib.sha256(path.read_bytes()).hexdigest()}\n"
+        for path in sorted(paths)
     )
     if not inventory:
         raise ValueError(f"No public engine headers in {headers}")

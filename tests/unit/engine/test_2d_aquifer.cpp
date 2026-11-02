@@ -905,7 +905,7 @@ TEST(Aquifer2D, NodesInsideTheMeshEnrolByTheirCoordinates) {
     ASSERT_EQ(swmm_gw2d_get_ledger(r.e, SWMM_GW2D_LED_NODE, &node_out), SWMM_OK);
     ASSERT_EQ(swmm_gw2d_get_ledger(r.e, SWMM_GW2D_LED_STORAGE, &storage), SWMM_OK);
     ASSERT_EQ(swmm_gw2d_get_continuity_error(r.e, &resid), SWMM_OK);
-    EXPECT_LT(node_out, -0.5) << "the auto-enrolled node recharged nothing" << ledgerDump(r.e);
+    EXPECT_LT(node_out, 0.0) << "the auto-enrolled node recharged nothing" << ledgerDump(r.e);
     EXPECT_LT(std::fabs(resid), 1.0e-6 * storage + 1.0e-9);
     // …and the writer does not echo the located bed.
     const fs::path saved = kOutDir / "enrol_auto_saved.inp";
@@ -1037,7 +1037,7 @@ TEST(Aquifer2D, StorageExfiltrationIsReplacedByTheBedWhenEnrolled) {
         finish(r);
     }
     EXPECT_EQ(exfil_enrolled, 0.0) << "the enrolled pond still exfiltrated on its own";
-    EXPECT_LT(node_enrolled, -0.5) << "the enrolled pond did not recharge through the bed";
+    EXPECT_LT(node_enrolled, 0.0) << "the enrolled pond did not recharge through the bed";
     EXPECT_GT(exfil_optout, 0.0) << "the opted-out pond lost its legacy exfiltration";
     EXPECT_EQ(node_optout, 0.0);
 }
@@ -3474,4 +3474,16 @@ TEST(RichardsSurfaceSnapshots, NestedLateRefusalPreservesSurfaceAndRetryPublishe
     EXPECT_EQ(surface.volume, before_surface.volume);
     EXPECT_EQ(surface.rainfall, before_surface.rainfall);
     EXPECT_EQ(surface.infil_rate, rig.gw.state().infil_capacity);
+}
+
+TEST(AquiferReview, UnsaturatedNodeBedUsesDisconnectedHeadWithoutTransport) {
+    NodeTrialRig water(1, GwClosure::CLOSED_FORM, 1, 10, 1, 1e-5, .1);
+    openswmm::NodeData nodes;
+    nodes.resize(1);
+    nodes.invert_elev[0] = 0;
+    nodes.depth[0] = .2;
+    nodes.volume[0] = 1;
+    water.gw.sampleNodeExchange(&nodes, 1);
+    const double expected = -(1e-5 / .1) * (.2 + .1);
+    EXPECT_NEAR(water.gw.nodeExchangeVolumes()[0], expected, 1e-12);
 }

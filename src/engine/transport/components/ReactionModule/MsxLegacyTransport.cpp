@@ -55,8 +55,7 @@ struct MsxScratch {
      * @param[in] nl Nonnegative link count.
      * @param[in] ns Species stride, products fit size_t and allocation limits.
      * @note Node mismatch zeroes old-node/mass-rate scratch, link mismatch zeroes old-link
-     * scratch. Allocation may partially reset. No model/clock mutation; process-static workspace
-     * is not concurrent.
+     * scratch. Allocation may partially reset. No model/clock mutation; thread-local workspace is isolated from other simulation threads.
      */
     void ensure(std::size_t nn, std::size_t nl, std::size_t ns) {
         if (node_old.size() != nn * ns) {
@@ -68,12 +67,12 @@ struct MsxScratch {
     }
 };
 /**
- * @brief Borrow process-wide legacy native-species routing scratch.
- * @return Static nonowned MsxScratch reference with process lifetime; mutable use
+ * @brief Borrow thread-local legacy native-species routing scratch.
+ * @return Static nonowned MsxScratch reference with thread lifetime; mutable use
  * unsynchronized. Caller serializes routeLegacyMsx calls across all contexts.
  */
 MsxScratch& scratch() {
-    static MsxScratch s;
+    static thread_local MsxScratch s;
     return s;
 }
 } // namespace

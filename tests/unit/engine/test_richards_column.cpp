@@ -505,3 +505,17 @@ TEST(RichardsColumn, BoundedTimeToleranceRefinementConvergesAfterAwardExhaustion
     for (const auto& x : r)
         EXPECT_LE(x.bottom_outflow, 1.e-5);
 }
+
+TEST(RichardsColumn, NumericalStepUnderflowRollsBackHealthyAndStiffColumns) {
+    auto healthy = column(), stiff = column();
+    stiff.options.max_step = 1e-12;
+    const auto before_healthy = healthy.water, before_stiff = stiff.water;
+    std::vector<Column*> batch{&healthy, &stiff};
+    const auto reports = openswmm::richards::advance(batch, 60);
+    ASSERT_EQ(reports.size(), 2u);
+    EXPECT_FALSE(reports[0].ok);
+    EXPECT_FALSE(reports[1].ok);
+    EXPECT_FALSE(reports[1].error.empty());
+    EXPECT_EQ(healthy.water, before_healthy);
+    EXPECT_EQ(stiff.water, before_stiff);
+}

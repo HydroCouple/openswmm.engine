@@ -40,3 +40,9 @@ J_IN    FLOW   0.75
 J_IN    0.0    0.0
 VJ_S    100.0  0.0
 O_OUT   200.0  0.0
+
+[REPORT]
+
+NODES ALL
+
+LINKS ALL

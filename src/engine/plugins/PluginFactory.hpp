@@ -133,8 +133,8 @@ public:
     /** @brief Load/register an IO plugin or offer a non-IO library to the global component catalogue.
      * @param path Platform path spelling, compared literally for per-instance duplicates.
      * Native loader uses LoadLibraryA or dlopen(RTLD_NOW|RTLD_LOCAL); WebAssembly
-     * cannot dynamically load. IO metadata entry points are invoked without a separate
-     * ABI stamp check; loaded plugins must match the engine toolchain/SDK.
+     * cannot dynamically load. IO metadata entry points are invoked only after their C ABI tag matches
+     * the engine toolchain, SDK and feature identity.
      * @param warn_cb Optional synchronous warning sink; absent means no warning output.
      * @return Borrowed IO metadata, valid until unload/destruction, or null for failure/
      * non-IO components. The latter can still have been adopted by the process-global

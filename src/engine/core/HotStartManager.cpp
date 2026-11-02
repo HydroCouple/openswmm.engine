@@ -45,6 +45,7 @@
  */
 
 #include "HotStartManager.hpp"
+#include "AtomicOutputFile.hpp"
 #include <algorithm>
 #include "core/FileIO.hpp" // issue #7: UTF-8 paths on Windows
 #include "SimulationContext.hpp"
@@ -505,18 +506,17 @@ bool HotStartManager::write_file(const HotStartFile& hs, const std::string& path
     const std::string body = buf.str();
     const uint32_t crc = crc32(reinterpret_cast<const uint8_t*>(body.data()), body.size());
 
-    // Write body + checksum to actual file
-    std::ofstream file(openswmm::io::utf8_path(path), std::ios::binary | std::ios::trunc);
-    if (!file) {
-        tl_last_io_error = "Cannot open '" + path + "' for writing";
+    io::AtomicOutputFile file(io::utf8_path(path), true);
+    if (!file.stream()) {
+        tl_last_io_error = file.error();
         return false;
     }
-    file.write(body.data(), static_cast<std::streamsize>(body.size()));
-    if (!write_pod(file, crc)) {
-        tl_last_io_error = "Write error on '" + path + "'";
+    if (std::fwrite(body.data(), 1, body.size(), file.stream()) != body.size() ||
+        std::fwrite(&crc, sizeof crc, 1, file.stream()) != 1 || !file.commit()) {
+        tl_last_io_error = file.error().empty() ? "Hotstart write failed for '" + path + "'" : file.error();
         return false;
     }
-    return file.good();
+    return true;
 }
 
 // ============================================================================
@@ -1596,6 +1596,7 @@ void restoreAquiferBlock(const HotStartFile& hs, SimulationContext& ctx,
 
 HotStartFile* HotStartManager::save(const SimulationContext& ctx, const std::string& path) {
     tl_last_io_error.clear();
+
     if(ctx.state_accessors.has_fv_retained_dry_mass && ctx.state_accessors.has_fv_retained_dry_mass() && !ctx.state_accessors.get_fv_dry_state) {
         tl_last_io_error = "Hotstart cannot preserve retained FV dry scalar inventory; save after it remobilizes.";
         return nullptr;
@@ -1621,6 +1622,13 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx, const std::str
     if (ctx.runtime_coupling_used) {
         tl_last_io_error =
             "Hotstart cannot preserve runtime 2D coupling prescriptions and receipts";
+        return nullptr;
+    }
+
+    if (ctx.options.heat_transport || ctx.lid_layer_state.active() ||
+        (ctx.options.quality_solver != QualitySolverKind::LEGACY &&
+         (ctx.options.water_age || ctx.n_pollutants() > 0 || ctx.reactions.configured))) {
+        tl_last_io_error = "Record hotstart cannot preserve heat, LID-layer age or ARD/LAGRANGIAN inventories; use a supported full engine checkpoint.";
         return nullptr;
     }
 
@@ -1790,6 +1798,7 @@ HotStartFile* HotStartManager::save_with_engine_checkpoint(
     const groundwater::GWSolver* gw_solver, const std::string& path,
     const std::string& engine_checkpoint) {
     tl_last_io_error.clear();
+
     if(ctx.state_accessors.has_fv_retained_dry_mass && ctx.state_accessors.has_fv_retained_dry_mass() && !ctx.state_accessors.get_fv_dry_state) {
         tl_last_io_error = "Hotstart cannot preserve retained FV dry scalar inventory; save after it remobilizes.";
         return nullptr;
@@ -1819,6 +1828,14 @@ HotStartFile* HotStartManager::save_with_engine_checkpoint(
     }
     if (engine_checkpoint.size() > 512u * 1024u * 1024u) {
         tl_last_io_error = "Native engine hotstart checkpoint exceeds the 512 MiB limit";
+        return nullptr;
+    }
+
+    if (engine_checkpoint.empty() &&
+        (ctx.options.heat_transport || ctx.lid_layer_state.active() ||
+         (ctx.options.quality_solver != QualitySolverKind::LEGACY &&
+          (ctx.options.water_age || ctx.n_pollutants() > 0 || ctx.reactions.configured)))) {
+        tl_last_io_error = "Record hotstart requires a full engine checkpoint for heat, LID layers or ARD/LAGRANGIAN inventories.";
         return nullptr;
     }
 
@@ -2802,11 +2819,18 @@ int HotStartManager::save_legacy_routing(const std::string& path, const Simulati
         tl_last_io_error = "Mesh LID hotstart requires the R5 joint owner restart extension";
         return 1;
     }
-    std::ofstream file(openswmm::io::utf8_path(path), std::ios::binary | std::ios::trunc);
-    if (!file) {
-        tl_last_io_error = "Cannot open hotstart save file '" + path + "'";
+    if (ctx.options.water_age || ctx.options.heat_transport || ctx.lid_layer_state.active() ||
+        ctx.runtime_coupling_used || ctx.snowpacks.runtime.active) {
+        tl_last_io_error = "Legacy hotstart cannot preserve age, heat, LID layers, UEB snow or runtime coupling; use NATIVE.";
         return 1;
     }
+#ifdef OPENSWMM_HAS_2D
+    if (ctx.twod_io.surface_router && ctx.twod_io.surface_router->isActive()) {
+        tl_last_io_error = "Legacy hotstart cannot preserve the active 2D surface; use NATIVE.";
+        return 1;
+    }
+#endif
+    std::ostringstream file(std::ios::binary);
 
     // --- header: 15-char stamp (no NUL) + object counts (int32) ---
     //     legacy hotstart.c:346-352.
@@ -2899,6 +2923,14 @@ int HotStartManager::save_legacy_routing(const std::string& path, const Simulati
 
     if (!file) {
         tl_last_io_error = "Hotstart body write failed for '" + path + "'";
+        return 1;
+    }
+    const auto bytes = file.str();
+    io::AtomicOutputFile output(io::utf8_path(path), true);
+    if (!output.stream() ||
+        std::fwrite(bytes.data(), 1, bytes.size(), output.stream()) != bytes.size() ||
+        !output.commit()) {
+        tl_last_io_error = output.error().empty() ? "Hotstart write failed for '" + path + "'" : output.error();
         return 1;
     }
     tl_last_io_error.clear();

@@ -376,6 +376,8 @@ public:
  * @code{.cpp}
  * static MyPluginComponentInfo g_info;
  *
+ * #include <openswmm/plugin_sdk/PluginAbi.hpp>
+ * OPENSWMM_DECLARE_PLUGIN_ABI()
  * extern "C" openswmm::IPluginComponentInfo* openswmm_plugin_info(void) {
  *     return &g_info;
  * }

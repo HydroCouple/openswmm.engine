@@ -23,6 +23,17 @@ retroactive.
 
 ## [Unreleased]
 
+### Alpha.4 review corrections (2026-11-01)
+
+- Reaction RATE species integrate together under both coupling options; FULL also refreshes algebraic species at intermediate integration stages. Reaction scratch is isolated by simulation thread.
+- ARD dispersion conserves mass across unequal cell lengths. Dry startup and outfall backflow preserve held temperature; virtual junctions publish passing concentrations. Lagrangian storage mixing uses the water volume at each quality substep, and RWPT exchanges depend on concentration differences, including negative temperatures.
+- Incomplete hotstart saves are refused for unsupported transport/thermal state. AUTO selects native records for water age. Full thermal/age checkpoints include conventional LID-layer scalars under a new archive version. Hotstart and HDF5 model writes publish through sibling staging files.
+- Dynamic I/O plugins require a matching exported ABI tag before the factory is called. The ABI identity covers plugin SDK headers as well as the engine API; older plugins require recompilation.
+- Python groundwater source snapshots preserve authored XY coordinates through ordinary edits. Enum coverage includes storage area.
+- Snow-removal fractions are validated consistently, Richards batches check their water balance before publication, and groundwater stability bounds use the active closure's specific yield. Water-only node beds use the same disconnected-bed head as transport-enabled models.
+- Storage-node LIDs are authored through `[LID_NODES]`, with outlets and Richards controls described in the input reference.
+- Optional EPA regression comparisons use locally supplied unmodified EPA 5.2.4 tracer and rainfall-runoff references. Missing required regression decks now fail instead of being skipped.
+
 ### Portable development wheels and legacy option parsing (2026-10-24)
 
 - ARM64 engine builds use the portable CPU baseline by default. Local builds can opt into `-mcpu=native` with `OPENSWMM_NATIVE_CPU=ON`. Linux base and OpenMP companion wheel builds now reject SVE/SME and AVX-512 instructions before the release gates can pass.

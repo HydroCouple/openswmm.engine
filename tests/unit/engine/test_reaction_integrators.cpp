@@ -49,6 +49,8 @@
 #include <cmath>
 #include <cstring>
 #include <memory>
+#include <future>
+#include "transport/components/ReactionModule/ReactionLegacyBinding.hpp"
 #include <cstdio>
 #include <fstream>
 #include <string>
@@ -427,26 +429,43 @@ TEST(RxIntegrators, RateUnitsScaleExactly) {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 6 — COUPLING NONE freezes other species (MSX semantics).
-// A feeds B, but under NONE, B integrates with A frozen at its start value.
-// ---------------------------------------------------------------------------
-TEST(RxIntegrators, CouplingNoneFreezesOtherSpecies) {
-    const double dt = 4.0, a0 = 2.0;
-    SWMM_Engine e = open_with_rxn("[REACTION_OPTIONS]\nSOLVER RK5\nRATE_UNITS SEC\nCOUPLING NONE\n"
-                                  "ATOL 1e-12\nRTOL 1e-10\n"
-                                  "[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n"
-                                  "[REACTION_TANKS]\nRATE A -0.5 * A\nRATE B 0.5 * A\n");
-    const auto& rx = as_cpp_engine(e).context().reactions;
-    double species[2] = {a0, 0.0};
-    const auto rep = run_step(rx, dt, species);
-    ASSERT_TRUE(rep.ok) << rep.error;
-    // A decays exactly; B integrates 0.5*A with A FROZEN at a0:
-    // b = 0.5*a0*dt — distinguishable from the coupled answer
-    // a0(1 − e^{−0.5 dt}) = 1.729…, frozen answer = 4.0.
-    EXPECT_NEAR(species[0], a0 * std::exp(-0.5 * dt), 1e-6);
-    EXPECT_NEAR(species[1], 0.5 * a0 * dt, 1e-6)
-        << "COUPLING NONE must freeze A for B's integration";
-    swmm_engine_destroy(e);
+// Gate 6 — RATE species conserve mass under every algebraic coupling option.
+TEST(RxIntegrators, RateSystemConservesMassWithDefaultAndExplicitCoupling) {
+    for (const char* solver : {"EUL", "RK5", "ROS2", "BDF2"}) {
+        for (const char* coupling : {"", "COUPLING NONE\n", "COUPLING FULL\n"}) {
+            SCOPED_TRACE(std::string(solver) + " " + coupling);
+            SWMM_Engine e = open_with_rxn(std::string("[REACTION_OPTIONS]\nSOLVER ") + solver +
+                "\nRATE_UNITS SEC\n" + coupling + "ATOL 1e-10\nRTOL 1e-8\n"
+                "[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n"
+                "[REACTION_TANKS]\nRATE A -0.001 * A\nRATE B 0.001 * A\n");
+            double species[2] = {1.0, 0.0};
+            const auto rep = run_step(as_cpp_engine(e).context().reactions, 300, species);
+            ASSERT_TRUE(rep.ok) << rep.error;
+            EXPECT_NEAR(species[0] + species[1], 1.0, 1e-10);
+            if (std::strcmp(solver, "EUL") != 0)
+                EXPECT_NEAR(species[0], std::exp(-0.3), 2e-5);
+            swmm_engine_destroy(e);
+        }
+    }
+}
+
+// B=2*A must track intermediate A values when it drives A's rate.
+TEST(RxIntegrators, FullCouplingProjectsAlgebraicSpeciesInsideRateStages) {
+    for (const char* solver : {"RK5", "ROS2", "BDF2"}) {
+        for (const char* form : {"EQUIL B B - 2 * A", "FORMULA B 2 * A"}) {
+            SCOPED_TRACE(std::string(solver) + " " + form);
+            SWMM_Engine e = open_with_rxn(std::string("[REACTION_OPTIONS]\nSOLVER ") + solver +
+                "\nCOUPLING FULL\nRATE_UNITS SEC\nATOL 1e-10\nRTOL 1e-8\n"
+                "[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n"
+                "[REACTION_TANKS]\nRATE A -0.001 * B\n" + form + "\n");
+            double species[2] = {1, 2};
+            const auto rep = run_step(as_cpp_engine(e).context().reactions, 300, species);
+            ASSERT_TRUE(rep.ok) << rep.error;
+            EXPECT_NEAR(species[0], std::exp(-0.6), 2e-5);
+            EXPECT_NEAR(species[1], 2 * species[0], 1e-9);
+            swmm_engine_destroy(e);
+        }
+    }
 }
 
 } // namespace
@@ -497,4 +516,26 @@ TEST(RxIntegrators, ReinitializedWorkspaceMatchesFreshAcrossSystems) {
             EXPECT_EQ(a.error, b.error);
         }
     }
+}
+
+TEST(RxIntegrators, ConcurrentEngineBindingsMatchIndependentAnalyticDecay) {
+    auto e1 = open_with_rxn("[REACTION_OPTIONS]\nSOLVER RK5\nRATE_UNITS SEC\n"
+        "[REACTION_SPECIES]\nBULK A MG\n[REACTION_TANKS]\nRATE A -0.001 * A\n");
+    auto e2 = open_with_rxn("[REACTION_OPTIONS]\nSOLVER RK5\nRATE_UNITS SEC\n"
+        "[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n[REACTION_TANKS]\nRATE A -0.002 * A\nRATE B -0.003 * B\n");
+    const auto run = [](SWMM_Engine e, int count) {
+        auto& ctx = as_cpp_engine(e).context();
+        std::vector<double> block(count, 1);
+        for (int i = 0; i < 2000; ++i)
+            openswmm::transport::reactSpeciesBlock(ctx, true, 1, block.data(), nullptr, 0);
+        return block;
+    };
+    auto first = std::async(std::launch::async, run, e1, 1);
+    auto second = std::async(std::launch::async, run, e2, 2);
+    const auto a = first.get(), b = second.get();
+    EXPECT_NEAR(a[0], std::exp(-2), 1e-7);
+    EXPECT_NEAR(b[0], std::exp(-4), 1e-7);
+    EXPECT_NEAR(b[1], std::exp(-6), 1e-7);
+    swmm_engine_destroy(e1);
+    swmm_engine_destroy(e2);
 }

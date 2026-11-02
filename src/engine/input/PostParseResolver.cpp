@@ -4125,6 +4125,15 @@ void resolve_cross_references(SimulationContext& ctx) {
     // -------------------------------------------------------------------------
     if (ctx.aquifers.count() == 0)
         ctx.options.ignore_groundwater = true; // project.c:222
+    for (int i = 0; i < ctx.snowpacks.count(); ++i) {
+        const auto& removal = ctx.snowpacks.removal[i];
+        if (!SnowpackStore::validRemoval(removal.data()))
+            ctx.errors.push_back("[SNOWPACKS] " + ctx.snowpacks.names[i] +
+                                 ": removal values must be nonnegative and fractions sum to at most one.");
+        if (removal[5] > 0 && ctx.subcatch_names.find(ctx.snowpacks.removal_subcatch[i]) < 0)
+            ctx.errors.push_back("[SNOWPACKS] " + ctx.snowpacks.names[i] +
+                                 ": removal destination was not found.");
+    }
     if (ctx.snowpacks.count() == 0)
         ctx.options.ignore_snow_melt = true; // project.c:221
 

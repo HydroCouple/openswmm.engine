@@ -484,3 +484,25 @@ TEST_F(InpWriterComponent, StagedShortWritePreservesAllFinalOutputs) {
     }));
 }
 #endif
+
+TEST(AtomicOutputReview, ExternalWriterFailurePreservesPreviousDestination) {
+    fs::create_directories("atomic_external_review");
+    const fs::path path = "atomic_external_review/last-good.h5";
+    put(path, "previous valid model");
+    {
+        AtomicOutputFile output(path, true);
+        const auto staging = output.externalWriterPath();
+        ASSERT_FALSE(staging.empty());
+        put(staging, "partial library output");
+        // A failed library writer leaves scope without publication.
+    }
+    EXPECT_EQ(read(path), "previous valid model");
+    {
+        AtomicOutputFile output(path, true);
+        const auto staging = output.externalWriterPath();
+        ASSERT_FALSE(staging.empty());
+        put(staging, "complete replacement");
+        ASSERT_TRUE(output.commit()) << output.error();
+    }
+    EXPECT_EQ(read(path), "complete replacement");
+}

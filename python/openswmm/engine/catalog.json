@@ -7852,7 +7852,9 @@
    "python": "GroundwaterTransport.set_source",
    "doc": "Upsert an authored row; requires BUILDING or OPENED.",
    "c": [
-    "swmm_gw_source_set"
+    "swmm_2d_cell_count",
+    "swmm_gw_source_set",
+    "swmm_gw_source_xy_set"
    ],
    "returns": "None",
    "params": [
@@ -8021,7 +8023,8 @@
    "doc": "Immutable authored row snapshots in native order.",
    "c": [
     "swmm_gw_source_count",
-    "swmm_gw_source_get"
+    "swmm_gw_source_get",
+    "swmm_gw_source_xy_get"
    ],
    "type": "tuple[GroundwaterSource, ...]",
    "access": "r"
@@ -27541,7 +27544,10 @@
     "tag": "str",
     "cell": "int",
     "flow": "float",
-    "flow_timeseries": "str"
+    "flow_timeseries": "str",
+    "by_xy": "bool",
+    "x": "float",
+    "y": "float"
    },
    "doc": "Immutable authored row; replace fields and submit it with the matching setter."
   },

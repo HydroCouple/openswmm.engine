@@ -454,3 +454,44 @@ TEST_F(ArdTransportTest, ForcedQualityMassFluxRoutesUnderBothEngines) {
 }
 
 } // namespace
+
+TEST(ArdTransportReview, VirtualJunctionPublishesPassingTracer) {
+    std::ofstream("_ard_review_virtual.inp") << R"([OPTIONS]
+FLOW_UNITS CFS
+FLOW_ROUTING DYNWAVE
+QUALITY_SOLVER EULERIAN_ARD
+START_DATE 01/01/2026
+END_DATE 01/01/2026
+END_TIME 00:30:00
+REPORT_STEP 00:01:00
+ROUTING_STEP 1
+[JUNCTIONS]
+J0 12 10 0 0 0
+[VIRTUAL_JUNCTIONS]
+MID 11
+[OUTFALLS]
+OUT 10 FREE NO
+[CONDUITS]
+C1 J0 MID 100 .013 0 0 0
+C2 MID OUT 100 .013 0 0 0
+[XSECTIONS]
+C1 CIRCULAR 2 0 0 0
+C2 CIRCULAR 2 0 0 0
+[POLLUTANTS]
+TSS MG/L 0 0 0 0 NO * 0 0 0
+[DWF]
+J0 FLOW 1
+J0 TSS 12.5
+)";
+    auto e = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e, "_ard_review_virtual.inp", "_ard_review_virtual.rpt", nullptr, nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(e, 0), SWMM_OK);
+    double elapsed = 0;
+    do { ASSERT_EQ(swmm_engine_step(e, &elapsed), SWMM_OK); } while (elapsed > 0);
+    const auto& ctx = as_cpp_engine(e).context();
+    const int middle = ctx.node_names.find("MID");
+    ASSERT_GE(middle, 0);
+    EXPECT_NEAR(ctx.nodes.conc[middle], 12.5, 1e-5);
+    swmm_engine_destroy(e);
+}

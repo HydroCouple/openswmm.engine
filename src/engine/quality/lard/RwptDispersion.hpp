@@ -408,7 +408,7 @@ public:
                 const int stepdir = (j_to > j_from) ? 1 : -1;
                 while (j != j_to) {
                     const int jn = j + stepdir;
-                    // Quantum = upwind conc x the PENETRATION past this
+                    // Quantum = concentration difference x the PENETRATION past this
                     // boundary (capped at the particle's own water, V/N).
                     // A fixed V/N quantum let random-walk RE-crossings each
                     // move a full share while the limiter zeroed the
@@ -419,7 +419,8 @@ public:
                     const double bnd = bounds_[static_cast<std::size_t>(std::max(j, jn))];
                     const double pen = std::min(std::abs(z - bnd), vshare);
                     for (int s = 0; s < ns; ++s)
-                        delta[static_cast<std::size_t>(s)] = segs.seg_conc(l, j, s) * pen;
+                        delta[static_cast<std::size_t>(s)] =
+                            std::max(0.0, segs.seg_conc(l, j, s) - segs.seg_conc(l, jn, s)) * pen;
                     exchange(segs, l, j, jn, delta.data(), ns);
                     j = jn;
                 }
@@ -481,7 +482,10 @@ private:
                 continue;
             const double cj = segs.seg_conc(l, j, s);
             const double cn = segs.seg_conc(l, jn, s);
-            const double take = std::min({delta[s], cj * vj, std::max(0.0, (cj - cn)) * vn});
+            // Equalization is the maximum transfer that cannot reverse
+            // the gradient. This also works for signed temperature rows.
+            const double equalize = std::max(0.0, cj - cn) * vj * vn / (vj + vn);
+            const double take = std::min(delta[s], equalize);
             if (take <= 0.0)
                 continue;
             segs.set_seg_conc(l, j, s, (cj * vj - take) / vj);
