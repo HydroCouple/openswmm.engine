@@ -96,6 +96,10 @@ TEST(XsectGeometryOption, RefusesToChangeOnceTheModelIsOpen) {
     // Accepting a change here would update the report line and nothing else.
     EXPECT_EQ(swmm_options_set(e, "XSECT_GEOMETRY", "EXACT"), SWMM_ERR_LIFECYCLE);
     EXPECT_EQ(geometry(e), "LEGACY") << "the refused change must leave the option untouched";
+    // Writing back the value in force changes nothing, so it is accepted (the
+    // Python options mapping round-trips every key this way).
+    EXPECT_EQ(swmm_options_set(e, "XSECT_GEOMETRY", "LEGACY"), SWMM_OK);
+    EXPECT_EQ(geometry(e), "LEGACY");
 
     swmm_engine_close(e);
     swmm_engine_destroy(e);
