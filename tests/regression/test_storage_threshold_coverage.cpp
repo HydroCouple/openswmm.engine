@@ -172,6 +172,12 @@ Run runCase(const std::string& inp, const std::string& tag, bool rom_on, bool st
         if (t >= kEndTime) break;
     }
     out.ok = !out.times.empty();
+    if (rom_on && storage_members) {
+        const auto& st = eng->rom1dPortGraphStats();
+        std::printf("[STH-stats] %s solves %ld newton %ld armijo_fail %ld factorisations %ld port_evals %ld jacobi_fallbacks %ld jacobi_failed %ld\n",
+                    tag.c_str(), st.solves, st.newton_iters, st.armijo_failures, st.factorisations, st.port_evals,
+                    st.jacobi_fallbacks, st.jacobi_failed);
+    }
     cleanup();
     return out;
 }

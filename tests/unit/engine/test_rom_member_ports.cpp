@@ -561,6 +561,10 @@ TEST(PortGraph, ManholeToPondConservesWater) {
         // pond level (|F| <= 1e-10·a/dt + 1e-12·|terms|): not 1e-10 relative,
         // which a converged Newton step does not promise for a large footprint.
         EXPECT_NEAR(gained, g.dt * q_port, 1e-10 * a + 1e-12 * g.dt * std::fabs(q_port)) << "trial " << trial;
+        // What the engine books to the 2D ROM is the port's own flow over the
+        // step, to rounding (1e-12 relative) -- not the pond's volume change.
+        const double booked = g.portVolume(g.ports.size() - 1, z);
+        EXPECT_NEAR(booked, g.dt * q_port, 1e-12 * g.dt * std::fabs(q_port)) << "trial " << trial;
         (gained > 0.0 ? up : down) += std::fabs(gained) > 1e-9;
         // An empty member pond gives nothing back. (p_det + z_p may end below 0
         // in deviation form: the main run's pond also moves over the step, by
@@ -906,7 +910,7 @@ std::string coupledFixture(double cv) {
 struct CoupledTrace {
     std::vector<double> head, flow, surf, q05, q95, corr, cvol;
     std::size_t admitted = 0, admitted_coupled = 0;
-    long steps = 0, pg_steps = 0, law_evals = 0, port_evals = 0, solves = 0, newton = 0, jacobi = 0;
+    long steps = 0, pg_steps = 0, law_evals = 0, port_evals = 0, solves = 0, newton = 0, jacobi = 0, factor = 0, armijo = 0;
     double wall_s = 0.0, max_ext = 0.0;
     bool ok = false;
 };
@@ -972,6 +976,7 @@ CoupledTrace runCoupled(const std::string& inp, const std::string& tag, bool mem
     tr.law_evals = eng->rom1dCouplingLawEvals();
     const auto& st = eng->rom1dPortGraphStats();
     tr.port_evals = st.port_evals; tr.solves = st.solves; tr.newton = st.newton_iters; tr.jacobi = st.jacobi_fallbacks;
+    tr.factor = st.factorisations; tr.armijo = st.armijo_failures;
     tr.ok = !tr.head.empty();
     cleanup();
     return tr;
@@ -1007,18 +1012,32 @@ TEST(PerMemberPortsCoupled, ZeroPerturbationAddsNothingThroughPerMemberPath) {
 }
 
 TEST(PerMemberPortsCoupled, CostOfThePerMemberPathOnACoupledManhole) {
-    // Cost diagnostic (plan §6 runtime line): street-orifice law evaluations
-    // and port evaluations per per-member step, wall time ON vs OFF. Printed,
-    // not asserted (wall time in Debug is noisy).
-    const CoupledTrace off = runCoupled(coupledFixture(0.2), "cost_off", false, 0.2);
-    const CoupledTrace on = runCoupled(coupledFixture(0.2), "cost_on", true, 0.2);
-    ASSERT_TRUE(off.ok && on.ok);
+    // Cost diagnostic (plan §6 runtime line): street-orifice law evaluations,
+    // port evaluations, Newton iterations and factorisations per per-member
+    // step, wall time ON vs OFF over 6 runs each (min / median). Printed, not
+    // asserted (wall time in Debug is noisy).
+    constexpr int kRuns = 6;
+    std::vector<double> w_off, w_on;
+    CoupledTrace on;
+    for (int r = 0; r < kRuns; ++r) {
+        const CoupledTrace off_r = runCoupled(coupledFixture(0.2), "cost_off", false, 0.2);
+        const CoupledTrace on_r = runCoupled(coupledFixture(0.2), "cost_on", true, 0.2);
+        ASSERT_TRUE(off_r.ok && on_r.ok);
+        w_off.push_back(off_r.wall_s); w_on.push_back(on_r.wall_s);
+        on = on_r;
+    }
     ASSERT_GT(on.pg_steps, 0);
+    auto mn = [](std::vector<double> v) { return *std::min_element(v.begin(), v.end()); };
+    auto md = [](std::vector<double> v) { std::sort(v.begin(), v.end()); return 0.5 * (v[v.size() / 2] + v[(v.size() - 1) / 2]); };
     const double st = static_cast<double>(on.pg_steps);
     std::printf("[PH-O3 cost] steps %ld, per-member steps %ld, admitted %zu (coupled %zu)\n",
                 on.steps, on.pg_steps, on.admitted, on.admitted_coupled);
-    std::printf("[PH-O3 cost] orifice-law evals/step %.1f, port evals/step %.1f, solves %ld, newton %ld, jacobi %ld\n",
-                static_cast<double>(on.law_evals) / st, static_cast<double>(on.port_evals) / st, on.solves, on.newton, on.jacobi);
-    std::printf("[PH-O3 cost] wall OFF %.3f s, ON %.3f s, ratio %.3f\n", off.wall_s, on.wall_s, on.wall_s / off.wall_s);
+    std::printf("[PH-O3 cost] per step: orifice-law evals %.1f, port evals %.1f, newton iters %.1f, factorisations %.1f; "
+                "totals: solves %ld, newton %ld, factorisations %ld, armijo failures %ld, jacobi %ld\n",
+                static_cast<double>(on.law_evals) / st, static_cast<double>(on.port_evals) / st,
+                static_cast<double>(on.newton) / st, static_cast<double>(on.factor) / st,
+                on.solves, on.newton, on.factor, on.armijo, on.jacobi);
+    std::printf("[PH-O3 cost] wall OFF min %.3f med %.3f s, ON min %.3f med %.3f s, ratio min %.3f med %.3f\n",
+                mn(w_off), md(w_off), mn(w_on), md(w_on), mn(w_on) / mn(w_off), md(w_on) / md(w_off));
 }
 #endif  // OPENSWMM_HAS_2D

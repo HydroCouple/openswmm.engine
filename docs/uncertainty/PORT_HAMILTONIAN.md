@@ -166,3 +166,4 @@ cases the current code excludes). Acceptance gates as in the table.
   1D↔2D transfer by construction (today's gap ≈ Newton tolerance, 1e-9 ft³); (ii) O-2's `AdditiveSystem::build`
   per Newton iteration — reuse the factor (modified Newton) unless the Jacobian moved; (iii) the Bellinge
   `demo_ph5` run on O-2 code was killed and restarted on O-3 code (one run answers accuracy and cost).
+- 2026-11-02: O-3 follow-ups: (i) landed — booking = dt·Q_port, exact to 1e-12; (ii) modified Newton tried and REJECTED: factorisations halved, iterations doubled, wall ON/OFF unchanged (1.87 → 1.98 median), +14 Armijo rejections on R; remaining ON cost on the coupled fixture is BatchPropagator + reconstruction outside the Newton loop, not the solve.

@@ -71,7 +71,7 @@ struct PortGraph {
     int max_jacobi = 500;
     bool floor_projection = false;         ///< mutation hook only: clamp z >= floor (creates water)
     std::vector<double> floor;             ///< used only with floor_projection
-    struct Stats { long solves = 0, newton_iters = 0, armijo_failures = 0, jacobi_fallbacks = 0, jacobi_failed = 0, zero_exits = 0, port_evals = 0; };
+    struct Stats { long solves = 0, newton_iters = 0, armijo_failures = 0, jacobi_fallbacks = 0, jacobi_failed = 0, zero_exits = 0, port_evals = 0, factorisations = 0; };
     mutable Stats stats;   ///< mutable: residual() (const) counts port evaluations
 
     void resize(int n_nodes) {
@@ -80,6 +80,15 @@ struct PortGraph {
         S.assign(un, 1.0); pinned.assign(un, 0); store_of.assign(un, -1);
         b.assign(un, 0.0); z_prev.assign(un, 0.0);
         stores.clear(); edges.clear(); ports.clear(); dV_prev.clear();
+    }
+
+    /// Water the port moves over the step (ft^3, up -> dn) at z: dt · Q_port.
+    /// The 1D↔2D booking uses this, so the transfer to the 2D ROM is the port's
+    /// own flow by construction.
+    double portVolume(std::size_t port_index, const std::vector<double>& z) const {
+        const Port& p = ports[port_index];
+        auto zz = [&](int t) { return (t < 0 || pinned[static_cast<std::size_t>(t)]) ? 0.0 : z[static_cast<std::size_t>(t)]; };
+        return dt * evalPort(p, zz(p.up), zz(p.dn));
     }
 
     /// One port-law evaluation for the current member (counted in stats.port_evals).
@@ -201,6 +210,7 @@ struct PortGraph {
             }
             for (std::size_t t = 0; t < un; ++t) { volume(static_cast<int>(t), z[t], &A[t]); A[t] = std::max(A[t], 1.0e-9); }
             sys.build(n, jac, A.data(), dt, &pinned);
+            ++stats.factorisations;
             for (std::size_t t = 0; t < un; ++t) { dq[t] = -F[t]; dz[t] = 0.0; }
             sys.step(dq.data(), dz.data());
             // Armijo on ‖F‖₁. At a kink (dry ramp, table point, raised end) the

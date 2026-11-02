@@ -12950,7 +12950,7 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
     // its volume change is the exchange, booked by the 2D ROM
     // (setExternalCouplingVolume, then held per cell in its coupling residual).
     constexpr double kCfsPerCms = 1.0 / (0.3048 * 0.3048 * 0.3048);
-    struct Pond { int node = -1, cp = -1, store = -1; double a_ft2 = 0.0, p_det_ft = 0.0; };
+    struct Pond { int node = -1, cp = -1, store = -1; std::size_t port = 0; double a_ft2 = 0.0, p_det_ft = 0.0; };
     std::vector<Pond> ponds;
 #ifdef OPENSWMM_HAS_2D
     std::vector<double> ext_vol;
@@ -13000,6 +13000,7 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
                                                       d0_m, PP::ramp(dA + zu), ps.dry(zp));
                 return (qi - q_det) * kCfsPerCms;   // extra flow manhole -> street (cfs)
             };
+            pd.port = g.ports.size();
             g.ports.push_back(std::move(p));
             ponds.push_back(pd);
         }
@@ -13049,14 +13050,13 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
             }
         }
 #ifdef OPENSWMM_HAS_2D
-        // Exchange booked to the 2D ROM: the pond store's volume change over the
-        // step (m^3, positive into the pipe), the water the manhole store gained.
-        for (const Pond& pd : ponds) {
-            const auto un_p = static_cast<std::size_t>(pd.node);
-            const auto& st = g.stores[static_cast<std::size_t>(pd.store)];
-            const double dv_ft3 = st.dV(z[un_p], nullptr) - st.dV(g.z_prev[un_p], nullptr);
-            ext_vol[static_cast<std::size_t>(pd.cp) * uM + i] = -dv_ft3 / kCfsPerCms;
-        }
+        // Exchange booked to the 2D ROM: dt·Q_port, the orifice two-port's own
+        // flow over the step (m^3, positive into the pipe) at the solved levels.
+        // The manhole store gained exactly this; the pond store (the unknown)
+        // gained it up to the Newton tolerance. Booking the port flow makes the
+        // 1D<->2D transfer exact by construction.
+        for (const Pond& pd : ponds)
+            ext_vol[static_cast<std::size_t>(pd.cp) * uM + i] = -g.portVolume(pd.port, z) / kCfsPerCms;
 #endif
     }
     rom1d_->setMemberAdditive(rom1d_corr_.data());
