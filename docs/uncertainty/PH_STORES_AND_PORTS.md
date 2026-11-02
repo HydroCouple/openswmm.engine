@@ -65,7 +65,7 @@ port's "up" end. Every port used at an admitted node must have three properties:
 | Dry pipe out of a store | normal-flow rating Q_n(y_up), one-way downhill (exact here; the plane keeps its secant) | dry edge |
 | Depth-rated pump (PUMP2/4 with y_on/y_off) | `pumpFlowAtDepth`(d_up)·r(d_up), with r a dry ramp from 0 to 1 over the bottom δ_dry = 0.01 ft | kind 4 + `pump_bal` |
 | Rule-switched pump | §2.5 | excluded today |
-| Street exchange (coupled manhole) | the orifice c·sign(Δ)·sqrt(2g\|Δ\|) between the manhole and its member pond, with the pond as a store a_pond·p (phase 6 / O-3 owns the law; O-2 only gives it a port interface) | `couplingOrificeQ` |
+| Street exchange (coupled manhole) | the orifice c·sqrt(2g)·sign(Δ)·s(\|Δ\|), s regularised below δ0, between the manhole store and its member pond store a_pond·p (§1.5, O-3) | `orificePortFlow` + `PondStore` (was `couplingOrificeQ`, deleted) |
 | Rim overflow | Q_ovf(h) = 0 below rim + sur; above it, flooding loss (or ponding) | the clamp `y_ceil` |
 
 ### 1.3 Raised-end pipe (corrected)
@@ -104,6 +104,38 @@ edge (§5). Write the whole system as
 
 where 𝒱 is the vector of volume deviations (strictly increasing in each
 component) and G_t is the net extra outflow at t.
+
+### 1.5 Street pond and orifice (O-3, 2026-11-02)
+The street pond over a coupled manhole is a store of the per-member solve, not
+integrated inside the port law. Unknown: the pond depth's deviation z_p from the
+main run's pond depth p* (ft), volume a_pond·z_p over the 2D ROM's footprint
+(`SpectralROM::pondArea`). The orifice is an ordinary two-port manhole -> pond:
+
+    Q = flooredFlow( c·sqrt(2g)·sign(Δ)·s(|Δ|),  ramp(d_mh),  ramp(p) ),
+    Δ = h_mh − (z_or + max(p, 0)),   s = sqrtReg with δ0 = 0.03 ft,
+
+c = Cd·cd_mult_i·A. Monotone in both ends, passive (Q·Δ ≥ 0), slope ≤ c·sqrt(2g)/sqrt(δ0)
+(finite Jacobian), an empty pond gives nothing back. The main run's reference is the
+same law at (h*, p*) (no outside q*), so the dry factors are absolute (ramp of the
+pond's own depth), not relative like `dryFactor`. Per member and step: z_p^n is read
+from the 2D ROM (`memberCouplingDepth` − p*); the pond's only port in the step is the
+orifice; its volume change −a_pond·(z_p − z_p^n) is booked to the 2D ROM
+(`setExternalCouplingVolume`) and held there per cell (`coupling_resid_`/coupling
+volume over `pond_cells_`). It equals dt·(port flow) to the Newton tolerance on the
+pond equation (1e-10 ft of pond level), not to 1e-10 relative.
+
+Where the deviation form shows: p* + z_p can end below 0 for a member whose pond gains
+less than the main run's over the step (the main run's pond itself rose); its own
+water is still ≥ 0. Hence the clamp max(p, 0) in Δ (the street level is never below
+the ground).
+
+What stays on the 2D side and why: the coupling residual (fix 8) is the member pond's
+state between steps (the pond store lives one step); `reconstructHeadUnpinned` and the
+2D ROM's own implicit orifice in `applyCouplingFlux` serve coupling points whose manhole
+is not admitted (no external volume, NaN entries), and the whole non-per-member path;
+the ROM pin mask (`setPinnedNodes`) keeps spilling non-admitted nodes at the main run.
+Removed in the per-member path: the nested 60-step bisection (`couplingOrificeQ`) and
+its "empties the pond" floor, replaced by the pond store's dry factor.
 
 ## 2. Passivity
 

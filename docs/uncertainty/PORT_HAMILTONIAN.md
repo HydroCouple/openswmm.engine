@@ -152,3 +152,17 @@ cases the current code excludes). Acceptance gates as in the table.
   evaluation, called inside every Newton iteration × member × coupled manhole, single thread); steps 3000→4000
   cost ≥ 5× steps 2000→3000. Runtime stop line (≤ 1.5× OFF) is failed at the storm peak. O-3 (pond as a store,
   exchange as a closed-form monotone two-port, no nested solve) is therefore required on cost, not only accuracy.
+- 2026-11-02: O-3 (per-member path): the street pond is a store of the per-member solve (a_pond·z_p) and the
+  orifice a regularised monotone two-port manhole -> pond (`ports::orificePortFlow`, `PondStore`;
+  PH_STORES_AND_PORTS §1.5); `couplingOrificeQ` deleted (no other caller). Booking = pond volume change.
+  Tests: orifice monotone/passive/regularised (mutation: bare sqrt ⇒ slope 1.2e6 vs bound 14 and the ℓ1 test with
+  ponds fails to converge), ℓ1 contraction + order preservation + zero data on random graphs with ponds, manhole→pond
+  conservation, coupled engine fixture: deterministic run bit-identical, zero perturbation ⇒ C ≡ 0 and booked
+  volumes ≡ 0. Cost on the coupled fixture (1 coupled manhole, 20 members, Debug): orifice-law evaluations
+  7,801 → 209 per step; wall ON/OFF 1.74–2.06 before, 1.67–1.96 after — the ≤ 1.5× target is NOT met here: on a
+  5-node graph the remaining cost is the per-member Newton machinery (AdditiveSystem rebuild per iteration ≈ 1/3).
+  Storage gate unchanged (A 0.889/0.958, B 0.727/0.960, R 0.952/0.880). Bellinge not run (Release tree busy).
+  Follow-ups from O-3 (lead): (i) book dt·Q_port to the 2D ROM instead of the pond's volume change — exact
+  1D↔2D transfer by construction (today's gap ≈ Newton tolerance, 1e-9 ft³); (ii) O-2's `AdditiveSystem::build`
+  per Newton iteration — reuse the factor (modified Newton) unless the Jacobian moved; (iii) the Bellinge
+  `demo_ph5` run on O-2 code was killed and restarted on O-3 code (one run answers accuracy and cost).

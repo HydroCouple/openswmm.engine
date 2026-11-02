@@ -12373,34 +12373,14 @@ void SWMMEngine::stepRom1dAdditiveChannel(double dt) noexcept {
 // differences. The quadratic energy ½ zᵀ S z is NOT monotone for one-way ports
 // (weir, free outlet, supercritical pipe, pump: note §2.2), so it is not the
 // stability notion here.
+// The street pond over a coupled manhole is a store of the same solve (O-3):
+// linear volume a_pond·p, joined to the manhole by the orifice two-port
+// (RomStorePorts.hpp orificePortFlow), no inner integration.
 // Approximations kept: structure ratings hold the downstream node at the main
-// run (no member submergence); the street pond is integrated inside the orifice
-// law, not yet an unknown of the solve (phase 6); rim overflow is a loss (no
-// ponding).
+// run (no member submergence); the pond's own 2D dynamics within the step
+// (rain, overland flow) stay with the 2D ROM, the pond store carries only the
+// exchange; rim overflow is a loss (no ponding).
 namespace {
-// Mean exchange rate (m^3/s, positive from the street into the pipe) over one
-// step through a coupling orifice c = Cd·A, integrated implicitly on a pond of
-// area a_pond: the same law as twoD::SpectralROM::applyCouplingFlux.
-double couplingOrificeQ(double c, double z, double a_pond, double dt, double h_old, double h_1d) {
-    constexpr double G2 = 2.0 * 9.80665;
-    if (!(c > 0.0) || !(a_pond > 0.0) || !(dt > 0.0)) return 0.0;
-    const double h_eq = h_1d - z;
-    auto resid = [&](double h) {
-        const double dh = (z + h) - h_1d;
-        const double q = (dh >= 0.0 ? 1.0 : -1.0) * c * std::sqrt(G2 * std::fabs(dh));
-        return h - h_old + q * dt / a_pond;
-    };
-    double lo, hi;
-    if (h_old >= h_eq) { lo = std::max(h_eq, 0.0); hi = h_old; }
-    else               { lo = h_old;               hi = h_eq;  }
-    if (resid(lo) > 0.0) return (h_old - lo) * a_pond / dt;
-    for (int it = 0; it < 60; ++it) {
-        const double mid = 0.5 * (lo + hi);
-        if (resid(mid) > 0.0) hi = mid; else lo = mid;
-    }
-    return (h_old - 0.5 * (lo + hi)) * a_pond / dt;
-}
-
 double conveyance1d(const XSectParams& xs, double y) {
     const double a = xsect::getAofY(xs, y);
     const double r = xsect::getRofY(xs, y);
@@ -12961,13 +12941,22 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
         };
         g.ports.push_back(std::move(p));
     }
-    // Street exchange at coupled manholes: the same implicit orifice law the 2D
-    // ROM uses, on the member's pond; out of the manhole, booked once by the 2D ROM.
+    // Street exchange at coupled manholes (O-3): the member's street pond is a
+    // store of the solve, its unknown the pond depth's deviation from the main
+    // run's (ft), V = a_pond·p over the 2D ROM's footprint; the orifice is a
+    // monotone two-port manhole -> pond, the same law at the main run giving the
+    // reference flow. The pond's start level per member is the 2D ROM's member
+    // depth at the coupling cell; its only port in the step is the orifice, so
+    // its volume change is the exchange, booked by the 2D ROM
+    // (setExternalCouplingVolume, then held per cell in its coupling residual).
     constexpr double kCfsPerCms = 1.0 / (0.3048 * 0.3048 * 0.3048);
-    std::vector<int> exch_port(nb, -1), exch_cp(nb, -1);
+    struct Pond { int node = -1, cp = -1, store = -1; double a_ft2 = 0.0, p_det_ft = 0.0; };
+    std::vector<Pond> ponds;
 #ifdef OPENSWMM_HAS_2D
     std::vector<double> ext_vol;
     if (coupled) {
+        constexpr double kTwoG = 2.0 * 9.80665;
+        const double d0_m = PP::kDelta0 * kFt;   // the regularisation length in the law's unit (m)
         ext_vol.assign(surface_router_.nodeCouplingPoints().size() * uM, std::numeric_limits<double>::quiet_NaN());
         for (std::size_t b = 0; b < nb; ++b) {
             const int a = rom1d_nl_nodes_[b];
@@ -12979,31 +12968,48 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
             const double a_pond = rom2d->pondArea(static_cast<std::size_t>(kcp));
             const double p_det = rom2d->detCouplingDepth(static_cast<std::size_t>(kcp));
             if (!(a_pond > 0.0) || p_det < 0.0 || !(c_or > 0.0)) continue;
-            std::vector<double> p_mem(uM), cd_mem(uM);
-            for (std::size_t i = 0; i < uM; ++i) {
-                p_mem[i] = std::max(rom2d->memberCouplingDepth(static_cast<std::size_t>(kcp), static_cast<int>(i)), 0.0);
-                cd_mem[i] = i < rom2d->cd_mult.size() ? rom2d->cd_mult[i] : 1.0;
-            }
+            Pond pd;
+            pd.cp = kcp;
+            pd.a_ft2 = a_pond / (kFt * kFt);
+            pd.p_det_ft = p_det / kFt;
+            pd.node = g.addNode(pd.a_ft2);
+            PP::PondStore ps;
+            ps.a = pd.a_ft2;
+            ps.p_star = pd.p_det_ft;
+            PortGraph::Store st;
+            st.dV = [ps](double z, double* ar) { return ps.dV(z, ar); };
+            pd.store = static_cast<int>(g.stores.size());
+            g.store_of[static_cast<std::size_t>(pd.node)] = pd.store;
+            g.stores.push_back(std::move(st));
+            std::vector<double> cd_mem(uM);
+            for (std::size_t i = 0; i < uM; ++i) cd_mem[i] = i < rom2d->cd_mult.size() ? rom2d->cd_mult[i] : 1.0;
             const double h_det = nodes.head[static_cast<std::size_t>(fullOf(a))];
-            const double q_det = couplingOrificeQ(c_or, z_or, a_pond, dt, p_det, h_det * kFt);
+            const double dA = depthAt(a);
+            long* cnt = &rom1d_pg_cpl_evals_;
+            ++*cnt;
+            const double q_det = PP::orificePortFlow(c_or, kTwoG, h_det * kFt, z_or, p_det, d0_m,
+                                                     PP::ramp(dA), ps.dry(0.0));
             PortGraph::Port p;
             p.up = a;
-            p.dn = -1;
-            p.dq = [=](int i, double zu, double) {
-                const auto ui = static_cast<std::size_t>(i);
-                const double qi = couplingOrificeQ(c_or * cd_mem[ui], z_or, a_pond, dt, p_mem[ui], (h_det + zu) * kFt);
-                return (q_det - qi) * kCfsPerCms;   // extra flow out of the manhole (cfs)
+            p.dn = pd.node;
+            p.dq = [=](int i, double zu, double zp) {
+                const double cm = cd_mem[static_cast<std::size_t>(i)];
+                if (zu == 0.0 && zp == 0.0 && cm == 1.0) return 0.0;
+                ++*cnt;
+                const double qi = PP::orificePortFlow(c_or * cm, kTwoG, (h_det + zu) * kFt, z_or, (pd.p_det_ft + zp) * kFt,
+                                                      d0_m, PP::ramp(dA + zu), ps.dry(zp));
+                return (qi - q_det) * kCfsPerCms;   // extra flow manhole -> street (cfs)
             };
-            exch_port[b] = static_cast<int>(g.ports.size());
-            exch_cp[b] = kcp;
             g.ports.push_back(std::move(p));
+            ponds.push_back(pd);
         }
     }
 #endif
     // ---- one solve per member ----
-    g.dV_prev.assign(nb, 0.0);
+    ++rom1d_pg_steps_;
+    g.dV_prev.assign(g.stores.size(), 0.0);
     rom1d_nl_y_.assign(nb * uM, 0.0);
-    std::vector<double> z(un);
+    std::vector<double> z(static_cast<std::size_t>(g.n));
     for (std::size_t i = 0; i < uM; ++i) {
         g.member = static_cast<int>(i);
         for (std::size_t t = 0; t < un; ++t) {
@@ -13013,6 +13019,15 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
             g.z_prev[t] = rom1d_mem_z_[i * un + t];
         }
         for (std::size_t b = 0; b < nb; ++b) g.dV_prev[b] = store_scale[b] * rom1d_mem_dv_[b * uM + i];
+#ifdef OPENSWMM_HAS_2D
+        // The member's pond at the start of the step, as the 2D ROM holds it.
+        for (const Pond& pd : ponds) {
+            const double pm = rom2d->memberCouplingDepth(static_cast<std::size_t>(pd.cp), static_cast<int>(i));
+            const double zp = pm >= 0.0 ? pm / kFt - pd.p_det_ft : 0.0;
+            g.z_prev[static_cast<std::size_t>(pd.node)] = zp;
+            g.dV_prev[static_cast<std::size_t>(pd.store)] = g.stores[static_cast<std::size_t>(pd.store)].dV(zp, nullptr);
+        }
+#endif
         z = g.z_prev;
         g.solve(z, rom1d_corr_sys_);
         double* c = &rom1d_corr_[i * un];
@@ -13032,12 +13047,17 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
                 if (rom1d_pg_below_floor_node_.size() != un) rom1d_pg_below_floor_node_.assign(un, 0);
                 ++rom1d_pg_below_floor_node_[a];
             }
-#ifdef OPENSWMM_HAS_2D
-            if (exch_port[b] >= 0)
-                ext_vol[static_cast<std::size_t>(exch_cp[b]) * uM + i] =
-                    -g.ports[static_cast<std::size_t>(exch_port[b])].dq(static_cast<int>(i), z[a], 0.0) / kCfsPerCms * dt;
-#endif
         }
+#ifdef OPENSWMM_HAS_2D
+        // Exchange booked to the 2D ROM: the pond store's volume change over the
+        // step (m^3, positive into the pipe), the water the manhole store gained.
+        for (const Pond& pd : ponds) {
+            const auto un_p = static_cast<std::size_t>(pd.node);
+            const auto& st = g.stores[static_cast<std::size_t>(pd.store)];
+            const double dv_ft3 = st.dV(z[un_p], nullptr) - st.dV(g.z_prev[un_p], nullptr);
+            ext_vol[static_cast<std::size_t>(pd.cp) * uM + i] = -dv_ft3 / kCfsPerCms;
+        }
+#endif
     }
     rom1d_->setMemberAdditive(rom1d_corr_.data());
     // Per-member nodes carry their own level, spilling or not: they are not

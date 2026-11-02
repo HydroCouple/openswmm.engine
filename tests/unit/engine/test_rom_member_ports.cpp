@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <chrono>
 #include <cstdio>
 #include <fstream>
 #include <iomanip>
@@ -29,6 +30,7 @@
 
 #ifdef OPENSWMM_HAS_2D
 #include "openswmm/engine/openswmm_engine.h"
+#include "openswmm/engine/openswmm_2d.h"
 #include "core/SWMMEngine.hpp"
 #include "uncertainty/SpectralROM1D.hpp"
 #endif
@@ -79,7 +81,34 @@ PortGraph::Port raisedPort(int up, int dn, double K, double hB, double zB, doubl
     return p;
 }
 
-RandomGraph makeRandomGraph(std::mt19937& rng, int n) {
+// The street exchange at a coupled manhole (O-3): an orifice two-port from a
+// network node to its own pond store, anchored at the main run (the same law at
+// z = 0), floored by each side's water.
+constexpr double kTwoG = 64.348;   // 2g, ft/s^2
+PortGraph::Port orificePort(int mh, int pond, double c, double h_mh, double d_mh, double z_or, double p_det) {
+    const double q_det = P::orificePortFlow(c, kTwoG, h_mh, z_or, p_det, P::kDelta0, P::ramp(d_mh), P::ramp(p_det));
+    PortGraph::Port p;
+    p.up = mh; p.dn = pond;
+    p.dq = [=](int, double zu, double zp) {
+        if (zu == 0.0 && zp == 0.0) return 0.0;
+        return P::orificePortFlow(c, kTwoG, h_mh + zu, z_or, p_det + zp, P::kDelta0, P::ramp(d_mh + zu), P::ramp(p_det + zp)) - q_det;
+    };
+    return p;
+}
+
+// Attach a street pond store (linear, a·z) to network node mh; returns the pond node.
+int addPond(PortGraph& g, int mh, double a, double c, double h_mh, double d_mh, double z_or, double p_det) {
+    const int pn = g.addNode(a);
+    P::PondStore ps; ps.a = a; ps.p_star = p_det;
+    PortGraph::Store st;
+    st.dV = [ps](double z, double* ar) { return ps.dV(z, ar); };
+    g.store_of[static_cast<std::size_t>(pn)] = static_cast<int>(g.stores.size());
+    g.stores.push_back(st);
+    g.ports.push_back(orificePort(mh, pn, c, h_mh, d_mh, z_or, p_det));
+    return pn;
+}
+
+RandomGraph makeRandomGraph(std::mt19937& rng, int n, bool ponds = false) {
     std::uniform_real_distribution<double> U(0.0, 1.0);
     RandomGraph r;
     PortGraph& g = r.g;
@@ -97,7 +126,6 @@ RandomGraph makeRandomGraph(std::mt19937& rng, int n) {
         g.stores.push_back(s);
         r.c3.push_back(c);
     }
-    g.dV_prev.assign(g.stores.size(), 0.0);
     // Spanning chain plus random extra links: plane edges, weirs, raised-end pipes; outlets at the end.
     for (int t = 1; t < n; ++t) {
         const int up = t - 1 - static_cast<int>(U(rng) * std::min(t, 3));
@@ -122,6 +150,18 @@ RandomGraph makeRandomGraph(std::mt19937& rng, int n) {
     g.ports.push_back(weirPort(n - 1, -1, 2.0, 0.3));      // outfall
     FlowEdge out; out.up = n / 2; out.dn = -1; out.conduit = false; out.d = 0.5;
     g.edges.push_back(out);
+    if (ponds) {
+        // About a quarter of the network nodes are coupled manholes with a street
+        // pond: manhole above, near or below the street; pond wet or dry.
+        for (int t = 0; t < n; ++t) {
+            if (U(rng) > 0.25) continue;
+            const double z_or = 1.0 + 0.5 * U(rng);
+            const double h_mh = z_or + 0.6 * (U(rng) - 0.5);
+            const double p_det = U(rng) < 0.3 ? 0.0 : 0.4 * U(rng);
+            addPond(g, t, std::pow(10.0, 1.0 + 3.0 * U(rng)), 0.05 + 0.5 * U(rng), h_mh, 0.5 + U(rng), z_or, p_det);
+        }
+    }
+    g.dV_prev.assign(g.stores.size(), 0.0);
     return r;
 }
 
@@ -371,6 +411,166 @@ TEST(PortGraph, PortGraphIsL1Contractive) {
         worst = std::max(worst, rel);
     }
     std::printf("[PH-ports] l1 contraction: worst lhs/rhs %.4f over 80 random port graphs\n", worst);
+}
+
+// ---------------------------------------------------------------------------
+// O-3: the street pond as a store, the orifice as a two-port
+// ---------------------------------------------------------------------------
+
+TEST(StorePorts, OrificeTwoPortIsMonotonePassiveAndRegularised) {
+    std::mt19937 rng(31);
+    std::uniform_real_distribution<double> U(-1.0, 1.0);
+    const double c = 0.3, h = 1.0e-7;
+    for (int k = 0; k < 20000; ++k) {
+        const double hm = 1.0 + U(rng), zor = 1.0 + 0.3 * U(rng), p = 0.4 * U(rng);
+        const double gm = P::ramp(0.5 + U(rng)), gp = P::ramp(p);
+        const double q = P::orificePortFlow(c, kTwoG, hm, zor, p, P::kDelta0, gm, gp);
+        // (P1): nondecreasing in the manhole head, nonincreasing in the pond depth
+        // (the dry factors follow their own level).
+        EXPECT_GE(P::orificePortFlow(c, kTwoG, hm + h, zor, p, P::kDelta0, gm, gp) - q, -1e-12);
+        EXPECT_LE(P::orificePortFlow(c, kTwoG, hm, zor, p + h, P::kDelta0, gm, P::ramp(p + h)) - q, 1e-12);
+        // passive: flow only downhill, (h_mh − (z_or + p))·Q >= 0
+        EXPECT_GE((hm - (zor + p)) * q, 0.0);
+        // an empty pond gives nothing back
+        if (p <= 0.0) EXPECT_GE(q, 0.0);
+        // the bare law is odd in Δ
+        EXPECT_DOUBLE_EQ(P::orificeFlow(c, kTwoG, hm, zor, p, P::kDelta0), -P::orificeFlow(c, kTwoG, zor + std::max(p, 0.0), hm, 0.0, P::kDelta0));
+    }
+    // Regularised: the slope stays finite as the two levels meet (Δ -> 0), so the
+    // Newton Jacobian does; the bare square root's slope grows without bound.
+    const double bound = c * std::sqrt(kTwoG) / std::sqrt(P::kDelta0);
+    double smax = 0.0;
+    for (double d = 1e-12; d < 0.5; d *= 1.2)
+        for (double sgn : {1.0, -1.0}) {
+            // levels about 0 so that the finite difference resolves d = 1e-12
+            const double hm = sgn * d, eps = 1e-3 * d;
+            const double s = (P::orificeFlow(c, kTwoG, hm + eps, 0.0, 0.0, P::kDelta0) - P::orificeFlow(c, kTwoG, hm, 0.0, 0.0, P::kDelta0)) / eps;
+            smax = std::max(smax, s);
+        }
+    EXPECT_TRUE(std::isfinite(smax));
+    EXPECT_LE(smax, 1.01 * bound) << "orifice slope near level is unbounded: regularisation missing";
+    // Beyond δ0 it is the orifice law itself.
+    EXPECT_DOUBLE_EQ(P::orificeFlow(c, kTwoG, 3.0, 2.0, 0.5, P::kDelta0), c * std::sqrt(kTwoG) * std::sqrt(0.5));
+    // Pond store: linear volume, floor through its absolute dry factor.
+    P::PondStore ps; ps.a = 250.0; ps.p_star = 0.2;
+    double ar = 0.0;
+    EXPECT_EQ(ps.dV(0.0, &ar), 0.0);
+    EXPECT_EQ(ar, 250.0);
+    EXPECT_DOUBLE_EQ(ps.dV(-0.1, nullptr), -25.0);
+    EXPECT_EQ(ps.dry(0.0), 1.0);
+    EXPECT_EQ(ps.dry(-0.2), 0.0);
+    EXPECT_GT(ps.dry(-0.195), 0.0);
+}
+
+TEST(PortGraph, WithPondsZeroDataIsExact) {
+    std::mt19937 rng(41);
+    RandomGraph r = makeRandomGraph(rng, 30, true);
+    ASSERT_GT(r.g.n, 30) << "no pond drawn";
+    AdditiveSystem sys;
+    std::vector<double> z(static_cast<std::size_t>(r.g.n), 0.0);
+    ASSERT_TRUE(r.g.solve(z, sys));
+    for (double v : z) EXPECT_EQ(v, 0.0);
+    EXPECT_EQ(r.g.stats.zero_exits, 1);
+}
+
+TEST(PortGraph, WithPondsIsOrderPreserving) {
+    std::mt19937 rng(43);
+    std::uniform_real_distribution<double> U(0.0, 1.0);
+    int with_ponds = 0;
+    for (int trial = 0; trial < 60; ++trial) {
+        const int nnet = 8 + static_cast<int>(U(rng) * 30);
+        RandomGraph r = makeRandomGraph(rng, nnet, true);
+        PortGraph& g = r.g;
+        const int n = g.n;
+        with_ponds += n > nnet;
+        std::vector<double> b(n), bp(n), zp(n);
+        for (int t = 0; t < n; ++t) {
+            b[static_cast<std::size_t>(t)] = 4.0 * (U(rng) - 0.5);
+            bp[static_cast<std::size_t>(t)] = b[static_cast<std::size_t>(t)] + 3.0 * U(rng) * (U(rng) < 0.5);
+            zp[static_cast<std::size_t>(t)] = U(rng) - 0.5;
+        }
+        for (int t = 0; t < n; ++t)
+            if (g.store_of[static_cast<std::size_t>(t)] >= 0)
+                g.dV_prev[static_cast<std::size_t>(g.store_of[static_cast<std::size_t>(t)])] = g.volume(t, zp[static_cast<std::size_t>(t)], nullptr);
+        g.z_prev = zp;
+        AdditiveSystem sys;
+        g.b = b;
+        std::vector<double> z = zp;
+        ASSERT_TRUE(g.solve(z, sys));
+        g.b = bp;
+        std::vector<double> z2 = zp;
+        ASSERT_TRUE(g.solve(z2, sys));
+        for (int t = 0; t < n; ++t) EXPECT_LE(z[static_cast<std::size_t>(t)], z2[static_cast<std::size_t>(t)] + 1e-9) << "trial " << trial << " node " << t;
+    }
+    EXPECT_GT(with_ponds, 40);
+}
+
+TEST(PortGraph, WithPondsIsL1Contractive) {
+    std::mt19937 rng(47);
+    std::uniform_real_distribution<double> U(0.0, 1.0);
+    double worst = 0.0;
+    int with_ponds = 0;
+    for (int trial = 0; trial < 80; ++trial) {
+        const int nnet = 6 + static_cast<int>(U(rng) * 30);
+        RandomGraph r = makeRandomGraph(rng, nnet, true);
+        with_ponds += r.g.n > nnet;
+        double rel = 0.0;
+        const auto [lhs, rhs] = contraction(r.g, rng, &rel);
+        EXPECT_LE(lhs, rhs * (1.0 + 1e-9)) << "trial " << trial;
+        worst = std::max(worst, rel);
+    }
+    EXPECT_GT(with_ponds, 50);
+    std::printf("[PH-ports] l1 contraction with street ponds: worst lhs/rhs %.4f over 80 random port graphs\n", worst);
+}
+
+TEST(PortGraph, ManholeToPondConservesWater) {
+    // (c) The water a manhole store sends through the orifice is the water its
+    // pond store gains: dt·Q_port(z) = a·(z_p − z_p^n) after the solve, both
+    // ways (surcharging manhole; pond draining into a manhole below the street).
+    std::mt19937 rng(53);
+    std::uniform_real_distribution<double> U(0.0, 1.0);
+    int up = 0, down = 0;
+    for (int trial = 0; trial < 200; ++trial) {
+        PortGraph g;
+        g.resize(2);
+        g.dt = 5.0 + 30.0 * U(rng);
+        g.S = {20.0 + 200.0 * U(rng), 50.0 + 100.0 * U(rng)};
+        const double S0 = g.S[0], c3 = S0 * U(rng);
+        g.store_of[0] = 0;
+        PortGraph::Store mh;
+        mh.dV = [S0, c3](double z, double* a) { if (a) *a = S0 + 3.0 * c3 * z * z; return S0 * z + c3 * z * z * z; };
+        g.stores.push_back(mh);
+        FlowEdge e; e.up = 0; e.dn = 1; e.ju = 2.0 * U(rng); e.jd = -e.ju * U(rng); g.edges.push_back(e);
+        FlowEdge o; o.up = 1; o.dn = -1; o.conduit = false; o.d = 1.0 + U(rng); g.edges.push_back(o);
+        const double z_or = 3.0, h_mh = z_or + 0.4 * (U(rng) - 0.5), p_det = U(rng) < 0.25 ? 0.0 : 0.3 * U(rng);
+        const double a = std::pow(10.0, 1.0 + 3.0 * U(rng));
+        const int pn = addPond(g, 0, a, 0.05 + 0.5 * U(rng), h_mh, 2.0, z_or, p_det);
+        g.dV_prev.assign(g.stores.size(), 0.0);
+        g.b = {6.0 * (U(rng) - 0.5), 0.0, 0.0};
+        g.z_prev = {0.4 * (U(rng) - 0.5), 0.0, std::max(0.3 * (U(rng) - 0.3), -p_det)};   // a member pond starts at or above empty
+        for (int t = 0; t < g.n; ++t)
+            if (g.store_of[static_cast<std::size_t>(t)] >= 0)
+                g.dV_prev[static_cast<std::size_t>(g.store_of[static_cast<std::size_t>(t)])] = g.volume(t, g.z_prev[static_cast<std::size_t>(t)], nullptr);
+        AdditiveSystem sys;
+        std::vector<double> z = g.z_prev;
+        ASSERT_TRUE(g.solve(z, sys));
+        const auto& port = g.ports.back();
+        const double q_port = port.dq(0, z[0], z[static_cast<std::size_t>(pn)]);   // extra flow manhole -> pond
+        const double gained = g.volume(pn, z[static_cast<std::size_t>(pn)], nullptr) - g.volumePrev(pn);
+        // Equal to the solve's own tolerance on the pond equation, 1e-10 ft of
+        // pond level (|F| <= 1e-10·a/dt + 1e-12·|terms|): not 1e-10 relative,
+        // which a converged Newton step does not promise for a large footprint.
+        EXPECT_NEAR(gained, g.dt * q_port, 1e-10 * a + 1e-12 * g.dt * std::fabs(q_port)) << "trial " << trial;
+        (gained > 0.0 ? up : down) += std::fabs(gained) > 1e-9;
+        // An empty member pond gives nothing back. (p_det + z_p may end below 0
+        // in deviation form: the main run's pond also moves over the step, by
+        // dt·q_det/a here, so the member's own water is p_det + dt·q_det/a + z_p.)
+        const double pm = p_det + z[static_cast<std::size_t>(pn)];
+        const double q_abs = P::orificePortFlow(1.0, kTwoG, h_mh + z[0], z_or, pm, P::kDelta0, 1.0, P::ramp(pm));
+        if (pm <= 0.0) EXPECT_GE(q_abs, 0.0) << "trial " << trial;
+    }
+    EXPECT_GT(up, 20);
+    EXPECT_GT(down, 20);
 }
 
 TEST(PortGraph, NonMonotonePortBreaksL1Contraction) {
@@ -657,5 +857,168 @@ TEST(PerMemberPortsEngine, AdmittedBasinChangesTheBandOnly) {
     double diff = 0.0;
     for (std::size_t k = 0; k < std::min(on.q95.size(), off.q95.size()); ++k) diff = std::max(diff, std::fabs(on.q95[k] - off.q95[k]));
     EXPECT_GT(diff, 1e-3);
+}
+
+// ---------------------------------------------------------------------------
+// Coupled manhole (O-3): a 1D chain J1..J4 whose head manhole J1 sits under the
+// low corner of a sloped 2D patch. Rain on the patch ponds over J1; the
+// subcatchment overloads the 0.3 m pipes so J1 also surcharges to the street.
+// ---------------------------------------------------------------------------
+namespace {
+
+std::string coupledFixture(double cv) {
+    std::ostringstream f;
+    f << std::setprecision(10);
+    f << "[TITLE]\ncoupled per-member ports\n\n[OPTIONS]\n";
+    f << "FLOW_UNITS CMS\nINFILTRATION HORTON\nFLOW_ROUTING DYNWAVE\n";
+    f << "START_DATE 01/01/2026\nSTART_TIME 00:00:00\nREPORT_START_DATE 01/01/2026\nREPORT_START_TIME 00:00:00\n";
+    f << "END_DATE 01/01/2026\nEND_TIME 00:40:00\nREPORT_STEP 00:01:00\nWET_STEP 00:01:00\nDRY_STEP 00:05:00\n";
+    f << "ROUTING_STEP 5\nMINIMUM_STEP 0.5\nTHREADS 1\nALLOW_PONDING NO\n\n[EVAPORATION]\nCONSTANT 0.0\n\n";
+    f << "[RAINGAGES]\nRG1 INTENSITY 0:01 1.0 TIMESERIES TS1\n\n";
+    f << "[TIMESERIES]\n";
+    for (int m = 0; m <= 40; ++m)
+        f << "TS1 01/01/2026 00:" << std::setfill('0') << std::setw(2) << m << " " << (m < 15 ? 80.0 : 0.0) << "\n";
+    f << std::setfill(' ') << "\n";
+    f << "[SUBCATCHMENTS]\nS1 RG1 J1 1.0 100 50 1.0 0\n\n[SUBAREAS]\nS1 0.015 0.20 0.00 0.00 100 OUTLET\n\n";
+    f << "[INFILTRATION]\nS1 0.0 0.0 0.0 0.0 0.0\n\n";
+    f << "[JUNCTIONS]\nJ1 0.0 1.0 0 0 0\nJ2 -0.1 1.0 0 0 0\nJ3 -0.2 1.0 0 0 0\nJ4 -0.3 1.0 0 0 0\n\n";
+    f << "[OUTFALLS]\nO1 -0.5 FREE NO\n\n";
+    f << "[CONDUITS]\nC1 J1 J2 30 0.013 0 0 0\nC2 J2 J3 30 0.013 0 0 0\nC3 J3 J4 30 0.013 0 0 0\nC4 J4 O1 30 0.013 0 0 0\n\n";
+    f << "[XSECTIONS]\n";
+    for (const char* c : {"C1", "C2", "C3", "C4"}) f << c << " CIRCULAR 0.3 0 0 0 1\n";
+    f << "\n[2D_OPTIONS]\nMAX_TIMESTEP 4\nDRY_DEPTH 0.002\nCOUPLING_CD 0.7\nREPORT_2D NO\n\n[2D_VERTICES]\n";
+    constexpr int kN = 4;
+    const double d = 12.0 / kN;
+    for (int i = 0; i <= kN; ++i)
+        for (int j = 0; j <= kN; ++j) f << j * d << " " << i * d << " " << 1.0 + 0.02 * (i + j) << "\n";
+    f << "\n[2D_TRIANGLES]\n";
+    for (int i = 0; i < kN; ++i)
+        for (int j = 0; j < kN; ++j) {
+            const int v00 = i * (kN + 1) + j, v01 = v00 + 1, v10 = v00 + kN + 1, v11 = v10 + 1;
+            f << v00 << " " << v01 << " " << v11 << " 0.03\n" << v00 << " " << v11 << " " << v10 << " 0.03\n";
+        }
+    f << "\n[2D_VERTEX_NODE_MAP]\n0 J1 0.7 0.1\n\n";
+    f << "[REPORT]\nINPUT NO\nCONTINUITY YES\nNODES ALL\nLINKS ALL\n\n";
+    f << "[SOFT_RAINGAGES]\nRG1 NORMAL CV " << cv << "\n";
+    return f.str();
+}
+
+struct CoupledTrace {
+    std::vector<double> head, flow, surf, q05, q95, corr, cvol;
+    std::size_t admitted = 0, admitted_coupled = 0;
+    long steps = 0, pg_steps = 0, law_evals = 0, port_evals = 0, solves = 0, newton = 0, jacobi = 0;
+    double wall_s = 0.0, max_ext = 0.0;
+    bool ok = false;
+};
+
+CoupledTrace runCoupled(const std::string& inp, const std::string& tag, bool members, double pert) {
+    CoupledTrace tr;
+    const std::string pfx = "rom_member_ports_cpl_" + std::to_string(getpid()) + "_" + tag;
+    const std::string ip = pfx + ".inp", rp = pfx + ".rpt";
+    { std::ofstream f(ip); f << inp; }
+    SWMM_Engine h = swmm_engine_create();
+    auto cleanup = [&]() {
+        swmm_engine_end(h); swmm_engine_close(h); swmm_engine_destroy(h);
+        for (const char* ext : {".inp", ".rpt", ".uncertainty.csv", ".rom_threshold.csv", ".rom_diag.csv", ".out"})
+            std::remove((pfx + ext).c_str());
+    };
+    if (swmm_engine_open(h, ip.c_str(), rp.c_str(), nullptr, nullptr) != 0) { cleanup(); return tr; }
+    auto* eng = static_cast<openswmm::SWMMEngine*>(h);
+    auto& o = eng->surfaceRouter2D().options();
+    o.enable_rom = true;
+    o.rom_members = 20;
+    o.rom_modes = 6;
+    o.rom_mannings_pert = pert;
+    o.rom_rainfall_pert = pert;
+    o.rom_cd_pert = 0.5 * pert;
+    eng->rom1dStorageMembersEnabled() = members;
+    if (swmm_engine_initialize(h) != 0 || swmm_engine_start(h, 0) != 0) { cleanup(); return tr; }
+    const auto& ctx = eng->context();
+    const auto t0 = std::chrono::steady_clock::now();
+    double el = 1.0;
+    for (int guard = 0; el != 0.0 && guard < 200000; ++guard) {
+        if (swmm_engine_step(h, &el) != 0) break;
+        ++tr.steps;
+        for (int i = 0; i < ctx.n_nodes(); ++i) tr.head.push_back(ctx.nodes.head[static_cast<std::size_t>(i)]);
+        for (int j = 0; j < ctx.n_links(); ++j) tr.flow.push_back(ctx.links.flow[static_cast<std::size_t>(j)]);
+        double v = 0.0;
+        swmm_2d_get_total_volume(h, &v);
+        tr.surf.push_back(v);
+        if (const auto* rom = eng->rom1d(); rom && rom->is_ready()) {
+            tr.q05.insert(tr.q05.end(), rom->q05.begin(), rom->q05.end());
+            tr.q95.insert(tr.q95.end(), rom->q95.begin(), rom->q95.end());
+        }
+        const auto& c = eng->rom1dMemberCorrection();
+        tr.corr.insert(tr.corr.end(), c.begin(), c.end());
+        if (el > 0.0 && el * 86400.0 >= 2400.0) break;
+    }
+    tr.wall_s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    tr.admitted = eng->rom1dStorageMemberNodes().size();
+    if (const auto* rom1 = eng->rom1d()) {
+        const auto& cps = eng->surfaceRouter2D().nodeCouplingPoints();
+        for (int a : eng->rom1dStorageMemberNodes())
+            for (const auto& cp : cps)
+                if (cp.node_idx >= 0 && static_cast<std::size_t>(cp.node_idx) < rom1->full_to_active.size() &&
+                    rom1->full_to_active[static_cast<std::size_t>(cp.node_idx)] == a) ++tr.admitted_coupled;
+    }
+    if (const auto* r2 = eng->surfaceRouter2D().rom()) {
+        for (std::size_t k = 0; k < eng->surfaceRouter2D().nodeCouplingPoints().size(); ++k)
+            for (int i = 0; i < r2->n_ensemble; ++i) {
+                tr.cvol.push_back(r2->couplingVolume(k, i));
+                tr.max_ext = std::max(tr.max_ext, std::fabs(r2->couplingVolume(k, i)));
+            }
+    }
+    tr.pg_steps = eng->rom1dPortGraphSteps();
+    tr.law_evals = eng->rom1dCouplingLawEvals();
+    const auto& st = eng->rom1dPortGraphStats();
+    tr.port_evals = st.port_evals; tr.solves = st.solves; tr.newton = st.newton_iters; tr.jacobi = st.jacobi_fallbacks;
+    tr.ok = !tr.head.empty();
+    cleanup();
+    return tr;
+}
+
+}  // namespace
+
+TEST(PerMemberPortsCoupled, DeterministicRunBitIdenticalWithCoupledStores) {
+    // (d) with a coupled manhole carried per member: the deterministic 1D and
+    // 2D runs are untouched, bit for bit; the per-member path really ran.
+    const CoupledTrace off = runCoupled(coupledFixture(0.2), "det_off", false, 0.2);
+    const CoupledTrace on = runCoupled(coupledFixture(0.2), "det_on", true, 0.2);
+    ASSERT_TRUE(off.ok && on.ok);
+    ASSERT_GE(on.admitted_coupled, 1u) << "the coupled manhole should carry per-member levels";
+    EXPECT_GT(on.max_ext, 0.0) << "members exchanged nothing: the coupling port never ran";
+    ASSERT_EQ(off.head.size(), on.head.size());
+    for (std::size_t k = 0; k < off.head.size(); ++k) ASSERT_EQ(off.head[k], on.head[k]) << "head sample " << k;
+    for (std::size_t k = 0; k < off.flow.size(); ++k) ASSERT_EQ(off.flow[k], on.flow[k]) << "flow sample " << k;
+    for (std::size_t k = 0; k < off.surf.size(); ++k) ASSERT_EQ(off.surf[k], on.surf[k]) << "2D volume sample " << k;
+}
+
+TEST(PerMemberPortsCoupled, ZeroPerturbationAddsNothingThroughPerMemberPath) {
+    // (e) CouplingFluxZeroPerturbationAddsNothing through the per-member path:
+    // no perturbation anywhere ⇒ every member's correction and every booked
+    // exchange deviation is exactly zero, with the coupled manhole admitted.
+    const CoupledTrace on = runCoupled(coupledFixture(0.0), "zero", true, 0.0);
+    ASSERT_TRUE(on.ok);
+    ASSERT_GE(on.admitted_coupled, 1u);
+    ASSERT_GT(on.pg_steps, 0);
+    for (double c : on.corr) ASSERT_EQ(c, 0.0);
+    ASSERT_FALSE(on.cvol.empty());
+    for (double v : on.cvol) ASSERT_EQ(v, 0.0);
+}
+
+TEST(PerMemberPortsCoupled, CostOfThePerMemberPathOnACoupledManhole) {
+    // Cost diagnostic (plan §6 runtime line): street-orifice law evaluations
+    // and port evaluations per per-member step, wall time ON vs OFF. Printed,
+    // not asserted (wall time in Debug is noisy).
+    const CoupledTrace off = runCoupled(coupledFixture(0.2), "cost_off", false, 0.2);
+    const CoupledTrace on = runCoupled(coupledFixture(0.2), "cost_on", true, 0.2);
+    ASSERT_TRUE(off.ok && on.ok);
+    ASSERT_GT(on.pg_steps, 0);
+    const double st = static_cast<double>(on.pg_steps);
+    std::printf("[PH-O3 cost] steps %ld, per-member steps %ld, admitted %zu (coupled %zu)\n",
+                on.steps, on.pg_steps, on.admitted, on.admitted_coupled);
+    std::printf("[PH-O3 cost] orifice-law evals/step %.1f, port evals/step %.1f, solves %ld, newton %ld, jacobi %ld\n",
+                static_cast<double>(on.law_evals) / st, static_cast<double>(on.port_evals) / st, on.solves, on.newton, on.jacobi);
+    std::printf("[PH-O3 cost] wall OFF %.3f s, ON %.3f s, ratio %.3f\n", off.wall_s, on.wall_s, on.wall_s / off.wall_s);
 }
 #endif  // OPENSWMM_HAS_2D

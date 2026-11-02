@@ -185,6 +185,53 @@ inline double overflowFlow(double q_ovf_star, double k, double z_rim, double z) 
     return std::max(k * (z - z_rim), 0.0);
 }
 
+/// Street exchange at a coupled manhole (note §1.2 last row; PORT_HAMILTONIAN
+/// card O-3): an orifice between the manhole (head h_mh) and its street pond
+/// (depth p over the coupling cell's ground z_or), positive from the manhole
+/// into the street:
+///   Q = c·sqrt(2g)·sign(Δ)·s(|Δ|),   Δ = h_mh − (z_or + p),
+/// s = the regularised square root (linear below d0, in the law's length
+/// unit). Odd and nondecreasing in Δ, so nondecreasing in h_mh and
+/// nonincreasing in p (P1), with slope <= c·sqrt(2g)/sqrt(d0) everywhere: the
+/// Newton Jacobian stays finite when manhole and pond are nearly level (the
+/// bare square root has an infinite slope there). The street level is never
+/// below the ground (p is clamped at 0): in deviation form a member whose pond
+/// gains less than the main run's over a step reads p_star + z < 0 while its
+/// own water is still >= 0 (the main run's pond rose meanwhile).
+inline double orificeFlow(double c, double two_g, double h_mh, double z_or, double p, double d0) {
+    const double d = h_mh - (z_or + std::max(p, 0.0));
+    const double s = sqrtReg(std::fabs(d), d0);
+    return c * std::sqrt(two_g) * (d >= 0.0 ? s : -s);
+}
+
+/// The street pond over a coupled manhole as a store (O-3): linear volume
+/// V(p) = a·p over the footprint area a; the unknown is the pond depth's
+/// deviation z from the main run's pond depth p_star, so dV(z) = a·z. Floor 0:
+/// water leaves the pond only while it has some, through the dry factor
+/// ramp(p_star + z) on the pond's own absolute depth (0 once empty, 1 above
+/// δ_dry). Absolute, not relative to the main run like dryFactor(): the pond's
+/// reference flow is the same law at the main run (no outside q*), and a dry
+/// main-run pond must not pour water it does not have.
+struct PondStore {
+    double a = 0.0;        ///< footprint area (ft^2 in the per-member graph)
+    double p_star = 0.0;   ///< main run's pond depth (ft)
+    double dV(double z, double* area) const {
+        if (area) *area = a;
+        return a * z;
+    }
+    double dry(double z) const { return ramp(p_star + z); }
+};
+
+/// The manhole–pond two-port: orifice flow manhole -> pond, limited by the
+/// water on the side it leaves (g_mh for flow into the street, g_pond for
+/// flow out of the pond, both nondecreasing in their own level). Monotone
+/// (P1), conservative between the two stores (P2), and the same expression
+/// gives the main run's reference flow at z = 0 (P3).
+inline double orificePortFlow(double c, double two_g, double h_mh, double z_or, double p, double d0,
+                              double g_mh, double g_pond) {
+    return flooredFlow(orificeFlow(c, two_g, h_mh, z_or, p, d0), g_mh, g_pond);
+}
+
 }  // namespace openswmm::uncertainty::ports
 
 #endif  // OPENSWMM_ENGINE_UNCERTAINTY_ROM_STORE_PORTS_HPP

@@ -71,8 +71,8 @@ struct PortGraph {
     int max_jacobi = 500;
     bool floor_projection = false;         ///< mutation hook only: clamp z >= floor (creates water)
     std::vector<double> floor;             ///< used only with floor_projection
-    struct Stats { long solves = 0, newton_iters = 0, armijo_failures = 0, jacobi_fallbacks = 0, jacobi_failed = 0, zero_exits = 0; };
-    Stats stats;
+    struct Stats { long solves = 0, newton_iters = 0, armijo_failures = 0, jacobi_fallbacks = 0, jacobi_failed = 0, zero_exits = 0, port_evals = 0; };
+    mutable Stats stats;   ///< mutable: residual() (const) counts port evaluations
 
     void resize(int n_nodes) {
         n = n_nodes;
@@ -80,6 +80,21 @@ struct PortGraph {
         S.assign(un, 1.0); pinned.assign(un, 0); store_of.assign(un, -1);
         b.assign(un, 0.0); z_prev.assign(un, 0.0);
         stores.clear(); edges.clear(); ports.clear(); dV_prev.clear();
+    }
+
+    /// One port-law evaluation for the current member (counted in stats.port_evals).
+    double evalPort(const Port& p, double zu, double zd) const {
+        ++stats.port_evals;
+        return p.dq(member, zu, zd);
+    }
+
+    /// Append a node (after resize()): linear area S, not pinned, no source.
+    /// Returns its index. Used for stores that are not network nodes (the
+    /// street pond of a coupled manhole).
+    int addNode(double area) {
+        S.push_back(area); pinned.push_back(0); store_of.push_back(-1);
+        b.push_back(0.0); z_prev.push_back(0.0);
+        return n++;
     }
 
     /// Volume deviation at node t (store or linear) and its area.
@@ -116,7 +131,7 @@ struct PortGraph {
             add(e.up, f); add(e.dn, -f);
         }
         for (const auto& p : ports) {
-            const double f = p.dq(member, zz(p.up), zz(p.dn));
+            const double f = evalPort(p, zz(p.up), zz(p.dn));
             add(p.up, f); add(p.dn, -f);
         }
         for (std::size_t t = 0; t < un; ++t)
@@ -137,7 +152,7 @@ struct PortGraph {
             const double f = e.conduit ? e.ju * zz(e.up) + (e.dn >= 0 ? e.jd * zz(e.dn) : 0.0) : e.d * zz(e.up);
             s += out(e.up, e.dn) * f;
         }
-        for (const auto& p : ports) s += out(p.up, p.dn) * p.dq(member, zz(p.up), zz(p.dn));
+        for (const auto& p : ports) s += out(p.up, p.dn) * evalPort(p, zz(p.up), zz(p.dn));
         return s;
     }
 
@@ -172,12 +187,12 @@ struct PortGraph {
             for (const auto& p : ports) {
                 const double zu = (p.up >= 0 && !pinned[static_cast<std::size_t>(p.up)]) ? z[static_cast<std::size_t>(p.up)] : 0.0;
                 const double zd = (p.dn >= 0 && !pinned[static_cast<std::size_t>(p.dn)]) ? z[static_cast<std::size_t>(p.dn)] : 0.0;
-                const double f0 = p.dq(member, zu, zd);
+                const double f0 = evalPort(p, zu, zd);
                 const double hu = 1.0e-7 * std::max(1.0, std::fabs(zu)), hd = 1.0e-7 * std::max(1.0, std::fabs(zd));
                 FlowEdge e;
                 e.up = p.up; e.dn = p.dn; e.conduit = true;
-                e.ju = std::max((p.dq(member, zu + hu, zd) - f0) / hu, 0.0);
-                e.jd = p.dn >= 0 ? std::min((p.dq(member, zu, zd + hd) - f0) / hd, 0.0) : 0.0;
+                e.ju = std::max((evalPort(p, zu + hu, zd) - f0) / hu, 0.0);
+                e.jd = p.dn >= 0 ? std::min((evalPort(p, zu, zd + hd) - f0) / hd, 0.0) : 0.0;
                 if (e.up < 0) {   // an inflow port from outside: only its dn slope matters
                     e.up = p.dn; e.dn = -1; e.ju = -e.jd; e.jd = 0.0;
                     if (e.up < 0) continue;
@@ -255,7 +270,7 @@ private:
                     }
                     for (int k : inc_p[t]) {
                         const auto& p = ports[static_cast<std::size_t>(k)];
-                        const double f = p.dq(member, zz(p.up, x), zz(p.dn, x));
+                        const double f = evalPort(p, zz(p.up, x), zz(p.dn, x));
                         r += (p.up == ti ? f : 0.0) - (p.dn == ti ? f : 0.0);
                     }
                     return r;
