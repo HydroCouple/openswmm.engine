@@ -49,6 +49,16 @@ plain projection of upwind advection; defect 7, relative Galerkin with 17-order 
    conveyance above 0.94 D / pump curves, clamp on table extrapolation, regularised raised-end law
    (δ0 = 0.03 ft). Deferred to its own project: (b2) per-member pump switching.
 
+5. **Phase 0 measured (S-5, 2026-11-01; probe `bellinge-flood-uncertainty/scripts/probe/ph_operator_probe.cpp`).**
+   ‖J_r‖_F/‖R_r‖_F and min eig of R_r in the volume Gram, k = 40:
+   W3 plane 3000 s — Manning 0.037 (min eig 1.1e-3), additive 0.055 (4.3e-4);
+   Bellinge 05:25 — Manning 0.11 (7.7e-14), additive 3.9 (2.3e-16, both parts ~0: operator nearly dead, |λ|max 6e-6/s);
+   Bellinge 08:00 — Manning 0.023 (1.4e-4, cond G 1.6e5), additive 0.52 (1.7e-10).
+   No negative eigenvalue on any fixture: the shipped 2D operators are already ℓ2-stable. The skew part is
+   real physics on Bellinge (half the dissipative part in the additive channel at 08:00) and must be kept;
+   in the PLAIN inner product the Manning skew reads 0.05/0.24/0.97 — the Gram choice is what makes the
+   split meaningful (cond G 1.6e5 at 08:00). Phase 2 (area-orthonormal basis) is justified.
+
 ## 3. Phases
 
 | # | Phase | Model | Gate |

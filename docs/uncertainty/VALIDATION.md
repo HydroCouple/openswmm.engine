@@ -3844,3 +3844,14 @@ Storage nodes (median band against MC 5–95 span, m), `demo_v4`:
 
 Per-member storage levels (ADDITIVE_CHANNEL.md §7) target exactly these nodes,
 but they are not yet stable on this network.
+
+
+## Port-Hamiltonian structure — phase 0 measurement (2026-11-01)
+
+See `PORT_HAMILTONIAN.md` §2. The 1D directional operator reduced on the S-orthonormal basis has
+sym(M) ⪰ 0 by construction (test `DirectionalOperator.ReducedDirectionalOperatorIsEnergyStable`,
+min eig +0.009 over 50 random networks; dropping the gated upstream diagonal gives −0.023). The 2D
+reduced operators measured in the volume Gram (k = 40) show no negative eigenvalue on the W3 plane or on
+Bellinge (05:25, 08:00); the skew/dissipative ratio is 0.04–0.06 on the plane and 0.52 in the Bellinge
+additive channel at 08:00 (advection half of diffusion), so the skew form is load-bearing there. Probe and
+full table: `bellinge-flood-uncertainty/scripts/probe/ph_operator_probe_results.md`.
