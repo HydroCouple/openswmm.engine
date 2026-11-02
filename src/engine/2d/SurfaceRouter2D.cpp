@@ -2210,9 +2210,18 @@ void SurfaceRouter2D::initROM(SimulationContext& ctx) {
     if (use_reduced) computeGroundWeights();
     const double* ground_w_ptr = use_reduced ? rom_ground_w_.data() : nullptr;
 
+    // H16 relative form needs the constant mode, which only a GROUNDED basis
+    // carries (see below); decided here because the A-orthonormal basis
+    // (PORT_HAMILTONIAN.md S-2) is used exactly where the two-channel form is.
+    bool grounded = false;
+    for (const double w : rom_ground_w_) if (w > 0.0) { grounded = true; break; }
+    const bool relative_form = options_.rom_relative_deviation && use_reduced && grounded;
+    const bool area_basis = options_.rom_area_basis && relative_form;
+
     auto basis = std::make_unique<MeshEigenBasis>();
     const int k_req = std::max(1, options_.rom_modes);
-    if (!basis->build(mesh_, k_req, ground_w_ptr)) {
+    if (!basis->build(mesh_, k_req, ground_w_ptr,
+                      area_basis ? mesh_.tri_area.data() : nullptr)) {
         // Too few cells for an eigenbasis (< 4 triangles) or a failed solve.
         // The ROM simply stays off; the deterministic run is unaffected.
         return;
@@ -2227,9 +2236,7 @@ void SurfaceRouter2D::initROM(SimulationContext& ctx) {
     // (all WALL) or the legacy operator has no grounding: there the
     // relative source would project to ~0 and silently show no Manning
     // spread, so the absolute form is used instead.
-    bool grounded = false;
-    for (const double w : rom_ground_w_) if (w > 0.0) { grounded = true; break; }
-    rom->relative_deviation  = options_.rom_relative_deviation && use_reduced && grounded;
+    rom->relative_deviation  = relative_form;
     rom->relative_depth_floor = options_.dry_depth > 0.0 ? options_.dry_depth : 1.0e-3;
     rom->mannings_pert       = options_.rom_mannings_pert;
     rom->rainfall_pert       = options_.rom_rainfall_pert;

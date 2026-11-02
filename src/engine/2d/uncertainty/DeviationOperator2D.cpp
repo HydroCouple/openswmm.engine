@@ -272,6 +272,23 @@ bool DeviationOperator2D::assemble(const MeshData& mesh,
         }
         return true;
     }
+    if (similarity_h == nullptr && basis.area_weighted) {
+        // A-orthonormal basis (PᵀAP = I): the Galerkin operator in the volume
+        // inner product is just M = Pᵀ·A·L·P. No Gram, no G⁻¹.
+        GinvArea.clear();
+        for (std::size_t q = 0; q < nk; ++q) {
+            const double* Pq = &basis.P[q * nn];
+            csr_matvec(L, Pq, y.data());
+            for (std::size_t p = 0; p < nk; ++p) {
+                const double* Pp = &basis.P[p * nn];
+                double a = 0.0;
+                for (std::size_t t = 0; t < nn; ++t)
+                    a += (basis.area[t] * Pp[t]) * y[t];
+                M[p * nk + q] = a;
+            }
+        }
+        return true;
+    }
     if (similarity_h == nullptr) {
         // Volume inner product: A_v = Pᵀ·A·L·P, G = Pᵀ·A·P, M = G⁻¹·A_v.
         std::vector<double> Av(nk * nk, 0.0), G(nk * nk, 0.0);

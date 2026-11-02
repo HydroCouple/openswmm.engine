@@ -166,6 +166,10 @@ struct SpectralROM {
     ///                 a volume ΔV at cell c becomes G⁻¹·P[:,c]·ΔV, so one
     ///                 cubic metre has the same modal footprint whatever the
     ///                 size of the cell it enters. Empty = plain P[:,c]·ΔV/A_c.
+    ///                 With an A-orthonormal basis (MeshEigenBasis::area_weighted,
+    ///                 PORT_HAMILTONIAN.md S-2) no Gram exists (G = I): M_in is
+    ///                 Pᵀ·A·L·P, Ginv_in stays empty, and advance() projects every
+    ///                 additive source (rain, soft rain, FORCING_VECTOR) by Pᵀ·A.
     void setAdditiveOperator(const std::vector<double>& M_in,
                              const std::vector<double>& Ginv_in = {});
 

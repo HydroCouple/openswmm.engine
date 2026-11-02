@@ -3855,3 +3855,20 @@ reduced operators measured in the volume Gram (k = 40) show no negative eigenval
 Bellinge (05:25, 08:00); the skew/dissipative ratio is 0.04–0.06 on the plane and 0.52 in the Bellinge
 additive channel at 08:00 (advection half of diffusion), so the skew form is load-bearing there. Probe and
 full table: `bellinge-flood-uncertainty/scripts/probe/ph_operator_probe_results.md`.
+
+### Phase 2 (S-2, 2026-11-02): area-orthonormal 2D basis — neutral; harness-recipe finding
+
+The 2D basis is now A-orthonormal (`MeshEigenBasis::build(..., tri_area)`) and the additive channel is
+assembled as M = PᵀAL P with no Gram (`rom_area_basis`, temporary hook, default on). On every gated cell
+the basis change is neutral to the printed digit (W3 adv 0.856/1.319 both ways; W4 all cells identical);
+only the ungated `diag/grounded` reference rungs move (eigenvalues now carry 1/area).
+
+**Finding, pre-existing, not caused by the basis.** The W3/W4 harnesses had assembled the operator with
+the plain recipe from before defect 5 (2026-10-21), while the router ships skew advection + the volume
+form on the additive channel and skew on the Manning channel. Measured with the router's own recipe
+(`W3_/W4_ROUTER_FORM=1`, now the default): W3 adv 0.864/1.360 → 0.856/1.319 (calibrated); W4
+plane-rain corr20/corr100 0.894/1.32, 0.883/1.42 → 0.961/2.15, 0.957/2.52 (CONSERVATIVE); **H15
+plane-mann corr20 0.907/1.463 → 0.785/0.957 (RANKING ONLY, −0.015 below the floor)**; corr100
+0.906/1.52 → 0.876/1.27 (calibrated); channel cells unchanged. These are the numbers for what ships
+since defect 5; the earlier rows above describe the harness's recipe, not the engine's. The old recipe
+stays reachable (`*_ROUTER_FORM=0`) for reproduction only. Owner decision pending on the H15 corr20 cell.

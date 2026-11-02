@@ -393,6 +393,12 @@ void SpectralROM::advance(double dt, double K_eff, const double* rainfall,
     auto nt = static_cast<std::size_t>(n_tri);
     auto nk = static_cast<std::size_t>(n_kept);
 
+    // A-orthonormal basis (PORT_HAMILTONIAN.md S-2): every source is projected
+    // by Pᵀ·A so the reduced coordinates are volume-consistent with
+    // M = Pᵀ·A·L·P (no Gram). Plain basis: weight 1.0 (exact, bit-identical).
+    const double* pw_a = basis->area_weighted ? basis->area.data() : nullptr;
+    auto PW = [pw_a](std::size_t t) { return pw_a ? pw_a[t] : 1.0; };
+
     // ---- Step 1: Deviation mode energy E_j = mean_i(δa²_{i,j}) --------------
     for (std::size_t j = 0; j < nk; ++j) {
         double sum_sq = 0.0;
@@ -437,16 +443,16 @@ void SpectralROM::advance(double dt, double K_eff, const double* rainfall,
         } else if (relative_deviation) {
             // Original H16 (no Gram): the constant field itself.
             for (std::size_t t = 0; t < nt; ++t)
-                dot_b += Pj[t];
+                dot_b += Pj[t] * PW(t);
         } else {
             for (std::size_t t = 0; t < nt; ++t)
-                dot_b += Pj[t] * h_det[t];
+                dot_b += Pj[t] * PW(t) * h_det[t];
         }
         b_coarse[j] = dot_b;
         if (loc_field) {
             double dot_r = 0.0;
             for (std::size_t t = 0; t < nt; ++t)
-                dot_r += Pj[t] * loc_field[t];
+                dot_r += Pj[t] * PW(t) * loc_field[t];
             r_coarse[j] = dot_r;
         }
     }
@@ -456,7 +462,7 @@ void SpectralROM::advance(double dt, double K_eff, const double* rainfall,
             const double* Pj = &basis->P[j * nt];
             double dot = 0.0;
             for (std::size_t t = 0; t < nt; ++t)
-                dot += Pj[t] * soft_spread_field_[t];
+                dot += Pj[t] * PW(t) * soft_spread_field_[t];
             soft_r_spread_[j] = dot;
         }
     } else {
@@ -472,7 +478,7 @@ void SpectralROM::advance(double dt, double K_eff, const double* rainfall,
             const double* Pj = &basis->P[j * nt];
             double dot = 0.0;
             for (std::size_t t = 0; t < nt; ++t)
-                dot += Pj[t] * soft_spread_field_b_[t];
+                dot += Pj[t] * PW(t) * soft_spread_field_b_[t];
             soft_r_spread_b_[j] = dot;
         }
     } else {
@@ -509,7 +515,7 @@ void SpectralROM::advance(double dt, double K_eff, const double* rainfall,
                 const double* Pj = &basis->P[j * nt];
                 double dot = 0.0;
                 for (std::size_t t = 0; t < nt; ++t)
-                    dot += Pj[t] * soft_spread_field_[t] * Wi[t];
+                    dot += Pj[t] * PW(t) * soft_spread_field_[t] * Wi[t];
                 Ri[j] = dot;
             }
             for (std::size_t j = 0; j < nk; ++j) {
@@ -531,7 +537,7 @@ void SpectralROM::advance(double dt, double K_eff, const double* rainfall,
                 const double* Pj = &basis->P[j * nt];
                 double dot = 0.0;
                 for (std::size_t t = 0; t < nt; ++t)
-                    dot += Pj[t] * soft_spread_field_[t] * psim[t];
+                    dot += Pj[t] * PW(t) * soft_spread_field_[t] * psim[t];
                 Rm[j] = dot;
             }
         }
@@ -560,7 +566,7 @@ void SpectralROM::advance(double dt, double K_eff, const double* rainfall,
             const double* Pj = &basis->P[j * nt];
             double dot = 0.0;
             for (std::size_t t = 0; t < nt; ++t)
-                dot += Pj[t] * ep.field[t];
+                dot += Pj[t] * PW(t) * ep.field[t];
             ep.rv[j] = dot;
         }
     }
@@ -606,7 +612,7 @@ void SpectralROM::advance(double dt, double K_eff, const double* rainfall,
         const double* Pj = &basis->P[j * nt];
         double rq = 0.0;
         for (std::size_t t = 0; t < nt; ++t)
-            rq += Pj[t] * Pj[t] * h_weight_[t];
+            rq += Pj[t] * PW(t) * Pj[t] * h_weight_[t];
         keff_modes_[j] = K_eff * rq;
     }
 
@@ -815,7 +821,7 @@ void SpectralROM::advance(double dt, double K_eff, const double* rainfall,
                     const double* Pj = &basis->P[j * nt];
                     fj = 0.0;
                     for (std::size_t t = 0; t < nt; ++t)
-                        fj += Pj[t] * rainfall[t] * W_r_i[t];
+                        fj += Pj[t] * PW(t) * rainfall[t] * W_r_i[t];
                 } else {
                     fj = r_coarse[j] * rm;
                 }
@@ -897,7 +903,7 @@ void SpectralROM::advance(double dt, double K_eff, const double* rainfall,
             if (W_n_i) {
                 double rq = 0.0;
                 for (std::size_t t = 0; t < nt; ++t)
-                    rq += Pj[t] * Pj[t] * h_weight_[t] / W_n_i[t];
+                    rq += Pj[t] * PW(t) * Pj[t] * h_weight_[t] / W_n_i[t];
                 keff_ji = K_eff * rq / rate_prod;
             } else {
                 keff_ji = keff_modes_[j] / mm;
@@ -910,7 +916,7 @@ void SpectralROM::advance(double dt, double K_eff, const double* rainfall,
             } else if (W_r_i) {
                 fj = 0.0;
                 for (std::size_t t = 0; t < nt; ++t)
-                    fj += Pj[t] * rainfall[t] * W_r_i[t];
+                    fj += Pj[t] * PW(t) * rainfall[t] * W_r_i[t];
             } else {
                 fj = r_coarse[j] * rm;
             }

@@ -362,6 +362,15 @@ struct CorrRain {
     bool reduced = false;
 };
 
+// W4_ROUTER_FORM=1 assembles the operators the way SurfaceRouter2D does (additive channel in the
+// energy-stable volume form with skew advection, skew on the Manning channel); default = on whenever
+// the basis is A-orthonormal, so W4_AREA_BASIS=0 W4_ROUTER_FORM=1 is the pre-S-2 router recipe on a
+// plain basis (temporary A/B hook, PORT_HAMILTONIAN.md S-2).
+static bool routerForm(const MeshEigenBasis& basis) {
+    const char* v = std::getenv("W4_ROUTER_FORM");
+    return v ? std::atoi(v) != 0 : basis.area_weighted;
+}
+
 RomBands runRomRung(Rung rung, const MeshData& mesh0, const MeshEigenBasis& basis,
                     const std::vector<double>& ground_w, const RomInputs& in,
                     const std::vector<std::vector<double>>& hdet,
@@ -420,12 +429,17 @@ RomBands runRomRung(Rung rung, const MeshData& mesh0, const MeshEigenBasis& basi
             // channel first, then the depth-weighted one for Manning.
             op.similarity_h = nullptr;
             if (rom.relative_deviation) {
-                if (!op.assemble(mesh0, basis, D, h_prev.data(), vel_u.data(), vel_v.data(),
-                                 ground_w.data()))
-                    return out;
-                rom.setAdditiveOperator(op.M);
+                // A-orthonormal basis (PORT_HAMILTONIAN.md S-2): the additive channel
+                // is the router's energy-stable volume form, M = Pᵀ·A·L·P, no Gram.
+                if (routerForm(basis)) { op.skew_advection = true; op.volume_inner_product = true; }
+                const bool ok_add = op.assemble(mesh0, basis, D, h_prev.data(), vel_u.data(), vel_v.data(),
+                                                ground_w.data());
+                op.skew_advection = false; op.volume_inner_product = false;
+                if (!ok_add) return out;
+                rom.setAdditiveOperator(op.M, op.GinvArea);
             }
             op.similarity_h = rom.relative_deviation ? h_prev.data() : nullptr;
+            op.skew_advection = routerForm(basis) && rom.relative_deviation;   // router: skew with the volume form
             if (!op.assemble(mesh0, basis, D, h_prev.data(), vel_u.data(), vel_v.data(),
                              ground_w.data()))
                 return out;
@@ -659,7 +673,11 @@ Fixture makeFixture(const Surface& sf) {
     f.sf = sf;
     f.mesh = makeMesh(sf);
     f.gw = groundWeights(f.mesh);
-    if (!f.grounded.build(f.mesh, kModes, f.gw.data())) throw std::runtime_error("grounded basis");
+    // W4_AREA_BASIS=0 reproduces the pre-S-2 numbers; default 1 = the router's A-orthonormal
+    // basis (temporary A/B hook, PORT_HAMILTONIAN.md S-2).
+    static const bool area_basis = [](){ const char* v = std::getenv("W4_AREA_BASIS"); return !v || std::atoi(v) != 0; }();
+    if (!f.grounded.build(f.mesh, kModes, f.gw.data(), area_basis ? f.mesh.tri_area.data() : nullptr))
+        throw std::runtime_error("grounded basis");
     if (!f.neumann.build(f.mesh, kModes)) throw std::runtime_error("neumann basis");
     SurfaceStateData s0;
     seedSteady(f.mesh, s0);

@@ -1017,3 +1017,229 @@ TEST(DeviationOperator2D, TwoChannelManningTargetDoesNotDependOnCellArea) {
     EXPECT_NEAR(mean, 1.0, 0.5) << "the target is the constant fraction 1, projected";
     EXPECT_LT(maxAbsDiff(frac[0], frac[1]), 1e-8);
 }
+
+// ============================================================================
+// Phase 2 (PORT_HAMILTONIAN.md S-2): A-orthonormal basis, additive channel
+// assembled as M_add = Pᵀ·A·L·P with no Gram anywhere.
+// ============================================================================
+
+namespace {
+
+// The router's additive-channel recipe: skew advection + volume inner product.
+bool assembleAdditive(DeviationOperator2D& op, const MeshData& mesh, const MeshEigenBasis& basis,
+                      double D, const std::vector<double>& h, const std::vector<double>& u,
+                      const std::vector<double>& v, const double* gw) {
+    op.alpha_par = 0.62; op.alpha_perp = 2.0; op.c_factor = 5.0 / 3.0;
+    op.similarity_h = nullptr;
+    op.skew_advection = true; op.volume_inner_product = true;
+    const bool ok = op.assemble(mesh, basis, D, h.data(), u.data(), v.data(), gw);
+    op.skew_advection = false; op.volume_inner_product = false;
+    return ok;
+}
+
+} // namespace
+
+TEST(DeviationOperator2D, AreaBasisEnergyStableFormHasNoGrowingModeAndNoGram) {
+    auto mesh = makeStretchedMesh(10);
+    MeshEigenBasis basis;
+    ASSERT_TRUE(basis.build(mesh, 24, nullptr, mesh.tri_area.data()));
+    ASSERT_TRUE(basis.area_weighted);
+    const int k = basis.num_kept, nt = mesh.n_triangles();
+    // PᵀAP = I: the Gram the old path inverted is the identity.
+    const auto G = volumeGram(basis, mesh);
+    for (int p = 0; p < k; ++p)
+        for (int q = 0; q < k; ++q)
+            EXPECT_NEAR(G[static_cast<std::size_t>(p) * k + q], p == q ? 1.0 : 0.0, 1e-9);
+
+    double cx = 0.0;
+    for (int t = 0; t < nt; ++t) cx += mesh.tri_cx[static_cast<std::size_t>(t)];
+    cx /= nt;
+    std::vector<double> u(static_cast<std::size_t>(nt)), v(static_cast<std::size_t>(nt), 0.0);
+    for (int t = 0; t < nt; ++t)
+        u[static_cast<std::size_t>(t)] = (mesh.tri_cx[static_cast<std::size_t>(t)] < cx) ? 1.0 : -1.0;
+    std::vector<double> h(static_cast<std::size_t>(nt), 0.1);
+
+    DeviationOperator2D stable;
+    ASSERT_TRUE(assembleAdditive(stable, mesh, basis, 1.0e-3, h, u, v, nullptr));
+    EXPECT_TRUE(stable.GinvArea.empty()) << "no Gram on an A-orthonormal basis";
+    // Energy form is simply sym(M): no G.
+    std::vector<double> I(static_cast<std::size_t>(k) * k, 0.0);
+    for (int i = 0; i < k; ++i) I[static_cast<std::size_t>(i) * k + i] = 1.0;
+    double scale = 0.0;
+    for (double m : stable.M) scale = std::max(scale, std::fabs(m));
+    const double stable_min = minEnergyEig(I, stable.M, k);
+    EXPECT_GE(stable_min, -1e-10 * scale) << "min eig sym(M_add) = " << stable_min;
+
+    // Mutation: without the skew form the same projection is not energy-stable
+    // (the fixture must be able to fail, or the check above proves nothing).
+    DeviationOperator2D unskewed;
+    unskewed.alpha_par = 0.62; unskewed.alpha_perp = 2.0; unskewed.c_factor = 5.0 / 3.0;
+    unskewed.volume_inner_product = true;
+    ASSERT_TRUE(unskewed.assemble(mesh, basis, 1.0e-3, h.data(), u.data(), v.data()));
+    EXPECT_LT(minEnergyEig(I, unskewed.M, k), -1e-6 * scale);
+}
+
+TEST(DeviationOperator2D, AreaBasisMatchesGramPathOnUniformAreas) {
+    auto mesh = makeStructuredMesh(6);
+    std::vector<double> u, v, gw, h;
+    h15Fixture(mesh, u, v, gw, h);
+    MeshEigenBasis plain, area;
+    ASSERT_TRUE(plain.build(mesh, 8, gw.data()));
+    ASSERT_TRUE(area.build(mesh, 8, gw.data(), mesh.tri_area.data()));
+    ASSERT_EQ(plain.num_kept, area.num_kept);
+
+    // Both reduced operators (additive volume form, relative Galerkin).
+    DeviationOperator2D a_old, a_new;
+    ASSERT_TRUE(assembleAdditive(a_old, mesh, plain, 1.7, h, u, v, gw.data()));
+    ASSERT_TRUE(assembleAdditive(a_new, mesh, area, 1.7, h, u, v, gw.data()));
+    double scale = 0.0;
+    for (double m : a_old.M) scale = std::max(scale, std::fabs(m));
+    ASSERT_GT(scale, 0.0);
+    EXPECT_LT(maxAbsDiff(a_old.M, a_new.M), 1e-10 * scale);
+
+    DeviationOperator2D r_old, r_new;
+    for (auto* r : {&r_old, &r_new}) {
+        r->alpha_par = 0.62; r->alpha_perp = 2.0; r->c_factor = 5.0 / 3.0;
+        r->similarity_h = h.data(); r->skew_advection = true;
+    }
+    ASSERT_TRUE(r_old.assemble(mesh, plain, 1.7, h.data(), u.data(), v.data(), gw.data()));
+    ASSERT_TRUE(r_new.assemble(mesh, area, 1.7, h.data(), u.data(), v.data(), gw.data()));
+    EXPECT_LT(maxAbsDiff(r_old.M, r_new.M), 1e-10 * scale);
+
+    // One advance() with the same seeds: reconstructed bands agree.
+    const int nt = mesh.n_triangles(), M = 9;
+    std::vector<double> mann(static_cast<std::size_t>(M)), rain_mult(static_cast<std::size_t>(M));
+    for (int i = 0; i < M; ++i) {
+        mann[static_cast<std::size_t>(i)] = 0.8 + 0.4 * (i + 0.5) / M;
+        rain_mult[static_cast<std::size_t>(i)] = 1.2 - 0.4 * ((i * 4) % M + 0.5) / M;
+    }
+    std::vector<double> rain(static_cast<std::size_t>(nt));
+    for (int t = 0; t < nt; ++t) rain[static_cast<std::size_t>(t)] = 1e-5 * (1.0 + 0.5 * std::cos(0.4 * t));
+    auto run = [&](const MeshEigenBasis& b, const DeviationOperator2D& add, const DeviationOperator2D& rel,
+                   SpectralROM& r) {
+        r.basis = &b; r.n_ensemble = M; r.mannings_pert = 0.2; r.rainfall_pert = 0.2;
+        r.setExternalSamples(mann, rain_mult);
+        r.initialize(); r.seed(h.data());
+        r.relative_deviation = true;
+        r.setReducedOperator(rel.M);
+        r.setRelativeGram(rel.Ginv, rel.GramWeight);
+        r.setAdditiveOperator(add.M, add.GinvArea);
+        for (int step = 0; step < 6; ++step) r.advance(30.0, 1.0, rain.data(), nullptr, h.data());
+        r.computeQuantiles(h.data());
+    };
+    SpectralROM rom_old, rom_new;
+    run(plain, a_old, r_old, rom_old);
+    run(area, a_new, r_new, rom_new);
+    double spread = 0.0;
+    for (std::size_t t = 0; t < rom_old.q05.size(); ++t) spread = std::max(spread, rom_old.q95[t] - rom_old.q05[t]);
+    ASSERT_GT(spread, 1e-9) << "vacuous: no band developed";
+    EXPECT_LT(maxAbsDiff(rom_old.q05, rom_new.q05), 1e-10 * spread);
+    EXPECT_LT(maxAbsDiff(rom_old.q50, rom_new.q50), 1e-10 * spread);
+    EXPECT_LT(maxAbsDiff(rom_old.q95, rom_new.q95), 1e-10 * spread);
+}
+
+TEST(DeviationOperator2D, AreaBasisManningTargetDoesNotDependOnCellArea) {
+    // TwoChannelManningTargetDoesNotDependOnCellArea on the A-orthonormal basis:
+    // the fraction field P·b_coarse must be the same at 10 m and 100 m.
+    std::vector<std::vector<double>> frac(2);
+    const double domains[2] = {10.0, 100.0};
+    for (int d = 0; d < 2; ++d) {
+        auto mesh = makeStructuredMesh(6, domains[d]);
+        MeshEigenBasis basis;
+        std::vector<double> u, v, gw, h;
+        h15Fixture(mesh, u, v, gw, h);
+        for (int i = 0; i < mesh.n_triangles(); ++i)
+            gw[static_cast<std::size_t>(i)] = mesh.tri_cx[static_cast<std::size_t>(i)] < 0.1 * domains[d] ? 0.25 : 0.0;
+        ASSERT_TRUE(basis.build(mesh, 8, gw.data(), mesh.tri_area.data()));
+        DeviationOperator2D add, rel;
+        ASSERT_TRUE(assembleAdditive(add, mesh, basis, 1.7, h, u, v, gw.data()));
+        rel.alpha_par = 0.62; rel.alpha_perp = 2.0; rel.c_factor = 5.0 / 3.0;
+        rel.similarity_h = h.data(); rel.skew_advection = true;
+        ASSERT_TRUE(rel.assemble(mesh, basis, 1.7, h.data(), u.data(), v.data(), gw.data()));
+        const int M = 9;
+        std::vector<double> mann(static_cast<std::size_t>(M));
+        for (int i = 0; i < M; ++i) mann[static_cast<std::size_t>(i)] = 0.8 + 0.4 * (i + 0.5) / M;
+        SpectralROM two;
+        h15MakeRom(two, basis, M, mann, h, nullptr);
+        two.relative_deviation = true;
+        two.setReducedOperator(rel.M); two.setRelativeGram(rel.Ginv, rel.GramWeight);
+        two.setAdditiveOperator(add.M, add.GinvArea);
+        two.advance(30.0, 1.0, nullptr, nullptr, h.data());
+        const auto nt = static_cast<std::size_t>(mesh.n_triangles());
+        frac[static_cast<std::size_t>(d)].assign(nt, 0.0);
+        for (int j = 0; j < two.n_kept; ++j)
+            for (std::size_t t = 0; t < nt; ++t)
+                frac[static_cast<std::size_t>(d)][t] += basis.P[static_cast<std::size_t>(j) * nt + t] * two.b_coarse[static_cast<std::size_t>(j)];
+    }
+    double mean = 0.0;
+    for (double f : frac[0]) mean += f;
+    mean /= static_cast<double>(frac[0].size());
+    EXPECT_NEAR(mean, 1.0, 0.5);
+    EXPECT_LT(maxAbsDiff(frac[0], frac[1]), 1e-8);
+}
+
+TEST(DeviationOperator2D, AreaProjectedAdditiveSourcesConserveVolume) {
+    // Full A-orthonormal basis that contains the constant (Gram-Schmidt in the
+    // A inner product on a non-uniform-area mesh). Then PᵀA projection followed
+    // by P reconstruction is the identity, so a volume ΔV entering at one cell
+    // (coupling) and a rain field (advance) both keep Σ A·(P·δa) = ΔV exactly.
+    auto mesh = makeStretchedMesh(3);
+    const int n = mesh.n_triangles();
+    const auto un = static_cast<std::size_t>(n);
+    MeshEigenBasis b;
+    b.n_triangles = n; b.num_kept = n; b.num_modes = n;
+    b.area_weighted = true;
+    b.area.assign(mesh.tri_area.begin(), mesh.tri_area.begin() + static_cast<std::ptrdiff_t>(un));
+    b.inv_sqrt_area.assign(un, 1.0);
+    b.eigenvalues.assign(un, 1.0);
+    b.P.assign(un * un, 0.0);
+    auto ip = [&](const double* x, const double* y) {
+        double s = 0.0;
+        for (std::size_t t = 0; t < un; ++t) s += b.area[t] * x[t] * y[t];
+        return s;
+    };
+    for (std::size_t j = 0; j < un; ++j) {
+        double* c = &b.P[j * un];
+        for (std::size_t t = 0; t < un; ++t) c[t] = (j == 0) ? 1.0 : std::sin(1.0 + 0.37 * (j + 1) * (t + 1));
+        for (std::size_t m = 0; m < j; ++m) {
+            const double r = ip(c, &b.P[m * un]);
+            for (std::size_t t = 0; t < un; ++t) c[t] -= r * b.P[m * un + t];
+        }
+        const double nrm = std::sqrt(ip(c, c));
+        ASSERT_GT(nrm, 1e-8);
+        for (std::size_t t = 0; t < un; ++t) c[t] /= nrm;
+    }
+
+    // Coupling-style ΔV at one cell.
+    const std::size_t cell = 7 % un;
+    const double dV = 3.7;
+    std::vector<double> dh(un, 0.0), a(un, 0.0);
+    dh[cell] = dV / mesh.tri_area[cell];
+    b.projectArea(dh.data(), a.data());
+    double vol = 0.0;
+    for (std::size_t t = 0; t < un; ++t) {
+        double ph = 0.0;
+        for (std::size_t j = 0; j < un; ++j) ph += b.P[j * un + t] * a[j];
+        vol += mesh.tri_area[t] * ph;
+    }
+    EXPECT_NEAR(vol, dV, 1e-10 * dV);
+
+    // Rain source through SpectralROM::advance(): r_coarse = PᵀA rain.
+    SpectralROM rom;
+    rom.basis = &b; rom.n_ensemble = 4; rom.mannings_pert = 0.0; rom.rainfall_pert = 0.1;
+    std::vector<double> ones(4, 1.0);
+    rom.setExternalSamples(ones, ones);
+    rom.initialize();
+    std::vector<double> h(un, 0.1), rain(un);
+    for (std::size_t t = 0; t < un; ++t) rain[t] = 1e-5 * (1.0 + 0.3 * std::cos(0.5 * t));
+    rom.seed(h.data());
+    rom.advance(1.0, 1.0, rain.data(), nullptr, h.data());
+    double v_src = 0.0, v_rain = 0.0;
+    for (std::size_t t = 0; t < un; ++t) {
+        double ph = 0.0;
+        for (std::size_t j = 0; j < un; ++j) ph += b.P[j * un + t] * rom.r_coarse[j];
+        v_src += mesh.tri_area[t] * ph;
+        v_rain += mesh.tri_area[t] * rain[t];
+    }
+    EXPECT_NEAR(v_src, v_rain, 1e-10 * v_rain);
+}

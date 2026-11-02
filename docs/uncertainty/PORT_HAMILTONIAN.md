@@ -132,4 +132,4 @@ cases the current code excludes). Acceptance gates as in the table.
 
 ## 6. Log
 - 2026-11-01: plan approved; branch created; wave A launched (H-1, H-2, S-5, O-1).
-- 2026-11-01: H-1/H-2 landed (2ecc153a); S-1 landed (463c808a); O-1 note written, F-1 verdict in §2.4 — energy contract replaced by ℓ1 for full-order ports; S-2 running.
+- 2026-11-01: H-1/H-2 landed (2ecc153a); S-1 landed (463c808a); O-1 note written, F-1 verdict in §2.4 — energy contract replaced by ℓ1 for full-order ports; S-2 landed: basis neutral on every gated cell; harness-recipe finding (VALIDATION, phase 2) — H15 corr20 0.785 under the shipped recipe, owner decision pending; O-2 running.
