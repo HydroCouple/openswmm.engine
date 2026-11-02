@@ -167,3 +167,8 @@ cases the current code excludes). Acceptance gates as in the table.
   per Newton iteration — reuse the factor (modified Newton) unless the Jacobian moved; (iii) the Bellinge
   `demo_ph5` run on O-2 code was killed and restarted on O-3 code (one run answers accuracy and cost).
 - 2026-11-02: O-3 follow-ups: (i) landed — booking = dt·Q_port, exact to 1e-12; (ii) modified Newton tried and REJECTED: factorisations halved, iterations doubled, wall ON/OFF unchanged (1.87 → 1.98 median), +14 Armijo rejections on R; remaining ON cost on the coupled fixture is BatchPropagator + reconstruction outside the Newton loop, not the solve.
+- 2026-11-02: Bellinge `demo_ph5` on O-3 code (bfbcba09), per-member ON: steps 2000→3000 215 s wall (O-2 code 742 s —
+  the orifice cost is gone) but steps 3000→4000 took 10,108 s with 6,350 Jacobi fallbacks and **607 non-converged
+  solves** (`sample`: top engine frame `PortGraph::jacobi_`). Newton fails on the piecewise-smooth laws at the storm
+  peak and the fallback does the work. Run killed at step 4000 (06:17→07:03); no accuracy score taken — 607 failed
+  solves would make it meaningless. O-4 (semismooth / kink-bounded Newton) opened; rerun after it lands.
