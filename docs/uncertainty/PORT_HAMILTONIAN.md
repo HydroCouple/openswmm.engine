@@ -147,3 +147,8 @@ cases the current code excludes). Acceptance gates as in the table.
   6 non-converged by 06:17 (kink-cycle stalls at ~1e-8 cfs, G72R33B pair). Bellinge vs mc_v3 NOT yet scored
   (run in progress). Runtime ≤ 1.5× unmeasured (1D smoke 1.63× before the floors). O-3 does not start until
   the Bellinge number exists.
+- 2026-11-02: Bellinge `demo_ph5` (per-member ON) profiled mid-run with `sample`: ~85 % of engine samples in the
+  coupling-orifice port law of `stepRom1dStorageMembers` (`couplingOrificeQ`, a 60-iteration bisection per
+  evaluation, called inside every Newton iteration × member × coupled manhole, single thread); steps 3000→4000
+  cost ≥ 5× steps 2000→3000. Runtime stop line (≤ 1.5× OFF) is failed at the storm peak. O-3 (pond as a store,
+  exchange as a closed-form monotone two-port, no nested solve) is therefore required on cost, not only accuracy.
