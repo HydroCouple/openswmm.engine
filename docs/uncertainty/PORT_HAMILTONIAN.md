@@ -36,12 +36,25 @@ plain projection of upwind advection; defect 7, relative Galerkin with 17-order 
 3. **Where the code is.** `SWMMEngine::stepRom1dStorageMembers` = 645 lines of hand-built ratings, admission
    rules, sweeps and guards. Phase 5 (stores + ports) is the only phase where pH changes behaviour.
 
+4. **F-1 verdict on the stores-and-ports note (PH_STORES_AND_PORTS.md, 2026-11-01).** The quadratic energy
+   ½ψᵀQψ does NOT close in deviation form at one-way ports (weir, free outlet, supercritical pipe, pump):
+   δQ = d·z_up between two stores has sym(L) = d·[[1,−½],[−½,0]] with eigenvalue d(1−√2)/2 < 0. What
+   closes for every port is ℓ1 contraction of volume differences (monotone flow laws + conservation +
+   V(h) increasing ⇒ M-function; order preservation; Crandall–Tartar). This is the property the H19
+   additive channel already uses (column-dominant M-matrix). Consequence for the whole plan: **two
+   structural contracts, not one** — reduced modal operators are ℓ2-stable (Q-orthonormal Galerkin,
+   sym ⪰ 0; only two-way/diagonal terms may be projected), full-order one-way transfer is ℓ1-stable
+   and must stay full order. This is why H18's kinematic term sits on the diagonal only and why H19 is
+   full order. Accepted for O-2: (b1) frozen pump setting, monotone envelopes for flow brakes / circular
+   conveyance above 0.94 D / pump curves, clamp on table extrapolation, regularised raised-end law
+   (δ0 = 0.03 ft). Deferred to its own project: (b2) per-member pump switching.
+
 ## 3. Phases
 
 | # | Phase | Model | Gate |
 |---|-------|-------|------|
 | 0 | Measure ‖J_r‖/‖R_r‖ on the 2D reduced operators (Bellinge 05:25, 08:00; W3 plane; channel) | Sonnet (S-5) | report only |
-| 1 | Shared `PHOperator` core (diag Q, skew edge list J, PSD edges + diag R, ports B, `reduce(P)`) | Sonnet (S-3) | J_r skew, R_r PSD to roundoff; energy non-increasing; mutation on flipped J sign |
+| 1 | Shared `PHOperator` core: two-way edges (J skew + R PSD, reducible, ℓ2) and one-way edges (M-matrix, full order only, ℓ1); `reduce(P)` refuses one-way edges | Sonnet (S-3) | J_r skew, R_r PSD; ℓ1 non-expansive step on random one-way nets; mutation on flipped J sign; reduce() of a one-way edge is a refusal |
 | 2 | 2D area-orthonormal basis (`MeshEigenBasis` generalized `L v = λ A v`), additive channel without the volume Gram | Sonnet (S-1, S-2) → Haiku (H-4 deletions) | W3 0.864/1.360, W4, H15, channel cells within noise; defect-5/defect-7 fixtures stable; uniform-area mesh bit-identical |
 | 3 | 1D: pin the J−R property (test + docs); no numeric change | Haiku (H-1, H-2) | test fails when the upstream diagonal is dropped |
 | 4 | H19 additive channel assembled from `PHOperator` | Sonnet (S-4) | bit-identical: SR-5, SR-7, CL-1e, 3 AdditiveChannelDirect tests |
@@ -109,3 +122,4 @@ cases the current code excludes). Acceptance gates as in the table.
 
 ## 6. Log
 - 2026-11-01: plan approved; branch created; wave A launched (H-1, H-2, S-5, O-1).
+- 2026-11-01: H-1/H-2 landed (2ecc153a); S-1 landed (463c808a); O-1 note written, F-1 verdict in §2.4 — energy contract replaced by ℓ1 for full-order ports; S-2 running.
