@@ -18,7 +18,12 @@
 #ifndef OPENSWMM_ENGINE_UNCERTAINTY_ROM_ADDITIVE_CHANNEL_HPP
 #define OPENSWMM_ENGINE_UNCERTAINTY_ROM_ADDITIVE_CHANNEL_HPP
 
+#include "PHOperator.hpp"
 #include "RomFlowResponse.hpp"
+
+#include <cassert>
+#include <cstdint>
+#include <string>
 
 #include <algorithm>
 #include <cmath>
@@ -54,24 +59,94 @@ struct AdditiveSystem {
     int last_sweeps = 0;         ///< 1 after a direct solve (kept for diagnostics)
     int symbolic_builds = 0;     ///< how often the elimination order was recomputed
 
+    bool built = false;          ///< false until a build succeeds (step() is a no-op before)
+    std::string last_error;      ///< set when build() refuses its input
+
     /// Assemble from the oriented flow-response edges, storage S (> 0) and dt,
-    /// and factor.
-    void build(int n_nodes, const std::vector<FlowEdge>& edges, const double* S,
+    /// and factor. Delegates to the PHOperator overload (one assembly path):
+    /// each conduit becomes the one-way terms ju (up -> dn) and -jd (dn -> up),
+    /// each structure the one-way term d (up -> dn).
+    bool build(int n_nodes, const std::vector<FlowEdge>& edges, const double* S,
                double dt_s, const std::vector<char>* pinned_nodes = nullptr) {
-        n = n_nodes;
+        const auto un = static_cast<std::size_t>(std::max(n_nodes, 0));
+        PHOperator& op = scratch_;
+        op.n = n_nodes;
+        op.Q.assign(S, S + un);
+        op.Rdiag.clear();
+        op.two_way.clear();
+        op.one_way.clear();
+        for (const auto& e : edges) {
+            if (!(e.up >= 0 && e.up < n_nodes)) continue;
+            const bool dn_ok = e.dn >= 0 && e.dn < n_nodes;
+            const int to = dn_ok ? e.dn : -1;
+            if (e.conduit) {
+                op.one_way.push_back({e.up, to, e.ju});            // outflow grows with the upstream head
+                if (dn_ok) op.one_way.push_back({e.dn, e.up, -e.jd});   // ...and falls as the downstream head rises
+            } else {
+                op.one_way.push_back({e.up, to, e.d});
+            }
+        }
+        pinned_scratch_.assign(un, 0);
+        if (pinned_nodes)
+            for (std::size_t i = 0; i < un && i < pinned_nodes->size(); ++i)
+                pinned_scratch_[i] = static_cast<std::uint8_t>((*pinned_nodes)[i]);
+        return build(op, dt_s, pinned_scratch_.data());
+    }
+
+    /// Assemble from a PHOperator and factor. Maps Q -> S, Rdiag and two-way
+    /// edges (j must be 0) -> symmetric conductance, one-way edges -> the
+    /// upstream-diagonal / downstream-offdiagonal pair (to = -1: outfall).
+    /// Refuses (returns false, `built` = false, `last_error` set, nothing else
+    /// touched) on bad dimensions or a two-way edge with j != 0: a J edge is not
+    /// column-dominant, so the l1 contract (PHOperator.hpp, H19 stability) fails.
+    /// `pinned` (size n, nullable): nodes held at zero (spilling).
+    bool build(const PHOperator& op, double dt_s, const std::uint8_t* pinned_nodes = nullptr) {
+        if (op.n < 0 || op.Q.size() != static_cast<std::size_t>(op.n) ||
+            (!op.Rdiag.empty() && op.Rdiag.size() != static_cast<std::size_t>(op.n))) {
+            last_error = "AdditiveSystem::build: bad PHOperator dimensions";
+            built = false;
+            return false;
+        }
+        for (const auto& e : op.two_way) {
+            if (e.a < 0 || e.a >= op.n || e.b < 0 || e.b >= op.n) {
+                last_error = "AdditiveSystem::build: two-way index out of range";
+                built = false;
+                return false;
+            }
+            if (e.j != 0.0) {
+                last_error = "AdditiveSystem::build: two-way edge with j != 0 breaks the l1 "
+                             "(column-dominant) contract of the full-order channel";
+                built = false;
+                return false;
+            }
+        }
+        for (const auto& e : op.one_way)
+            if (e.from < 0 || e.from >= op.n || e.to >= op.n) {
+                last_error = "AdditiveSystem::build: one-way index out of range";
+                built = false;
+                return false;
+            }
+        last_error.clear();
+#ifndef NDEBUG
+        // H19 stability: (S/dt + L) is an M-matrix with column sums >= S/dt only
+        // while L is column-dominant (non-negative ju, d, and -jd).
+        assert(op.columnDominantSparse() && "AdditiveSystem: operator is not column-dominant (l1 contract)");
+#endif
+        n = op.n;
         dt = dt_s;
         const auto un = static_cast<std::size_t>(std::max(n, 0));
         s_dt.assign(un, 0.0);
         pinned.assign(un, 0);
         if (pinned_nodes)
-            for (std::size_t i = 0; i < un && i < pinned_nodes->size(); ++i) pinned[i] = (*pinned_nodes)[i];
-        for (std::size_t i = 0; i < un; ++i) s_dt[i] = S[i] / dt;
+            for (std::size_t i = 0; i < un; ++i) pinned[i] = static_cast<char>(pinned_nodes[i]);
+        for (std::size_t i = 0; i < un; ++i) s_dt[i] = op.Q[i] / dt;
         if (sym_n_ != n) { pattern_.assign(un, {}); sym_n_ = n; order_.clear(); }
         // Grow the pattern with any pair not yet in it.
         bool grew = order_.empty() && n > 0;
-        for (const auto& e : edges)
-            if (e.up >= 0 && e.up < n && e.dn >= 0 && e.dn < n && e.up != e.dn)
-                grew |= addPair_(e.up, e.dn);
+        for (const auto& e : op.one_way)
+            if (e.to >= 0 && e.from != e.to) grew |= addPair_(e.from, e.to);
+        for (const auto& e : op.two_way)
+            if (e.a != e.b) grew |= addPair_(e.a, e.b);
         if (grew) symbolic_();
         // Numeric assembly: A x = rhs with A[i][i] = S/dt + outgoing slopes, and
         // A[row][col] = -(dQ into row per unit head at col).
@@ -79,21 +154,17 @@ struct AdditiveSystem {
         std::fill(L_.begin(), L_.end(), 0.0);
         std::fill(U_.begin(), U_.end(), 0.0);
         for (std::size_t i = 0; i < un; ++i) D_[i] = s_dt[i];
-        for (const auto& e : edges) {
-            const bool up_ok = e.up >= 0 && e.up < n;
-            const bool dn_ok = e.dn >= 0 && e.dn < n;
-            if (!up_ok) continue;
-            if (e.conduit) {
-                D_[static_cast<std::size_t>(e.up)] += e.ju;   // outflow grows with the upstream head
-                if (dn_ok) {
-                    addEntry_(e.up, e.dn, e.jd);                // ...and falls as the downstream head rises
-                    D_[static_cast<std::size_t>(e.dn)] += -e.jd; // inflow to dn falls as its own head rises
-                    addEntry_(e.dn, e.up, -e.ju);               // ...and grows with the upstream head
-                }
-            } else {
-                D_[static_cast<std::size_t>(e.up)] += e.d;
-                if (dn_ok) addEntry_(e.dn, e.up, -e.d);
-            }
+        for (std::size_t i = 0; i < un && !op.Rdiag.empty(); ++i) D_[i] += op.Rdiag[i];
+        for (const auto& e : op.two_way) {
+            if (e.a == e.b) continue;
+            D_[static_cast<std::size_t>(e.a)] += e.w;
+            D_[static_cast<std::size_t>(e.b)] += e.w;
+            addEntry_(e.a, e.b, -e.w);
+            addEntry_(e.b, e.a, -e.w);
+        }
+        for (const auto& e : op.one_way) {
+            D_[static_cast<std::size_t>(e.from)] += e.d;
+            if (e.to >= 0) addEntry_(e.to, e.from, -e.d);
         }
         for (std::size_t k = 0; k < un; ++k) {
             if (!pinned[k]) continue;
@@ -127,12 +198,15 @@ struct AdditiveSystem {
             }
         }
         last_sweeps = 0;
+        built = true;
+        return true;
     }
 
     /// One backward-Euler step of one plane: psi (in: old, out: new), dq in cfs.
     /// The two trailing arguments are kept for interface compatibility with the
     /// former iterative solver and are ignored. Returns 1.
     int step(const double* dq, double* psi, int /*max_sweeps*/ = 200, double /*tol*/ = 1.0e-10) {
+        if (!built) return 0;
         const auto un = static_cast<std::size_t>(std::max(n, 0));
         rhs_.resize(un);
         for (std::size_t i = 0; i < un; ++i) rhs_[i] = pinned[i] ? 0.0 : s_dt[i] * psi[i] + dq[i];
@@ -253,6 +327,8 @@ private:
     std::vector<int> updOff_;
     std::vector<Slot> upd_;
     std::vector<double> rhs_;
+    PHOperator scratch_;                     ///< reused by the array overload of build()
+    std::vector<std::uint8_t> pinned_scratch_;
 };
 
 }  // namespace openswmm::uncertainty

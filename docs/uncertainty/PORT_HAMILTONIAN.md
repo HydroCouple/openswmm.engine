@@ -134,3 +134,4 @@ cases the current code excludes). Acceptance gates as in the table.
 - 2026-11-01: plan approved; branch created; wave A launched (H-1, H-2, S-5, O-1).
 - 2026-11-01: H-1/H-2 landed (2ecc153a); S-1 landed (463c808a); O-1 note written, F-1 verdict in §2.4 — energy contract replaced by ℓ1 for full-order ports; S-2 landed: basis neutral on every gated cell; harness-recipe finding (VALIDATION, phase 2) — H15 corr20 0.785 under the shipped recipe, owner decision pending; O-2 running.
 - 2026-11-02: H-4 phase-2 clean-up landed; hook, GinvArea, volume_inner_product, skew_advection flags deleted.
+- 2026-11-02: S-4 landed: H19 AdditiveSystem assembled from PHOperator (ℓ1 contract asserted), bit-identical on SR-5/SR-7/CL-1e.

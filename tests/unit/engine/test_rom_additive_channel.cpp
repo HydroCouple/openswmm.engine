@@ -11,12 +11,16 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <random>
 #include <vector>
 
 #include "uncertainty/RomAdditiveChannel.hpp"
+#include "uncertainty/PHOperator.hpp"
 
 using openswmm::uncertainty::AdditiveSystem;
 using openswmm::uncertainty::FlowEdge;
+using openswmm::uncertainty::PHOperator;
 
 namespace {
 
@@ -306,4 +310,103 @@ TEST(AdditiveChannelDirect, LinkThatAppearsLaterIsAddedToThePattern) {
     const auto x2 = denseSolve(m.n, m.edges, m.S, 3.0, m.psi_old, m.q, m.pinned);
     for (int i = 0; i < m.n; ++i)
         EXPECT_NEAR(psi[static_cast<std::size_t>(i)], x2[static_cast<std::size_t>(i)], 1.0e-12 * scale) << "node " << i;
+}
+
+namespace {
+
+// The PHOperator the array overload builds, written out by hand here so the
+// test does not depend on the delegation it is checking.
+PHOperator phFromNet(const LoopedNet& m) {
+    PHOperator op;
+    op.n = m.n;
+    op.Q = m.S;
+    for (const auto& e : m.edges) {
+        const int to = (e.dn >= 0 && e.dn < m.n) ? e.dn : -1;
+        if (e.conduit) {
+            op.one_way.push_back({e.up, to, e.ju});
+            if (to >= 0) op.one_way.push_back({e.dn, e.up, -e.jd});
+        } else {
+            op.one_way.push_back({e.up, to, e.d});
+        }
+    }
+    return op;
+}
+
+}  // namespace
+
+TEST(AdditiveChannelPH, BuildFromPHOperatorIsBitIdenticalToArrays) {
+    auto m = loopedNet();
+    const PHOperator op = phFromNet(m);
+    std::vector<std::uint8_t> pins(m.pinned.begin(), m.pinned.end());
+    AdditiveSystem a, b;
+    ASSERT_TRUE(a.build(m.n, m.edges, m.S.data(), 4.0, &m.pinned));
+    ASSERT_TRUE(b.build(op, 4.0, pins.data()));
+    std::vector<double> pa = m.psi_old, pb = m.psi_old;
+    for (int k = 0; k < 20; ++k) {
+        std::vector<double> q = m.q;
+        for (std::size_t i = 0; i < q.size(); ++i) q[i] *= 1.0 + 0.1 * k;
+        a.step(q.data(), pa.data());
+        b.step(q.data(), pb.data());
+        for (std::size_t i = 0; i < pa.size(); ++i) ASSERT_EQ(pa[i], pb[i]) << "step " << k << " node " << i;
+    }
+    EXPECT_EQ(a.symbolic_builds, b.symbolic_builds);
+}
+
+TEST(AdditiveChannelPH, TwoWayEdgeWithJIsRefused) {
+    auto m = loopedNet();
+    PHOperator op = phFromNet(m);
+    op.two_way.push_back({1, 2, 0.5, 0.25});   // j != 0
+    AdditiveSystem sys;
+    EXPECT_FALSE(sys.build(op, 4.0));
+    EXPECT_FALSE(sys.last_error.empty());
+    EXPECT_FALSE(sys.built);
+    std::vector<double> psi = m.psi_old;
+    EXPECT_EQ(sys.step(m.q.data(), psi.data()), 0);
+    EXPECT_EQ(psi, m.psi_old);                 // unbuilt system does not touch the plane
+    // The same operator with j = 0 builds (symmetric conductance is allowed).
+    op.two_way.back().j = 0.0;
+    EXPECT_TRUE(sys.build(op, 4.0));
+    EXPECT_TRUE(sys.built);
+    EXPECT_TRUE(sys.last_error.empty());
+}
+
+TEST(AdditiveChannelPH, AssembledMatrixIsColumnDominantOnRandomNetworks) {
+    std::mt19937 rng(77);
+    std::uniform_real_distribution<double> U(0.0, 1.0);
+    for (int trial = 0; trial < 50; ++trial) {
+        PHOperator op;
+        op.n = 6 + static_cast<int>(rng() % 20);
+        const int n = op.n;
+        for (int i = 0; i < n; ++i) { op.Q.push_back(0.1 + 10.0 * U(rng)); op.Rdiag.push_back(rng() % 4 == 0 ? U(rng) : 0.0); }
+        for (int e = 0; e < n; ++e) {
+            const int a = static_cast<int>(rng() % n), b = static_cast<int>(rng() % n);
+            if (a != b) op.two_way.push_back({a, b, U(rng), 0.0});
+        }
+        for (int e = 0; e < 2 * n; ++e) {
+            const int a = static_cast<int>(rng() % n), b = static_cast<int>(rng() % n);
+            if (a != b) op.one_way.push_back({a, rng() % 5 == 0 ? -1 : b, U(rng)});
+        }
+        std::vector<std::uint8_t> pins(static_cast<std::size_t>(n), 0);
+        for (int i = 0; i < n; ++i) pins[static_cast<std::size_t>(i)] = (rng() % 6 == 0);
+        EXPECT_TRUE(op.columnDominantSparse());
+        std::vector<double> L;
+        ASSERT_TRUE(op.assembleFull(L));
+        EXPECT_TRUE(PHOperator::checkColumnDominant(L));
+        // Pinned rows and columns removed: the principal submatrix keeps the property.
+        std::vector<int> keep;
+        for (int i = 0; i < n; ++i) if (!pins[static_cast<std::size_t>(i)]) keep.push_back(i);
+        std::vector<double> Ls;
+        for (int r : keep) for (int c : keep) Ls.push_back(L[static_cast<std::size_t>(r) * n + static_cast<std::size_t>(c)]);
+        if (!keep.empty()) EXPECT_TRUE(PHOperator::checkColumnDominant(Ls));
+        AdditiveSystem sys;
+        EXPECT_TRUE(sys.build(op, 3.0, pins.data()));
+    }
+    // A J edge or a negative one-way d is detected (the checker bites).
+    PHOperator bad;
+    bad.n = 2; bad.Q = {1.0, 1.0};
+    bad.one_way.push_back({0, 1, -0.5});
+    EXPECT_FALSE(bad.columnDominantSparse());
+    std::vector<double> Lb;
+    ASSERT_TRUE(bad.assembleFull(Lb));
+    EXPECT_FALSE(PHOperator::checkColumnDominant(Lb));
 }

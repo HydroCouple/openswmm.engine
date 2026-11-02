@@ -88,6 +88,47 @@ struct PHOperator {
         return true;
     }
 
+    /// l1 stability contract (file header, contract 2): L is a column-dominant
+    /// M-matrix -- off-diagonals <= tol, column sums >= -tol. `L` is dense n x n
+    /// row-major (n = sqrt(size)). Test-grade O(n^2).
+    static bool checkColumnDominant(const std::vector<double>& L, double tol = 1.0e-12) {
+        const auto un = static_cast<std::size_t>(std::llround(std::sqrt(static_cast<double>(L.size()))));
+        if (un * un != L.size()) return false;
+        for (std::size_t c = 0; c < un; ++c) {
+            double sum = 0.0;
+            for (std::size_t r = 0; r < un; ++r) {
+                if (r != c && L[r * un + c] > tol) return false;
+                sum += L[r * un + c];
+            }
+            if (sum < -tol * (1.0 + std::fabs(L[c * un + c]))) return false;
+        }
+        return true;
+    }
+
+    /// Same contract evaluated on the edge lists in O(edges) (no dense matrix),
+    /// for the per-step Debug assertion in AdditiveSystem::build. Requires
+    /// j == 0 on every two-way edge.
+    bool columnDominantSparse(double tol = 1.0e-12) const {
+        if (!validate()) return false;
+        const auto un = static_cast<std::size_t>(n);
+        std::vector<double> colsum(un, 0.0), diagmag(un, 0.0);
+        for (std::size_t i = 0; i < un && !Rdiag.empty(); ++i) { colsum[i] += Rdiag[i]; diagmag[i] += std::fabs(Rdiag[i]); }
+        for (const auto& e : two_way) {
+            if (e.a == e.b) continue;
+            if (e.j != 0.0 || e.w < -tol) return false;
+            // columns a and b: +w on the diagonal, -w off it: sum 0.
+        }
+        for (const auto& e : one_way) {
+            if (e.d < -tol) return false;
+            colsum[static_cast<std::size_t>(e.from)] += e.d;
+            diagmag[static_cast<std::size_t>(e.from)] += std::fabs(e.d);
+            if (e.to >= 0 && e.to != e.from) colsum[static_cast<std::size_t>(e.from)] -= e.d;
+        }
+        for (std::size_t c = 0; c < un; ++c)
+            if (colsum[c] < -tol * (1.0 + diagmag[c])) return false;
+        return true;
+    }
+
     /**
      * @brief Galerkin M = PᵀLP for the two-way + diagonal part, P k×n row-major
      *        (`P[j*n+i]`), assumed Q-orthonormal (not checked).
