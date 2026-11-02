@@ -2211,17 +2211,16 @@ void SurfaceRouter2D::initROM(SimulationContext& ctx) {
     const double* ground_w_ptr = use_reduced ? rom_ground_w_.data() : nullptr;
 
     // H16 relative form needs the constant mode, which only a GROUNDED basis
-    // carries (see below); decided here because the A-orthonormal basis
-    // (PORT_HAMILTONIAN.md S-2) is used exactly where the two-channel form is.
+    // carries (see below); the A-orthonormal basis (PORT_HAMILTONIAN.md S-2)
+    // is the unconditional path (phase-2 cleanup: H-4).
     bool grounded = false;
     for (const double w : rom_ground_w_) if (w > 0.0) { grounded = true; break; }
     const bool relative_form = options_.rom_relative_deviation && use_reduced && grounded;
-    const bool area_basis = options_.rom_area_basis && relative_form;
 
     auto basis = std::make_unique<MeshEigenBasis>();
     const int k_req = std::max(1, options_.rom_modes);
     if (!basis->build(mesh_, k_req, ground_w_ptr,
-                      area_basis ? mesh_.tri_area.data() : nullptr)) {
+                      relative_form ? mesh_.tri_area.data() : nullptr)) {
         // Too few cells for an eigenbasis (< 4 triangles) or a failed solve.
         // The ROM simply stays off; the deterministic run is unaffected.
         return;
@@ -2396,24 +2395,18 @@ void SurfaceRouter2D::refreshROMOperator() {
     // operator; the Manning channel with the depth-weighted Galerkin one.
     rom_operator_.similarity_floor = rom_->relative_depth_floor;
     if (rom_->relative_deviation) {
-        // Energy-stable form for the additive channel (see the dials' note in
-        // DeviationOperator2D.hpp): the plain projection of upwind advection
-        // grew without bound where Bellinge's flow converges into ponds.
+        // Energy-stable form for the additive channel: skew-form advection is
+        // now unconditional, applied whenever c_factor != 0 and flow is present.
         rom_operator_.similarity_h = nullptr;
-        rom_operator_.skew_advection = true;
-        rom_operator_.volume_inner_product = true;
         const bool ok_add = rom_operator_.assemble(mesh_, *rom_basis_, D_scale, state_.depth.data(),
                                                    state_.face_vx.data(), state_.face_vy.data(),
                                                    rom_ground_w_.data());
-        rom_operator_.skew_advection = false;
-        rom_operator_.volume_inner_product = false;
         if (!ok_add) return;
-        rom_->setAdditiveOperator(rom_operator_.M, rom_operator_.GinvArea);
+        rom_->setAdditiveOperator(rom_operator_.M);
     } else {
         rom_->setAdditiveOperator({});
     }
     rom_operator_.similarity_h = rom_->relative_deviation ? state_.depth.data() : nullptr;
-    rom_operator_.skew_advection = rom_->relative_deviation;   // energy-stable with the volume form
     const bool ok = rom_operator_.assemble(
         mesh_, *rom_basis_, D_scale, state_.depth.data(),
         state_.face_vx.data(), state_.face_vy.data(), rom_ground_w_.data());

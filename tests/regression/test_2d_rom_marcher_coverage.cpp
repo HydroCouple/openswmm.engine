@@ -298,11 +298,9 @@ struct RomBands {
     bool ok = false;
 };
 
-// W3_ROUTER_FORM=1 assembles the operators the way SurfaceRouter2D does (additive channel in the
-// energy-stable volume form with skew advection, skew on the Manning channel); default = on whenever
-// the basis is A-orthonormal, so W3_AREA_BASIS=0 W3_ROUTER_FORM=1 is the pre-S-2 router recipe on a
-// plain basis (temporary A/B hook, PORT_HAMILTONIAN.md S-2).
-static bool routerForm(const MeshEigenBasis& basis) {
+// W3_ROUTER_FORM: historical knob (VALIDATION cites it). Since H-4 phase 2 the harness always
+// assembles the router's form (A-orthonormal basis, volume-form additive channel); the value is a no-op.
+[[maybe_unused]] static bool routerForm(const MeshEigenBasis& basis) {
     const char* v = std::getenv("W3_ROUTER_FORM");
     return v ? std::atoi(v) != 0 : basis.area_weighted;
 }
@@ -376,15 +374,12 @@ RomBands runRomRung(Rung rung, const MeshData& mesh0,
             if (rom.relative_deviation) {
                 // A-orthonormal basis (PORT_HAMILTONIAN.md S-2): the additive channel
                 // is the router's energy-stable volume form, M = Pᵀ·A·L·P, no Gram.
-                if (routerForm(basis)) { op.skew_advection = true; op.volume_inner_product = true; }
                 const bool ok_add = op.assemble(mesh0, basis, D, h_prev.data(), vel_u.data(), vel_v.data(),
                                                 ground_w.data());
-                op.skew_advection = false; op.volume_inner_product = false;
                 if (!ok_add) return out;
-                rom.setAdditiveOperator(op.M, op.GinvArea);
+                rom.setAdditiveOperator(op.M);
             }
             op.similarity_h = rom.relative_deviation ? h_prev.data() : nullptr;
-            op.skew_advection = routerForm(basis) && rom.relative_deviation;   // router: skew with the volume form
             if (!op.assemble(mesh0, basis, D, h_prev.data(),
                              vel_u.data(), vel_v.data(), ground_w.data()))
                 return out;   // ok stays false
@@ -502,10 +497,7 @@ TEST(Rom2dMarcherCoverage, ProductionRungBandsBracketMarcherMonteCarlo) {
 
     // Grounded basis for the physical rungs; ungrounded for the legacy record.
     MeshEigenBasis basis_grounded, basis_neumann;
-    // W3_AREA_BASIS=0 reproduces the pre-S-2 (plain-orthonormal, Gram) numbers;
-    // default 1 = the router's A-orthonormal basis (temporary A/B hook, PORT_HAMILTONIAN.md S-2).
-    const bool area_basis = [](){ const char* v = std::getenv("W3_AREA_BASIS"); return !v || std::atoi(v) != 0; }();
-    ASSERT_TRUE(basis_grounded.build(mesh0, kModes, gw.data(), area_basis ? mesh0.tri_area.data() : nullptr));
+    ASSERT_TRUE(basis_grounded.build(mesh0, kModes, gw.data(), mesh0.tri_area.data()));
     ASSERT_TRUE(basis_neumann.build(mesh0, kModes));
 
     SurfaceStateData s0;

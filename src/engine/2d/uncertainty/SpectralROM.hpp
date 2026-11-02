@@ -159,19 +159,10 @@ struct SpectralROM {
 
     /// Two-channel relative mode: the reduced operator (k×k, 1/s) the
     /// additive channel propagates with. Empty = single-channel.
-    /// @param Ginv_in  Optional k×k inverse of the volume Gram Pᵀ·A·P when
-    ///                 M_in was assembled in the volume inner product
-    ///                 (DeviationOperator2D::volume_inner_product). The
-    ///                 coupling exchange is then projected consistently:
-    ///                 a volume ΔV at cell c becomes G⁻¹·P[:,c]·ΔV, so one
-    ///                 cubic metre has the same modal footprint whatever the
-    ///                 size of the cell it enters. Empty = plain P[:,c]·ΔV/A_c.
-    ///                 With an A-orthonormal basis (MeshEigenBasis::area_weighted,
-    ///                 PORT_HAMILTONIAN.md S-2) no Gram exists (G = I): M_in is
-    ///                 Pᵀ·A·L·P, Ginv_in stays empty, and advance() projects every
-    ///                 additive source (rain, soft rain, FORCING_VECTOR) by Pᵀ·A.
-    void setAdditiveOperator(const std::vector<double>& M_in,
-                             const std::vector<double>& Ginv_in = {});
+    /// @note With the area-orthonormal basis (MeshEigenBasis::area_weighted),
+    ///       M_in is Pᵀ·A·L·P and all additive sources (rain, soft rain,
+    ///       FORCING_VECTOR) are projected by Pᵀ·A (no Gram needed).
+    void setAdditiveOperator(const std::vector<double>& M_in);
 
     /// True when relative mode runs the two-channel split.
     bool twoChannel() const noexcept {
@@ -713,8 +704,6 @@ private:
     std::vector<double> reduced_A_;
     openswmm::uncertainty::BatchPropagator reduced_batch_;
     std::vector<double> reduced_M_add_;   ///< additive-channel operator (k×k); empty = off
-    std::vector<double> add_ginv_;        ///< volume-Gram inverse for the additive projection; empty = plain
-    std::vector<double> add_proj_buf_;    ///< k scratch: G⁻¹·P[:,c]·A_c for one coupling point
     /// Cumulative exchange DEVIATION per coupling point and member,
     /// [cp * n_ensemble + i], m³, + = drained from the surface into that
     /// member's manhole beyond the deterministic exchange; spread over the

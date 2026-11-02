@@ -3870,5 +3870,6 @@ form on the additive channel and skew on the Manning channel. Measured with the 
 plane-rain corr20/corr100 0.894/1.32, 0.883/1.42 → 0.961/2.15, 0.957/2.52 (CONSERVATIVE); **H15
 plane-mann corr20 0.907/1.463 → 0.785/0.957 (RANKING ONLY, −0.015 below the floor)**; corr100
 0.906/1.52 → 0.876/1.27 (calibrated); channel cells unchanged. These are the numbers for what ships
-since defect 5; the earlier rows above describe the harness's recipe, not the engine's. The old recipe
-stays reachable (`*_ROUTER_FORM=0`) for reproduction only. Owner decision pending on the H15 corr20 cell.
+since defect 5; the earlier rows above describe the harness's recipe, not the engine's. The old recipe is
+no longer reachable after the H-4 clean-up (the plain/Gram path is deleted); the `*_ROUTER_FORM` knob is a
+no-op kept only so this paragraph's history resolves, and the pre-S-2 numbers are the ones recorded above. Owner decision pending on the H15 corr20 cell.

@@ -78,26 +78,6 @@ struct DeviationOperator2D {
     /// the conductance blends to the direction-free mean (α∥+α⊥)/2.
     double u_eps = 1.0e-6;
 
-    /// Energy-stable form (2026-10-21). With both set, assemble() returns the
-    /// Galerkin projection in the cell-VOLUME inner product with advection in
-    /// skew form, and the result is stable on any flow field:
-    ///   M = G⁻¹·Pᵀ·A·L·P,  G = Pᵀ·A·P  (GinvArea stores G⁻¹),
-    /// where advection's diagonal is reduced by half the cell's net outflow
-    /// so its symmetric part is exactly the upwind dissipation
-    /// ½·Σ_faces q·(δh_i − δh_j)², never negative. The plain projection of
-    /// upwind advection (both false) is only stable where the flow does not
-    /// converge: on Bellinge's ponds it had an eigenvalue of −0.006/s and the
-    /// additive channel grew 1e11× in 75 min; the volume inner product alone
-    /// (−5e-4/s) and the skew form alone (−2e-3/s) each still grew.
-    /// Measured on the dumped storm-peak state, the combination is +2e-4/s.
-    /// What it gives up: the half of the convergence term that let extra
-    /// water pile up in converging cells through the operator; the exchange
-    /// and rain sources still deliver it. The Manning channel (relative
-    /// Galerkin with depth weighting) stayed stable there and is unchanged.
-    bool skew_advection = false;
-    bool volume_inner_product = false;
-    std::vector<double> GinvArea; ///< k×k row-major: G⁻¹ of the volume Gram, set when volume_inner_product.
-
     /// Relative-coordinate projection (2026-10-11). When non-null, the ROM
     /// represents δh = H·P·δa with H = diag(max(h, similarity_floor)) and
     /// assemble() returns the GALERKIN projection of L onto that trial space:

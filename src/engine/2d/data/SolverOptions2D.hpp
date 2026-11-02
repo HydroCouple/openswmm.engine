@@ -648,16 +648,6 @@ struct SolverOptions2D {
      *  domain the constant mode relative mode needs is not in the basis, and
      *  the absolute form is used. Internal test hook only. */
     bool rom_relative_deviation = true;
-
-    /*! TEMPORARY A/B hook for phase 2 of docs/uncertainty/PORT_HAMILTONIAN.md
-     *  (S-2); deleted when that phase lands. true (default): the 2D basis is
-     *  A-orthonormal (P^T A P = I, areas from the mesh, same ground_w) and the
-     *  additive channel's reduced operator is the Galerkin operator in the
-     *  volume inner product, M_add = P^T A L P, with every additive source
-     *  projected by P^T A (no Gram, no G^-1). Applied only where the two-channel
-     *  relative form is active. false: the plain orthonormal basis with the
-     *  volume Gram (bit-identical to the pre-S-2 behaviour). Not parser-exposed. */
-    bool rom_area_basis = true;
 };
 
 } // namespace openswmm::twoD

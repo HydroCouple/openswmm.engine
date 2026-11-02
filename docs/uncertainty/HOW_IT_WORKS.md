@@ -649,7 +649,7 @@ cannot represent rain on a 3 mm film (the channel rain band collapsed). So each
 member carries two coefficient sets: a fractional Manning set, propagated with
 the operator projected in the depth-weighted space (a Galerkin projection onto
 span(H·P), H the deterministic depths), and an absolute forcing set, propagated
-with the plain operator. Depth is reconstructed as h_det·(1 + P·δa) + P·δa_add.
+with the volume-form operator (Galerkin in the cell-volume inner product on an area-orthonormal basis, no Gram matrix). Depth is reconstructed as h_det·(1 + P·δa) + P·δa_add.
 The system is linear, so the split is exact to first order. With rainfall
 uncertainty alone the forcing set is exactly the earlier absolute ensemble; with
 Manning alone the forcing set stays at zero. Neither is a setting, and the

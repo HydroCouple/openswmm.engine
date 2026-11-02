@@ -737,7 +737,7 @@ uncertainty behave differently, and each member carries both in the form that ma
 - **Rainfall (and soft rain, inflow forcings and 1D↔2D exchange) is additive.** It lands mostly
   on thin films and drains into channels. This part is carried as an added depth.
 
-A member's depth is `h_det × (1 + Manning fraction) + rainfall deviation`. This is not a setting.
+A member's depth is `h_det × (1 + Manning fraction) + rainfall deviation`. This is not a setting. The additive part is Galerkin in the cell-volume inner product on an area-orthonormal basis (operator `PᵀAL P`, sources projected with `PᵀA`, no Gram matrix).
 Using one form for both fails one or the other: an added-depth Manning deviation hands a thin film
 its deep neighbour's deviation (the channel band was 2.5× too wide), and a fractional rainfall
 deviation cannot hold the water rain puts on a film (the channel rain band collapsed to 5 %

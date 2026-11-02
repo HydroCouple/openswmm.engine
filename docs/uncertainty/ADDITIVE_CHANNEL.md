@@ -223,3 +223,12 @@ stays a ranking.
 
 Every Manning gate is unchanged at the printed digit. The rain gates are within
 2 %: SR-5 0.921/1.028, CL-1e 0.941/1.031, SR-7 0.921/0.987.
+
+## 2D counterpart (H-4, 2026-11-02)
+
+The 2D ROM's additive channel (rain, soft rain, coupling exchange) is Galerkin
+in the cell-volume inner product on an A-orthonormal basis (PᵀAP = I): the
+reduced operator is M_add = Pᵀ·A·L·P, with L the physical operator with
+skew-form advection, and every source is projected with PᵀA. There is no Gram
+matrix and no switch for any of this. Only the fractional Manning channel keeps
+its relative Gram (`setRelativeGram`).

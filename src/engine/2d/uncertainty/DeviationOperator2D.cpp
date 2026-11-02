@@ -87,9 +87,9 @@ bool DeviationOperator2D::assemble(const MeshData& mesh,
 
     const bool has_flow = (cell_u != nullptr) && (cell_v != nullptr);
     const bool advect   = has_flow && (c_factor != 0.0);
-    // Net outflow per cell (m²/s per unit depth) for the skew form.
+    // Net outflow per cell (m²/s per unit depth) for the skew form (unconditional).
     std::vector<double> net_out;
-    if (advect && skew_advection) net_out.assign(static_cast<std::size_t>(n), 0.0);
+    if (advect) net_out.assign(static_cast<std::size_t>(n), 0.0);
 
     // Optional depth weighting: per-cell (h/h̄)^{5/3}, floored so a dry cell
     // cannot zero an edge outright (same floor role as the eigenbasis's
@@ -257,8 +257,8 @@ bool DeviationOperator2D::assemble(const MeshData& mesh,
     M.assign(nk * nk, 0.0);
 
     std::vector<double> y(nn, 0.0);
-    if (similarity_h == nullptr && !volume_inner_product) {
-        GinvArea.clear();
+    if (similarity_h == nullptr && !basis.area_weighted) {
+        // Plain basis: M = Pᵀ·L·P (no area weighting).
         for (std::size_t q = 0; q < nk; ++q) {
             const double* Pq = &basis.P[q * nn];
             csr_matvec(L, Pq, y.data());
@@ -274,8 +274,7 @@ bool DeviationOperator2D::assemble(const MeshData& mesh,
     }
     if (similarity_h == nullptr && basis.area_weighted) {
         // A-orthonormal basis (PᵀAP = I): the Galerkin operator in the volume
-        // inner product is just M = Pᵀ·A·L·P. No Gram, no G⁻¹.
-        GinvArea.clear();
+        // inner product is just M = Pᵀ·A·L·P.
         for (std::size_t q = 0; q < nk; ++q) {
             const double* Pq = &basis.P[q * nn];
             csr_matvec(L, Pq, y.data());
@@ -289,39 +288,11 @@ bool DeviationOperator2D::assemble(const MeshData& mesh,
         }
         return true;
     }
-    if (similarity_h == nullptr) {
-        // Volume inner product: A_v = Pᵀ·A·L·P, G = Pᵀ·A·P, M = G⁻¹·A_v.
-        std::vector<double> Av(nk * nk, 0.0), G(nk * nk, 0.0);
-        for (std::size_t q = 0; q < nk; ++q) {
-            const double* Pq = &basis.P[q * nn];
-            csr_matvec(L, Pq, y.data());
-            for (std::size_t p = 0; p < nk; ++p) {
-                const double* Pp = &basis.P[p * nn];
-                double a = 0.0, g = 0.0;
-                for (std::size_t t = 0; t < nn; ++t) {
-                    const double ap = mesh.tri_area[t] * Pp[t];
-                    a += ap * y[t];
-                    g += ap * Pq[t];
-                }
-                Av[p * nk + q] = a;
-                G[p * nk + q] = g;
-            }
-        }
-        if (!invertSpd_(G, nk, GinvArea)) return false;
-        for (std::size_t p = 0; p < nk; ++p)
-            for (std::size_t q = 0; q < nk; ++q) {
-                double s = 0.0;
-                for (std::size_t r = 0; r < nk; ++r) s += GinvArea[p * nk + r] * Av[r * nk + q];
-                M[p * nk + q] = s;
-            }
-        return true;
-    }
-    GinvArea.clear();
 
     // Relative coordinates, Galerkin in the trial space span(H·P), in the
     // cell-VOLUME inner product (2026-10-23; before: plain inner product):
     //   A_v = (HP)ᵀ·A·L·(HP) = (HP)ᵀ·B·(HP),  G = (HP)ᵀ·A·(HP),  M = G⁻¹·A_v.
-    // B's symmetric part is the face dissipation (with skew_advection), so
+    // B's symmetric part is the face dissipation (skew-form advection), so
     // the energy (HP δa)ᵀ A (HP δa) cannot grow whatever the depth contrast;
     // the plain inner product had no such bound on Bellinge's 233:1 cell
     // areas. On a uniform mesh the two coincide, so the plane and channel

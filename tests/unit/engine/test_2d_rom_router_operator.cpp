@@ -440,28 +440,26 @@ TEST(SurfaceROMRouterOperator, WettedAreaGrowthDoesNotEraseTheBand) {
     EXPECT_GT(max_band, 0.0);
 }
 
-TEST(SurfaceROMRouterOperator, AreaBasisHookSelectsTheBasisOnlyWhereTheRelativeFormRuns) {
-    // PORT_HAMILTONIAN.md S-2 (temporary A/B hook rom_area_basis): the
-    // A-orthonormal basis is built exactly where the two-channel relative
-    // form runs (grounded domain); a closed box and hook=false keep the plain
-    // orthonormal basis (and the volume Gram path).
-    EXPECT_TRUE(openswmm::twoD::SolverOptions2D{}.rom_area_basis);
+TEST(SurfaceROMRouterOperator, AreaBasisIsBuiltExactlyWhereTheRelativeFormRuns) {
+    // PORT_HAMILTONIAN.md H-4: the A-orthonormal basis is built exactly where
+    // the two-channel relative form runs (grounded domain, new operator);
+    // a closed WALL box or rom_legacy_operator keeps the plain orthonormal basis.
     const fs::path dir = fs::current_path() / "rom_router_operator_out";
     fs::create_directories(dir);
     for (const bool open : {true, false}) {
-        for (const bool hook : {true, false}) {
-            const std::string tag = std::string("areabasis_") + (open ? "open" : "closed") + (hook ? "_on" : "_off");
+        for (const bool legacy : {false, true}) {
+            const std::string tag = std::string("areabasis_") + (open ? "open" : "closed") + (legacy ? "_legacy" : "_new");
             { std::ofstream f(dir / (tag + ".inp")); f << buildModel(open); }
             auto eng = driveRun(dir / (tag + ".inp"), dir / (tag + ".rpt"), dir / (tag + ".out"),
-                                [hook](openswmm::twoD::SolverOptions2D& o) {
+                                [legacy](openswmm::twoD::SolverOptions2D& o) {
                                     o.enable_rom = true; o.rom_members = 12; o.rom_modes = 6;
                                     o.rom_mannings_pert = 0.20; o.rom_rainfall_pert = 0.0;
-                                    o.rom_area_basis = hook;
+                                    o.rom_legacy_operator = legacy;
                                 });
             ASSERT_NE(eng, nullptr) << tag;
             const auto& router = static_cast<openswmm::SWMMEngine*>(eng)->surfaceRouter2D();
             ASSERT_NE(router.romBasis(), nullptr) << tag;
-            EXPECT_EQ(router.romBasis()->area_weighted, open && hook) << tag;
+            EXPECT_EQ(router.romBasis()->area_weighted, open && !legacy) << tag;
             double spread = 0.0;
             for (std::size_t c = 0; c < router.rom()->q05.size(); ++c)
                 spread = std::max(spread, router.rom()->q95[c] - router.rom()->q05[c]);

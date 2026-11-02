@@ -352,15 +352,11 @@ void SpectralROM::seed(const double* h_full) {
 // advance
 // ============================================================================
 
-void SpectralROM::setAdditiveOperator(const std::vector<double>& M_in,
-                                      const std::vector<double>& Ginv_in) {
+void SpectralROM::setAdditiveOperator(const std::vector<double>& M_in) {
     const auto kk = static_cast<std::size_t>(n_kept) * static_cast<std::size_t>(n_kept);
     if (!M_in.empty() && M_in.size() != kk)
         throw std::invalid_argument("SpectralROM::setAdditiveOperator: size mismatch");
-    if (!Ginv_in.empty() && Ginv_in.size() != kk)
-        throw std::invalid_argument("SpectralROM::setAdditiveOperator: Gram size mismatch");
     reduced_M_add_ = M_in;
-    add_ginv_ = M_in.empty() ? std::vector<double>{} : Ginv_in;
 }
 
 void SpectralROM::setRelativeGram(const std::vector<double>& Ginv, const std::vector<double>& weight) {
@@ -1245,20 +1241,6 @@ void SpectralROM::applyCouplingFlux(
 
         double q_min_cp = std::numeric_limits<double>::max();
         double q_max_cp = std::numeric_limits<double>::lowest();
-
-        // Projection of a unit depth change at this cell. Volume-consistent
-        // when the additive operator carries its Gram: G⁻¹·P[:,c]·A_c (see
-        // setAdditiveOperator); otherwise the plain column P[:,c].
-        const bool vol_proj = twoChannel() && !add_ginv_.empty();
-        if (vol_proj) {
-            add_proj_buf_.assign(nk, 0.0);
-            for (std::size_t p = 0; p < nk; ++p) {
-                double s = 0.0;
-                for (std::size_t j = 0; j < nk; ++j)
-                    s += add_ginv_[p * nk + j] * basis->P[j * nt + ci];
-                add_proj_buf_[p] = s * tri_area;
-            }
-        }
 
         for (int i = 0; i < n_ensemble; ++i) {
             auto    ui = static_cast<std::size_t>(i);

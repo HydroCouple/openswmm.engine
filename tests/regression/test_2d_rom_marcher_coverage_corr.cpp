@@ -362,11 +362,9 @@ struct CorrRain {
     bool reduced = false;
 };
 
-// W4_ROUTER_FORM=1 assembles the operators the way SurfaceRouter2D does (additive channel in the
-// energy-stable volume form with skew advection, skew on the Manning channel); default = on whenever
-// the basis is A-orthonormal, so W4_AREA_BASIS=0 W4_ROUTER_FORM=1 is the pre-S-2 router recipe on a
-// plain basis (temporary A/B hook, PORT_HAMILTONIAN.md S-2).
-static bool routerForm(const MeshEigenBasis& basis) {
+// W4_ROUTER_FORM: historical knob (VALIDATION cites it). Since H-4 phase 2 the harness always
+// assembles the router's form (A-orthonormal basis, volume-form additive channel); the value is a no-op.
+[[maybe_unused]] static bool routerForm(const MeshEigenBasis& basis) {
     const char* v = std::getenv("W4_ROUTER_FORM");
     return v ? std::atoi(v) != 0 : basis.area_weighted;
 }
@@ -431,15 +429,12 @@ RomBands runRomRung(Rung rung, const MeshData& mesh0, const MeshEigenBasis& basi
             if (rom.relative_deviation) {
                 // A-orthonormal basis (PORT_HAMILTONIAN.md S-2): the additive channel
                 // is the router's energy-stable volume form, M = Pᵀ·A·L·P, no Gram.
-                if (routerForm(basis)) { op.skew_advection = true; op.volume_inner_product = true; }
                 const bool ok_add = op.assemble(mesh0, basis, D, h_prev.data(), vel_u.data(), vel_v.data(),
                                                 ground_w.data());
-                op.skew_advection = false; op.volume_inner_product = false;
                 if (!ok_add) return out;
-                rom.setAdditiveOperator(op.M, op.GinvArea);
+                rom.setAdditiveOperator(op.M);
             }
             op.similarity_h = rom.relative_deviation ? h_prev.data() : nullptr;
-            op.skew_advection = routerForm(basis) && rom.relative_deviation;   // router: skew with the volume form
             if (!op.assemble(mesh0, basis, D, h_prev.data(), vel_u.data(), vel_v.data(),
                              ground_w.data()))
                 return out;
@@ -673,10 +668,7 @@ Fixture makeFixture(const Surface& sf) {
     f.sf = sf;
     f.mesh = makeMesh(sf);
     f.gw = groundWeights(f.mesh);
-    // W4_AREA_BASIS=0 reproduces the pre-S-2 numbers; default 1 = the router's A-orthonormal
-    // basis (temporary A/B hook, PORT_HAMILTONIAN.md S-2).
-    static const bool area_basis = [](){ const char* v = std::getenv("W4_AREA_BASIS"); return !v || std::atoi(v) != 0; }();
-    if (!f.grounded.build(f.mesh, kModes, f.gw.data(), area_basis ? f.mesh.tri_area.data() : nullptr))
+    if (!f.grounded.build(f.mesh, kModes, f.gw.data(), f.mesh.tri_area.data()))
         throw std::runtime_error("grounded basis");
     if (!f.neumann.build(f.mesh, kModes)) throw std::runtime_error("neumann basis");
     SurfaceStateData s0;
