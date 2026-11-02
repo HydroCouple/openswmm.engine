@@ -88,6 +88,42 @@ std::string fixtureInp(double rain_mult, double crest, bool with_soft) {
     return f.str();
 }
 
+// Raised-end backflow (PH_STORES_AND_PORTS §6 step 5): an offline basin B1
+// joined to trunk node J2 by a pipe whose J2 end is raised `raise` ft above
+// J2's invert. B1 fills only when J2 rises over that end, and drains back to
+// it afterwards (Bellinge G72R83B from G72UD11). J2 is backed up by a smaller
+// pipe below it. Same storm as the weir fixture.
+std::string fixtureRaisedInp(double rain_mult, double raise, bool with_soft) {
+    std::ostringstream f;
+    f << std::setprecision(10);
+    f << "[TITLE]\noffline basin behind a raised pipe end\n\n[OPTIONS]\n";
+    f << "FLOW_UNITS CFS\nINFILTRATION HORTON\nFLOW_ROUTING DYNWAVE\n";
+    f << "START_DATE 01/01/2025\nSTART_TIME 00:00:00\nREPORT_START_DATE 01/01/2025\nREPORT_START_TIME 00:00:00\n";
+    f << "END_DATE 01/01/2025\nEND_TIME 03:05:00\n";
+    f << "REPORT_STEP 00:05:00\nWET_STEP 00:01:00\nDRY_STEP 00:05:00\nROUTING_STEP 00:00:10\n";
+    f << "MINIMUM_STEP 0.5\nTHREADS 1\n\n[EVAPORATION]\nCONSTANT 0.0\n\n";
+    f << "[RAINGAGES]\nRG1 INTENSITY 0:05 1.0 TIMESERIES TS0\n\n[TIMESERIES]\n";
+    for (int m = 0; m <= 185; m += 5) {
+        const double tri = (m <= 60) ? (1.0 - std::fabs(m - 30.0) / 30.0) : 0.0;
+        f << "TS0 01/01/2025 " << std::setfill('0') << std::setw(2) << m / 60 << ":"
+          << std::setfill('0') << std::setw(2) << m % 60 << " " << 2.0 * tri * rain_mult << "\n";
+    }
+    f << std::setfill(' ') << "\n";
+    f << "[SUBCATCHMENTS]\nS1 RG1 J1 4.0 400 100 1.0 0\n\n[SUBAREAS]\nS1 0.015 0.20 0.00 0.00 100 OUTLET\n\n";
+    f << "[INFILTRATION]\nS1 0.0 0.0 0.0 0.0 0.0\n\n";
+    f << "[JUNCTIONS]\nJ1 " << kInvert + 1.0 << " 10 0 0 0\nJ2 " << kInvert - 1.0 << " 10 0 0 0\nJ3 " << kInvert - 2.0
+      << " 10 0 0 0\nJ4 " << kInvert - 3.0 << " 10 0 0 0\n\n";
+    f << "[OUTFALLS]\nO1 " << kInvert - 4.0 << " FREE NO\n\n";
+    f << "[STORAGE]\nB1 " << kInvert - 1.0 << " 20 0 FUNCTIONAL 0 0 2000\n\n";
+    f << "[CONDUITS]\nC1 J1 J2 300 0.015 0 0 0 0\nC2 J2 J3 300 0.015 0 0 0 0\nC3 J3 J4 300 0.015 0 0 0 0\n"
+      << "C4 J4 O1 300 0.015 0 0 0 0\nCB B1 J2 100 0.015 0 " << std::min(raise, 9.0) << " 0 0\n\n";
+    f << "[XSECTIONS]\nC1 CIRCULAR 2 0 0 0 1\nC2 CIRCULAR 1.25 0 0 0 1\nC3 CIRCULAR 2 0 0 0 1\nC4 CIRCULAR 2 0 0 0 1\n"
+      << "CB CIRCULAR 1.5 0 0 0 1\n\n";
+    f << "[REPORT]\nINPUT NO\nCONTINUITY YES\nNODES ALL\nLINKS ALL\n\n";
+    if (with_soft) f << "[SOFT_RAINGAGES]\nRG1 NORMAL CV " << kCV << "\n";
+    return f.str();
+}
+
 struct Run {
     std::vector<double> times;
     std::map<std::string, std::vector<double>> head, q05, q95;
@@ -173,36 +209,39 @@ Score score(const std::vector<Run>& mc, const Run& rom, const std::string& nm, b
     return s;
 }
 
+using FixtureFn = std::string (*)(double, double, bool);
+
 void runScenario(const char* name, double crest_offset_from_peak, double& basin_cov, double& basin_width,
-                 double& off_width, double& below_width) {
+                 double& off_width, double& below_width, FixtureFn fixture = &fixtureInp,
+                 const char* cal_node = "B1", double cal_invert = kInvert, double* basin_cov_off = nullptr) {
     using openswmm::uncertainty::probit;
     const bool trace = std::getenv("STH_TRACE") != nullptr;
-    // Calibration: the main run's peak basin level with the weir out of reach.
-    Run cal = runCase(fixtureInp(1.0, 50.0, false), std::string(name) + "cal", false, true);
+    // Calibration: the main run's peak level at cal_node with the threshold out of reach.
+    Run cal = runCase(fixture(1.0, 50.0, false), std::string(name) + "cal", false, true);
     ASSERT_TRUE(cal.ok);
     double peak = 0.0;
-    for (double v : cal.head.at("B1")) peak = std::max(peak, v - kInvert);
+    for (double v : cal.head.at(cal_node)) peak = std::max(peak, v - cal_invert);
     const double crest = peak + crest_offset_from_peak;
     std::vector<Run> mc(kMcRuns);
     for (int i = 0; i < kMcRuns; ++i) {
         const double z = probit((i + 0.5) / kMcRuns);
-        mc[static_cast<std::size_t>(i)] = runCase(fixtureInp(1.0 + z * kCV, crest, false),
+        mc[static_cast<std::size_t>(i)] = runCase(fixture(1.0 + z * kCV, crest, false),
                                                   std::string(name) + "mc" + std::to_string(i), false, true);
         ASSERT_TRUE(mc[static_cast<std::size_t>(i)].ok);
     }
-    Run on = runCase(fixtureInp(1.0, crest, true), std::string(name) + "on", true, true);
-    Run off = runCase(fixtureInp(1.0, crest, true), std::string(name) + "off", true, false);
+    Run on = runCase(fixture(1.0, crest, true), std::string(name) + "on", true, true);
+    Run off = runCase(fixture(1.0, crest, true), std::string(name) + "off", true, false);
     ASSERT_TRUE(on.ok && off.ok);
     ASSERT_FALSE(on.q05["B1"].empty());
     double mc_peak = 0.0;
     for (double v : mc[kMcRuns / 2].head.at("B1")) mc_peak = std::max(mc_peak, v - kInvert);
-    std::printf("[STH] scenario %s: main-run peak %.3f ft, crest %.3f ft\n", name, peak, crest);
+    std::printf("[STH] scenario %s: main-run peak %.3f ft, threshold %.3f ft\n", name, peak, crest);
     for (const char* nm : {"B1", "J2", "J4"}) {
         const Score a = score(mc, on, nm, trace, "on ");
         const Score b = score(mc, off, nm, trace, "off");
         std::printf("[STH] %s %-2s  per-member storage: coverage %.3f width %.3f (n %d)   shared planes only: coverage %.3f width %.3f\n",
                     name, nm, a.cov, a.width, a.n, b.cov, b.width);
-        if (std::string(nm) == "B1") { basin_cov = a.cov; basin_width = a.width; off_width = b.width; }
+        if (std::string(nm) == "B1") { basin_cov = a.cov; basin_width = a.width; off_width = b.width; if (basin_cov_off) *basin_cov_off = b.cov; }
         if (std::string(nm) == "J2") below_width = a.width;
     }
 }
@@ -232,4 +271,15 @@ TEST(StorageThreshold, MainRunStopsBelowCrest) {
     EXPECT_GE(w, 0.8) << "basin band too narrow";
     EXPECT_LE(w, 1.5) << "basin band over-wide";
     EXPECT_LE(w_below, 3.0) << "the dry pipe below the weir is holding members' water again";
+}
+
+TEST(StorageThreshold, RaisedEndBackflowFillsOfflineBasin) {
+    // PH_STORES_AND_PORTS §6 step 5: the raised-end two-port (note §1.3).
+    // J2's pipe end sits 0.3 ft below the main run's peak at J2, so the main
+    // run and the wetter members pour into B1, drier members barely. Measured
+    // and reported only: no floor is set on a scenario without a history.
+    double cov = 0, w = 0, w_off = 0, w_below = 0, cov_off = 0;
+    runScenario("R", -0.30, cov, w, w_off, w_below, &fixtureRaisedInp, "J2", kInvert - 1.0, &cov_off);
+    mcq::reportCalibration("Offline basin behind a raised pipe end", cov, w, "PH_STORES_AND_PORTS step 5");
+    std::printf("[STH] R B1 shared planes only: coverage %.3f width %.3f\n", cov_off, w_off);
 }

@@ -1410,6 +1410,10 @@ if(OPENSWMM_BUILD_2D)
     # SWMMEngine.hpp (a pre-existing quirk -- the 1D ROM member is unconditional,
     # only its accessor is gated), so this test cannot build without 2D.
     add_gtest_unit(test_engine_1d_rom_integration test_engine_1d_rom_integration.cpp)
+    # PORT_HAMILTONIAN phase 5: per-member stores and monotone ports
+    # (docs/uncertainty/PH_STORES_AND_PORTS.md). Pure laws and solver plus
+    # engine checks through rom1d(), hence 2D-gated like the test above.
+    add_gtest_unit(test_engine_rom_member_ports test_rom_member_ports.cpp)
 endif()
 # Two independently-written PR 11 regression tests for the same fix, same
 # subject, different fixtures -- kept as two targets rather than merged.

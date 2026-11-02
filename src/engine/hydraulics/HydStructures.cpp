@@ -1381,9 +1381,11 @@ double StructureSolver::flowAtShiftedDepth(SimulationContext& ctx, int link_idx,
     const FlowClass l_class = ctx.links.flow_class[uj];
     const double sa = (t == LinkType::ORIFICE) ? orifices_.surf_area[uk]
                     : (t == LinkType::WEIR)    ? weirs_.surf_area[uk] : 0.0;
-    std::vector<double> scratch(static_cast<std::size_t>(ctx.n_nodes()), 0.0);
+    // Surface-area accumulator the flow routine writes into; never read back.
+    // Held across calls so its storage is not reallocated per table point.
+    shift_scratch_.assign(static_cast<std::size_t>(ctx.n_nodes()), 0.0);   // reuses capacity
     ctx.nodes.depth[un] = std::max(d0 + dy, 0.0);
-    computeNonConduitFlowOne(ctx, 0.0, scratch.data(), link_idx);
+    computeNonConduitFlowOne(ctx, 0.0, shift_scratch_.data(), link_idx);
     const double q = ctx.links.flow[uj];
     ctx.nodes.depth[un] = d0;
     ctx.links.depth[uj] = l_depth; ctx.links.dqdh[uj] = l_dqdh; ctx.links.flow[uj] = l_flow;

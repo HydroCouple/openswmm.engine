@@ -135,3 +135,15 @@ cases the current code excludes). Acceptance gates as in the table.
 - 2026-11-01: H-1/H-2 landed (2ecc153a); S-1 landed (463c808a); O-1 note written, F-1 verdict in §2.4 — energy contract replaced by ℓ1 for full-order ports; S-2 landed: basis neutral on every gated cell; harness-recipe finding (VALIDATION, phase 2) — H15 corr20 0.785 under the shipped recipe, owner decision pending; O-2 running.
 - 2026-11-02: H-4 phase-2 clean-up landed; hook, GinvArea, volume_inner_product, skew_advection flags deleted.
 - 2026-11-02: S-4 landed: H19 AdditiveSystem assembled from PHOperator (ℓ1 contract asserted), bit-identical on SR-5/SR-7/CL-1e.
+- 2026-11-02: O-2 landed behind `rom1dStorageMembersEnabled()` (default OFF): RomStorePorts.hpp (laws),
+  RomPortGraph.hpp (one Newton solve per member, Armijo, counted Jacobi fallback), stepRom1dStorageMembers
+  rewritten (646 del / 642 add; Ldn, GS sweeps, bisection, pump_bal, two_way ownership deleted). 16 property
+  tests incl. ℓ1 contraction + two mutations. Storage gate: A 0.889/0.958 cal., B 0.727/0.960 (−0.001, noise),
+  new R 0.952/0.880 cal. **Three additions beyond the note, all found on Bellinge**: (i) floored/dry-factored
+  anchored laws (members sank 3,600 ft below invert otherwise), (ii) per-member source-floor port (κq below
+  −100 % of runoff), (iii) main-run volume mismatch (V(d*_new)−V(d*_old) ≠ dt·net*) shared in proportion to
+  member water, gains additive, clamp ≤ 1 — a modelling choice, needs F-2. **Stop lines touched**: Jacobi
+  fallbacks 1.25 % of member-solves with (b1) vs 0.4 % without (G71F68Y pump floor starves G71F06R_ovl);
+  6 non-converged by 06:17 (kink-cycle stalls at ~1e-8 cfs, G72R33B pair). Bellinge vs mc_v3 NOT yet scored
+  (run in progress). Runtime ≤ 1.5× unmeasured (1D smoke 1.63× before the floors). O-3 does not start until
+  the Bellinge number exists.

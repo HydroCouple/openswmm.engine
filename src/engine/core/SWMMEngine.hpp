@@ -90,6 +90,7 @@
 #include "../uncertainty/RomDirectionalOperator.hpp"
 #include "../uncertainty/RomFlowResponse.hpp"
 #include "../uncertainty/RomAdditiveChannel.hpp"
+#include "../uncertainty/RomPortGraph.hpp"
 #include "../uncertainty/UncertaintyEnsemble.hpp"
 #include "../uncertainty/SoftSpatialField.hpp"
 #include "../uncertainty/SpdeSpatialBasis.hpp"
@@ -773,6 +774,8 @@ public:
     /// Per-member storage and rim levels (default OFF: stable on the threshold gate, not yet on
     /// Bellinge's coupled storage, 2026-10-24). Set before the first step.
     bool& rom1dStorageMembersEnabled() noexcept { return rom1d_nl_enabled_; }
+    /// Diagnostic: counters of the per-member port-graph solves (PH_STORES_AND_PORTS §3).
+    const uncertainty::PortGraph::Stats& rom1dPortGraphStats() const noexcept { return rom1d_pg_.stats; }
     /// Diagnostic: conductance Laplacian Lc (ft^2/s) of the last H18 assembly, active space.
     const uncertainty::CsrGraph& rom1dConductance() const noexcept { return rom1d_h18_Lc_; }
     /// Diagnostic: the last flow-response field phi per active node (H17).
@@ -804,9 +807,11 @@ private:
     void computeRom1dStorage() noexcept;
     /** @brief H19: advance every additive plane one backward-Euler step and hand them to the ROM. */
     void stepRom1dAdditiveChannel(double dt) noexcept;
-    /** @brief Per-member levels at storage nodes with real outlet ratings, and
-     *  one correction field per member for what the shared planes mis-deliver
-     *  downstream (ADDITIVE_CHANNEL.md §7). Called by stepRom1dAdditiveChannel. */
+    /** @brief Per-member stores and ports (PH_STORES_AND_PORTS.md): one implicit
+     *  step per member on the whole active network, admitted nodes as stores,
+     *  every link touching one as a monotone port, the rest as plane edges; the
+     *  correction field C_i = z_i - kappa_i·Psi goes to the ROM. Called by
+     *  stepRom1dAdditiveChannel. */
     void stepRom1dStorageMembers(double dt, const std::vector<std::vector<double>>& q,
                                  const std::vector<std::vector<double>>& kap) noexcept;
     std::vector<uncertainty::FlowEdge> rom1d_fs_dry_edges_;   ///< dry pipes with a member-range secant (rain channel only)
@@ -815,13 +820,22 @@ private:
     bool rom1d_nl_enabled_ = false;  ///< per-member storage/rim levels: off until stable on Bellinge (ADDITIVE_CHANNEL.md §7)
     std::vector<int> rom1d_nl_nodes_;                     ///< active indices of storage nodes
     std::vector<double> rom1d_nl_y_;                      ///< nodes x members, level above the main run (ft)
-    std::vector<std::vector<double>> rom1d_nl_link_dq_;   ///< per link: members' extra outflow (cfs), storage out-links only
     std::vector<double> rom1d_corr_;                      ///< members x active nodes (ft)
     std::vector<char> rom1d_nl_struct_;                   ///< storage node with a structure link
     std::vector<int> rom1d_cp_of_active_;                 ///< coupling point per active node (-1 none)
     std::vector<char> rom1d_rom_pinned_;                  ///< ROM pin mask: spilling, minus per-member nodes
-    std::vector<char> rom1d_corr_pinned_;
-    uncertainty::AdditiveSystem rom1d_corr_sys_;
+    uncertainty::AdditiveSystem rom1d_corr_sys_;          ///< factor of the per-member Newton Jacobian (pattern shared)
+    uncertainty::PortGraph rom1d_pg_;                     ///< the per-member port graph of the current step
+    std::vector<double> rom1d_mem_z_;                     ///< members x active nodes: z at the end of the last step (ft)
+    std::vector<double> rom1d_mem_dv_;                    ///< admitted nodes x members: volume deviation (ft^3)
+    std::vector<double> rom1d_store_W_;                   ///< per admitted node: the main run's water V(d*) at the last step (ft^3)
+    double rom1d_pg_rescale_max_ = 0.0;                   ///< largest |scale - 1| of the carried dV (storage-function mismatch)
+    int rom1d_mem_np_ = -1;                               ///< plane count the member state belongs to
+    std::vector<std::vector<int>> rom1d_node_links_;      ///< full node -> attached links
+    std::vector<int> rom1d_pg_envelope_links_;            ///< links whose rating needed a monotone envelope
+    long rom1d_pg_below_floor_ = 0;                       ///< member-steps a store ended > 0.05 ft below its invert (counted, not projected)
+    std::vector<long> rom1d_pg_below_floor_node_;         ///< the same, per active node
+    double rom1d_pg_min_depth_ = 0.0;                     ///< deepest member depth below an admitted store's invert (ft, <= 0)
     std::vector<double> rom1d_fs_relay_;   ///< H18: per-link head relay (1 - Froude gate) from the flow response
     std::vector<double> rom1d_h18_wsym_, rom1d_h18_diag_, rom1d_h18_S_, rom1d_h18_rates_, rom1d_h18_tmp_;
     uncertainty::CsrGraph rom1d_h18_Lc_;

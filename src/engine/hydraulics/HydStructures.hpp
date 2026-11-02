@@ -248,6 +248,7 @@ private:
     OutletGroup  outlets_;
     std::vector<int> nc_indices_;   ///< All non-conduit link indices
     std::vector<int> nc_group_k_;   ///< link index → row in its type group (-1 = none)
+    std::vector<double> shift_scratch_;   ///< flowAtShiftedDepth's surface-area accumulator (write-only)
 
     /// Batch pump flow — vectorisable curve lookups. Reads node_new_surf_area
     /// for the non-storage pump flow-limiter (legacy getModPumpFlow).

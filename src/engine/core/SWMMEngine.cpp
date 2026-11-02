@@ -79,6 +79,7 @@
 #include "../2d/input/SectionHandlers2D.hpp"
 #include "../uncertainty/QualityUncertaintyHandler.hpp"
 #include "../uncertainty/RomDiagTrust.hpp"
+#include "../uncertainty/RomStorePorts.hpp"
 #include "../2d/subsurface/CommonSourceStage.hpp"
 #include "../2d/subsurface/EngineSourceResultHistory.hpp"
 #ifdef OPENSWMM_HAS_2D_HDF5_OUTPUT
@@ -8105,6 +8106,31 @@ int SWMMEngine::end() noexcept {
     if (rom1d_csv_.is_open()) {
         rom1d_csv_.close();
     }
+    if (rom1d_nl_enabled_ && rom1d_pg_.stats.solves > 0) {
+        // PH_STORES_AND_PORTS §3: a fallback that silently rescues a method is not allowed.
+        const auto& st = rom1d_pg_.stats;
+        std::printf("[PH-ports] member solves %ld, Newton iterations %ld (Armijo rejected %ld), Jacobi fallbacks %ld (not converged %ld), "
+                    "zero-data exits %ld, admitted nodes %zu, links on a monotone envelope %zu, "
+                    "store member-steps > 0.05 ft below invert %ld (deepest %.3f ft), largest storage rescale %.3g\n",
+                    st.solves, st.newton_iters, st.armijo_failures, st.jacobi_fallbacks, st.jacobi_failed, st.zero_exits,
+                    rom1d_nl_nodes_.size(), rom1d_pg_envelope_links_.size(), rom1d_pg_below_floor_, rom1d_pg_min_depth_, rom1d_pg_rescale_max_);
+        // Where: a store drained below its invert through a linear (plane) edge,
+        // which has no floor (the drowned-pipe line, note §1.2 kind 3).
+        std::vector<std::size_t> worst;
+        for (std::size_t a = 0; a < rom1d_pg_below_floor_node_.size(); ++a)
+            if (rom1d_pg_below_floor_node_[a] > 0) worst.push_back(a);
+        std::sort(worst.begin(), worst.end(), [&](std::size_t x, std::size_t y) {
+            return rom1d_pg_below_floor_node_[x] > rom1d_pg_below_floor_node_[y]; });
+        if (!worst.empty()) {
+            std::printf("[PH-ports] below invert by node:");
+            for (std::size_t k = 0; k < worst.size() && k < 8; ++k)
+                std::printf(" %s %ld", ctx_.node_names.name_of(rom1d_active_map_[worst[k]]).c_str(),
+                            rom1d_pg_below_floor_node_[worst[k]]);
+            std::printf("\n");
+        }
+        for (int j : rom1d_pg_envelope_links_) std::printf("[PH-ports] monotone envelope on link %s\n", ctx_.link_names.name_of(j).c_str());
+        std::fflush(stdout);
+    }
     if (wq_csv_.is_open()) {
         wq_csv_.close();
     }
@@ -12320,31 +12346,37 @@ void SWMMEngine::stepRom1dAdditiveChannel(double dt) noexcept {
 }
 
 // ============================================================================
-// stepRom1dStorageMembers() — per-member levels at storage nodes
+// stepRom1dStorageMembers() — per-member stores and ports
 // ============================================================================
 //
-// docs/uncertainty/ADDITIVE_CHANNEL.md §7. The shared planes give member i the
-// extra head kappa_i·Psi everywhere, one straight-line outlet slope per link.
-// Behind an outlet that starts at a level (weir crest, flow brake, a pipe that
-// ends above the next manhole's water) that slope is zero or near zero at the
-// main run's level, so the extra water piles up for the whole storm (Bellinge
-// G72R basins, 2026-10-24: 1–3 m bands against 5–13 mm in the Monte Carlo).
-// Here each storage node carries each member's own level y, stepped with the
-// node's water balance and the outlets' real ratings:
-//   structures  a table of the engine's own structure flow at shifted levels,
-//   conduits    the main run's flow scaled by sqrt(head above the downstream
-//               control / the main run's), the control being the higher of the
-//               downstream water and the pipe's downstream end, so a pipe
-//               ending above the next manhole stops when the basin falls below
-//               that end;
-//   pumps       their linear slope.
-// What the shared planes then mis-deliver downstream (actual extra outflow
-// minus their straight-line outflow) is the source of one correction field per
-// member, solved on the same matrix with the storage nodes held. The storage
-// node's own correction is set so the member reads its level y there.
-// Approximations: the node's area is the main run's; a storage node's level
-// difference does not travel upstream through backwater; members' downstream
-// heads in the conduit rating lag one step.
+// docs/uncertainty/PH_STORES_AND_PORTS.md (PORT_HAMILTONIAN phase 5). The shared
+// planes give member i the extra head kappa_i·Psi everywhere, one straight-line
+// slope per link. Behind an outlet that starts at a level (weir crest, flow
+// brake, a pipe that ends above the next manhole's water) that slope is zero or
+// near zero at the main run's level, so the extra water piles up for the whole
+// storm (Bellinge G72R basins, 2026-10-24: 1–3 m bands against 5–13 mm in the
+// Monte Carlo).
+//
+// Here every member takes one implicit step of its own water balance on the
+// whole active network (uncertainty::PortGraph): admitted nodes are stores with
+// a member-level volume V(h) (SWMM's surface-area function, integrated); every
+// link touching one is a monotone port with its own rating
+// (uncertainty/RomStorePorts.hpp: structure and pump tables at the member's
+// level, free-end and raised-end pipes, dry pipes, rim overflow, the street
+// orifice); every other link is the planes' edge. Each link is booked once, so a
+// store's level travels upstream through the plane edges' backwater and its
+// outflow arrives downstream in the same solve; the correction handed to the
+// ROM is C_i = z_i − kappa_i·Psi.
+//
+// Stability: the ports are monotone and conservative, so the step is an
+// M-function — unique, order-preserving, non-expansive in l1 of volume
+// differences. The quadratic energy ½ zᵀ S z is NOT monotone for one-way ports
+// (weir, free outlet, supercritical pipe, pump: note §2.2), so it is not the
+// stability notion here.
+// Approximations kept: structure ratings hold the downstream node at the main
+// run (no member submergence); the street pond is integrated inside the orifice
+// law, not yet an unknown of the solve (phase 6); rim overflow is a loss (no
+// ponding).
 namespace {
 // Mean exchange rate (m^3/s, positive from the street into the pipe) over one
 // step through a coupling orifice c = Cd·A, integrated implicitly on a pond of
@@ -12378,11 +12410,17 @@ double conveyance1d(const XSectParams& xs, double y) {
 
 void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vector<double>>& q,
                                          const std::vector<std::vector<double>>& kap) noexcept {
+    namespace PP = uncertainty::ports;
+    using uncertainty::PortGraph;
     const int na = static_cast<int>(rom1d_active_map_.size());
     const auto un = static_cast<std::size_t>(na);
     const int M = rom1d_->n_ensemble;
     const auto uM = static_cast<std::size_t>(M);
     const auto P = q.size();
+    const auto& f2a = rom1d_->full_to_active;
+    auto act = [&](int full) -> int {
+        return (full >= 0 && full < static_cast<int>(f2a.size())) ? f2a[static_cast<std::size_t>(full)] : -1;
+    };
     if (!rom1d_nl_init_) {
         rom1d_nl_init_ = true;
         rom1d_nl_nodes_.clear();
@@ -12397,55 +12435,52 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
             // The structure's upstream node drains over it; its downstream
             // node only receives (G71F04R sits below a weir, 2026-10-24).
             const int nd = ctx_.links.node1[uj];
-            if (nd < 0 || nd >= static_cast<int>(rom1d_->full_to_active.size())) continue;
-            const int a = rom1d_->full_to_active[static_cast<std::size_t>(nd)];
+            const int a = act(nd);
             if (a >= 0 && ctx_.nodes.type[static_cast<std::size_t>(nd)] == NodeType::STORAGE)
                 rom1d_nl_struct_[static_cast<std::size_t>(a)] = 1;
         }
         // ... and storage nodes drained by a pipe whose far end is raised
-        // above the node's floor: water must rise to that end before it can
-        // leave (Bellinge G72R83B: the outlet pipe climbs 1.78 m from the
-        // basin floor to its end in G72UD11).
+        // above the node's floor, and the node at that raised end: the
+        // raised-end two-port is defined by geometry, so both stores exist from
+        // the start (Bellinge G72R83B: the pipe climbs 1.78 m to its end in G72UD11).
         for (int j = 0; j < ctx_.n_links(); ++j) {
             const auto uj = static_cast<std::size_t>(j);
             if (ctx_.links.type[uj] != LinkType::CONDUIT) continue;
             for (int end = 0; end < 2; ++end) {
                 const int nd = end == 0 ? ctx_.links.node1[uj] : ctx_.links.node2[uj];
                 const int far = end == 0 ? ctx_.links.node2[uj] : ctx_.links.node1[uj];
-                if (nd < 0 || far < 0 || nd >= static_cast<int>(rom1d_->full_to_active.size())) continue;
+                if (nd < 0 || far < 0 || act(nd) < 0) continue;
                 if (ctx_.nodes.type[static_cast<std::size_t>(nd)] != NodeType::STORAGE) continue;
                 const double off_far = end == 0 ? ctx_.links.offset2[uj] : ctx_.links.offset1[uj];
                 const double z_far = ctx_.nodes.invert_elev[static_cast<std::size_t>(far)] + off_far;
                 if (off_far > 0.1 && z_far > ctx_.nodes.invert_elev[static_cast<std::size_t>(nd)] + 0.1) {
-                    const int a = rom1d_->full_to_active[static_cast<std::size_t>(nd)];
-                    if (a >= 0) rom1d_nl_struct_[static_cast<std::size_t>(a)] = 1;
-                    // ... and the node at the raised end: once its water rises
-                    // over the end it pours into the basin, which caps it (the
-                    // Monte Carlo's G72UD11 never rose much above the end; the
-                    // planes' symmetric band put wetter members 1.8 m over it).
-                    const int af = rom1d_->full_to_active[static_cast<std::size_t>(far)];
-                    if (af >= 0) rom1d_nl_struct_[static_cast<std::size_t>(af)] = 1;
+                    rom1d_nl_struct_[static_cast<std::size_t>(act(nd))] = 1;
+                    if (act(far) >= 0) rom1d_nl_struct_[static_cast<std::size_t>(act(far))] = 1;
                 }
             }
         }
         rom1d_nl_y_.clear();
         rom1d_corr_.assign(uM * un, 0.0);
-        rom1d_nl_link_dq_.assign(static_cast<std::size_t>(ctx_.n_links()), {});
+        rom1d_mem_z_.clear();
+        rom1d_mem_dv_.clear();
+        rom1d_mem_np_ = -1;
+        rom1d_node_links_.assign(static_cast<std::size_t>(ctx_.n_nodes()), {});
+        for (int j = 0; j < ctx_.n_links(); ++j)
+            for (int nd : {ctx_.links.node1[static_cast<std::size_t>(j)], ctx_.links.node2[static_cast<std::size_t>(j)]})
+                if (nd >= 0 && nd < ctx_.n_nodes()) rom1d_node_links_[static_cast<std::size_t>(nd)].push_back(j);
         rom1d_cp_of_active_.assign(un, -1);
 #ifdef OPENSWMM_HAS_2D
         const auto& cps = surface_router_.nodeCouplingPoints();
         for (std::size_t k = 0; k < cps.size(); ++k) {
             const int nd = cps[k].node_idx;
-            if (cps[k].is_outfall || cps[k].cell_idx < 0 || nd < 0 ||
-                nd >= static_cast<int>(rom1d_->full_to_active.size())) continue;
-            const int a = rom1d_->full_to_active[static_cast<std::size_t>(nd)];
-            if (a >= 0) rom1d_cp_of_active_[static_cast<std::size_t>(a)] = static_cast<int>(k);
+            if (cps[k].is_outfall || cps[k].cell_idx < 0 || act(nd) < 0) continue;
+            rom1d_cp_of_active_[static_cast<std::size_t>(act(nd))] = static_cast<int>(k);
         }
 #endif
     }
     if (!rom1d_nl_enabled_ || P == 0) { rom1d_->setMemberAdditive(nullptr); return; }
 
-    // Members' shared-plane deviation u_i(t) and their linear deviation L = u + C (C lagged).
+    // Members' shared-plane deviation u_i = Σ_p kappa_ip Psi_p (this step).
     std::vector<double> u(uM * un, 0.0);
     for (std::size_t p = 0; p < P; ++p) {
         const double* psi = &rom1d_add_state_[p * un];
@@ -12456,57 +12491,38 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
             for (std::size_t t = 0; t < un; ++t) ui[t] += k * psi[t];
         }
     }
-    // A member's linear deviation at node t: plane plus correction (lagged one
-    // step), or, at a per-member node, the member's own level as last solved
-    // (this sweep's when the node was solved earlier in it).
+    // Member state z^n: the planes restart at zero when their count changes, and so do the members.
+    if (rom1d_mem_np_ != static_cast<int>(P) || rom1d_mem_z_.size() != uM * un) {
+        rom1d_mem_np_ = static_cast<int>(P);
+        rom1d_mem_z_.assign(uM * un, 0.0);
+        rom1d_mem_dv_.clear();
+        rom1d_store_W_.clear();
+    }
     std::vector<int> nl_of(un, -1);
     for (std::size_t b = 0; b < rom1d_nl_nodes_.size(); ++b) nl_of[static_cast<std::size_t>(rom1d_nl_nodes_[b])] = static_cast<int>(b);
-    auto L = [&](std::size_t i, int t) -> double {
-        const auto ut = static_cast<std::size_t>(t);
-        const int sl = nl_of[ut];
-        if (sl >= 0 && static_cast<std::size_t>(sl) * uM + i < rom1d_nl_y_.size())
-            return rom1d_nl_y_[static_cast<std::size_t>(sl) * uM + i];
-        return u[i * un + ut] + rom1d_corr_[i * un + ut];
-    };
-    // The downstream level a per-member node's outlet rating reads: the
-    // member's own level at a per-member node, else the shared planes'
-    // deviation only. Not the correction there: that is fed by this node's
-    // own outflow, and reading it back closes a one-step-lagged loop through
-    // a small downstream manhole (Bellinge G72R83B -> G72UD11, 2026-10-31:
-    // the manhole's member deviation reached 550 ft and drove backflow).
-    auto Ldn = [&](std::size_t i, int t) -> double {
-        const auto ut = static_cast<std::size_t>(t);
-        const int sl = nl_of[ut];
-        if (sl >= 0 && static_cast<std::size_t>(sl) * uM + i < rom1d_nl_y_.size())
-            return rom1d_nl_y_[static_cast<std::size_t>(sl) * uM + i];
-        return u[i * un + ut];
-    };
-
+    auto isA = [&](int a) { return a >= 0 && nl_of[static_cast<std::size_t>(a)] >= 0; };
     auto admit = [&](int a) {
-        std::vector<double> y0(uM);
-        for (std::size_t i = 0; i < uM; ++i) y0[i] = L(i, a);   // before the node becomes per-member
         nl_of[static_cast<std::size_t>(a)] = static_cast<int>(rom1d_nl_nodes_.size());
         rom1d_nl_nodes_.push_back(a);
-        rom1d_nl_y_.insert(rom1d_nl_y_.end(), y0.begin(), y0.end());
     };
     // Storage nodes join when an outlet starts at a level: a structure, a pipe
     // that ends above the next node's water, or a pipe the main run leaves
     // dry. A storage node draining through plain flowing pipes stays in the
-    // planes: the straight line is right there, and per-member levels coupled
-    // through large two-way pipes with a one-step lag oscillate (Bellinge
-    // G71F trunk storages, 2026-10-24: bands of 1e17 m). Once in, they stay.
+    // planes: the straight line is right there. Once in, they stay (sticky:
+    // swapping a link between its linear and its nonlinear law at z != 0
+    // would inject volume). A node with a rule-switched pump is admitted with
+    // the pump at the main run's setting ((b1), note §2.5).
     {
-        const auto& Eall = rom1d_add_edges_;
         std::vector<char> thr(rom1d_nl_struct_.begin(), rom1d_nl_struct_.end());
         thr.resize(un, 0);
-        for (const auto& ed : Eall) {
+        for (const auto& ed : rom1d_add_edges_) {
             if (ed.up < 0 || ed.link < 0) continue;
             const auto uu = static_cast<std::size_t>(ed.up);
             const int fu = rom1d_active_map_[uu];
             if (ctx_.nodes.type[static_cast<std::size_t>(fu)] != NodeType::STORAGE) continue;
             const auto lj = static_cast<std::size_t>(ed.link);
             if (ctx_.links.type[lj] != LinkType::CONDUIT) continue;
-            if (!ed.conduit) {   // a dry pipe (member-range secant) below a node that holds water
+            if (!ed.conduit) {   // a dry pipe below a node that holds water
                 if (ctx_.nodes.depth[static_cast<std::size_t>(fu)] > 0.03) thr[uu] = 1;
                 continue;
             }
@@ -12516,24 +12532,12 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
             const double z_end = ctx_.nodes.invert_elev[static_cast<std::size_t>(fd)] + off_dn;
             if (z_end > ctx_.nodes.head[static_cast<std::size_t>(fd)]) thr[uu] = 1;   // pours over a raised end
         }
-        // A pump switched by control rules (or always on) cannot be followed
-        // per member: its node stays in the planes (Bellinge G71F68Y, a wet
-        // well whose pump starts above 1.03 m by rule, 2026-10-31). Per-member
-        // control switching is its own project.
-        for (int j = 0; j < ctx_.n_links(); ++j) {
-            const auto uj = static_cast<std::size_t>(j);
-            if (ctx_.links.type[uj] != LinkType::PUMP || hydstruct_.pumpDepthRated(j)) continue;
-            const int n1 = ctx_.links.node1[uj];
-            if (n1 < 0 || n1 >= static_cast<int>(rom1d_->full_to_active.size())) continue;
-            const int a1 = rom1d_->full_to_active[static_cast<std::size_t>(n1)];
-            if (a1 >= 0) thr[static_cast<std::size_t>(a1)] = 0;
-        }
         for (int a = 0; a < na; ++a)
             if (thr[static_cast<std::size_t>(a)] && nl_of[static_cast<std::size_t>(a)] < 0) admit(a);
     }
     // Coupled manholes join when a member can reach the street, when the
     // street above them holds water, or when they overflow; once in, they stay
-    // (ADDITIVE_CHANNEL.md §8). A member's level starts from its linear deviation.
+    // (ADDITIVE_CHANNEL.md §8).
 #ifdef OPENSWMM_HAS_2D
     twoD::SpectralROM* rom2d = surface_router_.rom();
     const bool coupled = rom2d && rom2d->is_ready() && !rom1d_cp_of_active_.empty();
@@ -12551,464 +12555,488 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
             const bool near = (ctx_.nodes.head[full] + std::max(sig, 0.0)) * kFt >= z - 0.10 ||
                               rom2d->detCouplingDepth(static_cast<std::size_t>(k)) > 0.01 ||
                               (full < ctx_.nodes.overflow.size() && ctx_.nodes.overflow[full] > 0.0);
-            if (!near) continue;
-            admit(a);
+            if (near) admit(a);
         }
     }
-    std::vector<double> ext_vol;
-    if (coupled) ext_vol.assign(surface_router_.nodeCouplingPoints().size() * uM, std::numeric_limits<double>::quiet_NaN());
 #endif
-    if (rom1d_nl_nodes_.empty()) { rom1d_->setMemberAdditive(nullptr); return; }
+    // No admitted node: F is the plane system scaled by kappa_i, so C = 0
+    // exactly (bit-identical to per-member off).
+    if (rom1d_nl_nodes_.empty()) { rom1d_mem_z_ = u; rom1d_->setMemberAdditive(nullptr); return; }
     const auto nb = rom1d_nl_nodes_.size();
-
-    // Edges into and out of each per-member node: the rain channel's edges,
-    // plus every weir, orifice and outlet draining a per-member node that the
-    // main run leaves closed (no edge without flow or a band), so a member
-    // that rises over it can still spill (Bellinge G71F68Y, 2026-10-24: an
-    // empty wet well with no outlet edge let members run 15 m apart).
-    std::vector<uncertainty::FlowEdge> Ex = rom1d_add_edges_;
-    {
-        std::vector<char> have(static_cast<std::size_t>(ctx_.n_links()), 0);
-        for (const auto& ed : Ex) if (ed.link >= 0) have[static_cast<std::size_t>(ed.link)] = 1;
-        for (int j = 0; j < ctx_.n_links(); ++j) {
-            const auto uj = static_cast<std::size_t>(j);
-            const LinkType t = ctx_.links.type[uj];
-            if (have[uj] || (t != LinkType::WEIR && t != LinkType::ORIFICE && t != LinkType::OUTLET && t != LinkType::PUMP)) continue;
-            const int n1 = ctx_.links.node1[uj], n2 = ctx_.links.node2[uj];
-            const int a1 = (n1 >= 0 && n1 < static_cast<int>(rom1d_->full_to_active.size())) ? rom1d_->full_to_active[static_cast<std::size_t>(n1)] : -1;
-            if (a1 < 0 || nl_of[static_cast<std::size_t>(a1)] < 0) continue;
-            uncertainty::FlowEdge ed;
-            ed.up = a1;
-            ed.dn = (n2 >= 0 && n2 < static_cast<int>(rom1d_->full_to_active.size())) ? rom1d_->full_to_active[static_cast<std::size_t>(n2)] : -1;
-            ed.link = j; ed.conduit = false; ed.d = 0.0;
-            Ex.push_back(ed);
-        }
-    }
-    // Pipes whose far end is raised above a per-member node: one nonlinear
-    // two-way link (full-pipe friction between the two sides' controlling
-    // levels), carried as an out-edge of the node whatever the main run's
-    // direction; their straight-line inflow term is not used. An offline
-    // basin fills by backflow over such an end and drains back to it
-    // (Bellinge G72R83B from G72UD11, 2026-10-31: the straight line through a
-    // small head difference cut a drier member's fill several-fold).
-    std::vector<int> two_way(static_cast<std::size_t>(ctx_.n_links()), -1);   // link -> active node it belongs to
-    {
-        for (int j = 0; j < ctx_.n_links(); ++j) {
-            const auto uj = static_cast<std::size_t>(j);
-            if (ctx_.links.type[uj] != LinkType::CONDUIT) continue;
-            for (int end = 0; end < 2; ++end) {
-                const int nd = end == 0 ? ctx_.links.node1[uj] : ctx_.links.node2[uj];
-                const int far = end == 0 ? ctx_.links.node2[uj] : ctx_.links.node1[uj];
-                if (nd < 0 || far < 0 || nd >= static_cast<int>(rom1d_->full_to_active.size())) continue;
-                const int a = rom1d_->full_to_active[static_cast<std::size_t>(nd)];
-                if (a < 0 || nl_of[static_cast<std::size_t>(a)] < 0) continue;
-                if (ctx_.nodes.type[static_cast<std::size_t>(nd)] != NodeType::STORAGE) continue;
-                const double off_far = end == 0 ? ctx_.links.offset2[uj] : ctx_.links.offset1[uj];
-                const double z_far = ctx_.nodes.invert_elev[static_cast<std::size_t>(far)] + off_far;
-                if (!(off_far > 0.1 && z_far > ctx_.nodes.invert_elev[static_cast<std::size_t>(nd)] + 0.1)) continue;
-                two_way[uj] = a;
-                bool have_out = false;
-                for (const auto& ed : Ex) if (ed.link == j && ed.up == a) { have_out = true; break; }
-                if (!have_out) {
-                    uncertainty::FlowEdge ed;
-                    ed.up = a;
-                    ed.dn = rom1d_->full_to_active[static_cast<std::size_t>(far)];
-                    ed.link = j; ed.conduit = true; ed.ju = 0.0; ed.jd = 0.0; ed.q = 0.0;
-                    Ex.push_back(ed);
-                }
-            }
-        }
-    }
-    const auto& E = Ex;
-    std::vector<std::vector<int>> ein(nb), eout(nb);
-    for (std::size_t k = 0; k < E.size(); ++k) {
-        if (E[k].up >= 0 && nl_of[static_cast<std::size_t>(E[k].up)] >= 0) eout[static_cast<std::size_t>(nl_of[static_cast<std::size_t>(E[k].up)])].push_back(static_cast<int>(k));
-        if (E[k].dn >= 0 && nl_of[static_cast<std::size_t>(E[k].dn)] >= 0) ein[static_cast<std::size_t>(nl_of[static_cast<std::size_t>(E[k].dn)])].push_back(static_cast<int>(k));
-    }
     const auto& nodes = ctx_.nodes;
     const auto& links = ctx_.links;
     auto fullOf = [&](int a) { return rom1d_active_map_[static_cast<std::size_t>(a)]; };
+    auto offAt = [&](std::size_t lj, int full) { return links.node1[lj] == full ? links.offset1[lj] : links.offset2[lj]; };
+    auto otherEnd = [&](std::size_t lj, int full) { return links.node1[lj] == full ? links.node2[lj] : links.node1[lj]; };
 
-    // Sources for the correction fields, members x active nodes (cfs).
-    std::vector<double> e(uM * un, 0.0);
-    std::vector<std::vector<double>> new_link_dq(static_cast<std::size_t>(ctx_.n_links()));
-    constexpr int kTab = 17;
-
-    // Upstream first, so a node downstream of another per-member node takes
-    // this step's outflow, not last step's.
-    std::vector<std::size_t> order;
-    {
-        std::vector<int> indeg(nb, 0);
-        std::vector<std::vector<std::size_t>> nxt(nb);
-        for (const auto& ed : E)
-            if (ed.up >= 0 && ed.dn >= 0 && nl_of[static_cast<std::size_t>(ed.up)] >= 0 && nl_of[static_cast<std::size_t>(ed.dn)] >= 0) {
-                nxt[static_cast<std::size_t>(nl_of[static_cast<std::size_t>(ed.up)])].push_back(static_cast<std::size_t>(nl_of[static_cast<std::size_t>(ed.dn)]));
-                ++indeg[static_cast<std::size_t>(nl_of[static_cast<std::size_t>(ed.dn)])];
-            }
-        std::vector<char> seen(nb, 0);
-        for (std::size_t b = 0; b < nb; ++b) if (indeg[b] == 0) { order.push_back(b); seen[b] = 1; }
-        for (std::size_t h = 0; h < order.size(); ++h)
-            for (std::size_t d : nxt[order[h]]) if (--indeg[d] == 0 && !seen[d]) { order.push_back(d); seen[d] = 1; }
-        for (std::size_t b = 0; b < nb; ++b) if (!seen[b]) order.push_back(b);
+    // ---- the port graph of this step (shared by members) ----
+    PortGraph& g = rom1d_pg_;
+    g.resize(na);
+    g.dt = dt;
+    for (std::size_t t = 0; t < un; ++t) {
+        g.S[t] = std::max(rom1d_h18_S_[t], 1.0e-6);
+        g.pinned[t] = (t < rom1d_fs_pinned_.size() && rom1d_fs_pinned_[t] && nl_of[t] < 0) ? 1 : 0;
     }
-    // Neighbouring per-member nodes see each other's levels: a few
-    // Gauss-Seidel sweeps within the step, each node implicit in its own level
-    // from its start-of-step value, instead of a one-step lag (which let large
-    // two-way pipes between small storage nodes oscillate). Corrections and
-    // the levels handed downstream are taken from the last sweep.
-    const std::vector<double> y_start = rom1d_nl_y_;
-    bool linked = false;
-    for (const auto& ed : E)
-        if (ed.up >= 0 && ed.dn >= 0 && nl_of[static_cast<std::size_t>(ed.up)] >= 0 && nl_of[static_cast<std::size_t>(ed.dn)] >= 0) { linked = true; break; }
-    const int n_sweeps = linked ? 4 : 1;
-    for (int sweep = 0; sweep < n_sweeps; ++sweep) {
-    const bool last_sweep = sweep == n_sweeps - 1;
-    for (std::size_t b : order) {
-        const int ab = rom1d_nl_nodes_[b];
-        const auto uab = static_cast<std::size_t>(ab);
-        const int fb = fullOf(ab);
-        const double S = std::max(rom1d_h18_S_[uab], 1.0e-6);
-        double* y = &rom1d_nl_y_[b * uM];
+    // Level range the members span at node a (the rating tables' half-range).
+    auto spanAt = [&](int a) {
         double ymax = 0.0;
-        for (std::size_t i = 0; i < uM; ++i) ymax = std::max(ymax, std::fabs(y[i]));
-        // Extra inflow that does not depend on this node's level: local source,
-        // conduits and structures from upstream (a storage node upstream hands
-        // over its members' actual extra outflow of the last step).
-        std::vector<double> inflow(uM, 0.0), jin(uM, 0.0);
-        double jd_in = 0.0;   // inflow falls as this node rises (conduit backwater)
-        for (std::size_t p = 0; p < P; ++p)
+        if (a >= 0)
             for (std::size_t i = 0; i < uM; ++i)
-                inflow[i] += (i < kap[p].size() ? kap[p][i] : 0.0) * q[p][uab];
-        std::vector<int> tw_seen;
-        for (int k : ein[b]) {
-            const auto& ed = E[static_cast<std::size_t>(k)];
-            if (ed.link >= 0 && two_way[static_cast<std::size_t>(ed.link)] == ab) continue;   // rated as an out-edge
-            if (ed.link >= 0 && two_way[static_cast<std::size_t>(ed.link)] >= 0) {
-                // Owned by the node across it: take its rated exchange, once.
-                if (std::find(tw_seen.begin(), tw_seen.end(), ed.link) != tw_seen.end()) continue;
-                tw_seen.push_back(ed.link);
-                const auto& fr = new_link_dq[static_cast<std::size_t>(ed.link)];
-                const auto& cr = fr.size() == uM ? fr : rom1d_nl_link_dq_[static_cast<std::size_t>(ed.link)];
-                if (cr.size() == uM) for (std::size_t i = 0; i < uM; ++i) inflow[i] += cr[i];
-                continue;
-            }
-            const auto& fresh = new_link_dq[static_cast<std::size_t>(ed.link)];
-            const auto& carried = fresh.size() == uM ? fresh : rom1d_nl_link_dq_[static_cast<std::size_t>(ed.link)];
-            for (std::size_t i = 0; i < uM; ++i) {
-                if (carried.size() == uM) inflow[i] += carried[i];
-                else if (ed.conduit) inflow[i] += ed.ju * L(i, ed.up);
-                else inflow[i] += ed.d * L(i, ed.up);
-            }
-            if (ed.conduit && carried.size() != uM) jd_in += ed.jd;
-        }
-        for (std::size_t i = 0; i < uM; ++i) ymax = std::max(ymax, std::fabs(inflow[i]) * dt / S);
-        // Outlet ratings.
-        struct Out { int k; int kind; double q0; double hdet; double hctrl; double y0; double K0; double yfull; bool use_dn; double ylo, dy; std::vector<double> tab; };   // structures: ylo = table half-range Y, dy = step in t
-        std::vector<Out> outs;
-        const double Y = std::max(0.1, 2.0 * ymax + 0.1);
-        for (int k : eout[b]) {
-            const auto& ed = E[static_cast<std::size_t>(k)];
-            // A two-way link owned by the node across it: that node rates the
-            // exchange and hands it over as this node's inflow.
-            if (ed.link >= 0 && two_way[static_cast<std::size_t>(ed.link)] >= 0 && two_way[static_cast<std::size_t>(ed.link)] != ab) continue;
-            Out o; o.k = k; o.kind = 2;
-            const auto lj = static_cast<std::size_t>(ed.link);
-            if (ed.conduit) {
-                const int fd = ed.dn >= 0 ? fullOf(ed.dn) : -1;
-                const double off_dn = (fd >= 0 && links.node2[lj] == fd) ? links.offset2[lj] : links.offset1[lj];
-                const double z_end = (fd >= 0) ? nodes.invert_elev[static_cast<std::size_t>(fd)] + off_dn : -1.0e30;
-                const double h_dn = (fd >= 0) ? nodes.head[static_cast<std::size_t>(fd)] : -1.0e30;
-                // Q = q0 * K(y_up)/K(y0) * sqrt(dh/dh0): conveyance at the
-                // member's upstream depth times friction over the head above the
-                // downstream control. The control is the higher of the next
-                // node's water and the pipe's downstream end, so a pipe that
-                // pours over a raised end stops when the node falls below that
-                // end. At the main run both slopes equal the shared field's
-                // (q K'/K + q/(2 dh) upstream, -q/(2 dh) downstream). A
-                // supercritical pipe (relay off) does not feel the head
-                // difference: its flow is the conveyance factor alone.
-                o.use_dn = lj < rom1d_fs_relay_.size() ? rom1d_fs_relay_[lj] >= 0.5 : true;
-                o.hdet = nodes.head[static_cast<std::size_t>(fb)];
-                o.hctrl = std::max(h_dn, z_end);
-                o.q0 = ed.q;
-                const double off_up = (links.node1[lj] == fb) ? links.offset1[lj] : links.offset2[lj];
-                o.yfull = (lj < xsp_cache_.size()) ? xsp_cache_[lj].y_full : 0.0;
-                o.y0 = o.hdet - (nodes.invert_elev[static_cast<std::size_t>(fb)] + off_up);
-                const double ycl = std::clamp(o.y0, 1.0e-3, o.yfull > 0.0 ? o.yfull : 1.0e-3);
-                o.K0 = (lj < xsp_cache_.size()) ? conveyance1d(xsp_cache_[lj], ycl) : 0.0;
-                const double H0 = o.hdet - o.hctrl;
-                // The rating is for a free end: the next node's water below the
-                // pipe's downstream end, with a real head over it. A drowned end
-                // is a two-way pipe with no threshold, where the plane's straight
-                // line is right; the friction square root over the near-zero head
-                // difference of a drowned pair is a near-infinite slope (Bellinge
-                // G71F320/G71F68Y, 2026-10-31: members jumped invert to rim).
-                const bool free_end = !(h_dn >= z_end);
-                o.kind = (o.q0 > 0.0 && o.K0 > 0.0 && free_end && H0 > 0.03) ? 0 : 3;   // 3: linear slope
-                if (two_way[lj] == ab && lj < xsp_cache_.size()) {
-                    const int crow = ctx_.link_subtypes.conduit_row(ed.link);
-                    if (crow >= 0) {
-                        const auto ucr = static_cast<std::size_t>(crow);
-                        const double n = ctx_.link_subtypes.conduits.roughness[ucr];
-                        const double Lc = ctx_.link_subtypes.conduits.length[ucr];
-                        const XSectParams& xs = xsp_cache_[lj];
-                        const double Af = xsect::getAofY(xs, xs.y_full), Rf = xsect::getRofY(xs, xs.y_full);
-                        const int nbar = std::max(ctx_.link_subtypes.conduits.barrels[ucr], 1);
-                        if (n > 0.0 && Lc > 0.0 && Af > 0.0 && Rf > 0.0) {
-                            o.kind = 6;
-                            o.K0 = constants::PHI / n * Af * std::pow(Rf, 2.0 / 3.0) * nbar / std::sqrt(Lc);
-                            o.hctrl = z_end;   // far end
-                            o.yfull = nodes.invert_elev[static_cast<std::size_t>(fb)] + off_up;   // this node's end
-                            o.use_dn = true;
-                            const double Hn = std::max(o.hdet, o.yfull), Hf = std::max(h_dn, o.hctrl);
-                            const double dlt = Hn - Hf;
-                            o.y0 = (dlt >= 0.0 ? 1.0 : -1.0) * o.K0 * std::sqrt(std::fabs(dlt));   // main run on this rating
-                        }
-                    }
+                ymax = std::max({ymax, std::fabs(rom1d_mem_z_[i * un + static_cast<std::size_t>(a)]),
+                                 std::fabs(u[i * un + static_cast<std::size_t>(a)])});
+        return std::max(0.1, 2.0 * ymax + 0.1);
+    };
+    // Stores. A member's water at an admitted node is V(d*) + dV: one absolute
+    // volume curve V(depth) = ∫ A, A = node surface area + ½·top width·length
+    // of attached conduits (SWMM's surface-area rule at the member's level),
+    // floored at MIN_SURFAREA, so "a member's water >= 0" is exactly "its level
+    // >= the invert", which is what the ports' dry factors hold.
+    // The main run's own volume change over a step, V(d*_new) − V(d*_old), is
+    // not exactly dt × its net inflow through the links the ports are anchored
+    // on (the dynamic-wave level carries the conduits' own storage, lagged
+    // areas, flap/surcharge weir terms). Carried unchanged, that difference
+    // accumulates in every member's dV and drains members through their floor
+    // with every outlet at zero (Bellinge 1D smoke, 2026-11-01: G72R83B members
+    // 134 ft below the invert). The unaccounted change m = V(d*_new) − V(d*_old)
+    // − dt·net* belongs to the storage function. A loss (m < 0) is shared by
+    // members in proportion to their water, so none is drained below empty:
+    // dV is carried scaled by (V(d*_new) − dt·net*) / V(d*_old) < 1. A gain is
+    // shared equally (dV unchanged, the deviation form's own rule): scaling it
+    // up would widen member differences (seen up to ×7.6 near-empty stores).
+    // Zero perturbation stays exact.
+    std::vector<double> d_eff(un, std::numeric_limits<double>::quiet_NaN());
+    std::vector<double> store_scale(nb, 1.0);
+    {
+        const int unit_sys = ucf::getUnitSystem(static_cast<int>(ctx_.options.flow_units));
+        const double s_min = (ctx_.options.min_surf_area > 0.0) ? ctx_.options.min_surf_area : constants::MIN_SURFAREA;
+        const std::size_t nW = rom1d_store_W_.size();
+        for (std::size_t b = 0; b < nb; ++b) {
+            const int a = rom1d_nl_nodes_[b];
+            const int fu = fullOf(a);
+            const auto ufu = static_cast<std::size_t>(fu);
+            auto area = [&](double depth) {
+                double ar = std::max(node::getSurfArea(nodes, fu, std::max(depth, 0.0), &ctx_.tables, unit_sys, &ctx_.node_subtypes), 0.0);
+                for (int j : rom1d_node_links_[ufu]) {
+                    const auto uj = static_cast<std::size_t>(j);
+                    if (links.type[uj] != LinkType::CONDUIT || uj >= xsp_cache_.size()) continue;
+                    const int crow = ctx_.link_subtypes.conduit_row(j);
+                    if (crow < 0) continue;
+                    const auto ucr = static_cast<std::size_t>(crow);
+                    const XSectParams& xs = xsp_cache_[uj];
+                    const double y = std::clamp(depth - offAt(uj, fu), 0.0, xs.y_full > 0.0 ? xs.y_full : 0.0);
+                    double L = ctx_.link_subtypes.conduits.mod_length[ucr];
+                    if (!(L > 0.0)) L = ctx_.link_subtypes.conduits.length[ucr];
+                    const int nbar = std::max(ctx_.link_subtypes.conduits.barrels[ucr], 1);
+                    const double w = xsect::getWofY(xs, y);
+                    if (w > 0.0) ar += 0.5 * w * L * nbar;
                 }
-                // No usable main-run flow, but the far end is raised above this
-                // node: full-pipe friction over the head above that end (the
-                // member pours out once it rises over it; below it, nothing).
-                if (o.kind == 3 && free_end && off_dn > 0.1 && lj < xsp_cache_.size()) {
-                    const int crow = ctx_.link_subtypes.conduit_row(ed.link);
-                    if (crow >= 0) {
-                        const auto ucr = static_cast<std::size_t>(crow);
-                        const double n = ctx_.link_subtypes.conduits.roughness[ucr];
-                        double Lc = ctx_.link_subtypes.conduits.length[ucr];
-                        const XSectParams& xs = xsp_cache_[lj];
-                        const double Af = xsect::getAofY(xs, xs.y_full), Rf = xsect::getRofY(xs, xs.y_full);
-                        const int nbar = std::max(ctx_.link_subtypes.conduits.barrels[ucr], 1);
-                        if (n > 0.0 && Lc > 0.0 && Af > 0.0 && Rf > 0.0) {
-                            o.kind = 5;
-                            o.K0 = constants::PHI / n * Af * std::pow(Rf, 2.0 / 3.0) * nbar / std::sqrt(Lc);
-                            o.y0 = std::sqrt(std::max(H0, 0.0)) * o.K0;   // the main run's flow on this rating
-                        }
-                    }
-                }
-            } else if (links.type[lj] == LinkType::PUMP) {
-                // The pump's own curve at the member's depth, less the main
-                // run's pump flow. An empty wet well in the main run pumps only
-                // what arrives; a member with extra water gets the spare capacity
-                // (Bellinge G71F68Y, 2026-10-31). Volume, head and ideal pumps
-                // keep their linear slope.
-                o.q0 = links.flow[lj];
-                const double q_at = hydstruct_.pumpFlowAtDepth(ctx_, ed.link, std::max(nodes.head[static_cast<std::size_t>(fb)] - nodes.invert_elev[static_cast<std::size_t>(fb)], 0.0));
-                o.kind = std::isfinite(q_at) ? 4 : 2;
-                o.hdet = q_at;   // the curve's flow at the main run's depth
-            } else {
-                const double sgn = (fb == links.node1[lj]) ? 1.0 : -1.0;
-                // Table points cluster near the main run's level (y = Y t|t|,
-                // t uniform in [-1, 1]): a weir or orifice curves most just
-                // above its crest, where members start and stop spilling.
-                o.kind = 1; o.ylo = Y; o.dy = 2.0 / (kTab - 1);
-                o.tab.resize(kTab);
-                bool ok = true;
-                for (int m = 0; m < kTab; ++m) {
-                    const double tm = -1.0 + m * o.dy;
-                    const double sh = (m == (kTab - 1) / 2) ? 0.0 : Y * tm * std::fabs(tm);
-                    const double qq = hydstruct_.flowAtShiftedDepth(ctx_, ed.link, fb, sh);
-                    if (!std::isfinite(qq)) { ok = false; break; }
-                    o.tab[static_cast<std::size_t>(m)] = sgn * qq;
-                }
-                if (!ok) o.kind = 2;
-                else { const double q0 = o.tab[(kTab - 1) / 2]; for (double& v : o.tab) v -= q0; }
-            }
-            outs.push_back(std::move(o));
-        }
-        // Extra outflow through out-edge o for member i at level yy (cfs).
-        auto outflow = [&](const Out& o, std::size_t i, double yy) -> double {
-            const auto& ed = E[static_cast<std::size_t>(o.k)];
-            switch (o.kind) {
-                case 0: {
-                    const auto lj = static_cast<std::size_t>(ed.link);
-                    if (yy == 0.0 && (!o.use_dn || ed.dn < 0 || Ldn(i, ed.dn) == 0.0)) return 0.0;   // exact at the main run
-                    const double yc = std::clamp(o.y0 + yy, 1.0e-3, o.yfull > 0.0 ? o.yfull : 1.0e-3);
-                    const double ycl0 = std::clamp(o.y0, 1.0e-3, o.yfull > 0.0 ? o.yfull : 1.0e-3);
-                    double f = (yc == ycl0) ? 1.0 : conveyance1d(xsp_cache_[lj], yc) / o.K0;
-                    if (o.y0 + yy <= 0.0) f = 0.0;   // the node has fallen below the pipe's upstream end
-                    if (o.use_dn) {
-                        const int fd = ed.dn >= 0 ? fullOf(ed.dn) : -1;
-                        const double off_dn = (fd >= 0 && links.node2[lj] == fd) ? links.offset2[lj] : links.offset1[lj];
-                        const double z_end = (fd >= 0) ? nodes.invert_elev[static_cast<std::size_t>(fd)] + off_dn : -1.0e30;
-                        const double ctrl = (fd >= 0) ? std::max(nodes.head[static_cast<std::size_t>(fd)] + Ldn(i, ed.dn), z_end) : z_end;
-                        const double H0 = o.hdet - o.hctrl;
-                        const double H = o.hdet + yy - ctrl;
-                        f *= (H == H0) ? 1.0 : std::sqrt(std::max(H, 0.0) / H0);
-                    }
-                    return o.q0 * f - o.q0;
-                }
-                case 1: {
-                    if (yy == 0.0) return 0.0;   // exact at the main run's level
-                    const double Yt = o.ylo;
-                    const double t = (yy >= 0.0 ? 1.0 : -1.0) * std::sqrt(std::fabs(yy) / Yt);
-                    int m = static_cast<int>(std::floor((t + 1.0) / o.dy));
-                    m = std::clamp(m, 0, kTab - 2);
-                    const double t0 = -1.0 + m * o.dy, t1 = t0 + o.dy;
-                    const double y0 = Yt * t0 * std::fabs(t0), y1 = Yt * t1 * std::fabs(t1);
-                    const double f = (yy - y0) / (y1 - y0);   // linear in y between table points
-                    return o.tab[static_cast<std::size_t>(m)] * (1.0 - f) + o.tab[static_cast<std::size_t>(m) + 1] * f;
-                }
-                case 3:
-                    return ed.ju * yy + (ed.dn >= 0 ? ed.jd * Ldn(i, ed.dn) : 0.0);
-                case 6: {   // two-way full-pipe friction between the two ends' controlling levels
-                    const int fd = ed.dn >= 0 ? fullOf(ed.dn) : -1;
-                    const double h_far = (fd >= 0) ? nodes.head[static_cast<std::size_t>(fd)] + Ldn(i, ed.dn) : -1.0e30;
-                    const double Hn = std::max(o.hdet + yy, o.yfull), Hf = std::max(h_far, o.hctrl);
-                    const double dlt = Hn - Hf;
-                    const double q = (dlt >= 0.0 ? 1.0 : -1.0) * o.K0 * std::sqrt(std::fabs(dlt));
-                    return q - o.y0;
-                }
-                case 5: {   // full-pipe friction over a raised end, absolute
-                    if (yy == 0.0 && (!o.use_dn || ed.dn < 0 || Ldn(i, ed.dn) == 0.0)) return 0.0;
-                    const int fd = ed.dn >= 0 ? fullOf(ed.dn) : -1;
-                    const auto lj = static_cast<std::size_t>(ed.link);
-                    const double off_dn = (fd >= 0 && links.node2[lj] == fd) ? links.offset2[lj] : links.offset1[lj];
-                    const double z_end = (fd >= 0) ? nodes.invert_elev[static_cast<std::size_t>(fd)] + off_dn : -1.0e30;
-                    const double ctrl = (fd >= 0) ? std::max(nodes.head[static_cast<std::size_t>(fd)] + Ldn(i, ed.dn), z_end) : z_end;
-                    return o.K0 * std::sqrt(std::max(o.hdet + yy - ctrl, 0.0)) - o.y0;
-                }
-                case 4: {
-                    if (yy == 0.0) return 0.0;
-                    const auto ufb2 = static_cast<std::size_t>(fb);
-                    const double d = std::max(nodes.head[ufb2] - nodes.invert_elev[ufb2], 0.0) + yy;
-                    // Relative to the main run's actual pump flow, which sits
-                    // below the curve when its wet well is empty (it pumps only
-                    // what arrives): a member with stored water runs on its
-                    // curve; one below the main run cannot pump more than it.
-                    const double c = hydstruct_.pumpFlowAtDepth(ctx_, ed.link, d);
-                    return (yy > 0.0 ? c : std::min(c, o.q0)) - o.q0;
-                }
-                default:
-                    return ed.d * yy;
-            }
-        };
-        // Exchange with the street (coupled manholes): the same implicit
-        // orifice law the 2D ROM uses, on the member's pond, solved here
-        // inside the manhole's balance so the water a member pours out leaves
-        // its manhole; the 2D ROM then books exactly that volume.
-        int kcp = -1;
-        double c_or = 0.0, z_or = 0.0, a_pond = 0.0, q_det_ex = 0.0;
-        std::vector<double> p_mem, cd_mem;
-#ifdef OPENSWMM_HAS_2D
-        if (coupled && rom1d_cp_of_active_[uab] >= 0) {
-            kcp = rom1d_cp_of_active_[uab];
-            const auto& cp = surface_router_.nodeCouplingPoints()[static_cast<std::size_t>(kcp)];
-            c_or = cp.cd * cp.area;
-            z_or = surface_router_.mesh().tri_cz[static_cast<std::size_t>(cp.cell_idx)];
-            a_pond = rom2d->pondArea(static_cast<std::size_t>(kcp));
-            const double p_det = rom2d->detCouplingDepth(static_cast<std::size_t>(kcp));
-            if (!(a_pond > 0.0) || p_det < 0.0 || !(c_or > 0.0)) kcp = -1;
-            else {
-                p_mem.resize(uM); cd_mem.resize(uM);
-                for (std::size_t i = 0; i < uM; ++i) {
-                    p_mem[i] = std::max(rom2d->memberCouplingDepth(static_cast<std::size_t>(kcp), static_cast<int>(i)), 0.0);
-                    cd_mem[i] = i < rom2d->cd_mult.size() ? rom2d->cd_mult[i] : 1.0;
-                }
-            }
-            if (kcp >= 0) {
-                const double p_det = rom2d->detCouplingDepth(static_cast<std::size_t>(kcp));
-                q_det_ex = couplingOrificeQ(c_or, z_or, a_pond, dt, p_det, nodes.head[static_cast<std::size_t>(fb)] * kFt);
-            }
-        }
-#endif
-        constexpr double kCfsPerCms = 1.0 / (0.3048 * 0.3048 * 0.3048);
-        auto exch = [&](std::size_t i, double yy) -> double {   // extra flow into the manhole (cfs)
-#ifdef OPENSWMM_HAS_2D
-            if (kcp < 0) return 0.0;
-            const double qi = couplingOrificeQ(c_or * cd_mem[i], z_or, a_pond, dt, p_mem[i],
-                                               (nodes.head[static_cast<std::size_t>(fb)] + yy) * kFt);
-            return (qi - q_det_ex) * kCfsPerCms;
-#else
-            (void)i; (void)yy; return 0.0;
-#endif
-        };
-        const auto ufb = static_cast<std::size_t>(fb);
-        const double depth_det = std::max(nodes.head[ufb] - nodes.invert_elev[ufb], 0.0);
-        const double y_floor = -depth_det;
-        const double y_ceil = nodes.full_depth[ufb] > 0.0
-                                  ? nodes.full_depth[ufb] + std::max(nodes.sur_depth[ufb], 0.0) - depth_det : 0.0;
-        bool has_pump = false;
-        for (const auto& o : outs) if (o.kind == 4) has_pump = true;
-        std::vector<double> pump_bal(uM, std::numeric_limits<double>::quiet_NaN());
-        for (std::size_t i = 0; i < uM; ++i) {
-            const double y0 = y_start[b * uM + i];
-            auto resid = [&](double yy) {
-                double r = S * (yy - y0) / dt - inflow[i] - jd_in * yy - exch(i, yy);
-                for (const auto& o : outs) r += outflow(o, i, yy);
-                return r;
+                return std::max(ar, s_min);
             };
-            double y1 = y0;
-            if (!(inflow[i] == 0.0 && y0 == 0.0 && exch(i, 0.0) == 0.0)) {   // zero perturbation stays exactly zero
-                // A member's level stays between the node's invert and its rim
-                // plus surcharge: a deficit an empty node cannot hold is less
-                // outflow, not a negative depth; water above the rim leaves.
-                double lo = y0 - 1.0, hi = y0 + 1.0;
-                for (int it = 0; it < 60 && resid(lo) > 0.0; ++it) lo -= (hi - lo);
-                for (int it = 0; it < 60 && resid(hi) < 0.0; ++it) hi += (hi - lo);
-                for (int it = 0; it < 60; ++it) {
-                    const double mid = 0.5 * (lo + hi);
-                    (resid(mid) > 0.0 ? hi : lo) = mid;
+            // Absolute curve on a uniform depth grid from the invert, past the rim.
+            const double d_star = std::max(nodes.head[ufu] - nodes.invert_elev[ufu], 0.0);
+            const double top = std::max({nodes.full_depth[ufu] + std::max(nodes.sur_depth[ufu], 0.0), d_star, 1.0}) + 2.0 * spanAt(a);
+            constexpr int G = 128;
+            const double hd = top / G;
+            std::vector<double> Vg(G + 1, 0.0), Ag(G + 1);
+            for (int m = 0; m <= G; ++m) Ag[static_cast<std::size_t>(m)] = area(m * hd);
+            for (int m = 1; m <= G; ++m)
+                Vg[static_cast<std::size_t>(m)] = Vg[static_cast<std::size_t>(m) - 1] + 0.5 * (Ag[static_cast<std::size_t>(m)] + Ag[static_cast<std::size_t>(m) - 1]) * hd;
+            auto Vabs = [Vg, Ag, hd](double d, double* ar) {
+                if (d <= 0.0) { if (ar) *ar = Ag[0]; return Ag[0] * d; }   // below the invert: the floor area (negative water)
+                const double x = d / hd;
+                const auto k = std::min(static_cast<std::size_t>(x), Vg.size() - 2);
+                const double slope = (Vg[k + 1] - Vg[k]) / hd;
+                if (ar) *ar = slope;
+                return Vg[k] + slope * (d - static_cast<double>(k) * hd);
+            };
+            const double Wnew = Vabs(d_star, nullptr);
+            double scale = 1.0;
+            if (b < nW) {
+                double net = ufu < nodes.lat_flow.size() ? nodes.lat_flow[ufu] : 0.0;
+                for (int j : rom1d_node_links_[ufu]) {
+                    const auto uj = static_cast<std::size_t>(j);
+                    if (links.node2[uj] == fu) net += links.flow[uj];
+                    if (links.node1[uj] == fu) net -= links.flow[uj];
                 }
-                y1 = 0.5 * (lo + hi);
-                y1 = std::max(y1, y_floor);
-                if (y_ceil > y_floor) y1 = std::min(y1, y_ceil);
+                if (ufu < nodes.overflow.size()) net -= std::max(nodes.overflow[ufu], 0.0);
+                const double Wold = rom1d_store_W_[b];
+                if (Wold > Ag[0] * PP::kDeltaDry) scale = std::clamp((Wnew - dt * net) / Wold, 0.0, 1.0);
+                rom1d_store_W_[b] = Wnew;
+                rom1d_pg_rescale_max_ = std::max(rom1d_pg_rescale_max_, std::fabs(scale - 1.0));
+            } else {
+                rom1d_store_W_.push_back(Wnew);
             }
-            y[i] = y1;
-            // An empty member (at its floor, or at an empty main run's level)
-            // pumps exactly what arrives: its pump outflow is the balance's
-            // remainder, not the curve (the curve alone would remove water the
-            // member does not have).
-            pump_bal[i] = std::numeric_limits<double>::quiet_NaN();
-            if (has_pump && (y1 <= y_floor + 1.0e-9 || std::fabs(y1) < 1.0e-9)) {
-                double rem = inflow[i] + jd_in * y1 + exch(i, y1) - S * (y1 - y0) / dt;
-                for (const auto& o : outs) if (o.kind != 4) rem -= outflow(o, i, y1);
-                pump_bal[i] = rem;
-            }
-#ifdef OPENSWMM_HAS_2D
-            if (last_sweep && kcp >= 0) ext_vol[static_cast<std::size_t>(kcp) * uM + i] = exch(i, y1) / kCfsPerCms * dt;
-#endif
-        }
-        // Correction sources: actual extra outflow minus the shared planes' straight line.
-        for (const auto& o : outs) {
-            const auto& ed = E[static_cast<std::size_t>(o.k)];
-            auto& carried = new_link_dq[static_cast<std::size_t>(ed.link)];
-            carried.assign(uM, 0.0);
-            for (std::size_t i = 0; i < uM; ++i) {
-                double actual = outflow(o, i, y[i]);
-                if (o.kind == 4 && std::isfinite(pump_bal[i]))
-                    actual = std::clamp(pump_bal[i], -o.q0, std::max(actual, 0.0) + 0.0 * o.q0 + 1.0e300);
-                carried[i] = actual;
-                if (ed.dn < 0 || !last_sweep) continue;
-                double shared = ed.conduit ? ed.ju * u[i * un + uab] + ed.jd * u[i * un + static_cast<std::size_t>(ed.dn)]
-                                           : ed.d * u[i * un + uab];
-                if (o.kind == 6) {   // the shared plane's own edge for this link, either direction
-                    shared = 0.0;
-                    for (const auto& se : rom1d_add_edges_) {
-                        if (se.link != ed.link) continue;
-                        const double qse = se.conduit ? se.ju * u[i * un + static_cast<std::size_t>(se.up)] +
-                                                        (se.dn >= 0 ? se.jd * u[i * un + static_cast<std::size_t>(se.dn)] : 0.0)
-                                                      : se.d * u[i * un + static_cast<std::size_t>(se.up)];
-                        shared += (se.up == ab) ? qse : -qse;
-                    }
-                }
-                e[i * un + static_cast<std::size_t>(ed.dn)] += actual - shared;
-            }
+            store_scale[b] = scale;
+            const double de = d_star;
+            d_eff[static_cast<std::size_t>(a)] = de;
+            const double V0 = Vabs(de, nullptr);
+            PortGraph::Store st;
+            st.dV = [Vabs, de, V0](double z, double* ar) {
+                const double v = Vabs(de + z, ar);
+                return z == 0.0 ? 0.0 : v - V0;
+            };
+            g.store_of[static_cast<std::size_t>(a)] = static_cast<int>(b);
+            g.stores.push_back(std::move(st));
         }
     }
-    }   // sweeps
-    rom1d_nl_link_dq_ = std::move(new_link_dq);
-
-    // One correction field per member on the same matrix, storage nodes held.
-    rom1d_corr_pinned_.assign(un, 0);
-    for (std::size_t t = 0; t < un && t < rom1d_fs_pinned_.size(); ++t) rom1d_corr_pinned_[t] = rom1d_fs_pinned_[t];
-    for (int a : rom1d_nl_nodes_) rom1d_corr_pinned_[static_cast<std::size_t>(a)] = 1;
-    rom1d_corr_sys_.build(na, rom1d_add_edges_, rom1d_h18_S_.data(), dt, &rom1d_corr_pinned_);
-    for (std::size_t i = 0; i < uM; ++i) {
-        double* c = &rom1d_corr_[i * un];
-        rom1d_corr_sys_.step(&e[i * un], c);
+    // Newly admitted stores start from the member's present level.
+    for (std::size_t b = rom1d_mem_dv_.size() / std::max<std::size_t>(uM, 1); b < nb; ++b) {
+        const auto a = static_cast<std::size_t>(rom1d_nl_nodes_[b]);
+        for (std::size_t i = 0; i < uM; ++i) rom1d_mem_dv_.push_back(g.stores[b].dV(rom1d_mem_z_[i * un + a], nullptr));
+    }
+    // Main-run depth at an active node, for the dry factor a member's outflow
+    // from a store carries (the accounted depth d_eff at a store).
+    auto depthAt = [&](int a) {
+        if (a < 0) return 0.0;
+        if (std::isfinite(d_eff[static_cast<std::size_t>(a)])) return d_eff[static_cast<std::size_t>(a)];
+        const auto uf = static_cast<std::size_t>(fullOf(a));
+        return nodes.head[uf] - nodes.invert_elev[uf];
+    };
+    // Monotone envelope of a conduit's conveyance A·R^(2/3) (circular falls above ≈0.94 D).
+    struct KEnv {
+        const XSectParams* xs = nullptr;
+        double yfull = 0.0, dy = 0.0;
+        std::vector<double> km;
+        double eval(double y) const {
+            if (!xs || !(yfull > 0.0) || km.empty()) return 0.0;
+            y = std::clamp(y, 0.0, yfull);
+            const auto m = std::min(static_cast<std::size_t>(y / dy), km.size() - 1);
+            return std::max(conveyance1d(*xs, y), km[m]);
+        }
+    };
+    auto kenv = [&](std::size_t lj) {
+        KEnv e;
+        if (lj >= xsp_cache_.size()) return e;
+        e.xs = &xsp_cache_[lj];
+        e.yfull = e.xs->y_full;
+        if (!(e.yfull > 0.0)) return e;
+        constexpr int G = 64;
+        e.dy = e.yfull / G;
+        e.km.resize(G + 1);
+        double run = 0.0;
+        for (int m = 0; m <= G; ++m) { run = std::max(run, conveyance1d(*e.xs, m * e.dy)); e.km[static_cast<std::size_t>(m)] = run; }
+        return e;
+    };
+    std::vector<char> is_port(static_cast<std::size_t>(ctx_.n_links()), 0), has_edge(is_port.size(), 0);
+    for (const auto& ed : rom1d_add_edges_) if (ed.link >= 0) has_edge[static_cast<std::size_t>(ed.link)] = 1;
+    // One-way rated port: a table of the rating at the member's level (the
+    // downstream node held at the main run), made monotone, anchored on the
+    // main run's actual flow.
+    auto addRatedPort = [&](int j, int fu, int fd, double q_star, PP::RatingTable T, double d_star) {
+        if (act(fu) < 0) return false;
+        T.makeMonotone();
+        if (T.raised > 0 && std::find(rom1d_pg_envelope_links_.begin(), rom1d_pg_envelope_links_.end(), j) == rom1d_pg_envelope_links_.end())
+            rom1d_pg_envelope_links_.push_back(j);
+        const double T0 = T.eval(0.0) * PP::ramp(d_star);
+        PortGraph::Port p;
+        p.up = act(fu);
+        p.dn = act(fd);
+        p.dq = [T, T0, q_star, d_star](int, double zu, double) {
+            if (zu == 0.0) return 0.0;
+            return PP::anchoredRatedFlow(T.eval(zu) * PP::ramp(d_star + zu), T0, q_star, d_star, zu) - q_star;
+        };
+        g.ports.push_back(std::move(p));
+        is_port[static_cast<std::size_t>(j)] = 1;
+        return true;
+    };
+    auto tableOffsets = [&](int a, double d_star) {
+        std::vector<double> y = PP::clusteredOffsets(spanAt(a), 17);
+        if (-d_star < y.front()) y.insert(y.begin(), -d_star);   // reach down to the dry level
+        return y;
+    };
+    auto structurePort = [&](int j, int fu) {
+        const auto uj = static_cast<std::size_t>(j);
+        const double sgn = (fu == links.node1[uj]) ? 1.0 : -1.0;
+        const double d_star = std::max(nodes.head[static_cast<std::size_t>(fu)] - nodes.invert_elev[static_cast<std::size_t>(fu)], 0.0);
+        PP::RatingTable T;
+        T.y = tableOffsets(act(fu), d_star);
+        for (double y : T.y) {
+            const double qq = hydstruct_.flowAtShiftedDepth(ctx_, j, fu, y);
+            if (!std::isfinite(qq)) return false;
+            T.q.push_back(std::max(sgn * qq, 0.0));
+        }
+        return addRatedPort(j, fu, otherEnd(uj, fu), std::max(sgn * links.flow[uj], 0.0), std::move(T), d_star);
+    };
+    // A pump at the main run's setting, curve at the member's depth ((b1)).
+    auto pumpPort = [&](int j) {
+        const auto uj = static_cast<std::size_t>(j);
+        const int fu = links.node1[uj];
+        if (fu < 0) return false;
+        const double d_star = std::max(nodes.head[static_cast<std::size_t>(fu)] - nodes.invert_elev[static_cast<std::size_t>(fu)], 0.0);
+        if (!std::isfinite(hydstruct_.pumpFlowAtDepth(ctx_, j, d_star))) return false;   // volume/head/ideal: plane line
+        PP::RatingTable T;
+        T.y = tableOffsets(act(fu), d_star);
+        for (double y : T.y) T.q.push_back(hydstruct_.pumpFlowAtDepth(ctx_, j, std::max(d_star + y, 0.0)));
+        return addRatedPort(j, fu, links.node2[uj], std::max(links.flow[uj], 0.0), std::move(T), d_star);
+    };
+    // Raised-end pipe (note §1.3): full-pipe friction between the two sides'
+    // controlling levels, two-way, positive B -> F.
+    auto raisedPort = [&](int j, int fB, int fF) {
+        const auto uj = static_cast<std::size_t>(j);
+        const int crow = ctx_.link_subtypes.conduit_row(j);
+        if (crow < 0 || uj >= xsp_cache_.size() || act(fB) < 0) return false;
+        const auto ucr = static_cast<std::size_t>(crow);
+        const double n = ctx_.link_subtypes.conduits.roughness[ucr];
+        const double Lc = ctx_.link_subtypes.conduits.length[ucr];
+        const XSectParams& xs = xsp_cache_[uj];
+        const double Af = xsect::getAofY(xs, xs.y_full), Rf = xsect::getRofY(xs, xs.y_full);
+        const int nbar = std::max(ctx_.link_subtypes.conduits.barrels[ucr], 1);
+        if (!(n > 0.0 && Lc > 0.0 && Af > 0.0 && Rf > 0.0)) return false;
+        const double K = constants::PHI / n * Af * std::pow(Rf, 2.0 / 3.0) * nbar / std::sqrt(Lc);
+        const double zB = nodes.invert_elev[static_cast<std::size_t>(fB)] + offAt(uj, fB);
+        const double zF = nodes.invert_elev[static_cast<std::size_t>(fF)] + offAt(uj, fF);
+        const double hB = nodes.head[static_cast<std::size_t>(fB)], hF = nodes.head[static_cast<std::size_t>(fF)];
+        const double q0 = PP::raisedEndFlow(K, hB, zB, hF, zF);
+        // The main run's own flow B -> F, which the law at h* need not match.
+        const double q_star = (links.node1[uj] == fB ? 1.0 : -1.0) * links.flow[uj];
+        const double dB = depthAt(act(fB)), dF = depthAt(act(fF));
+        const bool flB = isA(act(fB)), flF = isA(act(fF));
+        PortGraph::Port p;
+        p.up = act(fB);
+        p.dn = act(fF);
+        p.dq = [=](int, double zu, double zd) {
+            if (zu == 0.0 && zd == 0.0) return 0.0;
+            const double qm = q_star + PP::raisedEndFlow(K, hB + zu, zB, hF + zd, zF) - q0;
+            return PP::flooredFlow(qm, flB ? PP::dryFactor(dB, zu) : 1.0, flF ? PP::dryFactor(dF, zd) : 1.0) - q_star;
+        };
+        g.ports.push_back(std::move(p));
+        is_port[uj] = 1;
+        return true;
+    };
+    // A dry pipe: normal-flow rating at the member's depth over its upstream end, one-way downhill.
+    auto dryPort = [&](const uncertainty::FlowEdge& e) {
+        const auto uj = static_cast<std::size_t>(e.link);
+        const int crow = ctx_.link_subtypes.conduit_row(e.link);
+        if (crow < 0 || uj >= xsp_cache_.size()) return false;
+        const auto ucr = static_cast<std::size_t>(crow);
+        const double S0 = ctx_.link_subtypes.conduits.slope[ucr];
+        const double n = ctx_.link_subtypes.conduits.roughness[ucr];
+        const int nbar = std::max(ctx_.link_subtypes.conduits.barrels[ucr], 1);
+        if (!(n > 0.0) || !(std::fabs(S0) > 1.0e-6)) return false;
+        const int fu = fullOf(e.up);
+        const double y0 = nodes.head[static_cast<std::size_t>(fu)] - (nodes.invert_elev[static_cast<std::size_t>(fu)] + offAt(uj, fu));
+        const double coef = constants::PHI / n * std::sqrt(std::fabs(S0)) * nbar;
+        const KEnv K = kenv(uj);
+        auto Qn = [K, coef](double y) { return y > 0.0 ? coef * K.eval(y) : 0.0; };
+        const double T0 = Qn(y0), q_star = std::fabs(links.flow[uj]), d_star = std::max(y0, 0.0);
+        PortGraph::Port p;
+        p.up = e.up;
+        p.dn = act(otherEnd(uj, fu));
+        p.dq = [=](int, double zu, double) {
+            if (zu == 0.0) return 0.0;
+            return PP::anchoredRatedFlow(Qn(y0 + zu), T0, q_star, d_star, zu) - q_star;
+        };
+        g.ports.push_back(std::move(p));
+        is_port[uj] = 1;
+        return true;
+    };
+    // A flowing pipe with a free end: q0·K(y_up)/K(y0)·s(H)/s(H0), H the head
+    // over the higher of the downstream water and the pipe's downstream end.
+    // A drowned end (or a head below δ0) keeps the plane's straight line.
+    auto conduitPort = [&](const uncertainty::FlowEdge& e) {
+        const auto uj = static_cast<std::size_t>(e.link);
+        const int fu = fullOf(e.up), fd = otherEnd(uj, fu);
+        if (fd < 0) return false;
+        const double off_dn = offAt(uj, fd);
+        const double z_end = nodes.invert_elev[static_cast<std::size_t>(fd)] + off_dn;
+        const double hu = nodes.head[static_cast<std::size_t>(fu)], hd = nodes.head[static_cast<std::size_t>(fd)];
+        const bool free_end = hd < z_end;
+        const double y0 = hu - (nodes.invert_elev[static_cast<std::size_t>(fu)] + offAt(uj, fu));
+        const KEnv K = kenv(uj);
+        const double K0 = K.eval(y0), H0 = hu - std::max(hd, z_end);
+        const bool use_dn = uj < rom1d_fs_relay_.size() ? rom1d_fs_relay_[uj] >= 0.5 : true;
+        if (e.q > 0.0 && K0 > 0.0 && free_end && H0 > PP::kDelta0) {
+            const double q0 = e.q;
+            PortGraph::Port p;
+            p.up = e.up;
+            p.dn = act(fd);
+            p.dq = [=](int, double zu, double zd) {
+                if (zu == 0.0 && zd == 0.0) return 0.0;
+                const double H = hu + zu - std::max(hd + zd, z_end);
+                return PP::freeEndFlow(q0, K.eval(y0 + zu), K0, H, H0, use_dn) - q0;
+            };
+            g.ports.push_back(std::move(p));
+            is_port[uj] = 1;
+            return true;
+        }
+        if (free_end && off_dn > 0.1) return raisedPort(e.link, fu, fd);   // no usable flow, raised far end
+        return false;
+    };
+    // Raised-end geometry first: a storage node whose pipe's far end is raised.
+    for (int b = 0; b < static_cast<int>(nb); ++b) {
+        const int nd = fullOf(rom1d_nl_nodes_[static_cast<std::size_t>(b)]);
+        if (nodes.type[static_cast<std::size_t>(nd)] != NodeType::STORAGE) continue;
+        for (int j : rom1d_node_links_[static_cast<std::size_t>(nd)]) {
+            const auto uj = static_cast<std::size_t>(j);
+            if (links.type[uj] != LinkType::CONDUIT || is_port[uj]) continue;
+            const int far = otherEnd(uj, nd);
+            if (far < 0) continue;
+            const double off_far = offAt(uj, far);
+            const double z_far = nodes.invert_elev[static_cast<std::size_t>(far)] + off_far;
+            if (off_far > 0.1 && z_far > nodes.invert_elev[static_cast<std::size_t>(nd)] + 0.1) raisedPort(j, nd, far);
+        }
+    }
+    // Plane edges touching an admitted node become ports where their law is nonlinear.
+    for (const auto& ed : rom1d_add_edges_) {
+        if (ed.link < 0 || is_port[static_cast<std::size_t>(ed.link)] || !(isA(ed.up) || isA(ed.dn))) continue;
+        const LinkType t = links.type[static_cast<std::size_t>(ed.link)];
+        if (t == LinkType::CONDUIT) { if (!ed.conduit) dryPort(ed); else conduitPort(ed); }
+        else if (t == LinkType::PUMP) pumpPort(ed.link);
+        else structurePort(ed.link, fullOf(ed.up));
+    }
+    // Structures and pumps the main run leaves without an edge (closed), so a
+    // member that rises over them can still spill (Bellinge G71F68Y, 2026-10-24).
+    for (int j = 0; j < ctx_.n_links(); ++j) {
+        const auto uj = static_cast<std::size_t>(j);
+        if (is_port[uj] || has_edge[uj]) continue;
+        const LinkType t = links.type[uj];
+        if (t != LinkType::WEIR && t != LinkType::ORIFICE && t != LinkType::OUTLET && t != LinkType::PUMP) continue;
+        const int n1 = links.node1[uj];
+        if (act(n1) < 0 || !(isA(act(n1)) || isA(act(links.node2[uj])))) continue;
+        if (t == LinkType::PUMP) pumpPort(j); else structurePort(j, n1);
+    }
+    // The remaining plane edges keep their straight line; at an admitted node
+    // it is limited by the store's dry factor (a drowned pipe out of an empty
+    // member cannot keep draining it: Bellinge 1D smoke, 2026-11-01, members
+    // 3,600 ft below G72R83B's invert before this).
+    for (const auto& ed : rom1d_add_edges_) {
+        if (ed.link >= 0 && is_port[static_cast<std::size_t>(ed.link)]) continue;
+        const bool fu = isA(ed.up), fd = isA(ed.dn);
+        if (!fu && !fd) { g.edges.push_back(ed); continue; }
+        const double q_star = ed.conduit ? ed.q : std::fabs(links.flow[static_cast<std::size_t>(ed.link)]);
+        const double ju = ed.conduit ? ed.ju : ed.d, jd = ed.conduit ? ed.jd : 0.0;
+        const double dU = depthAt(ed.up), dD = depthAt(ed.dn);
+        PortGraph::Port p;
+        p.up = ed.up;
+        p.dn = ed.dn;
+        p.dq = [=](int, double zu, double zd) {
+            if (zu == 0.0 && zd == 0.0) return 0.0;
+            const double qm = q_star + ju * zu + jd * zd;
+            return PP::flooredFlow(qm, fu ? PP::dryFactor(dU, zu) : 1.0, fd ? PP::dryFactor(dD, zd) : 1.0) - q_star;
+        };
+        g.ports.push_back(std::move(p));
+    }
+    // Rim overflow out of every admitted node: the main run's own spill plus a
+    // stiff loss above it (no ponding), so the rim is a port, not a clamp.
+    for (std::size_t b = 0; b < nb; ++b) {
+        const int a = rom1d_nl_nodes_[b];
+        const auto ufu = static_cast<std::size_t>(fullOf(a));
+        if (!(nodes.full_depth[ufu] > 0.0)) continue;
+        const double z_rim = nodes.invert_elev[ufu] + nodes.full_depth[ufu] + std::max(nodes.sur_depth[ufu], 0.0) - nodes.head[ufu];
+        const double q_ovf = ufu < nodes.overflow.size() ? std::max(nodes.overflow[ufu], 0.0) : 0.0;
+        const double k = 100.0 * g.S[static_cast<std::size_t>(a)] / dt;
+        PortGraph::Port p;
+        p.up = a;
+        p.dn = -1;
+        p.dq = [=](int, double zu, double) { return zu == 0.0 ? 0.0 : PP::overflowFlow(q_ovf, k, z_rim, zu) - q_ovf; };
+        g.ports.push_back(std::move(p));
+    }
+    // A member's negative extra inflow at a store is a sink limited by the
+    // member's water, like every outlet: the planes' source (soft rain c·CV·E,
+    // E up to 3) can ask a dry member for more than its runoff (Bellinge 1D
+    // smoke, 2026-11-01: G72R83B members 170 ft below the invert with zero
+    // residual). The port returns what the sink cannot take: |b|·(g − 1) <= 0.
+    std::vector<double> b_all(uM * nb, 0.0);
+    for (std::size_t i = 0; i < uM; ++i)
         for (std::size_t b = 0; b < nb; ++b) {
             const auto a = static_cast<std::size_t>(rom1d_nl_nodes_[b]);
-            c[a] = rom1d_nl_y_[b * uM + i] - u[i * un + a];
+            double bt = 0.0;
+            for (std::size_t p = 0; p < P; ++p) bt += (i < kap[p].size() ? kap[p][i] : 0.0) * q[p][a];
+            b_all[b * uM + i] = bt;
+        }
+    for (std::size_t b = 0; b < nb; ++b) {
+        const int a = rom1d_nl_nodes_[b];
+        bool any_neg = false;
+        for (std::size_t i = 0; i < uM && !any_neg; ++i) any_neg = b_all[b * uM + i] < 0.0;
+        if (!any_neg) continue;
+        std::vector<double> bneg(uM);
+        for (std::size_t i = 0; i < uM; ++i) bneg[i] = std::max(-b_all[b * uM + i], 0.0);
+        const double dA = depthAt(a);
+        PortGraph::Port p;
+        p.up = a;
+        p.dn = -1;
+        p.dq = [bneg, dA](int i, double zu, double) {
+            const double s = bneg[static_cast<std::size_t>(i)];
+            return s > 0.0 ? s * (PP::dryFactor(dA, zu) - 1.0) : 0.0;
+        };
+        g.ports.push_back(std::move(p));
+    }
+    // Street exchange at coupled manholes: the same implicit orifice law the 2D
+    // ROM uses, on the member's pond; out of the manhole, booked once by the 2D ROM.
+    constexpr double kCfsPerCms = 1.0 / (0.3048 * 0.3048 * 0.3048);
+    std::vector<int> exch_port(nb, -1), exch_cp(nb, -1);
+#ifdef OPENSWMM_HAS_2D
+    std::vector<double> ext_vol;
+    if (coupled) {
+        ext_vol.assign(surface_router_.nodeCouplingPoints().size() * uM, std::numeric_limits<double>::quiet_NaN());
+        for (std::size_t b = 0; b < nb; ++b) {
+            const int a = rom1d_nl_nodes_[b];
+            const int kcp = rom1d_cp_of_active_[static_cast<std::size_t>(a)];
+            if (kcp < 0) continue;
+            const auto& cp = surface_router_.nodeCouplingPoints()[static_cast<std::size_t>(kcp)];
+            const double c_or = cp.cd * cp.area;
+            const double z_or = surface_router_.mesh().tri_cz[static_cast<std::size_t>(cp.cell_idx)];
+            const double a_pond = rom2d->pondArea(static_cast<std::size_t>(kcp));
+            const double p_det = rom2d->detCouplingDepth(static_cast<std::size_t>(kcp));
+            if (!(a_pond > 0.0) || p_det < 0.0 || !(c_or > 0.0)) continue;
+            std::vector<double> p_mem(uM), cd_mem(uM);
+            for (std::size_t i = 0; i < uM; ++i) {
+                p_mem[i] = std::max(rom2d->memberCouplingDepth(static_cast<std::size_t>(kcp), static_cast<int>(i)), 0.0);
+                cd_mem[i] = i < rom2d->cd_mult.size() ? rom2d->cd_mult[i] : 1.0;
+            }
+            const double h_det = nodes.head[static_cast<std::size_t>(fullOf(a))];
+            const double q_det = couplingOrificeQ(c_or, z_or, a_pond, dt, p_det, h_det * kFt);
+            PortGraph::Port p;
+            p.up = a;
+            p.dn = -1;
+            p.dq = [=](int i, double zu, double) {
+                const auto ui = static_cast<std::size_t>(i);
+                const double qi = couplingOrificeQ(c_or * cd_mem[ui], z_or, a_pond, dt, p_mem[ui], (h_det + zu) * kFt);
+                return (q_det - qi) * kCfsPerCms;   // extra flow out of the manhole (cfs)
+            };
+            exch_port[b] = static_cast<int>(g.ports.size());
+            exch_cp[b] = kcp;
+            g.ports.push_back(std::move(p));
+        }
+    }
+#endif
+    // ---- one solve per member ----
+    g.dV_prev.assign(nb, 0.0);
+    rom1d_nl_y_.assign(nb * uM, 0.0);
+    std::vector<double> z(un);
+    for (std::size_t i = 0; i < uM; ++i) {
+        g.member = static_cast<int>(i);
+        for (std::size_t t = 0; t < un; ++t) {
+            double bt = 0.0;
+            for (std::size_t p = 0; p < P; ++p) bt += (i < kap[p].size() ? kap[p][i] : 0.0) * q[p][t];
+            g.b[t] = bt;
+            g.z_prev[t] = rom1d_mem_z_[i * un + t];
+        }
+        for (std::size_t b = 0; b < nb; ++b) g.dV_prev[b] = store_scale[b] * rom1d_mem_dv_[b * uM + i];
+        z = g.z_prev;
+        g.solve(z, rom1d_corr_sys_);
+        double* c = &rom1d_corr_[i * un];
+        for (std::size_t t = 0; t < un; ++t) {
+            rom1d_mem_z_[i * un + t] = z[t];
+            c[t] = z[t] - u[i * un + t];
+        }
+        for (std::size_t b = 0; b < nb; ++b) {
+            const auto a = static_cast<std::size_t>(rom1d_nl_nodes_[b]);
+            rom1d_mem_dv_[b * uM + i] = g.stores[b].dV(z[a], nullptr);
+            rom1d_nl_y_[b * uM + i] = z[a];
+            const auto ufa = static_cast<std::size_t>(fullOf(static_cast<int>(a)));
+            const double dm = depthAt(static_cast<int>(a)) + z[a];   // the member's own depth (accounted)
+            rom1d_pg_min_depth_ = std::min(rom1d_pg_min_depth_, dm);
+            if (dm < -0.05) {
+                ++rom1d_pg_below_floor_;
+                if (rom1d_pg_below_floor_node_.size() != un) rom1d_pg_below_floor_node_.assign(un, 0);
+                ++rom1d_pg_below_floor_node_[a];
+            }
+#ifdef OPENSWMM_HAS_2D
+            if (exch_port[b] >= 0)
+                ext_vol[static_cast<std::size_t>(exch_cp[b]) * uM + i] =
+                    -g.ports[static_cast<std::size_t>(exch_port[b])].dq(static_cast<int>(i), z[a], 0.0) / kCfsPerCms * dt;
+#endif
         }
     }
     rom1d_->setMemberAdditive(rom1d_corr_.data());
