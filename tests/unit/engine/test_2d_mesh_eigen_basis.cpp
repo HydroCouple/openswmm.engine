@@ -561,3 +561,124 @@ TEST(MeshEigenBasis, DepthWeightedRejectsMeshSizeMismatch) {
     EXPECT_FALSE(b.buildDepthWeighted(other, 6, D.data()));
     EXPECT_FALSE(b.depth_weighted);
 }
+
+// ============================================================================
+// Area-weighted (generalized) mode:  L v = lambda A v,  P^T A P = I
+// ============================================================================
+
+// Structured mesh with vertices stretched non-uniformly -> varied cell areas.
+static MeshData makeStretchedMesh(int N) {
+    auto mesh = makeStructuredMesh(N);
+    for (std::size_t v = 0; v < mesh.vx.size(); ++v) {
+        const double x = mesh.vx[v], y = mesh.vy[v];
+        mesh.vx[v] = x * (1.0 + 0.6 * std::sin(0.4 * y)) + 0.15 * y;
+        mesh.vy[v] = y * (1.0 + 0.5 * std::cos(0.3 * x));
+    }
+    buildMeshTopology(mesh);
+    return mesh;
+}
+
+static std::vector<double> cellAreas(const MeshData& mesh) {
+    return std::vector<double>(mesh.tri_area.begin(),
+                               mesh.tri_area.begin() + mesh.n_triangles());
+}
+
+static void expectAOrthonormal(const MeshEigenBasis& b,
+                               const std::vector<double>& A) {
+    const int n = b.n_triangles;
+    for (int a = 0; a < b.num_kept; ++a)
+        for (int c = 0; c < b.num_kept; ++c) {
+            double dot = 0.0;
+            for (int i = 0; i < n; ++i)
+                dot += b.P[static_cast<std::size_t>(a * n + i)] * A[static_cast<std::size_t>(i)]
+                     * b.P[static_cast<std::size_t>(c * n + i)];
+            EXPECT_NEAR(dot, a == c ? 1.0 : 0.0, 1e-10) << a << "," << c;
+        }
+}
+
+TEST(MeshEigenBasisAreaWeighted, AOrthonormalOnStructuredMeshes) {
+    for (int N : {4, 50}) {
+        auto mesh = makeStructuredMesh(N);
+        auto A = cellAreas(mesh);
+        MeshEigenBasis b;
+        ASSERT_TRUE(b.build(mesh, N == 4 ? 6 : 10, nullptr, A.data()));
+        EXPECT_TRUE(b.area_weighted);
+        expectAOrthonormal(b, A);
+    }
+}
+
+TEST(MeshEigenBasisAreaWeighted, AOrthonormalOnNonUniformAreas) {
+    auto mesh = makeStretchedMesh(6);
+    auto A = cellAreas(mesh);
+    double lo = A[0], hi = A[0];
+    for (double a : A) { lo = std::min(lo, a); hi = std::max(hi, a); }
+    ASSERT_GT(hi / lo, 1.5) << "fixture must have varied areas";
+    MeshEigenBasis b;
+    ASSERT_TRUE(b.build(mesh, 8, nullptr, A.data()));
+    expectAOrthonormal(b, A);
+
+    // projectArea agrees with the explicit sum.
+    const auto v = probeVector(b.n_triangles);
+    std::vector<double> out(static_cast<std::size_t>(b.num_kept));
+    b.projectArea(v.data(), out.data());
+    for (int j = 0; j < b.num_kept; ++j) {
+        double s = 0.0;
+        for (int i = 0; i < b.n_triangles; ++i)
+            s += b.P[static_cast<std::size_t>(j * b.n_triangles + i)] * A[static_cast<std::size_t>(i)] * v[static_cast<std::size_t>(i)];
+        EXPECT_NEAR(out[static_cast<std::size_t>(j)], s, 1e-12);
+    }
+}
+
+TEST(MeshEigenBasisAreaWeighted, UniformAreaMatchesPlainBasisUpToScale) {
+    for (int N : {4, 10}) {
+        auto mesh = makeStructuredMesh(N);
+        const int n = mesh.n_triangles();
+        const double c = 0.37;
+        std::vector<double> A(static_cast<std::size_t>(n), c);
+        MeshEigenBasis plain, gen;
+        ASSERT_TRUE(plain.build(mesh, 6));
+        ASSERT_TRUE(gen.build(mesh, 6, nullptr, A.data()));
+        ASSERT_EQ(plain.num_kept, gen.num_kept);
+        const auto pp = projectProbe(plain);
+        const auto v = probeVector(n);
+        std::vector<double> pg(static_cast<std::size_t>(gen.num_kept));
+        gen.projectArea(v.data(), pg.data());
+        for (int q = 0; q < plain.num_kept; ++q) {
+            const auto uq = static_cast<std::size_t>(q);
+            EXPECT_NEAR(std::fabs(pg[uq]), std::sqrt(c) * pp[uq], 1e-10);
+            EXPECT_NEAR(gen.eigenvalues[uq] * c / plain.eigenvalues[uq], 1.0, 1e-12);
+        }
+    }
+}
+
+TEST(MeshEigenBasisAreaWeighted, NullAreaIsBitIdentical) {
+    auto mesh = makeStructuredMesh(4);
+    MeshEigenBasis a, b;
+    ASSERT_TRUE(a.build(mesh, 6));
+    ASSERT_TRUE(b.build(mesh, 6, nullptr, nullptr));
+    EXPECT_FALSE(b.area_weighted);
+    EXPECT_EQ(a.P, b.P);
+    EXPECT_EQ(a.eigenvalues, b.eigenvalues);
+}
+
+TEST(MeshEigenBasisAreaWeighted, GeneralizedEigenrelationSatisfied) {
+    auto mesh = makeStretchedMesh(4);  // 32 cells
+    auto A = cellAreas(mesh);
+    MeshEigenBasis b;
+    ASSERT_TRUE(b.build(mesh, 6, nullptr, A.data()));
+    const int n = b.n_triangles;
+    for (int q = 0; q < b.num_kept; ++q) {
+        const double lam = b.eigenvalues[static_cast<std::size_t>(q)];
+        std::vector<double> vq(b.P.begin() + q * n, b.P.begin() + (q + 1) * n);
+        const auto Lv = laplacianMatvec(mesh, vq);
+        double r2 = 0.0, n2 = 0.0;
+        for (int i = 0; i < n; ++i) {
+            const auto ui = static_cast<std::size_t>(i);
+            const double Av = A[ui] * vq[ui];
+            const double r = Lv[ui] - lam * Av;
+            r2 += r * r;
+            n2 += Av * Av;
+        }
+        EXPECT_LT(std::sqrt(r2 / n2), 1e-6) << "mode " << q;
+    }
+}

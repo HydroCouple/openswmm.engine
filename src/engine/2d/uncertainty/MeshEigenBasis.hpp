@@ -69,6 +69,12 @@ struct MeshEigenBasis {
     std::vector<double> P;            ///< n_triangles × num_kept, col-major
     std::vector<double> eigenvalues;  ///< length num_kept, ascending
 
+    /// true after build() with area_weights: solves L v = lambda A v, P is
+    /// A-orthonormal (P^T A P = I) and eigenvalues carry 1/area units.
+    bool area_weighted = false;
+    std::vector<double> area;         ///< A = diag(area), length n_triangles (empty unless area_weighted)
+    std::vector<double> inv_sqrt_area;///< A^{-1/2} (empty unless area_weighted)
+
     // ---- status ----
 
     int last_error = 0;   ///< 0=ok, 1=too few cells, 2=eigensolver failed
@@ -95,10 +101,24 @@ struct MeshEigenBasis {
      *        the mesh analogue of NetworkLaplacian1D's outfall grounding, and
      *        it exists for the same reason. Null = pure Neumann (closed box).
      *
+     * @param area_weights Optional per-cell weights A (length n_triangles, all
+     *        > 0, normally cell areas). Non-null solves the generalized problem
+     *        L v = lambda A v through A^{-1/2} L A^{-1/2} (the H18 trick of
+     *        GraphEigenBasis::buildGeneralized): P = A^{-1/2} V is
+     *        A-orthonormal. The scaled matrix is divided by
+     *        rho = mean(diag L)/mean(A) before the solve and eigenvalues are
+     *        multiplied back, so null_tol keeps its meaning. Null = today's
+     *        plain orthonormal basis, bit-identical.
+     *
      * @return true on success (num_kept > 0); false otherwise.
      */
     bool build(const MeshData& mesh, int num_modes_req,
-               const double* ground_w = nullptr);
+               const double* ground_w = nullptr,
+               const double* area_weights = nullptr);
+
+    /// out[j] = (P^T A field)_j, j < num_kept. Requires area_weighted
+    /// (otherwise A = I, i.e. the plain projection P^T field).
+    void projectArea(const double* field, double* out) const;
 
     /**
      * @brief Rebuild eigenbasis using depth-weighted edge conductances.
@@ -115,6 +135,8 @@ struct MeshEigenBasis {
      * @param mesh          Mesh geometry.
      * @param num_modes_req Number of modes to retain.
      * @param D_cell        Per-triangle diffusivity (length n_triangles).
+     * @note No area_weights argument: the depth-weighted rebuild stays the
+     *       plain orthonormal basis (and clears area_weighted on success).
      * @return true on success; false if Lanczos fails (basis unchanged).
      */
     bool buildDepthWeighted(const MeshData& mesh, int num_modes_req,
@@ -133,7 +155,8 @@ private:
 
     /// Shared eigensolve + null-mode filtering + P/eigenvalues population.
     /// On failure returns false and leaves P/eigenvalues unchanged.
-    bool buildFromLaplacian(const uncertainty::CsrGraph& L, int num_modes_req);
+    bool buildFromLaplacian(const uncertainty::CsrGraph& L, int num_modes_req,
+                            const double* area_weights = nullptr);
 };
 
 } // namespace openswmm::twoD
