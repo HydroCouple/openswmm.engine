@@ -103,6 +103,17 @@ c_h. The member rates scale as 1/mm, the same structure as today. The fixed poin
 (mm − 1)·φ is therefore unchanged and still independent of the operator
 (unit-tested).
 
+## 3.1 Port-Hamiltonian reading (2026-11-01)
+
+Write the 1D operator as Q dψ/dt = (J − R) ψ, where J is the skew part
+(conservative transport) and R is the dissipative symmetric part. For the Froude-gated
+edge (H14), per edge w·[[1, −(1−g)], [−1, 1]] has symmetric part with eigenvalues
+w(1 ± (1−g/2)) ≥ w·g/2 ≥ 0 and skew part w·g/2·[[0, 1], [−1, 0]]. R = symmetric
+conductance + kinematic upstream diagonal + grounding, all ⪰ 0. With the S-orthonormal
+basis, sym(PᵀLP) = Pᵀ·sym(L)·P ⪰ 0, so the reduced operator is energy-stable by
+construction. See `test_spectral_rom1d.cpp` (`DirectionalOperator.ReducedDirectionalOperatorIsEnergyStable`)
+and PORT_HAMILTONIAN.md §2.1.
+
 ## 4. Storage per node (decided)
 
     S_i = max( node::getSurfArea(i, depth_i)

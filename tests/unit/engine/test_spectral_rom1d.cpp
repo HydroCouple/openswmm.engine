@@ -17,11 +17,13 @@
 #include "uncertainty/GraphEigenBasis.hpp"
 #include "uncertainty/FiedlerDiagnostic1D.hpp"
 #include "uncertainty/NetworkLaplacian1D.hpp"
+#include "uncertainty/RomDirectionalOperator.hpp"
 #include "uncertainty/SpectralROM1D.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <numeric>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -3198,4 +3200,418 @@ TEST(PerModeRates, FailedRebuildLeavesTheLiveBasisUntouched) {
     EXPECT_EQ(rom.basis, before);
     EXPECT_EQ(rom.basis->num_kept, kept_before);
     EXPECT_EQ(rom.basis->P, P_before);
+}
+
+// ============================================================================
+// H14 — Directional operator for Froude-gated upstream closure
+// ============================================================================
+
+// Helper: compute minimum eigenvalue of a symmetric matrix using Jacobi.
+// Works for small k (≤ 10); converges in ~10-20 sweeps.
+static double minEigenvalueSymmetric(const std::vector<double>& M_sym, int k) {
+    if (k <= 0) return 0.0;
+    const auto uk = static_cast<std::size_t>(k);
+    std::vector<double> A = M_sym;  // work copy
+    std::vector<double> V(uk * uk, 0.0);
+    // Initialize V = I
+    for (std::size_t i = 0; i < uk; ++i) V[i * uk + i] = 1.0;
+
+    for (int sweep = 0; sweep < 20; ++sweep) {
+        for (std::size_t p = 0; p < uk; ++p) {
+            for (std::size_t q = p + 1; q < uk; ++q) {
+                const double app = A[p * uk + p];
+                const double aqq = A[q * uk + q];
+                const double apq = A[p * uk + q];
+                if (std::fabs(apq) < 1.0e-15) continue;
+                const double theta = 0.5 * std::atan2(2.0 * apq, aqq - app);
+                const double c = std::cos(theta);
+                const double s = std::sin(theta);
+                // Update A: A = JᵀAJ
+                for (std::size_t i = 0; i < uk; ++i) {
+                    if (i == p || i == q) continue;
+                    const double aip = A[i * uk + p];
+                    const double aiq = A[i * uk + q];
+                    A[i * uk + p] = c * aip - s * aiq;
+                    A[p * uk + i] = A[i * uk + p];
+                    A[i * uk + q] = s * aip + c * aiq;
+                    A[q * uk + i] = A[i * uk + q];
+                }
+                // Diagonal
+                A[p * uk + p] = c * c * app + s * s * aqq - 2.0 * s * c * apq;
+                A[q * uk + q] = s * s * app + c * c * aqq + 2.0 * s * c * apq;
+                A[p * uk + q] = 0.0;
+                A[q * uk + p] = 0.0;
+                // Update V = VJ
+                for (std::size_t i = 0; i < uk; ++i) {
+                    const double vip = V[i * uk + p];
+                    const double viq = V[i * uk + q];
+                    V[i * uk + p] = c * vip - s * viq;
+                    V[i * uk + q] = s * vip + c * viq;
+                }
+            }
+        }
+    }
+    // Extract diagonal: these are the eigenvalues
+    double min_eig = A[0];
+    for (std::size_t i = 1; i < uk; ++i)
+        min_eig = std::min(min_eig, A[i * uk + i]);
+    return min_eig;
+}
+
+TEST(DirectionalOperator, ReducedDirectionalOperatorIsEnergyStable) {
+    // Random test: build 50 gated operators with random chains + loops, random
+    // gates, random storage, and S-orthonormal bases. Verify that
+    // sym(M_reduced + kinematic_diagonal) has minimum eigenvalue ≥ -1e-12.
+    std::mt19937 rng(42);
+    std::uniform_int_distribution<int> dist_n(6, 30);
+    std::uniform_real_distribution<double> dist_w(0.1, 10.0);
+    std::uniform_real_distribution<double> dist_fr(0.0, 1.5);
+    std::uniform_int_distribution<int> dist_sgn(-1, 1);
+    std::uniform_real_distribution<double> dist_S(0.01, 100.0);
+    std::uniform_real_distribution<double> dist_kin(0.001, 0.1);
+
+    double worst_min_eig = 1.0;
+
+    for (int trial = 0; trial < 50; ++trial) {
+        SCOPED_TRACE("random case " + std::to_string(trial));
+        const int n_active = dist_n(rng);
+        const int k = std::min(8, n_active - 1);
+        if (k <= 0) continue;
+
+        // Build a random network: chain + extra edges
+        std::vector<int> a1, a2;
+        std::vector<double> weights;
+        std::vector<int> flow_sign_vec;
+        std::vector<double> froude_vec;
+        std::vector<double> drop_ratio_vec;
+
+        // Chain: 0-1-2-...-(n_active-1)
+        for (int i = 0; i < n_active - 1; ++i) {
+            a1.push_back(i);
+            a2.push_back(i + 1);
+            weights.push_back(dist_w(rng));
+            flow_sign_vec.push_back((dist_sgn(rng) < 0) ? -1 : 1);
+            froude_vec.push_back(dist_fr(rng));
+            drop_ratio_vec.push_back(std::fabs(dist_fr(rng) - 0.5) * 4.0);
+        }
+
+        // Random extra edges (2-3 more)
+        const int n_extra = 2 + (rng() % 2);
+        for (int i = 0; i < n_extra; ++i) {
+            const int u = rng() % n_active;
+            const int v = rng() % n_active;
+            if (u != v) {
+                a1.push_back(u);
+                a2.push_back(v);
+                weights.push_back(dist_w(rng));
+                flow_sign_vec.push_back((dist_sgn(rng) < 0) ? -1 : 1);
+                froude_vec.push_back(dist_fr(rng));
+                drop_ratio_vec.push_back(std::fabs(dist_fr(rng) - 0.5) * 4.0);
+            }
+        }
+
+        const int n_conduits = static_cast<int>(a1.size());
+
+        // Random storage per node
+        std::vector<double> S_vec(static_cast<std::size_t>(n_active));
+        for (int i = 0; i < n_active; ++i)
+            S_vec[static_cast<std::size_t>(i)] = dist_S(rng);
+
+        // Build S-orthonormal basis via QR decomposition
+        // 1. Random n_active × k matrix
+        std::vector<double> V(static_cast<std::size_t>(n_active * k), 0.0);
+        for (int j = 0; j < k; ++j) {
+            for (int i = 0; i < n_active; ++i) {
+                V[static_cast<std::size_t>(j * n_active + i)] =
+                    (dist_sgn(rng) < 0 ? -1.0 : 1.0) * dist_w(rng);
+            }
+        }
+        // 2. Gram-Schmidt with S-weighted inner product: (u,v) = uᵀSv
+        std::vector<double> P(static_cast<std::size_t>(n_active * k), 0.0);
+        for (int j = 0; j < k; ++j) {
+            // Copy v_j
+            for (int i = 0; i < n_active; ++i)
+                P[static_cast<std::size_t>(j * n_active + i)] = V[static_cast<std::size_t>(j * n_active + i)];
+
+            // Gram-Schmidt
+            for (int j2 = 0; j2 < j; ++j2) {
+                double dot = 0.0;
+                for (int i = 0; i < n_active; ++i) {
+                    dot += P[static_cast<std::size_t>(j2 * n_active + i)] * S_vec[static_cast<std::size_t>(i)]
+                         * P[static_cast<std::size_t>(j * n_active + i)];
+                }
+                for (int i = 0; i < n_active; ++i) {
+                    P[static_cast<std::size_t>(j * n_active + i)] -=
+                        dot * P[static_cast<std::size_t>(j2 * n_active + i)];
+                }
+            }
+
+            // Normalize: ‖P[:,j]‖_S = 1
+            double norm_sq = 0.0;
+            for (int i = 0; i < n_active; ++i) {
+                norm_sq += P[static_cast<std::size_t>(j * n_active + i)] * S_vec[static_cast<std::size_t>(i)]
+                        * P[static_cast<std::size_t>(j * n_active + i)];
+            }
+            if (norm_sq > 1.0e-14) {
+                const double norm = std::sqrt(norm_sq);
+                for (int i = 0; i < n_active; ++i)
+                    P[static_cast<std::size_t>(j * n_active + i)] /= norm;
+            }
+        }
+
+        // Verify PᵀSP ≈ I to 1e-10
+        for (int j1 = 0; j1 < k; ++j1) {
+            for (int j2 = 0; j2 < k; ++j2) {
+                double dot = 0.0;
+                for (int i = 0; i < n_active; ++i) {
+                    dot += P[static_cast<std::size_t>(j1 * n_active + i)] * S_vec[static_cast<std::size_t>(i)]
+                         * P[static_cast<std::size_t>(j2 * n_active + i)];
+                }
+                double expected = (j1 == j2) ? 1.0 : 0.0;
+                EXPECT_NEAR(dot, expected, 1.0e-10) << "P^T S P [" << j1 << "," << j2 << "]";
+            }
+        }
+
+        // Call assembleDirectionalReduced
+        DirectionalOperatorConfig cfg;
+        cfg.enabled = true;
+        cfg.fr_lo = 0.8;
+        cfg.fr_hi = 1.2;
+        cfg.use_drop = false;
+
+        std::vector<double> M;
+        int n_gated = 0;
+        bool ok = assembleDirectionalReduced(
+            P.data(), k, n_active, n_conduits,
+            a1.data(), a2.data(), weights.data(),
+            flow_sign_vec.data(), froude_vec.data(), cfg,
+            M, &n_gated, drop_ratio_vec.data());
+        ASSERT_TRUE(ok) << "assembleDirectionalReduced failed";
+
+        // Add kinematic diagonal: each upstream node gets a diagonal term
+        // aligned with its first eigenvector
+        std::vector<double> diag_contrib(static_cast<std::size_t>(n_active), 0.0);
+        for (int i = 0; i < n_active; ++i) {
+            double kin_rate = dist_kin(rng);
+            diag_contrib[static_cast<std::size_t>(i)] = kin_rate;
+        }
+
+        // Add to M: M[p,q] += diag_contrib[i] * P[p,i] * P[q,i]
+        const auto uk = static_cast<std::size_t>(k);
+        const auto un = static_cast<std::size_t>(n_active);
+        for (std::size_t p = 0; p < uk; ++p) {
+            for (std::size_t q = 0; q < uk; ++q) {
+                double contrib = 0.0;
+                for (int i = 0; i < n_active; ++i) {
+                    contrib += diag_contrib[static_cast<std::size_t>(i)]
+                            * P[p * un + static_cast<std::size_t>(i)]
+                            * P[q * un + static_cast<std::size_t>(i)];
+                }
+                M[p * uk + q] += contrib;
+            }
+        }
+
+        // Form sym(M) = (M + Mᵀ)/2
+        std::vector<double> M_sym(uk * uk, 0.0);
+        for (std::size_t p = 0; p < uk; ++p) {
+            for (std::size_t q = 0; q < uk; ++q) {
+                M_sym[p * uk + q] = 0.5 * (M[p * uk + q] + M[q * uk + p]);
+            }
+        }
+
+        // Compute minimum eigenvalue
+        double min_eig = minEigenvalueSymmetric(M_sym, k);
+        worst_min_eig = std::min(worst_min_eig, min_eig);
+        EXPECT_GE(min_eig, -1.0e-10)
+            << "trial " << trial << ": min eig = " << min_eig
+            << ", n_active=" << n_active << ", k=" << k << ", n_gated=" << n_gated;
+    }
+
+    // Report the worst case minimum eigenvalue found across all trials
+    std::cout << "Worst minimum eigenvalue across all 50 cases: " << worst_min_eig << std::endl;
+}
+
+TEST(DirectionalOperator, MutationDropsUpstreamDiagonalAndFails) {
+    // Mutation check: verify that removing the upstream diagonal contribution
+    // from the gated edges makes the test fail in at least one case.
+    // This proves the first test actually exercises the requirement.
+    std::mt19937 rng(99);
+    std::uniform_int_distribution<int> dist_n(6, 20);
+    std::uniform_real_distribution<double> dist_w(0.1, 10.0);
+    std::uniform_real_distribution<double> dist_fr(0.5, 1.5);  // higher Fr to gate more
+    std::uniform_int_distribution<int> dist_sgn(-1, 1);
+    std::uniform_real_distribution<double> dist_S(1.0, 100.0);
+    std::uniform_real_distribution<double> dist_kin(0.01, 0.1);
+
+    bool any_failed = false;
+
+    for (int trial = 0; trial < 10 && !any_failed; ++trial) {
+        const int n_active = dist_n(rng);
+        const int k = std::min(8, n_active - 1);
+        if (k <= 0) continue;
+
+        // Build network
+        std::vector<int> a1, a2;
+        std::vector<double> weights;
+        std::vector<int> flow_sign_vec;
+        std::vector<double> froude_vec;
+
+        // Chain + random edges
+        for (int i = 0; i < n_active - 1; ++i) {
+            a1.push_back(i);
+            a2.push_back(i + 1);
+            weights.push_back(dist_w(rng));
+            flow_sign_vec.push_back((dist_sgn(rng) < 0) ? -1 : 1);
+            froude_vec.push_back(dist_fr(rng));
+        }
+
+        const int n_extra = 1 + (rng() % 2);
+        for (int i = 0; i < n_extra; ++i) {
+            const int u = rng() % n_active;
+            const int v = rng() % n_active;
+            if (u != v) {
+                a1.push_back(u);
+                a2.push_back(v);
+                weights.push_back(dist_w(rng));
+                flow_sign_vec.push_back((dist_sgn(rng) < 0) ? -1 : 1);
+                froude_vec.push_back(dist_fr(rng));
+            }
+        }
+
+        const int n_conduits = static_cast<int>(a1.size());
+
+        // Random storage
+        std::vector<double> S_vec(static_cast<std::size_t>(n_active));
+        for (int i = 0; i < n_active; ++i)
+            S_vec[static_cast<std::size_t>(i)] = dist_S(rng);
+
+        // Build S-orthonormal basis (same as above)
+        std::vector<double> V(static_cast<std::size_t>(n_active * k), 0.0);
+        for (int j = 0; j < k; ++j) {
+            for (int i = 0; i < n_active; ++i) {
+                V[static_cast<std::size_t>(j * n_active + i)] =
+                    (dist_sgn(rng) < 0 ? -1.0 : 1.0) * dist_w(rng);
+            }
+        }
+        std::vector<double> P(static_cast<std::size_t>(n_active * k), 0.0);
+        for (int j = 0; j < k; ++j) {
+            for (int i = 0; i < n_active; ++i)
+                P[static_cast<std::size_t>(j * n_active + i)] = V[static_cast<std::size_t>(j * n_active + i)];
+
+            for (int j2 = 0; j2 < j; ++j2) {
+                double dot = 0.0;
+                for (int i = 0; i < n_active; ++i) {
+                    dot += P[static_cast<std::size_t>(j2 * n_active + i)] * S_vec[static_cast<std::size_t>(i)]
+                         * P[static_cast<std::size_t>(j * n_active + i)];
+                }
+                for (int i = 0; i < n_active; ++i) {
+                    P[static_cast<std::size_t>(j * n_active + i)] -=
+                        dot * P[static_cast<std::size_t>(j2 * n_active + i)];
+                }
+            }
+
+            double norm_sq = 0.0;
+            for (int i = 0; i < n_active; ++i) {
+                norm_sq += P[static_cast<std::size_t>(j * n_active + i)] * S_vec[static_cast<std::size_t>(i)]
+                        * P[static_cast<std::size_t>(j * n_active + i)];
+            }
+            if (norm_sq > 1.0e-14) {
+                const double norm = std::sqrt(norm_sq);
+                for (int i = 0; i < n_active; ++i)
+                    P[static_cast<std::size_t>(j * n_active + i)] /= norm;
+            }
+        }
+
+        // Call assembleDirectionalReduced (normal)
+        DirectionalOperatorConfig cfg;
+        cfg.enabled = true;
+        cfg.fr_lo = 0.8;
+        cfg.fr_hi = 1.2;
+        cfg.use_drop = false;
+
+        std::vector<double> M_normal;
+        int n_gated = 0;
+        bool ok = assembleDirectionalReduced(
+            P.data(), k, n_active, n_conduits,
+            a1.data(), a2.data(), weights.data(),
+            flow_sign_vec.data(), froude_vec.data(), cfg,
+            M_normal, &n_gated);
+        ASSERT_TRUE(ok);
+
+        if (n_gated == 0) continue;  // Skip if no gates fired
+
+        // Add kinematic diagonal (normal case)
+        std::vector<double> diag_contrib(static_cast<std::size_t>(n_active), 0.0);
+        for (int i = 0; i < n_active; ++i)
+            diag_contrib[static_cast<std::size_t>(i)] = dist_kin(rng);
+
+        const auto uk = static_cast<std::size_t>(k);
+        const auto un = static_cast<std::size_t>(n_active);
+        for (std::size_t p = 0; p < uk; ++p) {
+            for (std::size_t q = 0; q < uk; ++q) {
+                double contrib = 0.0;
+                for (int i = 0; i < n_active; ++i) {
+                    contrib += diag_contrib[static_cast<std::size_t>(i)]
+                            * P[p * un + static_cast<std::size_t>(i)]
+                            * P[q * un + static_cast<std::size_t>(i)];
+                }
+                M_normal[p * uk + q] += contrib;
+            }
+        }
+
+        // Form sym(M) for normal case
+        std::vector<double> M_sym_normal(uk * uk, 0.0);
+        for (std::size_t p = 0; p < uk; ++p) {
+            for (std::size_t q = 0; q < uk; ++q) {
+                M_sym_normal[p * uk + q] = 0.5 * (M_normal[p * uk + q] + M_normal[q * uk + p]);
+            }
+        }
+        double min_eig_normal = minEigenvalueSymmetric(M_sym_normal, k);
+
+        // Mutated case: subtract the upstream diagonal contribution of gated edges
+        std::vector<double> M_mut = M_normal;
+        for (int c = 0; c < n_conduits; ++c) {
+            const int i1 = a1[static_cast<std::size_t>(c)], i2 = a2[static_cast<std::size_t>(c)];
+            const double w = weights[static_cast<std::size_t>(c)];
+            if (w <= 0.0 || i1 < 0 || i2 < 0) continue;
+
+            // Determine gate
+            int u = i1, d = i2;
+            double g = 0.0;
+            const int sgn = flow_sign_vec[static_cast<std::size_t>(c)];
+            if (sgn != 0) {
+                if (sgn < 0) std::swap(u, d);
+                g = upstreamGate(std::fabs(froude_vec[static_cast<std::size_t>(c)]), cfg);
+            }
+            if (g <= 0.0) continue;
+
+            // Remove upstream diagonal contribution: g·w·P[p,u]·P[q,u]
+            const auto uu = static_cast<std::size_t>(u);
+            for (std::size_t p = 0; p < uk; ++p) {
+                const double Ppu = P[p * un + uu];
+                for (std::size_t q = 0; q < uk; ++q) {
+                    const double Pqu = P[q * un + uu];
+                    M_mut[p * uk + q] -= g * w * Ppu * Pqu;
+                }
+            }
+        }
+
+        // Form sym(M) for mutated case
+        std::vector<double> M_sym_mut(uk * uk, 0.0);
+        for (std::size_t p = 0; p < uk; ++p) {
+            for (std::size_t q = 0; q < uk; ++q) {
+                M_sym_mut[p * uk + q] = 0.5 * (M_mut[p * uk + q] + M_mut[q * uk + p]);
+            }
+        }
+        double min_eig_mut = minEigenvalueSymmetric(M_sym_mut, k);
+
+        // Check that mutated case has a negative eigenvalue
+        if (min_eig_mut < -1.0e-10) {
+            any_failed = true;
+            std::cout << "Mutation succeeded: normal min_eig=" << min_eig_normal
+                      << ", mutated min_eig=" << min_eig_mut << std::endl;
+        }
+    }
+
+    EXPECT_TRUE(any_failed) << "Mutation check should produce at least one failure across trials";
 }

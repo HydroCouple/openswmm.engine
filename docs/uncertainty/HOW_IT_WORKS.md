@@ -583,6 +583,15 @@ signal: once a reach surcharges, velocities collapse toward zero (Fr → 0)
 and the symmetric surrogate becomes *more* accurate again, not less — so a
 high surcharge fraction is not itself a trust concern.
 
+**The modal channel lacks a transport J (PR H19).** The 1D operator is J − R:
+R (the symmetric conductance, the kinematic upstream diagonal and the grounding) only
+loses energy, and J (the skew part of the Froude gate) only moves it. The kinematic term
+sits on the upstream diagonal alone, so it damps a deviation without passing it downstream.
+The Manning channel does not notice, because its target φ already carries the transfer;
+additive sources (rain, inflow, 1D–2D exchange) have no target, and their steady response
+is the transfer itself. H19 therefore routes them through a full-order one-way operator
+(ADDITIVE_CHANNEL.md), which is the missing J written out in full.
+
 **The Manning channel comes from the solver's own flows (PR H17).** Manning
 flow scales as 1/n. Raise every roughness by a small fraction and each
 conduit loses that fraction of its capacity; the heads then shift until every
