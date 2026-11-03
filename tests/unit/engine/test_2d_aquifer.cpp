@@ -3541,39 +3541,56 @@ TEST(Aquifer2D, DarcyVelocityReconstructsAPlanarWaterTable) {
     finish(r);
 }
 
+namespace {
+
+/**
+ * @brief Five-minute deck of three 10 m groundwater quads in a row on a flat water table.
+ * @param[in] zs Aquifer thickness of every cell (m).
+ * @param[in] hg0 Initial saturated thickness of every cell (m).
+ * @param[in] boundaries [2D_AQUIFER_BOUNDARIES] rows, or empty for none.
+ */
+std::string darcyStripDeck(double zs, double hg0, const std::string& boundaries) {
+    constexpr int nx = 3;
+    std::ostringstream m;
+    m << "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\n"
+         "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
+         "END_DATE 01/01/2026\nEND_TIME 00:05:00\n"
+         "REPORT_STEP 00:01:00\nWET_STEP 00:01:00\nDRY_STEP 00:01:00\nROUTING_STEP 5\n"
+         "ALLOW_PONDING NO\n\n"
+         "[JUNCTIONS]\nJ1 0.0 3.0 0 0 0\n\n[OUTFALLS]\nO1 -1.0 FREE NO\n\n"
+         "[CONDUITS]\nC1 J1 O1 30.0 0.013 0 0 0\n\n[XSECTIONS]\nC1 CIRCULAR 0.5 0 0 0 1\n\n"
+         "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\n"
+         "DRY_DEPTH 0.001\nCOUPLING_CD 0.7\nREPORT_2D NO\n\n[2D_VERTICES]\n";
+    for (int j = 0; j <= 1; ++j)
+        for (int i = 0; i <= nx; ++i)
+            m << 10.0 * i << " " << 10.0 * j << " -10.0\n";
+    m << "\n[2D_QUADS]\n";
+    for (int i = 0; i < nx; ++i)
+        m << i << " " << i + 1 << " " << nx + 2 + i << " " << nx + 1 + i << " 0.03 0\n";
+    m << "\n[2D_INFILTRATION_DEFAULTS]\n*  CONSTANT  50.0  -  -  -  -\n\n"
+         "[2D_AQUIFER_OPTIONS]\nNODE_ENROLMENT ROWS\n\n[2D_AQUIFER]\n";
+    for (int i = 0; i < nx; ++i)
+        m << "CELL " << i + 1 << " 36 " << zs << " .45 .1 2 HG0 " << hg0 << "\n";
+    if (!boundaries.empty())
+        m << "\n[2D_AQUIFER_BOUNDARIES]\n" << boundaries;
+    m << "\n[REPORT]\nINPUT NO\n";
+    return m.str();
+}
+
+} // namespace
+
 // Darcy velocity display output at a FLOW boundary and in thin cells: a row of
 // three 10 m quads on a flat water table takes Q through the west edge of the
 // first cell. The boundary face is part of that cell's Perot moment, so it
 // shows q = Q·(dx/2) / (A·hg) (the east face carries almost nothing yet). A
 // column that cannot reach 1 cm (ZS = 8 mm) reports zero instead of a spike.
 TEST(Aquifer2D, DarcyVelocityCountsBoundaryEdgesAndSkipsThinCells) {
-    constexpr int nx = 3;
     constexpr double Q = 1.0e-6; // m3/s through the west edge of cell 1
     const auto deck = [&](double zs, double hg0) {
-        std::ostringstream m;
-        m << "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\n"
-             "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
-             "END_DATE 01/01/2026\nEND_TIME 00:05:00\n"
-             "REPORT_STEP 00:01:00\nWET_STEP 00:01:00\nDRY_STEP 00:01:00\nROUTING_STEP 5\n"
-             "ALLOW_PONDING NO\n\n"
-             "[JUNCTIONS]\nJ1 0.0 3.0 0 0 0\n\n[OUTFALLS]\nO1 -1.0 FREE NO\n\n"
-             "[CONDUITS]\nC1 J1 O1 30.0 0.013 0 0 0\n\n[XSECTIONS]\nC1 CIRCULAR 0.5 0 0 0 1\n\n"
-             "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\n"
-             "DRY_DEPTH 0.001\nCOUPLING_CD 0.7\nREPORT_2D NO\n\n[2D_VERTICES]\n";
-        for (int j = 0; j <= 1; ++j)
-            for (int i = 0; i <= nx; ++i)
-                m << 10.0 * i << " " << 10.0 * j << " -10.0\n";
-        m << "\n[2D_QUADS]\n";
-        for (int i = 0; i < nx; ++i)
-            m << i << " " << i + 1 << " " << nx + 2 + i << " " << nx + 1 + i << " 0.03 0\n";
-        m << "\n[2D_INFILTRATION_DEFAULTS]\n*  CONSTANT  50.0  -  -  -  -\n\n"
-             "[2D_AQUIFER_OPTIONS]\nNODE_ENROLMENT ROWS\n\n[2D_AQUIFER]\n";
-        for (int i = 0; i < nx; ++i)
-            m << "CELL " << i + 1 << " 36 " << zs << " .45 .1 2 HG0 " << hg0 << "\n";
         // Local edge k runs from vertex k + 1 to k + 2: edge 2 (v3 -> v0) is the west side.
-        m << "\n[2D_AQUIFER_BOUNDARIES]\nCELL 1 EDGE 2 FLOW CONST " << Q << "\n"
-          << "\n[REPORT]\nINPUT NO\n";
-        return m.str();
+        std::ostringstream boundary;
+        boundary << "CELL 1 EDGE 2 FLOW CONST " << Q << "\n";
+        return darcyStripDeck(zs, hg0, boundary.str());
     };
     const auto darcy = [](DeckRun& r, int c, double& qx, double& qy) {
         ASSERT_EQ(swmm_gw2d_get_cell(r.e, c, SWMM_GW2D_VAR_QX, &qx), SWMM_OK);
@@ -3604,6 +3621,35 @@ TEST(Aquifer2D, DarcyVelocityCountsBoundaryEdgesAndSkipsThinCells) {
         EXPECT_EQ(qy, 0.0);
         finish(r);
     }
+}
+
+// A coupler's runtime FLOW prescription (kind 2, outward m3/s) on the same west
+// edge is part of the Perot moment too, like an authored FLOW boundary: the
+// cell drains westward at q = -Q·(dx/2) / (A·hg).
+TEST(Aquifer2D, DarcyVelocityCountsRuntimeFlowBoundaryEdges) {
+    constexpr double Q = 1.0e-6; // m3/s out through the west edge of cell 1
+    DeckRun r = openDeck("darcy_velocity_runtime_flow", darcyStripDeck(10.0, 4.9, ""));
+    ASSERT_TRUE(r.opened);
+    ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(r.e, 1), SWMM_OK);
+    r.started = true;
+    ASSERT_EQ(r.eng->surfaceRouter2D().subsurface().transport().n_species, 0);
+    // Local edge 2 (v3 -> v0) is the west side.
+    ASSERT_EQ(swmm_gw2d_set_runtime_boundary(r.e, 0, 2, 2, Q, nullptr, 0), SWMM_OK);
+    double elapsed = 0.0;
+    int steps = 0, rc = SWMM_OK;
+    while ((rc = swmm_engine_step(r.e, &elapsed)) == SWMM_OK && elapsed > 0.0)
+        ++steps;
+    ASSERT_EQ(rc, SWMM_OK) << "the run stopped early";
+    ASSERT_GT(steps, 1);
+    const auto& g = r.eng->surfaceRouter2D().subsurface().state();
+    double qx = 0, qy = 0;
+    ASSERT_EQ(swmm_gw2d_get_cell(r.e, 0, SWMM_GW2D_VAR_QX, &qx), SWMM_OK);
+    ASSERT_EQ(swmm_gw2d_get_cell(r.e, 0, SWMM_GW2D_VAR_QY, &qy), SWMM_OK);
+    const double expected = -Q * 5.0 / (100.0 * g.hg[0]);
+    EXPECT_NEAR(qx, expected, 0.02 * std::abs(expected)) << "the runtime FLOW face is in the moment";
+    EXPECT_NEAR(qy, 0.0, 1e-3 * std::abs(expected));
+    finish(r);
 }
 
 TEST(AquiferReview, UnsaturatedNodeBedUsesDisconnectedHeadWithoutTransport) {

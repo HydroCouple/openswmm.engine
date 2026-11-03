@@ -1667,7 +1667,7 @@ void Default2DOutputPlugin::createGroundwaterDatasets(const SimulationSnapshot& 
          "m"},
         {"Mesh2_face_gw_hg", "saturated thickness", "m"},
         {"Mesh2_face_gw_hu",
-         "closure A unsaturated storage (equivalent depth of water; 0 under closure B)", "m"},
+         "unsaturated storage (equivalent depth of water; the sigma column total under closure B)", "m"},
         {"Mesh2_face_gw_recharge",
          "recharge from the unsaturated to the saturated zone, positive down, negative = capillary rise (last firing, held)",
          "m s-1"},

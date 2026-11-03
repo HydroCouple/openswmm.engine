@@ -327,7 +327,7 @@ struct SimulationSnapshot {
     std::vector<double> gw2d_table_elev; ///< water-table elevation (m) = bed + hg
     std::vector<double> gw2d_hg;         ///< saturated thickness (m)
     std::vector<double>
-        gw2d_hu; ///< closure A bulk unsaturated storage (m of water); 0 under closure B
+        gw2d_hu; ///< bulk unsaturated storage (m of water); the sigma column total under closure B
     std::vector<double> gw2d_recharge; ///< q0 (m/s), + down, − capillary rise
     std::vector<double> gw2d_lateral;  ///< net lateral Darcy into the cell (m³/s)
     std::vector<double>
