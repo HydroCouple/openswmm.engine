@@ -9,6 +9,9 @@ install(TARGETS openswmm_model_component LIBRARY DESTINATION lib/hydrocouple/com
 
 # Generic component; the existing FVQual module remains independently available.
 add_library(openswmm_engine_component MODULE OpenSWMMEngineComponent.cpp)
+if(OPENSWMM_BUILD_2D AND OPENSWMM_2D_HDF5_OUTPUT)
+    target_compile_definitions(openswmm_engine_component PRIVATE OPENSWMM_COMPONENT_2D_RESULTS=1)
+endif()
 target_link_libraries(openswmm_engine_component PRIVATE openswmm::engine HydroCouple::HydroCouple nlohmann_json::nlohmann_json)
 set_target_properties(openswmm_engine_component PROPERTIES
     CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON

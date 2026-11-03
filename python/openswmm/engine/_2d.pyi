@@ -205,6 +205,10 @@ class Surface2D:
         """
         ...
 
+    def set_results_file(self, path: str) -> None:
+        """Bind a fresh absolute HDF5 destination before initialize; opens at start."""
+        ...
+
     def prepare_for_edit(self) -> None:
         """Make the parsed 2D mesh editable without a full ``initialize()``."""
         ...
@@ -934,6 +938,14 @@ class Surface2D:
         @return: Boundary edge count.
         @rtype: int
         @raise EngineError: If the C API call fails.
+        """
+        ...
+
+    def edge_is_exterior(self, cell: int, edge: int) -> bool:
+        """Inspect native exterior-edge classification after prepare_for_edit().
+
+        Invalid indices or unprepared storage raise EngineError. Does not
+        initialize the solver, resolve neighbours or validate manifold topology.
         """
         ...
 

@@ -15,6 +15,9 @@
 #include <hydrocoupletemporal.h>
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_output.h>
+#ifdef OPENSWMM_HAS_2D
+#include <openswmm/engine/openswmm_2d.h>
+#endif
 #include <nlohmann/json.hpp>
 #include <filesystem>
 #include <fstream>
@@ -287,13 +290,20 @@ protected:
      * @param[in,out] native Fixture-owned allocated engine, mutated to a running state with saved
      *     results.
      */
-    void nativeStart(NativeEngine& native) {
+    void nativeStart(NativeEngine& native, bool surface = false) {
         fs::create_directories(directory / "native");
+        if (surface)
+            fs::remove(directory / "native/model.2d.h5");
         ASSERT_EQ(swmm_engine_open(native.value, model.string().c_str(),
                                    (directory / "native/model.rpt").string().c_str(),
                                    (directory / "native/model.out").string().c_str(), nullptr),
                   0);
-        ASSERT_EQ(swmm_engine_initialize(native.value), 0);
+#ifdef OPENSWMM_HAS_2D
+        if (surface)
+            ASSERT_EQ(swmm_2d_set_results_file(native.value,
+                        (directory / "native/model.2d.h5").string().c_str()), 0);
+#endif
+        ASSERT_EQ(swmm_engine_initialize(native.value), 0) << swmm_get_last_error_msg(native.value);
         ASSERT_EQ(swmm_engine_start(native.value, 1), 0);
     }
     /**
@@ -333,9 +343,9 @@ protected:
      * wrapped/model.out bytes. Fatal assertions can leave a partial component lifecycle, while local
      * NativeEngine still destroys its handle.
      */
-    void runUncoupledAndCompare() {
+    void runUncoupledAndCompare(bool surface = false, bool coupled = false) {
         NativeEngine native;
-        nativeStart(native);
+        nativeStart(native, surface);
         ready();
         double elapsed = 0;
         int guard = 0;
@@ -343,6 +353,18 @@ protected:
             ASSERT_EQ(swmm_engine_step(native.value, &elapsed), 0);
         } while (elapsed > 0 && ++guard < 10000);
         ASSERT_LT(guard, 10000);
+#ifdef OPENSWMM_HAS_2D
+        if (coupled) {
+            int cells = 0;
+            ASSERT_EQ(swmm_2d_cell_count(native.value, &cells), 0);
+            std::vector<double> volume(cells);
+            ASSERT_EQ(swmm_2d_get_coupling_volume_bulk(native.value, volume.data()), 0);
+            double moved = 0;
+            for (double value : volume) moved += std::abs(value);
+            EXPECT_GT(moved, 0); // exercise physical 1D/2D exchange, not only two independent models
+            std::ofstream(directory / "native-coupling.json") << Json(volume).dump(2);
+        }
+#endif
         ASSERT_EQ(swmm_engine_end(native.value), 0);
         ASSERT_EQ(swmm_engine_report(native.value), 0);
         ASSERT_EQ(swmm_engine_close(native.value), 0);
@@ -387,6 +409,137 @@ TEST_F(EngineComponent, AuthoredExtraOutputIsReportedAndRefusedBeforeExecution) 
 TEST_F(EngineComponent, UncoupledNativeAndWrappedOutputAreByteIdentical) {
     runUncoupledAndCompare();
 }
+#ifdef OPENSWMM_COMPONENT_2D_RESULTS
+namespace {
+void surfaceWaterModel(const fs::path& model) {
+    auto deck = bytes(model);
+    deck.replace(deck.find("HEAT_TRANSPORT ON"), 17, "HEAT_TRANSPORT OFF\nIGNORE_QUALITY YES");
+    std::ofstream(model) << deck << R"(
+[2D_OPTIONS]
+BACKEND CPU
+MAX_TIMESTEP 1
+RECONSTRUCTION_ORDER 1
+REPORT_2D YES
+OUTPUT_FILE authored-shared.h5
+TRANSPORT_POLLUTANTS NO
+TRANSPORT_MSX NO
+TRANSPORT_AGE NO
+TRANSPORT_TEMPERATURE NO
+[2D_VERTICES]
+0 0 0
+10 0 0
+10 10 0
+0 10 0
+20 0 0
+20 10 0
+[2D_TRIANGLES]
+0 1 2 .03 .1
+0 2 3 .03 .2
+[2D_QUADS]
+1 4 5 2 .035 .15
+[2D_BOUNDARY_CONDITIONS]
+0 2 SPECIFIED_FLOW .001
+)";
+}
+}
+TEST_F(EngineComponent, CompleteSurfaceWaterMatchesNativeWithoutTouchingAuthoredDestination) {
+    surfaceWaterModel(model);
+    const auto sentinel = directory / "authored-shared.h5";
+    std::ofstream(sentinel) << "keep authored destination";
+    runUncoupledAndCompare(true);
+    EXPECT_EQ(bytes(sentinel), "keep authored destination");
+    EXPECT_TRUE(fs::exists(directory / "native/model.2d.h5"));
+    EXPECT_TRUE(fs::exists(directory / "wrapped/model.2d.h5"));
+    const auto m = Json::parse(read<std::string>(output(*component, "model_metadata")));
+    EXPECT_EQ(m["execution_profile"], "native_cpu_surface_water/1");
+    EXPECT_EQ(m["result_files"]["surface"], "model.2d.h5");
+}
+
+TEST_F(EngineComponent, SurfaceInstancesKeepIndependentResultsWhenAdvancedTogether) {
+    surfaceWaterModel(model);
+    fs::remove_all(directory / "peer");
+    ready();
+    auto peer = library.create();
+    ASSERT_NE(peer, nullptr);
+    peer->setReferenceDirectory(directory.string());
+    argument(*peer, "hydrocouple.instance_id", {{"values", {"peer"}}});
+    auto config = configuration;
+    config["output_directory"] = "peer";
+    argument(*peer, "configuration", config);
+    peer->initialize();
+    ASSERT_EQ(peer->status(), Status::Initialized) << diagnostics(*peer);
+    ASSERT_TRUE(peer->validate().empty()) << diagnostics(*peer);
+    peer->prepare();
+    ASSERT_EQ(peer->status(), Status::Updated) << diagnostics(*peer);
+    int guard = 0;
+    while ((component->status() == Status::Updated || peer->status() == Status::Updated) &&
+           ++guard < 10000) {
+        if (component->status() == Status::Updated) component->update();
+        if (peer->status() == Status::Updated) peer->update();
+    }
+    ASSERT_EQ(component->status(), Status::Done) << diagnostics(*component);
+    ASSERT_EQ(peer->status(), Status::Done) << diagnostics(*peer);
+    component->finish(); peer->finish();
+    ASSERT_EQ(component->status(), Status::Finished);
+    ASSERT_EQ(peer->status(), Status::Finished);
+    EXPECT_EQ(bytes(directory / "wrapped/model.out"), bytes(directory / "peer/model.out"));
+    EXPECT_TRUE(fs::exists(directory / "wrapped/model.2d.h5"));
+    EXPECT_TRUE(fs::exists(directory / "peer/model.2d.h5"));
+    EXPECT_FALSE(fs::exists(directory / "authored-shared.h5"));
+}
+
+TEST_F(EngineComponent, CompleteCoupledSurfaceWaterMatchesNativeWithActualExchange) {
+    surfaceWaterModel(model);
+    std::ofstream(model, std::ios::app) << "\n[STORAGE]\nLake -10 5 2 FUNCTIONAL 0 0 100 0 0\n[2D_TRIANGLE_NODE_MAP]\n0 Lake .6 .01\n";
+    runUncoupledAndCompare(true, true);
+}
+
+TEST_F(EngineComponent, SurfaceTransportRemainsRefusedBeforeCreatingRunOutputs) {
+    surfaceWaterModel(model);
+    std::ofstream(model, std::ios::app) << "\n[2D_OPTIONS]\nTRANSPORT_AGE YES\n";
+    initialize();
+    EXPECT_FALSE(component->validate().empty());
+    component->prepare();
+    EXPECT_EQ(component->status(), Status::Failed);
+    EXPECT_FALSE(fs::exists(directory / "wrapped"));
+    EXPECT_FALSE(fs::exists(directory / "authored-shared.h5"));
+}
+
+TEST_F(EngineComponent, NativeSurfaceResultsBindingAddsWriterWhenModelHasNoOutputSlot) {
+    surfaceWaterModel(model);
+    auto deck = bytes(model);
+    const std::string outputLine = "OUTPUT_FILE authored-shared.h5\n";
+    deck.erase(deck.find(outputLine), outputLine.size());
+    std::ofstream(model) << deck;
+    runUncoupledAndCompare(true);
+    EXPECT_TRUE(fs::exists(directory / "native/model.2d.h5"));
+    EXPECT_TRUE(fs::exists(directory / "wrapped/model.2d.h5"));
+}
+
+TEST_F(EngineComponent, NativeSurfaceResultsBindingRefusesLifecycleAndExistingFiles) {
+    surfaceWaterModel(model);
+    NativeEngine native;
+    const auto destination = directory / "fresh.h5";
+    fs::remove(destination);
+    EXPECT_EQ(swmm_2d_set_results_file(nullptr, destination.string().c_str()), SWMM_ERR_BADHANDLE);
+    EXPECT_EQ(swmm_2d_set_results_file(native.value, destination.string().c_str()), SWMM_ERR_LIFECYCLE);
+    ASSERT_EQ(swmm_engine_open_metadata(native.value, model.string().c_str()), 0);
+    EXPECT_EQ(swmm_2d_set_results_file(native.value, destination.string().c_str()), SWMM_ERR_LIFECYCLE);
+    ASSERT_EQ(swmm_engine_close(native.value), 0);
+    ASSERT_EQ(swmm_engine_open(native.value, model.string().c_str(), nullptr, nullptr, nullptr), 0);
+    EXPECT_EQ(swmm_2d_set_results_file(native.value, nullptr), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_2d_set_results_file(native.value, ""), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_2d_set_results_file(native.value, "relative.h5"), SWMM_ERR_BADPARAM);
+    ASSERT_EQ(swmm_2d_set_results_file(native.value, destination.string().c_str()), 0);
+    EXPECT_FALSE(fs::exists(destination));
+    std::ofstream(destination) << "existing result";
+    ASSERT_EQ(swmm_engine_initialize(native.value), 0) << swmm_get_last_error_msg(native.value);
+    EXPECT_EQ(swmm_2d_set_results_file(native.value, destination.string().c_str()), SWMM_ERR_LIFECYCLE);
+    EXPECT_NE(swmm_engine_start(native.value, 1), 0);
+    EXPECT_EQ(bytes(destination), "existing result");
+    EXPECT_FALSE(fs::exists(directory / "authored-shared.h5"));
+}
+#endif
 TEST_F(EngineComponent, QualifiedNetworkRolePreservesNativeOutput) {
     configuration["role"] = "network_only";
     runUncoupledAndCompare();
@@ -720,6 +873,12 @@ Stack AGGREGATE 6 .4 100
 Stack BOTTOM .5 0
 [LID_NODES]
 Store Stack 10 BOTTOM SEALED
+[ORIFICES]
+Drain Store O BOTTOM 0 .6 NO 0
+[XSECTIONS]
+Drain CIRCULAR .1 0 0 0
+[LID_NODE_OUTLETS]
+Drain 3 BOTTOM
 [LID_RICHARDS]
 Stack OPTIONS 4 1e-7 1e-5 30
 Stack 2 .03 2 1.6 .5 .0001
@@ -730,10 +889,199 @@ Stack 3 .03 2 1.6 .5 .0001
     EXPECT_EQ(m["lids"]["controls"][0]["node_flow_model"], "RICHARDS");
     EXPECT_EQ(m["lids"]["node_assignments"][0],
               Json({{"node", "Store"}, {"control", "Stack"}, {"bottom", "SEALED"}}));
+    EXPECT_EQ(m["lids"]["node_outlets"],
+              Json::array({{{"link", "Drain"}, {"layer", 3}, {"anchor", "BOTTOM"}}}));
     EXPECT_FALSE(fs::exists(directory / "wrapped"));
 }
 
 #ifdef OPENSWMM_HAS_2D
+TEST_F(EngineComponent, SurfaceBoundaryCataloguePreservesAuthoredUnitsAndReferences) {
+    std::ofstream(model, std::ios::app) << R"(
+[2D_OPTIONS]
+REPORT_2D NO
+[2D_VERTICES]
+0 0 10
+10 0 10
+10 10 10
+0 10 10
+20 0 10
+20 10 10
+[2D_TRIANGLES]
+0 1 2 .03 0
+[2D_QUADS]
+1 4 5 2 .03 0
+[2D_BOUNDARY_CONDITIONS]
+0 1 SPECIFIED_STAGE 12
+0 2 NORMAL_FLOW .03
+1 0 TS_FLOW Inlet
+1 1 RATING_CURVE Rating
+[2D_BOUNDARY_QUALITY]
+0 1 A 7
+[TIMESERIES]
+Inlet 0:00 2
+Inlet 0:10 3
+[CURVES]
+Rating RATING 0 0
+Rating 1 2
+)";
+    initialize();
+    const auto m = Json::parse(read<std::string>(output(*component, "model_metadata")));
+    const auto& rows = m.at("surface").at("boundaries");
+    ASSERT_EQ(rows.size(), 5u); // shared interior edge is absent; default WALL is retained
+    EXPECT_EQ(rows[0]["cell"], 0);
+    EXPECT_EQ(rows[0]["edge"], 1);
+    EXPECT_EQ(rows[0]["type"], "SPECIFIED_STAGE");
+    EXPECT_DOUBLE_EQ(rows[0]["head_m"], 12 * .3048);
+    EXPECT_EQ(rows[1]["type"], "NORMAL_FLOW");
+    EXPECT_DOUBLE_EQ(rows[1]["slope"], .03);
+    EXPECT_EQ(rows[2]["type"], "SPECIFIED_FLOW");
+    EXPECT_EQ(rows[2]["timeseries"], "Inlet");
+    EXPECT_EQ(rows[3]["type"], "RATING_CURVE");
+    EXPECT_EQ(rows[3]["rating_curve"], "Rating");
+    EXPECT_EQ(rows[4]["type"], "WALL");
+    EXPECT_EQ(m["surface"]["boundary_quality"][0],
+              Json({{"cell", 0}, {"edge", 1}, {"species", "A"},
+                    {"concentration_native", 7}}));
+    EXPECT_FALSE(m["runnable"]);
+    EXPECT_FALSE(fs::exists(directory / "wrapped"));
+}
+
+TEST_F(EngineComponent, SiMeshBoundaryCatalogueDoesNotScaleTwice) {
+    std::ofstream(model, std::ios::app) << R"(
+[2D_OPTIONS]
+REPORT_2D NO
+[2D_VERTICES]
+;; UNITS: SI (m)
+0 0 10
+10 0 10
+10 10 10
+[2D_TRIANGLES]
+0 1 2 .03 0
+[2D_BOUNDARY_CONDITIONS]
+0 0 SPECIFIED_STAGE 12
+0 1 SPECIFIED_FLOW 2
+0 2 TS_STAGE Tailwater
+[TIMESERIES]
+Tailwater 0:00 12
+Tailwater 0:10 13
+)";
+    initialize();
+    const auto m = Json::parse(read<std::string>(output(*component, "model_metadata")));
+    const auto& rows = m.at("surface").at("boundaries");
+    EXPECT_DOUBLE_EQ(rows[0]["head_m"], 12);
+    EXPECT_DOUBLE_EQ(rows[1]["flow_native"], 2);
+    EXPECT_EQ(rows[1]["units"], "CFS/m"); // flow signals use project units, even for an SI mesh
+    EXPECT_EQ(rows[2]["timeseries"], "Tailwater");
+    EXPECT_EQ(rows[2]["timeseries_units"], "ft");
+    EXPECT_FALSE(rows[2].contains("head_m"));
+    EXPECT_TRUE(m["surface"]["boundary_quality"].empty());
+    EXPECT_FALSE(fs::exists(directory / "wrapped"));
+}
+
+TEST_F(EngineComponent, SiProjectBoundaryCataloguePreservesProjectSignals) {
+    auto deck = bytes(model);
+    deck.replace(deck.find("FLOW_UNITS CFS"), 14, "FLOW_UNITS CMS");
+    std::ofstream(model) << deck << R"(
+[2D_OPTIONS]
+REPORT_2D NO
+[2D_VERTICES]
+0 0 10
+10 0 10
+10 10 10
+[2D_TRIANGLES]
+0 1 2 .03 0
+[2D_BOUNDARY_CONDITIONS]
+0 0 SPECIFIED_STAGE 12
+0 1 SPECIFIED_FLOW 2
+0 2 TS_STAGE Tailwater
+[TIMESERIES]
+Tailwater 0:00 12
+)";
+    initialize();
+    const auto m = Json::parse(read<std::string>(output(*component, "model_metadata")));
+    const auto& rows = m.at("surface").at("boundaries");
+    ASSERT_EQ(rows.size(), 3u);
+    EXPECT_DOUBLE_EQ(rows[0]["head_m"], 12);
+    EXPECT_DOUBLE_EQ(rows[1]["flow_native"], 2);
+    EXPECT_EQ(rows[1]["units"], "CMS/m");
+    EXPECT_EQ(rows[2]["timeseries_units"], "m");
+    EXPECT_FALSE(rows[2].contains("head_m"));
+    EXPECT_FALSE(fs::exists(directory / "wrapped"));
+}
+
+TEST_F(EngineComponent, GroundwaterBoundaryAndSourceCatalogueRetainsNativeSemantics) {
+    std::ofstream(model, std::ios::app) << R"(
+[2D_OPTIONS]
+REPORT_2D NO
+[2D_VERTICES]
+0 0 10
+10 0 10
+10 10 10
+[2D_TRIANGLES]
+0 1 2 .03 0 Soil
+[2D_AQUIFER]
+* 1 4 .45 .1 2
+[2D_AQUIFER_OPTIONS]
+GW_CLOCK INDEPENDENT
+GW_BASE_STEP .125
+[2D_AQUIFER_BOUNDARIES]
+CELL 1 EDGE 0 HEAD CONST 8
+CELL 1 EDGE 1 FLOW SERIES Pump
+[GW_BOUNDARY_QUALITY]
+1 0 A CONC 3
+1 0 A MASSFLUX 2
+[GW_SOURCES]
+Well XY 2 3 FLOW Pump SCALE .5 A CONC 4 B MASS 2
+Global * FLOW 0 A MASS 1
+Tagged TAG Soil FLOW -.01
+Cell CELL 1 FLOW .001
+[TIMESERIES]
+Pump 0:00 .001
+Pump 0:10 -.001
+)";
+    const std::string longSeries(300, 'P');
+    auto deck = bytes(model);
+    for (std::size_t pos = 0; (pos = deck.find("Pump", pos)) != std::string::npos;
+         pos += longSeries.size())
+        deck.replace(pos, 4, longSeries);
+    std::ofstream(model) << deck;
+    initialize();
+    const auto m = Json::parse(read<std::string>(output(*component, "model_metadata")));
+    const auto& gw = m.at("explicit_groundwater");
+    EXPECT_EQ(gw["options"]["GW_CLOCK"], "INDEPENDENT");
+    EXPECT_DOUBLE_EQ(std::stod(gw["options"]["GW_BASE_STEP"].get<std::string>()), .125);
+    ASSERT_EQ(gw.at("boundaries").size(), 2u);
+    EXPECT_EQ(gw["boundaries"][0],
+              Json({{"cell", 0}, {"edge", 0}, {"type", "HEAD"},
+                    {"value", 8}, {"units", "ft"}, {"timeseries", ""}}));
+    EXPECT_EQ(gw["boundaries"][1]["type"], "FLOW");
+    EXPECT_EQ(gw["boundaries"][1]["units"], "m3/s");
+    EXPECT_EQ(gw["boundaries"][1]["timeseries"], longSeries);
+    ASSERT_EQ(gw["boundary_quality"].size(), 2u);
+    EXPECT_EQ(gw["boundary_quality"][0]["kind"], "CONC");
+    EXPECT_EQ(gw["boundary_quality"][1]["kind"], "MASSFLUX");
+    const auto& source = gw.at("sources").at(0);
+    EXPECT_EQ(source["name"], "Well");
+    EXPECT_EQ(source["coordinates"], Json({2, 3}));
+    EXPECT_EQ(source["flow_timeseries"], longSeries);
+    EXPECT_DOUBLE_EQ(source["scale"], .5);
+    ASSERT_EQ(source["species_terms"].size(), 2u);
+    EXPECT_EQ(source["species_terms"][0]["species"], "A");
+    EXPECT_EQ(source["species_terms"][0]["kind"], "CONC");
+    EXPECT_EQ(source["species_terms"][1]["species"], "B");
+    EXPECT_EQ(source["species_terms"][1]["kind"], "MASS");
+    ASSERT_EQ(gw["sources"].size(), 4u);
+    EXPECT_EQ(gw["sources"][1]["scope"], "GLOBAL");
+    EXPECT_TRUE(gw["sources"][1]["cell"].is_null());
+    EXPECT_EQ(gw["sources"][2]["scope"], "TAG");
+    EXPECT_EQ(gw["sources"][2]["tag"], "Soil");
+    EXPECT_TRUE(gw["sources"][2]["cell"].is_null());
+    EXPECT_EQ(gw["sources"][3]["scope"], "CELL");
+    EXPECT_EQ(gw["sources"][3]["cell"], 0);
+    EXPECT_FALSE(m["runnable"]);
+    EXPECT_FALSE(fs::exists(directory / "wrapped"));
+}
+
 TEST_F(EngineComponent, MixedSurfaceGeometryAndRepeatedConnectionsAreReadWithoutPreparing) {
     std::ofstream(model, std::ios::app) << R"(
 [2D_OPTIONS]

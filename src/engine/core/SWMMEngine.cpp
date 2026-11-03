@@ -221,10 +221,11 @@ int SWMMEngine::open(const char* inp_path, const char* rpt_path, const char* out
     ctx_.reset();
     metadata_only_ = metadata_only;
 #ifdef OPENSWMM_HAS_2D
-    // Router-owned groundwater rows outlive ctx_.reset(). A fresh open must
-    // replace authoring (including derived lookup indexes), not append to it.
-    // Run initialization and hotstart deliberately retain these rows.
-    surface_router_.gwTransport().clear();
+    // Router-owned mesh/options/rows outlive ctx_.reset(). Replace the whole
+    // owner on a fresh open; otherwise a prior quad makes the next model's
+    // first triangle look like an out-of-order append. Member addresses used
+    // by ctx_.twod_io stay stable across move assignment.
+    surface_router_ = twoD::SurfaceRouter2D{};
 #endif
 
     // Zero the load-phase accumulators so a process that opens several models
@@ -1023,6 +1024,40 @@ int SWMMEngine::open(const char* inp_path, const char* rpt_path, const char* out
 // ============================================================================
 // initialize()
 // ============================================================================
+
+#ifdef OPENSWMM_HAS_2D
+int SWMMEngine::setSurfaceResultsFile(const char* path) noexcept {
+    if (metadata_only_ || ctx_.state != EngineState::OPENED)
+        return SWMM_ERR_WRONG_STATE;
+    if (!path || !path[0])
+        return SWMM_ERR_BADPARAM;
+#ifdef OPENSWMM_HAS_2D_HDF5_OUTPUT
+    try {
+        if (!io::utf8_path(path).is_absolute())
+            return SWMM_ERR_BADPARAM;
+        std::string destination(path);
+        if (!surface_output_plugin_) {
+            auto writer = std::make_unique<twoD::Default2DOutputPlugin>(destination);
+            writer->initialize({}, nullptr);
+            writer->validate(ctx_);
+            plugins_.add_output_plugin(writer.get());
+            surface_output_plugin_ = writer.release();
+        }
+        surface_router_.options().output_file = destination;
+        surface_output_plugin_->h5_path_ = std::move(destination);
+        surface_output_plugin_->checkpoint_fresh_ = true; // exclusive creation, also for ordinary runs
+        return SWMM_OK;
+    } catch (const std::bad_alloc&) {
+        return SWMM_ERR_MEMORY;
+    } catch (const std::exception& error) {
+        set_error(SWMM_ERR_BADPARAM, error.what());
+        return SWMM_ERR_BADPARAM;
+    }
+#else
+    return SWMM_ERR_PLUGIN;
+#endif
+}
+#endif
 
 int SWMMEngine::initialize() noexcept {
     if (metadata_only_) {

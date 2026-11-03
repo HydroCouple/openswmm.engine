@@ -21,12 +21,14 @@
 #ifdef OPENSWMM_HAS_2D
 #include <openswmm/engine/openswmm_2d.h>
 #include <openswmm/engine/openswmm_gw2d.h>
+#include <openswmm/engine/openswmm_gw_transport.h>
 #endif
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <map>
 #include <set>
+#include <cstdlib>
 
 namespace openswmm::couplers {
 namespace {
@@ -494,6 +496,12 @@ public:
                     throw std::runtime_error(
                         "Process configuration changed after initialization; create a new configured instance: " +
                         pathText(path));
+            if (surfaceExecution_) {
+                const char* backend = std::getenv("OPENSWMM_2D_BACKEND");
+                if (backend && backend[0] && std::string(backend) != "cpu" &&
+                    std::string(backend) != "CPU")
+                    throw std::invalid_argument("Surface component requires CPU backend override or no override");
+            }
             if (!fs::create_directories(output_))
                 throw std::invalid_argument(
                     "output_directory already exists; choose a fresh directory for each run/instance");
@@ -505,6 +513,11 @@ public:
                                             pathText(output_ / "model.out").c_str(), nullptr));
             if (role_ == "network_only")
                 check(engine_, swmm_options_set(engine_, "IGNORE_2D", "YES"));
+#ifdef OPENSWMM_HAS_2D
+            if (surfaceExecution_)
+                check(engine_, swmm_2d_set_results_file(
+                                   engine_, pathText(output_ / "model.2d.h5").c_str()));
+#endif
             check(engine_, swmm_engine_initialize(engine_));
             check(engine_, swmm_engine_start(engine_, 1));
             for (auto& outfall : outfalls_) {
@@ -684,6 +697,7 @@ private:
     Json config_, metadata_;
     fs::path base_, model_, output_;
     std::string role_, modelBytes_, pendingToken_;
+    bool surfaceExecution_ = false;
     std::map<fs::path, std::string> componentFiles_;
     std::vector<std::string> species_, reasons_;
     std::vector<Outfall> outfalls_;
@@ -819,7 +833,7 @@ private:
      * duration, routing step s, native IDs/transport matrix/process bytes/geometry and runnable
      * restriction reasons. Resolves selected unique external outfalls, qualified LEGACY
      * heat/pollutant SI receipts and finite strictly increasing exchange schedule ending at
-     * duration. Current profile rejects runtime plugins, spatial execution/output-path
+     * duration. Current profile rejects runtime plugins, unqualified spatial profiles/output-path
      * collisions, network_only watershed, MSX/count-based outfall exports. Does not itself open
      * runtime/start/advance or write files; reads process configuration bytes. Errors throw with
      * partial metadata/selection retained, exclusive initialization and immutable source files.
@@ -837,6 +851,13 @@ private:
      * Caller owns metadata lifecycle and native handle.
      */
     void discoverGeometry(SWMM_Engine engine);
+    /**
+     * @brief Append authored boundary/source records through parsed-stage public APIs.
+     * @note Values retain explicitly labelled native units except constant surface stages,
+     * converted with the mesh scale. Series/curve references are not sampled. No runtime
+     * initialization or inventory transfer occurs; unsupported execution stays refused.
+     */
+    void discoverBoundaries(SWMM_Engine engine);
     /**
      * @brief Resolve a single direct receiving owner for the complete typed interval tuple.
      * @note Clears receiver_; disconnected tuple permitted. Any connected field requires exactly
@@ -873,6 +894,7 @@ private:
 };
 
 void OpenSWMMEngineComponent::discover(SWMM_Engine engine) {
+    surfaceExecution_ = false;
     double start = 0, end = 0;
     check(engine, swmm_get_start_time(engine, &start));
     check(engine, swmm_get_end_time(engine, &end));
@@ -995,9 +1017,35 @@ void OpenSWMMEngineComponent::discover(SWMM_Engine engine) {
     metadata_["explicit_groundwater_row_count"] = spatialRows;
     metadata_["explicit_groundwater_mode"] = groundwaterMode;
     metadata_["explicit_groundwater_configured"] = spatialConfigured;
-    if (vertices || spatialConfigured || spatialRows)
+    if (spatialConfigured || spatialRows)
         reasons_.push_back(
-            "Spatial surface/groundwater execution is pending qualification; use native execution for this model");
+            "Explicit groundwater component execution is pending qualification; use native execution for this model");
+    if (vertices) {
+        auto surfaceOption = [&](const char* key) {
+            return readText([&](char* b, int n) {
+                check(engine, swmm_options_get_ext(engine, key, b, n));
+            });
+        };
+#ifdef OPENSWMM_COMPONENT_2D_RESULTS
+        surfaceExecution_ = role_ == "complete_model" && !spatialConfigured && !spatialRows &&
+                            option(engine, "IGNORE_2D") != "YES" &&
+                            option(engine, "IGNORE_QUALITY") == "YES" &&
+                            option(engine, "HEAT_TRANSPORT") != "YES" && nr == 0 &&
+                            surfaceOption("BACKEND") == "CPU" &&
+                            surfaceOption("RECONSTRUCTION_ORDER") == "1" &&
+                            surfaceOption("TRANSPORT_POLLUTANTS") == "NO" &&
+                            surfaceOption("TRANSPORT_MSX") == "NO" &&
+                            surfaceOption("TRANSPORT_AGE") == "NO" &&
+                            surfaceOption("TRANSPORT_TEMPERATURE") == "NO" &&
+                            surfaceOption("BED_HEAT_MODEL") == "NONE";
+#endif
+        if (!surfaceExecution_)
+            reasons_.push_back("Surface component requires the qualified complete-model CPU first-order water-only profile and HDF5 results writer");
+    }
+    metadata_["execution_profile"] = surfaceExecution_ ? "native_cpu_surface_water/1" : "native_cpu_1d/1";
+    metadata_["result_files"] = {{"report", "model.rpt"}, {"binary", "model.out"}};
+    if (surfaceExecution_)
+        metadata_["result_files"]["surface"] = "model.2d.h5";
     // Retain ordinary model input files. Additional authored output channels
     // need their own isolated-output mapping before independent instances run.
     auto fileField = [&](const char* key) {
@@ -1031,7 +1079,7 @@ void OpenSWMMEngineComponent::discover(SWMM_Engine engine) {
     const auto surfacePath = readText([&](char* b, int n) {
         check(engine, swmm_file_path_get(engine, SWMM_FILE_OUTPUT_2D, nullptr, ignored, 1, b, n));
     });
-    if (!surfacePath.empty())
+    if (!surfacePath.empty() && !surfaceExecution_)
         reasons_.push_back(
             "Model-declared 2D results need output-path isolation before component execution");
 #endif
@@ -1055,6 +1103,8 @@ void OpenSWMMEngineComponent::discover(SWMM_Engine engine) {
         outfalls_.push_back({node, {}, {}});
     }
     if (!outfalls_.empty()) {
+        if (surfaceExecution_)
+            reasons_.push_back("External outfall exports with spatial execution require separate receipt qualification");
         if (nr)
             reasons_.push_back(
                 "MSX outfall amount receipts are not yet qualified; MSX remains supported in uncoupled native output");
@@ -1190,7 +1240,8 @@ void OpenSWMMEngineComponent::discoverGeometry(SWMM_Engine engine) {
     }
     metadata_["lids"] = {{"controls", Json::array()},
                          {"watershed_usage", Json::array()},
-                         {"node_assignments", Json::array()}};
+                         {"node_assignments", Json::array()},
+                         {"node_outlets", Json::array()}};
     for (int i = 0; i < swmm_lid_count(engine); ++i) {
         int type = 0;
         check(engine, swmm_lid_get_type(engine, i, &type));
@@ -1227,18 +1278,31 @@ void OpenSWMMEngineComponent::discoverGeometry(SWMM_Engine engine) {
                         : bottom == SWMM_LID_BOTTOM_SEALED     ? "SEALED"
                                                                : "CURRENT"}});
     }
+    for (int i = 0; i < swmm_link_count(engine); ++i) {
+        int layer = 0, top = 0;
+        check(engine, swmm_lid_node_outlet_get(engine, i, &layer, &top));
+        if (layer)
+            metadata_["lids"]["node_outlets"].push_back(
+                {{"link", swmm_link_id(engine, i)}, {"layer", layer},
+                 {"anchor", top ? "TOP" : "BOTTOM"}});
+    }
     Json surface = {{"owner", "native_integrated2d"},
                     {"vertices_m", Json::array()},
                     {"cells", Json::array()},
                     {"vertex_connections", Json::array()},
-                    {"cell_connections", Json::array()}};
+                    {"cell_connections", Json::array()},
+                    {"boundaries", Json::array()},
+                    {"boundary_quality", Json::array()}};
     Json gw = {{"owner", "native_integrated2d"},
                {"internal_exchange", "native_surface_groundwater"},
                {"configured", metadata_["explicit_groundwater_configured"]},
                {"mode", metadata_["explicit_groundwater_mode"]},
                {"rows", Json::array()},
                {"node_beds", Json::array()},
-               {"link_beds", Json::array()}};
+               {"link_beds", Json::array()},
+               {"boundaries", Json::array()},
+               {"boundary_quality", Json::array()},
+               {"sources", Json::array()}};
 #ifdef OPENSWMM_HAS_2D
     surface["available"] = true;
     gw["available"] = true;
@@ -1247,7 +1311,9 @@ void OpenSWMMEngineComponent::discoverGeometry(SWMM_Engine engine) {
                                 : "surface.cells";
     gw["options"] = Json::object();
     for (const char* key :
-         {"NODE_ENROLMENT", "LINK_SEEPAGE", "GW_ET", "GW_ET_EFFECTIVE", "LINK_SEEPAGE_EFFECTIVE"})
+         {"NODE_ENROLMENT", "LINK_SEEPAGE", "GW_ET", "GW_ET_EFFECTIVE", "LINK_SEEPAGE_EFFECTIVE",
+          "GW_CLOCK", "GW_BASE_STEP", "GW_MAX_STEP", "GW_BUDGET_FRACTION", "GW_HEAD_TOLERANCE",
+          "GW_BINDS_SURFACE_DT"})
         gw["options"][key] = readText(
             [&](char* b, int n) { check(engine, swmm_gw2d_option_get(engine, key, b, n)); });
     const int vertices = metadata_["surface_vertex_count"].get<int>();
@@ -1346,6 +1412,158 @@ void OpenSWMMEngineComponent::discoverGeometry(SWMM_Engine engine) {
 #endif
     metadata_["surface"] = surface;
     metadata_["explicit_groundwater"] = gw;
+    discoverBoundaries(engine);
+}
+
+void OpenSWMMEngineComponent::discoverBoundaries(SWMM_Engine engine) {
+#ifdef OPENSWMM_HAS_2D
+    auto& surface = metadata_["surface"];
+    auto& gw = metadata_["explicit_groundwater"];
+    if (!surface["cells"].empty()) {
+        // Materialize authored edge slots only; this does not initialize the solver,
+        // scale the mesh, resolve runtime owners or advance the inspection handle.
+        check(engine, swmm_2d_prepare_for_edit(engine));
+        const double scale = surface.at("source_scale_to_m");
+        for (const auto& cell : surface["cells"]) {
+            const int index = cell.at("index");
+            const int nv = cell.at("vertices").size();
+            for (int edge = 0; edge < nv; ++edge) {
+                int exterior = 0;
+                check(engine, swmm_2d_edge_is_exterior(engine, index, edge, &exterior));
+                if (!exterior)
+                    continue;
+                int type = 0;
+                check(engine, swmm_2d_get_edge_bc_type(engine, index, edge, &type));
+                static constexpr const char* types[] = {
+                    "WALL", "NORMAL_FLOW", "SPECIFIED_STAGE", "SPECIFIED_FLOW", "RATING_CURVE"};
+                if (type < SWMM_2D_BC_WALL || type > SWMM_2D_BC_RATING_CURVE)
+                    throw std::runtime_error("Unknown surface boundary type");
+                Json row = {{"cell", index}, {"edge", edge}, {"type", types[type]}};
+                double value = 0;
+                if (type == SWMM_2D_BC_SPECIFIED_STAGE) {
+                    check(engine, swmm_2d_get_edge_bc_head(engine, index, edge, &value));
+                    const auto series = readText([&](char* b, int n) {
+                        check(engine, swmm_2d_get_edge_bc_tseries_name(engine, index, edge, b, n));
+                    });
+                    row["timeseries"] = series;
+                    if (series.empty())
+                        row["head_m"] = value * scale;
+                    else
+                        row["timeseries_units"] = metadata_["spatial"]["project_length_units"];
+                } else if (type == SWMM_2D_BC_SPECIFIED_FLOW) {
+                    check(engine, swmm_2d_get_edge_bc_flow(engine, index, edge, &value));
+                    const auto series = readText([&](char* b, int n) {
+                        check(engine, swmm_2d_get_edge_bc_flow_tseries_name(engine, index, edge, b, n));
+                    });
+                    row["timeseries"] = series;
+                    row["units"] = metadata_["flow_units"].get<std::string>() + "/m";
+                    if (series.empty())
+                        row["flow_native"] = value;
+                } else if (type == SWMM_2D_BC_NORMAL_FLOW) {
+                    check(engine, swmm_2d_get_edge_bc_slope(engine, index, edge, &value));
+                    row["slope"] = value;
+                } else if (type == SWMM_2D_BC_RATING_CURVE) {
+                    row["stage_units"] = metadata_["spatial"]["project_length_units"];
+                    row["flow_units"] = metadata_["flow_units"].get<std::string>() + "/m";
+                    row["rating_curve"] = readText([&](char* b, int n) {
+                        check(engine, swmm_2d_get_edge_bc_rating_curve_name(engine, index, edge, b, n));
+                    });
+                }
+                surface["boundaries"].push_back(std::move(row));
+            }
+        }
+    }
+    int count = 0;
+    check(engine, swmm_2d_boundary_quality_count(engine, &count));
+    for (int i = 0; i < count; ++i) {
+        int cell = -1, edge = -1;
+        double value = 0;
+        const auto species = readText([&](char* b, int n) {
+            check(engine, swmm_2d_get_boundary_quality(engine, i, &cell, &edge, b, n, &value));
+        });
+        surface["boundary_quality"].push_back({{"cell", cell}, {"edge", edge},
+                                               {"species", species},
+                                               {"concentration_native", value}});
+    }
+    for (int i = 0; i < swmm_gw2d_boundary_count(engine); ++i) {
+        SWMM_GwBoundary row{};
+        std::vector<char> series(256);
+        for (;;) {
+            const int code = swmm_gw2d_boundary_get(engine, i, &row, series.data(),
+                                                    static_cast<int>(series.size()));
+            if (code == SWMM_ERR_BUFSIZE) {
+                series.resize(series.size() * 2);
+                continue;
+            }
+            check(engine, code);
+            break;
+        }
+        const bool head = row.kind == SWMM_GW2D_BOUNDARY_HEAD;
+        gw["boundaries"].push_back(
+            {{"cell", row.cell}, {"edge", row.edge}, {"type", head ? "HEAD" : "FLOW"},
+             {"value", row.value},
+             {"units", head ? metadata_["spatial"]["project_length_units"] : Json("m3/s")},
+             {"timeseries", series.data()}});
+    }
+    for (int i = 0; i < swmm_gw_boundary_quality_count(engine); ++i) {
+        int cell = -1, edge = -1;
+        double value = 0;
+        char kind[16]{};
+        const auto species = readText([&](char* b, int n) {
+            check(engine, swmm_gw_boundary_quality_get(engine, i, &cell, &edge, b, n,
+                                                       kind, sizeof(kind), &value, nullptr, 0));
+        });
+        const auto series = readText([&](char* b, int n) {
+            check(engine, swmm_gw_boundary_quality_get(engine, i, nullptr, nullptr, nullptr, 0,
+                                                       nullptr, 0, nullptr, b, n));
+        });
+        gw["boundary_quality"].push_back({{"cell", cell}, {"edge", edge},
+                                          {"species", species}, {"kind", kind},
+                                          {"value_native", value}, {"timeseries", series}});
+    }
+    for (int i = 0; i < swmm_gw_source_count(engine); ++i) {
+        int scope = 0, cell = -1, xy = 0;
+        double flow = 0, scale = 1, x = 0, y = 0;
+        const auto name = readText([&](char* b, int n) {
+            check(engine, swmm_gw_source_get(engine, i, b, n, &scope, nullptr, 0, &cell,
+                                              &flow, nullptr, 0));
+        });
+        const auto tag = readText([&](char* b, int n) {
+            check(engine, swmm_gw_source_get(engine, i, nullptr, 0, nullptr, b, n,
+                                              nullptr, nullptr, nullptr, 0));
+        });
+        const auto series = readText([&](char* b, int n) {
+            check(engine, swmm_gw_source_get(engine, i, nullptr, 0, nullptr, nullptr, 0,
+                                              nullptr, nullptr, b, n));
+        });
+        check(engine, swmm_gw_source_scale_get(engine, i, &scale));
+        check(engine, swmm_gw_source_xy_get(engine, i, &xy, &x, &y));
+        Json source = {{"name", name}, {"scope", scope == SWMM_GW2D_SCOPE_CELL ? "CELL"
+                                                : scope == SWMM_GW2D_SCOPE_TAG ? "TAG" : "GLOBAL"},
+                       {"cell", scope == SWMM_GW2D_SCOPE_CELL ? Json(cell) : Json(nullptr)},
+                       {"tag", tag}, {"coordinates", xy ? Json{x, y} : Json(nullptr)},
+                       {"flow_m3_s", flow}, {"flow_timeseries", series}, {"scale", scale},
+                       {"species_terms", Json::array()}};
+        for (int term = 0; term < swmm_gw_source_species_count(engine, i); ++term) {
+            double value = 0;
+            char kind[16]{};
+            const auto species = readText([&](char* b, int n) {
+                check(engine, swmm_gw_source_species_get(engine, i, term, b, n, kind,
+                                                         sizeof(kind), &value, nullptr, 0));
+            });
+            const auto timeseries = readText([&](char* b, int n) {
+                check(engine, swmm_gw_source_species_get(engine, i, term, nullptr, 0, nullptr,
+                                                         0, nullptr, b, n));
+            });
+            source["species_terms"].push_back({{"species", species}, {"kind", kind},
+                                                {"value_native", value},
+                                                {"timeseries", timeseries}});
+        }
+        gw["sources"].push_back(std::move(source));
+    }
+#else
+    (void)engine;
+#endif
 }
 
 void OpenSWMMEngineComponent::validateConnections() {
@@ -1481,7 +1699,7 @@ public:
      */
     OpenSWMMEngineInfo() : Identity("org.hydrocouple.openswmm.engine", "OpenSWMM engine") {
         setDescription(
-            "SDK-free native engine with configured metadata and typed external-outfall exports. Initial CPU 1D profile; spatial execution/restart remain separate qualifications.");
+            "SDK-free native engine with configured metadata, CPU 1D and CPU surface-water profiles, and typed 1D external-outfall exports. Spatial transport, groundwater and restart require separate qualification.");
     }
     /**
      * @brief Read declared component-factory libraryFilePath metadata.

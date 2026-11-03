@@ -1206,6 +1206,30 @@ if(OPENSWMM_WITH_HYDROCOUPLE)
     target_link_libraries(test_engine_component PRIVATE HydroCouple::HydroCouple nlohmann_json::nlohmann_json ${CMAKE_DL_LIBS})
     target_compile_definitions(test_engine_component PRIVATE ENGINE_COMPONENT_LIBRARY="$<TARGET_FILE:openswmm_engine_component>")
     add_dependencies(test_engine_component openswmm_engine_component)
+    if(OPENSWMM_BUILD_2D AND OPENSWMM_2D_HDF5_OUTPUT)
+        target_compile_definitions(test_engine_component PRIVATE OPENSWMM_COMPONENT_2D_RESULTS=1)
+        find_program(OPENSWMM_H5DIFF_EXECUTABLE NAMES h5diff)
+        if(OPENSWMM_H5DIFF_EXECUTABLE)
+            set_tests_properties(test_engine_component PROPERTIES FIXTURES_SETUP engine_component_surface)
+            set(_surface_cases "${CMAKE_CURRENT_SOURCE_DIR}/data/component_engine")
+            add_test(NAME test_engine_component_surface_hdf5_parity
+                COMMAND "${OPENSWMM_H5DIFF_EXECUTABLE}"
+                    "${_surface_cases}/CompleteSurfaceWaterMatchesNativeWithoutTouchingAuthoredDestination/native/model.2d.h5"
+                    "${_surface_cases}/CompleteSurfaceWaterMatchesNativeWithoutTouchingAuthoredDestination/wrapped/model.2d.h5")
+            add_test(NAME test_engine_component_surface_instance_parity
+                COMMAND "${OPENSWMM_H5DIFF_EXECUTABLE}"
+                    "${_surface_cases}/SurfaceInstancesKeepIndependentResultsWhenAdvancedTogether/wrapped/model.2d.h5"
+                    "${_surface_cases}/SurfaceInstancesKeepIndependentResultsWhenAdvancedTogether/peer/model.2d.h5")
+            add_test(NAME test_engine_component_surface_coupled_parity
+                COMMAND "${OPENSWMM_H5DIFF_EXECUTABLE}"
+                    "${_surface_cases}/CompleteCoupledSurfaceWaterMatchesNativeWithActualExchange/native/model.2d.h5"
+                    "${_surface_cases}/CompleteCoupledSurfaceWaterMatchesNativeWithActualExchange/wrapped/model.2d.h5")
+            set_tests_properties(test_engine_component_surface_hdf5_parity
+                test_engine_component_surface_instance_parity
+                test_engine_component_surface_coupled_parity PROPERTIES
+                FIXTURES_REQUIRED engine_component_surface LABELS unit)
+        endif()
+    endif()
     set(OPENSWMM_COMPONENT_RECEIVER_LIBRARY "" CACHE FILEPATH "Optional CF2 receiver for direct engine-component acceptance")
     if(OPENSWMM_COMPONENT_RECEIVER_LIBRARY)
         if(NOT EXISTS "${OPENSWMM_COMPONENT_RECEIVER_LIBRARY}")

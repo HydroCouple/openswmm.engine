@@ -30,6 +30,7 @@ cdef extern from "openswmm_2d.h":
     # Bulk ground-elevation write — a pure C memory op over an owned buffer.
     int swmm_2d_set_vertex_z_bulk(void* engine, const double* z, int count) nogil
     int swmm_2d_prepare_for_edit(void* engine)
+    int swmm_2d_set_results_file(void* engine, const char* path)
     int swmm_2d_triangle_get_vertices(void* engine, int idx,
                                        int* v0, int* v1, int* v2)
     int swmm_2d_triangle_get_area(void* engine, int idx, double* area)
@@ -168,6 +169,7 @@ cdef extern from "openswmm_2d.h":
 
     # Boundary edges
     int swmm_2d_boundary_edge_count(void* engine, int* count)
+    int swmm_2d_edge_is_exterior(void* engine, int cell, int edge, int* exterior)
     int swmm_2d_get_edge_bc_type(void* engine, int tri_idx, int edge, int* bc_type)
     int swmm_2d_set_edge_bc_type(void* engine, int tri_idx, int edge, int bc_type)
     int swmm_2d_get_edge_bc_head(void* engine, int tri_idx, int edge, double* head)

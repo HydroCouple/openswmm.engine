@@ -107,6 +107,21 @@ SWMM_ENGINE_API int swmm_2d_is_active(SWMM_Engine engine, int* active);
 SWMM_ENGINE_API int swmm_2d_set_auto_backend_cpu(SWMM_Engine engine, int enabled);
 
 /**
+ * @brief Bind the built-in 2D results writer to a fresh absolute destination.
+ * @param[in] engine Live executable engine in OPENED; serialize with all engine calls.
+ * @param[in] path Nonempty absolute UTF-8 path, copied before return. Parent must exist
+ * at start. The destination must not exist when start opens it (exclusive creation).
+ * @note Updates both the stored output slot and the unprepared writer, adding the
+ * writer if absent. Creates no file and does not initialize or advance physics.
+ * Metadata-only, initialized/running/closed handles are refused. This does not
+ * redirect other authored output channels or make a checkpoint-capable model.
+ * @return SWMM_OK, SWMM_ERR_BADHANDLE, SWMM_ERR_BADPARAM for invalid path,
+ * SWMM_ERR_LIFECYCLE for invalid lifecycle, SWMM_ERR_PLUGIN without the HDF5
+ * results writer, or SWMM_ERR_NOMEM. Start reports destination/parent IO errors.
+ */
+SWMM_ENGINE_API int swmm_2d_set_results_file(SWMM_Engine engine, const char* path);
+
+/**
  * @brief Make the parsed 2D mesh editable without a full initialize().
  *
  *  The mesh-edit/query setters work as soon as the mesh is parsed (OPENED
@@ -1973,6 +1988,23 @@ SWMM_ENGINE_API int swmm_2d_set_dry_depth(SWMM_Engine engine, double dry_depth);
  * required storage or values. Lifecycle restrictions and additional errors are described above.
  */
 SWMM_ENGINE_API int swmm_2d_boundary_edge_count(SWMM_Engine engine, int* count);
+
+/**
+ * @brief Inspect whether a parsed triangle or quad edge is exterior.
+ * @ingroup engine_2d
+ * @param[in] engine Borrowed live engine; serialize with edits and stepping.
+ * @param[in] cell Zero-based cell index.
+ * @param[in] edge Zero-based local edge, less than the cell's vertex count.
+ * @param[out] exterior Required destination: 1 for exterior, 0 for interior.
+ * @note Call swmm_2d_prepare_for_edit() first for a newly parsed mesh. Reads
+ * native endpoint-incidence classification without initializing or advancing
+ * the solver. It does not resolve cell neighbours or validate manifold topology.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine; SWMM_ERR_BADINDEX for
+ * invalid cell/edge; SWMM_ERR_BADPARAM for null output, no mesh or unprepared
+ * boundary storage. Output remains unchanged on failure.
+ */
+SWMM_ENGINE_API int swmm_2d_edge_is_exterior(SWMM_Engine engine, int cell, int edge,
+                                           int* exterior);
 
 /**
  * @brief Get boundary condition type for an edge.

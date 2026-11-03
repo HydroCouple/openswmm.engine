@@ -182,4 +182,49 @@ TEST(ComponentMetadata, GeometryScaleTracksProjectUnitsAndSiDeclarationWithoutDo
         EXPECT_DOUBLE_EQ(z, expected);
     }
 }
+
+TEST(ComponentMetadata, ParsedExteriorEdgesUseNativeIncidenceWithoutSolverInitialization) {
+    auto directory = fixture("exterior-edges");
+    const auto model = directory / "model.inp";
+    std::ofstream(model, std::ios::app) << R"(
+[2D_OPTIONS]
+REPORT_2D NO
+[2D_VERTICES]
+0 0 10
+10 0 10
+10 10 10
+20 0 10
+20 10 10
+[2D_TRIANGLES]
+0 1 2 .03 0
+[2D_QUADS]
+1 3 4 2 .03 0
+)";
+    Engine e;
+    ASSERT_EQ(swmm_engine_open_metadata(e.value, model.string().c_str()), SWMM_OK);
+    int exterior = 42;
+    EXPECT_EQ(swmm_2d_edge_is_exterior(nullptr, 0, 0, &exterior), SWMM_ERR_BADHANDLE);
+    EXPECT_EQ(swmm_2d_edge_is_exterior(e.value, 0, 0, &exterior), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(exterior, 42);
+    ASSERT_EQ(swmm_2d_prepare_for_edit(e.value), SWMM_OK);
+    const int expected[2][4] = {{0, 1, 1, -1}, {1, 1, 0, 1}};
+    for (int cell = 0; cell < 2; ++cell)
+        for (int edge = 0; edge < (cell ? 4 : 3); ++edge) {
+            ASSERT_EQ(swmm_2d_edge_is_exterior(e.value, cell, edge, &exterior), SWMM_OK);
+            EXPECT_EQ(exterior, expected[cell][edge]);
+        }
+    exterior = 42;
+    EXPECT_EQ(swmm_2d_edge_is_exterior(e.value, -1, 0, &exterior), SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_2d_edge_is_exterior(e.value, 2, 0, &exterior), SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_2d_edge_is_exterior(e.value, 0, 3, &exterior), SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_2d_edge_is_exterior(e.value, 1, 4, &exterior), SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_2d_edge_is_exterior(e.value, 0, -1, &exterior), SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_2d_edge_is_exterior(e.value, 0, 0, nullptr), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(exterior, 42);
+    int active = 1;
+    ASSERT_EQ(swmm_2d_is_active(e.value, &active), SWMM_OK);
+    EXPECT_EQ(active, 0);
+    EXPECT_FALSE(fs::exists(directory / "native.rpt"));
+    EXPECT_FALSE(fs::exists(directory / "native.out"));
+}
 #endif

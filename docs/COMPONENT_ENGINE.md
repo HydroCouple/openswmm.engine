@@ -4,9 +4,10 @@ The optional `openswmm_engine_component` module publishes component information
 ID `org.hydrocouple.openswmm.engine`. It uses HydroCouple interfaces and the
 public OpenSWMM C API; it does not link HydroCoupleSDK. The older
 `openswmm.model` module remains the separate FVQual compatibility adapter.
-Build with `OPENSWMM_WITH_HYDROCOUPLE=ON`. This initial execution profile is
-CPU 1D. Spatial execution, bidirectional exchange and coordinated restart are
-separate qualifications, not capabilities of this module yet.
+Build with `OPENSWMM_WITH_HYDROCOUPLE=ON`. Qualified execution includes CPU 1D
+and the bounded CPU surface-water profile below. Spatial transport, explicit
+groundwater, bidirectional exchange and coordinated restart remain separate
+qualifications.
 
 ## Configuration and inspection
 
@@ -27,14 +28,24 @@ file's directory.
 }
 ```
 
-`complete_model` retains native ownership of configured processes. The initial
-profile refuses explicit surface meshes and explicit groundwater, including
-PER_SUBCATCH groundwater; it never turns off these processes to make a model
-appear supported. `network_only` requires no subcatchments and the same spatial
-restrictions. Neither role is the future external-1D/integrated2d split mode.
+`complete_model` retains native ownership of configured processes. Explicit
+groundwater, including PER_SUBCATCH groundwater, remains refused. Surface meshes
+can run through the water-only profile below. `network_only` requires no
+subcatchments or surface mesh. Neither role is the future
+external-1D/integrated2d split mode.
 Native watershed, snow, LID and legacy groundwater processes in a complete model
 are not replaced by a second component driver. Their detailed coupling and
 parity matrices remain to be qualified.
+
+The `native_cpu_surface_water/1` profile supports a complete model with triangle
+and/or quad surface cells and the built-in HDF5 results writer. It requires
+authored `BACKEND CPU`, `RECONSTRUCTION_ORDER 1`, `IGNORE_QUALITY YES`, heat
+transport disabled, no reaction species or explicit groundwater, and all four
+surface `TRANSPORT_POLLUTANTS`, `TRANSPORT_MSX`, `TRANSPORT_AGE` and
+`TRANSPORT_TEMPERATURE` options set to NO, with `BED_HEAT_MODEL NONE`.
+The wrapper preserves those settings and the native schedule. Other spatial
+configurations and selected external outfall exports are refused. A non-CPU
+`OPENSWMM_2D_BACKEND` environment override is refused before creating run outputs.
 
 Initialization parses the configured model without preparing or advancing a
 simulation, loading runtime `[PLUGINS]`, or writing results. `model_metadata`
@@ -56,6 +67,13 @@ catalogue includes:
   cells), with exchange areas in square metres. `source_scale_to_m` accounts
   for project units and a mesh's SI declaration. Mesh indices are model-local,
   and must not be reused across a remesh.
+  `boundaries` lists exterior cell/local-edge prescriptions, including default
+  WALL edges, using native endpoint incidence rather than unresolved neighbour
+  slots. Constant stages use `head_m`; stage-series references retain project
+  length units even for an explicitly SI mesh. Constant flow uses `flow_native`
+  and `<FLOW_UNITS>/m`; flow-series and rating-curve records identify their units
+  without sampling a value. `boundary_quality` retains species IDs and native
+  concentration values. These records do not validate manifold topology.
 - `legacy_groundwater`: separate aquifer definitions and actual subcatchment /
   aquifer / receiving-node connections, owned by native watershed hydrology.
 - `explicit_groundwater`: MESH or PER_SUBCATCH mode, authored scopes, node beds,
@@ -65,16 +83,27 @@ catalogue includes:
   not synthesized during inspection. Properties ending `_project` use project
   units: lengths ft/m, areas ft²/m², conductivity in/hr or mm/hr and alpha 1/ft
   or 1/m. The native integrated surface/groundwater owner retains internal exchange.
+  `boundaries` retains HEAD in project ft/m and FLOW in m³/s, plus series names.
+  `boundary_quality` retains CONC/MASSFLUX kinds and native species values.
+  `sources` retains CELL/TAG/GLOBAL scope, authored XY where present, scale,
+  m³/s flow or series references, and native CONC/MASS species terms. XY retains
+  authored project map units. Clock options describe the configured
+  shared/independent groundwater clock; they do not enable component stepping.
 - `snow` and `lids`: effective degree-day/UEB pack selections, conventional LID
   usage, node assignments, classical/Richards flow choice and bottom ownership.
+  `lids.node_outlets` identifies link IDs, one-based layer anchors and TOP/BOTTOM.
   These describe authoring; the native parser's compatibility gates still apply.
 
 These records support connection inspection, without advertising new execution,
-remapping, species conversion, or restart capabilities. Full forcing/boundary
+remapping, species conversion, or restart capabilities. Broader weather/forcing
 catalogues and resolved connection validation remain separate work. Check `runnable` and
 `execution_restrictions`; metadata inspection can succeed for a model whose
 execution is not qualified. Runtime plugins and model-authored additional output
 channels are refused until their metadata/output isolation is qualified.
+For the surface-water profile, `execution_profile` names the profile and
+`result_files.surface` names `model.2d.h5` under the instance output directory.
+The authored 2D destination is preserved during inspection and replaced on the
+private runtime handle. Other authored output channels retain their restrictions.
 
 The same inspection path is public independently of HydroCouple:
 
@@ -96,6 +125,20 @@ normally to simulate. The parser uses strict validation even if lenient editor
 opening was selected. Inspection may read referenced inputs/configuration files;
 it does not evaluate runtime chemistry or prove that all runtime data are valid.
 
+For parsed edge inspection through C, call `swmm_2d_prepare_for_edit()` then
+`swmm_2d_edge_is_exterior()`. Python exposes the same operations through
+`solver.surface2d.prepare_for_edit()` and `edge_is_exterior(cell, edge)`.
+Preparation materializes authored boundary storage; it does not start a solver
+or resolve neighbour topology. Indices follow the native local-edge convention,
+including quads; invalid cell/edge indices are rejected.
+
+Executable OPENED handles can bind a fresh absolute 2D results path with
+`swmm_2d_set_results_file()` or Python `surface2d.set_results_file(path)`.
+This updates the unprepared writer as well as its stored path, adding the writer
+when absent. Start opens the destination exclusively. Binding creates no file;
+metadata-only and initialized/running handles are refused. The generic
+`swmm_file_path_set` edits the stored authoring slot and does not rebind a writer.
+
 ## Execution and outputs
 
 Each run requires a **fresh, nonexisting** `output_directory`. Preparation creates
@@ -116,6 +159,10 @@ solver, report-boundary and output-continuation qualification remains open.
 component `.out` files are byte-identical for the tested 1D pollutant and MSX
 models. Independent instances have separate engine handles, clocks and result
 directories. Cloneability and checkpointing are not advertised.
+Surface-water runs additionally write isolated `model.2d.h5` results. The
+mixed-mesh native/component fixture retains `.out` byte identity and exact HDF5
+dataset/attribute equality, including nonempty evolving report values. Two
+interleaved instances retain independent files with matching scientific results.
 
 ## Typed external-outfall transfers
 
@@ -191,3 +238,59 @@ Composer's optional `COMPOSER_OPENSWMM_ENGINE_COMPONENT_LIBRARY` and
 paths, enable configured metadata and actual native-engine/receiver workflow
 tests. Current qualification is macOS arm64 Release, CPU; these tests do not
 establish relocated-package, other-platform or coordinated-resume compatibility.
+
+## Component contract inventory
+
+This inventory distinguishes native operations from their HydroCouple exposure.
+It is a source inventory, not a claim that the complete component gates pass.
+Surface and explicit groundwater retain one native integrated owner. A metadata
+catalogue describes authored configuration; it does not grant execution capability.
+
+| Exchange group | Native public operation / owner | Component exposure and remaining work |
+| --- | --- | --- |
+| Identity and topology | `swmm_engine_open_metadata`, `swmm_spatial_node_has_coord`, `swmm_2d_cell_get_vertices`; native parsed model | Implemented inspection and portable `hydrocouple.instance_id`. General geometry revision/remapping validation remains missing. |
+| Boundary configuration | `swmm_2d_get_edge_bc_type`, `swmm_gw2d_boundary_get`, `swmm_gw_boundary_quality_get`; native surface/GW boundary owners | Parsed catalogues are inspection records. Runtime boundary ports and split ownership are missing. |
+| Hydraulic boundary state | `swmm_node_get_depth`, `swmm_coupling_set_sources`, `swmm_2d_set_runtime_boundary`, `swmm_gw2d_set_runtime_boundary` | Native calls exist; general component hydraulic input/output ports are missing. A head override does not itself transfer inventory. |
+| External source/forcing | `swmm_coupling_apply_frame`, `swmm_gw_source_get`; native source staging and receipts | Native copied atomic frames and source inspection exist. No generic HydroCouple provider bridge or automatic physical-unit conversion is implemented. |
+| Transfer offer/reservation | Native surface/GW/node/link and Richards owners | Native scheduling exists. The public external-1D trial/reservation/acceptance lifecycle and `Integrated2dComponent` are missing. No wrapper may recreate these owners or advance chemistry twice. |
+| Accepted outfall transfer | `swmm_node_get_export_receipt`; native outfall debit | Implemented scalar `hydrocouple.interval-transfer/1`, one direct receiver, water/pollutants/enthalpy. MSX, fan-out and refund/retry are refused. |
+| Accepted source/boundary transfer | `swmm_coupling_get_receipts`, `swmm_coupling_get_boundary_receipt`, `swmm_coupling_get_infiltration_receipt`; native receipt owners | Native receipts exist. General typed component ports and split phase equivalence remain missing. |
+| Inventory and diagnostics | `swmm_2d_get_species_ledger`, `swmm_gw2d_boundary_species`, native `.out` / HDF5 owners | Native diagnostics and wrapper result files exist for qualified profiles. Diagnostics never constitute a second physical storage or debit. |
+| Time | `swmm_engine_advance_to`, `swmm_coupling_advance_to`; native solver calendars | Qualified CPU 1D wrapper uses the recorded epoch and millisecond endpoints. External-1D R4/R5 phase traces and unequal-step component qualification remain missing. |
+| Recovery | `swmm_checkpoint_save`, `swmm_checkpoint_restore`; supported native session owner | Native profile-specific recovery exists. Wrapper/graph recovery is missing; `checkpointing` remains false. |
+| Native hosting | `swmm_component_library_count`, `swmm_component_search_path_add`; library discovery | Discovery is implemented. Library-backed `[PROCESS_COMPONENTS]` lifecycle, connections and scheduling remain missing. |
+
+The matching executable witnesses are `test_engine_component_metadata`,
+`test_engine_component`, `test_engine_process_component_loader`,
+`test_engine_output_quality`, `test_engine_runtime_coupling_api` and
+`test_engine_checkpoint`. Their profile-specific results must be recorded for
+the source being qualified; a symbol in this table alone is not acceptance.
+
+## Runtime forcing semantics at a component boundary
+
+The legacy forcing API is not a uniform conservative amount API. The following
+classification follows `openswmm_forcing.h` and its current native consumers.
+New component connections must convert explicitly and use accepted receipts for
+physical inventory. Never treat a concentration assignment as delivered mass.
+
+| Operation (`swmm_forcing_` prefix) | Meaning and native value units |
+| --- | --- |
+| `node_lat_inflow` | Overlay on user lateral flow, ft³/s in every project. OVERRIDE replaces that contribution; other authored inflows remain independently assembled. |
+| `node_head_boundary` | Outfall stage override in datum ft. ADD is accepted by the setter but not consumed as a stage addition. No physical amount receipt. |
+| `node_quality`, `link_quality` | Direct concentration overlay in pollutant-native concentration units. ADD currently adds concentration; it is not a conservative mass-rate injection. Use `swmm_node_set_quality_mass_flux` for the supported node amount-rate path. |
+| `node_temperature` | OVERRIDE assigns °C; ADD supplies °C·ft³/s through the loader accumulator. Requires heat enabled. |
+| `node_age` | OVERRIDE assigns hours; ADD supplies hours·ft³/s, converted internally to seconds. Requires age enabled. |
+| `link_flow` | Pre-physics flow-state overlay in ft³/s. Routing may subsequently change it; it is not a sustained solver boundary. |
+| `link_setting` | Current/target opening or speed overlay, dimensionless. Native controls remain active. |
+| `link_seepage` | Conduit exchange in ft³/s, positive out of the conduit. Internal TWO_WAY/AUTO aquifer exchange also debits/credits its aquifer. An external owner must not debit that same aquifer again. |
+| `subcatch_rainfall`, `subcatch_evap`, `subcatch_snowfall`, `gage_rainfall` | Weather-rate overlays in project precipitation units (in/hr or mm/hr), converted by native hydrology. |
+| `climate_temperature`, `climate_wind`, `climate_evap` | Global weather overlays: °F/°C, mph/km/hr, and in/day/mm/day for US/SI respectively. Channel consumption follows the native weather owner. |
+| `element_climate` | Per-element heat-climate override; values and parameter units follow the heat-climate parameter code. This is environmental forcing, not transferred water/energy. |
+| `clear`, `clear_all` | Remove prescriptions. RESET expires after the consuming physical step; PERSIST lasts until replaced or cleared. Clearing is not a refund of an already accepted amount. |
+
+The SI `swmm_coupling_*` frame/source/boundary family is a separate contract:
+water m³/s, signed receipts m³, species in the target domain's declared order
+and units, and heat J where supported. Its capability flags and profile guards
+must be checked before attaching a provider. Neither this inventory nor native
+forcing tests qualify a new HydroCouple connection or close the split scheduling
+and double-debit tests required by the component finalization plan.

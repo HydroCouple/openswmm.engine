@@ -362,6 +362,16 @@ cdef class Surface2D:
     # Mesh definition - geometry
     # ====================================================================
 
+    def set_results_file(self, path: str) -> None:
+        """Bind a fresh absolute HDF5 destination on an executable OPENED model.
+
+        Creates no file. Start creates it exclusively; an existing destination
+        is refused. Metadata-only and initialized/running handles are refused.
+        Other output channels retain their configured destinations.
+        """
+        cdef bytes encoded = path.encode('utf-8')
+        _check(swmm_2d_set_results_file(self._h(), encoded))
+
     def prepare_for_edit(self) -> None:
         """Make the parsed 2D mesh editable without a full ``initialize()``.
 
@@ -1691,6 +1701,17 @@ cdef class Surface2D:
         cdef int count = 0
         _check(swmm_2d_boundary_edge_count(self._h(), &count))
         return count
+
+    def edge_is_exterior(self, int cell, int edge) -> bool:
+        """Inspect a triangle or quad edge after ``prepare_for_edit()``.
+
+        Returns native endpoint-incidence classification without initializing
+        the solver. Invalid indices or unprepared storage raise EngineError.
+        This does not resolve neighbours or validate manifold topology.
+        """
+        cdef int exterior = 0
+        _check(swmm_2d_edge_is_exterior(self._h(), cell, edge, &exterior))
+        return bool(exterior)
 
     def get_edge_bc_type(self, int tri_idx, int edge):
         """Return the boundary condition type for a triangle edge.

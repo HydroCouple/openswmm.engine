@@ -947,6 +947,8 @@ public:
      *     lifecycle/readiness check.
      */
     twoD::SurfaceRouter2D& surfaceRouter2D() noexcept { return surface_router_; }
+    /** Bind a fresh absolute HDF5 output path before initialize; C API owns validation. */
+    int setSurfaceResultsFile(const char* path) noexcept;
     /**
      * @brief Borrow this engine's 2D surface router.
      *

@@ -132,6 +132,11 @@ int swmm_2d_set_auto_backend_cpu(SWMM_Engine engine, int enabled) {
     return SWMM_OK;
 }
 
+int swmm_2d_set_results_file(SWMM_Engine engine, const char* path) {
+    GET_ENGINE(engine);
+    return eng->setSurfaceResultsFile(path);
+}
+
 int swmm_2d_prepare_for_edit(SWMM_Engine engine) {
     GET_ENGINE(engine);
     CHECK_2D_MESH(eng);
@@ -1474,6 +1479,19 @@ int swmm_2d_boundary_edge_count(SWMM_Engine engine, int* count) {
 #define CHECK_BC_SIZED(vec, idx)                                                                   \
     if ((idx) < 0 || static_cast<std::size_t>(idx) >= (vec).size())                                \
     return SWMM_ERR_BADPARAM
+
+int swmm_2d_edge_is_exterior(SWMM_Engine engine, int cell, int edge, int* exterior) {
+    GET_ENGINE(engine);
+    CHECK_2D_MESH(eng);
+    CHECK_TRI_IDX(cell, router2d);
+    CHECK_EDGE_IDX(cell, edge, router2d);
+    if (!exterior)
+        return SWMM_ERR_BADPARAM;
+    const int slot = openswmm::twoD::MeshData::slot(cell, edge);
+    CHECK_BC_SIZED(router2d.boundary().edge_is_exterior, slot);
+    *exterior = router2d.boundary().edge_is_exterior[slot] ? 1 : 0;
+    return SWMM_OK;
+}
 
 int swmm_2d_get_edge_bc_type(SWMM_Engine engine, int tri_idx, int edge, int* bc_type) {
     GET_ENGINE(engine);
