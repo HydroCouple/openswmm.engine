@@ -244,6 +244,12 @@ struct SubsurfaceState {
     std::vector<double> q0_last;    ///< recharge (m/s), + down, − capillary rise
     std::vector<double> qnode_last; ///< node exchange (m³/s), + into the pipe
     std::vector<double> qlat_last;  ///< net lateral Darcy into the cell (m³/s)
+    /// Darcy specific discharge (m/s): x/y of the cell reconstruction
+    /// Σ_f outflow_f·(m⃗_f − c⃗) / (A·hg0) over the face volumes of the last firing
+    /// (held): gathered interior faces plus applied HEAD/FLOW and boundary-head
+    /// edges. Zero when hg0 < 1 cm. Display diagnostic; not checkpointed, so it
+    /// reads zero after a restart until the cell fires again.
+    std::vector<double> qx_last, qy_last;
     std::vector<double> qdeep_last; ///< deep loss (m/s)
     std::vector<double> qet_last;   ///< subsurface ET (m/s, ≥ 0 out)
     std::vector<double> dunne_last; ///< saturation-excess to the surface (m³/s)

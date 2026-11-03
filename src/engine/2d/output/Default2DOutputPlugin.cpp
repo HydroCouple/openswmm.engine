@@ -1127,7 +1127,9 @@ int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
                                                             &snap.gw2d_et_surface,
                                                             &snap.gw2d_et_potential,
                                                             &snap.gw2d_et_stress,
-                                                            &snap.gw2d_et_refresh};
+                                                            &snap.gw2d_et_refresh,
+                                                            &snap.gw2d_qx,
+                                                            &snap.gw2d_qy};
         for (int k = 0; k < kGwFaceFields; ++k)
             face(ds_gw_face_[k], *fields[k]);
         if (ds_gw_ledger_ != H5I_INVALID_HID && snap.gw2d_ledger.size() == kGwLedgerTerms)
@@ -1700,6 +1702,10 @@ void Default2DOutputPlugin::createGroundwaterDatasets(const SimulationSnapshot& 
         {"Mesh2_face_et_potential", "Potential atmospheric loss last surface interval", "m s-1"},
         {"Mesh2_face_et_stress", "Single stress factor at the soil ET extraction location", "1"},
         {"Mesh2_face_et_refresh", "End of the last integrated surface ET interval", "s"},
+        {"Mesh2_face_gw_qx", "groundwater Darcy velocity, x component (last firing, held)",
+         "m s-1"},
+        {"Mesh2_face_gw_qy", "groundwater Darcy velocity, y component (last firing, held)",
+         "m s-1"},
     };
     for (int k = 0; k < kGwFaceFields; ++k) {
         hid_t ds = createUnlimitedDataset(kFields[k].name, 2, zero2, face_chunk);

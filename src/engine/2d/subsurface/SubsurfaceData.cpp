@@ -63,6 +63,8 @@ void SubsurfaceState::resize(int n, int m) {
     q0_last.assign(nn, 0.0);
     qnode_last.assign(nn, 0.0);
     qlat_last.assign(nn, 0.0);
+    qx_last.assign(nn, 0.0);
+    qy_last.assign(nn, 0.0);
     qdeep_last.assign(nn, 0.0);
     qet_last.assign(nn, 0.0);
     dunne_last.assign(nn, 0.0);

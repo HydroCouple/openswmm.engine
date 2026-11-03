@@ -8152,6 +8152,8 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
             snap.gw2d_hu = g.hu;
             snap.gw2d_recharge = g.q0_last;
             snap.gw2d_lateral = g.qlat_last;
+            snap.gw2d_qx = g.qx_last;
+            snap.gw2d_qy = g.qy_last;
             snap.gw2d_node_exchange = g.qnode_last;
             snap.gw2d_deep = g.qdeep_last;
             snap.gw2d_et = g.qet_last;
@@ -8310,6 +8312,8 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
             snap.gw2d_hu.clear();
             snap.gw2d_recharge.clear();
             snap.gw2d_lateral.clear();
+            snap.gw2d_qx.clear();
+            snap.gw2d_qy.clear();
             snap.gw2d_node_exchange.clear();
             snap.gw2d_deep.clear();
             snap.gw2d_et.clear();

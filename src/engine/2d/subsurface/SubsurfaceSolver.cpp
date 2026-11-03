@@ -87,6 +87,9 @@ namespace openswmm::twoD {
 namespace {
 
 constexpr double kTiny = 1.0e-12;
+/// Saturated thickness (m) below which the Darcy velocity display reports zero:
+/// a thin or wetting cell receives face flows sized by its donors' thickness.
+constexpr double kDarcyMinThickness = 0.01;
 /// Minimum drainable porosity. Guards `Sy` against a column that has
 /// saturated to `θ_s` at the table (which is physically where it should be —
 /// the specific yield genuinely vanishes there, and the table stops moving).
@@ -1117,7 +1120,11 @@ double SubsurfaceSolver::gatherLateralMass(int i, int s) noexcept {
     return m;
 }
 
-double SubsurfaceSolver::gatherLateral(int i) noexcept {
+double SubsurfaceSolver::gatherLateral(int i, double* moment_x, double* moment_y) noexcept {
+    if (moment_x)
+        *moment_x = 0.0;
+    if (moment_y)
+        *moment_y = 0.0;
     if (state_.eacc_L.empty())
         return 0.0;
     const InertialEdges& E = *edges_;
@@ -1130,11 +1137,14 @@ double SubsurfaceSolver::gatherLateral(int i) noexcept {
     for (int k = b0; k < b1; ++k) {
         const auto ku = static_cast<std::size_t>(k);
         const auto eu = static_cast<std::size_t>(E.cell_edge[ku]);
-        if (E.cell_sign[ku] > 0) {
-            v += consumePending(state_.eacc_L[eu]);
-        } else {
-            v += consumePending(state_.eacc_R[eu]);
-        }
+        const double in =
+            consumePending(E.cell_sign[ku] > 0 ? state_.eacc_L[eu] : state_.eacc_R[eu]);
+        v += in;
+        // Outgoing volume times the Perot arm: exact for a uniform flux field.
+        if (moment_x)
+            *moment_x -= in * E.cell_arm_x[ku];
+        if (moment_y)
+            *moment_y -= in * E.cell_arm_y[ku];
     }
     return v;
 }
@@ -2345,7 +2355,8 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
             lateral_out += std::max(
                 0., -(edges_->cell_sign[k] > 0 ? state_.eacc_L[edge] : state_.eacc_R[edge]));
         }
-    const double lat_vol = gatherLateral(i); // m³, + in
+    double lat_mx = 0.0, lat_my = 0.0;
+    const double lat_vol = gatherLateral(i, &lat_mx, &lat_my); // m³, + in
     const double node_vol = gatherNode(i);   // m³, + OUT
 
     const double infil_vol = dated_intake
@@ -2633,6 +2644,27 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
         }
     state_.led_source_in += source.in;
     state_.led_source_out += source.out;
+    // Darcy specific discharge (display diagnostic): the Perot moment of every
+    // face the cell exchanged through, interior faces (gathered above) and the
+    // exterior HEAD/FLOW and boundary-head faces as applied, over A·hg0·dt.
+    const auto boundaryMoment = [&](int edge, double out_vol) {
+        const auto slot = static_cast<std::size_t>(MeshData::slot(i, edge));
+        lat_mx += out_vol * (mesh_->edge_mx[slot] - mesh_->tri_cx[u]);
+        lat_my += out_vol * (mesh_->edge_my[slot] - mesh_->tri_cy[u]);
+    };
+    for (const auto& pulse : boundary_pulses)
+        boundaryMoment(boundaries_[pulse.boundary].edge, pulse.out - pulse.in);
+    if (runtime)
+        for (auto k : runtime_sources_.cells[u]) {
+            const auto& s = runtime_sources_.rows[k];
+            if (s.boundary_edge >= 0) // edge-attached HEAD or FLOW boundary
+                boundaryMoment(s.boundary_edge,
+                               (std::max(0.0, -s.flow) * runtime_scale - std::max(0.0, s.flow)) *
+                                   dt);
+        }
+    const bool carried = hg0 >= kDarcyMinThickness;
+    state_.qx_last[u] = carried ? lat_mx / (A * hg0 * dt) : 0.0;
+    state_.qy_last[u] = carried ? lat_my / (A * hg0 * dt) : 0.0;
     const double dV_sat = other_sat + source.in - source.out + boundary_in - boundary_out;
     double hg1 = hg0 + dV_sat / (Sy * A);
 

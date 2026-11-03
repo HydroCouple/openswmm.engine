@@ -475,6 +475,9 @@ struct SimulationSnapshot {
         gw2d_boundary_species; // [species,boundary,4]: advective in/out, imposed in/out
     std::vector<int> gw2d_boundary_cell_edge;  // [boundary,2], zero-based
     std::vector<double> gw2d_transport_ledger; // [species,20], append-only public SPL terms
+    // Appended for plugin-ABI compatibility: groundwater Darcy specific discharge
+    // (m/s), cell reconstruction of the last gathered lateral face flows (held).
+    std::vector<double> gw2d_qx, gw2d_qy;
 };
 
 } /* namespace openswmm */

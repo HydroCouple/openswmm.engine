@@ -1800,11 +1800,13 @@ private:
      * @return Signed incoming water m3 consumed from only this cell's side of incident edges
      * using the current gather_fraction_. Retains unused fractions for later chronological
      * source subintervals.
+     * @param[out] moment_x,moment_y Optional; when non-null, receive Σ outgoing m³ · Perot arm
+     * (m⃗_e − c⃗_i) over the consumed slots (m⁴), the numerator of the cell Darcy reconstruction.
      * @note Requires live edges_ when storage exists. Does not mutate canonical water or
      * neighbor-side receipts, book native mass or clear all accumulators. Exclusive access to
      * consumed slots is required.
      */
-    double gatherLateral(int i) noexcept;
+    double gatherLateral(int i, double* moment_x = nullptr, double* moment_y = nullptr) noexcept;
     /**
      * @brief T7.1: the same gather for one species' mass.
      *

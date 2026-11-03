@@ -824,6 +824,10 @@ double cellVar(const SubsurfaceSolver& gw, std::size_t u, int var, bool& ok) {
         return st.q0_last[u];
     case SWMM_GW2D_VAR_QLAT:
         return st.qlat_last[u];
+    case SWMM_GW2D_VAR_QX:
+        return st.qx_last[u];
+    case SWMM_GW2D_VAR_QY:
+        return st.qy_last[u];
     case SWMM_GW2D_VAR_QNODE:
         return st.qnode_last[u];
     case SWMM_GW2D_VAR_QDEEP:

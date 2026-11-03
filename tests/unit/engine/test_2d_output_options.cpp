@@ -1334,7 +1334,8 @@ TEST(Output2DWriter, DeckGroundwaterFieldsEndToEnd) {
              {"Mesh2_face_gw_table_elev", "Mesh2_face_gw_hg", "Mesh2_face_gw_hu",
               "Mesh2_face_gw_recharge", "Mesh2_face_gw_lateral", "Mesh2_face_gw_node_exchange",
               "Mesh2_face_gw_deep", "Mesh2_face_gw_et", "Mesh2_face_gw_dunne",
-              "Mesh2_face_gw_infil_in", "Mesh2_face_gw_link_seepage"}) { // G-X3
+              "Mesh2_face_gw_infil_in", "Mesh2_face_gw_link_seepage", // G-X3
+              "Mesh2_face_gw_qx", "Mesh2_face_gw_qy"}) {
             ASSERT_TRUE(f.has(name)) << stem << ": " << name;
             const auto d = f.dims(name);
             ASSERT_EQ(d.size(), 2u) << name;
@@ -1356,6 +1357,8 @@ TEST(Output2DWriter, DeckGroundwaterFieldsEndToEnd) {
         EXPECT_FALSE(f.has("groundwater_species_ledger"));
         EXPECT_EQ(f.dsAttr("groundwater_node_exchange_cum", "node_names"), "J1");
         EXPECT_EQ(f.dsAttr("Mesh2_face_gw_hg", "units"), "m");
+        EXPECT_EQ(f.dsAttr("Mesh2_face_gw_qx", "units"), "m s-1");
+        EXPECT_EQ(f.dsAttr("Mesh2_face_gw_qy", "units"), "m s-1");
         // water table = bed + hg, per record, per cell
         const auto te = f.readAll("Mesh2_face_gw_table_elev");
         const auto hg = f.readAll("Mesh2_face_gw_hg");

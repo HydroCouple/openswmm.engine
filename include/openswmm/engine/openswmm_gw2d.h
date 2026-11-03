@@ -215,6 +215,8 @@ SWMM_ENGINE_API int swmm_gw2d_boundary_species(SWMM_Engine engine, int index, in
 #define SWMM_GW2D_VAR_COMPLETED_TIME 30 /**< Last committed groundwater state (elapsed seconds). */
 #define SWMM_GW2D_VAR_PENDING_IN 31     /**< Pending incoming water (m3). */
 #define SWMM_GW2D_VAR_PENDING_OUT 32    /**< Pending water withdrawals and soil ET demand (m3). */
+#define SWMM_GW2D_VAR_QX 33 /**< Darcy specific discharge, x (m s-1), last firing, held */
+#define SWMM_GW2D_VAR_QY 34 /**< Darcy specific discharge, y (m s-1), last firing, held */
 
 /* ---- Ledger selectors (m3, cumulative) ---------------------------------- */
 
