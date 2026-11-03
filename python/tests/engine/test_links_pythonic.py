@@ -23,6 +23,8 @@ except ImportError as _exc:  # pragma: no cover - environment dependent
     raise unittest.SkipTest(f"requires compiled engine: {_exc}")
 
 from openswmm.engine import (  # noqa: E402
+    GeomChangePolicy,
+    GeometryError,
     LinkType,
     NodeType,
     OrificeType,
@@ -342,3 +344,109 @@ class TestEquality(EngineSolverCase):
         if len(solver.links) < 2:
             self.skipTest("need at least two links")
         self.assertNotEqual(solver.links[0], solver.links[1])
+
+
+# ---------------------------------------------------------------------------
+# Polygon cross-section (link.xsect.set_polygon / .polygon)
+# ---------------------------------------------------------------------------
+
+
+class TestPolygonCrossSection(EngineSolverCase):
+    """The run-time boundary API, as reached from Python.
+
+    The C entry points have their own suite (``test_engine_link_polygon_runtime``);
+    these pin the Cython layer on top of them — buffer handling, the two-pass
+    count query, the policy enum, and which Python exception each refusal maps
+    to.
+
+    Every case runs on an OPENED, not-yet-started solver. Changing geometry
+    once the run is under way is FV-only by design, while before the run every
+    routing model accepts it — so this is the state that exercises the binding
+    rather than the routing-model gate.
+
+    What that state cannot show is what the POLICY does: with no water routed
+    yet there is nothing to reconcile, so CONSERVE_DEPTH and CONSERVE_VOLUME
+    are indistinguishable here and both report zero displaced volume. These
+    cases pin that the policy is validated and forwarded, not its physics —
+    mutating the binding to ignore the argument entirely still passes all of
+    them. The reconciliation itself is pinned on the C side, on a running FV
+    solver, by ``test_engine_link_polygon_runtime``.
+    """
+
+    # A CCW "house" pentagon: a 3 x 2 box with a peaked roof. Two properties
+    # are load-bearing.
+    #
+    # It needs no normalisation — already counter-clockwise, minimum y already
+    # 0 — which is what makes the read-back order-for-order identical
+    # (``fromPolyline`` reverses a clockwise chain and shifts any chain whose
+    # lowest point is above the invert).
+    #
+    # And it is NOT symmetric under exchanging x with y. A square is: swap the
+    # two arrays and the result is the same square traced clockwise, which the
+    # compiler then re-orients back to the original chain, so a binding that
+    # passed the buffers in the wrong order would read back correct. The
+    # asymmetric roof is what gives that mutation somewhere to show up.
+    HOUSE_X = [0.0, 3.0, 3.0, 1.5, 0.0]
+    HOUSE_Y = [0.0, 0.0, 2.0, 3.0, 2.0]
+
+    def _conduit(self, solver):
+        for link in solver.links:
+            if link.type == LinkType.CONDUIT:
+                return link
+        self.skipTest("model has no conduit")
+
+    def test_set_polygon_installs_a_polygon_section(self):
+        solver = self.opened_solver()
+        link = self._conduit(solver)
+        displaced = link.xsect.set_polygon(
+            self.HOUSE_X, self.HOUSE_Y, GeomChangePolicy.CONSERVE_DEPTH)
+        # Nothing has been routed, so there is no water to displace.
+        self.assertEqual(displaced, 0.0)
+        self.assertEqual(link.xsect.shape, XSectShape.POLYGON)
+
+    def test_polygon_reads_back_what_was_installed(self):
+        solver = self.opened_solver()
+        link = self._conduit(solver)
+        link.xsect.set_polygon(
+            self.HOUSE_X, self.HOUSE_Y, GeomChangePolicy.CONSERVE_VOLUME)
+        gx, gy = link.xsect.polygon()
+        self.assertEqual(gx.dtype, np.float64)
+        self.assertEqual(len(gx), len(self.HOUSE_X))
+        np.testing.assert_allclose(gx, self.HOUSE_X, rtol=1e-12, atol=1e-9)
+        np.testing.assert_allclose(gy, self.HOUSE_Y, rtol=1e-12, atol=1e-9)
+
+    def test_accepts_numpy_input_and_a_bare_int_policy(self):
+        solver = self.opened_solver()
+        link = self._conduit(solver)
+        x = np.asarray(self.HOUSE_X, dtype=np.float32)   # wrong dtype on purpose
+        y = np.asarray(self.HOUSE_Y, dtype=np.float32)
+        self.assertEqual(link.xsect.set_polygon(x, y, 1), 0.0)
+        self.assertEqual(link.xsect.shape, XSectShape.POLYGON)
+
+    def test_reading_a_link_with_no_boundary_raises(self):
+        solver = self.opened_solver()
+        link = self._conduit(solver)
+        with self.assertRaises(GeometryError):
+            link.xsect.polygon()
+
+    def test_malformed_input_is_rejected_before_the_c_call(self):
+        solver = self.opened_solver()
+        link = self._conduit(solver)
+        with self.assertRaises(ValueError):          # fewer than 3 vertices
+            link.xsect.set_polygon([0.0, 1.0], [0.0, 1.0],
+                                   GeomChangePolicy.CONSERVE_DEPTH)
+        with self.assertRaises(ValueError):          # x and y disagree
+            link.xsect.set_polygon([0.0, 1.0, 1.0], [0.0, 1.0],
+                                   GeomChangePolicy.CONSERVE_DEPTH)
+        with self.assertRaises(ValueError):          # policy is not a member
+            link.xsect.set_polygon(self.HOUSE_X, self.HOUSE_Y, 7)
+        # Nothing above reached the engine, so the section is untouched.
+        self.assertNotEqual(link.xsect.shape, XSectShape.POLYGON)
+
+    def test_self_intersecting_boundary_is_refused_by_the_engine(self):
+        solver = self.opened_solver()
+        link = self._conduit(solver)
+        # A bowtie: a closed chain, but not a simple one.
+        with self.assertRaises(GeometryError):
+            link.xsect.set_polygon([0.0, 2.0, 0.0, 2.0], [0.0, 2.0, 2.0, 0.0],
+                                   GeomChangePolicy.CONSERVE_DEPTH)

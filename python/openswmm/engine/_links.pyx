@@ -55,7 +55,9 @@ import numpy as np
 cimport numpy as np
 
 from ._common cimport *
-from ._enums import LinkType, OrificeType, OutletRatingType, WeirType, XSectShape
+from ._enums import (
+    GeomChangePolicy, LinkType, OrificeType, OutletRatingType, WeirType, XSectShape,
+)
 from ._exceptions import ElementNotFoundError, StaleObjectError
 from ._geometry import CrossSection
 
@@ -269,6 +271,91 @@ cdef class XSection:
         _check_fresh(self._link)
         from ._xsect import XSectionGeometry
         return XSectionGeometry.from_link(self._link)
+
+    def polygon(self):
+        """Return this link's polygon boundary as ``(x, y)`` float64 arrays.
+
+        The vertices are in project length units, in boundary order; the chain
+        closes implicitly, so the first vertex is not repeated.
+
+        Arc segments read back by their endpoints only — the bulge is not
+        recoverable through the C API, so a boundary that came from a
+        ``[CURVES] XPOLYGON`` with arcs reads back as the inscribed polyline.
+
+        A boundary installed through :meth:`set_polygon` reads back vertex for
+        vertex only when it was already in the engine's normal form: traced
+        counter-clockwise, with its lowest point at the conduit invert. The
+        compiler reverses a clockwise chain and shifts the whole chain so its
+        minimum y sits at 0 (depth is measured from the section's own invert),
+        so a chain given clockwise, or one sitting on a raised bed, reads back
+        reversed or shifted. The section it describes is the same either way.
+
+        @return: ``(x, y)`` as two ``numpy.ndarray`` of dtype float64.
+        @raise GeometryError: The link carries no polygon boundary.
+        """
+        _check_fresh(self._link)
+        cdef SWMM_Engine e = _h(self._link._solver)
+        cdef int idx = self._link._index
+        cdef int n = 0
+        # First pass: NULL buffers query the vertex count.
+        _check(swmm_link_get_polygon(e, idx, NULL, NULL, &n))
+        cdef np.ndarray[double, ndim=1] xs = np.empty(n, dtype=np.float64)
+        cdef np.ndarray[double, ndim=1] ys = np.empty(n, dtype=np.float64)
+        if n == 0:
+            return xs, ys
+        _check(swmm_link_get_polygon(e, idx, &xs[0], &ys[0], &n))
+        return xs, ys
+
+    def set_polygon(self, x, y, policy) -> float:
+        """Replace this conduit's cross-section with a closed polygon boundary.
+
+        The boundary is compiled to a piecewise-Chebyshev closure and installed
+        on the link, replacing whatever shape it carried. Legal both before the
+        run and between routing steps.
+
+        @param x: Boundary x-coordinates, project length units. At least 3
+            vertices; point *i* joins point *(i+1) mod n*, so do not repeat the
+            first vertex. Either winding is accepted.
+        @param y: Boundary y-coordinates, same length as *x*.
+        @param policy: A :class:`GeomChangePolicy`. Required — the two members
+            describe opposite physical events and picking wrongly is silent.
+        @return: Water volume removed from the conduit, in project volume
+            units (positive = removed; always 0 for ``CONSERVE_VOLUME``).
+            **Book this into your own mass balance** — an unbooked change is
+            indistinguishable from a continuity error in the report.
+        @raise ValueError: *x* and *y* differ in length, fewer than 3 vertices
+            were given, or *policy* is not a GeomChangePolicy member. These are
+            caught here, before the engine is called.
+        @raise GeometryError: The boundary reached the engine but is not a
+            simple closed chain (self-intersecting, zero area, non-finite
+            coordinate), it does not compile to a usable closure, or the run
+            has already started under a routing model other than FV.
+        @raise BadParamError: The link is not a conduit.
+
+        @note Changing geometry mid-run is FV-only. ``DYNWAVE``/``KINWAVE``
+            hold per-link state derived from the section at init with no
+            defined way to re-seed it mid-Picard, so a mid-run call under
+            either raises rather than producing state that half describes each
+            section. Before the run starts every routing model accepts it.
+        @note Not carried in hot starts: a hotstart file records depths and
+            flows, not geometry. Re-apply the polygons after loading.
+        """
+        _check_fresh(self._link)
+        cdef np.ndarray[double, ndim=1] xs = np.ascontiguousarray(x, dtype=np.float64)
+        cdef np.ndarray[double, ndim=1] ys = np.ascontiguousarray(y, dtype=np.float64)
+        if xs.shape[0] != ys.shape[0]:
+            raise ValueError(
+                f"x and y must be the same length (got {xs.shape[0]} and {ys.shape[0]})"
+            )
+        cdef int n = xs.shape[0]
+        if n < 3:
+            raise ValueError(f"a polygon boundary needs at least 3 vertices (got {n})")
+        cdef int pol = int(GeomChangePolicy(policy))
+        cdef double displaced = 0.0
+        _check(swmm_link_set_polygon(
+            _h(self._link._solver), self._link._index,
+            &xs[0], &ys[0], n, pol, &displaced))
+        return displaced
 
     def __iter__(self):
         return iter(self.as_tuple())

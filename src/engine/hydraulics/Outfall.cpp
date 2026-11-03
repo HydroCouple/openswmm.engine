@@ -98,6 +98,7 @@ static int translateShape(XsectShape link_shape) {
         return static_cast<int>(XSectShape::STREET_XSECT);
     case XsectShape::DUMMY:
         return static_cast<int>(XSectShape::DUMMY);
+        case XsectShape::POLYGON:         return static_cast<int>(XSectShape::POLYGON);
     default:
         return static_cast<int>(XSectShape::DUMMY);
     }
@@ -147,6 +148,10 @@ static XSectParams buildXSectParams(const SimulationContext& ctx, std::size_t uk
             xs.transect_tbl_size = transect::N_TRANSECT_TBL;
         }
     }
+
+    const int ci = ctx.links.xsect_cheb_idx[uk];
+    if (ci >= 0 && static_cast<std::size_t>(ci) < ctx.cheb_sections.size())
+        xs.cheb = &ctx.cheb_sections[static_cast<std::size_t>(ci)];
     return xs;
 }
 

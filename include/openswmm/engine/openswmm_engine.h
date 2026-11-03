@@ -141,6 +141,8 @@ typedef enum SWMM_ErrorCode {
     SWMM_ERR_CANCELLED = 16,  /**< A caller cancelled a cancellable read-only operation. */
     SWMM_ERR_BUFSIZE = 17,    /**< A caller's output buffer is too small for the value; nothing
                                    was written. Retry with a larger buffer. */
+    SWMM_ERR_GEOMETRY = 18,   /**< Cross-section geometry is invalid, or cannot be changed at run
+                                   time in the active routing model. @see swmm_link_set_polygon. */
     SWMM_ERR_INTERNAL = 99
 } SWMM_ErrorCode;
 

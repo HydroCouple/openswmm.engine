@@ -1,0 +1,96 @@
+
+  OPENSWMM ENGINE - VERSION 5.3.0 (Build 5.3.0)
+  ------------------------------------------------------------
+
+  Reduced groundwater parity probe from MC storm case 
+  
+  ****************
+  Analysis Options
+  ****************
+  Flow Units ............... CFS
+  Process Models:
+    Rainfall/Runoff ........ YES
+    RDII ................... NO
+    Snowmelt ............... NO
+    Groundwater ............ YES
+    Flow Routing ........... NO
+    Water Quality .......... NO
+  Infiltration Method ...... HORTON
+  Surcharge Method ......... EXTRAN
+  Starting Date ............ 03/30/1970 15:00:00
+  Ending Date .............. 04/04/1970 07:00:00
+  Antecedent Dry Days ...... 0.0
+  Report Time Step ......... 01:00:00
+  Wet Time Step ............ 01:00:00
+  Dry Time Step ............ 01:00:00
+  
+  
+  **************************        Volume         Depth
+  Runoff Quantity Continuity     acre-feet        inches
+  **************************     ---------       -------
+  Total Precipitation ......         1.199         2.390
+  Evaporation Loss .........         0.030         0.059
+  Infiltration Loss ........         0.307         0.612
+  Surface Runoff ...........         0.888         1.770
+  Final Storage ............         0.000         0.000
+  Continuity Error (%) .....        -2.100
+  
+  
+  **************************        Volume         Depth
+  Groundwater Continuity         acre-feet        inches
+  **************************     ---------       -------
+  Initial Storage ..........       994.138      1981.670
+  Infiltration .............         0.307         0.612
+  Upper Zone ET ............         0.043         0.086
+  Lower Zone ET ............         0.000         0.000
+  Deep Percolation .........         0.010         0.020
+  Groundwater Flow .........         0.000         0.000
+  Final Storage ............       994.392      1982.176
+  Continuity Error (%) .....        -0.000
+  
+  
+  **************************        Volume        Volume
+  Flow Routing Continuity        acre-feet      10^6 gal
+  **************************     ---------     ---------
+  Dry Weather Inflow .......         0.000         0.000
+  Wet Weather Inflow .......         0.888         0.289
+  Groundwater Inflow .......         0.000         0.000
+  RDII Inflow ..............         0.000         0.000
+  External Inflow ..........         0.000         0.000
+  External Outflow .........         0.888         0.289
+  Flooding Loss ............         0.000         0.000
+  Evaporation Loss .........         0.000         0.000
+  Exfiltration Loss ........         0.000         0.000
+  Initial Stored Volume ....         0.000         0.000
+  Final Stored Volume ......         0.000         0.000
+  Continuity Error (%) .....         0.000
+  
+  
+  ***************************
+  Subcatchment Runoff Summary
+  ***************************
+  
+  ------------------------------------------------------------------------------------------------------------------------------
+                            Total      Total      Total      Total     Imperv       Perv      Total       Total     Peak  Runoff
+                           Precip      Runon       Evap      Infil     Runoff     Runoff     Runoff      Runoff   Runoff   Coeff
+  Subcatchment                 in         in         in         in         in         in         in    10^6 gal      CFS
+  ------------------------------------------------------------------------------------------------------------------------------
+  MMC013C0050a               2.39       0.00       0.06       0.61       0.95       1.14       1.77        0.29     2.01   0.740
+  
+  
+  *******************
+  Groundwater Summary
+  *******************
+  
+  -----------------------------------------------------------------------------------------------------
+                                            Total    Total  Maximum  Average  Average    Final    Final
+                          Total    Total    Lower  Lateral  Lateral    Upper    Water    Upper    Water
+                          Infil     Evap  Seepage  Outflow  Outflow   Moist.    Table   Moist.    Table
+  Subcatchment               in       in       in       in      CFS                ft                ft
+  -----------------------------------------------------------------------------------------------------
+  MMC013C0050a             0.61     0.09     0.02     0.00     0.00     0.29     0.21     0.29     0.44
+  
+
+  Analysis begun on:  Sun Nov  1 09:35:47 2026
+  Analysis ended on:  Sun Nov  1 09:35:47 2026
+  Total elapsed time: < 1 sec

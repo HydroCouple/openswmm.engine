@@ -1,0 +1,41 @@
+[TITLE]
+C-API gap closures
+
+[OPTIONS]
+FLOW_UNITS           CFS
+FLOW_ROUTING         DYNWAVE
+START_DATE           01/01/2024
+START_TIME           00:00:00
+END_DATE             01/01/2024
+END_TIME             01:00:00
+REPORT_STEP          00:15:00
+ROUTING_STEP         00:00:30
+COMPATIBILITY        5
+WATER_DENSITY        999.5
+
+[JUNCTIONS]
+;;Name  Elev  MaxDepth
+J1      10    5
+J2      9     5
+
+[OUTFALLS]
+;;Name  Elev  Type
+O1      8     FREE
+
+[CONDUITS]
+;;Name  From  To  Length  N      InOff  OutOff  InitQ
+C1      J1    J2  100     0.013  0      0       0
+C2      J2    O1  100     0.013  0      0       0
+
+[XSECTIONS]
+;;Link  Shape     G1  G2  G3  G4  Barrels
+C1      CIRCULAR  1   0   0   0   1
+C2      CIRCULAR  1   0   0   0   1
+
+[TIMESERIES]
+src_ts 0 1.0
+src_ts 1 1.0
+
+[PROCESS_COMPONENTS]
+org.hydrocouple.openswmm.reactions config="ard_detail.rxn"
+org.hydrocouple.openswmm.transport.ard config="ard_detail.ard"

@@ -61,6 +61,7 @@ __all__ = [
     "NumericalError",
     "CRSError",
     "DependencyError",
+    "GeometryError",
     "GeoPackageError",
     "ElementNotFoundError",
     "StaleObjectError",
@@ -157,6 +158,17 @@ class DependencyError(EngineError, RuntimeError):
     (``SWMM_ERR_DEPENDENCY``)."""
 
 
+class GeometryError(EngineError, ValueError):
+    """Cross-section geometry is invalid, or cannot be changed in the current
+    state (``SWMM_ERR_GEOMETRY``).
+
+    Raised by :meth:`XSection.set_polygon` when the boundary is not a simple
+    closed chain or does not compile, and when a mid-run change is attempted
+    under a routing model other than FV; by :meth:`XSection.polygon` when the
+    link carries no polygon boundary.
+    """
+
+
 class GeoPackageError(EngineError, RuntimeError):
     """A GeoPackage operation failed: opening the file, a query or a write
     (``SWMM_ERR_IO``). The GeoPackage C API reports failures without a code;
@@ -222,6 +234,7 @@ _CODE_TO_EXCEPTION: dict[int, type[EngineError]] = {
     ErrorCode.CRS:         CRSError,
     ErrorCode.NUMERICAL:   NumericalError,
     ErrorCode.DEPENDENCY:  DependencyError,
+    ErrorCode.GEOMETRY:    GeometryError,
     ErrorCode.INTERNAL:    EngineError,
 }
 

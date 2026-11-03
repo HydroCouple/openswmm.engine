@@ -1,0 +1,37 @@
+
+  OPENSWMM ENGINE - VERSION 6.0.0-alpha.4
+  ------------------------------------------------------------
+
+  WARNING 04: minimum elevation drop used for Conduit C
+  
+  ****************
+  Analysis Options
+  ****************
+  Flow Units ............... CFS
+  Process Models:
+    Rainfall/Runoff ........ YES
+    RDII ................... NO
+    Snowmelt ............... NO
+    Groundwater ............ NO
+    Flow Routing ........... YES
+    Ponding Allowed ........ NO
+    Water Quality .......... NO
+  Infiltration Method ...... GREEN_AMPT
+  Flow Routing Method ...... DYNWAVE
+  Cross-Section Geometry ... LEGACY
+  Surcharge Method ......... EXTRAN
+  Starting Date ............ 01/31/2004 23:59:00
+  Ending Date .............. 02/01/2004 00:03:00
+  Antecedent Dry Days ...... 0.0
+  Report Time Step ......... 00:00:03
+  Wet Time Step ............ 00:00:07
+  Dry Time Step ............ 00:00:23
+  Routing Time Step ........ 0.70 sec
+  Variable Time Step ....... YES
+  Maximum Trials ........... 8
+  Number of Threads ........ 1
+  Head Tolerance ........... 0.005000 ft
+  
+  
+
+  [Report interrupted — simulation did not complete normally]

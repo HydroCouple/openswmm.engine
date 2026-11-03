@@ -1119,7 +1119,8 @@ const char* const kStandardOptionKeys[] = {
     "SKIP_STEADY_STATE", "IGNORE_RAINFALL", "IGNORE_SNOWMELT", "IGNORE_GROUNDWATER", "IGNORE_RDII",
     "IGNORE_QUALITY", "IGNORE_ROUTING", "IGNORE_2D", "SURCHARGE_METHOD", "TPA_CELERITY",
     "UNSTEADY_FRICTION", "UF_K3", "REPORT_SIGNED_HEADS", "NODE_CONTINUITY", "FORCE_MAIN_EQUATION",
-    "NORMAL_FLOW_LIMITED", "INERTIAL_DAMPING", "ANDERSON_ACCEL", "DPS_CELERITY", "DPS_ALPHA",
+    "NORMAL_FLOW_LIMITED", "XSECT_GEOMETRY", "INERTIAL_DAMPING", "ANDERSON_ACCEL", "DPS_CELERITY",
+    "DPS_ALPHA",
     "DPS_DECAY_TIME", "LENGTHENING_STEP", "VARIABLE_STEP", "MINIMUM_STEP", "MAX_TRIALS",
     "HEAD_TOLERANCE", "LAT_FLOW_TOL", "SYS_FLOW_TOL", "MIN_SURFAREA", "MIN_SLOPE", "FV_CELL_LENGTH",
     "FV_MIN_CELLS", "FV_CFL", "FV_RIEMANN", "FV_ORDER", "FV_LIMITER", "FV_SCALAR_SCHEME",
@@ -1409,6 +1410,8 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine, const char* key, char* 
             val = "NEITHER";
             break;
         }
+    } else if (k == "XSECT_GEOMETRY") {
+        val = (opt.xsect_geometry == openswmm::XsectGeometryMode::EXACT) ? "EXACT" : "LEGACY";
     } else if (k == "INERTIAL_DAMPING") {
         switch (opt.inertial_damping) {
         case 0:
@@ -2012,6 +2015,26 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine, const char* key, const 
                 opt.normal_flow_ltd = 3;
             else
                 return SWMM_ERR_BADPARAM;
+        } else if (k == "XSECT_GEOMETRY") {
+            // The compiled sections this selects are built once, at open, by the
+            // resolver. Flipping the flag afterwards would change what the report
+            // prints and nothing else — the hot loop would keep the geometry it
+            // was built with — so refuse rather than leave the two disagreeing.
+            // Writing back the value already in force changes nothing and is accepted.
+            std::string vu(v);
+            for (auto& c : vu)
+                c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
+            openswmm::XsectGeometryMode mode;
+            if (vu == "LEGACY")
+                mode = openswmm::XsectGeometryMode::LEGACY;
+            else if (vu == "EXACT")
+                mode = openswmm::XsectGeometryMode::EXACT;
+            else
+                return SWMM_ERR_BADPARAM;
+            if (mode != opt.xsect_geometry &&
+                to_engine(engine)->context().state != openswmm::EngineState::CREATED)
+                return SWMM_ERR_LIFECYCLE;
+            opt.xsect_geometry = mode;
         } else if (k == "INERTIAL_DAMPING") {
             std::string vu(v);
             for (auto& c : vu)
