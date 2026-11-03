@@ -735,6 +735,119 @@ TEST(PortGraph, StraightLineOutletOfAStoreStopsAtItsFloor) {
     EXPECT_EQ(P::flooredFlow(q_star, P::dryFactor(d_star, 0.0), 1.0), q_star);
 }
 
+// ---------------------------------------------------------------------------
+// Piecewise-smooth solve (PORT_HAMILTONIAN O-4): kinks in monotone port laws
+// ---------------------------------------------------------------------------
+namespace {
+// Two stores joined by a flow brake whose kickback dip is under its monotone
+// envelope (rises to the main run, then a plateau), the first store also has
+// a straight-line outlet floored at its bottom; the second drains through a
+// pump at a frozen setting, floored (dry ramp) below and opening its spare
+// capacity over δ_dry above. Every law is C⁰ with strong corners: dry
+// ramp → steep rise → plateau (an S), and the pump's floor/spare corners.
+struct KinkSolve { bool ok = false; PortGraph::Stats st; std::vector<double> z, F; };
+KinkSolve solveKinkSystem(bool kink_bound, bool active_set) {
+    PortGraph g;
+    g.resize(2);
+    g.dt = 15.8;
+    g.S = {12.0, 61.0};
+    g.kink_bound = kink_bound;
+    g.active_set = active_set;
+    g.max_jacobi = 0;   // measure Newton alone
+    const double qs = 1.1, plate = 0.74, qp = 0.97, Tp = 2.07, dp = 0.0057, ju = 1.72;
+    RatingTable T;   // the brake: rises, dips (kickback), rises again; envelope = plateau
+    T.y = {-1.0, -0.01, 0.0, 0.02, 0.05, 0.3, 1.0};
+    T.q = {0.0, 0.0, qs, qs * 1.2, qs * 0.7, qs * 0.9, qs * 1.2 + plate};
+    T.makeMonotone();
+    EXPECT_GT(T.raised, 0);
+    const double T0 = T.eval(0.0), q_br = 0.9 * qs;   // the main run passes less than its rating
+    PortGraph::Port br;
+    br.up = 0; br.dn = 1;
+    br.dq = [=](int, double zu, double) {
+        if (zu == 0.0) return 0.0;
+        return P::anchoredRatedFlow(T.eval(zu) * P::ramp(0.5 + zu), T0, q_br, 0.5, zu) - q_br;
+    };
+    PortGraph::Port pu;
+    pu.up = 1; pu.dn = -1;
+    pu.dq = [=](int, double zu, double) {
+        if (zu == 0.0) return 0.0;
+        return P::anchoredRatedFlow(Tp * P::ramp(dp + zu), Tp * P::ramp(dp), qp, dp, zu) - qp;
+    };
+    PortGraph::Port ln;
+    ln.up = 0; ln.dn = -1;
+    ln.dq = [=](int, double zu, double) { return P::flooredFlow(0.3 + ju * zu, P::dryFactor(0.5, zu), 1.0) - 0.3; };
+    g.ports = {br, pu, ln};
+    g.b = {0.78, -0.135};
+    g.z_prev = {0.081, -0.059};
+    AdditiveSystem sys;
+    KinkSolve r;
+    r.z = g.z_prev;
+    r.ok = g.solve(r.z, sys);
+    r.st = g.stats;
+    g.residual(r.z, r.F);
+    return r;
+}
+}  // namespace
+
+TEST(PortGraph, KinkBoundedNewtonCrossesEnvelopeAndPumpFloorCorners) {
+    const KinkSolve plain = solveKinkSystem(false, false);
+    EXPECT_FALSE(plain.ok) << "plain Newton (forward slopes, blind halving) should stall on this system";
+    const KinkSolve s = solveKinkSystem(true, true);
+    ASSERT_TRUE(s.ok);
+    EXPECT_LE(s.st.newton_iters, 8);
+    EXPECT_EQ(s.st.jacobi_fallbacks, 0);
+    EXPECT_GE(s.st.kink_bounded, 1) << "the fixture must exercise the kink bound";
+    for (double f : s.F) EXPECT_LT(std::fabs(f), 1e-9);
+    // Mutation: without the kink bound (active set kept) Newton cycles across the S.
+    const KinkSolve m = solveKinkSystem(false, true);
+    EXPECT_FALSE(m.ok && m.st.newton_iters <= 8) << "kink bound removed: should not converge in <= 8 iterations";
+}
+
+TEST(PortGraph, ActiveSetSlopeAtAKinkWithinTheDifferenceStep) {
+    // Bellinge G72R33Bb -> G72R33B (2026-11-02): a node drains through a rated
+    // outlet whose main run passes q* with its rating ~0 at the main run's
+    // level (below: q*·ramp(δ + y), slope 61.8; above: the rating's 1.56) and
+    // through a plane edge. The member's root sits 2.4e-8 ft below the kink,
+    // inside the forward-difference step (1e-7): the forward slope blends both
+    // pieces, Newton converges linearly with alternating sign and stalls.
+    auto solveAt = [](bool active_set, double zp, PortGraph::Stats* st) {
+        PortGraph g;
+        g.resize(2);
+        g.dt = 10.0;
+        g.S = {17.17, 53.82};
+        g.active_set = active_set;
+        g.max_jacobi = 0;
+        RatingTable T;
+        T.y = {-1.0, 0.0, 1.0};
+        T.q = {0.0, 0.0, 1.56};
+        const double qs = 0.618;
+        PortGraph::Port R;
+        R.up = 0; R.dn = 1;
+        R.dq = [=](int, double zu, double) { return zu == 0.0 ? 0.0 : P::anchoredRatedFlow(T.eval(zu), 0.0, qs, 0.5, zu) - qs; };
+        PortGraph::Port L;
+        L.up = 0; L.dn = -1;
+        L.dq = [](int, double zu, double) { return 0.4621 * zu; };
+        PortGraph::Port W;   // the basin's weir, closed at the main run
+        W.up = 1; W.dn = -1;
+        W.dq = [](int, double zu, double) { return zu > 0.0 ? 3.0 * zu * std::sqrt(zu) : 0.0; };
+        g.ports = {R, L, W};
+        g.b = {-1.5e-6, -3.065e-5};
+        g.z_prev = {zp, -3.5e-4};
+        AdditiveSystem sys;
+        std::vector<double> z = g.z_prev;
+        const bool ok = g.solve(z, sys);
+        *st = g.stats;
+        EXPECT_TRUE(!ok || (z[0] < 0.0 && z[0] > -1e-7)) << "root just below the kink";
+        return ok;
+    };
+    for (double zp : {-2.5e-8, 0.0}) {
+        PortGraph::Stats st, st_m;
+        EXPECT_TRUE(solveAt(true, zp, &st)) << "zp " << zp;
+        EXPECT_LE(st.newton_iters, 3) << "zp " << zp;
+        EXPECT_FALSE(solveAt(false, zp, &st_m)) << "forward-difference slope at the kink should stall (zp " << zp << ")";
+    }
+}
+
 // ===========================================================================
 // Step 3 — engine wiring (hook rom1dStorageMembersEnabled())
 // ===========================================================================

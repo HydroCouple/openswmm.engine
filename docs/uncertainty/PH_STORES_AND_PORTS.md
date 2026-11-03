@@ -247,6 +247,13 @@ Do not split it into store bisection plus a separate correction solve.
   flow from the balance there. This is the monotone-graph (complementarity)
   solution, and it is what "an empty member pumps what arrives" and "a basin
   sits at its pipe end" mean.
+  *As built (O-4, PORT_HAMILTONIAN §6):* the ports stay black boxes, so kinks are
+  found numerically: both one-sided differences per argument (far differences when
+  the kink lies inside the difference step), the slopes of a port on a kink taken
+  just inside the piece the solved step enters (re-solved while they change; this
+  also covers kinks along a line in (z_up, z_dn)), the same for a store's volume
+  corner, and, when the full step fails Armijo, the step bounded by the first strong
+  kink along it (cross it by at most its distance, then just past it).
 - **Damping.** Armijo on ‖F‖₁. Start from z^n. Stop at ‖F‖∞ < 1e-10·(S/Δt) or
   after 20 iterations.
 - **Fallback.** Monotone nonlinear Jacobi (each node solved for its own

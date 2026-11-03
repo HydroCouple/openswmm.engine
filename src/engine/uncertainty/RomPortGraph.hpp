@@ -19,9 +19,16 @@
  * column-dominant M-matrix, so the AdditiveSystem LU (minimum-degree order, no
  * pivoting) factors it as it is; its symbolic pattern is shared with the planes.
  *
- * Solve: Newton (forward-difference port slopes = the one-sided slope at a
- * kink), Armijo on ‖F‖₁; fallback monotone nonlinear Jacobi, counted. F == 0
- * exactly at the start (zero data) returns without iterating.
+ * Solve: semismooth (active-set) Newton for piecewise-smooth monotone ports
+ * (PORT_HAMILTONIAN O-4). Port slopes are one-sided differences on both sides;
+ * a kink inside the difference step is resolved by the far differences (the
+ * two pieces' slopes), and a port sitting on a kink takes its slopes on the
+ * piece the solved step enters (the B-derivative in the step's direction;
+ * re-solved while any changes).
+ * Armijo on ‖F‖₁ from the full step; when it fails, the step is bounded by the
+ * first strong kink along it (no further than twice its distance, then just
+ * past it) before halving. Fallback monotone nonlinear Jacobi, counted as an
+ * anomaly. F == 0 exactly at the start (zero data) returns without iterating.
  */
 #ifndef OPENSWMM_ENGINE_UNCERTAINTY_ROM_PORT_GRAPH_HPP
 #define OPENSWMM_ENGINE_UNCERTAINTY_ROM_PORT_GRAPH_HPP
@@ -71,7 +78,9 @@ struct PortGraph {
     int max_jacobi = 500;
     bool floor_projection = false;         ///< mutation hook only: clamp z >= floor (creates water)
     std::vector<double> floor;             ///< used only with floor_projection
-    struct Stats { long solves = 0, newton_iters = 0, armijo_failures = 0, jacobi_fallbacks = 0, jacobi_failed = 0, zero_exits = 0, port_evals = 0, factorisations = 0; };
+    bool kink_bound = true;                ///< mutation hook only: false = blind Armijo halving across kinks
+    bool active_set = true;                ///< mutation hook only: false = forward-difference slopes at a kink
+    struct Stats { long solves = 0, newton_iters = 0, armijo_failures = 0, jacobi_fallbacks = 0, jacobi_failed = 0, zero_exits = 0, port_evals = 0, factorisations = 0, side_switches = 0, kink_bounded = 0; };
     mutable Stats stats;   ///< mutable: residual() (const) counts port evaluations
 
     void resize(int n_nodes) {
@@ -189,52 +198,245 @@ struct PortGraph {
         std::vector<FlowEdge> jac;
         std::vector<double> A(un), dq(un), dz(un), zt(un), Ft, Mt;
         bool ok = converged(F, mag, z);
-        for (int it = 0; it < max_newton && !ok; ++it) {
-            ++stats.newton_iters;
-            // Jacobian: store areas, plane edges, port slopes (forward difference = one-sided slope).
+        // Difference step (relative to max(1, |z|)) for the port and store slopes.
+        constexpr double kDiff = 1.0e-7;
+        // Per port: value and both one-sided slopes in each argument at z.
+        struct Slope { double f0 = 0.0, up_p = 0.0, up_m = 0.0, dn_p = 0.0, dn_m = 0.0, ju = 0.0, jd = 0.0; bool kink = false; };
+        std::vector<Slope> sl(ports.size());
+        // Per node: the store area on the two sides (a store's volume curve is
+        // piecewise linear in depth, with a corner at the invert), and the one used.
+        struct StoreSlope { double a = 0.0, a_p = 0.0, a_m = 0.0; bool kink = false; };
+        std::vector<StoreSlope> st_(un);
+        std::vector<double> dz_last(un, 0.0);
+        auto zOf = [&](const std::vector<double>& zc, int t) {
+            return (t < 0 || pinned[static_cast<std::size_t>(t)]) ? 0.0 : zc[static_cast<std::size_t>(t)];
+        };
+        // The two sides differ by more than roundoff: a kink within the difference step.
+        auto differ = [](double a, double c) { return std::fabs(a - c) > 1.0e-6 * (std::fabs(a) + std::fabs(c)) + 1.0e-300; };
+        auto slopes = [&](const Port& p, double zu, double zd, Slope& S) {
+            S.f0 = evalPort(p, zu, zd);
+            const bool has_u = p.up >= 0 && !pinned[static_cast<std::size_t>(p.up)];
+            const bool has_d = p.dn >= 0 && !pinned[static_cast<std::size_t>(p.dn)];
+            auto one = [&](bool has, bool upside, double x, double& sp, double& sm) {
+                sp = sm = 0.0;
+                if (!has) return;
+                const double h = kDiff * std::max(1.0, std::fabs(x));
+                auto f = [&](double dx) { return upside ? evalPort(p, zu + dx, zd) : evalPort(p, zu, zd + dx); };
+                const double fp = f(h);
+                sp = (fp - S.f0) / h;
+                if (!active_set) { sm = sp; return; }   // mutation: the forward difference only
+                const double fm = f(-h);
+                sm = (S.f0 - fm) / h;
+                if (!differ(sp, sm)) return;   // smooth here
+                // A kink within one difference step of x: the near differences blend
+                // the two pieces (Bellinge G72R33Bout1, 2026-11-02: kink 2.5e-8 ft away,
+                // forward slope 16.6 against 61.8 and 1.56 on its two sides). The far
+                // differences, which skip [x − h, x + h], are the slopes of the two pieces.
+                const double sp2 = (f(2.0 * h) - fp) / h, sm2 = (fm - f(-2.0 * h)) / h;
+                const bool clean_m = !differ(sm, sm2), clean_p = !differ(sp, sp2);
+                if (clean_m && !clean_p) { sp = sm; return; }   // kink ahead: x is on the lower piece
+                if (clean_p && !clean_m) { sm = sp; return; }   // kink behind: x is on the upper piece
+                sp = sp2;   // on the kink (or several kinks): both pieces, the active set picks
+                sm = sm2;
+            };
+            one(has_u, true, zu, S.up_p, S.up_m);
+            one(has_d, false, zd, S.dn_p, S.dn_m);
+        };
+        auto assemble = [&]() {
             jac = edges;
-            for (const auto& p : ports) {
-                const double zu = (p.up >= 0 && !pinned[static_cast<std::size_t>(p.up)]) ? z[static_cast<std::size_t>(p.up)] : 0.0;
-                const double zd = (p.dn >= 0 && !pinned[static_cast<std::size_t>(p.dn)]) ? z[static_cast<std::size_t>(p.dn)] : 0.0;
-                const double f0 = evalPort(p, zu, zd);
-                const double hu = 1.0e-7 * std::max(1.0, std::fabs(zu)), hd = 1.0e-7 * std::max(1.0, std::fabs(zd));
+            for (std::size_t k = 0; k < ports.size(); ++k) {
+                const Port& p = ports[k];
+                const Slope& S = sl[k];
                 FlowEdge e;
                 e.up = p.up; e.dn = p.dn; e.conduit = true;
-                e.ju = std::max((evalPort(p, zu + hu, zd) - f0) / hu, 0.0);
-                e.jd = p.dn >= 0 ? std::min((evalPort(p, zu, zd + hd) - f0) / hd, 0.0) : 0.0;
+                e.ju = S.ju;
+                e.jd = p.dn >= 0 ? S.jd : 0.0;
                 if (e.up < 0) {   // an inflow port from outside: only its dn slope matters
                     e.up = p.dn; e.dn = -1; e.ju = -e.jd; e.jd = 0.0;
                     if (e.up < 0) continue;
                 }
                 jac.push_back(e);
             }
-            for (std::size_t t = 0; t < un; ++t) { volume(static_cast<int>(t), z[t], &A[t]); A[t] = std::max(A[t], 1.0e-9); }
+            for (std::size_t t = 0; t < un; ++t) A[t] = std::max(st_[t].a, 1.0e-9);
             sys.build(n, jac, A.data(), dt, &pinned);
             ++stats.factorisations;
             for (std::size_t t = 0; t < un; ++t) { dq[t] = -F[t]; dz[t] = 0.0; }
             sys.step(dq.data(), dz.data());
-            // Armijo on ‖F‖₁. At a kink (dry ramp, table point, raised end) the
-            // one-sided slope can make no step decrease ‖F‖₁; the best trial is
-            // then taken anyway (the full step if none is better) and Newton
-            // goes on: a monotone piecewise-smooth system usually settles on the
-            // right piece within a few such steps. Only Newton that has not
-            // converged after max_newton iterations hands over to Jacobi.
+        };
+        // Directional linearisation error of port k along dz at step t (cfs).
+        auto kinkErr = [&](std::size_t k, double t) {
+            const Port& p = ports[k];
+            const Slope& S = sl[k];
+            const double du = zOf(dz, p.up), dd = zOf(dz, p.dn);
+            const double g0 = S.ju * du + S.jd * dd;
+            return evalPort(p, zOf(z, p.up) + t * du, zOf(z, p.dn) + t * dd) - S.f0 - t * g0;
+        };
+        for (int it = 0; it < max_newton && !ok; ++it) {
+            ++stats.newton_iters;
+            // Semismooth (active-set) Newton on the piecewise-smooth monotone ports
+            // (note §3 "Jumps"). A port whose two one-sided slopes differ in an
+            // argument sits on a kink: its Jacobian row must be the derivative on
+            // the piece the step moves into (the B-derivative in the step's
+            // direction), which per-axis sides cannot give for a kink along a
+            // line in (z_up, z_dn) (a flow reversing, h_up − max(h_dn, z_end) = δ0,
+            // the orifice's Δ = 0). Start from the side of the last move, solve;
+            // then take the kinked ports' slopes just inside the piece the solved
+            // step enters (forward differences at z + η·dz, η·|dz| = 3 difference
+            // steps) and re-solve while any changes. Bellinge G71F320/G71F68Y,
+            // 2026-11-02: per-axis sides at such a corner gave a non-descent
+            // direction and a period-6 cycle. The Jacobian is a column-dominant
+            // M-matrix for every choice (slopes clipped to their monotone sign).
+            for (std::size_t k = 0; k < ports.size(); ++k) {
+                const Port& p = ports[k];
+                Slope& S = sl[k];
+                slopes(p, zOf(z, p.up), zOf(z, p.dn), S);
+                const bool ku = differ(S.up_p, S.up_m), kd = differ(S.dn_p, S.dn_m);
+                S.kink = active_set && (ku || kd);
+                const bool back_u = S.kink && ku && p.up >= 0 && dz_last[static_cast<std::size_t>(p.up)] < 0.0;
+                const bool back_d = S.kink && kd && p.dn >= 0 && dz_last[static_cast<std::size_t>(p.dn)] < 0.0;
+                S.ju = std::max(back_u ? S.up_m : S.up_p, 0.0);
+                S.jd = std::min(back_d ? S.dn_m : S.dn_p, 0.0);
+            }
+            for (std::size_t t = 0; t < un; ++t) {
+                StoreSlope& T = st_[t];
+                const int ti = static_cast<int>(t);
+                volume(ti, z[t], &T.a);
+                T.kink = false;
+                if (store_of[t] < 0 || pinned[t] || !active_set) continue;
+                const double h = kDiff * std::max(1.0, std::fabs(z[t]));
+                const double v0 = volume(ti, z[t], nullptr), vp = volume(ti, z[t] + h, nullptr), vm = volume(ti, z[t] - h, nullptr);
+                T.a_p = (vp - v0) / h;
+                T.a_m = (v0 - vm) / h;
+                if (!differ(T.a_p, T.a_m)) { T.a = T.a_p; continue; }
+                const double ap2 = (volume(ti, z[t] + 2.0 * h, nullptr) - vp) / h, am2 = (vm - volume(ti, z[t] - 2.0 * h, nullptr)) / h;
+                const bool clean_m = !differ(T.a_m, am2), clean_p = !differ(T.a_p, ap2);
+                if (clean_m && !clean_p) { T.a = T.a_m; continue; }   // corner ahead
+                if (clean_p && !clean_m) { T.a = T.a_p; continue; }   // corner behind
+                T.a_p = ap2; T.a_m = am2; T.kink = true;
+                T.a = dz_last[t] < 0.0 ? T.a_m : T.a_p;
+            }
+            for (int pass = 0; pass < 4; ++pass) {
+                assemble();
+                if (!active_set || pass == 3) break;
+                bool changed = false;
+                for (std::size_t k = 0; k < ports.size(); ++k) {
+                    Slope& S = sl[k];
+                    const Port& p = ports[k];
+                    const bool has_u = p.up >= 0 && !pinned[static_cast<std::size_t>(p.up)];
+                    const bool has_d = p.dn >= 0 && !pinned[static_cast<std::size_t>(p.dn)];
+                    const double zu = zOf(z, p.up), zd = zOf(z, p.dn), du = zOf(dz, p.up), dd = zOf(dz, p.dn);
+                    const double hu = kDiff * std::max(1.0, std::fabs(zu)), hd = kDiff * std::max(1.0, std::fabs(zd));
+                    const double m = std::max(std::fabs(du) / hu, std::fabs(dd) / hd);
+                    if (!(m > 0.0)) continue;
+                    if (!S.kink) continue;
+                    const double eta = std::min(1.0, 3.0 / m);
+                    const double pu = zu + eta * du, pd = zd + eta * dd, f0 = evalPort(p, pu, pd);
+                    const double ju = has_u ? std::max((evalPort(p, pu + hu, pd) - f0) / hu, 0.0) : 0.0;
+                    const double jd = has_d ? std::min((evalPort(p, pu, pd + hd) - f0) / hd, 0.0) : 0.0;
+                    if (differ(ju, S.ju) || differ(jd, S.jd)) { S.ju = ju; S.jd = jd; changed = true; }
+                }
+                for (std::size_t t = 0; t < un; ++t) {
+                    StoreSlope& T = st_[t];
+                    if (!T.kink || dz[t] == 0.0) continue;
+                    const double a = dz[t] > 0.0 ? T.a_p : T.a_m;
+                    if (a != T.a) { T.a = a; changed = true; }
+                }
+                if (!changed) break;
+                ++stats.side_switches;
+            }
+            // Armijo on ‖F‖₁ from the full step. If the full step fails, the
+            // step is bounded by the first strong kink along it instead of being
+            // halved blindly: a port whose law bends where the step crosses it
+            // (dry ramp, brake plateau, raised end, a flow reversing into an
+            // empty store) caps the step at twice the kink's distance (cross it
+            // by no more than its distance), then at the kink itself, then
+            // halving. Next iteration the iterate sits on the new piece and the
+            // active-set slopes take over. Without this, Newton jumped across an
+            // S-shaped corner both ways (Bellinge G72R33Bb, G71F06R_ovl).
             const double r0 = norm1(F);
-            double lam = 1.0, best = 0.0, best_lam = 1.0;
-            bool acc = false;
-            for (int ls = 0; ls < 12; ++ls, lam *= 0.5) {
+            std::vector<double> lams;
+            auto trial = [&](double lam) {
                 for (std::size_t t = 0; t < un; ++t) zt[t] = z[t] + lam * dz[t];
                 residual(zt, Ft, &Mt);
-                const double r = norm1(Ft);
-                if (r <= (1.0 - 1.0e-4 * lam) * r0 || converged(Ft, Mt, zt)) { acc = true; break; }
-                if (ls == 0 || r < best) { best = r; best_lam = lam; }
-            }
+                return norm1(Ft);
+            };
+            double lam = 1.0, r = trial(1.0), best = r, best_lam = 1.0;
+            bool acc = r <= (1.0 - 1.0e-4) * r0 || converged(Ft, Mt, zt);
             if (!acc) {
-                ++stats.armijo_failures;
-                const double l = best < r0 ? best_lam : 1.0;
-                for (std::size_t t = 0; t < un; ++t) zt[t] = z[t] + l * dz[t];
-                residual(zt, Ft, &Mt);
+                // Kink parameter, per port whose linearisation misses by >= 1 % of the
+                // full step's residual (e = the port's linearisation error along the
+                // step). Bisect for the first t with |e(t)| > ½·|e(1)|·t: a kink at t_k
+                // between linear pieces (e = Δs·(t − t_k)⁺) gives t_c = 2t_k/(1 + t_k)
+                // ∈ [t_k, 2t_k], a step that crosses it by at most its distance; a
+                // smooth (quadratic) law gives t_c = ½, and e(t_c/(2 − t_c)) ≈ 0.44 e(t_c)
+                // where a kink gives 0: only kinks bound the step. The kink itself is
+                // then located to 1e-6 of the step and the second candidate lands just
+                // past it, so the next iteration linearises on the new piece.
+                double tc = 1.0, tp = 1.0;
+                // err(t): one law's linearisation error at step t (cfs); move(t): whether the
+                // step to t moves its arguments by more than one difference step.
+                auto bound = [&](const std::function<double(double)>& err, const std::function<bool(double)>& moves) {
+                    const double e1 = std::fabs(err(1.0));
+                    if (!(e1 >= 1.0e-2 * std::min(r, r0))) return;
+                    double lo = 0.0, hi = 1.0;
+                    for (int bi = 0; bi < 40 && hi > 1.0e-14; ++bi) {
+                        const double m = 0.5 * (lo + hi);
+                        (std::fabs(err(m)) > 0.5 * e1 * m ? hi : lo) = m;
+                    }
+                    if (!(hi < 1.0) || std::fabs(err(hi / (2.0 - hi))) > 0.1 * std::fabs(err(hi))) return;   // smooth
+                    const double c = hi;
+                    lo = 0.0;
+                    for (int bi = 0; bi < 40 && hi - lo > 1.0e-6 * c; ++bi) {
+                        const double m = 0.5 * (lo + hi);
+                        (std::fabs(err(m)) > 1.0e-6 * e1 ? hi : lo) = m;
+                    }
+                    // A kink within one difference step of the iterate is the slope
+                    // classification's (it is "at" the iterate); bounding by it would stall
+                    // the step at roundoff (Bellinge G71F100, 2026-11-02: kink 7e-15 ft away).
+                    if (!moves(hi)) return;
+                    tc = std::min(tc, c);
+                    tp = std::min(tp, hi);
+                };
+                auto far = [](double d, double x) { return std::fabs(d) >= kDiff * std::max(1.0, std::fabs(x)); };
+                if (kink_bound) {
+                    for (std::size_t k = 0; k < ports.size(); ++k) {
+                        const Port& p = ports[k];
+                        bound([&](double t) { return kinkErr(k, t); }, [&](double t) {
+                            return far(t * zOf(dz, p.up), zOf(z, p.up)) || far(t * zOf(dz, p.dn), zOf(z, p.dn));
+                        });
+                    }
+                    for (std::size_t t = 0; t < un; ++t) {
+                        if (store_of[t] < 0 || pinned[t] || dz[t] == 0.0) continue;
+                        const int ti = static_cast<int>(t);
+                        const double v0 = volume(ti, z[t], nullptr);
+                        bound([&](double s) { return (volume(ti, z[t] + s * dz[t], nullptr) - v0 - s * st_[t].a * dz[t]) / dt; },
+                              [&](double s) { return far(s * dz[t], z[t]); });
+                    }
+                }
+                if (tc < 1.0) {
+                    ++stats.kink_bounded;
+                    lams.push_back(tc);
+                    if (tp < tc) lams.push_back(tp);
+                    for (double l = 0.5 * tp; lams.size() < 14; l *= 0.5) lams.push_back(l);
+                } else {
+                    for (double l = 0.5; lams.size() < 11; l *= 0.5) lams.push_back(l);
+                }
+                for (double l : lams) {
+                    r = trial(l);
+                    if (r <= (1.0 - 1.0e-4 * l) * r0 || converged(Ft, Mt, zt)) { acc = true; lam = l; break; }
+                    if (r < best) { best = r; best_lam = l; }
+                }
+                if (!acc) {
+                    ++stats.armijo_failures;
+                    // No step decreases ‖F‖₁: take the best one, or (none better) step just
+                    // past the kink, which moves the iterate to the next piece. Never the
+                    // blind full step: taken anyway, it fed a period-6 cycle through
+                    // residuals 4 -> 4e4 (Bellinge G71F320/G71F68Y, 2026-11-02).
+                    lam = best < r0 ? best_lam : (tc < 1.0 ? tp : best_lam);
+                    trial(lam);
+                }
             }
+            for (std::size_t t = 0; t < un; ++t) dz_last[t] = lam * dz[t];
             z.swap(zt); F.swap(Ft); mag.swap(Mt);
             ok = converged(F, mag, z);
         }

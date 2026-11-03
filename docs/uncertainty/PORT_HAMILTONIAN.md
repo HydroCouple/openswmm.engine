@@ -172,3 +172,40 @@ cases the current code excludes). Acceptance gates as in the table.
   solves** (`sample`: top engine frame `PortGraph::jacobi_`). Newton fails on the piecewise-smooth laws at the storm
   peak and the fallback does the work. Run killed at step 4000 (06:17→07:03); no accuracy score taken — 607 failed
   solves would make it meaningless. O-4 (semismooth / kink-bounded Newton) opened; rerun after it lands.
+- 2026-11-02: O-4 (per-member solve on piecewise-smooth monotone ports, `RomPortGraph.hpp` only; laws unchanged).
+  **Diagnosis** (Bellinge 1D smoke `ph_smoke1d.inp` to 07:00, Debug, hook ON; first 20 + every 50th fallback dumped with
+  residual history, the incident ports' one-sided slopes and kink flags): no law is discontinuous (every port is C⁰,
+  the frozen pump included); every fallback sat at a kink, in three classes, none of them ill-scaling of store vs
+  manhole area. (a) *Wrong Jacobian at a kink*: the forward difference (h = 1e-7) straddled a kink 2.5e-8 ft away
+  (G72R33Bout1 at y = 0, slopes 61.8 | 1.56, difference 16.6) → linear convergence with alternating sign (ratio ≈ 0.8),
+  stall at 1e-9–1e-8 cfs; or took the wrong side at a store's floor (G80F66X → G80F11B, 0 | −5317 cfs/ft).
+  (b) *True non-smooth cycles* across a strong corner, fed by "take the full step when no trial is better": the S of
+  dry ramp → q*/δ ramp → envelope plateau at G72R33Bb (±0.04 ft 2-cycle), the floored line G71F06R_ovl → G71F68Y at its
+  flow reversal (z −324 ↔ −227 ft, ‖F‖ 1e3 cfs). (c) *Per-axis sides at a kink along a line in (z_up, z_dn)* (a flow
+  reversal): a non-descent direction and a period-6 cycle, ‖F‖ 4 → 4e4 (G71F320/G71F68Y). The G71F68Y pump itself was
+  never the culprit; G71F06R_ovl (a linear node behind a port floored by the dry wet well) does sink to −300…−500 ft,
+  which Jacobi converged to as well — a model finding (no floor at a non-admitted node), not a solver one.
+  **Scheme**: semismooth (active-set) Newton. Both one-sided differences per port argument; a kink inside the
+  difference step → far differences (the two pieces); a port on a kink takes its slopes just inside the piece the solved
+  step enters (forward differences at z + η·dz, re-solved while they change, ≤ 3 re-solves — the B-derivative in the
+  step's direction, which also covers line kinks); the same for a store's volume corner (direction = sign of its dz).
+  When the full step fails Armijo, the step is bounded by the first strong kink along it (any port or store whose
+  linearisation misses by ≥ 1 % of ‖F‖₁; bisection for the departure point, a quadratic law is recognised as smooth):
+  candidates t_c ∈ [t_k, 2t_k] (cross by at most its distance), then just past the kink, then halving; with no
+  decrease the best trial (or just past the kink) is taken, never the blind full step. Jacobi stays as a counted anomaly
+  (`[PH-ports] ... Jacobi fallbacks N (anomaly; ...)`, plus kink-bounded and active-set re-solve counts). No tolerance,
+  δ0, δ_dry or law changed; two mutation hooks `kink_bound`, `active_set`.
+  **Tests**: test_engine_rom_member_ports 26 (24 + `KinkBoundedNewtonCrossesEnvelopeAndPumpFloorCorners`: two stores, a
+  kickback brake under its envelope, a floored line and a floored pump; plain Newton stalls 20 its, the scheme 2 its,
+  kink bound removed → fails; and `ActiveSetSlopeAtAKinkWithinTheDifferenceStep`: the G72R33Bb fixture, 1–2 its, forward
+  slopes → stall; both mutated in the source as well), additive channel 12, spectral_rom1d 101, storage gate A 0.889/0.958,
+  B 0.727/0.960, R 0.952/0.880 unchanged (Jacobi 0 on A/B/R; R factorisations 62,041 for 60,771 Newton iterations).
+  **Smoke to 07:00 (Debug)**: before — 894 Jacobi fallbacks by step 3000 (06:17), then the run sits in `jacobi_`
+  and had not finished after 65 min wall (79 CPU-min, killed; step 3000 at 587 s); after — done, 3,892 steps, 474 fallbacks in 194,550 solves (0.24 %), not converged 0, Newton
+  iterations 310,901, wall 939 s under load (650 s on a quieter machine; step 3000 at 347–541 s vs 404–587 s before).
+  **Remaining fallbacks are not kinks**: 462 of 474 are roundoff floors — Newton steps ≤ 1e-12 ft with ‖F‖ < 1e-6 cfs,
+  where |slope| × the head's floating-point quantum exceeds the 1e-10·A/dt tolerance at a small node (G80F310,
+  A = 1.2 ft², dry-ramp slope 4e4 cfs/ft; G71F320, plane jd 2.6e6 cfs/ft through a nearly level drowned pipe). Jacobi
+  "converges" those only because its own tolerance is 1e-8·A/dt, 100× looser than Newton's. 11 (+1 near the floor) are genuine stalls on
+  the bilinear dry-ramp region of floored lines (G80F66Y/G80F330, G71F090/G71F265). Owner decision: a roundoff-aware
+  residual floor (or one tolerance for both solvers) would remove the 462; not done here (no tolerance changes).
