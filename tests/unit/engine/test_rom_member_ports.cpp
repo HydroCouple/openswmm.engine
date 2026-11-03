@@ -745,14 +745,63 @@ namespace {
 // pump at a frozen setting, floored (dry ramp) below and opening its spare
 // capacity over δ_dry above. Every law is C⁰ with strong corners: dry
 // ramp → steep rise → plateau (an S), and the pump's floor/spare corners.
+// Plain Newton, the reference the O-4 solver replaced: forward-difference
+// Jacobian of the whole residual, dense solve, blind Armijo halving on ‖F‖₁
+// (11 halvings, then the last trial is taken), 20 iterations, ‖F‖∞ < 1e-9.
+// Linear nodes only (the fixtures below). Returns converged; iters = iterations used.
+bool plainNewton(const PortGraph& g, std::vector<double>& z, int* iters) {
+    const std::size_t n = z.size();
+    auto norm1 = [](const std::vector<double>& v) { double s = 0.0; for (double x : v) s += std::fabs(x); return s; };
+    auto ninf = [](const std::vector<double>& v) { double s = 0.0; for (double x : v) s = std::max(s, std::fabs(x)); return s; };
+    std::vector<double> F, F1, Ft, zt(n);
+    g.residual(z, F);
+    *iters = 0;
+    for (int it = 0; it < 20; ++it) {
+        if (ninf(F) < 1e-9) return true;
+        ++*iters;
+        std::vector<std::vector<double>> J(n, std::vector<double>(n + 1, 0.0));
+        for (std::size_t c = 0; c < n; ++c) {
+            auto zp = z;
+            const double h = 1e-7 * std::max(1.0, std::fabs(z[c]));
+            zp[c] += h;
+            g.residual(zp, F1);
+            for (std::size_t r = 0; r < n; ++r) J[r][c] = (F1[r] - F[r]) / h + (r == c ? g.S[r] / g.dt : 0.0);
+        }
+        for (std::size_t r = 0; r < n; ++r) J[r][n] = -F[r];
+        for (std::size_t c = 0; c < n; ++c) {   // Gauss with partial pivoting
+            std::size_t pv = c;
+            for (std::size_t r = c + 1; r < n; ++r) if (std::fabs(J[r][c]) > std::fabs(J[pv][c])) pv = r;
+            std::swap(J[c], J[pv]);
+            if (J[c][c] == 0.0) return false;
+            for (std::size_t r = c + 1; r < n; ++r) {
+                const double f = J[r][c] / J[c][c];
+                for (std::size_t k = c; k <= n; ++k) J[r][k] -= f * J[c][k];
+            }
+        }
+        std::vector<double> dz(n);
+        for (std::size_t r = n; r-- > 0;) {
+            double v = J[r][n];
+            for (std::size_t k = r + 1; k < n; ++k) v -= J[r][k] * dz[k];
+            dz[r] = v / J[r][r];
+        }
+        const double r0 = norm1(F);
+        double lam = 1.0;
+        for (int h = 0; h < 12; ++h, lam *= 0.5) {
+            for (std::size_t t = 0; t < n; ++t) zt[t] = z[t] + lam * dz[t];
+            g.residual(zt, Ft);
+            if (norm1(Ft) <= (1.0 - 1e-4 * lam) * r0) break;
+        }
+        z = zt; F = Ft;
+    }
+    return ninf(F) < 1e-9;
+}
+
 struct KinkSolve { bool ok = false; PortGraph::Stats st; std::vector<double> z, F; };
-KinkSolve solveKinkSystem(bool kink_bound, bool active_set) {
+KinkSolve solveKinkSystem(bool plain) {
     PortGraph g;
     g.resize(2);
     g.dt = 15.8;
     g.S = {12.0, 61.0};
-    g.kink_bound = kink_bound;
-    g.active_set = active_set;
     g.max_jacobi = 0;   // measure Newton alone
     const double qs = 1.1, plate = 0.74, qp = 0.97, Tp = 2.07, dp = 0.0057, ju = 1.72;
     RatingTable T;   // the brake: rises, dips (kickback), rises again; envelope = plateau
@@ -782,25 +831,29 @@ KinkSolve solveKinkSystem(bool kink_bound, bool active_set) {
     AdditiveSystem sys;
     KinkSolve r;
     r.z = g.z_prev;
-    r.ok = g.solve(r.z, sys);
-    r.st = g.stats;
+    if (plain) {
+        int it = 0;
+        r.ok = plainNewton(g, r.z, &it);
+        r.st.newton_iters = it;
+    } else {
+        r.ok = g.solve(r.z, sys);
+        r.st = g.stats;
+    }
     g.residual(r.z, r.F);
     return r;
 }
 }  // namespace
 
 TEST(PortGraph, KinkBoundedNewtonCrossesEnvelopeAndPumpFloorCorners) {
-    const KinkSolve plain = solveKinkSystem(false, false);
-    EXPECT_FALSE(plain.ok) << "plain Newton (forward slopes, blind halving) should stall on this system";
-    const KinkSolve s = solveKinkSystem(true, true);
+    // Reference: plain Newton (forward slopes, blind halving) stalls on this system.
+    const KinkSolve plain = solveKinkSystem(true);
+    EXPECT_FALSE(plain.ok) << "plain Newton should stall on this system";
+    const KinkSolve s = solveKinkSystem(false);
     ASSERT_TRUE(s.ok);
     EXPECT_LE(s.st.newton_iters, 8);
     EXPECT_EQ(s.st.jacobi_fallbacks, 0);
     EXPECT_GE(s.st.kink_bounded, 1) << "the fixture must exercise the kink bound";
     for (double f : s.F) EXPECT_LT(std::fabs(f), 1e-9);
-    // Mutation: without the kink bound (active set kept) Newton cycles across the S.
-    const KinkSolve m = solveKinkSystem(false, true);
-    EXPECT_FALSE(m.ok && m.st.newton_iters <= 8) << "kink bound removed: should not converge in <= 8 iterations";
 }
 
 TEST(PortGraph, ActiveSetSlopeAtAKinkWithinTheDifferenceStep) {
@@ -810,12 +863,11 @@ TEST(PortGraph, ActiveSetSlopeAtAKinkWithinTheDifferenceStep) {
     // through a plane edge. The member's root sits 2.4e-8 ft below the kink,
     // inside the forward-difference step (1e-7): the forward slope blends both
     // pieces, Newton converges linearly with alternating sign and stalls.
-    auto solveAt = [](bool active_set, double zp, PortGraph::Stats* st) {
+    auto solveAt = [](bool plain, double zp, PortGraph::Stats* st) {
         PortGraph g;
         g.resize(2);
         g.dt = 10.0;
         g.S = {17.17, 53.82};
-        g.active_set = active_set;
         g.max_jacobi = 0;
         RatingTable T;
         T.y = {-1.0, 0.0, 1.0};
@@ -835,16 +887,18 @@ TEST(PortGraph, ActiveSetSlopeAtAKinkWithinTheDifferenceStep) {
         g.z_prev = {zp, -3.5e-4};
         AdditiveSystem sys;
         std::vector<double> z = g.z_prev;
-        const bool ok = g.solve(z, sys);
-        *st = g.stats;
+        bool ok;
+        if (plain) { int it = 0; ok = plainNewton(g, z, &it); }
+        else { ok = g.solve(z, sys); *st = g.stats; }
         EXPECT_TRUE(!ok || (z[0] < 0.0 && z[0] > -1e-7)) << "root just below the kink";
         return ok;
     };
     for (double zp : {-2.5e-8, 0.0}) {
         PortGraph::Stats st, st_m;
-        EXPECT_TRUE(solveAt(true, zp, &st)) << "zp " << zp;
+        EXPECT_TRUE(solveAt(false, zp, &st)) << "zp " << zp;
         EXPECT_LE(st.newton_iters, 3) << "zp " << zp;
-        EXPECT_FALSE(solveAt(false, zp, &st_m)) << "forward-difference slope at the kink should stall (zp " << zp << ")";
+        EXPECT_EQ(st.jacobi_fallbacks, 0) << "zp " << zp;
+        EXPECT_FALSE(solveAt(true, zp, &st_m)) << "forward-difference slope at the kink should stall (zp " << zp << ")";
     }
 }
 

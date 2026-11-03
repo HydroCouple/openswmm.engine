@@ -8109,11 +8109,11 @@ int SWMMEngine::end() noexcept {
     if (rom1d_nl_enabled_ && rom1d_pg_.stats.solves > 0) {
         // PH_STORES_AND_PORTS §3: a fallback that silently rescues a method is not allowed.
         const auto& st = rom1d_pg_.stats;
-        std::printf("[PH-ports] member solves %ld, Newton iterations %ld (Armijo rejected %ld, kink-bounded %ld, active-set re-solves %ld), "
+        std::printf("[PH-ports] member solves %ld, Newton iterations %ld (Armijo rejected %ld, kink-bounded %ld, active-set re-solves %ld, fp-floor converged %ld), "
                     "Jacobi fallbacks %ld (anomaly; not converged %ld), "
                     "zero-data exits %ld, admitted nodes %zu, links on a monotone envelope %zu, "
                     "store member-steps > 0.05 ft below invert %ld (deepest %.3f ft), largest storage rescale %.3g\n",
-                    st.solves, st.newton_iters, st.armijo_failures, st.kink_bounded, st.side_switches, st.jacobi_fallbacks, st.jacobi_failed, st.zero_exits,
+                    st.solves, st.newton_iters, st.armijo_failures, st.kink_bounded, st.side_switches, st.fp_floor_converged, st.jacobi_fallbacks, st.jacobi_failed, st.zero_exits,
                     rom1d_nl_nodes_.size(), rom1d_pg_envelope_links_.size(), rom1d_pg_below_floor_, rom1d_pg_min_depth_, rom1d_pg_rescale_max_);
         // Where: a store drained below its invert through a linear (plane) edge,
         // which has no floor (the drowned-pipe line, note §1.2 kind 3).
@@ -12557,6 +12557,7 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
     for (std::size_t t = 0; t < un; ++t) {
         g.S[t] = std::max(rom1d_h18_S_[t], 1.0e-6);
         g.pinned[t] = (t < rom1d_fs_pinned_.size() && rom1d_fs_pinned_[t] && nl_of[t] < 0) ? 1 : 0;
+        g.level[t] = ctx_.nodes.head[static_cast<std::size_t>(rom1d_active_map_[t])];   // main-run level h* (ft): the fp floor's scale
     }
     // Level range the members span at node a (the rating tables' half-range).
     auto spanAt = [&](int a) {

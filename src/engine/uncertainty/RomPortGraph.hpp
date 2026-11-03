@@ -27,8 +27,10 @@
  * re-solved while any changes).
  * Armijo on ‖F‖₁ from the full step; when it fails, the step is bounded by the
  * first strong kink along it (no further than twice its distance, then just
- * past it) before halving. Fallback monotone nonlinear Jacobi, counted as an
- * anomaly. F == 0 exactly at the start (zero data) returns without iterating.
+ * past it) before halving. Convergence is the residual tolerance, or the
+ * roundoff floor of the level (atFloor_; counted in stats.fp_floor_converged),
+ * the same for Newton and for the fallback monotone nonlinear Jacobi, which is
+ * counted as an anomaly. F == 0 exactly at the start (zero data) returns without iterating.
  */
 #ifndef OPENSWMM_ENGINE_UNCERTAINTY_ROM_PORT_GRAPH_HPP
 #define OPENSWMM_ENGINE_UNCERTAINTY_ROM_PORT_GRAPH_HPP
@@ -40,6 +42,7 @@
 #include <cmath>
 #include <cstddef>
 #include <functional>
+#include <limits>
 #include <vector>
 
 namespace openswmm::uncertainty {
@@ -78,16 +81,15 @@ struct PortGraph {
     int max_jacobi = 500;
     bool floor_projection = false;         ///< mutation hook only: clamp z >= floor (creates water)
     std::vector<double> floor;             ///< used only with floor_projection
-    bool kink_bound = true;                ///< mutation hook only: false = blind Armijo halving across kinks
-    bool active_set = true;                ///< mutation hook only: false = forward-difference slopes at a kink
-    struct Stats { long solves = 0, newton_iters = 0, armijo_failures = 0, jacobi_fallbacks = 0, jacobi_failed = 0, zero_exits = 0, port_evals = 0, factorisations = 0, side_switches = 0, kink_bounded = 0; };
+    std::vector<double> level;             ///< main-run absolute head h* (ft) per node, for the fp floor (0 = unknown)
+    struct Stats { long solves = 0, newton_iters = 0, armijo_failures = 0, jacobi_fallbacks = 0, jacobi_failed = 0, zero_exits = 0, port_evals = 0, factorisations = 0, side_switches = 0, kink_bounded = 0, fp_floor_converged = 0; };
     mutable Stats stats;   ///< mutable: residual() (const) counts port evaluations
 
     void resize(int n_nodes) {
         n = n_nodes;
         const auto un = static_cast<std::size_t>(std::max(n, 0));
         S.assign(un, 1.0); pinned.assign(un, 0); store_of.assign(un, -1);
-        b.assign(un, 0.0); z_prev.assign(un, 0.0);
+        b.assign(un, 0.0); z_prev.assign(un, 0.0); level.assign(un, 0.0);
         stores.clear(); edges.clear(); ports.clear(); dV_prev.clear();
     }
 
@@ -111,7 +113,7 @@ struct PortGraph {
     /// street pond of a coupled manhole).
     int addNode(double area) {
         S.push_back(area); pinned.push_back(0); store_of.push_back(-1);
-        b.push_back(0.0); z_prev.push_back(0.0);
+        b.push_back(0.0); z_prev.push_back(0.0); level.push_back(0.0);
         return n++;
     }
 
@@ -186,13 +188,7 @@ struct PortGraph {
         for (double v : F) if (v != 0.0) { all_zero = false; break; }
         if (all_zero) { ++stats.zero_exits; return true; }
         auto converged = [&](const std::vector<double>& FF, const std::vector<double>& M, const std::vector<double>& zc) {
-            for (std::size_t t = 0; t < un; ++t) {
-                double a = 0.0;
-                volume(static_cast<int>(t), zc[t], &a);
-                const double tol = 1.0e-10 * std::max(a, 1.0e-6) / dt + 1.0e-12 * M[t];
-                if (!(std::fabs(FF[t]) <= tol)) return false;
-            }
-            return true;
+            return residualOk_(FF, M, zc);
         };
         auto norm1 = [](const std::vector<double>& v) { double s = 0.0; for (double x : v) s += std::fabs(x); return s; };
         std::vector<FlowEdge> jac;
@@ -224,7 +220,6 @@ struct PortGraph {
                 auto f = [&](double dx) { return upside ? evalPort(p, zu + dx, zd) : evalPort(p, zu, zd + dx); };
                 const double fp = f(h);
                 sp = (fp - S.f0) / h;
-                if (!active_set) { sm = sp; return; }   // mutation: the forward difference only
                 const double fm = f(-h);
                 sm = (S.f0 - fm) / h;
                 if (!differ(sp, sm)) return;   // smooth here
@@ -259,6 +254,12 @@ struct PortGraph {
             }
             for (std::size_t t = 0; t < un; ++t) A[t] = std::max(st_[t].a, 1.0e-9);
             sys.build(n, jac, A.data(), dt, &pinned);
+            diag_slope_.assign(un, 0.0);
+            for (std::size_t t = 0; t < un; ++t) diag_slope_[t] = A[t] / dt;
+            for (const auto& e : jac) {
+                if (e.up >= 0) diag_slope_[static_cast<std::size_t>(e.up)] += std::fabs(e.conduit ? e.ju : e.d);
+                if (e.dn >= 0 && e.conduit) diag_slope_[static_cast<std::size_t>(e.dn)] += std::fabs(e.jd);
+            }
             ++stats.factorisations;
             for (std::size_t t = 0; t < un; ++t) { dq[t] = -F[t]; dz[t] = 0.0; }
             sys.step(dq.data(), dz.data());
@@ -291,7 +292,7 @@ struct PortGraph {
                 Slope& S = sl[k];
                 slopes(p, zOf(z, p.up), zOf(z, p.dn), S);
                 const bool ku = differ(S.up_p, S.up_m), kd = differ(S.dn_p, S.dn_m);
-                S.kink = active_set && (ku || kd);
+                S.kink = ku || kd;
                 const bool back_u = S.kink && ku && p.up >= 0 && dz_last[static_cast<std::size_t>(p.up)] < 0.0;
                 const bool back_d = S.kink && kd && p.dn >= 0 && dz_last[static_cast<std::size_t>(p.dn)] < 0.0;
                 S.ju = std::max(back_u ? S.up_m : S.up_p, 0.0);
@@ -302,7 +303,7 @@ struct PortGraph {
                 const int ti = static_cast<int>(t);
                 volume(ti, z[t], &T.a);
                 T.kink = false;
-                if (store_of[t] < 0 || pinned[t] || !active_set) continue;
+                if (store_of[t] < 0 || pinned[t]) continue;
                 const double h = kDiff * std::max(1.0, std::fabs(z[t]));
                 const double v0 = volume(ti, z[t], nullptr), vp = volume(ti, z[t] + h, nullptr), vm = volume(ti, z[t] - h, nullptr);
                 T.a_p = (vp - v0) / h;
@@ -317,7 +318,7 @@ struct PortGraph {
             }
             for (int pass = 0; pass < 4; ++pass) {
                 assemble();
-                if (!active_set || pass == 3) break;
+                if (pass == 3) break;
                 bool changed = false;
                 for (std::size_t k = 0; k < ports.size(); ++k) {
                     Slope& S = sl[k];
@@ -344,6 +345,8 @@ struct PortGraph {
                 if (!changed) break;
                 ++stats.side_switches;
             }
+            // Roundoff floor: no step the arithmetic can resolve is left (see atFloor_).
+            if (atFloor_(F, z, dz)) { ++stats.fp_floor_converged; ok = true; break; }
             // Armijo on ‖F‖₁ from the full step. If the full step fails, the
             // step is bounded by the first strong kink along it instead of being
             // halved blindly: a port whose law bends where the step crosses it
@@ -398,7 +401,7 @@ struct PortGraph {
                     tp = std::min(tp, hi);
                 };
                 auto far = [](double d, double x) { return std::fabs(d) >= kDiff * std::max(1.0, std::fabs(x)); };
-                if (kink_bound) {
+                {
                     for (std::size_t k = 0; k < ports.size(); ++k) {
                         const Port& p = ports[k];
                         bound([&](double t) { return kinkErr(k, t); }, [&](double t) {
@@ -451,6 +454,43 @@ struct PortGraph {
     }
 
 private:
+    mutable std::vector<double> diag_slope_;   ///< |dF_t/dz_t| at the last assembled Jacobian
+
+    /// The residual tolerance (cfs per node), shared by Newton and the Jacobi
+    /// fallback: 1e-10·A/dt plus 1e-12 of the magnitude of the node's own terms.
+    bool residualOk_(const std::vector<double>& FF, const std::vector<double>& M, const std::vector<double>& zc) const {
+        for (std::size_t t = 0; t < static_cast<std::size_t>(n); ++t) {
+            double a = 0.0;
+            volume(static_cast<int>(t), zc[t], &a);
+            const double tol = 1.0e-10 * std::max(a, 1.0e-6) / dt + 1.0e-12 * M[t];
+            if (!(std::fabs(FF[t]) <= tol)) return false;
+        }
+        return true;
+    }
+
+    /// Roundoff floor (an engineering floor of double arithmetic, not a looser
+    /// tolerance). The unknown is the deviation z about the main run's level
+    /// h*, but the physics evaluates the absolute level h* + z, which carries
+    /// 8·eps·(|z| + |h*| + 1 ft) of resolution. Converged when every proposed
+    /// step is within that resolution AND the residual is within what that
+    /// resolution can produce, Σ|slope_t|·8·eps·(|h*_t| + 1), the node's slope
+    /// being the diagonal of the Jacobian. Past it a step moves no bit of the
+    /// level the ports see (Bellinge, 2026-11-02: 462 of 474 fallbacks were
+    /// steps <= 1e-12 ft at tiny nodes with ‖F‖ < 1e-6 cfs).
+    bool atFloor_(const std::vector<double>& FF, const std::vector<double>& zc, const std::vector<double>& dzc) const {
+        constexpr double k8eps = 8.0 * std::numeric_limits<double>::epsilon();
+        if (diag_slope_.size() != static_cast<std::size_t>(n)) return false;
+        double r = 0.0, bound = 0.0;
+        for (std::size_t t = 0; t < static_cast<std::size_t>(n); ++t) {
+            if (pinned[t]) continue;
+            const double hs = t < level.size() ? std::fabs(level[t]) : 0.0;
+            if (!(std::fabs(dzc[t]) <= k8eps * (std::fabs(zc[t]) + hs + 1.0))) return false;
+            r += std::fabs(FF[t]);
+            bound += diag_slope_[t] * k8eps * (hs + 1.0);
+        }
+        return r <= bound;
+    }
+
     // Monotone nonlinear Jacobi: each node solves its own equation with the
     // others frozen, simultaneous update.
     bool jacobi_(std::vector<double>& z) {
@@ -464,7 +504,7 @@ private:
             if (ports[k].up >= 0) inc_p[static_cast<std::size_t>(ports[k].up)].push_back(static_cast<int>(k));
             if (ports[k].dn >= 0) inc_p[static_cast<std::size_t>(ports[k].dn)].push_back(static_cast<int>(k));
         }
-        std::vector<double> znew(un), F, mag;
+        std::vector<double> znew(un), dzj(un), F, mag;
         for (int sw = 0; sw < max_jacobi; ++sw) {
             for (std::size_t t = 0; t < un; ++t) {
                 if (pinned[t]) { znew[t] = 0.0; continue; }
@@ -496,15 +536,13 @@ private:
                 }
                 znew[t] = 0.5 * (lo + hi);
             }
+            for (std::size_t t = 0; t < un; ++t) dzj[t] = znew[t] - z[t];
             z = znew;
             residual(z, F, &mag);
-            bool ok = true;
-            for (std::size_t t = 0; t < un && ok; ++t) {
-                double a = 0.0;
-                volume(static_cast<int>(t), z[t], &a);
-                ok = std::fabs(F[t]) <= 1.0e-8 * std::max(a, 1.0e-6) / dt + 1.0e-12 * mag[t];
-            }
-            if (ok) return true;
+            // The same criterion as Newton's: the residual tolerance, or the roundoff floor.
+            if (residualOk_(F, mag, z)) return true;
+            if (atFloor_(F, z, dzj)) { ++stats.fp_floor_converged; return true; }
+            continue;
         }
         return false;
     }

@@ -214,3 +214,12 @@ cases the current code excludes). Acceptance gates as in the table.
   Jacobi and Newton agree, so it is the model, not the solver. Fix belongs to admission: a node whose every
   outlet is a floored/one-way port of an admitted node must be admitted too (closure of the admitted set under
   "only drains through an admitted store"). Not done; blocks calling phase 5 complete.
+- 2026-11-03: O-4b (`RomPortGraph.hpp` only). (1) Roundoff-aware convergence: Newton also stops when every proposed step is
+  |dz_i| <= 8·eps·(|z_i| + |h*_i| + 1 ft) AND ‖F‖₁ <= Σ|slope_i|·8·eps·(|h*_i| + 1) (slope = Jacobian diagonal); `PortGraph::level`
+  carries h* (engine fills it from the main-run head). An engineering floor of double arithmetic, not a tolerance change; counted in
+  `stats.fp_floor_converged` and printed on the `[PH-ports]` line. (2) `jacobi_` uses exactly Newton's criterion (residual
+  tolerance 1e-10·A/dt + 1e-12·mag, or the floor); its own 1e-8 is gone. (3) `kink_bound` / `active_set` deleted; the two O-4
+  tests compare with a plain Newton reference inside the test (shown to stall on the same fixtures). Gates (Debug): member_ports 26,
+  additive_channel 12, spectral_rom1d 101, storage_threshold A 0.889/0.958, B 0.727/0.960, R 0.952/0.880, 0 fallbacks, fp-floor 0.
+  1D smoke to 07:00 NOT completed: the machine was swap-starved (14 GB swap, load 60-120, the process got 1 CPU-minute in 2 h);
+  Bellinge rerun NOT launched. Rerun the smoke, then the Release run, on a quiet machine.
