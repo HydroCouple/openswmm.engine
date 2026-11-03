@@ -208,6 +208,8 @@ void ExplicitFvSolver::initialize(NetworkMeshData& mesh, NetworkStateData& state
     lts_valid_ = false;
     lts_countdown_ = 0;
     lts_dt0_ = 0.0;
+    cell_dt_cap_.clear();
+    tier_cap_hold_ = 0;
 
     total_steps_ = 0;
     total_flux_ = 0;
@@ -310,6 +312,8 @@ void ExplicitFvSolver::reinitialize(double /*t0*/) {
     if (!mesh_)
         return;
     lts_valid_ = false;
+    cell_dt_cap_.clear();
+    tier_cap_hold_ = 0;
     lists_valid_ = false;
     census_count_ = 0;
     dt_cache_ = 0.0;
@@ -3883,6 +3887,8 @@ int ExplicitFvSolver::assignTiers(double& dt0, int k_cap_override) {
     for (int c = 0; c < nc; ++c) {
         const auto uc = static_cast<std::size_t>(c);
         dt_cell[uc] = cellStableDt(c);
+        if (tier_cap_hold_ > 0)
+            dt_cell[uc] = std::min(dt_cell[uc], cell_dt_cap_[uc]);
         if (dt_cell[uc] < dt_min) {
             dt_min = dt_cell[uc];
             dt_argmin_cell = c;
@@ -4556,6 +4562,33 @@ void ExplicitFvSolver::emitConduitSteps(double dt0, double dur, bool tiered) con
     }
 }
 
+bool ExplicitFvSolver::macroCycleCellsAdmissible(double dt0) {
+    // Only the crown crossing is tested. Free-surface speed drift and wetting
+    // are what tier grading absorbs; holding every cell to its taken step
+    // rejected nearly every cycle of a dry-weather sewer (Bellinge, 2026-11-02).
+    const int nc = mesh_->n_cells();
+    bool ok = true;
+    for (int c = 0; c < nc; ++c) {
+        const auto uc = static_cast<std::size_t>(c);
+        const int k = cell_tier_[uc];
+        if (k == 0)
+            continue;
+        const FvGeometry& g = mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
+        if (!tpaCell(uc) && (g.is_open || state_->cell_h[uc] < g.y_crown))
+            continue;
+        const double dt_post = cellStableDt(c);
+        if (dt_post >= kStepAcceptRatio * static_cast<double>(1 << k) * dt0)
+            continue;
+        if (cell_dt_cap_.size() != static_cast<std::size_t>(nc))
+            cell_dt_cap_.assign(static_cast<std::size_t>(nc), 1.0e30);
+        cell_dt_cap_[uc] = std::min(cell_dt_cap_[uc], dt_post);
+        ok = false;
+    }
+    if (!ok)
+        tier_cap_hold_ = kTierCapHoldCycles;
+    return ok;
+}
+
 void ExplicitFvSolver::runMacroCycle(double dt0, int nsub, const FvStepForcing& forcing) {
     if (tpa_)
         updateTpaFlags(); // once per macro cycle (#156); the caller's
@@ -4905,7 +4938,7 @@ double ExplicitFvSolver::advanceImpl(double t_current, double t_target,
                 // the same post-step rejection applies — with the accumulators
                 // cleared on rollback, since the fluxes that produced them are
                 // being discarded with the state that produced them.
-                if (censusDt() < kStepAcceptRatio * dt0) {
+                if (censusDt() < kStepAcceptRatio * dt0 || !macroCycleCellsAdmissible(dt0)) {
                     ++n_macro_rejected_;
                     perf::count(perf::n_fv_macro_rejected);
                     restoreState();
@@ -4923,6 +4956,8 @@ double ExplicitFvSolver::advanceImpl(double t_current, double t_target,
                 } else {
                     ++n_macro_cycles_;
                     perf::count(perf::n_fv_macro_cycles);
+                    if (tier_cap_hold_ > 0 && --tier_cap_hold_ == 0)
+                        std::fill(cell_dt_cap_.begin(), cell_dt_cap_.end(), 1.0e30);
                     if (step_sink_)
                         emitConduitSteps(dt0, span, true);
                     t += span;
@@ -4958,7 +4993,8 @@ double ExplicitFvSolver::advanceImpl(double t_current, double t_target,
                             reconstructState();
                         saveState();
                         runMacroCycle(dt0f, nsubf, forcing);
-                        if (censusDt() < kStepAcceptRatio * dt0f) {
+                        if (censusDt() < kStepAcceptRatio * dt0f ||
+                            !macroCycleCellsAdmissible(dt0f)) {
                             ++n_macro_rejected_;
                             perf::count(perf::n_fv_macro_rejected);
                             restoreState();
@@ -4969,6 +5005,8 @@ double ExplicitFvSolver::advanceImpl(double t_current, double t_target,
                         } else {
                             ++n_macro_cycles_;
                             perf::count(perf::n_fv_macro_cycles);
+                            if (tier_cap_hold_ > 0 && --tier_cap_hold_ == 0)
+                                std::fill(cell_dt_cap_.begin(), cell_dt_cap_.end(), 1.0e30);
                             if (step_sink_)
                                 emitConduitSteps(dt0f, spanf, true);
                             t += spanf;

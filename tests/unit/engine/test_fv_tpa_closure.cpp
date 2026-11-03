@@ -670,11 +670,26 @@ TEST(FvTpa, DivergenceGuardFailsLoudNotSilent) {
     // a = 150 filling deck under explicit EULER — the temporal odd–even mode
     // — until the slot/free-surface wave-speed bound (closure-kernel
     // program, 2026-09-12) made that deck complete at a = 150, 300, 600, 1000
-    // and 3000 m/s (see HighCelerityFillingCompletes). The surviving natural
-    // divergence is an absurd a = 10 000 m/s (ERROR 14, depth magnitude
-    // 5e5 ft at step 381): the guard must still catch it in the conduit,
+    // and 3000 m/s (see HighCelerityFillingCompletes). The last natural
+    // divergence, an absurd a = 10 000 m/s (ERROR 14 at step 381), turned out
+    // to be the LTS crown-crossing gap: a coarse-tier cell that pressurized
+    // inside a macro cycle was accepted at 2^k*dt0 (2026-11-02, see
+    // FvLts.ACoarseCellCrossingTheCrownMidCycleTracksGlobalStepping). With it
+    // closed the deck runs at its acoustic step, ~2e-6 s, and never diverges
+    // (FV_LTS NO already did not). No natural divergence is left, so the gate
+    // now forces one at the physical a = 25 m/s: the pipe discharges straight
+    // into the outfall, whose stage is then set to an absurd 100 km. A storage
+    // node would flood at its rim; a fixed head has no rim, so the backflow
+    // passes 1000 ft/s and the guard must still catch it in the conduit,
     // loudly, the same routing step.
-    const std::string deck = fillingSurgeDeck("10000");
+    std::string deck = fillingSurgeDeck("25");
+    for (const auto& [from, to] :
+         {std::pair<std::string, std::string>{"P1      FB    ST 8.00", "P1      FB    DN 8.00"},
+          {"DN  0.0  FREE NO", "DN  0.0  FIXED 0.0 NO"}}) {
+        const auto at = deck.find(from);
+        ASSERT_NE(at, std::string::npos) << from;
+        deck.replace(at, from.size(), to);
+    }
     const std::string inp = outPath("tpa_guard_loud.inp");
     {
         std::ofstream f(inp);
@@ -687,13 +702,15 @@ TEST(FvTpa, DivergenceGuardFailsLoudNotSilent) {
         << swmm_get_last_error_msg(e);
     ASSERT_EQ(swmm_engine_initialize(e), 0);
     ASSERT_EQ(swmm_engine_start(e, 1), 0);
+    const int dn = swmm_node_index(e, "DN");
+    ASSERT_GE(dn, 0);
+    ASSERT_EQ(swmm_node_set_head_boundary(e, dn, 1.0e5), 0); // m
     double elapsed = 0.0;
     int rc = 0;
     do {
         rc = swmm_engine_step(e, &elapsed);
     } while (rc == 0 && elapsed > 0.0);
-    EXPECT_NE(rc, 0) << "Euler at a = 10 000 m/s completed — find the next natural "
-                        "divergence for this gate's deck";
+    EXPECT_NE(rc, 0) << "a 100 km outfall stage completed without tripping the cell-state guard";
     if (rc != 0) {
         const std::string msg = swmm_get_last_error_msg(e);
         EXPECT_NE(msg.find("the FV solution diverged in conduit"), std::string::npos)

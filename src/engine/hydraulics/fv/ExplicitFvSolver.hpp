@@ -997,6 +997,19 @@ private:
      * @return Tier count K; one means the caller should take the global path.
      */
     int assignTiers(double& dt0, int k_cap_override = 0);
+    /**
+     * @brief Test that every tiered cell a macro cycle pressurized could afford the step it took.
+     *
+     * The post-cycle census bounds only the base step dt0, i.e. tier-zero cells. A coarse cell that
+     * crossed the crown inside the cycle now moves at the slot celerity yet was integrated at
+     * 2^tier*dt0; it is held to the same kStepAcceptRatio as the global retry. Each violator's
+     * post-cycle stable step is kept in cell_dt_cap_ and tier_cap_hold_ is rearmed. Must read the
+     * post-cycle state, before restoreState.
+     *
+     * @param[in] dt0 Positive base step of the macro cycle just run, in seconds.
+     * @return False when a pressurized or TPA cell above tier zero violates the ratio.
+     */
+    bool macroCycleCellsAdmissible(double dt0);
 
     /**
      * @brief Open due local-tier face windows and book their conservative transfers.
@@ -1465,6 +1478,18 @@ private:
     int lts_countdown_ = 0;
     double lts_dt0_ = 0.0;
     static constexpr int kRetierEveryCycles = 8;
+
+    /// Post-cycle stable step (s) of each cell that broke a rejected macro
+    /// cycle, applied by assignTiers as a cap on that cell's step. Without it
+    /// the re-tier reads the restored, sub-crown state, hands the cell the same
+    /// coarse tier, and every following cycle is rejected for the same cell.
+    /// Released after one assignment's lifetime of accepted cycles with no new
+    /// violation; holding it longer keeps cells fine long after they need it
+    /// (64 cycles cost 40 % more cycles and broke
+    /// FvNetwork.PressurizeDepressurizeCyclingIsHysteresisFree).
+    std::vector<double> cell_dt_cap_;
+    int tier_cap_hold_ = 0;
+    static constexpr int kTierCapHoldCycles = kRetierEveryCycles;
 
     /// Pending ∫F dt per control volume, in the cell's OWN axis for momentum.
     /// These are the tier-interface flux accumulators: a face books into them

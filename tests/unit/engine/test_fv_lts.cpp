@@ -209,6 +209,60 @@ RunResult runGradedDamBreak(int max_tiers, bool lts, double t_end, double dt_rep
     return r;
 }
 
+struct CrownSurge {
+    double peak_head = 0.0; ///< max over window ends and cells of h - y_crown (ft)
+    double vol_drift = 0.0; ///< |V(t) − V(0)| / V(0)
+    long rejected = 0;
+    int tiers = 1;
+};
+
+/**
+ * @brief Drive a nearly full sealed pipe into its downstream wall and record the surge.
+ *
+ * A 1 ft circular reach of fifty cells: ten 1 ft cells at the upstream end set the base step,
+ * forty 20 ft cells tier coarse on their free-surface speed. Every cell starts at 0.95 of the
+ * crown moving at 3 ft/s, so the wall cell fills past the crown inside one coarse window — the
+ * Bellinge 2026-11-02 ERROR 14 configuration. Runs 20 s; no file output.
+ *
+ * @param[in] lts Enable local tiering (six tiers) when true.
+ * @param[in] window Advance-window length in seconds; must exceed the macro-cycle span for the
+ *     tiered path to run cycles at all.
+ * @return Peak pressure head, relative cell-water drift, rejected macro cycles and tier count.
+ */
+CrownSurge runCrownSurge(bool lts, double window) {
+    Channel ch = makeGradedChannel(
+        circular(1.0), 50, [](int i) { return (i < 10) ? 1.0 : 20.0; },
+        [](double) { return 0.0; }, 0.013);
+    const FvGeometry& g = ch.mesh.geom[0];
+    for (int i = 0; i < ch.n; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        ch.state.cell_a[ui] = k::areaOfDepth(g, 0.95 * g.y_crown);
+        ch.state.cell_q[ui] = 3.0 * ch.state.cell_a[ui];
+    }
+
+    openswmm::fv::FvOptions o = defaultOptions();
+    o.lts = lts;
+    o.lts_max_tiers = 6;
+    openswmm::fv::ExplicitFvSolver s;
+    s.initialize(ch.mesh, ch.state, o);
+    const double v0 = totalVol(ch);
+
+    openswmm::fv::FvStepForcing f;
+    f.n_nodes = 0;
+    CrownSurge r;
+    for (double t = 0.0; t < 20.0; t += window) {
+        s.advance(t, t + window, f);
+        r.tiers = std::max(r.tiers, s.lts_tiers());
+        for (int i = 0; i < ch.n; ++i)
+            r.peak_head = std::max(r.peak_head,
+                                   ch.state.cell_h[static_cast<std::size_t>(i)] - g.y_crown);
+    }
+    r.vol_drift = std::fabs(totalVol(ch) - v0) / v0;
+    r.rejected = s.run_stats().n_macro_rejected;
+    s.finalize();
+    return r;
+}
+
 } // namespace
 
 // ===========================================================================
@@ -346,6 +400,32 @@ TEST(FvLts, WettingFrontCrossesTierBoundariesWithoutLoss) {
     EXPECT_GT(ch.state.cell_a[static_cast<std::size_t>(62)], 0.0)
         << "the front never reached the coarse tier beyond the short pipes";
     s.finalize();
+}
+
+// ===========================================================================
+// §6.12(c) — a coarse cell crossing the crown inside a cycle
+// ===========================================================================
+
+// A closed cell just below its crown tiers on its free-surface speed, the
+// coarsest tier available. Once it fills past the crown it moves at the slot
+// celerity, ~30x faster, and the step it was integrated at is no longer
+// admissible. The post-cycle census bounds only dt0, so the cycle used to be
+// accepted: the wall cell here stood 23.6 ft above the crown where global
+// stepping peaks at 5.5 ft, and on Bellinge one accepted cycle took a cell to
+// 15,182 ft (ERROR 14). The tiered surge must track global stepping instead.
+TEST(FvLts, ACoarseCellCrossingTheCrownMidCycleTracksGlobalStepping) {
+    for (const double window : {1.0, 2.0, 5.0}) {
+        const CrownSurge glob = runCrownSurge(/*lts=*/false, window);
+        const CrownSurge tier = runCrownSurge(/*lts=*/true, window);
+        ASSERT_GT(tier.tiers, 1) << "the fixture must actually tier";
+        EXPECT_NEAR(tier.peak_head, glob.peak_head, 0.10 * glob.peak_head)
+            << "window " << window << " s: tiered surge head (ft) vs global stepping";
+        EXPECT_LT(tier.vol_drift, 1.0e-12);
+        EXPECT_GT(tier.rejected, 0) << "the crossing cycle must have been rejected";
+        std::printf("[fv-lts] crown surge window %.0f s: global %.4f ft, tiered %.4f ft, "
+                    "%ld cycles rejected\n",
+                    window, glob.peak_head, tier.peak_head, tier.rejected);
+    }
 }
 
 // ===========================================================================
