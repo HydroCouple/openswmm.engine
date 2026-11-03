@@ -209,3 +209,8 @@ cases the current code excludes). Acceptance gates as in the table.
   "converges" those only because its own tolerance is 1e-8·A/dt, 100× looser than Newton's. 11 (+1 near the floor) are genuine stalls on
   the bilinear dry-ramp region of floored lines (G80F66Y/G80F330, G71F090/G71F265). Owner decision: a roundoff-aware
   residual floor (or one tolerance for both solvers) would remove the 462; not done here (no tolerance changes).
+- 2026-11-02 (lead, from O-4): OPEN model finding — a NON-admitted linear node whose outlet is a port floored by
+  a dry wet well (G71F06R_ovl → G71F68Y) has no floor of its own and sinks to −300…−500 ft in the shared plane;
+  Jacobi and Newton agree, so it is the model, not the solver. Fix belongs to admission: a node whose every
+  outlet is a floored/one-way port of an admitted node must be admitted too (closure of the admitted set under
+  "only drains through an admitted store"). Not done; blocks calling phase 5 complete.
