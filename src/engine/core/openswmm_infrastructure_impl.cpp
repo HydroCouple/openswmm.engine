@@ -1066,6 +1066,34 @@ SWMM_ENGINE_API int swmm_lid_rename(SWMM_Engine engine, int idx, const char* new
     return SWMM_OK;
 }
 
+SWMM_ENGINE_API int swmm_lid_set_type(SWMM_Engine engine, int idx, int type) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+    auto& controls = ctx.lid_controls;
+    CHECK_INDEX(idx >= 0 && idx < controls.count());
+    const char* code = lid_type_code(type);
+    if (!*code)
+        return SWMM_ERR_BADPARAM;
+    if (controls.lid_type[idx] == code)
+        return SWMM_OK;
+
+    const auto& usages = ctx.lid_usage.lid_index;
+    const auto& storages = ctx.node_subtypes.storages.lid;
+    const auto& laws = ctx.reactions.lid_laws;
+    if (std::find(usages.begin(), usages.end(), idx) != usages.end() ||
+        std::any_of(storages.begin(), storages.end(),
+                    [idx](const auto& s) { return s.control == idx; }) ||
+        ctx.reactions.lid_enabled(idx) ||
+        std::any_of(laws.begin(), laws.end(),
+                    [idx](const auto& law) { return law.control == idx; }) ||
+        (idx < static_cast<int>(controls.node_layers.size()) && !controls.node_layers[idx].empty()))
+        return SWMM_ERR_BADPARAM;
+
+    controls.lid_type[idx] = code;
+    return SWMM_OK;
+}
+
 // The surface/soil/storage layer parameters seed per-unit LID state at
 // start() (soil moisture from wilting point/porosity, storage depth from the
 // initial saturation), so mid-run mutation has no single correct meaning —

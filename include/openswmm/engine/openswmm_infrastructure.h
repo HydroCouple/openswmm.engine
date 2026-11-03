@@ -925,6 +925,11 @@ SWMM_ENGINE_API int swmm_inlet_usage_remove(SWMM_Engine engine, int usage_idx);
  */
 SWMM_ENGINE_API int swmm_lid_add(SWMM_Engine engine, const char* id, int type);
 
+/** Change the type of an unassigned control in place, using the codes from swmm_lid_add().
+ * Requires BUILDING/OPENED. Returns SWMM_ERR_BADPARAM for an unknown type or a change
+ * that would invalidate an assignment, reaction rule, or authored NODE layer stack. */
+SWMM_ENGINE_API int swmm_lid_set_type(SWMM_Engine engine, int idx, int type);
+
 /** Arbitrary ordered NODE control layers; thickness/suction in in or mm,
  * conductivity in in/hr or mm/hr. Params: SURFACE=(thickness, vegetation),
  * MEDIA=(thickness, porosity, FC, WP, Ksat, Kslope, suction),

@@ -1158,6 +1158,10 @@ class LIDs:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_lid_set_drainmat(h, idx, thick, void_frac, roughness))
 
+    def set_type(self, int idx, int lid_type) -> None:
+        """Change the type of an unassigned LID before an ordered layer stack is applied."""
+        _check(swmm_lid_set_type(_h(self._solver), idx, lid_type))
+
     def get_type(self, int idx) -> int:
         """Return the LID control's type code (inverse of the ``lid_type``
         argument to :meth:`add`).
