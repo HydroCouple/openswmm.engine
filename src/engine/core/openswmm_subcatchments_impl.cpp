@@ -1246,7 +1246,26 @@ SWMM_ENGINE_API int swmm_subcatch_rename(SWMM_Engine engine, int idx, const char
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
-    return ctx.subcatch_names.rename(idx, newId) ? SWMM_OK : SWMM_ERR_BADPARAM;
+    const std::string previous = ctx.subcatch_names.name_of(idx);
+    if (!ctx.subcatch_names.rename(idx, newId))
+        return SWMM_ERR_BADPARAM;
+    // GWF expressions are owned by this catchment, keyed by canonical spelling.
+    const std::string next = ctx.subcatch_names.name_of(idx);
+    if (previous != next) {
+        for (const char* type : {"LATERAL", "DEEP"}) {
+            const auto old_key = "GWF:" + previous + ":" + type;
+            const auto new_key = "GWF:" + next + ":" + type;
+            auto it = ctx.options.ext_options.find(old_key);
+            if (it == ctx.options.ext_options.end()) {
+                ctx.options.ext_options.erase(new_key);
+                continue;
+            }
+            auto expression = std::move(it->second);
+            ctx.options.ext_options.erase(it);
+            ctx.options.ext_options[new_key] = std::move(expression);
+        }
+    }
+    return SWMM_OK;
 }
 
 SWMM_ENGINE_API int swmm_subcatch_get_tag(SWMM_Engine engine, int idx, char* buf, int buflen) {

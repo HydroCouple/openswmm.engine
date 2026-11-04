@@ -398,4 +398,35 @@ TEST(SubcatchQualityEditing, GrowthAndDeletionPreserveNamedRowsAndColumns) {
     }
 }
 
+TEST(SubcatchGroundwaterEditing, ExpressionsFollowRenameAndAreRemovedBeforeNameReuse) {
+    const auto engine = swmm_engine_new();
+    ASSERT_NE(engine, nullptr);
+    struct Cleanup {
+        SWMM_Engine engine;
+        ~Cleanup() { swmm_engine_destroy(engine); }
+    } cleanup{engine};
+    ASSERT_EQ(swmm_subcatch_add(engine, "MixedCase"), SWMM_OK);
+    ASSERT_EQ(swmm_subcatch_add(engine, "Control"), SWMM_OK);
+    ASSERT_EQ(swmm_subcatch_set_gwf_expression(engine, 0, SWMM_GWF_LATERAL, "0.25 * HGW"), SWMM_OK);
+    ASSERT_EQ(swmm_subcatch_set_gwf_expression(engine, 0, SWMM_GWF_DEEP, "KS * 0.1"), SWMM_OK);
+    ASSERT_EQ(swmm_subcatch_set_gwf_expression(engine, 1, SWMM_GWF_LATERAL, "HGW + 1"), SWMM_OK);
+    char text[128] = {};
+    for (const char* name : {"mixedcase", "Renamed"}) {
+        ASSERT_EQ(swmm_subcatch_rename(engine, 0, name), SWMM_OK);
+        ASSERT_EQ(swmm_subcatch_get_gwf_expression(engine, 0, SWMM_GWF_LATERAL, text, 128), SWMM_OK);
+        EXPECT_STREQ(text, "0.25 * HGW");
+        ASSERT_EQ(swmm_subcatch_get_gwf_expression(engine, 0, SWMM_GWF_DEEP, text, 128), SWMM_OK);
+        EXPECT_STREQ(text, "KS * 0.1");
+    }
+    ASSERT_EQ(swmm_subcatch_rename(engine, 0, "Control"), SWMM_ERR_BADPARAM);
+    ASSERT_EQ(swmm_subcatch_delete(engine, 0, nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_subcatch_add(engine, "Renamed"), SWMM_OK);
+    for (int type : {SWMM_GWF_LATERAL, SWMM_GWF_DEEP}) {
+        ASSERT_EQ(swmm_subcatch_get_gwf_expression(engine, 1, type, text, 128), SWMM_OK);
+        EXPECT_STREQ(text, "");
+    }
+    ASSERT_EQ(swmm_subcatch_get_gwf_expression(engine, 0, SWMM_GWF_LATERAL, text, 128), SWMM_OK);
+    EXPECT_STREQ(text, "HGW + 1");
+}
+
 } // namespace

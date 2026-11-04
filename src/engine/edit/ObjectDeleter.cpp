@@ -886,6 +886,9 @@ CascadeResult delete_subcatch(SimulationContext& ctx, int sc_idx) {
     // --- Step 3: erase SoA row ---
     erase_subcatch_spatial(ctx, sc_idx);
     erase_subcatch_patterns(ctx, sc_idx);
+    const std::string subcatch_name = ctx.subcatch_names.name_of(sc_idx);
+    for (const char* type : {"LATERAL", "DEEP"})
+        ctx.options.ext_options.erase("GWF:" + subcatch_name + ":" + type);
     ctx.subcatch_names.remove_at(sc_idx);
     ctx.subcatches.erase_at(sc_idx);
 
