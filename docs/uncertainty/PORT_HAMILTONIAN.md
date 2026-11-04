@@ -239,3 +239,24 @@ cases the current code excludes). Acceptance gates as in the table.
   1D smoke is therefore not a sufficient reproducer. Next (after O-5 leaves RomPortGraph.hpp): dump every
   non-converged per-member system at the peak (admitted graph, A, tabulated port laws, F, z) to a file and
   replay it in a Debug unit test (O-6). The accuracy score of this run will be contaminated by the 539.
+- 2026-11-04: O-5 (`RomPortGraph.hpp`; engine: `g.prepare()` once per step, `rom1d_corr_sys_` deleted). The per-member
+  solve no longer factors the whole network per Newton iteration per member. Partition: N = every store and every node
+  a port touches (admitted stores, ponds, the far ends of their ports), L = all other unpinned nodes. No port touches
+  L, so L rows are linear with the main run's ju/jd/d and S/dt — member-independent; only b and z^n (right-hand side)
+  are the member's. A_LL factored once per step (AdditiveSystem), Schur complement J_NN − A_NL·A_LL⁻¹·A_LN formed with
+  one L solve per N node that has an L neighbour; each Newton pass factors only the dense k×k system. The iterates are
+  the full-network Newton's (the L residual scales by exactly 1 − λ along a step: carried as a scalar; boundary z_L
+  follows the step; z_L recovered with one L solve per member), so criteria, kink bound, active set, fp floor and
+  Jacobi are unchanged. Counters: `factorisations` = k×k, new `l_factorisations`, `l_solves`, `k_max`.
+  Tests: member_ports 28 (26 unchanged + `SchurComplementSolveMatchesFullNetworkSolve`: 50 graphs of 30–200 linear
+  nodes with 2–6 stores, ponds, member-dependent sinks, random pins, 3 members each, vs the pre-O-5 solver kept as a
+  test-only reference header: worst max|Δz|/max|z| 3.0e-14, Newton iterations 752 = 752, 0 fallbacks; mutation —
+  boundary step without the W term — fails it at 0.26 and two other tests; `LinearFactorIsSharedByMembers…`: 1 L
+  factorisation for 10 members, refactored on an edge change; coupled cost test asserts L factorisations = per-member
+  steps, 409 = 409 for 20 members), additive_channel 12, spectral_rom1d 101, storage gate A 0.889/0.958, B 0.727/0.960,
+  R 0.952/0.880 identical, 0 fallbacks (R Newton 60,760 vs 60,771 before: roundoff). Coupled fixture wall ON/OFF 1.79
+  median (5-node graph, unchanged within noise).
+  **Debug 1D smoke to 07:00** (load 10–24, another session's build running): 3,892 steps in **336 s** (HEAD O-4b 636 s on
+  a quieter machine; step 2000 127 vs 165 s, step 3000 220 vs 359 s); solves 194,550, Newton 305,185 (305,332), fp-floor
+  741 (736), Jacobi 35 (34, all converged), non-converged 0, G80F11B 92 member-steps ≤ 0.123 ft below invert (same);
+  k ≤ 30, k×k factorisations 438,830, L factorisations 3,891, L solves 256,872.

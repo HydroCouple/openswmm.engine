@@ -828,7 +828,6 @@ private:
     std::vector<char> rom1d_nl_struct_;                   ///< storage node with a structure link
     std::vector<int> rom1d_cp_of_active_;                 ///< coupling point per active node (-1 none)
     std::vector<char> rom1d_rom_pinned_;                  ///< ROM pin mask: spilling, minus per-member nodes
-    uncertainty::AdditiveSystem rom1d_corr_sys_;          ///< factor of the per-member Newton Jacobian (pattern shared)
     uncertainty::PortGraph rom1d_pg_;                     ///< the per-member port graph of the current step
     std::vector<double> rom1d_mem_z_;                     ///< members x active nodes: z at the end of the last step (ft)
     std::vector<double> rom1d_mem_dv_;                    ///< admitted nodes x members: volume deviation (ft^3)

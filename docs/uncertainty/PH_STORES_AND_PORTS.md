@@ -241,6 +241,20 @@ Do not split it into store bisection plus a separate correction solve.
   So the `AdditiveSystem` LU (minimum-degree order, no pivoting) factors it as
   it is. Reuse its symbolic pattern: the union of plane edges and port edges is
   the same graph. Only numeric values change per member and per iteration.
+  *As built (O-5, PORT_HAMILTONIAN §6):* the unknowns split into N (every store
+  and every node a port touches — the admitted stores, the ponds and the far ends
+  of their ports) and L (every other unpinned node). No port touches an L node, so
+  the L rows are linear and their matrix (S/Δt plus the plane edges' ju, jd, d) is
+  the same for every member: only the right-hand side (b, z^n) is the member's. It
+  is factored once per step (`PortGraph::prepare`, AdditiveSystem LU) with its
+  Schur complement on N (one L solve per N node with an L neighbour); each Newton
+  pass factors only the dense k×k J_NN − A_NL·A_LL⁻¹·A_LN. The iterates are the
+  full-network ones: along a Newton step the linear L residual scales by exactly
+  (1 − λ), so it is carried as a scalar, z_L at the boundary of N follows the step,
+  and the whole z_L is recovered with one L solve per member. Convergence, the
+  kink bound, the active set, the roundoff floor and the Jacobi fallback are
+  unchanged (the floor's L part costs two L solves, only when the N part is
+  already at the floor).
 - **Jumps.** At a jump (raised end, y_on/y_off, the dry ramp end) use the
   one-sided slope. If an iterate crosses the jump and the residual changes sign
   in that component, fix that node's level at the jump and take the port's

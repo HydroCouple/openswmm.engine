@@ -27,6 +27,7 @@
 #include "uncertainty/RomStorePorts.hpp"
 #include "uncertainty/RomPortGraph.hpp"
 #include "uncertainty/RomAdditiveChannel.hpp"
+#include "rom_port_graph_full_reference.hpp"
 
 #ifdef OPENSWMM_HAS_2D
 #include "openswmm/engine/openswmm_engine.h"
@@ -297,9 +298,8 @@ TEST(StorePorts, FrozenSettingPumpRunsOnItsCurveAtMemberDepth) {
 TEST(PortGraph, PortGraphZeroDataIsExact) {
     std::mt19937 rng(11);
     RandomGraph r = makeRandomGraph(rng, 30);
-    AdditiveSystem sys;
     std::vector<double> z(30, 0.0);
-    ASSERT_TRUE(r.g.solve(z, sys));
+    ASSERT_TRUE(r.g.solve(z));
     for (double v : z) EXPECT_EQ(v, 0.0);
     EXPECT_EQ(r.g.stats.zero_exits, 1);
     EXPECT_EQ(r.g.stats.newton_iters, 0);
@@ -320,12 +320,12 @@ TEST(PortGraph, PortGraphLinearReducesToPlane) {
     }
     FlowEdge out; out.up = n - 1; out.dn = -1; out.conduit = false; out.d = 3.0; g.edges.push_back(out);
     g.pinned[7] = 1;
-    AdditiveSystem plane, sys;
+    AdditiveSystem plane;
     plane.build(n, g.edges, g.S.data(), g.dt, &g.pinned);
     std::vector<double> psi = g.z_prev;
     plane.step(g.b.data(), psi.data());
     std::vector<double> z = g.z_prev;
-    ASSERT_TRUE(g.solve(z, sys));
+    ASSERT_TRUE(g.solve(z));
     for (int t = 0; t < n; ++t) EXPECT_NEAR(z[static_cast<std::size_t>(t)], psi[static_cast<std::size_t>(t)], 1e-12 * (1.0 + std::fabs(psi[static_cast<std::size_t>(t)])));
     EXPECT_EQ(g.stats.jacobi_fallbacks, 0);
 }
@@ -349,13 +349,12 @@ TEST(PortGraph, PortGraphIsOrderPreserving) {
             if (g.store_of[static_cast<std::size_t>(t)] >= 0)
                 g.dV_prev[static_cast<std::size_t>(g.store_of[static_cast<std::size_t>(t)])] = g.volume(t, zp[static_cast<std::size_t>(t)], nullptr);
         g.z_prev = zp;
-        AdditiveSystem sys;
         g.b = b;
         std::vector<double> z = zp;
-        ASSERT_TRUE(g.solve(z, sys));
+        ASSERT_TRUE(g.solve(z));
         g.b = bp;
         std::vector<double> z2 = zp;
-        ASSERT_TRUE(g.solve(z2, sys));
+        ASSERT_TRUE(g.solve(z2));
         for (int t = 0; t < n; ++t) EXPECT_LE(z[static_cast<std::size_t>(t)], z2[static_cast<std::size_t>(t)] + 1e-9) << "trial " << trial << " node " << t;
         ++checked;
     }
@@ -380,14 +379,13 @@ std::pair<double, double> contraction(PortGraph& g, std::mt19937& rng, double* o
             if (g.store_of[static_cast<std::size_t>(t)] >= 0)
                 g.dV_prev[static_cast<std::size_t>(g.store_of[static_cast<std::size_t>(t)])] = g.volume(t, zp[static_cast<std::size_t>(t)], nullptr);
     };
-    AdditiveSystem sys;
     setup(z1p, b1);
     std::vector<double> dV1p(n), dV2p(n), z1 = z1p, z2 = z2p;
     for (int t = 0; t < n; ++t) dV1p[static_cast<std::size_t>(t)] = g.volumePrev(t);
-    EXPECT_TRUE(g.solve(z1, sys));
+    EXPECT_TRUE(g.solve(z1));
     setup(z2p, b2);
     for (int t = 0; t < n; ++t) dV2p[static_cast<std::size_t>(t)] = g.volumePrev(t);
-    EXPECT_TRUE(g.solve(z2, sys));
+    EXPECT_TRUE(g.solve(z2));
     double lhs = 0.0, rhs = 0.0;
     for (int t = 0; t < n; ++t) {
         if (g.pinned[static_cast<std::size_t>(t)]) continue;
@@ -466,9 +464,8 @@ TEST(PortGraph, WithPondsZeroDataIsExact) {
     std::mt19937 rng(41);
     RandomGraph r = makeRandomGraph(rng, 30, true);
     ASSERT_GT(r.g.n, 30) << "no pond drawn";
-    AdditiveSystem sys;
     std::vector<double> z(static_cast<std::size_t>(r.g.n), 0.0);
-    ASSERT_TRUE(r.g.solve(z, sys));
+    ASSERT_TRUE(r.g.solve(z));
     for (double v : z) EXPECT_EQ(v, 0.0);
     EXPECT_EQ(r.g.stats.zero_exits, 1);
 }
@@ -493,13 +490,12 @@ TEST(PortGraph, WithPondsIsOrderPreserving) {
             if (g.store_of[static_cast<std::size_t>(t)] >= 0)
                 g.dV_prev[static_cast<std::size_t>(g.store_of[static_cast<std::size_t>(t)])] = g.volume(t, zp[static_cast<std::size_t>(t)], nullptr);
         g.z_prev = zp;
-        AdditiveSystem sys;
         g.b = b;
         std::vector<double> z = zp;
-        ASSERT_TRUE(g.solve(z, sys));
+        ASSERT_TRUE(g.solve(z));
         g.b = bp;
         std::vector<double> z2 = zp;
-        ASSERT_TRUE(g.solve(z2, sys));
+        ASSERT_TRUE(g.solve(z2));
         for (int t = 0; t < n; ++t) EXPECT_LE(z[static_cast<std::size_t>(t)], z2[static_cast<std::size_t>(t)] + 1e-9) << "trial " << trial << " node " << t;
     }
     EXPECT_GT(with_ponds, 40);
@@ -551,9 +547,8 @@ TEST(PortGraph, ManholeToPondConservesWater) {
         for (int t = 0; t < g.n; ++t)
             if (g.store_of[static_cast<std::size_t>(t)] >= 0)
                 g.dV_prev[static_cast<std::size_t>(g.store_of[static_cast<std::size_t>(t)])] = g.volume(t, g.z_prev[static_cast<std::size_t>(t)], nullptr);
-        AdditiveSystem sys;
         std::vector<double> z = g.z_prev;
-        ASSERT_TRUE(g.solve(z, sys));
+        ASSERT_TRUE(g.solve(z));
         const auto& port = g.ports.back();
         const double q_port = port.dq(0, z[0], z[static_cast<std::size_t>(pn)]);   // extra flow manhole -> pond
         const double gained = g.volume(pn, z[static_cast<std::size_t>(pn)], nullptr) - g.volumePrev(pn);
@@ -597,13 +592,12 @@ TEST(PortGraph, NonMonotonePortBreaksL1Contraction) {
         p.dq = [T, T0](int, double zu, double) { return zu == 0.0 ? 0.0 : T.eval(zu) - T0; };
         g.ports.push_back(p);
         FlowEdge out; out.up = 1; out.dn = -1; out.conduit = false; out.d = 2.0; g.edges.push_back(out);
-        AdditiveSystem sys;
         std::vector<double> zA = {0.0, 0.0};   // the main run's own member: stays at 0
         g.z_prev = zA;
-        ASSERT_TRUE(g.solve(zA, sys));
+        ASSERT_TRUE(g.solve(zA));
         std::vector<double> zB = {0.1, 0.0};
         g.z_prev = zB;
-        g.solve(zB, sys);
+        g.solve(zB);
         const double lhs = std::fabs(100.0 * zB[0]) + std::fabs(100.0 * zB[1]);
         const double rhs = 100.0 * 0.1;
         if (envelope) EXPECT_LE(lhs, rhs * (1.0 + 1e-9));
@@ -624,9 +618,8 @@ TEST(PortGraph, PortGraphConservesVolume) {
         for (int t = 0; t < n; ++t)
             if (g.store_of[static_cast<std::size_t>(t)] >= 0)
                 g.dV_prev[static_cast<std::size_t>(g.store_of[static_cast<std::size_t>(t)])] = g.volume(t, g.z_prev[static_cast<std::size_t>(t)], nullptr) + 0.3 * U(rng);
-        AdditiveSystem sys;
         std::vector<double> z = g.z_prev;
-        ASSERT_TRUE(g.solve(z, sys));
+        ASSERT_TRUE(g.solve(z));
         double src = 0.0;
         for (int t = 0; t < n; ++t) if (!g.pinned[static_cast<std::size_t>(t)]) src += g.b[static_cast<std::size_t>(t)];
         const double dv = sumDV(g, z);
@@ -650,10 +643,9 @@ TEST(PortGraph, FloorClampCreatesWater) {
     for (bool clamp : {false, true}) {
         g.floor_projection = clamp;
         g.floor = {-0.5, -0.5, -0.5};
-        AdditiveSystem sys;
         std::vector<double> z = {0.0, 0.0, 0.0};
         g.z_prev = z;
-        g.solve(z, sys);
+        g.solve(z);
         const double dv = sumDV(g, z), rhs = g.dt * (-40.0 - g.boundaryOutflow(z));
         if (clamp) EXPECT_GT(std::fabs(dv - rhs), 1.0) << "the clamp should create water";
         else EXPECT_NEAR(dv, rhs, 1e-9);
@@ -678,10 +670,9 @@ TEST(PortGraph, PhantomRaisedEndDrainsBelowThePipeEnd) {
         g.b = {0.0, -5.0};
         const double q_star = (legacy ? P::raisedEndFlowLegacyKind6 : P::raisedEndFlow)(K, hB, zB_end, hF, zF_end);
         std::vector<double> z = {-0.5, 0.0};   // member B at 100.55: below its pipe end
-        AdditiveSystem sys;
         for (int step = 0; step < 40; ++step) {
             g.z_prev = z;
-            g.solve(z, sys);
+            g.solve(z);
         }
         const double hBm = hB + z[0], hFm = hF + z[1];
         const double qm = q_star + g.ports[0].dq(0, z[0], z[1]);   // the member's absolute exchange
@@ -720,9 +711,8 @@ TEST(PortGraph, StraightLineOutletOfAStoreStopsAtItsFloor) {
         FlowEdge o; o.up = 1; o.dn = -1; o.conduit = false; o.d = 2.0; g.edges.push_back(o);
         g.b = {-q_star, 0.0};
         std::vector<double> z = {0.0, 0.0};
-        AdditiveSystem sys;
         double zmin = 0.0;
-        for (int step = 0; step < 30; ++step) { g.z_prev = z; ASSERT_TRUE(g.solve(z, sys)); zmin = std::min(zmin, z[0]); }
+        for (int step = 0; step < 30; ++step) { g.z_prev = z; ASSERT_TRUE(g.solve(z)); zmin = std::min(zmin, z[0]); }
         if (floored) EXPECT_GE(d_star + zmin, -P::kDeltaDry - 1e-9);
         else EXPECT_LT(d_star + zmin, -1.0);
     }
@@ -828,7 +818,6 @@ KinkSolve solveKinkSystem(bool plain) {
     g.ports = {br, pu, ln};
     g.b = {0.78, -0.135};
     g.z_prev = {0.081, -0.059};
-    AdditiveSystem sys;
     KinkSolve r;
     r.z = g.z_prev;
     if (plain) {
@@ -836,7 +825,7 @@ KinkSolve solveKinkSystem(bool plain) {
         r.ok = plainNewton(g, r.z, &it);
         r.st.newton_iters = it;
     } else {
-        r.ok = g.solve(r.z, sys);
+        r.ok = g.solve(r.z);
         r.st = g.stats;
     }
     g.residual(r.z, r.F);
@@ -885,11 +874,10 @@ TEST(PortGraph, ActiveSetSlopeAtAKinkWithinTheDifferenceStep) {
         g.ports = {R, L, W};
         g.b = {-1.5e-6, -3.065e-5};
         g.z_prev = {zp, -3.5e-4};
-        AdditiveSystem sys;
         std::vector<double> z = g.z_prev;
         bool ok;
         if (plain) { int it = 0; ok = plainNewton(g, z, &it); }
-        else { ok = g.solve(z, sys); *st = g.stats; }
+        else { ok = g.solve(z); *st = g.stats; }
         EXPECT_TRUE(!ok || (z[0] < 0.0 && z[0] > -1e-7)) << "root just below the kink";
         return ok;
     };
@@ -900,6 +888,204 @@ TEST(PortGraph, ActiveSetSlopeAtAKinkWithinTheDifferenceStep) {
         EXPECT_EQ(st.jacobi_fallbacks, 0) << "zp " << zp;
         EXPECT_FALSE(solveAt(true, zp, &st_m)) << "forward-difference slope at the kink should stall (zp " << zp << ")";
     }
+}
+
+// ---------------------------------------------------------------------------
+// O-5: Schur complement on the port/store nodes, linear part factored once
+// ---------------------------------------------------------------------------
+namespace {
+using FullRef = openswmm::uncertainty::test_reference::FullNetworkPortGraph;
+
+// A linear plane network of 30–200 nodes (tree with branches and a few loops,
+// conduit and structure edges, outfalls) with 2–6 nonlinear stores embedded:
+// each store drains through a weir or a raised-end two-port, carries a
+// member-dependent sink floored by its water, and some have a street pond.
+// Random pins. Built identically into G (the O-5 graph or the full reference)
+// from the same seed. Members get their own b, z_prev, dV_prev.
+template <class G>
+void buildEmbedded(G& g, unsigned seed, int M) {
+    std::mt19937 rng(seed);
+    std::uniform_real_distribution<double> U(0.0, 1.0);
+    const int n = 30 + static_cast<int>(U(rng) * 171);
+    g.resize(n);
+    g.dt = 5.0 + 50.0 * U(rng);
+    for (int t = 0; t < n; ++t) {
+        g.S[static_cast<std::size_t>(t)] = std::pow(10.0, 1.0 + 3.0 * U(rng));
+        g.level[static_cast<std::size_t>(t)] = 90.0 + 20.0 * U(rng);
+    }
+    for (int t = 1; t < n; ++t) {
+        const int up = t - 1 - static_cast<int>(U(rng) * std::min(t, 4));
+        FlowEdge e; e.up = up; e.dn = t;
+        if (U(rng) < 0.8) { e.conduit = true; e.ju = 0.1 + 5.0 * U(rng); e.jd = -e.ju * U(rng); }
+        else { e.conduit = false; e.d = 0.05 + 2.0 * U(rng); }
+        g.edges.push_back(e);
+    }
+    for (int q = 0; q < n / 15; ++q) {   // loops
+        const int a = static_cast<int>(U(rng) * n), c = static_cast<int>(U(rng) * n);
+        if (a == c) continue;
+        FlowEdge e; e.up = std::min(a, c); e.dn = std::max(a, c); e.conduit = true; e.ju = 2.0 * U(rng); e.jd = -e.ju * U(rng);
+        g.edges.push_back(e);
+    }
+    for (int q = 0; q < 3; ++q) {   // outfalls
+        FlowEdge o; o.up = n - 1 - static_cast<int>(U(rng) * n / 3); o.dn = -1; o.conduit = false; o.d = 0.5 + 2.0 * U(rng);
+        g.edges.push_back(o);
+    }
+    const int ns = 2 + static_cast<int>(U(rng) * 5);
+    std::vector<int> st_nodes;
+    for (int s = 0; s < ns; ++s) {
+        const int t = static_cast<int>(U(rng) * (n - 1));
+        if (std::find(st_nodes.begin(), st_nodes.end(), t) != st_nodes.end()) continue;
+        st_nodes.push_back(t);
+        const double S0 = g.S[static_cast<std::size_t>(t)], c3 = S0 * U(rng);
+        g.store_of[static_cast<std::size_t>(t)] = static_cast<int>(g.stores.size());
+        typename G::Store st;
+        st.dV = [S0, c3](double z, double* a) { if (a) *a = S0 + 3.0 * c3 * z * z; return S0 * z + c3 * z * z * z; };
+        g.stores.push_back(st);
+        const int dn = t + 1 + static_cast<int>(U(rng) * std::min(5, n - 1 - t));
+        typename G::Port p;
+        if (U(rng) < 0.5) {
+            const double c = 0.5 + 3.0 * U(rng), a = 0.05 + U(rng);
+            p.up = t; p.dn = dn;
+            p.dq = [c, a](int, double zu, double) {
+                return zu == 0.0 ? 0.0 : c * (std::pow(std::max(a + zu, 0.0), 1.5) - std::pow(a, 1.5));
+            };
+        } else {
+            const double K = 1.0 + 4.0 * U(rng), zB = U(rng), zF = zB + 0.5 * U(rng);
+            const double hB = zB + 0.5 * U(rng), hF = zF + U(rng) - 0.5, q0 = P::raisedEndFlow(K, hB, zB, hF, zF);
+            p.up = t; p.dn = dn;
+            p.dq = [=](int, double zu, double zd) {
+                return (zu == 0.0 && zd == 0.0) ? 0.0 : P::raisedEndFlow(K, hB + zu, zB, hF + zd, zF) - q0;
+            };
+        }
+        g.ports.push_back(p);
+        std::vector<double> sink(static_cast<std::size_t>(M));
+        for (auto& v : sink) v = U(rng) < 0.5 ? 2.0 * U(rng) : 0.0;
+        const double d_star = 0.2 + U(rng);
+        typename G::Port k;
+        k.up = t; k.dn = -1;
+        k.dq = [sink, d_star](int i, double zu, double) {
+            const double s = sink[static_cast<std::size_t>(i)];
+            return s > 0.0 ? s * (P::dryFactor(d_star, zu) - 1.0) : 0.0;
+        };
+        g.ports.push_back(k);
+        if (U(rng) < 0.5) {
+            const double a = std::pow(10.0, 1.0 + 3.0 * U(rng)), c = 0.05 + 0.5 * U(rng);
+            const double z_or = 1.0 + 0.5 * U(rng), h_mh = z_or + 0.6 * (U(rng) - 0.5), p_det = U(rng) < 0.3 ? 0.0 : 0.4 * U(rng);
+            const double d_mh = 0.5 + U(rng);
+            const int pn = g.addNode(a);
+            P::PondStore ps; ps.a = a; ps.p_star = p_det;
+            typename G::Store pst;
+            pst.dV = [ps](double z, double* ar) { return ps.dV(z, ar); };
+            g.store_of[static_cast<std::size_t>(pn)] = static_cast<int>(g.stores.size());
+            g.stores.push_back(pst);
+            const double q_det = P::orificePortFlow(c, kTwoG, h_mh, z_or, p_det, P::kDelta0, P::ramp(d_mh), P::ramp(p_det));
+            typename G::Port o;
+            o.up = t; o.dn = pn;
+            o.dq = [=](int, double zu, double zp) {
+                if (zu == 0.0 && zp == 0.0) return 0.0;
+                return P::orificePortFlow(c, kTwoG, h_mh + zu, z_or, p_det + zp, P::kDelta0, P::ramp(d_mh + zu), P::ramp(p_det + zp)) - q_det;
+            };
+            g.ports.push_back(o);
+        }
+    }
+    const int npin = static_cast<int>(U(rng) * 4);
+    for (int q = 0; q < npin; ++q) g.pinned[static_cast<std::size_t>(U(rng) * n)] = 1;
+    g.dV_prev.assign(g.stores.size(), 0.0);
+}
+
+// Member i's data, the same for both graphs.
+template <class G>
+void setMember(G& g, unsigned seed, int i) {
+    std::mt19937 rng(seed * 7919u + static_cast<unsigned>(i));
+    std::uniform_real_distribution<double> U(0.0, 1.0);
+    g.member = i;
+    for (int t = 0; t < g.n; ++t) {
+        g.b[static_cast<std::size_t>(t)] = 3.0 * (U(rng) - 0.45);
+        g.z_prev[static_cast<std::size_t>(t)] = 0.6 * (U(rng) - 0.5);
+    }
+    for (int t = 0; t < g.n; ++t)
+        if (g.store_of[static_cast<std::size_t>(t)] >= 0)
+            g.dV_prev[static_cast<std::size_t>(g.store_of[static_cast<std::size_t>(t)])] =
+                g.volume(t, g.z_prev[static_cast<std::size_t>(t)], nullptr) + 0.2 * (U(rng) - 0.5);
+}
+}  // namespace
+
+TEST(PortGraph, SchurComplementSolveMatchesFullNetworkSolve) {
+    // O-5: the solve on the k×k Schur complement, with the linear part factored
+    // once per graph, reaches the same solution as the full-network Newton it
+    // replaced (kept only as the test reference), member by member.
+    constexpr int kGraphs = 50, kMembers = 3;
+    double worst = 0.0;
+    long it_new = 0, it_ref = 0, fb_new = 0, fb_ref = 0, kmax = 0, nmax = 0, lfact = 0;
+    for (unsigned gseed = 1; gseed <= kGraphs; ++gseed) {
+        PortGraph g;
+        FullRef ref;
+        buildEmbedded(g, gseed, kMembers);
+        buildEmbedded(ref, gseed, kMembers);
+        ASSERT_EQ(g.n, ref.n);
+        nmax = std::max<long>(nmax, g.n);
+        AdditiveSystem sys;
+        for (int i = 0; i < kMembers; ++i) {
+            setMember(g, gseed, i);
+            setMember(ref, gseed, i);
+            std::vector<double> z = g.z_prev, zr = ref.z_prev;
+            const bool ok = g.solve(z);
+            const bool okr = ref.solve(zr, sys);
+            ASSERT_TRUE(okr) << "graph " << gseed << " member " << i << ": reference did not converge";
+            ASSERT_TRUE(ok) << "graph " << gseed << " member " << i;
+            double zmax = 0.0, dmax = 0.0;
+            for (std::size_t t = 0; t < z.size(); ++t) { zmax = std::max(zmax, std::fabs(zr[t])); dmax = std::max(dmax, std::fabs(z[t] - zr[t])); }
+            const double rel = dmax / std::max(zmax, 1.0e-300);
+            worst = std::max(worst, rel);
+            EXPECT_LE(rel, 1.0e-9) << "graph " << gseed << " (n " << g.n << ") member " << i << ": max |dz| " << dmax << " of " << zmax;
+            // The O-5 solution satisfies the full residual tolerance on every node.
+            std::vector<double> F, mag;
+            g.residual(z, F, &mag);
+            for (int t = 0; t < g.n; ++t) {
+                if (g.pinned[static_cast<std::size_t>(t)]) continue;
+                double a = 0.0;
+                g.volume(t, z[static_cast<std::size_t>(t)], &a);
+                const double tol = 1.0e-10 * std::max(a, 1.0e-6) / g.dt + 1.0e-12 * mag[static_cast<std::size_t>(t)];
+                // The roundoff floor may stop a solve above the tolerance: allow its bound.
+                EXPECT_LE(std::fabs(F[static_cast<std::size_t>(t)]), std::max(tol, 1.0e-9 * (1.0 + mag[static_cast<std::size_t>(t)])))
+                    << "graph " << gseed << " member " << i << " node " << t;
+            }
+        }
+        it_new += g.stats.newton_iters; it_ref += ref.stats.newton_iters;
+        fb_new += g.stats.jacobi_fallbacks; fb_ref += ref.stats.jacobi_fallbacks;
+        kmax = std::max(kmax, g.stats.k_max);
+        lfact += g.stats.l_factorisations;
+        EXPECT_EQ(g.stats.l_factorisations, 1) << "graph " << gseed << ": one L factorisation per graph, shared by its members";
+    }
+    std::printf("[PH-O5] %d graphs x %d members (n <= %ld, k <= %ld): worst max|dz|/max|z| %.2e; Newton iterations O-5 %ld / full %ld; "
+                "Jacobi fallbacks %ld / %ld; L factorisations %ld\n",
+                kGraphs, kMembers, nmax, kmax, worst, it_new, it_ref, fb_new, fb_ref, lfact);
+}
+
+TEST(PortGraph, LinearFactorIsSharedByMembersAndRebuiltWhenTheGraphChanges) {
+    PortGraph g;
+    buildEmbedded(g, 77, 10);
+    for (int i = 0; i < 10; ++i) {
+        setMember(g, 77, i);
+        std::vector<double> z = g.z_prev;
+        ASSERT_TRUE(g.solve(z));
+    }
+    EXPECT_EQ(g.stats.l_factorisations, 1);
+    const long solves_one = g.stats.l_solves;
+    EXPECT_GT(solves_one, 0);
+    // A plane edge changes (a new step's Jacobian): refactored once, on the next solve.
+    g.edges[0].ju *= 1.5;
+    for (int i = 0; i < 10; ++i) {
+        setMember(g, 77, i);
+        std::vector<double> z = g.z_prev;
+        ASSERT_TRUE(g.solve(z));
+    }
+    EXPECT_EQ(g.stats.l_factorisations, 2);
+    // resize() always starts a new graph.
+    buildEmbedded(g, 77, 10);
+    g.prepare();
+    g.prepare();
+    EXPECT_EQ(g.stats.l_factorisations, 3);
 }
 
 // ===========================================================================
@@ -1077,7 +1263,7 @@ std::string coupledFixture(double cv) {
 struct CoupledTrace {
     std::vector<double> head, flow, surf, q05, q95, corr, cvol;
     std::size_t admitted = 0, admitted_coupled = 0;
-    long steps = 0, pg_steps = 0, law_evals = 0, port_evals = 0, solves = 0, newton = 0, jacobi = 0, factor = 0, armijo = 0;
+    long steps = 0, pg_steps = 0, law_evals = 0, port_evals = 0, solves = 0, newton = 0, jacobi = 0, factor = 0, armijo = 0, lfact = 0, lsolves = 0, kmax = 0;
     double wall_s = 0.0, max_ext = 0.0;
     bool ok = false;
 };
@@ -1144,6 +1330,7 @@ CoupledTrace runCoupled(const std::string& inp, const std::string& tag, bool mem
     const auto& st = eng->rom1dPortGraphStats();
     tr.port_evals = st.port_evals; tr.solves = st.solves; tr.newton = st.newton_iters; tr.jacobi = st.jacobi_fallbacks;
     tr.factor = st.factorisations; tr.armijo = st.armijo_failures;
+    tr.lfact = st.l_factorisations; tr.lsolves = st.l_solves; tr.kmax = st.k_max;
     tr.ok = !tr.head.empty();
     cleanup();
     return tr;
@@ -1204,6 +1391,10 @@ TEST(PerMemberPortsCoupled, CostOfThePerMemberPathOnACoupledManhole) {
                 static_cast<double>(on.law_evals) / st, static_cast<double>(on.port_evals) / st,
                 static_cast<double>(on.newton) / st, static_cast<double>(on.factor) / st,
                 on.solves, on.newton, on.factor, on.armijo, on.jacobi);
+    std::printf("[PH-O5 cost] k x k factorisations %ld (k <= %ld), L factorisations %ld for %ld per-member steps (%d members), L solves %ld\n",
+                on.factor, on.kmax, on.lfact, on.pg_steps, 20, on.lsolves);
+    // O-5: the linear part is factored once per step and shared by the members.
+    EXPECT_EQ(on.lfact, on.pg_steps);
     std::printf("[PH-O3 cost] wall OFF min %.3f med %.3f s, ON min %.3f med %.3f s, ratio min %.3f med %.3f\n",
                 mn(w_off), md(w_off), mn(w_on), md(w_on), mn(w_on) / mn(w_off), md(w_on) / md(w_off));
 }
