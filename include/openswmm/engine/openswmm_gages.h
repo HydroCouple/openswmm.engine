@@ -160,8 +160,9 @@ SWMM_ENGINE_API int swmm_gage_set_data_source(SWMM_Engine engine, int idx, int s
  *
  * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
  *     SWMM_ERR_BADHANDLE. A failed gage index check returns SWMM_ERR_BADINDEX. ts_id must
- *     be non-null and resolve to an existing time series or BADPARAM is returned; success also
- *     selects TIMESERIES as the source.
+ *     be non-null and resolve to an existing time series or BADPARAM is returned. An empty
+ *     identifier clears the assignment, allowing editors to restore an unconfigured gage.
+ *     Success also selects TIMESERIES as the source.
  */
 SWMM_ENGINE_API int swmm_gage_set_timeseries(SWMM_Engine engine, int idx, const char* ts_id);
 

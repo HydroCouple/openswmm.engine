@@ -105,7 +105,14 @@ SWMM_ENGINE_API int swmm_subcatch_set_outlet(SWMM_Engine engine, int idx, int no
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    if (node_idx < -1 || node_idx >= ctx.n_nodes()) return SWMM_ERR_BADPARAM;
+    if (node_idx >= 0 && ctx.subcatch_names.find(ctx.node_names.name_of(node_idx)) >= 0)
+        return SWMM_ERR_BADPARAM; // INP outlet tokens cannot distinguish these namespaces.
     ctx.subcatches.outlet_node[static_cast<std::size_t>(idx)] = node_idx;
+    if (node_idx >= 0) ctx.subcatches.outlet_subcatch[static_cast<std::size_t>(idx)] = -1;
+    const int sc = ctx.subcatches.outlet_subcatch[static_cast<std::size_t>(idx)];
+    ctx.subcatches.outlet_name[static_cast<std::size_t>(idx)] = node_idx >= 0 ? ctx.node_names.name_of(node_idx) :
+        sc >= 0 ? ctx.subcatch_names.name_of(sc) : "";
     return SWMM_OK;
 }
 
@@ -391,7 +398,20 @@ SWMM_ENGINE_API int swmm_subcatch_set_outlet_subcatch(SWMM_Engine engine, int id
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    if (sc_idx < -1 || sc_idx >= ctx.n_subcatches()) return SWMM_ERR_BADPARAM;
+    if (sc_idx >= 0 && ctx.node_names.find(ctx.subcatch_names.name_of(sc_idx)) >= 0)
+        return SWMM_ERR_BADPARAM;
+    int next = sc_idx;
+    for (int visited = 0; next >= 0; ++visited) {
+        if (next == idx || next >= ctx.n_subcatches() || visited >= ctx.n_subcatches())
+            return SWMM_ERR_BADPARAM;
+        next = ctx.subcatches.outlet_subcatch[static_cast<std::size_t>(next)];
+    }
     ctx.subcatches.outlet_subcatch[static_cast<std::size_t>(idx)] = sc_idx;
+    if (sc_idx >= 0) ctx.subcatches.outlet_node[static_cast<std::size_t>(idx)] = -1;
+    const int node = ctx.subcatches.outlet_node[static_cast<std::size_t>(idx)];
+    ctx.subcatches.outlet_name[static_cast<std::size_t>(idx)] = sc_idx >= 0 ? ctx.subcatch_names.name_of(sc_idx) :
+        node >= 0 ? ctx.node_names.name_of(node) : "";
     return SWMM_OK;
 }
 

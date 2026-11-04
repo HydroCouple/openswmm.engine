@@ -1160,6 +1160,51 @@ SWMM_ENGINE_API int swmm_node_get_divider_type(SWMM_Engine engine, int idx, int*
 // Node Geometry/State Getters
 // ============================================================================
 
+SWMM_ENGINE_API int swmm_node_get_divider_params(SWMM_Engine engine, int idx, SWMM_DividerParams* out) {
+    CHECK_HANDLE(engine);
+    if (!out) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    const int row = ctx.node_subtypes.divider_row(idx);
+    if (row < 0) return SWMM_ERR_BADPARAM;
+    const auto r = static_cast<std::size_t>(row);
+    const auto& d = ctx.node_subtypes.dividers;
+    *out = {static_cast<int>(d.method[r]), d.link[r], d.curve[r],
+            to_display(ctx, openswmm::ucf::FLOW, d.cutoff[r]), d.max_depth[r], d.cd[r]};
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_node_set_divider_params(SWMM_Engine engine, int idx, const SWMM_DividerParams* value) {
+    CHECK_HANDLE(engine);
+    if (!value) return SWMM_ERR_BADPARAM;
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    const int row = ctx.node_subtypes.divider_row(idx);
+    if (row < 0 || value->method < 0 || value->method > 3 ||
+        !std::isfinite(value->cutoff_flow) || value->cutoff_flow < 0 ||
+        !std::isfinite(value->weir_height) || value->weir_height < 0 ||
+        !std::isfinite(value->weir_coefficient) || value->weir_coefficient < 0 ||
+        value->diversion_link < -1 || value->diversion_link >= ctx.n_links() ||
+        (value->diversion_link >= 0 && ctx.links.node1[static_cast<std::size_t>(value->diversion_link)] != idx) ||
+        value->curve < -1 || value->curve >= ctx.n_tables() ||
+        (value->curve >= 0 && ctx.tables[value->curve].type != openswmm::TableType::CURVE_DIVERSION) ||
+        (value->method == 2 && value->curve < 0) ||
+        (value->method == 3 && (value->weir_height <= 0 || value->weir_coefficient <= 0)))
+        return SWMM_ERR_BADPARAM;
+    const auto r = static_cast<std::size_t>(row);
+    auto& d = ctx.node_subtypes.dividers;
+    d.method[r] = static_cast<openswmm::DividerType>(value->method);
+    d.link[r] = value->diversion_link;
+    d.curve[r] = value->curve;
+    d.link_name[r] = value->diversion_link >= 0 ? ctx.link_names.name_of(value->diversion_link) : "";
+    d.curve_name[r] = value->curve >= 0 ? ctx.tables[value->curve].id : "";
+    d.cutoff[r] = to_internal(ctx, openswmm::ucf::FLOW, value->cutoff_flow);
+    d.max_depth[r] = value->weir_height;
+    d.cd[r] = value->weir_coefficient;
+    return SWMM_OK;
+}
+
 SWMM_ENGINE_API int swmm_node_get_surcharge_depth(SWMM_Engine engine, int idx, double* depth) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();

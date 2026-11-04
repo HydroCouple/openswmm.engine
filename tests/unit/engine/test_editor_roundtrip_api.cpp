@@ -43,8 +43,14 @@
 #include <openswmm/engine/openswmm_pollutants.h>
 #include <openswmm/engine/openswmm_subcatchments.h>
 #include <openswmm/engine/openswmm_infrastructure.h>
+#include <openswmm/engine/openswmm_nodes.h>
+#include <openswmm/engine/openswmm_links.h>
+#include <openswmm/engine/openswmm_tables.h>
+#include <openswmm/engine/openswmm_gages.h>
 
 #include <string>
+#include <fstream>
+#include <iterator>
 
 namespace {
 
@@ -74,6 +80,96 @@ void destroy(SWMM_Engine e) {
 }
 
 } // namespace
+
+TEST(EditorDividerRecord, ValidatesBeforeMutationAndKeepsProjectFlowUnits) {
+    auto e = makeEngine();
+    ASSERT_NE(e, nullptr);
+    ASSERT_EQ(swmm_options_set(e, "FLOW_UNITS", "CMS"), SWMM_OK);
+    ASSERT_EQ(swmm_node_add(e, "D", SWMM_NODE_DIVIDER), SWMM_OK);
+    ASSERT_EQ(swmm_node_add(e, "N", SWMM_NODE_JUNCTION), SWMM_OK);
+    ASSERT_EQ(swmm_link_add(e, "L", SWMM_LINK_CONDUIT), SWMM_OK);
+    ASSERT_EQ(swmm_link_set_nodes(e, 0, 0, 1), SWMM_OK);
+    ASSERT_EQ(swmm_curve_add(e, "Division", 2), SWMM_OK);
+    SWMM_DividerParams value{3, 0, 0, 2.125, 1.5, 1.25}, got{};
+    ASSERT_EQ(swmm_node_set_divider_params(e, 0, &value), SWMM_OK);
+    ASSERT_EQ(swmm_node_get_divider_params(e, 0, &got), SWMM_OK);
+    EXPECT_EQ(got.method, 3);
+    EXPECT_EQ(got.diversion_link, 0);
+    EXPECT_EQ(got.curve, 0);
+    EXPECT_DOUBLE_EQ(got.cutoff_flow, 2.125);
+    EXPECT_DOUBLE_EQ(got.weir_height, 1.5);
+    EXPECT_DOUBLE_EQ(got.weir_coefficient, 1.25);
+    value.weir_height = 0;
+    EXPECT_EQ(swmm_node_set_divider_params(e, 0, &value), SWMM_ERR_BADPARAM);
+    ASSERT_EQ(swmm_node_get_divider_params(e, 0, &got), SWMM_OK);
+    EXPECT_DOUBLE_EQ(got.weir_height, 1.5);
+    EXPECT_EQ(swmm_node_get_divider_params(e, 1, &got), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_node_get_divider_params(e, 0, nullptr), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_node_set_divider_params(nullptr, 0, &value), SWMM_ERR_BADHANDLE);
+    value = got;
+    value.method = 2;
+    value.curve = -1;
+    EXPECT_EQ(swmm_node_set_divider_params(e, 0, &value), SWMM_ERR_BADPARAM);
+    destroy(e);
+}
+
+TEST(EditorSubcatchOutlet, TargetsAreExclusiveAndCascadeCyclesAreRejected) {
+    auto e = makeEngine();
+    ASSERT_NE(e, nullptr);
+    ASSERT_EQ(swmm_node_add(e, "N", SWMM_NODE_JUNCTION), SWMM_OK);
+    for (const char* id : {"A", "B", "C"}) ASSERT_EQ(swmm_subcatch_add(e, id), SWMM_OK);
+    ASSERT_EQ(swmm_subcatch_set_outlet(e, 0, 0), SWMM_OK);
+    ASSERT_EQ(swmm_subcatch_set_outlet_subcatch(e, 0, 1), SWMM_OK);
+    int node = -2, sc = -2;
+    ASSERT_EQ(swmm_subcatch_get_outlet(e, 0, &node), SWMM_OK);
+    EXPECT_EQ(node, -1);
+    ASSERT_EQ(swmm_subcatch_set_outlet_subcatch(e, 1, 2), SWMM_OK);
+    EXPECT_EQ(swmm_subcatch_set_outlet_subcatch(e, 2, 0), SWMM_ERR_BADPARAM);
+    ASSERT_EQ(swmm_subcatch_get_outlet_subcatch(e, 2, &sc), SWMM_OK);
+    EXPECT_EQ(sc, -1);
+    ASSERT_EQ(swmm_subcatch_set_outlet(e, 0, 0), SWMM_OK);
+    ASSERT_EQ(swmm_subcatch_get_outlet_subcatch(e, 0, &sc), SWMM_OK);
+    EXPECT_EQ(sc, -1);
+    EXPECT_EQ(swmm_subcatch_set_outlet(e, 0, 99), SWMM_ERR_BADPARAM);
+    ASSERT_EQ(swmm_subcatch_get_outlet(e, 0, &node), SWMM_OK);
+    EXPECT_EQ(node, 0);
+    ASSERT_EQ(swmm_node_add(e, "B", SWMM_NODE_JUNCTION), SWMM_OK);
+    EXPECT_EQ(swmm_subcatch_set_outlet_subcatch(e, 0, 1), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_subcatch_set_outlet(e, 0, 1), SWMM_ERR_BADPARAM);
+    ASSERT_EQ(swmm_subcatch_get_outlet(e, 0, &node), SWMM_OK);
+    EXPECT_EQ(node, 0);
+    destroy(e);
+}
+
+TEST(EditorRainSource, EmptySeriesRestoresAnUnconfiguredAssignment) {
+    auto e = makeEngine();
+    ASSERT_NE(e, nullptr);
+    ASSERT_EQ(swmm_gage_add(e, "G"), SWMM_OK);
+    ASSERT_EQ(swmm_timeseries_add(e, "Rain"), SWMM_OK);
+    ASSERT_EQ(swmm_gage_set_timeseries(e, 0, "Rain"), SWMM_OK);
+    ASSERT_EQ(swmm_gage_set_timeseries(e, 0, ""), SWMM_OK);
+    char id[64]{};
+    ASSERT_EQ(swmm_gage_get_timeseries(e, 0, id, sizeof(id)), SWMM_OK);
+    EXPECT_STREQ(id, "");
+    EXPECT_EQ(swmm_gage_set_timeseries(e, 0, nullptr), SWMM_ERR_BADPARAM);
+    destroy(e);
+}
+
+TEST(EditorRainSource, SavedFileSourceDoesNotRevertToALatentSeries) {
+    auto e = makeEngine();
+    ASSERT_NE(e, nullptr);
+    ASSERT_EQ(swmm_gage_add(e, "G"), SWMM_OK);
+    ASSERT_EQ(swmm_timeseries_add(e, "Rain"), SWMM_OK);
+    ASSERT_EQ(swmm_gage_set_timeseries(e, 0, "Rain"), SWMM_OK);
+    ASSERT_EQ(swmm_gage_set_filename(e, 0, "rain.csv", "Station"), SWMM_OK);
+    const char* path = "editor_rain_source_roundtrip.inp";
+    ASSERT_EQ(swmm_model_write(e, path), SWMM_OK);
+    std::ifstream file(path);
+    const std::string saved((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    EXPECT_NE(saved.find("FILE "), std::string::npos);
+    EXPECT_EQ(saved.find("TIMESERIES Rain"), std::string::npos);
+    destroy(e);
+}
 
 // ---------------------------------------------------------------------------
 // Pollutant units

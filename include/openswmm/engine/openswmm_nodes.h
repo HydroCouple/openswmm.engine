@@ -1086,6 +1086,25 @@ SWMM_ENGINE_API int swmm_node_set_divider_type(SWMM_Engine engine, int idx, int 
  */
 SWMM_ENGINE_API int swmm_node_get_divider_type(SWMM_Engine engine, int idx, int* type);
 
+/** Complete authored divider configuration. References use zero-based indices; -1 is unset.
+ * cutoff_flow is in project flow units; weir_height and weir_coefficient retain the
+ * [DIVIDERS] input values. Inactive numeric members are retained for lossless Undo. */
+typedef struct SWMM_DividerParams {
+    int method;
+    int diversion_link;
+    int curve;
+    double cutoff_flow;
+    double weir_height;
+    double weir_coefficient;
+} SWMM_DividerParams;
+
+/** Read a divider record. Requires a divider node and non-null output. */
+SWMM_ENGINE_API int swmm_node_get_divider_params(SWMM_Engine engine, int idx, SWMM_DividerParams* out);
+/** Atomically write a divider record in BUILDING/OPENED. Checks method, finite nonnegative
+ * numbers, outgoing diversion-link identity and DIVERSION curve type. TABULAR requires a curve;
+ * WEIR requires positive height and coefficient. No mutation occurs on validation failure. */
+SWMM_ENGINE_API int swmm_node_set_divider_params(SWMM_Engine engine, int idx, const SWMM_DividerParams* value);
+
 /* =========================================================================
  * Additional Geometry / State Getters
  * ========================================================================= */

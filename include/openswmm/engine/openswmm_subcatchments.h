@@ -113,8 +113,9 @@ SWMM_ENGINE_API int swmm_subcatch_add(SWMM_Engine engine, const char* id);
  *
  * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
  *     SWMM_ERR_BADHANDLE. A failed subcatchment/pollutant index check returns SWMM_ERR_BADINDEX.
- *     Only the owning subcatchment index is checked; the supplied target reference is stored
- *     without target range, cycle or cross-field validation.
+ *     Target -1 clears this reference. A nonnegative node target must exist and clears the
+ *     subcatchment-outlet reference. Names shared by a node and subcatchment are rejected
+ *     because INP cannot preserve their target type. Validation failures leave both unchanged.
  */
 SWMM_ENGINE_API int swmm_subcatch_set_outlet(SWMM_Engine engine, int idx, int node_idx);
 
@@ -502,8 +503,9 @@ SWMM_ENGINE_API int swmm_subcatch_get_gage(SWMM_Engine engine, int idx, int* gag
  *
  * @note Requires BUILDING or OPENED; other states return SWMM_ERR_LIFECYCLE. A null engine returns
  *     SWMM_ERR_BADHANDLE. A failed subcatchment/pollutant index check returns SWMM_ERR_BADINDEX.
- *     Only the owning subcatchment index is checked; the supplied target reference is stored
- *     without target range, cycle or cross-field validation.
+ *     Target -1 clears this reference. A nonnegative target must exist, must not create a
+ *     cascade cycle and clears the node-outlet reference. Names shared by a node and subcatchment
+ *     are rejected because INP cannot preserve their target type. Validation failures leave both unchanged.
  */
 SWMM_ENGINE_API int swmm_subcatch_set_outlet_subcatch(SWMM_Engine engine, int idx, int sc_idx);
 

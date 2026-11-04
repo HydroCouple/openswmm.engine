@@ -2609,14 +2609,14 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                      std::to_string(sf) + " dropped (stock SWMM 5 has no such column)");
                 sf = 1.0;
             }
-            if (ts >= 0) {
+            if (ctx.gages.source[u] == RainSource::TIMESERIES && ts >= 0) {
                 std::fprintf(f, "%-16s %-12s %-8s     %.17g     TIMESERIES %s",
                              ctx.gage_names.name_of(j).c_str(), fmt, gsb, ctx.gages.snow_factor[u],
                              tN(ctx, ts));
                 if (sf != 1.0)
                     std::fprintf(f, " %.17g", sf);
                 std::fprintf(f, "\n");
-            } else if (!ctx.gages.file_path[u].empty()) {
+            } else if (ctx.gages.source[u] == RainSource::FILE_RAIN && !ctx.gages.file_path[u].empty()) {
                 const std::string tok =
                     emit_path_token(ctx.gages.file_path[u], dst_dir, force_abs_paths, warnings);
                 if (ctx.gages.file_format[u] == RainFileFormat::USER_CSV) {

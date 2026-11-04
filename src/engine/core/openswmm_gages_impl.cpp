@@ -127,6 +127,12 @@ SWMM_ENGINE_API int swmm_gage_set_timeseries(SWMM_Engine engine, int idx, const 
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
+    if (*ts_id == '\0') {
+        ctx.gages.ts_index[static_cast<std::size_t>(idx)] = -1;
+        ctx.gages.ts_name[static_cast<std::size_t>(idx)].clear();
+        ctx.gages.source[static_cast<std::size_t>(idx)] = openswmm::RainSource::TIMESERIES;
+        return SWMM_OK;
+    }
     int ts_idx = ctx.find_timeseries(ts_id);
     if (ts_idx < 0)
         return SWMM_ERR_BADPARAM;
