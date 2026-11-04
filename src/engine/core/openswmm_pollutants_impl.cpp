@@ -173,7 +173,10 @@ SWMM_ENGINE_API int swmm_pollutant_add(SWMM_Engine engine, const char* id, int u
         const int rows = ctx.n_subcatches();
         insert_pollut_column(ctx.subcatches.conc, rows, np_old);
         insert_pollut_column(ctx.subcatches.conc_old, rows, np_old);
+        insert_pollut_column(ctx.subcatches.init_loading, rows, np_old);
         insert_pollut_column(ctx.subcatches.ponded_qual, rows, np_old);
+        insert_pollut_column(ctx.subcatches.runon_qual_rate, rows, np_old);
+        insert_pollut_column(ctx.subcatches.lid_drain_runon_qual, rows, np_old);
         insert_pollut_column(ctx.subcatches.washoff_load, rows, np_old);
         ctx.subcatches.conc_n_pollutants = n;
     }

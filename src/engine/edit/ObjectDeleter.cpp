@@ -1473,14 +1473,17 @@ CascadeResult delete_pollutant(SimulationContext& ctx, int pollut_idx) {
         T.n_pollutants = np - 1;
     }
 
-    // Per-object concentration state ([LOADINGS] initial buildup lives in
-    // subcatches.conc, so erase columns — never re-zero wholesale).
+    // Per-object quality state, including authored [LOADINGS] initial buildup:
+    // erase columns rather than re-zeroing surviving pollutant assignments.
     if (ctx.subcatches.conc_n_pollutants == np) {
         auto& S = ctx.subcatches;
         const int n = S.count();
         erase_matrix_column(S.conc, n, np, pollut_idx);
         erase_matrix_column(S.conc_old, n, np, pollut_idx);
+        erase_matrix_column(S.init_loading, n, np, pollut_idx);
         erase_matrix_column(S.ponded_qual, n, np, pollut_idx);
+        erase_matrix_column(S.runon_qual_rate, n, np, pollut_idx);
+        erase_matrix_column(S.lid_drain_runon_qual, n, np, pollut_idx);
         erase_matrix_column(S.washoff_load, n, np, pollut_idx);
         S.conc_n_pollutants = np - 1;
     }

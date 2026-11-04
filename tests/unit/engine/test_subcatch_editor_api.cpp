@@ -39,8 +39,12 @@
 #include <gtest/gtest.h>
 
 #include <openswmm/engine/openswmm_engine.h>
+#include <openswmm/engine/openswmm_model.h>
 #include <openswmm/engine/openswmm_subcatchments.h>
 #include <openswmm/engine/openswmm_infrastructure.h>
+#include <openswmm/engine/openswmm_edit.h>
+#include <openswmm/engine/openswmm_pollutants.h>
+#include <openswmm/engine/openswmm_quality.h>
 
 namespace {
 
@@ -350,6 +354,48 @@ TEST_F(CurveNumberInfilTest, ZeroImpervPctParsedPerSubcatchment) {
     EXPECT_DOUBLE_EQ(pct, 25.0);
     ASSERT_EQ(swmm_subcatch_get_zero_imperv_pct(engine_, 1, &pct), SWMM_OK);
     EXPECT_DOUBLE_EQ(pct, 60.0);
+}
+
+TEST(SubcatchQualityEditing, GrowthAndDeletionPreserveNamedRowsAndColumns) {
+    const auto engine = swmm_engine_new();
+    ASSERT_NE(engine, nullptr);
+    struct Cleanup {
+        SWMM_Engine engine;
+        ~Cleanup() { swmm_engine_destroy(engine); }
+    } cleanup{engine};
+    ASSERT_EQ(swmm_subcatch_add(engine, "A"), SWMM_OK);
+    ASSERT_EQ(swmm_subcatch_add(engine, "B"), SWMM_OK);
+    ASSERT_EQ(swmm_landuse_add(engine, "Residential"), SWMM_OK);
+    ASSERT_EQ(swmm_landuse_add(engine, "Commercial"), SWMM_OK);
+    ASSERT_EQ(swmm_pollutant_add(engine, "Unused", 0), SWMM_OK);
+    ASSERT_EQ(swmm_pollutant_add(engine, "P", 0), SWMM_OK);
+    for (int sub = 0; sub < 2; ++sub) {
+        ASSERT_EQ(swmm_subcatch_set_coverage(engine, sub, 0, 20.0 + sub), SWMM_OK);
+        ASSERT_EQ(swmm_subcatch_set_coverage(engine, sub, 1, 40.0 + sub), SWMM_OK);
+        ASSERT_EQ(swmm_subcatch_set_initial_loading(engine, sub, 1, 1.25 + sub), SWMM_OK);
+    }
+    // An unrelated definition shifts the stride without relabeling P's values.
+    ASSERT_EQ(swmm_pollutant_delete(engine, 0, nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_pollutant_add(engine, "Q", 1), SWMM_OK);
+    // New subcatchments start with zero rows and preserve existing assignments.
+    ASSERT_EQ(swmm_subcatch_add(engine, "C"), SWMM_OK);
+    double value = -1;
+    for (int sub = 0; sub < 3; ++sub) {
+        ASSERT_EQ(swmm_subcatch_get_initial_loading(engine, sub, 0, &value), SWMM_OK);
+        EXPECT_DOUBLE_EQ(value, sub < 2 ? 1.25 + sub : 0.0);
+        ASSERT_EQ(swmm_subcatch_get_initial_loading(engine, sub, 1, &value), SWMM_OK);
+        EXPECT_DOUBLE_EQ(value, 0.0);
+        ASSERT_EQ(swmm_subcatch_get_coverage(engine, sub, 0, &value), SWMM_OK);
+        EXPECT_DOUBLE_EQ(value, sub < 2 ? 20.0 + sub : 0.0);
+    }
+    ASSERT_EQ(swmm_subcatch_delete(engine, 1, nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_subcatch_add(engine, "B"), SWMM_OK);
+    for (int sub = 0; sub < 3; ++sub) {
+        ASSERT_EQ(swmm_subcatch_get_initial_loading(engine, sub, 0, &value), SWMM_OK);
+        EXPECT_DOUBLE_EQ(value, sub == 0 ? 1.25 : 0.0);
+        ASSERT_EQ(swmm_subcatch_get_coverage(engine, sub, 1, &value), SWMM_OK);
+        EXPECT_DOUBLE_EQ(value, sub == 0 ? 40.0 : 0.0);
+    }
 }
 
 } // namespace

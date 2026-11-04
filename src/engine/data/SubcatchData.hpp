@@ -866,8 +866,9 @@ struct SubcatchData {
     /**
      * @brief Extend base subcatchment columns while preserving existing prefixes.
      *
-     * New rows use the corresponding resize() defaults. Does not grow flattened pollutant matrices,
-     * name indexes, subtype stores or spatial arrays; caller resizes those separately. Requires
+     * New rows use the corresponding resize() defaults. Configured flattened quality, load and
+     * coverage matrices grow with zero rows, preserving existing entries. Does not grow name
+     * indexes, subtype stores or spatial arrays; caller resizes those separately. Requires
      * initially aligned columns and valid size products; allocation failure can interrupt extension.
      *
      * @param[in] n Requested total count; <=count() is a no-op, including negatives.
@@ -973,8 +974,19 @@ struct SubcatchData {
         g(total_lid_area_ft2, 0.0);
         g(lid_return_to_perv_cfs, 0.0);
         g(lid_drain_runon_cfs, 0.0);
-        // Note: conc, conc_old, ponded_qual, washoff_load handled by resize_quality()
-        // Note: coverage, total_load handled separately
+        if (conc_n_pollutants > 0) {
+            const auto size = un * static_cast<std::size_t>(conc_n_pollutants);
+            for (auto* matrix : {&conc, &conc_old, &init_loading, &ponded_qual, &runon_qual_rate,
+                                 &lid_drain_runon_qual, &washoff_load})
+                matrix->resize(size, 0.0);
+        }
+        if (total_load_n_pollutants > 0)
+            total_load.resize(un * static_cast<std::size_t>(total_load_n_pollutants), 0.0);
+        if (coverage_n_landuses > 0) {
+            const auto size = un * static_cast<std::size_t>(coverage_n_landuses);
+            coverage.resize(size, 0.0);
+            sweep_last_swept.resize(size, 0.0);
+        }
     }
 
     /**
