@@ -11,6 +11,7 @@
 #include "2d/data/BoundaryData.hpp"
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 #include <numeric>
 
 using namespace openswmm::twoD;
@@ -165,8 +166,8 @@ TEST(MomentumPhysics, BackgroundViscosityDecaysCosineFlowAtAnalyticalRate) {
     // u = U cos(pi xi) along a rotated square's xi axis, v = 0, constant h:
     // zero traction on all four walls and du/dt = 2 nu u_xixi, so the
     // amplitude decays exactly as exp(-2 nu pi^2 t) under div(2 h nu S).
-    const double nu = .01, T = 2.0, exact = -2 * nu * M_PI * M_PI;
-    for (double angle : {0.0, 64.0 * M_PI / 180}) {
+    const double nu = .01, T = 2.0, exact = -2 * nu * std::numbers::pi * std::numbers::pi;
+    for (double angle : {0.0, 64.0 * std::numbers::pi / 180}) {
         double previous = 1;
         for (int n : {16, 32}) {
             Fields f(n, false, false, angle);
@@ -174,7 +175,7 @@ TEST(MomentumPhysics, BackgroundViscosityDecaysCosineFlowAtAnalyticalRate) {
             std::vector<double> shape(f.m.n_cells());
             for (int i = 0; i < f.m.n_cells(); ++i) {
                 const double xi = ex * f.m.tri_cx[i] + ey * f.m.tri_cy[i];
-                shape[i] = std::cos(M_PI * xi);
+                shape[i] = std::cos(std::numbers::pi * xi);
                 f.x[i] = shape[i] * ex;
                 f.y[i] = shape[i] * ey;
             }
