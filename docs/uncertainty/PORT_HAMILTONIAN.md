@@ -226,3 +226,10 @@ cases the current code excludes). Acceptance gates as in the table.
 - 2026-11-03: Debug 1D smoke on HEAD (O-4b): 3,892 steps in 636 s; 194,550 solves, 305k Newton iterations, fp-floor
   converged 736, Jacobi fallbacks 34 (0.017 %, all converged), non-converged 0; G80F11B 92 member-steps ≤ 0.12 ft
   below invert. Accepted (criteria: non-converged 0, fallbacks ≤ 1 %). Release rebuilt; Bellinge `demo_ph5` rerun launched.
+- 2026-11-04: Bellinge `demo_ph5` on HEAD (O-4b): step 3000 at 3,998 s, 162 fallbacks, 4 non-converged (pre-O-4:
+  6,350/607) — the solver is fixed, but steps 3000→4000 still take hours. `sample`: `stepRom1dStorageMembers` body
+  610 + `AdditiveSystem::build` 420 of ~1,500 engine samples. Cause: `PortGraph::solve` does `jac = edges` and
+  `sys.build(n, …)` — the FULL 1,011-node network is rebuilt and factored on every Newton iteration for every
+  member, although only ~11 stores + ponds are nonlinear and the rest is the member-independent linear plane
+  operator. O-5 opened: factor the linear multi-port once per step (shared across members), Newton on the
+  admitted set through its Schur complement. Same solution by construction; cost per iteration O(k²), k ≈ 11–50.
