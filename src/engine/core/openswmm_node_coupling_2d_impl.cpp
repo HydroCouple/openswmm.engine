@@ -139,4 +139,59 @@ SWMM_ENGINE_API int swmm_node_set_2d_coupling_param(SWMM_Engine engine, int node
     return SWMM_OK;
 }
 
+SWMM_ENGINE_API int swmm_node_validate_2d_coupling(SWMM_Engine engine, int node, int authored,
+                                                   int type, const SWMM_NodeCoupling2DParam* params,
+                                                   int count) {
+    CHECK_HANDLE(engine);
+    const auto& c = to_engine(engine)->context();
+    CHECK_EDITABLE(c);
+    CHECK_INDEX(node >= 0 && node < c.n_nodes());
+    if ((authored != 0 && authored != 1) || count < 0 || (count && !params) || type < 0 ||
+        type > SWMM_2D_COUPLING_OUTFALL)
+        return SWMM_ERR_BADPARAM;
+    const auto t = static_cast<openswmm::NodeCoupling2DType>(type);
+    if (!authored)
+        return !count && t == nc::defaultType(c, node) ? SWMM_OK : SWMM_ERR_BADPARAM;
+    if (!nc::checkType(c, node, t).empty())
+        return SWMM_ERR_BADPARAM;
+    std::array<bool, openswmm::kNodeCoupling2DKeys> seen{};
+    for (int i = 0; i < count; ++i) {
+        openswmm::NodeCoupling2DKey k{};
+        double value = 0;
+        if (!params[i].key || !params[i].value || !params[i].value[0] ||
+            !nc::parseKey(params[i].key, k) || seen[static_cast<int>(k)] || !nc::keyAllowed(t, k) ||
+            !nc::parseValue(k, params[i].value, value).empty())
+            return SWMM_ERR_BADPARAM;
+        seen[static_cast<int>(k)] = true;
+    }
+    return SWMM_OK;
+}
+SWMM_ENGINE_API int swmm_node_replace_2d_coupling(SWMM_Engine engine, int node, int authored,
+                                                  int type, const SWMM_NodeCoupling2DParam* params,
+                                                  int count) {
+    const int status = swmm_node_validate_2d_coupling(engine, node, authored, type, params, count);
+    if (status != SWMM_OK)
+        return status;
+    auto& rows = to_engine(engine)->context().node_coupling_2d;
+    if (!authored) {
+        const int row = rows.row_of(node);
+        if (row >= 0)
+            rows.erase_row(row);
+        return SWMM_OK;
+    }
+    auto values = openswmm::unsetNodeCoupling2DParams();
+    for (int i = 0; i < count; ++i) {
+        openswmm::NodeCoupling2DKey k{};
+        nc::parseKey(params[i].key, k);
+        nc::parseValue(k, params[i].value, values[static_cast<int>(k)]);
+    }
+    auto next = rows;
+    const auto t = static_cast<openswmm::NodeCoupling2DType>(type);
+    const int row = next.ensure_row(node, t);
+    next.type[row] = t;
+    next.params[row] = values;
+    rows = std::move(next);
+    return SWMM_OK;
+}
+
 } // extern "C"

@@ -3465,3 +3465,57 @@ TEST(LidNodes, ReactionSpeciesAreRefusedOnClassicalLidNodes) {
         EXPECT_TRUE(ok.errors.empty()) << (ok.errors.empty() ? "" : ok.errors.front());
     }
 }
+
+TEST(LidNodes, EditorSnapshotRestoresClearedAnchorsAndLeavesSharedControlNodesExact) {
+    SWMMEngine engine;
+    engine.context() = model();
+    auto& c = engine.context();
+    c.state = EngineState::OPENED;
+    auto e = reinterpret_cast<SWMM_Engine>(&engine);
+    c.nodes.resize(3);
+    c.node_names.add("Control");
+    c.node_subtypes.set_node_type(c.nodes, 2, NodeType::STORAGE);
+    c.node_subtypes.storages.lid[c.node_subtypes.storage_row(2)] = {0, 65};
+    ASSERT_EQ(swmm_link_add(e, "Drain", SWMM_LINK_ORIFICE), SWMM_OK);
+    ASSERT_EQ(swmm_link_set_nodes(e, 0, 0, 1), SWMM_OK);
+    ASSERT_EQ(swmm_lid_node_outlet_set(e, 0, 3, 0), SWMM_OK);
+    c.nodes.full_depth[2] = 19.123456789012345;
+    c.links.offset1[0] = .123456789012345;
+    SWMM_StorageLidState before{}, clear{}, got{};
+    SWMM_StorageLidAnchor anchor{}, buffer[1]{};
+    int count = -1;
+    ASSERT_EQ(swmm_storage_lid_get(e, 0, &before), SWMM_OK);
+    ASSERT_EQ(swmm_storage_lid_anchor_get(e, 0, &anchor), SWMM_OK);
+    ASSERT_EQ(swmm_storage_lid_prepare(e, 0, -1, 10, 0, &clear, buffer, 1, &count), SWMM_OK);
+    EXPECT_EQ(count, 0);
+    EXPECT_EQ(c.lid_node_outlets.size(), 1u);
+    EXPECT_EQ(clear.max_depth_ft, before.max_depth_ft);
+    ASSERT_EQ(swmm_storage_lid_replace(e, 0, &clear, nullptr, 0), SWMM_OK);
+    EXPECT_TRUE(c.lid_node_outlets.empty());
+    ASSERT_EQ(swmm_storage_lid_replace(e, 0, &before, &anchor, 1), SWMM_OK);
+    ASSERT_EQ(swmm_storage_lid_get(e, 0, &got), SWMM_OK);
+    EXPECT_EQ(got.control, before.control);
+    EXPECT_DOUBLE_EQ(got.saturation, before.saturation);
+    EXPECT_DOUBLE_EQ(c.links.offset1[0], anchor.offset_up_ft);
+    EXPECT_DOUBLE_EQ(c.nodes.full_depth[2], 19.123456789012345);
+    auto invalid = anchor;
+    invalid.crest_ft = NAN;
+    EXPECT_EQ(swmm_storage_lid_replace(e, 0, &clear, &invalid, 1), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(c.lid_node_outlets.size(), 1u);
+    ASSERT_EQ(swmm_node_set_lid(e, 0, 0, 75), SWMM_OK);
+    EXPECT_DOUBLE_EQ(c.links.offset1[0], anchor.offset_up_ft);
+    EXPECT_DOUBLE_EQ(c.nodes.full_depth[2], 19.123456789012345);
+    // Clearing an unassigned node at the other end must not delete the LID owner's anchor.
+    c.nodes.resize(4);
+    c.node_names.add("Plain");
+    c.node_subtypes.set_node_type(c.nodes, 3, NodeType::STORAGE);
+    c.nodes.full_depth[3] = 1.0;
+    c.links.node2[0] = 3;
+    SWMM_StorageLidState plain{};
+    ASSERT_EQ(swmm_storage_lid_get(e, 3, &plain), SWMM_OK);
+    ASSERT_EQ(plain.control, -1);
+    ASSERT_EQ(plain.bottom, 0);
+    ASSERT_TRUE(std::isfinite(plain.max_depth_ft));
+    ASSERT_EQ(swmm_node_set_lid(e, 3, -1, 0), SWMM_OK);
+    EXPECT_EQ(c.lid_node_outlets.size(), 1u);
+}

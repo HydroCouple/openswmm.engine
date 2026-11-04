@@ -500,3 +500,33 @@ TEST(NodeCoupling2DSection, AuthoredCoupleableNodeWithoutMapRowIsReported) {
         << r.rpt;
     EXPECT_NE(r.rpt.find(": J3"), std::string::npos);
 }
+
+TEST(NodeCoupling2DSection, CompleteReplacementRejectsInvalidLastTokenWithoutMutation) {
+    const auto e = open_text("atomic_editor", deck(kSection));
+    ASSERT_NE(e, nullptr);
+    const int node = swmm_node_index(e, "J1");
+    const int original = type_of(e, "J1");
+    char before[128]{}, after[128]{};
+    ASSERT_EQ(swmm_node_get_2d_coupling_param(e, node, "AREA", before, 128), SWMM_OK);
+    SWMM_NodeCoupling2DParam bad[]{{"D", "0.24"}, {"COI", "nan"}};
+    EXPECT_EQ(swmm_node_validate_2d_coupling(e, node, 1, SWMM_2D_COUPLING_MANHOLE, bad, 2),
+              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_node_replace_2d_coupling(e, node, 1, SWMM_2D_COUPLING_MANHOLE, bad, 2),
+              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(type_of(e, "J1"), original);
+    ASSERT_EQ(swmm_node_get_2d_coupling_param(e, node, "AREA", after, 128), SWMM_OK);
+    EXPECT_STREQ(before, after);
+    SWMM_NodeCoupling2DParam good[]{{"D", "1e100"}, {"LAW", "WEIR_ORIFICE"}};
+    ASSERT_EQ(swmm_node_replace_2d_coupling(e, node, 1, SWMM_2D_COUPLING_MANHOLE, good, 2),
+              SWMM_OK);
+    ASSERT_EQ(swmm_node_get_2d_coupling_param(e, node, "D", after, 128), SWMM_OK);
+    EXPECT_STREQ(after, "1e+100");
+    SWMM_NodeCoupling2DParam duplicate[]{{"D", "1"}, {"d", "2"}};
+    EXPECT_EQ(swmm_node_replace_2d_coupling(e, node, 1, 1, duplicate, 2), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_node_replace_2d_coupling(e, node, 0, 1, good, 2), SWMM_ERR_BADPARAM);
+    ASSERT_EQ(swmm_node_replace_2d_coupling(e, node, 0, 1, nullptr, 0), SWMM_OK);
+    int authored = 1;
+    EXPECT_EQ(type_of(e, "J1", &authored), 1);
+    EXPECT_EQ(authored, 0);
+    close(e);
+}

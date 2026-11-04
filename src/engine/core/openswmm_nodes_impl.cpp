@@ -1386,6 +1386,10 @@ SWMM_ENGINE_API int swmm_node_rename(SWMM_Engine engine, int idx, const char* ne
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    std::vector<std::string*> node_beds;
+    if (ctx.twod_io.aquifer_nodes)
+        for (auto& name : *ctx.twod_io.aquifer_nodes)
+            if (ctx.node_names.find(name) == idx) node_beds.push_back(&name);
     std::vector<int> drains;
     const int same_named_catchment = ctx.subcatch_names.find(newId);
     for (int row = 0; row < ctx.lid_usage.count(); ++row) {
@@ -1398,6 +1402,7 @@ SWMM_ENGINE_API int swmm_node_rename(SWMM_Engine engine, int idx, const char* ne
         if (node == idx) drains.push_back(row);
     }
     if (!ctx.node_names.rename(idx, newId)) return SWMM_ERR_BADPARAM;
+    for (auto* name : node_beds) *name = ctx.node_names.name_of(idx);
     for (int row : drains) ctx.lid_usage.drain_to[row] = ctx.node_names.name_of(idx);
     return SWMM_OK;
 }

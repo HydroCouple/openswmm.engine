@@ -2695,6 +2695,22 @@ typedef enum SWMM_NodeCoupling2DType {
     SWMM_2D_COUPLING_OUTFALL = 5 /**< Tailwater + discharge delivery. */
 } SWMM_NodeCoupling2DType;
 
+typedef struct SWMM_NodeCoupling2DParam {
+    const char* key;
+    const char* value;
+} SWMM_NodeCoupling2DParam;
+/** Validate/replace one complete authored row in BUILDING/OPENED. No mesh-map mutation.
+ * authored=0 removes the row and requires count=0; type then must equal the class default.
+ * authored=1 requires a legal type and unique, applicable, nonempty key/value tokens.
+ * Inputs are copied; omitted parameters inherit. Validation never mutates. Rejected replacement
+ * changes nothing, including when the last parameter is invalid. */
+SWMM_ENGINE_API int swmm_node_validate_2d_coupling(SWMM_Engine engine, int node, int authored,
+                                                   int type, const SWMM_NodeCoupling2DParam* params,
+                                                   int count);
+SWMM_ENGINE_API int swmm_node_replace_2d_coupling(SWMM_Engine engine, int node, int authored,
+                                                  int type, const SWMM_NodeCoupling2DParam* params,
+                                                  int count);
+
 /**
  * @brief Effective coupling type of a node.
  *

@@ -275,52 +275,218 @@ SWMM_ENGINE_API int swmm_lid_node_configure_flow(SWMM_Engine engine, int control
     openswmm::lidnode::sync(c, control);
     return SWMM_OK;
 }
-SWMM_ENGINE_API int swmm_node_set_lid(SWMM_Engine engine, int node, int control,
-                                      double saturation) {
+SWMM_ENGINE_API int swmm_storage_lid_get(SWMM_Engine engine, int node, SWMM_StorageLidState* out) {
     CHECK_HANDLE(engine);
-    auto& c = to_engine(engine)->context();
+    if (!out)
+        return SWMM_ERR_BADPARAM;
+    const auto& c = to_engine(engine)->context();
+    CHECK_INDEX(node >= 0 && node < c.n_nodes());
+    const int row = c.node_subtypes.storage_row(node);
+    if (row < 0)
+        return SWMM_ERR_BADPARAM;
+    const auto& cfg = c.node_subtypes.storages.lid[row];
+    *out = {cfg.control, cfg.initial_saturation, static_cast<int>(cfg.bottom),
+            c.nodes.full_depth[node]};
+    return SWMM_OK;
+}
+SWMM_ENGINE_API int swmm_storage_lid_anchor_get(SWMM_Engine engine, int link,
+                                                SWMM_StorageLidAnchor* out) {
+    CHECK_HANDLE(engine);
+    if (!out)
+        return SWMM_ERR_BADPARAM;
+    const auto& c = to_engine(engine)->context();
+    CHECK_INDEX(link >= 0 && link < c.n_links());
+    int layer = 0, top = 0;
+    swmm_lid_node_outlet_get(engine, link, &layer, &top);
+    const int wr = c.link_subtypes.weir_row(link), orow = c.link_subtypes.outlet_row(link);
+    const double crest = wr >= 0     ? c.link_subtypes.weirs.crest_height[wr]
+                         : orow >= 0 ? c.link_subtypes.outlets.crest_height[orow]
+                                     : 0;
+    *out = {link, layer, top, c.links.offset1[link], c.links.offset2[link], crest};
+    return SWMM_OK;
+}
+SWMM_ENGINE_API int swmm_storage_lid_validate(SWMM_Engine engine, int node,
+                                              const SWMM_StorageLidState* state,
+                                              const SWMM_StorageLidAnchor* anchors, int count) {
+    CHECK_HANDLE(engine);
+    const auto& c = to_engine(engine)->context();
     if (!editable(c))
         return SWMM_ERR_LIFECYCLE;
     CHECK_INDEX(node >= 0 && node < c.n_nodes());
-    const int r = c.node_subtypes.storage_row(node);
-    if (r < 0 || control < -1 || control >= c.lid_controls.count() || !std::isfinite(saturation) ||
-        saturation < 0.0 || saturation > 100.0)
+    if (!state || count < 0 || (count && !anchors) || c.node_subtypes.storage_row(node) < 0 ||
+        state->control < -1 || state->control >= c.lid_controls.count() ||
+        !std::isfinite(state->saturation) || state->saturation < 0 || state->saturation > 100 ||
+        !std::isfinite(state->max_depth_ft) || state->max_depth_ft < 0 || state->bottom < 0 ||
+        state->bottom > 2)
         return SWMM_ERR_BADPARAM;
-    if (control >= 0 &&
-        !openswmm::lidnode::validateStack(openswmm::lidnode::layers(c, control)).empty())
+    int numbered = 0;
+    if (state->control >= 0) {
+        const auto stack = openswmm::lidnode::layers(c, state->control);
+        if (!openswmm::lidnode::validateStack(stack).empty())
+            return SWMM_ERR_BADPARAM;
+        for (const auto& layer : stack)
+            numbered += layer.kind != openswmm::LidNodeLayerKind::Bottom;
+    } else if (count || state->saturation != 0 || state->bottom != 0)
         return SWMM_ERR_BADPARAM;
+    if (state->control >= 0 &&
+        c.node_subtypes.storages.lid[c.node_subtypes.storage_row(node)].control < 0)
+        for (const auto& a : c.lid_node_outlets)
+            if (c.links.node1[a.link] == node || c.links.node2[a.link] == node)
+                return SWMM_ERR_BADPARAM; // Do not claim an existing other owner's anchor.
+    std::vector<int> links;
+    for (int i = 0; i < count; ++i) {
+        const auto& a = anchors[i];
+        if (a.link < 0 || a.link >= c.n_links() || a.layer < 1 || a.layer > numbered ||
+            (a.top != 0 && a.top != 1) || !std::isfinite(a.offset_up_ft) ||
+            !std::isfinite(a.offset_down_ft) || !std::isfinite(a.crest_ft) ||
+            std::find(links.begin(), links.end(), a.link) != links.end())
+            return SWMM_ERR_BADPARAM;
+        links.push_back(a.link);
+        const int n1 = c.links.node1[a.link], n2 = c.links.node2[a.link];
+        if (n1 != node && n2 != node)
+            return SWMM_ERR_BADPARAM;
+        const int other = n1 == node ? n2 : n1;
+        const int other_row = c.node_subtypes.storage_row(other);
+        if (other_row >= 0 && c.node_subtypes.storages.lid[other_row].control >= 0)
+            return SWMM_ERR_BADPARAM;
+    }
+    return SWMM_OK;
+}
+SWMM_ENGINE_API int swmm_storage_lid_prepare(SWMM_Engine engine, int node, int control,
+                                             double saturation, int bottom,
+                                             SWMM_StorageLidState* out,
+                                             SWMM_StorageLidAnchor* anchors, int capacity,
+                                             int* count) {
+    CHECK_HANDLE(engine);
+    if (!out || !count || capacity < 0 || (capacity && !anchors))
+        return SWMM_ERR_BADPARAM;
+    const auto& c = to_engine(engine)->context();
+    if (!editable(c))
+        return SWMM_ERR_LIFECYCLE;
+    SWMM_StorageLidState before{};
+    const int status = swmm_storage_lid_get(engine, node, &before);
+    if (status != SWMM_OK)
+        return status;
+    if (control < -1 || control >= c.lid_controls.count() || !std::isfinite(saturation) ||
+        saturation < 0 || saturation > 100 || bottom < 0 || bottom > 2)
+        return SWMM_ERR_BADPARAM;
+    SWMM_StorageLidState next{control, control < 0 ? 0 : saturation, control < 0 ? 0 : bottom,
+                              before.max_depth_ft};
+    std::vector<SWMM_StorageLidAnchor> proposed;
+    const bool changed = control != before.control;
+    const auto stack = control >= 0 ? openswmm::lidnode::layers(c, control)
+                                    : std::vector<openswmm::LidNodeLayer>{};
+    const double factor =
+        openswmm::ucf::Ucf[openswmm::ucf::RAINDEPTH]
+                          [openswmm::ucf::getUnitSystem(static_cast<int>(c.options.flow_units))];
     if (control >= 0) {
-        int numbered = 0;
-        for (const auto& l : openswmm::lidnode::layers(c, control))
-            numbered += l.kind != openswmm::LidNodeLayerKind::Bottom;
+        if (!openswmm::lidnode::validateStack(stack).empty())
+            return SWMM_ERR_BADPARAM;
+        if (changed)
+            next.max_depth_ft = openswmm::lidnode::thickness(stack) / factor;
         for (const auto& a : c.lid_node_outlets) {
             if (c.links.node1[a.link] != node && c.links.node2[a.link] != node)
                 continue;
-            const int other =
-                c.links.node1[a.link] == node ? c.links.node2[a.link] : c.links.node1[a.link];
-            const int other_row = c.node_subtypes.storage_row(other);
-            if (a.layer > numbered ||
-                (other_row >= 0 && c.node_subtypes.storages.lid[other_row].control >= 0))
-                return SWMM_ERR_BADPARAM;
+            SWMM_StorageLidAnchor row{};
+            swmm_storage_lid_anchor_get(engine, a.link, &row);
+            if (changed) {
+                double down = 0;
+                int numbered = 0;
+                bool found = false;
+                for (const auto& l : stack) {
+                    if (l.kind == openswmm::LidNodeLayerKind::Bottom)
+                        continue;
+                    if (++numbered == a.layer) {
+                        const double h = (openswmm::lidnode::thickness(stack) - down -
+                                          (a.top ? 0 : l.params[0])) /
+                                         factor;
+                        const int wr = c.link_subtypes.weir_row(a.link),
+                                  orow = c.link_subtypes.outlet_row(a.link);
+                        if (wr >= 0 || orow >= 0)
+                            row.crest_ft = c.nodes.invert_elev[node] + h -
+                                           c.nodes.invert_elev[c.links.node1[a.link]];
+                        else if (c.links.node1[a.link] == node)
+                            row.offset_up_ft = h;
+                        else
+                            row.offset_down_ft = h;
+                        found = true;
+                        break;
+                    }
+                    down += l.params[0];
+                }
+                if (!found)
+                    return SWMM_ERR_BADPARAM;
+            }
+            proposed.push_back(row);
         }
     }
-    const auto bottom =
-        control < 0 ? openswmm::LidNodeBottom::Current : c.node_subtypes.storages.lid[r].bottom;
-    c.node_subtypes.storages.lid_state[r] = {};
-    c.node_subtypes.storages.lid[r] = {control, control < 0 ? 0.0 : saturation, bottom};
-    if (control >= 0)
-        openswmm::lidnode::sync(c, control);
-    else {
-        auto& a = c.lid_node_outlets;
-        a.erase(std::remove_if(a.begin(), a.end(),
-                               [&](const auto& v) {
-                                   return c.links.node1[v.link] == node ||
-                                          c.links.node2[v.link] == node;
-                               }),
-                a.end());
-    }
-    c.nodes.full_volume[node] = 0.0;
+    const int valid =
+        swmm_storage_lid_validate(engine, node, &next, proposed.data(), proposed.size());
+    if (valid != SWMM_OK)
+        return valid;
+    if (capacity < static_cast<int>(proposed.size()))
+        return SWMM_ERR_BADPARAM;
+    if (!proposed.empty())
+        std::copy(proposed.begin(), proposed.end(), anchors);
+    *out = next;
+    *count = proposed.size();
     return SWMM_OK;
+}
+SWMM_ENGINE_API int swmm_storage_lid_replace(SWMM_Engine engine, int node,
+                                             const SWMM_StorageLidState* state,
+                                             const SWMM_StorageLidAnchor* anchors, int count) {
+    const int status = swmm_storage_lid_validate(engine, node, state, anchors, count);
+    if (status != SWMM_OK)
+        return status;
+    auto& c = to_engine(engine)->context();
+    auto next = c.lid_node_outlets;
+    const int previous_row = c.node_subtypes.storage_row(node);
+    const bool previously_assigned = c.node_subtypes.storages.lid[previous_row].control >= 0;
+    next.erase(std::remove_if(next.begin(), next.end(),
+                              [&](const auto& a) {
+                                  return previously_assigned && (c.links.node1[a.link] == node ||
+                                                                 c.links.node2[a.link] == node);
+                              }),
+               next.end());
+    for (int i = 0; i < count; ++i)
+        next.push_back({anchors[i].link, anchors[i].layer, anchors[i].top != 0});
+    const int row = c.node_subtypes.storage_row(node);
+    c.node_subtypes.storages.lid[row] = {state->control, state->saturation,
+                                         static_cast<openswmm::LidNodeBottom>(state->bottom)};
+    c.node_subtypes.storages.lid_state[row] = {};
+    c.nodes.full_depth[node] = state->max_depth_ft;
+    c.nodes.full_volume[node] = 0;
+    for (int i = 0; i < count; ++i) {
+        const auto& a = anchors[i];
+        c.links.offset1[a.link] = a.offset_up_ft;
+        c.links.offset2[a.link] = a.offset_down_ft;
+        const int wr = c.link_subtypes.weir_row(a.link), orow = c.link_subtypes.outlet_row(a.link);
+        if (wr >= 0)
+            c.link_subtypes.weirs.crest_height[wr] = a.crest_ft;
+        else if (orow >= 0)
+            c.link_subtypes.outlets.crest_height[orow] = a.crest_ft;
+    }
+    c.lid_node_outlets.swap(next);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_node_set_lid(SWMM_Engine engine, int node, int control,
+                                      double saturation) {
+    CHECK_HANDLE(engine);
+    const auto& c = to_engine(engine)->context();
+    if (!editable(c))
+        return SWMM_ERR_LIFECYCLE;
+    SWMM_StorageLidState before{}, after{};
+    const int status = swmm_storage_lid_get(engine, node, &before);
+    if (status != SWMM_OK)
+        return status;
+    std::vector<SWMM_StorageLidAnchor> anchors(c.lid_node_outlets.size());
+    int count = 0;
+    const int prepared = swmm_storage_lid_prepare(engine, node, control, saturation, before.bottom,
+                                                  &after, anchors.data(), anchors.size(), &count);
+    return prepared == SWMM_OK
+               ? swmm_storage_lid_replace(engine, node, &after, anchors.data(), count)
+               : prepared;
 }
 SWMM_ENGINE_API int swmm_node_get_lid_bottom(SWMM_Engine engine, int node, int* mode) {
     CHECK_HANDLE(engine);

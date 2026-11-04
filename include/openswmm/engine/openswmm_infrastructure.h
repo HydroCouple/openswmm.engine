@@ -1139,6 +1139,44 @@ SWMM_ENGINE_API int swmm_lid_node_layers_set(SWMM_Engine engine, int control,
  */
 SWMM_ENGINE_API int swmm_node_get_lid(SWMM_Engine engine, int node, int* control,
                                       double* saturation);
+/** Complete editor snapshot of storage LID assignment and its dependent geometry.
+ * Geometry members ending _ft are native internal feet, copied losslessly for Undo;
+ * saturation is percent. These geometry members are not ordinary UI input fields. */
+typedef struct SWMM_StorageLidState {
+    int control;
+    double saturation;
+    int bottom;
+    double max_depth_ft;
+} SWMM_StorageLidState;
+typedef struct SWMM_StorageLidAnchor {
+    int link, layer, top;
+    double offset_up_ft, offset_down_ft, crest_ft;
+} SWMM_StorageLidAnchor;
+SWMM_ENGINE_API int swmm_storage_lid_get(SWMM_Engine engine, int node, SWMM_StorageLidState* out);
+/** Read one link's anchor (layer=0 when absent) and exact raw geometry. */
+SWMM_ENGINE_API int swmm_storage_lid_anchor_get(SWMM_Engine engine, int link,
+                                                SWMM_StorageLidAnchor* out);
+/** Read-only assignment proposal. Requires BUILDING/OPENED. capacity must hold every attached
+ * anchor; count receives the result size. Clearing drops anchors, resets saturation/bottom and
+ * preserves geometry. Changing control derives depth/anchored offsets for this node only;
+ * saturation/bottom edits preserve geometry. Node beds and mesh mappings are never changed. */
+SWMM_ENGINE_API int swmm_storage_lid_prepare(SWMM_Engine engine, int node, int control,
+                                             double saturation, int bottom,
+                                             SWMM_StorageLidState* out,
+                                             SWMM_StorageLidAnchor* anchors, int capacity,
+                                             int* count);
+/** Validate or atomically install a complete snapshot and all this node's keyed anchors.
+ * Invalid references, duplicate/foreign anchors, incompatible stacks/endpoints or nonfinite
+ * numbers reject before mutation. Unselected nodes/links retain exact state. Runtime LID state
+ * and derived full volume reset; no mesh/contact mutation or execution qualification occurs.
+ * count=0 accepts null anchors. Input is copied; BUILDING/OPENED only. */
+SWMM_ENGINE_API int swmm_storage_lid_validate(SWMM_Engine engine, int node,
+                                              const SWMM_StorageLidState* state,
+                                              const SWMM_StorageLidAnchor* anchors, int count);
+SWMM_ENGINE_API int swmm_storage_lid_replace(SWMM_Engine engine, int node,
+                                             const SWMM_StorageLidState* state,
+                                             const SWMM_StorageLidAnchor* anchors, int count);
+
 /**
  * @brief Assign or clear a storage-node LID and synchronize its geometry.
  *

@@ -177,7 +177,10 @@ std::string parseValue(NodeCoupling2DKey k, const std::string& token, double& ou
 }
 
 std::string formatValue(NodeCoupling2DKey k, double v) {
-    const int i = static_cast<int>(v);
+    const int i = (k == NodeCoupling2DKey::CREST || k == NodeCoupling2DKey::COEFFS ||
+                   k == NodeCoupling2DKey::LAW)
+                      ? static_cast<int>(v)
+                      : 0;
     switch (k) {
     case NodeCoupling2DKey::CREST:
         return (i >= 0 && i < 4) ? kCrestTokens[i] : "";

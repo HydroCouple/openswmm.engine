@@ -89,8 +89,7 @@ std::string parseValue(NodeCoupling2DKey k, const std::string& token, double& ou
  * locale-independent decimal forcing.
  *
  * @param[in] k Valid NodeCoupling2DKey excluding COUNT unless a fallback is explicitly described.
- * @param[in] v Stored value; must be finite and int-representable because the implementation casts
- *     before selecting even the numeric branch. Categorical values should be integral ordinals.
+ * @param[in] v Stored finite value. Categorical values must be valid integral ordinals representable as int.
  * @return Owned categorical token or numeric %g text; invalid categorical index yields empty
  *     string.
  */
