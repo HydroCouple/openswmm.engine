@@ -80,6 +80,7 @@
 #include "../uncertainty/QualityUncertaintyHandler.hpp"
 #include "../uncertainty/RomDiagTrust.hpp"
 #include "../uncertainty/RomStorePorts.hpp"
+#include "../uncertainty/RomPortGraphDump.hpp"
 #include "../2d/subsurface/CommonSourceStage.hpp"
 #include "../2d/subsurface/EngineSourceResultHistory.hpp"
 #ifdef OPENSWMM_HAS_2D_HDF5_OUTPUT
@@ -8109,12 +8110,12 @@ int SWMMEngine::end() noexcept {
     if (rom1d_nl_enabled_ && rom1d_pg_.stats.solves > 0) {
         // PH_STORES_AND_PORTS §3: a fallback that silently rescues a method is not allowed.
         const auto& st = rom1d_pg_.stats;
-        std::printf("[PH-ports] member solves %ld, Newton iterations %ld (Armijo rejected %ld, kink-bounded %ld, active-set re-solves %ld, fp-floor converged %ld), "
+        std::printf("[PH-ports] member solves %ld, Newton iterations %ld (Armijo rejected %ld, kink-bounded %ld (per node %ld), active-set re-solves %ld, fp-floor converged %ld), "
                     "Jacobi fallbacks %ld (anomaly; not converged %ld), "
                     "zero-data exits %ld, k x k factorisations %ld (k <= %ld), L factorisations %ld, L solves %ld, "
                     "admitted nodes %zu, links on a monotone envelope %zu, "
                     "store member-steps > 0.05 ft below invert %ld (deepest %.3f ft), largest storage rescale %.3g\n",
-                    st.solves, st.newton_iters, st.armijo_failures, st.kink_bounded, st.side_switches, st.fp_floor_converged, st.jacobi_fallbacks, st.jacobi_failed, st.zero_exits,
+                    st.solves, st.newton_iters, st.armijo_failures, st.kink_bounded, st.node_bounded, st.side_switches, st.fp_floor_converged, st.jacobi_fallbacks, st.jacobi_failed, st.zero_exits,
                     st.factorisations, st.k_max, st.l_factorisations, st.l_solves,
                     rom1d_nl_nodes_.size(), rom1d_pg_envelope_links_.size(), rom1d_pg_below_floor_, rom1d_pg_min_depth_, rom1d_pg_rescale_max_);
         // Where: a store drained below its invert through a linear (plane) edge,
@@ -12774,7 +12775,8 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
         // The main run's own flow B -> F, which the law at h* need not match.
         const double q_star = (links.node1[uj] == fB ? 1.0 : -1.0) * links.flow[uj];
         const double dB = depthAt(act(fB)), dF = depthAt(act(fF));
-        const bool flB = isA(act(fB)), flF = isA(act(fF));
+        // Both ends carry their own floor, admitted or not (O-6, as for the floored lines below).
+        const bool flB = act(fB) >= 0, flF = act(fF) >= 0;
         PortGraph::Port p;
         p.up = act(fB);
         p.dn = act(fF);
@@ -12879,14 +12881,20 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
         if (act(n1) < 0 || !(isA(act(n1)) || isA(act(links.node2[uj])))) continue;
         if (t == LinkType::PUMP) pumpPort(j); else structurePort(j, n1);
     }
-    // The remaining plane edges keep their straight line; at an admitted node
-    // it is limited by the store's dry factor (a drowned pipe out of an empty
-    // member cannot keep draining it: Bellinge 1D smoke, 2026-11-01, members
-    // 3,600 ft below G72R83B's invert before this).
+    // The remaining plane edges keep their straight line; one touching an
+    // admitted node becomes a port limited by the dry factor of the end the
+    // water leaves (a drowned pipe out of an empty member cannot keep draining
+    // it: Bellinge 1D smoke, 2026-11-01, members 3,600 ft below G72R83B's invert
+    // before this). Both ends carry their floor, admitted or not (O-6): a node
+    // that drains only through such a port into an empty admitted store had none,
+    // and the line q* + ju·z_up + jd·z_dn pulled it toward the store's deficit
+    // (Bellinge G71F06R_ovl -> the empty wet well G71F68Y, members 95–117 ft
+    // below the main run, 2026-11-04; residual 1e4 cfs at the storm peak).
     for (const auto& ed : rom1d_add_edges_) {
         if (ed.link >= 0 && is_port[static_cast<std::size_t>(ed.link)]) continue;
         const bool fu = isA(ed.up), fd = isA(ed.dn);
         if (!fu && !fd) { g.edges.push_back(ed); continue; }
+        const bool gu = ed.up >= 0, gd = ed.dn >= 0;
         const double q_star = ed.conduit ? ed.q : std::fabs(links.flow[static_cast<std::size_t>(ed.link)]);
         const double ju = ed.conduit ? ed.ju : ed.d, jd = ed.conduit ? ed.jd : 0.0;
         const double dU = depthAt(ed.up), dD = depthAt(ed.dn);
@@ -12896,7 +12904,7 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
         p.dq = [=](int, double zu, double zd) {
             if (zu == 0.0 && zd == 0.0) return 0.0;
             const double qm = q_star + ju * zu + jd * zd;
-            return PP::flooredFlow(qm, fu ? PP::dryFactor(dU, zu) : 1.0, fd ? PP::dryFactor(dD, zd) : 1.0) - q_star;
+            return PP::flooredFlow(qm, gu ? PP::dryFactor(dU, zu) : 1.0, gd ? PP::dryFactor(dD, zd) : 1.0) - q_star;
         };
         g.ports.push_back(std::move(p));
     }
@@ -13010,6 +13018,23 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
         }
     }
 #endif
+    // Failure dumps (diagnostic, PORT_HAMILTONIAN O-6): every member solve whose
+    // Newton fails is written under OPENSWMM_PH_DUMP_DIR; unset, nothing changes.
+    if (!rom1d_pg_dump_init_) {
+        rom1d_pg_dump_init_ = true;
+        if (const char* dd = std::getenv("OPENSWMM_PH_DUMP_DIR"); dd && *dd) {
+            std::error_code ec;
+            std::filesystem::create_directories(dd, ec);
+            uncertainty::dump::installPortGraphDump(g, dd);
+        }
+    }
+    if (g.on_failure) {
+        rom1d_pg_names_.assign(static_cast<std::size_t>(g.n), std::string());
+        for (std::size_t t = 0; t < un; ++t) rom1d_pg_names_[t] = ctx_.node_names.name_of(rom1d_active_map_[t]);
+        for (const Pond& pd : ponds) rom1d_pg_names_[static_cast<std::size_t>(pd.node)] = "pond:" + ctx_.node_names.name_of(rom1d_active_map_[static_cast<std::size_t>(g.ports[pd.port].up)]);
+        g.node_names = &rom1d_pg_names_;
+        g.sim_time = ctx_.current_time;
+    }
     // ---- one solve per member ----
     // The linear part (every node no port touches) is the same for all members:
     // factored once here, with its Schur complement on the port/store nodes (O-5).

@@ -1414,6 +1414,12 @@ if(OPENSWMM_BUILD_2D)
     # (docs/uncertainty/PH_STORES_AND_PORTS.md). Pure laws and solver plus
     # engine checks through rom1d(), hence 2D-gated like the test above.
     add_gtest_unit(test_engine_rom_member_ports test_rom_member_ports.cpp)
+    # PORT_HAMILTONIAN O-6: replay of per-member solve failure dumps
+    # (uncertainty/RomPortGraphDump.hpp); committed Bellinge subset in data/ph_dumps.
+    add_gtest_unit(test_engine_rom_port_graph_replay test_rom_port_graph_replay.cpp)
+    target_compile_definitions(test_engine_rom_port_graph_replay PRIVATE
+        "PH_DUMP_DATA_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/data/ph_dumps\""
+        "PH_TEST_OUTPUT_DIR=\"${PROJECT_SOURCE_DIR}/tests/output\"")
 endif()
 # Two independently-written PR 11 regression tests for the same fix, same
 # subject, different fixtures -- kept as two targets rather than merged.

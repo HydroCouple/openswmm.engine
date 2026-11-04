@@ -260,3 +260,36 @@ cases the current code excludes). Acceptance gates as in the table.
   a quieter machine; step 2000 127 vs 165 s, step 3000 220 vs 359 s); solves 194,550, Newton 305,185 (305,332), fp-floor
   741 (736), Jacobi 35 (34, all converged), non-converged 0, G80F11B 92 member-steps ≤ 0.123 ft below invert (same);
   k ≤ 30, k×k factorisations 438,830, L factorisations 3,891, L solves 256,872.
+- 2026-11-04: O-6 (coupled storm peak). **Dumps**: `PortGraph::on_failure` + `uncertainty/RomPortGraphDump.hpp`
+  (`OPENSWMM_PH_DUMP_DIR`; diagnostic only): whole graph, start / Newton exit / final levels, Newton trace, N set and
+  Schur base, every store and port law tabulated (adaptive knots, bilinear replay). `demo_ph5` on HEAD + hook, Release,
+  stopped after step 3000 (06:21): 252 dumps (200 fallbacks = cap, 52 not converged) in `SWMM6/data/ph_dumps`; k = 251
+  at 04:33 growing to 619 at 06:21 (coupled manholes + ponds). Machine thermally throttled (CPU speed limit 26 %) for
+  most of it: step 1000 at 4,464 s vs 594 s before. **Replay** (Debug, `test_rom_port_graph_replay.cpp`): the O-5
+  solver on the tables reproduces 160 of 252 (all 52 NC as fallbacks, 46 as Jacobi failures). **Causes** (by
+  scratch variants of the solver): (A) *many independent corners* — ~20 coupled manholes whose cell ground lies
+  below their member level, each a 0.01 ft dry ramp worth ~90 cfs into its street pond (ramp slope 9e3 cfs/ft vs
+  A/dt ≈ 0.6); the global kink bound crosses one corner per iteration (λ 1e-5…1e-3, 20 its, ‖F‖ 64 → 63.7): 24 fb;
+  (B) *law curving before its kink* (orifice square root below the street-level crossing, bilinear floored lines
+  G80F66Y/G80F310/G80F330): "just past the kink" located where the error first departs from the tangent, t ≈
+  0.003–0.02, while the kink sat near t ≈ 0.3–0.4 → 20 its at λ ≈ 0.005: 82 fb + 10 nc (+ 4 needing A or A+B);
+  (C) *a sunk unfloored port end*: G71F06R_ovl (not admitted) drains only through a floored line into the empty
+  wet well G71F68Y and sits 68–157 ft below the main run in 64 dumps, 39 of the 52 NC — the O-4 open model finding;
+  (D) not reproduced by the tables: 66 fb + 1 nc (6 at |F| < 1e-6 cfs, the roundoff class). Pond/manhole area
+  ratios 460–680 and k > 600 were present but not causes on their own. **Fix** (`RomPortGraph.hpp`, no tolerance
+  or law constant changed): (1) when the full step fails Armijo, each N node is first bounded by its own laws'
+  kinks (cross by ≤ its distance, then just past it; the L block takes the exact linear response, so the L residual
+  is zero after it), then the old global bound, then halving; with no decrease the per-node "just past" step is
+  taken; counted as `node_bounded` (`[PH-ports] ... kink-bounded N (per node M)`); (2) a kink is placed at
+  max(departure point, t_c/(2 − t_c)) from the crossing parameter. (3) Engine (`stepRom1dStorageMembers`): the
+  floored lines and raised-end ports carry the dry factor at BOTH ends, admitted or not — the "admission closure"
+  in its floor sense (a node draining into an empty store can no longer be pulled below its invert by the line;
+  not testable on the tables, the full run checks it). **Replay after**: 242 of 252 by Newton without fallback (all
+  150 reproduced A/B converge, ≤ 20 its, median 5); the 10 left are 9 NC carrying the sunk (C) state from earlier
+  steps and 1 table artifact (an anchor knot at the solution; the writer no longer puts anchors at knots). Mutation:
+  without (1) the A dumps fall back again, without (2) the B dumps do. Committed: 3 compacted dumps (1.7 MB,
+  `tests/unit/engine/data/ph_dumps`, README there) in `CommittedBellingeDumpsConverge`. **Gates (Debug)**:
+  member_ports 28, additive_channel 12, spectral_rom1d 101, replay 2 (+3 env-gated diagnostics), storage gate A
+  0.889/0.958, B 0.727/0.960, R 0.952/0.880 unchanged (R Newton 61,269 vs 60,760: the raised end's far-end floor);
+  1D smoke `ph_smoke1d.inp` to 07:00: 3,892 steps in 395 s, solves 194,550, Newton 302,004, fp-floor 970, Jacobi
+  fallbacks 29 (all converged), not converged 0, kink-bounded 35,053 (per node 29,435). Full `demo_ph5` relaunched.

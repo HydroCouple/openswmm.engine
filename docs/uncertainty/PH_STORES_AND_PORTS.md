@@ -268,6 +268,11 @@ Do not split it into store bisection plus a separate correction solve.
   also covers kinks along a line in (z_up, z_dn)), the same for a store's volume
   corner, and, when the full step fails Armijo, the step bounded by the first strong
   kink along it (cross it by at most its distance, then just past it).
+  *As built (O-6, PORT_HAMILTONIAN §6):* when the full step fails Armijo, each N node is
+  first bounded by its own laws' kinks (the L block takes the exact linear response), then
+  the whole step by the first kink anywhere; a kink is placed at t_c/(2 − t_c) when the law
+  curves before it. Floored lines and raised ends carry the dry factor at both ends,
+  admitted or not.
 - **Damping.** Armijo on ‖F‖₁. Start from z^n. Stop at ‖F‖∞ < 1e-10·(S/Δt) or
   after 20 iterations.
 - **Fallback.** Monotone nonlinear Jacobi (each node solved for its own

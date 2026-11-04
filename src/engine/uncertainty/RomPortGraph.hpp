@@ -32,9 +32,12 @@
  * two pieces' slopes), and a port sitting on a kink takes its slopes on the
  * piece the solved step enters (the B-derivative in the step's direction;
  * re-solved while any changes).
- * Armijo on ‖F‖₁ from the full step; when it fails, the step is bounded by the
- * first strong kink along it (no further than twice its distance, then just
- * past it) before halving. Convergence is the residual tolerance, or the
+ * Armijo on ‖F‖₁ from the full step; when it fails, each N node's step is
+ * bounded by its own laws' first strong kink (O-6: no further than twice its
+ * distance, then just past it; the L block takes the exact linear response),
+ * then the whole step by the first kink anywhere, then halving. A kink is
+ * placed at t_c/(2 − t_c) from the crossing parameter t_c when the law curves
+ * before it. Convergence is the residual tolerance, or the
  * roundoff floor of the level (atFloor_; counted in stats.fp_floor_converged),
  * the same for Newton and for the fallback monotone nonlinear Jacobi, which is
  * counted as an anomaly. F == 0 exactly at the start (zero data) returns without iterating.
@@ -50,6 +53,7 @@
 #include <cstddef>
 #include <functional>
 #include <limits>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -93,7 +97,32 @@ struct PortGraph {
     /// factorisations: k×k Schur-complement factorisations (one per Newton pass);
     /// l_factorisations: factorisations of the linear L block (one per graph, prepare());
     /// l_solves: forward/backward passes on the L factor; k_max: largest N block seen.
-    struct Stats { long solves = 0, newton_iters = 0, armijo_failures = 0, jacobi_fallbacks = 0, jacobi_failed = 0, zero_exits = 0, port_evals = 0, factorisations = 0, side_switches = 0, kink_bounded = 0, fp_floor_converged = 0, l_factorisations = 0, l_solves = 0, k_max = 0; };
+    /// Failure dump hook (diagnostic only, PORT_HAMILTONIAN O-6): when set, every
+    /// solve whose Newton fails calls it once after the Jacobi fallback, with the
+    /// start, the Newton exit, the final iterate and Newton's per-iteration trace.
+    /// It never changes the solve. The engine installs it only when
+    /// OPENSWMM_PH_DUMP_DIR is set (RomPortGraphDump.hpp writes the file).
+    struct TraceRec {
+        double r0 = 0.0, r1 = 0.0, lam = 0.0;   ///< ‖F‖₁ before and after the step, step length
+        int flags = 0;                          ///< 1 kink-bounded, 2 Armijo failed (best/past-kink step taken), 4 fp floor, 8 bounded per node
+        int worst = -1;                         ///< node with the largest |F| after the step
+        double worst_F = 0.0;
+        int big = -1;                           ///< node with the largest |dz| of the step
+        double big_dz = 0.0;
+    };
+    struct FailureInfo {
+        bool converged = false;                 ///< the Jacobi fallback converged
+        std::vector<double> z_start, z_newton;  ///< z at entry; Newton's last iterate (L recovered)
+        std::vector<TraceRec> trace;
+    };
+    std::function<void(const PortGraph&, const FailureInfo&, const std::vector<double>& z_final)> on_failure;
+    double sim_time = 0.0;                                   ///< label for the dump (s)
+    const std::vector<std::string>* node_names = nullptr;    ///< label for the dump (per node)
+    /// The N set of the last prepare() and its plane Schur base J_NN − A_NL·A_LL⁻¹·A_LN (k×k, row-major).
+    const std::vector<int>& nSet() const { return part_.Nn; }
+    const std::vector<double>& schurBase() const { return part_.Jbase; }
+
+    struct Stats { long solves = 0, newton_iters = 0, armijo_failures = 0, jacobi_fallbacks = 0, jacobi_failed = 0, zero_exits = 0, port_evals = 0, factorisations = 0, side_switches = 0, kink_bounded = 0, fp_floor_converged = 0, node_bounded = 0, l_factorisations = 0, l_solves = 0, k_max = 0; };
     mutable Stats stats;   ///< mutable: residual() (const) counts port evaluations
 
     void resize(int n_nodes) {
@@ -213,11 +242,18 @@ struct PortGraph {
         bool ok = residualOk_(F, mag, z);
         if (!ok) {
             prepare();
+            FailureInfo* fi = nullptr;
+            FailureInfo info;
+            if (on_failure) { fi = &info; info.z_start = z; }
+            trace_ = fi ? &info.trace : nullptr;
             ok = newton_(z, F);
+            trace_ = nullptr;
             if (!ok) {
                 ++stats.jacobi_fallbacks;
+                if (fi) info.z_newton = z;
                 ok = jacobi_(z);
                 if (!ok) ++stats.jacobi_failed;
+                if (fi) { info.converged = ok; on_failure(*this, info, z); }
             }
         }
         if (floor_projection)
@@ -350,6 +386,7 @@ private:
     };
     Part part_;
     std::vector<double> lpsi_;
+    std::vector<TraceRec>* trace_ = nullptr;   ///< Newton's per-iteration record, only while on_failure is set
 
     bool structureChanged_() const {
         const Part& pt = part_;
@@ -498,7 +535,7 @@ private:
         };
         std::vector<double> F = F0, mag(un, 0.0);
         std::vector<double> dz(un, 0.0), zt = z, Ft, Mt;
-        std::vector<double> J(k * k), dzN(k);
+        std::vector<double> J(k * k), dzN(k), capC(k, 1.0), capP(k, 1.0);
         // Difference step (relative to max(1, |z|)) for the port and store slopes.
         constexpr double kDiff = 1.0e-7;
         // Per port: value and both one-sided slopes in each argument at z.
@@ -692,7 +729,12 @@ private:
                 ++stats.side_switches;
             }
             // Roundoff floor: no step the arithmetic can resolve is left (see atFloor_).
-            if (atFloorRed(F, z, dz)) { ++stats.fp_floor_converged; ok = true; break; }
+            if (atFloorRed(F, z, dz)) {
+                ++stats.fp_floor_converged;
+                if (trace_) { TraceRec tr; tr.r0 = tr.r1 = normRed(F, c); tr.flags = 4; trace_->push_back(tr); }
+                ok = true;
+                break;
+            }
             // Armijo on ‖F‖₁ from the full step. If the full step fails, the
             // step is bounded by the first strong kink along it instead of being
             // halved blindly: a port whose law bends where the step crosses it
@@ -710,6 +752,26 @@ private:
                 residualN_(zt, Ft, Mt);
                 return normRed(Ft, c * (1.0 - lam));
             };
+            // A step bounded per node (O-6): N moves by cap ⊙ dz_N, the boundary
+            // L nodes by the exact linear response −c·w0 − W·(cap ⊙ dz_N), and the
+            // L residual is then zero.
+            auto trialCap = [&](const std::vector<double>& cap) {
+                for (std::size_t i = 0; i < k; ++i) {
+                    const auto t = static_cast<std::size_t>(pt.Nn[i]);
+                    zt[t] = z[t] + cap[i] * dz[t];
+                }
+                for (std::size_t b2 = 0; b2 < nb; ++b2) {
+                    double v = -c * w0b[b2];
+                    const double* w = &pt.Wb[b2 * k];
+                    for (std::size_t j = 0; j < k; ++j) v -= w[j] * cap[j] * dzN[j];
+                    const auto t = static_cast<std::size_t>(pt.bnd[b2]);
+                    zt[t] = z[t] + v;
+                }
+                residualN_(zt, Ft, Mt);
+                return normRed(Ft, 0.0);
+            };
+            const std::vector<double>* capped = nullptr;
+            bool kb = false;
             double lam = 1.0, r = trial(1.0), best = r, best_lam = 1.0;
             bool acc = r <= (1.0 - 1.0e-4) * r0 || converged(Ft, Mt, zt, 0.0);
             if (!acc) {
@@ -725,7 +787,9 @@ private:
                 double tc = 1.0, tp = 1.0;
                 // err(t): one law's linearisation error at step t (cfs); move(t): whether the
                 // step to t moves its arguments by more than one difference step.
+                double kc = 1.0, kp = 1.0;   // this law's kink parameters (1: none)
                 auto bound = [&](const std::function<double(double)>& err, const std::function<bool(double)>& moves) {
+                    kc = kp = 1.0;
                     const double e1 = std::fabs(err(1.0));
                     if (!(e1 >= 1.0e-2 * std::min(r, r0))) return;
                     double lo = 0.0, hi = 1.0;
@@ -740,12 +804,34 @@ private:
                         const double m = 0.5 * (lo + hi);
                         (std::fabs(err(m)) > 1.0e-6 * e1 ? hi : lo) = m;
                     }
+                    // The departure point found above is the kink only when the law is
+                    // straight up to it. A law that curves before its kink (the orifice's
+                    // square root below the street-level crossing, Bellinge G71F044,
+                    // 2026-11-04) departs from its tangent long before the kink: "just
+                    // past the kink" then landed at t ≈ 0.003–0.02 of a step whose kink
+                    // sits near 0.27, and Newton crawled 20 iterations. The crossing
+                    // parameter places a kink between straight pieces exactly at
+                    // t_k = t_c/(2 − t_c); the later of the two is the kink estimate.
+                    hi = std::max(hi, cc / (2.0 - cc));
+
                     // A kink within one difference step of the iterate is the slope
                     // classification's (it is "at" the iterate); bounding by it would stall
                     // the step at roundoff (Bellinge G71F100, 2026-11-02: kink 7e-15 ft away).
                     if (!moves(hi)) return;
                     tc = std::min(tc, cc);
                     tp = std::min(tp, hi);
+                    kc = cc;
+                    kp = hi;
+                };
+                // Per node: the kink parameters of its own laws (O-6). capC crosses
+                // each node's first kink by at most its distance, capP lands just past it.
+                std::fill(capC.begin(), capC.end(), 1.0);
+                std::fill(capP.begin(), capP.end(), 1.0);
+                auto capAt = [&](int t, double cc, double cp) {
+                    if (t < 0 || pt.cls[static_cast<std::size_t>(t)] != 1) return;
+                    const std::size_t i = lc(t);
+                    capC[i] = std::min(capC[i], cc);
+                    capP[i] = std::min(capP[i], cp);
                 };
                 auto far = [](double d, double x) { return std::fabs(d) >= kDiff * std::max(1.0, std::fabs(x)); };
                 {
@@ -754,6 +840,7 @@ private:
                         bound([&](double t) { return kinkErr(q, t); }, [&](double t) {
                             return far(t * zOf(dz, p.up), zOf(z, p.up)) || far(t * zOf(dz, p.dn), zOf(z, p.dn));
                         });
+                        if (kc < 1.0) capAt(p.up, kc, kp), capAt(p.dn, kc, kp);
                     }
                     for (int ti : pt.Nn) {
                         const auto t = static_cast<std::size_t>(ti);
@@ -761,34 +848,67 @@ private:
                         const double v0 = volume(ti, z[t], nullptr);
                         bound([&](double s) { return (volume(ti, z[t] + s * dz[t], nullptr) - v0 - s * st_[t].a * dz[t]) / dt; },
                               [&](double s) { return far(s * dz[t], z[t]); });
+                        if (kc < 1.0) capAt(ti, kc, kp);
                     }
                 }
                 if (tc < 1.0) {
                     ++stats.kink_bounded;
-                    lams.push_back(tc);
-                    if (tp < tc) lams.push_back(tp);
-                    for (double l = 0.5 * tp; lams.size() < 14; l *= 0.5) lams.push_back(l);
+                    kb = true;
+                    // O-6: bound each node by its own laws' kinks first. The global
+                    // bound stops every node at the nearest kink anywhere, so a step
+                    // that crosses m independent corners takes m iterations (Bellinge
+                    // storm peak, 2026-11-04: ~20 coupled manholes, each a dry ramp
+                    // 0.01 ft from its member level, one crossed per iteration, 20
+                    // iterations at λ ≈ 1e-5..1e-3). The L block takes the exact
+                    // response to the bounded N step (its rows are linear).
+                    const double mC = *std::min_element(capC.begin(), capC.end());
+                    const double mP = *std::min_element(capP.begin(), capP.end());
+                    if (trialCap(capC) <= (1.0 - 1.0e-4 * mC) * r0 || converged(Ft, Mt, zt, 0.0)) { acc = true; capped = &capC; }
+                    else if (trialCap(capP) <= (1.0 - 1.0e-4 * mP) * r0 || converged(Ft, Mt, zt, 0.0)) { acc = true; capped = &capP; }
+                    if (!acc) {
+                        lams.push_back(tc);
+                        if (tp < tc) lams.push_back(tp);
+                        for (double l = 0.5 * tp; lams.size() < 14; l *= 0.5) lams.push_back(l);
+                    }
                 } else {
                     for (double l = 0.5; lams.size() < 11; l *= 0.5) lams.push_back(l);
                 }
                 for (double l : lams) {
+                    if (acc) break;
                     r = trial(l);
                     if (r <= (1.0 - 1.0e-4 * l) * r0 || converged(Ft, Mt, zt, c * (1.0 - l))) { acc = true; lam = l; break; }
                     if (r < best) { best = r; best_lam = l; }
                 }
                 if (!acc) {
                     ++stats.armijo_failures;
-                    // No step decreases ‖F‖₁: take the best one, or (none better) step just
-                    // past the kink, which moves the iterate to the next piece. Never the
-                    // blind full step: taken anyway, it fed a period-6 cycle through
-                    // residuals 4 -> 4e4 (Bellinge G71F320/G71F68Y, 2026-11-02).
-                    lam = best < r0 ? best_lam : (tc < 1.0 ? tp : best_lam);
-                    trial(lam);
+                    // No step decreases ‖F‖₁: take the best one, or (none better) step
+                    // every kinked node just past its own kink, which moves each to its
+                    // next piece. Never the blind full step: taken anyway, it fed a
+                    // period-6 cycle through residuals 4 -> 4e4 (Bellinge
+                    // G71F320/G71F68Y, 2026-11-02).
+                    if (best < r0 || !(tc < 1.0)) { lam = best_lam; trial(lam); }
+                    else { trialCap(capP); capped = &capP; }
                 }
             }
-            for (int t : pt.Nn) dz_last[static_cast<std::size_t>(t)] = lam * dz[static_cast<std::size_t>(t)];
+            if (capped) {
+                ++stats.node_bounded;
+                lam = 0.0;   // the L residual is solved exactly by the bounded step
+                for (std::size_t i = 0; i < k; ++i) dz[static_cast<std::size_t>(pt.Nn[i])] *= (*capped)[i];
+            }
+            for (int t : pt.Nn) dz_last[static_cast<std::size_t>(t)] = (capped ? 1.0 : lam) * dz[static_cast<std::size_t>(t)];
+            if (trace_) {
+                TraceRec tr;
+                tr.r0 = r0; tr.r1 = normRed(Ft, capped ? 0.0 : c * (1.0 - lam)); tr.lam = capped ? -1.0 : lam;
+                tr.flags = (kb ? 1 : 0) | (acc ? 0 : 2) | (capped ? 8 : 0);
+                for (int t : pt.Nn) {
+                    const auto ut = static_cast<std::size_t>(t);
+                    if (std::fabs(Ft[ut]) > std::fabs(tr.worst_F)) { tr.worst = t; tr.worst_F = Ft[ut]; }
+                    if (std::fabs(dz[ut]) > std::fabs(tr.big_dz)) { tr.big = t; tr.big_dz = dz[ut]; }
+                }
+                trace_->push_back(tr);
+            }
             z.swap(zt); F.swap(Ft); mag.swap(Mt);
-            c *= 1.0 - lam;
+            c = capped ? 0.0 : c * (1.0 - lam);
             ok = converged(F, mag, z, c);
         }
         materialize(z, c);
