@@ -1707,6 +1707,8 @@ class GroundwaterVariable(IntEnum):
     COMPLETED_TIME = 30
     PENDING_IN = 31
     PENDING_OUT = 32
+    QX = 33
+    QY = 34
 
 
 class GroundwaterLedger(IntEnum):
