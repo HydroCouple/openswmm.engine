@@ -377,6 +377,7 @@ SWMM_ENGINE_API int swmm_reaction_species_add(SWMM_Engine engine, const char* na
     if (!recompile_or_rollback(ctx, rx_backup, reg_backup))
         return SWMM_ERR_BADPARAM;
     rx.configured = true;
+    rx.surface.resize_authoring(ctx.n_landuses(), rx.n_species(), ctx.n_subcatches());
     return SWMM_OK;
 }
 
@@ -469,6 +470,16 @@ SWMM_ENGINE_API int swmm_reaction_species_remove(SWMM_Engine engine, int idx) {
     rebuild_msx_registry(ctx, old_base, old_n);
     if (!recompile_or_rollback(ctx, rx_backup, reg_backup))
         return SWMM_ERR_BADPARAM;
+    rx.surface.resize_authoring(ctx.n_landuses(), rx.n_species(), ctx.n_subcatches(), idx);
+    const auto& removed_name = rx_backup.species_name[static_cast<std::size_t>(idx)];
+    const auto prune = [&](auto& rows) {
+        rows.erase(std::remove_if(rows.begin(), rows.end(), [&](const auto& row) {
+            return row.species == removed_name;
+        }), rows.end());
+    };
+    prune(rx.surface.rows.buildup);
+    prune(rx.surface.rows.washoff);
+    prune(rx.surface.rows.loadings);
     return SWMM_OK;
 }
 

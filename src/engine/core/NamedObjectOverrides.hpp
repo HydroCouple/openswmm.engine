@@ -19,6 +19,14 @@ inline void moveNamedOverrides(SimulationContext& ctx, const char* type, int ind
         ctx.user_flags.unset(type, from, def.name);
         if (!to.empty()) ctx.user_flags.set(type, to, def.name, std::move(*value));
     }
+    if (std::string(type) == "SUBCATCHMENT") {
+        auto& rows = ctx.reactions.surface.rows.loadings;
+        for (auto& row : rows)
+            if (CiEqual{}(row.subcatch, from)) row.subcatch = to;
+        rows.erase(std::remove_if(rows.begin(), rows.end(), [](const auto& row) {
+            return row.subcatch.empty();
+        }), rows.end());
+    }
     const bool node = std::string(type) == "NODE", link = std::string(type) == "LINK";
     if (!node && !link) return;
     auto& iq = ctx.initial_quality;

@@ -84,6 +84,9 @@ SWMM_ENGINE_API int swmm_subcatch_add(SWMM_Engine engine, const char* id) {
     ctx.subcatch_names.add(id);
     int n = ctx.subcatch_names.size();
     ctx.subcatches.grow_to(n);
+    auto& surface = ctx.reactions.surface;
+    if (surface.n_species > 0)
+        surface.init_loading.resize(static_cast<std::size_t>(n) * surface.n_species, 0.0);
     const auto un = static_cast<std::size_t>(n);
     if (ctx.spatial.subcatch_x.size() < un)
         ctx.spatial.subcatch_x.resize(un, 0.0);
@@ -595,13 +598,23 @@ SWMM_ENGINE_API int swmm_subcatch_set_initial_loading(SWMM_Engine engine, int sc
         auto& ms = ctx.reactions.surface;
         const int m = pollut_idx - ctx.n_pollutants();
         CHECK_INDEX(m >= 0 && m < ctx.reactions.n_species());
+        const auto& species = ctx.reactions.species_name[static_cast<std::size_t>(m)];
+        if (ctx.reactions.species_is_wall[static_cast<std::size_t>(m)] ||
+            ctx.pollutant_names.find(species) >= 0)
+            return SWMM_ERR_BADPARAM; // [LOADINGS] cannot persist either ownership.
         if (ms.n_landuses != ctx.n_landuses() || ms.n_species != ctx.reactions.n_species())
-            ms.resize_params(ctx.n_landuses(), ctx.reactions.n_species());
+            ms.resize_authoring(ctx.n_landuses(), ctx.reactions.n_species(), ctx.n_subcatches());
         const auto want =
             static_cast<std::size_t>(ctx.n_subcatches()) * static_cast<std::size_t>(ms.n_species);
         if (ms.init_loading.size() != want)
-            ms.init_loading.assign(want, 0.0);
+            ms.init_loading.resize(want, 0.0);
         ms.init_loading[ms.sidx(sc_idx, m)] = buildup;
+        const auto& owner = ctx.subcatch_names.name_of(sc_idx);
+        auto& rows = ms.rows.loadings;
+        rows.erase(std::remove_if(rows.begin(), rows.end(), [&](const auto& row) {
+            return ctx.subcatch_names.find(row.subcatch) == sc_idx && row.species == species;
+        }), rows.end());
+        if (buildup != 0.0) rows.push_back({owner, species, buildup});
         ms.resolved = true;
         return SWMM_OK;
     }

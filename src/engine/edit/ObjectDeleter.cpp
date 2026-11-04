@@ -835,6 +835,11 @@ CascadeResult delete_link(SimulationContext& ctx, int link_idx) {
 CascadeResult delete_subcatch(SimulationContext& ctx, int sc_idx) {
     CascadeResult result;
     moveNamedOverrides(ctx, "SUBCATCHMENT", sc_idx, ctx.subcatch_names.name_of(sc_idx), {});
+    auto& surface = ctx.reactions.surface;
+    if (surface.n_species > 0 && surface.init_loading.size() == static_cast<std::size_t>(ctx.n_subcatches()) * surface.n_species) {
+        const auto begin = surface.init_loading.begin() + static_cast<std::size_t>(sc_idx) * surface.n_species;
+        surface.init_loading.erase(begin, begin + surface.n_species);
+    }
     for (auto* laws : {&ctx.reactions.wet_laws, &ctx.reactions.buildup_laws}) {
         laws->erase(std::remove_if(laws->begin(), laws->end(),
                                    [&](const auto& l) { return l.subcatchment == sc_idx; }),

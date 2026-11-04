@@ -726,7 +726,9 @@ SWMM_ENGINE_API int swmm_subcatch_get_coverages(SWMM_Engine engine, int sc_idx, 
  *     SWMM_ERR_BADHANDLE. A failed subcatchment/pollutant index check returns SWMM_ERR_BADINDEX. No
  *     independent finite/range validation of the numeric inputs is performed here. Constituent
  *     indices 0..np-1 select pollutants; np+m selects reaction species m. This is an initial
- *     authoring loading, not current runoff concentration; unset storage reads zero.
+ *     authoring loading, not current runoff concentration; unset storage reads zero. Reaction WALL
+ *     species and names shadowed by a pollutant return SWMM_ERR_BADPARAM. Species edits update
+ *     deferred authoring rows as well as dense storage, so initialization retains the edit.
  */
 SWMM_ENGINE_API int swmm_subcatch_set_initial_loading(SWMM_Engine engine, int sc_idx,
                                                       int pollut_idx, double buildup);

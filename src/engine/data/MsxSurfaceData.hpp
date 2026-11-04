@@ -51,6 +51,7 @@
 
 #include <cstddef>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace openswmm {
@@ -202,6 +203,32 @@ struct MsxSurfaceData {
     std::size_t sidx(int sc, int m) const noexcept {
         return static_cast<std::size_t>(sc) * static_cast<std::size_t>(n_species) +
                static_cast<std::size_t>(m);
+    }
+
+    // Configuration edits preserve authored siblings; runtime arrays are rebuilt at initialize.
+    void resize_authoring(int nlu, int nm, int nsc, int removed_species = -1) {
+        const int old_nm = n_species, old_nlu = n_landuses;
+        auto repack = [&](auto& values, int old_rows, int new_rows, auto initial) {
+            auto previous = std::move(values);
+            values.assign(static_cast<std::size_t>(new_rows) * nm, initial);
+            for (int row = 0; row < old_rows && row < new_rows; ++row)
+                for (int col = 0; col < nm; ++col) {
+                    const int old_col = removed_species >= 0 && col >= removed_species ? col + 1 : col;
+                    const auto from = static_cast<std::size_t>(row) * old_nm + old_col;
+                    if (old_col < old_nm && from < previous.size())
+                        values[static_cast<std::size_t>(row) * nm + col] = previous[from];
+                }
+        };
+        for (auto* v : {&bu_type, &bu_normalizer, &wo_type}) repack(*v, old_nlu, nlu, 0);
+        for (auto* v : {&bu_c1, &bu_c2, &bu_c3, &bu_max_days, &wo_coeff, &wo_expon,
+                        &wo_sweep_effic, &wo_bmp_effic}) repack(*v, old_nlu, nlu, 0.0);
+        const int old_nsc = old_nm > 0 ? static_cast<int>(init_loading.size() / old_nm) : 0;
+        repack(init_loading, old_nsc, nsc, 0.0);
+        repack(mcf, 1, 1, 1.0);
+        repack(c_rain, 1, 1, 0.0);
+        repack(snow_only, 1, 1, false);
+        n_landuses = nlu;
+        n_species = nm;
     }
 
     /**
