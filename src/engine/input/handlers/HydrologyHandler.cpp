@@ -976,7 +976,7 @@ void handle_lid_usage(SimulationContext& ctx, const std::vector<std::string>& li
         // RptFile `*` is legacy's "no report file" (lid.c:475). Kept as a path
         // it resolved to <inp dir>/* and the run wrote a file named `*`.
         ctx.lid_usage.rpt_file.push_back(tok.size() > 8 && tok[8] != "*" ? tok[8] : std::string{});
-        ctx.lid_usage.drain_to.push_back(tok.size() > 9 ? tok[9] : std::string{});
+        ctx.lid_usage.drain_to.push_back(tok.size() > 9 && tok[9] != "*" ? tok[9] : std::string{});
         ctx.lid_usage.from_perv.push_back(tok.size() > 10 ? to_double(tok[10]) : 0.0);
     }
 }

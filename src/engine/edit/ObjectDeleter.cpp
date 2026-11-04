@@ -625,6 +625,12 @@ CascadeResult delete_link(SimulationContext& ctx, int link_idx);
 
 CascadeResult delete_node(SimulationContext& ctx, int node_idx) {
     CascadeResult result;
+    for (int row = 0; row < ctx.lid_usage.count(); ++row)
+        if (ctx.node_names.find(ctx.lid_usage.drain_to[row]) == node_idx) {
+            ctx.lid_usage.drain_to[row].clear();
+            result.add(SWMM_REF_LID_USAGE, row, "drain_to", false);
+        }
+
 
     // --- Step 0: report (never edit) control rules referencing this node ---
     add_rule_refs(ctx, ctx.node_names.name_of(node_idx), result);
@@ -867,7 +873,9 @@ CascadeResult delete_subcatch(SimulationContext& ctx, int sc_idx) {
         if (!sc_name.empty()) {
             for (int i = 0; i < ctx.lid_usage.count(); ++i) {
                 const auto ui = static_cast<std::size_t>(i);
-                if (ui < ctx.lid_usage.drain_to.size() && ctx.lid_usage.drain_to[ui] == sc_name) {
+                if (ui < ctx.lid_usage.drain_to.size() &&
+                    ctx.node_names.find(ctx.lid_usage.drain_to[ui]) < 0 &&
+                    ctx.subcatch_names.find(ctx.lid_usage.drain_to[ui]) == sc_idx) {
                     ctx.lid_usage.drain_to[ui].clear();
                     result.add(SWMM_REF_LID_USAGE, i, "drain_to", false);
                 }

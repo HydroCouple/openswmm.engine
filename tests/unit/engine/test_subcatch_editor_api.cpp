@@ -37,9 +37,11 @@
  */
 
 #include <gtest/gtest.h>
+#include <cmath>
 
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_model.h>
+#include <openswmm/engine/openswmm_nodes.h>
 #include <openswmm/engine/openswmm_subcatchments.h>
 #include <openswmm/engine/openswmm_infrastructure.h>
 #include <openswmm/engine/openswmm_edit.h>
@@ -427,6 +429,64 @@ TEST(SubcatchGroundwaterEditing, ExpressionsFollowRenameAndAreRemovedBeforeNameR
     }
     ASSERT_EQ(swmm_subcatch_get_gwf_expression(engine, 0, SWMM_GWF_LATERAL, text, 128), SWMM_OK);
     EXPECT_STREQ(text, "HGW + 1");
+}
+
+TEST(LidUsageEditing, CompleteOwnerReplacementPreservesRowsPathsAndRejectsInvalidLastRecord) {
+    const auto engine = swmm_engine_new();
+    ASSERT_NE(engine, nullptr);
+    struct Cleanup { SWMM_Engine e; ~Cleanup() { swmm_engine_destroy(e); } } cleanup{engine};
+    ASSERT_EQ(swmm_subcatch_add(engine, "A"), SWMM_OK);
+    ASSERT_EQ(swmm_subcatch_add(engine, "B"), SWMM_OK);
+    ASSERT_EQ(swmm_lid_add(engine, "RainGarden", 1), SWMM_OK);
+    ASSERT_EQ(swmm_lid_add(engine, "Other", 0), SWMM_OK);
+    SWMM_LidUsageRecord a{0, 0, 2, 12.1234567890123, 3, 25, 40, 1, 15,
+                         "reports/A report.txt", "/project/reports/A report.txt", "B"};
+    SWMM_LidUsageRecord b{1, 1, 3, 21, 4, 35, 50, 0, 20, "", "", "*"};
+    ASSERT_EQ(swmm_lid_usage_replace_subcatch(engine, 0, &a, 1), SWMM_OK);
+    ASSERT_EQ(swmm_lid_usage_replace_subcatch(engine, 1, &b, 1), SWMM_OK);
+    SWMM_LidUsageRecord read{};
+    ASSERT_EQ(swmm_lid_usage_get_record(engine, 0, &read), SWMM_OK);
+    EXPECT_DOUBLE_EQ(read.area, a.area); EXPECT_STREQ(read.report_file, a.report_file);
+    EXPECT_STREQ(read.report_file_resolved, a.report_file_resolved); EXPECT_STREQ(read.drain_to, "B");
+    // Borrowed getter strings must survive a replace call that reads that same store.
+    ASSERT_EQ(swmm_lid_usage_replace_subcatch(engine, 0, &read, 1), SWMM_OK);
+    SWMM_LidUsageRecord replacements[2]{a, a}; replacements[1].area = NAN;
+    EXPECT_EQ(swmm_lid_usage_replace_subcatch(engine, 0, replacements, 2), SWMM_ERR_BADPARAM);
+    ASSERT_EQ(swmm_lid_usage_get_record(engine, 0, &read), SWMM_OK); EXPECT_DOUBLE_EQ(read.area, a.area);
+    replacements[1] = a; replacements[1].control_idx = 1; replacements[1].area = 8;
+    ASSERT_EQ(swmm_lid_usage_replace_subcatch(engine, 0, replacements, 2), SWMM_OK);
+    ASSERT_EQ(swmm_lid_usage_get_record(engine, 2, &read), SWMM_OK);
+    EXPECT_EQ(read.subcatch_idx, 1); EXPECT_DOUBLE_EQ(read.area, 21); EXPECT_STREQ(read.drain_to, "");
+    ASSERT_EQ(swmm_lid_usage_replace_subcatch(engine, 0, nullptr, 0), SWMM_OK);
+    ASSERT_EQ(swmm_lid_usage_get_record(engine, 0, &read), SWMM_OK); EXPECT_EQ(read.subcatch_idx, 1);
+    EXPECT_EQ(swmm_lid_usage_count(engine), 1);
+}
+
+TEST(LidUsageEditing, DrainReferencesFollowTypedRenameAndCannotRebindOnDeletion) {
+    const auto e = swmm_engine_new(); ASSERT_NE(e, nullptr);
+    struct Cleanup { SWMM_Engine e; ~Cleanup() { swmm_engine_destroy(e); } } cleanup{e};
+    ASSERT_EQ(swmm_subcatch_add(e, "Source"), SWMM_OK);
+    ASSERT_EQ(swmm_subcatch_add(e, "Shared"), SWMM_OK);
+    ASSERT_EQ(swmm_node_add(e, "Shared", 0), SWMM_OK);
+    ASSERT_EQ(swmm_lid_add(e, "RainGarden", 1), SWMM_OK);
+    SWMM_LidUsageRecord row{0, 0, 1, 10, 0, 0, 20, 0, 0, "", "", "sHaReD"}, got{};
+    ASSERT_EQ(swmm_lid_usage_replace_subcatch(e, 0, &row, 1), SWMM_OK);
+    ASSERT_EQ(swmm_subcatch_rename(e, 1, "Catchment"), SWMM_OK);
+    ASSERT_EQ(swmm_lid_usage_get_record(e, 0, &got), SWMM_OK); EXPECT_STREQ(got.drain_to, "sHaReD");
+    ASSERT_EQ(swmm_node_rename(e, 0, "Receiver"), SWMM_OK);
+    ASSERT_EQ(swmm_lid_usage_get_record(e, 0, &got), SWMM_OK); EXPECT_STREQ(got.drain_to, "Receiver");
+    ASSERT_EQ(swmm_node_delete(e, 0, nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_lid_usage_get_record(e, 0, &got), SWMM_OK); EXPECT_STREQ(got.drain_to, "");
+    row.drain_to = "Catchment"; ASSERT_EQ(swmm_lid_usage_replace_subcatch(e, 0, &row, 1), SWMM_OK);
+    ASSERT_EQ(swmm_subcatch_rename(e, 1, "NewCatchment"), SWMM_OK);
+    ASSERT_EQ(swmm_lid_usage_get_record(e, 0, &got), SWMM_OK); EXPECT_STREQ(got.drain_to, "NewCatchment");
+    ASSERT_EQ(swmm_node_add(e, "Other", 0), SWMM_OK);
+    EXPECT_EQ(swmm_subcatch_rename(e, 1, "Other"), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_node_rename(e, 0, "NewCatchment"), SWMM_ERR_BADPARAM);
+    ASSERT_EQ(swmm_lid_usage_get_record(e, 0, &got), SWMM_OK); EXPECT_STREQ(got.drain_to, "NewCatchment");
+    EXPECT_STREQ(swmm_subcatch_id(e, 1), "NewCatchment"); EXPECT_STREQ(swmm_node_id(e, 0), "Other");
+    ASSERT_EQ(swmm_subcatch_delete(e, 1, nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_lid_usage_get_record(e, 0, &got), SWMM_OK); EXPECT_STREQ(got.drain_to, "");
 }
 
 } // namespace

@@ -1246,11 +1246,21 @@ SWMM_ENGINE_API int swmm_subcatch_rename(SWMM_Engine engine, int idx, const char
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    std::vector<int> drains;
+    for (int row = 0; row < ctx.lid_usage.count(); ++row) {
+        const auto& target = ctx.lid_usage.drain_to[row];
+        if (ctx.node_names.find(target) < 0 && ctx.subcatch_names.find(target) == idx)
+            drains.push_back(row);
+    }
     const std::string previous = ctx.subcatch_names.name_of(idx);
+    // A renamed catchment drain must not become a node drain on the next load.
+    if (!drains.empty() && ctx.node_names.find(newId) >= 0)
+        return SWMM_ERR_BADPARAM;
     if (!ctx.subcatch_names.rename(idx, newId))
         return SWMM_ERR_BADPARAM;
     // GWF expressions are owned by this catchment, keyed by canonical spelling.
     const std::string next = ctx.subcatch_names.name_of(idx);
+    for (int row : drains) ctx.lid_usage.drain_to[row] = next;
     if (previous != next) {
         for (const char* type : {"LATERAL", "DEEP"}) {
             const auto old_key = "GWF:" + previous + ":" + type;

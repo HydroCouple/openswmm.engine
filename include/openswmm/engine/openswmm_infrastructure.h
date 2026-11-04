@@ -868,12 +868,17 @@ SWMM_ENGINE_API int swmm_inlet_usage_find_node(SWMM_Engine engine, int node_idx)
  */
 SWMM_ENGINE_API int swmm_inlet_usage_get(SWMM_Engine engine, int usage_idx, SWMM_InletUsage* out);
 
+/** @brief Validate a complete inlet placement without changing the model.
+ * @details Uses the same lifecycle, finite numeric, host/design compatibility and capture-node
+ * checks as swmm_inlet_usage_set. Returns its rejection status; no row is created or replaced.
+ */
+SWMM_ENGINE_API int swmm_inlet_usage_validate(SWMM_Engine engine, const SWMM_InletUsage* usage);
+
 /**
  * @brief Validate and upsert one inlet placement per host.
  *
  * Requires BUILDING/OPENED. Copies the row and clears deferred design/capture names. Flow and local
- * dimensions are display flow/length units. Supply finite numbers because comparison guards do not
- * independently reject NaN.
+ * dimensions are display flow/length units. Nonfinite numbers are rejected before mutation.
  *
  * @param[in] engine Non-null live engine; caller serializes access.
  * @param[in] usage Non-null borrowed struct. Host must be a conduit or already flagged inlet
@@ -1765,6 +1770,42 @@ SWMM_ENGINE_API int swmm_lid_usage_get(SWMM_Engine engine, int usage_idx, int* s
  *     or SWMM_ERR_BADPARAM for invalid required arguments.
  */
 SWMM_ENGINE_API int swmm_lid_usage_remove(SWMM_Engine engine, int usage_idx);
+
+/** Complete authored LID placement. Percentages and per-unit dimensions use project input units.
+ * Getter strings borrow engine storage until mutation/destruction; copy them before changing rows.
+ * report_file is the authored path token; report_file_resolved preserves its absolute path cache.
+ */
+typedef struct SWMM_LidUsageRecord {
+    int subcatch_idx;
+    int control_idx;
+    int number;
+    double area, width, init_sat, from_imperv;
+    int to_perv;
+    double from_perv;
+    const char* report_file;
+    const char* report_file_resolved;
+    const char* drain_to;
+} SWMM_LidUsageRecord;
+
+/** @brief Read all authored members of a placement; out must be non-null. No lifecycle guard. */
+SWMM_ENGINE_API int swmm_lid_usage_get_record(SWMM_Engine engine, int row, SWMM_LidUsageRecord* out);
+
+/** @brief Preflight a complete placement without mutation, in BUILDING/OPENED.
+ * @details Requires valid subcatchment/control, a non-NODE control and finite numbers. It preserves
+ * native authored values outside UI entry ranges for exact replay. Optional strings may be null;
+ * no file is opened and no drain-name resolution is performed by this configuration API.
+ */
+SWMM_ENGINE_API int swmm_lid_usage_validate_record(SWMM_Engine engine, const SWMM_LidUsageRecord* row);
+
+/** @brief Atomically replace one subcatchment's ordered authored placements in BUILDING/OPENED.
+ * @details Every row must belong to subcatch_idx and pass validate_record before any mutation.
+ * count0 removes that owner's placements; null rows is valid only then. Unselected owners' records
+ * and relative order are preserved. New rows occupy the first old position, or append if absent.
+ * Mutable global indices may change. Input strings are copied, including both report-path members.
+ * Selected placement balances reset; unselected balances are retained. No runtime solver rebuild.
+ */
+SWMM_ENGINE_API int swmm_lid_usage_replace_subcatch(SWMM_Engine engine, int subcatch_idx,
+                                                    const SWMM_LidUsageRecord* rows, int count);
 
 #ifdef __cplusplus
 } /* extern "C" */

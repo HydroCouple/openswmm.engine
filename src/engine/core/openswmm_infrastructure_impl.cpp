@@ -34,6 +34,7 @@
 #include "../edit/VirtualJunctionOps.hpp"
 
 #include <cctype>
+#include <cmath>
 #include <string>
 
 extern "C" {
@@ -900,8 +901,7 @@ SWMM_ENGINE_API int swmm_inlet_usage_get(SWMM_Engine engine, int usage_idx, SWMM
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_inlet_usage_set(SWMM_Engine engine, const SWMM_InletUsage* usage,
-                                         int* usage_idx) {
+SWMM_ENGINE_API int swmm_inlet_usage_validate(SWMM_Engine engine, const SWMM_InletUsage* usage) {
     CHECK_HANDLE(engine);
     if (!usage)
         return SWMM_ERR_BADPARAM;
@@ -932,6 +932,9 @@ SWMM_ENGINE_API int swmm_inlet_usage_set(SWMM_Engine engine, const SWMM_InletUsa
         return SWMM_ERR_BADPARAM;
     if (usage->num_inlets < 1)
         return SWMM_ERR_BADPARAM;
+    if (!std::isfinite(usage->pct_clogged) || !std::isfinite(usage->flow_limit) ||
+        !std::isfinite(usage->local_depress) || !std::isfinite(usage->local_width))
+        return SWMM_ERR_BADPARAM;
     if (usage->pct_clogged < 0.0 || usage->pct_clogged > 99.0)
         return SWMM_ERR_BADPARAM;
     if (usage->flow_limit < 0.0 || usage->local_depress < 0.0 || usage->local_width < 0.0)
@@ -944,6 +947,17 @@ SWMM_ENGINE_API int swmm_inlet_usage_set(SWMM_Engine engine, const SWMM_InletUsa
     if (!openswmm::edit::ij_usage_shape_ok(ctx, usage->design_idx, host_link))
         return openswmm::ERR_INLET_USAGE_SHAPE;
 
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_inlet_usage_set(SWMM_Engine engine, const SWMM_InletUsage* usage,
+                                         int* usage_idx) {
+    const int status = swmm_inlet_usage_validate(engine, usage);
+    if (status != SWMM_OK)
+        return status;
+    auto& ctx = to_engine(engine)->context();
+    const bool node_host = usage->host_kind == SWMM_INLET_HOST_NODE;
+
     // At most one row per host: replace in place, else append.
     int row = node_host ? ctx.inlet_usages.find_by_node_host(usage->host_idx)
                         : ctx.inlet_usages.find_by_link(usage->host_idx);
@@ -954,11 +968,14 @@ SWMM_ENGINE_API int swmm_inlet_usage_set(SWMM_Engine engine, const SWMM_InletUsa
     }
     const auto ur = static_cast<std::size_t>(row);
     auto& U = ctx.inlet_usages;
+    const double previous_clogging = (1.0 - U.clog_factor[ur]) * 100.0;
     U.design_index[ur] = usage->design_idx;
     U.node_index[ur] = usage->capture_node_idx;
     U.num_inlets[ur] = usage->num_inlets;
     U.placement[ur] = usage->placement;
-    U.clog_factor[ur] = 1.0 - usage->pct_clogged / 100.0;
+    // Preserve the stored factor when changing a sibling field: percent conversion is lossy.
+    if (usage->pct_clogged != previous_clogging)
+        U.clog_factor[ur] = 1.0 - usage->pct_clogged / 100.0;
     U.flow_limit[ur] = usage->flow_limit;
     U.local_depress[ur] = usage->local_depress;
     U.local_width[ur] = usage->local_width;
@@ -1588,6 +1605,81 @@ SWMM_ENGINE_API int swmm_lid_usage_remove(SWMM_Engine engine, int usage_idx) {
     u.drain_to.erase(u.drain_to.begin() + ui);
     u.from_perv.erase(u.from_perv.begin() + ui);
     u.resize_wb(u.count());
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_lid_usage_get_record(SWMM_Engine engine, int row, SWMM_LidUsageRecord* out) {
+    CHECK_HANDLE(engine);
+    if (!out) return SWMM_ERR_BADPARAM;
+    const auto& u = to_engine(engine)->context().lid_usage;
+    CHECK_INDEX(row >= 0 && row < u.count());
+    const int status = swmm_lid_usage_get(engine, row, &out->subcatch_idx, &out->control_idx,
+        &out->number, &out->area, &out->width, &out->init_sat, &out->from_imperv,
+        &out->to_perv, &out->from_perv);
+    if (status != SWMM_OK) return status;
+    out->report_file = u.rpt_file[row].original.c_str();
+    out->report_file_resolved = u.rpt_file[row].absolute.c_str();
+    out->drain_to = u.drain_to[row].c_str();
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_lid_usage_validate_record(SWMM_Engine engine, const SWMM_LidUsageRecord* row) {
+    CHECK_HANDLE(engine);
+    if (!row) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+    CHECK_INDEX(row->subcatch_idx >= 0 && row->subcatch_idx < ctx.n_subcatches());
+    CHECK_INDEX(row->control_idx >= 0 && row->control_idx < ctx.lid_controls.count());
+    if (ctx.lid_controls.lid_type[row->control_idx] == "NODE") return SWMM_ERR_BADPARAM;
+    for (double value : {row->area, row->width, row->init_sat, row->from_imperv, row->from_perv})
+        if (!std::isfinite(value)) return SWMM_ERR_BADPARAM;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_lid_usage_replace_subcatch(SWMM_Engine engine, int subcatch_idx,
+                                                    const SWMM_LidUsageRecord* rows, int count) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+    CHECK_INDEX(subcatch_idx >= 0 && subcatch_idx < ctx.n_subcatches());
+    if (count < 0 || (count > 0 && !rows)) return SWMM_ERR_BADPARAM;
+    for (int i = 0; i < count; ++i) {
+        if (rows[i].subcatch_idx != subcatch_idx) return SWMM_ERR_BADPARAM;
+        const int status = swmm_lid_usage_validate_record(engine, &rows[i]);
+        if (status != SWMM_OK) return status;
+    }
+    // Build separately: even strings borrowed from the current store stay live until publication.
+    auto next = ctx.lid_usage;
+    int position = next.count();
+    for (int i = next.count() - 1; i >= 0; --i) {
+        if (next.subcatch_index[i] != subcatch_idx) continue;
+        position = i;
+        const auto erase = [i](auto& v) { if (i < static_cast<int>(v.size())) v.erase(v.begin() + i); };
+        erase(next.subcatch_index); erase(next.lid_index); erase(next.number);
+        erase(next.area); erase(next.width); erase(next.init_sat); erase(next.from_imperv);
+        erase(next.to_perv); erase(next.rpt_file); erase(next.drain_to); erase(next.from_perv);
+        erase(next.wb_inflow); erase(next.wb_evap); erase(next.wb_infil); erase(next.wb_surf_flow);
+        erase(next.wb_drain_flow); erase(next.wb_init_vol); erase(next.wb_final_vol);
+    }
+    for (auto* v : {&next.wb_inflow, &next.wb_evap, &next.wb_infil, &next.wb_surf_flow,
+                    &next.wb_drain_flow, &next.wb_init_vol, &next.wb_final_vol})
+        v->resize(next.count(), 0.0);
+    for (int i = 0; i < count; ++i) {
+        const auto& r = rows[i];
+        const auto insert = [at = position + i](auto& v, auto value) { v.insert(v.begin() + at, std::move(value)); };
+        openswmm::FilePathPair path;
+        path.original = r.report_file ? r.report_file : "";
+        path.absolute = r.report_file_resolved ? r.report_file_resolved : "";
+        insert(next.subcatch_index, subcatch_idx); insert(next.lid_index, r.control_idx);
+        insert(next.number, r.number); insert(next.area, r.area); insert(next.width, r.width);
+        insert(next.init_sat, r.init_sat); insert(next.from_imperv, r.from_imperv);
+        insert(next.to_perv, r.to_perv); insert(next.rpt_file, std::move(path));
+        insert(next.drain_to, std::string(r.drain_to && std::string(r.drain_to) != "*" ? r.drain_to : "")); insert(next.from_perv, r.from_perv);
+        for (auto* v : {&next.wb_inflow, &next.wb_evap, &next.wb_infil, &next.wb_surf_flow,
+                        &next.wb_drain_flow, &next.wb_init_vol, &next.wb_final_vol})
+            insert(*v, 0.0);
+    }
+    ctx.lid_usage = std::move(next);
     return SWMM_OK;
 }
 

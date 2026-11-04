@@ -33,6 +33,7 @@
  */
 
 #include <gtest/gtest.h>
+#include <cmath>
 
 #include <cstdio>
 #include <filesystem>
@@ -925,6 +926,17 @@ TEST(InletJunctionIO, UsageSetGetRemove) {
     u.local_depress = 0.2;
     u.local_width = 3.0;
     u.placement = SWMM_INLET_ON_GRADE;
+    const int before_count = swmm_inlet_usage_count(e);
+    ASSERT_EQ(swmm_inlet_usage_validate(e, &u), SWMM_OK);
+    EXPECT_EQ(swmm_inlet_usage_count(e), before_count);
+    for (int field = 0; field < 4; ++field) {
+        auto invalid = u;
+        double* slots[] = {&invalid.pct_clogged, &invalid.flow_limit, &invalid.local_depress, &invalid.local_width};
+        *slots[field] = NAN;
+        EXPECT_EQ(swmm_inlet_usage_validate(e, &invalid), SWMM_ERR_BADPARAM);
+        EXPECT_EQ(swmm_inlet_usage_set(e, &invalid, nullptr), SWMM_ERR_BADPARAM);
+        EXPECT_EQ(swmm_inlet_usage_count(e), before_count);
+    }
     int row = -1;
     ASSERT_EQ(swmm_inlet_usage_set(e, &u, &row), SWMM_OK);
     EXPECT_EQ(swmm_inlet_usage_count(e), 1);
@@ -935,6 +947,17 @@ TEST(InletJunctionIO, UsageSetGetRemove) {
     EXPECT_EQ(back.num_inlets, 3);
     EXPECT_NEAR(back.pct_clogged, 25.0, 1e-9);
     EXPECT_EQ(back.placement, SWMM_INLET_ON_GRADE);
+
+    auto precise = back;
+    precise.pct_clogged = 25.1;
+    ASSERT_EQ(swmm_inlet_usage_set(e, &precise, nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_inlet_usage_get(e, row, &precise), SWMM_OK);
+    const double authored_clogging = precise.pct_clogged;
+    precise.num_inlets = 4;
+    ASSERT_EQ(swmm_inlet_usage_set(e, &precise, nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_inlet_usage_get(e, row, &precise), SWMM_OK);
+    EXPECT_DOUBLE_EQ(precise.pct_clogged, authored_clogging);
+    ASSERT_EQ(swmm_inlet_usage_set(e, &u, nullptr), SWMM_OK);
 
     // Rejections: bad clogging, a capture node equal to the host, a link host
     // that is not a conduit index, and a node host without is_inlet.
