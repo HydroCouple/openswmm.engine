@@ -1715,6 +1715,10 @@ int Router::stepFv(SimulationContext& ctx, double dt,
             auto* r = static_cast<RefreshCtx*>(user);
             r->self->refreshFvBoundaryFlows(*r->ctx, t_elapsed, *r->eval);
         };
+        forcing.refresh_structures = [](void* user, double) {
+            auto* r = static_cast<RefreshCtx*>(user);
+            r->self->refreshFvStructureFlows(*r->ctx, *r->eval);
+        };
     }
 
 
@@ -1875,6 +1879,31 @@ void Router::refreshFvBoundaryFlows(SimulationContext& ctx, double t_elapsed,
         fv_fixed_head_[un] = ctx.nodes.invert_elev[un] + ctx.nodes.depth[un];
     }
 
+    eval_structures();
+}
+
+bool Router::fvJunctionHoldsWater(int node) const noexcept {
+    const auto* impl = dynamic_cast<const fv::ExplicitFvSolver*>(fv_solver_.get());
+    if (!impl)
+        return false;
+    const auto un = static_cast<std::size_t>(node);
+    return un < impl->node_algebraic().size() && fv_mesh_.node_kind[un] == fv::kNodeJunction &&
+           !impl->node_algebraic()[un];
+}
+
+void Router::refreshFvStructureFlows(SimulationContext& ctx,
+                                     const std::function<void()>& eval_structures) {
+    if (!dynamic_cast<fv::ExplicitFvSolver*>(fv_solver_.get()))
+        return;
+    for (std::size_t s = 0; s < fv_mesh_.struct_link.size(); ++s) {
+        for (const int n : {fv_mesh_.struct_n1[s], fv_mesh_.struct_n2[s]}) {
+            const auto un = static_cast<std::size_t>(n);
+            if (fv_mesh_.node_kind[un] == fv::kNodeVirtual)
+                continue;
+            ctx.nodes.depth[un] = std::max(0.0, fv_state_.node_head[un] - fv_mesh_.node_invert[un]);
+            ctx.nodes.head[un] = fv_state_.node_head[un];
+        }
+    }
     eval_structures();
 }
 
@@ -2130,14 +2159,16 @@ void Router::publishFv(SimulationContext& ctx, double dt) {
                 continue;
             ctx.links.flow[uj] = fv_struct_int_[uj] / dt;
         }
-        // The solver pays a structure only what its donor holds
-        // (ExplicitFvSolver::limitStructureFlows); report the water it moved.
+        // The CPU solver pays a structure only what its donor holds and
+        // refreshes it inside LTS macro cycles, which the integral above cannot
+        // see and a rejected cycle would leave it holding; report the water it
+        // moved (ExplicitFvSolver::limitStructureFlows).
         if (impl) {
-            const auto& refused = impl->structure_refused_volume();
-            for (std::size_t s = 0; s < refused.size(); ++s) {
-                if (refused[s] != 0.0)
-                    ctx.links.flow[static_cast<std::size_t>(fv_mesh_.struct_link[s])] -=
-                        refused[s] / dt;
+            const auto& applied = impl->structure_applied_volume();
+            for (std::size_t s = 0; s < applied.size(); ++s) {
+                if (fv_mesh_.struct_is_dummy.empty() || !fv_mesh_.struct_is_dummy[s])
+                    ctx.links.flow[static_cast<std::size_t>(fv_mesh_.struct_link[s])] =
+                        applied[s] / dt;
             }
         }
     }

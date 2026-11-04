@@ -265,7 +265,7 @@ These keys are read only under FLOW_ROUTING FV; under any other routing model th
 | FV_NODE_COUPLING | \status{Retired} | Parsed; the value EXPLICIT warns and is treated as SEMI_IMPLICIT (storage nodes are always coupled semi-implicitly); any other value is silently ignored. |
 | FV_NODE_DT | \status{Retired} | Parsed; the value NONE warns and is treated as STABILITY (the node accuracy bound is always armed); any other value is silently ignored. |
 | FV_NODE_PICARD | \status{Retired} | Parsed; a value above 1 warns and is treated as 1 (the semi-implicit node correction is always a single sweep); 1 or less is silently accepted. |
-| FV_NODE_CELL_COUPLING | \status{Retired} | Accepted and silently ignored; junctions are always algebraic interfaces (hydraulics §8.6.1). |
+| FV_NODE_CELL_COUPLING | \status{Retired} | Accepted and silently ignored; the junction model follows from each node's connectivity (hydraulics §8.6.1). |
 | FV_JUNCTION_MODEL | \status{Retired} | Accepted and silently ignored; the BUCKET junction model was removed in favour of the algebraic interface (hydraulics §8.6.1). |
 | VIRTUAL_JUNCTION_MOMENTUM | \status{Retired} | Parsed; FULL warns and is treated as BASIC (its cross-junction momentum term was not mass conserving); every value maps to BASIC and the key is never written back. |
 | COMPATIBILITY | \status{Retired} | Accepted and silently ignored; a legacy SWMM compatibility flag with no effect in this engine. |

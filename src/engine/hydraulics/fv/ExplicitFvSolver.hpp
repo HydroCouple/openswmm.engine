@@ -318,14 +318,15 @@ public:
     const std::vector<double>& dummy_volume() const noexcept { return dummy_vol_; }
 
     /**
-     * @brief Borrow per-structure-entry volume refused by donor limiting this routing step.
+     * @brief Borrow per-structure-entry volume moved this routing step.
      *
-     * Same lifetime and alignment as dummy_volume(). Router subtracts it from the forced structure
-     * discharge it integrated, so the published flow is the water the solver actually moved.
-     * @return ft3 over the last window, aligned with mesh.struct_link; zero when no donor ran short.
+     * Same lifetime and alignment as dummy_volume(): the ft3 the solver applied to each non-DUMMY entry
+     * after donor limiting, signed node1 to node2. Router publishes it as the step-mean link flow, so
+     * the report is the water moved even when the discharge was refreshed inside a macro cycle.
+     * @return ft3 over the last window, aligned with mesh.struct_link; DUMMY entries stay zero.
      */
-    const std::vector<double>& structure_refused_volume() const noexcept {
-        return struct_refused_vol_;
+    const std::vector<double>& structure_applied_volume() const noexcept {
+        return struct_applied_vol_;
     }
 
     /**
@@ -347,6 +348,16 @@ public:
      *     Demoted real ponds are excluded before return from advance.
      */
     const std::vector<std::uint8_t>& node_publish_stage() const noexcept { return node_pub_; }
+
+    /**
+     * @brief Borrow the static algebraic-junction eligibility mask.
+     *
+     * Same lifetime as node_publish_stage(). A plain junction with a zero entry keeps its water in a
+     * bucket (no incident face, or an end of a structure link), which the reported balance has to count.
+     * @return Node-indexed mask fixed at initialization; nonzero when the flux-balance solve may own the
+     *     node. Dynamic ponding demotion does not change it.
+     */
+    const std::vector<std::uint8_t>& node_algebraic() const noexcept { return node_alg_; }
 
     /**
      * @brief Borrow the last-window time integral of mean face through-flow per cell.
@@ -864,9 +875,9 @@ private:
      * Rebuilds node_qstruct_ from forcing.structure_flow in refreshStructFlows' order, scaling every
      * outflow of a bucket donor (not algebraic, fixed-head or virtual) whose outgoing demand over dt
      * exceeds its volume plus net face arrival plus positive lateral. Receivers get the scaled flow;
-     * the refused ft3 accumulates in struct_refused_vol_ and accepted-water tracking books the applied
-     * volume. Bit-identical to the unscaled sums when no donor runs short. Call immediately before a
-     * node update, ahead of refreshDummyFlows.
+     * the applied ft3 accumulates in struct_applied_vol_ and accepted-water tracking books it.
+     * Bit-identical to the unscaled sums when no donor runs short. Call immediately before a node
+     * update, ahead of refreshDummyFlows.
      *
      * @param[in] dt Positive finite timestep in seconds matching the imminent node update.
      * @param[in] forcing Borrowed aligned current forcing in native units.
@@ -875,8 +886,8 @@ private:
      */
     template <class ArrivedFn>
     void limitStructureFlows(double dt, const FvStepForcing& forcing, ArrivedFn&& arrived);
-    /// Volume refused to each structure entry this routing step (ft³), parallel to mesh.struct_link.
-    std::vector<double> struct_refused_vol_;
+    /// Volume applied to each structure entry this routing step (ft³), parallel to mesh.struct_link.
+    std::vector<double> struct_applied_vol_;
     /// Per-node scratch for limitStructureFlows: outgoing demand, then the donor's scale factor.
     std::vector<double> node_struct_scale_;
 
@@ -1095,14 +1106,17 @@ private:
      * cell/node windows close at their matching end, so sources and booked transfers cover the same
      * span. Reconstructs HO2 and UF snapshots as required, then fires due faces/cells/nodes. With a
      * complete cycle all accumulators drain; caller owns outer save/reject/clock/stat acceptance and
-     * must keep forcing unchanged mid-cycle.
+     * must keep face forcing unchanged mid-cycle. Under SUBSTEP coupling, structure_flow alone is
+     * refreshed through forcing.refresh_structures before every base step after the first.
      *
      * @param[in] dt0 Positive finite base interval in seconds.
      * @param[in] nsub Required cycle base-step count 2^(K-1), matching current tier/due-set arrays.
      * @param[in] forcing Borrowed aligned current forcing in native units; matching structure/lateral
      *     arrays and callback context remain live for this call.
+     * @param[in] t_elapsed Seconds from the advance's start to the cycle's start, the clock the
+     *     structure refresh is given.
      */
-    void runMacroCycle(double dt0, int nsub, const FvStepForcing& forcing);
+    void runMacroCycle(double dt0, int nsub, const FvStepForcing& forcing, double t_elapsed);
 
     /**
      * @brief Transfer pending local-tier water/momentum into state before synchronization/re-tiering.
@@ -1420,7 +1434,7 @@ private:
     // doing something interesting. Re-censusing the POST-step state and rolling
     // back when it disagrees is the principled fix; a heuristic fill-rate cap
     // is not, because the stiffness ratio depends on FV_SLOT_CELERITY.
-    std::vector<double> save_dummy_, rk_dummy_, save_refused_, rk_refused_;
+    std::vector<double> save_dummy_, rk_dummy_, save_applied_, rk_applied_;
     std::vector<double> save_cell_a_, save_cell_q_, save_cell_phi_;
     std::vector<double> save_node_vol_, save_node_head_;
     std::vector<double> save_exch_, save_in_, save_out_, save_flood_, save_qint_, save_carry_;

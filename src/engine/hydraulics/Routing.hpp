@@ -362,6 +362,18 @@ public:
     /// The FV mesh built at init (empty unless FLOW_ROUTING FV).
     const fv::NetworkMeshData& fvMesh() const { return fv_mesh_; }
 
+    /**
+     * @brief Tell whether the native FV solver keeps real water at a plain junction.
+     *
+     * Ordinary FV junctions are algebraic interfaces whose water stands in the incident cells; an
+     * end junction of a structure link holds surface area times depth of its own.
+     *
+     * @param[in] node Node index, not validated beyond a loaded mesh.
+     * @return True for a plain junction on the native solver's bucket path; false otherwise,
+     *     including every other backend and routing model.
+     */
+    bool fvJunctionHoldsWater(int node) const noexcept;
+
     /// Backend label chosen by the FV factory ("cpu (...)", "omp (...)", ...).
     const std::string& fvBackend() const { return fv_backend_; }
 
@@ -716,6 +728,21 @@ private:
      */
     void refreshFvBoundaryFlows(SimulationContext& ctx, double t_elapsed,
                                 const std::function<void()>& eval_structures);
+
+    /**
+     * @brief Re-evaluate native FV structure flows inside an LTS macro cycle.
+     *
+     * No-op for a non-native FV backend. Publishes the solver depth/head of structure end nodes
+     * only, then invokes structure equations. Banks nothing (the solver books applied structure
+     * volume) and leaves outfall stages and the fixed-head array untouched.
+     *
+     * @param[in,out] ctx Resolved matching native-ft simulation context with stable
+     *     node/link/subtype/profile dimensions; caller owns storage, clocks and run-level ledgers.
+     * @param[in] eval_structures Synchronous borrowed no-argument callable evaluating structures and
+     *     refilling forcing arrays; must remain live, not throw/reenter or change topology.
+     */
+    void refreshFvStructureFlows(SimulationContext& ctx,
+                                 const std::function<void()>& eval_structures);
 
     /**
      * @brief Bank current structure discharge over the elapsed forcing segment.

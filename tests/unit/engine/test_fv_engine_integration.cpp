@@ -1465,7 +1465,7 @@ TEST(FvEngine, ForceMainUsesItsPressurizedFrictionLaw) {
 // A routing step spans many substeps, across which a weir's head difference
 // moves while a frozen discharge does not.
 TEST(FvEngine, StructureCouplingSubstepTracksTheMovingHead) {
-    auto run_coupling = [](const char* tag, const char* mode) {
+    auto run_coupling = [](const char* tag, const char* routing, const char* mode) {
         std::ifstream in(std::string(kUnitDataDir) + "/fv_structures.inp");
         EXPECT_TRUE(in.good()) << "cannot open fv_structures.inp";
         const std::string path = outDir() + "/coupling_" + tag + ".inp";
@@ -1474,7 +1474,7 @@ TEST(FvEngine, StructureCouplingSubstepTracksTheMovingHead) {
             std::string line;
             while (std::getline(in, line)) {
                 if (line.rfind("FLOW_ROUTING", 0) == 0) {
-                    os << "FLOW_ROUTING         FV\n";
+                    os << "FLOW_ROUTING         " << routing << "\n";
                     if (mode)
                         os << "FV_STRUCTURE_COUPLING " << mode << "\n";
                 } else {
@@ -1488,21 +1488,21 @@ TEST(FvEngine, StructureCouplingSubstepTracksTheMovingHead) {
         return parseReport(rpt);
     };
 
-    const RunResult frozen = run_coupling("frozen", "ROUTING_STEP");
-    const RunResult substep = run_coupling("substep", "SUBSTEP");
-    ASSERT_TRUE(frozen.parsed && substep.parsed);
+    const RunResult frozen = run_coupling("frozen", "FV", "ROUTING_STEP");
+    const RunResult substep = run_coupling("substep", "FV", "SUBSTEP");
+    const RunResult dw = run_coupling("dw", "DYNWAVE", nullptr);
+    ASSERT_TRUE(frozen.parsed && substep.parsed && dw.parsed);
 
-    // Historical note: under the integrated junction bucket the two cadences
-    // opened a 2x gap on the weir (23.0 cfs frozen vs 12.1 re-evaluated) —
-    // the bucket's head LAGGED, and the frozen weir kept spending the stale
-    // head difference. An algebraic junction's head is quasi-static (balanced
-    // every substep), so that lag is gone and the cadences must now AGREE;
-    // a re-opened gap would mean junction heads are integration-lagged again.
-    ASSERT_TRUE(frozen.peak_flow.count("W1") && substep.peak_flow.count("W1"));
-    EXPECT_NEAR(substep.peak_flow.at("W1"), frozen.peak_flow.at("W1"),
-                0.2 * frozen.peak_flow.at("W1"))
-        << "weir peak " << substep.peak_flow.at("W1") << " cfs under SUBSTEP vs "
-        << frozen.peak_flow.at("W1") << " frozen — the cadences diverged";
+    // A junction at a structure holds real storage, so its head is integrated
+    // and a frozen weir keeps spending a head difference that has already gone
+    // (22.8 cfs against DW's 3.9). Re-evaluating it is what brings the peak back.
+    ASSERT_TRUE(frozen.peak_flow.count("W1") && substep.peak_flow.count("W1") &&
+                dw.peak_flow.count("W1"));
+    const double dw_peak = dw.peak_flow.at("W1");
+    EXPECT_LT(std::fabs(substep.peak_flow.at("W1") - dw_peak),
+              0.5 * std::fabs(frozen.peak_flow.at("W1") - dw_peak))
+        << "weir peak " << substep.peak_flow.at("W1") << " cfs under SUBSTEP, "
+        << frozen.peak_flow.at("W1") << " frozen, " << dw_peak << " DW";
     EXPECT_LT(std::fabs(substep.continuity_pct), 0.5)
         << "routing continuity " << substep.continuity_pct << " %";
     EXPECT_LT(std::fabs(frozen.continuity_pct), 0.5)
@@ -1721,6 +1721,258 @@ TEST(FvEngine, StructuresModelAgreesWithDynamicWave) {
     // brought these from 12.1 / 14.3 / 7.4.
     EXPECT_LT(fv.peak_flow.at("W1"), 3.0 * dw.peak_flow.at("W1"))
         << "weir " << fv.peak_flow.at("W1") << " vs DW " << dw.peak_flow.at("W1");
+}
+
+// ===========================================================================
+// A CSO weir spilling into a small junction (Bellinge chambers, 2026-11-03)
+// ===========================================================================
+
+namespace {
+
+/**
+ * @brief Write a CSO chamber fixture: a throttled chamber spilling over a weir into a junction.
+ *
+ * Copy of Bellinge's G60F60Y chamber in CMS/metres: 1.2 m3/s for 1.5 h into chamber CH, whose
+ * tabular outlet passes at most 0.08 m3/s on to OUT1; the rest crosses transverse weir W_CSO into
+ * plain junction OV, which drains by a 0.8 m pipe to OUT2. Truncates the destination input file and
+ * returns its path even when stream creation/write fails; does not run the model.
+ *
+ * @param[in] name Artifact basename, without extension, beneath outDir().
+ * @param[in] routing Routing token inserted verbatim into FLOW_ROUTING; FV or DYNWAVE.
+ * @param[in] lts False writes FV_LTS NO; true leaves local time stepping at its default.
+ * @return Owned generated input path.
+ */
+std::string writeCsoChamberModel(const std::string& name, const char* routing, bool lts) {
+    const std::string path = outDir() + "/" + name + ".inp";
+    std::ofstream os(path);
+    os << "[OPTIONS]\nFLOW_UNITS           CMS\nFLOW_ROUTING         " << routing
+       << "\nLINK_OFFSETS         DEPTH\n"
+          "START_DATE           06/29/2012\nSTART_TIME           00:00:00\n"
+          "END_DATE             06/29/2012\nEND_TIME             04:00:00\n"
+          "REPORT_STEP          00:00:30\nROUTING_STEP         10\nMIN_SURFAREA         1.167\n"
+       << (lts ? "" : "FV_LTS               NO\n")
+       << "\n[JUNCTIONS]\nJ_UP   12.959  2.46  0 0 0\nCH     11.989  2.33  0 0 0\n"
+          "J_THR  11.269  2.58  0 0 0\nOV     11.989  2.33  0 0 0\n\n"
+          "[OUTFALLS]\nOUT1   11.000  FREE NO\nOUT2   11.199  FREE NO\n\n"
+          "[CONDUITS]\nC_IN   J_UP   CH    59.1  0.013 0 0.06 0 0\n"
+          "C_THR  J_THR  OUT1  20.0  0.013 0 0    0 0\nC_OV   OV     OUT2  33.9  0.013 0 0    0 0\n\n"
+          "[OUTLETS]\nO_THR  CH  J_THR  0  TABULAR/HEAD  THRCURVE  NO\n\n"
+          "[WEIRS]\nW_CSO  CH  OV  TRANSVERSE  1.38  1.77  NO  0  0  NO\n\n"
+          "[XSECTIONS]\nC_IN   CIRCULAR  0.70 0 0 0 1\nC_THR  CIRCULAR  0.30 0 0 0 1\n"
+          "C_OV   CIRCULAR  0.80 0 0 0 1\nW_CSO  RECT_OPEN 0.95 2 0 0 1\n\n"
+          "[CURVES]\nTHRCURVE RATING 0 0\nTHRCURVE 0.57 0.0712\nTHRCURVE 0.78 0.08\n"
+          "THRCURVE 1.0 0.0676\nTHRCURVE 1.3 0.0741\nTHRCURVE 1.4 0.08\nTHRCURVE 7.93 0.08\n\n"
+          "[TIMESERIES]\nHYD 06/29/2012 00:00 0.0\nHYD 06/29/2012 00:30 1.2\n"
+          "HYD 06/29/2012 02:00 1.2\nHYD 06/29/2012 02:30 0.0\nHYD 06/29/2012 04:00 0.0\n\n"
+          "[INFLOWS]\nJ_UP  FLOW  HYD  FLOW  1.0  1.0  0\n\n"
+          "[REPORT]\nINPUT  NO\nCONTROLS  NO\nNODES ALL\nLINKS ALL\n";
+    return path;
+}
+
+/**
+ * @brief Write a CSO chain fixture: a weir into a manhole that must fill to push water uphill.
+ *
+ * Copy of Bellinge's G80F66 chain in CMS/metres: 1.2 m3/s for 1.5 h into basin CY spills over W_Y
+ * into plain junction JX, whose only way on is 0.8 m pipe C_UP, climbing 0.54 m into basin CB; CB
+ * spills over W_B into JO, which drains by C_OUT to OUT. Truncates the destination input file and
+ * returns its path even when stream creation/write fails; does not run the model.
+ *
+ * @param[in] name Artifact basename, without extension, beneath outDir().
+ * @return Owned generated input path.
+ */
+std::string writeCsoChainModel(const std::string& name) {
+    const std::string path = outDir() + "/" + name + ".inp";
+    std::ofstream os(path);
+    os << "[OPTIONS]\nFLOW_UNITS           CMS\nFLOW_ROUTING         FV\n"
+          "LINK_OFFSETS         DEPTH\n"
+          "START_DATE           06/29/2012\nSTART_TIME           00:00:00\n"
+          "END_DATE             06/29/2012\nEND_TIME             04:00:00\n"
+          "REPORT_STEP          00:00:30\nROUTING_STEP         10\nMIN_SURFAREA         1.167\n\n"
+          "[JUNCTIONS]\nJX  34.319  3.08  0 0 0\nJO  35.669  0.95  0 0 0\n\n"
+          "[STORAGE]\nCY  34.169  3.231  0  TABULAR  YBAS  0 0\n"
+          "CB  34.860  2.46   0  TABULAR  BBAS  0 0\n\n"
+          "[OUTFALLS]\nOUT  34.630  FREE  NO\n\n"
+          "[CONDUITS]\nC_UP   CB  JX   14.82  0.013 0 0 0 0\nC_OUT  JO  OUT  14.91  0.013 0 0 0 0\n\n"
+          "[WEIRS]\nW_Y  CY  JX  TRANSVERSE  1.26  1.77  NO   0 0 YES\n"
+          "W_B  CB  JO  TRANSVERSE  1.10  1.77  YES  0 0 NO\n\n"
+          "[XSECTIONS]\nC_UP   CIRCULAR   0.80 0 0 0 1\nC_OUT  CIRCULAR   0.80 0 0 0 1\n"
+          "W_Y    RECT_OPEN  5.00 3.15 0 0 1\nW_B    RECT_OPEN  2.46 7.00 0 0 1\n\n"
+          "[CURVES]\nYBAS STORAGE 0 2.4\nYBAS 0.4 4.95\nYBAS 3.23 4.95\n"
+          "BBAS STORAGE 0 0\nBBAS 0.14 12\nBBAS 0.33 100\nBBAS 0.53 240\nBBAS 0.74 344\n"
+          "BBAS 1.13 478\nBBAS 1.80 617\n\n"
+          "[TIMESERIES]\nHYD 06/29/2012 00:00 0.0\nHYD 06/29/2012 00:30 1.2\n"
+          "HYD 06/29/2012 02:00 1.2\nHYD 06/29/2012 02:30 0.0\nHYD 06/29/2012 04:00 0.0\n\n"
+          "[INFLOWS]\nCY  FLOW  HYD  FLOW  1.0  1.0  0\n\n"
+          "[REPORT]\nINPUT  NO\nCONTROLS  NO\nNODES ALL\nLINKS ALL\n";
+    return path;
+}
+
+} // namespace
+
+// The weir's discharge is evaluated from the node heads and held across the
+// substeps it spans. Into a zero-storage junction nothing buffered it: the
+// solved head flipped between empty and the rim, and 2.2-2.5 ML of the 8.6 ML
+// spill booked as flooding under global stepping and LTS alike. The junction
+// now keeps DW's storage; under LTS the weir is also re-evaluated inside each
+// macro cycle, without which a cycle-long frozen discharge still overfilled it.
+TEST(FvEngine, ACsoWeirIntoASmallJunctionDeliversItsSpillLikeDynamicWave) {
+    const std::string dw_inp = writeCsoChamberModel("cso_chamber_dw", "DYNWAVE", true);
+    ASSERT_TRUE(runModel(dw_inp).parsed);
+    const double dw_out = routingRow(outDir() + "/cso_chamber_dw.rpt", "External Outflow");
+    ASSERT_GT(dw_out, 0.0);
+
+    for (const bool lts : {false, true}) {
+        const std::string tag = lts ? "cso_chamber_fv_lts" : "cso_chamber_fv_global";
+        const RunResult fv = runModel(writeCsoChamberModel(tag, "FV", lts));
+        ASSERT_TRUE(fv.parsed) << tag;
+        const std::string rpt = outDir() + "/" + tag + ".rpt";
+        // hectare-m: DW floods nothing; 0.001 ha-m is 0.1 % of the spill.
+        EXPECT_LT(routingRow(rpt, "Flooding Loss"), 0.001) << tag << ": the spill flooded OV";
+        EXPECT_NEAR(routingRow(rpt, "External Outflow"), dw_out, 0.01 * dw_out) << tag;
+        EXPECT_LT(std::fabs(fv.continuity_pct), 0.1) << tag;
+        if (lts) {
+            std::ifstream in(rpt);
+            std::string line;
+            double cycles = -1.0;
+            while (std::getline(in, line)) {
+                const auto v = trailingNumbers(line);
+                if (line.find("LTS Macro Cycles Fired") != std::string::npos && !v.empty())
+                    cycles = v.back();
+            }
+            EXPECT_GT(cycles, 0.0) << "LTS never ran a macro cycle, so this variant tests nothing";
+        }
+    }
+}
+
+// JX has to fill to 1.7 m before anything climbs C_UP. With W_Y's discharge held
+// for a whole macro cycle, JX flipped between empty and its rim every cycle, C_UP
+// never saw a steady head and all 8.6 ML flooded with nothing delivered, storage
+// or no storage (Bellinge G80U03F, 2026-11-03). DW is no reference on this
+// stripped-down deck (-28 % continuity), so the water balance is asserted directly:
+// the spill goes out through OUT, less what CB holds below its crest.
+TEST(FvEngine, AManholeBelowACsoWeirFillsAndPushesTheSpillUphill) {
+    const RunResult fv = runModel(writeCsoChainModel("cso_chain"));
+    ASSERT_TRUE(fv.parsed);
+    const std::string rpt = outDir() + "/cso_chain.rpt";
+    const double inflow = routingRow(rpt, "External Inflow");
+    ASSERT_GT(inflow, 0.0);
+    EXPECT_LT(routingRow(rpt, "Flooding Loss"), 0.001 * inflow) << "the spill flooded JX";
+    EXPECT_GT(routingRow(rpt, "External Outflow"), 0.95 * inflow);
+    EXPECT_LT(std::fabs(fv.continuity_pct), 0.1);
+}
+
+// A structure's published flow is the routing-step mean of the water it moved.
+// Refreshed inside macro cycles, a discharge the router banked for itself would
+// hold each cycle's last sample over the whole cycle and keep what a rejected
+// cycle had booked. W_B is JO's only inflow and C_OUT its only outflow, so over
+// the storm the two volumes must close.
+TEST(FvEngine, APublishedWeirFlowIsTheWaterItMoved) {
+    const std::string inp = writeCsoChainModel("cso_chain_ledger");
+    const std::string rpt = outDir() + "/cso_chain_ledger.rpt";
+    const std::string out = outDir() + "/cso_chain_ledger.out";
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e, inp.c_str(), rpt.c_str(), out.c_str(), nullptr), 0);
+    ASSERT_EQ(swmm_engine_initialize(e), 0);
+    ASSERT_EQ(swmm_engine_start(e, 1), 0);
+    const int weir = swmm_link_index(e, "W_B");
+    const int pipe = swmm_link_index(e, "C_OUT");
+    ASSERT_GE(weir, 0);
+    ASSERT_GE(pipe, 0);
+    double elapsed = 0.0, previous = 0.0, weir_volume = 0.0, pipe_volume = 0.0;
+    while (swmm_engine_step(e, &elapsed) == 0 && elapsed > 0.0) {
+        double q_weir = 0.0, q_pipe = 0.0;
+        swmm_link_get_flow(e, weir, &q_weir);
+        swmm_link_get_flow(e, pipe, &q_pipe);
+        const double dt = (elapsed - previous) * 86400.0;
+        weir_volume += q_weir * dt;
+        pipe_volume += q_pipe * dt;
+        previous = elapsed;
+    }
+    swmm_engine_end(e);
+    swmm_engine_destroy(e);
+    ASSERT_GT(pipe_volume, 0.0);
+    EXPECT_NEAR(weir_volume, pipe_volume, 0.002 * pipe_volume);
+}
+
+// A pump asking for more than its wet well holds moves what arrives. The router's
+// own integral of the requested 5 cfs would report five times the water it moved.
+TEST(FvEngine, APumpOutrunningItsWetWellReportsTheWaterItMoved) {
+    const std::string inp = outDir() + "/pump_outruns_well.inp";
+    {
+        std::ofstream os(inp);
+        os << "[OPTIONS]\nFLOW_UNITS           CFS\nFLOW_ROUTING         FV\n"
+              "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
+              "END_DATE             01/01/2026\nEND_TIME             01:00:00\n"
+              "REPORT_STEP          00:01:00\nROUTING_STEP         5\n\n"
+              "[JUNCTIONS]\nJU  10.0  5.0  0 0 0\nWW   9.0  6.0  0 0 0\n\n"
+              "[OUTFALLS]\nOUT  9.0  FREE  NO\n\n"
+              "[CONDUITS]\nC1  JU  WW  100  0.013  0 0 0 0\n\n"
+              "[PUMPS]\nP1  WW  OUT  CP1  ON  0  0\n\n"
+              "[XSECTIONS]\nC1  CIRCULAR  1.0 0 0 0 1\n\n"
+              "[CURVES]\nCP1  PUMP4  0 5\nCP1  10 5\n\n"
+              "[INFLOWS]\nJU  FLOW  \"\"  FLOW  1.0  1.0  1.0\n\n"
+              "[REPORT]\nINPUT  NO\nCONTROLS  NO\n";
+    }
+    const std::string rpt = outDir() + "/pump_outruns_well.rpt";
+    const std::string out = outDir() + "/pump_outruns_well.out";
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e, inp.c_str(), rpt.c_str(), out.c_str(), nullptr), 0);
+    ASSERT_EQ(swmm_engine_initialize(e), 0);
+    ASSERT_EQ(swmm_engine_start(e, 1), 0);
+    const int pump = swmm_link_index(e, "P1");
+    const int pipe = swmm_link_index(e, "C1");
+    ASSERT_GE(pump, 0);
+    ASSERT_GE(pipe, 0);
+    double elapsed = 0.0, previous = 0.0, pump_volume = 0.0, pipe_volume = 0.0;
+    while (swmm_engine_step(e, &elapsed) == 0 && elapsed > 0.0) {
+        double q_pump = 0.0, q_pipe = 0.0;
+        swmm_link_get_flow(e, pump, &q_pump);
+        swmm_link_get_flow(e, pipe, &q_pipe);
+        const double dt = (elapsed - previous) * 86400.0;
+        pump_volume += q_pump * dt;
+        pipe_volume += q_pipe * dt;
+        previous = elapsed;
+    }
+    swmm_engine_end(e);
+    swmm_engine_destroy(e);
+    ASSERT_GT(pipe_volume, 0.0);
+    EXPECT_NEAR(pump_volume, pipe_volume, 0.02 * pipe_volume);
+}
+
+// Slot-program fixture (d): 40 cfs through a 1500 ft main and an orifice into a
+// 112 ft outfall, slammed shut at 1 h. As a zero-storage interface J1 settled into
+// a false steady state before the valve ever closed: 150 cfs drawn from the
+// outfall and 304 cfs reported through the valve, against DW's 119 and a true 40.
+// J1's water then has to reach the balance: 1 005 ft3 at its rim is 0.34 %.
+TEST(FvEngine, AValveAtAJunctionMatchesDynamicWaveAndBalances) {
+    auto run_valve = [](const std::string& tag, const char* routing) {
+        const std::string inp = outDir() + "/" + tag + ".inp";
+        {
+            std::ofstream os(inp);
+            os << "[OPTIONS]\nFLOW_UNITS           CFS\nFLOW_ROUTING         " << routing
+               << "\nSTART_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
+                  "END_DATE             01/01/2026\nEND_TIME             02:00:00\n"
+                  "REPORT_STEP          00:00:30\nROUTING_STEP         0.25\n"
+                  "FV_SLOT_CELERITY     100\nLENGTHENING_STEP     0\n\n"
+                  "[JUNCTIONS]\nJ0  100.0  80.0  0 0 0\nJ1  100.0  80.0  0 0 0\n\n"
+                  "[OUTFALLS]\nOF  100.0  FIXED  112.0  NO\n\n"
+                  "[CONDUITS]\nC1  J0  J1  1500  0.013  0 0 0\n\n"
+                  "[ORIFICES]\nV1  J1  OF  SIDE  0.0  0.65  NO  0\n\n"
+                  "[XSECTIONS]\nC1  CIRCULAR  3 0 0 0 1\nV1  CIRCULAR  3 0 0 0 1\n\n"
+                  "[INFLOWS]\nJ0  FLOW  \"\"  FLOW  1.0  1.0  40.0\n\n"
+                  "[CONTROLS]\nRULE SLAM\nIF SIMULATION TIME > 1.0\n"
+                  "THEN ORIFICE V1 SETTING = 0.0\n\n"
+                  "[REPORT]\nINPUT  NO\nCONTROLS  NO\nNODES ALL\nLINKS ALL\n";
+        }
+        return runModel(inp);
+    };
+    const RunResult dw = run_valve("valve_junction_dw", "DYNWAVE");
+    const RunResult fv = run_valve("valve_junction_fv", "FV");
+    ASSERT_TRUE(dw.parsed && fv.parsed);
+    ASSERT_TRUE(dw.peak_flow.count("V1") && fv.peak_flow.count("V1"));
+    EXPECT_NEAR(fv.peak_flow.at("V1"), dw.peak_flow.at("V1"), 0.05 * dw.peak_flow.at("V1"));
+    EXPECT_NEAR(fv.outflow_volume, dw.outflow_volume, 0.02 * dw.outflow_volume);
+    EXPECT_LT(std::fabs(fv.continuity_pct), 0.05) << "J1's water is missing from the balance";
 }
 
 // ===========================================================================

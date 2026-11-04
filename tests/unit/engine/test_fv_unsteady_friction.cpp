@@ -351,7 +351,9 @@ namespace {
  *
  * @param[in] extra Raw extra FV/project option lines inserted before JUNCTIONS.
  * @return Owned ten-minute CFS deck with 15 ft upstream stage, JV initial depth13 ft,200 ft one-foot
- *     pipe with initial2.4 CFS, .25 s routing and minimum16 cells.
+ *     pipe with initial2.4 CFS, .25 s routing and minimum16 cells. JV's 0.1 ft2 surface is well below
+ *     the pipe's own slot storage (about 0.5 ft2), so the closed valve is the pipe end the correlation
+ *     was calibrated on rather than a surge chamber.
  */
 std::string valveModel(const std::string& extra) {
     std::ostringstream ss;
@@ -366,6 +368,7 @@ std::string valveModel(const std::string& extra) {
           "ROUTING_STEP         0.25\n"
           "RULE_STEP            0\n"
           "FV_MIN_CELLS         16\n"
+          "MIN_SURFAREA         0.1\n"
        << extra
        << "\n[JUNCTIONS]\n;;Name Elev MaxDepth InitDepth\n"
           "JV     0.0  40.0     13.0\n"

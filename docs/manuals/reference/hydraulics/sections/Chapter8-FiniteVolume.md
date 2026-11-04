@@ -1268,8 +1268,8 @@ connectivity — there is no user option:
 | Model | Applies to | Storage | Head |
 |---|---|---|---|
 | **Pass-through** | a *clean* junction of degree 2 with nothing injected at it | none | not a state at all: the two end cells present their centred states directly to each other |
-| **Solved algebraic** | every other storage-less junction with at least one conduit face | none | root of the instantaneous flux balance (8-31) |
-| **Bucket** | storage units, junctions with no conduit face (a pump-only wet well), and junctions demoted by ponding | \f$A_{s}\f$ or a curve | integrated volume ledger, §8.6.5 step 5 |
+| **Solved algebraic** | every other storage-less junction with at least one conduit face and no pump, orifice, weir or outlet | none | root of the instantaneous flux balance (8-31) |
+| **Bucket** | storage units, junctions with no conduit face (a pump-only wet well), junctions at either end of a pump, orifice, weir or outlet, and junctions demoted by ponding | \f$A_{s}\f$ or a curve | integrated volume ledger, §8.6.5 step 5 |
 
 *Clean* means every incident face is a plain conduit face — no culvert
 inlet, no flap gate. A culvert or gate law is head- and
@@ -1321,8 +1321,8 @@ the incident cells, split evenly with zero momentum, because that is
 where an interface junction's water physically stands. The node volume
 the report shows for such a node is that carry ledger and nothing else.
 
-Where a bucket ledger *is* integrated — storage units, structure-only
-junctions, ponding-demoted junctions — the storage relation is the
+Where a bucket ledger *is* integrated — storage units, junctions at a
+structure, ponding-demoted junctions — the storage relation is the
 engine's own: a linear reservoir of area \f$A_{s} = V_{full}/y_{full}\f$
 (`MIN_SURFAREA` unless the project overrode it) held fixed for the run,
 or the storage unit's own curve flattened to a monotone 129-sample
@@ -1473,6 +1473,17 @@ stage, against the state the solver has actually reached — a routing
 step spans many substeps, across which a pump's wet-well depth and a
 weir's head difference move while a frozen discharge does not.
 `ROUTING_STEP` holds them at their start-of-step values instead.
+
+A structure discharge is evaluated from the node heads and then held, so
+a junction at either end of one keeps the bucket ledger of §8.6.1: into a
+storage-less junction nothing buffers the lagged source, and the solved
+head flips between empty and the rim. Inside a macro cycle (§8.5.6) the
+structures alone are re-evaluated before every base substep, since their
+nodes fire at every one; a discharge held for the whole cycle overfills a
+`MIN_SURFAREA` chamber within it and reverses at the next. The outfall
+stage keeps the value the cycle opened with, because it bounds faces
+whose booked flux has to describe one forcing. A bucket donor pays out
+only the water it holds, and the link reports the water actually moved.
 
 Control *rules* are not re-evaluated at substep cadence; they run on the
 engine's own rule step, which is tuned for routing-step cadence. Only

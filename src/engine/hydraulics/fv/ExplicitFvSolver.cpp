@@ -183,7 +183,7 @@ void ExplicitFvSolver::initialize(NetworkMeshData& mesh, NetworkStateData& state
     flood_vol_.assign(nn, 0.0);
     node_qdummy_.assign(mesh.struct_is_dummy.empty() ? 0 : nn, 0.0);
     dummy_vol_.assign(mesh.struct_link.size(), 0.0);
-    struct_refused_vol_.assign(mesh.struct_link.size(), 0.0);
+    struct_applied_vol_.assign(mesh.struct_link.size(), 0.0);
     node_struct_scale_.assign(mesh.struct_link.empty() ? 0 : nn, 0.0);
     inlet_control_.assign(static_cast<std::size_t>(mesh.n_conduits()), 0);
 
@@ -230,12 +230,28 @@ void ExplicitFvSolver::initialize(NetworkMeshData& mesh, NetworkStateData& state
     refreshNodeAreas();
 
     // Algebraic-junction eligibility. Static for the run: plain junctions
-    // (no storage table) with at least one incident face. A node with only
-    // structure links has no face flux to balance — its residual would carry
-    // no head dependence — so it keeps the bucket machinery. Outfalls are
-    // excluded by kind; virtual junctions never reach the node paths at all
-    // (their only node-level state is a lateral inflow, which
-    // refreshStructFlows diverts into the two spliced cells).
+    // (no storage table) with at least one incident face and no structure
+    // link. A node with only structure links has no face flux to balance — its
+    // residual would carry no head dependence — so it keeps the bucket
+    // machinery. Outfalls are excluded by kind; virtual junctions never reach
+    // the node paths at all (their only node-level state is a lateral inflow,
+    // which refreshStructFlows diverts into the two spliced cells).
+    //
+    // A weir, orifice, outlet or pump discharge is evaluated from the node
+    // heads and held across the substeps it spans. Into or out of a
+    // zero-storage junction nothing buffers that lagged source: the solved
+    // head flipped between empty and the rim and the CSO chamber's overflow
+    // booked as flooding (Bellinge G80F66X, 2026-11-03). Their end junctions
+    // keep the bucket path with the engine surface area, as DW gives every
+    // junction. DUMMY links take their discharge from the solver's own fluxes
+    // and leave their ends eligible.
+    std::vector<char> struct_end(nn, 0);
+    for (std::size_t s = 0; s < mesh_->struct_link.size(); ++s) {
+        if (!mesh_->struct_is_dummy.empty() && mesh_->struct_is_dummy[s])
+            continue;
+        struct_end[static_cast<std::size_t>(mesh_->struct_n1[s])] = 1;
+        struct_end[static_cast<std::size_t>(mesh_->struct_n2[s])] = 1;
+    }
     node_alg_.assign(nn, 0);
     node_carry_.assign(nn, 0.0);
     node_vfull_.assign(nn, 0.0);
@@ -246,7 +262,7 @@ void ExplicitFvSolver::initialize(NetworkMeshData& mesh, NetworkStateData& state
     for (std::size_t un = 0; un < nn; ++un) {
         node_vfull_[un] = nodeVolumeFromDepth(static_cast<int>(un), mesh_->node_full_depth[un]);
         node_alg_[un] = (mesh_->node_kind[un] == kNodeJunction && mesh_->node_vol_off[un] < 0 &&
-                         mesh_->node_face_ptr[un + 1] > mesh_->node_face_ptr[un])
+                         mesh_->node_face_ptr[un + 1] > mesh_->node_face_ptr[un] && !struct_end[un])
                             ? 1
                             : 0;
         // "Clean" = every incident face is a plain conduit face. A culvert
@@ -3080,12 +3096,11 @@ void ExplicitFvSolver::limitStructureFlows(double dt, const FvStepForcing& forci
         if (q == 0.0)
             continue;
         const double scale = node_struct_scale_[donor(us, q)];
-        if (scale < 1.0) {
-            struct_refused_vol_[us] += (1.0 - scale) * q * dt;
+        if (scale < 1.0)
             q *= scale;
-        }
         node_qstruct_[static_cast<std::size_t>(mesh_->struct_n1[us])] -= q;
         node_qstruct_[static_cast<std::size_t>(mesh_->struct_n2[us])] += q;
+        struct_applied_vol_[us] += q * dt;
         if (water_tracking_)
             water_.structure(us, q * dt);
     }
@@ -3474,7 +3489,7 @@ void ExplicitFvSolver::saveState() {
     save_qint_ = cell_q_int_;
     save_carry_ = node_carry_;
     save_dummy_=dummy_vol_;
-    save_refused_=struct_refused_vol_;
+    save_applied_=struct_applied_vol_;
     save_unmet_=unmet_withdrawal_;
     if (water_tracking_) save_water_ = water_;
     if (tpa_)
@@ -3497,7 +3512,7 @@ void ExplicitFvSolver::restoreState() {
     cell_q_int_ = save_qint_;
     node_carry_ = save_carry_;
     dummy_vol_=save_dummy_;
-    struct_refused_vol_=save_refused_;
+    struct_applied_vol_=save_applied_;
     unmet_withdrawal_=save_unmet_;
     if (water_tracking_) water_ = save_water_;
     // Spill banked by the cells is drained by the node update of the same
@@ -3664,7 +3679,7 @@ void ExplicitFvSolver::rkSave() {
     rk_qint_ = cell_q_int_;
     rk_carry_ = node_carry_;
     rk_dummy_=dummy_vol_;
-    rk_refused_=struct_refused_vol_;
+    rk_applied_=struct_applied_vol_;
     rk_unmet_=unmet_withdrawal_;
     if (water_tracking_) rk_water_ = water_;
     if (tpa_)
@@ -3731,7 +3746,7 @@ void ExplicitFvSolver::rkAverage(const FvStepForcing& forcing) {
     avg_delta(cell_q_int_, rk_qint_);
     avg_delta(node_carry_, rk_carry_);
     avg_delta(dummy_vol_,rk_dummy_);
-    avg_delta(struct_refused_vol_,rk_refused_);
+    avg_delta(struct_applied_vol_,rk_applied_);
     avg_delta(unmet_withdrawal_,rk_unmet_);
     if (water_tracking_) water_.averageDelta(rk_water_);
     // Publish the accepted carry, not the unaveraged second-stage balance.
@@ -4653,7 +4668,8 @@ bool ExplicitFvSolver::macroCycleCellsAdmissible(double dt0) {
     return ok;
 }
 
-void ExplicitFvSolver::runMacroCycle(double dt0, int nsub, const FvStepForcing& forcing) {
+void ExplicitFvSolver::runMacroCycle(double dt0, int nsub, const FvStepForcing& forcing,
+                                     double t_elapsed) {
     if (tpa_)
         updateTpaFlags(); // once per macro cycle (#156); the caller's
                           // saveState precedes this, so rejection
@@ -4676,7 +4692,20 @@ void ExplicitFvSolver::runMacroCycle(double dt0, int nsub, const FvStepForcing& 
         return j;
     };
 
+    // Structure end nodes are pinned to tier 0 and fire every base step, and
+    // limitStructureFlows re-reads structure_flow at each firing. Held for the
+    // whole cycle instead, a weir into a 1.2 m² chamber overfilled it within
+    // one cycle and reversed at the next, every cycle (Bellinge G80F66X,
+    // 2026-11-03). Only the structures are refreshed: faces keep the forcing
+    // their windows opened with, and the solver books what it applies.
+    const bool refresh_structures = forcing.refresh_structures && !mesh_->struct_link.empty() &&
+                                    opts_.structure_coupling == StructureCoupling::SUBSTEP;
     for (int s = 0; s < nsub; ++s) {
+        if (refresh_structures && s > 0) {
+            perf::GatedTimer _pt_cb(perf::sec_fv_bndcallback);
+            forcing.refresh_structures(forcing.refresh_user,
+                                       t_elapsed + static_cast<double>(s) * dt0);
+        }
         const auto jf =
             static_cast<std::size_t>(std::min((s == 0) ? K - 1 : trailing_zeros(s), K - 1));
         const auto jv = static_cast<std::size_t>(std::min(trailing_zeros(s + 1), K - 1));
@@ -4781,7 +4810,7 @@ double ExplicitFvSolver::advance(double t_current, double t_target, const FvStep
     const auto carry = node_carry_, exchange = node_exch_, incoming = node_in_,
                outgoing = node_out_;
     const auto flood = flood_vol_, qint = cell_q_int_, dummy = dummy_vol_,
-               refused = struct_refused_vol_;
+               applied = struct_applied_vol_;
     const auto inlet = inlet_control_, published = node_pub_;
     const double last = last_h_, minimum = min_h_, cached = dt_cache_;
     const double simulated = sim_time_, suggested = suggested_h_;
@@ -4803,7 +4832,7 @@ double ExplicitFvSolver::advance(double t_current, double t_target, const FvStep
         flood_vol_ = flood;
         cell_q_int_ = qint;
         dummy_vol_ = dummy;
-        struct_refused_vol_ = refused;
+        struct_applied_vol_ = applied;
         inlet_control_ = inlet;
         node_pub_ = published;
         last_h_ = last;
@@ -4862,7 +4891,7 @@ double ExplicitFvSolver::advanceImpl(double t_current, double t_target,
     // The pass-through ledger is per routing step, like cell_q_int_: the Router
     // divides it by dt to publish a step-mean discharge.
     std::fill(dummy_vol_.begin(), dummy_vol_.end(), 0.0);
-    std::fill(struct_refused_vol_.begin(), struct_refused_vol_.end(), 0.0);
+    std::fill(struct_applied_vol_.begin(), struct_applied_vol_.end(), 0.0);
 
     // A full-mesh inversion, needed only when someone other than this solver
     // wrote cell_a since the last advance() (see state_clean_). The solver's
@@ -4998,7 +5027,7 @@ double ExplicitFvSolver::advanceImpl(double t_current, double t_target,
                 if (opts_.order < 2)
                     reconstructState();
                 saveState();
-                runMacroCycle(dt0, nsub, forcing);
+                runMacroCycle(dt0, nsub, forcing, t - t_current);
 
                 // A cell can cross the crown inside a cycle exactly as it can
                 // inside a global substep (D-FV6), and the cycle is longer, so
@@ -5059,7 +5088,7 @@ double ExplicitFvSolver::advanceImpl(double t_current, double t_target,
                         if (opts_.order < 2)
                             reconstructState();
                         saveState();
-                        runMacroCycle(dt0f, nsubf, forcing);
+                        runMacroCycle(dt0f, nsubf, forcing, t - t_current);
                         if (censusDt() < kStepAcceptRatio * dt0f ||
                             !macroCycleCellsAdmissible(dt0f)) {
                             ++n_macro_rejected_;

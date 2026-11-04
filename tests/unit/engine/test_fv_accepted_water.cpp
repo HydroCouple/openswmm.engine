@@ -124,7 +124,10 @@ TEST(AcceptedWater, AFrozenStructureDrawIsBoundedByItsBucketDonor) {
         double exported=0;
         for(int step=0;step<3;++step) {
             ASSERT_NEAR(solver.advance(step*.2,(step+1)*.2,f),(step+1)*.2,1e-12);
-            exported+=solver.acceptedWater().structure_forward[0]-solver.acceptedWater().structure_reverse[0];
+            const double moved=solver.acceptedWater().structure_forward[0]-solver.acceptedWater().structure_reverse[0];
+            // The router publishes this volume as the structure's step flow.
+            EXPECT_NEAR(solver.structure_applied_volume()[0],moved,1e-10) << "mode="<<mode;
+            exported+=moved;
         }
         EXPECT_LE(exported,initial+1e-9) << "exported more water than existed, mode="<<mode;
         EXPECT_NEAR(initial,volume()+exported,1e-9) << "water created at the bucket floor, mode="<<mode;

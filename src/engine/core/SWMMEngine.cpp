@@ -11867,6 +11867,11 @@ double SWMMEngine::reportedNodeVolume(int i, double depth, double volume) const 
     if (ctx_.options.routing_model == RoutingModel::KINWAVE ||
         ctx_.options.routing_model == RoutingModel::STEADY)
         return volume;
+    // An FV junction at a structure holds real water (see the convention note
+    // below); left out, its surface area x depth read as a continuity error,
+    // 0.34 % on an 80 ft manhole behind a closed valve.
+    if (router_.fvJunctionHoldsWater(i))
+        return volume;
     double fd = ctx_.nodes.full_depth[ui];
     if (!(fd > 0.0))
         return 0.0;
@@ -11888,10 +11893,10 @@ double SWMMEngine::reportedNodeVolume(int i, double depth, double volume) const 
         return volume;
 
     // Legacy convention: a plain junction contributes ZERO to reported
-    // storage, because rpt_full_volume is 0 for it. FV junctions are now
-    // algebraic INTERFACES that hold no water of their own — the water at a
-    // junction's head stands in the incident cells, already counted through
-    // link volumes — so FV shares the convention. (The earlier bucket model
+    // storage, because rpt_full_volume is 0 for it. FV junctions away from
+    // structures are algebraic INTERFACES that hold no water of their own — the
+    // water at a junction's head stands in the incident cells, already counted
+    // through link volumes — so FV shares the convention. (The earlier bucket model
     // DID hold MIN_SURFAREA·depth of real water per junction and reported it
     // here; keeping that relation after the buckets were removed re-counted
     // the cells' water and read as a continuity error proportional to

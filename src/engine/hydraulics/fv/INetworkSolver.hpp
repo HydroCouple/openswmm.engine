@@ -111,6 +111,18 @@ struct FvStepForcing {
     void (*refresh)(void* user, double t_elapsed) = nullptr;
     void* refresh_user = nullptr;
 
+    /// Optional structure-only re-evaluation the CPU solver calls inside an
+    /// LTS macro cycle, before every base substep after the first
+    /// (FV_STRUCTURE_COUPLING SUBSTEP), with `refresh_user` as context.
+    ///
+    /// The callee refreshes `structure_flow` in place from the solver's
+    /// current node heads and leaves `node_fixed_head` alone: outfall stages
+    /// bound faces, whose booked flux must keep the forcing its window opened
+    /// with. It banks nothing — the solver books the volume it applies
+    /// (ExplicitFvSolver::structure_applied_volume), so a rejected cycle rolls
+    /// the books back with the state. Same ABI rule as `refresh`.
+    void (*refresh_structures)(void* user, double t_elapsed) = nullptr;
+
     int n_nodes = 0;
     int n_links = 0;
     /// Optional gross external withdrawal requests (cfs). Native CPU routing
