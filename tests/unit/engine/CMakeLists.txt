@@ -457,6 +457,28 @@ set_property(TEST
 # Water/source/checkpoint tests can run without the mesh results writer.
 # These surface/output suites require the writer and read back its HDF5 file.
 if(OPENSWMM_BUILD_2D AND OPENSWMM_2D_HDF5_OUTPUT)
+    add_gtest_unit(test_engine_split test_engine_split.cpp)
+    set(_split_evidence "${PROJECT_SOURCE_DIR}/tests/verification/component_split_2026-11-03")
+    target_compile_definitions(test_engine_split PRIVATE SPLIT_EVIDENCE="${_split_evidence}")
+    find_program(OPENSWMM_SPLIT_H5DIFF NAMES h5diff)
+    set_tests_properties(test_engine_split PROPERTIES FIXTURES_SETUP engine_split)
+    if(OPENSWMM_SPLIT_H5DIFF)
+        foreach(_case DrainingSurface SpillingNetwork PerStepExchange VariableRouting DrySurface
+                      EarlyFinishFlushesPendingBatch CompetingWithdrawals
+                      OutfallDischarge OutfallWithdrawal OutfallFlapGate OutfallOverlap
+                      OutfallSpreadRelaxation OutfallMixedNodeExchange OutfallEarlyFinish
+                      WatershedRainfall WatershedOutfall ConventionalLidOutlets ConventionalLidOverflow ConventionalLidCascade WatershedEarlyFinish
+                      GroundwaterNodeGain GroundwaterNodeLoss GroundwaterIndependent GroundwaterEnslaved GroundwaterSigma GroundwaterLinkGain GroundwaterLinkLoss GroundwaterCompetingLinks GroundwaterOneWayLoss GroundwaterUSUnits GroundwaterEarlyFinish GroundwaterWatershed
+                      ReviewedFootprintSources ReviewedFootprintIndependent ReviewedFootprintEnslaved ReviewedFootprintSigma ReviewedFootprintEvaporation ReviewedFootprintEarlyFinish
+                      JointRichardsClosedShared JointRichardsClosedIndependent JointRichardsEnslavedShared JointRichardsEnslavedIndependent JointRichardsSigmaShared JointRichardsSigmaIndependent JointRichardsCompeting JointRichardsAquiferGain JointRichardsEarlyFinish
+                      ReviewedMappedDischarge ReviewedMappedWithdrawal ReviewedMappedFlapGate ReviewedMappedRichards ReviewedReturnClosedShared ReviewedReturnIndependent ReviewedReturnEnslaved ReviewedReturnSigma ReviewedReturnRichards ReviewedReturnEarlyFinish ReviewedReturnMixedMapped ReviewedReturnOrdinary
+                      ClassicalMeshReviewedShared ClassicalMeshReviewedIndependent ClassicalMeshReviewedEnslaved ClassicalMeshReviewedSigma ClassicalMeshReviewedGain ClassicalMeshOrdinarySources ClassicalMeshConduit ClassicalSealedReviewed ClassicalCurrentReviewed ClassicalMixedRichards ClassicalMixedRichardsSigma ClassicalEarlyFinish)
+            add_test(NAME test_engine_split_${_case}_hdf5
+                COMMAND "${OPENSWMM_SPLIT_H5DIFF}" "${_split_evidence}/${_case}/native.h5"
+                        "${_split_evidence}/${_case}/surface.h5")
+            set_tests_properties(test_engine_split_${_case}_hdf5 PROPERTIES FIXTURES_REQUIRED engine_split LABELS "unit")
+        endforeach()
+    endif()
 
 # 2D surface routing tests — geometry, gradients, flux, parsing.
 # The 2D engine sources (MeshBuilder, VertexReconstruction, SurfaceFluxCalculator,
@@ -1207,11 +1229,30 @@ if(OPENSWMM_WITH_HYDROCOUPLE)
     target_compile_definitions(test_engine_component PRIVATE ENGINE_COMPONENT_LIBRARY="$<TARGET_FILE:openswmm_engine_component>")
     add_dependencies(test_engine_component openswmm_engine_component)
     if(OPENSWMM_BUILD_2D AND OPENSWMM_2D_HDF5_OUTPUT)
-        target_compile_definitions(test_engine_component PRIVATE OPENSWMM_COMPONENT_2D_RESULTS=1)
+        target_compile_definitions(test_engine_component PRIVATE OPENSWMM_COMPONENT_2D_RESULTS=1
+            SPLIT_WITNESS="${_split_evidence}")
+        set_tests_properties(test_engine_component PROPERTIES FIXTURES_REQUIRED engine_split)
+        add_dependencies(test_engine_component test_engine_split)
         find_program(OPENSWMM_H5DIFF_EXECUTABLE NAMES h5diff)
         if(OPENSWMM_H5DIFF_EXECUTABLE)
             set_tests_properties(test_engine_component PROPERTIES FIXTURES_SETUP engine_component_surface)
             set(_surface_cases "${CMAKE_CURRENT_SOURCE_DIR}/data/component_engine")
+            foreach(_case DrainingSurface SpillingNetwork PerStepExchange VariableRouting DrySurface
+                          EarlyFinishFlushesPendingBatch CompetingWithdrawals
+                      OutfallDischarge OutfallWithdrawal OutfallFlapGate OutfallOverlap
+                      OutfallSpreadRelaxation OutfallMixedNodeExchange OutfallEarlyFinish
+                      WatershedRainfall WatershedOutfall ConventionalLidOutlets ConventionalLidOverflow ConventionalLidCascade WatershedEarlyFinish
+                      GroundwaterNodeGain GroundwaterNodeLoss GroundwaterIndependent GroundwaterEnslaved GroundwaterSigma GroundwaterLinkGain GroundwaterLinkLoss GroundwaterCompetingLinks GroundwaterOneWayLoss GroundwaterUSUnits GroundwaterEarlyFinish GroundwaterWatershed
+                      ReviewedFootprintSources ReviewedFootprintIndependent ReviewedFootprintEnslaved ReviewedFootprintSigma ReviewedFootprintEvaporation ReviewedFootprintEarlyFinish
+                      JointRichardsClosedShared JointRichardsClosedIndependent JointRichardsEnslavedShared JointRichardsEnslavedIndependent JointRichardsSigmaShared JointRichardsSigmaIndependent JointRichardsCompeting JointRichardsAquiferGain JointRichardsEarlyFinish
+                      ReviewedMappedDischarge ReviewedMappedWithdrawal ReviewedMappedFlapGate ReviewedMappedRichards ReviewedReturnClosedShared ReviewedReturnIndependent ReviewedReturnEnslaved ReviewedReturnSigma ReviewedReturnRichards ReviewedReturnEarlyFinish ReviewedReturnMixedMapped ReviewedReturnOrdinary
+                      ClassicalMeshReviewedShared ClassicalMeshReviewedIndependent ClassicalMeshReviewedEnslaved ClassicalMeshReviewedSigma ClassicalMeshReviewedGain ClassicalMeshOrdinarySources ClassicalMeshConduit ClassicalSealedReviewed ClassicalCurrentReviewed ClassicalMixedRichards ClassicalMixedRichardsSigma ClassicalEarlyFinish)
+                add_test(NAME test_engine_component_split_${_case}_parity
+                    COMMAND "${OPENSWMM_H5DIFF_EXECUTABLE}" "${_split_evidence}/${_case}/native.h5"
+                        "${_surface_cases}/SplitWaterComponentsMatchIndependentNativeRuns/wrapped/${_case}/surface/model.2d.h5")
+                set_tests_properties(test_engine_component_split_${_case}_parity PROPERTIES
+                    FIXTURES_REQUIRED engine_component_surface LABELS "unit")
+            endforeach()
             add_test(NAME test_engine_component_surface_hdf5_parity
                 COMMAND "${OPENSWMM_H5DIFF_EXECUTABLE}"
                     "${_surface_cases}/CompleteSurfaceWaterMatchesNativeWithoutTouchingAuthoredDestination/native/model.2d.h5"
@@ -1224,6 +1265,50 @@ if(OPENSWMM_WITH_HYDROCOUPLE)
                 COMMAND "${OPENSWMM_H5DIFF_EXECUTABLE}"
                     "${_surface_cases}/CompleteCoupledSurfaceWaterMatchesNativeWithActualExchange/native/model.2d.h5"
                     "${_surface_cases}/CompleteCoupledSurfaceWaterMatchesNativeWithActualExchange/wrapped/model.2d.h5")
+            foreach(_case IN ITEMS
+                GroundwaterSharedRecharge
+                GroundwaterIndependentRecharge
+                GroundwaterSharedNodeIn
+                GroundwaterIndependentNodeIn
+                GroundwaterSharedNodeOut
+                GroundwaterIndependentNodeOut
+                GroundwaterSharedLinkIn
+                GroundwaterIndependentLinkIn
+                GroundwaterSharedLinkOut
+                GroundwaterIndependentLinkOut
+                GroundwaterUsProject
+                GroundwaterUsProjectSiMesh)
+                add_test(NAME test_engine_component_gw_${_case}_parity
+                    COMMAND "${OPENSWMM_H5DIFF_EXECUTABLE}"
+                        "${_surface_cases}/${_case}/native/model.2d.h5"
+                        "${_surface_cases}/${_case}/wrapped/model.2d.h5")
+                set_tests_properties(test_engine_component_gw_${_case}_parity PROPERTIES
+                    FIXTURES_REQUIRED engine_component_surface LABELS unit)
+            endforeach()
+            foreach(_case RANGE 0 17)
+                add_test(NAME test_engine_component_managed_${_case}_parity
+                    COMMAND "${OPENSWMM_H5DIFF_EXECUTABLE}"
+                        "${_surface_cases}/NativeSourceOwners/${_case}/native/model.2d.h5"
+                        "${_surface_cases}/NativeSourceOwners/${_case}/wrapped/model.2d.h5")
+                set_tests_properties(test_engine_component_managed_${_case}_parity PROPERTIES
+                    FIXTURES_REQUIRED engine_component_surface LABELS unit)
+            endforeach()
+            foreach(_case IN ITEMS 0 1 4 5 8 9)
+                add_test(NAME test_engine_component_mesh_transport_${_case}_parity
+                    COMMAND "${OPENSWMM_H5DIFF_EXECUTABLE}"
+                        "${_surface_cases}/MatchedMeshGroundTransport/${_case}/native/model.2d.h5"
+                        "${_surface_cases}/MatchedMeshGroundTransport/${_case}/wrapped/model.2d.h5")
+                set_tests_properties(test_engine_component_mesh_transport_${_case}_parity PROPERTIES
+                    FIXTURES_REQUIRED engine_component_surface LABELS unit)
+            endforeach()
+            foreach(_case RANGE 0 5)
+                add_test(NAME test_engine_component_joint_lid_${_case}_parity
+                    COMMAND "${OPENSWMM_H5DIFF_EXECUTABLE}"
+                        "${_surface_cases}/NativeRichardsAquiferAcceptance/${_case}/native/model.2d.h5"
+                        "${_surface_cases}/NativeRichardsAquiferAcceptance/${_case}/wrapped/model.2d.h5")
+                set_tests_properties(test_engine_component_joint_lid_${_case}_parity PROPERTIES
+                    FIXTURES_REQUIRED engine_component_surface LABELS unit)
+            endforeach()
             set_tests_properties(test_engine_component_surface_hdf5_parity
                 test_engine_component_surface_instance_parity
                 test_engine_component_surface_coupled_parity PROPERTIES

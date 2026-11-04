@@ -2550,6 +2550,18 @@ void resolve_cross_references(SimulationContext& ctx) {
     }
 
     // -------------------------------------------------------------------------
+    // Outfall return destinations may precede SUBCATCHMENTS in ordinary INP order.
+    // Retain the authored name through parsing; an unknown destination must not
+    // silently turn a physical return into a system discharge.
+    for (int r=0; r<ctx.node_subtypes.outfalls.count(); ++r) {
+        auto& outfalls=ctx.node_subtypes.outfalls;
+        const auto& name=outfalls.route_to_name[r];
+        if (name.empty() || outfalls.route_to[r] >= 0) continue;
+        const int sc=ctx.subcatch_names.find(name);
+        if (sc < 0) ctx.errors.push_back(format_error(ERR_NAME,name));
+        else outfalls.route_to[r]=sc;
+    }
+
     // Outfall stage-data name resolution (TIDAL curve / TIMESERIES stage series)
     // -------------------------------------------------------------------------
     // [OUTFALLS] may precede [CURVES]/[TIMESERIES] in the .inp, so the handler

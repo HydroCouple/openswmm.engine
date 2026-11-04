@@ -287,6 +287,8 @@ struct OutfallData {
     std::vector<uint8_t> has_flap_gate;
     /** @brief Subcatchment index to route discharge to (-1 = none). */
     std::vector<int> route_to;
+    /** @brief Authored return destination retained until subcatchments resolve. */
+    std::vector<std::string> route_to_name;
     /** @brief Cached connected-conduit index (-1 = none). */
     std::vector<int> link_idx;
     /** @brief Conduit offset at the outfall end. */
@@ -316,6 +318,7 @@ struct OutfallData {
         param_name.clear();
         has_flap_gate.clear();
         route_to.clear();
+        route_to_name.clear();
         link_idx.clear();
         link_offset.clear();
         head_2d.clear();
@@ -338,6 +341,7 @@ struct OutfallData {
         param_name.reserve(un);
         has_flap_gate.reserve(un);
         route_to.reserve(un);
+        route_to_name.reserve(un);
         link_idx.reserve(un);
         link_offset.reserve(un);
         head_2d.reserve(un);
@@ -365,6 +369,7 @@ struct OutfallData {
         param_name.insert(param_name.begin() + p, std::string{});
         has_flap_gate.insert(has_flap_gate.begin() + p, uint8_t{0});
         route_to.insert(route_to.begin() + p, -1);
+        route_to_name.insert(route_to_name.begin() + p, std::string{});
         link_idx.insert(link_idx.begin() + p, -1);
         link_offset.insert(link_offset.begin() + p, 0.0);
         head_2d.insert(head_2d.begin() + p, -1.0e30);
@@ -389,6 +394,7 @@ struct OutfallData {
         param_name.erase(param_name.begin() + p);
         has_flap_gate.erase(has_flap_gate.begin() + p);
         route_to.erase(route_to.begin() + p);
+        route_to_name.erase(route_to_name.begin() + p);
         link_idx.erase(link_idx.begin() + p);
         link_offset.erase(link_offset.begin() + p);
         head_2d.erase(head_2d.begin() + p);

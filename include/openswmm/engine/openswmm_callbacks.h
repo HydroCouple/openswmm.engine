@@ -161,6 +161,26 @@ typedef void (*SWMM_StepBeginCallback)(SWMM_Engine engine, double sim_time, doub
 typedef void (*SWMM_StepEndCallback)(SWMM_Engine engine, double sim_time, double dt,
                                      void* user_data);
 
+/** Native phase trace points. These observe the existing algorithm; they are
+ * not externally executable phases or a second scheduling interface. A steady
+ * routing skip omits phases that did not execute. */
+#define SWMM_PHASE_STEP_BEGIN 10
+#define SWMM_PHASE_SOURCE_DELIVERY_STAGED 20
+#define SWMM_PHASE_RUNOFF_PASS_COMPLETE 30
+#define SWMM_PHASE_LID_ADMISSION_PREPARED 40
+#define SWMM_PHASE_NETWORK_ROUTED 50
+#define SWMM_PHASE_INTEGRATED_ADVANCED 60
+#define SWMM_PHASE_INVENTORY_CLOSED 70
+#define SWMM_PHASE_OUTPUTS_PUBLISHED 80
+#define SWMM_PHASE_STEP_ACCEPTED 90
+/** Read-only synchronous diagnostic observer. Times are the actual native
+ * interval's elapsed seconds, independent of its epoch. The callback may query
+ * public state/receipt getters but MUST NOT mutate, advance, close or destroy
+ * an engine, or throw. Pointers are borrowed until unregistration/destruction.
+ * Diagnostic callbacks are not persisted as physical checkpoint state. */
+typedef void (*SWMM_PhaseCallback)(SWMM_Engine engine, int phase, double start_seconds,
+                                  double end_seconds, void* user_data);
+
 /* =========================================================================
  * Plugin event callbacks (fired by the plugin system)
  * ========================================================================= */

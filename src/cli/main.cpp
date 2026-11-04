@@ -19,6 +19,12 @@
 #include <ctime>
 
 #include "openswmm_engine.h"
+#include "openswmm_checkpoint.h"
+#include "openswmm_surface_ownership.h"
+#ifdef OPENSWMM_HAS_2D
+#include "openswmm_2d.h"
+#endif
+#include <filesystem>
 #include "version.h"
 
 /**
@@ -30,9 +36,11 @@ static void print_help() {
     std::printf("===================================================\n\n");
     std::printf("USAGE:\n");
     std::printf("  openswmm <input.inp> <report.rpt> [output.out]\n\n");
+    std::printf("  openswmm --managed <input.inp> <report.rpt> [output.out]\n\n");
     std::printf("OPTIONS:\n");
     std::printf("  --help, -h       Show this help message\n");
     std::printf("  --version, -v    Show version number\n\n");
+    std::printf("  --managed       Use the native managed source/checkpoint session\n\n");
     std::printf("DESCRIPTION:\n");
     std::printf("  Runs a SWMM simulation using the new data-oriented engine.\n");
     std::printf("  The engine reads a standard SWMM .inp file and produces\n");
@@ -80,6 +88,11 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
+    const bool managed = std::strcmp(argv[1], "--managed") == 0;
+    if (managed) {
+        --argc;
+        ++argv;
+    }
     if (argc < 3) {
         std::printf("\nError: need at least input and report file paths.\n");
         std::printf("Usage: openswmm <input.inp> <report.rpt> [output.out]\n\n");
@@ -114,7 +127,40 @@ int main(int argc, char* argv[]) {
     }
 
     // ---- Initialize ----
-    err = swmm_engine_initialize(engine);
+    if (managed) {
+        SWMM_CheckpointSessionOptions options{};
+        options.struct_size = sizeof(options);
+        options.schema_version = 1;
+        options.output = out_file[0] ? SWMM_CHECKPOINT_OUTPUT_BINARY : SWMM_CHECKPOINT_OUTPUT_NONE;
+        char token[32]{};
+#ifdef OPENSWMM_HAS_2D
+        char path[4096]{}, original[4096]{}, diagnostic[4096]{};
+        int count = 0, objects = 0, shares = 0, cells = 0, valid = 0;
+        err = swmm_file_path_get(engine, SWMM_FILE_OUTPUT_2D, nullptr, path, sizeof(path),
+                                original, sizeof(original));
+        if (!err && path[0]) {
+            const auto absolute = std::filesystem::absolute(path).string();
+            err = swmm_2d_set_results_file(engine, absolute.c_str());
+            options.output = out_file[0] ? SWMM_CHECKPOINT_OUTPUT_COMBINED : SWMM_CHECKPOINT_OUTPUT_MESH;
+        }
+        if (!err) err = swmm_surface_owner_get(engine, nullptr, 0, &count);
+        if (!err && count) {
+            err = swmm_surface_owner_preview(engine, nullptr, -1, nullptr, 0, &objects,
+                nullptr, 0, &shares, nullptr, 0, &cells, &valid, token, sizeof(token),
+                diagnostic, sizeof(diagnostic), nullptr, nullptr);
+            if (!err && !valid) {
+                std::printf("Invalid surface ownership: %s\n", diagnostic);
+                err = SWMM_ERR_BADPARAM;
+            }
+            options.ownership_token = token;
+        }
+#endif
+        if (!err) {
+            err = swmm_checkpoint_start_session(engine, &options);
+            if (err) std::printf("Managed session: %s\n", swmm_checkpoint_last_error_msg());
+        }
+    } else
+        err = swmm_engine_initialize(engine);
     if (err != SWMM_OK) {
         std::printf("Error initializing: %s\n", swmm_get_last_error_msg(engine));
         swmm_engine_close(engine);
@@ -124,7 +170,7 @@ int main(int argc, char* argv[]) {
 
     // ---- Start simulation ----
     int save = (out_file[0] != '\0') ? 1 : 0;
-    err = swmm_engine_start(engine, save);
+    err = managed ? SWMM_OK : swmm_engine_start(engine, save);
     if (err != SWMM_OK) {
         std::printf("Error starting simulation: %s\n", swmm_get_last_error_msg(engine));
         swmm_engine_close(engine);

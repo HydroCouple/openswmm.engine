@@ -102,6 +102,58 @@ void reviewed(const twoD::SurfaceOwnershipPreview& preview) {
 }
 #endif
 }
+#ifdef OPENSWMM_HAS_2D
+void SWMMEngine::initializeCommonSourceStage(CheckpointSessionResources& resources) {
+    auto& r = surface_router_;
+    const auto& owners = r.aquiferConfig().surface_owners;
+    twoD::SurfaceOwnershipPreview preview;
+    std::vector<int> seeds;
+    std::vector<std::pair<int, double>> areas;
+    const bool spatial = !owners.empty();
+    if (spatial) {
+        // Initialization normalizes mesh units; recompute physical SI
+        // shares with the same authoritative geometry/area resolver.
+        preview = twoD::resolveSurfaceOwnership(ctx_, r.mesh(), r.options(),
+                        r.aquiferConfig(), owners);
+        reviewed(preview);
+        for (const auto& owner : owners)
+            seeds.push_back(ctx_.subcatch_names.find(owner.subcatch));
+        // The authoring resolver uses exact SI footprints. Supply its
+        // non-LID areas to avoid the legacy rounded LANDAREA denominator.
+        for (const auto& object : preview.objects)
+            areas.emplace_back(object.subcatch, object.declared_area - object.lid_area);
+    } else
+        preview.mesh_weather_area = r.mesh().tri_area;
+    // Initial receipt mode is immutable; it closes native outfall returns
+    // into owned graphs without changing the authored routing topology.
+    const bool returns = spatial;
+    checked(resources.sources.initialize(ctx_, seeds, areas, &lid_, returns));
+    checked(resources.stage.initialize(r.mesh(), r.state(), r.options(), r.subsurface(),
+                resources.sources, preview, !spatial));
+}
+#endif
+void SWMMEngine::initializeSplitSources() {
+#ifdef OPENSWMM_HAS_2D
+    if (!split_ || !split_->spatial_sources || split_->role != SWMM_SPLIT_SURFACE) return;
+    auto resources = std::make_shared<CheckpointSessionResources>();
+    {
+        // The private native source owner retains the original routed model;
+        // only the boundary engine disables its duplicate hydraulic solve.
+        struct Restore { bool& flag; bool value; ~Restore() { flag=value; } } restore{ctx_.options.ignore_routing,ctx_.options.ignore_routing};
+        ctx_.options.ignore_routing=false;
+        initializeCommonSourceStage(*resources);
+    }
+    auto bridge=std::make_unique<runoff::SourceWaterDeliveryBridge>();
+    checked(bridge->initialize(resources->sources));
+    checked(bridge->validateReceiver(ctx_));
+    surface_router_.setExternalSourceStage(ctx_,resources->stage);
+    source_stage_=&resources->stage;
+    source_delivery_=std::move(bridge);
+    checkpoint_session_resources_=resources; // lifetime only; recovery stays disabled
+    computeFinalStorage();
+    ctx_.mass_balance.runoff_init_store=ctx_.mass_balance.runoff_final_store;
+#endif
+}
 std::string SWMMEngine::startCheckpointSession(int output, const std::string& source_path,
                                                bool detailed, const std::string& token) {
     bool initializing = false;
@@ -116,6 +168,7 @@ std::string SWMMEngine::startCheckpointSession(int output, const std::string& so
         }
     } failure_close{*this, initializing, complete};
     try {
+        require(!split_, "Split participants cannot start a managed checkpoint session.");
         require(ctx_.state == EngineState::OPENED && !step_active_ && !runtime_pipeline_ &&
                     !checkpoint_enabled_,
                 "Start the managed checkpoint session from OPENED.");
@@ -299,30 +352,8 @@ std::string SWMMEngine::startCheckpointSession(int output, const std::string& so
         if (r.isActive() && r.options().reconstruction_order == 2) {
             checked(enableCheckpointing());
         } else if (r.isActive()) {
-            twoD::SurfaceOwnershipPreview preview;
-            std::vector<int> seeds;
-            std::vector<std::pair<int, double>> areas;
             const bool spatial = !owners.empty();
-            if (spatial) {
-                // Initialization normalizes mesh units; recompute physical SI
-                // shares with the same authoritative geometry/area resolver.
-                preview = twoD::resolveSurfaceOwnership(ctx_, r.mesh(), r.options(),
-                                                        r.aquiferConfig(), owners);
-                reviewed(preview);
-                for (const auto& owner : owners)
-                    seeds.push_back(ctx_.subcatch_names.find(owner.subcatch));
-                // The authoring resolver uses exact SI footprints. Supply its
-                // non-LID areas to avoid the legacy rounded LANDAREA denominator.
-                for (const auto& object : preview.objects)
-                    areas.emplace_back(object.subcatch, object.declared_area - object.lid_area);
-            } else
-                preview.mesh_weather_area = r.mesh().tri_area;
-            // Initial receipt mode is immutable; it closes native outfall returns
-            // into owned graphs without changing the authored routing topology.
-            const bool returns = spatial;
-            checked(resources->sources.initialize(ctx_, seeds, areas, &lid_, returns));
-            checked(resources->stage.initialize(r.mesh(), r.state(), r.options(), r.subsurface(),
-                                                resources->sources, preview, !spatial));
+            initializeCommonSourceStage(*resources);
             if (spatial)
                 checked(enableSpatialSourceCheckpointing(resources->stage));
             else

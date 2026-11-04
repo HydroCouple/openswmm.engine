@@ -24,6 +24,10 @@
  */
 
 #include "ProcessComponentRegistry.hpp"
+#include "ProcessComponentHost.hpp"
+#ifdef OPENSWMM_HAS_HYDROCOUPLE
+#include <nlohmann/json.hpp>
+#endif
 #include "core/FileIO.hpp" // issue #7: UTF-8 paths on Windows
 
 #include <algorithm>
@@ -230,11 +234,27 @@ std::vector<std::string> resolve_process_components(SimulationContext& ctx,
     }
 
     for (auto& spec : ctx.process_component_specs) {
-        if (looks_like_library(spec.id)) {
+        if (looks_like_library(spec.id) || foreign_component(spec)) {
+#ifdef OPENSWMM_HAS_HYDROCOUPLE
+            try {
+                if (spec.config_path.empty())
+                    throw std::runtime_error("missing config= hosting document");
+                const auto path = std::filesystem::absolute(
+                    io::utf8_path(base_dir) / io::utf8_path(spec.config_path));
+                std::ifstream file(path);
+                if (!file) throw std::runtime_error("cannot read " + io::path_utf8(path));
+                nlohmann::json config;
+                file >> config;
+                if (config.at("schema") != "openswmm.hosted-component/1")
+                    throw std::runtime_error("use schema openswmm.hosted-component/1");
+                spec.resolved_config_path = io::path_utf8(path);
+            } catch (const std::exception& error) {
+                errors.push_back("[PROCESS_COMPONENTS] '" + spec.id + "': " + error.what());
+            }
+#else
             errors.push_back("[PROCESS_COMPONENTS] '" + spec.id +
-                             "': library-loaded HydroCouple components are not available "
-                             "yet (arrives with plan phase HC2 — "
-                             "IMPLEMENTATION_ROADMAP.md).");
+                             "': library components require OPENSWMM_WITH_HYDROCOUPLE.");
+#endif
             continue;
         }
         const ProcessComponentEntry* entry = reg.find(spec.id);

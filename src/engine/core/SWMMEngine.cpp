@@ -97,6 +97,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
+#include <exception>
 #include <mutex> // call_once: process-global one-time init, see open()
 #include "ErrorCodes.hpp"
 #include "ThreadInfo.hpp"
@@ -1017,6 +1018,15 @@ int SWMMEngine::open(const char* inp_path, const char* rpt_path, const char* out
     }
 
     ctx_.state = EngineState::OPENED;
+    try {
+        if (std::any_of(ctx_.process_component_specs.begin(), ctx_.process_component_specs.end(),
+                        components::foreign_component))
+            process_component_host_ = std::make_unique<components::ProcessComponentHost>(
+                this, ctx_, plugins_, io::path_utf8(io::utf8_path(inp_path ? inp_path : "").parent_path()));
+    } catch (const std::exception& error) {
+        set_error(SWMM_ERR_PLUGIN, error.what());
+        return SWMM_ERR_PLUGIN;
+    }
     perf::begin_process_model(this);
     return SWMM_OK;
 }
@@ -1029,6 +1039,8 @@ int SWMMEngine::open(const char* inp_path, const char* rpt_path, const char* out
 int SWMMEngine::setSurfaceResultsFile(const char* path) noexcept {
     if (metadata_only_ || ctx_.state != EngineState::OPENED)
         return SWMM_ERR_WRONG_STATE;
+    if (split_ && split_->role == SWMM_SPLIT_NETWORK)
+        return SWMM_ERR_LIFECYCLE;
     if (!path || !path[0])
         return SWMM_ERR_BADPARAM;
 #ifdef OPENSWMM_HAS_2D_HDF5_OUTPUT
@@ -1078,6 +1090,12 @@ int SWMMEngine::initialize() noexcept {
     // Programmatic finalize enters here without open(); file-based and repeated
     // initialization are already registered and this call is idempotent.
     perf::begin_process_model(this);
+    if (!process_component_host_ &&
+        std::any_of(ctx_.process_component_specs.begin(), ctx_.process_component_specs.end(),
+                    components::foreign_component)) {
+        set_error(SWMM_ERR_PLUGIN, "Hosted process rows added after open require saving and reopening the model");
+        return SWMM_ERR_PLUGIN;
+    }
 
 #ifndef OPENSWMM_HAS_2D
     if (!ctx_.reactions.subsurface_laws.empty()) {
@@ -1693,6 +1711,11 @@ int SWMMEngine::initialize() noexcept {
     }
 
     ctx_.state = EngineState::INITIALIZED;
+    try { initializeSplitSources(); }
+    catch (const std::exception& error) {
+        set_error(SWMM_ERR_PLUGIN,error.what());
+        return SWMM_ERR_PLUGIN;
+    }
     return SWMM_OK;
 }
 
@@ -1771,6 +1794,15 @@ int SWMMEngine::start(int save_results) noexcept {
     }
 
     save_results_ = save_results;
+    if (split_ && split_->role == SWMM_SPLIT_SURFACE && (!split_->geometry || save_results != 0)) {
+        set_error(SWMM_ERR_LIFECYCLE, "Split surface requires validated geometry before start");
+        return SWMM_ERR_LIFECYCLE;
+    }
+    if (split_ && split_->role == SWMM_SPLIT_NETWORK &&
+        (!split_->geometry || !split_->callback)) {
+        set_error(SWMM_ERR_LIFECYCLE, "Split network requires matching geometry and a phase callback before start");
+        return SWMM_ERR_LIFECYCLE;
+    }
 
     // Short runs still need one reporting period (legacy project_validate).
     // Do this at start so options changed through the API after open/init
@@ -1985,6 +2017,13 @@ int SWMMEngine::start(int save_results) noexcept {
     hotstart_save_done_.assign(ctx_.files.hotstart_saves.size(), 0);
 
     ctx_.state = EngineState::RUNNING;
+    if (process_component_host_) {
+        try { process_component_host_->start(); }
+        catch (const std::exception& error) {
+            set_error(SWMM_ERR_PLUGIN, error.what());
+            return SWMM_ERR_PLUGIN;
+        }
+    }
     bool date_native_snapshot = ctx_.options.heat_transport;
 #ifdef OPENSWMM_HAS_2D
     date_native_snapshot |= surface_router_.subsurface().independentClock();
@@ -2062,6 +2101,8 @@ int SWMMEngine::advanceTo(double seconds, double* actual) noexcept {
     if (!actual || !std::isfinite(seconds))
         return CFFI_ERR_BADPARAM;
     *actual = runtimeCouplingTime();
+    if (split_)
+        return CFFI_ERR_LIFECYCLE;
     if (step_active_ || ctx_.state != EngineState::RUNNING)
         return CFFI_ERR_LIFECYCLE;
     if (seconds < *actual || seconds > ctx_.options.totalDurationMs() / 1000.0)
@@ -2099,6 +2140,10 @@ int SWMMEngine::advanceTo(double seconds, double* actual) noexcept {
 }
 
 int SWMMEngine::step(double* elapsed_time) noexcept {
+    if (split_ && split_->failed)
+        return ctx_.error_code != SWMM_OK ? ctx_.error_code : SWMM_ERR_LIFECYCLE;
+    if (split_ && split_->role == SWMM_SPLIT_SURFACE && !(split_->requested_dt > 0))
+        return SWMM_ERR_LIFECYCLE;
     if (step_active_)
         return CFFI_ERR_LIFECYCLE;
 #ifdef OPENSWMM_HAS_2D
@@ -2236,6 +2281,8 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
 
         const auto bound_runtime_step = [&]() {
             const double now = runtimeCouplingTime();
+            if (process_component_host_)
+                dt_next = std::min(dt_next, process_component_host_->nextBoundary() - now);
             if (exchange_target_ >= 0.0)
                 dt_next = std::min(dt_next, exchange_target_ - now);
 #ifdef OPENSWMM_HAS_2D
@@ -2245,6 +2292,8 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
 #endif
         };
         bound_runtime_step();
+        if (split_ && split_->role == SWMM_SPLIT_SURFACE)
+            dt_next = split_->requested_dt;
         // Fire step-begin callback
         emit_progress();
         if (callbacks_.on_step_begin) {
@@ -2255,6 +2304,8 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
         // A begin callback may install a source expiring during this step.
         bound_runtime_step();
         runtime_pipeline_ = true;
+        const double phase_start = runtimeCouplingTime();
+        tracePhase(SWMM_PHASE_STEP_BEGIN, phase_start, dt_next);
 
         // Snapshot the every-step old state (legacy initSystemInflows'
         // oldLatFlow and the quality old state). The HYDRAULIC old state rolls
@@ -2276,18 +2327,25 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
         // Reference: swmm5.c::execRouting() → runoff_execute() + routing_execute()
 
 #ifdef OPENSWMM_HAS_2D
-        if (source_delivery_) {
+        if (split_ && split_->role == SWMM_SPLIT_NETWORK && split_->spatial_sources)
+            splitExchange(SWMM_SPLIT_SOURCE_PREPARE,dt_next);
+        if (source_delivery_ && !(split_ && split_->spatial_sources)) {
             const auto error =
                 source_delivery_->stage(ctx_.current_time, ctx_.current_time + dt_next);
             if (!error.empty())
                 throw std::runtime_error(error);
+            tracePhase(SWMM_PHASE_SOURCE_DELIVERY_STAGED, phase_start, dt_next);
         }
 #endif
-        stepRunoff(dt_next);
+        // A split surface consumes the network owner's native weather journal;
+        // watershed and conventional LID clocks advance only in that owner.
+        if (!split_ || split_->role != SWMM_SPLIT_SURFACE || !split_->source_count)
+            stepRunoff(dt_next);
+        tracePhase(SWMM_PHASE_RUNOFF_PASS_COMPLETE, phase_start, dt_next);
 #ifdef OPENSWMM_HAS_2D
-        if (source_delivery_)
+        if (hasSourceDelivery())
             for (int n = 0; n < ctx_.n_nodes(); ++n)
-                ctx_.nodes.runoff_inflow[n] += source_delivery_->receipts()[n].rate;
+                ctx_.nodes.runoff_inflow[n] += sourceDeliveryRate(n);
 #endif
         // IGNORE_ROUTING (legacy `if (DoRouting) routing_execute()`, swmm5.c:997,
         // and massbal.c:299): skip the routing step and its statistics / routing
@@ -2304,11 +2362,10 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
             // ordinary-node statistics as well as storage and wet-weather continuity.
             // Node LID total inflow records mobile hydraulic water after capture;
             // preserve that convention and expose whole admitted receipts separately.
-            if (source_delivery_ && !fv_window_totals)
+            if (hasSourceDelivery() && !fv_window_totals)
                 for (int n = 0; n < ctx_.n_nodes(); ++n)
                     if (!lidnode::active(ctx_, n)) {
-                        const double half_receipt = (source_delivery_->receipts()[n].rate -
-                                                     source_delivery_->lastReceipts()[n].rate) *
+                        const double half_receipt = (sourceDeliveryRate(n) - sourceDeliveryRate(n,true)) *
                                                     dt_next / 2;
                         ctx_.nodes.stat_total_inflow_vol[n] += half_receipt;
                         if (ctx_.nodes.type[n] == NodeType::OUTFALL ||
@@ -2356,6 +2413,10 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
                 // backflowing outfall's inflow its outflow magnitude) runs BEFORE
                 // stats_updateFlowStats (routing.c:258-265)
                 updateRoutingMassBalance(dt_next);
+#ifdef OPENSWMM_HAS_2D
+                if (split_ && split_->role == SWMM_SPLIT_NETWORK && split_->source_returns)
+                    splitExchange(SWMM_SPLIT_ADVANCE, dt_next);
+#endif
                 updateStatistics(dt_next);
             }
             // [REPORT] LINK_STEPS: same window as updateStatistics (not between
@@ -2368,10 +2429,9 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
                     ctx_, dt_next, !between_events_ && step_end >= ctx_.options.report_start);
             }
 #ifdef OPENSWMM_HAS_2D
-            if (source_delivery_)
+            if (hasSourceDelivery())
                 for (int n = 0; n < ctx_.n_nodes(); ++n)
-                    routing_prev_rates_[1] += source_delivery_->receipts()[n].rate -
-                                              source_delivery_->lastReceipts()[n].rate;
+                    routing_prev_rates_[1] += sourceDeliveryRate(n) - sourceDeliveryRate(n,true);
 #endif
             const double half = dt_next / 2.0;
             for (int k = 0; k < 11; ++k) {
@@ -2392,7 +2452,11 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
 #ifdef OPENSWMM_HAS_2D
         if (surface_router_.runtimeActive() || exchange_target_ >= 0.0)
             surface_router_.flushPendingBatch(ctx_);
-        if (checkpoint_surface_output_ && checkpoint_enabled_ &&
+        if (split_ && split_->role == SWMM_SPLIT_SURFACE) {
+            surface_router_.advancePostRouting(ctx_, dt_next, phase_start);
+        }
+        if (((checkpoint_surface_output_ && checkpoint_enabled_) ||
+             (split_ && split_->role == SWMM_SPLIT_SURFACE && split_->spatial_sources)) &&
             ctx_.elapsed_ms + 1000.0 * dt_next >= ctx_.next_report_ms &&
             datetime::addSeconds(ctx_.options.start_date, (ctx_.next_report_ms + 1.0) / 1000.0) >=
                 ctx_.options.report_start) {
@@ -2451,6 +2515,7 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
         }
 #endif
 
+        tracePhase(SWMM_PHASE_INVENTORY_CLOSED, phase_start, dt_next);
         // Advance the control-rule clock when the step landed on its grid
         // (legacy routing.c:407-408, 1 ms tolerance).
         if (do_routing_ && ctx_.options.rule_step > 0.0 &&
@@ -2480,9 +2545,11 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
         // All subcatch/node/link state arrays still reflect the end of the
         // just-completed routing step — advance only updates timers, not state.
         postOutputSnapshot(dt_next);
+        tracePhase(SWMM_PHASE_OUTPUTS_PUBLISHED, phase_start, dt_next);
 
 #ifdef OPENSWMM_HAS_2D
-        if (checkpoint_surface_output_ && checkpoint_enabled_) {
+        if ((checkpoint_surface_output_ && checkpoint_enabled_) ||
+            (split_ && split_->role == SWMM_SPLIT_SURFACE && split_->spatial_sources)) {
             // A mesh report may close another source interval. Capture its queues
             // and closing stores before accepting this whole-engine boundary.
             computeFinalStorage();
@@ -2533,6 +2600,8 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
             ground.refreshClockAfterEdit(surface_router_.state());
 #endif
         runtime_pipeline_ = false;
+        if (process_component_host_)
+            process_component_host_->acceptBoundary(runtimeCouplingTime());
         // Fire step-end callback
         if (callbacks_.on_step_end) {
             callbacks_.on_step_end(static_cast<void*>(this), ctx_.current_date, dt_next,
@@ -2562,6 +2631,7 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
         }
         if (elapsed_time)
             *elapsed_time = ctx_.current_time / hydraulics::TimestepController::SEC_PER_DAY;
+        tracePhase(SWMM_PHASE_STEP_ACCEPTED, phase_start, dt_next);
         return SWMM_OK;
     } catch (const std::exception& e) {
         checkpoint_ready_ = false;
@@ -2930,6 +3000,8 @@ void SWMMEngine::stepRunoff(double dt_routing) {
         // its start, so mesh and subcatchments receive the same gage depth.
         if (surface_router_.isActive())
             surface_router_.bookGageRates(ctx_, old_runoff_ms_ / 1000.0);
+        if (split_ && split_->role == SWMM_SPLIT_NETWORK && split_->source_count)
+            split_->weather.push_back({old_runoff_ms_ / 1000.0, ctx_.gages.rainfall});
 #endif
 
         // A2z. [FILES] USE RUNOFF — replace this runoff substep with the
@@ -5028,6 +5100,8 @@ void SWMMEngine::stepRouting(double dt_routing) {
     //      Must happen after setOutfallDepths() (called inside router_.step)
     //      but the 2D pre-routing hook modifies outfall heads from 2D state.
     surface_router_.updateOutfallsPreRouting(ctx_, dt_routing);
+    if (split_ && split_->role == SWMM_SPLIT_NETWORK && !split_->mapped_outfalls.empty())
+        splitExchange(SWMM_SPLIT_OUTFALL_PREPARE, dt_routing);
 #endif
 
     // B2d. Check if system is in steady state — skip routing if so
@@ -5041,21 +5115,25 @@ void SWMMEngine::stepRouting(double dt_routing) {
         return;
     }
 #ifdef OPENSWMM_HAS_2D
-    surface_router_.prepareLidStep(ctx_, dt_routing, ctx_.climate_state.evap_rate);
+    if (split_ && split_->role == SWMM_SPLIT_NETWORK && !split_->mesh_richards_nodes.empty()) {
+        splitExchange(SWMM_SPLIT_LID_TRIAL, dt_routing);
+        splitExchange(SWMM_SPLIT_LID_ACCEPT, dt_routing);
+    } else surface_router_.prepareLidStep(ctx_, dt_routing, ctx_.climate_state.evap_rate);
 #else
     lidnode::prepareStep(ctx_, dt_routing, ctx_.climate_state.evap_rate);
 #endif
+    tracePhase(SWMM_PHASE_LID_ADMISSION_PREPARED, ctx_.current_time, dt_routing);
     // legacy routeFlow: the hydraulic old state rolls only on a routed step.
     ctx_.save_hyd_state();
 #ifdef OPENSWMM_HAS_2D
     // Ordinary dynamic-wave volume averages endpoint net rates. Replace only
     // the source part of its old endpoint with this interval's held rate.
     // Node LID storage already integrates lateral inflow as rate * duration.
-    if (source_delivery_)
+    if (hasSourceDelivery())
         for (int n = 0; n < ctx_.n_nodes(); ++n)
             if (!lidnode::active(ctx_, n))
                 ctx_.nodes.old_net_inflow[n] +=
-                    source_delivery_->receipts()[n].rate - source_delivery_->lastReceipts()[n].rate;
+                    sourceDeliveryRate(n) - sourceDeliveryRate(n,true);
 #endif
 
     // B3. Hydraulic routing (batch xsect geometry → batch momentum)
@@ -5069,7 +5147,9 @@ void SWMMEngine::stepRouting(double dt_routing) {
     // Pre-fetch the non-conduit index list (built once at init)
     const auto& nc_idx = hydstruct_.nonConduitIndices();
     auto& dw = router_.dwSolver();
-    auto non_conduit_fn = [this, &nc_idx, &dw](SimulationContext& ctx, double dt, int step) {
+    std::exception_ptr split_error;
+    auto non_conduit_fn = [this, &nc_idx, &dw, &split_error](SimulationContext& ctx, double dt, int step) {
+        if (split_error) return;
         auto& links = ctx.links;
 
         // PARITY: legacy findLinkFlows (dynwave.c:383-398) processes
@@ -5205,6 +5285,16 @@ void SWMMEngine::stepRouting(double dt_routing) {
             for (const auto& [gn, gv] : gs)
                 dw.nodeSumDqdh(gn) += gv;
         }
+        if (dw.isInitialized() && split_ && split_->role == SWMM_SPLIT_NETWORK &&
+            ctx_.options.node_continuity == NodeContinuity::EXPLICIT) {
+            // This callback runs inside an OpenMP single region, including
+            // its inactive one-thread form. Never unwind across that region.
+            try {
+                std::vector<std::pair<int, double>> gs;
+                splitExchange(SWMM_SPLIT_CONDUCTANCE, dt, &gs);
+                for (const auto& [node, value] : gs) dw.nodeSumDqdh(node) += value;
+            } catch (...) { split_error = std::current_exception(); }
+        }
 #endif
     };
     // B3-pre. Exfiltration (storage node Green-Ampt seepage).
@@ -5221,9 +5311,11 @@ void SWMMEngine::stepRouting(double dt_routing) {
                                        non_conduit_fn, true)
                     : router_.step(ctx_, dt_routing, ctx_.climate_state.evap_rate, non_conduit_fn);
     }
+    if (split_error) std::rethrow_exception(split_error);
     if(ctx_.options.routing_model==RoutingModel::FV && ctx_.options.quality_solver==QualitySolverKind::LEGACY)
         router_.acceptedQualityWater(ctx_,dt_routing,quality_.fvWater());
     lidnode::finishStep(ctx_);
+    tracePhase(SWMM_PHASE_NETWORK_ROUTED, ctx_.current_time, dt_routing);
     // Legacy counts a step as non-converging from the ACTUAL final Picard flag,
     // not merely from "used all MaxTrials" — a step converging on the last
     // allowed iteration is converged (dynwave.c:245). Using the real flag here
@@ -5321,6 +5413,17 @@ void SWMMEngine::stepRouting(double dt_routing) {
     // B3+. Post-routing: compute 2D↔1D coupling exchange, update rainfall,
     //      advance the 2D solver, transfer outfall discharges to 2D cells.
     surface_router_.advancePostRouting(ctx_, dt_routing, ctx_.current_time);
+    if (split_ && split_->role == SWMM_SPLIT_NETWORK) {
+        if (split_->source_returns) {
+            // removeSystemOutflows later books the authoritative return and may
+            // rewrite outfall inflow on reversal. Retain its pre-booking view
+            // for the native surface exchange; do not reconstruct the transfer.
+            split_->accepted_inflow=ctx_.nodes.inflow;
+            split_->accepted_outflow=ctx_.nodes.outflow;
+        } else splitExchange(SWMM_SPLIT_ADVANCE, dt_routing);
+    }
+    if (surface_router_.isActive())
+        tracePhase(SWMM_PHASE_INTEGRATED_ADVANCED, ctx_.current_time, dt_routing);
 #endif
 
     // B3a. Inlet capture (street inlet HEC-22 calculations) runs at the END of
@@ -5546,9 +5649,8 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
         }
         double lateral_pair = ctx_.nodes.old_lat_flow[uj] + lat;
 #ifdef OPENSWMM_HAS_2D
-        if (source_delivery_)
-            lateral_pair +=
-                source_delivery_->receipts()[uj].rate - source_delivery_->lastReceipts()[uj].rate;
+        if (hasSourceDelivery())
+            lateral_pair += sourceDeliveryRate(int(uj)) - sourceDeliveryRate(int(uj),true);
 #endif
         ctx_.nodes.stat_lat_inflow_vol[uj] += lateral_pair * 0.5 * dt_routing;
         // PARITY stats.c:588 stats_updateStorageStats — a storage unit's peak
@@ -6234,6 +6336,8 @@ void SWMMEngine::computeFinalStorage() noexcept {
 #ifdef OPENSWMM_HAS_2D
         if (source_delivery_)
             ctx_.mass_balance.runoff_final_store += spatialSourceStorage(source_stage_->sources());
+        else if (split_ && split_->spatial_sources && split_->role == SWMM_SPLIT_NETWORK)
+            ctx_.mass_balance.runoff_final_store += split_->source_storage;
 #endif
 
         // F8 — the pack still standing, and the snow ploughed out of the
@@ -7884,20 +7988,25 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
             io_thread_.post(std::move(snap));
         }
 #ifdef OPENSWMM_HAS_2D
-        else if (surface_output_plugin_ != nullptr && surface_router_.isActive() &&
-                 !plugins_.empty()) {
+        else if (surface_router_.isActive() &&
+                 ((surface_output_plugin_ != nullptr && !plugins_.empty()) ||
+                  (split_ && split_->role == SWMM_SPLIT_SURFACE && split_->report_flush))) {
             // 2D output is configured but the 1D binary .out is not being saved
             // (no .out path → no 1D output writer registered). Post a snapshot
             // carrying only the surface state so the 2D HDF5 still writes. The
             // 1D writers are absent in this mode, so the empty 1D arrays are
             // never consumed; DefaultReportPlugin::update() is a no-op.
-            SimulationSnapshot snap;
-            snap.sim_time = report_date;
             if (!checkpoint_surface_output_ || !checkpoint_enabled_)
                 surface_router_.flushPendingBatch(ctx_);
             surface_router_.refreshRenderFieldsIfStale();
-            fillSurfaceSnapshot(snap);
-            io_thread_.post(std::move(snap));
+            // A split network saving binary results retains the native report
+            // flush even when its surface peer has no mesh writer.
+            if (surface_output_plugin_ != nullptr) {
+                SimulationSnapshot snap;
+                snap.sim_time = report_date;
+                fillSurfaceSnapshot(snap);
+                io_thread_.post(std::move(snap));
+            }
         }
 #endif
         hydraulics::TimestepController::reset_output_timer(ctx_);
@@ -8751,6 +8860,13 @@ int SWMMEngine::end() noexcept {
         return SWMM_ERR_WRONG_STATE;
     }
 
+    if (process_component_host_) {
+        try { process_component_host_->finish(); }
+        catch (const std::exception& error) {
+            set_error(SWMM_ERR_PLUGIN, error.what());
+            return SWMM_ERR_PLUGIN;
+        }
+    }
     // Native thermal hotstarts use the last accepted full engine checkpoint.
     // Capture before teardown's partial 2D flush so clocks, water and energy
     // describe the same accepted boundary.
@@ -8830,6 +8946,12 @@ int SWMMEngine::end() noexcept {
     // Finalize per-element max stats for report (top-5 CFL-critical, flow turns,
     // non-convergence — matching legacy stats_findMaxStats)
 #ifdef OPENSWMM_HAS_2D
+    if (split_ && split_->role == SWMM_SPLIT_NETWORK && !split_->finished)
+        try { splitExchange(SWMM_SPLIT_FINISH, 0); split_->finished = true; }
+        catch (const std::exception& error) {
+            set_error(SWMM_ERR_PLUGIN, error.what());
+            return SWMM_ERR_PLUGIN;
+        }
     // Finalize 2D surface routing module BEFORE the max-stats finalize: the
     // partial-window flush advances the 2D state and books its exchanges, so
     // the statistics/reports must read the post-flush state, not a snapshot
@@ -9091,6 +9213,8 @@ int SWMMEngine::report() noexcept {
 // ============================================================================
 
 int SWMMEngine::close() noexcept {
+    split_.reset();
+    process_component_host_.reset();
     checkpoint_enabled_ = checkpoint_ready_ = false;
     checkpoint_output_ = false;
     binary_output_plugin_ = nullptr;
@@ -9422,6 +9546,22 @@ void SWMMEngine::set_step_begin_callback(SWMM_StepBeginCallback cb, void* ud) no
 void SWMMEngine::set_step_end_callback(SWMM_StepEndCallback cb, void* ud) noexcept {
     callbacks_.on_step_end = cb;
     callbacks_.step_end_ud = ud;
+}
+
+int SWMMEngine::set_phase_callback(SWMM_PhaseCallback cb, void* ud) noexcept {
+    if (step_active_) return SWMM_ERR_LIFECYCLE;
+    callbacks_.on_phase = cb;
+    callbacks_.phase_ud = ud;
+    return SWMM_OK;
+}
+
+void SWMMEngine::tracePhase(int phase, double start, double duration) noexcept {
+    if (!callbacks_.on_phase) return;
+    try {
+        callbacks_.on_phase(this, phase, start, start + duration, callbacks_.phase_ud);
+    } catch (...) {
+        // A diagnostic observer must never alter native physical acceptance.
+    }
 }
 
 // ============================================================================
@@ -9888,6 +10028,12 @@ void SWMMEngine::initHydraulics() noexcept {
     //     route the message through the error path so it reaches the .rpt and the
     //     open fails gracefully, exactly like a 1D validation error.
     try {
+        struct RestoreOwnership {
+            bool& flag; bool value;
+            ~RestoreOwnership() { flag=value; }
+        } restoreOwnership{surface_router_.checkpoint_owned_initialization_, surface_router_.checkpoint_owned_initialization_};
+        if (split_ && split_->spatial_sources)
+            surface_router_.checkpoint_owned_initialization_=true;
         surface_router_.initialize(ctx_);
         if (!ctx_.options.ignore_2d && surface_router_.options().groundwater != 0 &&
             !surface_router_.subsurface().active() &&
@@ -9897,6 +10043,10 @@ void SWMMEngine::initHydraulics() noexcept {
                 "Groundwater edge forcing and REACTION_SUBSURFACE require an active resolved mesh aquifer.");
         for (int n = 0; n < ctx_.n_nodes(); ++n)
             if (lidnode::bottomMode(ctx_, n) == LidNodeBottom::MeshAquifer &&
+                // Split receivers resolve this owner from the matching surface
+                // geometry before start; they deliberately have no aquifer solver.
+                !(split_ && split_->role == SWMM_SPLIT_NETWORK &&
+                  std::find(split_->lid_nodes.begin(),split_->lid_nodes.end(),n) != split_->lid_nodes.end()) &&
                 (!surface_router_.isActive() || !surface_router_.subsurface().active() ||
                  n >= int(ctx_.nodes.aquifer2d_bed.size()) || !ctx_.nodes.aquifer2d_bed[n]))
                 throw std::runtime_error(
@@ -11587,8 +11737,8 @@ void SWMMEngine::assembleLateralInflows(double dt_routing) noexcept {
 
         ctx_.nodes.lat_flow[uj] += q_user + ctx_.nodes.coupling_inflow[uj];
 #ifdef OPENSWMM_HAS_2D
-        if (source_delivery_)
-            ctx_.nodes.lat_flow[uj] += source_delivery_->receipts()[uj].rate;
+        if (hasSourceDelivery())
+            ctx_.nodes.lat_flow[uj] += sourceDeliveryRate(int(uj));
 #endif
     }
 
@@ -11851,8 +12001,27 @@ const std::vector<int>* SWMMEngine::ordinarySourceOwners() const noexcept {
 #ifdef OPENSWMM_HAS_2D
     if (source_delivery_)
         return &source_delivery_->sourceGroups();
+    if (split_ && split_->spatial_sources && split_->role == SWMM_SPLIT_NETWORK)
+        return &split_->source_groups;
 #endif
     return nullptr;
+}
+bool SWMMEngine::hasSourceDelivery() const noexcept {
+#ifdef OPENSWMM_HAS_2D
+    return bool(source_delivery_) ||
+        (split_ && split_->spatial_sources && split_->role == SWMM_SPLIT_NETWORK);
+#else
+    return false;
+#endif
+}
+double SWMMEngine::sourceDeliveryRate(int node, bool previous) const {
+#ifdef OPENSWMM_HAS_2D
+    if (source_delivery_)
+        return (previous ? source_delivery_->lastReceipts() : source_delivery_->receipts())[node].rate;
+    if (split_ && split_->spatial_sources && split_->role == SWMM_SPLIT_NETWORK)
+        return (previous ? split_->source_previous_rates : split_->source_rates)[node];
+#endif
+    return 0;
 }
 bool SWMMEngine::ownsSpatialSource(int source) const noexcept {
     const auto* owners = ordinarySourceOwners();

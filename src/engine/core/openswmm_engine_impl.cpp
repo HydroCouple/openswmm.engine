@@ -269,6 +269,12 @@ SWMM_ENGINE_API int swmm_set_step_end_callback(SWMM_Engine engine, SWMM_StepEndC
     return SWMM_OK;
 }
 
+SWMM_ENGINE_API int swmm_set_phase_callback(SWMM_Engine engine, SWMM_PhaseCallback callback,
+                                            void* user_data) {
+    CHECK_HANDLE(engine);
+    return to_engine(engine)->set_phase_callback(callback, user_data);
+}
+
 // ============================================================================
 // Error reporting
 // ============================================================================

@@ -75,6 +75,19 @@ SWMM_ENGINE_API int swmm_process_component_get(SWMM_Engine engine, int idx, char
                                                int id_len, char* config_buf, int config_len,
                                                char* resolved_buf, int resolved_len);
 
+/** Read extra authored key/value arguments without loading a component.
+ * Count returns -1 for an invalid handle/registration. Get follows the same
+ * NUL-termination/truncation rules as swmm_process_component_get. */
+SWMM_ENGINE_API int swmm_process_component_argument_count(SWMM_Engine engine, int idx);
+SWMM_ENGINE_API int swmm_process_component_argument_get(SWMM_Engine engine, int idx, int argument,
+    char* key, int key_length, char* value, int value_length);
+/** Set/replace an authored argument in BUILDING/OPENED. NULL value removes it.
+ * Keys must be nonempty tokens without whitespace, control characters or '=';
+ * CONFIG is reserved for the registration's config_path, case-insensitively.
+ * Changes are consumed at the next model open; they do not rebind a live host. */
+SWMM_ENGINE_API int swmm_process_component_argument_set(SWMM_Engine engine, int idx,
+    const char* key, const char* value);
+
 /**
  * @brief Find a model registration by exact component ID.
  *

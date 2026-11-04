@@ -1611,6 +1611,11 @@ cdef extern from "openswmm_process_components.h":
                                          char* config_buf, int config_len,
                                          char* resolved_buf, int resolved_len)
     cdef int swmm_process_component_find(SWMM_Engine e, const char* id)
+    cdef int swmm_process_component_argument_count(SWMM_Engine e, int idx)
+    cdef int swmm_process_component_argument_get(SWMM_Engine e, int idx, int argument,
+        char* key, int key_length, char* value, int value_length)
+    cdef int swmm_process_component_argument_set(SWMM_Engine e, int idx,
+        const char* key, const char* value)
     cdef int swmm_process_component_register(SWMM_Engine e, const char* id,
                                               const char* config_path)
     cdef int swmm_process_component_remove(SWMM_Engine e, int idx)

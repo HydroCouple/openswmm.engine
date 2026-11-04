@@ -98,6 +98,49 @@ SWMM_ENGINE_API int swmm_process_component_known_count(void) {
         openswmm::components::ProcessComponentRegistry::instance().known_ids().size());
 }
 
+SWMM_ENGINE_API int swmm_process_component_argument_count(SWMM_Engine engine, int idx) {
+    if (!engine) return -1;
+    const auto& specs = to_engine(engine)->context().process_component_specs;
+    if (idx < 0 || idx >= static_cast<int>(specs.size())) return -1;
+    return static_cast<int>(specs[idx].args.size());
+}
+SWMM_ENGINE_API int swmm_process_component_argument_get(SWMM_Engine engine, int idx, int argument,
+    char* key, int key_length, char* value, int value_length) {
+    CHECK_HANDLE(engine);
+    const auto count = swmm_process_component_argument_count(engine, idx);
+    CHECK_INDEX(count >= 0 && argument >= 0 && argument < count);
+    if (!key || key_length <= 0 || !value || value_length <= 0) return SWMM_ERR_BADPARAM;
+    const auto& pair = to_engine(engine)->context().process_component_specs[idx].args[argument];
+    copy_to_buf(pair.first, key, key_length);
+    copy_to_buf(pair.second, value, value_length);
+    return SWMM_OK;
+}
+SWMM_ENGINE_API int swmm_process_component_argument_set(SWMM_Engine engine, int idx,
+    const char* key, const char* value) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    CHECK_INDEX(idx >= 0 && idx < static_cast<int>(ctx.process_component_specs.size()));
+    if (!key || !*key) return SWMM_ERR_BADPARAM;
+    try {
+        std::string name(key), normalized(key);
+        for (auto& c : normalized) {
+            const auto byte = static_cast<unsigned char>(c);
+            if (byte <= 32 || byte == 127 || c == '=') return SWMM_ERR_BADPARAM;
+            if (c >= 'a' && c <= 'z') c -= 'a' - 'A';
+        }
+        if (normalized == "CONFIG") return SWMM_ERR_BADPARAM;
+        auto& arguments = ctx.process_component_specs[idx].args;
+        const auto found = std::find_if(arguments.begin(), arguments.end(), [&](const auto& pair) { return pair.first == name; });
+        if (!value) {
+            if (found != arguments.end()) arguments.erase(found);
+        } else if (found != arguments.end()) found->second = value;
+        else arguments.emplace_back(name, value);
+        return SWMM_OK;
+    } catch (const std::bad_alloc&) { return SWMM_ERR_NOMEM; }
+    catch (...) { return SWMM_ERR_INTERNAL; }
+}
+
 SWMM_ENGINE_API int swmm_process_component_known_get(int idx, char* id_buf, int id_len,
                                                      char* desc_buf, int desc_len,
                                                      int* implemented) {

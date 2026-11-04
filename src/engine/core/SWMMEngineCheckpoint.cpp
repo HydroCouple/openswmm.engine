@@ -2412,6 +2412,7 @@ std::string SWMMEngine::enableCheckpointingImpl(
     const bool aquifer_owned = router_.checkpoint_aquifer_session_;
     const bool fresh_router = router_.checkpoint_context_ == nullptr;
     try {
+        require(!split_, "Split participants require coordinated graph recovery; native checkpoint attachment is unavailable.");
         require(!step_active_ && !runtime_pipeline_ && exchange_target_ < 0 &&
                     !checkpoint_enabled_ && ctx_.current_time == 0,
                 "Enable engine checkpointing at start's initial session boundary.");

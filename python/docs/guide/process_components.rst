@@ -15,6 +15,31 @@ reactions, …) are active and where each one's config file lives.
 
 Reference: ``openswmm_process_components.h``.
 
+Extra arguments and foreign instances
+====================================
+
+``arguments(key)`` returns ordered ``(name, value)`` pairs without loading a
+component. ``set_argument(key, name, value)`` sets or replaces a row argument;
+``None`` removes it. These edits require BUILDING/OPENED and are consumed at the
+next model open. ``config`` remains the registration's separate configuration
+path; it cannot be set as an extra argument.
+
+.. code-block:: python
+
+    components = solver.process_components
+    components.register("receiving", "receiving.json")
+    components.set_argument("receiving", "library", "components/receiver.so")
+    components.set_argument("receiving", "component", "example.receiving")
+    print(components.arguments("receiving"))
+
+Foreign runtime hosting requires the optional HydroCouple build feature and an
+``openswmm.hosted-component/1`` configuration. The qualified export profile uses
+native external-outfall water, pollutant mass and heat receipts with explicit
+one-to-one item connections. Metadata inspection does not create or advance the
+foreign instance. Configuration inspection and authoring remain separate from
+runtime compatibility qualification. See ``docs/HYDROCOUPLE_HOSTING.md`` in the
+engine repository for ownership, units, cancellation and acceptance semantics.
+
 ----
 
 Quickstart

@@ -57,7 +57,7 @@ twoD::RichardsBedAcceptance acceptNodes(SimulationContext& ctx, twoD::Subsurface
                                         double evaporation, const std::vector<int>& input, int tier,
                                         Router* router = nullptr,
                                         const std::vector<double>& step_ends = {},
-                                        bool queued = false) {
+                                        bool queued = false, MeshRichardsTrial* pending = nullptr) {
     using twoD::RichardsBedAcceptance;
     const auto fail = [](const std::string& error) {
         RichardsBedAcceptance r;
@@ -296,6 +296,14 @@ twoD::RichardsBedAcceptance acceptNodes(SimulationContext& ctx, twoD::Subsurface
         return fail(e.what());
     }
     if (queued) {
+        if (pending) {
+            pending->start = start;
+            pending->end = end;
+            pending->evaporation = evaporation;
+            pending->drafts = std::move(drafts);
+            pending->receipts = accepted.trial.receipts;
+            return accepted;
+        }
         if (auto error = gw.retainLidReceipts(start, end, accepted.trial.receipts); !error.empty())
             return fail(error);
         for (auto& d : drafts)
@@ -312,6 +320,31 @@ twoD::RichardsBedAcceptance acceptNodes(SimulationContext& ctx, twoD::Subsurface
         detail::publish(ctx, std::move(d));
     return accepted;
 }
+}
+MeshRichardsTrial trialMeshRichardsStep(SimulationContext& ctx, twoD::SubsurfaceSolver& gw,
+                                       twoD::SurfaceStateData& surface, double dt, double evaporation) {
+    std::vector<int> nodes;
+    for (int n = 0; n < ctx.n_nodes(); ++n)
+        if (richardsMode(ctx, n) && bottomMode(ctx, n) == LidNodeBottom::MeshAquifer)
+            nodes.push_back(n);
+    if (nodes.empty() || !gw.lidReceiptsEnabled())
+        throw std::runtime_error("Mesh Richards trial requires configured native node/receipt owners.");
+    MeshRichardsTrial trial;
+    trial.routing_dt = dt;
+    auto result = acceptNodes(ctx, gw, surface, ctx.current_time, ctx.current_time + dt,
+                              evaporation, nodes, -1, nullptr, {}, true, &trial);
+    if (!result.error.empty()) throw std::runtime_error(result.error);
+    return trial;
+}
+void acceptMeshRichardsTrial(SimulationContext& ctx, twoD::SubsurfaceSolver& gw,
+                             MeshRichardsTrial& trial) {
+    if (trial.consumed || trial.drafts.empty() || trial.start != ctx.current_time)
+        throw std::runtime_error("Stale or consumed Mesh Richards trial.");
+    if (auto error = gw.retainLidReceipts(trial.start, trial.end, trial.receipts); !error.empty())
+        throw std::runtime_error(error);
+    trial.consumed = true;
+    for (auto& draft : trial.drafts) detail::publish(ctx, std::move(draft));
+    prepareStepAfterMesh(ctx, trial.routing_dt, trial.evaporation);
 }
 void prepareMeshRichardsStep(SimulationContext& ctx, twoD::SubsurfaceSolver& gw,
                              twoD::SurfaceStateData& surface, double dt, double evaporation) {

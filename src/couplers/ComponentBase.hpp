@@ -456,7 +456,7 @@ private:
     Dimension dimension_;
     Definition definition_;
 };
-class Output final : public Item, public HC::IOutput {
+class Output : public Item, public HC::IOutput {
 public:
     /**
      * @brief Inherit scalar Item construction and metadata/borrowed-model ownership.

@@ -282,6 +282,64 @@ class ProcessComponents:
         _check(swmm_process_component_remove(_h(self._solver), idx))
         self._solver._bump_generation()
 
+    def arguments(self, key):
+        """Copy ordered extra row arguments without loading the component.
+
+        Returns a tuple of ``(name, value)`` pairs, preserving unknown keys,
+        authoring order and duplicates for inspection. Configuration paths remain
+        in the registration's ``config`` field.
+        """
+        cdef int idx = self._index_of(key)
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int count = swmm_process_component_argument_count(h, idx)
+        cdef int argument, size
+        cdef char* name = NULL
+        cdef char* value = NULL
+        if count < 0:
+            raise BadHandleError(int(ErrorCode.BADHANDLE), "Cannot read component arguments")
+        result = []
+        for argument in range(count):
+            size = 256
+            while size <= 64 * 1024 * 1024:
+                name = <char*>malloc(size)
+                value = <char*>malloc(size)
+                try:
+                    if name == NULL or value == NULL:
+                        raise MemoryError()
+                    _check(swmm_process_component_argument_get(h, idx, argument, name, size, value, size))
+                    if strlen(name) < size - 1 and strlen(value) < size - 1:
+                        result.append((name.decode('utf-8'), value.decode('utf-8')))
+                        break
+                finally:
+                    free(name)
+                    free(value)
+                size *= 2
+            else:
+                raise ValueError("Component argument exceeds the supported text size")
+        return tuple(result)
+
+    def set_argument(self, key, str name, value):
+        """Set an authored extra argument; ``None`` removes it.
+
+        BUILDING/OPENED only. A changed hosted row is consumed after save/reopen;
+        this operation never reconfigures or advances a foreign runtime instance.
+        """
+        cdef int idx = self._index_of(key)
+        cdef bytes encoded_name = name.encode('utf-8')
+        cdef bytes encoded_value
+        if '\x00' in name:
+            raise ValueError("Component argument names cannot contain NUL")
+        if value is None:
+            _check(swmm_process_component_argument_set(_h(self._solver), idx, encoded_name, NULL))
+        else:
+            if not isinstance(value, str):
+                raise TypeError("Component argument values must be strings or None")
+            if '\x00' in value:
+                raise ValueError("Component argument values cannot contain NUL")
+            encoded_value = value.encode('utf-8')
+            _check(swmm_process_component_argument_set(_h(self._solver), idx, encoded_name, encoded_value))
+        self._solver._bump_generation()
+
     # ---- Internals ---------------------------------------------------
 
     def _index_of(self, key) -> int:

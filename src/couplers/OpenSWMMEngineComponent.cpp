@@ -13,15 +13,18 @@
  */
 
 #include "ComponentBase.hpp"
+#include "WaterPhaseLink.hpp"
 #include <hydrocouplecomponentabi.h>
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_spatial.h>
 #include <openswmm/engine/openswmm_hotstart.h>
+#include <openswmm/engine/openswmm_checkpoint.h>
 #include <openswmm/engine/openswmm_snow.h>
 #ifdef OPENSWMM_HAS_2D
 #include <openswmm/engine/openswmm_2d.h>
 #include <openswmm/engine/openswmm_gw2d.h>
 #include <openswmm/engine/openswmm_gw_transport.h>
+#include <openswmm/engine/openswmm_surface_ownership.h>
 #endif
 #include <filesystem>
 #include <fstream>
@@ -387,10 +390,15 @@ public:
      * clears dynamic items. Do not delete pointers; no producer advance or ownership transfer.
      * Vector allocation can throw; host serializes initialization/output-list reads.
      */
+    std::vector<HC::IInput*> inputs() const override {
+        if (split_ && !split_->surface) return {&split_->request};
+        return {};
+    }
     std::vector<HC::IOutput*> outputs() const override {
         std::vector<HC::IOutput*> result;
         for (const auto& item : outputs_)
             result.push_back(item.get());
+        if (split_ && split_->surface) result.push_back(&split_->receipt);
         return result;
     }
     /**
@@ -422,8 +430,40 @@ public:
             config_ = configuration_.load(base_);
             if (config_.at("schema") != "openswmm.component/1")
                 throw std::invalid_argument("Use schema openswmm.component/1");
+            for (const auto& [key, value] : config_.items())
+                if (key != "schema" && key != "role" && key != "model" &&
+                    key != "output_directory" && key != "outfalls" &&
+                    key != "exchange_times_s" && key != "managed_session" && key != "surface_results")
+                    throw std::invalid_argument("Unknown component configuration key: " + key);
+            managed_ = config_.value("managed_session", false);
+            ownershipToken_.clear();
             role_ = config_.value("role", std::string("complete_model"));
-            if (role_ != "complete_model" && role_ != "network_only")
+            if (config_.contains("surface_results") &&
+                (role_ != "integrated2d" || !config_.at("surface_results").is_boolean()))
+                throw std::invalid_argument("surface_results is a Boolean for the integrated2d role");
+            split_.reset();
+            if (role_ == "split_network" || role_ == "integrated2d") {
+#ifdef OPENSWMM_COMPONENT_2D_RESULTS
+                if (managed_ || config_.contains("outfalls") || config_.contains("exchange_times_s"))
+                    throw std::invalid_argument("Split water roles require native phase scheduling without outfall exports or managed sessions");
+                split_ = std::make_unique<WaterPhaseLink>(this,role_ == "integrated2d");
+                split_->request.finalizeAt = [this](double at) {
+                    if (status() != CS::Updated || time_ != at)
+                        throw std::invalid_argument("Final settlement requires a shared accepted boundary");
+                    try {
+                        transition(CS::Updating);
+                        split_->finishNetwork(engine_);
+                        transition(CS::Done);
+                    } catch (const std::exception& ex) { fail(ex.what()); throw; }
+                };
+                split_->receipt.serve = [this](const HC::IInput* query) {
+                    try { split_->evaluate(engine_,query,time_); }
+                    catch (const std::exception& ex) { fail(ex.what()); throw; }
+                };
+#else
+                throw std::invalid_argument("Split roles require the CPU surface and HDF5 build");
+#endif
+            } else if (role_ != "complete_model" && role_ != "network_only")
                 throw std::invalid_argument("Use complete_model or network_only");
             model_ = resolve(config_.at("model").get<std::string>());
             output_ = resolve(config_.at("output_directory").get<std::string>());
@@ -510,16 +550,31 @@ public:
                 throw std::runtime_error("Cannot create runtime engine");
             check(engine_, swmm_engine_open(engine_, pathText(model_).c_str(),
                                             pathText(output_ / "model.rpt").c_str(),
-                                            pathText(output_ / "model.out").c_str(), nullptr));
+                                            split_ && split_->surface ? nullptr : pathText(output_ / "model.out").c_str(), nullptr));
+            if (split_)
+                check(engine_, swmm_split_configure(engine_, split_->surface ? SWMM_SPLIT_SURFACE : SWMM_SPLIT_NETWORK));
             if (role_ == "network_only")
                 check(engine_, swmm_options_set(engine_, "IGNORE_2D", "YES"));
 #ifdef OPENSWMM_HAS_2D
-            if (surfaceExecution_)
+            if (surfaceExecution_ && config_.value("surface_results",true))
                 check(engine_, swmm_2d_set_results_file(
                                    engine_, pathText(output_ / "model.2d.h5").c_str()));
 #endif
-            check(engine_, swmm_engine_initialize(engine_));
-            check(engine_, swmm_engine_start(engine_, 1));
+            if (managed_) {
+                SWMM_CheckpointSessionOptions options{};
+                options.struct_size = sizeof(options);
+                options.schema_version = 1;
+                options.output = surfaceExecution_ ? SWMM_CHECKPOINT_OUTPUT_COMBINED
+                                                  : SWMM_CHECKPOINT_OUTPUT_BINARY;
+                options.ownership_token = ownershipToken_.empty() ? nullptr : ownershipToken_.c_str();
+                const int code = swmm_checkpoint_start_session(engine_, &options);
+                if (code)
+                    throw std::runtime_error(swmm_checkpoint_last_error_msg());
+            } else {
+                check(engine_, swmm_engine_initialize(engine_));
+                if (!split_) check(engine_, swmm_engine_start(engine_, 1));
+                else if (split_->surface) split_->prepareSurface(engine_);
+            }
             for (auto& outfall : outfalls_) {
                 outfall.amounts.assign(species_.size(), 0);
                 check(engine_, swmm_node_get_export_receipt(
@@ -559,10 +614,16 @@ public:
         try {
             verifyReceipt();
             transition(CS::Updating);
+            if (split_ && split_->surface) {
+                transition(split_->ended ? CS::Done : CS::Updated);
+                return;
+            }
+            if (split_) split_->startNetwork(engine_);
             if (outfalls_.empty()) {
                 double elapsed = 0;
                 check(engine_, swmm_engine_step(engine_, &elapsed));
                 check(engine_, swmm_engine_get_elapsed_seconds(engine_, &time_));
+                if (split_ && elapsed == 0) split_->finishNetwork(engine_);
                 transition(elapsed == 0 ? CS::Done : CS::Updated);
                 return;
             }
@@ -638,7 +699,9 @@ public:
                 verifyReceipt();
             transition(CS::Finishing);
             if (engine_ && !failed) {
-                check(engine_, swmm_engine_end(engine_));
+                if (!split_) check(engine_, swmm_engine_end(engine_));
+                else if (!split_->surface) split_->finishNetwork(engine_);
+                else split_->finishSurface(time_);
                 check(engine_, swmm_engine_report(engine_));
             }
             close();
@@ -676,7 +739,7 @@ public:
      * allocation; prepared schedule/sequence must remain stable through query.
      */
     double nextDateTimeJulianDay() const override {
-        if (status() != CS::Updated)
+        if (status() != CS::Updated || (split_ && split_->surface))
             return epoch_ + time_ / 86400.;
         return epoch_ + (outfalls_.empty() ? std::min(duration_, time_ + routingStep_)
                                            : times_.at(sequence_)) /
@@ -697,6 +760,9 @@ private:
     Json config_, metadata_;
     fs::path base_, model_, output_;
     std::string role_, modelBytes_, pendingToken_;
+    std::string ownershipToken_;
+    bool managed_ = false;
+    std::unique_ptr<WaterPhaseLink> split_;
     bool surfaceExecution_ = false;
     std::map<fs::path, std::string> componentFiles_;
     std::vector<std::string> species_, reasons_;
@@ -737,7 +803,7 @@ private:
      */
     void fail(const std::string& message) {
         if (status() != CS::Failed && status() != CS::Finished)
-            transition(CS::Failed, message);
+            transition(CS::Failed, split_ && !split_->error.empty() ? message + ": " + split_->error : message);
     }
     /**
      * @brief Write one JSON boundary/configuration artifact under the component output
@@ -768,6 +834,63 @@ private:
             check(engine, swmm_options_get(engine, key, buffer, length));
         });
     }
+#ifdef OPENSWMM_COMPONENT_2D_RESULTS
+    /**
+     * @brief Admit the bounded native MESH groundwater owner without changing configuration.
+     * @param[in] engine Borrowed parsed handle; getters do not prepare or advance it.
+     * @param[in] rows Authored aquifer row count.
+     * @return Whether global and row settings fit the qualified water-only profile.
+     * @note Native getter errors throw through check/readText; no output or state mutation.
+     */
+    bool groundwaterWaterProfile(SWMM_Engine engine, int rows) const {
+        auto aquifer = [&](const char* key) {
+            return readText([&](char* b, int n) {
+                check(engine, swmm_gw2d_option_get(engine, key, b, n));
+            });
+        };
+        auto transport = [&](const char* key) {
+            return readText([&](char* b, int n) {
+                check(engine, swmm_gw_transport_option_get(engine, key, b, n));
+            });
+        };
+        if (rows < 1 || aquifer("MODE") != "MESH" ||
+            option(engine, "FLOW_ROUTING") != "DYNWAVE" ||
+            transport("THERMAL_MODEL") != "WATER_ONLY" || transport("CONDUCTION") != "NO")
+            return false;
+        for (const char* key :
+             {"TRANSPORT_POLLUTANTS", "TRANSPORT_MSX", "TRANSPORT_AGE", "TRANSPORT_TEMPERATURE"})
+            if (transport(key) != "NO") return false;
+        // The managed native builder owns the broader source/Richards/closure
+        // profiles and retains its own compatibility checks before initialization.
+        if (managed_ || split_)
+            return true;
+        if (aquifer("CLOSURE") != "CLOSED_FORM" ||
+            aquifer("SOIL_CHAR") != "GARDNER" || aquifer("GW_ET") != "NONE" ||
+            aquifer("NODE_ENROLMENT") != "ROWS" || option(engine, "FLOW_ROUTING") != "DYNWAVE" ||
+            swmm_subcatch_count(engine) || swmm_lid_usage_count(engine) ||
+            transport("THERMAL_MODEL") != "WATER_ONLY" || transport("CONDUCTION") != "NO")
+            return false;
+        for (const char* key :
+             {"TRANSPORT_POLLUTANTS", "TRANSPORT_MSX", "TRANSPORT_AGE", "TRANSPORT_TEMPERATURE"})
+            if (transport(key) != "NO") return false;
+        for (int row = 0; row < rows; ++row)
+            for (const auto& property : std::vector<std::pair<const char*, int>>{
+                     {"CLOSURE", SWMM_GW2D_CLOSURE_CLOSED_FORM}, {"SOIL_CHAR", SWMM_GW2D_SOIL_GARDNER}}) {
+                double authored = 0, value = 0;
+                const auto flag = std::string(property.first) + "_SET";
+                check(engine, swmm_gw2d_row_get_property(engine, row, flag.c_str(), &authored));
+                check(engine, swmm_gw2d_row_get_property(engine, row, property.first, &value));
+                if (authored && value != property.second) return false;
+            }
+        for (int node = 0; node < swmm_node_count(engine); ++node) {
+            int lid = -1;
+            double saturation = 0;
+            check(engine, swmm_node_get_lid(engine, node, &lid, &saturation));
+            if (lid >= 0) return false;
+        }
+        return true;
+    }
+#endif
     /**
      * @brief Map interval tuple position to typed amount field name.
      * @param[in] index 0 water_m3,1 enthalpy_j,>=2 species name at index-2.
@@ -989,7 +1112,25 @@ void OpenSWMMEngineComponent::discover(SWMM_Engine engine) {
         const auto path = readText([&](char* b, int n) {
             check(engine, swmm_process_component_get(engine, i, ignored, 1, ignored, 1, b, n));
         });
-        metadata_["process_components"].push_back({{"id", id}, {"configuration_file", path}});
+        Json arguments = Json::array();
+        bool foreign = id.find_first_of("/\\") != std::string::npos || id.ends_with(".so") ||
+                       id.ends_with(".dll") || id.ends_with(".dylib");
+        const int count = swmm_process_component_argument_count(engine, i);
+        if (count < 0) throw std::runtime_error("Cannot inspect process component arguments");
+        for (int argument = 0; argument < count; ++argument) {
+            const auto key = readText([&](char* b, int n) {
+                check(engine, swmm_process_component_argument_get(engine, i, argument, b, n, ignored, 1));
+            });
+            const auto value = readText([&](char* b, int n) {
+                check(engine, swmm_process_component_argument_get(engine, i, argument, ignored, 1, b, n));
+            });
+            arguments.push_back({{"name", key}, {"value", value}});
+            foreign = foreign || key == "library";
+        }
+        metadata_["process_components"].push_back({{"id", id}, {"configuration_file", path},
+                                                   {"arguments", arguments}, {"foreign", foreign}});
+        if (foreign)
+            reasons_.push_back("Native hosted components require separate nested graph ownership/recovery qualification in the engine wrapper");
         if (!path.empty())
             componentFiles_[pathFromText(path)] = readFile(pathFromText(path));
     }
@@ -1017,9 +1158,9 @@ void OpenSWMMEngineComponent::discover(SWMM_Engine engine) {
     metadata_["explicit_groundwater_row_count"] = spatialRows;
     metadata_["explicit_groundwater_mode"] = groundwaterMode;
     metadata_["explicit_groundwater_configured"] = spatialConfigured;
-    if (spatialConfigured || spatialRows)
-        reasons_.push_back(
-            "Explicit groundwater component execution is pending qualification; use native execution for this model");
+    const bool groundwaterConfigured = spatialConfigured || spatialRows;
+    bool groundwaterExecution = false;
+    bool meshTransportExecution = false;
     if (vertices) {
         auto surfaceOption = [&](const char* key) {
             return readText([&](char* b, int n) {
@@ -1027,7 +1168,7 @@ void OpenSWMMEngineComponent::discover(SWMM_Engine engine) {
             });
         };
 #ifdef OPENSWMM_COMPONENT_2D_RESULTS
-        surfaceExecution_ = role_ == "complete_model" && !spatialConfigured && !spatialRows &&
+        surfaceExecution_ = (role_ == "complete_model" || split_) &&
                             option(engine, "IGNORE_2D") != "YES" &&
                             option(engine, "IGNORE_QUALITY") == "YES" &&
                             option(engine, "HEAT_TRANSPORT") != "YES" && nr == 0 &&
@@ -1038,14 +1179,65 @@ void OpenSWMMEngineComponent::discover(SWMM_Engine engine) {
                             surfaceOption("TRANSPORT_AGE") == "NO" &&
                             surfaceOption("TRANSPORT_TEMPERATURE") == "NO" &&
                             surfaceOption("BED_HEAT_MODEL") == "NONE";
+        if (groundwaterConfigured) {
+            groundwaterExecution = surfaceExecution_ && groundwaterWaterProfile(engine, spatialRows);
+            surfaceExecution_ = groundwaterExecution;
+        }
+        // Native managed sessions already own matched mesh/GW tracer, age and
+        // porous-ground heat profiles. No watershed or network is duplicated.
+        auto groundwaterTransport = [&](const char* key) {
+            return readText([&](char* b, int n) {
+                check(engine, swmm_gw_transport_option_get(engine, key, b, n));
+            });
+        };
+        meshTransportExecution = managed_ && role_ == "complete_model" &&
+            groundwaterConfigured && spatialRows > 0 && groundwaterMode == "MESH" &&
+            swmm_node_count(engine) == 0 && swmm_link_count(engine) == 0 &&
+            swmm_subcatch_count(engine) == 0 && nr == 0 &&
+            option(engine, "IGNORE_2D") != "YES" && surfaceOption("BACKEND") == "CPU" &&
+            surfaceOption("RECONSTRUCTION_ORDER") == "1" &&
+            ((option(engine, "HEAT_TRANSPORT") == "YES" &&
+              surfaceOption("BED_HEAT_MODEL") == "GROUND_COLUMN" &&
+              surfaceOption("HEAT_MODEL") == "COUPLED" &&
+              groundwaterTransport("THERMAL_MODEL") == "POROUS_EQUILIBRIUM") ||
+             (option(engine, "HEAT_TRANSPORT") != "YES" &&
+              surfaceOption("BED_HEAT_MODEL") == "NONE")) &&
+            surfaceOption("TRANSPORT_MSX") == "NO" &&
+            groundwaterTransport("TRANSPORT_MSX") == "NO";
+        if (meshTransportExecution) surfaceExecution_ = groundwaterExecution = true;
 #endif
         if (!surfaceExecution_)
-            reasons_.push_back("Surface component requires the qualified complete-model CPU first-order water-only profile and HDF5 results writer");
+            reasons_.push_back("Surface component requires a qualified complete-model CPU first-order water or managed matched mesh/GW transport profile and HDF5 results writer");
     }
-    metadata_["execution_profile"] = surfaceExecution_ ? "native_cpu_surface_water/1" : "native_cpu_1d/1";
+    if (groundwaterConfigured && !groundwaterExecution)
+        reasons_.push_back("Explicit groundwater requires a qualified MESH water profile or managed matched mesh/GW transport profile");
+    if (split_) {
+        if (!vertices || swmm_split_validate_input(engine) != SWMM_OK)
+            reasons_.push_back(std::string("Split input: ") + swmm_get_last_error_msg(engine));
+        surfaceExecution_ = split_->surface;
+    }
+    metadata_["managed_session"] = managed_;
+    if (managed_ && (!config_.value("outfalls", Json::array()).empty() || role_ != "complete_model"))
+        reasons_.push_back("Managed sessions require complete_model without external outfall ports");
+    if (managed_ && vertices && !groundwaterExecution)
+        reasons_.push_back("Managed spatial sessions require a qualified native mesh aquifer profile");
+    metadata_["execution_profile"] = meshTransportExecution ? "native_cpu_managed_transport/1"
+                                     : groundwaterExecution && managed_ ? "native_cpu_managed_water/1"
+                                     : groundwaterExecution ? "native_cpu_integrated_water/1"
+                                     : surfaceExecution_ ? "native_cpu_surface_water/1" : "native_cpu_1d/1";
     metadata_["result_files"] = {{"report", "model.rpt"}, {"binary", "model.out"}};
     if (surfaceExecution_)
         metadata_["result_files"]["surface"] = "model.2d.h5";
+    if (split_) {
+        metadata_["execution_profile"] = "openswmm.node-surface-water/1";
+        metadata_["phase_port"] = waterPhasePort;
+        metadata_["phase_packet_schemas"] = {"openswmm.node-surface-water/1", "openswmm.node-surface-water/2", "openswmm.node-surface-water/3", "openswmm.node-surface-water/4", "openswmm.node-surface-water/5", "openswmm.node-surface-water/6", "openswmm.node-surface-water/7", "openswmm.node-surface-water/8"};
+        metadata_["groundwater_owner"] = "integrated2d";
+        metadata_["watershed_owner"] = "network";
+        metadata_["split_source_scope"] = "ordinary runoff and conventional LID outlets through native network routing";
+        if (split_->surface) metadata_["result_files"].erase("binary");
+        if (!config_.value("surface_results",true)) metadata_["result_files"].erase("surface");
+    }
     // Retain ordinary model input files. Additional authored output channels
     // need their own isolated-output mapping before independent instances run.
     auto fileField = [&](const char* key) {
@@ -1141,9 +1333,9 @@ void OpenSWMMEngineComponent::discover(SWMM_Engine engine) {
         times_.clear();
     metadata_["selected_outfalls"] = selected;
     metadata_["interval_profile"] = outfalls_.empty() ? Json(nullptr) : Json(profile);
+    discoverGeometry(engine);
     metadata_["execution_restrictions"] = reasons_;
     metadata_["runnable"] = reasons_.empty();
-    discoverGeometry(engine);
 }
 
 // Parsed authoring only: no kernel initialization, mapping resolution or time
@@ -1313,11 +1505,60 @@ void OpenSWMMEngineComponent::discoverGeometry(SWMM_Engine engine) {
     for (const char* key :
          {"NODE_ENROLMENT", "LINK_SEEPAGE", "GW_ET", "GW_ET_EFFECTIVE", "LINK_SEEPAGE_EFFECTIVE",
           "GW_CLOCK", "GW_BASE_STEP", "GW_MAX_STEP", "GW_BUDGET_FRACTION", "GW_HEAD_TOLERANCE",
-          "GW_BINDS_SURFACE_DT"})
+          "GW_BINDS_SURFACE_DT", "CLOSURE", "SOIL_CHAR"})
         gw["options"][key] = readText(
             [&](char* b, int n) { check(engine, swmm_gw2d_option_get(engine, key, b, n)); });
+    gw["transport_options"] = Json::object();
+    for (const char* key : {"TRANSPORT_POLLUTANTS", "TRANSPORT_MSX", "TRANSPORT_AGE", "TRANSPORT_TEMPERATURE",
+                            "THERMAL_MODEL", "CONDUCTION"})
+        gw["transport_options"][key] = readText([&](char* b, int n) {
+            check(engine, swmm_gw_transport_option_get(engine, key, b, n));
+        });
     const int vertices = metadata_["surface_vertex_count"].get<int>();
     if (vertices) {
+        int ownerCount = 0;
+        check(engine, swmm_surface_owner_get(engine, nullptr, 0, &ownerCount));
+        surface["ownership"] = {{"authored_count", ownerCount}, {"objects", Json::array()},
+                                 {"shares", Json::array()}, {"revision", nullptr}};
+        if (ownerCount) {
+            int objects = 0, shares = 0, cells = 0, valid = 0;
+            char token[32]{}, diagnostic[4096]{};
+            check(engine, swmm_surface_owner_preview(engine, nullptr, -1, nullptr, 0, &objects,
+                nullptr, 0, &shares, nullptr, 0, &cells, &valid, token, sizeof(token),
+                diagnostic, sizeof(diagnostic), nullptr, nullptr));
+            std::vector<SWMM_SurfaceOwnerObject> ownerObjects(objects);
+            std::vector<SWMM_SurfaceOwnerShare> ownerShares(shares);
+            check(engine, swmm_surface_owner_preview(engine, nullptr, -1, ownerObjects.data(), objects,
+                &objects, ownerShares.data(), shares, &shares, nullptr, 0, &cells, &valid,
+                token, sizeof(token), diagnostic, sizeof(diagnostic), nullptr, nullptr));
+            auto& ownership = surface["ownership"];
+            ownership["revision"] = token;
+            ownership["valid"] = valid != 0;
+            ownership["diagnostics"] = diagnostic;
+            for (const auto& object : ownerObjects)
+                ownership["objects"].push_back({{"subcatchment", object.name},
+                    {"reviewed", object.reviewed != 0}, {"status", object.status},
+                    {"declared_area_m2", object.declared_area}, {"inside_area_m2", object.inside_area},
+                    {"outside_area_m2", object.outside_area}, {"reason", object.reason}});
+            for (const auto& share : ownerShares)
+                ownership["shares"].push_back({{"subcatchment", subcatchId(share.subcatch)},
+                    {"cell", share.cell}, {"weather_area_m2", share.weather_area},
+                    {"pervious_area_m2", share.pervious_area},
+                    {"impervious_area_m2", share.impervious_area}, {"lid_area_m2", share.lid_area},
+                    {"native_lid_area_m2", share.native_lid_area}});
+            if (managed_ || split_) {
+                if (!valid)
+                    reasons_.push_back(std::string("Invalid native surface ownership: ") + diagnostic);
+                else
+                    ownershipToken_ = token;
+                if (split_) {
+                    metadata_["watershed_owners"]={{"ordinary","network"},{"reviewed","integrated2d"}};
+                    if (split_->surface && !config_.value("surface_results",true))
+                        reasons_.push_back("Reviewed split source ownership requires surface_results=true");
+                }
+            } else
+                reasons_.push_back("Reviewed surface ownership requires managed_session=true");
+        }
         double scale = 1;
         check(engine, swmm_2d_geometry_scale_to_si(engine, &scale));
         surface["source_scale_to_m"] = scale;
@@ -1568,6 +1809,7 @@ void OpenSWMMEngineComponent::discoverBoundaries(SWMM_Engine engine) {
 
 void OpenSWMMEngineComponent::validateConnections() {
     receiver_ = nullptr;
+    if (split_) split_->validate();
     if (outfalls_.empty())
         return;
     std::vector<Output*> ports;
@@ -1699,7 +1941,7 @@ public:
      */
     OpenSWMMEngineInfo() : Identity("org.hydrocouple.openswmm.engine", "OpenSWMM engine") {
         setDescription(
-            "SDK-free native engine with configured metadata, CPU 1D and CPU surface-water profiles, and typed 1D external-outfall exports. Spatial transport, groundwater and restart require separate qualification.");
+            "SDK-free native engine with configured metadata, CPU 1D, CPU surface-water and bounded MESH groundwater profiles, and typed 1D external-outfall exports. Independent split_network and integrated2d roles support the serial CPU node/surface water phase contract.");
     }
     /**
      * @brief Read declared component-factory libraryFilePath metadata.

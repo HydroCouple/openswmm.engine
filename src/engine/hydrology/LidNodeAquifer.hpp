@@ -11,6 +11,10 @@
 
 #pragma once
 #include <vector>
+#ifdef OPENSWMM_HAS_2D
+#include "LidNodeRichardsState.hpp"
+#include "../2d/subsurface/LidNodeExchange.hpp"
+#endif
 namespace openswmm {
 struct SimulationContext;
 class Router;
@@ -20,6 +24,19 @@ struct SurfaceStateData;
 struct RichardsBedAcceptance;
 }
 namespace lidnode {
+#ifdef OPENSWMM_HAS_2D
+// Native draft only: no owner water, clocks or groundwater reservations publish
+// until acceptMeshRichardsTrial. Kept private by the split surface participant.
+struct MeshRichardsTrial {
+    double start = 0, end = 0, routing_dt = 0, evaporation = 0;
+    std::vector<detail::RichardsNodeDraft> drafts;
+    std::vector<twoD::RichardsBedReceipt> receipts;
+    bool consumed = false;
+};
+MeshRichardsTrial trialMeshRichardsStep(SimulationContext&, twoD::SubsurfaceSolver&,
+                                       twoD::SurfaceStateData&, double dt, double evaporation);
+void acceptMeshRichardsTrial(SimulationContext&, twoD::SubsurfaceSolver&, MeshRichardsTrial&);
+#endif
 // Production column preparation at the single global hydraulic cadence.
 // Accepted gross receipts wait for each receiving groundwater cell's clock.
 /** @brief Prepare global-cadence Richards LID nodes and retain completed aquifer receipts.

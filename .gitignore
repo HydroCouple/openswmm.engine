@@ -22,6 +22,14 @@ docs/2D_MULTISCALE_FORMULATION_REVIEW.md
 # Keep the canonical 2D fixture — tests/unit/engine/CMakeLists.txt and
 # python/tests/engine/{test_2d_evap,test_surface2d_view}.py load it from here.
 !/examples/2d_complete_example.inp
+
+# Reusable split component example. Keep generated run results local.
+!/examples/hydrocouple/
+/examples/hydrocouple/*
+!/examples/hydrocouple/split-water/
+/examples/hydrocouple/split-water/*
+!/examples/hydrocouple/split-water/model.inp
+!/examples/hydrocouple/split-water/composition.json
 # Keep the street-inlet / inlet-junction example (deck + README only; the
 # .rpt/.out a run writes next to them stay out).
 !/examples/inlets/
@@ -148,3 +156,45 @@ docs/figures/cache/
 !/examples/reactions/attached_wall.rxn
 !/examples/reactions/wet_pool.inp
 !/examples/reactions/wet_pool.rxn
+
+# Reusable mapped-outfall split composition.
+!/examples/hydrocouple/split-outfall/
+/examples/hydrocouple/split-outfall/*
+!/examples/hydrocouple/split-outfall/model.inp
+!/examples/hydrocouple/split-outfall/composition.json
+
+# Reviewable source-owner split example; generated results stay ignored.
+!/examples/hydrocouple/split-watershed/
+/examples/hydrocouple/split-watershed/*
+!/examples/hydrocouple/split-watershed/model.inp
+!/examples/hydrocouple/split-watershed/composition.json
+
+# Reviewable groundwater split example; generated results stay ignored.
+!/examples/hydrocouple/split-groundwater/
+/examples/hydrocouple/split-groundwater/*
+!/examples/hydrocouple/split-groundwater/model.inp
+!/examples/hydrocouple/split-groundwater/composition.json
+
+# Reviewable native source-footprint split example; generated results stay ignored.
+!/examples/hydrocouple/split-footprints/
+/examples/hydrocouple/split-footprints/*
+!/examples/hydrocouple/split-footprints/model.inp
+!/examples/hydrocouple/split-footprints/composition.json
+
+# Reviewable joint Richards split example; generated results stay ignored.
+!/examples/hydrocouple/split-richards/
+/examples/hydrocouple/split-richards/*
+!/examples/hydrocouple/split-richards/model.inp
+!/examples/hydrocouple/split-richards/composition.json
+
+# Reviewable reviewed-source return/outfall example; generated results stay ignored.
+!/examples/hydrocouple/split-returns/
+/examples/hydrocouple/split-returns/*
+!/examples/hydrocouple/split-returns/model.inp
+!/examples/hydrocouple/split-returns/composition.json
+
+# Reviewable classical/mixed node-LID split example; generated results stay ignored.
+!/examples/hydrocouple/split-lids/
+/examples/hydrocouple/split-lids/*
+!/examples/hydrocouple/split-lids/model.inp
+!/examples/hydrocouple/split-lids/composition.json

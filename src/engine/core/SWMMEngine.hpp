@@ -53,8 +53,10 @@
 #define OPENSWMM_ENGINE_SWMM_ENGINE_HPP
 
 #include "SimulationContext.hpp"
+#include "SplitExecution.hpp"
 #include "HotStartManager.hpp"
 #include "../plugins/PluginFactory.hpp"
+#include "../plugins/ProcessComponentHost.hpp"
 #include "../output/IOThread.hpp"
 #include "../hydraulics/Routing.hpp"
 #include "../hydrology/Runoff.hpp"
@@ -102,6 +104,7 @@ typedef void (*SWMM_ProgressCallback)(void*, double, double, void*);
 typedef void (*SWMM_WarningCallback)(void*, int, const char*, void*);
 typedef void (*SWMM_StepBeginCallback)(void*, double, double, void*);
 typedef void (*SWMM_StepEndCallback)(void*, double, double, void*);
+typedef void (*SWMM_PhaseCallback)(void*, int, double, double, void*);
 }
 
 namespace openswmm {
@@ -109,6 +112,7 @@ namespace openswmm {
 class DefaultOutputPlugin;
 struct CheckpointInspection;
 struct CheckpointSessionResources;
+struct SplitFrame;
 
 /**
  * @brief Registered callback bundle (all optional).
@@ -123,6 +127,8 @@ struct EngineCallbacks {
     void* step_begin_ud = nullptr;
     SWMM_StepEndCallback on_step_end = nullptr;
     void* step_end_ud = nullptr;
+    SWMM_PhaseCallback on_phase = nullptr;
+    void* phase_ud = nullptr;
 };
 
 /**
@@ -222,6 +228,11 @@ public:
      * @returns SWMM_OK or an error code.
      */
     int step(double* elapsed_time) noexcept;
+    int configureSplit(int role) noexcept;
+    int splitGeometry(SWMM_SplitFrame* frame) noexcept;
+    int applySplitGeometry(SWMM_SplitFrame frame) noexcept;
+    int setSplitCallback(SWMM_SplitCallback callback, void* user) noexcept;
+    int evaluateSplit(int phase, SWMM_SplitFrame request, SWMM_SplitFrame* reply) noexcept;
     /**
      * @brief Advance a RUNNING engine toward an accepted elapsed-second boundary.
      *
@@ -631,6 +642,7 @@ public:
      *     alive through every callback.
      */
     void set_step_end_callback(SWMM_StepEndCallback cb, void* user_data) noexcept;
+    int set_phase_callback(SWMM_PhaseCallback cb, void* user_data) noexcept;
 
     // =========================================================================
     // Context access (for C API wrappers)
@@ -1090,6 +1102,9 @@ private:
     std::string out_path_; ///< Binary output file path
 
     bool step_active_ = false, runtime_pipeline_ = false;
+    std::unique_ptr<SplitExecution> split_;
+    void splitExchange(int phase, double dt,
+                       std::vector<std::pair<int, double>>* conductance = nullptr);
     struct RestartState;
     bool checkpoint_enabled_ = false, checkpoint_ready_ = false;
     bool checkpoint_output_ = false;
@@ -1248,6 +1263,11 @@ private:
      * @return Bridge-owned sourceGroups() pointer, or nullptr without bridge/2D support.
      */
     const std::vector<int>* ordinarySourceOwners() const noexcept;
+    bool hasSourceDelivery() const noexcept;
+    double sourceDeliveryRate(int node, bool previous = false) const;
+    void initializeCommonSourceStage(CheckpointSessionResources&);
+    void initializeSplitSources();
+    void captureSplitSources(SplitFrame&);
     /**
      * @brief Test whether an ordinary subcatchment source has a private nonnegative owner.
      *
@@ -1363,6 +1383,8 @@ private:
     bool has_snow_ = false;   ///< Prev step had snow cover   (legacy HasSnow)
 
     EngineCallbacks callbacks_; ///< Registered callback bundle
+    void tracePhase(int phase, double start, double duration) noexcept;
+    std::unique_ptr<components::ProcessComponentHost> process_component_host_;
     int save_results_ = 0;      ///< Whether to save binary results
 
     /// Legacy DoRouting analog (swmm5.c:748): routing executes only when the

@@ -40,6 +40,26 @@ _OUT_DIR = os.path.join(os.path.dirname(__file__), "output")
 _AGE_COMPONENT = "org.hydrocouple.openswmm.waterage"
 
 
+class TestAuthoredProcessArguments(EngineSolverCase):
+    def test_extra_arguments_preserve_order_long_values_and_removal(self):
+        solver = self.opened_solver()
+        components = solver.process_components
+        components.register("receiving", "host.json")
+        library = "x" * 5000 + "/receiver-λ.so"
+        components.set_argument("receiving", "library", library)
+        components.set_argument("receiving", "component", "example.receiving")
+        self.assertEqual(components.arguments("receiving"),
+                         (("library", library), ("component", "example.receiving")))
+        components.set_argument("receiving", "library", "updated.so")
+        self.assertEqual(components.arguments("receiving")[0], ("library", "updated.so"))
+        components.set_argument("receiving", "component", None)
+        self.assertEqual(components.arguments("receiving"), (("library", "updated.so"),))
+        with self.assertRaises(BadParamError):
+            components.set_argument("receiving", "Config", "wrong")
+        with self.assertRaises(ValueError):
+            components.set_argument("receiving", "library", "bad\x00path")
+
+
 def _process_components_model(tag):
     """Write an ``.inp`` with one ``[PROCESS_COMPONENTS]`` row plus its config.
 

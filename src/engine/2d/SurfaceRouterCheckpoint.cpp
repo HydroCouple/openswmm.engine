@@ -768,6 +768,9 @@ std::string SurfaceRouter2D::sourceBoundary(const SimulationContext& ctx) const 
 void SurfaceRouter2D::setCommonSourceStage(SimulationContext& ctx, CommonSourceStage& stage) {
     attachCommonSourceStage(ctx, stage, nullptr);
 }
+void SurfaceRouter2D::setExternalSourceStage(SimulationContext& ctx, CommonSourceStage& stage) {
+    attachCommonSourceStage(ctx, stage, nullptr, true);
+}
 /**
  * @brief Attach matching first-order source and tracked native hydraulic owners for joint
  * checkpoints.
@@ -821,17 +824,30 @@ void SurfaceRouter2D::checkJointRoutingStep(const SimulationContext& ctx, double
  * owner must stay alive/identity-stable for routing/restoration.
  */
 void SurfaceRouter2D::attachCommonSourceStage(SimulationContext& ctx, CommonSourceStage& stage,
-                                              Router* hydraulic) {
+                                              Router* hydraulic, bool external) {
     auto* cpu = dynamic_cast<ExplicitInertialSolver*>(solver_.get());
     if (common_stage_ || !active_ || !cpu || sim_time_ != 0 || pending_dt_ != 0 ||
         ctx.current_time != 0 || !stage.matches(&mesh_, &state_, &subsurface_) ||
         int(stage.cells().size()) != mesh_.n_cells() ||
-        (!hydraulic && (ctx.n_nodes() != 0 || ctx.n_links() != 0 || !coupling_points_.empty())) ||
+        (!hydraulic && !external && (ctx.n_nodes() != 0 || ctx.n_links() != 0 || !coupling_points_.empty())) ||
         !subcatch_recharge_.empty() ||
         (!infil_.resolvedRows().empty() && infil_.resolvedRows().size() != mesh_.tri_area.size()) ||
         !cell_subcatch_.empty() || surface_quality_.active() || runtimeActive())
         throw std::invalid_argument(
             "Router source attachment requires its initial CPU/all-cell profile and matching exchange scope.");
+    if (external &&
+        (!ctx.options.ignore_routing || ctx.options.routing_model != RoutingModel::DYNWAVE ||
+         !ctx.options.ignore_quality || ctx.n_pollutants() || ctx.options.heat_transport ||
+         ctx.options.water_age || coupling_points_.empty() || !aquifer_link_shares_.empty() ||
+         std::any_of(subsurface_.nodeBeds().begin(), subsurface_.nodeBeds().end(),
+                     [&ctx](const auto& bed) { return bed.exchange && bed.cell >= 0 &&
+                         (!lidnode::active(ctx,bed.node) ||
+                          lidnode::bottomMode(ctx,bed.node) != LidNodeBottom::MeshAquifer); }) ||
+         std::any_of(ctx.node_subtypes.storages.node_idx.begin(), ctx.node_subtypes.storages.node_idx.end(),
+                     [&ctx](int node) { return lidnode::active(ctx,node) &&
+                         lidnode::richardsMode(ctx,node) && lidnode::bottomMode(ctx,node) != LidNodeBottom::MeshAquifer; })))
+        throw std::invalid_argument(
+            "External reviewed sources require water-only boundary hydraulics and explicit Mesh LID ownership for node beds.");
     if (hydraulic) {
         for (const auto& bed : subsurface_.nodeBeds())
             if (bed.exchange && bed.cell >= 0 &&

@@ -529,6 +529,11 @@ SWMM_ENGINE_API int swmm_set_step_begin_callback(SWMM_Engine engine,
  */
 SWMM_ENGINE_API int swmm_set_step_end_callback(SWMM_Engine engine, SWMM_StepEndCallback callback,
                                                void* user_data);
+/** Register a read-only native phase observer; NULL unregisters it.
+ * Requires exclusive access between steps. Does not advance or open outputs.
+ * Returns BADHANDLE for NULL and LIFECYCLE when called during a native step. */
+SWMM_ENGINE_API int swmm_set_phase_callback(SWMM_Engine engine, SWMM_PhaseCallback callback,
+                                           void* user_data);
 
 /* =========================================================================
  * Error reporting

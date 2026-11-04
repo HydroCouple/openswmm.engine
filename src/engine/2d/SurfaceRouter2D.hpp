@@ -223,6 +223,9 @@ public:
      * serially after native routers/LID initialize.
      */
     void setJointSourceStage(SimulationContext& ctx, CommonSourceStage& stage, Router& hydraulic);
+    // Accepted external hydraulics are validated by the engine split phase owner;
+    // no hydraulic solver/context is shared and this does not enable recovery.
+    void setExternalSourceStage(SimulationContext& ctx, CommonSourceStage& stage);
     /**
      * @brief Attach a fresh borrowed accepted-source history recorder through the CPU source
      * marcher.
@@ -1151,6 +1154,10 @@ public:
      * ownership transfer or synchronization occurs in this query.
      */
     const std::vector<double>& couplingCumulative() const noexcept { return coupling_cum_applied_; }
+    bool hasOutfallCoupling() const noexcept {
+        for (const auto& point : coupling_points_) if (point.is_outfall) return true;
+        return false;
+    }
 
     /**
      * @brief Ledger-consistent cumulative rainfall volume per cell (m³).
@@ -1429,7 +1436,7 @@ private:
      * No physics/calendar advance; definition documents complete qualification and installed
      * identities. Exclusive lifecycle access.
      */
-    void attachCommonSourceStage(SimulationContext&, CommonSourceStage&, Router*);
+    void attachCommonSourceStage(SimulationContext&, CommonSourceStage&, Router*, bool external = false);
     /**
      * @brief Test whether the router has attached standalone second-order checkpoint ownership.
      * @return True for nonnull source context, reconstruction order 2 and no common stage.

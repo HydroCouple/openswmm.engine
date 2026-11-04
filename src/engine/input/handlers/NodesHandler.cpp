@@ -343,6 +343,7 @@ void handle_outfalls(SimulationContext& ctx, const std::vector<std::string>& lin
         if (tok.size() > next && !tok[next].empty() && tok[next] != "*") {
             int sc = ctx.subcatch_names.find(tok[next]);
             O.route_to[orow] = sc; // may be -1 if not yet parsed
+            O.route_to_name[orow] = tok[next];
         }
         if (!pl.comment.empty())
             ctx.nodes.comments[static_cast<std::size_t>(idx)] = pl.comment;

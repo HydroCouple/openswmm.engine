@@ -487,9 +487,10 @@ endif()
 # engine do not inherit the dependency. Applied to the MSVC test twin too,
 # since it compiles the same sources.
 if(OPENSWMM_WITH_HYDROCOUPLE)
+    find_package(nlohmann_json CONFIG REQUIRED)
     foreach(_hc_tgt openswmm_engine openswmm_engine_internal)
         if(TARGET ${_hc_tgt})
-            target_link_libraries(${_hc_tgt} PRIVATE HydroCouple::HydroCouple)
+            target_link_libraries(${_hc_tgt} PRIVATE HydroCouple::HydroCouple nlohmann_json::nlohmann_json)
             target_compile_definitions(${_hc_tgt} PRIVATE OPENSWMM_HAS_HYDROCOUPLE=1)
         endif()
     endforeach()
