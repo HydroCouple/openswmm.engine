@@ -2130,6 +2130,16 @@ void Router::publishFv(SimulationContext& ctx, double dt) {
                 continue;
             ctx.links.flow[uj] = fv_struct_int_[uj] / dt;
         }
+        // The solver pays a structure only what its donor holds
+        // (ExplicitFvSolver::limitStructureFlows); report the water it moved.
+        if (impl) {
+            const auto& refused = impl->structure_refused_volume();
+            for (std::size_t s = 0; s < refused.size(); ++s) {
+                if (refused[s] != 0.0)
+                    ctx.links.flow[static_cast<std::size_t>(fv_mesh_.struct_link[s])] -=
+                        refused[s] / dt;
+            }
+        }
     }
 
     // DUMMY links carry no section, so publishFv's conduit loop skipped them

@@ -183,6 +183,8 @@ void ExplicitFvSolver::initialize(NetworkMeshData& mesh, NetworkStateData& state
     flood_vol_.assign(nn, 0.0);
     node_qdummy_.assign(mesh.struct_is_dummy.empty() ? 0 : nn, 0.0);
     dummy_vol_.assign(mesh.struct_link.size(), 0.0);
+    struct_refused_vol_.assign(mesh.struct_link.size(), 0.0);
+    node_struct_scale_.assign(mesh.struct_link.empty() ? 0 : nn, 0.0);
     inlet_control_.assign(static_cast<std::size_t>(mesh.n_conduits()), 0);
 
     cell_tier_.assign(nc, 0);
@@ -3024,18 +3026,74 @@ void ExplicitFvSolver::bookSpliceReceipt(std::size_t vj, double flux, double dt)
     node_out_[vj] += (std::max(-left, 0.0) + std::max(-right, 0.0)) * dt;
 }
 
-void ExplicitFvSolver::bookStructureWater(double dt, const FvStepForcing& forcing) {
-    if (!forcing.structure_flow) return;
-    for (std::size_t s=0;s<mesh_->struct_link.size();++s) {
-        if (!mesh_->struct_is_dummy.empty() && mesh_->struct_is_dummy[s]) continue;
-        water_.structure(s, forcing.structure_flow[mesh_->struct_link[s]] * dt);
+template <class ArrivedFn>
+void ExplicitFvSolver::limitStructureFlows(double dt, const FvStepForcing& forcing,
+                                           ArrivedFn&& arrived) {
+    if (!forcing.structure_flow || dt <= 0.0)
+        return;
+    // A bucket donor can pay out only the water it holds after this window's
+    // face exchange and lateral inflow. limitPositivity scales its face outflow
+    // against node_volume alone, so a frozen structure draw on top drove the
+    // volume negative and the floor in the node update created the difference:
+    // with Bellinge's CSO chambers on the bucket path, -36.6 % routing
+    // continuity and 289 ML flooded at one junction (2026-11-03). Incoming
+    // structure flow is not counted: it may itself be scaled, and leaving it out
+    // keeps the bound independent of structure order.
+    const int nstruct = static_cast<int>(mesh_->struct_link.size());
+    auto skip = [&](std::size_t us) {
+        return !mesh_->struct_is_dummy.empty() && mesh_->struct_is_dummy[us];
+    };
+    auto bucket = [&](std::size_t un) {
+        return mesh_->node_kind[un] != kNodeVirtual && !algebraicActive(static_cast<int>(un)) &&
+               !(forcing.node_fixed_head && std::isfinite(forcing.node_fixed_head[un]));
+    };
+    auto donor = [&](std::size_t us, double q) {
+        return static_cast<std::size_t>((q > 0.0) ? mesh_->struct_n1[us] : mesh_->struct_n2[us]);
+    };
+    std::fill(node_struct_scale_.begin(), node_struct_scale_.end(), 0.0);
+    for (int s = 0; s < nstruct; ++s) {
+        const auto us = static_cast<std::size_t>(s);
+        const double q = forcing.structure_flow[mesh_->struct_link[us]];
+        if (skip(us) || q == 0.0)
+            continue;
+        node_struct_scale_[donor(us, q)] += std::fabs(q) * dt;
+    }
+    for (std::size_t un = 0; un < node_struct_scale_.size(); ++un) {
+        const double demand = node_struct_scale_[un];
+        if (demand <= 0.0 || !bucket(un)) {
+            node_struct_scale_[un] = 1.0;
+            continue;
+        }
+        const double held = state_->node_volume[un] + arrived(un) +
+                            dt * std::max(0.0, nodeLateral(forcing, un));
+        node_struct_scale_[un] = (held >= demand) ? 1.0 : std::max(0.0, held) / demand;
+    }
+
+    // Same order and arithmetic as refreshStructFlows, so an unscaled step
+    // reproduces its sums bit for bit.
+    std::fill(node_qstruct_.begin(), node_qstruct_.end(), 0.0);
+    for (int s = 0; s < nstruct; ++s) {
+        const auto us = static_cast<std::size_t>(s);
+        if (skip(us))
+            continue;
+        double q = forcing.structure_flow[mesh_->struct_link[us]];
+        if (q == 0.0)
+            continue;
+        const double scale = node_struct_scale_[donor(us, q)];
+        if (scale < 1.0) {
+            struct_refused_vol_[us] += (1.0 - scale) * q * dt;
+            q *= scale;
+        }
+        node_qstruct_[static_cast<std::size_t>(mesh_->struct_n1[us])] -= q;
+        node_qstruct_[static_cast<std::size_t>(mesh_->struct_n2[us])] += q;
+        if (water_tracking_)
+            water_.structure(us, q * dt);
     }
 }
 
 void ExplicitFvSolver::updateNodes(double dt, const FvStepForcing& forcing) {
     if (water_tracking_) {
         for (int f : active_faces_) bookFaceWater(f, dt);
-        bookStructureWater(dt, forcing);
     }
 
     perf::GatedTimer _pt(perf::sec_fv_nodeupdate);
@@ -3043,7 +3101,7 @@ void ExplicitFvSolver::updateNodes(double dt, const FvStepForcing& forcing) {
 
     // Net face volume arriving at a node over this substep, which is exactly
     // what the loop below is about to add to its storage.
-    refreshDummyFlows(dt, forcing, [&](std::size_t un) {
+    auto arrived = [&](std::size_t un) {
         double sum = 0.0;
         for (int p = mesh_->node_face_ptr[un]; p < mesh_->node_face_ptr[un + 1]; ++p) {
             const auto up = static_cast<std::size_t>(p);
@@ -3051,7 +3109,9 @@ void ExplicitFvSolver::updateNodes(double dt, const FvStepForcing& forcing) {
                    f_mass_[static_cast<std::size_t>(mesh_->node_face_idx[up])];
         }
         return sum * dt;
-    });
+    };
+    limitStructureFlows(dt, forcing, arrived);
+    refreshDummyFlows(dt, forcing, arrived);
 
     // Lateral the incident cells refused at their rim this substep
     // (injectDivertedLateral) — booked before the ledger loop so a pondable
@@ -3414,6 +3474,7 @@ void ExplicitFvSolver::saveState() {
     save_qint_ = cell_q_int_;
     save_carry_ = node_carry_;
     save_dummy_=dummy_vol_;
+    save_refused_=struct_refused_vol_;
     save_unmet_=unmet_withdrawal_;
     if (water_tracking_) save_water_ = water_;
     if (tpa_)
@@ -3436,6 +3497,7 @@ void ExplicitFvSolver::restoreState() {
     cell_q_int_ = save_qint_;
     node_carry_ = save_carry_;
     dummy_vol_=save_dummy_;
+    struct_refused_vol_=save_refused_;
     unmet_withdrawal_=save_unmet_;
     if (water_tracking_) water_ = save_water_;
     // Spill banked by the cells is drained by the node update of the same
@@ -3602,6 +3664,7 @@ void ExplicitFvSolver::rkSave() {
     rk_qint_ = cell_q_int_;
     rk_carry_ = node_carry_;
     rk_dummy_=dummy_vol_;
+    rk_refused_=struct_refused_vol_;
     rk_unmet_=unmet_withdrawal_;
     if (water_tracking_) rk_water_ = water_;
     if (tpa_)
@@ -3668,6 +3731,7 @@ void ExplicitFvSolver::rkAverage(const FvStepForcing& forcing) {
     avg_delta(cell_q_int_, rk_qint_);
     avg_delta(node_carry_, rk_carry_);
     avg_delta(dummy_vol_,rk_dummy_);
+    avg_delta(struct_refused_vol_,rk_refused_);
     avg_delta(unmet_withdrawal_,rk_unmet_);
     if (water_tracking_) water_.averageDelta(rk_water_);
     // Publish the accepted carry, not the unaveraged second-stage balance.
@@ -4500,8 +4564,8 @@ void ExplicitFvSolver::fireNodes(const std::vector<int>& nodes, double dt0,
     // span, which is what keeps the pair exactly conservative. acc_nvol_ is the
     // window's arrival volume and is zeroed below, so the drain has to be
     // computed from it BEFORE the loop consumes it.
+    limitStructureFlows(dt0, forcing, [&](std::size_t un) { return acc_nvol_[un]; });
     refreshDummyFlows(dt0, forcing, [&](std::size_t un) { return acc_nvol_[un]; });
-    if (water_tracking_) bookStructureWater(dt0, forcing);
 
     // A pass-through node is pinned to its finest incident cell (assignTiers),
     // so it is due whenever either cell fired: everything the cells refused at
@@ -4716,7 +4780,8 @@ double ExplicitFvSolver::advance(double t_current, double t_target, const FvStep
     const auto unmet=unmet_withdrawal_;
     const auto carry = node_carry_, exchange = node_exch_, incoming = node_in_,
                outgoing = node_out_;
-    const auto flood = flood_vol_, qint = cell_q_int_, dummy = dummy_vol_;
+    const auto flood = flood_vol_, qint = cell_q_int_, dummy = dummy_vol_,
+               refused = struct_refused_vol_;
     const auto inlet = inlet_control_, published = node_pub_;
     const double last = last_h_, minimum = min_h_, cached = dt_cache_;
     const double simulated = sim_time_, suggested = suggested_h_;
@@ -4738,6 +4803,7 @@ double ExplicitFvSolver::advance(double t_current, double t_target, const FvStep
         flood_vol_ = flood;
         cell_q_int_ = qint;
         dummy_vol_ = dummy;
+        struct_refused_vol_ = refused;
         inlet_control_ = inlet;
         node_pub_ = published;
         last_h_ = last;
@@ -4796,6 +4862,7 @@ double ExplicitFvSolver::advanceImpl(double t_current, double t_target,
     // The pass-through ledger is per routing step, like cell_q_int_: the Router
     // divides it by dt to publish a step-mean discharge.
     std::fill(dummy_vol_.begin(), dummy_vol_.end(), 0.0);
+    std::fill(struct_refused_vol_.begin(), struct_refused_vol_.end(), 0.0);
 
     // A full-mesh inversion, needed only when someone other than this solver
     // wrote cell_a since the last advance() (see state_clean_). The solver's

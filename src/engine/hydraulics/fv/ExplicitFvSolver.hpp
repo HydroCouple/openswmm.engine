@@ -318,6 +318,17 @@ public:
     const std::vector<double>& dummy_volume() const noexcept { return dummy_vol_; }
 
     /**
+     * @brief Borrow per-structure-entry volume refused by donor limiting this routing step.
+     *
+     * Same lifetime and alignment as dummy_volume(). Router subtracts it from the forced structure
+     * discharge it integrated, so the published flow is the water the solver actually moved.
+     * @return ft3 over the last window, aligned with mesh.struct_link; zero when no donor ran short.
+     */
+    const std::vector<double>& structure_refused_volume() const noexcept {
+        return struct_refused_vol_;
+    }
+
+    /**
      * @brief Borrow the current direct-face algebraic-node bypass mask.
      *
      * Const references remain valid only while this solver lives; their underlying element
@@ -848,6 +859,28 @@ private:
     void refreshDummyFlows(double dt, const FvStepForcing& forcing, ArrivedFn&& arrived, bool book_receipts = true);
 
     /**
+     * @brief Bound frozen structure transfers by the water each bucket donor holds.
+     *
+     * Rebuilds node_qstruct_ from forcing.structure_flow in refreshStructFlows' order, scaling every
+     * outflow of a bucket donor (not algebraic, fixed-head or virtual) whose outgoing demand over dt
+     * exceeds its volume plus net face arrival plus positive lateral. Receivers get the scaled flow;
+     * the refused ft3 accumulates in struct_refused_vol_ and accepted-water tracking books the applied
+     * volume. Bit-identical to the unscaled sums when no donor runs short. Call immediately before a
+     * node update, ahead of refreshDummyFlows.
+     *
+     * @param[in] dt Positive finite timestep in seconds matching the imminent node update.
+     * @param[in] forcing Borrowed aligned current forcing in native units.
+     * @param[in] arrived Synchronous callable(node_index)->net accepted face arrival volume in ft3 over
+     *     dt; must match the imminent node update.
+     */
+    template <class ArrivedFn>
+    void limitStructureFlows(double dt, const FvStepForcing& forcing, ArrivedFn&& arrived);
+    /// Volume refused to each structure entry this routing step (ft³), parallel to mesh.struct_link.
+    std::vector<double> struct_refused_vol_;
+    /// Per-node scratch for limitStructureFlows: outgoing demand, then the donor's scale factor.
+    std::vector<double> node_struct_scale_;
+
+    /**
      * @brief Read a DUMMY-derived node source with an empty-array fast path.
      *
      * @param[in] un Valid node index when dummy source storage is present.
@@ -1371,7 +1404,6 @@ private:
     double capWithdrawal(std::size_t node, double balance, double dt, const FvStepForcing& forcing);
 
     AcceptedWaterVolumes water_, save_water_, rk_water_;
-    void bookStructureWater(double dt, const FvStepForcing& forcing);
     double algebraicAvailableWater(std::size_t node, double dt, double pending,
                                    const std::vector<double>& cell_scales) const;
 
@@ -1388,7 +1420,7 @@ private:
     // doing something interesting. Re-censusing the POST-step state and rolling
     // back when it disagrees is the principled fix; a heuristic fill-rate cap
     // is not, because the stiffness ratio depends on FV_SLOT_CELERITY.
-    std::vector<double> save_dummy_, rk_dummy_;
+    std::vector<double> save_dummy_, rk_dummy_, save_refused_, rk_refused_;
     std::vector<double> save_cell_a_, save_cell_q_, save_cell_phi_;
     std::vector<double> save_node_vol_, save_node_head_;
     std::vector<double> save_exch_, save_in_, save_out_, save_flood_, save_qint_, save_carry_;

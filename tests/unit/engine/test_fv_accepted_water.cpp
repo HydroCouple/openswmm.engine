@@ -102,6 +102,35 @@ TEST(AcceptedWater, DummyWindowReceiptUsesTheAcceptedRk2Weight) {
         }
     }
 }
+TEST(AcceptedWater, AFrozenStructureDrawIsBoundedByItsBucketDonor) {
+    // A weir/outlet/pump flow is frozen between structure refreshes. Drawing 50 cfs for 0.6 s from a
+    // 1 ft2 bucket fed by a nearly dry reach (4.5 ft3 of water in all) used to drive the volume
+    // negative, and the node floor created the difference (Bellinge CSO chambers, 2026-11-03:
+    // -36.6 % routing continuity).
+    for(int mode=0;mode<3;++mode) {
+        auto ch=makeNodedChannel(rectOpen(10,10),4,2,[](double){return 0.;},0,25);
+        ch.mesh.node_kind={kNodeStorage,kNodeStorage,kNodeOutfall};
+        ch.mesh.node_invert={0,0,0};ch.mesh.node_full_depth={1e6,1e6,0};ch.mesh.node_ponded_area={0,0,0};
+        ch.mesh.node_area={1,1,0};ch.mesh.node_vol_off={-1,-1,-1};ch.mesh.node_vol_dmax={0,0,0};ch.mesh.node_vol_atop={0,0,0};
+        ch.mesh.node_face_ptr={0,1,2,2};
+        ch.mesh.struct_link={1};ch.mesh.struct_n1={1};ch.mesh.struct_n2={2};ch.mesh.struct_is_dummy={0};
+        ch.state.resize(4,3,0);seedLevel(ch,.05);ch.state.node_head={.5,.5,0};
+        FvOptions o;o.order=1;o.cfl=.1875;o.lts=mode==2;o.time_integration=mode==1?TimeIntegration::RK2:TimeIntegration::EULER;
+        ExplicitFvSolver solver;solver.initialize(ch.mesh,ch.state,o);solver.trackAcceptedWater(true);
+        double lateral[3]={0,0,0},fixed[3]={std::numeric_limits<double>::quiet_NaN(),std::numeric_limits<double>::quiet_NaN(),0},q[2]={0,50};
+        FvStepForcing f;f.node_lateral=lateral;f.node_fixed_head=fixed;f.structure_flow=q;f.n_nodes=3;f.n_links=2;
+        auto volume=[&](){double v=0;for(int c=0;c<4;++c)v+=ch.state.cell_a[c]*ch.mesh.cell_dx[c];for(double x:ch.state.node_volume)v+=x;return v;};
+        const double initial=volume();
+        double exported=0;
+        for(int step=0;step<3;++step) {
+            ASSERT_NEAR(solver.advance(step*.2,(step+1)*.2,f),(step+1)*.2,1e-12);
+            exported+=solver.acceptedWater().structure_forward[0]-solver.acceptedWater().structure_reverse[0];
+        }
+        EXPECT_LE(exported,initial+1e-9) << "exported more water than existed, mode="<<mode;
+        EXPECT_NEAR(initial,volume()+exported,1e-9) << "water created at the bucket floor, mode="<<mode;
+        EXPECT_GE(ch.state.node_volume[1],0) << "mode="<<mode;
+    }
+}
 TEST(AcceptedWater, PrescribedStageCanSupplyAConservativeZeroStorageInterface) {
     for(int mode=0;mode<3;++mode) {
         auto ch=makeNodedChannel(rectOpen(10,10),8,2,[](double){return 0.;},0,25);
