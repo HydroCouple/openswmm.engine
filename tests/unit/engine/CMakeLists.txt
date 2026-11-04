@@ -1413,8 +1413,15 @@ if(OPENSWMM_BUILD_2D)
         target_compile_definitions(test_engine_2d_backend_safety PRIVATE
             OPENSWMM_TEST_OMP_DIRECTORY="$<TARGET_FILE_DIR:openswmm_gpu_omp>")
     endif()
+    # Windows stages the linked DLL beside the executable. Load that same
+    # instance so the injected probe counters observe the calls made by the host.
+    if(WIN32)
+        set(_failure_plugin_dir "$<TARGET_FILE_DIR:test_engine_2d_backend_safety>")
+    else()
+        set(_failure_plugin_dir "$<TARGET_FILE_DIR:test_gpu_failure_plugin>")
+    endif()
     set_tests_properties(test_engine_2d_backend_safety PROPERTIES
-        ENVIRONMENT "OPENSWMM_GPU_PLUGIN_PATH=$<TARGET_FILE_DIR:test_gpu_failure_plugin>"
+        ENVIRONMENT "OPENSWMM_GPU_PLUGIN_PATH=${_failure_plugin_dir}"
         TIMEOUT 60)
 endif()
 

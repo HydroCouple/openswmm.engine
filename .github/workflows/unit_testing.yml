@@ -146,8 +146,8 @@ jobs:
           -DOPENSWMM_GPU_BACKEND=omp
           -DOPENSWMM_WITH_HYPRE=ON
           -DOPENSWMM_WITH_GEOPACKAGE=ON
-          "-DCMAKE_C_FLAGS_DEBUG=${{ runner.os == 'Windows' && '/Zi /Od /DDEBUG' || '-O1 -g -DDEBUG' }}"
-          "-DCMAKE_CXX_FLAGS_DEBUG=${{ runner.os == 'Windows' && '/Zi /Od /DDEBUG' || '-O1 -g -DDEBUG' }}"
+          "-DCMAKE_C_FLAGS_DEBUG=${{ runner.os == 'Windows' && '/Zi /O1 /DDEBUG' || '-O1 -g -DDEBUG' }}"
+          "-DCMAKE_CXX_FLAGS_DEBUG=${{ runner.os == 'Windows' && '/Zi /O1 /DDEBUG' || '-O1 -g -DDEBUG' }}"
           -DCMAKE_OSX_ARCHITECTURES=${{ matrix.cmake_osx_arch }}
 
       - name: Build

@@ -107,7 +107,13 @@ ConservativeMixing::Result ConservativeMixing::solve(const MixingScalar& scalar,
     result.mass_residual=(initial-final)/scale;
     if (std::abs(result.mass_residual)>1e-9) return result;
     result.converged=true;
-    std::swap(output,accepted); // retain both buffers; no partial state on failure
+    // Swap the vector buffers directly. Moving a vector object can allocate
+    // an iterator proxy in the MSVC Debug library.
+    output.concentration.swap(accepted.concentration);
+    output.held_dry_mass.swap(accepted.held_dry_mass);
+    output.transfer_mass.swap(accepted.transfer_mass);
+    output.exported_mass.swap(accepted.exported_mass);
+    output.seeped_mass.swap(accepted.seeped_mass);
     return result;
 }
 } // namespace openswmm::quality

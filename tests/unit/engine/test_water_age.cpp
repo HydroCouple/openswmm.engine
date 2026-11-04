@@ -61,6 +61,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <fstream>
 #include <iterator>
 #include <string>
@@ -568,7 +569,7 @@ TEST(WaterAgeTest, LegacyAgeLeavesPollutantsBitwise) {
 // A2a — hotstart persistence: save/load round trip + restart continuity.
 // ---------------------------------------------------------------------------
 namespace {
-/// Run a deck, save a V3 hotstart at end, and return the final ages.
+/// Return final live ages after checking the expected hotstart save status.
 struct HsRun {
     std::vector<double> node_age, link_age;
     bool ok = false;
@@ -583,10 +584,11 @@ struct HsRun {
  *
  * @param[in] inp Non-null existing input filename.
  * @param[in] hs_path Non-null hotstart destination, potentially overwritten.
- * @return Owned final node/link ages in seconds; ok requires lifecycle, step and hotstart-save
- *     success.
+ * @param[in] expected_save Required status from the save attempt.
+ * @return Owned final node/link ages in seconds; ok requires lifecycle/step success
+ *     and the expected save status.
  */
-HsRun run_and_save(const char* inp, const char* hs_path) {
+HsRun run_and_save(const char* inp, const char* hs_path, int expected_save = SWMM_OK) {
     HsRun out;
     SWMM_Engine e = swmm_engine_create();
     if (e == nullptr) {
@@ -606,7 +608,9 @@ HsRun run_and_save(const char* inp, const char* hs_path) {
         } while (elapsed > 0.0 && ++guard < 20000);
         if (ok) {
             swmm_engine_end(e);
-            ok = swmm_hotstart_save(e, hs_path) == SWMM_OK;
+            const int rc = swmm_hotstart_save(e, hs_path);
+            EXPECT_EQ(rc, expected_save) << swmm_hotstart_last_io_error();
+            ok = rc == expected_save;
             out.node_age = as_cpp_engine(e).context().water_age_state.node_age;
             out.link_age = as_cpp_engine(e).context().water_age_state.link_age;
         }
@@ -619,7 +623,7 @@ HsRun run_and_save(const char* inp, const char* hs_path) {
 }
 } // namespace
 
-TEST(WaterAgeTest, HotstartRoundTripsAgeAcrossBothEngines) {
+TEST(WaterAgeTest, RecordHotstartPreservesLegacyAgeAndRefusesIncompleteArdState) {
     // INITIAL_STATE is a DISCRIMINATOR here, not decoration: 100 h. If the
     // restart seeded from INITIAL_STATE instead of the loaded state, ages
     // jump to 360000 s; the loaded ages are O(10²–10³) s. The same deck
@@ -631,7 +635,8 @@ TEST(WaterAgeTest, HotstartRoundTripsAgeAcrossBothEngines) {
         const char* inp = legacy ? "_a2_hs_leg.inp" : "_a2_hs_ard.inp";
         const char* hsf = legacy ? "_a2_hs_leg.bin" : "_a2_hs_ard.bin";
         write_deck(inp, pc, true, false, false, legacy ? "QUALITY_SOLVER LEGACY\n" : "");
-        const auto saved = run_and_save(inp, hsf);
+        std::remove(hsf);
+        const auto saved = run_and_save(inp, hsf, legacy ? SWMM_OK : SWMM_ERR_HOTSTART);
         ASSERT_TRUE(saved.ok);
         ASSERT_FALSE(saved.node_age.empty());
         // The run started from INITIAL_STATE 100 h and flushed for an hour;
@@ -643,6 +648,12 @@ TEST(WaterAgeTest, HotstartRoundTripsAgeAcrossBothEngines) {
             << ": the run never flushed the 100-h initial age — the "
                "discriminator is dead on this deck";
 
+        if (!legacy) {
+            EXPECT_NE(std::string(swmm_hotstart_last_io_error()).find("ARD/LAGRANGIAN"),
+                      std::string::npos);
+            EXPECT_FALSE(std::ifstream(hsf).good());
+            continue;
+        }
         // Round trip: open a FRESH engine on the same deck, apply the file,
         // and compare the restored state BIT-FOR-BIT (double → double).
         SWMM_Engine e2 = swmm_engine_create();
@@ -914,62 +925,34 @@ TEST(WaterAgeTest, SaveKeepsWaterAgeAndQualitySolver) {
 }
 
 // ---------------------------------------------------------------------------
-// The state/report separation, observed at last.
-//
-// `584d1065` masks the REPORTED age of a dry element to 0 while leaving the
-// aged value in `water_age_state`. Its validation found that masking the
-// STATE instead passes the entire suite — 140/141, identical to clean — so
-// the separation was a design claim with no observer.
-//
-// Only ONE consequence of the separation is real (the "refilling pipe would
-// jump" half of the original rationale does not survive: the stale state
-// occupies 0.0107 ft³ against 1263 ft³ arriving, ~1e-5 influence). That
-// consequence is HOTSTART FIDELITY: a save taken while an element is dry
-// must carry the aged value forward, because the restart may refill it.
-//
-// So: run a bone-dry deck, save, and assert the SAVED state is non-zero and
-// round-trips. Masking the state instead of the report zeroes the saved
-// value and fails here.
+// A dry ARD element retains its aged state even though the result column is
+// masked to zero. A partial record hotstart must refuse the unrepresented
+// per-cell inventories; refusal must leave the live state available unchanged.
 // ---------------------------------------------------------------------------
-TEST(WaterAgeTest, DryElementHotstartCarriesTheAgedState) {
+TEST(WaterAgeTest, DryElementRetainsAgedStateAndRefusesIncompleteRecordHotstart) {
     write_file("_a2_dry.age", "[WATER_AGE_SOURCES]\nINITIAL_STATE GLOBAL 6.0\n");
     write_deck("_a2_dry.inp", "org.hydrocouple.openswmm.waterage config=\"_a2_dry.age\"",
                /*water_age=*/true, /*pollutants=*/false, /*stagnant=*/false,
                /*extra_options=*/"", /*routing_step=*/5, /*dry=*/true);
 
-    const auto saved = run_and_save("_a2_dry.inp", "_a2_dry.bin");
+    std::remove("_a2_dry.bin");
+    const auto saved = run_and_save("_a2_dry.inp", "_a2_dry.bin", SWMM_ERR_HOTSTART);
     ASSERT_TRUE(saved.ok);
     ASSERT_FALSE(saved.link_age.empty());
 
-    // The discriminator. INITIAL_STATE 6 h = 21600 s, plus an hour of
-    // aging: the STATE must hold ~25200 s even though every element is dry
-    // and the .out column reports 0. If the state were masked instead of
-    // the report, this reads 0 and the gate fails — which is the whole
-    // point of the gate.
+    // INITIAL_STATE 6 h = 21600 s, plus an hour of aging. The live state
+    // remains nonzero after the refused save while the dry result column is 0.
     EXPECT_GT(saved.link_age[kC5], 21600.0)
-        << "a dry link's SAVED age is " << saved.link_age[kC5]
+        << "a dry link's retained age is " << saved.link_age[kC5]
         << " s — the aged state was not carried, so a restart would lose "
            "it. (The .out column reporting 0 for this element is correct "
            "and separate.)";
 
-    // And it must survive the round trip, like any other age (A2a).
-    SWMM_Engine e2 = swmm_engine_create();
-    ASSERT_NE(e2, nullptr);
-    ASSERT_EQ(swmm_engine_open(e2, "_a2_dry.inp", "_a2_dry2.rpt", "_a2_dry2.out", nullptr),
-              SWMM_OK);
-    ASSERT_EQ(swmm_engine_initialize(e2), SWMM_OK);
-    SWMM_HotStart hs = nullptr;
-    ASSERT_EQ(swmm_hotstart_open("_a2_dry.bin", &hs), SWMM_OK);
-    ASSERT_EQ(swmm_hotstart_apply(e2, hs), SWMM_OK);
-    swmm_hotstart_close(hs);
-    {
-        const auto& ws = as_cpp_engine(e2).context().water_age_state;
-        ASSERT_EQ(ws.link_age.size(), saved.link_age.size());
-        for (std::size_t i = 0; i < saved.link_age.size(); ++i)
-            EXPECT_EQ(ws.link_age[i], saved.link_age[i])
-                << "dry link " << i << " age did not round-trip";
-    }
-    swmm_engine_destroy(e2);
+    // ARD also owns per-cell age inventories; publishing record-only ages
+    // would claim a restart that cannot preserve the represented dry state.
+    EXPECT_NE(std::string(swmm_hotstart_last_io_error()).find("ARD/LAGRANGIAN"),
+              std::string::npos);
+    EXPECT_FALSE(std::ifstream("_a2_dry.bin").good());
 }
 
 // ===========================================================================

@@ -291,7 +291,10 @@ TEST(ArdNodeStoreTest, DrainingStorageNodeNeverExceedsItsInitialConcentration) {
              // InitDepth must be NON-ZERO or initQuality discards Cinit and
              // the deck holds no pollutant at all — the E3 lesson.
              "[STORAGE]\nS1 5.0 12.0 8.0 FUNCTIONAL 1000 0 0\n\n"
-             "[JUNCTIONS]\nJ1 4.0 10 0 0 0\n\n"
+             // Keep the receiving conduit wet initially. The dry-front variant
+             // needs > 50,000 explicit substeps at coarse routing steps and
+             // trips the documented 512-substep stability warning instead.
+             "[JUNCTIONS]\nJ1 4.0 10 1.5 0 0\n\n"
              "[OUTFALLS]\nOUT 0.0 FREE NO\n\n"
              "[CONDUITS]\nC1 S1 J1 200 0.013 0 0 0\n"
              "C2 J1 OUT 200 0.013 0 0 0\n\n"
@@ -311,6 +314,8 @@ TEST(ArdNodeStoreTest, DrainingStorageNodeNeverExceedsItsInitialConcentration) {
         ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK) << "rs=" << rs;
         auto& ctx = as_cpp_engine(e).context();
         const int np = ctx.n_pollutants();
+        const double initial_storage_volume = ctx.nodes.volume[0];
+        ASSERT_GT(initial_storage_volume, 0);
         // The deck must actually hold pollutant, or every bound below is
         // satisfied by zeros.
         double peak = 0.0;
@@ -323,6 +328,12 @@ TEST(ArdNodeStoreTest, DrainingStorageNodeNeverExceedsItsInitialConcentration) {
             for (int j = 0; j < ctx.n_nodes(); ++j)
                 peak = std::max(peak, ctx.nodes.conc[static_cast<std::size_t>(j * np)]);
         } while (elapsed > 0.0 && ++guard < 200000);
+        EXPECT_EQ(elapsed, 0) << "draining fixture exhausted its step guard";
+        EXPECT_LT(ctx.nodes.volume[0], initial_storage_volume)
+            << "the storage node must actually drain";
+        for (const auto& warning : ctx.warnings)
+            EXPECT_EQ(warning.find("transport subcycling clamped"), std::string::npos)
+                << "rs=" << rs << ": maximum-principle gate exceeded its CFL budget: " << warning;
         swmm_engine_end(e);
         swmm_engine_destroy(e);
 

@@ -381,32 +381,24 @@ TEST(HeatArdBindingTest, ArdAndLegacyAgreeOnTransportedTemperature) {
                "engine is not transporting heat at all — check which is at "
                "the 5 degC seed.";
 
-    // The comparison above is made at the END of the hour, by which point
-    // both engines have flushed to the 30 degC inflow — which means it cannot
-    // see the INITIAL_STATE at all: seeding the mesh cells from a zeroed
-    // array instead of the heat config produces the identical 30 degC field
-    // and the identical agreement. Five minutes puts the thermal front
-    // mid-chain, where the last conduit is still holding its seed.
+    // Observe the first published mesh state before the thermal front
+    // reaches the tail. Five minutes is already long enough for some warm
+    // water to reach C3, so it cannot be treated as an unchanged initial seed.
     write_deck("_h4_seed.inp", "EULERIAN_ARD", "org.hydrocouple.openswmm.heat config=\"_h4x.heat\"",
                /*pollutants=*/true, /*open_channel=*/false,
                /*extra_options=*/"", /*end_time=*/"00:05:00");
-    SWMM_Engine sd = run_and_hold("_h4_seed.inp", "_h4_seed.rpt", "_h4_seed.out");
+    SWMM_Engine sd = swmm_engine_create();
     ASSERT_NE(sd, nullptr);
+    ASSERT_EQ(swmm_engine_open(sd, "_h4_seed.inp", "_h4_seed.rpt", "_h4_seed.out", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(sd), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(sd, 1), SWMM_OK);
+    double elapsed = 0;
+    ASSERT_EQ(swmm_engine_step(sd, &elapsed), SWMM_OK);
+    ASSERT_GT(elapsed, 0);
     const auto& sctx = as_cpp_engine(sd).context();
     ASSERT_FALSE(sctx.heat_state.link_temp.empty());
-    // SETUP: the front must be mid-chain, or "the tail still holds the seed"
-    // is just "nothing moved".
-    EXPECT_GT(sctx.heat_state.link_temp.front(), kTInit + 5.0)
-        << "C1 reads " << sctx.heat_state.link_temp.front()
-        << " degC five minutes in — the 30 degC inflow has not entered the "
-           "mesh, so the tail below proves nothing about the seed";
-    EXPECT_NEAR(sctx.heat_state.link_temp.back(), kTInit, 1.0)
-        << "C3 reads " << sctx.heat_state.link_temp.back()
-        << " degC five minutes in, with the front still upstream of it. Its "
-           "cells were seeded from INITIAL_STATE ("
-        << kTInit
-        << " degC); a reading near 0 means the seed came from a zeroed array "
-           "rather than the heat config.";
+    EXPECT_NEAR(sctx.heat_state.link_temp.back(), kTInit, 1e-4)
+        << "The first ARD publication must retain the configured tail temperature.";
     swmm_engine_destroy(sd);
 }
 

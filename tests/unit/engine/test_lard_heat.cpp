@@ -49,6 +49,7 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <cstdio>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -180,22 +181,21 @@ struct HeatRun {
 };
 
 /**
- * @brief Run a LARD heat fixture with optional restart/save and collect temperature state.
+ * @brief Run a LARD heat fixture with an optional hotstart save attempt.
  *
  * Overwrites shared _lh.heat, so calls require serialized artifact access. Owns/destroys engine and
- * opened hotstart reader; caps at 40000 positive-time calls, with guard exhaustion potentially
- * still ok. Ignores end status; missing C3 heat state skips samples. Fatal run refusal records
+ * caps at 40000 positive-time calls, with guard exhaustion potentially still ok. Ignores end status; missing C3 heat state skips samples. Fatal run refusal records
  * ADD_FAILURE; partial traces can remain.
  *
  * @param[in] tag Safe cwd artifact prefix for overwritten .inp/.rpt/.out.
  * @param[in] s Deck specification copied before writing.
  * @param[in] save_hs Optional hotstart destination written after end.
- * @param[in] use_hs Optional existing hotstart applied between initialize and start.
+ * @param[in] expected_save Required status from the optional save attempt.
  * @return Owned temperature trajectories/final arrays C, first-pollutant C5 concentration and
- *     warnings; ok reflects setup/step/save success.
+ *     warnings; ok requires setup/step success and the expected save status.
  */
 HeatRun run_deck(const std::string& tag, const DeckSpec& s, const char* save_hs = nullptr,
-                 const char* use_hs = nullptr) {
+                 int expected_save = SWMM_OK) {
     HeatRun out;
     write_heat_cfg("_lh.heat");
     DeckSpec spec = s;
@@ -208,14 +208,6 @@ HeatRun run_deck(const std::string& tag, const DeckSpec& s, const char* save_hs 
     bool ok = swmm_engine_open(e, (tag + ".inp").c_str(), (tag + ".rpt").c_str(),
                                (tag + ".out").c_str(), nullptr) == SWMM_OK &&
               swmm_engine_initialize(e) == SWMM_OK;
-    // Restart path: apply the saved state through the hotstart API (the
-    // test_water_age convention) between initialize and start.
-    if (ok && use_hs != nullptr) {
-        SWMM_HotStart hs = nullptr;
-        ok = swmm_hotstart_open(use_hs, &hs) == SWMM_OK && swmm_hotstart_apply(e, hs) == SWMM_OK;
-        if (hs != nullptr)
-            swmm_hotstart_close(hs);
-    }
     ok = ok && swmm_engine_start(e, 1) == SWMM_OK;
     if (ok) {
         const auto& ctx = as_cpp_engine(e).context();
@@ -236,8 +228,11 @@ HeatRun run_deck(const std::string& tag, const DeckSpec& s, const char* save_hs 
                                                   static_cast<std::size_t>(ctx.n_pollutants())];
             out.link_temp_final = ctx.heat_state.link_temp;
             out.warnings = ctx.warnings;
-            if (save_hs != nullptr)
-                ok = swmm_hotstart_save(e, save_hs) == SWMM_OK;
+            if (save_hs != nullptr) {
+                const int rc = swmm_hotstart_save(e, save_hs);
+                EXPECT_EQ(rc, expected_save) << swmm_hotstart_last_io_error();
+                ok = rc == expected_save;
+            }
         }
     }
     if (!ok)
@@ -312,37 +307,17 @@ TEST(LardHeatTest, TemperatureDoesNotDecayWithThePollutant) {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 3 — the hotstart contract AS IT IS. HotStartNodeRecord carries an
-// age field and NO temperature field — no engine persists temperature
-// (LEGACY and ARD included), so a restarted run re-seeds from
-// INITIAL_STATE. This gate pins that shared, documented behaviour so the
-// debt stays visible: the day the record gains a temperature field, the
-// EXPECT_NEAR below fails and its replacement asserts the round-trip
-// instead. (The round that widens the record owns flipping this.)
+// Gate 3 — partial record hotstarts must refuse LARD heat inventories instead
+// of silently dropping the transported temperature on restart.
 // ---------------------------------------------------------------------------
-TEST(LardHeatTest, HotstartReseedsTemperatureFromInitialState) {
+TEST(LardHeatTest, RecordHotstartRefusesIncompleteTemperatureState) {
+    std::remove("_lh_hs.bin");
     DeckSpec warm;
-    const HeatRun a = run_deck("_lh_hs1", warm, "_lh_hs.bin");
+    const HeatRun a = run_deck("_lh_hs1", warm, "_lh_hs.bin", SWMM_ERR_HOTSTART);
     ASSERT_TRUE(a.ok);
     ASSERT_GT(a.link_temp_final[kC5], kTinit + 5.0);
-
-    // Restart from the saved state, but with a zero-length horizon of new
-    // forcing: one hour, steady inflow. The hydraulics restore; the
-    // temperature cannot (no field), so init re-seeds INITIAL_STATE.
-    DeckSpec resumed;
-    resumed.end_h = 1;
-    const HeatRun b = run_deck("_lh_hs2", resumed, nullptr, "_lh_hs.bin");
-    ASSERT_TRUE(b.ok);
-
-    // First published C3 temperature after restart is the INITIAL_STATE
-    // seed (the warm inflow has not reached mid-chain yet), NOT the saved
-    // run's final temperature.
-    ASSERT_FALSE(b.c3_trace.empty());
-    EXPECT_NEAR(b.c3_trace.front(), kTinit, 1.0)
-        << "the restarted run's first mid-chain temperature is " << b.c3_trace.front()
-        << " degC — either the hotstart began "
-           "persisting temperature (update this gate to assert the "
-           "round-trip!) or the INITIAL_STATE re-seed broke";
+    EXPECT_NE(std::string(swmm_hotstart_last_io_error()).find("Record hotstart"), std::string::npos);
+    EXPECT_FALSE(std::ifstream("_lh_hs.bin").good());
 }
 
 // ---------------------------------------------------------------------------

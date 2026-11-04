@@ -207,6 +207,9 @@ C2 CIRCULAR .025 0 0 0 1
         reviewed_sources=true;
         groundwater=true;
         override_model=bytes(fs::path(__FILE__).parent_path() / "data/component_profiles/managed_sources.inp");
+        // The binary reader also serves checkpoint comparisons; normalize only
+        // this text fixture before applying authored LF-delimited substitutions.
+        std::erase(override_model, '\r');
         const std::string output="OUTPUT_FILE authored-managed.h5\n";
         override_model.erase(override_model.find(output),output.size());
         override_model += R"(
@@ -1255,6 +1258,19 @@ TEST_F(EngineSplit, BorrowedRequestCannotBeReturnedAsOwnedReply) {
     ASSERT_EQ(swmm_engine_start(network.value, 1), SWMM_OK);
     double elapsed = 0;
     EXPECT_NE(swmm_engine_step(network.value, &elapsed), SWMM_OK);
+}
+TEST_F(EngineSplit, StepPreservesTheOriginalFailureDiagnostic) {
+    Engine engine;
+    const auto missing = (directory / "missing.inp").string();
+    ASSERT_FALSE(fs::exists(missing));
+    const int cause = swmm_engine_open(engine.value, missing.c_str(), nullptr, nullptr, nullptr);
+    ASSERT_NE(cause, SWMM_OK);
+    const std::string message = swmm_get_last_error_msg(engine.value);
+    ASSERT_FALSE(message.empty());
+    double elapsed = -1;
+    EXPECT_EQ(swmm_engine_step(engine.value, &elapsed), cause);
+    EXPECT_EQ(elapsed, 0);
+    EXPECT_EQ(swmm_get_last_error_msg(engine.value), message);
 }
 TEST_F(EngineSplit, CallbackExceptionStopsWithoutUnwindingAcrossHydraulicTeam) {
     Engine network, surface; Peer peer;

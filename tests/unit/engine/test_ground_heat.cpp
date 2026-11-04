@@ -838,7 +838,8 @@ TEST(GroundHeat, GroundPorewaterNodeReversalPreservesGrossMassAndAgeReceipts) {
     nodes.resize(2);
     const double head = gw.state().z_bed[0] + gw.state().hg[0],
                  length = m.router().options().len_1d_to_2d;
-    nodes.invert_elev[0] = (head + .25) / length;
+    nodes.invert_elev[0] = (head - .25) / length;
+    nodes.depth[0] = .5 / length;
     nodes.volume[0] = 100;
     std::vector<double> concentrations(2 * tr.n_species, 0);
     concentrations[dye] = 20;
@@ -850,7 +851,7 @@ TEST(GroundHeat, GroundPorewaterNodeReversalPreservesGrossMassAndAgeReceipts) {
     gw.sampleNodeExchange(&nodes, .5);
     const double incoming = -gw.nodeExchangeVolumes()[0];
     ASSERT_GT(incoming, 0);
-    nodes.invert_elev[0] = (head - .25) / length;
+    nodes.depth[0] = 0;
     gw.sampleNodeExchange(&nodes, .5);
     EXPECT_NEAR(gw.nodeExchangeVolumes()[0], 0, 1e-12);
     gw.fireGwCells(0, 1, m.router().state(), 0);
@@ -3689,8 +3690,8 @@ TEST(GroundHeat, NodeFlowReversalKeepsGrossOutgoingHeatWhenAcceptedWaterNetsToZe
     nodes.resize(2);
     const double head = gw.state().z_bed[0] + gw.state().hg[0],
                  length = m.router().options().len_1d_to_2d;
-    nodes.invert_elev[0] = (head + .25) / length;
-    nodes.depth[0] = 0;
+    nodes.invert_elev[0] = (head - .25) / length;
+    nodes.depth[0] = .5 / length;
     nodes.volume[0] = 100;
     std::vector<double> concentrations(2 * tr.n_species, 0);
     concentrations[row] = 20;
@@ -3700,7 +3701,7 @@ TEST(GroundHeat, NodeFlowReversalKeepsGrossOutgoingHeatWhenAcceptedWaterNetsToZe
     gw.sampleNodeExchange(&nodes, .5);
     const double incoming = -gw.nodeExchangeVolumes()[0];
     ASSERT_GT(incoming, 0);
-    nodes.invert_elev[0] = (head - .25) / length;
+    nodes.depth[0] = 0;
     gw.sampleNodeExchange(&nodes, .5);
     ASSERT_NEAR(gw.nodeExchangeVolumes()[0], 0, 1e-12);
     gw.fireGwCells(0, 1, m.router().state(), 0);

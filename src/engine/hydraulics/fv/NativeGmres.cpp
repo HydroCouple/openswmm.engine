@@ -94,7 +94,7 @@ NativeGmres::Result NativeGmres::solve(const std::vector<double>& b, const Apply
     // Six length-n work vectors, (m+1)*n basis entries, (m+1)*m H,
     // three length-m arrays and one length-(m+1) least-squares RHS.
     const auto limit =
-        std::min(controls.workspace_limit_bytes / sizeof(double), std::vector<double>().max_size());
+        std::min(controls.workspace_limit_bytes / sizeof(double), basis_.max_size());
     std::size_t count = 0;
     auto addProduct = [&](std::size_t a, std::size_t c) {
         if (a && c > (limit - count) / a)

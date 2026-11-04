@@ -2178,6 +2178,10 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
     if (ctx_.state != EngineState::RUNNING) {
         if (elapsed_time)
             *elapsed_time = 0.0;
+        // Retain the root cause when a failed run is stepped again, as end()
+        // and report() already do on their unconditional teardown paths.
+        if (ctx_.state == EngineState::ERROR_STATE)
+            return ctx_.error_code != SWMM_OK ? ctx_.error_code : SWMM_ERR_WRONG_STATE;
         set_error(SWMM_ERR_WRONG_STATE, "swmm_engine_step: engine is not running");
         return SWMM_ERR_WRONG_STATE;
     }
