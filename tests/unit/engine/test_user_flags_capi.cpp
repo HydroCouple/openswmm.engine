@@ -306,3 +306,14 @@ TEST_F(UserFlagsCapiTest, CaseHandling) {
 }
 
 } // namespace
+
+TEST_F(UserFlagsCapiTest, RealValuesReadBackWithoutPrecisionLoss) {
+    ASSERT_EQ(swmm_userflag_define(engine, "EXACT", kReal, ""), SWMM_OK);
+    ASSERT_EQ(swmm_userflag_value_set(engine, "NODE", "A", "EXACT", "0.12345678901234566"), SWMM_OK);
+    int found = 0;
+    const auto text = getValue("NODE", "A", "EXACT", &found);
+    ASSERT_EQ(found, 1);
+    EXPECT_DOUBLE_EQ(std::stod(text), 0.12345678901234566);
+    ASSERT_EQ(swmm_userflag_value_set(engine, "NODE", "A", "EXACT", "3.14"), SWMM_OK);
+    EXPECT_EQ(getValue("NODE", "A", "EXACT", &found), "3.14");
+}

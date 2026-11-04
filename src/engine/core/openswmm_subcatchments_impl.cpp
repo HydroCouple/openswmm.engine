@@ -27,6 +27,7 @@
  */
 
 #include "openswmm_api_common.hpp"
+#include "NamedObjectOverrides.hpp"
 #include "StringCase.hpp"
 #include "../hydrology/Groundwater.hpp"
 #include "../math/MathExpr.hpp"
@@ -1275,6 +1276,7 @@ SWMM_ENGINE_API int swmm_subcatch_rename(SWMM_Engine engine, int idx, const char
             ctx.options.ext_options[new_key] = std::move(expression);
         }
     }
+    openswmm::moveNamedOverrides(ctx, "SUBCATCHMENT", idx, previous, ctx.subcatch_names.name_of(idx));
     return SWMM_OK;
 }
 

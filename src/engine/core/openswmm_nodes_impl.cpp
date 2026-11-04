@@ -28,6 +28,7 @@
  */
 
 #include "openswmm_api_common.hpp"
+#include "NamedObjectOverrides.hpp"
 #include "TypeHelpers.hpp"
 #include "../../../include/openswmm/engine/openswmm_nodes.h"
 #include "../data/StorageGeometry.hpp"
@@ -1386,6 +1387,7 @@ SWMM_ENGINE_API int swmm_node_rename(SWMM_Engine engine, int idx, const char* ne
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    const std::string previous = ctx.node_names.name_of(idx);
     std::vector<std::string*> node_beds;
     if (ctx.twod_io.aquifer_nodes)
         for (auto& name : *ctx.twod_io.aquifer_nodes)
@@ -1404,6 +1406,8 @@ SWMM_ENGINE_API int swmm_node_rename(SWMM_Engine engine, int idx, const char* ne
     if (!ctx.node_names.rename(idx, newId)) return SWMM_ERR_BADPARAM;
     for (auto* name : node_beds) *name = ctx.node_names.name_of(idx);
     for (int row : drains) ctx.lid_usage.drain_to[row] = ctx.node_names.name_of(idx);
+    openswmm::moveNamedOverrides(ctx, "NODE", idx, previous, ctx.node_names.name_of(idx));
+    openswmm::refreshNamedHeatOverrides(ctx);
     return SWMM_OK;
 }
 

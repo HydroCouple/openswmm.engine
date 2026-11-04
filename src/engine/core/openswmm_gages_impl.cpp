@@ -27,6 +27,7 @@
  */
 
 #include "openswmm_api_common.hpp"
+#include "NamedObjectOverrides.hpp"
 #include "../../../include/openswmm/engine/openswmm_gages.h"
 
 #include "../hydrology/Gage.hpp"
@@ -423,7 +424,10 @@ SWMM_ENGINE_API int swmm_gage_rename(SWMM_Engine engine, int idx, const char* ne
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
-    return ctx.gage_names.rename(idx, newId) ? SWMM_OK : SWMM_ERR_BADPARAM;
+    const std::string previous = ctx.gage_names.name_of(idx);
+    if (!ctx.gage_names.rename(idx, newId)) return SWMM_ERR_BADPARAM;
+    openswmm::moveNamedOverrides(ctx, "GAGE", idx, previous, ctx.gage_names.name_of(idx));
+    return SWMM_OK;
 }
 
 // ============================================================================

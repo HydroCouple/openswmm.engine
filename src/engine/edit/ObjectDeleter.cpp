@@ -24,6 +24,7 @@
  */
 
 #include "ObjectDeleter.hpp"
+#include "../core/NamedObjectOverrides.hpp"
 #include "../quality/Treatment.hpp"
 #include "../data/LinkData.hpp"
 #include "../../../include/openswmm/engine/openswmm_edit.h"
@@ -625,6 +626,7 @@ CascadeResult delete_link(SimulationContext& ctx, int link_idx);
 
 CascadeResult delete_node(SimulationContext& ctx, int node_idx) {
     CascadeResult result;
+    moveNamedOverrides(ctx, "NODE", node_idx, ctx.node_names.name_of(node_idx), {});
     for (int row = 0; row < ctx.lid_usage.count(); ++row)
         if (ctx.node_names.find(ctx.lid_usage.drain_to[row]) == node_idx) {
             ctx.lid_usage.drain_to[row].clear();
@@ -756,6 +758,7 @@ CascadeResult delete_node(SimulationContext& ctx, int node_idx) {
     renumber_refs(ctx.dwf_inflows.node_idx, node_idx);
     renumber_refs(ctx.rdii_assigns.node_idx, node_idx);
 
+    refreshNamedHeatOverrides(ctx);
     return result;
 }
 
@@ -765,6 +768,7 @@ CascadeResult delete_node(SimulationContext& ctx, int node_idx) {
 
 CascadeResult delete_link(SimulationContext& ctx, int link_idx) {
     CascadeResult result;
+    moveNamedOverrides(ctx, "LINK", link_idx, ctx.link_names.name_of(link_idx), {});
 
     // --- Step 0: report (never edit) control rules referencing this link ---
     add_rule_refs(ctx, ctx.link_names.name_of(link_idx), result);
@@ -820,6 +824,7 @@ CascadeResult delete_link(SimulationContext& ctx, int link_idx) {
             --v;
     }
 
+    refreshNamedHeatOverrides(ctx);
     return result;
 }
 
@@ -829,6 +834,7 @@ CascadeResult delete_link(SimulationContext& ctx, int link_idx) {
 
 CascadeResult delete_subcatch(SimulationContext& ctx, int sc_idx) {
     CascadeResult result;
+    moveNamedOverrides(ctx, "SUBCATCHMENT", sc_idx, ctx.subcatch_names.name_of(sc_idx), {});
     for (auto* laws : {&ctx.reactions.wet_laws, &ctx.reactions.buildup_laws}) {
         laws->erase(std::remove_if(laws->begin(), laws->end(),
                                    [&](const auto& l) { return l.subcatchment == sc_idx; }),
@@ -914,6 +920,7 @@ CascadeResult delete_subcatch(SimulationContext& ctx, int sc_idx) {
 
 CascadeResult delete_gage(SimulationContext& ctx, int gage_idx) {
     CascadeResult result;
+    moveNamedOverrides(ctx, "GAGE", gage_idx, ctx.gage_names.name_of(gage_idx), {});
     add_rule_refs(ctx, ctx.gage_names.name_of(gage_idx), result);
 
     // --- Step 1: nullify subcatch gage references ---
@@ -1445,6 +1452,11 @@ CascadeResult delete_pollutant(SimulationContext& ctx, int pollut_idx) {
 
     const int np = ctx.n_pollutants();
     const std::string pname = ctx.pollutant_names.name_of(pollut_idx);
+
+    for (int row = ctx.initial_quality.count() - 1; row >= 0; --row) {
+        if (ctx.initial_quality.kind[row] == pollut_idx) ctx.initial_quality.erase(row);
+        else if (ctx.initial_quality.kind[row] > pollut_idx) --ctx.initial_quality.kind[row];
+    }
 
     // --- Step 1: cascade-delete inflow rows keyed by constituent name ---
     for (int i = ctx.ext_inflows.count() - 1; i >= 0; --i)

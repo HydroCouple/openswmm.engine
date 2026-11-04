@@ -34,6 +34,7 @@
 #include <vector>
 
 #include "openswmm_api_common.hpp"
+#include <charconv>
 #include "InpWriter.hpp"
 #include "DateTime.hpp"
 #include "charconv_compat.hpp"
@@ -2677,9 +2678,9 @@ SWMM_ENGINE_API int swmm_userflag_value_get(SWMM_Engine engine, const char* obj_
     } else if (std::holds_alternative<int>(v)) {
         s = std::to_string(std::get<int>(v));
     } else if (std::holds_alternative<double>(v)) {
-        char tmp[32];
-        std::snprintf(tmp, sizeof(tmp), "%g", std::get<double>(v));
-        s = tmp;
+        char tmp[64];
+        const auto result = std::to_chars(tmp, tmp + sizeof(tmp), std::get<double>(v));
+        s.assign(tmp, result.ptr);
     } else {
         s = std::get<std::string>(v);
     }

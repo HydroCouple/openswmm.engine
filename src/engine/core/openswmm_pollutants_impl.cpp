@@ -205,6 +205,8 @@ SWMM_ENGINE_API int swmm_pollutant_rename(SWMM_Engine engine, int idx, const cha
     // strings — the same set ObjectDeleter cascades on delete). Everything
     // else (co-pollutant, LID removals, buildup/washoff, treatment) is
     // index/positional and unaffected.
+    for (int row = 0; row < ctx.initial_quality.count(); ++row)
+        if (ctx.initial_quality.kind[row] == idx) ctx.initial_quality.constituent[row] = ctx.pollutant_names.name_of(idx);
     const std::string next = new_id;
     auto upper = [](std::string value) {
         for (auto& ch : value)

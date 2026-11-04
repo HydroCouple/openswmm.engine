@@ -32,6 +32,9 @@
 #include <openswmm/engine/openswmm_infrastructure.h>
 #include <openswmm/engine/openswmm_controls.h>
 
+#include <openswmm/engine/openswmm_initial_quality.h>
+#include <openswmm/engine/openswmm_heat.h>
+#include <memory>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -628,4 +631,68 @@ TEST_F(DeletionExtTest, AnalyzeImpactDoesNotMutateNewTypes) {
     EXPECT_EQ(swmm_landuse_count(engine), 2);
     EXPECT_EQ(swmm_hydrograph_group_count(engine), 1);
     EXPECT_EQ(swmm_pollutant_count(engine), 2);
+}
+
+TEST(NamedObjectOverrides, RenameReindexAndRemovePreserveTypedOwnership) {
+    std::unique_ptr<void, decltype(&swmm_engine_destroy)> owner(swmm_engine_new(), swmm_engine_destroy);
+    auto e = owner.get(); ASSERT_NE(e, nullptr);
+    for (const char* name : {"N0", "A", "N2"}) ASSERT_EQ(swmm_node_add(e, name, 0), SWMM_OK);
+    ASSERT_EQ(swmm_pollutant_add(e, "P", 0), SWMM_OK);
+    ASSERT_EQ(swmm_link_add(e, "L0", 0), SWMM_OK);
+    ASSERT_EQ(swmm_link_add(e, "A", 0), SWMM_OK);
+    ASSERT_EQ(swmm_link_set_nodes(e, 0, 0, 2), SWMM_OK);
+    ASSERT_EQ(swmm_link_set_nodes(e, 1, 1, 2), SWMM_OK);
+    ASSERT_EQ(swmm_userflag_define(e, "F", 2, "Exact"), SWMM_OK);
+    ASSERT_EQ(swmm_userflag_value_set(e, "NODE", "A", "F", "0.12345678901234566"), SWMM_OK);
+    ASSERT_EQ(swmm_userflag_value_set(e, "LINK", "A", "F", "0.9876543210987654"), SWMM_OK);
+    ASSERT_EQ(swmm_userflag_value_set(e, "NODE", "N2", "F", "0"), SWMM_OK);
+    ASSERT_EQ(swmm_init_quality_set(e, 0, 1, "P", 2.5), SWMM_OK);
+    ASSERT_EQ(swmm_init_quality_set(e, 1, 1, "P", 3.5), SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_element_override(e, 1, SWMM_HEAT_SCOPE_NODE, "A", .2), SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_element_override(e, 1, SWMM_HEAT_SCOPE_LINK, "A", .3), SWMM_OK);
+    ASSERT_EQ(swmm_node_rename(e, 1, "RenamedN"), SWMM_OK);
+    ASSERT_EQ(swmm_link_rename(e, 1, "RenamedL"), SWMM_OK);
+    char value[128]{}; int found = 0;
+    ASSERT_EQ(swmm_userflag_value_get(e, "NODE", "RenamedN", "F", value, sizeof(value), &found), SWMM_OK);
+    ASSERT_EQ(found, 1); EXPECT_DOUBLE_EQ(std::stod(value), .12345678901234566);
+    ASSERT_EQ(swmm_userflag_value_get(e, "LINK", "RenamedL", "F", value, sizeof(value), &found), SWMM_OK);
+    ASSERT_EQ(found, 1); EXPECT_DOUBLE_EQ(std::stod(value), .9876543210987654);
+    int count = -1; ASSERT_EQ(swmm_heat_element_override_count(e, &count), SWMM_OK); ASSERT_EQ(count, 2);
+    char name[128]{}; ASSERT_EQ(swmm_heat_get_element_override(e, 0, nullptr, nullptr, name, sizeof(name), nullptr), SWMM_OK);
+    EXPECT_STREQ(name, "RenamedN");
+    ASSERT_EQ(swmm_node_delete(e, 0, nullptr), SWMM_OK); // Also deletes L0; both namespaces reindex.
+    for (int row = 0; row < 2; ++row) {
+        int link = -1, index = -1; double v = 0; char cons[128]{};
+        ASSERT_EQ(swmm_init_quality_get(e, row, &link, &index, cons, sizeof(cons), &v), SWMM_OK);
+        EXPECT_EQ(index, 0); EXPECT_EQ(link, row); EXPECT_DOUBLE_EQ(v, row ? 3.5 : 2.5);
+    }
+    ASSERT_EQ(swmm_node_delete(e, swmm_node_index(e, "RenamedN"), nullptr), SWMM_OK);
+    EXPECT_EQ(swmm_init_quality_count(e), 0);
+    ASSERT_EQ(swmm_heat_element_override_count(e, &count), SWMM_OK); EXPECT_EQ(count, 0);
+    ASSERT_EQ(swmm_node_add(e, "RenamedN", 0), SWMM_OK);
+    ASSERT_EQ(swmm_link_add(e, "RenamedL", 0), SWMM_OK);
+    for (const char* type : {"NODE", "LINK"}) {
+        ASSERT_EQ(swmm_userflag_value_get(e, type, type[0] == 'N' ? "RenamedN" : "RenamedL", "F", value, sizeof(value), &found), SWMM_OK);
+        EXPECT_EQ(found, 0);
+    }
+    ASSERT_EQ(swmm_userflag_value_get(e, "NODE", "N2", "F", value, sizeof(value), &found), SWMM_OK);
+    EXPECT_EQ(found, 1); EXPECT_STREQ(value, "0");
+}
+
+TEST(NamedObjectOverrides, InitialPollutantKeysFollowRenameAndReindex) {
+    std::unique_ptr<void, decltype(&swmm_engine_destroy)> owner(swmm_engine_new(), swmm_engine_destroy);
+    auto e = owner.get(); ASSERT_NE(e, nullptr);
+    ASSERT_EQ(swmm_node_add(e, "N", 0), SWMM_OK);
+    ASSERT_EQ(swmm_pollutant_add(e, "Unused", 0), SWMM_OK);
+    ASSERT_EQ(swmm_pollutant_add(e, "P", 0), SWMM_OK);
+    ASSERT_EQ(swmm_init_quality_set(e, 0, 0, "P", 5.25), SWMM_OK);
+    ASSERT_EQ(swmm_pollutant_delete(e, 0, nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_init_quality_set(e, 0, 0, "P", 7.5), SWMM_OK);
+    EXPECT_EQ(swmm_init_quality_count(e), 1);
+    ASSERT_EQ(swmm_pollutant_rename(e, 0, "Renamed"), SWMM_OK);
+    int link = -1, element = -1; char cons[128]{}; double value = 0;
+    ASSERT_EQ(swmm_init_quality_get(e, 0, &link, &element, cons, sizeof(cons), &value), SWMM_OK);
+    EXPECT_STREQ(cons, "Renamed"); EXPECT_DOUBLE_EQ(value, 7.5);
+    ASSERT_EQ(swmm_pollutant_delete(e, 0, nullptr), SWMM_OK);
+    EXPECT_EQ(swmm_init_quality_count(e), 0);
 }
