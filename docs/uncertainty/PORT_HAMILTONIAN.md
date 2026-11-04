@@ -233,3 +233,9 @@ cases the current code excludes). Acceptance gates as in the table.
   member, although only ~11 stores + ponds are nonlinear and the rest is the member-independent linear plane
   operator. O-5 opened: factor the linear multi-port once per step (shared across members), Newton on the
   admitted set through its Schur complement. Same solution by construction; cost per iteration O(k²), k ≈ 11–50.
+- 2026-11-04: Bellinge HEAD run reached step 4000 (07:03) at 15,302 s: steps 3000→4000 added 2,853 fallbacks and
+  535 non-converged (totals 3,015 / 539). The O-4 kink handling, which clears the 1D-only smoke (34 fallbacks,
+  0 failed), does NOT carry to the coupled storm peak, where many rim manholes + street ponds are admitted. The
+  1D smoke is therefore not a sufficient reproducer. Next (after O-5 leaves RomPortGraph.hpp): dump every
+  non-converged per-member system at the peak (admitted graph, A, tabulated port laws, F, z) to a file and
+  replay it in a Debug unit test (O-6). The accuracy score of this run will be contaminated by the 539.
