@@ -223,3 +223,6 @@ cases the current code excludes). Acceptance gates as in the table.
   additive_channel 12, spectral_rom1d 101, storage_threshold A 0.889/0.958, B 0.727/0.960, R 0.952/0.880, 0 fallbacks, fp-floor 0.
   1D smoke to 07:00 NOT completed: the machine was swap-starved (14 GB swap, load 60-120, the process got 1 CPU-minute in 2 h);
   Bellinge rerun NOT launched. Rerun the smoke, then the Release run, on a quiet machine.
+- 2026-11-03: Debug 1D smoke on HEAD (O-4b): 3,892 steps in 636 s; 194,550 solves, 305k Newton iterations, fp-floor
+  converged 736, Jacobi fallbacks 34 (0.017 %, all converged), non-converged 0; G80F11B 92 member-steps ≤ 0.12 ft
+  below invert. Accepted (criteria: non-converged 0, fallbacks ≤ 1 %). Release rebuilt; Bellinge `demo_ph5` rerun launched.
