@@ -557,12 +557,28 @@ jobs:
           -DVCPKG_MANIFEST_FEATURES="tests;geopackage"
           -DOPENSWMM_BUILD_UNIT_TESTS=ON
           -DOPENSWMM_WITH_GEOPACKAGE=ON
+          "-DCMAKE_C_FLAGS_DEBUG=-O1 -g -DDEBUG"
+          "-DCMAKE_CXX_FLAGS_DEBUG=-O1 -g -DDEBUG"
 
       - name: Build
         run: cmake --build build-test --config Debug
 
       - name: Unit tests
-        run: ctest --test-dir build-test -C Debug -L unit --output-on-failure
+        timeout-minutes: 90
+        run: >-
+          ctest --test-dir build-test -C Debug -L unit
+          --parallel 2 --timeout 900 --verbose --output-on-failure
+          --output-junit "${{ github.workspace }}/build-test/unit-tests.xml"
+
+      - name: Upload unit-test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: release-gate-unit-test-logs
+          path: |
+            build-test/Testing/Temporary/
+            build-test/unit-tests.xml
+          if-no-files-found: ignore
 
   # ──────────────────────────────────────────────────────────────────────
   #  Create GitHub Release

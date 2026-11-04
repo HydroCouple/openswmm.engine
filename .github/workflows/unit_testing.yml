@@ -146,23 +146,43 @@ jobs:
           -DOPENSWMM_GPU_BACKEND=omp
           -DOPENSWMM_WITH_HYPRE=ON
           -DOPENSWMM_WITH_GEOPACKAGE=ON
+          "-DCMAKE_C_FLAGS_DEBUG=${{ runner.os == 'Windows' && '/Zi /Od /DDEBUG' || '-O1 -g -DDEBUG' }}"
+          "-DCMAKE_CXX_FLAGS_DEBUG=${{ runner.os == 'Windows' && '/Zi /Od /DDEBUG' || '-O1 -g -DDEBUG' }}"
           -DCMAKE_OSX_ARCHITECTURES=${{ matrix.cmake_osx_arch }}
 
       - name: Build
         run: cmake --build build-${{ matrix.vcpkg_triplet }} --config Debug
 
       - name: Unit tests
-        # Stream Windows cases so a canceled run identifies the last active test.
-        run: ctest --test-dir build-${{ matrix.vcpkg_triplet }} -C Debug -L unit --output-on-failure ${{ runner.os == 'Windows' && '--verbose' || '' }}
+        # Keep assertions/debug symbols, but optimize numerical kernels on Unix.
+        # Bound each executable and stream its cases on every platform. CTest
+        # honors the fixture resource locks when running two suites together.
+        timeout-minutes: 90
+        run: >-
+          ctest --test-dir build-${{ matrix.vcpkg_triplet }} -C Debug -L unit
+          --parallel 2 --timeout 900 --verbose --output-on-failure
+          --output-junit "${{ github.workspace }}/build-${{ matrix.vcpkg_triplet }}/unit-tests.xml"
+
+      - name: Upload unit-test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: unit-test-logs-${{ matrix.vcpkg_triplet }}
+          path: |
+            build-${{ matrix.vcpkg_triplet }}/Testing/Temporary/
+            build-${{ matrix.vcpkg_triplet }}/unit-tests.xml
+          if-no-files-found: ignore
 
       - name: Diagnose Linux unit-test segfaults (gdb)
         if: failure() && runner.os == 'Linux'
+        timeout-minutes: 10
         run: |
           sudo apt-get install -y gdb
           python3 .github/scripts/debug_failed_tests.py "build-${{ matrix.vcpkg_triplet }}" gdb
 
       - name: Diagnose macOS unit-test segfaults (lldb)
         if: failure() && runner.os == 'macOS'
+        timeout-minutes: 10
         run: python3 .github/scripts/debug_failed_tests.py "build-${{ matrix.vcpkg_triplet }}" lldb
 
       - name: Dump failed vcpkg build logs (Windows)

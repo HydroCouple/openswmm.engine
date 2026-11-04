@@ -3576,6 +3576,7 @@ struct RouterSourceModel {
     Model source;
     SurfaceRouter2D router;
     Router hydraulic;
+    double aquifer_conductivity = .01;
     int joint_profile = 0;
     /**
      * @brief Build the router-owned source fixture and optional joint 1D hydraulic profile.
@@ -3607,6 +3608,7 @@ struct RouterSourceModel {
                int mapped = 0, OutfallType boundary = OutfallType::FIXED, bool flap = false,
                double initial_depth = -1) {
         AtmosphericInput a;
+        a.ks = aquifer_conductivity;
         a.inside = {.75, .25};
         a.pet = {.0001, .0002};
         a.et = "BOUNDARY_ET";
@@ -4052,6 +4054,9 @@ TEST(CommonSourceStage,
 
 TEST(CommonSourceStage, RouterLedgerUsesActualWeatherFootprintAndReturnsWithoutInventingNodeSpill) {
     RouterSourceModel m;
+    // Keep this ledger test's nearly saturated aquifer off diffusion microsteps.
+    // The 10 m3 pulse below still forces real Dunne return and ownership checks.
+    m.aquifer_conductivity = 1e-5;
     m.setup(Momentum2D::LOCAL_INERTIAL, GwClosure::CLOSED_FORM, true);
     ASSERT_FALSE(HasFatalFailure());
     for (int i = 0; i < 5; ++i) {
