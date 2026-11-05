@@ -757,6 +757,15 @@ typedef struct SWMM_InletDesign {
  */
 SWMM_ENGINE_API int swmm_inlet_get_design(SWMM_Engine engine, int idx, SWMM_InletDesign* out);
 
+/** @brief Validate an editable inlet design without changing the model.
+ * @details Uses the same rules as swmm_inlet_set_design. On success, optional normalized
+ * receives exactly the active record the setter/getter retain, including derived curve kind.
+ * On failure normalized is untouched. Requires BUILDING/OPENED and a valid engine/design.
+ */
+SWMM_ENGINE_API int swmm_inlet_validate_design(SWMM_Engine engine,
+                                               const SWMM_InletDesign* design,
+                                               SWMM_InletDesign* normalized);
+
 /**
  * @brief Validate and replace the type-specific inlet design.
  *

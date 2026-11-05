@@ -1062,3 +1062,24 @@ TEST(InletJunctionIO, DesignGetSet) {
     EXPECT_STREQ(cbuf, "standard 6 ft curb opening");
     destroy(e);
 }
+
+TEST(InletDesignValidation, PreviewIsPureAndMatchesStoredRecord) {
+    auto e = swmm_engine_new(); ASSERT_NE(e, nullptr);
+    struct Cleanup { SWMM_Engine e; ~Cleanup() { swmm_engine_destroy(e); } } cleanup{e};
+    ASSERT_EQ(swmm_inlet_add(e, "A", "GRATE"), SWMM_OK);
+    SWMM_InletDesign before{}, normalized{}, after{};
+    ASSERT_EQ(swmm_inlet_get_design(e, 0, &before), SWMM_OK);
+    auto draft = before; draft.type = SWMM_INLET_GRATE; draft.grate_length = 3.25; draft.grate_width = 2.5;
+    draft.curb_length = 99; draft.slot_length = 88;
+    ASSERT_EQ(swmm_inlet_validate_design(e, &draft, &normalized), SWMM_OK);
+    EXPECT_DOUBLE_EQ(normalized.grate_length, 3.25); EXPECT_DOUBLE_EQ(normalized.curb_length, 0); EXPECT_DOUBLE_EQ(normalized.slot_length, 0);
+    ASSERT_EQ(swmm_inlet_get_design(e, 0, &after), SWMM_OK); EXPECT_DOUBLE_EQ(after.grate_length, before.grate_length);
+    ASSERT_EQ(swmm_inlet_set_design(e, 0, &draft), SWMM_OK);
+    ASSERT_EQ(swmm_inlet_get_design(e, 0, &after), SWMM_OK);
+    EXPECT_EQ(after.type, normalized.type); EXPECT_DOUBLE_EQ(after.grate_width, normalized.grate_width);
+    EXPECT_EQ(after.throat, normalized.throat); EXPECT_DOUBLE_EQ(after.curb_length, normalized.curb_length);
+    auto invalid = draft; invalid.grate_length = 0;
+    EXPECT_EQ(swmm_inlet_validate_design(e, &invalid, &normalized), SWMM_ERR_BADPARAM);
+    EXPECT_DOUBLE_EQ(normalized.grate_length, 3.25);
+    ASSERT_EQ(swmm_inlet_get_design(e, 0, &after), SWMM_OK); EXPECT_DOUBLE_EQ(after.grate_length, 3.25);
+}

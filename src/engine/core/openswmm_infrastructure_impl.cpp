@@ -733,14 +733,13 @@ SWMM_ENGINE_API int swmm_inlet_get_design(SWMM_Engine engine, int idx, SWMM_Inle
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_inlet_set_design(SWMM_Engine engine, int idx,
-                                          const SWMM_InletDesign* design) {
+SWMM_ENGINE_API int swmm_inlet_validate_design(SWMM_Engine engine,
+                                               const SWMM_InletDesign* design,
+                                               SWMM_InletDesign* normalized) {
     CHECK_HANDLE(engine);
-    if (!design)
-        return SWMM_ERR_BADPARAM;
-    auto& ctx = to_engine(engine)->context();
+    if (!design) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
-    CHECK_INDEX(idx >= 0 && idx < ctx.inlets.count());
     if (design->type < 0 || design->type > SWMM_INLET_CUSTOM)
         return SWMM_ERR_BADPARAM;
 
@@ -794,6 +793,42 @@ SWMM_ENGINE_API int swmm_inlet_set_design(SWMM_Engine engine, int idx,
             custom_curve_kind = actual;
         }
     }
+
+    SWMM_InletDesign result{};
+    result.type = design->type;
+    result.throat = SWMM_THROAT_VERTICAL;
+    if (is_grate_kind(design->type)) {
+        result.grate_length = design->grate_length; result.grate_width = design->grate_width;
+        result.grate_type = design->grate_type; result.open_area = design->open_area;
+        result.splash_veloc = design->splash_veloc;
+    }
+    if (is_curb_kind(design->type)) {
+        result.curb_length = design->curb_length; result.curb_height = design->curb_height;
+        result.throat = design->throat;
+    }
+    if (design->type == SWMM_INLET_SLOTTED) {
+        result.slot_length = design->slot_length; result.slot_width = design->slot_width;
+    }
+    if (design->type == SWMM_INLET_CUSTOM) {
+        copy_str(design->curve_id, result.curve_id, sizeof(result.curve_id));
+        result.curve_kind = custom_curve_kind;
+    }
+    if (normalized) *normalized = result;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_inlet_set_design(SWMM_Engine engine, int idx,
+                                          const SWMM_InletDesign* design) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.inlets.count());
+    SWMM_InletDesign normalized{};
+    const int rc = swmm_inlet_validate_design(engine, design, &normalized);
+    if (rc != SWMM_OK) return rc;
+    design = &normalized;
+    const int custom_curve_index = design->type == SWMM_INLET_CUSTOM ? ctx.find_curve(design->curve_id) : -1;
+    const int custom_curve_kind = design->curve_kind;
 
     const auto ui = static_cast<std::size_t>(idx);
     auto& I = ctx.inlets;
