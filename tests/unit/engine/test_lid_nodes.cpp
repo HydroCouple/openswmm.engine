@@ -3519,3 +3519,67 @@ TEST(LidNodes, EditorSnapshotRestoresClearedAnchorsAndLeavesSharedControlNodesEx
     ASSERT_EQ(swmm_node_set_lid(e, 3, -1, 0), SWMM_OK);
     EXPECT_EQ(c.lid_node_outlets.size(), 1u);
 }
+
+TEST(LidNodes, CompleteProfileValidationIsPureIncludingAssignedGeometry) {
+    SWMMEngine engine;
+    engine.context() = richardsModel();
+    auto& c = engine.context();
+    c.state = EngineState::OPENED;
+    const auto h = reinterpret_cast<SWMM_Engine>(&engine);
+    SWMM_LidNodeLayer rows[4]{};
+    SWMM_LidRichardsMaterial materials[4]{};
+    SWMM_LidRichardsOptions options{};
+    ASSERT_EQ(swmm_lid_richards_options_get(h, 0, &options), SWMM_OK);
+    for (int i = 0; i < 4; ++i) {
+        ASSERT_EQ(swmm_lid_node_layer_get(h, 0, i, &rows[i]), SWMM_OK);
+        ASSERT_EQ(swmm_lid_richards_material_get(h, 0, i, &materials[i]), SWMM_OK);
+    }
+    const auto before = c.lid_controls.node_layers[0];
+    const auto depths = c.nodes.full_depth;
+    rows[1].params[0] *= 2;
+    ASSERT_EQ(swmm_lid_node_validate_flow(h, 0, rows, 4, nullptr, 0, &options, materials), SWMM_OK);
+    EXPECT_EQ(c.nodes.full_depth, depths);
+    EXPECT_EQ(c.lid_controls.node_layers[0][1].params, before[1].params);
+    EXPECT_DOUBLE_EQ(c.lid_controls.node_layers[0][1].retention.alpha, before[1].retention.alpha);
+    materials[1].alpha = 0;
+    EXPECT_EQ(swmm_lid_node_validate_flow(h, 0, rows, 4, nullptr, 0, &options, materials), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(c.nodes.full_depth, depths);
+    EXPECT_EQ(c.lid_controls.node_layers[0][1].params, before[1].params);
+    c.state = EngineState::RUNNING;
+    EXPECT_EQ(swmm_lid_node_validate_flow(h, 0, rows, 4, nullptr, 0, &options, materials), SWMM_ERR_LIFECYCLE);
+}
+
+TEST(LidNodes, StandardExtraFieldsPreserveSiblingsAndTypePreflightDoesNotMutate) {
+    SWMMEngine engine;
+    auto& c = engine.context(); c.state = EngineState::BUILDING;
+    const auto h = reinterpret_cast<SWMM_Engine>(&engine);
+    ASSERT_EQ(swmm_lid_add(h, "Design", 0), SWMM_OK);
+    ASSERT_EQ(swmm_lid_set_surface(h, 0, 6, .1, 2), SWMM_OK);
+    ASSERT_EQ(swmm_lid_set_soil(h, 0, 12, .45, .2, .08, 2, 10), SWMM_OK);
+    const auto surface = c.lid_controls.surface[0];
+    const auto soil = c.lid_controls.soil[0];
+    for (int field = 0; field < 7; ++field) {
+        const double value = field == SWMM_LID_SURFACE_VEGETATION ? .25 : 3.25 + field;
+        ASSERT_EQ(swmm_lid_set_extra(h, 0, field, value), SWMM_OK);
+        double got = -1;
+        ASSERT_EQ(swmm_lid_get_extra(h, 0, field, &got), SWMM_OK);
+        EXPECT_DOUBLE_EQ(got, value);
+        EXPECT_EQ(swmm_lid_set_extra(h, 0, field, NAN), SWMM_ERR_BADPARAM);
+        ASSERT_EQ(swmm_lid_get_extra(h, 0, field, &got), SWMM_OK);
+        EXPECT_DOUBLE_EQ(got, value);
+    }
+    EXPECT_DOUBLE_EQ(c.lid_controls.surface[0][0], surface[0]);
+    EXPECT_DOUBLE_EQ(c.lid_controls.surface[0][2], surface[2]);
+    for (int i = 0; i < 6; ++i) EXPECT_DOUBLE_EQ(c.lid_controls.soil[0][i], soil[i]);
+    EXPECT_EQ(swmm_lid_set_extra(h, 0, SWMM_LID_SURFACE_VEGETATION, 1), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_lid_get_extra(h, 0, 99, nullptr), SWMM_ERR_BADPARAM);
+    ASSERT_EQ(swmm_lid_validate_type(h, 0, 4), SWMM_OK);
+    EXPECT_EQ(c.lid_controls.lid_type[0], "BC");
+    ASSERT_EQ(swmm_lid_set_type(h, 0, 4), SWMM_OK);
+    EXPECT_EQ(c.lid_controls.lid_type[0], "PP");
+    EXPECT_DOUBLE_EQ(c.lid_controls.surface[0][1], .25);
+    ASSERT_EQ(swmm_lid_add(h, "Node", 8), SWMM_OK);
+    EXPECT_EQ(swmm_lid_set_extra(h, 1, 0, .1), SWMM_ERR_BADPARAM);
+    c.state = EngineState::RUNNING;
+    EXPECT_EQ(swmm_lid_set_extra(h, 0, 0, .1), SWMM_ERR_LIFECYCLE);
+}

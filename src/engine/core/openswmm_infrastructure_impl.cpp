@@ -1118,7 +1118,7 @@ SWMM_ENGINE_API int swmm_lid_rename(SWMM_Engine engine, int idx, const char* new
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_lid_set_type(SWMM_Engine engine, int idx, int type) {
+SWMM_ENGINE_API int swmm_lid_validate_type(SWMM_Engine engine, int idx, int type) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
@@ -1142,8 +1142,61 @@ SWMM_ENGINE_API int swmm_lid_set_type(SWMM_Engine engine, int idx, int type) {
         (idx < static_cast<int>(controls.node_layers.size()) && !controls.node_layers[idx].empty()))
         return SWMM_ERR_BADPARAM;
 
-    controls.lid_type[idx] = code;
     return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_lid_set_type(SWMM_Engine engine, int idx, int type) {
+    const int result = swmm_lid_validate_type(engine, idx, type);
+    if (result != SWMM_OK) return result;
+    to_engine(engine)->context().lid_controls.lid_type[idx] = lid_type_code(type);
+    return SWMM_OK;
+}
+
+static double* lid_extra(openswmm::LidControlStore& rows, int idx, int field) {
+    switch (field) {
+    case SWMM_LID_SURFACE_VEGETATION: return &rows.surface[idx][1];
+    case SWMM_LID_SURFACE_SIDE_SLOPE: return &rows.surface[idx][4];
+    case SWMM_LID_SOIL_SUCTION: return &rows.soil[idx][6];
+    case SWMM_LID_STORAGE_CLOGGING: return &rows.storage[idx][3];
+    case SWMM_LID_DRAIN_DELAY: return &rows.drain[idx][3];
+    case SWMM_LID_DRAIN_OPEN: return &rows.drain[idx][4];
+    case SWMM_LID_DRAIN_CLOSE: return &rows.drain[idx][5];
+    default: return nullptr;
+    }
+}
+SWMM_ENGINE_API int swmm_lid_get_extra(SWMM_Engine engine, int idx, int field, double* value) {
+    CHECK_HANDLE(engine);
+    auto& rows = to_engine(engine)->context().lid_controls;
+    CHECK_INDEX(idx >= 0 && idx < rows.count());
+    const auto* stored = lid_extra(rows, idx, field);
+    if (!stored || !value) return SWMM_ERR_BADPARAM;
+    *value = *stored;
+    return SWMM_OK;
+}
+SWMM_ENGINE_API int swmm_lid_set_extra(SWMM_Engine engine, int idx, int field, double value) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.lid_controls.count());
+    auto* stored = lid_extra(ctx.lid_controls, idx, field);
+    if (!stored || ctx.lid_controls.lid_type[idx] == "NODE" || !std::isfinite(value) || value < 0 ||
+        (field == SWMM_LID_SURFACE_VEGETATION && value >= 1)) return SWMM_ERR_BADPARAM;
+    const double previous = *stored;
+    *stored = value;
+    if (std::any_of(ctx.node_subtypes.storages.lid.begin(), ctx.node_subtypes.storages.lid.end(),
+                    [idx](const auto& cfg) { return cfg.control == idx; }) &&
+        !openswmm::lidnode::validateStack(openswmm::lidnode::layers(ctx, idx)).empty()) {
+        *stored = previous;
+        return SWMM_ERR_BADPARAM;
+    }
+    openswmm::lidnode::sync(ctx, idx);
+    return SWMM_OK;
+}
+SWMM_ENGINE_API const char* swmm_lid_get_drain_curve(SWMM_Engine engine, int idx) {
+    if (!engine) return nullptr;
+    const auto& rows = to_engine(engine)->context().lid_controls;
+    if (idx < 0 || idx >= rows.count()) return nullptr;
+    return idx < static_cast<int>(rows.drain_curve.size()) ? rows.drain_curve[idx].c_str() : "";
 }
 
 // The surface/soil/storage layer parameters seed per-unit LID state at

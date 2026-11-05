@@ -944,6 +944,24 @@ SWMM_ENGINE_API int swmm_lid_add(SWMM_Engine engine, const char* id, int type);
  * that would invalidate an assignment, reaction rule, or authored NODE layer stack. */
 SWMM_ENGINE_API int swmm_lid_set_type(SWMM_Engine engine, int idx, int type);
 
+/** Check the same type-change and assignment restrictions as swmm_lid_set_type without mutation. */
+SWMM_ENGINE_API int swmm_lid_validate_type(SWMM_Engine engine, int idx, int type);
+
+/** Remaining stored scalar members of standard LID layers, in input units. */
+enum SWMM_LidExtraField {
+    SWMM_LID_SURFACE_VEGETATION = 0, SWMM_LID_SURFACE_SIDE_SLOPE = 1,
+    SWMM_LID_SOIL_SUCTION = 2, SWMM_LID_STORAGE_CLOGGING = 3,
+    SWMM_LID_DRAIN_DELAY = 4, SWMM_LID_DRAIN_OPEN = 5, SWMM_LID_DRAIN_CLOSE = 6
+};
+/** Read one stored scalar. Vegetation is a fraction, side slope dimensionless, suction/open/close
+ * are input in/mm, clogging dimensionless, delay hours. No mutation; output is caller-owned. */
+SWMM_ENGINE_API int swmm_lid_get_extra(SWMM_Engine engine, int idx, int field, double* value);
+/** Set one finite nonnegative scalar in BUILDING/OPENED. Vegetation must be below one.
+ * Rejects NODE controls and invalid attached storage profiles; all sibling fields are preserved. */
+SWMM_ENGINE_API int swmm_lid_set_extra(SWMM_Engine engine, int idx, int field, double value);
+/** Borrow the authored drain-curve token until the next control/engine mutation. No mutation. */
+SWMM_ENGINE_API const char* swmm_lid_get_drain_curve(SWMM_Engine engine, int idx);
+
 /** Arbitrary ordered NODE control layers; thickness/suction in in or mm,
  * conductivity in in/hr or mm/hr. Params: SURFACE=(thickness, vegetation),
  * MEDIA=(thickness, porosity, FC, WP, Ksat, Kslope, suction),
@@ -1094,6 +1112,15 @@ SWMM_ENGINE_API int swmm_lid_node_configure_flow(SWMM_Engine engine, int control
                                                  int treatment_count,
                                                  const SWMM_LidRichardsOptions* options,
                                                  const SWMM_LidRichardsMaterial* material);
+
+/** Pure preflight of the complete NODE profile using the same validation as configure_flow.
+ * Requires BUILDING/OPENED. Does not change layers, treatment, flow, nodes or anchored outlets.
+ * Input arrays and expressions are borrowed only for this call. */
+SWMM_ENGINE_API int swmm_lid_node_validate_flow(SWMM_Engine engine, int control,
+                                               const SWMM_LidNodeLayer* layers, int count,
+                                               const SWMM_LidLayerTreatment* treatment, int treatment_count,
+                                               const SWMM_LidRichardsOptions* options,
+                                               const SWMM_LidRichardsMaterial* material);
 /**
  * @brief Count authored or derived stack layers, including a BOTTOM row when present.
  *

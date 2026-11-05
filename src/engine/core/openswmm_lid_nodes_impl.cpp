@@ -217,11 +217,11 @@ SWMM_ENGINE_API int swmm_lid_richards_material_get(SWMM_Engine engine, int contr
     *out = {p.theta_r, p.alpha, p.n, p.l, p.specific_storage};
     return SWMM_OK;
 }
-SWMM_ENGINE_API int swmm_lid_node_configure_flow(SWMM_Engine engine, int control,
+static int configure_node_flow(SWMM_Engine engine, int control,
                                                  const SWMM_LidNodeLayer* rows, int count,
                                                  const SWMM_LidLayerTreatment* treatment, int nt,
                                                  const SWMM_LidRichardsOptions* options,
-                                                 const SWMM_LidRichardsMaterial* material) {
+                                                 const SWMM_LidRichardsMaterial* material, bool publish) {
     CHECK_HANDLE(engine);
     auto& c = to_engine(engine)->context();
     if (!editable(c))
@@ -270,10 +270,22 @@ SWMM_ENGINE_API int swmm_lid_node_configure_flow(SWMM_Engine engine, int control
                 if (r >= 0 && c.node_subtypes.storages.lid[r].control == control)
                     return SWMM_ERR_BADPARAM;
             }
-    c.lid_controls.node_layers.resize(c.lid_controls.count());
-    c.lid_controls.node_layers[control] = std::move(stack);
-    openswmm::lidnode::sync(c, control);
+    if (publish) {
+        c.lid_controls.node_layers.resize(c.lid_controls.count());
+        c.lid_controls.node_layers[control] = std::move(stack);
+        openswmm::lidnode::sync(c, control);
+    }
     return SWMM_OK;
+}
+SWMM_ENGINE_API int swmm_lid_node_configure_flow(SWMM_Engine engine, int control,
+    const SWMM_LidNodeLayer* rows, int count, const SWMM_LidLayerTreatment* treatment, int nt,
+    const SWMM_LidRichardsOptions* options, const SWMM_LidRichardsMaterial* material) {
+    return configure_node_flow(engine, control, rows, count, treatment, nt, options, material, true);
+}
+SWMM_ENGINE_API int swmm_lid_node_validate_flow(SWMM_Engine engine, int control,
+    const SWMM_LidNodeLayer* rows, int count, const SWMM_LidLayerTreatment* treatment, int nt,
+    const SWMM_LidRichardsOptions* options, const SWMM_LidRichardsMaterial* material) {
+    return configure_node_flow(engine, control, rows, count, treatment, nt, options, material, false);
 }
 SWMM_ENGINE_API int swmm_storage_lid_get(SWMM_Engine engine, int node, SWMM_StorageLidState* out) {
     CHECK_HANDLE(engine);
