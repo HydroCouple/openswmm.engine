@@ -293,3 +293,8 @@ cases the current code excludes). Acceptance gates as in the table.
   0.889/0.958, B 0.727/0.960, R 0.952/0.880 unchanged (R Newton 61,269 vs 60,760: the raised end's far-end floor);
   1D smoke `ph_smoke1d.inp` to 07:00: 3,892 steps in 395 s, solves 194,550, Newton 302,004, fp-floor 970, Jacobi
   fallbacks 29 (all converged), not converged 0, kink-bounded 35,053 (per node 29,435). Full `demo_ph5` relaunched.
+- 2026-11-05: Bellinge `demo_ph5` on O-6 code reached step 4000 (07:03): 456 Jacobi fallbacks, **14 non-converged**
+  of 200,000 solves (0.007 %) — was 3,015 / 539 before O-6 and 6,350 / 607 before O-4. Wall 53,860 s is not a
+  measurement (machine throttled to 26 % CPU and loaded by another session for most of it). Run continuing to
+  10:00 for the score vs mc_v3. The 14 remain open (no dump dir on this run; a dump run on the O-6 code would
+  classify them) — below the 1 % stop line but not zero.
