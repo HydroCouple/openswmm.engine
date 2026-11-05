@@ -89,6 +89,32 @@ protected:
 // Snow packs — names vector + NameIndex must stay in lockstep
 // ---------------------------------------------------------------------------
 
+TEST_F(ObjectRenameTest, SubcatchmentRenamePreservesSnowRemovalDestination) {
+    ASSERT_EQ(swmm_subcatch_add(engine_, "CatchA"), SWMM_OK);
+    ASSERT_EQ(swmm_subcatch_add(engine_, "CatchB"), SWMM_OK);
+    ASSERT_EQ(swmm_snowpack_add(engine_, "Selected"), SWMM_OK);
+    ASSERT_EQ(swmm_snowpack_add(engine_, "Control"), SWMM_OK);
+    ASSERT_EQ(swmm_snowpack_set_removal_subcatch(engine_, 0, "catcha"), SWMM_OK);
+    ASSERT_EQ(swmm_snowpack_set_removal_subcatch(engine_, 1, "CatchB"), SWMM_OK);
+    ASSERT_EQ(swmm_snowpack_set_removal(engine_, 0, 2, .1, .1, .1, .1, .2), SWMM_OK);
+    ASSERT_EQ(swmm_subcatch_rename(engine_, 0, "Renamed"), SWMM_OK);
+    char destination[128]{};
+    ASSERT_EQ(swmm_snowpack_get_removal_subcatch(engine_, 0, destination, sizeof(destination)), SWMM_OK);
+    EXPECT_STREQ(destination, "Renamed");
+    double threshold, out, imp, perv, melt, subcatch;
+    ASSERT_EQ(swmm_snowpack_get_removal(engine_, 0, &threshold, &out, &imp, &perv, &melt, &subcatch), SWMM_OK);
+    EXPECT_DOUBLE_EQ(threshold, 2);
+    EXPECT_DOUBLE_EQ(subcatch, .2);
+    ASSERT_EQ(swmm_subcatch_rename(engine_, 0, "RENAMED"), SWMM_OK);
+    ASSERT_EQ(swmm_snowpack_get_removal_subcatch(engine_, 0, destination, sizeof(destination)), SWMM_OK);
+    EXPECT_STREQ(destination, "RENAMED");
+    EXPECT_EQ(swmm_subcatch_rename(engine_, 0, "CatchB"), SWMM_ERR_BADPARAM);
+    ASSERT_EQ(swmm_snowpack_get_removal_subcatch(engine_, 0, destination, sizeof(destination)), SWMM_OK);
+    EXPECT_STREQ(destination, "RENAMED");
+    ASSERT_EQ(swmm_snowpack_get_removal_subcatch(engine_, 1, destination, sizeof(destination)), SWMM_OK);
+    EXPECT_STREQ(destination, "CatchB");
+}
+
 TEST_F(ObjectRenameTest, SnowpackRenameKeepsBothNameStoresInSync) {
     ASSERT_EQ(swmm_snowpack_add(engine_, "SP1"), SWMM_OK);
     ASSERT_EQ(swmm_snowpack_add(engine_, "SP2"), SWMM_OK);

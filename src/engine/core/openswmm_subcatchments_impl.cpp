@@ -1275,6 +1275,9 @@ SWMM_ENGINE_API int swmm_subcatch_rename(SWMM_Engine engine, int idx, const char
     // GWF expressions are owned by this catchment, keyed by canonical spelling.
     const std::string next = ctx.subcatch_names.name_of(idx);
     for (int row : drains) ctx.lid_usage.drain_to[row] = next;
+    for (auto& destination : ctx.snowpacks.removal_subcatch)
+        if (openswmm::ieq(destination, previous))
+            destination = next;
     if (previous != next) {
         for (const char* type : {"LATERAL", "DEEP"}) {
             const auto old_key = "GWF:" + previous + ":" + type;
