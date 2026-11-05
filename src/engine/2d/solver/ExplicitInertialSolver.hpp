@@ -356,6 +356,8 @@ public:
      * is required.
      */
     const std::vector<double>& last_coupling_exchange() const noexcept override { return exch_; }
+    /// Duration of the completed advance represented by last_coupling_exchange(), seconds.
+    double last_coupling_interval() const noexcept { return exch_tau_; }
 
     /**
      * @brief C3: cumulative spill volume (m³) the coupled nodes could not supply from their

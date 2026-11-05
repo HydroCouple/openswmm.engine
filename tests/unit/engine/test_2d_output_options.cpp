@@ -23,6 +23,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <chrono>
 #include <cstdint>
@@ -50,6 +51,7 @@
 #include "2d/solver/InertialEdges.hpp"
 #include <thread>
 #include "core/SimulationContext.hpp"
+#include "core/SWMMEngine.hpp"
 #include "core/DateTime.hpp"
 #include "openswmm/plugin_sdk/SimulationSnapshot.hpp"
 
@@ -2432,4 +2434,88 @@ TEST(Output2DWriter, RuntimeRk2RainExpiryPreservesAcceptedMassBalanceAndCellHdfH
         EXPECT_NEAR(value, 50 * .0001 * .735, 1e-10);
     for (double value : rain)
         EXPECT_NEAR(value, 100 * .0001 * .735, 1e-10);
+}
+
+// Native node exchange is integrated by the marcher, separately from the
+// prescribed coupling RHS. Reporting that RHS alone yielded all-zero files.
+TEST(Output2DWriter, AppliedNativeNodeExchangeReachesApiAndSavedCells) {
+    fs::create_directories(kOutDir);
+    for (bool cellMap : {false, true}) {
+        SCOPED_TRACE(cellMap ? "shared cell mapping" : "vertex mapping");
+        const auto stem = std::string("native_exchange_") + (cellMap ? "cells" : "vertices");
+        const auto inp = kOutDir / (stem + ".inp");
+        const auto h5 = kOutDir / (stem + ".h5");
+        std::ofstream deck(inp);
+        deck << "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\n"
+                "START_DATE 01/01/2026\nEND_DATE 01/01/2026\nEND_TIME 00:40:00\n"
+                "ROUTING_STEP 1\nVARIABLE_STEP 0\nREPORT_STEP 00:00:05\n"
+                "IGNORE_QUALITY YES\nALLOW_PONDING NO\n"
+                "[JUNCTIONS]\nJ1 0 1 0 0 0\nJ2 0 1 0 0 0\n"
+                "[OUTFALLS]\nO1 -0.5 FREE NO\n"
+                "[CONDUITS]\nC1 J1 O1 30 0.013 0 0 0\n"
+                "[XSECTIONS]\nC1 CIRCULAR 0.2 0 0 0 1\n"
+                "[INFLOWS]\nJ1 FLOW IN_TS FLOW 1 1\n"
+                "[TIMESERIES]\nIN_TS 0:00 0.10\nIN_TS 0:12 0.10\n"
+                "IN_TS 0:13 0\nIN_TS 0:40 0\n"
+                "[2D_OPTIONS]\nBACKEND CPU\nINTEGRATOR EXPLICIT\nMAX_TIMESTEP 1\nLTS_TIERS 4\n"
+                "REPORT_2D YES\nOUTPUT_PRECISION FLOAT64\nREPORT_2D_VARIABLES DEPTH COUPLING\n"
+                "OUTPUT_FILE " << h5.filename().string() << "\n"
+                "[2D_VERTICES]\n0 0 1\n10 0 1\n10 10 1\n0 10 1\n"
+                "[2D_TRIANGLES]\n0 1 2 0.03\n0 2 3 0.03\n";
+        if (cellMap)
+            deck << "[2D_TRIANGLE_NODE_MAP]\n0 J1 0.7 1\n0 J2 0.7 0.5\n";
+        else
+            deck << "[2D_VERTEX_NODE_MAP]\n0 J1 0.7 1\n1 J2 0.7 0.5\n";
+        deck.close();
+        SWMM_Engine e = swmm_engine_create();
+        ASSERT_NE(e, nullptr);
+        ASSERT_EQ(swmm_engine_open(e, inp.string().c_str(),
+            (kOutDir / (stem + ".rpt")).string().c_str(),
+            (kOutDir / (stem + ".out")).string().c_str(), nullptr), SWMM_OK);
+        ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
+        ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK);
+        double elapsed = 0, previousTime = 0, previous[2] = {0, 0};
+        bool sawSpill = false, sawDrain = false;
+        for (;;) {
+            ASSERT_EQ(swmm_engine_step(e, &elapsed), SWMM_OK);
+            if (!(elapsed > 0))
+                break;
+            double cumulative[2], rate[2];
+            ASSERT_EQ(swmm_2d_get_coupling_volume_bulk(e, cumulative), SWMM_OK);
+            ASSERT_EQ(swmm_2d_get_coupling_fluxes_bulk(e, rate), SWMM_OK);
+            const double dt = (elapsed - previousTime) * 86400.0;
+            ASSERT_GT(dt, 0);
+            const auto& state = static_cast<openswmm::SWMMEngine*>(e)->surfaceRouter2D().state();
+            for (int c = 0; c < 2; ++c) {
+                double single = 0, net = 0;
+                ASSERT_EQ(swmm_2d_get_coupling_flux(e, c, &single), SWMM_OK);
+                ASSERT_EQ(swmm_2d_get_net_source(e, c, &net), SWMM_OK);
+                EXPECT_NEAR(single, rate[c], 1e-12);
+                EXPECT_NEAR(net, rate[c], 1e-12); // No rain, evaporation or infiltration.
+                EXPECT_NEAR(rate[c] * 50.0 * dt, cumulative[c] - previous[c], 1e-8);
+                EXPECT_EQ(state.coupling_flux[c], 0.0); // Never feed diagnostics back into RHS.
+                sawSpill |= rate[c] > 1e-9;
+                sawDrain |= rate[c] < -1e-9;
+                previous[c] = cumulative[c];
+            }
+            double total = 0;
+            ASSERT_EQ(swmm_2d_get_total_exchange_flow(e, &total), SWMM_OK);
+            EXPECT_NEAR(total, (rate[0] + rate[1]) * 50.0, 1e-10);
+            previousTime = elapsed;
+        }
+        ASSERT_EQ(swmm_engine_end(e), SWMM_OK);
+        ASSERT_EQ(swmm_engine_close(e), SWMM_OK);
+        swmm_engine_destroy(e);
+        EXPECT_TRUE(sawSpill);
+        EXPECT_TRUE(sawDrain);
+        H5File file(h5);
+        ASSERT_GE(file.id, 0);
+        const auto flux = file.readAll("Mesh2_face_coupling_flux");
+        const auto net = file.readAll("Mesh2_face_net_source");
+        ASSERT_EQ(flux.size(), net.size());
+        EXPECT_TRUE(std::any_of(flux.begin(), flux.end(), [](double q) { return q > 1e-9; }));
+        EXPECT_TRUE(std::any_of(flux.begin(), flux.end(), [](double q) { return q < -1e-9; }));
+        for (std::size_t i = 0; i < flux.size(); ++i)
+            EXPECT_NEAR(net[i], flux[i], 1e-12);
+    }
 }

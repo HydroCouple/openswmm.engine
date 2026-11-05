@@ -4679,6 +4679,9 @@ double ExplicitInertialSolver::advanceImpl(double t_current, double t_target) {
         for (const int e : active_faces_)
             publish_face(e);
     const double span = t_target - t_current;
+    // The accepted exchange receipts cover the entire advance, including RK2
+    // source paths that do not increment the in-marcher head-ramp clock.
+    exch_tau_ = span;
     if (span > 0.0)
         for (std::size_t k = 0; k < bc_cell_.size(); ++k)
             state_->edge_flux[bc_slot_[k]] = bc_accum_[k] / span;

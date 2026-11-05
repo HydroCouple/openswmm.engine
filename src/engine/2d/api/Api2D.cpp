@@ -724,7 +724,7 @@ int swmm_2d_get_coupling_flux(SWMM_Engine engine, int idx, double* flux) {
     if (!flux)
         return SWMM_ERR_BADPARAM;
 
-    *flux = router2d.state().coupling_flux[idx];
+    *flux = router2d.couplingFlux(idx);
     return SWMM_OK;
 }
 
@@ -775,7 +775,7 @@ int swmm_2d_get_net_source(SWMM_Engine engine, int idx, double* net_source) {
     if (!net_source)
         return SWMM_ERR_BADPARAM;
 
-    *net_source = router2d.state().net_source[idx];
+    *net_source = router2d.netSource(idx);
     return SWMM_OK;
 }
 
@@ -869,8 +869,7 @@ int swmm_2d_get_coupling_fluxes_bulk(SWMM_Engine engine, double* fluxes) {
     if (!fluxes)
         return SWMM_ERR_BADPARAM;
 
-    auto& s = router2d.state();
-    std::memcpy(fluxes, s.coupling_flux.data(), s.coupling_flux.size() * sizeof(double));
+    router2d.copyCouplingFluxes(fluxes);
     return SWMM_OK;
 }
 

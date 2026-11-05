@@ -1154,6 +1154,13 @@ public:
      * ownership transfer or synchronization occurs in this query.
      */
     const std::vector<double>& couplingCumulative() const noexcept { return coupling_cum_applied_; }
+    /// Report-only m/s: held forcing plus accepted native junction exchange averaged over
+    /// the latest completed surface advance. These queries never alter solver forcing arrays.
+    double couplingFlux(int cell) const noexcept;
+    void copyCouplingFluxes(double* values) const noexcept;
+    /// Stored net source diagnostic plus the otherwise omitted native exchange, m/s.
+    double netSource(int cell) const noexcept;
+    void copyNetSources(double* values) const noexcept;
     bool hasOutfallCoupling() const noexcept {
         for (const auto& point : coupling_points_) if (point.is_outfall) return true;
         return false;
@@ -1309,9 +1316,9 @@ public:
     /**
      * @brief Get total exchange flow (sum of coupling flows, m³/s).
      *
-     * @details Sum the current held surface coupling source-rate field over cell areas.
-     * @return Sum coupling_flux[i]*area[i] in m3/s, positive into surface. This is not the
-     * accepted per-point integrated drain receipt and does not consume any queue.
+     * @details Sum held coupling forcing and accepted native junction exchange rates.
+     * @return m3/s, positive into surface. Native junction receipts are averaged over the
+     * latest completed surface advance. Does not consume or reapply exchange receipts.
      * @note Requires matching prepared cell arrays; active flag is not checked. Read-only, no
      * validation, reconstruction, allocation, physical or clock change.
      */

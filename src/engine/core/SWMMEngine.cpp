@@ -8112,8 +8112,12 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
         }
     }
 
-    snap.surface_coupling_flux = st.coupling_flux;
-    snap.surface_net_source = st.net_source;
+    // Native node exchange is integrated inside the marcher; it must never
+    // be written back into coupling_flux, which is a prescribed solver RHS.
+    snap.surface_coupling_flux.resize(msh.n_cells());
+    snap.surface_net_source.resize(msh.n_cells());
+    surface_router_.copyCouplingFluxes(snap.surface_coupling_flux.data());
+    surface_router_.copyNetSources(snap.surface_net_source.data());
     // Per-cell infiltration (plan §5.5.6). The held rate lives on the surface
     // state; the cumulative depth comes from the ROUTER's applied-loss
     // accumulator (SurfaceRouter2D::infilCumulative) rather than

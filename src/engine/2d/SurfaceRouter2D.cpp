@@ -3681,18 +3681,63 @@ double SurfaceRouter2D::totalVolume() const {
 }
 
 /**
- * @brief Sum the current held surface coupling source-rate field over cell areas.
- * @return Sum coupling_flux[i]*area[i] in m3/s, positive into surface. This is not the accepted
- * per-point integrated drain receipt and does not consume any queue.
+ * @brief Read the signed reported coupling rate of one valid cell, m/s.
+ * @note Held forcing and accepted native junction receipts are combined only for reporting;
+ * the prescribed solver source is unchanged. Native receipts use their completed interval.
  * @note Requires matching prepared cell arrays; active flag is not checked. Read-only, no
  * validation, reconstruction, allocation, physical or clock change.
  */
+double SurfaceRouter2D::couplingFlux(int cell) const noexcept {
+    double rate = state_.coupling_flux[static_cast<std::size_t>(cell)];
+    const auto* cpu = dynamic_cast<const ExplicitInertialSolver*>(solver_.get());
+    if (!cpu || !(cpu->last_coupling_interval() > 0))
+        return rate;
+    const auto& exchange = cpu->last_coupling_exchange();
+    const double scale = mesh_.tri_area[cell] * cpu->last_coupling_interval();
+    if (!(scale > 0))
+        return rate;
+    for (std::size_t k = 0; k < std::min(exchange.size(), node_coupling_points_.size()); ++k)
+        if (node_coupling_points_[k].cell_idx == cell)
+            rate -= exchange[k] / scale; // Receipts are positive from surface to node.
+    return rate;
+}
+
+void SurfaceRouter2D::copyCouplingFluxes(double* values) const noexcept {
+    std::copy(state_.coupling_flux.begin(), state_.coupling_flux.end(), values);
+    const auto* cpu = dynamic_cast<const ExplicitInertialSolver*>(solver_.get());
+    if (!cpu || !(cpu->last_coupling_interval() > 0))
+        return;
+    const auto& exchange = cpu->last_coupling_exchange();
+    for (std::size_t k = 0; k < std::min(exchange.size(), node_coupling_points_.size()); ++k) {
+        const int cell = node_coupling_points_[k].cell_idx;
+        const double scale = mesh_.tri_area[cell] * cpu->last_coupling_interval();
+        if (scale > 0)
+            values[cell] -= exchange[k] / scale;
+    }
+}
+
+double SurfaceRouter2D::netSource(int cell) const noexcept {
+    // Retain the solver's other source diagnostics and add only the native
+    // exchange that is absent from its prescribed coupling RHS.
+    return state_.net_source[cell] + (couplingFlux(cell) - state_.coupling_flux[cell]);
+}
+
+void SurfaceRouter2D::copyNetSources(double* values) const noexcept {
+    copyCouplingFluxes(values);
+    for (int i = 0; i < mesh_.n_cells(); ++i)
+        values[i] = state_.net_source[i] + (values[i] - state_.coupling_flux[i]);
+}
+
 double SurfaceRouter2D::totalExchangeFlow() const {
     double flow = 0.0;
     int nt = mesh_.n_triangles();
     for (int i = 0; i < nt; ++i) {
         flow += state_.coupling_flux[i] * mesh_.tri_area[i];
     }
+    const auto* cpu = dynamic_cast<const ExplicitInertialSolver*>(solver_.get());
+    if (cpu && cpu->last_coupling_interval() > 0)
+        for (double volume : cpu->last_coupling_exchange())
+            flow -= volume / cpu->last_coupling_interval();
     return flow;
 }
 

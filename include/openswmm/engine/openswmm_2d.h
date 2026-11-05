@@ -1055,6 +1055,10 @@ SWMM_ENGINE_API int swmm_2d_get_head(SWMM_Engine engine, int idx, double* head);
  * @brief Get coupling exchange flux at a triangle (m/s, + = into 2D).
  *  @ingroup engine_2d
  *
+ * Includes held prescribed forcing and applied native junction exchange.
+ * Native exchange is averaged over the latest completed surface advance;
+ * querying does not consume or reapply it.
+ *
  * @param[out] flux Required destination for coupling flux in m/s, positive into 2D.
  * @param[in] engine Borrowed live engine handle; all caller storage remains caller-owned.
  * Serialize calls with stepping and other engine edits.
@@ -1191,6 +1195,8 @@ SWMM_ENGINE_API int swmm_2d_get_velocities_bulk(SWMM_Engine engine, double* vx, 
 /**
  * @brief Bulk get coupling fluxes for all triangles.
  *  @ingroup engine_2d
+ *
+ * Uses the same signed rates and averaging interval as swmm_2d_get_coupling_flux().
  *
  * @param[out] fluxes Required caller-owned cell_count-double array receiving flux in m/s,
  * positive into 2D. No capacity is passed or checked.
@@ -1585,8 +1591,11 @@ SWMM_ENGINE_API int swmm_2d_get_total_volume(SWMM_Engine engine, double* volume)
 
 /**
  * @brief Get total exchange flow rate (sum of all coupling flows, m³/s).
- *  Positive = net flow from 2D into 1D network.
+ *  Positive = net flow from the 1D network into 2D.
  *  @ingroup engine_2d
+ *
+ * Includes held prescribed forcing and applied native junction exchange,
+ * with native exchange averaged over the latest completed surface advance.
  *
  * @param[out] flow Required destination for signed total coupling flow in m3/s, positive into 2D.
  * @param[in] engine Borrowed live engine handle; all caller storage remains caller-owned.
