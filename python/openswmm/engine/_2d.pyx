@@ -46,6 +46,7 @@ from ._enums import (SurfaceForcingMode, ForcingPersist, SurfaceBoundaryType,
 
 from ._common cimport (_check, _read_engine_index_string, _TextBufs, _tb_open,
                        _tb_retry, _tb_str, _tb_close)
+from ._common cimport SWMM_Engine, SWMM_NodeCoupling2DParam, swmm_node_validate_2d_coupling, swmm_node_replace_2d_coupling
 from ._access import resolve_owner
 from ._exceptions import StaleObjectError, raise_for_code
 
@@ -971,6 +972,39 @@ cdef class Surface2D:
     # Per-node coupling type ([2D_NODE_COUPLING]) — node data, valid with
     # or without a mesh
     # ====================================================================
+
+    cdef _coupling_record(self, int node_idx, int coupling_type, params, bint authored, bint validate):
+        cdef SWMM_Engine h
+        cdef int count
+        cdef SWMM_NodeCoupling2DParam* rows = NULL
+        with self._owner._operation():
+            encoded = [] if params is None else [(str(k).encode('utf-8'), str(v).encode('utf-8')) for k, v in params.items()]
+            if any(b'\0' in key or b'\0' in value for key, value in encoded):
+                raise ValueError("Coupling parameters cannot contain null bytes")
+            count = len(encoded)
+            if count:
+                rows = <SWMM_NodeCoupling2DParam*>calloc(count, sizeof(SWMM_NodeCoupling2DParam))
+                if rows == NULL:
+                    raise MemoryError()
+            try:
+                for i in range(count):
+                    rows[i].key = <bytes>encoded[i][0]
+                    rows[i].value = <bytes>encoded[i][1]
+                h = self._h()
+                if validate:
+                    _check(swmm_node_validate_2d_coupling(h, node_idx, authored, coupling_type, rows, count))
+                else:
+                    _check(swmm_node_replace_2d_coupling(h, node_idx, authored, coupling_type, rows, count))
+            finally:
+                free(rows)
+
+    def validate_node_coupling(self, int node_idx, int coupling_type, params=None, *, bint authored=True):
+        """Validate a complete node coupling row without mutation, before initialization."""
+        self._coupling_record(node_idx, coupling_type, params, authored, True)
+
+    def replace_node_coupling(self, int node_idx, int coupling_type, params=None, *, bint authored=True):
+        """Atomically replace a node coupling row; parameters use authored project units."""
+        self._coupling_record(node_idx, coupling_type, params, authored, False)
 
     def get_node_coupling_type(self, int node_idx):
         """Return a node's effective coupling type.

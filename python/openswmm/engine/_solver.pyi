@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Any, Callable, Iterator, NamedTuple, Optional,
 from ._enums import EngineState, FlowUnits
 
 if TYPE_CHECKING:
+    from ._split import SplitParticipant
     from ._results import Results
     # Imports for type-checking only — avoids cycles at runtime because the
     # collection modules import Solver themselves.
@@ -461,6 +462,9 @@ class Solver:
     def close_runoff_interface(self) -> None: ...
 
     # ------------- Callbacks -------------
+    @property
+    def split(self) -> SplitParticipant: ...
+    def set_phase_callback(self, callback: Callable[[int, float, float], None] | None) -> None: ...
     def set_step_begin_callback(
         self, callback: Optional[Callable[[float, float], None]]
     ) -> None: ...

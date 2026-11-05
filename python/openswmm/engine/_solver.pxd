@@ -34,6 +34,8 @@ cdef class Solver:
     cdef object _step_end_cb
     cdef object _warning_cb
     cdef object _progress_cb
+    cdef object _phase_cb
+    cdef object _split_cb
     # P1 — lazy views & domain-collection accessors. Cached on first access so
     # ``solver.options is solver.options`` holds for a given Solver instance.
     # ``_generation`` is bumped on structural mutations (add/delete/rename) so

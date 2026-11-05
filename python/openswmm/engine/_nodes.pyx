@@ -401,6 +401,28 @@ cdef class DividerView:
         _check_fresh(self._node)
         _check(swmm_node_set_divider_type(_h(self._node._solver), self._node._index, value))
 
+    @property
+    def params(self):
+        """Complete divider record; flow and height use project display units."""
+        _check_fresh(self._node)
+        cdef SWMM_DividerParams value
+        _check(swmm_node_get_divider_params(_h(self._node._solver), self._node._index, &value))
+        return {'method': value.method, 'diversion_link': value.diversion_link, 'curve': value.curve, 'cutoff_flow': value.cutoff_flow, 'weir_height': value.weir_height, 'weir_coefficient': value.weir_coefficient}
+
+    @params.setter
+    def params(self, record):
+        cdef SWMM_DividerParams value
+        with self._node._solver._operation():
+            _check_fresh(self._node)
+            value.method = record['method']
+            value.diversion_link = record['diversion_link']
+            value.curve = record['curve']
+            value.cutoff_flow = record['cutoff_flow']
+            value.weir_height = record['weir_height']
+            value.weir_coefficient = record['weir_coefficient']
+            _check_fresh(self._node)
+            _check(swmm_node_set_divider_params(_h(self._node._solver), self._node._index, &value))
+
     def __repr__(self) -> str:
         return f"<DividerView for {self._node!r}>"
 

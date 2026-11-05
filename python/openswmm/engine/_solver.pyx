@@ -140,6 +140,14 @@ cdef inline object _days_to_td(double days):
 # C trampolines for step callbacks
 # =============================================================================
 
+cdef extern from "openswmm/engine/openswmm_engine.h":
+    ctypedef void (*SWMM_PhaseCallback)(SWMM_Engine, int, double, double, void*) noexcept
+    int swmm_set_phase_callback(SWMM_Engine, SWMM_PhaseCallback, void*)
+
+cdef void _phase_trampoline(SWMM_Engine engine, int phase, double start,
+                            double end, void* user_data) noexcept with gil:
+    (<object>user_data)(phase, start, end)
+
 cdef void _step_begin_trampoline(SWMM_Engine engine, double sim_time,
                                   double dt, void* user_data) noexcept with gil:
     (<object>user_data)(sim_time, dt)
@@ -212,6 +220,8 @@ cdef class Solver:
         self._step_end_cb = None
         self._warning_cb = None
         self._progress_cb = None
+        self._phase_cb = None
+        self._split_cb = None
         self._options = None
         self._userflags = None
         self._events_view = None
@@ -403,6 +413,12 @@ cdef class Solver:
         return _days_to_td(self._elapsed)
 
     @property
+    def split(self):
+        """Experimental native water peer and owned phase/packet snapshots."""
+        from ._split import SplitParticipant
+        return SplitParticipant(self)
+
+    @property
     def coupling(self):
         from ._coupling import Coupling
         return Coupling(self)
@@ -486,6 +502,8 @@ cdef class Solver:
             self._handle = NULL
             self._generation += 1
             self._surface2d = None
+            self._phase_cb = None
+            self._split_cb = None
 
     # ------------------------------------------------------------------
     # Iteration helpers
@@ -1272,6 +1290,21 @@ cdef class Solver:
     # ------------------------------------------------------------------
     # Callbacks
     # ------------------------------------------------------------------
+
+    def set_phase_callback(self, callback) -> None:
+        """Read-only observer(phase, start_seconds, end_seconds); None unregisters.
+
+        Do not mutate or recursively advance/close/destroy an engine in this
+        callback. The first Python failure is raised after the native step returns.
+        """
+        self._access.require_idle()
+        if callback is None:
+            _check(swmm_set_phase_callback(self._handle, NULL, NULL))
+            self._phase_cb = None
+        else:
+            state = Callback(self._access, callback)
+            _check(swmm_set_phase_callback(self._handle, _phase_trampoline, <void*>state))
+            self._phase_cb = state
 
     def set_step_begin_callback(self, callback) -> None:
         """Register a callback invoked at the start of each timestep.

@@ -44,6 +44,7 @@ set(_engine_modules
     _climate
     _snow
     _checkpoint
+    _split
 )
 
 if(OPENSWMM_ENGINE_ABI_MANIFEST)

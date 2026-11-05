@@ -483,3 +483,7 @@ if HAS_2D:
     __all__ += ["Coupling", "DomainSources", "RuntimeSource", "SourceReceipt", "BoundaryReceipt", "CouplingFrame", "RuntimeBoundary", "RuntimeForcing", "RuntimeClear"]
 
 __all__ += ['EvapPreviewStatus', 'Heat2DValue']
+
+from ._split import SplitParticipant, SplitFrame
+from ._enums import SplitRole, SplitPhase
+__all__ += ["SplitParticipant", "SplitFrame", "SplitRole", "SplitPhase"]

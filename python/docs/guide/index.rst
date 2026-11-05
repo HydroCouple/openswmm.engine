@@ -140,4 +140,5 @@ explicit finite-volume solver; read saved HDF5 results through :doc:`results`.
 
    2d
    runtime_coupling
+   native_peers
    geopackage

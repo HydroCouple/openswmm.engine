@@ -50,6 +50,7 @@
   ]
  },
  "roots": {
+  "split_frame": {"class": "SplitFrame", "construct": {"via": "new", "args": ["solver"]}},
   "builder": {
    "class": "ModelBuilder",
    "construct": {

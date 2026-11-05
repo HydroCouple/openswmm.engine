@@ -74,6 +74,7 @@ class OutfallView:
 
 class DividerView:
     type: int
+    params: dict[str, int | float]
 
 
 class Node:

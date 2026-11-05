@@ -877,6 +877,7 @@ cdef extern from "openswmm_infrastructure.h":
         int    curve_kind
     cdef int swmm_inlet_get_design(SWMM_Engine e, int idx, SWMM_InletDesign* out)
     cdef int swmm_inlet_set_design(SWMM_Engine e, int idx, const SWMM_InletDesign* design)
+    cdef int swmm_inlet_validate_design(SWMM_Engine e, const SWMM_InletDesign* design, SWMM_InletDesign* normalized)
     cdef int swmm_inlet_get_comment(SWMM_Engine e, int idx, char* buf, int buflen)
     cdef int swmm_inlet_set_comment(SWMM_Engine e, int idx, const char* text)
     # Inlet usage rows — one per placement, hosted by a conduit
@@ -2005,3 +2006,58 @@ cdef extern from "openswmm_climate.h":
         double adjust_temperature[12]
     int swmm_climate_preview_evaporation(SWMM_Engine, double, double, double, SWMM_EvapPreviewSample*, int, int*, SWMM_EvapPreviewSummary*, char*, int) nogil
     int swmm_climate_preview_evaporation_with_config(SWMM_Engine, const SWMM_EvapPreviewConfig*, double, double, double, SWMM_EvapPreviewSample*, int, int*, SWMM_EvapPreviewSummary*, char*, int) nogil
+
+
+cdef extern from "openswmm/engine/openswmm_nodes.h":
+    ctypedef struct SWMM_DividerParams:
+        int method
+        int diversion_link
+        int curve
+        double cutoff_flow
+        double weir_height
+        double weir_coefficient
+    int swmm_node_get_divider_params(SWMM_Engine, int, SWMM_DividerParams*)
+    int swmm_node_set_divider_params(SWMM_Engine, int, const SWMM_DividerParams*)
+
+cdef extern from "openswmm/engine/openswmm_2d.h":
+    ctypedef struct SWMM_NodeCoupling2DParam:
+        const char* key
+        const char* value
+    int swmm_node_validate_2d_coupling(SWMM_Engine, int, int, int, const SWMM_NodeCoupling2DParam*, int)
+    int swmm_node_replace_2d_coupling(SWMM_Engine, int, int, int, const SWMM_NodeCoupling2DParam*, int)
+
+cdef extern from "openswmm/engine/openswmm_infrastructure.h":
+    ctypedef struct SWMM_LidUsageRecord:
+        int subcatch_idx
+        int control_idx
+        int number
+        double area
+        double width
+        double init_sat
+        double from_imperv
+        int to_perv
+        double from_perv
+        const char* report_file
+        const char* report_file_resolved
+        const char* drain_to
+    ctypedef struct SWMM_StorageLidState:
+        int control
+        double saturation
+        int bottom
+        double max_depth_ft
+    ctypedef struct SWMM_StorageLidAnchor:
+        int link
+        int layer
+        int top
+        double offset_up_ft
+        double offset_down_ft
+        double crest_ft
+    int swmm_inlet_usage_validate(SWMM_Engine, const SWMM_InletUsage*)
+    int swmm_lid_usage_get_record(SWMM_Engine, int, SWMM_LidUsageRecord*)
+    int swmm_lid_usage_validate_record(SWMM_Engine, const SWMM_LidUsageRecord*)
+    int swmm_lid_usage_replace_subcatch(SWMM_Engine, int, const SWMM_LidUsageRecord*, int)
+    int swmm_storage_lid_get(SWMM_Engine, int, SWMM_StorageLidState*)
+    int swmm_storage_lid_anchor_get(SWMM_Engine, int, SWMM_StorageLidAnchor*)
+    int swmm_storage_lid_prepare(SWMM_Engine, int, int, double, int, SWMM_StorageLidState*, SWMM_StorageLidAnchor*, int, int*)
+    int swmm_storage_lid_validate(SWMM_Engine, int, const SWMM_StorageLidState*, const SWMM_StorageLidAnchor*, int)
+    int swmm_storage_lid_replace(SWMM_Engine, int, const SWMM_StorageLidState*, const SWMM_StorageLidAnchor*, int)

@@ -16,7 +16,7 @@ reactions, …) are active and where each one's config file lives.
 Reference: ``openswmm_process_components.h``.
 
 Extra arguments and foreign instances
-====================================
+=====================================
 
 ``arguments(key)`` returns ordered ``(name, value)`` pairs without loading a
 component. ``set_argument(key, name, value)`` sets or replaces a row argument;

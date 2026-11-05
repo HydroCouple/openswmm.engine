@@ -1833,3 +1833,18 @@ class Heat2DValue(IntEnum):
     WATER_THERMAL_INCREMENT = 10
     ACCEPTED_EVAPORATION = 11
     THERMAL_RESIDUAL = 12
+
+
+class SplitRole(IntEnum):
+    NETWORK = 1
+    SURFACE = 2
+
+
+class SplitPhase(IntEnum):
+    CONDUCTANCE = 1
+    ADVANCE = 2
+    FINISH = 3
+    OUTFALL_PREPARE = 4
+    SOURCE_PREPARE = 5
+    LID_TRIAL = 6
+    LID_ACCEPT = 7
