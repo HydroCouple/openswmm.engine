@@ -307,3 +307,8 @@ cases the current code excludes). Acceptance gates as in the table.
   (OFF 0.041, no-skill 0.0997). **Phase 5 verdict: stable enough to run, not better than OFF on the bands.**
   The hook stays OFF. Open: admission closure (class C), N-set growth at the peak (k 986 → the dense k×k LU is
   the remaining cost), the 26, and the 1D over-width 1.65 with members ON.
+  Per-node (median 05–10 h, m; MC span / OFF / ON): G72R83B 0.062 / 2.995 / 0.999; G72R150 0.454 / 3.445 / 0.877;
+  G72UD11 1.105 / 0.916 / 0.722; G70F11P 0.733 / 0.038 / 0.157; G71O020 0.007 / 0.033 / 0.076. **At the storage
+  basins the per-member path is a clear improvement** (3–4× closer to the MC); the aggregate 1D over-width must
+  come from the ~400 admitted rim manholes (step-3 admission), which also drive k to 986. Hypothesis: admit
+  storage nodes + threshold outlets only (the step-2 scope) and leave rim manholes to the shared plane.
