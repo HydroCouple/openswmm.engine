@@ -298,3 +298,12 @@ cases the current code excludes). Acceptance gates as in the table.
   measurement (machine throttled to 26 % CPU and loaded by another session for most of it). Run continuing to
   10:00 for the score vs mc_v3. The 14 remain open (no dump dir on this run; a dump run on the O-6 code would
   classify them) — below the 1 % stop line but not zero.
+- 2026-11-05: **Bellinge `demo_ph5` on O-6 code finished** (6,816 steps; wall 86,386 s is not a measurement —
+  the machine was throttled/loaded for most of it). Solver: 340,750 member solves, 551 Jacobi fallbacks, 26
+  non-converged (0.008 %), k up to 986 (admitted 405 nodes at the peak), 6,227 member-steps > 0.05 ft below
+  invert, deepest −105.8 ft (G71O020 2,708, G70F11P 1,630 — class C is not closed). **Score vs mc_v3
+  (per-member ON vs OFF = demo_v4)**: 1D all manholes 0.944/1.650 CONSERVATIVE (OFF 0.957/1.40 calibrated);
+  trunk 0.811/1.200 (OFF 0.814/1.26); 2D street 0.665/0.155 ranking (OFF 0.698/0.21); P(>20 cm) Brier 0.0305
+  (OFF 0.041, no-skill 0.0997). **Phase 5 verdict: stable enough to run, not better than OFF on the bands.**
+  The hook stays OFF. Open: admission closure (class C), N-set growth at the peak (k 986 → the dense k×k LU is
+  the remaining cost), the 26, and the 1D over-width 1.65 with members ON.

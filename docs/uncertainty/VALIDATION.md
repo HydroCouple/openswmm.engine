@@ -3873,3 +3873,14 @@ plane-mann corr20 0.907/1.463 → 0.785/0.957 (RANKING ONLY, −0.015 below the 
 since defect 5; the earlier rows above describe the harness's recipe, not the engine's. The old recipe is
 no longer reachable after the H-4 clean-up (the plain/Gram path is deleted); the `*_ROUTER_FORM` knob is a
 no-op kept only so this paragraph's history resolves, and the pre-S-2 numbers are the ones recorded above. Owner decision pending on the H15 corr20 cell.
+
+### Phase 5 (per-member stores and ports) on Bellinge, 2026-11-05 — hook stays OFF
+
+With `rom1dStorageMembersEnabled()` ON (O-2…O-6: one semismooth Newton solve per member on the Schur complement
+of the admitted set; pond as a store; orifice, structure, pump, conduit as monotone ports), the real-storm run
+completes with 26 non-converged member solves of 340,750 (0.008 %; was 607/200,000 before O-4). Scored against
+`mc_v3` (05–10 h): 1D all manholes 0.944/1.650 (conservative) vs 0.957/1.40 (calibrated) with the hook OFF;
+trunk 0.811/1.200 vs 0.814/1.26; 2D street 0.665/0.155 vs 0.698/0.21 (both ranking only); Brier for P(>20 cm)
+0.0305 vs 0.041 (no-skill 0.0997). The per-member path does not improve the bands; it ships OFF. Known causes
+still open: admission closure (members at G71O020/G70F11P sink to −106 ft behind floored ports), the admitted
+set growing to 405 nodes (k = 986) at the peak, and the 26.
