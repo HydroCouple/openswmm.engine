@@ -4238,11 +4238,17 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                 int ft = ctx.buildup.func_type[idx];
                 if (ft == 0)
                     continue;
+                if (ft == 4) {
+                    const int ti=static_cast<int>(ctx.buildup.coeff3[idx]);
+                    const auto token=ti>=0 && ti<ctx.n_tables()?ctx.tables[ti].id:std::string("*");
+                    std::fprintf(f,"%-16s %-16s EXT %.17g %.17g %s %s\n",ctx.landuse_names.name_of(lu).c_str(),pN(ctx,p),ctx.buildup.coeff1[idx],ctx.buildup.coeff2[idx],token.c_str(),ctx.buildup.normalizer[idx]==0?"AREA":"CURB");
+                } else {
                 std::fprintf(f, "%-16s %-16s %-10s %.17g %.17g %.17g %-8s\n",
                              ctx.landuse_names.name_of(lu).c_str(), pN(ctx, p),
                              (ft >= 0 && ft <= 4) ? buNames[ft] : "NONE", ctx.buildup.coeff1[idx],
                              ctx.buildup.coeff2[idx], ctx.buildup.coeff3[idx],
                              ctx.buildup.normalizer[idx] == 0 ? "AREA" : "CURB");
+                }
             }
         }
         for (int lu = 0; lu < msxs.n_landuses; ++lu) {
@@ -4491,8 +4497,8 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
             std::fprintf(f, "%-16s %-8s %.17g %.17g %.17g %.17g %.17g %.17g",
                          e.uh_name.c_str(), r, e.k_dep, e.k_0, e.k_T, e.T_ref, e.theta_rec,
                          e.T_freeze);
-            if (e.snow_on)
-                std::fprintf(f, " SNOW %.17g %.17g", e.snow_T, e.snow_ddf);
+            // Retain inactive authoring parameters without enabling the snow law.
+            std::fprintf(f, " %s %.17g %.17g", e.snow_on ? "SNOW" : "NOSNOW", e.snow_T, e.snow_ddf);
             std::fprintf(f, "\n");
         }
     }

@@ -85,11 +85,11 @@ SWMM_ENGINE_API int swmm_control_count(SWMM_Engine engine);
 SWMM_ENGINE_API int swmm_control_get_rule(SWMM_Engine engine, int idx, char* buf, int buflen);
 
 /**
- * @brief Copy the RULE identifier at the beginning of a stored text block.
+ * @brief Copy the first RULE identifier in a stored text block.
  *
- * Skips leading whitespace, matches RULE case-insensitively as a complete token and takes the next
- * whitespace-delimited token. Leading declarations/comments cause refusal; the function does not
- * search for a later RULE. Outputs are unchanged on refusal.
+ * Scans line starts for RULE case-insensitively as a complete token and takes the next
+ * whitespace-delimited token. Leading declarations and comments are preserved and skipped.
+ * Outputs are unchanged on refusal.
  *
  * @param[in] engine Non-null live engine handle; caller provides exclusive access.
  * @param[in] idx Zero-based stored text-block index in [0,swmm_control_count(engine)).
@@ -97,7 +97,7 @@ SWMM_ENGINE_API int swmm_control_get_rule(SWMM_Engine engine, int idx, char* buf
  *     silently truncated to buflen-1 bytes.
  * @param[in] buflen Positive destination capacity in bytes, including the NUL terminator.
  * @return SWMM_OK, including when truncated; SWMM_ERR_BADHANDLE, SWMM_ERR_BADINDEX, or
- *     SWMM_ERR_BADPARAM for invalid buffer or text without a RULE/name prefix.
+ *     SWMM_ERR_BADPARAM for invalid buffer or text without a RULE/name line.
  */
 SWMM_ENGINE_API int swmm_control_get_id(SWMM_Engine engine, int idx, char* buf, int buflen);
 
@@ -112,6 +112,14 @@ SWMM_ENGINE_API int swmm_control_get_id(SWMM_Engine engine, int idx, char* buf, 
  * @return SWMM_OK, or SWMM_ERR_BADHANDLE for null engine.
  */
 SWMM_ENGINE_API int swmm_control_clear_rules(SWMM_Engine engine);
+
+/** Validate (publish=0) or atomically replace (publish=1) the complete authored program.
+ * Blocks retain their order, including declarations shared by later rules. Validation uses
+ * the complete concatenated program and resolves current model references without mutation.
+ * BUILDING/OPENED only. Empty program is allowed. All strings are borrowed for this call. */
+SWMM_ENGINE_API int swmm_control_replace_program(SWMM_Engine engine, const char* const* blocks,
+    int count, int publish, char* error, int error_capacity);
+
 
 /**
  * @brief Remove one stored control text block while the model is editable.

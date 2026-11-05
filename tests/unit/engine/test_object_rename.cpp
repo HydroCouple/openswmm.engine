@@ -45,8 +45,14 @@
 #include <gtest/gtest.h>
 
 #include <string>
+#include <filesystem>
+#include <fstream>
+#include <openswmm/engine/openswmm_inflows.h>
+#include <openswmm/engine/openswmm_quality.h>
 
 #include <openswmm/engine/openswmm_engine.h>
+#include <openswmm/engine/openswmm_tables.h>
+#include <openswmm/engine/openswmm_controls.h>
 #include <openswmm/engine/openswmm_infrastructure.h>
 #include <openswmm/engine/openswmm_links.h>
 #include <openswmm/engine/openswmm_model.h>
@@ -259,3 +265,79 @@ TEST_F(ObjectRenameTest, StreetRenameRewritesLinkCrossSectionReference) {
 }
 
 } // namespace
+
+TEST_F(ObjectRenameTest, AtomicTablePayloadValidatesBeforePublication) {
+    ASSERT_EQ(swmm_timeseries_add(engine_,"Series"),SWMM_OK);
+    const int idx=swmm_table_index(engine_,"Series");
+    const double x[]{46023.,46023.5},y[]{1.,2.};
+    ASSERT_EQ(swmm_table_replace_points(engine_,idx,x,y,2,2,46023.,""),SWMM_OK);
+    const double bad[]{46023.,46023.};
+    EXPECT_EQ(swmm_table_replace_points(engine_,idx,bad,y,2,0,0.,""),SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_table_validate_points(engine_,idx,x,y,2,3,46023.),SWMM_ERR_BADPARAM);
+    double xx=0,yy=0,anchor=0;int count=0,relative=0;
+    ASSERT_EQ(swmm_table_get_point_count(engine_,idx,&count),SWMM_OK);EXPECT_EQ(count,2);
+    ASSERT_EQ(swmm_table_get_point(engine_,idx,1,&xx,&yy),SWMM_OK);EXPECT_DOUBLE_EQ(xx,x[1]);EXPECT_DOUBLE_EQ(yy,y[1]);
+    ASSERT_EQ(swmm_timeseries_get_relative_info(engine_,idx,&relative,&anchor),SWMM_OK);EXPECT_EQ(relative,2);EXPECT_DOUBLE_EQ(anchor,46023.);
+    const double changed[]{3.,4.};ASSERT_EQ(swmm_table_validate_points(engine_,idx,x,changed,2,0,0.),SWMM_OK);
+    ASSERT_EQ(swmm_table_get_point(engine_,idx,0,&xx,&yy),SWMM_OK);EXPECT_DOUBLE_EQ(yy,1.);
+}
+TEST_F(ObjectRenameTest, WholeRuleProgramSharesDeclarationsAndRejectsWithoutMutation) {
+    ASSERT_EQ(swmm_node_add(engine_,"J1",SWMM_NODE_JUNCTION),SWMM_OK);
+    ASSERT_EQ(swmm_node_add(engine_,"J2",SWMM_NODE_JUNCTION),SWMM_OK);
+    ASSERT_EQ(swmm_link_add(engine_,"L",SWMM_LINK_CONDUIT),SWMM_OK);
+    ASSERT_EQ(swmm_link_set_nodes(engine_,0,0,1),SWMM_OK);
+    const char* blocks[]{"VARIABLE Depth = NODE J1 DEPTH\nRULE First\nIF Depth > 1\nTHEN CONDUIT L STATUS = CLOSED\n",
+        "RULE Second\nIF Depth <= 1\nTHEN CONDUIT L STATUS = OPEN\n"};
+    char error[4096]{};ASSERT_EQ(swmm_control_replace_program(engine_,blocks,2,0,error,sizeof(error)),SWMM_OK)<<error;
+    EXPECT_EQ(swmm_control_count(engine_),0);
+    ASSERT_EQ(swmm_control_replace_program(engine_,blocks,2,1,error,sizeof(error)),SWMM_OK)<<error;
+    char id[128]{};ASSERT_EQ(swmm_control_get_id(engine_,0,id,sizeof(id)),SWMM_OK);EXPECT_STREQ(id,"First");
+    const char* invalid[]{blocks[0],"RULE Second\nIF NODE Missing DEPTH > 1\nTHEN CONDUIT L STATUS = CLOSED\n"};
+    EXPECT_EQ(swmm_control_replace_program(engine_,invalid,2,1,error,sizeof(error)),SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_control_count(engine_),2);char body[4096]{};
+    ASSERT_EQ(swmm_control_get_rule(engine_,1,body,sizeof(body)),SWMM_OK);EXPECT_STREQ(body,blocks[1]);
+}
+
+TEST_F(ObjectRenameTest, SaveReopenRetainsInactiveSnowAndForwardExternalBuildup) {
+    const auto folder=std::filesystem::path("test-output/bulk-record-persistence");
+    std::filesystem::create_directories(folder);
+    const auto source=folder/"source.inp",saved=folder/"saved.inp";
+    {std::ofstream file(source);file<<R"([OPTIONS]
+FLOW_UNITS CFS
+START_DATE 01/01/2026
+END_DATE 01/02/2026
+[JUNCTIONS]
+J1 0 10
+[OUTFALLS]
+O1 0 FREE NO
+[CONDUITS]
+C1 J1 O1 100 .013 0 0
+[XSECTIONS]
+C1 CIRCULAR 1 0 0 0 1
+[POLLUTANTS]
+TSS MG/L 0 0 0 0 NO
+[LANDUSES]
+LU 1 .2 0
+[BUILDUP]
+LU TSS EXT 2 .3 TS AREA
+[TIMESERIES]
+TS 01/01/2026 0:00 1
+TS 01/01/2026 1:00 2
+[HYDROGRAPHS]
+H ALL SHORT .1 1 2 .5 .2 .1
+[RDII_DECAY]
+H SHORT .2 .1 .3 10 .02 -1 NOSNOW 3.5 1.25
+)";}
+    swmm_engine_destroy(engine_);engine_=swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(engine_,source.string().c_str(),nullptr,nullptr,nullptr),SWMM_OK) << swmm_get_last_error_msg(engine_);
+    ASSERT_EQ(swmm_model_write(engine_,saved.string().c_str()),SWMM_OK);
+    auto reopened=swmm_engine_create();ASSERT_NE(reopened,nullptr);
+    ASSERT_EQ(swmm_engine_open(reopened,saved.string().c_str(),nullptr,nullptr,nullptr),SWMM_OK);
+    char name[128]{};int response=0,on=1;double d[8]{};
+    ASSERT_EQ(swmm_rdii_decay_get(reopened,0,name,sizeof(name),&response,&d[0],&d[1],&d[2],&d[3],&d[4],&d[5],&on,&d[6],&d[7]),SWMM_OK);
+    EXPECT_EQ(on,0);EXPECT_DOUBLE_EQ(d[6],3.5);EXPECT_DOUBLE_EQ(d[7],1.25);
+    int type=0,normalizer=0;double c1=0,c2=0,c3=-1;
+    ASSERT_EQ(swmm_buildup_get(reopened,0,0,&type,&c1,&c2,&c3,&normalizer),SWMM_OK);
+    EXPECT_EQ(type,4);ASSERT_GE(c3,0);EXPECT_STREQ(swmm_table_id(reopened,int(c3)),"TS");
+    swmm_engine_destroy(reopened);
+}

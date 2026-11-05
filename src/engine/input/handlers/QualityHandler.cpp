@@ -390,6 +390,11 @@ void handle_buildup(SimulationContext& ctx, const std::vector<std::string>& line
             continue;
 
         const int p_idx = ctx.pollutant_names.find(tok[1]);
+        if (p_idx >= 0 && tok.size()>5 && findmatch_prefix(Tokenizer::to_upper(tok[2]), {"NONE", "POW", "EXP", "SAT", "EXT"})==4 && ctx.find_timeseries(tok[5])<0) {
+            ctx.deferred_section_rows.emplace_back("BUILDUP",line);
+            continue;
+        }
+
         if (p_idx < 0) {
             // BW-MSX: not a pollutant — park the row by name for the
             // reactions component's species, resolved after the component

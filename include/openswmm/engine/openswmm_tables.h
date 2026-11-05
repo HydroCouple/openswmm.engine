@@ -206,6 +206,17 @@ SWMM_ENGINE_API int swmm_table_get_point(SWMM_Engine engine, int idx, int pt_idx
  */
 SWMM_ENGINE_API int swmm_table_clear(SWMM_Engine engine, int idx);
 
+/** Preflight a complete ordered table payload without mutation. Requires BUILDING/OPENED;
+ * finite values and strictly increasing X, valid relative prefix/anchor. Arrays borrowed. */
+SWMM_ENGINE_API int swmm_table_validate_points(SWMM_Engine engine, int idx, const double* x,
+    const double* y, int count, int relative_count, double anchor);
+/** Atomically publish validated points/relative metadata and an optional timeseries FILE token.
+ * A null token preserves the binding. Non-null empty token detaches to inline. Existing id/type
+ * and comment are preserved; cursor/stream caches reset. All allocations precede publication. */
+SWMM_ENGINE_API int swmm_table_replace_points(SWMM_Engine engine, int idx, const double* x,
+    const double* y, int count, int relative_count, double anchor, const char* file_token);
+
+
 /**
  * @brief Get a timeseries' time-only (relative) row info.
  *
