@@ -780,6 +780,11 @@ public:
     /// evaluations (the square-root law itself, wherever it is evaluated) over the run.
     long rom1dPortGraphSteps() const noexcept { return rom1d_pg_steps_; }
     long rom1dCouplingLawEvals() const noexcept { return rom1d_pg_cpl_evals_; }
+    /// Diagnostic (O-7): street exchange each member's per-member solve moved through
+    /// the orifice two-port, summed over every routing step (m^3, deviation from the
+    /// deterministic exchange, positive into the pipe), coupling point × member. The
+    /// 2D ROM must book exactly this (booked + pending), whatever its sync batches.
+    const std::vector<double>& rom1dStreetExchangeVolume() const noexcept { return rom1d_pg_street_vol_; }
     /// Diagnostic: conductance Laplacian Lc (ft^2/s) of the last H18 assembly, active space.
     const uncertainty::CsrGraph& rom1dConductance() const noexcept { return rom1d_h18_Lc_; }
     /// Diagnostic: the last flow-response field phi per active node (H17).
@@ -843,6 +848,7 @@ private:
     double rom1d_pg_min_depth_ = 0.0;                     ///< deepest member depth below an admitted store's invert (ft, <= 0)
     long rom1d_pg_steps_ = 0;                             ///< steps that ran the per-member solve
     long rom1d_pg_cpl_evals_ = 0;                         ///< street-orifice law evaluations (cost diagnostic)
+    std::vector<double> rom1d_pg_street_vol_;             ///< Σ over routing steps of the per-member street exchange (m^3, cp × member)
     std::vector<double> rom1d_fs_relay_;   ///< H18: per-link head relay (1 - Froude gate) from the flow response
     std::vector<double> rom1d_h18_wsym_, rom1d_h18_diag_, rom1d_h18_S_, rom1d_h18_rates_, rom1d_h18_tmp_;
     uncertainty::CsrGraph rom1d_h18_Lc_;

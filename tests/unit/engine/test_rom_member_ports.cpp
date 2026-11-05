@@ -1223,7 +1223,7 @@ TEST(PerMemberPortsEngine, AdmittedBasinChangesTheBandOnly) {
 // ---------------------------------------------------------------------------
 namespace {
 
-std::string coupledFixture(double cv) {
+std::string coupledFixture(double cv, double sync = 0.0, double rain = 80.0, bool mesh_rain = true, double diam = 0.3, double len = 30.0) {
     std::ostringstream f;
     f << std::setprecision(10);
     f << "[TITLE]\ncoupled per-member ports\n\n[OPTIONS]\n";
@@ -1234,16 +1234,19 @@ std::string coupledFixture(double cv) {
     f << "[RAINGAGES]\nRG1 INTENSITY 0:01 1.0 TIMESERIES TS1\n\n";
     f << "[TIMESERIES]\n";
     for (int m = 0; m <= 40; ++m)
-        f << "TS1 01/01/2026 00:" << std::setfill('0') << std::setw(2) << m << " " << (m < 15 ? 80.0 : 0.0) << "\n";
+        f << "TS1 01/01/2026 00:" << std::setfill('0') << std::setw(2) << m << " " << (m < 15 ? rain : 0.0) << "\n";
     f << std::setfill(' ') << "\n";
     f << "[SUBCATCHMENTS]\nS1 RG1 J1 1.0 100 50 1.0 0\n\n[SUBAREAS]\nS1 0.015 0.20 0.00 0.00 100 OUTLET\n\n";
     f << "[INFILTRATION]\nS1 0.0 0.0 0.0 0.0 0.0\n\n";
     f << "[JUNCTIONS]\nJ1 0.0 1.0 0 0 0\nJ2 -0.1 1.0 0 0 0\nJ3 -0.2 1.0 0 0 0\nJ4 -0.3 1.0 0 0 0\n\n";
     f << "[OUTFALLS]\nO1 -0.5 FREE NO\n\n";
-    f << "[CONDUITS]\nC1 J1 J2 30 0.013 0 0 0\nC2 J2 J3 30 0.013 0 0 0\nC3 J3 J4 30 0.013 0 0 0\nC4 J4 O1 30 0.013 0 0 0\n\n";
+    f << "[CONDUITS]\nC1 J1 J2 " << len << " 0.013 0 0 0\nC2 J2 J3 " << len << " 0.013 0 0 0\nC3 J3 J4 " << len << " 0.013 0 0 0\nC4 J4 O1 " << len << " 0.013 0 0 0\n\n";
     f << "[XSECTIONS]\n";
-    for (const char* c : {"C1", "C2", "C3", "C4"}) f << c << " CIRCULAR 0.3 0 0 0 1\n";
-    f << "\n[2D_OPTIONS]\nMAX_TIMESTEP 4\nDRY_DEPTH 0.002\nCOUPLING_CD 0.7\nREPORT_2D NO\n\n[2D_VERTICES]\n";
+    for (const char* c : {"C1", "C2", "C3", "C4"}) f << c << " CIRCULAR " << diam << " 0 0 0 1\n";
+    f << "\n[2D_OPTIONS]\nMAX_TIMESTEP 4\nDRY_DEPTH 0.002\nCOUPLING_CD 0.7\nREPORT_2D NO\n";
+    if (sync > 0.0) f << "COUPLING_SYNC " << sync << "\n";
+    if (!mesh_rain) f << "RAINFALL_MODE NONE\n";
+    f << "\n[2D_VERTICES]\n";
     constexpr int kN = 4;
     const double d = 12.0 / kN;
     for (int i = 0; i <= kN; ++i)
@@ -1261,7 +1264,7 @@ std::string coupledFixture(double cv) {
 }
 
 struct CoupledTrace {
-    std::vector<double> head, flow, surf, q05, q95, corr, cvol;
+    std::vector<double> head, flow, surf, q05, q95, corr, cvol, pending, street, cvol_at_admission;
     std::size_t admitted = 0, admitted_coupled = 0;
     long steps = 0, pg_steps = 0, law_evals = 0, port_evals = 0, solves = 0, newton = 0, jacobi = 0, factor = 0, armijo = 0, lfact = 0, lsolves = 0, kmax = 0;
     double wall_s = 0.0, max_ext = 0.0;
@@ -1307,6 +1310,12 @@ CoupledTrace runCoupled(const std::string& inp, const std::string& tag, bool mem
         }
         const auto& c = eng->rom1dMemberCorrection();
         tr.corr.insert(tr.corr.end(), c.begin(), c.end());
+        // The 2D's own volume when the per-member path first exchanged: what the
+        // 2D booked by its local orifice law before the manhole was admitted.
+        if (tr.cvol_at_admission.empty() && !eng->rom1dStreetExchangeVolume().empty())
+            if (const auto* r2 = eng->surfaceRouter2D().rom())
+                for (std::size_t k = 0; k < eng->surfaceRouter2D().nodeCouplingPoints().size(); ++k)
+                    for (int i = 0; i < r2->n_ensemble; ++i) tr.cvol_at_admission.push_back(r2->couplingVolume(k, i));
         if (el > 0.0 && el * 86400.0 >= 2400.0) break;
     }
     tr.wall_s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
@@ -1322,9 +1331,12 @@ CoupledTrace runCoupled(const std::string& inp, const std::string& tag, bool mem
         for (std::size_t k = 0; k < eng->surfaceRouter2D().nodeCouplingPoints().size(); ++k)
             for (int i = 0; i < r2->n_ensemble; ++i) {
                 tr.cvol.push_back(r2->couplingVolume(k, i));
+                tr.pending.push_back(r2->pendingExternalCouplingVolume(k, i));
                 tr.max_ext = std::max(tr.max_ext, std::fabs(r2->couplingVolume(k, i)));
             }
     }
+    tr.street = eng->rom1dStreetExchangeVolume();
+    if (tr.street.empty()) tr.street.assign(tr.cvol.size(), 0.0);
     tr.pg_steps = eng->rom1dPortGraphSteps();
     tr.law_evals = eng->rom1dCouplingLawEvals();
     const auto& st = eng->rom1dPortGraphStats();
@@ -1397,5 +1409,37 @@ TEST(PerMemberPortsCoupled, CostOfThePerMemberPathOnACoupledManhole) {
     EXPECT_EQ(on.lfact, on.pg_steps);
     std::printf("[PH-O3 cost] wall OFF min %.3f med %.3f s, ON min %.3f med %.3f s, ratio min %.3f med %.3f\n",
                 mn(w_off), md(w_off), mn(w_on), md(w_on), mn(w_on) / mn(w_off), md(w_on) / md(w_off));
+}
+TEST(PerMemberPortsCoupled, StreetExchangeIsBookedOnceUnderSyncBatches) {
+    // O-7 (Bellinge demo_ph5, 2026-11-05): the 2D advances in sync batches of
+    // several routing steps (here COUPLING_SYNC 30 s over 5 s routing steps),
+    // while the per-member solve runs every routing step and hands its street
+    // exchange to the 2D ROM each time. Every step's volume must be booked: the
+    // 2D ROM's booked plus pending volume equals the sum of what the members
+    // moved through the orifice, per coupling point and member. When a later
+    // step REPLACED the earlier ones, only the batch's last step was booked
+    // (here 10.1 of 12.3 m^3 left unbooked for the worst member) and the pond,
+    // re-read from the un-updated 2D state, refilled itself every routing step:
+    // on Bellinge member ponds held shallow laterals at their rim for hours (1D
+    // bands 1.4-2.3 m vs an MC span of 0-2 cm). Small 0.15 m pipes, 80 m long:
+    // the head manhole surcharges to the street. Volume the 2D booked by its own
+    // law before the manhole was admitted is not part of the per-member path.
+    // The pond level seeing pending volumes is pinned in test_2d_spectral_rom
+    // (ExternalCouplingVolumesAddUpUntilBookedAndShowInThePond).
+    for (double sync : {30.0, 0.0}) {
+        const CoupledTrace on = runCoupled(coupledFixture(0.2, sync, 20.0, false, 0.15, 80.0), "book", true, 0.2);
+        ASSERT_TRUE(on.ok);
+        ASSERT_GE(on.admitted_coupled, 1u);
+        ASSERT_EQ(on.street.size(), on.cvol.size());
+        ASSERT_EQ(on.cvol_at_admission.size(), on.cvol.size());
+        double worst = 0.0, scale = 0.0;
+        for (std::size_t k = 0; k < on.street.size(); ++k) {
+            worst = std::max(worst, std::fabs(on.cvol[k] - on.cvol_at_admission[k] + on.pending[k] - on.street[k]));
+            scale = std::max(scale, std::fabs(on.street[k]));
+        }
+        std::printf("[O-7] sync %.0f s: max |street exchange| %.3f m^3, max |booked + pending - street| %.3g m^3\n", sync, scale, worst);
+        EXPECT_GT(scale, 0.1) << "the members must reach the street, or the check proves nothing";
+        EXPECT_LE(worst, 1.0e-9 * scale) << "sync " << sync;
+    }
 }
 #endif  // OPENSWMM_HAS_2D

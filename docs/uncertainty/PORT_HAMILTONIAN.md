@@ -321,3 +321,43 @@ cases the current code excludes). Acceptance gates as in the table.
   laterals: candidates — the per-member correction C = z − κΨ spreading a store's outflow mismatch through the
   plane onto small-S nodes, the main-run volume-mismatch sharing, members sunk below invert (G71O020 −106 ft)
   leaking through the plane, or the source-floor port. O-7 (diagnosis in Debug) opened.
+- 2026-11-05: **O-7 diagnosis — the lateral tail is a street-pond bookkeeping defect across sync batches, not
+  the correction field.** CSVs (`demo_ph5` vs `demo_v4`): at all 10 nodes the ON band is one-sided (q95 moves,
+  q05 stays at the main run), starts with the 06:20–06:40 burst that both runs share (OFF up to 1–2.5 m too,
+  gone in 10 min), and then stays: 28–38 % of members (p_exceed of the crown, bimodal flag on) sit above the
+  crown for hours with q95 at the manhole's RIM (G62F196 −0.17…+0.47 ft from rim 07–09 h, G72F311 ±0.4, G70S213
+  ±0.2), decaying over hours (G62F196 8.3 → 6.6 ft by 09:50). q50 is not protected there (G70S213 08:20 +1.6 ft,
+  G62F196 08:00 +1.0 ft): a one-sided per-member source moves the median; the zero-perturbation invariant still
+  holds. Bands peak at the lateral HEADS and fall downstream (G62F196 2.43 → G62F195 0.77 m … G60F340 0.45), so
+  not backwater from an admitted store, not (a)/(c). **2D output**: within 25 m of every one of the 10 nodes
+  a cell holds an ON q95 pond of 0.12–2.1 m for hours where OFF has 0 (G72F311 0.948 m constant 07–08 h, pond
+  surface 27.21 m = the rim; G62F196 0.74 m, surface 31.09 vs rim 31.10; G70S213 23 m at 07:00), i.e. member
+  ponds level with the manhole rim, holding 100–250 m³ that a 1 m² manhole never passed. **1D smoke does not
+  reproduce** (no 2D, no ponds: ph_o6 G62F196 band 0.03 ft at 06:40), nor does forcing the 10 laterals to be
+  admitted junction stores in the smoke (temporary rim-criterion admission: bands identical to ph_o6), so
+  stores, L recovery, volume-mismatch sharing, source floor and sunk members are ruled out on these nodes.
+  **Mechanism (e)**: the 2D advances in sync batches (`couplingSyncSpan` = ROUTING_STEP 10 s, Bellinge DW steps
+  average 5.3 s and 1–2 s at the peak, so 2–10 routing steps per batch) while `stepRom1dStorageMembers` runs every
+  routing step. It (1) read each member pond's start level from the 2D ROM (`memberCouplingDepth`), which only
+  changes at a batch, and (2) handed its exchange over with `setExternalCouplingVolume`, which REPLACED the
+  previous step's volumes, so the batch booked only its last step. A pond above its manhole poured into it every
+  routing step from the same un-depleted level (water created ~(N−1)× per batch; a manhole pouring into an empty
+  pond lost the other way); the member manhole is held at street level, its rim overflow port loses the excess,
+  and the pond empties only at 1/N of its outflow. Coupled fixture (COUPLING_SYNC 30 s, 5 s steps): worst member
+  10.1 of 12.3 m³ unbooked. **Fix** (`SpectralROM.hpp/.cpp`, engine): `addExternalCouplingVolume` adds the
+  routing steps' volumes until the batch books them (a NaN never overwrites a pending volume);
+  `memberCouplingDepth` subtracts booked AND pending volume, so the next routing step sees the pond after this
+  step's exchange; engine diagnostic `rom1dStreetExchangeVolume()` (Σ over routing steps of the per-member street
+  exchange). No tolerance, knob or law constant. **Tests**: `PerMemberPortsCoupled.StreetExchangeIsBookedOnceUnder
+  SyncBatches` (booked + pending − volume booked by the 2D's own law before admission = Σ per-step exchange:
+  1.6e-14 of 10.8 m³ at sync 30 s, 3.4e-16 at every step; replace semantics: 10.1 m³ → fails) and
+  `SpectralROM.ExternalCouplingVolumesAddUpUntilBookedAndShowInThePond` (sum booked once, pending in the pond
+  level; fails on either mutation: replace, or pond level without pending). The requested "laterals within 2× the
+  shared-plane band" test was tried on the coupled fixture (rain 10–80 mm/h, 0.15–0.3 m pipes, 30–80 m, sync 0/30 s):
+  no small fixture shows the blow-up before the fix (its pond never sits above the manhole long enough), so the
+  pin is conservation, not the band. **Gates (Debug)**: member_ports 29, additive_channel 12, spectral_rom1d 101,
+  2d_spectral_rom 65, 2d_rom_nonintrusive/integration/router_operator pass, storage gate A 0.889/0.958, B
+  0.727/0.960, R 0.952/0.880 unchanged; 1D smoke to 07:00 (probe recompiled against the new header) bit-identical
+  to ph_o6 (`.uncertainty.csv` cmp-equal): 3,892 steps, 194,550 solves, Newton 302,004, Jacobi 29 (all converged),
+  not converged 0, wall 290 s (ph_o5: 35/0/336 s). The coupled Bellinge was NOT rerun (owner decision); whether
+  the fix removes the tail there, and what it does to the 1D 0.944/1.650 aggregate, is open.

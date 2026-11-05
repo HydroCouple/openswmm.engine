@@ -120,9 +120,14 @@ same law at (h*, p*) (no outside q*), so the dry factors are absolute (ramp of t
 pond's own depth), not relative like `dryFactor`. Per member and step: z_p^n is read
 from the 2D ROM (`memberCouplingDepth` − p*); the pond's only port in the step is the
 orifice; its volume change −a_pond·(z_p − z_p^n) is booked to the 2D ROM
-(`setExternalCouplingVolume`) and held there per cell (`coupling_resid_`/coupling
+(`addExternalCouplingVolume`) and held there per cell (`coupling_resid_`/coupling
 volume over `pond_cells_`). It equals dt·(port flow) to the Newton tolerance on the
 pond equation (1e-10 ft of pond level), not to 1e-10 relative.
+*As built (O-7, PORT_HAMILTONIAN §6):* the 2D advances in sync batches of several
+routing steps, the per-member solve every routing step. The volumes handed over
+within a batch add up and the batch books their sum once; until then
+`memberCouplingDepth` already subtracts them, so z_p^n of the next routing step is
+the pond after this step's exchange, not the 2D's state at the last batch.
 
 Where the deviation form shows: p* + z_p can end below 0 for a member whose pond gains
 less than the main run's over the step (the main run's pond itself rose); its own
@@ -348,8 +353,8 @@ Two consequences:
 - Backwater from a store's level travels upstream through the plane edges' jd.
   This removes the approximation "a storage node's level difference does not
   travel upstream".
-- The coupled manhole's exchange volume (`setExternalCouplingVolume`) is read
-  from the solved port flow, once.
+- The coupled manhole's exchange volume (`addExternalCouplingVolume`) is read
+  from the solved port flow, once per routing step, and booked once by the 2D.
 
 ## 6. Gates and implementation order
 

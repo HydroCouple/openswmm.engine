@@ -12960,7 +12960,8 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
     // reference flow. The pond's start level per member is the 2D ROM's member
     // depth at the coupling cell; its only port in the step is the orifice, so
     // its volume change is the exchange, booked by the 2D ROM
-    // (setExternalCouplingVolume, then held per cell in its coupling residual).
+    // (addExternalCouplingVolume, summed over the routing steps of its sync
+    // batch, then held per cell in its coupling residual).
     constexpr double kCfsPerCms = 1.0 / (0.3048 * 0.3048 * 0.3048);
     struct Pond { int node = -1, cp = -1, store = -1; std::size_t port = 0; double a_ft2 = 0.0, p_det_ft = 0.0; };
     std::vector<Pond> ponds;
@@ -13099,7 +13100,14 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
         if (static_cast<std::size_t>(a) < rom1d_rom_pinned_.size()) rom1d_rom_pinned_[static_cast<std::size_t>(a)] = 0;
     rom1d_->setPinnedNodes(&rom1d_rom_pinned_);
 #ifdef OPENSWMM_HAS_2D
-    if (coupled) rom2d->setExternalCouplingVolume(std::move(ext_vol));
+    if (coupled) {
+        // One call per routing step; the 2D ROM adds them up until its next
+        // sync batch books the sum (O-7).
+        if (rom1d_pg_street_vol_.size() != ext_vol.size()) rom1d_pg_street_vol_.assign(ext_vol.size(), 0.0);
+        for (std::size_t k = 0; k < ext_vol.size(); ++k)
+            if (std::isfinite(ext_vol[k])) rom1d_pg_street_vol_[k] += ext_vol[k];
+        rom2d->addExternalCouplingVolume(ext_vol);
+    }
 #endif
 }
 

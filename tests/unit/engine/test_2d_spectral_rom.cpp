@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numeric>
+#include <limits>
 #include <vector>
 
 using namespace openswmm::uncertainty;
@@ -1323,6 +1324,47 @@ TEST(SpectralROM, CouplingFluxZeroPerturbationAddsNothing) {
     for (int step = 0; step < 20; ++step)
         r.f.rom.applyCouplingFlux(r.cps, now.data(), r.f.mesh, 10.0, &r.rom1d, 0.3048);
     EXPECT_EQ(r.maxChange(a0, add0), 0.0);
+}
+
+// O-7: the 1D per-member solve hands its street exchange over once per routing
+// step, the 2D books it once per sync batch. Volumes handed over within a batch
+// add up and are booked once; until then the member's pond level already
+// reflects them, so the next routing step does not see a refilled pond
+// (Bellinge demo_ph5: replaced volumes held laterals at their rim for hours).
+TEST(SpectralROM, ExternalCouplingVolumesAddUpUntilBookedAndShowInThePond) {
+    CouplingRig r(0.05);
+    const double z = r.f.mesh.tri_cz[0];
+    std::vector<double> heads(5, z + 0.05);
+    r.rom1d.seed(heads.data());
+    r.f.rom.applyCouplingFlux(r.cps, heads.data(), r.f.mesh, 10.0, &r.rom1d, 1.0);   // footprint, zero deviation
+    const int M = r.f.rom.n_ensemble;
+    const double A = r.f.rom.pondArea(0);
+    ASSERT_GT(A, 0.0);
+    std::vector<double> d0(static_cast<std::size_t>(M)), v1(static_cast<std::size_t>(M)), v2(static_cast<std::size_t>(M));
+    for (int i = 0; i < M; ++i) {
+        d0[static_cast<std::size_t>(i)] = r.f.rom.memberCouplingDepth(0, i);
+        v1[static_cast<std::size_t>(i)] = 1.0e-3 * (i + 1);        // into the pipe
+        v2[static_cast<std::size_t>(i)] = -0.5e-3 * (i % 3);       // back to the street
+    }
+    std::vector<double> nan_step(static_cast<std::size_t>(M), std::numeric_limits<double>::quiet_NaN());
+    r.f.rom.addExternalCouplingVolume(v1);
+    r.f.rom.addExternalCouplingVolume(nan_step);                      // a step without the pond: books nothing
+    r.f.rom.addExternalCouplingVolume(v2);
+    for (int i = 0; i < M; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        const double sum = v1[ui] + v2[ui];
+        EXPECT_NEAR(r.f.rom.pendingExternalCouplingVolume(0, i), sum, 1e-15);
+        EXPECT_NEAR(r.f.rom.memberCouplingDepth(0, i), std::max(d0[ui] - sum / A, 0.0), 1e-12) << "pending volume not in the pond, member " << i;
+    }
+    std::vector<double> dp(static_cast<std::size_t>(M));
+    for (int i = 0; i < M; ++i) dp[static_cast<std::size_t>(i)] = r.f.rom.memberCouplingDepth(0, i);
+    r.f.rom.applyCouplingFlux(r.cps, heads.data(), r.f.mesh, 30.0, &r.rom1d, 1.0);   // the batch books
+    for (int i = 0; i < M; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        EXPECT_NEAR(r.f.rom.couplingVolume(0, i), v1[ui] + v2[ui], 1e-15) << "member " << i;
+        EXPECT_EQ(r.f.rom.pendingExternalCouplingVolume(0, i), 0.0);
+        EXPECT_NEAR(r.f.rom.memberCouplingDepth(0, i), dp[ui], 1e-12) << "booking moved the pond again, member " << i;
+    }
 }
 
 // Pond footprint: a member's exchanged volume raises the whole deterministic

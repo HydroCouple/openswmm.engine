@@ -40,6 +40,7 @@
 #include "../../uncertainty/UncertaintyTypes.hpp"
 #include "../../uncertainty/RomQuantileGemm.hpp"
 #include "../../uncertainty/RomDensePropagator.hpp"
+#include <cmath>
 #include <vector>
 #include <cstddef>
 #include <cstdint>
@@ -673,7 +674,9 @@ struct SpectralROM {
     double pondArea(std::size_t cp) const noexcept { return cp < pond_area_.size() ? pond_area_[cp] : 0.0; }
     /// Member i's water depth (m) at coupling point cp's cell, the level the
     /// exchange sees: deterministic depth plus the member's modal deviations,
-    /// minus the member's exchanged volume over the pond. -1 when unknown.
+    /// minus the member's exchanged volume over the pond, booked or still
+    /// pending (handed over by earlier routing steps of the current sync
+    /// batch). -1 when unknown.
     double memberCouplingDepth(std::size_t cp, int member) const noexcept;
     /// Deterministic water depth (m) at coupling point cp's cell, -1 when unknown.
     double detCouplingDepth(std::size_t cp) const noexcept {
@@ -683,10 +686,26 @@ struct SpectralROM {
     /// Exchange volumes (m^3, deviation from the deterministic exchange,
     /// positive into the pipe) per coupling point × member, computed by the
     /// 1D ROM where a member carries its own manhole level
-    /// (ADDITIVE_CHANNEL.md §8). Booked by the next applyCouplingFlux instead
-    /// of the local orifice law, then cleared, so both sides move the same
-    /// water. NaN entries: computed locally as before.
-    void setExternalCouplingVolume(std::vector<double> vol) { ext_vol_ = std::move(vol); }
+    /// (ADDITIVE_CHANNEL.md §8), one call per 1D routing step. They ADD to the
+    /// volumes pending since the last applyCouplingFlux, which books the sum
+    /// instead of the local orifice law and clears it, so both sides move the
+    /// same water even when the 2D advances in sync batches of several routing
+    /// steps. NaN entries: computed locally (a NaN never overwrites a pending
+    /// finite volume). Replacing instead of adding booked only the batch's last
+    /// step and let the member's pond refill itself every routing step
+    /// (PORT_HAMILTONIAN §6, O-7: Bellinge laterals held at their rim for hours).
+    void addExternalCouplingVolume(const std::vector<double>& vol) {
+        if (ext_vol_.size() != vol.size()) { ext_vol_ = vol; return; }
+        for (std::size_t k = 0; k < vol.size(); ++k) {
+            if (!std::isfinite(vol[k])) continue;
+            ext_vol_[k] = std::isfinite(ext_vol_[k]) ? ext_vol_[k] + vol[k] : vol[k];
+        }
+    }
+    /// External exchange volume (m^3) handed over but not yet booked; 0 when none.
+    double pendingExternalCouplingVolume(std::size_t cp, int member) const noexcept {
+        const auto k = cp * static_cast<std::size_t>(n_ensemble) + static_cast<std::size_t>(member);
+        return (k < ext_vol_.size() && std::isfinite(ext_vol_[k])) ? ext_vol_[k] : 0.0;
+    }
     double couplingVolume(std::size_t cp, int member) const noexcept {
         const auto k = cp * static_cast<std::size_t>(n_ensemble) + static_cast<std::size_t>(member);
         return k < coupling_vol_.size() ? coupling_vol_[k] : 0.0;

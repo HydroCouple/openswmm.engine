@@ -1329,7 +1329,8 @@ double SpectralROM::memberCouplingDepth(std::size_t cp, int member) const noexce
     const double h_det = std::max(h_det_last_[ci], 0.0);
     const double h = relative_deviation ? h_det * (1.0 + d2) + da : h_det + d2;
     const auto M = static_cast<std::size_t>(n_ensemble);
-    const double vol = (cp * M + ui < coupling_vol_.size()) ? coupling_vol_[cp * M + ui] : 0.0;
+    const double vol = ((cp * M + ui < coupling_vol_.size()) ? coupling_vol_[cp * M + ui] : 0.0) +
+                       pendingExternalCouplingVolume(cp, member);
     return std::max(h - vol / pond_area_[cp], 0.0);
 }
 
