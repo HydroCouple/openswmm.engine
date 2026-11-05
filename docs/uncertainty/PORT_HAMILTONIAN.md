@@ -312,3 +312,12 @@ cases the current code excludes). Acceptance gates as in the table.
   basins the per-member path is a clear improvement** (3–4× closer to the MC); the aggregate 1D over-width must
   come from the ~400 admitted rim manholes (step-3 admission), which also drive k to 986. Hypothesis: admit
   storage nodes + threshold outlets only (the step-2 scope) and leave rim manholes to the shared plane.
+- 2026-11-05: **Score split by node class** (`bellinge-flood-uncertainty/scripts/score_mc_by_class.py`, demo repo
+  2505f5c; OFF → ON, cov/width): STORAGE (16) 0.845/1.99 → 0.778/0.94; coupled near rim (64) 0.871/1.17 →
+  0.861/1.26 (calibrated both); coupled far from rim (931, 18,073 of 19,949 samples) 0.964/1.42 → 0.952/1.71 —
+  **this class carries the regression**, and not broadly: a tail of shallow laterals (G62F196/192/191, G70S214/213,
+  G72F311, G62F403/012, G72F081, G71F043) with MC span 0–2 cm, OFF band 7–130 mm, ON band 1.4–2.3 m (100–300×).
+  The rim-manhole hypothesis above is wrong. Something in the per-member path puts metres of head on tiny-storage
+  laterals: candidates — the per-member correction C = z − κΨ spreading a store's outflow mismatch through the
+  plane onto small-S nodes, the main-run volume-mismatch sharing, members sunk below invert (G71O020 −106 ft)
+  leaking through the plane, or the source-floor port. O-7 (diagnosis in Debug) opened.
