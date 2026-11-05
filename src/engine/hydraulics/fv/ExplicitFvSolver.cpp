@@ -1216,7 +1216,17 @@ void ExplicitFvSolver::faceSide(int face, int cell, int node, double zstar, int 
     // the cells' own section everywhere except at a width step between two
     // conduits (mesh.face_geom), where using each side's own section would
     // leave the step's wall exerting no force on the flow.
-    const FvGeometry* gf = &mesh_->geom[static_cast<std::size_t>(mesh_->face_geom[uf])];
+    //
+    // That shared section belongs to a live splice. A node with its own head
+    // poses a separate problem at each face, and there the average is wrong: a
+    // 0.7 m + 0.191 m pair shares 0.446 m, so the big pipe drained through 40 %
+    // of its area at its own velocity while the small one drew through a face
+    // 5.5x its own (Bellinge G70F62Y and G80F66X, 2026-11-04: 96 % of a CSO
+    // chamber's inflow flooded upstream, ±200 cfs in the small pipe).
+    const int face_nd = mesh_->face_node[uf];
+    const FvGeometry* gf = &mesh_->faceSection(
+        face, face_nd >= 0 && !node_pass_.empty() && node_pass_[static_cast<std::size_t>(face_nd)] &&
+                  algebraicActive(face_nd));
 
     if (cell >= 0) {
         const auto uc = static_cast<std::size_t>(cell);
@@ -3580,6 +3590,7 @@ PressurizedView ExplicitFvSolver::pressView(const FvStepForcing& forcing) {
     pv.node_qstruct = &node_qstruct_;
     pv.node_carry = &node_carry_;
     pv.node_alg = &node_alg_;
+    pv.node_pass = &node_pass_;
     pv.node_vfull = &node_vfull_;
     pv.node_lat_div = &node_lat_div_;
     pv.cell_qlat = &cell_qlat_;

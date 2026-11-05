@@ -204,6 +204,26 @@ struct NetworkMeshData {
         }
     }
 
+    /**
+     * @brief Select the section a face reconstructs both its sides in.
+     *
+     * A differing face_geom entry describes the one Riemann problem posed between the two conduits of a
+     * degree-2 node, which exists only while that node splices them. Any other node face stands between
+     * its own cell and the node's own head, so it keeps its cell's section. Interior faces always use
+     * face_geom.
+     *
+     * @param[in] face Valid face index with face_geom, face_node and cell_geom populated.
+     * @param[in] splicing True while the face's node presents its two faces directly to each other.
+     * @return Borrowed section, valid until geom is next resized.
+     */
+    const FvGeometry& faceSection(int face, bool splicing) const noexcept {
+        const auto uf = static_cast<std::size_t>(face);
+        const int c = (face_cl[uf] >= 0) ? face_cl[uf] : face_cr[uf];
+        if (splicing || face_node[uf] < 0 || c < 0)
+            return geom[static_cast<std::size_t>(face_geom[uf])];
+        return geom[static_cast<std::size_t>(cell_geom[static_cast<std::size_t>(c)])];
+    }
+
     /// Flap-gate mask on a boundary face: bit 0 blocks a POSITIVE mass flux,
     /// bit 1 blocks a NEGATIVE one, 0 leaves the face open. A gate is a check
     /// valve, so a blocked face behaves as a wall only while the flux would run

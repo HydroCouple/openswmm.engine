@@ -1377,6 +1377,14 @@ diverted into the two incident cells, half each, as a zero-momentum area
 source. A structure flow or an unbled carry does revoke it, since both
 need a head the fluxes can respond to.
 
+Where the two conduits of such a junction differ in section, the splice
+poses its one Riemann problem in a section-averaged geometry, and the
+per-side hydrostatic correction becomes the force of the step's wall. The
+average belongs to the splice alone. A node with a head of its own poses a
+separate problem at each face, in that conduit's own section: averaging
+there would drain a large pipe through a fraction of its area and feed a
+small one through a face several times its own.
+
 **A bucket node's coupling to its faces is semi-implicit.** Its storage
 area is typically the `MIN_SURFAREA` floor, which as an effective length
 \f$A_{s}/T\f$ is a few feet against a conduit \f$\Delta x\f$ of several

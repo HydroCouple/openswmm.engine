@@ -101,7 +101,7 @@ struct ViewFixture {
     std::vector<kernels::FaceFlux> flux;
     std::vector<int> faces;
     std::vector<char> active;
-    std::vector<std::uint8_t> algebraic, diverted;
+    std::vector<std::uint8_t> algebraic, diverted, splicing;
     FvStepForcing forcing;
     PressurizedView view;
     /**
@@ -133,6 +133,7 @@ struct ViewFixture {
         active.assign(nc, 1);
         algebraic.assign(nn, 1);
         diverted.assign(nn, 0);
+        splicing.assign(nn, 0);
         for (int f = 0; f < nf; ++f) {
             const int cl = ch.mesh.face_cl[f], cr = ch.mesh.face_cr[f], node = ch.mesh.face_node[f];
             left[f].a =
@@ -160,6 +161,7 @@ struct ViewFixture {
         view.node_qstruct = &qstruct;
         view.node_carry = &carry;
         view.node_alg = &algebraic;
+        view.node_pass = &splicing;
         view.node_vfull = &vfull;
         view.node_lat_div = &diverted;
         view.cell_qlat = &qlat;
@@ -184,6 +186,32 @@ TEST(FvPressureCandidateAdapter, FailedSolveDoesNotPublishAnyFaceOrNode) {
     EXPECT_EQ(f.sstar, sstar);
     for (std::size_t i = 0; i < f.flux.size(); ++i)
         EXPECT_EQ(f.flux[i].mass, mass[i]);
+}
+
+// The pressure solve caps a face's conveyance area at the section that face
+// reconstructs in, so it has to follow the same rule: the section shared across a
+// node only while the node splices its conduits, the pipe's own otherwise.
+TEST(FvPressureCandidateAdapter, ConveyanceFollowsTheSectionTheFaceReconstructsIn) {
+    const auto solve = [](bool narrow_shared_section, std::uint8_t node_splices) {
+        ViewFixture f;
+        if (narrow_shared_section) {
+            FvGeometry shared = f.ch.mesh.geom[0];
+            shared.a_crown *= 0.5;
+            f.ch.mesh.geom.push_back(shared);
+            for (int face = 0; face < f.ch.mesh.n_faces(); ++face)
+                if (f.ch.mesh.face_node[face] >= 0)
+                    f.ch.mesh.face_geom[face] = 1;
+        }
+        f.splicing.assign(f.ch.mesh.n_nodes(), node_splices);
+        PressurizedHeadSolver solver;
+        EXPECT_TRUE(solver.classify(f.view));
+        const auto result = solver.solveCandidate(f.view, 0.1, {});
+        EXPECT_TRUE(result.converged()) << static_cast<int>(result.status);
+        return f.mass;
+    };
+    const auto own = solve(false, 0);
+    EXPECT_EQ(solve(true, 0), own) << "a node with its own head took the shared section";
+    EXPECT_NE(solve(true, 1), own) << "a splicing node ignored the shared section";
 }
 
 TEST(FvPressureCandidateAdapter, SharedFluxCopiesAndCommittedEndpointAreVerified) {

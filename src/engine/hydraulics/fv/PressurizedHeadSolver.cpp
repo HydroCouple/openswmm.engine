@@ -360,7 +360,10 @@ void PressurizedHeadSolver::prepare(const PressurizedView& v, double dt) {
         // Conveyance area, not conserved area: the slot's numerical storage
         // must not conduct (see frictionGamma above). Capped at the FACE
         // section's crown area — both sides were reconstructed in it.
-        const FvGeometry& gf = mesh.geom[static_cast<std::size_t>(mesh.face_geom[uf])];
+        const int nd = mesh.face_node[uf];
+        const FvGeometry& gf = mesh.faceSection(
+            F.face, nd >= 0 && !v.node_pass->empty() && (*v.node_pass)[static_cast<std::size_t>(nd)] &&
+                        algActive(v, nd));
         const double ahat = std::min(0.5 * (L.a + R.a), std::max(gf.a_crown, k::kDryArea));
         const double Lf = mesh.face_dx[uf];
         F.cond = 0.0;
@@ -434,7 +437,6 @@ void PressurizedHeadSolver::prepare(const PressurizedView& v, double dt) {
         F.qstar = qstar0 * (1.0 + k3) - uf_src;
 
         // Time-n heads / Dirichlet values of each side.
-        const int nd = mesh.face_node[uf];
         F.eta_l = (cl >= 0) ? v.cell_eta[static_cast<std::size_t>(cl)]
                             : state.node_head[static_cast<std::size_t>(nd)];
         F.eta_r = (cr >= 0) ? v.cell_eta[static_cast<std::size_t>(cr)]

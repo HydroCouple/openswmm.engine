@@ -717,6 +717,10 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx, const FvOptions& opts,
     // in two different geometries and the wall the width step presents exerts
     // no force. Give both faces of such a pair one section-averaged geometry
     // and the per-side hydrostatic correction becomes the wall-pressure term.
+    //
+    // Whether the node is clean is decided at run time, so every degree-2 pair
+    // gets the section here; the solver uses it only while the node actually
+    // splices the pair (NetworkMeshData::faceSection).
     // -----------------------------------------------------------------------
     mesh.face_geom.clear();
     mesh.deriveFaceGeom();
@@ -729,7 +733,7 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx, const FvOptions& opts,
             const int nb = mesh.node_face_ptr[ui];
             const int ne = mesh.node_face_ptr[ui + 1];
             if (ne - nb != 2)
-                continue; // only clean degree-2
+                continue; // only degree-2 can splice
             const int f0 = mesh.node_face_idx[static_cast<std::size_t>(nb)];
             const int f1 = mesh.node_face_idx[static_cast<std::size_t>(nb + 1)];
             const int g0 = mesh.face_geom[static_cast<std::size_t>(f0)];

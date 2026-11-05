@@ -138,6 +138,7 @@ struct PressurizedView {
     const std::vector<double>* node_qstruct = nullptr;
     std::vector<double>* node_carry = nullptr;
     const std::vector<std::uint8_t>* node_alg = nullptr;
+    const std::vector<std::uint8_t>* node_pass = nullptr;
     const std::vector<double>* node_vfull = nullptr;
     const std::vector<std::uint8_t>* node_lat_div = nullptr;
     const std::vector<double>* cell_qlat = nullptr;

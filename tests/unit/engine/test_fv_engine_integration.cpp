@@ -1976,6 +1976,120 @@ TEST(FvEngine, AValveAtAJunctionMatchesDynamicWaveAndBalances) {
 }
 
 // ===========================================================================
+// A section step is averaged only while the node splices the two conduits
+// ===========================================================================
+
+namespace {
+
+/**
+ * @brief Write a two-hour model with a diameter step at degree-2 node, 0 to q m3/s to q and back.
+ *
+ * Truncates the destination input file and returns its path even when stream creation/write fails;
+ * does not run the model. The extra option text is copied verbatim into [OPTIONS].
+ *
+ * @param[in] name Artifact basename, without extension, beneath outDir().
+ * @param[in] routing Routing token inserted verbatim into FLOW_ROUTING; FV or DYNWAVE.
+ * @param[in] q Plateau inflow at JU in m3/s.
+ * @param[in] network Raw node, link and section text in CMS/metres; must define node JU.
+ * @param[in] extra Raw option lines, each newline-terminated; default none.
+ * @return Owned generated input path.
+ */
+std::string writeSectionStepModel(const std::string& name, const char* routing, double q,
+                                  const std::string& network, const char* extra = "") {
+    const std::string path = outDir() + "/" + name + ".inp";
+    std::ofstream os(path);
+    os << "[OPTIONS]\nFLOW_UNITS           CMS\nFLOW_ROUTING         " << routing
+       << "\nLINK_OFFSETS         DEPTH\n"
+          "START_DATE           06/29/2012\nSTART_TIME           00:00:00\n"
+          "END_DATE             06/29/2012\nEND_TIME             02:00:00\n"
+          "REPORT_STEP          00:00:30\nROUTING_STEP         5\nMIN_SURFAREA         1.167\n"
+       << extra << "\n"
+       << network << "\n[TIMESERIES]\nHYD 06/29/2012 00:00 0\nHYD 06/29/2012 00:30 " << q
+       << "\nHYD 06/29/2012 01:30 " << q
+       << "\nHYD 06/29/2012 02:00 0\n\n[INFLOWS]\nJU  FLOW  HYD  FLOW  1.0  1.0  0\n\n"
+          "[REPORT]\nINPUT  NO\nCONTROLS  NO\nNODES ALL\nLINKS ALL\n";
+    return path;
+}
+
+/// A 0.7 m pipe into a chamber with a 0.191 m throttle and a CSO weir: Bellinge's G70F62Y.
+const char* kThrottledChamber =
+    "[JUNCTIONS]\nJU  13.669  2.24  0 0 0\nCH  13.589  1.99  0 0 0\nOV  14.099  1.48  0 0 0\n\n"
+    "[OUTFALLS]\nOT  10.919  FREE  NO\nOC  13.479  FREE  NO\n\n"
+    "[CONDUITS]\nC_IN  JU  CH  10    0.013  0 0    0 0\nC_TH  CH  OT  10    0.013  0 2.62 0 0\n"
+    "C_OV  OV  OC  6.18  0.013  0 0    0 0\n\n"
+    "[WEIRS]\nW  CH  OV  TRANSVERSE  0.98  1.77  NO  0 0 NO\n\n"
+    "[XSECTIONS]\nC_IN  CIRCULAR  0.70 0 0 0 1\nC_TH  CIRCULAR  0.191 0 0 0 1\n"
+    "C_OV  CIRCULAR  0.70 0 0 0 1\nW  RECT_OPEN  1.01 2.0 0 0 1\n";
+
+/// No structure: a 0.6 m pipe into a 0.2 m one, overloaded so the junction surcharges.
+const char* kOverloadedStep =
+    "[JUNCTIONS]\nJU  10.3  8  0 0 0\nJM  10.0  8  0 0 0\n\n[OUTFALLS]\nOUT  9.5  FREE  NO\n\n"
+    "[CONDUITS]\nC_BIG  JU  JM   40  0.013  0 0 0 0\nC_SML  JM  OUT  30  0.013  0 0 0 0\n\n"
+    "[XSECTIONS]\nC_BIG  CIRCULAR  0.60 0 0 0 1\nC_SML  CIRCULAR  0.20 0 0 0 1\n";
+
+/// Free surface through a clean degree-2 step, never surcharged.
+const char* kCleanStep =
+    "[JUNCTIONS]\nJU  10.4  3  0 0 0\nJM  10.2  3  0 0 0\n\n[OUTFALLS]\nOUT  10.0  FREE  NO\n\n"
+    "[CONDUITS]\nC_BIG  JU  JM   40  0.013  0 0 0 0\nC_SML  JM  OUT  40  0.013  0 0 0 0\n\n"
+    "[XSECTIONS]\nC_BIG  CIRCULAR  0.70 0 0 0 1\nC_SML  CIRCULAR  0.45 0 0 0 1\n";
+
+} // namespace
+
+// Both conduits at CH shared a 0.446 m section: the 0.7 m pipe drained through
+// 40 % of its area at its own velocity and held 0.04 m3/s against 1.2 m of head,
+// flooding 96 % of the inflow at JU, while the throttle drew through a face 5.5x
+// its own at 100 ft/s. CH has a head of its own, so each face keeps its section.
+TEST(FvEngine, AChamberWithASectionStepDeliversItsSpillLikeDynamicWave) {
+    const RunResult dw =
+        runModel(writeSectionStepModel("step_chamber_dw", "DYNWAVE", 1.2, kThrottledChamber));
+    const RunResult fv =
+        runModel(writeSectionStepModel("step_chamber_fv", "FV", 1.2, kThrottledChamber));
+    ASSERT_TRUE(dw.parsed && fv.parsed);
+    const std::string rpt = outDir() + "/step_chamber_fv.rpt";
+    const double inflow = routingRow(rpt, "External Inflow");
+    ASSERT_GT(inflow, 0.0);
+    EXPECT_LT(routingRow(rpt, "Flooding Loss"), 0.001 * inflow) << "the inflow flooded at JU";
+    EXPECT_NEAR(routingRow(rpt, "External Outflow"),
+                routingRow(outDir() + "/step_chamber_dw.rpt", "External Outflow"), 0.01 * inflow);
+    ASSERT_TRUE(dw.peak_flow.count("C_TH") && fv.peak_flow.count("C_TH"));
+    EXPECT_NEAR(fv.peak_flow.at("C_TH"), dw.peak_flow.at("C_TH"), 0.1 * dw.peak_flow.at("C_TH"))
+        << "the throttle is not carrying what its head drives";
+}
+
+// The same blockage without a structure: a plain junction loses the splice as
+// soon as it surcharges, and then sat 4.1 m deep on average against DW's 0.93 m,
+// flooding half the inflow. The implicit pressurized path's junction depth spikes
+// on this 0.2 m pipe with or without the step, so only its water balance is held
+// to DW; test_fv_pressure_candidate_adapter holds its conveyance to the rule.
+TEST(FvEngine, AnOverloadedSectionStepKeepsItsConveyance) {
+    const RunResult dw =
+        runModel(writeSectionStepModel("step_overload_dw", "DYNWAVE", 0.08, kOverloadedStep));
+    ASSERT_TRUE(dw.parsed);
+    for (const bool implicit : {false, true}) {
+        const std::string tag = implicit ? "step_overload_imp" : "step_overload_exp";
+        const RunResult fv = runModel(writeSectionStepModel(
+            tag, "FV", 0.08, kOverloadedStep, implicit ? "FV_PRESSURIZED_IMPLICIT YES\n" : ""));
+        ASSERT_TRUE(fv.parsed) << tag;
+        const std::string rpt = outDir() + "/" + tag + ".rpt";
+        EXPECT_LT(routingRow(rpt, "Flooding Loss"), 0.001 * routingRow(rpt, "External Inflow"))
+            << tag;
+        if (implicit)
+            continue;
+        ASSERT_TRUE(fv.avg_depth.count("JM") && dw.avg_depth.count("JM"));
+        EXPECT_NEAR(fv.avg_depth.at("JM"), dw.avg_depth.at("JM"), 0.25 * dw.avg_depth.at("JM"));
+    }
+}
+
+// The other half of the rule: while the node does splice its two conduits, its
+// faces solve one interface and keep the shared section. Solved twice in two
+// geometries, the same step opens a 23 % continuity error at the junction.
+TEST(FvEngine, ACleanSectionStepStaysOneInterface) {
+    ASSERT_TRUE(runModel(writeSectionStepModel("step_clean", "FV", 0.05, kCleanStep)).parsed);
+    EXPECT_FALSE(reportHas(outDir() + "/step_clean.rpt", "Node JM ("))
+        << "the splice is no longer conservative at the step";
+}
+
+// ===========================================================================
 // A mesh the FV solver cannot build must FAIL, not run unrouted
 // ===========================================================================
 
