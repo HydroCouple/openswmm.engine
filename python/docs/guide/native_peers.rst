@@ -79,3 +79,18 @@ Inlet designs can be checked without modifying the model with
 ``solver.infrastructure.inlets.validate_design(record)``. The returned record
 contains the normalized active fields and the resolved custom curve kind;
 it can be passed directly to ``set_design`` after review.
+
+Complete table and control edits are also atomic. ``table.validate_points(rows)``
+checks raw numeric pairs without mutation; ``replace_points`` publishes the rows
+and relative-prefix metadata together. Time-series X and anchor values are native
+OADate days. ``file_token=None`` preserves a FILE binding; an empty token detaches
+it. ``solver.controls.replace_program(blocks, publish=False)`` validates the whole
+ordered program, including declarations shared by later rules; the default
+publishes it atomically. Diagnostics use a growing buffer.
+
+``lids.validate_type`` and ``validate_layers`` preflight type and complete NODE
+profile changes. The latter accepts the same layers, treatment and material
+records as ``set_layers``, with explicit flow options. ``get_extra``/``set_extra``
+use ``LidExtraField`` for stored scalar members; ``get_drain_curve`` returns a
+copied curve token. These operations retain the native lifecycle and input-unit
+rules.

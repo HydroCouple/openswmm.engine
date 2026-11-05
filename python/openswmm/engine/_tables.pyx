@@ -130,6 +130,45 @@ cdef class _PointTable:
         """Remove all points."""
         _check(swmm_table_clear(_h(self._solver), self._index))
 
+    def validate_points(self, points, *, int relative_count=0, double anchor=0):
+        """Preflight raw (x, y) rows; x and anchor use native OADate days for series."""
+        self._replace_points(points, relative_count, anchor, None, False)
+
+    def replace_points(self, points, *, int relative_count=0, double anchor=0, file_token=None):
+        """Atomically replace raw rows and relative metadata; None preserves FILE, '' detaches."""
+        self._replace_points(points, relative_count, anchor, file_token, True)
+
+    def _replace_points(self, points, int relative_count, double anchor, file_token, bint publish):
+        cdef np.ndarray[double, ndim=2] rows
+        cdef np.ndarray[double, ndim=1] x, y
+        cdef bytes token
+        cdef const char* raw_token = NULL
+        cdef int count
+        with self._solver._operation():
+            values = list(points)
+            rows = np.array(values, dtype=np.float64, order='C') if values else np.empty((0, 2))
+            if rows.shape[1] != 2:
+                raise ValueError("points must contain (x, y) rows")
+            x = np.ascontiguousarray(rows[:, 0])
+            y = np.ascontiguousarray(rows[:, 1])
+            count = len(values)
+            if file_token is not None:
+                token = str(file_token).encode('utf-8')
+                if b'\0' in token:
+                    raise ValueError("file_token must not contain NUL")
+                raw_token = token
+            if self.id != self._captured_id:
+                from ._exceptions import StaleObjectError
+                raise StaleObjectError("Table changed; reacquire it before replacing points")
+            if publish:
+                _check(swmm_table_replace_points(_h(self._solver), self._index,
+                    &x[0] if count else NULL, &y[0] if count else NULL,
+                    count, relative_count, anchor, raw_token))
+            else:
+                _check(swmm_table_validate_points(_h(self._solver), self._index,
+                    &x[0] if count else NULL, &y[0] if count else NULL,
+                    count, relative_count, anchor))
+
     def lookup(self, double x) -> float:
         """Interpolate y at x using the underlying SWMM lookup."""
         cdef double v = 0.0

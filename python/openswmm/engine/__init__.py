@@ -311,7 +311,7 @@ from ._enums import (
     # Hydrology
     InfilModel, GageDataSource, GageRainType,
     # Water quality / LID
-    ConcentrationUnits, BuildupFunc, WashoffFunc, LidType,
+    ConcentrationUnits, BuildupFunc, WashoffFunc, LidType, LidExtraField,
     # Hydrology parameters
     AquiferParam, GwfType,
     # Output variables
@@ -392,7 +392,7 @@ __all__ = [
     # --- Enumerations: hydrology ---
     "InfilModel", "GageDataSource", "GageRainType",
     # --- Enumerations: water quality / LID ---
-    "ConcentrationUnits", "BuildupFunc", "WashoffFunc", "LidType", "LidNodeLayer", "LidNodeLayerKind", "LidLayerTreatment",
+    "ConcentrationUnits", "BuildupFunc", "WashoffFunc", "LidType", "LidExtraField", "LidNodeLayer", "LidNodeLayerKind", "LidLayerTreatment",
     # --- Enumerations: hydrology parameters ---
     "AquiferParam", "GwfType",
     # --- Enumerations: output variables ---

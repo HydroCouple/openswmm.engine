@@ -1848,3 +1848,16 @@ class SplitPhase(IntEnum):
     SOURCE_PREPARE = 5
     LID_TRIAL = 6
     LID_ACCEPT = 7
+
+
+class LidExtraField(IntEnum):
+    """Stored layer fields: vegetation fraction; side slope/clogging dimensionless;
+    suction and drain open/close in authored in/mm; drain delay in hours.
+    """
+    SURFACE_VEGETATION = 0
+    SURFACE_SIDE_SLOPE = 1
+    SOIL_SUCTION = 2
+    STORAGE_CLOGGING = 3
+    DRAIN_DELAY = 4
+    DRAIN_OPEN = 5
+    DRAIN_CLOSE = 6

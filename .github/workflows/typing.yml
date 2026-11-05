@@ -43,7 +43,7 @@ jobs:
           - label: "openswmm.engine (default mode)"
             args: "openswmm/engine"
           - label: "tests/typing/ (strict mode)"
-            args: "--strict tests/typing/test_surface.py"
+            args: "--strict tests/typing/"
 
     steps:
       - name: Checkout repository

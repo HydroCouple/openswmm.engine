@@ -1037,6 +1037,25 @@ class LIDs:
         and specific_storage, one per authored layer; alpha/storage use 1/m.
         When flow is supplied, omitted treatments/materials retain readback values.
         """
+        self._configure_layers(key, layers, treatments=treatments, flow=flow, materials=materials)
+
+    def validate_layers(self, key, layers, *, flow, treatments=None, materials=None):
+        """Pure preflight of the complete NODE profile, including flow and treatment."""
+        if flow is None:
+            raise ValueError("flow options are required for profile validation")
+        self._configure_layers(key, layers, treatments=treatments, flow=flow, materials=materials, validate=True)
+
+    @_record_access
+    def _configure_layers(self, key, layers, *, treatments=None, flow=None, materials=None, bint validate=False):
+        """Atomically replace an arbitrary ordered NODE stack and sync its nodes.
+
+        Accepts an iterable of LidNodeLayer. Invalid stacks leave the old stack,
+        node MaxDepths and anchored link offsets unchanged. Pre-start only.
+        Optional flow is a mapping with model, cells_per_layer, atol, rtol and
+        max_step (seconds). Materials are mappings with theta_r, alpha, n, l
+        and specific_storage, one per authored layer; alpha/storage use 1/m.
+        When flow is supplied, omitted treatments/materials retain readback values.
+        """
         cdef SWMM_Engine h = _h(self._solver)
         cdef int idx = _resolve_index(h, key, swmm_lid_index, swmm_lid_count, "LID")
         values = list(layers)
@@ -1103,7 +1122,10 @@ class LIDs:
                 if flow is None:
                     _check(swmm_lid_node_configure(h, idx, rows, count, rules, rule_count))
                 else:
-                    _check(swmm_lid_node_configure_flow(h, idx, rows, count, rules, rule_count, &options, retention))
+                    if validate:
+                        _check(swmm_lid_node_validate_flow(h, idx, rows, count, rules, rule_count, &options, retention))
+                    else:
+                        _check(swmm_lid_node_configure_flow(h, idx, rows, count, rules, rule_count, &options, retention))
         finally:
             free(retention)
             free(rules)
@@ -1263,6 +1285,31 @@ class LIDs:
     def set_type(self, int idx, int lid_type) -> None:
         """Change the type of an unassigned LID before an ordered layer stack is applied."""
         _check(swmm_lid_set_type(_h(self._solver), idx, lid_type))
+
+    @_record_access
+    def validate_type(self, int idx, int lid_type) -> None:
+        """Preflight a type change without changing the control or its assignments."""
+        _check(swmm_lid_validate_type(_h(self._solver), idx, lid_type))
+
+    @_record_access
+    def get_extra(self, int idx, int field) -> float:
+        """Read a LidExtraField scalar in authored input units."""
+        cdef double value
+        _check(swmm_lid_get_extra(_h(self._solver), idx, field, &value))
+        return value
+
+    @_record_access
+    def set_extra(self, int idx, int field, double value) -> None:
+        """Set one checked scalar, preserving its sibling fields."""
+        _check(swmm_lid_set_extra(_h(self._solver), idx, field, value))
+
+    @_record_access
+    def get_drain_curve(self, int idx) -> str:
+        """Copy the authored drain curve token; reject an invalid control index."""
+        if not 0 <= idx < swmm_lid_count(_h(self._solver)):
+            raise IndexError(idx)
+        cdef const char* value = swmm_lid_get_drain_curve(_h(self._solver), idx)
+        return value.decode('utf-8') if value != NULL else ''
 
     def get_type(self, int idx) -> int:
         """Return the LID control's type code (inverse of the ``lid_type``

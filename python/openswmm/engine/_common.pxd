@@ -2061,3 +2061,16 @@ cdef extern from "openswmm/engine/openswmm_infrastructure.h":
     int swmm_storage_lid_prepare(SWMM_Engine, int, int, double, int, SWMM_StorageLidState*, SWMM_StorageLidAnchor*, int, int*)
     int swmm_storage_lid_validate(SWMM_Engine, int, const SWMM_StorageLidState*, const SWMM_StorageLidAnchor*, int)
     int swmm_storage_lid_replace(SWMM_Engine, int, const SWMM_StorageLidState*, const SWMM_StorageLidAnchor*, int)
+
+
+cdef extern from "openswmm/engine/openswmm_controls.h":
+    int swmm_control_replace_program(SWMM_Engine, const char* const*, int, int, char*, int)
+cdef extern from "openswmm/engine/openswmm_tables.h":
+    int swmm_table_validate_points(SWMM_Engine, int, const double*, const double*, int, int, double)
+    int swmm_table_replace_points(SWMM_Engine, int, const double*, const double*, int, int, double, const char*)
+cdef extern from "openswmm/engine/openswmm_infrastructure.h":
+    int swmm_lid_validate_type(SWMM_Engine, int, int)
+    int swmm_lid_get_extra(SWMM_Engine, int, int, double*)
+    int swmm_lid_set_extra(SWMM_Engine, int, int, double)
+    const char* swmm_lid_get_drain_curve(SWMM_Engine, int)
+    int swmm_lid_node_validate_flow(SWMM_Engine, int, const SWMM_LidNodeLayer*, int, const SWMM_LidLayerTreatment*, int, const SWMM_LidRichardsOptions*, const SWMM_LidRichardsMaterial*)

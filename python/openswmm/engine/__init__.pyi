@@ -173,6 +173,7 @@ from ._enums import (
     BuildupFunc as BuildupFunc,
     ConcentrationUnits as ConcentrationUnits,
     LidType as LidType,
+    LidExtraField as LidExtraField,
     WashoffFunc as WashoffFunc,
     # Transport processes — heat, water age, reactions
     HeatFluxModule as HeatFluxModule,

@@ -47,10 +47,12 @@ a :class:`MutableSequence` of :class:`ControlRule` records over the
 
 # cython: language_level=3
 
+from cpython.bytearray cimport PyByteArray_AsString
+from libc.string cimport strlen
 from collections.abc import MutableSequence
 from typing import NamedTuple
 
-from libc.stdlib cimport malloc, free
+from libc.stdlib cimport malloc, calloc, free
 
 from ._common cimport *
 
@@ -149,6 +151,39 @@ class Controls(MutableSequence):
         """Remove all control rules from the model."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_control_clear_rules(h))
+
+    def replace_program(self, blocks, *, bint publish=True) -> None:
+        """Validate (publish=False) or atomically replace the complete ordered program."""
+        cdef const char** pointers = NULL
+        cdef int n, rc
+        cdef char* error
+        cdef int capacity = 256
+        with self._solver._operation():
+            encoded = [self._unpack(block).encode('utf-8') for block in blocks]
+            if any(b'\0' in block for block in encoded):
+                raise ValueError("Control blocks must not contain NUL")
+            n = len(encoded)
+            if n:
+                pointers = <const char**>calloc(n, sizeof(char*))
+                if pointers == NULL:
+                    raise MemoryError()
+            try:
+                for i in range(n):
+                    pointers[i] = <bytes>encoded[i]
+                while True:
+                    storage = bytearray(capacity)
+                    error = PyByteArray_AsString(storage)
+                    rc = swmm_control_replace_program(<SWMM_Engine><size_t>self._solver.handle,
+                                                      pointers, n, publish, error, capacity)
+                    if rc and strlen(error) >= capacity - 1:
+                        capacity *= 2
+                        continue
+                    break
+                if rc:
+                    from ._exceptions import raise_for_code
+                    raise_for_code(rc, error.decode('utf-8', 'replace'))
+            finally:
+                free(pointers)
 
     def remove_rule(self, int idx) -> None:
         """Remove a single control rule by index.
