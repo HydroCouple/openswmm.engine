@@ -361,3 +361,14 @@ cases the current code excludes). Acceptance gates as in the table.
   to ph_o6 (`.uncertainty.csv` cmp-equal): 3,892 steps, 194,550 solves, Newton 302,004, Jacobi 29 (all converged),
   not converged 0, wall 290 s (ph_o5: 35/0/336 s). The coupled Bellinge was NOT rerun (owner decision); whether
   the fix removes the tail there, and what it does to the 1D 0.944/1.650 aggregate, is open.
+- 2026-11-06: **Bellinge `demo_ph5` on O-7 code finished** (6,816 steps; 39,755 s wall incl. sleep/throttle gaps —
+  not a measurement; `caffeinate -w` brought the last 3 h to ~126 CPU-min per 80 wall-min). Solver: 340,750 member
+  solves, Newton 1,137,914, Jacobi fallbacks 475, non-converged 28 (0.008 %), members > 0.05 ft below invert 4,387
+  (6,227 before), deepest −105.9 ft (unchanged: class C still open). **Score vs mc_v3 — the O-7 pond-booking fix
+  removes the 1D regression**: 1D all manholes **0.947/1.416 CALIBRATED** (OFF 0.957/1.40; O-6 ON 0.944/1.650);
+  trunk 0.815/1.210 (OFF 0.814/1.26); 2D street 0.620/0.158 ranking (OFF 0.698/0.21; O-6 ON 0.665/0.155);
+  P(>20 cm) Brier 0.0191 vs no-skill 0.1113 = 0.17 (OFF 0.041/0.106 = 0.39; O-6 ON 0.0305/0.0997 = 0.31). Reliability
+  95–100 % class → 89.5 % observed (940 cells), 50–75 % → 44 %. By MC span: 5–20 cm 0.910/1.776 conservative,
+  20–100 cm 0.795/1.216 ranking only (as with OFF). Phase 5 with the hook ON is now at least as good as OFF on
+  every 1D aggregate and clearly better on flood-probability skill; the 2D street band coverage did not improve
+  (0.62 vs 0.70). Decision pending: make per-member the default (hook deleted) vs keep OFF — see summary.
