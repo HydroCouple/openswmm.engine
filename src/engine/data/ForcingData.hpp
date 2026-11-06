@@ -1,6 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file ForcingData.hpp
- * @brief Per-element runtime forcing state — SoA layout.
+ * @file      ForcingData.hpp
+ * @brief     Per-element runtime forcing state — SoA layout.
  *
  * @details Stores user-injected forcing mode, value, and persistence for every
  *          forceable quantity (lateral inflow, head boundary, rainfall,
@@ -17,9 +33,9 @@
  * @see src/engine/core/SWMMEngine.cpp               (integration)
  * @ingroup engine_data
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_FORCING_DATA_HPP
@@ -28,6 +44,8 @@
 #include <cstdint>
 #include <vector>
 
+#include "HeatOverrideData.hpp" // HeatElement — PE4
+
 namespace openswmm {
 
 // ============================================================================
@@ -35,14 +53,14 @@ namespace openswmm {
 // ============================================================================
 
 enum class ForcingMode : int8_t {
-    NONE     = 0,   ///< Use model-computed value (no forcing)
-    OVERRIDE = 1,   ///< Replace computed value with user value
-    ADD      = 2    ///< Add user value to computed value
+    NONE = 0,     ///< Use model-computed value (no forcing)
+    OVERRIDE = 1, ///< Replace computed value with user value
+    ADD = 2       ///< Add user value to computed value
 };
 
 enum class ForcingPersist : int8_t {
-    RESET   = 0,    ///< Auto-clear after each timestep
-    PERSIST = 1     ///< Keep until explicitly cleared
+    RESET = 0,  ///< Auto-clear after each timestep
+    PERSIST = 1 ///< Keep until explicitly cleared
 };
 
 // ============================================================================
@@ -53,73 +71,264 @@ struct ForcingData {
 
     // ------ Node forcing (sized to n_nodes) ---------------------------------
 
-    std::vector<ForcingMode>    node_lat_inflow_mode;
-    std::vector<double>         node_lat_inflow_value;
+    std::vector<ForcingMode> node_lat_inflow_mode;
+    std::vector<double> node_lat_inflow_value;
     std::vector<ForcingPersist> node_lat_inflow_persist;
 
-    std::vector<ForcingMode>    node_head_boundary_mode;
-    std::vector<double>         node_head_boundary_value;
+    std::vector<ForcingMode> node_head_boundary_mode;
+    std::vector<double> node_head_boundary_value;
     std::vector<ForcingPersist> node_head_boundary_persist;
 
     // Node quality: flat 2D [node_idx * n_pollutants + pollutant_idx]
-    std::vector<ForcingMode>    node_quality_mode;
-    std::vector<double>         node_quality_value;     ///< mass rate (mass/sec)
+    std::vector<ForcingMode> node_quality_mode;
+    std::vector<double> node_quality_value; ///< mass rate (mass/sec)
     std::vector<ForcingPersist> node_quality_persist;
+
+    // U2 (2026-09-07) — the reserved species, the twins of node_quality:
+    // OVERRIDE sets the PUBLISHED state (degC / hours); ADD injects a rate
+    // into the loader accumulator every engine already reads
+    // (heat_state.node_temp_vol_in in degC·ft3/s,
+    // water_age_state.node_age_vol_in in s·ft3/s). One entry per node.
+    std::vector<ForcingMode> node_temperature_mode;
+    std::vector<double> node_temperature_value;
+    std::vector<ForcingPersist> node_temperature_persist;
+
+    std::vector<ForcingMode> node_age_mode;
+    std::vector<double> node_age_value;
+    std::vector<ForcingPersist> node_age_persist;
 
     // ------ Link forcing (sized to n_links) ---------------------------------
 
-    std::vector<ForcingMode>    link_flow_mode;
-    std::vector<double>         link_flow_value;
+    std::vector<ForcingMode> link_flow_mode;
+    std::vector<double> link_flow_value;
     std::vector<ForcingPersist> link_flow_persist;
 
-    std::vector<ForcingMode>    link_setting_mode;
-    std::vector<double>         link_setting_value;     ///< 0.0–1.0 for pump/orifice/weir
+    std::vector<ForcingMode> link_setting_mode;
+    std::vector<double> link_setting_value; ///< 0.0–1.0 for pump/orifice/weir
     std::vector<ForcingPersist> link_setting_persist;
 
-    std::vector<ForcingMode>    link_quality_mode;      ///< flattened link × pollutant
-    std::vector<double>         link_quality_value;     ///< OVERRIDE: concentration; ADD: mass rate (mass/sec)
+    /// G-X4 (2026-09-20): a host's conduit ⇄ groundwater exchange rate
+    /// (internal flow units, `+` OUT of the conduit — the `seep_loss_rate`
+    /// sign). This is the HydroCouple `link_exchange_flow` inlet: an
+    /// external groundwater model computes the exchange and the conduit
+    /// routes it, in place of (OVERRIDE) or on top of (ADD) whatever the
+    /// [LOSSES] rate or the internal signed law produced.
+    std::vector<ForcingMode> link_seepage_mode;
+    std::vector<double> link_seepage_value;
+    std::vector<ForcingPersist> link_seepage_persist;
+
+    std::vector<ForcingMode> link_quality_mode; ///< flattened link × pollutant
+    std::vector<double> link_quality_value; ///< OVERRIDE: concentration; ADD: mass rate (mass/sec)
     std::vector<ForcingPersist> link_quality_persist;
 
     // ------ Subcatchment forcing (sized to n_subcatches) --------------------
 
-    std::vector<ForcingMode>    subcatch_rainfall_mode;
-    std::vector<double>         subcatch_rainfall_value; ///< user units (in/hr or mm/hr)
+    std::vector<ForcingMode> subcatch_rainfall_mode;
+    std::vector<double> subcatch_rainfall_value; ///< user units (in/hr or mm/hr)
     std::vector<ForcingPersist> subcatch_rainfall_persist;
 
-    std::vector<ForcingMode>    subcatch_evap_mode;
-    std::vector<double>         subcatch_evap_value;     ///< prescribed PET rate, ft/sec (internal units; converted from in/day or mm/day at the C API boundary)
+    std::vector<ForcingMode> subcatch_evap_mode;
+    std::vector<double>
+        subcatch_evap_value; ///< prescribed PET rate, ft/sec (internal units; converted from in/day or mm/day at the C API boundary)
     std::vector<ForcingPersist> subcatch_evap_persist;
 
-    std::vector<ForcingMode>    subcatch_snowfall_mode;
-    std::vector<double>         subcatch_snowfall_value; ///< ft/sec (internal; converted from in/hr or mm/hr at the C API boundary)
+    std::vector<ForcingMode> subcatch_snowfall_mode;
+    std::vector<double>
+        subcatch_snowfall_value; ///< ft/sec (internal; converted from in/hr or mm/hr at the C API boundary)
     std::vector<ForcingPersist> subcatch_snowfall_persist;
 
     // ------ Gage forcing (sized to n_gages) ---------------------------------
 
-    std::vector<ForcingMode>    gage_rainfall_mode;
-    std::vector<double>         gage_rainfall_value;     ///< user units (in/hr or mm/hr)
+    std::vector<ForcingMode> gage_rainfall_mode;
+    std::vector<double> gage_rainfall_value; ///< user units (in/hr or mm/hr)
     std::vector<ForcingPersist> gage_rainfall_persist;
 
     // ------ Climate forcing (scalar — system-wide) ---------------------------
 
-    ForcingMode    climate_temperature_mode    = ForcingMode::NONE;
-    double         climate_temperature_value   = 0.0;  ///< deg F (internal; converted from deg C at the C API boundary for SI)
+    ForcingMode climate_temperature_mode = ForcingMode::NONE;
+    double climate_temperature_value =
+        0.0; ///< deg F (internal; converted from deg C at the C API boundary for SI)
     ForcingPersist climate_temperature_persist = ForcingPersist::RESET;
 
-    ForcingMode    climate_wind_mode    = ForcingMode::NONE;
-    double         climate_wind_value   = 0.0;         ///< mph (internal; converted from km/hr at the C API boundary for SI)
+    ForcingMode climate_wind_mode = ForcingMode::NONE;
+    double climate_wind_value =
+        0.0; ///< mph (internal; converted from km/hr at the C API boundary for SI)
     ForcingPersist climate_wind_persist = ForcingPersist::RESET;
 
-    ForcingMode    climate_evap_mode    = ForcingMode::NONE;
-    double         climate_evap_value   = 0.0;         ///< ft/sec (internal; converted from in/day or mm/day at the C API boundary)
+    ForcingMode climate_evap_mode = ForcingMode::NONE;
+    double climate_evap_value =
+        0.0; ///< ft/sec (internal; converted from in/day or mm/day at the C API boundary)
     ForcingPersist climate_evap_persist = ForcingPersist::RESET;
+
+    // ------ PE4: per-ELEMENT climate (API only; no deck syntax) -------------
+    //
+    // Air temperature, humidity, wind and incoming shortwave are GLOBAL in
+    // every deck and per-element ONLY through this API. The caller is a
+    // coupled driver — an MCP session, a calibration loop, or a HydroCouple
+    // composition where an atmospheric or riparian-shade model owns the
+    // near-surface field — asserting the heterogeneity deliberately, per
+    // step, and answerable for it. That is how the reference works too:
+    // RHEComponent and CSHComponent receive per-element meteorology through
+    // EXCHANGE ITEMS, never through their input files.
+    //
+    // ⚠ These are resolved AT THE FLUX CALL (SurfaceExchange/RadiativeExchange),
+    // never written into ClimateState. That is the whole safety property:
+    // ClimateState is shared with hydrology, snowmelt and evaporation, and a
+    // per-link push must not reach them. A "simplification" that assigned
+    // these into climate_state would silently give the snowpack above a
+    // conduit that conduit's air temperature.
+    //
+    // Scope is LINK and NODE only. Neither has a competing consumer for air
+    // temperature — snowmelt runs on subcatchments, evaporation on
+    // subcatchment and storage surfaces — so no subsystem divergence is
+    // possible. SUBCATCH is refused at the API boundary, naming that reason.
+    //
+    // Sized lazily on first use (the D-PE2 pattern): a model that never
+    // calls these allocates nothing and pays one `.empty()` check per flux.
+    struct ElemClimateChannel {
+        std::vector<ForcingMode> mode;
+        std::vector<double> value;
+        std::vector<ForcingPersist> persist;
+
+        /**
+         * @brief Allocate a channel shape or preserve an already matching shape.
+         *
+         * If mode.size()==n returns without checking value/persist alignment. Otherwise replaces modes with
+         * NONE, values with zero, persistence RESET; allocation may interrupt the assignments.
+         *
+         * @param[in] n Element count for all three parallel arrays.
+         */
+        void ensure(std::size_t n) {
+            if (mode.size() == n)
+                return;
+            mode.assign(n, ForcingMode::NONE);
+            value.assign(n, 0.0);
+            persist.assign(n, ForcingPersist::RESET);
+        }
+        /**
+         * @brief Resolve an element override/addition against a supplied baseline.
+         *
+         * Caller aligns value/persist with mode; does not clamp, validate finite values or mutate climate
+         * state.
+         *
+         * @param[in] i Element index; negative or outside mode returns base.
+         * @param[in] base Broadcast value in this channel's units.
+         * @return base for absent/NONE; value for OVERRIDE; base+value for any other non-NONE mode.
+         */
+        double apply(int i, double base) const noexcept {
+            if (i < 0)
+                return base;
+            const auto u = static_cast<std::size_t>(i);
+            if (u >= mode.size() || mode[u] == ForcingMode::NONE)
+                return base;
+            return (mode[u] == ForcingMode::OVERRIDE) ? value[u] : base + value[u];
+        }
+        /**
+         * @brief Disable only channel entries marked RESET.
+         *
+         * Requires persist aligned with mode. Preserves values/persistence, dimensions and PERSIST entries.
+         */
+        void resetPerStep() {
+            for (std::size_t i = 0; i < mode.size(); ++i)
+                if (persist[i] == ForcingPersist::RESET)
+                    mode[i] = ForcingMode::NONE;
+        }
+        /**
+         * @brief Release all owned element-climate channel arrays.
+         *
+         * Restores an empty channel, invalidating borrowed elements; does not alter global climate forcing.
+         */
+        void clear() { *this = ElemClimateChannel{}; }
+    };
+
+    /// [0] = LINK, [1] = NODE. Indexed by `elemSlot` below so the two kinds
+    /// cannot be confused at a call site.
+    ElemClimateChannel elem_air_temp[2];  ///< deg F
+    ElemClimateChannel elem_humidity[2];  ///< %
+    ElemClimateChannel elem_wind[2];      ///< mph
+    ElemClimateChannel elem_shortwave[2]; ///< W/m2
+
+    /**
+     * @brief Map a heat element category to the per-element climate slot.
+     *
+     * @param[in] k Heat-element category; only LINK and NODE have channels.
+     * @return 0 for LINK, 1 for NODE, otherwise -1.
+     */
+    static int elemSlot(HeatElemKind k) noexcept {
+        if (k == HeatElemKind::LINK)
+            return 0;
+        if (k == HeatElemKind::NODE)
+            return 1;
+        return -1;
+    }
+
+    /**
+     * @brief Resolve air-temperature forcing for one heat element.
+     *
+     * Does not validate model index, clamp physical range, or change shared ClimateState. Channel
+     * parallel arrays must be aligned.
+     *
+     * @param[in] e Borrowed element descriptor; LINK/NODE supported, other kinds return base.
+     *     Negative/unallocated indices also fall back.
+     * @param[in] base Broadcast air-temperature in deg F.
+     * @return Effective value in deg F using NONE/OVERRIDE/ADD channel semantics.
+     */
+    double elementAirTempF(const HeatElement& e, double base) const noexcept {
+        const int s = elemSlot(e.kind);
+        return (s < 0) ? base : elem_air_temp[s].apply(e.index, base);
+    }
+    /**
+     * @brief Resolve humidity forcing for one heat element.
+     *
+     * Does not validate model index, clamp physical range, or change shared ClimateState. Channel
+     * parallel arrays must be aligned.
+     *
+     * @param[in] e Borrowed element descriptor; LINK/NODE supported, other kinds return base.
+     *     Negative/unallocated indices also fall back.
+     * @param[in] base Broadcast humidity in % relative humidity.
+     * @return Effective value in % relative humidity using NONE/OVERRIDE/ADD channel semantics.
+     */
+    double elementHumidity(const HeatElement& e, double base) const noexcept {
+        const int s = elemSlot(e.kind);
+        return (s < 0) ? base : elem_humidity[s].apply(e.index, base);
+    }
+    /**
+     * @brief Resolve wind-speed forcing for one heat element.
+     *
+     * Does not validate model index, clamp physical range, or change shared ClimateState. Channel
+     * parallel arrays must be aligned.
+     *
+     * @param[in] e Borrowed element descriptor; LINK/NODE supported, other kinds return base.
+     *     Negative/unallocated indices also fall back.
+     * @param[in] base Broadcast wind-speed in mph.
+     * @return Effective value in mph using NONE/OVERRIDE/ADD channel semantics.
+     */
+    double elementWindMph(const HeatElement& e, double base) const noexcept {
+        const int s = elemSlot(e.kind);
+        return (s < 0) ? base : elem_wind[s].apply(e.index, base);
+    }
+    /**
+     * @brief Resolve incoming-shortwave forcing for one heat element.
+     *
+     * Does not validate model index, clamp physical range, or change shared ClimateState. Channel
+     * parallel arrays must be aligned.
+     *
+     * @param[in] e Borrowed element descriptor; LINK/NODE supported, other kinds return base.
+     *     Negative/unallocated indices also fall back.
+     * @param[in] base Broadcast incoming-shortwave in W/m2.
+     * @return Effective value in W/m2 using NONE/OVERRIDE/ADD channel semantics.
+     */
+    double elementShortwave(const HeatElement& e, double base) const noexcept {
+        const int s = elemSlot(e.kind);
+        return (s < 0) ? base : elem_shortwave[s].apply(e.index, base);
+    }
 
     // ------ Counts (for iteration) ------------------------------------------
 
-    int n_nodes_      = 0;
-    int n_links_      = 0;
+    int n_nodes_ = 0;
+    int n_links_ = 0;
     int n_subcatches_ = 0;
-    int n_gages_      = 0;
+    int n_gages_ = 0;
     int n_pollutants_ = 0;
 
     // ========================================================================
@@ -127,22 +336,30 @@ struct ForcingData {
     // ========================================================================
 
     /**
-     * @brief Allocate all arrays and initialise to NONE / 0 / RESET.
+     * @brief Replace object-channel arrays with NONE/zero/RESET defaults.
+     *
+     * Stores counts before allocating flattened object-major quality arrays. Existing object forcing
+     * values are discarded; scalar climate and lazily allocated element-climate channels are unchanged.
+     * No negative/dimension overflow checks or transactional rollback on allocation failure.
+     *
+     * @param[in] n_nodes Nonnegative node count.
+     * @param[in] n_links Nonnegative link count.
+     * @param[in] n_subcatches Nonnegative subcatchment count.
+     * @param[in] n_gages Nonnegative rain-gage count.
+     * @param[in] n_pollutants Nonnegative pollutants per node/link; dimension products must fit size_t.
      */
-    void resize(int n_nodes, int n_links, int n_subcatches,
-                int n_gages, int n_pollutants) {
-        n_nodes_      = n_nodes;
-        n_links_      = n_links;
+    void resize(int n_nodes, int n_links, int n_subcatches, int n_gages, int n_pollutants) {
+        n_nodes_ = n_nodes;
+        n_links_ = n_links;
         n_subcatches_ = n_subcatches;
-        n_gages_      = n_gages;
+        n_gages_ = n_gages;
         n_pollutants_ = n_pollutants;
 
-        auto un  = static_cast<std::size_t>(n_nodes);
-        auto ul  = static_cast<std::size_t>(n_links);
-        auto us  = static_cast<std::size_t>(n_subcatches);
-        auto ug  = static_cast<std::size_t>(n_gages);
-        auto unp = static_cast<std::size_t>(n_nodes) *
-                   static_cast<std::size_t>(n_pollutants);
+        auto un = static_cast<std::size_t>(n_nodes);
+        auto ul = static_cast<std::size_t>(n_links);
+        auto us = static_cast<std::size_t>(n_subcatches);
+        auto ug = static_cast<std::size_t>(n_gages);
+        auto unp = static_cast<std::size_t>(n_nodes) * static_cast<std::size_t>(n_pollutants);
 
         node_lat_inflow_mode.assign(un, ForcingMode::NONE);
         node_lat_inflow_value.assign(un, 0.0);
@@ -156,6 +373,14 @@ struct ForcingData {
         node_quality_value.assign(unp, 0.0);
         node_quality_persist.assign(unp, ForcingPersist::RESET);
 
+        node_temperature_mode.assign(un, ForcingMode::NONE);
+        node_temperature_value.assign(un, 0.0);
+        node_temperature_persist.assign(un, ForcingPersist::RESET);
+
+        node_age_mode.assign(un, ForcingMode::NONE);
+        node_age_value.assign(un, 0.0);
+        node_age_persist.assign(un, ForcingPersist::RESET);
+
         link_flow_mode.assign(ul, ForcingMode::NONE);
         link_flow_value.assign(ul, 0.0);
         link_flow_persist.assign(ul, ForcingPersist::RESET);
@@ -164,8 +389,11 @@ struct ForcingData {
         link_setting_value.assign(ul, 0.0);
         link_setting_persist.assign(ul, ForcingPersist::RESET);
 
-        auto ulp = static_cast<std::size_t>(n_links) *
-                   static_cast<std::size_t>(n_pollutants);
+        link_seepage_mode.assign(ul, ForcingMode::NONE); // G-X4
+        link_seepage_value.assign(ul, 0.0);
+        link_seepage_persist.assign(ul, ForcingPersist::RESET);
+
+        auto ulp = static_cast<std::size_t>(n_links) * static_cast<std::size_t>(n_pollutants);
         link_quality_mode.assign(ulp, ForcingMode::NONE);
         link_quality_value.assign(ulp, 0.0);
         link_quality_persist.assign(ulp, ForcingPersist::RESET);
@@ -188,25 +416,32 @@ struct ForcingData {
     }
 
     /**
-     * @brief Reset ALL forcing modes to NONE (called on simulation restart).
+     * @brief Disable object and global-climate forcing modes.
+     *
+     * Preserves all values, persistence flags and dimensions. Does not visit the lazy per-element
+     * climate channels; callers requiring their reset clear those separately.
      */
     void clear_all() {
         auto set_none = [](auto& mode_vec) {
-            for (auto& m : mode_vec) m = ForcingMode::NONE;
+            for (auto& m : mode_vec)
+                m = ForcingMode::NONE;
         };
         set_none(node_lat_inflow_mode);
         set_none(node_head_boundary_mode);
         set_none(node_quality_mode);
+        set_none(node_temperature_mode);
+        set_none(node_age_mode);
         set_none(link_flow_mode);
         set_none(link_setting_mode);
+        set_none(link_seepage_mode); // G-X4
         set_none(link_quality_mode);
         set_none(subcatch_rainfall_mode);
         set_none(subcatch_evap_mode);
         set_none(subcatch_snowfall_mode);
         set_none(gage_rainfall_mode);
         climate_temperature_mode = ForcingMode::NONE;
-        climate_wind_mode        = ForcingMode::NONE;
-        climate_evap_mode        = ForcingMode::NONE;
+        climate_wind_mode = ForcingMode::NONE;
+        climate_evap_mode = ForcingMode::NONE;
     }
 
     /**
@@ -223,22 +458,38 @@ struct ForcingData {
                     mode_vec[i] = ForcingMode::NONE;
             }
         };
-        clear_resets(node_lat_inflow_mode,      node_lat_inflow_persist);
-        clear_resets(node_head_boundary_mode,    node_head_boundary_persist);
-        clear_resets(node_quality_mode,          node_quality_persist);
-        clear_resets(link_flow_mode,             link_flow_persist);
-        clear_resets(link_setting_mode,          link_setting_persist);
-        clear_resets(link_quality_mode,          link_quality_persist);
-        clear_resets(subcatch_rainfall_mode,     subcatch_rainfall_persist);
-        clear_resets(subcatch_evap_mode,         subcatch_evap_persist);
-        clear_resets(subcatch_snowfall_mode,     subcatch_snowfall_persist);
-        clear_resets(gage_rainfall_mode,         gage_rainfall_persist);
+        clear_resets(node_lat_inflow_mode, node_lat_inflow_persist);
+        clear_resets(node_head_boundary_mode, node_head_boundary_persist);
+        clear_resets(node_quality_mode, node_quality_persist);
+        clear_resets(node_temperature_mode, node_temperature_persist);
+        clear_resets(node_age_mode, node_age_persist);
+        clear_resets(link_flow_mode, link_flow_persist);
+        clear_resets(link_setting_mode, link_setting_persist);
+        clear_resets(link_seepage_mode, link_seepage_persist); // G-X4
+        clear_resets(link_quality_mode, link_quality_persist);
+        clear_resets(subcatch_rainfall_mode, subcatch_rainfall_persist);
+        clear_resets(subcatch_evap_mode, subcatch_evap_persist);
+        clear_resets(subcatch_snowfall_mode, subcatch_snowfall_persist);
+        clear_resets(gage_rainfall_mode, gage_rainfall_persist);
         if (climate_temperature_persist == ForcingPersist::RESET)
             climate_temperature_mode = ForcingMode::NONE;
         if (climate_wind_persist == ForcingPersist::RESET)
             climate_wind_mode = ForcingMode::NONE;
         if (climate_evap_persist == ForcingPersist::RESET)
             climate_evap_mode = ForcingMode::NONE;
+        // PE4: the per-element channels join the SAME sweep, so RESET
+        // semantics cannot drift between the global and element spellings.
+        // RESET is the documented default for a coupled driver: under
+        // PERSIST, a driver that pushes on some steps and not others
+        // silently reuses a stale field that looks like data and is hours
+        // old. Under RESET the value falls back to the global broadcast the
+        // moment the driver stops feeding it.
+        for (int k = 0; k < 2; ++k) {
+            elem_air_temp[k].resetPerStep();
+            elem_humidity[k].resetPerStep();
+            elem_wind[k].resetPerStep();
+            elem_shortwave[k].resetPerStep();
+        }
     }
 
     /**
@@ -249,9 +500,12 @@ struct ForcingData {
      */
     double effective_temperature(double broadcast) const noexcept {
         switch (climate_temperature_mode) {
-            case ForcingMode::OVERRIDE: return climate_temperature_value;
-            case ForcingMode::ADD:      return broadcast + climate_temperature_value;
-            default:                    return broadcast;
+        case ForcingMode::OVERRIDE:
+            return climate_temperature_value;
+        case ForcingMode::ADD:
+            return broadcast + climate_temperature_value;
+        default:
+            return broadcast;
         }
     }
 
@@ -263,9 +517,12 @@ struct ForcingData {
      */
     double effective_wind(double broadcast) const noexcept {
         switch (climate_wind_mode) {
-            case ForcingMode::OVERRIDE: return climate_wind_value;
-            case ForcingMode::ADD:      return broadcast + climate_wind_value;
-            default:                    return broadcast;
+        case ForcingMode::OVERRIDE:
+            return climate_wind_value;
+        case ForcingMode::ADD:
+            return broadcast + climate_wind_value;
+        default:
+            return broadcast;
         }
     }
 
@@ -281,11 +538,15 @@ struct ForcingData {
      * @return Effective rainfall in user units.
      */
     double effective_rainfall(std::size_t ui, double gage_rainfall) const noexcept {
-        if (ui >= subcatch_rainfall_mode.size()) return gage_rainfall;
+        if (ui >= subcatch_rainfall_mode.size())
+            return gage_rainfall;
         switch (subcatch_rainfall_mode[ui]) {
-            case ForcingMode::OVERRIDE: return subcatch_rainfall_value[ui];
-            case ForcingMode::ADD:      return gage_rainfall + subcatch_rainfall_value[ui];
-            default:                    return gage_rainfall;
+        case ForcingMode::OVERRIDE:
+            return subcatch_rainfall_value[ui];
+        case ForcingMode::ADD:
+            return gage_rainfall + subcatch_rainfall_value[ui];
+        default:
+            return gage_rainfall;
         }
     }
 
@@ -297,9 +558,12 @@ struct ForcingData {
      */
     double effective_climate_evap(double broadcast) const noexcept {
         switch (climate_evap_mode) {
-            case ForcingMode::OVERRIDE: return climate_evap_value;
-            case ForcingMode::ADD:      return broadcast + climate_evap_value;
-            default:                    return broadcast;
+        case ForcingMode::OVERRIDE:
+            return climate_evap_value;
+        case ForcingMode::ADD:
+            return broadcast + climate_evap_value;
+        default:
+            return broadcast;
         }
     }
 
@@ -314,11 +578,15 @@ struct ForcingData {
      * @return Effective snowfall (ft/sec).
      */
     double effective_snowfall(std::size_t ui, double gage_snowfall) const noexcept {
-        if (ui >= subcatch_snowfall_mode.size()) return gage_snowfall;
+        if (ui >= subcatch_snowfall_mode.size())
+            return gage_snowfall;
         switch (subcatch_snowfall_mode[ui]) {
-            case ForcingMode::OVERRIDE: return subcatch_snowfall_value[ui];
-            case ForcingMode::ADD:      return gage_snowfall + subcatch_snowfall_value[ui];
-            default:                    return gage_snowfall;
+        case ForcingMode::OVERRIDE:
+            return subcatch_snowfall_value[ui];
+        case ForcingMode::ADD:
+            return gage_snowfall + subcatch_snowfall_value[ui];
+        default:
+            return gage_snowfall;
         }
     }
 
@@ -339,11 +607,15 @@ struct ForcingData {
         // Total over unallocated forcing: callers (Runoff, Groundwater, LID)
         // run against hand-built / partially-initialized contexts in tests
         // and via the builder API before the forcing arrays are sized.
-        if (ui >= subcatch_evap_mode.size()) return broadcast_rate;
+        if (ui >= subcatch_evap_mode.size())
+            return broadcast_rate;
         switch (subcatch_evap_mode[ui]) {
-            case ForcingMode::OVERRIDE: return subcatch_evap_value[ui];
-            case ForcingMode::ADD:      return broadcast_rate + subcatch_evap_value[ui];
-            default:                    return broadcast_rate;
+        case ForcingMode::OVERRIDE:
+            return subcatch_evap_value[ui];
+        case ForcingMode::ADD:
+            return broadcast_rate + subcatch_evap_value[ui];
+        default:
+            return broadcast_rate;
         }
     }
 };

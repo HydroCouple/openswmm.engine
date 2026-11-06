@@ -1,0 +1,62 @@
+{
+  "tests": 4,
+  "failures": 0,
+  "disabled": 0,
+  "errors": 0,
+  "timestamp": "2026-10-06T10:31:47Z",
+  "time": "0.004s",
+  "name": "AllTests",
+  "testsuites": [
+    {
+      "name": "RuntimeCouplingApi",
+      "tests": 4,
+      "failures": 0,
+      "disabled": 0,
+      "errors": 0,
+      "timestamp": "2026-10-06T10:31:47Z",
+      "time": "0.004s",
+      "testsuite": [
+        {
+          "name": "ScalarCopiesBuffersAndClearPreservesReceipt",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_runtime_coupling_api.cpp",
+          "line": 73,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:47Z",
+          "time": "0.002s",
+          "classname": "RuntimeCouplingApi"
+        },
+        {
+          "name": "InvalidBatchLeavesPriorRateAndClockUnchanged",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_runtime_coupling_api.cpp",
+          "line": 92,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:47Z",
+          "time": "0s",
+          "classname": "RuntimeCouplingApi"
+        },
+        {
+          "name": "ExpiryAndIndependentSpeciesSinkAreConservative",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_runtime_coupling_api.cpp",
+          "line": 109,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:47Z",
+          "time": "0.001s",
+          "classname": "RuntimeCouplingApi"
+        },
+        {
+          "name": "DirectBoundaryUsesTotalFlowAndRejectsDisabledHeat",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_runtime_coupling_api.cpp",
+          "line": 128,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:47Z",
+          "time": "0s",
+          "classname": "RuntimeCouplingApi"
+        }
+      ]
+    }
+  ]
+}

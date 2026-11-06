@@ -1,10 +1,15 @@
-/*!
-* \file findroot.h
-* \brief Header file for root finding method.
-* \author L. Rossman
-* \date Created: 2013-11-19
-* \date Last updated: 2025-01-02
-*/
+/**
+ * @file      findroot.h
+ * @brief     Header file for root finding method.
+ * @author    L. Rossman
+ * @date      Created: 2013-11-19
+ * @date      Last updated: 2025-01-02
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com> (OpenSWMM maintenance and extensions)
+ * @copyright Copyright (c) 2026 Caleb Buahin. OpenSWMM contributions only; original EPA SWMM
+ *            credits are retained.
+ * @license   Apache-2.0 for OpenSWMM contributions; original EPA SWMM provenance is retained.
+ */
 
 #ifndef FINDROOT_H
 #define FINDROOT_H
@@ -17,7 +22,7 @@
 * \param df Value of the derivative of the function at x.
 * \param p Pointer to additional data.
 */
-typedef void (*newton_callback) (double x, double* f, double* df, void* p);
+typedef void (*newton_callback)(double x, double* f, double* df, void* p);
 
 /*!
 * \typedef ridder_callback
@@ -25,7 +30,7 @@ typedef void (*newton_callback) (double x, double* f, double* df, void* p);
 * \param x Value of the independent variable.
 * \param p Pointer to additional data.
 */
-typedef double (*ridder_callback) (double x, void* p);
+typedef double (*ridder_callback)(double x, void* p);
 
 /*!
 * \brief Finds the root of a function using Newton's method.

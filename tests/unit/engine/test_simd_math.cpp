@@ -1,6 +1,6 @@
 /**
- * @file test_simd_math.cpp
- * @brief Unit tests for SIMD-accelerated math routines.
+ * @file      test_simd_math.cpp
+ * @brief     Unit tests for SIMD-accelerated math routines.
  *
  * @details Tests the SIMD abstraction layer which wraps:
  *          - AVX2 intrinsics on x86_64
@@ -16,6 +16,10 @@
  *
  * @see src/engine/math/SIMD.hpp
  * @ingroup engine_math
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -38,6 +42,14 @@ protected:
     static constexpr int N = 1024;
     std::vector<double> a, b, expected, result;
 
+    /**
+     * @brief Allocate SIMD input/output arrays and deterministic positive random inputs.
+     *
+     * Resizes all four arrays to N; fills a/b from mt19937_64 seed42 uniform [0,100). expected/result
+     * remain resize-initialized for the case to fill; no math kernel is called. Fatal GoogleTest
+     * assertions return from this hook on failure; any created handle remains owned by the fixture for
+     * teardown.
+     */
     void SetUp() override {
         a.resize(N);
         b.resize(N);
@@ -53,15 +65,19 @@ protected:
 };
 
 TEST_F(SimdMathTest, VectorizedAddMatchesScalar) {
-    for (int i = 0; i < N; i++) expected[i] = a[i] + b[i];
+    for (int i = 0; i < N; i++)
+        expected[i] = a[i] + b[i];
     openswmm::simd::add(a.data(), b.data(), result.data(), N);
-    for (int i = 0; i < N; i++) EXPECT_DOUBLE_EQ(result[i], expected[i]);
+    for (int i = 0; i < N; i++)
+        EXPECT_DOUBLE_EQ(result[i], expected[i]);
 }
 
 TEST_F(SimdMathTest, VectorizedMultiplyMatchesScalar) {
-    for (int i = 0; i < N; i++) expected[i] = a[i] * b[i];
+    for (int i = 0; i < N; i++)
+        expected[i] = a[i] * b[i];
     openswmm::simd::multiply(a.data(), b.data(), result.data(), N);
-    for (int i = 0; i < N; i++) EXPECT_DOUBLE_EQ(result[i], expected[i]);
+    for (int i = 0; i < N; i++)
+        EXPECT_DOUBLE_EQ(result[i], expected[i]);
 }
 
 TEST_F(SimdMathTest, VectorizedMinMatchesStdMin) {
@@ -121,7 +137,8 @@ TEST_F(SimdMathTest, VectorizedSqrtArray) {
 
 TEST_F(SimdMathTest, VectorizedFabsArray) {
     // Mix in some negative values
-    for (int i = 0; i < N; i += 2) a[i] = -a[i];
+    for (int i = 0; i < N; i += 2)
+        a[i] = -a[i];
     openswmm::simd::fabs_array(a.data(), result.data(), N);
     for (int i = 0; i < N; i++) {
         EXPECT_DOUBLE_EQ(result[i], std::fabs(a[i]));
@@ -132,7 +149,8 @@ TEST_F(SimdMathTest, VectorizedFmaArray) {
     std::vector<double> c(N);
     std::mt19937_64 rng(99);
     std::uniform_real_distribution<double> dist(0.0, 50.0);
-    for (int i = 0; i < N; i++) c[i] = dist(rng);
+    for (int i = 0; i < N; i++)
+        c[i] = dist(rng);
 
     openswmm::simd::fma_array(a.data(), b.data(), c.data(), result.data(), N);
     for (int i = 0; i < N; i++) {
@@ -144,13 +162,18 @@ TEST_F(SimdMathTest, NonMultipleOfLaneWidthHandledCorrectly) {
     // Test with N = 13 (not a multiple of any SIMD lane width)
     constexpr int M = 13;
     std::vector<double> sa(M), sb(M), sr(M);
-    for (int i = 0; i < M; i++) { sa[i] = i + 1.0; sb[i] = 2.0; }
+    for (int i = 0; i < M; i++) {
+        sa[i] = i + 1.0;
+        sb[i] = 2.0;
+    }
 
     openswmm::simd::add(sa.data(), sb.data(), sr.data(), M);
-    for (int i = 0; i < M; i++) EXPECT_DOUBLE_EQ(sr[i], sa[i] + sb[i]);
+    for (int i = 0; i < M; i++)
+        EXPECT_DOUBLE_EQ(sr[i], sa[i] + sb[i]);
 
     openswmm::simd::multiply(sa.data(), sb.data(), sr.data(), M);
-    for (int i = 0; i < M; i++) EXPECT_DOUBLE_EQ(sr[i], sa[i] * sb[i]);
+    for (int i = 0; i < M; i++)
+        EXPECT_DOUBLE_EQ(sr[i], sa[i] * sb[i]);
 
     double min_val = openswmm::simd::min(sa.data(), M);
     EXPECT_DOUBLE_EQ(min_val, 1.0);
@@ -160,20 +183,23 @@ TEST_F(SimdMathTest, NonMultipleOfLaneWidthHandledCorrectly) {
 
     double dot_val = openswmm::simd::dot(sa.data(), sb.data(), M);
     double ref_dot = 0.0;
-    for (int i = 0; i < M; i++) ref_dot += sa[i] * sb[i];
+    for (int i = 0; i < M; i++)
+        ref_dot += sa[i] * sb[i];
     EXPECT_DOUBLE_EQ(dot_val, ref_dot);
 }
 
 TEST_F(SimdMathTest, UnalignedBuffersHandledCorrectly) {
     // Offset by 1 double (8 bytes) to test unaligned access
     std::vector<double> buf(N + 1);
-    for (int i = 0; i < N; i++) buf[i + 1] = a[i];
+    for (int i = 0; i < N; i++)
+        buf[i + 1] = a[i];
 
     double* unaligned = buf.data() + 1;
     std::vector<double> res(N);
 
     openswmm::simd::add(unaligned, b.data(), res.data(), N);
-    for (int i = 0; i < N; i++) EXPECT_DOUBLE_EQ(res[i], a[i] + b[i]);
+    for (int i = 0; i < N; i++)
+        EXPECT_DOUBLE_EQ(res[i], a[i] + b[i]);
 }
 
 TEST_F(SimdMathTest, LaneWidthIsPositive) {

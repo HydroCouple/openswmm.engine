@@ -1,17 +1,24 @@
 /**
- * @file test_ode_solver.cpp
- * @brief Unit and benchmark tests for the ODE integrator and root-finder.
+ * @file      test_ode_solver.cpp
+ * @brief     Unit and benchmark tests for the ODE integrator and root-finder.
  *
  * @see src/engine/math/OdeSolver.hpp
  * @see src/engine/math/FindRoot.hpp
  * @ingroup engine_math
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
 #include <cmath>
+#include <cstring>
+#include <stdexcept>
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "math/OdeSolver.hpp"
@@ -24,9 +31,7 @@
 TEST(OdeSolver, ExponentialDecay) {
     // dy/dt = -y, y(0) = 1 → y(t) = exp(-t)
     double y = 1.0;
-    auto derivs = [](double /*x*/, const double* y, double* dydx) {
-        dydx[0] = -y[0];
-    };
+    auto derivs = [](double /*x*/, const double* y, double* dydx) { dydx[0] = -y[0]; };
 
     int rc = openswmm::ode::integrate(&y, 1, 0.0, 1.0, 1e-6, 0.1, derivs);
     EXPECT_EQ(rc, 0);
@@ -36,9 +41,7 @@ TEST(OdeSolver, ExponentialDecay) {
 TEST(OdeSolver, LinearGrowth) {
     // dy/dt = 1, y(0) = 0 → y(t) = t
     double y = 0.0;
-    auto derivs = [](double /*x*/, const double* /*y*/, double* dydx) {
-        dydx[0] = 1.0;
-    };
+    auto derivs = [](double /*x*/, const double* /*y*/, double* dydx) { dydx[0] = 1.0; };
 
     int rc = openswmm::ode::integrate(&y, 1, 0.0, 5.0, 1e-6, 0.5, derivs);
     EXPECT_EQ(rc, 0);
@@ -47,7 +50,7 @@ TEST(OdeSolver, LinearGrowth) {
 
 TEST(OdeSolver, HarmonicOscillator) {
     // dy1/dt = y2, dy2/dt = -y1 → y1(t) = cos(t), y2(t) = -sin(t)
-    double y[2] = {1.0, 0.0};  // y1(0)=1, y2(0)=0
+    double y[2] = {1.0, 0.0}; // y1(0)=1, y2(0)=0
     auto derivs = [](double /*x*/, const double* y, double* dydx) {
         dydx[0] = y[1];
         dydx[1] = -y[0];
@@ -63,13 +66,43 @@ TEST(OdeSolver, HarmonicOscillator) {
 TEST(OdeSolver, QuadraticGrowth) {
     // dy/dt = 2*t, y(0) = 0 → y(t) = t²
     double y = 0.0;
-    auto derivs = [](double x, const double* /*y*/, double* dydx) {
-        dydx[0] = 2.0 * x;
-    };
+    auto derivs = [](double x, const double* /*y*/, double* dydx) { dydx[0] = 2.0 * x; };
 
     int rc = openswmm::ode::integrate(&y, 1, 0.0, 3.0, 1e-8, 0.1, derivs);
     EXPECT_EQ(rc, 0);
     EXPECT_NEAR(y, 9.0, 1e-6);
+}
+
+TEST(OdeSolver, WorkerThreadsMatchMainThreadExactly) {
+    // The integrator keeps its scratch arrays in a thread_local workspace, so
+    // each worker allocates and tears down its own. Two things are checked
+    // here: results must be bit-identical across threads (the workspace is
+    // per-thread state, never shared), and the workspace teardown that runs at
+    // thread exit must not fault -- a double free there would abort this test.
+    // The teardown itself is only *measurable* out of process; the falsifier in
+    // tests/manual/ode_workspace_leak does that.
+    auto derivs = [](double /*x*/, const double* y, double* dydx) { dydx[0] = -y[0]; };
+
+    double expected = 1.0;
+    ASSERT_EQ(openswmm::ode::integrate(&expected, 1, 0.0, 1.0, 1e-6, 0.1, derivs), 0);
+
+    constexpr int kThreads = 8;
+    std::vector<double> results(kThreads, 0.0);
+    std::vector<int> codes(kThreads, -1);
+    std::vector<std::thread> pool;
+    for (int i = 0; i < kThreads; ++i) {
+        pool.emplace_back([&, i] {
+            results[i] = 1.0;
+            codes[i] = openswmm::ode::integrate(&results[i], 1, 0.0, 1.0, 1e-6, 0.1, derivs);
+        });
+    }
+    for (auto& t : pool)
+        t.join();
+
+    for (int i = 0; i < kThreads; ++i) {
+        EXPECT_EQ(codes[i], 0) << "thread " << i;
+        EXPECT_DOUBLE_EQ(results[i], expected) << "thread " << i;
+    }
 }
 
 // ============================================================================
@@ -126,24 +159,51 @@ TEST(FindRoot, RidderTrigRoot) {
 // ============================================================================
 
 #ifndef BENCHMARK_DATA_DIR
-#  define BENCHMARK_DATA_DIR ""
+#define BENCHMARK_DATA_DIR ""
 #endif
 
 namespace {
 
-struct OdeBenchRow      { double t_s; double y_exact; };
-struct LogisticBenchRow { double t_s; double y_exact; };
-struct SIRBenchRow      { double t_s; double S; double I; double R; };
+struct OdeBenchRow {
+    double t_s;
+    double y_exact;
+};
+struct LogisticBenchRow {
+    double t_s;
+    double y_exact;
+};
+struct SIRBenchRow {
+    double t_s;
+    double S;
+    double I;
+    double R;
+};
 
+/**
+ * @brief Load the simple comma-separated time seconds and exact scalar value reference.
+ *
+ * Skips empty and column-zero # lines, skips the first remaining line as header, converts the first
+ * 2 comma tokens with stod and drops rows with too few columns. Extra columns are ignored; quoted
+ * CSV/whitespace comments are not parsed. Numeric/allocation exceptions propagate and partial reads
+ * have no separate status; input file is unchanged.
+ *
+ * @param[in] path Reference CSV filename borrowed for this synchronous read.
+ * @return Owned rows, empty for open failure or no complete rows.
+ */
 static std::vector<OdeBenchRow> load_ode_bench(const std::string& path) {
     std::vector<OdeBenchRow> rows;
     std::ifstream in(path);
-    if (!in.is_open()) return rows;
+    if (!in.is_open())
+        return rows;
     std::string line;
     bool header_seen = false;
     while (std::getline(in, line)) {
-        if (line.empty() || line[0] == '#') continue;
-        if (!header_seen) { header_seen = true; continue; }
+        if (line.empty() || line[0] == '#')
+            continue;
+        if (!header_seen) {
+            header_seen = true;
+            continue;
+        }
         // columns: t_s, y_exact
         std::istringstream ss(line);
         std::string tok;
@@ -157,15 +217,31 @@ static std::vector<OdeBenchRow> load_ode_bench(const std::string& path) {
     return rows;
 }
 
+/**
+ * @brief Load the simple comma-separated time seconds and exact logistic state reference.
+ *
+ * Skips empty and column-zero # lines, skips the first remaining line as header, converts the first
+ * 2 comma tokens with stod and drops rows with too few columns. Extra columns are ignored; quoted
+ * CSV/whitespace comments are not parsed. Numeric/allocation exceptions propagate and partial reads
+ * have no separate status; input file is unchanged.
+ *
+ * @param[in] path Reference CSV filename borrowed for this synchronous read.
+ * @return Owned rows, empty for open failure or no complete rows.
+ */
 static std::vector<LogisticBenchRow> load_logistic_bench(const std::string& path) {
     std::vector<LogisticBenchRow> rows;
     std::ifstream in(path);
-    if (!in.is_open()) return rows;
+    if (!in.is_open())
+        return rows;
     std::string line;
     bool header_seen = false;
     while (std::getline(in, line)) {
-        if (line.empty() || line[0] == '#') continue;
-        if (!header_seen) { header_seen = true; continue; }
+        if (line.empty() || line[0] == '#')
+            continue;
+        if (!header_seen) {
+            header_seen = true;
+            continue;
+        }
         std::istringstream ss(line);
         std::string tok;
         double vals[2] = {};
@@ -178,15 +254,31 @@ static std::vector<LogisticBenchRow> load_logistic_bench(const std::string& path
     return rows;
 }
 
+/**
+ * @brief Load the simple comma-separated time seconds and exact S/I/R states reference.
+ *
+ * Skips empty and column-zero # lines, skips the first remaining line as header, converts the first
+ * 4 comma tokens with stod and drops rows with too few columns. Extra columns are ignored; quoted
+ * CSV/whitespace comments are not parsed. Numeric/allocation exceptions propagate and partial reads
+ * have no separate status; input file is unchanged.
+ *
+ * @param[in] path Reference CSV filename borrowed for this synchronous read.
+ * @return Owned rows, empty for open failure or no complete rows.
+ */
 static std::vector<SIRBenchRow> load_sir_bench(const std::string& path) {
     std::vector<SIRBenchRow> rows;
     std::ifstream in(path);
-    if (!in.is_open()) return rows;
+    if (!in.is_open())
+        return rows;
     std::string line;
     bool header_seen = false;
     while (std::getline(in, line)) {
-        if (line.empty() || line[0] == '#') continue;
-        if (!header_seen) { header_seen = true; continue; }
+        if (line.empty() || line[0] == '#')
+            continue;
+        if (!header_seen) {
+            header_seen = true;
+            continue;
+        }
         std::istringstream ss(line);
         std::string tok;
         double vals[4] = {};
@@ -199,48 +291,43 @@ static std::vector<SIRBenchRow> load_sir_bench(const std::string& path) {
     return rows;
 }
 
-}  // namespace
+} // namespace
 
 // ODE exponential-decay grid walk against manufactured benchmark.
 //
 // integrate() is called across successive sub-intervals; the endpoint value is
 // compared against y(t) = exp(-0.5*t) at each reference grid point.
 TEST(OdeSolver, ExponentialDecayTrajectory) {
-    std::string path = std::string(BENCHMARK_DATA_DIR)
-        + "/manufactured/odesolve-exponential-decay/reference.csv";
+    std::string path =
+        std::string(BENCHMARK_DATA_DIR) + "/manufactured/odesolve-exponential-decay/reference.csv";
 
     auto rows = load_ode_bench(path);
     if (rows.empty()) {
         GTEST_SKIP() << "Benchmark data not found: " << path;
     }
 
-    auto derivs = [](double /*x*/, const double* y, double* dydx) {
-        dydx[0] = -0.5 * y[0];
-    };
+    auto derivs = [](double /*x*/, const double* y, double* dydx) { dydx[0] = -0.5 * y[0]; };
 
-    double y      = 1.0;
+    double y = 1.0;
     double max_err = 0.0, sum_sq = 0.0;
-    double prev_t  = rows[0].t_s;  // t=0; y(0)=1 matches reference
+    double prev_t = rows[0].t_s; // t=0; y(0)=1 matches reference
 
     for (size_t i = 1; i < rows.size(); ++i) {
-        int rc = openswmm::ode::integrate(&y, 1, prev_t, rows[i].t_s,
-                                          1e-6, 0.1, derivs);
+        int rc = openswmm::ode::integrate(&y, 1, prev_t, rows[i].t_s, 1e-6, 0.1, derivs);
         ASSERT_EQ(rc, 0) << "ODE integrator failed at t=" << rows[i].t_s;
 
         double err = std::abs(y - rows[i].y_exact);
-        max_err    = std::max(max_err, err);
-        sum_sq    += err * err;
-        prev_t     = rows[i].t_s;
+        max_err = std::max(max_err, err);
+        sum_sq += err * err;
+        prev_t = rows[i].t_s;
     }
 
     ASSERT_GE(rows.size(), 2u) << "benchmark CSV must have at least one data row";
     double rms_err = std::sqrt(sum_sq / static_cast<double>(rows.size() - 1));
-    EXPECT_LT(max_err, 1e-5)
-        << "ODE exponential-decay max error " << max_err
-        << " exceeds 1e-5 tolerance (benchmark: " << path << ")";
-    EXPECT_LT(rms_err, 1e-6)
-        << "ODE exponential-decay RMS error " << rms_err
-        << " exceeds 1e-6 tolerance";
+    EXPECT_LT(max_err, 1e-5) << "ODE exponential-decay max error " << max_err
+                             << " exceeds 1e-5 tolerance (benchmark: " << path << ")";
+    EXPECT_LT(rms_err, 1e-6) << "ODE exponential-decay RMS error " << rms_err
+                             << " exceeds 1e-6 tolerance";
 }
 
 // Logistic growth ODE trajectory against manufactured benchmark.
@@ -250,8 +337,8 @@ TEST(OdeSolver, ExponentialDecayTrajectory) {
 // RK45 with eps=1e-6 should deliver global error well below 1e-4 on this smooth
 // nonlinear trajectory; any larger deviation indicates an integrator regression.
 TEST(OdeSolver, LogisticGrowthTrajectory) {
-    std::string path = std::string(BENCHMARK_DATA_DIR)
-        + "/manufactured/odesolve-logistic-growth/reference.csv";
+    std::string path =
+        std::string(BENCHMARK_DATA_DIR) + "/manufactured/odesolve-logistic-growth/reference.csv";
 
     auto rows = load_logistic_bench(path);
     if (rows.empty()) {
@@ -262,23 +349,21 @@ TEST(OdeSolver, LogisticGrowthTrajectory) {
         dydx[0] = 0.5 * y[0] * (1.0 - y[0]);
     };
 
-    double y      = rows[0].y_exact;  // 0.1
+    double y = rows[0].y_exact; // 0.1
     double max_err = 0.0;
-    double prev_t  = rows[0].t_s;     // t=0
+    double prev_t = rows[0].t_s; // t=0
 
     for (size_t i = 1; i < rows.size(); ++i) {
-        int rc = openswmm::ode::integrate(&y, 1, prev_t, rows[i].t_s,
-                                          1e-6, 0.1, derivs);
+        int rc = openswmm::ode::integrate(&y, 1, prev_t, rows[i].t_s, 1e-6, 0.1, derivs);
         ASSERT_EQ(rc, 0) << "ODE integrator failed at t=" << rows[i].t_s;
 
         double err = std::abs(y - rows[i].y_exact);
-        max_err    = std::max(max_err, err);
-        prev_t     = rows[i].t_s;
+        max_err = std::max(max_err, err);
+        prev_t = rows[i].t_s;
     }
 
-    EXPECT_LT(max_err, 1e-4)
-        << "ODE logistic-growth max error " << max_err
-        << " exceeds 1e-4 tolerance (benchmark: " << path << ")";
+    EXPECT_LT(max_err, 1e-4) << "ODE logistic-growth max error " << max_err
+                             << " exceeds 1e-4 tolerance (benchmark: " << path << ")";
 }
 
 // SIR epidemic ODE — invariant, phase-plane, and qualitative dynamics.
@@ -297,25 +382,25 @@ TEST(OdeSolver, LogisticGrowthTrajectory) {
 // to bugs that a trajectory comparison might miss (e.g. a wrong beta/gamma
 // ratio that still produces a plausible-looking curve).
 TEST(OdeSolver, SIREpidemicInvariantsAndDynamics) {
-    const double beta  = 0.3;
+    const double beta = 0.3;
     const double gamma_rate = 0.1;
-    const double R0_basic   = beta / gamma_rate;  // = 3.0
-    const double N     = 1.0;
+    const double R0_basic = beta / gamma_rate; // = 3.0
+    const double N = 1.0;
 
-    double y[3] = {0.99, 0.01, 0.0};  // [S, I, R]
+    double y[3] = {0.99, 0.01, 0.0}; // [S, I, R]
     const double S0 = y[0];
 
     auto sir_rhs = [&](double /*t*/, const double* y, double* dydx) {
         const double force = beta * y[0] * y[1] / N;
         dydx[0] = -force;
-        dydx[1] =  force - gamma_rate * y[1];
-        dydx[2] =  gamma_rate * y[1];
+        dydx[1] = force - gamma_rate * y[1];
+        dydx[2] = gamma_rate * y[1];
     };
 
     double max_conserv_err = 0.0;
-    double max_phase_err   = 0.0;
+    double max_phase_err = 0.0;
     double prev_I = y[1];
-    bool   peak_seen = false;
+    bool peak_seen = false;
 
     // Run to t=120: with R0=3, γ=0.1 the epidemic peaks near t=30 and I drops
     // below 1% only after t≈80 (recovery period 1/γ=10 units).
@@ -325,15 +410,14 @@ TEST(OdeSolver, SIREpidemicInvariantsAndDynamics) {
         ASSERT_EQ(rc, 0) << "ODE integrator failed at t=" << t;
 
         // 1. Conservation invariant (machine-precision expectation)
-        max_conserv_err = std::max(max_conserv_err,
-                                   std::abs(y[0] + y[1] + y[2] - N));
+        max_conserv_err = std::max(max_conserv_err, std::abs(y[0] + y[1] + y[2] - N));
 
         // 2. Phase-plane relationship S = S0 * exp(-R0 * R)
-        max_phase_err = std::max(max_phase_err,
-                                 std::abs(y[0] - S0 * std::exp(-R0_basic * y[2])));
+        max_phase_err = std::max(max_phase_err, std::abs(y[0] - S0 * std::exp(-R0_basic * y[2])));
 
         // 3a. Epidemic peak detection
-        if (y[1] < prev_I) peak_seen = true;
+        if (y[1] < prev_I)
+            peak_seen = true;
         prev_I = y[1];
     }
 
@@ -350,12 +434,10 @@ TEST(OdeSolver, SIREpidemicInvariantsAndDynamics) {
 
     // 3c. Herd immunity overshoot: final S below gamma/beta threshold
     EXPECT_LT(y[0], gamma_rate / beta)
-        << "S(120) = " << y[0] << " should be below herd-immunity threshold "
-        << gamma_rate / beta;
+        << "S(120) = " << y[0] << " should be below herd-immunity threshold " << gamma_rate / beta;
 
     // 3d. Epidemic resolved: I small at t=120
-    EXPECT_LT(y[1], 1e-2)
-        << "I(120) = " << y[1] << " should be near zero at end of epidemic";
+    EXPECT_LT(y[1], 1e-2) << "I(120) = " << y[1] << " should be near zero at end of epidemic";
 }
 
 // SIR epidemic trajectory comparison against Flash-X-generated reference.
@@ -363,33 +445,32 @@ TEST(OdeSolver, SIREpidemicInvariantsAndDynamics) {
 // See tests/benchmarks/manufactured/odesolve-sir-epidemic/provenance.yaml
 // for the generation methodology (Flash-X CashKarp45, eFrac=1e-12).
 TEST(OdeSolver, SIRTrajectoryMatchesBenchmark) {
-    std::string path = std::string(BENCHMARK_DATA_DIR)
-        + "/manufactured/odesolve-sir-epidemic/reference.csv";
+    std::string path =
+        std::string(BENCHMARK_DATA_DIR) + "/manufactured/odesolve-sir-epidemic/reference.csv";
 
     auto rows = load_sir_bench(path);
     if (rows.size() < 2) {
         GTEST_SKIP() << "SIR reference trajectory not yet populated: " << path;
     }
 
-    const double beta  = 0.3;
+    const double beta = 0.3;
     const double gamma_rate = 0.1;
-    const double N     = 1.0;
+    const double N = 1.0;
 
     double y[3] = {rows[0].S, rows[0].I, rows[0].R};
 
     auto sir_rhs = [&](double /*t*/, const double* y, double* dydx) {
         const double force = beta * y[0] * y[1] / N;
         dydx[0] = -force;
-        dydx[1] =  force - gamma_rate * y[1];
-        dydx[2] =  gamma_rate * y[1];
+        dydx[1] = force - gamma_rate * y[1];
+        dydx[2] = gamma_rate * y[1];
     };
 
     double max_err_S = 0.0, max_err_I = 0.0, max_err_R = 0.0;
     double prev_t = rows[0].t_s;
 
     for (size_t i = 1; i < rows.size(); ++i) {
-        int rc = openswmm::ode::integrate(y, 3, prev_t, rows[i].t_s,
-                                          1e-6, 0.1, sir_rhs);
+        int rc = openswmm::ode::integrate(y, 3, prev_t, rows[i].t_s, 1e-6, 0.1, sir_rhs);
         ASSERT_EQ(rc, 0) << "ODE integrator failed at t=" << rows[i].t_s;
 
         max_err_S = std::max(max_err_S, std::abs(y[0] - rows[i].S));
@@ -401,4 +482,55 @@ TEST(OdeSolver, SIRTrajectoryMatchesBenchmark) {
     EXPECT_LT(max_err_S, 1e-3) << "SIR S max error " << max_err_S << " (benchmark: " << path << ")";
     EXPECT_LT(max_err_I, 1e-3) << "SIR I max error " << max_err_I;
     EXPECT_LT(max_err_R, 1e-3) << "SIR R max error " << max_err_R;
+}
+
+TEST(OdeSolver, TypedCallbackPreservesErasedValuesAndEveryEvaluation) {
+    for (int n : {1, 2, 7})
+        for (bool reverse : {false, true}) {
+            std::vector<double> typed(n, 1.), erased = typed, typed_trace, erased_trace;
+            auto callback = [n](std::vector<double>& trace) {
+                return [n, &trace](double t, const double* y, double* dy) {
+                    trace.push_back(t);
+                    for (int i = 0; i < n; ++i)
+                        trace.push_back(y[i]);
+                    for (int i = 0; i < n; ++i)
+                        dy[i] = -.03*(i+1)*y[i]*y[i] + .001*y[(i+1)%n] + .0001*t;
+                };
+            };
+            auto typed_rhs = callback(typed_trace);
+            openswmm::ode::DerivFunc erased_rhs = callback(erased_trace);
+            const double end = reverse ? -.5 : 25.;
+            const int a = openswmm::ode::integrateCallable(typed.data(), n, 0., end, 1e-10, end, typed_rhs);
+            const int b = openswmm::ode::integrate(erased.data(), n, 0., end, 1e-10, end, erased_rhs);
+            EXPECT_EQ(a, openswmm::ode::ODE_OK);
+            EXPECT_EQ(a, b);
+            EXPECT_EQ(0, std::memcmp(typed.data(), erased.data(), n*sizeof(double)));
+            ASSERT_EQ(typed_trace.size(), erased_trace.size());
+            EXPECT_EQ(0, std::memcmp(typed_trace.data(), erased_trace.data(), typed_trace.size()*sizeof(double)));
+        }
+    auto stiff = [](double, const double* y, double* dy) { dy[0] = -100*y[0]; };
+    double typed = 1., erased = 1.;
+    const int a = openswmm::ode::integrateCallable(&typed, 1, 1e20, 1e20+1e6, 1e-10, 1000., stiff);
+    const int b = openswmm::ode::integrate(&erased, 1, 1e20, 1e20+1e6, 1e-10, 1000., stiff);
+    EXPECT_EQ(a, openswmm::ode::ODE_MAX_STEPS);
+    EXPECT_EQ(a, b);
+    EXPECT_EQ(0, std::memcmp(&typed, &erased, sizeof(double)));
+    EXPECT_DOUBLE_EQ(typed, 1.);
+    for (bool concrete : {false, true}) {
+        int evaluations = 0;
+        auto throws = [&](double, const double* y, double* dy) {
+            if (++evaluations == 3)
+                throw std::runtime_error("ODE test refusal");
+            dy[0] = -y[0];
+        };
+        double value = 2.;
+        EXPECT_THROW({
+            if (concrete)
+                openswmm::ode::integrateCallable(&value, 1, 0., 1., 1e-8, 1., throws);
+            else
+                openswmm::ode::integrate(&value, 1, 0., 1., 1e-8, 1., throws);
+        }, std::runtime_error);
+        EXPECT_DOUBLE_EQ(value, 2.);
+        EXPECT_EQ(evaluations, 3);
+    }
 }

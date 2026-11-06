@@ -1,6 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file PollutantData.hpp
- * @brief Structure-of-Arrays (SoA) storage for pollutants and water quality.
+ * @file      PollutantData.hpp
+ * @brief     Structure-of-Arrays (SoA) storage for pollutants and water quality.
  *
  * @details Replaces the global `Pollut[]` array and `TPollut` struct from
  *          src/solver/objects.h. Per-object quality arrays (concentrations at
@@ -11,9 +27,9 @@
  * @see Legacy reference: src/solver/globals.h — Pollut[], Npolluts
  * @ingroup engine_data
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_POLLUTANT_DATA_HPP
@@ -34,8 +50,8 @@ namespace openswmm {
  * @see Legacy: MassUnitsType in src/solver/enums.h
  */
 enum class MassUnits : int8_t {
-    MG_PER_L  = 0,  ///< Milligrams per liter
-    UG_PER_L  = 1,  ///< Micrograms per liter
+    MG_PER_L = 0,    ///< Milligrams per liter
+    UG_PER_L = 1,    ///< Micrograms per liter
     COUNTS_PER_L = 2 ///< Counts per liter (bacteria)
 };
 
@@ -62,68 +78,71 @@ struct PollutantData {
      * @brief Concentration units for each pollutant.
      * @see Legacy: Pollut[i].units
      */
-    std::vector<MassUnits>  units;
+    std::vector<MassUnits> units;
 
     /**
      * @brief Molecular weight (g/mol). Used for unit conversions.
      * @see Legacy: Pollut[i].mwt
      */
-    std::vector<double>     mwt;
+    std::vector<double> mwt;
 
     /**
-     * @brief First-order decay coefficient (1/day).
+     * @brief First-order decay coefficient (1/sec). The [POLLUTANTS]
+     *        Kdecay column is 1/day: the parser divides by SEC_PER_DAY
+     *        and every writer multiplies back (KD1) — the same seam
+     *        legacy keeps (landuse.c / SECperDAY).
      * @see Legacy: Pollut[i].kDecay
      */
-    std::vector<double>     k_decay;
+    std::vector<double> k_decay;
 
     /**
      * @brief Rain concentration (project mass/volume units).
      * @see Legacy: Pollut[i].cRain
      */
-    std::vector<double>     c_rain;
+    std::vector<double> c_rain;
 
     /**
      * @brief Groundwater concentration.
      * @see Legacy: Pollut[i].cGW
      */
-    std::vector<double>     c_gw;
+    std::vector<double> c_gw;
 
     /**
      * @brief RDII concentration.
      * @see Legacy: Pollut[i].cRDII
      */
-    std::vector<double>     c_rdii;
+    std::vector<double> c_rdii;
 
     /**
      * @brief Dry weather sanitary flow concentration.
      * @see Legacy: Pollut[i].dwfConcen
      */
-    std::vector<double>     c_dwf;
+    std::vector<double> c_dwf;
 
     /**
      * @brief Initial concentration everywhere in the network.
      * @see Legacy: Pollut[i].initConc
      */
-    std::vector<double>     init_conc;
+    std::vector<double> init_conc;
 
     /**
      * @brief Co-pollutant index (-1 if none).
      * @details Used for co-fraction (fraction of co-pollutant).
      * @see Legacy: Pollut[i].coPollut
      */
-    std::vector<int>        co_pollut;
+    std::vector<int> co_pollut;
 
     /**
      * @brief Co-fraction (fraction of co-pollutant concentration).
      * @see Legacy: Pollut[i].coFraction
      */
-    std::vector<double>     co_frac;
+    std::vector<double> co_frac;
 
     /**
      * @brief True if the pollutant should be printed in output.
      * @see Legacy: Pollut[i].snowOnly
      */
-    std::vector<bool>       snow_only;
+    std::vector<bool> snow_only;
 
     /**
      * @brief Object comment from the INP file (';'-prefixed lines immediately
@@ -136,9 +155,22 @@ struct PollutantData {
     // Capacity management
     // -----------------------------------------------------------------------
 
+    /**
+     * @brief Count pollutant definitions from the unit-code column.
+     * @return units.size() converted to int; no alignment/name-registry check.
+     */
     int n_pollutants() const noexcept { return static_cast<int>(units.size()); }
 
-    /** @brief Resize pollutant definition arrays to hold `n` pollutants. */
+    /**
+     * @brief Replace pollutant parameter columns with defaults.
+     *
+     * Defaults mg/L units, molecular weight one, no decay/rain/GW/RDII/DWF/initial concentration, no
+     * co-pollutant (-1), zero co-fraction, snow_only=false and empty comments. Does not allocate
+     * node/link/subcatchment matrices or update pollutant names. Independent allocations may fail
+     * partway.
+     *
+     * @param[in] n Nonnegative pollutant count; unchecked size_t conversion.
+     */
     void resize_pollutants(int n) {
         const auto un = static_cast<std::size_t>(n);
         units.assign(un, MassUnits::MG_PER_L);

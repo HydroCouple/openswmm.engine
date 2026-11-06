@@ -1,17 +1,33 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright 2026 Caleb Buahin
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Rain gage access (Pythonic v1 surface)
 ======================================
 
 :author: Caleb Buahin
 :copyright: Copyright (c) 2026 Caleb Buahin
-:license: MIT
+:license: Apache-2.0
 
 Type stubs for :mod:`openswmm.engine._gages`.
 """
 
 from collections.abc import Iterator
 from datetime import timedelta
-from typing import Any, Union
+from typing import Any, Optional, Union
 
 import numpy as np
 from numpy.typing import NDArray
@@ -35,12 +51,16 @@ class Gage:
     rain_units: int
     timeseries: str
     station_id: str
+    file_column: str
+    file_format: int
     rainfall: float
+    rainfall_series: NDArray[Any]  # dtype = [(time, datetime64[s]), (value, f8)]
 
     def __init__(self, solver: Solver, index: int) -> None: ...
     def set_rain_interval(self, seconds: Union[float, timedelta]) -> None: ...
     def set_timeseries(self, ts_id: str) -> None: ...
-    def set_file(self, path: str, station_id: str) -> None: ...
+    def set_file(self, path: str, station_id: str,
+                 column: Optional[str] = ...) -> None: ...
 
     def __eq__(self, other: object) -> bool: ...
     def __hash__(self) -> int: ...
@@ -59,6 +79,7 @@ class Gages:
     def get_id(self, idx: int) -> str: ...
     def add(self, gage_id: str) -> Gage: ...
     def rename(self, key: _Key, new_id: str) -> None: ...
+    def reload_rain_files(self) -> None: ...
 
     rainfalls: NDArray[Any]
     ids: NDArray[Any]

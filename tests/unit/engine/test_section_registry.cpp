@@ -1,10 +1,14 @@
 /**
- * @file test_section_registry.cpp
- * @brief Unit tests for the SectionRegistry (optional sections support).
+ * @file      test_section_registry.cpp
+ * @brief     Unit tests for the SectionRegistry (optional sections support).
  *
  * @see src/engine/input/SectionRegistry.hpp
  * @see src/engine/input/SectionRegistry.cpp
  * @ingroup engine_input
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -18,10 +22,17 @@ using openswmm::SimulationContext;
 namespace {
 
 // Helper: build a registry with one built-in "JUNCTIONS" handler
+/**
+ * @brief Build a registry with a deliberately no-op JUNCTIONS builtin handler.
+ *
+ * The callback accepts but does not mutate its context/line arguments and captures nothing,
+ * remaining valid after return. This fixture tests registration/dispatch bookkeeping rather than
+ * actual junction parsing.
+ * @return Owned registry with the single named builtin registration.
+ */
 static SectionRegistry make_registry_with_builtin() {
     SectionRegistry reg;
-    reg.register_builtin("JUNCTIONS", [](SimulationContext&,
-                                         const std::vector<std::string>&) {
+    reg.register_builtin("JUNCTIONS", [](SimulationContext&, const std::vector<std::string>&) {
         // no-op for test
     });
     return reg;
@@ -34,7 +45,7 @@ static SectionRegistry make_registry_with_builtin() {
 TEST(SectionRegistryTest, HasBuiltinReturnsTrueAfterRegister) {
     auto reg = make_registry_with_builtin();
     EXPECT_TRUE(reg.has("JUNCTIONS"));
-    EXPECT_TRUE(reg.has("junctions"));    // case-insensitive
+    EXPECT_TRUE(reg.has("junctions")); // case-insensitive
 }
 
 TEST(SectionRegistryTest, HasReturnsFalseForUnregistered) {
@@ -49,8 +60,7 @@ TEST(SectionRegistryTest, IsCustomFalseForBuiltin) {
 
 TEST(SectionRegistryTest, IsCustomTrueAfterRegisterCustom) {
     SectionRegistry reg;
-    reg.register_custom("MY_SECTION", [](SimulationContext&,
-                                          const std::vector<std::string>&) {});
+    reg.register_custom("MY_SECTION", [](SimulationContext&, const std::vector<std::string>&) {});
     EXPECT_TRUE(reg.is_custom("MY_SECTION"));
     EXPECT_TRUE(reg.has("MY_SECTION"));
 }
@@ -62,8 +72,7 @@ TEST(SectionRegistryTest, IsCustomTrueAfterRegisterCustom) {
 TEST(SectionRegistryTest, BuiltinSectionDispatched) {
     SectionRegistry reg;
     bool called = false;
-    reg.register_builtin("OPTIONS", [&called](SimulationContext&,
-                                               const std::vector<std::string>&) {
+    reg.register_builtin("OPTIONS", [&called](SimulationContext&, const std::vector<std::string>&) {
         called = true;
     });
 
@@ -84,10 +93,10 @@ TEST(SectionRegistryTest, UnknownSectionSkipped) {
 TEST(SectionRegistryTest, CustomHandlerCalledWithSectionLines) {
     SectionRegistry reg;
     std::vector<std::string> captured;
-    reg.register_custom("MY_SECTION", [&captured](SimulationContext&,
-                                                    const std::vector<std::string>& lines) {
-        captured = lines;
-    });
+    reg.register_custom("MY_SECTION",
+                        [&captured](SimulationContext&, const std::vector<std::string>& lines) {
+                            captured = lines;
+                        });
 
     SimulationContext ctx;
     std::vector<std::string> input_lines = {"line1", "line2", "line3"};
@@ -100,16 +109,16 @@ TEST(SectionRegistryTest, CustomHandlerOverridesBuiltin) {
     SectionRegistry reg;
 
     bool builtin_called = false;
-    bool custom_called  = false;
+    bool custom_called = false;
 
-    reg.register_builtin("JUNCTIONS", [&builtin_called](SimulationContext&,
-                                                         const std::vector<std::string>&) {
-        builtin_called = true;
-    });
-    reg.register_custom("JUNCTIONS", [&custom_called](SimulationContext&,
-                                                       const std::vector<std::string>&) {
-        custom_called = true;
-    });
+    reg.register_builtin("JUNCTIONS",
+                         [&builtin_called](SimulationContext&, const std::vector<std::string>&) {
+                             builtin_called = true;
+                         });
+    reg.register_custom("JUNCTIONS",
+                        [&custom_called](SimulationContext&, const std::vector<std::string>&) {
+                            custom_called = true;
+                        });
 
     SimulationContext ctx;
     reg.dispatch("JUNCTIONS", ctx, {});
@@ -122,9 +131,7 @@ TEST(SectionRegistryTest, CaseInsensitiveDispatch) {
     SectionRegistry reg;
     bool called = false;
     reg.register_builtin("CONDUITS", [&called](SimulationContext&,
-                                                const std::vector<std::string>&) {
-        called = true;
-    });
+                                               const std::vector<std::string>&) { called = true; });
     SimulationContext ctx;
     reg.dispatch("conduits", ctx, {});
     EXPECT_TRUE(called);
@@ -137,8 +144,8 @@ TEST(SectionRegistryTest, CaseInsensitiveDispatch) {
 TEST(SectionRegistryTest, RegisteredTagsListsAll) {
     SectionRegistry reg;
     reg.register_builtin("JUNCTIONS", [](SimulationContext&, const std::vector<std::string>&) {});
-    reg.register_builtin("CONDUITS",  [](SimulationContext&, const std::vector<std::string>&) {});
-    reg.register_custom("MY_SECTION",[](SimulationContext&, const std::vector<std::string>&) {});
+    reg.register_builtin("CONDUITS", [](SimulationContext&, const std::vector<std::string>&) {});
+    reg.register_custom("MY_SECTION", [](SimulationContext&, const std::vector<std::string>&) {});
 
     auto tags = reg.registered_tags();
     ASSERT_EQ(tags.size(), 3u);

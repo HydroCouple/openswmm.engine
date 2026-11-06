@@ -1,0 +1,62 @@
+{
+  "test_engine_2d_inertial_marcher": {
+    "tests": 11,
+    "failures": 0,
+    "disabled": 0
+  },
+  "test_engine_common_source_stage": {
+    "tests": 25,
+    "failures": 0,
+    "disabled": 0
+  },
+  "test_engine_lid": {
+    "tests": 55,
+    "failures": 0,
+    "disabled": 0
+  },
+  "test_engine_lid_nodes": {
+    "tests": 53,
+    "failures": 0,
+    "disabled": 0
+  },
+  "test_engine_runoff": {
+    "tests": 17,
+    "failures": 0,
+    "disabled": 0
+  },
+  "test_engine_runtime_coupling_api": {
+    "tests": 4,
+    "failures": 0,
+    "disabled": 0
+  },
+  "test_engine_source_clock_groups": {
+    "tests": 16,
+    "failures": 0,
+    "disabled": 0
+  },
+  "test_engine_source_water_driver": {
+    "tests": 20,
+    "failures": 0,
+    "disabled": 0
+  },
+  "test_engine_surface_aquifer_receiving": {
+    "tests": 16,
+    "failures": 0,
+    "disabled": 0
+  },
+  "test_engine_surface_et_budget": {
+    "tests": 12,
+    "failures": 0,
+    "disabled": 0
+  },
+  "test_engine_surface_exchange": {
+    "tests": 15,
+    "failures": 0,
+    "disabled": 0
+  },
+  "test_engine_surface_ownership": {
+    "tests": 9,
+    "failures": 0,
+    "disabled": 0
+  }
+}

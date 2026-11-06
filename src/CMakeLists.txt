@@ -23,9 +23,20 @@ add_subdirectory(plugin_sdk)  # → openswmm_plugin_sdk (INTERFACE, no .so)
 
 # ---- New engine (Phase 2+) ----
 add_subdirectory(engine)   # → openswmm_engine (output name: openswmm.engine)
+if(OPENSWMM_WITH_HYDROCOUPLE)
+    add_subdirectory(couplers)
+endif()
 
 # ---- CLI ----
 add_subdirectory(cli)
+
+# O4 diagnostic driver — off by default. It is a debugging instrument, not a
+# shipped artefact, and it should not lengthen an ordinary build.
+option(OPENSWMM_BUILD_O4_DIFFERENTIAL
+       "Build the O4 API/CLI differential driver" OFF)
+if(OPENSWMM_BUILD_O4_DIFFERENTIAL)
+    add_subdirectory(tools/o4_differential)
+endif()
 
 # ---- openswmm2d (2D FVHM solver — future coupling target; disabled for now) ----
 # add_subdirectory(openswmm2d)

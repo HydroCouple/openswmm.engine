@@ -1,10 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright 2026 Caleb Buahin
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Subcatchment access (Pythonic v1 surface)
 =========================================
 
 :author: Caleb Buahin
 :copyright: Copyright (c) 2026 Caleb Buahin
-:license: MIT
+:license: Apache-2.0
 
 The :class:`Subcatchments` collection and :class:`Subcatchment` wrapper
 follow the same shape as :mod:`openswmm.engine._nodes`. Each wrapper
@@ -74,6 +90,47 @@ cdef inline void _check_fresh(sub) except *:
 cdef int _resolve_pollutant(solver, key) except -1:
     return _resolve_index(
         _h(solver), key, swmm_pollutant_index, swmm_pollutant_count, "Pollutant")
+
+
+cdef inline int _resolve_surface_species(solver, key) except -1:
+    """BW-MSX (2026-09-19): a buildup / washoff / loading constituent is a
+    pollutant OR a reactions-component (MSX) species. The C API addresses
+    species at ``n_pollutants + m``; this resolver accepts a pollutant id or
+    index as before, a species *name*, or an int in ``[0, np + nm)``."""
+    cdef SWMM_Engine h = _h(solver)
+    cdef int np = swmm_pollutant_count(h)
+    cdef int nm = swmm_reaction_species_count(h)
+    cdef int i, m, is_wall, rc
+    cdef double atol, rtol
+    cdef _TextBufs t
+    cdef bytes b
+    if isinstance(key, str):
+        b = (<str>key).encode('utf-8')
+        i = swmm_pollutant_index(h, b)
+        if i >= 0:
+            return i
+        _tb_open(&t, 2)
+        try:
+            for m in range(nm):
+                while True:
+                    rc = swmm_reaction_species_get(h, m, t.p[0], t.size, &is_wall,
+                                                   t.p[1], t.size, &atol, &rtol)
+                    if rc != 0 or not _tb_retry(&t):
+                        break
+                if rc == 0 and <bytes>t.p[0] == b:
+                    return np + m
+        finally:
+            _tb_close(&t)
+        raise KeyError(f"Pollutant or species '{key}' not found")
+    if isinstance(key, bool):
+        raise TypeError("Pollutant key must be int or str, got bool")
+    if isinstance(key, int) or hasattr(key, "__index__"):
+        i = <int>int(key)
+        if i < 0 or i >= np + nm:
+            raise IndexError(
+                f"Pollutant/species index {i} out of range [0, {np + nm})")
+        return i
+    raise TypeError(f"Pollutant key must be int or str, got {type(key).__name__}")
 
 
 cdef int _resolve_landuse(solver, key) except -1:
@@ -294,7 +351,7 @@ class LoadingsView(MutableMapping):
 
     def __getitem__(self, key):
         _check_fresh(self._sub)
-        cdef int p = _resolve_pollutant(self._sub._solver, key)
+        cdef int p = _resolve_surface_species(self._sub._solver, key)
         cdef double v = 0.0
         _check(swmm_subcatch_get_initial_loading(
             _h(self._sub._solver), self._sub._index, p, &v))
@@ -302,7 +359,7 @@ class LoadingsView(MutableMapping):
 
     def __setitem__(self, key, value):
         _check_fresh(self._sub)
-        cdef int p = _resolve_pollutant(self._sub._solver, key)
+        cdef int p = _resolve_surface_species(self._sub._solver, key)
         _check(swmm_subcatch_set_initial_loading(
             _h(self._sub._solver), self._sub._index, p, float(value)))
 
@@ -372,9 +429,8 @@ cdef class Subcatchment:
         @rtype: str
         """
         _check_fresh(self)
-        cdef char buf[256]
-        _check(swmm_subcatch_get_tag(_h(self._solver), self._index, buf, 256))
-        return buf.decode('utf-8')
+        return _read_engine_index_string(_h(self._solver), self._index,
+                                         swmm_subcatch_get_tag)
 
     @tag.setter
     def tag(self, value) -> None:
@@ -390,6 +446,23 @@ cdef class Subcatchment:
     @property
     def solver(self):
         return self._solver
+
+    @property
+    def snowpack(self) -> str:
+        """Assigned snow-pack name; empty when unassigned. Edit before initialization."""
+        _check_fresh(self)
+        cdef const char* name = swmm_subcatch_get_snowpack(_h(self._solver), self._index)
+        if name == NULL:
+            raise ValueError("Invalid subcatchment snow-pack assignment")
+        return name.decode('utf-8')
+
+    @snowpack.setter
+    def snowpack(self, value) -> None:
+        _check_fresh(self)
+        cdef bytes name = (value or "").encode('utf-8')
+        if b"\0" in name:
+            raise ValueError("Snow-pack names cannot contain NUL")
+        _check(swmm_subcatch_set_snowpack(_h(self._solver), self._index, name))
 
     # ---- Geometry / properties -------------------------------------
 
@@ -1006,9 +1079,11 @@ cdef class Subcatchments:
         cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_subcatch_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with nogil:
-            err = swmm_subcatch_get_runoff_bulk(h, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_subcatch_get_runoff_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -1017,9 +1092,11 @@ cdef class Subcatchments:
         cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_subcatch_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with nogil:
-            err = swmm_subcatch_get_rainfall_bulk(h, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_subcatch_get_rainfall_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -1028,9 +1105,11 @@ cdef class Subcatchments:
         cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_subcatch_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with nogil:
-            err = swmm_subcatch_get_evap_bulk(h, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_subcatch_get_evap_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -1039,9 +1118,11 @@ cdef class Subcatchments:
         cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_subcatch_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with nogil:
-            err = swmm_subcatch_get_infil_bulk(h, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_subcatch_get_infil_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -1050,9 +1131,11 @@ cdef class Subcatchments:
         cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_subcatch_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with nogil:
-            err = swmm_subcatch_get_snow_depth_bulk(h, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_subcatch_get_snow_depth_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -1062,11 +1145,99 @@ cdef class Subcatchments:
         cdef int n = swmm_subcatch_count(h)
         cdef int p = _resolve_pollutant(self._solver, pollutant)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with nogil:
-            err = swmm_subcatch_get_quality_bulk(h, p, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_subcatch_get_quality_bulk(h, p, <double*>buf.data, n)
         _check(err)
         return buf
+
+    # ---- [GWF] custom groundwater flow expressions ------------------
+
+    def get_gwf_expression(self, key, gwf_type) -> str:
+        """Return a subcatchment's C{[GWF]} expression (empty if none is set).
+
+        @param key: Subcatchment index or string id.
+        @param gwf_type: L{GwfType} (C{LATERAL} or C{DEEP}) or its int code.
+        @rtype: str
+        """
+        cdef int idx = _resolve_subcatch(self._solver, key)
+        cdef _TextBufs t
+        _tb_open(&t, 1)
+        try:
+            while True:
+                _check(swmm_subcatch_get_gwf_expression(
+                    _h(self._solver), idx, int(gwf_type), t.p[0], t.size))
+                if not _tb_retry(&t):
+                    break
+            return _tb_str(&t, 0)
+        finally:
+            _tb_close(&t)
+
+    def set_gwf_expression(self, key, gwf_type, expression) -> None:
+        """Set or clear a subcatchment's C{[GWF]} expression.
+
+        The text is stored as given and is NOT validated here — use
+        :meth:`validate_gwf_expression` first; an invalid expression fails
+        C{initialize()} with ERROR 233. Pre-start-only; a mid-run change
+        raises L{LifecycleError}.
+
+        @param key: Subcatchment index or string id.
+        @param gwf_type: L{GwfType} (C{LATERAL} or C{DEEP}) or its int code.
+        @param expression: Expression text, or C{None}/``""`` to clear.
+        """
+        cdef int idx = _resolve_subcatch(self._solver, key)
+        cdef bytes b = (expression or "").encode('utf-8')
+        _check(swmm_subcatch_set_gwf_expression(
+            _h(self._solver), idx, int(gwf_type), b))
+
+    def validate_gwf_expression(self, str expression):
+        """Validate a C{[GWF]} expression WITHOUT modifying the engine.
+
+        Returns ``(ok, message, col)`` — ``ok`` True when the expression is
+        valid; on failure ``message`` is the diagnostic and ``col`` the
+        0-based character offset of the error (-1 when not attributable).
+        An empty expression is reported invalid; callers treat empty as
+        "clear" themselves.
+        """
+        cdef bytes b = expression.encode('utf-8')
+        cdef char errbuf[512]
+        cdef int col = -1
+        errbuf[0] = 0
+        cdef int rc = swmm_gwf_validate_expression(
+            _h(self._solver), b, errbuf, 512, &col)
+        if rc == 0:
+            return (True, "", -1)
+        return (False, errbuf.decode('utf-8'), col)
+
+    def gwf_variables(self):
+        """Variables a C{[GWF]} expression may reference, as a list of
+        ``(name, description)`` tuples (names upper-case, e.g. ``"HGW"``).
+        """
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int n = swmm_gwf_variable_count(h)
+        cdef char name[64]
+        cdef char desc[256]
+        out = []
+        for i in range(n):
+            _check(swmm_gwf_variable_name(h, i, name, sizeof(name)))
+            _check(swmm_gwf_variable_description(h, i, desc, sizeof(desc)))
+            out.append((name.decode('utf-8'), desc.decode('utf-8')))
+        return out
+
+    def gwf_functions(self):
+        """Built-in functions a C{[GWF]} expression may call, as a list of
+        lower-case names (``min``/``max`` take two arguments, the rest one).
+        """
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int n = swmm_gwf_function_count(h)
+        cdef char name[64]
+        out = []
+        for i in range(n):
+            _check(swmm_gwf_function_name(h, i, name, sizeof(name)))
+            out.append(name.decode('utf-8'))
+        return out
 
     @property
     def ids(self):
@@ -1077,9 +1248,11 @@ cdef class Subcatchments:
         cdef int n = swmm_subcatch_count(h)
         cdef np.ndarray[char, ndim=1, mode="c"] buf = np.zeros(
             n * stride, dtype=np.int8)
-        cdef int err
-        with nogil:
-            err = swmm_subcatch_get_ids_bulk(h, <char*>buf.data, stride, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_subcatch_get_ids_bulk(h, <char*>buf.data, stride, n)
         _check(err)
         raw = bytes(buf)
         out = []
@@ -1126,6 +1299,9 @@ cdef class _NamedObjects:
         raise NotImplementedError
 
     cdef int _add(self, bytes b) except -1:
+        raise NotImplementedError
+
+    cdef int _rename(self, int idx, bytes b) except -1:
         raise NotImplementedError
 
     def __len__(self) -> int:
@@ -1176,6 +1352,17 @@ cdef class _NamedObjects:
         self._solver._bump_generation()
         return self._count() - 1
 
+    def rename(self, key, str new_id) -> None:
+        """Rename an object, updating stored references to it.
+
+        @param key: Integer index or string id.
+        @param new_id: New identifier.
+        """
+        cdef int idx = key if isinstance(key, int) else self.get_index(key)
+        cdef bytes b = new_id.encode('utf-8')
+        self._rename(idx, b)
+        self._solver._bump_generation()
+
 
 cdef class Aquifers(_NamedObjects):
     """C{solver.aquifers} — name-keyed collection of C{[AQUIFERS]} entries."""
@@ -1191,6 +1378,10 @@ cdef class Aquifers(_NamedObjects):
 
     cdef int _add(self, bytes b) except -1:
         _check(swmm_aquifer_add(_h(self._solver), b))
+        return 0
+
+    cdef int _rename(self, int idx, bytes b) except -1:
+        _check(swmm_aquifer_rename(_h(self._solver), idx, b))
         return 0
 
     def get_param(self, aquifer, param) -> float:
@@ -1230,9 +1421,7 @@ cdef class Aquifers(_NamedObjects):
         @rtype: str
         """
         cdef int idx = aquifer if isinstance(aquifer, int) else self.get_index(aquifer)
-        cdef char buf[256]
-        _check(swmm_aquifer_get_evap_pattern(_h(self._solver), idx, buf, sizeof(buf)))
-        return buf.decode('utf-8')
+        return _read_engine_index_string(_h(self._solver), idx, swmm_aquifer_get_evap_pattern)
 
     def set_evap_pattern(self, aquifer, name) -> None:
         """Set or clear the aquifer's upper-zone evaporation pattern name.
@@ -1267,6 +1456,10 @@ cdef class Snowpacks(_NamedObjects):
 
     cdef int _add(self, bytes b) except -1:
         _check(swmm_snowpack_add(_h(self._solver), b))
+        return 0
+
+    cdef int _rename(self, int idx, bytes b) except -1:
+        _check(swmm_snowpack_rename(_h(self._solver), idx, b))
         return 0
 
     # ---- Surface parameters (pre-start-only) -----------------------
@@ -1344,9 +1537,8 @@ cdef class Snowpacks(_NamedObjects):
     def get_removal_subcatch(self, snowpack) -> str:
         """Read the REMOVAL destination subcatchment name (empty if none)."""
         cdef int idx = self._idx(snowpack)
-        cdef char buf[256]
-        _check(swmm_snowpack_get_removal_subcatch(_h(self._solver), idx, buf, sizeof(buf)))
-        return buf.decode('utf-8')
+        return _read_engine_index_string(_h(self._solver), idx,
+                                         swmm_snowpack_get_removal_subcatch)
 
     def __repr__(self) -> str:
         try:

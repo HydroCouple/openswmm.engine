@@ -1,0 +1,42 @@
+{
+  "suites": {
+    "test_engine_lid": 55,
+    "test_engine_runoff": 17,
+    "test_engine_source_clock_groups": 16,
+    "test_engine_surface_aquifer_receiving": 16,
+    "test_engine_surface_et_budget": 10,
+    "test_engine_surface_exchange": 15,
+    "test_engine_surface_ownership": 9
+  },
+  "total": 138,
+  "final_cases": {
+    "test_engine_lid": {
+      "timestamp": "2026-10-05T14:24:52Z",
+      "sha256": "112ff20d9a6c7820c1e2db15b413e1011e9d70123315a4907be7957ebedbe2af"
+    },
+    "test_engine_runoff": {
+      "timestamp": "2026-10-05T14:24:52Z",
+      "sha256": "e19d5f5ff32f090f4db6fbacf8cd9744a5681f28bde1f547ebec873ffce7dd03"
+    },
+    "test_engine_source_clock_groups": {
+      "timestamp": "2026-10-05T14:24:52Z",
+      "sha256": "0368aadb0fb26f03323dd1b516c9b3ef272a187518eaa3a085e7be77b8fa66b4"
+    },
+    "test_engine_surface_aquifer_receiving": {
+      "timestamp": "2026-10-05T14:24:53Z",
+      "sha256": "fb484454f34fa4cff1e424819474076df117386c53cf48e7d19226b3428093dd"
+    },
+    "test_engine_surface_et_budget": {
+      "timestamp": "2026-10-05T14:24:52Z",
+      "sha256": "255d91425813bfdb6ba0c1cda856a74c78375297b246f8fee07d6e791d59f884"
+    },
+    "test_engine_surface_exchange": {
+      "timestamp": "2026-10-05T14:24:52Z",
+      "sha256": "17c2d6d8ca3c6ceafb7315fa8e81a4c7dfc0f5c1202d7ab330659b6d6c46d0d4"
+    },
+    "test_engine_surface_ownership": {
+      "timestamp": "2026-10-05T14:24:52Z",
+      "sha256": "3c02859177fb59bf761af63798d6ea39e7049ce4bff1473814a3e7b100dd4b46"
+    }
+  }
+}

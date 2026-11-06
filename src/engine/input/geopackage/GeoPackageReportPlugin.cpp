@@ -1,11 +1,17 @@
 /**
- * @file GeoPackageReportPlugin.cpp
- * @brief IReportPlugin that writes summary statistics to a GeoPackage.
+ * @file      GeoPackageReportPlugin.cpp
+ * @brief     IReportPlugin that writes summary statistics to a GeoPackage.
  * @ingroup engine_geopackage
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include "GeoPackageReportPlugin.hpp"
 #include "GeoPackageSchema.hpp"
+#include "GeoPackageWriter.hpp"
+#include <version.h>
 
 #include "core/SimulationContext.hpp"
 #include "data/NodeData.hpp"
@@ -15,7 +21,7 @@
 namespace openswmm::gpkg {
 
 int GeoPackageReportPlugin::initialize(const std::vector<std::string>& init_args,
-                                        const IPluginComponentInfo* /*info*/) {
+                                       const IPluginComponentInfo* /*info*/) {
     if (init_args.size() < 1) {
         error_msg_ = "GeoPackageReportPlugin requires at least 1 argument: db path";
         return -1;
@@ -31,12 +37,31 @@ int GeoPackageReportPlugin::validate(const SimulationContext& /*ctx*/) {
     return 0;
 }
 
-int GeoPackageReportPlugin::prepare(const SimulationContext& /*ctx*/) {
+int GeoPackageReportPlugin::prepare(const SimulationContext& ctx) {
     try {
         db_ = open_database(db_path_);
+        auto schema = gpkg::prepare(db_.get(), "SELECT 1 FROM sqlite_master WHERE type='table' AND name='variables'");
+        const bool exists = sqlite3_step(schema.get()) == SQLITE_ROW;
+        schema.reset();
+        if (!exists) create_schema(db_.get());
+        auto run = gpkg::prepare(db_.get(), "SELECT 1 FROM simulations WHERE simulation_id=?");
+        bind_text(run.get(), 1, simulation_id_);
+        const bool hasRun = sqlite3_step(run.get()) == SQLITE_ROW;
+        run.reset();
+        // A report writer may be selected independently of the results writer.
+        if (!hasRun) {
+            write_model(db_.get(), ctx, simulation_id_);
+            auto insert = gpkg::prepare(db_.get(), "INSERT INTO simulations "
+                "(simulation_id,name,created_at,engine_version,status) "
+                "VALUES (?,?,strftime('%Y-%m-%dT%H:%M:%SZ','now'),?,'running')");
+            bind_text(insert.get(), 1, simulation_id_); bind_text(insert.get(), 2, simulation_id_);
+            bind_text(insert.get(), 3, OPENSWMM_VERSION_FULL);
+            if (sqlite3_step(insert.get()) != SQLITE_DONE) throw GpkgError(sqlite3_errmsg(db_.get()));
+        }
 
         // Cache variable IDs
-        auto stmt = gpkg::prepare(db_.get(), "SELECT variable_id, name, object_type FROM variables");
+        auto stmt =
+            gpkg::prepare(db_.get(), "SELECT variable_id, name, object_type FROM variables");
         while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
             int vid = column_int(stmt.get(), 0);
             std::string key = column_text(stmt.get(), 1) + ":" + column_text(stmt.get(), 2);
@@ -57,17 +82,20 @@ int GeoPackageReportPlugin::update(const SimulationSnapshot& /*snapshot*/) {
 
 int GeoPackageReportPlugin::write_summary(const SimulationContext& ctx) {
     try {
-        auto stmt = gpkg::prepare(db_.get(),
-            "INSERT OR REPLACE INTO result_summary "
-            "(simulation_id, object_type, object_id, variable_id, value) "
-            "VALUES (?, ?, ?, ?, ?)");
+        // report() follows end(), which has already finalized plugin handles.
+        if (!db_) db_ = open_database(db_path_);
+        auto stmt =
+            gpkg::prepare(db_.get(), "INSERT OR REPLACE INTO result_summary "
+                                     "(simulation_id, object_type, object_id, variable_id, value) "
+                                     "VALUES (?, ?, ?, ?, ?)");
 
         Transaction txn(db_.get());
 
         auto insert = [&](const std::string& obj_type, const std::string& obj_id,
                           const std::string& var_name, double value) {
             int vid = lookup_variable(var_name, obj_type);
-            if (vid < 0) return;
+            if (vid < 0)
+                return;
             sqlite3_reset(stmt.get());
             sqlite3_clear_bindings(stmt.get());
             bind_text(stmt.get(), 1, simulation_id_);
@@ -75,12 +103,13 @@ int GeoPackageReportPlugin::write_summary(const SimulationContext& ctx) {
             bind_text(stmt.get(), 3, obj_id);
             bind_int(stmt.get(), 4, vid);
             bind_double(stmt.get(), 5, value);
-            sqlite3_step(stmt.get());
+            if (sqlite3_step(stmt.get()) != SQLITE_DONE) throw GpkgError(sqlite3_errmsg(db_.get()));
         };
 
         // Node statistics
         for (int i = 0; i < ctx.node_names.size(); ++i) {
-            if (!ctx.nodes.rpt_flag[static_cast<std::size_t>(i)]) continue;
+            if (!ctx.nodes.rpt_flag[static_cast<std::size_t>(i)])
+                continue;
             const auto& name = ctx.node_names.name_of(i);
             if (i < (int)ctx.nodes.stat_max_depth.size())
                 insert("NODE", name, "max_depth", ctx.nodes.stat_max_depth[i]);
@@ -92,7 +121,8 @@ int GeoPackageReportPlugin::write_summary(const SimulationContext& ctx) {
 
         // Link statistics
         for (int i = 0; i < ctx.link_names.size(); ++i) {
-            if (!ctx.links.rpt_flag[static_cast<std::size_t>(i)]) continue;
+            if (!ctx.links.rpt_flag[static_cast<std::size_t>(i)])
+                continue;
             const auto& name = ctx.link_names.name_of(i);
             if (i < (int)ctx.links.stat_max_flow.size())
                 insert("LINK", name, "max_flow", ctx.links.stat_max_flow[i]);
@@ -106,7 +136,8 @@ int GeoPackageReportPlugin::write_summary(const SimulationContext& ctx) {
 
         // Subcatchment statistics
         for (int i = 0; i < ctx.subcatch_names.size(); ++i) {
-            if (!ctx.subcatches.rpt_flag[static_cast<std::size_t>(i)]) continue;
+            if (!ctx.subcatches.rpt_flag[static_cast<std::size_t>(i)])
+                continue;
             const auto& name = ctx.subcatch_names.name_of(i);
             if (i < (int)ctx.subcatches.stat_precip_vol.size())
                 insert("SUBCATCH", name, "precip_volume", ctx.subcatches.stat_precip_vol[i]);
@@ -115,16 +146,16 @@ int GeoPackageReportPlugin::write_summary(const SimulationContext& ctx) {
         }
 
         // Update simulation continuity errors
-        auto upd = gpkg::prepare(db_.get(),
-            "UPDATE simulations SET "
-            "continuity_error_runoff = ?, continuity_error_flow = ?, "
-            "continuity_error_quality = ?, status = 'completed' "
-            "WHERE simulation_id = ?");
+        auto upd =
+            gpkg::prepare(db_.get(), "UPDATE simulations SET "
+                                     "continuity_error_runoff = ?, continuity_error_flow = ?, "
+                                     "continuity_error_quality = ?, status = 'completed' "
+                                     "WHERE simulation_id = ?");
         bind_double(upd.get(), 1, ctx.mass_balance.runoff_error());
         bind_double(upd.get(), 2, ctx.mass_balance.routing_error());
         bind_double(upd.get(), 3, 0.0); // quality error not yet tracked
         bind_text(upd.get(), 4, simulation_id_);
-        sqlite3_step(upd.get());
+        if (sqlite3_step(upd.get()) != SQLITE_DONE) throw GpkgError(sqlite3_errmsg(db_.get()));
 
         txn.commit();
         return 0;

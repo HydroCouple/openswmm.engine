@@ -1,0 +1,3 @@
+
+# Unified diagnostic patches require a space on blank context lines.
+/tests/benchmarks/generated/gw2d_clock/*.patch whitespace=-blank-at-eol

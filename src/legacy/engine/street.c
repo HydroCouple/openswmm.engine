@@ -12,6 +12,17 @@
 //   - Fixed incorrect index used to retrieve street backing parameters
 //     in street_readParams.
 //-----------------------------------------------------------------------------
+
+/**
+ * @file      street.c
+ * @brief     Street cross-section geometry and hydraulic properties.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com> (OpenSWMM maintenance and extensions)
+ * @copyright Copyright (c) 2026 Caleb Buahin. OpenSWMM contributions only; original EPA SWMM
+ *            credits are retained.
+ * @license   Apache-2.0 for OpenSWMM contributions; original EPA SWMM provenance is retained.
+ */
+
 #define _CRT_SECURE_NO_DEPRECATE
 
 #include <stdlib.h>
@@ -26,7 +37,15 @@
 
 //=============================================================================
 
-int   street_create(int nStreets)
+/**
+ * @brief Allocate zero-initialized street cross-section definitions.
+ * @param[in] nStreets Nonnegative requested street count.
+ * @return Zero on success, ERR_MEMORY when calloc returns NULL.
+ * @post Resets Street and Nobjects[STREET], then assigns the new array/count
+ * on success. The project owns the allocation and street_delete() releases it.
+ * @pre Any earlier Street allocation has been released before this call.
+ */
+int street_create(int nStreets)
 //
 //  Input:   nStreets = number of Street objects to create
 //  Output:  none
@@ -35,26 +54,36 @@ int   street_create(int nStreets)
 {
     Street = NULL;
     Nobjects[STREET] = 0;
-    Street = (TStreet *)calloc(nStreets, sizeof(TStreet));
-    if (Street == NULL) return ERR_MEMORY;
+    Street = (TStreet*)calloc(nStreets, sizeof(TStreet));
+    if (Street == NULL)
+        return ERR_MEMORY;
     Nobjects[STREET] = nStreets;
     return 0;
 }
 
 //=============================================================================
 
-void  street_delete()
-//
-//  Input:   none
-//  Output:  none
-//  Purpose: deletes the collection of Street objects.
-//
-{
+/**
+ * @brief Deletes the collection of Street objects.
+ */
+void street_delete() {
     FREE(Street)
 }
 
 //=============================================================================
 
+/**
+ * @brief Parse a street cross section and construct its hydraulic transect tables.
+ * @param[in] tok Borrowed ntoks non-null token strings: ID, crown width,
+ * curb height, cross slope, road n, then optional gutter/backing parameters.
+ * Lengths are authored ft/m and slopes are percentages.
+ * @param[in] ntoks Number of tokens; at least five required, with complete
+ * backing slope/roughness data required when backing width is positive.
+ * @return Zero on success or an input error code for missing, unknown or
+ * invalid numeric items; error_setInpError stores the diagnostic token.
+ * @post Stores Street properties in feet and dimensionless slope fractions
+ * and calls transect_createStreetTransect(). ID may be set before a later error.
+ */
 int street_readParams(char* tok[], int ntoks)
 //
 //  Format is:
@@ -72,20 +101,23 @@ int street_readParams(char* tok[], int ntoks)
 //    Sback  = slope of street backing (ft or m)
 //    nBack  = Manning's n of street backing
 {
-    int    i, k, sides;
+    int i, k, sides;
     double x[11];
-    TStreet *street;
+    TStreet* street;
 
     // --- check for minimum number of tokens
-    if (ntoks < 5) return error_setInpError(ERR_ITEMS, "");
+    if (ntoks < 5)
+        return error_setInpError(ERR_ITEMS, "");
 
     // --- check that street exists in project
     i = project_findObject(STREET, tok[0]);
-    if (i < 0) return error_setInpError(ERR_NAME, tok[0]);
+    if (i < 0)
+        return error_setInpError(ERR_NAME, tok[0]);
     Street[i].ID = project_findID(STREET, tok[0]);
 
     // --- parse required data
-    for (k = 0; k <= 9; k++) x[k] = 0.0;
+    for (k = 0; k <= 9; k++)
+        x[k] = 0.0;
     for (k = 1; k <= 4; k++)
         if (!getDouble(tok[k], &x[k]) || x[k] <= 0.0)
             return error_setInpError(ERR_NUMBER, tok[k]);
@@ -107,13 +139,12 @@ int street_readParams(char* tok[], int ntoks)
             return error_setInpError(ERR_NUMBER, tok[7]);
 
     // --- read street backing parameters
-    if (ntoks > 8)
-    {
+    if (ntoks > 8) {
         if (!getDouble(tok[8], &x[8]) || x[8] < 0.0)
             return error_setInpError(ERR_NUMBER, tok[8]);
-        if (x[8] > 0.0)
-        {
-            if (ntoks < 11) return error_setInpError(ERR_ITEMS, "");
+        if (x[8] > 0.0) {
+            if (ntoks < 11)
+                return error_setInpError(ERR_ITEMS, "");
             for (k = 9; k <= 10; k++)
                 if (!getDouble(tok[k], &x[k]) || x[k] <= 0.0)
                     return error_setInpError(ERR_NUMBER, tok[k]);
@@ -138,6 +169,14 @@ int street_readParams(char* tok[], int ntoks)
 
 //=============================================================================
 
+/**
+ * @brief Inspect the high-end depth or area of a street conduit.
+ * @param[in] link Valid street conduit link index.
+ * @return Maximum endpoint node depth in feet for dynamic-wave routing,
+ * otherwise maximum conduit endpoint flow area in square feet. Returns zero
+ * when the cross-section transect index is negative.
+ * @note The result is a dimensional depth/area, not a normalized fullness ratio.
+ */
 double street_getExtentFilled(int link)
 //
 //  Input:   link = a link index
@@ -146,18 +185,15 @@ double street_getExtentFilled(int link)
 //           depth (for DW routing) or cross section area at the higher end.
 //
 {
-    int    k, t;
+    int k, t;
     double filled;
 
     t = Link[link].xsect.transect;
-    if (t < 0) return 0.0;
-    if (RouteModel == DW)
-    {
-        filled = MAX(Node[Link[link].node1].newDepth,
-                     Node[Link[link].node2].newDepth);
-    }
-    else
-    {
+    if (t < 0)
+        return 0.0;
+    if (RouteModel == DW) {
+        filled = MAX(Node[Link[link].node1].newDepth, Node[Link[link].node2].newDepth);
+    } else {
         k = Link[link].subIndex;
         filled = MAX(Conduit[k].a1, Conduit[k].a2);
     }

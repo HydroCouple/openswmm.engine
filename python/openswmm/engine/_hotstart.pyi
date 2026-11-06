@@ -38,7 +38,12 @@ class HotStart:
 
     @property
     def sim_datetime(self) -> datetime:
-        """Simulation moment at which the hot-start state was captured."""
+        """Simulation moment at which the hot-start state was captured: the
+        saving run's start date plus the elapsed simulation time."""
+        ...
+    @property
+    def start_datetime(self) -> datetime:
+        """Start date and time of the run that saved the state."""
         ...
     @property
     def crs(self) -> Optional[str]:
@@ -76,3 +81,12 @@ class SaveSchedule(MutableSequence[SaveScheduleEntry]):
     def insert(self, idx: int, value: Any) -> None: ...
     def append(self, value: Any) -> None: ...
     def clear(self) -> None: ...
+    def get_format(self, idx: int) -> str:
+        """File format of entry *idx*: ``"AUTO"``, ``"LEGACY"`` or ``"NATIVE"``."""
+        ...
+    def set_format(self, idx: int, fmt: str) -> None:
+        """Set the file format of entry *idx* (``"AUTO"``, ``"LEGACY"`` or ``"NATIVE"``)."""
+        ...
+    def legacy_omits(self) -> tuple[str, ...]:
+        """Model state a legacy SWMM5 file has no place for and NATIVE keeps."""
+        ...

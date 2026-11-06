@@ -1,6 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file test_pluginfactory_builtins.cpp
- * @brief Slice RC.5 — verify GeoPackage is an explicit built-in plugin and
+ * @file      test_pluginfactory_builtins.cpp
+ * @brief     Slice RC.5 — verify GeoPackage is an explicit built-in plugin and
  *        the discovery API surfaces the `is_builtin` flag correctly.
  *
  * Coverage:
@@ -17,29 +33,36 @@
  *       packaging tests. Visibility-hidden hardening (Slice RC.2) is
  *       verified at build time by the CMake target properties.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
 
 #include <openswmm/plugin_sdk/PluginDiscovery.hpp>
 
+#include "plugins/PluginFactory.hpp"
 #include <algorithm>
 #include <string>
 #include <vector>
 
 namespace {
 
-const openswmm::DiscoveredPlugin*
-findById(const std::vector<openswmm::DiscoveredPlugin>& plugins,
-         const std::string& id)
-{
+/**
+ * @brief Borrow the first discovered plugin with an exact ID.
+ *
+ * Valid only while the vector/element remains alive and unmodified; no retention, ownership
+ * transfer, registration or plugin loading occurs.
+ *
+ * @param[in] plugins Stable caller-owned discovery vector.
+ * @param[in] id Case-sensitive plugin ID.
+ * @return Pointer into plugins, or null when absent.
+ */
+const openswmm::DiscoveredPlugin* findById(const std::vector<openswmm::DiscoveredPlugin>& plugins,
+                                           const std::string& id) {
     auto it = std::find_if(plugins.begin(), plugins.end(),
-        [&](const openswmm::DiscoveredPlugin& p) {
-            return p.plugin_id == id;
-        });
+                           [&](const openswmm::DiscoveredPlugin& p) { return p.plugin_id == id; });
     return it == plugins.end() ? nullptr : &*it;
 }
 
@@ -49,8 +72,7 @@ findById(const std::vector<openswmm::DiscoveredPlugin>& plugins,
 // Default built-ins must be present and flagged
 // ---------------------------------------------------------------------------
 
-TEST(PluginFactoryBuiltins, DefaultPluginsAreRegisteredAsBuiltins)
-{
+TEST(PluginFactoryBuiltins, DefaultPluginsAreRegisteredAsBuiltins) {
     const auto plugins = openswmm::discover_plugins_by_id();
     ASSERT_FALSE(plugins.empty());
 
@@ -64,36 +86,29 @@ TEST(PluginFactoryBuiltins, DefaultPluginsAreRegisteredAsBuiltins)
             break;
         }
     }
-    EXPECT_TRUE(sawBuiltin)
-        << "Expected at least one is_builtin=true plugin from "
-        << "register_builtin_infos (Default Input/Output/Report/StateIO).";
+    EXPECT_TRUE(sawBuiltin) << "Expected at least one is_builtin=true plugin from "
+                            << "register_builtin_infos (Default Input/Output/Report/StateIO).";
 }
 
 // ---------------------------------------------------------------------------
 // GeoPackage — gated on OPENSWMM_HAS_GEOPACKAGE
 // ---------------------------------------------------------------------------
 
-TEST(PluginFactoryBuiltins, GeoPackageRegistrationMatchesBuildConfig)
-{
+TEST(PluginFactoryBuiltins, GeoPackageRegistrationMatchesBuildConfig) {
     const auto plugins = openswmm::discover_plugins_by_id();
-    const auto* gpkg = findById(plugins,
-        "org.hydrocouple.openswmm.plugins.geopackage");
+    const auto* gpkg = findById(plugins, "org.hydrocouple.openswmm.plugins.geopackage");
 
 #ifdef OPENSWMM_HAS_GEOPACKAGE
-    ASSERT_NE(gpkg, nullptr)
-        << "Expected GeoPackage to be registered as a built-in when "
-           "OPENSWMM_HAS_GEOPACKAGE is defined.";
-    EXPECT_TRUE(gpkg->is_builtin)
-        << "GeoPackage must be flagged is_builtin=true (Slice RC.1).";
+    ASSERT_NE(gpkg, nullptr) << "Expected GeoPackage to be registered as a built-in when "
+                                "OPENSWMM_HAS_GEOPACKAGE is defined.";
+    EXPECT_TRUE(gpkg->is_builtin) << "GeoPackage must be flagged is_builtin=true (Slice RC.1).";
 #else
-    EXPECT_EQ(gpkg, nullptr)
-        << "GeoPackage should NOT be registered when "
-           "OPENSWMM_HAS_GEOPACKAGE is undefined.";
+    EXPECT_EQ(gpkg, nullptr) << "GeoPackage should NOT be registered when "
+                                "OPENSWMM_HAS_GEOPACKAGE is undefined.";
 #endif
 }
 
-TEST(PluginFactoryBuiltins, NoDuplicateRegistrationOfGeoPackage)
-{
+TEST(PluginFactoryBuiltins, NoDuplicateRegistrationOfGeoPackage) {
     const auto plugins = openswmm::discover_plugins_by_id();
     int count = 0;
     for (const auto& p : plugins) {
@@ -101,10 +116,9 @@ TEST(PluginFactoryBuiltins, NoDuplicateRegistrationOfGeoPackage)
             ++count;
     }
 #ifdef OPENSWMM_HAS_GEOPACKAGE
-    EXPECT_EQ(count, 1)
-        << "GeoPackage should appear exactly once — the explicit "
-           "register_one in register_builtin_infos (Slice RC.1) must "
-           "not collide with any leftover discovery-scan registration.";
+    EXPECT_EQ(count, 1) << "GeoPackage should appear exactly once — the explicit "
+                           "register_one in register_builtin_infos (Slice RC.1) must "
+                           "not collide with any leftover discovery-scan registration.";
 #else
     EXPECT_EQ(count, 0);
 #endif
@@ -114,8 +128,7 @@ TEST(PluginFactoryBuiltins, NoDuplicateRegistrationOfGeoPackage)
 // is_builtin propagates through DiscoveredFilter -> DiscoveredPlugin
 // ---------------------------------------------------------------------------
 
-TEST(PluginFactoryBuiltins, IsBuiltinPropagatesThroughDiscoveredFilter)
-{
+TEST(PluginFactoryBuiltins, IsBuiltinPropagatesThroughDiscoveredFilter) {
     const auto filters = openswmm::discover_all_filters();
     ASSERT_FALSE(filters.empty());
 
@@ -124,13 +137,15 @@ TEST(PluginFactoryBuiltins, IsBuiltinPropagatesThroughDiscoveredFilter)
     // implementation now propagates it from ComponentEntry).
     bool sawBuiltinFilter = false;
     for (const auto& f : filters) {
-        if (f.is_builtin) { sawBuiltinFilter = true; break; }
+        if (f.is_builtin) {
+            sawBuiltinFilter = true;
+            break;
+        }
     }
     EXPECT_TRUE(sawBuiltinFilter);
 }
 
-TEST(PluginFactoryBuiltins, NonBuiltinDefaultIsFalseForAccidentalScanHits)
-{
+TEST(PluginFactoryBuiltins, NonBuiltinDefaultIsFalseForAccidentalScanHits) {
     // Defensive: if discover_plugins_by_id ever returns a plugin without
     // an explicit is_builtin assignment (e.g. a future on-disk-scanned
     // plugin), the field's default (false) must hold so callers don't
@@ -140,3 +155,17 @@ TEST(PluginFactoryBuiltins, NonBuiltinDefaultIsFalseForAccidentalScanHits)
     openswmm::DiscoveredPlugin fresh;
     EXPECT_FALSE(fresh.is_builtin);
 }
+
+#ifdef TEST_IO_ABI_0
+TEST(PluginFactoryBuiltins, DynamicPluginsRequireMatchingAbiBeforeFactoryCall) {
+    openswmm::PluginFactory factory;
+    for (const char* path : {TEST_IO_ABI_0, TEST_IO_ABI_1}) {
+        std::string warning;
+        EXPECT_EQ(factory.load_library(path, [&](const std::string& text) { warning = text; }), nullptr);
+        EXPECT_NE(warning.find("ABI tag"), std::string::npos);
+    }
+    auto* info = factory.load_library(TEST_IO_ABI_2);
+    ASSERT_NE(info, nullptr);
+    EXPECT_EQ(info->id(), "test.current-plugin-abi");
+}
+#endif

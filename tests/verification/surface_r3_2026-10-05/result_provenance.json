@@ -1,0 +1,22 @@
+{
+  "generator": "Fresh isolated candidate from committed R2 HEAD plus only R3 changes; native six full-model ET runs. Results and pending-demand restart copied from isolated verification output.",
+  "base_commit": "35547cd082944622b5da459e56967e0e1c7d677c",
+  "engine_sha256": "69f0e513c88f2bb838943f7e90a20f51b1e730beb95d7347978502a8c3d51e96",
+  "files": {
+    "models/et_CLOSED_FORM_dry.2d.h5": "8b1699eb70f10f325208345a6ee984c2cd8ba2ea9d9b9a548037e442585abef2",
+    "models/et_CLOSED_FORM_dry.inp": "25bc6317cdfc093d890e3abd85af0cd6ded7b2735d47656f57046323520b70fa",
+    "models/et_CLOSED_FORM_ponded.2d.h5": "ec93f999685f79dff1887e0acabd8b1ed1c361c6d16348265558850553232f1f",
+    "models/et_CLOSED_FORM_ponded.inp": "8cff470bce18de87ba83165b828b085c78a3c1cdc89793f60e0afa8c46ecdd2a",
+    "models/et_ENSLAVED_dry.2d.h5": "b8d9eaa6b583b4a0ee8163131d5fb61ddebcd4a0e32bbcfab1d5acad23143eb4",
+    "models/et_ENSLAVED_dry.inp": "ae71590efaf77316c7e11fb6935345f19d8d31374fafa6f284cd67772f5c253f",
+    "models/et_ENSLAVED_ponded.2d.h5": "9ec352ba262d259ce74bbc9bc13348a2e8ac7b0792e001a29bfd8d32d975b06f",
+    "models/et_ENSLAVED_ponded.inp": "53b402fc5e79e427d3056c05d3279b5053db57b3248857d1f58eec7f8e2b2c70",
+    "models/et_SIGMA_dry.2d.h5": "52565ceffdc4e0472cd36d71f265cf83dc2a50d7289087b2dfc8f63e5f1c0ca6",
+    "models/et_SIGMA_dry.inp": "e7bde0ef189f399d0966769ce3790d88d68913de2111e69fa376797eccaad82f",
+    "models/et_SIGMA_ponded.2d.h5": "87394645f20322be5236920219e47b71e69df5a85d87d01e7b7df36e5a497f69",
+    "models/et_SIGMA_ponded.inp": "a55292ccfd92b776c9bf795da0861be062eb8a7baf51113d7de9c5920f00182f",
+    "models/pending_et.hsf": "334aeba627ea588e896afd3ebdbaf93e05d13a01bfd4b494f4468c3992d1642c",
+    "models/restart_original.inp": "6ce9ce607a689de547790cd0e56f399825f4a8ae82aec96a372a9650b23a97e2",
+    "models/restart_resumed.inp": "5270b9889f77d136b8929dacb904991a511a36ff6aa6dda31faf2da5323b6eba"
+  }
+}

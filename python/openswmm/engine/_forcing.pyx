@@ -1,10 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright 2026 Caleb Buahin
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Runtime forcing (Pythonic v1 surface)
 =====================================
 
 :author: Caleb Buahin
 :copyright: Copyright (c) 2026 Caleb Buahin
-:license: MIT
+:license: Apache-2.0
 
 The :class:`Forcing` view, reached via ``solver.forcing``, applies
 runtime overrides to node/link/subcatchment/gage state.
@@ -81,6 +97,44 @@ class Forcing:
 
     def __init__(self, solver):
         self._solver = solver
+
+    def node_temperature(self, node, double value, *, mode=ForcingMode.REPLACE, bint persist=False):
+        """Temperature override in degrees C; ADD uses degrees C times ft³/s."""
+        cdef int i = _resolve_node(self._solver, node)
+        _check(swmm_forcing_node_temperature(_h(self._solver), i, value, int(mode), int(persist)))
+
+    def node_age(self, node, double value, *, mode=ForcingMode.REPLACE, bint persist=False):
+        """Age override in hours; ADD uses hours times ft³/s."""
+        cdef int i = _resolve_node(self._solver, node)
+        _check(swmm_forcing_node_age(_h(self._solver), i, value, int(mode), int(persist)))
+
+    def link_seepage(self, link, double value, *, mode=ForcingMode.REPLACE, bint persist=False):
+        """Exchange in ft³/s regardless of project units, positive out of conduit."""
+        cdef int i = _resolve_link(self._solver, link)
+        _check(swmm_forcing_link_seepage(_h(self._solver), i, value, int(mode), int(persist)))
+
+    def element_climate(self, kind, element, variable, double value, *, mode=ForcingMode.REPLACE, bint persist=False):
+        """Force local air temperature, humidity, wind or shortwave climate.
+
+        Use HeatElemKind and the ELEM_* ForcingType selectors. Values use
+        project temperature/wind units, percent humidity, and W/m² shortwave.
+        """
+        cdef int k = int(kind)
+        if k not in (0, 1):
+            raise ValueError("kind must be HeatElemKind.NODE or LINK")
+        cdef int i = _resolve_node(self._solver, element) if k == 0 else _resolve_link(self._solver, element)
+        _check(swmm_forcing_element_climate(_h(self._solver), k, i, int(variable), value, int(mode), int(persist)))
+
+    def element_climate_get(self, kind, element, variable):
+        """Return (value, mode), with mode None when no override is present."""
+        cdef int k = int(kind)
+        if k not in (0, 1):
+            raise ValueError("kind must be HeatElemKind.NODE or LINK")
+        cdef int i = _resolve_node(self._solver, element) if k == 0 else _resolve_link(self._solver, element)
+        cdef double value = 0
+        cdef int mode = 0
+        _check(swmm_forcing_element_climate_get(_h(self._solver), k, i, int(variable), &value, &mode))
+        return value, ForcingMode(mode) if mode else None
 
     # ---- Node forcing ---------------------------------------------
 
@@ -420,3 +474,10 @@ class Forcing:
 
     def __repr__(self) -> str:
         return f"<Forcing for {self._solver!r}>"
+
+cdef extern from "openswmm/engine/openswmm_forcing.h":
+    int swmm_forcing_node_temperature(SWMM_Engine, int, double, int, int)
+    int swmm_forcing_node_age(SWMM_Engine, int, double, int, int)
+    int swmm_forcing_link_seepage(SWMM_Engine, int, double, int, int)
+    int swmm_forcing_element_climate(SWMM_Engine, int, int, int, double, int, int)
+    int swmm_forcing_element_climate_get(SWMM_Engine, int, int, int, double*, int*)

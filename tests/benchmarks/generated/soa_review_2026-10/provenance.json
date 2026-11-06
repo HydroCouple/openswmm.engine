@@ -1,0 +1,32 @@
+{
+  "soa_sigma": {
+    "seed": "tests/unit/engine/data/runtime_water_checkpoint/SIGMA-1.inp",
+    "seed_sha256": "7a3e5905785a3ae4736a4f07f29fcdb415f3099572f7ad843a9c217a448f4f30",
+    "changes": [
+      "Enable 2D HDF5 output to observe internal fields, not just the 1D .out.",
+      "Explicit node bed and constant infiltration make a non-equilibrium SIGMA workload."
+    ]
+  },
+  "soa_gw_species_heat": {
+    "seed": "tests/output/ground_heat/lateral-advection-spatial-fine.inp",
+    "seed_sha256": "084503a3326e89ac9fd6717fc6fe05bd9da01310924d8b92ddf84f7fbf4813e3",
+    "changes": [
+      "Add two conservative species with different SAT/UNSAT concentrations.",
+      "Enable 2D HDF5 output to observe internal fields, not just the 1D .out.",
+      "Use SIGMA closure and layered UNSAT transport to exercise the physical porewater map."
+    ]
+  },
+  "soa_ueb_mesh": {
+    "seed": "tests/unit/engine/data/_mesh_snow_UEB_warm.inp",
+    "seed_sha256": "30291f0cecd75293c2686c9f818e429917b6859707e1db26bf156a33c34ba318",
+    "changes": [
+      "Enable 2D HDF5 output to observe internal fields, not just the 1D .out.",
+      "Add a disconnected report node so the CLI writes a .out file."
+    ]
+  },
+  "soa_richards_lid": {
+    "seed": "tests/verification/surface_subsurface_program_2026-10-05/richards_drain_pipe.inp",
+    "seed_sha256": "d12f139e4b3e500848f513d21b2d05ff8c0af9ba1507050b0e6af7850d0120f6",
+    "changes": []
+  }
+}

@@ -1,6 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file TablesHandler.cpp
- * @brief Section handlers for [TIMESERIES] and [CURVES].
+ * @file      TablesHandler.cpp
+ * @brief     Section handlers for [TIMESERIES] and [CURVES].
  *
  * ### [TIMESERIES] format — inline data
  * ```
@@ -29,9 +45,9 @@
  * @see TableData.hpp — Table + TableCursor data structures
  * @ingroup engine_input
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #include "TablesHandler.hpp"
@@ -54,6 +70,21 @@ namespace openswmm::input {
 // handle_timeseries()
 // ============================================================================
 
+/**
+ * @brief Append inline time-series samples or retain external-file references.
+ *
+ * Creates/reuses TIMESERIES tables by case-insensitive name independently of curves. Per-series
+ * anchors survive interleaving and earlier sections: explicit slash-date rows use OADate, time-only
+ * decimal hours/clock values wrap forward when <=prior time-of-day. Pre-date samples stay relative
+ * and n_relative marks later start-date offsetting. FILE path:column is retained without loading or
+ * marking streaming state. Values parse permissively; no monotonicity/finite/shape validation or
+ * rollback of separate x/y appends.
+ *
+ * @param[in,out] ctx Context receiving authored hydrology configuration/deferred references/errors;
+ *     caller serializes parsing with coherent current stores.
+ * @param[in] lines Borrowed section data rows, tokenized/copied synchronously; units remain project
+ *     authoring units except the stated conversions.
+ */
 void handle_timeseries(SimulationContext& ctx, const std::vector<std::string>& lines) {
     // SWMM timeseries rows can have:
     //   Name  Date  Time  Value   (with explicit date)
@@ -61,17 +92,42 @@ void handle_timeseries(SimulationContext& ctx, const std::vector<std::string>& l
     //   Name  FILE  "path"        (external file reference)
 
     std::string current_name;
-    double      last_date = 0.0;
-    int         current_idx = -1;
+    double last_date = 0.0;
+    int current_idx = -1;
+
+    // Legacy keeps the date anchor PER SERIES (Tseries[j].lastDate), not per
+    // section scan, so interleaved rows of different series must each resume
+    // their own anchor. Rows are almost always grouped by series, so the
+    // anchor is kept in these locals on the hot path and swapped through the
+    // map only when the row's series changes. `seen_date == false` means the
+    // series has not yet had an explicit date token: its date-less rows are
+    // elapsed times anchored at the simulation start (legacy input.c:170
+    // seeds lastDate = StartDate + StartTime). Those rows are stored with
+    // x relative to 0 and COUNTED in Table::n_relative; the start_date
+    // offset is applied later by resolve_cross_references(), because
+    // [OPTIONS] may legally appear after [TIMESERIES] in the file.
+    struct SeriesParseState {
+        double last_date = 0.0;
+        bool seen_date = false;
+    };
+    std::unordered_map<int, SeriesParseState> series_state;
+    bool seen_date = false;
 
     for (const auto& pl : parse_section(lines)) {
         auto tok = Tokenizer::tokenize(pl.data);
-        if (tok.empty()) continue;
+        if (tok.empty())
+            continue;
 
         // First column: name (non-empty) or continuation (empty — same name)
         const std::string& maybe_name = tok[0];
         bool is_new_table = false;
-        if (!maybe_name.empty()) {
+        // Standard SWMM repeats the series name on every row, so the common
+        // case is "same table as the previous row". Skipping the lookup then
+        // keeps the whole section at one lookup per DISTINCT series.
+        if (!maybe_name.empty() && !(current_idx >= 0 && ieq(maybe_name, current_name))) {
+            // Park the outgoing series' anchor state before switching.
+            if (current_idx >= 0)
+                series_state[current_idx] = {last_date, seen_date};
             current_name = maybe_name;
             // Ensure table exists (kind-scoped: a curve with the same name
             // is a DIFFERENT object, matching legacy's separate hash tables)
@@ -80,15 +136,33 @@ void handle_timeseries(SimulationContext& ctx, const std::vector<std::string>& l
                 current_idx = ctx.tables.add(current_name, TableType::TIMESERIES);
                 is_new_table = true;
             }
+            const auto it = series_state.find(current_idx);
+            if (it != series_state.end()) {
+                last_date = it->second.last_date;
+                seen_date = it->second.seen_date;
+            } else if (current_idx < ctx.n_tables() && !ctx.tables[current_idx].x.empty()) {
+                // Series resumed from an earlier [TIMESERIES] section:
+                // reconstruct the anchor from its stored rows. All-relative
+                // rows keep any accumulated day wraps in floor(x.back());
+                // once a dated row exists, floor(x.back()) IS the last date.
+                const Table& prev = ctx.tables[current_idx];
+                seen_date = prev.n_relative < static_cast<int>(prev.x.size());
+                last_date = std::floor(prev.x.back());
+            } else {
+                last_date = 0.0;
+                seen_date = false;
+            }
         }
         // Attach comment to the table on its first (name-introducing) row
         if (is_new_table && !pl.comment.empty() && current_idx >= 0)
             ctx.tables[current_idx].comment = pl.comment;
 
-        if (current_idx < 0 || current_name.empty()) continue;
+        if (current_idx < 0 || current_name.empty())
+            continue;
         Table& tbl = ctx.tables[current_idx];
 
-        if (tok.size() < 2) continue;
+        if (tok.size() < 2)
+            continue;
 
         // Detect FILE reference
         const std::string tok1_upper = Tokenizer::to_upper(tok[1]);
@@ -125,6 +199,7 @@ void handle_timeseries(SimulationContext& ctx, const std::vector<std::string>& l
             // scrambling rain/inflow hydrographs that repeat the date every N
             // rows.
             last_date = std::floor(x);
+            seen_date = true;
             y = to_double(tok[3]);
         } else if (!has_date && tok.size() >= 3) {
             // Name  Time  Value  (continuation, uses last_date)
@@ -149,23 +224,30 @@ void handle_timeseries(SimulationContext& ctx, const std::vector<std::string>& l
                 // Clock format HH:MM[:SS].  Use integer arithmetic matching
                 // legacy datetime_encodeTime() for identical time fractions.
                 unsigned th = 0, tm = 0;
-                double   ts = 0.0;
+                double ts = 0.0;
                 const char* tp = tbeg;
                 auto rut = [&](unsigned& out) {
                     auto [np, ec] = std::from_chars(tp, tend, out);
-                    if (ec != std::errc{}) return;
+                    if (ec != std::errc{})
+                        return;
                     tp = np;
                 };
                 auto rdt = [&](double& out) {
                     auto [np, ec] = openswmm::from_chars_double(tp, tend, out);
-                    if (ec != std::errc{}) return;
+                    if (ec != std::errc{})
+                        return;
                     tp = np;
                 };
                 rut(th);
-                if (tp < tend && *tp == ':') { ++tp; rut(tm); }
-                if (tp < tend && *tp == ':') { ++tp; rdt(ts); }
-                time_frac = datetime::encodeTime(static_cast<int>(th),
-                                                 static_cast<int>(tm),
+                if (tp < tend && *tp == ':') {
+                    ++tp;
+                    rut(tm);
+                }
+                if (tp < tend && *tp == ':') {
+                    ++tp;
+                    rdt(ts);
+                }
+                time_frac = datetime::encodeTime(static_cast<int>(th), static_cast<int>(tm),
                                                  static_cast<int>(ts));
             }
 
@@ -176,6 +258,12 @@ void handle_timeseries(SimulationContext& ctx, const std::vector<std::string>& l
             }
             x = last_date + time_frac;
             y = to_double(tok[2]);
+            // Date-less rows before the series' first explicit date are
+            // elapsed times anchored at the simulation start — count them
+            // so the resolver adds start_date to exactly these rows (and
+            // InpWriter emits them back in time-only form).
+            if (!seen_date)
+                tbl.n_relative = static_cast<int>(tbl.x.size()) + 1;
         } else {
             continue;
         }
@@ -190,41 +278,62 @@ void handle_timeseries(SimulationContext& ctx, const std::vector<std::string>& l
 // ============================================================================
 
 static const std::unordered_map<std::string, TableType> CURVE_TYPE_MAP = {
-    {"STORAGE",   TableType::CURVE_STORAGE},
-    {"DIVERSION", TableType::CURVE_DIVERSION},
-    {"RATING",    TableType::CURVE_RATING},
-    {"SHAPE",     TableType::CURVE_SHAPE},
-    {"CONTROL",   TableType::CURVE_CONTROL},
-    {"TIDAL",     TableType::CURVE_TIDAL},
-    {"PUMP1",     TableType::CURVE_PUMP1},
-    {"PUMP2",     TableType::CURVE_PUMP2},
-    {"PUMP3",     TableType::CURVE_PUMP3},
-    {"PUMP4",     TableType::CURVE_PUMP4},
-    {"PUMP5",     TableType::CURVE_PUMP5},
+    {"STORAGE", TableType::CURVE_STORAGE}, {"DIVERSION", TableType::CURVE_DIVERSION},
+    {"RATING", TableType::CURVE_RATING},   {"SHAPE", TableType::CURVE_SHAPE},
+    {"CONTROL", TableType::CURVE_CONTROL}, {"TIDAL", TableType::CURVE_TIDAL},
+    {"WEIR", TableType::CURVE_WEIR},       {"PUMP1", TableType::CURVE_PUMP1},
+    {"PUMP2", TableType::CURVE_PUMP2},     {"PUMP3", TableType::CURVE_PUMP3},
+    {"PUMP4", TableType::CURVE_PUMP4},     {"PUMP5", TableType::CURVE_PUMP5},
 };
 
+/**
+ * @brief Append curve coordinate pairs to kind-scoped named tables.
+ *
+ * Creates/reuses non-TIMESERIES tables independently of a same-named series. New first-row type
+ * token uses exact folded lookup; unknown type appends ERR_KEYWORD but still creates a table using
+ * current_type (initially RATING, potentially retained from a previous curve). Recognized optional
+ * type tokens are consumed on continuation rows without retyping existing table. Raw x/y values
+ * remain curve-specific project units; ignores incomplete final pair and performs no ordering/range
+ * validation.
+ *
+ * @param[in,out] ctx Context receiving authored hydrology configuration/deferred references/errors;
+ *     caller serializes parsing with coherent current stores.
+ * @param[in] lines Borrowed section data rows, tokenized/copied synchronously; units remain project
+ *     authoring units except the stated conversions.
+ */
 void handle_curves(SimulationContext& ctx, const std::vector<std::string>& lines) {
-    std::string  current_name;
-    int          current_idx = -1;
-    TableType    current_type = TableType::CURVE_RATING;
+    std::string current_name;
+    int current_idx = -1;
+    TableType current_type = TableType::CURVE_RATING;
 
     for (const auto& pl : parse_section(lines)) {
         auto tok = Tokenizer::tokenize(pl.data);
-        if (tok.empty()) continue;
+        if (tok.empty())
+            continue;
 
         const std::string& maybe_name = tok[0];
         bool is_new_table = false;
-        if (!maybe_name.empty()) {
+        // As in [TIMESERIES]: curve rows repeat the curve name, so skip the
+        // lookup when this row names the table we are already on. Only the
+        // lookup is skipped — the data-column handling below still runs, and
+        // current_name's spelling never reaches output (it feeds only the
+        // lookup and the add).
+        if (!maybe_name.empty() && !(current_idx >= 0 && ieq(maybe_name, current_name))) {
             current_name = maybe_name;
             // Kind-scoped: a timeseries with the same name is a DIFFERENT
             // object, matching legacy's separate hash tables.
             current_idx = ctx.find_curve(current_name);
             if (current_idx < 0) {
-                // Type may appear in tok[1] (first row only)
+                // Type appears in tok[1] on a new curve's first row. Legacy
+                // table_readCurve (table.c) rejects an unknown type keyword with
+                // ERR_KEYWORD; v6 formerly kept the default RATING and mis-parsed
+                // the token as data (e.g. a "GENERAL" curve was silently run).
                 if (tok.size() > 1) {
                     auto it = CURVE_TYPE_MAP.find(Tokenizer::to_upper(tok[1]));
                     if (it != CURVE_TYPE_MAP.end()) {
                         current_type = it->second;
+                    } else {
+                        ctx.errors.push_back(format_error(ERR_KEYWORD, tok[1]));
                     }
                 }
                 current_idx = ctx.tables.add(current_name, current_type);
@@ -232,7 +341,8 @@ void handle_curves(SimulationContext& ctx, const std::vector<std::string>& lines
             }
         }
 
-        if (current_idx < 0) continue;
+        if (current_idx < 0)
+            continue;
         Table& tbl = ctx.tables[current_idx];
         if (is_new_table && !pl.comment.empty())
             tbl.comment = pl.comment;
@@ -243,7 +353,7 @@ void handle_curves(SimulationContext& ctx, const std::vector<std::string>& lines
         if (tok.size() >= 2) {
             auto it = CURVE_TYPE_MAP.find(Tokenizer::to_upper(tok[1]));
             if (it != CURVE_TYPE_MAP.end()) {
-                data_start = 2;  // type token consumed
+                data_start = 2; // type token consumed
             }
         }
 

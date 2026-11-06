@@ -1,0 +1,95 @@
+[TITLE]
+Grammar edges the legacy reader enforces and a naive writer violates.
+
+Each value below produced a file the legacy engine REFUSED, found by running
+legacy over the round-tripped corpus:
+
+  * RG_FAST records every 4 seconds (0.001111 h). H:MM cannot represent that,
+    and "0:00" is ERROR 213. Legacy reads this column with getDouble first, so
+    decimal hours are legal and are the only form that carries it.
+  * GW_SUB's groundwater row leaves every optional depth unset. Legacy still
+    demands ntoks >= 11 (gwater.c), so an eleventh token must be written even
+    when it is only "*" — stopping at ten is ERROR 203.
+  * S_GA infiltrates at Ksat = 1e-6 in/hr. %10.4f wrote that as 0.0000 and
+    legacy rejects a non-positive Ksat with ERROR 235.
+  * The [ADJUSTMENTS] N-PERV row names a PATTERN. Patterns live in their own
+    store, so resolving the index through the table list returned an unrelated
+    object and legacy answered ERROR 209.
+
+[OPTIONS]
+FLOW_UNITS           CFS
+INFILTRATION         GREEN_AMPT
+FLOW_ROUTING         DYNWAVE
+START_DATE           01/01/2024
+END_DATE             01/02/2024
+REPORT_STEP          00:15:00
+ROUTING_STEP         00:00:30
+
+[RAINGAGES]
+;;Name   Format     Interval    SCF  Source
+RG_FAST  INTENSITY  0.001111    1.0  TIMESERIES TS1
+RG_SLOW  INTENSITY  0:15        1.0  TIMESERIES TS1
+
+[TIMESERIES]
+TS1  0:00  0.0
+TS1  1:00  0.5
+
+[PATTERNS]
+;;Name     Type     Factors
+NPERVPAT   MONTHLY  1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0
+
+[AQUIFERS]
+;;Name   Por   WP    FC    Ksat  Kslope  Tslope  ETu   ETs  Seep  Ebot  Egw   Umc
+AQ1      0.5   0.15  0.30  5.0   10.0    15.0    0.35  14   0.002 0.0   10.0  0.30
+
+[SUBCATCHMENTS]
+;;Name  RainGage  Outlet  Area  %Imperv  Width  %Slope  CurbLen
+S_GA    RG_FAST   J1      2.0   25.0     100.0  0.5     0
+GW_SUB  RG_SLOW   J1      2.0   25.0     100.0  0.5     0
+
+[SUBAREAS]
+S_GA    0.013  0.1  0.05  0.05  25  OUTLET
+GW_SUB  0.013  0.1  0.05  0.05  25  OUTLET
+
+[ADJUSTMENTS]
+;;Parameter  Subcatchment  Pattern
+N-PERV       S_GA          NPERVPAT
+
+[INFILTRATION]
+;;Subcatch  Suction  Ksat      IMD
+S_GA        3.0      0.000001  0.3
+GW_SUB      3.0      0.5       0.3
+
+[GROUNDWATER]
+;;Subcatch  Aquifer  Node  Esurf  A1     B1  A2     B2  A3  Dsw  Egwt
+; The trailing '*' leaves the groundwater-table elevation at its default. It
+; is also what makes this row eleven tokens, which legacy requires; the writer
+; used to drop it because every optional was unset, taking the row to ten.
+GW_SUB      AQ1      J1    20     0.001  1   0.001  1   0   2    *
+
+[JUNCTIONS]
+;;Name  Elev   MaxDepth
+J1      100.0  10.0
+
+[OUTFALLS]
+;;Name  Elev  Type  Stage  Gated
+O1      90.0  FREE         NO
+
+[CONDUITS]
+;;Name  From  To  Length  Rough  InOff  OutOff
+C1      J1    O1  100.0   0.013  0      0
+
+[XSECTIONS]
+C1  CIRCULAR  1.5  0  0  0  1
+
+[COORDINATES]
+J1  0    0
+O1  100  0
+
+[Polygons]
+S_GA    0  0
+S_GA    0  50
+S_GA    50 50
+GW_SUB  60  0
+GW_SUB  60  50
+GW_SUB  110 50

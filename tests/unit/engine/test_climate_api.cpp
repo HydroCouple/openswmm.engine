@@ -1,6 +1,6 @@
 /**
- * @file test_climate_api.cpp
- * @brief Unit tests for the climatology configuration C API (openswmm_climate.h):
+ * @file      test_climate_api.cpp
+ * @brief     Unit tests for the climatology configuration C API (openswmm_climate.h):
  *        temperature, evaporation, wind, snowmelt globals, areal-depletion
  *        curves, and monthly adjustments.
  *
@@ -15,13 +15,22 @@
  * @see src/engine/core/openswmm_climate_impl.cpp
  * @see include/openswmm/engine/openswmm_climate.h
  * @ingroup engine_api
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
 #include <array>
+#include <fstream>
+#include <string>
 
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_climate.h>
+#include <openswmm/engine/openswmm_model.h>
+
+#include "core/SWMMEngine.hpp"
 
 // Working directory is tests/unit/engine/data/ (set by CMakeLists.txt).
 namespace {
@@ -30,13 +39,28 @@ class ClimateConfigCApi : public ::testing::Test {
 protected:
     SWMM_Engine engine_ = nullptr;
 
+    /**
+     * @brief Create/open the fixed climate configuration fixture.
+     *
+     * Requires engine_ initially null to avoid losing an existing handle. Fatal create/open assertions
+     * leave partial state for TearDown; returning from this helper does not guarantee caller test
+     * termination. Does not initialize/start.
+     *
+     * @param[in] rpt Report destination passed to open.
+     * @param[in] out Binary output destination passed to open.
+     */
     void openModel(const char* rpt, const char* out) {
         engine_ = swmm_engine_create();
         ASSERT_NE(engine_, nullptr);
-        ASSERT_EQ(swmm_engine_open(engine_, "climate_config.inp", rpt, out, nullptr),
-                  SWMM_OK);
+        ASSERT_EQ(swmm_engine_open(engine_, "climate_config.inp", rpt, out, nullptr), SWMM_OK);
     }
 
+    /**
+     * @brief Close and destroy the fixture model, then clear its handle.
+     *
+     * Checks for null, ignores close status and releases partial state after setup/test failure. No
+     * simulation report is requested here.
+     */
     void TearDown() override {
         if (engine_) {
             swmm_engine_close(engine_);
@@ -46,20 +70,16 @@ protected:
     }
 };
 
-constexpr double kEvapMonthly[12] =
-    {0.10,0.11,0.12,0.13,0.14,0.15,0.16,0.17,0.18,0.19,0.20,0.21};
-constexpr double kWindMonthly[12] =
-    {1,2,3,4,5,6,7,8,9,10,11,12};
-constexpr double kAdcImperv[10] =
-    {1.0,0.9,0.8,0.7,0.6,0.5,0.4,0.3,0.2,0.1};
-constexpr double kAdcPerv[10] =
-    {1.0,0.95,0.9,0.85,0.8,0.75,0.7,0.65,0.6,0.55};
-constexpr double kAdjTemp[12] =
-    {-2,-1,0,1,2,3,4,5,4,3,2,1};
-constexpr double kAdjEvap[12] =
-    {0.80,0.85,0.90,0.95,1.00,1.05,1.10,1.15,1.10,1.05,1.00,0.95};
-constexpr double kAdjRain[12] =
-    {1.0,1.1,1.2,1.3,1.4,1.5,1.4,1.3,1.2,1.1,1.0,0.9};
+constexpr double kEvapMonthly[12] = {0.10, 0.11, 0.12, 0.13, 0.14, 0.15,
+                                     0.16, 0.17, 0.18, 0.19, 0.20, 0.21};
+constexpr double kWindMonthly[12] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
+constexpr double kHumidityMonthly[12] = {40, 42, 44, 46, 48, 50, 52, 54, 56, 58, 60, 62};
+constexpr double kAdcImperv[10] = {1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1};
+constexpr double kAdcPerv[10] = {1.0, 0.95, 0.9, 0.85, 0.8, 0.75, 0.7, 0.65, 0.6, 0.55};
+constexpr double kAdjTemp[12] = {-2, -1, 0, 1, 2, 3, 4, 5, 4, 3, 2, 1};
+constexpr double kAdjEvap[12] = {0.80, 0.85, 0.90, 0.95, 1.00, 1.05,
+                                 1.10, 1.15, 1.10, 1.05, 1.00, 0.95};
+constexpr double kAdjRain[12] = {1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.4, 1.3, 1.2, 1.1, 1.0, 0.9};
 
 } // namespace
 
@@ -84,11 +104,11 @@ TEST_F(ClimateConfigCApi, ScalarsMatchParsedInput) {
     EXPECT_EQ(swmm_climate_get_latitude(engine_, &d), SWMM_OK);
     EXPECT_DOUBLE_EQ(d, 40.5);
     EXPECT_EQ(swmm_climate_get_longitude_correction(engine_, &d), SWMM_OK);
-    EXPECT_DOUBLE_EQ(d, 300.0);  // minutes, as written in the .inp
+    EXPECT_DOUBLE_EQ(d, 300.0); // minutes, as written in the .inp
 
     int tunits = -99;
     EXPECT_EQ(swmm_climate_get_temp_units(engine_, &tunits), SWMM_OK);
-    EXPECT_EQ(tunits, -1);  // fixture uses TIMESERIES temp source: units unspecified
+    EXPECT_EQ(tunits, -1); // fixture uses TIMESERIES temp source: units unspecified
 
     int etype = -1;
     EXPECT_EQ(swmm_climate_get_evap_type(engine_, &etype), SWMM_OK);
@@ -99,6 +119,12 @@ TEST_F(ClimateConfigCApi, ScalarsMatchParsedInput) {
     int wtype = -1;
     EXPECT_EQ(swmm_climate_get_wind_type(engine_, &wtype), SWMM_OK);
     EXPECT_EQ(wtype, SWMM_WIND_MONTHLY);
+
+    int htype = -1, hvar = -1;
+    EXPECT_EQ(swmm_climate_get_humidity_type(engine_, &htype), SWMM_OK);
+    EXPECT_EQ(htype, SWMM_HUMIDITY_MONTHLY);
+    EXPECT_EQ(swmm_climate_get_humidity_variable(engine_, &hvar), SWMM_OK);
+    EXPECT_EQ(hvar, SWMM_HUMIDITY_RELATIVE);
 
     EXPECT_EQ(swmm_climate_get_snow_temp(engine_, &d), SWMM_OK);
     EXPECT_DOUBLE_EQ(d, 32.5);
@@ -115,29 +141,41 @@ TEST_F(ClimateConfigCApi, ArraysMatchParsedInput) {
     std::array<double, 10> a10{};
 
     EXPECT_EQ(swmm_climate_get_evap_monthly(engine_, m12.data(), 12), SWMM_OK);
-    for (int i = 0; i < 12; ++i) EXPECT_DOUBLE_EQ(m12[i], kEvapMonthly[i]) << "evap[" << i << "]";
+    for (int i = 0; i < 12; ++i)
+        EXPECT_DOUBLE_EQ(m12[i], kEvapMonthly[i]) << "evap[" << i << "]";
 
     EXPECT_EQ(swmm_climate_get_wind_monthly(engine_, m12.data(), 12), SWMM_OK);
-    for (int i = 0; i < 12; ++i) EXPECT_DOUBLE_EQ(m12[i], kWindMonthly[i]) << "wind[" << i << "]";
+    for (int i = 0; i < 12; ++i)
+        EXPECT_DOUBLE_EQ(m12[i], kWindMonthly[i]) << "wind[" << i << "]";
+
+    EXPECT_EQ(swmm_climate_get_humidity_monthly(engine_, m12.data(), 12), SWMM_OK);
+    for (int i = 0; i < 12; ++i)
+        EXPECT_DOUBLE_EQ(m12[i], kHumidityMonthly[i]) << "rh[" << i << "]";
 
     EXPECT_EQ(swmm_climate_get_adc_impervious(engine_, a10.data(), 10), SWMM_OK);
-    for (int i = 0; i < 10; ++i) EXPECT_DOUBLE_EQ(a10[i], kAdcImperv[i]) << "adcI[" << i << "]";
+    for (int i = 0; i < 10; ++i)
+        EXPECT_DOUBLE_EQ(a10[i], kAdcImperv[i]) << "adcI[" << i << "]";
 
     EXPECT_EQ(swmm_climate_get_adc_pervious(engine_, a10.data(), 10), SWMM_OK);
-    for (int i = 0; i < 10; ++i) EXPECT_DOUBLE_EQ(a10[i], kAdcPerv[i]) << "adcP[" << i << "]";
+    for (int i = 0; i < 10; ++i)
+        EXPECT_DOUBLE_EQ(a10[i], kAdcPerv[i]) << "adcP[" << i << "]";
 
     EXPECT_EQ(swmm_climate_get_adjust_temperature(engine_, m12.data(), 12), SWMM_OK);
-    for (int i = 0; i < 12; ++i) EXPECT_DOUBLE_EQ(m12[i], kAdjTemp[i]) << "adjT[" << i << "]";
+    for (int i = 0; i < 12; ++i)
+        EXPECT_DOUBLE_EQ(m12[i], kAdjTemp[i]) << "adjT[" << i << "]";
 
     EXPECT_EQ(swmm_climate_get_adjust_evaporation(engine_, m12.data(), 12), SWMM_OK);
-    for (int i = 0; i < 12; ++i) EXPECT_DOUBLE_EQ(m12[i], kAdjEvap[i]) << "adjE[" << i << "]";
+    for (int i = 0; i < 12; ++i)
+        EXPECT_DOUBLE_EQ(m12[i], kAdjEvap[i]) << "adjE[" << i << "]";
 
     EXPECT_EQ(swmm_climate_get_adjust_rainfall(engine_, m12.data(), 12), SWMM_OK);
-    for (int i = 0; i < 12; ++i) EXPECT_DOUBLE_EQ(m12[i], kAdjRain[i]) << "adjR[" << i << "]";
+    for (int i = 0; i < 12; ++i)
+        EXPECT_DOUBLE_EQ(m12[i], kAdjRain[i]) << "adjR[" << i << "]";
 
     // pan coefficients default to 1.0 (no FILE pan line in the fixture)
     EXPECT_EQ(swmm_climate_get_pan_coeff(engine_, m12.data(), 12), SWMM_OK);
-    for (int i = 0; i < 12; ++i) EXPECT_DOUBLE_EQ(m12[i], 1.0) << "pan[" << i << "]";
+    for (int i = 0; i < 12; ++i)
+        EXPECT_DOUBLE_EQ(m12[i], 1.0) << "pan[" << i << "]";
 }
 
 // ---------------------------------------------------------------------------
@@ -181,10 +219,10 @@ TEST_F(ClimateConfigCApi, ScalarSettersRoundTrip) {
     EXPECT_EQ(swmm_climate_get_wind_type(engine_, &t), SWMM_OK);
     EXPECT_EQ(t, SWMM_WIND_FILE);
 
-    EXPECT_EQ(swmm_climate_set_temp_units(engine_, 0), SWMM_OK);  // C10
+    EXPECT_EQ(swmm_climate_set_temp_units(engine_, 0), SWMM_OK); // C10
     EXPECT_EQ(swmm_climate_get_temp_units(engine_, &t), SWMM_OK);
     EXPECT_EQ(t, 0);
-    EXPECT_EQ(swmm_climate_set_temp_units(engine_, 2), SWMM_OK);  // F
+    EXPECT_EQ(swmm_climate_set_temp_units(engine_, 2), SWMM_OK); // F
     EXPECT_EQ(swmm_climate_get_temp_units(engine_, &t), SWMM_OK);
     EXPECT_EQ(t, 2);
 }
@@ -193,8 +231,10 @@ TEST_F(ClimateConfigCApi, ArraySettersRoundTrip) {
     openModel("_climate_array_set.rpt", "_climate_array_set.out");
     std::array<double, 12> in12{}, out12{};
     std::array<double, 10> in10{}, out10{};
-    for (int i = 0; i < 12; ++i) in12[i] = 0.5 + i;
-    for (int i = 0; i < 10; ++i) in10[i] = 1.0 - i * 0.1;
+    for (int i = 0; i < 12; ++i)
+        in12[i] = 0.5 + i;
+    for (int i = 0; i < 10; ++i)
+        in10[i] = 1.0 - i * 0.1;
 
     EXPECT_EQ(swmm_climate_set_evap_monthly(engine_, in12.data(), 12), SWMM_OK);
     EXPECT_EQ(swmm_climate_get_evap_monthly(engine_, out12.data(), 12), SWMM_OK);
@@ -206,6 +246,10 @@ TEST_F(ClimateConfigCApi, ArraySettersRoundTrip) {
 
     EXPECT_EQ(swmm_climate_set_wind_monthly(engine_, in12.data(), 12), SWMM_OK);
     EXPECT_EQ(swmm_climate_get_wind_monthly(engine_, out12.data(), 12), SWMM_OK);
+    EXPECT_EQ(in12, out12);
+
+    EXPECT_EQ(swmm_climate_set_humidity_monthly(engine_, in12.data(), 12), SWMM_OK);
+    EXPECT_EQ(swmm_climate_get_humidity_monthly(engine_, out12.data(), 12), SWMM_OK);
     EXPECT_EQ(in12, out12);
 
     EXPECT_EQ(swmm_climate_set_adc_impervious(engine_, in10.data(), 10), SWMM_OK);
@@ -246,6 +290,216 @@ TEST_F(ClimateConfigCApi, TimeseriesSettersSwitchSource) {
     EXPECT_EQ(t, SWMM_EVAP_TIMESERIES);
     EXPECT_EQ(swmm_climate_get_evap_timeseries(engine_, buf, sizeof(buf)), SWMM_OK);
     EXPECT_STREQ(buf, "TS1");
+
+    EXPECT_EQ(swmm_climate_set_humidity_timeseries(engine_, "TS1"), SWMM_OK);
+    EXPECT_EQ(swmm_climate_get_humidity_type(engine_, &t), SWMM_OK);
+    EXPECT_EQ(t, SWMM_HUMIDITY_TIMESERIES);
+    EXPECT_EQ(swmm_climate_get_humidity_timeseries(engine_, buf, sizeof(buf)), SWMM_OK);
+    EXPECT_STREQ(buf, "TS1");
+    EXPECT_EQ(swmm_climate_set_humidity_variable(engine_, SWMM_HUMIDITY_DEWPOINT), SWMM_OK);
+    EXPECT_EQ(swmm_climate_get_humidity_variable(engine_, &t), SWMM_OK);
+    EXPECT_EQ(t, SWMM_HUMIDITY_DEWPOINT);
+}
+
+TEST_F(ClimateConfigCApi, EvaporationPreviewAddsAdjustmentAndPreservesNonMidnightStepTiming) {
+    openModel("_climate_preview_ts.rpt", "_climate_preview_ts.out");
+    constexpr double day = 43831.0; // 2020-01-01 in SWMM OADate.
+    const double start = day + 30.0 / 1440.0;
+    const double end = start + 3.0 / 24.0;
+    ASSERT_EQ(swmm_options_set_start_date(engine_, start), SWMM_OK);
+    ASSERT_EQ(swmm_options_set_end_date(engine_, end), SWMM_OK);
+    ASSERT_EQ(swmm_climate_set_evap_timeseries(engine_, "TS1"), SWMM_OK);
+    std::array<double, 12> adjustment{};
+    adjustment[0] = 0.25; // CFS decks display evaporation in in/day.
+    ASSERT_EQ(swmm_climate_set_adjust_evaporation(engine_, adjustment.data(), 12), SWMM_OK);
+
+    int count = -1;
+    SWMM_EvapPreviewSummary summary{};
+    char diagnostic[256]{};
+    ASSERT_EQ(swmm_climate_preview_evaporation(engine_, start, end, 1.0 / 24.0, nullptr, 0, &count,
+                                               &summary, diagnostic, sizeof(diagnostic)),
+              SWMM_OK)
+        << diagnostic;
+    ASSERT_EQ(count, 3);
+    ASSERT_EQ(summary.source_type, SWMM_EVAP_TIMESERIES);
+    ASSERT_EQ(summary.runtime_forcing_unknown, 1);
+    std::array<SWMM_EvapPreviewSample, 3> samples{};
+    ASSERT_EQ(swmm_climate_preview_evaporation(engine_, start, end, 1.0 / 24.0, samples.data(),
+                                               static_cast<int>(samples.size()), &count, &summary,
+                                               diagnostic, sizeof(diagnostic)),
+              SWMM_OK)
+        << diagnostic;
+    EXPECT_NEAR(samples[0].date, start, 1.0e-12);
+    EXPECT_NEAR(samples[0].source_rate, 1.0, 1.0e-12); // first entry at/after the model start
+    EXPECT_NEAR(samples[0].adjustment, 0.25, 1.0e-12);
+    EXPECT_NEAR(samples[0].effective_rate, 1.25, 1.0e-12);
+    EXPECT_NEAR(samples[1].source_rate, 1.0, 1.0e-12);
+    EXPECT_NEAR(samples[1].effective_rate, 1.25, 1.0e-12);
+    EXPECT_NEAR(samples[2].source_rate, 0.0, 1.0e-12); // crossed the 02:00 step
+    EXPECT_NEAR(samples[2].effective_rate, 0.25, 1.0e-12);
+    EXPECT_EQ(summary.available_count, 2);
+    EXPECT_EQ(summary.held_count, 1); // series ended; engine holds the last rate
+    EXPECT_EQ(summary.missing_count, 0);
+}
+
+TEST_F(ClimateConfigCApi, EvaporationPreviewDistinguishesConstantAndMonthlyRatesAtMonthBoundary) {
+    openModel("_climate_preview_constant_monthly.rpt", "_climate_preview_constant_monthly.out");
+    constexpr double jan31 = 43831.0 + 30.0; // 2020-01-31 in SWMM OADate.
+    constexpr double feb3 = jan31 + 3.0;
+    ASSERT_EQ(swmm_options_set_start_date(engine_, jan31), SWMM_OK);
+    ASSERT_EQ(swmm_options_set_end_date(engine_, feb3), SWMM_OK);
+
+    std::array<double, 12> rates{};
+    rates[0] = 0.4;
+    rates[1] = 0.8;
+    std::array<double, 12> adjustments{};
+    adjustments[0] = 0.1;
+    adjustments[1] = 0.2;
+    ASSERT_EQ(swmm_climate_set_evap_monthly(engine_, rates.data(), 12), SWMM_OK);
+    ASSERT_EQ(swmm_climate_set_adjust_evaporation(engine_, adjustments.data(), 12), SWMM_OK);
+
+    std::array<SWMM_EvapPreviewSample, 3> samples{};
+    int count = 0;
+    SWMM_EvapPreviewSummary summary{};
+    char diagnostic[256]{};
+    ASSERT_EQ(swmm_climate_set_evap_type(engine_, SWMM_EVAP_CONSTANT), SWMM_OK);
+    ASSERT_EQ(swmm_climate_preview_evaporation(engine_, jan31, feb3, 1.0, samples.data(),
+                                               static_cast<int>(samples.size()), &count, &summary,
+                                               diagnostic, sizeof(diagnostic)),
+              SWMM_OK)
+        << diagnostic;
+    ASSERT_EQ(count, 3);
+    EXPECT_EQ(summary.source_type, SWMM_EVAP_CONSTANT);
+    EXPECT_EQ(summary.available_count, 3);
+    EXPECT_EQ(summary.runtime_forcing_unknown, 1);
+    EXPECT_NEAR(samples[0].source_rate, 0.4, 1.0e-12);
+    EXPECT_NEAR(samples[0].effective_rate, 0.5, 1.0e-12);
+    EXPECT_NEAR(samples[1].source_rate, 0.4, 1.0e-12);    // Constant stays constant in February.
+    EXPECT_NEAR(samples[1].effective_rate, 0.6, 1.0e-12); // Monthly adjustment still changes.
+    EXPECT_NEAR(samples[2].effective_rate, 0.6, 1.0e-12);
+
+    ASSERT_EQ(swmm_climate_set_evap_type(engine_, SWMM_EVAP_MONTHLY), SWMM_OK);
+    ASSERT_EQ(swmm_climate_preview_evaporation(engine_, jan31, feb3, 1.0, samples.data(),
+                                               static_cast<int>(samples.size()), &count, &summary,
+                                               diagnostic, sizeof(diagnostic)),
+              SWMM_OK)
+        << diagnostic;
+    ASSERT_EQ(count, 3);
+    EXPECT_EQ(summary.source_type, SWMM_EVAP_MONTHLY);
+    EXPECT_NEAR(samples[0].effective_rate, 0.5, 1.0e-12);
+    EXPECT_NEAR(samples[1].source_rate, 0.8, 1.0e-12);
+    EXPECT_NEAR(samples[1].adjustment, 0.2, 1.0e-12);
+    EXPECT_NEAR(samples[1].effective_rate, 1.0, 1.0e-12);
+    EXPECT_NEAR(samples[2].effective_rate, 1.0, 1.0e-12);
+}
+
+TEST_F(ClimateConfigCApi, EvaporationPreviewReportsPanGapsAndHoldsLastValidRate) {
+    openModel("_climate_preview_pan.rpt", "_climate_preview_pan.out");
+    constexpr double day = 43831.0;
+    ASSERT_EQ(swmm_options_set_end_date(engine_, day + 3.0), SWMM_OK);
+    ASSERT_EQ(swmm_climate_set_evap_type(engine_, SWMM_EVAP_FILE), SWMM_OK);
+    ASSERT_EQ(swmm_file_path_set(engine_, SWMM_FILE_CLIMATE_TEMP, "", "pan_evap_preview_gap.dat"),
+              SWMM_OK);
+    std::array<double, 12> adjustment{};
+    adjustment[0] = 0.05;
+    std::array<double, 12> pan{};
+    pan.fill(2.0);
+    ASSERT_EQ(swmm_climate_set_adjust_evaporation(engine_, adjustment.data(), 12), SWMM_OK);
+    ASSERT_EQ(swmm_climate_set_pan_coeff(engine_, pan.data(), 12), SWMM_OK);
+
+    std::array<SWMM_EvapPreviewSample, 3> samples{};
+    int count = 0;
+    SWMM_EvapPreviewSummary summary{};
+    char diagnostic[256]{};
+    ASSERT_EQ(swmm_climate_preview_evaporation(engine_, day, day + 3.0, 1.0, samples.data(),
+                                               static_cast<int>(samples.size()), &count, &summary,
+                                               diagnostic, sizeof(diagnostic)),
+              SWMM_OK)
+        << diagnostic;
+    ASSERT_EQ(count, 3);
+    EXPECT_NEAR(samples[0].source_rate, 0.20, 1.0e-12);
+    EXPECT_NEAR(samples[0].adjustment, 0.05, 1.0e-12);
+    EXPECT_NEAR(samples[0].effective_rate, 0.25, 1.0e-12);
+    EXPECT_EQ(samples[1].status, SWMM_EVAP_PREVIEW_HELD);
+    EXPECT_NEAR(samples[1].effective_rate, 0.25, 1.0e-12);
+    EXPECT_DOUBLE_EQ(samples[1].adjustment, 0.0); // no new adjustment while holding
+    EXPECT_NEAR(samples[2].source_rate, 0.60, 1.0e-12);
+    EXPECT_NEAR(samples[2].effective_rate, 0.65, 1.0e-12);
+    EXPECT_EQ(summary.held_count, 1);
+    EXPECT_EQ(summary.missing_count, 0);
+}
+
+TEST_F(ClimateConfigCApi, EvaporationPreviewMarksTemperatureRatesAsEstimates) {
+    openModel("_climate_preview_hargreaves.rpt", "_climate_preview_hargreaves.out");
+    ASSERT_EQ(swmm_climate_set_evap_type(engine_, SWMM_EVAP_TEMPERATURE), SWMM_OK);
+    ASSERT_EQ(swmm_climate_set_temp_source(engine_, SWMM_TEMP_FILE), SWMM_OK);
+    ASSERT_EQ(swmm_file_path_set(engine_, SWMM_FILE_CLIMATE_TEMP, "", "pan_evap_preview_gap.dat"),
+              SWMM_OK);
+    std::array<double, 12> adjustment{};
+    ASSERT_EQ(swmm_climate_set_adjust_evaporation(engine_, adjustment.data(), 12), SWMM_OK);
+    double start = 0.0, end = 0.0;
+    ASSERT_EQ(swmm_options_get_start_date(engine_, &start), SWMM_OK);
+    end = start + 2.0;
+    ASSERT_EQ(swmm_options_set_end_date(engine_, end), SWMM_OK);
+    std::array<SWMM_EvapPreviewSample, 2> samples{};
+    int count = 0;
+    SWMM_EvapPreviewSummary summary{};
+    char diagnostic[256]{};
+    ASSERT_EQ(swmm_climate_preview_evaporation(engine_, start, end, 1.0, samples.data(),
+                                               static_cast<int>(samples.size()), &count, &summary,
+                                               diagnostic, sizeof(diagnostic)),
+              SWMM_OK)
+        << diagnostic;
+    ASSERT_EQ(count, 2);
+    EXPECT_EQ(samples[0].status, SWMM_EVAP_PREVIEW_ESTIMATED);
+    EXPECT_GT(samples[0].source_rate, 0.0);
+    EXPECT_EQ(samples[1].status, SWMM_EVAP_PREVIEW_ESTIMATED);
+    EXPECT_EQ(summary.estimated_count, 2);
+    EXPECT_EQ(summary.runtime_forcing_unknown, 1);
+}
+
+TEST_F(ClimateConfigCApi, EvaporationPreviewUsesDraftWithoutChangingSavedClimate) {
+    openModel("_climate_preview_draft.rpt", "_climate_preview_draft.out");
+    double start = 0.0, end = 0.0;
+    ASSERT_EQ(swmm_options_get_start_date(engine_, &start), SWMM_OK);
+    ASSERT_EQ(swmm_options_get_end_date(engine_, &end), SWMM_OK);
+    std::array<double, 12> saved_rates{};
+    std::array<double, 12> saved_adjustments{};
+    ASSERT_EQ(swmm_climate_get_evap_monthly(engine_, saved_rates.data(), 12), SWMM_OK);
+    ASSERT_EQ(swmm_climate_get_adjust_evaporation(engine_, saved_adjustments.data(), 12), SWMM_OK);
+
+    SWMM_EvapPreviewConfig draft{};
+    draft.evap_type = SWMM_EVAP_MONTHLY;
+    draft.temp_source = SWMM_TEMP_NONE;
+    draft.climate_file_temp_units = -1;
+    draft.latitude = 40.5;
+    for (int month = 0; month < 12; ++month) {
+        draft.evap_monthly[month] = 0.0;
+        draft.pan_coeff[month] = 1.0;
+        draft.adjust_evaporation[month] = 0.0;
+        draft.adjust_temperature[month] = 0.0;
+    }
+    draft.adjust_evaporation[0] = 0.25;
+    std::array<SWMM_EvapPreviewSample, 1> samples{};
+    int count = 0;
+    SWMM_EvapPreviewSummary summary{};
+    char diagnostic[256]{};
+    ASSERT_EQ(swmm_climate_preview_evaporation_with_config(
+                  engine_, &draft, start, end, 1.0, samples.data(),
+                  static_cast<int>(samples.size()), &count, &summary, diagnostic,
+                  sizeof(diagnostic)),
+              SWMM_OK)
+        << diagnostic;
+    ASSERT_EQ(count, 1);
+    EXPECT_DOUBLE_EQ(samples[0].source_rate, 0.0);
+    EXPECT_DOUBLE_EQ(samples[0].adjustment, 0.25);
+    EXPECT_DOUBLE_EQ(samples[0].effective_rate, 0.25);
+
+    std::array<double, 12> after_rates{}, after_adjustments{};
+    ASSERT_EQ(swmm_climate_get_evap_monthly(engine_, after_rates.data(), 12), SWMM_OK);
+    ASSERT_EQ(swmm_climate_get_adjust_evaporation(engine_, after_adjustments.data(), 12), SWMM_OK);
+    EXPECT_EQ(after_rates, saved_rates);
+    EXPECT_EQ(after_adjustments, saved_adjustments);
 }
 
 // ---------------------------------------------------------------------------
@@ -254,24 +508,28 @@ TEST_F(ClimateConfigCApi, TimeseriesSettersSwitchSource) {
 
 TEST_F(ClimateConfigCApi, EnumSettersRejectOutOfRange) {
     openModel("_climate_enum_bad.rpt", "_climate_enum_bad.out");
-    EXPECT_NE(swmm_climate_set_temp_source(engine_, 3),  SWMM_OK);
+    EXPECT_NE(swmm_climate_set_temp_source(engine_, 3), SWMM_OK);
     EXPECT_NE(swmm_climate_set_temp_source(engine_, -1), SWMM_OK);
-    EXPECT_NE(swmm_climate_set_evap_type(engine_, 5),    SWMM_OK);
-    EXPECT_NE(swmm_climate_set_evap_type(engine_, -1),   SWMM_OK);
-    EXPECT_NE(swmm_climate_set_wind_type(engine_, 2),    SWMM_OK);
-    EXPECT_NE(swmm_climate_set_wind_type(engine_, -1),   SWMM_OK);
-    EXPECT_NE(swmm_climate_set_temp_units(engine_, 3),   SWMM_OK);
-    EXPECT_NE(swmm_climate_set_temp_units(engine_, -2),  SWMM_OK);
-    EXPECT_EQ(swmm_climate_set_temp_units(engine_, -1),  SWMM_OK);  // -1 is valid (unspecified)
+    EXPECT_NE(swmm_climate_set_evap_type(engine_, 5), SWMM_OK);
+    EXPECT_NE(swmm_climate_set_evap_type(engine_, -1), SWMM_OK);
+    EXPECT_NE(swmm_climate_set_wind_type(engine_, 2), SWMM_OK);
+    EXPECT_NE(swmm_climate_set_wind_type(engine_, -1), SWMM_OK);
+    EXPECT_NE(swmm_climate_set_humidity_type(engine_, 3), SWMM_OK);
+    EXPECT_NE(swmm_climate_set_humidity_type(engine_, -1), SWMM_OK);
+    EXPECT_NE(swmm_climate_set_humidity_variable(engine_, 2), SWMM_OK);
+    EXPECT_NE(swmm_climate_set_humidity_variable(engine_, -1), SWMM_OK);
+    EXPECT_NE(swmm_climate_set_temp_units(engine_, 3), SWMM_OK);
+    EXPECT_NE(swmm_climate_set_temp_units(engine_, -2), SWMM_OK);
+    EXPECT_EQ(swmm_climate_set_temp_units(engine_, -1), SWMM_OK); // -1 is valid (unspecified)
 }
 
 TEST_F(ClimateConfigCApi, RangeSettersRejectOutOfRange) {
     openModel("_climate_range_bad.rpt", "_climate_range_bad.out");
-    EXPECT_NE(swmm_climate_set_latitude(engine_, 91.0),  SWMM_OK);
+    EXPECT_NE(swmm_climate_set_latitude(engine_, 91.0), SWMM_OK);
     EXPECT_NE(swmm_climate_set_latitude(engine_, -91.0), SWMM_OK);
     EXPECT_NE(swmm_climate_set_ati_weight(engine_, 1.1), SWMM_OK);
-    EXPECT_NE(swmm_climate_set_ati_weight(engine_, -0.1),SWMM_OK);
-    EXPECT_NE(swmm_climate_set_neg_melt_ratio(engine_, 1.5),  SWMM_OK);
+    EXPECT_NE(swmm_climate_set_ati_weight(engine_, -0.1), SWMM_OK);
+    EXPECT_NE(swmm_climate_set_neg_melt_ratio(engine_, 1.5), SWMM_OK);
     EXPECT_NE(swmm_climate_set_neg_melt_ratio(engine_, -0.5), SWMM_OK);
 
     // A rejected set must not mutate the stored value.
@@ -283,16 +541,17 @@ TEST_F(ClimateConfigCApi, RangeSettersRejectOutOfRange) {
 TEST_F(ClimateConfigCApi, AdcSettersRejectFractionsAndCount) {
     openModel("_climate_adc_bad.rpt", "_climate_adc_bad.out");
     std::array<double, 10> bad{};
-    for (int i = 0; i < 10; ++i) bad[i] = kAdcImperv[i];
-    bad[3] = 1.5;  // out of [0,1]
+    for (int i = 0; i < 10; ++i)
+        bad[i] = kAdcImperv[i];
+    bad[3] = 1.5; // out of [0,1]
     EXPECT_NE(swmm_climate_set_adc_impervious(engine_, bad.data(), 10), SWMM_OK);
     bad[3] = -0.2;
     EXPECT_NE(swmm_climate_set_adc_pervious(engine_, bad.data(), 10), SWMM_OK);
 
     std::array<double, 10> ok{};
     ok.fill(0.5);
-    EXPECT_NE(swmm_climate_set_adc_impervious(engine_, ok.data(), 9), SWMM_OK);   // wrong count
-    EXPECT_NE(swmm_climate_set_adc_impervious(engine_, nullptr, 10), SWMM_OK);    // null
+    EXPECT_NE(swmm_climate_set_adc_impervious(engine_, ok.data(), 9), SWMM_OK); // wrong count
+    EXPECT_NE(swmm_climate_set_adc_impervious(engine_, nullptr, 10), SWMM_OK);  // null
 }
 
 TEST_F(ClimateConfigCApi, MonthlySettersRejectWrongCount) {
@@ -309,8 +568,8 @@ TEST_F(ClimateConfigCApi, ConductivityClampsNonPositiveToOne) {
     openModel("_climate_conduct.rpt", "_climate_conduct.out");
     std::array<double, 12> in{};
     in.fill(2.0);
-    in[2] = 0.0;    // clamp -> 1.0
-    in[5] = -3.0;   // clamp -> 1.0
+    in[2] = 0.0;  // clamp -> 1.0
+    in[5] = -3.0; // clamp -> 1.0
     EXPECT_EQ(swmm_climate_set_adjust_conductivity(engine_, in.data(), 12), SWMM_OK);
 
     std::array<double, 12> out{};
@@ -344,8 +603,133 @@ TEST_F(ClimateConfigCApi, SettersRejectedAfterInitialize) {
 // ---------------------------------------------------------------------------
 
 TEST(ClimateConfigCApiNoFixture, NullHandleRejected) {
-    int i = 0; double d = 0.0;
+    int i = 0;
+    double d = 0.0;
     EXPECT_EQ(swmm_climate_get_temp_source(nullptr, &i), SWMM_ERR_BADHANDLE);
     EXPECT_EQ(swmm_climate_set_elevation(nullptr, 1.0), SWMM_ERR_BADHANDLE);
     EXPECT_EQ(swmm_climate_get_latitude(nullptr, &d), SWMM_ERR_BADHANDLE);
+}
+
+// ---------------------------------------------------------------------------
+// [ADJUSTMENTS] CONDUCT scales conduit seepage (legacy link.c:1378:
+// seepLossRate *= Adjust.hydconFactor). A/B decks differ only in the
+// adjustment block; a unity factor must be BIT-identical to no block at all
+// (x *= 1.0 is exact), and 0.5 must roughly halve the seepage volume on
+// both loss paths (DYNWAVE: DWSolver::recomputeConduitLossOne; KINWAVE:
+// Router::computeConduitLosses).
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/**
+ * @brief Write the CFS trapezoidal seepage-adjustment fixture.
+ *
+ * Uses a 400 ft conduit, authored 0.5 seepage loss parameter, 5 cfs inflow and one-hour run. Stream
+ * status and raw keyword escaping are unchecked; no engine is opened or run.
+ *
+ * @param[in] path Non-null output filename; existing content is truncated and parent must exist.
+ * @param[in] routing Non-null raw routing keyword.
+ * @param[in] conduct Positive dimensionless value emits twelve monthly CONDUCT factors;
+ *     zero/negative/NaN omits the adjustment.
+ */
+void writeSeepDeck(const char* path, const char* routing, double conduct) {
+    std::ofstream f(path);
+    f << "[TITLE]\nCONDUCT seepage adjustment gate\n\n[OPTIONS]\n"
+      << "FLOW_UNITS CFS\nFLOW_ROUTING " << routing << "\n"
+      << "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
+      << "END_DATE 01/01/2026\nEND_TIME 01:00:00\n"
+      << "ROUTING_STEP 5\nREPORT_STEP 00:05:00\n\n"
+      << "[JUNCTIONS]\nJ1 10.0 10 0 0 0\n\n"
+      << "[OUTFALLS]\nOUT 5.0 FREE NO\n\n"
+      << "[CONDUITS]\nC1 J1 OUT 400 0.013 0 0 0\n\n"
+      << "[XSECTIONS]\nC1 TRAPEZOIDAL 4.0 4.0 1.0 1.0\n\n"
+      << "[LOSSES]\nC1 0 0 0 NO 0.5\n\n"
+      << "[INFLOWS]\nJ1 FLOW seepin FLOW 1.0 1.0\n\n"
+      << "[TIMESERIES]\nseepin 0:00 5\nseepin 24:00 5\n";
+    if (conduct > 0.0) {
+        f << "\n[ADJUSTMENTS]\nCONDUCT";
+        for (int m = 0; m < 12; ++m)
+            f << " " << conduct;
+        f << "\n";
+    }
+}
+
+/**
+ * @brief Run the seepage fixture and return the native routing-loss ledger.
+ *
+ * Owns/destroys the engine, records nonfatal failures and caps at 20000 positive-time calls. Guard
+ * exhaustion can return partial volume; end/close statuses are ignored. Model setup failures
+ * short-circuit later initialization/start and do not produce a loss value.
+ *
+ * @param[in] inp Non-null existing deck filename.
+ * @param[in] rpt Report destination passed to open.
+ * @param[in] out Binary destination passed to open.
+ * @return Routing seep loss ft3, or -1 after create/setup/step refusal.
+ */
+double runSeepDeck(const char* inp, const char* rpt, const char* out) {
+    double seep = -1.0;
+    SWMM_Engine e = swmm_engine_create();
+    if (e == nullptr) {
+        ADD_FAILURE() << "engine create";
+        return seep;
+    }
+    bool ok = swmm_engine_open(e, inp, rpt, out, nullptr) == SWMM_OK &&
+              swmm_engine_initialize(e) == SWMM_OK && swmm_engine_start(e, 1) == SWMM_OK;
+    if (!ok)
+        ADD_FAILURE() << "open/init/start failed for " << inp;
+    if (ok) {
+        double elapsed = 0.0;
+        int guard = 0;
+        do {
+            if (swmm_engine_step(e, &elapsed) != SWMM_OK) {
+                ADD_FAILURE() << "step failed for " << inp;
+                ok = false;
+                break;
+            }
+        } while (elapsed > 0.0 && ++guard < 20000);
+        if (ok) {
+            swmm_engine_end(e);
+            seep = static_cast<openswmm::SWMMEngine*>(e)->context().mass_balance.routing_seep_loss;
+        }
+        swmm_engine_close(e);
+    }
+    swmm_engine_destroy(e);
+    return seep;
+}
+
+} // namespace
+
+TEST(ConductAdjustmentSeepage, ScalesConduitSeepageBothPaths) {
+    for (const char* routing : {"DYNWAVE", "KINWAVE"}) {
+        const std::string tag = std::string("_hydcon_seep_") + routing;
+        const std::string base_inp = tag + "_base.inp";
+        const std::string unity_inp = tag + "_unity.inp";
+        const std::string half_inp = tag + "_half.inp";
+        writeSeepDeck(base_inp.c_str(), routing, 0.0); // no [ADJUSTMENTS]
+        writeSeepDeck(unity_inp.c_str(), routing, 1.0);
+        writeSeepDeck(half_inp.c_str(), routing, 0.5);
+
+        const double base =
+            runSeepDeck(base_inp.c_str(), (tag + "_base.rpt").c_str(), (tag + "_base.out").c_str());
+        const double unity = runSeepDeck(unity_inp.c_str(), (tag + "_unity.rpt").c_str(),
+                                         (tag + "_unity.out").c_str());
+        const double half =
+            runSeepDeck(half_inp.c_str(), (tag + "_half.rpt").c_str(), (tag + "_half.out").c_str());
+
+        ASSERT_GT(base, 0.0) << routing
+                             << ": deck produced no seepage — the "
+                                "gate cannot observe the factor";
+        // ×1.0 is exact in IEEE 754: a unity CONDUCT block must not perturb
+        // a single bit of the seepage ledger.
+        EXPECT_EQ(unity, base) << routing << ": unity CONDUCT changed seepage";
+        // 0.5 halves the rate; depth feedback keeps the volume ratio near but
+        // not exactly 0.5. Pre-fix both runs were identical and fail here.
+        EXPECT_LT(half, 0.75 * base) << routing
+                                     << ": CONDUCT 0.5 did not reduce conduit seepage "
+                                        "(Adjust.hydconFactor not applied — legacy "
+                                        "link.c:1378)";
+        EXPECT_GT(half, 0.25 * base) << routing
+                                     << ": CONDUCT 0.5 over-reduced seepage (factor "
+                                        "applied more than once?)";
+    }
 }

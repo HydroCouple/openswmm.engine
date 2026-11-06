@@ -1,0 +1,42 @@
+[TITLE]
+Slot program fixture (a): steady full-bore head loss vs analytic Manning.
+Analytic: Q=60 cfs, D=3 ft (A=7.0686 sf, R=0.75 ft), n=0.013, L=1000 ft
+=> Sf = (Q n / (1.486 A R^(2/3)))^2 = 8.091e-3, hf = 8.09 ft.
+Gate: H(J0) - H(OF stage) -> 8.09 ft, and INDEPENDENT of FV_SLOT_CELERITY
+after R2 (today it is not: the slot absorbs part of the loss).
+
+[OPTIONS]
+FLOW_UNITS           CFS
+FLOW_ROUTING         FV
+START_DATE           01/01/2026
+START_TIME           00:00:00
+END_DATE             01/01/2026
+END_TIME             02:00:00
+REPORT_STEP          00:05:00
+ROUTING_STEP         0.5
+FV_SLOT_CELERITY     100
+LENGTHENING_STEP     0
+
+[JUNCTIONS]
+;;Name Elev MaxDepth InitDepth SurDepth Aponded
+J0     100.0 60.0 0 0 0
+
+[OUTFALLS]
+;;Name Elev Type StageData Gated
+OF     100.0 FIXED 115.0 NO
+
+[CONDUITS]
+;;Name From To Length N Zin Zout Q0
+C1     J0   OF 1000 0.013 0 0 0
+
+[XSECTIONS]
+C1     CIRCULAR 3 0 0 0 1
+
+[INFLOWS]
+J0     FLOW "" FLOW 1.0 1.0 60.0
+
+[REPORT]
+CONTINUITY YES
+FLOWSTATS YES
+NODES ALL
+LINKS ALL

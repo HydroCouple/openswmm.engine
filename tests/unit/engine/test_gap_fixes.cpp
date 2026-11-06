@@ -1,14 +1,18 @@
 /**
- * @file test_gap_fixes.cpp
- * @brief Unit tests for critical gap fixes: co-pollutant washoff, quality
+ * @file      test_gap_fixes.cpp
+ * @brief     Unit tests for critical gap fixes: co-pollutant washoff, quality
  *        continuity error, routing events, and steady-state skip.
  *
  * @see docs/COMPREHENSIVE_GAP_ANALYSIS.md Phase 1
  * @ingroup engine_quality
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #ifdef _MSC_VER
-#  define _USE_MATH_DEFINES
+#define _USE_MATH_DEFINES
 #endif
 #include <gtest/gtest.h>
 #include <cmath>
@@ -39,8 +43,15 @@ protected:
     LanduseSolver solver;
     SurfaceQualitySoA sq;
 
+    /**
+     * @brief Initialize the copollutant washoff fixture with independent EMC coefficients.
+     *
+     * Owns one-landuse/three-pollutant LanduseSolver and two-subcatchment surface-quality arrays.
+     * Assigns EMC coefficients 10/20/30 by pollutant row; does not create a hydraulic engine or run
+     * washoff until each test supplies its own inputs.
+     */
     void SetUp() override {
-        solver.init(1, 3);  // 1 landuse, 3 pollutants
+        solver.init(1, 3); // 1 landuse, 3 pollutants
 
         // Set up EMC washoff for all 3 pollutants
         for (int p = 0; p < 3; ++p) {
@@ -48,7 +59,7 @@ protected:
             solver.washoff_params[static_cast<size_t>(p)].coeff = 10.0 * (p + 1);
         }
 
-        sq.resize(2, 1, 3);  // 2 subcatchments, 1 landuse, 3 pollutants
+        sq.resize(2, 1, 3); // 2 subcatchments, 1 landuse, 3 pollutants
     }
 };
 
@@ -78,11 +89,11 @@ TEST_F(CoPollutantTest, SimpleCoPollutantFraction) {
     double area[2] = {100.0, 100.0};
     solver.computeWashoff(sq, runoff, area, 2);
 
-    double c0_before = sq.washoff_conc[0];  // pollutant 0, subcatch 0
-    double c1_before = sq.washoff_conc[1];  // pollutant 1, subcatch 0
+    double c0_before = sq.washoff_conc[0]; // pollutant 0, subcatch 0
+    double c1_before = sq.washoff_conc[1]; // pollutant 1, subcatch 0
 
-    int co_pollut[3] = {-1, 0, -1};   // pollutant 1 has co-pollutant 0
-    double co_frac[3] = {0.0, 0.5, 0.0};  // 50% of pollutant 0's washoff
+    int co_pollut[3] = {-1, 0, -1};      // pollutant 1 has co-pollutant 0
+    double co_frac[3] = {0.0, 0.5, 0.0}; // 50% of pollutant 0's washoff
     solver.applyCoPollutant(sq, runoff, area, co_pollut, co_frac, 2);
 
     // Pollutant 0 should be unchanged
@@ -121,7 +132,7 @@ TEST_F(CoPollutantTest, ZeroFractionNoChange) {
     std::vector<double> orig(sq.washoff_conc.begin(), sq.washoff_conc.end());
 
     int co_pollut[3] = {-1, 0, -1};
-    double co_frac[3] = {0.0, 0.0, 0.0};  // fraction is 0
+    double co_frac[3] = {0.0, 0.0, 0.0}; // fraction is 0
     solver.applyCoPollutant(sq, runoff, area, co_pollut, co_frac, 2);
 
     for (size_t i = 0; i < sq.washoff_conc.size(); ++i) {
@@ -136,9 +147,9 @@ TEST_F(CoPollutantTest, ChainCoPollutant) {
     sq.resize(1, 1, 3);
     solver.computeWashoff(sq, runoff, area, 1);
 
-    double c0 = sq.washoff_conc[0];  // 10.0
-    double c1 = sq.washoff_conc[1];  // 20.0
-    double c2 = sq.washoff_conc[2];  // 30.0
+    double c0 = sq.washoff_conc[0]; // 10.0
+    double c1 = sq.washoff_conc[1]; // 20.0
+    double c2 = sq.washoff_conc[2]; // 30.0
 
     int co_pollut[3] = {-1, 0, 1};
     double co_frac[3] = {0.0, 0.5, 0.3};
@@ -326,14 +337,14 @@ TEST(SteadyState, OptionCanBeEnabled) {
 TEST(SteadyState, InflowChangeDetection) {
     // Simulate checking if inflow changed significantly
     double qOld = 10.0;
-    double qNew = 10.4;  // 4% change — below 5% threshold
+    double qNew = 10.4; // 4% change — below 5% threshold
     double lat_flow_tol = 0.05;
 
     double diff = (std::abs(qOld) > 1e-6) ? (qNew / qOld) - 1.0 : 1.0;
     bool changed = std::abs(diff) > lat_flow_tol;
-    EXPECT_FALSE(changed);  // 4% change is below threshold
+    EXPECT_FALSE(changed); // 4% change is below threshold
 
-    qNew = 11.0;  // 10% change
+    qNew = 11.0; // 10% change
     diff = (qNew / qOld) - 1.0;
     changed = std::abs(diff) > lat_flow_tol;
     EXPECT_TRUE(changed);
@@ -345,9 +356,12 @@ TEST(SteadyState, ZeroInflowNoChange) {
     double diff;
     constexpr double TINY = 1e-6;
 
-    if (std::abs(qOld) > TINY) diff = (qNew / qOld) - 1.0;
-    else if (std::abs(qNew) > TINY) diff = 1.0;
-    else diff = 0.0;
+    if (std::abs(qOld) > TINY)
+        diff = (qNew / qOld) - 1.0;
+    else if (std::abs(qNew) > TINY)
+        diff = 1.0;
+    else
+        diff = 0.0;
 
     EXPECT_NEAR(diff, 0.0, 1e-10);
 }
@@ -358,12 +372,15 @@ TEST(SteadyState, ZeroToNonzeroIsChange) {
     double diff;
     constexpr double TINY = 1e-6;
 
-    if (std::abs(qOld) > TINY) diff = (qNew / qOld) - 1.0;
-    else if (std::abs(qNew) > TINY) diff = 1.0;
-    else diff = 0.0;
+    if (std::abs(qOld) > TINY)
+        diff = (qNew / qOld) - 1.0;
+    else if (std::abs(qNew) > TINY)
+        diff = 1.0;
+    else
+        diff = 0.0;
 
     EXPECT_NEAR(diff, 1.0, 1e-10);
-    EXPECT_TRUE(std::abs(diff) > 0.05);  // exceeds any reasonable tolerance
+    EXPECT_TRUE(std::abs(diff) > 0.05); // exceeds any reasonable tolerance
 }
 
 TEST(SteadyState, ActionCountPreventsSkip) {
@@ -420,9 +437,9 @@ TEST(LanduseSolver, PowerBuildup) {
     LanduseSolver solver;
     solver.init(1, 1);
     solver.buildup_params[0].type = BuildupType::POWER;
-    solver.buildup_params[0].coeff[0] = 100.0;  // max
-    solver.buildup_params[0].coeff[1] = 5.0;    // rate
-    solver.buildup_params[0].coeff[2] = 0.5;    // power
+    solver.buildup_params[0].coeff[0] = 100.0; // max
+    solver.buildup_params[0].coeff[1] = 5.0;   // rate
+    solver.buildup_params[0].coeff[2] = 0.5;   // power
     solver.buildup_params[0].max_days = 365.0;
 
     SurfaceQualitySoA sq;
@@ -431,7 +448,7 @@ TEST(LanduseSolver, PowerBuildup) {
 
     double area[1] = {100.0};
     double curb[1] = {0.0};
-    solver.computeBuildup(sq, area, curb, 86400.0, 1);  // 1 day
+    solver.computeBuildup(sq, area, curb, 86400.0, 1); // 1 day
 
     EXPECT_GT(sq.buildup[0], 0.0);
     EXPECT_LE(sq.buildup[0], 100.0);
@@ -441,8 +458,8 @@ TEST(LanduseSolver, ExponentialBuildup) {
     LanduseSolver solver;
     solver.init(1, 1);
     solver.buildup_params[0].type = BuildupType::EXPON;
-    solver.buildup_params[0].coeff[0] = 50.0;   // max
-    solver.buildup_params[0].coeff[1] = 0.1;    // rate
+    solver.buildup_params[0].coeff[0] = 50.0; // max
+    solver.buildup_params[0].coeff[1] = 0.1;  // rate
     solver.buildup_params[0].max_days = 365.0;
 
     SurfaceQualitySoA sq;
@@ -456,7 +473,7 @@ TEST(LanduseSolver, ExponentialBuildup) {
     for (int d = 0; d < 100; ++d)
         solver.computeBuildup(sq, area, curb, 86400.0, 1);
 
-    EXPECT_GT(sq.buildup[0], 45.0);  // close to 50 asymptote
+    EXPECT_GT(sq.buildup[0], 45.0); // close to 50 asymptote
     EXPECT_LE(sq.buildup[0], 50.0);
 }
 
@@ -466,8 +483,8 @@ TEST(LanduseSolver, SurfaceQualitySoAResize) {
     EXPECT_EQ(sq.n_subcatch, 5);
     EXPECT_EQ(sq.n_landuses, 2);
     EXPECT_EQ(sq.n_pollutants, 3);
-    EXPECT_EQ(static_cast<int>(sq.buildup.size()), 30);  // 5*2*3
-    EXPECT_EQ(static_cast<int>(sq.washoff_conc.size()), 15);  // 5*3
+    EXPECT_EQ(static_cast<int>(sq.buildup.size()), 30);      // 5*2*3
+    EXPECT_EQ(static_cast<int>(sq.washoff_conc.size()), 15); // 5*3
 }
 
 // ============================================================================
@@ -507,8 +524,7 @@ TEST(KWSolver, SolveConduitZeroFlow) {
     double p[4] = {3.0, 0, 0, 0};
     xsect::setParams(xs, static_cast<int>(XSectShape::CIRCULAR) + 1, p, 1.0);
 
-    int iters = solver.solveConduit(0, xs, 10.0, xs.a_full, xs.s_full,
-                                     1.0, 500.0, 300.0, 0.0);
+    int iters = solver.solveConduit(0, xs, 10.0, xs.a_full, xs.s_full, 1.0, 500.0, 300.0, 0.0);
     // With zero inflow, should converge quickly
     EXPECT_GE(iters, 0);
 }
@@ -530,10 +546,9 @@ TEST(KWSolver, SolveConduitPositiveFlow) {
     // by first setting the working arrays
     // For a clean test, we just verify the solver doesn't crash and produces
     // reasonable output
-    int iters = solver.solveConduit(0, xs, q_full, xs.a_full, xs.s_full,
-                                     beta, 500.0, 300.0, 0.0);
+    int iters = solver.solveConduit(0, xs, q_full, xs.a_full, xs.s_full, beta, 500.0, 300.0, 0.0);
     EXPECT_GE(iters, 0);
-    EXPECT_LE(iters, 40);  // MAX_ITERS
+    EXPECT_LE(iters, 40); // MAX_ITERS
 }
 
 TEST(KWSolver, SolveConduitConvergence) {
@@ -542,7 +557,7 @@ TEST(KWSolver, SolveConduitConvergence) {
     solver.init(1, groups);
 
     XSectParams xs{};
-    double p[4] = {2.0, 0, 0, 0};  // 2ft diameter circular
+    double p[4] = {2.0, 0, 0, 0}; // 2ft diameter circular
     xsect::setParams(xs, static_cast<int>(XSectShape::CIRCULAR) + 1, p, 1.0);
 
     double q_full = 5.0;
@@ -550,8 +565,8 @@ TEST(KWSolver, SolveConduitConvergence) {
 
     // Multiple calls should converge to steady state
     for (int step = 0; step < 10; ++step) {
-        int iters = solver.solveConduit(0, xs, q_full, xs.a_full, xs.s_full,
-                                         beta, 300.0, 60.0, 0.0);
+        int iters =
+            solver.solveConduit(0, xs, q_full, xs.a_full, xs.s_full, beta, 300.0, 60.0, 0.0);
         EXPECT_GE(iters, 0);
     }
 }
@@ -592,7 +607,7 @@ TEST(TopoSort, BranchingNetwork) {
     auto it = std::find(sorted.begin(), sorted.end(), 2);
     EXPECT_NE(it, sorted.end());
     auto pos2 = std::distance(sorted.begin(), it);
-    EXPECT_EQ(pos2, 2);  // Link 2 should be last
+    EXPECT_EQ(pos2, 2); // Link 2 should be last
 }
 
 TEST(TopoSort, SingleLink) {
@@ -638,8 +653,8 @@ TEST(OutfallRouting, RouteToCanBeSet) {
 
 TEST(OutfallRouting, RunonConversion) {
     // Outfall discharge (CFS) → runon (depth/sec over subcatchment area)
-    double q_outfall = 10.0;   // CFS
-    double area = 43560.0;     // 1 acre in ft²
+    double q_outfall = 10.0; // CFS
+    double area = 43560.0;   // 1 acre in ft²
     double runon = q_outfall / area;
     EXPECT_GT(runon, 0.0);
     EXPECT_NEAR(runon, 10.0 / 43560.0, 1e-10);
@@ -683,7 +698,7 @@ TEST(PondedQuality, FieldExistsInSubcatchData) {
     openswmm::SubcatchData sc;
     sc.resize(3);
     sc.resize_quality(2);
-    EXPECT_EQ(sc.ponded_qual.size(), 6u);  // 3 subcatch * 2 pollutants
+    EXPECT_EQ(sc.ponded_qual.size(), 6u); // 3 subcatch * 2 pollutants
     for (size_t i = 0; i < sc.ponded_qual.size(); ++i) {
         EXPECT_NEAR(sc.ponded_qual[i], 0.0, 1e-15);
     }
@@ -692,8 +707,8 @@ TEST(PondedQuality, FieldExistsInSubcatchData) {
 TEST(PondedQuality, MassAccumulates) {
     // Ponded quality should accumulate rain deposition between events
     double ponded_qual = 0.0;
-    double c_rain = 5.0;    // mg/L in rainfall
-    double v_rain = 100.0;  // ft³ of rainfall
+    double c_rain = 5.0;   // mg/L in rainfall
+    double v_rain = 100.0; // ft³ of rainfall
     double w_rain = c_rain * v_rain;
 
     ponded_qual += w_rain;
@@ -701,9 +716,9 @@ TEST(PondedQuality, MassAccumulates) {
 }
 
 TEST(PondedQuality, RunoffCarriesMassOut) {
-    double ponded_qual = 500.0;  // accumulated mass
-    double v_outflow = 80.0;     // ft³ of runoff
-    double v_total = 100.0;      // total volume (rain + existing)
+    double ponded_qual = 500.0; // accumulated mass
+    double v_outflow = 80.0;    // ft³ of runoff
+    double v_total = 100.0;     // total volume (rain + existing)
     double c_ponded = ponded_qual / v_total;
     double w_outflow = c_ponded * v_outflow;
     ponded_qual -= w_outflow;
@@ -716,7 +731,7 @@ TEST(PondedQuality, RunoffCarriesMassOut) {
 TEST(PondedQuality, PersistsBetweenDryPeriods) {
     // During dry period (no runoff), ponded mass stays
     double ponded_qual = 100.0;
-    double q_runoff = 0.0;  // no runoff
+    double q_runoff = 0.0; // no runoff
 
     // No runoff → no removal
     if (q_runoff <= 0.0) {
@@ -747,31 +762,31 @@ TEST(PondedQualityGap36, WetDepositionUnits) {
 
 // Gap #36: infiltration removes mass proportionally via complete-mix concentration
 TEST(PondedQualityGap36, InfiltrationLoss) {
-    double w_ponded = 1000.0;  // mg in ponded water
-    double v_inflow = 200.0;   // ft3 total inflow (rain + runon + ponded volume)
-    double v_infil  = 40.0;    // ft3 lost to infiltration
-    double v_outflow = 80.0;   // ft3 leaving as runoff
+    double w_ponded = 1000.0; // mg in ponded water
+    double v_inflow = 200.0;  // ft3 total inflow (rain + runon + ponded volume)
+    double v_infil = 40.0;    // ft3 lost to infiltration
+    double v_outflow = 80.0;  // ft3 leaving as runoff
 
-    double c_ponded = w_ponded / v_inflow;          // 5.0 mg/ft3
-    double w_infil  = std::min(c_ponded * v_infil, w_ponded);  // 200 mg
+    double c_ponded = w_ponded / v_inflow;                   // 5.0 mg/ft3
+    double w_infil = std::min(c_ponded * v_infil, w_ponded); // 200 mg
     w_ponded -= w_infil;
-    double w_out = std::min(c_ponded * v_outflow, w_ponded);   // 400 mg
+    double w_out = std::min(c_ponded * v_outflow, w_ponded); // 400 mg
     w_ponded -= w_out;
 
     EXPECT_NEAR(c_ponded, 5.0, 1e-10);
     EXPECT_NEAR(w_infil, 200.0, 1e-10);
     EXPECT_NEAR(w_out, 400.0, 1e-10);
-    EXPECT_NEAR(w_ponded, 400.0, 1e-10);  // 1000 - 200 - 400 = 400 remaining
+    EXPECT_NEAR(w_ponded, 400.0, 1e-10); // 1000 - 200 - 400 = 400 remaining
 }
 
 // Gap #36: when Vinflow == 0 (dry surface), ponded mass is retained (moved to final load)
 TEST(PondedQualityGap36, DryCase) {
-    double w_ponded = 300.0;   // mg remaining from a wet event
-    double v_inflow = 0.0;     // no rain, no runon, no ponded depth
-    double w_moved  = 0.0;
+    double w_ponded = 300.0; // mg remaining from a wet event
+    double v_inflow = 0.0;   // no rain, no runon, no ponded depth
+    double w_moved = 0.0;
 
     if (v_inflow <= 0.0) {
-        w_moved  = w_ponded;   // move to final_buildup
+        w_moved = w_ponded; // move to final_buildup
         w_ponded = 0.0;
     }
 
@@ -781,23 +796,23 @@ TEST(PondedQualityGap36, DryCase) {
 
 // Gap #36: v_inflow includes ponded depth volume in addition to rain + runon
 TEST(PondedQualityGap36, VInflowIncludesPondedVolume) {
-    double area_ft2  = 1.0 * 43560.0;   // 1 acre in ft2
-    double rain_rate = 0.001;            // ft/sec
-    double dt        = 300.0;            // sec
-    double runon_cfs = 0.01;             // CFS
-    double ponded_d  = 0.005;            // ft ponded depth
+    double area_ft2 = 1.0 * 43560.0; // 1 acre in ft2
+    double rain_rate = 0.001;        // ft/sec
+    double dt = 300.0;               // sec
+    double runon_cfs = 0.01;         // CFS
+    double ponded_d = 0.005;         // ft ponded depth
 
-    double v_rain    = rain_rate * area_ft2 * dt;
-    double v_runon   = runon_cfs * dt;
-    double v_ponded  = ponded_d  * area_ft2;
-    double v_inflow  = v_rain + v_runon + v_ponded;
+    double v_rain = rain_rate * area_ft2 * dt;
+    double v_runon = runon_cfs * dt;
+    double v_ponded = ponded_d * area_ft2;
+    double v_inflow = v_rain + v_runon + v_ponded;
 
     // v_inflow must be larger than just v_rain alone
     EXPECT_GT(v_inflow, v_rain);
     EXPECT_GT(v_inflow, v_rain + v_runon);
     // Sanity: all components positive
-    EXPECT_GT(v_rain,   0.0);
-    EXPECT_GT(v_runon,  0.0);
+    EXPECT_GT(v_rain, 0.0);
+    EXPECT_GT(v_runon, 0.0);
     EXPECT_GT(v_ponded, 0.0);
 }
 
@@ -811,7 +826,8 @@ TEST(PondedQualityGap36, VInflowIncludesPondedVolume) {
 using namespace openswmm::runoff_iface;
 
 TEST(RunoffInterface, WriteAndReadHeader) {
-    std::string path_str = (std::filesystem::temp_directory_path() / "test_runoff_iface.bin").string();
+    std::string path_str =
+        (std::filesystem::temp_directory_path() / "test_runoff_iface.bin").string();
     const char* path = path_str.c_str();
 
     // Write
@@ -836,7 +852,8 @@ TEST(RunoffInterface, WriteAndReadHeader) {
 }
 
 TEST(RunoffInterface, IncompatibleHeaderFails) {
-    std::string path_str = (std::filesystem::temp_directory_path() / "test_runoff_iface2.bin").string();
+    std::string path_str =
+        (std::filesystem::temp_directory_path() / "test_runoff_iface2.bin").string();
     const char* path = path_str.c_str();
 
     // Write with n_subcatch=3, n_pollut=2
@@ -849,7 +866,7 @@ TEST(RunoffInterface, IncompatibleHeaderFails) {
     // Read with different counts → should fail
     {
         RunoffInterfaceFile rif;
-        int err = rif.openForRead(path, 5, 2, 0);  // wrong subcatch count
+        int err = rif.openForRead(path, 5, 2, 0); // wrong subcatch count
         EXPECT_NE(err, 0);
     }
 
@@ -857,7 +874,8 @@ TEST(RunoffInterface, IncompatibleHeaderFails) {
 }
 
 TEST(RunoffInterface, WriteReadRoundTrip) {
-    std::string path_str = (std::filesystem::temp_directory_path() / "test_runoff_iface3.bin").string();
+    std::string path_str =
+        (std::filesystem::temp_directory_path() / "test_runoff_iface3.bin").string();
     const char* path = path_str.c_str();
 
     SimulationContext ctx;
@@ -907,7 +925,8 @@ TEST(RunoffInterface, WriteReadRoundTrip) {
 }
 
 TEST(RunoffInterface, EOFReturnsFalse) {
-    std::string path_str = (std::filesystem::temp_directory_path() / "test_runoff_iface4.bin").string();
+    std::string path_str =
+        (std::filesystem::temp_directory_path() / "test_runoff_iface4.bin").string();
     const char* path = path_str.c_str();
 
     SimulationContext ctx;
@@ -1024,29 +1043,41 @@ TEST(DiagPumpStats, CycleDetection) {
 
     // Step 1: off → on
     bool is_on = true;
-    if (is_on != was_on) { cycles++; was_on = is_on; }
+    if (is_on != was_on) {
+        cycles++;
+        was_on = is_on;
+    }
     EXPECT_EQ(cycles, 1);
 
     // Step 2: on → on (no cycle)
     is_on = true;
-    if (is_on != was_on) { cycles++; was_on = is_on; }
+    if (is_on != was_on) {
+        cycles++;
+        was_on = is_on;
+    }
     EXPECT_EQ(cycles, 1);
 
     // Step 3: on → off
     is_on = false;
-    if (is_on != was_on) { cycles++; was_on = is_on; }
+    if (is_on != was_on) {
+        cycles++;
+        was_on = is_on;
+    }
     EXPECT_EQ(cycles, 2);
 
     // Step 4: off → on
     is_on = true;
-    if (is_on != was_on) { cycles++; was_on = is_on; }
+    if (is_on != was_on) {
+        cycles++;
+        was_on = is_on;
+    }
     EXPECT_EQ(cycles, 3);
 }
 
 TEST(DiagPumpStats, VolumeAccumulation) {
     double volume = 0.0;
-    double q = 5.0;      // CFS
-    double dt = 300.0;   // seconds
+    double q = 5.0;    // CFS
+    double dt = 300.0; // seconds
 
     // Pump on for 3 steps
     for (int i = 0; i < 3; ++i) {
@@ -1059,10 +1090,10 @@ TEST(DiagPumpStats, OnTimeAccumulation) {
     double on_time = 0.0;
     double dt = 60.0;
 
-    on_time += dt;  // step 1: on
-    on_time += dt;  // step 2: on
+    on_time += dt; // step 1: on
+    on_time += dt; // step 2: on
     // step 3: off (no accumulation)
-    on_time += dt;  // step 4: on
+    on_time += dt; // step 4: on
 
     EXPECT_NEAR(on_time, 180.0, 1e-10);
 }
@@ -1113,7 +1144,7 @@ TEST(NodeGetDepth, JunctionLinear) {
     nodes.full_depth[0] = 10.0;
 
     // Junction: V = MIN_SURFAREA * d → d = V / MIN_SURFAREA
-    double vol = 62.83;  // MIN_SURFAREA * 5.0
+    double vol = 62.83; // MIN_SURFAREA * 5.0
     double d = node::getDepth(nodes, 0, vol);
     EXPECT_NEAR(d, vol / 12.566, 0.01);
 }
@@ -1134,11 +1165,12 @@ TEST(NodeGetDepth, StorageFunctionalLinear) {
     nodes.full_depth[0] = 10.0;
     openswmm::NodeSubtypes subs;
     const int sr = subs.set_node_type(nodes, 0, NodeType::STORAGE);
-    auto& S = subs.storages; const auto ur = static_cast<std::size_t>(sr);
-    S.curve[ur] = -1;  // functional
-    S.a[ur] = 1000.0;  // A = 1000 (constant area)
-    S.b[ur] = 0.0;     // exponent = 0
-    S.c[ur] = 0.0;     // constant = 0
+    auto& S = subs.storages;
+    const auto ur = static_cast<std::size_t>(sr);
+    S.curve[ur] = -1; // functional
+    S.a[ur] = 1000.0; // A = 1000 (constant area)
+    S.b[ur] = 0.0;    // exponent = 0
+    S.c[ur] = 0.0;    // constant = 0
 
     // V = (a0 + a1)*d = 1000*d → d = V/1000
     double vol = 5000.0;
@@ -1151,14 +1183,15 @@ TEST(NodeGetDepth, StorageFunctionalNonlinear) {
     nodes.resize(1);
     nodes.type[0] = NodeType::STORAGE;
     nodes.full_depth[0] = 20.0;
-    nodes.full_volume[0] = 0.0;  // no precomputed
+    nodes.full_volume[0] = 0.0; // no precomputed
     openswmm::NodeSubtypes subs;
     const int sr = subs.set_node_type(nodes, 0, NodeType::STORAGE);
-    auto& S = subs.storages; const auto ur = static_cast<std::size_t>(sr);
+    auto& S = subs.storages;
+    const auto ur = static_cast<std::size_t>(sr);
     S.curve[ur] = -1;
-    S.a[ur] = 100.0;   // a1
-    S.b[ur] = 1.0;     // a2 (exponent) → A = a1*d^1 = 100*d
-    S.c[ur] = 50.0;    // a0 → A = 50 + 100*d
+    S.a[ur] = 100.0; // a1
+    S.b[ur] = 1.0;   // a2 (exponent) → A = a1*d^1 = 100*d
+    S.c[ur] = 50.0;  // a0 → A = 50 + 100*d
 
     // V = 50*d + 100/2 * d^2 = 50*d + 50*d^2
     // At d=5: V = 250 + 1250 = 1500
@@ -1186,11 +1219,12 @@ TEST(NodeGetDepth, StorageFunctionalNewtonBranch) {
     nodes.full_volume[0] = 0.0;
     openswmm::NodeSubtypes subs;
     const int sr = subs.set_node_type(nodes, 0, NodeType::STORAGE);
-    auto& S = subs.storages; const auto ur = static_cast<std::size_t>(sr);
+    auto& S = subs.storages;
+    const auto ur = static_cast<std::size_t>(sr);
     S.curve[ur] = -1;
-    S.c[ur] = 50.0;   // a0
-    S.a[ur] = 10.0;   // a1
-    S.b[ur] = 2.0;    // a2 (not 0 or 1 -> forces Newton)
+    S.c[ur] = 50.0; // a0
+    S.a[ur] = 10.0; // a1
+    S.b[ur] = 2.0;  // a2 (not 0 or 1 -> forces Newton)
 
     // V = a0*d + a1/(a2+1)*d^(a2+1) = 50*d + (10/3)*d^3
     double d_test = 3.0;
@@ -1213,17 +1247,18 @@ TEST(NodeGetDepth, StorageFunctionalNewtonBranch_SIUnits) {
     NodeData nodes;
     nodes.resize(1);
     nodes.type[0] = NodeType::STORAGE;
-    nodes.full_depth[0] = 20.0;  // internal ft
+    nodes.full_depth[0] = 20.0; // internal ft
     nodes.full_volume[0] = 0.0;
     openswmm::NodeSubtypes subs;
     const int sr = subs.set_node_type(nodes, 0, NodeType::STORAGE);
-    auto& S = subs.storages; const auto ur = static_cast<std::size_t>(sr);
+    auto& S = subs.storages;
+    const auto ur = static_cast<std::size_t>(sr);
     S.curve[ur] = -1;
-    S.c[ur] = 50.0;   // a0
-    S.a[ur] = 10.0;   // a1
-    S.b[ur] = 2.0;    // a2
+    S.c[ur] = 50.0; // a0
+    S.a[ur] = 10.0; // a1
+    S.b[ur] = 2.0;  // a2
 
-    double d_ft = 20.0 / 3.0;  // mid-range internal depth, well under fullDepth
+    double d_ft = 20.0 / 3.0; // mid-range internal depth, well under fullDepth
     double v_ft3 = node::getVolume(nodes, 0, d_ft, nullptr, /*unit_sys=*/1, &subs);
     ASSERT_GT(v_ft3, 0.0);
 
@@ -1245,7 +1280,8 @@ TEST(NodeGetDepth, StorageFunctionalNewtonBranch_NonZeroIndex) {
     nodes.full_volume[1] = 0.0;
     openswmm::NodeSubtypes subs;
     const int sr = subs.set_node_type(nodes, 1, NodeType::STORAGE);
-    auto& S = subs.storages; const auto ur = static_cast<std::size_t>(sr);
+    auto& S = subs.storages;
+    const auto ur = static_cast<std::size_t>(sr);
     S.curve[ur] = -1;
     S.c[ur] = 50.0;
     S.a[ur] = 10.0;
@@ -1329,15 +1365,15 @@ TEST(StorageHalfAreaGuard, RealCurveProvidesArea) {
     nodes.full_depth[0] = 10.0;
     openswmm::NodeSubtypes subs;
     const int sr = subs.set_node_type(nodes, 0, NodeType::STORAGE);
-    auto& S = subs.storages; const auto ur = static_cast<std::size_t>(sr);
-    S.curve[ur] = -1;  // functional
+    auto& S = subs.storages;
+    const auto ur = static_cast<std::size_t>(sr);
+    S.curve[ur] = -1; // functional
     S.a[ur] = 1000.0;
     S.b[ur] = 0.0;
     S.c[ur] = 0.0;
 
     double sa = node::getSurfArea(nodes, 0, 5.0, nullptr, 0, &subs);
-    EXPECT_GT(sa, constants::MIN_SURFAREA)
-        << "Real storage curve should exceed MIN_SURFAREA";
+    EXPECT_GT(sa, constants::MIN_SURFAREA) << "Real storage curve should exceed MIN_SURFAREA";
     EXPECT_NEAR(sa, 1000.0, 0.01);
 }
 
@@ -1350,8 +1386,9 @@ TEST(StorageHalfAreaGuard, DegenerateCurveReturnsRaw) {
     nodes.full_depth[0] = 10.0;
     openswmm::NodeSubtypes subs;
     const int sr = subs.set_node_type(nodes, 0, NodeType::STORAGE);
-    auto& S = subs.storages; const auto ur = static_cast<std::size_t>(sr);
-    S.curve[ur] = -1;  // functional
+    auto& S = subs.storages;
+    const auto ur = static_cast<std::size_t>(sr);
+    S.curve[ur] = -1; // functional
     S.a[ur] = 0.0;
     S.b[ur] = 0.0;
     S.c[ur] = 0.0;
@@ -1372,7 +1409,8 @@ TEST(StorageHalfAreaGuard, SmallCurveReturnsRaw) {
     nodes.full_depth[0] = 10.0;
     openswmm::NodeSubtypes subs;
     const int sr = subs.set_node_type(nodes, 0, NodeType::STORAGE);
-    auto& S = subs.storages; const auto ur = static_cast<std::size_t>(sr);
+    auto& S = subs.storages;
+    const auto ur = static_cast<std::size_t>(sr);
     S.curve[ur] = -1;
     S.a[ur] = 0.01;
     S.b[ur] = 0.0;
@@ -1394,7 +1432,8 @@ TEST(StorageHalfAreaGuard, CurveJustAboveThreshold) {
     nodes.full_depth[0] = 10.0;
     openswmm::NodeSubtypes subs;
     const int sr = subs.set_node_type(nodes, 0, NodeType::STORAGE);
-    auto& S = subs.storages; const auto ur = static_cast<std::size_t>(sr);
+    auto& S = subs.storages;
+    const auto ur = static_cast<std::size_t>(sr);
     S.curve[ur] = -1;
     S.a[ur] = 13.0;
     S.b[ur] = 0.0;
@@ -1417,7 +1456,8 @@ TEST(StorageHalfAreaGuard, DepthDependentCrosses) {
     nodes.full_depth[0] = 20.0;
     openswmm::NodeSubtypes subs;
     const int sr = subs.set_node_type(nodes, 0, NodeType::STORAGE);
-    auto& S = subs.storages; const auto ur = static_cast<std::size_t>(sr);
+    auto& S = subs.storages;
+    const auto ur = static_cast<std::size_t>(sr);
     S.curve[ur] = -1;
     S.a[ur] = 100.0;
     S.b[ur] = 1.0;
@@ -1430,8 +1470,7 @@ TEST(StorageHalfAreaGuard, DepthDependentCrosses) {
         << "Raw value below MIN_SURFAREA → guard keeps pipe halves";
 
     double sa_high = node::getSurfArea(nodes, 0, 5.0, nullptr, 0, &subs);
-    EXPECT_NEAR(sa_high, 500.0, 0.01)
-        << "At depth 5, returns raw curve value 500";
+    EXPECT_NEAR(sa_high, 500.0, 0.01) << "At depth 5, returns raw curve value 500";
     EXPECT_GT(sa_high, constants::MIN_SURFAREA)
         << "Raw value above MIN_SURFAREA → guard zeroes pipe halves";
 }
@@ -1442,9 +1481,21 @@ TEST(StorageHalfAreaGuard, DepthDependentCrosses) {
 
 // Helper: run curvenum_getInfil with the legacy contract —
 //   runon is added to ponded depth, NOT to the precipitation rate.
-static double cn_infil_with_runon_legacy(
-        openswmm::CurveNumState& state,
-        double precip, double runon, double depth, double dt) {
+/**
+ * @brief Apply the legacy curve-number contract by adding runon volume to ponding.
+ *
+ * Passes depth+runon*dt as the depth argument with precip unchanged; no extra clamp, validation or
+ * ownership transfer occurs.
+ *
+ * @param[in,out] state Mutable curve-number infiltration state advanced by the production kernel.
+ * @param[in] precip Rainfall rate in ft/s.
+ * @param[in] runon Runon rate in ft/s.
+ * @param[in] depth Current ponded water depth in feet.
+ * @param[in] dt Positive interval in seconds.
+ * @return Production curvenum_getInfil infiltration rate in ft/s.
+ */
+static double cn_infil_with_runon_legacy(openswmm::CurveNumState& state, double precip,
+                                         double runon, double depth, double dt) {
     // Legacy infil.c line 318-319:
     //   depth += runon * tstep;
     //   return curvenum_getInfil(..., tstep, rainfall, depth);
@@ -1453,9 +1504,23 @@ static double cn_infil_with_runon_legacy(
 }
 
 // Helper: old (wrong) contract — runon added to precip rate.
-static double cn_infil_with_runon_wrong(
-        openswmm::CurveNumState& state,
-        double precip, double runon, double depth, double dt) {
+/**
+ * @brief Evaluate the intentionally incorrect rainfall-plus-runon reference path.
+ *
+ * Calls curvenum_getInfil with precip+runon and unchanged depth. This fixture contrast demonstrates
+ * the regression; callers use a separate state copy so this mutating reference does not alter the
+ * legacy-path state.
+ *
+ * @param[in,out] state Mutable curve-number infiltration state advanced by the production kernel.
+ * @param[in] precip Rainfall rate in ft/s.
+ * @param[in] runon Runon rate in ft/s.
+ * @param[in] depth Current ponded water depth in feet.
+ * @param[in] dt Positive interval in seconds.
+ * @return Production curve-number kernel result in ft/s under the deliberately wrong input
+ *     partition.
+ */
+static double cn_infil_with_runon_wrong(openswmm::CurveNumState& state, double precip, double runon,
+                                        double depth, double dt) {
     return openswmm::infil::curvenum_getInfil(state, precip + runon, depth, dt);
 }
 
@@ -1465,13 +1530,13 @@ TEST(CurveNumRunon, ZeroRunonSameBothContracts) {
     openswmm::infil::curvenum_init(s1, 75.0, 0.0);
     openswmm::infil::curvenum_init(s2, 75.0, 0.0);
 
-    const double dt     = 300.0;
-    const double precip = 0.001;  // ft/sec
-    const double depth  = 0.0;
-    const double runon  = 0.0;
+    const double dt = 300.0;
+    const double precip = 0.001; // ft/sec
+    const double depth = 0.0;
+    const double runon = 0.0;
 
     double f1 = cn_infil_with_runon_legacy(s1, precip, runon, depth, dt);
-    double f2 = cn_infil_with_runon_wrong(s2,  precip, runon, depth, dt);
+    double f2 = cn_infil_with_runon_wrong(s2, precip, runon, depth, dt);
     EXPECT_NEAR(f1, f2, 1e-12) << "Zero runon: contracts should agree";
 }
 
@@ -1481,15 +1546,15 @@ TEST(CurveNumRunon, NonZeroRunonDiffers) {
     openswmm::CurveNumState s_legacy;
     openswmm::CurveNumState s_wrong;
     openswmm::infil::curvenum_init(s_legacy, 75.0, 0.0);
-    openswmm::infil::curvenum_init(s_wrong,  75.0, 0.0);
+    openswmm::infil::curvenum_init(s_wrong, 75.0, 0.0);
 
-    const double dt     = 300.0;
-    const double precip = 0.001;  // ft/sec rainfall
-    const double runon  = 0.002;  // ft/sec runon from adjacent subarea
-    const double depth  = 0.0;
+    const double dt = 300.0;
+    const double precip = 0.001; // ft/sec rainfall
+    const double runon = 0.002;  // ft/sec runon from adjacent subarea
+    const double depth = 0.0;
 
     double f_legacy = cn_infil_with_runon_legacy(s_legacy, precip, runon, depth, dt);
-    double f_wrong  = cn_infil_with_runon_wrong(s_wrong,   precip, runon, depth, dt);
+    double f_wrong = cn_infil_with_runon_wrong(s_wrong, precip, runon, depth, dt);
 
     // The legacy contract uses a deeper ponded depth, so infiltration ≥ wrong.
     // They must differ (otherwise the fix has no effect).
@@ -1502,20 +1567,19 @@ TEST(CurveNumRunon, LegacyRunonIncreasesInfil) {
     // infiltration should be >= the zero-runon case (or equal if already maxed).
     openswmm::CurveNumState s_no_runon;
     openswmm::CurveNumState s_with_runon;
-    openswmm::infil::curvenum_init(s_no_runon,   75.0, 0.0);
+    openswmm::infil::curvenum_init(s_no_runon, 75.0, 0.0);
     openswmm::infil::curvenum_init(s_with_runon, 75.0, 0.0);
 
-    const double dt     = 300.0;
+    const double dt = 300.0;
     const double precip = 0.001;
-    const double runon  = 0.005;
-    const double depth  = 0.0;
+    const double runon = 0.005;
+    const double depth = 0.0;
 
-    double f_base  = cn_infil_with_runon_legacy(s_no_runon,   precip, 0.0,   depth, dt);
+    double f_base = cn_infil_with_runon_legacy(s_no_runon, precip, 0.0, depth, dt);
     double f_runon = cn_infil_with_runon_legacy(s_with_runon, precip, runon, depth, dt);
 
     // More ponded water → infiltration can only stay same or go up.
-    EXPECT_GE(f_runon, f_base)
-        << "With runon, infil should be >= no-runon case";
+    EXPECT_GE(f_runon, f_base) << "With runon, infil should be >= no-runon case";
 }
 
 // ============================================================================
@@ -1531,13 +1595,23 @@ TEST(CurveNumRunon, LegacyRunonIncreasesInfil) {
 
 namespace {
 
-/// Build a minimal SimulationContext with 2 junction nodes and 1 circular
-/// conduit between them.  The upstream node gets a prescribed lateral inflow.
+/**
+ * @brief Build a dry two-junction/one-conduit steady-flow context.
+ *
+ * Uses 300 s routing and seeds old_flow=99 as a sentinel. Populates critical geometry independently
+ * rather than initializing a complete Router; callers supply further state/setup required by the
+ * tested operation.
+ *
+ * @param[in] lat_inflow_cfs Upstream prescribed lateral inflow in cfs, copied without range
+ *     validation.
+ * @return Owned US context with one-foot circular/100-ft conduit and precomputed geometry/Manning
+ *     capacity.
+ */
 SimulationContext buildSteadyCtx(double lat_inflow_cfs) {
     SimulationContext ctx;
-    ctx.options.routing_model  = RoutingModel::STEADY;
-    ctx.options.flow_units     = FlowUnits::CFS;
-    ctx.options.routing_step   = 300.0;
+    ctx.options.routing_model = RoutingModel::STEADY;
+    ctx.options.flow_units = FlowUnits::CFS;
+    ctx.options.routing_step = 300.0;
     ctx.options.lengthening_step = 0.0;
 
     // Register names so ctx.n_nodes() / ctx.n_links() return correct counts.
@@ -1550,19 +1624,19 @@ SimulationContext buildSteadyCtx(double lat_inflow_cfs) {
     ctx.nodes.resize(N);
     for (int i = 0; i < N; ++i) {
         auto ui = static_cast<std::size_t>(i);
-        ctx.nodes.type[ui]        = NodeType::JUNCTION;
-        ctx.nodes.full_depth[ui]  = 10.0;   // ft
-        ctx.nodes.full_volume[ui] = 100.0;  // ft³
+        ctx.nodes.type[ui] = NodeType::JUNCTION;
+        ctx.nodes.full_depth[ui] = 10.0;   // ft
+        ctx.nodes.full_volume[ui] = 100.0; // ft³
         ctx.nodes.invert_elev[ui] = 0.0;
-        ctx.nodes.depth[ui]       = 0.0;
-        ctx.nodes.volume[ui]      = 0.0;
-        ctx.nodes.head[ui]        = 0.0;
-        ctx.nodes.overflow[ui]    = 0.0;
-        ctx.nodes.lat_flow[ui]    = 0.0;
-        ctx.nodes.losses[ui]      = 0.0;
-        ctx.nodes.inflow[ui]      = 0.0;
-        ctx.nodes.outflow[ui]     = 0.0;
-        ctx.nodes.old_volume[ui]  = 0.0;
+        ctx.nodes.depth[ui] = 0.0;
+        ctx.nodes.volume[ui] = 0.0;
+        ctx.nodes.head[ui] = 0.0;
+        ctx.nodes.overflow[ui] = 0.0;
+        ctx.nodes.lat_flow[ui] = 0.0;
+        ctx.nodes.losses[ui] = 0.0;
+        ctx.nodes.inflow[ui] = 0.0;
+        ctx.nodes.outflow[ui] = 0.0;
+        ctx.nodes.old_volume[ui] = 0.0;
     }
     // Upstream node receives lateral inflow
     ctx.nodes.lat_flow[0] = lat_inflow_cfs;
@@ -1571,24 +1645,24 @@ SimulationContext buildSteadyCtx(double lat_inflow_cfs) {
     const int NL = 1;
     ctx.links.resize(NL);
     auto ul = std::size_t{0};
-    const auto cr = static_cast<std::size_t>(
-        ctx.link_subtypes.set_link_type(ctx.links, 0, LinkType::CONDUIT));
+    const auto cr =
+        static_cast<std::size_t>(ctx.link_subtypes.set_link_type(ctx.links, 0, LinkType::CONDUIT));
     auto& C = ctx.link_subtypes.conduits;
-    ctx.links.node1[ul]            = 0;
-    ctx.links.node2[ul]            = 1;
-    C.barrels[cr]                  = 1;
-    ctx.links.xsect_shape[ul]      = XsectShape::CIRCULAR;
-    ctx.links.xsect_y_full[ul]     = 1.0;   // 1 ft diameter
-    ctx.links.xsect_w_max[ul]      = 1.0;
-    C.length[cr]                   = 100.0; // ft
-    C.roughness[cr]                = 0.015; // Manning n
-    C.slope[cr]                    = 0.005; // ft/ft
-    ctx.links.offset1[ul]          = 0.0;
-    ctx.links.offset2[ul]          = 0.0;
-    C.seep_rate[cr]                = 0.0;
-    C.evap_loss_rate[cr]           = 0.0;
-    C.seep_loss_rate[cr]           = 0.0;
-    ctx.links.old_flow[ul]         = 99.0;  // sentinel: must not be copied
+    ctx.links.node1[ul] = 0;
+    ctx.links.node2[ul] = 1;
+    C.barrels[cr] = 1;
+    ctx.links.xsect_shape[ul] = XsectShape::CIRCULAR;
+    ctx.links.xsect_y_full[ul] = 1.0; // 1 ft diameter
+    ctx.links.xsect_w_max[ul] = 1.0;
+    C.length[cr] = 100.0;    // ft
+    C.roughness[cr] = 0.015; // Manning n
+    C.slope[cr] = 0.005;     // ft/ft
+    ctx.links.offset1[ul] = 0.0;
+    ctx.links.offset2[ul] = 0.0;
+    C.seep_rate[cr] = 0.0;
+    C.evap_loss_rate[cr] = 0.0;
+    C.seep_loss_rate[cr] = 0.0;
+    ctx.links.old_flow[ul] = 99.0; // sentinel: must not be copied
 
     // Pre-compute xsect properties (the Router::init does this, but we do it
     // manually here so the test is self-contained for the critical fields).
@@ -1599,18 +1673,18 @@ SimulationContext buildSteadyCtx(double lat_inflow_cfs) {
     ctx.links.xsect_a_full[ul] = xs.a_full;
     ctx.links.xsect_r_full[ul] = xs.r_full;
     ctx.links.xsect_s_full[ul] = xs.s_full;
-    ctx.links.xsect_s_max[ul]  = xs.s_max;
-    ctx.links.xsect_y_bot[ul]  = xs.y_bot;
-    ctx.links.xsect_a_bot[ul]  = xs.a_bot;
-    ctx.links.xsect_s_bot[ul]  = xs.s_bot;
-    ctx.links.xsect_r_bot[ul]  = xs.r_bot;
+    ctx.links.xsect_s_max[ul] = xs.s_max;
+    ctx.links.xsect_y_bot[ul] = xs.y_bot;
+    ctx.links.xsect_a_bot[ul] = xs.a_bot;
+    ctx.links.xsect_s_bot[ul] = xs.s_bot;
+    ctx.links.xsect_r_bot[ul] = xs.r_bot;
 
     using constants::PHI;
     double beta = PHI * std::sqrt(C.slope[cr]) / C.roughness[cr];
-    C.beta[cr]         = beta;
-    C.q_full[cr]       = xs.s_full * beta;
-    C.q_max[cr]        = xs.s_max  * beta;
-    C.mod_length[cr]   = C.length[cr];
+    C.beta[cr] = beta;
+    C.q_full[cr] = xs.s_full * beta;
+    C.q_max[cr] = xs.s_max * beta;
+    C.mod_length[cr] = C.length[cr];
     C.rough_factor[cr] = 0.0;
 
     return ctx;
@@ -1621,7 +1695,7 @@ SimulationContext buildSteadyCtx(double lat_inflow_cfs) {
 TEST(SteadyFlowRouting, FlowEqualsManningSolution) {
     // Gap #33: STEADY routing must route via Manning equation, not copy old_flow.
     // old_flow is set to 99 (sentinel); lateral inflow is 0.5 cfs.
-    const double Q_in = 0.5;   // cfs
+    const double Q_in = 0.5; // cfs
     SimulationContext ctx = buildSteadyCtx(Q_in);
 
     Router router;
@@ -1645,10 +1719,12 @@ TEST(SteadyFlowRouting, FlowEqualsManningSolution) {
     xs.type = static_cast<int>(XSectShape::CIRCULAR);
     double p[4] = {1.0, 0.0, 0.0, 0.0};
     xsect::setParams(xs, xs.type, p, 1.0);
-    double beta    = ctx.link_subtypes.conduits.beta[static_cast<std::size_t>(ctx.link_subtypes.conduit_row(static_cast<int>(ul)))];
-    double s       = Q_in / beta;
-    double a_exp   = xsect::getAofS(xs, s);
-    double y_exp   = xsect::getYofA(xs, a_exp);
+    double beta =
+        ctx.link_subtypes.conduits
+            .beta[static_cast<std::size_t>(ctx.link_subtypes.conduit_row(static_cast<int>(ul)))];
+    double s = Q_in / beta;
+    double a_exp = xsect::getAofS(xs, s);
+    double y_exp = xsect::getYofA(xs, a_exp);
 
     EXPECT_NEAR(ctx.links.depth[ul], y_exp, 1e-6)
         << "Depth must match Manning normal depth for Q=" << Q_in;
@@ -1657,7 +1733,7 @@ TEST(SteadyFlowRouting, FlowEqualsManningSolution) {
 TEST(SteadyFlowRouting, FlowCappedAtQFull) {
     // Gap #33: inflow exceeding q_full must be capped at q_full and area = a_full.
     auto ul = std::size_t{0};
-    SimulationContext ctx = buildSteadyCtx(1000.0);  // huge inflow
+    SimulationContext ctx = buildSteadyCtx(1000.0); // huge inflow
 
     Router router;
     router.init(ctx, RouteModel::STEADY);
@@ -1667,7 +1743,9 @@ TEST(SteadyFlowRouting, FlowCappedAtQFull) {
     ctx.links.save_state();
     router.step(ctx, 300.0);
 
-    double q_full = ctx.link_subtypes.conduits.q_full[static_cast<std::size_t>(ctx.link_subtypes.conduit_row(static_cast<int>(ul)))];
+    double q_full =
+        ctx.link_subtypes.conduits
+            .q_full[static_cast<std::size_t>(ctx.link_subtypes.conduit_row(static_cast<int>(ul)))];
     EXPECT_NEAR(ctx.links.flow[ul], q_full, q_full * 1e-6)
         << "Flow exceeding q_full must be capped";
     EXPECT_NEAR(ctx.links.depth[ul], ctx.links.xsect_y_full[ul], 1e-6)
@@ -1686,7 +1764,7 @@ TEST(SteadyFlowRouting, ZeroInflowZeroDepth) {
     router.step(ctx, 300.0);
 
     auto ul = std::size_t{0};
-    EXPECT_DOUBLE_EQ(ctx.links.flow[ul],  0.0);
+    EXPECT_DOUBLE_EQ(ctx.links.flow[ul], 0.0);
     EXPECT_DOUBLE_EQ(ctx.links.depth[ul], 0.0);
 }
 
@@ -1714,37 +1792,36 @@ TEST(KWAmaxBounds, OverflowReturnsFullPipe) {
 
     using constants::PHI;
     double roughness = 0.013;
-    double slope     = 0.01;
-    double beta      = PHI * std::sqrt(slope) / roughness;
-    double q_full    = xs.s_full * beta;
+    double slope = 0.01;
+    double beta = PHI * std::sqrt(slope) / roughness;
+    double q_full = xs.s_full * beta;
 
     openswmm::kinwave::KWSolver solver;
     solver.init(1, XSectGroups{});
 
     // Set state arrays: previous flow/area both zero (cold start)
     // q_in = 3 * q_full (well above capacity)
-    solver.q_in_[0]  = 3.0 * q_full;
-    solver.a_in_[0]  = xs.a_full;
-    solver.q1_[0]    = 0.0;
-    solver.a1_[0]    = 0.0;
-    solver.q2_[0]    = 0.0;
-    solver.a2_[0]    = 0.0;
+    solver.q_in_[0] = 3.0 * q_full;
+    solver.a_in_[0] = xs.a_full;
+    solver.q1_[0] = 0.0;
+    solver.a1_[0] = 0.0;
+    solver.q2_[0] = 0.0;
+    solver.a2_[0] = 0.0;
     solver.q_out_[0] = 0.0;
     solver.a_out_[0] = 0.0;
 
     double length = 100.0;
-    double dt     = 300.0;
-    int ret = solver.solveConduit(0, xs, q_full, xs.a_full, xs.s_full,
-                                   beta, length, dt, 0.0);
+    double dt = 300.0;
+    int ret = solver.solveConduit(0, xs, q_full, xs.a_full, xs.s_full, beta, length, dt, 0.0);
 
-    // Return code -2 means "full flow" branch taken
-    EXPECT_EQ(ret, -2) << "Over-full inflow must return -2 (full-flow branch)";
+    // Legacy kinwave_execute folds the full-flow (-2) / no-flow (-3) branch
+    // codes into 1 before returning (kinwave.c `if (result <= 0) result = 1`).
+    EXPECT_EQ(ret, 1) << "Over-full inflow must take the full-flow branch (returns 1)";
     // Outlet area must not exceed a_full
     EXPECT_LE(solver.a_out_[0], xs.a_full * (1.0 + 1e-9))
         << "a_out must not exceed a_full under over-capacity inflow";
     // Output flow must not exceed q_full
-    EXPECT_LE(solver.q_out_[0], q_full * (1.0 + 1e-9))
-        << "q_out must not exceed q_full";
+    EXPECT_LE(solver.q_out_[0], q_full * (1.0 + 1e-9)) << "q_out must not exceed q_full";
 }
 
 TEST(KWAmaxBounds, ZeroInflowReturnsZeroFlow) {
@@ -1755,19 +1832,18 @@ TEST(KWAmaxBounds, ZeroInflowReturnsZeroFlow) {
     xsect::setParams(xs, xs.type, p, 1.0);
 
     using constants::PHI;
-    double beta   = PHI * std::sqrt(0.005) / 0.015;
+    double beta = PHI * std::sqrt(0.005) / 0.015;
     double q_full = xs.s_full * beta;
 
     openswmm::kinwave::KWSolver solver;
     solver.init(1, XSectGroups{});
-    solver.q_in_[0]  = 0.0;
-    solver.a_in_[0]  = 0.0;
+    solver.q_in_[0] = 0.0;
+    solver.a_in_[0] = 0.0;
     solver.q1_[0] = solver.a1_[0] = 0.0;
     solver.q2_[0] = solver.a2_[0] = 0.0;
     solver.q_out_[0] = solver.a_out_[0] = 0.0;
 
-    solver.solveConduit(0, xs, q_full, xs.a_full, xs.s_full,
-                        beta, 100.0, 300.0, 0.0);
+    solver.solveConduit(0, xs, q_full, xs.a_full, xs.s_full, beta, 100.0, 300.0, 0.0);
 
     EXPECT_NEAR(solver.q_out_[0], 0.0, 1e-9) << "Zero inflow must produce zero outflow";
     EXPECT_NEAR(solver.a_out_[0], 0.0, 1e-9) << "Zero inflow must produce zero area";
@@ -1781,24 +1857,23 @@ TEST(KWAmaxBounds, PartialFlowStaysInBounds) {
     xsect::setParams(xs, xs.type, p, 1.0);
 
     using constants::PHI;
-    double beta   = PHI * std::sqrt(0.005) / 0.015;
+    double beta = PHI * std::sqrt(0.005) / 0.015;
     double q_full = xs.s_full * beta;
 
     openswmm::kinwave::KWSolver solver;
     solver.init(1, XSectGroups{});
-    solver.q_in_[0]  = 0.4 * q_full;
-    solver.a_in_[0]  = 0.0;
+    solver.q_in_[0] = 0.4 * q_full;
+    solver.a_in_[0] = 0.0;
     solver.q1_[0] = solver.a1_[0] = 0.0;
     solver.q2_[0] = solver.a2_[0] = 0.0;
     solver.q_out_[0] = solver.a_out_[0] = 0.0;
 
-    int ret = solver.solveConduit(0, xs, q_full, xs.a_full, xs.s_full,
-                                   beta, 100.0, 300.0, 0.0);
+    int ret = solver.solveConduit(0, xs, q_full, xs.a_full, xs.s_full, beta, 100.0, 300.0, 0.0);
 
     EXPECT_GE(ret, 0) << "Partial flow must converge normally";
-    EXPECT_GT(solver.a_out_[0], 0.0)   << "Partial-fill area must be positive";
+    EXPECT_GT(solver.a_out_[0], 0.0) << "Partial-fill area must be positive";
     EXPECT_LE(solver.a_out_[0], xs.a_full) << "Partial-fill area must not exceed a_full";
-    EXPECT_GT(solver.q_out_[0], 0.0)   << "Partial-fill outflow must be positive";
+    EXPECT_GT(solver.q_out_[0], 0.0) << "Partial-fill outflow must be positive";
     EXPECT_LE(solver.q_out_[0], q_full) << "Partial-fill outflow must not exceed q_full";
 }
 
@@ -1846,22 +1921,25 @@ TEST(TopoSortCycle44, CycleReturnsFewer) {
 TEST(TopoSortCycle44, RouterHasCycleFlagSet) {
     // Build a minimal context with a KW cycle (node0→link0→node1→link1→node0)
     SimulationContext ctx;
-    ctx.node_names.add("n0"); ctx.node_names.add("n1");
-    ctx.link_names.add("l0"); ctx.link_names.add("l1");
+    ctx.node_names.add("n0");
+    ctx.node_names.add("n1");
+    ctx.link_names.add("l0");
+    ctx.link_names.add("l1");
     ctx.nodes.resize(2);
     ctx.links.resize(2);
     ctx.link_subtypes.set_link_type(ctx.links, 0, openswmm::LinkType::CONDUIT);
     ctx.link_subtypes.set_link_type(ctx.links, 1, openswmm::LinkType::CONDUIT);
-    ctx.links.node1[0] = 0; ctx.links.node2[0] = 1;
-    ctx.links.node1[1] = 1; ctx.links.node2[1] = 0;  // forms cycle
+    ctx.links.node1[0] = 0;
+    ctx.links.node2[0] = 1;
+    ctx.links.node1[1] = 1;
+    ctx.links.node2[1] = 0; // forms cycle
     ctx.links.xsect_shape[0] = ctx.links.xsect_shape[1] = openswmm::XsectShape::CIRCULAR;
     ctx.links.xsect_y_full[0] = ctx.links.xsect_y_full[1] = 1.0;
     ctx.links.xsect_a_full[0] = ctx.links.xsect_a_full[1] = M_PI / 4.0;
 
     openswmm::Router router;
     router.init(ctx, openswmm::RouteModel::KINWAVE);
-    EXPECT_TRUE(router.hasCycle())
-        << "Router must detect KW cycle and set hasCycle() = true";
+    EXPECT_TRUE(router.hasCycle()) << "Router must detect KW cycle and set hasCycle() = true";
 }
 
 // ============================================================================
@@ -1879,15 +1957,14 @@ TEST(GWMaxInfilVol40, LimitsInfiltration) {
     // Set a tight limit: 0.001 ft of max infil volume
     ctx.subcatches.gw_max_infil_vol[0] = 0.001;
 
-    double dt = 300.0;  // 5-minute step
-    double max_rate = ctx.subcatches.gw_max_infil_vol[0] / dt;  // ft/sec
+    double dt = 300.0;                                         // 5-minute step
+    double max_rate = ctx.subcatches.gw_max_infil_vol[0] / dt; // ft/sec
     // A typical infiltration of 0.001 ft/sec should be capped to max_rate
     double infil = 0.001;
     if (ctx.subcatches.gw_max_infil_vol[0] < 1.0e30)
         infil = std::min(infil, max_rate);
 
-    EXPECT_NEAR(infil, max_rate, 1.0e-10)
-        << "Infiltration must be capped at gw_max_infil_vol/dt";
+    EXPECT_NEAR(infil, max_rate, 1.0e-10) << "Infiltration must be capped at gw_max_infil_vol/dt";
 }
 
 // ============================================================================
@@ -1900,14 +1977,13 @@ TEST(GWFixedDepth41, FieldStoredCorrectly) {
     ctx.subcatch_names.add("SC0");
     ctx.subcatches.resize(1);
     ctx.subcatches.gw_tw.assign(1, 0.0);
-    EXPECT_EQ(ctx.subcatches.gw_tw[0], 0.0)
-        << "gw_tw must default to 0 (no fixedDepth)";
+    EXPECT_EQ(ctx.subcatches.gw_tw[0], 0.0) << "gw_tw must default to 0 (no fixedDepth)";
 
     // Setting gw_tw > 0 should cause assembleGWCoupling to use fixed depth.
     // The formula is: Hsw = gw_tw + node_invert_elev - bottom_elev
-    double fixed_depth = 2.5;   // ft
-    double node_invert = 10.0;  // ft
-    double bottom_elev = 8.0;   // ft
+    double fixed_depth = 2.5;                                          // ft
+    double node_invert = 10.0;                                         // ft
+    double bottom_elev = 8.0;                                          // ft
     double expected_sw_head = fixed_depth + node_invert - bottom_elev; // 4.5 ft
     EXPECT_NEAR(expected_sw_head, 4.5, 1.0e-10);
 }
@@ -1925,8 +2001,8 @@ TEST(SubcatchCascading27, RunonFieldsExist) {
     ctx.subcatches.resize(2);
 
     // Default init: all zeros
-    EXPECT_EQ(ctx.subcatches.runon_inflow[0],     0.0);
-    EXPECT_EQ(ctx.subcatches.runon_inflow[1],     0.0);
+    EXPECT_EQ(ctx.subcatches.runon_inflow[0], 0.0);
+    EXPECT_EQ(ctx.subcatches.runon_inflow[1], 0.0);
     EXPECT_EQ(ctx.subcatches.old_runon_inflow[0], 0.0);
     EXPECT_EQ(ctx.subcatches.old_runon_inflow[1], 0.0);
 }
@@ -1943,9 +2019,9 @@ TEST(SubcatchCascading27, OutletSubcatchFieldExists) {
 TEST(SubcatchCascading27, RunonConvertedToDepthRate) {
     // Core conversion: q (CFS) / total_area (ft²) = depth rate (ft/sec).
     // This is what the Runoff solver adds to precip before processSubarea().
-    double q_runon   = 2.5;    // CFS upstream runoff
-    double area_ft2  = 43560.0; // 1 acre in ft²
-    double runon_rate = q_runon / area_ft2;  // ft/sec
+    double q_runon = 2.5;                   // CFS upstream runoff
+    double area_ft2 = 43560.0;              // 1 acre in ft²
+    double runon_rate = q_runon / area_ft2; // ft/sec
     EXPECT_NEAR(runon_rate, 2.5 / 43560.0, 1.0e-12)
         << "Runon depth rate = q / area must match legacy subcatch_addRunonFlow()";
 }
@@ -1959,8 +2035,7 @@ TEST(OutfallRunon28, FieldExists) {
     SimulationContext ctx;
     ctx.subcatch_names.add("SC0");
     ctx.subcatches.resize(1);
-    EXPECT_EQ(ctx.subcatches.outfall_runon_vol[0], 0.0)
-        << "outfall_runon_vol must default to 0";
+    EXPECT_EQ(ctx.subcatches.outfall_runon_vol[0], 0.0) << "outfall_runon_vol must default to 0";
 }
 
 TEST(OutfallRunon28, VolumeAccumulatesAndDrains) {
@@ -1969,8 +2044,8 @@ TEST(OutfallRunon28, VolumeAccumulatesAndDrains) {
     SimulationContext ctx;
     ctx.subcatch_names.add("SC0");
     ctx.subcatches.resize(1);
-    ctx.subcatches.area[0]    = 43560.0;  // 1 acre (ft²)
-    ctx.subcatches.runoff[0]  = 0.0;      // no subcatch-to-subcatch runon
+    ctx.subcatches.area[0] = 43560.0; // 1 acre (ft²)
+    ctx.subcatches.runoff[0] = 0.0;   // no subcatch-to-subcatch runon
     ctx.subcatches.outlet_subcatch[0] = -1;
 
     // Simulate two routing steps: 1.0 CFS for 60 sec each → 120 ft³ total
@@ -1981,8 +2056,8 @@ TEST(OutfallRunon28, VolumeAccumulatesAndDrains) {
 
     // assembleRunon(dt_runoff) should convert vol/dt_runoff to CFS and reset vol
     // Simulate manually (assembleRunon is private, test the arithmetic)
-    double dt_runoff = 300.0;  // 5-min runoff step
-    double expected_q = 120.0 / dt_runoff;  // 0.4 CFS
+    double dt_runoff = 300.0;              // 5-min runoff step
+    double expected_q = 120.0 / dt_runoff; // 0.4 CFS
     double q_from_outfall = ctx.subcatches.outfall_runon_vol[0] / dt_runoff;
     EXPECT_NEAR(q_from_outfall, expected_q, 1.0e-10)
         << "outfall_runon_vol / dt_runoff must equal average outfall CFS";
@@ -1998,7 +2073,7 @@ TEST(StreetSweeping34, SweepLastSweptFieldExists) {
     ctx.subcatch_names.add("SC0");
     ctx.subcatch_names.add("SC1");
     ctx.subcatches.resize(2);
-    ctx.subcatches.resize_coverage(2, 3);  // 2 subcatches, 3 landuses
+    ctx.subcatches.resize_coverage(2, 3); // 2 subcatches, 3 landuses
 
     EXPECT_EQ(ctx.subcatches.sweep_last_swept.size(), std::size_t(2 * 3));
     // All initialized to 0
@@ -2013,16 +2088,15 @@ TEST(StreetSweeping34, IndependentPerSubcatch) {
     ctx.subcatch_names.add("SC0");
     ctx.subcatch_names.add("SC1");
     ctx.subcatches.resize(2);
-    ctx.subcatches.resize_coverage(2, 1);  // 1 landuse
+    ctx.subcatches.resize_coverage(2, 1); // 1 landuse
 
     // SC0: already swept 5 days ago; SC1: swept 1 day ago
-    ctx.subcatches.sweep_last_swept[0] = 5.0;  // SC0, LU0
-    ctx.subcatches.sweep_last_swept[1] = 1.0;  // SC1, LU0
+    ctx.subcatches.sweep_last_swept[0] = 5.0; // SC0, LU0
+    ctx.subcatches.sweep_last_swept[1] = 1.0; // SC1, LU0
 
-    double interval = 4.0;  // days
+    double interval = 4.0; // days
     // SC0 should sweep (5 >= 4), SC1 should not (1 < 4)
-    EXPECT_GE(ctx.subcatches.sweep_last_swept[0], interval)
-        << "SC0 should trigger sweeping";
+    EXPECT_GE(ctx.subcatches.sweep_last_swept[0], interval) << "SC0 should trigger sweeping";
     EXPECT_LT(ctx.subcatches.sweep_last_swept[1], interval)
         << "SC1 should NOT trigger sweeping yet";
 }
@@ -2033,9 +2107,9 @@ TEST(StreetSweeping34, IndependentPerSubcatch) {
 
 TEST(ExternalBuildup35, IntegrationFormula) {
     // Verify: new_buildup = MIN(old + rate * dt_days, max_buildup)
-    double old_buildup = 5.0;    // mass/unit
-    double rate        = 2.0;    // mass/unit/day (from time series * scaling factor)
-    double dt_days     = 0.5;    // half-day step
+    double old_buildup = 5.0; // mass/unit
+    double rate = 2.0;        // mass/unit/day (from time series * scaling factor)
+    double dt_days = 0.5;     // half-day step
     double max_buildup = 10.0;
 
     double new_buildup = std::min(old_buildup + rate * dt_days, max_buildup);
@@ -2051,7 +2125,7 @@ TEST(ExternalBuildup35, ParserStoresTsIndex) {
     // Verify EXT buildup stores time series index in coeff3 (not a raw double).
     // The fix resolves tok[5] as a table name; -1 means "not found".
     // Here we test the formula used at runtime: coeff[2] is cast to int for lookup.
-    double coeff2 = 3.0;  // ts index stored as double
+    double coeff2 = 3.0; // ts index stored as double
     int ts_idx = static_cast<int>(coeff2);
     EXPECT_EQ(ts_idx, 3);
 }
@@ -2091,15 +2165,16 @@ TEST(SwmmEngineStride50, ZeroStepsNoOp) {
 TEST(SwmmEngineStride50, StepCountAccumulates) {
     // Simulate what swmm_engine_stride does internally:
     // call step() n_steps times, stop on elapsed == 0.
-    int n_steps  = 4;
+    int n_steps = 4;
     int n_actual = 0;
-    double elapsed = 1.0;  // simulate non-zero remaining time each call
+    double elapsed = 1.0; // simulate non-zero remaining time each call
 
     for (int s = 0; s < n_steps && elapsed > 0.0; ++s) {
         // Simulate a step that advances time (elapsed decreases each call)
-        elapsed = (s < 3) ? 1.0 : 0.0;  // 4th step ends simulation
+        elapsed = (s < 3) ? 1.0 : 0.0; // 4th step ends simulation
         ++n_actual;
-        if (elapsed <= 0.0) break;
+        if (elapsed <= 0.0)
+            break;
     }
     // Loop ran 4 times: 3 real steps + 1 that saw elapsed==0 and broke
     EXPECT_EQ(n_actual, 4);
@@ -2111,9 +2186,9 @@ TEST(SwmmEngineStride50, StepCountAccumulates) {
 
 // Gap #31: INTENSITY (type 0) passes through unchanged
 TEST(CumulativeRainfall31, IntensityPassthrough) {
-    int rain_type = 0;   // INTENSITY
+    int rain_type = 0; // INTENSITY
     double interval = 3600.0;
-    double raw_value = 0.5;  // already in/hr
+    double raw_value = 0.5; // already in/hr
 
     // INTENSITY: no conversion
     if (rain_type == 1 && interval > 0.0)
@@ -2129,9 +2204,9 @@ TEST(CumulativeRainfall31, IntensityPassthrough) {
 
 // Gap #31: VOLUME (type 1) divides by interval in hours
 TEST(CumulativeRainfall31, VolumeConversion) {
-    int rain_type = 1;   // VOLUME
-    double interval = 900.0;  // 15 min in seconds
-    double raw_value = 0.1;   // 0.1 inch per 15 min interval
+    int rain_type = 1;       // VOLUME
+    double interval = 900.0; // 15 min in seconds
+    double raw_value = 0.1;  // 0.1 inch per 15 min interval
 
     if (rain_type == 1 && interval > 0.0)
         raw_value = raw_value / (interval / 3600.0);
@@ -2142,14 +2217,12 @@ TEST(CumulativeRainfall31, VolumeConversion) {
 
 // Gap #31: CUMULATIVE (type 2) normal increment (new >= prev)
 TEST(CumulativeRainfall31, CumulativeNormalIncrement) {
-    int rain_type = 2;   // CUMULATIVE
+    int rain_type = 2; // CUMULATIVE
     double interval = 3600.0;
-    double prev_accum = 1.2;  // previous cumulative depth
-    double raw_value  = 1.5;  // new cumulative depth (increased)
+    double prev_accum = 1.2; // previous cumulative depth
+    double raw_value = 1.5;  // new cumulative depth (increased)
 
-    double depth = (raw_value < prev_accum)
-        ? raw_value
-        : (raw_value - prev_accum);
+    double depth = (raw_value < prev_accum) ? raw_value : (raw_value - prev_accum);
     double result = depth / (interval / 3600.0);
 
     // delta = 0.3 in / 1 hr = 0.3 in/hr
@@ -2160,12 +2233,12 @@ TEST(CumulativeRainfall31, CumulativeNormalIncrement) {
 TEST(CumulativeRainfall31, CumulativeCounterReset) {
     int rain_type = 2;
     double interval = 3600.0;
-    double prev_accum = 5.0;  // previous accumulator
-    double raw_value  = 0.2;  // reset — new value < prev
+    double prev_accum = 5.0; // previous accumulator
+    double raw_value = 0.2;  // reset — new value < prev
 
     double depth = (raw_value < prev_accum)
-        ? raw_value              // treat full new value as depth this interval
-        : (raw_value - prev_accum);
+                       ? raw_value // treat full new value as depth this interval
+                       : (raw_value - prev_accum);
     double result = depth / (interval / 3600.0);
 
     // counter reset: depth = 0.2 in / 1 hr = 0.2 in/hr
@@ -2180,18 +2253,24 @@ TEST(CumulativeRainfall31, CumulativeCounterReset) {
 TEST(CoGageSharing53, PrimaryGageIsIndependent) {
     // Simulate three gages: gage 0 and gage 2 share ts_index 5;
     // gage 1 uses a different ts_index.
-    struct FakeGage { int source; int ts_index; int co_gage; };
+    struct FakeGage {
+        int source;
+        int ts_index;
+        int co_gage;
+    };
     std::vector<FakeGage> gages = {
-        {0, 5, -1},  // gage 0: primary, ts=5
-        {0, 7, -1},  // gage 1: unique ts=7
-        {0, 5, -1},  // gage 2: shares ts=5 with gage 0
+        {0, 5, -1}, // gage 0: primary, ts=5
+        {0, 7, -1}, // gage 1: unique ts=7
+        {0, 5, -1}, // gage 2: shares ts=5 with gage 0
     };
     int n = static_cast<int>(gages.size());
     for (int gj = 0; gj < n; ++gj) {
         gages[gj].co_gage = -1;
-        if (gages[gj].source != 0) continue;
+        if (gages[gj].source != 0)
+            continue;
         int ts_j = gages[gj].ts_index;
-        if (ts_j < 0) continue;
+        if (ts_j < 0)
+            continue;
         for (int gi = 0; gi < gj; ++gi) {
             if (gages[gi].source == 0 && gages[gi].ts_index == ts_j) {
                 gages[gj].co_gage = gi;
@@ -2199,25 +2278,31 @@ TEST(CoGageSharing53, PrimaryGageIsIndependent) {
             }
         }
     }
-    EXPECT_EQ(gages[0].co_gage, -1);  // primary
-    EXPECT_EQ(gages[1].co_gage, -1);  // unique ts
-    EXPECT_EQ(gages[2].co_gage,  0);  // secondary — points to gage 0
+    EXPECT_EQ(gages[0].co_gage, -1); // primary
+    EXPECT_EQ(gages[1].co_gage, -1); // unique ts
+    EXPECT_EQ(gages[2].co_gage, 0);  // secondary — points to gage 0
 }
 
 // Gap #53: FILE-source gages never get a co_gage (only TIMESERIES shares)
 TEST(CoGageSharing53, FileSourceNeverCoGage) {
-    struct FakeGage { int source; int ts_index; int co_gage; };
+    struct FakeGage {
+        int source;
+        int ts_index;
+        int co_gage;
+    };
     // source 1 = FILE, source 0 = TIMESERIES
     std::vector<FakeGage> gages = {
-        {1, -1, -1},  // gage 0: FILE source
-        {1, -1, -1},  // gage 1: FILE source (same "ts_index" -1 — irrelevant)
+        {1, -1, -1}, // gage 0: FILE source
+        {1, -1, -1}, // gage 1: FILE source (same "ts_index" -1 — irrelevant)
     };
     int n = static_cast<int>(gages.size());
     for (int gj = 0; gj < n; ++gj) {
         gages[gj].co_gage = -1;
-        if (gages[gj].source != 0) continue;  // skip FILE gages
+        if (gages[gj].source != 0)
+            continue; // skip FILE gages
         int ts_j = gages[gj].ts_index;
-        if (ts_j < 0) continue;
+        if (ts_j < 0)
+            continue;
         for (int gi = 0; gi < gj; ++gi) {
             if (gages[gi].source == 0 && gages[gi].ts_index == ts_j) {
                 gages[gj].co_gage = gi;
@@ -2232,8 +2317,8 @@ TEST(CoGageSharing53, FileSourceNeverCoGage) {
 // Gap #53: co-gage copies rainfall from primary during simulation step
 TEST(CoGageSharing53, SecondaryGageCopiesRainfall) {
     // Simulate the Gage.cpp update loop for two gages where gage 1 is a co-gage
-    std::vector<double> rainfall    = {0.0, 0.0};
-    std::vector<int>    co_gage_idx = {-1, 0};  // gage 1 points to gage 0
+    std::vector<double> rainfall = {0.0, 0.0};
+    std::vector<int> co_gage_idx = {-1, 0}; // gage 1 points to gage 0
     std::vector<double> api_rainfall = {-1.0, -1.0};
 
     // Simulate primary gage 0 computing 0.75 in/hr
@@ -2242,14 +2327,20 @@ TEST(CoGageSharing53, SecondaryGageCopiesRainfall) {
     // Now simulate gage 1's update — should copy from gage 0
     for (int j = 0; j < 2; ++j) {
         auto uj = static_cast<std::size_t>(j);
-        if (api_rainfall[uj] >= 0.0) { rainfall[uj] = api_rainfall[uj]; continue; }
+        if (api_rainfall[uj] >= 0.0) {
+            rainfall[uj] = api_rainfall[uj];
+            continue;
+        }
         int co = co_gage_idx[uj];
-        if (co >= 0 && co < j) { rainfall[uj] = rainfall[static_cast<std::size_t>(co)]; continue; }
+        if (co >= 0 && co < j) {
+            rainfall[uj] = rainfall[static_cast<std::size_t>(co)];
+            continue;
+        }
         // primary: already set above
     }
 
     EXPECT_DOUBLE_EQ(rainfall[0], 0.75);
-    EXPECT_DOUBLE_EQ(rainfall[1], 0.75);  // copied from primary
+    EXPECT_DOUBLE_EQ(rainfall[1], 0.75); // copied from primary
 }
 
 // ============================================================================
@@ -2272,7 +2363,7 @@ TEST(HotStartInfilGW54, HortonStateLayoutTpFeFmh) {
     // Simulate infil_get_state output for Horton
     // state[0]=tp, state[1]=Fe, state[2]=Fmh
     double state[6] = {120.0, 0.05, 0.03, 0.0, 0.0, 0.0};
-    int model = 0;  // HORTON
+    int model = 0; // HORTON
 
     // Round-trip: pack into record, verify each element
     openswmm::HotStartSubcatchRecord rec;
@@ -2280,49 +2371,49 @@ TEST(HotStartInfilGW54, HortonStateLayoutTpFeFmh) {
     std::copy(std::begin(state), std::end(state), std::begin(rec.infil));
 
     EXPECT_EQ(rec.infil_model, 0);
-    EXPECT_DOUBLE_EQ(rec.infil[0], 120.0);  // tp
-    EXPECT_DOUBLE_EQ(rec.infil[1], 0.05);   // Fe
-    EXPECT_DOUBLE_EQ(rec.infil[2], 0.03);   // Fmh
+    EXPECT_DOUBLE_EQ(rec.infil[0], 120.0); // tp
+    EXPECT_DOUBLE_EQ(rec.infil[1], 0.05);  // Fe
+    EXPECT_DOUBLE_EQ(rec.infil[2], 0.03);  // Fmh
     EXPECT_DOUBLE_EQ(rec.infil[3], 0.0);
 }
 
 // Gap #54: GA infil flat-pack round-trip (IMD, F, Fu, T, sat, 0 layout)
 TEST(HotStartInfilGW54, GreenAmptStateLayout) {
-    double state[6] = {0.25, 0.12, 0.08, 600.0, 1.0, 0.0};  // saturated=true
-    int model = 2;  // GREEN_AMPT
+    double state[6] = {0.25, 0.12, 0.08, 600.0, 1.0, 0.0}; // saturated=true
+    int model = 2;                                         // GREEN_AMPT
 
     openswmm::HotStartSubcatchRecord rec;
     rec.infil_model = model;
     std::copy(std::begin(state), std::end(state), std::begin(rec.infil));
 
     EXPECT_EQ(rec.infil_model, 2);
-    EXPECT_DOUBLE_EQ(rec.infil[0], 0.25);   // IMD
-    EXPECT_DOUBLE_EQ(rec.infil[1], 0.12);   // F
-    EXPECT_DOUBLE_EQ(rec.infil[2], 0.08);   // Fu
-    EXPECT_DOUBLE_EQ(rec.infil[3], 600.0);  // T
-    EXPECT_DOUBLE_EQ(rec.infil[4], 1.0);    // saturated
+    EXPECT_DOUBLE_EQ(rec.infil[0], 0.25);  // IMD
+    EXPECT_DOUBLE_EQ(rec.infil[1], 0.12);  // F
+    EXPECT_DOUBLE_EQ(rec.infil[2], 0.08);  // Fu
+    EXPECT_DOUBLE_EQ(rec.infil[3], 600.0); // T
+    EXPECT_DOUBLE_EQ(rec.infil[4], 1.0);   // saturated
 }
 
 // Gap #54: CN infil flat-pack round-trip (S, Se, P, F, f, T layout)
 TEST(HotStartInfilGW54, CurveNumStateLayout) {
     double state[6] = {0.30, 0.25, 0.10, 0.08, 0.001, 3600.0};
-    int model = 4;  // CURVE_NUM
+    int model = 4; // CURVE_NUM
 
     openswmm::HotStartSubcatchRecord rec;
     rec.infil_model = model;
     std::copy(std::begin(state), std::end(state), std::begin(rec.infil));
 
     EXPECT_EQ(rec.infil_model, 4);
-    EXPECT_DOUBLE_EQ(rec.infil[0], 0.30);    // S
-    EXPECT_DOUBLE_EQ(rec.infil[4], 0.001);   // f (previous rate)
-    EXPECT_DOUBLE_EQ(rec.infil[5], 3600.0);  // T (time since rain)
+    EXPECT_DOUBLE_EQ(rec.infil[0], 0.30);   // S
+    EXPECT_DOUBLE_EQ(rec.infil[4], 0.001);  // f (previous rate)
+    EXPECT_DOUBLE_EQ(rec.infil[5], 3600.0); // T (time since rain)
 }
 
 // Gap #54: GW zone state stored per subcatch record
 TEST(HotStartInfilGW54, GWZoneStatePerSubcatch) {
     openswmm::HotStartSubcatchRecord rec;
-    rec.gw_theta       = 0.15;  // upper zone moisture
-    rec.gw_lower_depth = 3.2;   // lower zone water table depth
+    rec.gw_theta = 0.15;      // upper zone moisture
+    rec.gw_lower_depth = 3.2; // lower zone water table depth
 
     EXPECT_DOUBLE_EQ(rec.gw_theta, 0.15);
     EXPECT_DOUBLE_EQ(rec.gw_lower_depth, 3.2);
@@ -2331,11 +2422,11 @@ TEST(HotStartInfilGW54, GWZoneStatePerSubcatch) {
 // Gap #54: mismatched infil model is a no-op for set_state (model must match init)
 TEST(HotStartInfilGW54, ModelMismatchIsNoOp) {
     // Simulate infil_set_state logic: only restores if model matches stored
-    int stored_model = 0;  // Horton
-    int file_model   = 2;  // file says GA
+    int stored_model = 0; // Horton
+    int file_model = 2;   // file says GA
 
     bool would_restore = (file_model == stored_model);
-    EXPECT_FALSE(would_restore);  // mismatch → skip
+    EXPECT_FALSE(would_restore); // mismatch → skip
 }
 
 // Gap #54: V2 file has version==2; V1 has version==1
@@ -2381,29 +2472,30 @@ TEST(InletBackflowRatio56, CustomInletCountBasedRatio) {
     // 1 custom inlet out of 2 total custom inlets; no standard inlets → f=0
     int n_links = 2, n_std = 0, n_custom_total = 2, n_custom_this = 1;
     double f = static_cast<double>(n_std) / static_cast<double>(n_links);
-    double ratio = static_cast<double>(n_custom_this) /
-                   static_cast<double>(n_custom_total) * (1.0 - f);
+    double ratio =
+        static_cast<double>(n_custom_this) / static_cast<double>(n_custom_total) * (1.0 - f);
     EXPECT_DOUBLE_EQ(ratio, 0.5);
 }
 
 // Gap #56: backflow = overflow × ratio
 TEST(InletBackflowRatio56, BackflowComputedFromOverflow) {
-    double overflow     = 2.0;  // cfs
-    double bfr          = 0.3;
-    double backflow     = overflow * bfr;
+    double overflow = 2.0; // cfs
+    double bfr = 0.3;
+    double backflow = overflow * bfr;
     // Below FUDGE → set to 0
     static constexpr double FUDGE = 2.5e-5;
-    if (std::fabs(backflow) < FUDGE) backflow = 0.0;
+    if (std::fabs(backflow) < FUDGE)
+        backflow = 0.0;
 
     EXPECT_NEAR(backflow, 0.6, 1e-12);
 }
 
 // Gap #56: net lateral-flow removal from bypass = capture - backflow
 TEST(InletBackflowRatio56, NetLatFlowReducedByBackflow) {
-    double lat_flow  = 5.0;
-    double qcap      = 1.5;
-    double qbf       = 0.4;
-    lat_flow -= (qcap - qbf);  // net extraction
+    double lat_flow = 5.0;
+    double qcap = 1.5;
+    double qbf = 0.4;
+    lat_flow -= (qcap - qbf); // net extraction
     EXPECT_NEAR(lat_flow, 5.0 - 1.1, 1e-12);
 }
 
@@ -2413,11 +2505,11 @@ TEST(InletBackflowRatio56, NetLatFlowReducedByBackflow) {
 
 // Gap #55: net capture > 0 → mass added to capture node
 TEST(InletQualityAdj55, NetCaptureAddsToCapture) {
-    double qcap = 1.0;  // cfs
-    double qbf  = 0.2;  // cfs backflow
-    double qNet = qcap - qbf;  // = 0.8 cfs net capture
+    double qcap = 1.0;        // cfs
+    double qbf = 0.2;         // cfs backflow
+    double qNet = qcap - qbf; // = 0.8 cfs net capture
 
-    double bypass_conc = 25.0;  // mg/L at bypass node (old)
+    double bypass_conc = 25.0; // mg/L at bypass node (old)
     double dt = 60.0;
 
     // qual_vol_in += qNet * dt
@@ -2433,14 +2525,14 @@ TEST(InletQualityAdj55, NetCaptureAddsToCapture) {
 
 // Gap #55: net backflow > 0 → mass added to bypass node
 TEST(InletQualityAdj55, NetBackflowAddsToBypass) {
-    double qcap = 0.1;  // tiny capture
-    double qbf  = 0.8;  // backflow dominates
-    double qNet = qcap - qbf;  // = -0.7 (negative → net backflow)
+    double qcap = 0.1;        // tiny capture
+    double qbf = 0.8;         // backflow dominates
+    double qNet = qcap - qbf; // = -0.7 (negative → net backflow)
     ASSERT_LT(qNet, 0.0);
 
-    double capture_conc = 50.0;  // mg/L at capture node (old)
+    double capture_conc = 50.0; // mg/L at capture node (old)
     double dt = 60.0;
-    double qBkf = -qNet;  // 0.7 cfs
+    double qBkf = -qNet; // 0.7 cfs
 
     double vol_in = 0.0;
     vol_in += qBkf * dt;
@@ -2454,14 +2546,16 @@ TEST(InletQualityAdj55, NetBackflowAddsToBypass) {
 // Gap #55: zero net flow → no quality transfer
 TEST(InletQualityAdj55, ZeroNetFlowNoTransfer) {
     double qcap = 0.5;
-    double qbf  = 0.5;
+    double qbf = 0.5;
     double qNet = qcap - qbf;
 
-    double mass_in = 100.0;  // existing accumulator
-    if (qNet > 0.0) mass_in += qNet * 30.0;
-    else if (qNet < 0.0) mass_in += (-qNet) * 40.0;
+    double mass_in = 100.0; // existing accumulator
+    if (qNet > 0.0)
+        mass_in += qNet * 30.0;
+    else if (qNet < 0.0)
+        mass_in += (-qNet) * 40.0;
 
-    EXPECT_DOUBLE_EQ(mass_in, 100.0);  // unchanged
+    EXPECT_DOUBLE_EQ(mass_in, 100.0); // unchanged
 }
 
 // ============================================================================
@@ -2471,11 +2565,25 @@ TEST(InletQualityAdj55, ZeroNetFlowNoTransfer) {
 // ============================================================================
 
 // Helper mirrors the logic in KW/DW/Steady-flow solvers.
+/**
+ * @brief Encode full cross-section status of upstream and downstream areas.
+ *
+ * Uses >= comparisons without shape or finite validation; this is a local reference expression
+ * rather than a production solver invocation.
+ *
+ * @param[in] a_in Upstream wetted area in the same squared-length units as a_full.
+ * @param[in] a_out Downstream wetted area in those units.
+ * @param[in] a_full Full-pipe area; nonpositive returns zero.
+ * @return Bit mask 1 upstream full, 2 downstream full, 3 both, 0 neither.
+ */
 static int8_t computeFullState(double a_in, double a_out, double a_full) {
-    if (a_full <= 0.0) return 0;
+    if (a_full <= 0.0)
+        return 0;
     int8_t fs = 0;
-    if (a_in  >= a_full) fs |= 1;  // bit 0 = upstream
-    if (a_out >= a_full) fs |= 2;  // bit 1 = downstream
+    if (a_in >= a_full)
+        fs |= 1; // bit 0 = upstream
+    if (a_out >= a_full)
+        fs |= 2; // bit 1 = downstream
     return fs;
 }
 
@@ -2532,24 +2640,31 @@ TEST(LinkFullState57, ResizeInitialisesZero) {
 
 // Stat tracking: up_full time accumulates when bit 0 is set
 TEST(LinkFullState57, StatUpFullAccumulates) {
-    int8_t fs = 1;  // UP_FULL
+    int8_t fs = 1; // UP_FULL
     bool up = (fs & 1) != 0;
     bool dn = (fs & 2) != 0;
     double t = 0.0, dt = 30.0;
-    if (up) t += dt;
+    if (up)
+        t += dt;
     EXPECT_DOUBLE_EQ(t, 30.0);
     EXPECT_FALSE(dn);
 }
 
 // Stat tracking: dn_full time accumulates when bit 1 is set
 TEST(LinkFullState57, StatDnFullAccumulates) {
-    int8_t fs = 2;  // DN_FULL
+    int8_t fs = 2; // DN_FULL
     bool up = (fs & 1) != 0;
     bool dn = (fs & 2) != 0;
     double t_both = 0.0, t_up = 0.0, t_dn = 0.0, dt = 30.0;
-    if (up) { t_up += dt; }
-    if (dn) { t_dn += dt; }
-    if (up && dn) { t_both += dt; }
+    if (up) {
+        t_up += dt;
+    }
+    if (dn) {
+        t_dn += dt;
+    }
+    if (up && dn) {
+        t_both += dt;
+    }
     EXPECT_DOUBLE_EQ(t_up, 0.0);
     EXPECT_DOUBLE_EQ(t_dn, 30.0);
     EXPECT_DOUBLE_EQ(t_both, 0.0);
@@ -2557,15 +2672,18 @@ TEST(LinkFullState57, StatDnFullAccumulates) {
 
 // Stat tracking: all-full accumulates all three counters
 TEST(LinkFullState57, StatAllFullAccumulatesAll) {
-    int8_t fs = 3;  // ALL_FULL
+    int8_t fs = 3; // ALL_FULL
     bool up = (fs & 1) != 0;
     bool dn = (fs & 2) != 0;
     double t_up = 0.0, t_dn = 0.0, t_both = 0.0, dt = 60.0;
-    if (up) t_up += dt;
-    if (dn) t_dn += dt;
-    if (up && dn) t_both += dt;
-    EXPECT_DOUBLE_EQ(t_up,   60.0);
-    EXPECT_DOUBLE_EQ(t_dn,   60.0);
+    if (up)
+        t_up += dt;
+    if (dn)
+        t_dn += dt;
+    if (up && dn)
+        t_both += dt;
+    EXPECT_DOUBLE_EQ(t_up, 60.0);
+    EXPECT_DOUBLE_EQ(t_dn, 60.0);
     EXPECT_DOUBLE_EQ(t_both, 60.0);
 }
 
@@ -2576,10 +2694,24 @@ TEST(LinkFullState57, StatAllFullAccumulatesAll) {
 // ============================================================================
 
 // Helper: plow removed volume uses non-LID area_ft2
-static double plowRemovedVol(double sfrac0, double exc, double fPlow,
-                              double area_acres, double lid_area_ft2) {
+/**
+ * @brief Compute the reference plowed snow volume over non-LID area.
+ *
+ * Clamps only remaining area; fraction/depth signs and bounds are not validated. No production snow
+ * solver or state mutation occurs.
+ *
+ * @param[in] sfrac0 Plowable fraction of non-LID area.
+ * @param[in] exc Excess snow depth in feet.
+ * @param[in] fPlow Fraction of excess snow removed.
+ * @param[in] area_acres Total subcatchment area in acres.
+ * @param[in] lid_area_ft2 LID footprint in ft2 subtracted from total area.
+ * @return sfrac0*exc*fPlow*max(area_acres*43560-lid_area_ft2,0) in ft3.
+ */
+static double plowRemovedVol(double sfrac0, double exc, double fPlow, double area_acres,
+                             double lid_area_ft2) {
     double area_ft2 = area_acres * 43560.0 - lid_area_ft2;
-    if (area_ft2 < 0.0) area_ft2 = 0.0;
+    if (area_ft2 < 0.0)
+        area_ft2 = 0.0;
     return sfrac0 * exc * fPlow * area_ft2;
 }
 
@@ -2595,20 +2727,20 @@ TEST(SnowPlowLid60, HalfLidHalvesVolume) {
     double full_area_ft2 = 1.0 * 43560.0;
     double lid_ft2 = full_area_ft2 / 2.0;
     double vol_with_lid = plowRemovedVol(0.5, 0.1, 0.3, 1.0, lid_ft2);
-    double vol_no_lid   = plowRemovedVol(0.5, 0.1, 0.3, 1.0, 0.0);
+    double vol_no_lid = plowRemovedVol(0.5, 0.1, 0.3, 1.0, 0.0);
     EXPECT_DOUBLE_EQ(vol_with_lid, vol_no_lid / 2.0);
 }
 
 // LID exactly equals total area → zero plow volume
 TEST(SnowPlowLid60, FullLidZeroVolume) {
-    double lid_ft2 = 2.0 * 43560.0;  // equal to 2 acres
+    double lid_ft2 = 2.0 * 43560.0; // equal to 2 acres
     double vol = plowRemovedVol(0.5, 0.1, 0.3, 2.0, lid_ft2);
     EXPECT_DOUBLE_EQ(vol, 0.0);
 }
 
 // LID exceeds total area → clamped to 0, not negative
 TEST(SnowPlowLid60, LidExceedsTotalAreaClamped) {
-    double lid_ft2 = 5.0 * 43560.0;  // more than 2 acres
+    double lid_ft2 = 5.0 * 43560.0; // more than 2 acres
     double vol = plowRemovedVol(0.5, 0.1, 0.3, 2.0, lid_ft2);
     EXPECT_DOUBLE_EQ(vol, 0.0);
 }
@@ -2624,14 +2756,15 @@ TEST(SnowPlowLid60, ResizeInitialisesZero) {
 // Snow cover area-weighted average excludes LID area
 TEST(SnowPlowLid60, SysSnowDepthExcludesLid) {
     // two subcatchments: 1 acre each, one has 0.5 acre LID
-    double snow_d[2] = {0.1, 0.2};   // ft
-    double area_ac[2] = {1.0, 1.0};  // acres
+    double snow_d[2] = {0.1, 0.2};  // ft
+    double area_ac[2] = {1.0, 1.0}; // acres
     double lid_ft2[2] = {0.0, 0.5 * 43560.0};
 
     double total_snow = 0.0, total_area = 0.0;
     for (int s = 0; s < 2; ++s) {
         double a = area_ac[s] - lid_ft2[s] / 43560.0;
-        if (a < 0.0) a = 0.0;
+        if (a < 0.0)
+            a = 0.0;
         total_snow += snow_d[s] * a;
         total_area += a;
     }
@@ -2660,27 +2793,41 @@ namespace {
 // Table x = depth (ft), y = surface area (ft²).  Returns a TableData with
 // the curve at index 0.
 struct StorageTestSetup {
-    NodeData             nodes;
-    TableData            tables;
+    NodeData nodes;
+    TableData tables;
     openswmm::NodeSubtypes subs;
 
     // area_depths: pairs of (depth_ft, area_ft2) for the storage curve.
     // full_depth: maximum depth (ft).
-    StorageTestSetup(const std::vector<std::pair<double,double>>& area_depths,
-                     double full_depth) {
+    /**
+     * @brief Build one tabular storage node with its integrated full-volume reference.
+     *
+     * Owns node/subtype/table storage, references table zero and zeroes functional coefficients. Uses
+     * table_getStorageVolume to integrate the supplied points, so callers must provide a valid storage
+     * curve; no ordering/finite validation occurs here.
+     *
+     * @param[in] area_depths Borrowed ordered pairs of depth ft and surface area ft2, copied as curve
+     *     entries.
+     * @param[in] full_depth Node full depth in feet, used to precompute full volume.
+     */
+    StorageTestSetup(const std::vector<std::pair<double, double>>& area_depths, double full_depth) {
         nodes.resize(1);
-        nodes.full_depth[0]    = full_depth;
+        nodes.full_depth[0] = full_depth;
         const int sr = subs.set_node_type(nodes, 0, NodeType::STORAGE);
-        auto& S = subs.storages; const auto ur = static_cast<std::size_t>(sr);
-        S.curve[ur] = 0;     // use table index 0
-        S.a[ur]     = 0.0;
-        S.b[ur]     = 0.0;
-        S.c[ur]     = 0.0;
+        auto& S = subs.storages;
+        const auto ur = static_cast<std::size_t>(sr);
+        S.curve[ur] = 0; // use table index 0
+        S.a[ur] = 0.0;
+        S.b[ur] = 0.0;
+        S.c[ur] = 0.0;
 
         // Pre-compute full_volume via table_getStorageVolume
         Table tbl;
         tbl.type = TableType::CURVE_STORAGE;
-        for (auto& [d, a] : area_depths) { tbl.x.push_back(d); tbl.y.push_back(a); }
+        for (auto& [d, a] : area_depths) {
+            tbl.x.push_back(d);
+            tbl.y.push_back(a);
+        }
         nodes.full_volume[0] = table_getStorageVolume(tbl, full_depth);
 
         tables.tables.push_back(std::move(tbl));
@@ -2712,13 +2859,13 @@ TEST(StorageTabularDepth12, TrapezoidalNonlinearExact) {
     StorageTestSetup s({{0.0, 100.0}, {10.0, 200.0}}, 10.0);
 
     double vol_at_5 = table_getStorageVolume(s.tables.tables[0], 5.0);
-    EXPECT_NEAR(vol_at_5, 625.0, 1e-6);  // sanity check
+    EXPECT_NEAR(vol_at_5, 625.0, 1e-6); // sanity check
 
     double d_back = node::getDepth(s.nodes, 0, vol_at_5, &s.tables, 0, &s.subs);
     EXPECT_NEAR(d_back, 5.0, 1e-4);
 
     // Confirm the old linear approximation would have been wrong
-    double v_full = s.nodes.full_volume[0];   // = 1500 ft³
+    double v_full = s.nodes.full_volume[0]; // = 1500 ft³
     double d_linear = s.nodes.full_depth[0] * (vol_at_5 / v_full);
     EXPECT_GT(std::fabs(d_linear - 5.0), 0.5)
         << "Linear approx should differ significantly from correct depth";
@@ -2779,8 +2926,18 @@ namespace {
 // area_acres: total subcatch area (acres)
 // lid_area_ft2: LID area within this subcatch (ft²)
 // frac_imperv: impervious fraction of NON-LID area
-static SimulationContext makeLIDRunoffCtx(double area_acres,
-                                          double lid_area_ft2,
+/**
+ * @brief Build one catchment with explicit LID and non-LID runoff partitions.
+ *
+ * Does not validate area bounds or initialize a full engine/runoff solver. Sets large available
+ * groundwater infiltration volume to avoid that fixture constraint and zero depression storage.
+ *
+ * @param[in] area_acres Total catchment area in acres.
+ * @param[in] lid_area_ft2 LID footprint in ft2 stored separately from total catchment area.
+ * @param[in] frac_imperv Impervious fraction of the non-LID catchment area, normally [0,1].
+ * @return Owned US context with one SC1, no gage, Horton infiltration and zero initial runon.
+ */
+static SimulationContext makeLIDRunoffCtx(double area_acres, double lid_area_ft2,
                                           double frac_imperv) {
     SimulationContext ctx;
     ctx.options.flow_units = FlowUnits::CFS;
@@ -2789,39 +2946,39 @@ static SimulationContext makeLIDRunoffCtx(double area_acres,
     ctx.subcatch_names.add("SC1");
 
     ctx.subcatches.resize(1);
-    ctx.subcatches.area[0]                = area_acres;
-    ctx.subcatches.width[0]               = 100.0;   // ft
-    ctx.subcatches.slope[0]               = 0.01;
-    ctx.subcatches.frac_imperv[0]         = frac_imperv;
-    ctx.subcatches.frac_imperv_no_store[0]= 0.25;  // 25% of imperv has zero dStore
-    ctx.subcatches.n_imperv[0]            = 0.013;
-    ctx.subcatches.n_perv[0]              = 0.1;
-    ctx.subcatches.ds_imperv[0]           = 0.0;
-    ctx.subcatches.ds_perv[0]             = 0.0;
-    ctx.subcatches.infil_model[0]         = 0;  // Horton
-    ctx.subcatches.infil_p1[0]            = 3.0;  // f0 (in/hr)
-    ctx.subcatches.infil_p2[0]            = 0.5;  // fmin
-    ctx.subcatches.infil_p3[0]            = 0.001; // decay
-    ctx.subcatches.infil_p4[0]            = 0.0;
-    ctx.subcatches.infil_p5[0]            = 0.0;
-    ctx.subcatches.gage[0]                = -1;   // no gage
-    ctx.subcatches.total_lid_area_ft2[0]  = lid_area_ft2;
-    ctx.subcatches.gw_max_infil_vol[0]    = 1e30;
-    ctx.subcatches.runon_inflow[0]        = 0.0;
+    ctx.subcatches.area[0] = area_acres;
+    ctx.subcatches.width[0] = 100.0; // ft
+    ctx.subcatches.slope[0] = 0.01;
+    ctx.subcatches.frac_imperv[0] = frac_imperv;
+    ctx.subcatches.frac_imperv_no_store[0] = 0.25; // 25% of imperv has zero dStore
+    ctx.subcatches.n_imperv[0] = 0.013;
+    ctx.subcatches.n_perv[0] = 0.1;
+    ctx.subcatches.ds_imperv[0] = 0.0;
+    ctx.subcatches.ds_perv[0] = 0.0;
+    ctx.subcatches.infil_model[0] = 0;  // Horton
+    ctx.subcatches.infil_p1[0] = 3.0;   // f0 (in/hr)
+    ctx.subcatches.infil_p2[0] = 0.5;   // fmin
+    ctx.subcatches.infil_p3[0] = 0.001; // decay
+    ctx.subcatches.infil_p4[0] = 0.0;
+    ctx.subcatches.infil_p5[0] = 0.0;
+    ctx.subcatches.gage[0] = -1; // no gage
+    ctx.subcatches.total_lid_area_ft2[0] = lid_area_ft2;
+    ctx.subcatches.gw_max_infil_vol[0] = 1e30;
+    ctx.subcatches.runon_inflow[0] = 0.0;
     ctx.subcatches.lid_return_to_perv_cfs[0] = 0.0;
     return ctx;
 }
 
-}  // namespace
+} // namespace
 
 // (a) Without LID, RunoffSolver uses full area.
 // With LID occupying half the area, it should use half area → lower runoff volume.
 TEST(LIDRunoffIntegration23, LIDAreaReducesRunoffVolume) {
     const double area_acres = 1.0;
-    const double area_ft2   = area_acres * 43560.0;
-    const double lid_ft2    = area_ft2 / 2.0;   // 50% LID
-    const double fi         = 0.5;
-    const double dt         = 300.0;             // 5-min step
+    const double area_ft2 = area_acres * 43560.0;
+    const double lid_ft2 = area_ft2 / 2.0; // 50% LID
+    const double fi = 0.5;
+    const double dt = 300.0; // 5-min step
 
     // No LID context
     SimulationContext ctx_no_lid = makeLIDRunoffCtx(area_acres, 0.0, fi);
@@ -2835,26 +2992,24 @@ TEST(LIDRunoffIntegration23, LIDAreaReducesRunoffVolume) {
 
     // Heavy rainfall (0.1 ft/sec over US units — rainfall is internally ft/sec)
     // Apply directly as subcatch rainfall since there's no gage
-    const double rain_ftps = 0.001;  // ~0.4 in/hr
+    const double rain_ftps = 0.001; // ~0.4 in/hr
 
     // Force rainfall via subcatch.rainfall (RunoffSolver reads gage or subcatch.rainfall[ui])
     // Since gage=-1, rainfall comes from precip_[] set from gage. We set it directly.
     ctx_no_lid.subcatches.rainfall[0] = rain_ftps;
-    ctx_lid.subcatches.rainfall[0]    = rain_ftps;
+    ctx_lid.subcatches.rainfall[0] = rain_ftps;
 
     // Hack: RunoffSolver reads from ctx.gages.rainfall[gage_idx] when gage>=0.
     // Since gage=-1, precip_[i]=0. We need a gage to inject rain.
     // Instead, verify the alpha/area relationship directly via soa().
-    const auto& soa_no  = solver_no.soa();
+    const auto& soa_no = solver_no.soa();
     const auto& soa_lid = solver_lid.soa();
 
     // Non-LID solver area should be close to full area (UCF rounding is ~2 ft²)
-    EXPECT_NEAR(soa_no.area[0], area_ft2, 5.0)
-        << "No-LID solver should use full area";
+    EXPECT_NEAR(soa_no.area[0], area_ft2, 5.0) << "No-LID solver should use full area";
 
     // LID solver area ≈ full area - LID area (also within UCF rounding)
-    EXPECT_NEAR(soa_lid.area[0], area_ft2 - lid_ft2, 5.0)
-        << "LID solver should use nonLidArea";
+    EXPECT_NEAR(soa_lid.area[0], area_ft2 - lid_ft2, 5.0) << "LID solver should use nonLidArea";
 
     // LID area cuts area in half → soa_lid.area ≈ soa_no.area / 2
     EXPECT_NEAR(soa_lid.area[0], soa_no.area[0] / 2.0, 1.0)
@@ -2871,22 +3026,22 @@ TEST(LIDRunoffIntegration23, LIDAreaReducesRunoffVolume) {
 // should be non-negative and imperv should dominate (higher imperv fraction).
 TEST(LIDRunoffIntegration23, PerSubareaRunoffCFSTracked) {
     const double area_acres = 1.0;
-    const double fi         = 0.8;   // 80% imperv → imperv runoff >> perv
-    const double dt         = 300.0;
+    const double fi = 0.8; // 80% imperv → imperv runoff >> perv
+    const double dt = 300.0;
 
     SimulationContext ctx = makeLIDRunoffCtx(area_acres, 0.0, fi);
     runoff::RunoffSolver solver;
     solver.init(ctx);
 
     // Inject rainfall via gage
-    ctx.gages.rainfall.resize(1, 0.001);  // 0.001 ft/sec rain
+    ctx.gages.rainfall.resize(1, 0.001); // 0.001 ft/sec rain
     ctx.subcatches.gage[0] = 0;
 
     solver.execute(ctx, dt, 0.0, 1.0, 1.0, 0);
 
     const auto& soa = solver.soa();
     EXPECT_GE(soa.imperv_runoff_cfs[0], 0.0) << "Impervious runoff CFS must be non-negative";
-    EXPECT_GE(soa.perv_runoff_cfs[0],   0.0) << "Pervious runoff CFS must be non-negative";
+    EXPECT_GE(soa.perv_runoff_cfs[0], 0.0) << "Pervious runoff CFS must be non-negative";
 
     // With 80% imperv, impervious runoff CFS should exceed pervious
     EXPECT_GE(soa.imperv_runoff_cfs[0], soa.perv_runoff_cfs[0])
@@ -2897,8 +3052,8 @@ TEST(LIDRunoffIntegration23, PerSubareaRunoffCFSTracked) {
 // Inject a return flow, run one dry step, verify it's consumed and adds runoff.
 TEST(LIDRunoffIntegration23, LIDReturnToPervConsumed) {
     const double area_acres = 1.0;
-    const double fi         = 0.5;
-    const double dt         = 300.0;
+    const double fi = 0.5;
+    const double dt = 300.0;
 
     SimulationContext ctx = makeLIDRunoffCtx(area_acres, 0.0, fi);
     runoff::RunoffSolver solver;
@@ -2922,8 +3077,7 @@ TEST(LIDRunoffIntegration23, LIDReturnToPervConsumed) {
         << "lid_return_to_perv_cfs should be consumed (set to 0) each step";
 
     // And subcatch runoff should be > 0 (return flow generated some pervious runoff)
-    EXPECT_GT(ctx.subcatches.runoff[0], 0.0)
-        << "LID return flow to pervious should produce runoff";
+    EXPECT_GT(ctx.subcatches.runoff[0], 0.0) << "LID return flow to pervious should produce runoff";
 }
 
 // ============================================================================
@@ -2942,43 +3096,57 @@ TEST(LIDRunoffIntegration23, LIDReturnToPervConsumed) {
 namespace {
 
 // Build a minimal LIDGroupSoA with one infiltration-trench unit.
-static lid::LIDGroupSoA makeInfilTrench(double stor_thick, double stor_void,
-                                          double stor_ksat,
-                                          double surf_store = 0.0,
-                                          double drain_coeff = 0.0) {
+/**
+ * @brief Build one native-unit infiltration-trench group for direct kernel tests.
+ *
+ * Sets requested native fields directly, bypassing authoring conversion/validation and full engine
+ * initialization. Other group arrays retain resize defaults; callers supply intended initial
+ * water/time inputs.
+ *
+ * @param[in] stor_thick Storage thickness in feet.
+ * @param[in] stor_void Storage void fraction.
+ * @param[in] stor_ksat Native bottom/storage saturated conductivity in ft/s.
+ * @param[in] surf_store Surface storage depth in feet.
+ * @param[in] drain_coeff Native LID underdrain coefficient forwarded unchanged to the direct
+ *     kernel.
+ * @return Owned single-unit group with 100 ft2 area, 10 ft width, no clogging and an open
+ *     square-root drain.
+ */
+static lid::LIDGroupSoA makeInfilTrench(double stor_thick, double stor_void, double stor_ksat,
+                                        double surf_store = 0.0, double drain_coeff = 0.0) {
     lid::LIDGroupSoA g;
     g.type = lid::LIDType::INFIL_TRENCH;
     g.resize(1);
     // Surface layer
-    g.surf_store[0]     = surf_store;
+    g.surf_store[0] = surf_store;
     g.surf_void_frac[0] = 1.0;
-    g.surf_alpha[0]     = 0.0;   // no Manning's surface outflow (stor_store=0)
-    g.full_width[0]     = 10.0;
-    g.area[0]           = 100.0;
+    g.surf_alpha[0] = 0.0; // no Manning's surface outflow (stor_store=0)
+    g.full_width[0] = 10.0;
+    g.area[0] = 100.0;
     // Storage layer
-    g.stor_thick[0]     = stor_thick;
-    g.stor_void[0]      = stor_void;
-    g.stor_ksat[0]      = stor_ksat;
-    g.stor_clog[0]      = 0.0;   // no clogging
+    g.stor_thick[0] = stor_thick;
+    g.stor_void[0] = stor_void;
+    g.stor_ksat[0] = stor_ksat;
+    g.stor_clog[0] = 0.0; // no clogging
     // Drain
-    g.drain_coeff[0]    = drain_coeff;
-    g.drain_expon[0]    = 0.5;
-    g.drain_offset[0]   = 0.0;
-    g.drain_hopen[0]    = 0.0;
-    g.drain_hclose[0]   = 0.0;
-    g.drain_open[0]     = 1;
+    g.drain_coeff[0] = drain_coeff;
+    g.drain_expon[0] = 0.5;
+    g.drain_offset[0] = 0.0;
+    g.drain_hopen[0] = 0.0;
+    g.drain_hclose[0] = 0.0;
+    g.drain_open[0] = 1;
     return g;
 }
 
-}  // namespace
+} // namespace
 
 // (a) With empty storage and heavy inflow, trench stores all in storage.
 // After 1 step: stor_depth > 0, surf_depth ≈ 0 (all drained to storage).
 TEST(InfilTrench24, SurfaceDrainsDirectlyToStorage) {
     auto g = makeInfilTrench(/*stor_thick=*/2.0, /*stor_void=*/0.4,
-                              /*stor_ksat=*/0.0);  // no exfiltration
+                             /*stor_ksat=*/0.0); // no exfiltration
     const double dt = 300.0;
-    const double rain = 0.001;  // ft/sec
+    const double rain = 0.001; // ft/sec
 
     g.inflow[0] = rain;
     g.surf_depth[0] = 0.0;
@@ -3000,16 +3168,16 @@ TEST(InfilTrench24, SurfaceDrainsDirectlyToStorage) {
 // Storage at capacity → StorageInflow → 0 → SurfaceInfil → 0 → surface ponds → overflow.
 TEST(InfilTrench24, FullStorageProducesSurfaceRunoff) {
     const double stor_thick = 1.0;
-    const double stor_void  = 0.4;
+    const double stor_void = 0.4;
     auto g = makeInfilTrench(stor_thick, stor_void, /*stor_ksat=*/0.0,
-                              /*surf_store=*/0.0, /*drain_coeff=*/0.0);
-    g.surf_alpha[0] = 1.49 * std::sqrt(0.01) / 0.05;  // Manning's surface outflow
-    const double dt    = 300.0;
-    const double rain  = 0.002;
+                             /*surf_store=*/0.0, /*drain_coeff=*/0.0);
+    g.surf_alpha[0] = 1.49 * std::sqrt(0.01) / 0.05; // Manning's surface outflow
+    const double dt = 300.0;
+    const double rain = 0.002;
 
     // Pre-fill storage to capacity
     g.stor_depth[0] = stor_thick;
-    g.surf_depth[0] = 0.5;  // some water already on surface
+    g.surf_depth[0] = 0.5; // some water already on surface
 
     g.inflow[0] = rain;
     const double no_evap[1] = {0.0};
@@ -3022,21 +3190,21 @@ TEST(InfilTrench24, FullStorageProducesSurfaceRunoff) {
 // (c) Exfiltration and drain both produce outputs when storage has water.
 TEST(InfilTrench24, ExfiltrationAndDrainOutputs) {
     auto g = makeInfilTrench(/*stor_thick=*/1.0, /*stor_void=*/0.4,
-                              /*stor_ksat=*/0.0001,  // non-zero exfil
-                              /*surf_store=*/0.0,
-                              /*drain_coeff=*/0.001); // non-zero drain
+                             /*stor_ksat=*/0.0001, // non-zero exfil
+                             /*surf_store=*/0.0,
+                             /*drain_coeff=*/0.001); // non-zero drain
     const double dt = 300.0;
 
     // Pre-fill storage (60% full) so drain and exfil can activate
     g.stor_depth[0] = 0.6;
     g.surf_depth[0] = 0.0;
-    g.inflow[0]     = 0.0;
+    g.inflow[0] = 0.0;
 
     const double no_evap[1] = {0.0};
     lid::LIDSolver::batchInfilTrenchFlux(g, 0.0, no_evap, dt);
 
-    EXPECT_GT(g.infil_loss[0],  0.0) << "Exfiltration should be > 0 when storage is full";
-    EXPECT_GT(g.drain_flow[0],  0.0) << "Drain flow should be > 0";
+    EXPECT_GT(g.infil_loss[0], 0.0) << "Exfiltration should be > 0 when storage is full";
+    EXPECT_GT(g.drain_flow[0], 0.0) << "Drain flow should be > 0";
     EXPECT_DOUBLE_EQ(g.surface_runoff[0], 0.0) << "No surface inflow → no surface runoff";
 }
 
@@ -3058,14 +3226,24 @@ TEST(InfilTrench24, ExfiltrationAndDrainOutputs) {
 
 // Build a minimal SimulationContext with one subcatchment and one LID unit
 // suitable for testing A6b routing directly (no full engine run needed).
-static std::pair<SimulationContext, lid::LIDGroupSoA>
-makeDrainRoutingCtx(double lid_area_ft2, int drain_subcatch_idx)
-{
+/**
+ * @brief Build two-catchment/one-LID state for direct underdrain routing checks.
+ *
+ * Registers SC0/SC1 and N0, sizes only required buffers, and assigns the unit to SC0. This is
+ * partial fixture state for direct A6b operations, not a finalized hydraulic model.
+ *
+ * @param[in] lid_area_ft2 LID unit footprint in ft2.
+ * @param[in] drain_subcatch_idx Destination subcatchment row; -1 disables that route, other valid
+ *     rows belong to the two-source context.
+ * @return Owned context/group pair with zero initial drain/runon and no node drain destination.
+ */
+static std::pair<SimulationContext, lid::LIDGroupSoA> makeDrainRoutingCtx(double lid_area_ft2,
+                                                                          int drain_subcatch_idx) {
     SimulationContext ctx;
     ctx.subcatch_names.add("SC0");
     ctx.subcatch_names.add("SC1");
     ctx.subcatches.resize(2);
-    ctx.subcatches.area[0] = 1.0;   // 1 acre
+    ctx.subcatches.area[0] = 1.0; // 1 acre
     ctx.subcatches.area[1] = 1.0;
     ctx.subcatches.lid_drain_runon_cfs.assign(2, 0.0);
     ctx.subcatches.runoff.assign(2, 0.0);
@@ -3075,32 +3253,32 @@ makeDrainRoutingCtx(double lid_area_ft2, int drain_subcatch_idx)
     ctx.nodes.ext_inflow.assign(1, 0.0);
 
     lid::LIDGroupSoA g;
-    g.type  = lid::LIDType::BIO_CELL;
+    g.type = lid::LIDType::BIO_CELL;
     g.count = 1;
     g.resize(1);
-    g.subcatch_idx[0]   = 0;
-    g.area[0]           = lid_area_ft2;
+    g.subcatch_idx[0] = 0;
+    g.area[0] = lid_area_ft2;
     g.drain_subcatch[0] = drain_subcatch_idx;
-    g.drain_node[0]     = -1;
-    g.to_perv[0]        = 0;
+    g.drain_node[0] = -1;
+    g.to_perv[0] = 0;
     g.surface_runoff[0] = 0.0;
-    g.drain_flow[0]     = 0.0;
+    g.drain_flow[0] = 0.0;
     return {ctx, g};
 }
 
 // (a) Surface runoff unit is CFS: 0.001 ft/sec over 43560 ft² → 43.56 CFS
 TEST(LIDDrainRouting25, SurfaceRunoffUnitIsCFS) {
-    const double lid_ft2 = 43560.0;  // 1 acre in ft²
+    const double lid_ft2 = 43560.0; // 1 acre in ft²
     auto [ctx, g] = makeDrainRoutingCtx(lid_ft2, -1);
 
-    g.surface_runoff[0] = 0.001;  // ft/sec
-    g.to_perv[0]        = 0;
+    g.surface_runoff[0] = 0.001; // ft/sec
+    g.to_perv[0] = 0;
 
     // Simulate A6b surface runoff accumulation (the fixed formula):
     // runoff[usc] += surface_runoff * lid_area   (CFS = ft/sec * ft²)
     ctx.subcatches.runoff[0] += g.surface_runoff[0] * g.area[0];
 
-    const double expected_cfs = 0.001 * lid_ft2;  // 43.56 CFS
+    const double expected_cfs = 0.001 * lid_ft2; // 43.56 CFS
     EXPECT_NEAR(ctx.subcatches.runoff[0], expected_cfs, 1e-6)
         << "Surface runoff must be ft/sec * lid_area_ft2 = CFS";
 }
@@ -3110,9 +3288,9 @@ TEST(LIDDrainRouting25, DrainToSameCatchRouteAsRunon) {
     const double lid_ft2 = 43560.0;
     auto [ctx, g] = makeDrainRoutingCtx(lid_ft2, /*drain_subcatch_idx=*/-1);
 
-    g.drain_flow[0]     = 0.0005;   // ft/sec
-    g.drain_node[0]     = -1;
-    g.drain_subcatch[0] = -1;       // same subcatch (sc==0)
+    g.drain_flow[0] = 0.0005; // ft/sec
+    g.drain_node[0] = -1;
+    g.drain_subcatch[0] = -1; // same subcatch (sc==0)
 
     const double expected_cfs = 0.0005 * lid_ft2;
 
@@ -3137,7 +3315,7 @@ TEST(LIDDrainRouting25, AssembleRunonDrainsLIDRunon) {
     ctx.subcatch_names.add("SC0");
     ctx.subcatches.resize(1);
     ctx.subcatches.runon_inflow.assign(1, 0.0);
-    ctx.subcatches.lid_drain_runon_cfs.assign(1, 5.0);  // 5 CFS pending
+    ctx.subcatches.lid_drain_runon_cfs.assign(1, 5.0); // 5 CFS pending
 
     // Simulate assembleRunon Gap #25 logic (drain and clear):
     for (int i = 0; i < 1; ++i) {
@@ -3178,10 +3356,25 @@ namespace {
 
 // Build minimal context with 2 subcatches, 1 node, 1 pollutant
 // suitable for testing A6b quality accumulation logic.
-static std::tuple<SimulationContext, lid::LIDGroupSoA>
-makeLIDQualCtx(int drain_node_idx, int drain_subcatch_idx, double drain_rmvl,
-               double src_conc_mg_ft3)
-{
+/**
+ * @brief Build one-pollutant fixture state for direct LID quality delivery.
+ *
+ * Sets one-acre LID area, native 0.001 ft/s drain flux, one pollutant slot and no
+ * return-to-pervious path. Caller interprets raw concentration consistently with the direct kernel
+ * being tested; this helper bypasses public authoring and full model validation.
+ *
+ * @param[in] drain_node_idx Native node drain target, valid zero or -1 to disable; intentional
+ *     invalid cases are passed through.
+ * @param[in] drain_subcatch_idx Native subcatchment drain target, valid 0/1 or -1 to disable.
+ * @param[in] drain_rmvl Raw underdrain pollutant removal fraction stored unchanged.
+ * @param[in] src_conc_mg_ft3 Historical fixture parameter name: raw SC0 concentration assigned
+ *     unchanged to subcatches.conc[0], with no unit conversion.
+ * @return Owned two-subcatchment/one-node context and one-unit BIO_CELL group.
+ */
+static std::tuple<SimulationContext, lid::LIDGroupSoA> makeLIDQualCtx(int drain_node_idx,
+                                                                      int drain_subcatch_idx,
+                                                                      double drain_rmvl,
+                                                                      double src_conc_mg_ft3) {
     SimulationContext ctx;
     ctx.subcatch_names.add("SC0");
     ctx.subcatch_names.add("SC1");
@@ -3193,24 +3386,24 @@ makeLIDQualCtx(int drain_node_idx, int drain_subcatch_idx, double drain_rmvl,
 
     ctx.node_names.add("N0");
     ctx.nodes.resize(1);
-    ctx.nodes.resize_quality(1);   // 1 pollutant
+    ctx.nodes.resize_quality(1); // 1 pollutant
 
     // Set source subcatch quality (mg/ft³)
     ctx.subcatches.resize_quality(1);
-    ctx.subcatches.conc[0] = src_conc_mg_ft3;  // SC0 pollutant 0
+    ctx.subcatches.conc[0] = src_conc_mg_ft3; // SC0 pollutant 0
 
     lid::LIDGroupSoA g;
-    g.type  = lid::LIDType::BIO_CELL;
+    g.type = lid::LIDType::BIO_CELL;
     g.count = 1;
     g.n_pollutants = 1;
     g.resize(1);
-    g.subcatch_idx[0]   = 0;                // belongs to SC0
-    g.area[0]           = 43560.0;          // 1 acre in ft²
-    g.drain_node[0]     = drain_node_idx;
+    g.subcatch_idx[0] = 0; // belongs to SC0
+    g.area[0] = 43560.0;   // 1 acre in ft²
+    g.drain_node[0] = drain_node_idx;
     g.drain_subcatch[0] = drain_subcatch_idx;
-    g.drain_flow[0]     = 0.001;            // ft/sec
+    g.drain_flow[0] = 0.001; // ft/sec
     g.drain_rmvl.resize(1, drain_rmvl);
-    g.to_perv[0]        = 0;
+    g.to_perv[0] = 0;
     return {ctx, g};
 }
 
@@ -3219,16 +3412,16 @@ makeLIDQualCtx(int drain_node_idx, int drain_subcatch_idx, double drain_rmvl,
 // (a) drain-to-node: lid_drain_qual_load and lid_drain_qual_vol populated correctly
 TEST(LIDDrainQuality26, DrainToNodeQualityAccumulated) {
     auto [ctx, g] = makeLIDQualCtx(/*drain_node=*/0, /*drain_subcatch=*/-1,
-                                    /*rmvl=*/0.0, /*src_conc=*/2.0);
-    const double drain_cfs = g.drain_flow[0] * g.area[0]; // 0.001 * 43560 = 43.56 CFS
+                                   /*rmvl=*/0.0, /*src_conc=*/2.0);
+    const double drain_cfs = g.drain_flow[0] * g.area[0];    // 0.001 * 43560 = 43.56 CFS
     const double expected_mass_rate = drain_cfs * 2.0 * 1.0; // drain * conc * (1-rmvl)
 
     // Simulate A6b quality accumulation
     int np = 1;
     double c_src = ctx.subcatches.conc[0];
-    double rmvl   = g.drain_rmvl[0];
-    ctx.nodes.lid_drain_qual_vol[0]    += drain_cfs;
-    ctx.nodes.lid_drain_qual_load[0]   += drain_cfs * c_src * (1.0 - rmvl);
+    double rmvl = g.drain_rmvl[0];
+    ctx.nodes.lid_drain_qual_vol[0] += drain_cfs;
+    ctx.nodes.lid_drain_qual_load[0] += drain_cfs * c_src * (1.0 - rmvl);
 
     EXPECT_NEAR(ctx.nodes.lid_drain_qual_vol[0], drain_cfs, 1e-6)
         << "lid_drain_qual_vol must equal drain_cfs";
@@ -3245,15 +3438,13 @@ TEST(LIDDrainQuality26, RemovalReducesMassRate) {
     double drain_cfs = g_full.drain_flow[0] * g_full.area[0];
 
     // Full quality (no removal)
-    ctx_full.nodes.lid_drain_qual_load[0] +=
-        drain_cfs * ctx_full.subcatches.conc[0] * (1.0 - 0.0);
+    ctx_full.nodes.lid_drain_qual_load[0] += drain_cfs * ctx_full.subcatches.conc[0] * (1.0 - 0.0);
 
     // Half quality (50% removal)
-    ctx_half.nodes.lid_drain_qual_load[0] +=
-        drain_cfs * ctx_half.subcatches.conc[0] * (1.0 - 0.5);
+    ctx_half.nodes.lid_drain_qual_load[0] += drain_cfs * ctx_half.subcatches.conc[0] * (1.0 - 0.5);
 
-    EXPECT_NEAR(ctx_half.nodes.lid_drain_qual_load[0],
-                ctx_full.nodes.lid_drain_qual_load[0] * 0.5, 1e-6)
+    EXPECT_NEAR(ctx_half.nodes.lid_drain_qual_load[0], ctx_full.nodes.lid_drain_qual_load[0] * 0.5,
+                1e-6)
         << "50% removal should halve the drain mass rate";
 }
 
@@ -3265,10 +3456,10 @@ TEST(LIDDrainQuality26, AddWetWeatherLoadsIncludesLIDDrain) {
     ctx.nodes.resize_quality(1);
 
     // Pre-load drain accumulators
-    ctx.nodes.lid_drain_qual_vol[0]  = 2.0;   // 2 CFS drain flow
-    ctx.nodes.lid_drain_qual_load[0] = 3.0;   // 3 mg/sec drain mass
+    ctx.nodes.lid_drain_qual_vol[0] = 2.0;  // 2 CFS drain flow
+    ctx.nodes.lid_drain_qual_load[0] = 3.0; // 3 mg/sec drain mass
 
-    const double dt = 60.0;  // 60-second routing step
+    const double dt = 60.0; // 60-second routing step
 
     // Simulate addWetWeatherLoads Gap #26 LID drain block:
     for (int j = 0; j < 1; ++j) {
@@ -3307,15 +3498,15 @@ TEST(LIDDrainQuality26, AddWetWeatherLoadsIncludesLIDDrain) {
 
 TEST(LIDQualityLoads37, WetDepositionOnLIDArea) {
     // Inputs
-    const double rain_ftps    = 1.0 / 12.0 / 3600.0;  // 1 in/hr in ft/sec
-    const double lid_ft2      = 43560.0;               // 1 acre
-    const double dt           = 300.0;                 // 5 min
-    const double c_rain       = 1.0;                   // 1 mg/L rain concentration
+    const double rain_ftps = 1.0 / 12.0 / 3600.0; // 1 in/hr in ft/sec
+    const double lid_ft2 = 43560.0;               // 1 acre
+    const double dt = 300.0;                      // 5 min
+    const double c_rain = 1.0;                    // 1 mg/L rain concentration
     constexpr double L_PER_FT3 = 28.317;
 
     double v_lid_rain = rain_ftps * lid_ft2 * dt;        // ft³
     double w_lid_rain = c_rain * L_PER_FT3 * v_lid_rain; // mg
-    double load_rate  = w_lid_rain / dt;                 // mg/sec
+    double load_rate = w_lid_rain / dt;                  // mg/sec
 
     // Match the formula in the Gap #37 code block
     EXPECT_NEAR(v_lid_rain, rain_ftps * lid_ft2 * dt, 1e-6);
@@ -3326,18 +3517,18 @@ TEST(LIDQualityLoads37, WetDepositionOnLIDArea) {
 
 // (b) When LIDs cover full subcatchment, runon quality is included.
 TEST(LIDQualityLoads37, FullLIDSubcatchGetsRunonQuality) {
-    const double lid_ft2      = 43560.0;
-    const double full_ft2     = 43560.0;  // same → full LID
-    const double q_runon      = 1.0;      // 1 CFS runon
-    const double c_old        = 2.0;      // 2 mg/ft³ previous concentration
-    const double dt           = 300.0;
+    const double lid_ft2 = 43560.0;
+    const double full_ft2 = 43560.0; // same → full LID
+    const double q_runon = 1.0;      // 1 CFS runon
+    const double c_old = 2.0;        // 2 mg/ft³ previous concentration
+    const double dt = 300.0;
 
     // When lid_ft2 == full_ft2 (within tolerance 1.0), runon quality is added.
     bool is_full_lid = (std::fabs(lid_ft2 - full_ft2) < 1.0);
     ASSERT_TRUE(is_full_lid) << "Setup check: lid covers full subcatch";
 
-    double w_lid_runon = q_runon * c_old * dt;  // mg
-    double load_rate   = w_lid_runon / dt;      // mg/sec = q_runon * c_old
+    double w_lid_runon = q_runon * c_old * dt; // mg
+    double load_rate = w_lid_runon / dt;       // mg/sec = q_runon * c_old
 
     EXPECT_NEAR(load_rate, q_runon * c_old, 1e-9)
         << "Full-LID runon load = q_runon * c_old (mg/sec)";
@@ -3345,8 +3536,8 @@ TEST(LIDQualityLoads37, FullLIDSubcatchGetsRunonQuality) {
 
 // (c) Partial LID coverage → no runon quality from findLidLoads.
 TEST(LIDQualityLoads37, PartialLIDNoRunonQuality) {
-    const double lid_ft2  = 21780.0;  // 0.5 acre
-    const double full_ft2 = 43560.0;  // 1 acre → partial LID
+    const double lid_ft2 = 21780.0;  // 0.5 acre
+    const double full_ft2 = 43560.0; // 1 acre → partial LID
 
     bool is_full_lid = (std::fabs(lid_ft2 - full_ft2) < 1.0);
     ASSERT_FALSE(is_full_lid) << "Setup check: partial LID coverage";
@@ -3366,11 +3557,11 @@ using namespace openswmm::rdii;
 TEST(RDIIValidation80, ValidParamsPassCheck) {
     UnitHydParams uh{};
     // Set valid values for month 0, response 0
-    uh.r[0][0]     = 0.4;
-    uh.r[0][1]     = 0.3;
-    uh.r[0][2]     = 0.2;
-    uh.tPeak[0][0] = 3600.0;   // 1 hr
-    uh.tBase[0][0] = 7200.0;   // 2 hr (>= tPeak)
+    uh.r[0][0] = 0.4;
+    uh.r[0][1] = 0.3;
+    uh.r[0][2] = 0.2;
+    uh.tPeak[0][0] = 3600.0; // 1 hr
+    uh.tBase[0][0] = 7200.0; // 2 hr (>= tPeak)
     uh.tPeak[0][1] = 7200.0;
     uh.tBase[0][1] = 14400.0;
     uh.tPeak[0][2] = 14400.0;
@@ -3387,7 +3578,7 @@ TEST(RDIIValidation80, ValidParamsPassCheck) {
 
 TEST(RDIIValidation80, NegativeTpeakInvalid) {
     UnitHydParams uh{};
-    uh.tPeak[0][0] = -1.0;    // negative tPeak
+    uh.tPeak[0][0] = -1.0; // negative tPeak
     uh.tBase[0][0] = 3600.0;
     EXPECT_LT(uh.tPeak[0][0], 0.0) << "Negative tPeak should trigger ERR_UNITHYD_TIMES";
 }
@@ -3395,7 +3586,7 @@ TEST(RDIIValidation80, NegativeTpeakInvalid) {
 TEST(RDIIValidation80, TbaseBeforeTpeakInvalid) {
     UnitHydParams uh{};
     uh.tPeak[0][0] = 7200.0;
-    uh.tBase[0][0] = 3600.0;  // tBase < tPeak → invalid
+    uh.tBase[0][0] = 3600.0; // tBase < tPeak → invalid
     EXPECT_LT(uh.tBase[0][0], uh.tPeak[0][0]) << "tBase < tPeak should trigger ERR_UNITHYD_TIMES";
 }
 
@@ -3403,7 +3594,7 @@ TEST(RDIIValidation80, RatioSumExceedsOneInvalid) {
     UnitHydParams uh{};
     uh.r[0][0] = 0.5;
     uh.r[0][1] = 0.4;
-    uh.r[0][2] = 0.3;  // sum = 1.2 > 1.01
+    uh.r[0][2] = 0.3; // sum = 1.2 > 1.01
     double rsum = uh.r[0][0] + uh.r[0][1] + uh.r[0][2];
     EXPECT_GT(rsum, 1.01) << "r sum > 1.01 should trigger ERR_UNITHYD_RATIOS";
 }
@@ -3415,20 +3606,15 @@ TEST(RDIIValidation80, RatioSumExceedsOneInvalid) {
 // Validate aquifer parameter constraint logic
 TEST(AquiferValidation81, ValidAquiferPassesAllChecks) {
     double por = 0.4, fc = 0.2, wp = 0.1, ksat = 1.0e-4, uevap = 0.3;
-    bool bad = (por <= 0.0 || por > 1.0
-             || fc  < 0.0  || fc  >= por
-             || wp  < 0.0  || wp  >= fc
-             || ksat < 0.0
-             || uevap < 0.0 || uevap > 1.0);
+    bool bad = (por <= 0.0 || por > 1.0 || fc < 0.0 || fc >= por || wp < 0.0 || wp >= fc ||
+                ksat < 0.0 || uevap < 0.0 || uevap > 1.0);
     EXPECT_FALSE(bad) << "Valid aquifer params should not trigger error";
 }
 
 TEST(AquiferValidation81, ZeroPorosityInvalid) {
     double por = 0.0, fc = 0.2, wp = 0.1, ksat = 1e-4, uevap = 0.3;
-    bool bad = (por <= 0.0 || por > 1.0
-             || fc < 0.0 || fc >= por
-             || wp < 0.0 || wp >= fc
-             || ksat < 0.0 || uevap < 0.0 || uevap > 1.0);
+    bool bad = (por <= 0.0 || por > 1.0 || fc < 0.0 || fc >= por || wp < 0.0 || wp >= fc ||
+                ksat < 0.0 || uevap < 0.0 || uevap > 1.0);
     EXPECT_TRUE(bad) << "Zero porosity should trigger ERR_AQUIFER_PARAMS";
 }
 
@@ -3451,17 +3637,15 @@ TEST(AquiferValidation81, WiltPointExceedsFieldCapInvalid) {
 TEST(LIDValidation82, ValidSoilLayerPasses) {
     // soil: [0]=thickness, [1]=porosity, [2]=fieldCap, [3]=wiltPt
     std::array<double, 7> soil = {0.3, 0.4, 0.2, 0.1, 1e-4, 2.0, 3.0};
-    bool bad = (soil[0] > 0.0) &&
-               (soil[1] <= 0.0 || soil[1] > 1.0 || soil[2] < 0.0 || soil[2] >= soil[1]
-                || soil[3] < 0.0 || soil[3] >= soil[2]);
+    bool bad = (soil[0] > 0.0) && (soil[1] <= 0.0 || soil[1] > 1.0 || soil[2] < 0.0 ||
+                                   soil[2] >= soil[1] || soil[3] < 0.0 || soil[3] >= soil[2]);
     EXPECT_FALSE(bad) << "Valid soil layer should pass validation";
 }
 
 TEST(LIDValidation82, ZeroSoilPorosityInvalid) {
-    std::array<double, 7> soil = {0.3, 0.0, 0.2, 0.1, 1e-4, 2.0, 3.0};  // porosity=0
-    bool bad = (soil[0] > 0.0) &&
-               (soil[1] <= 0.0 || soil[1] > 1.0 || soil[2] < 0.0 || soil[2] >= soil[1]
-                || soil[3] < 0.0 || soil[3] >= soil[2]);
+    std::array<double, 7> soil = {0.3, 0.0, 0.2, 0.1, 1e-4, 2.0, 3.0}; // porosity=0
+    bool bad = (soil[0] > 0.0) && (soil[1] <= 0.0 || soil[1] > 1.0 || soil[2] < 0.0 ||
+                                   soil[2] >= soil[1] || soil[3] < 0.0 || soil[3] >= soil[2]);
     EXPECT_TRUE(bad) << "Zero soil porosity should trigger ERR_LID_PARAMS";
 }
 
@@ -3548,15 +3732,22 @@ TEST(CyclicTreatment85, NoDependencyNoCycle) {
     TreatExpr te;
     te.pollutant_idx = 0;
     te.is_removal = true;
-    Token t1; t1.type = TokenType::NUMBER; t1.value = 0.5;
-    Token t2; t2.type = TokenType::VARIABLE; t2.var = TreatVar::C; t2.pollut_ref = -1;
-    Token t3; t3.type = TokenType::MUL;
+    Token t1;
+    t1.type = TokenType::NUMBER;
+    t1.value = 0.5;
+    Token t2;
+    t2.type = TokenType::VARIABLE;
+    t2.var = TreatVar::C;
+    t2.pollut_ref = -1;
+    Token t3;
+    t3.type = TokenType::MUL;
     te.tokens = {t1, t2, t3};
 
     // No R_POLLUT references → no dependencies → no cycle
     int dep_count = 0;
     for (const auto& tok : te.tokens)
-        if (tok.type == TokenType::VARIABLE && tok.var == TreatVar::R_POLLUT) ++dep_count;
+        if (tok.type == TokenType::VARIABLE && tok.var == TreatVar::R_POLLUT)
+            ++dep_count;
     EXPECT_EQ(dep_count, 0) << "No cross-pollutant refs means no cycle risk";
 }
 
@@ -3565,22 +3756,28 @@ TEST(CyclicTreatment85, MutualDependencyCycleDetected) {
     // Build dependency lists
     int np = 2;
     std::vector<std::vector<int>> dep(static_cast<std::size_t>(np));
-    dep[0].push_back(1);  // p0 depends on p1
-    dep[1].push_back(0);  // p1 depends on p0 → cycle!
+    dep[0].push_back(1); // p0 depends on p1
+    dep[1].push_back(0); // p1 depends on p0 → cycle!
 
     std::vector<int> color(static_cast<std::size_t>(np), 0);
     bool cycle = false;
     std::function<void(int)> dfs = [&](int p) {
-        if (cycle) return;
+        if (cycle)
+            return;
         color[static_cast<std::size_t>(p)] = 1;
         for (int q : dep[static_cast<std::size_t>(p)]) {
-            if (color[static_cast<std::size_t>(q)] == 1) { cycle = true; return; }
-            if (color[static_cast<std::size_t>(q)] == 0) dfs(q);
+            if (color[static_cast<std::size_t>(q)] == 1) {
+                cycle = true;
+                return;
+            }
+            if (color[static_cast<std::size_t>(q)] == 0)
+                dfs(q);
         }
         color[static_cast<std::size_t>(p)] = 2;
     };
     for (int p = 0; p < np && !cycle; ++p)
-        if (color[static_cast<std::size_t>(p)] == 0) dfs(p);
+        if (color[static_cast<std::size_t>(p)] == 0)
+            dfs(p);
 
     EXPECT_TRUE(cycle) << "Mutual p0↔p1 dependency should detect cycle";
 }
@@ -3589,22 +3786,28 @@ TEST(CyclicTreatment85, LinearDependencyNoCycle) {
     // p0 depends on p1, p1 has no deps → no cycle (DAG)
     int np = 2;
     std::vector<std::vector<int>> dep(static_cast<std::size_t>(np));
-    dep[0].push_back(1);  // p0 depends on p1
+    dep[0].push_back(1); // p0 depends on p1
     // dep[1] is empty
 
     std::vector<int> color(static_cast<std::size_t>(np), 0);
     bool cycle = false;
     std::function<void(int)> dfs = [&](int p) {
-        if (cycle) return;
+        if (cycle)
+            return;
         color[static_cast<std::size_t>(p)] = 1;
         for (int q : dep[static_cast<std::size_t>(p)]) {
-            if (color[static_cast<std::size_t>(q)] == 1) { cycle = true; return; }
-            if (color[static_cast<std::size_t>(q)] == 0) dfs(q);
+            if (color[static_cast<std::size_t>(q)] == 1) {
+                cycle = true;
+                return;
+            }
+            if (color[static_cast<std::size_t>(q)] == 0)
+                dfs(q);
         }
         color[static_cast<std::size_t>(p)] = 2;
     };
     for (int p = 0; p < np && !cycle; ++p)
-        if (color[static_cast<std::size_t>(p)] == 0) dfs(p);
+        if (color[static_cast<std::size_t>(p)] == 0)
+            dfs(p);
 
     EXPECT_FALSE(cycle) << "Linear p0→p1 DAG should not detect cycle";
 }

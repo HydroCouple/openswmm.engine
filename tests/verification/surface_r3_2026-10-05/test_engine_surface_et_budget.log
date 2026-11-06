@@ -1,0 +1,37 @@
+Running main() from /Users/calebbuahin/Documents/Projects/vcpkg/buildtrees/gtest/src/v1.15.2-41f5afb119.clean/googletest/src/gtest_main.cc
+[==========] Running 10 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 10 tests from SurfaceEt
+[ RUN      ] SurfaceEt.PondedSurfaceConsumesOneWholeDemandBeforeAllClosures
+[       OK ] SurfaceEt.PondedSurfaceConsumesOneWholeDemandBeforeAllClosures (0 ms)
+[ RUN      ] SurfaceEt.DryAndPartialPondDemandUsesExactlyOneStressAtExtraction
+[       OK ] SurfaceEt.DryAndPartialPondDemandUsesExactlyOneStressAtExtraction (0 ms)
+[ RUN      ] SurfaceEt.CadenceAndRateRefreshCannotResetOrBorrowDemand
+[       OK ] SurfaceEt.CadenceAndRateRefreshCannotResetOrBorrowDemand (0 ms)
+[ RUN      ] SurfaceEt.StressAndDonorCapsStopWithdrawalAtWilting
+[       OK ] SurfaceEt.StressAndDonorCapsStopWithdrawalAtWilting (0 ms)
+[ RUN      ] SurfaceEt.USAndSIWiltingSuctionAreTheSamePhysicalParameter
+[       OK ] SurfaceEt.USAndSIWiltingSuctionAreTheSamePhysicalParameter (1 ms)
+[ RUN      ] SurfaceEt.AutomaticDefaultsAndExplicitOptOutsRemainDistinct
+[       OK ] SurfaceEt.AutomaticDefaultsAndExplicitOptOutsRemainDistinct (0 ms)
+[ RUN      ] SurfaceEt.EquilibriumEtCannotSpendAnAlreadyCommittedNodeWithdrawal
+[       OK ] SurfaceEt.EquilibriumEtCannotSpendAnAlreadyCommittedNodeWithdrawal (0 ms)
+[ RUN      ] SurfaceEt.ProcessOptionsValidateAtomicallyAndPreserveExplicitDefaults
+[       OK ] SurfaceEt.ProcessOptionsValidateAtomicallyAndPreserveExplicitDefaults (0 ms)
+[ RUN      ] SurfaceEt.ActualModelIntegratesOneAreaDemandAndWritesTheBudget
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[       OK ] SurfaceEt.ActualModelIntegratesOneAreaDemandAndWritesTheBudget (39 ms)
+[ RUN      ] SurfaceEt.RestartPreservesUnspentPastDemandWithoutReplay
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[       OK ] SurfaceEt.RestartPreservesUnspentPastDemandWithoutReplay (1 ms)
+[----------] 10 tests from SurfaceEt (43 ms total)
+
+[----------] Global test environment tear-down
+[==========] 10 tests from 1 test suite ran. (43 ms total)
+[  PASSED  ] 10 tests.

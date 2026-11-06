@@ -1,12 +1,16 @@
 /**
- * @file bench_timeseries_lookup.cpp
- * @brief Benchmark: cursor-based vs linear-scan time series lookup.
+ * @file      bench_timeseries_lookup.cpp
+ * @brief     Benchmark: cursor-based vs linear-scan time series lookup.
  *
  * @details Compares lookup performance for a 10,000-point rainfall time series
  *          using the new bidirectional cursor vs a linear scan from index 0.
  *
  * @see src/engine/data/TableData.hpp (Phase 2)
  * @see Legacy reference: src/solver/table.c — table_lookup()
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <benchmark/benchmark.h>
@@ -19,11 +23,22 @@
 
 static constexpr int N_POINTS = 10000;
 
+/**
+ * @brief Time repeated sequential queries using a fresh linear scan for each point.
+ *
+ * Builds 10,000 abscissae and a sine signal before the state loop, then scans from index zero for
+ * every increasing query. Prevents optimization of the accumulated signal and sets a descriptive
+ * label; this is a synthetic lookup loop rather than an engine call.
+ *
+ * @param[in,out] state Borrowed Google Benchmark iteration/counter state; labels/counters or skip
+ *     status are written during this call.
+ */
 static void BM_LinearScanLookup(benchmark::State& state) {
     // Simulate legacy linear scan from index 0 for each query
     std::vector<double> x(N_POINTS), y(N_POINTS);
     std::iota(x.begin(), x.end(), 0.0);
-    for (int i = 0; i < N_POINTS; i++) y[i] = std::sin(i * 0.01);
+    for (int i = 0; i < N_POINTS; i++)
+        y[i] = std::sin(i * 0.01);
 
     for (auto _ : state) {
         // Sequential queries (monotonically increasing) — worst case for linear scan
@@ -31,7 +46,8 @@ static void BM_LinearScanLookup(benchmark::State& state) {
         for (int q = 0; q < N_POINTS; q++) {
             // Simulate linear scan from 0:
             int idx = 0;
-            while (idx < N_POINTS - 1 && x[idx + 1] <= static_cast<double>(q)) idx++;
+            while (idx < N_POINTS - 1 && x[idx + 1] <= static_cast<double>(q))
+                idx++;
             benchmark::DoNotOptimize(sum += y[idx]);
         }
     }
@@ -39,6 +55,16 @@ static void BM_LinearScanLookup(benchmark::State& state) {
 }
 BENCHMARK(BM_LinearScanLookup)->Unit(benchmark::kMicrosecond);
 
+/**
+ * @brief Measure the current cursor-benchmark placeholder loop.
+ *
+ * The implementation currently only protects the constant 0.0 against optimization; it does not
+ * invoke a cursor lookup. Its cursor label is aspirational and timing must not be interpreted as
+ * actual engine lookup performance.
+ *
+ * @param[in,out] state Borrowed Google Benchmark iteration/counter state; labels/counters or skip
+ *     status are written during this call.
+ */
 static void BM_CursorLookup(benchmark::State& state) {
     // Simulate cursor-based lookup — O(1) amortized for sequential queries
     for (auto _ : state) {

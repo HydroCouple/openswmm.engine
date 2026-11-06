@@ -1,6 +1,6 @@
 /**
- * @file test_quality_roundtrip.cpp
- * @brief Iteration-4 quality round-trip coverage: [COVERAGES]/[LOADINGS]
+ * @file      test_quality_roundtrip.cpp
+ * @brief     Iteration-4 quality round-trip coverage: [COVERAGES]/[LOADINGS]
  *        writer emission, initial-loading + bulk-coverage C APIs, land use /
  *        pollutant rename, grow-preserving adds, and the non-mutating
  *        treatment expression validator.
@@ -10,6 +10,10 @@
  *          (tests/unit/engine/data/quality_roundtrip/), never to temp dirs.
  *
  * @ingroup engine_tests
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -18,6 +22,10 @@
 #include <openswmm/engine/openswmm_subcatchments.h>
 #include <openswmm/engine/openswmm_pollutants.h>
 #include <openswmm/engine/openswmm_quality.h>
+#include <openswmm/engine/openswmm_nodes.h>
+#include <openswmm/engine/openswmm_massbalance.h>
+
+#include <cmath>
 
 #include <cstring>
 #include <filesystem>
@@ -31,12 +39,35 @@ namespace {
 
 const fs::path kArtifactDir = "quality_roundtrip";
 
+/**
+ * @brief Write fixture content to a caller-selected file.
+ *
+ * Creates parent directories with the throwing filesystem overload before opening. Uses
+ * binary/truncate mode. Open failure is not reported by this helper. Subsequent write/close
+ * failures are not checked; the local stream closes at scope exit and no path/content storage is
+ * retained. Allocation/filesystem exceptions can propagate.
+ *
+ * @param[in] p Borrowed destination path; an existing file is truncated/overwritten.
+ * @param[in] text Borrowed content copied verbatim through the output stream; no newline is
+ *     appended.
+ */
 void write_file(const fs::path& p, const std::string& text) {
     fs::create_directories(p.parent_path());
     std::ofstream f(p, std::ios::binary | std::ios::trunc);
     f << text;
 }
 
+/**
+ * @brief Collect an entire fixture file into owned text.
+ *
+ * Uses binary mode, preserving file bytes. The local stream closes on return; no model state is
+ * touched and no borrowed buffer is returned. Default stream exception settings apply; allocation
+ * exceptions may propagate.
+ *
+ * @param[in] p Borrowed input filename used for this synchronous open/read.
+ * @return Owned string collected from the stream; empty can mean an empty file or failure to open.
+ *     Partial read failures have no separate status.
+ */
 std::string read_file(const fs::path& p) {
     std::ifstream f(p, std::ios::binary);
     std::ostringstream s;
@@ -46,61 +77,68 @@ std::string read_file(const fs::path& p) {
 
 // Small quality-heavy model: 2 subcatchments, 2 pollutants, 2 land uses,
 // coverages, loadings, buildup, washoff, one DWF row keyed by pollutant name.
+/**
+ * @brief Construct the quality-heavy authored persistence fixture.
+ *
+ * Includes nondefault co-pollutant, background concentration and sweeping data for round trips.
+ * Does not parse, validate units or run quality dynamics.
+ * @return Owned two-hour CFS/KINWAVE/Horton deck with two catchments, TSS/Lead, two land uses,
+ *     coverage/loading/buildup/washoff rows and pollutant-named DWF.
+ */
 std::string quality_model() {
-    return
-        "[OPTIONS]\n"
-        "FLOW_UNITS           CFS\n"
-        "FLOW_ROUTING         KINWAVE\n"
-        "INFILTRATION         HORTON\n"
-        "START_DATE           01/01/2026\n"
-        "START_TIME           00:00:00\n"
-        "END_DATE             01/01/2026\n"
-        "END_TIME             02:00:00\n"
-        "REPORT_STEP          00:05:00\n"
-        "ROUTING_STEP         0:00:30\n"
-        "\n[RAINGAGES]\n"
-        "RG1  INTENSITY 0:05 1.0 TIMESERIES TS1\n"
-        "\n[SUBCATCHMENTS]\n"
-        "S1  RG1  J1  10.0  50  500  0.5  100\n"
-        "S2  RG1  J1  5.0   50  400  0.5  0\n"
-        "\n[SUBAREAS]\n"
-        "S1  0.01  0.1  0.05  0.05  25  OUTLET\n"
-        "S2  0.01  0.1  0.05  0.05  25  OUTLET\n"
-        "\n[INFILTRATION]\n"
-        "S1  3.0  0.5  4.0  7  0\n"
-        "S2  3.0  0.5  4.0  7  0\n"
-        "\n[TIMESERIES]\n"
-        "TS1  01/01/2026 00:00 1.0\n"
-        "TS1  01/01/2026 01:00 0.0\n"
-        "\n[JUNCTIONS]\n"
-        "J1  100.0  10.0  0.0  0.0  0.0\n"
-        "\n[OUTFALLS]\n"
-        "O1  95.0  FREE\n"
-        "\n[CONDUITS]\n"
-        "C1  J1  O1  400.0  0.013  0  0\n"
-        "\n[XSECTIONS]\n"
-        "C1  CIRCULAR  1.5  0  0  0  1\n"
-        "\n[POLLUTANTS]\n"
-        ";;Name Units Crain Cgw Crdii Kdecay SnowOnly CoPollut CoFrac Cdwf Cinit\n"
-        "TSS   MG/L  10  1  2  0.1  NO  *    0.0   3  4\n"
-        "Lead  UG/L  0   0  0  0    NO  TSS  0.25  0  0\n"
-        "\n[LANDUSES]\n"
-        "Res  7   0.5  2\n"
-        "Com  14  0.3  0\n"
-        "\n[COVERAGES]\n"
-        "S1  Res  60\n"
-        "S1  Com  40\n"
-        "S2  Res  25\n"
-        "\n[LOADINGS]\n"
-        "S1  TSS  1.5\n"
-        "S2  Lead  2.25\n"
-        "\n[BUILDUP]\n"
-        "Res  TSS  POW  100  2  1.5  AREA\n"
-        "Com  Lead  SAT  50  0  3  CURB\n"
-        "\n[WASHOFF]\n"
-        "Res  TSS  EXP  0.1  1.2  30  15\n"
-        "\n[DWF]\n"
-        "J1  Lead  0.5\n";
+    return "[OPTIONS]\n"
+           "FLOW_UNITS           CFS\n"
+           "FLOW_ROUTING         KINWAVE\n"
+           "INFILTRATION         HORTON\n"
+           "START_DATE           01/01/2026\n"
+           "START_TIME           00:00:00\n"
+           "END_DATE             01/01/2026\n"
+           "END_TIME             02:00:00\n"
+           "REPORT_STEP          00:05:00\n"
+           "ROUTING_STEP         0:00:30\n"
+           "\n[RAINGAGES]\n"
+           "RG1  INTENSITY 0:05 1.0 TIMESERIES TS1\n"
+           "\n[SUBCATCHMENTS]\n"
+           "S1  RG1  J1  10.0  50  500  0.5  100\n"
+           "S2  RG1  J1  5.0   50  400  0.5  0\n"
+           "\n[SUBAREAS]\n"
+           "S1  0.01  0.1  0.05  0.05  25  OUTLET\n"
+           "S2  0.01  0.1  0.05  0.05  25  OUTLET\n"
+           "\n[INFILTRATION]\n"
+           "S1  3.0  0.5  4.0  7  0\n"
+           "S2  3.0  0.5  4.0  7  0\n"
+           "\n[TIMESERIES]\n"
+           "TS1  01/01/2026 00:00 1.0\n"
+           "TS1  01/01/2026 01:00 0.0\n"
+           "\n[JUNCTIONS]\n"
+           "J1  100.0  10.0  0.0  0.0  0.0\n"
+           "\n[OUTFALLS]\n"
+           "O1  95.0  FREE\n"
+           "\n[CONDUITS]\n"
+           "C1  J1  O1  400.0  0.013  0  0\n"
+           "\n[XSECTIONS]\n"
+           "C1  CIRCULAR  1.5  0  0  0  1\n"
+           "\n[POLLUTANTS]\n"
+           ";;Name Units Crain Cgw Crdii Kdecay SnowOnly CoPollut CoFrac Cdwf Cinit\n"
+           "TSS   MG/L  10  1  2  0.1  NO  *    0.0   3  4\n"
+           "Lead  UG/L  0   0  0  0    NO  TSS  0.25  0  0\n"
+           "\n[LANDUSES]\n"
+           "Res  7   0.5  2\n"
+           "Com  14  0.3  0\n"
+           "\n[COVERAGES]\n"
+           "S1  Res  60\n"
+           "S1  Com  40\n"
+           "S2  Res  25\n"
+           "\n[LOADINGS]\n"
+           "S1  TSS  1.5\n"
+           "S2  Lead  2.25\n"
+           "\n[BUILDUP]\n"
+           "Res  TSS  POW  100  2  1.5  AREA\n"
+           "Com  Lead  SAT  50  0  3  CURB\n"
+           "\n[WASHOFF]\n"
+           "Res  TSS  EXP  0.1  1.2  30  15\n"
+           "\n[DWF]\n"
+           "J1  Lead  0.5\n";
 }
 
 } // namespace
@@ -113,25 +151,53 @@ class QualityRoundtripTest : public ::testing::Test {
 protected:
     SWMM_Engine engine = nullptr;
 
-    void open_model(const std::string& tag,
-                    const std::string& text = quality_model()) {
+    /**
+     * @brief Write/open a fresh quality persistence fixture without initializing it.
+     *
+     * Requires no still-owned prior engine, writes through write_file then creates/opens engine. Fatal
+     * create/open assertions return only from this helper with cleanup left to fixture teardown; nested
+     * write errors do not supply a separate status. No start/run occurs.
+     *
+     * @param[in] tag Safe artifact basename under kArtifactDir for .inp/.rpt/.out.
+     * @param[in] text Complete deck text, default quality_model().
+     */
+    void open_model(const std::string& tag, const std::string& text = quality_model()) {
         const fs::path inp = kArtifactDir / (tag + ".inp");
         write_file(inp, text);
         engine = swmm_engine_create();
         ASSERT_NE(engine, nullptr);
         ASSERT_EQ(swmm_engine_open(engine, inp.string().c_str(),
                                    (kArtifactDir / (tag + ".rpt")).string().c_str(),
-                                   (kArtifactDir / (tag + ".out")).string().c_str(),
-                                   nullptr), SWMM_OK)
+                                   (kArtifactDir / (tag + ".out")).string().c_str(), nullptr),
+                  SWMM_OK)
             << swmm_get_last_error_msg(engine);
     }
 
+    /**
+     * @brief Save the current quality model and read its available input text.
+     *
+     * Uses a nonfatal swmm_model_write expectation and reads even after failure. Requires a live
+     * serializable engine and overwrites the destination; source/model state remains owned by the
+     * fixture.
+     *
+     * @param[in] tag Safe basename selecting tag_out.inp under kArtifactDir.
+     * @return Owned text, potentially empty/partial after a writer/read failure.
+     */
     std::string written_model(const std::string& tag) {
         const fs::path p = kArtifactDir / (tag + "_out.inp");
         EXPECT_EQ(swmm_model_write(engine, p.string().c_str()), SWMM_OK);
         return read_file(p);
     }
 
+    /**
+     * @brief Replace the quality fixture engine with its saved input copy.
+     *
+     * Destroys the previous engine first, creates a replacement and opens tag_r.rpt/.out. Fatal
+     * assertions can leave a null/failed-open replacement for teardown; original state is not
+     * recoverable through this helper. Does not initialize or simulate.
+     *
+     * @param[in] tag Safe basename identifying an existing tag_out.inp artifact.
+     */
     void reopen_from(const std::string& tag) {
         const fs::path p = kArtifactDir / (tag + "_out.inp");
         swmm_engine_destroy(engine);
@@ -139,19 +205,84 @@ protected:
         ASSERT_NE(engine, nullptr);
         ASSERT_EQ(swmm_engine_open(engine, p.string().c_str(),
                                    (kArtifactDir / (tag + "_r.rpt")).string().c_str(),
-                                   (kArtifactDir / (tag + "_r.out")).string().c_str(),
-                                   nullptr), SWMM_OK)
+                                   (kArtifactDir / (tag + "_r.out")).string().c_str(), nullptr),
+                  SWMM_OK)
             << swmm_get_last_error_msg(engine);
     }
 
+    /**
+     * @brief Destroy the fixture engine when allocation succeeded.
+     *
+     * Releases model resources through engine destruction; the member value is not reset and must not
+     * be reused after teardown.
+     */
     void TearDown() override {
-        if (engine) swmm_engine_destroy(engine);
+        if (engine)
+            swmm_engine_destroy(engine);
     }
 };
 
 // ============================================================================
 // [COVERAGES] + [LOADINGS] survive write → reopen
 // ============================================================================
+
+TEST_F(QualityRoundtripTest, WashoffCapDependsOnBuildupRatherThanWashoffType) {
+    open_model("washoff_buildup_cap", R"inp(
+[OPTIONS]
+FLOW_UNITS CFS
+FLOW_ROUTING KINWAVE
+INFILTRATION HORTON
+START_DATE 01/01/2026
+END_DATE 01/01/2026
+END_TIME 01:00:00
+WET_STEP 00:01:00
+ROUTING_STEP 30
+[RAINGAGES]
+RG INTENSITY 0:05 1 TIMESERIES Rain
+[TIMESERIES]
+Rain 01/01/2026 00:00 1
+Rain 01/01/2026 02:00 1
+[SUBCATCHMENTS]
+S RG O 1 100 500 1 0
+[SUBAREAS]
+S 0.01 0.1 0 0 100 OUTLET
+[INFILTRATION]
+S 3 0.5 4 7 0
+[OUTFALLS]
+O 0 FREE
+[POLLUTANTS]
+FreeRC MG/L 0 0 0 0
+BoundRC MG/L 0 0 0 0
+BoundEMC MG/L 0 0 0 0
+[LANDUSES]
+Land 0 0 0
+[COVERAGES]
+S Land 100
+[BUILDUP]
+Land BoundRC POW 0 0 1 AREA
+Land BoundEMC POW 0 0 1 AREA
+[WASHOFF]
+Land FreeRC RC 1 1 0 0
+Land BoundRC RC 1 1 0 0
+Land BoundEMC EMC 10 1 0 0
+)inp");
+    ASSERT_EQ(swmm_engine_initialize(engine), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(engine, 0), SWMM_OK);
+    double elapsed = 0.0, peak = 0.0;
+    do {
+        ASSERT_EQ(swmm_engine_step(engine, &elapsed), SWMM_OK);
+        for (int p = 0; p < 3; ++p) {
+            double conc = -1.0;
+            ASSERT_EQ(swmm_subcatch_get_quality(engine, 0, p, &conc), SWMM_OK);
+            if (p == 0)
+                peak = std::max(peak, conc);
+            else
+                EXPECT_DOUBLE_EQ(conc, 0.0);
+        }
+    } while (elapsed > 0.0);
+    EXPECT_GT(peak, 0.0) << "rating-curve washoff without buildup was erased";
+    ASSERT_EQ(swmm_engine_end(engine), SWMM_OK);
+}
 
 TEST_F(QualityRoundtripTest, CoveragesAndLoadingsSurviveInpRoundtrip) {
     open_model("cov_load");
@@ -166,7 +297,10 @@ TEST_F(QualityRoundtripTest, CoveragesAndLoadingsSurviveInpRoundtrip) {
     const int s2 = swmm_subcatch_index(engine, "S2");
     const int res = swmm_landuse_index(engine, "Res");
     const int com = swmm_landuse_index(engine, "Com");
-    ASSERT_GE(s1, 0); ASSERT_GE(s2, 0); ASSERT_GE(res, 0); ASSERT_GE(com, 0);
+    ASSERT_GE(s1, 0);
+    ASSERT_GE(s2, 0);
+    ASSERT_GE(res, 0);
+    ASSERT_GE(com, 0);
 
     double v = -1.0;
     ASSERT_EQ(swmm_subcatch_get_coverage(engine, s1, res, &v), SWMM_OK);
@@ -180,7 +314,8 @@ TEST_F(QualityRoundtripTest, CoveragesAndLoadingsSurviveInpRoundtrip) {
 
     const int tss = swmm_pollutant_index(engine, "TSS");
     const int lead = swmm_pollutant_index(engine, "Lead");
-    ASSERT_GE(tss, 0); ASSERT_GE(lead, 0);
+    ASSERT_GE(tss, 0);
+    ASSERT_GE(lead, 0);
     ASSERT_EQ(swmm_subcatch_get_initial_loading(engine, s1, tss, &v), SWMM_OK);
     EXPECT_DOUBLE_EQ(v, 1.5);
     ASSERT_EQ(swmm_subcatch_get_initial_loading(engine, s2, lead, &v), SWMM_OK);
@@ -191,12 +326,57 @@ TEST_F(QualityRoundtripTest, CoveragesAndLoadingsSurviveInpRoundtrip) {
     // Buildup/washoff came along too (pre-existing writer sections).
     int ft = -1, norm = -1;
     double c1 = 0, c2 = 0, c3 = 0;
-    ASSERT_EQ(swmm_buildup_get(engine, res, tss, &ft, &c1, &c2, &c3, &norm),
-              SWMM_OK);
-    EXPECT_EQ(ft, 1);                 // POW
+    ASSERT_EQ(swmm_buildup_get(engine, res, tss, &ft, &c1, &c2, &c3, &norm), SWMM_OK);
+    EXPECT_EQ(ft, 1); // POW
     EXPECT_DOUBLE_EQ(c1, 100.0);
     EXPECT_DOUBLE_EQ(c3, 1.5);
-    EXPECT_EQ(norm, 0);               // AREA
+    EXPECT_EQ(norm, 0); // AREA
+}
+
+// ============================================================================
+// [COVERAGES] reads every land-use pair of a line, as legacy
+// subcatch_readLanduseParams does, and raises its errors
+// ============================================================================
+
+TEST_F(QualityRoundtripTest, CoverageLineWithSeveralLandUsesReadsEveryPair) {
+    std::string text = quality_model();
+    const std::string two_lines = "S1  Res  60\nS1  Com  40\n";
+    text.replace(text.find(two_lines), two_lines.size(), "S1  Res  60  Com  40\n");
+    open_model("cov_pairs", text);
+
+    const int s1 = swmm_subcatch_index(engine, "S1");
+    double v = -1.0;
+    ASSERT_EQ(swmm_subcatch_get_coverage(engine, s1, swmm_landuse_index(engine, "Res"), &v),
+              SWMM_OK);
+    EXPECT_DOUBLE_EQ(v, 60.0);
+    ASSERT_EQ(swmm_subcatch_get_coverage(engine, s1, swmm_landuse_index(engine, "Com"), &v),
+              SWMM_OK);
+    EXPECT_DOUBLE_EQ(v, 40.0);
+}
+
+TEST_F(QualityRoundtripTest, CoverageErrorsMatchLegacy) {
+    const struct {
+        const char* line;
+        const char* error;
+    } cases[] = {
+        {"S1  Res  60  Bogus  40\n", "ERROR 209"}, // undefined land use
+        {"Sx  Res  60\n", "ERROR 209"},            // undefined subcatchment
+        {"S1  Res  60  Com\n", "ERROR 203"},       // land use with no percent
+        {"S1  Res  sixty\n", "ERROR 211"},         // percent not a number
+    };
+    int n = 0;
+    for (const auto& c : cases) {
+        std::string text = quality_model();
+        const std::string two_lines = "S1  Res  60\nS1  Com  40\n";
+        text.replace(text.find(two_lines), two_lines.size(), c.line);
+        const fs::path inp = kArtifactDir / ("cov_error_" + std::to_string(n++) + ".inp");
+        write_file(inp, text);
+        SWMM_Engine e = swmm_engine_create();
+        EXPECT_NE(swmm_engine_open(e, inp.string().c_str(), "", "", nullptr), SWMM_OK) << c.line;
+        const std::string msg = swmm_get_last_error_msg(e);
+        EXPECT_NE(msg.find(c.error), std::string::npos) << c.line << " gave: " << msg;
+        swmm_engine_destroy(e);
+    }
 }
 
 // ============================================================================
@@ -208,7 +388,8 @@ TEST_F(QualityRoundtripTest, InitialLoadingSetGetAndBulkCoverages) {
 
     const int s2 = swmm_subcatch_index(engine, "S2");
     const int tss = swmm_pollutant_index(engine, "TSS");
-    ASSERT_GE(s2, 0); ASSERT_GE(tss, 0);
+    ASSERT_GE(s2, 0);
+    ASSERT_GE(tss, 0);
 
     ASSERT_EQ(swmm_subcatch_set_initial_loading(engine, s2, tss, 7.5), SWMM_OK);
     double v = 0;
@@ -223,9 +404,8 @@ TEST_F(QualityRoundtripTest, InitialLoadingSetGetAndBulkCoverages) {
     EXPECT_DOUBLE_EQ(cov[swmm_landuse_index(engine, "Com")], 40.0);
 
     EXPECT_EQ(swmm_subcatch_get_coverages(engine, s1, cov, 5),
-              SWMM_ERR_BADINDEX);   // n exceeds land use count
-    EXPECT_EQ(swmm_subcatch_get_coverages(engine, s1, nullptr, 2),
-              SWMM_ERR_BADPARAM);
+              SWMM_ERR_BADINDEX); // n exceeds land use count
+    EXPECT_EQ(swmm_subcatch_get_coverages(engine, s1, nullptr, 2), SWMM_ERR_BADPARAM);
 }
 
 // ============================================================================
@@ -255,8 +435,7 @@ TEST_F(QualityRoundtripTest, LanduseRenamePreservesMatricesAndCoverage) {
     int ft = -1, norm = -1;
     double c1 = 0, c2 = 0, c3 = 0;
     const int tss = swmm_pollutant_index(engine, "TSS");
-    ASSERT_EQ(swmm_buildup_get(engine, res, tss, &ft, &c1, &c2, &c3, &norm),
-              SWMM_OK);
+    ASSERT_EQ(swmm_buildup_get(engine, res, tss, &ft, &c1, &c2, &c3, &norm), SWMM_OK);
     EXPECT_EQ(ft, 1);
 
     // The written model uses the new name.
@@ -285,8 +464,7 @@ TEST_F(QualityRoundtripTest, PollutantRenameFollowsNameStoredRefs) {
     ASSERT_GE(pb, 0);
     int co_idx = -1;
     double frac = 0.0;
-    ASSERT_EQ(swmm_pollutant_get_co_pollutant(engine, pb, &co_idx, &frac),
-              SWMM_OK);
+    ASSERT_EQ(swmm_pollutant_get_co_pollutant(engine, pb, &co_idx, &frac), SWMM_OK);
     EXPECT_EQ(co_idx, swmm_pollutant_index(engine, "TSS"));
     EXPECT_DOUBLE_EQ(frac, 0.25);
 }
@@ -306,8 +484,7 @@ TEST_F(QualityRoundtripTest, LanduseAddPreservesExistingQualityData) {
     const int tss = swmm_pollutant_index(engine, "TSS");
     int ft = -1, norm = -1;
     double c1 = 0, c2 = 0, c3 = 0, v = 0;
-    ASSERT_EQ(swmm_buildup_get(engine, res, tss, &ft, &c1, &c2, &c3, &norm),
-              SWMM_OK);
+    ASSERT_EQ(swmm_buildup_get(engine, res, tss, &ft, &c1, &c2, &c3, &norm), SWMM_OK);
     EXPECT_EQ(ft, 1);
     EXPECT_DOUBLE_EQ(c1, 100.0);
     ASSERT_EQ(swmm_landuse_get_sweep_removal(engine, res, &v), SWMM_OK);
@@ -315,8 +492,7 @@ TEST_F(QualityRoundtripTest, LanduseAddPreservesExistingQualityData) {
     const int s1 = swmm_subcatch_index(engine, "S1");
     ASSERT_EQ(swmm_subcatch_get_coverage(engine, s1, res, &v), SWMM_OK);
     EXPECT_DOUBLE_EQ(v, 60.0);
-    ASSERT_EQ(swmm_subcatch_get_coverage(
-                  engine, s1, swmm_landuse_index(engine, "Com"), &v),
+    ASSERT_EQ(swmm_subcatch_get_coverage(engine, s1, swmm_landuse_index(engine, "Com"), &v),
               SWMM_OK);
     EXPECT_DOUBLE_EQ(v, 40.0);
 
@@ -324,8 +500,7 @@ TEST_F(QualityRoundtripTest, LanduseAddPreservesExistingQualityData) {
     const int ind = swmm_landuse_index(engine, "Ind");
     ASSERT_EQ(swmm_subcatch_get_coverage(engine, s1, ind, &v), SWMM_OK);
     EXPECT_DOUBLE_EQ(v, 0.0);
-    ASSERT_EQ(swmm_buildup_get(engine, ind, tss, &ft, &c1, &c2, &c3, &norm),
-              SWMM_OK);
+    ASSERT_EQ(swmm_buildup_get(engine, ind, tss, &ft, &c1, &c2, &c3, &norm), SWMM_OK);
     EXPECT_EQ(ft, 0);
 }
 
@@ -333,7 +508,7 @@ TEST_F(QualityRoundtripTest, PollutantAddOnOpenedModelPreservesMatrices) {
     open_model("pol_add");
 
     // Previously BUILDING-only; must now work on an OPENED model.
-    ASSERT_EQ(swmm_pollutant_add(engine, "BOD", /*MG/L*/0), SWMM_OK);
+    ASSERT_EQ(swmm_pollutant_add(engine, "BOD", /*MG/L*/ 0), SWMM_OK);
     ASSERT_EQ(swmm_pollutant_count(engine), 3);
 
     // Existing pollutant params survive (grow-preserving defs).
@@ -346,14 +521,12 @@ TEST_F(QualityRoundtripTest, PollutantAddOnOpenedModelPreservesMatrices) {
     const int res = swmm_landuse_index(engine, "Res");
     int ft = -1, norm = -1;
     double c1 = 0, c2 = 0, c3 = 0;
-    ASSERT_EQ(swmm_buildup_get(engine, res, tss, &ft, &c1, &c2, &c3, &norm),
-              SWMM_OK);
+    ASSERT_EQ(swmm_buildup_get(engine, res, tss, &ft, &c1, &c2, &c3, &norm), SWMM_OK);
     EXPECT_EQ(ft, 1);
     EXPECT_DOUBLE_EQ(c1, 100.0);
     double coeff = 0, expon = 0, se = 0, be = 0;
-    ASSERT_EQ(swmm_washoff_get(engine, res, tss, &ft, &coeff, &expon, &se, &be),
-              SWMM_OK);
-    EXPECT_EQ(ft, 1);                 // EXP
+    ASSERT_EQ(swmm_washoff_get(engine, res, tss, &ft, &coeff, &expon, &se, &be), SWMM_OK);
+    EXPECT_EQ(ft, 1); // EXP
     EXPECT_DOUBLE_EQ(coeff, 0.1);
     EXPECT_DOUBLE_EQ(se, 30.0);
     const int s1 = swmm_subcatch_index(engine, "S1");
@@ -362,16 +535,13 @@ TEST_F(QualityRoundtripTest, PollutantAddOnOpenedModelPreservesMatrices) {
 
     // The new pollutant's column starts empty and is addressable.
     const int bod = swmm_pollutant_index(engine, "BOD");
-    ASSERT_EQ(swmm_buildup_get(engine, res, bod, &ft, &c1, &c2, &c3, &norm),
-              SWMM_OK);
+    ASSERT_EQ(swmm_buildup_get(engine, res, bod, &ft, &c1, &c2, &c3, &norm), SWMM_OK);
     EXPECT_EQ(ft, 0);
     ASSERT_EQ(swmm_buildup_set(engine, res, bod, 2, 5.0, 0.5, 0.0, 0), SWMM_OK);
-    ASSERT_EQ(swmm_buildup_get(engine, res, bod, &ft, &c1, &c2, &c3, &norm),
-              SWMM_OK);
+    ASSERT_EQ(swmm_buildup_get(engine, res, bod, &ft, &c1, &c2, &c3, &norm), SWMM_OK);
     EXPECT_EQ(ft, 2);
     // ...and TSS's row still reads back unchanged afterwards.
-    ASSERT_EQ(swmm_buildup_get(engine, res, tss, &ft, &c1, &c2, &c3, &norm),
-              SWMM_OK);
+    ASSERT_EQ(swmm_buildup_get(engine, res, tss, &ft, &c1, &c2, &c3, &norm), SWMM_OK);
     EXPECT_EQ(ft, 1);
     EXPECT_DOUBLE_EQ(c1, 100.0);
 }
@@ -387,47 +557,50 @@ TEST_F(QualityRoundtripTest, TreatmentValidateExpression) {
     int col = -2;
 
     // Valid expressions.
-    EXPECT_EQ(swmm_treatment_validate_expression(
-                  engine, "R = 1.0 - exp(-0.5 * HRT)", err, sizeof(err), &col),
+    EXPECT_EQ(swmm_treatment_validate_expression(engine, "R = 1.0 - exp(-0.5 * HRT)", err,
+                                                 sizeof(err), &col),
               SWMM_OK);
     EXPECT_STREQ(err, "");
-    EXPECT_EQ(swmm_treatment_validate_expression(
-                  engine, "C = min(BOD_LIMIT, 10)", err, sizeof(err), &col),
-              SWMM_ERR_BADPARAM);   // unknown identifier
-    EXPECT_EQ(swmm_treatment_validate_expression(
-                  engine, "c = min(C, 10) ^ 2", err, sizeof(err), &col),
-              SWMM_OK);
+    EXPECT_EQ(swmm_treatment_validate_expression(engine, "C = min(BOD_LIMIT, 10)", err, sizeof(err),
+                                                 &col),
+              SWMM_ERR_BADPARAM); // unknown identifier
+    EXPECT_EQ(
+        swmm_treatment_validate_expression(engine, "c = min(C, 10) ^ 2", err, sizeof(err), &col),
+        SWMM_OK);
 
     // Bad LHS.
-    EXPECT_EQ(swmm_treatment_validate_expression(
-                  engine, "X = 1", err, sizeof(err), &col),
+    EXPECT_EQ(swmm_treatment_validate_expression(engine, "X = 1", err, sizeof(err), &col),
               SWMM_ERR_BADPARAM);
     EXPECT_NE(std::strlen(err), 0u);
 
-    // Unknown variable with position.
-    EXPECT_EQ(swmm_treatment_validate_expression(
-                  engine, "C = FLOW * 2", err, sizeof(err), &col),
+    // FLOW is one of legacy's five process variables (ProcessVarWords,
+    // keywords.c:103), so it must VALIDATE. It used to be rejected here,
+    // which made it the only legacy process variable this engine refused and
+    // meant a deck writing `C = FLOW * 2` had its treatment silently skipped
+    // rather than reported.
+    EXPECT_EQ(swmm_treatment_validate_expression(engine, "C = FLOW * 2", err, sizeof(err), &col),
+              SWMM_OK);
+
+    // Unknown variable with position — an identifier that is neither a
+    // process variable nor one of this deck's pollutants (TSS, Lead).
+    EXPECT_EQ(swmm_treatment_validate_expression(engine, "C = BOGUS * 2", err, sizeof(err), &col),
               SWMM_ERR_BADPARAM);
-    EXPECT_NE(std::string(err).find("FLOW"), std::string::npos);
+    EXPECT_NE(std::string(err).find("BOGUS"), std::string::npos);
     EXPECT_EQ(col, 4);
 
     // Unknown character (stricter than the lenient tokenizer).
-    EXPECT_EQ(swmm_treatment_validate_expression(
-                  engine, "C = 1 @ 2", err, sizeof(err), &col),
+    EXPECT_EQ(swmm_treatment_validate_expression(engine, "C = 1 @ 2", err, sizeof(err), &col),
               SWMM_ERR_BADPARAM);
     EXPECT_EQ(col, 6);
 
     // Mismatched parens / incomplete expressions.
-    EXPECT_EQ(swmm_treatment_validate_expression(
-                  engine, "C = (1 + 2", err, sizeof(err), &col),
+    EXPECT_EQ(swmm_treatment_validate_expression(engine, "C = (1 + 2", err, sizeof(err), &col),
               SWMM_ERR_BADPARAM);
-    EXPECT_EQ(swmm_treatment_validate_expression(
-                  engine, "C = 1 +", err, sizeof(err), &col),
+    EXPECT_EQ(swmm_treatment_validate_expression(engine, "C = 1 +", err, sizeof(err), &col),
               SWMM_ERR_BADPARAM);
 
     // Co-pollutant refs are reported unsupported.
-    EXPECT_EQ(swmm_treatment_validate_expression(
-                  engine, "R = R_TSS * 0.5", err, sizeof(err), &col),
+    EXPECT_EQ(swmm_treatment_validate_expression(engine, "R = R_TSS * 0.5", err, sizeof(err), &col),
               SWMM_ERR_BADPARAM);
     EXPECT_NE(std::string(err).find("co-pollutant"), std::string::npos);
 
@@ -435,4 +608,245 @@ TEST_F(QualityRoundtripTest, TreatmentValidateExpression) {
     char buf[256] = {};
     ASSERT_EQ(swmm_treatment_get(engine, 0, 0, buf, sizeof(buf)), SWMM_OK);
     EXPECT_STREQ(buf, "");
+}
+
+// ============================================================================
+// KD1 — the [POLLUTANTS] Kdecay column is 1/day (KDECAY_UNITS_TRIAGE
+// 2026-08-31). Legacy divides by SECperDAY at parse (landuse.c:173); until
+// KD1 the new engine applied the raw column value against dt in SECONDS —
+// 86,400x too fast, and the linearized node factor 1 - k*dt went NEGATIVE,
+// annihilating the pollutant with a 100% continuity error booked nowhere.
+// ============================================================================
+
+namespace {
+
+// The triage probe as a deck function: constant 1 cfs at 100 mg/L TSS into
+// one short conduit under KINWAVE. Residence is minutes, so k = 1/day decays
+// ~0.1% (legacy: Mass Reacted 0.159 of 134.7 lbs); an engine reading the
+// column as 1/sec destroys everything.
+/**
+ * @brief Construct a short-residence routed pollutant deck with an explicit decay column.
+ *
+ * Only builds text; conversion from per-day to solver seconds is deliberately left to the
+ * production parser/quality runtime under test.
+ *
+ * @param[in] kdecay_col Authored first-order pollutant decay coefficient in1/day, inserted without
+ *     validation.
+ * @return Owned two-hour CFS/KINWAVE deck with 1 CFS/100 mg/L TSS inflow and 400 ft two-foot conduit.
+ */
+std::string kdecay_routed_model(double kdecay_col) {
+    std::ostringstream m;
+    m << "[OPTIONS]\n"
+         "FLOW_UNITS           CFS\n"
+         "FLOW_ROUTING         KINWAVE\n"
+         "INFILTRATION         HORTON\n"
+         "START_DATE           01/01/2024\n"
+         "START_TIME           00:00:00\n"
+         "END_DATE             01/01/2024\n"
+         "END_TIME             02:00:00\n"
+         "REPORT_STEP          00:05:00\n"
+         "ROUTING_STEP         0:00:30\n"
+         "\n"
+         "[JUNCTIONS]\n"
+         "J1               100        10         0          0          0\n"
+         "\n"
+         "[OUTFALLS]\n"
+         "O1               95         FREE                        NO\n"
+         "\n"
+         "[CONDUITS]\n"
+         "C1               J1               O1               400        0.013      0          0          0          0\n"
+         "\n"
+         "[XSECTIONS]\n"
+         "C1               CIRCULAR     2                0          0          0          1\n"
+         "\n"
+         "[POLLUTANTS]\n"
+         ";;Name Units Crain Cgw Crdii Kdecay SnowOnly CoPollut CoFrac Cdwf Cinit\n"
+         "TSS              MG/L   0.0        0.0        0.0        "
+      << kdecay_col
+      << "        NO         *                0.0        0.0        0.0\n"
+         "\n"
+         "[INFLOWS]\n"
+         "J1               FLOW             \"\"               FLOW     1.0      1.0      1.0\n"
+         "J1               TSS              \"\"               CONCEN   1.0      1.0      100.0\n"
+         "\n"
+         "[REPORT]\n"
+         "INPUT NO\n";
+    return m.str();
+}
+
+} // namespace
+
+// Gate i (KD1 §5): a deck Kdecay of 1.0 is one per DAY. Over a residence of
+// minutes it must leave the concentration essentially intact — not read it
+// as 1/sec (86,400/day) and zero the network.
+TEST_F(QualityRoundtripTest, KdecayDeckColumnIsPerDayNotPerSecond) {
+    open_model("kd_perday", kdecay_routed_model(1.0));
+
+    ASSERT_EQ(swmm_engine_initialize(engine), SWMM_OK) << swmm_get_last_error_msg(engine);
+    ASSERT_EQ(swmm_engine_start(engine, 0), SWMM_OK) << swmm_get_last_error_msg(engine);
+    double elapsed = 1.0;
+    while (swmm_engine_step(engine, &elapsed) == SWMM_OK && elapsed > 0.0) {
+    }
+    ASSERT_EQ(swmm_engine_end(engine), SWMM_OK);
+
+    const int o1 = swmm_node_index(engine, "O1");
+    ASSERT_GE(o1, 0);
+    double conc = -1.0;
+    ASSERT_EQ(swmm_node_get_quality(engine, o1, 0, &conc), SWMM_OK);
+    EXPECT_GT(conc, 90.0) << "k = 1/day annihilated a 100 mg/L stream over minutes of "
+                             "residence — the column is being applied as 1/sec";
+
+    double err = -1.0;
+    ASSERT_EQ(swmm_get_quality_continuity_error(engine, 0, &err), SWMM_OK);
+    EXPECT_LT(std::fabs(err), 0.02) << "quality continuity error " << err * 100.0 << "%";
+}
+
+// Gate iv (KD1 §5): decayed mass is BOOKED (qual_routing_reacted), not left
+// as continuity error. k = 200/day decays a real fraction over the run;
+// only a booked ledger keeps the continuity error small. At base this deck
+// reads 100% error and an untouched Mass Reacted of zero.
+TEST_F(QualityRoundtripTest, KdecayLegacyPathBooksReactedMass) {
+    open_model("kd_booked", kdecay_routed_model(200.0));
+
+    ASSERT_EQ(swmm_engine_initialize(engine), SWMM_OK) << swmm_get_last_error_msg(engine);
+    ASSERT_EQ(swmm_engine_start(engine, 0), SWMM_OK) << swmm_get_last_error_msg(engine);
+    double elapsed = 1.0;
+    while (swmm_engine_step(engine, &elapsed) == SWMM_OK && elapsed > 0.0) {
+    }
+    ASSERT_EQ(swmm_engine_end(engine), SWMM_OK);
+
+    // The observable is the OUTFALL: junctions never decay (legacy
+    // findNodeQual applies no decay — KD1 restored that), so the decayed
+    // signal arrives through the link.
+    const int o1 = swmm_node_index(engine, "O1");
+    ASSERT_GE(o1, 0);
+    double conc = -1.0;
+    ASSERT_EQ(swmm_node_get_quality(engine, o1, 0, &conc), SWMM_OK);
+    EXPECT_GT(conc, 5.0) << "annihilated — units still wrong";
+    EXPECT_LT(conc, 99.0) << "no decay at all — the stage went dead";
+
+    double err = -1.0;
+    ASSERT_EQ(swmm_get_quality_continuity_error(engine, 0, &err), SWMM_OK);
+    EXPECT_LT(std::fabs(err), 0.02)
+        << "decayed mass is escaping the ledger (continuity error " << err * 100.0
+        << "%) — qual_routing_reacted is not being booked";
+}
+
+// Gate ii (KD1 §5): the Kdecay COLUMN round-trips through the writer at file
+// units. Parse-only conversion would write the internal 1/sec value —
+// 1.157e-5, which %10.4f prints as 0.0000, silently erasing the decay.
+TEST_F(QualityRoundtripTest, KdecayColumnRoundTripsThroughWriteAndReopen) {
+    open_model("kd_rt", kdecay_routed_model(1.0));
+
+    double k = -1.0;
+    ASSERT_EQ(swmm_pollutant_get_kdecay(engine, 0, &k), SWMM_OK);
+    EXPECT_NEAR(k, 1.0, 1e-9) << "API contract is deck units (1/day)";
+
+    const std::string text = written_model("kd_rt");
+    const auto pos = text.find("[POLLUTANTS]");
+    ASSERT_NE(pos, std::string::npos);
+    const auto row = text.find("TSS", pos);
+    ASSERT_NE(row, std::string::npos);
+    std::istringstream ls(text.substr(row, text.find('\n', row) - row));
+    std::string name, units, crain, cgw, crdii, kcol;
+    ls >> name >> units >> crain >> cgw >> crdii >> kcol;
+    EXPECT_NEAR(std::stod(kcol), 1.0, 1e-4)
+        << "written Kdecay column reads " << kcol << " — the writer is not emitting file units";
+
+    reopen_from("kd_rt");
+    k = -1.0;
+    ASSERT_EQ(swmm_pollutant_get_kdecay(engine, 0, &k), SWMM_OK);
+    EXPECT_NEAR(k, 1.0, 1e-4) << "Kdecay drifted across write -> reopen";
+}
+
+// Gate iii (KD1 §5): the C API speaks deck units (1/day) in both directions
+// — the header has documented that contract all along. A set of 2.0 must
+// read back 2.0 and write as 2.0000.
+TEST_F(QualityRoundtripTest, KdecayApiContractIsPerDayBothWays) {
+    open_model("kd_api", kdecay_routed_model(0.0));
+
+    ASSERT_EQ(swmm_pollutant_set_kdecay(engine, 0, 2.0), SWMM_OK);
+    double k = -1.0;
+    ASSERT_EQ(swmm_pollutant_get_kdecay(engine, 0, &k), SWMM_OK);
+    EXPECT_NEAR(k, 2.0, 1e-9);
+
+    const std::string text = written_model("kd_api");
+    const auto pos = text.find("[POLLUTANTS]");
+    ASSERT_NE(pos, std::string::npos);
+    const auto row = text.find("TSS", pos);
+    ASSERT_NE(row, std::string::npos);
+    std::istringstream ls(text.substr(row, text.find('\n', row) - row));
+    std::string name, units, crain, cgw, crdii, kcol;
+    ls >> name >> units >> crain >> cgw >> crdii >> kcol;
+    EXPECT_NEAR(std::stod(kcol), 2.0, 1e-4) << "API-set Kdecay wrote as " << kcol;
+}
+
+// Gate v (KD1, added by the check pass): the NODE-side decay + booking has
+// its own observer. Junctions never decay (legacy findNodeQual), but a
+// STORAGE node does (findStorageQual via getReactedQual) — this pins that
+// the storage path still decays, and that its removal is BOOKED from the
+// node-volume basis (the k=200 routed deck above only exercises the LINK
+// booking).
+TEST_F(QualityRoundtripTest, KdecayStorageNodeStillDecaysAndBooks) {
+    std::string deck = kdecay_routed_model(200.0);
+    // DYNWAVE: KINWAVE's storage handling leaves a ~9% FLOW continuity
+    // error on this shape, which no quality ledger can close over.
+    auto rt = deck.find("FLOW_ROUTING         KINWAVE");
+    ASSERT_NE(rt, std::string::npos);
+    deck.replace(rt, std::string("FLOW_ROUTING         KINWAVE").size(),
+                 "FLOW_ROUTING         DYNWAVE");
+    // Splice a storage unit between J1 and O1: J1 -C1-> ST1 -C2-> O1.
+    const std::string storage = "[STORAGE]\n"
+                                ";;Name Elev MaxDepth InitDepth Shape      Coeff Expon Const\n"
+                                "ST1    96   10       2.0       FUNCTIONAL 0     0     1000\n"
+                                "\n"
+                                "[OUTFALLS]\n";
+    auto pos = deck.find("[OUTFALLS]");
+    ASSERT_NE(pos, std::string::npos);
+    deck.replace(pos, std::string("[OUTFALLS]").size(), storage);
+    const std::string conduits =
+        "[CONDUITS]\n"
+        "C1               J1               ST1              400        0.013      0          0          0          0\n"
+        "C2               ST1              O1               400        0.013      0          0          0          0\n";
+    pos = deck.find("[CONDUITS]");
+    ASSERT_NE(pos, std::string::npos);
+    auto endpos = deck.find("\n\n", pos);
+    deck.replace(pos, endpos - pos + 1, conduits);
+    const std::string xsects =
+        "[XSECTIONS]\n"
+        "C1               CIRCULAR     2                0          0          0          1\n"
+        "C2               CIRCULAR     2                0          0          0          1\n";
+    pos = deck.find("[XSECTIONS]");
+    ASSERT_NE(pos, std::string::npos);
+    endpos = deck.find("\n\n", pos);
+    deck.replace(pos, endpos - pos + 1, xsects);
+
+    open_model("kd_storage", deck);
+
+    ASSERT_EQ(swmm_engine_initialize(engine), SWMM_OK) << swmm_get_last_error_msg(engine);
+    ASSERT_EQ(swmm_engine_start(engine, 0), SWMM_OK) << swmm_get_last_error_msg(engine);
+    double elapsed = 1.0;
+    while (swmm_engine_step(engine, &elapsed) == SWMM_OK && elapsed > 0.0) {
+    }
+    ASSERT_EQ(swmm_engine_end(engine), SWMM_OK);
+
+    const int st1 = swmm_node_index(engine, "ST1");
+    ASSERT_GE(st1, 0);
+    double conc = -1.0;
+    ASSERT_EQ(swmm_node_get_quality(engine, st1, 0, &conc), SWMM_OK);
+    EXPECT_GT(conc, 1.0) << "storage annihilated — the clamp regressed";
+    EXPECT_LT(conc, 95.0) << "the storage node no longer decays — the "
+                             "junction gate over-reached";
+
+    double err = -1.0;
+    ASSERT_EQ(swmm_get_quality_continuity_error(engine, 0, &err), SWMM_OK);
+    // Threshold: this deck's storage volume-balance accounting leaks even
+    // with NO decay (this engine k=0: +3.9%; LEGACY on the same deck:
+    // +6.5% at k=200/day, +7.0% at k=0), and per-step transit mass takes
+    // the decay factor outside any volume-basis booking (the P2.4 storage
+    // mixing class, present in both engines). 15% cleanly separates
+    // "booked, with the pre-existing slop" from unbooked decay (~+50%
+    // here) and from the pre-KD1 creation (-47%).
+    EXPECT_LT(std::fabs(err), 0.15)
+        << "storage decay is escaping the ledger (continuity error " << err * 100.0 << "%)";
 }

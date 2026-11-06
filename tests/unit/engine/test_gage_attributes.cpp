@@ -1,6 +1,6 @@
 /**
- * @file test_gage_attributes.cpp
- * @brief Unit tests for the rain-gage C API getters/setters added to close the
+ * @file      test_gage_attributes.cpp
+ * @brief     Unit tests for the rain-gage C API getters/setters added to close the
  *        Property-Browser parity gap (DA-ENG-04): recording interval, snow-catch
  *        factor, time-series id, station id, and rain-depth units.
  *
@@ -17,6 +17,10 @@
  * @see include/openswmm/engine/openswmm_gages.h
  * @see Property-Browser consumer: openswmm.gui SWMMRainGagePropertyAdapter
  * @ingroup engine_api
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -34,14 +38,29 @@ class GageAttributesCApi : public ::testing::Test {
 protected:
     SWMM_Engine engine_ = nullptr;
 
+    /**
+     * @brief Create/open the single-gage attribute fixture.
+     *
+     * Requires engine_ initially null; owns created state until TearDown. Fatal assertions check
+     * create/open and exactly one gage, returning only from this helper on failure. No initialize/start
+     * or rainfall update is performed.
+     *
+     * @param[in] rpt Report destination passed to open.
+     * @param[in] out Binary output destination passed to open.
+     */
     void openModel(const char* rpt, const char* out) {
         engine_ = swmm_engine_create();
         ASSERT_NE(engine_, nullptr);
-        ASSERT_EQ(swmm_engine_open(engine_, "gage_noscalefactor.inp", rpt, out, nullptr),
-                  SWMM_OK);
+        ASSERT_EQ(swmm_engine_open(engine_, "gage_noscalefactor.inp", rpt, out, nullptr), SWMM_OK);
         ASSERT_EQ(swmm_gage_count(engine_), 1);
     }
 
+    /**
+     * @brief Close and destroy the fixture model, then clear its handle.
+     *
+     * Checks for null, ignores close status and releases partial state after setup/test failure. No
+     * simulation report is requested here.
+     */
     void TearDown() override {
         if (engine_) {
             swmm_engine_close(engine_);
@@ -61,7 +80,7 @@ TEST_F(GageAttributesCApi, GetRainIntervalReturnsParsedValue) {
     openModel("_gage_interval_get.rpt", "_gage_interval_get.out");
     double secs = 0.0;
     EXPECT_EQ(swmm_gage_get_rain_interval(engine_, 0, &secs), SWMM_OK);
-    EXPECT_DOUBLE_EQ(secs, 900.0);  // 0:15
+    EXPECT_DOUBLE_EQ(secs, 900.0); // 0:15
 }
 
 TEST_F(GageAttributesCApi, SetRainIntervalRoundTrips) {
@@ -93,7 +112,7 @@ TEST_F(GageAttributesCApi, SetSnowFactorRoundTrips) {
 
 TEST_F(GageAttributesCApi, SetSnowFactorRejectsNonPositive) {
     openModel("_gage_scf_bad.rpt", "_gage_scf_bad.out");
-    EXPECT_NE(swmm_gage_set_snow_factor(engine_, 0,  0.0), SWMM_OK);
+    EXPECT_NE(swmm_gage_set_snow_factor(engine_, 0, 0.0), SWMM_OK);
     EXPECT_NE(swmm_gage_set_snow_factor(engine_, 0, -2.0), SWMM_OK);
     double scf = 0.0;
     EXPECT_EQ(swmm_gage_get_snow_factor(engine_, 0, &scf), SWMM_OK);
@@ -152,12 +171,12 @@ TEST_F(GageAttributesCApi, GetRainUnitsDefaultsToInches) {
     openModel("_gage_units_get.rpt", "_gage_units_get.out");
     int units = -1;
     EXPECT_EQ(swmm_gage_get_rain_units(engine_, 0, &units), SWMM_OK);
-    EXPECT_EQ(units, 0);  // IN
+    EXPECT_EQ(units, 0); // IN
 }
 
 TEST_F(GageAttributesCApi, SetRainUnitsRoundTrips) {
     openModel("_gage_units_set.rpt", "_gage_units_set.out");
-    EXPECT_EQ(swmm_gage_set_rain_units(engine_, 0, 1), SWMM_OK);  // MM
+    EXPECT_EQ(swmm_gage_set_rain_units(engine_, 0, 1), SWMM_OK); // MM
     int units = -1;
     EXPECT_EQ(swmm_gage_get_rain_units(engine_, 0, &units), SWMM_OK);
     EXPECT_EQ(units, 1);
@@ -165,7 +184,7 @@ TEST_F(GageAttributesCApi, SetRainUnitsRoundTrips) {
 
 TEST_F(GageAttributesCApi, SetRainUnitsRejectsOutOfRange) {
     openModel("_gage_units_bad.rpt", "_gage_units_bad.out");
-    EXPECT_NE(swmm_gage_set_rain_units(engine_, 0,  2), SWMM_OK);
+    EXPECT_NE(swmm_gage_set_rain_units(engine_, 0, 2), SWMM_OK);
     EXPECT_NE(swmm_gage_set_rain_units(engine_, 0, -1), SWMM_OK);
 }
 
@@ -175,10 +194,12 @@ TEST_F(GageAttributesCApi, SetRainUnitsRejectsOutOfRange) {
 
 TEST_F(GageAttributesCApi, GettersRejectBadIndex) {
     openModel("_gage_attr_badidx.rpt", "_gage_attr_badidx.out");
-    double d = 0.0; int i = 0; char buf[8] = {};
-    EXPECT_NE(swmm_gage_get_rain_interval(engine_, 9, &d),        SWMM_OK);
-    EXPECT_NE(swmm_gage_get_snow_factor(engine_, 9, &d),          SWMM_OK);
-    EXPECT_NE(swmm_gage_get_rain_units(engine_, 9, &i),           SWMM_OK);
+    double d = 0.0;
+    int i = 0;
+    char buf[8] = {};
+    EXPECT_NE(swmm_gage_get_rain_interval(engine_, 9, &d), SWMM_OK);
+    EXPECT_NE(swmm_gage_get_snow_factor(engine_, 9, &d), SWMM_OK);
+    EXPECT_NE(swmm_gage_get_rain_units(engine_, 9, &i), SWMM_OK);
     EXPECT_NE(swmm_gage_get_timeseries(engine_, 9, buf, sizeof(buf)), SWMM_OK);
     EXPECT_NE(swmm_gage_get_station_id(engine_, 9, buf, sizeof(buf)), SWMM_OK);
 }

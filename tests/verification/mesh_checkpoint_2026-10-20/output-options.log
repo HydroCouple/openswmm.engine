@@ -1,0 +1,152 @@
+Running main() from /Users/calebbuahin/Documents/Projects/vcpkg/buildtrees/gtest/src/v1.15.2-41f5afb119.clean/googletest/src/gtest_main.cc
+[==========] Running 31 tests from 5 test suites.
+[----------] Global test environment set-up.
+[----------] 3 tests from Output2DOptions
+[ RUN      ] Output2DOptions.TokenMaskRoundTrip
+[       OK ] Output2DOptions.TokenMaskRoundTrip (2 ms)
+[ RUN      ] Output2DOptions.ParseAndFormatKeys
+[       OK ] Output2DOptions.ParseAndFormatKeys (0 ms)
+[ RUN      ] Output2DOptions.CApiExtRoundTripOnAModel
+[       OK ] Output2DOptions.CApiExtRoundTripOnAModel (2 ms)
+[----------] 3 tests from Output2DOptions (5 ms total)
+
+[----------] 17 tests from Output2DWriter
+[ RUN      ] Output2DWriter.DefaultIsFloat32AndDropsDiagnostics
+[       OK ] Output2DWriter.DefaultIsFloat32AndDropsDiagnostics (6 ms)
+[ RUN      ] Output2DWriter.Float64AllWritesEverythingExactly
+[       OK ] Output2DWriter.Float64AllWritesEverythingExactly (4 ms)
+[ RUN      ] Output2DWriter.MinimalCreatesOnlyDepthNodeAndEnvelopes
+[       OK ] Output2DWriter.MinimalCreatesOnlyDepthNodeAndEnvelopes (1 ms)
+[ RUN      ] Output2DWriter.SpeciesSubsetByName
+[       OK ] Output2DWriter.SpeciesSubsetByName (1 ms)
+[ RUN      ] Output2DWriter.SpeciesUnitsAttributeFollowsTheSelectedRows
+[       OK ] Output2DWriter.SpeciesUnitsAttributeFollowsTheSelectedRows (1 ms)
+[ RUN      ] Output2DWriter.DeckAgeColumnIsHoursEndToEnd
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] Output2DWriter.DeckAgeColumnIsHoursEndToEnd (10 ms)
+[ RUN      ] Output2DWriter.LocalBedTracerAndAgeAreReportedFromLivePorewaterState
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] Output2DWriter.LocalBedTracerAndAgeAreReportedFromLivePorewaterState (11 ms)
+[ RUN      ] Output2DWriter.LocalBedThermalStorageIsReportedWithoutQualityTransport
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] Output2DWriter.LocalBedThermalStorageIsReportedWithoutQualityTransport (14 ms)
+[ RUN      ] Output2DWriter.RainPulseBetweenReportsAccumulates
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[       OK ] Output2DWriter.RainPulseBetweenReportsAccumulates (12 ms)
+[ RUN      ] Output2DWriter.RainFormatsAndMismatchedClocks
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[       OK ] Output2DWriter.RainFormatsAndMismatchedClocks (592 ms)
+[ RUN      ] Output2DWriter.DeckBuildupColumnEndToEnd
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] Output2DWriter.DeckBuildupColumnEndToEnd (8 ms)
+[ RUN      ] Output2DWriter.DeckGroundwaterFieldsEndToEnd
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] Output2DWriter.DeckGroundwaterFieldsEndToEnd (28 ms)
+[ RUN      ] Output2DWriter.CoupledGroundHeatFieldsAndBudgetsEndToEnd
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] Output2DWriter.CoupledGroundHeatFieldsAndBudgetsEndToEnd (14 ms)
+[ RUN      ] Output2DWriter.MeshRichardsLidThermalStateMapsToItsReciprocalGroundReceipt
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] Output2DWriter.MeshRichardsLidThermalStateMapsToItsReciprocalGroundReceipt (242 ms)
+[ RUN      ] Output2DWriter.Report2DStepThinsTheTimeAxis
+[       OK ] Output2DWriter.Report2DStepThinsTheTimeAxis (5 ms)
+[ RUN      ] Output2DWriter.Report2DStepMustBeAMultipleOfReportStep
+[       OK ] Output2DWriter.Report2DStepMustBeAMultipleOfReportStep (3 ms)
+[ RUN      ] Output2DWriter.Float32FileIsSmaller
+[       OK ] Output2DWriter.Float32FileIsSmaller (179 ms)
+[----------] 17 tests from Output2DWriter (1138 ms total)
+
+[----------] 8 tests from Output2DSourceHistory
+[ RUN      ] Output2DSourceHistory.SavesSourceIntervalsIndependentlyOfReportCadenceAndKeepsMeshFields
+[       OK ] Output2DSourceHistory.SavesSourceIntervalsIndependentlyOfReportCadenceAndKeepsMeshFields (31 ms)
+[ RUN      ] Output2DSourceHistory.InvalidPrefixPreservesSavedHistoryAndOrdinaryFields
+[       OK ] Output2DSourceHistory.InvalidPrefixPreservesSavedHistoryAndOrdinaryFields (29 ms)
+[ RUN      ] Output2DSourceHistory.InvalidNewHistoryAndUnopenedSinkReturnErrorsWithoutHdf5Publication
+[       OK ] Output2DSourceHistory.InvalidNewHistoryAndUnopenedSinkReturnErrorsWithoutHdf5Publication (2 ms)
+[ RUN      ] Output2DSourceHistory.VersionOneHistoryRemainsReadableWithoutContinuationMetadata
+[       OK ] Output2DSourceHistory.VersionOneHistoryRemainsReadableWithoutContinuationMetadata (23 ms)
+[ RUN      ] Output2DSourceHistory.RestoredPrefixContinuesInsideTheSameMeshResultFile
+[       OK ] Output2DSourceHistory.RestoredPrefixContinuesInsideTheSameMeshResultFile (44 ms)
+[ RUN      ] Output2DSourceHistory.OutfallHistorySavesFutureAvailabilityAndContinuesThroughSkippedReports
+[       OK ] Output2DSourceHistory.OutfallHistorySavesFutureAvailabilityAndContinuesThroughSkippedReports (44 ms)
+[ RUN      ] Output2DSourceHistory.OutfallHistoryRefusesChangedProfilesAndMissingRequiredDataAtomically
+[       OK ] Output2DSourceHistory.OutfallHistoryRefusesChangedProfilesAndMissingRequiredDataAtomically (37 ms)
+[ RUN      ] Output2DSourceHistory.OlderHistoryCannotResumeReturnProfileWithoutItsRequiredDiagnostics
+[       OK ] Output2DSourceHistory.OlderHistoryCannotResumeReturnProfileWithoutItsRequiredDiagnostics (13 ms)
+[----------] 8 tests from Output2DSourceHistory (226 ms total)
+
+[----------] 1 test from Output2DSnow
+[ RUN      ] Output2DSnow.WritesAcceptedStateWithUnitsMissingValuesAndRainfallSelection
+[       OK ] Output2DSnow.WritesAcceptedStateWithUnitsMissingValuesAndRainfallSelection (9 ms)
+[----------] 1 test from Output2DSnow (9 ms total)
+
+[----------] 2 tests from Output2DThermal
+[ RUN      ] Output2DThermal.WritesOnlySelectedInitializedThermalStateAndSignedBudgets
+[       OK ] Output2DThermal.WritesOnlySelectedInitializedThermalStateAndSignedBudgets (10 ms)
+[ RUN      ] Output2DThermal.ReportsLocalBedPhysicalStoresWithoutQualityRows
+[       OK ] Output2DThermal.ReportsLocalBedPhysicalStoresWithoutQualityRows (2 ms)
+[----------] 2 tests from Output2DThermal (13 ms total)
+
+[----------] Global test environment tear-down
+[==========] 31 tests from 5 test suites ran. (1393 ms total)
+[  PASSED  ] 31 tests.

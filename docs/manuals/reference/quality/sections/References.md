@@ -89,10 +89,24 @@ R.C. Johanson, *Hydrologic Simulation Program -- Fortran: User's Manual
 for Release 11*, U.S. Environmental Protection Agency, Office of
 Research and Development, Athens, GA, 1997.
 
+Bencala, K.E. and Walters, R.A., "Simulation of Solute Transport in a
+Mountain Pool-and-Riffle Stream: A Transient Storage Model",
+*Water Resources Research*, 19(3), 718-724, 1983.
+
+Bird, R.E. and Hulstrom, R.L., *A Simplified Clear Sky Model for Direct
+and Diffuse Insolation on Horizontal Surfaces*, Technical Report
+SERI/TR-642-761, Solar Energy Research Institute, Golden, CO, 1981.
+
+Bolz, H.M., "Die Abhangigkeit der infraroten Gegenstrahlung von der
+Bewolkung", *Zeitschrift fur Meteorologie*, Vol. 3, pp. 201-203, 1949.
+
 Brezonik, P.L., "Nutrients and Other Biologically Active Substances in
 Atmo­spheric Precipitation," Proceedings Symposium on Atmospheric
 Contribution to the Chemistry of Lake Waters, International Association
 Great Lakes Research, September 1975, pp. 166-186.
+
+Brunt, D., "Notes on Radiation in the Atmosphere", *Quarterly Journal of
+the Royal Meteorological Society*, Vol. 58, No. 247, pp. 389-420, 1932.
 
 Burton, G.A. and Pitt, R.E., *Stormwater Effects Handbook*. Lewis
 Publishers, CRC Press, Boca Raton, FL, 2002.
@@ -142,6 +156,9 @@ time-dependent advection-dominated partial differential equations",
 
 Ferguson, B., *Porous Pavements*, CRC Press, Boca Raton, 2005.
 
+Fischer, H.B., List, E.J., Koh, R.C.Y., Imberger, J., and Brooks, N.H.,
+*Mixing in Inland and Coastal Waters*, Academic Press, New York, 1979.
+
 Fletcher, T.D., Shuster, W., Hunt, W.F., Ashley, R., Butler, D., Arthur,
 S., Trowsdale, S., Barraud, S., Semadeni-Davies, A., Bertrand-Krajewski,
 J-L., Mikkelsen, P.S., Rivard, G., Uhl, M., Dagenais, D., and Viklander,
@@ -154,6 +171,10 @@ Graf, W.H., *Hydraulics of Sediment Transport*, McGraw-Hill, New York,
 
 Haan, C.T., Barfield, B.J. and J.C. Hayes, *Design Hydrology and
 Sedimentology for Small Catchments*, Academic Press, New York, 1994.
+
+Hairer, E. and Wanner, G., *Solving Ordinary Differential Equations II:
+Stiff and Differential-Algebraic Problems*, 2nd ed., Springer-Verlag,
+Berlin, 1996.
 
 Haseltine, T.R., "Addition of Garbage to Sewage," *Water and Sewage
 Works*, 1950.
@@ -246,6 +267,14 @@ System Overflow Based on Historical Rain Series," Proc. Third
 International Conference on Urban Storm Drainage, Chalmers University,
 Goteborg, Sweden, June 1984, Vol. 3, pp. 909-918.
 
+Kasten, F. and Czeplak, G., "Solar and Terrestrial Radiation Dependent
+on the Amount and Type of Cloud", *Solar Energy*, Vol. 24, No. 2, pp.
+177-189, 1980.
+
+Kasten, F. and Young, A.T., "Revised Optical Air Mass Tables and
+Approximation Formula", *Applied Optics*, Vol. 28, No. 22, pp.
+4735-4738, 1989.
+
 Kluesener, J.W. and Lee, G.F., "Nutrient Loading from a Separate Storm
 Sewer in Madison, Wisconsin," *Journal Water Pollution Control
 Federation*, Vol. 46, No. 5, May 1974, pp. 920-936.
@@ -266,6 +295,10 @@ Cincinnati, OH, Septem­ber 1977.
 Lee, J., Borst, M., Brown, R., Rossman, L., and Simon, M., "Modeling the
 Hydrologic Processes of a Permeable Pavement System", Journal of
 Hydrologic Engineering, Vol. 20, No. 5, 2015.
+
+Leonard, B.P., "The ULTIMATE Conservative Difference Scheme Applied to
+Unsteady One-Dimensional Advection", *Computer Methods in Applied
+Mechanics and Engineering*, Vol. 88, No. 1, pp. 17-74, 1991.
 
 Li, H. and Davis, A.P., "Water Quality Improvement through Reductions of
 Pollutant Loads using Bioretention", *Journal of Environmental
@@ -418,6 +451,11 @@ Rossman, L.A., "Modeling Low Impact Development Alternatives with SWMM"
 in *Dynamic Modeling of Urban Systems, Monograph 18* (W. James, editor),
 CHI, Guelph, Ontario, 2010.
 
+Runkel, R.L., *One-Dimensional Transport with Inflow and Storage
+(OTIS): A Solute Transport Model for Streams and Rivers*,
+Water-Resources Investigations Report 98-4018, U.S. Geological
+Survey, Denver, CO, 1998.
+
 Sartor, J.D. and Boyd, G.B., "Water Pollution Aspects of Street Surface
 Con­taminants," EPA-R2-72-081 (NTIS PB-214408), U.S. Environmental
 Protection Agency, Washington, DC, November 1972.
@@ -429,6 +467,10 @@ American Journal, 70:1569-1578, 2006.
 Shaheen, D.G., "Contributions of Urban Roadway Usage to Water
 Pollution," EPA-600/2-75-004 (NTIS PB-245854), U.S. Environmental
 Protection Agency, Washington, DC, April l975.
+
+Shang, F., Uber, J.G., and Rossman, L.A., *EPANET Multi-Species
+Extension User's Manual*, EPA/600/S-07/021, U.S. Environmental Protection
+Agency, Cincinnati, OH, 2008.
 
 Simons, D.B. and Senturk, F., *Sediment Transport Technology*, Water
 Resources Publications, Ft. Collins, CO, 1977.
@@ -448,6 +490,9 @@ Gainesville, 1979.
 Sonnen, M.B., "Urban Runoff Quality: Information Needs," *Journal of the
 Tech­nical Councils, ASCE*, Vol. 106, No. TC1, August 1980, pp. 29-40.
 
+Spencer, J.W., "Fourier Series Representation of the Position of the
+Sun", *Search*, Vol. 2, No. 5, p. 172, 1971.
+
 Sutherland, R.C. and Jelen, S.J., "Contrary to Conventional Wisdom,
 Street Sweeping Can Be an Effective BMP," Chapter 9 in *Advances in
 Modeling the Management of Stormwater Impacts*, W. James, ed., Proc. of
@@ -458,6 +503,10 @@ the Stormwater and Water Quality Modeling Conference, Toronto, February
 Strecker, E.W., Quigley, M.M., Urbonas, B.R., Jones, J.E. and Clary,
 J.K., "Determining Urban Storm Water BMP Effectiveness," *Journal of
 Water Resources Planning and Management*, 127(3), 2001, pp.144-149.
+
+Taylor, G.I., "Dispersion of Soluble Matter in Solvent Flowing Slowly
+Through a Tube", *Proceedings of the Royal Society of London, Series A*,
+Vol. 219, No. 1137, pp. 186-203, 1953.
 
 Tchobanoglous, G. and Burton, F., *Wastewater Engineering, Treatment,
 Disposal, Reuse*, Third Edition, Metcalf & Eddy, Inc., Boston, MA, 1991.

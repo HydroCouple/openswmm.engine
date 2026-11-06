@@ -1,0 +1,12 @@
+corpus run: 2026-10-05T08:35:07Z
+decks:      25
+commit:     85ebe251
+base    /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/verification/surface_r1_2026-10-05/isolated/baseline/bin/openswmm
+        sha256 d3ea0bbb793be256d24ef675f403d87227a79fe15c5e460860000c786b2e074f
+        engine /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/verification/surface_r1_2026-10-05/isolated/baseline/bin/../lib/libopenswmm.engine.6.dylib
+        sha256 549bb2b2dff5cee14f724a5cecc0d4ce56df062f7e8c0cceadcbcee3304e37b7
+patched /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/verification/surface_r1_2026-10-05/isolated/build/src/cli/openswmm
+        sha256 381c7e5d1fd8ce0ead3156af0a53491ca9add0032e517ef5931661ad47800cfc
+        engine /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/verification/surface_r1_2026-10-05/isolated/build/src/cli/../engine/libopenswmm.engine.6.0.0.dylib
+        sha256 67ca5d1a760fa3cd04901db7e8b33e6aa66c93f5e3a3a2c47bbf68da831f52a7
+build configurations match on OPENSWMM_*, CMAKE_BUILD_TYPE and CMAKE_CXX_FLAGS.

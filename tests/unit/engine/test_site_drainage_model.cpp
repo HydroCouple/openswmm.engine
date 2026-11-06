@@ -1,6 +1,6 @@
 /**
- * @file test_site_drainage_model.cpp
- * @brief Integration test — run site_drainage_model.inp through the new engine.
+ * @file      test_site_drainage_model.cpp
+ * @brief     Integration test — run site_drainage_model.inp through the new engine.
  *
  * @details Verifies the new engine can open, parse, initialize, run, and
  *          report on a realistic SWMM model with:
@@ -23,6 +23,10 @@
  *
  * @see src/engine/core/SWMMEngine.hpp
  * @ingroup engine_tests
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -63,11 +67,23 @@ class SiteDrainageModelTest : public ::testing::Test {
 protected:
     SWMM_Engine engine_ = nullptr;
 
+    /**
+     * @brief Allocate the per-test engine handle and assert allocation succeeded.
+     *
+     * Leaves the handle unopen for this fixture; its teardown owns destruction. A fatal allocation
+     * assertion stops setup.
+     */
     void SetUp() override {
         engine_ = swmm_engine_create();
         ASSERT_NE(engine_, nullptr);
     }
 
+    /**
+     * @brief Close and destroy the fixture model, then clear its handle.
+     *
+     * Checks for null, ignores close status and releases partial state after setup/test failure. No
+     * simulation report is requested here.
+     */
     void TearDown() override {
         if (engine_) {
             swmm_engine_close(engine_);
@@ -82,17 +98,15 @@ protected:
 // ---------------------------------------------------------------------------
 
 TEST_F(SiteDrainageModelTest, OpenAndParse) {
-    int rc = swmm_engine_open(engine_,
-                               "site_drainage_model.inp",
-                               "site_drainage_model.rpt",
-                               "site_drainage_model.out", nullptr);
+    int rc = swmm_engine_open(engine_, "site_drainage_model.inp", "site_drainage_model.rpt",
+                              "site_drainage_model.out", nullptr);
     ASSERT_EQ(rc, SWMM_OK) << "open failed: " << swmm_get_last_error_msg(engine_);
 
     // Verify object counts
-    EXPECT_EQ(swmm_node_count(engine_), 12);      // 11 junctions + 1 outfall
-    EXPECT_EQ(swmm_link_count(engine_), 11);       // 11 conduits
-    EXPECT_EQ(swmm_subcatch_count(engine_), 7);    // 7 subcatchments
-    EXPECT_EQ(swmm_gage_count(engine_), 1);        // 1 rain gage
+    EXPECT_EQ(swmm_node_count(engine_), 12);    // 11 junctions + 1 outfall
+    EXPECT_EQ(swmm_link_count(engine_), 11);    // 11 conduits
+    EXPECT_EQ(swmm_subcatch_count(engine_), 7); // 7 subcatchments
+    EXPECT_EQ(swmm_gage_count(engine_), 1);     // 1 rain gage
 
     // Verify a node can be looked up by name
     int j1 = swmm_node_index(engine_, "J1");
@@ -119,10 +133,9 @@ TEST_F(SiteDrainageModelTest, OpenAndParse) {
 // ---------------------------------------------------------------------------
 
 TEST_F(SiteDrainageModelTest, NodePropertiesParsed) {
-    ASSERT_EQ(swmm_engine_open(engine_,
-                                "site_drainage_model.inp",
-                                "site_drainage_model.rpt",
-                                "site_drainage_model.out", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(engine_, "site_drainage_model.inp", "site_drainage_model.rpt",
+                               "site_drainage_model.out", nullptr),
+              SWMM_OK);
 
     int j1 = swmm_node_index(engine_, "J1");
     ASSERT_GE(j1, 0);
@@ -146,10 +159,9 @@ TEST_F(SiteDrainageModelTest, NodePropertiesParsed) {
 // ---------------------------------------------------------------------------
 
 TEST_F(SiteDrainageModelTest, LinkPropertiesParsed) {
-    ASSERT_EQ(swmm_engine_open(engine_,
-                                "site_drainage_model.inp",
-                                "site_drainage_model.rpt",
-                                "site_drainage_model.out", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(engine_, "site_drainage_model.inp", "site_drainage_model.rpt",
+                               "site_drainage_model.out", nullptr),
+              SWMM_OK);
 
     int c1 = swmm_link_index(engine_, "C1");
     ASSERT_GE(c1, 0);
@@ -172,10 +184,9 @@ TEST_F(SiteDrainageModelTest, LinkPropertiesParsed) {
 // ---------------------------------------------------------------------------
 
 TEST_F(SiteDrainageModelTest, SubcatchPropertiesParsed) {
-    ASSERT_EQ(swmm_engine_open(engine_,
-                                "site_drainage_model.inp",
-                                "site_drainage_model.rpt",
-                                "site_drainage_model.out", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(engine_, "site_drainage_model.inp", "site_drainage_model.rpt",
+                               "site_drainage_model.out", nullptr),
+              SWMM_OK);
 
     int s1 = swmm_subcatch_index(engine_, "S1");
     ASSERT_GE(s1, 0);
@@ -190,10 +201,9 @@ TEST_F(SiteDrainageModelTest, SubcatchPropertiesParsed) {
 // ---------------------------------------------------------------------------
 
 TEST_F(SiteDrainageModelTest, FullSimulationRuns) {
-    ASSERT_EQ(swmm_engine_open(engine_,
-                                "site_drainage_model.inp",
-                                "site_drainage_model.rpt",
-                                "site_drainage_model.out", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(engine_, "site_drainage_model.inp", "site_drainage_model.rpt",
+                               "site_drainage_model.out", nullptr),
+              SWMM_OK);
 
     ASSERT_EQ(swmm_engine_initialize(engine_), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(engine_, 1), SWMM_OK);
@@ -205,8 +215,8 @@ TEST_F(SiteDrainageModelTest, FullSimulationRuns) {
 
     do {
         rc = swmm_engine_step(engine_, &elapsed);
-        ASSERT_EQ(rc, SWMM_OK) << "step failed at step " << step_count
-                                << ": " << swmm_get_last_error_msg(engine_);
+        ASSERT_EQ(rc, SWMM_OK) << "step failed at step " << step_count << ": "
+                               << swmm_get_last_error_msg(engine_);
         step_count++;
 
         // Safety limit — the model should complete in well under 500k steps
@@ -226,8 +236,7 @@ TEST_F(SiteDrainageModelTest, FullSimulationRuns) {
 // ---------------------------------------------------------------------------
 
 TEST_F(SiteDrainageModelTest, GageRainfallNonZero) {
-    ASSERT_EQ(swmm_engine_open(engine_,
-                                "site_drainage_model.inp", "", "", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(engine_, "site_drainage_model.inp", "", "", nullptr), SWMM_OK);
     ASSERT_EQ(swmm_engine_initialize(engine_), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(engine_, 0), SWMM_OK);
 
@@ -241,9 +250,11 @@ TEST_F(SiteDrainageModelTest, GageRainfallNonZero) {
         ASSERT_EQ(swmm_engine_step(engine_, &elapsed), SWMM_OK);
         double rain = 0.0;
         swmm_gage_get_rainfall(engine_, rg, &rain);
-        if (rain > max_rain) max_rain = rain;
+        if (rain > max_rain)
+            max_rain = rain;
         step++;
-        if (step > 25000) break;
+        if (step > 25000)
+            break;
     } while (elapsed > 0.0);
 
     // The 2-yr storm starts at 0:12 with non-zero values
@@ -252,10 +263,9 @@ TEST_F(SiteDrainageModelTest, GageRainfallNonZero) {
 }
 
 TEST_F(SiteDrainageModelTest, FlowsProducedDuringSimulation) {
-    ASSERT_EQ(swmm_engine_open(engine_,
-                                "site_drainage_model.inp",
-                                "site_drainage_model.rpt",
-                                "site_drainage_model.out", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(engine_, "site_drainage_model.inp", "site_drainage_model.rpt",
+                               "site_drainage_model.out", nullptr),
+              SWMM_OK);
     ASSERT_EQ(swmm_engine_initialize(engine_), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(engine_, 0), SWMM_OK);
 
@@ -294,10 +304,9 @@ TEST_F(SiteDrainageModelTest, FlowsProducedDuringSimulation) {
 // ---------------------------------------------------------------------------
 
 TEST_F(SiteDrainageModelTest, MassBalanceContinuity) {
-    ASSERT_EQ(swmm_engine_open(engine_,
-                                "site_drainage_model.inp",
-                                "site_drainage_model.rpt",
-                                "site_drainage_model.out", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(engine_, "site_drainage_model.inp", "site_drainage_model.rpt",
+                               "site_drainage_model.out", nullptr),
+              SWMM_OK);
     ASSERT_EQ(swmm_engine_initialize(engine_), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(engine_, 0), SWMM_OK);
 
@@ -326,10 +335,9 @@ TEST_F(SiteDrainageModelTest, MassBalanceContinuity) {
 // ---------------------------------------------------------------------------
 
 TEST_F(SiteDrainageModelTest, NodeStatisticsPopulated) {
-    ASSERT_EQ(swmm_engine_open(engine_,
-                                "site_drainage_model.inp",
-                                "site_drainage_model.rpt",
-                                "site_drainage_model.out", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(engine_, "site_drainage_model.inp", "site_drainage_model.rpt",
+                               "site_drainage_model.out", nullptr),
+              SWMM_OK);
     ASSERT_EQ(swmm_engine_initialize(engine_), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(engine_, 0), SWMM_OK);
 
@@ -345,7 +353,8 @@ TEST_F(SiteDrainageModelTest, NodeStatisticsPopulated) {
     for (int i = 0; i < swmm_node_count(engine_); ++i) {
         double md = 0.0;
         swmm_node_get_stat_max_depth(engine_, i, &md);
-        if (md > max_depth_any) max_depth_any = md;
+        if (md > max_depth_any)
+            max_depth_any = md;
     }
     // NOTE: Until INFILTRATION section parsing is complete, subcatchments won't
     // produce runoff, so nodes won't see depth from lateral inflow.
@@ -359,10 +368,9 @@ TEST_F(SiteDrainageModelTest, NodeStatisticsPopulated) {
 // ---------------------------------------------------------------------------
 
 TEST_F(SiteDrainageModelTest, LinkStatisticsPopulated) {
-    ASSERT_EQ(swmm_engine_open(engine_,
-                                "site_drainage_model.inp",
-                                "site_drainage_model.rpt",
-                                "site_drainage_model.out", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(engine_, "site_drainage_model.inp", "site_drainage_model.rpt",
+                               "site_drainage_model.out", nullptr),
+              SWMM_OK);
     ASSERT_EQ(swmm_engine_initialize(engine_), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(engine_, 0), SWMM_OK);
 
@@ -378,7 +386,8 @@ TEST_F(SiteDrainageModelTest, LinkStatisticsPopulated) {
     for (int i = 0; i < swmm_link_count(engine_); ++i) {
         double mf = 0.0;
         swmm_link_get_stat_max_flow(engine_, i, &mf);
-        if (mf > max_flow_any) max_flow_any = mf;
+        if (mf > max_flow_any)
+            max_flow_any = mf;
     }
     EXPECT_GT(max_flow_any, 0.0)
         << "No link recorded any flow — simulation may not have run correctly";
@@ -389,10 +398,9 @@ TEST_F(SiteDrainageModelTest, LinkStatisticsPopulated) {
 // ---------------------------------------------------------------------------
 
 TEST_F(SiteDrainageModelTest, SubcatchRunoffProduced) {
-    ASSERT_EQ(swmm_engine_open(engine_,
-                                "site_drainage_model.inp",
-                                "site_drainage_model.rpt",
-                                "site_drainage_model.out", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(engine_, "site_drainage_model.inp", "site_drainage_model.rpt",
+                               "site_drainage_model.out", nullptr),
+              SWMM_OK);
     ASSERT_EQ(swmm_engine_initialize(engine_), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(engine_, 0), SWMM_OK);
 
@@ -405,7 +413,8 @@ TEST_F(SiteDrainageModelTest, SubcatchRunoffProduced) {
         ASSERT_EQ(swmm_engine_step(engine_, &elapsed), SWMM_OK);
         double ro = 0.0;
         swmm_subcatch_get_runoff(engine_, s1, &ro);
-        if (ro > max_runoff) max_runoff = ro;
+        if (ro > max_runoff)
+            max_runoff = ro;
     } while (elapsed > 0.0);
 
     // NOTE: Until INFILTRATION section parsing is complete, subcatchments
@@ -421,10 +430,9 @@ TEST_F(SiteDrainageModelTest, SubcatchRunoffProduced) {
 // ---------------------------------------------------------------------------
 
 TEST_F(SiteDrainageModelTest, BulkAccessWorks) {
-    ASSERT_EQ(swmm_engine_open(engine_,
-                                "site_drainage_model.inp",
-                                "site_drainage_model.rpt",
-                                "site_drainage_model.out", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(engine_, "site_drainage_model.inp", "site_drainage_model.rpt",
+                               "site_drainage_model.out", nullptr),
+              SWMM_OK);
     ASSERT_EQ(swmm_engine_initialize(engine_), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(engine_, 0), SWMM_OK);
 
@@ -441,8 +449,7 @@ TEST_F(SiteDrainageModelTest, BulkAccessWorks) {
 
     // All depths should be non-negative
     for (int i = 0; i < nn; ++i) {
-        EXPECT_GE(depths[static_cast<size_t>(i)], 0.0)
-            << "Node " << i << " has negative depth";
+        EXPECT_GE(depths[static_cast<size_t>(i)], 0.0) << "Node " << i << " has negative depth";
     }
 
     // Bulk get link flows
@@ -458,10 +465,9 @@ TEST_F(SiteDrainageModelTest, BulkAccessWorks) {
 // ---------------------------------------------------------------------------
 
 TEST_F(SiteDrainageModelTest, PeakFlowTracking) {
-    ASSERT_EQ(swmm_engine_open(engine_,
-                                "site_drainage_model.inp",
-                                "site_drainage_model.rpt",
-                                "site_drainage_model.out", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(engine_, "site_drainage_model.inp", "site_drainage_model.rpt",
+                               "site_drainage_model.out", nullptr),
+              SWMM_OK);
     ASSERT_EQ(swmm_engine_initialize(engine_), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(engine_, 0), SWMM_OK);
 
@@ -478,8 +484,10 @@ TEST_F(SiteDrainageModelTest, PeakFlowTracking) {
         double f1 = 0.0, f11 = 0.0;
         swmm_link_get_flow(engine_, c1, &f1);
         swmm_link_get_flow(engine_, c11, &f11);
-        if (std::fabs(f1) > max_c1) max_c1 = std::fabs(f1);
-        if (std::fabs(f11) > max_c11) max_c11 = std::fabs(f11);
+        if (std::fabs(f1) > max_c1)
+            max_c1 = std::fabs(f1);
+        if (std::fabs(f11) > max_c11)
+            max_c11 = std::fabs(f11);
     } while (elapsed > 0.0);
 
     ASSERT_EQ(swmm_engine_end(engine_), SWMM_OK);
@@ -495,10 +503,9 @@ TEST_F(SiteDrainageModelTest, PeakFlowTracking) {
 // ---------------------------------------------------------------------------
 
 TEST_F(SiteDrainageModelTest, NodeDepthsBounded) {
-    ASSERT_EQ(swmm_engine_open(engine_,
-                                "site_drainage_model.inp",
-                                "site_drainage_model.rpt",
-                                "site_drainage_model.out", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(engine_, "site_drainage_model.inp", "site_drainage_model.rpt",
+                               "site_drainage_model.out", nullptr),
+              SWMM_OK);
     ASSERT_EQ(swmm_engine_initialize(engine_), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(engine_, 0), SWMM_OK);
 
@@ -512,8 +519,7 @@ TEST_F(SiteDrainageModelTest, NodeDepthsBounded) {
         for (int i = 0; i < nn; ++i) {
             double d = 0.0;
             swmm_node_get_depth(engine_, i, &d);
-            EXPECT_GE(d, -0.001)
-                << "Node " << i << " has negative depth at step " << step;
+            EXPECT_GE(d, -0.001) << "Node " << i << " has negative depth at step " << step;
         }
         step++;
     } while (elapsed > 0.0);
@@ -526,10 +532,9 @@ TEST_F(SiteDrainageModelTest, NodeDepthsBounded) {
 // ---------------------------------------------------------------------------
 
 TEST_F(SiteDrainageModelTest, LinkVelocitiesBounded) {
-    ASSERT_EQ(swmm_engine_open(engine_,
-                                "site_drainage_model.inp",
-                                "site_drainage_model.rpt",
-                                "site_drainage_model.out", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(engine_, "site_drainage_model.inp", "site_drainage_model.rpt",
+                               "site_drainage_model.out", nullptr),
+              SWMM_OK);
     ASSERT_EQ(swmm_engine_initialize(engine_), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(engine_, 0), SWMM_OK);
 
@@ -550,8 +555,7 @@ TEST_F(SiteDrainageModelTest, LinkVelocitiesBounded) {
     ASSERT_EQ(swmm_engine_end(engine_), SWMM_OK);
 
     // Velocity should be bounded (DW solver caps at MAXVELOCITY = 50 ft/s)
-    EXPECT_LE(max_velocity, 55.0)
-        << "Max velocity should be bounded by solver limits";
+    EXPECT_LE(max_velocity, 55.0) << "Max velocity should be bounded by solver limits";
 }
 
 // ---------------------------------------------------------------------------
@@ -559,10 +563,9 @@ TEST_F(SiteDrainageModelTest, LinkVelocitiesBounded) {
 // ---------------------------------------------------------------------------
 
 TEST_F(SiteDrainageModelTest, SimulationTimingCorrect) {
-    ASSERT_EQ(swmm_engine_open(engine_,
-                                "site_drainage_model.inp",
-                                "site_drainage_model.rpt",
-                                "site_drainage_model.out", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(engine_, "site_drainage_model.inp", "site_drainage_model.rpt",
+                               "site_drainage_model.out", nullptr),
+              SWMM_OK);
     ASSERT_EQ(swmm_engine_initialize(engine_), SWMM_OK);
 
     double start_time = 0.0, end_time = 0.0;
@@ -580,10 +583,9 @@ TEST_F(SiteDrainageModelTest, SimulationTimingCorrect) {
 // ---------------------------------------------------------------------------
 
 TEST_F(SiteDrainageModelTest, RoutingStepConfigured) {
-    ASSERT_EQ(swmm_engine_open(engine_,
-                                "site_drainage_model.inp",
-                                "site_drainage_model.rpt",
-                                "site_drainage_model.out", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(engine_, "site_drainage_model.inp", "site_drainage_model.rpt",
+                               "site_drainage_model.out", nullptr),
+              SWMM_OK);
     ASSERT_EQ(swmm_engine_initialize(engine_), SWMM_OK);
 
     double dt = 0.0;
@@ -605,7 +607,9 @@ TEST_F(SiteDrainageModelTest, ErrorReporting) {
     // Error message should be non-empty
     const char* msg = swmm_get_last_error_msg(engine_);
     EXPECT_NE(msg, nullptr);
-    if (msg) { EXPECT_GT(strlen(msg), 0u); }
+    if (msg) {
+        EXPECT_GT(strlen(msg), 0u);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -618,10 +622,8 @@ TEST_F(SiteDrainageModelTest, EngineStateTransitions) {
     // State after create should be >= 0 (exact value depends on implementation)
     EXPECT_GE(state, 0);
 
-    int rc = swmm_engine_open(engine_,
-                               "site_drainage_model.inp",
-                               "site_drainage_model.rpt",
-                               "site_drainage_model.out", nullptr);
+    int rc = swmm_engine_open(engine_, "site_drainage_model.inp", "site_drainage_model.rpt",
+                              "site_drainage_model.out", nullptr);
     if (rc != SWMM_OK) {
         GTEST_SKIP() << "Engine open failed (" << rc << "), skipping state transitions";
     }
@@ -640,8 +642,7 @@ TEST_F(SiteDrainageModelTest, EngineStateTransitions) {
 // ---------------------------------------------------------------------------
 
 TEST_F(SiteDrainageModelTest, GageIndexLookup) {
-    ASSERT_EQ(swmm_engine_open(engine_,
-                                "site_drainage_model.inp", "", "", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(engine_, "site_drainage_model.inp", "", "", nullptr), SWMM_OK);
 
     int rg = swmm_gage_index(engine_, "RainGage");
     EXPECT_GE(rg, 0);
@@ -656,8 +657,7 @@ TEST_F(SiteDrainageModelTest, GageIndexLookup) {
 // ---------------------------------------------------------------------------
 
 TEST_F(SiteDrainageModelTest, SubcatchRainfallReceived) {
-    ASSERT_EQ(swmm_engine_open(engine_,
-                                "site_drainage_model.inp", "", "", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(engine_, "site_drainage_model.inp", "", "", nullptr), SWMM_OK);
     ASSERT_EQ(swmm_engine_initialize(engine_), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(engine_, 0), SWMM_OK);
 
@@ -671,12 +671,13 @@ TEST_F(SiteDrainageModelTest, SubcatchRainfallReceived) {
         ASSERT_EQ(swmm_engine_step(engine_, &elapsed), SWMM_OK);
         double p = 0.0;
         swmm_subcatch_get_rainfall(engine_, s1, &p);
-        if (p > max_precip) max_precip = p;
+        if (p > max_precip)
+            max_precip = p;
         step++;
-        if (step > 25000) break;
+        if (step > 25000)
+            break;
     } while (elapsed > 0.0);
 
-    EXPECT_GT(max_precip, 0.0)
-        << "Subcatchment S1 should receive rainfall from the design storm";
+    EXPECT_GT(max_precip, 0.0) << "Subcatchment S1 should receive rainfall from the design storm";
     ASSERT_EQ(swmm_engine_end(engine_), SWMM_OK);
 }

@@ -1,247 +1,285 @@
 # OpenSWMM Engine Roadmap
 
-This document describes the planned development direction for the OpenSWMM Engine (formerly OpenSWMMCore). It is maintained by the Technical Manager, [Caleb Buahin](https://github.com/cbuahin), and updated at each release and after significant community discussions.
+This document records the development direction and current implementation of the OpenSWMM Engine (formerly OpenSWMMCore). It is maintained by the Technical Manager, [Caleb Buahin](https://github.com/cbuahin).
 
-Items are organized by theme rather than strict release targeting, as scientific software timelines depend heavily on validation rigor and community bandwidth. Release assignments will be updated as work matures through experimental branches.
+**Implementation snapshot: October 21, 2026 — 6.0.0-alpha.4 development source.** The milestone table distinguishes tagged baselines from later source work; current code may be ahead of published packages. Release history is recorded in the [release notes](docs/releases/RELEASE_NOTES_6.0.0-alpha.4.md) and [changelog](CHANGELOG.md).
 
-Community members wishing to influence priorities should participate in the [GitHub Discussions — Ideas](../../discussions) section. Threads that shape roadmap decisions are linked directly from the relevant entries below.
-
----
+Items are organized by theme rather than release dates. Remaining work depends on numerical validation, supported process combinations, platform qualification and community bandwidth. Community members can discuss priorities in [GitHub Discussions](https://github.com/HydroCouple/openswmm.engine/discussions).
 
 ## Status Key
 
-| Symbol | Meaning                                                  |
-|--------|----------------------------------------------------------|
-| 🔬     | Under exploration — prototype or recorded design study    |
-| 🔧     | Actively in development                                  |
-| 📋     | Planned — accepted for future development                |
-| ⏸      | Deferred — not currently scheduled                       |
-| ✅     | Completed — implemented and shipping (see §8 for version) |
+| Symbol | Meaning |
+|---|---|
+| ✅ | Implemented baseline in the development source; remaining extensions are listed separately |
+| 🔧 | Implemented in part or experimental; integration or qualification remains active |
+| 📋 | Planned; no operational implementation claimed |
+| 🔬 | Under exploration or recorded design study |
+| ⏸ | Deferred or retired |
 
-The 6.0.0 line is in alpha. Items marked ✅ are implemented and exercised by the
-test suites, but ship in pre-release builds until 6.0.0 is final.
-
----
+Implementation does not imply that every hydraulic, transport, restart and backend combination is supported. The restrictions below and the runtime capability diagnostics define those boundaries. Section 8 separates released milestones from later source work.
 
 ## 1. Flow Routing
 
-### 1.1 Explicit Finite Volume 1D Flow Routing — Full Saint-Venant Equations 🔧
+### 1.1 Explicit Finite Volume 1D Flow Routing — Full Saint-Venant Equations ✅
 
-**Motivation:** The node-link dynamic wave formulation writes momentum in non-conservative form, carries one discharge per conduit, and handles transcritical flow by suppressing it. An explicit finite volume formulation in conservation form conserves volume identically, resolves the flow field *inside* a reach, and reproduces the propagation speed of hydraulic jumps and pressurization fronts from the Rankine-Hugoniot conditions rather than tracking them heuristically.
+**Implemented:** `FLOW_ROUTING FV` selects conservative Saint-Venant routing alongside the existing routing models. The solver includes hydrostatic reconstruction, HLL fluxes, semi-implicit Manning friction, MUSCL reconstruction, SSP-RK2, local time stepping, algebraic junction handling and mixed free-surface/pressurized cross-section closures. Virtual junctions, the two-component pressure approach (TPA), signed-head reporting and unsteady friction are available in their supported configurations. Dynamic wave remains the default.
 
-**Status:** Implemented and selectable with `FLOW_ROUTING FV` in the 6.0.0 development line — an addition alongside dynamic wave analysis, which remains the default. Documented as Chapter 8 of the Hydraulics Reference Manual.
+The built-in CPU solver includes OpenMP work regions. `FV_BACKEND` and the plugin loader exist, but the supplied surface plugins do not provide a 1D network-solver implementation. Loader availability is not a claim of 1D GPU execution.
 
-**Delivered:**
-- Godunov-type explicit finite volume discretization of the conservation-form continuity and momentum equations on a cell mesh cut from the conduits, with hydrostatic (Audusse) reconstruction, HLL interface flux and semi-implicit Manning friction. Mesh resolution is set by `FV_CELL_LENGTH`; the default is one cell per conduit, matching the dynamic wave element count.
-- Mixed free-surface/pressurized flow with no regime-switching logic: the Preissmann slot is folded into the cross-section closure with a tapered mouth, so a filling bore is captured and its speed is an output of the scheme.
-- Second-order MUSCL reconstruction (`FV_ORDER 2`) and SSP-RK2 time integration (`FV_TIME_INTEGRATION RK2`), both preserving the still-water property to machine precision.
-- Local time stepping (`FV_LTS`, on by default): each control volume takes a power-of-two tier from its own Courant limit, tiers are graded so no face spans more than one level, and conservation across a tier interface is exact by construction. Where tiering finds nothing to separate, the solver falls through to global stepping bit-for-bit.
-- Semi-implicit node coupling (`FV_NODE_COUPLING`, default `SEMI_IMPLICIT`), which linearizes each coupling face's flux in the node head and so removes the junction storage floor — not the pipe — from the explicit stability limit.
-- Backward compatible: seventeen `FV_*` `[OPTIONS]` keys, readable and writable through `swmm_options_get`/`set`, the Python bindings (`RouteModel.FV`) and the MCP server, and inert rather than rejected under the other routing models, so switching `FLOW_ROUTING` never invalidates a file. Virtual junctions become ordinary interior faces and reproduce the unsplit conduit cell for cell.
+**Remaining work:**
 
-**Validation to date:** 29 analytic gates (closure, scheme, network) plus 7 local-time-stepping gates and 5 engine-level gates. Ritter and Stoker match the closed-form solutions including shock speed; lake at rest holds to 1e-9 ft across a slope break and while pressurized; mass is conserved to 1e-12 over 10⁵ substeps. On the EPA reference drainage model the routing continuity error is **0.000 % at every mesh resolution**, against 0.026 % for dynamic wave routing on the same file. Finite-volume routing is deliberately outside the legacy bit-parity contract — it is a different discretization, gated on analytic and engineering tolerances instead.
+- Improve runtime using measured production bottlenecks, preserving the accepted solution and retry behavior. Earlier timing ratios and cache experiments describe their recorded models and builds, not current universal FV/dynamic-wave speed ratios.
+- Continue mesh-refinement, junction bed-step, mixed-flow and short/steep-reach studies; establish peak and timing accuracy as well as continuity.
+- Broaden published laboratory and engineering benchmark coverage, including pressurization, flow reversal and long-duration runs.
+- Implement and qualify 1D device backends. The experimental implicit pressurized update is a CPU capability, not a general implicit FV solver.
 
-**Remaining scope:**
-- **Performance.** The solver runs ~7× dynamic wave wall-clock at one cell per conduit and ~34× at Δx = 20 ft on the reference model. The original expectation of parity at equal element counts is recorded as refuted; the two largest costs found so far (the depth inversion, 3.2×, and the node stability constraint, 2.9×) are already addressed. Remaining levers are kernel fusion and CFL-census interval tuning.
-- **Parallel and GPU backends.** `FV_BACKEND` and the plugin loader are in place, but no plugin yet exports the 1D network-solver entry point, so execution is CPU-serial today.
-- **Peak attenuation at the default mesh.** One cell per conduit attenuates the reference model's peaks by 37 % on average (7 % at Δx = 20 ft). The cause is geometric rather than diffusive — a cell-centred scheme places a single cell's bed at the conduit mid-point, presenting an artificial bed step at every manhole — so higher-order reconstruction does not rescue it. Setting `FV_CELL_LENGTH` is the present workaround; a bed-step treatment at junction faces is the fix.
-- **Desktop application exposure.** `FLOW_ROUTING FV` and the `FV_*` keys are not yet offered in the OpenSWMM GUI's routing options.
-- **Broader regression** against published benchmark cases beyond the analytic suite, and quantification of the short-steep-pipe cell-length floor.
-- **Sub-atmospheric transients** are outside the slot closure; the two-component pressure approach is the documented extension path if rapid-downsurge fidelity is later required.
+See the [hydraulics reference](docs/manuals/reference/hydraulics.md) and [FV implementation](src/engine/hydraulics/fv/ExplicitFvSolver.cpp).
 
-### 1.2 2D Overland Flow — Local Inertial Finite Volume Model 🔧
+### 1.2 2D Overland Flow and 1D/2D Exchange ✅
 
-**Status:** A dynamically coupled 1D/2D overland flow solver using an explicit finite volume, local inertial formulation is available in the 6.0.0 alpha releases, with mass-conservative 1D–2D exchange, mesh generation from digital terrain data, and GUI support for mesh visualization and 1D↔2D coupling.
+**Implemented:** the explicit finite-volume marcher supports `LOCAL_INERTIAL`, `FULL_SWE` and `DIFFUSIVE_WAVE` momentum closures, mixed triangle/quad meshes, local time stepping, boundary forcing and conservative exchange with the 1D network. Terrain meshing and results visualization are provided by SWMMVis.
 
-**Since the last roadmap update:**
-- The implicit CVODE/ARKODE integrators carried through development have been **retired**. The explicit local-inertial marcher is the only 2D integrator; the retired `[2D_OPTIONS]` keys warn and are ignored on file load, and the SUNDIALS and hypre dependencies are gone.
-- Kokkos-based plugin backends (OpenMP, CUDA, HIP, SYCL) execute the 2D kernels, selected at runtime above a cell-count gate.
-- Per-cell parameter surfaces (roughness, initial depth, initial velocity), the full set of 2D boundary condition types, and 1D↔2D exchange booked per routing step by default.
-- Standing analytic validation against the SWASHES benchmark set — lake at rest (emerged and immersed), Ritter and Stoker dam breaks, Thacker planar and radial oscillations, MacDonald gradually-varied profiles, and subcritical, transcritical and shocked bump flows.
-- Mesh generation reworked to stream arbitrarily large DEMs, with a mesh cache sidecar and tiled level-of-detail rendering in the GUI.
+The exchange configuration now includes per-node `[2D_NODE_COUPLING]` types, automatic coupling areas and the regime-aware `COUPLING_LAW WEIR_ORIFICE` option. Authored coupling rows and overrides persist through GeoPackage I/O.
 
-**Remaining scope:**
-- Continued validation against published inundation benchmarks (e.g. the UK Environment Agency test cases) and field-validated case studies; the analytic suite above is green but is not a substitute for these.
-- Performance and robustness hardening on large regional meshes based on beta testing feedback.
-- 2D water quality transport (Section 2.2) on the same mesh.
+OpenMP, CUDA, HIP and SYCL surface plugins load separately from the core. Active groundwater, transported species/age/temperature and porous-ground heat can require the built-in CPU marcher. The CPU implementation and numerical/performance review are documented in the [2D CPU qualification chapter](docs/manuals/engine/sections/Chapter7-TwoDimensionalCpu.md); its results do not establish GPU performance or correctness.
 
-### 1.3 Spatially Explicit Inlets — Mode-Switching Junction Nodes 🔬
+**Remaining work:**
 
-**Motivation:** Since SWMM 5.2, inlets are attributes of street and channel conduits (`[INLET_USAGE]`): capture flow is computed from approach hydraulics and applied as a flow modification inside the link, with ponding tracked at a separate reference node. The inlet has no independent hydraulic presence, so inlet-controlled surface/sewer exchange cannot respond to the hydraulic state of the node it drains to.
+- Published inundation benchmarks and measured catchment case studies beyond the analytic SWASHES suite.
+- Long-period damping, mesh-dependent stability and production-scale accuracy studies.
+- Qualification of additional process/backend combinations, including groundwater transport under the RK2 surface route. Standalone CLOSED_FORM/ENSLAVED/SIGMA water, pollutants/MSX, age and transported water temperature now support CPU SSP-RK2, including SIGMA layer chemistry and symmetric groundwater reactions; porous heat, chemical/age inventories and reactions also support restricted RK2 under constant, time-series or held air thermal boundaries, including latent soil evaporation. Finite surface/soil RK2 contacts now include pollutants/MSX and age with complete aquifer coverage; nonlinear radiative, sensible and accepted surface latent atmospheric exchange are also qualified; copied surface and groundwater runtime sources, aquifer HEAD/FLOW frames, copied constant surface STAGE/FLOW overrides with wall fallback and rain/ET/paired infiltration now share bounded stages and expiry/restart ownership; further heat and borrowed source/network owners retain first-order requirements.
+- Further large-mesh performance work where deployment measurements justify it.
 
-**Status:** Design recorded. No implementation yet.
+The implicit CVODE/ARKODE 2D integrators are retired; they are not an alternative operational route.
 
-**Planned scope:**
-- Promote inlets to first-class junction nodes that switch mode based on approach hydraulics: capturing street flow when gutter spread exceeds a threshold, and reverting to passive junctions otherwise.
-- HEC-22 grate and curb-opening capture retained as the capture closure, evaluated at the node rather than as a link post-processing step.
-- Ponding, bypass, and re-entry resolved at the inlet node itself, enabling two-way street ↔ sewer exchange under surcharge.
+### 1.3 Spatially Explicit Inlets — Mode-Switching Junction Nodes ✅
 
----
+**Implemented:** `[INLET_JUNCTIONS]` promotes inlet capture to a hydraulic junction with its own head, HEC-22 grate/curb capture, bypass, ponding and sewer-to-street backflow. The existing conduit-attribute `[INLET_USAGE]` form remains supported. The engine rejects double capture when both forms are assigned to the same attached conduit.
+
+**Remaining work:** broader engineering case validation and continued parity checks for the conventional HEC-22 capture path.
 
 ## 2. Water Quality Transport
 
-### 2.1 Advection-Dispersion Model — Pipe Flow 🔧
+### 2.1 Pipe Advection–Reaction–Dispersion ✅
 
-**Motivation:** The OpenSWMM Engine currently supports simplified first-order water quality routing in pipes. A full advection-dispersion equation (ADE) solver will enable physically accurate simulation of constituent mixing and longitudinal dispersion in pressurized and open-channel conduits.
+**Implemented:** `QUALITY_SOLVER` selects legacy tanks-in-series, Eulerian ARD (`EULERIAN_ARD`/`ARD`) or Lagrangian parcel transport (`LAGRANGIAN`/`LARD`). The operational ARD and LARD engines provide conduit transport, dispersion, external loading, node mixing/treatment and mass accounting, with reaction, water-age and heat bindings where supported.
 
-Two routes are being developed, and they are complementary rather than competing — one rides the finite-volume hydraulic mesh, the other is a stand-alone quality engine usable under any flow routing model.
+The hydraulic FV solver also contains conservative scalar kernels on its own mesh. These scheme-level kernels are distinct from selecting the operational ARD quality engine; their existence does not establish complete model-load, treatment and output integration on the hydraulic FV mesh. Its scalar FCT sweep currently requires synchronous stepping.
 
-**Route A — Eulerian transport on the finite-volume mesh (implemented at scheme level).** The cell mesh of Section 1.1 already carries advected species. The species flux is the same mass flux the water used, upwinded on the contact speed, which makes solute mass conservation exact and keeps a uniform concentration field uniform under any flow, including reversal and drying. First-order upwind, MUSCL and QUICKEST-ULTIMATE reconstructions are available, limited by flux-corrected transport so the discrete maximum principle holds without sacrificing conservation, and longitudinal dispersion is treated implicitly (`FV_DISPERSION`) so the Δx²/2D_L step restriction never binds. Verified against analytic transport gates.
+**Remaining work:** complete and qualify that hydraulic-FV scalar integration, broaden transport/reaction/structure combinations, and document resolution, parcel-merging and timestep sensitivity for engineering applications.
 
-*Remaining for Route A:* the transport layer is not yet connected to the project's `[POLLUTANTS]`, land-use buildup/washoff, inflows or treatment — it is exercised through the solver's own gates. Wiring it up, deciding how `QUALITY_SOLVER` selects between the legacy Eulerian solver, Route B and finite-volume transport, and reporting cell-resolved concentrations are the open items. Note that local time stepping is disabled while species are transported, because the flux-corrected transport limiter needs one synchronous sweep.
+See the [transport reference](docs/manuals/reference/quality/sections/Chapter7-AdvectionReactionDispersion.md).
 
-**Route B — Lagrangian parcel tracking (design study recorded, not implemented).** Parcels of water and their constituent loads are advected along the flow field, with dispersion applied as a superimposed Fickian random-walk step. The approach is free of numerical diffusion, carries no Courant constraint on advection, conserves mass at the parcel level, and — unlike Route A — is independent of the hydraulic discretization, so it works under dynamic wave and kinematic wave routing as well. It is the natural host for the multispecies reaction system of Section 2.4, since reactions are evaluated along parcel trajectories.
+### 2.2 Overland Transport and Surface Quality ✅
 
-*Planned scope for Route B:*
-- Lagrangian parcel-tracking advection for 1D pipe and conduit flow across all SWMM link and node types, driven by velocity fields from the flow routing solver.
-- Random-walk dispersion on parcel trajectories using user-specified or empirically estimated longitudinal dispersion coefficients.
-- Parcel injection, merging, and splitting logic to maintain solution resolution while controlling computational cost.
-- Mass-conservative interpolation of parcel concentrations onto the fixed computational grid for output and coupling.
-- Water age as a built-in reserved species.
-- Numerical alignment with the legacy Eulerian solver in the degenerate case (single bulk species, first-order decay, no dispersion, complete-mixing storage) as a parity gate, plus comparison to analytical solutions for simple pipe transport problems.
+**Implemented:** the 2D marcher carries species, age and temperature on the surface mesh according to the transport policy. Rainfall quality, infiltration, saturation-excess return, 1D/2D transfers, cell coverages, buildup, washoff, sweeping and dispersion have operational paths. Multispecies surface processes share the model's reaction-species definitions.
 
-### 2.2 Advection-Dispersion Model — Overland Flow 📋
+**Remaining work:** broader catchment-scale transport validation, mixed surface ownership and wet/dry transition qualification, and backend/order combinations beyond the supported CPU profile. A transported particulate pollutant is not a sediment-bed or morphodynamic model (Section 3).
 
-**Motivation:** Surface runoff carries dissolved and particulate constituents across the land surface. A 2D or quasi-2D ADE formulation for overland flow will extend water quality modeling to the catchment scale.
+See the [surface-quality reference](docs/manuals/reference/quality/sections/Chapter10-MeshSurfaceQuality.md) and [surface-quality tests](tests/unit/engine/test_2d_surface_quality.cpp).
 
-**Status:** No implementation yet. The 2D marcher solves water only; this work is sequenced behind Route A of Section 2.1, whose contact-upwinded, flux-corrected species update is the same construction applied to an unstructured 2D mesh.
+### 2.3 Groundwater Transport 🔧
 
-**Planned scope:**
-- 2D depth-averaged ADE for overland flow domains.
-- Coupling to the surface runoff and infiltration modules for flow field and source term input.
-- Boundary conditions for rainfall-driven constituent loading and inlet/outlet fluxes.
+**Implemented:** the CPU mesh aquifer carries pollutant/reaction-species mass, age and temperature through saturated/unsaturated stores. Exterior hydraulic HEAD/FLOW edges now bind `[GW_BOUNDARY_QUALITY]` composition and independent native mass/physical heat fluxes, with gross requested/accepted receipts and availability limits. Explicit `UNSAT_TRANSPORT LAYERED` enables canonical SIGMA layer inventories and LAYER initial conditions. `[REACTION_SUBSURFACE]` binds scoped SAT/UNSAT/LAYER expressions to the shared reaction integrator. LAYERED node/conduit leakage enters the actual receiving layer; sloping reaches split at layer/table intersections. Porous SAT/UNSAT reactors use the existing fixed-depth inventory, thermal temperature and protected outgoing reservations. SIGMA chemistry can also share porous soil heat through a conservative overlap map: chemistry and thermal layer counts remain independent, layer reactions use projected temperature, and fixed physical layers retain sole energy ownership. C/Python, INP/GeoPackage, native V17 state and HDF5 layer/edge results support these profiles; the GUI adds staged boundary editing, layer assignment and layer-result selection.
 
-### 2.3 Advection-Dispersion Model — Groundwater Flow 📋
+**Qualification and remaining work:**
 
-**Motivation:** Subsurface transport of dissolved constituents is relevant to infiltration-based stormwater controls, groundwater recharge, and contaminant fate. An ADE formulation for the groundwater module will complete the full subsurface-surface-pipe transport chain.
+- CPU integration/regression and heterogeneous/plume refinement qualification are in progress. Tensor dispersion now uses transverse dispersivity, skew correction, harmonic normal resistance and the solute `C_DIFF` bound; passing local flux/conservation tests does not establish universal field validity.
+- Attached mesh-only CPU bulk or SIGMA engine checkpoints now qualify matched optional BULK MSX/pollutant chemistry, age-only and heat-only layouts, WATER_ONLY or paired porous heat, and groundwater HDF5 continuation, including pending contacts, accepted cell clocks and independent grids. Managed sessions support numerical state or mesh output for this profile; reactive hydraulic/quality HEAD/FLOW edge continuation now also qualifies bulk and independent SIGMA/thermal grids, signed water forcing, imposed mass fluxes and atomic forcing-identity refusal. Qualified native LEGACY network pollutants now continue with first-order matched mesh exchange or an independent RK2 mesh; reactive/ARD/LARD network owners and surface-species/buildup output continuation retain their guards.
+- Joint conduit/node/well/edge donor tests, unequal-clock pending cold-contact/heat restart and a heterogeneous skewed-mesh diffusion refinement case now pass on CPU. Deliberate boundary-debit and compression-transfer faults are detected. Complete broader reactive network/output restart and application qualification. The SIGMA/porous overlap mapping is implemented and selected CPU profiles are tested; default BULK retains its historical saturated-contact approximation.
+- **Coupled CPU SSP-RK2:** standalone FULL_SWE with one global tier advances actual CLOSED_FORM, ENSLAVED or SIGMA aquifers. Conserved equilibrium/layer-water blends, starting-state ALE motion, beginning donors and whole-call rollback qualify smooth refinements and bounded wet/dry transitions. Authored wells and aquifer HEAD/FLOW edges split the shared stages at forcing knots and reversals. Switching events have no blanket second-order claim.
+- **RK2 chemistry and age:** bulk or SIGMA inventories, sorption, dispersion, explicit age production, pollutant decay and surface/SAT/UNSAT/LAYER MSX kinetics share the accepted transaction. Symmetric reaction halves use actual aqueous capacity and local temperature, with bounded work-limit retries and signed production/loss ledgers. EUL, algebraic and non-smooth laws retain their declared accuracy limits.
+- **RK2 thermal owners:** WATER_ONLY temperature advection and porous energy/conduction support cold forcing, independent chemistry/thermal grids, phase-aware reactions, sensible or latent soil ET and constant, project-series or held AIR boundaries. Complete aquifer coverage also supports reciprocal finite surface/soil heat, chemical and age contacts over physical VFR footprints. Nonlinear radiation, sensible atmosphere and surface latent cooling qualify. Latent joules follow actual accepted evaporation, with separate sensible water export and bounded whole-interval retries for thermal admissibility. Channel/LID thermal owners and reciprocal snow/soil heat remain outstanding under RK2. Independent owned degree-day/UEB snow now supplies water through symmetric source halves, without heat or quality transport.
+- **Copied runtime inputs:** surface/groundwater sources, aquifer HEAD/FLOW, rain/quality, ET and paired infiltration share bounded stages, chronological expiry and accepted water/species/heat receipts. Authored constant or in-memory series STAGE/FLOW boundaries and copied overrides qualify with exterior binding and wall or authored fallback, including held beginning-state Riemann evaluations, competing-edge budgets, clear history and atomic provider frames. Immutable series use actual Euler times, shared knot/reversal cuts and completed-clock restart validation. Normal-flow and in-memory rating curves now evaluate each Euler state, with accepted-state curve diagnostics and atomic restart/override fallback. Borrowed network/catchment owners remain guarded. Accepted rain and evaporation reach public/cell/HDF5 reports once.
+- **Managed standalone RK2 restart:** numerical, binary, mesh-HDF5 and combined sessions preserve engine/native-weather calendars, cursors, pending batches, copied prescriptions and actual numerical/receipt state. Exact split runs and read-only inspection cover reactions, age and qualified thermal grids; corrupt or incompatible state is refused before installation/output publication, with valid retry. Scientific HDF5 values, attributes and schema match exactly; allocation addresses may differ. Earlier managed RK2 router snapshots lacking boundary receipt/fallback state are refused. Component format 4 and first-order formats retain their documented scope. Networks without shared exchanges now use their existing hydraulic checkpoint owner, including qualified native LEGACY pollutant state, alongside the RK2 aquifer, with exact physical/calendar continuation and unchanged independent trajectories. Shared RK2 network/catchment owners, wider network quality and source journals remain outside this managed profile. Binary and combined companions now qualify for matched mesh-only transport under first-order and RK2, with byte-exact native binary history and exact scientific HDF5 continuation. Immutable hourly MET_FILE caches now bind every loaded weather value and resume exactly after file removal; native weather cadence is preserved. Owned water-only degree-day/UEB snow resumes its actual point state, cover, signed vapor and liquid ledgers with paired numerical clocks in all four output modes; copied weather and snow heat/quality coupling remain guarded.
+- **Backend qualification:** surface plugin ABI 7 protects the shared receipt layout; matching build contracts are also required. An optional versioned host OpenMP operator computes raw CLOSED_FORM recharge, with C/Python availability/use/thread diagnostics. Water, receipts, transport, reactions and heat remain CPU-owned. Fresh macOS installed-package checks prove actual raw-recharge execution at one/four host threads and exact managed continuation; plugin repair/signing failures now reject installation. Full groundwater/transport acceleration and CUDA/HIP/SYCL execution remain outstanding; CPU fallback and surface alignment do not qualify device groundwater execution.
 
-**Planned scope:**
-- 1D or 2D ADE for the saturated zone, coupled to the existing groundwater module.
-- Dispersion tensor formulation accounting for mechanical dispersion and molecular diffusion.
-- Coupling to the surface and pipe water quality modules at shared boundaries.
+**Native pollutant restart:** Native LEGACY network pollutants now support numerical/binary checkpoint continuation, including signed native loads, current/old concentrations, load statistics and pollutant balances. First-order matched conservative mesh/aquifer rows can share actual surface/node exchange; an independent RK2 mesh can retain the native network quality owner alongside its own integrator. Pollutant order, units, decay, defaults and per-element initial quality participate in model identity. This profile excludes catchments, LIDs, treatment expressions, native heat/age and multispecies reactions. Shared network RK2, ARD/LARD continuation and broader quality owners remain guarded.
 
-### 2.4 Multispecies Reaction Support — All Flow Domains 🔬
+**Integrated restart coverage:** 96 additional global-RK2 sessions combine skewed quad/mixed meshes, heterogeneous aquifers, independent chemical/thermal grids, both boundary domains, reactions, age, latent cooling and cached weather. Physical budgets and numerical/combined histories pass together. Shared catchment/network/channel/LID RK2 and reciprocal snow heat/quality remain outstanding.
 
-**Motivation:** Real-world water quality problems involve interacting chemical and biological species (e.g., nitrogen cycling, dissolved oxygen–BOD interactions, pathogen decay). A general multispecies reaction framework will allow users to define arbitrary reaction networks without modifying source code.
+See the [transport contracts, examples and limits](docs/design/groundwater-transport.md), [kernel tests](tests/unit/engine/test_gw_transport_kernel.cpp) and [SIGMA conservation tests](tests/unit/engine/test_sigma_conservation.cpp). The new work is a development implementation, not a declaration that every groundwater completion gate has passed.
 
-**Status:** Design recorded — an EPANET-MSX-equivalent reaction system (user-defined rate ODEs and equilibrium DAEs, bulk and wall species, selectable integrators with adaptive error control) specified as part of the Route B strategy in Section 2.1. No implementation yet. Whichever transport route ships first, the reaction system is intended to be written once and shared, not duplicated per transport scheme.
+### 2.4 Multispecies Reactions Across Domains 🔧
 
-**Planned scope:**
-- A general reaction network specification (user-defined stoichiometry, rate laws, and kinetic parameters) applicable to pipe, overland, and groundwater transport.
-- Built-in implementations of common reaction sets: nitrification/denitrification, DO-BOD, first-order decay.
-- Operator-splitting approach separating transport and reaction steps for numerical stability.
-- Validation against published multispecies benchmark problems and analytical solutions for simple reaction networks.
-- Applicable across all ADE-enabled flow domains (Sections 2.1–2.3) with a unified species definition interface.
+**Implemented:** shared reaction-species definitions, bulk/wall declarations,
+named coefficients and expressions, rate/equilibrium/formula evaluation and
+selectable integrators. Bindings exist for legacy, ARD and LARD network
+transport and supported surface processes. Groundwater has explicit scoped
+`[REACTION_SUBSURFACE]` reactors for the supported CPU profiles described in
+Section 2.3. Standard native binary output includes reaction-species columns.
 
----
+The 2026-10-19 increment implements four formerly reserved sections:
+
+- `[REACTION_SOURCES]`: additive CONC/MASS node loads through the existing external species-load seam; MASS uses declared mass units per second.
+- `[REACTION_PATTERNS]`: cyclic nonnegative source multipliers, with PATTERN_TIMESTEP in seconds and a simulation-start clock origin.
+- `[REACTION_PARAMETERS]`: node/link PARAMETER overrides used by terms and all expression forms, including ARD parent links and LARD segments.
+- `[REACTION_REPORT]`: species-column selection in native output without altering internal species indexing. Ordinary `[REPORT]` retains element selection.
+
+The 2026-10-20 increment adds `[REACTION_SUBCATCHMENTS]` for BULK wet pools
+on non-LID subcatchments. It mixes rain/run-on with retained mass, integrates
+its own expressions, then allocates mass to infiltration, runoff and storage.
+It uses conservative residual-mass storage, records reaction/clamp amounts,
+and exposes the scope through C/Python and File editing. Constants, global
+parameters, terms, DT and beginning-of-step runoff TEMP are supported;
+WALL/pollutant dependencies and other hydraulic inputs are refused. Existing
+surface-quality closure remains unchanged without explicit subcatchment laws.
+
+LEGACY now keeps WALL state attached rather than advecting or evaporatively
+concentrating it as dissolved mass. The dissolved routing ledger excludes
+WALL densities. ARD retains its LEGACY fallback for WALL systems; LARD refuses
+them. LEGACY/LARD tank kinetics skip zero and sub-litre storage volumes.
+Selected output and parameter overrides are checked across all three network
+quality solvers. Reusable [reaction networks](examples/reactions/README.md)
+include parent/product conversion, temperature-dependent decay and attached
+wall decay. The companion benchmark repository adds a `quality/reactions`
+suite with 24 analytic cells across quality solvers, rate units and overrides,
+plus three rain-fed wet-pool conservation checks (self-consistency only).
+
+The next increment adds native checkpoint/output continuation for the qualified
+1D chemistry profile, geometry-aware WALL exchange, selective wet laws,
+dry land-use reactors, porous LID inventories and FLOWPACED/SETPOINT boosters.
+The editor has dedicated source, pattern, parameter, wall-area and report tables.
+The companion suite now has 38 cells, including analytic wall, dry-buildup and
+setpoint cases and a rain-fed bioretention conservation case.
+
+**Remaining work and restrictions:**
+
+- Full native reaction continuation currently qualifies CPU 1D network, wet/dry surface and supported LID inventories, with inline rainfall and native output. That 1D profile excludes heat/age combinations, active 2D surface chemistry, subsurface laws, pollutants and detailed ARD/LID output. A separate mesh-only first-order profile supports matched optional BULK MSX/pollutant inventories, age and porous heat, including age-only and heat-only layouts, without live network or private catchment owners (Section 2.3). State-only hotstarts cannot carry porous LID reaction inventories.
+- `WALL_GEOMETRY YES` supplies AV in AREA_UNITS/litre. Conduits use actual wetted perimeter, physical length and barrels; storage requires explicit contact area. WALL density uses fixed reference area, kinetics scale by wetted fraction, and dry inventory is retained. WALL algebraic projections remain refused; ARD uses LEGACY fallback and LARD refuses WALL.
+- `[REACTION_LIDS]` explicitly opts controls into BULK layer transport. Storage-node bucket/Richards reactors require LEGACY quality and a non-Mesh bottom. Conventional units require full subcatchment coverage and all units to opt in; bioretention and permeable-pavement stacks have conservation/restart checks. Partial capture, covered rain barrels, WALL chemistry and 2D-owned conventional units remain refused.
+- Wet-pool mixing and dry buildup accrual/washoff remain first-order splits. Selective subcatchment laws and separate land-use buildup laws are implemented; exact continuously fed CSTR integration and wider timestep/domain qualification remain future work.
+- Broaden independent chemistry and field benchmarks. Current analytic and conservation cases are numerical qualification, not calibrated or universal chemistry validation. Changes are committed locally; publication requires pushing the repositories.
+
+The [reaction component](src/engine/transport/components/ReactionModule/ReactionsComponent.cpp),
+[configuration/qualification tests](tests/unit/engine/test_reactions_config.cpp),
+[output-quality tests](tests/unit/engine/test_output_quality.cpp) and
+[multispecies tests](tests/unit/engine/test_msx_parity.cpp) record these distinct
+capabilities. Source patterns are sampled on the inflow-assembly clock;
+routing steps must resolve their changes. The GUI's Sources tab opens the
+validated File editor for the extended sections; dedicated structured tables
+are not yet provided.
 
 ## 3. Sediment Transport 📋
 
-**Motivation:** Sediment is a primary pollutant and transport vehicle for nutrients, metals, and pathogens in urban stormwater systems. A sediment transport module will enable simulation of erosion, deposition, and sediment routing through catchments, channels, and pipe networks.
+**Planned:** overland erosion/detachment, suspended and bedload routing, particle-size fractions, deposition and re-entrainment, sediment-associated constituents, and validation against flume and field data.
 
-**Planned scope:**
-- Overland erosion: USLE/RUSLE-based or physically based detachment models driven by rainfall and surface runoff shear stress.
-- Sediment routing in channels and pipes: bedload and suspended load transport using empirical (e.g., Engelund-Hansen, Yang) or process-based formulations.
-- Particle size fractionation: multi-fraction sediment transport supporting cohesive and non-cohesive particles.
-- Deposition modeling in detention basins, retention ponds, and low-velocity pipe reaches.
-- Coupling to the water quality transport module for sediment-associated constituent transport (e.g., particle-bound phosphorus).
-- Regression testing against published flume data and field-validated benchmark cases.
+There is no operational sediment-bed evolution or morphodynamic solver claimed here. Existing pollutant transport and thermal `SEDIMENT_EXCHANGE` do not provide those processes.
 
----
+## 4. Heat Transport 🔧
 
-## 4. Heat Transport 📋
+**Implemented baseline:** network/watershed temperature transport, surface sensible/latent exchange, radiation, solar forcing, supported LID layer heat and prescribed bed/hyporheic exchange. Per-element and tag-based heat overrides and runtime climate forcing are implemented; they are no longer a wholly planned feature.
 
-**Motivation:** Thermal loading from urban surfaces, impervious cover, and stormwater infrastructure is a significant stressor on receiving water bodies. A heat transport module will enable simulation of stormwater temperature dynamics from catchment to receiving water.
+**Experimental coupled mesh implementation:** `HEAT_MODEL COUPLED` and the required transport switches enable finite surface/soil heat exchange. `THERMAL_MODEL POROUS_EQUILIBRIUM` adds soil-plus-water storage and thermal transport beneath the spatial aquifer. Supported paths include lateral saturated heat transfer, routed-channel mesh-ground contacts, reciprocal UEB snow/soil exchange and mapped Richards LID layer heat. Accepted water and energy transfers share explicit ownership and budgets. Groundwater's default `WATER_ONLY` thermal representation remains distinct.
 
-**Planned scope:**
-- Surface energy balance model for catchment-scale water temperature estimation, accounting for solar radiation, long-wave exchange, evaporation, and conduction.
-- 1D longitudinal heat transport in pipes and channels, coupled to the ADE solver (Section 2.1).
-- Coupling to the groundwater module for subsurface heat exchange and baseflow temperature.
-- Thermal stratification in detention basins (simplified layer model).
-- Validation against field data from monitored urban catchments and published benchmark cases for stream temperature modeling.
+**Remaining work:**
 
----
+- Broader geometry, spatial/time refinement and material-contrast qualification for the coupled model, especially channel/LID/soil contacts and UEB melt, drying and rewetting transitions.
+- Complete tracer/age partitioning and atmospheric/footprint ownership for the experimental ground/LID paths; heat support does not establish support for every pollutant, reaction or age combination.
+- Expand supported restart, backend and GUI release profiles. Native coupled thermal restart exists for qualified configurations (Section 9), while the wider combination matrix remains open.
+- Field-temperature validation and detention-basin stratification remain development goals; neither is asserted as a delivered validation result or general operational capability here.
+
+See the [thermal implementation and limits](docs/design/mesh-thermal-model.md), [mesh heat tests](tests/unit/engine/test_mesh_heat.cpp), [porous heat tests](tests/unit/engine/test_porous_heat.cpp) and [per-element heat tests](tests/unit/engine/test_heat_per_element.cpp).
 
 ## 5. Groundwater
 
-### 5.1 Two-Zone Model ✅
+### 5.1 Conventional Two-Zone Subcatchment Aquifers ✅
 
-**Motivation:** Groundwater interaction is central to infiltration-based stormwater controls, baseflow generation, and subsurface drainage. A two-zone (unsaturated/saturated) groundwater model provides subsurface flow representation in the new engine and serves as the flow foundation for the groundwater advection-dispersion transport module (Section 2.3).
+**Implemented:** the SWMM per-subcatchment aquifer path retains `[AQUIFERS]`, `[GROUNDWATER]` and `[GWF]`, with unsaturated/saturated moisture accounting, percolation, evapotranspiration and user-defined lateral flow to the drainage network. C and Python interfaces expose aquifer parameters.
 
-**Status:** Implemented in the 6.0.0 line. Each subcatchment carries an independent aquifer with an upper unsaturated and a lower saturated zone, integrated as a batch of independent ODE systems (moisture accounting, percolation, deep percolation and evapotranspiration from both zones), with the user-definable lateral flow equation to drainage nodes and channels. `[AQUIFERS]`, `[GROUNDWATER]` and `[GWF]` parse with SWMM 5.x semantics, and aquifer parameters are readable and writable at runtime through the C API and the Python bindings.
+**Remaining work:** continued hydrology/legacy-parity verification and explicit documentation of transport support for this path. Mesh-aquifer transport in Section 2.3 does not automatically apply to conventional subcatchment aquifers.
 
-**Remaining scope:**
-- The coupling interface for the groundwater ADE transport module (Section 2.3).
-- Continued legacy-parity verification alongside the rest of the hydrology suite.
+### 5.2 Spatially Explicit Groundwater — FV Mesh Integration 🔧
 
-### 5.2 Spatially Explicit Groundwater — FV Mesh Integration 🔬
+**Implemented:** opt-in `[2D_AQUIFER]` cells with a moving water table, saturated lateral Darcy exchange, surface infiltration/return flow, deep losses, node/conduit beds, evapotranspiration, soil-characteristic choices and CLOSED_FORM/ENSLAVED/SIGMA unsaturated closures. Groundwater transport and porous thermal work are described in Sections 2.3 and 4.
 
-**Motivation:** The two-zone aquifer of Section 5.1 is integrated per subcatchment: lateral exchange is the empirical SWMM cubic polynomial, there is no inter-subcatchment communication, and the aquifer's only feedback to the rest of the engine is an end-of-step infiltration cap. Four physically real processes are therefore not representable: saturation-excess (Dunne) overland flow when the water table reaches the surface, return flow re-emerging downslope after lateral subsurface transport, head-driven pipe and node ↔ aquifer exchange (the physical mechanism behind RDII, groundwater inflow, and sewer exfiltration), and true capillary rise feeding evaporation.
+**Remaining work and restrictions:**
 
-**Status:** Design recorded, following the semidiscrete finite volume multiprocess watershed formulation of Qu & Duffy (2007). No implementation yet.
+- Continue closure-ladder, column-reference and catchment-scale validation; the non-Gardner recharge generalizations remain experimental.
+- Complete a true subcatchment-cell/outlet implementation for `MODE PER_SUBCATCH`. The current selector removes lateral topology but still runs on mesh cells; it is not the completed mesh-free aquifer representation originally proposed.
+- Extend supported boundary, reconstruction-order and backend combinations without changing native ownership or double-counting subcatchment infiltration and aquifer exchanges.
 
-**Planned scope:**
-- A vertically integrated, complementary two-layer subsurface kernel on the 2D FV mesh — unsaturated moisture depth and saturated thickness per cell, joined at a moving water table.
-- Closed-form interfacial recharge flux with a runtime-selectable soil characteristic (Gardner, Russo, Brooks–Corey, van Genuchten), smooth in both states so no piecewise switching is needed.
-- Lateral saturated Darcy exchange on the same FV stencil the 2D surface router already assembles, giving the four missing processes above without new closures.
-- An enslaved shallow-water-table reduction collapsing each cell to a single ODE in saturated thickness, and a benchmarked comparison against a kinematic-wave approximation of unsaturated-zone dynamics across behavioural regimes from pipe-only urban projects to fully meshed catchments.
-- Legacy alignment: all existing SWMM aquifer behaviour continues to route through the unchanged per-subcatchment path (Section 5.1); the mesh-coupled kernel is opt-in.
+See the [groundwater reference](docs/manuals/reference/hydrology/sections/Chapter9-MeshGroundwater.md) and [kernel implementation](src/engine/2d/subsurface/SubsurfaceSolver.cpp).
 
----
+## 6. LID Hydraulic Integration — LID as Storage Nodes 🔧
 
-## 6. LID Hydraulic Integration — LID as Storage Nodes 🔬
+**Implemented:** `[LID_NODES]` assigns layered controls to ordinary storage nodes. Multiple links and independent control rules supply head-dependent outlets, backwater and reversal. Classical layered flow, layer-specific pollutant treatment, outlet anchors, explicit bottom ownership and an optional adaptive 1D Richards column are operational. Conventional subcatchment LIDs remain supported.
 
-**Motivation:** LID units are currently subcatchment attributes connected through the runon mechanism — a one-way hydrological cascade that passes volume fluxes with no hydraulic mediation. Real green-infrastructure trains are hydraulically connected devices: flow between units is head-dependent, a saturated downstream unit exerts backpressure on the upstream one, and control structures between units regulate flow based on hydraulic state.
+Mapped Richards LID/aquifer water exchange and coupled thermal layers have supported experimental paths; these are no longer design-only work.
 
-**Status:** Design recorded. No implementation yet.
+**Remaining work:**
 
-**Planned scope:**
-- Map LID layers (surface, media, gravel) onto extended storage nodes using a reduced-physics kinematic Richards ODE for the media layer.
-- Head-dependent flow between LID units and to/from the conveyance network, with two-way feedback so network surcharge propagates upstream through the LID train.
-- Orifice, weir, and underdrain control structures at LID connections, participating in the standard link hydraulics and control-rule machinery.
-- Backward compatibility with the existing subcatchment-attribute LID representation, which remains the default.
+- Broaden hydraulic, routing-step and porous-cell convergence studies and independent/field validation.
+- Extend transport/reaction/age support across classical and Richards layers and qualify the combined mesh-aquifer/thermal configurations.
+- Complete profile-history output and the remaining GUI/restart combinations. Classical and Richards LIDs do not share an unrestricted support matrix.
 
----
+See the [storage-node LID manual](docs/manuals/engine/sections/Chapter6-LidStorageNodes.md), [classical hydrology implementation note](docs/design/lid-node-legacy-hydrology.md), [LID tests](tests/unit/engine/test_lid_nodes.cpp) and [thermal limits](docs/design/mesh-thermal-model.md).
 
 ## 7. Deferred Items
 
-The following items have been raised in community discussions, or explored and set aside, and are not currently scheduled. They may be reconsidered in future release cycles as resources permit or as community interest grows.
+| Item | Current disposition |
+|---|---|
+| Implicit 2D CVODE/ARKODE integrators | Retired; the explicit marcher replaced this route and its SUNDIALS/hypre dependencies |
+| Real-time data assimilation and sensor fusion | Deferred; external telemetry infrastructure is outside the current implementation |
+| Machine-learning surrogate models | Deferred research direction; no operational engine module claimed |
 
-| Item                                           | Reason for Deferral                                                        |
-|------------------------------------------------|----------------------------------------------------------------------------|
-| 2D overland flow (full shallow water equations) | Local inertial finite volume model implemented (Section 1.2); full dynamic-wave SWE not currently scheduled |
-| Implicit 2D time integration (CVODE/ARKODE)     | Explored and retired — the explicit marcher outperformed it on the benchmark models and removed two heavy dependencies |
-| Real-time data assimilation & sensor fusion     | Requires external telemetry infrastructure not yet in scope                |
-| Machine learning surrogate models               | Research area; may be introduced as an optional experimental module        |
-
-**No longer deferred.** *GPU-accelerated solvers* have moved into development: the
-2D marcher's kernels run through Kokkos-based plugin backends (OpenMP, CUDA, HIP,
-SYCL) selected at runtime above a cell-count gate, shipped as optional plugin
-binaries so the base build carries no GPU dependency. The 1D finite volume solver
-(Section 1.1) has the same loader hooks and option surface but no plugin
-implementation yet.
-
----
+Full shallow-water 2D momentum and Kokkos surface plugins are implemented (Section 1.2). 1D device execution remains outstanding (Section 1.1).
 
 ## 8. Completed Items
 
-The 6.0.0 line is still in pre-release, so the version column records the
-pre-release the work first shipped in rather than a stable release. "Unreleased"
-means merged and gated but not yet carried by a tag.
+The version column distinguishes released baselines from later source milestones. **Unreleased** identifies development work beyond the recorded `v6.0.0-alpha.3` release baseline; it does not assign a future release or claim that every related extension is complete.
 
-| Item                                                                                  | Version         |
-|---------------------------------------------------------------------------------------|-----------------|
-| Data-oriented, reentrant engine core (SoA state, opaque handle, plugin I/O, lifecycle state machine) | 6.0.0-alpha.1   |
-| Public C API, Python bindings and MCP server over the model, options, results and runtime state | 6.0.0-alpha.1 → ongoing |
-| Two-zone groundwater model (Section 5.1)                                              | 6.0.0-alpha.1   |
-| 1D/2D coupled overland flow — explicit local inertial finite volume marcher (Section 1.2) | 6.0.0-alpha.1 (hardened through alpha.3) |
-| Kokkos GPU/threaded plugin backends for the 2D solver (OpenMP, CUDA, HIP, SYCL)        | 6.0.0-alpha.2   |
-| Decoupled 1D/2D timesteps with conservative per-window exchange booking                | 6.0.0-alpha.3   |
-| Retirement of the implicit 2D integrators and their SUNDIALS/hypre dependencies        | unreleased      |
-| Per-cell 2D parameter surfaces and 2D initial conditions                               | unreleased      |
-| Explicit finite volume 1D routing, `FLOW_ROUTING FV` (Section 1.1)                     | unreleased      |
-| Cell-resolved Eulerian scalar transport on the finite volume mesh (Section 2.1, Route A) | unreleased      |
+| Implemented baseline or milestone | Release/source status |
+|---|---|
+| Data-oriented, reentrant core, public C API and Python interfaces | 6.0.0-alpha.1; interfaces continue to evolve |
+| Conventional two-zone groundwater | 6.0.0-alpha.1 |
+| Coupled explicit local-inertial 1D/2D surface routing | 6.0.0-alpha.1; hardened through alpha.3 |
+| Kokkos OpenMP/CUDA/HIP/SYCL surface plugins | 6.0.0-alpha.2 |
+| Decoupled 1D/2D timesteps and conservative exchange windows | 6.0.0-alpha.3 |
+| FV 1D routing, virtual junctions, TPA and unsteady friction | Unreleased source |
+| Full-SWE/diffusive-wave 2D closures, mixed meshes and parameter surfaces | Unreleased source |
+| Inlet junctions and revised per-node 1D/2D exchange laws | Unreleased source |
+| Operational ARD/LARD, multispecies network bindings and native species output | Unreleased source |
+| Mesh surface quality and bulk aquifer species/age/temperature transport | Unreleased source; restrictions in Section 2 |
+| Spatial aquifer flow and common-source ownership | Unreleased source; restrictions in Section 5 |
+| Storage-node LIDs, Richards columns and supported aquifer beds | Unreleased source; restrictions in Section 6 |
+| Network/watershed heat and per-element heat overrides | Unreleased source |
+| Coupled mesh, porous-ground, channel, UEB and Richards LID thermal paths | Unreleased experimental source; restrictions in Section 4 |
+| Native hot-start extensions, dated saves and qualified coupled thermal checkpoints | Unreleased source; restrictions in Section 9 |
+| HydroCouple metadata inspection, CPU 1D component execution and qualified outfall transfers | Unreleased source; restrictions in Section 9 |
+
+## 9. Interfaces, Persistence and Model Coupling 🔧
+
+### 9.1 C and Python Interfaces
+
+**Implemented:** domain APIs, programmatic model construction/editing, runtime forcing and controls, bulk results, capability diagnostics, live output reading and metadata-only opening. Schema/catalog generation and API drift checks support binding maintenance.
+
+**Remaining work:** close authoring/diagnostic gaps as new features arrive, retain strict lifecycle and unit contracts, and keep C/Python/GUI documentation aligned with actual execution support. Parsed configuration and metadata inspection must not advertise unqualified execution.
+
+### 9.2 Model I/O and Restart
+
+**Implemented:** input-file, GeoPackage and optional HDF5 model persistence; binary and 2D HDF5 results; native/legacy hot-start handling with per-save format selection and dated saves. Legacy hot starts with subcatchments can be embedded in GeoPackage without losing their runoff/trailer bytes. Native save/use includes reaction state and qualified coupled thermal engine state at accepted step boundaries.
+
+Mesh-output checkpoint capture now settles HDF5's unused allocation tail before
+recording a result prefix. Exact fresh-header identity checks, corruption rejection
+and atomic multi-output publication remain intact. An isolated macOS CPU build
+with HDF5 2.1.1 passes **174 engine checkpoint checks and 31 mesh-output checks**,
+including initial/resumed reports, compression, groundwater/thermal/Richards LID
+stores, source histories, damaged companions and relocated bundles. See the
+[mesh-checkpoint verification record](tests/verification/mesh_checkpoint_2026-10-20/README.md).
+
+**Remaining work:** extend qualification beyond the tested CPU surface/GW/snow/LID/thermal configurations to additional physical cases, platforms/backends and transport combinations. Managed water-only sessions, direct component checkpoints and coupled thermal engine checkpoints have different contracts; they are not interchangeable. Coordinated multi-component restart remains open.
+
+See the [file reference](docs/manuals/engine/sections/Chapter3-Files.md), [hot-start implementation](src/engine/core/HotStartManager.cpp) and [checkpoint tests](tests/unit/engine/test_engine_checkpoint.cpp).
+
+### 9.3 HydroCouple Components
+
+**Implemented:** optional native components built with `OPENSWMM_WITH_HYDROCOUPLE`. The generic engine component provides model metadata, qualified CPU 1D execution, native results including MSX columns, and conservative external-outfall transfers with receiver acknowledgments for its supported LEGACY-quality/heat profile. The FVQual compatibility adapter remains separate.
+
+**Remaining work:** spatial/integrated surface-groundwater execution, bidirectional hydraulic feedback, broader species and receiver profiles, coordinated restart and wider platform/package qualification. Inspection of spatial configuration is not spatial component execution.
+
+See the [component execution and qualification contract](docs/COMPONENT_ENGINE.md).
 
 ---
 
-*Last updated: August 2026 — Caleb Buahin, Technical Manager*
+*Last updated: October 21, 2026 — Caleb Buahin, Technical Manager*

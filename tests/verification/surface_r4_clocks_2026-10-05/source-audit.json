@@ -1,0 +1,24 @@
+{
+  "head": "61f19212b72e629773bce583077d8c60f2fe12b5",
+  "task_source_tree": "f57deebe7c39c28700c2f1bfbf203d833a74f921",
+  "working_file_sha256": {
+    "src/engine/hydrology/Runoff.cpp": "f798ec6c13d96cb0d29d7bce423f5d598281e8668c81b03ce0ac2f71bb889f4f",
+    "src/engine/hydrology/Runoff.hpp": "3af1396e350848125c4dc5cd79d1df31ee08a3db51b4c7015309cc9990868880",
+    "tests/unit/engine/CMakeLists.txt": "4bfa41a4c8b9df16be39a9eb45d772ce8ac9fb908caa83be45beb42e2b364743",
+    "src/engine/hydrology/SourceClockGroups.hpp": "3d19eb415b2bec78efbee43cec1c60757adfd787508aa4d9fe3ac05134837803",
+    "src/engine/hydrology/SourceClockGroups.cpp": "b6785a45568ceccbed553ee37b56d37c6a5598d02d703121c260dfa687e40bd0",
+    "tests/unit/engine/test_source_clock_groups.cpp": "b7542ff6ee96bd598cd05dae75d05d6641ba795019c01ae00f03f0f51d3e081d",
+    "plans/SURFACE_PROCESS_R4_SOURCE_CLOCKS_2026-10-05.md": "07905063d56a9464baad2d80b9ecf72070ba9bc205039e62f3c6a2fd4c9949be"
+  },
+  "isolated_file_sha256": {
+    "src/engine/hydrology/Runoff.cpp": "f798ec6c13d96cb0d29d7bce423f5d598281e8668c81b03ce0ac2f71bb889f4f",
+    "src/engine/hydrology/Runoff.hpp": "3af1396e350848125c4dc5cd79d1df31ee08a3db51b4c7015309cc9990868880",
+    "tests/unit/engine/CMakeLists.txt": "8dd34af50456985cf47dec445777fa31d089d3a781167b987288ce37dc25abae",
+    "src/engine/hydrology/SourceClockGroups.hpp": "3d19eb415b2bec78efbee43cec1c60757adfd787508aa4d9fe3ac05134837803",
+    "src/engine/hydrology/SourceClockGroups.cpp": "b6785a45568ceccbed553ee37b56d37c6a5598d02d703121c260dfa687e40bd0",
+    "tests/unit/engine/test_source_clock_groups.cpp": "b7542ff6ee96bd598cd05dae75d05d6641ba795019c01ae00f03f0f51d3e081d",
+    "plans/SURFACE_PROCESS_R4_SOURCE_CLOCKS_2026-10-05.md": "07905063d56a9464baad2d80b9ecf72070ba9bc205039e62f3c6a2fd4c9949be"
+  },
+  "build_source_path": "/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.gui/tests/verification/surface_r4_2026-10-05/isolated/openswmm.engine",
+  "build_source_matches_archived_code_and_cmake": true
+}

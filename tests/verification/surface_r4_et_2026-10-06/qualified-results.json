@@ -1,0 +1,50 @@
+{
+  "test_engine_common_source_stage": {
+    "exit_code": 0,
+    "seconds": 0.4235389999812469
+  },
+  "test_engine_source_water_driver": {
+    "exit_code": 0,
+    "seconds": 0.061991209047846496
+  },
+  "test_engine_source_clock_groups": {
+    "exit_code": 0,
+    "seconds": 0.06548258400289342
+  },
+  "test_engine_surface_exchange": {
+    "exit_code": 0,
+    "seconds": 0.07223220798186958
+  },
+  "test_engine_surface_ownership": {
+    "exit_code": 0,
+    "seconds": 0.11722808296326548
+  },
+  "test_engine_surface_aquifer_receiving": {
+    "exit_code": 0,
+    "seconds": 0.11644712497945875
+  },
+  "test_engine_surface_et_budget": {
+    "exit_code": 0,
+    "seconds": 0.14629575004801154
+  },
+  "test_engine_runoff": {
+    "exit_code": 0,
+    "seconds": 0.07002779201138765
+  },
+  "test_engine_lid": {
+    "exit_code": 0,
+    "seconds": 0.08947320899460465
+  },
+  "test_engine_lid_nodes": {
+    "exit_code": 0,
+    "seconds": 11.566949125030078
+  },
+  "test_engine_2d_inertial_marcher": {
+    "exit_code": 0,
+    "seconds": 1.5062542500090785
+  },
+  "test_engine_runtime_coupling_api": {
+    "exit_code": 0,
+    "seconds": 0.07294187502702698
+  }
+}

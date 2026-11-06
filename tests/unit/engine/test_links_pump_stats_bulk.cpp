@@ -1,6 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file test_links_pump_stats_bulk.cpp
- * @brief Unit tests for the bulk pump-statistics C API
+ * @file      test_links_pump_stats_bulk.cpp
+ * @brief     Unit tests for the bulk pump-statistics C API
  *        (`swmm_link_get_pump_stats_bulk`).
  *
  * @details The bulk getter is the single-call replacement for the three
@@ -27,9 +43,9 @@
  * @see docs/C_API_BINDINGS_MCP_IMPROVEMENT_PLAN.md Phase 1
  * @ingroup engine_tests
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -51,14 +67,19 @@ protected:
     SWMM_Engine engine_ = nullptr;
     int n_links_ = 0;
 
+    /**
+     * @brief Open/initialize the drainage model and cache its link count.
+     *
+     * Loads site_drainage_model.inp with same-stem report/output paths and requires a positive object
+     * count. Does not start or simulate; cases inspect initialized bulk API state. Fatal GoogleTest
+     * assertions return from this hook on failure; any created handle remains owned by the fixture for
+     * teardown.
+     */
     void SetUp() override {
         engine_ = swmm_engine_create();
         ASSERT_NE(engine_, nullptr);
-        ASSERT_EQ(swmm_engine_open(engine_,
-                                    "site_drainage_model.inp",
-                                    "site_drainage_model.rpt",
-                                    "site_drainage_model.out",
-                                    nullptr),
+        ASSERT_EQ(swmm_engine_open(engine_, "site_drainage_model.inp", "site_drainage_model.rpt",
+                                   "site_drainage_model.out", nullptr),
                   SWMM_OK)
             << "open failed: " << swmm_get_last_error_msg(engine_);
         ASSERT_EQ(swmm_engine_initialize(engine_), SWMM_OK);
@@ -66,6 +87,12 @@ protected:
         ASSERT_GT(n_links_, 0);
     }
 
+    /**
+     * @brief Close and destroy the fixture model, then clear its handle.
+     *
+     * Checks for null, ignores close status and releases partial state after setup/test failure. No
+     * simulation report is requested here.
+     */
     void TearDown() override {
         if (engine_) {
             swmm_engine_close(engine_);
@@ -81,21 +108,18 @@ protected:
 // (-1) and the corresponding on_time / volume must be zero.
 // ---------------------------------------------------------------------------
 TEST_F(PumpStatsBulkTest, FullBufferAllConduitsYieldsSentinel) {
-    std::vector<int>    cycles(n_links_, 0xDEADBEEF);
+    std::vector<int> cycles(n_links_, 0xDEADBEEF);
     std::vector<double> on_time(n_links_, -42.0);
     std::vector<double> volume(n_links_, -42.0);
 
-    ASSERT_EQ(swmm_link_get_pump_stats_bulk(engine_,
-                                             cycles.data(),
-                                             on_time.data(),
-                                             volume.data(),
-                                             n_links_),
+    ASSERT_EQ(swmm_link_get_pump_stats_bulk(engine_, cycles.data(), on_time.data(), volume.data(),
+                                            n_links_),
               SWMM_OK);
 
     for (int i = 0; i < n_links_; ++i) {
-        EXPECT_EQ(cycles[i],  -1)  << "link " << i;
+        EXPECT_EQ(cycles[i], -1) << "link " << i;
         EXPECT_EQ(on_time[i], 0.0) << "link " << i;
-        EXPECT_EQ(volume[i],  0.0) << "link " << i;
+        EXPECT_EQ(volume[i], 0.0) << "link " << i;
     }
 }
 
@@ -108,15 +132,12 @@ TEST_F(PumpStatsBulkTest, FullBufferAllConduitsYieldsSentinel) {
 // non-pump links.)
 // ---------------------------------------------------------------------------
 TEST_F(PumpStatsBulkTest, EquivalenceWithScalarGetters) {
-    std::vector<int>    cycles(n_links_);
+    std::vector<int> cycles(n_links_);
     std::vector<double> on_time(n_links_);
     std::vector<double> volume(n_links_);
 
-    ASSERT_EQ(swmm_link_get_pump_stats_bulk(engine_,
-                                             cycles.data(),
-                                             on_time.data(),
-                                             volume.data(),
-                                             n_links_),
+    ASSERT_EQ(swmm_link_get_pump_stats_bulk(engine_, cycles.data(), on_time.data(), volume.data(),
+                                            n_links_),
               SWMM_OK);
 
     for (int i = 0; i < n_links_; ++i) {
@@ -151,26 +172,23 @@ TEST_F(PumpStatsBulkTest, PartialBufferWritesOnlyRequestedPrefix) {
     ASSERT_GE(n_links_, 2);
     const int half = n_links_ / 2;
 
-    std::vector<int>    cycles(n_links_, 0xDEADBEEF);
+    std::vector<int> cycles(n_links_, 0xDEADBEEF);
     std::vector<double> on_time(n_links_, -42.0);
     std::vector<double> volume(n_links_, -42.0);
 
-    ASSERT_EQ(swmm_link_get_pump_stats_bulk(engine_,
-                                             cycles.data(),
-                                             on_time.data(),
-                                             volume.data(),
-                                             half),
-              SWMM_OK);
+    ASSERT_EQ(
+        swmm_link_get_pump_stats_bulk(engine_, cycles.data(), on_time.data(), volume.data(), half),
+        SWMM_OK);
 
     for (int i = 0; i < half; ++i) {
-        EXPECT_NE(cycles[i],  0xDEADBEEF) << "prefix entry " << i << " not written";
-        EXPECT_NE(on_time[i], -42.0)      << "prefix entry " << i << " not written";
-        EXPECT_NE(volume[i],  -42.0)      << "prefix entry " << i << " not written";
+        EXPECT_NE(cycles[i], 0xDEADBEEF) << "prefix entry " << i << " not written";
+        EXPECT_NE(on_time[i], -42.0) << "prefix entry " << i << " not written";
+        EXPECT_NE(volume[i], -42.0) << "prefix entry " << i << " not written";
     }
     for (int i = half; i < n_links_; ++i) {
-        EXPECT_EQ(cycles[i],  0xDEADBEEF) << "suffix entry " << i << " was clobbered";
-        EXPECT_EQ(on_time[i], -42.0)      << "suffix entry " << i << " was clobbered";
-        EXPECT_EQ(volume[i],  -42.0)      << "suffix entry " << i << " was clobbered";
+        EXPECT_EQ(cycles[i], 0xDEADBEEF) << "suffix entry " << i << " was clobbered";
+        EXPECT_EQ(on_time[i], -42.0) << "suffix entry " << i << " was clobbered";
+        EXPECT_EQ(volume[i], -42.0) << "suffix entry " << i << " was clobbered";
     }
 }
 
@@ -181,11 +199,9 @@ TEST_F(PumpStatsBulkTest, PartialBufferWritesOnlyRequestedPrefix) {
 // ---------------------------------------------------------------------------
 TEST_F(PumpStatsBulkTest, SelectiveOutputCyclesOnly) {
     std::vector<int> cycles(n_links_, 0xDEADBEEF);
-    ASSERT_EQ(swmm_link_get_pump_stats_bulk(engine_,
-                                             cycles.data(),
-                                             /*on_time=*/nullptr,
-                                             /*volume=*/nullptr,
-                                             n_links_),
+    ASSERT_EQ(swmm_link_get_pump_stats_bulk(engine_, cycles.data(),
+                                            /*on_time=*/nullptr,
+                                            /*volume=*/nullptr, n_links_),
               SWMM_OK);
     for (int i = 0; i < n_links_; ++i) {
         EXPECT_EQ(cycles[i], -1) << "link " << i;
@@ -195,10 +211,8 @@ TEST_F(PumpStatsBulkTest, SelectiveOutputCyclesOnly) {
 TEST_F(PumpStatsBulkTest, SelectiveOutputOnTimeOnly) {
     std::vector<double> on_time(n_links_, -42.0);
     ASSERT_EQ(swmm_link_get_pump_stats_bulk(engine_,
-                                             /*cycles=*/nullptr,
-                                             on_time.data(),
-                                             /*volume=*/nullptr,
-                                             n_links_),
+                                            /*cycles=*/nullptr, on_time.data(),
+                                            /*volume=*/nullptr, n_links_),
               SWMM_OK);
     for (int i = 0; i < n_links_; ++i) {
         EXPECT_EQ(on_time[i], 0.0) << "link " << i;
@@ -210,43 +224,36 @@ TEST_F(PumpStatsBulkTest, SelectiveOutputOnTimeOnly) {
 // inputs at entry without writing to caller memory.
 // ---------------------------------------------------------------------------
 TEST_F(PumpStatsBulkTest, RejectsNullEngine) {
-    std::vector<int>    cycles(n_links_, 0xDEADBEEF);
+    std::vector<int> cycles(n_links_, 0xDEADBEEF);
     std::vector<double> on_time(n_links_, -42.0);
     std::vector<double> volume(n_links_, -42.0);
-    EXPECT_EQ(swmm_link_get_pump_stats_bulk(nullptr,
-                                             cycles.data(),
-                                             on_time.data(),
-                                             volume.data(),
-                                             n_links_),
+    EXPECT_EQ(swmm_link_get_pump_stats_bulk(nullptr, cycles.data(), on_time.data(), volume.data(),
+                                            n_links_),
               SWMM_ERR_BADHANDLE);
     // Buffers must not have been written.
-    EXPECT_EQ(cycles.front(),  0xDEADBEEF);
+    EXPECT_EQ(cycles.front(), 0xDEADBEEF);
     EXPECT_EQ(on_time.front(), -42.0);
-    EXPECT_EQ(volume.front(),  -42.0);
+    EXPECT_EQ(volume.front(), -42.0);
 }
 
 TEST_F(PumpStatsBulkTest, RejectsNonPositiveCount) {
     int cycles = 0xDEADBEEF;
     double on_time = -42.0;
     double volume = -42.0;
-    EXPECT_EQ(swmm_link_get_pump_stats_bulk(engine_,
-                                             &cycles, &on_time, &volume, 0),
+    EXPECT_EQ(swmm_link_get_pump_stats_bulk(engine_, &cycles, &on_time, &volume, 0),
               SWMM_ERR_BADPARAM);
-    EXPECT_EQ(swmm_link_get_pump_stats_bulk(engine_,
-                                             &cycles, &on_time, &volume, -3),
+    EXPECT_EQ(swmm_link_get_pump_stats_bulk(engine_, &cycles, &on_time, &volume, -3),
               SWMM_ERR_BADPARAM);
     // Untouched.
-    EXPECT_EQ(cycles,  0xDEADBEEF);
+    EXPECT_EQ(cycles, 0xDEADBEEF);
     EXPECT_EQ(on_time, -42.0);
-    EXPECT_EQ(volume,  -42.0);
+    EXPECT_EQ(volume, -42.0);
 }
 
 TEST_F(PumpStatsBulkTest, RejectsAllNullOutputs) {
     // Calling with all three outputs null is almost certainly a programming
     // error; the function returns BADPARAM rather than silently succeeding.
-    EXPECT_EQ(swmm_link_get_pump_stats_bulk(engine_,
-                                             nullptr, nullptr, nullptr,
-                                             n_links_),
+    EXPECT_EQ(swmm_link_get_pump_stats_bulk(engine_, nullptr, nullptr, nullptr, n_links_),
               SWMM_ERR_BADPARAM);
 }
 
@@ -257,21 +264,18 @@ TEST_F(PumpStatsBulkTest, RejectsAllNullOutputs) {
 // ---------------------------------------------------------------------------
 TEST_F(PumpStatsBulkTest, OversizedCountIsClippedAtNLinks) {
     const int oversized = n_links_ + 7;
-    std::vector<int>    cycles(oversized, 0xDEADBEEF);
+    std::vector<int> cycles(oversized, 0xDEADBEEF);
     std::vector<double> on_time(oversized, -42.0);
     std::vector<double> volume(oversized, -42.0);
 
-    ASSERT_EQ(swmm_link_get_pump_stats_bulk(engine_,
-                                             cycles.data(),
-                                             on_time.data(),
-                                             volume.data(),
-                                             oversized),
+    ASSERT_EQ(swmm_link_get_pump_stats_bulk(engine_, cycles.data(), on_time.data(), volume.data(),
+                                            oversized),
               SWMM_OK);
 
     for (int i = n_links_; i < oversized; ++i) {
-        EXPECT_EQ(cycles[i],  0xDEADBEEF) << "tail entry " << i << " was clobbered";
-        EXPECT_EQ(on_time[i], -42.0)      << "tail entry " << i << " was clobbered";
-        EXPECT_EQ(volume[i],  -42.0)      << "tail entry " << i << " was clobbered";
+        EXPECT_EQ(cycles[i], 0xDEADBEEF) << "tail entry " << i << " was clobbered";
+        EXPECT_EQ(on_time[i], -42.0) << "tail entry " << i << " was clobbered";
+        EXPECT_EQ(volume[i], -42.0) << "tail entry " << i << " was clobbered";
     }
 }
 

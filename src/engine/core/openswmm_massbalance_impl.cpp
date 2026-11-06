@@ -1,14 +1,32 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file openswmm_massbalance_impl.cpp
- * @brief C API implementation — continuity errors and flux totals.
+ * @file      openswmm_massbalance_impl.cpp
+ * @brief     C API implementation — continuity errors and flux totals.
  *
  * @see include/openswmm/engine/openswmm_massbalance.h
  * @ingroup engine_api
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
+
+#include <cmath>
 
 #include "openswmm_api_common.hpp"
 #include "../../../include/openswmm/engine/openswmm_massbalance.h"
@@ -21,20 +39,23 @@ extern "C" {
 
 SWMM_ENGINE_API int swmm_get_runoff_continuity_error(SWMM_Engine engine, double* error) {
     CHECK_HANDLE(engine);
-    if (error) *error = to_engine(engine)->context().mass_balance.runoff_error();
+    if (error)
+        *error = to_engine(engine)->context().mass_balance.runoff_error();
     return SWMM_OK;
 }
 
 SWMM_ENGINE_API int swmm_get_routing_continuity_error(SWMM_Engine engine, double* error) {
     CHECK_HANDLE(engine);
-    if (error) *error = to_engine(engine)->context().mass_balance.routing_error();
+    if (error)
+        *error = to_engine(engine)->context().mass_balance.routing_error();
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_get_quality_continuity_error(SWMM_Engine engine,
-                                                       int pollutant_idx, double* error) {
+SWMM_ENGINE_API int swmm_get_quality_continuity_error(SWMM_Engine engine, int pollutant_idx,
+                                                      double* error) {
     CHECK_HANDLE(engine);
-    if (!error) return SWMM_OK;
+    if (!error)
+        return SWMM_OK;
     const auto& mb = to_engine(engine)->context().mass_balance;
     auto p = static_cast<std::size_t>(pollutant_idx);
 
@@ -50,23 +71,46 @@ SWMM_ENGINE_API int swmm_get_quality_continuity_error(SWMM_Engine engine,
     //   total_out = routing_outflow + routing_flood + routing_reacted
     //   error     = (total_in + init - final - total_out) / total_in
     double total_in = 0.0;
-    if (p < mb.qual_wet_deposition.size()) total_in += mb.qual_wet_deposition[p];
-    if (p < mb.qual_runoff_load.size())    total_in += mb.qual_runoff_load[p];
-    if (p < mb.qual_routing_wet.size())    total_in += mb.qual_routing_wet[p];
-    if (p < mb.qual_routing_ii_in.size())  total_in += mb.qual_routing_ii_in[p];
-    if (p < mb.qual_routing_dw_in.size())  total_in += mb.qual_routing_dw_in[p];
-    if (p < mb.qual_routing_ex_in.size())  total_in += mb.qual_routing_ex_in[p];
+    if (p < mb.qual_wet_deposition.size())
+        total_in += mb.qual_wet_deposition[p];
+    if (p < mb.qual_runoff_load.size())
+        total_in += mb.qual_runoff_load[p];
+    if (p < mb.qual_routing_wet.size())
+        total_in += mb.qual_routing_wet[p];
+    if (p < mb.qual_routing_ii_in.size())
+        total_in += mb.qual_routing_ii_in[p];
+    if (p < mb.qual_routing_dw_in.size())
+        total_in += mb.qual_routing_dw_in[p];
+    if (p < mb.qual_routing_ex_in.size())
+        total_in += mb.qual_routing_ex_in[p];
 
     double total_out = 0.0;
-    if (p < mb.qual_routing_outflow.size()) total_out += mb.qual_routing_outflow[p];
-    if (p < mb.qual_routing_flood.size())   total_out += mb.qual_routing_flood[p];
-    if (p < mb.qual_routing_reacted.size()) total_out += mb.qual_routing_reacted[p];
+    if (p < mb.qual_routing_outflow.size())
+        total_out += mb.qual_routing_outflow[p];
+    if (p < mb.qual_routing_flood.size())
+        total_out += mb.qual_routing_flood[p];
+    if (p < mb.qual_routing_reacted.size())
+        total_out += mb.qual_routing_reacted[p];
 
     double init_stored = (p < mb.qual_routing_init.size()) ? mb.qual_routing_init[p] : 0.0;
     double final_stored = (p < mb.qual_routing_final.size()) ? mb.qual_routing_final[p] : 0.0;
 
-    if (total_in > 0.0) {
-        *error = (total_in + init_stored - final_stored - total_out) / total_in;
+    // Legacy massbal_getQualError (massbal.c:900-911) has THREE branches, and
+    // the third is the one this function lacked: when nothing came IN but
+    // something went OUT, the error is measured against the outflow. Without
+    // it, a system that discharges mass it never received reports a
+    // continuity error of exactly 0.000 — measured on the known-mass EMC
+    // deck, where 1.8M units of booked mass left a system whose total_in was
+    // zero under a printed error of 0.000 (Finding 10, third instance of the
+    // vacuous-denominator shape after runoff_error's F8 case).
+    const double in_total = total_in + init_stored;
+    const double out_total = total_out + final_stored;
+    if (std::fabs(in_total - out_total) < 0.001) {
+        *error = 0.0;
+    } else if (in_total > 0.0) {
+        *error = (in_total - out_total) / in_total;
+    } else if (out_total > 0.0) {
+        *error = (in_total - out_total) / out_total;
     } else {
         *error = 0.0;
     }
@@ -79,39 +123,93 @@ SWMM_ENGINE_API int swmm_get_quality_continuity_error(SWMM_Engine engine,
 
 SWMM_ENGINE_API int swmm_get_runoff_total(SWMM_Engine engine, int component, double* volume) {
     CHECK_HANDLE(engine);
-    if (!volume) return SWMM_ERR_BADPARAM;
+    if (!volume)
+        return SWMM_ERR_BADPARAM;
     const auto& mb = to_engine(engine)->context().mass_balance;
     switch (component) {
-        case SWMM_RUNOFF_RAINFALL:   *volume = mb.runoff_rainfall;    break;
-        case SWMM_RUNOFF_EVAP:       *volume = mb.runoff_evap;        break;
-        case SWMM_RUNOFF_INFIL:      *volume = mb.runoff_infil;       break;
-        case SWMM_RUNOFF_RUNOFF:     *volume = mb.runoff_runoff;      break;
-        case SWMM_RUNOFF_SNOWREMOV:  *volume = mb.runoff_snowremov;   break;
-        case SWMM_RUNOFF_INITSTORE:  *volume = mb.runoff_init_store;  break;
-        case SWMM_RUNOFF_FINALSTORE: *volume = mb.runoff_final_store; break;
-        default: return SWMM_ERR_BADPARAM;
+    case SWMM_RUNOFF_RAINFALL:
+        *volume = mb.runoff_rainfall;
+        break;
+    case SWMM_RUNOFF_EVAP:
+        *volume = mb.runoff_evap;
+        break;
+    case SWMM_RUNOFF_INFIL:
+        *volume = mb.runoff_infil;
+        break;
+    case SWMM_RUNOFF_RUNOFF:
+        *volume = mb.runoff_runoff;
+        break;
+    case SWMM_RUNOFF_SNOWREMOV:
+        *volume = mb.runoff_snowremov;
+        break;
+    case SWMM_RUNOFF_INITSNOW:
+        *volume = mb.runoff_init_snow;
+        break;
+    case SWMM_RUNOFF_FINALSNOW:
+        *volume = mb.runoff_final_snow;
+        break;
+    case SWMM_RUNOFF_INITSTORE:
+        *volume = mb.runoff_init_store;
+        break;
+    case SWMM_RUNOFF_FINALSTORE:
+        *volume = mb.runoff_final_store;
+        break;
+    default:
+        return SWMM_ERR_BADPARAM;
     }
     return SWMM_OK;
 }
 
 SWMM_ENGINE_API int swmm_get_routing_total(SWMM_Engine engine, int component, double* volume) {
     CHECK_HANDLE(engine);
-    if (!volume) return SWMM_ERR_BADPARAM;
+    if (!volume)
+        return SWMM_ERR_BADPARAM;
     const auto& mb = to_engine(engine)->context().mass_balance;
     switch (component) {
-        case SWMM_ROUTING_DRY_WEATHER:   *volume = mb.routing_dry_weather;   break;
-        case SWMM_ROUTING_WET_WEATHER:   *volume = mb.routing_wet_weather;   break;
-        case SWMM_ROUTING_GW_INFLOW:     *volume = mb.routing_gw_inflow;     break;
-        case SWMM_ROUTING_RDII:          *volume = mb.routing_rdii;          break;
-        case SWMM_ROUTING_EXTERNAL:      *volume = mb.routing_external;      break;
-        case SWMM_ROUTING_FLOODING:      *volume = mb.routing_flooding;      break;
-        case SWMM_ROUTING_OUTFLOW:       *volume = mb.routing_outflow;       break;
-        case SWMM_ROUTING_EVAP_LOSS:     *volume = mb.routing_evap_loss;     break;
-        case SWMM_ROUTING_SEEP_LOSS:     *volume = mb.routing_seep_loss;     break;
-        case SWMM_ROUTING_INIT_STORAGE:  *volume = mb.routing_init_storage;  break;
-        case SWMM_ROUTING_FINAL_STORAGE: *volume = mb.routing_final_storage; break;
-        case SWMM_ROUTING_FORCING_INFLOW: *volume = mb.routing_forcing_inflow; break;
-        default: return SWMM_ERR_BADPARAM;
+    case SWMM_ROUTING_DRY_WEATHER:
+        *volume = mb.routing_dry_weather;
+        break;
+    case SWMM_ROUTING_WET_WEATHER:
+        *volume = mb.routing_wet_weather;
+        break;
+    case SWMM_ROUTING_GW_INFLOW:
+        *volume = mb.routing_gw_inflow;
+        break;
+    case SWMM_ROUTING_RDII:
+        *volume = mb.routing_rdii;
+        break;
+    case SWMM_ROUTING_EXTERNAL:
+        *volume = mb.routing_external;
+        break;
+    case SWMM_ROUTING_FLOODING:
+        *volume = mb.routing_flooding;
+        break;
+    case SWMM_ROUTING_OUTFLOW:
+        *volume = mb.routing_outflow;
+        break;
+    case SWMM_ROUTING_EVAP_LOSS:
+        *volume = mb.routing_evap_loss;
+        break;
+    case SWMM_ROUTING_SEEP_LOSS:
+        *volume = mb.routing_seep_loss;
+        break;
+    case SWMM_ROUTING_INIT_STORAGE:
+        *volume = mb.routing_init_storage;
+        break;
+    case SWMM_ROUTING_FINAL_STORAGE:
+        *volume = mb.routing_final_storage;
+        break;
+    case SWMM_ROUTING_FORCING_INFLOW:
+        *volume = mb.routing_forcing_inflow;
+        break;
+    case SWMM_ROUTING_COUPLING_OUT:
+        *volume = mb.routing_coupling_out;
+        break;
+    case SWMM_ROUTING_LINK_GW_INFLOW:
+        *volume = mb.routing_link_gw_inflow;
+        break; // G-X4
+    default:
+        return SWMM_ERR_BADPARAM;
     }
     return SWMM_OK;
 }
@@ -120,25 +218,33 @@ SWMM_ENGINE_API int swmm_get_routing_total(SWMM_Engine engine, int component, do
 // Routing diagnostics (combined stats)
 // ============================================================================
 
-SWMM_ENGINE_API int swmm_get_routing_stats(SWMM_Engine engine,
-    double* avg_step, double* min_step, double* max_step,
-    int* n_steps, double* pct_non_converged,
-    double* avg_iterations, double* max_courant) {
+SWMM_ENGINE_API int swmm_get_routing_stats(SWMM_Engine engine, double* avg_step, double* min_step,
+                                           double* max_step, int* n_steps,
+                                           double* pct_non_converged, double* avg_iterations,
+                                           double* max_courant) {
     CHECK_HANDLE(engine);
     const auto& rs = to_engine(engine)->context().routing_stats;
-    if (avg_step) *avg_step = rs.avg_step();
-    if (min_step) *min_step = (rs.min_step < 1.0e30) ? rs.min_step : 0.0;
-    if (max_step) *max_step = rs.max_step;
-    if (n_steps)  *n_steps  = static_cast<int>(rs.n_steps);
-    if (pct_non_converged) *pct_non_converged = rs.pct_non_converged();
-    if (avg_iterations) *avg_iterations = rs.computed_avg_iterations();
-    if (max_courant) *max_courant = rs.max_courant;
+    if (avg_step)
+        *avg_step = rs.avg_step();
+    if (min_step)
+        *min_step = (rs.min_step < 1.0e30) ? rs.min_step : 0.0;
+    if (max_step)
+        *max_step = rs.max_step;
+    if (n_steps)
+        *n_steps = static_cast<int>(rs.n_steps);
+    if (pct_non_converged)
+        *pct_non_converged = rs.pct_non_converged();
+    if (avg_iterations)
+        *avg_iterations = rs.computed_avg_iterations();
+    if (max_courant)
+        *max_courant = rs.max_courant;
     return SWMM_OK;
 }
 
 SWMM_ENGINE_API int swmm_get_max_courant(SWMM_Engine engine, double* max_courant) {
     CHECK_HANDLE(engine);
-    if (max_courant) *max_courant = to_engine(engine)->context().routing_stats.max_courant;
+    if (max_courant)
+        *max_courant = to_engine(engine)->context().routing_stats.max_courant;
     return SWMM_OK;
 }
 
@@ -146,19 +252,23 @@ SWMM_ENGINE_API int swmm_get_max_courant(SWMM_Engine engine, double* max_courant
 // Quality mass losses
 // ============================================================================
 
-SWMM_ENGINE_API int swmm_get_quality_seep_loss(SWMM_Engine engine, int pollutant_idx, double* mass) {
+SWMM_ENGINE_API int swmm_get_quality_seep_loss(SWMM_Engine engine, int pollutant_idx,
+                                               double* mass) {
     CHECK_HANDLE(engine);
     const auto& mb = to_engine(engine)->context().mass_balance;
     auto p = static_cast<std::size_t>(pollutant_idx);
-    if (mass) *mass = (p < mb.qual_routing_seep.size()) ? mb.qual_routing_seep[p] : 0.0;
+    if (mass)
+        *mass = (p < mb.qual_routing_seep.size()) ? mb.qual_routing_seep[p] : 0.0;
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_get_quality_evap_loss(SWMM_Engine engine, int pollutant_idx, double* mass) {
+SWMM_ENGINE_API int swmm_get_quality_evap_loss(SWMM_Engine engine, int pollutant_idx,
+                                               double* mass) {
     CHECK_HANDLE(engine);
     const auto& mb = to_engine(engine)->context().mass_balance;
     auto p = static_cast<std::size_t>(pollutant_idx);
-    if (mass) *mass = (p < mb.qual_routing_evap.size()) ? mb.qual_routing_evap[p] : 0.0;
+    if (mass)
+        *mass = (p < mb.qual_routing_evap.size()) ? mb.qual_routing_evap[p] : 0.0;
     return SWMM_OK;
 }
 

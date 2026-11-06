@@ -1,0 +1,31 @@
+;; Reaction system for the SWMMVis manual tutorial T7.
+;; One bulk species that decays first order, with an Arrhenius (theta^(T-20))
+;; temperature correction taken from the heat module's computed water
+;; temperature. TEMP is a hydraulic variable available to every expression.
+
+[REACTION_OPTIONS]
+SOLVER       RK5
+COUPLING     NONE
+RATE_UNITS   HR
+TEMPERATURE  20
+
+[REACTION_SPECIES]
+;;Kind   Name   Units
+BULK     CL2    MG
+
+[REACTION_COEFFICIENTS]
+;;Kind      Name    Value
+CONSTANT    kb      0.30
+CONSTANT    theta   1.07
+
+[REACTION_PIPES]
+;;Form   Species  Expression
+RATE     CL2      -kb * theta ^ (TEMP - 20) * CL2
+
+[REACTION_TANKS]
+;;Form   Species  Expression
+RATE     CL2      -kb * theta ^ (TEMP - 20) * CL2
+
+[REACTION_QUALITY]
+;;Scope   Species  Value
+GLOBAL    CL2      2.0

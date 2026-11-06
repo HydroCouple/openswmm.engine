@@ -1,3 +1,13 @@
+/**
+ * @file      mathexpr.h
+ * @brief     Parsing and evaluation of mathematical expressions.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com> (OpenSWMM maintenance and extensions)
+ * @copyright Copyright (c) 2026 Caleb Buahin. OpenSWMM contributions only; original EPA SWMM
+ *            credits are retained.
+ * @license   Apache-2.0 for OpenSWMM contributions; original EPA SWMM provenance is retained.
+ */
+
 /******************************************************************************
 **  MODULE:        MATHEXPR.H
 **  PROJECT:       SWMM5
@@ -11,26 +21,23 @@
 #ifndef MATHEXPR_H
 #define MATHEXPR_H
 
-
 //  Node in a tokenized math expression list
-struct ExprNode
-{
-    int    opcode;                // operator code
-    int    ivar;                  // variable index
-    double fvalue;                // numerical value
-	struct ExprNode *prev;        // previous node
-    struct ExprNode *next;        // next node
+struct ExprNode {
+    int opcode;            // operator code
+    int ivar;              // variable index
+    double fvalue;         // numerical value
+    struct ExprNode* prev; // previous node
+    struct ExprNode* next; // next node
 };
 typedef struct ExprNode MathExpr;
 
 //  Creates a tokenized math expression from a string
-MathExpr* mathexpr_create(char* s, int (*getVar) (char *));
+MathExpr* mathexpr_create(char* s, int (*getVar)(char*));
 
 //  Evaluates a tokenized math expression
-double mathexpr_eval(MathExpr* expr, double (*getVal) (int));
+double mathexpr_eval(MathExpr* expr, double (*getVal)(int));
 
 //  Deletes a tokenized math expression
-void  mathexpr_delete(MathExpr* expr);
-
+void mathexpr_delete(MathExpr* expr);
 
 #endif //MATHEXPR_H

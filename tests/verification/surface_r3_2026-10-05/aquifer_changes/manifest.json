@@ -1,0 +1,566 @@
+[
+  {
+    "deck": "automatic_CLOSED_FORM_dry.inp",
+    "input_sha256": "22d930a3a2b986a7a58c576c73e8f39ce510d80d92cbdfe26b44fd07af3f3de6",
+    "changed": true,
+    "reason": "Automatic mesh ET resolves BOTH; single shared demand.",
+    "baseline": {
+      "soil_et_m3": 0.0,
+      "caprise_m3": 0.0,
+      "node_m3": 0.0,
+      "link_m3": 0.0,
+      "storage_m3": 43.52249393218839,
+      "residual_m3": 0.0,
+      "depths_m": [
+        0.0
+      ]
+    },
+    "candidate": {
+      "soil_et_m3": 0.0017331488682855302,
+      "caprise_m3": 0.0,
+      "node_m3": 0.0,
+      "link_m3": 0.0,
+      "storage_m3": 43.5207607833201,
+      "residual_m3": -4.371936840330548e-15,
+      "depths_m": [
+        0.0
+      ]
+    }
+  },
+  {
+    "deck": "old_opt_out_CLOSED_FORM_dry.inp",
+    "input_sha256": "787def37d4f3951fc9dc669ffe585c3077e8aab7eae9a59f32c62f7b1a411109",
+    "changed": false,
+    "reason": "Explicit legacy opt-outs retain behavior.",
+    "baseline": {
+      "soil_et_m3": 0.0,
+      "caprise_m3": 0.0,
+      "node_m3": 0.0,
+      "link_m3": 0.0,
+      "storage_m3": 43.52249393218839,
+      "residual_m3": 0.0,
+      "depths_m": [
+        0.0
+      ]
+    },
+    "candidate": {
+      "soil_et_m3": 0.0,
+      "caprise_m3": 0.0,
+      "node_m3": 0.0,
+      "link_m3": 0.0,
+      "storage_m3": 43.52249393218839,
+      "residual_m3": 0.0,
+      "depths_m": [
+        0.0
+      ]
+    }
+  },
+  {
+    "deck": "both_CLOSED_FORM_dry.inp",
+    "input_sha256": "d06b3d861307f5695df8fd8792e096a799f9280e9d3cc86667cb7bde815318c4",
+    "changed": true,
+    "reason": "Surface-first demand and a single stress/threshold replace duplicate soil withdrawal.",
+    "baseline": {
+      "soil_et_m3": 0.0017360422719910824,
+      "caprise_m3": 0.0,
+      "node_m3": 0.0,
+      "link_m3": 0.0,
+      "storage_m3": 43.520757889916396,
+      "residual_m3": -2.1165794811262018e-15,
+      "depths_m": [
+        0.0
+      ]
+    },
+    "candidate": {
+      "soil_et_m3": 0.0017331488682855302,
+      "caprise_m3": 0.0,
+      "node_m3": 0.0,
+      "link_m3": 0.0,
+      "storage_m3": 43.5207607833201,
+      "residual_m3": -4.371936840330548e-15,
+      "depths_m": [
+        0.0
+      ]
+    }
+  },
+  {
+    "deck": "automatic_CLOSED_FORM_ponded.inp",
+    "input_sha256": "24bf728b2f8a294f7e2ce08ff3702309bc97342d53a25303c2d95abf5b284019",
+    "changed": false,
+    "reason": "Automatic mesh ET resolves BOTH; single shared demand.",
+    "baseline": {
+      "soil_et_m3": 0.0,
+      "caprise_m3": 0.0,
+      "node_m3": 0.0,
+      "link_m3": 0.0,
+      "storage_m3": 43.52249393218839,
+      "residual_m3": 0.0,
+      "depths_m": [
+        0.09996527777777722
+      ]
+    },
+    "candidate": {
+      "soil_et_m3": 0.0,
+      "caprise_m3": 0.0,
+      "node_m3": 0.0,
+      "link_m3": 0.0,
+      "storage_m3": 43.52249393218839,
+      "residual_m3": 0.0,
+      "depths_m": [
+        0.09996527777777722
+      ]
+    }
+  },
+  {
+    "deck": "old_opt_out_CLOSED_FORM_ponded.inp",
+    "input_sha256": "642e0b011dd078fecb2c8af06506878bfde1ea438b479cc30a05f89ac43615cd",
+    "changed": false,
+    "reason": "Explicit legacy opt-outs retain behavior.",
+    "baseline": {
+      "soil_et_m3": 0.0,
+      "caprise_m3": 0.0,
+      "node_m3": 0.0,
+      "link_m3": 0.0,
+      "storage_m3": 43.52249393218839,
+      "residual_m3": 0.0,
+      "depths_m": [
+        0.09996527777777722
+      ]
+    },
+    "candidate": {
+      "soil_et_m3": 0.0,
+      "caprise_m3": 0.0,
+      "node_m3": 0.0,
+      "link_m3": 0.0,
+      "storage_m3": 43.52249393218839,
+      "residual_m3": 0.0,
+      "depths_m": [
+        0.09996527777777722
+      ]
+    }
+  },
+  {
+    "deck": "both_CLOSED_FORM_ponded.inp",
+    "input_sha256": "2dc5381d6d1914508cdd92c82e1d30c28527697273df7a5daa386e8f131cc0b6",
+    "changed": true,
+    "reason": "Surface-first demand and a single stress/threshold replace duplicate soil withdrawal.",
+    "baseline": {
+      "soil_et_m3": 0.0017360422719910824,
+      "caprise_m3": 0.0,
+      "node_m3": 0.0,
+      "link_m3": 0.0,
+      "storage_m3": 43.520757889916396,
+      "residual_m3": -2.1165794811262018e-15,
+      "depths_m": [
+        0.09996527777777722
+      ]
+    },
+    "candidate": {
+      "soil_et_m3": 0.0,
+      "caprise_m3": 0.0,
+      "node_m3": 0.0,
+      "link_m3": 0.0,
+      "storage_m3": 43.52249393218839,
+      "residual_m3": 0.0,
+      "depths_m": [
+        0.09996527777777722
+      ]
+    }
+  },
+  {
+    "deck": "automatic_SIGMA_dry.inp",
+    "input_sha256": "cd38c8009b6ae45f122fe80a3d4ee12707e71d464efc6206306f59c8991c44d7",
+    "changed": true,
+    "reason": "Automatic mesh ET resolves BOTH; single shared demand.",
+    "baseline": {
+      "soil_et_m3": 0.0,
+      "caprise_m3": 0.0,
+      "node_m3": 0.0,
+      "link_m3": 0.0,
+      "storage_m3": 43.526052067162496,
+      "residual_m3": -1.7053025658242404e-13,
+      "depths_m": [
+        0.0
+      ]
+    },
+    "candidate": {
+      "soil_et_m3": 0.0017330147793318635,
+      "caprise_m3": 0.0,
+      "node_m3": 0.0,
+      "link_m3": 0.0,
+      "storage_m3": 43.524319052383206,
+      "residual_m3": -1.2910939678478783e-13,
+      "depths_m": [
+        0.0
+      ]
+    }
+  },
+  {
+    "deck": "old_opt_out_SIGMA_dry.inp",
+    "input_sha256": "e8547fb97f72399074170ea39c3174948fd6ee63b99e9b3f1451507eb6063b0e",
+    "changed": false,
+    "reason": "Explicit legacy opt-outs retain behavior.",
+    "baseline": {
+      "soil_et_m3": 0.0,
+      "caprise_m3": 0.0,
+      "node_m3": 0.0,
+      "link_m3": 0.0,
+      "storage_m3": 43.526052067162496,
+      "residual_m3": -1.7053025658242404e-13,
+      "depths_m": [
+        0.0
+      ]
+    },
+    "candidate": {
+      "soil_et_m3": 0.0,
+      "caprise_m3": 0.0,
+      "node_m3": 0.0,
+      "link_m3": 0.0,
+      "storage_m3": 43.526052067162496,
+      "residual_m3": -1.7053025658242404e-13,
+      "depths_m": [
+        0.0
+      ]
+    }
+  },
+  {
+    "deck": "both_SIGMA_dry.inp",
+    "input_sha256": "43b8e020083d41139316635145aa3954cfb35f89683e612d8f4822ac2253beac",
+    "changed": true,
+    "reason": "Surface-first demand and a single stress/threshold replace duplicate soil withdrawal.",
+    "baseline": {
+      "soil_et_m3": 0.00166910979440409,
+      "caprise_m3": 0.0,
+      "node_m3": 0.0,
+      "link_m3": 0.0,
+      "storage_m3": 43.52438295736813,
+      "residual_m3": -1.2996157969236144e-13,
+      "depths_m": [
+        0.0
+      ]
+    },
+    "candidate": {
+      "soil_et_m3": 0.0017330147793318635,
+      "caprise_m3": 0.0,
+      "node_m3": 0.0,
+      "link_m3": 0.0,
+      "storage_m3": 43.524319052383206,
+      "residual_m3": -1.2910939678478783e-13,
+      "depths_m": [
+        0.0
+      ]
+    }
+  },
+  {
+    "deck": "automatic_SIGMA_ponded.inp",
+    "input_sha256": "cdfcb43fc76c3d4e44fa16e230b4c7ecbcf0c9a48ca705e52d62cfcc3394766c",
+    "changed": false,
+    "reason": "Automatic mesh ET resolves BOTH; single shared demand.",
+    "baseline": {
+      "soil_et_m3": 0.0,
+      "caprise_m3": 0.0,
+      "node_m3": 0.0,
+      "link_m3": 0.0,
+      "storage_m3": 43.526052067162496,
+      "residual_m3": -1.7053025658242404e-13,
+      "depths_m": [
+        0.09996527777777722
+      ]
+    },
+    "candidate": {
+      "soil_et_m3": 0.0,
+      "caprise_m3": 0.0,
+      "node_m3": 0.0,
+      "link_m3": 0.0,
+      "storage_m3": 43.526052067162496,
+      "residual_m3": -1.7053025658242404e-13,
+      "depths_m": [
+        0.09996527777777722
+      ]
+    }
+  },
+  {
+    "deck": "old_opt_out_SIGMA_ponded.inp",
+    "input_sha256": "a76fc6d82225843b086622f84a6836a274298b6c1fd63580f277deb01f3ab2da",
+    "changed": false,
+    "reason": "Explicit legacy opt-outs retain behavior.",
+    "baseline": {
+      "soil_et_m3": 0.0,
+      "caprise_m3": 0.0,
+      "node_m3": 0.0,
+      "link_m3": 0.0,
+      "storage_m3": 43.526052067162496,
+      "residual_m3": -1.7053025658242404e-13,
+      "depths_m": [
+        0.09996527777777722
+      ]
+    },
+    "candidate": {
+      "soil_et_m3": 0.0,
+      "caprise_m3": 0.0,
+      "node_m3": 0.0,
+      "link_m3": 0.0,
+      "storage_m3": 43.526052067162496,
+      "residual_m3": -1.7053025658242404e-13,
+      "depths_m": [
+        0.09996527777777722
+      ]
+    }
+  },
+  {
+    "deck": "both_SIGMA_ponded.inp",
+    "input_sha256": "c8272b22c7466be623d5523fc98acb2c78e898d63d7a3243034085ff610f44e3",
+    "changed": true,
+    "reason": "Surface-first demand and a single stress/threshold replace duplicate soil withdrawal.",
+    "baseline": {
+      "soil_et_m3": 0.00166910979440409,
+      "caprise_m3": 0.0,
+      "node_m3": 0.0,
+      "link_m3": 0.0,
+      "storage_m3": 43.52438295736813,
+      "residual_m3": -1.2996157969236144e-13,
+      "depths_m": [
+        0.09996527777777722
+      ]
+    },
+    "candidate": {
+      "soil_et_m3": 0.0,
+      "caprise_m3": 0.0,
+      "node_m3": 0.0,
+      "link_m3": 0.0,
+      "storage_m3": 43.526052067162496,
+      "residual_m3": -1.7053025658242404e-13,
+      "depths_m": [
+        0.09996527777777722
+      ]
+    }
+  },
+  {
+    "deck": "automatic_ENSLAVED_dry.inp",
+    "input_sha256": "357648dcc75222960abb77740850f614654e1d787203257cceba56999f319525",
+    "changed": true,
+    "reason": "Automatic mesh ET resolves BOTH; single shared demand.",
+    "baseline": {
+      "soil_et_m3": 0.0,
+      "caprise_m3": 0.0,
+      "node_m3": 0.0,
+      "link_m3": 0.0,
+      "storage_m3": 43.52249393218839,
+      "residual_m3": 0.0,
+      "depths_m": [
+        0.0
+      ]
+    },
+    "candidate": {
+      "soil_et_m3": 0.0017329874199284443,
+      "caprise_m3": 0.0,
+      "node_m3": 0.0,
+      "link_m3": 0.0,
+      "storage_m3": 43.52076094476842,
+      "residual_m3": -4.18556248688029e-14,
+      "depths_m": [
+        0.0
+      ]
+    }
+  },
+  {
+    "deck": "old_opt_out_ENSLAVED_dry.inp",
+    "input_sha256": "c652698c589b0779fed320513ceec880350390486caa42937ff7e8fd075c2951",
+    "changed": false,
+    "reason": "Explicit legacy opt-outs retain behavior.",
+    "baseline": {
+      "soil_et_m3": 0.0,
+      "caprise_m3": 0.0,
+      "node_m3": 0.0,
+      "link_m3": 0.0,
+      "storage_m3": 43.52249393218839,
+      "residual_m3": 0.0,
+      "depths_m": [
+        0.0
+      ]
+    },
+    "candidate": {
+      "soil_et_m3": 0.0,
+      "caprise_m3": 0.0,
+      "node_m3": 0.0,
+      "link_m3": 0.0,
+      "storage_m3": 43.52249393218839,
+      "residual_m3": 0.0,
+      "depths_m": [
+        0.0
+      ]
+    }
+  },
+  {
+    "deck": "both_ENSLAVED_dry.inp",
+    "input_sha256": "2ed693cc937e2c8845efe8d0b843a4c06a12948d7e3af32b5695534a7f3c9f66",
+    "changed": true,
+    "reason": "Surface-first demand and a single stress/threshold replace duplicate soil withdrawal.",
+    "baseline": {
+      "soil_et_m3": 0.001736042290666184,
+      "caprise_m3": 0.001736042290666184,
+      "node_m3": 0.0,
+      "link_m3": 0.0,
+      "storage_m3": 43.520757889897666,
+      "residual_m3": -5.692148141722697e-14,
+      "depths_m": [
+        0.0
+      ]
+    },
+    "candidate": {
+      "soil_et_m3": 0.0017329874199284443,
+      "caprise_m3": 0.0,
+      "node_m3": 0.0,
+      "link_m3": 0.0,
+      "storage_m3": 43.52076094476842,
+      "residual_m3": -4.18556248688029e-14,
+      "depths_m": [
+        0.0
+      ]
+    }
+  },
+  {
+    "deck": "automatic_ENSLAVED_ponded.inp",
+    "input_sha256": "fb170e86292386ae7a93eb83f336692326cea5dddfce952523f7d063fee69282",
+    "changed": false,
+    "reason": "Automatic mesh ET resolves BOTH; single shared demand.",
+    "baseline": {
+      "soil_et_m3": 0.0,
+      "caprise_m3": 0.0,
+      "node_m3": 0.0,
+      "link_m3": 0.0,
+      "storage_m3": 43.52249393218839,
+      "residual_m3": 0.0,
+      "depths_m": [
+        0.09996527777777722
+      ]
+    },
+    "candidate": {
+      "soil_et_m3": 0.0,
+      "caprise_m3": 0.0,
+      "node_m3": 0.0,
+      "link_m3": 0.0,
+      "storage_m3": 43.52249393218839,
+      "residual_m3": 0.0,
+      "depths_m": [
+        0.09996527777777722
+      ]
+    }
+  },
+  {
+    "deck": "old_opt_out_ENSLAVED_ponded.inp",
+    "input_sha256": "c00597aada070e7423d8a8eea9d75f7f85d74a70991b9fb3187b1b3fe1c8ddff",
+    "changed": false,
+    "reason": "Explicit legacy opt-outs retain behavior.",
+    "baseline": {
+      "soil_et_m3": 0.0,
+      "caprise_m3": 0.0,
+      "node_m3": 0.0,
+      "link_m3": 0.0,
+      "storage_m3": 43.52249393218839,
+      "residual_m3": 0.0,
+      "depths_m": [
+        0.09996527777777722
+      ]
+    },
+    "candidate": {
+      "soil_et_m3": 0.0,
+      "caprise_m3": 0.0,
+      "node_m3": 0.0,
+      "link_m3": 0.0,
+      "storage_m3": 43.52249393218839,
+      "residual_m3": 0.0,
+      "depths_m": [
+        0.09996527777777722
+      ]
+    }
+  },
+  {
+    "deck": "both_ENSLAVED_ponded.inp",
+    "input_sha256": "064e834d4077669d4c72a01805ffea07d92953bce90f1028993a7beeea3c3212",
+    "changed": true,
+    "reason": "Surface-first demand and a single stress/threshold replace duplicate soil withdrawal.",
+    "baseline": {
+      "soil_et_m3": 0.001736042290666184,
+      "caprise_m3": 0.001736042290666184,
+      "node_m3": 0.0,
+      "link_m3": 0.0,
+      "storage_m3": 43.520757889897666,
+      "residual_m3": -5.692148141722697e-14,
+      "depths_m": [
+        0.09996527777777722
+      ]
+    },
+    "candidate": {
+      "soil_et_m3": 0.0,
+      "caprise_m3": 0.0,
+      "node_m3": 0.0,
+      "link_m3": 0.0,
+      "storage_m3": 43.52249393218839,
+      "residual_m3": 0.0,
+      "depths_m": [
+        0.09996527777777722
+      ]
+    }
+  },
+  {
+    "deck": "automatic_signed_link.inp",
+    "input_sha256": "d413330006331f0a68c419a354a2984b283a85087c95463eeef770b1127c1948",
+    "changed": true,
+    "reason": "Absent LINK_SEEPAGE resolves the signed TWO_WAY law; this high-table conduit gains.",
+    "baseline": {
+      "soil_et_m3": 0.0,
+      "caprise_m3": 0.0,
+      "node_m3": 0.0,
+      "link_m3": 0.7485623743455756,
+      "storage_m3": 344.82527682532344,
+      "residual_m3": 1.6253665080512292e-13,
+      "depths_m": [
+        0.0,
+        0.0
+      ]
+    },
+    "candidate": {
+      "soil_et_m3": 0.0,
+      "caprise_m3": 0.0,
+      "node_m3": 0.0,
+      "link_m3": -3.477799692537088,
+      "storage_m3": 340.5955194633365,
+      "residual_m3": 1.2434497875801753e-14,
+      "depths_m": [
+        0.0,
+        0.0
+      ]
+    }
+  },
+  {
+    "deck": "explicit_legacy_link.inp",
+    "input_sha256": "db6131439630bc5a159bfabebcdacf3b03e0d6bb6def20c298d9b0576e3d38f8",
+    "changed": false,
+    "reason": "Explicit legacy AUTO retains one-way delivery.",
+    "baseline": {
+      "soil_et_m3": 0.0,
+      "caprise_m3": 0.0,
+      "node_m3": 0.0,
+      "link_m3": 0.7485623743455756,
+      "storage_m3": 344.82527682532344,
+      "residual_m3": 1.6253665080512292e-13,
+      "depths_m": [
+        0.0,
+        0.0
+      ]
+    },
+    "candidate": {
+      "soil_et_m3": 0.0,
+      "caprise_m3": 0.0,
+      "node_m3": 0.0,
+      "link_m3": 0.7485623743455756,
+      "storage_m3": 344.82527682532344,
+      "residual_m3": 1.6253665080512292e-13,
+      "depths_m": [
+        0.0,
+        0.0
+      ]
+    }
+  }
+]

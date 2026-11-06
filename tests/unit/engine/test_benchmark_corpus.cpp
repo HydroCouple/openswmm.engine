@@ -1,6 +1,6 @@
 /**
- * @file test_benchmark_corpus.cpp
- * @brief Presence guard for the manufactured-solution benchmark corpus.
+ * @file      test_benchmark_corpus.cpp
+ * @brief     Presence guard for the manufactured-solution benchmark corpus.
  *
  * The data-driven benchmark tests (in test_routing, test_infiltration,
  * test_ode_solver, test_groundwater, test_exfiltration, test_lid,
@@ -16,6 +16,10 @@
  *
  * @see tests/benchmarks/manufactured/
  * @ingroup engine_tests
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -25,61 +29,82 @@
 #include <vector>
 
 #ifndef BENCHMARK_DATA_DIR
-#  define BENCHMARK_DATA_DIR ""
+#define BENCHMARK_DATA_DIR ""
 #endif
 
 namespace {
 
 struct Expected {
-    const char* relpath;       // path under BENCHMARK_DATA_DIR
-    int         min_data_rows; // non-comment rows excluding the header
+    const char* relpath; // path under BENCHMARK_DATA_DIR
+    int min_data_rows;   // non-comment rows excluding the header
 };
 
 // One entry per manufactured benchmark consumed by a unit test. min_data_rows
 // is the row count committed with each reference.csv; the check is `>=`, so
 // adding rows is fine but losing/truncating a file fails loudly.
+/**
+ * @brief Borrow the fixed manufactured-reference file/count manifest.
+ *
+ * Does not locate/open the sibling benchmark repository or verify numeric contents; allocation
+ * during first initialization can throw.
+ * @return Const process-lifetime vector of reference path suffixes and expected data row counts.
+ */
 const std::vector<Expected>& corpus() {
     static const std::vector<Expected> kCorpus = {
-        {"/manufactured/dw-ritter-drybed-strip/reference.csv",                   204},
-        {"/manufactured/dynwave-gvf-backwater-m1/reference.csv",                   6},
-        {"/manufactured/exfil-cylindrical-storage-greenampt/reference.csv",       11},
-        {"/manufactured/exfil-storage-constant-area/reference.csv",                7},
-        {"/manufactured/exfil-storage-geometry-greenampt/reference.csv",          11},
-        {"/manufactured/forcemain-friction-reference-curves/reference.csv",       12},
-        {"/manufactured/grnampt-saturated-trajectory/reference.csv",               6},
-        {"/manufactured/groundwater-linearized-recession/reference.csv",           7},
-        {"/manufactured/infil-horton-constant-rainfall/reference.csv",             7},
-        {"/manufactured/kinwave-normal-depth-rect-open/reference.csv",             7},
-        {"/manufactured/kinwave-step-inflow-rectangular-conduit/reference.csv",    1},
-        {"/manufactured/modified-horton-fmax-saturation-recovery/reference.csv",  22},
-        {"/manufactured/odesolve-exponential-decay/reference.csv",                 6},
-        {"/manufactured/odesolve-logistic-growth/reference.csv",                   8},
-        {"/manufactured/odesolve-sir-epidemic/reference.csv",                     13},
-        {"/manufactured/quality-cstr-first-order-decay/reference.csv",            11},
-        {"/manufactured/xsect-circular-ellipse-reference/reference.csv",          21},
+        {"/manufactured/dw-ritter-drybed-strip/reference.csv", 204},
+        {"/manufactured/dynwave-gvf-backwater-m1/reference.csv", 6},
+        {"/manufactured/exfil-cylindrical-storage-greenampt/reference.csv", 11},
+        {"/manufactured/exfil-storage-constant-area/reference.csv", 7},
+        {"/manufactured/exfil-storage-geometry-greenampt/reference.csv", 11},
+        {"/manufactured/forcemain-friction-reference-curves/reference.csv", 12},
+        {"/manufactured/grnampt-saturated-trajectory/reference.csv", 6},
+        {"/manufactured/groundwater-linearized-recession/reference.csv", 7},
+        {"/manufactured/infil-horton-constant-rainfall/reference.csv", 7},
+        {"/manufactured/kinwave-normal-depth-rect-open/reference.csv", 7},
+        {"/manufactured/kinwave-step-inflow-rectangular-conduit/reference.csv", 1},
+        {"/manufactured/modified-horton-fmax-saturation-recovery/reference.csv", 22},
+        {"/manufactured/odesolve-exponential-decay/reference.csv", 6},
+        {"/manufactured/odesolve-logistic-growth/reference.csv", 8},
+        {"/manufactured/odesolve-sir-epidemic/reference.csv", 13},
+        {"/manufactured/quality-cstr-first-order-decay/reference.csv", 11},
+        {"/manufactured/xsect-circular-ellipse-reference/reference.csv", 21},
     };
     return kCorpus;
 }
 
 // Count non-empty, non-comment lines (lines whose first non-space char is '#'
 // are comments). The first such line is the header; the rest are data rows.
+/**
+ * @brief Count apparent CSV data lines after one noncomment header.
+ *
+ * Leading whitespace is allowed before # comments. A successfully opened empty/comment-only file
+ * also returns -1, distinguished by opened. Does not parse CSV values, validate the header or
+ * detect later read errors; count must fit int.
+ *
+ * @param[in] path Reference filename borrowed for a text read.
+ * @param[out] opened Required writable bool set to the stream's initial open status.
+ * @return Nonblank/noncomment line count minus one header, or -1 on open failure.
+ */
 int countDataRows(const std::string& path, bool* opened) {
     std::ifstream f(path);
     *opened = f.is_open();
-    if (!*opened) return -1;
+    if (!*opened)
+        return -1;
 
     int non_comment = 0;
     std::string line;
     while (std::getline(f, line)) {
         size_t i = line.find_first_not_of(" \t\r\n");
-        if (i == std::string::npos) continue;   // blank
-        if (line[i] == '#') continue;            // comment
+        if (i == std::string::npos)
+            continue; // blank
+        if (line[i] == '#')
+            continue; // comment
         ++non_comment;
     }
-    return non_comment - 1;  // subtract the header row
+    return non_comment - 1; // subtract the header row
 }
 
-}  // namespace
+} // namespace
 
 TEST(BenchmarkCorpus, AllReferenceDatasetsPresent) {
     const std::string base = BENCHMARK_DATA_DIR;
@@ -92,8 +117,7 @@ TEST(BenchmarkCorpus, AllReferenceDatasetsPresent) {
         bool opened = false;
         const int rows = countDataRows(path, &opened);
         ASSERT_TRUE(opened) << "Missing benchmark reference: " << path;
-        ASSERT_GE(rows, e.min_data_rows)
-            << "Benchmark reference truncated: " << path
-            << " has " << rows << " data rows, expected >= " << e.min_data_rows;
+        ASSERT_GE(rows, e.min_data_rows) << "Benchmark reference truncated: " << path << " has "
+                                         << rows << " data rows, expected >= " << e.min_data_rows;
     }
 }

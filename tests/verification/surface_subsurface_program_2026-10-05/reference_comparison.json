@@ -1,0 +1,38 @@
+[
+  {
+    "cells": 8,
+    "max_water_error_m3": 2.9945637720907303e-07,
+    "max_moisture_error": 2.3956510176725843e-06,
+    "surface_infiltrated_m": 0.02,
+    "reference_infiltrated_m": 0.020000000000000004,
+    "reference_rhs": 2980,
+    "reference_balance_m3": -2.7755575615628914e-17
+  },
+  {
+    "cells": 16,
+    "max_water_error_m3": 5.981235948228358e-07,
+    "max_moisture_error": 9.569977517165373e-06,
+    "surface_infiltrated_m": 0.02,
+    "reference_infiltrated_m": 0.020000000000000014,
+    "reference_rhs": 4654,
+    "reference_balance_m3": -5.551115123125783e-17
+  },
+  {
+    "cells": 32,
+    "max_water_error_m3": 3.640889431819061e-07,
+    "max_moisture_error": 1.1650846181820995e-05,
+    "surface_infiltrated_m": 0.02,
+    "reference_infiltrated_m": 0.02000000000000084,
+    "reference_rhs": 5274,
+    "reference_balance_m3": -2.7755575615628914e-17
+  },
+  {
+    "cells": 64,
+    "max_water_error_m3": 1.901030757304155e-07,
+    "max_moisture_error": 1.2166596846746591e-05,
+    "surface_infiltrated_m": 0.02,
+    "reference_infiltrated_m": 0.02000000000001263,
+    "reference_rhs": 6855,
+    "reference_balance_m3": -2.7755575615628914e-17
+  }
+]

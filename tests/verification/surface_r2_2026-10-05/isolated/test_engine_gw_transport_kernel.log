@@ -1,0 +1,116 @@
+Running main() from /Users/calebbuahin/Documents/Projects/vcpkg/buildtrees/gtest/src/v1.15.2-41f5afb119.clean/googletest/src/gtest_main.cc
+[==========] Running 30 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 30 tests from GwTransportKernel
+[ RUN      ] GwTransportKernel.TupleConservesOnEveryMeshFlavour
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.TupleConservesOnEveryMeshFlavour (8 ms)
+[ RUN      ] GwTransportKernel.InfiltrationHandsMassToTheAquiferAndExcessBringsItBack
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.InfiltrationHandsMassToTheAquiferAndExcessBringsItBack (2 ms)
+[ RUN      ] GwTransportKernel.SubsurfaceEtLeavesTheSolutesBehind
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.SubsurfaceEtLeavesTheSolutesBehind (2 ms)
+[ RUN      ] GwTransportKernel.EtCarriesTheAgeRowOutWithTheWaterD_A20
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.EtCarriesTheAgeRowOutWithTheWaterD_A20 (2 ms)
+[ RUN      ] GwTransportKernel.MatrixReportsTheGroundwaterRowAndTheWarningIsScoped
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.MatrixReportsTheGroundwaterRowAndTheWarningIsScoped (1 ms)
+[ RUN      ] GwTransportKernel.DispersionMixesTheNeighboursAndRespectsTheMaxPrinciple
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.DispersionMixesTheNeighboursAndRespectsTheMaxPrinciple (3 ms)
+[ RUN      ] GwTransportKernel.RetardationHoldsMassBackAndStillConserves
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.RetardationHoldsMassBackAndStillConserves (4 ms)
+[ RUN      ] GwTransportKernel.DecayRemovesTheAnalyticFractionAndIsLedgered
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.DecayRemovesTheAnalyticFractionAndIsLedgered (3 ms)
+[ RUN      ] GwTransportKernel.CApiReportsTheSpeciesRowsConcentrationsAndLedger
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.CApiReportsTheSpeciesRowsConcentrationsAndLedger (2 ms)
+[ RUN      ] GwTransportKernel.ReportCarriesTheAquiferQualityContinuity
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.ReportCarriesTheAquiferQualityContinuity (5 ms)
+[ RUN      ] GwTransportKernel.HotStartCarriesTheAquiferSpeciesAcrossARestart
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.HotStartCarriesTheAquiferSpeciesAcrossARestart (3 ms)
+[ RUN      ] GwTransportKernel.ResultsFileCarriesTheSpeciesFieldsAndLedger
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.ResultsFileCarriesTheSpeciesFieldsAndLedger (10 ms)
+[ RUN      ] GwTransportKernel.DrainingBedAgreesWithTheNodeInVolume
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[G-W1] 1D flow continuity, gw1_bed_only: 0.662393 % (clamped 235 firings; undelivered tail 4.62749e-05 m3 of 0.0665293 m3 exchanged)
+[       OK ] GwTransportKernel.DrainingBedAgreesWithTheNodeInVolume (4 ms)
+[ RUN      ] GwTransportKernel.DrainingBedAgreesWithTheNodeUnderEnslavedClosure
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[G-W1] 1D flow continuity, gw1_bed_enslaved: 0.528045 % (clamped 228 firings; undelivered tail 1.874e-05 m3 of 0.234981 m3 exchanged)
+[       OK ] GwTransportKernel.DrainingBedAgreesWithTheNodeUnderEnslavedClosure (4 ms)
+[ RUN      ] GwTransportKernel.LeakingConduitCarriesItsQualityIntoTheAquifer
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.LeakingConduitCarriesItsQualityIntoTheAquifer (2 ms)
+[ RUN      ] GwTransportKernel.RechargingNodeSendsItsQualityDownTheBedAndIsLedgered
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.RechargingNodeSendsItsQualityDownTheBedAndIsLedgered (2 ms)
+[ RUN      ] GwTransportKernel.DrainingAquiferHandsItsMassToTheNodeQueue
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.DrainingAquiferHandsItsMassToTheNodeQueue (2 ms)
+[ RUN      ] GwTransportKernel.ContinuityDenominatorNamesEveryInflowRoute
+[       OK ] GwTransportKernel.ContinuityDenominatorNamesEveryInflowRoute (0 ms)
+[ RUN      ] GwTransportKernel.ReportSaysNaWhenThereIsNoScaleToDivideBy
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.ReportSaysNaWhenThereIsNoScaleToDivideBy (2 ms)
+[ RUN      ] GwTransportKernel.NamedSourcesApplyTotalFlowScaleAndNativeMassOnActualCells
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.NamedSourcesApplyTotalFlowScaleAndNativeMassOnActualCells (5 ms)
+[ RUN      ] GwTransportKernel.ExtractionIsAvailabilityLimitedAndRemovesDissolvedSpecies
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.ExtractionIsAvailabilityLimitedAndRemovesDissolvedSpecies (4 ms)
+[ RUN      ] GwTransportKernel.SourceSeriesUsesNonMidnightStartAndFileValues
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.SourceSeriesUsesNonMidnightStartAndFileValues (1 ms)
+[ RUN      ] GwTransportKernel.UnsupportedGroundwaterForcingFailsRatherThanRunningInertly
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.UnsupportedGroundwaterForcingFailsRatherThanRunningInertly (2 ms)
+[ RUN      ] GwTransportKernel.InitialCellQualityOverridesLaterGlobalRows
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.InitialCellQualityOverridesLaterGlobalRows (0 ms)
+[ RUN      ] GwTransportKernel.SourceLedgersResumeThroughNativeHotstart
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.SourceLedgersResumeThroughNativeHotstart (3 ms)
+[ RUN      ] GwTransportKernel.FlowReversalCannotWithdrawFutureInjectionAndClosesAcrossCadences
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.FlowReversalCannotWithdrawFutureInjectionAndClosesAcrossCadences (12 ms)
+[ RUN      ] GwTransportKernel.CoupledGroundwaterRejectsUnsupportedRk2Route
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.CoupledGroundwaterRejectsUnsupportedRk2Route (1 ms)
+[ RUN      ] GwTransportKernel.AquiferOptionSnapshotsPreserveFullDoublePrecision
+[       OK ] GwTransportKernel.AquiferOptionSnapshotsPreserveFullDoublePrecision (0 ms)
+[ RUN      ] GwTransportKernel.AuthoringTagGettersWorkBeforeRuntimeInitialization
+[       OK ] GwTransportKernel.AuthoringTagGettersWorkBeforeRuntimeInitialization (0 ms)
+[ RUN      ] GwTransportKernel.GroundwaterHdfUnitsFollowNativeSpeciesEvenWhenSurfaceTransportIsOff
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[       OK ] GwTransportKernel.GroundwaterHdfUnitsFollowNativeSpeciesEvenWhenSurfaceTransportIsOff (21 ms)
+[----------] 30 tests from GwTransportKernel (123 ms total)
+
+[----------] Global test environment tear-down
+[==========] 30 tests from 1 test suite ran. (123 ms total)
+[  PASSED  ] 30 tests.

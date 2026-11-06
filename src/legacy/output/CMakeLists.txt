@@ -46,11 +46,21 @@ set_target_properties(openswmm_legacy_output
 #       directly in the unmodified legacy C source file (swmm_output.c).
 #   EXPORT_OPENSWMMCORE_OUTPUT_API         → EXPORT_MACRO_NAME (preserved)
 include(GenerateExportHeader)
+set(OPENSWMM_LEGACY_OUTPUT_EXPORT_DOCUMENTATION [=[
+/**
+ * @file      openswmm_output_export.h
+ * @brief     Build-generated visibility and deprecation macros for the legacy output API.
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
+ */
+]=])
 generate_export_header(openswmm_legacy_output
     BASE_NAME        openswmm_legacy_output
     EXPORT_MACRO_NAME EXPORT_OPENSWMMCORE_OUTPUT_API
     EXPORT_FILE_NAME openswmm_output_export.h
     STATIC_DEFINE    SHARED_EXPORTS_BUILT_AS_STATIC
+    CUSTOM_CONTENT_FROM_VARIABLE OPENSWMM_LEGACY_OUTPUT_EXPORT_DOCUMENTATION
 )
 
 # Copy generated export header to the canonical include location

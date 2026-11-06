@@ -1,0 +1,115 @@
+[TITLE]
+Column-and-precision fixture for the file-IO parity audit.
+
+Every value below is chosen so that a dropped column, a shifted column or a
+truncating format is unambiguous in generation 1:
+
+  * the divider tails carry four DISTINCT values, so reading MaxDepth from the
+    InitDepth column (the old OVERFLOW off-by-one) shows up as 1.11 not 6.07;
+  * C_CULVERT carries culvert code 4, which used to vanish because the writer
+    stopped at the Barrels column;
+  * S1's area has nine significant digits, which %12.4f truncated to 0.0189 —
+    a 0.2% error straight into runoff volume;
+  * ST1's functional A1 has nine, which a bare %g truncated to 278.54;
+  * C_SEEP's seepage is in in/hr and this deck is CFS, so it exercises the
+    UCF(RAINFALL) back-conversion the LENGTH-only writer gate used to skip;
+  * MINIMUM_STEP is a WHOLE number of seconds on purpose — fmt_step only
+    produced the fatal "0:00:01" clock form for whole-second values, so a
+    fractional 0.5 here would let the defect through the gate unnoticed.
+
+Units are CFS deliberately: the unit defects only bite US decks.
+
+[OPTIONS]
+FLOW_UNITS           CFS
+INFILTRATION         HORTON
+FLOW_ROUTING         DYNWAVE
+LINK_OFFSETS         DEPTH
+START_DATE           01/01/2024
+END_DATE             01/01/2024
+REPORT_STEP          00:15:00
+ROUTING_STEP         00:00:30
+MINIMUM_STEP         1
+ALLOW_PONDING        YES
+
+[RAINGAGES]
+;;Name  Format     Interval  SCF   Source
+RG1     INTENSITY  0:05      1.0   TIMESERIES TS1
+
+[TIMESERIES]
+TS1  0:00  0.0
+TS1  1:00  0.5
+
+[SUBCATCHMENTS]
+;;Name  RainGage  Outlet  Area         %Imperv  Width  %Slope  CurbLen
+S1      RG1       J1      0.018939394  25.0     100.0  0.5     0
+
+[SUBAREAS]
+;;Subcatch  N-Imperv  N-Perv  S-Imperv  S-Perv  PctZero  RouteTo
+S1          0.013     0.1     0.05      0.05    25       OUTLET
+
+[INFILTRATION]
+;;Subcatch  MaxRate  MinRate  Decay  DryTime  MaxInfil
+S1          3.0      0.5      4.0    7        0
+
+[JUNCTIONS]
+;;Name  Elev   MaxDepth  InitDepth  SurDepth  Aponded
+J1      100.0  10.0      0.0        0.0       0.0
+J2      98.0   10.0      0.0        0.0       0.0
+J3      96.0   10.0      0.0        0.0       0.0
+
+[DIVIDERS]
+;;Name  Elev  DivLink  Type      (Params)  MaxDepth  InitDepth  SurDepth  Aponded
+DIV_OVR 95.0  L_DIV    OVERFLOW            6.07      1.11       2.22      200.0
+DIV_CUT 94.0  L_DIV2   CUTOFF    3.33      7.07      1.12       2.23      300.0
+
+[STORAGE]
+;;Name  Elev  MaxDepth  InitDepth  Shape       A1          A2  A0  SurDepth  Fevap
+ST1     93.0  22.0      1.0        FUNCTIONAL  278.539816  0   0   0         0
+
+[OUTFALLS]
+;;Name  Elev  Type  Stage  Gated
+O1      90.0  FREE         NO
+O2      90.0  FREE         NO
+O3      90.0  FREE         NO
+
+[CONDUITS]
+;;Name    From     To       Length  Rough  InOff  OutOff
+C_CULVERT J1       J2       100.0   0.013  0      0
+C_SEEP    J2       J3       120.5   0.013  0      0
+C_IN      J3       DIV_OVR  100.0   0.013  0      0
+L_DIV     DIV_OVR  O1       100.0   0.013  0      0
+C_MID     DIV_OVR  DIV_CUT  100.0   0.013  0      0
+L_DIV2    DIV_CUT  O2       100.0   0.013  0      0
+C_MAIN    DIV_CUT  ST1      100.0   0.013  0      0
+C_OUT     ST1      O3       100.0   0.013  0      0
+
+[XSECTIONS]
+;;Link     Shape     Geom1  Geom2  Geom3  Geom4  Barrels  Culvert
+C_CULVERT  CIRCULAR  1.5    0      0      0      1        4
+C_SEEP     CIRCULAR  1.5    0      0      0      1
+C_IN       CIRCULAR  1.5    0      0      0      1
+L_DIV      CIRCULAR  1.0    0      0      0      1
+C_MID      CIRCULAR  1.5    0      0      0      1
+L_DIV2     CIRCULAR  1.0    0      0      0      1
+C_MAIN     CIRCULAR  1.5    0      0      0      1
+C_OUT      CIRCULAR  1.5    0      0      0      1
+
+[LOSSES]
+;;Link   Kentry  Kexit  Kavg  Flap  Seepage
+C_SEEP   0       0      0     NO    0.25
+
+[COORDINATES]
+J1       0    0
+J2       100  0
+J3       200  0
+DIV_OVR  300  0
+DIV_CUT  400  0
+ST1      500  0
+O1       300  100
+O2       400  100
+O3       600  0
+
+[Polygons]
+S1  0  0
+S1  0  50
+S1  50 50

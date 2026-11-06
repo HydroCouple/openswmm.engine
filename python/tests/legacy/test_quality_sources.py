@@ -115,7 +115,16 @@ def _max_node_quality(s, max_steps):
 # --------------------------------------------------------------------------- #
 class TestRainConcentration(unittest.TestCase):
     def _peak_runoff_tss(self, rain_conc, name):
-        s = _open(_SITE_DRAINAGE, name)
+        # Isolate wet deposition: the shared model also contains initial
+        # buildup and land-use washoff, which otherwise produce TSS at zero rain concentration.
+        with open(_SITE_DRAINAGE) as source:
+            text = source.read()
+        text = re.sub(r"^\[(?:LOADINGS|BUILDUP|WASHOFF)\][^\[]*", "", text, flags=re.MULTILINE)
+        os.makedirs(_OUT_DIR, exist_ok=True)
+        path = os.path.join(_OUT_DIR, name + ".inp")
+        with open(path, "w") as destination:
+            destination.write(text)
+        s = _open(path, name)
         s.set_value(_PObj, _PProp.RAIN_CONCENTRATION, 0, rain_conc)
         subs = LegacySubcatchments(s)
         peak = 0.0

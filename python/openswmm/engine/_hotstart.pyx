@@ -1,10 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright 2026 Caleb Buahin
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Hot start files (Pythonic v1 surface)
 =====================================
 
 :author: Caleb Buahin
 :copyright: Copyright (c) 2026 Caleb Buahin
-:license: MIT
+:license: Apache-2.0
 
 Hot start files capture the hydraulic + quality state of a simulation
 at a moment in time and let a follow-up run resume from there.
@@ -37,12 +53,26 @@ is exposed via :attr:`Solver.save_schedule`.
 
 import os
 from collections.abc import MutableSequence
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, NamedTuple, Optional
 
 from ._common cimport *
 from ._solver cimport Solver
 from ._dates import datetime_to_oadate, oadate_to_datetime
+
+cdef extern from "openswmm/engine/openswmm_hotstart.h":
+    enum:
+        SWMM_ERR_HOTSTART
+    const char* swmm_hotstart_last_io_error()
+
+cdef void _check_io(int rc) except *:
+    cdef const char* detail
+    if rc == SWMM_ERR_HOTSTART:
+        detail = swmm_hotstart_last_io_error()
+        if detail != NULL and detail[0] != 0:
+            from ._exceptions import raise_for_code
+            raise_for_code(rc, detail.decode('utf-8'))
+    _check(rc)
 
 
 cdef class HotStart:
@@ -61,12 +91,13 @@ cdef class HotStart:
     def save_from(Solver solver, path) -> None:
         """Save ``solver`` state to ``path``. Raises on failure."""
         cdef bytes b = os.fspath(path).encode('utf-8')
-        cdef SWMM_Engine h = solver._handle
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>solver.handle
         cdef const char* p = b
         cdef int rc
-        with nogil:
-            rc = swmm_hotstart_save(h, p)
-        _check(rc)
+        with solver._operation(<size_t>h):
+            with nogil:
+                rc = swmm_hotstart_save(h, p)
+            _check_io(rc)
 
     @classmethod
     def open(cls, path) -> "HotStart":
@@ -78,7 +109,7 @@ cdef class HotStart:
         cdef int rc
         with nogil:
             rc = swmm_hotstart_open(p, &hs)
-        _check(rc)
+        _check_io(rc)
         obj._handle = hs
         return obj
 
@@ -107,10 +138,10 @@ cdef class HotStart:
     def apply(self, Solver solver) -> None:
         """Apply this hot start to ``solver``. The solver must be
         INITIALIZED (post-:meth:`Solver.initialize`, pre-:meth:`Solver.start`)."""
-        cdef SWMM_Engine h = solver._handle
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>solver.handle
         cdef SWMM_HotStart hs = self._handle
         cdef int rc
-        with nogil:
+        with solver._operation(<size_t>h):
             rc = swmm_hotstart_apply(h, hs)
         _check(rc)
 
@@ -120,20 +151,36 @@ cdef class HotStart:
 
     @property
     def sim_datetime(self) -> datetime:
-        """Moment at which the saved state was captured."""
+        """Moment at which the saved state was captured: the saving run's
+        start date plus the elapsed simulation time."""
+        cdef double elapsed = 0.0
+        _check(swmm_hotstart_get_sim_time(self._handle, &elapsed))
+        return self.start_datetime + timedelta(seconds=elapsed)
+
+    @property
+    def start_datetime(self) -> datetime:
+        """Start date and time of the run that saved the state."""
         cdef double v = 0.0
-        _check(swmm_hotstart_get_sim_time(self._handle, &v))
+        _check(swmm_hotstart_get_start_date(self._handle, &v))
         return oadate_to_datetime(v)
 
     @property
     def crs(self) -> Optional[str]:
         """CRS string captured in the file, or ``None`` if absent."""
-        cdef char buf[256]
-        cdef int rc = swmm_hotstart_get_crs(self._handle, buf, 256)
-        if rc != 0:
-            return None
-        s = buf.decode('utf-8')
-        return s or None
+        cdef _TextBufs t
+        cdef int rc
+        _tb_open(&t, 1)
+        try:
+            while True:
+                rc = swmm_hotstart_get_crs(self._handle, t.p[0], t.size)
+                if rc != 0:
+                    return None
+                if not _tb_retry(&t):
+                    break
+            s = _tb_str(&t, 0)
+            return s or None
+        finally:
+            _tb_close(&t)
 
     @property
     def node_count(self) -> int:
@@ -195,6 +242,13 @@ cdef class HotStart:
 # Save schedule — solver.save_schedule
 # =============================================================================
 
+# SWMM_HOTSTART_FORMAT_AUTO / _LEGACY / _NATIVE, by value.
+_SAVE_FORMATS = ("AUTO", "LEGACY", "NATIVE")
+# SWMM_HOTSTART_OMITS_* bits, by name.
+_LEGACY_OMITS = ((0x1, "WATER_AGE"), (0x2, "REACTION_SPECIES"),
+                 (0x4, "AQUIFER"), (0x8, "NODE_LIDS"))
+
+
 class SaveScheduleEntry(NamedTuple):
     """One row in the engine's ``[SAVE HOTSTART]`` schedule."""
     when: datetime
@@ -241,12 +295,11 @@ class SaveSchedule(MutableSequence):
         if not 0 <= idx < n:
             raise IndexError(idx)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef char buf[512]
-        _check(swmm_hotstart_saves_get_path(h, idx, buf, 512))
+        path = _read_engine_index_string(h, idx, swmm_hotstart_saves_get_path)
         cdef double when = 0.0
         _check(swmm_hotstart_saves_get_datetime(h, idx, &when))
         return SaveScheduleEntry(
-            when=oadate_to_datetime(when), path=buf.decode('utf-8'))
+            when=oadate_to_datetime(when), path=path)
 
     def __setitem__(self, idx, value):
         if not isinstance(idx, int):
@@ -276,16 +329,64 @@ class SaveSchedule(MutableSequence):
     def insert(self, idx, value):
         """Insert *value* at *idx* (emulated via clear + re-add; the C save API is append-only)."""
         # The C API only supports append; emulate insert by clearing and
-        # re-adding (same approach as solver.events).
+        # re-adding (same approach as solver.events). Formats ride along.
         n = len(self)
         if idx < 0:
             idx += n
         idx = max(0, min(idx, n))
-        existing = [self[i] for i in range(n)]
-        existing.insert(idx, value)
+        existing = [(self[i], self.get_format(i)) for i in range(n)]
+        existing.insert(idx, (value, "AUTO"))
         self.clear()
-        for ent in existing:
+        for i, (ent, fmt) in enumerate(existing):
             self.append(ent)
+            if fmt != "AUTO":
+                self.set_format(i, fmt)
+
+    def get_format(self, idx) -> str:
+        """File format of entry *idx*: ``"AUTO"``, ``"LEGACY"`` or ``"NATIVE"``.
+
+        AUTO (the default, and every row without a format keyword) writes the
+        legacy SWMM5 ``.hsf``, or the native file when the model has node
+        LIDs. NATIVE also keeps the state :meth:`legacy_omits` names; legacy
+        SWMM 5 cannot read it.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int fmt = 0
+        _check(swmm_hotstart_saves_get_format(h, self._index(idx), &fmt))
+        return _SAVE_FORMATS[fmt]
+
+    def set_format(self, idx, fmt: str) -> None:
+        """Set the file format of entry *idx* (``"AUTO"``, ``"LEGACY"`` or ``"NATIVE"``)."""
+        key = str(fmt).upper()
+        if key not in _SAVE_FORMATS:
+            raise ValueError(
+                "hot-start save format must be one of " + ", ".join(_SAVE_FORMATS)
+                + "; got " + repr(fmt))
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_hotstart_saves_set_format(h, self._index(idx),
+                                              _SAVE_FORMATS.index(key)))
+
+    def legacy_omits(self) -> tuple:
+        """Model state a legacy SWMM5 file has no place for and NATIVE keeps.
+
+        A tuple drawn from ``"WATER_AGE"``, ``"REACTION_SPECIES"``,
+        ``"AQUIFER"`` and ``"NODE_LIDS"``; empty when nothing in the model
+        needs NATIVE. ``[POLLUTANTS]`` concentrations are in both formats.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int flags = 0
+        _check(swmm_hotstart_legacy_omits(h, &flags))
+        return tuple(name for bit, name in _LEGACY_OMITS if flags & bit)
+
+    def _index(self, idx) -> int:
+        if not isinstance(idx, int):
+            raise TypeError("SaveSchedule index must be int")
+        n = len(self)
+        if idx < 0:
+            idx += n
+        if not 0 <= idx < n:
+            raise IndexError(idx)
+        return idx
 
     def append(self, value):
         """Append a hot-start save-schedule entry *value*."""

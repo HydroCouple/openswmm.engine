@@ -22,6 +22,17 @@
 //   Build 5.2.1:
 //   - Possible integer underflow avoided in getTokens() function.
 //-----------------------------------------------------------------------------
+
+/**
+ * @file      input.c
+ * @brief     Parsing and dispatch of legacy SWMM input sections.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com> (OpenSWMM maintenance and extensions)
+ * @copyright Copyright (c) 2026 Caleb Buahin. OpenSWMM contributions only; original EPA SWMM
+ *            credits are retained.
+ * @license   Apache-2.0 for OpenSWMM contributions; original EPA SWMM provenance is retained.
+ */
+
 #define _CRT_SECURE_NO_DEPRECATE
 
 #include <stdlib.h>
@@ -33,17 +44,17 @@
 //-----------------------------------------------------------------------------
 //  Constants
 //-----------------------------------------------------------------------------
-static const int MAXERRS = 100;        // Max. input errors reported
+static const int MAXERRS = 100; // Max. input errors reported
 
 //-----------------------------------------------------------------------------
 //  Shared variables
 //-----------------------------------------------------------------------------
-static char *Tok[MAXTOKS];             // String tokens from line of input
-static int  Ntokens;                   // Number of tokens in line of input
-static int  Mobjects[MAX_OBJ_TYPES];   // Working number of objects of each type
-static int  Mnodes[MAX_NODE_TYPES];    // Working number of node objects
-static int  Mlinks[MAX_LINK_TYPES];    // Working number of link objects
-static int  Mevents;                   // Working number of event periods
+static char* Tok[MAXTOKS];          // String tokens from line of input
+static int Ntokens;                 // Number of tokens in line of input
+static int Mobjects[MAX_OBJ_TYPES]; // Working number of objects of each type
+static int Mnodes[MAX_NODE_TYPES];  // Working number of node objects
+static int Mlinks[MAX_LINK_TYPES];  // Working number of link objects
+static int Mevents;                 // Working number of event periods
 
 //-----------------------------------------------------------------------------
 //  External Functions (declared in funcs.h)
@@ -54,68 +65,69 @@ static int  Mevents;                   // Working number of event periods
 //-----------------------------------------------------------------------------
 //  Local functions
 //-----------------------------------------------------------------------------
-static int  addObject(int objType, char* id);
-static int  getTokens(char *s);
-static int  parseLine(int sect, char* line);
-static int  readOption(char* line);
-static int  readTitle(char* line);
-static int  readControl(char* tok[], int ntoks);
-static int  readNode(int type);
-static int  readLink(int type);
-static int  readEvent(char* tok[], int ntoks);
+static int addObject(int objType, char* id);
+static int getTokens(char* s);
+static int parseLine(int sect, char* line);
+static int readOption(char* line);
+static int readTitle(char* line);
+static int readControl(char* tok[], int ntoks);
+static int readNode(int type);
+static int readLink(int type);
+static int readEvent(char* tok[], int ntoks);
 
 //=============================================================================
 
-int input_countObjects()
-//
-//  Input:   none
-//  Output:  returns error code
-//  Purpose: reads input file to determine number of system objects.
-//
-{
-    char  line[MAXLINE+1];             // line from input data file     
-    char  wLine[MAXLINE+1];            // working copy of input line   
-    char  *tok;                        // first string token of line          
-    int   sect = -1, newsect;          // input data sections          
-    int   errcode = 0;                 // error code
-    int   errsum = 0;                  // number of errors found                   
-    int   i;
-    long  lineCount = 0;
+/**
+ * @brief Reads input file to determine number of system objects.
+ *
+ * @return Error code.
+ */
+int input_countObjects() {
+    char line[MAXLINE + 1];  // line from input data file
+    char wLine[MAXLINE + 1]; // working copy of input line
+    char* tok;               // first string token of line
+    int sect = -1, newsect;  // input data sections
+    int errcode = 0;         // error code
+    int errsum = 0;          // number of errors found
+    int i;
+    long lineCount = 0;
 
     // --- initialize number of objects & set default values
-    if ( ErrorCode ) return ErrorCode;
+    if (ErrorCode)
+        return ErrorCode;
     error_setInpError(0, "");
-    for (i = 0; i < MAX_OBJ_TYPES; i++) Nobjects[i] = 0;
-    for (i = 0; i < MAX_NODE_TYPES; i++) Nnodes[i] = 0;
-    for (i = 0; i < MAX_LINK_TYPES; i++) Nlinks[i] = 0;
+    for (i = 0; i < MAX_OBJ_TYPES; i++)
+        Nobjects[i] = 0;
+    for (i = 0; i < MAX_NODE_TYPES; i++)
+        Nnodes[i] = 0;
+    for (i = 0; i < MAX_LINK_TYPES; i++)
+        Nlinks[i] = 0;
     controls_init();
 
     // --- make pass through data file counting number of each object
-    while ( fgets(line, MAXLINE, Finp.file) != NULL )
-    {
+    while (fgets(line, MAXLINE, Finp.file) != NULL) {
         // --- skip blank lines & those beginning with a comment
         lineCount++;
-        sstrncpy(wLine, line, MAXLINE);     // make working copy of line
-        tok = strtok(wLine, SEPSTR);        // get first text token on line
-        if ( tok == NULL ) continue;
-        if ( *tok == ';' ) continue;
+        sstrncpy(wLine, line, MAXLINE); // make working copy of line
+        tok = strtok(wLine, SEPSTR);    // get first text token on line
+        if (tok == NULL)
+            continue;
+        if (*tok == ';')
+            continue;
 
         // --- check if line begins with a new section heading
-        if ( *tok == '[' )
-        {
+        if (*tok == '[') {
             // --- look for heading in list of section keywords
             newsect = findmatch(tok, SectWords);
-            if ( newsect >= 0 )
-            {
+            if (newsect >= 0) {
                 sect = newsect;
                 continue;
-            }
-            else
-            {
+            } else {
                 // --- unknown section: warn and skip
-                char warnMsg[MAXLINE+1];
+                char warnMsg[MAXLINE + 1];
                 snprintf(warnMsg, MAXLINE,
-                    "\n  WARNING: Unknown section '%s' at line %ld will be skipped.", tok, lineCount);
+                         "\n  WARNING: Unknown section '%s' at line %ld will be skipped.", tok,
+                         lineCount);
                 report_writeLine(warnMsg);
                 report_invokeWarningCallback(warnMsg);
                 sect = -1;
@@ -125,54 +137,59 @@ int input_countObjects()
 
         // --- if in OPTIONS section then read the option setting
         //     otherwise add object and its ID name (tok) to project
-        if ( sect == s_OPTION ) errcode = readOption(line);
-        else if ( sect >= 0 )   errcode = addObject(sect, tok);
+        if (sect == s_OPTION)
+            errcode = readOption(line);
+        else if (sect >= 0)
+            errcode = addObject(sect, tok);
 
         // --- report any error found
-        if ( errcode )
-        {
+        if (errcode) {
             report_writeInputErrorMsg(errcode, sect, line, lineCount);
             errsum++;
-            if (errsum >= MAXERRS ) break;
+            if (errsum >= MAXERRS)
+                break;
         }
     }
 
     // --- set global error code if input errors were found
-    if ( errsum > 0 ) ErrorCode = ERR_INPUT;
+    if (errsum > 0)
+        ErrorCode = ERR_INPUT;
     return ErrorCode;
 }
 
 //=============================================================================
 
-int input_readData()
-//
-//  Input:   none
-//  Output:  returns error code
-//  Purpose: reads input file to determine input parameters for each object.
-//
-{
-    char  line[MAXLINE+1];        // line from input data file
-    char  wLine[MAXLINE+1];       // working copy of input line
-    char* comment;                // ptr. to start of comment in input line
-    int   sect, newsect;          // data sections
-    int   inperr, errsum;         // error code & total error count
-    int   lineLength;             // number of characters in input line
-    int   i;
-    long  lineCount = 0;
+/**
+ * @brief Reads input file to determine input parameters for each object.
+ *
+ * @return Error code.
+ */
+int input_readData() {
+    char line[MAXLINE + 1];  // line from input data file
+    char wLine[MAXLINE + 1]; // working copy of input line
+    char* comment;           // ptr. to start of comment in input line
+    int sect, newsect;       // data sections
+    int inperr, errsum;      // error code & total error count
+    int lineLength;          // number of characters in input line
+    int i;
+    long lineCount = 0;
 
     // --- initialize working item count arrays
     //     (final counts in Mobjects, Mnodes & Mlinks should
     //      match those in Nobjects, Nnodes and Nlinks).
-    if ( ErrorCode ) return ErrorCode;
+    if (ErrorCode)
+        return ErrorCode;
     error_setInpError(0, "");
-    for (i = 0; i < MAX_OBJ_TYPES; i++)  Mobjects[i] = 0;
-    for (i = 0; i < MAX_NODE_TYPES; i++) Mnodes[i] = 0;
-    for (i = 0; i < MAX_LINK_TYPES; i++) Mlinks[i] = 0;
+    for (i = 0; i < MAX_OBJ_TYPES; i++)
+        Mobjects[i] = 0;
+    for (i = 0; i < MAX_NODE_TYPES; i++)
+        Mnodes[i] = 0;
+    for (i = 0; i < MAX_LINK_TYPES; i++)
+        Mlinks[i] = 0;
     Mevents = 0;
 
     // --- initialize starting date for all time series
-    for ( i = 0; i < Nobjects[TSERIES]; i++ )
-    {
+    for (i = 0; i < Nobjects[TSERIES]; i++) {
         Tseries[i].lastDate = StartDate + StartTime;
     }
 
@@ -180,26 +197,26 @@ int input_readData()
     sect = 0;
     errsum = 0;
     rewind(Finp.file);
-    while ( fgets(line, MAXLINE, Finp.file) != NULL )
-    {
+    while (fgets(line, MAXLINE, Finp.file) != NULL) {
         // --- make copy of line and scan for tokens
         lineCount++;
         sstrncpy(wLine, line, MAXLINE);
         Ntokens = getTokens(wLine);
 
         // --- skip blank lines and comments
-        if ( Ntokens == 0 ) continue;
-        if ( *Tok[0] == ';' ) continue;
+        if (Ntokens == 0)
+            continue;
+        if (*Tok[0] == ';')
+            continue;
 
         // --- check if max. line length exceeded
         lineLength = (int)strlen(line);
-        if ( lineLength >= MAXLINE )
-        {
+        if (lineLength >= MAXLINE) {
             // --- don't count comment if present
             comment = strchr(line, ';');
-            if ( comment ) lineLength = (int)(comment - line);  // Pointer math here
-            if ( lineLength >= MAXLINE )
-            {
+            if (comment)
+                lineLength = (int)(comment - line); // Pointer math here
+            if (lineLength >= MAXLINE) {
                 inperr = ERR_LINE_LENGTH;
                 report_writeInputErrorMsg(inperr, sect, line, lineCount);
                 errsum++;
@@ -207,27 +224,24 @@ int input_readData()
         }
 
         // --- check if at start of a new input section
-        if (*Tok[0] == '[')
-        {
+        if (*Tok[0] == '[') {
             // --- match token against list of section keywords
             newsect = findmatch(Tok[0], SectWords);
-            if (newsect >= 0)
-            {
+            if (newsect >= 0) {
                 // --- SPECIAL CASE FOR TRANSECTS
                 //     finish processing the last set of transect data
-                if ( sect == s_TRANSECT )
-                    transect_validate(Nobjects[TRANSECT]-1);
+                if (sect == s_TRANSECT)
+                    transect_validate(Nobjects[TRANSECT] - 1);
 
                 // --- begin a new input section
                 sect = newsect;
                 continue;
-            }
-            else
-            {
+            } else {
                 // --- unknown section: warn and skip until next known section
-                char warnMsg[MAXLINE+1];
+                char warnMsg[MAXLINE + 1];
                 snprintf(warnMsg, MAXLINE,
-                    "\n  WARNING: Unknown section '%s' at line %ld will be skipped.", Tok[0], lineCount);
+                         "\n  WARNING: Unknown section '%s' at line %ld will be skipped.", Tok[0],
+                         lineCount);
                 report_writeLine(warnMsg);
                 report_invokeWarningCallback(warnMsg);
                 sect = -1;
@@ -236,231 +250,226 @@ int input_readData()
         }
 
         // --- otherwise parse tokens from input line
-        else
-        {
+        else {
             inperr = parseLine(sect, line);
-            if ( inperr > 0 )
-            {
+            if (inperr > 0) {
                 errsum++;
-                if ( errsum > MAXERRS ) report_writeLine(FMT19);
-                else report_writeInputErrorMsg(inperr, sect, line, lineCount);
+                if (errsum > MAXERRS)
+                    report_writeLine(FMT19);
+                else
+                    report_writeInputErrorMsg(inperr, sect, line, lineCount);
             }
         }
 
         // --- stop if reach end of file or max. error count
-        if (errsum > MAXERRS) break;
-    }   /* End of while */
+        if (errsum > MAXERRS)
+            break;
+    } /* End of while */
 
     // --- check for errors
-    if (errsum > 0)  ErrorCode = ERR_INPUT;
+    if (errsum > 0)
+        ErrorCode = ERR_INPUT;
     return ErrorCode;
 }
 
 //=============================================================================
 
-int  addObject(int objType, char* id)
-//
-//  Input:   objType = object type index
-//           id = object's ID string
-//  Output:  returns an error code
-//  Purpose: adds a new object to the project.
-//
-{
+/**
+ * @brief Adds a new object to the project.
+ *
+ * @param[in] objType Object type index.
+ * @param id Object's ID string.
+ * @return An error code.
+ */
+int addObject(int objType, char* id) {
     int errcode = 0;
-    switch( objType )
-    {
-      case s_RAINGAGE:
-        if ( !project_addObject(GAGE, id, Nobjects[GAGE]) )
+    switch (objType) {
+    case s_RAINGAGE:
+        if (!project_addObject(GAGE, id, Nobjects[GAGE]))
             errcode = error_setInpError(ERR_DUP_NAME, id);
         Nobjects[GAGE]++;
         break;
 
-      case s_SUBCATCH:
-        if ( !project_addObject(SUBCATCH, id, Nobjects[SUBCATCH]) )
+    case s_SUBCATCH:
+        if (!project_addObject(SUBCATCH, id, Nobjects[SUBCATCH]))
             errcode = error_setInpError(ERR_DUP_NAME, id);
         Nobjects[SUBCATCH]++;
         break;
 
-      case s_AQUIFER:
-        if ( !project_addObject(AQUIFER, id, Nobjects[AQUIFER]) )
+    case s_AQUIFER:
+        if (!project_addObject(AQUIFER, id, Nobjects[AQUIFER]))
             errcode = error_setInpError(ERR_DUP_NAME, id);
         Nobjects[AQUIFER]++;
         break;
 
-      case s_UNITHYD:
+    case s_UNITHYD:
         // --- the same Unit Hydrograph can span several lines
-        if ( project_findObject(UNITHYD, id) < 0 )
-        {
-            if ( !project_addObject(UNITHYD, id, Nobjects[UNITHYD]) )
+        if (project_findObject(UNITHYD, id) < 0) {
+            if (!project_addObject(UNITHYD, id, Nobjects[UNITHYD]))
                 errcode = error_setInpError(ERR_DUP_NAME, id);
             Nobjects[UNITHYD]++;
         }
         break;
 
-      case s_SNOWMELT:
+    case s_SNOWMELT:
         // --- the same Snowmelt object can appear on several lines
-        if ( project_findObject(SNOWMELT, id) < 0 )
-        {
-            if ( !project_addObject(SNOWMELT, id, Nobjects[SNOWMELT]) )
+        if (project_findObject(SNOWMELT, id) < 0) {
+            if (!project_addObject(SNOWMELT, id, Nobjects[SNOWMELT]))
                 errcode = error_setInpError(ERR_DUP_NAME, id);
             Nobjects[SNOWMELT]++;
         }
         break;
 
-      case s_JUNCTION:
-        if ( !project_addObject(NODE, id, Nobjects[NODE]) )
+    case s_JUNCTION:
+        if (!project_addObject(NODE, id, Nobjects[NODE]))
             errcode = error_setInpError(ERR_DUP_NAME, id);
         Nobjects[NODE]++;
         Nnodes[JUNCTION]++;
         break;
 
-      case s_OUTFALL:
-        if ( !project_addObject(NODE, id, Nobjects[NODE]) )
+    case s_OUTFALL:
+        if (!project_addObject(NODE, id, Nobjects[NODE]))
             errcode = error_setInpError(ERR_DUP_NAME, id);
         Nobjects[NODE]++;
         Nnodes[OUTFALL]++;
         break;
 
-      case s_STORAGE:
-        if ( !project_addObject(NODE, id, Nobjects[NODE]) )
+    case s_STORAGE:
+        if (!project_addObject(NODE, id, Nobjects[NODE]))
             errcode = error_setInpError(ERR_DUP_NAME, id);
         Nobjects[NODE]++;
         Nnodes[STORAGE]++;
         break;
 
-      case s_DIVIDER:
-        if ( !project_addObject(NODE, id, Nobjects[NODE]) )
+    case s_DIVIDER:
+        if (!project_addObject(NODE, id, Nobjects[NODE]))
             errcode = error_setInpError(ERR_DUP_NAME, id);
         Nobjects[NODE]++;
         Nnodes[DIVIDER]++;
         break;
 
-      case s_CONDUIT:
-        if ( !project_addObject(LINK, id, Nobjects[LINK]) )
+    case s_CONDUIT:
+        if (!project_addObject(LINK, id, Nobjects[LINK]))
             errcode = error_setInpError(ERR_DUP_NAME, id);
         Nobjects[LINK]++;
         Nlinks[CONDUIT]++;
         break;
 
-      case s_PUMP:
-        if ( !project_addObject(LINK, id, Nobjects[LINK]) ) 
+    case s_PUMP:
+        if (!project_addObject(LINK, id, Nobjects[LINK]))
             errcode = error_setInpError(ERR_DUP_NAME, id);
         Nobjects[LINK]++;
         Nlinks[PUMP]++;
         break;
 
-      case s_ORIFICE:
-        if ( !project_addObject(LINK, id, Nobjects[LINK]) ) 
+    case s_ORIFICE:
+        if (!project_addObject(LINK, id, Nobjects[LINK]))
             errcode = error_setInpError(ERR_DUP_NAME, id);
         Nobjects[LINK]++;
         Nlinks[ORIFICE]++;
         break;
 
-      case s_WEIR:
-        if ( !project_addObject(LINK, id, Nobjects[LINK]) ) 
+    case s_WEIR:
+        if (!project_addObject(LINK, id, Nobjects[LINK]))
             errcode = error_setInpError(ERR_DUP_NAME, id);
         Nobjects[LINK]++;
         Nlinks[WEIR]++;
         break;
 
-      case s_OUTLET:
-        if ( !project_addObject(LINK, id, Nobjects[LINK]) )
+    case s_OUTLET:
+        if (!project_addObject(LINK, id, Nobjects[LINK]))
             errcode = error_setInpError(ERR_DUP_NAME, id);
         Nobjects[LINK]++;
         Nlinks[OUTLET]++;
         break;
 
-      case s_POLLUTANT:
-        if ( !project_addObject(POLLUT, id, Nobjects[POLLUT]) ) 
+    case s_POLLUTANT:
+        if (!project_addObject(POLLUT, id, Nobjects[POLLUT]))
             errcode = error_setInpError(ERR_DUP_NAME, id);
         Nobjects[POLLUT]++;
         break;
 
-      case s_LANDUSE:
-        if ( !project_addObject(LANDUSE, id, Nobjects[LANDUSE]) ) 
+    case s_LANDUSE:
+        if (!project_addObject(LANDUSE, id, Nobjects[LANDUSE]))
             errcode = error_setInpError(ERR_DUP_NAME, id);
         Nobjects[LANDUSE]++;
         break;
 
-      case s_PATTERN:
+    case s_PATTERN:
         // --- a time pattern can span several lines
-        if ( project_findObject(TIMEPATTERN, id) < 0 )
-        {
-            if ( !project_addObject(TIMEPATTERN, id, Nobjects[TIMEPATTERN]) )
+        if (project_findObject(TIMEPATTERN, id) < 0) {
+            if (!project_addObject(TIMEPATTERN, id, Nobjects[TIMEPATTERN]))
                 errcode = error_setInpError(ERR_DUP_NAME, id);
             Nobjects[TIMEPATTERN]++;
         }
         break;
 
-      case s_CURVE:
+    case s_CURVE:
         // --- a Curve can span several lines
-        if ( project_findObject(CURVE, id) < 0 )
-        {
-            if ( !project_addObject(CURVE, id, Nobjects[CURVE]) )
+        if (project_findObject(CURVE, id) < 0) {
+            if (!project_addObject(CURVE, id, Nobjects[CURVE]))
                 errcode = error_setInpError(ERR_DUP_NAME, id);
             Nobjects[CURVE]++;
 
             // --- check for a conduit shape curve
             id = strtok(NULL, SEPSTR);
-            if ( findmatch(id, CurveTypeWords) == SHAPE_CURVE )
+            if (findmatch(id, CurveTypeWords) == SHAPE_CURVE)
                 Nobjects[SHAPE]++;
         }
         break;
 
-      case s_TIMESERIES:
+    case s_TIMESERIES:
         // --- a Time Series can span several lines
-        if ( project_findObject(TSERIES, id) < 0 )
-        {
-            if ( !project_addObject(TSERIES, id, Nobjects[TSERIES]) )
+        if (project_findObject(TSERIES, id) < 0) {
+            if (!project_addObject(TSERIES, id, Nobjects[TSERIES]))
                 errcode = error_setInpError(ERR_DUP_NAME, id);
             Nobjects[TSERIES]++;
         }
         break;
 
-      case s_CONTROL:
-        if ( match(id, w_RULE) ) Nobjects[CONTROL]++;
-        else controls_addToCount(id);
+    case s_CONTROL:
+        if (match(id, w_RULE))
+            Nobjects[CONTROL]++;
+        else
+            controls_addToCount(id);
         break;
 
-      case s_TRANSECT:
+    case s_TRANSECT:
         // --- for TRANSECTS, ID name appears as second entry on X1 line
-        if ( match(id, "X1") )
-        {
+        if (match(id, "X1")) {
             id = strtok(NULL, SEPSTR);
-            if ( id ) 
-            {
-                if ( !project_addObject(TRANSECT, id, Nobjects[TRANSECT]) )
+            if (id) {
+                if (!project_addObject(TRANSECT, id, Nobjects[TRANSECT]))
                     errcode = error_setInpError(ERR_DUP_NAME, id);
                 Nobjects[TRANSECT]++;
             }
         }
         break;
 
-      case s_LID_CONTROL:
+    case s_LID_CONTROL:
         // --- an LID object can span several lines
-        if ( project_findObject(LID, id) < 0 )
-        {
-            if ( !project_addObject(LID, id, Nobjects[LID]) )
-            {
+        if (project_findObject(LID, id) < 0) {
+            if (!project_addObject(LID, id, Nobjects[LID])) {
                 errcode = error_setInpError(ERR_DUP_NAME, id);
             }
             Nobjects[LID]++;
         }
         break;
 
-      case s_EVENT: NumEvents++; break;
+    case s_EVENT:
+        NumEvents++;
+        break;
 
-      case s_STREET:
-        if ( !project_addObject(STREET, id, Nobjects[STREET]) )
+    case s_STREET:
+        if (!project_addObject(STREET, id, Nobjects[STREET]))
             errcode = error_setInpError(ERR_DUP_NAME, id);
         Nobjects[STREET]++;
         break;
 
-      case s_INLET:
+    case s_INLET:
         // --- an INLET object can span several lines
-        if (project_findObject(INLET, id) < 0)
-        {
-            if ( !project_addObject(INLET, id, Nobjects[INLET]) ) 
+        if (project_findObject(INLET, id) < 0) {
+            if (!project_addObject(INLET, id, Nobjects[INLET]))
                 errcode = error_setInpError(ERR_DUP_NAME, id);
             Nobjects[INLET]++;
         }
@@ -471,7 +480,16 @@ int  addObject(int objType, char* id)
 
 //=============================================================================
 
-int  parseLine(int sect, char *line)
+/**
+ * @brief Dispatch one tokenized input line to its section-specific parser.
+ * @param[in] sect Input section code; unhandled sections return zero.
+ * @param[in] line Non-null borrowed original line text, used by the title parser.
+ * @return Zero on success or an error code from the selected section parser.
+ * @pre Tok and Ntokens already contain this line's tokens, and Mobjects
+ * tracks the next object positions. Several cases increment those counts even
+ * if a parser returns an error; callers must use the normal input lifecycle.
+ */
+int parseLine(int sect, char* line)
 //
 //  Input:   sect  = current section of input file
 //           *line = line of text read from input file
@@ -480,183 +498,184 @@ int  parseLine(int sect, char *line)
 //
 {
     int j, err;
-    switch (sect)
-    {
-      case s_TITLE:
+    switch (sect) {
+    case s_TITLE:
         return readTitle(line);
 
-      case s_RAINGAGE:
+    case s_RAINGAGE:
         j = Mobjects[GAGE];
         err = gage_readParams(j, Tok, Ntokens);
         Mobjects[GAGE]++;
         return err;
 
-      case s_TEMP:
+    case s_TEMP:
         return climate_readParams(Tok, Ntokens);
 
-      case s_EVAP:
+    case s_EVAP:
         return climate_readEvapParams(Tok, Ntokens);
 
-      case s_ADJUST:
+    case s_ADJUST:
         return climate_readAdjustments(Tok, Ntokens);
 
-      case s_SUBCATCH:
+    case s_SUBCATCH:
         j = Mobjects[SUBCATCH];
         err = subcatch_readParams(j, Tok, Ntokens);
         Mobjects[SUBCATCH]++;
         return err;
 
-      case s_SUBAREA:
+    case s_SUBAREA:
         return subcatch_readSubareaParams(Tok, Ntokens);
 
-      case s_INFIL:
+    case s_INFIL:
         return infil_readParams(InfilModel, Tok, Ntokens);
 
-      case s_AQUIFER:
+    case s_AQUIFER:
         j = Mobjects[AQUIFER];
         err = gwater_readAquiferParams(j, Tok, Ntokens);
         Mobjects[AQUIFER]++;
         return err;
 
-      case s_GROUNDWATER:
+    case s_GROUNDWATER:
         return gwater_readGroundwaterParams(Tok, Ntokens);
 
-      case s_GWF:
+    case s_GWF:
         return gwater_readFlowExpression(Tok, Ntokens);
 
-      case s_SNOWMELT:
+    case s_SNOWMELT:
         return snow_readMeltParams(Tok, Ntokens);
 
-      case s_JUNCTION:
+    case s_JUNCTION:
         return readNode(JUNCTION);
 
-      case s_OUTFALL:
+    case s_OUTFALL:
         return readNode(OUTFALL);
 
-      case s_STORAGE:
+    case s_STORAGE:
         return readNode(STORAGE);
 
-      case s_DIVIDER:
+    case s_DIVIDER:
         return readNode(DIVIDER);
 
-      case s_CONDUIT:
+    case s_CONDUIT:
         return readLink(CONDUIT);
 
-      case s_PUMP:
+    case s_PUMP:
         return readLink(PUMP);
 
-      case s_ORIFICE:
+    case s_ORIFICE:
         return readLink(ORIFICE);
 
-      case s_WEIR:
+    case s_WEIR:
         return readLink(WEIR);
 
-      case s_OUTLET:
+    case s_OUTLET:
         return readLink(OUTLET);
 
-      case s_XSECTION:
+    case s_XSECTION:
         return link_readXsectParams(Tok, Ntokens);
 
-      case s_TRANSECT:
+    case s_TRANSECT:
         return transect_readParams(&Mobjects[TRANSECT], Tok, Ntokens);
 
-      case s_LOSSES:
+    case s_LOSSES:
         return link_readLossParams(Tok, Ntokens);
 
-      case s_POLLUTANT:
+    case s_POLLUTANT:
         j = Mobjects[POLLUT];
         err = landuse_readPollutParams(j, Tok, Ntokens);
         Mobjects[POLLUT]++;
         return err;
 
-      case s_LANDUSE:
+    case s_LANDUSE:
         j = Mobjects[LANDUSE];
         err = landuse_readParams(j, Tok, Ntokens);
         Mobjects[LANDUSE]++;
         return err;
 
-      case s_BUILDUP:
+    case s_BUILDUP:
         return landuse_readBuildupParams(Tok, Ntokens);
 
-      case s_WASHOFF:
+    case s_WASHOFF:
         return landuse_readWashoffParams(Tok, Ntokens);
 
-      case s_COVERAGE:
+    case s_COVERAGE:
         return subcatch_readLanduseParams(Tok, Ntokens);
 
-      case s_INFLOW:
+    case s_INFLOW:
         return inflow_readExtInflow(Tok, Ntokens);
 
-      case s_DWF:
+    case s_DWF:
         return inflow_readDwfInflow(Tok, Ntokens);
 
-      case s_PATTERN:
+    case s_PATTERN:
         return inflow_readDwfPattern(Tok, Ntokens);
 
-      case s_RDII:
+    case s_RDII:
         return rdii_readRdiiInflow(Tok, Ntokens);
 
-      case s_UNITHYD:
+    case s_UNITHYD:
         return rdii_readUnitHydParams(Tok, Ntokens);
 
-      case s_LOADING:
+    case s_LOADING:
         return subcatch_readInitBuildup(Tok, Ntokens);
 
-      case s_TREATMENT:
+    case s_TREATMENT:
         return treatmnt_readExpression(Tok, Ntokens);
 
-      case s_CURVE:
+    case s_CURVE:
         return table_readCurve(Tok, Ntokens);
 
-      case s_TIMESERIES:
+    case s_TIMESERIES:
         return table_readTimeseries(Tok, Ntokens);
 
-      case s_CONTROL:
+    case s_CONTROL:
         return readControl(Tok, Ntokens);
 
-      case s_REPORT:
+    case s_REPORT:
         return report_readOptions(Tok, Ntokens);
 
-      case s_FILE:
+    case s_FILE:
         return iface_readFileParams(Tok, Ntokens);
 
-      case s_LID_CONTROL:
+    case s_LID_CONTROL:
         return lid_readProcParams(Tok, Ntokens);
 
-      case s_LID_USAGE:
+    case s_LID_USAGE:
         return lid_readGroupParams(Tok, Ntokens);
 
-      case s_EVENT:
+    case s_EVENT:
         return readEvent(Tok, Ntokens);
 
-      case s_STREET:
+    case s_STREET:
         return street_readParams(Tok, Ntokens);
 
-      case s_INLET:
+    case s_INLET:
         return inlet_readDesignParams(Tok, Ntokens);
 
-      case s_INLET_USAGE:
+    case s_INLET_USAGE:
         return inlet_readUsageParams(Tok, Ntokens);
 
-      default: return 0;
+    default:
+        return 0;
     }
 }
 
 //=============================================================================
 
-int readControl(char* tok[], int ntoks)
-//
-//  Input:   tok[] = array of string tokens
-//           ntoks = number of tokens
-//  Output:  returns error code
-//  Purpose: reads a line of input for a control rule.
-//
-{
+/**
+ * @brief Reads a line of input for a control rule.
+ *
+ * @param tok Array of string tokens.
+ * @param[in] ntoks Number of tokens.
+ * @return Error code.
+ */
+int readControl(char* tok[], int ntoks) {
     int index;
     int keyword;
 
     // --- check for minimum number of tokens
-    if ( ntoks < 2 ) return error_setInpError(ERR_ITEMS, "");
+    if (ntoks < 2)
+        return error_setInpError(ERR_ITEMS, "");
 
     if (match(tok[0], w_VARIABLE))
         return controls_addVariable(tok, ntoks);
@@ -665,13 +684,12 @@ int readControl(char* tok[], int ntoks)
 
     // --- get index of control rule keyword
     keyword = findmatch(tok[0], RuleKeyWords);
-    if ( keyword < 0 ) return error_setInpError(ERR_KEYWORD, tok[0]);
+    if (keyword < 0)
+        return error_setInpError(ERR_KEYWORD, tok[0]);
 
     // --- if line begins a new control rule, add rule ID to the database
-    if ( keyword == 0 )
-    {
-        if ( !project_addObject(CONTROL, tok[1], Mobjects[CONTROL]) )
-        {
+    if (keyword == 0) {
+        if (!project_addObject(CONTROL, tok[1], Mobjects[CONTROL])) {
             return error_setInpError(ERR_DUP_NAME, Tok[1]);
         }
         Mobjects[CONTROL]++;
@@ -679,7 +697,8 @@ int readControl(char* tok[], int ntoks)
 
     // --- get index of last control rule processed
     index = Mobjects[CONTROL] - 1;
-    if ( index < 0 ) return error_setInpError(ERR_RULE, "");
+    if (index < 0)
+        return error_setInpError(ERR_RULE, "");
 
     // --- add current line as a new clause to the control rule
     return controls_addRuleClause(index, keyword, Tok, Ntokens);
@@ -687,36 +706,36 @@ int readControl(char* tok[], int ntoks)
 
 //=============================================================================
 
-int readOption(char* line)
-//
-//  Input:   line = line of input data
-//  Output:  returns error code
-//  Purpose: reads an input line containing a project option.
-//
-{
+/**
+ * @brief Reads an input line containing a project option.
+ *
+ * @param line Line of input data.
+ * @return Error code.
+ */
+int readOption(char* line) {
     Ntokens = getTokens(line);
-    if ( Ntokens < 2 ) return 0;
+    if (Ntokens < 2)
+        return 0;
     return project_readOption(Tok[0], Tok[1]);
 }
 
 //=============================================================================
 
-int readTitle(char* line)
-//
-//  Input:   line = line from input file
-//  Output:  returns error code
-//  Purpose: reads project title from line of input.
-//
-{
+/**
+ * @brief Reads project title from line of input.
+ *
+ * @param line Line from input file.
+ * @return Error code.
+ */
+int readTitle(char* line) {
     int i, n;
-    for (i = 0; i < MAXTITLE; i++)
-    {
+    for (i = 0; i < MAXTITLE; i++) {
         // --- find next empty Title entry
-        if ( strlen(Title[i]) == 0 )
-        {
+        if (strlen(Title[i]) == 0) {
             // --- strip line feed character from input line
             n = (int)strlen(line);
-            if (line[n-1] == 10) line[n-1] = ' ';
+            if (line[n - 1] == 10)
+                line[n - 1] = ' ';
 
             // --- copy input line into Title entry
             sstrncpy(Title[i], line, MAXMSG);
@@ -727,14 +746,14 @@ int readTitle(char* line)
 }
 
 //=============================================================================
-    
-int readNode(int type)
-//
-//  Input:   type = type of node
-//  Output:  returns error code
-//  Purpose: reads data for a node from a line of input.
-//
-{
+
+/**
+ * @brief Reads data for a node from a line of input.
+ *
+ * @param[in] type Type of node.
+ * @return Error code.
+ */
+int readNode(int type) {
     int j = Mobjects[NODE];
     int k = Mnodes[type];
     int err = node_readParams(j, type, k, Tok, Ntokens);
@@ -745,13 +764,13 @@ int readNode(int type)
 
 //=============================================================================
 
-int readLink(int type)
-//
-//  Input:   type = type of link
-//  Output:  returns error code
-//  Purpose: reads data for a link from a line of input.
-//
-{
+/**
+ * @brief Reads data for a link from a line of input.
+ *
+ * @param[in] type Type of link.
+ * @return Error code.
+ */
+int readLink(int type) {
     int j = Mobjects[LINK];
     int k = Mlinks[type];
     int err = link_readParams(j, type, k, Tok, Ntokens);
@@ -762,77 +781,86 @@ int readLink(int type)
 
 //=============================================================================
 
-int  readEvent(char* tok[], int ntoks)
-{
+/**
+ * @brief Parse and store one start/end event interval.
+ * @param[in] tok Borrowed ntoks token strings: start date, start time,
+ * end date and end time in the currently selected date-text convention.
+ * @param[in] ntoks Available token count, at least four.
+ * @return Zero on success or ERR_ITEMS/ERR_DATETIME via error_setInpError().
+ * @post Stores absolute SWMM-day start/end in Event[Mevents] and increments
+ * Mevents only when start < end. A reversed interval leaves assigned values
+ * but does not increment the counter.
+ * @pre The global Event array has room at Mevents.
+ */
+int readEvent(char* tok[], int ntoks) {
     DateTime x[4];
 
-    if ( ntoks < 4 ) return error_setInpError(ERR_ITEMS, "");
-    if ( !datetime_strToDate(tok[0], &x[0]) )
+    if (ntoks < 4)
+        return error_setInpError(ERR_ITEMS, "");
+    if (!datetime_strToDate(tok[0], &x[0]))
         return error_setInpError(ERR_DATETIME, tok[0]);
-    if ( !datetime_strToTime(tok[1], &x[1]) )
+    if (!datetime_strToTime(tok[1], &x[1]))
         return error_setInpError(ERR_DATETIME, tok[1]);
-    if ( !datetime_strToDate(tok[2], &x[2]) )
+    if (!datetime_strToDate(tok[2], &x[2]))
         return error_setInpError(ERR_DATETIME, tok[2]);
-    if ( !datetime_strToTime(tok[3], &x[3]) )
+    if (!datetime_strToTime(tok[3], &x[3]))
         return error_setInpError(ERR_DATETIME, tok[3]);
 
     Event[Mevents].start = x[0] + x[1];
     Event[Mevents].end = x[2] + x[3];
-    if ( Event[Mevents].start >= Event[Mevents].end )
-       return error_setInpError(ERR_DATETIME, " - start date exceeds end date");
+    if (Event[Mevents].start >= Event[Mevents].end)
+        return error_setInpError(ERR_DATETIME, " - start date exceeds end date");
     Mevents++;
     return 0;
 }
 
-
 /*!
-* \copydoc findmatch
+* @see Declaration contract for findmatch().
 */
-int findmatch(char *s, char *keyword[])
-{
-   int i = 0;
-   while (keyword[i] != NULL)
-   {
-      if (match(s, keyword[i])) return(i);
-      i++;
-   }
-   return(-1);
+int findmatch(char* s, char* keyword[]) {
+    int i = 0;
+    while (keyword[i] != NULL) {
+        if (match(s, keyword[i]))
+            return (i);
+        i++;
+    }
+    return (-1);
 }
 
 /*!
-* \copydoc match
+* @see Declaration contract for match().
 */
-int match(char *str, char *substr)
-{
-    int i,j,k;
+int match(char* str, char* substr) {
+    int i, j, k;
 
     // --- fail if substring is empty
-    if (!substr[0]) return(0);
+    if (!substr[0])
+        return (0);
 
     // --- skip leading blanks of str
-    for (k = 0; str[k]; k++)
-    {
-        if (str[k] != ' ') break;
+    for (k = 0; str[k]; k++) {
+        if (str[k] != ' ')
+            break;
     }
 
     // --- check if substr matches remainder of str
-    for (i = k,j = 0; substr[j]; i++,j++)
-    {
-        if (!str[i] || UCHAR(str[i]) != UCHAR(substr[j])) return(0);
+    for (i = k, j = 0; substr[j]; i++, j++) {
+        if (!str[i] || UCHAR(str[i]) != UCHAR(substr[j]))
+            return (0);
     }
-    return(1);
+    return (1);
 }
 
 /*!
-* \copydoc getInt
+* @see Declaration contract for getInt().
 */
-int getInt(char *s, int *y)
-{
+int getInt(char* s, int* y) {
     double x;
-    if ( getDouble(s, &x) )
-    {
-        if ( x < 0.0 ) x -= 0.01;
-        else x += 0.01;
+    if (getDouble(s, &x)) {
+        if (x < 0.0)
+            x -= 0.01;
+        else
+            x += 0.01;
         *y = (int)x;
         return 1;
     }
@@ -841,73 +869,72 @@ int getInt(char *s, int *y)
 }
 
 /*!
-* \copydoc getFloat
+* @see Declaration contract for getFloat().
 */
-int getFloat(char *s, float *y)
-{
-    char *endptr;
-    *y = (float) strtod(s, &endptr);
-    if (*endptr > 0) return(0);
-    return(1);
+int getFloat(char* s, float* y) {
+    char* endptr;
+    *y = (float)strtod(s, &endptr);
+    if (*endptr > 0)
+        return (0);
+    return (1);
 }
 
 /*!
-* \copydoc getDouble
+* @see Declaration contract for getDouble().
 */
-int getDouble(char *s, double *y)
-{
-    char *endptr;
+int getDouble(char* s, double* y) {
+    char* endptr;
     *y = strtod(s, &endptr);
-    if (*endptr > 0) return(0);
-    return(1);
+    if (*endptr > 0)
+        return (0);
+    return (1);
 }
 
 //=============================================================================
 
-int getTokens(char *s)
-//
-//  Input:   s = a character string
-//  Output:  returns number of tokens found in s
-//  Purpose: scans a string for tokens, saving pointers to them
-//           in shared variable Tok[].
-//
-//  Notes:   Tokens can be separated by the characters listed in SEPSTR
-//           (spaces, tabs, newline, carriage return) which is defined
-//           in CONSTS.H. Text between quotes is treated as a single token.
-//
-{
-    int  len, n;
-    int  m;
-    char *c;
+/**
+ * @brief Scans a string for tokens, saving pointers to them in shared variable Tok[].
+ *
+ * @param s A character string.
+ * @return Number of tokens found in s.
+ * @note Tokens can be separated by the characters listed in SEPSTR (spaces, tabs, newline,
+ *       carriage return) which is defined in CONSTS.H. Text between quotes is treated as a single
+ *       token.
+ */
+int getTokens(char* s) {
+    int len, n;
+    int m;
+    char* c;
 
     // --- begin with no tokens
-    for (n = 0; n < MAXTOKS; n++) Tok[n] = NULL;
+    for (n = 0; n < MAXTOKS; n++)
+        Tok[n] = NULL;
     n = 0;
 
-    // --- truncate s at start of comment 
-    c = strchr(s,';');
-    if (c) *c = '\0';
+    // --- truncate s at start of comment
+    c = strchr(s, ';');
+    if (c)
+        *c = '\0';
     len = (int)strlen(s);
 
     // --- scan s for tokens until nothing left
-    while (len > 0 && n < MAXTOKS)
-    {
-        m = (int)strcspn(s,SEPSTR);         // find token length 
-        if (m == 0) s++;                    // no token found
-        else
-        {
-            if (*s == '"')                  // token begins with quote
+    while (len > 0 && n < MAXTOKS) {
+        m = (int)strcspn(s, SEPSTR); // find token length
+        if (m == 0)
+            s++; // no token found
+        else {
+            if (*s == '"') // token begins with quote
             {
-                s++;                        // start token after quote
-                len--;                      // reduce length of s
-                m = (int)strcspn(s,"\"\n"); // find end quote or new line
+                s++;                         // start token after quote
+                len--;                       // reduce length of s
+                m = (int)strcspn(s, "\"\n"); // find end quote or new line
             }
-            s[m] = '\0';                    // null-terminate the token
-            Tok[n] = s;                     // save pointer to token 
-            n++;                            // update token count
-            s += m+1;                       // begin next token
+            s[m] = '\0'; // null-terminate the token
+            Tok[n] = s;  // save pointer to token
+            n++;         // update token count
+            s += m + 1;  // begin next token
         }
-        len -= m+1;                         // update length of s
+        len -= m + 1; // update length of s
     }
     return n;
 }
