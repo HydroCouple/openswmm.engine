@@ -372,3 +372,12 @@ cases the current code excludes). Acceptance gates as in the table.
   20–100 cm 0.795/1.216 ranking only (as with OFF). Phase 5 with the hook ON is now at least as good as OFF on
   every 1D aggregate and clearly better on flood-probability skill; the 2D street band coverage did not improve
   (0.62 vs 0.70). Decision pending: make per-member the default (hook deleted) vs keep OFF — see summary.
+  By class (OFF → ON, cov/width): STORAGE (16) 0.845/1.99 conservative → **0.801/0.805 CALIBRATED**; coupled near
+  rim (64) 0.871/1.169 → 0.860/1.174; coupled far from rim (931) 0.964/1.419 → 0.956/1.447 (calibrated, was
+  conservative 1.71 before O-7). Summed band change ON−OFF is negative in every class (storage −425 m, near rim
+  −306 m, far −370 m). The shallow-lateral tail is fixed at G62F196/192/191 (2.27/1.87/1.71 m → 0.012/0.036/0.031),
+  G72F311, G62F403, G72F081 (cm scale). **Four nodes remain 1.2–1.6 m wide with MC span ≈ 0**: G70S213 (1.640),
+  G70S214 (1.503), G62F012 (1.477), G71F043 (1.161). G71F043 is the node that goes below its invert in the smoke
+  (258 member-steps) — a second mechanism (sunk member / class C), not the pond booking. Basins: G72R83B 2.995 →
+  0.363 (MC 0.062), G72R150 3.445 → 0.991 (MC 0.454), G72UD11 0.916 → 0.228 (MC 1.105: now too narrow),
+  G70F11P 0.038 → 0.138 (MC 0.733: still narrow).
