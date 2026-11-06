@@ -449,9 +449,12 @@ std::string ExplicitInertialSolver::checkpointBoundary() const {
     if (!common_stage_->runtimeBoundariesEnabled() && !bc_cell_.empty())
         return "CPU checkpoint live external boundary providers are not qualified.";
     if (joint_checkpoint_) {
-        if (bool(state_->nodes_1d) != bool(state_->node_coupling) ||
+        // Groundwater beds publish the node head view after CPU initialization.
+        // Without surface ports there is no orifice donor-withdrawal ledger.
+        if ((state_->node_coupling && !state_->nodes_1d) ||
+            (state_->nodes_1d && !state_->node_coupling && (!gw_ || gw_->nodeBeds().empty())) ||
             (transport.active() && !supported_transport) ||
-            node_drawn_.size() != (state_->nodes_1d ? std::size_t(state_->nodes_1d->count()) : 0) ||
+            node_drawn_.size() != (state_->node_coupling ? std::size_t(state_->nodes_1d->count()) : 0) ||
             exch_.size() != (state_->node_coupling ? state_->node_coupling->size() : 0))
             return "Joint CPU checkpoint coupling layout differs.";
         if (state_->node_coupling)
@@ -520,7 +523,8 @@ std::string ExplicitInertialSolver::checkpointBoundary() const {
  * Throws on archive/shape/state/allocation failure; caller must decode into a private copy
  * because failure can leave this candidate partly modified.
  */
-void ExplicitInertialSolver::checkpointState(Archive& a) {
+void ExplicitInertialSolver::checkpointState(Archive& a, bool passive_joint) {
+    const bool joint = joint_checkpoint_ || passive_joint;
     // Scratch reconstructed before use is excluded; frozen scheduling and
     // prognostic momentum must survive without a rebuild or momentum reset.
     const auto pins = pin_t0_;
@@ -546,7 +550,7 @@ void ExplicitInertialSolver::checkpointState(Archive& a) {
     if ((common_stage_ && common_stage_->runtimeBoundariesEnabled()) ||
         (second_order_ && gw_ && rk2HasSurfaceBoundary(state_->boundary)))
         a(bc_cell_, bc_slot_, bc_q_, bc_accum_, wall_ptr_, wall_slot_);
-    if (joint_checkpoint_) {
+    if (joint) {
         a.fixed(exch_, node_drawn_);
         for (double v : exch_)
             if (!std::isfinite(v))
@@ -583,7 +587,7 @@ void ExplicitInertialSolver::checkpointState(Archive& a) {
             throw std::runtime_error("Nonfinite CPU checkpoint clock/statistic.");
     if (t_last_sync_ < 0 || source_phase_end_ != t_last_sync_ || dt0_ < 0 ||
         (t_last_sync_ > 0 && dt0_ <= 0) || h_on_front_ < 0 || exch_tau_ < 0 || spill_deficit_ < 0 ||
-        (!joint_checkpoint_ && spill_deficit_ != 0) || last_dt_ < 0 || accumulators_pending_ ||
+        (!joint && spill_deficit_ != 0) || last_dt_ < 0 || accumulators_pending_ ||
         cycles_since_rebuild_ < 0 || cycles_since_rebuild_ > (t_last_sync_ == 0 ? 1000 : 4) ||
         substeps_run_ < 0 || face_passes_ < 0 || last_steps_ < 0 || last_steps_ > substeps_run_ ||
         active_samples_ < 0)

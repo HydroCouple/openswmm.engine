@@ -1286,6 +1286,8 @@ int swmm_2d_force_rainfall(SWMM_Engine engine, int idx, double value, int mode, 
         return SWMM_ERR_BADPARAM;
     if (forcingOwned(router2d, 1, idx))
         return SWMM_ERR_BADPARAM;
+    if (eng->livePassiveExchange() && eng->livePassiveExchange()->preflightsHistory())
+        return SWMM_ERR_LIFECYCLE;
     router2d.prepareOneShotForcing(eng->context());
 
     auto& s = const_cast<openswmm::twoD::SurfaceStateData&>(router2d.state());
@@ -1305,6 +1307,8 @@ int swmm_2d_force_rainfall_uniform(SWMM_Engine engine, double value, int mode, i
         return SWMM_ERR_BADPARAM;
     if (forcingOwned(router2d, 1, -1))
         return SWMM_ERR_BADPARAM;
+    if (eng->livePassiveExchange() && eng->livePassiveExchange()->preflightsHistory())
+        return SWMM_ERR_LIFECYCLE;
     router2d.prepareOneShotForcing(eng->context());
 
     auto& s = const_cast<openswmm::twoD::SurfaceStateData&>(router2d.state());
@@ -1328,6 +1332,8 @@ int swmm_2d_force_evap(SWMM_Engine engine, int idx, double value, int mode, int 
         return SWMM_ERR_BADPARAM;
     if (forcingOwned(router2d, 2, idx))
         return SWMM_ERR_BADPARAM;
+    if (eng->livePassiveExchange() && eng->livePassiveExchange()->preflightsHistory())
+        return SWMM_ERR_LIFECYCLE;
     router2d.prepareOneShotForcing(eng->context());
 
     auto& s = const_cast<openswmm::twoD::SurfaceStateData&>(router2d.state());
@@ -1347,6 +1353,8 @@ int swmm_2d_force_evap_uniform(SWMM_Engine engine, double value, int mode, int p
         return SWMM_ERR_BADPARAM;
     if (forcingOwned(router2d, 2, -1))
         return SWMM_ERR_BADPARAM;
+    if (eng->livePassiveExchange() && eng->livePassiveExchange()->preflightsHistory())
+        return SWMM_ERR_LIFECYCLE;
     router2d.prepareOneShotForcing(eng->context());
 
     auto& s = const_cast<openswmm::twoD::SurfaceStateData&>(router2d.state());
@@ -1368,6 +1376,8 @@ int swmm_2d_force_coupling_flux(SWMM_Engine engine, int idx, double value, int m
     if (!std::isfinite(value) || mode < SWMM_FORCING_NONE || mode > SWMM_FORCING_ADD ||
         (persist != SWMM_FORCING_RESET && persist != SWMM_FORCING_PERSIST))
         return SWMM_ERR_BADPARAM;
+    if (eng->livePassiveExchange() && eng->livePassiveExchange()->preflightsHistory())
+        return SWMM_ERR_LIFECYCLE;
     router2d.prepareOneShotForcing(eng->context());
 
     auto& s = const_cast<openswmm::twoD::SurfaceStateData&>(router2d.state());
@@ -1382,6 +1392,8 @@ int swmm_2d_force_coupling_flux(SWMM_Engine engine, int idx, double value, int m
 int swmm_2d_force_clear_all(SWMM_Engine engine) {
     GET_ENGINE(engine);
     CHECK_2D_ACTIVE(eng);
+    if (eng->livePassiveExchange() && eng->livePassiveExchange()->preflightsHistory())
+        return SWMM_ERR_LIFECYCLE;
     router2d.prepareOneShotForcing(eng->context());
 
     auto& s = const_cast<openswmm::twoD::SurfaceStateData&>(router2d.state());
@@ -1537,6 +1549,8 @@ static int prepareBoundaryEdit(openswmm::SWMMEngine* eng, openswmm::twoD::Surfac
     if (router.isActive()) {
         if (router.options().wall_drag_enabled) return SWMM_ERR_LIFECYCLE;
         if (!eng->runtimeUpdateAllowed() || !router.runtimeCpuAvailable())
+            return SWMM_ERR_LIFECYCLE;
+        if (eng->livePassiveExchange() && eng->livePassiveExchange()->preflightsHistory())
             return SWMM_ERR_LIFECYCLE;
         router.prepareOneShotForcing(eng->context());
         if (save) {

@@ -1886,6 +1886,21 @@ struct SWMMEngine::RestartState {
 };
 
 void SWMMEngine::checkCheckpointProfile(bool attaching_surface) const {
+#ifdef OPENSWMM_HAS_2D
+    if (live_passive_exchange_ || surface_router_.paired_water_checkpoint_) {
+        if (live_passive_exchange_) checkLivePassiveExchange();
+        if (surface_router_.paired_water_checkpoint_) {
+            require(!split_ && !process_component_host_ && !runtime_water_driver_ && !runtime_pipeline_ &&
+                        !source_delivery_ && !source_stage_ && !engine_source_stream_ && !engine_source_history_ &&
+                        exchange_target_ < 0 && pending_hotstart_checkpoint_.empty() && ctx_.files.hotstart_saves.empty(),
+                    "Coupled water checkpoint excludes split, process, source and runtime owners and public hotstarts.");
+            const auto error = surface_router_.coupledWaterProfile(ctx_, surface_router_.state_);
+            require(error.empty(), error.c_str());
+        }
+        require(!save_results_ && !checkpoint_output_ && !checkpoint_surface_output_ && !surface_output_plugin_,
+                "Live checkpoint currently supports native physical state without output continuation.");
+    }
+#endif
     bool advancing_catchments = false;
 #ifdef OPENSWMM_HAS_2D
     advancing_catchments =
@@ -1966,7 +1981,9 @@ void SWMMEngine::checkCheckpointProfile(bool attaching_surface) const {
         require(!checkpoint_surface_output_, "Mesh output checkpoint support is unavailable.");
 #endif
         require(
-            attaching_surface || surface_router_.standaloneRk2Checkpointing() ||
+            attaching_surface ||
+                ((live_passive_exchange_ || surface_router_.paired_water_checkpoint_) && surface_router_.joint_hydraulic_ == &router_ &&
+                 surface_router_.source_context_ == &ctx_) || surface_router_.standaloneRk2Checkpointing() ||
                 (surface_router_.joint_hydraulic_ == &router_ && surface_router_.common_stage_ &&
                  (surface_router_.common_stage_->meshOnly() ||
                   (source_delivery_ && source_stage_ == surface_router_.common_stage_))),
@@ -2167,6 +2184,12 @@ std::string SWMMEngine::checkpointModel() const {
     auto hydraulic = router_.checkpointModel(ctx_);
     a(hydraulic);
 #ifdef OPENSWMM_HAS_2D
+    if (live_passive_exchange_ || surface_router_.paired_water_checkpoint_) {
+        std::string profile = surface_router_.paired_water_checkpoint_ ?
+            "paired native water transfer owner v1" : "paired native passive transfer owner v1";
+        auto live = surface_router_.liveCheckpointModel(ctx_);
+        a(profile, live);
+    }
     if (source_delivery_) {
         auto bridge = *source_delivery_;
         bridge.checkpoint(a, true, source_stage_->sources());
@@ -2217,6 +2240,24 @@ std::string SWMMEngine::enableCheckpointing() {
 #endif
     );
 }
+#ifdef OPENSWMM_HAS_2D
+std::string SWMMEngine::enableCoupledWaterCheckpointing() {
+    if (ctx_.state != EngineState::RUNNING || step_active_ || runtime_pipeline_ ||
+        checkpoint_enabled_ || live_passive_exchange_ || surface_router_.source_context_ ||
+        surface_router_.joint_hydraulic_ || ctx_.current_time != 0)
+        return "Attach coupled water checkpoints at a fresh running native boundary.";
+    surface_router_.paired_water_checkpoint_ = true;
+    const auto error = enableCheckpointing();
+    if (!error.empty()) {
+        surface_router_.paired_water_checkpoint_ = false;
+        surface_router_.source_context_ = nullptr;
+        surface_router_.joint_hydraulic_ = nullptr;
+        surface_router_.source_router_model_.clear();
+        surface_router_.source_boundary_ready_ = false;
+    }
+    return error;
+}
+#endif
 std::string SWMMEngine::prepareOutputCheckpointing() {
     try {
         require(ctx_.state == EngineState::INITIALIZED && !step_active_ && !runtime_pipeline_ &&
@@ -2412,6 +2453,10 @@ std::string SWMMEngine::enableCheckpointingImpl(
     const bool aquifer_owned = router_.checkpoint_aquifer_session_;
     const bool fresh_router = router_.checkpoint_context_ == nullptr;
     try {
+#ifdef OPENSWMM_HAS_2D
+        require(!live_passive_exchange_ || !stage,
+                "Live checkpoint cannot also attach a source stage.");
+#endif
         require(!split_, "Split participants require coordinated graph recovery; native checkpoint attachment is unavailable.");
         require(!step_active_ && !runtime_pipeline_ && exchange_target_ < 0 &&
                     !checkpoint_enabled_ && ctx_.current_time == 0,
@@ -2471,7 +2516,8 @@ std::string SWMMEngine::enableCheckpointingImpl(
             require(initial.bytes() == matching.bytes(),
                     "Spatial source initial water differs from the live engine.");
         }
-        checkCheckpointProfile(stage != nullptr || rk2_attachment);
+        checkCheckpointProfile(stage != nullptr || rk2_attachment || live_passive_exchange_ != nullptr ||
+                               surface_router_.paired_water_checkpoint_);
 #else
         checkCheckpointProfile();
 #endif
@@ -2491,6 +2537,8 @@ std::string SWMMEngine::enableCheckpointingImpl(
 #ifdef OPENSWMM_HAS_2D
         if (stage)
             surface_router_.setJointSourceStage(ctx_, *stage, router_);
+        else if (live_passive_exchange_ || surface_router_.paired_water_checkpoint_)
+            surface_router_.attachLiveCheckpoint(ctx_, router_);
         else if (rk2_attachment) {
             // The hydraulic router owns its accepted calendar and any disjoint
             // water-only network stores; the mesh has no shared exchanges.
@@ -2570,6 +2618,8 @@ std::string SWMMEngine::checkpointBytes(std::string& result, bool include_output
         if (surface_router_.isActive()) {
             version = source_delivery_ ? 105 : 104;
             error = surface_router_.checkpointBytes(ctx_, hydraulic);
+            if (live_passive_exchange_) version = live_passive_exchange_->receipts().changingVolume() ? 3005 : 3003;
+            if (surface_router_.paired_water_checkpoint_) version = 3004;
         } else
 #endif
             error = router_.checkpointBytes(ctx_, hydraulic);
@@ -3043,7 +3093,8 @@ std::string SWMMEngine::loadCheckpointBytes(std::string checkpoint,
         uint32_t expected_version = 103;
 #ifdef OPENSWMM_HAS_2D
         if (surface_router_.isActive())
-            expected_version = source_delivery_ ? 105 : 104;
+            expected_version = surface_router_.paired_water_checkpoint_ ? 3004 :
+                live_passive_exchange_ ? (live_passive_exchange_->receipts().changingVolume() ? 3005 : 3003) : source_delivery_ ? 105 : 104;
         if (surface_router_.runtimeWaterCheckpointing())
             expected_version += 20;
         if (runtime_water_driver_)

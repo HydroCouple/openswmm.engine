@@ -83,6 +83,7 @@
 
 #ifdef OPENSWMM_HAS_2D
 #include "../2d/SurfaceRouter2D.hpp"
+#include "../quality/LivePassiveStorageExchange.hpp"
 #include "../2d/coupling/RuntimeWaterDriverCheckpoint.hpp"
 #include "../hydrology/SourceWaterDeliveryBridge.hpp"
 namespace openswmm::twoD {
@@ -312,6 +313,10 @@ public:
      * @return Empty string on success; otherwise an owned refusal/IO/validation diagnostic.
      */
     std::string enableCheckpointing();
+#ifdef OPENSWMM_HAS_2D
+    /// Private opt-in restart for isolated first-order CPU node/surface water exchange.
+    std::string enableCoupledWaterCheckpointing();
+#endif
     /**
      * @brief Queue owned native engine-checkpoint bytes for start-time restore.
      *
@@ -959,6 +964,18 @@ public:
      *     lifecycle/readiness check.
      */
     twoD::SurfaceRouter2D& surfaceRouter2D() noexcept { return surface_router_; }
+    /// Explicit private research attachment at a settled boundary. No INP/C API activation.
+    std::string attachLivePassiveExchange(std::size_t journal_capacity = 4096);
+    std::string attachLiveChangingVolumeExchange(std::size_t journal_capacity = 4096);
+    /// Conservative restart-history admission before stepping or flushing a pending window.
+    std::string attachLiveChangingVolumeExchange(std::size_t journal_capacity, bool preflight_history);
+    std::string attachLivePassiveExchange(quality::PassiveStorageArithmetic arithmetic,
+                                         std::size_t journal_capacity = 4096);
+    std::string attachLivePassiveExchange(quality::PassiveStorageArithmetic arithmetic,
+                                         std::size_t journal_capacity, bool preflight_history);
+    const quality::LivePassiveStorageExchange* livePassiveExchange() const noexcept {
+        return live_passive_exchange_.get();
+    }
     /** Bind a fresh absolute HDF5 output path before initialize; C API owns validation. */
     int setSurfaceResultsFile(const char* path) noexcept;
     /**
@@ -1074,6 +1091,8 @@ private:
     std::vector<gage::GageState> gage_states_;    ///< Per-gage state (SoA)
 
 #ifdef OPENSWMM_HAS_2D
+    std::unique_ptr<quality::LivePassiveStorageExchange> live_passive_exchange_;
+    void checkLivePassiveExchange(bool preflight_history = false) const;
     twoD::SurfaceRouter2D surface_router_; ///< Optional 2D surface routing solver
     /// S4b: per-row unit labels for the 2D species snapshot (pollutant units,
     /// MSX units, "hours", "degC"), rebuilt by fillSurfaceSnapshot() and
@@ -1727,9 +1746,11 @@ private:
      * scheduling. Snapshot owns copied arrays; IO completion/failure is managed separately. Does not
      * synchronously guarantee bytes reached disk.
      *
+     * @throws std::exception A failed pending surface flush or snapshot allocation propagates
+     *     to the step owner; an accepted physical transfer is never retried.
      * @param[in] dt_step Legacy routing-step-duration argument; unused by this implementation.
      */
-    void postOutputSnapshot(double dt_step) noexcept;
+    void postOutputSnapshot(double dt_step);
 
     /**
      * @brief Write one authored SAVE HOTSTART entry from the current state.

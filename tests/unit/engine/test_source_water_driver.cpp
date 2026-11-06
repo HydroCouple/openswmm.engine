@@ -1790,6 +1790,67 @@ TEST(SourceWaterDriver, ProviderWeatherFailureLeavesPrivateStateAndClockRetryabl
 
 #include "core/CompletedSourceArchive.hpp"
 
+TEST(SourceWaterDriver, LongDeliveryHistoryRetainsBranchesCancellationAndRestartBytes) {
+    auto c = pollutantLid("IT", 43200);
+    SourceWaterDriver original;
+    ASSERT_EQ(original.initialize(c, {0}, areas(c)), "");
+    for (int i=1; i<=2048; ++i)
+        ASSERT_NO_FATAL_FAILURE(step(original,i*.001));
+    const auto prefix=original.deliveries();
+    ASSERT_GT(prefix.size(),2048u);
+    ASSERT_EQ(prefix.back().mass.size(),2u);
+    EXPECT_GT(prefix.back().mass[0],0);
+    std::vector<std::array<std::string,3>> history;
+    const auto capture=[&](const char* tag, SourceWaterDriver& source) {
+        detail::CompletedSourceArchive model,state;
+        source.checkpoint(model,true); source.checkpoint(state,false);
+        history.push_back({tag,model.bytes(),state.bytes()});
+        return std::pair{model.bytes(),state.bytes()};
+    };
+    const auto before=capture("prefix",original);
+    auto first=original.waterTrial(), second=original.waterTrial();
+    ASSERT_EQ(first.stage(0,2.1,2.1,&sealed),"");
+    EXPECT_GT(first.deliveries(true).size(),prefix.size());
+    EXPECT_EQ(capture("original_during_trial",original),before);
+    EXPECT_EQ(capture("second_during_trial",second),before);
+    first.cancel();
+    EXPECT_EQ(capture("cancelled",first),before);
+    ASSERT_NO_FATAL_FAILURE(step(second,2.2));
+    const auto other=capture("second_committed",second);
+    EXPECT_EQ(capture("original_after_branch",original),before);
+    ASSERT_NO_FATAL_FAILURE(step(first,2.1));
+    ASSERT_NO_FATAL_FAILURE(step(original,2.1));
+    const auto after=capture("first_committed",first);
+    EXPECT_EQ(capture("original_committed",original),after);
+    EXPECT_NE(after.second,other.second);
+    SourceWaterDriver restored;
+    ASSERT_EQ(restored.initialize(c,{0},areas(c)),"");
+    detail::CompletedSourceArchive model(other.first),state(other.second);
+    restored.checkpoint(model,true); model.finish();
+    restored.checkpoint(state,false); state.finish();
+    EXPECT_EQ(capture("restored",restored),other);
+    ASSERT_NO_FATAL_FAILURE(step(second,2.3));
+    ASSERT_NO_FATAL_FAILURE(step(restored,2.3));
+    EXPECT_EQ(capture("restored_continued",restored),capture("second_continued",second));
+    const auto& records=restored.deliveries();
+    ASSERT_GT(records.size(),prefix.size());
+    for (size_t i=0; i<prefix.size(); ++i) {
+        const auto& a=prefix[i]; const auto& b=records[i];
+        EXPECT_EQ(a.source,b.source); EXPECT_EQ(a.node,b.node);
+        EXPECT_EQ(a.start,b.start); EXPECT_EQ(a.end,b.end);
+        EXPECT_EQ(a.volume,b.volume); EXPECT_EQ(a.drain,b.drain); EXPECT_EQ(a.mass,b.mass);
+    }
+    if (const char* output=std::getenv("OPENSWMM_SOURCE_DELIVERY_HISTORY")) {
+        detail::CompletedSourceArchive archive;
+        std::string magic="Source delivery branch history v1";
+        archive(magic,history);
+        std::filesystem::create_directories(output);
+        std::ofstream out(std::filesystem::path(output)/"branches.bin",std::ios::binary);
+        out.write(archive.bytes().data(),archive.bytes().size());
+        ASSERT_TRUE(out.good());
+    }
+}
+
 TEST(SourceWaterDriver, ContextSnapshotsStayIndependentAcrossAdvanceAndCheckpointReads) {
     auto c = model(1);
     SourceWaterDriver original;

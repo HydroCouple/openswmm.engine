@@ -198,3 +198,9 @@ docs/figures/cache/
 /examples/hydrocouple/split-lids/*
 !/examples/hydrocouple/split-lids/model.inp
 !/examples/hydrocouple/split-lids/composition.json
+
+# Reviewed native groundwater bed/conduit split example; keep results local.
+!/examples/hydrocouple/split-beds/
+/examples/hydrocouple/split-beds/*
+!/examples/hydrocouple/split-beds/model.inp
+!/examples/hydrocouple/split-beds/composition.json

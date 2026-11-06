@@ -26,6 +26,7 @@ struct SplitFrame {
     std::vector<int> lid_nodes;
     std::vector<int> mesh_richards_nodes;
     bool extended_water = false;
+    bool reviewed_exchange = false;
     uint64_t lid_trial_sequence = 0;
     double infil_factor = 1;
     double recovery_factor = 1;

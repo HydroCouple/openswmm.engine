@@ -111,6 +111,10 @@ SWMM_ENGINE_API int swmm_hotstart_save(SWMM_Engine engine, const char* path) {
     openswmm::SWMMEngine* eng = to_engine(engine);
     openswmm::SimulationContext& ctx = eng->context();
 
+#ifdef OPENSWMM_HAS_2D
+    if (eng->livePassiveExchange()) return SWMM_ERR_HOTSTART;
+#endif
+
     // Must be RUNNING or ENDED to save
     if (ctx.state != openswmm::EngineState::RUNNING && ctx.state != openswmm::EngineState::ENDED) {
         return SWMM_ERR_LIFECYCLE;

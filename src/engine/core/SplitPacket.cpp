@@ -39,6 +39,7 @@ constexpr auto footprintSchema = "openswmm.node-surface-water/5";
 constexpr auto richardsSchema = "openswmm.node-surface-water/6";
 constexpr auto returnSchema = "openswmm.node-surface-water/7";
 constexpr auto lidSchema = "openswmm.node-surface-water/8";
+constexpr auto exchangeSchema = "openswmm.node-surface-water/9";
 void require(bool ok, const char* text) {
     if (!ok)
         throw std::invalid_argument(text);
@@ -53,7 +54,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Balance, init_storage, final_storage, externa
                                    solver_n_tiers)
 
 Json encode(const Frame& f, const openswmm::SimulationContext& ctx) {
-    Json j = {{"schema", f.extended_water ? lidSchema : f.source_returns ? returnSchema : !f.lid_nodes.empty() ? richardsSchema : f.spatial_sources ? footprintSchema : f.aquifer ? groundwaterSchema : f.source_count ? sourceSchema : f.mapped_outfalls.empty() ? schema : outfallSchema},
+    Json j = {{"schema", f.reviewed_exchange ? exchangeSchema : f.extended_water ? lidSchema : f.source_returns ? returnSchema : !f.lid_nodes.empty() ? richardsSchema : f.spatial_sources ? footprintSchema : f.aquifer ? groundwaterSchema : f.source_count ? sourceSchema : f.mapped_outfalls.empty() ? schema : outfallSchema},
               {"phase", f.phase},
               {"sender", f.sender},
               {"target", f.target},
@@ -109,7 +110,8 @@ Json encode(const Frame& f, const openswmm::SimulationContext& ctx) {
     }
     if (f.aquifer) {
         j["conduit_count"] = ctx.link_subtypes.conduits.link_idx.size();
-        if (!f.phase || (f.reply && (f.phase == SWMM_SPLIT_ADVANCE || f.phase == SWMM_SPLIT_FINISH))) {
+        if (!f.phase || (f.reply && (f.phase == SWMM_SPLIT_ADVANCE || f.phase == SWMM_SPLIT_FINISH ||
+                                   (f.reviewed_exchange && f.phase == SWMM_SPLIT_LID_ACCEPT)))) {
             j["groundwater_conduits"] = {{"coupled",f.conduits.coupled}, {"head_relative_ft",f.conduits.head},
                 {"conductivity_ft_per_s",f.conduits.conductivity}, {"path_ft",f.conduits.path},
                 {"gain_limit_cfs",f.conduits.gain_limit}};
@@ -206,19 +208,22 @@ std::unique_ptr<Frame> decode(const Json& j, const openswmm::SimulationContext& 
         if (lid.bottom == openswmm::LidNodeBottom::MeshAquifer &&
             openswmm::lidnode::layers(ctx,lid.control).front().flow.enabled) mesh_richards.push_back(n);
     }
-    const bool extended = j.at("schema") == lidSchema;
+    const bool paired = j.at("schema") == exchangeSchema;
+    require(paired == openswmm::reviewedGroundwaterExchange(ctx),"Split reviewed groundwater schema downgrade or unexpected ownership");
+    const bool extended = j.at("schema") == lidSchema || (paired && configured_lids.size() != mesh_richards.size());
     require(extended == (configured_lids.size() != mesh_richards.size()),"Split LID schema downgrade or unexpected formulation");
+    const bool scoped = extended || paired;
     const bool configured_spatial=ctx.twod_io.aquifer && !ctx.twod_io.aquifer->surface_owners.empty();
     const bool configured_groundwater=ctx.twod_io.aquifer && !ctx.twod_io.aquifer->empty();
     const bool configured_returns=configured_spatial && std::any_of(ctx.node_subtypes.outfalls.route_to.begin(),
         ctx.node_subtypes.outfalls.route_to.end(),[](int sc) { return sc >= 0; });
-    const bool returns = j.at("schema") == returnSchema || (extended && configured_returns);
-    const bool joint = j.at("schema") == richardsSchema || (returns && !extended && !configured_lids.empty()) ||
-                       (extended && !mesh_richards.empty());
-    const bool spatial = j.at("schema") == footprintSchema || (!extended && joint) || (!extended && returns) ||
-                         (extended && configured_spatial);
-    const bool groundwater = j.at("schema") == groundwaterSchema || (!extended && spatial) ||
-                             (extended && configured_groundwater);
+    const bool returns = j.at("schema") == returnSchema || (scoped && configured_returns);
+    const bool joint = j.at("schema") == richardsSchema || (returns && !scoped && !configured_lids.empty()) ||
+                       (scoped && !mesh_richards.empty());
+    const bool spatial = j.at("schema") == footprintSchema || (!scoped && joint) || (!scoped && returns) ||
+                         (scoped && configured_spatial);
+    const bool groundwater = j.at("schema") == groundwaterSchema || (!scoped && spatial) ||
+                             (scoped && configured_groundwater);
     const bool sources = j.at("schema") == sourceSchema || ((groundwater || extended) && ctx.n_subcatches() > 0);
     const bool outfalls = j.at("schema") == outfallSchema || sources || groundwater || extended;
     require((j.at("schema") == schema || outfalls) && count > 0 &&
@@ -252,6 +257,7 @@ std::unique_ptr<Frame> decode(const Json& j, const openswmm::SimulationContext& 
     f->spatial_sources = spatial;
     f->source_returns = returns;
     f->extended_water = extended;
+    f->reviewed_exchange = paired;
     f->mesh_richards_nodes=mesh_richards;
     if (returns) {
         if (!phase) require(j.at("outfall_return_targets") == ctx.node_subtypes.outfalls.route_to,
@@ -385,7 +391,8 @@ std::unique_ptr<Frame> decode(const Json& j, const openswmm::SimulationContext& 
     if (groundwater) {
         const auto n = ctx.link_subtypes.conduits.link_idx.size();
         require(integer(j,"conduit_count") == n, "Split conduit count mismatch");
-        if (!phase || (f->reply && (phase == SWMM_SPLIT_ADVANCE || phase == SWMM_SPLIT_FINISH))) {
+        if (!phase || (f->reply && (phase == SWMM_SPLIT_ADVANCE || phase == SWMM_SPLIT_FINISH ||
+                                  (paired && phase == SWMM_SPLIT_LID_ACCEPT)))) {
             const auto& c = j.at("groundwater_conduits");
             f->conduits.coupled = flags(c.at("coupled"),n);
             f->conduits.head = column(c,"head_relative_ft",n);

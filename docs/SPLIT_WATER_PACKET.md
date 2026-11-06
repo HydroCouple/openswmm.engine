@@ -41,7 +41,7 @@ Every packet carries these fields.
 
 | Field | Type and meaning |
 | --- | --- |
-| `schema` | `openswmm.node-surface-water/1` for node-only coupling, `openswmm.node-surface-water/2` when outfalls are mapped, `/3` for ordinary watershed/LID outlets, `/4` for the qualified mesh groundwater owner, `/5` for reviewed source pools, `/6` for the reviewed joint Richards profile, `/7` for reviewed models with outfall return destinations, or `/8` when classical NODE LIDs are present |
+| `schema` | `openswmm.node-surface-water/1` for node-only coupling, `openswmm.node-surface-water/2` when outfalls are mapped, `/3` for ordinary watershed/LID outlets, `/4` for the qualified mesh groundwater owner, `/5` for reviewed source pools, `/6` for the reviewed joint Richards profile, `/7` for reviewed models with outfall return destinations, `/8` when classical NODE LIDs are present, or `/9` for reviewed ordinary groundwater beds or conduit exchange |
 | `kind` | `geometry`, `request` or `receipt` |
 | `phase` | 0 geometry, 1 conductance, 2 advance, 3 finish, 4 outfall preparation, 5 source preparation, 6 LID trial, 7 LID acceptance. Only configured owners permit their preparation phases. |
 | `sender`, `target` | Unsigned 64-bit integer tokens issued to native participants in this run. Sender is positive. Geometry targets 0. Requests target the surface. Receipts reverse the pair. |
@@ -509,9 +509,51 @@ moisture and public water ledgers match at accepted boundaries; native binary
 and full HDF5 output equality are required through direct adapters and Composer.
 Malformed history, extents and formulation/subset changes are refused.
 
-Native managed-source eligibility guards still require explicit LID ownership
-for active node beds and refuse conduit seepage in reviewed source models.
-Broader reviewed source/generic groundwater bed/conduit combinations remain
-outside this qualification. Non-Mesh Richards bottoms and outfall-only Richards
+Versions 5–8 retain the earlier LID-bed/LINK_SEEPAGE NONE scope. Version 9 below
+adds reviewed ordinary groundwater beds and conduit exchange. Non-Mesh Richards bottoms and outfall-only Richards
 layouts also remain outside the bounded profile. This is water-only execution;
 species, heat and graph recovery need their own contracts and qualification.
+
+## Version 9 reviewed groundwater node beds and conduit exchange
+
+Reviewed source models with enabled ordinary groundwater node beds or a
+LINK_SEEPAGE mode other than NONE select `openswmm.node-surface-water/9`.
+The existing source, groundwater and optional outfall-return contracts remain.
+Classical rows retain the version 8 `lid_states` representation; an all-Richards
+cohort retains `richards_nodes`. The configured model determines these owners;
+schema downgrade or an unexpected ownership profile is refused before advance.
+The [split-beds example](../examples/hydrocouple/split-beds/composition.json)
+combines a reviewed source graph, ordinary bed, classical/Richards columns and
+native two-way conduit exchange.
+
+Ordinary node beds use the existing native aquifer/node exchange law and
+delivery queue. A bed-only node need not be a surface coupling point. Geometry
+carries its actual `aquifer_bed` ownership flag independently of `coupled`.
+Conduit-only exchange also needs no artificial surface port. Private source
+pools, pending water, receiving clocks, directional reservations and the sole
+aquifer remain with their native owners. The network installs the native frozen
+conduit tuples and sends accepted seepage rates on ADVANCE, as in version 4.
+
+When Mesh Richards admission is present, native acceptance reserves its donor
+water before the hydraulic solve. The surface then invokes the existing
+`publishLinkCoupling` operation to refresh conduit allowances against those
+reservations. Its LID_ACCEPT receipt additionally carries the same
+`groundwater_conduits` and diagnostic `groundwater_ledger_m3` columns used by
+ADVANCE. The network installs these allowances before routing. Missing, short,
+negative or nonfinite budget columns are refused. No allowance, accepted rate,
+column solve or groundwater firing is recomputed by the wrapper.
+
+The native complete-model source attachment now qualifies these combinations
+for water-only execution and numerical restart. Resolved conduit share IDs,
+weights and vertical contacts join the native router model identity. Existing
+hydraulic and aquifer archives retain their dynamic state. Delivery validation
+recognizes a resolved aquifer bed as a real queue receiver without changing its
+surface coupling flag. Unsupported quality/age/heat owners remain refused.
+Native restart continuation is checked with ordinary beds, conduits, their
+combinations, classical/Richards columns and no-surface-port layouts across all
+three groundwater closures. This does not enable restart of a component graph.
+
+The split profile continues to require explicit NODE_ENROLMENT ROWS, Gardner
+mesh groundwater, qualified closures, serial first-order CPU DYNWAVE and
+water-only owners. Automatic enrollment, non-Mesh Richards bottoms, transport,
+graph recovery and other unqualified layouts retain their guards.

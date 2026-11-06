@@ -54,6 +54,7 @@ std::unique_ptr<Frame> capture(const SimulationContext& ctx, const SplitExecutio
     value->lid_nodes = state.lid_nodes;
     value->mesh_richards_nodes = state.mesh_richards_nodes;
     value->extended_water = state.extended_water;
+    value->reviewed_exchange = state.reviewed_exchange;
     value->lid_trial_sequence = state.lid_trial_sequence;
     value->infil_factor = ctx.climate_state.infil_factor;
     value->recovery_factor = ctx.climate_state.recovery_factor;
@@ -63,7 +64,8 @@ std::unique_ptr<Frame> capture(const SimulationContext& ctx, const SplitExecutio
         value->evap_rate = ctx.climate_state.evap_rate;
         value->nodes.lat_flow = ctx.nodes.lat_flow;
     }
-    if (state.aquifer && (phase == 0 || phase == SWMM_SPLIT_ADVANCE || phase == SWMM_SPLIT_FINISH))
+    if (state.aquifer && (phase == 0 || phase == SWMM_SPLIT_ADVANCE || phase == SWMM_SPLIT_FINISH ||
+                         (state.reviewed_exchange && phase == SWMM_SPLIT_LID_ACCEPT)))
         value->conduits.capture(ctx.link_subtypes.conduits);
     if (state.source_count && state.role == SWMM_SPLIT_NETWORK && phase == SWMM_SPLIT_ADVANCE) {
         value->weather = state.weather;
@@ -161,9 +163,8 @@ void validateInputs(SWMMEngine* engine) {
         const auto& r=engine->surfaceRouter2D();
         const auto preview=twoD::resolveSurfaceOwnership(ctx,r.mesh(),r.options(),r.aquiferConfig(),owners);
         require(preview.valid() && !preview.cancelled,"Split source ownership preview is invalid");
-        require(rows > 0 && s.groundwater != 0 && r.aquiferConfig().options.link_seepage == twoD::GwLinkMode::NONE &&
-                !r.aquiferConfig().options.node_auto,
-                "Reviewed split sources require mesh groundwater with NODE_ENROLMENT ROWS and LINK_SEEPAGE NONE");
+        require(rows > 0 && s.groundwater != 0 && !r.aquiferConfig().options.node_auto,
+                "Reviewed split sources require mesh groundwater with NODE_ENROLMENT ROWS");
     }
     require(ctx.rdii_assigns.count() == 0, "Split RDII ownership requires separate qualification");
     for (const auto& path : ctx.lid_usage.rpt_file)
@@ -183,6 +184,26 @@ void validateInputs(SWMMEngine* engine) {
 }
 
 namespace openswmm {
+bool reviewedGroundwaterExchange(const SimulationContext& ctx) {
+#ifdef OPENSWMM_HAS_2D
+    const auto* aq = ctx.twod_io.aquifer;
+    if (!aq || aq->surface_owners.empty()) return false;
+    if (aq->options.link_seepage != twoD::GwLinkMode::NONE) return true;
+    for (size_t i=0; i<aq->node_beds.size(); ++i) {
+        const auto& bed=aq->node_beds[i];
+        // Role selection precedes mesh resolution. Use the authored native
+        // name so initialization cannot change the packet ownership profile.
+        const int node=ctx.twod_io.aquifer_nodes && i<ctx.twod_io.aquifer_nodes->size()
+            ? ctx.node_names.find((*ctx.twod_io.aquifer_nodes)[i]) : bed.node;
+        const auto bottom=lidnode::bottomMode(ctx,node);
+        if (bed.exchange && bottom != LidNodeBottom::MeshAquifer &&
+            bottom != LidNodeBottom::Sealed) return true;
+    }
+    return false;
+#else
+    return false;
+#endif
+}
 void SWMMEngine::captureSplitSources(SplitFrame& value) {
 #ifdef OPENSWMM_HAS_2D
     if (!split_->spatial_sources) return;
@@ -223,6 +244,7 @@ int SWMMEngine::configureSplit(int role) noexcept {
         state->source_count = ctx_.n_subcatches();
         state->aquifer = !surface_router_.aquiferConfig().empty();
         state->spatial_sources = !surface_router_.aquiferConfig().surface_owners.empty();
+        state->reviewed_exchange = reviewedGroundwaterExchange(ctx_);
         for (int n=0; n<ctx_.n_nodes(); ++n)
             if (ctx_.node_subtypes.storage_row(n) >= 0 &&
                 ctx_.node_subtypes.storages.lid[ctx_.node_subtypes.storage_row(n)].control >= 0) {
@@ -309,7 +331,8 @@ int SWMMEngine::applySplitGeometry(SWMM_SplitFrame input) noexcept {
                 value.spatial_sources == split_->spatial_sources && value.source_groups == split_->source_groups &&
                 value.source_returns == split_->source_returns &&
                 value.lid_nodes == split_->lid_nodes && value.mesh_richards_nodes == split_->mesh_richards_nodes &&
-                value.extended_water == split_->extended_water,
+                value.extended_water == split_->extended_water &&
+                value.reviewed_exchange == split_->reviewed_exchange,
                 "Split geometry/configuration differs from the network");
         auto outfalls = value.mapped_outfalls;
         auto limits = outfalls.empty() ? std::vector<double>{} :
@@ -383,6 +406,7 @@ void SWMMEngine::splitExchange(int phase, double dt,
         reply->source_count == split_->source_count && reply->aquifer == split_->aquifer &&
         reply->spatial_sources == split_->spatial_sources && reply->lid_nodes == split_->lid_nodes &&
         reply->source_returns == split_->source_returns && reply->extended_water == split_->extended_water &&
+        reply->reviewed_exchange == split_->reviewed_exchange &&
         reply->mesh_richards_nodes == split_->mesh_richards_nodes &&
         reply->mapped_outfalls == request->mapped_outfalls && reply->model == request->model && reply->phase == phase &&
         reply->sequence == request->sequence && reply->start == request->start && reply->dt == dt,
@@ -418,6 +442,7 @@ void SWMMEngine::splitExchange(int phase, double dt,
         }
         split_->lid_trial_sequence=0;
         split_->lid_prepared=true;
+        if (split_->reviewed_exchange) reply->conduits.publish(ctx_.link_subtypes.conduits);
     } else if (phase == SWMM_SPLIT_SOURCE_PREPARE) {
         require(split_->spatial_sources && !split_->source_prepared &&
                 reply->source_rates.size() == size_t(ctx_.n_nodes()) &&
@@ -485,6 +510,7 @@ int SWMMEngine::evaluateSplit(int phase, SWMM_SplitFrame input, SWMM_SplitFrame*
             request.source_returns == split_->source_returns &&
             request.lid_nodes == split_->lid_nodes && request.mesh_richards_nodes == split_->mesh_richards_nodes &&
             request.extended_water == split_->extended_water &&
+            request.reviewed_exchange == split_->reviewed_exchange &&
             request.mapped_outfalls == split_->mapped_outfalls &&
             (phase == SWMM_SPLIT_FINISH || (std::isfinite(request.dt) && request.dt > 0 &&
                 request.dt <= std::max((ctx_.options.totalDurationMs() - ctx_.elapsed_ms) / 1000., .001))),
@@ -606,9 +632,11 @@ int SWMMEngine::evaluateSplit(int phase, SWMM_SplitFrame input, SWMM_SplitFrame*
             }
         } else if (phase == SWMM_SPLIT_LID_ACCEPT) {
             lidnode::acceptMeshRichardsTrial(ctx_,surface_router_.subsurface(),*split_->lid_trial);
+            if (split_->reviewed_exchange) surface_router_.publishLinkCoupling(ctx_);
             split_->lid_trial.reset();
             split_->lid_prepared=true;
             reply=capture(ctx_,*split_,phase,request.sequence,request.dt);
+            if (split_->reviewed_exchange) captureGroundwater(this,*reply);
         } else if (phase == SWMM_SPLIT_SOURCE_PREPARE) {
             const auto error=source_delivery_->stage(ctx_.current_time,ctx_.current_time+request.dt);
             require(error.empty(),error.c_str());

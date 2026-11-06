@@ -34,6 +34,8 @@ static_assert(std::is_nothrow_move_assignable_v<SurfaceStateData>);
 static_assert(std::is_nothrow_move_assignable_v<CommonSourceStage>);
 constexpr uint32_t checkpointVersion = 1;
 constexpr uint32_t thermalCheckpointOffset = 5;
+// Profiles 11-20 append compensated-water remainders to the unchanged 1-10 prefix.
+constexpr uint32_t compensatedWaterOffset = 10;
 constexpr uint64_t maxCheckpointBytes = 64 * 1024 * 1024;
 /**
  * @brief Compute the reflected IEEE CRC-32 of an internal checkpoint payload.
@@ -277,29 +279,10 @@ void checkpoint::meshState(Archive& a, SurfaceStateData& s) {
     meshStateImpl(a, s);
 }
 using checkpoint::meshState;
-/**
- * @brief Encode the exact immutable common-source model/ownership identity for checkpoint
- * matching.
- * @return Owned binary identity covering source/GW model configuration, mesh SI geometry, solver
- * options, transport layout/composition, reviewed footprints/donors and enabled thermal/snow/
- * runtime-provider profiles. Runtime receipts and external pointer addresses are excluded.
- * @note Requires a fully attached stable stage and all borrowed source/GW/mesh/options/surface
- * owners alive; this low-level helper does not check attachment pointers before dereferencing.
- * Uses private copies and may throw on archive/configuration/allocation failure. Conditional
- * profile fields preserve the encoding of older default configurations. No simulation clock is
- * advanced.
- */
-std::string CommonSourceStage::checkpointModel() const {
-    Archive a;
-    auto source = sources_->waterTrial();
-    auto gw = *gw_;
-    auto m = *mesh_;
-    auto o = *options_;
-    auto t = surface_->transport;
-    source.checkpoint(a, true);
-    gw.checkpoint(a, true);
-    auto mesh_thermal = checkpoint::meshHeatModelIdentity(surface_->heat);
-    a(mesh_thermal);
+/** Archive the shared mesh/options/transport identity in the existing field order. */
+void checkpoint::meshModel(Archive& a, const MeshData& mesh, const SolverOptions2D& options,
+                           const SurfaceTransportState& transport) {
+    auto m = mesh; auto o = options; auto t = transport;
     a(m.vx, m.vy, m.vz, m.vtag, m.cell_nv, m.cell_v, m.cell_nbr, m.tri_area, m.tri_cx, m.tri_cy,
       m.tri_cz, m.edge_length, m.edge_nx, m.edge_ny, m.edge_mx, m.edge_my, m.edge_mz, m.edge_dist_c,
       m.quad_vfr_z, m.quad_vfr_a, m.edge_conveyance, m.mannings_n, m.tri_init_depth, m.tri_init_u,
@@ -330,6 +313,29 @@ std::string CommonSourceStage::checkpointModel() const {
     a(t.n_species, t.n_cells, t.n_pollut, t.n_msx, t.age_row, t.temp_row, t.row_names, t.rain_conc,
       t.bc_conc);
     a.sequence(t.bc_quality_rows, [&](auto& b) { a(b.slot, b.species, b.conc); });
+}
+
+/**
+ * @brief Encode the exact immutable common-source model/ownership identity for checkpoint
+ * matching.
+ * @return Owned binary identity covering source/GW model configuration, mesh SI geometry, solver
+ * options, transport layout/composition, reviewed footprints/donors and enabled thermal/snow/
+ * runtime-provider profiles. Runtime receipts and external pointer addresses are excluded.
+ * @note Requires a fully attached stable stage and all borrowed source/GW/mesh/options/surface
+ * owners alive; this low-level helper does not check attachment pointers before dereferencing.
+ * Uses private copies and may throw on archive/configuration/allocation failure. Conditional
+ * profile fields preserve the encoding of older default configurations. No simulation clock is
+ * advanced.
+ */
+std::string CommonSourceStage::checkpointModel() const {
+    Archive a;
+    auto source = sources_->waterTrial();
+    auto gw = *gw_;
+    source.checkpoint(a, true);
+    gw.checkpoint(a, true);
+    auto mesh_thermal = checkpoint::meshHeatModelIdentity(surface_->heat);
+    a(mesh_thermal);
+    checkpoint::meshModel(a, *mesh_, *options_, surface_->transport);
     auto owned = owned_;
     auto weather = weather_;
     auto cells = cells_;
@@ -425,6 +431,9 @@ std::string CommonSourceStage::checkpointBytes(std::string& bytes) const {
                 return invalid;
             state(providers);
         }
+        auto volume_roundoff = volume_roundoff_;
+        auto ledger_roundoff = ledger_roundoff_;
+        state(volume_roundoff,ledger_roundoff);
         std::string magic = "OpenSWMM source boundary";
         uint32_t version = runtimeCatchmentForcingEnabled() ? (runtimeBoundariesEnabled() ? 5 : 4)
                            : runtimeBoundariesEnabled()     ? 3
@@ -432,6 +441,7 @@ std::string CommonSourceStage::checkpointBytes(std::string& bytes) const {
                                                             : checkpointVersion;
         if (surface_->heat.enabled || gw_->heat().active())
             version += thermalCheckpointOffset;
+        version += compensatedWaterOffset;
         uint32_t endian = 0x01020304;
         uint32_t longBytes = sizeof(long), doubleBytes = sizeof(double);
         auto model = checkpoint_model_, payload = state.bytes();
@@ -558,7 +568,8 @@ std::string CommonSourceStage::loadCheckpointBytes(
                                                                  : checkpointVersion;
         if (surface_->heat.enabled || gw_->heat().active())
             expected_version += thermalCheckpointOffset;
-        if (magic != "OpenSWMM source boundary" || version != expected_version ||
+        const bool compensated = version == expected_version + compensatedWaterOffset;
+        if (magic != "OpenSWMM source boundary" || (!compensated && version != expected_version) ||
             endian != 0x01020304 || longBytes != sizeof(long) || doubleBytes != sizeof(double))
             return "Unsupported source checkpoint version or platform.";
         if (model != checkpoint_model_)
@@ -597,6 +608,13 @@ std::string CommonSourceStage::loadCheckpointBytes(
                 runtimeBoundariesEnabled() ? &boundary : nullptr);
             if (!invalid.empty())
                 return invalid;
+        }
+        if (compensated) {
+            state.fixed(trial.volume_roundoff_);
+            state(trial.ledger_roundoff_);
+        } else {
+            std::fill(trial.volume_roundoff_.begin(),trial.volume_roundoff_.end(),0);
+            trial.ledger_roundoff_ = {};
         }
         state.finish();
         if (mesh.heat.enabled)

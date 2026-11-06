@@ -22,11 +22,20 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <limits>
 #include <tuple>
 
 namespace openswmm::twoD {
 namespace {
 constexpr double ft2 = .3048 * .3048, ft3 = ft2 * .3048;
+// Preserve small completed transfers when a stiff groundwater clock requires
+// many source updates against a much larger standing surface inventory.
+void addWater(double& total, double water, double& roundoff) {
+    const double adjusted = water - roundoff;
+    const double next = total + adjusted;
+    roundoff = (next - total) - adjusted;
+    total = next;
+}
 /**
  * @brief Compare nonnegative physical areas with the reviewed-footprint closure tolerance.
  * @param[in] a First area m2, finite and nonnegative by caller validation.
@@ -574,6 +583,8 @@ std::string CommonSourceStage::initialize(const MeshData& mesh, SurfaceStateData
     surface.snow = std::move(mesh_snow);
     mesh_ = &mesh;
     surface_ = &surface;
+    volume_roundoff_.assign(mesh.n_cells(), 0);
+    ledger_roundoff_ = {};
     options_ = &options;
     gw_ = &gw;
     sources_ = &sources;
@@ -681,6 +692,19 @@ std::string CommonSourceStage::validateRuntimeWater(const RuntimeSources& surfac
 std::string CommonSourceStage::checkpointBoundary() const {
     if (!mesh_ || !sources_ || !gw_ || !surface_ || exchange_.planned_)
         return "Checkpoint requires an attached accepted source boundary.";
+    if (volume_roundoff_.size() != surface_->volume.size())
+        return "Source water roundoff shape differs.";
+    const auto valid_roundoff = [](double correction, double water) {
+        return std::isfinite(correction) && std::abs(correction) <=
+            8 * std::numeric_limits<double>::epsilon() * std::max(1., std::abs(water));
+    };
+    for (size_t i=0; i<volume_roundoff_.size(); ++i)
+        if (!valid_roundoff(volume_roundoff_[i],surface_->volume[i]))
+            return "Invalid source volume roundoff.";
+    if (!valid_roundoff(ledger_roundoff_[0],mesh_rain_) ||
+        !valid_roundoff(ledger_roundoff_[1],mesh_evap_) ||
+        !valid_roundoff(ledger_roundoff_[2],mesh_return_))
+        return "Invalid source ledger roundoff.";
     if (surface_->snow.active() && surface_->snow.completedEnd() != completedEnd())
         return "Checkpoint mesh snow clock does not match the accepted source boundary.";
     for (const auto& group : sources_->clocks().groups())
@@ -1333,18 +1357,24 @@ std::string CommonSourceStage::advance(double start, double end) {
             r.last_flow = total / dt;
             r.last_dt = dt;
         }
-        surface_->volume[m.cell] =
-            std::max(0.0, surface_->volume[m.cell] + m.incoming - m.evap - m.out - infil);
+        auto& volume = surface_->volume[m.cell];
+        auto& roundoff = volume_roundoff_[m.cell];
+        for (double water : {m.incoming, -m.evap, -m.out, -infil})
+            addWater(volume,water,roundoff);
+        if (volume <= 0) {
+            volume = 0;
+            roundoff = 0;
+        }
         surface_->infil_applied[m.cell] += infil / A;
         surface_->coupling_applied[m.cell] += m.incoming - m.rain - m.out;
-        mesh_return_ += mesh_return[m.cell];
+        addWater(mesh_return_,mesh_return[m.cell],ledger_roundoff_[2]);
         surface_->evap_loss_total += m.evap;
         const auto& b = et_budget[m.cell];
         gw_->bookAreaEt(m.cell, dt, b.potential, b.evaporation, b.soil);
         inertial::cellEtaDepth(*mesh_, *options_, m.cell, surface_->volume[m.cell],
                                surface_->head[m.cell], surface_->depth[m.cell]);
-        mesh_rain_ += m.rain;
-        mesh_evap_ += m.evap;
+        addWater(mesh_rain_,m.rain,ledger_roundoff_[0]);
+        addWater(mesh_evap_,m.evap,ledger_roundoff_[1]);
         auto& tr = surface_->transport;
         for (int p = 0; p < ntransport; ++p) {
             const double taken = mesh_mass[mesh_index[m.cell]][p];

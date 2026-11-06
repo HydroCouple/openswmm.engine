@@ -251,6 +251,47 @@ double factor(const SimulationContext& c, int sc, const SourceForcingInterval& f
     return f.infil_factor;
 }
 }
+namespace {
+// Completed records are immutable. Private source trials share their prefix
+// and append their own records without copying every previous interval.
+class DeliveryHistory {
+    struct Entry {
+        SourceWaterDelivery water;
+        std::shared_ptr<Entry> previous;
+        Entry(SourceWaterDelivery value, std::shared_ptr<Entry> prefix)
+            : water(std::move(value)), previous(std::move(prefix)) {}
+        ~Entry() {
+            // Release a long unshared suffix iteratively; small groundwater
+            // steps can produce far more records than the call stack holds.
+            while (previous && previous.use_count() == 1) {
+                auto next = std::move(previous->previous);
+                previous = std::move(next);
+            }
+        }
+    };
+    std::shared_ptr<Entry> last_;
+    std::size_t count_ = 0;
+    mutable std::shared_ptr<const std::vector<SourceWaterDelivery>> contiguous_;
+public:
+    void push_back(SourceWaterDelivery value) {
+        auto next = std::make_shared<Entry>(std::move(value), last_);
+        last_ = std::move(next);
+        ++count_;
+        contiguous_.reset();
+    }
+    const std::vector<SourceWaterDelivery>& values() const {
+        if (!contiguous_) {
+            auto rows = std::make_shared<std::vector<SourceWaterDelivery>>(count_);
+            auto* entry = last_.get();
+            for (std::size_t i = count_; i > 0; --i, entry = entry->previous.get())
+                (*rows)[i - 1] = entry->water;
+            contiguous_ = std::move(rows);
+        }
+        return *contiguous_;
+    }
+};
+}
+
 struct SourceWaterDriver::State {
     std::shared_ptr<SimulationContext> ctx;
     RunoffSolver runoff;
@@ -264,7 +305,7 @@ struct SourceWaterDriver::State {
     std::vector<SourceSurfaceReturn> aquifer_returns;
     std::vector<SourceOutfallReturn> outfall_returns;
     std::vector<SourceWaterLedger> ledger;
-    std::vector<SourceWaterDelivery> deliveries;
+    DeliveryHistory deliveries;
     std::vector<SourceAtmosphericLedger> atmosphere;
     std::vector<std::string> pollutant_names;
     std::vector<SourcePollutantLedger> pollutants;
@@ -292,8 +333,8 @@ struct SourceWaterDriver::State {
             snow = std::make_shared<surface::SourceSnow>(*snow);
         return *snow;
     }
-    /** @brief Copy histories while sharing unchanged private context and snow snapshots.
-     * LID water is cloned without report writers; other histories/ledgers/queues copy.
+    /** @brief Copy state while sharing immutable delivery, context and snow snapshots.
+     * LID water is cloned without report writers; mutable ledgers/queues copy.
      * Mutable context/snow owners detach before use. External handle/callback references
      * retain their original ownership. Copy failures leave s unchanged. */
     State(const State& s)
@@ -440,7 +481,7 @@ const std::vector<SourceWaterLedger>& SourceWaterDriver::ledgers(bool t) const {
     return view(t).ledger;
 }
 const std::vector<SourceWaterDelivery>& SourceWaterDriver::deliveries(bool t) const {
-    return view(t).deliveries;
+    return view(t).deliveries.values();
 }
 const std::vector<SourceAtmosphericLedger>& SourceWaterDriver::atmosphere(bool t) const {
     return view(t).atmosphere;
@@ -1183,8 +1224,16 @@ void SourceWaterDriver::checkpoint(detail::CompletedSourceArchive& a, bool model
                     b.aquifer_return, b.pending_routing, b.incoming);
         },
         true);
-    a.sequence(s.deliveries,
+    // Keep the existing ordered vector wire format. Flatten only for an
+    // explicit read/checkpoint, never for a private source trial copy.
+    auto deliveries = a.reading() ? std::vector<SourceWaterDelivery>{} : s.deliveries.values();
+    a.sequence(deliveries,
                [&](auto& d) { a(d.source, d.node, d.start, d.end, d.volume, d.drain, d.mass); });
+    if (a.reading()) {
+        s.deliveries = {};
+        for (auto& d : deliveries)
+            s.deliveries.push_back(std::move(d));
+    }
     a.sequence(s.aquifer_returns,
                [&](auto& q) { a(q.source, q.type, q.unit, q.pool, q.volume, q.mass); });
     // Conditional extension: ordinary completed-source model/runtime archives
@@ -1249,7 +1298,7 @@ void SourceWaterDriver::checkpoint(detail::CompletedSourceArchive& a, bool model
                 b.evaporation < 0 ||
                 b.evaporation > b.potential + 1e-10 * std::max(1., b.potential))
                 throw std::runtime_error("Invalid source checkpoint atmospheric budget.");
-        for (const auto& d : s.deliveries) {
+        for (const auto& d : s.deliveries.values()) {
             if (clocks_.groupForSubcatch(d.source) < 0 || !std::isfinite(d.start) ||
                 !std::isfinite(d.end) || d.start < 0 || d.end <= d.start ||
                 d.end > clocks_.groups()[clocks_.groupForSubcatch(d.source)].completed_end)

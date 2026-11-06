@@ -1,3 +1,4 @@
+#include "../quality/LivePassiveStorageExchange.hpp"
 /**
  * @file      SurfaceRouter2D.cpp
  * @brief     Implementation of the 2D surface routing orchestrator.
@@ -288,6 +289,7 @@ void SurfaceRouter2D::prepareForEdit() {
  * not a transactional reinitialization or a safe way to preserve an evolved model's inventories.
  */
 void SurfaceRouter2D::initialize(SimulationContext& ctx) {
+    paired_water_checkpoint_ = false;
     channel_ground_.clear();
     ctx.heat_state.mesh_contact_link.clear();
     common_stage_ = nullptr;
@@ -2309,9 +2311,30 @@ void SurfaceRouter2D::refreshRenderFields() {
  * queue or report changes; it has no router-wide rollback/replay contract. Call exactly once per
  * pending interval and serialize access.
  */
-void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt, double t) {
+std::string SurfaceRouter2D::livePassiveProfile() const {
+    if (!active_ || !dynamic_cast<ExplicitInertialSolver*>(solver_.get()) ||
+        options_.reconstruction_order != 1 || options_.num_threads != 1)
+        return "Live passive exchange requires the first-order serial CPU marcher.";
+    if (common_stage_ || subsurface_.active() || runtimeActive() || runtimeWaterCheckpointing() ||
+        surface_quality_.active() || state_.transport.n_species != 1 || state_.transport.n_pollut != 1 ||
+        node_coupling_points_.empty() ||
+        std::any_of(coupling_points_.begin(), coupling_points_.end(), [](const auto& p) { return p.is_outfall; }) ||
+        std::any_of(state_.coupling_native.begin(), state_.coupling_native.end(), [](double v) { return v != 0; }))
+        return "Live passive exchange excludes other source, outfall, groundwater and checkpoint owners.";
+    return {};
+}
+
+void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt, double t, BatchPhase phase) {
     if (dt <= 0.0)
         return;
+    if (live_passive_exchange_) {
+        if (live_passive_exchange_->failed()) throw std::runtime_error(live_passive_exchange_->error());
+        if (auto error = livePassiveProfile(); !error.empty()) {
+            live_passive_exchange_->fail("Live passive exchange profile changed.");
+            throw std::runtime_error(error);
+        }
+    }
+    const double batch_start_ms = report_window_new_ms_;
     if (common_stage_)
         source_boundary_ready_ = false;
     perf::ScopedTimer tm_window(perf::sec_2d_window);
@@ -2552,7 +2575,32 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt, double t)
     publishEqualizeAreas(ctx, dt);
     {
         perf::ScopedTimer tm_adv(perf::sec_2d_advance);
-        solver_->advance(sim_time_, sim_time_ + dt); // always reaches target
+        if (live_passive_exchange_) {
+            using Phase = quality::PassiveStorageExchange::Phase;
+            if (live_passive_exchange_->receipts().changingVolume())
+                if (auto error = changingVolumeProfile(ctx, state_); !error.empty()) {
+                    live_passive_exchange_->fail("Changing-volume physical profile changed before producer effects.");
+                    throw std::runtime_error(error);
+                }
+            const auto publication = phase == BatchPhase::ADVANCE ? Phase::ADVANCE
+                : phase == BatchPhase::REPORT ? Phase::REPORT : Phase::FINAL;
+            live_passive_exchange_->beginWindow(ctx, state_, batch_start_ms, report_window_new_ms_, publication);
+            struct Borrow {
+                SurfaceStateData& state;
+                quality::LivePassiveStorageExchange& owner;
+                bool complete = false;
+                ~Borrow() {
+                    state.live_passive_exchange = nullptr;
+                    if (!complete) owner.fail("Live passive exchange advance failed; journal retained.");
+                }
+            } borrow{state_, *live_passive_exchange_};
+            state_.live_passive_exchange = live_passive_exchange_;
+            solver_->advance(sim_time_, sim_time_ + dt);
+            live_passive_exchange_->seal(ctx, solver_->last_coupling_exchange());
+            borrow.complete = true;
+        } else {
+            solver_->advance(sim_time_, sim_time_ + dt); // always reaches target
+        }
     }
     // Plugin solvers publish gross accepted boundary volumes without touching
     // the engine-owned receipt map across the shared-library boundary. Drain
@@ -2625,7 +2673,7 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt, double t)
             const auto& tr = state_.transport;
             const auto ns = static_cast<std::size_t>(tr.n_species);
             auto& q = ctx.nodes.coupling_qual_queue;
-            if (ns > 0 && !tr.exch_mass.empty()) {
+            if (!live_passive_exchange_ && ns > 0 && !tr.exch_mass.empty()) {
                 for (std::size_t k = 0; k < n; ++k) {
                     const auto ni = static_cast<std::size_t>(node_coupling_points_[k].node_idx);
                     if ((ni + 1) * ns > q.size() || (k + 1) * ns > tr.exch_mass.size())
@@ -2763,6 +2811,7 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt, double t)
         if (queued)
             ctx.coupling_delivery_remaining = std::max(ctx.coupling_delivery_remaining, dt);
     }
+    if (live_passive_exchange_) live_passive_exchange_->observeWaterBooking(ctx);
     state_.clear_reset_forcings();
     resetWindowAccumulators();
 
@@ -3369,9 +3418,12 @@ void SurfaceRouter2D::flushPendingBatch(SimulationContext& ctx) {
     if (common_stage_ && (!source_boundary_ready_ || &ctx != source_context_))
         throw std::invalid_argument("Common-source router has no completed boundary to flush.");
     if (pending_dt_ > 0.0) {
+        if (live_passive_exchange_ && live_passive_exchange_->receipts().changingVolume() &&
+            !live_passive_exchange_->preflightHistory(ctx, false))
+            throw std::invalid_argument(live_passive_exchange_->historyPreflightError());
         const double span = pending_dt_;
         pending_dt_ = 0.0;
-        coAdvanceStep(ctx, span, last_t_);
+        coAdvanceStep(ctx, span, last_t_, BatchPhase::REPORT);
     }
 }
 
@@ -3596,10 +3648,13 @@ void SurfaceRouter2D::finalize(SimulationContext& ctx) {
     // Flush the partial sync batch so the 2D clock (and the exchange booking)
     // ends at the simulation end instead of up to one batch short. The
     // marcher always integrates the whole span — no failure/backlog handling.
-    if (active_ && pending_dt_ > 0.0) {
+    if (active_ && pending_dt_ > 0.0 && (!live_passive_exchange_ || !live_passive_exchange_->failed())) {
+        if (live_passive_exchange_ && live_passive_exchange_->receipts().changingVolume() &&
+            !live_passive_exchange_->preflightHistory(ctx, false))
+            throw std::invalid_argument(live_passive_exchange_->historyPreflightError());
         const double span = pending_dt_;
         pending_dt_ = 0.0;
-        coAdvanceStep(ctx, span, last_t_);
+        coAdvanceStep(ctx, span, last_t_, BatchPhase::FINAL);
     }
 #ifdef OPENSWMM_HAS_2D
     if (solver_) {
@@ -3644,6 +3699,7 @@ void SurfaceRouter2D::finalize(SimulationContext& ctx) {
     common_stage_ = nullptr;
     source_context_ = nullptr;
     joint_hydraulic_ = nullptr;
+    paired_water_checkpoint_ = false;
     source_boundary_ready_ = false;
 }
 
@@ -3687,6 +3743,11 @@ double SurfaceRouter2D::totalVolume() const {
  * @note Requires matching prepared cell arrays; active flag is not checked. Read-only, no
  * validation, reconstruction, allocation, physical or clock change.
  */
+const std::vector<double>& SurfaceRouter2D::couplingExchangeVolumes() const noexcept {
+    static const std::vector<double> empty;
+    return solver_ ? solver_->last_coupling_exchange() : empty;
+}
+
 double SurfaceRouter2D::couplingFlux(int cell) const noexcept {
     double rate = state_.coupling_flux[static_cast<std::size_t>(cell)];
     const auto* cpu = dynamic_cast<const ExplicitInertialSolver*>(solver_.get());

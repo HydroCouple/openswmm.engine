@@ -199,6 +199,67 @@ void SWMMEngine::wire2DModelIO() noexcept {
 }
 #endif
 
+#ifdef OPENSWMM_HAS_2D
+void SWMMEngine::checkLivePassiveExchange(bool preflight_history) const {
+    if (live_passive_exchange_ && live_passive_exchange_->failed())
+        throw std::runtime_error(live_passive_exchange_->error());
+    if ((preflight_history || (live_passive_exchange_ && live_passive_exchange_->preflightsHistory())) &&
+        (callbacks_.on_progress || callbacks_.on_warning || callbacks_.on_step_begin || callbacks_.on_step_end || callbacks_.on_phase))
+        throw std::invalid_argument("Live history preflight excludes callbacks that can mutate the accepted boundary.");
+    const bool paired = surface_router_.joint_hydraulic_ == &router_ && surface_router_.source_context_ == &ctx_;
+    if (split_ || process_component_host_ || !ctx_.events.empty() || (checkpoint_enabled_ && !paired) || runtime_water_driver_ || runtime_pipeline_ || source_delivery_ ||
+        source_stage_ || engine_source_stream_ || engine_source_history_ || exchange_target_ >= 0 ||
+        !pending_hotstart_checkpoint_.empty() || !ctx_.files.hotstart_saves.empty())
+        throw std::invalid_argument("Live passive exchange excludes split, source, runtime and checkpoint sessions.");
+    if (auto error = surface_router_.livePassiveProfile(); !error.empty())
+        throw std::invalid_argument(error);
+    if (live_passive_exchange_ && live_passive_exchange_->receipts().changingVolume())
+        if (auto error = surface_router_.changingVolumeProfile(ctx_, surface_router_.state_); !error.empty())
+            throw std::invalid_argument(error);
+    for (const auto& point : surface_router_.node_coupling_points_)
+        if (std::size_t(point.node_idx) >= ctx_.forcing.node_head_boundary_mode.size() ||
+            ctx_.forcing.node_head_boundary_mode[point.node_idx] != ForcingMode::NONE)
+            throw std::invalid_argument("Live passive exchange excludes mapped node head overrides.");
+}
+std::string SWMMEngine::attachLivePassiveExchange(std::size_t capacity) {
+    return attachLivePassiveExchange(quality::PassiveStorageArithmetic::EXACT, capacity);
+}
+std::string SWMMEngine::attachLiveChangingVolumeExchange(std::size_t capacity) {
+    return attachLiveChangingVolumeExchange(capacity, false);
+}
+std::string SWMMEngine::attachLiveChangingVolumeExchange(std::size_t capacity, bool preflight_history) {
+    try {
+        if (live_passive_exchange_ || step_active_ || ctx_.state != EngineState::RUNNING ||
+            ctx_.error_code != SWMM_OK || !do_routing_ || ctx_.elapsed_ms != 0 || surface_router_.pending_dt_ != 0)
+            return "Attach changing-volume exchange at an initial running boundary with no prior owner.";
+        checkLivePassiveExchange(preflight_history);
+        if (auto error = surface_router_.changingVolumeProfile(ctx_, surface_router_.state_); !error.empty()) return error;
+        auto owner = std::make_unique<quality::LivePassiveStorageExchange>(
+            ctx_, surface_router_.state_, surface_router_.node_coupling_points_, surface_router_.options_.flow_2d_to_1d,
+            capacity, quality::PassiveStorageArithmetic::RETAIN_EXACT_HALVES, preflight_history, quality::PassiveStorageLaw::CHANGING_VOLUME);
+        surface_router_.live_passive_exchange_ = owner.get();
+        live_passive_exchange_ = std::move(owner);
+        return {};
+    } catch (const std::exception& error) { return error.what(); }
+}
+std::string SWMMEngine::attachLivePassiveExchange(quality::PassiveStorageArithmetic arithmetic, std::size_t capacity) {
+    return attachLivePassiveExchange(arithmetic, capacity, false);
+}
+std::string SWMMEngine::attachLivePassiveExchange(quality::PassiveStorageArithmetic arithmetic, std::size_t capacity, bool preflight_history) {
+    try {
+        if (live_passive_exchange_ || step_active_ || ctx_.state != EngineState::RUNNING ||
+            ctx_.error_code != SWMM_OK || !do_routing_ || surface_router_.pending_dt_ != 0)
+            return "Attach live passive exchange at a running settled boundary with no prior owner.";
+        checkLivePassiveExchange(preflight_history);
+        auto owner = std::make_unique<quality::LivePassiveStorageExchange>(
+            ctx_, surface_router_.state_, surface_router_.node_coupling_points_, surface_router_.options_.flow_2d_to_1d, capacity, arithmetic, preflight_history);
+        surface_router_.live_passive_exchange_ = owner.get();
+        live_passive_exchange_ = std::move(owner);
+        return {};
+    } catch (const std::exception& error) { return error.what(); }
+}
+#endif
+
 SWMMEngine::~SWMMEngine() {
     if (ctx_.state == EngineState::RUNNING || ctx_.state == EngineState::ENDED) {
         close();
@@ -219,6 +280,10 @@ int SWMMEngine::open(const char* inp_path, const char* rpt_path, const char* out
     }
 
     // Reset context for a fresh run
+#ifdef OPENSWMM_HAS_2D
+    surface_router_.live_passive_exchange_ = nullptr;
+    live_passive_exchange_.reset();
+#endif
     ctx_.reset();
     metadata_only_ = metadata_only;
 #ifdef OPENSWMM_HAS_2D
@@ -2140,6 +2205,17 @@ int SWMMEngine::advanceTo(double seconds, double* actual) noexcept {
 }
 
 int SWMMEngine::step(double* elapsed_time) noexcept {
+#ifdef OPENSWMM_HAS_2D
+    if (live_passive_exchange_) {
+        if (live_passive_exchange_->failed()) return ctx_.error_code != SWMM_OK ? ctx_.error_code : SWMM_ERR_WRONG_STATE;
+        try { checkLivePassiveExchange(); }
+        catch (const std::exception& error) {
+            live_passive_exchange_->fail("Live passive exchange session profile changed.");
+            set_error(SWMM_ERR_WRONG_STATE, error.what());
+            return SWMM_ERR_WRONG_STATE;
+        }
+    }
+#endif
     if (split_ && split_->failed)
         return ctx_.error_code != SWMM_OK ? ctx_.error_code : SWMM_ERR_LIFECYCLE;
     if (split_ && split_->role == SWMM_SPLIT_SURFACE && !(split_->requested_dt > 0))
@@ -2193,6 +2269,13 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
         ctx_.state = EngineState::ENDED;
         return SWMM_OK;
     }
+
+#ifdef OPENSWMM_HAS_2D
+    // Recoverable archive-capacity refusal before readiness, callbacks, clocks or physics change.
+    if (live_passive_exchange_ && live_passive_exchange_->preflightsHistory() &&
+        !live_passive_exchange_->preflightHistory(ctx_, true))
+        return SWMM_ERR_WRONG_STATE;
+#endif
 
     // Compute next explicit timestep using CFL-based adaptive stepping
     try {
@@ -2639,6 +2722,9 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
         return SWMM_OK;
     } catch (const std::exception& e) {
         checkpoint_ready_ = false;
+#ifdef OPENSWMM_HAS_2D
+        if (live_passive_exchange_) live_passive_exchange_->fail("Live passive exchange engine step failed.");
+#endif
         set_error(SWMM_ERR_WRONG_STATE, e.what());
         return SWMM_ERR_WRONG_STATE;
     }
@@ -5096,8 +5182,14 @@ void SWMMEngine::stepRouting(double dt_routing) {
     //      addIfaceInflows(currentDate), the same +1 ms date.
     iface_.readInflows(ctx_, routing_date);
 
-    // B2c. Assemble all decomposed sources into nodes.lat_flow[]
+    // B2c. Freeze prior receipts before the actual native lateral drain.
+#ifdef OPENSWMM_HAS_2D
+    if (live_passive_exchange_) live_passive_exchange_->freeze(ctx_, dt_routing);
+#endif
     assembleLateralInflows(dt_routing);
+#ifdef OPENSWMM_HAS_2D
+    if (live_passive_exchange_) live_passive_exchange_->observeDrain(ctx_);
+#endif
 
 #ifdef OPENSWMM_HAS_2D
     // B2c. Pre-routing: update outfall boundary heads from 2D surface state.
@@ -5527,7 +5619,11 @@ void SWMMEngine::stepRouting(double dt_routing) {
             // junction's ~zero stored volume gave the late write no weight
             // in the next mix) and its own gate caught it on first run.
         } else {
-            quality_.execute(ctx_, dt_routing);
+#ifdef OPENSWMM_HAS_2D
+            if (live_passive_exchange_) live_passive_exchange_->receive(ctx_, quality_, dt_routing);
+            else
+#endif
+                quality_.execute(ctx_, dt_routing);
         }
     }
 }
@@ -7132,7 +7228,7 @@ void convertSnapshotToDisplay(SimulationSnapshot& s, const ucf::DisplayUnits& du
  *          builds a SimulationSnapshot from the current context state and
  *          posts it to the IO thread for asynchronous writing.
  */
-void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
+void SWMMEngine::postOutputSnapshot(double /*dt_step*/) {
     // Post snapshot to IO thread if output is due (Phase 5)
     // Called AFTER advance(). State arrays (lat_flow, depth, flow, infil etc.)
     // still reflect the just-completed routing step. current_date is at the
@@ -8857,6 +8953,10 @@ void SWMMEngine::applyAvgResults(SimulationSnapshot& snap) noexcept {
 }
 
 int SWMMEngine::end() noexcept {
+#ifdef OPENSWMM_HAS_2D
+    if (live_passive_exchange_ && live_passive_exchange_->failed())
+        return ctx_.error_code != SWMM_OK ? ctx_.error_code : SWMM_ERR_WRONG_STATE;
+#endif
     if (ctx_.state != EngineState::RUNNING && ctx_.state != EngineState::ENDED) {
         // A failed run sits in ERROR_STATE holding the root-cause message.
         // Callers (GUI, CLI, swmm_engine_run) call end() unconditionally on
@@ -8867,6 +8967,19 @@ int SWMMEngine::end() noexcept {
         set_error(SWMM_ERR_WRONG_STATE, "swmm_engine_end: engine must be running or ended");
         return SWMM_ERR_WRONG_STATE;
     }
+
+#ifdef OPENSWMM_HAS_2D
+    if (live_passive_exchange_ && live_passive_exchange_->preflightsHistory()) {
+        try { checkLivePassiveExchange(); }
+        catch (const std::exception& error) {
+            live_passive_exchange_->fail("Live history preflight final profile changed.");
+            set_error(SWMM_ERR_WRONG_STATE, error.what());
+            return SWMM_ERR_WRONG_STATE;
+        }
+        if (surface_router_.pending_dt_ > 0 && !live_passive_exchange_->preflightHistory(ctx_, false))
+            return SWMM_ERR_WRONG_STATE;
+    }
+#endif
 
     if (process_component_host_) {
         try { process_component_host_->finish(); }
@@ -8964,7 +9077,16 @@ int SWMMEngine::end() noexcept {
     // partial-window flush advances the 2D state and books its exchanges, so
     // the statistics/reports must read the post-flush state, not a snapshot
     // taken one window early.
-    surface_router_.finalize(ctx_);
+    if (live_passive_exchange_) {
+        try { checkLivePassiveExchange(); surface_router_.finalize(ctx_); }
+        catch (const std::exception& error) {
+            live_passive_exchange_->fail("Live passive exchange final flush failed.");
+            set_error(SWMM_ERR_WRONG_STATE, error.what());
+            return SWMM_ERR_WRONG_STATE;
+        }
+    } else {
+        surface_router_.finalize(ctx_);
+    }
 #endif
 
     // Benchmark aid: attribute wall time between the 2D solve, its window
@@ -9221,6 +9343,11 @@ int SWMMEngine::report() noexcept {
 // ============================================================================
 
 int SWMMEngine::close() noexcept {
+#ifdef OPENSWMM_HAS_2D
+    surface_router_.state_.live_passive_exchange = nullptr;
+    surface_router_.live_passive_exchange_ = nullptr;
+    live_passive_exchange_.reset();
+#endif
     split_.reset();
     process_component_host_.reset();
     checkpoint_enabled_ = checkpoint_ready_ = false;

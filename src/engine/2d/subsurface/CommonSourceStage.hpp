@@ -14,6 +14,7 @@
 #include "SurfaceOwnership.hpp"
 #include "../coupling/RuntimeCouplingCheckpoint.hpp"
 #include "../../hydrology/SourceWaterDriver.hpp"
+#include <array>
 #include <functional>
 
 namespace openswmm {
@@ -301,5 +302,7 @@ private:
     std::vector<double> weather_;
     long intervals_ = 0;
     double mesh_rain_ = 0, mesh_evap_ = 0, mesh_return_ = 0;
+    std::vector<double> volume_roundoff_;
+    std::array<double, 3> ledger_roundoff_{};
 };
 }

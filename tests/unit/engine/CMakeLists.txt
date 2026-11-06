@@ -346,6 +346,37 @@ target_compile_definitions(test_engine_routing PRIVATE
     "BENCHMARK_DATA_DIR=\"${PROJECT_SOURCE_DIR}/tests/benchmarks\""
 )
 add_gtest_unit(test_engine_quality_routing  test_quality_routing.cpp)
+add_gtest_unit(test_engine_passive_storage_exchange test_passive_storage_exchange.cpp)
+if(OPENSWMM_BUILD_2D)
+    add_gtest_unit(test_engine_coupled_water_checkpoint test_coupled_water_checkpoint.cpp)
+    add_gtest_unit(test_engine_changing_volume_storage_exchange test_changing_volume_storage_exchange.cpp)
+    target_compile_definitions(test_engine_changing_volume_storage_exchange PRIVATE
+        CHANGING_VOLUME_TEST_OUTPUT="${PROJECT_SOURCE_DIR}/tests/verification/component_species_changing_volume_2026-11-06/native-fixtures")
+    target_compile_definitions(test_engine_coupled_water_checkpoint PRIVATE
+        COUPLED_WATER_TEST_OUTPUT="${PROJECT_SOURCE_DIR}/tests/verification/component_species_variable_volume_2026-11-06/native-fixtures")
+    add_gtest_unit(test_engine_live_passive_storage_exchange test_live_passive_storage_exchange.cpp)
+    target_compile_definitions(test_engine_live_passive_storage_exchange PRIVATE
+        LIVE_EXCHANGE_TEST_OUTPUT="${PROJECT_SOURCE_DIR}/tests/verification/component_species_halves_2026-11-05/native-fixtures")
+    find_package(Python3 QUIET COMPONENTS Interpreter)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME test_engine_changing_volume_exact_accounting
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/verify_changing_volume.py
+                --engine $<TARGET_FILE:test_engine_changing_volume_storage_exchange>
+                --output ${PROJECT_SOURCE_DIR}/tests/verification/component_species_changing_volume_2026-11-06/exact-accounting)
+        set_tests_properties(test_engine_changing_volume_exact_accounting PROPERTIES LABELS unit)
+        add_test(NAME test_engine_coupled_water_exact_accounting
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/verify_coupled_water.py
+                --engine $<TARGET_FILE:test_engine_coupled_water_checkpoint>
+                --output ${PROJECT_SOURCE_DIR}/tests/verification/component_species_variable_volume_2026-11-06/exact-water)
+        set_tests_properties(test_engine_coupled_water_exact_accounting PROPERTIES LABELS unit)
+        add_test(NAME test_engine_passive_roundoff_exact_accounting
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/verify_passive_roundoff.py
+                --owner $<TARGET_FILE:test_engine_passive_storage_exchange>
+                --live $<TARGET_FILE:test_engine_live_passive_storage_exchange>
+                --output ${PROJECT_SOURCE_DIR}/tests/verification/component_species_halves_2026-11-05/exact-audit)
+        set_tests_properties(test_engine_passive_roundoff_exact_accounting PROPERTIES LABELS unit)
+    endif()
+endif()
 add_gtest_unit(test_engine_fv_conservative_mixing test_fv_conservative_mixing.cpp)
 add_gtest_unit(test_engine_fv_transport_allocations test_fv_transport_allocations.cpp)
 add_gtest_unit(test_engine_fv_accepted_water test_fv_accepted_water.cpp)
@@ -475,7 +506,8 @@ if(OPENSWMM_BUILD_2D AND OPENSWMM_2D_HDF5_OUTPUT)
                       ReviewedFootprintSources ReviewedFootprintIndependent ReviewedFootprintEnslaved ReviewedFootprintSigma ReviewedFootprintEvaporation ReviewedFootprintEarlyFinish
                       JointRichardsClosedShared JointRichardsClosedIndependent JointRichardsEnslavedShared JointRichardsEnslavedIndependent JointRichardsSigmaShared JointRichardsSigmaIndependent JointRichardsCompeting JointRichardsAquiferGain JointRichardsEarlyFinish
                       ReviewedMappedDischarge ReviewedMappedWithdrawal ReviewedMappedFlapGate ReviewedMappedRichards ReviewedReturnClosedShared ReviewedReturnIndependent ReviewedReturnEnslaved ReviewedReturnSigma ReviewedReturnRichards ReviewedReturnEarlyFinish ReviewedReturnMixedMapped ReviewedReturnOrdinary
-                      ClassicalMeshReviewedShared ClassicalMeshReviewedIndependent ClassicalMeshReviewedEnslaved ClassicalMeshReviewedSigma ClassicalMeshReviewedGain ClassicalMeshOrdinarySources ClassicalMeshConduit ClassicalSealedReviewed ClassicalCurrentReviewed ClassicalMixedRichards ClassicalMixedRichardsSigma ClassicalEarlyFinish)
+                      ClassicalMeshReviewedShared ClassicalMeshReviewedIndependent ClassicalMeshReviewedEnslaved ClassicalMeshReviewedSigma ClassicalMeshReviewedGain ClassicalMeshOrdinarySources ClassicalMeshConduit ClassicalSealedReviewed ClassicalCurrentReviewed ClassicalMixedRichards ClassicalMixedRichardsSigma ClassicalEarlyFinish
+                      ReviewedBedLossShared ReviewedBedLossIndependent ReviewedBedGainIndependent ReviewedBedEnslaved ReviewedBedSigma ReviewedConduitLoss ReviewedConduitGain ReviewedConduitOneWay ReviewedBedConduit ReviewedClassicalBedConduit ReviewedRichardsBedConduit ReviewedBedsEarlyFinish ReviewedBedWithoutSurfacePort ReviewedConduitWithoutSurfacePort)
             add_test(NAME test_engine_split_${_case}_hdf5
                 COMMAND "${OPENSWMM_SPLIT_H5DIFF}" "${_split_evidence}/${_case}/native.h5"
                         "${_split_evidence}/${_case}/surface.h5")
@@ -1249,7 +1281,8 @@ if(OPENSWMM_WITH_HYDROCOUPLE)
                       ReviewedFootprintSources ReviewedFootprintIndependent ReviewedFootprintEnslaved ReviewedFootprintSigma ReviewedFootprintEvaporation ReviewedFootprintEarlyFinish
                       JointRichardsClosedShared JointRichardsClosedIndependent JointRichardsEnslavedShared JointRichardsEnslavedIndependent JointRichardsSigmaShared JointRichardsSigmaIndependent JointRichardsCompeting JointRichardsAquiferGain JointRichardsEarlyFinish
                       ReviewedMappedDischarge ReviewedMappedWithdrawal ReviewedMappedFlapGate ReviewedMappedRichards ReviewedReturnClosedShared ReviewedReturnIndependent ReviewedReturnEnslaved ReviewedReturnSigma ReviewedReturnRichards ReviewedReturnEarlyFinish ReviewedReturnMixedMapped ReviewedReturnOrdinary
-                      ClassicalMeshReviewedShared ClassicalMeshReviewedIndependent ClassicalMeshReviewedEnslaved ClassicalMeshReviewedSigma ClassicalMeshReviewedGain ClassicalMeshOrdinarySources ClassicalMeshConduit ClassicalSealedReviewed ClassicalCurrentReviewed ClassicalMixedRichards ClassicalMixedRichardsSigma ClassicalEarlyFinish)
+                      ClassicalMeshReviewedShared ClassicalMeshReviewedIndependent ClassicalMeshReviewedEnslaved ClassicalMeshReviewedSigma ClassicalMeshReviewedGain ClassicalMeshOrdinarySources ClassicalMeshConduit ClassicalSealedReviewed ClassicalCurrentReviewed ClassicalMixedRichards ClassicalMixedRichardsSigma ClassicalEarlyFinish
+                      ReviewedBedLossShared ReviewedBedLossIndependent ReviewedBedGainIndependent ReviewedBedEnslaved ReviewedBedSigma ReviewedConduitLoss ReviewedConduitGain ReviewedConduitOneWay ReviewedBedConduit ReviewedClassicalBedConduit ReviewedRichardsBedConduit ReviewedBedsEarlyFinish ReviewedBedWithoutSurfacePort ReviewedConduitWithoutSurfacePort)
                 add_test(NAME test_engine_component_split_${_case}_parity
                     COMMAND "${OPENSWMM_H5DIFF_EXECUTABLE}" "${_split_evidence}/${_case}/native.h5"
                         "${_surface_cases}/SplitWaterComponentsMatchIndependentNativeRuns/wrapped/${_case}/surface/model.2d.h5")

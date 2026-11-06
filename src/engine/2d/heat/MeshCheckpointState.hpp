@@ -15,6 +15,9 @@ class CompletedSourceArchive;
 }
 namespace openswmm::twoD {
 struct SurfaceStateData;
+struct SurfaceTransportState;
+struct MeshData;
+struct SolverOptions2D;
 namespace checkpoint {
 /**
  * @brief Archive and validate accepted mesh hydraulic, species and optional snow/thermal
@@ -30,5 +33,6 @@ namespace checkpoint {
  * whole-engine framing or ownership transfer occurs here.
  */
 void meshState(detail::CompletedSourceArchive&, SurfaceStateData&);
+void meshModel(detail::CompletedSourceArchive&, const MeshData&, const SolverOptions2D&, const SurfaceTransportState&);
 }
 }

@@ -6,7 +6,9 @@ public OpenSWMM C API; it does not link HydroCoupleSDK. The older
 `openswmm.model` module remains the separate FVQual compatibility adapter.
 Build with `OPENSWMM_WITH_HYDROCOUPLE=ON`. Qualified execution includes CPU 1D
 and the bounded CPU spatial and managed transport profiles below. Independent network and surface roles also support the CPU node/surface water phase contract.
-Mesh groundwater node/conduit water exchange, classical NODE LIDs and the reviewed water-only joint Richards profile are available in bounded split profiles. Classical mesh, sealed and current bottoms and mixed classical/Richards columns retain native preparation and hydraulic ownership. Reviewed source models still enforce native eligibility guards for generic groundwater beds and conduit seepage. See the version 8 scope in the water phase contract. Coordinated restart remains open.
+Mesh groundwater node/conduit water exchange, classical NODE LIDs and the reviewed water-only joint Richards profile are available in bounded split profiles. Classical mesh, sealed and current bottoms and mixed classical/Richards columns retain native preparation and hydraulic ownership. Version 9 adds reviewed ordinary groundwater beds and conduit seepage, including layouts without a surface coupling port. Native complete-model restart retains their real queue ownership and conduit geometry; coordinated component-graph restart remains open.
+
+Common-source water updates retain compensated rounding remainders for small stability-limited steps. Native source checkpoints use profiles 11–20 for these remainders and can read older profiles 1–10 with zero remainders. The precision correction can change final rounding bits relative to older runs; native/component parity is qualified against the same engine build. See versions 8/9 in the water phase contract for the bounded scope.
 
 ## Configuration and inspection
 
@@ -400,6 +402,308 @@ process rows, file interfaces and restart are refused. Geometry validation
 precedes advancement. Ordinary surface stepping and both roles' `advance_to`
 are unavailable. Managed checkpoint attachment is also unavailable: graph
 recovery must qualify every participant and pending exchange together.
+
+Native pollutant preparation includes a bounded receiving correction: passive
+wet storage with unchanged positive volume retains a positive coupling pollutant
+amount when both incoming carrier water and coupling water are exactly zero.
+The complete assembled signed amount, including ordinary co-loads, joins the
+pool after the existing available-mass clamp. Storage LIDs, reactions and
+treatment retain their existing mixing rules. This does not qualify split
+pollutant packets: negative delivery, funded donor reservations and complete
+bidirectional material conservation remain open. Public water packet schemas
+remain 1–9.
+
+The internal `PassiveStorageExchange` input additionally qualifies staged
+funded receiving through `QualitySolver::execute`. One named native pollutant
+and isolated passive storage are supported. The book reserves gross spill
+across points and outstanding receipts; future drain mass cannot fund it.
+Signed slices enter the single native mixer separately from ordinary loads and
+the shared legacy queue. Native interval/span checks, exact gross partitions,
+representability checks and terminal failure handling prevent silent drops or
+replay. Ordinary concentration divide/product roundoff has an explicit bound
+of two machine epsilons of the target amount. No component species schema is enabled.
+
+The staged owner can freeze a delivery cohort before lateral assembly and
+observe its post-drain span. ADVANCE rows accepted afterward wait for the next
+actual assembly. Historical sample, physical batch, phase and eligibility are
+retained; REPORT/FINAL sampling is distinct, and final receipts remain pending
+without an extra routing step. Overlapping physical point batches are refused
+even under a changed receipt ID. This profile does not admit a producer-side
+water-span reset.
+
+Sealed owner archives preserve pending rows, samples and native delivery
+history. Restore validates a detached historical input through the native
+quality receiver before binding a pristine owner to matching current state.
+Frozen/prepared/failed snapshots are refused. Archives are limited to 64 MiB,
+4096 nodes/rows/receipts/events and one million validation-work units. This
+owner-state archive alone does not restore native water/quality. Staged-only
+archives retain their version 1 bytes. Version 2 retains authenticated live
+proof, with at most 65,536 proof records and the same bounded replay budget.
+
+An explicitly attached private C++ `LivePassiveStorageExchange` now owns the
+sealed book and a bounded, preallocated journal in `SWMMEngine`. The actual
+first-order serial CPU marcher authenticates each drain and admits each spill
+before its native donor, cell, water and diagnostic writes. Gross spill funding
+includes all sealed and open commitments across shared-node points; future drain
+mass is unavailable. Zero-concentration carrier legs are recorded. The engine
+freezes the prior cohort before lateral assembly, observes the real drain, and
+receives through the existing quality solver. Live-owned points bypass the
+legacy pollutant queue. Actual firing sites distinguish ADVANCE, REPORT and FINAL.
+
+This is a restricted research attachment with no INP flag, public C API or
+component activation. Only isolated, wet, unchanged passive STORAGE pools with
+one native pollutant are eligible. RK2, parallel/plugin marchers, incident links,
+other storage/source mobilization, event schedules, process hosts, head overrides,
+runtime/source/split sessions remain refused. A separate private paired restart
+profile supports physical state in a closed first-order CPU model: all network
+nodes are mapped passive storage, with no links, catchments, gages, infiltration,
+groundwater, heat, external boundary/forcing owners or output continuation. Attach
+the live owner first and enable checkpointing at the initial accepted boundary.
+Generic hotstart saving and component activation remain refused.
+
+A window seals only when both authenticated gross water and actual native hydraulic
+booking are exactly zero net. The private live input preserves each actual SI
+donor operand, sample, firing order/duration and native spill withdrawal, then
+converts that accepted amount once. It does not recompute aggregate spill mass
+from converted carrier water. Staged unauthenticated inputs retain their original
+strict carrier identity. Other unrepresentable aggregates and stored increments
+still stop the owner. Capacity, funding and source-increment refusals precede the
+rejected leg's effects; earlier applied legs survive terminal refusal. Later
+`step` and `end` cannot retry failed work, and diagnostics survive until close.
+
+Paired restart stages the existing hydraulic, mesh, marcher and router archives
+without a source stage or additional physics. It checks receipt proof against the
+incoming physical state before installation or output publication. Initial water
+and surface pollutant anchors, per-node native receiver replay (including retired
+and never-used pools), actual exchange/donor ledgers, clocks and pending mesh time
+must agree. Resolved per-point laws, coefficients, sampling cells and equalization
+policy are part of the model identity. Checksum-valid edits to sources, water, material, samples, topology,
+conversion, proof and node concentrations are refused atomically. Native engine
+profile 3003 is distinct; existing unrelated checkpoint formats stay unchanged.
+
+An authored ponded-storage model now demonstrates two actual transfer directions,
+funded pending receipts, byte-identical restored checkpoints and native
+continuation. Its live runs with and without checkpoint attachment have identical
+clocks, water, material and transfer legs. A separate real marcher witness at
+concentration 0.3 preserves a conversion-roundoff difference in the authenticated
+archive. Full unequal-concentration signed delivery, broader layouts/RK2, output
+continuation, GUI exposure and component species/schema 10 remain unqualified.
+
+Two arithmetic-conditioned authored cases additionally demonstrate positive and
+negative native delivery at unequal concentrations, with checkpoint recovery both
+while pending and after settlement. They use the native two-step synchronization
+window, matching native pond geometry and existing quality mixer. These bounded
+witnesses do not establish general eligibility: ordinary 1/2 and 2/1 concentration
+cases and later signed windows still refuse unrepresentable aggregates.
+Arithmetic reservation refusals are distinguished from insufficient
+donor inventory. This strict policy remains the default.
+
+An explicitly selected private `RETAIN_ROUNDOFF` research policy additionally
+retains the native receiver's exact rounding difference. For represented native
+mass M, realized signed amount delta and owned remainder R, it preserves the
+receiver-local identity `Mnext + Rnext = M + R + delta`. The single native mixer
+and prepared physical amount remain unchanged; R is never fed back into mixing.
+The exact local error must fit two machine epsilons of the native rounded target,
+and a whole nonzero increment still cannot disappear. Negative R reduces gross
+spill funding, while positive R and future drain cannot increase it. Nonzero R
+keeps its pool bound after receipts retire. Receipt archive 3 and live archive 2
+preserve policy identity and verify R through the existing native replay before
+installation. Empty standalone bytes mean absence of a bound owner, rather than
+a saved arithmetic policy. Strict archive bytes remain unchanged. This does not
+establish exact global conservation: surface writes and unit conversions retain
+their separate rounding behavior and the independent physical inventory check.
+This policy keeps gross/net and partial partitions strict; corrective feedback, broader
+owners and public/component activation are separate gates.
+
+The separate private `RETAIN_AGGREGATES` policy retains exact node gross and net
+material sums across represented rows and receipts. Exact gross accessors expose
+the components; existing double getters still refuse a nonrepresentable result.
+Live sealed/open spill budgets compare the complete exact amount against both
+physical and accountable inventory before credit. Only the signed mixer input is
+correctly rounded to binary64, with exact bracketing and ties to even. R retains
+the difference against the exact realized net; the full native error is bounded
+using the independently rounded exact target `RN(M+D)`. Prior R never joins the
+mixer input. Receipt archive 4 and live archive 3 identify these semantics even
+with zero R. Each individual point total, water balance and partial partition
+remains strict; unsupported point aggregation keeps its applied journal on
+terminal refusal. This qualifies node aggregation separately from broader point,
+layout, ordinary-source and public/component profiles.
+
+The further private `RETAIN_POINT_AGGREGATES` policy retains material totals
+across repeated actual firings at one physical point. One receipt row still owns
+one point; its individually converted native proof legs authenticate each exact
+direction total. Zero/single-part amounts use the existing scalar fields. For
+nonrepresentable totals a sparse canonical expansion is authoritative and the
+scalar field is zero. Multipart input requires authenticated native proof. Water
+remains strict. A whole native flush consumes the exact material total; a partial
+multipart delivery refuses before mixing and retains the original pending proof.
+Represented partial amounts retain the prior scalar operation and exact partition
+checks. Node funding, the single correctly rounded mixer input and exact retained
+roundoff use the same rules as `RETAIN_AGGREGATES`; no component is donor credit.
+
+Receipt v5/live owner v4 identify this policy even at zero remainder. Earlier
+policies retain their archive bytes and behavior. Component counts, exclusivity,
+nonnegative totals and canonical form are checked under the bounded replay work
+budget before native history replay and atomic installation. This remains private
+C++ research functionality; no input option, public component species interface,
+GUI activation or HydroCoupleSDK dependency is introduced.
+
+The point qualification has two distinct witnesses: both signs of a full window
+with two firings per point and pending/retired restart, and a separate nine-window
+history with one firing per point per window. The latter reaches 19 native steps
+and restarts after five windows. Its next window exceeds the unchanged replay
+work budget after producer execution: the applied journal is retained and the
+owner becomes terminal. This is not a rollback boundary. Strict water aggregation
+also limits subsequent windows of the repeated-firing fixture. Broader water and
+partial-delivery arithmetic remain separate qualification gates. Local evidence
+is under `tests/verification/component_species_points_2026-11-04`.
+
+The explicit private `preflight_history` attachment option selects live wrapper
+v5 with the same point arithmetic and receipt v5. Before a normal engine step
+changes readiness, clocks or physics, it reserves the unchanged replay-work,
+record and proof limits for one next delivery and a possible surface batch. It
+bounds future applied legs by the global journal's remaining capacity, including
+potential point components in both accepted and remaining rows. This conservative
+estimate can refuse earlier than the actual limit, including at initial state
+for a large journal capacity; it does not infer firing count from MAX_TIMESTEP.
+A work-limit refusal is recoverable: the owner remains accepted, its transient
+diagnostic is available through `historyPreflightError()`, and the preceding
+checkpoint can still save, restore and refuse a retry identically. A pending
+FINAL flush is independently checked before teardown effects.
+
+This option qualifies a closed engine path. Callbacks are excluded, and one-shot
+forcing/boundary edits refuse before they can flush a batch. Earlier wrappers
+retain their admission behavior and bytes. Actual journal exhaustion remains a
+separate terminal leg failure with its applied journal retained. This admission
+check does not relax water arithmetic, partial-delivery eligibility, native
+receiving/funding rules or any numerical tolerance. Local evidence is under
+`tests/verification/component_species_preflight_2026-11-05`.
+
+The private `RETAIN_EXACT_HALVES` receiver policy additionally permits one
+exact half delivery of authenticated point amounts. It evaluates each original
+once-converted native leg in the existing `(amount/span)*dt` order and requires
+finite, nonnegative, equal slice and remainder with an exact partition. Exact
+point water must agree with the scalar water schedule, and each delivered and
+remaining node-water sum must remain zero. Material slices retain their original
+point/direction attribution. The second half flushes whole; quarter requests,
+repeated partial requests and subnormal unequal halves refuse before mixing.
+The SI donor proof remains immutable and surface transfers are never replayed.
+
+Receipt v6 retains the first-half marker through settlement. Live v6 and v7
+identify this policy without and with history preflight. Native replay derives
+both progress and remaining rows before installation. History work includes
+per-leg reconstruction and a bound on component growth in pending historical
+receipts; all prior policy formats and limits retain their rules.
+
+This qualifies the authenticated marcher/native receiver seam with a supplied
+pre-existing span and fixture-driven lateral-drain and clock observations; the
+half-delivery fixture does not call the engine's lateral-inflow assembler.
+A fresh authored closed model has zero net native water and
+does not create a positive partial-delivery span. Whole-engine witnesses of this
+policy qualify full delivery only. Water diagnostics separately expose the raw
+solver point volumes; a failed seal precedes posting to the network, so an
+ordered reconstructed node sum is labeled what would be booked. No water join
+is relaxed by this policy, and no public/GUI/component species activation or
+HydroCoupleSDK dependency is introduced.
+
+The separate private `enableCoupledWaterCheckpointing()` opt-in supports native
+water-only restart for isolated mapped wet storage and a closed first-order
+serial CPU surface. It retains the ordinary native marcher, point-volume
+booking, lateral-inflow assembly and dynamic-wave routing. Engine archive 3004
+and a distinct paired-water surface/model identity separate this physical
+snapshot from the passive-material receipt profiles. External source/process
+owners, links, groundwater, LID storage, forcing, controls, material, output
+continuation and public hotstarts remain excluded. Read-only phase observation
+is permitted. Inspection and restore validate detached state before publication;
+the snapshot establishes physical consistency and continuation, not historical
+reachability or authenticity. For this closed profile, current inflow/outflow
+must match the signed coupling rate, node losses must be zero, and the saved
+net and incoming flows must agree with the saved lateral rate. Finite but
+inconsistent histories are refused before either inspection or restore publishes
+state. Ponded overflow remains a diagnostic and need not be zero.
+
+Authored cases with both drain and spill points now qualify positive and negative
+net native water booking, genuine two-step queue halves, and fresh-engine restart
+at initial, pending, first-half and later refill boundaries. Ordinary and opted-in
+runs have identical phase traces; resumed archives and continued state are
+byte-identical. The queue consumes the current delivery rate, while isolated
+dynamic-wave storage integrates the previous/current net-flow average. Its
+endpoint flow memory is therefore required even after a queue drains. The tests
+observe empty queues during routing and preserve that memory through later
+refills. Two additional authored near-equilibrium cases qualify idle-boundary
+restart after the queue empties. Six bidirectional points first drain and spill;
+their head differences then fall below the existing ORIFICE cutoff without any
+runtime head, queue or clock edits. Both signs recover the zero-queue boundary,
+the following hydraulic tail and its settled continuation. With no newly
+delivered water, that following step still changes storage by the retained
+previous-flow contribution. This is a bounded near-equilibrium witness, not a
+general convergence claim. Its phase and exact arithmetic records are in
+`tests/verification/component_species_variable_volume_2026-11-06`.
+
+The exact audit distinguishes per-window SI point totals, their rounded native
+conversions, ordered node booking and queue consumption from hydraulic volume
+change. Depth and volume round independently during repeated native updates;
+their geometric residual is accounted for from the observed operations without
+adding a tolerance. This does not relax the passive receiver's zero-water gate
+or by itself qualify changing-volume pollutant delivery. Earlier
+water-booking evidence is retained in
+`tests/verification/component_species_water_booking_2026-11-05`.
+
+The private `attachLiveChangingVolumeExchange()` attachment selects a distinct
+changing-volume passive receiving law. Each mapped storage retains settled
+`M = RN(C * V)` and exact accounting remainder `R`. The existing quality writer
+computes `Cnew = RN(RN(M + RN(deltaM)) / Vnew)` using the actual hydraulic volume,
+including steps without material delivery. It retains
+`Rnew = R + M + deltaM - RN(Cnew * Vnew)` without adding that remainder to the
+physical mixer. Gross spill admission uses both settled physical and accountable
+inventory; the prepared result must still fund all remaining reservations.
+Nonzero material increments are compared with the same-step zero-material mix.
+The existing local two-epsilon roundoff bound remains in force.
+
+This law requires exclusively mapped wet storage and a closed flat first-order
+serial CPU surface, with no other source, forcing, boundary, thermal, reaction,
+network or storage-loss owner. Eligibility is checked at attachment, at step
+entry and before producer effects even without checkpointing. Water remains on
+the ordinary native path. Physical per-firing water, ordered signed SI point
+totals, point conversions, node bookings, queue consumption and hydraulic volume
+changes remain separate observations. The exact difference between native
+booking and gross native leg water is diagnostic, never a balancing receipt.
+Per-point directional gross water totals must still be exactly representable;
+unsupported accumulation or partitioning is refused. Whole deliveries and the
+existing authenticated exact halves are the only qualified material partitions.
+
+Receipt archive 7, live owner archive 8 and engine archive 3005 distinguish the
+new law. Bounded replay records every quality-step volume transition and every
+producer water publication, including empty windows, separate drained and
+refreshed spans, and old/current flow memory. Replay uses the existing quality
+writer, validates water booking/assembly and continuity of the observations,
+and compares all mapped pools against detached incoming state before publishing.
+Observed hydraulic transitions are inputs to material replay; this does not
+prove that a unique historical hydraulic run produced them. Earlier formats
+remain unchanged. Broader water aggregation, other owners and
+public/component/GUI activation remain unqualified.
+
+`attachLiveChangingVolumeExchange(capacity, true)` additionally selects
+conservative history admission (live owner archive 9; receipt 7 and engine 3005
+stay unchanged). Before stepping, it reserves one quality delivery and one
+possible producer window against the existing record and replay-work limits.
+Water publications and all mapped points count even in empty windows after the
+material journal fills. The remaining global leg capacity bounds possible new
+receipt rows, proofs and material expansions; this is deliberately conservative
+and does not predict the native substep count. Pending REPORT/FINAL flushes
+reserve one publication without an extra quality delivery. Refusal leaves the
+accepted checkpoint, clocks and physical state unchanged, with a transient
+owner diagnostic. Registered callbacks and forcing APIs that can flush or alter
+that boundary remain excluded. A large journal capacity can refuse initially;
+native leg exhaustion remains an independent terminal condition. Earlier live
+owner 8 behavior and bytes are preserved, and cross-policy restores refuse.
+
+Authored positive and negative cases cover native half delivery, pending/refill
+states and zero-material hydraulic tails with fresh restart at each boundary.
+Evidence and exact arithmetic checks are retained under
+`tests/verification/component_species_changing_volume_2026-11-06`. The law stays
+opt-in and introduces no HydroCoupleSDK dependency.
+
 
 Evidence in `tests/verification/component_split_2026-11-03` covers native versus
 independent split `.out` equality, per-step water ledgers and full HDF5 datasets

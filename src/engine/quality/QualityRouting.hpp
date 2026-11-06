@@ -146,6 +146,8 @@ void applyNodeTreatment(SimulationContext& ctx, int node, double dt, double q_in
 // Quality solver
 // ============================================================================
 
+class PassiveStorageExchange;
+
 class QualitySolver {
 public:
     void init(int n_nodes, int n_links, int n_pollutants);
@@ -163,6 +165,10 @@ public:
      * - Argument dt: Timestep (seconds).
      */
     void execute(SimulationContext& ctx, double dt);
+    /// Internal funded input for the qualified isolated passive storage case.
+    /// Native lateral assembly must already have drained the captured span.
+    /// Receiving failure is terminal for the exclusive receipt owner.
+    void execute(SimulationContext& ctx, double dt, PassiveStorageExchange& exchange);
     FvTransportWater& fvWater() noexcept {return fv_transport_.water;}
     bool fvTransportAccepted() const noexcept {return fv_transport_.accepted();}
     bool hasFvRetainedDryMass() const noexcept {return fv_transport_.hasRetainedDryMass();}
@@ -230,6 +236,7 @@ public:
     void applyTreatment(SimulationContext& ctx, double dt, bool full_inflow = true);
 
 private:
+    void execute(SimulationContext& ctx, double dt, PassiveStorageExchange* exchange);
     int n_pollutants_ = 0;
     FvQualityTransport fv_transport_;
     /// Per-node LATERAL carrier volume added into qual_vol_in this step, so
@@ -262,7 +269,8 @@ private:
     void accumulateLinkLoads(SimulationContext& ctx, double dt);
 
     /// Batch complete mixing at all nodes.
-    void mixAtNodes(SimulationContext& ctx, double dt);
+    void mixAtNodes(SimulationContext& ctx, double dt,
+                    const PassiveStorageExchange* exchange = nullptr);
 
     /// Batch first-order decay.
     void applyDecay(SimulationContext& ctx, double dt);

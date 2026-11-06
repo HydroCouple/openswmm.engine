@@ -481,6 +481,8 @@ private:
      *     paired session constraints.
      */
     void installCheckpoint(SimulationContext& c, std::shared_ptr<RestartState> s) noexcept;
+    /// Populate detached incoming owner views for cross-domain validation only.
+    static void copyCheckpointContext(const std::shared_ptr<RestartState>& s, SimulationContext& c);
     SimulationContext* checkpoint_context_ = nullptr; // non-owning, stable lifetime
     bool checkpoint_owned_session_ = false;           // engine owns structure/control memory
     bool checkpoint_aquifer_session_ =

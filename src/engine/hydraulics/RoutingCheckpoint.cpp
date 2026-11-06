@@ -913,6 +913,15 @@ struct Router::RestartState {
     }
 };
 
+void Router::copyCheckpointContext(const std::shared_ptr<RestartState>& s, SimulationContext& c) {
+    c.nodes = s->nodes; c.links = s->links;
+    c.node_subtypes.storages = s->storages;
+    c.node_subtypes.outfalls = s->outfalls;
+    c.current_time = s->time; c.current_date = s->date; c.elapsed_ms = s->elapsed;
+    c.old_elapsed_ms = s->old_elapsed; c.next_report_ms = s->next_report;
+    c.climate_state.evap_rate = s->evap;
+}
+
 void Router::checkCheckpointProfile(const SimulationContext& c) const {
     require(model_ == RouteModel::DYNWAVE && c.options.routing_model == RoutingModel::DYNWAVE &&
                 c.options.surcharge_method >= 0 && c.options.surcharge_method <= 3 &&
@@ -1280,6 +1289,7 @@ void Router::validateJointDelivery(const NodeData& nodes, const std::vector<uint
                                    double delivery) {
     require(std::isfinite(delivery) && delivery >= 0 &&
                 coupled.size() == std::size_t(nodes.count()) &&
+                (nodes.aquifer2d_bed.empty() || nodes.aquifer2d_bed.size() == coupled.size()) &&
                 nodes.coupling_queue.size() == coupled.size() &&
                 nodes.coupling_volume.size() == coupled.size() &&
                 nodes.coupling_inflow.size() == coupled.size(),
@@ -1288,7 +1298,8 @@ void Router::validateJointDelivery(const NodeData& nodes, const std::vector<uint
         require(
             coupled[n] <= 1 && std::isfinite(nodes.coupling_queue[n]) &&
                 nodes.coupling_volume[n] == 0 &&
-                (coupled[n] || (nodes.coupling_queue[n] == 0 && nodes.coupling_inflow[n] == 0)) &&
+                (coupled[n] || (!nodes.aquifer2d_bed.empty() && nodes.aquifer2d_bed[n] == 1) ||
+                 (nodes.coupling_queue[n] == 0 && nodes.coupling_inflow[n] == 0)) &&
                 (delivery > 0 || nodes.coupling_queue[n] == 0),
             "Joint checkpoint has unpaired or undeliverable node exchange.");
 }

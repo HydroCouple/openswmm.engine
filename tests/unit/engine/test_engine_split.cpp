@@ -53,6 +53,44 @@ protected:
     bool classical_mesh = true;
     int classical_bottom = 2;
     bool classical_conduit = false;
+    bool reviewed_beds = false;
+    int reviewed_node_sign = 0, reviewed_link_sign = 0;
+    void reviewedBedModel(int closure=0, bool independent=true, int mode=0,
+                          bool gaining=false, int lid=0, bool oneWay=false) {
+        if (lid == 1 || lid == 3) classicalModel(true,closure,independent,false,2,lid == 3);
+        else if (lid == 2) richardsModel(closure,independent);
+        else reviewedModel(closure,independent);
+        reviewed_beds=true;
+        reviewed_node_sign=mode == 1 || lid ? 0 : gaining ? 1 : -1;
+        reviewed_link_sign=mode == 0 ? 0 : gaining && !oneWay ? -1 : 1;
+        if (!lid) {
+            const std::string from="SINK 0 100 0";
+            override_model.replace(override_model.find(from),from.size(),
+                gaining ? "SINK -.5 100 .05" : "SINK 0 100 .15");
+        }
+        if (gaining) {
+            override_model.replace(override_model.find("HG0 1"),5,"HG0 1.8");
+            const std::string outfall="DRAIN 0 FREE NO";
+            override_model.replace(override_model.find(outfall),outfall.size(),"DRAIN -.6 FREE NO");
+            if (lid) for (const std::string node : {"SINK", "TANK"}) {
+                const auto from=node+" 0 .325 .024";
+                if (const auto at=override_model.find(from); at != std::string::npos)
+                    override_model.replace(at,from.size(),node+" -.5 .325 .024");
+            }
+            if (lid == 3) {
+                const std::string second="DRAIN2 0 FREE NO";
+                override_model.replace(override_model.find(second),second.size(),"DRAIN2 -.6 FREE NO");
+            }
+        }
+        override_model += "\n[COORDINATES]\nSINK .2 .5\nDRAIN 1.8 .5\n";
+        if (mode != 1) {
+            if (lid) override_model += "\n[STORAGE]\nBED 0 2 .15 FUNCTIONAL 0 0 10 0 0\n[COORDINATES]\nBED .4 .6\n";
+            override_model += "\n[2D_AQUIFER_NODE]\n" + std::string(lid ? "BED" : "SINK") + " 1 KC 3600 DC .1 AREA 1\n";
+        }
+        if (mode != 0) override_model += "\n[2D_AQUIFER_OPTIONS]\nLINK_SEEPAGE " +
+            std::string(oneWay ? "ONE_WAY" : "TWO_WAY") + "\n[LOSSES]\nC 0 0 0 NO 100\n";
+        if (mode != 0 && lid == 3) override_model += "\n[LOSSES]\nC2 0 0 0 NO 100\n[COORDINATES]\nDRAIN2 1.6 .8\n";
+    }
     void classicalModel(bool reviewed=true, int closure=0, bool independent=false,
                         bool gaining=false, int bottom=2, bool mixed=false, bool links=false) {
         if (mixed) richardsModel(closure,independent,true);
@@ -226,7 +264,7 @@ CLOSURE )" + std::string(closure==0 ? "CLOSED_FORM" : closure==1 ? "ENSLAVED" : 
             "\nGW_CLOCK " + (independent ? "INDEPENDENT" : "SHARED") + "\n";
         if (evaporation) override_model += "\n[EVAPORATION]\nCONSTANT 48\n";
     }
-    void startReviewedReference(Engine& engine) {
+    void startReviewedReference(Engine& engine, bool output=true) {
         int objects=0,shares=0,cells=0,valid=0;
         char token[64]{},diagnostic[2048]{};
         ASSERT_EQ(swmm_surface_owner_preview(engine.value,nullptr,-1,nullptr,0,&objects,
@@ -234,7 +272,7 @@ CLOSURE )" + std::string(closure==0 ? "CLOSED_FORM" : closure==1 ? "ENSLAVED" : 
         ASSERT_EQ(valid,1) << diagnostic;
         SWMM_CheckpointSessionOptions options{};
         options.struct_size=sizeof(options); options.schema_version=1;
-        options.output=SWMM_CHECKPOINT_OUTPUT_COMBINED; options.ownership_token=token;
+        options.output=output ? SWMM_CHECKPOINT_OUTPUT_COMBINED : SWMM_CHECKPOINT_OUTPUT_NONE; options.ownership_token=token;
         ASSERT_EQ(swmm_checkpoint_start_session(engine.value,&options),0) << swmm_checkpoint_last_error_msg();
     }
     bool groundwater = false;
@@ -899,6 +937,15 @@ COUPLING_SYNC )" << sync << R"(
             &splitIn, &splitOut, nullptr, nullptr, nullptr, nullptr, nullptr), SWMM_OK);
         EXPECT_EQ(nativeIn, splitIn); EXPECT_EQ(nativeOut, splitOut);
         const auto referenceBalance = balance(reference.value);
+        if (reviewed_beds && stopAfter > 1) {
+            double node=0,link=0;
+            ASSERT_EQ(swmm_gw2d_get_ledger(reference.value,SWMM_GW2D_LED_NODE,&node),0);
+            ASSERT_EQ(swmm_gw2d_get_ledger(reference.value,SWMM_GW2D_LED_LINK,&link),0);
+            if (reviewed_node_sign) EXPECT_GT(node*reviewed_node_sign,0);
+            if (reviewed_link_sign) EXPECT_GT(link*reviewed_link_sign,0);
+            std::ofstream(directory/"reviewed-groundwater.json") << std::setprecision(17)
+                << "{\"node_m3\":" << node << ",\"conduit_m3\":" << link << "}\n";
+        }
         if (classical_lids && stopAfter > 1) {
             double evaporation=0,exfiltration=0,link=0;
             ASSERT_EQ(swmm_get_routing_total(reference.value,SWMM_ROUTING_EVAP_LOSS,&evaporation),0);
@@ -1099,6 +1146,77 @@ TEST_F(EngineSplit, ClassicalCurrentReviewed) { classicalModel(true,0,true,false
 TEST_F(EngineSplit, ClassicalMixedRichards) { classicalModel(true,0,true,false,2,true); parity(false); }
 TEST_F(EngineSplit, ClassicalMixedRichardsSigma) { classicalModel(true,2,true,false,2,true); parity(false); }
 TEST_F(EngineSplit, ClassicalEarlyFinish) { classicalModel(); parity(false,.7,false,false,true,1); }
+TEST_F(EngineSplit, ReviewedBedLossShared) { reviewedBedModel(0,false); parity(false); }
+TEST_F(EngineSplit, ReviewedBedLossIndependent) { reviewedBedModel(); parity(false); }
+TEST_F(EngineSplit, ReviewedBedGainIndependent) { reviewedBedModel(0,true,0,true); parity(false); }
+TEST_F(EngineSplit, ReviewedBedEnslaved) { reviewedBedModel(1); parity(false); }
+TEST_F(EngineSplit, ReviewedBedSigma) { reviewedBedModel(2); parity(false); }
+TEST_F(EngineSplit, ReviewedConduitLoss) { reviewedBedModel(0,true,1); parity(false); }
+TEST_F(EngineSplit, ReviewedConduitGain) { reviewedBedModel(0,true,1,true); parity(false); }
+TEST_F(EngineSplit, ReviewedConduitOneWay) { reviewedBedModel(0,true,1,false,0,true); parity(false); }
+TEST_F(EngineSplit, ReviewedBedConduit) { reviewedBedModel(0,true,2); parity(false); }
+TEST_F(EngineSplit, ReviewedClassicalBedConduit) { reviewedBedModel(0,true,2,false,1); parity(false); }
+TEST_F(EngineSplit, ReviewedRichardsBedConduit) { reviewedBedModel(0,true,2,true,3); parity(false); }
+TEST_F(EngineSplit, ReviewedBedsEarlyFinish) { reviewedBedModel(0,true,2); parity(false,.7,false,false,true,1); }
+TEST_F(EngineSplit, ReviewedBedWithoutSurfacePort) {
+    reviewedBedModel();
+    const std::string mapping="[2D_TRIANGLE_NODE_MAP]\n0 SINK 0 1\n";
+    override_model.erase(override_model.find(mapping),mapping.size());
+    parity(false);
+}
+TEST_F(EngineSplit, ReviewedConduitWithoutSurfacePort) {
+    reviewedBedModel(0,true,1);
+    const std::string mapping="[2D_TRIANGLE_NODE_MAP]\n0 SINK 0 1\n";
+    override_model.erase(override_model.find(mapping),mapping.size());
+    parity(false);
+}
+TEST_F(EngineSplit, ReviewedBedsNativeCheckpointContinuation) {
+    for (int closure=0; closure<3; ++closure) for (int profile=0; profile<7; ++profile) {
+        SCOPED_TRACE(std::to_string(closure)+"/"+std::to_string(profile));
+        reviewedBedModel(closure,true,profile >= 5 ? profile-5 : profile < 2 ? profile : 2,
+                         false,profile >= 3 && profile < 5 ? profile-2 : 0);
+        if (profile >= 5) {
+            const std::string mapping="[2D_TRIANGLE_NODE_MAP]\n0 SINK 0 1\n";
+            override_model.erase(override_model.find(mapping),mapping.size());
+        }
+        std::ofstream(model) << override_model;
+        fs::remove(directory/"continuous.rpt"); fs::remove(directory/"resumed.rpt");
+        Engine continuous,resumed;
+        ASSERT_NO_FATAL_FAILURE(open(continuous,"continuous",false));
+        ASSERT_NO_FATAL_FAILURE(open(resumed,"resumed",false));
+        ASSERT_NO_FATAL_FAILURE(startReviewedReference(continuous,false));
+        ASSERT_NO_FATAL_FAILURE(startReviewedReference(resumed,false));
+        double a=0,b=0;
+        for (int step=0; step<7; ++step) ASSERT_EQ(swmm_engine_step(continuous.value,&a),0);
+        const auto stem=directory/("restart-"+std::to_string(closure)+"-"+std::to_string(profile));
+        const auto checkpoint=stem.string()+".hsf";
+        fs::remove_all(checkpoint);
+        ASSERT_EQ(swmm_checkpoint_save(continuous.value,checkpoint.c_str()),0) << swmm_checkpoint_last_error_msg();
+        ASSERT_EQ(swmm_checkpoint_restore(resumed.value,checkpoint.c_str()),0) << swmm_checkpoint_last_error_msg();
+        const auto first=stem.string()+"-continuous.hsf",second=stem.string()+"-resumed.hsf";
+        fs::remove_all(first); fs::remove_all(second);
+        int steps=0;
+        do {
+            ASSERT_EQ(swmm_engine_step(continuous.value,&a),0);
+            ASSERT_EQ(swmm_engine_step(resumed.value,&b),0);
+            ASSERT_EQ(a,b); ASSERT_EQ(balance(continuous.value),balance(resumed.value));
+            for (int term=0; term<16; ++term) {
+                double x=0,y=0;
+                ASSERT_EQ(swmm_gw2d_get_ledger(continuous.value,term,&x),0);
+                ASSERT_EQ(swmm_gw2d_get_ledger(resumed.value,term,&y),0);
+                ASSERT_EQ(x,y) << "GW term " << term;
+            }
+            if (steps == 9) {
+                ASSERT_EQ(swmm_checkpoint_save(continuous.value,first.c_str()),0) << swmm_checkpoint_last_error_msg();
+                ASSERT_EQ(swmm_checkpoint_save(resumed.value,second.c_str()),0) << swmm_checkpoint_last_error_msg();
+                EXPECT_EQ(bytes(first),bytes(second));
+            }
+        } while (a > 0 && ++steps<10000);
+        ASSERT_LT(steps,10000);
+        EXPECT_GE(steps,10);
+        ASSERT_EQ(swmm_engine_end(continuous.value),0); ASSERT_EQ(swmm_engine_end(resumed.value),0);
+    }
+}
 TEST_F(EngineSplit, ReviewedMappedDischarge) { reviewedOutfallModel(true); parity(false); }
 TEST_F(EngineSplit, ReviewedMappedWithdrawal) { reviewedOutfallModel(true,0,true,false,-1); parity(false); }
 TEST_F(EngineSplit, ReviewedMappedFlapGate) { reviewedOutfallModel(true,0,false,false,0); parity(false); }

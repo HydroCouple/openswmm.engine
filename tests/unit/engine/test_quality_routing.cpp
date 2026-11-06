@@ -694,6 +694,76 @@ TEST(QualityConstantsTest, ZeroDepthIsOneMillimeterInFt) {
     EXPECT_NEAR(openswmm::quality::ZERO_DEPTH, 0.003281, 1e-5);
 }
 
+TEST(QualityCouplingReceipt, WetStorageRetainsPositiveMassWithoutCarrierWater) {
+    // Native amounts are concentration*ft3. A closed 100 ft3 pool at C=5
+    // receiving one unit must hold 501 units, even when water transfer nets
+    // to zero. Ordinary signed co-loads join that same inventory balance.
+    for (const double ordinary_rate : {0.0, 1e-9, -0.5}) {
+        SCOPED_TRACE(ordinary_rate);
+        SimulationContext ctx = makeContext(1);
+        QualitySolver solver;
+        solver.init(ctx.n_nodes(), ctx.n_links(), 1);
+        ctx.nodes.type[0] = openswmm::NodeType::STORAGE;
+        ctx.nodes.volume[0] = ctx.nodes.old_volume[0] = 100.0;
+        ctx.nodes.conc[0] = ctx.nodes.conc_old[0] = 5.0;
+        ctx.nodes.coupling_inflow[0] = 0.0;
+        ctx.nodes.coupling_qual_inflow[0] = 1.0;
+        ctx.nodes.user_conc_mass_flux[0] = ordinary_rate;
+        ctx.pollutants.k_decay.assign(1, 0.0);
+        ctx.mass_balance.qual_routing_ex_in.assign(1, 0.0);
+        ctx.mass_balance.routing_forcing_qual_inflow.assign(1, 0.0);
+
+        solver.execute(ctx, 1.0);
+
+        const double accepted_amount = 1.0 + ordinary_rate;
+        EXPECT_NEAR(ctx.nodes.conc[0] * ctx.nodes.volume[0], 500.0 + accepted_amount, 1e-12);
+        EXPECT_DOUBLE_EQ(ctx.mass_balance.qual_routing_ex_in[0], accepted_amount);
+        EXPECT_DOUBLE_EQ(ctx.mass_balance.routing_forcing_qual_inflow[0], ordinary_rate);
+        EXPECT_DOUBLE_EQ(ctx.nodes.qual_vol_in[0], 0.0);
+        EXPECT_DOUBLE_EQ(ctx.nodes.coupling_inflow[0], 0.0);
+        EXPECT_DOUBLE_EQ(ctx.nodes.volume[0], 100.0);
+    }
+}
+
+TEST(QualityCouplingReceipt, PassiveCorrectionPreservesReactingAndStorageLidMixing) {
+    // These native owners are outside the qualified passive receiving case.
+    // Keep their historical no-carrier mixing rather than accepting a new
+    // receipt through a LID owner or a pre-decay withdrawal budget.
+    for (const bool storage_lid : {false, true}) {
+        SCOPED_TRACE(storage_lid);
+        SimulationContext ctx = makeContext(1);
+        QualitySolver solver;
+        solver.init(ctx.n_nodes(), ctx.n_links(), 1);
+        ctx.node_subtypes.set_node_type(ctx.nodes, 0, openswmm::NodeType::STORAGE);
+        ctx.nodes.volume[0] = ctx.nodes.old_volume[0] = 100.0;
+        ctx.nodes.conc[0] = ctx.nodes.conc_old[0] = 5.0;
+        ctx.nodes.coupling_qual_inflow[0] = 1.0;
+        ctx.mass_balance.resize_quality(1);
+        if (storage_lid) {
+            const int row = ctx.node_subtypes.storage_row(0);
+            ctx.node_subtypes.storages.lid[row].control = 0;
+            ctx.lid_controls.names = {"Stack"};
+            ctx.lid_controls.lid_type = {"NODE"};
+            ctx.lid_controls.node_layers = {{{openswmm::LidNodeLayerKind::Surface, {12, 0}}}};
+            auto& cells = ctx.node_subtypes.storages.lid_state[row].cells;
+            cells.resize(1);
+            cells[0].kind = openswmm::LidNodeLayerKind::Surface;
+            cells[0].layer = 1;
+            cells[0].top = 1.0;
+            cells[0].geometric_volume = cells[0].area = 100.0;
+            ctx.nodes.old_depth[0] = 1.0;
+        } else {
+            ctx.pollutants.k_decay[0] = 0.5;
+            ctx.nodes.user_conc_mass_flux[0] = -401.0;
+        }
+
+        solver.execute(ctx, 1.0);
+
+        EXPECT_DOUBLE_EQ(ctx.nodes.conc[0], storage_lid ? 5.0 : 2.5);
+        EXPECT_DOUBLE_EQ(ctx.nodes.volume[0], 100.0);
+    }
+}
+
 // ============================================================================
 // Gap #38: Steady Flow quality routing (findSFLinkQual)
 // ============================================================================

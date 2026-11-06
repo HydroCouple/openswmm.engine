@@ -78,6 +78,7 @@ class SWMMEngine;
 
 namespace openswmm::twoD {
 class CommonSourceStage;
+class ExplicitInertialSolver;
 class SourceResultHistory;
 
 /**
@@ -1154,6 +1155,9 @@ public:
      * ownership transfer or synchronization occurs in this query.
      */
     const std::vector<double>& couplingCumulative() const noexcept { return coupling_cum_applied_; }
+    /// Borrow the solver's latest signed point volumes for diagnostics, including a completed
+    /// advance whose live seal refused. No posting, queue consumption or reconstruction.
+    const std::vector<double>& couplingExchangeVolumes() const noexcept;
     /// Report-only m/s: held forcing plus accepted native junction exchange averaged over
     /// the latest completed surface advance. These queries never alter solver forcing arrays.
     double couplingFlux(int cell) const noexcept;
@@ -1522,6 +1526,18 @@ private:
      * allocation/checked lookup may throw under inconsistent layout.
      */
     std::string sourceBoundary(const SimulationContext& ctx) const;
+    std::string liveCheckpointModel(const SimulationContext& ctx) const;
+    std::string coupledWaterProfile(const SimulationContext& ctx, const SurfaceStateData& surface) const;
+    std::string liveCheckpointBoundary(const SimulationContext& ctx) const;
+    std::string validateLivePhysical(const ExplicitInertialSolver& cpu, const SurfaceStateData& state,
+        double completed, double total, double pending) const;
+    void attachLiveCheckpoint(SimulationContext& ctx, Router& hydraulic);
+    std::string liveCheckpointBytes(const SimulationContext& ctx, std::string& result) const;
+    std::string loadLiveCheckpointBytes(SimulationContext& ctx, std::string bytes,
+        const std::array<double, 6>* engine_boundary, const std::vector<double>* engine_rainfall,
+        const double* engine_storage, bool engine_routed, const std::function<void()>* before_install,
+        double* inspect_source_end);
+
     /**
      * @brief Encode immutable router report/weather, coupling policy and authored boundary
      * identity.
@@ -1532,7 +1548,7 @@ private:
      * copy. Allocation/archive can throw. Requires matching stable initialized views; no
      * physical/calendar change.
      */
-    std::string sourceRouterModel(const SimulationContext& ctx) const;
+    std::string sourceRouterModel(const SimulationContext& ctx, bool passive_joint = false) const;
     /**
      * @brief Drain pending [2D_BOUNDARY_CONDITIONS] / [2D_EDGE_CONVEYANCE] rows into
      * BoundaryData / mesh edge slots and flip pending_rows_drained. Shared by initialize() and
@@ -1758,7 +1774,12 @@ private:
      * no router-wide rollback/replay contract. Call exactly once per pending interval and
      * serialize access.
      */
-    void coAdvanceStep(SimulationContext& ctx, double dt, double t);
+    enum class BatchPhase { ADVANCE, REPORT, FINAL };
+    void coAdvanceStep(SimulationContext& ctx, double dt, double t, BatchPhase phase = BatchPhase::ADVANCE);
+    std::string livePassiveProfile() const;
+    std::string changingVolumeProfile(const SimulationContext& ctx, const SurfaceStateData& surface) const;
+    quality::LivePassiveStorageExchange* live_passive_exchange_ = nullptr;
+    bool paired_water_checkpoint_ = false;
     /**
      * @brief G-X4: freeze the aquifer's side of the conduit exchange (table elevation relative
      * to the conduit invert, conductivity, path length and the gain budget) into the conduit

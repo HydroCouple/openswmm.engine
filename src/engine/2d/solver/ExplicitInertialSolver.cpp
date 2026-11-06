@@ -30,6 +30,7 @@
 
 #include "core/ProcessPerf.hpp"
 #include "ExplicitInertialSolver.hpp"
+#include "../../quality/LivePassiveStorageExchange.hpp"
 #include "../coupling/Rk2RuntimeSources.hpp"
 #include "core/FileIO.hpp" // issue #7: UTF-8 paths on Windows
 
@@ -543,6 +544,12 @@ double ExplicitInertialSolver::donorConc(int s, int cell) const noexcept {
     return tr.cell_mass[tr.idx(s, cell)] / v;
 }
 
+double ExplicitInertialSolver::takenAtCellConc(int s, int cell, double volume) const noexcept {
+    const double dm = volume * donorConc(s, cell);
+    const double m = state_->transport.cell_mass[state_->transport.idx(s, cell)];
+    return state_->transport.signedRow(s) ? dm : ((dm < m) ? dm : m);
+}
+
 void ExplicitInertialSolver::sinkMassAtCellConc(int i, double dv_m3, std::vector<double>& ledger,
                                                 double* per_point_ledger) noexcept {
     if (!(dv_m3 > 0.0))
@@ -562,13 +569,12 @@ void ExplicitInertialSolver::sinkMassAtCellConc(int i, double dv_m3, std::vector
         const double c = donorConc(s, i);
         if (c == 0.0)
             continue;
-        const double dm = dv_m3 * c;
         double& m = tr.cell_mass[tr.idx(s, i)];
         // Cannot remove more than is there (the volume clamps identically);
         // the residual is a rounding artefact, not a modelling event. The
         // SIGNED temperature row (S4) has no floor: °C·m³ below zero is a
         // state, and "min(dm, m)" on two negatives would empty the row.
-        const double taken = tr.signedRow(s) ? dm : ((dm < m) ? dm : m);
+        const double taken = takenAtCellConc(s, i, dv_m3);
         m -= taken;
         const auto kind = &ledger == &tr.lost_infiltration ? SourceLedger::Infiltration
                           : &ledger == &tr.lost_boundary   ? SourceLedger::Boundary
@@ -2814,6 +2820,7 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells, double
                                             h_off);
             if (Q == 0.0)
                 continue;
+            double spill_take = 0.0, spill_shortfall = 0.0;
             if (Q > 0.0) { // 2D → 1D drain: availability share of the cell
                 Q = std::min(Q, opts_->exchange_beta * std::max(state_->volume[ci], 0.0) / dt_c);
             } else {
@@ -2852,9 +2859,23 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells, double
                 // node could not supply. Booked so it is visible instead of
                 // being absorbed by the 1D side's `y_new = max(y_new, 0)`
                 // floor, which would create the water silently.
-                spill_deficit_ += std::max(0.0, want - take);
-                node_drawn_[ni] += take;
+                spill_shortfall = std::max(0.0, want - take);
+                spill_take = take;
                 Q = -take / dt_c;
+            }
+            auto* live = state_->live_passive_exchange;
+            if (live && Q != 0.0) {
+                const double dv = Q * dt_c;
+                const double mass = Q > 0 ? takenAtCellConc(0, ci, dv)
+                    : (-Q * dt_c) * (*state_->node_row_conc)[cp.node_idx];
+                if (!live->admit(k, ci, cp.node_idx, dv, mass,
+                                 state_->transport.cell_mass[state_->transport.idx(0, ci)],
+                                 state_->volume[ci], exch_tau_, dt_c, spill_take))
+                    throw std::runtime_error(live->error());
+            }
+            if (Q < 0.0) {
+                spill_deficit_ += spill_shortfall;
+                node_drawn_[static_cast<std::size_t>(cp.node_idx)] += spill_take;
             }
             // S1: a 2D→1D drain (Q > 0) leaves at the cell's concentration
             // and is booked per coupling point so S3's tuple can hand it to
@@ -2919,6 +2940,10 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells, double
             exch_[k] += Q * dt_c;
             inertial::cellEtaDepth(*mesh_, *opts_, ci, state_->volume[ci], state_->head[ci],
                                    state_->depth[ci]);
+            if (live && Q != 0.0) {
+                live->applied(state_->transport.cell_mass[state_->transport.idx(0, ci)], state_->volume[ci]);
+                if (live->failed()) throw std::runtime_error(live->error());
+            }
         }
     }
     // Head-ramp clock: tier-0 fires once per finest substep, so dt_c here is
@@ -4346,6 +4371,14 @@ void ExplicitInertialSolver::runMacroCycle(double dt0, int nsub, double time) {
 }
 
 double ExplicitInertialSolver::advance(double t_current, double t_target) {
+    if (state_->live_passive_exchange && state_->live_passive_exchange->failed())
+        throw std::runtime_error(state_->live_passive_exchange->error());
+    if (state_->live_passive_exchange &&
+        (second_order_ || opts_->reconstruction_order != 1 || opts_->num_threads != 1 ||
+         state_->transport.n_species != 1 || !state_->node_row_conc)) {
+        state_->live_passive_exchange->fail("Live passive exchange requires first-order serial CPU transport.");
+        throw std::runtime_error(state_->live_passive_exchange->error());
+    }
     if (!(second_order_ && gw_))
         return advanceImpl(t_current, t_target);
     if (auto error = rk2CheckpointProfile(); !error.empty())

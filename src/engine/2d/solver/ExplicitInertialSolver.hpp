@@ -1030,6 +1030,7 @@ private:
      * allocate or publish a report value.
      */
     double donorConc(int s, int cell) const noexcept;
+    double takenAtCellConc(int s, int cell, double volume) const noexcept;
     /**
      * @brief Remove `dv_m3` of water from cell `i` at the cell's concentration and book it to
      * `ledger` — infiltration, boundary outflow, coupling drain. Evaporation deliberately does
@@ -1212,7 +1213,7 @@ private:
      * or unsettled state. Does not reconstruct momentum, advance physics or install external
      * owners.
      */
-    void checkpointState(detail::CompletedSourceArchive& archive);
+    void checkpointState(detail::CompletedSourceArchive& archive, bool passive_joint = false);
     /**
      * @brief Capture one accepted finest source interval into each attached recorder/stream.
      * @throws std::runtime_error Detailed stream or history capture refuses, with

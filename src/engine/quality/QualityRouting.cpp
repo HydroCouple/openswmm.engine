@@ -30,6 +30,7 @@
  */
 
 #include "QualityRouting.hpp"
+#include "PassiveStorageExchange.hpp"
 #include "MsxLidReactions.hpp"
 
 #include "../transport/components/EulerianArdComponent/ArdConfig.hpp"
@@ -48,6 +49,7 @@
 #include <cmath>
 #include <algorithm>
 #include <vector>
+#include <stdexcept>
 
 // OpenMP support — graceful degradation when not available
 #if defined(SWMM_USE_OPENMP)
@@ -822,6 +824,22 @@ void QualitySolver::addExtInflowLoads(SimulationContext& ctx, double dt) {
  * repeat calls can double-book loads.
  */
 void QualitySolver::execute(SimulationContext& ctx, double dt) {
+    execute(ctx, dt, static_cast<PassiveStorageExchange*>(nullptr));
+}
+
+void QualitySolver::execute(SimulationContext& ctx, double dt, PassiveStorageExchange& exchange) {
+    try {
+        exchange.begin(ctx, dt);
+        if (n_pollutants_ != 1)
+            throw std::invalid_argument("Passive storage exchange: solver pollutant count differs");
+        execute(ctx, dt, &exchange);
+    } catch (...) {
+        exchange.fail();
+        throw;
+    }
+}
+
+void QualitySolver::execute(SimulationContext& ctx, double dt, PassiveStorageExchange* exchange) {
     // R4: an MSX-only model (a reactions component and no [POLLUTANTS]) is a
     // legitimate shape — EPANET-MSX decks routinely declare no legacy
     // pollutant. Every stage below is a no-op at np == 0, so letting it
@@ -910,7 +928,9 @@ void QualitySolver::execute(SimulationContext& ctx, double dt) {
         lidnode::prepareOutletQuality(ctx, dt, true);
     } else {
         accumulateLinkLoads(ctx, dt);
-        mixAtNodes(ctx, dt);
+        if (exchange)
+            exchange->prepare(ctx, dt);
+        mixAtNodes(ctx, dt, exchange);
     }
     // R4b (transport half): MSX element state advects on the same CSTR
     // mirror family as age and heat. It runs BEFORE the react stages —
@@ -982,6 +1002,8 @@ void QualitySolver::execute(SimulationContext& ctx, double dt) {
             transport::heat::applyBedSoluteExchange(ctx, ctx.reactions.msx_link_conc.data(), nm,
                                                     (np > 0 ? np : 0), nt, dt);
     }
+    if (exchange)
+        exchange->commit(ctx);
 }
 
 // ============================================================================
@@ -1571,7 +1593,8 @@ void QualitySolver::accumulateLinkLoads(SimulationContext& ctx, double dt) {
  * conversion, hydraulic water advance or engine clock change. Caller serializes quality phases;
  * repeat calls can double-book loads.
  */
-void QualitySolver::mixAtNodes(SimulationContext& ctx, double dt) {
+void QualitySolver::mixAtNodes(SimulationContext& ctx, double dt,
+                               const PassiveStorageExchange* exchange) {
     int np = n_pollutants_;
     auto& nodes = ctx.nodes;
     auto& poll = ctx.pollutants;
@@ -1735,8 +1758,29 @@ void QualitySolver::mixAtNodes(SimulationContext& ctx, double dt) {
             // capped at max(c, cIn), and the whole thing is skipped when the
             // inflow is below the effective zero.
             double c_new;
-            if (q_in <= LEGACY_ZERO) {
+            if (exchange && exchange->prepared_->affected[ui]) {
+                // A funded gross receipt is distinct from ordinary loads and
+                // the legacy queue. All affected pools were preflighted before
+                // this single mixing pass; no source clamp can refund a debit.
+                const double amount = exchange->prepared_->amount[ui];
+                c_new = exchange->changingVolume() ? (c1 * v_old + amount) / nodes.volume[ui] :
+                    amount == 0 ? c1 : (c1 * v_old + amount) / v_old;
+            } else if (q_in <= LEGACY_ZERO) {
                 c_new = c1;
+                // A positive coupling amount can arrive with exactly zero
+                // carrier water. In a passive wet, unchanged storage pool it
+                // joins the retained inventory, including ordinary signed
+                // co-loads after the available-mass clamp above. LID and
+                // reaction/treatment owners keep their existing mixing and
+                // inventory rules, including the pre-decay withdrawal budget.
+                if (is_storage && !dry && !lidnode::active(ctx, i) && !reactions_active &&
+                    !any_treatment && k == 0.0 && v_old > ZERO_VOLUME && v_in == 0.0 &&
+                    nodes.volume[ui] == v_old && ui < nodes.coupling_inflow.size() &&
+                    nodes.coupling_inflow[ui] == 0.0 &&
+                    idx < nodes.coupling_qual_inflow.size() &&
+                    nodes.coupling_qual_inflow[idx] > 0.0) {
+                    c_new = (c1 * v_old + mass_in) / v_old;
+                }
             } else {
                 const double c_in = mass_in / v_in;
                 const double c_max = std::max(c1, c_in);

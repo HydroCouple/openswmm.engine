@@ -8,6 +8,8 @@
 #include <memory>
 
 namespace openswmm {
+struct SimulationContext;
+bool reviewedGroundwaterExchange(const SimulationContext&);
 namespace lidnode { struct MeshRichardsTrial; }
 struct SplitGageSample {
     double start = 0;
@@ -42,6 +44,7 @@ struct SplitExecution {
     std::vector<int> lid_nodes;
     std::vector<int> mesh_richards_nodes;
     bool extended_water = false;
+    bool reviewed_exchange = false;
     std::shared_ptr<lidnode::MeshRichardsTrial> lid_trial;
     uint64_t lid_trial_sequence = 0;
     bool lid_prepared = false;

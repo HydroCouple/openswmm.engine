@@ -1069,7 +1069,7 @@ TEST_F(EngineComponent, SplitWaterComponentsMatchIndependentNativeRuns) {
                              "ReviewedFootprintSources", "ReviewedFootprintIndependent", "ReviewedFootprintEnslaved", "ReviewedFootprintSigma", "ReviewedFootprintEvaporation", "ReviewedFootprintEarlyFinish",
                              "JointRichardsClosedShared", "JointRichardsClosedIndependent", "JointRichardsEnslavedShared", "JointRichardsEnslavedIndependent", "JointRichardsSigmaShared", "JointRichardsSigmaIndependent", "JointRichardsCompeting", "JointRichardsAquiferGain", "JointRichardsEarlyFinish",
                              "ReviewedMappedDischarge", "ReviewedMappedWithdrawal", "ReviewedMappedFlapGate", "ReviewedMappedRichards", "ReviewedReturnClosedShared", "ReviewedReturnIndependent", "ReviewedReturnEnslaved", "ReviewedReturnSigma", "ReviewedReturnRichards", "ReviewedReturnEarlyFinish", "ReviewedReturnMixedMapped", "ReviewedReturnOrdinary",
-                             "ClassicalMeshReviewedShared", "ClassicalMeshReviewedIndependent", "ClassicalMeshReviewedEnslaved", "ClassicalMeshReviewedSigma", "ClassicalMeshReviewedGain", "ClassicalMeshOrdinarySources", "ClassicalMeshConduit", "ClassicalSealedReviewed", "ClassicalCurrentReviewed", "ClassicalMixedRichards", "ClassicalMixedRichardsSigma", "ClassicalEarlyFinish"}) {
+                             "ClassicalMeshReviewedShared", "ClassicalMeshReviewedIndependent", "ClassicalMeshReviewedEnslaved", "ClassicalMeshReviewedSigma", "ClassicalMeshReviewedGain", "ClassicalMeshOrdinarySources", "ClassicalMeshConduit", "ClassicalSealedReviewed", "ClassicalCurrentReviewed", "ClassicalMixedRichards", "ClassicalMixedRichardsSigma", "ClassicalEarlyFinish", "ReviewedBedLossShared", "ReviewedBedLossIndependent", "ReviewedBedGainIndependent", "ReviewedBedEnslaved", "ReviewedBedSigma", "ReviewedConduitLoss", "ReviewedConduitGain", "ReviewedConduitOneWay", "ReviewedBedConduit", "ReviewedClassicalBedConduit", "ReviewedRichardsBedConduit", "ReviewedBedsEarlyFinish", "ReviewedBedWithoutSurfacePort", "ReviewedConduitWithoutSurfacePort"}) {
         SCOPED_TRACE(name);
         const auto work = directory / "wrapped" / name;
         const auto witness = cases / name;
@@ -1077,7 +1077,7 @@ TEST_F(EngineComponent, SplitWaterComponentsMatchIndependentNativeRuns) {
         auto surface = library.create();
         ASSERT_TRUE(network && surface);
         const bool mesh = std::string_view(name) != "BinaryOnlyRetainsReportFlushes" && std::string_view(name) != "OutfallBinaryOnly" && std::string_view(name) != "WatershedBinaryOnly" && std::string_view(name) != "GroundwaterBinaryOnly";
-        const bool early = std::string_view(name) == "EarlyFinishFlushesPendingBatch" || std::string_view(name) == "OutfallEarlyFinish" || std::string_view(name) == "WatershedEarlyFinish" || std::string_view(name) == "GroundwaterEarlyFinish" || std::string_view(name) == "ReviewedFootprintEarlyFinish" || std::string_view(name) == "JointRichardsEarlyFinish" || std::string_view(name) == "ReviewedReturnEarlyFinish" || std::string_view(name) == "ClassicalEarlyFinish";
+        const bool early = std::string_view(name) == "EarlyFinishFlushesPendingBatch" || std::string_view(name) == "OutfallEarlyFinish" || std::string_view(name) == "WatershedEarlyFinish" || std::string_view(name) == "GroundwaterEarlyFinish" || std::string_view(name) == "ReviewedFootprintEarlyFinish" || std::string_view(name) == "JointRichardsEarlyFinish" || std::string_view(name) == "ReviewedReturnEarlyFinish" || std::string_view(name) == "ClassicalEarlyFinish" || std::string_view(name) == "ReviewedBedsEarlyFinish";
         Json netConfig = {{"schema","openswmm.component/1"},{"role","split_network"},
                           {"model",(witness / "model.inp").string()},
                           {"output_directory",(work / "network").string()}};
@@ -1162,8 +1162,9 @@ TEST_F(EngineComponent, SplitWaterComponentsMatchIndependentNativeRuns) {
     }
 }
 TEST_F(EngineComponent, ClassicalPacketsValidateFormulationHistoryAndRichardsSubset) {
+  for (const auto* profile : {"ClassicalMixedRichards", "ReviewedRichardsBedConduit"}) {
     NativeEngine net,surface;
-    const auto deck=fs::path(SPLIT_WITNESS)/"ClassicalMixedRichards/model.inp";
+    const auto deck=fs::path(SPLIT_WITNESS)/profile/"model.inp";
     ASSERT_EQ(swmm_engine_open(net.value,deck.string().c_str(),(directory/"net.rpt").string().c_str(),nullptr,nullptr),0);
     ASSERT_EQ(swmm_engine_open(surface.value,deck.string().c_str(),(directory/"surface.rpt").string().c_str(),nullptr,nullptr),0);
     ASSERT_EQ(swmm_split_configure(net.value,SWMM_SPLIT_NETWORK),0);
@@ -1184,7 +1185,8 @@ TEST_F(EngineComponent, ClassicalPacketsValidateFormulationHistoryAndRichardsSub
         char* text=nullptr;
         EXPECT_EQ(swmm_split_packet_encode(engine,*reply,&text),0); if (!text) return SWMM_ERR_BADPARAM;
         const auto packet=Json::parse(text); swmm_split_packet_free(text);
-        EXPECT_EQ(packet.at("schema"),"openswmm.node-surface-water/8");
+        const bool paired=packet.at("schema") == "openswmm.node-surface-water/9";
+        EXPECT_TRUE(paired || packet.at("schema") == "openswmm.node-surface-water/8");
         std::ofstream(check.path/"accepted-lid-packet.json") << packet.dump(2);
         int classical=-1;
         for (size_t i=0; i<packet.at("lid_states").size(); ++i)
@@ -1205,6 +1207,11 @@ TEST_F(EngineComponent, ClassicalPacketsValidateFormulationHistoryAndRichardsSub
         changed=packet; changed["lid_states"][classical]["state"]["infiltration_cell"]=999; decode(changed,false);
         changed=packet; changed["lid_states"][classical]["theta"]={0.}; decode(changed,false);
         changed=packet; changed["lid_states"][classical]["state"]["richards_water"]={1.}; decode(changed,false);
+        if (paired) {
+            changed=packet; changed["schema"]="openswmm.node-surface-water/8"; decode(changed,false);
+            changed=packet; changed.erase("groundwater_conduits"); decode(changed,false);
+            changed=packet; changed["groundwater_conduits"]["gain_limit_cfs"][0]=-1.; decode(changed,false);
+        }
         return SWMM_OK;
     };
     ASSERT_EQ(swmm_split_set_callback(net.value,callback,&check),0);
@@ -1213,6 +1220,7 @@ TEST_F(EngineComponent, ClassicalPacketsValidateFormulationHistoryAndRichardsSub
     ASSERT_EQ(swmm_engine_step(net.value,&elapsed),0) << swmm_get_last_error_msg(surface.value);
     EXPECT_TRUE(check.checked);
     ASSERT_EQ(swmm_engine_end(net.value),0);
+  }
 }
 TEST_F(EngineComponent, CompleteSurfaceWaterMatchesNativeWithoutTouchingAuthoredDestination) {
     surfaceWaterModel(model);

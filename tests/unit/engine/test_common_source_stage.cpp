@@ -2508,6 +2508,76 @@ uint32_t restartCrc(const std::string& bytes) {
     return ~crc;
 }
 }
+TEST(CommonSourceStage, CompensatedWaterRestartPreservesRemaindersAndReadsLegacyProfiles) {
+    const auto configure=[](Model& m) {
+        m.setup(true,2,false,true);
+        m.attach();
+    };
+    const auto save=[](Model& m,const std::string& tag) {
+        const auto path=restartPath("roundoff-"+tag);
+        EXPECT_EQ(m.stage.saveCheckpoint(path.string()),"");
+        return restartBytes(path);
+    };
+    const auto load=[](Model& m,const std::string& bytes,const std::string& tag) {
+        const auto path=restartPath("roundoff-"+tag);
+        std::ofstream out(path,std::ios::binary); out.write(bytes.data(),bytes.size()); out.close();
+        return m.stage.loadCheckpoint(path.string());
+    };
+    Model continuous,resumed;
+    configure(continuous); configure(resumed);
+    for (int i=0; i<100; ++i)
+        ASSERT_NO_FATAL_FAILURE(advanceRestart(continuous,i*.0001,(i+1)*.0001));
+    const auto bytes=save(continuous,"initial");
+    ASSERT_FALSE(bytes.empty());
+    ASSERT_EQ(load(resumed,bytes,"resume"),"");
+    for (int i=100; i<200; ++i) {
+        ASSERT_NO_FATAL_FAILURE(advanceRestart(continuous,i*.0001,(i+1)*.0001));
+        ASSERT_NO_FATAL_FAILURE(advanceRestart(resumed,i*.0001,(i+1)*.0001));
+    }
+    checkpointEqual(continuous,resumed,"compensated-water");
+    detail::CompletedSourceArchive file(bytes);
+    std::string magic,model,payload;
+    uint32_t version=0,endian=0,long_bytes=0,double_bytes=0,crc=0;
+    file(magic,version,endian,long_bytes,double_bytes,model,payload,crc); file.finish();
+    ASSERT_EQ(version,11u);
+    const auto extra=sizeof(uint64_t)+(continuous.mesh.n_cells()+3)*sizeof(double);
+    ASSERT_GT(payload.size(),extra);
+    const auto offset=payload.size()-extra;
+    bool nonzero=false;
+    for (size_t at=offset+sizeof(uint64_t); at<payload.size(); at+=sizeof(double)) {
+        double v=0; std::memcpy(&v,payload.data()+at,sizeof(v));
+        nonzero |= v!=0;
+    }
+    ASSERT_TRUE(nonzero);
+    for (int change=0; change<3; ++change) {
+        auto bad=payload;
+        if (change<2) {
+            const double value=change==0 ? std::numeric_limits<double>::quiet_NaN() : .001;
+            std::memcpy(bad.data()+offset+sizeof(uint64_t),&value,sizeof(value));
+        } else {
+            uint64_t size=continuous.mesh.n_cells()+1;
+            std::memcpy(bad.data()+offset,&size,sizeof(size));
+        }
+        auto checksum=restartCrc(bad);
+        detail::CompletedSourceArchive encoded;
+        encoded(magic,version,endian,long_bytes,double_bytes,model,bad,checksum);
+        Model target; configure(target);
+        const auto before=save(target,"before");
+        EXPECT_FALSE(load(target,encoded.bytes(),"invalid").empty());
+        EXPECT_EQ(before,save(target,"after"));
+        ASSERT_EQ(load(target,bytes,"valid"),"");
+    }
+    payload.resize(offset);
+    version-=10;
+    crc=restartCrc(payload);
+    detail::CompletedSourceArchive legacy;
+    legacy(magic,version,endian,long_bytes,double_bytes,model,payload,crc);
+    Model migrated; configure(migrated);
+    ASSERT_EQ(load(migrated,legacy.bytes(),"legacy"),"");
+    EXPECT_EQ(migrated.stage.completedEnd(),.01);
+    ASSERT_NO_FATAL_FAILURE(advanceRestart(migrated,.01,.0101));
+}
+
 TEST(CommonSourceStage, SemanticallyInvalidCheckpointWithValidChecksumIsRejectedAtomically) {
     Model original;
     mixedPollutants(original);

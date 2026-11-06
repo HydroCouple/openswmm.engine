@@ -1231,7 +1231,7 @@ void OpenSWMMEngineComponent::discover(SWMM_Engine engine) {
     if (split_) {
         metadata_["execution_profile"] = "openswmm.node-surface-water/1";
         metadata_["phase_port"] = waterPhasePort;
-        metadata_["phase_packet_schemas"] = {"openswmm.node-surface-water/1", "openswmm.node-surface-water/2", "openswmm.node-surface-water/3", "openswmm.node-surface-water/4", "openswmm.node-surface-water/5", "openswmm.node-surface-water/6", "openswmm.node-surface-water/7", "openswmm.node-surface-water/8"};
+        metadata_["phase_packet_schemas"] = {"openswmm.node-surface-water/1", "openswmm.node-surface-water/2", "openswmm.node-surface-water/3", "openswmm.node-surface-water/4", "openswmm.node-surface-water/5", "openswmm.node-surface-water/6", "openswmm.node-surface-water/7", "openswmm.node-surface-water/8", "openswmm.node-surface-water/9"};
         metadata_["groundwater_owner"] = "integrated2d";
         metadata_["watershed_owner"] = "network";
         metadata_["split_source_scope"] = "ordinary runoff and conventional LID outlets through native network routing";
