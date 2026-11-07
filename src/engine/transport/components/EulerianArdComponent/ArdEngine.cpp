@@ -320,7 +320,7 @@ bool ArdEngine::init(SimulationContext& ctx) {
         const double ucf_len0 =
             ucf::Ucf[ucf::LENGTH][ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units))];
         mesh_opts.cell_length /= ucf_len0;
-        mesh_opts.slot_celerity /= ucf_len0;
+        mesh_opts.slot_celerity = fv::slotCelerityInternal(mesh_opts.slot_celerity, ucf_len0);
         mesh_opts.dispersion /= ucf_len0 * ucf_len0;
         if (ctx.ard_config.configured && ctx.ard_config.target_dx > 0.0) {
             if (ctx.options.routing_model == RoutingModel::FV) {

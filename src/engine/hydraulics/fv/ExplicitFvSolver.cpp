@@ -61,7 +61,16 @@ const int kOmpMinCells = ompMinEnv("OPENSWMM_FV_OMP_MIN_CELLS", 4096);
 /// its own incident faces and writes only its own head, so the loop is
 /// order-independent and bit-identical at any thread count. A solve costs
 /// ~10 face fluxes, so far fewer items amortize the fork/join than a cell loop.
-const int kOmpMinNodes = ompMinEnv("OPENSWMM_FV_OMP_MIN_NODES", 64);
+/// Measured 2026-11-07 on Bellinge (1,015 conduits, ~5,000 cells; face and
+/// cell loops never reach their gates there), 5 h window, wall s, serial 48.5:
+///     gate     64     128    256    512
+///     2 thr   53.0   40.3   39.9   43.1
+///     8 thr   36.5   37.1   38.1   40.3
+/// At 64 the many small regions (64-127 junctions) cost more than two threads
+/// recover; 256 keeps the 8-thread gain within noise of 64 with half the
+/// parallel regions of 128 — each region is a wait on a descheduled worker
+/// when the machine is loaded (see plan §5k item 4).
+const int kOmpMinNodes = ompMinEnv("OPENSWMM_FV_OMP_MIN_NODES", 256);
 
 /// Column-separation vacuum limit, ~1 atm of water column (issue #156): a
 /// sealed TPA reach can sustain sub-atmospheric pressure only to about
@@ -2733,13 +2742,19 @@ void ExplicitFvSolver::solveAlgebraicNode(int n, double dt, const FvStepForcing&
     // an open-ended full depth), and a bisection budget spent walking back
     // from it leaves the head — and the ghost fluxes — stranded far from the
     // root. Geometric expansion bounds the work by the distance to the root
-    // instead: start at the quasi-Newton scale |R|/resist, double until the
-    // residual changes sign. Hitting the floor or ceiling with no sign change
-    // IS the clamp case (dry junction / flooding), with the fluxes already
-    // evaluated at the clamped head.
+    // instead: start at TWICE the quasi-Newton scale |R|/resist, double until
+    // the residual changes sign. Twice, because resist is an estimate: a first
+    // trial aimed at the estimated root falls short wherever the estimate is
+    // high (a pressurized ghost) and costs a doubling, while one aimed past it
+    // brackets the root at once and the secant below closes in from there
+    // (3.6 residual evaluations per solve against 4.4 on a surcharged network).
+    // Hitting the floor or ceiling with no sign change IS the clamp case (dry
+    // junction / flooding), with the fluxes already evaluated at the clamped
+    // head.
     const double dir = (r > 0.0) ? 1.0 : -1.0;
     const double res0 = resistAt(h);
-    double step = std::max(kAlgHeadTol, (res0 > 0.0) ? std::fabs(r) / res0 : kAlgHeadTol);
+    double step =
+        2.0 * std::max(kAlgHeadTol, (res0 > 0.0) ? std::fabs(r) / res0 : kAlgHeadTol);
     double h_a = h, r_a = r;
     bool bracketed = false;
     for (int it = 0; it < kAlgMaxExpand; ++it) {
@@ -2753,14 +2768,7 @@ void ExplicitFvSolver::solveAlgebraicNode(int n, double dt, const FvStepForcing&
             finalize();
             return;
         } // landed on the root
-        if ((r_a > 0.0) != (r_b > 0.0)) { // sign change: bracketed
-            if (dir > 0.0) {
-                lo = h_a;
-                hi = h_b;
-            } else {
-                lo = h_b;
-                hi = h_a;
-            }
+        if ((r_a > 0.0) != (r_b > 0.0)) { // sign change: bracketed by (h_a, r_a) and (h, r)
             h = h_b;
             r = r_b;
             bracketed = true;
@@ -2786,24 +2794,32 @@ void ExplicitFvSolver::solveAlgebraicNode(int n, double dt, const FvStepForcing&
         return;
     }
 
-    // Bracketed quasi-Newton: dh = R/resist when it lands inside the bracket,
-    // bisection otherwise. R is monotone decreasing, so sign(R) picks the
-    // sub-bracket unambiguously; flat stretches (supercritical through-flow)
-    // fall to bisection.
+    // Bracketed root find on the residuals already evaluated: Illinois regula
+    // falsi between the far end of the bracket (h_a, r_a) and the latest trial
+    // (h, r). R is monotone decreasing, so sign(R) picks the sub-bracket
+    // unambiguously. A step on the estimated slope `resistAt` converged only
+    // linearly wherever that estimate is off by a constant factor — about 2x at
+    // a pressurized ghost, 8 to 13 residual evaluations per solve on a
+    // surcharged network; the secant through two evaluated points needs no
+    // slope. Halving the retained end's residual when the same end survives (the
+    // Illinois rule) keeps a kink in R — a crown, a ghost going dry — from
+    // pinning that end; a secant point outside the bracket falls to bisection.
     const int root_budget=conservative_node_balance_?64:kAlgMaxIters;
     const double head_stop=conservative_node_balance_?16*std::numeric_limits<double>::epsilon()*std::max(1.0,std::abs(h)):kAlgHeadTol;
     for (int it = 0; it < root_budget; ++it) {
-        const double resist = resistAt(h);
-        double h_new = (resist > 0.0) ? h + r / resist : 0.5 * (lo + hi);
-        if (!(h_new > lo && h_new < hi))
-            h_new = 0.5 * (lo + hi);
+        double h_new = (r != r_a) ? h - r * (h - h_a) / (r - r_a) : 0.5 * (h_a + h);
+        if (!(h_new > std::min(h_a, h) && h_new < std::max(h_a, h)))
+            h_new = 0.5 * (h_a + h);
+        const double r_new = residual(h_new);
         const double dh = h_new - h;
+        if ((r_new > 0.0) != (r > 0.0)) {
+            h_a = h;
+            r_a = r;
+        } else {
+            r_a *= 0.5;
+        }
         h = h_new;
-        r = residual(h);
-        if (r > 0.0)
-            lo = h;
-        else
-            hi = h;
+        r = r_new;
         if (std::fabs(dh) <= head_stop || std::fabs(r) <= kAlgQEps)
             break;
     }

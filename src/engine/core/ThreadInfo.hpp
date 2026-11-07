@@ -105,7 +105,26 @@ bool isOversubscribed(int threads);
 
 /// Minimum conduits of momentum work per dynamic-wave team thread before an
 /// extra thread pays for its barriers (PERFORMANCE-ONLY; bit-identical).
-constexpr int kMinConduitsPerThread = 100;
+///
+/// Measured 2026-11-07 with the OpenMP runtime's default (passive) waiting —
+/// the engine no longer forces active spinning (dce68091) — on an M1 Max with
+/// ordinary desktop load, wall seconds at 1 / 2 / 4 / 8 threads
+/// (tests/output/fv_bellinge_failure_20261102/perf/threads/):
+///
+///     conduits   1      2      4      8
+///      1,015    16.3   29.1   65.2  116.5   every extra thread costs
+///      2,100    28.8   28.5   35.2   58.4
+///      4,146    38.2   27.9   24.3   36.3   first gain
+///      6,402    22.2   14.4   11.6   13.6
+///     12,840    17.3   11.1    8.0    7.9
+///     24,721    27.4   17.5   11.7   10.8
+///     41,678    26.5   19.5   12.7   11.0
+///
+/// One thread per 2,000 conduits follows that table: 1 below 4,000, 2 at
+/// 4,000, 4 at 8,000, 8 from 16,000. The former 100 dates from the forced
+/// active-wait era (T=4 was 1.74x on 1,015 conduits then); with passive
+/// waiting the same model ran 7x slower at 8 threads than on one.
+constexpr int kMinConduitsPerThread = 2000;
 
 /**
  * @brief Resolve a dynamic-wave team request with model-size and automatic core caps.

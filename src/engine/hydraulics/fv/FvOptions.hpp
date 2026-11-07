@@ -182,6 +182,11 @@ struct FvOptions {
     /// width through T_slot = g·A_full/c², so it is a direct accuracy/cost dial:
     /// physical acoustic speeds would crush the global CFL step. Default 100
     /// ft/s is the same order DW's SLOT surcharge method produces.
+    ///
+    /// In SimulationOptions::fv this member holds the [OPTIONS] value in
+    /// project length units per second, and 0 there means the deck gave none:
+    /// slotCelerityInternal() then selects kDefaultSlotCelerity, so the default
+    /// is the same physical speed in either unit system.
     double slot_celerity = 100.0;
 
     /// Integrate the acoustic/slot pair implicitly on the pressurized subset
@@ -300,6 +305,31 @@ struct FvOptions {
     /// Δx²/(2·D_L) constraint never binds.
     double dispersion = 0.0;
 };
+
+/// Design slot celerity (ft/s): what FV_SLOT_CELERITY means when a deck does
+/// not give it. One physical speed in either unit system: 30.48 m/s in SI.
+inline constexpr double kDefaultSlotCelerity = 100.0;
+
+/**
+ * @brief [OPTIONS] FV_SLOT_CELERITY as the solver needs it (ft/s).
+ * @param[in] option Value held in SimulationOptions::fv: project length units per second, or 0
+ *     when the deck gave none.
+ * @param[in] ucf_len Project length units per foot (1 US, 0.3048 SI).
+ * @return option converted to ft/s, or kDefaultSlotCelerity when option is not positive.
+ */
+inline double slotCelerityInternal(double option, double ucf_len) {
+    return option > 0.0 ? option / ucf_len : kDefaultSlotCelerity;
+}
+
+/**
+ * @brief [OPTIONS] FV_SLOT_CELERITY as a deck or the options API states it.
+ * @param[in] option Value held in SimulationOptions::fv (see slotCelerityInternal).
+ * @param[in] ucf_len Project length units per foot (1 US, 0.3048 SI).
+ * @return option when positive, else the default in project length units per second.
+ */
+inline double slotCelerityProject(double option, double ucf_len) {
+    return option > 0.0 ? option : kDefaultSlotCelerity * ucf_len;
+}
 
 } // namespace openswmm::fv
 

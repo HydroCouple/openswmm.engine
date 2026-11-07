@@ -31,6 +31,7 @@
 
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_links.h>
+#include <openswmm/engine/openswmm_model.h>
 #include <openswmm/engine/openswmm_nodes.h>
 
 namespace fs = std::filesystem;
@@ -300,4 +301,132 @@ TEST(FvSlotVolume, shareStatisticsAndReportBlock) {
     double pct = -1.0;
     std::sscanf(text.c_str() + pos, "dt Argmin Pressurized (%%)%lf", &pct);
     EXPECT_GT(pct, 50.0);
+}
+
+// ---------------------------------------------------------------------------
+// The default slot celerity is one physical speed, not one number
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// The pressurized fixture in SI: 100 m of 1 m circular pipe from a junction to
+// an outfall whose stage sits 4 m above the crown, fed 0.5 m3/s. `celerity`
+// is the whole FV_SLOT_CELERITY option line, or empty to leave the key out.
+std::string siDeck(const std::string& celerity) {
+    return "[OPTIONS]\n"
+           "FLOW_UNITS           CMS\n"
+           "FLOW_ROUTING         FV\n"
+           "START_DATE           01/01/2026\n"
+           "START_TIME           00:00:00\n"
+           "END_DATE             01/01/2026\n"
+           "END_TIME             01:00:00\n"
+           "REPORT_STEP          00:05:00\n"
+           "ROUTING_STEP         0.5\n"
+           "LENGTHENING_STEP     0\n" +
+           celerity +
+           "\n"
+           "[JUNCTIONS]\n"
+           ";;Name Elev MaxDepth InitDepth SurDepth Aponded\n"
+           "J0     100.0 12.0 0 0 0\n"
+           "\n"
+           "[OUTFALLS]\n"
+           ";;Name Elev Type StageData Gated\n"
+           "OF     100.0 FIXED 105.0 NO\n"
+           "\n"
+           "[CONDUITS]\n"
+           ";;Name From To Length N Zin Zout Q0\n"
+           "C1     J0   OF 100 0.013 0 0 0\n"
+           "\n"
+           "[XSECTIONS]\n"
+           ";;Link Shape G1 G2 G3 G4\n"
+           "C1     CIRCULAR 1 0 0 0 1\n"
+           "\n"
+           "[INFLOWS]\n"
+           ";;Node Constituent TimeSeries Type Mfactor Sfactor Baseline\n"
+           "J0     FLOW \"\" FLOW 1.0 1.0 0.5\n"
+           "\n"
+           "[REPORT]\n"
+           "CONTINUITY YES\n";
+}
+
+/**
+ * @brief Open a deck and read one option back through the C API.
+ * @param[in] base Safe retained outPath artifact basename.
+ * @param[in] text Complete input passed to writeFile.
+ * @param[in] key [OPTIONS] key to read.
+ * @param[in] rewrite When set, swmm_model_write() the opened model to outPath(rewrite).
+ * @return The option's string as the API returns it; empty on failure.
+ */
+std::string openAndGetOption(const std::string& base, const std::string& text, const char* key,
+                             const std::string& rewrite = std::string()) {
+    const std::string inp = outPath(base + ".inp");
+    writeFile(inp, text);
+    SWMM_Engine e = swmm_engine_create();
+    EXPECT_EQ(swmm_engine_open(e, inp.c_str(), outPath(base + ".rpt").c_str(),
+                               outPath(base + ".out").c_str(), nullptr),
+              0)
+        << swmm_get_last_error_msg(e);
+    char buf[64] = {0};
+    EXPECT_EQ(swmm_options_get(e, key, buf, sizeof buf), 0) << key;
+    if (!rewrite.empty())
+        EXPECT_EQ(swmm_model_write(e, outPath(rewrite).c_str()), 0) << swmm_get_last_error_msg(e);
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+    return buf;
+}
+
+} // namespace
+
+// FV_SLOT_CELERITY is read in project length units per second, and its design
+// default is 100 ft/s (FvOptions.hpp). A default stored as the NUMBER 100 made
+// an SI deck run at 100 m/s: a slot 3.3x stiffer, a pressurized step 3.3x
+// smaller, and junctions 500 m above their rims on the Bellinge example. Left
+// out, the key must mean 100 ft/s = 30.48 m/s in either unit system.
+TEST(FvSlotCelerityDefault, anSiDeckWithoutTheKeyRunsAt100FeetPerSecond) {
+    const RunResult absent = run("si_celerity_absent", siDeck(""));
+    const RunResult stated = run("si_celerity_30_48", siDeck("FV_SLOT_CELERITY     30.48\n"));
+    const RunResult hundred = run("si_celerity_100", siDeck("FV_SLOT_CELERITY     100\n"));
+    ASSERT_GT(absent.slot_volume, 0.0); // pressurized for certain
+    ASSERT_GT(hundred.slot_volume, 0.0);
+
+    // 30.48 m/s is exactly 100 ft/s (30.48 / 0.3048 == 100.0 in IEEE double),
+    // so leaving the key out must reproduce the stated value bit for bit.
+    EXPECT_EQ(absent.slot_volume, stated.slot_volume);
+    EXPECT_EQ(absent.j0_depth, stated.j0_depth);
+
+    // And 100 m/s is a different slot: T_slot = g A_full / c^2, so the same
+    // head above the crown holds (30.48/100)^2 = 0.0929 of the volume.
+    const double ratio = hundred.slot_volume / absent.slot_volume;
+    const double expected = (30.48 / 100.0) * (30.48 / 100.0);
+    EXPECT_NEAR(ratio, expected, 0.05 * expected)
+        << "slot volume at 100 m/s / at the default: " << ratio;
+}
+
+// The options API and the .inp writer state the default in the project's own
+// units, so a GUI or a round trip sees 30.48 for an SI model and 100 for a US
+// one, never the bare number the deck happened to omit.
+TEST(FvSlotCelerityDefault, apiAndWriterStateTheDefaultInProjectUnits) {
+    const std::string si = openAndGetOption("si_celerity_api", siDeck(""), "FV_SLOT_CELERITY",
+                                            "si_celerity_api_rewritten.inp");
+    EXPECT_DOUBLE_EQ(std::stod(si), 30.48) << "API returned '" << si << "'";
+
+    std::string us = deck("FV", true);
+    const auto key = us.find("FV_SLOT_CELERITY");
+    ASSERT_NE(key, std::string::npos);
+    us.erase(key, us.find('\n', key) + 1 - key); // leave the key out of the CFS deck
+    const std::string cfs = openAndGetOption("us_celerity_api", us, "FV_SLOT_CELERITY");
+    EXPECT_DOUBLE_EQ(std::stod(cfs), 100.0) << "API returned '" << cfs << "'";
+
+    // An explicit value is reported as given, in either system.
+    const std::string given = openAndGetOption("si_celerity_api_given",
+                                               siDeck("FV_SLOT_CELERITY     100\n"), "FV_SLOT_CELERITY");
+    EXPECT_DOUBLE_EQ(std::stod(given), 100.0) << "API returned '" << given << "'";
+
+    // The rewritten SI deck carries the default spelled out in m/s.
+    const std::string text = readFile(outPath("si_celerity_api_rewritten.inp"));
+    const auto pos = text.find("FV_SLOT_CELERITY");
+    ASSERT_NE(pos, std::string::npos) << text;
+    double written = 0.0;
+    ASSERT_EQ(std::sscanf(text.c_str() + pos, "FV_SLOT_CELERITY %lf", &written), 1);
+    EXPECT_DOUBLE_EQ(written, 30.48);
 }

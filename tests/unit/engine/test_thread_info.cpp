@@ -226,10 +226,15 @@ TEST(ThreadInfo, HostReservedThreadsCountTowardOversubscription) {
 
 TEST(ThreadInfo, DwSizeGateReducesExplicitRequestWithWarning) {
     std::vector<std::string> w;
-    // 40 conduits / 100 per thread → cap 1.
+    // 40 conduits / 2000 per thread → cap 1.
     EXPECT_EQ(ti::dwThreads(4, 40, &w), 1);
     EXPECT_TRUE(hasWarningContaining(w, "conduits"));
-    // 1000 conduits → cap 10; a request of 4 within the machine passes.
+    // A 1,015-conduit sewer network (Bellinge) ran 7x slower at 8 threads than
+    // serial with the runtime's passive waiting: THREADS 8 must resolve to 1.
+    w.clear();
+    EXPECT_EQ(ti::dwThreads(8, 1015, &w), 1);
+    EXPECT_TRUE(hasWarningContaining(w, "conduits"));
+    // 8000 conduits → cap 4; a request of 4 within the machine passes.
     //
     // Silence needs BOTH gates open: enough logical processors, and an OpenMP
     // runtime limit that allows 4. resolveRequested warns on either bound
@@ -241,7 +246,7 @@ TEST(ThreadInfo, DwSizeGateReducesExplicitRequestWithWarning) {
     // about the conduit-count gate this test covers.
     w.clear();
     if (ti::logicalCpus() >= 4 && ti::ompMaxThreads() >= 4) {
-        EXPECT_EQ(ti::dwThreads(4, 1000, &w), 4);
+        EXPECT_EQ(ti::dwThreads(4, 8000, &w), 4);
         EXPECT_TRUE(w.empty()) << w.front();
     }
 }

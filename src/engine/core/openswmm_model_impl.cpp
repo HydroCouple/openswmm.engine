@@ -1496,7 +1496,8 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine, const char* key, char* 
     } else if (k == "FV_TIME_INTEGRATION")
         val = (opt.fv.time_integration == openswmm::fv::TimeIntegration::RK2) ? "RK2" : "EULER";
     else if (k == "FV_SLOT_CELERITY")
-        val = fmt_full(opt.fv.slot_celerity);
+        val = fmt_full(openswmm::fv::slotCelerityProject(
+            opt.fv.slot_celerity, openswmm::ucf::UCF(openswmm::ucf::LENGTH, opt)));
     else if (k == "FV_PRESSURIZED_IMPLICIT")
         val = opt.fv.pressurized_implicit ? "YES" : "NO";
     else if (k == "FV_PRESSURE_CLOSURE") // issue #156

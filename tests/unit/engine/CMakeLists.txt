@@ -942,6 +942,9 @@ add_gtest_unit(test_engine_fv_analytic test_fv_solver_analytic.cpp)
 # coupling and continuity, mixed-flow filling bore vs. Rankine–Hugoniot,
 # compaction results-transparency, and the scalar-transport contracts.
 add_gtest_unit(test_engine_fv_network test_fv_solver_network.cpp)
+# The junction head root find, costed with the engine's own counters.
+add_gtest_unit(test_engine_fv_junction_root test_fv_junction_root.cpp)
+set_tests_properties(test_engine_fv_junction_root PROPERTIES ENVIRONMENT "OPENSWMM_PERF=1")
 # Local time stepping (§6.12): fall-through to global stepping bit-for-bit on an
 # untiered mesh, tier-interface conservation exact at every tier count, a
 # wetting front crossing tier boundaries without loss, and the substep-count

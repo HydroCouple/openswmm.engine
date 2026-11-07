@@ -1252,7 +1252,7 @@ void Router::initFv(SimulationContext& ctx) {
         ucf::Ucf[ucf::LENGTH][ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units))];
     fv_opts_ = ctx.options.fv;
     fv_opts_.cell_length = ctx.options.fv.cell_length / ucf_len;
-    fv_opts_.slot_celerity = ctx.options.fv.slot_celerity / ucf_len;
+    fv_opts_.slot_celerity = fv::slotCelerityInternal(ctx.options.fv.slot_celerity, ucf_len);
     fv_opts_.dispersion = ctx.options.fv.dispersion / (ucf_len * ucf_len);
     // Unsteady friction (issue #156): shared [OPTIONS] keys, dimensionless —
     // copied here so the solver keeps seeing only FvOptions.

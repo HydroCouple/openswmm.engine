@@ -409,8 +409,15 @@ struct SimulationOptions {
      *          internal feet, the same treatment HEAD_TOLERANCE gets. FV_* keys
      *          are accepted and inert under any other routing model, so
      *          switching FLOW_ROUTING never invalidates a file.
+     *          slot_celerity starts at 0 (not given): the default is a
+     *          physical speed, fv::kDefaultSlotCelerity, not a number of
+     *          project units.
      */
-    fv::FvOptions fv;
+    fv::FvOptions fv = [] {
+        fv::FvOptions o;
+        o.slot_celerity = 0.0;
+        return o;
+    }();
 
     /** @brief Infiltration method for subcatchments. */
     InfiltrationModel infiltration = InfiltrationModel::HORTON;
@@ -634,7 +641,8 @@ struct SimulationOptions {
      *     active spin-wait policy is disabled for an oversubscribed run.
      *
      * Model-size gates still apply to explicit values (warned): dynamic wave
-     * keeps >= 100 conduits per thread; the 2D marcher needs >= 4 triangles
+     * keeps >= 2,000 conduits per thread (threadinfo::kMinConduitsPerThread,
+     * measured); the 2D marcher needs >= 4 triangles
      * per thread. The 2D Kokkos OpenMP backend receives the raw value via
      * the plugin ABI (v4) and initialises once per process.
      *

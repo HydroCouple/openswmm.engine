@@ -205,7 +205,7 @@ These keys are read only under FLOW_ROUTING FV; under any other routing model th
 | FV_LIMITER | MINMOD / VANLEER / SUPERBEE | MINMOD | Slope limiter used with FV_ORDER 2; MINMOD is most robust, SUPERBEE sharpest. Hydraulics §8.5.7. |
 | FV_SCALAR_SCHEME | UPWIND / MUSCL / QUICKEST_ULTIMATE / QUICKEST | MUSCL | Reconstruction of the advected scalar field on the finite-volume mesh. Hydraulics §8.8. |
 | FV_TIME_INTEGRATION | EULER / RK2 | EULER | Time integrator: forward Euler or SSP-RK2 (Heun); RK2 disables local time stepping. Hydraulics §8.5.5. |
-| FV_SLOT_CELERITY | number | 100 | Pressurised wave celerity in project length units per second; sets the slot width and doubles as the TPA acoustic celerity. Hydraulics §8.4.1. |
+| FV_SLOT_CELERITY | number | 100 ft/s (30.48 m/s) | Pressurised wave celerity in project length units per second; sets the slot width and doubles as the TPA acoustic celerity. When the key is absent or 0 the default is the same physical speed in either unit system. Hydraulics §8.4.1. |
 | FV_PRESSURIZED_IMPLICIT | YES / TRUE / ON / 1 / NO | NO | Integrates the slot's acoustic pair implicitly on pressurised cells, removing the celerity from the time-step law; CPU only, local time stepping stands down. Hydraulics §8.4.4. \status{Experimental} |
 | FV_PRESSURE_CLOSURE | SLOT / TPA | SLOT | Pressurisation closure: the Preissmann slot, or the two-component pressure approach that allows sub-atmospheric full-pipe flow. Hydraulics §8.4.5. \status{Experimental} |
 | FV_DISPERSION | number | 0 | Longitudinal dispersion coefficient in project length squared per second; 0 disables it. Accepted but inert until finite-volume transport is connected; non-zero warns at open. Hydraulics §8.8. |
@@ -253,7 +253,7 @@ These keys are read only under FLOW_ROUTING FV; under any other routing model th
 
 | Keyword | Values | Default | Description |
 |---|---|---|---|
-| THREADS | number | 1 | OpenMP thread count for dynamic-wave and 2D loops; 0 resolves to the runtime maximum, and larger values oversubscribe with a warning. |
+| THREADS | number | 1 | OpenMP thread count for dynamic-wave and 2D loops; 0 resolves to the runtime maximum, and larger values oversubscribe with a warning. Dynamic wave keeps at least 2,000 conduits per thread (a smaller model runs serial, with a warning when the request was explicit): below that size extra threads only cost. |
 | SKIP_STEADY_STATE | YES / NO | NO | Skips routing during steady periods, reusing the last flows, when system flow and lateral inflows change by less than SYS_FLOW_TOL and LAT_FLOW_TOL. |
 | SYS_FLOW_TOL | number | 5 | Maximum percent difference between total system inflow and outflow for SKIP_STEADY_STATE to take effect. |
 | LAT_FLOW_TOL | number | 5 | Maximum percent difference between current and previous lateral inflows for SKIP_STEADY_STATE to take effect. |

@@ -2179,7 +2179,8 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                          sScalar[static_cast<int>(fvo.scalar_scheme)]);
             std::fprintf(f, "%-20s %s\n", "FV_TIME_INTEGRATION",
                          sTime[static_cast<int>(fvo.time_integration)]);
-            std::fprintf(f, "%-20s %.17g\n", "FV_SLOT_CELERITY", fvo.slot_celerity);
+            std::fprintf(f, "%-20s %.17g\n", "FV_SLOT_CELERITY",
+                         fv::slotCelerityProject(fvo.slot_celerity, ucf::UCF(ucf::LENGTH, o)));
             if (fvo.pressurized_implicit)
                 std::fprintf(f, "%-20s %s\n", "FV_PRESSURIZED_IMPLICIT", "YES");
             if (fvo.node_feedback_dt) // non-default only
