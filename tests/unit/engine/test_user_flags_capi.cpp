@@ -24,6 +24,10 @@
 
 #include <gtest/gtest.h>
 
+#include <clocale>
+#include <cmath>
+#include <cstdlib>
+#include <locale>
 #include <string>
 
 #include <openswmm/engine/openswmm_engine.h>
@@ -225,6 +229,48 @@ TEST_F(UserFlagsCapiTest, RealValueRoundTrip) {
 
     EXPECT_EQ(swmm_userflag_value_set(engine, "LINK", "C_MAIN", "ROUGHNESS_ADJ", "abc"),
               SWMM_ERR_BADPARAM);
+}
+
+TEST_F(UserFlagsCapiTest, RealValuesPreservePrecisionAndIgnoreGlobalLocale) {
+    /** @cond */
+    struct Comma : std::numpunct<char> {
+        char do_decimal_point() const override { return ','; }
+        char do_thousands_sep() const override { return '.'; }
+        std::string do_grouping() const override { return "\3"; }
+    };
+    struct Restore {
+        std::locale previous_cpp = std::locale();
+        std::string previous_c = std::setlocale(LC_NUMERIC, nullptr);
+        ~Restore() {
+            std::locale::global(previous_cpp);
+            std::setlocale(LC_NUMERIC, previous_c.c_str());
+        }
+    } restore;
+    /** @endcond */
+    ASSERT_NE(std::setlocale(LC_NUMERIC, "C"), nullptr);
+    std::locale::global(std::locale(std::locale::classic(), new Comma));
+    ASSERT_EQ(swmm_userflag_define(engine, "REAL", kReal, ""), SWMM_OK);
+    for (const char* input : {"0", "-0", "0.1", "0.10000000000000002",
+                              "1.0000000000000002", "998.2", "1e-6",
+                              "1.7976931348623157e308", "-1.7976931348623157e308",
+                              "2.2250738585072014e-308", "4.9406564584124654e-324"}) {
+        SCOPED_TRACE(input);
+        ASSERT_EQ(swmm_userflag_value_set(engine, "NODE", "J1", "REAL", input), SWMM_OK);
+        int found = 0;
+        const std::string output = getValue("NODE", "J1", "REAL", &found);
+        ASSERT_EQ(found, 1);
+        EXPECT_EQ(output.find(','), std::string::npos);
+        char* end = nullptr;
+        const double actual = std::strtod(output.c_str(), &end);
+        const double expected = std::strtod(input, nullptr);
+        ASSERT_NE(end, output.c_str());
+        EXPECT_EQ(*end, '\0');
+        EXPECT_EQ(actual, expected);
+        EXPECT_EQ(std::signbit(actual), std::signbit(expected));
+        ASSERT_EQ(swmm_userflag_value_set(engine, "NODE", "J1", "REAL", output.c_str()),
+                  SWMM_OK);
+        EXPECT_EQ(getValue("NODE", "J1", "REAL", &found), output);
+    }
 }
 
 TEST_F(UserFlagsCapiTest, StringValueRoundTrip) {

@@ -28,6 +28,9 @@
 
 #include <algorithm>
 #include <iterator>
+#include <limits>
+#include <locale>
+#include <sstream>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -2670,7 +2673,7 @@ SWMM_ENGINE_API int swmm_userflag_value_get(SWMM_Engine engine, const char* obj_
     }
     *found = 1;
     // String form is symmetric with the INP encoding (InpWriter): YES/NO,
-    // %d, %g, string verbatim (no quoting at the API boundary).
+    // integers, round-trip reals, string verbatim (no quoting at the API boundary).
     std::string s;
     const auto& v = opt.value();
     if (std::holds_alternative<bool>(v)) {
@@ -2678,9 +2681,21 @@ SWMM_ENGINE_API int swmm_userflag_value_get(SWMM_Engine engine, const char* obj_
     } else if (std::holds_alternative<int>(v)) {
         s = std::to_string(std::get<int>(v));
     } else if (std::holds_alternative<double>(v)) {
-        char tmp[64];
-        const auto result = std::to_chars(tmp, tmp + sizeof(tmp), std::get<double>(v));
-        s.assign(tmp, result.ptr);
+        // Floating-point to_chars requires macOS 13.3; wheels still support macOS 11.
+        std::ostringstream text;
+        text.imbue(std::locale::classic());
+        const double value = std::get<double>(v);
+        for (int precision = 15; precision <= std::numeric_limits<double>::max_digits10;
+             ++precision) {
+            text.str("");
+            text.precision(precision);
+            text << value;
+            s = text.str();
+            double parsed = 0.0;
+            const auto result = openswmm::from_chars_double(s.data(), s.data() + s.size(), parsed);
+            if (result.ec == std::errc{} && result.ptr == s.data() + s.size() && parsed == value)
+                break;
+        }
     } else {
         s = std::get<std::string>(v);
     }
