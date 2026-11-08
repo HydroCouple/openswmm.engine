@@ -1792,7 +1792,7 @@ void ExplicitFvSolver::limitPositivity(double dt) {
             out_node[un] = conservative_node_balance_ ? k::positivityScale(algebraicAvailableWater(un,dt,0.0,out_cell),out_node[un],dt) : 1.0;
             continue;
         }
-        out_node[un] = k::positivityScale(state_->node_volume[un], out_node[un], dt);
+        out_node[un] = k::positivityScale(state_->node_volume[un] - pondBase(un), out_node[un], dt);
     }
 
     for (const int f : active_faces_) {
@@ -3208,9 +3208,12 @@ void ExplicitFvSolver::updateNodes(double dt, const FvStepForcing& forcing) {
 
         const double v_prev = state_->node_volume[un];
         double vol = capWithdrawal(un, v_prev + dt * (sum_faces + q_lat), dt, forcing);
-        if (vol < 0.0) {
-            if (water_tracking_) water_.node_deficit[un] -= vol;
-            vol = 0.0;
+        // A demoted pondable junction floors at its phantom base, not at zero:
+        // the base is not water, so drawing it would create the difference.
+        const double v_floor = pondBase(un);
+        if (vol < v_floor) {
+            if (water_tracking_) water_.node_deficit[un] += v_floor - vol;
+            vol = v_floor;
         }
 
         double depth = nodeDepthFromVolume(n, vol);
@@ -3235,11 +3238,14 @@ void ExplicitFvSolver::settleAlgebraicNode(int n, double carry) {
     const double invert = mesh_->node_invert[un];
     const double depth = std::max(0.0, state_->node_head[un] - invert);
     const double full = mesh_->node_full_depth[un];
-    // A node re-promoting from a demoted (ponded) spell arrives with the
-    // bucket-integrated volume it held below the rim still published; fold it
-    // into the carry so the transition cannot orphan water. In normal
-    // operation the published volume IS the carry and this is a no-op.
-    const double published = state_->node_volume[un];
+    // A node re-promoting from a demoted (ponded) spell arrives with its
+    // bucket volume still published; fold the WATER in it — what stands above
+    // the phantom v_full base — into the carry so the transition cannot
+    // orphan it. Folding the base too re-ponded 1.17 m3 that never existed
+    // every time a pond drained back to the rim (1D pond fixture: +168 m3 on
+    // a 73 m3 inflow, 2026-11-07). In normal operation the published volume
+    // IS the carry and this is a no-op.
+    const double published = std::max(0.0, state_->node_volume[un] - pondBase(un));
     const double ledger = std::max(0.0, node_carry_[un]);
     if (published > ledger)
         carry += published - ledger;
@@ -4420,8 +4426,8 @@ void ExplicitFvSolver::fireFaces(const std::vector<int>& faces, double dt0) {
             out_node[nn]=conservative_node_balance_ ? k::positivityScale(algebraicAvailableWater(nn,span,acc_nvol_[nn],out_cell),out_node[nn],1.0) : 1.0;
             continue;
         }
-        out_node[nn] =
-            k::positivityScale(state_->node_volume[nn] + acc_nvol_[nn], out_node[nn], 1.0);
+        out_node[nn] = k::positivityScale(state_->node_volume[nn] + acc_nvol_[nn] - pondBase(nn),
+                                          out_node[nn], 1.0);
     }
 
     // Book. The IDENTICAL scaled flux enters both incident accumulators, which
@@ -4638,9 +4644,10 @@ void ExplicitFvSolver::fireNodes(const std::vector<int>& nodes, double dt0,
 
         const double v_prev = state_->node_volume[un];
         double vol = capWithdrawal(un, v_prev + drained + dt * q_lat, dt, forcing);
-        if (vol < 0.0) {
-            if (water_tracking_) water_.node_deficit[un] -= vol;
-            vol = 0.0;
+        const double v_floor = pondBase(un); // see updateNodes
+        if (vol < v_floor) {
+            if (water_tracking_) water_.node_deficit[un] += v_floor - vol;
+            vol = v_floor;
         }
 
         double depth = nodeDepthFromVolume(n, vol);
@@ -4797,8 +4804,8 @@ void ExplicitFvSolver::settleAccumulators() {
             continue;
         }
         double vol = state_->node_volume[un] + acc_nvol_[un];
-        if (vol < 0.0)
-            vol = 0.0;
+        if (vol < pondBase(un)) // see updateNodes
+            vol = pondBase(un);
         acc_nvol_[un] = 0.0;
         state_->node_volume[un] = vol;
         state_->node_head[un] = mesh_->node_invert[un] + nodeDepthFromVolume(n, vol);

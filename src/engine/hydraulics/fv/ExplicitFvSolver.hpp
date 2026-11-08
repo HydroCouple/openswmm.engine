@@ -751,6 +751,21 @@ private:
     }
 
     /**
+     * @brief The part of a demoted pondable junction's bucket volume that is NOT water.
+     *
+     * A ponding algebraic junction is stored as v_full + pond so the depth/volume conversions hold
+     * above the rim, but the v_full base is the nominal below-rim junction volume: an algebraic
+     * junction's water stands in its cells. Faces may draw, and a re-promotion may fold back, only
+     * what lies above this base. Zero for every other node.
+     *
+     * @param[in] un Valid node index.
+     * @return node_vfull_ for a pondable algebraic junction, else 0.
+     */
+    double pondBase(std::size_t un) const noexcept {
+        return (node_alg_[un] && mesh_->node_can_pond[un]) ? node_vfull_[un] : 0.0;
+    }
+
+    /**
      * @brief Inspect adjacent cells for pressure-band or latched TPA state.
      *
      * Unlike the narrower anyPressurizedCell early-exit scan, this explicitly recognizes TPA flags

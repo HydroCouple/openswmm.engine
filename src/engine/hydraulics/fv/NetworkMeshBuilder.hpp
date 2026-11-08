@@ -76,6 +76,33 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx, const FvOptions& opts,
                                  NetworkMeshData& mesh);
 
 /**
+ * @brief Whether node @p i may pond above its rim: the dynamic-wave rule (DynamicWave.cpp
+ *        getFloodedDepth), so both routers flood and pond the same nodes.
+ *
+ * ALLOW_PONDING gates ponding, a 2D-coupled node ponds regardless because its rim is the surface
+ * exchange, and either needs a positive ponded area; an outfall never ponds.
+ *
+ * @param[in] ctx Borrowed context with nodes and the coupled-node flags.
+ * @param[in] i Node index below ctx.n_nodes().
+ * @return True when the node ponds above its rim under FV.
+ */
+bool nodeCanPond(const SimulationContext& ctx, std::size_t i);
+
+/**
+ * @brief Re-read every node's ponding area and eligibility from @p ctx into a built mesh.
+ *
+ * The 2D router assigns a coupled junction's ponding footprint (SurfaceRouter2D::initialize) after
+ * the mesh is built in Router::init, so a mesh built then carries ponded_area 0 and can_pond 0 for
+ * every coupled junction: the junction clamps at its rim and spills instead of ponding on the
+ * footprint, and the 1D head never follows the 2D surface. Call this once the 2D router has
+ * initialized. Solvers read these two arrays through their mesh pointer, so no rebuild is needed.
+ *
+ * @param[in] ctx Borrowed context with the current node ponding areas and coupled-node flags.
+ * @param[in,out] mesh Built mesh whose node_ponded_area / node_can_pond are overwritten in place.
+ */
+void refreshNodePonding(const SimulationContext& ctx, NetworkMeshData& mesh);
+
+/**
  * @brief Construct an aggregate-barrel FV section and its tapered slot/closure.
  *
  * Depth/radius remain per-barrel, area/width multiply max(1,barrels). Closed slot uses g*A/c^2,

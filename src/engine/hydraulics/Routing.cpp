@@ -1242,6 +1242,27 @@ void Router::updateLinkStates(SimulationContext& ctx) {
  * mod_length/rough_factor: the mesh reuses that lengthening as its Δx floor and
  * the friction closure as its rough_factor, so the two must already agree.
  */
+void Router::refreshFvNodePonding(SimulationContext& ctx) {
+    if (model_ != RouteModel::FV || fv_mesh_.n_nodes() == 0)
+        return;
+    fv::refreshNodePonding(ctx, fv_mesh_);
+    // The built-in solvers read node_can_pond / node_ponded_area through their
+    // mesh pointer at use time. A plugin backend received the mesh once, at
+    // initialize, and may hold a device copy: say so rather than let coupled
+    // junctions silently clamp at the rim there.
+    if (fv_backend_.rfind("cpu", 0) != 0) {
+        bool any_coupled = false;
+        for (std::size_t i = 0; i < ctx.coupled_node.size() && !any_coupled; ++i)
+            any_coupled = ctx.coupled_node[i] != 0;
+        if (any_coupled)
+            ctx.warnings.push_back("WARNING: FV backend '" + fv_backend_ +
+                                   "' took its mesh before the 2D router assigned the coupled "
+                                   "junctions' ponding footprint; those junctions clamp at the "
+                                   "rim instead of ponding on the surface. Use FV_BACKEND CPU for "
+                                   "a 2D-coupled model.");
+    }
+}
+
 void Router::initFv(SimulationContext& ctx) {
     fv_warnings_.clear();
     fv_errors_.clear();

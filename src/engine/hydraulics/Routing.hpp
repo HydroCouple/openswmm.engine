@@ -363,6 +363,19 @@ public:
     const fv::NetworkMeshData& fvMesh() const { return fv_mesh_; }
 
     /**
+     * @brief Re-read node ponding areas and eligibility into the FV mesh.
+     *
+     * The 2D router assigns a coupled junction's ponding footprint in SurfaceRouter2D::initialize,
+     * which runs after init() built the mesh; without this call every coupled FV junction keeps
+     * can_pond 0, clamps at its rim and spills to the surface while the exchange law keeps pushing
+     * water in. No-op unless FLOW_ROUTING FV with a built mesh. A device plugin backend took its own
+     * copy of the mesh at initialize, so the refresh is warned rather than applied there.
+     *
+     * @param[in,out] ctx Context after 2D initialization; warnings may be appended.
+     */
+    void refreshFvNodePonding(SimulationContext& ctx);
+
+    /**
      * @brief Tell whether the native FV solver keeps real water at a plain junction.
      *
      * Ordinary FV junctions are algebraic interfaces whose water stands in the incident cells; an

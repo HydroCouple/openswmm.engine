@@ -634,6 +634,10 @@ if(OPENSWMM_BUILD_2D)
     # head-equalisation cap: pure geometry, then engine runs.
     add_gtest_unit(test_engine_2d_pond_continuity test_2d_pond_continuity.cpp)
     add_gtest_unit(test_engine_2d_coupling_ponds test_2d_coupling_ponds.cpp)
+    # A 2D-coupled junction under FLOW_ROUTING FV ponds on the footprint the
+    # 2D router assigns at start (the FV mesh must re-read it) and its head
+    # follows the surface.
+    add_gtest_unit(test_engine_fv_coupled_ponding test_fv_coupled_ponding.cpp)
     # Outfalls on the 2D surface: flap-gated tailwater, TAILWATER_RELAX,
     # COUPLING_HEAD sampling, SPREAD delivery, the tailwater report.
     add_gtest_unit(test_engine_2d_outfall_boundary test_2d_outfall_boundary.cpp)

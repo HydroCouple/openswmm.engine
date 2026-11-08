@@ -198,6 +198,20 @@ void buildClosure(FvGeometry& g) {
 // ===========================================================================
 
 // Aggregate geometry contract is documented in NetworkMeshBuilder.hpp.
+bool nodeCanPond(const SimulationContext& ctx, std::size_t i) {
+    const bool is_coupled = (i < ctx.coupled_node.size() && ctx.coupled_node[i]);
+    return (ctx.options.allow_ponding || is_coupled) && ctx.nodes.ponded_area[i] > 0.0 &&
+           ctx.nodes.type[i] != NodeType::OUTFALL;
+}
+
+void refreshNodePonding(const SimulationContext& ctx, NetworkMeshData& mesh) {
+    const std::size_t n = std::min(mesh.node_ponded_area.size(), mesh.node_can_pond.size());
+    for (std::size_t i = 0; i < n && i < static_cast<std::size_t>(ctx.n_nodes()); ++i) {
+        mesh.node_ponded_area[i] = ctx.nodes.ponded_area[i];
+        mesh.node_can_pond[i] = static_cast<uint8_t>(nodeCanPond(ctx, i));
+    }
+}
+
 void buildGeometry(const XSectParams& xs, bool is_open, double slot_celerity, FvGeometry& g,
                    int barrels) {
     g.xs = xs;
@@ -271,13 +285,10 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx, const FvOptions& opts,
         mesh.node_full_depth[ui] = ctx.nodes.full_depth[ui];
         mesh.node_ponded_area[ui] = ctx.nodes.ponded_area[ui];
         mesh.node_sur_depth[ui] = ctx.nodes.sur_depth[ui];
-        // Same eligibility rule as DW (DynamicWave.cpp getFloodedDepth): the
-        // project option gates ponding, and a 2D-coupled node ponds regardless
-        // because its rim is the surface exchange.
-        const bool is_coupled = (ui < ctx.coupled_node.size() && ctx.coupled_node[ui]);
-        mesh.node_can_pond[ui] = static_cast<uint8_t>((ctx.options.allow_ponding || is_coupled) &&
-                                                      ctx.nodes.ponded_area[ui] > 0.0 &&
-                                                      ctx.nodes.type[ui] != NodeType::OUTFALL);
+        // Same eligibility rule as DW (nodeCanPond). A 2D-coupled junction's
+        // footprint is assigned by the 2D router AFTER this build; see
+        // refreshNodePonding.
+        mesh.node_can_pond[ui] = static_cast<uint8_t>(nodeCanPond(ctx, ui));
         uint8_t kind = kNodeJunction;
         if (ui < ctx.nodes.is_virtual.size() && ctx.nodes.is_virtual[ui])
             kind = kNodeVirtual;

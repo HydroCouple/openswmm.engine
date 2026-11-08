@@ -10170,6 +10170,10 @@ void SWMMEngine::initHydraulics() noexcept {
         if (split_ && split_->spatial_sources)
             surface_router_.checkpoint_owned_initialization_=true;
         surface_router_.initialize(ctx_);
+        // The 2D router has just assigned each coupled junction's ponding
+        // footprint (ctx_.nodes.ponded_area, ctx_.coupled_node). Dynamic wave
+        // reads those live; the FV mesh copied them at init and must re-read.
+        router_.refreshFvNodePonding(ctx_);
         if (!ctx_.options.ignore_2d && surface_router_.options().groundwater != 0 &&
             !surface_router_.subsurface().active() &&
             (!ctx_.reactions.subsurface_laws.empty() ||
