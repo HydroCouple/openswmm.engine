@@ -775,6 +775,22 @@ public:
      */
     double nodePondBase(int node) const noexcept { return pondBase(static_cast<std::size_t>(node)); }
 
+    /**
+     * @brief Pay a 1D->2D spill out of a node before an advance.
+     *
+     * The 2D surface takes a coupled node's spill during its co-advance, sized against the pond the
+     * node held then. Removing it here, before the structures are evaluated and the faces drain the
+     * node, gives the spill the first claim on the water it was sized against. A bucket or demoted
+     * pond loses the volume and its head follows; an active algebraic junction, whose water stands
+     * in its cells, takes it as negative carry for the next junction solve to draw from them.
+     *
+     * @param[in] node Valid non-virtual, non-outfall node index of an initialized solver.
+     * @param[in] volume Nonnegative spill (ft3).
+     * @return The volume paid (ft3): all of it for an active algebraic junction, else at most what
+     *     the node holds above its floor (pondBase). The caller leaves the rest in the lateral.
+     */
+    double debitNode(int node, double volume);
+
 private:
 
     /**

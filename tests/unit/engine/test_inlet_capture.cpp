@@ -42,6 +42,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <utility>
 
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_nodes.h>
@@ -631,6 +632,7 @@ struct CaptureRun {
     double peak_capture = 0.0;  ///< peak lateral inflow at MH1 (cfs)
     double peak_approach = 0.0; ///< peak flow in the approach conduit (cfs)
     double routing_error = 0.0; ///< raw native routing continuity error fraction
+    double flooding = 0.0;      ///< cumulative routing Flooding Loss (native units)
 };
 
 /**
@@ -688,6 +690,7 @@ CaptureRun runStreetModel(const std::string& base, const std::string& text) {
 
     swmm_engine_end(e);
     swmm_get_routing_continuity_error(e, &r.routing_error);
+    swmm_get_routing_total(e, SWMM_ROUTING_FLOODING, &r.flooding);
     swmm_engine_close(e);
     swmm_engine_destroy(e);
     r.ran = true;
@@ -747,4 +750,30 @@ TEST(InletCaptureDeck, SurchargedCaptureNodeBackflowClosesContinuity) {
             << "routing continuity error " << r.routing_error * 100.0
             << " % with a surcharged capture node, as_junction=" << as_junction;
     }
+}
+
+// The same surcharged street under FLOW_ROUTING FV, with the capture node
+// allowed to pond. The native FV solver keeps a pondable node's rim crossings
+// as pond water, so its overflow is neither a Flooding Loss nor water the
+// inlet can hand back to the street: returning it as backflow as well created
+// it (-46 % routing continuity once Flooding Loss stopped booking the kept
+// overflow), and subtracting the unbooked overflow from Flooding Loss drove
+// that row negative (-0.038 ac-ft before).
+TEST(InletCaptureDeck, PondingFvCaptureNodeKeepsItsOverflow) {
+    std::string text = streetModel(false, /*undersized_trunk=*/true);
+    for (const auto& [from, to] :
+         {std::pair<std::string, std::string>{"FLOW_ROUTING         DYNWAVE",
+                                              "FLOW_ROUTING         FV"},
+          {"ALLOW_PONDING        NO", "ALLOW_PONDING        YES"},
+          {"MH1      90.0  1.0\n", "MH1      90.0  1.0  0  0  10\n"}}) {
+        const auto at = text.find(from);
+        ASSERT_NE(at, std::string::npos) << from;
+        text.replace(at, from.size(), to);
+    }
+    const CaptureRun r = runStreetModel("street_fv_pond_surch", text);
+    ASSERT_TRUE(r.ran);
+    EXPECT_GT(r.peak_capture, 0.0) << "no flow reached the capture node";
+    EXPECT_GE(r.flooding, 0.0) << "unbooked overflow subtracted from Flooding Loss";
+    EXPECT_LT(std::fabs(r.routing_error), 0.005)
+        << "routing continuity error " << r.routing_error * 100.0 << " %";
 }

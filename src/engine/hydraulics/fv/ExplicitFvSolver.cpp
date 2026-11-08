@@ -3045,6 +3045,25 @@ double ExplicitFvSolver::capWithdrawal(std::size_t node, double balance, double 
     return balance;
 }
 
+double ExplicitFvSolver::debitNode(int n, double volume) {
+    const auto un = static_cast<std::size_t>(n);
+    if (!(volume > 0.0))
+        return 0.0;
+    if (!node_alg_.empty() && algebraicActive(n)) {
+        // The carry is the junction's whole water account (settleAlgebraicNode);
+        // its next solve draws a negative carry from the incident cells.
+        node_carry_[un] -= volume;
+        state_->node_volume[un] = std::max(0.0, node_carry_[un]);
+        return volume;
+    }
+    const double paid = std::min(volume, std::max(0.0, state_->node_volume[un] - pondBase(un)));
+    const double vol = state_->node_volume[un] - paid;
+    // Head from volume, the pair advance()'s reseed round-trips exactly.
+    state_->node_volume[un] = vol;
+    state_->node_head[un] = mesh_->node_invert[un] + nodeDepthFromVolume(n, vol);
+    return paid;
+}
+
 void ExplicitFvSolver::bookFaceWater(int f, double dt) {
     const auto uf=static_cast<std::size_t>(f);
     water_.face(uf,f_mass_[uf]*dt);

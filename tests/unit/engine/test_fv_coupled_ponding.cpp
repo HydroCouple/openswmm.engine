@@ -273,6 +273,150 @@ TEST(FvCoupledPonding, APondingJunctionConservesWithoutAnySurface) {
     EXPECT_GT(fv.peak_depth, 1.5) << "the junction never ponded";
 }
 
+namespace {
+/**
+ * @brief A CSO weir chamber in miniature (G70F62Y -> G70F62X on Bellinge): J00 -> C0 -> J0 ->
+ *        transverse weir W1 -> J1 -> 0.3 m pipe C1 -> FREE outfall O1. J0 and J1 are weir ends
+ *        (bucket nodes); every junction is coupled to the flat pan at J1's rim, so every one can
+ *        pond and none can lose water as flooding. 13 s routing steps (ROUTING_STEP 20,
+ *        VARIABLE_STEP 0.65), so each 20 s 2D batch spans two of them.
+ * @return Owned forty-minute CMS deck.
+ */
+std::string chamberDeck() {
+    const double h = 10.0 / kN;
+    std::ostringstream m;
+    m << "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING FV\nSTART_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
+         "END_DATE 01/01/2026\nEND_TIME 00:40:00\nREPORT_STEP 00:01:00\nROUTING_STEP 20\n"
+         "VARIABLE_STEP 0.65\nALLOW_PONDING NO\n\n"
+         "[JUNCTIONS]\nJ00 1.0 30.0 0 0 0\nJ0 0.0 2.0 0 0 0\nJ1 0.0 1.0 0 0 0\n\n"
+         "[OUTFALLS]\nO1 -0.5 FREE NO\n\n"
+         "[CONDUITS]\nC0 J00 J0 20.0 0.013 0 0 0\nC1 J1 O1 30.0 0.013 0 0 0\n\n"
+         "[WEIRS]\nW1 J0 J1 TRANSVERSE 0.2 1.84 NO 0 0 NO\n\n"
+         "[XSECTIONS]\nC0 CIRCULAR 0.6 0 0 0 1\nC1 CIRCULAR 0.3 0 0 0 1\nW1 RECT_OPEN 1.0 2.0 0 0\n\n"
+         "[INFLOWS]\nJ00 FLOW IN_TS FLOW 1.0 1.0\n\n"
+         "[TIMESERIES]\n"
+         "IN_TS 0:00 0.0\nIN_TS 0:02 1.0\nIN_TS 0:08 1.0\nIN_TS 0:09 0.0\n"
+         "IN_TS 0:14 0.0\nIN_TS 0:15 1.0\nIN_TS 0:20 1.0\nIN_TS 0:21 0.0\nIN_TS 0:40 0.0\n\n"
+         "[REPORT]\nCONTINUITY YES\n\n"
+         "[2D_OPTIONS]\nMAX_TIMESTEP 1\nDRY_DEPTH 0.002\nREPORT_2D NO\n\n[2D_VERTICES]\n";
+    for (int j = 0; j <= kN; ++j)
+        for (int i = 0; i <= kN; ++i)
+            m << i * h << " " << j * h << " 1.0\n";
+    m << "\n[2D_TRIANGLES]\n";
+    auto v = [](int i, int j) { return j * (kN + 1) + i; };
+    for (int j = 0; j < kN; ++j)
+        for (int i = 0; i < kN; ++i) {
+            m << v(i, j) << " " << v(i + 1, j) << " " << v(i + 1, j + 1) << " 0.03\n";
+            m << v(i, j) << " " << v(i + 1, j + 1) << " " << v(i, j + 1) << " 0.03\n";
+        }
+    m << "\n[2D_VERTEX_NODE_MAP]\n"
+      << kVertex << " J1\n" << kVertex - 3 << " J0\n" << kVertex - 33 << " J00\n";
+    return m.str();
+}
+} // namespace
+
+// The 2D takes a spill during its batch, sized against the pond the chamber
+// held then, and the 1D owes it from that pond. Paid as a lateral over the
+// next two steps, the pipe and the weir spent the pond first and the bucket
+// floor raised the shortfall (349 m3 created here); and every rim crossing the
+// ponds kept was also booked as Flooding Loss (44 m3). Routing continuity read
+// -14.19 % while the 2D closed (engine CLI on this deck). Delivering the spill
+// in one step without paying it out of the pond first still read -1.27 %
+// (-1.55 % stepped through the API, as here).
+TEST(FvCoupledPonding, ASpillingWeirChamberNeitherCreatesNorLosesWater) {
+    fs::create_directories(kOut);
+    const fs::path inp = kOut / "chamber.inp";
+    { std::ofstream f(inp); f << chamberDeck(); }
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e, inp.string().c_str(), (kOut / "chamber.rpt").string().c_str(), "",
+                               nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(e, 0), SWMM_OK);
+    double elapsed = 0.0;
+    while (swmm_engine_step(e, &elapsed) == SWMM_OK && elapsed > 0.0) {
+    }
+    swmm_engine_end(e);
+    double spilled = 0.0, cont_2d = 0.0, cont = 0.0, flooding = -1.0, inflow = 0.0;
+    swmm_2d_get_mass_balance(e, nullptr, nullptr, nullptr, &spilled, nullptr, nullptr, nullptr,
+                             nullptr, nullptr, nullptr);
+    swmm_2d_get_continuity_error(e, &cont_2d);
+    swmm_get_routing_continuity_error(e, &cont);
+    swmm_get_routing_total(e, SWMM_ROUTING_FLOODING, &flooding);
+    swmm_get_routing_total(e, SWMM_ROUTING_EXTERNAL, &inflow);
+    // The report's per-node flow balance at the two weir ends: a spill paid
+    // out of the pond and a kept rim crossing must both close it.
+    const auto& nodes = static_cast<openswmm::SWMMEngine*>(e)->context().nodes;
+    double worst_node = 0.0;
+    for (const char* name : {"J0", "J1"}) {
+        const auto u = static_cast<std::size_t>(swmm_node_index(e, name));
+        const double in = nodes.stat_total_inflow_vol[u];
+        if (in > 0.0)
+            worst_node = std::max(
+                worst_node,
+                std::fabs(1.0 - (nodes.stat_total_outflow_vol[u] + nodes.volume[u]) / in));
+    }
+    swmm_engine_report(e);
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+    std::printf("[fv-chamber] spilled %.2f m3, flooding/inflow %.5f, continuity 2D %.5f routing "
+                "%.5f, worst weir-end node balance %.6f\n",
+                spilled, inflow > 0.0 ? flooding / inflow : -1.0, cont_2d, cont, worst_node);
+    ASSERT_GT(spilled, 100.0) << "the chamber never spilled";
+    EXPECT_LT(std::fabs(cont_2d), 1.0e-4);
+    // Every junction ponds, so no water can leave as flooding.
+    EXPECT_EQ(flooding, 0.0) << "kept rim crossings booked as Flooding Loss";
+    EXPECT_LT(std::fabs(cont), 1.0e-3) << "the chamber created water";
+    EXPECT_LT(worst_node, 1.0e-4) << "a weir end's node flow balance does not close";
+}
+
+// A sealed bucket (a weir end, no ponding) with a surcharge depth floods once
+// its head passes rim + SurDepth: the solver clamps it there and removes the
+// excess. Its volume then stands above full volume, so the old rule (book
+// overflow only when the step ends at or below full volume) never booked that
+// water: +65.5 % routing continuity on this deck. The native FV solver now
+// books every overflow at a node that cannot pond.
+TEST(FvFloodingLoss, ASealedBucketWithSurchargeDepthBooksItsFlooding) {
+    fs::create_directories(kOut);
+    const fs::path inp = kOut / "sealed_surdepth.inp";
+    {
+        std::ofstream f(inp);
+        f << "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING FV\nSTART_DATE 01/01/2026\n"
+             "START_TIME 00:00:00\nEND_DATE 01/01/2026\nEND_TIME 00:40:00\n"
+             "REPORT_STEP 00:01:00\nROUTING_STEP 2\nALLOW_PONDING NO\n\n"
+             "[JUNCTIONS]\nJ00 1.0 5.0 0 0 0\nJ0 0.0 2.0 0 0 0\nJ1 0.0 1.0 0 0.5 0\n\n"
+             "[OUTFALLS]\nO1 -0.5 FREE NO\n\n"
+             "[CONDUITS]\nC0 J00 J0 20.0 0.013 0 0 0\nC1 J1 O1 30.0 0.013 0 0 0\n\n"
+             "[WEIRS]\nW1 J0 J1 TRANSVERSE 0.2 1.84 NO 0 0 NO\n\n"
+             "[XSECTIONS]\nC0 CIRCULAR 0.6 0 0 0 1\nC1 CIRCULAR 0.2 0 0 0 1\n"
+             "W1 RECT_OPEN 1.0 2.0 0 0\n\n"
+             "[INFLOWS]\nJ00 FLOW IN_TS FLOW 1.0 1.0\n\n"
+             "[TIMESERIES]\n"
+             "IN_TS 0:00 0.0\nIN_TS 0:02 0.3\nIN_TS 0:08 0.3\nIN_TS 0:09 0.0\n"
+             "IN_TS 0:14 0.0\nIN_TS 0:15 0.3\nIN_TS 0:20 0.3\nIN_TS 0:21 0.0\nIN_TS 0:40 0.0\n";
+    }
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e, inp.string().c_str(),
+                               (kOut / "sealed_surdepth.rpt").string().c_str(), "", nullptr),
+              SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(e, 0), SWMM_OK);
+    double elapsed = 0.0;
+    while (swmm_engine_step(e, &elapsed) == SWMM_OK && elapsed > 0.0) {
+    }
+    swmm_engine_end(e);
+    double cont = 0.0, flooding = 0.0, inflow = 0.0;
+    swmm_get_routing_continuity_error(e, &cont);
+    swmm_get_routing_total(e, SWMM_ROUTING_FLOODING, &flooding);
+    swmm_get_routing_total(e, SWMM_ROUTING_EXTERNAL, &inflow);
+    swmm_engine_report(e);
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+    std::printf("[fv-sealed-surdepth] flooding/inflow %.4f, routing continuity %.5f\n",
+                inflow > 0.0 ? flooding / inflow : -1.0, cont);
+    EXPECT_GT(flooding, 0.1 * inflow) << "the sealed weir end never flooded";
+    EXPECT_LT(std::fabs(cont), 1.0e-3) << "flooding the clamp removed was not booked";
+}
+
 // The same junction, with the run ending mid-pulse while it ponds. Stored
 // volume must count the pond only: the junction's nominal below-rim volume
 // (MIN_SURFAREA x 1 m = 1.17 m3, not water) used to be reported with it, -3 %

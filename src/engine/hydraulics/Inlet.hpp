@@ -48,6 +48,7 @@
 #define OPENSWMM_INLET_HPP
 
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 namespace openswmm {
@@ -546,8 +547,12 @@ public:
      *     nodes.lat_flow and reads previous link flows/overflow.
      * @param[in] dt Positive finite routing interval seconds for donor-volume caps and cumulative
      *     volumes.
+     * @param[in] overflow_kept Optional: true for a capture node that keeps its overflow as pond
+     *     water (a pondable node on the native FV solver); its inlets return no backflow. Empty
+     *     keeps legacy's rule.
      */
-    void computeAll(SimulationContext& ctx, double dt);
+    void computeAll(SimulationContext& ctx, double dt,
+                    const std::function<bool(int)>& overflow_kept = {});
 
     /**
      * @brief Add pollutant inflow volume and mass-rate contributions for net inlet exchange.
@@ -575,8 +580,12 @@ public:
      * @param[in,out] ctx Borrowed aligned current overflow/concentration and mass-balance arrays;
      *     updates global water/pollutant flood totals.
      * @param[in] dt Routing seconds; water volume q*dt ft3 and pollutant ledger q*concentration*dt.
+     * @param[in] overflow_kept Optional: true for a node whose overflow the routing ledger did not
+     *     book because the node kept it (a pondable node on the native FV solver); its overflow is
+     *     not subtracted. Empty keeps legacy's unconditional rule.
      */
-    void adjustFloodingTotals(SimulationContext& ctx, double dt) const;
+    void adjustFloodingTotals(SimulationContext& ctx, double dt,
+                              const std::function<bool(int)>& overflow_kept = {}) const;
 
     /**
      * @brief Publish retained inlet statistics to model usage and reporting stores.

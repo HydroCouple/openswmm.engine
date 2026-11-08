@@ -1583,6 +1583,7 @@ void Router::initFv(SimulationContext& ctx) {
 
 
     fv_lateral_.assign(static_cast<std::size_t>(nn), 0.0);
+    fv_spill_debit_.assign(static_cast<std::size_t>(nn), 0.0);
     fv_fixed_head_.assign(static_cast<std::size_t>(nn), std::numeric_limits<double>::quiet_NaN());
     fv_struct_flow_.assign(static_cast<std::size_t>(ctx.n_links()), 0.0);
     fv_cond_loss_.assign(static_cast<std::size_t>(fv_mesh_.n_conduits()), 0.0);
@@ -1676,6 +1677,36 @@ int Router::stepFv(SimulationContext& ctx, double dt,
             }
         }
     };
+    // Spill first. The 2D surface took this 1D->2D spill during the co-advance
+    // that just ended, sized against the pond the node held then
+    // (ExplicitInertialSolver: spill <= volume - full_volume), and the engine
+    // delivers it in this one step (assembleLateralInflows). Pay it out of the
+    // node now, before the structures are evaluated and the faces drain it. As
+    // a lateral it was paid last, after the pipes and weirs had spent the same
+    // pond, and the bucket floor raised the shortfall from nothing: 278,295 m3
+    // created on the coupled Bellinge 48 h run, 96 % at the CSO chamber
+    // G70F62Y/G70F62X. A negative coupling inflow can also carry the 2D
+    // aquifer's node exchange, which is not sized against stored water:
+    // debitNode pays only what the node holds above its floor, and the rest
+    // stays in the lateral, paid with the step's inflow as before.
+    if (native && dt > 0.0) {
+        for (int n = 0; n < nn; ++n) {
+            const auto un = static_cast<std::size_t>(n);
+            fv_spill_debit_[un] = 0.0;
+            const double spill = -ctx.nodes.coupling_inflow[un] * dt;
+            if (!(spill > 0.0) || ctx.nodes.type[un] == NodeType::OUTFALL ||
+                fv_mesh_.node_kind[un] == fv::kNodeVirtual)
+                continue;
+            const double paid = native->debitNode(n, spill);
+            fv_lateral_[un] += paid / dt;
+            fv_spill_debit_[un] = paid;
+            // The structures read the published state.
+            ctx.nodes.head[un] = fv_state_.node_head[un];
+            ctx.nodes.depth[un] = std::max(0.0, fv_state_.node_head[un] - ctx.nodes.invert_elev[un]);
+            ctx.nodes.volume[un] = fv_state_.node_volume[un];
+        }
+    }
+
     std::fill(fv_struct_int_.begin(), fv_struct_int_.end(), 0.0);
     fv_struct_t_prev_ = 0.0;
     evaluate_structures();
@@ -1914,9 +1945,21 @@ bool Router::fvJunctionHoldsWater(int node) const noexcept {
 
 double Router::fvPondBase(int node) const noexcept {
     const auto* impl = dynamic_cast<const fv::ExplicitFvSolver*>(fv_solver_.get());
-    if (!impl || node < 0 || node >= fv_mesh_.n_nodes())
+    if (model_ != RouteModel::FV || !impl || node < 0 || node >= fv_mesh_.n_nodes())
         return 0.0;
     return impl->nodePondBase(node);
+}
+
+bool Router::fvNative() const noexcept {
+    // The model check: a handle reopened on a DW deck keeps the old FV solver.
+    return model_ == RouteModel::FV &&
+           dynamic_cast<const fv::ExplicitFvSolver*>(fv_solver_.get()) != nullptr;
+}
+
+bool Router::fvNodeKeepsOverflow(int node) const noexcept {
+    if (!fvNative() || node < 0 || node >= fv_mesh_.n_nodes())
+        return false;
+    return fv_mesh_.node_can_pond[static_cast<std::size_t>(node)] != 0;
 }
 
 void Router::refreshFvStructureFlows(SimulationContext& ctx,
@@ -2345,7 +2388,7 @@ void Router::acceptedQualityWater(const SimulationContext& ctx, double dt,
             out.boundary_imports.push_back({i,i,out.withdrawal[i]});
             w.source_volume[i]+=out.withdrawal[i];
         }
-        w.exported[i]=out.withdrawal[i]+out.flooding[i];
+        w.exported[i]=out.withdrawal[i]+out.flooding[i]+fv_spill_debit_[i];
     }
     for(std::size_t j=0;j<nl;++j) {
         if(ctx.links.type[j]!=LinkType::CONDUIT || ctx.links.xsect_shape[j]==XsectShape::DUMMY)continue;

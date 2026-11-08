@@ -5662,7 +5662,9 @@ void SWMMEngine::accumulateNodeRoutingTotals(double half_step) noexcept {
             ctx_.nodes.stat_total_outflow_vol[uj] += qin * half_step;
         } else {
             ctx_.nodes.stat_total_outflow_vol[uj] += ctx_.nodes.outflow[uj] * half_step;
-            if (ctx_.nodes.volume[uj] <= ctx_.nodes.full_volume[uj])
+            // Same rule as the routing ledger (updateRoutingMassBalance).
+            if (router_.fvNative() ? !router_.fvNodeKeepsOverflow(j)
+                                   : ctx_.nodes.volume[uj] <= ctx_.nodes.full_volume[uj])
                 ctx_.nodes.stat_total_outflow_vol[uj] += ctx_.nodes.overflow[uj] * half_step;
         }
     }
@@ -6237,11 +6239,24 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
             // junction, so a ponded one is never booked as flooding —
             // 304-nodes-234-subs under KW booked a ponded junction's
             // overflow as FLOOD_LOSSES against the MIN_SURFAREA full volume);
-            // FV books it against full_volume.
+            // FV plugin backends book it against full_volume.
+            //
+            // The native FV solver books exactly the water it removed:
+            // overflow at a node that cannot pond (sealed clamp, sealed
+            // algebraic junction, non-pondable lateral spill) is a loss
+            // whatever volume the step ended at, and a node that can pond keeps
+            // every rim crossing as pond water, its overflow only a report
+            // quantity (Node Flooding Summary). The volume test booked the kept
+            // crossings of every step that ended at or below the rim (44,763 m3
+            // of phantom Flooding Loss on the coupled Bellinge 48 h run, where
+            // every junction can pond) and missed a sealed bucket clamped above
+            // full volume by its surcharge depth.
             const double full_vol = (ctx_.options.routing_model == RoutingModel::FV)
                                         ? ctx_.nodes.full_volume[uj]
                                         : ctx_.nodes.rpt_full_volume[uj];
-            if (ctx_.nodes.overflow[uj] > 0.0 && ctx_.nodes.volume[uj] <= full_vol) {
+            const bool is_loss = router_.fvNative() ? !router_.fvNodeKeepsOverflow(j)
+                                                    : ctx_.nodes.volume[uj] <= full_vol;
+            if (ctx_.nodes.overflow[uj] > 0.0 && is_loss) {
                 quality_outflow = ctx_.nodes.overflow[uj];
                 quality_flooding = true;
                 ctx_.mass_balance.routing_flooding += ctx_.nodes.overflow[uj] * dt_routing;
@@ -6296,7 +6311,8 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
     // the flooding total just booked. Legacy's slot exactly: routing.c:259-260
     // runs removeSystemOutflows() then inlet_adjustQualOutflows(); the node
     // statistics (updateStatistics) run after both, as stats_updateFlowStats.
-    inlet_.adjustFloodingTotals(ctx_, dt_routing);
+    inlet_.adjustFloodingTotals(ctx_, dt_routing,
+                                [this](int j) { return router_.fvNodeKeepsOverflow(j); });
 
     // Accumulate link evaporation and seepage losses
     for (int j = 0; j < ctx_.n_links(); ++j) {
@@ -11703,6 +11719,7 @@ void SWMMEngine::assembleLateralInflows(double dt_routing) noexcept {
     double sum_rdii = 0.0;
     double sum_ext = 0.0;
     double sum_wd = 0.0; // withdrawals: negative external inflows (legacy: outflow)
+    const bool spill_first = router_.fvNative();
 
     for (int j = 0; j < ctx_.n_nodes(); ++j) {
         auto uj = static_cast<std::size_t>(j);
@@ -11720,10 +11737,18 @@ void SWMMEngine::assembleLateralInflows(double dt_routing) noexcept {
         // arrives (jitter leftovers carry over in the queue). When the 2D
         // co-advance spans a single routing step, remaining ≤ dt on the first
         // delivery step and this is byte-for-byte a one-step delivery.
+        //
+        // Under the native FV solver a queued SPILL (1D -> 2D, negative) is
+        // the exception: the 2D has already moved that water, sized against
+        // the pond the node held at the batch, so the router pays it out of
+        // the pond at the start of the next step (Router::stepFv, spill
+        // first) and it is delivered in that one step. Spread over the span,
+        // the node's pipes and weirs spent the pond before the spill was paid.
         {
             double q_couple = 0.0;
             if (dt_routing > 0.0 && ctx_.nodes.coupling_queue[uj] != 0.0) {
-                if (ctx_.coupling_delivery_remaining > dt_routing) {
+                if (ctx_.coupling_delivery_remaining > dt_routing &&
+                    !(spill_first && ctx_.nodes.coupling_queue[uj] < 0.0)) {
                     q_couple = ctx_.nodes.coupling_queue[uj] / ctx_.coupling_delivery_remaining;
                     ctx_.nodes.coupling_queue[uj] -= q_couple * dt_routing;
                 } else {
@@ -11893,7 +11918,8 @@ void SWMMEngine::assembleLateralInflows(double dt_routing) noexcept {
     // "called after regular lateral flows to all nodes have been set but
     // before a flow routing step has been taken"). Not a mass-balance source:
     // both sides of the transfer stay inside the system.
-    inlet_.computeAll(ctx_, dt_routing);
+    inlet_.computeAll(ctx_, dt_routing,
+                      [this](int j) { return router_.fvNodeKeepsOverflow(j); });
 }
 
 // ============================================================================
@@ -12021,9 +12047,9 @@ double SWMMEngine::reportedNodeVolume(int i, double depth, double volume) const 
     // base put every junction that ended a run at or above its rim into Final
     // Stored Volume twice: -5.5 % routing continuity on the coupled Bellinge
     // window (498 junctions, 1,378 of 1,384 m3), -13.8 % on the 1D model with
-    // ponding allowed. The published node volume keeps the base, which the
-    // flooding rule in updateRoutingMassBalance relies on (ponded => volume >
-    // full volume). A junction not ponding reports 0, the convention below.
+    // ponding allowed. The published node volume keeps the base: the node
+    // flood-time statistic (volume > full volume) reads it. A junction not
+    // ponding reports 0, the convention below.
     if (const double base = router_.fvPondBase(i); base > 0.0)
         return volume > base ? volume - base : 0.0;
     double fd = ctx_.nodes.full_depth[ui];

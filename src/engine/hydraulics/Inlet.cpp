@@ -947,7 +947,8 @@ void InletSolver::init(SimulationContext& ctx) {
 // computeAll() — capture, backflow and the lateral-flow coupling
 // ============================================================================
 
-void InletSolver::computeAll(SimulationContext& ctx, double dt) {
+void InletSolver::computeAll(SimulationContext& ctx, double dt,
+                             const std::function<bool(int)>& overflow_kept) {
     const int ni = soa_.count;
     if (ni == 0)
         return;
@@ -1062,8 +1063,12 @@ void InletSolver::computeAll(SimulationContext& ctx, double dt) {
         soa_.flow_capture[ui] = qc;
         node_inlet_flow_[static_cast<std::size_t>(host)] += qc;
 
-        // --- capture node's overflow becomes the inlet's backflow
-        double qbf = nodes.overflow[static_cast<std::size_t>(capture)] * soa_.backflow_ratio[ui];
+        // --- capture node's overflow becomes the inlet's backflow, unless the
+        // node kept it (a pondable node on the native FV solver holds it as
+        // pond water: returning it to the street as well created it)
+        double qbf = (overflow_kept && overflow_kept(capture))
+                         ? 0.0
+                         : nodes.overflow[static_cast<std::size_t>(capture)] * soa_.backflow_ratio[ui];
         if (std::fabs(qbf) < INLET_FUDGE)
             qbf = 0.0;
         soa_.backflow[ui] = qbf;
@@ -1285,7 +1290,8 @@ void InletSolver::adjustQualInflows(SimulationContext& ctx, double dt) {
 // adjustFloodingTotals() — legacy inlet_adjustQualOutflows (inlet.c:706)
 // ============================================================================
 
-void InletSolver::adjustFloodingTotals(SimulationContext& ctx, double dt) const {
+void InletSolver::adjustFloodingTotals(SimulationContext& ctx, double dt,
+                                       const std::function<bool(int)>& overflow_kept) const {
     const int ni = soa_.count;
     if (ni == 0)
         return;
@@ -1328,6 +1334,9 @@ void InletSolver::adjustFloodingTotals(SimulationContext& ctx, double dt) const 
             continue;
         const double q = nodes.overflow[uj];
         if (q <= 0.0)
+            continue;
+        // Nothing was booked for an overflow the node kept (pondable FV node).
+        if (overflow_kept && overflow_kept(j))
             continue;
         mb.routing_flooding -= q * dt;
         mb.step_flooding -= q;

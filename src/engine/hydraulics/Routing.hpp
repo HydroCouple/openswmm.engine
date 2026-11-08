@@ -400,6 +400,29 @@ public:
      */
     double fvPondBase(int node) const noexcept;
 
+    /**
+     * @brief Tell whether the current model routes with the native FV solver.
+     *
+     * On it, stepFv pays a node's 1D->2D spill out of the node before the advance (so the engine
+     * delivers a queued spill in one step), and a node's overflow is a loss exactly where the solver
+     * removed it (fvNodeKeepsOverflow false).
+     *
+     * @return True when the routing model is FV and the backend is ExplicitFvSolver.
+     */
+    bool fvNative() const noexcept;
+
+    /**
+     * @brief Tell whether the native FV solver keeps a node's rim crossings as pond water.
+     *
+     * Such a node's overflow is a report quantity (Node Flooding Summary), not a loss: the routing
+     * ledger must not book it as Flooding Loss.
+     *
+     * @param[in] node Node index, not validated beyond a loaded mesh.
+     * @return True for a pondable node on the native solver; false otherwise, including other
+     *     backends, whose overflow keeps the legacy booking rule.
+     */
+    bool fvNodeKeepsOverflow(int node) const noexcept;
+
     /// Backend label chosen by the FV factory ("cpu (...)", "omp (...)", ...).
     const std::string& fvBackend() const { return fv_backend_; }
 
@@ -630,6 +653,10 @@ private:
 
     // Per-step forcing buffers, allocated once at init.
     std::vector<double> fv_lateral_, fv_fixed_head_, fv_struct_flow_, fv_cond_loss_;
+
+    /// This step's 1D->2D spill paid out of each node before the advance (ft3), exported from
+    /// the node in the conservative quality water graph.
+    std::vector<double> fv_spill_debit_;
 
     /// Per-link cap on a DUMMY link's pass-through discharge: the control
     /// setting and FLOW_LIMIT, which the solver cannot see. Negative means
