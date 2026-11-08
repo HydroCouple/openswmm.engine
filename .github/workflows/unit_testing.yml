@@ -134,6 +134,8 @@ jobs:
       # tests and the BoomerAMG path are always built+exercised here even if an
       # upstream default flips (find_package(Kokkos/HYPRE REQUIRED) → configure
       # fails loudly rather than silently dropping Kokkos/AMG).
+      # With CMP0184 NEW, CMake adds /RTC1 separately from *_FLAGS_DEBUG.
+      # Disable it for this optimized Debug build: MSVC rejects /RTC1 with /O1.
       - name: Configure
         run: >
           cmake
@@ -146,6 +148,7 @@ jobs:
           -DOPENSWMM_GPU_BACKEND=omp
           -DOPENSWMM_WITH_HYPRE=ON
           -DOPENSWMM_WITH_GEOPACKAGE=ON
+          ${{ runner.os == 'Windows' && '-DCMAKE_MSVC_RUNTIME_CHECKS=' || '' }}
           "-DCMAKE_C_FLAGS_DEBUG=${{ runner.os == 'Windows' && '/Zi /O1 /DDEBUG' || '-O1 -g -DDEBUG' }}"
           "-DCMAKE_CXX_FLAGS_DEBUG=${{ runner.os == 'Windows' && '/Zi /O1 /DDEBUG' || '-O1 -g -DDEBUG' }}"
           -DCMAKE_OSX_ARCHITECTURES=${{ matrix.cmake_osx_arch }}

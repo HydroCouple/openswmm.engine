@@ -849,16 +849,13 @@ TEST(FvEngine, PondedNodeStillReportsItsFloodingRate) {
 // FV flooded at the rim regardless, so a bolted manhole lost water it should
 // have held.
 //
-// Re-based 2026-09-11 (closure-kernel program) onto the implicit pressurized
-// head update and onto the level itself: on the EXPLICIT slot path this
-// 10-cfs-into-a-0.5-ft-pipe fixture is a startup transient whose flooded
-// volume differed by 3 % between the two SURCHARGE_DEPTH values and flipped
-// sign with the cross-section closure (the sealed run's head spiked to 80 ft
-// on the way). Under FV_PRESSURIZED_IMPLICIT the sealed node stands at rim +
-// SURCHARGE_DEPTH (10.15 ft against the flush run's 5.45) and floods less,
-// which is the property the column is supposed to buy.
+// Use the implicit pressurized update and resolve this severely overloaded
+// 0.5 ft pipe with 32 cells. The default four-cell mesh makes the flooding
+// comparison sensitive to startup and roundoff (it reverses with the time
+// step or CFL). At CFL 0.5, refinement to 32/64 cells approaches the 4/10 ft
+// flooding ceilings and preserves the expected flooded-volume ordering.
 TEST(FvEngine, SurchargeDepthDelaysFlooding) {
-    const char* imp = "FV_PRESSURIZED_IMPLICIT YES\n";
+    const char* imp = "FV_PRESSURIZED_IMPLICIT YES\nFV_MIN_CELLS 32\nFV_CFL 0.5\n";
     const RunResult flush = runModel(writeCapacityModel("sur_none", "FV", "NO", 0.0, 0.0, imp));
     const RunResult sealed = runModel(writeCapacityModel("sur_deep", "FV", "NO", 6.0, 0.0, imp));
     ASSERT_TRUE(flush.parsed);
@@ -867,11 +864,8 @@ TEST(FvEngine, SurchargeDepthDelaysFlooding) {
 
     // The sealed node must actually use its column: its level stands well
     // above the 4 ft rim (rim + 6 ft = 10 ft is the ceiling), and the flush
-    // node cannot follow it there. On the AVERAGE depth: both runs open with
-    // a one-record startup overshoot at t = 0 (10 cfs into a dry 0.5 ft pipe
-    // through a node with no storage — 23–47 ft on the first report line,
-    // then 2.7 / 8.1 ft for the rest of the run), which the maximum would
-    // read instead of the column. That overshoot is a separate open item.
+    // node cannot follow it there. Use the average depth so a startup peak
+    // cannot satisfy the sealed-column check on its own.
     const double d0 = flush.avg_depth.at("JA");
     const double d6 = sealed.avg_depth.at("JA");
     EXPECT_GT(d6, 4.0 + 0.5 * 6.0)
@@ -882,8 +876,11 @@ TEST(FvEngine, SurchargeDepthDelaysFlooding) {
     const double f0 = routingRow(outDir() + "/sur_none.rpt", "Flooding Loss");
     const double f6 = routingRow(outDir() + "/sur_deep.rpt", "Flooding Loss");
     ASSERT_GT(f0, 0.0) << "fixture never flooded";
+    ASSERT_GT(f6, 0.0) << "sealed fixture never flooded";
     EXPECT_LT(f6, f0) << "SURCHARGE_DEPTH 6 ft flooded as much as 0 ft — the "
                          "column is being ignored";
+    EXPECT_LT(std::fabs(flush.continuity_pct), 0.5)
+        << "flush routing continuity " << flush.continuity_pct << " %";
     EXPECT_LT(std::fabs(sealed.continuity_pct), 0.5)
         << "routing continuity " << sealed.continuity_pct << " %";
 }
