@@ -2,6 +2,7 @@
 // Copyright 2026 Caleb Buahin
 #include <gtest/gtest.h>
 #include "core/SWMMEngine.hpp"
+#include "core/FileIO.hpp"
 #include "core/CheckpointInspection.hpp"
 #include "quality/LivePassiveStorageExchange.hpp"
 #include "2d/coupling/NodeCoupling.hpp"
@@ -54,7 +55,7 @@ std::string model(bool positive,bool tail) {
 void start(SWMMEngine& e,const std::string& tag,const std::string& input,bool checkpoint=true,bool attach=true,
            bool preflight=false,std::size_t capacity=4096) {
     std::ofstream(evidence(tag+".inp"))<<input;
-    ASSERT_EQ(e.open(evidence(tag+".inp").c_str(),evidence(tag+".rpt").c_str(),nullptr),SWMM_OK);
+    ASSERT_EQ(e.open(io::path_utf8(evidence(tag+".inp")).c_str(),io::path_utf8(evidence(tag+".rpt")).c_str(),nullptr),SWMM_OK);
     ASSERT_EQ(e.initialize(),SWMM_OK);ASSERT_EQ(e.start(0),SWMM_OK);
     if(!attach)return;
     auto error=e.attachLiveChangingVolumeExchange(capacity,preflight);ASSERT_TRUE(error.empty())<<error;

@@ -2,6 +2,7 @@
 // Copyright 2026 Caleb Buahin
 #include <gtest/gtest.h>
 #include "core/SWMMEngine.hpp"
+#include "core/FileIO.hpp"
 #include "core/CompletedSourceArchive.hpp"
 #include "core/CheckpointInspection.hpp"
 #include "live_passive_recovery_test_support.hpp"
@@ -57,7 +58,7 @@ std::string model(bool positive) {
 }
 void start(SWMMEngine& e, const std::string& name, const std::string& input, bool checkpoint=true) {
     std::ofstream(evidence(name+".inp")) << input;
-    ASSERT_EQ(e.open(evidence(name+".inp").c_str(), evidence(name+".rpt").c_str(), nullptr), SWMM_OK);
+    ASSERT_EQ(e.open(io::path_utf8(evidence(name+".inp")).c_str(), io::path_utf8(evidence(name+".rpt")).c_str(), nullptr), SWMM_OK);
     ASSERT_EQ(e.initialize(), SWMM_OK);
     ASSERT_EQ(e.start(0), SWMM_OK);
     if (checkpoint) { const auto error=e.enableCoupledWaterCheckpointing(); ASSERT_TRUE(error.empty()) << error; }
