@@ -188,9 +188,9 @@ TEST(FvCoupledPonding, ACoupledJunctionPondsOnTheSurfaceFootprint) {
     EXPECT_LT(fv.mean_hgl_gap, 0.05) << "J1 head does not follow the 2D surface";
     EXPECT_LT(fv.worst_hgl_gap, 0.25);
     EXPECT_LT(std::fabs(fv.cont_2d), 0.01);
-    // The routing ledger closes to the one phantom: a junction still ponded at
-    // the last step publishes v_full + pond as stored volume (1.17 m3 here).
-    EXPECT_LT(std::fabs(fv.cont_routing), 0.03);
+    // J1 ends the run at its rim, still a pond: its stored volume is the pond
+    // alone (the phantom base read as -1.5 % here before reporting dropped it).
+    EXPECT_LT(std::fabs(fv.cont_routing), 0.005);
 }
 
 // Same footprint, same physics: FV and dynamic wave pond J1 to the same depth
@@ -205,11 +205,13 @@ TEST(FvCoupledPonding, FvAndDynamicWaveAgreeOnThePond) {
 }
 
 namespace {
-std::string pondOnlyDeck(const char* routing) {
+std::string pondOnlyDeck(const char* routing, const char* end_time = "00:40:00") {
     std::ostringstream m;
     m << "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING " << routing
       << "\nSTART_DATE 01/01/2026\n"
-         "START_TIME 00:00:00\nEND_DATE 01/01/2026\nEND_TIME 00:40:00\nREPORT_STEP 00:01:00\n"
+         "START_TIME 00:00:00\nEND_DATE 01/01/2026\nEND_TIME "
+      << end_time
+      << "\nREPORT_STEP 00:01:00\n"
          "ROUTING_STEP 2\nALLOW_PONDING YES\n\n"
          "[JUNCTIONS]\nJ1 0.0 1.0 0 0 1.0\n\n[OUTFALLS]\nO1 -0.5 FREE NO\n\n"
          "[CONDUITS]\nC1 J1 O1 30.0 0.013 0 0 0\n\n[XSECTIONS]\nC1 CIRCULAR 0.2 0 0 0 1\n\n"
@@ -223,12 +225,14 @@ std::string pondOnlyDeck(const char* routing) {
 struct PondOnly {
     double peak_depth = 0.0, max_volume = 0.0, continuity = 0.0;
 };
-PondOnly pondOnly(const char* routing) {
+PondOnly pondOnly(const char* routing, const char* end_time = "00:40:00") {
     PondOnly out;
     fs::create_directories(kOut);
-    const std::string tag = std::string("pond_only_") + routing;
+    std::string tag = std::string("pond_only_") + routing;
+    if (std::string(end_time) != "00:40:00")
+        tag += "_ends_ponded";
     const fs::path inp = kOut / (tag + ".inp");
-    { std::ofstream f(inp); f << pondOnlyDeck(routing); }
+    { std::ofstream f(inp); f << pondOnlyDeck(routing, end_time); }
     SWMM_Engine e = swmm_engine_create();
     EXPECT_EQ(swmm_engine_open(e, inp.string().c_str(), (kOut / (tag + ".rpt")).string().c_str(), "", nullptr), SWMM_OK);
     EXPECT_EQ(swmm_engine_initialize(e), SWMM_OK);
@@ -267,4 +271,14 @@ TEST(FvCoupledPonding, APondingJunctionConservesWithoutAnySurface) {
     EXPECT_LT(std::fabs(fv.continuity), 0.005) << "FV pond created or lost water";
     EXPECT_NEAR(fv.peak_depth, dw.peak_depth, 0.1) << "pond depth differs between the routers";
     EXPECT_GT(fv.peak_depth, 1.5) << "the junction never ponded";
+}
+
+// The same junction, with the run ending mid-pulse while it ponds. Stored
+// volume must count the pond only: the junction's nominal below-rim volume
+// (MIN_SURFAREA x 1 m = 1.17 m3, not water) used to be reported with it, -3 %
+// routing continuity on this deck.
+TEST(FvCoupledPonding, ARunEndingWhilePondedReportsOnlyThePond) {
+    const PondOnly fv = pondOnly("FV", "00:07:00");
+    EXPECT_GT(fv.peak_depth, 1.2) << "the junction is not ponded at the end";
+    EXPECT_LT(std::fabs(fv.continuity), 0.002) << "stored volume counts more than the pond";
 }

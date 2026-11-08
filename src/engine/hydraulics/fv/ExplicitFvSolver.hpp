@@ -765,6 +765,18 @@ private:
         return (node_alg_[un] && mesh_->node_can_pond[un]) ? node_vfull_[un] : 0.0;
     }
 
+public:
+    /**
+     * @brief The non-water base carried in a ponding algebraic junction's published volume.
+     *
+     * Reporting subtracts it so stored volume counts only the pond (see pondBase).
+     * @param[in] node Valid node index of an initialized solver.
+     * @return node_vfull_ for a pondable algebraic junction, else 0 (ft3).
+     */
+    double nodePondBase(int node) const noexcept { return pondBase(static_cast<std::size_t>(node)); }
+
+private:
+
     /**
      * @brief Inspect adjacent cells for pressure-band or latched TPA state.
      *

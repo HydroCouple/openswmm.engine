@@ -12011,6 +12011,21 @@ double SWMMEngine::reportedNodeVolume(int i, double depth, double volume) const 
     // 0.34 % on an 80 ft manhole behind a closed valve.
     if (router_.fvJunctionHoldsWater(i))
         return volume;
+    // A pondable FV ALGEBRAIC junction: while it ponds the solver integrates it
+    // as base + pond, where the base (MIN_SURFAREA x full depth) is the nominal
+    // below-rim junction volume -- not water, because an algebraic junction's
+    // water below the rim stands in its cells and is counted with the links.
+    // Report the pond alone, and decide "ponding" from the volume, not the
+    // depth: the published depth of many junctions is rebuilt from their wet
+    // cells and need not exceed the rim while the solver ponds. Reporting the
+    // base put every junction that ended a run at or above its rim into Final
+    // Stored Volume twice: -5.5 % routing continuity on the coupled Bellinge
+    // window (498 junctions, 1,378 of 1,384 m3), -13.8 % on the 1D model with
+    // ponding allowed. The published node volume keeps the base, which the
+    // flooding rule in updateRoutingMassBalance relies on (ponded => volume >
+    // full volume). A junction not ponding reports 0, the convention below.
+    if (const double base = router_.fvPondBase(i); base > 0.0)
+        return volume > base ? volume - base : 0.0;
     double fd = ctx_.nodes.full_depth[ui];
     if (!(fd > 0.0))
         return 0.0;

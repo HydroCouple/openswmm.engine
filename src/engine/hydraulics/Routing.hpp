@@ -387,6 +387,19 @@ public:
      */
     bool fvJunctionHoldsWater(int node) const noexcept;
 
+    /**
+     * @brief The part of a ponding FV junction's published volume that is not water (ft3).
+     *
+     * A pondable algebraic junction is integrated, while it ponds, as v_full + pond: v_full is the
+     * nominal below-rim junction volume, but an algebraic junction's water below its rim stands in
+     * its cells and is counted with the links. Stored-volume reporting subtracts this base.
+     *
+     * @param[in] node Node index, not validated beyond a loaded mesh.
+     * @return The base for a pondable algebraic junction on the native solver; 0 otherwise,
+     *     including every other backend and routing model.
+     */
+    double fvPondBase(int node) const noexcept;
+
     /// Backend label chosen by the FV factory ("cpu (...)", "omp (...)", ...).
     const std::string& fvBackend() const { return fv_backend_; }
 

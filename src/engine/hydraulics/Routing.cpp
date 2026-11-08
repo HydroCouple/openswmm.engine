@@ -1912,6 +1912,13 @@ bool Router::fvJunctionHoldsWater(int node) const noexcept {
            !impl->node_algebraic()[un];
 }
 
+double Router::fvPondBase(int node) const noexcept {
+    const auto* impl = dynamic_cast<const fv::ExplicitFvSolver*>(fv_solver_.get());
+    if (!impl || node < 0 || node >= fv_mesh_.n_nodes())
+        return 0.0;
+    return impl->nodePondBase(node);
+}
+
 void Router::refreshFvStructureFlows(SimulationContext& ctx,
                                      const std::function<void()>& eval_structures) {
     if (!dynamic_cast<fv::ExplicitFvSolver*>(fv_solver_.get()))
