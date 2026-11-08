@@ -30,6 +30,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <openswmm/engine/openswmm_2d.h>
@@ -367,6 +368,62 @@ TEST(FvCoupledPonding, ASpillingWeirChamberNeitherCreatesNorLosesWater) {
     EXPECT_EQ(flooding, 0.0) << "kept rim crossings booked as Flooding Loss";
     EXPECT_LT(std::fabs(cont), 1.0e-3) << "the chamber created water";
     EXPECT_LT(worst_node, 1.0e-4) << "a weir end's node flow balance does not close";
+}
+
+namespace {
+/**
+ * @brief Carry TSS (conservative) at a constant 100 mg/L on a node's [INFLOWS] FLOW row.
+ * @param[in] text Deck with "[INFLOWS]\n<node> FLOW IN_TS FLOW 1.0 1.0\n" and a [2D_OPTIONS] section.
+ * @param[in] node Inflow node name.
+ * @return The deck with a [POLLUTANTS] section and the CONCEN row.
+ */
+std::string withPollutant(std::string text, const std::string& node) {
+    const std::string flow = "[INFLOWS]\n" + node + " FLOW IN_TS FLOW 1.0 1.0\n";
+    text.replace(text.find(flow), flow.size(), flow + node + " TSS \"\" CONCEN 1.0 1.0 100\n");
+    text.insert(text.find("[2D_OPTIONS]"), "[POLLUTANTS]\nTSS MG/L 0 0 0 0 NO * 0 0 0\n\n");
+    return text;
+}
+} // namespace
+
+// Coupled FV with any pollutant never completed: the conservative quality
+// transport builds a water graph from the nodes' published volumes, and a
+// ponding junction publishes its pond base (not water) with the pond, so the
+// graph missed by a whole base whenever a junction started or stopped
+// ponding ("FV quality accepted-water graph does not close"). Nor did the
+// graph export the 1D->2D spill. The chamber spills from bucket weir ends;
+// the plain coupled junction ponds and ends the run ponded, which also put
+// its base into Final Stored Mass (-1.37 % quality continuity).
+TEST(FvCoupledPonding, ACoupledFvModelWithAPollutantRunsAndCloses) {
+    const std::pair<const char*, std::string> decks[] = {
+        {"chamber_tss", withPollutant(chamberDeck(), "J00")},
+        {"plain_tss", withPollutant(deck("FV"), "J1")}};
+    for (const auto& [tag, text] : decks) {
+        fs::create_directories(kOut);
+        const fs::path inp = kOut / (std::string(tag) + ".inp");
+        { std::ofstream f(inp); f << text; }
+        SWMM_Engine e = swmm_engine_create();
+        ASSERT_EQ(swmm_engine_open(e, inp.string().c_str(),
+                                   (kOut / (std::string(tag) + ".rpt")).string().c_str(), "",
+                                   nullptr), SWMM_OK) << tag;
+        ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK) << tag;
+        ASSERT_EQ(swmm_engine_start(e, 0), SWMM_OK) << tag;
+        double elapsed = 0.0;
+        int status = SWMM_OK;
+        while ((status = swmm_engine_step(e, &elapsed)) == SWMM_OK && elapsed > 0.0) {
+        }
+        swmm_engine_end(e);
+        double flow = 1.0, quality = 1.0;
+        swmm_get_routing_continuity_error(e, &flow);
+        swmm_get_quality_continuity_error(e, 0, &quality);
+        swmm_engine_report(e);
+        swmm_engine_close(e);
+        swmm_engine_destroy(e);
+        std::printf("[fv-coupled-quality] %-12s status %d, routing %.6f, quality %.6f\n", tag, status,
+                    flow, quality);
+        EXPECT_EQ(status, SWMM_OK) << tag << ": the run aborted";
+        EXPECT_LT(std::fabs(flow), 1.0e-3) << tag;
+        EXPECT_LT(std::fabs(quality), 1.0e-3) << tag;
+    }
 }
 
 // A sealed bucket (a weir end, no ponding) with a surcharge depth floods once

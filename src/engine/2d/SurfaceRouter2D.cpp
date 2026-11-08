@@ -3014,7 +3014,14 @@ void SurfaceRouter2D::flushAquiferNodeSpecies(SimulationContext& ctx) {
     // `coupling_volume` and the node's concentration is unchanged, so the
     // mass left implicitly with the volume — book it as the exfiltration
     // loss it is, or the 1D continuity error grows by exactly this.
-    if (np > 0 && gtr.n_pollut > 0) {
+    //
+    // Not under FV: there the recharge leaves the node as part of its
+    // negative coupling inflow, which the 1D quality transport already books
+    // as the node's outflow (exported in the conservative water graph, or the
+    // spill term of the mixing fallback), so booking it here counted the same
+    // mass twice (-0.003 % on the recharging-node seam deck, = seep / inflow).
+    const bool book_recharge = ctx.options.routing_model != RoutingModel::FV;
+    if (book_recharge && np > 0 && gtr.n_pollut > 0) {
         for (std::size_t ni = 0; ni < nv.size() && ni < nn; ++ni) {
             if (nv[ni] >= 0.0)
                 continue; // + is out of the aquifer
@@ -3036,7 +3043,7 @@ void SurfaceRouter2D::flushAquiferNodeSpecies(SimulationContext& ctx) {
         auto& rx = ctx.reactions;
         auto& led = rx.msx_ledger;
         const auto ns = static_cast<std::size_t>(rx.n_species());
-        if (led.armed && gtr.n_msx > 0 && led.seepage.size() == ns) {
+        if (book_recharge && led.armed && gtr.n_msx > 0 && led.seepage.size() == ns) {
             for (std::size_t ni = 0; ni < nv.size() && ni < nn; ++ni) {
                 if (nv[ni] >= 0.0)
                     continue;

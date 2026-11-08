@@ -48,6 +48,7 @@
 #include <numeric>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <openswmm/engine/openswmm_engine.h>
@@ -1498,6 +1499,37 @@ TEST(GwTransportKernel, RechargingNodeSendsItsQualityDownTheBedAndIsLedgered) {
     EXPECT_LE(s.gained_node / -s.led_node, 50.0 * (1.0 + 1.0e-9))
         << "the aquifer received " << s.gained_node << " conc·m³ with " << -s.led_node << " m³ — "
         << s.gained_node / -s.led_node << " per m³ (1/vol_1d_to_2d = " << 1.0 / s.v12 << ")";
+}
+
+// Under FLOW_ROUTING FV the recharge leaves the node as part of its negative
+// coupling inflow, which the 1D quality transport exports as the node's
+// outflow; the aquifer flush booked the same mass again as exfiltration, so
+// quality continuity read -seep/inflow (-0.003 % here, with a conductive bed
+// so the node recharges measurably). FV books it once, as outflow.
+TEST(GwTransportKernel, RechargingNodeUnderFvBooksItsMassOnce) {
+    std::string body = seamDeck(0.5, 3.0, 0.0, 50.0);
+    const std::pair<std::string, std::string> edits[] = {
+        {"FLOW_ROUTING         DYNWAVE", "FLOW_ROUTING         FV"},
+        {"*  36.0  1.0", "*  3600.0  1.0"},
+        {"CELL 1  36.0  1.0", "CELL 1  3600.0  1.0"}};
+    for (const auto& [from, to] : edits) {
+        const auto at = body.find(from);
+        ASSERT_NE(at, std::string::npos) << from;
+        body.replace(at, from.size(), to);
+    }
+    Deck r = open("seam_node_in_fv", body);
+    ASSERT_TRUE(r.opened);
+    EXPECT_TRUE(run(r));
+    swmm_engine_end(r.e);
+    r.started = false;
+    double quality = 1.0, seep = -1.0;
+    swmm_get_quality_continuity_error(r.e, 0, &quality);
+    swmm_get_quality_seep_loss(r.e, 0, &seep);
+    const double led_node = r.eng->surfaceRouter2D().subsurface().state().led_node;
+    finish(r);
+    ASSERT_LT(led_node, 0.0) << "the bed did not recharge; deck defect";
+    EXPECT_EQ(seep, 0.0) << "recharge mass booked as exfiltration as well as node outflow";
+    EXPECT_LT(std::fabs(quality), 1.0e-5) << "quality continuity " << quality * 100.0 << " %";
 }
 
 TEST(GwTransportKernel, DrainingAquiferHandsItsMassToTheNodeQueue) {

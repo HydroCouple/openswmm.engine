@@ -654,10 +654,6 @@ private:
     // Per-step forcing buffers, allocated once at init.
     std::vector<double> fv_lateral_, fv_fixed_head_, fv_struct_flow_, fv_cond_loss_;
 
-    /// This step's 1D->2D spill paid out of each node before the advance (ft3), exported from
-    /// the node in the conservative quality water graph.
-    std::vector<double> fv_spill_debit_;
-
     /// Per-link cap on a DUMMY link's pass-through discharge: the control
     /// setting and FLOW_LIMIT, which the solver cannot see. Negative means
     /// unlimited; only DUMMY entries are ever read. Refreshed with the

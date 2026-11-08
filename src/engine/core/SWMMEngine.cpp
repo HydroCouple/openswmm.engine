@@ -6519,9 +6519,14 @@ void SWMMEngine::computeFinalStorage() noexcept {
             double m = 0.0;
             for (int j = 0; j < ctx_.n_nodes(); ++j) {
                 const auto idx = static_cast<std::size_t>(j) * static_cast<std::size_t>(np) + up;
+                // A ponding FV junction's published volume carries its pond
+                // base, which is not water (see reportedNodeVolume); the
+                // conservative transport mixed the pond alone.
+                double volume = ctx_.nodes.volume[j];
+                if (const double base = router_.fvPondBase(j); base > 0.0 && volume >= base)
+                    volume -= base;
                 if (idx < ctx_.nodes.conc.size())
-                    m +=
-                        ctx_.nodes.conc[idx] * ctx_.nodes.volume[j] + lidnode::heldMass(ctx_, j, p);
+                    m += ctx_.nodes.conc[idx] * volume + lidnode::heldMass(ctx_, j, p);
             }
             for (int j = 0; j < ctx_.n_links(); ++j) {
                 const auto uj = static_cast<std::size_t>(j);

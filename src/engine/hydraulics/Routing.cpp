@@ -1583,7 +1583,6 @@ void Router::initFv(SimulationContext& ctx) {
 
 
     fv_lateral_.assign(static_cast<std::size_t>(nn), 0.0);
-    fv_spill_debit_.assign(static_cast<std::size_t>(nn), 0.0);
     fv_fixed_head_.assign(static_cast<std::size_t>(nn), std::numeric_limits<double>::quiet_NaN());
     fv_struct_flow_.assign(static_cast<std::size_t>(ctx.n_links()), 0.0);
     fv_cond_loss_.assign(static_cast<std::size_t>(fv_mesh_.n_conduits()), 0.0);
@@ -1692,14 +1691,12 @@ int Router::stepFv(SimulationContext& ctx, double dt,
     if (native && dt > 0.0) {
         for (int n = 0; n < nn; ++n) {
             const auto un = static_cast<std::size_t>(n);
-            fv_spill_debit_[un] = 0.0;
             const double spill = -ctx.nodes.coupling_inflow[un] * dt;
             if (!(spill > 0.0) || ctx.nodes.type[un] == NodeType::OUTFALL ||
                 fv_mesh_.node_kind[un] == fv::kNodeVirtual)
                 continue;
             const double paid = native->debitNode(n, spill);
             fv_lateral_[un] += paid / dt;
-            fv_spill_debit_[un] = paid;
             // The structures read the published state.
             ctx.nodes.head[un] = fv_state_.node_head[un];
             ctx.nodes.depth[un] = std::max(0.0, fv_state_.node_head[un] - ctx.nodes.invert_elev[un]);
@@ -2375,7 +2372,15 @@ void Router::acceptedQualityWater(const SimulationContext& ctx, double dt,
     out.boundary_imports.clear();out.withdrawal.assign(nn,0);out.flooding.assign(nn,0);
     for(std::size_t i=0;i<nn;++i) {
         if(ctx.nodes.type[i]!=NodeType::OUTFALL) {
-            w.old_volume[i]=ctx.nodes.old_volume[i];w.new_volume[i]=ctx.nodes.volume[i];
+            // Water, not the published volume: a ponding (demoted) pondable
+            // algebraic junction publishes base + pond, and the base is not
+            // water (ExplicitFvSolver::pondBase). Every step a coupled
+            // junction started or stopped ponding left the graph a whole
+            // base short or over (1,236.8 ft3 at a 30 m junction) and the run
+            // aborted: coupled FV with any pollutant never completed.
+            const double base=native->nodePondBase(static_cast<int>(i));
+            auto water=[base](double v){return base>0 && v>=base ? v-base : v;};
+            w.old_volume[i]=water(ctx.nodes.old_volume[i]);w.new_volume[i]=water(ctx.nodes.volume[i]);
         }
         const int row=ctx.node_subtypes.storage_row(static_cast<int>(i));
         if(row>=0) {
@@ -2388,7 +2393,14 @@ void Router::acceptedQualityWater(const SimulationContext& ctx, double dt,
             out.boundary_imports.push_back({i,i,out.withdrawal[i]});
             w.source_volume[i]+=out.withdrawal[i];
         }
-        w.exported[i]=out.withdrawal[i]+out.flooding[i]+fv_spill_debit_[i];
+        w.exported[i]=out.withdrawal[i]+out.flooding[i];
+        if(ctx.nodes.type[i]!=NodeType::OUTFALL) {
+            // The 1D->2D spill leaves the node, the part paid out of it before
+            // the advance and any part left in the lateral alike; water a
+            // floor raised to pay it is a (concentration-free) source.
+            w.exported[i]+=std::max(0.0,-ctx.nodes.coupling_inflow[i])*dt;
+            w.source_volume[i]+=r.node_deficit[i];
+        }
     }
     for(std::size_t j=0;j<nl;++j) {
         if(ctx.links.type[j]!=LinkType::CONDUIT || ctx.links.xsect_shape[j]==XsectShape::DUMMY)continue;
