@@ -25,7 +25,8 @@ bool noneAt(const std::vector<ForcingMode>& values, std::size_t i) {
 }
 bool pending(const PassiveStorageExchange::Row& r) {
     return r.drain_water != 0 || r.spill_water != 0 || r.drain_mass != 0 || r.spill_mass != 0 ||
-        !r.drain_mass_parts.empty() || !r.spill_mass_parts.empty();
+        !r.drain_mass_parts.empty() || !r.spill_mass_parts.empty() ||
+        !r.drain_water_parts.empty() || !r.spill_water_parts.empty();
 }
 bool pending(const std::vector<PassiveStorageExchange::Receipt>& receipts) {
     for (const auto& receipt : receipts)
@@ -35,6 +36,11 @@ bool pending(const std::vector<PassiveStorageExchange::Receipt>& receipts) {
     return false;
 }
 using ExactSum = NativeAmountSum;
+void addWater(ExactSum& sum, const PassiveStorageExchange::Row& row) {
+    sum.add(row.waterAmount(true));
+    const auto spill = row.waterAmount(false);
+    for (double part : spill.parts()) sum.add(-part);
+}
 double nativeConcentration(double volume, double concentration, double amount) {
     if (amount == 0)
         return concentration;
@@ -92,10 +98,40 @@ void PassiveStorageExchange::Row::setMaterialAmount(bool drain, const NativeAmou
     else { components.assign(amount.parts().begin(), amount.parts().end()); scalar = 0; }
 }
 
+NativeAmountSum PassiveStorageExchange::Row::waterAmount(bool drain) const {
+    const double scalar = drain ? drain_water : spill_water;
+    const auto& components = drain ? drain_water_parts : spill_water_parts;
+    NativeAmountSum amount;
+    require(std::isfinite(scalar) && scalar >= 0, "invalid scalar water amount");
+    if (components.empty()) { amount.add(scalar); return amount; }
+    require(scalar == 0 && components.size() >= 2 && components.size() <= NativeAmountSum::capacity,
+            "invalid point water scalar/component extent");
+    for (double part : components) {
+        require(std::isfinite(part) && part != 0, "invalid point water component");
+        amount.add(part);
+    }
+    require(!amount.negative() && amount.parts().size() == components.size() &&
+                std::equal(components.begin(), components.end(), amount.parts().begin()),
+            "noncanonical/negative point water amount");
+    return amount;
+}
+void PassiveStorageExchange::Row::setWaterAmount(bool drain, const NativeAmountSum& amount) {
+    require(!amount.negative(), "negative point water amount");
+    auto& scalar = drain ? drain_water : spill_water;
+    auto& components = drain ? drain_water_parts : spill_water_parts;
+    if (amount.parts().size() <= 1) { scalar = amount.value(); components.clear(); }
+    else { components.assign(amount.parts().begin(), amount.parts().end()); scalar = 0; }
+}
+
 void PassiveStorageExchange::validate(const SimulationContext& ctx) const {
     require(!failed_, "receiving owner is terminal");
+    require(water_arithmetic_ == PassiveStorageWaterArithmetic::EXACT ||
+                (retainsWaterAggregates() && changingVolume() && (arithmetic_ == PassiveStorageArithmetic::RETAIN_EXACT_HALVES || exactSlices())),
+            "retained water requires changing-volume authenticated exact-half arithmetic");
+    require(!exactSlices() || (changingVolume() && retainsWaterAggregates()),
+            "exact slices require changing-volume retained-water arithmetic");
     require(law_ == PassiveStorageLaw::FIXED_VOLUME ||
-                (changingVolume() && arithmetic_ == PassiveStorageArithmetic::RETAIN_EXACT_HALVES),
+                (changingVolume() && (arithmetic_ == PassiveStorageArithmetic::RETAIN_EXACT_HALVES || exactSlices())),
             "changing-volume law requires authenticated exact-half arithmetic");
     if (changingVolume()) {
         require(!ctx.n_links() && !ctx.n_subcatches() && !ctx.n_gages() && ctx.events.empty() &&
@@ -112,6 +148,8 @@ void PassiveStorageExchange::validate(const SimulationContext& ctx) const {
     require(ctx.n_pollutants() == 1 && ctx.pollutants.units.size() == 1 &&
                 ctx.pollutants.k_decay.size() == 1 && ctx.pollutants.k_decay[0] == 0,
             "exactly one passive native pollutant is required");
+    require(ctx.pollutants.unit_declaration_valid.size() == 1 && ctx.pollutants.unit_declaration_valid[0] == 1,
+            "unrecognized pollutant unit declaration; use MG/L, UG/L or #/L");
     const auto units = ctx.pollutants.units[0];
     require(units == MassUnits::MG_PER_L || units == MassUnits::UG_PER_L ||
                 units == MassUnits::COUNTS_PER_L, "unsupported native amount basis");
@@ -259,6 +297,7 @@ void PassiveStorageExchange::validateWaterTransition(const SimulationContext& ct
 }
 void PassiveStorageExchange::beginWaterPublication(const SimulationContext& ctx, const LiveProof& proof,
         Phase phase, double start, double end, double dt) {
+    require(!changingVolume() || !exactSlices() || funding_, "native sliced water publication requires issued funding");
     require(changingVolume() && !pending_water_ && std::isfinite(dt) && dt > 0 &&
                 std::isfinite(proof.si_to_native) && proof.si_to_native > 0 &&
                 (phase == Phase::ADVANCE ? frozen_ && frozen_->observed : !frozen_) &&
@@ -270,6 +309,13 @@ void PassiveStorageExchange::beginWaterPublication(const SimulationContext& ctx,
             "native water publication phase/endpoint differs");
     require(start == (water_publications_.empty() ? 0 : water_publications_.back().publication.batch_end_ms),
             "native water publication windows are discontinuous");
+    if (funding_) {
+        if (!seal_) reconcileFunding(ctx, proof, phase, start, end);
+        else require(&ctx == owner_ && funding_->reconciled && phase == funding_->phase && start == funding_->start_ms &&
+                         end == funding_->end_ms && ctx.elapsed_ms == funding_->capture_ms,
+                     "prepared material seal differs from its funding window");
+        water_publications_.reserve(water_publications_.size() + 1);
+    }
     std::set<std::uint64_t> points;
     for (const auto& point : proof.points)
         require(initial_pools_.count(point.node) && point.cell >= 0 && points.insert(point.point).second &&
@@ -283,8 +329,9 @@ void PassiveStorageExchange::beginWaterPublication(const SimulationContext& ctx,
     next.points = proof.points; next.before = waterState(ctx).queue;
     next.after = next.before; next.remaining_after = ctx.coupling_delivery_remaining;
     if (!proof.legs.empty()) {
-        require(!receipts_.empty() && receipts_.back().proof == proof, "water publication has no matching material proof");
-        next.receipt = receipts_.back().id;
+        const auto& receipts = seal_ ? seal_->receipts : receipts_;
+        require(!receipts.empty() && receipts.back().proof == proof, "water publication has no matching material proof");
+        next.receipt = receipts.back().id;
     }
     bool booked = false;
     std::size_t k = 0;
@@ -301,16 +348,43 @@ void PassiveStorageExchange::beginWaterPublication(const SimulationContext& ctx,
     }
     if (booked) next.remaining_after = std::max(next.remaining_after, dt);
     pending_water_ = std::move(next);
+    if (funding_) funding_->reconciled = true;
 }
 void PassiveStorageExchange::finishWaterPublication(const SimulationContext& ctx) {
-    require(pending_water_.has_value(), "missing native water publication");
-    require(waterState(ctx).queue == pending_water_->after &&
-                ctx.coupling_delivery_remaining == pending_water_->remaining_after,
-            "actual native water queue/span publication differs");
-    for (const auto& [node, pool] : initial_pools_)
+    require(!changingVolume() || !exactSlices() || funding_, "native sliced water confirmation requires issued funding");
+    require(pending_water_.has_value() && &ctx == owner_, "missing native water publication or wrong owner");
+    require(pending_water_->after.size() == initial_pools_.size() &&
+                ctx.coupling_delivery_remaining == pending_water_->remaining_after, "actual native water span differs");
+    std::size_t k = 0;
+    for (const auto& [node, pool] : initial_pools_) {
+        require(ctx.nodes.coupling_queue.at(node) == pending_water_->after[k++], "actual native water queue differs");
         require(ctx.nodes.coupling_volume.at(node) == 0, "native booking left an undelivered volume");
+    }
+    if (funding_)
+        require(funding_->reconciled && funding_->ordinal == water_publications_.size() + 1 &&
+                    ctx.elapsed_ms == funding_->capture_ms &&
+                    pending_water_->publication == Publication{funding_->phase, funding_->capture_ms,
+                        funding_->start_ms, funding_->end_ms,
+                        funding_->phase == Phase::ADVANCE ? funding_->end_ms : funding_->capture_ms,
+                        funding_->remaining, funding_->generation} && funding_->generation == deliveries_.size() &&
+                    (funding_->phase == Phase::ADVANCE ? frozen_ && frozen_->observed && !prepared_ &&
+                        frozen_->start_ms == funding_->capture_ms && frozen_->end_ms == funding_->end_ms : !frozen_) &&
+                    (!pending_water_->receipt || pending_water_->receipt == funding_->receipt) &&
+                    water_publications_.capacity() > water_publications_.size() &&
+                    (pending_water_->receipt ? seal_.has_value() : !seal_),
+                "native water confirmation has no matching prepared funding seal");
+    // Capacity was reserved before native water effects. These owner commits do
+    // not allocate; unused authority is released only after both books publish.
     water_publications_.push_back(std::move(*pending_water_)); pending_water_.reset();
+    if (seal_) {
+        receipts_.swap(seal_->receipts); pools_.swap(seal_->pools);
+        node_ids_.swap(seal_->node_ids); pollutant_ids_.swap(seal_->pollutant_ids);
+        last_id_ = seal_->last_id; next_start_ms_ = seal_->next_start_ms; remaining_ = seal_->remaining;
+        seal_.reset();
+    }
     if (!frozen_) remaining_ = ctx.coupling_delivery_remaining;
+    peer_received_.reset();
+    funding_.reset();
 }
 
 void PassiveStorageExchange::reserve(const SimulationContext& ctx, std::uint64_t id,
@@ -344,6 +418,7 @@ void PassiveStorageExchange::reserveNext(const SimulationContext& ctx, std::uint
 
 void PassiveStorageExchange::reserveAuthenticated(const SimulationContext& ctx, std::uint64_t id,
         std::vector<Row> rows, Phase phase, double start, double end, const LiveProof& proof) {
+    require(!changingVolume() || !exactSlices() || funding_, "native sliced material publication requires issued funding");
     require(std::isfinite(start) && std::isfinite(end) && start >= 0 && start < end,
             "invalid authenticated physical batch");
     Publication p{phase, ctx.elapsed_ms, start, end, ctx.elapsed_ms,
@@ -355,6 +430,10 @@ void PassiveStorageExchange::reserveAuthenticated(const SimulationContext& ctx, 
     } else {
         require((phase == Phase::REPORT || phase == Phase::FINAL) && end == ctx.elapsed_ms,
                 "authenticated boundary differs from actual publication");
+    }
+    if (funding_) {
+        require(id == funding_->receipt, "authenticated receipt differs from its funding identity");
+        reconcileFunding(ctx, proof, phase, start, end);
     }
     reserveImpl(ctx, id, std::move(rows), p, &proof);
 }
@@ -415,7 +494,10 @@ void PassiveStorageExchange::validateProof(const SimulationContext& ctx, const s
         const auto it = gross.find(r.point);
         require(it != gross.end() && points.at(r.point).node == r.node, "authenticated row identity differs");
         const auto& g = it->second;
-        require(r.drain_water == g.dw.value() && r.spill_water == g.sw.value() &&
+        require((retainsWaterAggregates() ?
+                    (r.waterAmount(true) == g.dw && r.waterAmount(false) == g.sw) :
+                    (r.drain_water_parts.empty() && r.spill_water_parts.empty() &&
+                     r.drain_water == g.dw.value() && r.spill_water == g.sw.value())) &&
                     (retainsPointAggregates(arithmetic_) ?
                      (r.materialAmount(true) == g.dm && r.materialAmount(false) == g.sm) :
                      (r.drain_mass_parts.empty() && r.spill_mass_parts.empty() &&
@@ -433,6 +515,9 @@ void PassiveStorageExchange::validateProof(const SimulationContext& ctx, const s
 void PassiveStorageExchange::reserveImpl(const SimulationContext& ctx, std::uint64_t id,
                                        std::vector<Row> rows, Publication publication, const LiveProof* proof) {
     validate(ctx);
+    require(!seal_ && (!funding_ || (proof && !funding_->reconciled && id == funding_->receipt &&
+                publication.phase == funding_->phase && publication.batch_start_ms == funding_->start_ms &&
+                publication.batch_end_ms == funding_->end_ms)), "exclusive funding blocks another material reservation");
     require(!changingVolume() || (owner_ && proof), "changing-volume input requires a bound authenticated owner");
     require(id > last_id_ && !rows.empty(), "replayed/empty receipt");
     if (publication.phase == Phase::ADVANCE) {
@@ -464,9 +549,12 @@ void PassiveStorageExchange::reserveImpl(const SimulationContext& ctx, std::uint
         require((proof && retainsPointAggregates(arithmetic_)) ||
                     (r.drain_mass_parts.empty() && r.spill_mass_parts.empty()),
                 "point material components require authenticated point policy");
+        require((proof && retainsWaterAggregates()) ||
+                    (r.drain_water_parts.empty() && r.spill_water_parts.empty()),
+                "point water components require authenticated water policy");
         const auto drain = r.materialAmount(true), spill = r.materialAmount(false);
-        require(pending(r) && (r.drain_water > 0 || drain.zero()) &&
-                    (r.spill_water > 0 || spill.zero()), "material has no carrier");
+        require(pending(r) && (!r.waterAmount(true).zero() || drain.zero()) &&
+                    (!r.waterAmount(false).zero() || spill.zero()), "material has no carrier");
         const auto ni = static_cast<std::size_t>(r.node);
         require(ni < ctx.nodes.conc.size() && ni < ctx.nodes.volume.size() && ni < ctx.nodes.depth.size(),
                 "incomplete native pool shape");
@@ -485,8 +573,7 @@ void PassiveStorageExchange::reserveImpl(const SimulationContext& ctx, std::uint
         if (!pools.count(r.node))
             pools.emplace(r.node, Pool{ctx.nodes.volume[r.node], ctx.nodes.depth[r.node], ctx.nodes.conc[r.node]});
         validatePool(ctx, r.node, pools.at(r.node), false);
-        water[r.node].add(r.drain_water);
-        water[r.node].add(-r.spill_water);
+        addWater(water[r.node], r);
     }
     if (!changingVolume())
         for (const auto& [node, w] : water)
@@ -494,6 +581,13 @@ void PassiveStorageExchange::reserveImpl(const SimulationContext& ctx, std::uint
     auto receipts = receipts_;
     Receipt receipt{id, rows, rows, {}, publication};
     if (proof) { receipt.authenticated = true; receipt.proof = *proof; }
+    if (exactSlices()) {
+        require(proof, "exact slices require authenticated native legs");
+        for (const auto& leg : proof->legs) {
+            receipt.remaining_water_legs.push_back(leg.water_native);
+            receipt.remaining_mass_legs.push_back(leg.mass_native);
+        }
+    }
     for (const auto& r : rows)
         receipt.samples.push_back(pools.at(r.node));
     receipts.push_back(std::move(receipt));
@@ -510,6 +604,12 @@ void PassiveStorageExchange::reserveImpl(const SimulationContext& ctx, std::uint
     }
     auto node_ids = ctx.node_names.names();
     auto pollutant_ids = ctx.pollutant_names.names();
+    if (funding_) {
+        seal_ = PreparedSeal{std::move(receipts), std::move(pools), std::move(node_ids), std::move(pollutant_ids),
+            id, frozen_ ? next_start_ms_ : ctx.elapsed_ms, frozen_ ? remaining_ : ctx.coupling_delivery_remaining};
+        funding_->reconciled = true;
+        return;
+    }
     // All allocations and refusals precede this nonthrowing ownership commit.
     receipts_.swap(receipts);
     pools_.swap(pools);
@@ -525,6 +625,7 @@ void PassiveStorageExchange::reserveImpl(const SimulationContext& ctx, std::uint
 }
 
 void PassiveStorageExchange::freezeDelivery(const SimulationContext& ctx, double dt) {
+    require(!funding_ && !seal_, "unresolved funding blocks quality advancement");
     if (frozen_) {
         fail();
         require(false, "delivery cohort already frozen");
@@ -577,6 +678,7 @@ void PassiveStorageExchange::observeDeliveryDrain(const SimulationContext& ctx) 
 }
 
 void PassiveStorageExchange::begin(const SimulationContext& ctx, double dt) {
+    require(!funding_ && !seal_, "unresolved funding blocks quality advancement");
     if (!failed_)
         attempt_ = {ctx.elapsed_ms, dt, remaining_};
     validate(ctx);
@@ -621,11 +723,65 @@ std::vector<PassiveStorageExchange::Row> PassiveStorageExchange::exactHalfRows(
     auto rows = receipt.accepted;
     for (auto& row : rows) {
         const auto& g = gross.at(row.point);
-        const double drain = half(row.drain_water), spill = half(row.spill_water);
-        require(g.dw.value() == drain && g.sw.value() == spill,
-                "native leg half water differs from the scalar point schedule");
-        row.drain_water = drain; row.spill_water = spill;
+        for (bool drain : {true, false}) {
+            const auto& amount = drain ? g.dw : g.sw;
+            const auto& parts = drain ? row.drain_water_parts : row.spill_water_parts;
+            if (parts.empty()) {
+                require(amount.value() == half(drain ? row.drain_water : row.spill_water),
+                        "native leg half water differs from the scalar point schedule");
+            } else {
+                auto partition = amount; partition.add(amount);
+                const auto original = row.waterAmount(drain);
+                for (double part : original.parts()) partition.add(-part);
+                require(retainsWaterAggregates() && partition.zero(),
+                        "native leg halves do not partition the exact point water");
+            }
+            row.setWaterAmount(drain, amount);
+        }
         row.setMaterialAmount(true, g.dm); row.setMaterialAmount(false, g.sm);
+    }
+    return rows;
+}
+
+std::vector<PassiveStorageExchange::Row> PassiveStorageExchange::exactSliceRows(
+        Receipt& receipt, double span, double dt) const {
+    require(receipt.authenticated && receipt.half_state == 0 &&
+                receipt.remaining_water_legs.size() == receipt.proof.legs.size() &&
+                receipt.remaining_mass_legs.size() == receipt.proof.legs.size(),
+            "exact slice leg ownership differs");
+    const auto take = [&](double& before) {
+        require(std::isfinite(before) && before >= 0, "invalid exact slice remainder");
+        const double slice = span > dt ? (before / span) * dt : before;
+        const double after = before - slice;
+        ExactSum partition; partition.add(slice); partition.add(after); partition.add(-before);
+        require(std::isfinite(slice) && slice >= 0 && slice <= before && partition.zero() &&
+                    (!(span > dt && before > 0) || (slice > 0 && after > 0)),
+                "native leg slice/remainder is not an exact nonvanishing partition");
+        before = after; return slice;
+    };
+    struct Gross { ExactSum dw, sw, dm, sm; };
+    std::map<std::uint64_t, Gross> delivered, remaining;
+    for (std::size_t k = 0; k < receipt.proof.legs.size(); ++k) {
+        const auto& leg = receipt.proof.legs[k];
+        const double water = take(receipt.remaining_water_legs[k]);
+        const double mass = take(receipt.remaining_mass_legs[k]);
+        auto& d = delivered[leg.point]; auto& r = remaining[leg.point];
+        if (leg.drain) {
+            d.dw.add(water); d.dm.add(mass);
+            r.dw.add(receipt.remaining_water_legs[k]); r.dm.add(receipt.remaining_mass_legs[k]);
+        } else {
+            d.sw.add(water); d.sm.add(mass);
+            r.sw.add(receipt.remaining_water_legs[k]); r.sm.add(receipt.remaining_mass_legs[k]);
+        }
+    }
+    auto rows = receipt.remaining;
+    for (std::size_t k = 0; k < rows.size(); ++k) {
+        auto& row = rows[k]; auto& rest = receipt.remaining[k];
+        const auto& d = delivered.at(row.point); const auto& r = remaining.at(row.point);
+        row.setWaterAmount(true, d.dw); row.setWaterAmount(false, d.sw);
+        row.setMaterialAmount(true, d.dm); row.setMaterialAmount(false, d.sm);
+        rest.setWaterAmount(true, r.dw); rest.setWaterAmount(false, r.sw);
+        rest.setMaterialAmount(true, r.dm); rest.setMaterialAmount(false, r.sm);
     }
     return rows;
 }
@@ -648,12 +804,23 @@ void PassiveStorageExchange::prepare(const SimulationContext& ctx, double dt) {
         if (receipt.id > cutoff)
             continue;
         require(receipt.publication.eligible_ms <= ctx.elapsed_ms, "receipt is not yet eligible for assembly");
+        if (exactSlices() && std::any_of(receipt.remaining.begin(), receipt.remaining.end(),
+                                       [](const Row& r) { return pending(r); })) {
+            const auto slice = exactSliceRows(receipt, span, dt);
+            for (const auto& row : slice) {
+                next.affected[row.node] = 1; addWater(water[row.node], row);
+                amount[row.node].add(row.materialAmount(true));
+                const auto spill = row.materialAmount(false);
+                for (double part : spill.parts()) amount[row.node].add(-part);
+            }
+            continue;
+        }
         if (arithmetic_ == PassiveStorageArithmetic::RETAIN_EXACT_HALVES && span > dt &&
             std::any_of(receipt.remaining.begin(), receipt.remaining.end(), [](const Row& r) { return pending(r); })) {
             auto half = exactHalfRows(receipt, span, dt);
             for (const auto& row : half) {
                 next.affected[row.node] = 1;
-                water[row.node].add(row.drain_water); water[row.node].add(-row.spill_water);
+                addWater(water[row.node], row);
                 amount[row.node].add(row.materialAmount(true));
                 const auto spill = row.materialAmount(false);
                 for (double part : spill.parts()) amount[row.node].add(-part);
@@ -679,8 +846,19 @@ void PassiveStorageExchange::prepare(const SimulationContext& ctx, double dt) {
                 require(partition.zero(), "native gross slice partition is not exact");
                 return slice;
             };
-            water[r.node].add(take(r.drain_water));
-            water[r.node].add(-take(r.spill_water));
+            auto takeWater = [&](bool drain) {
+                auto exact = r.waterAmount(drain);
+                if (exact.parts().size() > 1) {
+                    require(retainsWaterAggregates() && span <= dt, "multipart point water requires a whole native flush");
+                    r.setWaterAmount(drain, NativeAmountSum{});
+                    return exact;
+                }
+                auto& scalar = drain ? r.drain_water : r.spill_water;
+                NativeAmountSum slice; slice.add(take(scalar)); return slice;
+            };
+            water[r.node].add(takeWater(true));
+            const auto water_spill = takeWater(false);
+            for (double part : water_spill.parts()) water[r.node].add(-part);
             auto takeMaterial = [&](bool drain) {
                 auto exact = r.materialAmount(drain);
                 if (exact.parts().size() > 1) {
@@ -702,8 +880,7 @@ void PassiveStorageExchange::prepare(const SimulationContext& ctx, double dt) {
         for (const auto& receipt : next.receipts)
             for (const auto& r : receipt.remaining)
                 if (r.node == node) {
-                    remaining_water.add(r.drain_water);
-                    remaining_water.add(-r.spill_water);
+                    addWater(remaining_water, r);
                 }
         require(changingVolume() || remaining_water.zero(), "remaining gross water is not exactly zero net");
         auto roundoff = storedRoundoff(node);

@@ -79,6 +79,9 @@ struct PollutantData {
      * @see Legacy: Pollut[i].units
      */
     std::vector<MassUnits> units;
+    // Authored unknown tokens retain native mg/L fallback but cannot enroll in
+    // conservative coupling. Programmatic and database rows declare an enum.
+    std::vector<std::uint8_t> unit_declaration_valid;
 
     /**
      * @brief Molecular weight (g/mol). Used for unit conversions.
@@ -174,6 +177,7 @@ struct PollutantData {
     void resize_pollutants(int n) {
         const auto un = static_cast<std::size_t>(n);
         units.assign(un, MassUnits::MG_PER_L);
+        unit_declaration_valid.assign(un, 1);
         mwt.assign(un, 1.0);
         k_decay.assign(un, 0.0);
         c_rain.assign(un, 0.0);
@@ -190,6 +194,7 @@ struct PollutantData {
     /** @brief Release excess vector capacity. */
     void shrink_to_fit() {
         units.shrink_to_fit();
+        unit_declaration_valid.shrink_to_fit();
         mwt.shrink_to_fit();
         k_decay.shrink_to_fit();
         c_rain.shrink_to_fit();

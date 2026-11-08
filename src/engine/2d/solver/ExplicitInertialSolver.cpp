@@ -30,7 +30,7 @@
 
 #include "core/ProcessPerf.hpp"
 #include "ExplicitInertialSolver.hpp"
-#include "../../quality/LivePassiveStorageExchange.hpp"
+#include "../../quality/PassiveStorageAdmission.hpp"
 #include "../coupling/Rk2RuntimeSources.hpp"
 #include "core/FileIO.hpp" // issue #7: UTF-8 paths on Windows
 
@@ -4371,6 +4371,10 @@ void ExplicitInertialSolver::runMacroCycle(double dt0, int nsub, double time) {
 }
 
 double ExplicitInertialSolver::advance(double t_current, double t_target) {
+    if (state_->live_passive_exchange && !state_->live_passive_exchange->owns(state_)) {
+        state_->live_passive_exchange->fail("Passive admission belongs to a different native surface.");
+        throw std::runtime_error(state_->live_passive_exchange->error());
+    }
     if (state_->live_passive_exchange && state_->live_passive_exchange->failed())
         throw std::runtime_error(state_->live_passive_exchange->error());
     if (state_->live_passive_exchange &&

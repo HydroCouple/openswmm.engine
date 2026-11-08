@@ -229,7 +229,19 @@ public:
      * @returns SWMM_OK or an error code.
      */
     int step(double* elapsed_time) noexcept;
-    int configureSplit(int role) noexcept;
+    /// Private settled-output mode is native-only and unavailable to packet schemas 1-9.
+    int configureSplit(int role, bool settled_reports = false) noexcept;
+    /// Opt-in no-link passive-material pair.
+    int configureMaterialSplit(int role) noexcept;
+    int setMaterialTransport(SWMM_MaterialTransport callback, void* user) noexcept;
+    int bindMaterialPeer(SWMMEngine& surface, std::size_t capacity = 4096, bool require_transport = false) noexcept;
+    const quality::PeerPassiveStorageFunding* peerMaterialFunding() const noexcept;
+    const quality::PeerPassiveStorageProducer* peerMaterialProducer() const noexcept;
+    // Private outputs-off pair recovery. Both bound roles are captured/installed
+    // together; the standalone/public checkpoint API still refuses split roles.
+    std::string enableMaterialPairCheckpoint();
+    std::string materialPairCheckpointBytes(std::string& result) const;
+    std::string restoreMaterialPairCheckpoint(const std::string& bytes);
     int splitGeometry(SWMM_SplitFrame* frame) noexcept;
     int applySplitGeometry(SWMM_SplitFrame frame) noexcept;
     int setSplitCallback(SWMM_SplitCallback callback, void* user) noexcept;
@@ -964,11 +976,17 @@ public:
      *     lifecycle/readiness check.
      */
     twoD::SurfaceRouter2D& surfaceRouter2D() noexcept { return surface_router_; }
-    /// Explicit private research attachment at a settled boundary. No INP/C API activation.
+    /// Private research policies; only exact slices have an experimental C facade.
+    bool passiveExchangeInspectionReady() const noexcept {
+        return !step_active_ && !runtime_pipeline_ && exchange_target_ < 0;
+    }
     std::string attachLivePassiveExchange(std::size_t journal_capacity = 4096);
     std::string attachLiveChangingVolumeExchange(std::size_t journal_capacity = 4096);
+    std::string attachLiveChangingVolumeSlicedExchange(std::size_t journal_capacity = 4096, bool preflight_history = false);
     /// Conservative restart-history admission before stepping or flushing a pending window.
     std::string attachLiveChangingVolumeExchange(std::size_t journal_capacity, bool preflight_history);
+    std::string attachLiveChangingVolumeExchange(quality::PassiveStorageWaterArithmetic water,
+                                                 std::size_t journal_capacity = 4096, bool preflight_history = false);
     std::string attachLivePassiveExchange(quality::PassiveStorageArithmetic arithmetic,
                                          std::size_t journal_capacity = 4096);
     std::string attachLivePassiveExchange(quality::PassiveStorageArithmetic arithmetic,
@@ -1122,9 +1140,19 @@ private:
 
     bool step_active_ = false, runtime_pipeline_ = false;
     std::unique_ptr<SplitExecution> split_;
+    class MaterialWindow;
+    int configureSplitImpl(int role, bool settled_reports, bool material) noexcept;
+    bool materialCloseBlocked() const noexcept;
+    bool materialEndBlocked() const noexcept;
+    void detachMaterialPeer() noexcept;
+    void acceptMaterialBoundary();
     void splitExchange(int phase, double dt,
                        std::vector<std::pair<int, double>>* conductance = nullptr);
     struct RestartState;
+    bool material_checkpoint_network_ = false;
+    bool materialCheckpointNetwork() const noexcept { return material_checkpoint_network_; }
+    void checkMaterialPairBoundary() const;
+    std::string materialPairModel() const;
     bool checkpoint_enabled_ = false, checkpoint_ready_ = false;
     bool checkpoint_output_ = false;
     DefaultOutputPlugin* binary_output_plugin_ = nullptr; // owned by PluginFactory

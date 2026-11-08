@@ -67,6 +67,8 @@ namespace openswmm::runoff {
 class SourceWaterDriver;
 }
 namespace openswmm {
+namespace detail { class CompletedSourceArchive; }
+namespace quality { class PeerPassiveStorageProducer; class PeerPassiveStorageWindow; }
 struct SimulationContext;
 struct HeatState;
 namespace climate {
@@ -1388,6 +1390,15 @@ public:
 private:
     friend class openswmm::SWMMEngine;
     struct RestartState;
+    struct MaterialRestart;
+    std::string materialCheckpointBytes(const SimulationContext&) const;
+    std::shared_ptr<MaterialRestart> prepareMaterialCheckpoint(const SimulationContext&, std::string) const;
+    const SurfaceStateData& materialCheckpointState(const std::shared_ptr<MaterialRestart>&) const;
+    void validateMaterialCheckpoint(const SimulationContext&, const quality::PeerPassiveStorageProducer&,
+        double initial, double loss, double gain, const std::array<double,2>& window,
+        const std::shared_ptr<MaterialRestart>& = {}) const;
+    void installMaterialCheckpoint(SimulationContext&, std::shared_ptr<MaterialRestart>) noexcept;
+    static void checkpointMaterialBalance(detail::CompletedSourceArchive&, SimulationContext&);
     /**
      * @brief Encode the qualified completed router/CPU/source and optional joint/channel
      * boundary.
@@ -1779,6 +1790,8 @@ private:
     std::string livePassiveProfile() const;
     std::string changingVolumeProfile(const SimulationContext& ctx, const SurfaceStateData& surface) const;
     quality::LivePassiveStorageExchange* live_passive_exchange_ = nullptr;
+    quality::PeerPassiveStorageProducer* peer_passive_exchange_ = nullptr;
+    quality::PeerPassiveStorageWindow* peer_window_ = nullptr;
     bool paired_water_checkpoint_ = false;
     /**
      * @brief G-X4: freeze the aquifer's side of the conduit exchange (table elevation relative

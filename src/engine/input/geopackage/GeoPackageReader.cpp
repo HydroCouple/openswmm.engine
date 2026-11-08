@@ -1471,6 +1471,8 @@ static void read_pollutants(sqlite3* db, SimulationContext& ctx, const std::stri
                 vec.resize(n);
         };
         grow(ctx.pollutants.units);
+        if (ctx.pollutants.unit_declaration_valid.size() < n)
+            ctx.pollutants.unit_declaration_valid.resize(n, 1);
         ctx.pollutants.mwt.resize(n, 1.0);
         ctx.pollutants.comments.resize(n);
         grow(ctx.pollutants.c_rain);
@@ -1484,6 +1486,8 @@ static void read_pollutants(sqlite3* db, SimulationContext& ctx, const std::stri
             ctx.pollutants.co_pollut.resize(n, -1);
         grow(ctx.pollutants.co_frac);
 
+        const auto unit_code = column_text(stmt.get(), 1);
+        ctx.pollutants.unit_declaration_valid[idx] = unit_code == "0" || unit_code == "1" || unit_code == "2";
         ctx.pollutants.units[idx] = static_cast<MassUnits>(column_int(stmt.get(), 1));
         ctx.pollutants.c_rain[idx] = column_double(stmt.get(), 2);
         ctx.pollutants.c_gw[idx] = column_double(stmt.get(), 3);

@@ -29,6 +29,7 @@
 #include "data/GageData.hpp"
 #include "data/TableData.hpp"
 #include "data/PollutantData.hpp"
+#include "quality/PassiveStorageExchange.hpp"
 #include "data/InflowData.hpp"
 #include "input/geopackage/GeoPackageSchema.hpp"
 #include "input/geopackage/GeoPackageWriter.hpp"
@@ -2427,4 +2428,24 @@ TEST(GeoPackageElevationOffsets, ElevationOffsetsSurviveAGpkgRoundTrip) {
     const Offsets c2 = conduit_offsets(back, "C2");
     EXPECT_NEAR(c2.up, 98.5, 1e-6);
     EXPECT_NEAR(c2.dn, 90.0, 1e-6);
+}
+
+TEST(GeoPackagePollutantBasis, RawUnitCodesRetainDeclarationValidity) {
+    const auto root=fs::path(__FILE__).parent_path().parent_path().parent_path()/"verification/component_species_bases_2026-11-07/geopackage";
+    fs::create_directories(root);
+    int index=0;
+    for(const auto code:{"0","1","2","junk","256","UG/L"}) {
+        SCOPED_TRACE(code);SimulationContext source;source.pollutant_names.add("Dye");source.allocate_objects();
+        const auto file=(root/(std::to_string(index)+".gpkg")).string();ASSERT_EQ(write_to_file(file,source,"basis"),0);
+        {auto db=open_database(file);auto query=prepare(db.get(),"UPDATE pollutants SET units=? WHERE simulation_id='basis'");bind_text(query.get(),1,code);ASSERT_EQ(sqlite3_step(query.get()),SQLITE_DONE);}
+        SimulationContext loaded;ASSERT_EQ(read_from_file(file,loaded,"basis"),0);ASSERT_EQ(loaded.pollutants.unit_declaration_valid.size(),1u);
+        const bool recognized=index<3;EXPECT_EQ(loaded.pollutants.unit_declaration_valid[0],recognized);
+        EXPECT_EQ(static_cast<int>(loaded.pollutants.units[0]),recognized?index:0);
+        if(!recognized) {
+            quality::PassiveStorageExchange book;quality::PassiveStorageExchange::Row row;row.pollutant="Dye";
+            try {book.reserve(loaded,1,{row});FAIL()<<"Malformed database units enrolled";}
+            catch(const std::exception& error) {EXPECT_NE(std::string(error.what()).find("unit declaration"),std::string::npos)<<error.what();}
+        }
+        ++index;
+    }
 }

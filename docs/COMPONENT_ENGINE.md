@@ -39,6 +39,50 @@ Native watershed, snow, LID and legacy groundwater processes in a complete model
 are not replaced by a second component driver. Their detailed coupling and
 parity matrices remain to be qualified.
 
+The opt-in `split_material_network` and `split_material_surface` roles expose
+`openswmm.node-surface-material.v10`. They use the bounded native passive-storage
+pollutant contract described in [the material packet contract](SPLIT_MATERIAL_PACKET.md),
+with MG/L, UG/L or #/L basis and native concentration-volume amounts. They are
+separate from the water-only roles and schemas. See
+`examples/hydrocouple/split-material/composition.json` for a two-component graph.
+No HydroCoupleSDK dependency is added to the engine or its component module.
+
+Connect exactly one material surface output directly to one material network
+input from this plugin, with distinct instance IDs. Both instances must prepare
+before the network advances; either preparation order is supported. They must
+have matching authored configuration, ordered geometry, pollutant basis and
+initial native stocks. Optional `material_capacity` is an integer from 1 to
+65536 (default 4096) and must match on both roles. It bounds the retained native
+journal; it is not a packet-size guarantee. The example uses six slots and
+then continues through real empty windows after those slots have been used.
+
+The native network owns advancement. Surface `update()` performs lifecycle
+scheduling only; native outer-phase callbacks drive its solver. The surface
+publishes accepted time only after the network accepts the corresponding step.
+Either finish order settles native pending windows before reporting. Public
+output pulls cannot drive these callbacks. Prepared connections are frozen;
+adapters, fan-out, replacement peers and lifecycle reentry during callbacks are
+refused. Destroyed or reinitialized peers invalidate their private generation.
+The opaque in-process session owns material authority; a copied JSON packet
+does not create an executable endpoint or ownership.
+
+`material_session` is scalar String observational JSON with schema
+`openswmm.material-component-session/1`. It reports accepted time/boundaries,
+observed OFFER/PROOF/ACK stages, applied drain/spill legs, empty windows and the
+first terminal error. These counters do not authorize transfers. A snapshot is
+written as `material-session.json` at preparation, finish or failure in the
+component's fresh output directory; numerical callback dispatch does no disk
+I/O. The network owns `model.out`, while the surface owns optional
+`model.2d.h5` (`surface_results`, default true).
+
+Material metadata inspection invokes the native read-only eligibility check,
+without starting a session or creating output files. Runtime geometry import
+and binding still enforce the executable contract. This profile excludes
+general reaction/heat/age transport, arbitrary network or watershed ownership,
+coordinated graph restart and remote authentication. Unsupported native
+arithmetic or transaction failures stop the session with its original
+obligations retained; the adapter does not retry or reconstruct authority.
+
 The `native_cpu_surface_water/1` profile supports a complete model with triangle
 and/or quad surface cells and the built-in HDF5 results writer. It requires
 authored `BACKEND CPU`, `RECONSTRUCTION_ORDER 1`, `IGNORE_QUALITY YES`, heat
@@ -668,9 +712,126 @@ the ordinary native path. Physical per-firing water, ordered signed SI point
 totals, point conversions, node bookings, queue consumption and hydraulic volume
 changes remain separate observations. The exact difference between native
 booking and gross native leg water is diagnostic, never a balancing receipt.
-Per-point directional gross water totals must still be exactly representable;
+By default, per-point directional gross water totals must still be exactly
+representable;
 unsupported accumulation or partitioning is refused. Whole deliveries and the
 existing authenticated exact halves are the only qualified material partitions.
+
+The separate `PassiveStorageWaterArithmetic::RETAIN_AGGREGATES` option on
+`attachLiveChangingVolumeExchange(water, capacity, preflight)` retains canonical
+sparse directional water totals at each point. It authenticates sums of the
+actual once-converted native legs; signed SI point accumulation and native
+queue booking keep their original arithmetic. Water supplements never balance
+or modify the hydraulic queue. Whole delivery consumes the stored exact amount;
+one equal-half delivery regroups individually authenticated native leg halves
+and proves the exact partition. Existing scalar half-schedule checks remain.
+Other fractions still refuse. Water-only rows remain pending even with zero
+pollutant mass. Receipt archive 8 and live archives 10/11 distinguish this option,
+without/with conservative history admission, and reject cross-policy restores.
+Decoding, replay and preflight include the additional water components and their
+possible future half remainders. Earlier modes and archive bytes are unchanged.
+
+`attachLiveChangingVolumeSlicedExchange(capacity, preflight)` selects
+`RETAIN_EXACT_SLICES` with retained gross water. Two columns in immutable
+native-leg order own the current water and material remainders. Each partial
+uses `(before / frozen_span) * dt` and `before - slice`; both must stay positive
+for a positive leg and their exact sum must equal `before`. Thus successive
+partitions qualify only when the represented native operations conserve each
+leg exactly. This does not promise exact rational proportionality. Whole delivery
+retires every remainder. Unsupported arithmetic refuses before material mixing.
+
+Receipt 9 and live 12/13 identify this pairing. Detached replay reconstructs every
+leg remainder from the original transfers and delivery history, including settled
+zero remainders. Counts are bounded before allocation; history admission and
+replay include the extra per-leg validation/copy/regrouping work. Earlier
+attachments and archive formats retain their previous behavior.
+
+The live changing-volume profile accepts one declared native pollutant in `MG/L`,
+`UG/L` or `#/L`. Numeric concentration is preserved: surface amounts are
+concentration times m3 and receiving amounts are concentration times ft3. These
+are not kg amounts merely because a field includes `si` in its internal name.
+Physical surface-amount factors are 0.001 kg for mg/L, 0.000001 kg for ug/L,
+and 1000 counts for #/L. The corresponding native factor also includes
+0.028316846592 m3/ft3. Counts may represent fractional expected values.
+Conversion rounding is an observation, not a balancing correction.
+
+Conservative enrollment additionally requires a recognized unit declaration.
+Unknown registered INP unit tokens retain the ordinary native mg/L fallback,
+with validity metadata that refuses this optional profile. GeoPackage rows
+must contain the writer's explicit unit codes 0, 1 or 2; text coercion or enum
+wraparound cannot establish a valid declaration. The metadata follows row
+creation/deletion, and a valid pre-start units setter intentionally repairs it.
+Rows skipped entirely by the native parser are outside this declaration check.
+Existing archive formats retain their identities and bytes.
+
+The experimental `openswmm_passive_exchange.h` C facade selects the qualified
+integrated exact-slice owner with `swmm_passive_exchange_enable`. Call it after
+ordinary initialize/start(0), before advancing. Capacity and history admission
+remain explicit. `swmm_passive_exchange_enable_checkpoint` separately attaches
+the native numerical checkpoint profile; existing C checkpoint inspection,
+exclusive save and restore then require matching fresh enrollment.
+
+Version1 getters copy status, the book's settled pool, sealed pending gross
+amounts, receipt rows, original journal legs and current per-leg remainders.
+Amounts are exact canonical expansions: count0 means zero and every returned
+component participates in the sum. They carry no funding or application
+authority. Versioned record sizes are checked before writing. Reads require
+exclusive idle engine access and preserve outputs and engine diagnostics on
+refusal. Terminal observations may include an open/unsealed producer window;
+settled and current hydraulic volumes are separate. Unapplied attempt after-values
+are proposals. These records are neither portable packets nor checkpoint files.
+
+The pure C11 reference harness compares all three bases and both flow signs with
+the same native C++/Fraction reference, including exact checkpoints, intermediate
+restart, callback refusal, unsupported arithmetic, an open terminal journal and
+recoverable history refusal. This facade does not activate species in the water
+split API. The native exact-slice owner now reserves an exclusive network-book
+allowance for each actual ADVANCE, REPORT or FINAL window. Per-node authority is
+the exact minimum of settled physical and accountable inventory, less sealed
+gross spill. Each spill consumes before surface credit; drains cannot replenish
+the grant. Ordered applied proof prepares a candidate receipt. The old sealed
+book remains unchanged until actual native water queue/span confirmation commits
+both records and releases unused authority. Failed or missing confirmation keeps
+the grant, spend, applied journal and prepared seal unresolved; quality and
+checkpoints refuse outstanding work. Accepted-boundary archives retain their
+existing format and replay reconstructs these grants, including empty windows.
+This private integrated authority has no remote peer/session identity. Schema10
+still needs the actual split post-quality REPORT/final handoffs and a qualified
+peer funding protocol before any material grant can leave the native owner.
+
+A separate private C++ water-only scheduling mode qualifies that report seam
+using two native participants. It defers the surface's entire due output action
+until one zero-duration REPORT request at the settled network endpoint. Peer
+identities, sequence, report-grid time and mode must match. A pending report
+blocks further phases; timer-only slots before REPORT_START still consume one
+native tick. FINISH uses the existing peer end() after that tick completes.
+The mode is restricted to simple water without source, aquifer, mapped-outfall
+or node-LID owners. Schemas1-9 refuse all of its frames, including geometry;
+the public C configure call and component metadata keep their existing profile.
+This establishes scheduling only. Species transport, session-bound material
+authority and schema10 remain separate gates.
+
+The private `PeerPassiveStorageFunding`/`PeerPassiveStorageProducer` protocol
+qualifies one native two-way producer window with distinct network and surface
+contexts. The network alone owns settled inventory and the full in-flight grant;
+the surface owns exact local spend and its actual applied-leg journal. A registered
+recipient capability and noncopyable single-use offer/reply/acknowledgement bind
+the process session, point map, native node columns, basis and physical window.
+The same native admission port and operand checks serve integrated and peer
+producers. Admission and application allocate nothing. Returned evidence is
+marked peer-reported; the receiver does not replay admission as a local witness.
+Unused funding is released after material/water commit. Missing replies retain
+the full network encumbrance and the independently held surface journal. Peer
+book checkpoints refuse even at settled boundaries until paired recovery exists.
+
+The caller must maintain one exclusive issuer per network context throughout
+the session, including unresolved work. This internal protocol does not arbitrate
+two independently constructed books over the same inventory. Engine-owned
+attachment must enforce that exclusion when the no-link material role, native
+quality hooks and successive REPORT/FINAL scheduling are added. This first
+qualification uses the existing manufactured closed wet-storage marcher fixture
+with zero-net water and both signs of material change. It does not enable full
+engine material split scheduling, a portable packet, schema10 or GUI activation.
 
 Receipt archive 7, live owner archive 8 and engine archive 3005 distinguish the
 new law. Bounded replay records every quality-step volume transition and every
@@ -680,7 +841,7 @@ writer, validates water booking/assembly and continuity of the observations,
 and compares all mapped pools against detached incoming state before publishing.
 Observed hydraulic transitions are inputs to material replay; this does not
 prove that a unique historical hydraulic run produced them. Earlier formats
-remain unchanged. Broader water aggregation, other owners and
+remain unchanged. Other delivery arithmetic, other owners and
 public/component/GUI activation remain unqualified.
 
 `attachLiveChangingVolumeExchange(capacity, true)` additionally selects
@@ -782,3 +943,31 @@ also send the same discharge into a reviewed source. The native INP reader now
 resolves forward catchment references in outfall destinations and refuses unknown
 names. See `SPLIT_WATER_PACKET.md` and
 `tests/verification/component_split_returns_2026-11-03` for qualification.
+
+
+Private C++ material pairing uses `configureMaterialSplit` and
+`bindMaterialPeer` for the existing closed, serial CPU, first-order,
+changing-volume passive storage profile. Both engines start from the same
+native model and geometry. The network exclusively owns the receiving stock,
+funding allowance and quality solver; the surface owns its native mesh solve
+and applied-leg journal. Native ADVANCE, post-quality REPORT and FINISH windows
+transfer single-use funding/proof/acknowledgement capsules. Material proof and
+water booking are checked before publishing the network queue. Surface step
+acceptance follows network quality, output and the master step-end callback.
+Successful finalization is tracked separately from natural clock completion.
+A failed or closed partner makes the pair terminal; no physical rollback or
+paired restart is provided.
+
+This private path retains the existing SoA hydraulic and quality arrays and
+native solver. It has no HydroCoupleSDK dependency. It does not enable species
+in the public C split API, portable packets, installed components or the GUI.
+Public water profiles and packet schemas remain unchanged. Unsupported exact
+arithmetic still refuses. Qualification and limitations are recorded under
+`tests/verification/component_material_pair_2026-11-07`.
+
+
+An experimental C material adapter and separate schema10 codec are described in
+`SPLIT_MATERIAL_PACKET.md`. This adapter retains native authority in one explicitly
+bound trusted in-process pair and validates complete serialized offers before
+credit, proofs before preparation, and acknowledgements after commitment. The
+existing water codec and component/Composer/GUI profiles remain unchanged.

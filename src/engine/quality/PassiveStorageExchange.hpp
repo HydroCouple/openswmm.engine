@@ -15,10 +15,13 @@ namespace openswmm {
 struct SimulationContext;
 namespace quality {
 class QualitySolver;
+class PeerPassiveStorageFunding;
 enum class PassiveStorageLaw : std::uint8_t { FIXED_VOLUME, CHANGING_VOLUME };
-enum class PassiveStorageArithmetic : std::uint8_t { EXACT, RETAIN_ROUNDOFF, RETAIN_AGGREGATES, RETAIN_POINT_AGGREGATES, RETAIN_EXACT_HALVES };
+enum class PassiveStorageWaterArithmetic : std::uint8_t { EXACT, RETAIN_AGGREGATES };
+enum class PassiveStorageArithmetic : std::uint8_t { EXACT, RETAIN_ROUNDOFF, RETAIN_AGGREGATES, RETAIN_POINT_AGGREGATES, RETAIN_EXACT_HALVES, RETAIN_EXACT_SLICES };
 inline bool retainsPointAggregates(PassiveStorageArithmetic policy) noexcept {
-    return policy == PassiveStorageArithmetic::RETAIN_POINT_AGGREGATES || policy == PassiveStorageArithmetic::RETAIN_EXACT_HALVES;
+    return policy == PassiveStorageArithmetic::RETAIN_POINT_AGGREGATES || policy == PassiveStorageArithmetic::RETAIN_EXACT_HALVES ||
+        policy == PassiveStorageArithmetic::RETAIN_EXACT_SLICES;
 }
 inline bool retainsMaterialAggregates(PassiveStorageArithmetic policy) noexcept {
     return policy == PassiveStorageArithmetic::RETAIN_AGGREGATES || retainsPointAggregates(policy);
@@ -56,7 +59,8 @@ inline bool retainsMaterialAggregates(PassiveStorageArithmetic policy) noexcept 
  * the observed new hydraulic volume. The exact difference stays in R; gross
  * spill uses settled physical and accountable inventory. Native water assembly
  * and ordered producer booking have separate bounded observation histories.
- * Gross per-point water accumulation still requires exact representability.
+ * The separate RETAIN_AGGREGATES water policy retains exact directional totals
+ * from authenticated native legs without changing hydraulic queue arithmetic.
  *
  * Staged and privately authenticated live inputs share this native receiving
  * book. Live proofs preserve actual SI donor operands and one native conversion;
@@ -88,8 +92,11 @@ public:
         // Empty supplement: the scalar is authoritative. Multipart supplement:
         // canonical exact total is authoritative and scalar must be zero.
         std::vector<double> drain_mass_parts, spill_mass_parts;
+        std::vector<double> drain_water_parts, spill_water_parts;
         NativeAmountSum materialAmount(bool drain) const;
         void setMaterialAmount(bool drain, const NativeAmountSum& amount);
+        NativeAmountSum waterAmount(bool drain) const;
+        void setWaterAmount(bool drain, const NativeAmountSum& amount);
         bool operator==(const Row&) const = default;
     };
     struct AppliedLeg {
@@ -123,15 +130,46 @@ public:
         bool authenticated = false;
         LiveProof proof;
         std::uint8_t half_state = 0; // retained after settlement; reconstructed through delivery replay
+        // Current remainders in immutable proof-leg order; owned only by exact slices.
+        std::vector<double> remaining_water_legs, remaining_mass_legs;
         bool operator==(const Receipt&) const = default;
     };
     struct Attempt {
         double start_ms = 0.0, dt = 0.0, remaining_start = 0.0;
     };
+    // Private native authority; read-only diagnostics are not a transferable grant.
+    struct FundingPool {
+        int node;
+        Sample settled;
+        double published_concentration;
+        NativeAmountSum roundoff, sealed, granted, spent;
+        bool operator==(const FundingPool&) const = default;
+    };
+    struct PeerIdentity {
+        std::uint64_t issuer = 0, recipient = 0, session = 0;
+        bool operator==(const PeerIdentity&) const = default;
+    };
+    struct FundingAllowance {
+        std::uint64_t ordinal, receipt, generation;
+        Phase phase;
+        double capture_ms, start_ms, end_ms, remaining;
+        std::string pollutant;
+        MassUnits units;
+        std::size_t leg_limit;
+        std::vector<FundingPool> pools;
+        std::vector<AppliedLeg> spills; // bounded, expected operands in native firing order
+        bool reconciled = false;
+        PeerIdentity peer;
+        bool peer_reported = false; // receipt information, never a local admission witness
+        bool operator==(const FundingAllowance&) const = default;
+    };
+    const FundingAllowance* fundingAllowance() const noexcept { return funding_ ? &*funding_ : nullptr; }
+    bool materialSealPrepared() const noexcept { return seal_.has_value(); }
 
     explicit PassiveStorageExchange(PassiveStorageArithmetic arithmetic = PassiveStorageArithmetic::EXACT,
-                                    PassiveStorageLaw law = PassiveStorageLaw::FIXED_VOLUME)
-        : arithmetic_(arithmetic), law_(law) {}
+                                    PassiveStorageLaw law = PassiveStorageLaw::FIXED_VOLUME,
+                                    PassiveStorageWaterArithmetic water = PassiveStorageWaterArithmetic::EXACT)
+        : arithmetic_(arithmetic), law_(law), water_arithmetic_(water) {}
     PassiveStorageExchange(const PassiveStorageExchange&) = delete;
     PassiveStorageExchange& operator=(const PassiveStorageExchange&) = delete;
     PassiveStorageExchange(PassiveStorageExchange&&) = delete;
@@ -167,11 +205,17 @@ public:
     NativeAmountSum pendingSpillAmount(int node) const;
     PassiveStorageArithmetic arithmetic() const noexcept { return arithmetic_; }
     PassiveStorageLaw law() const noexcept { return law_; }
+    PassiveStorageWaterArithmetic waterArithmetic() const noexcept { return water_arithmetic_; }
+    bool retainsWaterAggregates() const noexcept { return water_arithmetic_ == PassiveStorageWaterArithmetic::RETAIN_AGGREGATES; }
+    bool exactSlices() const noexcept { return arithmetic_ == PassiveStorageArithmetic::RETAIN_EXACT_SLICES; }
     bool changingVolume() const noexcept { return law_ == PassiveStorageLaw::CHANGING_VOLUME; }
     /// Bind every mapped pool before the first changing-volume delivery. Its
     /// settled inventory remains owned through empty cohorts and hydraulic tails.
     void bindChangingVolumePools(const SimulationContext& ctx, const std::vector<int>& nodes);
     const NativeAmountSum& storedRoundoff(int node) const noexcept;
+    const Sample* settledPool(int node) const noexcept {
+        const auto it = pools_.find(node); return it == pools_.end() ? nullptr : &it->second;
+    }
     /// Both physical and exact accountable inventory must fund this gross sum.
     bool canFund(int node, double physical_mass, double gross_spill) const noexcept;
     bool canFund(int node, double physical_mass, const NativeAmountSum& gross_spill) const noexcept;
@@ -181,6 +225,12 @@ public:
 private:
     friend class QualitySolver;
     friend class LivePassiveStorageExchange;
+    friend class PeerPassiveStorageFunding;
+    friend class PeerPassiveStorageCheckpoint;
+    // Only the acknowledged peer coordinator may bypass the standalone peer guard.
+    std::string checkpointSealed(const SimulationContext& ctx) const;
+    void restoreSealed(const SimulationContext& ctx, const std::string& bytes,
+                       const std::map<int, Sample>* closed_initial);
     using Pool = Sample;
     // Columnar observations of native hydraulics. These are inputs to material
     // replay, not a second hydraulic solver or a claim of historical authenticity.
@@ -221,6 +271,18 @@ private:
         double end_ms, remaining;
         Delivery delivery;
     };
+    struct PreparedSeal {
+        std::vector<Receipt> receipts;
+        std::map<int, Pool> pools;
+        std::vector<std::string> node_ids, pollutant_ids;
+        std::uint64_t last_id;
+        double next_start_ms, remaining;
+    };
+    void grantFunding(const SimulationContext& ctx, std::uint64_t receipt, Phase phase,
+                      double start_ms, double end_ms, std::size_t leg_capacity);
+    bool spendFunding(const SimulationContext& ctx, const AppliedLeg& leg) noexcept;
+    void reconcileFunding(const SimulationContext& ctx, const LiveProof& proof,
+                          Phase phase, double start_ms, double end_ms) const;
     void reserveImpl(const SimulationContext& ctx, std::uint64_t id, std::vector<Row> rows,
                      Publication publication, const LiveProof* proof = nullptr);
     void reserveAuthenticated(const SimulationContext& ctx, std::uint64_t id, std::vector<Row> rows,
@@ -233,7 +295,7 @@ private:
     void validateChangingReplay(const SimulationContext& ctx) const;
     struct ReplaySize {
         std::size_t deliveries = 0, receipts = 0, rows = 0, nodes = 0, proof_items = 0, material_parts = 0, proof_legs = 0,
-            water_publications = 0, water_points = 0;
+            water_publications = 0, water_points = 0, water_parts = 0;
     };
     ReplaySize replaySize(std::size_t deliveries) const;
     static void checkReplaySize(const SimulationContext& ctx, const ReplaySize& size,
@@ -249,6 +311,7 @@ private:
     void finishWaterPublication(const SimulationContext& ctx);
     void begin(const SimulationContext& ctx, double dt);
     std::vector<Row> exactHalfRows(const Receipt& receipt, double span, double dt) const;
+    std::vector<Row> exactSliceRows(Receipt& receipt, double span, double dt) const;
     void prepare(const SimulationContext& ctx, double dt);
     void commit(const SimulationContext& ctx);
     double receivingConcentration(const Pool& pool, double amount, NativeAmountSum& next_roundoff) const;
@@ -266,9 +329,14 @@ private:
     std::map<int, NativeAmountSum> roundoff_;
     PassiveStorageArithmetic arithmetic_;
     PassiveStorageLaw law_;
+    PassiveStorageWaterArithmetic water_arithmetic_;
     std::map<int, Pool> initial_pools_;
     std::vector<WaterPublication> water_publications_;
     std::optional<WaterPublication> pending_water_;
+    std::optional<FundingAllowance> funding_;
+    std::optional<PreparedSeal> seal_;
+    std::optional<PeerIdentity> peer_binding_; // private session; paired recovery is not qualified
+    std::optional<LiveProof> peer_received_;
     std::optional<Prepared> prepared_;
     std::optional<Frozen> frozen_;
     std::vector<Delivery> deliveries_;

@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "SWMMEngine.hpp"
 #include "SplitFrame.hpp"
+#include "MaterialPacket.hpp"
 #include <openswmm/engine/openswmm_split_packet.h>
 #include "openswmm_api_common.hpp"
 #include "FileIO.hpp"
 #include "../hydrology/Gage.hpp"
 #include "../hydrology/SourceClockGroups.hpp"
 #include "../hydrology/LidNode.hpp"
+#include "../hydraulics/TimestepController.hpp"
+#include "../quality/PeerPassiveStorageExchange.hpp"
 #include <openswmm/engine/openswmm_2d.h>
 #include <openswmm/engine/openswmm_gw2d.h>
 #include <openswmm/engine/openswmm_gw_transport.h>
@@ -45,6 +48,19 @@ std::unique_ptr<Frame> capture(const SimulationContext& ctx, const SplitExecutio
     value->start = ctx.elapsed_ms / 1000.;
     value->dt = dt;
     value->reply = state.role == SWMM_SPLIT_SURFACE;
+    value->settled_reports = state.settled_reports;
+    value->material = state.material;
+    if (state.material) {
+        value->material_species = ctx.pollutant_names.names()[0];
+        value->material_units = ctx.pollutants.units[0];
+        value->material_concentration = ctx.nodes.conc;
+        value->material_full_volume = ctx.nodes.full_volume;
+        value->material_ponded_area = ctx.nodes.ponded_area;
+        value->material_rate = ctx.nodes.coupling_inflow;
+        value->material_factor = state.material_factor;
+        if (!phase) value->material_points = state.material_points;
+    }
+    if (state.settled_reports) value->report_time_ms = ctx.next_report_ms;
     value->node_count = ctx.n_nodes();
     value->source_count = state.source_count;
     value->aquifer = state.aquifer;
@@ -184,6 +200,198 @@ void validateInputs(SWMMEngine* engine) {
 }
 
 namespace openswmm {
+SplitExecution::SplitExecution() = default;
+SplitExecution::~SplitExecution() = default;
+
+void validateMaterialSplitInput(const SimulationContext& ctx) {
+#ifdef OPENSWMM_HAS_2D
+    quality::PeerPassiveStorageFunding::validateProfile(ctx);
+    require(!ctx.options.ignore_routing && !ctx.options.ignore_2d &&
+        ctx.options.node_continuity==NodeContinuity::EXPLICIT && !ctx.options.skip_steady_state &&
+        !ctx.options.rpt_averages && ctx.plugin_specs.empty() && ctx.process_component_specs.empty() &&
+        !ctx.files.has_any(),"Private material role excludes other runtime owners");
+#else
+    throw std::invalid_argument("Material split requires the native surface build");
+#endif
+}
+
+class SWMMEngine::MaterialWindow final : public quality::PeerPassiveStorageWindow {
+public:
+    explicit MaterialWindow(SWMMEngine& network) : network_(network) {}
+    void start(int phase) {
+        auto& s=*network_.split_;
+        require(s.material_pair && !s.material_pair->active && s.material_pair->surface &&
+            s.material_pair->network==&network_ && s.material_issuer && !s.material_issuer->failed(),
+            "Missing or failed engine-owned material pair");
+        s.material_pair->active=true;s.material_pair->phase=phase;issued_=false;reply_.reset();
+    }
+    std::unique_ptr<quality::PeerFundingOffer> ready(quality::PassiveStorageExchange::Phase phase,double start,double end) override {
+        using P=quality::PassiveStorageExchange::Phase;
+        auto& s=*network_.split_;
+        const int expected=phase==P::ADVANCE?SWMM_SPLIT_ADVANCE:phase==P::REPORT?SplitExecution::REPORT:SWMM_SPLIT_FINISH;
+        require(s.material_pair->active && s.material_pair->phase==expected && !issued_,
+            "Material funding requires exactly one actual window in its native phase");
+        auto offer=s.material_issuer->issue(phase,start,end);issued_=true;
+        if(s.material_transport)relay(SWMM_MATERIAL_OFFER,materialOfferPacket(offer->view(),s.sequence,s.material_pair->phase));
+        return offer;
+    }
+    void returned(std::unique_ptr<quality::PeerFundingReply> reply) override {
+        require(network_.split_->material_pair->active && issued_ && !reply_ && reply,
+            "Material proof is missing or already returned");
+        reply_=std::move(reply);
+    }
+    void prepare(const Frame& request,const Frame& reply) {
+        if(issued_) {
+            require(reply_!=nullptr,"Material window did not return its single-use proof");
+            auto& s=*network_.split_;
+            if(s.material_transport)relay(SWMM_MATERIAL_PROOF,materialProofPacket(*reply_,s.sequence,s.material_pair->phase,
+                reply.nodes.coupling_queue,reply.nodes.coupling_volume,reply.remaining));
+            network_.split_->material_issuer->accept(std::move(reply_));
+            network_.split_->material_issuer->validateWaterBooking(reply.nodes.coupling_queue,reply.nodes.coupling_volume,reply.remaining);
+        } else require(!reply_ && reply.nodes.coupling_queue==request.nodes.coupling_queue &&
+            reply.nodes.coupling_volume==request.nodes.coupling_volume && reply.remaining==request.remaining,
+            "Material water booking without an actual funded producer window");
+    }
+    void confirm() {
+        if(!issued_)return;
+        auto& s=*network_.split_;auto* peer=s.material_pair->surface;
+        require(peer && peer->split_ && peer->split_->material_producer,"Material recipient closed before acknowledgement");
+        auto acknowledgement=s.material_issuer->confirmWater();
+        if(s.material_transport)relay(SWMM_MATERIAL_ACK,materialAcknowledgementPacket(s.material_issuer->returnedReply()->view(),
+            s.sequence,s.material_pair->phase,network_.ctx_.nodes.coupling_queue,network_.ctx_.coupling_delivery_remaining));
+        peer->split_->material_producer->acknowledge(std::move(acknowledgement));
+    }
+    void finish(bool accepted) noexcept {
+        auto& s=*network_.split_;
+        if(!accepted) {
+            if(s.material_issuer)s.material_issuer->fail("Material phase return failed; encumbrance retained.");
+            if(s.material_pair && s.material_pair->surface && s.material_pair->surface->split_)
+                s.material_pair->surface->split_->failed=true;
+        }
+        if(s.material_pair){s.material_pair->active=false;s.material_pair->phase=0;}
+    }
+private:
+    void relay(int stage,const std::string& packet) {
+        auto& s=*network_.split_;auto& pair=*s.material_pair;
+        require(pair.active && !pair.transporting,"Material transport is not at its exclusive native phase");
+        pair.transporting=true;
+        struct Guard {bool& active;~Guard(){active=false;}} guard{pair.transporting};
+        const char* response=nullptr;std::size_t size=0;
+        int rc;
+        try {rc=s.material_transport(&network_,stage,packet.data(),packet.size(),&response,&size,s.material_transport_user);}
+        catch(...){throw std::runtime_error("Material transport callback threw; stop without retry");}
+        require(rc==SWMM_OK && response && size && size<=SWMM_MATERIAL_PACKET_MAX_BYTES,
+            "Material transport refused or lost its packet; state retained");
+        matchMaterialPacket(packet,response,size,network_.ctx_);
+    }
+    SWMMEngine& network_;
+    bool issued_=false;
+    std::unique_ptr<quality::PeerFundingReply> reply_;
+};
+
+const quality::PeerPassiveStorageFunding* SWMMEngine::peerMaterialFunding() const noexcept {
+    return split_?split_->material_issuer.get():nullptr;
+}
+const quality::PeerPassiveStorageProducer* SWMMEngine::peerMaterialProducer() const noexcept {
+    return split_?split_->material_producer.get():nullptr;
+}
+bool SWMMEngine::materialCloseBlocked() const noexcept {
+    return split_ && split_->material && (step_active_ || split_->reporting ||
+        (split_->material_pair && (split_->material_pair->active ||
+            (split_->material_pair->network && split_->material_pair->network->step_active_))));
+}
+bool SWMMEngine::materialEndBlocked() const noexcept {
+    if(!split_ || !split_->material)return false;
+    if(step_active_)return true;
+    const auto& p=split_->material_pair;
+    if(split_->role==SWMM_SPLIT_SURFACE)
+        return !p || !p->active || p->phase!=SWMM_SPLIT_FINISH;
+    return p && p->active;
+}
+void SWMMEngine::detachMaterialPeer() noexcept {
+#ifdef OPENSWMM_HAS_2D
+    if(!split_ || !split_->material)return;
+    auto p=split_->material_pair;
+    surface_router_.peer_passive_exchange_=nullptr;surface_router_.peer_window_=nullptr;
+    if(!p)return;
+    auto* other=split_->role==SWMM_SPLIT_NETWORK?p->surface:p->network;
+    if(split_->role==SWMM_SPLIT_NETWORK)p->network=nullptr;else p->surface=nullptr;
+    if(other && other->split_ && other->split_->material_pair==p) {
+        other->surface_router_.peer_passive_exchange_=nullptr;other->surface_router_.peer_window_=nullptr;
+        if(!split_->material_finalized || !other->split_->material_finalized) {
+            other->split_->failed=true;
+            if(other->split_->material_issuer)other->split_->material_issuer->fail("Material peer closed before completion.");
+            if(other->split_->material_producer)other->split_->material_producer->fail("Material peer closed before completion.");
+        }
+    }
+#endif
+}
+void SWMMEngine::acceptMaterialBoundary() {
+    if(!split_ || !split_->material || split_->role!=SWMM_SPLIT_NETWORK)return;
+    const auto& pair=split_->material_pair;
+    require(pair && pair->surface && !pair->active && split_->material_issuer &&
+        !split_->material_issuer->failed() && !split_->material_issuer->unresolved(),"Material acceptance has unresolved work");
+    auto& peer=*pair->surface;auto& state=*peer.split_;
+    require(state.material_acceptance_pending && !state.awaiting_report && !state.failed &&
+        peer.ctx_.elapsed_ms==ctx_.elapsed_ms,"Material surface lacks its completed native boundary");
+    peer.ctx_.nodes.conc=ctx_.nodes.conc;
+    if(peer.callbacks_.on_step_end)
+        peer.callbacks_.on_step_end(&peer,peer.ctx_.current_date,state.output_dt,peer.callbacks_.step_end_ud);
+    peer.tracePhase(SWMM_PHASE_STEP_ACCEPTED,state.output_start,state.output_dt);
+    state.material_acceptance_pending=false;
+}
+int SWMMEngine::setMaterialTransport(SWMM_MaterialTransport callback,void* user) noexcept {
+#if !defined(OPENSWMM_HAS_2D) || !defined(OPENSWMM_HAS_HYDROCOUPLE)
+    return SWMM_ERR_PLUGIN;
+#else
+    if(!callback || !split_ || !split_->material || split_->role!=SWMM_SPLIT_NETWORK ||
+        step_active_ || split_->material_pair || ctx_.state!=EngineState::RUNNING || ctx_.elapsed_ms!=0)
+        return SWMM_ERR_LIFECYCLE;
+    split_->material_transport=callback;split_->material_transport_user=user;return SWMM_OK;
+#endif
+}
+int SWMMEngine::bindMaterialPeer(SWMMEngine& peer,std::size_t capacity,bool require_transport) noexcept {
+#ifndef OPENSWMM_HAS_2D
+    return SWMM_ERR_PLUGIN;
+#else
+    if(&peer==this || !split_ || !peer.split_ || !split_->material || !peer.split_->material ||
+        split_->role!=SWMM_SPLIT_NETWORK || peer.split_->role!=SWMM_SPLIT_SURFACE ||
+        ctx_.state!=EngineState::RUNNING || peer.ctx_.state!=EngineState::RUNNING || step_active_ || peer.step_active_ ||
+        ctx_.elapsed_ms!=0 || peer.ctx_.elapsed_ms!=0 || split_->failed || peer.split_->failed ||
+        split_->material_pair || peer.split_->material_pair || split_->material_issuer || peer.split_->material_producer ||
+        live_passive_exchange_ || peer.live_passive_exchange_ || checkpoint_enabled_ || peer.checkpoint_enabled_)
+        return SWMM_ERR_LIFECYCLE;
+    if(require_transport && !split_->material_transport)return SWMM_ERR_LIFECYCLE;
+    try {
+        require(split_->geometry && peer.split_->geometry && split_->peer==peer.split_->identity &&
+            split_->model==peer.split_->model && split_->callback && split_->material_points==peer.split_->material_points &&
+            split_->material_factor==peer.split_->material_factor && ctx_.node_names.names()==peer.ctx_.node_names.names() &&
+            ctx_.pollutant_names.names()==peer.ctx_.pollutant_names.names() && ctx_.pollutants.units==peer.ctx_.pollutants.units,
+            "Material peers require matching authored model, geometry, species and basis");
+        require(ctx_.nodes.volume==peer.ctx_.nodes.volume && ctx_.nodes.depth==peer.ctx_.nodes.depth &&
+            ctx_.nodes.head==peer.ctx_.nodes.head && ctx_.nodes.full_volume==peer.ctx_.nodes.full_volume &&
+            ctx_.nodes.rpt_full_volume==peer.ctx_.nodes.rpt_full_volume && ctx_.nodes.ponded_area==peer.ctx_.nodes.ponded_area &&
+            ctx_.nodes.conc==peer.ctx_.nodes.conc,"Initial material native hydraulic or quality stocks differ");
+        quality::PeerPassiveStorageFunding::validateProfile(ctx_);
+        quality::PeerPassiveStorageFunding::validateProfile(peer.ctx_);
+        auto error=peer.surface_router_.changingVolumeProfile(peer.ctx_,peer.surface_router_.state_);
+        require(error.empty(),error.c_str());
+        auto issuer=std::make_unique<quality::PeerPassiveStorageFunding>(ctx_,split_->identity,peer.split_->identity,
+            split_->material_points,split_->material_factor,capacity);
+        auto producer=std::make_unique<quality::PeerPassiveStorageProducer>(peer.ctx_,peer.surface_router_.state_,
+            issuer->bindRecipient(peer.ctx_),split_->material_factor,capacity);
+        auto pair=std::make_shared<MaterialPairLifetime>();pair->network=this;pair->surface=&peer;
+        auto channel=std::make_unique<MaterialWindow>(*this);
+        split_->material_issuer=std::move(issuer);peer.split_->material_producer=std::move(producer);
+        split_->material_pair=peer.split_->material_pair=pair;
+        peer.split_->peer=split_->identity;
+        split_->material_channel=std::move(channel);
+        peer.surface_router_.peer_passive_exchange_=peer.split_->material_producer.get();
+        peer.surface_router_.peer_window_=split_->material_channel.get();
+        return SWMM_OK;
+    } catch(const std::exception& error){ctx_.error_message=error.what();return SWMM_ERR_PLUGIN;}
+#endif
+}
 bool reviewedGroundwaterExchange(const SimulationContext& ctx) {
 #ifdef OPENSWMM_HAS_2D
     const auto* aq = ctx.twod_io.aquifer;
@@ -227,7 +435,11 @@ void SWMMEngine::captureSplitSources(SplitFrame& value) {
         (pending.water.drain ? value.source_pending_drain : value.source_pending_runoff)[pending.water.node] += pending.water.volume;
 #endif
 }
-int SWMMEngine::configureSplit(int role) noexcept {
+int SWMMEngine::configureSplit(int role, bool settled_reports) noexcept {
+    return configureSplitImpl(role,settled_reports,false);
+}
+int SWMMEngine::configureMaterialSplit(int role) noexcept {return configureSplitImpl(role,true,true);}
+int SWMMEngine::configureSplitImpl(int role, bool settled_reports, bool material) noexcept {
 #ifndef OPENSWMM_HAS_2D
     return SWMM_ERR_PLUGIN;
 #else
@@ -236,7 +448,8 @@ int SWMMEngine::configureSplit(int role) noexcept {
         return SWMM_ERR_LIFECYCLE;
     if (role != SWMM_SPLIT_NETWORK && role != SWMM_SPLIT_SURFACE) return SWMM_ERR_BADPARAM;
     try {
-        validateInputs(this);
+        if(material) validateMaterialSplitInput(ctx_);
+        else validateInputs(this);
         require(!surface_output_plugin_ && (role != SWMM_SPLIT_SURFACE || out_path_.empty()),
             "Split input must omit OUTPUT_FILE; bind a private surface file after role selection, with no surface-role binary output");
         auto state = std::make_unique<SplitExecution>();
@@ -245,6 +458,8 @@ int SWMMEngine::configureSplit(int role) noexcept {
         state->aquifer = !surface_router_.aquiferConfig().empty();
         state->spatial_sources = !surface_router_.aquiferConfig().surface_owners.empty();
         state->reviewed_exchange = reviewedGroundwaterExchange(ctx_);
+        state->settled_reports = settled_reports;
+        state->material = material;
         for (int n=0; n<ctx_.n_nodes(); ++n)
             if (ctx_.node_subtypes.storage_row(n) >= 0 &&
                 ctx_.node_subtypes.storages.lid[ctx_.node_subtypes.storage_row(n)].control >= 0) {
@@ -254,6 +469,8 @@ int SWMMEngine::configureSplit(int role) noexcept {
                     state->mesh_richards_nodes.push_back(n);
                 else state->extended_water=true;
             }
+        require(!settled_reports || (!state->source_count && !state->aquifer && state->lid_nodes.empty()),
+                "Private settled reports require simple native water without source, aquifer or node-LID owners");
         if (state->spatial_sources) {
             std::vector<int> seeds;
             for (const auto& owner : surface_router_.aquiferConfig().surface_owners)
@@ -301,6 +518,17 @@ int SWMMEngine::splitGeometry(SWMM_SplitFrame* output) noexcept {
             surface_router_.subsurface().active() == split_->aquifer &&
             (split_->aquifer || !outfalls.empty() || std::any_of(ctx_.coupled_node.begin(), ctx_.coupled_node.end(), [](auto v) { return v != 0; })),
             "Split surface requires a live coupled mesh and its configured groundwater owner");
+        require(!split_->settled_reports || outfalls.empty(), "Private settled reports exclude mapped outfalls");
+        if(split_->material) {
+            auto error=surface_router_.changingVolumeProfile(ctx_,surface_router_.state_);
+            require(error.empty(),error.c_str());
+            split_->material_points.clear();
+            for(std::size_t k=0;k<surface_router_.node_coupling_points_.size();++k) {
+                const auto& point=surface_router_.node_coupling_points_[k];
+                split_->material_points.push_back({k,point.cell_idx,point.node_idx,0});
+            }
+            split_->material_factor=surface_router_.options_.flow_2d_to_1d;
+        }
         split_->mapped_outfalls = std::move(outfalls);
         require(!split_->spatial_sources || surface_output_plugin_,"Reviewed split sources require mesh results");
         if (split_->spatial_sources)
@@ -332,7 +560,13 @@ int SWMMEngine::applySplitGeometry(SWMM_SplitFrame input) noexcept {
                 value.source_returns == split_->source_returns &&
                 value.lid_nodes == split_->lid_nodes && value.mesh_richards_nodes == split_->mesh_richards_nodes &&
                 value.extended_water == split_->extended_water &&
-                value.reviewed_exchange == split_->reviewed_exchange,
+                value.reviewed_exchange == split_->reviewed_exchange &&
+                value.settled_reports == split_->settled_reports &&
+                value.material == split_->material &&
+                (!split_->material || (value.material_species==ctx_.pollutant_names.names()[0] &&
+                    value.material_units==ctx_.pollutants.units[0] && !value.material_points.empty() &&
+                    std::isfinite(value.material_factor) && value.material_factor>0)) &&
+                (!split_->settled_reports || value.mapped_outfalls.empty()),
                 "Split geometry/configuration differs from the network");
         auto outfalls = value.mapped_outfalls;
         auto limits = outfalls.empty() ? std::vector<double>{} :
@@ -352,6 +586,7 @@ int SWMMEngine::applySplitGeometry(SWMM_SplitFrame input) noexcept {
             value.conduits.publish(ctx_.link_subtypes.conduits);
         }
         split_->mapped_outfalls.swap(outfalls);
+        if(split_->material){split_->material_points=value.material_points;split_->material_factor=value.material_factor;}
         ctx_.surface_outfall_link_limit.swap(limits);
         split_->geometry = true;
         split_->peer = value.sender;
@@ -376,11 +611,14 @@ void SWMMEngine::splitExchange(int phase, double dt,
                               std::vector<std::pair<int, double>>* conductance) {
     require(split_ && split_->callback && !split_->failed, "Missing or failed native split participant");
     bool accepted = false;
+    auto* material=split_->material?static_cast<MaterialWindow*>(split_->material_channel.get()):nullptr;
     struct PhaseGuard {
         SplitExecution& state;
         bool& accepted;
-        ~PhaseGuard() { if (!accepted) state.failed = true; }
-    } guard{*split_, accepted};
+        MaterialWindow* material;
+        ~PhaseGuard() { if (!accepted) state.failed = true;if(material)material->finish(accepted); }
+    } guard{*split_, accepted,material};
+    if(split_->material){require(material!=nullptr,"Material pair must be bound before native advancement");material->start(phase);}
     auto request = capture(ctx_, *split_, phase, ++split_->sequence, dt);
     if (phase == SWMM_SPLIT_ADVANCE && split_->source_returns) {
         require(split_->accepted_inflow.size() == size_t(ctx_.n_nodes()) &&
@@ -403,6 +641,13 @@ void SWMMEngine::splitExchange(int phase, double dt,
     std::unique_ptr<Frame> reply(static_cast<Frame*>(response));
     require(rc == SWMM_OK && reply && reply.get() != request.get(), "Split participant refused the native phase; stop without retry");
     require(reply->node_count == ctx_.n_nodes() && reply->reply && reply->sender == split_->peer && reply->target == split_->identity &&
+        reply->material == split_->material &&
+        (!split_->material || (reply->material_species==request->material_species && reply->material_units==request->material_units &&
+            reply->material_factor==request->material_factor && reply->material_concentration==request->material_concentration &&
+            reply->material_full_volume==request->material_full_volume && reply->material_ponded_area==request->material_ponded_area &&
+            reply->nodes.head==request->nodes.head && reply->nodes.depth==request->nodes.depth && reply->nodes.volume==request->nodes.volume)) &&
+        reply->settled_reports == split_->settled_reports &&
+        (!split_->settled_reports || reply->report_time_ms == request->report_time_ms) &&
         reply->source_count == split_->source_count && reply->aquifer == split_->aquifer &&
         reply->spatial_sources == split_->spatial_sources && reply->lid_nodes == split_->lid_nodes &&
         reply->source_returns == split_->source_returns && reply->extended_water == split_->extended_water &&
@@ -411,6 +656,15 @@ void SWMMEngine::splitExchange(int phase, double dt,
         reply->mapped_outfalls == request->mapped_outfalls && reply->model == request->model && reply->phase == phase &&
         reply->sequence == request->sequence && reply->start == request->start && reply->dt == dt,
         "Stale or mismatched split phase receipt");
+    if(material) {
+        const auto nn=std::size_t(ctx_.n_nodes());
+        require(reply->nodes.coupling_queue.size()==nn && reply->nodes.coupling_volume.size()==nn &&
+            std::isfinite(reply->remaining) && reply->remaining>=0,"Material phase water columns differ");
+        for(std::size_t k=0;k<nn;++k)
+            require(std::isfinite(reply->nodes.coupling_queue[k]) && reply->nodes.coupling_volume[k]==0,
+                "Material phase returned an invalid native water booking");
+        material->prepare(*request,*reply);
+    }
     if (phase == SWMM_SPLIT_LID_TRIAL) {
         require(!split_->mesh_richards_nodes.empty() && !split_->lid_trial_sequence && !split_->lid_prepared &&
                 reply->lid_trial_sequence == reply->sequence &&
@@ -489,6 +743,7 @@ void SWMMEngine::splitExchange(int phase, double dt,
         }
     }
     if (phase == SWMM_SPLIT_ADVANCE) { split_->weather.clear(); split_->lid_prepared=false; }
+    if(material)material->confirm();
     accepted = true;
 }
 
@@ -497,11 +752,14 @@ int SWMMEngine::evaluateSplit(int phase, SWMM_SplitFrame input, SWMM_SplitFrame*
     return SWMM_ERR_PLUGIN;
 #else
     if (!input || !output) return SWMM_ERR_BADPARAM;
-    if (!split_ || split_->role != SWMM_SPLIT_SURFACE || split_->failed || step_active_ ||
+    if (!split_ || split_->role != SWMM_SPLIT_SURFACE || split_->failed || split_->reporting || step_active_ ||
+        (split_->material_pair && split_->material_pair->transporting) ||
         ctx_.state != EngineState::RUNNING) return SWMM_ERR_LIFECYCLE;
     try {
         const auto& request = frame(input);
-        require(request.phase == phase && phase >= SWMM_SPLIT_CONDUCTANCE && phase <= SWMM_SPLIT_LID_ACCEPT &&
+        require(request.phase == phase && ((phase >= SWMM_SPLIT_CONDUCTANCE && phase <= SWMM_SPLIT_LID_ACCEPT) ||
+            (split_->settled_reports && phase == SplitExecution::REPORT)) &&
+            request.settled_reports == split_->settled_reports && request.material == split_->material &&
             !request.reply && request.start == ctx_.elapsed_ms / 1000. &&
             request.sequence == split_->sequence + 1 && request.target == split_->identity &&
             request.sender != 0 && (!split_->peer || request.sender == split_->peer) &&
@@ -512,9 +770,37 @@ int SWMMEngine::evaluateSplit(int phase, SWMM_SplitFrame input, SWMM_SplitFrame*
             request.extended_water == split_->extended_water &&
             request.reviewed_exchange == split_->reviewed_exchange &&
             request.mapped_outfalls == split_->mapped_outfalls &&
-            (phase == SWMM_SPLIT_FINISH || (std::isfinite(request.dt) && request.dt > 0 &&
+            (phase == SWMM_SPLIT_FINISH ? (!split_->settled_reports || request.dt == 0) :
+                phase == SplitExecution::REPORT ? request.dt == 0 :
+                (std::isfinite(request.dt) && request.dt > 0 &&
                 request.dt <= std::max((ctx_.options.totalDurationMs() - ctx_.elapsed_ms) / 1000., .001))),
             "Split phase/configuration/clock mismatch");
+        if(split_->material) {
+            require(split_->material_producer && split_->material_pair && split_->material_pair->network &&
+                split_->material_pair->active && split_->material_pair->phase==phase &&
+                (phase==SplitExecution::REPORT || !split_->material_acceptance_pending),"Unbound or pending material peer phase");
+            quality::PeerPassiveStorageFunding::validateProfile(ctx_);
+            const auto nn=std::size_t(ctx_.n_nodes());
+            require(request.material_species==ctx_.pollutant_names.names()[0] && request.material_units==ctx_.pollutants.units[0] &&
+                request.material_factor==split_->material_factor,"Material species or native conversion differs");
+            for(const auto* column:{&request.nodes.head,&request.nodes.depth,&request.nodes.volume,&request.nodes.rpt_full_volume,
+                &request.nodes.coupling_queue,&request.nodes.coupling_volume,&request.nodes.inflow,&request.nodes.outflow,
+                &request.material_concentration,&request.material_full_volume,&request.material_ponded_area,&request.material_rate}) {
+                require(column->size()==nn,"Material native column extent differs");
+                for(double value:*column)require(std::isfinite(value),"Material native column is nonfinite");
+            }
+            for(std::size_t k=0;k<nn;++k)
+                require(request.material_concentration[k]>=0 && request.nodes.volume[k]>0 && request.nodes.depth[k]>0 &&
+                    request.material_full_volume[k]>=0 && request.material_ponded_area[k]>=0,"Invalid material native stock boundary");
+        }
+        if (split_->settled_reports) {
+            require(request.report_time_ms == ctx_.next_report_ms, "Private settled phase grid differs");
+            require(split_->awaiting_report == (phase == SplitExecution::REPORT),
+                    "Private settled output requires its pending REPORT before another phase");
+            if (phase == SplitExecution::REPORT)
+                require(hydraulics::TimestepController::output_due(ctx_) && request.report_time_ms == ctx_.next_report_ms,
+                        "Private settled REPORT grid differs");
+        }
         if (!split_->mesh_richards_nodes.empty()) {
             if (phase == SWMM_SPLIT_LID_TRIAL)
                 require(!split_->lid_trial && !split_->lid_prepared,"Richards interval already has a trial or acceptance");
@@ -580,7 +866,7 @@ int SWMMEngine::evaluateSplit(int phase, SWMM_SplitFrame input, SWMM_SplitFrame*
         split_->peer = request.sender;
         split_->report_flush = request.report_flush;
         if (phase != SWMM_SPLIT_LID_ACCEPT) {
-        if (split_->aquifer || !split_->mapped_outfalls.empty()) {
+        if (split_->aquifer || !split_->mapped_outfalls.empty() || split_->material) {
             ctx_.nodes.inflow = request.nodes.inflow;
             ctx_.nodes.outflow = request.nodes.outflow;
         }
@@ -591,6 +877,11 @@ int SWMMEngine::evaluateSplit(int phase, SWMM_SplitFrame input, SWMM_SplitFrame*
         ctx_.nodes.coupling_queue = request.nodes.coupling_queue;
         ctx_.nodes.coupling_volume = request.nodes.coupling_volume;
         ctx_.coupling_delivery_remaining = request.remaining;
+        if(split_->material) {
+            ctx_.nodes.conc=request.material_concentration;
+            ctx_.nodes.full_volume=request.material_full_volume;ctx_.nodes.ponded_area=request.material_ponded_area;
+            ctx_.nodes.coupling_inflow=ctx_.nodes.lat_flow=request.material_rate;
+        }
         }
         if (!split_->lid_nodes.empty() && (phase == SWMM_SPLIT_LID_TRIAL || phase == SWMM_SPLIT_ADVANCE)) {
             require(request.lids.size() == split_->lid_nodes.size(),"Missing Richards boundary state");
@@ -672,6 +963,19 @@ int SWMMEngine::evaluateSplit(int phase, SWMM_SplitFrame input, SWMM_SplitFrame*
                 double elapsed = 0;
                 rc = step(&elapsed);
                 split_->requested_dt = 0;
+            } else if (phase == SplitExecution::REPORT) {
+                struct Reporting {
+                    bool& active;
+                    explicit Reporting(bool& value) : active(value) { active = true; }
+                    ~Reporting() { active = false; }
+                } reporting(split_->reporting);
+                postOutputSnapshot(0);
+                split_->awaiting_report = false;
+                tracePhase(SWMM_PHASE_OUTPUTS_PUBLISHED, split_->output_start, split_->output_dt);
+                if (!split_->material && callbacks_.on_step_end)
+                    callbacks_.on_step_end(static_cast<void*>(this), ctx_.current_date, split_->output_dt,
+                                           callbacks_.step_end_ud);
+                if(!split_->material)tracePhase(SWMM_PHASE_STEP_ACCEPTED, split_->output_start, split_->output_dt);
             } else rc = end();
             if (rc != SWMM_OK) { split_->failed = true; return rc; }
             if (phase == SWMM_SPLIT_ADVANCE) split_->routing_prepared = false;

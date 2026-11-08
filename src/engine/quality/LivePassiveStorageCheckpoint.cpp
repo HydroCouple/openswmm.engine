@@ -109,7 +109,8 @@ std::string LivePassiveStorageExchange::checkpoint(const SimulationContext& ctx,
     state(book);
     auto payload = state.bytes();
     std::string magic = "OpenSWMM live passive owner";
-    std::uint32_t version = book_.changingVolume() ? (preflight_history_ ? 9 : 8) : book_.arithmetic() == PassiveStorageArithmetic::RETAIN_EXACT_HALVES ? (preflight_history_ ? 7 : 6) :
+    std::uint32_t version = book_.exactSlices() ? (preflight_history_ ? 13 : 12) : book_.retainsWaterAggregates() ? (preflight_history_ ? 11 : 10) :
+        book_.changingVolume() ? (preflight_history_ ? 9 : 8) : book_.arithmetic() == PassiveStorageArithmetic::RETAIN_EXACT_HALVES ? (preflight_history_ ? 7 : 6) :
         preflight_history_ ? 5 :
         book_.arithmetic() == PassiveStorageArithmetic::RETAIN_POINT_AGGREGATES ? 4 :
         book_.arithmetic() == PassiveStorageArithmetic::RETAIN_AGGREGATES ? 3 :
@@ -130,7 +131,8 @@ std::unique_ptr<LivePassiveStorageExchange> LivePassiveStorageExchange::prepareR
     std::string magic, payload;
     std::uint32_t version, endian, sum;
     envelope(magic, version, endian, sum, payload); envelope.finish();
-    const std::uint32_t expected_version = book_.changingVolume() ? (preflight_history_ ? 9 : 8) : book_.arithmetic() == PassiveStorageArithmetic::RETAIN_EXACT_HALVES ? (preflight_history_ ? 7 : 6) :
+    const std::uint32_t expected_version = book_.exactSlices() ? (preflight_history_ ? 13 : 12) : book_.retainsWaterAggregates() ? (preflight_history_ ? 11 : 10) :
+        book_.changingVolume() ? (preflight_history_ ? 9 : 8) : book_.arithmetic() == PassiveStorageArithmetic::RETAIN_EXACT_HALVES ? (preflight_history_ ? 7 : 6) :
         preflight_history_ ? 5 :
         book_.arithmetic() == PassiveStorageArithmetic::RETAIN_POINT_AGGREGATES ? 4 :
         book_.arithmetic() == PassiveStorageArithmetic::RETAIN_AGGREGATES ? 3 :
@@ -156,7 +158,7 @@ std::unique_ptr<LivePassiveStorageExchange> LivePassiveStorageExchange::prepareR
     std::string book; state(book); state.finish();
     check(surface.node_coupling != nullptr, "Live restore has no incoming point topology.");
     auto candidate = std::make_unique<LivePassiveStorageExchange>(book_.changingVolume() ? *context_ : ctx,
-        surface, *surface.node_coupling, factor_, capacity, book_.arithmetic(), preflight_history_, book_.law());
+        surface, *surface.node_coupling, factor_, capacity, book_.arithmetic(), preflight_history_, book_.law(), book_.waterArithmetic());
     candidate->book_.restoreImpl(ctx, book, &initial_pools_);
     candidate->rebind(ctx);
     if (book_.changingVolume())
@@ -191,7 +193,7 @@ void LivePassiveStorageExchange::installFrom(LivePassiveStorageExchange& c, cons
     b.owner_ = s.owner_ ? &ctx : nullptr;
     b.units_ = s.units_; b.last_id_ = s.last_id_; b.next_start_ms_ = s.next_start_ms_;
     b.remaining_ = s.remaining_; b.attempt_ = s.attempt_; b.failed_ = false;
-    b.prepared_.reset(); b.frozen_.reset(); b.pending_water_.reset();
+    b.prepared_.reset(); b.frozen_.reset(); b.pending_water_.reset(); b.funding_.reset(); b.seal_.reset();
     rebind(ctx);
 }
 }

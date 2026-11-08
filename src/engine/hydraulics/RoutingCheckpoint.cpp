@@ -513,9 +513,7 @@ struct Router::RestartState {
         a.fixed(exports.water_m3, exports.reverse_m3, exports.heat_j, exports.pollutant_amounts);
         a(time, date, elapsed, old_elapsed, next_report, evap, infil_factor, recovery_factor,
           link_steps, link_step_span);
-#define FIELD(v) a.fixed(nodes.v);
-        NODE_STATE(FIELD)
-#undef FIELD
+        Router::checkpointNodeColumns(a, nodes);
 #define FIELD(v) a.fixed(links.v);
         LINK_STATE(FIELD)
 #undef FIELD
@@ -920,6 +918,11 @@ void Router::copyCheckpointContext(const std::shared_ptr<RestartState>& s, Simul
     c.current_time = s->time; c.current_date = s->date; c.elapsed_ms = s->elapsed;
     c.old_elapsed_ms = s->old_elapsed; c.next_report_ms = s->next_report;
     c.climate_state.evap_rate = s->evap;
+}
+void Router::checkpointNodeColumns(detail::CompletedSourceArchive& a, NodeData& nodes, bool validate) {
+#define FIELD(v) a.fixed(nodes.v); if (validate) finite(nodes.v);
+    NODE_STATE(FIELD)
+#undef FIELD
 }
 
 void Router::checkCheckpointProfile(const SimulationContext& c) const {

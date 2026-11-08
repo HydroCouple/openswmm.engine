@@ -54,6 +54,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Balance, init_storage, final_storage, externa
                                    solver_n_tiers)
 
 Json encode(const Frame& f, const openswmm::SimulationContext& ctx) {
+    require(!f.settled_reports && !f.material, "Private material/settled-report frames cannot use water packet schemas 1-9");
     Json j = {{"schema", f.reviewed_exchange ? exchangeSchema : f.extended_water ? lidSchema : f.source_returns ? returnSchema : !f.lid_nodes.empty() ? richardsSchema : f.spatial_sources ? footprintSchema : f.aquifer ? groundwaterSchema : f.source_count ? sourceSchema : f.mapped_outfalls.empty() ? schema : outfallSchema},
               {"phase", f.phase},
               {"sender", f.sender},

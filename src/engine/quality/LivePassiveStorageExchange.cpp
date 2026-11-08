@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Caleb Buahin
 #include "LivePassiveStorageExchange.hpp"
+#include "PassiveStorageLegAdmission.hpp"
 #ifdef OPENSWMM_HAS_2D
 #include "QualityRouting.hpp"
 #include "../core/SimulationContext.hpp"
@@ -41,8 +42,9 @@ double sum(double a, double b) {
 }
 LivePassiveStorageExchange::LivePassiveStorageExchange(const SimulationContext& ctx,
         const twoD::SurfaceStateData& state, const std::vector<twoD::CouplingPoint>& points, double factor,
-        std::size_t capacity, PassiveStorageArithmetic arithmetic, bool preflight_history, PassiveStorageLaw law)
-    : context_(&ctx), legs_(journalCapacity(capacity)), factor_(factor), book_(arithmetic, law), preflight_history_(preflight_history) {
+        std::size_t capacity, PassiveStorageArithmetic arithmetic, bool preflight_history, PassiveStorageLaw law,
+        PassiveStorageWaterArithmetic water)
+    : context_(&ctx), legs_(journalCapacity(capacity)), factor_(factor), book_(arithmetic, law, water), preflight_history_(preflight_history) {
     require(!preflight_history || retainsPointAggregates(arithmetic),
             "History preflight requires exact authenticated point arithmetic.");
     require(capacity > 0 && capacity <= 65536 && !points.empty() && points.size() <= 4096 &&
@@ -84,7 +86,7 @@ bool LivePassiveStorageExchange::preflightHistory(const SimulationContext& ctx, 
     try {
         requireReady();
         require(&ctx == context_ && !open_ && !reserved_ && !book_.frozen_ && !book_.prepared_ &&
-                    !book_.pending_water_ && count_ <= legs_.size(),
+                    !book_.pending_water_ && !book_.funding_ && !book_.seal_ && count_ <= legs_.size(),
                 "History preflight requires an accepted live boundary.");
         auto size = book_.replaySize(book_.deliveries_.size() + std::size_t(next_delivery));
         if (book_.changingVolume()) {
@@ -103,6 +105,7 @@ bool LivePassiveStorageExchange::preflightHistory(const SimulationContext& ctx, 
             // A successful expansion has at most one component per actual
             // contributing leg. Accepted/remaining hold at most two copies.
             if (remaining > 1) size.material_parts += 2 * remaining;
+            if (book_.retainsWaterAggregates() && remaining > 1) size.water_parts += 2 * remaining;
         }
         std::set<int> nodes;
         for (const auto& receipt : book_.receipts_)
@@ -191,6 +194,8 @@ void LivePassiveStorageExchange::beginWindow(const SimulationContext& ctx,
         for (const auto& p : points_)
             require(std::size_t(p.cell) < state.volume.size() && std::size_t(p.cell) < state.transport.cell_mass.size(),
                     "Live mapped donor is unavailable.");
+        if (book_.changingVolume() && book_.exactSlices())
+            book_.grantFunding(ctx, next_id_, phase, start, end, legs_.size() - count_);
         start_ms_ = start; end_ms_ = end; phase_ = phase; first_ = count_;
         ever_opened_ = open_ = true;
     } catch (...) { fail("Live passive exchange publication failed."); throw; }
@@ -198,12 +203,8 @@ void LivePassiveStorageExchange::beginWindow(const SimulationContext& ctx,
 bool LivePassiveStorageExchange::admit(std::size_t point, int cell, int node, double water,
                                       double mass, double before, double volume_before, double offset_s, double duration_s, double withdrawal_si) noexcept {
     if (failed()) return false;
-    attempted_ = {point, cell, node, water > 0, false, std::abs(water), mass,
-                  std::abs(water) * factor_, mass * factor_, before,
-                  water > 0 ? before - mass : before + mass, 0, start_ms_, end_ms_, phase_};
-    attempted_.volume_before = volume_before;
-    attempted_.volume_after = std::max(0.0, volume_before - water);
-    attempted_.offset_s = offset_s; attempted_.duration_s = duration_s; attempted_.withdrawal_si = withdrawal_si;
+    attempted_ = passiveStorageAttempt(point,cell,node,water,mass,before,volume_before,offset_s,duration_s,
+        withdrawal_si,factor_,start_ms_,end_ms_,phase_);
     auto reject = [&](const char* reason) { fail(reason); return false; };
     if (!open_ || reserved_ || point >= points_.size() || points_[point].cell != cell || points_[point].node != node)
         return reject("Live passive exchange leg has no matching open owner.");
@@ -211,29 +212,12 @@ bool LivePassiveStorageExchange::admit(std::size_t point, int cell, int node, do
     if (it == budgets_.end()) return reject("Live passive exchange donor is unowned.");
     attempted_.sample = it->concentration;
     if (count_ == legs_.size()) return reject("Live passive exchange journal capacity exhausted.");
-    if (!std::isfinite(water) || water == 0 || !std::isfinite(mass) || mass < 0 ||
-        !std::isfinite(before) || before < 0 || !std::isfinite(attempted_.after) || attempted_.after < 0 ||
-        !std::isfinite(attempted_.water_native) || attempted_.water_native == 0 ||
-        !std::isfinite(attempted_.mass_native) || (mass != 0 && attempted_.mass_native == 0))
-        return reject("Live passive exchange leg is nonfinite or has no representable carrier.");
-    if (!std::isfinite(volume_before) || volume_before < 0 || (water > 0 && volume_before == 0) ||
-        !std::isfinite(attempted_.volume_after) || !std::isfinite(offset_s) || offset_s < 0 ||
-        !std::isfinite(duration_s) || duration_s <= 0 ||
-        offset_s + duration_s > (end_ms_ - start_ms_) / 1000)
-        return reject("Live passive exchange donor water or firing interval differs.");
-    if (water > 0 && mass != std::min(water * (before / volume_before), before))
-        return reject("Live passive exchange drain differs from its actual donor operands.");
-    if (!std::isfinite(withdrawal_si) || withdrawal_si < 0 ||
-        (water > 0 ? withdrawal_si != 0 : (withdrawal_si / duration_s) * duration_s != -water))
-        return reject("Live passive exchange water withdrawal differs from native operands.");
-    const double delta = water > 0 ? -mass : mass;
-    const double bound = 2 * std::numeric_limits<double>::epsilon() * std::abs(attempted_.after);
-    if (mass != 0 && (attempted_.after == before || std::abs((attempted_.after - before) - delta) > bound))
-        return reject("Live passive exchange source increment is not representable.");
+    if (const auto* reason = passiveStorageLegError(attempted_,water)) return reject(reason);
     if (water < 0) {
-        if (mass != attempted_.water_si * attempted_.sample)
-            return reject("Live passive exchange spill differs from its actual SI sample.");
-        if (retainsMaterialAggregates(book_.arithmetic())) {
+        if (book_.changingVolume() && book_.exactSlices()) {
+            if (!book_.spendFunding(*context_, attempted_))
+                return reject("Live passive spill exceeds its exclusive pre-credit allowance.");
+        } else if (retainsMaterialAggregates(book_.arithmetic())) {
             auto proposed = it->open, total = it->sealed;
             if (!proposed.tryAdd(attempted_.mass_native) || !total.tryAdd(proposed))
                 return reject("Live passive exchange exact spill reservation exceeds arithmetic capacity.");
@@ -292,12 +276,14 @@ void LivePassiveStorageExchange::seal(const SimulationContext& ctx, const std::v
             const auto j = std::size_t(b - budgets_.begin());
             hydraulic[j] = book_.changingVolume() ? hydraulic[j] + exchange[k] * factor_ : sum(hydraulic[j], exchange[k] * factor_);
             double actual = 0;
-            NativeAmountSum drain, spill;
+            NativeAmountSum drain, spill, drain_water, spill_water;
             for (std::size_t i = first_leg[k]; i != count_; i = next_leg[i - first_]) {
                 const auto& l = legs_[i];
                 require(l.applied, "Live passive exchange contains an unapplied reservation.");
                 actual = book_.changingVolume() ? actual + (l.drain ? l.water_si : -l.water_si) : sum(actual, l.drain ? l.water_si : -l.water_si);
-                if (l.drain) rows[k].drain_water = sum(rows[k].drain_water, l.water_native);
+                if (book_.retainsWaterAggregates()) {
+                    if (l.drain) drain_water.add(l.water_native); else spill_water.add(l.water_native);
+                } else if (l.drain) rows[k].drain_water = sum(rows[k].drain_water, l.water_native);
                 else rows[k].spill_water = sum(rows[k].spill_water, l.water_native);
                 if (retainsPointAggregates(book_.arithmetic())) {
                     if (l.drain) drain.add(l.mass_native); else spill.add(l.mass_native);
@@ -308,12 +294,16 @@ void LivePassiveStorageExchange::seal(const SimulationContext& ctx, const std::v
             if (retainsPointAggregates(book_.arithmetic())) {
                 rows[k].setMaterialAmount(true, drain); rows[k].setMaterialAmount(false, spill);
             }
+            if (book_.retainsWaterAggregates()) {
+                rows[k].setWaterAmount(true, drain_water); rows[k].setWaterAmount(false, spill_water);
+            }
             require(actual == exchange[k], "Live gross legs differ from native hydraulic booking.");
         }
         if (!book_.changingVolume())
             for (std::size_t j = 0; j < budgets_.size(); ++j)
                 require(hydraulic[j] == 0 && gross[j] == 0, "Live passive exchange requires exactly zero net native water.");
-        std::erase_if(rows, [](const auto& r) { return r.drain_water == 0 && r.spill_water == 0; });
+        std::erase_if(rows, [](const auto& r) { return r.drain_water == 0 && r.spill_water == 0 &&
+            r.drain_water_parts.empty() && r.spill_water_parts.empty(); });
         PassiveStorageExchange::LiveProof proof;
         proof.si_to_native = factor_;
         proof.legs.assign(legs_.begin() + first_, legs_.begin() + count_);
@@ -321,7 +311,7 @@ void LivePassiveStorageExchange::seal(const SimulationContext& ctx, const std::v
             proof.points.push_back({k, points_[k].cell, points_[k].node, exchange[k]});
         if (!rows.empty()) {
             book_.reserveAuthenticated(ctx, next_id_, std::move(rows), phase_, start_ms_, end_ms_, proof);
-            ++next_id_;
+            if (!book_.funding_) ++next_id_;
         }
         if (book_.changingVolume())
             book_.beginWaterPublication(ctx, proof, phase_, start_ms_, end_ms_, (end_ms_ - start_ms_) / 1000.0);
@@ -331,7 +321,10 @@ void LivePassiveStorageExchange::seal(const SimulationContext& ctx, const std::v
 void LivePassiveStorageExchange::observeWaterBooking(const SimulationContext& ctx) {
     if (!book_.changingVolume()) return;
     requireReady();
-    try { book_.finishWaterPublication(ctx); }
+    try {
+        book_.finishWaterPublication(ctx);
+        next_id_ = book_.last_id_ + 1;
+    }
     catch (...) { fail("Live changing-volume water publication failed."); throw; }
 }
 }

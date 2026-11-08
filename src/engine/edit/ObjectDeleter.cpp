@@ -1578,6 +1578,7 @@ CascadeResult delete_pollutant(SimulationContext& ctx, int pollut_idx) {
                 v.erase(v.begin() + static_cast<std::ptrdiff_t>(pollut_idx));
         };
         e(P.units);
+        e(P.unit_declaration_valid);
         e(P.mwt);
         e(P.k_decay);
         e(P.c_rain);

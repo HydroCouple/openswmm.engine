@@ -163,6 +163,7 @@ void handle_pollutants(SimulationContext& ctx, const std::vector<std::string>& l
 
         // Units
         const std::string units_str = Tokenizer::to_upper(tok[1]);
+        ctx.pollutants.unit_declaration_valid[idx] = units_str == "MG/L" || units_str == "UG/L" || units_str == "#/L";
         if (units_str == "UG/L")
             ctx.pollutants.units[idx] = MassUnits::UG_PER_L;
         else if (units_str == "#/L")

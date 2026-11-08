@@ -10,6 +10,14 @@ struct SplitFrame {
     uint64_t sequence = 0;
     uint64_t sender = 0, target = 0;
     bool report_flush = false;
+    bool settled_reports = false;
+    double report_time_ms = 0;
+    bool material = false;
+    std::string material_species;
+    MassUnits material_units = MassUnits::MG_PER_L;
+    double material_factor = 0;
+    std::vector<quality::PassiveStorageExchange::HydraulicPoint> material_points;
+    std::vector<double> material_concentration, material_full_volume, material_ponded_area, material_rate;
     double start = 0, dt = 0, remaining = 0;
     std::string model;
     int node_count = 0;

@@ -39,6 +39,16 @@ void row(Archive& a, PassiveStorageExchange::Row& r, std::uint32_t version) {
             if (!a.reading()) r.materialAmount(drain); // decoded components are validated after work preflight
         }
     } else check(r.drain_mass_parts.empty() && r.spill_mass_parts.empty(), "earlier format cannot omit point components");
+    if (version >= 8) {
+        for (bool drain : {true, false}) {
+            auto& parts = drain ? r.drain_water_parts : r.spill_water_parts;
+            std::uint64_t count = parts.size(); a(count);
+            check(count == 0 || (count >= 2 && count <= NativeAmountSum::capacity), "point water component count differs");
+            if (a.reading()) parts.resize(count);
+            for (double& part : parts) a(part);
+            if (!a.reading()) r.waterAmount(drain); // validate decoded components after work preflight
+        }
+    } else check(r.drain_water_parts.empty() && r.spill_water_parts.empty(), "earlier format cannot omit water components");
 }
 void proof(Archive& a, PassiveStorageExchange::LiveProof& p, std::size_t& total) {
     a(p.si_to_native);
@@ -81,12 +91,24 @@ void receipt(Archive& a, PassiveStorageExchange::Receipt& r, std::size_t& total,
         a(r.half_state);
         check(r.half_state <= 1 && (r.half_state == 0 || r.authenticated), "invalid exact-half receipt progress");
     } else check(r.half_state == 0, "earlier format cannot omit half progress");
+    if (version >= 9) {
+        check(r.authenticated && r.half_state == 0, "exact slice authentication/progress differs");
+        for (auto* column : {&r.remaining_water_legs, &r.remaining_mass_legs}) {
+            std::uint64_t size = column->size(); a(size);
+            check(size == r.proof.legs.size(), "exact slice leg column extent differs");
+            if (a.reading()) column->resize(size);
+            for (double& value : *column) {
+                a(value); check(std::isfinite(value) && value >= 0, "invalid exact slice leg remainder");
+            }
+        }
+    } else check(r.remaining_water_legs.empty() && r.remaining_mass_legs.empty(), "earlier format cannot omit leg remainders");
 }
 bool pendingRows(const std::vector<PassiveStorageExchange::Receipt>& receipts) {
     for (const auto& r : receipts)
         for (const auto& q : r.remaining)
             if (q.drain_water != 0 || q.spill_water != 0 || q.drain_mass != 0 || q.spill_mass != 0 ||
-                !q.drain_mass_parts.empty() || !q.spill_mass_parts.empty())
+                !q.drain_mass_parts.empty() || !q.spill_mass_parts.empty() ||
+                !q.drain_water_parts.empty() || !q.spill_water_parts.empty())
                 return true;
     return false;
 }
@@ -137,10 +159,13 @@ PassiveStorageExchange::ReplaySize PassiveStorageExchange::replaySize(std::size_
         size.proof_items += receipt.proof.points.size() + receipt.proof.legs.size();
         size.proof_legs += receipt.proof.legs.size();
         for (const auto* column : {&receipt.accepted, &receipt.remaining})
-            for (const auto& r : *column) size.material_parts += r.drain_mass_parts.size() + r.spill_mass_parts.size();
+            for (const auto& r : *column) {
+                size.material_parts += r.drain_mass_parts.size() + r.spill_mass_parts.size();
+                size.water_parts += r.drain_water_parts.size() + r.spill_water_parts.size();
+            }
     }
-    if (arithmetic_ == PassiveStorageArithmetic::RETAIN_EXACT_HALVES) {
-        std::size_t bound = 0;
+    if (arithmetic_ == PassiveStorageArithmetic::RETAIN_EXACT_HALVES || exactSlices()) {
+        std::size_t bound = 0, water_bound = 0;
         for (const auto& receipt : receipts_) {
             std::map<std::pair<std::uint64_t, bool>, std::size_t> counts;
             for (const auto& row : receipt.accepted) {
@@ -152,24 +177,29 @@ PassiveStorageExchange::ReplaySize PassiveStorageExchange::replaySize(std::size_
                 check(it != counts.end(), "half proof point differs from receipt rows");
                 ++it->second;
             }
-            for (const auto& row : receipt.accepted)
+            for (const auto& row : receipt.accepted) {
                 bound += row.drain_mass_parts.size() + row.spill_mass_parts.size();
+                water_bound += row.drain_water_parts.size() + row.spill_water_parts.size();
+            }
             for (const auto& row : receipt.remaining) {
                 for (bool drain : {true, false}) {
                     const auto& parts = drain ? row.drain_mass_parts : row.spill_mass_parts;
                     const double scalar = drain ? row.drain_mass : row.spill_mass;
                     const double water = drain ? row.drain_water : row.spill_water;
-                    if (water != 0 || scalar != 0 || !parts.empty()) {
+                    const auto& water_parts = drain ? row.drain_water_parts : row.spill_water_parts;
+                    if (water != 0 || scalar != 0 || !parts.empty() || !water_parts.empty()) {
                         const auto it = counts.find({row.point, drain});
                         check(it != counts.end(), "half remaining point differs from accepted rows");
                         const auto count = it->second;
                         if (count > 1) bound += std::min(count, NativeAmountSum::capacity);
+                        if (retainsWaterAggregates() && count > 1) water_bound += std::min(count, NativeAmountSum::capacity);
                     }
                 }
             }
         }
         // Cover both decoded canonical validation and any later per-leg regrouping.
         size.material_parts = std::max(size.material_parts, bound);
+        size.water_parts = std::max(size.water_parts, water_bound);
     }
     size.nodes = changingVolume() ? initial_pools_.size() : nodes.size();
     size.water_publications = water_publications_.size();
@@ -210,7 +240,10 @@ void PassiveStorageExchange::checkReplaySize(const SimulationContext& ctx, const
         charge({size.deliveries + size.receipts, size.nodes, NativeAmountSum::capacity, NativeAmountSum::capacity, 8});
     if (retainsPointAggregates(arithmetic))
         charge({size.deliveries + size.receipts + 1, size.material_parts, NativeAmountSum::capacity, 4});
-    if (arithmetic == PassiveStorageArithmetic::RETAIN_EXACT_HALVES)
+    charge({size.deliveries + size.receipts + 1, size.water_parts, NativeAmountSum::capacity, 4});
+    if (arithmetic == PassiveStorageArithmetic::RETAIN_EXACT_SLICES)
+        charge({size.deliveries + size.receipts + 1, size.proof_legs, NativeAmountSum::capacity, 8});
+    if (arithmetic == PassiveStorageArithmetic::RETAIN_EXACT_HALVES || arithmetic == PassiveStorageArithmetic::RETAIN_EXACT_SLICES)
         charge({size.deliveries + size.receipts + 1, size.proof_legs, NativeAmountSum::capacity, 8});
     const auto& n = ctx.nodes;
     check(n.volume.size() >= nn && n.old_volume.size() >= nn && n.depth.size() >= nn &&
@@ -219,7 +252,11 @@ void PassiveStorageExchange::checkReplaySize(const SimulationContext& ctx, const
 }
 
 std::string PassiveStorageExchange::checkpoint(const SimulationContext& ctx) const {
-    check(!failed_ && !frozen_ && !prepared_ && !pending_water_, "only sealed accepted owner state can be saved");
+    check(!peer_binding_, "peer funding requires a qualified paired recovery format");
+    return checkpointSealed(ctx);
+}
+std::string PassiveStorageExchange::checkpointSealed(const SimulationContext& ctx) const {
+    check(!failed_ && !frozen_ && !prepared_ && !pending_water_ && !funding_ && !seal_, "only sealed accepted owner state can be saved");
     if (!owner_) {
         check(!changingVolume(), "changing-volume checkpoint requires bound initial pools");
         return {};
@@ -234,7 +271,7 @@ std::string PassiveStorageExchange::checkpoint(const SimulationContext& ctx) con
     checkReplaySize(ctx, replaySize(deliveries_.size()), arithmetic_);
     check(receipts_.size() <= maxRecords && pools_.size() <= maxRecords, "owner size exceeds profile");
     Archive a;
-    std::uint32_t version = changingVolume() ? 7 : arithmetic_ == PassiveStorageArithmetic::RETAIN_EXACT_HALVES ? 6 :
+    std::uint32_t version = changingVolume() ? (exactSlices() ? 9 : retainsWaterAggregates() ? 8 : 7) : arithmetic_ == PassiveStorageArithmetic::RETAIN_EXACT_HALVES ? 6 :
         arithmetic_ == PassiveStorageArithmetic::RETAIN_POINT_AGGREGATES ? 5 :
         arithmetic_ == PassiveStorageArithmetic::RETAIN_AGGREGATES ? 4 :
         arithmetic_ == PassiveStorageArithmetic::RETAIN_ROUNDOFF ? 3 :
@@ -306,7 +343,7 @@ void PassiveStorageExchange::validateChangingReplay(const SimulationContext& ctx
         trial.nodes.conc[node] = trial.nodes.conc_old[node] = sample.concentration;
         nodes.push_back(node);
     }
-    PassiveStorageExchange replay(arithmetic_, law_);
+    PassiveStorageExchange replay(arithmetic_, law_, water_arithmetic_);
     replay.bindChangingVolumePools(trial, nodes);
     QualitySolver solver; solver.init(trial.n_nodes(), 0, 1);
     std::size_t receipt_index = 0, publication_index = 0;
@@ -323,13 +360,22 @@ void PassiveStorageExchange::validateChangingReplay(const SimulationContext& ctx
                       r.proof.points == w.points && r.proof.si_to_native == w.si_to_native,
                   "water/material publication provenance differs");
             proof = r.proof;
+            if (exactSlices()) {
+                replay.grantFunding(trial, r.id, p.phase, p.batch_start_ms, p.batch_end_ms, proof.legs.size());
+                for (auto leg : proof.legs) if (!leg.drain) {
+                    leg.applied = false;
+                    check(replay.spendFunding(trial, leg), "historical spill exceeds its pre-credit allowance");
+                }
+            }
             replay.reserveAuthenticated(trial, r.id, r.accepted, p.phase, p.batch_start_ms, p.batch_end_ms, proof);
-            const auto& accepted = replay.receipts_.back();
+            const auto& accepted = replay.seal_ ? replay.seal_->receipts.back() : replay.receipts_.back();
             check(accepted.samples == r.samples && accepted.accepted == r.accepted && accepted.publication == r.publication,
                   "changing-volume settled donor/publication sample differs");
         } else {
             for (const auto& point : w.points)
                 check(initial_pools_.count(point.node) && point.exchange_si == 0, "unproved water-only publication");
+            if (exactSlices())
+                replay.grantFunding(trial, replay.last_id_ + 1, p.phase, p.batch_start_ms, p.batch_end_ms, 0);
         }
         replay.beginWaterPublication(trial, proof, p.phase, p.batch_start_ms, p.batch_end_ms, w.dt);
         for (std::size_t k = 0; k < nodes.size(); ++k) trial.nodes.coupling_queue[nodes[k]] = w.after.at(k);
@@ -386,7 +432,12 @@ void PassiveStorageExchange::restore(const SimulationContext& ctx, const std::st
 }
 void PassiveStorageExchange::restoreImpl(const SimulationContext& ctx, const std::string& bytes,
                                         const std::map<int, Sample>* closed_initial) {
-    check((!owner_ || changingVolume()) && !failed_ && !frozen_ && !prepared_ && !pending_water_ &&
+    check(!peer_binding_, "peer funding requires a qualified paired recovery format");
+    restoreSealed(ctx, bytes, closed_initial);
+}
+void PassiveStorageExchange::restoreSealed(const SimulationContext& ctx, const std::string& bytes,
+                                          const std::map<int, Sample>* closed_initial) {
+    check((!owner_ || changingVolume()) && !failed_ && !frozen_ && !prepared_ && !pending_water_ && !funding_ && !seal_ &&
               receipts_.empty() && deliveries_.empty() && water_publications_.empty(),
           "restore requires a pristine owner");
     if (bytes.empty()) {
@@ -403,7 +454,7 @@ void PassiveStorageExchange::restoreImpl(const SimulationContext& ctx, const std
     std::string name, payload;
     std::uint32_t version, endian, sum;
     envelope(name, version, endian, sum, payload); envelope.finish();
-    check((changingVolume() ? name == "OpenSWMM changing-volume storage receipt owner" && version == 7 :
+    check((changingVolume() ? name == "OpenSWMM changing-volume storage receipt owner" && version == (exactSlices() ? 9u : retainsWaterAggregates() ? 8u : 7u) :
           name == magic && ((version <= 2 && version >= 1 && arithmetic_ == PassiveStorageArithmetic::EXACT) ||
               (version == 3 && arithmetic_ == PassiveStorageArithmetic::RETAIN_ROUNDOFF) ||
               (version == 4 && arithmetic_ == PassiveStorageArithmetic::RETAIN_AGGREGATES) ||
@@ -411,7 +462,7 @@ void PassiveStorageExchange::restoreImpl(const SimulationContext& ctx, const std
               (version == 6 && arithmetic_ == PassiveStorageArithmetic::RETAIN_EXACT_HALVES))) &&
               endian == 0x01020304 && sum == crc(payload),
           "owner format/version/checksum differs");
-    PassiveStorageExchange saved(arithmetic_, law_);
+    PassiveStorageExchange saved(arithmetic_, law_, water_arithmetic_);
     Archive a(std::move(payload));
     double actual_time, actual_span;
     a(saved.node_ids_, saved.pollutant_ids_, saved.units_, saved.last_id_, saved.next_start_ms_,
@@ -442,7 +493,10 @@ void PassiveStorageExchange::restoreImpl(const SimulationContext& ctx, const std
     checkReplaySize(ctx, saved.replaySize(count), arithmetic_);
     for (const auto& receipt : saved.receipts_)
         for (const auto* rows : {&receipt.accepted, &receipt.remaining})
-            for (const auto& r : *rows) { r.materialAmount(true); r.materialAmount(false); }
+            for (const auto& r : *rows) {
+                r.materialAmount(true); r.materialAmount(false);
+                r.waterAmount(true); r.waterAmount(false);
+            }
     saved.deliveries_.resize(count);
     for (auto& d : saved.deliveries_) {
         a(d.start_ms, d.dt, d.remaining_start, d.remaining_after, d.cutoff, d.frozen);

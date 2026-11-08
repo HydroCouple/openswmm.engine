@@ -35,6 +35,7 @@
 
 #ifndef OPENSWMM_ROUTING_HPP
 #define OPENSWMM_ROUTING_HPP
+namespace openswmm::detail { class CompletedSourceArchive; }
 
 #include "XSectBatch.hpp"
 #include "../quality/FvTransportWater.hpp"
@@ -532,6 +533,9 @@ private:
     void installCheckpoint(SimulationContext& c, std::shared_ptr<RestartState> s) noexcept;
     /// Populate detached incoming owner views for cross-domain validation only.
     static void copyCheckpointContext(const std::shared_ptr<RestartState>& s, SimulationContext& c);
+    // Exact native node-column codec, also used by the distinct split surface
+    // context which does not own or initialize a second hydraulic solver.
+    static void checkpointNodeColumns(detail::CompletedSourceArchive&, NodeData&, bool validate = false);
     SimulationContext* checkpoint_context_ = nullptr; // non-owning, stable lifetime
     bool checkpoint_owned_session_ = false;           // engine owns structure/control memory
     bool checkpoint_aquifer_session_ =

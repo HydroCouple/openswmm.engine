@@ -346,10 +346,50 @@ target_compile_definitions(test_engine_routing PRIVATE
     "BENCHMARK_DATA_DIR=\"${PROJECT_SOURCE_DIR}/tests/benchmarks\""
 )
 add_gtest_unit(test_engine_quality_routing  test_quality_routing.cpp)
+add_executable(test_engine_passive_exchange_c test_passive_exchange_c.c)
+target_link_libraries(test_engine_passive_exchange_c PRIVATE openswmm_engine)
+set_target_properties(test_engine_passive_exchange_c PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF LINKER_LANGUAGE CXX RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY})
+openswmm_stage_test_runtime_deps(test_engine_passive_exchange_c)
+add_executable(test_engine_material_split_c test_material_split_c.c)
+target_link_libraries(test_engine_material_split_c PRIVATE openswmm_engine)
+set_target_properties(test_engine_material_split_c PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF LINKER_LANGUAGE CXX RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY})
+openswmm_stage_test_runtime_deps(test_engine_material_split_c)
+if(OPENSWMM_BUILD_2D)
+    add_gtest_unit(test_engine_material_pair test_material_pair.cpp)
+    add_library(material_test_transport OBJECT test_material_split_c.c)
+    target_link_libraries(material_test_transport PRIVATE openswmm_engine)
+    target_compile_definitions(material_test_transport PRIVATE MATERIAL_TRANSPORT_ONLY)
+    set_target_properties(material_test_transport PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+    target_sources(test_engine_material_pair PRIVATE $<TARGET_OBJECTS:material_test_transport>)
+    if(OPENSWMM_WITH_HYDROCOUPLE)
+        target_compile_definitions(test_engine_material_pair PRIVATE MATERIAL_PACKET_TESTS)
+        target_link_libraries(test_engine_material_pair PRIVATE nlohmann_json::nlohmann_json)
+        add_test(NAME test_engine_material_split_guards COMMAND test_engine_material_split_c --guards)
+    else()
+        target_compile_definitions(test_engine_material_split_c PRIVATE MATERIAL_SPLIT_OFF)
+        add_test(NAME test_engine_material_split_guards COMMAND test_engine_material_split_c --off)
+    endif()
+    target_compile_definitions(test_engine_material_pair PRIVATE
+        MATERIAL_PAIR_DATA="${PROJECT_SOURCE_DIR}/tests/unit/engine/data/passive_exchange_c"
+        MATERIAL_PAIR_EVIDENCE="${PROJECT_SOURCE_DIR}/tests/verification/component_material_pair_2026-11-07/native")
+    add_test(NAME test_engine_public_passive_guards COMMAND test_engine_passive_exchange_c --guards)
+else()
+    target_compile_definitions(test_engine_material_split_c PRIVATE MATERIAL_SPLIT_OFF)
+    add_test(NAME test_engine_material_split_guards COMMAND test_engine_material_split_c --off)
+    add_test(NAME test_engine_public_passive_guards COMMAND test_engine_passive_exchange_c --off)
+endif()
+set_tests_properties(test_engine_public_passive_guards PROPERTIES LABELS unit)
 add_gtest_unit(test_engine_passive_storage_exchange test_passive_storage_exchange.cpp)
 if(OPENSWMM_BUILD_2D)
+    add_gtest_unit(test_engine_peer_passive_storage_exchange test_peer_passive_storage_exchange.cpp)
+    target_compile_definitions(test_engine_peer_passive_storage_exchange PRIVATE
+        PEER_FUNDING_EVIDENCE="${PROJECT_SOURCE_DIR}/tests/verification/component_peer_funding_2026-11-07/native")
+    if(OPENSWMM_WITH_HYDROCOUPLE)
+        target_compile_definitions(test_engine_peer_passive_storage_exchange PRIVATE PEER_RECOVERY_PACKET_TESTS)
+    endif()
     add_gtest_unit(test_engine_coupled_water_checkpoint test_coupled_water_checkpoint.cpp)
     add_gtest_unit(test_engine_changing_volume_storage_exchange test_changing_volume_storage_exchange.cpp)
+    target_sources(test_engine_changing_volume_storage_exchange PRIVATE test_passive_storage_funding.cpp)
     target_compile_definitions(test_engine_changing_volume_storage_exchange PRIVATE
         CHANGING_VOLUME_TEST_OUTPUT="${PROJECT_SOURCE_DIR}/tests/verification/component_species_changing_volume_2026-11-06/native-fixtures")
     target_compile_definitions(test_engine_coupled_water_checkpoint PRIVATE
@@ -359,6 +399,34 @@ if(OPENSWMM_BUILD_2D)
         LIVE_EXCHANGE_TEST_OUTPUT="${PROJECT_SOURCE_DIR}/tests/verification/component_species_halves_2026-11-05/native-fixtures")
     find_package(Python3 QUIET COMPONENTS Interpreter)
     if(Python3_Interpreter_FOUND)
+        if(OPENSWMM_WITH_HYDROCOUPLE)
+            add_test(NAME test_engine_material_split_packets
+                COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/verify_material_split_c.py
+                    --caller $<TARGET_FILE:test_engine_material_split_c>
+                    --output ${PROJECT_SOURCE_DIR}/tests/verification/component_material_packet_2026-11-07/c-split)
+            set_tests_properties(test_engine_material_split_packets PROPERTIES LABELS unit TIMEOUT 180)
+        endif()
+        add_test(NAME test_engine_public_passive_accounting
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/verify_public_passive.py
+                --engine $<TARGET_FILE:test_engine_changing_volume_storage_exchange>
+                --caller $<TARGET_FILE:test_engine_passive_exchange_c>
+                --output ${PROJECT_SOURCE_DIR}/tests/verification/component_public_passive_2026-11-07/public-c)
+        set_tests_properties(test_engine_public_passive_accounting PROPERTIES LABELS unit)
+        add_test(NAME test_engine_native_basis_accounting
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/verify_native_bases.py
+                --engine $<TARGET_FILE:test_engine_changing_volume_storage_exchange>
+                --output ${PROJECT_SOURCE_DIR}/tests/verification/component_species_bases_2026-11-07/exact-bases)
+        set_tests_properties(test_engine_native_basis_accounting PROPERTIES LABELS unit)
+        add_test(NAME test_engine_exact_slice_accounting
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/verify_exact_slices.py
+                --engine $<TARGET_FILE:test_engine_changing_volume_storage_exchange>
+                --output ${PROJECT_SOURCE_DIR}/tests/verification/component_species_exact_slices_2026-11-07/exact-slices)
+        set_tests_properties(test_engine_exact_slice_accounting PROPERTIES LABELS unit)
+        add_test(NAME test_engine_water_aggregate_exact_accounting
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/verify_water_aggregates.py
+                --engine $<TARGET_FILE:test_engine_changing_volume_storage_exchange>
+                --output ${PROJECT_SOURCE_DIR}/tests/verification/component_species_water_aggregates_2026-11-06/exact-water)
+        set_tests_properties(test_engine_water_aggregate_exact_accounting PROPERTIES LABELS unit)
         add_test(NAME test_engine_changing_volume_exact_accounting
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/verify_changing_volume.py
                 --engine $<TARGET_FILE:test_engine_changing_volume_storage_exchange>
@@ -491,6 +559,9 @@ set_property(TEST
 # Water/source/checkpoint tests can run without the mesh results writer.
 # These surface/output suites require the writer and read back its HDF5 file.
 if(OPENSWMM_BUILD_2D AND OPENSWMM_2D_HDF5_OUTPUT)
+    add_gtest_unit(test_engine_split_reports test_split_reports.cpp)
+    target_compile_definitions(test_engine_split_reports PRIVATE
+        SPLIT_REPORT_EVIDENCE="${PROJECT_SOURCE_DIR}/tests/verification/component_split_reports_2026-11-07/native")
     add_gtest_unit(test_engine_split test_engine_split.cpp)
     set(_split_evidence "${PROJECT_SOURCE_DIR}/tests/verification/component_split_2026-11-03")
     target_compile_definitions(test_engine_split PRIVATE SPLIT_EVIDENCE="${_split_evidence}")
@@ -1271,12 +1342,41 @@ if(OPENSWMM_WITH_HYDROCOUPLE)
     target_compile_definitions(test_engine_component PRIVATE ENGINE_COMPONENT_LIBRARY="$<TARGET_FILE:openswmm_engine_component>")
     add_dependencies(test_engine_component openswmm_engine_component)
     if(OPENSWMM_BUILD_2D AND OPENSWMM_2D_HDF5_OUTPUT)
+        add_gtest_unit(test_engine_material_components test_material_components.cpp)
+        target_link_libraries(test_engine_material_components PRIVATE HydroCouple::HydroCouple nlohmann_json::nlohmann_json ${CMAKE_DL_LIBS})
+        target_compile_definitions(test_engine_material_components PRIVATE
+            ENGINE_COMPONENT_LIBRARY="$<TARGET_FILE:openswmm_engine_component>"
+            MATERIAL_COMPONENT_DATA="${CMAKE_CURRENT_SOURCE_DIR}/data/passive_exchange_c"
+            MATERIAL_COMPONENT_EVIDENCE="${PROJECT_SOURCE_DIR}/tests/verification/component_material_components_2026-11-08/direct")
+        add_dependencies(test_engine_material_components openswmm_engine_component)
         target_compile_definitions(test_engine_component PRIVATE OPENSWMM_COMPONENT_2D_RESULTS=1
             SPLIT_WITNESS="${_split_evidence}")
         set_tests_properties(test_engine_component PROPERTIES FIXTURES_REQUIRED engine_split)
         add_dependencies(test_engine_component test_engine_split)
         find_program(OPENSWMM_H5DIFF_EXECUTABLE NAMES h5diff)
         if(OPENSWMM_H5DIFF_EXECUTABLE)
+            set_tests_properties(test_engine_material_components PROPERTIES FIXTURES_SETUP engine_material_components)
+            set(_material_outputs "${PROJECT_SOURCE_DIR}/tests/verification/component_material_components_2026-11-08/direct")
+            set(_material_comparisons "")
+            foreach(_basis mg ug count)
+                foreach(_sign positive negative)
+                    list(APPEND _material_comparisons "FullDurationAllBasesBothSignsAndOrdersMatchNative/${_basis}-${_sign}")
+                    foreach(_steps 5 8)
+                        list(APPEND _material_comparisons "ShortSlicesAndPendingReportWindowsMatchNative/${_basis}-${_sign}-${_steps}")
+                    endforeach()
+                endforeach()
+            endforeach()
+            foreach(_order network-first source-first)
+                list(APPEND _material_comparisons "EarlyFinishInBothOrdersFlushesOnlyPendingNativeWindow/${_order}")
+            endforeach()
+            foreach(_comparison IN LISTS _material_comparisons)
+                string(REPLACE "/" "_" _name "${_comparison}")
+                add_test(NAME test_engine_material_component_${_name}_hdf5
+                    COMMAND "${OPENSWMM_H5DIFF_EXECUTABLE}" "${_material_outputs}/${_comparison}-native.h5"
+                        "${_material_outputs}/${_comparison}-surface/model.2d.h5")
+                set_tests_properties(test_engine_material_component_${_name}_hdf5 PROPERTIES
+                    FIXTURES_REQUIRED engine_material_components LABELS unit)
+            endforeach()
             set_tests_properties(test_engine_component PROPERTIES FIXTURES_SETUP engine_component_surface)
             set(_surface_cases "${CMAKE_CURRENT_SOURCE_DIR}/data/component_engine")
             foreach(_case DrainingSurface SpillingNetwork PerStepExchange VariableRouting DrySurface

@@ -128,6 +128,7 @@ SWMM_ENGINE_API int swmm_pollutant_add(SWMM_Engine engine, const char* id, int u
     // their parameters.
     const auto un = static_cast<std::size_t>(n);
     ctx.pollutants.units.resize(un, openswmm::MassUnits::MG_PER_L);
+    ctx.pollutants.unit_declaration_valid.resize(un, 1);
     ctx.pollutants.mwt.resize(un, 1.0);
     ctx.pollutants.k_decay.resize(un, 0.0);
     ctx.pollutants.c_rain.resize(un, 0.0);
@@ -183,6 +184,7 @@ SWMM_ENGINE_API int swmm_pollutant_add(SWMM_Engine engine, const char* id, int u
 
     // Set units for the new pollutant
     ctx.pollutants.units[static_cast<std::size_t>(idx)] = static_cast<openswmm::MassUnits>(units);
+    ctx.pollutants.unit_declaration_valid[static_cast<std::size_t>(idx)] = units >= 0 && units <= 2;
 
     return SWMM_OK;
 }
@@ -311,6 +313,7 @@ SWMM_ENGINE_API int swmm_pollutant_set_units(SWMM_Engine engine, int idx, int un
     if (units < 0 || units > 2)
         return SWMM_ERR_BADPARAM;
     ctx.pollutants.units[static_cast<std::size_t>(idx)] = static_cast<openswmm::MassUnits>(units);
+    ctx.pollutants.unit_declaration_valid[static_cast<std::size_t>(idx)] = units >= 0 && units <= 2;
     return SWMM_OK;
 }
 

@@ -4,6 +4,7 @@
 #define OPENSWMM_LIVE_PASSIVE_STORAGE_EXCHANGE_HPP
 
 #include "PassiveStorageExchange.hpp"
+#include "PassiveStorageAdmission.hpp"
 #include <cstddef>
 #include <memory>
 
@@ -22,7 +23,7 @@ namespace openswmm::quality {
  * Paired physical restart uses the closed no-source native profile. Output
  * continuation, public hotstarts and component activation remain separate gates.
  */
-class LivePassiveStorageExchange {
+class LivePassiveStorageExchange : public PassiveStorageAdmission {
 public:
     using Phase = PassiveStorageExchange::Phase;
     using Leg = PassiveStorageExchange::AppliedLeg;
@@ -31,7 +32,8 @@ public:
                                const std::vector<twoD::CouplingPoint>& points,
                                double si_to_native, std::size_t capacity = 4096,
                                PassiveStorageArithmetic arithmetic = PassiveStorageArithmetic::EXACT, bool preflight_history = false,
-                               PassiveStorageLaw law = PassiveStorageLaw::FIXED_VOLUME);
+                               PassiveStorageLaw law = PassiveStorageLaw::FIXED_VOLUME,
+                               PassiveStorageWaterArithmetic water = PassiveStorageWaterArithmetic::EXACT);
     LivePassiveStorageExchange(const LivePassiveStorageExchange&) = delete;
     LivePassiveStorageExchange& operator=(const LivePassiveStorageExchange&) = delete;
     /// Opt-in conservative archive admission. A refusal preserves the accepted owner.
@@ -47,14 +49,14 @@ public:
     /// Same actual operands the native writer will use. Allocation-free, before all leg effects.
     bool admit(std::size_t point, int cell, int node, double signed_water_si,
                double actual_mass_si, double before, double volume_before,
-               double offset_s, double duration_s, double withdrawal_si = 0) noexcept;
+               double offset_s, double duration_s, double withdrawal_si = 0) noexcept override;
     /// Called only after the native leg was applied. Allocation-free and nonthrowing.
-    void applied(double actual_after, double volume_after) noexcept;
+    void applied(double actual_after, double volume_after) noexcept override;
     void seal(const SimulationContext& ctx, const std::vector<double>& hydraulic_exchange_si);
     void observeWaterBooking(const SimulationContext& ctx);
-    void fail(const char* reason) noexcept;
-    bool failed() const noexcept { return failure_ != nullptr || book_.failed(); }
-    const char* error() const noexcept { return failure_ ? failure_ : "Live passive exchange receiving failed."; }
+    void fail(const char* reason) noexcept override;
+    bool failed() const noexcept override { return failure_ != nullptr || book_.failed(); }
+    const char* error() const noexcept override { return failure_ ? failure_ : "Live passive exchange receiving failed."; }
     bool windowOpen() const noexcept { return open_; }
     std::size_t legCount() const noexcept { return count_; }
     const Leg& leg(std::size_t index) const { return legs_.at(index); }
