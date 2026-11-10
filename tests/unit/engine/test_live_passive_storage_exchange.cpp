@@ -2,6 +2,7 @@
 // Copyright 2026 Caleb Buahin
 #include <gtest/gtest.h>
 #include "core/SWMMEngine.hpp"
+#include "core/FileIO.hpp"
 #include "quality/LivePassiveStorageExchange.hpp"
 #include "quality/QualityRouting.hpp"
 #include "2d/mesh/MeshBuilder.hpp"
@@ -242,7 +243,7 @@ TEST(LivePassiveStorageExchange, CanonicalEmptyWindowsKeepNativeExecutionAndRefu
     ASSERT_TRUE(e.attachLivePassiveExchange().empty());
     ASSERT_TRUE(e.enableCheckpointing().empty());
     const auto p = evidence("must-not-save.hsf");
-    EXPECT_NE(swmm_hotstart_save(&e, p.c_str()), SWMM_OK); EXPECT_FALSE(std::filesystem::exists(p));
+    EXPECT_NE(swmm_hotstart_save(&e, io::path_utf8(p).c_str()), SWMM_OK); EXPECT_FALSE(std::filesystem::exists(p));
     double elapsed = 0; ASSERT_EQ(e.step(&elapsed), SWMM_OK) << e.context().error_message;
     EXPECT_EQ(e.livePassiveExchange()->legCount(), 0u);
     EXPECT_FALSE(e.livePassiveExchange()->failed()); EXPECT_EQ(e.end(), SWMM_OK);
