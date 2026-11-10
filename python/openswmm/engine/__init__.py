@@ -484,6 +484,12 @@ if HAS_2D:
 
 __all__ += ['EvapPreviewStatus', 'Heat2DValue']
 
-from ._split import SplitParticipant, SplitFrame
+from ._split import SplitParticipant, SplitFrame, MaterialSplitParticipant
+from ._passive_exchange import (
+    PassiveExchange, PassiveAmount, PassiveStatus, PassivePool,
+    PassiveReceipt, PassiveRow, PassiveLeg,
+)
 from ._enums import SplitRole, SplitPhase
 __all__ += ["SplitParticipant", "SplitFrame", "SplitRole", "SplitPhase"]
+
+__all__ += ["MaterialSplitParticipant", "PassiveExchange", "PassiveAmount", "PassiveStatus", "PassivePool", "PassiveReceipt", "PassiveRow", "PassiveLeg"]

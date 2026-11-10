@@ -60,7 +60,7 @@ jobs:
           python/tests/minimal_features.py python/tests/engine/test_solver_pythonic.py
           python/tests/engine/test_transport.py python/tests/engine/test_trace.py
           python/tests/engine/test_atomic_editor_records.py python/tests/engine/test_native_split.py
-          python/tests/engine/test_checked_authoring.py -q
+          python/tests/engine/test_checked_authoring.py python/tests/engine/test_passive_material.py -q
 
   downstream:
     name: MCP and gymnasium against this catalog

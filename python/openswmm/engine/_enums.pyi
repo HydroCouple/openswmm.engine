@@ -1489,6 +1489,7 @@ class SplitPhase(IntEnum):
     SOURCE_PREPARE = 5
     LID_TRIAL = 6
     LID_ACCEPT = 7
+    MATERIAL_REPORT = 8
 
 
 class LidExtraField(IntEnum):

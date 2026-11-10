@@ -270,5 +270,13 @@ from ._enums import (
 
 from ._lid_nodes import LidNodeLayer as LidNodeLayer, LidNodeLayerKind as LidNodeLayerKind, LidLayerTreatment as LidLayerTreatment
 
-from ._split import SplitParticipant as SplitParticipant, SplitFrame as SplitFrame
+from ._split import (
+    SplitParticipant as SplitParticipant, SplitFrame as SplitFrame,
+    MaterialSplitParticipant as MaterialSplitParticipant,
+)
+from ._passive_exchange import (
+    PassiveExchange as PassiveExchange, PassiveAmount as PassiveAmount,
+    PassiveStatus as PassiveStatus, PassivePool as PassivePool,
+    PassiveReceipt as PassiveReceipt, PassiveRow as PassiveRow, PassiveLeg as PassiveLeg,
+)
 from ._enums import SplitRole as SplitRole, SplitPhase as SplitPhase

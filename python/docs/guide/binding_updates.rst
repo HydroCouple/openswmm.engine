@@ -162,3 +162,41 @@ leaves the model unchanged. An empty list clears the records. Initialization
 currently rejects stored ownership records until the completed-interval
 runtime adapter is qualified; geometric acceptance alone does not activate
 recharge or suppress existing weather sources.
+
+Passive exchange and material peers
+-----------------------------------
+
+``solver.passive_exchange`` exposes the experimental integrated native passive
+profile. After ``initialize()`` and ``start(False)``, call ``enable(capacity=64)``
+before the first step. ``enable_checkpoint()`` attaches numerical checkpoints
+at that initial boundary; use ``solver.checkpoints`` to save or restore them.
+Native eligibility restrictions apply, including a single passive pollutant,
+isolated wet storage and a serial CPU surface.
+
+``status()``, ``pool(node)``, ``receipt(index)``, ``row(receipt, row,
+remaining=0)``, ``leg(index)`` and ``attempt()`` return frozen V1 snapshots.
+``PassiveAmount.components`` retains every original ordered expansion component;
+the exact sum is authoritative. Water and material keep the native units of
+the C records (ft³ and declared concentration times ft³ for native amounts;
+m³ and declared concentration times m³ for surface legs). These copies do not
+carry transfer authority. Inspection during callbacks raises ``LifecycleError``.
+
+``solver.material_split`` exposes the separate experimental in-process material
+adapter. Both peers must open the same input path. Configure NETWORK and SURFACE
+roles while OPENED, exchange initialized
+geometry through ``encode``/``decode``, apply it on the network, then register a
+phase callback with ``set_callback``. Start both peers, register
+``set_transport(callback)`` on the network and call ``bind(surface, capacity)``.
+The phase callback uses owned ``SplitFrame`` replies, including
+``SplitPhase.MATERIAL_REPORT``. The material callback receives ``(stage, text)``
+and returns response JSON text; stages are OFFER=1, PROOF=2 and ACK=3.
+``copy_packet(text)`` validates/canonicalizes schema-10 boundary, offer, proof
+and acknowledgement values. Copies alone grant no spending authority.
+
+Python retains callback text until native parsing finishes and retains both
+bound owners. Access is serialized across the pair; callback exceptions stop
+exchange and are re-raised after the native call. Reentrant stepping or teardown
+is refused. Explicitly close/destroy both solvers when finished. This interface
+requires the native 2D and material-component features; omitted-feature builds
+keep the Python API importable and return ``PluginError``. The integrated
+passive facade and paired material adapter are separate enrollment alternatives.

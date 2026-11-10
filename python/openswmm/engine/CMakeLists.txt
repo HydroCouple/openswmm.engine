@@ -45,6 +45,7 @@ set(_engine_modules
     _snow
     _checkpoint
     _split
+    _passive_exchange
 )
 
 if(OPENSWMM_ENGINE_ABI_MANIFEST)

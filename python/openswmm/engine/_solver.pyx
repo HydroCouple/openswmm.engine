@@ -222,6 +222,8 @@ cdef class Solver:
         self._progress_cb = None
         self._phase_cb = None
         self._split_cb = None
+        self._material_transport_cb = None
+        self._material_peer = None
         self._options = None
         self._userflags = None
         self._events_view = None
@@ -419,6 +421,18 @@ cdef class Solver:
         return SplitParticipant(self)
 
     @property
+    def passive_exchange(self):
+        """Experimental integrated passive exchange and exact V1 observations."""
+        from ._passive_exchange import PassiveExchange
+        return PassiveExchange(self)
+
+    @property
+    def material_split(self):
+        """Experimental in-process material peer and schema-10 packet codec."""
+        from ._split import MaterialSplitParticipant
+        return MaterialSplitParticipant(self)
+
+    @property
     def coupling(self):
         from ._coupling import Coupling
         return Coupling(self)
@@ -493,10 +507,15 @@ cdef class Solver:
         _check_engine(rc, self._handle)
         self._generation += 1
         self._surface2d = None
+        if self._material_peer is not None:
+            (<Solver>self._material_peer)._material_peer = None
+        self._material_peer = None
 
     def destroy(self) -> None:
         """Destroy the engine handle. Idempotent."""
         self._access.require_idle()
+        if self._material_peer is not None:
+            (<Solver>self._material_peer)._access.require_idle()
         if self._handle != NULL:
             swmm_engine_destroy(<SWMM_Engine><size_t>self.handle)
             self._handle = NULL
@@ -504,6 +523,10 @@ cdef class Solver:
             self._surface2d = None
             self._phase_cb = None
             self._split_cb = None
+            self._material_transport_cb = None
+            if self._material_peer is not None:
+                (<Solver>self._material_peer)._material_peer = None
+            self._material_peer = None
 
     # ------------------------------------------------------------------
     # Iteration helpers
@@ -684,7 +707,18 @@ cdef class Solver:
 
     def _operation(self, expected=0):
         """Internal nonblocking guard for native calls that release the GIL."""
-        return self._access.operation(self, expected)
+        if self._material_peer is None:
+            return self._access.operation(self, expected)
+        from contextlib import ExitStack
+        stack = ExitStack()
+        try:
+            stack.enter_context(self._access.operation(self, expected))
+            if self._material_peer is not None:
+                stack.enter_context((<Solver>self._material_peer)._access.operation(self._material_peer))
+        except BaseException:
+            stack.close()
+            raise
+        return stack
 
     def _bump_generation(self) -> None:
         """Increment the staleness counter. Called by collection-level

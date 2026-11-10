@@ -13,6 +13,7 @@ from ._common cimport SWMM_Engine, _check
 from ._solver cimport Solver
 from ._access import EngineView
 from ._enums import SplitRole, SplitPhase
+from ._exceptions import raise_for_code
 
 cdef extern from "openswmm/engine/openswmm_split.h":
     ctypedef void* SWMM_SplitFrame
@@ -34,6 +35,52 @@ cdef extern from "openswmm/engine/openswmm_split_packet.h":
     int swmm_split_packet_decode(SWMM_Engine, const char*, size_t, SWMM_SplitFrame*)
     int swmm_split_packet_phase(SWMM_SplitFrame)
     void swmm_split_packet_free(char*)
+
+
+cdef extern from "openswmm/engine/openswmm_split_material.h":
+    ctypedef int (*SWMM_MaterialTransport)(SWMM_Engine, int, const char*, size_t, const char**, size_t*, void*) noexcept
+    int swmm_split_material_validate_input(SWMM_Engine)
+    int swmm_split_material_configure(SWMM_Engine, int)
+    int swmm_split_material_set_transport(SWMM_Engine, SWMM_MaterialTransport, void*)
+    int swmm_split_material_bind(SWMM_Engine, SWMM_Engine, uint64_t)
+    int swmm_split_material_packet_encode(SWMM_Engine, SWMM_SplitFrame, char**)
+    int swmm_split_material_packet_decode(SWMM_Engine, const char*, size_t, SWMM_SplitFrame*)
+    int swmm_split_material_packet_copy(SWMM_Engine, const char*, size_t, char**)
+    const char* swmm_split_material_last_error()
+
+cdef void _check_material(int code) except *:
+    if code:
+        message = swmm_split_material_last_error()
+        raise_for_code(code, message.decode('utf-8', 'replace') if message != NULL else None)
+
+cdef bytes _material_text(text):
+    if not isinstance(text, str):
+        raise TypeError('Material packet and callback response must be str')
+    cdef bytes data = text.encode('utf-8')
+    if not data or len(data) > 64 * 1024 * 1024 or b'\0' in data:
+        raise ValueError('Material packet must be nonempty, NUL-free and at most 64 MiB')
+    return data
+
+cdef int _material_callback(SWMM_Engine engine, int stage, const char* request,
+                            size_t length, const char** response,
+                            size_t* response_length, void* user) noexcept with gil:
+    state = <object>user
+    cdef bytes storage
+    response[0] = NULL
+    response_length[0] = 0
+    try:
+        if state[0].error is not None:
+            return -1
+        storage = _material_text(state[1](stage, request[:length].decode('utf-8')))
+        # Keep storage alive AFTER this trampoline returns, until the next call.
+        state[2] = storage
+        response[0] = <const char*>storage
+        response_length[0] = len(storage)
+        return 0
+    except BaseException as error:
+        if state[0].error is None:
+            state[0].error = error
+        return -1
 
 
 cdef class SplitFrame:
@@ -254,3 +301,80 @@ class SplitParticipant(EngineView):
         with self._owner._operation():
             _check(swmm_split_packet_decode(<SWMM_Engine><size_t>self._address(), data, len(data), &result))
         return _frame(result)
+
+
+class MaterialSplitParticipant(SplitParticipant):
+    """Trusted in-process material peer exposed as Solver.material_split.
+
+    Configure OPENED peers, exchange initialized geometry with this codec,
+    install the ordinary phase callback, start both, set_transport, then bind.
+    Schema-10 copies convey no authority. Native restrictions remain decisive.
+    """
+    def validate_input(self):
+        """Check authored material eligibility without selecting a role or advancing."""
+        cdef Solver owner = self._owner
+        owner._access.require_idle()
+        with owner._operation():
+            _check_material(swmm_split_material_validate_input(<SWMM_Engine><size_t>self._address()))
+
+    def configure(self, int role):
+        """Select the material NETWORK or SURFACE role while OPENED."""
+        cdef Solver owner = self._owner
+        owner._access.require_idle()
+        with owner._operation():
+            _check_material(swmm_split_material_configure(<SWMM_Engine><size_t>self._address(), role))
+
+    def set_transport(self, callback):
+        """Retain callback(stage, request_json)->response_json for OFFER=1/PROOF=2/ACK=3.
+
+        Register on the running network before bind. Calls are synchronous on
+        its owner thread. Exceptions stop exchange and are re-raised by step.
+        Reentrant advancement/teardown is forbidden; codec calls are allowed.
+        """
+        cdef Solver owner = self._owner
+        owner._access.require_idle()
+        if not callable(callback):
+            raise TypeError('callback must be callable')
+        state = [owner._access, callback, b'']
+        with owner._operation():
+            _check_material(swmm_split_material_set_transport(<SWMM_Engine><size_t>self._address(), _material_callback, <void*>state))
+        owner._material_transport_cb = state
+
+    def bind(self, Solver surface not None, uint64_t capacity=4096):
+        """Bind one started surface peer once; retain both owners for the pair lifetime."""
+        cdef Solver owner = self._owner
+        owner._access.require_idle()
+        surface._access.require_idle()
+        with owner._operation(), surface._operation():
+            _check_material(swmm_split_material_bind(<SWMM_Engine><size_t>self._address(), <SWMM_Engine><size_t>surface.handle, capacity))
+            owner._material_peer = surface
+            surface._material_peer = owner
+
+    def encode(self, SplitFrame frame not None):
+        """Copy a native boundary frame to schema-10 UTF-8 JSON."""
+        cdef char* text = NULL
+        with self._owner._operation(), _frame_use(frame):
+            _check_material(swmm_split_material_packet_encode(<SWMM_Engine><size_t>self._address(), frame._handle, &text))
+            try:
+                return text.decode('utf-8')
+            finally:
+                swmm_split_packet_free(text)
+
+    def decode(self, str text):
+        """Decode a schema-10 boundary packet into a newly owned frame."""
+        cdef bytes data = _material_text(text)
+        cdef SWMM_SplitFrame result = NULL
+        with self._owner._operation():
+            _check_material(swmm_split_material_packet_decode(<SWMM_Engine><size_t>self._address(), data, len(data), &result))
+        return _frame(result)
+
+    def copy_packet(self, str text):
+        """Validate and canonicalize a complete boundary/offer/proof/ack JSON value."""
+        cdef bytes data = _material_text(text)
+        cdef char* result = NULL
+        with self._owner._operation():
+            _check_material(swmm_split_material_packet_copy(<SWMM_Engine><size_t>self._address(), data, len(data), &result))
+            try:
+                return result.decode('utf-8')
+            finally:
+                swmm_split_packet_free(result)
