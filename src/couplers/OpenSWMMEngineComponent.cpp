@@ -15,6 +15,7 @@
 #include "ComponentBase.hpp"
 #include "WaterPhaseLink.hpp"
 #include "MaterialPhaseLink.hpp"
+#include <openswmm/components/openswmm_component_recovery.h>
 #include <hydrocouplecomponentabi.h>
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_spatial.h>
@@ -354,6 +355,7 @@ private:
     ArgumentInputType type_ = ArgumentInputType::JSON;
 };
 
+struct MaterialGroupRecovery;
 class OpenSWMMEngineComponent final : public ComponentBase,
                                       public HC::Temporal::ITimeModelComponent {
 public:
@@ -438,6 +440,7 @@ public:
             reasons_.clear();
             componentFiles_.clear();
             materialOutputOwned_ = false;
+            materialRecovery_=materialRecoveryOutputs_=materialRecoveryEnabled_=false;
             config_ = configuration_.load(base_);
             if (config_.at("schema") != "openswmm.component/1")
                 throw std::invalid_argument("Use schema openswmm.component/1");
@@ -470,7 +473,7 @@ public:
                     if (lifecycleActive_ || !material_->authorizedFinish() || status()!=CS::Updated || time_!=at)
                         throw std::invalid_argument("Material final settlement requires its shared accepted boundary");
                     ComponentOperation call(lifecycleActive_);
-                    try { transition(CS::Updating); material_->finishNetwork(engine_); recordMaterialState(true); transition(CS::Done); }
+                    try { transition(CS::Updating); startMaterialNetwork();material_->finishNetwork(engine_); recordMaterialState(true); transition(CS::Done); }
                     catch(const std::exception& ex){fail(ex.what());recordMaterialFailure();throw;}
                 };
                 material_->receipt.serve = [this](const HC::IInput* query) {
@@ -609,8 +612,8 @@ public:
             if (!engine_)
                 throw std::runtime_error("Cannot create runtime engine");
             check(engine_, swmm_engine_open(engine_, pathText(model_).c_str(),
-                                            pathText(output_ / "model.rpt").c_str(),
-                                            (split_ && split_->surface) || (material_ && material_->surface) ? nullptr : pathText(output_ / "model.out").c_str(), nullptr));
+                                            materialRecovery_ ? nullptr : pathText(output_ / "model.rpt").c_str(),
+                                            (split_ && split_->surface) || (material_ && (material_->surface || (materialRecovery_ && !materialRecoveryOutputs_))) ? nullptr : pathText(output_ / "model.out").c_str(), nullptr));
             if(material_)
                 check(engine_,swmm_split_material_configure(engine_,material_->surface?SWMM_SPLIT_SURFACE:SWMM_SPLIT_NETWORK));
             if (split_)
@@ -618,7 +621,7 @@ public:
             if (role_ == "network_only")
                 check(engine_, swmm_options_set(engine_, "IGNORE_2D", "YES"));
 #ifdef OPENSWMM_HAS_2D
-            if (surfaceExecution_ && config_.value("surface_results",true))
+            if (surfaceExecution_ && config_.value("surface_results",true) && (!materialRecovery_ || materialRecoveryOutputs_))
                 check(engine_, swmm_2d_set_results_file(
                                    engine_, pathText(output_ / "model.2d.h5").c_str()));
 #endif
@@ -634,7 +637,11 @@ public:
                     throw std::runtime_error(swmm_checkpoint_last_error_msg());
             } else {
                 check(engine_, swmm_engine_initialize(engine_));
-                if(material_){if(material_->surface)material_->prepareSurface(engine_);else material_->preparedNetwork(engine_);}
+                if(material_){
+                    if(materialRecovery_ && materialRecoveryOutputs_)
+                        checkMaterialRecovery(swmm_split_material_checkpoint_prepare_outputs(engine_));
+                    if(material_->surface)material_->prepareSurface(engine_);else material_->preparedNetwork(engine_);
+                }
                 else if (!split_) check(engine_, swmm_engine_start(engine_, 1));
                 else if (split_->surface) split_->prepareSurface(engine_);
             }
@@ -685,7 +692,7 @@ public:
             transition(CS::Updating);
             if(material_){
                 if(material_->surface){transition(material_->ended()?CS::Done:CS::Updated);return;}
-                material_->startNetwork(engine_);double elapsed=0;
+                startMaterialNetwork();double elapsed=0;
                 check(engine_,swmm_engine_step(engine_,&elapsed));check(engine_,swmm_engine_get_elapsed_seconds(engine_,&time_));
                 if(elapsed==0)material_->finishNetwork(engine_);else material_->accepted(time_);
                 recordMaterialState(elapsed==0);transition(elapsed==0?CS::Done:CS::Updated);return;
@@ -780,7 +787,7 @@ public:
                 verifyReceipt();
             transition(CS::Finishing);
             if (engine_ && !failed) {
-                if(material_){if(material_->surface)material_->finishSurface(time_);else material_->finishNetwork(engine_);}
+                if(material_){if(material_->surface)material_->finishSurface(time_);else {startMaterialNetwork();material_->finishNetwork(engine_);}}
                 else if (!split_) check(engine_, swmm_engine_end(engine_));
                 else if (!split_->surface) split_->finishNetwork(engine_);
                 else split_->finishSurface(time_);
@@ -836,6 +843,8 @@ private:
         explicit ComponentOperation(bool& flag):active(flag){active=true;}
         ~ComponentOperation(){active=false;}
     };
+    friend struct MaterialGroupRecovery;
+    bool materialRecovery_=false, materialRecoveryOutputs_=false, materialRecoveryEnabled_=false;
     bool lifecycleActive_=false;
     bool rejectLifecycleReentry(){
         if(lifecycleActive_ || (material_ && material_->busy())){reportError("Component lifecycle is already active");return true;}
@@ -893,6 +902,17 @@ private:
             engine_ = nullptr;
         }else if(material_)material_->release();
         return true;
+    }
+    static void checkMaterialRecovery(int code) {
+        if(code)throw std::runtime_error(swmm_split_material_checkpoint_last_error());
+    }
+    void startMaterialNetwork() {
+        if(material_->ended())return;
+        material_->startNetwork(engine_,!materialRecovery_ || materialRecoveryOutputs_);
+        if(materialRecovery_ && !materialRecoveryEnabled_) {
+            checkMaterialRecovery(swmm_split_material_checkpoint_enable(engine_,materialRecoveryOutputs_));
+            materialRecoveryEnabled_=true;
+        }
     }
     void recordMaterialState(bool persist) {
         if(!material_)return;const auto snapshot=material_->snapshot();
@@ -1365,6 +1385,8 @@ void OpenSWMMEngineComponent::discover(SWMM_Engine engine) {
         metadata_["receiving_quality_owner"]="split_material_network";
         metadata_["surface_material_owner"]="split_material_surface";
         metadata_["material_checkpointing"]=false;
+        metadata_["material_collective_recovery"]={{"service",OPENSWMM_COMPONENT_RECOVERY_SYMBOL},
+            {"version",OPENSWMM_COMPONENT_RECOVERY_VERSION},{"enrolled",false},{"scope","exclusive_pair_fresh_restore"}};
         if(material_->surface)metadata_["result_files"].erase("binary");
         if(!config_.value("surface_results",true))metadata_["result_files"].erase("surface");
     }
@@ -2063,6 +2085,8 @@ void OpenSWMMEngineComponent::recordNativeBoundary(double end, int code) const {
                                                                      {"outfalls", rows}});
 }
 
+#include "MaterialGroupRecovery.inc"
+
 class OpenSWMMEngineInfo final : public Identity, public HC::IModelComponentInfo {
 public:
     /**
@@ -2179,3 +2203,7 @@ private:
 }
 }
 HYDROCOUPLE_DECLARE_COMPONENT(openswmm::couplers::OpenSWMMEngineInfo)
+extern "C" HYDROCOUPLE_COMPONENT_EXPORT const OpenSWMM_MaterialRecoveryV1*
+openswmm_component_material_recovery(uint32_t version,size_t caller_size) {
+    return openswmm::couplers::MaterialGroupRecovery::service(version,caller_size);
+}

@@ -977,80 +977,7 @@ int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
     if (want(report2d::SPECIES) && snap.surface_species_count > 0 &&
         snap.surface_species_conc.size() ==
             static_cast<std::size_t>(snap.surface_species_count) * n_faces_) {
-        if (ds_face_species_conc_ == H5I_INVALID_HID) {
-            // Resolve the row selection once, by name against the surface's
-            // own row names (S4) or the pollutant list (pre-S4 fallback).
-            const std::vector<std::string>* names_src =
-                snap.surface_species_names ? snap.surface_species_names : snap.pollut_names;
-            species_rows_.clear();
-            const int n_in = snap.surface_species_count;
-            if (species_filter_.empty() || !names_src) {
-                for (int i = 0; i < n_in; ++i)
-                    species_rows_.push_back(i);
-            } else {
-                for (int i = 0; i < n_in && i < static_cast<int>(names_src->size()); ++i) {
-                    const std::string& nm = (*names_src)[static_cast<std::size_t>(i)];
-                    for (const auto& want_nm : species_filter_) {
-                        if (report2d::iequalsTok(want_nm, nm.c_str())) {
-                            species_rows_.push_back(i);
-                            break;
-                        }
-                    }
-                }
-            }
-            if (species_rows_.empty()) {
-                // Nothing selected matches — write nothing rather than an
-                // empty block; the mask says SPECIES, the filter said none.
-                n_species_ = 0;
-            } else {
-                n_species_ = static_cast<hsize_t>(species_rows_.size());
-                hsize_t zero3s[3] = {0, n_species_, n_faces_};
-                hsize_t chunk3[3] = {1, n_species_, std::min<hsize_t>(n_faces_, 4096)};
-                ds_face_species_conc_ =
-                    createUnlimitedDataset("Mesh2_face_species_conc", 3, zero3s, chunk3);
-                writeStringAttr(ds_face_species_conc_, "long_name",
-                                "surface species concentration");
-                // Species units are per species; the dataset carries the
-                // layout, a name list and (S4b) a parallel unit list so a
-                // reader can join. "1" here means "see species_units".
-                writeStringAttr(ds_face_species_conc_, "units", "1");
-                writeStringAttr(ds_face_species_conc_, "mesh", "Mesh2");
-                writeStringAttr(ds_face_species_conc_, "location", "face");
-                writeStringAttr(ds_face_species_conc_, "layout",
-                                "[time, species, face]; species order = "
-                                "the species_names list (a REPORT_2D_SPECIES "
-                                "subset of pollutants, MSX, __WATER_AGE__, "
-                                "__TEMPERATURE__); dry cell reports 0");
-                if (names_src) {
-                    std::string names;
-                    for (std::size_t k = 0; k < species_rows_.size(); ++k) {
-                        const auto r = static_cast<std::size_t>(species_rows_[k]);
-                        if (r >= names_src->size())
-                            break;
-                        if (k)
-                            names += ",";
-                        names += (*names_src)[r];
-                    }
-                    if (!names.empty())
-                        writeStringAttr(ds_face_species_conc_, "species_names", names.c_str());
-                }
-                // S4b: species_units — one label per selected row, same
-                // order as species_names; __WATER_AGE__ is reported in hours.
-                if (snap.surface_species_units) {
-                    std::string units;
-                    for (std::size_t k = 0; k < species_rows_.size(); ++k) {
-                        const auto r = static_cast<std::size_t>(species_rows_[k]);
-                        if (r >= snap.surface_species_units->size())
-                            break;
-                        if (k)
-                            units += ",";
-                        units += (*snap.surface_species_units)[r];
-                    }
-                    if (!units.empty())
-                        writeStringAttr(ds_face_species_conc_, "species_units", units.c_str());
-                }
-            }
-        }
+        createSpeciesDatasets(snap);
         if (ds_face_species_conc_ != H5I_INVALID_HID && n_species_ > 0)
             writeSpeciesRows(snap.surface_species_conc.data(),
                              static_cast<hsize_t>(snap.surface_species_count));
@@ -1952,6 +1879,83 @@ void Default2DOutputPlugin::createGroundwaterDatasets(const SimulationSnapshot& 
         writeStringAttr(ds_gw_theta_, "layout",
                         "[time, layer, face]; layer 0 at the ground surface; a cell whose "
                         "Mesh2_face_gw_closure is not 2 carries 0 in every layer");
+    }
+}
+
+void Default2DOutputPlugin::createSpeciesDatasets(const SimulationSnapshot& snap) {
+    if(ds_face_species_conc_!=H5I_INVALID_HID || !want(report2d::SPECIES) || snap.surface_species_count<=0 ||
+        snap.surface_species_conc.size()!=std::size_t(snap.surface_species_count)*n_faces_)return;
+    // Resolve the row selection once, by name against the surface's
+    // own row names (S4) or the pollutant list (pre-S4 fallback).
+    const std::vector<std::string>* names_src =
+        snap.surface_species_names ? snap.surface_species_names : snap.pollut_names;
+    species_rows_.clear();
+    const int n_in = snap.surface_species_count;
+    if (species_filter_.empty() || !names_src) {
+        for (int i = 0; i < n_in; ++i)
+            species_rows_.push_back(i);
+    } else {
+        for (int i = 0; i < n_in && i < static_cast<int>(names_src->size()); ++i) {
+            const std::string& nm = (*names_src)[static_cast<std::size_t>(i)];
+            for (const auto& want_nm : species_filter_) {
+                if (report2d::iequalsTok(want_nm, nm.c_str())) {
+                    species_rows_.push_back(i);
+                    break;
+                }
+            }
+        }
+    }
+    if (species_rows_.empty()) {
+        // Nothing selected matches — write nothing rather than an
+        // empty block; the mask says SPECIES, the filter said none.
+        n_species_ = 0;
+    } else {
+        n_species_ = static_cast<hsize_t>(species_rows_.size());
+        hsize_t zero3s[3] = {0, n_species_, n_faces_};
+        hsize_t chunk3[3] = {1, n_species_, std::min<hsize_t>(n_faces_, 4096)};
+        ds_face_species_conc_ =
+            createUnlimitedDataset("Mesh2_face_species_conc", 3, zero3s, chunk3);
+        writeStringAttr(ds_face_species_conc_, "long_name",
+                        "surface species concentration");
+        // Species units are per species; the dataset carries the
+        // layout, a name list and (S4b) a parallel unit list so a
+        // reader can join. "1" here means "see species_units".
+        writeStringAttr(ds_face_species_conc_, "units", "1");
+        writeStringAttr(ds_face_species_conc_, "mesh", "Mesh2");
+        writeStringAttr(ds_face_species_conc_, "location", "face");
+        writeStringAttr(ds_face_species_conc_, "layout",
+                        "[time, species, face]; species order = "
+                        "the species_names list (a REPORT_2D_SPECIES "
+                        "subset of pollutants, MSX, __WATER_AGE__, "
+                        "__TEMPERATURE__); dry cell reports 0");
+        if (names_src) {
+            std::string names;
+            for (std::size_t k = 0; k < species_rows_.size(); ++k) {
+                const auto r = static_cast<std::size_t>(species_rows_[k]);
+                if (r >= names_src->size())
+                    break;
+                if (k)
+                    names += ",";
+                names += (*names_src)[r];
+            }
+            if (!names.empty())
+                writeStringAttr(ds_face_species_conc_, "species_names", names.c_str());
+        }
+        // S4b: species_units — one label per selected row, same
+        // order as species_names; __WATER_AGE__ is reported in hours.
+        if (snap.surface_species_units) {
+            std::string units;
+            for (std::size_t k = 0; k < species_rows_.size(); ++k) {
+                const auto r = static_cast<std::size_t>(species_rows_[k]);
+                if (r >= snap.surface_species_units->size())
+                    break;
+                if (k)
+                    units += ",";
+                units += (*snap.surface_species_units)[r];
+            }
+            if (!units.empty())
+                writeStringAttr(ds_face_species_conc_, "species_units", units.c_str());
+        }
     }
 }
 

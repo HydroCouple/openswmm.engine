@@ -971,3 +971,86 @@ An experimental C material adapter and separate schema10 codec are described in
 bound trusted in-process pair and validates complete serialized offers before
 credit, proofs before preparation, and acknowledgements after commitment. The
 existing water codec and component/Composer/GUI profiles remain unchanged.
+
+## Paired material recovery ownership
+
+The engine's experimental material C interface now provides collective recovery
+of an explicitly bound network/surface pair, with optional built-in binary and
+pollutant HDF5 continuation. See [paired material recovery](SPLIT_MATERIAL_PACKET.md#paired-c-recovery).
+Its backend capability flags are separate from HydroCouple component capabilities.
+Both component roles continue to omit `Capability::Checkpointing` and
+`ICheckpointableModelComponent`: that interface permits independent restoration
+of an Updated/Done component, while this backend restores two fresh running
+participants together. Composer/GUI resume requires collective host grouping,
+fresh pair/output preparation and coordinated token ownership before activation.
+
+The engine component module also exports the optional versioned service
+`openswmm_component_material_recovery`, declared in
+`openswmm/components/openswmm_component_recovery.h`. Discover it from the exact
+already-loaded module after checking its HydroCouple component ABI stamp. It is
+not an export of the native engine library and introduces no SDK dependency or
+HydroCouple interface/vtable change. Unsupported component builds return no
+service table. The V2 extension supports the explicit Composer CLI integration
+described below; GUI resume remains disabled.
+
+The host gives `enroll` the canonical `IModelComponent*` base addresses of one
+exclusive material network and surface pair, in that order, while both are Valid
+and before either prepares. Enrollment freezes the connection and rejects a
+second owner. Writer mode is explicit: `outputs=0` suppresses native result
+writers; `outputs=1` uses network `model.out` and surface `model.2d.h5`, requires
+surface results, and intentionally omits text reports on both roles. Updated
+metadata records this policy while per-component checkpoint capabilities remain
+false. The chosen writer mode persists until reinitialization; releasing a group
+does not finish its components.
+
+Prepare both components in either order, then call the service's `prepare(group)`
+once to start/bind/enroll at zero before the first workflow update. At an idle
+synchronized Updated barrier, `capture` produces **one** immutable owned state for
+both stable member IDs. The host indexes both IDs to that group and persists its
+bytes once. `import_state` copies bounded caller storage; `data` borrows bytes
+until `destroy_state`. The module must remain loaded until all groups and states
+are released. State survives destruction of the original components and may seed
+multiple fresh pairs. Release is exactly once; active group/state release is
+refused and must be retried after the call returns.
+
+Restore requires the same logical members/model/capacity/output policy, freshly
+prepared and bound at zero. A bounded checksummed envelope retains accepted
+component clocks, observation counts and last-window history around the native
+paired binary state. Import rejects duplicate JSON keys and excessive nesting;
+restore checks both observer histories and joins their accepted seconds to the
+native `elapsed_ms/1000` before any numerical/output publication. It stages both
+views before the native transaction, installs both clocks/views and statuses
+before notifications, and holds the pair lease throughout. Invalid state leaves
+the fresh views/prefixes available for valid retry. Historical session/receipt
+observations are marked as history and never supply callback or funding
+authority; the native restore establishes fresh identities. Notification failure
+does not undo committed physics. Restore does not write diagnostic JSON files;
+the host can persist the returned live views after success.
+
+The service covers exactly this pair, fresh recovery and the existing native
+save bounds. It does not cover text reports, arbitrary graphs/adapters, live
+rollback or authenticated remote state. Checksums detect corruption, not hostile
+rewriting. Factory/module and fresh executable qualification is under
+`tests/verification/component_group_recovery_2026-11-08`.
+
+### V2 state inspection and Composer CLI
+
+The same discovery symbol accepts version 2 and
+`sizeof(OpenSWMM_MaterialRecoveryV2)`. Its unchanged V1 function prefix has
+`version=2`/the V2 size, followed by `describe_state`. Version-1 requests still
+receive the original version/size/table. The added read-only operation borrows an
+immutable `openswmm.component-material-state/1` JSON summary until state release:
+`group`, `accepted_steps` and exact `accepted_time_s`. It remains valid after the
+original components/group close. These are captured observations, not restored
+native authority or certification of model compatibility.
+
+A collective-aware host can now compare its logical members, output policy,
+absolute step and accepted seconds to the opaque state before restore publishes
+any native prefix. It must not parse the private binary wrapper itself. The
+native/component transaction still performs full history/model/clock validation.
+Composer's explicit command-line path uses this V2 join and one atomically
+published binary state/manifest package for the entire pair. Its separate run
+catalogs/writers and GUI resume remain outside this profile. See Composer
+`docs/MATERIAL_RECOVERY.md`; qualification is retained under
+`tests/verification/composer_collective_recovery_2026-11-08` and the Composer
+checkout's `verification/component_collective_recovery_2026-11-08`.

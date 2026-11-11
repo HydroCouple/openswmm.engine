@@ -1244,6 +1244,7 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         }
         // S4: the node row-value publisher the marcher and the outfall
         // injector read (spill / discharge arrive at the NODE's values).
+        material_publisher_ms_=-1;
         node_row_conc_.assign(
             static_cast<std::size_t>(ns) * static_cast<std::size_t>(ctx.n_nodes()), 0.0);
         state_.node_row_conc = &node_row_conc_;
@@ -3546,6 +3547,7 @@ void SurfaceRouter2D::publishNodeRows(const SimulationContext& ctx) {
     const auto ns = static_cast<std::size_t>(tr.n_species);
     if (!tr.active() || node_row_conc_.size() != ns * static_cast<std::size_t>(ctx.n_nodes()))
         return;
+    if(peer_passive_exchange_)material_publisher_ms_=ctx.elapsed_ms;
     const auto np = static_cast<std::size_t>(tr.n_pollut);
     const auto nm = static_cast<std::size_t>(tr.n_msx);
     const auto& conc = ctx.nodes.conc;             // [node * np + p]

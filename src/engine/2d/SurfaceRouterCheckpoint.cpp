@@ -771,25 +771,27 @@ struct SurfaceRouter2D::MaterialRestart {
     SurfaceStateData surface;
     ExplicitInertialSolver cpu;
     std::vector<double> published;
+    double published_ms;
     MaterialRestart(const SurfaceRouter2D& r,const SimulationContext& ctx)
-        :snapshot(r,ctx),surface(r.state_),cpu(*static_cast<const ExplicitInertialSolver*>(r.solver_.get())),published(r.node_row_conc_){}
+        :snapshot(r,ctx),surface(r.state_),cpu(*static_cast<const ExplicitInertialSolver*>(r.solver_.get())),published(r.node_row_conc_),published_ms(r.material_publisher_ms_){}
 };
 void SurfaceRouter2D::checkpointMaterialBalance(Archive& a,SimulationContext& ctx) { massBalance(a,ctx.mass_balance_2d); }
-std::string SurfaceRouter2D::materialCheckpointBytes(const SimulationContext& ctx) const {
+std::string SurfaceRouter2D::materialCheckpointBytes(const SimulationContext& ctx,bool outputs) const {
     MaterialRestart saved(*this,ctx);saved.snapshot.validate(*this,ctx,true);
     Archive out;std::string marker="OpenSWMM split material surface state";out(marker);
     saved.snapshot.archive(out);saved.cpu.checkpointState(out,true);
     marker="native material pair mesh v1";out(marker);checkpoint::meshState(out,saved.surface);out.fixed(saved.published);
+    if(outputs)out(saved.published_ms);
     return out.bytes();
 }
 std::shared_ptr<SurfaceRouter2D::MaterialRestart> SurfaceRouter2D::prepareMaterialCheckpoint(
-        const SimulationContext& ctx,std::string bytes) const {
+        const SimulationContext& ctx,std::string bytes,bool outputs) const {
     auto p=std::make_shared<MaterialRestart>(*this,ctx);
     Archive in(std::move(bytes));std::string marker;in(marker);
     if(marker!="OpenSWMM split material surface state")throw std::invalid_argument("Material surface role/schema differs.");
     p->snapshot.archive(in);p->cpu.checkpointState(in,true);in(marker);
     if(marker!="native material pair mesh v1")throw std::invalid_argument("Material mesh schema differs.");
-    checkpoint::meshState(in,p->surface);in.fixed(p->published);in.finish();
+    checkpoint::meshState(in,p->surface);in.fixed(p->published);if(outputs)in(p->published_ms);in.finish();
     const auto& s=p->snapshot;
     auto expected=ctx.mass_balance_2d,actual=s.mb;Archive before,after;
     massBalance(before,expected);massBalance(after,actual);
@@ -803,7 +805,7 @@ std::shared_ptr<SurfaceRouter2D::MaterialRestart> SurfaceRouter2D::prepareMateri
 const SurfaceStateData& SurfaceRouter2D::materialCheckpointState(const std::shared_ptr<MaterialRestart>& p) const { return p->surface; }
 void SurfaceRouter2D::validateMaterialCheckpoint(const SimulationContext& ctx,
         const quality::PeerPassiveStorageProducer& producer,double initial,double initial_loss,double initial_gain,
-        const std::array<double,2>& window,const std::shared_ptr<MaterialRestart>& prepared) const {
+        const std::array<double,2>& window,bool outputs,bool reported_now,const std::shared_ptr<MaterialRestart>& prepared) const {
     const auto* canonical=dynamic_cast<const ExplicitInertialSolver*>(solver_.get());
     if (!canonical || joint_hydraulic_ || source_context_ || common_stage_ || live_passive_exchange_ ||
         paired_water_checkpoint_ || node_coupling_points_.empty())
@@ -819,7 +821,10 @@ void SurfaceRouter2D::validateMaterialCheckpoint(const SimulationContext& ctx,
     validatePassiveWater(surface,snapshot.mb,true);
     if (published.size()!=std::size_t(ctx.n_nodes()))throw std::invalid_argument("Material publisher shape differs.");
     for(double c:published)if(!std::isfinite(c)||c<0)throw std::invalid_argument("Invalid material published concentration.");
-    if(published!=(ctx.current_time>0?ctx.nodes.conc_old:node_row_conc_))
+    const auto stamp=prepared?prepared->published_ms:material_publisher_ms_;
+    if(outputs && (ctx.current_time>0 ? stamp!=(reported_now?ctx.elapsed_ms:ctx.old_elapsed_ms) : stamp!=-1))
+        throw std::invalid_argument("Material publisher sample generation differs from native publication history.");
+    if(published!=(ctx.current_time>0?(outputs && reported_now?ctx.nodes.conc:ctx.nodes.conc_old):node_row_conc_))
         throw std::invalid_argument("Material publisher differs from its latest native sample.");
     if(window[1]!=snapshot.report_window_new_ms_ ||
         (producer.last_ordinal_ && window[0]+1000*cpu.last_coupling_interval()!=window[1]))
@@ -858,6 +863,7 @@ void SurfaceRouter2D::installMaterialCheckpoint(SimulationContext& ctx,std::shar
     static_assert(std::is_nothrow_move_assignable_v<SurfaceStateData> && std::is_nothrow_move_assignable_v<ExplicitInertialSolver>);
     p->surface.nodes_1d=&ctx.nodes;p->surface.node_row_conc=&node_row_conc_;p->cpu.state_=&state_;
     node_row_conc_=std::move(p->published);state_=std::move(p->surface);
+    material_publisher_ms_=p->published_ms;
     *static_cast<ExplicitInertialSolver*>(solver_.get())=std::move(p->cpu);p->snapshot.install(*this,ctx);
 }
 

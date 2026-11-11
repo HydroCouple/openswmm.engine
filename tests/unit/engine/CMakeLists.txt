@@ -354,13 +354,26 @@ add_executable(test_engine_material_split_c test_material_split_c.c)
 target_link_libraries(test_engine_material_split_c PRIVATE openswmm_engine)
 set_target_properties(test_engine_material_split_c PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF LINKER_LANGUAGE CXX RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY})
 openswmm_stage_test_runtime_deps(test_engine_material_split_c)
+add_executable(test_engine_material_checkpoint_c test_material_checkpoint_c.c)
+target_link_libraries(test_engine_material_checkpoint_c PRIVATE openswmm_engine)
+set_target_properties(test_engine_material_checkpoint_c PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF LINKER_LANGUAGE CXX RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY})
+openswmm_stage_test_runtime_deps(test_engine_material_checkpoint_c)
+if(NOT OPENSWMM_BUILD_2D OR NOT OPENSWMM_WITH_HYDROCOUPLE)
+    target_compile_definitions(test_engine_material_checkpoint_c PRIVATE MATERIAL_RECOVERY_OFF)
+endif()
+add_test(NAME test_engine_material_checkpoint_guards COMMAND test_engine_material_checkpoint_c --guards)
+set_tests_properties(test_engine_material_checkpoint_guards PROPERTIES LABELS unit)
 if(OPENSWMM_BUILD_2D)
     add_gtest_unit(test_engine_material_pair test_material_pair.cpp)
+    if(OPENSWMM_2D_HDF5_OUTPUT)
+        target_compile_definitions(test_engine_material_pair PRIVATE MATERIAL_OUTPUT_CHECKPOINT_TESTS)
+    endif()
     add_library(material_test_transport OBJECT test_material_split_c.c)
     target_link_libraries(material_test_transport PRIVATE openswmm_engine)
     target_compile_definitions(material_test_transport PRIVATE MATERIAL_TRANSPORT_ONLY)
     set_target_properties(material_test_transport PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
     target_sources(test_engine_material_pair PRIVATE $<TARGET_OBJECTS:material_test_transport>)
+    target_sources(test_engine_material_checkpoint_c PRIVATE $<TARGET_OBJECTS:material_test_transport>)
     if(OPENSWMM_WITH_HYDROCOUPLE)
         target_compile_definitions(test_engine_material_pair PRIVATE MATERIAL_PACKET_TESTS)
         target_link_libraries(test_engine_material_pair PRIVATE nlohmann_json::nlohmann_json)
@@ -399,6 +412,18 @@ if(OPENSWMM_BUILD_2D)
         LIVE_EXCHANGE_TEST_OUTPUT="${PROJECT_SOURCE_DIR}/tests/verification/component_species_halves_2026-11-05/native-fixtures")
     find_package(Python3 QUIET COMPONENTS Interpreter)
     if(Python3_Interpreter_FOUND)
+        if(OPENSWMM_WITH_HYDROCOUPLE)
+            set(_material_checkpoint_options "")
+            if(NOT OPENSWMM_2D_HDF5_OUTPUT)
+                list(APPEND _material_checkpoint_options --numeric-only)
+            endif()
+            add_test(NAME test_engine_material_checkpoint_c
+                COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/verify_material_checkpoint_c.py
+                    --caller $<TARGET_FILE:test_engine_material_checkpoint_c>
+                    --output ${PROJECT_SOURCE_DIR}/tests/verification/component_pair_recovery_c_2026-11-08/ctest
+                    ${_material_checkpoint_options})
+            set_tests_properties(test_engine_material_checkpoint_c PROPERTIES LABELS unit TIMEOUT 600)
+        endif()
         if(OPENSWMM_WITH_HYDROCOUPLE)
             add_test(NAME test_engine_material_split_packets
                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/verify_material_split_c.py
@@ -1349,6 +1374,18 @@ if(OPENSWMM_WITH_HYDROCOUPLE)
             MATERIAL_COMPONENT_DATA="${CMAKE_CURRENT_SOURCE_DIR}/data/passive_exchange_c"
             MATERIAL_COMPONENT_EVIDENCE="${PROJECT_SOURCE_DIR}/tests/verification/component_material_components_2026-11-08/direct")
         add_dependencies(test_engine_material_components openswmm_engine_component)
+        add_executable(test_engine_material_group_recovery test_material_group_recovery.cpp)
+        target_link_libraries(test_engine_material_group_recovery PRIVATE openswmm::engine HydroCouple::HydroCouple nlohmann_json::nlohmann_json ${CMAKE_DL_LIBS})
+        target_compile_definitions(test_engine_material_group_recovery PRIVATE
+            ENGINE_COMPONENT_LIBRARY="$<TARGET_FILE:openswmm_engine_component>")
+        add_dependencies(test_engine_material_group_recovery openswmm_engine_component)
+        if(Python3_Interpreter_FOUND)
+            add_test(NAME test_engine_material_group_recovery
+                COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/verify_material_group_recovery.py
+                    --caller $<TARGET_FILE:test_engine_material_group_recovery>
+                    --output ${PROJECT_SOURCE_DIR}/tests/verification/component_group_recovery_2026-11-08/ctest)
+            set_tests_properties(test_engine_material_group_recovery PROPERTIES LABELS unit TIMEOUT 600)
+        endif()
         target_compile_definitions(test_engine_component PRIVATE OPENSWMM_COMPONENT_2D_RESULTS=1
             SPLIT_WITNESS="${_split_evidence}")
         set_tests_properties(test_engine_component PROPERTIES FIXTURES_REQUIRED engine_split)
@@ -1593,6 +1630,7 @@ add_gtest_unit(test_engine_conduit_losses test_conduit_losses.cpp)
 target_compile_definitions(test_engine_conduit_losses PRIVATE
     ISSUE2_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/manual/issue2_seepage")
 
+# Physical ordinary-junction chamber storage (engine #10 / USEPA #200).
 add_gtest_unit(test_engine_junction_storage test_junction_storage.cpp)
 target_compile_definitions(test_engine_junction_storage PRIVATE
     ISSUE10_OUTPUT_DIR="${PROJECT_SOURCE_DIR}/tests/verification/junction_storage_issue10/runs")

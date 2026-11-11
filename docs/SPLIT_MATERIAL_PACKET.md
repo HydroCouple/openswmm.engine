@@ -220,3 +220,93 @@ completion at step 80. This is not a promise of late-run checkpoint availability
 Coordinated output-file publication and public/component/GUI recovery are the
 remaining gates. Evidence is local under
 `tests/verification/component_pair_checkpoint_2026-11-08`.
+
+## Private paired output continuation
+
+The explicit C++ call `enableMaterialPairCheckpoint(true)` selects the separate
+paired output profile. Before start, prepare the network with
+`prepareOutputCheckpointing()` and the surface with
+`prepareSurfaceOutputCheckpointing()`, then start them with `start(1)` and
+`start(0)` respectively. Both destinations must be fresh. Text reports, averaging,
+extra output plugins, buildup and external checkpoint companion files are outside
+this profile. Public C, component, Composer and GUI resume remain disabled.
+
+The version 2 pair envelope binds both actual output prefixes to the numerical
+pair. The network binary and surface HDF5 writers retain independent validated
+report clocks, mesh cadence and REPORT_START selection. The material HDF5
+checkpoint profile retains the single declared pollutant, its selected row,
+native concentration unit, complete report history and append handle. It
+validates that selection at enrollment even before the lazy concentration
+dataset exists. Restoring a zero-record checkpoint creates that dataset on its
+first report; restoring a populated prefix reopens it for append.
+
+Both prefixes and all numerical domains prepare before publication. One existing
+`CheckpointOutputPublication` replaces both fresh destinations, then the writers
+and numerical owners adopt their prepared state without throwing. Failed
+preparation preserves both fresh files and solvers, allowing valid retry. The
+publication primitive rolls back an earlier rename if the second rename fails;
+this does not provide power-loss recovery or a single visibility event to
+external readers. The forced second-rename qualification exercises that primitive
+against the actual fresh writer destinations; invalid-prefix tests exercise the
+complete pair restore path.
+
+Native post-quality REPORT ordering remains authoritative. A separately recorded
+publisher sample time joins the latest accepted REPORT publication and delivery
+generation; it distinguishes settled current concentration from the old sample
+used by ADVANCE. The outputs-off version 1 pair and existing water-only output
+formats retain their bytes and guards.
+
+Qualification includes 80 restores over all concentration bases and both signs,
+different mesh cadence and REPORT_START gating, plus 12 fresh executable restores
+without prefix replay. Final binary bytes and 102 complete HDF5 comparisons match
+uninterrupted native execution. The authored report cadence uses supported
+half-window receipt deliveries. Other cadences can reach the existing exact
+partition refusal, and frequent publications can reach the unchanged optional
+checkpoint-work limit sooner. Refused later saves preserve the caller's buffer;
+live and restored runs can continue through accepted native steps and normal end.
+Evidence is local under
+`tests/verification/component_pair_output_restart_2026-11-08`.
+
+## Paired C recovery
+
+`openswmm_split_material.h` exposes paired recovery through an immutable
+`SWMM_MaterialCheckpoint` value. It coordinates both actual bound roles, including
+both writers in the output profile. Ordinary single-engine checkpoints still
+refuse split participants. Component/Composer/GUI resume remains gated: a compiled
+C backend feature does not establish the host's collective checkpoint ownership.
+
+Query `swmm_split_material_checkpoint_capabilities()` for compiled numerical and
+binary/HDF5 support. After configuring the material roles and initializing and
+exchanging geometry, outputs-enabled callers prepare each role with
+`swmm_split_material_checkpoint_prepare_outputs()`, then start the network with
+`start(1)` and surface with `start(0)`. Outputs-off callers skip preparation and
+start both with `start(0)`. Set the native callbacks and transport, bind the pair,
+then call `swmm_split_material_checkpoint_enable(network, outputs)` once.
+
+Capture and restore take the network handle only. Capture requires an accepted,
+acknowledged running boundary. Restore requires a separately initialized,
+identically configured, bound and enrolled fresh running pair at time zero,
+with separate fresh output destinations when enabled. Both participants validate
+before output publication and state installation. Callbacks and channels remain
+those of the target pair; saved identities are provenance and receive new role
+and funding epochs on each restore. A snapshot may seed multiple fresh pairs.
+
+Capture returns an owned snapshot. `swmm_split_material_checkpoint_data()` borrows its immutable
+binary bytes and explicit length until `swmm_split_material_checkpoint_destroy()`, independently of
+engine lifetime. `swmm_split_material_checkpoint_from_bytes()` copies bounded caller storage and
+checks outer framing, native format/platform/version and checksum. Model,
+numerical and embedded output compatibility remain restore checks. Snapshot
+success replaces the output variable without freeing an earlier value; callers
+must release each returned snapshot. Refusal preserves all output variables.
+Destroying a null snapshot is harmless. Persistence is caller-owned; the facade
+does not open checkpoint paths or translate binary state through schema10 JSON.
+
+Engine recovery is refused during callbacks, stepping, reporting and material
+transport, before changing native attachments or output bindings. Immutable
+snapshot observation/import is independent of engine execution. Each operation
+requires exclusive owner-thread access; simultaneous destruction is invalid.
+The separate fixed thread-local `swmm_split_material_checkpoint_last_error()` diagnostic preserves
+both engines' original errors. Unavailable builds retain argument validation,
+report zero compiled capabilities and refuse recovery operations. Native exact
+partition, save-work and 64 MiB archive bounds remain unchanged, as do the
+same-platform and trusted in-process restrictions.

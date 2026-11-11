@@ -765,6 +765,25 @@ protected:
         Signal<StatusEvent>::emit(event);
     }
 
+    // Collective operations stage both events before committing native state. Publishing
+    // installs both statuses before callbacks; notification allocation failures cannot undo
+    // an already committed restore. The caller holds both lifecycle leases throughout.
+    struct PairedStatus {
+        std::shared_ptr<HC::IComponentStatusChangeEventArgs> first, second;
+        CS target;
+        void publish(ComponentBase& a, ComponentBase& b) const noexcept {
+            a.status_=b.status_=target;
+            try { a.Signal<StatusEvent>::emit(first); } catch(...) {}
+            try { b.Signal<StatusEvent>::emit(second); } catch(...) {}
+        }
+    };
+    static PairedStatus pairedStatus(ComponentBase& a,ComponentBase& b,CS from,CS to) {
+        if(!HC::Helpers::isValidComponentStatusTransition(from,to))
+            throw std::logic_error("Invalid collective lifecycle transition");
+        return {std::make_shared<StatusChange>(&a,from,to,std::string()),
+                std::make_shared<StatusChange>(&b,from,to,std::string()),to};
+    }
+
 private:
     HC::IModelComponentInfo* info_;
     CS status_ = CS::Created;

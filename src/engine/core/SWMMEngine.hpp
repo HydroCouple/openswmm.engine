@@ -237,11 +237,14 @@ public:
     int bindMaterialPeer(SWMMEngine& surface, std::size_t capacity = 4096, bool require_transport = false) noexcept;
     const quality::PeerPassiveStorageFunding* peerMaterialFunding() const noexcept;
     const quality::PeerPassiveStorageProducer* peerMaterialProducer() const noexcept;
-    // Private outputs-off pair recovery. Both bound roles are captured/installed
+    // Private pair recovery. Both bound roles are captured/installed
     // together; the standalone/public checkpoint API still refuses split roles.
-    std::string enableMaterialPairCheckpoint();
+    std::string enableMaterialPairCheckpoint(bool outputs = false);
+    std::string prepareMaterialPairOutputCheckpointing();
+    bool materialPairCheckpointAccessReady(bool attached = true) const noexcept;
+    static std::string validateMaterialPairCheckpointEnvelope(const std::string& bytes);
     std::string materialPairCheckpointBytes(std::string& result) const;
-    std::string restoreMaterialPairCheckpoint(const std::string& bytes);
+    std::string restoreMaterialPairCheckpoint(const std::string& bytes, double expected_seconds = -1);
     int splitGeometry(SWMM_SplitFrame* frame) noexcept;
     int applySplitGeometry(SWMM_SplitFrame frame) noexcept;
     int setSplitCallback(SWMM_SplitCallback callback, void* user) noexcept;

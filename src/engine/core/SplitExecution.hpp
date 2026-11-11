@@ -20,6 +20,7 @@ struct MaterialPairLifetime {
     bool transporting = false;
     int phase = 0;
     bool checkpoint_enabled = false, checkpoint_accepted = false;
+    bool checkpoint_outputs = false;
     std::string checkpoint_model;
     double initial_material = 0, initial_loss = 0, initial_gain = 0;
 };

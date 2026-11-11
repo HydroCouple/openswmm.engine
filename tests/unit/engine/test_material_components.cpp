@@ -240,6 +240,10 @@ TEST_F(MaterialComponents, MetadataValidationIsReadOnlyAndUsesNativeEligibility)
     auto p=model();const auto original=bytes(p);Native e;e.check(swmm_engine_open_metadata(e.handle,path_utf8(p).c_str()));
     EXPECT_EQ(swmm_split_material_validate_input(e.handle),SWMM_OK);EXPECT_EQ(swmm_split_material_validate_input(e.handle),SWMM_OK);EXPECT_EQ(bytes(p),original);
     auto n=component(p,"network",false);EXPECT_EQ(n->status(),Status::Initialized);EXPECT_FALSE(fs::exists(dir/"network"));
+    EXPECT_FALSE(n->capabilities().contains(HC::Capability::Checkpointing));
+    EXPECT_EQ(dynamic_cast<HC::ICheckpointableModelComponent*>(n.get()),nullptr);
+    auto s=component(p,"surface",true);EXPECT_FALSE(s->capabilities().contains(HC::Capability::Checkpointing));
+    EXPECT_EQ(dynamic_cast<HC::ICheckpointableModelComponent*>(s.get()),nullptr);
     auto bad=original;replace(bad,"IGNORE_QUALITY NO","IGNORE_QUALITY YES");auto q=dir/"unsupported.inp";save(q,bad);auto refused=component(q,"refused",false);
     EXPECT_EQ(refused->status(),Status::Initialized);EXPECT_FALSE(refused->validate().empty());EXPECT_FALSE(fs::exists(dir/"refused"));
 }

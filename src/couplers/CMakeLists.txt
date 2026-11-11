@@ -17,3 +17,7 @@ set_target_properties(openswmm_engine_component PROPERTIES
     CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/components")
 install(TARGETS openswmm_engine_component LIBRARY DESTINATION lib/hydrocouple/components)
+
+# Optional collective service contract; no HydroCoupleSDK dependency.
+install(FILES "${PROJECT_SOURCE_DIR}/include/openswmm/components/openswmm_component_recovery.h"
+    DESTINATION include/openswmm/components)

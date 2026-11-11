@@ -390,6 +390,8 @@ struct Default2DOutputPlugin::PreparedCheckpoint {
     std::vector<std::pair<hid_t*, hid_t>> datasets;
     hsize_t steps = 0, beds = 0, layers = 0;
     hsize_t gw_species = 0, gw_transport_layers = 0, gw_boundaries = 0;
+    hsize_t species = 0;
+    std::vector<int> species_rows;
     double next_due = -1;
     bool groundwater = false;
     bool heat = false;
@@ -465,8 +467,18 @@ void Default2DOutputPlugin::validateCheckpoint(hid_t file, const SimulationConte
                                                const SimulationSnapshot& snap, hsize_t steps,
                                                double next_due, bool groundwater) const {
     require(
-        checkpoint_fresh_ && !checkpoint_header_.empty() && n_species_ == 0 && n_buildup_ == 0,
-        "Mesh checkpoint requires its prepared writer without surface species or buildup output.");
+        checkpoint_fresh_ && !checkpoint_header_.empty() && n_buildup_ == 0 &&
+            (checkpoint_material_ || n_species_ == 0),
+        "Mesh checkpoint requires its prepared writer and qualified species profile.");
+    if(checkpoint_material_) {
+        const auto unit=ctx.pollutants.units.empty()?-1:static_cast<int>(ctx.pollutants.units[0]);
+        const char* units[]={"MG/L","UG/L","#/L"};
+        require(ctx.n_pollutants()==1 && unit>=0 && unit<3 && snap.surface_species_count==1 &&
+            snap.surface_species_names && *snap.surface_species_names==ctx.pollutant_names.names() &&
+            snap.surface_species_units && *snap.surface_species_units==std::vector<std::string>{units[unit]} &&
+            snap.surface_species_conc.size()==n_faces_ && snap.surface_buildup_count==0 && want(report2d::SPECIES),
+            "Material mesh checkpoint requires its named pollutant concentration and declared unit.");
+    }
     Default2DOutputPlugin reference("");
     reference.file_id_ = openImage(checkpoint_header_);
     reference.n_faces_ = n_faces_;
@@ -474,6 +486,17 @@ void Default2DOutputPlugin::validateCheckpoint(hid_t file, const SimulationConte
     reference.storage_type_ = storage_type_;
     reference.compression_ = compression_;
     reference.native_species_units_ = native_species_units_;
+    reference.species_filter_ = species_filter_;
+    if(checkpoint_material_) {
+        reference.createSpeciesDatasets(snap);
+        require(reference.n_species_==1 && reference.ds_face_species_conc_>=0 && reference.species_rows_==std::vector<int>{0},
+            "Material mesh checkpoint cannot omit its pollutant row.");
+        if(steps==0) {
+            H5Dclose(reference.ds_face_species_conc_);reference.ds_face_species_conc_=H5I_INVALID_HID;
+            require(H5Ldelete(reference.file_id_,"Mesh2_face_species_conc",H5P_DEFAULT)>=0,"Cannot validate initial material mesh schema.");
+            reference.n_species_=0;reference.species_rows_.clear();
+        }
+    }
     require(groundwater == (steps > 0 && want(report2d::GROUNDWATER) && snap.gw2d_active),
             "Mesh checkpoint groundwater presence differs.");
     if (groundwater)
@@ -565,7 +588,8 @@ void Default2DOutputPlugin::validateCheckpoint(hid_t file, const SimulationConte
                  name == "Mesh2_face_vy" || name == "Mesh2_face_max_velocity")
             missing.assign(n_faces_, 1);
         if (H5Tget_class(bt.id) == H5T_FLOAT || H5Tget_class(bt.id) == H5T_INTEGER)
-            visitNumbers(b.id, {}, missing);
+            visitNumbers(b.id, name=="Mesh2_face_species_conc" ? std::function<void(double)>{[](double value){
+                require(value>=0,"Negative material mesh checkpoint concentration.");}} : std::function<void(double)>{}, missing);
         else
             require(H5Tget_class(bt.id) == H5T_STRING && !series,
                     "Unsupported mesh checkpoint dataset type.");
@@ -639,7 +663,7 @@ std::string Default2DOutputPlugin::checkpointBytes(const SimulationContext& ctx,
     auto prefix = fileBytes();
     validateCheckpoint(file_id_, ctx, next_report_ms, snap, n_steps_, next_due_days_, gw_created_);
     detail::CompletedSourceArchive out;
-    uint32_t version = 1;
+    uint32_t version = checkpoint_material_ ? 2 : 1;
     auto step = report_2d_step_days_;
     out(version, step, n_steps_, next_due_days_, gw_created_, prefix);
     return out.bytes();
@@ -683,7 +707,7 @@ std::shared_ptr<Default2DOutputPlugin::PreparedCheckpoint> Default2DOutputPlugin
     auto result = std::make_shared<PreparedCheckpoint>();
     in(version, step, result->steps, result->next_due, result->groundwater, prefix);
     in.finish();
-    require(version == 1 && step == report_2d_step_days_ && !prefix.empty() &&
+    require(version == (checkpoint_material_ ? 2u : 1u) && step == report_2d_step_days_ && !prefix.empty() &&
                 prefix.size() <= maxBytes,
             "Mesh checkpoint format or reporting interval differs.");
     const auto path = io::utf8_path(h5_path_);
@@ -745,6 +769,13 @@ void Default2DOutputPlugin::resolveCheckpointDatasets(PreparedCheckpoint& result
     reference.storage_type_ = storage_type_;
     reference.compression_ = compression_;
     reference.native_species_units_ = native_species_units_;
+    reference.species_filter_ = species_filter_;
+    if(checkpoint_material_ && result.steps>0) {
+        reference.createSpeciesDatasets(snap);
+        require(reference.n_species_==1 && reference.ds_face_species_conc_>=0 && reference.species_rows_==std::vector<int>{0},
+            "Cannot reopen material pollutant schema.");
+    }
+    result.species=reference.n_species_;result.species_rows=std::move(reference.species_rows_);
     if (result.groundwater)
         reference.createGroundwaterDatasets(snap);
     if (result.steps > 0)
@@ -922,6 +953,7 @@ void Default2DOutputPlugin::adoptCheckpoint(PreparedCheckpoint& prepared) noexce
         prepared.file_copy->retain();
     prepared.staging.clear();
     n_steps_ = prepared.steps;
+    n_species_=prepared.species;species_rows_=std::move(prepared.species_rows);
     next_due_days_ = prepared.next_due;
     gw_created_ = prepared.groundwater;
     n_gw_beds_ = prepared.beds;

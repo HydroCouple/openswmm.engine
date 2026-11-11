@@ -3,6 +3,8 @@
 #include <gtest/gtest.h>
 #include "core/SWMMEngine.hpp"
 #include "core/FileIO.hpp"
+#include "core/DateTime.hpp"
+#include "io/CheckpointOutputPublication.hpp"
 #include "core/SplitFrame.hpp"
 #include "quality/PeerPassiveStorageExchange.hpp"
 #include "quality/QualityRouting.hpp"
@@ -77,7 +79,7 @@ struct MaterialPair {
             EXPECT_EQ(p.network.close(),SWMM_ERR_LIFECYCLE);
         }
     }
-    void start(const std::string& tag,bool positive,int basis=0,bool automatic_report=false,bool bind=true,bool natural_completion=false,MaterialTestTransport* transport=nullptr,bool tail=false,const fs::path& same_input={}) {
+    void start(const std::string& tag,bool positive,int basis=0,bool automatic_report=false,bool bind=true,bool natural_completion=false,MaterialTestTransport* transport=nullptr,bool tail=false,const fs::path& same_input={},bool checkpoint_outputs=false,int mesh_stride=1,bool delayed_report=false,const std::string& output_selection={}) {
         const char* chosen=std::getenv("OPENSWMM_MATERIAL_PAIR_EVIDENCE");
         const std::size_t capacity=tail?6:natural_completion?4096:64;
         dir=fs::path(chosen?chosen:MATERIAL_PAIR_EVIDENCE)/tag;fs::create_directories(dir);input=same_input.empty()?dir/"model.inp":same_input;
@@ -87,6 +89,12 @@ struct MaterialPair {
         if(automatic_report){
             const std::string from="REPORT_STEP 00:00:01";const auto at=text.find(from);text.replace(at,from.size(),"REPORT_STEP 00:00:00.00244140625");
             const std::string mesh="REPORT_2D NO";text.replace(text.find(mesh),mesh.size(),"REPORT_2D YES\nREPORT_2D_STEP 0.00244140625");
+            if(checkpoint_outputs){
+                for(const auto& edit:std::vector<std::pair<std::string,std::string>>{{"REPORT_STEP 00:00:00.00244140625","REPORT_STEP 00:00:00.0009765625"},{"REPORT_2D_STEP 0.00244140625","REPORT_2D_STEP 0.0009765625"}}){const auto at=text.find(edit.first);text.replace(at,edit.first.size(),edit.second);}
+            }
+            if(mesh_stride>1){const auto from=std::string("REPORT_2D_STEP 0.0009765625");text.replace(text.find(from),from.size(),"REPORT_2D_STEP 0.001953125");}
+            if(delayed_report){const auto at=text.find("REPORT_STEP ");text.insert(at,"REPORT_START_TIME 00:00:00.004\n");}
+            if(!output_selection.empty())text.insert(text.find("[2D_VERTICES]"),output_selection);
         }
         if(natural_completion) {
             for(const auto& edit:std::vector<std::pair<std::string,std::string>>{
@@ -97,9 +105,15 @@ struct MaterialPair {
             }
         }
         if(same_input.empty())std::ofstream(input)<<text;else ASSERT_EQ(read(input),text);
-        ASSERT_EQ(reference.open(io::path_utf8(input).c_str(),io::path_utf8((dir/"native.rpt")).c_str(),automatic_report?io::path_utf8((dir/"native.out")).c_str():nullptr),SWMM_OK);
-        ASSERT_EQ(network.open(io::path_utf8(input).c_str(),io::path_utf8((dir/"network.rpt")).c_str(),automatic_report?io::path_utf8((dir/"network.out")).c_str():nullptr),SWMM_OK);
-        ASSERT_EQ(surface.open(io::path_utf8(input).c_str(),io::path_utf8((dir/"surface.rpt")).c_str(),nullptr),SWMM_OK);
+        ASSERT_EQ(reference.open(io::path_utf8(input).c_str(),io::path_utf8((dir/"native.rpt")).c_str(),automatic_report?io::path_utf8((dir/"native.out")).c_str():nullptr),SWMM_OK)<<reference.context().error_message;
+        ASSERT_EQ(network.open(io::path_utf8(input).c_str(),checkpoint_outputs?nullptr:io::path_utf8((dir/"network.rpt")).c_str(),automatic_report?io::path_utf8((dir/"network.out")).c_str():nullptr),SWMM_OK);
+        ASSERT_EQ(surface.open(io::path_utf8(input).c_str(),checkpoint_outputs?nullptr:io::path_utf8((dir/"surface.rpt")).c_str(),nullptr),SWMM_OK);
+        if(delayed_report)for(auto* engine:{&reference,&network,&surface}) {
+            // Exercise a subsecond native report gate; the INP calendar-time
+            // parser rounds these tiny authored time-of-day values to seconds.
+            auto& o=engine->context().options;o.report_start=datetime::addSeconds(o.start_date,.0025);
+            ASSERT_GT(o.report_start,o.start_date);
+        }
         ASSERT_EQ(network.configureMaterialSplit(SWMM_SPLIT_NETWORK),SWMM_OK)<<network.context().error_message;
         ASSERT_EQ(surface.configureMaterialSplit(SWMM_SPLIT_SURFACE),SWMM_OK)<<surface.context().error_message;
         if(automatic_report) {
@@ -111,6 +125,7 @@ struct MaterialPair {
         ASSERT_EQ(surface.splitGeometry(&geometry.value),SWMM_OK)<<surface.context().error_message;
         char* encoded=nullptr;EXPECT_NE(swmm_split_packet_encode(&surface,geometry.value,&encoded),SWMM_OK);EXPECT_EQ(encoded,nullptr);
         ASSERT_EQ(network.initialize(),SWMM_OK);ASSERT_EQ(network.applySplitGeometry(geometry.value),SWMM_OK)<<network.context().error_message;
+        if(checkpoint_outputs){ASSERT_TRUE(network.prepareOutputCheckpointing().empty());ASSERT_TRUE(surface.prepareSurfaceOutputCheckpointing().empty());}
         if(transport){transport->surface=&surface;ASSERT_EQ(network.setSplitCallback(material_test_exchange,transport),SWMM_OK);}
         else ASSERT_EQ(network.setSplitCallback(exchange,this),SWMM_OK);
         ASSERT_EQ(reference.initialize(),SWMM_OK);
@@ -682,6 +697,276 @@ TEST(MaterialPairCheckpoint, PartialRestoreContinuesThroughActualRefillAndAcknow
     EXPECT_FALSE(restored.network.peerMaterialFunding()->unresolved());
     EXPECT_FALSE(restored.surface.peerMaterialProducer()->awaitingAcknowledgement());
 }
+#ifdef MATERIAL_OUTPUT_CHECKPOINT_TESTS
+std::string outputNumerics(std::string bytes) {
+    bytes=mutatePair(bytes,[](std::string& body){
+        live_recovery_test::editBlob(body,"OpenSWMM material pair output prefixes v1",[](std::string& output){
+            detail::CompletedSourceArchive in(output);std::string label,binary,mesh;in(label,binary,mesh);in.finish();
+            binary.clear();mesh.clear();detail::CompletedSourceArchive out;out(label,binary,mesh);output=out.bytes();
+        });
+    });
+    return normalizePair(std::move(bytes));
+}
+void outputRestartCase(bool positive,int basis,int policy) {
+    const auto tag="output-"+std::to_string(basis)+(positive?"-positive":"-negative")+"-"+std::to_string(policy);
+    const int stride=policy==1?2:1;const bool delayed=policy==2;
+    MaterialPair original;ASSERT_NO_FATAL_FAILURE(original.start(tag,positive,basis,true,true,false,nullptr,false,{},true,stride,delayed));
+    auto error=original.network.enableMaterialPairCheckpoint(true);ASSERT_TRUE(error.empty())<<error;
+    std::vector<std::string> states(13);
+    std::ofstream refused(original.dir/"save-refusals.txt");
+    for(int step=0;step<=12;++step) {
+        if(step) {double elapsed;ASSERT_EQ(original.reference.step(&elapsed),SWMM_OK)<<step<<' '<<original.reference.context().error_message;ASSERT_EQ(original.network.step(&elapsed),SWMM_OK)<<original.network.context().error_message;ASSERT_NO_FATAL_FAILURE(original.same());}
+        std::string saved="unchanged";error=original.network.materialPairCheckpointBytes(saved);
+        if(!error.empty()){ASSERT_GT(step,8);EXPECT_EQ(saved,"unchanged");ASSERT_NE(error.find("staged archive profile"),std::string::npos)<<error;refused<<step<<' '<<error<<'\n';}
+        else{states[step]=std::move(saved);std::ofstream(original.dir/("native-"+std::to_string(step)+".checkpoint"),std::ios::binary)<<states[step];}
+    }
+    std::vector<fs::path> restored_paths;
+    for(int capture:{0,1,2,4,5,6,7,8}) {
+        SCOPED_TRACE(tag+"/"+std::to_string(capture));MaterialPair restored;
+        ASSERT_NO_FATAL_FAILURE(restored.start(tag+"-restored-"+std::to_string(capture),positive,basis,true,true,false,nullptr,false,original.input,true,stride,delayed));
+        error=restored.network.enableMaterialPairCheckpoint(true);ASSERT_TRUE(error.empty())<<error;
+        error=restored.network.restoreMaterialPairCheckpoint(states[capture]);ASSERT_TRUE(error.empty())<<error;
+        for(int step=capture;step<=12;++step) {
+            if(step>capture){double elapsed;ASSERT_EQ(restored.network.step(&elapsed),SWMM_OK)<<restored.network.context().error_message;}
+            std::string actual="unchanged";error=restored.network.materialPairCheckpointBytes(actual);
+            if(states[step].empty()){EXPECT_EQ(actual,"unchanged");EXPECT_NE(error.find("staged archive profile"),std::string::npos)<<error;}
+            else{ASSERT_TRUE(error.empty())<<step<<' '<<error;EXPECT_EQ(outputNumerics(actual),outputNumerics(states[step]))<<step;}
+        }
+        ASSERT_NO_FATAL_FAILURE(sameRecoveredPair(original,restored));
+        ASSERT_EQ(restored.network.end(),SWMM_OK);ASSERT_EQ(restored.network.close(),SWMM_OK);ASSERT_EQ(restored.surface.close(),SWMM_OK);
+        restored_paths.push_back(restored.dir);
+    }
+    ASSERT_EQ(original.reference.end(),SWMM_OK);ASSERT_EQ(original.network.end(),SWMM_OK);
+    ASSERT_NO_FATAL_FAILURE(original.same(true));ASSERT_EQ(original.network.close(),SWMM_OK);ASSERT_EQ(original.surface.close(),SWMM_OK);ASSERT_EQ(original.reference.close(),SWMM_OK);
+    ASSERT_EQ(read(original.dir/"native.out"),read(original.dir/"network.out"));
+    for(const auto& path:restored_paths)EXPECT_EQ(read(path/"network.out"),read(original.dir/"network.out"));
+    std::ofstream(original.dir/"completion.txt")<<"12 native steps and end\n";
+}
+TEST(MaterialPairOutputCheckpoint, PollutantReportsAllBasesBothSignsBeforeAndAfterReports) {
+    for(int basis=0;basis<3;++basis)for(bool positive:{false,true})ASSERT_NO_FATAL_FAILURE(outputRestartCase(positive,basis,0));
+}
+TEST(MaterialPairOutputCheckpoint, IndependentMeshCadenceAndReportStart) {
+    for(int policy:{1,2})for(bool positive:{false,true})ASSERT_NO_FATAL_FAILURE(outputRestartCase(positive,0,policy));
+}
+TEST(MaterialPairOutputCheckpoint, MissingSpeciesSelectionRefusesBeforeAttachmentAndLeavesWritersUsable) {
+    int index=0;
+    for(const auto& selection:{std::string("REPORT_2D_SPECIES Missing\n"),std::string("REPORT_2D_VARIABLES DEPTH\n")}) {
+        MaterialPair pair;ASSERT_NO_FATAL_FAILURE(pair.start("output-selection-"+std::to_string(index++),true,0,true,true,false,nullptr,false,{},true,1,false,selection));
+        const auto binary=read(pair.dir/"network.out"),mesh=read(pair.dir/"surface.h5");
+        for(int repeat=0;repeat<2;++repeat){const auto error=pair.network.enableMaterialPairCheckpoint(true);EXPECT_FALSE(error.empty());std::ofstream(pair.dir/("refusal-"+std::to_string(repeat)+".txt"))<<error<<'\n';}
+        EXPECT_EQ(pair.network.context().elapsed_ms,0);EXPECT_EQ(pair.surface.context().elapsed_ms,0);
+        EXPECT_EQ(binary,read(pair.dir/"network.out"));EXPECT_EQ(mesh,read(pair.dir/"surface.h5"));
+        ASSERT_NO_FATAL_FAILURE(pair.steps(8));
+    }
+}
+TEST(MaterialPairOutputCheckpoint, EitherPrefixAndPublisherDamagePreserveBothTargetsAndPermitRetry) {
+    MaterialPair original;ASSERT_NO_FATAL_FAILURE(original.start("output-damage-source",true,0,true,true,false,nullptr,false,{},true));
+    ASSERT_TRUE(original.network.enableMaterialPairCheckpoint(true).empty());std::string early,saved;
+    ASSERT_NO_FATAL_FAILURE(original.steps(1));ASSERT_EQ(original.surface.context().nodes.conc,original.surface.context().nodes.conc_old);
+    ASSERT_TRUE(original.network.materialPairCheckpointBytes(early).empty());
+    for(int step=2;step<=6;++step){double elapsed;ASSERT_EQ(original.reference.step(&elapsed),SWMM_OK);ASSERT_EQ(original.network.step(&elapsed),SWMM_OK);}
+    ASSERT_TRUE(original.network.materialPairCheckpointBytes(saved).empty());
+    for(int edit=0;edit<4;++edit) {
+        MaterialPair target;ASSERT_NO_FATAL_FAILURE(target.start("output-damage-"+std::to_string(edit),true,0,true,true,false,nullptr,false,original.input,true));
+        ASSERT_TRUE(target.network.enableMaterialPairCheckpoint(true).empty());std::string before,after;
+        ASSERT_TRUE(target.network.materialPairCheckpointBytes(before).empty());
+        const auto binary_header=read(target.dir/"network.out"),mesh_header=read(target.dir/"surface.h5");
+        auto bad=mutatePair(edit==3?early:saved,[&](std::string& body){
+            if(edit==3)live_recovery_test::editBlob(body,"OpenSWMM split material surface state",[&](std::string& mesh){
+                detail::CompletedSourceArchive out;auto time=original.network.context().options.routing_step*1000;out(time);mesh.replace(mesh.size()-sizeof(double),sizeof(double),out.bytes());
+            });
+            else live_recovery_test::editBlob(body,"OpenSWMM material pair output prefixes v1",[&](std::string& output){
+                detail::CompletedSourceArchive in(output);std::string label,binary,mesh;in(label,binary,mesh);in.finish();
+                if(edit==0)binary[0]^=1;
+                if(edit==1) {const auto at=mesh.find(std::string("\211HDF\r\n\032\n",8));if(at==std::string::npos)throw std::runtime_error("Missing HDF5 test prefix");mesh[at]=0;}
+                if(edit==2)std::swap(binary,mesh);
+                detail::CompletedSourceArchive out;out(label,binary,mesh);output=out.bytes();
+            });
+        });
+        auto error=target.network.restoreMaterialPairCheckpoint(bad);EXPECT_FALSE(error.empty());
+        std::ofstream(target.dir/"refusal.txt")<<error<<'\n';ASSERT_TRUE(target.network.materialPairCheckpointBytes(after).empty());
+        EXPECT_EQ(before,after);EXPECT_EQ(binary_header,read(target.dir/"network.out"));EXPECT_EQ(mesh_header,read(target.dir/"surface.h5"));
+        error=target.network.restoreMaterialPairCheckpoint(saved);ASSERT_TRUE(error.empty())<<error;
+        double elapsed;ASSERT_EQ(target.network.step(&elapsed),SWMM_OK);
+    }
+}
+TEST(MaterialPairOutputCheckpoint, SecondRenameFailureRollsBackFreshWritersAndAllowsPairRestore) {
+    MaterialPair original;ASSERT_NO_FATAL_FAILURE(original.start("output-publish-source",false,0,true,true,false,nullptr,false,{},true));
+    ASSERT_TRUE(original.network.enableMaterialPairCheckpoint(true).empty());ASSERT_NO_FATAL_FAILURE(original.steps(6));std::string saved;
+    ASSERT_TRUE(original.network.materialPairCheckpointBytes(saved).empty());
+    MaterialPair target;ASSERT_NO_FATAL_FAILURE(target.start("output-publish-target",false,0,true,true,false,nullptr,false,original.input,true));
+    ASSERT_TRUE(target.network.enableMaterialPairCheckpoint(true).empty());std::string before,after;
+    ASSERT_TRUE(target.network.materialPairCheckpointBytes(before).empty());
+    const auto binary=target.dir/"network.out",mesh=target.dir/"surface.h5";
+    const auto bh=read(binary),mh=read(mesh);const auto a=target.dir/"first-stage",b=target.dir/"second-stage";
+    std::ofstream(a)<<"first published replacement";std::ofstream(b)<<"second published replacement";
+    {
+        io::CheckpointOutputPublication publication({{a,binary,bh,-1},{b,mesh,mh,-1}});
+        fs::remove(b); // Constructor succeeded; first rename succeeds, second fails.
+        try{publication.publish();FAIL()<<"Missing second staging file was published";}
+        catch(const std::exception& error){EXPECT_NE(std::string(error.what()).find("fresh destinations were restored"),std::string::npos);std::ofstream(target.dir/"rollback.txt")<<error.what()<<'\n';}
+    }
+    EXPECT_FALSE(fs::exists(a));EXPECT_EQ(bh,read(binary));EXPECT_EQ(mh,read(mesh));
+    ASSERT_TRUE(target.network.materialPairCheckpointBytes(after).empty());EXPECT_EQ(before,after);
+    const auto error=target.network.restoreMaterialPairCheckpoint(saved);ASSERT_TRUE(error.empty())<<error;
+    double elapsed;ASSERT_EQ(target.network.step(&elapsed),SWMM_OK);
+}
+TEST(MaterialPairOutputCheckpoint, FreshProcessOutputRestoreChild) {
+    const char* directory=std::getenv("OPENSWMM_PAIR_OUTPUT_CASE");if(!directory)GTEST_SKIP()<<"Run by fresh executable output driver.";
+    const char* basis_text=std::getenv("OPENSWMM_PAIR_RESTORE_BASIS");const char* sign=std::getenv("OPENSWMM_PAIR_RESTORE_SIGN");
+    const char* capture_text=std::getenv("OPENSWMM_PAIR_RESTORE_CAPTURE");ASSERT_NE(basis_text,nullptr);ASSERT_NE(sign,nullptr);ASSERT_NE(capture_text,nullptr);
+    const int basis=std::stoi(basis_text),capture=std::stoi(capture_text);const bool positive=std::string(sign)=="positive";
+    ASSERT_GE(basis,0);ASSERT_LT(basis,3);ASSERT_TRUE(capture==5 || capture==6);
+    const fs::path parent(directory);MaterialPair target;
+    ASSERT_NO_FATAL_FAILURE(target.start("fresh",positive,basis,true,true,false,nullptr,false,parent/"model.inp",true));
+    ASSERT_TRUE(target.network.enableMaterialPairCheckpoint(true).empty());
+    ASSERT_EQ(target.network.context().elapsed_ms,0);ASSERT_EQ(target.surface.context().elapsed_ms,0);
+    ASSERT_EQ(target.accepted,0);ASSERT_EQ(target.advances,0);ASSERT_EQ(target.surface.peerMaterialProducer()->legCount(),0u);
+    auto error=target.network.restoreMaterialPairCheckpoint(read(parent/("native-"+std::to_string(capture)+".checkpoint")));ASSERT_TRUE(error.empty())<<error;
+    const auto id=target.network.peerMaterialFunding()->identity();std::ofstream(target.dir/"identity.txt")<<id.issuer<<' '<<id.recipient<<' '<<id.session<<'\n';
+    for(int step=capture;step<=12;++step) {
+        if(step>capture){double elapsed;ASSERT_EQ(target.network.step(&elapsed),SWMM_OK)<<target.network.context().error_message;}
+        std::string actual="unchanged";error=target.network.materialPairCheckpointBytes(actual);
+        const auto file=parent/("native-"+std::to_string(step)+".checkpoint");
+        if(fs::exists(file)){ASSERT_TRUE(error.empty())<<error;EXPECT_EQ(outputNumerics(actual),outputNumerics(read(file)))<<step;}
+        else{EXPECT_EQ(actual,"unchanged");EXPECT_NE(error.find("staged archive profile"),std::string::npos)<<error;}
+    }
+    EXPECT_EQ(target.accepted,12-capture);ASSERT_EQ(target.network.end(),SWMM_OK);
+    ASSERT_EQ(target.network.close(),SWMM_OK);ASSERT_EQ(target.surface.close(),SWMM_OK);
+    EXPECT_EQ(read(target.dir/"network.out"),read(parent/"network.out"));
+}
+#endif
+#ifdef MATERIAL_PACKET_TESTS
+struct PublicCheckpoint {
+    SWMM_MaterialCheckpoint value=nullptr;
+    ~PublicCheckpoint(){swmm_split_material_checkpoint_destroy(value);}
+};
+std::string publicCheckpointBytes(SWMM_MaterialCheckpoint value) {
+    const void* data=nullptr;std::size_t size=0;
+    if(swmm_split_material_checkpoint_data(value,&data,&size)!=SWMM_OK)throw std::runtime_error(swmm_split_material_checkpoint_last_error());
+    return {static_cast<const char*>(data),size};
+}
+TEST(MaterialPublicRecovery, BytesMatchNativeAndSurviveSourceCloseAndCallerBufferDestruction) {
+    for(bool outputs:{false,true}) {
+#ifndef MATERIAL_OUTPUT_CHECKPOINT_TESTS
+        if(outputs)continue;
+#endif
+        MaterialPair original;ASSERT_NO_FATAL_FAILURE(original.start(outputs?"public-value-output":"public-value-off",true,0,outputs,true,false,nullptr,false,{},outputs));
+        ASSERT_EQ(swmm_split_material_checkpoint_enable(&original.network,outputs),SWMM_OK);ASSERT_NO_FATAL_FAILURE(original.steps(6));
+        PublicCheckpoint state,imported;ASSERT_EQ(swmm_split_material_checkpoint_capture(&original.network,&state.value),SWMM_OK);
+        const auto bytes=publicCheckpointBytes(state.value);std::string native;
+        ASSERT_TRUE(original.network.materialPairCheckpointBytes(native).empty());EXPECT_EQ(bytes,native);
+        auto buffer=bytes;ASSERT_EQ(swmm_split_material_checkpoint_from_bytes(buffer.data(),buffer.size(),&imported.value),SWMM_OK);
+        buffer.assign(buffer.size(),'\0');buffer.clear();buffer.shrink_to_fit();EXPECT_EQ(publicCheckpointBytes(imported.value),bytes);
+        ASSERT_EQ(original.network.end(),SWMM_OK);ASSERT_EQ(original.network.close(),SWMM_OK);ASSERT_EQ(original.surface.close(),SWMM_OK);
+        EXPECT_EQ(publicCheckpointBytes(state.value),bytes);EXPECT_EQ(publicCheckpointBytes(imported.value),bytes);
+        const void* unchanged=reinterpret_cast<void*>(1);std::size_t size=789;
+        EXPECT_EQ(swmm_split_material_checkpoint_data(state.value,nullptr,&size),SWMM_ERR_BADPARAM);EXPECT_EQ(size,789u);
+        EXPECT_EQ(swmm_split_material_checkpoint_data(state.value,&unchanged,nullptr),SWMM_ERR_BADPARAM);EXPECT_EQ(unchanged,reinterpret_cast<void*>(1));
+    }
+}
+TEST(MaterialPublicRecovery, OuterEnvelopeAndOutputModeRefuseWithoutChangingFreshPair) {
+    MaterialPair original;ASSERT_NO_FATAL_FAILURE(original.start("public-envelope-source",true));
+    ASSERT_EQ(swmm_split_material_checkpoint_enable(&original.network,0),SWMM_OK);ASSERT_NO_FATAL_FAILURE(original.steps(6));
+    PublicCheckpoint state;ASSERT_EQ(swmm_split_material_checkpoint_capture(&original.network,&state.value),SWMM_OK);const auto bytes=publicCheckpointBytes(state.value);
+    for(int edit=0;edit<6;++edit) {
+        detail::CompletedSourceArchive in(bytes);std::string magic,model,body;std::uint32_t version,endian,width,sum;in(magic,version,endian,width,model,sum,body);in.finish();
+        if(edit==0)magic[0]^=1;if(edit==1)version=99;if(edit==2)endian=0;if(edit==3)width=0;if(edit==4)++sum;if(edit==5)version=2;
+        detail::CompletedSourceArchive out;out(magic,version,endian,width,model,sum,body);const auto damaged=out.bytes();
+        PublicCheckpoint value;value.value=nullptr;
+        const auto rc=swmm_split_material_checkpoint_from_bytes(damaged.data(),damaged.size(),&value.value);
+        if(edit<5){EXPECT_EQ(rc,SWMM_ERR_BADPARAM);EXPECT_EQ(value.value,nullptr);continue;}
+        ASSERT_EQ(rc,SWMM_OK);MaterialPair target;ASSERT_NO_FATAL_FAILURE(target.start("public-mode-target",true,0,false,true,false,nullptr,false,original.input));
+        ASSERT_EQ(swmm_split_material_checkpoint_enable(&target.network,0),SWMM_OK);PublicCheckpoint before,after;
+        ASSERT_EQ(swmm_split_material_checkpoint_capture(&target.network,&before.value),SWMM_OK);
+        target.network.context().error_message="original diagnostic";
+        EXPECT_EQ(swmm_split_material_checkpoint_restore(&target.network,value.value),SWMM_ERR_IO);
+        EXPECT_EQ(target.network.context().error_message,"original diagnostic");ASSERT_EQ(swmm_split_material_checkpoint_capture(&target.network,&after.value),SWMM_OK);
+        EXPECT_EQ(publicCheckpointBytes(before.value),publicCheckpointBytes(after.value));
+        ASSERT_EQ(swmm_split_material_checkpoint_restore(&target.network,state.value),SWMM_OK);ASSERT_NO_FATAL_FAILURE(sameRecoveredPair(original,target));
+    }
+}
+TEST(MaterialPublicRecovery, ExpectedClockIsJoinedBeforeCollectivePublicationAndAllowsRetry) {
+    for(bool outputs:{false,true}) {
+#ifndef MATERIAL_OUTPUT_CHECKPOINT_TESTS
+        if(outputs)continue;
+#endif
+        MaterialPair original;ASSERT_NO_FATAL_FAILURE(original.start(outputs?"public-clock-source-on":"public-clock-source-off",true,0,outputs,true,false,nullptr,false,{},outputs));
+        ASSERT_EQ(swmm_split_material_checkpoint_enable(&original.network,outputs),SWMM_OK);ASSERT_NO_FATAL_FAILURE(original.steps(6));
+        PublicCheckpoint state;ASSERT_EQ(swmm_split_material_checkpoint_capture(&original.network,&state.value),SWMM_OK);
+        MaterialPair target;ASSERT_NO_FATAL_FAILURE(target.start(outputs?"public-clock-target-on":"public-clock-target-off",true,0,outputs,true,false,nullptr,false,original.input,outputs));
+        ASSERT_EQ(swmm_split_material_checkpoint_enable(&target.network,outputs),SWMM_OK);
+        PublicCheckpoint before,after;ASSERT_EQ(swmm_split_material_checkpoint_capture(&target.network,&before.value),SWMM_OK);
+        const double seconds=original.network.context().elapsed_ms/1000.0;
+        for(double bad:{-1.0,std::numeric_limits<double>::infinity(),std::numeric_limits<double>::quiet_NaN()})
+            EXPECT_EQ(swmm_split_material_checkpoint_restore_at(&target.network,state.value,bad),SWMM_ERR_BADPARAM);
+        EXPECT_EQ(swmm_split_material_checkpoint_restore_at(&target.network,state.value,std::nextafter(seconds,INFINITY)),SWMM_ERR_IO);
+        ASSERT_EQ(swmm_split_material_checkpoint_capture(&target.network,&after.value),SWMM_OK);
+        EXPECT_EQ(publicCheckpointBytes(before.value),publicCheckpointBytes(after.value));
+        ASSERT_EQ(swmm_split_material_checkpoint_restore_at(&target.network,state.value,seconds),SWMM_OK);
+        ASSERT_NO_FATAL_FAILURE(sameRecoveredPair(original,target));
+    }
+}
+TEST(MaterialPublicRecovery, InitialCallbackAndLateEnrollmentCannotChangeOrdinaryPair) {
+    MaterialPair pair;ASSERT_NO_FATAL_FAILURE(pair.start("public-late",true));int calls=0;
+    ASSERT_EQ(swmm_set_step_begin_callback(&pair.network,[](SWMM_Engine engine,double,double,void* user){
+        ++*static_cast<int*>(user);SWMM_MaterialCheckpoint untouched=reinterpret_cast<SWMM_MaterialCheckpoint>(1);
+        EXPECT_EQ(swmm_split_material_checkpoint_enable(engine,0),SWMM_ERR_LIFECYCLE);
+        EXPECT_EQ(swmm_split_material_checkpoint_capture(engine,&untouched),SWMM_ERR_LIFECYCLE);
+        EXPECT_EQ(untouched,reinterpret_cast<SWMM_MaterialCheckpoint>(1));
+    },&calls),SWMM_OK);
+    double elapsed;ASSERT_EQ(pair.reference.step(&elapsed),SWMM_OK);ASSERT_EQ(pair.network.step(&elapsed),SWMM_OK);EXPECT_EQ(calls,1);
+    ASSERT_EQ(swmm_set_step_begin_callback(&pair.network,nullptr,nullptr),SWMM_OK);
+    EXPECT_EQ(swmm_split_material_checkpoint_enable(&pair.network,0),SWMM_ERR_LIFECYCLE);
+    for(int k=1;k<8;++k){ASSERT_EQ(pair.reference.step(&elapsed),SWMM_OK);ASSERT_EQ(pair.network.step(&elapsed),SWMM_OK);ASSERT_NO_FATAL_FAILURE(pair.same());}
+}
+TEST(MaterialPublicRecovery, TerminalPairRefusalPreservesOriginalEngineDiagnostics) {
+    MaterialPair pair;ASSERT_NO_FATAL_FAILURE(pair.start("public-terminal",true));
+    ASSERT_EQ(swmm_split_material_checkpoint_enable(&pair.network,0),SWMM_OK);PublicCheckpoint initial;
+    ASSERT_EQ(swmm_split_material_checkpoint_capture(&pair.network,&initial.value),SWMM_OK);pair.drop=true;
+    double elapsed;for(int k=0;k<3;++k)ASSERT_EQ(pair.network.step(&elapsed),SWMM_OK);
+    ASSERT_NE(pair.network.step(&elapsed),SWMM_OK);const auto root=pair.network.context().error_message;
+    SWMM_MaterialCheckpoint untouched=reinterpret_cast<SWMM_MaterialCheckpoint>(1);
+    EXPECT_EQ(swmm_split_material_checkpoint_capture(&pair.network,&untouched),SWMM_ERR_LIFECYCLE);
+    EXPECT_EQ(untouched,reinterpret_cast<SWMM_MaterialCheckpoint>(1));
+    EXPECT_EQ(swmm_split_material_checkpoint_restore(&pair.network,initial.value),SWMM_ERR_LIFECYCLE);
+    EXPECT_EQ(pair.network.context().error_message,root);
+}
+TEST(MaterialPublicRecovery, ClosedSurfaceIsRefusedBeforeDereferencingItsOldOwner) {
+    MaterialPair pair;ASSERT_NO_FATAL_FAILURE(pair.start("public-closed-peer",true));
+    ASSERT_EQ(swmm_split_material_checkpoint_enable(&pair.network,0),SWMM_OK);PublicCheckpoint state;
+    ASSERT_EQ(swmm_split_material_checkpoint_capture(&pair.network,&state.value),SWMM_OK);
+    const auto bytes=publicCheckpointBytes(state.value);ASSERT_EQ(pair.surface.close(),SWMM_OK);
+    SWMM_MaterialCheckpoint untouched=reinterpret_cast<SWMM_MaterialCheckpoint>(1);
+    EXPECT_EQ(swmm_split_material_checkpoint_capture(&pair.network,&untouched),SWMM_ERR_LIFECYCLE);
+    EXPECT_EQ(untouched,reinterpret_cast<SWMM_MaterialCheckpoint>(1));
+    EXPECT_EQ(swmm_split_material_checkpoint_restore(&pair.network,state.value),SWMM_ERR_LIFECYCLE);
+    EXPECT_EQ(publicCheckpointBytes(state.value),bytes);
+}
+#ifdef MATERIAL_OUTPUT_CHECKPOINT_TESTS
+TEST(MaterialPublicRecovery, ValidOuterDamagedSecondPrefixIsAtomicAndAllowsValidRetry) {
+    MaterialPair original;ASSERT_NO_FATAL_FAILURE(original.start("public-prefix-source",false,0,true,true,false,nullptr,false,{},true));
+    ASSERT_EQ(swmm_split_material_checkpoint_enable(&original.network,1),SWMM_OK);ASSERT_NO_FATAL_FAILURE(original.steps(6));
+    PublicCheckpoint saved;ASSERT_EQ(swmm_split_material_checkpoint_capture(&original.network,&saved.value),SWMM_OK);
+    auto bad=mutatePair(publicCheckpointBytes(saved.value),[](std::string& body){
+        live_recovery_test::editBlob(body,"OpenSWMM material pair output prefixes v1",[](std::string& output){
+            detail::CompletedSourceArchive in(output);std::string label,binary,mesh;in(label,binary,mesh);in.finish();
+            const auto at=mesh.find(std::string("\211HDF\r\n\032\n",8));if(at==mesh.npos)throw std::runtime_error("Missing HDF prefix");mesh[at]=0;
+            detail::CompletedSourceArchive out;out(label,binary,mesh);output=out.bytes();
+        });
+    });
+    PublicCheckpoint damaged;ASSERT_EQ(swmm_split_material_checkpoint_from_bytes(bad.data(),bad.size(),&damaged.value),SWMM_OK);
+    MaterialPair target;ASSERT_NO_FATAL_FAILURE(target.start("public-prefix-target",false,0,true,true,false,nullptr,false,original.input,true));
+    ASSERT_EQ(swmm_split_material_checkpoint_enable(&target.network,1),SWMM_OK);PublicCheckpoint before,after;
+    ASSERT_EQ(swmm_split_material_checkpoint_capture(&target.network,&before.value),SWMM_OK);
+    const auto binary=read(target.dir/"network.out"),mesh=read(target.dir/"surface.h5");
+    EXPECT_EQ(swmm_split_material_checkpoint_restore(&target.network,damaged.value),SWMM_ERR_IO);
+    ASSERT_EQ(swmm_split_material_checkpoint_capture(&target.network,&after.value),SWMM_OK);
+    EXPECT_EQ(publicCheckpointBytes(before.value),publicCheckpointBytes(after.value));EXPECT_EQ(binary,read(target.dir/"network.out"));EXPECT_EQ(mesh,read(target.dir/"surface.h5"));
+    ASSERT_EQ(swmm_split_material_checkpoint_restore(&target.network,saved.value),SWMM_OK);ASSERT_NO_FATAL_FAILURE(sameRecoveredPair(original,target));
+}
+#endif
+#endif
 TEST(MaterialEnginePair, AuthoredSuccessivePartialDeliveriesAllBasesBothWaterSigns) {
     for(int basis=0;basis<3;++basis)for(bool positive:{true,false}) {
         MaterialPair p;

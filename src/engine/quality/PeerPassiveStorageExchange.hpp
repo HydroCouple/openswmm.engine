@@ -109,6 +109,7 @@ public:
     const PassiveStorageExchange& receipts() const noexcept { return book_; }
     const PeerFundingReply* returnedReply() const noexcept { return reply_.get(); }
     std::array<double,2> lastWindow() const noexcept;
+    bool reportPublishedAt(double elapsed_ms) const noexcept;
 private:
     friend class PeerPassiveStorageCheckpoint;
     void ready() const;

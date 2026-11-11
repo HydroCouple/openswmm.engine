@@ -88,6 +88,12 @@ std::array<double,2> PeerPassiveStorageFunding::lastWindow() const noexcept {
     if(book_.water_publications_.empty())return {0,0};
     const auto& p=book_.water_publications_.back().publication;return {p.batch_start_ms,p.batch_end_ms};
 }
+bool PeerPassiveStorageFunding::reportPublishedAt(double time) const noexcept {
+    if(book_.water_publications_.empty())return false;
+    const auto& p=book_.water_publications_.back().publication;
+    return p.phase==PassiveStorageExchange::Phase::REPORT && p.capture_ms==time &&
+        p.batch_end_ms==time && p.generation==book_.deliveries_.size();
+}
 void PeerPassiveStorageFunding::ready() const {require(!failed(),"Peer funding session is terminal.");}
 void PeerPassiveStorageFunding::fail(const char* reason) noexcept {
     if(!failure_)failure_=reason;if(recipient_)recipient_->failed=true;if(token_)token_->state=PeerFundingToken::FAILED;

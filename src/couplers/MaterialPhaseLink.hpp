@@ -13,9 +13,10 @@ struct MaterialLifetime {
     const bool surface;
     const std::string id;
     std::weak_ptr<MaterialLifetime> peer;
+    const void* recoveryOwner=nullptr;
     bool available=true,prepared=false,ready=false,busy=false,bound=false,ended=false,terminal=false,finishing=false,authorizedFinish=false;
     std::string error;
-    bool frozen()const noexcept{return busy||(prepared&&!ended&&!terminal);}
+    bool frozen()const noexcept{return recoveryOwner || busy||(prepared&&!ended&&!terminal);}
 };
 class MaterialReceipt;
 class MaterialRequest final:public Item,public HC::IInput {
@@ -123,6 +124,7 @@ class MaterialPhaseLink {
     std::uint64_t accepted_=0,legs_=0,drain_=0,spill_=0,empty_=0,zeroCapacity_=0;
     Json lastWindow_=Json::object();
     double acceptedTime_=0;
+    bool lastWindowHistorical_=false;
     static void checked(SWMM_Engine e,int rc){if(rc)throw std::runtime_error("Material phase: "+std::to_string(rc)+" "+swmm_get_last_error_msg(e)+" "+swmm_split_material_last_error());}
     static std::string read(const HC::IComponentDataItem& item){std::string text;const int64_t zero=0;
         if(!HC::Helpers::getValue(item,text,{&zero,1})||text.empty())throw std::invalid_argument("Material endpoint has no prepared packet");return text;}
@@ -154,7 +156,7 @@ class MaterialPhaseLink {
         char* raw=nullptr;checked(engine_,swmm_split_material_packet_copy(engine_,bytes,size,&raw));
         std::unique_ptr<char,decltype(&swmm_split_packet_free)> value(raw,swmm_split_packet_free);
         const auto packet=Json::parse(raw);if(packet.at("stage")!=stage)throw std::invalid_argument("Material stage mismatch");
-        ++observed_[stage];const auto& allowance=packet.at("body").at("view").at("allowance");
+        lastWindowHistorical_=false;++observed_[stage];const auto& allowance=packet.at("body").at("view").at("allowance");
         lastWindow_={{"session",packet.at("session")},{"ordinal",allowance.at("ordinal")},{"receipt",allowance.at("receipt")},
             {"outer_sequence",packet.at("outer_sequence")},{"outer_phase",packet.at("outer_phase")},{"stage",stage}};
         if(stage==SWMM_MATERIAL_OFFER&&allowance.at("leg_limit")=="0")++zeroCapacity_;
@@ -209,11 +211,11 @@ public:
     void preparedNetwork(SWMM_Engine e){engine_=e;life_->ready=true;}
     void prepareSurface(SWMM_Engine e){engine_=e;Frame geometry;checked(e,swmm_split_geometry(e,&geometry.value));receipt.text=encode(e,geometry.value);
         checked(e,swmm_engine_start(e,0));started=true;life_->ready=true;}
-    void startNetwork(SWMM_Engine e){
+    void startNetwork(SWMM_Engine e,bool saveResults=true){
         if(started){validate();return;}auto& peer=provider();auto state=peer.lifetime();
         if(!life_->ready||!state->ready||state->bound)throw std::invalid_argument("Both material components must prepare before advancement");
         const auto geometry=read(peer);Frame frame;checked(e,swmm_split_material_packet_decode(e,geometry.data(),geometry.size(),&frame.value));
-        checked(e,swmm_split_apply_geometry(e,frame.value));checked(e,swmm_split_set_callback(e,exchange,this));checked(e,swmm_engine_start(e,1));
+        checked(e,swmm_split_apply_geometry(e,frame.value));checked(e,swmm_split_set_callback(e,exchange,this));checked(e,swmm_engine_start(e,saveResults?1:0));
         checked(e,swmm_split_material_set_transport(e,transport,this));pinned_=&peer;peer.bind(e,capacity_);life_->bound=true;started=true;engine_=e;
     }
     void evaluate(SWMM_Engine e,const HC::IInput* query){
@@ -247,6 +249,64 @@ public:
         }
         life_->available=false;life_->ready=false;engine_=nullptr;
     }
+    struct Observation {
+        std::array<std::uint64_t,4> observed{};
+        std::array<std::uint64_t,9> outer{};
+        std::uint64_t accepted=0,legs=0,drain=0,spill=0,empty=0,zeroCapacity=0;
+        Json last=Json::object();
+        double time=0;
+        bool historical=false;
+    };
+    Json observation()const {
+        return Json{{"observed",observed_},{"outer",outer_},{"accepted",accepted_},{"legs",legs_},
+            {"drain",drain_},{"spill",spill_},{"empty",empty_},{"zero_capacity",zeroCapacity_},
+            {"last",lastWindow_},{"time_s",acceptedTime_}};
+    }
+    Observation prepareObservation(const Json& j)const {
+        if(!j.is_object() || j.size()!=10 || !j.at("observed").is_array() || j.at("observed").size()!=4 ||
+            !j.at("outer").is_array() || j.at("outer").size()!=9)
+            throw std::invalid_argument("Material observer shape differs");
+        auto count=[](const Json& v){if(!v.is_number_unsigned() || v.get<std::uint64_t>()>1000000000000ULL)
+                throw std::invalid_argument("Material observer count exceeds its bound");return v.get<std::uint64_t>();};
+        Observation o;
+        for(size_t i=0;i<4;++i)o.observed[i]=count(j.at("observed").at(i));
+        for(size_t i=0;i<9;++i)o.outer[i]=count(j.at("outer").at(i));
+        o.accepted=count(j.at("accepted"));o.legs=count(j.at("legs"));o.drain=count(j.at("drain"));
+        o.spill=count(j.at("spill"));o.empty=count(j.at("empty"));o.zeroCapacity=count(j.at("zero_capacity"));
+        o.time=j.at("time_s").get<double>();o.last=j.at("last");o.historical=!o.last.empty();
+        if(!std::isfinite(o.time) || o.time<0 || (o.time==0)!=(o.accepted==0) || o.observed[0] ||
+            o.observed[1]!=o.observed[2] || o.observed[1]!=o.observed[3] || o.legs!=o.drain+o.spill ||
+            o.empty>o.observed[2] || o.zeroCapacity>o.observed[1] || !o.last.is_object() ||
+            (!surface && (o.legs || o.empty || o.zeroCapacity || !o.last.empty())) ||
+            (surface && ((o.observed[3]==0)!=o.last.empty())) || o.outer[3] || o.outer[0] ||
+            o.outer[4] || o.outer[5] || o.outer[6] || o.outer[7])
+            throw std::invalid_argument("Material observer history is inconsistent");
+        if(!o.last.empty()) {
+            auto ordinal=[&](const char* key){
+                const auto& value=o.last.at(key);
+                if(!value.is_string())throw std::invalid_argument("Material observer identity must be decimal text");
+                const auto text=value.get<std::string>();
+                if(text.empty() || text.size()>20 || text.front()=='0' ||
+                    !std::all_of(text.begin(),text.end(),[](char c){return c>='0' && c<='9';}))
+                    throw std::invalid_argument("Material observer identity is not canonical");
+                const auto n=std::stoull(text);if(std::to_string(n)!=text)throw std::invalid_argument("Material observer identity overflow");return n;
+            };
+            if(o.last.size()!=6 || !o.last.at("stage").is_number_integer() ||
+                !o.last.at("outer_phase").is_number_integer() || o.last.at("stage")!=SWMM_MATERIAL_ACK ||
+                (o.last.at("outer_phase")!=2 && o.last.at("outer_phase")!=8) ||
+                ordinal("session")==0 || ordinal("receipt")<std::max(uint64_t(1),o.observed[3]-o.empty) ||
+                ordinal("receipt")>o.observed[3]-o.empty+uint64_t(o.empty!=0) ||
+                ordinal("ordinal")!=o.observed[3] || ordinal("outer_sequence")<o.observed[3] ||
+                ordinal("outer_sequence")>o.outer[1]+o.outer[2]+o.outer[8])
+                throw std::invalid_argument("Material observer last window differs");
+        }
+        return o;
+    }
+    void installObservation(Observation&& o)noexcept {
+        observed_=o.observed;outer_=o.outer;accepted_=o.accepted;legs_=o.legs;drain_=o.drain;
+        spill_=o.spill;empty_=o.empty;zeroCapacity_=o.zeroCapacity;acceptedTime_=o.time;
+        lastWindow_.swap(o.last);lastWindowHistorical_=o.historical;
+    }
     Json snapshot()const {
         auto peer=life_->peer.lock();return Json{{"schema","openswmm.material-component-session/1"},{"instance_id",life_->id},
             {"peer",peer?peer->id:std::string()},{"surface",surface},{"ready",life_->ready},{"bound",life_->bound},
@@ -254,7 +314,7 @@ public:
             {"accepted_boundaries",accepted_},{"observed_offer",observed_[1]},{"observed_proof",observed_[2]},{"observed_ack",observed_[3]},
             {"applied_legs_observed",legs_},{"drain_legs_observed",drain_},{"spill_legs_observed",spill_},{"empty_windows_observed",empty_},
             {"zero_capacity_offers_observed",zeroCapacity_},{"conductance_observed",outer_[1]},{"advance_observed",outer_[2]},
-            {"report_observed",outer_[8]},{"finish_observed",outer_[3]},{"last_window",lastWindow_},{"authority","retained_native_in_process"}};
+            {"report_observed",outer_[8]},{"finish_observed",outer_[3]},{"last_window",lastWindow_},{"last_window_historical",lastWindowHistorical_},{"authority","retained_native_in_process"}};
     }
 };
 }

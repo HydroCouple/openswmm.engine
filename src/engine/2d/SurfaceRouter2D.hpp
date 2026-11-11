@@ -1391,11 +1391,13 @@ private:
     friend class openswmm::SWMMEngine;
     struct RestartState;
     struct MaterialRestart;
-    std::string materialCheckpointBytes(const SimulationContext&) const;
-    std::shared_ptr<MaterialRestart> prepareMaterialCheckpoint(const SimulationContext&, std::string) const;
+    double material_publisher_ms_ = -1;
+    std::string materialCheckpointBytes(const SimulationContext&, bool outputs = false) const;
+    std::shared_ptr<MaterialRestart> prepareMaterialCheckpoint(const SimulationContext&, std::string, bool outputs = false) const;
     const SurfaceStateData& materialCheckpointState(const std::shared_ptr<MaterialRestart>&) const;
     void validateMaterialCheckpoint(const SimulationContext&, const quality::PeerPassiveStorageProducer&,
         double initial, double loss, double gain, const std::array<double,2>& window,
+        bool outputs = false, bool reported_now = false,
         const std::shared_ptr<MaterialRestart>& = {}) const;
     void installMaterialCheckpoint(SimulationContext&, std::shared_ptr<MaterialRestart>) noexcept;
     static void checkpointMaterialBalance(detail::CompletedSourceArchive&, SimulationContext&);

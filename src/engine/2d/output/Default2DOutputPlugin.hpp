@@ -319,6 +319,7 @@ private:
     friend class openswmm::SWMMEngine;
     // Internal single-file, water-only continuation. IO must be idle.
     bool checkpoint_fresh_ = false;
+    bool checkpoint_material_ = false; // only the private one-pollutant material pair
     bool checkpoint_write_failed_ = false;
     void checkpointWriteStatus(herr_t);
     std::string checkpoint_header_;
@@ -335,6 +336,7 @@ private:
     void validateCheckpoint(hid_t, const SimulationContext&, double, const SimulationSnapshot&,
                             hsize_t, double, bool) const;
     std::vector<hid_t*> checkpointDatasets();
+    void createSpeciesDatasets(const SimulationSnapshot&);
     void closeDatasets() noexcept;
     std::string fileBytes() const;
     std::string captureFileCheckpoint(const SimulationContext&, double, const SimulationSnapshot&,
