@@ -104,7 +104,10 @@ struct MaterialPair {
                 const auto at=text.find(edit.first);ASSERT_NE(at,std::string::npos);text.replace(at,edit.first.size(),edit.second);
             }
         }
-        if(same_input.empty())std::ofstream(input)<<text;else ASSERT_EQ(read(input),text);
+        if (same_input.empty())
+            std::ofstream(input, std::ios::binary) << text;
+        else
+            ASSERT_EQ(read(input), text);
         ASSERT_EQ(reference.open(io::path_utf8(input).c_str(),io::path_utf8((dir/"native.rpt")).c_str(),automatic_report?io::path_utf8((dir/"native.out")).c_str():nullptr),SWMM_OK)<<reference.context().error_message;
         ASSERT_EQ(network.open(io::path_utf8(input).c_str(),checkpoint_outputs?nullptr:io::path_utf8((dir/"network.rpt")).c_str(),automatic_report?io::path_utf8((dir/"network.out")).c_str():nullptr),SWMM_OK);
         ASSERT_EQ(surface.open(io::path_utf8(input).c_str(),checkpoint_outputs?nullptr:io::path_utf8((dir/"surface.rpt")).c_str(),nullptr),SWMM_OK);
