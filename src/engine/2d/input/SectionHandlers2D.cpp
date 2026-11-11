@@ -89,34 +89,31 @@ double tryParseDouble(const std::string& s, bool& ok) {
     return val;
 }
 
-// Find a vertex by tag name; returns index or -1
 /**
- * @brief Find first exact case-sensitive vertex tag in row order.
- * @param[in] mesh Stable vertex tag vector covering n_vertices.
+ * @brief Find the first index carrying an exact case-sensitive tag.
+ * @param[in] tags Tag column (vtag, or tri_tag for unified cells) covering at least n entries.
+ * @param[in] n Live entries: n_vertices or n_triangles.
  * @param[in] tag Exact desired tag, including empty/numeric strings.
- * @return Zero-based first match or -1; no index/cache/physical mutation or allocation.
+ * @param[in,out] index Optional per-section lookup, filled from the whole column on first use;
+ * null scans in row order. Without it a section of tag rows costs rows x n.
+ * @return Zero-based first match or -1.
  */
-int findVertexByTag(const MeshData& mesh, const std::string& tag) {
-    for (int i = 0; i < mesh.n_vertices(); ++i) {
-        if (mesh.vtag[i] == tag)
-            return i;
+int findFirstTag(const std::vector<std::string>& tags, int n, const std::string& tag,
+                 TagIndex* index) {
+    if (index == nullptr) {
+        for (int i = 0; i < n; ++i) {
+            if (tags[i] == tag)
+                return i;
+        }
+        return -1;
     }
-    return -1;
-}
-
-// Find a triangle by tag name; returns index or -1
-/**
- * @brief Find first exact case-sensitive unified cell tag.
- * @param[in] mesh Stable cell tag vector covering n_triangles (including quads).
- * @param[in] tag Exact desired tag, including empty/numeric strings.
- * @return Zero-based first match or -1; no mutation/allocation.
- */
-int findTriangleByTag(const MeshData& mesh, const std::string& tag) {
-    for (int i = 0; i < mesh.n_triangles(); ++i) {
-        if (mesh.tri_tag[i] == tag)
-            return i;
+    if (!index->built) {
+        for (int i = 0; i < n; ++i)
+            index->first.emplace(tags[i], i); // emplace keeps the first index per tag
+        index->built = true;
     }
-    return -1;
+    const auto it = index->first.find(tag);
+    return it == index->first.end() ? -1 : it->second;
 }
 
 /// Hard-error suffix for [2D_OPTIONS] keys retired with the CVODE/ARKODE
@@ -1206,7 +1203,8 @@ std::string parse2DInitialVelocityLine(const std::vector<std::string>& tokens, M
  * yet; surplus ignored. Name allocation can throw; exclusive edit access, later
  * resolution/scaling required.
  */
-std::string parse2DVertexNodeMapLine(const std::vector<std::string>& tokens, MeshData& mesh) {
+std::string parse2DVertexNodeMapLine(const std::vector<std::string>& tokens, MeshData& mesh,
+                                     TagIndex* tag_index) {
     if (tokens.size() < 2)
         return "Expected VERTEX_INDEX_OR_TAG SWMM_NODE_NAME [CD] [AREA]";
 
@@ -1219,7 +1217,7 @@ std::string parse2DVertexNodeMapLine(const std::vector<std::string>& tokens, Mes
     if (ok && (vidx < 0 || vidx >= mesh.n_vertices()))
         ok = false; // numeric but not a valid index — treat as a tag
     if (!ok) {
-        vidx = findVertexByTag(mesh, tokens[0]);
+        vidx = findFirstTag(mesh.vtag, mesh.n_vertices(), tokens[0], tag_index);
         if (vidx < 0)
             return "Unknown vertex index or tag: " + tokens[0];
     }
@@ -1259,7 +1257,8 @@ std::string parse2DVertexNodeMapLine(const std::vector<std::string>& tokens, Mes
  * runtime owner rebuild or physics/calendar advance; exclusive authoring access and prepared
  * per-cell arrays required.
  */
-std::string parse2DTriangleNodeMapLine(const std::vector<std::string>& tokens, MeshData& mesh) {
+std::string parse2DTriangleNodeMapLine(const std::vector<std::string>& tokens, MeshData& mesh,
+                                       TagIndex* tag_index) {
     if (tokens.size() < 2)
         return "Expected TRIANGLE_INDEX_OR_TAG SWMM_NODE_NAME [CD] [AREA]";
 
@@ -1271,7 +1270,7 @@ std::string parse2DTriangleNodeMapLine(const std::vector<std::string>& tokens, M
     if (ok && (tidx < 0 || tidx >= mesh.n_triangles()))
         ok = false; // numeric but not a valid index — treat as a tag
     if (!ok) {
-        tidx = findTriangleByTag(mesh, tokens[0]);
+        tidx = findFirstTag(mesh.tri_tag, mesh.n_triangles(), tokens[0], tag_index);
         if (tidx < 0)
             return "Unknown triangle index or tag: " + tokens[0];
     }
@@ -1352,6 +1351,24 @@ input::SectionHandler makeSectionHandler(LineParser line_parser) {
                 return;
             }
         }
+    };
+}
+
+using TagIndexedLineParser = std::function<std::string(const std::vector<std::string>&, TagIndex&)>;
+
+/**
+ * @brief makeSectionHandler for the node-map sections, with one TagIndex per section occurrence.
+ * @param[in] line_parser Row parser that resolves tags through the index it is given.
+ * @return Callable with makeSectionHandler's error behaviour. The index lives for one call, one
+ * section occurrence, so vertices or cells read by a later repeated header are never missed.
+ */
+input::SectionHandler makeTagIndexedSectionHandler(TagIndexedLineParser line_parser) {
+    return [lp = std::move(line_parser)](openswmm::SimulationContext& ctx,
+                                         const std::vector<std::string>& lines) {
+        TagIndex index;
+        makeSectionHandler([&lp, &index](const std::vector<std::string>& tokens) {
+            return lp(tokens, index);
+        })(ctx, lines);
     };
 }
 
@@ -1933,15 +1950,17 @@ void register2DSections(MeshData& mesh, SolverOptions2D& options,
                                  return parse2DInitialVelocityLine(tokens, mesh);
                              }));
 
-    registry.register_custom("2D_VERTEX_NODE_MAP",
-                             makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
-                                 return parse2DVertexNodeMapLine(tokens, mesh);
-                             }));
+    registry.register_custom(
+        "2D_VERTEX_NODE_MAP",
+        makeTagIndexedSectionHandler([&mesh](const std::vector<std::string>& tokens, TagIndex& ix) {
+            return parse2DVertexNodeMapLine(tokens, mesh, &ix);
+        }));
 
-    registry.register_custom("2D_TRIANGLE_NODE_MAP",
-                             makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
-                                 return parse2DTriangleNodeMapLine(tokens, mesh);
-                             }));
+    registry.register_custom(
+        "2D_TRIANGLE_NODE_MAP",
+        makeTagIndexedSectionHandler([&mesh](const std::vector<std::string>& tokens, TagIndex& ix) {
+            return parse2DTriangleNodeMapLine(tokens, mesh, &ix);
+        }));
 
     // V-E3 — [2D_BOUNDARY_CONDITIONS] accumulates pending rows; drained
     // during SurfaceRouter2D::initialize() after BoundaryData::resize.
@@ -2072,14 +2091,16 @@ load2DMeshExternalFile(MeshData& mesh, SolverOptions2D& opts,
                          makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
                              return parse2DInitialVelocityLine(tokens, mesh);
                          }));
-    mini.register_custom("2D_VERTEX_NODE_MAP",
-                         makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
-                             return parse2DVertexNodeMapLine(tokens, mesh);
-                         }));
-    mini.register_custom("2D_TRIANGLE_NODE_MAP",
-                         makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
-                             return parse2DTriangleNodeMapLine(tokens, mesh);
-                         }));
+    mini.register_custom(
+        "2D_VERTEX_NODE_MAP",
+        makeTagIndexedSectionHandler([&mesh](const std::vector<std::string>& tokens, TagIndex& ix) {
+            return parse2DVertexNodeMapLine(tokens, mesh, &ix);
+        }));
+    mini.register_custom(
+        "2D_TRIANGLE_NODE_MAP",
+        makeTagIndexedSectionHandler([&mesh](const std::vector<std::string>& tokens, TagIndex& ix) {
+            return parse2DTriangleNodeMapLine(tokens, mesh, &ix);
+        }));
 
     // V-E3 — external .2dm may carry its own [2D_BOUNDARY_CONDITIONS].
     mini.register_custom(

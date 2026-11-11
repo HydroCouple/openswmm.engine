@@ -47,6 +47,7 @@
 
 #include <span>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace openswmm::twoD {
@@ -153,12 +154,27 @@ std::string parse2DQuadLine(const std::vector<std::string>& tokens, MeshData& me
 std::string parse2DInitialVelocityLine(const std::vector<std::string>& tokens, MeshData& mesh);
 
 /**
+ * @brief Tag lookup for the rows of one node-map section.
+ *
+ * @details Maps each tag to the FIRST vertex (or cell) carrying it, the same answer as a scan in
+ * row order. Built from the whole tag column by the section's first tag lookup, so it is only
+ * valid while that column does not change: the section readers make one per section occurrence
+ * (node-map rows never add vertices or cells).
+ */
+struct TagIndex {
+    std::unordered_map<std::string, int> first; ///< tag -> first index carrying it
+    bool built = false;                         ///< `first` covers the whole column
+};
+
+/**
  * @brief Parse a single line from the [2D_VERTEX_NODE_MAP] section.
  *
  * Format: VERTEX_INDEX_OR_TAG SWMM_NODE_NAME [CD] [AREA]
  *
  * @param tokens Whitespace-split tokens from the line.
  * @param mesh   Mesh data to update coupling map.
+ * @param tag_index Optional per-section tag lookup (see TagIndex); null scans the tags in row
+ * order. Both give the same vertex.
  * @return Empty string on success, or error description.
  *
  * @details Resolves zero-based index first, then exact tag fallback (including out-of-range
@@ -168,7 +184,8 @@ std::string parse2DInitialVelocityLine(const std::vector<std::string>& tokens, M
  * yet; surplus ignored. Name allocation can throw; exclusive edit access, later
  * resolution/scaling required.
  */
-std::string parse2DVertexNodeMapLine(const std::vector<std::string>& tokens, MeshData& mesh);
+std::string parse2DVertexNodeMapLine(const std::vector<std::string>& tokens, MeshData& mesh,
+                                     TagIndex* tag_index = nullptr);
 
 /**
  * @brief Parse a single line from the [2D_TRIANGLE_NODE_MAP] section.
@@ -177,6 +194,8 @@ std::string parse2DVertexNodeMapLine(const std::vector<std::string>& tokens, Mes
  *
  * @param tokens Whitespace-split tokens from the line.
  * @param mesh   Mesh data to update coupling map.
+ * @param tag_index Optional per-section tag lookup (see TagIndex); null scans the tags in row
+ * order. Both give the same cell.
  * @return Empty string on success, or error description.
  *
  * @details Resolves zero-based unified cell index or exact first matching tag fallback,
@@ -187,7 +206,8 @@ std::string parse2DVertexNodeMapLine(const std::vector<std::string>& tokens, Mes
  * runtime owner rebuild or physics/calendar advance; exclusive authoring access and prepared
  * per-cell arrays required.
  */
-std::string parse2DTriangleNodeMapLine(const std::vector<std::string>& tokens, MeshData& mesh);
+std::string parse2DTriangleNodeMapLine(const std::vector<std::string>& tokens, MeshData& mesh,
+                                       TagIndex* tag_index = nullptr);
 
 /**
  * @brief V-E3 — parse a single line from the [2D_BOUNDARY_CONDITIONS] section into a

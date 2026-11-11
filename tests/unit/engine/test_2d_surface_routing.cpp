@@ -42,6 +42,7 @@
 #include <cctype>
 #include <cstdlib>
 #include <vector>
+#include <sstream>
 #include <string>
 #include <numeric>
 
@@ -55,6 +56,9 @@
 #include "2d/input/SectionHandlers2D.hpp"
 #include "2d/solver/SurfaceSolverFactory.hpp"
 #include "2d/solver/ISurfaceSolver.hpp"
+#include "core/SimulationContext.hpp"
+#include "input/InputReader.hpp"
+#include "input/SectionRegistry.hpp"
 
 #include "platform_test_support.hpp"
 
@@ -1345,6 +1349,133 @@ TEST(InputParsing, Parse2DVertexNodeMapRejectsOutOfRange) {
 
     auto err = parse2DVertexNodeMapLine({"99", "J1"}, mesh);
     EXPECT_FALSE(err.empty());
+}
+
+// ============================================================================
+// Node-map tag lookup through the section reader (mesh open plan E1).
+//
+// [2D_VERTEX_NODE_MAP] / [2D_TRIANGLE_NODE_MAP] rows name their vertex or
+// cell by index or by tag. These pin the resolution rules through the real
+// section path (InputReader -> register2DSections), which is where a tag
+// index would live: an in-range index wins over an equal tag; an
+// out-of-range number falls back to a numeric tag; duplicate tags resolve to
+// the FIRST row; the match is exact and case-sensitive; vertex rows
+// overwrite, cell rows append.
+// ============================================================================
+
+namespace {
+
+/// One 2D read of `text` through the main reader's 2D registrations.
+struct SectionRead2D {
+    MeshData mesh;
+    SolverOptions2D opts;
+    std::vector<SurfaceRouter2D::PendingBoundaryRow> bc;
+    std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow> ec;
+    std::vector<SurfaceRouter2D::PendingInitialQualityRow> iq;
+    std::vector<SurfaceRouter2D::PendingInitialBedQualityRow> ibq;
+    std::vector<SurfaceRouter2D::PendingBoundaryQualityRow> bq;
+    openswmm::SimulationContext ctx;
+    bool ok = false;
+
+    explicit SectionRead2D(const std::string& text) {
+        openswmm::input::SectionRegistry registry;
+        register2DSections(mesh, opts, bc, ec, iq, ibq, bq, registry);
+        openswmm::input::InputReader reader(registry);
+        std::istringstream in(text);
+        ok = reader.read_stream(in, ctx);
+    }
+};
+
+// Vertices: tag A twice (0 and 2), numeric tag 5001 (3), lower-case b (4),
+// and tag "2" on vertex 5 so the index 2 and the tag "2" name different
+// vertices. Cells: tag T twice (0 and 1), numeric tag 7001 (2), and tag "1"
+// on cell 3.
+const char* const kTaggedMesh = "[2D_VERTICES]\n"
+                                "0 0 0 A\n"
+                                "1 0 0 B\n"
+                                "0 1 0 A\n"
+                                "1 1 0 5001\n"
+                                "2 2 0 b\n"
+                                "3 3 0 2\n"
+                                "[2D_TRIANGLES]\n"
+                                "0 1 3 0.03 0 T\n"
+                                "1 3 2 0.03 0 T\n"
+                                "2 3 4 0.03 0 7001\n"
+                                "3 4 5 0.03 0 1\n";
+
+} // namespace
+
+TEST(NodeMapTagLookup, VertexMapResolvesIndexTagAndFirstDuplicate) {
+    const SectionRead2D r(std::string(kTaggedMesh) +
+                          "[2D_VERTEX_NODE_MAP]\n"
+                          "A J1\n"       // tag A: first row (vertex 0), not 2
+                          "5001 J2\n"    // out-of-range number: tag 5001 (vertex 3)
+                          "2 J3\n"       // in-range index 2 wins over tag "2" (vertex 5)
+                          "A J4 0.6\n"); // vertex rows overwrite: vertex 0 -> J4
+    ASSERT_TRUE(r.ok) << r.ctx.error_message;
+    ASSERT_EQ(r.mesh.n_vertices(), 6);
+    EXPECT_EQ(r.mesh.vert_coupled_node_name[0], "J4");
+    EXPECT_EQ(r.mesh.vert_coupled_node_name[1], "");
+    EXPECT_EQ(r.mesh.vert_coupled_node_name[2], "J3");
+    EXPECT_EQ(r.mesh.vert_coupled_node_name[3], "J2");
+    EXPECT_EQ(r.mesh.vert_coupled_node_name[4], "");
+    EXPECT_EQ(r.mesh.vert_coupled_node_name[5], "");
+    EXPECT_EQ(r.mesh.vert_coupling_cd[0], 0.6);
+    EXPECT_EQ(r.mesh.vert_coupling_cd_set[0], 1);
+}
+
+TEST(NodeMapTagLookup, TriangleMapResolvesIndexTagAndAppends) {
+    const SectionRead2D r(std::string(kTaggedMesh) +
+                          "[2D_TRIANGLE_NODE_MAP]\n"
+                          "T J1\n"    // tag T: first row (cell 0), not 1
+                          "7001 J2\n" // out-of-range number: tag 7001 (cell 2)
+                          "1 J3\n"    // in-range index 1 wins over tag "1" (cell 3)
+                          "T J5\n");  // cell rows append: a second coupling on cell 0
+    ASSERT_TRUE(r.ok) << r.ctx.error_message;
+    ASSERT_EQ(r.mesh.n_triangles(), 4);
+    ASSERT_EQ(r.mesh.tri_couplings.size(), 4u);
+    const int want_tri[] = {0, 2, 1, 0};
+    const char* const want_node[] = {"J1", "J2", "J3", "J5"};
+    for (std::size_t i = 0; i < 4; ++i) {
+        EXPECT_EQ(r.mesh.tri_couplings[i].tri, want_tri[i]) << "row " << i;
+        EXPECT_EQ(r.mesh.tri_couplings[i].node_name, want_node[i]) << "row " << i;
+    }
+    // The per-cell mirror keeps the last row per cell.
+    EXPECT_EQ(r.mesh.tri_coupled_node_name[0], "J5");
+    EXPECT_EQ(r.mesh.tri_coupled_node_name[1], "J3");
+    EXPECT_EQ(r.mesh.tri_coupled_node_name[2], "J2");
+    EXPECT_EQ(r.mesh.tri_coupled_node_name[3], "");
+}
+
+TEST(NodeMapTagLookup, VertexTagMatchIsCaseSensitive) {
+    // "a" matches neither A (vertices 0, 2) nor anything else.
+    const SectionRead2D r(std::string(kTaggedMesh) + "[2D_VERTEX_NODE_MAP]\na J1\n");
+    EXPECT_FALSE(r.ok);
+    EXPECT_NE(r.ctx.error_message.find("Unknown vertex index or tag: a"), std::string::npos)
+        << r.ctx.error_message;
+    EXPECT_EQ(r.mesh.vert_coupled_node_name[0], "");
+}
+
+TEST(NodeMapTagLookup, TriangleTagMatchIsCaseSensitive) {
+    const SectionRead2D r(std::string(kTaggedMesh) + "[2D_TRIANGLE_NODE_MAP]\nt J1\n");
+    EXPECT_FALSE(r.ok);
+    EXPECT_NE(r.ctx.error_message.find("Unknown triangle index or tag: t"), std::string::npos)
+        << r.ctx.error_message;
+    EXPECT_TRUE(r.mesh.tri_couplings.empty());
+}
+
+TEST(NodeMapTagLookup, TagRowsSeeOnlyVerticesReadSoFar) {
+    // A map section read before more vertices arrive (repeated headers) must
+    // resolve against the vertices read so far, then see the later ones.
+    const SectionRead2D r("[2D_VERTICES]\n0 0 0 P\n"
+                          "[2D_VERTEX_NODE_MAP]\nP J1\n"
+                          "[2D_VERTICES]\n1 0 0 Q\n0 1 0 P\n"
+                          "[2D_VERTEX_NODE_MAP]\nQ J2\nP J3\n");
+    ASSERT_TRUE(r.ok) << r.ctx.error_message;
+    ASSERT_EQ(r.mesh.n_vertices(), 3);
+    EXPECT_EQ(r.mesh.vert_coupled_node_name[0], "J3"); // P is still vertex 0
+    EXPECT_EQ(r.mesh.vert_coupled_node_name[1], "J2");
+    EXPECT_EQ(r.mesh.vert_coupled_node_name[2], "");
 }
 
 // ============================================================================

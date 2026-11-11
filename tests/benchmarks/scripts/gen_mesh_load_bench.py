@@ -26,11 +26,14 @@ mesh. These decks put a structured-grid ``[2D_*]`` mesh in front of
   ``InputReader``).
 
 The mesh bytes follow the GUI's ``make_inp_mesh_fixture.py``
-(``openswmm.gui/libraries/meshkit/tests``) exactly, so the engine and GUI
-benchmarks time the same files: a ``*_sidecar`` ``.2dm`` is byte-identical to
-that script's output for the same cell count and options. ``mixed`` adds the
-``--features`` rows (vertex/cell tags, tag-form ``[2D_VERTEX_NODE_MAP]``,
-``[2D_BOUNDARY_CONDITIONS]``, ``[2D_EDGE_CONVEYANCE]``) and 50 rows of quads.
+(``openswmm.gui/libraries/meshkit/tests``), so the engine and GUI benchmarks
+time the same files: a ``tri`` ``.2dm`` is byte-identical to that script's
+output for the same cell count. ``mixed`` adds that script's ``--features``
+rows (vertex/cell tags, tag-form ``[2D_VERTEX_NODE_MAP]``,
+``[2D_BOUNDARY_CONDITIONS]``, ``[2D_EDGE_CONVEYANCE]``) and 50 rows of quads,
+plus two things it does not have (mesh open plan E1): distinct tags on every
+97th square's second triangle with tag-form ``[2D_TRIANGLE_NODE_MAP]`` rows
+naming them, and the ``N0`` vertex tag repeated on the last vertex.
 
 Deterministic: no RNG. Byte sizes can differ by a few bytes across platforms
 (``math.sin`` in the libm); counts are exact.
@@ -118,11 +121,14 @@ def write_mesh(f, cells: int, features: bool, quad_rows: int) -> tuple[int, int,
             row = "%s  %s  %s" % (_g(x0 + i * dx), y, _g(z))
             if tag_every and v % tag_every == 0:
                 row += "  N%d" % v
+            elif features and v == n_verts - 1:
+                row += "  N0"  # mesh-open E1: duplicate tag; the map row N0 must still pick vertex 0
             rows.append(row)
         f.write("\n".join(rows) + "\n")
 
     f.write("[2D_TRIANGLES]\n;; V1   V2   V3   MANNINGS_N   TAG\n")
     n = _g(0.035)
+    cell_tags = []  # mesh-open E1: distinct cell tags for tag-form triangle map rows
     for j in range(tri_rows):
         rows = []
         base = j * (nx + 1)
@@ -135,7 +141,12 @@ def write_mesh(f, cells: int, features: bool, quad_rows: int) -> tuple[int, int,
                 rows.append("%d  %d  %d  %s  0.10000000000000001  zoneA" % (v00, v10, v11, n))
             else:
                 rows.append("%d  %d  %d  %s" % (v00, v10, v11, n))
-            rows.append("%d  %d  %d  %s" % (v00, v11, v01, n))
+            square = j * nx + i
+            if features and square % 97 == 50:
+                cell_tags.append("C%d" % (2 * square + 1))
+                rows.append("%d  %d  %d  %s  %s" % (v00, v11, v01, n, cell_tags[-1]))
+            else:
+                rows.append("%d  %d  %d  %s" % (v00, v11, v01, n))
         f.write("\n".join(rows) + "\n")
 
     if n_quads:
@@ -150,6 +161,9 @@ def write_mesh(f, cells: int, features: bool, quad_rows: int) -> tuple[int, int,
         f.write("[2D_VERTEX_NODE_MAP]\n;; VERTEX_INDEX_OR_TAG    SWMM_NODE_NAME    CD    AREA\n")
         for v in range(0, n_verts, tag_every):
             f.write("N%d        N%d  0.65000000000000002  1\n" % (v, v))
+        f.write("[2D_TRIANGLE_NODE_MAP]\n;; TRIANGLE_INDEX_OR_TAG    SWMM_NODE_NAME    CD    AREA\n")
+        for t in cell_tags:
+            f.write("%s        %s  0.65000000000000002  1\n" % (t, t))
         f.write("[2D_BOUNDARY_CONDITIONS]\n;; TRI EDGE TYPE PARAM_1 PARAM_2 GROUP\n")
         for i in range(nx):  # bottom row: first triangle of each square, edge 0
             f.write("%d  0  NORMAL_FLOW  0.001  *  outlet\n" % (2 * i))
