@@ -32,9 +32,9 @@ jobs:
             # An initial branch push or an unreachable prior tip.
             BASE=$(git hash-object -w -t tree /dev/null)
           fi
-          git diff --name-only -z --diff-filter=ACMRT "$BASE" HEAD -- \
-            '*.c' '*.cc' '*.cpp' '*.cxx' '*.h' '*.hh' '*.hpp' '*.hxx' '*.inl' '*.ipp' \
-            | xargs -0 -r clang-format-19 --style=file --dry-run --Werror --
+          # Check only the changed lines: most older files predate .clang-format.
+          git clang-format-19 --binary clang-format-19 --style=file --diff \
+            --extensions c,cc,cpp,cxx,h,hh,hpp,hxx,inl,ipp "$BASE" HEAD
 
   linux:
     name: ${{ matrix.check }}
@@ -69,7 +69,10 @@ jobs:
             -DCMAKE_C_FLAGS_DEBUG="-O1 -g1" -DCMAKE_CXX_FLAGS_DEBUG="-O1 -g1" \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DOPENSWMM_BUILD_UNIT_TESTS=ON \
             -DOPENSWMM_BUILD_GPU_PLUGIN=OFF -DOPENSWMM_ENGINE_FORCE_OPTIMIZED=OFF \
-            -DOPENSWMM_ENABLE_LTO=OFF
+            -DOPENSWMM_ENABLE_LTO=OFF -DCMAKE_CXX_SCAN_FOR_MODULES=OFF \
+            -DOPENSWMM_2D_HDF5_OUTPUT=OFF
+          # No module scan: clang-tidy cannot read the build-time module maps.
+          # No 2D HDF5 writer: it needs HDF5 1.14, and Ubuntu 24.04 ships 1.10.
       - name: Analyze engine and CLI translation units
         if: matrix.check == 'clang-tidy'
         run: run-clang-tidy-19 -p build/quality -j 2 -quiet '/src/(engine|cli)/'
