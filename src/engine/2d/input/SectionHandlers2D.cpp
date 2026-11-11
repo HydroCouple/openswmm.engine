@@ -1372,6 +1372,33 @@ input::SectionHandler makeTagIndexedSectionHandler(TagIndexedLineParser line_par
     };
 }
 
+using MeshRowParser = std::string (*)(const std::vector<std::string>&, MeshData&);
+
+/**
+ * @brief Section handler for [2D_VERTICES], [2D_TRIANGLES] or [2D_QUADS].
+ * @param[in,out] mesh Mesh the rows append to; must outlive the handler.
+ * @param[in] row_parser parse2DVertexLine, parse2DTriangleLine or parse2DQuadLine.
+ * @param[in] cells False for vertex rows, true for cell rows.
+ * @return makeSectionHandler's callable, after first reserving room for every line of the
+ * section (an upper bound on its rows: comment lines count too), so the row parsers' one-row
+ * resizes never reallocate. MeshData grows capacity geometrically, which keeps repeated headers
+ * and sidecar rows after inline rows linear.
+ */
+input::SectionHandler makeMeshRowsHandler(MeshData& mesh, MeshRowParser row_parser, bool cells) {
+    auto rows = makeSectionHandler([&mesh, row_parser](const std::vector<std::string>& tokens) {
+        return row_parser(tokens, mesh);
+    });
+    return [&mesh, cells, rows = std::move(rows)](openswmm::SimulationContext& ctx,
+                                                  const std::vector<std::string>& lines) {
+        const int extra = static_cast<int>(lines.size());
+        if (cells)
+            mesh.reserve_triangles(mesh.n_triangles() + extra);
+        else
+            mesh.reserve_vertices(mesh.n_vertices() + extra);
+        rows(ctx, lines);
+    };
+}
+
 } // anonymous namespace
 
 // ============================================================================
@@ -1930,20 +1957,11 @@ void register2DSections(MeshData& mesh, SolverOptions2D& options,
         }
     });
 
-    registry.register_custom("2D_VERTICES",
-                             makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
-                                 return parse2DVertexLine(tokens, mesh);
-                             }));
+    registry.register_custom("2D_VERTICES", makeMeshRowsHandler(mesh, parse2DVertexLine, false));
 
-    registry.register_custom("2D_TRIANGLES",
-                             makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
-                                 return parse2DTriangleLine(tokens, mesh);
-                             }));
+    registry.register_custom("2D_TRIANGLES", makeMeshRowsHandler(mesh, parse2DTriangleLine, true));
 
-    registry.register_custom("2D_QUADS",
-                             makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
-                                 return parse2DQuadLine(tokens, mesh);
-                             }));
+    registry.register_custom("2D_QUADS", makeMeshRowsHandler(mesh, parse2DQuadLine, true));
 
     registry.register_custom("2D_INITIAL_VELOCITY",
                              makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
@@ -2075,18 +2093,9 @@ load2DMeshExternalFile(MeshData& mesh, SolverOptions2D& opts,
         "2D_OPTIONS", makeSectionHandler([&opts, warnings](const std::vector<std::string>& tokens) {
             return parse2DOptionsLine(tokens, opts, warnings);
         }));
-    mini.register_custom("2D_VERTICES",
-                         makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
-                             return parse2DVertexLine(tokens, mesh);
-                         }));
-    mini.register_custom("2D_TRIANGLES",
-                         makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
-                             return parse2DTriangleLine(tokens, mesh);
-                         }));
-    mini.register_custom("2D_QUADS",
-                         makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
-                             return parse2DQuadLine(tokens, mesh);
-                         }));
+    mini.register_custom("2D_VERTICES", makeMeshRowsHandler(mesh, parse2DVertexLine, false));
+    mini.register_custom("2D_TRIANGLES", makeMeshRowsHandler(mesh, parse2DTriangleLine, true));
+    mini.register_custom("2D_QUADS", makeMeshRowsHandler(mesh, parse2DQuadLine, true));
     mini.register_custom("2D_INITIAL_VELOCITY",
                          makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
                              return parse2DInitialVelocityLine(tokens, mesh);

@@ -34,6 +34,7 @@
 #ifndef OPENSWMM_ENGINE_2D_MESH_DATA_HPP
 #define OPENSWMM_ENGINE_2D_MESH_DATA_HPP
 
+#include <bit>
 #include <vector>
 #include <string>
 #include <cstdint>
@@ -484,6 +485,83 @@ struct MeshData {
         tri_coupled_node_name.resize(n);
         tri_coupling_cd.resize(n, 0.65);
         tri_coupling_area.resize(n, 1.0);
+    }
+
+    /**
+     * @brief Make room for at least nv vertices in every array resize_vertices() sizes.
+     * @param[in] nv Nonnegative vertex count the caller expects to reach.
+     * @post Extents and contents unchanged; each array's capacity is at least nv (see
+     * grow_capacity for how much more). A reader that calls this before every section (repeated
+     * headers, inline rows then sidecar rows) still appends in linear total time.
+     * @note Reserve, never resize: n_vertices() is the extent the row parsers append at. Vector
+     * allocations may throw; requires exclusive mesh access.
+     */
+    void reserve_vertices(int nv) {
+        const auto n = static_cast<std::size_t>(nv);
+        grow_capacity(vx, n);
+        grow_capacity(vy, n);
+        grow_capacity(vz, n);
+        grow_capacity(vtag, n);
+        grow_capacity(vert_coupled_node, n);
+        grow_capacity(vert_coupled_node_name, n);
+        grow_capacity(vert_coupling_cd, n);
+        grow_capacity(vert_coupling_cd_set, n);
+        grow_capacity(vert_coupling_area, n);
+        grow_capacity(vert_coupling_area_set, n);
+    }
+
+    /**
+     * @brief Make room for at least nt cells in every array resize_triangles() sizes.
+     * @param[in] nt Nonnegative mixed-cell count the caller expects to reach.
+     * @post As reserve_vertices(): extents and contents unchanged, capacity at least nt cells
+     * (nt x kMaxCellVerts slots for the padded arrays).
+     * @note Vector allocations may throw; requires exclusive mesh access.
+     */
+    void reserve_triangles(int nt) {
+        const auto n = static_cast<std::size_t>(nt);
+        const auto n4 = n * static_cast<std::size_t>(kMaxCellVerts);
+        grow_capacity(cell_nv, n);
+        grow_capacity(cell_v, n4);
+        grow_capacity(cell_nbr, n4);
+        grow_capacity(tri_area, n);
+        grow_capacity(tri_cx, n);
+        grow_capacity(tri_cy, n);
+        grow_capacity(tri_cz, n);
+        grow_capacity(edge_length, n4);
+        grow_capacity(edge_nx, n4);
+        grow_capacity(edge_ny, n4);
+        grow_capacity(edge_mx, n4);
+        grow_capacity(edge_my, n4);
+        grow_capacity(edge_mz, n4);
+        grow_capacity(edge_dist_c, n4);
+        grow_capacity(edge_conveyance, n4);
+        grow_capacity(mannings_n, n);
+        grow_capacity(tri_init_depth, n);
+        grow_capacity(tri_init_u, n);
+        grow_capacity(tri_init_v, n);
+        grow_capacity(tri_tag, n);
+        grow_capacity(tri_coupled_node, n);
+        grow_capacity(tri_coupled_node_name, n);
+        grow_capacity(tri_coupling_cd, n);
+        grow_capacity(tri_coupling_area, n);
+    }
+
+private:
+    /**
+     * @brief Raise a vector's capacity to the power of two at or above `need`.
+     * @param[in,out] v Vector whose extent and contents stay unchanged.
+     * @param[in] need Minimum capacity in elements.
+     * @details With libc++ and libstdc++, which double, that is the capacity the vector reached
+     * growing one row at a time, now reached without the copies (MSVC grows 1.5x, so there the
+     * untouched tail can be larger). The headroom usually absorbs a small following section
+     * (quads after triangles) that an exact or doubling reserve would copy every array for:
+     * measured on the 1 M mixed deck, peak footprint 0.55 GB against 0.79 GB with no reserve and
+     * 0.90 GB with max(need, 2 x capacity) (tests/output/mesh_open_engine_2026-11-11/e2). Once
+     * capacity is a power of two every regrowth doubles it, so repeated sections stay linear.
+     */
+    template <class V> static void grow_capacity(V& v, std::size_t need) {
+        if (need > v.capacity())
+            v.reserve(std::bit_ceil(need));
     }
 };
 
