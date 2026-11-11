@@ -114,7 +114,7 @@ bool InputReader::read_stream(std::istream& stream, SimulationContext& ctx) {
 
     auto flush_section = [&]() {
         if (!current_tag.empty()) {
-            perf::ScopedTimer _pt(perf::sec_read_dispatch);
+            perf::ScopedTimer _pt(dispatch_timer_ ? *dispatch_timer_ : perf::sec_read_dispatch);
             dispatch_section(current_tag, section_lines, ctx);
             section_lines.clear();
         }

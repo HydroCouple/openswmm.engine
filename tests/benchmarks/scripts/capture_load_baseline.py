@@ -186,6 +186,7 @@ def main(argv: list[str] | None = None) -> int:
     lines.append("## Phase-timer breakdown (`OPENSWMM_PERF=1`, full cut, seconds)")
     lines.append("")
     cols = ["open.read", "open.resolve", "open.validate", "open.prescan2d",
+            "open.mesh2d", "mesh2d.prescan", "mesh2d.scan", "mesh2d.dispatch",
             "res.extfiles", "res.tables", "res.transects", "res.xsect",
             "res.shrink", "init.state", "init.hydraulics", "init.hydrology",
             "init.quality", "init.geometry", "start.iface", "start.plugins"]

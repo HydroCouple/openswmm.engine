@@ -404,6 +404,7 @@ int SWMMEngine::open(const char* inp_path, const char* rpt_path, const char* out
     {
         const std::string& mf = surface_router_.options().mesh_file;
         if (!mf.empty()) {
+            perf::ScopedTimer _pt(perf::sec_open_mesh2d);
             std::string base_dir;
             if (inp_path && inp_path[0] != '\0')
                 base_dir = openswmm::io::path_utf8(openswmm::io::utf8_path(inp_path).parent_path());

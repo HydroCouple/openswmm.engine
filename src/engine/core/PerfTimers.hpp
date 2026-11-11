@@ -45,6 +45,16 @@ inline double sec_read_dispatch = 0.0; // SectionRegistry handler execution
 inline double sec_open_resolve = 0.0;  // input::resolve_cross_references
 inline double sec_open_validate = 0.0; // validate_project
 
+// The [2D_MESH_FILE] sidecar load (twoD::load2DMeshExternalFile) runs after
+// open.read and outside it. open.mesh2d brackets the whole load; inside it the
+// sidecar's own `;; UNITS` pass and its nested reader are split the same way
+// open.read is, with mesh2d.scan derived as read minus dispatch. The nested
+// reader books its dispatch here, not in sec_read_dispatch.
+inline double sec_open_mesh2d = 0.0;     // the whole sidecar load
+inline double sec_mesh2d_prescan = 0.0;  // twoD::prescan2DUnitsHeader on the sidecar
+inline double sec_mesh2d_read = 0.0;     // the nested InputReader::read
+inline double sec_mesh2d_dispatch = 0.0; // its section handlers
+
 // resolve_cross_references sub-phases (sum <= sec_open_resolve; the remainder
 // is everything not individually bracketed).
 inline double sec_res_extfiles = 0.0;  // FILE-backed timeseries/curve loads
@@ -249,6 +259,7 @@ inline bool enabled() noexcept {
 inline void reset_load() noexcept {
     sec_open_prescan2d = sec_open_read = sec_open_resolve = sec_open_validate = 0.0;
     sec_read_dispatch = 0.0;
+    sec_open_mesh2d = sec_mesh2d_prescan = sec_mesh2d_read = sec_mesh2d_dispatch = 0.0;
     sec_res_extfiles = sec_res_tables = sec_res_transects = 0.0;
     sec_res_xsect = sec_res_shrink = 0.0;
     sec_init_state = sec_init_hydraulics = sec_init_hydrology = 0.0;
@@ -266,7 +277,7 @@ inline void reset_load() noexcept {
  */
 inline void dump_load() noexcept {
     const double open_total =
-        sec_open_prescan2d + sec_open_read + sec_open_resolve + sec_open_validate;
+        sec_open_prescan2d + sec_open_read + sec_open_mesh2d + sec_open_resolve + sec_open_validate;
     const double init_total = sec_init_state + sec_init_hydraulics + sec_init_hydrology +
                               sec_init_quality + sec_init_geometry;
     const double start_total = sec_start_iface + sec_start_plugins;
@@ -278,12 +289,15 @@ inline void dump_load() noexcept {
                  "res.shrink=%.4f "
                  "init=%.4f init.state=%.4f init.hydraulics=%.4f init.hydrology=%.4f "
                  "init.quality=%.4f init.geometry=%.4f "
-                 "start=%.4f start.iface=%.4f start.plugins=%.4f\n",
+                 "start=%.4f start.iface=%.4f start.plugins=%.4f "
+                 "open.mesh2d=%.4f mesh2d.prescan=%.4f mesh2d.scan=%.4f mesh2d.dispatch=%.4f\n",
                  open_total, sec_open_prescan2d, sec_open_read, sec_open_read - sec_read_dispatch,
                  sec_read_dispatch, sec_open_resolve, sec_open_validate, sec_res_extfiles,
                  sec_res_tables, sec_res_transects, sec_res_xsect, sec_res_shrink, init_total,
                  sec_init_state, sec_init_hydraulics, sec_init_hydrology, sec_init_quality,
-                 sec_init_geometry, start_total, sec_start_iface, sec_start_plugins);
+                 sec_init_geometry, start_total, sec_start_iface, sec_start_plugins,
+                 sec_open_mesh2d, sec_mesh2d_prescan, sec_mesh2d_read - sec_mesh2d_dispatch,
+                 sec_mesh2d_dispatch);
 }
 
 // Adds the elapsed wall time between construction and destruction to `acc`.

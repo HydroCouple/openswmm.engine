@@ -135,10 +135,21 @@ public:
      */
     const std::vector<std::string>& skipped_sections() const noexcept { return skipped_sections_; }
 
+    /**
+     * @brief Book this reader's section-dispatch time to another `[PERF-LOAD]` accumulator.
+     *
+     * The default is `perf::sec_read_dispatch`. A nested reader (the `[2D_MESH_FILE]` sidecar
+     * load) sets its own, so its handlers are not counted in the main read's `read.dispatch`.
+     *
+     * @param[in,out] acc Seconds accumulator that must outlive every later read on this reader.
+     */
+    void set_dispatch_timer(double& acc) noexcept { dispatch_timer_ = &acc; }
+
 private:
     SectionRegistry& registry_;
     int lines_read_ = 0;
     std::vector<std::string> skipped_sections_;
+    double* dispatch_timer_ = nullptr; ///< null books to perf::sec_read_dispatch
 
     /**
      * @brief Extract and uppercase the text before the first closing bracket.

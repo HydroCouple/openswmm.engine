@@ -20,6 +20,7 @@
 #include "../../input/Tokenizer.hpp"
 #include "../../core/ErrorCodes.hpp"
 #include "../../core/NodeCoupling2D.hpp"
+#include "../../core/PerfTimers.hpp"
 #include "../../core/SimulationContext.hpp"
 
 #include <algorithm>
@@ -2147,11 +2148,20 @@ load2DMeshExternalFile(MeshData& mesh, SolverOptions2D& opts,
     // path_utf8, not p.string(): both callees take a UTF-8 std::string and
     // re-apply utf8_path themselves, and string() would re-encode to ANSI.
     const std::string p_utf8 = openswmm::io::path_utf8(p);
-    prescan2DUnitsHeader(p_utf8, opts);
+    {
+        perf::ScopedTimer _pt(perf::sec_mesh2d_prescan);
+        prescan2DUnitsHeader(p_utf8, opts);
+    }
 
     openswmm::input::InputReader reader(mini);
+    reader.set_dispatch_timer(perf::sec_mesh2d_dispatch);
     openswmm::SimulationContext dummy;
-    if (!reader.read(p_utf8, dummy)) {
+    bool read_ok = false;
+    {
+        perf::ScopedTimer _pt(perf::sec_mesh2d_read);
+        read_ok = reader.read(p_utf8, dummy);
+    }
+    if (!read_ok) {
         return "2D_MESH_FILE: error reading '" + p_utf8 + "': " + dummy.error_message;
     }
 

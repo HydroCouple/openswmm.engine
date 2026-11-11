@@ -60,7 +60,9 @@ its deck**, and component configs resolve relative to the `.inp`
 (`SWMMEngine.cpp`: `base_dir = parent_path(inp_path)`), not to the working
 directory — so the runner's per-deck cwd cannot break it. **A companion file
 that travels with the deck in git is admissible; a reference to somewhere
-else on the machine is not.**
+else on the machine is not.** `twod_coupled_quality_sidecar.inp` uses the
+same exception for its `[2D_MESH_FILE]` mesh, `twod_coupled_quality_sidecar.2dm`,
+which also resolves relative to the `.inp`.
 
 ## 3. Why there are no stored baselines
 

@@ -134,6 +134,8 @@ tests/benchmarks/generated/*.inp
 tests/benchmarks/generated/*.rpt
 tests/benchmarks/generated/*.out
 tests/benchmarks/generated/*.json
+# The 2D mesh decks from gen_mesh_load_bench.py (75-765 MB each).
+tests/benchmarks/generated/mesh2d*/
 
 # Working copies written by test_engine_output_reader_live (reviewable, not tracked)
 tests/unit/engine/data/live_out/

@@ -1,0 +1,26 @@
+;; UNITS: SI (m)
+;; Mesh sidecar of twod_coupled_quality_sidecar.inp (see that deck's header).
+
+[2D_VERTICES]
+;;X     Y     Z
+ 0.0    0.0   1.0
+10.0    0.0   1.0
+10.0   10.0   1.0
+ 0.0   10.0   1.0
+ 5.0    5.0   1.0
+
+[2D_TRIANGLES]
+;;V1  V2  V3  N     INIT_DEPTH  TAG
+0     1   4   0.03  0.5         PAN
+1     2   4   0.03  0.5         PAN
+2     3   4   0.03  0.5         FAR
+3     0   4   0.03  0.5         FAR
+
+[2D_VERTEX_NODE_MAP]
+;;Vertex  Node  Cd   Area
+0         J1    0.7  1.0
+
+[2D_INITIAL_QUALITY]
+;;'*' SPECIES CONC  |  TAG NAME SPECIES CONC  |  CELL N SPECIES CONC
+*     Cu   4.0
+TAG   FAR  Cu  1.0

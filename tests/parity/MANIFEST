@@ -87,6 +87,7 @@ tests/parity/corpus/decks/steady_quality.inp	STEADY routing + pollutant + age --
 # also sweeps it (it has a mesh) -- one deck, two nets, attribute once.
 tests/parity/corpus/decks/twod_coupled_quality.inp	DYNWAVE + coupled 2D pan with [POLLUTANTS], [2D_INITIAL_QUALITY] (* and TAG), DISPERSION -- the only deck where species cross the 1D<->2D coupling
 tests/parity/corpus/decks/twod_mixed_quality.inp	the same pan tessellated as one [2D_QUADS] cell + two triangles -- the only deck on the padded kMaxCellVerts=4 / edge-stride-4 layout; a movement in ONLY this deck is the quad path (added 2026-09-07, E1)
+tests/parity/corpus/decks/twod_coupled_quality_sidecar.inp	twod_coupled_quality with its mesh, node map and initial quality in a tracked [2D_MESH_FILE] .2dm -- the only deck through load2DMeshExternalFile (the GUI's default save mode); its .out equals twod_coupled_quality's, so a movement in ONLY this deck is the sidecar loader (added 2026-11-11, mesh open E0)
 
 # ---- SoA review process coverage (Phase 0, 2026-10-23) ---------------------
 # These close four process-path holes. The companion soa_review_baseline.py
