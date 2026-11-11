@@ -21,6 +21,15 @@ add_subdirectory(legacy)   # → openswmm_legacy_engine + openswmm_legacy_output
 # ---- Plugin SDK (header-only; must come before engine so engine can link it) ----
 add_subdirectory(plugin_sdk)  # → openswmm_plugin_sdk (INTERFACE, no .so)
 
+# The Linux presets enforce these diagnostics on native code. The legacy
+# reference engine above retains its own compiler policy.
+option(OPENSWMM_STRICT_GCC_WARNINGS "Reject duplicated branches and ignored results in native GCC builds" OFF)
+if(OPENSWMM_STRICT_GCC_WARNINGS)
+    foreach(lang IN ITEMS C CXX)
+        add_compile_options("$<$<COMPILE_LANG_AND_ID:${lang},GNU>:-Werror=duplicated-branches;-Werror=unused-result>")
+    endforeach()
+endif()
+
 # ---- New engine (Phase 2+) ----
 add_subdirectory(engine)   # → openswmm_engine (output name: openswmm.engine)
 if(OPENSWMM_WITH_HYDROCOUPLE)

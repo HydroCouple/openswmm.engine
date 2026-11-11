@@ -96,18 +96,15 @@ int RunoffInterfaceFile::openForRead(const std::string& path, int n_subcatch, in
 
     // Read and verify header
     char stamp[12] = {};
-    std::fread(stamp, sizeof(char), 12, fp_);
-    if (std::strncmp(stamp, FILE_STAMP, 12) != 0) {
+    int32_t ns, np, fu, ms;
+    if (std::fread(stamp, 1, sizeof(stamp), fp_) != sizeof(stamp) ||
+        std::memcmp(stamp, FILE_STAMP, sizeof(stamp)) != 0 ||
+        std::fread(&ns, sizeof(ns), 1, fp_) != 1 || std::fread(&np, sizeof(np), 1, fp_) != 1 ||
+        std::fread(&fu, sizeof(fu), 1, fp_) != 1 || std::fread(&ms, sizeof(ms), 1, fp_) != 1) {
         std::fclose(fp_);
         fp_ = nullptr;
-        return -2; // invalid file format
+        return -2; // invalid or truncated header
     }
-
-    int32_t ns, np, fu, ms;
-    std::fread(&ns, sizeof(int32_t), 1, fp_);
-    std::fread(&np, sizeof(int32_t), 1, fp_);
-    std::fread(&fu, sizeof(int32_t), 1, fp_);
-    std::fread(&ms, sizeof(int32_t), 1, fp_);
 
     // Verify compatibility
     if (ns != static_cast<int32_t>(n_subcatch) || np != static_cast<int32_t>(n_pollut) ||

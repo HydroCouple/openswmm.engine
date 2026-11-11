@@ -106,9 +106,9 @@ public:
      * must have at least this many compatible ordered rows.
      * @param n_pollut Expected nonnegative count with 8+n_pollut representable and allocatable.
      * @param flow_units Expected valid enum [0,5]; exact header equality required.
-     * @return Zero after header comparison/setup; -1 open failure, -2 bad stamp, -3 count/
-     * unit mismatch. Rejection closes the newly opened stream. Header scalar read
-     * counts are unchecked; use only complete qualified headers. Ignores maxSteps and
+     * @return Zero on success, -1 if opening fails, -2 for an invalid stamp or a
+     * truncated header, and -3 for incompatible counts or units. Rejection closes
+     * the newly opened stream. The reader ignores the stored maxSteps value and
      * does not validate payload length, dates, names, value finiteness or endianness.
      * Allocation failures propagate; no previous stream is closed automatically. */
     int openForRead(const std::string& path, int n_subcatch, int n_pollut, int flow_units);

@@ -851,6 +851,21 @@ TEST(RunoffInterface, WriteAndReadHeader) {
     std::remove(path);
 }
 
+TEST(RunoffInterface, EveryTruncatedHeaderIsInvalid) {
+    const auto path = std::filesystem::temp_directory_path() / "test_runoff_truncated_header.bin";
+    RunoffInterfaceFile file;
+    ASSERT_EQ(file.openForWrite(path.string(), 3, 2, 0), 0);
+    file.close();
+
+    for (auto size = std::filesystem::file_size(path); size > 0; --size) {
+        std::filesystem::resize_file(path, size - 1);
+        EXPECT_EQ(file.openForRead(path.string(), 3, 2, 0), -2) << "header bytes: " << size - 1;
+        EXPECT_FALSE(file.isOpen());
+        file.close();
+    }
+    std::filesystem::remove(path);
+}
+
 TEST(RunoffInterface, IncompatibleHeaderFails) {
     std::string path_str =
         (std::filesystem::temp_directory_path() / "test_runoff_iface2.bin").string();
