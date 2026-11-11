@@ -24,6 +24,7 @@ retroactive.
 ## [Unreleased]
 
 - Permeable pavement now recovers the specified fraction of clogging at each regeneration interval. INP and GeoPackage round trips and the C and Python APIs preserve the regeneration degree (#199).
+- Rain barrels honour the optional covered flag after the clogging factor on the `STORAGE` line. As in the legacy solver, a covered barrel only collects runoff, and rain on its footprint goes to the subcatchment's pervious area. INP and GeoPackage round trips preserve the flag (#203).
 
 ### Finite-volume speed and coupled ponding (2026-11-07)
 

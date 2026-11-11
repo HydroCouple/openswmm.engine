@@ -1772,7 +1772,7 @@ static void write_lid_controls(sqlite3* db, const SimulationContext& ctx,
         if (uj < ctx.lid_controls.pavement.size())
             write_row("PAVEMENT", ctx.lid_controls.pavement[uj].data(), 7);
         if (uj < ctx.lid_controls.storage.size())
-            write_row("STORAGE", ctx.lid_controls.storage[uj].data(), 4);
+            write_row("STORAGE", ctx.lid_controls.storage[uj].data(), 5);
         if (uj < ctx.lid_controls.drain.size())
             write_row("DRAIN", ctx.lid_controls.drain[uj].data(), 6);
         if (uj < ctx.lid_controls.drainmat.size())

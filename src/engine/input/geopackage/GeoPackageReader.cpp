@@ -2191,7 +2191,7 @@ static void read_lid_controls(sqlite3* db, SimulationContext& ctx, const std::st
             if (!(pavement[6] >= 0.0 && pavement[6] <= 1.0))
                 throw std::runtime_error("Invalid pavement regeneration degree for LID " + name);
         } else if (layer == "STORAGE") {
-            for (int k = 0; k < 4; ++k)
+            for (int k = 0; k < 5; ++k)
                 ctx.lid_controls.storage[idx][k] = column_double(stmt.get(), 2 + k);
         } else if (layer == "DRAIN") {
             for (int k = 0; k < 6; ++k)

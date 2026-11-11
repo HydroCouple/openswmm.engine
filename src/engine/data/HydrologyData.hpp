@@ -170,8 +170,9 @@ struct LidControlStore {
      * clogging factor, regeneration interval in days, fraction regenerated). */
     std::vector<std::array<double, 7>> pavement;
 
-    /** @brief STORAGE layer params (up to 4 values). */
-    std::vector<std::array<double, 4>> storage;
+    /** @brief STORAGE layer params (thickness, void ratio, seepage rate, clogging factor,
+     * covered flag: 1 when a rain barrel is covered). */
+    std::vector<std::array<double, 5>> storage;
 
     /** @brief DRAIN layer params (up to 6 values). */
     std::vector<std::array<double, 6>> drain;

@@ -78,7 +78,7 @@ static constexpr double kEvap1em4[1] = {1e-4};
 static SimulationContext makeLidContext(const std::string& type_code,
                                         const std::array<double, 5>& surface,
                                         const std::array<double, 7>& soil,
-                                        const std::array<double, 4>& storage,
+                                        const std::array<double, 5>& storage,
                                         const std::array<double, 6>& drain, double area = 1000.0,
                                         double width = 50.0, double init_sat = 0.0) {
     SimulationContext ctx;
@@ -502,6 +502,41 @@ TEST(LIDBarrel, WaterBalanceConserved) {
     double stored = g.wb_final_vol[0] - g.wb_init_vol[0];
 
     EXPECT_NEAR(in, out + stored, 1e-6) << "Water balance should be conserved for rain barrel";
+}
+
+// Issue #203. Four half-impervious one-acre subcatchments send roof runoff to a 0.1-acre
+// barrel and receive 2 inches in 2 hours. A covered barrel returns the rain on its
+// footprint to the pervious area instead of storing it.
+TEST(LIDBarrel, CoveredFlagInpRoundTripReproducesLegacyRunoff) {
+    std::filesystem::create_directories("lid_area_out");
+    const char* saved = "lid_area_out/rain_barrel_covered.inp";
+    SWMMEngine engine;
+    ASSERT_EQ(swmm_engine_open(&engine, "lid_rain_barrel_covered.inp",
+                               "lid_area_out/covered_input.rpt", "lid_area_out/covered_input.out",
+                               nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_model_write(&engine, saved), SWMM_OK);
+
+    SWMMEngine reopened;
+    ASSERT_EQ(swmm_engine_open(&reopened, saved, "lid_area_out/covered.rpt",
+                               "lid_area_out/covered.out", nullptr), SWMM_OK)
+        << swmm_get_last_error_msg(&reopened);
+    ASSERT_EQ(swmm_engine_initialize(&reopened), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(&reopened, 0), SWMM_OK);
+    double elapsed;
+    do {
+        ASSERT_EQ(swmm_engine_step(&reopened, &elapsed), SWMM_OK);
+    } while (elapsed > 0.0);
+
+    // Reference runoff depths (inches) from the legacy solver with this deck.
+    struct Case { const char* subcatch; double inches; };
+    for (const Case c : {Case{"S_omitted", 0.896}, Case{"S_no", 0.896}, Case{"S_yes", 1.096},
+                         Case{"S_lower", 1.096}}) {
+        SCOPED_TRACE(c.subcatch);
+        int idx = swmm_subcatch_index(&reopened, c.subcatch);
+        double volume;
+        ASSERT_EQ(swmm_subcatch_get_stat_runoff_vol(&reopened, idx, &volume), SWMM_OK);
+        EXPECT_NEAR(volume * 12.0 / 43560.0, c.inches, 0.001);
+    }
 }
 
 // ============================================================================

@@ -351,13 +351,14 @@ void LIDSolver::init(SimulationContext& ctx) {
             g.soil_suction[us] = p[6] / ucfRainDepth; // in|mm  → ft
         }
 
-        // STORAGE layer: [0]=Thick, [1]=VoidRatio, [2]=Ksat, [3]=ClogFactor
+        // STORAGE layer: [0]=Thick, [1]=VoidRatio, [2]=Ksat, [3]=ClogFactor, [4]=Covered
         if (uli < ctx.lid_controls.storage.size()) {
             const auto& p = ctx.lid_controls.storage[uli];
             g.stor_thick[us] = p[0] / ucfRainDepth;                     // in|mm → ft
             g.stor_void[us] = (p[1] > 0.0) ? p[1] / (p[1] + 1.0) : 0.0; // ratio → fraction
             g.stor_ksat[us] = p[2] / ucfRainfall;                       // in/hr|mm/hr → ft/sec
             g.stor_clog[us] = p[3];
+            g.stor_covered[us] = p[4] != 0.0;
         }
 
         // DRAIN layer: [0]=Coeff, [1]=Expon, [2]=Offset, [3]=Delay, [4]=hOpen, [5]=hClose

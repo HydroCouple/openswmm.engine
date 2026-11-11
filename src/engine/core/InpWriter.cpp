@@ -3036,11 +3036,11 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                     std::fprintf(f, "\n");
                 }
             }
-            // STORAGE (4 params)
+            // STORAGE (4 params, then YES for a covered rain barrel)
             if (uj < ctx.lid_controls.storage.size()) {
                 const auto& p = ctx.lid_controls.storage[uj];
                 bool has = false;
-                for (int k = 0; k < 4; ++k)
+                for (int k = 0; k < 5; ++k)
                     if (p[k] != 0.0) {
                         has = true;
                         break;
@@ -3049,6 +3049,8 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                     std::fprintf(f, "%-16s STORAGE    ", name);
                     for (int k = 0; k < 4; ++k)
                         std::fprintf(f, " %.17g", p[k]);
+                    if (p[4] != 0.0)
+                        std::fprintf(f, " YES");
                     std::fprintf(f, "\n");
                 }
             }
