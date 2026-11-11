@@ -27,6 +27,7 @@ retroactive.
 - Rain barrels honour the optional covered flag after the clogging factor on the `STORAGE` line. As in the legacy solver, a covered barrel only collects runoff, and rain on its footprint goes to the subcatchment's pervious area. INP and GeoPackage round trips preserve the flag (#203).
 - A covered rain barrel returns only the rain on its own area to the pervious area, and sends it to the outlet when the subcatchment has no pervious area. Both solvers returned rain over the subcatchment's whole LID area, which created water when a covered barrel shared a subcatchment with other LID units, and lost it on fully impervious or fully LID-covered subcatchments (#205).
 - Ponded runoff quality mixes LID outflow returned to the pervious area into the ponded water. Both solvers and the multispecies surface mix left that water out of the mixing volume and created pollutant mass: a rain barrel returning its overflow reported a -45 % runoff quality continuity error (#206).
+- `SWMM_LID_STORAGE_COVERED` (`LidExtraField.STORAGE_COVERED` in Python) reads and sets the rain barrel covered flag through `swmm_lid_get_extra` and `swmm_lid_set_extra` (#207).
 
 ### Finite-volume speed and coupled ponding (2026-11-07)
 

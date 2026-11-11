@@ -1853,7 +1853,8 @@ class SplitPhase(IntEnum):
 
 class LidExtraField(IntEnum):
     """Stored layer fields: vegetation fraction; side slope/clogging dimensionless;
-    suction and drain open/close in authored in/mm; drain delay in hours.
+    suction and drain open/close in authored in/mm; drain delay in hours;
+    storage covered 1 for a covered rain barrel, otherwise 0.
     """
     SURFACE_VEGETATION = 0
     SURFACE_SIDE_SLOPE = 1
@@ -1862,3 +1863,4 @@ class LidExtraField(IntEnum):
     DRAIN_DELAY = 4
     DRAIN_OPEN = 5
     DRAIN_CLOSE = 6
+    STORAGE_COVERED = 7

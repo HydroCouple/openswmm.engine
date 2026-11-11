@@ -49,6 +49,7 @@
 #include <openswmm/engine/openswmm_gages.h>
 
 #include <string>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <limits>
@@ -416,5 +417,34 @@ TEST(EditorRoundtripApi, LidLayersAndTypeRoundTrip) {
     EXPECT_EQ(swmm_lid_get_surface(e, 9, &storage, &roughness, &slope), SWMM_ERR_BADINDEX);
     EXPECT_EQ(swmm_lid_set_pavement(e, 9, 1, 0.1, 0, 1, 0, 0), SWMM_ERR_BADINDEX);
     EXPECT_EQ(swmm_lid_set_drainmat(e, 0, -1.0, 0.5, 0.1), SWMM_ERR_BADPARAM);
+    destroy(e);
+}
+
+// Issue #207: the rain barrel covered flag is an extra STORAGE field. It accepts 0
+// or 1, survives the three-value storage setter and reaches the saved model.
+TEST(EditorRoundtripApi, RainBarrelCoveredFlagSetGetAndSave) {
+    SWMM_Engine e = makeEngine();
+    ASSERT_EQ(swmm_lid_add(e, "RB1", /*RAIN_BARREL*/ 5), SWMM_OK);
+    ASSERT_EQ(swmm_lid_set_storage(e, 0, /*thick*/ 36.0, /*void_frac*/ 0.75, /*ksat*/ 0.0),
+              SWMM_OK);
+    double covered = -1.0;
+    ASSERT_EQ(swmm_lid_get_extra(e, 0, SWMM_LID_STORAGE_COVERED, &covered), SWMM_OK);
+    EXPECT_DOUBLE_EQ(covered, 0.0);
+    ASSERT_EQ(swmm_lid_set_extra(e, 0, SWMM_LID_STORAGE_COVERED, 1.0), SWMM_OK);
+    for (double invalid : {0.5, 2.0, -1.0, std::numeric_limits<double>::quiet_NaN()})
+        EXPECT_EQ(swmm_lid_set_extra(e, 0, SWMM_LID_STORAGE_COVERED, invalid), SWMM_ERR_BADPARAM);
+    ASSERT_EQ(swmm_lid_set_storage(e, 0, 30.0, 0.75, 0.0), SWMM_OK);
+    ASSERT_EQ(swmm_lid_get_extra(e, 0, SWMM_LID_STORAGE_COVERED, &covered), SWMM_OK);
+    EXPECT_DOUBLE_EQ(covered, 1.0);
+
+    std::filesystem::create_directories("lid_area_out");
+    const char* path = "lid_area_out/editor_rain_barrel_covered.inp";
+    ASSERT_EQ(swmm_model_write(e, path), SWMM_OK);
+    std::ifstream file(path);
+    const std::string saved((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    const auto at = saved.find(" STORAGE ");
+    ASSERT_NE(at, std::string::npos);
+    const auto end = saved.find('\n', at);
+    EXPECT_EQ(saved.substr(end - 4, 4), " YES") << saved.substr(at, end - at);
     destroy(e);
 }

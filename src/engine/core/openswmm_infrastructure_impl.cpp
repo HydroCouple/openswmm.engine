@@ -1161,6 +1161,7 @@ static double* lid_extra(openswmm::LidControlStore& rows, int idx, int field) {
     case SWMM_LID_DRAIN_DELAY: return &rows.drain[idx][3];
     case SWMM_LID_DRAIN_OPEN: return &rows.drain[idx][4];
     case SWMM_LID_DRAIN_CLOSE: return &rows.drain[idx][5];
+    case SWMM_LID_STORAGE_COVERED: return &rows.storage[idx][4];
     default: return nullptr;
     }
 }
@@ -1180,7 +1181,8 @@ SWMM_ENGINE_API int swmm_lid_set_extra(SWMM_Engine engine, int idx, int field, d
     CHECK_INDEX(idx >= 0 && idx < ctx.lid_controls.count());
     auto* stored = lid_extra(ctx.lid_controls, idx, field);
     if (!stored || ctx.lid_controls.lid_type[idx] == "NODE" || !std::isfinite(value) || value < 0 ||
-        (field == SWMM_LID_SURFACE_VEGETATION && value >= 1)) return SWMM_ERR_BADPARAM;
+        (field == SWMM_LID_SURFACE_VEGETATION && value >= 1) ||
+        (field == SWMM_LID_STORAGE_COVERED && value != 0 && value != 1)) return SWMM_ERR_BADPARAM;
     const double previous = *stored;
     *stored = value;
     if (std::any_of(ctx.node_subtypes.storages.lid.begin(), ctx.node_subtypes.storages.lid.end(),

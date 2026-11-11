@@ -68,7 +68,7 @@ def test_checked_lid_members_and_pure_node_profile(opened):
     lids.validate_type(idx, LidType.BIO_CELL)
     assert lids.get_type(idx) == LidType.BIO_CELL
     for field in LidExtraField:
-        value = 0.1 if field == LidExtraField.SURFACE_VEGETATION else 2.0
+        value = {LidExtraField.SURFACE_VEGETATION: 0.1, LidExtraField.STORAGE_COVERED: 1.0}.get(field, 2.0)
         lids.set_extra(idx, field, value)
         assert lids.get_extra(idx, field) == pytest.approx(value)
         with pytest.raises(EngineError):

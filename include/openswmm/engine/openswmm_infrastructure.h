@@ -951,13 +951,16 @@ SWMM_ENGINE_API int swmm_lid_validate_type(SWMM_Engine engine, int idx, int type
 enum SWMM_LidExtraField {
     SWMM_LID_SURFACE_VEGETATION = 0, SWMM_LID_SURFACE_SIDE_SLOPE = 1,
     SWMM_LID_SOIL_SUCTION = 2, SWMM_LID_STORAGE_CLOGGING = 3,
-    SWMM_LID_DRAIN_DELAY = 4, SWMM_LID_DRAIN_OPEN = 5, SWMM_LID_DRAIN_CLOSE = 6
+    SWMM_LID_DRAIN_DELAY = 4, SWMM_LID_DRAIN_OPEN = 5, SWMM_LID_DRAIN_CLOSE = 6,
+    SWMM_LID_STORAGE_COVERED = 7
 };
 /** Read one stored scalar. Vegetation is a fraction, side slope dimensionless, suction/open/close
- * are input in/mm, clogging dimensionless, delay hours. No mutation; output is caller-owned. */
+ * are input in/mm, clogging dimensionless, delay hours, covered 1 for a covered rain barrel and
+ * 0 otherwise. No mutation; output is caller-owned. */
 SWMM_ENGINE_API int swmm_lid_get_extra(SWMM_Engine engine, int idx, int field, double* value);
-/** Set one finite nonnegative scalar in BUILDING/OPENED. Vegetation must be below one.
- * Rejects NODE controls and invalid attached storage profiles; all sibling fields are preserved. */
+/** Set one finite nonnegative scalar in BUILDING/OPENED. Vegetation must be below one; covered
+ * must be 0 or 1. Rejects NODE controls and invalid attached storage profiles; all sibling fields
+ * are preserved. */
 SWMM_ENGINE_API int swmm_lid_set_extra(SWMM_Engine engine, int idx, int field, double value);
 /** Borrow the authored drain-curve token until the next control/engine mutation. No mutation. */
 SWMM_ENGINE_API const char* swmm_lid_get_drain_curve(SWMM_Engine engine, int idx);

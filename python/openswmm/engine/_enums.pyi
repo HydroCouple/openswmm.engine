@@ -1500,3 +1500,4 @@ class LidExtraField(IntEnum):
     DRAIN_DELAY = 4
     DRAIN_OPEN = 5
     DRAIN_CLOSE = 6
+    STORAGE_COVERED = 7
