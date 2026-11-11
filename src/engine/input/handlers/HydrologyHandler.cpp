@@ -893,7 +893,8 @@ void handle_lid_controls(SimulationContext& ctx, const std::vector<std::string>&
             for (std::size_t i = 0; i < 4 && (i + 2) < tok.size(); ++i)
                 storage[i] = to_double(tok[2 + i]);
             // Legacy readStorageData: covered only when the optional token matches YES.
-            storage[4] = tok.size() > 6 && Tokenizer::to_upper(tok[6]).starts_with("YES") ? 1.0 : 0.0;
+            storage[4] =
+                tok.size() > 6 && Tokenizer::to_upper(tok[6]).starts_with("YES") ? 1.0 : 0.0;
         } else if (layer == "DRAIN") {
             for (std::size_t i = 0; i < 6 && (i + 2) < tok.size(); ++i)
                 ctx.lid_controls.drain[idx][i] = to_double(tok[2 + i]);

@@ -441,7 +441,8 @@ TEST(EditorRoundtripApi, RainBarrelCoveredFlagSetGetAndSave) {
     const char* path = "lid_area_out/editor_rain_barrel_covered.inp";
     ASSERT_EQ(swmm_model_write(e, path), SWMM_OK);
     std::ifstream file(path);
-    const std::string saved((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    const std::string saved((std::istreambuf_iterator<char>(file)),
+                            std::istreambuf_iterator<char>());
     const auto at = saved.find(" STORAGE ");
     ASSERT_NE(at, std::string::npos);
     const auto end = saved.find('\n', at);

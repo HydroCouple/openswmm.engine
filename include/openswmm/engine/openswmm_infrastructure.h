@@ -949,9 +949,13 @@ SWMM_ENGINE_API int swmm_lid_validate_type(SWMM_Engine engine, int idx, int type
 
 /** Remaining stored scalar members of standard LID layers, in input units. */
 enum SWMM_LidExtraField {
-    SWMM_LID_SURFACE_VEGETATION = 0, SWMM_LID_SURFACE_SIDE_SLOPE = 1,
-    SWMM_LID_SOIL_SUCTION = 2, SWMM_LID_STORAGE_CLOGGING = 3,
-    SWMM_LID_DRAIN_DELAY = 4, SWMM_LID_DRAIN_OPEN = 5, SWMM_LID_DRAIN_CLOSE = 6,
+    SWMM_LID_SURFACE_VEGETATION = 0,
+    SWMM_LID_SURFACE_SIDE_SLOPE = 1,
+    SWMM_LID_SOIL_SUCTION = 2,
+    SWMM_LID_STORAGE_CLOGGING = 3,
+    SWMM_LID_DRAIN_DELAY = 4,
+    SWMM_LID_DRAIN_OPEN = 5,
+    SWMM_LID_DRAIN_CLOSE = 6,
     SWMM_LID_STORAGE_COVERED = 7
 };
 /** Read one stored scalar. Vegetation is a fraction, side slope dimensionless, suction/open/close

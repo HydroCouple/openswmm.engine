@@ -2183,12 +2183,13 @@ std::string SWMMEngine::checkpointModel() const {
     else
         a.sequence(lc.pavement, [&](auto& p) { a(p[0], p[1], p[2], p[3], p[4], p[5]); });
     // Keep the model identity of older checkpoints when no rain barrel is covered.
-    if (std::any_of(lc.storage.begin(), lc.storage.end(), [](const auto& s) { return s[4] != 0.0; }))
+    if (std::any_of(lc.storage.begin(), lc.storage.end(),
+                    [](const auto& s) { return s[4] != 0.0; }))
         a(lc.storage);
     else
         a.sequence(lc.storage, [&](auto& s) { a(s[0], s[1], s[2], s[3]); });
-    a(lc.drain, lc.drainmat, lc.removals, lu.subcatch_index, lu.lid_index, lu.number, lu.area, lu.width, lu.init_sat,
-      lu.from_imperv, lu.to_perv, lu.drain_to, lu.from_perv);
+    a(lc.drain, lc.drainmat, lc.removals, lu.subcatch_index, lu.lid_index, lu.number, lu.area,
+      lu.width, lu.init_sat, lu.from_imperv, lu.to_perv, lu.drain_to, lu.from_perv);
     auto runoff = runoff_;
     auto lid = lid_.waterTrial();
     runoff.checkpoint(a, true);

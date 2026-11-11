@@ -514,12 +514,14 @@ TEST(LIDBarrel, CoveredFlagInpRoundTripReproducesLegacyRunoff) {
     SWMMEngine engine;
     ASSERT_EQ(swmm_engine_open(&engine, "lid_rain_barrel_covered.inp",
                                "lid_area_out/covered_input.rpt", "lid_area_out/covered_input.out",
-                               nullptr), SWMM_OK);
+                               nullptr),
+              SWMM_OK);
     ASSERT_EQ(swmm_model_write(&engine, saved), SWMM_OK);
 
     SWMMEngine reopened;
     ASSERT_EQ(swmm_engine_open(&reopened, saved, "lid_area_out/covered.rpt",
-                               "lid_area_out/covered.out", nullptr), SWMM_OK)
+                               "lid_area_out/covered.out", nullptr),
+              SWMM_OK)
         << swmm_get_last_error_msg(&reopened);
     ASSERT_EQ(swmm_engine_initialize(&reopened), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(&reopened, 0), SWMM_OK);
@@ -529,7 +531,10 @@ TEST(LIDBarrel, CoveredFlagInpRoundTripReproducesLegacyRunoff) {
     } while (elapsed > 0.0);
 
     // Reference runoff depths (inches) from the legacy solver with this deck.
-    struct Case { const char* subcatch; double inches; };
+    struct Case {
+        const char* subcatch;
+        double inches;
+    };
     for (const Case c : {Case{"S_omitted", 0.896}, Case{"S_no", 0.896}, Case{"S_yes", 1.096},
                          Case{"S_lower", 1.096}}) {
         SCOPED_TRACE(c.subcatch);
@@ -548,7 +553,8 @@ TEST(LIDBarrel, CoveredRainReturnConservesWater) {
     SWMMEngine engine;
     ASSERT_EQ(swmm_engine_open(&engine, "lid_rain_barrel_covered_return.inp",
                                "lid_area_out/covered_return.rpt", "lid_area_out/covered_return.out",
-                               nullptr), SWMM_OK);
+                               nullptr),
+              SWMM_OK);
     ASSERT_EQ(swmm_engine_initialize(&engine), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(&engine, 0), SWMM_OK);
     double elapsed;
@@ -558,7 +564,10 @@ TEST(LIDBarrel, CoveredRainReturnConservesWater) {
     ASSERT_EQ(swmm_engine_end(&engine), SWMM_OK);
 
     // Reference runoff depths (inches) from the legacy solver with this deck.
-    struct Case { const char* subcatch; double acres, inches; };
+    struct Case {
+        const char* subcatch;
+        double acres, inches;
+    };
     for (const Case c : {Case{"S_imperv", 1.0, 0.200}, Case{"S_two", 1.0, 1.197},
                          Case{"S_mixed", 1.0, 0.997}, Case{"S_full", 0.1, 2.000}}) {
         SCOPED_TRACE(c.subcatch);
@@ -578,7 +587,8 @@ TEST(LIDBarrel, ReturnedOutflowKeepsRunoffQualityBalance) {
     std::filesystem::create_directories("lid_area_out");
     SWMMEngine engine;
     ASSERT_EQ(swmm_engine_open(&engine, "lid_return_quality.inp", "lid_area_out/return_quality.rpt",
-                               "lid_area_out/return_quality.out", nullptr), SWMM_OK);
+                               "lid_area_out/return_quality.out", nullptr),
+              SWMM_OK);
     ASSERT_EQ(swmm_engine_initialize(&engine), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(&engine, 0), SWMM_OK);
     double elapsed;
@@ -592,8 +602,8 @@ TEST(LIDBarrel, ReturnedOutflowKeepsRunoffQualityBalance) {
     EXPECT_NEAR(mb.qual_wet_deposition[0], 9.058, 0.002);
     EXPECT_NEAR(mb.qual_bmp_removal[0], 4.105, 0.002);
     EXPECT_NEAR(mb.qual_runoff_load[0], 4.953, 0.002);
-    const double in = mb.qual_init_buildup[0] + mb.qual_surface_buildup[0] +
-                      mb.qual_wet_deposition[0];
+    const double in =
+        mb.qual_init_buildup[0] + mb.qual_surface_buildup[0] + mb.qual_wet_deposition[0];
     const double out = mb.qual_sweeping[0] + mb.qual_infil_loss[0] + mb.qual_bmp_removal[0] +
                        mb.qual_runoff_load[0] + mb.qual_final_buildup[0];
     EXPECT_LT(std::fabs(1.0 - out / in), 0.005);
