@@ -25,6 +25,14 @@ retroactive.
 
 - Permeable pavement now recovers the specified fraction of clogging at each regeneration interval. INP and GeoPackage round trips and the C and Python APIs preserve the regeneration degree (#199).
 
+### Finite-volume speed and coupled ponding (2026-11-07)
+
+- `FV_SLOT_CELERITY` left out (or 0) means 100 ft/s in either unit system, 30.48 m/s in SI. The bare number 100 used to be read in project units, so SI models without the key ran at 100 m/s: a 3.3x stiffer slot, a 3.3x smaller pressurized time step and junction heads far above their rims. An explicit value is honoured as before; the options API and `.inp` writer report the effective value in project units.
+- The algebraic junction head solve finds its root by Illinois regula falsi on the residuals it has already evaluated, with the first trial aimed past the estimated root: 3.6-4.0 balance evaluations per solve instead of 8-17, about 30 % less CPU on surcharged networks, and a smaller imbalance left at the junction. Results move at the 1e-6 ft head tolerance.
+- Thread gates were remeasured under the OpenMP runtime's default waiting. Dynamic wave keeps at least 2,000 conduits per thread (was 100): a 1,015-conduit network ran 7x slower at 8 threads than on one. The FV junction-solve loop goes parallel from 256 junctions (was 64).
+- A 2D-coupled junction under `FLOW_ROUTING FV` ponds on the surface footprint the 2D router assigns it, so its head follows the 2D surface and it exchanges water with it. The FV mesh was built before that footprint existed, which sealed every coupled junction at its rim and booked the surplus as flooding (13,430 m3 in five hours on the Bellinge example).
+- A ponding FV junction no longer creates water each time its pond drains back to the rim (a lone ponding junction reached 467 m with -234 % routing continuity).
+
 ### Alpha.4 review corrections (2026-11-01)
 
 - Reaction RATE species integrate together under both coupling options; FULL also refreshes algebraic species at intermediate integration stages. Reaction scratch is isolated by simulation thread.
