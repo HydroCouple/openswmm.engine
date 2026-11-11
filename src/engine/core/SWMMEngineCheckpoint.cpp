@@ -3201,7 +3201,7 @@ std::string SWMMEngine::loadCheckpointBytes(std::string checkpoint,
         std::unique_ptr<WaterDriver::PreparedRestore> prepared_driver;
         if (runtime_water_driver_) {
             if (inspection)
-                summary.driver.emplace();
+                summary.driver = CheckpointInspection::Driver{};
             prepared_driver =
                 prepareDriver(*runtime_water_driver_, state.boundary[0], hydraulic,
                               std::move(driver), inspection ? &*summary.driver : nullptr);
