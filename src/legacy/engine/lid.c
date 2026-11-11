@@ -1672,8 +1672,13 @@ void lid_getRunoff(int j, double tStep)
 
             TLidProc* lidProc = &LidProcs[lidUnit->lidIndex];
             if (lidProc->lidType == RAIN_BARREL && lidProc->storage.covered == TRUE) {
-                // Add runoff from closed rain barrel to return (cfs)
-                qReturn += subcatch->rainfall * subcatch->lidArea;
+                //... rain on the covered barrel's own area returns to the
+                //    pervious area under the same test as other LID outflow,
+                //    otherwise it leaves at the outlet (issue #205)
+                if (subcatch->area > subcatch->lidArea && subcatch->fracImperv < 0.999)
+                    qReturn += subcatch->rainfall * lidArea;
+                else
+                    qRunoff += subcatch->rainfall * lidArea;
             } else {
                 //... add rainfall onto LID inflow (ft/s)
                 lidInflow = lidInflow + subcatch->rainfall;

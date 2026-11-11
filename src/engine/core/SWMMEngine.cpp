@@ -3651,15 +3651,11 @@ void SWMMEngine::stepRunoff(double dt_routing) {
                 // the outlet runoff it is removed from.
                 lid_vlidin_vol_[usc] += q_from_sc * lid_area * dt_runoff;
                 // legacy lid_getRunoff: a COVERED rain barrel takes no rain
-                // — the rain on the subcatchment's LID footprint goes back to
-                // the pervious area instead (lid.c: qReturn += rainfall *
-                // lidArea); every other unit adds the rain onto its inflow
+                // (its rain is booked with the unit's outflow in A6b); every
+                // other unit adds the rain onto its inflow
                 // (lid.c:1712 `lidInflow = lidInflow + rainfall`).
                 if (g.type == lid::LIDType::RAIN_BARREL && g.stor_covered[uu]) {
                     g.inflow[uu] = q_from_sc;
-                    if (usc < ctx_.subcatches.total_lid_area_ft2.size())
-                        ctx_.subcatches.lid_return_to_perv_cfs[usc] +=
-                            rain * ctx_.subcatches.total_lid_area_ft2[usc];
                 } else {
                     g.inflow[uu] = q_from_sc + rain;
                 }
@@ -3781,6 +3777,17 @@ void SWMMEngine::stepRunoff(double dt_routing) {
                                                : 0.0;
                 const double sub_area_ft2 =
                     ctx_.subcatches.area[usc] / ucf::UCF(ucf::LANDAREA, ctx_.options);
+                // legacy lid_getRunoff (issue #205): rain on a covered barrel's
+                // own area returns to the pervious area under the same test as
+                // other LID outflow, otherwise it leaves at the outlet. Booked
+                // before the unit's own outflow, in legacy's summation order.
+                if (g.type == lid::LIDType::RAIN_BARREL && g.stor_covered[uu]) {
+                    const double covered_cfs = ctx_.subcatches.rainfall[usc] * lid_area;
+                    if (sub_area_ft2 > lid_area_sc && ctx_.subcatches.frac_imperv[usc] < 0.999)
+                        ctx_.subcatches.lid_return_to_perv_cfs[usc] += covered_cfs;
+                    else
+                        lid_qsurf_cfs_[usc] += covered_cfs;
+                }
                 const bool can_return = g.to_perv[uu] && sub_area_ft2 > lid_area_sc;
                 if (!can_return) {
                     // Legacy evalLidUnit accumulates qRunoff (cfs) across the

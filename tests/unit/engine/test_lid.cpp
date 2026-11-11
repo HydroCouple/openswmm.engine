@@ -32,6 +32,7 @@
 #include <vector>
 
 #include <openswmm/engine/openswmm_engine.h>
+#include <openswmm/engine/openswmm_massbalance.h>
 #include <openswmm/engine/openswmm_model.h>
 #include <openswmm/engine/openswmm_subcatchments.h>
 
@@ -537,6 +538,38 @@ TEST(LIDBarrel, CoveredFlagInpRoundTripReproducesLegacyRunoff) {
         ASSERT_EQ(swmm_subcatch_get_stat_runoff_vol(&reopened, idx, &volume), SWMM_OK);
         EXPECT_NEAR(volume * 12.0 / 43560.0, c.inches, 0.001);
     }
+}
+
+// Issue #205. A covered barrel returns only the rain on its own area, and only to a
+// pervious area that exists; otherwise the rain leaves at the outlet. Before the fix S_imperv
+// and S_full lost that rain, and S_two and S_mixed returned it over every LID unit's area.
+TEST(LIDBarrel, CoveredRainReturnConservesWater) {
+    std::filesystem::create_directories("lid_area_out");
+    SWMMEngine engine;
+    ASSERT_EQ(swmm_engine_open(&engine, "lid_rain_barrel_covered_return.inp",
+                               "lid_area_out/covered_return.rpt", "lid_area_out/covered_return.out",
+                               nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(&engine), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(&engine, 0), SWMM_OK);
+    double elapsed;
+    do {
+        ASSERT_EQ(swmm_engine_step(&engine, &elapsed), SWMM_OK);
+    } while (elapsed > 0.0);
+    ASSERT_EQ(swmm_engine_end(&engine), SWMM_OK);
+
+    // Reference runoff depths (inches) from the legacy solver with this deck.
+    struct Case { const char* subcatch; double acres, inches; };
+    for (const Case c : {Case{"S_imperv", 1.0, 0.200}, Case{"S_two", 1.0, 1.197},
+                         Case{"S_mixed", 1.0, 0.997}, Case{"S_full", 0.1, 2.000}}) {
+        SCOPED_TRACE(c.subcatch);
+        int idx = swmm_subcatch_index(&engine, c.subcatch);
+        double volume;
+        ASSERT_EQ(swmm_subcatch_get_stat_runoff_vol(&engine, idx, &volume), SWMM_OK);
+        EXPECT_NEAR(volume * 12.0 / (43560.0 * c.acres), c.inches, 0.001);
+    }
+    double error = 1.0;
+    ASSERT_EQ(swmm_get_runoff_continuity_error(&engine, &error), SWMM_OK);
+    EXPECT_LT(std::fabs(error), 0.001);
 }
 
 // ============================================================================
