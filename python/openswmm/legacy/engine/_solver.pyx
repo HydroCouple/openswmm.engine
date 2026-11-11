@@ -41,6 +41,7 @@ from cpython.datetime cimport datetime as cython_datetime
 from datetime import datetime, timedelta
 from libc.stdlib cimport free, malloc
 from functools import partialmethod
+from os.path import splitext
 
 # external imports
 from .solver cimport (
@@ -746,9 +747,9 @@ def run_solver(
 
     @param inp_file: Input file name.
     @type inp_file: str
-    @param rpt_file: Report file name.
+    @param rpt_file: Report file name. Derived from C{inp_file} when omitted.
     @type rpt_file: str
-    @param out_file: Output file name.
+    @param out_file: Output file name. Derived from C{inp_file} when omitted.
     @type out_file: str
     @param swmm_progress_callback: Optional progress callback receiving a
         float between 0.0 and 1.0.
@@ -762,11 +763,11 @@ def run_solver(
     cdef bytes c_inp_file_bytes = inp_file.encode('utf-8')
     cdef progress_callback c_swm_progress_callback
 
-    if rpt_file is not None:
-       rpt_file = inp_file.replace('.inp', '.rpt')
+    if rpt_file is None:
+        rpt_file = splitext(inp_file)[0] + '.rpt'
 
-    if out_file is not None:
-         out_file = inp_file.replace('.inp', '.out')
+    if out_file is None:
+        out_file = splitext(inp_file)[0] + '.out'
 
     cdef bytes c_rpt_file_bytes = rpt_file.encode('utf-8')
     cdef bytes c_out_file_bytes = out_file.encode('utf-8')
@@ -962,12 +963,12 @@ cdef class Solver:
         if rpt_file is not None:
             self._rpt_file = rpt_file
         else:
-            self._rpt_file = inp_file.replace('.inp', '.rpt')
+            self._rpt_file = splitext(inp_file)[0] + '.rpt'
 
         if out_file is not None:
             self._out_file = out_file
         else:
-            self._out_file = inp_file.replace('.inp', '.out')
+            self._out_file = splitext(inp_file)[0] + '.out'
         
         self._callbacks = {
             CallbackType.BEFORE_INITIALIZE: [],
