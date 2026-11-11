@@ -169,14 +169,9 @@ bool ClimateFileReader::isGhcndFormat(const char* line) {
         }
     }
 
-    // Detect temperature units from column labels (e.g., "TMIN_C10")
-    ptr = std::strstr(line, "C10");
-    if (ptr)
-        temp_units_ = DEG_C10;
-    else {
-        // Default for GHCND is tenths of degrees Celsius
-        temp_units_ = DEG_C10;
-    }
+    // GHCND temperatures are tenths of degrees Celsius whether or not a column label says so
+    // (e.g., "TMIN_C10").
+    temp_units_ = DEG_C10;
 
     return true;
 }
