@@ -2248,10 +2248,10 @@ TEST(EngineCheckpoint, MeshRichardsLidThermalEnergyContinuesAcrossRestart) {
 #else
     ASSERT_NO_THROW(source.start("surface-thermal-lid-source", 12, "channel:test", false, false,
                                  false, false, false, false, true, false, true, false, false, false,
-                                 "CLOSED_FORM", true));
+                                 false, "CLOSED_FORM", true));
     ASSERT_NO_THROW(target.start("surface-thermal-lid-target", 12, "channel:test", false, false,
                                  false, false, false, false, true, false, true, false, false, false,
-                                 "CLOSED_FORM", true));
+                                 false, "CLOSED_FORM", true));
 #endif
     const auto seed_lid = [](SWMMEngine& engine) {
         auto& ctx = engine.context();

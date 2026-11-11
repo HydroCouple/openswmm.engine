@@ -978,6 +978,7 @@ TEST(MaterialEnginePair, AuthoredSuccessivePartialDeliveriesAllBasesBothWaterSig
         ASSERT_NO_FATAL_FAILURE(p.same(true));EXPECT_EQ(p.finishes,1);
     }
 }
+#ifdef MATERIAL_OUTPUT_CHECKPOINT_TESTS // the automatic report writes 2D HDF5 results
 TEST(MaterialEnginePair, AutomaticReportUsesChangedPostQualitySample) {
     for(bool positive:{true,false}) {
         MaterialPair p;
@@ -992,6 +993,7 @@ TEST(MaterialEnginePair, AutomaticReportUsesChangedPostQualitySample) {
         EXPECT_EQ(read(p.dir/"native.out"),read(p.dir/"network.out"));
     }
 }
+#endif
 TEST(MaterialEnginePair, EarlyFinalLeavesActualMaterialReceiptPending) {
     for(bool positive:{true,false}) {
         MaterialPair p;
