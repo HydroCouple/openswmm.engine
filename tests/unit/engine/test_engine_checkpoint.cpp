@@ -11623,6 +11623,10 @@ TEST(EngineCheckpoint, ManagedSnowOwnersAndMeshResumeAcceptedWaterWithoutDoubleC
     for (int output : {0, 2})
         for (bool owners : {false, true})
             for (auto model : {surface::SnowKind::DegreeDay, surface::SnowKind::Ueb}) {
+#ifndef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
+                if (output == 2)
+                    continue;
+#endif
                 const auto name = "managed-snow-" + std::to_string(owners) + "-" +
                                   std::to_string(int(model)) + "-" + std::to_string(output);
                 SWMMEngine a, b;

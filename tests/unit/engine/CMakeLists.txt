@@ -982,6 +982,9 @@ if(OPENSWMM_BUILD_2D)
         OPENSWMM_HYDROTHERMAL_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
     target_compile_definitions(test_engine_gw_transport_kernel PRIVATE
         OPENSWMM_GW_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
+    if(OPENSWMM_2D_HDF5_OUTPUT)
+        target_compile_definitions(test_engine_gw_transport_kernel PRIVATE OPENSWMM_GW_RESULTS_FILE_TEST=1)
+    endif()
     # T7.5 reads the .h5 the run wrote, so it links HDF5 the same way the
     # 2D surface suite does.
     if(TARGET hdf5::hdf5-shared)

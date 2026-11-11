@@ -910,6 +910,7 @@ TEST(GwTransportKernel, FilesNativeHotStartWithANodeLidCarriesTheAquifer) {
 // ---------------------------------------------------------------------------
 // T7.5 — the results file carries the tuple.
 // ---------------------------------------------------------------------------
+#ifdef OPENSWMM_GW_RESULTS_FILE_TEST // reads the 2D HDF5 results file
 TEST(GwTransportKernel, ResultsFileCarriesTheSpeciesFieldsAndLedger) {
     // REPORT_2D YES with the GROUNDWATER variable: the species datasets ride
     // the same mask the water fields do. FLOAT64 so the comparison tests the
@@ -1006,6 +1007,7 @@ TEST(GwTransportKernel, ResultsFileCarriesTheSpeciesFieldsAndLedger) {
     EXPECT_NEAR(led.first[ll + 13], want_source, 1.0e-9) << "source term";
     H5Fclose(fid);
 }
+#endif
 
 // ---------------------------------------------------------------------------
 // T7.4 — the 1D ⇄ aquifer quality seam.
@@ -1988,6 +1990,7 @@ TEST(GwTransportKernel, AuthoringTagGettersWorkBeforeRuntimeInitialization) {
     EXPECT_EQ(swmm_2d_get_vertex_tag(r.e, 999, text, sizeof text), SWMM_ERR_BADINDEX);
     finish(r);
 }
+#ifdef OPENSWMM_GW_RESULTS_FILE_TEST // reads the 2D HDF5 results file
 TEST(GwTransportKernel, GroundwaterHdfUnitsFollowNativeSpeciesEvenWhenSurfaceTransportIsOff) {
     const char* inputUnits[] = {"MG/L", "UG/L", "#/L"};
     const char* outputUnits[] = {"MG/L", "UG/L", "#/L"};
@@ -2048,6 +2051,7 @@ TEST(GwTransportKernel, GroundwaterHdfUnitsFollowNativeSpeciesEvenWhenSurfaceTra
         H5Fclose(h5);
     }
 }
+#endif
 
 // ---------------------------------------------------------------------------
 // Review F21 (2026-10-15): the 1D ⇄ aquifer seam for a reaction-component
@@ -2620,6 +2624,7 @@ TEST(GwCompletion, MolecularDiffusionRunsAtHydrostaticRest) {
     finish(r);
 }
 
+#ifdef OPENSWMM_GW_RESULTS_FILE_TEST // reads the 2D HDF5 results file
 TEST(GwCompletion, LayerAndEdgeResultsPersistCanonicalInventoriesAndGrossReceipts) {
     auto body = layeredDeck("[GW_INITIAL_QUALITY]\n* UNSAT TSS 7\n\n"
                             "[2D_AQUIFER_BOUNDARIES]\nCELL 1 EDGE 0 FLOW CONST 0.0001\n\n"
@@ -2675,6 +2680,7 @@ TEST(GwCompletion, LayerAndEdgeResultsPersistCanonicalInventoriesAndGrossReceipt
     EXPECT_GT(H5Lexists(file, "groundwater_transport_ledger", H5P_DEFAULT), 0);
     H5Fclose(file);
 }
+#endif
 
 TEST(GwCompletion, PorousOwnerReceivesBoundarySpeciesAndPhysicalHeatExactlyOnce) {
     auto body =
@@ -3830,6 +3836,7 @@ TEST(GwSigmaPorous, UnspecifiedTemperatureUsesTheConfiguredThermalInitialState) 
     finish(r);
 }
 
+#ifdef OPENSWMM_GW_RESULTS_FILE_TEST // reads the 2D HDF5 results file
 TEST(GwSigmaPorous, ResultsKeepChemicalAndThermalLayerAxesIndependent) {
     auto body = mappedPorousDeck("[GW_INITIAL_QUALITY]\n* SAT TSS 7\n* UNSAT TSS 7\n"
                                  "* SAT __TEMPERATURE__ 20\n* UNSAT __TEMPERATURE__ 10\n",
@@ -3868,6 +3875,7 @@ TEST(GwSigmaPorous, ResultsKeepChemicalAndThermalLayerAxesIndependent) {
     H5Dclose(dataset);
     H5Fclose(file);
 }
+#endif
 
 TEST(GwIntegrated, ConduitNodeWellAndEdgesShareOneFiniteDonor) {
     fs::create_directories(kOutDir);
