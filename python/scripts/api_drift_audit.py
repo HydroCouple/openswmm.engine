@@ -108,6 +108,7 @@ KNOWN_UNBOUND = frozenset({
     "swmm_get_current_time",    # Solver.current_datetime
     "swmm_coupling_set_source", # scalar C convenience; Python uses identical atomic set_sources
     "swmm_coupling_advance_to", # C alias of swmm_engine_advance_to used by Solver.advance_to
+    "swmm_lid_get_pavement",    # LIDs.get_pavement reads all seven values via the _ex form
 })
 
 

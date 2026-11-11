@@ -14702,6 +14702,98 @@
    ]
   },
   {
+   "path": "material_split.checkpoint_capabilities",
+   "target": "material_split",
+   "name": "checkpoint_capabilities",
+   "form": "method",
+   "python": "MaterialSplitParticipant.checkpoint_capabilities",
+   "doc": "Compiled material checkpoint features: bit 0 numerical state, bit 1 outputs.",
+   "c": [
+    "swmm_split_material_checkpoint_capabilities",
+    "swmm_split_material_checkpoint_last_error"
+   ],
+   "returns": "int",
+   "params": []
+  },
+  {
+   "path": "material_split.checkpoint_capture",
+   "target": "material_split",
+   "name": "checkpoint_capture",
+   "form": "method",
+   "python": "MaterialSplitParticipant.checkpoint_capture",
+   "doc": "Capture the bound pair at an acknowledged boundary as same-platform native bytes.",
+   "c": [
+    "swmm_split_material_checkpoint_capture",
+    "swmm_split_material_checkpoint_data",
+    "swmm_split_material_checkpoint_destroy",
+    "swmm_split_material_checkpoint_last_error"
+   ],
+   "returns": "bytes",
+   "params": []
+  },
+  {
+   "path": "material_split.checkpoint_enable",
+   "target": "material_split",
+   "name": "checkpoint_enable",
+   "form": "method",
+   "python": "MaterialSplitParticipant.checkpoint_enable",
+   "doc": "Enable pair recovery once on the bound NETWORK at its fresh RUNNING boundary.",
+   "c": [
+    "swmm_split_material_checkpoint_enable",
+    "swmm_split_material_checkpoint_last_error"
+   ],
+   "returns": "None",
+   "params": [
+    {
+     "name": "outputs",
+     "type": "bool",
+     "required": false
+    }
+   ]
+  },
+  {
+   "path": "material_split.checkpoint_prepare_outputs",
+   "target": "material_split",
+   "name": "checkpoint_prepare_outputs",
+   "form": "method",
+   "python": "MaterialSplitParticipant.checkpoint_prepare_outputs",
+   "doc": "Prepare this INITIALIZED role's checkpointable writer before start.",
+   "c": [
+    "swmm_split_material_checkpoint_last_error",
+    "swmm_split_material_checkpoint_prepare_outputs"
+   ],
+   "returns": "None",
+   "params": []
+  },
+  {
+   "path": "material_split.checkpoint_restore",
+   "target": "material_split",
+   "name": "checkpoint_restore",
+   "form": "method",
+   "python": "MaterialSplitParticipant.checkpoint_restore",
+   "doc": "Restore fresh, identically bound roles from checkpoint_capture() bytes.",
+   "c": [
+    "swmm_split_material_checkpoint_destroy",
+    "swmm_split_material_checkpoint_from_bytes",
+    "swmm_split_material_checkpoint_last_error",
+    "swmm_split_material_checkpoint_restore",
+    "swmm_split_material_checkpoint_restore_at"
+   ],
+   "returns": "None",
+   "params": [
+    {
+     "name": "data",
+     "type": "bytes",
+     "required": true
+    },
+    {
+     "name": "expected_seconds",
+     "type": "float | None",
+     "required": false
+    }
+   ]
+  },
+  {
    "path": "material_split.configure",
    "target": "material_split",
    "name": "configure",

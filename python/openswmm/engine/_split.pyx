@@ -47,10 +47,26 @@ cdef extern from "openswmm/engine/openswmm_split_material.h":
     int swmm_split_material_packet_decode(SWMM_Engine, const char*, size_t, SWMM_SplitFrame*)
     int swmm_split_material_packet_copy(SWMM_Engine, const char*, size_t, char**)
     const char* swmm_split_material_last_error()
+    ctypedef void* SWMM_MaterialCheckpoint
+    int swmm_split_material_checkpoint_capabilities(SWMM_Engine, unsigned long*)
+    int swmm_split_material_checkpoint_prepare_outputs(SWMM_Engine)
+    int swmm_split_material_checkpoint_enable(SWMM_Engine, int)
+    int swmm_split_material_checkpoint_capture(SWMM_Engine, SWMM_MaterialCheckpoint*)
+    int swmm_split_material_checkpoint_restore(SWMM_Engine, SWMM_MaterialCheckpoint)
+    int swmm_split_material_checkpoint_restore_at(SWMM_Engine, SWMM_MaterialCheckpoint, double)
+    int swmm_split_material_checkpoint_from_bytes(const void*, size_t, SWMM_MaterialCheckpoint*)
+    int swmm_split_material_checkpoint_data(SWMM_MaterialCheckpoint, const void**, size_t*)
+    void swmm_split_material_checkpoint_destroy(SWMM_MaterialCheckpoint)
+    const char* swmm_split_material_checkpoint_last_error()
 
 cdef void _check_material(int code) except *:
     if code:
         message = swmm_split_material_last_error()
+        raise_for_code(code, message.decode('utf-8', 'replace') if message != NULL else None)
+
+cdef void _check_checkpoint(int code) except *:
+    if code:
+        message = swmm_split_material_checkpoint_last_error()
         raise_for_code(code, message.decode('utf-8', 'replace') if message != NULL else None)
 
 cdef bytes _material_text(text):
@@ -378,3 +394,57 @@ class MaterialSplitParticipant(SplitParticipant):
                 return result.decode('utf-8')
             finally:
                 swmm_split_packet_free(result)
+
+    def checkpoint_capabilities(self):
+        """Compiled material checkpoint features: bit 0 numerical state, bit 1 outputs."""
+        cdef unsigned long flags = 0
+        with self._owner._operation():
+            _check_checkpoint(swmm_split_material_checkpoint_capabilities(<SWMM_Engine><size_t>self._address(), &flags))
+        return flags
+
+    def checkpoint_prepare_outputs(self):
+        """Prepare this INITIALIZED role's checkpointable writer before start."""
+        cdef Solver owner = self._owner
+        owner._access.require_idle()
+        with owner._operation():
+            _check_checkpoint(swmm_split_material_checkpoint_prepare_outputs(<SWMM_Engine><size_t>self._address()))
+
+    def checkpoint_enable(self, bint outputs=False):
+        """Enable pair recovery once on the bound NETWORK at its fresh RUNNING boundary."""
+        cdef Solver owner = self._owner
+        owner._access.require_idle()
+        with owner._operation():
+            _check_checkpoint(swmm_split_material_checkpoint_enable(<SWMM_Engine><size_t>self._address(), outputs))
+
+    def checkpoint_capture(self):
+        """Capture the bound pair at an acknowledged boundary as same-platform native bytes."""
+        cdef SWMM_MaterialCheckpoint snapshot = NULL
+        cdef const void* data = NULL
+        cdef size_t length = 0
+        cdef Solver owner = self._owner
+        owner._access.require_idle()
+        with owner._operation():
+            _check_checkpoint(swmm_split_material_checkpoint_capture(<SWMM_Engine><size_t>self._address(), &snapshot))
+        try:
+            _check_checkpoint(swmm_split_material_checkpoint_data(snapshot, &data, &length))
+            return (<const char*>data)[:length]
+        finally:
+            swmm_split_material_checkpoint_destroy(snapshot)
+
+    def checkpoint_restore(self, bytes data not None, expected_seconds=None):
+        """Restore fresh, identically bound roles from checkpoint_capture() bytes.
+
+        With expected_seconds, the saved clock must equal it exactly (a collective clock join).
+        """
+        cdef SWMM_MaterialCheckpoint snapshot = NULL
+        cdef Solver owner = self._owner
+        owner._access.require_idle()
+        _check_checkpoint(swmm_split_material_checkpoint_from_bytes(<const char*>data, len(data), &snapshot))
+        try:
+            with owner._operation():
+                if expected_seconds is None:
+                    _check_checkpoint(swmm_split_material_checkpoint_restore(<SWMM_Engine><size_t>self._address(), snapshot))
+                else:
+                    _check_checkpoint(swmm_split_material_checkpoint_restore_at(<SWMM_Engine><size_t>self._address(), snapshot, expected_seconds))
+        finally:
+            swmm_split_material_checkpoint_destroy(snapshot)
