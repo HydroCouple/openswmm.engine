@@ -572,6 +572,33 @@ TEST(LIDBarrel, CoveredRainReturnConservesWater) {
     EXPECT_LT(std::fabs(error), 0.001);
 }
 
+// Issue #206. Barrel overflow (S_return) and covered-barrel rain (S_covered) returned to the
+// pervious area join its ponded water. Leaving them out of the mixing volume created mass.
+TEST(LIDBarrel, ReturnedOutflowKeepsRunoffQualityBalance) {
+    std::filesystem::create_directories("lid_area_out");
+    SWMMEngine engine;
+    ASSERT_EQ(swmm_engine_open(&engine, "lid_return_quality.inp", "lid_area_out/return_quality.rpt",
+                               "lid_area_out/return_quality.out", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(&engine), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(&engine, 0), SWMM_OK);
+    double elapsed;
+    do {
+        ASSERT_EQ(swmm_engine_step(&engine, &elapsed), SWMM_OK);
+    } while (elapsed > 0.0);
+    ASSERT_EQ(swmm_engine_end(&engine), SWMM_OK);
+
+    // Reference runoff quality totals (lb) from the legacy solver with this deck.
+    const auto& mb = engine.context().mass_balance;
+    EXPECT_NEAR(mb.qual_wet_deposition[0], 9.058, 0.002);
+    EXPECT_NEAR(mb.qual_bmp_removal[0], 4.105, 0.002);
+    EXPECT_NEAR(mb.qual_runoff_load[0], 4.953, 0.002);
+    const double in = mb.qual_init_buildup[0] + mb.qual_surface_buildup[0] +
+                      mb.qual_wet_deposition[0];
+    const double out = mb.qual_sweeping[0] + mb.qual_infil_loss[0] + mb.qual_bmp_removal[0] +
+                       mb.qual_runoff_load[0] + mb.qual_final_buildup[0];
+    EXPECT_LT(std::fabs(1.0 - out / in), 0.005);
+}
+
 // ============================================================================
 // Vegetative swale tests
 // ============================================================================

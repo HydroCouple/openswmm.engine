@@ -705,11 +705,14 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         // in subcatch_getRunon — one-step lag), after the transfer above.
         {
             double q_ret = ctx.subcatches.lid_return_to_perv_cfs[ui];
+            double applied = 0.0;
             if (q_ret > 0.0 && total_area > 0.0 && fp > 0.0) {
                 double perv_area = total_area * fp;
                 runon_perv += q_ret / perv_area; // ft/sec over pervious area
+                applied = q_ret;
             }
             ctx.subcatches.lid_return_to_perv_cfs[ui] = 0.0; // consume
+            ctx.subcatches.lid_return_applied_cfs[ui] = applied; // ponded-quality inflow
         }
 
         // Gap #20: When snow is active, use snow-modified net precip per subarea

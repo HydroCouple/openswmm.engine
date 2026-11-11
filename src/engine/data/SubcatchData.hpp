@@ -656,6 +656,15 @@ struct SubcatchData {
     std::vector<double> lid_return_to_perv_cfs;
 
     /**
+     * @brief LID return flow the runoff step applied to the pervious area (CFS).
+     * @details Written by RunoffSolver when it consumes lid_return_to_perv_cfs and read later in
+     *          the same step by the ponded-quality mix, whose inflow volume must include this
+     *          water. Not carried between steps.
+     * @see Legacy: lid_getFlowToPerv() in subcatch_getRunoff's Vinflow
+     */
+    std::vector<double> lid_return_applied_cfs;
+
+    /**
      * @brief LID drain flow routed to a target subcatchment (CFS).
      * @details Accumulated each runoff step when drain_subcatch >= 0.
      *          Drained into runon_inflow[] by assembleRunon() (after the clear),
@@ -860,6 +869,7 @@ struct SubcatchData {
         snow_melt_age_perv.assign(un, -1.0);
         total_lid_area_ft2.assign(un, 0.0);
         lid_return_to_perv_cfs.assign(un, 0.0);
+        lid_return_applied_cfs.assign(un, 0.0);
         lid_drain_runon_cfs.assign(un, 0.0);
     }
 
@@ -973,6 +983,7 @@ struct SubcatchData {
         g(snow_melt_age_perv, -1.0);
         g(total_lid_area_ft2, 0.0);
         g(lid_return_to_perv_cfs, 0.0);
+        g(lid_return_applied_cfs, 0.0);
         g(lid_drain_runon_cfs, 0.0);
         if (conc_n_pollutants > 0) {
             const auto size = un * static_cast<std::size_t>(conc_n_pollutants);
@@ -1103,6 +1114,7 @@ struct SubcatchData {
         r(snow_melt_age_perv);
         r(total_lid_area_ft2);
         r(lid_return_to_perv_cfs);
+        r(lid_return_applied_cfs);
         r(lid_drain_runon_cfs);
         r(outlet_name);
         r(gage_name);
@@ -1223,6 +1235,7 @@ struct SubcatchData {
         e(snow_melt_age_perv);
         e(total_lid_area_ft2);
         e(lid_return_to_perv_cfs);
+        e(lid_return_applied_cfs);
         e(lid_drain_runon_cfs);
 
         // Flat 2D quality arrays: [sc * np + p]

@@ -711,7 +711,8 @@ void reactPondedPools(SimulationContext& ctx, double dt, SurfaceScratch& scratch
             continue;
         const double rain_volume = std::max(0.0, ctx.subcatches.rainfall[i]) * area * dt;
         const double volume = ctx.subcatches.old_ponded_depth[i] * area + rain_volume +
-                              ctx.subcatches.runon_inflow[i] * dt;
+                              ctx.subcatches.runon_inflow[i] * dt +
+                              ctx.subcatches.lid_return_applied_cfs[i] * dt;
         if (!(volume > 0.0))
             continue; // a dry store is not a reactor
         const double litres = volume * litres_per_ft3;

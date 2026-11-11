@@ -536,6 +536,9 @@ void step(SimulationContext& ctx, Block& b, double dt_runoff, double old_runoff_
                     // opening depth is kept aside rather than read back here).
                     double v_ponded_pq = ctx.subcatches.old_ponded_depth[ui] * area_ft2_pq;
                     double v_inflow_pq = v_rain_pq + v_runon_pq + v_ponded_pq;
+                    // LID outflow returned to the pervious area this step mixes
+                    // into the same ponded water (issue #206).
+                    v_inflow_pq += ctx.subcatches.lid_return_applied_cfs[ui] * dt_runoff;
 
                     // Wet deposition mass: c_rain[mg/L] * LperFT3[L/ft3] * v_rain[ft3]
                     double c_rain_pq = (up < (*b.c_rain).size()) ? (*b.c_rain)[up] : 0.0;

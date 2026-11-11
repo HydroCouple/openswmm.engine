@@ -701,6 +701,13 @@ double subcatch_getRunoff(int subcatchIndex, double tStep) {
     vRunon = Subcatch[subcatchIndex].runon * tStep * nonLidArea;
     Vinflow = vRunon + subcatch_getDepth(subcatchIndex) * nonLidArea;
 
+    // --- include the LID outflow that subcatch_getRunon returned to the
+    //     pervious area, so ponded quality is mixed over all of its water
+    //     (issue #206)
+    if (Subcatch[subcatchIndex].lidArea > 0.0 && Subcatch[subcatchIndex].fracImperv < 1.0 &&
+        nonLidArea > 0.0)
+        Vinflow += lid_getFlowToPerv(subcatchIndex) * tStep;
+
     // --- find LID runon only if LID occupies full subcatchment
     if (nonLidArea <= 0.0)
         vRunon = Subcatch[subcatchIndex].runon * tStep * Subcatch[subcatchIndex].area;
