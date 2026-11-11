@@ -1553,10 +1553,10 @@ SWMM_ENGINE_API int swmm_lid_set_removal(SWMM_Engine engine, int idx, int consti
 /**
  * @brief Set the porous-pavement layer properties for a LID control.
  *
- * @details Used by PERM_PAVEMENT (and any LID with a `PAVEMENT` line). The six
+ * @details Used by PERM_PAVEMENT (and any LID with a `PAVEMENT` line). Updates the first six
  *          values of the `[LID_CONTROLS] ... PAVEMENT` line, in input-file
  *          units. Pre-start-only (BUILDING/OPENED) — the layer seeds per-unit
- *          LID state at start().
+ *          LID state at start(). An existing regeneration degree is preserved.
  *
  * @param[in] engine Engine handle.
  * @param[in] idx Zero-based LID index.
@@ -1579,6 +1579,15 @@ SWMM_ENGINE_API int swmm_lid_set_removal(SWMM_Engine engine, int idx, int consti
 SWMM_ENGINE_API int swmm_lid_set_pavement(SWMM_Engine engine, int idx, double thick,
                                           double void_ratio, double frac_imperv, double ksat,
                                           double clog_factor, double regen_days);
+
+/** @brief Set all seven PAVEMENT values in input-file units.
+ * @copydetails swmm_lid_set_pavement
+ * @param[in] regen_degree Fraction of clogging removed per interval, from 0 to 1 inclusive.
+ */
+SWMM_ENGINE_API int swmm_lid_set_pavement_ex(SWMM_Engine engine, int idx, double thick,
+                                             double void_ratio, double frac_imperv, double ksat,
+                                             double clog_factor, double regen_days,
+                                             double regen_degree);
 
 /**
  * @brief Set the drainage-mat layer properties for a LID control.
@@ -1745,6 +1754,15 @@ SWMM_ENGINE_API int swmm_lid_get_drain(SWMM_Engine engine, int idx, double* coef
 SWMM_ENGINE_API int swmm_lid_get_pavement(SWMM_Engine engine, int idx, double* thick,
                                           double* void_ratio, double* frac_imperv, double* ksat,
                                           double* clog_factor, double* regen_days);
+
+/** @brief Read all seven stored PAVEMENT values.
+ * @copydetails swmm_lid_get_pavement
+ * @param[out] regen_degree Optional output for the fraction of clogging removed per interval.
+ */
+SWMM_ENGINE_API int swmm_lid_get_pavement_ex(SWMM_Engine engine, int idx, double* thick,
+                                             double* void_ratio, double* frac_imperv, double* ksat,
+                                             double* clog_factor, double* regen_days,
+                                             double* regen_degree);
 
 /**
  * @brief Read the stored drainmat layer parameters.

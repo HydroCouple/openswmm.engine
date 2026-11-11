@@ -177,7 +177,7 @@ static void ensure_lid_capacity(LidControlStore& lc, int idx) {
     if (lc.soil.size() < n)
         lc.soil.resize(n, {0, 0, 0, 0, 0, 0, 0});
     if (lc.pavement.size() < n)
-        lc.pavement.resize(n, {0, 0, 0, 0, 0, 0});
+        lc.pavement.resize(n);
     if (lc.storage.size() < n)
         lc.storage.resize(n, {0, 0, 0, 0});
     if (lc.drain.size() < n)
@@ -878,8 +878,16 @@ void handle_lid_controls(SimulationContext& ctx, const std::vector<std::string>&
             for (std::size_t i = 0; i < 7 && (i + 2) < tok.size(); ++i)
                 ctx.lid_controls.soil[idx][i] = to_double(tok[2 + i]);
         } else if (layer == "PAVEMENT") {
+            double degree = 0.0;
+            if (tok.size() > 8 && (!parse_double_strict(tok[8], degree) ||
+                                   !(degree >= 0.0 && degree <= 1.0))) {
+                ctx.errors.push_back(format_error(ERR_NUMBER, tok[8]));
+                continue;
+            }
+            auto& pavement = ctx.lid_controls.pavement[idx];
             for (std::size_t i = 0; i < 6 && (i + 2) < tok.size(); ++i)
-                ctx.lid_controls.pavement[idx][i] = to_double(tok[2 + i]);
+                pavement[i] = to_double(tok[2 + i]);
+            pavement[6] = degree;
         } else if (layer == "STORAGE") {
             for (std::size_t i = 0; i < 4 && (i + 2) < tok.size(); ++i)
                 ctx.lid_controls.storage[idx][i] = to_double(tok[2 + i]);

@@ -1409,9 +1409,9 @@ SWMM_ENGINE_API int swmm_lid_set_removal(SWMM_Engine engine, int idx, int consti
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_lid_set_pavement(SWMM_Engine engine, int idx, double thick,
-                                          double void_ratio, double frac_imperv, double ksat,
-                                          double clog_factor, double regen_days) {
+static int set_pavement(SWMM_Engine engine, int idx, double thick, double void_ratio,
+                        double frac_imperv, double ksat, double clog_factor, double regen_days,
+                        const double* regen_degree) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     if (ctx.state != openswmm::EngineState::BUILDING && ctx.state != openswmm::EngineState::OPENED)
@@ -1420,9 +1420,9 @@ SWMM_ENGINE_API int swmm_lid_set_pavement(SWMM_Engine engine, int idx, double th
     if (ctx.lid_controls.lid_type[idx] == "NODE")
         return SWMM_ERR_BADPARAM;
     if (thick < 0.0 || void_ratio < 0.0 || frac_imperv < 0.0 || frac_imperv > 1.0 || ksat < 0.0 ||
-        clog_factor < 0.0 || regen_days < 0.0)
+        clog_factor < 0.0 || regen_days < 0.0 ||
+        (regen_degree && !(*regen_degree >= 0.0 && *regen_degree <= 1.0)))
         return SWMM_ERR_BADPARAM;
-    // PAVEMENT layer: [0]=Thick, [1]=VoidRatio, [2]=FracImperv, [3]=Ksat, [4]=ClogFactor, [5]=RegenDays
     auto& p = ctx.lid_controls.pavement[static_cast<std::size_t>(idx)];
     const auto previous = p;
     p[0] = thick;
@@ -1431,6 +1431,8 @@ SWMM_ENGINE_API int swmm_lid_set_pavement(SWMM_Engine engine, int idx, double th
     p[3] = ksat;
     p[4] = clog_factor;
     p[5] = regen_days;
+    if (regen_degree)
+        p[6] = *regen_degree;
     if (std::any_of(ctx.node_subtypes.storages.lid.begin(), ctx.node_subtypes.storages.lid.end(),
                     [idx](const auto& cfg) { return cfg.control == idx; })) {
         if (!openswmm::lidnode::validateStack(openswmm::lidnode::layers(ctx, idx)).empty()) {
@@ -1440,6 +1442,21 @@ SWMM_ENGINE_API int swmm_lid_set_pavement(SWMM_Engine engine, int idx, double th
     }
     openswmm::lidnode::sync(ctx, idx);
     return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_lid_set_pavement(SWMM_Engine engine, int idx, double thick,
+                                          double void_ratio, double frac_imperv, double ksat,
+                                          double clog_factor, double regen_days) {
+    return set_pavement(engine, idx, thick, void_ratio, frac_imperv, ksat, clog_factor, regen_days,
+                        nullptr);
+}
+
+SWMM_ENGINE_API int swmm_lid_set_pavement_ex(SWMM_Engine engine, int idx, double thick,
+                                             double void_ratio, double frac_imperv, double ksat,
+                                             double clog_factor, double regen_days,
+                                             double regen_degree) {
+    return set_pavement(engine, idx, thick, void_ratio, frac_imperv, ksat, clog_factor, regen_days,
+                        &regen_degree);
 }
 
 SWMM_ENGINE_API int swmm_lid_set_drainmat(SWMM_Engine engine, int idx, double thick,
@@ -1571,6 +1588,14 @@ SWMM_ENGINE_API int swmm_lid_get_drain(SWMM_Engine engine, int idx, double* coef
 SWMM_ENGINE_API int swmm_lid_get_pavement(SWMM_Engine engine, int idx, double* thick,
                                           double* void_ratio, double* frac_imperv, double* ksat,
                                           double* clog_factor, double* regen_days) {
+    return swmm_lid_get_pavement_ex(engine, idx, thick, void_ratio, frac_imperv, ksat, clog_factor,
+                                    regen_days, nullptr);
+}
+
+SWMM_ENGINE_API int swmm_lid_get_pavement_ex(SWMM_Engine engine, int idx, double* thick,
+                                             double* void_ratio, double* frac_imperv, double* ksat,
+                                             double* clog_factor, double* regen_days,
+                                             double* regen_degree) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.lid_controls.count());
@@ -1587,6 +1612,8 @@ SWMM_ENGINE_API int swmm_lid_get_pavement(SWMM_Engine engine, int idx, double* t
         *clog_factor = p[4];
     if (regen_days)
         *regen_days = p[5];
+    if (regen_degree)
+        *regen_degree = p[6];
     return SWMM_OK;
 }
 

@@ -1270,11 +1270,18 @@ class LIDs:
 
     def set_pavement(self, int idx, *,
                      double thick, double void_ratio, double frac_imperv,
-                     double ksat, double clog_factor=0.0, double regen_days=0.0) -> None:
-        """Set the porous-pavement layer (PERM_PAVEMENT LIDs)."""
+                     double ksat, double clog_factor=0.0, double regen_days=0.0,
+                     regen_degree=None) -> None:
+        """Set the pavement layer. Omit regen_degree to retain the stored fraction.
+        A supplied degree must be in [0, 1] and is applied each regeneration interval.
+        """
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_lid_set_pavement(h, idx, thick, void_ratio, frac_imperv,
-                                     ksat, clog_factor, regen_days))
+        if regen_degree is None:
+            _check(swmm_lid_set_pavement(h, idx, thick, void_ratio, frac_imperv,
+                                         ksat, clog_factor, regen_days))
+        else:
+            _check(swmm_lid_set_pavement_ex(h, idx, thick, void_ratio, frac_imperv,
+                                            ksat, clog_factor, regen_days, regen_degree))
 
     def set_drainmat(self, int idx, *,
                      double thick, double void_frac, double roughness) -> None:
@@ -1375,16 +1382,17 @@ class LIDs:
         """Read the porous-pavement layer. Inverse of :meth:`set_pavement`.
 
         @return: Mapping ``thick``, ``void_ratio``, ``frac_imperv``, ``ksat``,
-            ``clog_factor``, ``regen_days``.
+            ``clog_factor``, ``regen_days``, ``regen_degree``.
         @rtype: dict
         """
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef double thick = 0.0, void_ratio = 0.0, frac_imperv = 0.0
-        cdef double ksat = 0.0, clog_factor = 0.0, regen_days = 0.0
-        _check(swmm_lid_get_pavement(h, idx, &thick, &void_ratio, &frac_imperv,
-                                     &ksat, &clog_factor, &regen_days))
+        cdef double ksat = 0.0, clog_factor = 0.0, regen_days = 0.0, regen_degree = 0.0
+        _check(swmm_lid_get_pavement_ex(h, idx, &thick, &void_ratio, &frac_imperv,
+                                        &ksat, &clog_factor, &regen_days, &regen_degree))
         return {"thick": thick, "void_ratio": void_ratio, "frac_imperv": frac_imperv,
-                "ksat": ksat, "clog_factor": clog_factor, "regen_days": regen_days}
+                "ksat": ksat, "clog_factor": clog_factor, "regen_days": regen_days,
+                "regen_degree": regen_degree}
 
     def get_drainmat(self, int idx) -> dict:
         """Read the drainage-mat layer. Inverse of :meth:`set_drainmat`.

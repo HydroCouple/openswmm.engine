@@ -371,7 +371,7 @@ void LIDSolver::init(SimulationContext& ctx) {
             g.drain_hclose[us] = p[5] / ucfRainDepth; // in|mm → ft
         }
 
-        // PAVEMENT layer: [0]=Thick, [1]=VoidRatio, [2]=FracImperv, [3]=Ksat, [4]=ClogFactor, [5]=RegenDays
+        // PAVEMENT layer: [0]=Thick, [1]=VoidRatio, [2]=FracImperv, [3]=Ksat, [4]=ClogFactor, [5]=RegenDays, [6]=RegenDegree
         if (uli < ctx.lid_controls.pavement.size()) {
             const auto& p = ctx.lid_controls.pavement[uli];
             g.pave_thick[us] = p[0] / ucfRainDepth;                     // in|mm → ft
@@ -379,13 +379,9 @@ void LIDSolver::init(SimulationContext& ctx) {
             g.pave_imperv_frac[us] = p[2];
             g.pave_ksat[us] = p[3] / ucfRainfall; // in/hr|mm/hr → ft/sec
             g.pave_clog_factor[us] = p[4];
-            if (p[5] > 0.0) {
-                g.pave_regen_days[us] = p[5];
-                g.pave_regen_deg[us] = (uli < ctx.lid_controls.pavement.size() && p[5] > 0.0)
-                                           ? 0.0
-                                           : 0.0; // degree parsed separately if available
-                g.next_regen_day[us] = p[5];      // first regen after p[5] days
-            }
+            g.pave_regen_days[us] = p[5];
+            g.pave_regen_deg[us] = p[6];
+            g.next_regen_day[us] = p[5]; // first regeneration after one interval
         }
 
         // DRAINMAT layer: [0]=Thick, [1]=VoidRatio, [2]=Roughness

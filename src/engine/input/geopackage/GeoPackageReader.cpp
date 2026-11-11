@@ -2185,8 +2185,11 @@ static void read_lid_controls(sqlite3* db, SimulationContext& ctx, const std::st
             for (int k = 0; k < 7; ++k)
                 ctx.lid_controls.soil[idx][k] = column_double(stmt.get(), 2 + k);
         } else if (layer == "PAVEMENT") {
-            for (int k = 0; k < 6; ++k)
-                ctx.lid_controls.pavement[idx][k] = column_double(stmt.get(), 2 + k);
+            auto& pavement = ctx.lid_controls.pavement[idx];
+            for (int k = 0; k < static_cast<int>(pavement.size()); ++k)
+                pavement[k] = column_double(stmt.get(), 2 + k);
+            if (!(pavement[6] >= 0.0 && pavement[6] <= 1.0))
+                throw std::runtime_error("Invalid pavement regeneration degree for LID " + name);
         } else if (layer == "STORAGE") {
             for (int k = 0; k < 4; ++k)
                 ctx.lid_controls.storage[idx][k] = column_double(stmt.get(), 2 + k);

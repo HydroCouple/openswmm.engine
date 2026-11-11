@@ -160,7 +160,7 @@ class LIDs:
     def set_pavement(
         self, idx: int, *,
         thick: float, void_ratio: float, frac_imperv: float, ksat: float,
-        clog_factor: float = ..., regen_days: float = ...,
+        clog_factor: float = ..., regen_days: float = ..., regen_degree: float | None = ...,
     ) -> None: ...
     def set_drainmat(
         self, idx: int, *, thick: float, void_frac: float, roughness: float,

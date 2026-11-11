@@ -125,7 +125,13 @@ class TestLidLayers(EngineSolverCase):
         pp = lids.add("PP_RT", LidType.PERM_PAVEMENT)
         lids.set_pavement(pp, thick=6.0, void_ratio=0.15, frac_imperv=0.0,
                           ksat=100.0, clog_factor=0.0, regen_days=0.0)
+        self.assertEqual(lids.get_pavement(pp)["regen_degree"], 0.0)
+        lids.set_pavement(pp, thick=6.0, void_ratio=0.15, frac_imperv=0.0,
+                          ksat=100.0, regen_days=0.125, regen_degree=0.5)
+        lids.set_pavement(pp, thick=6.0, void_ratio=0.15, frac_imperv=0.0,
+                          ksat=100.0, regen_days=0.125)
         pav = lids.get_pavement(pp)
+        self.assertEqual(pav["regen_degree"], 0.5)
         self.assertAlmostEqual(pav["thick"], 6.0, places=6)
         self.assertAlmostEqual(pav["void_ratio"], 0.15, places=6)
         self.assertAlmostEqual(pav["ksat"], 100.0, places=6)

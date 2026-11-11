@@ -23,6 +23,8 @@ retroactive.
 
 ## [Unreleased]
 
+- Permeable pavement now recovers the specified fraction of clogging at each regeneration interval. INP and GeoPackage round trips and the C and Python APIs preserve the regeneration degree (#199).
+
 ### Alpha.4 review corrections (2026-11-01)
 
 - Reaction RATE species integrate together under both coupling options; FULL also refreshes algebraic species at intermediate integration stages. Reaction scratch is isolated by simulation thread.

@@ -2176,8 +2176,13 @@ std::string SWMMEngine::checkpointModel() const {
         auto used = gage::gageIsUsed(ctx_, i);
         a(used);
     }
-    a(lc.names, lc.lid_type, lc.surface, lc.soil, lc.pavement, lc.storage, lc.drain, lc.drainmat,
-      lc.removals, lu.subcatch_index, lu.lid_index, lu.number, lu.area, lu.width, lu.init_sat,
+    a(lc.names, lc.lid_type, lc.surface, lc.soil);
+    // Keep the model identity of older checkpoints when all degrees are zero.
+    if (std::any_of(lc.pavement.begin(), lc.pavement.end(), [](const auto& p) { return p[6] != 0.0; }))
+        a(lc.pavement);
+    else
+        a.sequence(lc.pavement, [&](auto& p) { a(p[0], p[1], p[2], p[3], p[4], p[5]); });
+    a(lc.storage, lc.drain, lc.drainmat, lc.removals, lu.subcatch_index, lu.lid_index, lu.number, lu.area, lu.width, lu.init_sat,
       lu.from_imperv, lu.to_perv, lu.drain_to, lu.from_perv);
     auto runoff = runoff_;
     auto lid = lid_.waterTrial();

@@ -1329,6 +1329,20 @@ TEST_F(GeoPackageTest, SubcatchmentsRoundTrip) {
     EXPECT_DOUBLE_EQ(ctx_in.subcatches.snow_scale_factor[s2], 1.0);
 }
 
+TEST_F(GeoPackageTest, PavementRegenerationRoundTrip) {
+    auto model = build_test_context();
+    model.lid_names.add("PP");
+    model.lid_controls.names.push_back("PP");
+    model.lid_controls.lid_type.push_back("PP");
+    model.lid_controls.pavement.push_back({6, 0.25, 0, 2, 5, 0.125, 0.625});
+    ASSERT_EQ(write_to_file(db_path_, model, "test_run"), 0);
+
+    SimulationContext loaded;
+    ASSERT_EQ(read_from_file(db_path_, loaded, "test_run"), 0);
+    ASSERT_EQ(loaded.lid_controls.pavement.size(), 1u);
+    EXPECT_EQ(loaded.lid_controls.pavement.front(), model.lid_controls.pavement.front());
+}
+
 TEST_F(GeoPackageTest, InfiltrationRoundTrip) {
     auto ctx_out = build_test_context();
     ASSERT_EQ(write_to_file(db_path_, ctx_out, "test_run"), 0);

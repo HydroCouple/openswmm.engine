@@ -51,6 +51,7 @@
 
 #include "InpWriter.hpp"
 #include "../transport/components/ReactionModule/ReactionsWriter.hpp"
+#include <algorithm>
 #include <memory>
 #include <limits>
 #include "AtomicOutputFile.hpp"
@@ -3025,19 +3026,13 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                     std::fprintf(f, "\n");
                 }
             }
-            // PAVEMENT (6 params)
+            // PAVEMENT
             if (uj < ctx.lid_controls.pavement.size()) {
                 const auto& p = ctx.lid_controls.pavement[uj];
-                bool has = false;
-                for (int k = 0; k < 6; ++k)
-                    if (p[k] != 0.0) {
-                        has = true;
-                        break;
-                    }
-                if (has) {
+                if (std::any_of(p.begin(), p.end(), [](double v) { return v != 0.0; })) {
                     std::fprintf(f, "%-16s PAVEMENT   ", name);
-                    for (int k = 0; k < 6; ++k)
-                        std::fprintf(f, " %.17g", p[k]);
+                    for (double value : p)
+                        std::fprintf(f, " %.17g", value);
                     std::fprintf(f, "\n");
                 }
             }

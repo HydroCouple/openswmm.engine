@@ -51,6 +51,7 @@
 #include <string>
 #include <fstream>
 #include <iterator>
+#include <limits>
 
 namespace {
 
@@ -384,6 +385,18 @@ TEST(EditorRoundtripApi, LidLayersAndTypeRoundTrip) {
     EXPECT_DOUBLE_EQ(p_void, 0.15);
     EXPECT_DOUBLE_EQ(p_fi, 0.0);
     EXPECT_DOUBLE_EQ(p_ksat, 100.0);
+
+    // Older setters preserve the degree. A rejected update is atomic.
+    ASSERT_EQ(swmm_lid_set_pavement_ex(e, 1, 6, 0.15, 0, 2, 5, 0.125, 0.5), SWMM_OK);
+    ASSERT_EQ(swmm_lid_set_pavement(e, 1, 7, 0.15, 0, 2, 5, 0.125), SWMM_OK);
+    for (double invalid : {-0.1, 1.1, std::numeric_limits<double>::quiet_NaN()})
+        EXPECT_EQ(swmm_lid_set_pavement_ex(e, 1, 8, 0.15, 0, 2, 5, 0.125, invalid),
+                  SWMM_ERR_BADPARAM);
+    double degree = -1.0;
+    ASSERT_EQ(swmm_lid_get_pavement_ex(e, 1, &p_thick, nullptr, nullptr, nullptr, nullptr, nullptr,
+                                      &degree), SWMM_OK);
+    EXPECT_DOUBLE_EQ(p_thick, 7.0);
+    EXPECT_DOUBLE_EQ(degree, 0.5);
 
     // DRAINMAT (3 vals) round-trips on a green-roof control.
     ASSERT_EQ(swmm_lid_add(e, "GR1", /*GREEN_ROOF*/ 2), SWMM_OK);

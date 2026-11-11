@@ -955,6 +955,7 @@ cdef extern from "openswmm_infrastructure.h":
     cdef int swmm_lid_get_removal(SWMM_Engine e, int idx, int constituent, double* percent)
     cdef int swmm_lid_set_removal(SWMM_Engine e, int idx, int constituent, double percent)
     cdef int swmm_lid_set_pavement(SWMM_Engine e, int idx, double thick, double void_ratio, double frac_imperv, double ksat, double clog_factor, double regen_days)
+    cdef int swmm_lid_set_pavement_ex(SWMM_Engine e, int idx, double thick, double void_ratio, double frac_imperv, double ksat, double clog_factor, double regen_days, double regen_degree)
     cdef int swmm_lid_set_drainmat(SWMM_Engine e, int idx, double thick, double void_frac, double roughness)
     cdef int swmm_lid_get_type(SWMM_Engine e, int idx, int* type)
     cdef int swmm_lid_set_type(SWMM_Engine e, int idx, int type)
@@ -963,6 +964,7 @@ cdef extern from "openswmm_infrastructure.h":
     cdef int swmm_lid_get_storage(SWMM_Engine e, int idx, double* thick, double* void_frac, double* ksat)
     cdef int swmm_lid_get_drain(SWMM_Engine e, int idx, double* coeff, double* expon, double* offset)
     cdef int swmm_lid_get_pavement(SWMM_Engine e, int idx, double* thick, double* void_ratio, double* frac_imperv, double* ksat, double* clog_factor, double* regen_days)
+    cdef int swmm_lid_get_pavement_ex(SWMM_Engine e, int idx, double* thick, double* void_ratio, double* frac_imperv, double* ksat, double* clog_factor, double* regen_days, double* regen_degree)
     cdef int swmm_lid_get_drainmat(SWMM_Engine e, int idx, double* thick, double* void_frac, double* roughness)
     cdef int swmm_lid_count(SWMM_Engine e)
     # LID usage

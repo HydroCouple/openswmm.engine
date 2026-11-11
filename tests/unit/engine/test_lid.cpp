@@ -32,6 +32,7 @@
 #include <vector>
 
 #include <openswmm/engine/openswmm_engine.h>
+#include <openswmm/engine/openswmm_model.h>
 #include <openswmm/engine/openswmm_subcatchments.h>
 
 #include "hydrology/LID.hpp"
@@ -1281,6 +1282,37 @@ TEST(LIDStorageClog, CloggingReducesExfiltration) {
 // ============================================================================
 // Phase 3: Pavement regeneration
 // ============================================================================
+
+// Issue #199. Five one-acre pavements receive the same 24-hour, 1 in/h storm.
+TEST(LIDPavementRegen, InpRoundTripReproducesLegacyRunoff) {
+    std::filesystem::create_directories("lid_area_out");
+    const char* saved = "lid_area_out/pavement_regen.inp";
+    SWMMEngine engine;
+    ASSERT_EQ(swmm_engine_open(&engine, "lid_pavement_regen.inp", "lid_area_out/regen_input.rpt",
+                          "lid_area_out/regen_input.out", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_model_write(&engine, saved), SWMM_OK);
+
+    SWMMEngine reopened;
+    ASSERT_EQ(swmm_engine_open(&reopened, saved, "lid_area_out/regen.rpt", "lid_area_out/regen.out",
+                               nullptr), SWMM_OK) << swmm_get_last_error_msg(&reopened);
+    ASSERT_EQ(swmm_engine_initialize(&reopened), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(&reopened, 0), SWMM_OK);
+    double elapsed;
+    do {
+        ASSERT_EQ(swmm_engine_step(&reopened, &elapsed), SWMM_OK);
+    } while (elapsed > 0.0);
+
+    // Reference runoff depths (inches) from the legacy solver with this deck.
+    struct Case { const char* subcatch; double inches; };
+    for (const Case c : {Case{"S_omitted", 19.372}, Case{"S_zero", 19.372},
+                         Case{"S_half", 7.777}, Case{"S_full", 0.0}, Case{"S_disabled", 19.372}}) {
+        SCOPED_TRACE(c.subcatch);
+        int idx = swmm_subcatch_index(&reopened, c.subcatch);
+        double volume;
+        ASSERT_EQ(swmm_subcatch_get_stat_runoff_vol(&reopened, idx, &volume), SWMM_OK);
+        EXPECT_NEAR(volume * 12.0 / 43560.0, c.inches, 0.01);
+    }
+}
 
 TEST(LIDPavementRegen, RegenerationReducesClogging) {
     LIDGroupSoA g;

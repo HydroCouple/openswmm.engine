@@ -166,8 +166,9 @@ struct LidControlStore {
     /** @brief SOIL layer params (up to 7 values). */
     std::vector<std::array<double, 7>> soil;
 
-    /** @brief PAVEMENT layer params (up to 6 values). */
-    std::vector<std::array<double, 6>> pavement;
+    /** @brief PAVEMENT layer params (thickness, void ratio, impervious fraction, permeability,
+     * clogging factor, regeneration interval in days, fraction regenerated). */
+    std::vector<std::array<double, 7>> pavement;
 
     /** @brief STORAGE layer params (up to 4 values). */
     std::vector<std::array<double, 4>> storage;
