@@ -100,6 +100,12 @@ First-time contributors must sign the project [CLA](CLA.md) before a pull reques
 
 Signing is automated through [CLA Assistant](https://cla-assistant.io) — when you open your first PR, a bot comments with a one-click sign-in link. The CLA covers all subsequent contributions, so you only sign once. Corporate contributors should additionally submit a CCLA per [CLA §6](CLA.md#6-corporate-contributors).
 
+## How to cite
+
+OpenSWMM Engine is developed by HydroCouple: <https://github.com/HydroCouple/openswmm.engine>.
+
+If you use it in your work, please cite the version you used. GitHub's **Cite this repository** button, generated from [CITATION.cff](CITATION.cff), gives APA and BibTeX entries.
+
 ## License
 
 Apache License, Version 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE). Original EPA SWMM material is in the public domain under 17 USC § 105 and is not subject to the Apache license grant.

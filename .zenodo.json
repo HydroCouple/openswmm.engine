@@ -1,0 +1,40 @@
+{
+  "title": "OpenSWMM Engine",
+  "upload_type": "software",
+  "description": "<p>OpenSWMM Engine, developed by HydroCouple (<a href=\"https://github.com/HydroCouple/openswmm.engine\">github.com/HydroCouple/openswmm.engine</a>), is an open-source hydrology, hydraulics and water-quality simulation engine for stormwater, wastewater and combined sewer systems. It is built on the EPA Storm Water Management Model (SWMM) 5.x and provides a reentrant C++20 engine, a public C API, Python bindings, two-dimensional surface flow and a command-line solver.</p><p>Portions are derived from EPA SWMM, which is in the public domain. The U.S. Environmental Protection Agency does not endorse this software.</p>",
+  "creators": [
+    {
+      "name": "Buahin, Caleb",
+      "orcid": "0000-0002-9859-2264"
+    },
+    {
+      "name": "HydroCouple Developers"
+    }
+  ],
+  "license": "apache-2.0",
+  "keywords": [
+    "stormwater",
+    "urban drainage",
+    "hydrology",
+    "hydraulics",
+    "water quality",
+    "SWMM",
+    "two-dimensional surface flow"
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/HydroCouple/openswmm.engine",
+      "relation": "isSupplementTo",
+      "resource_type": "software"
+    },
+    {
+      "identifier": "https://hydrocouple.org/openswmm.engine",
+      "relation": "isDocumentedBy"
+    },
+    {
+      "identifier": "https://www.epa.gov/water-research/storm-water-management-model-swmm",
+      "relation": "isDerivedFrom",
+      "resource_type": "software"
+    }
+  ]
+}
