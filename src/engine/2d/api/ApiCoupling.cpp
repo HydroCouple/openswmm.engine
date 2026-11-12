@@ -352,21 +352,21 @@ int swmm_coupling_apply_frame(SWMM_Engine h, const SWMM_CouplingFrame* f) {
                 // while an external stage or flow prescription owns the edge.
                 bc->edge_bc_tseries[slot] = bc->edge_bc_flow_tseries[slot] =
                     bc->edge_bc_rating_curve[slot] = -1;
-                bc->edge_bc_tseries_name[slot].clear();
-                bc->edge_bc_flow_tseries_name[slot].clear();
-                bc->edge_bc_rating_curve_name[slot].clear();
+                bc->edge_bc_tseries_name.set(slot, {});
+                bc->edge_bc_flow_tseries_name.set(slot, {});
+                bc->edge_bc_rating_curve_name.set(slot, {});
                 bc->edge_bc_type[slot] =
                     in.kind == 1 ? SWMM_2D_BC_SPECIFIED_STAGE : SWMM_2D_BC_SPECIFIED_FLOW;
                 if (in.kind == 1) {
                     bc->edge_bc_head[slot] = in.value;
                     bc->edge_bc_tseries[slot] = -1;
-                    bc->edge_bc_tseries_name[slot].clear();
+                    bc->edge_bc_tseries_name.set(slot, {});
                 } else {
                     bc->edge_bc_flow[slot] = in.value / mesh.edge_length[slot];
                     bc->edge_bc_flow_tseries[slot] = -1;
-                    bc->edge_bc_flow_tseries_name[slot].clear();
+                    bc->edge_bc_flow_tseries_name.set(slot, {});
                     bc->edge_bc_rating_curve[slot] = -1;
-                    bc->edge_bc_rating_curve_name[slot].clear();
+                    bc->edge_bc_rating_curve_name.set(slot, {});
                 }
                 if (router.runtimeBoundaryCheckpointing())
                     concentrations->erase(slot);

@@ -10524,7 +10524,7 @@ int setRkSurfaceSignal(CoupledRkRig& r, BoundaryData& boundary,
         table.y.push_back(stage ? values[k] : values[k] / r.mesh.edge_length[slot]);
     }
     (stage ? boundary.edge_bc_tseries : boundary.edge_bc_flow_tseries)[slot] = index;
-    (stage ? boundary.edge_bc_tseries_name : boundary.edge_bc_flow_tseries_name)[slot] = name;
+    (stage ? boundary.edge_bc_tseries_name : boundary.edge_bc_flow_tseries_name).set(slot, name);
     return slot;
 }
 /**
@@ -10880,7 +10880,7 @@ TEST(CoupledGroundwaterRk2,
     EXPECT_EQ(rk2File(before), rk2File(after));
     setRkSurfaceBoundary(r, boundary, 0, true, .22, {7, 3});
     boundary.edge_bc_tseries[slot] = -1;
-    boundary.edge_bc_tseries_name[slot].clear();
+    boundary.edge_bc_tseries_name.set(slot, {});
     r.solver.refreshBoundaries();
     ASSERT_NO_THROW(r.solver.advance(0, 1.5));
 }
@@ -10895,8 +10895,8 @@ TEST(CoupledGroundwaterRk2, SurfaceSeriesCopiedOverrideAndClearKeepExactComponen
         const auto override = [&](CoupledRkRig& r, BoundaryData& boundary) {
             setRkSurfaceBoundary(r, boundary, 0, stage, stage ? .23 : -.003, {-4});
             boundary.edge_bc_tseries[slot] = boundary.edge_bc_flow_tseries[slot] = -1;
-            boundary.edge_bc_tseries_name[slot].clear();
-            boundary.edge_bc_flow_tseries_name[slot].clear();
+            boundary.edge_bc_tseries_name.set(slot, {});
+            boundary.edge_bc_flow_tseries_name.set(slot, {});
             r.solver.refreshBoundaries();
         };
         for (auto* r : {&a, &b}) {
@@ -11129,7 +11129,7 @@ int setRkRatingBoundary(CoupledRkRig& r, BoundaryData& boundary,
     table.y = flows;
     boundary.edge_bc_type[slot] = int8_t(BoundaryType::RATING_CURVE);
     boundary.edge_bc_rating_curve[slot] = index;
-    boundary.edge_bc_rating_curve_name[slot] = name;
+    boundary.edge_bc_rating_curve_name.set(slot, name);
     r.solver.refreshBoundaries();
     return slot;
 }
@@ -11418,7 +11418,7 @@ TEST(CoupledGroundwaterRk2,
         auto& boundary = r == &a ? ba : bb;
         setRkSurfaceBoundary(*r, boundary, 0, false, -.003, {-4});
         boundary.edge_bc_rating_curve[slot] = -1;
-        boundary.edge_bc_rating_curve_name[slot].clear();
+        boundary.edge_bc_rating_curve_name.set(slot, {});
         r->solver.refreshBoundaries();
     }
     const auto good = rk2Output("surface-state-rating-override.chk"),
@@ -11465,7 +11465,7 @@ TEST(CoupledGroundwaterRk2,
     EXPECT_EQ(rk2File(before), rk2File(after));
     setRkSurfaceBoundary(r, boundary, 0, false, -.0001, {-8});
     boundary.edge_bc_rating_curve[slot] = -1;
-    boundary.edge_bc_rating_curve_name[slot].clear();
+    boundary.edge_bc_rating_curve_name.set(slot, {});
     r.solver.refreshBoundaries();
     ASSERT_NO_THROW(r.solver.advance(0, 1));
 }

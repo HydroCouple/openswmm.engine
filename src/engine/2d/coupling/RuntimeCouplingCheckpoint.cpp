@@ -262,9 +262,16 @@ bool fallback(const BoundaryData::RuntimeOriginal& value, const BoundaryData::Ru
  * extents; caller decodes into private state and validates afterward.
  */
 void boundaryFields(Archive& a, BoundaryData& b) {
-    a.fixed(b.edge_bc_type, b.edge_bed_slope, b.edge_bc_head, b.edge_bc_tseries,
-            b.edge_bc_tseries_name, b.edge_bc_flow, b.edge_bc_flow_tseries,
-            b.edge_bc_flow_tseries_name, b.edge_bc_rating_curve, b.edge_bc_rating_curve_name);
+    // The names are sparse in memory; the archive keeps one string per slot.
+    auto stage = b.edge_bc_tseries_name.dense(), flow = b.edge_bc_flow_tseries_name.dense(),
+         rating = b.edge_bc_rating_curve_name.dense();
+    a.fixed(b.edge_bc_type, b.edge_bed_slope, b.edge_bc_head, b.edge_bc_tseries, stage,
+            b.edge_bc_flow, b.edge_bc_flow_tseries, flow, b.edge_bc_rating_curve, rating);
+    if (a.reading()) {
+        b.edge_bc_tseries_name.assign(stage);
+        b.edge_bc_flow_tseries_name.assign(flow);
+        b.edge_bc_rating_curve_name.assign(rating);
+    }
 }
 /**
  * @brief Validate qualified exterior overrides, authored fallback and boundary receipt pairing.

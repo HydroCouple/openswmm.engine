@@ -810,13 +810,13 @@ TEST(RuntimeWaterCheckpoint, AuthoredBoundarySignalsBindRecordsAndValidateFallba
     authored.edge_bc_flow[5] = .01;
     authored.edge_bc_type[8] = int8_t(BoundaryType::SPECIFIED_STAGE);
     authored.edge_bc_tseries[8] = -2;
-    authored.edge_bc_tseries_name[8] = "Stage";
+    authored.edge_bc_tseries_name.set(8, "Stage");
     authored.edge_bc_type[9] = int8_t(BoundaryType::SPECIFIED_FLOW);
     authored.edge_bc_flow_tseries[9] = -2;
-    authored.edge_bc_flow_tseries_name[9] = "Flow";
+    authored.edge_bc_flow_tseries_name.set(9, "Flow");
     authored.edge_bc_type[10] = int8_t(BoundaryType::RATING_CURVE);
     authored.edge_bc_rating_curve[10] = -2;
-    authored.edge_bc_rating_curve_name[10] = "Rating";
+    authored.edge_bc_rating_curve_name.set(10, "Rating");
     auto b = binding();
     b.boundary_slots.assign(12, false);
     for (int k : {1, 4, 5, 8, 9, 10})
@@ -834,7 +834,7 @@ TEST(RuntimeWaterCheckpoint, AuthoredBoundarySignalsBindRecordsAndValidateFallba
     live.runtime_owner[8] = "edge";
     live.ensureReceipt(8, 0);
     live.edge_bc_tseries[8] = -1;
-    live.edge_bc_tseries_name[8].clear();
+    live.edge_bc_tseries_name.set(8, {});
     live.edge_bc_head[8] = .8;
     Stores s, c;
     std::string good;

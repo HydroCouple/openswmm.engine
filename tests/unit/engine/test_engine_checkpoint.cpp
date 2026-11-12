@@ -7259,11 +7259,18 @@ std::string changeBoundaryRecord(const std::string& original, int mutation) {
             a(r.channel, r.cell, r.mode, r.rate, r.until, r.enabled, r.owner);
             receipt(a, r.receipt);
         });
+        auto stage = boundary.edge_bc_tseries_name.dense(),
+             flow = boundary.edge_bc_flow_tseries_name.dense(),
+             rating = boundary.edge_bc_rating_curve_name.dense();
         a.fixed(boundary.edge_bc_type, boundary.edge_bed_slope, boundary.edge_bc_head,
-                boundary.edge_bc_tseries, boundary.edge_bc_tseries_name, boundary.edge_bc_flow,
-                boundary.edge_bc_flow_tseries, boundary.edge_bc_flow_tseries_name,
-                boundary.edge_bc_rating_curve, boundary.edge_bc_rating_curve_name,
+                boundary.edge_bc_tseries, stage, boundary.edge_bc_flow,
+                boundary.edge_bc_flow_tseries, flow, boundary.edge_bc_rating_curve, rating,
                 boundary.edge_bc_cum_flux);
+        if (a.reading()) {
+            boundary.edge_bc_tseries_name.assign(stage);
+            boundary.edge_bc_flow_tseries_name.assign(flow);
+            boundary.edge_bc_rating_curve_name.assign(rating);
+        }
         a.sequence(overrides, [&](auto& r) {
             a(r.slot);
             auto& v = r.old;

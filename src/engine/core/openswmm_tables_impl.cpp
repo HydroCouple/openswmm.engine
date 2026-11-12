@@ -123,13 +123,10 @@ void for_each_table_name_ref(openswmm::SWMMEngine& eng, bool timeseries, F&& fn)
 #ifdef OPENSWMM_HAS_2D
     auto& b = eng.surfaceRouter2D().boundary();
     if (timeseries) {
-        for (auto& s : b.edge_bc_tseries_name)
-            fn(s);
-        for (auto& s : b.edge_bc_flow_tseries_name)
-            fn(s);
+        b.edge_bc_tseries_name.edit(fn);
+        b.edge_bc_flow_tseries_name.edit(fn);
     } else {
-        for (auto& s : b.edge_bc_rating_curve_name)
-            fn(s);
+        b.edge_bc_rating_curve_name.edit(fn);
     }
 #endif
 }

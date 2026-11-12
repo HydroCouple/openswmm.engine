@@ -180,7 +180,7 @@ void SurfaceRouter2D::drainPendingRows() {
                 break;
             case BoundaryType::SPECIFIED_STAGE:
                 if (!r.name.empty()) {
-                    boundary_.edge_bc_tseries_name[idx] = r.name;
+                    boundary_.edge_bc_tseries_name.set(idx, r.name);
                     boundary_.edge_bc_tseries[idx] = -2; // deferred resolve
                 } else {
                     boundary_.edge_bc_head[idx] = r.param1;
@@ -188,14 +188,14 @@ void SurfaceRouter2D::drainPendingRows() {
                 break;
             case BoundaryType::SPECIFIED_FLOW:
                 if (!r.name.empty()) {
-                    boundary_.edge_bc_flow_tseries_name[idx] = r.name;
+                    boundary_.edge_bc_flow_tseries_name.set(idx, r.name);
                     boundary_.edge_bc_flow_tseries[idx] = -2;
                 } else {
                     boundary_.edge_bc_flow[idx] = r.param1;
                 }
                 break;
             case BoundaryType::RATING_CURVE:
-                boundary_.edge_bc_rating_curve_name[idx] = r.name;
+                boundary_.edge_bc_rating_curve_name.set(idx, r.name);
                 boundary_.edge_bc_rating_curve[idx] = -2;
                 break;
             case BoundaryType::WALL:

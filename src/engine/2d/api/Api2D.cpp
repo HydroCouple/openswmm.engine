@@ -1689,7 +1689,7 @@ int swmm_2d_set_edge_bc_head(SWMM_Engine engine, int tri_idx, int edge, double h
     if (router2d.isActive()) {
         const int slot = openswmm::twoD::MeshData::slot(tri_idx, edge);
         router2d.boundary().edge_bc_tseries[slot] = -1;
-        router2d.boundary().edge_bc_tseries_name[slot].clear();
+        router2d.boundary().edge_bc_tseries_name.set(slot, {});
     }
     return SWMM_OK;
 }
@@ -1843,10 +1843,10 @@ int swmm_2d_set_edge_bc_tseries_name(SWMM_Engine engine, int tri_idx, int edge, 
     const int idx = openswmm::twoD::MeshData::slot(tri_idx, edge);
     auto& b = router2d.boundary();
     if (!name || name[0] == '\0') {
-        b.edge_bc_tseries_name[idx].clear();
+        b.edge_bc_tseries_name.set(idx, {});
         b.edge_bc_tseries[idx] = -1;
     } else {
-        b.edge_bc_tseries_name[idx] = name;
+        b.edge_bc_tseries_name.set(idx, name);
         b.edge_bc_tseries[idx] = -2; // deferred resolution
     }
     router2d.invalidateBoundaryNames();
@@ -1943,9 +1943,9 @@ int swmm_2d_set_edge_bc_flow(SWMM_Engine engine, int tri_idx, int edge, double f
     if (router2d.isActive()) {
         const int slot = openswmm::twoD::MeshData::slot(tri_idx, edge);
         router2d.boundary().edge_bc_flow_tseries[slot] = -1;
-        router2d.boundary().edge_bc_flow_tseries_name[slot].clear();
+        router2d.boundary().edge_bc_flow_tseries_name.set(slot, {});
         router2d.boundary().edge_bc_rating_curve[slot] = -1;
-        router2d.boundary().edge_bc_rating_curve_name[slot].clear();
+        router2d.boundary().edge_bc_rating_curve_name.set(slot, {});
     }
     return SWMM_OK;
 }
@@ -1965,10 +1965,10 @@ int swmm_2d_set_edge_bc_flow_tseries_name(SWMM_Engine engine, int tri_idx, int e
     const int idx = openswmm::twoD::MeshData::slot(tri_idx, edge);
     auto& b = router2d.boundary();
     if (!name || name[0] == '\0') {
-        b.edge_bc_flow_tseries_name[idx].clear();
+        b.edge_bc_flow_tseries_name.set(idx, {});
         b.edge_bc_flow_tseries[idx] = -1;
     } else {
-        b.edge_bc_flow_tseries_name[idx] = name;
+        b.edge_bc_flow_tseries_name.set(idx, name);
         b.edge_bc_flow_tseries[idx] = -2;
     }
     router2d.invalidateBoundaryNames();
@@ -1990,10 +1990,10 @@ int swmm_2d_set_edge_bc_rating_curve_name(SWMM_Engine engine, int tri_idx, int e
     const int idx = openswmm::twoD::MeshData::slot(tri_idx, edge);
     auto& b = router2d.boundary();
     if (!name || name[0] == '\0') {
-        b.edge_bc_rating_curve_name[idx].clear();
+        b.edge_bc_rating_curve_name.set(idx, {});
         b.edge_bc_rating_curve[idx] = -1;
     } else {
-        b.edge_bc_rating_curve_name[idx] = name;
+        b.edge_bc_rating_curve_name.set(idx, name);
         b.edge_bc_rating_curve[idx] = -2;
     }
     router2d.invalidateBoundaryNames();

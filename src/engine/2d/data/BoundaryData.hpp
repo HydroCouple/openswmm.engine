@@ -39,6 +39,8 @@
 #ifndef OPENSWMM_ENGINE_2D_BOUNDARY_DATA_HPP
 #define OPENSWMM_ENGINE_2D_BOUNDARY_DATA_HPP
 
+#include <unordered_map>
+#include <stdexcept>
 #include "../coupling/RuntimeCoupling.hpp"
 #include <vector>
 #include <cstdint>
@@ -61,6 +63,72 @@ enum class BoundaryType : int8_t {
     SPECIFIED_STAGE = 2, ///< Prescribed water surface elevation (constant or TS)
     SPECIFIED_FLOW = 3,  ///< Prescribed discharge per metre of edge (constant or TS)
     RATING_CURVE = 4     ///< Stage → flow lookup (curve registry index)
+};
+
+/**
+ * @brief Per-slot names kept only for the slots that have one.
+ *
+ * A boundary names a time series or rating curve only on its authored edges, but BoundaryData
+ * has a slot for every edge of every cell; a std::string per slot cost 24 B each, almost all
+ * empty. size() is the logical slot count (extent checks and archives use it). Reads return the
+ * slot's name or an empty string and never insert, so concurrent reads are safe; writes go through
+ * set(). resize() keeps the names of slots below the new size, as std::vector::resize did.
+ */
+class SlotNames {
+public:
+    std::size_t size() const noexcept { return n_; }
+    bool empty() const noexcept { return n_ == 0; }
+    void resize(std::size_t n) {
+        if (n < n_)
+            std::erase_if(names_, [n](const auto& kv) { return kv.first >= n; });
+        n_ = n;
+    }
+    const std::string& operator[](std::size_t slot) const {
+        const auto it = names_.find(slot);
+        return it == names_.end() ? none() : it->second;
+    }
+    const std::string& at(std::size_t slot) const {
+        if (slot >= n_)
+            throw std::out_of_range("SlotNames::at");
+        return (*this)[slot];
+    }
+    /// Name a slot; an empty name clears it.
+    void set(std::size_t slot, std::string name) {
+        if (name.empty())
+            names_.erase(slot);
+        else
+            names_[slot] = std::move(name);
+    }
+    /// Edit every stored name in place (any order); a name left empty is cleared.
+    template <class F> void edit(F&& f) {
+        for (auto it = names_.begin(); it != names_.end();) {
+            f(it->second);
+            it = it->second.empty() ? names_.erase(it) : std::next(it);
+        }
+    }
+    /// The names as a dense array of size() entries: an archive's fixed-extent encoding.
+    std::vector<std::string> dense() const {
+        std::vector<std::string> v(n_);
+        for (const auto& [slot, name] : names_)
+            v[slot] = name;
+        return v;
+    }
+    /// Replace every name from a dense array; size() becomes its size.
+    void assign(const std::vector<std::string>& v) {
+        names_.clear();
+        n_ = v.size();
+        for (std::size_t i = 0; i < v.size(); ++i)
+            if (!v[i].empty())
+                names_.emplace(i, v[i]);
+    }
+
+private:
+    static const std::string& none() {
+        static const std::string empty;
+        return empty;
+    }
+    std::size_t n_ = 0;
+    std::unordered_map<std::size_t, std::string> names_;
 };
 
 /**
@@ -96,7 +164,7 @@ struct BoundaryData {
     std::vector<int> edge_bc_tseries;
 
     /// Timeseries name for deferred resolution (cleared after resolve).
-    std::vector<std::string> edge_bc_tseries_name;
+    SlotNames edge_bc_tseries_name;
 
     /// Cumulative boundary flux (m³, positive = outflow from domain).
     /// Tracked for mass balance reporting.
@@ -117,7 +185,7 @@ struct BoundaryData {
     std::vector<int> edge_bc_flow_tseries;
 
     /// Timeseries name for deferred resolution (cleared after resolve).
-    std::vector<std::string> edge_bc_flow_tseries_name;
+    SlotNames edge_bc_flow_tseries_name;
 
     // -----------------------------------------------------------------------
     // V-E5 — RATING_CURVE slot (stage → flow lookup).
@@ -128,7 +196,7 @@ struct BoundaryData {
     std::vector<int> edge_bc_rating_curve;
 
     /// Curve name for deferred resolution (cleared after resolve).
-    std::vector<std::string> edge_bc_rating_curve_name;
+    SlotNames edge_bc_rating_curve_name;
 
     struct RuntimeOriginal {
         int8_t type;
@@ -197,9 +265,9 @@ struct BoundaryData {
         edge_bc_tseries[slot] = b.stage_ts;
         edge_bc_flow_tseries[slot] = b.flow_ts;
         edge_bc_rating_curve[slot] = b.rating;
-        edge_bc_tseries_name[slot] = b.stage_name;
-        edge_bc_flow_tseries_name[slot] = b.flow_name;
-        edge_bc_rating_curve_name[slot] = b.rating_name;
+        edge_bc_tseries_name.set(slot, b.stage_name);
+        edge_bc_flow_tseries_name.set(slot, b.flow_name);
+        edge_bc_rating_curve_name.set(slot, b.rating_name);
         runtime_original.erase(it);
         runtime_owner.erase(slot);
     }

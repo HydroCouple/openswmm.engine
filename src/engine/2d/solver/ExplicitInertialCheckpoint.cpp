@@ -1204,10 +1204,17 @@ void rk2SurfaceBoundaryArchive(Archive& a, BoundaryData& b,
                 if (b.edge_bc_flow_tseries[slot] >= 0 || b.edge_bc_rating_curve[slot] >= 0)
                     flow[slot] = 0;
             }
+        // The names are sparse in memory; the archive keeps one string per slot.
+        auto stage_names = b.edge_bc_tseries_name.dense(),
+             flow_names = b.edge_bc_flow_tseries_name.dense(),
+             rating_names = b.edge_bc_rating_curve_name.dense();
         a.fixed(b.edge_bc_type, head, flow, b.edge_bed_slope, b.edge_bc_tseries,
-                b.edge_bc_flow_tseries, b.edge_bc_rating_curve, b.edge_bc_tseries_name,
-                b.edge_bc_flow_tseries_name, b.edge_bc_rating_curve_name);
+                b.edge_bc_flow_tseries, b.edge_bc_rating_curve, stage_names, flow_names,
+                rating_names);
         if (a.reading()) {
+            b.edge_bc_tseries_name.assign(stage_names);
+            b.edge_bc_flow_tseries_name.assign(flow_names);
+            b.edge_bc_rating_curve_name.assign(rating_names);
             b.edge_bc_head = std::move(head);
             b.edge_bc_flow = std::move(flow);
         }
