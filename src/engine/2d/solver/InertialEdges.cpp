@@ -46,6 +46,25 @@ void InertialEdges::build(const MeshData& mesh) {
     std::vector<std::array<int, kMaxCellVerts>> slot_edge(
         static_cast<std::size_t>(nt), std::array<int, kMaxCellVerts>{-1, -1, -1, -1});
 
+    // Count the interior edges first so each per-edge array below is allocated
+    // once, at its size: grown by push_back they were copied as they doubled
+    // (most of initialize's time on a large mesh) and kept up to half their
+    // capacity unused.
+    std::size_t n_interior = 0;
+    for (int t = 0; t < nt; ++t) {
+        const int nv_t = mesh.cell_vertex_count(t);
+        for (int e = 0; e < nv_t; ++e) {
+            const int nb = mesh.cell_neighbour(t, e);
+            if (nb >= 0 && nb >= t)
+                ++n_interior;
+        }
+    }
+    for (auto* v : {&cL, &cR, &slotL, &slotR})
+        v->reserve(n_interior);
+    for (auto* v : {&xi, &inv_dx, &zface, &ze_lo, &ze_hi, &nx, &ny, &mx, &my, &inv_dx_normal,
+                    &n2_face, &n_face})
+        v->reserve(n_interior);
+
     // 1. Enumerate unique interior edges. Count each once (nbr > t), and stamp
     //    the matching local edge on the neighbour so the CSR pass sees both.
     for (int t = 0; t < nt; ++t) {
