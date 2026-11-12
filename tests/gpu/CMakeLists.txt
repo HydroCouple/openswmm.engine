@@ -45,3 +45,9 @@ set_tests_properties(kokkos_explicit_alignment_one_thread PROPERTIES ENVIRONMENT
 add_test(NAME kokkos_explicit_alignment_profiling COMMAND test_kokkos_explicit_alignment)
 set_tests_properties(kokkos_explicit_alignment_profiling PROPERTIES
     ENVIRONMENT "OMP_NUM_THREADS=2;OMP_PROC_BIND=false;OPENSWMM_PERF=1" LABELS "gpu;parity")
+
+# LLVM's deprecated OpenMP query prints an informational message but exits
+# successfully. Treat its recurrence in kernel dispatch as a test failure.
+set_tests_properties(kokkos_explicit_alignment kokkos_explicit_alignment_one_thread
+    kokkos_explicit_alignment_profiling PROPERTIES
+    FAIL_REGULAR_EXPRESSION "omp_get_nested.*deprecated")
