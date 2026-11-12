@@ -1594,6 +1594,28 @@ HandlerOf<Line> makeTagIndexedSectionHandler(TagIndexedLineParser line_parser) {
 /// The three mesh-row sections.
 enum class MeshRows { Vertices, Triangles, Quads };
 
+/**
+ * @brief Split a row into its space/tab-separated fields, in one pass.
+ * @param[in] row A row with no '"', ',' or ';'. For such a row this is what
+ * Tokenizer::tokenize_views_into returns (its comment strip and CSV rules have nothing to act
+ * on), without their two extra passes over the row.
+ * @param[out] fields Cleared, then the fields as views into row.
+ */
+void splitPlainFields(std::string_view row, std::vector<std::string_view>& fields) {
+    fields.clear();
+    const std::size_t n = row.size();
+    std::size_t i = 0;
+    while (i < n) {
+        while (i < n && (row[i] == ' ' || row[i] == '\t'))
+            ++i;
+        const std::size_t start = i;
+        while (i < n && row[i] != ' ' && row[i] != '\t')
+            ++i;
+        if (i > start)
+            fields.push_back(row.substr(start, i - start));
+    }
+}
+
 /// One mesh row through its parser; tokens are owned strings or borrowed views.
 template <class Tokens>
 std::string parseMeshRow(MeshRows kind, const Tokens& tokens, MeshData& mesh) {
@@ -1616,9 +1638,9 @@ std::string parseMeshRow(MeshRows kind, const Tokens& tokens, MeshData& mesh) {
  * section (an upper bound on its rows: comment lines count too), so the row parsers' one-row
  * resizes never reallocate. MeshData grows capacity geometrically, which keeps repeated headers
  * and sidecar rows after inline rows linear. The view form (the sidecar loader) splits a row
- * with no quote and no comma into views with Tokenizer::tokenize_views_into, which splits such
- * rows exactly as Tokenizer::tokenize does, and parses them without a std::string or a
- * std::function per row; every other row goes through Tokenizer::tokenize as before.
+ * with no quote, comma or ';' into views with splitPlainFields, which splits such rows exactly as
+ * Tokenizer::tokenize does, and parses them without a std::string or a std::function per row;
+ * every other row (comment rows included) goes through Tokenizer::tokenize as before.
  */
 template <class Line = std::string>
 HandlerOf<Line> makeMeshRowsHandler(MeshData& mesh, MeshRows kind) {
@@ -1632,8 +1654,8 @@ HandlerOf<Line> makeMeshRowsHandler(MeshData& mesh, MeshRows kind) {
             std::vector<std::string_view> views;
             for (const std::string_view raw : lines) {
                 std::string err;
-                if (raw.find_first_of("\",") == std::string_view::npos) {
-                    openswmm::input::Tokenizer::tokenize_views_into(raw, views);
+                if (raw.find_first_of("\",;") == std::string_view::npos) {
+                    splitPlainFields(raw, views);
                     if (views.empty())
                         continue;
                     err = parseMeshRow(kind, views, mesh);
