@@ -858,6 +858,12 @@ if(OPENSWMM_BUILD_2D)
     add_gtest_unit(test_engine_2d_bc_units test_2d_bc_units.cpp)
     target_compile_definitions(test_engine_2d_bc_units PRIVATE
         OPENSWMM_BC_UNITS_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
+    # Pinned outputs of the 2D mesh readers: every field the [2D_MESH_FILE]
+    # loader and the .inp reader fill, for the edge cases under
+    # data/mesh_snapshots/ (mesh open plan; regenerate on purpose only).
+    add_gtest_unit(test_engine_mesh_snapshots test_mesh_snapshots.cpp)
+    target_compile_definitions(test_engine_mesh_snapshots PRIVATE
+        OPENSWMM_MESH_SNAPSHOT_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
     if(OPENSWMM_2D_HDF5_OUTPUT)
     # Live output reads, open-handle replacement, rollback and HDF5 interoperability.
     # Compile the helpers here so access-property IDs and HDF5 calls use one
