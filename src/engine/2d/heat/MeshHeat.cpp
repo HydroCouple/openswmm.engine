@@ -963,9 +963,11 @@ std::string initializeMeshHeat(SimulationContext& ctx, const MeshData& mesh,
  */
 std::string configureGroundLidOwners(SimulationContext& ctx, const MeshData& mesh,
                                      GroundHeatState& owner, const std::vector<GwNodeBed>& beds) {
-    owner.lid_owners.assign(mesh.n_cells(), {});
-    if (!owner.active())
+    if (!owner.active()) {
+        owner.lid_owners = {}; // readers bounds-check: no list reads as no owners
         return {};
+    }
+    owner.lid_owners.assign(mesh.n_cells(), {});
     constexpr double ft2_to_m2 = .09290304;
     std::vector<double> areas(mesh.n_cells(), 0);
     std::set<int> seen;
