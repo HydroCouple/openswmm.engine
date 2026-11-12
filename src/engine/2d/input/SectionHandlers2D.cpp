@@ -28,10 +28,12 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string_view>
+#include <type_traits>
 
 namespace openswmm::twoD {
 
@@ -86,6 +88,55 @@ double tryParseDouble(const std::string& s, bool& ok) {
     char* end = nullptr;
     double val = std::strtod(s.c_str(), &end);
     ok = (end != s.c_str() && *end == '\0');
+    return val;
+}
+
+/**
+ * @brief NUL-terminated copy of a borrowed token for the C number parsers.
+ * @param[in] s Token bytes, embedded NULs included.
+ * @param[out] stack Holds the copy when it fits.
+ * @param[out] heap Holds it otherwise.
+ * @return The copy; valid while stack and heap are.
+ */
+const char* cTerminated(std::string_view s, char (&stack)[64], std::string& heap) {
+    if (s.size() < sizeof stack) {
+        std::memcpy(stack, s.data(), s.size());
+        stack[s.size()] = '\0';
+        return stack;
+    }
+    heap.assign(s);
+    return heap.c_str();
+}
+
+/**
+ * @brief tryParseInt for a borrowed token: the same strtol call on a NUL-terminated copy.
+ * @param[in] s Token bytes.
+ * @param[out] ok As the std::string overload.
+ * @return As the std::string overload.
+ */
+int tryParseInt(std::string_view s, bool& ok) {
+    char stack[64];
+    std::string heap;
+    const char* c = cTerminated(s, stack, heap);
+    char* end = nullptr;
+    long val = std::strtol(c, &end, 10);
+    ok = (end != c && *end == '\0');
+    return static_cast<int>(val);
+}
+
+/**
+ * @brief tryParseDouble for a borrowed token: the same strtod call on a NUL-terminated copy.
+ * @param[in] s Token bytes.
+ * @param[out] ok As the std::string overload.
+ * @return As the std::string overload.
+ */
+double tryParseDouble(std::string_view s, bool& ok) {
+    char stack[64];
+    std::string heap;
+    const char* c = cTerminated(s, stack, heap);
+    char* end = nullptr;
+    double val = std::strtod(c, &end);
+    ok = (end != c && *end == '\0');
     return val;
 }
 
@@ -1002,7 +1053,10 @@ std::string format2DOptionValueEx(const SolverOptions2D& opts, const Infil2D* in
  * helpers accept full strtod/strtol syntax without general finite/range/errno checks; deferred
  * model validation remains necessary.
  */
-std::string parse2DVertexLine(const std::vector<std::string>& tokens, MeshData& mesh) {
+namespace {
+
+/// parse2DVertexLine over owned (std::string) or borrowed (std::string_view) tokens.
+template <class Tokens> std::string parseVertexRow(const Tokens& tokens, MeshData& mesh) {
     if (tokens.size() < 3)
         return "Expected X Y Z [TAG]";
 
@@ -1021,7 +1075,7 @@ std::string parse2DVertexLine(const std::vector<std::string>& tokens, MeshData& 
 
     std::string tag;
     if (tokens.size() >= 4)
-        tag = tokens[3];
+        tag = std::string(tokens[3]);
 
     int idx = mesh.n_vertices();
     mesh.resize_vertices(idx + 1);
@@ -1031,6 +1085,12 @@ std::string parse2DVertexLine(const std::vector<std::string>& tokens, MeshData& 
     mesh.vtag[idx] = tag;
 
     return {};
+}
+
+} // namespace
+
+std::string parse2DVertexLine(const std::vector<std::string>& tokens, MeshData& mesh) {
+    return parseVertexRow(tokens, mesh);
 }
 
 /**
@@ -1043,7 +1103,10 @@ std::string parse2DVertexLine(const std::vector<std::string>& tokens, MeshData& 
  * helpers accept full strtod/strtol syntax without general finite/range/errno checks; deferred
  * model validation remains necessary.
  */
-std::string parse2DTriangleLine(const std::vector<std::string>& tokens, MeshData& mesh) {
+namespace {
+
+/// parse2DTriangleLine over owned or borrowed tokens.
+template <class Tokens> std::string parseTriangleRow(const Tokens& tokens, MeshData& mesh) {
     if (tokens.size() < 4)
         return "Expected V1 V2 V3 MANNINGS_N [INIT_DEPTH] [TAG]";
 
@@ -1079,9 +1142,9 @@ std::string parse2DTriangleLine(const std::vector<std::string>& tokens, MeshData
                 return "Invalid INIT_DEPTH (must be >= 0)";
             init_depth = d;
             if (tokens.size() >= 6)
-                tag = tokens[5];
+                tag = std::string(tokens[5]);
         } else {
-            tag = tokens[4];
+            tag = std::string(tokens[4]);
         }
     }
 
@@ -1099,6 +1162,12 @@ std::string parse2DTriangleLine(const std::vector<std::string>& tokens, MeshData
     mesh.tri_tag[idx] = tag;
 
     return {};
+}
+
+} // namespace
+
+std::string parse2DTriangleLine(const std::vector<std::string>& tokens, MeshData& mesh) {
+    return parseTriangleRow(tokens, mesh);
 }
 
 // [2D_QUADS] — convex quadrilateral cells, appended AFTER every triangle:
@@ -1120,7 +1189,10 @@ std::string parse2DTriangleLine(const std::vector<std::string>& tokens, MeshData
  * Numeric helpers accept full strtod/strtol syntax without general finite/range/errno checks;
  * deferred model validation remains necessary.
  */
-std::string parse2DQuadLine(const std::vector<std::string>& tokens, MeshData& mesh) {
+namespace {
+
+/// parse2DQuadLine over owned or borrowed tokens.
+template <class Tokens> std::string parseQuadRow(const Tokens& tokens, MeshData& mesh) {
     if (tokens.size() < 5)
         return "Expected V1 V2 V3 V4 MANNINGS_N [INIT_DEPTH] [TAG]";
 
@@ -1146,9 +1218,9 @@ std::string parse2DQuadLine(const std::vector<std::string>& tokens, MeshData& me
                 return "Invalid INIT_DEPTH (must be >= 0)";
             init_depth = d;
             if (tokens.size() >= 7)
-                tag = tokens[6];
+                tag = std::string(tokens[6]);
         } else {
-            tag = tokens[5];
+            tag = std::string(tokens[5]);
         }
     }
 
@@ -1160,6 +1232,12 @@ std::string parse2DQuadLine(const std::vector<std::string>& tokens, MeshData& me
     mesh.tri_tag[idx] = tag;
 
     return {};
+}
+
+} // namespace
+
+std::string parse2DQuadLine(const std::vector<std::string>& tokens, MeshData& mesh) {
+    return parseQuadRow(tokens, mesh);
 }
 
 // [2D_INITIAL_VELOCITY] — optional per-triangle initial velocity (m/s):
@@ -1392,31 +1470,71 @@ HandlerOf<Line> makeTagIndexedSectionHandler(TagIndexedLineParser line_parser) {
     };
 }
 
-using MeshRowParser = std::string (*)(const std::vector<std::string>&, MeshData&);
+/// The three mesh-row sections.
+enum class MeshRows { Vertices, Triangles, Quads };
+
+/// One mesh row through its parser; tokens are owned strings or borrowed views.
+template <class Tokens>
+std::string parseMeshRow(MeshRows kind, const Tokens& tokens, MeshData& mesh) {
+    switch (kind) {
+    case MeshRows::Vertices:
+        return parseVertexRow(tokens, mesh);
+    case MeshRows::Triangles:
+        return parseTriangleRow(tokens, mesh);
+    case MeshRows::Quads:
+        break;
+    }
+    return parseQuadRow(tokens, mesh);
+}
 
 /**
  * @brief Section handler for [2D_VERTICES], [2D_TRIANGLES] or [2D_QUADS].
  * @param[in,out] mesh Mesh the rows append to; must outlive the handler.
- * @param[in] row_parser parse2DVertexLine, parse2DTriangleLine or parse2DQuadLine.
- * @param[in] cells False for vertex rows, true for cell rows.
+ * @param[in] kind Which of the three sections.
  * @return makeSectionHandler's callable, after first reserving room for every line of the
  * section (an upper bound on its rows: comment lines count too), so the row parsers' one-row
  * resizes never reallocate. MeshData grows capacity geometrically, which keeps repeated headers
- * and sidecar rows after inline rows linear.
+ * and sidecar rows after inline rows linear. The view form (the sidecar loader) splits a row
+ * with no quote and no comma into views with Tokenizer::tokenize_views_into, which splits such
+ * rows exactly as Tokenizer::tokenize does, and parses them without a std::string or a
+ * std::function per row; every other row goes through Tokenizer::tokenize as before.
  */
 template <class Line = std::string>
-HandlerOf<Line> makeMeshRowsHandler(MeshData& mesh, MeshRowParser row_parser, bool cells) {
-    LineParser rows = [&mesh, row_parser](const std::vector<std::string>& tokens) {
-        return row_parser(tokens, mesh);
-    };
-    return [&mesh, cells, rows = std::move(rows)](openswmm::SimulationContext& ctx,
-                                                  const std::vector<Line>& lines) {
+HandlerOf<Line> makeMeshRowsHandler(MeshData& mesh, MeshRows kind) {
+    return [&mesh, kind](openswmm::SimulationContext& ctx, const std::vector<Line>& lines) {
         const int extra = static_cast<int>(lines.size());
-        if (cells)
-            mesh.reserve_triangles(mesh.n_triangles() + extra);
-        else
+        if (kind == MeshRows::Vertices)
             mesh.reserve_vertices(mesh.n_vertices() + extra);
-        parseRows(rows, ctx, lines);
+        else
+            mesh.reserve_triangles(mesh.n_triangles() + extra);
+        if constexpr (std::is_same_v<Line, std::string_view>) {
+            std::vector<std::string_view> views;
+            for (const std::string_view raw : lines) {
+                std::string err;
+                if (raw.find_first_of("\",") == std::string_view::npos) {
+                    openswmm::input::Tokenizer::tokenize_views_into(raw, views);
+                    if (views.empty())
+                        continue;
+                    err = parseMeshRow(kind, views, mesh);
+                } else {
+                    const auto tokens = openswmm::input::Tokenizer::tokenize(raw);
+                    if (tokens.empty())
+                        continue;
+                    err = parseMeshRow(kind, tokens, mesh);
+                }
+                if (!err.empty()) { // as parseRows
+                    ctx.error_code = 5;
+                    ctx.error_message = "[2D] " + err + " — line: " + std::string(raw);
+                    return;
+                }
+            }
+        } else {
+            parseRows(
+                [&mesh, kind](const std::vector<std::string>& tokens) {
+                    return parseMeshRow(kind, tokens, mesh);
+                },
+                ctx, lines);
+        }
     };
 }
 
@@ -1978,11 +2096,11 @@ void register2DSections(MeshData& mesh, SolverOptions2D& options,
         }
     });
 
-    registry.register_custom("2D_VERTICES", makeMeshRowsHandler(mesh, parse2DVertexLine, false));
+    registry.register_custom("2D_VERTICES", makeMeshRowsHandler(mesh, MeshRows::Vertices));
 
-    registry.register_custom("2D_TRIANGLES", makeMeshRowsHandler(mesh, parse2DTriangleLine, true));
+    registry.register_custom("2D_TRIANGLES", makeMeshRowsHandler(mesh, MeshRows::Triangles));
 
-    registry.register_custom("2D_QUADS", makeMeshRowsHandler(mesh, parse2DQuadLine, true));
+    registry.register_custom("2D_QUADS", makeMeshRowsHandler(mesh, MeshRows::Quads));
 
     registry.register_custom("2D_INITIAL_VELOCITY",
                              makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
@@ -2249,12 +2367,12 @@ load2DMeshExternalFile(MeshData& mesh, SolverOptions2D& opts,
                                    [&opts, warnings](const std::vector<std::string>& tokens) {
                                        return parse2DOptionsLine(tokens, opts, warnings);
                                    }));
-    mini.register_custom_views(
-        "2D_VERTICES", makeMeshRowsHandler<std::string_view>(mesh, parse2DVertexLine, false));
-    mini.register_custom_views(
-        "2D_TRIANGLES", makeMeshRowsHandler<std::string_view>(mesh, parse2DTriangleLine, true));
+    mini.register_custom_views("2D_VERTICES",
+                               makeMeshRowsHandler<std::string_view>(mesh, MeshRows::Vertices));
+    mini.register_custom_views("2D_TRIANGLES",
+                               makeMeshRowsHandler<std::string_view>(mesh, MeshRows::Triangles));
     mini.register_custom_views("2D_QUADS",
-                               makeMeshRowsHandler<std::string_view>(mesh, parse2DQuadLine, true));
+                               makeMeshRowsHandler<std::string_view>(mesh, MeshRows::Quads));
     mini.register_custom_views(
         "2D_INITIAL_VELOCITY",
         makeSectionHandler<std::string_view>([&mesh](const std::vector<std::string>& tokens) {
