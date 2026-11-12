@@ -420,6 +420,10 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& s
     }
 
     reconstructAllDev();
+    // The seeded head/depth must be readable before the first step, as on the
+    // CPU marcher (whose reconstruct writes the host arrays directly).
+    hostRefresh(state.head, d_head_);
+    hostRefresh(state.depth, d_depth_);
 
     // Seed face momentum from the optional [2D_INITIAL_VELOCITY] rows
     // (== serial marcher; host-side build, one refresh). Mean depth is
@@ -1613,6 +1617,8 @@ void ExplicitKokkosSurfaceSolver::reinitialize(double /*t0*/) {
     Kokkos::deep_copy(d_faccL_, 0.0);
     Kokkos::deep_copy(d_faccR_, 0.0);
     reconstructAllDev();
+    hostRefresh(state_->head, d_head_);
+    hostRefresh(state_->depth, d_depth_);
     cycles_since_rebuild_ = 1000;
 }
 
@@ -1622,6 +1628,8 @@ void ExplicitKokkosSurfaceSolver::resyncFromVolumes(double /*t0*/) {
         return;
     devRefresh(d_volume_, state_->volume);
     reconstructAllDev();
+    hostRefresh(state_->head, d_head_);
+    hostRefresh(state_->depth, d_depth_);
     // External outfall transfers can activate previously dry cells.
     cycles_since_rebuild_ = 1000;
 }

@@ -23,6 +23,7 @@ retroactive.
 
 ## [Unreleased]
 
+- On the GPU (Kokkos) 2D backend, the 2D depth and head getters return the initial state right after start; they used to read zero until the first step. They also stay current after a reinitialize or a volume resync, as on the CPU solver.
 - A 2D cell's initial state can be prescribed as a water-surface elevation in the new optional `[2D_INITIAL_HGL]` section (`CELL HGL` rows, `*` for every cell) as an alternative to `INIT_DEPTH`. The elevation is converted to depth at initialization and clamped at the cell invert, so a cell whose bed is above the level starts dry. `swmm_2d_triangle_get_init_hgl` and `swmm_2d_set_triangle_init_hgl` (`Surface2D.get_triangle_init_hgl` / `set_triangle_init_hgl` in Python) read and set it, and INP and GeoPackage round trips preserve it.
 - Permeable pavement now recovers the specified fraction of clogging at each regeneration interval. INP and GeoPackage round trips and the C and Python APIs preserve the regeneration degree (#199).
 - Rain barrels honour the optional covered flag after the clogging factor on the `STORAGE` line. As in the legacy solver, a covered barrel only collects runoff, and rain on its footprint goes to the subcatchment's pervious area. INP and GeoPackage round trips preserve the flag (#203).
