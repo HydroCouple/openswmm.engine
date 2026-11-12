@@ -1135,8 +1135,11 @@ std::string format2DOptionValueEx(const SolverOptions2D& opts, const Infil2D* in
  */
 namespace {
 
-/// parse2DVertexLine over owned (std::string) or borrowed (std::string_view) tokens.
-template <class Tokens> std::string parseVertexRow(const Tokens& tokens, MeshData& mesh) {
+/// parse2DVertexLine over owned (std::string) or borrowed (std::string_view) tokens. With
+/// `at` >= 0 the row goes into that existing vertex slot instead of being appended (the
+/// section handler sizes the arrays once per section).
+template <class Tokens>
+std::string parseVertexRow(const Tokens& tokens, MeshData& mesh, int at = -1) {
     if (tokens.size() < 3)
         return "Expected X Y Z [TAG]";
 
@@ -1157,8 +1160,9 @@ template <class Tokens> std::string parseVertexRow(const Tokens& tokens, MeshDat
     if (tokens.size() >= 4)
         tag = std::string(tokens[3]);
 
-    int idx = mesh.n_vertices();
-    mesh.resize_vertices(idx + 1);
+    const int idx = at >= 0 ? at : mesh.n_vertices();
+    if (at < 0)
+        mesh.resize_vertices(idx + 1);
     mesh.vx[idx] = x;
     mesh.vy[idx] = y;
     mesh.vz[idx] = z;
@@ -1185,8 +1189,9 @@ std::string parse2DVertexLine(const std::vector<std::string>& tokens, MeshData& 
  */
 namespace {
 
-/// parse2DTriangleLine over owned or borrowed tokens.
-template <class Tokens> std::string parseTriangleRow(const Tokens& tokens, MeshData& mesh) {
+/// parse2DTriangleLine over owned or borrowed tokens; `at` as parseVertexRow.
+template <class Tokens>
+std::string parseTriangleRow(const Tokens& tokens, MeshData& mesh, int at = -1) {
     if (tokens.size() < 4)
         return "Expected V1 V2 V3 MANNINGS_N [INIT_DEPTH] [TAG]";
 
@@ -1228,14 +1233,15 @@ template <class Tokens> std::string parseTriangleRow(const Tokens& tokens, MeshD
         }
     }
 
-    int idx = mesh.n_triangles();
+    const int idx = at >= 0 ? at : mesh.n_triangles();
     // Cell index contract: triangles first, then quads (2D_TRI_QUAD_MESH_PLAN
     // §2.4). A triangle row arriving after a quad row would renumber every
     // cell-addressed section behind it.
     if (idx > 0 && mesh.cell_vertex_count(idx - 1) == 4)
         return "[2D_TRIANGLES] rows must precede all [2D_QUADS] rows "
                "(cells are numbered triangles first, then quads)";
-    mesh.resize_triangles(idx + 1);
+    if (at < 0)
+        mesh.resize_triangles(idx + 1);
     mesh.set_triangle(idx, v0, v1, v2);
     mesh.mannings_n[idx] = n;
     mesh.tri_init_depth[idx] = init_depth;
@@ -1271,8 +1277,9 @@ std::string parse2DTriangleLine(const std::vector<std::string>& tokens, MeshData
  */
 namespace {
 
-/// parse2DQuadLine over owned or borrowed tokens.
-template <class Tokens> std::string parseQuadRow(const Tokens& tokens, MeshData& mesh) {
+/// parse2DQuadLine over owned or borrowed tokens; `at` as parseVertexRow.
+template <class Tokens>
+std::string parseQuadRow(const Tokens& tokens, MeshData& mesh, int at = -1) {
     if (tokens.size() < 5)
         return "Expected V1 V2 V3 V4 MANNINGS_N [INIT_DEPTH] [TAG]";
 
@@ -1304,8 +1311,9 @@ template <class Tokens> std::string parseQuadRow(const Tokens& tokens, MeshData&
         }
     }
 
-    int idx = mesh.n_triangles();
-    mesh.resize_triangles(idx + 1);
+    const int idx = at >= 0 ? at : mesh.n_triangles();
+    if (at < 0)
+        mesh.resize_triangles(idx + 1);
     mesh.set_quad(idx, v[0], v[1], v[2], v[3]);
     mesh.mannings_n[idx] = n;
     mesh.tri_init_depth[idx] = init_depth;
@@ -1616,67 +1624,87 @@ void splitPlainFields(std::string_view row, std::vector<std::string_view>& field
     }
 }
 
-/// One mesh row through its parser; tokens are owned strings or borrowed views.
+/// One mesh row through its parser into an existing slot; tokens are owned strings or views.
 template <class Tokens>
-std::string parseMeshRow(MeshRows kind, const Tokens& tokens, MeshData& mesh) {
+std::string parseMeshRow(MeshRows kind, const Tokens& tokens, MeshData& mesh, int at) {
     switch (kind) {
     case MeshRows::Vertices:
-        return parseVertexRow(tokens, mesh);
+        return parseVertexRow(tokens, mesh, at);
     case MeshRows::Triangles:
-        return parseTriangleRow(tokens, mesh);
+        return parseTriangleRow(tokens, mesh, at);
     case MeshRows::Quads:
         break;
     }
-    return parseQuadRow(tokens, mesh);
+    return parseQuadRow(tokens, mesh, at);
 }
 
 /**
  * @brief Section handler for [2D_VERTICES], [2D_TRIANGLES] or [2D_QUADS].
  * @param[in,out] mesh Mesh the rows append to; must outlive the handler.
  * @param[in] kind Which of the three sections.
- * @return makeSectionHandler's callable, after first reserving room for every line of the
- * section (an upper bound on its rows: comment lines count too), so the row parsers' one-row
- * resizes never reallocate. MeshData grows capacity geometrically, which keeps repeated headers
- * and sidecar rows after inline rows linear. The view form (the sidecar loader) splits a row
- * with no quote, comma or ';' into views with splitPlainFields, which splits such rows exactly as
- * Tokenizer::tokenize does, and parses them without a std::string or a std::function per row;
- * every other row (comment rows included) goes through Tokenizer::tokenize as before.
+ * @return A callable with makeSectionHandler's error behaviour. It sizes the arrays once for
+ * the whole section (existing rows plus every line, comment lines included), parses each row
+ * into the next slot, and trims the arrays to the rows parsed -- also after an error row, and if
+ * anything throws -- so the result is what row-by-row appends gave. The reserve before it grows
+ * capacity geometrically (MeshData::grow_capacity), which keeps repeated headers and sidecar rows
+ * after inline rows linear. The view form (the sidecar loader) splits a row with no quote, comma
+ * or ';' with splitPlainFields, which splits such rows exactly as Tokenizer::tokenize does; every
+ * other row (comment rows included) goes through Tokenizer::tokenize as before. No per-row
+ * std::function either way.
  */
 template <class Line = std::string>
 HandlerOf<Line> makeMeshRowsHandler(MeshData& mesh, MeshRows kind) {
     return [&mesh, kind](openswmm::SimulationContext& ctx, const std::vector<Line>& lines) {
-        const int extra = static_cast<int>(lines.size());
-        if (kind == MeshRows::Vertices)
-            mesh.reserve_vertices(mesh.n_vertices() + extra);
-        else
-            mesh.reserve_triangles(mesh.n_triangles() + extra);
-        if constexpr (std::is_same_v<Line, std::string_view>) {
-            std::vector<std::string_view> views;
-            for (const std::string_view raw : lines) {
-                std::string err;
-                if (raw.find_first_of("\",;") == std::string_view::npos) {
-                    splitPlainFields(raw, views);
-                    if (views.empty())
-                        continue;
-                    err = parseMeshRow(kind, views, mesh);
-                } else {
-                    const auto tokens = openswmm::input::Tokenizer::tokenize(raw);
-                    if (tokens.empty())
-                        continue;
-                    err = parseMeshRow(kind, tokens, mesh);
-                }
-                if (!err.empty()) { // as parseRows
-                    ctx.error_code = 5;
-                    ctx.error_message = "[2D] " + err + " — line: " + std::string(raw);
-                    return;
-                }
-            }
+        const bool vertices = kind == MeshRows::Vertices;
+        const int first = vertices ? mesh.n_vertices() : mesh.n_triangles();
+        const int room = first + static_cast<int>(lines.size());
+        // One resize for the whole section (every line could be a row), then
+        // back down to the rows actually parsed -- on an error row too, and if
+        // anything throws -- so the arrays end as row-by-row appends left them.
+        if (vertices) {
+            mesh.reserve_vertices(room);
+            mesh.resize_vertices(room);
         } else {
-            parseRows(
-                [&mesh, kind](const std::vector<std::string>& tokens) {
-                    return parseMeshRow(kind, tokens, mesh);
-                },
-                ctx, lines);
+            mesh.reserve_triangles(room);
+            mesh.resize_triangles(room);
+        }
+        int next = first;
+        struct Trim {
+            MeshData& mesh;
+            bool vertices;
+            const int& next;
+            ~Trim() {
+                if (vertices)
+                    mesh.resize_vertices(next);
+                else
+                    mesh.resize_triangles(next);
+            }
+        } trim{mesh, vertices, next};
+
+        std::vector<std::string_view> views;
+        for (const auto& line : lines) {
+            const std::string_view raw = line;
+            bool plain = false; // views only: owned lines come from InputReader as before
+            if constexpr (std::is_same_v<Line, std::string_view>)
+                plain = raw.find_first_of("\",;") == std::string_view::npos;
+            std::string err;
+            if (plain) {
+                splitPlainFields(raw, views);
+                if (views.empty())
+                    continue;
+                err = parseMeshRow(kind, views, mesh, next);
+            } else {
+                const auto tokens = openswmm::input::Tokenizer::tokenize(raw);
+                if (tokens.empty())
+                    continue;
+                err = parseMeshRow(kind, tokens, mesh, next);
+            }
+            if (!err.empty()) { // as parseRows
+                ctx.error_code = 5;
+                ctx.error_message = "[2D] " + err + " — line: " + std::string(raw);
+                return;
+            }
+            ++next;
         }
     };
 }
