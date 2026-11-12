@@ -82,3 +82,8 @@ be edited via different ui but must remain synchronized. Generally, use modern U
 ## 5.2 CHANGELOG.md
 
 Update change log with critical commits upon releases.
+
+
+## 5.3 Workplans and Plans 
+
+Workplans and plans artifacts and markdowns are never to be committed. They stay local.
