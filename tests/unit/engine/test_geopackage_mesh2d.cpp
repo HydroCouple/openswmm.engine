@@ -625,6 +625,11 @@ TEST_F(GeoPackageMesh2DTest, PostInitUnscaleWrite) {
         v *= ft_to_m;
     for (auto& v : mesh_.vz)
         v *= ft_to_m;
+    // initialize() scales the initial conditions with vz (same vertical datum).
+    for (auto& d : mesh_.tri_init_depth)
+        d *= ft_to_m;
+    for (auto& h : mesh_.tri_init_hgl)
+        h *= ft_to_m;
     mesh_.vert_coupled_node_name[0] = "J1";
     mesh_.vert_coupling_area[0] = 2.5 * ft_to_m * ft_to_m;
     opts_.mesh_scaled_to_si = true;
@@ -648,6 +653,9 @@ TEST_F(GeoPackageMesh2DTest, PostInitUnscaleWrite) {
     EXPECT_NEAR(mesh_in_.vx[1], 10.0, 1e-12);
     EXPECT_NEAR(mesh_in_.vy[2], 10.0, 1e-12);
     EXPECT_NEAR(mesh_in_.vz[3], 11.5, 1e-12);
+    EXPECT_NEAR(mesh_in_.tri_init_depth[0], 0.25, 1e-12);
+    EXPECT_TRUE(std::isnan(mesh_in_.tri_init_hgl[0]));
+    EXPECT_NEAR(mesh_in_.tri_init_hgl[1], 10.75, 1e-12);
     EXPECT_NEAR(mesh_in_.vert_coupling_area[0], 2.5, 1e-12);
     EXPECT_FALSE(opts_in_.mesh_units_si);
     EXPECT_FALSE(opts_in_.mesh_scaled_to_si);

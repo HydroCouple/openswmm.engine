@@ -2912,8 +2912,8 @@ static void write_mesh_2d(sqlite3* db, const SimulationContext& ctx, const std::
                 bind_text(stmt.get(), 10, cn);
             else
                 bind_null(stmt.get(), 10);
-            bind_double(stmt.get(), 11, mesh.tri_init_depth[t]);
-            // Elevation on the vertex datum, written in the same units as z.
+            // Depth and elevation share the vertex datum: same units as z.
+            bind_double(stmt.get(), 11, mesh.tri_init_depth[t] * f);
             if (std::isfinite(mesh.tri_init_hgl[t]))
                 bind_double(stmt.get(), 12, mesh.tri_init_hgl[t] * f);
             else
@@ -2969,7 +2969,7 @@ static void write_mesh_2d(sqlite3* db, const SimulationContext& ctx, const std::
                 bind_text(stmt.get(), 11, cn);
             else
                 bind_null(stmt.get(), 11);
-            bind_double(stmt.get(), 12, mesh.tri_init_depth[t]);
+            bind_double(stmt.get(), 12, mesh.tri_init_depth[t] * f);
             if (std::isfinite(mesh.tri_init_hgl[t]))
                 bind_double(stmt.get(), 13, mesh.tri_init_hgl[t] * f);
             else
