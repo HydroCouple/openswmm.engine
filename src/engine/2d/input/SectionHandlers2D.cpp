@@ -19,6 +19,7 @@
 #include "../../input/InputReader.hpp"
 #include "../../input/Tokenizer.hpp"
 #include "../../core/ErrorCodes.hpp"
+#include "../../core/charconv_compat.hpp"
 #include "../../core/NodeCoupling2D.hpp"
 #include "../../core/PerfTimers.hpp"
 #include "../../core/SimulationContext.hpp"
@@ -33,7 +34,13 @@
 #include <fstream>
 #include <sstream>
 #include <string_view>
+#include <system_error>
 #include <type_traits>
+
+#include <locale.h> // newlocale/uselocale, _create_locale
+#if defined(__APPLE__)
+#include <xlocale.h> // strtod_l
+#endif
 
 namespace openswmm::twoD {
 
@@ -60,35 +67,32 @@ bool iequals(std::string_view a, std::string_view b) {
     return true;
 }
 
-// Try to parse an integer; return -1 on failure
 /**
- * @brief Parse whole strtol base-10 token and narrow it to int.
- * @param[in] s Null-terminated numeric token storage.
- * @param[out] ok True iff at least one character parsed and no trailing bytes.
- * @return Narrowed strtol result even on failure; leading whitespace/sign accepted. No
- * errno/long/int range checks, so callers require int-representable input. Never returns a
- * guaranteed -1 sentinel.
- * @note No model mutation/allocation; empty/surplus/noninteger syntax reports ok=false.
+ * @brief strtod in the "C" locale whatever the process locale (mesh open plan §8 Q2: the 2D
+ * number path is locale-independent).
+ * @param[in] s NUL-terminated token.
+ * @param[out] end As std::strtod.
+ * @return As std::strtod under LC_NUMERIC "C". Falls back to std::strtod if the C locale
+ * object cannot be created.
  */
-int tryParseInt(const std::string& s, bool& ok) {
-    char* end = nullptr;
-    long val = std::strtol(s.c_str(), &end, 10);
-    ok = (end != s.c_str() && *end == '\0');
-    return static_cast<int>(val);
-}
-
-/**
- * @brief Parse one whole strtod token without finite/errno/range policy.
- * @param[in] s Numeric token storage, leading whitespace/sign accepted.
- * @param[out] ok True iff at least one character parsed and all bytes consumed.
- * @return strtod result even on failure; NaN/Inf and underflow/overflow are not rejected here.
- * @note Caller applies physical/unit/sign/finite checks; no model mutation or allocation.
- */
-double tryParseDouble(const std::string& s, bool& ok) {
-    char* end = nullptr;
-    double val = std::strtod(s.c_str(), &end);
-    ok = (end != s.c_str() && *end == '\0');
-    return val;
+double strtodCLocale(const char* s, char** end) noexcept {
+#if defined(_WIN32)
+    static const _locale_t loc = _create_locale(LC_NUMERIC, "C");
+    return loc ? _strtod_l(s, end, loc) : std::strtod(s, end);
+#elif defined(__APPLE__)
+    static const locale_t loc = newlocale(LC_NUMERIC_MASK, "C", nullptr);
+    return loc ? strtod_l(s, end, loc) : std::strtod(s, end);
+#else
+    // POSIX.2008 uselocale rather than glibc's strtod_l, which is declared
+    // only under _GNU_SOURCE. musl (Emscripten) is C-locale either way.
+    static const locale_t loc = newlocale(LC_NUMERIC_MASK, "C", nullptr);
+    if (loc == static_cast<locale_t>(0))
+        return std::strtod(s, end);
+    const locale_t previous = uselocale(loc);
+    const double v = std::strtod(s, end);
+    uselocale(previous);
+    return v;
+#endif
 }
 
 /**
@@ -109,12 +113,32 @@ const char* cTerminated(std::string_view s, char (&stack)[64], std::string& heap
 }
 
 /**
- * @brief tryParseInt for a borrowed token: the same strtol call on a NUL-terminated copy.
+ * @brief Parse a whole base-10 integer token and narrow it to int.
  * @param[in] s Token bytes.
- * @param[out] ok As the std::string overload.
- * @return As the std::string overload.
+ * @param[out] ok True iff at least one character parsed and no bytes remain before a NUL.
+ * @return The value. `[+-]?D{1,9}` is read directly (it always fits an int, so this agrees with
+ * strtol everywhere); every other token goes through strtol on a NUL-terminated copy and is
+ * narrowed as before: leading whitespace/sign accepted, no errno/long/int range checks, and the
+ * value is returned even on failure.
+ * @note No model mutation; empty/surplus/noninteger syntax reports ok=false.
  */
 int tryParseInt(std::string_view s, bool& ok) {
+    const std::size_t sign = (!s.empty() && (s[0] == '+' || s[0] == '-')) ? 1 : 0;
+    const std::size_t digits = s.size() - sign;
+    if (digits >= 1 && digits <= 9) {
+        int v = 0;
+        std::size_t i = sign;
+        for (; i < s.size(); ++i) {
+            const unsigned d = static_cast<unsigned char>(s[i]) - unsigned{'0'};
+            if (d > 9)
+                break;
+            v = v * 10 + static_cast<int>(d);
+        }
+        if (i == s.size()) {
+            ok = true;
+            return s[0] == '-' ? -v : v;
+        }
+    }
     char stack[64];
     std::string heap;
     const char* c = cTerminated(s, stack, heap);
@@ -125,19 +149,75 @@ int tryParseInt(std::string_view s, bool& ok) {
 }
 
 /**
- * @brief tryParseDouble for a borrowed token: the same strtod call on a NUL-terminated copy.
+ * @brief True for `-?D+(.D+)?([eE][+-]?D+)?`, a token strtod and std::from_chars read alike.
  * @param[in] s Token bytes.
- * @param[out] ok As the std::string overload.
- * @return As the std::string overload.
+ * @return False for anything else (a leading '+', a bare '.', hex, inf, nan, whitespace...).
+ */
+bool isPlainDecimal(std::string_view s) noexcept {
+    std::size_t i = 0;
+    const std::size_t n = s.size();
+    const auto run = [&] {
+        const std::size_t start = i;
+        while (i < n && static_cast<unsigned char>(s[i]) - unsigned{'0'} <= 9)
+            ++i;
+        return i > start;
+    };
+    if (i < n && s[i] == '-')
+        ++i;
+    if (!run())
+        return false;
+    if (i < n && s[i] == '.') {
+        ++i;
+        if (!run())
+            return false;
+    }
+    if (i < n && (s[i] == 'e' || s[i] == 'E')) {
+        ++i;
+        if (i < n && (s[i] == '+' || s[i] == '-'))
+            ++i;
+        if (!run())
+            return false;
+    }
+    return i == n;
+}
+
+/**
+ * @brief Parse one whole floating-point token in the C locale, without finite/range policy.
+ * @param[in] s Token bytes.
+ * @param[out] ok True iff at least one character parsed and no bytes remain before a NUL.
+ * @return The value, even on failure. A plain decimal goes through openswmm::from_chars_double
+ * (std::from_chars, or C-locale strtod_l where the library lacks it); a range error there (1e400,
+ * 1e-400) and every other token use C-locale strtod, so the accepted syntax is strtod's: leading
+ * whitespace and '+', hex floats, inf/infinity/nan, overflow to inf, underflow to 0.
+ * @note Caller applies physical/unit/sign/finite checks; no model mutation.
  */
 double tryParseDouble(std::string_view s, bool& ok) {
+    if (isPlainDecimal(s)) {
+        double v = 0.0;
+        const char* last = s.data() + s.size();
+        const auto r = openswmm::from_chars_double(s.data(), last, v);
+        if (r.ec == std::errc{} && r.ptr == last) {
+            ok = true;
+            return v;
+        }
+    }
     char stack[64];
     std::string heap;
     const char* c = cTerminated(s, stack, heap);
     char* end = nullptr;
-    double val = std::strtod(c, &end);
+    double val = strtodCLocale(c, &end);
     ok = (end != c && *end == '\0');
     return val;
+}
+
+/// tryParseInt for an owned token (the whole string, as before).
+int tryParseInt(const std::string& s, bool& ok) {
+    return tryParseInt(std::string_view(s), ok);
+}
+
+/// tryParseDouble for an owned token (the whole string, as before).
+double tryParseDouble(const std::string& s, bool& ok) {
+    return tryParseDouble(std::string_view(s), ok);
 }
 
 /**

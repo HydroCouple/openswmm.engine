@@ -38,6 +38,7 @@
 
 #include <gtest/gtest.h>
 #include <algorithm>
+#include <clocale>
 #include <cmath>
 #include <cctype>
 #include <cstdlib>
@@ -1476,6 +1477,70 @@ TEST(NodeMapTagLookup, TagRowsSeeOnlyVerticesReadSoFar) {
     EXPECT_EQ(r.mesh.vert_coupled_node_name[0], "J3"); // P is still vertex 0
     EXPECT_EQ(r.mesh.vert_coupled_node_name[1], "J2");
     EXPECT_EQ(r.mesh.vert_coupled_node_name[2], "");
+}
+
+// ============================================================================
+// 2D number tokens (mesh open plan E3c, §8 Q2): C-locale, today's syntax.
+// ============================================================================
+
+TEST(InputParsing, NumbersKeepStrtodSyntax) {
+    MeshData mesh;
+    ASSERT_TRUE(parse2DVertexLine({"+1.5", "0x1p3", "1e400"}, mesh).empty());
+    ASSERT_TRUE(parse2DVertexLine({"-inf", "nan", "1e-400"}, mesh).empty());
+    ASSERT_TRUE(parse2DVertexLine({".5", "5.", "1E+2"}, mesh).empty());
+    EXPECT_EQ(mesh.vx[0], 1.5);
+    EXPECT_EQ(mesh.vy[0], 8.0);
+    EXPECT_TRUE(std::isinf(mesh.vz[0]) && mesh.vz[0] > 0); // overflow reads as inf, as strtod
+    EXPECT_TRUE(std::isinf(mesh.vx[1]) && mesh.vx[1] < 0);
+    EXPECT_TRUE(std::isnan(mesh.vy[1]));
+    EXPECT_EQ(mesh.vz[1], 0.0); // underflow
+    EXPECT_EQ(mesh.vx[2], 0.5);
+    EXPECT_EQ(mesh.vy[2], 5.0);
+    EXPECT_EQ(mesh.vz[2], 100.0);
+    EXPECT_FALSE(parse2DVertexLine({"1..2", "0", "0"}, mesh).empty());
+    EXPECT_FALSE(parse2DVertexLine({"1x", "0", "0"}, mesh).empty());
+    EXPECT_FALSE(parse2DVertexLine({"", "0", "0"}, mesh).empty());
+
+    // Integer indices: +, leading zeros; long values are narrowed as strtol + static_cast do.
+    ASSERT_TRUE(parse2DTriangleLine({"+0", "0001", "2", "0.03"}, mesh).empty());
+    EXPECT_EQ(mesh.cell_v[0], 0);
+    EXPECT_EQ(mesh.cell_v[1], 1);
+    ASSERT_TRUE(parse2DTriangleLine({"4294967297", "-7", "2", "0.03"}, mesh).empty());
+    EXPECT_EQ(mesh.cell_v[kMaxCellVerts + 0],
+              static_cast<int>(std::strtol("4294967297", nullptr, 10)));
+    EXPECT_EQ(mesh.cell_v[kMaxCellVerts + 1], -7);
+    EXPECT_FALSE(parse2DTriangleLine({"1.0", "2", "3", "0.03"}, mesh).empty());
+    EXPECT_FALSE(parse2DTriangleLine({"0x1", "2", "3", "0.03"}, mesh).empty());
+}
+
+TEST(InputParsing, NumbersIgnoreTheProcessLocale) {
+    // A Qt application calls setlocale(LC_ALL, ""); under a comma-decimal
+    // LC_NUMERIC, std::strtod stops at the '.'. The 2D parsers must not.
+    const std::string saved = std::setlocale(LC_NUMERIC, nullptr);
+    const char* comma = nullptr;
+    for (const char* name : {"de_DE.UTF-8", "de_DE.utf8", "de_DE", "fr_FR.UTF-8", "fr_FR"}) {
+        if (std::setlocale(LC_NUMERIC, name) != nullptr &&
+            *std::localeconv()->decimal_point == ',') {
+            comma = name;
+            break;
+        }
+    }
+    if (comma == nullptr) {
+        std::setlocale(LC_NUMERIC, saved.c_str());
+        GTEST_SKIP() << "no comma-decimal locale installed";
+    }
+    MeshData mesh;
+    const std::string err = parse2DVertexLine({"0.5", "-1.25e2", "+.75"}, mesh);
+    const std::string err_hex = parse2DVertexLine({"0x1.8p1", "inf", "2.5E-3"}, mesh);
+    std::setlocale(LC_NUMERIC, saved.c_str());
+    ASSERT_TRUE(err.empty()) << comma << ": " << err;
+    ASSERT_TRUE(err_hex.empty()) << comma << ": " << err_hex;
+    EXPECT_EQ(mesh.vx[0], 0.5);
+    EXPECT_EQ(mesh.vy[0], -125.0);
+    EXPECT_EQ(mesh.vz[0], 0.75);
+    EXPECT_EQ(mesh.vx[1], 3.0);
+    EXPECT_TRUE(std::isinf(mesh.vy[1]));
+    EXPECT_EQ(mesh.vz[1], 0.0025);
 }
 
 // ============================================================================
