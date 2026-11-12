@@ -1587,6 +1587,40 @@ TEST(Utf8Bom, UnitsMarkerOnTheFirstLineIsRead) {
 }
 
 // ============================================================================
+// Ctrl-Z (mesh open plan F4): a text-mode read on Windows ends a file at the
+// first 0x1A byte. Both readers keep that rule there and nowhere else, so a
+// row after a Ctrl-Z counts except on Windows.
+// ============================================================================
+
+TEST(CtrlZ, BothReadersEndTheFileThereOnlyOnWindows) {
+#if defined(_WIN32)
+    constexpr int kVertices = 2;
+#else
+    constexpr int kVertices = 3;
+#endif
+    MeshData inp_mesh;
+    SolverOptions2D inp_opts;
+    std::vector<SurfaceRouter2D::PendingBoundaryRow> bc;
+    std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow> ec;
+    std::vector<SurfaceRouter2D::PendingInitialQualityRow> iq;
+    std::vector<SurfaceRouter2D::PendingInitialBedQualityRow> ibq;
+    std::vector<SurfaceRouter2D::PendingBoundaryQualityRow> bq;
+    openswmm::input::SectionRegistry registry;
+    register2DSections(inp_mesh, inp_opts, bc, ec, iq, ibq, bq, registry);
+    openswmm::input::InputReader reader(registry);
+    openswmm::SimulationContext ctx;
+    ASSERT_TRUE(reader.read("mesh_ctrlz/ctrlz.inp", ctx)) << ctx.error_message;
+    EXPECT_EQ(inp_mesh.n_vertices(), kVertices);
+
+    MeshData mesh;
+    SolverOptions2D opts;
+    const std::string err =
+        load2DMeshExternalFile(mesh, opts, bc, ec, nullptr, "mesh_ctrlz/ctrlz.2dm", "");
+    ASSERT_TRUE(err.empty()) << err;
+    EXPECT_EQ(mesh.n_vertices(), kVertices);
+}
+
+// ============================================================================
 // The main .inp reader on line views (mesh open plan E3-inline): InputReader
 // reads the whole text once and walks it with views. A view handler and a
 // string handler must get the same lines, by the rules of the former getline

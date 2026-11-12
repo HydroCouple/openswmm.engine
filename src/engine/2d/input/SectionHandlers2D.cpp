@@ -2438,6 +2438,13 @@ void readSidecarSections(const std::string& path, const input::SectionRegistry& 
             in.read(buf.data(), static_cast<std::streamsize>(size));
             buf.resize(static_cast<std::size_t>(in.gcount()));
         }
+#if defined(_WIN32)
+        // The mesh file used to be read in text mode, where the Windows C
+        // runtime ends it at the first Ctrl-Z (0x1A); keep that, as
+        // InputReader::read does.
+        if (const auto eof = buf.find('\x1A'); eof != std::string::npos)
+            buf.resize(eof);
+#endif
     }
 
     perf::ScopedTimer _pt(perf::sec_mesh2d_read);
@@ -2461,6 +2468,11 @@ void readSidecarSections(const std::string& path, const input::SectionRegistry& 
         std::string_view raw = text.substr(pos, nl - pos);
         pos = nl + 1;
 
+#if defined(_WIN32)
+        // Text mode also turned a line's CR LF into LF before the CR strip below.
+        if (nl < text.size() && !raw.empty() && raw.back() == '\r')
+            raw.remove_suffix(1);
+#endif
         note2DUnitsMarker(raw, opts);
         if (!raw.empty() && raw.back() == '\r')
             raw.remove_suffix(1);
