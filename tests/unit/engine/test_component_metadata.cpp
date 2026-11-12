@@ -12,11 +12,15 @@
 #include <gtest/gtest.h>
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_spatial.h>
+#include <openswmm/engine/openswmm_model.h>
 #ifdef OPENSWMM_HAS_2D
 #include <openswmm/engine/openswmm_2d.h>
 #endif
 #include <filesystem>
 #include <fstream>
+#include <iterator>
+#include <sstream>
+#include <string>
 namespace fs = std::filesystem;
 namespace {
 struct Engine {
@@ -116,6 +120,88 @@ TEST(ComponentMetadata, ReactionMetadataUsesTheExistingRegistry) {
     EXPECT_STREQ(units, "MG");
     EXPECT_EQ(wall, 1);
 }
+namespace {
+std::string slurp(const fs::path& path) {
+    std::ifstream f(path, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+}
+/// A report without the lines that carry the wall clock.
+std::string reportBody(const fs::path& path) {
+    std::istringstream in(slurp(path));
+    std::string line, body;
+    while (std::getline(in, line))
+        if (line.find("Analysis begun") == std::string::npos &&
+            line.find("Analysis ended") == std::string::npos &&
+            line.find("Total elapsed time") == std::string::npos)
+            body += line + '\n';
+    return body;
+}
+void runToEnd(SWMM_Engine e, const fs::path& inp, const fs::path& rpt, const fs::path& out) {
+    ASSERT_EQ(swmm_engine_open(e, inp.string().c_str(), rpt.string().c_str(), out.string().c_str(),
+                               nullptr),
+              0)
+        << swmm_get_last_error_msg(e);
+    ASSERT_EQ(swmm_engine_initialize(e), 0) << swmm_get_last_error_msg(e);
+    ASSERT_EQ(swmm_engine_start(e, 1), 0) << swmm_get_last_error_msg(e);
+    double elapsed = 0.0;
+    while (swmm_engine_step(e, &elapsed) == SWMM_OK && elapsed > 0.0) {
+    }
+    swmm_engine_end(e);
+    swmm_engine_report(e);
+    swmm_engine_close(e);
+}
+} // namespace
+
+// Reopening one handle (open, close, open) reads the model afresh: nothing the
+// previous parse filled may carry over -- here [PROCESS_COMPONENTS], [PLUGINS],
+// embedded [REACTION_*] sections, [DWF] and [FILES] (mesh open plan R1).
+TEST(ComponentMetadata, ReopeningOneHandleReadsTheModelAfresh) {
+    const char* reactions = "[REACTION_SPECIES]\nBULK X MG\nWALL W MG\n[REACTION_PIPES]\nFORMULA X 2*A\n";
+    const auto external = fixture("reopen-external");
+    std::ofstream(external / "model.rxn") << reactions;
+    std::ofstream(external / "model.inp", std::ios::app)
+        << "\n[PROCESS_COMPONENTS]\norg.hydrocouple.openswmm.reactions config=\"model.rxn\"\n";
+    const auto embedded = fixture("reopen-embedded", true); // also [FILES] and [PLUGINS]
+    std::ofstream(embedded / "model.inp", std::ios::app) << "\n" << reactions;
+    for (const fs::path& directory : {external, embedded}) {
+        SCOPED_TRACE(directory.filename().string());
+        Engine e;
+        std::string written[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            ASSERT_EQ(swmm_engine_open_metadata(e.value, (directory / "model.inp").string().c_str()), 0)
+                << "open " << pass + 1 << ": " << swmm_get_last_error_msg(e.value);
+            EXPECT_EQ(swmm_reaction_species_count(e.value), 2);
+            const auto out = directory / ("written_" + std::to_string(pass + 1) + ".inp");
+            ASSERT_EQ(swmm_model_write(e.value, out.string().c_str()), 0);
+            written[pass] = slurp(out);
+            swmm_engine_close(e.value);
+        }
+        EXPECT_EQ(written[0], written[1]);
+    }
+}
+
+// The engine caches each conduit's section for its velocity statistics and
+// compares ctx.xsect_generation to decide when to rebuild. A reopen keeps that
+// counter rising, so a second model with as many links but other sections
+// reports its own velocities, exactly as on a fresh handle (mesh open plan R1).
+TEST(ComponentMetadata, ReopenedHandleReportsTheNewModelsSections) {
+    const auto directory = fixture("reopen-sections");
+    std::string text = slurp(directory / "model.inp");
+    const std::string heat = "HEAT_TRANSPORT ON\n", narrow = "C CIRCULAR 2", wide = "C CIRCULAR 3";
+    ASSERT_NE(text.find(heat), std::string::npos);
+    text.erase(text.find(heat), heat.size());
+    std::ofstream(directory / "narrow.inp") << text;
+    ASSERT_NE(text.find(narrow), std::string::npos);
+    std::ofstream(directory / "wide.inp") << text.replace(text.find(narrow), narrow.size(), wide);
+    Engine reused, fresh;
+    runToEnd(reused.value, directory / "narrow.inp", directory / "narrow.rpt", directory / "narrow.out");
+    runToEnd(reused.value, directory / "wide.inp", directory / "wide_reused.rpt", directory / "wide_reused.out");
+    runToEnd(fresh.value, directory / "wide.inp", directory / "wide_fresh.rpt", directory / "wide_fresh.out");
+    EXPECT_NE(slurp(directory / "narrow.out"), slurp(directory / "wide_fresh.out"));
+    EXPECT_EQ(slurp(directory / "wide_reused.out"), slurp(directory / "wide_fresh.out"));
+    EXPECT_EQ(reportBody(directory / "wide_reused.rpt"), reportBody(directory / "wide_fresh.rpt"));
+}
+
 TEST(ComponentMetadata, ValidatesHandlesPathsAndStrictInputEvenAfterLenientSelection) {
     Engine e;
     EXPECT_EQ(swmm_engine_open_metadata(nullptr, "x"), SWMM_ERR_BADHANDLE);

@@ -2119,105 +2119,23 @@ struct SimulationContext {
     }
 
     /**
-     * @brief Fully reset the context to a CREATED state.
+     * @brief Fully reset the context to a CREATED state: a fresh load.
      *
-     * @details Clears all object data and name indices. Does NOT free the
-     *          option structs (they are re-parsed from the input file).
-     *          Call this before re-running or re-opening a simulation.
+     * @details Every member returns to its default, so a reopen of one engine handle reads the
+     *          model afresh (a hand-kept list of stores to clear had drifted: the second open
+     *          kept the previous model's land uses, inflows, patterns, LIDs, [FILES], options and
+     *          more, and refused its own named objects as duplicates). Two members survive:
+     *          twod_io, the wiring into the engine's 2D router set by its constructor, and
+     *          xsect_generation, which the engine's cross-section cache compares against and so
+     *          must keep rising (a reopen with as many links would otherwise reuse the previous
+     *          model's sections). Called by SWMMEngine::open before every load.
      */
     void reset() {
-        outfall_exports = OutfallExports{};
-        runtime_coupling_used = false;
-        surface_outfall_link_limit.clear();
-        surface_outfall_quality = {};
-        link_gain_quality = {};
-        state = EngineState::CREATED;
-        control_log.clear();
-        control_rule_names.clear();
-        control_log_dropped = 0;
-        current_time = 0.0;
-        current_date = 0.0;
-        dt_controls_remaining = 0.0;
-        elapsed_ms = 0.0;
-        old_elapsed_ms = 0.0;
-        next_report_ms = 0.0;
-        error_code = 0;
-        warning_code = 0;
-        error_message.clear();
-        warnings.clear();
-        errors.clear();
-        title_notes.clear();
-        deferred_section_rows.clear();
-        unknown_section_headers.clear();
-        pending_gw_nodes.clear();
-        pending_gw_aquifers.clear();
-        pending_link_nodes.clear();
-
-        // Clear SoA stores
-        nodes = NodeData{};
-        links = LinkData{};
-        // Reopening a rain-rule model must not reuse the previous subtype
-        // join rows or append its rules to the freshly parsed rule store.
-        node_subtypes.clear();
-        link_subtypes.clear();
-        node_coupling_2d.clear();
-        control_rules = ControlRuleStore{};
-        subcatches = SubcatchData{};
-        gages = GageData{};
-        pollutants = PollutantData{};
-        tables = TableData{};
-        snowpacks = SnowpackStore{};
-
-        // Clear name indices
-        node_names.clear();
-        link_names.clear();
-        subcatch_names.clear();
-        gage_names.clear();
-        pollutant_names.clear();
-        snowpack_names.clear();
-
-        // Clear inflow-related stores that aren't reset by their owning solvers
-        rdii_decay = RDIIDecayData{};
-
-        // E3: transport.ard component config — its apply hook resets it, but
-        // a reopen WITHOUT the component would otherwise inherit the previous
-        // model's dispersion.
-        ard_config = ArdConfigData{};
-
-        // A1a: same stale-on-reopen hygiene for water age.
-        water_age_config = WaterAgeConfigData{};
-        water_age_state.clear();
-
-        // H1: and for heat.
-        heat_config = HeatConfigData{};
-        heat_state.clear();
-        lid_layer_state.clear();
-        bed_state.clear(); // H6b
-
-        // Virtual-junction diagnostics
-        vj_diag.clear();
-        inlet_diag.clear();
-
-        // Clear daily climate state (re-initialized by SWMMEngine on next run)
-        climate_state = climate::ClimateState{};
-
-        // Clear spatial, flags, events, and forcing. Per-object tags
-        // are owned by NodeData/LinkData/SubcatchData and cleared when
-        // those SoAs are resized/cleared by the wider reset path.
-        spatial = SpatialFrame{};
-        user_flags.clear();
-        events.clear();
-        std::fill(std::begin(adjust_temp), std::end(adjust_temp), 0.0);
-        std::fill(std::begin(adjust_evap), std::end(adjust_evap), 0.0);
-        std::fill(std::begin(adjust_rain), std::end(adjust_rain), 1.0);
-        std::fill(std::begin(adjust_hydcon), std::end(adjust_hydcon), 1.0);
-        subcatch_n_perv_pattern.clear();
-        subcatch_d_store_pattern.clear();
-        subcatch_infil_pattern.clear();
-        base_n_perv.clear();
-        base_ds_perv.clear();
-        has_subcatch_adj_patterns = false;
-        forcing = ForcingData{};
+        const TwoDModelIO io = twod_io;
+        const std::uint64_t generation = xsect_generation;
+        *this = SimulationContext{};
+        twod_io = io;
+        xsect_generation = generation;
     }
 
     /**
