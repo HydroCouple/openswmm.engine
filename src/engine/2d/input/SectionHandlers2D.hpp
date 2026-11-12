@@ -47,6 +47,7 @@
 
 #include <span>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -655,6 +656,16 @@ std::string load2DMeshExternalFile(
  * an earlier match.
  */
 void prescan2DUnitsHeader(const std::string& inp_path, SolverOptions2D& opts);
+
+/**
+ * @brief Apply one line's `;; UNITS: <value>` marker, if it carries one: the check
+ * prescan2DUnitsHeader makes on every line, for a reader that already walks the file.
+ *
+ * @param[in] line Raw line; surrounding whitespace, including a trailing '\r', is ignored.
+ * @param[in,out] opts mesh_units_si set true on a recognised metric value ("SI (m)", "m",
+ * "metre(s)", "meter(s)", case-insensitive); anything else leaves it unchanged, never false.
+ */
+void note2DUnitsMarker(std::string_view line, SolverOptions2D& opts);
 
 } // namespace openswmm::twoD
 

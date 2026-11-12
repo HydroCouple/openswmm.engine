@@ -35,7 +35,9 @@
 #include "../../../include/openswmm/plugin_sdk/IInputPlugin.hpp"
 #include "../input/SectionRegistry.hpp"
 
+#include <functional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace openswmm {
@@ -114,6 +116,13 @@ public:
      * or concurrently with registration/dispatch. Changes affect later input parsing. */
     input::SectionRegistry& registry() noexcept { return registry_; }
 
+    /** @brief Line observer for the next read() calls (InputReader::set_line_observer); an
+     * empty function turns it off. The engine checks each line for the `;; UNITS:` mesh marker
+     * this way during the .inp read. */
+    void set_line_observer(std::function<void(std::string_view)> observer) {
+        line_observer_ = std::move(observer);
+    }
+
 private:
     /** @brief Register standard engine sections, passthrough GUI annotations and embedded reaction sections.
      * Runs at construction. LABELS/BACKDROP/PROFILE/PROFILES retain authored lines;
@@ -122,6 +131,7 @@ private:
     void register_builtin_handlers();
 
     input::SectionRegistry registry_;
+    std::function<void(std::string_view)> line_observer_;
     PluginState state_ = PluginState::UNLOADED;
     std::string last_error_;
     std::vector<std::string> skipped_sections_;

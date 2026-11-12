@@ -64,11 +64,15 @@
 #include "SectionRegistry.hpp"
 #include "../core/SimulationContext.hpp"
 
+#include <functional>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <iosfwd>
 
 namespace openswmm::input {
+
+class LineBlocks; // InputReader.cpp: the input in blocks of whole lines
 
 /**
  * @brief Reads and parses a SWMM .inp file into a SimulationContext.
@@ -91,9 +95,11 @@ public:
     /**
      * @brief Open a UTF-8 input path and parse its section stream.
      *
-     * Open failure sets error_code=2, an error message and ERROR_STATE. On success delegates
-     * read_stream(); allocation/handler exceptions propagate. Does not perform post-parse
-     * cross-reference resolution or full model validation itself.
+     * Open failure sets error_code=2, an error message and ERROR_STATE. On success parses as
+     * read_stream() does, reading the file in binary blocks; on Windows it keeps the former
+     * text-mode read's rules (the input ends at the first Ctrl-Z, and CR LF reads as LF).
+     * Allocation/handler exceptions propagate. Does not perform post-parse cross-reference
+     * resolution or full model validation itself.
      *
      * @param[in] path Borrowed input filename; copied into ctx.inp_file_path only after successful
      *     open.
@@ -111,7 +117,11 @@ public:
      * header. Existing objects/errors remain. Does not distinguish EOF from a stream read failure or
      * call PostParseResolver.
      *
-     * @param[in,out] stream Borrowed open stream read from its current position until getline stops; no
+     * Lines end at '\n' (the last may lack one); a leading UTF-8 BOM and one trailing '\r' are
+     * dropped. A section whose handler takes views (SectionRegistry::register_custom_views)
+     * gets views into the block it was read in; every other section gets owned lines.
+     *
+     * @param[in,out] stream Borrowed open stream read from its current position to its end; no
      *     seek/close is performed.
      * @param[in,out] ctx Caller-owned model context; handlers mutate it directly. This reader does not
      *     clear prior objects, errors or error_code and does not roll back partial input.
@@ -121,8 +131,29 @@ public:
     bool read_stream(std::istream& stream, SimulationContext& ctx);
 
     /**
+     * @brief read_stream() for an input held in memory, without copying it.
+     * @param[in] text Whole input; must stay valid for the call.
+     * @param[in,out] ctx As read_stream().
+     * @return As read_stream().
+     */
+    bool read_text(std::string_view text, SimulationContext& ctx);
+
+    /**
+     * @brief Call `observer` with every line read, untrimmed (a leading BOM removed, a trailing
+     * '\r' kept), in input order.
+     *
+     * Lets a caller check each line during the read instead of in a pass over the file of its
+     * own (the engine's `;; UNITS:` mesh marker). An empty function turns it off.
+     *
+     * @param[in] observer Called synchronously, once per line.
+     */
+    void set_line_observer(std::function<void(std::string_view)> observer) {
+        line_observer_ = std::move(observer);
+    }
+
+    /**
      * @brief Read the physical-line counter from the most recent stream parse.
-     * @return Number of getline successes, including blank/comment/header lines. An open failure in
+     * @return Number of lines read, including blank/comment/header lines. An open failure in
      *     read() leaves the previous counter unchanged.
      */
     int lines_read() const noexcept { return lines_read_; }
@@ -151,6 +182,15 @@ private:
     SectionRegistry& registry_;
     int lines_read_ = 0;
     std::vector<std::string> skipped_sections_;
+    std::function<void(std::string_view)> line_observer_;
+
+    /**
+     * @brief The line walk behind read(), read_stream() and read_text().
+     * @param[in,out] blocks The input; blocks are released once no view points into them.
+     * @param[in,out] ctx As read_stream().
+     * @return As read_stream().
+     */
+    bool read_blocks(LineBlocks& blocks, SimulationContext& ctx);
 
     /**
      * @brief Dispatch registered sections or record unfamiliar section tags.

@@ -385,8 +385,23 @@ int SWMMEngine::open(const char* inp_path, const char* rpt_path, const char* out
     // Scan the inline .inp for `;; UNITS: SI (m)` so SurfaceRouter2D::initialize
     // can skip its FLOW_UNITS-based mesh scaling when the producer declared
     // the mesh is already SI. The external-mesh path runs its own prescan
-    // below and overrides this if both files carry the header.
-    if (inp_path && inp_path[0] != '\0') {
+    // below and overrides this if both files carry the header. The built-in
+    // reader checks each line as it reads it (one pass over the file, not
+    // two); another input plugin gets the separate scan. The observer is
+    // dropped when open() returns.
+    auto* units_reader = dynamic_cast<DefaultInputPlugin*>(input_plugin);
+    struct DropLineObserver {
+        DefaultInputPlugin* plugin;
+        ~DropLineObserver() {
+            if (plugin)
+                plugin->set_line_observer({});
+        }
+    } drop_line_observer{units_reader};
+    if (units_reader) {
+        units_reader->set_line_observer([&opts = surface_router_.options()](std::string_view line) {
+            twoD::note2DUnitsMarker(line, opts);
+        });
+    } else if (inp_path && inp_path[0] != '\0') {
         perf::ScopedTimer _pt(perf::sec_open_prescan2d);
         twoD::prescan2DUnitsHeader(inp_path, surface_router_.options());
     }

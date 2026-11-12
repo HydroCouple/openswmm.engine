@@ -73,6 +73,10 @@ bool SectionRegistry::is_custom(std::string_view tag) const {
     return custom_.count(key) > 0 || custom_views_.count(key) > 0;
 }
 
+bool SectionRegistry::takes_views(std::string_view tag) const {
+    return custom_views_.count(normalize_tag(tag)) > 0;
+}
+
 // ============================================================================
 // Dispatch
 // ============================================================================

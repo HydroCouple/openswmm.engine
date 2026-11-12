@@ -57,7 +57,6 @@
 
 #include "../input/InputReader.hpp"
 #include "../core/SimulationContext.hpp"
-#include <sstream>
 #include "../input/Tokenizer.hpp"
 #ifdef OPENSWMM_HAS_2D
 #include "../2d/SurfaceRouter2D.hpp"
@@ -114,9 +113,8 @@ void DefaultInputPlugin::registerContextSections(SimulationContext& ctx) {
 
 int DefaultInputPlugin::readText(const std::string& text, SimulationContext& ctx) {
     registerContextSections(ctx);
-    std::istringstream stream(text);
     input::InputReader reader(registry_);
-    const bool ok = reader.read_stream(stream, ctx);
+    const bool ok = reader.read_text(text, ctx);
     skipped_sections_ = reader.skipped_sections();
     return ok ? 0 : -1;
 }
@@ -281,6 +279,7 @@ int DefaultInputPlugin::validate(const SimulationContext& /*ctx*/) {
 
 int DefaultInputPlugin::read(const std::string& path, SimulationContext& ctx) {
     input::InputReader reader(registry_);
+    reader.set_line_observer(line_observer_);
     bool ok = reader.read(path, ctx);
 
     skipped_sections_ = reader.skipped_sections();

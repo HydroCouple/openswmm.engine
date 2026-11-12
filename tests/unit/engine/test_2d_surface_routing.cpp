@@ -1587,6 +1587,90 @@ TEST(Utf8Bom, UnitsMarkerOnTheFirstLineIsRead) {
 }
 
 // ============================================================================
+// The main .inp reader on line views (mesh open plan E3-inline): InputReader
+// reads the whole text once and walks it with views. A view handler and a
+// string handler must get the same lines, by the rules of the former getline
+// loop, whether the text comes from read_text or read_stream.
+// ============================================================================
+
+namespace {
+
+/// The sections one read handed out, and the lines its observer saw.
+struct LineCapture {
+    std::vector<std::string> title, views, strings, observed;
+    int lines_read = -1;
+    bool ok = false;
+
+    LineCapture(const std::string& text, bool through_stream) {
+        openswmm::input::SectionRegistry registry;
+        registry.register_custom("TITLE",
+                                 [this](openswmm::SimulationContext&,
+                                        const std::vector<std::string>& lines) { title = lines; });
+        registry.register_custom_views("VIEWS", [this](openswmm::SimulationContext&,
+                                                       const std::vector<std::string_view>& lines) {
+            views.assign(lines.begin(), lines.end());
+        });
+        registry.register_custom(
+            "STRINGS", [this](openswmm::SimulationContext&, const std::vector<std::string>& lines) {
+                strings = lines;
+            });
+        openswmm::input::InputReader reader(registry);
+        reader.set_line_observer([this](std::string_view line) { observed.emplace_back(line); });
+        openswmm::SimulationContext ctx;
+        if (through_stream) {
+            std::istringstream in(text);
+            ok = reader.read_stream(in, ctx);
+        } else {
+            ok = reader.read_text(text, ctx);
+        }
+        lines_read = reader.lines_read();
+    }
+};
+
+} // namespace
+
+TEST(InputReaderText, ViewAndStringHandlersGetTheSameLines) {
+    const std::string text = "stray text before any header\r\n"
+                             "[TITLE]\r\n"
+                             "  [Draft] a title; with a semicolon\r\n"
+                             "[VIEWS]   ; a header comment\r\n"
+                             "  a 1 ; trailing comment\r\n"
+                             " \t \r\n"
+                             ";; note \r\n"
+                             "[STRINGS]\n"
+                             "  a 1 ; trailing comment\n"
+                             ";; note \n"
+                             "b 2"; // no final newline
+    for (const bool through_stream : {false, true}) {
+        SCOPED_TRACE(through_stream ? "read_stream" : "read_text");
+        const LineCapture c(text, through_stream);
+        ASSERT_TRUE(c.ok);
+        EXPECT_EQ(c.title, (std::vector<std::string>{"  [Draft] a title; with a semicolon"}));
+        EXPECT_EQ(c.views, (std::vector<std::string>{"a 1", ";; note"}));
+        EXPECT_EQ(c.strings, (std::vector<std::string>{"a 1", ";; note", "b 2"}));
+        EXPECT_EQ(c.lines_read, 11);
+        // The observer gets every line untrimmed, its '\r' still on.
+        ASSERT_EQ(c.observed.size(), 11u);
+        EXPECT_EQ(c.observed[0], "stray text before any header\r");
+        EXPECT_EQ(c.observed[5], " \t \r");
+        EXPECT_EQ(c.observed[10], "b 2");
+    }
+}
+
+TEST(InputReaderText, EmptyAndBomOnlyTextsReadNothing) {
+    for (const std::string text : {std::string(), std::string("\xEF\xBB\xBF")}) {
+        const LineCapture c(text, false);
+        EXPECT_TRUE(c.ok);
+        EXPECT_EQ(c.lines_read, text.empty() ? 0 : 1);
+        EXPECT_TRUE(c.views.empty());
+        EXPECT_TRUE(c.strings.empty());
+        ASSERT_EQ(c.observed.size(), text.empty() ? 0u : 1u);
+        if (!text.empty())
+            EXPECT_EQ(c.observed[0], ""); // the BOM is not part of the line
+    }
+}
+
+// ============================================================================
 // SurfaceStateData Lifecycle Tests
 // ============================================================================
 

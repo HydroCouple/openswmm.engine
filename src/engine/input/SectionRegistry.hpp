@@ -75,7 +75,8 @@ using SectionHandler =
 /**
  * @brief SectionHandler that borrows its lines instead of owning copies.
  *
- * @details For readers that keep the whole file in memory (the [2D_MESH_FILE] sidecar loader):
+ * @details For the main .inp reader and the [2D_MESH_FILE] sidecar loader, which keep a line's
+ *          block or the whole file in memory:
  *          each view points into the reader's buffer and is valid only during the call.
  */
 using SectionViewHandler =
@@ -168,6 +169,13 @@ public:
      *     registration.
      */
     bool is_custom(std::string_view tag) const;
+
+    /**
+     * @brief Test whether a tag's custom handler takes line views (register_custom_views()).
+     * @param[in] tag Borrowed tag without brackets; normalized as has().
+     * @return True when the custom handler for the key is a view handler.
+     */
+    bool takes_views(std::string_view tag) const;
 
     // -----------------------------------------------------------------------
     // Dispatch

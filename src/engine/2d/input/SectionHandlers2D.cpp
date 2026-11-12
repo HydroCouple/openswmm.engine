@@ -2231,24 +2231,31 @@ void register2DSections(MeshData& mesh, SolverOptions2D& options,
                         std::vector<SurfaceRouter2D::PendingInitialBedQualityRow>& pending_ibq_rows,
                         std::vector<SurfaceRouter2D::PendingBoundaryQualityRow>& pending_bq_rows,
                         input::SectionRegistry& registry) {
+    // The sections with a token parser take line views, as in the [2D_MESH_FILE]
+    // registry below: InputReader::read_text hands them out without a
+    // std::string per line. 2D_OPTIONS (it warns through ctx), 2D_MESH_FILE
+    // (it reads the raw line) and the infiltration sections (they reach their
+    // store through ctx) keep string handlers.
+
     // S1/S2: initial surface species concentration. Main .inp only in this
     // round — the .2dm sidecar's mini-registry does not carry it (recorded).
-    registry.register_custom(
-        "2D_INITIAL_QUALITY",
-        makeSectionHandler([&pending_iq_rows](const std::vector<std::string>& tokens) {
-            return parse2DInitialQualityLine(tokens, pending_iq_rows);
-        }));
-    registry.register_custom(
-        "2D_INITIAL_BED_QUALITY",
-        makeSectionHandler([&pending_ibq_rows](const std::vector<std::string>& tokens) {
-            return parse2DInitialBedQualityLine(tokens, pending_ibq_rows);
-        }));
+    registry.register_custom_views(
+        "2D_INITIAL_QUALITY", makeSectionHandler<std::string_view>(
+                                  [&pending_iq_rows](const std::vector<std::string>& tokens) {
+                                      return parse2DInitialQualityLine(tokens, pending_iq_rows);
+                                  }));
+    registry.register_custom_views("2D_INITIAL_BED_QUALITY",
+                                   makeSectionHandler<std::string_view>(
+                                       [&pending_ibq_rows](const std::vector<std::string>& tokens) {
+                                           return parse2DInitialBedQualityLine(tokens,
+                                                                               pending_ibq_rows);
+                                       }));
     // S2: inflow concentration on a non-WALL boundary edge. Main .inp only.
-    registry.register_custom(
-        "2D_BOUNDARY_QUALITY",
-        makeSectionHandler([&pending_bq_rows](const std::vector<std::string>& tokens) {
-            return parse2DBoundaryQualityLine(tokens, pending_bq_rows);
-        }));
+    registry.register_custom_views(
+        "2D_BOUNDARY_QUALITY", makeSectionHandler<std::string_view>(
+                                   [&pending_bq_rows](const std::vector<std::string>& tokens) {
+                                       return parse2DBoundaryQualityLine(tokens, pending_bq_rows);
+                                   }));
 
     // Full-form handler (not makeSectionHandler): parse2DOptionsLine needs
     // ctx.warnings so retired CVODE-era keys warn-and-ignore on file load.
@@ -2267,50 +2274,56 @@ void register2DSections(MeshData& mesh, SolverOptions2D& options,
         }
     });
 
-    registry.register_custom("2D_VERTICES", makeMeshRowsHandler(mesh, MeshRows::Vertices));
+    registry.register_custom_views("2D_VERTICES",
+                                   makeMeshRowsHandler<std::string_view>(mesh, MeshRows::Vertices));
 
-    registry.register_custom("2D_TRIANGLES", makeMeshRowsHandler(mesh, MeshRows::Triangles));
+    registry.register_custom_views(
+        "2D_TRIANGLES", makeMeshRowsHandler<std::string_view>(mesh, MeshRows::Triangles));
 
-    registry.register_custom("2D_QUADS", makeMeshRowsHandler(mesh, MeshRows::Quads));
+    registry.register_custom_views("2D_QUADS",
+                                   makeMeshRowsHandler<std::string_view>(mesh, MeshRows::Quads));
 
-    registry.register_custom("2D_INITIAL_VELOCITY",
-                             makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
-                                 return parse2DInitialVelocityLine(tokens, mesh);
-                             }));
-
-    registry.register_custom("2D_INITIAL_HGL",
-                             makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
-                                 return parse2DInitialHglLine(tokens, mesh);
-                             }));
-
-    registry.register_custom(
-        "2D_VERTEX_NODE_MAP",
-        makeTagIndexedSectionHandler([&mesh](const std::vector<std::string>& tokens, TagIndex& ix) {
-            return parse2DVertexNodeMapLine(tokens, mesh, &ix);
+    registry.register_custom_views(
+        "2D_INITIAL_VELOCITY",
+        makeSectionHandler<std::string_view>([&mesh](const std::vector<std::string>& tokens) {
+            return parse2DInitialVelocityLine(tokens, mesh);
         }));
 
-    registry.register_custom(
-        "2D_TRIANGLE_NODE_MAP",
-        makeTagIndexedSectionHandler([&mesh](const std::vector<std::string>& tokens, TagIndex& ix) {
-            return parse2DTriangleNodeMapLine(tokens, mesh, &ix);
+    registry.register_custom_views(
+        "2D_INITIAL_HGL",
+        makeSectionHandler<std::string_view>([&mesh](const std::vector<std::string>& tokens) {
+            return parse2DInitialHglLine(tokens, mesh);
         }));
+
+    registry.register_custom_views(
+        "2D_VERTEX_NODE_MAP", makeTagIndexedSectionHandler<std::string_view>(
+                                  [&mesh](const std::vector<std::string>& tokens, TagIndex& ix) {
+                                      return parse2DVertexNodeMapLine(tokens, mesh, &ix);
+                                  }));
+
+    registry.register_custom_views(
+        "2D_TRIANGLE_NODE_MAP", makeTagIndexedSectionHandler<std::string_view>(
+                                    [&mesh](const std::vector<std::string>& tokens, TagIndex& ix) {
+                                        return parse2DTriangleNodeMapLine(tokens, mesh, &ix);
+                                    }));
 
     // V-E3 — [2D_BOUNDARY_CONDITIONS] accumulates pending rows; drained
     // during SurfaceRouter2D::initialize() after BoundaryData::resize.
-    registry.register_custom(
-        "2D_BOUNDARY_CONDITIONS",
-        makeSectionHandler([&pending_bc_rows](const std::vector<std::string>& tokens) {
-            return parse2DBoundaryConditionsLine(tokens, pending_bc_rows);
-        }));
+    registry.register_custom_views("2D_BOUNDARY_CONDITIONS",
+                                   makeSectionHandler<std::string_view>(
+                                       [&pending_bc_rows](const std::vector<std::string>& tokens) {
+                                           return parse2DBoundaryConditionsLine(tokens,
+                                                                                pending_bc_rows);
+                                       }));
 
     // §11A — [2D_EDGE_CONVEYANCE] accumulates pending rows; drained
     // during SurfaceRouter2D::initialize() after buildMeshTopology so
     // the vertex-pair → (tri, edge_local) lookup table is available.
-    registry.register_custom(
-        "2D_EDGE_CONVEYANCE",
-        makeSectionHandler([&pending_ec_rows](const std::vector<std::string>& tokens) {
-            return parse2DEdgeConveyanceLine(tokens, pending_ec_rows);
-        }));
+    registry.register_custom_views(
+        "2D_EDGE_CONVEYANCE", makeSectionHandler<std::string_view>(
+                                  [&pending_ec_rows](const std::vector<std::string>& tokens) {
+                                      return parse2DEdgeConveyanceLine(tokens, pending_ec_rows);
+                                  }));
 
     // §5.5 track I — per-cell infiltration. Rows land in the Infil2D reached
     // through ctx.twod_io.infil and are resolved against the mesh (tag/cell
@@ -2351,15 +2364,7 @@ void register2DSections(MeshData& mesh, SolverOptions2D& options,
     });
 }
 
-namespace {
-
-/**
- * @brief Apply one line's `;; UNITS: <value>` marker if it carries one (prescan2DUnitsHeader).
- * @param[in] line Raw line; surrounding whitespace, including a trailing '\r', is ignored.
- * @param[in,out] opts mesh_units_si set true on a recognised metric value ("SI (m)", "m",
- * "metre(s)", "meter(s)", case-insensitive); anything else leaves it unchanged, never false.
- */
-void noteUnitsMarker(std::string_view line, SolverOptions2D& opts) {
+void note2DUnitsMarker(std::string_view line, SolverOptions2D& opts) {
     // Views, not strings: this runs on every line of a file, and almost every
     // line is not a marker.
     const auto trim = [](std::string_view s) noexcept {
@@ -2391,12 +2396,14 @@ void noteUnitsMarker(std::string_view line, SolverOptions2D& opts) {
         opts.mesh_units_si = true;
 }
 
+namespace {
+
 /**
  * @brief Read a [2D_MESH_FILE] sidecar in one pass and dispatch its sections as line views.
  * @param[in] path UTF-8 sidecar path.
  * @param[in] registry Section handlers. View handlers get views into the file buffer; string
  * handlers get copies (SectionRegistry::dispatch_views).
- * @param[in,out] opts Receives the `;; UNITS:` marker of any line (noteUnitsMarker).
+ * @param[in,out] opts Receives the `;; UNITS:` marker of any line (note2DUnitsMarker).
  * @param[in,out] ctx Detached context collecting handler errors. An unopenable file sets code 2
  * and InputReader's message.
  * @details One walk replaces the separate units pass plus InputReader::read_stream's line loop,
@@ -2454,7 +2461,7 @@ void readSidecarSections(const std::string& path, const input::SectionRegistry& 
         std::string_view raw = text.substr(pos, nl - pos);
         pos = nl + 1;
 
-        noteUnitsMarker(raw, opts);
+        note2DUnitsMarker(raw, opts);
         if (!raw.empty() && raw.back() == '\r')
             raw.remove_suffix(1);
         const std::string_view t = Tokenizer::trim(raw);
@@ -2555,10 +2562,11 @@ load2DMeshExternalFile(MeshData& mesh, SolverOptions2D& opts,
         makeSectionHandler<std::string_view>([&mesh](const std::vector<std::string>& tokens) {
             return parse2DInitialVelocityLine(tokens, mesh);
         }));
-    mini.register_custom("2D_INITIAL_HGL",
-                         makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
-                             return parse2DInitialHglLine(tokens, mesh);
-                         }));
+    mini.register_custom_views(
+        "2D_INITIAL_HGL",
+        makeSectionHandler<std::string_view>([&mesh](const std::vector<std::string>& tokens) {
+            return parse2DInitialHglLine(tokens, mesh);
+        }));
     mini.register_custom_views("2D_VERTEX_NODE_MAP",
                                makeTagIndexedSectionHandler<std::string_view>(
                                    [&mesh](const std::vector<std::string>& tokens, TagIndex& ix) {
@@ -2694,7 +2702,7 @@ void prescan2DUnitsHeader(const std::string& inp_path, SolverOptions2D& opts) {
         if (first && line.compare(0, 3, "\xEF\xBB\xBF") == 0) // UTF-8 byte-order mark
             line.erase(0, 3);
         first = false;
-        noteUnitsMarker(line, opts);
+        note2DUnitsMarker(line, opts);
     }
 }
 

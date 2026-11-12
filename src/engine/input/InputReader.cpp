@@ -32,7 +32,9 @@
 #include "../core/ErrorCodes.hpp"
 #include "../core/PerfTimers.hpp"
 
+#include <deque>
 #include <fstream>
+#include <istream>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -78,11 +80,88 @@ bool legacy_knows_section(const std::string& tag) {
 InputReader::InputReader(SectionRegistry& registry) : registry_(registry) {}
 
 // ============================================================================
+// LineBlocks
+// ============================================================================
+
+/**
+ * @brief The input in blocks of whole lines.
+ *
+ * A block ends at a line end (a partial last line is carried into the next block), so a view of
+ * a line stays valid while its block is kept. Blocks are kept until release_old(), which drops all
+ * but the newest: a section that hands out views keeps its blocks until it is dispatched; every
+ * other section copies its lines, so its blocks go as soon as they are read.
+ */
+class LineBlocks {
+public:
+    /// Blocks read from `in`. `text_mode`: read as the Windows C runtime's text mode did -- the
+    /// input ends at the first Ctrl-Z (0x1A), and a CR before a line's '\n' is dropped.
+    LineBlocks(std::istream& in, bool text_mode) : in_(&in), text_mode_(text_mode) {}
+    /// One block: all of `text`, which must outlive the read.
+    explicit LineBlocks(std::string_view text) : text_(text) {}
+
+    bool text_mode() const noexcept { return text_mode_; }
+
+    /// The next block, or an empty view at the end of the input.
+    std::string_view next() {
+        if (!in_) {
+            const std::string_view t = text_;
+            text_ = {};
+            return t;
+        }
+        std::string block = std::move(carry_);
+        carry_.clear();
+        while (!eof_) {
+            const std::size_t old = block.size();
+            block.resize(old + kBlockBytes);
+            in_->read(block.data() + old, static_cast<std::streamsize>(kBlockBytes));
+            const auto got = static_cast<std::size_t>(in_->gcount());
+            block.resize(old + got);
+            if (got < kBlockBytes)
+                eof_ = true;
+            if (text_mode_) {
+                if (const auto z = block.find('\x1A', old); z != std::string::npos) {
+                    block.resize(z);
+                    eof_ = true;
+                }
+            }
+            // Whole lines only: what follows the last '\n' read just now waits for the next block.
+            std::size_t end = block.size();
+            while (end > old && block[end - 1] != '\n')
+                --end;
+            if (end > old) {
+                carry_.assign(block, end, std::string::npos);
+                block.resize(end);
+                break;
+            }
+        }
+        if (block.empty())
+            return {};
+        blocks_.push_back(std::move(block));
+        return blocks_.back();
+    }
+
+    /// Drop every block but the newest.
+    void release_old() {
+        while (blocks_.size() > 1)
+            blocks_.pop_front();
+    }
+
+private:
+    static constexpr std::size_t kBlockBytes = std::size_t{1} << 20;
+    std::istream* in_ = nullptr;
+    bool text_mode_ = false;
+    bool eof_ = false;
+    std::string_view text_;
+    std::string carry_;
+    std::deque<std::string> blocks_;
+};
+
+// ============================================================================
 // read()
 // ============================================================================
 
 bool InputReader::read(const std::string& path, SimulationContext& ctx) {
-    std::ifstream ifs(openswmm::io::utf8_path(path));
+    std::ifstream ifs(openswmm::io::utf8_path(path), std::ios::binary);
     if (!ifs.is_open()) {
         ctx.error_code = 2; // public SWMM_ERR_INPFILE (was 1 = NOMEM)
         ctx.error_message = "InputReader: cannot open file '" + path + "'";
@@ -90,14 +169,34 @@ bool InputReader::read(const std::string& path, SimulationContext& ctx) {
         return false;
     }
     ctx.inp_file_path = path;
-    return read_stream(ifs, ctx);
+#if defined(_WIN32)
+    // The file used to be read in text mode; keep its rules.
+    LineBlocks blocks(ifs, true);
+#else
+    LineBlocks blocks(ifs, false);
+#endif
+    return read_blocks(blocks, ctx);
 }
 
 // ============================================================================
-// read_stream()
+// read_stream() / read_text()
 // ============================================================================
 
 bool InputReader::read_stream(std::istream& stream, SimulationContext& ctx) {
+    LineBlocks blocks(stream, false);
+    return read_blocks(blocks, ctx);
+}
+
+bool InputReader::read_text(std::string_view text, SimulationContext& ctx) {
+    LineBlocks blocks(text);
+    return read_blocks(blocks, ctx);
+}
+
+// ============================================================================
+// read_blocks()
+// ============================================================================
+
+bool InputReader::read_blocks(LineBlocks& blocks, SimulationContext& ctx) {
     lines_read_ = 0;
     skipped_sections_.clear();
     ctx.unknown_section_headers.clear();
@@ -109,85 +208,117 @@ bool InputReader::read_stream(std::istream& stream, SimulationContext& ctx) {
     ctx.options.rpt_nodes = 0;
     ctx.options.rpt_links = 0;
 
-    std::string current_tag;                // e.g. "OPTIONS"
-    std::vector<std::string> section_lines; // accumulated data lines
+    std::string current_tag;                  // e.g. "OPTIONS"
+    bool views = false;                       // the section's handler takes line views
+    std::vector<std::string_view> view_lines; // its lines then, borrowed from blocks
+    std::vector<std::string> section_lines;   // its lines otherwise
 
     auto flush_section = [&]() {
         if (!current_tag.empty()) {
             perf::ScopedTimer _pt(perf::sec_read_dispatch);
-            dispatch_section(current_tag, section_lines, ctx);
-            section_lines.clear();
+            if (views) {
+                registry_.dispatch_views(current_tag, ctx, view_lines);
+                view_lines.clear();
+            } else {
+                dispatch_section(current_tag, section_lines, ctx);
+                section_lines.clear();
+            }
         }
+        blocks.release_old(); // no view points before the current block now
+    };
+    const auto keep = [&](std::string_view line) {
+        if (views)
+            view_lines.push_back(line);
+        else
+            section_lines.emplace_back(line);
     };
 
-    std::string raw_line;
-    while (std::getline(stream, raw_line)) {
-        ++lines_read_;
+    for (std::string_view block = blocks.next(); !block.empty(); block = blocks.next()) {
+        if (!views)
+            blocks.release_old();
+        std::size_t pos = 0;
+        while (pos < block.size()) {
+            std::size_t nl = block.find('\n', pos);
+            if (nl == std::string_view::npos)
+                nl = block.size();
+            std::string_view raw_line = block.substr(pos, nl - pos);
+            pos = nl + 1;
+            ++lines_read_;
 
-        // A UTF-8 byte-order mark (Notepad and many Windows tools write one)
-        // would otherwise hide the first section header.
-        if (lines_read_ == 1 && raw_line.compare(0, 3, "\xEF\xBB\xBF") == 0)
-            raw_line.erase(0, 3);
+            // A UTF-8 byte-order mark (Notepad and many Windows tools write one)
+            // would otherwise hide the first section header.
+            if (lines_read_ == 1 && raw_line.substr(0, 3) == "\xEF\xBB\xBF")
+                raw_line.remove_prefix(3);
 
-        // Strip \r (Windows CRLF)
-        if (!raw_line.empty() && raw_line.back() == '\r') {
-            raw_line.pop_back();
-        }
+            // Text mode turned a line's CR LF into LF before the CR strip below.
+            if (blocks.text_mode() && nl < block.size() && !raw_line.empty() &&
+                raw_line.back() == '\r')
+                raw_line.remove_suffix(1);
 
-        // Trim first so we can inspect the leading character without allocating.
-        std::string_view trimmed_raw = Tokenizer::trim(raw_line);
+            if (line_observer_)
+                line_observer_(raw_line);
 
-        // Skip truly empty lines
-        if (trimmed_raw.empty())
-            continue;
+            // Strip \r (Windows CRLF)
+            if (!raw_line.empty() && raw_line.back() == '\r') {
+                raw_line.remove_suffix(1);
+            }
 
-        // Detect section header. A real header is a clean "[NAME]" token on its
-        // own line (an optional trailing comment is allowed). A line that merely
-        // begins with '[' but carries other text after the ']' — e.g. a wrapped
-        // [TITLE] line that happens to start with a bracketed word — is NOT a
-        // header; it falls through and is kept as section data.
-        if (trimmed_raw.front() == '[') {
-            std::string_view header = Tokenizer::trim(Tokenizer::strip_comment(trimmed_raw));
-            if (!header.empty() && header.back() == ']') {
-                flush_section();
-                current_tag = parse_section_header(header);
-                if (!current_tag.empty() && !registry_.has(current_tag) &&
-                    !legacy_knows_section(current_tag)) {
-                    // legacy names the first token of the line, as written
-                    const auto end = trimmed_raw.find_first_of(" \t");
-                    ctx.unknown_section_headers.emplace_back(
-                        std::string(trimmed_raw.substr(0, end)), lines_read_);
+            // Trim first so we can inspect the leading character without allocating.
+            std::string_view trimmed_raw = Tokenizer::trim(raw_line);
+
+            // Skip truly empty lines
+            if (trimmed_raw.empty())
+                continue;
+
+            // Detect section header. A real header is a clean "[NAME]" token on its
+            // own line (an optional trailing comment is allowed). A line that merely
+            // begins with '[' but carries other text after the ']' — e.g. a wrapped
+            // [TITLE] line that happens to start with a bracketed word — is NOT a
+            // header; it falls through and is kept as section data.
+            if (trimmed_raw.front() == '[') {
+                std::string_view header = Tokenizer::trim(Tokenizer::strip_comment(trimmed_raw));
+                if (!header.empty() && header.back() == ']') {
+                    flush_section();
+                    current_tag = parse_section_header(header);
+                    views = !current_tag.empty() && registry_.takes_views(current_tag);
+                    if (!current_tag.empty() && !registry_.has(current_tag) &&
+                        !legacy_knows_section(current_tag)) {
+                        // legacy names the first token of the line, as written
+                        const auto end = trimmed_raw.find_first_of(" \t");
+                        ctx.unknown_section_headers.emplace_back(
+                            std::string(trimmed_raw.substr(0, end)), lines_read_);
+                    }
+                    continue;
                 }
+                // Not a clean header — fall through to data-line handling below.
+            }
+
+            // Comment line (starts with ';') — keep verbatim inside a section so
+            // section handlers can associate per-object comments with objects.
+            if (trimmed_raw.front() == ';') {
+                if (!current_tag.empty())
+                    keep(trimmed_raw);
                 continue;
             }
-            // Not a clean header — fall through to data-line handling below.
-        }
 
-        // Comment line (starts with ';') — keep verbatim inside a section so
-        // section handlers can associate per-object comments with objects.
-        if (trimmed_raw.front() == ';') {
-            if (!current_tag.empty())
-                section_lines.emplace_back(std::string(trimmed_raw));
-            continue;
+            // Data line. [TITLE] is free-form prose, so preserve it verbatim —
+            // legacy SWMM stores the whole title line (input.c readTitle), and a
+            // ';' in a sentence is description, not a comment. Stripping it here
+            // truncated titles mid-sentence in the .rpt echo. Every other section
+            // strips the inline trailing comment.
+            // legacy readTitle copies the RAW line, leading blanks included, so
+            // [TITLE] keeps it untrimmed (the .rpt echo and the .inp round trip
+            // both reproduce it).
+            if (current_tag == "TITLE") {
+                keep(raw_line);
+                continue;
+            }
+            std::string_view stripped = Tokenizer::strip_comment(trimmed_raw);
+            std::string_view trimmed = Tokenizer::trim(stripped);
+            if (!trimmed.empty() && !current_tag.empty())
+                keep(trimmed);
+            // Lines before the first section header are silently ignored
         }
-
-        // Data line. [TITLE] is free-form prose, so preserve it verbatim —
-        // legacy SWMM stores the whole title line (input.c readTitle), and a
-        // ';' in a sentence is description, not a comment. Stripping it here
-        // truncated titles mid-sentence in the .rpt echo. Every other section
-        // strips the inline trailing comment.
-        // legacy readTitle copies the RAW line, leading blanks included, so
-        // [TITLE] keeps it untrimmed (the .rpt echo and the .inp round trip
-        // both reproduce it).
-        if (current_tag == "TITLE") {
-            section_lines.emplace_back(raw_line);
-            continue;
-        }
-        std::string_view stripped = Tokenizer::strip_comment(trimmed_raw);
-        std::string_view trimmed = Tokenizer::trim(stripped);
-        if (!trimmed.empty() && !current_tag.empty())
-            section_lines.emplace_back(std::string(trimmed));
-        // Lines before the first section header are silently ignored
     }
 
     // Flush the last section

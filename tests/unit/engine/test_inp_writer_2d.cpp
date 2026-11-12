@@ -731,6 +731,33 @@ TEST_F(InpWriter2DTest, ParsedMeshBuildsNeighboursOnDemand) {
     EXPECT_DOUBLE_EQ(cz, (10.0 + 12.0 + 11.0) / 3.0);
 }
 
+// Mesh open plan E3-inline: the engine finds the `;; UNITS:` mesh marker while
+// the .inp reader walks the file, not in a pass of its own. The marker counts on
+// any line: here the last one, without a newline, in a CRLF file.
+TEST_F(InpWriter2DTest, UnitsMarkerIsFoundDuringTheRead) {
+    std::string crlf;
+    for (const char c : replace(k1DBase, "{FLOW_UNITS}", "CFS") + k2DSections) {
+        if (c == '\n')
+            crlf += '\r';
+        crlf += c;
+    }
+    const fs::path with = dir_ / "units_last_line.inp";
+    const fs::path without = dir_ / "units_none.inp";
+    std::ofstream(with, std::ios::binary) << crlf << ";; UNITS: SI (m)";
+    std::ofstream(without, std::ios::binary) << crlf;
+    eng_a_ = open_engine(with);
+    eng_b_ = open_engine(without);
+    const auto* a = reinterpret_cast<openswmm::SWMMEngine*>(eng_a_);
+    const auto* b = reinterpret_cast<openswmm::SWMMEngine*>(eng_b_);
+    EXPECT_TRUE(a->surfaceRouter2D().options().mesh_units_si);
+    EXPECT_FALSE(b->surfaceRouter2D().options().mesh_units_si);
+    int nv = 0, nt = 0;
+    ASSERT_EQ(swmm_2d_vertex_count(eng_a_, &nv), 0);
+    ASSERT_EQ(swmm_2d_triangle_count(eng_a_, &nt), 0);
+    EXPECT_EQ(nv, 4);
+    EXPECT_EQ(nt, 2);
+}
+
 // A mesh file that fails part-way, opened leniently (the GUI's editor open):
 // "continue 1D-only" must not keep what the file applied before the bad row —
 // its [2D_OPTIONS] values, its `;; UNITS: SI (m)` flag, or quality rows that
