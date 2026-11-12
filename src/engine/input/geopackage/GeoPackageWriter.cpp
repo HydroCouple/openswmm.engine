@@ -2873,8 +2873,8 @@ static void write_mesh_2d(sqlite3* db, const SimulationContext& ctx, const std::
     {
         auto stmt = prepare(db, "INSERT INTO mesh_2d_triangles "
                                 "(simulation_id, tri_idx, geom, v0, v1, v2, mannings_n, tag, "
-                                "bed_elev, coupled_node, init_depth) "
-                                "VALUES (?,?,?,?,?,?,?,?,?,?,?)");
+                                "bed_elev, coupled_node, init_depth, init_hgl) "
+                                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)");
         std::vector<double> xs(3), ys(3);
         for (int t = 0; t < nt; ++t) {
             if (mesh.cell_vertex_count(t) != 3)
@@ -2913,6 +2913,11 @@ static void write_mesh_2d(sqlite3* db, const SimulationContext& ctx, const std::
             else
                 bind_null(stmt.get(), 10);
             bind_double(stmt.get(), 11, mesh.tri_init_depth[t]);
+            // Elevation on the vertex datum, written in the same units as z.
+            if (std::isfinite(mesh.tri_init_hgl[t]))
+                bind_double(stmt.get(), 12, mesh.tri_init_hgl[t] * f);
+            else
+                bind_null(stmt.get(), 12);
             step_or_throw(db, stmt.get(), "mesh_2d_triangles insert failed");
         }
     }
@@ -2921,8 +2926,8 @@ static void write_mesh_2d(sqlite3* db, const SimulationContext& ctx, const std::
     if (mesh.n_quads() > 0) {
         auto stmt = prepare(db, "INSERT INTO mesh_2d_quads "
                                 "(simulation_id, quad_idx, geom, v0, v1, v2, v3, mannings_n, tag, "
-                                "bed_elev, coupled_node, init_depth) "
-                                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)");
+                                "bed_elev, coupled_node, init_depth, init_hgl) "
+                                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)");
         std::vector<double> xs(4), ys(4);
         int q = 0;
         for (int t = 0; t < nt; ++t) {
@@ -2965,6 +2970,10 @@ static void write_mesh_2d(sqlite3* db, const SimulationContext& ctx, const std::
             else
                 bind_null(stmt.get(), 11);
             bind_double(stmt.get(), 12, mesh.tri_init_depth[t]);
+            if (std::isfinite(mesh.tri_init_hgl[t]))
+                bind_double(stmt.get(), 13, mesh.tri_init_hgl[t] * f);
+            else
+                bind_null(stmt.get(), 13);
             step_or_throw(db, stmt.get(), "mesh_2d_quads insert failed");
         }
     }

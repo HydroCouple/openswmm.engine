@@ -554,6 +554,47 @@ SWMM_ENGINE_API int swmm_2d_triangle_get_init_depth(SWMM_Engine engine, int idx,
  */
 SWMM_ENGINE_API int swmm_2d_set_triangle_init_depth(SWMM_Engine engine, int idx, double d);
 
+/** Defined by engines that support `[2D_INITIAL_HGL]` and the two functions below, so a client
+ *  can be compiled against engines with and without them. */
+#define SWMM_2D_HAS_INIT_HGL 1
+
+/**
+ * @brief Get a cell's prescribed initial water-surface elevation (`[2D_INITIAL_HGL]`).
+ *         @ingroup engine_2d
+ *
+ * @param[out] hgl Required destination; receives the authored elevation in current mesh length
+ * units on the mesh vertical datum, or NaN when no HGL is prescribed for the cell (it then
+ * starts from its INIT_DEPTH).
+ * @param[in] engine Borrowed live engine handle; all caller storage remains caller-owned.
+ * Serialize calls with stepping and other engine edits.
+ * @param[in] idx Zero-based cell index in [0, cell_count); includes triangles and quadrilaterals.
+ * @note Requires a parsed mesh; no initialized hydraulic state is needed.
+ * @return SWMM_OK on success; SWMM_ERR_BADHANDLE for a null engine;
+ * SWMM_ERR_BADINDEX for an invalid integer index; SWMM_ERR_BADPARAM for invalid
+ * required storage or values. Lifecycle restrictions and additional errors are described above.
+ */
+SWMM_ENGINE_API int swmm_2d_triangle_get_init_hgl(SWMM_Engine engine, int idx, double* hgl);
+
+/**
+ * @brief Prescribe a cell's initial water-surface elevation as an alternative to its initial
+ *         depth. Applied when the 2D surface initializes: the elevation is converted to the
+ *         cell's water volume under the configured closure and clamped at the cell invert, so
+ *         an elevation at or below the bed starts the cell dry. While set it overrides the
+ *         cell's INIT_DEPTH. Persisted in `[2D_INITIAL_HGL]` on save. @ingroup engine_2d
+ *
+ * @param[in] hgl Finite elevation in current mesh length units on the mesh vertical datum, or
+ * NaN to clear the prescription; infinities return SWMM_ERR_BADPARAM. Only initialization
+ * consumes it.
+ * @param[in] engine Borrowed live engine handle; all caller storage remains caller-owned.
+ * Serialize calls with stepping and other engine edits.
+ * @param[in] idx Zero-based cell index in [0, cell_count); includes triangles and quadrilaterals.
+ * @note Requires a parsed mesh; no initialized hydraulic state is needed.
+ * @return SWMM_OK on success; SWMM_ERR_BADHANDLE for a null engine;
+ * SWMM_ERR_BADINDEX for an invalid integer index; SWMM_ERR_BADPARAM for invalid
+ * required storage or values. Lifecycle restrictions and additional errors are described above.
+ */
+SWMM_ENGINE_API int swmm_2d_set_triangle_init_hgl(SWMM_Engine engine, int idx, double hgl);
+
 /**
  * @brief Get triangle initial velocity (u, v in m/s; `[2D_INITIAL_VELOCITY]`
  *         rows, default 0,0). @ingroup engine_2d

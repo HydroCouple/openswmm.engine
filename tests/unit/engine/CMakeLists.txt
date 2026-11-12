@@ -745,6 +745,12 @@ if(OPENSWMM_BUILD_2D)
     # mesh's vertical datum (project display units), so initialize() must scale
     # it by mesh_to_si like vz. It was consumed raw as metres before the fix.
     add_gtest_unit(test_engine_2d_init_depth_units test_2d_init_depth_units.cpp)
+    # [2D_INITIAL_HGL] — initial water-surface elevation as an alternative to
+    # INIT_DEPTH: resolved depth is clamped at the cell invert, HGL overrides
+    # depth per cell, follows mesh units, and round-trips through the writer.
+    add_gtest_unit(test_engine_2d_init_hgl test_2d_init_hgl.cpp)
+    target_compile_definitions(test_engine_2d_init_hgl PRIVATE
+        OPENSWMM_INIT_HGL_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
     # Two-way 1D↔2D OUTFALL coupling regression — a coupled outfall's pipe
     # discharge must reach the 2D mesh (it read nodes.outflow≈0 before the fix)
     # and both the 2D and 1D continuity ledgers must close.

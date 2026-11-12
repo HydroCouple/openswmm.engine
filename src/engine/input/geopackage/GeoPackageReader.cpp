@@ -3013,11 +3013,14 @@ static void read_mesh_2d(sqlite3* db, SimulationContext& ctx, const std::string&
 
         // init_depth was added 2026-08 (default 0 = dry); older files lack it.
         const bool has_init_depth = column_exists(db, "mesh_2d_triangles", "init_depth");
+        // init_hgl was added 2026-11 (NULL = not prescribed); it is only ever
+        // present alongside init_depth.
+        const bool has_init_hgl =
+            has_init_depth && column_exists(db, "mesh_2d_triangles", "init_hgl");
         auto stmt = prepare(
-            db, has_init_depth ? "SELECT tri_idx, v0, v1, v2, mannings_n, tag, init_depth "
-                                 "FROM mesh_2d_triangles WHERE simulation_id = ? ORDER BY tri_idx"
-                               : "SELECT tri_idx, v0, v1, v2, mannings_n, tag "
-                                 "FROM mesh_2d_triangles WHERE simulation_id = ? ORDER BY tri_idx");
+            db, std::string("SELECT tri_idx, v0, v1, v2, mannings_n, tag") +
+                    (has_init_depth ? ", init_depth" : "") + (has_init_hgl ? ", init_hgl" : "") +
+                    " FROM mesh_2d_triangles WHERE simulation_id = ? ORDER BY tri_idx");
         bind_text(stmt.get(), 1, sim_id);
         while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
             const int t = column_int(stmt.get(), 0);
@@ -3029,6 +3032,8 @@ static void read_mesh_2d(sqlite3* db, SimulationContext& ctx, const std::string&
             mesh.tri_tag[t] = column_text(stmt.get(), 5);
             if (has_init_depth)
                 mesh.tri_init_depth[t] = column_double(stmt.get(), 6);
+            if (has_init_hgl && !column_is_null(stmt.get(), 7))
+                mesh.tri_init_hgl[t] = column_double(stmt.get(), 7);
         }
     }
 
@@ -3046,9 +3051,11 @@ static void read_mesh_2d(sqlite3* db, SimulationContext& ctx, const std::string&
                                     "contiguous [0, n)");
                 const int nt0 = mesh.n_triangles();
                 mesh.resize_triangles(nt0 + nq);
-                auto stmt =
-                    prepare(db, "SELECT quad_idx, v0, v1, v2, v3, mannings_n, tag, init_depth "
-                                "FROM mesh_2d_quads WHERE simulation_id = ? ORDER BY quad_idx");
+                const bool has_init_hgl = column_exists(db, "mesh_2d_quads", "init_hgl");
+                auto stmt = prepare(
+                    db, std::string("SELECT quad_idx, v0, v1, v2, v3, mannings_n, tag, init_depth") +
+                            (has_init_hgl ? ", init_hgl" : "") +
+                            " FROM mesh_2d_quads WHERE simulation_id = ? ORDER BY quad_idx");
                 bind_text(stmt.get(), 1, sim_id);
                 while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
                     const int q = column_int(stmt.get(), 0);
@@ -3060,6 +3067,8 @@ static void read_mesh_2d(sqlite3* db, SimulationContext& ctx, const std::string&
                     mesh.mannings_n[t] = column_double(stmt.get(), 5);
                     mesh.tri_tag[t] = column_text(stmt.get(), 6);
                     mesh.tri_init_depth[t] = column_double(stmt.get(), 7);
+                    if (has_init_hgl && !column_is_null(stmt.get(), 8))
+                        mesh.tri_init_hgl[t] = column_double(stmt.get(), 8);
                 }
             }
         }

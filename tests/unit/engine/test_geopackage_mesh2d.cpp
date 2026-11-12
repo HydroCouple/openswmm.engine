@@ -20,6 +20,7 @@
  * @license   Apache-2.0
  */
 
+#include <cmath>
 #include <gtest/gtest.h>
 
 #include <filesystem>
@@ -190,6 +191,7 @@ protected:
         mesh_.set_triangle(1, 0, 2, 3);
         mesh_.mannings_n = {0.03, 0.045};
         mesh_.tri_init_depth = {0.25, 0.0};
+        mesh_.tri_init_hgl[1] = 10.75; // cell 0 stays NaN (not prescribed)
         mesh_.tri_tag[1] = "T1";
     }
 
@@ -247,6 +249,9 @@ TEST_F(GeoPackageMesh2DTest, MeshRoundTripMinimal) {
         EXPECT_DOUBLE_EQ(mesh_in_.tri_init_depth[t], mesh_.tri_init_depth[t]);
         EXPECT_EQ(mesh_in_.tri_tag[t], mesh_.tri_tag[t]);
     }
+    // [2D_INITIAL_HGL]: an unset cell reads back unset (NULL), a set one exactly.
+    EXPECT_TRUE(std::isnan(mesh_in_.tri_init_hgl[0]));
+    EXPECT_DOUBLE_EQ(mesh_in_.tri_init_hgl[1], 10.75);
     // Derived topology is NOT persisted — it stays at the resize defaults
     // until SurfaceRouter2D::initialize() rebuilds it.
     EXPECT_EQ(mesh_in_.cell_neighbour(0, 0), -1);

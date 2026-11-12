@@ -690,6 +690,41 @@ cdef class Surface2D:
         """
         _check(swmm_2d_set_triangle_init_depth(self._h(), idx, depth))
 
+    def get_triangle_init_hgl(self, int idx) -> float:
+        """Return a cell's prescribed initial water-surface elevation.
+
+        The value is an absolute elevation in B{mesh length units} on the
+        vertex Z datum.
+
+        @param idx: Cell index (0-based; triangles then quads).
+        @type idx: int
+        @return: Prescribed elevation, or C{nan} when none is set and the
+            cell starts from its initial depth.
+        @rtype: float
+        @raise EngineError: If the C API call fails.
+        """
+        cdef double h
+        _check(swmm_2d_triangle_get_init_hgl(self._h(), idx, &h))
+        return h
+
+    def set_triangle_init_hgl(self, int idx, double hgl) -> None:
+        """Prescribe a cell's initial water-surface elevation.
+
+        An alternative to the initial depth: while set it overrides the
+        cell's C{INIT_DEPTH}. When the 2D surface initializes the elevation
+        is converted to water volume and clamped at the cell invert, so an
+        elevation at or below the bed starts the cell dry. Persisted in
+        C{[2D_INITIAL_HGL]} on save.
+
+        @param idx: Cell index (0-based; triangles then quads).
+        @type idx: int
+        @param hgl: Elevation in mesh length units on the vertex Z datum,
+            or C{nan} to clear the prescription.
+        @type hgl: float
+        @raise EngineError: If the C API rejects the value (infinite).
+        """
+        _check(swmm_2d_set_triangle_init_hgl(self._h(), idx, hgl))
+
     def get_triangle_init_velocity(self, int idx):
         """Return the C{(u, v)} initial velocity of a triangle.
 

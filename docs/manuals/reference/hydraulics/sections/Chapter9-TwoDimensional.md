@@ -440,6 +440,30 @@ the cell velocities. Without the latter a model can only start from
 rest, which excludes solutions such as Thacker's oscillating basins
 whose initial state has \f$\mathbf{u} \neq 0\f$.
 
+A cell's initial state can instead be given as a water-surface elevation
+in the optional `[2D_INITIAL_HGL]` section:
+
+```
+[2D_INITIAL_HGL]
+;;CELL  HGL
+*       12.50
+1042    13.10
+```
+
+`HGL` is an absolute elevation in mesh units on the `[2D_VERTICES]` Z
+datum. `CELL` is a cell index, or `*` for every cell; rows apply in file
+order, so a `*` row followed by cell rows sets a level pool with local
+overrides. The section must follow the cell sections it refers to; when
+the mesh is in a `[2D_MESH_FILE]`, it goes in that file. A
+cell with an HGL ignores its `INIT_DEPTH`. At
+initialization the elevation is converted to a cell volume through the
+closure of §9.4 and clamped at the cell invert: an HGL at or below the
+bed (the lowest vertex under `VFR`, the centroid bed under `FLAT`)
+starts the cell dry. A warning is issued when the HGL leaves every cell
+it is prescribed for dry, which usually means a datum or unit mismatch.
+A coupled 1D node is not initialized from the 2D level; give it a
+matching initial depth to avoid an exchange in the first step.
+
 For a finite local mesh bed, `[2D_INITIAL_BED_QUALITY]` seeds the bed
 porewater separately from the overland water. It uses the same `*`, `TAG`
 and one-based `CELL` scopes and `* < TAG < CELL` precedence as
@@ -467,7 +491,7 @@ tag columns as `[2D_TRIANGLES]`:
 **Cells are numbered triangles first, then quads**, each in file order:
 the \f$j\f$-th quad row is cell \f$n_{tri} + j\f$. Every cell-addressed
 section — `[2D_BOUNDARY_CONDITIONS]`, `[2D_BOUNDARY_QUALITY]`,
-`[2D_INITIAL_VELOCITY]`, `[2D_TRIANGLE_NODE_MAP]`, `[2D_INFILTRATION]` —
+`[2D_INITIAL_VELOCITY]`, `[2D_INITIAL_HGL]`, `[2D_TRIANGLE_NODE_MAP]`, `[2D_INFILTRATION]` —
 uses this unified index, and their column headers keep the word `TRI`. A
 `[2D_TRIANGLES]` row appearing after a `[2D_QUADS]` row is a parse error,
 which is what keeps the numbering unambiguous. A non-convex or

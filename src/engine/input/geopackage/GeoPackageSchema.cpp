@@ -1265,6 +1265,7 @@ CREATE TABLE IF NOT EXISTS mesh_2d_triangles (
     v2              INTEGER NOT NULL,
     mannings_n      REAL NOT NULL DEFAULT 0.035,
     init_depth      REAL NOT NULL DEFAULT 0,
+    init_hgl        REAL,  -- initial water-surface elevation; NULL = use init_depth
     tag             TEXT,
     bed_elev        REAL,
     coupled_node    TEXT,
@@ -1300,6 +1301,7 @@ CREATE TABLE IF NOT EXISTS mesh_2d_quads (
     v3              INTEGER NOT NULL,
     mannings_n      REAL NOT NULL DEFAULT 0.035,
     init_depth      REAL NOT NULL DEFAULT 0,
+    init_hgl        REAL,  -- initial water-surface elevation; NULL = use init_depth
     tag             TEXT,
     bed_elev        REAL,
     coupled_node    TEXT,
@@ -1481,6 +1483,9 @@ void create_schema(sqlite3* db) {
     add_missing("input_timeseries", "is_relative", "INTEGER");
     add_missing("input_timeseries", "rel_anchor", "REAL");
     exec(db, MESH_2D_DDL);
+    // Older databases lack the initial water-surface elevation column.
+    add_missing("mesh_2d_triangles", "init_hgl", "REAL");
+    add_missing("mesh_2d_quads", "init_hgl", "REAL");
     // An older triangle-coupling table is keyed by triangle alone and would
     // refuse a second node on the same triangle: rebuild it without that
     // key, keeping its rows.

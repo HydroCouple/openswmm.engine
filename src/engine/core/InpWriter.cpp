@@ -1505,6 +1505,38 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
         }
     }
 
+    // ---- [2D_INITIAL_HGL] -----------------------------------------------------
+    // Sparse: only cells with a prescribed HGL (finite) get a row; a mesh whose
+    // cells all share one HGL collapses to the single `*` row. Mesh length
+    // units, like vertex Z. Emitted after the cell sections — rows validate
+    // against loaded cells.
+    {
+        int n_hgl = 0;
+        bool uniform = true;
+        double first = 0.0;
+        for (int t = 0; t < nt; ++t) {
+            const double h = mesh.tri_init_hgl[t];
+            if (!std::isfinite(h))
+                continue;
+            if (n_hgl == 0)
+                first = h;
+            else if (h != first)
+                uniform = false;
+            ++n_hgl;
+        }
+        if (n_hgl > 0) {
+            sec(f, "2D_INITIAL_HGL");
+            std::fprintf(f, ";;%-6s %s\n", "CELL", "HGL");
+            if (uniform && n_hgl == nt) {
+                std::fprintf(f, "%-8s %.17g\n", "*", first);
+            } else {
+                for (int t = 0; t < nt; ++t)
+                    if (std::isfinite(mesh.tri_init_hgl[t]))
+                        std::fprintf(f, "%-8d %.17g\n", t, mesh.tri_init_hgl[t]);
+            }
+        }
+    }
+
     // Coupled-node name: prefer the authored name, fall back to the
     // resolved index (API-built models; rename-safe).
     auto node_name_for = [&ctx](const std::string& name, int idx) -> std::string {

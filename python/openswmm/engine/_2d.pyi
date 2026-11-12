@@ -313,6 +313,14 @@ class Surface2D:
         """Set the initial water depth of a triangle (mesh length units, M{>= 0})."""
         ...
 
+    def get_triangle_init_hgl(self, idx: int) -> float:
+        """Return a cell's prescribed initial water-surface elevation (NaN if unset)."""
+        ...
+
+    def set_triangle_init_hgl(self, idx: int, hgl: float) -> None:
+        """Prescribe a cell's initial water-surface elevation (NaN clears it)."""
+        ...
+
     def get_triangle_init_velocity(self, idx: int) -> tuple[float, float]:
         """Return the C{(u, v)} initial velocity of a triangle, in m/s."""
         ...

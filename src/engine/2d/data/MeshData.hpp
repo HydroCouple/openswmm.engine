@@ -39,6 +39,7 @@
 #include <string>
 #include <cstdint>
 #include <cmath>
+#include <limits>
 
 namespace openswmm::twoD {
 
@@ -135,6 +136,10 @@ struct MeshData {
     // Surface properties
     std::vector<double> mannings_n;     ///< Manning's roughness coefficient
     std::vector<double> tri_init_depth; ///< Initial water depth (m, default 0 = dry)
+    /// [2D_INITIAL_HGL] initial water-surface elevation (m, mesh datum). NaN = not
+    /// prescribed, the cell then starts from tri_init_depth. A finite value overrides
+    /// tri_init_depth and is clamped at the cell invert when the surface initializes.
+    std::vector<double> tri_init_hgl;
     std::vector<double> tri_init_u;     ///< [2D_INITIAL_VELOCITY] u (m/s, default 0)
     std::vector<double> tri_init_v;     ///< [2D_INITIAL_VELOCITY] v (m/s, default 0)
     std::vector<std::string> tri_tag;   ///< Optional triangle tag
@@ -478,6 +483,7 @@ struct MeshData {
 
         mannings_n.resize(n, 0.035);
         tri_init_depth.resize(n, 0.0);
+        tri_init_hgl.resize(n, std::numeric_limits<double>::quiet_NaN());
         tri_init_u.resize(n, 0.0);
         tri_init_v.resize(n, 0.0);
         tri_tag.resize(n);
@@ -537,6 +543,7 @@ struct MeshData {
         grow_capacity(edge_conveyance, n4);
         grow_capacity(mannings_n, n);
         grow_capacity(tri_init_depth, n);
+        grow_capacity(tri_init_hgl, n);
         grow_capacity(tri_init_u, n);
         grow_capacity(tri_init_v, n);
         grow_capacity(tri_tag, n);

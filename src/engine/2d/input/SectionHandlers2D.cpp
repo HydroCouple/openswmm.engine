@@ -1353,6 +1353,47 @@ std::string parse2DInitialVelocityLine(const std::vector<std::string>& tokens, M
     return {};
 }
 
+// [2D_INITIAL_HGL] — optional initial water-surface elevation (mesh length
+// units, [2D_VERTICES] Z datum):
+//   CELL  HGL      (CELL = zero-based cell index, or * for every cell)
+// An alternative to the [2D_TRIANGLES]/[2D_QUADS] INIT_DEPTH column: a cell
+// with an HGL ignores its INIT_DEPTH. Rows apply in file order (last wins).
+// The depth is resolved, and clamped at the cell invert, at initialize.
+/**
+ * @details `*` assigns every cell currently loaded; otherwise CELL is a zero-based unified cell
+ * index already present. HGL must be finite and may lie below the bed (the cell then starts
+ * dry). Surplus tokens ignored. No allocation/physics/clock update; serial edit.
+ */
+std::string parse2DInitialHglLine(const std::vector<std::string>& tokens, MeshData& mesh) {
+    if (tokens.size() < 2)
+        return "Expected CELL HGL";
+
+    bool ok = false;
+    const double hgl = tryParseDouble(tokens[1], ok);
+    if (!ok || !std::isfinite(hgl))
+        return "Invalid HGL value";
+
+    // Rows address cells already loaded. With none yet (section ahead of the
+    // cells, or a [2D_MESH_FILE] mesh, which loads after the .inp), say where
+    // the section belongs rather than reporting a bad index; a `*` row would
+    // otherwise silently assign nothing.
+    if (mesh.n_triangles() == 0)
+        return "[2D_INITIAL_HGL] must follow the [2D_TRIANGLES]/[2D_QUADS] cells; with a "
+               "[2D_MESH_FILE], put it in the mesh file";
+
+    if (tokens[0] == "*") {
+        std::fill(mesh.tri_init_hgl.begin(), mesh.tri_init_hgl.end(), hgl);
+        return {};
+    }
+
+    const int cell = tryParseInt(tokens[0], ok);
+    if (!ok || cell < 0 || cell >= mesh.n_triangles())
+        return "Invalid cell index: " + tokens[0];
+
+    mesh.tri_init_hgl[cell] = hgl;
+    return {};
+}
+
 /**
  * @details Resolves zero-based index first, then exact tag fallback (including out-of-range
  * numeric tags), first matching tag wins. Stores deferred native node name; optional CD
@@ -2187,6 +2228,11 @@ void register2DSections(MeshData& mesh, SolverOptions2D& options,
                                  return parse2DInitialVelocityLine(tokens, mesh);
                              }));
 
+    registry.register_custom("2D_INITIAL_HGL",
+                             makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
+                                 return parse2DInitialHglLine(tokens, mesh);
+                             }));
+
     registry.register_custom(
         "2D_VERTEX_NODE_MAP",
         makeTagIndexedSectionHandler([&mesh](const std::vector<std::string>& tokens, TagIndex& ix) {
@@ -2458,6 +2504,10 @@ load2DMeshExternalFile(MeshData& mesh, SolverOptions2D& opts,
         makeSectionHandler<std::string_view>([&mesh](const std::vector<std::string>& tokens) {
             return parse2DInitialVelocityLine(tokens, mesh);
         }));
+    mini.register_custom("2D_INITIAL_HGL",
+                         makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
+                             return parse2DInitialHglLine(tokens, mesh);
+                         }));
     mini.register_custom_views("2D_VERTEX_NODE_MAP",
                                makeTagIndexedSectionHandler<std::string_view>(
                                    [&mesh](const std::vector<std::string>& tokens, TagIndex& ix) {

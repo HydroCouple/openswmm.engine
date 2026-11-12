@@ -105,7 +105,7 @@ inline void write_model_supplement(sqlite3* db, const SimulationContext& ctx,
         "CONTROLS", "REPORT", "MAP", "COORDINATES", "VERTICES", "POLYGONS", "SYMBOLS",
         "LID_USAGE", "LID_NODES", "LID_NODE_OUTLETS", "LID_LAYER_TREATMENT", "LID_RICHARDS",
         "2D_VERTICES", "2D_TRIANGLES", "2D_QUADS", "2D_VERTEX_NODE_MAP", "2D_TRIANGLE_NODE_MAP",
-        "2D_BOUNDARY_CONDITIONS", "2D_EDGE_CONVEYANCE", "FILES"};
+        "2D_BOUNDARY_CONDITIONS", "2D_EDGE_CONVEYANCE", "2D_INITIAL_HGL", "FILES"};
     const char* destination = sqlite3_db_filename(db, "main");
     std::istringstream native(inp_writer::modelText(ctx, destination && *destination ? destination : ctx.inp_file_path, true));
     std::string line, section, previous;

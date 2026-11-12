@@ -372,6 +372,28 @@ int swmm_2d_set_triangle_init_depth(SWMM_Engine engine, int idx, double d) {
     return SWMM_OK;
 }
 
+int swmm_2d_triangle_get_init_hgl(SWMM_Engine engine, int idx, double* hgl) {
+    GET_ENGINE(engine);
+    CHECK_2D_MESH(eng);
+    CHECK_TRI_IDX(idx, router2d);
+    if (!hgl)
+        return SWMM_ERR_BADPARAM;
+
+    *hgl = router2d.mesh().tri_init_hgl[idx];
+    return SWMM_OK;
+}
+
+int swmm_2d_set_triangle_init_hgl(SWMM_Engine engine, int idx, double hgl) {
+    GET_ENGINE(engine);
+    CHECK_2D_MESH(eng);
+    CHECK_TRI_IDX(idx, router2d);
+    if (std::isinf(hgl))
+        return SWMM_ERR_BADPARAM;
+
+    router2d.mesh().tri_init_hgl[idx] = hgl; // NaN clears the prescription
+    return SWMM_OK;
+}
+
 int swmm_2d_triangle_get_init_velocity(SWMM_Engine engine, int idx, double* u, double* v) {
     GET_ENGINE(engine);
     CHECK_2D_MESH(eng);

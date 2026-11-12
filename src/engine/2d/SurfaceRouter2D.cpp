@@ -118,6 +118,36 @@ double headFromMeanDepth(const MeshData& mesh, const SolverOptions2D& opts, int 
     return mesh.tri_cz[i] + d;
 }
 
+/**
+ * @brief Convert a prescribed free-surface elevation to one cell's mean water depth under the
+ * configured closure; the inverse of headFromMeanDepth.
+ * @param[in] mesh Prepared SI triangle/quad geometry and VFR arrays.
+ * @param[in] opts FLAT/VFR closure and regularized minimum wet fraction.
+ * @param[in] i Valid zero-based mesh cell.
+ * @param[in] eta Finite absolute elevation m.
+ * @return Nonnegative mean depth m, exactly 0 when eta is at or below the cell invert (VFR: the
+ * lowest vertex; FLAT: the centroid bed). No state mutation or allocation.
+ */
+double meanDepthFromHead(const MeshData& mesh, const SolverOptions2D& opts, int i, double eta) {
+    double d;
+    if (opts.cell_closure == CellClosure2D::VFR) {
+        if (mesh.cell_vertex_count(i) == 4) {
+            const auto u = static_cast<std::size_t>(i);
+            d = quadMeanDepthFromEta(&mesh.quad_vfr_z[u * kQuadVfrZ], mesh.quad_vfr_a[u * 2],
+                                     mesh.quad_vfr_a[u * 2 + 1], eta, opts.vfr_min_wet_frac);
+        } else {
+            double z1 = mesh.vz[mesh.cell_vertex(i, 0)];
+            double z2 = mesh.vz[mesh.cell_vertex(i, 1)];
+            double z3 = mesh.vz[mesh.cell_vertex(i, 2)];
+            vfrSort3(z1, z2, z3);
+            d = vfrMeanDepthFromEta(z1, z2, z3, eta, opts.vfr_min_wet_frac);
+        }
+    } else {
+        d = eta - mesh.tri_cz[i];
+    }
+    return d > 0.0 ? d : 0.0;
+}
+
 } // namespace
 
 void SurfaceRouter2D::drainPendingRows() {
@@ -413,6 +443,9 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         // as vz — otherwise a US-unit deck's authored depth is read as metres.
         for (auto& d : mesh_.tri_init_depth)
             d *= f;
+        // [2D_INITIAL_HGL] is an elevation on the vz datum (NaN = unset stays NaN).
+        for (auto& h : mesh_.tri_init_hgl)
+            h *= f;
         options_.mesh_scaled_to_si = true;
     }
 
@@ -585,12 +618,31 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // solver's head → volume seeding returns exactly V = 0 for every dry
     // cell; nonzero initial depths seed the corresponding volume and are
     // captured as initial storage by the mass-balance ledger below.
+    //
+    // A cell with a [2D_INITIAL_HGL] elevation starts from that instead: the
+    // elevation is converted to the closure's mean depth, which is 0 for an
+    // HGL at or below the cell invert, so such a cell seeds exactly like a
+    // dry INIT_DEPTH 0 cell (depths are clamped at the bed, never negative).
+    int n_hgl = 0, n_hgl_wet = 0;
     for (int i = 0; i < mesh_.n_triangles(); ++i) {
-        state_.head[i] = headFromMeanDepth(mesh_, options_, i, mesh_.tri_init_depth[i]);
+        double d = mesh_.tri_init_depth[i];
+        if (std::isfinite(mesh_.tri_init_hgl[i])) {
+            d = meanDepthFromHead(mesh_, options_, i, mesh_.tri_init_hgl[i]);
+            ++n_hgl;
+            if (d > 0.0)
+                ++n_hgl_wet;
+        }
+        state_.head[i] = headFromMeanDepth(mesh_, options_, i, d);
         // Volume is the marcher's primary state (reconstructAll derives
         // head/depth from it) — seed it directly; mean-depth * area holds
         // for both FLAT and VFR closures by definition of the mean depth.
-        state_.volume[i] = mesh_.tri_init_depth[i] * mesh_.tri_area[i];
+        state_.volume[i] = d * mesh_.tri_area[i];
+    }
+    if (n_hgl > 0 && n_hgl_wet == 0) {
+        ctx.warnings.push_back("WARNING: [2D_INITIAL_HGL] is at or below the bed of all " +
+                               std::to_string(n_hgl) +
+                               " cell(s) it is prescribed for; they start dry. Check the "
+                               "elevation datum and units.");
     }
     // Seed the vertex heads once from the dry cell heads: the all-vertex pass
     // now runs per accepted window (not per RHS eval), so pre-first-window

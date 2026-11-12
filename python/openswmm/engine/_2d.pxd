@@ -40,6 +40,8 @@ cdef extern from "openswmm_2d.h":
     int swmm_2d_set_triangle_mannings(void* engine, int idx, double n)
     int swmm_2d_triangle_get_init_depth(void* engine, int idx, double* d)
     int swmm_2d_set_triangle_init_depth(void* engine, int idx, double d)
+    int swmm_2d_triangle_get_init_hgl(void* engine, int idx, double* hgl)
+    int swmm_2d_set_triangle_init_hgl(void* engine, int idx, double hgl)
     int swmm_2d_triangle_get_init_velocity(void* engine, int idx,
                                             double* u, double* v)
     int swmm_2d_set_triangle_init_velocity(void* engine, int idx,

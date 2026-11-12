@@ -154,6 +154,24 @@ std::string parse2DQuadLine(const std::vector<std::string>& tokens, MeshData& me
 std::string parse2DInitialVelocityLine(const std::vector<std::string>& tokens, MeshData& mesh);
 
 /**
+ * @brief Parse a single line from the [2D_INITIAL_HGL] section.
+ *
+ * Format: CELL HGL, where CELL is a zero-based unified cell index or `*` for every cell
+ * already loaded, and HGL is a finite absolute water-surface elevation in mesh length units on
+ * the [2D_VERTICES] Z datum.
+ *
+ * @param tokens Whitespace-split tokens from the line.
+ * @param mesh   Mesh data to update (tri_init_hgl).
+ * @return Empty string on success, or error description.
+ *
+ * @details Rows apply in file order, so a `*` row followed by cell rows gives a mesh-wide level
+ * with per-cell overrides. A cell with an HGL ignores its INIT_DEPTH; the HGL is converted to
+ * depth and clamped at the cell invert when the 2D surface initializes. Surplus tokens ignored.
+ * No allocation/physics/clock update; serial edit.
+ */
+std::string parse2DInitialHglLine(const std::vector<std::string>& tokens, MeshData& mesh);
+
+/**
  * @brief Tag lookup for the rows of one node-map section.
  *
  * @details Maps each tag to the FIRST vertex (or cell) carrying it, the same answer as a scan in
