@@ -87,8 +87,8 @@ the file does not identify a unit. Concentration fields use stored species
 unit codes; the binary format cannot recover arbitrary original MSX unit
 labels that its writer mapped to a legacy concentration code.
 
-Species fields
-==============
+Species
+=======
 
 .. code-block:: python
 
