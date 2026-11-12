@@ -25,6 +25,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include "core/FileIO.hpp"
+#include "core/SWMMEngine.hpp"
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -684,6 +685,43 @@ TEST_F(InpWriter2DTest, UnloadableMeshReferenceReanchoredOnSaveAs) {
     // mesh back where it always was makes the saved model whole again.
     const fs::path resolved = fs::weakly_canonical(dst_dir / fs::path(tok));
     EXPECT_EQ(resolved, fs::weakly_canonical(src_dir / "absent_mesh.2dm"));
+}
+
+// A mesh file that fails part-way, opened leniently (the GUI's editor open):
+// "continue 1D-only" must not keep what the file applied before the bad row —
+// its [2D_OPTIONS] values, its `;; UNITS: SI (m)` flag, or quality rows that
+// address cells of the discarded mesh. (Mesh open plan F2.)
+TEST_F(InpWriter2DTest, LenientMeshFileFailureLeavesNoPartial2DState) {
+    const fs::path inp = dir_ / "partial.inp";
+    write_file(inp, replace(k1DBase, "{FLOW_UNITS}", "CFS") +
+                        "\n[2D_OPTIONS]\nDRY_DEPTH 0.002\n\n[2D_MESH_FILE]\nFILE partial.2dm\n");
+    write_file(dir_ / "partial.2dm", ";; UNITS: SI (m)\n"
+                                     "[2D_OPTIONS]\nDRY_DEPTH 0.005\n"
+                                     "[2D_VERTICES]\n0 0 1\n10 0 1\n5 5 1\n"
+                                     "[2D_TRIANGLES]\n0 1 2 0.03\n"
+                                     "[2D_INITIAL_QUALITY]\n* Cu 4.0\n"
+                                     "[2D_VERTICES]\nnot a vertex\n");
+
+    eng_a_ = swmm_engine_create();
+    ASSERT_NE(eng_a_, nullptr);
+    swmm_engine_set_lenient_open(eng_a_, 1);
+    ASSERT_EQ(swmm_engine_open(eng_a_, inp.string().c_str(), "", "", nullptr), 0);
+
+    // SWMM_Engine is the engine object (Api2D.cpp GET_ENGINE); the mesh and
+    // units flag have no getter once the mesh is gone.
+    const auto* engine = reinterpret_cast<openswmm::SWMMEngine*>(eng_a_);
+    EXPECT_EQ(engine->surfaceRouter2D().mesh().n_vertices(), 0);
+
+    int count = -1;
+    ASSERT_EQ(swmm_2d_initial_quality_count(eng_a_, &count), 0);
+    EXPECT_EQ(count, 0) << "quality rows of the discarded mesh survived";
+
+    char buf[64] = {0};
+    ASSERT_EQ(swmm_options_get_ext(eng_a_, "DRY_DEPTH", buf, sizeof(buf)), 0);
+    EXPECT_DOUBLE_EQ(std::atof(buf), 0.002) << "the failed mesh file's [2D_OPTIONS] survived";
+
+    EXPECT_FALSE(engine->surfaceRouter2D().options().mesh_units_si)
+        << "the failed mesh file's ;; UNITS flag survived";
 }
 
 // ---------------------------------------------------------------------------

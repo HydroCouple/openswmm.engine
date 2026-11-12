@@ -408,6 +408,11 @@ int SWMMEngine::open(const char* inp_path, const char* rpt_path, const char* out
             std::string base_dir;
             if (inp_path && inp_path[0] != '\0')
                 base_dir = openswmm::io::path_utf8(openswmm::io::utf8_path(inp_path).parent_path());
+            // The mesh file writes [2D_OPTIONS] values and the `;; UNITS`
+            // flag as it goes; a lenient failure puts them back (below).
+            const bool lenient = lenient_open_ && !metadata_only_;
+            const twoD::SolverOptions2D options_before =
+                lenient ? surface_router_.options() : twoD::SolverOptions2D{};
             std::string err = twoD::load2DMeshExternalFile(
                 surface_router_.mesh(), surface_router_.options(), surface_router_.pendingBCRows(),
                 surface_router_.pendingEdgeConveyanceRows(), &surface_router_.infil(), mf, base_dir,
@@ -415,14 +420,20 @@ int SWMMEngine::open(const char* inp_path, const char* rpt_path, const char* out
                 &surface_router_.pendingInitialBedQualityRows(),
                 &surface_router_.pendingBoundaryQualityRows());
             if (!err.empty()) {
-                if (lenient_open_ && !metadata_only_) {
+                if (lenient) {
                     // A missing/unreadable external mesh must not make the
                     // whole model unopenable in an editor — discard any
                     // partially-read mesh state, record the diagnostic, and
                     // continue 1D-only. Running still uses a strict open.
+                    // Every row that addresses mesh cells goes with the mesh,
+                    // and the options return to what the .inp alone gave.
                     surface_router_.mesh() = {};
                     surface_router_.pendingBCRows().clear();
                     surface_router_.pendingEdgeConveyanceRows().clear();
+                    surface_router_.pendingInitialQualityRows().clear();
+                    surface_router_.pendingInitialBedQualityRows().clear();
+                    surface_router_.pendingBoundaryQualityRows().clear();
+                    surface_router_.options() = options_before;
                     ctx_.errors.push_back(err);
                 } else {
                     ctx_.error_code = SWMM_ERR_PARSE;
