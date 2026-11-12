@@ -510,16 +510,19 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
                 //   → horton_getInfil(state, tStep, precip + runon, depth)
                 // subarea->inflow here is the runon from other subareas (0 for OUTLET routing).
                 double runon = runon_in; // runon from inter-subarea routing
-                // Per-subcatchment INFIL pattern override
-                // (matching legacy infil_setInfilFactor per subcatchment)
+                // Per-subcatchment INFIL pattern override, as legacy
+                // infil_setInfilFactor: a MONTHLY pattern replaces the global
+                // factor, a month it does not list being 1.0 (legacy patterns
+                // start at 1.0); a pattern of any other type is ignored.
                 double local_infil = infil_factor;
                 if (month >= 0 && ui < ctx.subcatch_infil_pattern.size()) {
-                    int pi = ctx.subcatch_infil_pattern[ui];
-                    if (pi >= 0 && static_cast<std::size_t>(pi) < ctx.patterns.factors.size()) {
-                        const auto& facs = ctx.patterns.factors[static_cast<std::size_t>(pi)];
-                        auto umon = static_cast<std::size_t>(month);
-                        if (umon < facs.size())
-                            local_infil = facs[umon];
+                    const int pi = ctx.subcatch_infil_pattern[ui];
+                    const auto upi = static_cast<std::size_t>(pi);
+                    if (pi >= 0 && upi < ctx.patterns.factors.size() &&
+                        upi < ctx.patterns.types.size() && ctx.patterns.types[upi] == 0) {
+                        const auto& facs = ctx.patterns.factors[upi];
+                        const auto umon = static_cast<std::size_t>(month);
+                        local_infil = umon < facs.size() ? facs[umon] : 1.0;
                     }
                 }
 

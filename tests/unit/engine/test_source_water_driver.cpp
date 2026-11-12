@@ -1380,6 +1380,7 @@ TEST(SourceWaterDriver, PartialNativeHistoryRecoversThroughDryAndMonthlyInterval
                                 datetime::addSeconds(c.options.start_date, 30)};
         c.patterns.factors = {std::vector<double>(12, 1)};
         c.patterns.factors[0][10] = .2;
+        c.patterns.types = {0}; // MONTHLY: an INFIL pattern of another type is ignored (legacy)
         c.subcatch_infil_pattern = {0};
         c.forcing.subcatch_evap_mode[0] = ForcingMode::OVERRIDE;
         c.forcing.subcatch_evap_value[0] = .001;
@@ -1408,6 +1409,36 @@ TEST(SourceWaterDriver, PartialNativeHistoryRecoversThroughDryAndMonthlyInterval
         EXPECT_DOUBLE_EQ(d.ledgers()[0].spatial_infiltration, 0);
         EXPECT_DOUBLE_EQ(d.runoff().soa().depth_perv[0], 0);
     }
+}
+
+// Legacy infil_setInfilFactor also sets the factor a LID's soil layer uses (its Green-Ampt
+// conductivity): a MONTHLY INFIL pattern replaces the global CONDUCTIVITY factor, a month it
+// does not list being 1.0; a pattern of another type leaves the global factor.
+TEST(SourceWaterDriver, LidInfilFactorFollowsLegacyMonthlyPatternRule) {
+    enum Variant { None, Full, Short, Daily };
+    auto run = [](Variant v) {
+        auto c = pollutantLid("BC"); // bio-retention cell: a soil layer
+        std::fill(std::begin(c.adjust_hydcon), std::end(c.adjust_hydcon), .5);
+        if (v == Full)
+            c.patterns.factors = {std::vector<double>(12, 1)};
+        if (v == Short)
+            c.patterns.factors = {{2.0}}; // January only; the run is in October
+        if (v == Daily)
+            c.patterns.factors = {std::vector<double>(7, 1)};
+        c.patterns.types = {v == Daily ? 1 : 0};
+        c.subcatch_infil_pattern = {v == None ? -1 : 0};
+        SourceWaterDriver d;
+        EXPECT_EQ(d.initialize(c, {0}, areas(c)), "");
+        for (double end : {30., 60., 120., 300., 600.})
+            step(d, end);
+        return d.ledgers()[0];
+    };
+    const auto none = run(None), full = run(Full), shortp = run(Short), daily = run(Daily);
+    EXPECT_GT(full.infiltration, 1.05 * none.infiltration); // the factor matters here
+    EXPECT_DOUBLE_EQ(shortp.infiltration, full.infiltration);
+    EXPECT_DOUBLE_EQ(shortp.outlet, full.outlet);
+    EXPECT_DOUBLE_EQ(daily.infiltration, none.infiltration);
+    EXPECT_DOUBLE_EQ(daily.outlet, none.outlet);
 }
 
 TEST(SourceWaterDriver, SwaleVolumeRefinesAndBoundsOverflowAndDryDemand) {

@@ -239,14 +239,18 @@ void advanceLidPollutants(SourcePollutantLedger& b, const lid::LIDGroupSoA& g,
  * @param c Compatible optional subcatchment-pattern map and factor rows.
  * @param sc Original subcatchment index; invalid/unmapped indices use the fallback.
  * @param f Resolved forcing segment with zero-based month and fallback infil_factor.
- * @return Existing matching source pattern/month value, otherwise f.infil_factor.
+ * @return As legacy infil_setInfilFactor: a MONTHLY pattern's value for the month (1.0 for a
+ *     month it does not list), otherwise f.infil_factor (no pattern, or another type).
  * Does not validate finite/nonnegative values, change forcing or advance a cursor. */
 double factor(const SimulationContext& c, int sc, const SourceForcingInterval& f) {
     if (static_cast<std::size_t>(sc) < c.subcatch_infil_pattern.size()) {
         const int p = c.subcatch_infil_pattern[sc];
-        if (p >= 0 && static_cast<std::size_t>(p) < c.patterns.factors.size() &&
-            static_cast<std::size_t>(f.month) < c.patterns.factors[p].size())
-            return c.patterns.factors[p][f.month];
+        const auto up = static_cast<std::size_t>(p);
+        if (p >= 0 && f.month >= 0 && up < c.patterns.factors.size() &&
+            up < c.patterns.types.size() && c.patterns.types[up] == 0)
+            return static_cast<std::size_t>(f.month) < c.patterns.factors[up].size()
+                       ? c.patterns.factors[up][f.month]
+                       : 1.0;
     }
     return f.infil_factor;
 }

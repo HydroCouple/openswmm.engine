@@ -24,11 +24,13 @@
 #include <gtest/gtest.h>
 #include <array>
 #include <fstream>
+#include <map>
 #include <string>
 
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_climate.h>
 #include <openswmm/engine/openswmm_model.h>
+#include <openswmm/engine/openswmm_subcatchments.h>
 
 #include "core/SWMMEngine.hpp"
 
@@ -732,4 +734,81 @@ TEST(ConductAdjustmentSeepage, ScalesConduitSeepageBothPaths) {
                                      << ": CONDUCT 0.5 over-reduced seepage (factor "
                                         "applied more than once?)";
     }
+}
+
+namespace {
+
+/**
+ * @brief Write four identical pervious Horton subcatchments under a 0.5 global CONDUCTIVITY
+ *     factor in March: S_FULL has a full MONTHLY INFIL pattern (1.0 in March), S_SHORT a MONTHLY
+ *     pattern that lists only January, S_NONE none and S_DAILY a DAILY pattern (all 1.0).
+ * @param[in] path Non-null output filename; existing content is truncated.
+ */
+void writeInfilPatternDeck(const char* path) {
+    std::ofstream f(path);
+    f << "[OPTIONS]\nFLOW_UNITS CFS\nINFILTRATION HORTON\nFLOW_ROUTING KINWAVE\n"
+      << "START_DATE 03/01/2026\nSTART_TIME 00:00:00\nEND_DATE 03/01/2026\nEND_TIME 06:00:00\n"
+      << "WET_STEP 00:01:00\nDRY_STEP 00:05:00\nROUTING_STEP 30\nREPORT_STEP 00:15:00\n\n"
+      << "[RAINGAGES]\nRG1 INTENSITY 2:00 1.0 TIMESERIES Rain\n\n"
+      << "[OUTFALLS]\nOUT 0 FREE NO\n\n"
+      << "[TIMESERIES]\nRain 03/01/2026 00:00 4.0\nRain 03/01/2026 02:00 0.0\n";
+    std::string subcatch = "\n[SUBCATCHMENTS]\n", subarea = "\n[SUBAREAS]\n",
+                infil = "\n[INFILTRATION]\n";
+    for (const char* s : {"S_FULL", "S_SHORT", "S_NONE", "S_DAILY"}) {
+        subcatch += std::string(s) + " RG1 OUT 10 0 500 0.5 0\n";
+        subarea += std::string(s) + " 0.01 0.1 0.05 0.05 0 OUTLET\n";
+        infil += std::string(s) + " 3.0 0.5 4 7 0\n";
+    }
+    // [ADJUSTMENTS] after [SUBCATCHMENTS]: legacy, like the engine, drops an INFIL row
+    // for a subcatchment read later.
+    f << subcatch << subarea << infil
+      << "\n[PATTERNS]\nFull MONTHLY 2.0 1 1 1 1 1 1 1 1 1 1 1\nShort MONTHLY 2.0\n"
+      << "Daily DAILY 1 1 1 1 1 1 1\n\n"
+      << "[ADJUSTMENTS]\nCONDUCTIVITY 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5\n"
+      << "INFIL S_FULL Full\nINFIL S_SHORT Short\nINFIL S_DAILY Daily\n";
+}
+
+/**
+ * @brief Run a deck to its end and return each subcatchment's runoff volume.
+ * @return Volume by subcatchment name; empty after an open/initialize/start/step refusal.
+ */
+std::map<std::string, double> runoffVolumes(const char* inp, const char* rpt, const char* out) {
+    std::map<std::string, double> vol;
+    SWMM_Engine e = swmm_engine_create();
+    if (e == nullptr)
+        return vol;
+    bool ok = swmm_engine_open(e, inp, rpt, out, nullptr) == SWMM_OK &&
+              swmm_engine_initialize(e) == SWMM_OK && swmm_engine_start(e, 1) == SWMM_OK;
+    double elapsed = 0.0;
+    for (int guard = 0; ok && guard < 20000; ++guard) {
+        ok = swmm_engine_step(e, &elapsed) == SWMM_OK;
+        if (elapsed <= 0.0)
+            break;
+    }
+    if (ok) {
+        for (const char* s : {"S_FULL", "S_SHORT", "S_NONE", "S_DAILY"}) {
+            double v = -1.0;
+            swmm_subcatch_get_stat_runoff_vol(e, swmm_subcatch_index(e, s), &v);
+            vol[s] = v;
+        }
+        swmm_engine_end(e);
+    }
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+    return vol;
+}
+
+} // namespace
+
+// Legacy infil_setInfilFactor: a subcatchment's MONTHLY INFIL pattern replaces the global
+// CONDUCTIVITY factor, a month the pattern does not list being 1.0 (legacy patterns start at
+// 1.0); a pattern of any other type leaves the global factor. Before this, a short pattern fell
+// back to the global factor and a DAILY pattern was read as if it were monthly.
+TEST(SubcatchInfilPattern, FollowsLegacyForShortAndNonMonthlyPatterns) {
+    writeInfilPatternDeck("_infil_pattern.inp");
+    const auto vol = runoffVolumes("_infil_pattern.inp", "_infil_pattern.rpt", "_infil_pattern.out");
+    ASSERT_EQ(vol.size(), 4u);
+    EXPECT_GT(vol.at("S_NONE"), 1.05 * vol.at("S_FULL")); // the factor matters in this deck
+    EXPECT_DOUBLE_EQ(vol.at("S_SHORT"), vol.at("S_FULL"));
+    EXPECT_DOUBLE_EQ(vol.at("S_DAILY"), vol.at("S_NONE"));
 }
