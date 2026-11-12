@@ -2395,7 +2395,8 @@ void readSidecarSections(const std::string& path, const input::SectionRegistry& 
         registry.dispatch_views(tag, ctx, lines);
         lines.clear();
     };
-    std::size_t pos = 0;
+    // A leading UTF-8 byte-order mark is not part of the first line.
+    std::size_t pos = text.substr(0, 3) == "\xEF\xBB\xBF" ? 3 : 0;
     while (pos < text.size()) {
         std::size_t nl = text.find('\n', pos);
         if (nl == std::string_view::npos)
@@ -2638,8 +2639,13 @@ void prescan2DUnitsHeader(const std::string& inp_path, SolverOptions2D& opts) {
     // The [2D_MESH_FILE] sidecar applies the same rule in its own walk
     // (readSidecarSections).
     std::string line;
-    while (std::getline(in, line))
+    bool first = true;
+    while (std::getline(in, line)) {
+        if (first && line.compare(0, 3, "\xEF\xBB\xBF") == 0) // UTF-8 byte-order mark
+            line.erase(0, 3);
+        first = false;
         noteUnitsMarker(line, opts);
+    }
 }
 
 } // namespace openswmm::twoD

@@ -124,6 +124,11 @@ bool InputReader::read_stream(std::istream& stream, SimulationContext& ctx) {
     while (std::getline(stream, raw_line)) {
         ++lines_read_;
 
+        // A UTF-8 byte-order mark (Notepad and many Windows tools write one)
+        // would otherwise hide the first section header.
+        if (lines_read_ == 1 && raw_line.compare(0, 3, "\xEF\xBB\xBF") == 0)
+            raw_line.erase(0, 3);
+
         // Strip \r (Windows CRLF)
         if (!raw_line.empty() && raw_line.back() == '\r') {
             raw_line.pop_back();

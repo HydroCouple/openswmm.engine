@@ -1544,6 +1544,47 @@ TEST(InputParsing, NumbersIgnoreTheProcessLocale) {
 }
 
 // ============================================================================
+// UTF-8 byte-order mark (mesh open plan F1): Notepad and many Windows tools
+// start a file with EF BB BF. It used to hide the first section header and a
+// first-line `;; UNITS:` marker, in the .inp reader and the mesh-file reader.
+// ============================================================================
+
+TEST(Utf8Bom, InpReaderSeesTheFirstHeader) {
+    const SectionRead2D r("\xEF\xBB\xBF[2D_VERTICES]\n0 0 1\n10 0 1\n");
+    ASSERT_TRUE(r.ok) << r.ctx.error_message;
+    EXPECT_EQ(r.mesh.n_vertices(), 2);
+}
+
+TEST(Utf8Bom, MeshFileReaderSeesTheFirstHeader) {
+    MeshData mesh;
+    SolverOptions2D opts;
+    std::vector<SurfaceRouter2D::PendingBoundaryRow> bc;
+    std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow> ec;
+    const std::string err =
+        load2DMeshExternalFile(mesh, opts, bc, ec, nullptr, "mesh_bom/bom_header.2dm", "");
+    ASSERT_TRUE(err.empty()) << err;
+    EXPECT_EQ(mesh.n_vertices(), 3);
+    EXPECT_EQ(mesh.n_triangles(), 1);
+    EXPECT_FALSE(opts.mesh_units_si);
+}
+
+TEST(Utf8Bom, UnitsMarkerOnTheFirstLineIsRead) {
+    MeshData mesh;
+    SolverOptions2D opts;
+    std::vector<SurfaceRouter2D::PendingBoundaryRow> bc;
+    std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow> ec;
+    const std::string err =
+        load2DMeshExternalFile(mesh, opts, bc, ec, nullptr, "mesh_bom/bom_units.2dm", "");
+    ASSERT_TRUE(err.empty()) << err;
+    EXPECT_TRUE(opts.mesh_units_si);
+    EXPECT_EQ(mesh.n_vertices(), 3);
+
+    SolverOptions2D prescanned;
+    prescan2DUnitsHeader("mesh_bom/bom_units.2dm", prescanned); // the .inp-side scan
+    EXPECT_TRUE(prescanned.mesh_units_si);
+}
+
+// ============================================================================
 // SurfaceStateData Lifecycle Tests
 // ============================================================================
 
