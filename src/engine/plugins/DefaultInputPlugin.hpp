@@ -123,6 +123,13 @@ public:
         line_observer_ = std::move(observer);
     }
 
+    /** @brief Sections whose lines the next read() calls drop
+     * (InputReader::set_sections_to_skip); an empty list turns it off. The engine's
+     * simulation-period open leaves out the 2D mesh this way. */
+    void set_sections_to_skip(std::vector<std::string> tags) {
+        sections_to_skip_ = std::move(tags);
+    }
+
 private:
     /** @brief Register standard engine sections, passthrough GUI annotations and embedded reaction sections.
      * Runs at construction. LABELS/BACKDROP/PROFILE/PROFILES retain authored lines;
@@ -132,6 +139,7 @@ private:
 
     input::SectionRegistry registry_;
     std::function<void(std::string_view)> line_observer_;
+    std::vector<std::string> sections_to_skip_;
     PluginState state_ = PluginState::UNLOADED;
     std::string last_error_;
     std::vector<std::string> skipped_sections_;

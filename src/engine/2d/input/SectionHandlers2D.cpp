@@ -2364,6 +2364,15 @@ void register2DSections(MeshData& mesh, SolverOptions2D& options,
     });
 }
 
+const std::vector<std::string>& meshSectionTags() {
+    static const std::vector<std::string> tags{
+        "2D_VERTICES",          "2D_TRIANGLES",           "2D_QUADS",
+        "2D_INITIAL_VELOCITY",  "2D_INITIAL_HGL",         "2D_VERTEX_NODE_MAP",
+        "2D_TRIANGLE_NODE_MAP", "2D_BOUNDARY_CONDITIONS", "2D_EDGE_CONVEYANCE",
+        "2D_INITIAL_QUALITY",   "2D_INITIAL_BED_QUALITY", "2D_BOUNDARY_QUALITY"};
+    return tags;
+}
+
 void note2DUnitsMarker(std::string_view line, SolverOptions2D& opts) {
     // Views, not strings: this runs on every line of a file, and almost every
     // line is not a marker.

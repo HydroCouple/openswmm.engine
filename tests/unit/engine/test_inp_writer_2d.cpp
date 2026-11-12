@@ -795,6 +795,83 @@ TEST_F(InpWriter2DTest, LenientMeshFileFailureLeavesNoPartial2DState) {
         << "the failed mesh file's ;; UNITS flag survived";
 }
 
+// The simulation-period open (swmm_engine_open_simulation_period; mesh open
+// plan §10.2): the component-run launcher reads only the start and end times,
+// so the mesh and every row that addresses its cells stay unread. The times
+// must be the metadata open's.
+TEST_F(InpWriter2DTest, SimulationPeriodOpenLeavesOutTheMesh) {
+    const fs::path inline_inp = dir_ / "period_inline.inp";
+    const fs::path sidecar_inp = dir_ / "period_sidecar.inp";
+    write_file(inline_inp, replace(k1DBase, "{FLOW_UNITS}", "CFS") + k2DSections);
+    write_file(sidecar_inp,
+               replace(k1DBase, "{FLOW_UNITS}", "CFS") + "\n[2D_MESH_FILE]\nFILE missing.2dm\n");
+
+    eng_a_ = swmm_engine_create();
+    ASSERT_NE(eng_a_, nullptr);
+    double start = 0, end = 0;
+    ASSERT_EQ(swmm_engine_open_metadata(eng_a_, inline_inp.string().c_str()), 0);
+    ASSERT_EQ(swmm_get_start_time(eng_a_, &start), 0);
+    ASSERT_EQ(swmm_get_end_time(eng_a_, &end), 0);
+    ASSERT_LT(start, end);
+
+    for (const fs::path& inp : {inline_inp, sidecar_inp}) {
+        SCOPED_TRACE(inp.filename().string());
+        struct Handle {
+            SWMM_Engine e = swmm_engine_create();
+            ~Handle() {
+                swmm_engine_close(e);
+                swmm_engine_destroy(e);
+            }
+        } h;
+        ASSERT_NE(h.e, nullptr);
+        ASSERT_EQ(swmm_engine_open_simulation_period(h.e, inp.string().c_str()), 0)
+            << swmm_get_last_error_msg(h.e);
+        double s = 0, e = 0;
+        ASSERT_EQ(swmm_get_start_time(h.e, &s), 0);
+        ASSERT_EQ(swmm_get_end_time(h.e, &e), 0);
+        EXPECT_EQ(s, start);
+        EXPECT_EQ(e, end);
+        auto* engine = reinterpret_cast<openswmm::SWMMEngine*>(h.e);
+        EXPECT_EQ(engine->surfaceRouter2D().mesh().n_vertices(), 0);
+        EXPECT_TRUE(engine->surfaceRouter2D().pendingBCRows().empty());
+        EXPECT_TRUE(engine->surfaceRouter2D().pendingEdgeConveyanceRows().empty());
+        EXPECT_TRUE(engine->context().unknown_section_headers.empty());
+        EXPECT_NE(swmm_engine_initialize(h.e), 0);
+    }
+
+    // The metadata open still reads the mesh file, and refuses a missing one.
+    eng_b_ = swmm_engine_create();
+    ASSERT_NE(eng_b_, nullptr);
+    EXPECT_NE(swmm_engine_open_metadata(eng_b_, sidecar_inp.string().c_str()), 0);
+}
+
+// A full open checks [GW_*] rows and cell-scoped heat overrides against the
+// mesh. The period open has no mesh, so it must neither check nor refuse them.
+TEST_F(InpWriter2DTest, SimulationPeriodOpenAcceptsRowsThatAddressCells) {
+    std::string deck = replace(k1DBase, "{FLOW_UNITS}", "CFS");
+    const std::string key = "FLOW_UNITS           CFS\n";
+    deck.insert(deck.find(key) + key.size(), "HEAT_TRANSPORT       ON\n");
+    deck += k2DSections;
+    deck += "\n[POLLUTANTS]\nDye MG/L 0 0 0 0 NO * 0 0\n"
+            "\n[GW_INITIAL_QUALITY]\nCELL 2 SAT Dye 10\n"
+            "\n[PROCESS_COMPONENTS]\norg.hydrocouple.openswmm.heat config=\"cells.heat\"\n";
+    const fs::path inp = dir_ / "period_cells.inp";
+    write_file(inp, deck);
+    write_file(dir_ / "cells.heat", "[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 20.0\n\n"
+                                    "[HEAT_FLUXES]\nSEDIMENT_EXCHANGE ON\n\n"
+                                    "[SEDIMENT_EXCHANGE]\nBED_THICKNESS GLOBAL 0.3\n"
+                                    "BED_THICKNESS CELL2D 2 0.5\n");
+
+    eng_a_ = swmm_engine_create();
+    eng_b_ = swmm_engine_create();
+    ASSERT_NE(eng_a_, nullptr);
+    ASSERT_NE(eng_b_, nullptr);
+    ASSERT_EQ(swmm_engine_open_metadata(eng_a_, inp.string().c_str()), 0)
+        << swmm_get_last_error_msg(eng_a_);
+    EXPECT_EQ(swmm_engine_open_simulation_period(eng_b_, inp.string().c_str()), 0)
+        << swmm_get_last_error_msg(eng_b_);
+}
+
 // ---------------------------------------------------------------------------
 // 2D option keys set through swmm_options_set_ext reach the solver options
 // and persist through swmm_model_write (GUI tab-6 wiring fix)

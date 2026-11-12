@@ -516,6 +516,18 @@ void register2DSections(MeshData& mesh, SolverOptions2D& options,
                         input::SectionRegistry& registry);
 
 /**
+ * @brief The sections of register2DSections that carry the mesh or address its cells: the
+ * vertices, triangles and quads, the per-cell initial conditions, the node maps, and the
+ * boundary, edge-conveyance and quality rows (the rows a lenient [2D_MESH_FILE] failure drops).
+ *
+ * The simulation-period open (SWMMEngine::open with skip_2d_mesh) skips them. They are the
+ * main registry's line-view sections; a test keeps the two lists equal.
+ *
+ * @return Uppercase tags without brackets; static storage.
+ */
+const std::vector<std::string>& meshSectionTags();
+
+/**
  * @brief S1/S2 — one `[2D_INITIAL_QUALITY]` line. Empty string = OK.
  *
  * @details Parse one scoped initial surface native concentration authoring row.

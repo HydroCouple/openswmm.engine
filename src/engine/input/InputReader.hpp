@@ -152,6 +152,19 @@ public:
     }
 
     /**
+     * @brief Drop the lines of these sections while reading: they are neither kept nor
+     * dispatched, and they are not reported as unknown.
+     *
+     * The engine's simulation-period open leaves out the 2D mesh this way. The line observer
+     * still sees the lines. An empty list turns it off.
+     *
+     * @param[in] tags Section names without brackets, uppercase (as parse_section_header gives).
+     */
+    void set_sections_to_skip(std::vector<std::string> tags) {
+        sections_to_skip_ = std::move(tags);
+    }
+
+    /**
      * @brief Read the physical-line counter from the most recent stream parse.
      * @return Number of lines read, including blank/comment/header lines. An open failure in
      *     read() leaves the previous counter unchanged.
@@ -183,6 +196,7 @@ private:
     int lines_read_ = 0;
     std::vector<std::string> skipped_sections_;
     std::function<void(std::string_view)> line_observer_;
+    std::vector<std::string> sections_to_skip_;
 
     /**
      * @brief The line walk behind read(), read_stream() and read_text().

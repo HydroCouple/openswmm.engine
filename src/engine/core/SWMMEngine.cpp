@@ -293,7 +293,8 @@ SWMMEngine::~SWMMEngine() {
 // ============================================================================
 
 int SWMMEngine::open(const char* inp_path, const char* rpt_path, const char* out_path,
-                     const char* input_plugin_lib, bool metadata_only) noexcept {
+                     const char* input_plugin_lib, bool metadata_only,
+                     bool skip_2d_mesh) noexcept {
     if (ctx_.state != EngineState::CREATED && ctx_.state != EngineState::CLOSED) {
         set_error(SWMM_ERR_WRONG_STATE,
                   "swmm_engine_open: engine is not in CREATED or CLOSED state");
@@ -387,20 +388,26 @@ int SWMMEngine::open(const char* inp_path, const char* rpt_path, const char* out
     // the mesh is already SI. The external-mesh path runs its own prescan
     // below and overrides this if both files carry the header. The built-in
     // reader checks each line as it reads it (one pass over the file, not
-    // two); another input plugin gets the separate scan. The observer is
-    // dropped when open() returns.
+    // two); another input plugin gets the separate scan. The observer, and
+    // the simulation-period open's skip list, are dropped when open() returns.
     auto* units_reader = dynamic_cast<DefaultInputPlugin*>(input_plugin);
     struct DropLineObserver {
         DefaultInputPlugin* plugin;
         ~DropLineObserver() {
-            if (plugin)
+            if (plugin) {
                 plugin->set_line_observer({});
+                plugin->set_sections_to_skip({});
+            }
         }
     } drop_line_observer{units_reader};
     if (units_reader) {
         units_reader->set_line_observer([&opts = surface_router_.options()](std::string_view line) {
             twoD::note2DUnitsMarker(line, opts);
         });
+        // The simulation-period open (swmm_engine_open_simulation_period)
+        // leaves out the mesh and every row that addresses its cells.
+        if (skip_2d_mesh)
+            units_reader->set_sections_to_skip(twoD::meshSectionTags());
     } else if (inp_path && inp_path[0] != '\0') {
         perf::ScopedTimer _pt(perf::sec_open_prescan2d);
         twoD::prescan2DUnitsHeader(inp_path, surface_router_.options());
@@ -418,7 +425,7 @@ int SWMMEngine::open(const char* inp_path, const char* rpt_path, const char* out
     // If [2D_MESH_FILE] was present, load the external mesh file now.
     {
         const std::string& mf = surface_router_.options().mesh_file;
-        if (!mf.empty()) {
+        if (!mf.empty() && !skip_2d_mesh) { // the period open leaves it unread
             perf::ScopedTimer _pt(perf::sec_open_mesh2d);
             std::string base_dir;
             if (inp_path && inp_path[0] != '\0')
@@ -544,6 +551,11 @@ int SWMMEngine::open(const char* inp_path, const char* rpt_path, const char* out
         // the full .inp parse must be complete before a name can be
         // resolved or reported as unknown (D-RQ1 timing, D-PE5 fatality).
         {
+            // The period open has no mesh: rows scoped to its cells go with it.
+            if (skip_2d_mesh)
+                std::erase_if(ctx_.heat_config.overrides.rows, [](const auto& r) {
+                    return r.scope == HeatScope::CELL2D || r.scope == HeatScope::MESH_TAG;
+                });
             auto pe = transport::heat::resolveHeatOverrides(ctx_);
             for (auto& e : pe)
                 errs.push_back(std::move(e));
@@ -731,8 +743,11 @@ int SWMMEngine::open(const char* inp_path, const char* rpt_path, const char* out
     // "authored but inert" warning is emitted here so it reaches the report
     // whether or not the run proceeds.
     {
-        auto gw_errs =
-            twoD::resolveGwTransport(ctx_, surface_router_.mesh(), surface_router_.gwTransport());
+        // The period open has no mesh to check the rows' cells and tags against.
+        auto gw_errs = skip_2d_mesh
+                           ? std::vector<std::string>{}
+                           : twoD::resolveGwTransport(ctx_, surface_router_.mesh(),
+                                                      surface_router_.gwTransport());
         for (auto& e : gw_errs)
             ctx_.errors.push_back(std::move(e));
         // T7.1: the rows are inert only where there is no kernel to

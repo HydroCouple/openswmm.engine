@@ -1704,6 +1704,78 @@ TEST(InputReaderText, EmptyAndBomOnlyTextsReadNothing) {
     }
 }
 
+// The simulation-period open (mesh open plan §10.2) drops the 2D mesh sections
+// while reading: a skipped section is neither kept, dispatched nor reported as
+// unknown, and the sections around it read as before. An empty list turns it off.
+TEST(InputReaderText, SkippedSectionsAreDroppedWhileReading) {
+    const std::string text = "[VIEWS]\na 1\n[MESH]\n0 0 1\n;; note\n[ROWS]\nr 1\n"
+                             "[UNREGISTERED]\nu 1\n[STRINGS]\nb 2\n";
+    for (const bool skipping : {true, false}) {
+        for (const bool through_stream : {false, true}) {
+            SCOPED_TRACE(std::string(skipping ? "skipping" : "not skipping") +
+                         (through_stream ? ", read_stream" : ", read_text"));
+            std::vector<std::string> views, strings;
+            int mesh_rows = -1, rows = -1, observed = 0;
+            openswmm::input::SectionRegistry registry;
+            registry.register_custom_views(
+                "VIEWS", [&](openswmm::SimulationContext&, const std::vector<std::string_view>& l) {
+                    views.assign(l.begin(), l.end());
+                });
+            registry.register_custom_views(
+                "MESH", [&](openswmm::SimulationContext&, const std::vector<std::string_view>& l) {
+                    mesh_rows = int(l.size());
+                });
+            registry.register_custom(
+                "ROWS", [&](openswmm::SimulationContext&, const std::vector<std::string>& l) {
+                    rows = int(l.size());
+                });
+            registry.register_custom(
+                "STRINGS", [&](openswmm::SimulationContext&, const std::vector<std::string>& l) {
+                    strings = l;
+                });
+            openswmm::input::InputReader reader(registry);
+            if (skipping)
+                reader.set_sections_to_skip({"MESH", "ROWS", "UNREGISTERED"});
+            reader.set_line_observer([&](std::string_view) { ++observed; });
+            openswmm::SimulationContext ctx;
+            std::istringstream in(text);
+            ASSERT_TRUE(through_stream ? reader.read_stream(in, ctx) : reader.read_text(text, ctx));
+            EXPECT_EQ(views, std::vector<std::string>{"a 1"});
+            EXPECT_EQ(strings, std::vector<std::string>{"b 2"});
+            EXPECT_EQ(mesh_rows, skipping ? -1 : 2);
+            EXPECT_EQ(rows, skipping ? -1 : 1);
+            EXPECT_EQ(reader.skipped_sections(),
+                      skipping ? std::vector<std::string>{}
+                               : std::vector<std::string>{"UNREGISTERED"});
+            EXPECT_EQ(reader.lines_read(), 11);
+            EXPECT_EQ(observed, 11); // the observer still sees every line
+        }
+    }
+}
+
+// The simulation-period open skips twoD::meshSectionTags(): the main
+// registry's 2D sections that take line views, which are the mesh rows and
+// every row that addresses a cell. A new such section must join the list.
+TEST(MeshSectionTags, AreTheMainRegistrysViewSections) {
+    MeshData mesh;
+    SolverOptions2D opts;
+    std::vector<SurfaceRouter2D::PendingBoundaryRow> bc;
+    std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow> ec;
+    std::vector<SurfaceRouter2D::PendingInitialQualityRow> iq;
+    std::vector<SurfaceRouter2D::PendingInitialBedQualityRow> ibq;
+    std::vector<SurfaceRouter2D::PendingBoundaryQualityRow> bq;
+    openswmm::input::SectionRegistry registry;
+    register2DSections(mesh, opts, bc, ec, iq, ibq, bq, registry);
+    std::vector<std::string> views;
+    for (const auto& tag : registry.registered_tags())
+        if (registry.takes_views(tag))
+            views.push_back(tag);
+    std::vector<std::string> expected = meshSectionTags();
+    std::sort(views.begin(), views.end());
+    std::sort(expected.begin(), expected.end());
+    EXPECT_EQ(views, expected);
+}
+
 // ============================================================================
 // SurfaceStateData Lifecycle Tests
 // ============================================================================

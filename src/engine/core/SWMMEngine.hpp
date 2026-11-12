@@ -196,9 +196,15 @@ public:
          * @returns SWMM_OK or an error code.
 
          * @param[in] metadata_only True performs parse/metadata preparation and disallows initialize(); false prepares an executable handle.
+         * @param[in] skip_2d_mesh  With metadata_only: leave out the 2D mesh and every row that
+         *                          addresses its cells (swmm_engine_open_simulation_period). The
+         *                          built-in reader skips twoD::meshSectionTags(), [2D_MESH_FILE]
+         *                          is not read, the [GW_*] rows are not checked against the mesh
+         *                          and heat-override rows scoped CELL2D / MESH_TAG are dropped.
          */
     int open(const char* inp_path, const char* rpt_path, const char* out_path,
-             const char* input_plugin_lib = nullptr, bool metadata_only = false) noexcept;
+             const char* input_plugin_lib = nullptr, bool metadata_only = false,
+             bool skip_2d_mesh = false) noexcept;
 
     /**
      * @brief Apply initial conditions and prepare the engine for stepping.

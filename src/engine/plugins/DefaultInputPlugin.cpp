@@ -280,6 +280,7 @@ int DefaultInputPlugin::validate(const SimulationContext& /*ctx*/) {
 int DefaultInputPlugin::read(const std::string& path, SimulationContext& ctx) {
     input::InputReader reader(registry_);
     reader.set_line_observer(line_observer_);
+    reader.set_sections_to_skip(sections_to_skip_);
     bool ok = reader.read(path, ctx);
 
     skipped_sections_ = reader.skipped_sections();

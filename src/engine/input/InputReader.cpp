@@ -210,11 +210,12 @@ bool InputReader::read_blocks(LineBlocks& blocks, SimulationContext& ctx) {
 
     std::string current_tag;                  // e.g. "OPTIONS"
     bool views = false;                       // the section's handler takes line views
+    bool skip = false;                        // the section is in sections_to_skip_
     std::vector<std::string_view> view_lines; // its lines then, borrowed from blocks
     std::vector<std::string> section_lines;   // its lines otherwise
 
     auto flush_section = [&]() {
-        if (!current_tag.empty()) {
+        if (!current_tag.empty() && !skip) {
             perf::ScopedTimer _pt(perf::sec_read_dispatch);
             if (views) {
                 registry_.dispatch_views(current_tag, ctx, view_lines);
@@ -227,6 +228,8 @@ bool InputReader::read_blocks(LineBlocks& blocks, SimulationContext& ctx) {
         blocks.release_old(); // no view points before the current block now
     };
     const auto keep = [&](std::string_view line) {
+        if (skip)
+            return;
         if (views)
             view_lines.push_back(line);
         else
@@ -280,8 +283,10 @@ bool InputReader::read_blocks(LineBlocks& blocks, SimulationContext& ctx) {
                 if (!header.empty() && header.back() == ']') {
                     flush_section();
                     current_tag = parse_section_header(header);
-                    views = !current_tag.empty() && registry_.takes_views(current_tag);
-                    if (!current_tag.empty() && !registry_.has(current_tag) &&
+                    skip = std::find(sections_to_skip_.begin(), sections_to_skip_.end(),
+                                     current_tag) != sections_to_skip_.end();
+                    views = !skip && !current_tag.empty() && registry_.takes_views(current_tag);
+                    if (!skip && !current_tag.empty() && !registry_.has(current_tag) &&
                         !legacy_knows_section(current_tag)) {
                         // legacy names the first token of the line, as written
                         const auto end = trimmed_raw.find_first_of(" \t");

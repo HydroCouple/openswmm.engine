@@ -248,6 +248,29 @@ SWMM_ENGINE_API int swmm_engine_open(SWMM_Engine engine, const char* inp, const 
 SWMM_ENGINE_API int swmm_engine_open_metadata(SWMM_Engine engine, const char* inp);
 
 /**
+ * @brief Open a model only as far as its simulation period, without its 2D mesh.
+ *
+ * A metadata open (see swmm_engine_open_metadata()) that leaves out the 2D mesh and every row
+ * that addresses its cells: the built-in reader skips the mesh sections ([2D_VERTICES],
+ * [2D_TRIANGLES], [2D_QUADS]) and the per-cell ones (initial conditions, node maps, boundary,
+ * edge-conveyance and quality rows), and a [2D_MESH_FILE] is not read, so a large 2D model opens
+ * in a fraction of the time and memory. The start and end times (swmm_get_start_time(),
+ * swmm_get_end_time()) are the ones swmm_engine_open_metadata() gives. Other answers can differ:
+ * the handle has no 2D mesh, the [GW_*] rows are not checked, heat overrides scoped CELL2D or
+ * MESH_TAG are dropped, and rain gages only the mesh reads do not shorten WET_STEP. A mesh or a
+ * cell row a full open would refuse is not detected. initialize/start are refused until the
+ * engine is closed and reopened normally. An input plugin other than the built-in reader still
+ * reads any mesh rows it carries.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @param[in] inp Borrowed NUL-terminated input-model path.
+ * @return SWMM_OK on success; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADPARAM for null/empty
+ *     inp, or an open/parse/validation error.
+ */
+SWMM_ENGINE_API int swmm_engine_open_simulation_period(SWMM_Engine engine, const char* inp);
+
+/**
  * @brief Allocate simulation modules and initial state, entering SWMM_STATE_INITIALIZED.
  *
  * Requires OPENED, or INITIALIZED for a pre-start rebuild. Resolves runtime physics/transport
