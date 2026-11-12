@@ -276,9 +276,6 @@ bool Infil2D::resolveImpl(const MeshData& mesh, const SimulationOptions& opts, s
     const int nt = mesh.n_triangles();
     const auto nt_u = static_cast<std::size_t>(nt);
 
-    resolved_.assign(nt_u, Infil2DRow{});
-    prov_.assign(nt_u, Infil2DProvenance::NONE);
-    bank_.init(nt);
     active_ = false;
     ownership_messages_.clear();
     if (aquifer_owners_.empty())
@@ -287,6 +284,25 @@ bool Infil2D::resolveImpl(const MeshData& mesh, const SimulationOptions& opts, s
         err = "2D infiltration: invalid aquifer coverage size";
         return false;
     }
+    // D-I1: the cadence is INFIL_STEP, falling back to the project WET_STEP
+    // (SimulationOptions::wet_step is already in seconds).
+    step_seconds_ = (options_.infil_step > 0.0) ? options_.infil_step : opts.wet_step;
+
+    // Nothing authored and no aquifer-owned cell: nothing can resolve. Leave the
+    // unconfigured fast path (the end of this function's result) without first
+    // building a row per cell -- on a large mesh that was a sixth of initialize,
+    // and clear() kept the rows' memory. The cadence above is set either way.
+    if (defaults_.empty() && overrides_.empty() &&
+        std::none_of(aquifer_owners_.begin(), aquifer_owners_.end(),
+                     [](uint8_t o) { return o != 0; })) {
+        resolved_ = {};
+        prov_ = {};
+        bank_.clear();
+        return true;
+    }
+    resolved_.assign(nt_u, Infil2DRow{});
+    prov_.assign(nt_u, Infil2DProvenance::NONE);
+    bank_.init(nt);
     const auto owned = [this](std::size_t i) { return aquifer_owners_[i] != 0; };
     for (const auto& d : defaults_) {
         int applied = 0, skipped = 0;
@@ -302,10 +318,6 @@ bool Infil2D::resolveImpl(const MeshData& mesh, const SimulationOptions& opts, s
                                       "': " + std::to_string(applied) + " applied, " +
                                       std::to_string(skipped) + " skipped (aquifer-owned)");
     }
-
-    // D-I1: the cadence is INFIL_STEP, falling back to the project WET_STEP
-    // (SimulationOptions::wet_step is already in seconds).
-    step_seconds_ = (options_.infil_step > 0.0) ? options_.infil_step : opts.wet_step;
 
     // --- D-I3 precedence, least specific first: '*' → tag → override -------
 
