@@ -73,6 +73,15 @@ using SectionHandler =
                        )>;
 
 /**
+ * @brief SectionHandler that borrows its lines instead of owning copies.
+ *
+ * @details For readers that keep the whole file in memory (the [2D_MESH_FILE] sidecar loader):
+ *          each view points into the reader's buffer and is valid only during the call.
+ */
+using SectionViewHandler =
+    std::function<void(SimulationContext&, const std::vector<std::string_view>& /*lines*/)>;
+
+/**
  * @brief Registry that maps section tags (e.g., "[JUNCTIONS]") to handlers.
  *
  * @details Two types of sections:
@@ -124,6 +133,18 @@ public:
      */
     void register_custom(std::string_view tag, SectionHandler handler);
 
+    /**
+     * @brief register_custom() for a handler that takes borrowed line views.
+     *
+     * A tag has at most one custom handler: this replaces a register_custom() handler for the same
+     * tag, and register_custom() replaces this one. Either dispatch form reaches it.
+     *
+     * @param[in] tag Borrowed tag without brackets; normalized as register_custom().
+     * @param[in] handler Function object moved into owned storage; captured references remain
+     *     caller-managed.
+     */
+    void register_custom_views(std::string_view tag, SectionViewHandler handler);
+
     // -----------------------------------------------------------------------
     // Query
     // -----------------------------------------------------------------------
@@ -133,7 +154,8 @@ public:
      *
      * @param[in] tag Borrowed tag without brackets; copied and normalized using Tokenizer::to_upper().
      *     No bracket stripping or whitespace trimming occurs.
-     * @return True when custom or built-in map contains the key, even if its std::function is empty.
+     * @return True when a custom (string or view) or built-in handler is registered for the key,
+     *     even if its std::function is empty.
      */
     bool has(std::string_view tag) const;
 
@@ -142,7 +164,8 @@ public:
      *
      * @param[in] tag Borrowed tag without brackets; copied and normalized using Tokenizer::to_upper().
      *     No bracket stripping or whitespace trimming occurs.
-     * @return True when a custom entry exists; does not compare it with built-in registration.
+     * @return True when a custom (string or view) entry exists; does not compare it with built-in
+     *     registration.
      */
     bool is_custom(std::string_view tag) const;
 
@@ -167,6 +190,19 @@ public:
     void dispatch(std::string_view tag, SimulationContext& ctx,
                   const std::vector<std::string>& lines) const;
 
+    /**
+     * @brief dispatch() for borrowed line views.
+     *
+     * A view handler receives the views as they are; a string handler receives owned copies of
+     * the lines. Same precedence and no-op rule as dispatch().
+     *
+     * @param[in] tag Borrowed tag without brackets; normalized as dispatch().
+     * @param[in,out] ctx Caller-owned context forwarded by reference.
+     * @param[in] lines Borrowed views, valid for the duration of the call.
+     */
+    void dispatch_views(std::string_view tag, SimulationContext& ctx,
+                        const std::vector<std::string_view>& lines) const;
+
     // -----------------------------------------------------------------------
     // Enumeration
     // -----------------------------------------------------------------------
@@ -180,6 +216,7 @@ public:
 private:
     std::unordered_map<std::string, SectionHandler> builtin_;
     std::unordered_map<std::string, SectionHandler> custom_;
+    std::unordered_map<std::string, SectionViewHandler> custom_views_;
 
     /**
      * @brief Copy and uppercase a tag with tokenizer locale rules.

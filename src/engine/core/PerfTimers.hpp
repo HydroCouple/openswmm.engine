@@ -47,12 +47,13 @@ inline double sec_open_validate = 0.0; // validate_project
 
 // The [2D_MESH_FILE] sidecar load (twoD::load2DMeshExternalFile) runs after
 // open.read and outside it. open.mesh2d brackets the whole load; inside it the
-// sidecar's own `;; UNITS` pass and its nested reader are split the same way
-// open.read is, with mesh2d.scan derived as read minus dispatch. The nested
-// reader books its dispatch here, not in sec_read_dispatch.
+// sidecar's file read and its line walk are split the way open.read is, with
+// mesh2d.scan derived as walk minus dispatch. Its handlers book here, not in
+// sec_read_dispatch. (Until the one-pass reader, mesh2d.prescan was a separate
+// `;; UNITS` pass over the file.)
 inline double sec_open_mesh2d = 0.0;     // the whole sidecar load
-inline double sec_mesh2d_prescan = 0.0;  // twoD::prescan2DUnitsHeader on the sidecar
-inline double sec_mesh2d_read = 0.0;     // the nested InputReader::read
+inline double sec_mesh2d_prescan = 0.0;  // reading the sidecar into memory
+inline double sec_mesh2d_read = 0.0;     // the line walk, dispatch included
 inline double sec_mesh2d_dispatch = 0.0; // its section handlers
 
 // resolve_cross_references sub-phases (sum <= sec_open_resolve; the remainder

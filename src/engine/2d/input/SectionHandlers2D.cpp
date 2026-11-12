@@ -1324,8 +1324,41 @@ namespace {
 
 using LineParser = std::function<std::string(const std::vector<std::string>&)>;
 
+/// A section handler over owned lines (InputReader) or over views into a reader's buffer (the
+/// [2D_MESH_FILE] sidecar loader). The std::string form is input::SectionHandler.
+template <class Line>
+using HandlerOf = std::function<void(openswmm::SimulationContext&, const std::vector<Line>&)>;
+
+/**
+ * @brief Tokenize and parse a section's rows, stopping at the first returned diagnostic.
+ * @param[in] lp Row parser called per nonempty tokenized line.
+ * @param[in,out] ctx Receives error code 5 and "[2D] <reason> — line: <raw>" on the first
+ * diagnostic; rows accepted before it are kept.
+ * @param[in] lines Section lines, owned strings or borrowed views.
+ */
+template <class Line>
+void parseRows(const LineParser& lp, openswmm::SimulationContext& ctx,
+               const std::vector<Line>& lines) {
+    for (const auto& raw : lines) {
+        auto tokens = openswmm::input::Tokenizer::tokenize(raw);
+        if (tokens.empty())
+            continue;
+        std::string err = lp(tokens);
+        if (!err.empty()) {
+            // 5 = public SWMM_ERR_PARSE. Must be non-zero so InputReader
+            // (which gates success on ctx.error_code == 0) treats the
+            // section as failed; previously this was 1 (SWMM_ERR_NOMEM),
+            // so every 2D section parse error surfaced as "Out of memory".
+            ctx.error_code = 5;
+            ctx.error_message = "[2D] " + err + " — line: " + std::string(raw);
+            return;
+        }
+    }
+}
+
 /**
  * @brief Create a raw-section callback retaining an owned nonempty row parser.
+ * @tparam Line std::string (the default, an input::SectionHandler) or std::string_view.
  * @param[in] line_parser Row parser called per nonempty tokenized line, captures its own stable
  * targets.
  * @return Callable mutating passed context error code5/message on first returned diagnostic,
@@ -1333,24 +1366,10 @@ using LineParser = std::function<std::string(const std::vector<std::string>&)>;
  * reset/rollback/physics or clock advance; captured authoring targets must outlive handler,
  * callbacks execute serially.
  */
-input::SectionHandler makeSectionHandler(LineParser line_parser) {
+template <class Line = std::string> HandlerOf<Line> makeSectionHandler(LineParser line_parser) {
     return [lp = std::move(line_parser)](openswmm::SimulationContext& ctx,
-                                         const std::vector<std::string>& lines) {
-        for (const auto& raw : lines) {
-            auto tokens = openswmm::input::Tokenizer::tokenize(raw);
-            if (tokens.empty())
-                continue;
-            std::string err = lp(tokens);
-            if (!err.empty()) {
-                // 5 = public SWMM_ERR_PARSE. Must be non-zero so InputReader
-                // (which gates success on ctx.error_code == 0) treats the
-                // section as failed; previously this was 1 (SWMM_ERR_NOMEM),
-                // so every 2D section parse error surfaced as "Out of memory".
-                ctx.error_code = 5;
-                ctx.error_message = "[2D] " + err + " — line: " + raw;
-                return;
-            }
-        }
+                                         const std::vector<Line>& lines) {
+        parseRows(lp, ctx, lines);
     };
 }
 
@@ -1362,13 +1381,14 @@ using TagIndexedLineParser = std::function<std::string(const std::vector<std::st
  * @return Callable with makeSectionHandler's error behaviour. The index lives for one call, one
  * section occurrence, so vertices or cells read by a later repeated header are never missed.
  */
-input::SectionHandler makeTagIndexedSectionHandler(TagIndexedLineParser line_parser) {
+template <class Line = std::string>
+HandlerOf<Line> makeTagIndexedSectionHandler(TagIndexedLineParser line_parser) {
     return [lp = std::move(line_parser)](openswmm::SimulationContext& ctx,
-                                         const std::vector<std::string>& lines) {
+                                         const std::vector<Line>& lines) {
         TagIndex index;
-        makeSectionHandler([&lp, &index](const std::vector<std::string>& tokens) {
-            return lp(tokens, index);
-        })(ctx, lines);
+        parseRows(
+            [&lp, &index](const std::vector<std::string>& tokens) { return lp(tokens, index); },
+            ctx, lines);
     };
 }
 
@@ -1384,18 +1404,19 @@ using MeshRowParser = std::string (*)(const std::vector<std::string>&, MeshData&
  * resizes never reallocate. MeshData grows capacity geometrically, which keeps repeated headers
  * and sidecar rows after inline rows linear.
  */
-input::SectionHandler makeMeshRowsHandler(MeshData& mesh, MeshRowParser row_parser, bool cells) {
-    auto rows = makeSectionHandler([&mesh, row_parser](const std::vector<std::string>& tokens) {
+template <class Line = std::string>
+HandlerOf<Line> makeMeshRowsHandler(MeshData& mesh, MeshRowParser row_parser, bool cells) {
+    LineParser rows = [&mesh, row_parser](const std::vector<std::string>& tokens) {
         return row_parser(tokens, mesh);
-    });
+    };
     return [&mesh, cells, rows = std::move(rows)](openswmm::SimulationContext& ctx,
-                                                  const std::vector<std::string>& lines) {
+                                                  const std::vector<Line>& lines) {
         const int extra = static_cast<int>(lines.size());
         if (cells)
             mesh.reserve_triangles(mesh.n_triangles() + extra);
         else
             mesh.reserve_vertices(mesh.n_vertices() + extra);
-        rows(ctx, lines);
+        parseRows(rows, ctx, lines);
     };
 }
 
@@ -2036,6 +2057,140 @@ void register2DSections(MeshData& mesh, SolverOptions2D& options,
     });
 }
 
+namespace {
+
+/**
+ * @brief Apply one line's `;; UNITS: <value>` marker if it carries one (prescan2DUnitsHeader).
+ * @param[in] line Raw line; surrounding whitespace, including a trailing '\r', is ignored.
+ * @param[in,out] opts mesh_units_si set true on a recognised metric value ("SI (m)", "m",
+ * "metre(s)", "meter(s)", case-insensitive); anything else leaves it unchanged, never false.
+ */
+void noteUnitsMarker(std::string_view line, SolverOptions2D& opts) {
+    // Views, not strings: this runs on every line of a file, and almost every
+    // line is not a marker.
+    const auto trim = [](std::string_view s) noexcept {
+        const auto issp = [](unsigned char c) { return std::isspace(c) != 0; };
+        while (!s.empty() && issp(static_cast<unsigned char>(s.back())))
+            s.remove_suffix(1);
+        while (!s.empty() && issp(static_cast<unsigned char>(s.front())))
+            s.remove_prefix(1);
+        return s;
+    };
+    const std::string_view t = trim(line);
+    if (t.size() < 2 || t[0] != ';' || t[1] != ';')
+        return;
+    std::string_view rest = trim(t.substr(2));
+    // Match "UNITS:" prefix case-insensitively.
+    constexpr std::string_view kKey = "UNITS:";
+    if (rest.size() < kKey.size())
+        return;
+    for (std::size_t i = 0; i < kKey.size(); ++i) {
+        if (std::toupper(static_cast<unsigned char>(rest[i])) != kKey[i])
+            return;
+    }
+    const std::string_view value = trim(rest.substr(kKey.size()));
+    // Recognised metric markers.  Anything else (including absent /
+    // unknown / explicit "ft") leaves the flag at its current value.
+    const bool si = iequals(value, "SI (m)") || iequals(value, "m") || iequals(value, "metre") ||
+                    iequals(value, "metres") || iequals(value, "meter") || iequals(value, "meters");
+    if (si)
+        opts.mesh_units_si = true;
+}
+
+/**
+ * @brief Read a [2D_MESH_FILE] sidecar in one pass and dispatch its sections as line views.
+ * @param[in] path UTF-8 sidecar path.
+ * @param[in] registry Section handlers. View handlers get views into the file buffer; string
+ * handlers get copies (SectionRegistry::dispatch_views).
+ * @param[in,out] opts Receives the `;; UNITS:` marker of any line (noteUnitsMarker).
+ * @param[in,out] ctx Detached context collecting handler errors. An unopenable file sets code 2
+ * and InputReader's message.
+ * @details One walk replaces the separate units pass plus InputReader::read_stream's line loop,
+ * with the same line rules: lines split at '\n' as std::getline does; one trailing '\r'
+ * dropped; C-locale trim; blank lines skipped; a clean "[NAME]" (optional trailing comment)
+ * starts a section and other '['-lines stay data; ';' lines are kept trimmed; data lines lose a
+ * trailing comment; lines before the first header are ignored. Every header occurrence
+ * dispatches separately and the walk always reaches EOF, so the last failing section's message
+ * wins. Sections with no handler are skipped (InputReader only notes them in the context, which
+ * this caller drops).
+ */
+void readSidecarSections(const std::string& path, const input::SectionRegistry& registry,
+                         SolverOptions2D& opts, openswmm::SimulationContext& ctx) {
+    std::string buf;
+    {
+        perf::ScopedTimer _pt(perf::sec_mesh2d_prescan); // the file read, see PerfTimers.hpp
+        std::ifstream in(openswmm::io::utf8_path(path), std::ios::binary);
+        if (!in) {
+            ctx.error_code = 2; // public SWMM_ERR_INPFILE, as InputReader::read
+            ctx.error_message = "InputReader: cannot open file '" + path + "'";
+            return;
+        }
+        in.seekg(0, std::ios::end);
+        const std::streamoff size = in.tellg();
+        in.seekg(0, std::ios::beg);
+        if (size < 0) { // not seekable: read it as a stream
+            std::ostringstream ss;
+            ss << in.rdbuf();
+            buf = std::move(ss).str();
+        } else if (size > 0) {
+            buf.resize(static_cast<std::size_t>(size));
+            in.read(buf.data(), static_cast<std::streamsize>(size));
+            buf.resize(static_cast<std::size_t>(in.gcount()));
+        }
+    }
+
+    perf::ScopedTimer _pt(perf::sec_mesh2d_read);
+    using input::Tokenizer;
+    const std::string_view text(buf);
+    std::string tag;                     // current section; empty before the first header
+    std::vector<std::string_view> lines; // its lines, borrowed from buf
+    const auto flush = [&] {
+        if (tag.empty())
+            return;
+        perf::ScopedTimer _dt(perf::sec_mesh2d_dispatch);
+        registry.dispatch_views(tag, ctx, lines);
+        lines.clear();
+    };
+    std::size_t pos = 0;
+    while (pos < text.size()) {
+        std::size_t nl = text.find('\n', pos);
+        if (nl == std::string_view::npos)
+            nl = text.size();
+        std::string_view raw = text.substr(pos, nl - pos);
+        pos = nl + 1;
+
+        noteUnitsMarker(raw, opts);
+        if (!raw.empty() && raw.back() == '\r')
+            raw.remove_suffix(1);
+        const std::string_view t = Tokenizer::trim(raw);
+        if (t.empty())
+            continue;
+        if (t.front() == '[') {
+            const std::string_view header = Tokenizer::trim(Tokenizer::strip_comment(t));
+            if (!header.empty() && header.back() == ']') {
+                flush();
+                tag = input::InputReader::parse_section_header(header);
+                continue;
+            }
+        }
+        if (t.front() == ';') {
+            if (!tag.empty())
+                lines.push_back(t);
+            continue;
+        }
+        if (tag == "TITLE") { // free-form prose, kept raw as InputReader does
+            lines.push_back(raw);
+            continue;
+        }
+        const std::string_view data = Tokenizer::trim(Tokenizer::strip_comment(t));
+        if (!data.empty() && !tag.empty())
+            lines.push_back(data);
+    }
+    flush();
+}
+
+} // namespace
+
 // ============================================================================
 // load2DMeshExternalFile
 // ============================================================================
@@ -2089,63 +2244,72 @@ load2DMeshExternalFile(MeshData& mesh, SolverOptions2D& opts,
 
     // Build a minimal registry (no 2D_MESH_FILE — prevents recursion)
     openswmm::input::SectionRegistry mini;
-    mini.register_custom(
-        "2D_OPTIONS", makeSectionHandler([&opts, warnings](const std::vector<std::string>& tokens) {
-            return parse2DOptionsLine(tokens, opts, warnings);
+    mini.register_custom_views("2D_OPTIONS",
+                               makeSectionHandler<std::string_view>(
+                                   [&opts, warnings](const std::vector<std::string>& tokens) {
+                                       return parse2DOptionsLine(tokens, opts, warnings);
+                                   }));
+    mini.register_custom_views(
+        "2D_VERTICES", makeMeshRowsHandler<std::string_view>(mesh, parse2DVertexLine, false));
+    mini.register_custom_views(
+        "2D_TRIANGLES", makeMeshRowsHandler<std::string_view>(mesh, parse2DTriangleLine, true));
+    mini.register_custom_views("2D_QUADS",
+                               makeMeshRowsHandler<std::string_view>(mesh, parse2DQuadLine, true));
+    mini.register_custom_views(
+        "2D_INITIAL_VELOCITY",
+        makeSectionHandler<std::string_view>([&mesh](const std::vector<std::string>& tokens) {
+            return parse2DInitialVelocityLine(tokens, mesh);
         }));
-    mini.register_custom("2D_VERTICES", makeMeshRowsHandler(mesh, parse2DVertexLine, false));
-    mini.register_custom("2D_TRIANGLES", makeMeshRowsHandler(mesh, parse2DTriangleLine, true));
-    mini.register_custom("2D_QUADS", makeMeshRowsHandler(mesh, parse2DQuadLine, true));
-    mini.register_custom("2D_INITIAL_VELOCITY",
-                         makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
-                             return parse2DInitialVelocityLine(tokens, mesh);
-                         }));
-    mini.register_custom(
-        "2D_VERTEX_NODE_MAP",
-        makeTagIndexedSectionHandler([&mesh](const std::vector<std::string>& tokens, TagIndex& ix) {
-            return parse2DVertexNodeMapLine(tokens, mesh, &ix);
-        }));
-    mini.register_custom(
-        "2D_TRIANGLE_NODE_MAP",
-        makeTagIndexedSectionHandler([&mesh](const std::vector<std::string>& tokens, TagIndex& ix) {
-            return parse2DTriangleNodeMapLine(tokens, mesh, &ix);
-        }));
+    mini.register_custom_views("2D_VERTEX_NODE_MAP",
+                               makeTagIndexedSectionHandler<std::string_view>(
+                                   [&mesh](const std::vector<std::string>& tokens, TagIndex& ix) {
+                                       return parse2DVertexNodeMapLine(tokens, mesh, &ix);
+                                   }));
+    mini.register_custom_views("2D_TRIANGLE_NODE_MAP",
+                               makeTagIndexedSectionHandler<std::string_view>(
+                                   [&mesh](const std::vector<std::string>& tokens, TagIndex& ix) {
+                                       return parse2DTriangleNodeMapLine(tokens, mesh, &ix);
+                                   }));
 
     // V-E3 — external .2dm may carry its own [2D_BOUNDARY_CONDITIONS].
-    mini.register_custom(
-        "2D_BOUNDARY_CONDITIONS",
-        makeSectionHandler([&pending_bc_rows](const std::vector<std::string>& tokens) {
-            return parse2DBoundaryConditionsLine(tokens, pending_bc_rows);
-        }));
+    mini.register_custom_views("2D_BOUNDARY_CONDITIONS",
+                               makeSectionHandler<std::string_view>(
+                                   [&pending_bc_rows](const std::vector<std::string>& tokens) {
+                                       return parse2DBoundaryConditionsLine(tokens,
+                                                                            pending_bc_rows);
+                                   }));
 
     // S2/S3 — external .2dm may carry the surface quality sections too (they
     // travel with the mesh they address). Registered only when the caller
     // passes the pending stores, so older callers are unchanged.
     if (pending_iq_rows)
-        mini.register_custom(
-            "2D_INITIAL_QUALITY",
-            makeSectionHandler([pending_iq_rows](const std::vector<std::string>& tokens) {
-                return parse2DInitialQualityLine(tokens, *pending_iq_rows);
-            }));
+        mini.register_custom_views("2D_INITIAL_QUALITY",
+                                   makeSectionHandler<std::string_view>(
+                                       [pending_iq_rows](const std::vector<std::string>& tokens) {
+                                           return parse2DInitialQualityLine(tokens,
+                                                                            *pending_iq_rows);
+                                       }));
     if (pending_ibq_rows)
-        mini.register_custom(
-            "2D_INITIAL_BED_QUALITY",
-            makeSectionHandler([pending_ibq_rows](const std::vector<std::string>& tokens) {
-                return parse2DInitialBedQualityLine(tokens, *pending_ibq_rows);
-            }));
+        mini.register_custom_views("2D_INITIAL_BED_QUALITY",
+                                   makeSectionHandler<std::string_view>(
+                                       [pending_ibq_rows](const std::vector<std::string>& tokens) {
+                                           return parse2DInitialBedQualityLine(tokens,
+                                                                               *pending_ibq_rows);
+                                       }));
     if (pending_bq_rows)
-        mini.register_custom(
-            "2D_BOUNDARY_QUALITY",
-            makeSectionHandler([pending_bq_rows](const std::vector<std::string>& tokens) {
-                return parse2DBoundaryQualityLine(tokens, *pending_bq_rows);
-            }));
+        mini.register_custom_views("2D_BOUNDARY_QUALITY",
+                                   makeSectionHandler<std::string_view>(
+                                       [pending_bq_rows](const std::vector<std::string>& tokens) {
+                                           return parse2DBoundaryQualityLine(tokens,
+                                                                             *pending_bq_rows);
+                                       }));
 
     // §11A — external .2dm may carry its own [2D_EDGE_CONVEYANCE].
-    mini.register_custom(
-        "2D_EDGE_CONVEYANCE",
-        makeSectionHandler([&pending_ec_rows](const std::vector<std::string>& tokens) {
-            return parse2DEdgeConveyanceLine(tokens, pending_ec_rows);
-        }));
+    mini.register_custom_views("2D_EDGE_CONVEYANCE",
+                               makeSectionHandler<std::string_view>(
+                                   [&pending_ec_rows](const std::vector<std::string>& tokens) {
+                                       return parse2DEdgeConveyanceLine(tokens, pending_ec_rows);
+                                   }));
 
     // §5.5.5 — [2D_INFILTRATION*] are per-cell mesh attributes, so they follow
     // the mesh into the .2dm. The registry the main .inp uses reaches its
@@ -2157,41 +2321,31 @@ load2DMeshExternalFile(MeshData& mesh, SolverOptions2D& opts,
     // appending to it, so no row can be counted twice; sections the sidecar
     // omits keep whatever the .inp supplied.
     Infil2D sidecar_infil;
-    mini.register_custom(
-        "2D_INFILTRATION_OPTIONS",
-        makeSectionHandler([&sidecar_infil](const std::vector<std::string>& tokens) {
-            return parse2DInfiltrationOptionsLine(tokens, sidecar_infil);
-        }));
-    mini.register_custom(
-        "2D_INFILTRATION_DEFAULTS",
-        makeSectionHandler([&sidecar_infil](const std::vector<std::string>& tokens) {
-            return parse2DInfiltrationDefaultsLine(tokens, sidecar_infil);
-        }));
-    mini.register_custom(
-        "2D_INFILTRATION",
-        makeSectionHandler([&sidecar_infil](const std::vector<std::string>& tokens) {
-            return parse2DInfiltrationLine(tokens, sidecar_infil);
-        }));
+    mini.register_custom_views("2D_INFILTRATION_OPTIONS",
+                               makeSectionHandler<std::string_view>(
+                                   [&sidecar_infil](const std::vector<std::string>& tokens) {
+                                       return parse2DInfiltrationOptionsLine(tokens, sidecar_infil);
+                                   }));
+    mini.register_custom_views("2D_INFILTRATION_DEFAULTS",
+                               makeSectionHandler<std::string_view>(
+                                   [&sidecar_infil](const std::vector<std::string>& tokens) {
+                                       return parse2DInfiltrationDefaultsLine(tokens,
+                                                                              sidecar_infil);
+                                   }));
+    mini.register_custom_views("2D_INFILTRATION",
+                               makeSectionHandler<std::string_view>(
+                                   [&sidecar_infil](const std::vector<std::string>& tokens) {
+                                       return parse2DInfiltrationLine(tokens, sidecar_infil);
+                                   }));
 
-    // The external .2dm may carry its own `;; UNITS:` header. Scan first
-    // so SurfaceRouter2D::initialize sees the right flag before it runs.
-    // path_utf8, not p.string(): both callees take a UTF-8 std::string and
-    // re-apply utf8_path themselves, and string() would re-encode to ANSI.
+    // One read of the whole sidecar and one walk over its lines; the walk
+    // also finds the `;; UNITS:` header, so SurfaceRouter2D::initialize sees
+    // the right flag. path_utf8, not p.string(): the error text and
+    // utf8_path both take UTF-8, and string() would re-encode to ANSI.
     const std::string p_utf8 = openswmm::io::path_utf8(p);
-    {
-        perf::ScopedTimer _pt(perf::sec_mesh2d_prescan);
-        prescan2DUnitsHeader(p_utf8, opts);
-    }
-
-    openswmm::input::InputReader reader(mini);
-    reader.set_dispatch_timer(perf::sec_mesh2d_dispatch);
     openswmm::SimulationContext dummy;
-    bool read_ok = false;
-    {
-        perf::ScopedTimer _pt(perf::sec_mesh2d_read);
-        read_ok = reader.read(p_utf8, dummy);
-    }
-    if (!read_ok) {
+    readSidecarSections(p_utf8, mini, opts, dummy);
+    if (dummy.error_code != 0) {
         return "2D_MESH_FILE: error reading '" + p_utf8 + "': " + dummy.error_message;
     }
 
@@ -2227,55 +2381,17 @@ void prescan2DUnitsHeader(const std::string& inp_path, SolverOptions2D& opts) {
     if (!in)
         return; // file missing — caller will surface the error
 
-    // Views, not strings. This pass reads the ENTIRE .inp — see the note below
-    // on why it cannot stop early — so on a large model it visits millions of
-    // lines. The previous by-value `trim(std::string)` allocated twice per
-    // line (the parameter copy and the substr result) for a scan that almost
-    // always finds nothing.
-    const auto trim = [](std::string_view s) noexcept {
-        const auto issp = [](unsigned char c) { return std::isspace(c) != 0; };
-        while (!s.empty() && issp(static_cast<unsigned char>(s.back())))
-            s.remove_suffix(1);
-        while (!s.empty() && issp(static_cast<unsigned char>(s.front())))
-            s.remove_prefix(1);
-        return s;
-    };
-
     // NB: this deliberately scans to EOF rather than stopping at the first
     // "[SECTION]" header. The header is not always in the pre-section prefix —
     // InpWriter emits `;; UNITS: SI (m)` underneath [2D_VERTICES] (InpWriter.cpp
     // writeMesh2D), so every .inp the engine itself writes carries it mid-file.
     // Stopping early would silently drop SI mesh scaling on round-trip.
     // Recognized SI matches enable the flag; other markers leave it unchanged.
+    // The [2D_MESH_FILE] sidecar applies the same rule in its own walk
+    // (readSidecarSections).
     std::string line;
-    while (std::getline(in, line)) {
-        const std::string_view t = trim(line);
-        if (t.size() < 2 || t[0] != ';' || t[1] != ';')
-            continue;
-        std::string_view rest = trim(t.substr(2));
-        // Match "UNITS:" prefix case-insensitively.
-        constexpr std::string_view kKey = "UNITS:";
-        if (rest.size() < kKey.size())
-            continue;
-        bool match = true;
-        for (std::size_t i = 0; i < kKey.size(); ++i) {
-            if (std::toupper(static_cast<unsigned char>(rest[i])) != kKey[i]) {
-                match = false;
-                break;
-            }
-        }
-        if (!match)
-            continue;
-        const std::string_view value = trim(rest.substr(kKey.size()));
-        // Recognised metric markers.  Anything else (including absent /
-        // unknown / explicit "ft") leaves the flag at its current value.
-        const bool si = iequals(value, "SI (m)") || iequals(value, "m") ||
-                        iequals(value, "metre") || iequals(value, "metres") ||
-                        iequals(value, "meter") || iequals(value, "meters");
-        if (si)
-            opts.mesh_units_si = true;
-        // Continue scanning for recognized SI markers after section headers.
-    }
+    while (std::getline(in, line))
+        noteUnitsMarker(line, opts);
 }
 
 } // namespace openswmm::twoD

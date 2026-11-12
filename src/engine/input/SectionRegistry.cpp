@@ -48,7 +48,15 @@ void SectionRegistry::register_builtin(std::string_view tag, SectionHandler hand
 }
 
 void SectionRegistry::register_custom(std::string_view tag, SectionHandler handler) {
-    custom_[normalize_tag(tag)] = std::move(handler);
+    std::string key = normalize_tag(tag);
+    custom_views_.erase(key);
+    custom_[std::move(key)] = std::move(handler);
+}
+
+void SectionRegistry::register_custom_views(std::string_view tag, SectionViewHandler handler) {
+    std::string key = normalize_tag(tag);
+    custom_.erase(key);
+    custom_views_[std::move(key)] = std::move(handler);
 }
 
 // ============================================================================
@@ -57,11 +65,12 @@ void SectionRegistry::register_custom(std::string_view tag, SectionHandler handl
 
 bool SectionRegistry::has(std::string_view tag) const {
     const std::string key = normalize_tag(tag);
-    return custom_.count(key) > 0 || builtin_.count(key) > 0;
+    return custom_.count(key) > 0 || custom_views_.count(key) > 0 || builtin_.count(key) > 0;
 }
 
 bool SectionRegistry::is_custom(std::string_view tag) const {
-    return custom_.count(normalize_tag(tag)) > 0;
+    const std::string key = normalize_tag(tag);
+    return custom_.count(key) > 0 || custom_views_.count(key) > 0;
 }
 
 // ============================================================================
@@ -81,6 +90,14 @@ void SectionRegistry::dispatch(std::string_view tag, SimulationContext& ctx,
         }
     }
     {
+        auto it = custom_views_.find(key);
+        if (it != custom_views_.end()) {
+            const std::vector<std::string_view> views(lines.begin(), lines.end());
+            it->second(ctx, views);
+            return;
+        }
+    }
+    {
         auto it = builtin_.find(key);
         if (it != builtin_.end()) {
             it->second(ctx, lines);
@@ -88,6 +105,21 @@ void SectionRegistry::dispatch(std::string_view tag, SimulationContext& ctx,
         }
     }
     // Unknown section — silently ignored (caller should warn if desired)
+}
+
+void SectionRegistry::dispatch_views(std::string_view tag, SimulationContext& ctx,
+                                     const std::vector<std::string_view>& lines) const {
+    {
+        auto it = custom_views_.find(normalize_tag(tag));
+        if (it != custom_views_.end()) {
+            it->second(ctx, lines);
+            return;
+        }
+    }
+    if (!has(tag))
+        return; // unknown section, as dispatch()
+    const std::vector<std::string> copies(lines.begin(), lines.end());
+    dispatch(tag, ctx, copies);
 }
 
 // ============================================================================
@@ -99,18 +131,18 @@ std::vector<std::string> SectionRegistry::registered_tags() const {
     tags.reserve(builtin_.size() + custom_.size());
     for (const auto& [tag, _] : builtin_)
         tags.push_back(tag);
-    for (const auto& [tag, _] : custom_) {
+    auto add_unique = [&tags](const std::string& tag) {
         // Avoid duplicates (custom overrides same-named builtin)
-        bool already = false;
         for (const auto& existing : tags) {
-            if (existing == tag) {
-                already = true;
-                break;
-            }
+            if (existing == tag)
+                return;
         }
-        if (!already)
-            tags.push_back(tag);
-    }
+        tags.push_back(tag);
+    };
+    for (const auto& [tag, _] : custom_)
+        add_unique(tag);
+    for (const auto& [tag, _] : custom_views_)
+        add_unique(tag);
     return tags;
 }
 

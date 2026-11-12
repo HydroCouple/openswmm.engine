@@ -13,6 +13,8 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+
 #include "../../src/engine/input/SectionRegistry.hpp"
 #include "../../src/engine/core/SimulationContext.hpp"
 
@@ -156,6 +158,94 @@ TEST(SectionRegistryTest, RegisteredTagsListsAll) {
     EXPECT_TRUE(has_tag("JUNCTIONS"));
     EXPECT_TRUE(has_tag("CONDUITS"));
     EXPECT_TRUE(has_tag("MY_SECTION"));
+}
+
+// ============================================================================
+// View handlers (register_custom_views / dispatch_views)
+// ============================================================================
+
+TEST(SectionRegistryTest, ViewHandlerReceivesTheCallersViews) {
+    SectionRegistry reg;
+    std::vector<std::string_view> seen;
+    reg.register_custom_views(
+        "2d_vertices",
+        [&seen](SimulationContext&, const std::vector<std::string_view>& lines) { seen = lines; });
+    EXPECT_TRUE(reg.has("2D_VERTICES"));
+    EXPECT_TRUE(reg.is_custom("2D_VERTICES"));
+
+    const std::string buffer = "0 0 1\n10 0 1";
+    const std::vector<std::string_view> lines = {std::string_view(buffer).substr(0, 5),
+                                                 std::string_view(buffer).substr(6)};
+    SimulationContext ctx;
+    reg.dispatch_views("2D_VERTICES", ctx, lines);
+    ASSERT_EQ(seen.size(), 2u);
+    EXPECT_EQ(seen[0].data(), buffer.data()); // the views themselves, not copies
+    EXPECT_EQ(seen[1], "10 0 1");
+}
+
+TEST(SectionRegistryTest, EitherDispatchReachesEitherHandlerForm) {
+    SectionRegistry reg;
+    std::vector<std::string> by_string;
+    std::vector<std::string> by_view;
+    reg.register_custom("STRINGS",
+                        [&by_string](SimulationContext&, const std::vector<std::string>& lines) {
+                            by_string = lines;
+                        });
+    reg.register_custom_views(
+        "VIEWS", [&by_view](SimulationContext&, const std::vector<std::string_view>& lines) {
+            by_view.assign(lines.begin(), lines.end());
+        });
+
+    SimulationContext ctx;
+    const std::string a = "a b", b = "c";
+    reg.dispatch_views("STRINGS", ctx, {a, b});
+    reg.dispatch("VIEWS", ctx, {a, b});
+    EXPECT_EQ(by_string, (std::vector<std::string>{"a b", "c"}));
+    EXPECT_EQ(by_view, (std::vector<std::string>{"a b", "c"}));
+    EXPECT_NO_THROW(reg.dispatch_views("NONEXISTENT", ctx, {a}));
+}
+
+TEST(SectionRegistryTest, LaterCustomRegistrationReplacesTheOtherForm) {
+    SectionRegistry reg;
+    int string_calls = 0, view_calls = 0;
+    const auto string_handler =
+        [&string_calls](SimulationContext&, const std::vector<std::string>&) { ++string_calls; };
+    const auto view_handler = [&view_calls](SimulationContext&,
+                                            const std::vector<std::string_view>&) { ++view_calls; };
+    SimulationContext ctx;
+
+    reg.register_custom("SEC", string_handler);
+    reg.register_custom_views("SEC", view_handler);
+    reg.dispatch("SEC", ctx, {});
+    reg.dispatch_views("SEC", ctx, {});
+    EXPECT_EQ(string_calls, 0);
+    EXPECT_EQ(view_calls, 2);
+
+    reg.register_custom("SEC", string_handler);
+    reg.dispatch("SEC", ctx, {});
+    reg.dispatch_views("SEC", ctx, {});
+    EXPECT_EQ(string_calls, 2);
+    EXPECT_EQ(view_calls, 2);
+
+    const auto tags = reg.registered_tags();
+    EXPECT_EQ(std::count(tags.begin(), tags.end(), "SEC"), 1);
+}
+
+TEST(SectionRegistryTest, CustomViewHandlerOverridesBuiltin) {
+    SectionRegistry reg;
+    bool builtin_called = false, view_called = false;
+    reg.register_builtin("JUNCTIONS",
+                         [&builtin_called](SimulationContext&, const std::vector<std::string>&) {
+                             builtin_called = true;
+                         });
+    reg.register_custom_views(
+        "JUNCTIONS", [&view_called](SimulationContext&, const std::vector<std::string_view>&) {
+            view_called = true;
+        });
+    SimulationContext ctx;
+    reg.dispatch("JUNCTIONS", ctx, {});
+    EXPECT_FALSE(builtin_called);
+    EXPECT_TRUE(view_called);
 }
 
 } /* anonymous namespace */
