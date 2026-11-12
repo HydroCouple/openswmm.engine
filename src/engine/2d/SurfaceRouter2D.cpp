@@ -257,7 +257,7 @@ void SurfaceRouter2D::drainPendingRows() {
 
         // Authoring APIs run before buildMeshTopology. Classify actual
         // exterior faces from this existing endpoint map, without consulting
-        // cell_nbr's still-default -1 values or rescanning the mesh per edit.
+        // cell_nbr (not built yet) or rescanning the mesh per edit.
         for (const auto& entry : edge_key_to_slots)
             if (entry.second.size() == 1)
                 boundary_.edge_is_exterior[entry.second.front()] = 1;

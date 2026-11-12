@@ -687,6 +687,50 @@ TEST_F(InpWriter2DTest, UnloadableMeshReferenceReanchoredOnSaveAs) {
     EXPECT_EQ(resolved, fs::weakly_canonical(src_dir / "absent_mesh.2dm"));
 }
 
+// Mesh open plan E4: a parsed mesh no longer carries its derived arrays (cell
+// neighbours, cell and edge geometry) until initialize builds them. The editing
+// APIs that need neighbours before initialize build them on demand -- before
+// E4 they read every neighbour as -1, so a parsed mesh reported no neighbours,
+// an interior-edge conveyance edit did not reach the other side of the edge,
+// and an interior-edge boundary condition was accepted.
+TEST_F(InpWriter2DTest, ParsedMeshBuildsNeighboursOnDemand) {
+    const fs::path inp = dir_ / "e4.inp";
+    write_file(inp, replace(k1DBase, "{FLOW_UNITS}", "CMS") + k2DSections);
+    eng_a_ = open_engine(inp);
+    const auto* engine = reinterpret_cast<openswmm::SWMMEngine*>(eng_a_);
+    const auto& mesh = engine->surfaceRouter2D().mesh();
+    EXPECT_TRUE(mesh.cell_nbr.empty()) << "derived arrays allocated at parse";
+    EXPECT_TRUE(mesh.tri_area.empty()) << "derived arrays allocated at parse";
+
+    // Cells 0 (0 1 2) and 1 (0 2 3) share vertices 0-2: local edge 1 of cell 0
+    // (opposite vertex 1) and local edge 2 of cell 1 (opposite vertex 3).
+    int nbr[4] = {9, 9, 9, 9};
+    int nv = 0;
+    ASSERT_EQ(swmm_2d_cell_get_neighbours(eng_a_, 0, nbr, &nv), 0);
+    EXPECT_EQ(nv, 3);
+    EXPECT_EQ(nbr[0], -1);
+    EXPECT_EQ(nbr[1], 1);
+    EXPECT_EQ(nbr[2], -1);
+    EXPECT_TRUE(mesh.tri_area.empty()) << "only the neighbours are built on demand";
+
+    // (The conveyance getter needs an initialized engine: read the array.)
+    ASSERT_EQ(swmm_2d_set_edge_conveyance(eng_a_, 1, 2, 0.25), 0);
+    EXPECT_DOUBLE_EQ(mesh.edge_conveyance[openswmm::twoD::MeshData::slot(0, 1)], 0.25)
+        << "the other side of the interior edge";
+
+    ASSERT_EQ(swmm_2d_prepare_for_edit(eng_a_), 0);
+    EXPECT_NE(swmm_2d_set_edge_bc_type(eng_a_, 0, 1, SWMM_2D_BC_WALL), 0)
+        << "an interior edge takes no boundary condition";
+    EXPECT_EQ(swmm_2d_set_edge_bc_type(eng_a_, 0, 0, SWMM_2D_BC_WALL), 0);
+
+    // A vertex Z edit before initialize is kept and reaches the built geometry.
+    ASSERT_EQ(swmm_2d_set_vertex_z(eng_a_, 1, 12.0), 0);
+    ASSERT_EQ(swmm_engine_initialize(eng_a_), 0);
+    double cx = 0.0, cy = 0.0, cz = 0.0;
+    ASSERT_EQ(swmm_2d_triangle_get_centroid(eng_a_, 0, &cx, &cy, &cz), 0);
+    EXPECT_DOUBLE_EQ(cz, (10.0 + 12.0 + 11.0) / 3.0);
+}
+
 // A mesh file that fails part-way, opened leniently (the GUI's editor open):
 // "continue 1D-only" must not keep what the file applied before the bad row —
 // its [2D_OPTIONS] values, its `;; UNITS: SI (m)` flag, or quality rows that

@@ -1611,6 +1611,8 @@ struct MeshLidRig {
             c.node_subtypes.storages.lid[c.node_subtypes.storage_row(n)].bottom =
                 LidNodeBottom::MeshAquifer;
         mesh.resize_triangles(aquifer_cells);
+        mesh.size_neighbours();
+        mesh.size_geometry();
         for (int i = 0; i < aquifer_cells; ++i) {
             mesh.tri_area[i] = 1;
             mesh.tri_cz[i] = 0;

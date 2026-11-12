@@ -118,6 +118,8 @@ void buildMesh(MeshData& m, SurfaceStateData& s) {
     const int nt = 4, nv = 6;
     m.resize_vertices(nv);
     m.resize_triangles(nt);
+    m.size_neighbours();
+    m.size_geometry();
     s.resize(nt, nv);
 
     // Centroids along x; arbitrary but distinct.

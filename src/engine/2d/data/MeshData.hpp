@@ -444,12 +444,15 @@ struct MeshData {
     }
 
     /**
-     * @brief Resize the per-cell arrays to nt cells. New cells are TRIANGLES (cell_nv = 3,
-     * vertex slots 0 / padding −1) until set_quad() is called.
+     * @brief Resize the authored per-cell arrays to nt cells. New cells are TRIANGLES
+     * (cell_nv = 3, vertex slots 0 / padding −1) until set_quad() is called.
      *
      * @param[in] nt Nonnegative target mixed-cell count; the historical name includes quads.
-     * @post Preserves existing entries and initializes appended geometry/properties and padded
-     * slots. Does not rebuild topology/stencils, resize existing quad VFR side data, or prune
+     * @post Preserves existing entries and initializes appended properties and padded slots.
+     * Does not touch the derived arrays (cell_nbr, tri_area, tri_cx/cy/cz, edge_length/nx/ny/
+     * mx/my/mz/dist_c): buildMeshTopology sizes and fills those (size_neighbours,
+     * size_geometry), so a parsed, not yet initialized mesh does not carry their 272 B per
+     * cell. Does not rebuild topology/stencils, resize existing quad VFR side data, or prune
      * tri_couplings referring to removed cells.
      * @note Callers reconstruct those dependent arrays before use. Vector allocations may throw
      * after partial resize and invalidate references; requires exclusive mesh access. No
@@ -461,25 +464,10 @@ struct MeshData {
         cell_nv.resize(n, 3);
         const auto n4 = n * static_cast<std::size_t>(kMaxCellVerts);
         cell_v.resize(n4, 0);
-        cell_nbr.resize(n4, -1);
-        // Padding slot of every NEW triangle: vertex −1, neighbour −2.
-        for (std::size_t c = old_n; c < n; ++c) {
+        // Padding slot of every NEW triangle: vertex −1.
+        for (std::size_t c = old_n; c < n; ++c)
             cell_v[c * kMaxCellVerts + 3] = -1;
-            cell_nbr[c * kMaxCellVerts + 3] = -2;
-        }
-        tri_area.resize(n, 0.0);
-        tri_cx.resize(n, 0.0);
-        tri_cy.resize(n, 0.0);
-        tri_cz.resize(n, 0.0);
-
-        edge_length.resize(n4, 0.0);
-        edge_nx.resize(n4, 0.0);
-        edge_ny.resize(n4, 0.0);
-        edge_mx.resize(n4, 0.0);
-        edge_my.resize(n4, 0.0);
-        edge_mz.resize(n4, 0.0);
-        edge_dist_c.resize(n4, 0.0);
-        edge_conveyance.resize(n4, 1.0); // §11A — default unrestricted
+        edge_conveyance.resize(n4, 1.0); // §11A — default unrestricted, authored
 
         mannings_n.resize(n, 0.035);
         tri_init_depth.resize(n, 0.0);
@@ -528,18 +516,6 @@ struct MeshData {
         const auto n4 = n * static_cast<std::size_t>(kMaxCellVerts);
         grow_capacity(cell_nv, n);
         grow_capacity(cell_v, n4);
-        grow_capacity(cell_nbr, n4);
-        grow_capacity(tri_area, n);
-        grow_capacity(tri_cx, n);
-        grow_capacity(tri_cy, n);
-        grow_capacity(tri_cz, n);
-        grow_capacity(edge_length, n4);
-        grow_capacity(edge_nx, n4);
-        grow_capacity(edge_ny, n4);
-        grow_capacity(edge_mx, n4);
-        grow_capacity(edge_my, n4);
-        grow_capacity(edge_mz, n4);
-        grow_capacity(edge_dist_c, n4);
         grow_capacity(edge_conveyance, n4);
         grow_capacity(mannings_n, n);
         grow_capacity(tri_init_depth, n);
@@ -551,6 +527,44 @@ struct MeshData {
         grow_capacity(tri_coupled_node_name, n);
         grow_capacity(tri_coupling_cd, n);
         grow_capacity(tri_coupling_area, n);
+    }
+
+    /**
+     * @brief Size cell_nbr for n_triangles() cells: −1 on real edge slots, −2 on padding.
+     * @post neighbours_built() is true; the values are placeholders until buildMeshTopology or
+     * buildCellNeighbours fills them.
+     */
+    void size_neighbours() {
+        const auto n = cell_nv.size();
+        cell_nbr.assign(n * static_cast<std::size_t>(kMaxCellVerts), -1);
+        for (std::size_t c = 0; c < n; ++c)
+            for (int k = cell_nv[c]; k < kMaxCellVerts; ++k)
+                cell_nbr[c * kMaxCellVerts + static_cast<std::size_t>(k)] = -2;
+    }
+
+    /**
+     * @brief Size the cell and edge geometry arrays for n_triangles() cells, zero-filled.
+     * @post geometry_built() is true; buildMeshTopology overwrites every element.
+     */
+    void size_geometry() {
+        const auto n = cell_nv.size();
+        const auto n4 = n * static_cast<std::size_t>(kMaxCellVerts);
+        for (auto* v : {&tri_area, &tri_cx, &tri_cy, &tri_cz})
+            v->assign(n, 0.0);
+        for (auto* v :
+             {&edge_length, &edge_nx, &edge_ny, &edge_mx, &edge_my, &edge_mz, &edge_dist_c})
+            v->assign(n4, 0.0);
+    }
+
+    /// cell_nbr covers every cell (buildCellNeighbours or buildMeshTopology has run).
+    bool neighbours_built() const noexcept {
+        return cell_nbr.size() == cell_nv.size() * static_cast<std::size_t>(kMaxCellVerts);
+    }
+
+    /// The cell / edge geometry arrays cover every cell (buildMeshTopology has run).
+    bool geometry_built() const noexcept {
+        return tri_cz.size() == cell_nv.size() &&
+               edge_mz.size() == cell_nv.size() * static_cast<std::size_t>(kMaxCellVerts);
     }
 
 private:

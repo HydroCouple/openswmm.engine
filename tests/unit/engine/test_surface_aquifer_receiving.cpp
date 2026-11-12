@@ -51,6 +51,8 @@ struct Rig {
         mesh.vy = {0, 0, 2};
         mesh.vz = {10, 10, 10};
         mesh.resize_triangles(1);
+        mesh.size_neighbours();
+        mesh.size_geometry();
         mesh.set_triangle(0, 0, 1, 2);
         mesh.tri_area[0] = 2;
         mesh.tri_cz[0] = 10;

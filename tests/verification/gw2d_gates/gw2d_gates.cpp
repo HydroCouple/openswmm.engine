@@ -285,6 +285,8 @@ MeshData oneCell(double z = 10.0) {
     m.vy = {0.0, 0.0, 1.0};
     m.vz = {z, z, z};
     m.resize_triangles(1);
+    m.size_neighbours();
+    m.size_geometry();
     m.set_triangle(0, 0, 1, 2);
     for (int k = 0; k < 3; ++k) m.cell_nbr[MeshData::slot(0, k)] = -1;
     finishGeometry(m);
@@ -300,6 +302,8 @@ MeshData twoCells(double z0 = 10.0, double z1 = 10.0) {
     m.vy = {0.0, 0.0, 1.0, 1.0};
     m.vz = {z0, 0.5 * (z0 + z1), 0.5 * (z0 + z1), z1};
     m.resize_triangles(2);
+    m.size_neighbours();
+    m.size_geometry();
     m.set_triangle(0, 0, 1, 2);
     m.set_triangle(1, 1, 3, 2);
     for (int t = 0; t < 2; ++t)

@@ -49,7 +49,7 @@ namespace openswmm::twoD {
  *
  * @param[in,out] mesh The mesh data with vx/vy/vz and tri_v0/v1/v2 already populated.
  *
- * @pre Mixed-cell connectivity and all per-cell/per-edge arrays are already sized, vertex
+ * @pre Mixed-cell connectivity is in place (the derived arrays are sized here), vertex
  * references are in bounds, and XYZ values are finite in one consistent length unit. This
  * routine is not an input validator.
  * @post Replaces neighbor and geometry arrays, retaining triangle/quad cell numbering. Allocates
@@ -58,6 +58,15 @@ namespace openswmm::twoD {
  * lengths/areas retain the mesh's input units.
  */
 void buildMeshTopology(MeshData& mesh);
+
+/**
+ * @brief Size and fill only cell_nbr, for callers that need neighbours on a parsed mesh
+ * before initialize (buildMeshTopology does this and more, later).
+ *
+ * @param[in,out] mesh Mixed-cell connectivity in place; vertex references in bounds.
+ * @post mesh.neighbours_built(); same values buildMeshTopology gives. Geometry untouched.
+ */
+void buildCellNeighbours(MeshData& mesh);
 /**
  * @brief Cancellable equivalent; progress receives integer percent and returns true to cancel.
  *

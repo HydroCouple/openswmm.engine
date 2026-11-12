@@ -2018,6 +2018,8 @@ struct NodeTrialRig {
                           double area = 1, double contact = 40, double kc = 0, double dc = 0,
                           int cells = 1, const std::string& et = "NONE", bool dunne = true) {
         mesh.resize_triangles(cells);
+        mesh.size_neighbours();
+        mesh.size_geometry();
         for (int i = 0; i < cells; ++i) {
             mesh.tri_area[i] = area;
             mesh.tri_cz[i] = 0;

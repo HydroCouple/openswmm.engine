@@ -383,6 +383,7 @@ TEST(MeshBuilder, ValidationRejectsDuplicateVertices) {
     mesh.vz = {0.0, 0.0, 0.0};
 
     mesh.resize_triangles(1);
+    mesh.size_geometry(); // validateMesh reads tri_area
     // Degenerate: two vertices are the same index
     mesh.set_triangle(0, 0, 0, 2);
     mesh.mannings_n[0] = 0.035;
@@ -401,6 +402,7 @@ TEST(MeshBuilder, ValidationRejectsOutOfRangeIndex) {
     mesh.vz = {0.0, 0.0, 0.0};
 
     mesh.resize_triangles(1);
+    mesh.size_geometry();           // validateMesh reads tri_area
     mesh.set_triangle(0, 0, 1, 99); // out of range
     mesh.mannings_n[0] = 0.035;
     mesh.tri_area[0] = 1.0;
@@ -1779,10 +1781,23 @@ TEST(MeshData, ResizeTriangles) {
 
     EXPECT_EQ(mesh.n_triangles(), 3);
     EXPECT_EQ(mesh.cell_nv.size(), 3u);
-    EXPECT_EQ(mesh.edge_length.size(), 12u); // 3 * kMaxCellVerts (padded)
+    EXPECT_EQ(mesh.edge_conveyance.size(), 12u); // authored, 3 * kMaxCellVerts (padded)
     EXPECT_EQ(mesh.n_quads(), 0);
     EXPECT_EQ(mesh.edge_stride(), 3); // public stride stays 3 for all-tri
     EXPECT_EQ(mesh.mannings_n.size(), 3u);
+
+    // The derived arrays are MeshBuilder's (mesh open plan E4): resize leaves
+    // them unallocated, size_neighbours / size_geometry size them.
+    EXPECT_TRUE(mesh.cell_nbr.empty());
+    EXPECT_TRUE(mesh.edge_length.empty());
+    EXPECT_TRUE(mesh.tri_area.empty());
+    EXPECT_FALSE(mesh.neighbours_built());
+    EXPECT_FALSE(mesh.geometry_built());
+    mesh.size_neighbours();
+    mesh.size_geometry();
+    EXPECT_TRUE(mesh.neighbours_built());
+    EXPECT_TRUE(mesh.geometry_built());
+    EXPECT_EQ(mesh.edge_length.size(), 12u);
 
     // Default neighbours are -1; the padding slot of a triangle is -2 and
     // its padding vertex is -1.

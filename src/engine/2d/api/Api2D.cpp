@@ -308,6 +308,10 @@ int swmm_2d_cell_get_neighbours(SWMM_Engine engine, int idx, int* n, int* nv) {
     if (!n || !nv)
         return SWMM_ERR_BADPARAM;
     auto& m = router2d.mesh();
+    // Before initialize the neighbours are not built yet: build them now
+    // (they used to read as -1 for every edge of a parsed mesh).
+    if (!m.neighbours_built())
+        openswmm::twoD::buildCellNeighbours(m);
     *nv = m.cell_vertex_count(idx);
     for (int k = 0; k < openswmm::twoD::kMaxCellVerts; ++k)
         n[k] = (k < *nv) ? m.cell_neighbour(idx, k) : -2;
@@ -960,7 +964,11 @@ int swmm_2d_set_edge_conveyance(SWMM_Engine engine, int tri, int edge, double co
     auto& mesh = router2d.mesh();
     mesh.edge_conveyance[openswmm::twoD::MeshData::slot(tri, edge)] = conveyance;
 
-    // Q3 silent partner mirroring — interior edges only.
+    // Q3 silent partner mirroring — interior edges only. Before initialize
+    // the neighbours are built here (they used to read as -1, so the partner
+    // slot of an interior edge was left unchanged).
+    if (!mesh.neighbours_built())
+        openswmm::twoD::buildCellNeighbours(mesh);
     int nbr_tri = -1, nbr_edge = -1;
     if (partnerSlot(mesh, tri, edge, nbr_tri, nbr_edge)) {
         mesh.edge_conveyance[openswmm::twoD::MeshData::slot(nbr_tri, nbr_edge)] = conveyance;
@@ -1560,6 +1568,11 @@ static int prepareBoundaryEdit(openswmm::SWMMEngine* eng, openswmm::twoD::Surfac
     if (state != openswmm::EngineState::OPENED && state != openswmm::EngineState::BUILDING &&
         state != openswmm::EngineState::INITIALIZED && state != openswmm::EngineState::RUNNING)
         return SWMM_ERR_LIFECYCLE;
+    // Interior edges take no boundary condition. Before initialize the
+    // neighbours are built here (they used to read as -1, letting an
+    // interior-edge edit through).
+    if (!router.mesh().neighbours_built())
+        openswmm::twoD::buildCellNeighbours(router.mesh());
     if (router.mesh().cell_neighbour(cell, edge) >= 0)
         return SWMM_ERR_BADPARAM;
     const int slot = openswmm::twoD::MeshData::slot(cell, edge);

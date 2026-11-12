@@ -58,6 +58,8 @@ struct Receiver {
               int cells = 1, double table = 1, double ks = .1) {
         mesh.resize_vertices(cells * 3);
         mesh.resize_triangles(cells);
+        mesh.size_neighbours();
+        mesh.size_geometry();
         for (int c = 0; c < cells; ++c) {
             mesh.vx[3 * c] = 4 * c;
             mesh.vx[3 * c + 1] = 4 * c + 2;

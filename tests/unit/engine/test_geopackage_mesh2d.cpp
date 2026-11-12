@@ -252,9 +252,10 @@ TEST_F(GeoPackageMesh2DTest, MeshRoundTripMinimal) {
     // [2D_INITIAL_HGL]: an unset cell reads back unset (NULL), a set one exactly.
     EXPECT_TRUE(std::isnan(mesh_in_.tri_init_hgl[0]));
     EXPECT_DOUBLE_EQ(mesh_in_.tri_init_hgl[1], 10.75);
-    // Derived topology is NOT persisted — it stays at the resize defaults
-    // until SurfaceRouter2D::initialize() rebuilds it.
-    EXPECT_EQ(mesh_in_.cell_neighbour(0, 0), -1);
+    // Derived topology is NOT persisted, and a read mesh does not allocate it
+    // (mesh open plan E4): SurfaceRouter2D::initialize() builds it.
+    EXPECT_FALSE(mesh_in_.neighbours_built());
+    EXPECT_FALSE(mesh_in_.geometry_built());
 }
 
 #ifndef OPENSWMM_HAS_2D

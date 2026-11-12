@@ -101,29 +101,13 @@ inline EdgeKey makeEdgeKey(int va, int vb) {
  */
 inline void computeQuadVfr(MeshData& mesh, int t);
 
-} // anonymous namespace
-
-void buildMeshTopology(MeshData& mesh) {
-    (void)buildMeshTopologyCancellable(mesh, {});
-}
-
-bool buildMeshTopologyCancellable(MeshData& mesh, const std::function<bool(int)>& progress) {
+/**
+ * @brief Fill cell_nbr from the cell connectivity (cell_nbr must already be sized).
+ * @param[in] report Progress callback (start %, width %, cell, count) returning true to cancel.
+ * @return False if cancelled.
+ */
+template <class Report> bool fillCellNeighbours(MeshData& mesh, const Report& report) {
     const int nt = mesh.n_triangles();
-    const auto cancelled = [&](int value) { return progress && progress(value); };
-    const auto report = [&](int start, int width, int cell, int count) {
-        if (!progress)
-            return false;
-        const int stride = std::max(1, count / 100);
-        if ((cell + 1) % stride != 0 && cell + 1 != count)
-            return false;
-        const int pct = count > 0 ? start + width * (cell + 1) / count : start + width;
-        return cancelled(pct);
-    };
-    if (cancelled(0))
-        return false;
-
-    // --- 1. Build edge-neighbour adjacency ---
-
     // Map: sorted vertex pair → first cell that claimed this edge
     std::unordered_map<EdgeKey, EdgeRecord, EdgeKeyHash> edge_map;
     edge_map.reserve(static_cast<std::size_t>(nt) * kMaxCellVerts);
@@ -159,6 +143,43 @@ bool buildMeshTopologyCancellable(MeshData& mesh, const std::function<bool(int)>
         if (report(10, 25, t, nt))
             return false;
     }
+    return true;
+}
+
+} // anonymous namespace
+
+void buildCellNeighbours(MeshData& mesh) {
+    mesh.size_neighbours();
+    (void)fillCellNeighbours(mesh, [](int, int, int, int) { return false; });
+}
+
+void buildMeshTopology(MeshData& mesh) {
+    (void)buildMeshTopologyCancellable(mesh, {});
+}
+
+bool buildMeshTopologyCancellable(MeshData& mesh, const std::function<bool(int)>& progress) {
+    const int nt = mesh.n_triangles();
+    const auto cancelled = [&](int value) { return progress && progress(value); };
+    const auto report = [&](int start, int width, int cell, int count) {
+        if (!progress)
+            return false;
+        const int stride = std::max(1, count / 100);
+        if ((cell + 1) % stride != 0 && cell + 1 != count)
+            return false;
+        const int pct = count > 0 ? start + width * (cell + 1) / count : start + width;
+        return cancelled(pct);
+    };
+    if (cancelled(0))
+        return false;
+
+    // The derived arrays are not allocated at parse (MeshData::resize_triangles);
+    // size them here. Every element is written below.
+    mesh.size_neighbours();
+    mesh.size_geometry();
+
+    // --- 1. Build edge-neighbour adjacency ---
+    if (!fillCellNeighbours(mesh, report))
+        return false;
 
     // --- 2. Compute cell geometry ---
 
@@ -436,6 +457,10 @@ inline void recomputeCellZ(MeshData& mesh, int t) {
 } // namespace
 
 void recomputeVertexZDependents(MeshData& mesh, int vidx) {
+    // Before buildMeshTopology there are no derived Z arrays to update; the
+    // build computes them from vz.
+    if (!mesh.geometry_built())
+        return;
     const int nt = mesh.n_triangles();
     for (int t = 0; t < nt; ++t) {
         const int nv = mesh.cell_vertex_count(t);
@@ -449,6 +474,8 @@ void recomputeVertexZDependents(MeshData& mesh, int vidx) {
 }
 
 void recomputeAllZDependents(MeshData& mesh) {
+    if (!mesh.geometry_built()) // as recomputeVertexZDependents
+        return;
     const int nt = mesh.n_triangles();
     for (int t = 0; t < nt; ++t) {
         // Identical body to recomputeVertexZDependents above, minus the
