@@ -1392,8 +1392,16 @@ static void read_curves(sqlite3* db, SimulationContext& ctx, const std::string& 
  * @param[in] sim_id Borrowed simulation catalogue key used to filter rows; not normalized.
  */
 static void read_timeseries(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
-    auto stmt = prepare(db, "SELECT series_id, timestamp, value "
-                            "FROM input_timeseries WHERE simulation_id = ? ORDER BY fid");
+    // Rows imported from a FILE reference are restored by hydrateTimeseries();
+    // their ISO timestamps are not numeric OADates.
+    const bool has_rel = column_exists(db, "input_timeseries", "is_relative");
+    std::string sql = "SELECT series_id, timestamp, value";
+    sql += has_rel ? ", is_relative, rel_anchor" : ", 0, 0";
+    sql += " FROM input_timeseries WHERE simulation_id = ?";
+    if (column_exists(db, "input_timeseries", "source"))
+        sql += " AND source = 'inline'";
+    sql += " ORDER BY fid";
+    auto stmt = prepare(db, sql);
     bind_text(stmt.get(), 1, sim_id);
 
     std::string prev_name;
@@ -1411,6 +1419,10 @@ static void read_timeseries(sqlite3* db, SimulationContext& ctx, const std::stri
         double val = column_double(stmt.get(), 2);
         ctx.tables[idx].x.push_back(ts);
         ctx.tables[idx].y.push_back(val);
+        if (column_int(stmt.get(), 3) == 1) {
+            ctx.tables[idx].n_relative = static_cast<int>(ctx.tables[idx].x.size());
+            ctx.tables[idx].rel_anchor = column_double(stmt.get(), 4);
+        }
     }
 }
 

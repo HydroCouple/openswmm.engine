@@ -183,6 +183,7 @@ void hydrateTimeseries(sqlite3* db, SimulationContext& ctx, const std::string& s
         // Load rows in ordinal order.
         auto rs = prepare(db, "SELECT timestamp, value FROM input_timeseries "
                               "WHERE simulation_id=? AND series_id=? "
+                              "AND source='imported_from_file' "
                               "ORDER BY ordinal");
         bind_text(rs.get(), 1, sim);
         bind_text(rs.get(), 2, sid);

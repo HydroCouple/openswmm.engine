@@ -1446,6 +1446,86 @@ TEST_F(GeoPackageTest, TimeseriesRoundTrip) {
     EXPECT_DOUBLE_EQ(ctx_in.tables[ts].y[1], 2.0);
 }
 
+// A series authored as elapsed time must come back as one: without the flags
+// it reloads as absolute dates and stops following START_DATE.
+TEST_F(GeoPackageTest, TimeseriesRelativeFlagsRoundTrip) {
+    auto ctx_out = build_test_context();
+    int ts_out = ctx_out.find_timeseries("TS1");
+    ASSERT_GE(ts_out, 0);
+    ctx_out.tables[ts_out].n_relative = 2;
+    ctx_out.tables[ts_out].rel_anchor = 36000.25;
+    ASSERT_EQ(write_to_file(db_path_, ctx_out, "test_run"), 0);
+
+    SimulationContext ctx_in{};
+    ASSERT_EQ(read_from_file(db_path_, ctx_in, "test_run"), 0);
+    int ts = ctx_in.find_timeseries("TS1");
+    ASSERT_GE(ts, 0);
+    EXPECT_EQ(ctx_in.tables[ts].n_relative, 2);
+    EXPECT_DOUBLE_EQ(ctx_in.tables[ts].rel_anchor, 36000.25);
+    EXPECT_EQ(ctx_in.tables[ts].x, ctx_out.tables[ts_out].x);
+}
+
+// A FILE-backed series is embedded once, from its file. Cached rows used to be
+// written as well, in a second timestamp encoding, and the series reloaded empty.
+TEST_F(GeoPackageTest, FileBackedTimeseriesIsStoredOnce) {
+    const fs::path src = fs::temp_directory_path() / "test_openswmm_ts_file.dat";
+    {
+        std::ofstream o(src);
+        o << "01/01/2026 00:00 0.10\n01/01/2026 01:00 0.05\n";
+    }
+    auto ctx_out = build_test_context();
+    int ts_out = ctx_out.find_timeseries("TS1");
+    ASSERT_GE(ts_out, 0);
+    ctx_out.tables[ts_out].file_path = src.string();
+    ASSERT_EQ(write_to_file(db_path_, ctx_out, "test_run"), 0);
+    {
+        auto db = open_database(db_path_, SQLITE_OPEN_READONLY);
+        auto stmt = prepare(db.get(), "SELECT source, COUNT(*) FROM input_timeseries "
+                                      "WHERE series_id='TS1' GROUP BY source");
+        ASSERT_EQ(sqlite3_step(stmt.get()), SQLITE_ROW);
+        EXPECT_EQ(column_text(stmt.get(), 0), "imported_from_file");
+        EXPECT_EQ(column_int(stmt.get(), 1), 2);
+        EXPECT_EQ(sqlite3_step(stmt.get()), SQLITE_DONE);
+    }
+    SimulationContext ctx_in{};
+    ASSERT_EQ(read_from_file(db_path_, ctx_in, "test_run"), 0);
+    int ts = ctx_in.find_timeseries("TS1");
+    ASSERT_GE(ts, 0);
+    EXPECT_FALSE(ctx_in.tables[ts].file_path.empty());
+    EXPECT_TRUE(ctx_in.tables[ts].x.empty()); // rows live in the materialised file
+    std::remove(src.string().c_str());
+}
+
+// Save writes the model under "default" with no simulations row; a run adds a
+// simulations row with its own snapshot. Reopening must load the saved model.
+TEST_F(GeoPackageTest, SavedModelWinsOverRunSnapshotOnOpen) {
+    auto run_ctx = build_test_context();
+    ASSERT_EQ(write_to_file(db_path_, run_ctx, "run_1"), 0);
+    {
+        auto db = open_database(db_path_);
+        exec(db.get(), "INSERT INTO simulations (simulation_id, name, created_at, engine_version) "
+                       "VALUES ('run_1', 'run_1', '2026-11-11T00:00:00Z', 'test')");
+    }
+    GeoPackageInputPlugin plugin;
+    {
+        // Only the run snapshot exists: it is still what opens.
+        SimulationContext ctx{};
+        GeoPackageInputPlugin reader;
+        ASSERT_EQ(reader.read(db_path_, ctx), 0);
+        EXPECT_DOUBLE_EQ(ctx.tables[ctx.find_timeseries("TS1")].y[0], 0.5);
+    }
+    auto saved_ctx = build_test_context();
+    saved_ctx.tables[saved_ctx.find_timeseries("TS1")].y[0] = 9.0;
+    ASSERT_EQ(plugin.write(db_path_, saved_ctx), 0);
+
+    SimulationContext ctx{};
+    GeoPackageInputPlugin reader;
+    ASSERT_EQ(reader.read(db_path_, ctx), 0);
+    int ts = ctx.find_timeseries("TS1");
+    ASSERT_GE(ts, 0);
+    EXPECT_DOUBLE_EQ(ctx.tables[ts].y[0], 9.0);
+}
+
 TEST_F(GeoPackageTest, CurvesRoundTrip) {
     auto ctx_out = build_test_context();
     ASSERT_EQ(write_to_file(db_path_, ctx_out, "test_run"), 0);

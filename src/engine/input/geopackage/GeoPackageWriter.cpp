@@ -1153,13 +1153,19 @@ static void write_curves(sqlite3* db, const SimulationContext& ctx, const std::s
  */
 static void write_timeseries(sqlite3* db, const SimulationContext& ctx, const std::string& sim_id) {
     auto stmt = prepare(
-        db, "INSERT INTO input_timeseries (simulation_id, series_id, timestamp, value, ordinal) "
-            "VALUES (?,?,?,?,?)");
+        db, "INSERT INTO input_timeseries (simulation_id, series_id, timestamp, value, ordinal, "
+            "is_relative, rel_anchor) VALUES (?,?,?,?,?,?,?)");
 
     int n = ctx.n_tables();
     for (int i = 0; i < n; ++i) {
         const auto& tbl = ctx.tables[i];
         if (tbl.type != TableType::TIMESERIES)
+            continue;
+
+        // A FILE-backed series is embedded from its file by
+        // writeTimeseriesSlots(); writing cached rows here as well stored the
+        // series twice, in two timestamp encodings.
+        if (!tbl.file_path.empty())
             continue;
 
         const auto& name = tbl.id;
@@ -1172,6 +1178,9 @@ static void write_timeseries(sqlite3* db, const SimulationContext& ctx, const st
             bind_text(stmt.get(), 3, format_ts_timestamp(tbl.x[j], ctx.options.start_date));
             bind_double(stmt.get(), 4, tbl.y[j]);
             bind_int(stmt.get(), 5, j);
+            // Leading rows authored as elapsed time keep that form on reload.
+            bind_int(stmt.get(), 6, j < tbl.n_relative ? 1 : 0);
+            bind_double(stmt.get(), 7, tbl.rel_anchor);
             checked_model_step(db, stmt.get());
         }
     }

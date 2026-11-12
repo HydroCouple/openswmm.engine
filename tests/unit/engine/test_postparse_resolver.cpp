@@ -165,6 +165,24 @@ TEST(PostParseResolverIO3, GageDataFileVectorResolvedPerEntry) {
     EXPECT_EQ(ctx.gages.file_path[2].absolute, "/abs/g3.dat");
 }
 
+// A GeoPackage model's embedded file content is materialised by the reader
+// before this pass, which binds a "<gpkg:...>" sentinel with the scratch file as
+// `.absolute`. Anchoring the sentinel lost the scratch file: a .gpkg holding an
+// external-file series then failed to open (ERROR 361).
+TEST(PostParseResolverIO3, GeoPackageScratchFileKept) {
+    auto ctx = makeContextWithSlots();
+    int idx = ctx.tables.add("TS_GPKG", TableType::TIMESERIES);
+    ctx.tables[idx].file_path.original = "<gpkg:input_timeseries:TS_GPKG>";
+    ctx.tables[idx].file_path.absolute = "/proj/sub/model.scratch/ts.dat";
+    ctx.options.temp_file.original = "<gpkg:climate_data>";
+    ctx.options.temp_file.absolute = "/proj/sub/model.scratch/climate.dat";
+    resolve_external_file_slots(ctx, kAnchor);
+    EXPECT_EQ(ctx.tables[idx].file_path.absolute, "/proj/sub/model.scratch/ts.dat");
+    EXPECT_EQ(ctx.options.temp_file.absolute, "/proj/sub/model.scratch/climate.dat");
+    // An ordinary relative slot is still anchored.
+    EXPECT_EQ(ctx.files.rainfall_path.absolute, "/proj/sub/rain.dat");
+}
+
 TEST(PostParseResolverIO3, ClimateTempFileResolved) {
     auto ctx = makeContextWithSlots();
     resolve_external_file_slots(ctx, kAnchor);

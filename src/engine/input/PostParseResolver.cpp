@@ -151,6 +151,12 @@ void resolve_external_file_slots(SimulationContext& ctx, const std::string& anch
             slot.absolute.clear();
             return;
         }
+        // Content embedded in a GeoPackage was already written to a scratch
+        // file by the reader, which bound "<gpkg:...>" here with that file as
+        // `.absolute`. The sentinel is not a path; anchoring it would replace
+        // the scratch file with "<dir>/<gpkg:...>" and the open would fail.
+        if (slot.original.rfind("<gpkg:", 0) == 0 && !slot.absolute.empty())
+            return;
         slot.absolute = openswmm::io::resolveRelative(slot.original, anchor_dir);
     };
 

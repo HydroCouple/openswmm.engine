@@ -45,8 +45,17 @@ int GeoPackageInputPlugin::read(const std::string& path, SimulationContext& ctx)
     try {
         auto db = open_database(path, SQLITE_OPEN_READONLY);
 
-        // If simulation_id is "default", try to find the first available one
+        // write() saves the model under "default" without a simulations row,
+        // while a run adds a simulations row with its own model snapshot. When
+        // the file holds both, the saved model wins; otherwise fall back to
+        // the first available simulation.
+        bool has_default_model = false;
         if (simulation_id_ == "default") {
+            auto saved = prepare(db.get(),
+                                 "SELECT 1 FROM options WHERE simulation_id='default' LIMIT 1");
+            has_default_model = sqlite3_step(saved.get()) == SQLITE_ROW;
+        }
+        if (simulation_id_ == "default" && !has_default_model) {
             // Check if there's a simulations table with entries
             auto stmt = prepare(db.get(), "SELECT simulation_id FROM simulations LIMIT 1");
             if (sqlite3_step(stmt.get()) == SQLITE_ROW) {

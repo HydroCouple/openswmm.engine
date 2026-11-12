@@ -399,7 +399,9 @@ CREATE TABLE IF NOT EXISTS input_timeseries (
     ordinal         INTEGER NOT NULL,
     source          TEXT NOT NULL DEFAULT 'inline',  -- 'inline' | 'imported_from_file'
     source_filename TEXT,
-    source_column   TEXT
+    source_column   TEXT,
+    is_relative     INTEGER,  -- 1: row authored as elapsed time from the simulation start
+    rel_anchor      REAL      -- start-date offset baked into relative rows
 );
 CREATE INDEX IF NOT EXISTS idx_input_ts_lookup ON input_timeseries(simulation_id, series_id, ordinal);
 
@@ -1476,6 +1478,8 @@ void create_schema(sqlite3* db) {
     add_missing("hotstart_slots", "runoff_section", "BLOB");
     add_missing("hotstart_slots", "tail_section", "BLOB");
     add_missing("hotstart_node_state", "hrt", "REAL");
+    add_missing("input_timeseries", "is_relative", "INTEGER");
+    add_missing("input_timeseries", "rel_anchor", "REAL");
     exec(db, MESH_2D_DDL);
     // An older triangle-coupling table is keyed by triangle alone and would
     // refuse a second node on the same triangle: rebuild it without that
