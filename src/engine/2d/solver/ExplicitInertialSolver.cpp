@@ -279,10 +279,13 @@ void ExplicitInertialSolver::initialize(MeshData& mesh, SurfaceStateData& state,
         // preserving at Courant ≤ ½ on triangles/quads; the β-share is the
         // backstop, not the guarantee, so the bound is enforced here.
         if (opts.cfl_number > 0.5) {
-            std::fprintf(stderr,
-                         "[openswmm 2D] MOMENTUM_EQUATION FULL_SWE: CFL_NUMBER %.3g "
-                         "reduced to 0.5 (positivity bound of the Godunov update).\n",
-                         opts.cfl_number);
+            // Report a value the model chose; the built-in default is lowered quietly
+            // (FULL_SWE is the default closure, so every model without CFL_NUMBER lands here).
+            if (opts.cfl_number != SolverOptions2D{}.cfl_number)
+                std::fprintf(stderr,
+                             "[openswmm 2D] MOMENTUM_EQUATION FULL_SWE: CFL_NUMBER %.3g "
+                             "reduced to 0.5 (positivity bound of the Godunov update).\n",
+                             opts.cfl_number);
             opts.cfl_number = 0.5;
         }
         if (opts.reconstruction_order == 2 && opts.lts_tiers > 1) {
