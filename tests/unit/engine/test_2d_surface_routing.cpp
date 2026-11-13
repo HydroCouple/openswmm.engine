@@ -416,6 +416,39 @@ TEST(MeshData, InternedStringsReadBackAsOneStringPerElement) {
     EXPECT_EQ(many[n - 1], "v69999");
 }
 
+// The API's per-cell forcing overrides take no memory until one is set, and
+// read and archive as the plain arrays they replaced (working set plan W3).
+TEST(SurfaceState, ForcingOverridesAreAllocatedOnFirstUse) {
+    openswmm::twoD::SurfaceStateData state;
+    state.resize(6, 8);
+    EXPECT_EQ(state.rainfall_forced.size(), 6u);
+    EXPECT_FALSE(state.rainfall_forced.allocated());
+    EXPECT_FALSE(state.rainfall_force_val.allocated());
+    EXPECT_EQ(state.rainfall_forced[3], 0);
+    EXPECT_DOUBLE_EQ(state.evap_force_val[5], 0.0);
+    state.rainfall_force_val.set(2, 0.0); // the default: still nothing to store
+    EXPECT_FALSE(state.rainfall_force_val.allocated());
+    state.rainfall_force_val.set(2, 1.5e-6);
+    state.rainfall_forced.set(2, 1);
+    EXPECT_TRUE(state.rainfall_force_val.allocated());
+    EXPECT_FALSE(state.evap_force_val.allocated());
+    EXPECT_DOUBLE_EQ(state.rainfall_force_val[2], 1.5e-6);
+    EXPECT_DOUBLE_EQ(state.rainfall_force_val[1], 0.0);
+    EXPECT_EQ(state.rainfall_force_val.dense(),
+              (std::vector<double>{0.0, 0.0, 1.5e-6, 0.0, 0.0, 0.0}));
+    EXPECT_EQ(state.evap_force_val.dense(), std::vector<double>(6, 0.0));
+    openswmm::twoD::LazyArray<double> back;
+    back.assign(std::vector<double>(4, 0.0));
+    EXPECT_EQ(back.size(), 4u);
+    EXPECT_FALSE(back.allocated());
+    back.assign(std::vector<double>{0.0, -0.0, 0.0});
+    EXPECT_TRUE(back.allocated()); // bit for bit: a negative zero is kept
+    EXPECT_TRUE(std::signbit(back[1]));
+    state.resize(6, 8); // a resize starts again from nothing
+    EXPECT_FALSE(state.rainfall_force_val.allocated());
+    EXPECT_EQ(state.rainfall_forced[2], 0);
+}
+
 TEST(BoundaryData, ResizeInitialisesAllSlotsIncludingV_E4andV_E5) {
     // Verifies V-E4 (SPECIFIED_FLOW) + V-E5 (RATING_CURVE) slots resize
     // correctly alongside the legacy stage/slope slots, and that the
@@ -2001,13 +2034,13 @@ TEST(SurfaceState, ClearResetForcings) {
     // expiry sweep is skipped without it (it is dead work on every deck that
     // never forces anything), so a direct-write test must stamp it too.
     state.forcing_ever_set = true;
-    state.rainfall_forced[0] = 1;
-    state.rainfall_force_val[0] = 0.001;
-    state.rainfall_persist[0] = 0; // RESET
+    state.rainfall_forced.set(0, 1);
+    state.rainfall_force_val.set(0, 0.001);
+    state.rainfall_persist.set(0, 0); // RESET
 
-    state.rainfall_forced[1] = 1;
-    state.rainfall_force_val[1] = 0.002;
-    state.rainfall_persist[1] = 1; // PERSIST
+    state.rainfall_forced.set(1, 1);
+    state.rainfall_force_val.set(1, 0.002);
+    state.rainfall_persist.set(1, 1); // PERSIST
 
     state.clear_reset_forcings();
 

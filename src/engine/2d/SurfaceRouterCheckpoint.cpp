@@ -621,8 +621,8 @@ std::string SurfaceRouter2D::changingVolumeProfile(const SimulationContext& ctx,
         for (double v : *values)
             if (v != 0) return "Changing-volume exchange excludes surface sources and forcing.";
     for (const auto* values : {&surface.rainfall_forced, &surface.evap_forced, &surface.coupling_forced})
-        for (auto v : *values)
-            if (v != 0) return "Changing-volume exchange excludes surface forcing modes.";
+        for (std::size_t i = 0; values->allocated() && i < values->size(); ++i)
+            if ((*values)[i] != 0) return "Changing-volume exchange excludes surface forcing modes.";
     if (surface.forcing_ever_set) return "Changing-volume exchange excludes surface forcing history.";
     for (const auto* values : {&surface.transport.lost_infiltration, &surface.transport.lost_boundary,
               &surface.transport.lost_external, &surface.transport.gained_external, &surface.transport.gained_rainfall,
@@ -663,8 +663,8 @@ std::string SurfaceRouter2D::validateLivePhysical(const ExplicitInertialSolver& 
         for (double value : *values)
             if (value != 0) return "Live checkpoint decoded an unsupported source or undrained transfer.";
     for (const auto* flags : {&surface.rainfall_forced, &surface.evap_forced, &surface.coupling_forced})
-        for (auto flag : *flags)
-            if (flag != 0) return "Live checkpoint decoded an external forcing mode.";
+        for (std::size_t i = 0; flags->allocated() && i < flags->size(); ++i)
+            if ((*flags)[i] != 0) return "Live checkpoint decoded an external forcing mode.";
     if (surface.forcing_ever_set) return "Live checkpoint cannot recover external forcing history.";
     for (const auto* values : {&surface.transport.lost_infiltration, &surface.transport.lost_boundary,
               &surface.transport.lost_external, &surface.transport.gained_external, &surface.transport.gained_rainfall,

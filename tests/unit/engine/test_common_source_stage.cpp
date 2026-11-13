@@ -4061,7 +4061,7 @@ TEST(CommonSourceStage,
     EXPECT_EQ(continuous.router.state().volume, before);
     EXPECT_EQ(continuous.router.saveCheckpoint(continuous.source.context, file.string()), "");
     EXPECT_EQ(restartBytes(file), original);
-    continuous.router.state().coupling_forced[0] = 1;
+    continuous.router.state().coupling_forced.set(0, 1);
     EXPECT_FALSE(
         continuous.router.saveCheckpoint(continuous.source.context, file.string()).empty());
     EXPECT_EQ(restartBytes(file), original);

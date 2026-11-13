@@ -32,6 +32,7 @@
 #ifndef OPENSWMM_ENGINE_2D_SURFACE_STATE_DATA_HPP
 #define OPENSWMM_ENGINE_2D_SURFACE_STATE_DATA_HPP
 
+#include "LazyArray.hpp"
 #include <vector>
 #include <cstring>
 #include <cmath>
@@ -238,15 +239,15 @@ struct SurfaceStateData {
     // Forcing overrides (optional external control)
     // -----------------------------------------------------------------------
 
-    std::vector<int8_t> rainfall_forced;    ///< 0=computed, 1=override, 2=add
-    std::vector<int8_t> rainfall_persist;   ///< 0=reset, 1=persist
-    std::vector<double> rainfall_force_val; ///< Forced rainfall value
-    std::vector<int8_t> evap_forced;        ///< 0=computed, 1=override, 2=add
-    std::vector<int8_t> evap_persist;       ///< 0=reset, 1=persist
-    std::vector<double> evap_force_val;     ///< Forced evaporation value
-    std::vector<int8_t> coupling_forced;    ///< 0=computed, 1=override, 2=add
-    std::vector<int8_t> coupling_persist;   ///< 0=reset, 1=persist
-    std::vector<double> coupling_force_val; ///< Forced coupling value
+    LazyArray<int8_t> rainfall_forced;    ///< 0=computed, 1=override, 2=add
+    LazyArray<int8_t> rainfall_persist;   ///< 0=reset, 1=persist
+    LazyArray<double> rainfall_force_val; ///< Forced rainfall value
+    LazyArray<int8_t> evap_forced;        ///< 0=computed, 1=override, 2=add
+    LazyArray<int8_t> evap_persist;       ///< 0=reset, 1=persist
+    LazyArray<double> evap_force_val;     ///< Forced evaporation value
+    LazyArray<int8_t> coupling_forced;    ///< 0=computed, 1=override, 2=add
+    LazyArray<int8_t> coupling_persist;   ///< 0=reset, 1=persist
+    LazyArray<double> coupling_force_val; ///< Forced coupling value
 
     /// Set by the forcing API and by clear_reset_forcings() when any flag
     /// changes; consumed by the co-advance to bypass its coarse (30 s)
@@ -404,18 +405,18 @@ struct SurfaceStateData {
             return;
         for (std::size_t i = 0; i < rainfall_forced.size(); ++i) {
             if (rainfall_persist[i] == 0 && rainfall_forced[i] != 0) {
-                rainfall_forced[i] = 0;
-                rainfall_force_val[i] = 0.0;
+                rainfall_forced.set(i, 0);
+                rainfall_force_val.set(i, 0.0);
                 forcing_dirty = true;
             }
             if (evap_persist[i] == 0 && evap_forced[i] != 0) {
-                evap_forced[i] = 0;
-                evap_force_val[i] = 0.0;
+                evap_forced.set(i, 0);
+                evap_force_val.set(i, 0.0);
                 forcing_dirty = true;
             }
             if (coupling_persist[i] == 0 && coupling_forced[i] != 0) {
-                coupling_forced[i] = 0;
-                coupling_force_val[i] = 0.0;
+                coupling_forced.set(i, 0);
+                coupling_force_val.set(i, 0.0);
                 forcing_dirty = true;
             }
         }

@@ -113,14 +113,15 @@ bool validTransportMass(const std::vector<double>& mass, int temp_row) {
  * profile.
  */
 void meshStateImpl(Archive& a, SurfaceStateData& s) {
-    a.fixed(s.depth, s.head, s.volume, s.grad_hx, s.grad_hy, s.grad_hx_lim, s.grad_hy_lim,
-            s.vert_head, s.vert_depth_signed, s.face_vx, s.face_vy, s.cell_continuity_err,
-            s.edge_flux, s.rainfall, s.evap_rate, s.infil_rate, s.infil_applied, s.coupling_flux,
-            s.coupling_applied, s.net_source, s.rainfall_forced, s.rainfall_persist,
-            s.rainfall_force_val, s.evap_forced, s.evap_persist, s.evap_force_val,
-            s.coupling_forced, s.coupling_persist, s.coupling_force_val, s.coupling_native,
-            s.old_depth, s.old_volume, s.stat_max_depth, s.stat_max_velocity, s.stat_max_cont_err,
-            s.stat_cum_volume);
+    // The forcing overrides are unallocated until used; the archive keeps one value per cell.
+    fixedSlots(a, s.depth, s.head, s.volume, s.grad_hx, s.grad_hy, s.grad_hx_lim, s.grad_hy_lim,
+               s.vert_head, s.vert_depth_signed, s.face_vx, s.face_vy, s.cell_continuity_err,
+               s.edge_flux, s.rainfall, s.evap_rate, s.infil_rate, s.infil_applied,
+               s.coupling_flux, s.coupling_applied, s.net_source, s.rainfall_forced,
+               s.rainfall_persist, s.rainfall_force_val, s.evap_forced, s.evap_persist,
+               s.evap_force_val, s.coupling_forced, s.coupling_persist, s.coupling_force_val,
+               s.coupling_native, s.old_depth, s.old_volume, s.stat_max_depth,
+               s.stat_max_velocity, s.stat_max_cont_err, s.stat_cum_volume);
     a(s.forcing_dirty, s.forcing_ever_set, s.evap_loss_total);
     if (s.snow.active()) {
         auto bytes = a.reading() ? std::string{} : s.snow.saveCheckpoint();
@@ -188,9 +189,6 @@ void meshStateImpl(Archive& a, SurfaceStateData& s) {
                                    &s.coupling_flux,
                                    &s.coupling_applied,
                                    &s.net_source,
-                                   &s.rainfall_force_val,
-                                   &s.evap_force_val,
-                                   &s.coupling_force_val,
                                    &s.coupling_native,
                                    &s.old_depth,
                                    &s.old_volume,
@@ -199,6 +197,10 @@ void meshStateImpl(Archive& a, SurfaceStateData& s) {
                                    &s.stat_cum_volume})
             for (double v : *values)
                 if (!std::isfinite(v))
+                    throw std::runtime_error("Nonfinite s checkpoint state.");
+        for (const auto* values : {&s.rainfall_force_val, &s.evap_force_val, &s.coupling_force_val})
+            for (std::size_t i = 0; values->allocated() && i < values->size(); ++i)
+                if (!std::isfinite((*values)[i]))
                     throw std::runtime_error("Nonfinite s checkpoint state.");
         // Output-only velocity may be unavailable. Canonical water, fluxes,
         // momentum and transport above must remain finite.
