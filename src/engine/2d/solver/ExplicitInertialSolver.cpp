@@ -1954,8 +1954,8 @@ void ExplicitInertialSolver::refreshConveyance() {
         const int i = bc_cell_[k], slot = bc_slot_[k];
         const double fo = -bc_q_[k] * mesh_->edge_length[slot];
         const double inv_a = 1.0 / mesh_->tri_area[i];
-        qcx_[i] += fo * (mesh_->edge_mx[slot] - mesh_->tri_cx[i]) * inv_a;
-        qcy_[i] += fo * (mesh_->edge_my[slot] - mesh_->tri_cy[i]) * inv_a;
+        qcx_[i] += fo * (mesh_->edge_mx(slot) - mesh_->tri_cx[i]) * inv_a;
+        qcy_[i] += fo * (mesh_->edge_my(slot) - mesh_->tri_cy[i]) * inv_a;
     }
 }
 
@@ -2538,8 +2538,8 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells, double
                     double eta = wall_eta0, hf = wall_h0, ux = qcx_[i] / wall_h0,
                            uy = qcy_[i] / wall_h0;
                     if (so) {
-                        const double ax = mesh_->edge_mx[slot] - mesh_->tri_cx[i];
-                        const double ay = mesh_->edge_my[slot] - mesh_->tri_cy[i];
+                        const double ax = mesh_->edge_mx(slot) - mesh_->tri_cx[i];
+                        const double ay = mesh_->edge_my(slot) - mesh_->tri_cy[i];
                         const auto n = state_->depth.size();
                         eta += gex_[i] * ax + gey_[i] * ay;
                         hf = std::max(0., hf + gex_[n + i] * ax + gey_[n + i] * ay);

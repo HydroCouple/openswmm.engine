@@ -257,7 +257,7 @@ TEST(MeshBuilder, RecomputeVertexZDependentsUpdatesIncidentTriangles) {
             const int va = endpoints[e][0];
             const int vb = endpoints[e][1];
             const double expected = 0.5 * (mesh.vz[va] + mesh.vz[vb]);
-            EXPECT_NEAR(mesh.edge_mz[MeshData::slot(t, e)], expected, 1e-12)
+            EXPECT_NEAR(mesh.edge_mz(MeshData::slot(t, e)), expected, 1e-12)
                 << "t=" << t << " e=" << e;
         }
     }
@@ -477,6 +477,38 @@ TEST(MeshData, InitialHglAndVelocityAreAllocatedWhenAuthored) {
     mesh.tri_init_u.fill(0.0); // back to the default: released
     EXPECT_FALSE(mesh.tri_init_u.allocated());
     EXPECT_EQ(mesh.tri_init_u.dense(), std::vector<double>(6, 0.0));
+}
+
+// Edge midpoints are computed from the vertices where read (working set plan
+// W6a): the same values the builder stored, 0 on a triangle's padding slot,
+// and 0 for cells that were sized before any vertex exists.
+TEST(MeshData, EdgeMidpointsComeFromTheVertices) {
+    MeshData mesh;
+    mesh.resize_vertices(3);
+    mesh.vx = {0.0, 4.0, 0.0};
+    mesh.vy = {0.0, 0.0, 2.0};
+    mesh.vz = {1.0, 3.0, 7.0};
+    mesh.resize_triangles(1);
+    mesh.set_triangle(0, 0, 1, 2);
+    EXPECT_TRUE(mesh.edge_mid_values(0).empty()); // no geometry yet: nothing to archive
+    buildMeshTopology(mesh);
+    // Edge e is opposite vertex e.
+    EXPECT_DOUBLE_EQ(mesh.edge_mx(MeshData::slot(0, 0)), 2.0);
+    EXPECT_DOUBLE_EQ(mesh.edge_my(MeshData::slot(0, 0)), 1.0);
+    EXPECT_DOUBLE_EQ(mesh.edge_mz(MeshData::slot(0, 0)), 5.0);
+    EXPECT_DOUBLE_EQ(mesh.edge_mx(MeshData::slot(0, 1)), 0.0);
+    EXPECT_DOUBLE_EQ(mesh.edge_mz(MeshData::slot(0, 1)), 4.0);
+    EXPECT_DOUBLE_EQ(mesh.edge_mz(MeshData::slot(0, 2)), 2.0);
+    EXPECT_DOUBLE_EQ(mesh.edge_mz(MeshData::slot(0, 3)), 0.0); // padding slot
+    EXPECT_EQ(mesh.edge_mid_values(2), (std::vector<double>{5.0, 4.0, 2.0, 0.0}));
+    mesh.vz[2] = 9.0; // a bed edit shows without a refresh
+    EXPECT_DOUBLE_EQ(mesh.edge_mz(MeshData::slot(0, 0)), 6.0);
+
+    MeshData bare; // cells sized by hand, no vertices: zero geometry, as size_geometry() says
+    bare.resize_triangles(2);
+    bare.size_geometry();
+    EXPECT_EQ(bare.edge_mid_values(0), std::vector<double>(8, 0.0));
+    EXPECT_DOUBLE_EQ(bare.edge_mz(MeshData::slot(1, 2)), 0.0);
 }
 
 TEST(BoundaryData, ResizeInitialisesAllSlotsIncludingV_E4andV_E5) {
@@ -2345,7 +2377,7 @@ TEST(RecomputeAllZDependents, MatchesPerVertexFormBitwise) {
     for (int t = 0; t < a.n_triangles(); ++t) {
         EXPECT_EQ(a.tri_cz[t], b.tri_cz[t]) << "tri_cz diverged at triangle " << t;
         for (int e = 0; e < 3; ++e)
-            EXPECT_EQ(a.edge_mz[MeshData::slot(t, e)], b.edge_mz[MeshData::slot(t, e)])
+            EXPECT_EQ(a.edge_mz(MeshData::slot(t, e)), b.edge_mz(MeshData::slot(t, e)))
                 << "edge_mz diverged at triangle " << t << " edge " << e;
     }
 }

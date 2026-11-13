@@ -98,8 +98,8 @@ struct ExplicitInertialSolverTestAccess {
         }
         for (int w = s.wall_ptr_[i]; w < s.wall_ptr_[i + 1]; ++w) {
             const int slot = s.wall_slot_[w];
-            const double hw = h + slope[0] * (s.mesh_->edge_mx[slot] - s.mesh_->tri_cx[i]) +
-                              slope[1] * (s.mesh_->edge_my[slot] - s.mesh_->tri_cy[i]);
+            const double hw = h + slope[0] * (s.mesh_->edge_mx(slot) - s.mesh_->tri_cx[i]) +
+                              slope[1] * (s.mesh_->edge_my(slot) - s.mesh_->tri_cy[i]);
             x -= .5 * 9.80665 * hw * hw * s.mesh_->edge_nx[slot] * s.mesh_->edge_length[slot] * dt;
             y -= .5 * 9.80665 * hw * hw * s.mesh_->edge_ny[slot] * s.mesh_->edge_length[slot] * dt;
         }
@@ -181,7 +181,7 @@ bool admissible(const MeshData& m, int i, double bx, double by) {
     }
     for (int e = 0; e < 3; ++e) {
         const int slot = MeshData::slot(i, e);
-        const double w = bx * m.edge_mx[slot] + by * m.edge_my[slot];
+        const double w = bx * m.edge_mx(slot) + by * m.edge_my(slot);
         if (w < lo - 1e-12 || w > hi + 1e-12)
             return false;
     }
@@ -308,8 +308,8 @@ TEST(SweReconstruction, ReconstructedDepthStaysNonnegativeAtWetDryInterface) {
             ASSERT_TRUE(std::isfinite(value));
         for (int e = 0; e < 3; ++e) {
             const int slot = MeshData::slot(i, e);
-            const double hf = r.state.depth[i] + g[2] * (r.mesh.edge_mx[slot] - r.mesh.tri_cx[i]) +
-                              g[3] * (r.mesh.edge_my[slot] - r.mesh.tri_cy[i]);
+            const double hf = r.state.depth[i] + g[2] * (r.mesh.edge_mx(slot) - r.mesh.tri_cx[i]) +
+                              g[3] * (r.mesh.edge_my(slot) - r.mesh.tri_cy[i]);
             EXPECT_GE(hf, -2e-12);
         }
         if (r.state.depth[i] <= 10 * r.opts.dry_depth)

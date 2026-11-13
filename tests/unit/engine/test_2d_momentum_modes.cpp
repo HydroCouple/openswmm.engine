@@ -960,7 +960,7 @@ TEST(MomentumModes, ManningSteadySlopeQuadStrip) {
                 const int idx = MeshData::slot(i, e);
                 if (mesh.cell_neighbour(i, e) >= 0)
                     continue;
-                if (mesh.edge_mx[idx] < 1.0e-9) {
+                if (mesh.edge_mx(idx) < 1.0e-9) {
                     boundary.edge_bc_type[idx] = static_cast<int8_t>(BoundaryType::NORMAL_FLOW);
                     boundary.edge_bed_slope[idx] = S;
                 }
@@ -1046,7 +1046,7 @@ TEST(MomentumModes, SpecifiedFlowInflowIsExactFullSwe) {
                     continue;
                 // edge_mx / edge_my are the edge MIDPOINT: the inlet is the
                 // west face at x = 0 (the side walls sit at x >= dx/2).
-                if (mesh.edge_mx[idx] > 1.0e-9)
+                if (mesh.edge_mx(idx) > 1.0e-9)
                     continue;
                 boundary.edge_bc_type[idx] = static_cast<int8_t>(BoundaryType::SPECIFIED_FLOW);
                 boundary.edge_bc_flow[idx] = -c.q_in; // outward +, so inflow < 0
@@ -1094,7 +1094,7 @@ TEST(MomentumModes, NormalFlowOutletUsesManningFullSwe) {
                 if (mesh.cell_neighbour(i, e) >= 0)
                     continue;
                 // Outlet = the east face at x = nx·dx (midpoint coordinate).
-                if (mesh.edge_mx[idx] < nx * dx - 1.0e-9)
+                if (mesh.edge_mx(idx) < nx * dx - 1.0e-9)
                     continue;
                 boundary.edge_bc_type[idx] = static_cast<int8_t>(BoundaryType::NORMAL_FLOW);
                 boundary.edge_bed_slope[idx] = S;

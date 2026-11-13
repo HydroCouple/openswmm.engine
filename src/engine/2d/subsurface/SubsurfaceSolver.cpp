@@ -2649,8 +2649,8 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     // exterior HEAD/FLOW and boundary-head faces as applied, over A·hg0·dt.
     const auto boundaryMoment = [&](int edge, double out_vol) {
         const auto slot = static_cast<std::size_t>(MeshData::slot(i, edge));
-        lat_mx += out_vol * (mesh_->edge_mx[slot] - mesh_->tri_cx[u]);
-        lat_my += out_vol * (mesh_->edge_my[slot] - mesh_->tri_cy[u]);
+        lat_mx += out_vol * (mesh_->edge_mx(slot) - mesh_->tri_cx[u]);
+        lat_my += out_vol * (mesh_->edge_my(slot) - mesh_->tri_cy[u]);
     };
     for (const auto& pulse : boundary_pulses)
         boundaryMoment(boundaries_[pulse.boundary].edge, pulse.out - pulse.in);

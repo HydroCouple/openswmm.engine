@@ -114,8 +114,8 @@ void InertialEdges::build(const MeshData& mesh) {
             const int sl = MeshData::slot(t, e);
             nx.push_back(mesh.edge_nx[sl]);
             ny.push_back(mesh.edge_ny[sl]);
-            mx.push_back(mesh.edge_mx[sl]);
-            my.push_back(mesh.edge_my[sl]);
+            mx.push_back(mesh.edge_mx(sl));
+            my.push_back(mesh.edge_my(sl));
             {
                 const double dxc = mesh.tri_cx[nb] - mesh.tri_cx[t];
                 const double dyc = mesh.tri_cy[nb] - mesh.tri_cy[t];

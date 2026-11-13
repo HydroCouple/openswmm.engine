@@ -334,8 +334,8 @@ TEST(QuadMesh, SkewedQuadGeometry) {
         EXPECT_NEAR(mesh.edge_nx[s] * mesh.edge_nx[s] + mesh.edge_ny[s] * mesh.edge_ny[s], 1.0,
                     1e-12);
         // Outward: (midpoint − centroid)·n > 0 and equals edge_dist_c.
-        const double dmx = mesh.edge_mx[s] - mesh.tri_cx[0];
-        const double dmy = mesh.edge_my[s] - mesh.tri_cy[0];
+        const double dmx = mesh.edge_mx(s) - mesh.tri_cx[0];
+        const double dmy = mesh.edge_my(s) - mesh.tri_cy[0];
         EXPECT_GT(mesh.edge_dist_c[s], 0.0);
         EXPECT_NEAR(mesh.edge_dist_c[s], dmx * mesh.edge_nx[s] + dmy * mesh.edge_ny[s], 1e-12);
         EXPECT_EQ(mesh.cell_neighbour(0, k), -1);
@@ -633,7 +633,7 @@ TEST(QuadMarcher, ManningSteadySlopeRainOutflowQuadStrip) {
             const int idx = MeshData::slot(i, e);
             if (mesh.cell_neighbour(i, e) >= 0)
                 continue;
-            if (mesh.edge_mx[idx] < 1.0e-9) {
+            if (mesh.edge_mx(idx) < 1.0e-9) {
                 boundary.edge_bc_type[idx] = static_cast<int8_t>(BoundaryType::NORMAL_FLOW);
                 boundary.edge_bed_slope[idx] = S;
                 ++outlet_slots;

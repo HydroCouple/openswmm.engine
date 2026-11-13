@@ -248,7 +248,6 @@ bool buildMeshTopologyCancellable(MeshData& mesh, const std::function<bool(int)>
             int idx = MeshData::slot(t, e);
             if (e >= nv) {
                 // Padding slot: zero geometry, so a stray read is inert.
-                mesh.edge_mx[idx] = mesh.edge_my[idx] = mesh.edge_mz[idx] = 0.0;
                 mesh.edge_length[idx] = 0.0;
                 mesh.edge_nx[idx] = mesh.edge_ny[idx] = 0.0;
                 mesh.edge_dist_c[idx] = 0.0;
@@ -257,13 +256,12 @@ bool buildMeshTopologyCancellable(MeshData& mesh, const std::function<bool(int)>
             int va, vb;
             mesh.cell_edge_vertices(t, e, va, vb);
 
-            double ax = mesh.vx[va], ay = mesh.vy[va], az = mesh.vz[va];
-            double bx = mesh.vx[vb], by = mesh.vy[vb], bz = mesh.vz[vb];
+            double ax = mesh.vx[va], ay = mesh.vy[va];
+            double bx = mesh.vx[vb], by = mesh.vy[vb];
 
-            // Edge midpoint
-            mesh.edge_mx[idx] = 0.5 * (ax + bx);
-            mesh.edge_my[idx] = 0.5 * (ay + by);
-            mesh.edge_mz[idx] = 0.5 * (az + bz);
+            // Edge midpoint (MeshData::edge_mx / edge_my give the same values on demand)
+            const double mid_x = 0.5 * (ax + bx);
+            const double mid_y = 0.5 * (ay + by);
 
             // Edge length (planimetric)
             double dx = bx - ax;
@@ -276,8 +274,8 @@ bool buildMeshTopologyCancellable(MeshData& mesh, const std::function<bool(int)>
             double ny = -dx;
 
             // Ensure outward: dot product with (midpoint - centroid) should be positive
-            double to_mid_x = mesh.edge_mx[idx] - cx;
-            double to_mid_y = mesh.edge_my[idx] - cy;
+            double to_mid_x = mid_x - cx;
+            double to_mid_y = mid_y - cy;
             if (nx * to_mid_x + ny * to_mid_y < 0.0) {
                 nx = -nx;
                 ny = -ny;
@@ -435,23 +433,12 @@ inline void recomputeCellZ(MeshData& mesh, int t) {
         const double z2 = mesh.vz[v2];
 
         mesh.tri_cz[t] = (z0 + z1 + z2) / 3.0;
-
-        // Edge e (0..2) is opposite vertex e; its endpoints are the other two
-        // vertices of the triangle (same convention as cell_edge_vertices).
-        mesh.edge_mz[MeshData::slot(t, 0)] = 0.5 * (z1 + z2);
-        mesh.edge_mz[MeshData::slot(t, 1)] = 0.5 * (z2 + z0);
-        mesh.edge_mz[MeshData::slot(t, 2)] = 0.5 * (z0 + z1);
         return;
     }
     double zsum = 0.0;
     for (int k = 0; k < nv; ++k)
         zsum += mesh.vz[mesh.cell_vertex(t, k)];
     mesh.tri_cz[t] = zsum / static_cast<double>(nv);
-    for (int e = 0; e < nv; ++e) {
-        int va, vb;
-        mesh.cell_edge_vertices(t, e, va, vb);
-        mesh.edge_mz[MeshData::slot(t, e)] = 0.5 * (mesh.vz[va] + mesh.vz[vb]);
-    }
     computeQuadVfr(mesh, t);
 }
 } // namespace

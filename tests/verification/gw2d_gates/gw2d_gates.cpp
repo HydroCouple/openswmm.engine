@@ -256,22 +256,19 @@ void finishGeometry(MeshData& m) {
             const double dy = m.vy[vb] - m.vy[va];
             const double len = std::hypot(dx, dy);
             m.edge_length[sl] = len;
-            m.edge_mx[sl] = 0.5 * (m.vx[va] + m.vx[vb]);
-            m.edge_my[sl] = 0.5 * (m.vy[va] + m.vy[vb]);
-            m.edge_mz[sl] = 0.5 * (m.vz[va] + m.vz[vb]);
             double nxv = (len > 0.0) ? dy / len : 0.0;
             double nyv = (len > 0.0) ? -dx / len : 0.0;
             // Orient outward from the centroid.
-            if ((m.edge_mx[sl] - m.tri_cx[t]) * nxv +
-                (m.edge_my[sl] - m.tri_cy[t]) * nyv < 0.0) {
+            if ((m.edge_mx(sl) - m.tri_cx[t]) * nxv +
+                (m.edge_my(sl) - m.tri_cy[t]) * nyv < 0.0) {
                 nxv = -nxv;
                 nyv = -nyv;
             }
             m.edge_nx[sl] = nxv;
             m.edge_ny[sl] = nyv;
             m.edge_dist_c[sl] =
-                std::fabs((m.edge_mx[sl] - m.tri_cx[t]) * nxv +
-                          (m.edge_my[sl] - m.tri_cy[t]) * nyv);
+                std::fabs((m.edge_mx(sl) - m.tri_cx[t]) * nxv +
+                          (m.edge_my(sl) - m.tri_cy[t]) * nyv);
             m.edge_conveyance[sl] = 1.0;
         }
     }

@@ -103,9 +103,6 @@ struct MeshData {
     std::vector<double> edge_length; ///< Length of each edge
     std::vector<double> edge_nx;     ///< Outward normal X component
     std::vector<double> edge_ny;     ///< Outward normal Y component
-    std::vector<double> edge_mx;     ///< Edge midpoint X
-    std::vector<double> edge_my;     ///< Edge midpoint Y
-    std::vector<double> edge_mz;     ///< Edge midpoint Z (interpolated)
     /// Centroid → edge-midpoint distance along the outward normal,
     /// (m⃗_e − c⃗)·n̂_e (m). For a triangle this equals the classic 2A/(3ξ)
     /// (the centroid sits one third of the altitude up); for a quad it is the
@@ -554,7 +551,7 @@ struct MeshData {
         for (auto* v : {&tri_area, &tri_cx, &tri_cy, &tri_cz})
             v->assign(n, 0.0);
         for (auto* v :
-             {&edge_length, &edge_nx, &edge_ny, &edge_mx, &edge_my, &edge_mz, &edge_dist_c})
+             {&edge_length, &edge_nx, &edge_ny, &edge_dist_c})
             v->assign(n4, 0.0);
     }
 
@@ -566,10 +563,46 @@ struct MeshData {
     /// The cell / edge geometry arrays cover every cell (buildMeshTopology has run).
     bool geometry_built() const noexcept {
         return tri_cz.size() == cell_nv.size() &&
-               edge_mz.size() == cell_nv.size() * static_cast<std::size_t>(kMaxCellVerts);
+               edge_length.size() == cell_nv.size() * static_cast<std::size_t>(kMaxCellVerts);
+    }
+
+    /**
+     * @brief Midpoint of an edge slot: half the sum of its two vertices' coordinates.
+     *
+     * Computed from the vertices where it is read (boundary and wall edges, report-time
+     * velocities, building the solver's edges) rather than stored for every slot: three doubles
+     * per slot were 96 MB per million cells. A triangle's padding slot gives 0, as does an edge
+     * whose vertices are not in the mesh (cells sized before their vertices). The z midpoint
+     * follows the current vertex elevations, so a bed edit needs no refresh.
+     * @param[in] s Edge slot, slot(cell, edge), of an existing cell.
+     */
+    double edge_mx(std::size_t s) const noexcept { return edge_mid(vx, s); }
+    double edge_my(std::size_t s) const noexcept { return edge_mid(vy, s); } ///< @copydoc edge_mx
+    double edge_mz(std::size_t s) const noexcept { return edge_mid(vz, s); } ///< @copydoc edge_mx
+    /// The midpoints of every slot as the arrays they replaced (empty until geometry_built()):
+    /// what a checkpoint identity encodes. axis 0 = x, 1 = y, 2 = z.
+    std::vector<double> edge_mid_values(int axis) const {
+        const auto& coord = axis == 0 ? vx : axis == 1 ? vy : vz;
+        std::vector<double> v(geometry_built() ? edge_length.size() : 0);
+        for (std::size_t s = 0; s < v.size(); ++s)
+            v[s] = edge_mid(coord, s);
+        return v;
     }
 
 private:
+    double edge_mid(const std::vector<double>& coord, std::size_t s) const noexcept {
+        const int c = slot_cell(static_cast<int>(s)), k = slot_local(static_cast<int>(s));
+        if (k >= cell_nv[static_cast<std::size_t>(c)])
+            return 0.0;
+        int a, b;
+        cell_edge_vertices(c, k, a, b);
+        // A mesh sized without its vertices (size_geometry() on hand-set cells) has zero geometry.
+        const auto ua = static_cast<std::size_t>(a), ub = static_cast<std::size_t>(b);
+        if (a < 0 || b < 0 || ua >= coord.size() || ub >= coord.size())
+            return 0.0;
+        return 0.5 * (coord[ua] + coord[ub]);
+    }
+
     /**
      * @brief Raise a vector's capacity to the power of two at or above `need`.
      * @param[in,out] v Vector whose extent and contents stay unchanged.

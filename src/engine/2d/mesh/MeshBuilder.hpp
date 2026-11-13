@@ -114,9 +114,9 @@ std::string validateMeshCancellable(const MeshData& mesh, const std::function<bo
  * @brief Recompute Z-derived per-triangle / per-edge geometry for triangles incident to a vertex
  * whose Z just changed.
  *
- * Updates `tri_cz` (centroid Z = mean of vertex Zs) and `edge_mz` (per-edge midpoint Z) for
- * every triangle that references vertex `vidx`. XY-derived fields (`tri_area`, `tri_cx`,
- * `tri_cy`, `edge_length`, `edge_nx`, `edge_ny`, `edge_mx`, `edge_my`) are not affected.
+ * Updates `tri_cz` (centroid Z = mean of vertex Zs) for every triangle that references vertex
+ * `vidx` (the edge midpoint Z, MeshData::edge_mz, is computed from the vertices when read). XY-derived fields (`tri_area`, `tri_cx`,
+ * `tri_cy`, `edge_length`, `edge_nx`, `edge_ny`) are not affected.
  *
  * Used by `swmm_2d_set_vertex_z` and exposed here so tests can verify the recompute logic
  * without spinning up a full engine.
@@ -136,7 +136,7 @@ void recomputeVertexZDependents(MeshData& mesh, int vidx);
 /**
  * @brief Whole-mesh form of `recomputeVertexZDependents`.
  *
- * Recomputes `tri_cz` and `edge_mz` for EVERY triangle in one pass, and produces
+ * Recomputes `tri_cz` for EVERY triangle in one pass, and produces
  * bitwise-identical values to calling the per-vertex form for every vertex in turn (same
  * operands, same operand order, same arithmetic).
  *

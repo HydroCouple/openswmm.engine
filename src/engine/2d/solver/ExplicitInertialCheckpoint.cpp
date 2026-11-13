@@ -1454,8 +1454,11 @@ std::string ExplicitInertialSolver::rk2CheckpointModel(const Rk2CheckpointBindin
          tri_node_name = m.tri_coupled_node_name.dense();
     // The initial velocities are unallocated unless authored; the archive keeps one per cell.
     auto init_u = m.tri_init_u.dense(), init_v = m.tri_init_v.dense();
+    // The edge midpoints are computed from the vertices; the archive keeps one per slot.
+    auto edge_mx = m.edge_mid_values(0), edge_my = m.edge_mid_values(1),
+         edge_mz = m.edge_mid_values(2);
     a(m.vx, m.vy, m.vz, vtag, m.cell_nv, m.cell_v, m.cell_nbr, m.tri_area, m.tri_cx, m.tri_cy,
-      m.tri_cz, m.edge_length, m.edge_nx, m.edge_ny, m.edge_mx, m.edge_my, m.edge_mz, m.edge_dist_c,
+      m.tri_cz, m.edge_length, m.edge_nx, m.edge_ny, edge_mx, edge_my, edge_mz, m.edge_dist_c,
       m.quad_vfr_z, m.quad_vfr_a, m.edge_conveyance, m.mannings_n, m.tri_init_depth, init_u,
       init_v, tri_tag, m.vert_stencil_ptr, m.vert_stencil_idx, m.vert_stencil_wt,
       m.vert_coupled_node, m.tri_coupled_node, m.vert_coupling_cd, m.vert_coupling_area,

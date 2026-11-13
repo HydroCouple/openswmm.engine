@@ -68,9 +68,9 @@ void dump(std::ostream& o, const openswmm::twoD::MeshData& r) {
     o << "edge_length="; dump(o, r.edge_length); o << ";";
     o << "edge_nx="; dump(o, r.edge_nx); o << ";";
     o << "edge_ny="; dump(o, r.edge_ny); o << ";";
-    o << "edge_mx="; dump(o, r.edge_mx); o << ";";
-    o << "edge_my="; dump(o, r.edge_my); o << ";";
-    o << "edge_mz="; dump(o, r.edge_mz); o << ";";
+    o << "edge_mx="; dump(o, r.edge_mid_values(0)); o << ";";
+    o << "edge_my="; dump(o, r.edge_mid_values(1)); o << ";";
+    o << "edge_mz="; dump(o, r.edge_mid_values(2)); o << ";";
     o << "edge_dist_c="; dump(o, r.edge_dist_c); o << ";";
     o << "quad_vfr_z="; dump(o, r.quad_vfr_z); o << ";";
     o << "quad_vfr_a="; dump(o, r.quad_vfr_a); o << ";";

@@ -336,7 +336,7 @@ static void checkManningSteadySlopeRainOutflow(double reference_step) {
             const int idx = MeshData::slot(i, e);
             if (nbrs[e] >= 0)
                 continue;
-            if (mesh.edge_mx[idx] < 1.0e-9) { // x = 0 boundary
+            if (mesh.edge_mx(idx) < 1.0e-9) { // x = 0 boundary
                 boundary.edge_bc_type[idx] = static_cast<int8_t>(BoundaryType::NORMAL_FLOW);
                 boundary.edge_bed_slope[idx] = S;
                 ++outlet_slots;
@@ -437,7 +437,7 @@ static void checkSteadySlopeNoCheckerboard(double reference_step) {
                 const int idx = MeshData::slot(i, e);
                 if (nbrs[e] >= 0)
                     continue;
-                if (mesh.edge_mx[idx] < 1.0e-9) {
+                if (mesh.edge_mx(idx) < 1.0e-9) {
                     boundary.edge_bc_type[idx] = static_cast<int8_t>(BoundaryType::NORMAL_FLOW);
                     boundary.edge_bed_slope[idx] = S;
                 }
@@ -519,7 +519,7 @@ TEST(InertialMarcher, SpecifiedStageFillAndDrawdownLedger) {
             const int idx = MeshData::slot(i, e);
             if (nbrs[e] >= 0)
                 continue;
-            if (mesh.edge_mx[idx] < 1.0e-9) { // x = 0 boundary
+            if (mesh.edge_mx(idx) < 1.0e-9) { // x = 0 boundary
                 boundary.edge_bc_type[idx] = static_cast<int8_t>(BoundaryType::SPECIFIED_STAGE);
                 boundary.edge_bc_head[idx] = 0.5;
                 bc_slots.push_back(idx);

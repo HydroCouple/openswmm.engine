@@ -435,7 +435,7 @@ void computeFaceVelocity(const MeshData& mesh, SurfaceStateData& state,
             double hf = depth;
             if (j >= 0) {
                 eta = std::max(eta, state.head[j]);
-                hf = inertial::faceFlowDepth(eta, eta, mesh.edge_mz[idx]);
+                hf = inertial::faceFlowDepth(eta, eta, mesh.edge_mz(idx));
             } else if (state.boundary &&
                        static_cast<BoundaryType>(state.boundary->edge_bc_type[idx]) ==
                            BoundaryType::SPECIFIED_STAGE) {
