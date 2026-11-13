@@ -1,17 +1,21 @@
 # Contributing to openswmm.engine
 
-Thank you for your interest in contributing to **openswmm.engine**! This document outlines the governance model, contribution workflow, and standards that keep the project healthy, reproducible, and scientifically rigorous. Please read it carefully before opening an issue, submitting a pull request, or proposing a major change.
+Thank you for your interest in contributing to **openswmm.engine**! Whether you are reporting a bug, improving the documentation, adding a test case, or proposing a new numerical method, your work helps keep this engine open, reliable, and useful to everyone who depends on it.
+
+This guide explains how the project is governed, how contributions are reviewed and merged, and the standards that keep the engine reproducible and scientifically rigorous. Please read it before opening an issue, submitting a pull request, or proposing a major change.
+
+> **Where contributing can lead.** Contributors are recognised on the [HydroCouple Contributor Ladder](./LADDER.md): Inlet, Lateral, Trunk, Interceptor, and Pump Station. Your first merged change of any kind, even a typo fix, makes you a Lateral. Sustained work, especially verification work, can lead to becoming a Maintainer with merge authority in the parts of the engine you care for. Along the way you can earn [badges](./BADGES.md) that celebrate particular contributions.
 
 ---
 
 ## Table of Contents
 
-1. [Community Governance](#1-community-governance)
-2. [Repository & Technical Management](#2-repository--technical-management)
-3. [Succession & Delegation](#3-succession--delegation)
-4. [Licensing, Intellectual Property & CLA](#4-licensing-intellectual-property--cla)
-5. [Author Acknowledgment](#5-author-acknowledgment)
-6. [How to Cite openswmm.engine](#6-how-to-cite-openswmm.engine)
+1. [Governance](#1-governance)
+2. [Roles, Maintainers & the Contributor Ladder](#2-roles-maintainers--the-contributor-ladder)
+3. [Continuity & Urgent Fixes](#3-continuity--urgent-fixes)
+4. [Licensing, CLA & Employer Clearance](#4-licensing-cla--employer-clearance)
+5. [Recognition & Credit](#5-recognition--credit)
+6. [How to Cite openswmm.engine](#6-how-to-cite-openswmmengine)
 7. [Versioning Strategy](#7-versioning-strategy)
 8. [Deprecation & Backward Compatibility Policy](#8-deprecation--backward-compatibility-policy)
 9. [Branching Model](#9-branching-model)
@@ -22,7 +26,7 @@ Thank you for your interest in contributing to **openswmm.engine**! This documen
 14. [Review Timeline Expectations](#14-review-timeline-expectations)
 15. [Major Project Formulation Changes](#15-major-project-formulation-changes)
 16. [Conflict of Interest in Reviews](#16-conflict-of-interest-in-reviews)
-17. [Regression & Validation Testing](#17-regression--validation-testing)
+17. [Verification & Benchmark Testing](#17-verification--benchmark-testing)
 18. [Documentation Standards](#18-documentation-standards)
 19. [Dependency Evaluation Policy](#19-dependency-evaluation-policy)
 20. [Security Vulnerability Reporting](#20-security-vulnerability-reporting)
@@ -31,101 +35,159 @@ Thank you for your interest in contributing to **openswmm.engine**! This documen
 
 ---
 
-## 1. Community Governance
+## 1. Governance
 
-openswmm.engine is a community-driven open source project. All contributors are welcome regardless of affiliation, background, or experience level. The community operates on a model of open discussion, merit-based evaluation, and transparent decision-making. Key decisions affecting the project direction are made openly on GitHub, and all community members are encouraged to participate.
+openswmm.engine is an open, community-driven project. Everyone is welcome to take part, regardless of affiliation, background, or experience level. Discussion happens in the open on GitHub, and decisions are explained publicly.
+
+The engine is stewarded by **HydroCouple Foundation, Inc.**, a nonprofit in formation whose purpose is to develop and maintain open infrastructure for environmental modeling. The Foundation's Bylaws set out who makes which decisions, so that every decision has one clear owner:
+
+- **The Executive Director, Caleb Buahin ([@cbuahin](https://github.com/cbuahin)),** holds final authority over the engine's technical direction: architecture, standards, the roadmap, repository administration, merges, and releases. The Executive Director exercises this authority directly and through the Maintainers.
+- **The Chief Scientist, Corinne Wiesner-Friedman ([@corinne-wf-home](https://github.com/corinne-wf-home)),** leads verification, validation, and benchmark standards for the whole engine and certifies each release. The Chief Scientist also holds final authority within a set of **Designated Subsystems** (see below).
+- **Maintainers** review, merge, and release changes within the scopes they are assigned (Section 2).
+- **The Technical Steering Committee** advises on priorities and reviews draft standards. Its advice is recorded and answered publicly, and it does not direct the work. One of its seats is elected by the contributor community (Section 2).
+- **The Board of Directors** oversees the Foundation's finances, legal compliance, and mission. It does not direct technical work.
+
+### Designated Subsystems
+
+Within these subsystems, the Chief Scientist has final authority over design, merges, releases, the Maintainers who work on them, and the verification standards that apply to them:
+
+| Designated Subsystem | Where it lives in this repository |
+|---|---|
+| Uncertainty quantification, including the uncertainty sidecar and operator snapshot layer | On the `feature/uncertainty-sidecar` branch; paths are added here when it merges |
+| Contaminant, sediment, and reactive fate and transport | `src/engine/quality/` |
+| Verification, validation, and benchmark suites | `tests/benchmarks/`, `tests/regression/`, `tests/regression_testing/` |
+| Test infrastructure and the continuous verification pipeline | `tests/CMakeLists.txt`, `tests/helper.h`, and the testing workflows in `.github/workflows/` |
+
+Everything else is within the Executive Director's authority. Within a Designated Subsystem, the Executive Director's role covers integration with the rest of the engine: the build system, public interfaces, interfaces between subsystems, dependency policy, and release scheduling.
+
+[`CODEOWNERS`](./.github/CODEOWNERS) applies this map to every pull request, so the right people are asked to review automatically. If it is unclear whether a change falls within a Designated Subsystem, the Chief Scientist decides, as the Bylaws provide.
+
+> **While the Foundation is being formed.** Until HydroCouple Foundation is incorporated and its Bylaws are adopted, Caleb Buahin exercises the authority described here for the Executive Director, as the project's Technical Manager, and Corinne Wiesner-Friedman exercises the authority described for the Chief Scientist.
 
 ---
 
-## 2. Repository & Technical Management
+## 2. Roles, Maintainers & the Contributor Ladder
 
-**Repository and technical management is the responsibility of the Technical Manager (currently [@cbuahin](https://github.com/cbuahin)).**
+### The Contributor Ladder
 
-The Technical Manager is responsible for:
+Contributors are recognised on a public ladder, described in full in [LADDER.md](./LADDER.md). Ranks reflect sustained and verifiable work, such as tests, reviews, and benchmark cases with documented results, rather than the number of pull requests or lines of code.
 
-- Maintaining the integrity and health of the `main`, `dev`, and `experimental` branches.
-- Setting and enforcing coding standards, testing requirements, and documentation guidelines.
-- Triaging issues and pull requests in a timely manner.
-- Making final decisions on merges, releases, and branch management.
-- Coordinating with the community on roadmap items and governance questions.
+| Rank | What it means | GitHub permission |
+|---|---|---|
+| **Inlet** | You have taken part: opened an issue, joined a discussion, or asked a question | Read |
+| **Lateral** | You have had a contribution of any kind merged | Read |
+| **Trunk** | You have contributed across two or more release cycles | Triage |
+| **Interceptor** | You care for part of the verification corpus and review others' work | Triage, plus automatic review requests in your area |
+| **Pump Station** | You are a **Maintainer**, with merge authority in your assigned scope | Write |
 
-Community members who wish to take on elevated responsibilities (e.g., becoming a recurring reviewer or branch maintainer) may express interest by opening a discussion on GitHub.
+Contributors at Trunk rank and above are **Recognized Contributors**. Every two years they elect one member of the Foundation's Technical Steering Committee, and any Recognized Contributor may stand for that seat.
+
+### Maintainers
+
+Maintainers write, review, merge, and release changes within their scope. A Maintainer is designated in writing by the **appointing officer** for the scope: the Chief Scientist for a Designated Subsystem, and the Executive Director for everything else. The criteria in [LADDER.md](./LADDER.md) describe what the appointing officers look for.
+
+Before designation, a Maintainer has on file a signed CLA, any employer clearance their work requires (Section 4), a Conflict of Interest disclosure, confirmation that they use a personal GitHub account with two-factor authentication, and acknowledgement of the Code of Conduct and the Maintainers Charter.
+
+| Maintainer | Scope |
+|---|---|
+| Caleb Buahin ([@cbuahin](https://github.com/cbuahin)) | All scopes outside the Designated Subsystems (by office as Executive Director) |
+| Corinne Wiesner-Friedman ([@corinne-wf-home](https://github.com/corinne-wf-home)) | The Designated Subsystems (by office as Chief Scientist) |
+
+**Infrastructure and credentials**, which covers organization settings, branch protection, signing keys, package credentials, and CI secrets, is a Maintainer scope held by the Executive Director and one or two other Maintainers named in the Foundation's continuity plan. It is assigned by designation rather than reached through the ladder.
+
+Scopes change only by a further written designation from the appointing officer. When a Maintainer steps back, their scope passes to the successor named for it, and they are listed as an emeritus Maintainer. Their rank and their credit are unchanged.
 
 ---
 
-## 3. Succession & Delegation
+## 3. Continuity & Urgent Fixes
 
-The Technical Manager role is a single point of authority, which must be protected against absence or unavailability.
+The project is set up so that its work continues if any one person becomes unavailable.
 
-- In the event the Technical Manager is unavailable for an extended period (e.g., travel, illness, or leave), they may designate a **Temporary Delegate** with equivalent merge and release authority. The delegation will be announced publicly in GitHub Discussions.
-- If the Technical Manager steps down permanently, the outgoing manager will nominate a successor from the active contributor community. The nomination is subject to a community feedback period of at least two weeks before taking effect.
-- In the absence of a named delegate and in urgent situations (e.g., a critical security fix), any two senior community reviewers may jointly approve and merge a patch to `main`, with a written rationale posted to GitHub Discussions immediately afterward.
+- **Successors.** Each officer and each Maintainer scope has a designated successor in the Foundation's continuity plan. If someone is unavailable, for any reason, their successor acts for them until they return.
+- **If an officer is unavailable** and no successor has been designated, the Chief Scientist's duties pass to the Executive Director, and the Executive Director's technical duties pass to the Chief Scientist.
+- **Urgent security fixes.** A release that fixes a critical or actively exploited security vulnerability may be issued on the Executive Director's authority without waiting for verification certification. Certification status is published within fourteen days. If the fix touches a Designated Subsystem, the Chief Scientist is told before the release where practicable, and in any event within 24 hours.
+- **Release signing and administration** require two people's credentials. Within twelve months of the Foundation's first public release, at least one of them will be someone other than the two founding officers.
 
 ---
 
-## 4. Licensing, Intellectual Property & CLA
+## 4. Licensing, CLA & Employer Clearance
 
-openswmm.engine is released under the **MIT License**.
+openswmm.engine is released under the license in [LICENSE](./LICENSE) (currently the **MIT License**). Portions of the engine derive from the Storm Water Management Model developed by the U.S. Environmental Protection Agency, which is in the public domain. The project's license applies only to original contributions.
 
-All contributors must sign the project **Contributor License Agreement (CLA)** before their pull request can be merged. The CLA is detailed in [CLA.md](./CLA.md). Key points:
+### Contributor License Agreement
 
-- **You retain your copyright.** The CLA grants a license; it does not transfer ownership.
-- **Broad license grant.** You grant the Technical Manager a perpetual, irrevocable license to use, distribute, and **relicense** your contribution (e.g., for future dual open-source/commercial licensing).
+Every contributor signs the **Contributor License Agreement (CLA)** in [CLA.md](./CLA.md) before their first pull request is merged. This applies to everyone, including the project's officers and Maintainers. Key points:
+
+- **You keep your copyright.** The CLA grants a license; it does not transfer ownership.
+- **The license is non-exclusive.** The project can never hold exclusive rights in your contribution, and contributions are distributed only under open-source licenses approved by the Open Source Initiative.
 - **Patent grant.** You grant a royalty-free patent license covering patents necessarily infringed by your contribution.
-- **Representation of authority.** You confirm you have the right to submit the contribution and that it contains no unlicensed third-party material.
-- **Corporate contributors** must additionally submit a Corporate CLA (CCLA) — see [CLA.md §6](./CLA.md#6-corporate-contributors).
+- **Authority.** You confirm you have the right to submit the contribution, including any permission your employer requires.
 
-### Signing the CLA
+When the Foundation is formed, the rights granted under the existing CLA pass to the Foundation, and the CLA is updated so that future grants run to the Foundation directly. Any change to the CLA will be announced in advance.
 
-The project uses [CLA Assistant](https://cla-assistant.io). When you open your first pull request, a bot will post a comment with a signing link. You may also sign manually by posting the following comment on your PR:
+**How to sign.** You can sign in any of these ways, and you only need to sign once:
 
-> I have read the CLA Document and I hereby sign the CLA.
+1. Follow the link that the CLA Assistant bot posts on your first pull request.
+2. Post this comment on your pull request from your own account: `I have read the CLA Document and I hereby sign the CLA.`
+3. Email a Maintainer from your personal address with your name, GitHub username, the CLA version, and the sentence above.
 
-Once signed, the CLA covers all future contributions. You do not need to sign again.
+Signatures are recorded in `CLA-SIGNATORIES.md`.
 
-If your contribution includes third-party code or data, you are responsible for ensuring that the third-party license is compatible with MIT and that proper attribution is included in your submission.
+### Contributions connected to your employer
 
-The full license text is available in [LICENSE](./LICENSE).
+If you are employed, and your contribution relates to your employer's business or was made using your employer's time or equipment, we need your employer's clearance before it can be merged. That means either a **Corporate CLA** ([CCLA.md](./CCLA.md)) signed by your employer, or a written authorization from someone at your employer with authority to give it.
+
+The pull request template asks about your employment status so that this can be sorted out early. If clearance is needed, review continues as normal and the pull request is labelled `quarantine:employer-clearance` until the clearance arrives. We are glad to help: we can provide the Corporate CLA and a model authorization letter for your employer.
+
+### Personal accounts
+
+Please contribute from a GitHub account and commit email address that are personal to you, not ones administered by an employer or tied to an employer's single sign-on. If you have contributed from more than one account, let us know so your contributions can be credited together.
+
+If your contribution includes third-party code or data, make sure its license is approved by the Open Source Initiative and compatible with the project's license, and list it in `NOTICE`.
 
 ---
 
-## 5. Author Acknowledgment
+## 5. Recognition & Credit
 
-All contributors whose work is incorporated into openswmm.engine will be recognized in [AUTHORS.md](./AUTHORS.md).
+Your contributions are credited in several places, each with its own purpose:
 
-- **Name, affiliation (if any), and scope of contribution** will be documented for each contributor.
-- The Technical Manager maintains `AUTHORS.md` and will update it at each release.
-- If you believe your contribution has been omitted or mis-described, please open an issue or contact the Technical Manager directly.
+| Record | What it shows |
+|---|---|
+| [**AUTHORS.md**](./AUTHORS.md) | Everyone whose contribution has been merged, generated from the commit history at each release. Nobody is ever removed from it. |
+| **Contributors table** ([CONTRIBUTORS.md](https://github.com/HydroCouple/community-recognition/blob/main/CONTRIBUTORS.md)) | Everyone who has earned a badge, with links to the work behind each one |
+| [**ROSTER.md**](./ROSTER.md) | Contributor ranks, the history of promotions, and the HydroCouple Awards |
+| [**CITATION.cff**](./CITATION.cff) | How to cite the engine; Interceptors and above are included as authors of each release's DOI once per-release DOIs are available |
+| **Release notes** | Contributors to each release |
 
-Contributors are encouraged to add themselves to `AUTHORS.md` as part of their pull request, subject to review and formatting consistency.
+You don't need to add yourself to any of these. They are updated for you.
+
+### Badges
+
+Badges celebrate particular contributions: a first merged pull request, a verification case with documented results, a clear bug report, a translation, a discussion that became a roadmap item, and many more. **You never need to ask for a badge.** Most are found automatically from GitHub activity, and a project Maintainer reviews them each week before they are awarded. The full list, and how each is earned, is in [BADGES.md](./BADGES.md). Badges are a celebration only: they carry no permissions and do not count toward ranks.
+
+### The Annual Community Meeting and HydroCouple Awards
+
+Once a year, the Foundation holds an open **Annual Community Meeting**, where the officers report on the roadmap, releases, verification, and finances and answer questions from the community. The meeting is also where the **HydroCouple Awards** are presented, such as the HydroCouple Award for Education and Outreach. An independent panel of respected people in the field chooses the recipients. See [LADDER.md](./LADDER.md#the-annual-community-meeting).
+
+If you think a contribution has been missed or described incorrectly in any of these records, please open an issue.
 
 ---
 
 ## 6. How to Cite openswmm.engine
 
-If you use openswmm.engine in published research, teaching materials, or engineering reports, please cite the software to give appropriate credit and help others discover the project.
+If you use openswmm.engine in research, teaching materials, or engineering reports, please cite it. Citations credit everyone who built the engine and help others find it.
 
-### Recommended Citation Format
+- **Use the citation in [CITATION.cff](./CITATION.cff).** On GitHub, the **"Cite this repository"** button in the sidebar provides it in APA and BibTeX formats.
+- **Release DOIs.** Per-release DOIs through [Zenodo](https://zenodo.org) are being set up. Once they are available, each stable release's DOI will be listed on the [Releases](https://github.com/HydroCouple/openswmm.engine/releases) page. When citing a specific version, please use its DOI so your work is reproducible.
+- **Publications.** If a peer-reviewed publication describes a formulation you used, please cite it as well. If you publish work describing a contribution to the engine, let us know so we can add the reference.
 
-Until a formal publication is available, please cite the software repository directly:
-
-```
-Buahin, C. (2026). openswmm.engine [Computer software]. GitHub. https://github.com/cbuahin_github/openswmm.engine
-```
-
-### DOI & Archival
-
-Each stable release of openswmm.engine is archived and assigned a **DOI via [Zenodo](https://zenodo.org)**. The DOI for each release is listed in the [GitHub Releases](../../releases) page and in the repository badge. When citing a specific version, use the version-specific DOI so that your reference is reproducible.
-
-### Publications
-
-If a peer-reviewed publication describing the software or a specific formulation becomes available, it will be listed here and should be preferred over the repository citation. Authors of accepted publications describing openswmm.engine contributions are encouraged to notify the Technical Manager so the reference can be added.
+If you build a project, product, course, or service on openswmm.engine, please keep the license notice wherever you distribute the engine, name and link openswmm.engine where your users will see it, and cite it as above. Projects that do all three are eligible for the [Upstream Credit](./BADGES.md#upstream-credit) badge.
 
 ---
 
 ## 7. Versioning Strategy
 
-openswmm.engine follows **Semantic Versioning (SemVer)** as defined at [semver.org](https://semver.org), with formal pre-release trajectories during testing periods.
+openswmm.engine follows **Semantic Versioning (SemVer)** as defined at [semver.org](https://semver.org), with formal pre-release stages during testing.
 
 ### Version Format
 
@@ -139,9 +201,9 @@ MAJOR.MINOR.PATCH[-PRERELEASE]
 | `MINOR`   | New features or model components added in a backward-compatible manner |
 | `PATCH`   | Backward-compatible bug fixes, documentation updates, or performance improvements |
 
-### Pre-Release Trajectories
+### Pre-Release Stages
 
-During active release testing periods, the following pre-release labels are used in sequence:
+During release testing, the following pre-release labels are used in sequence:
 
 | Stage              | Label example     | Purpose                                                                      |
 |--------------------|-------------------|------------------------------------------------------------------------------|
@@ -150,7 +212,16 @@ During active release testing periods, the following pre-release labels are used
 | Release Candidate  | `1.2.0-rc.1`      | Final candidate for release; only critical bug fixes accepted                |
 | Stable             | `1.2.0`           | Fully validated, production-ready release                                    |
 
-Pre-release builds are tagged in Git and published to the appropriate distribution channel with clear labels to prevent unintended use in production workflows.
+Pre-release builds are tagged in Git and published with clear labels so they are not mistaken for production releases.
+
+### Release certification
+
+Before each release, the Chief Scientist certifies in writing whether it meets the published verification standard, and states the reasons if not:
+
+- **Major releases** require certification. If certification is declined, the Foundation's Board may still authorize the release by a supermajority vote, after hearing the Chief Scientist's reasons and the Technical Steering Committee's advice. The release notes then reproduce the reasons in full.
+- **Other releases** may proceed without certification on the Executive Director's authority. The Board is notified beforehand, and the release notes state that certification was withheld and give the reasons in full.
+
+Either way, any release made without certification says so openly.
 
 ---
 
@@ -160,15 +231,15 @@ openswmm.engine is committed to giving users adequate notice before breaking cha
 
 ### Deprecation Process
 
-1. **Announcement** — A feature, API, or behavior to be removed is first marked as deprecated in the release notes and in code (via comments or compiler warnings, as applicable). The deprecation announcement will state the planned removal version.
-2. **Minimum notice period** — Deprecated items will not be removed for at least **one full minor version cycle** following the deprecation announcement. For widely-used public APIs, a minimum of **one major version cycle** is preferred.
-3. **Removal** — Deprecated items are removed in a `MAJOR` version bump, never in a `MINOR` or `PATCH` release.
+1. **Announcement.** A feature, API, or behavior to be removed is first marked as deprecated in the release notes and in code (through comments or compiler warnings, as applicable). The announcement states the planned removal version.
+2. **Minimum notice period.** Deprecated items are not removed for at least **one full minor version cycle** after the announcement. For widely used public APIs, a minimum of **one major version cycle** is preferred.
+3. **Removal.** Deprecated items are removed in a `MAJOR` version, never in a `MINOR` or `PATCH` release.
 
 ### Backward Compatibility Commitment
 
-- `PATCH` releases are guaranteed to be fully backward-compatible.
+- `PATCH` releases are fully backward-compatible.
 - `MINOR` releases are backward-compatible for all stable public APIs.
-- `MAJOR` releases may introduce breaking changes, which will be documented in a migration guide published alongside the release.
+- `MAJOR` releases may introduce breaking changes, documented in a migration guide published with the release.
 
 Experimental APIs (clearly marked as such) carry no backward compatibility guarantee and may change or be removed in any release.
 
@@ -176,85 +247,91 @@ Experimental APIs (clearly marked as such) carry no backward compatibility guara
 
 ## 9. Branching Model
 
-| Branch                    | Purpose                                                                                    |
-|---------------------------|--------------------------------------------------------------------------------------------|
-| `main`                    | Stable, production-ready code. Only receives merges from release candidates.              |
-| `dev`                     | Integration branch for ongoing development. All feature and bug-fix branches target here. |
-| `experimental/<name>`     | Sandboxed branches for exploratory or major formulation changes. See Section 15.          |
-| `bugfix/<issue-id>-desc`  | Short-lived branches forked from `dev` to address specific bug reports.                   |
-| `feature/<name>`          | Short-lived branches for minor feature additions, forked from `dev`.                       |
-| `release/<version>`       | Release preparation branches (alpha → beta → rc) cut from `dev`.                          |
+| Branch                    | Purpose                                                                                     |
+|---------------------------|---------------------------------------------------------------------------------------------|
+| `main`                    | Stable, production-ready code. Receives merges from release branches.                      |
+| `develop`                 | Integration branch for ongoing development. Feature and bug-fix branches target here.      |
+| `release/<x.y>`           | Release preparation (alpha → beta → rc), cut from `develop`.                               |
+| `swmm6_rel`               | The current 6.x release-preparation branch, until 6.x moves to `release/<x.y>` branches.   |
+| `swmm6_exp`               | The current 6.x experimental branch.                                                        |
+| `experimental/<name>`     | Sandboxed branches for exploratory or major formulation changes. See Section 15.           |
+| `bugfix/<issue-id>-desc`  | Short-lived branches forked from `develop` to address specific bug reports.                |
+| `feature/<name>`          | Short-lived branches for minor feature additions, forked from `develop`.                   |
+
+The default and release branches are protected: changes arrive only by pull request, the CLA check and required tests must pass, and force pushes are blocked.
 
 ---
 
 ## 10. Bug Fixes & Small Improvements
 
-For small, well-scoped bug fixes and minor improvements, follow this workflow:
+For small, well-scoped bug fixes and minor improvements:
 
-1. **Open or reference an issue.** Verify the bug is reproducible and link the relevant issue number in all subsequent commits and pull requests.
-2. **Fork the `dev` branch.** Name your branch `bugfix/<issue-id>-short-description` (e.g., `bugfix/42-overflow-in-routing`).
-3. **Write a failing unit test first.** The test must demonstrate the defect before the fix is applied.
-4. **Implement the minimal fix.** Touch only the code necessary to resolve the issue. Do not refactor adjacent code.
-5. **Ensure all regression tests pass.** If a regression test fails as a result of your change, you must either:
-   - Fix the regression, **or**
-   - Provide a written, technically justified explanation for why the regression failure is acceptable (included in the pull request description).
-6. **Submit a pull request** against `dev` following the process described in Section 11.
+1. **Open or reference an issue.** Check that the bug is reproducible, and link the issue in your commits and pull request.
+2. **Branch from `develop`.** Name your branch `bugfix/<issue-id>-short-description` (for example `bugfix/42-overflow-in-routing`).
+3. **Write a failing unit test first.** The test should demonstrate the defect before the fix is applied.
+4. **Make the minimal fix.** Change only what is needed to resolve the issue, and leave refactoring of nearby code for a separate pull request.
+5. **Check the benchmarks.** All analytical benchmarks must pass. If your fix changes results on any reference problem, either correct the unintended change, or include a benchmark update in the pull request: documentation of the improvement and a test demonstrating it (Section 17).
+6. **Open a pull request** against `develop` following Section 11.
 
 ---
 
 ## 11. Pull Request Process
 
-All contributions enter the codebase through a pull request (PR). PRs must satisfy the following requirements before they can be merged:
+All contributions enter the codebase through a pull request (PR).
 
-### Required Approvals
+### Review and merge
 
-Every PR requires **all three** of the following approvals:
+- **Approval.** A PR merges into the default branch after approval by at least one Maintainer whose scope covers the change and who is not an author of it, and after all required checks pass, including the CLA check.
+- **Release branches.** A change merges into a release branch, or is included in a tagged release, after approval by two Maintainers within scope, neither of whom is an author of the change. Where fewer than three Maintainers hold the scope, the appointing officer may authorize the merge with one approval and records this in the release record.
+- **No self-merging.** Maintainers do not merge their own substantive changes. A substantive change is any change to source code, numerical methods, interfaces or data models, build configuration, dependencies, CI configuration, or licensing or notice files. Documentation-only changes that don't alter normative content may be merged by their author once the automated checks pass.
+- **Final decisions.** Outside the Designated Subsystems, the Executive Director may override a review outcome; within them, the Chief Scientist may. Any override is recorded on the pull request.
+- **Community reviews are warmly encouraged.** Anyone may review a pull request, and thoughtful reviews are one of the most valuable ways to contribute. They also count toward the [Contributor Ladder](./LADDER.md).
+- **AI review.** An automated AI-assisted review (GitHub Copilot) runs on every PR. Please address or respond to its comments. It does not count as an approval.
 
-| Reviewer               | Role                                                                                 |
-|------------------------|--------------------------------------------------------------------------------------|
-| **Technical Manager**  | [@cbuahin](https://github.com/cbuahin) (current Technical Manager) — final authority on code quality, architecture, and correctness       |
-| **AI Copilot Review**  | Automated AI-assisted review for style, logic, and common error patterns             |
-| **Community Reviewer** | At least one community contributor **other than the PR author** must approve         |
-
-Self-approvals are not permitted. The PR author may not count toward the community reviewer requirement.
+[`CODEOWNERS`](./.github/CODEOWNERS) requests reviews from the Maintainers for the paths a PR touches, including the Designated Subsystems (Section 1).
 
 ### PR Checklist
 
-Before requesting review, confirm that your PR:
+Before requesting review, please confirm that your PR:
 
-- [ ] Targets the correct branch (`dev` for bug fixes and features; see Section 15 for experimental work)
-- [ ] CLA signed — first-time contributors must sign the [CLA](./CLA.md) before the PR can be merged
-- [ ] Includes a clear description of what was changed and why
-- [ ] References any related issues (e.g., `Closes #42`)
+- [ ] Targets the correct branch (`develop` for bug fixes and features; see Section 15 for experimental work)
+- [ ] Is covered by your signed CLA, and by employer clearance if your contribution is connected to your employer (Section 4)
+- [ ] Answers the employment-status question in the PR template
+- [ ] Includes a clear description of what changed and why
+- [ ] References any related issues (for example `Closes #42`)
 - [ ] Includes new or updated unit tests covering the change
-- [ ] All existing regression tests pass (or failures are documented and justified)
-- [ ] CI pipeline passes (see Section 12)
-- [ ] Documentation has been updated where applicable (Doxygen comments, README, etc.)
-- [ ] `AUTHORS.md` entry has been added or updated if this is your first contribution
+- [ ] Passes all analytical benchmarks, and leaves benchmark results unchanged or includes a documented benchmark update (Section 17)
+- [ ] Passes the CI pipeline (Section 12)
+- [ ] Addresses or responds to the AI review's comments
+- [ ] Updates documentation where applicable (Doxygen comments, README, etc.)
+- [ ] Lists any third-party code or data in `NOTICE`
 
-### Merge Policy
+The PR template also has an optional **Referred by** field. If someone encouraged you to contribute, you can name them there.
 
-- Merges into `main` are performed exclusively by the Technical Manager at release time.
-- Squash merging is preferred for `bugfix` and `feature` branches to keep the `dev` history clean.
-- Merge commits are used when integrating `dev` into a `release` branch to preserve the full history.
+### Merge style
+
+- Squash merging is preferred for `bugfix` and `feature` branches to keep the `develop` history clean.
+- Merge commits are used when integrating `develop` into a release branch to preserve the full history.
 
 ---
 
 ## 12. Continuous Integration & Automated Testing
 
-All pull requests are automatically tested via the project's CI pipeline (GitHub Actions) before human review begins. A failing CI pipeline will block merge regardless of approvals.
+All pull requests are tested automatically by the project's CI pipeline (GitHub Actions) before human review begins. A failing pipeline blocks merging.
 
-The CI pipeline runs on every push to a PR branch and includes:
+The pipeline runs on every push to a PR branch and includes:
 
 | Stage                      | Description                                                                                   |
 |----------------------------|-----------------------------------------------------------------------------------------------|
-| **Build**                  | Compiles the engine and test suite across all supported platforms (Linux, macOS, Windows)     |
+| **CLA check**              | Confirms every commit author has signed the CLA                                               |
+| **Build**                  | Compiles the engine and test suite on all supported platforms (Linux, macOS, Windows)        |
 | **Unit Tests**             | Runs the full unit test suite; any failure blocks the PR                                      |
-| **Regression Tests**       | Runs the analytical benchmark suite; deviations outside tolerance thresholds block the PR     |
-| **Static Analysis**        | Runs a linter and static analyzer (e.g., `clang-tidy`) to catch common errors                |
-| **Documentation Build**    | Verifies that Doxygen documentation builds without errors or warnings                         |
+| **Analytical Benchmarks**  | Compares results with exact solutions; deviations outside tolerance block the PR             |
+| **Benchmark Comparison**   | Compares results on reference problems with the current benchmark; any change outside tolerance blocks the PR unless it includes a benchmark update (Section 17) |
+| **Static Analysis**        | Runs a linter and static analyzer (for example `clang-tidy`) to catch common errors          |
+| **Documentation Build**    | Checks that the Doxygen documentation builds without errors or warnings                       |
 
-Contributors are expected to run the test suite locally before opening a PR to minimize unnecessary CI failures. Instructions for running tests locally are in the [README](./README.md).
+Please run the test suite locally before opening a PR. Instructions are in the [README](./README.md).
 
 ---
 
@@ -262,29 +339,31 @@ Contributors are expected to run the test suite locally before opening a PR to m
 
 ### Bug Reports
 
-Use the **Bug Report** issue template on GitHub. A complete bug report must include:
+Please use the **Bug Report** issue template. A complete bug report includes:
 
 - A clear, descriptive title.
-- The version of openswmm.engine affected (e.g., `1.2.0-beta.1`).
-- The operating system and compiler version.
-- A minimal reproducible example — the smallest input file or code snippet that demonstrates the problem.
-- Observed vs. expected behavior, including any relevant output or error messages.
+- The version of openswmm.engine affected (for example `1.2.0-beta.1`).
+- Your operating system and compiler version.
+- A minimal reproducible example: the smallest input file or code snippet that shows the problem.
+- What you observed and what you expected, including any output or error messages.
 
-Incomplete bug reports may be closed or deprioritized pending clarification.
+Reports without enough detail to reproduce the problem may be paused until more information is available.
+
+If your example uses a model of a real system, please share only what you're comfortable making public. Issues are public, and synthetic or anonymized examples work well.
 
 ### Feature Requests & Ideas
 
-Use the **Feature Request** issue template for small, well-scoped additions. For proposals that would change the core physical or mathematical formulation, use the GitHub Discussions **Ideas** section instead (see Section 15).
+Use the **Feature Request** template for small, well-scoped additions. For proposals that would change the engine's physical or mathematical formulation, please start a thread in the GitHub Discussions **Ideas** section instead (see Section 15).
 
 ### Issue Triage
 
-The Technical Manager or a designated reviewer will triage new issues within **two weeks** of submission, assigning labels (e.g., `bug`, `enhancement`, `needs-clarification`, `wontfix`) and priority. Contributors are encouraged to comment on existing issues before opening duplicates.
+Contributors at Trunk rank and above can triage issues. We aim to label new issues within **two weeks**, assigning a type (for example `bug`, `enhancement`, `needs-clarification`, or `wontfix`) and a priority. Some labels, such as `reproducer-confirmed`, also help recognise contributions with badges (see [BADGES.md](./BADGES.md#for-triagers-and-reviewers)). Please search for existing issues before opening a new one.
 
 ---
 
 ## 14. Review Timeline Expectations
 
-openswmm.engine is maintained by volunteers. The following timelines are targets, not guarantees, but the Technical Manager is committed to keeping them:
+openswmm.engine is maintained by a small team, and many contributors volunteer their time. These are our targets:
 
 | Action                                    | Target Timeline          |
 |-------------------------------------------|--------------------------|
@@ -293,187 +372,212 @@ openswmm.engine is maintained by volunteers. The following timelines are targets
 | Follow-up review after requested changes  | Within 2 weeks           |
 | Major formulation discussion response     | Within 4 weeks           |
 
-If you have not received a response within the stated window, you are welcome to post a polite follow-up comment on the issue or PR. PRs that become stale (no activity for 60 days) may be closed with a note that they can be reopened when the contributor is ready to continue.
+If you haven't heard back within these windows, a friendly follow-up comment on the issue or PR is welcome. PRs with no activity for 60 days may be closed, with a note that they can be reopened whenever you're ready to continue.
 
 ---
 
 ## 15. Major Project Formulation Changes
 
-Changes that affect the core physical or mathematical formulation of the engine — including new process models, numerical schemes, or significant algorithmic restructuring — follow a more rigorous governance process to protect the scientific integrity of the project.
+Changes to the engine's physical or mathematical formulation, such as new process models, numerical schemes, or significant algorithmic restructuring, follow a more thorough process to protect the engine's scientific integrity.
 
-### Step 1 — Open a Community Discussion
+### Step 1: Open a Community Discussion
 
-Start a new thread in the **Ideas** section of the GitHub Discussions tab. Your proposal should describe:
+Start a thread in the **Ideas** section of GitHub Discussions. Your proposal should describe:
 
 - The scientific or engineering motivation for the change.
-- The anticipated impact on existing functionality and results.
-- Any known limitations, tradeoffs, or open questions.
+- The expected impact on existing functionality and results.
+- Known limitations, tradeoffs, or open questions.
 - References to relevant literature or prior implementations.
 
-### Step 2 — Community Feedback
+### Step 2: Community Feedback
 
-Allow a minimum of **four weeks** for community members to respond. The Technical Manager will facilitate the discussion and summarize the consensus or key points of disagreement. A proposal may be:
+Allow at least **four weeks** for the community to respond. The Executive Director, or the Chief Scientist for a Designated Subsystem, facilitates the discussion and summarizes the consensus or the main points of disagreement. A proposal may be:
 
-- **Accepted for prototyping** — community finds sufficient merit to proceed.
-- **Revised** — further refinement is needed before prototyping.
-- **Deferred** — not a current priority; may be revisited in a future release cycle.
-- **Declined** — not aligned with the project scope or scientifically unsound.
+- **Accepted for prototyping:** there is enough merit to proceed.
+- **Revised:** further refinement is needed before prototyping.
+- **Deferred:** not a current priority; it may be revisited in a future release cycle.
+- **Declined:** outside the project's scope, or not scientifically sound.
 
-### Step 3 — Experimental Branch Implementation
+A proposal accepted for prototyping earns its author the [Datum](./BADGES.md#datum) badge.
 
-Accepted proposals are implemented in a dedicated `experimental/<name>` branch. Requirements for this phase:
+### Step 3: Experimental Branch Implementation
 
-- Rigorous **unit tests** covering the new formulation's behavior across the expected parameter space.
-- **Regression tests** as described in Section 17.
-- Code must compile cleanly and not break the existing test suite on the `dev` branch.
-- Implementation notes and algorithm descriptions must be maintained in Doxygen-compatible documentation.
+Accepted proposals are developed in a dedicated `experimental/<name>` branch, with:
 
-### Step 4 — Peer Review (Strongly Encouraged)
+- Thorough **unit tests** covering the new formulation's behavior across the expected parameter space.
+- **Benchmark tests** as described in Section 17.
+- Code that compiles cleanly and doesn't break the existing test suite on `develop`.
+- Implementation notes and algorithm descriptions in Doxygen-compatible documentation.
 
-Where the improvement represents a meaningful scientific advance, contributors are strongly encouraged to submit a **peer-reviewed publication** describing the formulation, validation methodology, and results. Publication is not a hard requirement, but it significantly strengthens the case for incorporation into the core engine and signals readiness for production use. The Technical Manager can advise on suitable journals or conferences.
+### Step 4: Peer Review (Strongly Encouraged)
 
-### Step 5 — Regression & Validation Testing
+Where the improvement is a meaningful scientific advance, we strongly encourage a **peer-reviewed publication** describing the formulation, validation methodology, and results. Publication isn't required, but it strengthens the case for adding the work to the core engine and signals that it is ready for production use. The Executive Director and the Chief Scientist are happy to advise on suitable journals or conferences.
 
-See Section 17 for full details. At minimum, the experimental implementation must demonstrate:
+### Step 5: Verification & Benchmark Testing
+
+See Section 17 for details. At minimum, the implementation must demonstrate:
 
 - Correctness against problems with known analytical solutions.
-- Agreement within acceptable tolerance with the legacy engine and previous versions on benchmark problems.
-- No unacceptable degradation in computational performance or numerical stability.
+- A documented benchmark update for every reference problem whose results change, with tests demonstrating that the new results are an improvement.
+- No unacceptable loss of computational performance or numerical stability.
 
-### Step 6 — Documentation & References
+### Step 6: Documentation & References
 
-Before a major formulation change can be merged into `dev`, the following documentation must be complete:
+Before a major formulation change can be merged into `develop`, the following must be complete:
 
 - **Doxygen comments** on all new and modified public APIs, structs, and functions.
-- **Inline citations** linking to peer-reviewed references where the formulation is derived from published work.
-- Updated user-facing documentation (e.g., README sections, wiki pages) describing the new capability and how to invoke it.
+- **Inline citations** to peer-reviewed references where the formulation comes from published work.
+- Updated user documentation (for example README sections or wiki pages) describing the new capability and how to use it.
 - A changelog entry summarizing the change for the next release notes.
 
 ---
 
-## 16. Conflict of Interest in Reviewscon
+## 16. Conflict of Interest in Reviews
 
-Scientific software reviews can intersect with contributors' professional interests. To protect the integrity of the review process:
+Scientific software reviews can touch on reviewers' professional interests. To keep reviews fair:
 
-- A reviewer who has a competing or closely related implementation, active publication, or financial interest in the outcome of a review **must disclose this conflict** before participating in the review.
-- A conflicted reviewer may participate in discussion but **may not serve as one of the three required approvers** for that PR.
-- The Technical Manager makes the final determination on whether a disclosed conflict disqualifies a reviewer on a case-by-case basis.
-- Undisclosed conflicts of interest, if discovered after a merge, may trigger a re-review of the affected contribution.
+- If you have a competing or closely related implementation, an active publication, or a commercial or financial interest in the outcome of a review, including through your employer, please **disclose it on the pull request** before taking part.
+- A reviewer with such an interest may join the discussion but **does not approve** the change.
+- Maintainers and officers also file a Conflict of Interest disclosure with the Foundation each year, and do not approve, merge, block, or deprioritize changes in which they or their employer hold a competitive or commercial interest.
+- If a disclosed interest raises a question about who should review, the Executive Director decides, or the Chief Scientist within a Designated Subsystem.
+- If an undisclosed conflict comes to light after a merge, the contribution may be reviewed again.
 
 ---
 
-## 17. Regression & Validation Testing
+## 17. Verification & Benchmark Testing
 
-Validation testing is a cornerstone of scientific software development. openswmm.engine uses two complementary regression testing modes:
+Verification is at the heart of openswmm.engine. The Chief Scientist sets and publishes the engine's verification standard and certifies each release against it (Section 7). Results are tested in two complementary ways.
 
-### Mode 1 — Analytical Benchmarks
+openswmm.engine does not treat agreement with earlier versions of SWMM as proof of correctness. Earlier versions, including EPA SWMM, contain known defects, and reproducing their output would carry those defects forward. Instead, results are checked against exact solutions where they exist, and otherwise against a benchmark that moves when a change is shown to be an improvement.
 
-Test cases are constructed for which a closed-form or exact analytical solution exists. The engine output must agree with the analytical solution within a specified tolerance (defined per test case). These tests verify the mathematical correctness of the implementation independent of any reference implementation.
+### Mode 1: Analytical Benchmarks
 
-Examples include: mass balance checks, steady-state flow solutions, unit hydrograph convolutions, and simplified routing scenarios with exact solutions.
+These test cases have a closed-form or exact analytical solution. The engine's output must agree with the solution within a tolerance defined for each case. These tests check the mathematical correctness of the implementation independently of any other model. An analytical solution changes only if it is itself shown to be wrong, and that correction is documented in the same way as a benchmark update.
 
-### Mode 2 — Legacy & Version Comparison Benchmarks
+Examples include mass balance checks, steady-state flow solutions, unit hydrograph convolutions, manufactured solutions, and simplified routing scenarios with exact solutions.
 
-A suite of reference problems is maintained that have been previously executed with:
+### Mode 2: Shifting Benchmarks
 
-- The **legacy engine** (EPA SWMM or equivalent predecessor), and/or
-- A **prior stable release** of openswmm.engine.
+For realistic problems that have no exact solution, the project keeps a set of **reference problems** and the engine's **current accepted results** for them: the *benchmark*. The benchmark records the engine's own best current answer, not the output of another model or a frozen earlier release.
 
-New implementations must reproduce reference outputs within acceptable tolerance bounds. Deviations must be documented and scientifically justified — they may be acceptable if the new formulation is demonstrably more correct, but the deviation must be explicit and reviewed.
+CI compares every pull request with the current benchmark, and any change in results outside a problem's tolerance blocks the pull request. That way, no result ever changes by accident.
+
+A result can change, and the benchmark move with it, through a **benchmark update** in the same pull request. A benchmark update includes:
+
+1. **Documentation of the improvement:** what was wrong or limited before, what changed, and why the new results are more correct, with references to the literature, the defect report, or the derivation.
+2. **A test demonstrating the improvement:** an analytical or manufactured-solution case (Mode 1), a conservation or stability check, or a comparison with documented field or laboratory data, which the old results fail and the new results pass.
+3. **The updated benchmark** for every affected reference problem, with the size of each change summarised in the pull request.
+4. **A changelog entry** under *Benchmark changes*, so users can see when and why results changed between versions.
+
+The benchmark suites are a Designated Subsystem, so the Chief Scientist, or a Maintainer in that scope, reviews every benchmark update.
+
+A change that alters results without a demonstrated improvement is a regression, however small. Catching one before it reaches a release earns the [Freeboard](./BADGES.md#freeboard) badge.
+
+### Comparisons with other models
+
+Each release's verification report includes comparisons with EPA SWMM and with earlier releases of openswmm.engine, so that users and reviewing agencies can see how results differ and why. These comparisons are published for information. They are not pass/fail criteria, and they never block a pull request. Where openswmm.engine deliberately differs from EPA SWMM because a defect has been corrected, the benchmark update that introduced the difference explains it.
 
 ### Benchmarking Criteria
 
-All benchmarks are evaluated across three dimensions:
+All benchmarks are evaluated on three dimensions:
 
 | Criterion                      | Description                                                                                      |
 |--------------------------------|--------------------------------------------------------------------------------------------------|
-| **Stability**                  | The solver must not exhibit divergence, oscillation, or blow-up under standard test conditions   |
+| **Stability**                  | The solver must not show divergence, oscillation, or blow-up under standard test conditions      |
 | **Conservativeness**           | Mass, volume, or energy conservation must be maintained within defined tolerances                |
 | **Computational Performance**  | Runtime must not degrade unacceptably relative to the previous version for equivalent problem sizes |
 
-Performance benchmarks are run on a reference hardware configuration documented in the test suite. Significant regressions in performance require justification and, where possible, mitigation.
+Performance benchmarks run on a reference hardware configuration documented in the test suite. Significant performance regressions need a justification and, where possible, mitigation.
+
+### Verification ownership
+
+Each subsystem's verification cases have a named owner, at Interceptor rank or above, who looks after the cases, their documented results, and the subsystem's reference problems. Owners are assigned by the Chief Scientist.
 
 ---
 
 ## 18. Documentation Standards
 
-openswmm.engine uses **Doxygen** for API documentation. All public-facing code elements (functions, classes, structs, enumerations, and their members) must include Doxygen-compatible documentation comments.
+openswmm.engine uses **Doxygen** for API documentation. All public code elements (functions, classes, structs, enumerations, and their members) need Doxygen-compatible documentation comments.
 
 Minimum documentation per element:
 
-- `@brief` — one-line summary.
-- `@param` — description of each parameter including units where applicable.
-- `@return` — description of the return value.
-- `@note` / `@warning` — any important behavioral caveats.
-- `@ref` or `@cite` — citation of the relevant literature where the implementation follows a published formulation.
+- `@brief`: a one-line summary.
+- `@param`: a description of each parameter, including units where applicable.
+- `@return`: a description of the return value.
+- `@note` / `@warning`: any important behavioral caveats.
+- `@ref` or `@cite`: a citation of the relevant literature where the implementation follows a published formulation.
 
-Documentation is reviewed as part of the pull request process. PRs with undocumented public APIs will not be approved.
+Documentation is reviewed as part of each pull request, and public APIs need documentation before they can be approved.
 
 ---
 
 ## 19. Dependency Evaluation Policy
 
-Adding a third-party dependency increases the maintenance burden and risk surface of the project. All proposed new dependencies must be evaluated against the following criteria before inclusion:
+Each new third-party dependency adds maintenance work and risk, so proposed dependencies are evaluated against these criteria:
 
 | Criterion                | Requirement                                                                                      |
 |--------------------------|--------------------------------------------------------------------------------------------------|
-| **License compatibility**| The dependency's license must be compatible with MIT (e.g., MIT, BSD, Apache 2.0). Copyleft licenses such as GPL are not permitted. |
-| **Maintenance status**   | The dependency must be actively maintained with a responsive upstream community.                 |
-| **Stability**            | The dependency must have a stable, versioned API. Unpinned or volatile dependencies are not acceptable. |
-| **Binary footprint**     | Dependencies that substantially increase compiled binary size must be justified by proportional benefit. |
+| **License compatibility**| The license must be approved by the Open Source Initiative and compatible with the project's license (for example MIT, BSD, or Apache 2.0). Copyleft licenses such as GPL are not permitted in the core engine. |
+| **Maintenance status**   | The dependency must be actively maintained, with a responsive upstream community.               |
+| **Stability**            | The dependency must have a stable, versioned API. Unpinned or volatile dependencies are not accepted. |
+| **Binary footprint**     | Dependencies that substantially increase compiled binary size need a proportionate benefit.      |
 | **Platform support**     | The dependency must support all officially targeted platforms (Linux, macOS, Windows).           |
 
-Proposals to add a new dependency should be raised in a GitHub Discussion or issue before implementation. Optional or experimental dependencies that are not required for the core build may be included under a feature flag, with lower scrutiny, provided they meet the license requirement.
+Please raise a proposed dependency in a GitHub Discussion or issue before implementing it. Optional or experimental dependencies that aren't required for the core build may be included behind a feature flag with lighter review, provided they meet the license requirement. Every dependency is listed in `NOTICE`.
 
 ---
 
 ## 20. Security Vulnerability Reporting
 
-**Do not report security vulnerabilities through public GitHub issues.**
+**Please do not report security vulnerabilities in public GitHub issues.**
 
-If you discover a potential security vulnerability in openswmm.engine, please report it privately so that a fix can be prepared before the issue is publicly disclosed:
+If you find a potential security vulnerability in openswmm.engine, please report it privately so a fix can be prepared before it is disclosed:
 
-- **GitHub Private Advisory:** Use the [Security Advisories](../../security/advisories) tab to submit a draft advisory directly on GitHub. Tag [@cbuahin](https://github.com/cbuahin) (current Technical Manager) in the advisory.
+- **GitHub Private Advisory:** Use the [Security Advisories](https://github.com/HydroCouple/openswmm.engine/security/advisories) tab to submit a draft advisory, and tag the Executive Director, [@cbuahin](https://github.com/cbuahin).
 
-Please include in your report:
+Please include:
 
 - A description of the vulnerability and its potential impact.
 - Steps to reproduce, including any relevant input files or code.
-- The version(s) of openswmm.engine affected.
+- The affected version(s) of openswmm.engine.
 - Any known mitigations or workarounds.
 
-The Technical Manager will acknowledge receipt within **five business days** and work with you on a coordinated disclosure timeline. Credit for responsibly disclosed vulnerabilities will be given in the release notes and security advisory, unless the reporter prefers to remain anonymous.
+You will receive an acknowledgement within **five business days**, and we will work with you on a coordinated disclosure timeline. Responsible disclosures are credited in the release notes and security advisory unless you prefer to remain anonymous. See [SECURITY.md](./SECURITY.md) for more.
 
 ---
 
 ## 21. Roadmap & Prioritization
 
-The project maintains a public roadmap that communicates the planned direction of openswmm.engine across upcoming releases. The roadmap is updated by the Technical Manager and is available in [ROADMAP.md](./ROADMAP.md).
+The project keeps a public roadmap in [ROADMAP.md](./ROADMAP.md), maintained by the Executive Director, with the Chief Scientist reporting on the Designated Subsystems. The roadmap covers:
 
-The roadmap includes:
+- Features and formulation improvements planned for upcoming `MINOR` and `MAJOR` releases.
+- Known issues and technical debt scheduled for resolution.
+- Research directions being explored on experimental branches.
+- Items deferred or declined, with the reasons.
 
-- Features and formulation improvements targeted for upcoming `MINOR` and `MAJOR` releases.
-- Known issues and technical debt items scheduled for resolution.
-- Research directions under exploration in `experimental` branches.
-- Items that have been explicitly deferred or declined, along with the rationale.
+The roadmap is updated at each release and after significant community discussions. Proposals outside the current roadmap are still welcome and are considered on their merits, though they may be scheduled for a later cycle.
 
-The roadmap is a living document and is updated at each release and after significant community discussions. Contributors are encouraged to align their proposals with roadmap priorities to maximize the likelihood of acceptance. Proposals that fall outside the current roadmap scope are still welcome and will be evaluated on merit, but may be deferred to a future cycle.
+There are several ways to help shape it:
 
-Community members who wish to influence roadmap priorities should participate in the GitHub Discussions **Ideas** section. The Technical Manager reviews discussion threads when updating the roadmap and will reference specific threads in roadmap entries where community input shaped a decision.
+- **Everyone** can join the GitHub Discussions **Ideas** section. Threads that shaped a decision are referenced in the roadmap.
+- **Anyone** can describe a recurring problem in modeling practice that the engine could help with, using the pain-point template. Each submission is reviewed and its status recorded.
+- **The Technical Steering Committee** advises on priorities, and its advice and the response to it are published. Recognized Contributors elect one of its members.
 
 ---
 
 ## 22. Code of Conduct
 
-openswmm.engine is committed to providing a welcoming, respectful, and inclusive environment for all contributors. All participants are expected to:
+openswmm.engine is committed to a welcoming, respectful, and inclusive environment for everyone. All participants are expected to follow the [Code of Conduct](./CODE_OF_CONDUCT.md), and in particular to:
 
 - Engage constructively and professionally in all project spaces (issues, pull requests, discussions).
 - Respect differing viewpoints and scientific perspectives.
 - Accept constructive criticism of their contributions in good faith.
-- Prioritize the long-term health of the project over individual preferences.
+- Put the long-term health of the project ahead of individual preferences.
 
-Harassment, personal attacks, or exclusionary behavior of any kind will not be tolerated. Violations may be reported to the Technical Manager at @cbuahin. Reported incidents will be reviewed and addressed promptly and confidentially.
+Harassment, personal attacks, and exclusionary behavior are not tolerated. Please report concerns to the Executive Director, [@cbuahin](https://github.com/cbuahin). Reports concerning either officer go to the Foundation's Governance and Nominating Committee at [address to be published], which does not pass through either officer. All reports are handled promptly and confidentially, and no one who reports in good faith will face retaliation.
 
 ---
 
-*This document is maintained by the Technical Manager of openswmm.engine (currently [@cbuahin](https://github.com/cbuahin)). Last updated: May 2026.*
+*EPA SWMM is a product of the U.S. Environmental Protection Agency. HydroCouple Foundation is not affiliated with or endorsed by EPA.*
+
+*This document is maintained by the Executive Director of openswmm.engine. Last updated: October 2026 (draft).*
