@@ -444,7 +444,8 @@ CascadeResult delete_link(SimulationContext& ctx, int link_idx, DeleteRecord* re
  * @return Owned impact entries with static field-name literals and indices at the time each entry
  *     was recorded.
  */
-CascadeResult delete_subcatch(SimulationContext& ctx, int sc_idx);
+// record: optional; receives every step this delete takes (see delete_gage).
+CascadeResult delete_subcatch(SimulationContext& ctx, int sc_idx, DeleteRecord* record = nullptr);
 /**
  * @brief Delete a rain gage.
  *
@@ -513,7 +514,8 @@ CascadeResult delete_links_many(SimulationContext& ctx, std::vector<int> indices
  * @return Owned aggregate cascade report with each entry using the index at its sequential deletion
  *     time.
  */
-CascadeResult delete_subcatches_many(SimulationContext& ctx, std::vector<int> indices);
+CascadeResult delete_subcatches_many(SimulationContext& ctx, std::vector<int> indices,
+                                     DeleteRecord* record = nullptr);
 /**
  * @brief Delete rain gage rows in deduplicated descending pre-batch order.
  *

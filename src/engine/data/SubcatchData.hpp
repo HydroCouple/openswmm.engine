@@ -40,6 +40,8 @@
 #include <algorithm>
 #include <limits>
 
+#include "SoaRow.hpp"
+
 namespace openswmm {
 
 // ============================================================================
@@ -1124,159 +1126,176 @@ struct SubcatchData {
     }
 
     /**
-     * @brief Erase one subcatchment row from the columns visited by this helper.
+     * @brief Call @p f with a pointer to every per-subcatchment column member; the one list
+     *        erase_at and the delete record's take_row/put_row share (SoaRow.hpp).
      *
-     * Visits owned base columns and configured pollutant/load/coverage/sweeping strides when present.
-     * Caller separately repairs outlet/gage/snowpack references, names and spatial geometry; no engine
-     * lifecycle check occurs here. Following rows shift down and element references/iterators are
-     * invalidated. Does not make inconsistent stores transactional.
-     *
-     * @param[in] idx Caller-validated existing row index; aligned dimensions and representable size
-     *     products required.
+     * The pollutant-strided ([sc * np + p]) and land-use-strided ([sc * n_lu + lu]) columns are
+     * handled by take_row/put_row.
      */
-    void erase_at(int idx) {
-        const auto ui = static_cast<std::size_t>(idx);
-        auto e = [&](auto& v) {
-            if (ui < v.size())
-                v.erase(v.begin() + static_cast<std::ptrdiff_t>(idx));
-        };
+    template <class F>
+    static void for_each_column(F&& f) {
+        f(&SubcatchData::outlet_node);
+        f(&SubcatchData::outlet_subcatch);
+        f(&SubcatchData::outlet_name);
+        f(&SubcatchData::snowpack_name);
+        f(&SubcatchData::gage_name);
+        f(&SubcatchData::gage);
+        f(&SubcatchData::area);
+        f(&SubcatchData::width);
+        f(&SubcatchData::slope);
+        f(&SubcatchData::curb_length);
+        f(&SubcatchData::rain_scale_factor);
+        f(&SubcatchData::snow_scale_factor);
+        f(&SubcatchData::frac_imperv);
+        f(&SubcatchData::frac_imperv_no_store);
+        f(&SubcatchData::pct_zero);
+        f(&SubcatchData::n_imperv);
+        f(&SubcatchData::n_perv);
+        f(&SubcatchData::ds_imperv);
+        f(&SubcatchData::ds_perv);
+        f(&SubcatchData::subarea_routing);
+        f(&SubcatchData::pct_routed);
+        f(&SubcatchData::infil_model);
+        f(&SubcatchData::infil_p1);
+        f(&SubcatchData::infil_p2);
+        f(&SubcatchData::infil_p3);
+        f(&SubcatchData::infil_p4);
+        f(&SubcatchData::infil_p5);
+        f(&SubcatchData::runoff);
+        f(&SubcatchData::rainfall);
+        f(&SubcatchData::evap_loss);
+        f(&SubcatchData::infil_loss);
+        f(&SubcatchData::ponded_depth);
+        f(&SubcatchData::old_ponded_depth);
+        f(&SubcatchData::washoff_vout1);
+        f(&SubcatchData::gw_flow);
+        f(&SubcatchData::snow_depth);
+        f(&SubcatchData::lid_drain_flow);
+        f(&SubcatchData::old_runoff);
+        f(&SubcatchData::old_gw_flow);
+        f(&SubcatchData::old_snow_depth);
+        f(&SubcatchData::old_lid_drain_flow);
+        f(&SubcatchData::runon_inflow);
+        f(&SubcatchData::old_runon_inflow);
+        f(&SubcatchData::runon_rate);
+        f(&SubcatchData::outfall_runon_vol);
+        f(&SubcatchData::gw_sw_head);
+        f(&SubcatchData::gw_node_avail_flow);
+        f(&SubcatchData::gw_max_infil_vol);
+        f(&SubcatchData::subarea_runoff_rate);
+        f(&SubcatchData::comments);
+        f(&SubcatchData::tags);
+        f(&SubcatchData::rpt_flag);
+        f(&SubcatchData::stat_precip_vol);
+        f(&SubcatchData::stat_runon_vol);
+        f(&SubcatchData::stat_gw_time);
+        f(&SubcatchData::stat_evap_vol);
+        f(&SubcatchData::stat_infil_vol);
+        f(&SubcatchData::stat_imperv_vol);
+        f(&SubcatchData::stat_perv_vol);
+        f(&SubcatchData::stat_runoff_vol);
+        f(&SubcatchData::stat_max_runoff);
+        f(&SubcatchData::stat_gw_infil_vol);
+        f(&SubcatchData::stat_gw_upper_evap_vol);
+        f(&SubcatchData::stat_gw_lower_evap_vol);
+        f(&SubcatchData::stat_gw_deep_perc_vol);
+        f(&SubcatchData::stat_gw_flow_vol);
+        f(&SubcatchData::stat_gw_max_flow);
+        f(&SubcatchData::stat_gw_sum_theta);
+        f(&SubcatchData::stat_gw_sum_depth);
+        f(&SubcatchData::stat_gw_final_theta);
+        f(&SubcatchData::stat_gw_final_depth);
+        f(&SubcatchData::stat_gw_steps);
+        f(&SubcatchData::gw_aquifer);
+        f(&SubcatchData::gw_node);
+        f(&SubcatchData::gw_surf_elev);
+        f(&SubcatchData::gw_a1);
+        f(&SubcatchData::gw_b1);
+        f(&SubcatchData::gw_a2);
+        f(&SubcatchData::gw_b2);
+        f(&SubcatchData::gw_a3);
+        f(&SubcatchData::gw_tw);
+        f(&SubcatchData::gw_hstar);
+        f(&SubcatchData::gw_bot_elev);
+        f(&SubcatchData::gw_wt_elev);
+        f(&SubcatchData::gw_upper_moist);
+        f(&SubcatchData::snowpack);
+        f(&SubcatchData::snow_net_imperv);
+        f(&SubcatchData::snow_net_perv);
+        f(&SubcatchData::snow_melt_imperv);
+        f(&SubcatchData::snow_melt_perv);
+        f(&SubcatchData::snow_melt_age_imperv);
+        f(&SubcatchData::snow_melt_age_perv);
+        f(&SubcatchData::total_lid_area_ft2);
+        f(&SubcatchData::lid_return_to_perv_cfs);
+        f(&SubcatchData::lid_return_applied_cfs);
+        f(&SubcatchData::lid_drain_runon_cfs);
+    }
 
-        e(outlet_node);
-        e(outlet_subcatch);
-        e(outlet_name);
-        e(gage);
-        e(area);
-        e(width);
-        e(slope);
-        e(curb_length);
-        e(rain_scale_factor);
-        e(snow_scale_factor);
-        e(frac_imperv);
-        e(frac_imperv_no_store);
-        e(pct_zero);
-        e(subarea_runoff_rate);
-        e(n_imperv);
-        e(n_perv);
-        e(ds_imperv);
-        e(ds_perv);
-        e(subarea_routing);
-        e(pct_routed);
+    /**
+     * @brief Erase one subcatchment row: every listed column and the strided chunks.
+     *
+     * Caller separately repairs outlet/gage/snowpack references, names and spatial geometry.
+     * Following rows shift down.
+     *
+     * @param[in] idx Caller-validated existing row index.
+     */
+    void erase_at(int idx) { (void)take_row(idx); }
 
-        e(infil_model);
-        e(infil_p1);
-        e(infil_p2);
-        e(infil_p3);
-        e(infil_p4);
-        e(infil_p5);
+    /**
+     * @brief Remove a subcatchment's cells from every column, chunks included, and return them as
+     *        a one-row SubcatchData. put_row(idx, row) is the exact inverse while the pollutant and
+     *        land-use strides are unchanged.
+     * @param[in] idx Caller-validated existing subcatchment index.
+     */
+    SubcatchData take_row(int idx) {
+        auto q_conc = soa::take_chunk(conc, idx, conc_n_pollutants);
+        auto q_conc_old = soa::take_chunk(conc_old, idx, conc_n_pollutants);
+        auto q_init_loading = soa::take_chunk(init_loading, idx, conc_n_pollutants);
+        auto q_ponded_qual = soa::take_chunk(ponded_qual, idx, conc_n_pollutants);
+        auto q_runon_qual_rate = soa::take_chunk(runon_qual_rate, idx, conc_n_pollutants);
+        auto q_lid_drain_runon_qual = soa::take_chunk(lid_drain_runon_qual, idx, conc_n_pollutants);
+        auto q_washoff_load = soa::take_chunk(washoff_load, idx, conc_n_pollutants);
+        auto load = soa::take_chunk(total_load, idx, total_load_n_pollutants);
+        auto l_coverage = soa::take_chunk(coverage, idx, coverage_n_landuses);
+        auto l_sweep_last_swept = soa::take_chunk(sweep_last_swept, idx, coverage_n_landuses);
+        auto l_sweep_now = soa::take_chunk(sweep_now, idx, coverage_n_landuses);
+        auto l_sweep_last_date = soa::take_chunk(sweep_last_date, idx, coverage_n_landuses);
+        SubcatchData row = soa::take_row(*this, idx);
+        row.conc = std::move(q_conc);
+        row.conc_old = std::move(q_conc_old);
+        row.init_loading = std::move(q_init_loading);
+        row.ponded_qual = std::move(q_ponded_qual);
+        row.runon_qual_rate = std::move(q_runon_qual_rate);
+        row.lid_drain_runon_qual = std::move(q_lid_drain_runon_qual);
+        row.washoff_load = std::move(q_washoff_load);
+        row.total_load = std::move(load);
+        row.coverage = std::move(l_coverage);
+        row.sweep_last_swept = std::move(l_sweep_last_swept);
+        row.sweep_now = std::move(l_sweep_now);
+        row.sweep_last_date = std::move(l_sweep_last_date);
+        return row;
+    }
 
-        e(runoff);
-        e(rainfall);
-        e(evap_loss);
-        e(infil_loss);
-        e(ponded_depth);
-        e(gw_flow);
-        e(snow_depth);
-        e(lid_drain_flow);
-        e(old_runoff);
-        e(old_gw_flow);
-        e(old_snow_depth);
-        e(old_lid_drain_flow);
-        e(runon_inflow);
-        e(old_runon_inflow);
-        e(runon_rate);
-        e(outfall_runon_vol);
-        e(gw_sw_head);
-        e(gw_node_avail_flow);
-        e(gw_max_infil_vol);
-        e(comments);
-        e(tags);
-        e(rpt_flag);
-
-        e(stat_precip_vol);
-        e(stat_gw_time);
-        e(stat_runon_vol);
-        e(stat_evap_vol);
-        e(stat_infil_vol);
-        e(stat_imperv_vol);
-        e(stat_perv_vol);
-        e(stat_runoff_vol);
-        e(stat_max_runoff);
-        e(stat_gw_infil_vol);
-        e(stat_gw_upper_evap_vol);
-        e(stat_gw_lower_evap_vol);
-        e(stat_gw_deep_perc_vol);
-        e(stat_gw_flow_vol);
-        e(stat_gw_max_flow);
-        e(stat_gw_sum_theta);
-        e(stat_gw_sum_depth);
-        e(stat_gw_final_theta);
-        e(stat_gw_final_depth);
-        e(stat_gw_steps);
-
-        e(gw_aquifer);
-        e(gw_node);
-        e(gw_surf_elev);
-        e(gw_a1);
-        e(gw_b1);
-        e(gw_a2);
-        e(gw_b2);
-        e(gw_a3);
-        e(gw_tw);
-        e(gw_hstar);
-        e(gw_bot_elev);
-        e(gw_wt_elev);
-        e(gw_upper_moist);
-        e(snowpack);
-        e(snow_net_imperv);
-        e(snow_net_perv);
-        e(snow_melt_imperv);
-        e(snow_melt_perv);
-        e(snow_melt_age_imperv);
-        e(snow_melt_age_perv);
-        e(total_lid_area_ft2);
-        e(lid_return_to_perv_cfs);
-        e(lid_return_applied_cfs);
-        e(lid_drain_runon_cfs);
-
-        // Flat 2D quality arrays: [sc * np + p]
-        if (conc_n_pollutants > 0) {
-            const auto np = static_cast<std::size_t>(conc_n_pollutants);
-            const auto base = ui * np;
-            auto erase2d = [&](auto& v) {
-                if (base + np <= v.size())
-                    v.erase(v.begin() + static_cast<std::ptrdiff_t>(base),
-                            v.begin() + static_cast<std::ptrdiff_t>(base + np));
-            };
-            erase2d(conc);
-            erase2d(conc_old);
-            erase2d(init_loading);
-            erase2d(ponded_qual);
-            erase2d(runon_qual_rate);
-            erase2d(lid_drain_runon_qual);
-            erase2d(washoff_load);
-        }
-
-        // Flat 2D total load: [sc * np + p]
-        if (total_load_n_pollutants > 0) {
-            const auto np = static_cast<std::size_t>(total_load_n_pollutants);
-            const auto base = ui * np;
-            if (base + np <= total_load.size())
-                total_load.erase(total_load.begin() + static_cast<std::ptrdiff_t>(base),
-                                 total_load.begin() + static_cast<std::ptrdiff_t>(base + np));
-        }
-
-        // Flat 2D coverage/sweep matrices: [sc * n_lu + lu]
-        if (coverage_n_landuses > 0) {
-            const auto nlu = static_cast<std::size_t>(coverage_n_landuses);
-            const auto base = ui * nlu;
-            auto erase2d = [&](auto& v) {
-                if (base + nlu <= v.size())
-                    v.erase(v.begin() + static_cast<std::ptrdiff_t>(base),
-                            v.begin() + static_cast<std::ptrdiff_t>(base + nlu));
-            };
-            erase2d(coverage);
-            erase2d(sweep_last_swept);
-        }
+    /**
+     * @brief Insert a row taken by take_row back at idx; later subcatchments shift up by one.
+     * @param[in] idx Index the row was taken from.
+     * @param[in] row Value returned by take_row(idx), taken with the current strides.
+     */
+    void put_row(int idx, SubcatchData&& row) {
+        soa::put_chunk(conc, idx, conc_n_pollutants, row.conc);
+        soa::put_chunk(conc_old, idx, conc_n_pollutants, row.conc_old);
+        soa::put_chunk(init_loading, idx, conc_n_pollutants, row.init_loading);
+        soa::put_chunk(ponded_qual, idx, conc_n_pollutants, row.ponded_qual);
+        soa::put_chunk(runon_qual_rate, idx, conc_n_pollutants, row.runon_qual_rate);
+        soa::put_chunk(lid_drain_runon_qual, idx, conc_n_pollutants, row.lid_drain_runon_qual);
+        soa::put_chunk(washoff_load, idx, conc_n_pollutants, row.washoff_load);
+        soa::put_chunk(total_load, idx, total_load_n_pollutants, row.total_load);
+        soa::put_chunk(coverage, idx, coverage_n_landuses, row.coverage);
+        soa::put_chunk(sweep_last_swept, idx, coverage_n_landuses, row.sweep_last_swept);
+        soa::put_chunk(sweep_now, idx, coverage_n_landuses, row.sweep_now);
+        soa::put_chunk(sweep_last_date, idx, coverage_n_landuses, row.sweep_last_date);
+        soa::put_row(*this, idx, std::move(row));
     }
 
     /**

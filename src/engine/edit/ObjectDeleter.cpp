@@ -406,30 +406,7 @@ static void erase_subcatch_patterns(SimulationContext& ctx, int idx) {
  * @param[in] idx Usage-row index; each individual column is erased only if present.
  */
 static void erase_lid_usage(SimulationContext& ctx, int idx) {
-    auto& lu = ctx.lid_usage;
-    const auto ui = static_cast<std::size_t>(idx);
-    auto e = [&](auto& v) {
-        if (ui < v.size())
-            v.erase(v.begin() + static_cast<std::ptrdiff_t>(idx));
-    };
-    e(lu.subcatch_index);
-    e(lu.lid_index);
-    e(lu.number);
-    e(lu.area);
-    e(lu.width);
-    e(lu.init_sat);
-    e(lu.from_imperv);
-    e(lu.to_perv);
-    e(lu.rpt_file);
-    e(lu.drain_to);
-    e(lu.from_perv);
-    e(lu.wb_inflow);
-    e(lu.wb_evap);
-    e(lu.wb_infil);
-    e(lu.wb_surf_flow);
-    e(lu.wb_drain_flow);
-    e(lu.wb_init_vol);
-    e(lu.wb_final_vol);
+    (void)soa::take_row(ctx.lid_usage, idx);
 }
 
 // True when the treatment store is sized consistently for stripe erasure.
@@ -1198,15 +1175,47 @@ CascadeResult delete_link(SimulationContext& ctx, int link_idx, DeleteRecord* re
 // DELETE — subcatchment
 // ============================================================================
 
-CascadeResult delete_subcatch(SimulationContext& ctx, int sc_idx) {
+CascadeResult delete_subcatch(SimulationContext& ctx, int sc_idx, DeleteRecord* record) {
     CascadeResult result;
-    moveNamedOverrides(ctx, "SUBCATCHMENT", sc_idx, ctx.subcatch_names.name_of(sc_idx), {});
+    const std::string sc_name = ctx.subcatch_names.name_of(sc_idx);
     auto& surface = ctx.reactions.surface;
+    if (record) {
+        record_user_flags(ctx, "SUBCATCHMENT", sc_name, *record);
+        // moveNamedOverrides drops this subcatchment's surface loading rows, and any row that
+        // already had no subcatchment name.
+        auto loadings = rows_where(surface.rows.loadings, [&](const auto& row) {
+            return CiEqual{}(row.subcatch, sc_name) || row.subcatch.empty();
+        });
+        if (!loadings.empty())
+            record->add({}, [loadings](SimulationContext& c) {
+                insert_rows(c.reactions.surface.rows.loadings, loadings);
+            });
+    }
+    moveNamedOverrides(ctx, "SUBCATCHMENT", sc_idx, sc_name, {});
     if (surface.n_species > 0 && surface.init_loading.size() == static_cast<std::size_t>(ctx.n_subcatches()) * surface.n_species) {
-        const auto begin = surface.init_loading.begin() + static_cast<std::size_t>(sc_idx) * surface.n_species;
-        surface.init_loading.erase(begin, begin + surface.n_species);
+        auto chunk = soa::take_chunk(surface.init_loading, sc_idx, surface.n_species);
+        if (record)
+            record->add(
+                [ns = surface.n_species](const SimulationContext& c) {
+                    return c.reactions.surface.n_species == ns;
+                },
+                [sc_idx, ns = surface.n_species, chunk](SimulationContext& c) {
+                    soa::put_chunk(c.reactions.surface.init_loading, sc_idx, ns, chunk);
+                });
     }
     for (auto* laws : {&ctx.reactions.wet_laws, &ctx.reactions.buildup_laws}) {
+        if (record) {
+            const bool wet = laws == &ctx.reactions.wet_laws;
+            auto owned = rows_where(*laws, [sc_idx](const auto& l) { return l.subcatchment == sc_idx; });
+            if (!laws->empty())
+                record->add({}, [wet, sc_idx, owned](SimulationContext& c) {
+                    auto& v = wet ? c.reactions.wet_laws : c.reactions.buildup_laws;
+                    for (auto& l : v)
+                        if (l.subcatchment >= sc_idx)
+                            ++l.subcatchment;
+                    insert_rows(v, owned);
+                });
+        }
         laws->erase(std::remove_if(laws->begin(), laws->end(),
                                    [&](const auto& l) { return l.subcatchment == sc_idx; }),
                     laws->end());
@@ -1215,7 +1224,12 @@ CascadeResult delete_subcatch(SimulationContext& ctx, int sc_idx) {
                 --l.subcatchment;
     }
 
+    // In a subcatchment batch a later delete can remove or move the rows the reference steps
+    // below name, so they record no check; each undo runs on the model exactly as its step left
+    // it.
+
     // --- Step 1: nullify outlet_subcatch references ---
+    std::vector<int> cleared_outlets;
     const int nsc = ctx.n_subcatches();
     for (int i = 0; i < nsc; ++i) {
         if (i == sc_idx)
@@ -1223,36 +1237,63 @@ CascadeResult delete_subcatch(SimulationContext& ctx, int sc_idx) {
         if (ctx.subcatches.outlet_subcatch[static_cast<std::size_t>(i)] == sc_idx) {
             ctx.subcatches.outlet_subcatch[static_cast<std::size_t>(i)] = -1;
             result.add(SWMM_REF_SUBCATCH, i, "outlet_subcatch", false);
+            cleared_outlets.push_back(i);
         }
     }
+    if (record && !cleared_outlets.empty())
+        record->add({}, [cleared_outlets, sc_idx](SimulationContext& c) {
+            for (int i : cleared_outlets)
+                c.subcatches.outlet_subcatch[static_cast<std::size_t>(i)] = sc_idx;
+        });
 
     // --- Step 2: nullify outfall_route_to on nodes ---
+    std::vector<int> cleared_routes; // outfall table rows
     const int nn = ctx.n_nodes();
     for (int i = 0; i < nn; ++i) {
         const int r = ctx.node_subtypes.outfall_row(i);
         if (r >= 0 && ctx.node_subtypes.outfalls.route_to[static_cast<std::size_t>(r)] == sc_idx) {
             ctx.node_subtypes.outfalls.route_to[static_cast<std::size_t>(r)] = -1;
             result.add(SWMM_REF_NODE, i, "outfall_route_to", false);
+            cleared_routes.push_back(r);
         }
     }
+    if (record && !cleared_routes.empty())
+        record->add({}, [cleared_routes, sc_idx](SimulationContext& c) {
+            for (int r : cleared_routes)
+                c.node_subtypes.outfalls.route_to[static_cast<std::size_t>(r)] = sc_idx;
+        });
 
     // --- Step 2b: cascade-delete LID usage rows on this subcatchment ---
+    std::vector<std::pair<int, LidUsageStore>> taken_lids;
     for (int i = ctx.lid_usage.count() - 1; i >= 0; --i) {
         if (ctx.lid_usage.subcatch_index[static_cast<std::size_t>(i)] == sc_idx) {
             result.add(SWMM_REF_LID_USAGE, i, "subcatch_index", true);
-            erase_lid_usage(ctx, i);
+            if (record)
+                taken_lids.emplace_back(i, soa::take_row(ctx.lid_usage, i));
+            else
+                erase_lid_usage(ctx, i);
         }
     }
+    if (record && !taken_lids.empty())
+        record->add({}, [taken_lids](SimulationContext& c) {
+            // Taken in descending order; reinsert ascending.
+            for (auto it = taken_lids.rbegin(); it != taken_lids.rend(); ++it) {
+                auto row = it->second;
+                soa::put_row(c.lid_usage, std::min(it->first, c.lid_usage.count()),
+                             std::move(row));
+            }
+        });
 
     // --- Step 2c: clear name-based references (LID drain_to, snowpack removal) ---
     {
-        const std::string sc_name = ctx.subcatch_names.name_of(sc_idx);
+        std::vector<std::pair<int, std::string>> cleared_drains, cleared_removals;
         if (!sc_name.empty()) {
             for (int i = 0; i < ctx.lid_usage.count(); ++i) {
                 const auto ui = static_cast<std::size_t>(i);
                 if (ui < ctx.lid_usage.drain_to.size() &&
                     ctx.node_names.find(ctx.lid_usage.drain_to[ui]) < 0 &&
                     ctx.subcatch_names.find(ctx.lid_usage.drain_to[ui]) == sc_idx) {
+                    cleared_drains.emplace_back(i, ctx.lid_usage.drain_to[ui]);
                     ctx.lid_usage.drain_to[ui].clear();
                     result.add(SWMM_REF_LID_USAGE, i, "drain_to", false);
                 }
@@ -1261,26 +1302,87 @@ CascadeResult delete_subcatch(SimulationContext& ctx, int sc_idx) {
                 const auto ui = static_cast<std::size_t>(i);
                 if (ui < ctx.snowpacks.removal_subcatch.size() &&
                     ctx.snowpacks.removal_subcatch[ui] == sc_name) {
+                    cleared_removals.emplace_back(i, ctx.snowpacks.removal_subcatch[ui]);
                     ctx.snowpacks.removal_subcatch[ui].clear();
                     result.add(SWMM_REF_SNOWPACK, i, "removal_subcatch", false);
                 }
             }
         }
+        if (record && (!cleared_drains.empty() || !cleared_removals.empty()))
+            record->add({}, [cleared_drains, cleared_removals](SimulationContext& c) {
+                for (const auto& [row, name] : cleared_drains)
+                    c.lid_usage.drain_to[static_cast<std::size_t>(row)] = name;
+                for (const auto& [row, name] : cleared_removals)
+                    c.snowpacks.removal_subcatch[static_cast<std::size_t>(row)] = name;
+            });
     }
 
     // --- Step 3: erase SoA row ---
-    erase_subcatch_spatial(ctx, sc_idx);
-    erase_subcatch_patterns(ctx, sc_idx);
-    const std::string subcatch_name = ctx.subcatch_names.name_of(sc_idx);
-    for (const char* type : {"LATERAL", "DEEP"})
-        ctx.options.ext_options.erase("GWF:" + subcatch_name + ":" + type);
-    ctx.subcatch_names.remove_at(sc_idx);
-    ctx.subcatches.erase_at(sc_idx);
+    if (record) {
+        auto x = take_cell(ctx.spatial.subcatch_x, sc_idx);
+        auto y = take_cell(ctx.spatial.subcatch_y, sc_idx);
+        auto px = take_cell(ctx.spatial.subcatch_polygon_x, sc_idx);
+        auto py = take_cell(ctx.spatial.subcatch_polygon_y, sc_idx);
+        auto n_perv = take_cell(ctx.subcatch_n_perv_pattern, sc_idx);
+        auto d_store = take_cell(ctx.subcatch_d_store_pattern, sc_idx);
+        auto infil = take_cell(ctx.subcatch_infil_pattern, sc_idx);
+        auto base_n = take_cell(ctx.base_n_perv, sc_idx);
+        auto base_ds = take_cell(ctx.base_ds_perv, sc_idx);
+        std::vector<std::pair<std::string, std::string>> gwf;
+        for (const char* type : {"LATERAL", "DEEP"}) {
+            const std::string key = "GWF:" + sc_name + ":" + type;
+            const auto it = ctx.options.ext_options.find(key);
+            if (it != ctx.options.ext_options.end()) {
+                gwf.emplace_back(it->first, it->second);
+                ctx.options.ext_options.erase(it);
+            }
+        }
+        ctx.subcatch_names.remove_at(sc_idx);
+        auto row = std::make_shared<SubcatchData>(ctx.subcatches.take_row(sc_idx));
+        record->add(
+            [sc_name, conc_np = ctx.subcatches.conc_n_pollutants,
+             load_np = ctx.subcatches.total_load_n_pollutants,
+             n_lu = ctx.subcatches.coverage_n_landuses](const SimulationContext& c) {
+                return c.subcatch_names.find(sc_name) < 0 &&
+                       c.subcatches.conc_n_pollutants == conc_np &&
+                       c.subcatches.total_load_n_pollutants == load_np &&
+                       c.subcatches.coverage_n_landuses == n_lu;
+            },
+            [sc_idx, sc_name, row, x, y, px, py, n_perv, d_store, infil, base_n, base_ds,
+             gwf](SimulationContext& c) {
+                c.subcatches.put_row(sc_idx, std::move(*row));
+                c.subcatch_names.insert_at(sc_idx, sc_name);
+                for (const auto& [key, value] : gwf)
+                    c.options.ext_options[key] = value;
+                put_cell(c.base_ds_perv, sc_idx, base_ds);
+                put_cell(c.base_n_perv, sc_idx, base_n);
+                put_cell(c.subcatch_infil_pattern, sc_idx, infil);
+                put_cell(c.subcatch_d_store_pattern, sc_idx, d_store);
+                put_cell(c.subcatch_n_perv_pattern, sc_idx, n_perv);
+                put_cell(c.spatial.subcatch_polygon_y, sc_idx, py);
+                put_cell(c.spatial.subcatch_polygon_x, sc_idx, px);
+                put_cell(c.spatial.subcatch_y, sc_idx, y);
+                put_cell(c.spatial.subcatch_x, sc_idx, x);
+            });
+    } else {
+        erase_subcatch_spatial(ctx, sc_idx);
+        erase_subcatch_patterns(ctx, sc_idx);
+        for (const char* type : {"LATERAL", "DEEP"})
+            ctx.options.ext_options.erase("GWF:" + sc_name + ":" + type);
+        ctx.subcatch_names.remove_at(sc_idx);
+        ctx.subcatches.erase_at(sc_idx);
+    }
 
     // --- Step 4: renumber ---
     renumber_refs(ctx.subcatches.outlet_subcatch, sc_idx);
     renumber_refs(ctx.node_subtypes.outfalls.route_to, sc_idx);
     renumber_refs(ctx.lid_usage.subcatch_index, sc_idx);
+    if (record)
+        record->add({}, [sc_idx](SimulationContext& c) {
+            renumber_refs_up(c.subcatches.outlet_subcatch, sc_idx);
+            renumber_refs_up(c.node_subtypes.outfalls.route_to, sc_idx);
+            renumber_refs_up(c.lid_usage.subcatch_index, sc_idx);
+        });
 
     return result;
 }
@@ -1481,9 +1583,11 @@ CascadeResult delete_links_many(SimulationContext& ctx, std::vector<int> indices
                             [&ctx, record](int i) { return delete_link(ctx, i, record); });
 }
 
-CascadeResult delete_subcatches_many(SimulationContext& ctx, std::vector<int> indices) {
+CascadeResult delete_subcatches_many(SimulationContext& ctx, std::vector<int> indices,
+                                     DeleteRecord* record) {
     NameBulkScope scope{&ctx.subcatch_names};
-    return delete_many_impl(std::move(indices), [&ctx](int i) { return delete_subcatch(ctx, i); });
+    return delete_many_impl(std::move(indices),
+                            [&ctx, record](int i) { return delete_subcatch(ctx, i, record); });
 }
 
 CascadeResult delete_gages_many(SimulationContext& ctx, std::vector<int> indices,

@@ -969,3 +969,400 @@ TEST_F(DeleteRecordTest, NodeRestoreRefusesATakenName) {
     EXPECT_EQ(write("2_refused.inp"), before);
     swmm_delete_record_destroy(record);
 }
+
+namespace {
+
+// Two subcatchments whose rain gage and snowpack are later deleted, so the writer falls back to
+// the names each subcatchment retains.
+const char* kRetainedNamesInp = R"([TITLE]
+Subcatchment delete keeps later subcatchments' retained gage and snowpack names
+
+[OPTIONS]
+FLOW_UNITS           CFS
+INFILTRATION         HORTON
+FLOW_ROUTING         KINWAVE
+START_DATE           01/01/2024
+START_TIME           00:00:00
+END_DATE             01/01/2024
+END_TIME             06:00:00
+
+[RAINGAGES]
+G0      INTENSITY  0:15  1.0  TIMESERIES TS1
+G1      INTENSITY  0:15  1.0  TIMESERIES TS1
+
+[SNOWPACKS]
+SP0     PLOWABLE    0.001 0.001 32 0.1 0 0 0
+SP0     IMPERVIOUS  0.001 0.001 32 0.1 0 0 0
+SP0     PERVIOUS    0.001 0.001 32 0.1 0 0 0
+SP1     PLOWABLE    0.001 0.001 32 0.1 0 0 0
+SP1     IMPERVIOUS  0.001 0.001 32 0.1 0 0 0
+SP1     PERVIOUS    0.001 0.001 32 0.1 0 0 0
+
+[SUBCATCHMENTS]
+S0      G0  J1  1  50  100  0.5  0  SP0
+S1      G1  J1  1  50  100  0.5  0  SP1
+
+[SUBAREAS]
+S0      0.01  0.1  0.05  0.05  25  OUTLET
+S1      0.01  0.1  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+S0      3.0  0.5  4  7  0
+S1      3.0  0.5  4  7  0
+
+[JUNCTIONS]
+J1      0  5  0  0  0
+
+[OUTFALLS]
+O1      -1  FREE  NO
+
+[CONDUITS]
+C1      J1  O1  100  0.01  0  0  0  0
+
+[XSECTIONS]
+C1      CIRCULAR  1  0  0  0  1
+
+[TIMESERIES]
+TS1     0:00  0.5
+TS1     1:00  0.0
+)";
+
+} // namespace
+
+// SubcatchData::erase_at skipped gage_name and snowpack_name, which the [SUBCATCHMENTS] writer
+// uses when the gage or snowpack index is unset. Deleting S0 then gave S1 S0's names (G0, SP0):
+// a valid gage, so the saved file reopened with S1 on the wrong rain.
+TEST_F(DeleteRecordTest, SubcatchDeleteKeepsLaterRetainedNames) {
+    open_fixture(kRetainedNamesInp);
+    ASSERT_EQ(swmm_gage_delete(engine, swmm_gage_index(engine, "G1"), nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_snowpack_delete(engine, 1, nullptr), SWMM_OK); // SP1
+    ASSERT_EQ(swmm_subcatch_delete(engine, swmm_subcatch_index(engine, "S0"), nullptr), SWMM_OK);
+    const std::string saved = write("1_deleted.inp");
+    std::istringstream in(saved);
+    std::string line, section;
+    std::vector<std::string> s1;
+    while (std::getline(in, line)) {
+        if (!line.empty() && line[0] == '[')
+            section = line;
+        std::istringstream cols(line);
+        std::vector<std::string> c;
+        for (std::string t; cols >> t;)
+            c.push_back(t);
+        if (section.rfind("[SUBCATCHMENTS]", 0) == 0 && !c.empty() && c[0] == "S1")
+            s1 = c;
+    }
+    ASSERT_GE(s1.size(), 8u) << saved;
+    EXPECT_EQ(s1[1], "G1");
+    // Deleting SP1 cleared S1's retained snowpack name; S1 must not pick up S0's (SP0).
+    EXPECT_EQ(s1.size(), 8u) << "snowpack column: " << (s1.size() > 8 ? s1[8] : "");
+}
+
+namespace {
+
+// S2 is referred to by every table that can name a subcatchment: S1 drains to it, an outfall
+// routes to it, a LID usage drains to it and a snowpack removes snow to it; it owns LID usage
+// rows, coverages, loadings, a groundwater flow expression, a pattern adjustment, a polygon, a
+// tag and a user flag. S3 (after it) carries the same kinds of rows, and S4 drains to S3, so
+// their indices are renumbered by its delete. Reaction laws are added through the API.
+const char* kSubcatchInp = R"([TITLE]
+Delete-record round trip: every table that can refer to a subcatchment refers to S2
+
+[OPTIONS]
+FLOW_UNITS           CFS
+INFILTRATION         HORTON
+FLOW_ROUTING         KINWAVE
+START_DATE           01/01/2024
+START_TIME           00:00:00
+END_DATE             01/01/2024
+END_TIME             06:00:00
+
+[RAINGAGES]
+G1      INTENSITY  0:15  1.0  TIMESERIES TS1
+
+[SNOWPACKS]
+SP1     PLOWABLE    0.001 0.001 32 0.1 0 0 0
+SP1     IMPERVIOUS  0.001 0.001 32 0.1 0 0 0
+SP1     PERVIOUS    0.001 0.001 32 0.1 0 0 0
+SP1     REMOVAL     1.0  0  0  0  0  0  S2
+
+[SUBCATCHMENTS]
+S1      G1  S2  1  50  100  0.5  0
+S2      G1  J1  2  40  200  0.5  10  SP1
+S3      G1  J1  3  30  300  0.5  0
+S4      G1  S3  4  20  400  0.5  0
+
+[SUBAREAS]
+S1      0.01  0.1  0.05  0.05  25  OUTLET
+S2      0.01  0.1  0.05  0.05  25  OUTLET
+S3      0.01  0.1  0.05  0.05  25  OUTLET
+S4      0.01  0.1  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+S1      3.0  0.5  4  7  0
+S2      3.1  0.5  4  7  0
+S3      3.2  0.5  4  7  0
+S4      3.3  0.5  4  7  0
+
+[AQUIFERS]
+A1      0.5  0.15  0.30  0.1  12  15  0.35  14  0  0  4  0.3
+
+[GROUNDWATER]
+S2      A1  J1  6  1  1  0  0  0  0  *
+S3      A1  J1  6  1  1  0  0  0  0  *
+
+[GWF]
+S2      LATERAL  0.001*HGW
+S3      DEEP     0.0001
+
+[LID_CONTROLS]
+RB      RB
+RB      STORAGE  36  0.75  0  0  YES
+RB      DRAIN    0   0.5   0  6
+RB2     RB
+RB2     STORAGE  24  0.75  0  0  YES
+RB2     DRAIN    0   0.5   0  6
+
+[LID_USAGE]
+S1      RB   1  100  0  0  100  0  *  S2
+S2      RB   1  100  0  0  100  0
+S3      RB   1  100  0  0  100  0
+S2      RB2  2  50   0  0  50   0
+
+[JUNCTIONS]
+J1      0  5  0  0  0
+
+[OUTFALLS]
+O1      -1  FREE  NO  S2
+O2      -2  FREE  NO  S3
+
+[CONDUITS]
+C1      J1  O1  100  0.01  0  0  0  0
+C2      J1  O2  100  0.01  0  0  0  0
+
+[XSECTIONS]
+C1      CIRCULAR  1  0  0  0  1
+C2      CIRCULAR  1  0  0  0  1
+
+[POLLUTANTS]
+TSS     MG/L  0  0  0  0  NO  *  0  0  0
+
+[LANDUSES]
+LU1     0  0  0
+LU2     0  0  0
+
+[COVERAGES]
+S2      LU1  50  LU2  50
+S3      LU1  100
+
+[LOADINGS]
+S2      TSS  1.5
+S3      TSS  2.5
+
+[PATTERNS]
+P1      MONTHLY  1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0
+
+[ADJUSTMENTS]
+N-PERV  S2  P1
+
+[TIMESERIES]
+TS1     0:00  0.5
+TS1     1:00  0.0
+
+[TAGS]
+Subcatch  S2  Big
+
+[USER_FLAGS]
+Owner   STRING
+
+[USER_FLAG_VALUES]
+SUBCATCHMENT  S2  Owner  city
+SUBCATCHMENT  S3  Owner  county
+
+[COORDINATES]
+J1      0    0
+O1      100  0
+O2      100  50
+
+[POLYGONS]
+S2      0    100
+S2      50   100
+S2      50   150
+S3      100  100
+S3      150  100
+S3      150  150
+
+[SYMBOLS]
+G1      10   10
+)";
+
+const char* kSubcatchReactions = R"([REACTION_SPECIES]
+BULK A MG
+
+[REACTION_SUBCATCHMENTS]
+SUBCATCHMENT S1 RATE A -0.1*A
+SUBCATCHMENT S2 RATE A -0.2*A
+SUBCATCHMENT S3 RATE A -0.3*A
+)";
+
+// Every index-based reference into the subcatchment table, as names.
+std::vector<std::string> subcatch_refs(SWMM_Engine e) {
+    std::vector<std::string> refs;
+    auto name = [&](int i) { return i < 0 ? std::string("-") : std::string(swmm_subcatch_id(e, i)); };
+    for (int s = 0; s < swmm_subcatch_count(e); ++s) {
+        int sc = -2;
+        EXPECT_EQ(swmm_subcatch_get_outlet_subcatch(e, s, &sc), SWMM_OK);
+        refs.push_back(std::string(swmm_subcatch_id(e, s)) + " drains to subcatch " + name(sc));
+    }
+    for (int n = 0; n < swmm_node_count(e); ++n) {
+        int sc = -2;
+        EXPECT_EQ(swmm_node_get_outfall_route_to(e, n, &sc), SWMM_OK);
+        refs.push_back(std::string(swmm_node_id(e, n)) + " routes to " + name(sc));
+    }
+    for (int row = 0; row < swmm_lid_usage_count(e); ++row) {
+        SWMM_LidUsageRecord r{};
+        EXPECT_EQ(swmm_lid_usage_get_record(e, row, &r), SWMM_OK);
+        refs.push_back("lid usage on " + name(r.subcatch_idx) + " drains to " +
+                       (r.drain_to ? r.drain_to : ""));
+    }
+    return refs;
+}
+
+std::vector<std::string> subcatch_ids(SWMM_Engine e) {
+    std::vector<std::string> ids;
+    for (int i = 0; i < swmm_subcatch_count(e); ++i)
+        ids.emplace_back(swmm_subcatch_id(e, i));
+    return ids;
+}
+
+} // namespace
+
+TEST_F(DeleteRecordTest, SubcatchRestoresExactly) {
+    open_fixture(kSubcatchInp);
+    char err[256] = {0};
+    ASSERT_EQ(swmm_reactions_apply_text(engine, kSubcatchReactions, err, sizeof err), SWMM_OK)
+        << err;
+    const auto reactions = reactions_text(engine);
+    const auto ids = subcatch_ids(engine);
+    const auto refs = subcatch_refs(engine);
+    const int s2 = swmm_subcatch_index(engine, "S2");
+    ASSERT_EQ(s2, 1);
+    int route = -2;
+    ASSERT_EQ(swmm_node_get_outfall_route_to(engine, swmm_node_index(engine, "O1"), &route),
+              SWMM_OK);
+    ASSERT_EQ(route, s2);
+    ASSERT_EQ(swmm_lid_usage_count(engine), 4);
+    const std::string original = write("1_original.inp");
+    std::ofstream(dir / "1_original.rxn", std::ios::binary) << reactions;
+
+    SWMM_DeleteRecord record = nullptr;
+    ASSERT_EQ(swmm_subcatch_delete_recorded(engine, s2, nullptr, &record), SWMM_OK);
+    write("2_deleted.inp");
+    std::ofstream(dir / "2_deleted.rxn", std::ios::binary) << reactions_text(engine);
+    EXPECT_EQ(swmm_subcatch_index(engine, "S2"), -1);
+    EXPECT_EQ(swmm_lid_usage_count(engine), 2);
+
+    ASSERT_EQ(swmm_delete_record_restore(engine, record), SWMM_OK);
+    swmm_delete_record_destroy(record);
+    EXPECT_EQ(write("3_restored.inp"), original);
+    EXPECT_EQ(subcatch_ids(engine), ids);
+    EXPECT_EQ(subcatch_refs(engine), refs);
+    EXPECT_EQ(reactions_text(engine), reactions);
+
+    // Redo then undo again.
+    ASSERT_EQ(swmm_subcatch_delete_recorded(engine, s2, nullptr, &record), SWMM_OK);
+    ASSERT_EQ(swmm_delete_record_restore(engine, record), SWMM_OK);
+    swmm_delete_record_destroy(record);
+    EXPECT_EQ(write("4_redo_undo.inp"), original);
+}
+
+TEST_F(DeleteRecordTest, SubcatchBatchRestoresExactly) {
+    open_fixture(kSubcatchInp);
+    char err[256] = {0};
+    ASSERT_EQ(swmm_reactions_apply_text(engine, kSubcatchReactions, err, sizeof err), SWMM_OK)
+        << err;
+    const auto reactions = reactions_text(engine);
+    const auto ids = subcatch_ids(engine);
+    const auto refs = subcatch_refs(engine);
+    const std::string original = write("1_original.inp");
+
+    std::vector<int> indices;
+    for (const char* id : {"S1", "S2", "S3"})
+        indices.push_back(swmm_subcatch_index(engine, id));
+    SWMM_DeleteRecord record = nullptr;
+    ASSERT_EQ(swmm_subcatch_delete_many_recorded(engine, indices.data(),
+                                                 static_cast<int>(indices.size()), nullptr,
+                                                 &record),
+              SWMM_OK);
+    write("2_deleted.inp");
+    EXPECT_EQ(subcatch_ids(engine), std::vector<std::string>{"S4"});
+    EXPECT_EQ(swmm_lid_usage_count(engine), 0);
+
+    ASSERT_EQ(swmm_delete_record_restore(engine, record), SWMM_OK);
+    swmm_delete_record_destroy(record);
+    EXPECT_EQ(write("3_restored.inp"), original);
+    EXPECT_EQ(subcatch_ids(engine), ids);
+    EXPECT_EQ(subcatch_refs(engine), refs);
+    EXPECT_EQ(reactions_text(engine), reactions);
+}
+
+TEST_F(DeleteRecordTest, SubcatchRestoreRefusesATakenName) {
+    open_fixture(kSubcatchInp);
+    SWMM_DeleteRecord record = nullptr;
+    ASSERT_EQ(swmm_subcatch_delete_recorded(engine, swmm_subcatch_index(engine, "S2"), nullptr,
+                                            &record),
+              SWMM_OK);
+    ASSERT_EQ(swmm_subcatch_rename(engine, swmm_subcatch_index(engine, "S4"), "S2"), SWMM_OK);
+    const std::string before = write("1_deleted_then_renamed.inp");
+    EXPECT_EQ(swmm_delete_record_restore(engine, record), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(write("2_refused.inp"), before);
+    swmm_delete_record_destroy(record);
+}
+
+// Surface (reaction) species: S2 and S3 carry [LOADINGS] rows for species X, which the reaction
+// component keeps by subcatchment name and resolves into a per-subcatchment initial-loading
+// array. The component is attached at load from a config file next to the input.
+TEST_F(DeleteRecordTest, SubcatchRestoresSurfaceLoadings) {
+    const fs::path case_dir =
+        kOutRoot / ::testing::UnitTest::GetInstance()->current_test_info()->name();
+    fs::create_directories(case_dir);
+    const fs::path rxn = case_dir / "surface.rxn";
+    std::ofstream(rxn, std::ios::binary) << "[REACTION_OPTIONS]\nSOLVER RK5\n"
+                                            "[REACTION_SPECIES]\nBULK X MG\n"
+                                            "[REACTION_PIPES]\nRATE X 0\n"
+                                            "[REACTION_TANKS]\nRATE X 0\n";
+    std::string text = kSubcatchInp;
+    const std::string loadings = "[LOADINGS]\nS2      TSS  1.5\nS3      TSS  2.5\n";
+    ASSERT_NE(text.find(loadings), std::string::npos);
+    text.replace(text.find(loadings), loadings.size(),
+                 "[LOADINGS]\nS2      TSS  1.5\nS2      X    7.25\nS3      TSS  2.5\n"
+                 "S3      X    8.5\n\n"
+                 "[BUILDUP]\nLU1  X  POW  100  2  1  AREA\n\n"
+                 "[WASHOFF]\nLU1  X  EXP  0.1  1.0  0  0\n");
+    text += "\n[PROCESS_COMPONENTS]\norg.hydrocouple.openswmm.reactions config=\"" +
+            rxn.string() + "\"\n";
+    open_fixture(text.c_str());
+    const std::string original = write("1_original.inp");
+    ASSERT_NE(original.find("S2               X"), std::string::npos) << original;
+
+    SWMM_DeleteRecord record = nullptr;
+    ASSERT_EQ(swmm_subcatch_delete_recorded(engine, swmm_subcatch_index(engine, "S2"), nullptr,
+                                            &record),
+              SWMM_OK);
+    const std::string deleted = write("2_deleted.inp");
+    EXPECT_EQ(deleted.find("S2               X"), std::string::npos);
+    EXPECT_NE(deleted.find("S3               X"), std::string::npos);
+    ASSERT_EQ(swmm_delete_record_restore(engine, record), SWMM_OK);
+    swmm_delete_record_destroy(record);
+    EXPECT_EQ(write("3_restored.inp"), original);
+
+    std::vector<int> indices;
+    for (const char* id : {"S2", "S3"})
+        indices.push_back(swmm_subcatch_index(engine, id));
+    ASSERT_EQ(swmm_subcatch_delete_many_recorded(engine, indices.data(),
+                                                 static_cast<int>(indices.size()), nullptr,
+                                                 &record),
+              SWMM_OK);
+    ASSERT_EQ(swmm_delete_record_restore(engine, record), SWMM_OK);
+    swmm_delete_record_destroy(record);
+    EXPECT_EQ(write("4_batch_restored.inp"), original);
+}

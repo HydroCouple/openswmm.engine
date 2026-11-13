@@ -491,6 +491,18 @@ SWMM_ENGINE_API int swmm_node_delete_many_recorded(SWMM_Engine engine, const int
     SWMM_DELETE_MANY_RECORDED_BODY(ctx.n_nodes(), delete_nodes_many);
 }
 
+SWMM_ENGINE_API int swmm_subcatch_delete_recorded(SWMM_Engine engine, int idx,
+                                                  SWMM_ImpactReport* cascade_out,
+                                                  SWMM_DeleteRecord* record_out) {
+    SWMM_DELETE_RECORDED_BODY(ctx.n_subcatches(), delete_subcatch);
+}
+
+SWMM_ENGINE_API int swmm_subcatch_delete_many_recorded(SWMM_Engine engine, const int* indices,
+                                                       int n, SWMM_ImpactReport* cascade_out,
+                                                       SWMM_DeleteRecord* record_out) {
+    SWMM_DELETE_MANY_RECORDED_BODY(ctx.n_subcatches(), delete_subcatches_many);
+}
+
 #undef SWMM_DELETE_RECORDED_BODY
 #undef SWMM_DELETE_MANY_RECORDED_BODY
 

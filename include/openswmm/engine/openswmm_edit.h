@@ -541,6 +541,24 @@ SWMM_ENGINE_API int swmm_node_delete_many_recorded(SWMM_Engine engine, const int
                                                    SWMM_DeleteRecord* record_out);
 
 /**
+ * @brief Delete a subcatchment as swmm_subcatch_delete() does, and record how to undo it: the
+ *        subcatchment's row, name, polygon and patterns, its LID usage rows, surface loadings,
+ *        reaction laws, groundwater flow expressions and user flags, and every reference the
+ *        delete cleared or renumbered. Arguments and return as swmm_gage_delete_recorded().
+ */
+SWMM_ENGINE_API int swmm_subcatch_delete_recorded(SWMM_Engine engine, int idx,
+                                                  SWMM_ImpactReport* cascade_out,
+                                                  SWMM_DeleteRecord* record_out);
+
+/**
+ * @brief Delete several subcatchments as swmm_subcatch_delete_many() does, and record how to
+ *        undo the whole batch. Arguments and return as swmm_gage_delete_many_recorded().
+ */
+SWMM_ENGINE_API int swmm_subcatch_delete_many_recorded(SWMM_Engine engine, const int* indices,
+                                                       int n, SWMM_ImpactReport* cascade_out,
+                                                       SWMM_DeleteRecord* record_out);
+
+/**
  * @brief Delete several rain gages as swmm_gage_delete_many() does, and record how to undo the
  *        whole batch.
  *

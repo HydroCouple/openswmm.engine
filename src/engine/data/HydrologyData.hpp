@@ -41,6 +41,7 @@
 #include <cmath>
 
 #include "../core/FilePathPair.hpp"
+#include "SoaRow.hpp"
 
 namespace openswmm {
 
@@ -209,6 +210,32 @@ struct LidUsageStore {
      * @return subcatch_index.size() converted to int; no parallel-column or reference-validity checks.
      */
     int count() const { return static_cast<int>(subcatch_index.size()); }
+
+    /**
+     * @brief Call @p f with a pointer to every per-row column member; the one list the
+     *        subcatchment delete and its record share (SoaRow.hpp).
+     */
+    template <class F>
+    static void for_each_column(F&& f) {
+        f(&LidUsageStore::subcatch_index);
+        f(&LidUsageStore::lid_index);
+        f(&LidUsageStore::number);
+        f(&LidUsageStore::area);
+        f(&LidUsageStore::width);
+        f(&LidUsageStore::init_sat);
+        f(&LidUsageStore::from_imperv);
+        f(&LidUsageStore::to_perv);
+        f(&LidUsageStore::rpt_file);
+        f(&LidUsageStore::drain_to);
+        f(&LidUsageStore::from_perv);
+        f(&LidUsageStore::wb_inflow);
+        f(&LidUsageStore::wb_evap);
+        f(&LidUsageStore::wb_infil);
+        f(&LidUsageStore::wb_surf_flow);
+        f(&LidUsageStore::wb_drain_flow);
+        f(&LidUsageStore::wb_init_vol);
+        f(&LidUsageStore::wb_final_vol);
+    }
 
     std::vector<int> subcatch_index; ///< Subcatchment index
     std::vector<int> lid_index;      ///< Index into LidControlStore
