@@ -266,9 +266,6 @@ void finishGeometry(MeshData& m) {
             }
             m.edge_nx[sl] = nxv;
             m.edge_ny[sl] = nyv;
-            m.edge_dist_c[sl] =
-                std::fabs((m.edge_mx(sl) - m.tri_cx[t]) * nxv +
-                          (m.edge_my(sl) - m.tri_cy[t]) * nyv);
             m.edge_conveyance[sl] = 1.0;
         }
     }

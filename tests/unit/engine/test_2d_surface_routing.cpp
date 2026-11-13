@@ -502,6 +502,15 @@ TEST(MeshData, EdgeMidpointsComeFromTheVertices) {
     EXPECT_DOUBLE_EQ(mesh.edge_mz(MeshData::slot(0, 2)), 2.0);
     EXPECT_DOUBLE_EQ(mesh.edge_mz(MeshData::slot(0, 3)), 0.0); // padding slot
     EXPECT_EQ(mesh.edge_mid_values(2), (std::vector<double>{5.0, 4.0, 2.0, 0.0}));
+    // The centroid-to-edge distance (W6b) is (midpoint - centroid) . normal: 2A / (3 L) on a
+    // triangle, 0 on the padding slot.
+    for (int e = 0; e < 3; ++e) {
+        const auto slot = MeshData::slot(0, e);
+        EXPECT_NEAR(mesh.edge_dist_c(slot), 2.0 * mesh.tri_area[0] / (3.0 * mesh.edge_length[slot]),
+                    1e-12);
+    }
+    EXPECT_EQ(mesh.edge_dist_c(MeshData::slot(0, 3)), 0.0);
+    EXPECT_EQ(mesh.edge_dist_c_values().size(), 4u);
     mesh.vz[2] = 9.0; // a bed edit shows without a refresh
     EXPECT_DOUBLE_EQ(mesh.edge_mz(MeshData::slot(0, 0)), 6.0);
 
@@ -510,6 +519,8 @@ TEST(MeshData, EdgeMidpointsComeFromTheVertices) {
     bare.size_geometry();
     EXPECT_EQ(bare.edge_mid_values(0), std::vector<double>(8, 0.0));
     EXPECT_DOUBLE_EQ(bare.edge_mz(MeshData::slot(1, 2)), 0.0);
+    EXPECT_EQ(bare.edge_dist_c_values(), std::vector<double>(8, 0.0));
+    EXPECT_FALSE(std::signbit(bare.edge_dist_c(MeshData::slot(1, 2))));
 }
 
 // The solver's per-edge arrays that only one mode reads are built only when

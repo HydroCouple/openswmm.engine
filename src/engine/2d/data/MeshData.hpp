@@ -103,11 +103,6 @@ struct MeshData {
     std::vector<double> edge_length; ///< Length of each edge
     std::vector<double> edge_nx;     ///< Outward normal X component
     std::vector<double> edge_ny;     ///< Outward normal Y component
-    /// Centroid → edge-midpoint distance along the outward normal,
-    /// (m⃗_e − c⃗)·n̂_e (m). For a triangle this equals the classic 2A/(3ξ)
-    /// (the centroid sits one third of the altitude up); for a quad it is the
-    /// exact normal distance. The ghost-cell arm every boundary-edge law uses.
-    std::vector<double> edge_dist_c;
 
     /// Quad VFR precomputed data (B&S 2007 two-plane storage model, see
     /// mesh/QuadVfr.hpp): per CELL, six sorted sub-triangle elevations
@@ -551,7 +546,7 @@ struct MeshData {
         for (auto* v : {&tri_area, &tri_cx, &tri_cy, &tri_cz})
             v->assign(n, 0.0);
         for (auto* v :
-             {&edge_length, &edge_nx, &edge_ny, &edge_dist_c})
+             {&edge_length, &edge_nx, &edge_ny})
             v->assign(n4, 0.0);
     }
 
@@ -579,6 +574,34 @@ struct MeshData {
     double edge_mx(std::size_t s) const noexcept { return edge_mid(vx, s); }
     double edge_my(std::size_t s) const noexcept { return edge_mid(vy, s); } ///< @copydoc edge_mx
     double edge_mz(std::size_t s) const noexcept { return edge_mid(vz, s); } ///< @copydoc edge_mx
+    /**
+     * @brief Centroid-to-edge normal distance of an edge slot (the ghost-cell arm), m.
+     *
+     * (midpoint - centroid) . outward normal. For a triangle this equals the classic 2A/(3 xi)
+     * (the centroid sits one third of the altitude up); for a quad it is the exact normal
+     * distance: the ghost-cell arm every boundary-edge law uses. Computed where read
+     * (boundary edges, groundwater boundaries and faces at setup) rather than stored for every
+     * slot (32 MB per million cells). 0 on a triangle's padding slot and when the edge's vertices
+     * are not in the mesh.
+     * @param[in] s Edge slot, slot(cell, edge), of an existing cell with built geometry.
+     */
+    double edge_dist_c(std::size_t s) const noexcept {
+        int a, b;
+        if (s >= edge_nx.size() || !edge_ends(s, a, b))
+            return 0.0;
+        const auto c = static_cast<std::size_t>(slot_cell(static_cast<int>(s)));
+        const double to_mid_x = 0.5 * (vx[static_cast<std::size_t>(a)] + vx[static_cast<std::size_t>(b)]) - tri_cx[c];
+        const double to_mid_y = 0.5 * (vy[static_cast<std::size_t>(a)] + vy[static_cast<std::size_t>(b)]) - tri_cy[c];
+        return to_mid_x * edge_nx[s] + to_mid_y * edge_ny[s];
+    }
+    /// The centroid distances of every slot as the array they replaced (empty until
+    /// geometry_built()): what a checkpoint identity encodes.
+    std::vector<double> edge_dist_c_values() const {
+        std::vector<double> v(geometry_built() ? edge_length.size() : 0);
+        for (std::size_t s = 0; s < v.size(); ++s)
+            v[s] = edge_dist_c(s);
+        return v;
+    }
     /// The midpoints of every slot as the arrays they replaced (empty until geometry_built()):
     /// what a checkpoint identity encodes. axis 0 = x, 1 = y, 2 = z.
     std::vector<double> edge_mid_values(int axis) const {
@@ -590,17 +613,21 @@ struct MeshData {
     }
 
 private:
-    double edge_mid(const std::vector<double>& coord, std::size_t s) const noexcept {
+    /// The two vertices of an edge slot; false for a triangle's padding slot and for a mesh sized
+    /// without its vertices (size_geometry() on hand-set cells), whose geometry is zero.
+    bool edge_ends(std::size_t s, int& a, int& b) const noexcept {
         const int c = slot_cell(static_cast<int>(s)), k = slot_local(static_cast<int>(s));
         if (k >= cell_nv[static_cast<std::size_t>(c)])
-            return 0.0;
-        int a, b;
+            return false;
         cell_edge_vertices(c, k, a, b);
-        // A mesh sized without its vertices (size_geometry() on hand-set cells) has zero geometry.
-        const auto ua = static_cast<std::size_t>(a), ub = static_cast<std::size_t>(b);
-        if (a < 0 || b < 0 || ua >= coord.size() || ub >= coord.size())
+        return a >= 0 && b >= 0 && static_cast<std::size_t>(a) < vx.size() &&
+               static_cast<std::size_t>(b) < vx.size();
+    }
+    double edge_mid(const std::vector<double>& coord, std::size_t s) const noexcept {
+        int a, b;
+        if (!edge_ends(s, a, b))
             return 0.0;
-        return 0.5 * (coord[ua] + coord[ub]);
+        return 0.5 * (coord[static_cast<std::size_t>(a)] + coord[static_cast<std::size_t>(b)]);
     }
 
     /**

@@ -167,7 +167,7 @@ int edgeCheck(SWMMEngine& eng, int d, int cell, int edge) {
         return SWMM_ERR_BADINDEX;
     const int slot = MeshData::slot(cell, edge);
     return m.cell_neighbour(cell, edge) < 0 && m.edge_length[slot] > 0.0 &&
-                   m.edge_dist_c[slot] > 0.0
+                   m.edge_dist_c(slot) > 0.0
                ? SWMM_OK
                : SWMM_ERR_BADPARAM;
 }

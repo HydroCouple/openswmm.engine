@@ -214,7 +214,7 @@ inline double boundaryEdgeFlux(const MeshData& mesh, const SurfaceStateData& sta
         // uses the precomputed centroid→edge normal distance.
         const double dx_b = (mesh.cell_vertex_count(i) == 3)
                                 ? ((L > 1.0e-12) ? (2.0 * A) / (3.0 * L) : 0.0)
-                                : mesh.edge_dist_c[idx];
+                                : mesh.edge_dist_c(idx);
         if (dx_b <= 1.0e-12)
             return 0.0;
         double h_up;

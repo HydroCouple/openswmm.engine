@@ -250,7 +250,6 @@ bool buildMeshTopologyCancellable(MeshData& mesh, const std::function<bool(int)>
                 // Padding slot: zero geometry, so a stray read is inert.
                 mesh.edge_length[idx] = 0.0;
                 mesh.edge_nx[idx] = mesh.edge_ny[idx] = 0.0;
-                mesh.edge_dist_c[idx] = 0.0;
                 continue;
             }
             int va, vb;
@@ -290,8 +289,8 @@ bool buildMeshTopologyCancellable(MeshData& mesh, const std::function<bool(int)>
                 mesh.edge_nx[idx] = 0.0;
                 mesh.edge_ny[idx] = 0.0;
             }
-            // Centroid → edge normal distance (the ghost-cell arm).
-            mesh.edge_dist_c[idx] = to_mid_x * mesh.edge_nx[idx] + to_mid_y * mesh.edge_ny[idx];
+            // The centroid → edge normal distance (the ghost-cell arm) is
+            // MeshData::edge_dist_c(): to_mid · n over these same values.
         }
         if (report(65, 35, t, nt))
             return false;

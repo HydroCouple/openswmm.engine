@@ -2665,7 +2665,7 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells, double
             // verbatim for bit-identity), edge_dist_c for a quad.
             const double slope = (mesh_->cell_vertex_count(i) == 3)
                                      ? deta * (3.0 * L) / (2.0 * mesh_->tri_area[i])
-                                     : deta / mesh_->edge_dist_c[idx];
+                                     : deta / mesh_->edge_dist_c(idx);
             const double n = mesh_->mannings_n[i];
             double qn1 = inertial::inertialFaceUpdate(bc_q_[k], bc_q_[k], hf, dt_c, slope, n * n,
                                                       std::fabs(bc_q_[k]));

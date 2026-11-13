@@ -165,7 +165,7 @@ void InertialEdges::build(const MeshData& mesh, Needs needs) {
                 // cells). Only matters until a neighbour opens.
                 double dmin = 1.0e300;
                 for (int e = 0; e < mesh.cell_vertex_count(t); ++e)
-                    dmin = std::min(dmin, mesh.edge_dist_c[MeshData::slot(t, e)]);
+                    dmin = std::min(dmin, mesh.edge_dist_c(MeshData::slot(t, e)));
                 cell_lchar[t] = (dmin > 0.0 && dmin < 1.0e300) ? 2.0 * dmin : 0.0;
             }
         }

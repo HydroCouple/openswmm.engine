@@ -1792,8 +1792,8 @@ TEST(GroundHeat, SkewedHeterogeneousFaceCarriesAdvectionAndDispersiveHeatConserv
     ASSERT_EQ(edges.ne, 1);
     ASSERT_EQ(edges.cL[0], 0);
     ASSERT_EQ(edges.cR[0], 1);
-    EXPECT_GT(std::abs(mesh.edge_dist_c[std::size_t(edges.slotL[0])] -
-                       mesh.edge_dist_c[std::size_t(edges.slotR[0])]),
+    EXPECT_GT(std::abs(mesh.edge_dist_c(std::size_t(edges.slotL[0])) -
+                       mesh.edge_dist_c(std::size_t(edges.slotR[0]))),
               .01);
     const double centroid_distance =
         std::hypot(mesh.tri_cx[0] - mesh.tri_cx[1], mesh.tri_cy[0] - mesh.tri_cy[1]);
@@ -2231,8 +2231,8 @@ TEST(GroundHeat, LateralConductionUsesHeterogeneousCellMaterialsAndClosesEnergy)
         const double height = std::min(high, table) - low;
         if (height > 0) {
             const double resistance =
-                mesh.edge_dist_c[std::size_t(left_slot)] / left.conductivity[std::size_t(j)] +
-                mesh.edge_dist_c[std::size_t(right_slot)] / right.conductivity[std::size_t(k)];
+                mesh.edge_dist_c(std::size_t(left_slot)) / left.conductivity[std::size_t(j)] +
+                mesh.edge_dist_c(std::size_t(right_slot)) / right.conductivity[std::size_t(k)];
             conductance += mesh.edge_length[std::size_t(left_slot)] * height / resistance;
         }
         if (left_bottom >= right_bottom)
@@ -2462,8 +2462,8 @@ TEST(GroundHeat, HeterogeneousLateralContactUsesBothSkewedCellNormalDistances) {
             right_slot = openswmm::twoD::kMaxCellVerts + edge;
     ASSERT_GE(left_slot, 0);
     ASSERT_GE(right_slot, 0);
-    EXPECT_GT(std::abs(mesh.edge_dist_c[std::size_t(left_slot)] -
-                       mesh.edge_dist_c[std::size_t(right_slot)]),
+    EXPECT_GT(std::abs(mesh.edge_dist_c(std::size_t(left_slot)) -
+                       mesh.edge_dist_c(std::size_t(right_slot))),
               .01);
 
     const double table =
@@ -2480,8 +2480,8 @@ TEST(GroundHeat, HeterogeneousLateralContactUsesBothSkewedCellNormalDistances) {
         const double height = std::min(high, table) - low;
         if (height > 0) {
             const double resistance =
-                mesh.edge_dist_c[std::size_t(left_slot)] / left.conductivity[std::size_t(j)] +
-                mesh.edge_dist_c[std::size_t(right_slot)] / right.conductivity[std::size_t(k)];
+                mesh.edge_dist_c(std::size_t(left_slot)) / left.conductivity[std::size_t(j)] +
+                mesh.edge_dist_c(std::size_t(right_slot)) / right.conductivity[std::size_t(k)];
             const double g = mesh.edge_length[std::size_t(left_slot)] * height / resistance;
             const double tl = left.energy[std::size_t(j)] / left.capacity[std::size_t(j)];
             const double tr = right.energy[std::size_t(k)] / right.capacity[std::size_t(k)];

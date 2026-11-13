@@ -121,7 +121,7 @@ resolveGwBoundaries(SimulationContext& ctx, const MeshData& mesh, const Subsurfa
         b.edge = edge;
         b.head = authored.head;
         b.length = mesh.edge_length[slot];
-        b.distance = mesh.edge_dist_c[slot];
+        b.distance = mesh.edge_dist_c(slot);
         if (!std::isfinite(b.length) || !(b.length > 0) || !std::isfinite(b.distance) ||
             !(b.distance > 0))
             bad("invalid edge geometry");

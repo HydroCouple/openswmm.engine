@@ -336,8 +336,8 @@ TEST(QuadMesh, SkewedQuadGeometry) {
         // Outward: (midpoint − centroid)·n > 0 and equals edge_dist_c.
         const double dmx = mesh.edge_mx(s) - mesh.tri_cx[0];
         const double dmy = mesh.edge_my(s) - mesh.tri_cy[0];
-        EXPECT_GT(mesh.edge_dist_c[s], 0.0);
-        EXPECT_NEAR(mesh.edge_dist_c[s], dmx * mesh.edge_nx[s] + dmy * mesh.edge_ny[s], 1e-12);
+        EXPECT_GT(mesh.edge_dist_c(s), 0.0);
+        EXPECT_NEAR(mesh.edge_dist_c(s), dmx * mesh.edge_nx[s] + dmy * mesh.edge_ny[s], 1e-12);
         EXPECT_EQ(mesh.cell_neighbour(0, k), -1);
     }
 }
@@ -355,10 +355,10 @@ TEST(QuadMesh, TriangleEdgeDistMatchesTwoAOverThreeL) {
     buildMeshTopology(mesh);
     for (int k = 0; k < 3; ++k) {
         const int s = MeshData::slot(0, k);
-        EXPECT_NEAR(mesh.edge_dist_c[s], 2.0 * mesh.tri_area[0] / (3.0 * mesh.edge_length[s]),
+        EXPECT_NEAR(mesh.edge_dist_c(s), 2.0 * mesh.tri_area[0] / (3.0 * mesh.edge_length[s]),
                     1e-12);
     }
-    EXPECT_EQ(mesh.edge_dist_c[MeshData::slot(0, 3)], 0.0); // padding
+    EXPECT_EQ(mesh.edge_dist_c(MeshData::slot(0, 3)), 0.0); // padding
     EXPECT_EQ(mesh.cell_neighbour(0, 3), -2);
 }
 
@@ -397,7 +397,7 @@ TEST(QuadMesh, ClockwiseQuadAccepted) {
     EXPECT_TRUE(validateMesh(mesh).empty()) << validateMesh(mesh);
     EXPECT_NEAR(mesh.tri_area[0], 4.0, 1e-12);
     for (int k = 0; k < 4; ++k)
-        EXPECT_GT(mesh.edge_dist_c[MeshData::slot(0, k)], 0.0);
+        EXPECT_GT(mesh.edge_dist_c(MeshData::slot(0, k)), 0.0);
 }
 
 // ---------------------------------------------------------------------------

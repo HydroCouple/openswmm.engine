@@ -562,7 +562,7 @@ void SubsurfaceSolver::refreshCellBound(int i, const MeshData& mesh, const Inert
             const auto slot = MeshData::slot(i, boundary.boundary_edge);
             const double outside = std::abs(boundary.boundary_head - state_.z_bed[u]);
             sumT +=
-                state_.Ks[u] * mesh.edge_length[slot] / mesh.edge_dist_c[slot] * (2 * zs + outside);
+                state_.Ks[u] * mesh.edge_length[slot] / mesh.edge_dist_c(slot) * (2 * zs + outside);
         }
     }
     // Deep loss is a linear sink with rate c_loss/z_s; the node exchange
@@ -2543,7 +2543,7 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
                 const double outside = std::max(s.boundary_head, state_.z_bed[u]);
                 const double height = std::clamp(outside - state_.z_bed[u], 0.0, zs);
                 const double conductance = state_.Ks[u] * 0.5 * (hg0 + height) *
-                                           mesh_->edge_length[slot] / mesh_->edge_dist_c[slot];
+                                           mesh_->edge_length[slot] / mesh_->edge_dist_c(slot);
                 s.flow = conductance * (outside - state_.z_bed[u] - hg0);
             }
             if (runtime_rk2) {
@@ -3194,8 +3194,8 @@ std::string SubsurfaceSolver::initLateralHeat() {
         auto& face = heat_faces_[e];
         const auto& a = heat_.cells[l].column;
         const auto& b = heat_.cells[r].column;
-        face.distance_left = mesh_->edge_dist_c[edges.slotL[e]];
-        face.distance_right = mesh_->edge_dist_c[edges.slotR[e]];
+        face.distance_left = mesh_->edge_dist_c(edges.slotL[e]);
+        face.distance_right = mesh_->edge_dist_c(edges.slotR[e]);
         if (!(face.distance_left > 0) || !(face.distance_right > 0) ||
             !std::isfinite(face.distance_left) || !std::isfinite(face.distance_right))
             return "Lateral heat contact requires positive cell-centroid normal distances on both sides of every face.";

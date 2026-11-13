@@ -947,7 +947,7 @@ GwResolvedBoundary rk2FlowEdge(const CoupledRkRig& rig, int cell, const GwSource
         result.edge = edge;
         result.signal = signal;
         result.length = rig.mesh.edge_length[slot];
-        result.distance = rig.mesh.edge_dist_c[slot];
+        result.distance = rig.mesh.edge_dist_c(slot);
         return result;
     }
     throw std::runtime_error("Test cell has no exterior edge");
@@ -9068,7 +9068,7 @@ TEST(CoupledGroundwaterRk2, GroundBoundaryHeadHasIndependentAnalyticalSecondOrde
         const int slot = MeshData::slot(0, r.gw.runtimeSources().rows[0].boundary_edge);
         const double coefficient =
             .02 * r.mesh.edge_length[slot] /
-            (2 * r.mesh.edge_dist_c[slot] * (w.theta_s[0] - w.theta_r[0]) * w.area[0]);
+            (2 * r.mesh.edge_dist_c(slot) * (w.theta_s[0] - w.theta_r[0]) * w.area[0]);
         const double exact = .8 * std::tanh(std::atanh(.6 / .8) + coefficient * .8 * 2);
         ASSERT_NO_THROW(r.solver.advance(0, 2));
         const double error = std::abs(w.hg[0] - exact);
