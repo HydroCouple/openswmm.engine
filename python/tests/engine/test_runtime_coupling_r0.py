@@ -63,6 +63,7 @@ C1 J1 O1 10 0.013 0 0
 [XSECTIONS]
 C1 CIRCULAR 0.5 0 0 0
 [2D_OPTIONS]
+MOMENTUM_EQUATION LOCAL_INERTIAL
 MAX_TIMESTEP 5
 DRY_DEPTH 0.001
 [2D_VERTICES]
@@ -108,8 +109,11 @@ def _edge_length(surface, cell, edge):
 
 
 def _start_groundwater(name, *, source_flow=None):
-    """The shared mixed tri/quad model with an aquifer carrying TSS at 5."""
-    solver = _open(name, GW_MODEL.replace("0.03 0.1", "0.03 0"))
+    """The shared mixed tri/quad model with an aquifer carrying TSS at 5, local inertial (runtime
+    groundwater source edits are refused under FULL_SWE, the default since 2026-11-13)."""
+    model = GW_MODEL.replace("0.03 0.1", "0.03 0")
+    model = model.replace("[2D_OPTIONS]\n", "[2D_OPTIONS]\nMOMENTUM_EQUATION LOCAL_INERTIAL\n", 1)
+    solver = _open(name, model)
     gw = solver.surface2d.groundwater
     gw.options["NODE_ENROLMENT"] = "ROWS"
     gw.add_row(CellScope.GLOBAL, 36, 0.5, 0.45, 0.1, 2)

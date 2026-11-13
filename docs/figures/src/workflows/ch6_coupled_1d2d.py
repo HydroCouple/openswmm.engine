@@ -20,8 +20,8 @@ import numpy as np
 REQUIRES = ("openswmm", "h5py")
 
 DECK = "coupled_1d2d/2d_complete_example.inp"
-CLOSURES = [("LOCAL_INERTIAL", "local inertial (the default)", "fv"),
-            ("FULL_SWE", "full shallow water", "dw"),
+CLOSURES = [("LOCAL_INERTIAL", "local inertial", "fv"),
+            ("FULL_SWE", "full shallow water (the default)", "dw"),
             ("DIFFUSIVE_WAVE", "diffusive wave", "fv-lts")]
 WATCH = 4          # the cell whose depth history the second figure follows
 BC_COLOUR = {"NORMAL_FLOW": "#1baf7a", "TS_STAGE": "#2a78d6", "RATING_CURVE": "#6f42c1",
