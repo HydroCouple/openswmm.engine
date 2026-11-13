@@ -1043,14 +1043,17 @@ private:
      * @param[in] t Time dimension power.
      * @param[in] kind Intensive/extensive quantity semantics.
      * @param[in] factor Multiplicative SI conversion factor, offset0.
+     * @param[in] conceptURI Vocabulary URI of the quantity (a QUDT quantity kind), or empty.
      * @return Borrowed output pointer, owner vector retains object until clear/destruction; no
      * transfer. Allocation/description signal/append can throw, no engine/clock advance. Caller
      * updates fields map separately.
      */
     Output* add(const std::string& id, HC::DataKind type = HC::DataKind::Float64,
                 std::string unit = "unitless", double l = 0, double m = 0, double t = 0,
-                HC::ValueKind kind = HC::ValueKind::Extensive, double factor = 1) {
-        auto item = std::make_unique<Output>(id, this, type, unit, l, m, t, kind, factor);
+                HC::ValueKind kind = HC::ValueKind::Extensive, double factor = 1,
+                std::string conceptURI = {}) {
+        auto item = std::make_unique<Output>(id, this, type, unit, l, m, t, kind, factor,
+                                             std::move(conceptURI));
         auto* result = item.get();
         result->setDescription(std::string(profile) + ";field=" + id);
         outputs_.push_back(std::move(item));
@@ -1070,13 +1073,21 @@ private:
                                   std::string("interval_end_s")})
             fields_[field] =
                 add(field, HC::DataKind::Float64, field == "epoch_julian_day" ? "day" : "s", 0, 0,
-                    1, HC::ValueKind::Intensive, field == "epoch_julian_day" ? 86400 : 1);
+                    1, HC::ValueKind::Intensive, field == "epoch_julian_day" ? 86400 : 1,
+                    qudtQuantityKind("Time"));
         for (size_t i = 0; i < species_.size() + 2; ++i)
             for (const auto& prefix : {"", "exported.", "unreceived."}) {
                 const std::string field = prefix + amountField(i);
-                fields_[field] = i == 0   ? add(field, HC::DataKind::Float64, "m3", 3)
-                                 : i == 1 ? add(field, HC::DataKind::Float64, "J", 2, 1, -2)
-                                          : add(field, HC::DataKind::Float64, "kg", 0, 1);
+                // Water volume, enthalpy and species mass, each named by its QUDT kind.
+                fields_[field] = i == 0   ? add(field, HC::DataKind::Float64, "m3", 3, 0, 0,
+                                                HC::ValueKind::Extensive, 1,
+                                                qudtQuantityKind("Volume"))
+                                 : i == 1 ? add(field, HC::DataKind::Float64, "J", 2, 1, -2,
+                                                HC::ValueKind::Extensive, 1,
+                                                qudtQuantityKind("Enthalpy"))
+                                          : add(field, HC::DataKind::Float64, "kg", 0, 1, 0,
+                                                HC::ValueKind::Extensive, 1,
+                                                qudtQuantityKind("Mass"));
             }
     }
     /**

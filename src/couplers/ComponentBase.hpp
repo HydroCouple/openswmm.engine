@@ -231,11 +231,42 @@ public:
      * allocate. Caller keeps owner/pointees stable during access.
      */
     double offsetToSI() const override { return 0; }
+    /**
+     * @brief UDUNITS-2 symbol of this unit (HydroCouple ABI 5).
+     * @return The symbol for a unit label this layer uses (m3, J, kg, s, day); empty for any
+     * other label, which is a display string and is not offered as a code.
+     */
+    std::string symbol() const override { return code(false); }
+    /**
+     * @brief UCUM code of this unit (HydroCouple ABI 5).
+     * @return The code for a known label, as for symbol(); empty otherwise.
+     */
+    std::string ucumCode() const override { return code(true); }
 
 private:
+    /**
+     * @brief UDUNITS-2 symbol or UCUM code of the unit labels the coupling layer declares.
+     * @param[in] ucum True for the UCUM code, false for the UDUNITS-2 symbol.
+     * @return Empty for an unknown label; "unitless" is not declared either, since string
+     * items carry that default label too.
+     */
+    std::string code(bool ucum) const {
+        const std::string& label = caption();
+        if (label == "m3" || label == "J" || label == "kg" || label == "s") return label;
+        if (label == "day") return ucum ? "d" : "day";
+        return {};
+    }
     UnitDimensions dimensions_;
     double factor_;
 };
+/**
+ * @brief IRI of a QUDT quantity kind, the concept a generic engine quantity declares.
+ * @param[in] kind QUDT local name ("Volume", "Mass", ...); not validated.
+ * @return http://qudt.org/vocab/quantitykind/<kind>.
+ */
+inline std::string qudtQuantityKind(const char* kind) {
+    return std::string("http://qudt.org/vocab/quantitykind/") + kind;
+}
 class Definition : public Identity, public HC::IQuantity {
 public:
     /**
@@ -246,12 +277,15 @@ public:
      * @param[in] t Time exponent.
      * @param[in] kind Intensive/extensive/unknown value semantics retained verbatim.
      * @param[in] factor Multiplicative value-to-SI scale, offset always0.
+     * @param[in] conceptURI Vocabulary URI of the quantity (a QUDT quantity kind), or empty.
      * @note Missing NaN, default0 and infinite extrema are metadata, not setter validation.
      * Construction may allocate.
      */
     Definition(std::string unit = "unitless", double l = 0, double m = 0, double t = 0,
-               HC::ValueKind kind = HC::ValueKind::Extensive, double factor = 1)
-        : Identity("value"), unit_(unit, l, m, t, factor), kind_(kind) {}
+               HC::ValueKind kind = HC::ValueKind::Extensive, double factor = 1,
+               std::string conceptURI = {})
+        : Identity("value"), unit_(unit, l, m, t, factor), kind_(kind),
+          conceptURI_(std::move(conceptURI)) {}
     /**
      * @brief Read stored valueKind metadata.
      * @return Stored quantity intensive/extensive/unknown semantics.
@@ -259,6 +293,16 @@ public:
      * allocate. Caller keeps owner/pointees stable during access.
      */
     HC::ValueKind valueKind() const override { return kind_; }
+    /**
+     * @brief CF standard name of the quantity (HydroCouple ABI 5).
+     * @return Empty: the CF table names no interval transfer totals, so none is declared.
+     */
+    std::string standardName() const override { return {}; }
+    /**
+     * @brief Vocabulary URI of the quantity (HydroCouple ABI 5).
+     * @return The QUDT quantity kind given at construction, or empty when none was.
+     */
+    std::string conceptURI() const override { return conceptURI_; }
     /**
      * @brief Read stored missingValue metadata.
      * @return Quiet NaN marker, not stored physical value.
@@ -298,6 +342,7 @@ public:
 private:
     Unit unit_;
     HC::ValueKind kind_;
+    std::string conceptURI_;
 };
 using ValueEvent = const std::shared_ptr<HC::IComponentDataItemValueChanged>&;
 class Item : public Identity, public virtual HC::IComponentDataItem, public Signal<ValueEvent> {
@@ -316,15 +361,18 @@ public:
      * @param[in] t Time exponent.
      * @param[in] valueKind Quantity semantics; String always forces Unknown.
      * @param[in] factor Multiplicative value-to-SI scale, no automatic value conversion.
+     * @param[in] conceptURI Vocabulary URI of the quantity (a QUDT quantity kind), or empty.
      * @note Owns one dimension and definition, initializes numeric0/string empty. No kind/range
      * validation or model lifecycle mutation; construction may allocate.
      */
     Item(std::string id, HC::IModelComponent* component, HC::DataKind kind = HC::DataKind::Float64,
          std::string units = "unitless", double l = 0, double m = 0, double t = 0,
-         HC::ValueKind valueKind = HC::ValueKind::Extensive, double factor = 1)
+         HC::ValueKind valueKind = HC::ValueKind::Extensive, double factor = 1,
+         std::string conceptURI = {})
         : Identity(std::move(id)), component_(component), kind_(kind), dimension_("value"),
           definition_(units, l, m, t,
-                      kind == HC::DataKind::String ? HC::ValueKind::Unknown : valueKind, factor) {}
+                      kind == HC::DataKind::String ? HC::ValueKind::Unknown : valueKind, factor,
+                      std::move(conceptURI)) {}
     /**
      * @brief Block both property and value event dispatch on this scalar item.
      * @param[in] b True suppresses both signal specializations, false reenables; no queued
@@ -474,26 +522,37 @@ public:
     /**
      * @brief Wire a nonowned compatible input as consumer, avoiding null/duplicate entries.
      * @param[in,out] i Borrowed input pointer, alive until explicitly removed or output
-     * destroyed; compatibility query and setProvider(this) called before retained raw-list
-     * append.
-     * @throws std::invalid_argument Input refuses compatibility/provider; may include
-     * diagnostic.
+     * destroyed; compatibility query and setProvider(this) -- or, for a multi-input,
+     * canConsume(this, message, providerRole) and addProvider(this, providerRole) -- called
+     * before retained raw-list append (HydroCouple ABI 5 single wiring entry point).
+     * @param[in] providerRole Role this output fills for a multi-input; must be null otherwise.
+     * @throws std::invalid_argument Input refuses compatibility/provider, or a role is given
+     * for a plain input; may include diagnostic.
      * @note Append allocation can fail after input provider changed, no rollback. No output
      * value/model advance; caller serializes reciprocal wiring and lifetime, raw pointer
      * ownership not transferred.
      */
-    void addConsumer(HC::IInput* i) override {
+    void addConsumer(HC::IInput* i, const HC::IIdentity* providerRole = nullptr) override {
         if (!i || std::find(consumers_.begin(), consumers_.end(), i) != consumers_.end())
             return;
         std::string message;
-        if (!i->canConsume(this, message) || !i->setProvider(this))
-            throw std::invalid_argument("Cannot wire output: " + message);
+        if (auto* multi = dynamic_cast<HC::IMultiInput*>(i)) {
+            if (!multi->canConsume(this, message, providerRole) ||
+                !multi->addProvider(this, providerRole))
+                throw std::invalid_argument("Cannot wire output: " + message);
+        } else {
+            if (providerRole)
+                throw std::invalid_argument(
+                    "Cannot wire output: a provider role applies only to a multi-input");
+            if (!i->canConsume(this, message) || !i->setProvider(this))
+                throw std::invalid_argument("Cannot wire output: " + message);
+        }
         consumers_.push_back(i);
     }
     /**
      * @brief Remove one borrowed consumer association and conditionally clear its provider.
-     * @param[in,out] i Borrowed input pointer identity; if still provider==this, calls
-     * setProvider(nullptr).
+     * @param[in,out] i Borrowed input pointer identity; a multi-input gets
+     * removeProvider(this), any other input setProvider(nullptr) if still provider==this.
      * @return True when list entry removed, false absent. Provider refusal ignored after
      * removal, no rollback. No deletion or physical update; external input must still be alive,
      * exclusive wiring lifecycle.
@@ -501,7 +560,9 @@ public:
     bool removeConsumer(HC::IInput* i) override {
         if (std::erase(consumers_, i) == 0)
             return false;
-        if (i && i->provider() == this)
+        if (auto* multi = dynamic_cast<HC::IMultiInput*>(i))
+            (void)multi->removeProvider(this);
+        else if (i && i->provider() == this)
             (void)i->setProvider(nullptr);
         return true;
     }

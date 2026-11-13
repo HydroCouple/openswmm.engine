@@ -51,8 +51,10 @@ set(OPENSWMM_HYDROCOUPLE_GIT_REPOSITORY
 # CF1 (2026-10-15): ABI 4 and the shared loader header are published. This full
 # SHA was verified against the upstream dev ref; do not replace it with a
 # moving branch. Explicit developer overrides still take precedence.
+# 2026-11-13: HydroCouple 2.0.0-beta.1 (ABI 5) on dev. That commit must be
+# pushed to HydroCouple before this pin is fetched.
 set(OPENSWMM_HYDROCOUPLE_GIT_TAG
-    "b1722c4d1439e9782b97519ece86cec95096eb2a"
+    "165f5474fba47cbb7e5da8ccefe120fbee39d52d"
     CACHE STRING
     "Pinned HydroCouple commit (full SHA); explicit source/install overrides are supported")
 
@@ -73,7 +75,11 @@ set(OPENSWMM_HYDROCOUPLE_GIT_TAG
 # written against HydroCouple's ABI-4 contract-consistency round — ownership
 # via std::unique_ptr creators, the normative error channel, the reconciled
 # lifecycle table — rather than ported to it later.
-set(OPENSWMM_HYDROCOUPLE_EXPECTED_ABI "4" CACHE STRING
+#
+# 5 since 2026-11-13 (HydroCouple 2.0.0-beta.1): IOutput::addConsumer() carries
+# the provider role and IValueDefinition/IUnit name their vocabularies, so
+# src/couplers no longer compiles against ABI 4. Bumped with the pin above.
+set(OPENSWMM_HYDROCOUPLE_EXPECTED_ABI "5" CACHE STRING
     "HYDROCOUPLE_ABI_VERSION the build must compile against; asserted at compile time")
 
 function(_openswmm_hydrocouple_report _how)

@@ -53,9 +53,10 @@ public:
     std::function<void(double,bool)> accept;
     std::function<void()> observe;
     std::vector<HC::IInput*> consumers()const override{return connected_;}
-    void addConsumer(HC::IInput* input)override {
+    void addConsumer(HC::IInput* input,const HC::IIdentity* providerRole=nullptr)override {
         const auto connected=consumers();if(std::find(connected.begin(),connected.end(),input)!=connected.end())return;
-        if(life_->prepared||life_->frozen()||!life_->available||!connected.empty()||!dynamic_cast<MaterialRequest*>(input))
+        // A material phase pairs with one native MaterialRequest: never a multi-input role.
+        if(providerRole||life_->prepared||life_->frozen()||!life_->available||!connected.empty()||!dynamic_cast<MaterialRequest*>(input))
             throw std::invalid_argument("Material output requires one unfrozen native consumer");
         std::string why;if(!input->canConsume(this,why)||!input->setProvider(this))throw std::invalid_argument("Cannot wire material endpoint: "+why);
         try{connected_.push_back(input);}catch(...){input->setProvider(nullptr);throw;}
