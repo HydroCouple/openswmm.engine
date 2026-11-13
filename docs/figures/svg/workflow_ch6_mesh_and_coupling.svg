@@ -107,41 +107,48 @@ z
    <g id="text_9">
     <text style="font-size: 7.2px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #898781" x="19.504225" y="242.988453" transform="rotate(-0 19.504225 242.988453)">100.17 to 100.83 m</text>
    </g>
+   <g id="line2d_2">
+    <path d="M 117.025352 129.863946 
+L 214.546479 129.863946 
+L 214.546479 32.342819 
+L 117.025352 129.863946 
+" clip-path="url(#p7197abbd1b)" style="fill: none; stroke: #e8484c; stroke-width: 2; stroke-linecap: square"/>
+   </g>
    <g id="text_10">
     <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: start" x="0" y="6.838594" transform="rotate(-0 0 6.838594)">(a) The mesh: bed elevation, boundaries and coupling points</text>
    </g>
-   <g id="line2d_2">
+   <g id="line2d_3">
     <path d="M 19.504225 227.385073 
 L 117.025352 227.385073 
 " clip-path="url(#p7197abbd1b)" style="fill: none; stroke: #1baf7a; stroke-width: 3.2; stroke-linecap: round"/>
    </g>
-   <g id="line2d_3">
+   <g id="line2d_4">
     <path d="M 117.025352 227.385073 
 L 214.546479 227.385073 
 " clip-path="url(#p7197abbd1b)" style="fill: none; stroke: #1baf7a; stroke-width: 3.2; stroke-linecap: round"/>
    </g>
-   <g id="line2d_4">
+   <g id="line2d_5">
     <path d="M 214.546479 227.385073 
 L 214.546479 129.863946 
 " clip-path="url(#p7197abbd1b)" style="fill: none; stroke: #2a78d6; stroke-width: 3.2; stroke-linecap: round"/>
    </g>
-   <g id="line2d_5">
+   <g id="line2d_6">
     <path d="M 214.546479 129.863946 
 L 214.546479 32.342819 
 " clip-path="url(#p7197abbd1b)" style="fill: none; stroke: #6f42c1; stroke-width: 3.2; stroke-linecap: round"/>
    </g>
-   <g id="line2d_6">
+   <g id="line2d_7">
     <path d="M 214.546479 32.342819 
 L 117.025352 32.342819 
 " clip-path="url(#p7197abbd1b)" style="fill: none; stroke: #eb6834; stroke-width: 3.2; stroke-linecap: round"/>
    </g>
-   <g id="line2d_7">
+   <g id="line2d_8">
     <path d="M 117.025352 32.342819 
 L 19.504225 32.342819 
 " clip-path="url(#p7197abbd1b)" style="fill: none; stroke: #eda100; stroke-width: 3.2; stroke-linecap: round"/>
    </g>
    <g id="legend_1">
-    <g id="line2d_8">
+    <g id="line2d_9">
      <path d="M 5.94 251.113313 
 L 10.56 251.113313 
 L 15.18 251.113313 
@@ -150,7 +157,7 @@ L 15.18 251.113313
     <g id="text_11">
      <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; text-anchor: start" x="20.46" y="253.423313" transform="rotate(-0 20.46 253.423313)">normal flow</text>
     </g>
-    <g id="line2d_9">
+    <g id="line2d_10">
      <path d="M 5.94 260.800875 
 L 10.56 260.800875 
 L 15.18 260.800875 
@@ -159,7 +166,7 @@ L 15.18 260.800875
     <g id="text_12">
      <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; text-anchor: start" x="20.46" y="263.110875" transform="rotate(-0 20.46 263.110875)">ts stage</text>
     </g>
-    <g id="line2d_10">
+    <g id="line2d_11">
      <path d="M 5.94 270.488438 
 L 10.56 270.488438 
 L 15.18 270.488438 
@@ -168,7 +175,7 @@ L 15.18 270.488438
     <g id="text_13">
      <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; text-anchor: start" x="20.46" y="272.798438" transform="rotate(-0 20.46 272.798438)">rating curve</text>
     </g>
-    <g id="line2d_11">
+    <g id="line2d_12">
      <path d="M 5.94 280.176 
 L 10.56 280.176 
 L 15.18 280.176 
@@ -177,7 +184,7 @@ L 15.18 280.176
     <g id="text_14">
      <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; text-anchor: start" x="20.46" y="282.486" transform="rotate(-0 20.46 282.486)">specified flow</text>
     </g>
-    <g id="line2d_12">
+    <g id="line2d_13">
      <path d="M 72.310219 251.113313 
 L 76.930219 251.113313 
 L 81.550219 251.113313 
@@ -186,7 +193,7 @@ L 81.550219 251.113313
     <g id="text_15">
      <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; text-anchor: start" x="86.830219" y="253.423313" transform="rotate(-0 86.830219 253.423313)">specified stage</text>
     </g>
-    <g id="line2d_13">
+    <g id="line2d_14">
      <path d="M 72.310219 260.800875 
 L 76.930219 260.800875 
 L 81.550219 260.800875 
@@ -211,7 +218,7 @@ z
     <g id="text_16">
      <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; text-anchor: start" x="86.830219" y="263.110875" transform="rotate(-0 86.830219 263.110875)">vertex coupled to a node</text>
     </g>
-    <g id="line2d_14">
+    <g id="line2d_15">
      <path d="M 72.310219 270.488438 
 L 76.930219 270.488438 
 L 81.550219 270.488438 
@@ -232,7 +239,7 @@ z
      <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; text-anchor: start" x="86.830219" y="272.798438" transform="rotate(-0 86.830219 272.798438)">cells tagged vault coupled to ST1</text>
     </g>
    </g>
-   <g id="line2d_15">
+   <g id="line2d_16">
     <path d="M 117.025352 129.863946 
 " clip-path="url(#p7197abbd1b)" style="fill: none; stroke: #1f77b4; stroke-width: 1.5; stroke-linecap: square"/>
     <g clip-path="url(#p7197abbd1b)">
@@ -249,56 +256,56 @@ z
 L 432.085275 227.385073 
 L 432.085275 129.863946 
 z
-" clip-path="url(#pfe526430ff)" style="fill: #3c8cc3; stroke: #898781; stroke-width: 0.8; stroke-linejoin: miter"/>
+" clip-path="url(#pfe526430ff)" style="fill: #8dc1dd; stroke: #898781; stroke-width: 0.8; stroke-linejoin: miter"/>
    </g>
    <g id="patch_11">
     <path d="M 334.564149 227.385073 
 L 432.085275 129.863946 
 L 334.564149 129.863946 
 z
-" clip-path="url(#pfe526430ff)" style="fill: #3787c0; stroke: #898781; stroke-width: 0.8; stroke-linejoin: miter"/>
+" clip-path="url(#pfe526430ff)" style="fill: #c6dbef; stroke: #898781; stroke-width: 0.8; stroke-linejoin: miter"/>
    </g>
    <g id="patch_12">
     <path d="M 432.085275 227.385073 
 L 529.606402 227.385073 
 L 529.606402 129.863946 
 z
-" clip-path="url(#pfe526430ff)" style="fill: #3484bf; stroke: #898781; stroke-width: 0.8; stroke-linejoin: miter"/>
+" clip-path="url(#pfe526430ff)" style="fill: #56a0ce; stroke: #898781; stroke-width: 0.8; stroke-linejoin: miter"/>
    </g>
    <g id="patch_13">
     <path d="M 432.085275 227.385073 
 L 529.606402 129.863946 
 L 432.085275 129.863946 
 z
-" clip-path="url(#pfe526430ff)" style="fill: #68acd5; stroke: #898781; stroke-width: 0.8; stroke-linejoin: miter"/>
+" clip-path="url(#pfe526430ff)" style="fill: #b2d2e8; stroke: #898781; stroke-width: 0.8; stroke-linejoin: miter"/>
    </g>
    <g id="patch_14">
     <path d="M 334.564149 129.863946 
 L 432.085275 129.863946 
 L 432.085275 32.342819 
 z
-" clip-path="url(#pfe526430ff)" style="fill: #2d7dbb; stroke: #898781; stroke-width: 0.8; stroke-linejoin: miter"/>
+" clip-path="url(#pfe526430ff)" style="fill: #0d57a1; stroke: #898781; stroke-width: 0.8; stroke-linejoin: miter"/>
    </g>
    <g id="patch_15">
     <path d="M 334.564149 129.863946 
 L 432.085275 32.342819 
 L 334.564149 32.342819 
 z
-" clip-path="url(#pfe526430ff)" style="fill: #0d57a1; stroke: #898781; stroke-width: 0.8; stroke-linejoin: miter"/>
+" clip-path="url(#pfe526430ff)" style="fill: #4090c5; stroke: #898781; stroke-width: 0.8; stroke-linejoin: miter"/>
    </g>
    <g id="patch_16">
     <path d="M 432.085275 129.863946 
 L 529.606402 129.863946 
 L 529.606402 32.342819 
 z
-" clip-path="url(#pfe526430ff)" style="fill: #c6dbef; stroke: #898781; stroke-width: 0.8; stroke-linejoin: miter"/>
+" clip-path="url(#pfe526430ff)" style="fill: #2575b7; stroke: #898781; stroke-width: 0.8; stroke-linejoin: miter"/>
    </g>
    <g id="patch_17">
     <path d="M 432.085275 129.863946 
 L 529.606402 32.342819 
 L 432.085275 32.342819 
 z
-" clip-path="url(#pfe526430ff)" style="fill: #84bcdb; stroke: #898781; stroke-width: 0.8; stroke-linejoin: miter"/>
+" clip-path="url(#pfe526430ff)" style="fill: #c6dbef; stroke: #898781; stroke-width: 0.8; stroke-linejoin: miter"/>
    </g>
    <g id="text_19">
     <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b; opacity: 0.6" x="399.578233" y="196.699218" transform="rotate(-0 399.578233 196.699218)">0</text>
@@ -325,7 +332,7 @@ z
     <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b; opacity: 0.6" x="464.592318" y="66.671049" transform="rotate(-0 464.592318 66.671049)">7</text>
    </g>
    <g id="text_27">
-    <text style="font-size: 7.2px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #898781" x="334.564149" y="242.988453" transform="rotate(-0 334.564149 242.988453)">0.00 to 0.67 m</text>
+    <text style="font-size: 7.2px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #898781" x="334.564149" y="242.988453" transform="rotate(-0 334.564149 242.988453)">0.21 to 0.84 m</text>
    </g>
    <g id="text_28">
     <text style="font-size: 7px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #898781" x="334.564149" y="250.790143" transform="rotate(-0 334.564149 250.790143)">cell numbers are the triangle indices the deck uses</text>

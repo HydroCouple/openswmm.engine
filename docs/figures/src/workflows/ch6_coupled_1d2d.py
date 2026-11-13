@@ -94,7 +94,12 @@ def _draw_mesh(style, run, deck_text):
         a0.plot(x[v], y[v], marker="o", ms=10, mfc="none", mec="#e8484c", mew=2.0, zorder=6,
                 label="vertex coupled to a node")
         a0.text(x[v], y[v] - 2.2, f"vertex {v} → {row[1]}", fontsize=7.0, ha="center", color="#e8484c", zorder=6)
+    tris = _section(deck_text, "2D_TRIANGLES")
     for row in _section(deck_text, "2D_TRIANGLE_NODE_MAP"):
+        for t, tr in enumerate(tris):  # outline the tagged cells (TAG is the 5th column)
+            if len(tr) > 4 and tr[4] == row[0]:
+                v = list(tri[t]) + [tri[t][0]]
+                a0.plot(x[v], y[v], color="#e8484c", lw=2.0, zorder=3)  # under the BC edges
         a0.plot([], [], marker="s", ms=8, mfc="none", mec="#e8484c", mew=2.0, lw=0,
                 label=f"cells tagged {row[0]} coupled to {row[1]}")
     a0.legend(fontsize=6.6, frameon=False, loc="lower left", ncol=2, handlelength=1.4,
@@ -107,21 +112,22 @@ def _draw_mesh(style, run, deck_text):
 
 def _draw_closures(style, series):
     import matplotlib.pyplot as plt
-    fig, ax = plt.subplots(figsize=(8.6, 4.0))
+    fig, ax = plt.subplots(figsize=(8.6, 5.4))
     fig.patch.set_facecolor(style.SURFACE)
     style.style_ax(ax)
     for (name, label, colour), (t, d, secs) in zip(CLOSURES, series):
         ax.plot(t, d, color=style.COLORS[colour], lw=1.8, label=f"MOMENTUM_EQUATION {name} — {label}")
     ax.set_xlabel("time  (hours)")
     ax.set_ylabel(f"depth in cell {WATCH}  (m)")
-    ax.legend(fontsize=7.4, frameon=False, loc="center right")
+    # Legend and note sit below the axes so neither can cover a line.
+    ax.legend(fontsize=7.4, frameon=False, loc="upper left", bbox_to_anchor=(0.0, -0.13))
     ax.set_title("The same coupled model under the three momentum closures", fontsize=9.5, loc="left")
     spread = max(float(np.max(np.abs(series[0][1] - s[1]))) for s in series[1:])
-    ax.text(0.03, 0.06, "The three closures share every other part of the marcher: the same mesh, the same time\n"
+    ax.text(0.0, -0.36, "The three closures share every other part of the marcher: the same mesh, the same time\n"
             f"stepping, the same coupling. On this cell they disagree by up to {spread:.2f} m and hold that\n"
             "disagreement — the closure is not a cosmetic choice. Eight cells under strong boundary\n"
             "forcing is a feature demonstration, not a validation: see the analytic cases of Hydraulics 9.",
-            transform=ax.transAxes, fontsize=7.4, color=style.MUTED, va="bottom", linespacing=1.45)
+            transform=ax.transAxes, fontsize=7.4, color=style.MUTED, va="top", linespacing=1.45)
     fig.tight_layout()
     return fig
 
