@@ -71,8 +71,9 @@ typedef enum SWMM_HeatFluxModule {
 
 /** Pre-run climate/snow/heat transaction. The callback may use only climate,
  * snow configuration, heat configuration (including 2D heat and GW/aquifer
- * authoring), HEAT_TRANSPORT, component registrations and climate-file path
- * setters. Returning an error restores values and provenance. The callback
+ * authoring), HEAT_TRANSPORT, component registrations, ARD transport
+ * (openswmm_transport.h) and climate-file path setters. Returning an error
+ * restores values and provenance. The callback
  * must not change topology, destroy the engine, run, or nest transactions. */
 typedef int (*SWMM_HydrothermalEdit)(SWMM_Engine engine, void* user);
 /**
@@ -179,7 +180,9 @@ SWMM_ENGINE_API void swmm_heat_snapshot_destroy(SWMM_HeatSnapshot snapshot);
 
 /** Exact pre-run authoring memento spanning simulation options, monthly
  * climate adjustments, climate/snow/UEB, heat (including 2D thermal/GW
- * authoring), shared site state and process-component registrations. It owns
+ * authoring), shared site state, process-component registrations and the ARD
+ * transport settings (openswmm_transport.h: dispersion, cell spacing,
+ * detailed output, conduit-dispersion, boundary and source rows). It owns
  * no engine; restore requires the same editable engine used to create it.
  * The snapshot is reusable for Undo and Redo. */
 typedef void* SWMM_ConfigSnapshot;

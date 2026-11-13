@@ -62,6 +62,8 @@
 #include <openswmm/engine/openswmm_process_components.h>
 #include <openswmm/engine/openswmm_snow.h>
 #include <openswmm/engine/openswmm_snow2d.h>
+#include <openswmm/engine/openswmm_transport.h>
+#include <openswmm/engine/openswmm_links.h>
 
 #include "2d/SurfaceRouter2D.hpp"
 #include "2d/subsurface/SubsurfaceData.hpp"
@@ -607,6 +609,102 @@ TEST(HydrothermalConfig, FullConfigurationSnapshotRestoresSharedEditorStateAndIs
     EXPECT_EQ(hydrothermalState(e), authored);
     swmm_config_snapshot_destroy(snapshot);
     swmm_engine_destroy(other);
+    swmm_engine_destroy(e);
+}
+
+namespace {
+/**
+ * @brief Render the authored ARD transport settings (review G-02) as one comparable string.
+ * @param[in] e Borrowed engine.
+ * @return Configured flag, dispersion mode/value, cell spacing, detailed output path, and every
+ *     conduit-dispersion, boundary and source row in stored order.
+ */
+std::string ardState(SWMM_Engine e) {
+    std::ostringstream s;
+    int configured = -1, mode = -1, count = 0;
+    double value = 0.0, dx = 0.0;
+    char path[256]{};
+    swmm_transport_get_configured(e, &configured);
+    swmm_transport_get_dispersion_mode(e, &mode);
+    swmm_transport_get_dispersion_value(e, &value);
+    swmm_transport_get_target_dx(e, &dx);
+    swmm_transport_get_detailed_output(e, path, sizeof path);
+    s << configured << '|' << mode << '|' << value << '|' << dx << '|' << path;
+    swmm_transport_conduit_disp_count(e, &count);
+    for (int i = 0; i < count; ++i) {
+        int link = -1;
+        swmm_transport_get_conduit_disp(e, i, &link, &value);
+        s << "|disp " << link << ' ' << value;
+    }
+    const auto rows = [&](const char* tag, int (*n)(SWMM_Engine, int*),
+                          int (*get)(SWMM_Engine, int, char*, int, char*, int, int*, double*,
+                                     char*, int)) {
+        int rowCount = 0;
+        n(e, &rowCount);
+        for (int i = 0; i < rowCount; ++i) {
+            char element[64]{}, species[64]{}, series[64]{};
+            int isTs = -1;
+            get(e, i, element, sizeof element, species, sizeof species, &isTs, &value, series,
+                sizeof series);
+            s << '|' << tag << ' ' << element << ' ' << species << ' ' << isTs << ' ' << value
+              << ' ' << series;
+        }
+    };
+    rows("bc", swmm_transport_boundary_count, swmm_transport_get_boundary);
+    rows("src", swmm_transport_source_count, swmm_transport_get_source);
+    return s.str();
+}
+} // namespace
+
+TEST(HydrothermalConfig, ConfigurationSnapshotAndAtomicEditCoverArdTransport) {
+    // Review G-02: the options dialog's undo restores a configuration snapshot, so the ARD
+    // transport settings it edits must be in that snapshot (and in the atomic rollback).
+    SWMM_Engine e = buildingEngine();
+    ASSERT_NE(e, nullptr);
+    ASSERT_EQ(swmm_link_add(e, "C1", SWMM_LINK_CONDUIT), SWMM_OK);
+    const std::string unconfigured = ardState(e);
+    SWMM_ConfigSnapshot empty = swmm_config_snapshot_create(e);
+    ASSERT_NE(empty, nullptr);
+
+    ASSERT_EQ(swmm_transport_set_dispersion_mode(e, SWMM_DISPERSION_VALUE), SWMM_OK);
+    ASSERT_EQ(swmm_transport_set_dispersion_value(e, 0.5), SWMM_OK);
+    ASSERT_EQ(swmm_transport_set_conduit_disp(e, 0, 1.25), SWMM_OK);
+    ASSERT_EQ(swmm_transport_set_boundary(e, "J1", "NH3", 0, 2.0, nullptr), SWMM_OK);
+    const std::string authored = ardState(e);
+    ASSERT_NE(authored, unconfigured);
+    SWMM_ConfigSnapshot snapshot = swmm_config_snapshot_create(e);
+    ASSERT_NE(snapshot, nullptr);
+
+    ASSERT_EQ(swmm_transport_set_dispersion_mode(e, SWMM_DISPERSION_FISCHER), SWMM_OK);
+    ASSERT_EQ(swmm_transport_set_target_dx(e, 25.0), SWMM_OK);
+    ASSERT_EQ(swmm_transport_set_detailed_output(e, "ard_detail.csv"), SWMM_OK);
+    ASSERT_EQ(swmm_transport_remove_conduit_disp(e, 0), SWMM_OK);
+    ASSERT_EQ(swmm_transport_remove_boundary(e, 0), SWMM_OK);
+    ASSERT_EQ(swmm_transport_set_boundary(e, "J2", "CL2", 0, 1.0, nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_transport_set_source(e, "C1", "NH3", 0, -0.1, nullptr), SWMM_OK);
+    ASSERT_NE(ardState(e), authored);
+
+    ASSERT_EQ(swmm_config_snapshot_restore(e, snapshot), SWMM_OK);
+    EXPECT_EQ(ardState(e), authored);
+    // Back to before any transport setting: not configured, so a save writes no .ard.
+    ASSERT_EQ(swmm_config_snapshot_restore(e, empty), SWMM_OK);
+    EXPECT_EQ(ardState(e), unconfigured);
+    ASSERT_EQ(swmm_config_snapshot_restore(e, snapshot), SWMM_OK);
+    EXPECT_EQ(ardState(e), authored);
+
+    // A refused atomic edit leaves the transport settings as they were.
+    ASSERT_EQ(swmm_hydrothermal_edit_atomic(
+                  e,
+                  [](SWMM_Engine x, void*) -> int {
+                      swmm_transport_set_dispersion_mode(x, SWMM_DISPERSION_OFF);
+                      swmm_transport_set_source(x, "C1", "CL2", 0, 3.0, nullptr);
+                      return SWMM_ERR_BADPARAM;
+                  },
+                  nullptr),
+              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(ardState(e), authored);
+    swmm_config_snapshot_destroy(snapshot);
+    swmm_config_snapshot_destroy(empty);
     swmm_engine_destroy(e);
 }
 

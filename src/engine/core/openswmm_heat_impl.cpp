@@ -1354,6 +1354,7 @@ SWMM_ENGINE_API int swmm_hydrothermal_edit_atomic(SWMM_Engine engine, SWMM_Hydro
         auto met = ctx.snowpacks.meteorology;
         auto heat = ctx.heat_config;
         auto components = ctx.process_component_specs;
+        auto ard = ctx.ard_config; // ARD transport settings ([TRANSPORT_OPTIONS] and rows)
         const double shortwave = ctx.heat_state.shortwave_now;
         const double cloud = ctx.heat_state.cloud_now;
         struct Guard {
@@ -1377,6 +1378,7 @@ SWMM_ENGINE_API int swmm_hydrothermal_edit_atomic(SWMM_Engine engine, SWMM_Hydro
             ctx.snowpacks.meteorology = std::move(met);
             ctx.heat_config = std::move(heat);
             ctx.process_component_specs = std::move(components);
+            ctx.ard_config = std::move(ard);
             ctx.heat_state.shortwave_now = shortwave;
             ctx.heat_state.cloud_now = cloud;
         }
@@ -1484,6 +1486,7 @@ struct ConfigurationSnapshot {
     decltype(std::declval<EngineContext>().snowpacks.meteorology) meteorology;
     openswmm::HeatConfigData heat;
     decltype(std::declval<EngineContext>().process_component_specs) components;
+    decltype(std::declval<EngineContext>().ard_config) ard; ///< ARD transport settings and rows
     std::array<std::array<double, 12>, 4> monthly_adjustments{};
     double shortwave_now = 0.0, cloud_now = 0.0;
     Thermal2DAuthoring thermal_2d;
@@ -1496,13 +1499,14 @@ struct ConfigurationSnapshot {
      * subsequent restore; allocation can throw during construction.
      *
      * @param[in] engine Borrowed owner identity copied without validation or ownership transfer.
-     * @param[in] ctx Borrowed model whose options/climate/snow/heat/components, monthly arrays and2D
-     *     authoring are copied.
+     * @param[in] ctx Borrowed model whose options/climate/snow/heat/components, ARD transport
+     *     settings, monthly arrays and2D authoring are copied.
      */
     ConfigurationSnapshot(SWMM_Engine engine, const EngineContext& ctx)
         : owner(engine), options(ctx.options), climate(ctx.climate_state),
           snow(ctx.snowpacks.config), meteorology(ctx.snowpacks.meteorology), heat(ctx.heat_config),
-          components(ctx.process_component_specs), shortwave_now(ctx.heat_state.shortwave_now),
+          components(ctx.process_component_specs), ard(ctx.ard_config),
+          shortwave_now(ctx.heat_state.shortwave_now),
           cloud_now(ctx.heat_state.cloud_now), thermal_2d(ctx) {
         const double* source[] = {ctx.adjust_temp, ctx.adjust_evap, ctx.adjust_rain,
                                   ctx.adjust_hydcon};
@@ -1597,6 +1601,7 @@ SWMM_ENGINE_API int swmm_config_snapshot_restore(SWMM_Engine engine, SWMM_Config
             auto meteorology = source.meteorology;
             auto heat = source.heat;
             auto components = source.components;
+            auto ard = source.ard;
             auto thermal2d = source.thermal_2d;
             ctx.options = std::move(options);
             ctx.climate_state = std::move(climate);
@@ -1604,6 +1609,7 @@ SWMM_ENGINE_API int swmm_config_snapshot_restore(SWMM_Engine engine, SWMM_Config
             ctx.snowpacks.meteorology = std::move(meteorology);
             ctx.heat_config = std::move(heat);
             ctx.process_component_specs = std::move(components);
+            ctx.ard_config = std::move(ard);
             double* destination[] = {ctx.adjust_temp, ctx.adjust_evap, ctx.adjust_rain,
                                      ctx.adjust_hydcon};
             for (int row = 0; row < 4; ++row)
