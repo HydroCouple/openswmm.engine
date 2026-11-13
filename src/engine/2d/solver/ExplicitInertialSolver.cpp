@@ -189,8 +189,9 @@ void ExplicitInertialSolver::initialize(MeshData& mesh, SurfaceStateData& state,
     wall_drag_energy_ = 0;
     if (state.boundary) {
         const auto& b = *state.boundary;
-        for (int slot = 0; slot < int(b.edge_wall_drag.size()); ++slot) {
-            const double cw = b.edge_wall_drag[slot];
+        // Only the edges with a drag are stored; visit them in slot order.
+        for (const auto& [stored_slot, cw] : b.edge_wall_drag.entries()) {
+            const int slot = int(stored_slot);
             if (!std::isfinite(cw) || cw < 0)
                 throw std::invalid_argument("WALL_DRAG requires finite nonnegative Cw.");
             if (cw == 0) continue;

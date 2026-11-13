@@ -344,6 +344,13 @@ TEST(BoundaryData, SlotValuesStoreOnlyWhatDiffersFromTheDefault) {
     EXPECT_EQ(back.size(), 8u);
     EXPECT_EQ(back.stored(), 3u);
     EXPECT_TRUE(std::signbit(back[1]));
+    // The stored slots, in slot order whatever order they were written in.
+    const auto entries = v.entries();
+    ASSERT_EQ(entries.size(), 3u);
+    EXPECT_EQ(entries[0].first, 1u);
+    EXPECT_EQ(entries[1].first, 2u);
+    EXPECT_EQ(entries[2].first, 3u);
+    EXPECT_DOUBLE_EQ(entries[2].second, 3.5);
     EXPECT_THROW(std::as_const(v).at(8), std::out_of_range);
     EXPECT_THROW(v.at(8) = 1.0, std::out_of_range);
 

@@ -284,8 +284,9 @@ void SurfaceRouter2D::drainPendingRows() {
     // From here on the drained arrays are the live state (API mutators edit
     // them, not the pending rows) — tell the serialization collectors to read
     // the arrays instead of the now-stale rows.
-    options_.wall_drag_enabled = std::any_of(boundary_.edge_wall_drag.begin(),
-        boundary_.edge_wall_drag.end(), [](double c) { return c > 0; });
+    const auto drags = boundary_.edge_wall_drag.entries();
+    options_.wall_drag_enabled =
+        std::any_of(drags.begin(), drags.end(), [](const auto& drag) { return drag.second > 0; });
     options_.pending_rows_drained = true;
 }
 

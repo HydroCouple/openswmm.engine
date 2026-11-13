@@ -41,6 +41,7 @@
 
 #include <unordered_map>
 #include <stdexcept>
+#include <algorithm>
 #include <cstring>
 #include <utility>
 #include "../coupling/RuntimeCoupling.hpp"
@@ -207,6 +208,12 @@ public:
                                                                       : std::next(it);
         }
     }
+    /// Every stored (non-default) value as (slot, value) pairs in ascending slot order.
+    std::vector<std::pair<std::size_t, T>> entries() const {
+        std::vector<std::pair<std::size_t, T>> v(values_.begin(), values_.end());
+        std::sort(v.begin(), v.end());
+        return v;
+    }
     /// The values as a dense array of size() entries: an archive's fixed-extent encoding.
     std::vector<T> dense() const {
         std::vector<T> v(n_, default_);
@@ -256,9 +263,9 @@ template <class Archive, class... V> void fixedSlots(Archive& a, V&... values) {
  * @brief SoA storage for per-edge boundary conditions.
  *
  * All arrays are flat 2D: indexed as [cell * kMaxCellVerts + edge_local] where edge_local ∈
- * {0,1,2}. The type, wall drag and exterior flag are dense, one per slot, since the flux loop
- * reads them for every edge; the values that only a boundary edge carries are kept per stored
- * slot (SlotValues, SlotNames).
+ * {0,1,2}. The type and exterior flag are dense, one per slot, since the flux loop reads them for
+ * every edge; the values that only a boundary edge carries are kept per stored slot (SlotValues,
+ * SlotNames).
  */
 struct BoundaryData {
 
@@ -266,7 +273,7 @@ struct BoundaryData {
     std::vector<int8_t> edge_bc_type;
 
     /// Optional tangential wall drag: tau/rho = -Cw |ut| ut. Zero = free slip.
-    std::vector<double> edge_wall_drag;
+    SlotValues<double> edge_wall_drag;
     /// Derived from authored connectivity before runtime topology exists.
     std::vector<uint8_t> edge_is_exterior;
 
