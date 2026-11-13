@@ -1070,6 +1070,69 @@ TEST(MomentumModes, SpecifiedFlowInflowIsExactFullSwe) {
     }
 }
 
+// A stage edge prescribes one quantity, so under FULL_SWE it admits at most a
+// critical inflow at the prescribed depth. The ghost used to extrapolate the
+// outgoing Riemann invariant even when the interior flowed IN supercritically
+// (there is no outgoing characteristic then), so it copied the interior's
+// inflow speed back and the stream fed itself: examples/2d_complete_example.inp
+// drew 85 m³/s at 12 m/s through a 0.5 m head and stood the next cell 0.8 m
+// above the stage. Here a stream already runs in at 6 m/s (Fr ~2.7) down a
+// slope that could carry it; a 0.5 m stage cannot supply it.
+TEST(MomentumModes, StageInflowIsAtMostCriticalFullSwe) {
+    const double S = 0.05, dx = 1.0, n_man = 0.018, eta_bc = 0.5, h0 = 0.5, u0 = 6.0;
+    const int nx = 30, ny = 2;
+    auto mesh = makeQuadGrid(nx, ny, dx, [&](double x, double) { return -S * x; }, n_man);
+    mesh.tri_init_u.fill(u0); // +x: into the domain through the west (stage) face
+    SolverOptions2D opts;
+    opts.momentum = Momentum2D::FULL_SWE;
+    auto state = makeState(mesh);
+    for (int i = 0; i < mesh.n_triangles(); ++i) {
+        state.depth[i] = h0;
+        state.head[i] = mesh.tri_cz[i] + h0;
+        state.volume[i] = h0 * mesh.tri_area[i];
+    }
+    BoundaryData boundary;
+    boundary.resize(mesh.n_edge_slots());
+    std::vector<std::pair<int, int>> inlet; // (cell, slot)
+    for (int i = 0; i < mesh.n_triangles(); ++i)
+        for (int e = 0; e < mesh.cell_vertex_count(i); ++e) {
+            const int idx = MeshData::slot(i, e);
+            if (mesh.cell_neighbour(i, e) >= 0)
+                continue;
+            if (mesh.edge_mx(idx) < 1.0e-9) { // west face, x = 0
+                boundary.edge_bc_type[idx] = static_cast<int8_t>(BoundaryType::SPECIFIED_STAGE);
+                boundary.edge_bc_head[idx] = eta_bc;
+                inlet.emplace_back(i, idx);
+            } else if (mesh.edge_mx(idx) > nx * dx - 1.0e-9) { // east face drains
+                boundary.edge_bc_type[idx] = static_cast<int8_t>(BoundaryType::NORMAL_FLOW);
+                boundary.edge_bed_slope[idx] = S;
+            }
+        }
+    ASSERT_EQ(inlet.size(), std::size_t(ny));
+    state.boundary = &boundary;
+    ExplicitInertialSolver solver;
+    solver.initialize(mesh, state, opts);
+    // Inflow as a fraction of the critical unit discharge h_g·sqrt(g·h_g) at
+    // the ghost's depth, every second; the water surface once the stream has
+    // had 10 s to adjust to its source.
+    double q_max = 0.0, rise_max = -1.0e30;
+    for (int s = 1; s <= 60; ++s) {
+        solver.advance(s - 1.0, double(s));
+        for (const auto& [i, idx] : inlet) {
+            const double h_g = eta_bc - (state.head[i] - state.depth[i]);
+            const double q = state.edge_flux[idx] / mesh.edge_length[idx]; // inflow +, per metre
+            q_max = std::max(q_max, q / (h_g * std::sqrt(9.80665 * h_g)));
+        }
+        if (s >= 10)
+            for (int i = 0; i < mesh.n_triangles(); ++i)
+                rise_max = std::max(rise_max, state.head[i] - eta_bc);
+    }
+    solver.finalize();
+    EXPECT_GT(q_max, 0.9) << "the inlet should still run at critical on this slope";
+    EXPECT_LE(q_max, 1.0 + 1.0e-6) << "stage inflow exceeded critical at the prescribed depth";
+    EXPECT_LT(rise_max, 0.01) << "the steady surface stood above the prescribed stage";
+}
+
 // NORMAL_FLOW under FULL_SWE is the Manning law the local-inertial and
 // diffusive paths apply, not a zero-gradient outlet: doubling the edge's bed
 // slope must raise the outflow by sqrt(2), and a zero slope must hold water.

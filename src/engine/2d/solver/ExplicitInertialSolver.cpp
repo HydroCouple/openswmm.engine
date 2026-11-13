@@ -4132,6 +4132,13 @@ double ExplicitInertialSolver::boundaryFluxSwe(std::size_t k, int i, double dt_c
         // extrapolation), instead of a bare copy of the interior velocity.
         if (h_i > dry && h_g > 0.0)
             un_g = u_n + 2.0 * (c_i - std::sqrt(swe::kGravity * h_g));
+        // The invariant needs a characteristic leaving the domain. A
+        // supercritical INFLOW has none, and the extrapolated ghost copied
+        // the interior's inflow speed back so the stream fed itself (85 m³/s
+        // at 12 m/s through a 0.5 m head on the complete 2D example). One
+        // prescribed quantity admits at most a critical inflow at its depth.
+        if (h_g > 0.0)
+            un_g = std::max(un_g, -std::sqrt(swe::kGravity * h_g));
         break;
     }
     case BoundaryType::SPECIFIED_FLOW:

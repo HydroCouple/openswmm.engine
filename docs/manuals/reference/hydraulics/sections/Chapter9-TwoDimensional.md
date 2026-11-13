@@ -1816,7 +1816,12 @@ a momentum change for the cell.
 
   rather than a bare copy of the interior velocity; under supercritical
   outflow (\f$u_n \ge \sqrt{g h_i}\f$) no characteristic enters and the
-  ghost is transmissive — the prescribed stage cannot act.
+  ghost is transmissive — the prescribed stage cannot act. Inflow is
+  held to at most critical at the prescribed depth,
+  \f$u_{n,g} \ge -\sqrt{g h_{g}}\f$: a stage is one quantity and cannot
+  supply a supercritical stream, and under supercritical inflow no
+  characteristic leaves, so (9-44) would copy the interior's inflow
+  speed back and let the stream feed itself.
 - `SPECIFIED_FLOW` and `RATING_CURVE` are flux boundaries: the mass flux
   is the prescribed value verbatim, because the Riemann solve's own
   mass flux is a wave-speed-weighted blend of the interior and
