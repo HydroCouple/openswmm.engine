@@ -34,6 +34,24 @@ retroactive.
 - `SWMM_LID_STORAGE_COVERED` (`LidExtraField.STORAGE_COVERED` in Python) reads and sets the rain barrel covered flag through `swmm_lid_get_extra` and `swmm_lid_set_extra` (#207).
 - Python's `MaterialSplitParticipant` binds the paired material checkpoint API: `checkpoint_capabilities`, `checkpoint_prepare_outputs`, `checkpoint_enable`, `checkpoint_capture` (native bytes) and `checkpoint_restore`, which takes an optional exact clock.
 
+### Full shallow water by default (2026-11-13)
+
+- **Changed default.** A 2D model without `MOMENTUM_EQUATION` now runs `FULL_SWE`; it ran `LOCAL_INERTIAL`. Add `MOMENTUM_EQUATION LOCAL_INERTIAL` to `[2D_OPTIONS]` to keep a model's earlier results. The writer now leaves the `FULL_SWE` default out and writes `LOCAL_INERTIAL` explicitly, so a saved local-inertial model reopens as one. `FULL_SWE` still lowers `CFL_NUMBER` to 0.5, but the message saying so is printed only when the model sets a value other than the built-in 0.7.
+- Under `FULL_SWE`, a `SPECIFIED_STAGE` or `TS_STAGE` edge lets in at most the critical discharge at its prescribed depth. When water inside the mesh was already flowing in faster than critical, the edge copied that speed back and the inflow fed itself: the complete 2D example drew 85 m3/s at 12 m/s through a 0.5 m head. Outflow and subcritical inflow are unchanged.
+- The complete 2D example's `DOWN_RC` rating curve is written as water-surface stage, which is how the engine reads a `RATING_CURVE`. It was written as depth above the bed and drained its boundary cell dry under every momentum closure. Chapter 6 of the application manual, its two figures and Tables 6-1 and 6-2 are redone on the corrected example.
+
+### 2D mesh open and initialize memory (2026-11-11 to 2026-11-13)
+
+- Opening a model with a 2D mesh is faster and uses less memory. The `.inp` file is read in 1 MiB blocks, the 2D sections and the `[2D_MESH_FILE]` are parsed in one pass, and the arrays derived from the mesh (cell neighbours, cell and edge geometry) are built at initialize instead of at open. A 10 M-cell model with a mesh file opens in about 3.3 s of CPU instead of 8.9 s, with a peak footprint of 2.2 GB instead of 9.2 GB.
+- Initialize needs about half the memory. Boundary values and names, wall drag, the 2D forcing overrides and the initial HGL and velocity are allocated only where they are authored or set. Each distinct mesh tag and coupled node name is stored once. The solver builds its edge arrays once, only for the momentum equation in use, and computes edge midpoints and centroid distances where they are read. The footprint after initialize fell from 19.7 GB to 9.5 GB at 10 M cells and from 1.89 GB to 0.92 GB at 1 M (measured under local inertial, then the default).
+- `swmm_engine_open_simulation_period` opens a model only for its start and end times. It leaves out the 2D mesh, the `[2D_MESH_FILE]` and every row that addresses mesh cells, so a 10 M-cell model no longer costs about 3 s and 3 GB just to read its dates.
+- `[PERF-LOAD]` times the `[2D_MESH_FILE]` load as `open.mesh2d` (with `mesh2d.prescan`, `mesh2d.scan` and `mesh2d.dispatch`) and counts it in `open`. A mesh-file model used to print `open=0.000`.
+- Opening a second model on the same engine handle kept parts of the first: its land uses, inflows, DWF, patterns, streets, aquifers, LID controls, `[FILES]`, options and more. Of 405 tracked models, 58 refused the second open with duplicate IDs and 76 more reopened with doubled rows. The Python `Solver` reuses its handle this way. Each open now starts from a fresh model.
+- `.inp` and 2D mesh files that start with a UTF-8 byte-order mark (Notepad and many Windows tools write one) no longer lose their first section or a first-line `;; UNITS: SI (m)` marker.
+- 2D numbers are read in the C locale. Under a comma-decimal `LC_NUMERIC`, which a Qt application adopts, every decimal coordinate was rejected.
+- Before initialize, `swmm_2d_cell_get_neighbours` reported no neighbours, `swmm_2d_set_edge_conveyance` did not copy an interior edge's value to the cell across it, and an interior edge accepted a boundary condition. All three now work on a model that has only been opened.
+- When a `[2D_MESH_FILE]` fails to read during a lenient (editor) open, the model no longer keeps that file's `[2D_OPTIONS]` values, its `;; UNITS: SI (m)` flag, or quality rows addressing the cells it dropped.
+
 ### Finite-volume speed and coupled ponding (2026-11-07)
 
 - `FV_SLOT_CELERITY` left out (or 0) means 100 ft/s in either unit system, 30.48 m/s in SI. The bare number 100 used to be read in project units, so SI models without the key ran at 100 m/s: a 3.3x stiffer slot, a 3.3x smaller pressurized time step and junction heads far above their rims. An explicit value is honoured as before; the options API and `.inp` writer report the effective value in project units.
