@@ -126,7 +126,21 @@ struct InertialEdges {
      * and do not consume after failure. The mesh is borrowed only during building; no mesh
      * pointers or references are retained.
      */
-    void build(const MeshData& mesh);
+    void build(const MeshData& mesh) { build(mesh, Needs{}); }
+
+    /// Which of the arrays only one solver mode reads build() should fill (each is one double
+    /// per interior edge). The default builds all of them.
+    struct Needs {
+        bool vfr_faces = true; ///< ze_lo / ze_hi: FACE_RECONSTRUCTION VFR_FACE
+        bool n_face = true;    ///< the diffusive-wave law
+        bool n2_face = true;   ///< the inertial law
+    };
+    /// build() filling only the mode-specific arrays @p needs asks for; the others stay empty.
+    void build(const MeshData& mesh, Needs needs);
+
+    /// Fill ze_lo / ze_hi from the mesh if build() left them out (the face mode was switched to
+    /// VFR_FACE after the build). No-op when they are there. Call from serial code only.
+    void buildVfrFaces(const MeshData& mesh);
 
     /// Refresh canonical face factors from the symmetric mesh slots, including runtime API edits.
     /// Requires the topology used by build(); returns whether any factor changed. Geometry and

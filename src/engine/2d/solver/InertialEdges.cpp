@@ -19,7 +19,7 @@
 
 namespace openswmm::twoD {
 
-void InertialEdges::build(const MeshData& mesh) {
+void InertialEdges::build(const MeshData& mesh, Needs needs) {
     const int nt = mesh.n_triangles();
 
     cL.clear();
@@ -61,9 +61,12 @@ void InertialEdges::build(const MeshData& mesh) {
     }
     for (auto* v : {&cL, &cR, &slotL, &slotR})
         v->reserve(n_interior);
-    for (auto* v : {&xi, &inv_dx, &zface, &ze_lo, &ze_hi, &nx, &ny, &mx, &my, &inv_dx_normal,
-                    &n2_face, &n_face})
+    for (auto* v : {&xi, &inv_dx, &zface, &nx, &ny, &mx, &my, &inv_dx_normal})
         v->reserve(n_interior);
+    if (needs.n2_face)
+        n2_face.reserve(n_interior);
+    if (needs.n_face)
+        n_face.reserve(n_interior);
 
     // 1. Enumerate unique interior edges. Count each once (nbr > t), and stamp
     //    the matching local edge on the neighbour so the CSR pass sees both.
@@ -82,19 +85,6 @@ void InertialEdges::build(const MeshData& mesh) {
                 std::hypot(mesh.tri_cx[t] - mesh.tri_cx[nb], mesh.tri_cy[t] - mesh.tri_cy[nb]);
             inv_dx.push_back(ddx > 1.0e-12 ? 1.0 / ddx : 0.0);
             zface.push_back(std::max(mesh.tri_cz[t], mesh.tri_cz[nb]));
-            {
-                // Endpoint bed elevations of the shared edge (MeshData
-                // connectivity supplies the actual endpoint pair). Same rule
-                // as SurfaceFluxCalculator's edgeEndpointZ — both incident
-                // cells see identical (z_lo, z_hi), so the VFR face depth is
-                // antisymmetric and the FV flux mass-conservative.
-                int va, vb;
-                mesh.cell_edge_vertices(t, e, va, vb);
-                const double za = mesh.vz[va];
-                const double zb = mesh.vz[vb];
-                ze_lo.push_back(std::min(za, zb));
-                ze_hi.push_back(std::max(za, zb));
-            }
             slotL.push_back(MeshData::slot(t, e));
 
             // Find nb's local edge facing t (the mirror slot) and record it.
@@ -126,12 +116,16 @@ void InertialEdges::build(const MeshData& mesh) {
             }
             {
                 const double nf = 0.5 * (mesh.mannings_n[t] + mesh.mannings_n[nb]);
-                n2_face.push_back(nf * nf);
-                n_face.push_back(nf);
+                if (needs.n2_face)
+                    n2_face.push_back(nf * nf);
+                if (needs.n_face)
+                    n_face.push_back(nf);
             }
         }
     }
     ne = static_cast<int>(cL.size());
+    if (needs.vfr_faces)
+        buildVfrFaces(mesh);
     conveyance.assign(static_cast<std::size_t>(ne), 1.0);
     refreshConveyance(mesh);
 
@@ -212,6 +206,26 @@ void InertialEdges::build(const MeshData& mesh) {
             cell_arm_x[pos] = mx[eid] - mesh.tri_cx[t];
             cell_arm_y[pos] = my[eid] - mesh.tri_cy[t];
         }
+    }
+}
+
+void InertialEdges::buildVfrFaces(const MeshData& mesh) {
+    if (ze_lo.size() == cL.size())
+        return;
+    // Endpoint bed elevations of each shared edge (MeshData connectivity
+    // supplies the actual endpoint pair). Same rule as SurfaceFluxCalculator's
+    // edgeEndpointZ — both incident cells see identical (z_lo, z_hi), so the
+    // VFR face depth is antisymmetric and the FV flux mass-conservative.
+    ze_lo.resize(cL.size());
+    ze_hi.resize(cL.size());
+    for (std::size_t k = 0; k < cL.size(); ++k) {
+        int va, vb;
+        mesh.cell_edge_vertices(MeshData::slot_cell(slotL[k]), MeshData::slot_local(slotL[k]), va,
+                                vb);
+        const double za = mesh.vz[va];
+        const double zb = mesh.vz[vb];
+        ze_lo[k] = std::min(za, zb);
+        ze_hi[k] = std::max(za, zb);
     }
 }
 

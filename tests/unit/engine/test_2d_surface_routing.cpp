@@ -56,6 +56,7 @@
 #include "2d/mesh/MeshBuilder.hpp"
 #include "2d/mesh/VertexReconstruction.hpp"
 #include "2d/solver/SurfaceFluxCalculator.hpp"
+#include "2d/solver/InertialEdges.hpp"
 #include "2d/input/SectionHandlers2D.hpp"
 #include "2d/solver/SurfaceSolverFactory.hpp"
 #include "2d/solver/ISurfaceSolver.hpp"
@@ -509,6 +510,52 @@ TEST(MeshData, EdgeMidpointsComeFromTheVertices) {
     bare.size_geometry();
     EXPECT_EQ(bare.edge_mid_values(0), std::vector<double>(8, 0.0));
     EXPECT_DOUBLE_EQ(bare.edge_mz(MeshData::slot(1, 2)), 0.0);
+}
+
+// The solver's per-edge arrays that only one mode reads are built only when
+// asked for, and the VFR pair built later equals the pair built up front
+// (working set plan W9a).
+TEST(InertialEdges, ModeSpecificArraysAreBuiltOnlyWhenNeeded) {
+    MeshData mesh;
+    mesh.resize_vertices(5);
+    mesh.vx = {0.0, 10.0, 10.0, 0.0, 5.0};
+    mesh.vy = {0.0, 0.0, 10.0, 10.0, 5.0};
+    mesh.vz = {1.0, 2.0, 4.0, 3.0, 0.5};
+    mesh.resize_triangles(4);
+    mesh.set_triangle(0, 0, 1, 4);
+    mesh.set_triangle(1, 1, 2, 4);
+    mesh.set_triangle(2, 2, 3, 4);
+    mesh.set_triangle(3, 3, 0, 4);
+    mesh.mannings_n = {0.02, 0.03, 0.04, 0.05};
+    buildMeshTopology(mesh);
+
+    InertialEdges all, lean;
+    all.build(mesh);
+    ASSERT_EQ(all.ne, 4);
+    EXPECT_EQ(all.ze_lo.size(), 4u);
+    EXPECT_EQ(all.n_face.size(), 4u);
+    EXPECT_EQ(all.n2_face.size(), 4u);
+
+    lean.build(mesh, {false, false, true}); // the inertial law with MEAN faces
+    EXPECT_EQ(lean.ne, 4);
+    EXPECT_TRUE(lean.ze_lo.empty());
+    EXPECT_TRUE(lean.ze_hi.empty());
+    EXPECT_TRUE(lean.n_face.empty());
+    EXPECT_EQ(lean.n2_face, all.n2_face);
+    EXPECT_EQ(lean.zface, all.zface);
+    EXPECT_EQ(lean.xi, all.xi);
+
+    lean.buildVfrFaces(mesh); // the face mode switched to VFR_FACE after the build
+    EXPECT_EQ(lean.ze_lo, all.ze_lo);
+    EXPECT_EQ(lean.ze_hi, all.ze_hi);
+    lean.buildVfrFaces(mesh); // already there: unchanged
+    EXPECT_EQ(lean.ze_lo, all.ze_lo);
+
+    InertialEdges diffusive;
+    diffusive.build(mesh, {true, true, false});
+    EXPECT_EQ(diffusive.n_face, all.n_face);
+    EXPECT_TRUE(diffusive.n2_face.empty());
+    EXPECT_EQ(diffusive.ze_hi, all.ze_hi);
 }
 
 TEST(BoundaryData, ResizeInitialisesAllSlotsIncludingV_E4andV_E5) {

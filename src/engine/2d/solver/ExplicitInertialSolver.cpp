@@ -253,7 +253,11 @@ void ExplicitInertialSolver::initialize(MeshData& mesh, SurfaceStateData& state,
     if (nt <= 0)
         return;
 
-    edges_.build(mesh);
+    // Only the per-edge arrays this run's momentum law and face mode read
+    // (fireFaces* build the VFR pair on demand if the face mode is switched).
+    edges_.build(mesh, {opts.face_reconstruction == FaceDepth2D::VFR_FACE,
+                        opts.momentum == Momentum2D::DIFFUSIVE_WAVE,
+                        opts.momentum != Momentum2D::DIFFUSIVE_WAVE});
     const auto ne = static_cast<std::size_t>(edges_.ne);
     q_.assign(ne, 0.0);
     face_accum_stride_ = opts.momentum == Momentum2D::FULL_SWE ? 6 : 2;
@@ -1844,6 +1848,8 @@ void ExplicitInertialSolver::fireFacesInertial(const std::vector<int>& faces, do
     // VFR_FACE: block/convey at the shared edge's TRUE crest via the B&S
     // Eq. 14 wetted-edge depth; MEAN keeps the centroid zface bit-identical.
     const bool vfr_face = (opts_->face_reconstruction == FaceDepth2D::VFR_FACE);
+    if (vfr_face)
+        edges_.buildVfrFaces(*mesh_);
 
 #pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
     for (int k = 0; k < na; ++k) {
@@ -2101,6 +2107,8 @@ void ExplicitInertialSolver::fireFacesDiffusive(const std::vector<int>& faces, d
     const double beta3 = opts_->exchange_beta / 3.0;
     const double beta4 = opts_->exchange_beta / 4.0;
     const bool vfr_face = (opts_->face_reconstruction == FaceDepth2D::VFR_FACE);
+    if (vfr_face)
+        edges_.buildVfrFaces(*mesh_);
     const double dry = opts_->dry_depth, flux_dh_eps = opts_->flux_dh_eps;
     const bool species = species_on_;
     const bool has_quads = has_quads_;
@@ -4683,6 +4691,8 @@ double ExplicitInertialSolver::advanceImpl(double t_current, double t_target) {
     } else
         std::fill(state_->edge_flux.begin(), state_->edge_flux.end(), 0.0);
     const bool vfr_face = (opts_->face_reconstruction == FaceDepth2D::VFR_FACE);
+    if (vfr_face)
+        edges_.buildVfrFaces(*mesh_);
     // Only the ACTIVE faces can carry flux: a face with an inactive side had
     // its q zeroed when the side deactivated, so the old full sweep spent
     // O(n_faces) recomputing a face depth and a Froude cap in order to publish
