@@ -35,6 +35,7 @@
 #define OPENSWMM_ENGINE_2D_MESH_DATA_HPP
 
 #include "InternedStrings.hpp"
+#include "LazyArray.hpp"
 #include <bit>
 #include <vector>
 #include <string>
@@ -140,9 +141,9 @@ struct MeshData {
     /// [2D_INITIAL_HGL] initial water-surface elevation (m, mesh datum). NaN = not
     /// prescribed, the cell then starts from tri_init_depth. A finite value overrides
     /// tri_init_depth and is clamped at the cell invert when the surface initializes.
-    std::vector<double> tri_init_hgl;
-    std::vector<double> tri_init_u;     ///< [2D_INITIAL_VELOCITY] u (m/s, default 0)
-    std::vector<double> tri_init_v;     ///< [2D_INITIAL_VELOCITY] v (m/s, default 0)
+    LazyArray<double> tri_init_hgl;
+    LazyArray<double> tri_init_u;     ///< [2D_INITIAL_VELOCITY] u (m/s, default 0)
+    LazyArray<double> tri_init_v;     ///< [2D_INITIAL_VELOCITY] v (m/s, default 0)
     InternedStrings tri_tag;            ///< Optional triangle tag
 
     // -----------------------------------------------------------------------

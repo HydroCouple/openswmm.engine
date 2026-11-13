@@ -152,12 +152,12 @@ struct Rig {
             const double h = field == 0 ? 2 : field == 1 ? 2 + .02 * x + .03 * y : 2 + .02 * x;
             state.head[i] = state.depth[i] = h;
             state.volume[i] = mesh.tri_area[i] * h;
-            mesh.tri_init_u[i] = field == 0   ? .4
+            mesh.tri_init_u.set(i, field == 0   ? .4
                                  : field == 1 ? .4 + .01 * x - .02 * y
-                                              : co * (.4 + .01 * x);
-            mesh.tri_init_v[i] = field == 0   ? -.2
+                                              : co * (.4 + .01 * x));
+            mesh.tri_init_v.set(i, field == 0   ? -.2
                                  : field == 1 ? -.2 + .02 * x + .005 * y
-                                              : si * (.4 + .01 * x);
+                                              : si * (.4 + .01 * x));
         }
         opts.momentum = Momentum2D::FULL_SWE;
         opts.reconstruction_order = 2;

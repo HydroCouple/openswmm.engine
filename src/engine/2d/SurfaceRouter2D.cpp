@@ -445,8 +445,7 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         for (auto& d : mesh_.tri_init_depth)
             d *= f;
         // [2D_INITIAL_HGL] is an elevation on the vz datum (NaN = unset stays NaN).
-        for (auto& h : mesh_.tri_init_hgl)
-            h *= f;
+        mesh_.tri_init_hgl.transform([f](double h) { return h * f; });
         options_.mesh_scaled_to_si = true;
     }
 

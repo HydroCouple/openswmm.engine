@@ -107,6 +107,9 @@ template <class T, std::size_t N> void dump(std::ostream& o, const T (&a)[N]) {
 void dump(std::ostream& o, const openswmm::twoD::InternedStrings& v) {
     dump(o, v.dense()); // one string per element, as the plain array it replaced
 }
+template <class T> void dump(std::ostream& o, const openswmm::twoD::LazyArray<T>& v) {
+    dump(o, v.dense()); // one value per element, as the plain array it replaced
+}
 void dump(std::ostream& o, const std::vector<bool>& v) {
     o << "[" << v.size() << ":";
     for (const bool b : v)

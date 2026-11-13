@@ -3033,7 +3033,7 @@ static void read_mesh_2d(sqlite3* db, SimulationContext& ctx, const std::string&
             if (has_init_depth)
                 mesh.tri_init_depth[t] = column_double(stmt.get(), 6);
             if (has_init_hgl && !column_is_null(stmt.get(), 7))
-                mesh.tri_init_hgl[t] = column_double(stmt.get(), 7);
+                mesh.tri_init_hgl.set(t, column_double(stmt.get(), 7));
         }
     }
 
@@ -3068,7 +3068,7 @@ static void read_mesh_2d(sqlite3* db, SimulationContext& ctx, const std::string&
                     mesh.tri_tag.set(t, column_text(stmt.get(), 6));
                     mesh.tri_init_depth[t] = column_double(stmt.get(), 7);
                     if (has_init_hgl && !column_is_null(stmt.get(), 8))
-                        mesh.tri_init_hgl[t] = column_double(stmt.get(), 8);
+                        mesh.tri_init_hgl.set(t, column_double(stmt.get(), 8));
                 }
             }
         }

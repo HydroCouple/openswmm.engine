@@ -584,8 +584,8 @@ TEST(MomentumModes, FullSwePublishesNativeVelocityWithoutOptionalPhysics) {
         for (int i = 0; i < mesh.n_cells(); ++i) {
             state.depth[i] = state.head[i] = .01;
             state.volume[i] = .01 * mesh.tri_area[i];
-            mesh.tri_init_u[i] = initial_u;
-            mesh.tri_init_v[i] = -.4;
+            mesh.tri_init_u.set(i, initial_u);
+            mesh.tri_init_v.set(i, -.4);
         }
         state.volume[0] = 0.;
         ExplicitInertialSolver solver;
@@ -644,8 +644,8 @@ TEST(MomentumModes, RouterPublishesNativeInitialAndRefreshedVelocity) {
     router.mesh() = makeTriGrid(2, 2, 1., [](double, double) { return 0.; });
     auto& mesh = router.mesh();
     std::fill(mesh.tri_init_depth.begin(), mesh.tri_init_depth.end(), .01);
-    std::fill(mesh.tri_init_u.begin(), mesh.tri_init_u.end(), .3);
-    std::fill(mesh.tri_init_v.begin(), mesh.tri_init_v.end(), -.4);
+    mesh.tri_init_u.fill(.3);
+    mesh.tri_init_v.fill(-.4);
     router.options().momentum = Momentum2D::FULL_SWE;
     router.options().backend = Backend2D::CPU;
     openswmm::SimulationContext ctx;
@@ -675,8 +675,8 @@ TEST(MomentumModes, BulkVelocityApiMatchesPhysicalOutputAndRefreshesWithoutAdvan
     router.mesh() = makeTriGrid(2, 2, 1., [](double, double) { return 0.; });
     auto& mesh = router.mesh();
     std::fill(mesh.tri_init_depth.begin(), mesh.tri_init_depth.end(), .01);
-    std::fill(mesh.tri_init_u.begin(), mesh.tri_init_u.end(), .3);
-    std::fill(mesh.tri_init_v.begin(), mesh.tri_init_v.end(), -.4);
+    mesh.tri_init_u.fill(.3);
+    mesh.tri_init_v.fill(-.4);
     mesh.tri_init_depth[0] = 0.;
     router.options().momentum = Momentum2D::FULL_SWE;
     router.options().backend = Backend2D::CPU;

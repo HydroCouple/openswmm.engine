@@ -191,7 +191,7 @@ protected:
         mesh_.set_triangle(1, 0, 2, 3);
         mesh_.mannings_n = {0.03, 0.045};
         mesh_.tri_init_depth = {0.25, 0.0};
-        mesh_.tri_init_hgl[1] = 10.75; // cell 0 stays NaN (not prescribed)
+        mesh_.tri_init_hgl.set(1, 10.75); // cell 0 stays NaN (not prescribed)
         mesh_.tri_tag.set(1, "T1");
     }
 
@@ -628,8 +628,7 @@ TEST_F(GeoPackageMesh2DTest, PostInitUnscaleWrite) {
     // initialize() scales the initial conditions with vz (same vertical datum).
     for (auto& d : mesh_.tri_init_depth)
         d *= ft_to_m;
-    for (auto& h : mesh_.tri_init_hgl)
-        h *= ft_to_m;
+    mesh_.tri_init_hgl.transform([ft_to_m](double h) { return h * ft_to_m; });
     mesh_.vert_coupled_node_name.set(0, "J1");
     mesh_.vert_coupling_area[0] = 2.5 * ft_to_m * ft_to_m;
     opts_.mesh_scaled_to_si = true;

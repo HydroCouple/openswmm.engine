@@ -36,7 +36,8 @@ namespace openswmm::twoD {
 /**
  * @brief An array of size() elements whose storage appears with the first non-default write.
  *
- * For optional per-cell data that most runs never touch (the API's forcing overrides): until a
+ * For optional per-cell data that most runs never touch (the API's forcing overrides, a mesh's
+ * initial HGL and velocity): until a
  * value other than the default is written, every element reads as the default and nothing is
  * allocated. The first such write allocates the whole array, since an override may be set on every
  * cell at once. Reads (`v[i]`, const, by value) never allocate, so concurrent reads are safe;
@@ -55,6 +56,19 @@ public:
         n_ = n;
         default_ = value;
     }
+    /// As std::vector::resize(n, value): keeps the elements below n; @p value is the default.
+    void resize(std::size_t n, T value) {
+        default_ = value;
+        if (!data_.empty())
+            data_.resize(n, value);
+        n_ = n;
+    }
+    /// Room for n elements once allocated; nothing to reserve before that.
+    void reserve(std::size_t n) {
+        if (!data_.empty())
+            data_.reserve(n);
+    }
+    std::size_t capacity() const noexcept { return data_.capacity(); }
     T operator[](std::size_t i) const { return data_.empty() ? default_ : data_[i]; }
     void set(std::size_t i, T value) {
         if (data_.empty()) {
@@ -63,6 +77,21 @@ public:
             data_.assign(n_, default_);
         }
         data_[i] = value;
+    }
+    /// Every element becomes @p value (the default releases the storage).
+    void fill(T value) {
+        if (std::memcmp(&value, &default_, sizeof(T)) == 0)
+            std::vector<T>().swap(data_);
+        else
+            data_.assign(n_, value);
+    }
+    /// Replace every element x by f(x), as a loop over the plain array would.
+    template <class F> void transform(F&& f) {
+        if (data_.empty())
+            default_ = f(default_);
+        else
+            for (T& x : data_)
+                x = f(x);
     }
     /// One value per element: an archive's encoding.
     std::vector<T> dense() const { return data_.empty() ? std::vector<T>(n_, default_) : data_; }

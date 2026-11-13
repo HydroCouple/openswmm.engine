@@ -449,6 +449,36 @@ TEST(SurfaceState, ForcingOverridesAreAllocatedOnFirstUse) {
     EXPECT_EQ(state.rainfall_forced[2], 0);
 }
 
+// A mesh's initial HGL and velocity arrays take no memory unless authored,
+// and grow, fill and rescale as the plain arrays did (working set plan W4).
+TEST(MeshData, InitialHglAndVelocityAreAllocatedWhenAuthored) {
+    MeshData mesh;
+    mesh.resize_triangles(4);
+    EXPECT_EQ(mesh.tri_init_hgl.size(), 4u);
+    EXPECT_FALSE(mesh.tri_init_hgl.allocated());
+    EXPECT_FALSE(mesh.tri_init_u.allocated());
+    EXPECT_TRUE(std::isnan(mesh.tri_init_hgl[2]));
+    EXPECT_DOUBLE_EQ(mesh.tri_init_v[3], 0.0);
+    mesh.tri_init_hgl.set(1, std::numeric_limits<double>::quiet_NaN()); // "not prescribed"
+    EXPECT_FALSE(mesh.tri_init_hgl.allocated());
+    mesh.tri_init_hgl.transform([](double h) { return h * 0.3048; }); // NaN stays NaN
+    EXPECT_FALSE(mesh.tri_init_hgl.allocated());
+    EXPECT_TRUE(std::isnan(mesh.tri_init_hgl[0]));
+    mesh.tri_init_hgl.set(1, 10.0);
+    mesh.resize_triangles(6); // keeps what is there, new cells unprescribed
+    EXPECT_EQ(mesh.tri_init_hgl.size(), 6u);
+    EXPECT_DOUBLE_EQ(mesh.tri_init_hgl[1], 10.0);
+    EXPECT_TRUE(std::isnan(mesh.tri_init_hgl[5]));
+    mesh.tri_init_hgl.transform([](double h) { return h * 0.5; });
+    EXPECT_DOUBLE_EQ(mesh.tri_init_hgl[1], 5.0);
+    EXPECT_TRUE(std::isnan(mesh.tri_init_hgl[0]));
+    mesh.tri_init_u.fill(0.25);
+    EXPECT_EQ(mesh.tri_init_u.dense(), std::vector<double>(6, 0.25));
+    mesh.tri_init_u.fill(0.0); // back to the default: released
+    EXPECT_FALSE(mesh.tri_init_u.allocated());
+    EXPECT_EQ(mesh.tri_init_u.dense(), std::vector<double>(6, 0.0));
+}
+
 TEST(BoundaryData, ResizeInitialisesAllSlotsIncludingV_E4andV_E5) {
     // Verifies V-E4 (SPECIFIED_FLOW) + V-E5 (RATING_CURVE) slots resize
     // correctly alongside the legacy stage/slope slots, and that the

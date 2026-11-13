@@ -882,7 +882,7 @@ TEST(Cpu2DCorrectness, SecondOrderThackerDoesNotAccelerateTrappedFilms) {
         double x = m.tri_cx[i] - 2.5, y = m.tri_cy[i] - 2;
         s.volume[i] = std::max(0., .1 * (1 - x * x - y * y)) * m.tri_area[i];
         m.mannings_n[i] = 0;
-        m.tri_init_v[i] = .5 * omega;
+        m.tri_init_v.set(i, .5 * omega);
     }
     const double initial = sum(s.volume);
     ExplicitInertialSolver solver;
@@ -958,7 +958,7 @@ TEST(Cpu2DCorrectness, SparseRebuildRetiresMomentumAndOrdersFaces) {
             auto s = state(m, .002);
             auto o = options(4, 4);
             o.momentum = static_cast<Momentum2D>(mode);
-            std::fill(m.tri_init_u.begin(), m.tri_init_u.end(), .25);
+            m.tri_init_u.fill(.25);
             ExplicitInertialSolver solver;
             solver.initialize(m, s, o);
             A::rebuild(solver);
@@ -1196,8 +1196,8 @@ TEST(Cpu2DCorrectness, SecondOrderSlopeReconstructionCarriesPhysicalMassFlux) {
             o.momentum = Momentum2D::FULL_SWE;
             o.reconstruction_order = 2;
             for (int i = 0; i < m.n_cells(); ++i) {
-                m.tri_init_u[i] = .2;
-                m.tri_init_v[i] = -.1;
+                m.tri_init_u.set(i, .2);
+                m.tri_init_v.set(i, -.1);
                 m.mannings_n[i] = 0;
             }
             ExplicitInertialSolver solver;
@@ -1245,7 +1245,7 @@ TEST(Cpu2DCorrectness, SecondOrderPlanarThackerRetainsRotationPhase) {
         for (int i = 0; i < m.n_cells(); ++i) {
             const double x = m.tri_cx[i] - 2.5, y = m.tri_cy[i] - 2;
             s.volume[i] = std::max(0.0, .1 * (1 - x * x - y * y)) * m.tri_area[i];
-            m.tri_init_v[i] = .5 * omega;
+            m.tri_init_v.set(i, .5 * omega);
             m.mannings_n[i] = 0;
         }
         const double initial_volume = sum(s.volume);
@@ -1396,8 +1396,8 @@ TEST(Cpu2DCorrectness, SecondOrderShorelineKeepsConnectedWetFaceAccuracy) {
             o.reconstruction_order = 2;
             for (int i = 0; i < m.n_cells(); ++i) {
                 s.volume[i] = m.tri_cx[i] < 4 ? .5 * m.tri_area[i] : 0;
-                m.tri_init_u[i] = .2;
-                m.tri_init_v[i] = -.1;
+                m.tri_init_u.set(i, .2);
+                m.tri_init_v.set(i, -.1);
                 m.mannings_n[i] = 0;
             }
             ExplicitInertialSolver solver;

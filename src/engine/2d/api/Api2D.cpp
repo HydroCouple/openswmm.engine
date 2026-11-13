@@ -394,7 +394,7 @@ int swmm_2d_set_triangle_init_hgl(SWMM_Engine engine, int idx, double hgl) {
     if (std::isinf(hgl))
         return SWMM_ERR_BADPARAM;
 
-    router2d.mesh().tri_init_hgl[idx] = hgl; // NaN clears the prescription
+    router2d.mesh().tri_init_hgl.set(idx, hgl); // NaN clears the prescription
     return SWMM_OK;
 }
 
@@ -417,8 +417,8 @@ int swmm_2d_set_triangle_init_velocity(SWMM_Engine engine, int idx, double u, do
     if (!std::isfinite(u) || !std::isfinite(v))
         return SWMM_ERR_BADPARAM;
 
-    router2d.mesh().tri_init_u[idx] = u;
-    router2d.mesh().tri_init_v[idx] = v;
+    router2d.mesh().tri_init_u.set(idx, u);
+    router2d.mesh().tri_init_v.set(idx, v);
     return SWMM_OK;
 }
 

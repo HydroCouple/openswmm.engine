@@ -553,8 +553,8 @@ TEST(MomentumPhysics, FullSolverMatchesAnalyticalInertialOscillation) {
         for (int i = 0; i < m.n_cells(); ++i) {
             state.depth[i] = state.head[i] = .5;
             state.volume[i] = .5 * m.tri_area[i];
-            m.tri_init_u[i] = .2;
-            m.tri_init_v[i] = .3;
+            m.tri_init_u.set(i, .2);
+            m.tri_init_v.set(i, .3);
             for (int k = 0; k < m.cell_vertex_count(i); ++k)
                 if (m.cell_neighbour(i, k) < 0) {
                     const int slot = MeshData::slot(i, k);
@@ -631,7 +631,7 @@ TEST(MomentumPhysics, GeostrophicStateConvergesWithMeshRefinement) {
             const double h = 1 + f * v / g * m.tri_cx[i];
             state.depth[i] = state.head[i] = h;
             state.volume[i] = h * m.tri_area[i];
-            m.tri_init_v[i] = v;
+            m.tri_init_v.set(i, v);
             for (int k = 0; k < 3; ++k)
                 if (m.cell_neighbour(i, k) < 0) {
                     const int slot = MeshData::slot(i, k);
@@ -787,8 +787,8 @@ TEST(MomentumPhysics, FullSolverWallAndSmagorinskyKeepClosedMassAndRemoveEnergy)
                 for(int i=0;i<m.n_cells();++i) {
                     state.depth[i]=state.head[i]=.5;
                     state.volume[i]=.5*m.tri_area[i];
-                    m.tri_init_u[i]=.2*std::sin(3.141592653589793*m.tri_cy[i]);
-                    m.tri_init_v[i]=.1*std::sin(3.141592653589793*m.tri_cx[i]);
+                    m.tri_init_u.set(i, .2*std::sin(3.141592653589793*m.tri_cy[i]));
+                    m.tri_init_v.set(i, .1*std::sin(3.141592653589793*m.tri_cx[i]));
                     for(int e=0;e<m.cell_vertex_count(i);++e)
                         if(m.cell_neighbour(i,e)<0) b.edge_wall_drag[MeshData::slot(i,e)]=.02;
                 }

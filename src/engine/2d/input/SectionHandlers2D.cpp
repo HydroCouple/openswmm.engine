@@ -1356,8 +1356,8 @@ std::string parse2DInitialVelocityLine(const std::vector<std::string>& tokens, M
     if (!ok)
         return "Invalid V value";
 
-    mesh.tri_init_u[tri] = u;
-    mesh.tri_init_v[tri] = v;
+    mesh.tri_init_u.set(tri, u);
+    mesh.tri_init_v.set(tri, v);
     return {};
 }
 
@@ -1390,7 +1390,7 @@ std::string parse2DInitialHglLine(const std::vector<std::string>& tokens, MeshDa
                "[2D_MESH_FILE], put it in the mesh file";
 
     if (tokens[0] == "*") {
-        std::fill(mesh.tri_init_hgl.begin(), mesh.tri_init_hgl.end(), hgl);
+        mesh.tri_init_hgl.fill(hgl);
         return {};
     }
 
@@ -1398,7 +1398,7 @@ std::string parse2DInitialHglLine(const std::vector<std::string>& tokens, MeshDa
     if (!ok || cell < 0 || cell >= mesh.n_triangles())
         return "Invalid cell index: " + tokens[0];
 
-    mesh.tri_init_hgl[cell] = hgl;
+    mesh.tri_init_hgl.set(cell, hgl);
     return {};
 }
 

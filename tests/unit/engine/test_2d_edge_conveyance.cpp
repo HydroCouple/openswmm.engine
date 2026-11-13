@@ -133,7 +133,7 @@ TEST(EdgeConveyance, ClosedFullWidthBarrierKeepsDrySideDry) {
                 o.theta = .8;
                 o.advection = true;
                 for (int c = 0; c < m.n_cells(); ++c)
-                    m.tri_init_u[c] = m.tri_cx[c] < 2 ? .1 : 0;
+                    m.tri_init_u.set(c, m.tri_cx[c] < 2 ? .1 : 0);
                 ExplicitInertialSolver solver;
                 solver.initialize(m, s, o);
                 const double initial = std::accumulate(s.volume.begin(), s.volume.end(), 0.);
@@ -185,7 +185,7 @@ TEST(EdgeConveyance, FluxAndWaterTransferScaleOnceAndRankWithFactor) {
 TEST(EdgeConveyance, InitialAndUpdatedPerotVectorsUseTransmittedDischarge) {
     auto m = channel();
     std::fill(m.edge_conveyance.begin(), m.edge_conveyance.end(), .3);
-    std::fill(m.tri_init_u.begin(), m.tri_init_u.end(), .1);
+    m.tri_init_u.fill(.1);
     auto s = water(m, .2);
     auto o = options();
     o.theta = .8;
@@ -258,8 +258,8 @@ TEST(EdgeConveyance, PositivityBudgetUsesTransmittedVolume) {
     ASSERT_EQ(ed.ne, 1);
     std::fill(m.edge_conveyance.begin(), m.edge_conveyance.end(), .3);
     std::fill(m.mannings_n.begin(), m.mannings_n.end(), 0);
-    std::fill(m.tri_init_u.begin(), m.tri_init_u.end(), 1000 * ed.nx[0]);
-    std::fill(m.tri_init_v.begin(), m.tri_init_v.end(), 1000 * ed.ny[0]);
+    m.tri_init_u.fill(1000 * ed.nx[0]);
+    m.tri_init_v.fill(1000 * ed.ny[0]);
     SurfaceStateData s;
     s.resize(2, 4);
     s.volume = {.1, .025};

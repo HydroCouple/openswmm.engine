@@ -1452,10 +1452,12 @@ std::string ExplicitInertialSolver::rk2CheckpointModel(const Rk2CheckpointBindin
     auto vtag = m.vtag.dense(), tri_tag = m.tri_tag.dense(),
          vert_node_name = m.vert_coupled_node_name.dense(),
          tri_node_name = m.tri_coupled_node_name.dense();
+    // The initial velocities are unallocated unless authored; the archive keeps one per cell.
+    auto init_u = m.tri_init_u.dense(), init_v = m.tri_init_v.dense();
     a(m.vx, m.vy, m.vz, vtag, m.cell_nv, m.cell_v, m.cell_nbr, m.tri_area, m.tri_cx, m.tri_cy,
       m.tri_cz, m.edge_length, m.edge_nx, m.edge_ny, m.edge_mx, m.edge_my, m.edge_mz, m.edge_dist_c,
-      m.quad_vfr_z, m.quad_vfr_a, m.edge_conveyance, m.mannings_n, m.tri_init_depth, m.tri_init_u,
-      m.tri_init_v, tri_tag, m.vert_stencil_ptr, m.vert_stencil_idx, m.vert_stencil_wt,
+      m.quad_vfr_z, m.quad_vfr_a, m.edge_conveyance, m.mannings_n, m.tri_init_depth, init_u,
+      init_v, tri_tag, m.vert_stencil_ptr, m.vert_stencil_idx, m.vert_stencil_wt,
       m.vert_coupled_node, m.tri_coupled_node, m.vert_coupling_cd, m.vert_coupling_area,
       m.vert_coupling_area_set, m.tri_coupling_cd, m.tri_coupling_area, vert_node_name,
       tri_node_name);
