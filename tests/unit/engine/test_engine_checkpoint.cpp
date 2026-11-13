@@ -7262,10 +7262,10 @@ std::string changeBoundaryRecord(const std::string& original, int mutation) {
         auto stage = boundary.edge_bc_tseries_name.dense(),
              flow = boundary.edge_bc_flow_tseries_name.dense(),
              rating = boundary.edge_bc_rating_curve_name.dense();
-        a.fixed(boundary.edge_bc_type, boundary.edge_bed_slope, boundary.edge_bc_head,
-                boundary.edge_bc_tseries, stage, boundary.edge_bc_flow,
-                boundary.edge_bc_flow_tseries, flow, boundary.edge_bc_rating_curve, rating,
-                boundary.edge_bc_cum_flux);
+        fixedSlots(a, boundary.edge_bc_type, boundary.edge_bed_slope, boundary.edge_bc_head,
+                   boundary.edge_bc_tseries, stage, boundary.edge_bc_flow,
+                   boundary.edge_bc_flow_tseries, flow, boundary.edge_bc_rating_curve, rating,
+                   boundary.edge_bc_cum_flux);
         if (a.reading()) {
             boundary.edge_bc_tseries_name.assign(stage);
             boundary.edge_bc_flow_tseries_name.assign(flow);

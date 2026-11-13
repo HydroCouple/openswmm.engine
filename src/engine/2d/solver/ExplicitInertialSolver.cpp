@@ -3119,7 +3119,7 @@ std::string ExplicitInertialSolver::configureRk2BoundarySignals(SimulationContex
         for (int slot = 0; slot < boundary.size(); ++slot) {
             const auto type = BoundaryType(boundary.edge_bc_type.at(slot));
             if (type == BoundaryType::RATING_CURVE) {
-                int& index = boundary.edge_bc_rating_curve.at(slot);
+                SlotValues<int>::Ref index = boundary.edge_bc_rating_curve.at(slot);
                 const auto& name = boundary.edge_bc_rating_curve_name.at(slot);
                 const int resolved = index == -2 ? ctx.find_curve(name) : index;
                 if (resolved < 0 || resolved >= int(ctx.tables.tables.size()) ||
@@ -3150,8 +3150,8 @@ std::string ExplicitInertialSolver::configureRk2BoundarySignals(SimulationContex
                 continue;
             }
             for (bool stage : {true, false}) {
-                int& index = stage ? boundary.edge_bc_tseries.at(slot)
-                                   : boundary.edge_bc_flow_tseries.at(slot);
+                SlotValues<int>::Ref index = stage ? boundary.edge_bc_tseries.at(slot)
+                                                   : boundary.edge_bc_flow_tseries.at(slot);
                 const auto& name = stage ? boundary.edge_bc_tseries_name.at(slot)
                                          : boundary.edge_bc_flow_tseries_name.at(slot);
                 if (index == -1 && name.empty())
@@ -3453,7 +3453,7 @@ void ExplicitInertialSolver::runRk2Step(double interval, double start, unsigned 
     std::unique_ptr<SurfaceStateData> surface0;
     std::unique_ptr<SubsurfaceSolver> ground0;
     std::map<int, RuntimeReceipt> receipts0;
-    std::vector<double> boundary_head0, boundary_flow0;
+    SlotValues<double> boundary_head0, boundary_flow0;
     if (gw_) {
         if (auto error = gw_->rk2ProfileError(); !error.empty())
             throw std::runtime_error(error);
@@ -4398,9 +4398,9 @@ double ExplicitInertialSolver::advance(double t_current, double t_target) {
     if (state_->boundary)
         receipts = state_->boundary->receipts;
     const auto boundary_head =
-        rk_boundary_signals_.empty() ? std::vector<double>{} : state_->boundary->edge_bc_head;
+        rk_boundary_signals_.empty() ? SlotValues<double>{} : state_->boundary->edge_bc_head;
     const auto boundary_flow =
-        rk_boundary_signals_.empty() ? std::vector<double>{} : state_->boundary->edge_bc_flow;
+        rk_boundary_signals_.empty() ? SlotValues<double>{} : state_->boundary->edge_bc_flow;
     try {
         return advanceImpl(t_current, t_target);
     } catch (...) {

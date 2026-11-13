@@ -9665,15 +9665,23 @@ TEST(CoupledGroundwaterRk2, SurfaceBoundaryChangedDescriptorAndCorruptReceiptRef
                before = rk2Output("surface-boundary-corrupt-before.chk"),
                after = rk2Output("surface-boundary-corrupt-after.chk");
     ASSERT_EQ(a.solver.saveCheckpoint(good.string()), "");
-    for (double* value : {&bb.edge_bc_flow[slot], &b.state.transport.runtime_bc_conc[slot][0]}) {
-        const auto old = *value;
-        *value += .001;
+    // The flow is held per stored slot (no address to take), the concentration densely.
+    double* const conc = &b.state.transport.runtime_bc_conc[slot][0];
+    for (int which = 0; which < 2; ++which) {
+        const double old = which ? *conc : double(bb.edge_bc_flow[slot]);
+        const auto put = [&](double value) {
+            if (which)
+                *conc = value;
+            else
+                bb.edge_bc_flow[slot] = value;
+        };
+        put(old + .001);
         b.solver.refreshBoundaries();
         ASSERT_EQ(b.solver.saveCheckpoint(before.string()), "");
         EXPECT_FALSE(b.solver.loadCheckpoint(good.string()).empty());
         ASSERT_EQ(b.solver.saveCheckpoint(after.string()), "");
         EXPECT_EQ(rk2File(before), rk2File(after));
-        *value = old;
+        put(old);
         b.solver.refreshBoundaries();
     }
     openswmm::detail::CompletedSourceArchive original(rk2File(good));
@@ -10381,15 +10389,23 @@ TEST(CoupledGroundwaterRk2, AuthoredSurfaceChangedDescriptorAndCorruptReceiptRef
                before = rk2Output("authored-surface-corrupt-before.chk"),
                after = rk2Output("authored-surface-corrupt-after.chk");
     ASSERT_EQ(a.solver.saveCheckpoint(good.string()), "");
-    for (double* value : {&bb.edge_bc_flow[slot], &b.state.transport.bc_quality_rows[0].conc}) {
-        const auto old = *value;
-        *value += .001;
+    // The flow is held per stored slot (no address to take), the concentration densely.
+    double* const conc = &b.state.transport.bc_quality_rows[0].conc;
+    for (int which = 0; which < 2; ++which) {
+        const double old = which ? *conc : double(bb.edge_bc_flow[slot]);
+        const auto put = [&](double value) {
+            if (which)
+                *conc = value;
+            else
+                bb.edge_bc_flow[slot] = value;
+        };
+        put(old + .001);
         b.solver.refreshBoundaries();
         ASSERT_EQ(b.solver.saveCheckpoint(before.string()), "");
         EXPECT_FALSE(b.solver.loadCheckpoint(good.string()).empty());
         ASSERT_EQ(b.solver.saveCheckpoint(after.string()), "");
         EXPECT_EQ(rk2File(before), rk2File(after));
-        *value = old;
+        put(old);
         b.solver.refreshBoundaries();
     }
     openswmm::detail::CompletedSourceArchive original(rk2File(good));

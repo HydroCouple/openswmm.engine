@@ -265,8 +265,8 @@ void boundaryFields(Archive& a, BoundaryData& b) {
     // The names are sparse in memory; the archive keeps one string per slot.
     auto stage = b.edge_bc_tseries_name.dense(), flow = b.edge_bc_flow_tseries_name.dense(),
          rating = b.edge_bc_rating_curve_name.dense();
-    a.fixed(b.edge_bc_type, b.edge_bed_slope, b.edge_bc_head, b.edge_bc_tseries, stage,
-            b.edge_bc_flow, b.edge_bc_flow_tseries, flow, b.edge_bc_rating_curve, rating);
+    fixedSlots(a, b.edge_bc_type, b.edge_bed_slope, b.edge_bc_head, b.edge_bc_tseries, stage,
+               b.edge_bc_flow, b.edge_bc_flow_tseries, flow, b.edge_bc_rating_curve, rating);
     if (a.reading()) {
         b.edge_bc_tseries_name.assign(stage);
         b.edge_bc_flow_tseries_name.assign(flow);
@@ -562,7 +562,7 @@ void state(Archive& a, State& s, bool boundaries) {
     });
     if (boundaries) {
         boundaryFields(a, s.boundary);
-        a.fixed(s.boundary.edge_bc_cum_flux);
+        fixedSlots(a, s.boundary.edge_bc_cum_flux);
         struct Row {
             int slot = 0;
             BoundaryData::RuntimeOriginal old{};

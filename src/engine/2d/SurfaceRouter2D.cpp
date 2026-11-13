@@ -4069,17 +4069,19 @@ void SurfaceRouter2D::resolveBoundaryValues(SimulationContext& ctx, double t) {
     // time; -2 = "name pending", -1 = not found (then treated as constant).
     if (!boundary_names_resolved_) {
         boundary_names_resolved_ = true;
-        for (int idx = 0; idx < ne; ++idx) {
-            if (boundary_.edge_bc_tseries[idx] == -2)
-                boundary_.edge_bc_tseries[idx] =
-                    ctx.find_timeseries(boundary_.edge_bc_tseries_name[idx]);
-            if (boundary_.edge_bc_flow_tseries[idx] == -2)
-                boundary_.edge_bc_flow_tseries[idx] =
-                    ctx.find_timeseries(boundary_.edge_bc_flow_tseries_name[idx]);
-            if (boundary_.edge_bc_rating_curve[idx] == -2)
-                boundary_.edge_bc_rating_curve[idx] =
-                    ctx.find_curve(boundary_.edge_bc_rating_curve_name[idx]);
-        }
+        // Only the slots that hold an index are stored, so visit those.
+        boundary_.edge_bc_tseries.edit([&](std::size_t idx, int& ts) {
+            if (ts == -2)
+                ts = ctx.find_timeseries(boundary_.edge_bc_tseries_name[idx]);
+        });
+        boundary_.edge_bc_flow_tseries.edit([&](std::size_t idx, int& ts) {
+            if (ts == -2)
+                ts = ctx.find_timeseries(boundary_.edge_bc_flow_tseries_name[idx]);
+        });
+        boundary_.edge_bc_rating_curve.edit([&](std::size_t idx, int& curve) {
+            if (curve == -2)
+                curve = ctx.find_curve(boundary_.edge_bc_rating_curve_name[idx]);
+        });
     }
 
     // The coupled RK2 owner evaluates immutable signals at its Euler times.

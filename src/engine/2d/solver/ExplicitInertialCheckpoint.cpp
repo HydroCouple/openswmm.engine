@@ -1208,9 +1208,9 @@ void rk2SurfaceBoundaryArchive(Archive& a, BoundaryData& b,
         auto stage_names = b.edge_bc_tseries_name.dense(),
              flow_names = b.edge_bc_flow_tseries_name.dense(),
              rating_names = b.edge_bc_rating_curve_name.dense();
-        a.fixed(b.edge_bc_type, head, flow, b.edge_bed_slope, b.edge_bc_tseries,
-                b.edge_bc_flow_tseries, b.edge_bc_rating_curve, stage_names, flow_names,
-                rating_names);
+        fixedSlots(a, b.edge_bc_type, head, flow, b.edge_bed_slope, b.edge_bc_tseries,
+                   b.edge_bc_flow_tseries, b.edge_bc_rating_curve, stage_names, flow_names,
+                   rating_names);
         if (a.reading()) {
             b.edge_bc_tseries_name.assign(stage_names);
             b.edge_bc_flow_tseries_name.assign(flow_names);
@@ -1250,9 +1250,9 @@ void rk2SurfaceBoundaryArchive(Archive& a, BoundaryData& b,
             }
         }
     } else {
-        a.fixed(b.edge_bc_cum_flux);
+        fixedSlots(a, b.edge_bc_cum_flux);
         if (dynamic)
-            a.fixed(b.edge_bc_head, b.edge_bc_flow);
+            fixedSlots(a, b.edge_bc_head, b.edge_bc_flow);
         for (auto& [slot, r] : b.receipts)
             a(r.requested, r.applied, r.water_in, r.water_out, r.heat_requested, r.heat_applied,
               r.last_flow, r.last_dt, r.requested_mass, r.applied_mass);

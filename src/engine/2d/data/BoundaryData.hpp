@@ -41,6 +41,8 @@
 
 #include <unordered_map>
 #include <stdexcept>
+#include <cstring>
+#include <utility>
 #include "../coupling/RuntimeCoupling.hpp"
 #include <vector>
 #include <cstdint>
@@ -132,11 +134,131 @@ private:
 };
 
 /**
+ * @brief Per-slot values kept only for the slots that differ from the array's default.
+ *
+ * A boundary's head, flow, slope, table indices and cumulative flux mean something only on the
+ * edges that carry a boundary condition, but BoundaryData has a slot for every edge of every cell;
+ * a dense array per value cost 44 B per slot (176 MB per million cells), almost all at the
+ * default. Reads look and behave like the dense array's: `v[slot]` is the slot's value or the
+ * default, and `v[slot] = x`, `+=` and `*=` write through a reference object. A value equal to the
+ * default bit for bit is not stored, so dense() reproduces the dense array exactly (a NaN or a
+ * negative zero is kept). size() is the logical slot count (extent checks and archives use it).
+ * Const reads never insert, so concurrent reads are safe; writes need exclusive access, as a
+ * write to a new slot allocates.
+ */
+template <class T> class SlotValues {
+public:
+    /// What a non-const `v[slot]` returns: reads the slot's value, writes through set().
+    class Ref {
+    public:
+        operator T() const { return std::as_const(*owner_)[slot_]; }
+        Ref& operator=(T value) {
+            owner_->set(slot_, value);
+            return *this;
+        }
+        Ref& operator=(const Ref& other) { return *this = static_cast<T>(other); }
+        Ref& operator+=(T value) { return *this = static_cast<T>(*this) + value; }
+        Ref& operator*=(T value) { return *this = static_cast<T>(*this) * value; }
+
+    private:
+        friend class SlotValues;
+        Ref(SlotValues* owner, std::size_t slot) : owner_(owner), slot_(slot) {}
+        SlotValues* owner_;
+        std::size_t slot_;
+    };
+
+    SlotValues() = default;
+    explicit SlotValues(T default_value) : default_(default_value) {}
+
+    std::size_t size() const noexcept { return n_; }
+    bool empty() const noexcept { return n_ == 0; }
+    /// How many slots hold a value other than the default (what the array costs in memory).
+    std::size_t stored() const noexcept { return values_.size(); }
+    /// n slots, every one at @p value (which becomes the default), as std::vector::assign.
+    void assign(std::size_t n, T value) {
+        values_.clear();
+        n_ = n;
+        default_ = value;
+    }
+    T operator[](std::size_t slot) const {
+        const auto it = values_.find(slot);
+        return it == values_.end() ? default_ : it->second;
+    }
+    Ref operator[](std::size_t slot) { return Ref(this, slot); }
+    T at(std::size_t slot) const {
+        check(slot);
+        return (*this)[slot];
+    }
+    Ref at(std::size_t slot) {
+        check(slot);
+        return Ref(this, slot);
+    }
+    void set(std::size_t slot, T value) {
+        if (std::memcmp(&value, &default_, sizeof(T)) == 0)
+            values_.erase(slot);
+        else
+            values_[slot] = value;
+    }
+    /// Edit every stored (non-default) value in place, in any order.
+    template <class F> void edit(F&& f) {
+        for (auto it = values_.begin(); it != values_.end();) {
+            f(it->first, it->second);
+            it = std::memcmp(&it->second, &default_, sizeof(T)) == 0 ? values_.erase(it)
+                                                                      : std::next(it);
+        }
+    }
+    /// The values as a dense array of size() entries: an archive's fixed-extent encoding.
+    std::vector<T> dense() const {
+        std::vector<T> v(n_, default_);
+        for (const auto& [slot, value] : values_)
+            v[slot] = value;
+        return v;
+    }
+    /// Replace every value from a dense array; size() becomes its size.
+    void assign(const std::vector<T>& v) {
+        values_.clear();
+        n_ = v.size();
+        for (std::size_t i = 0; i < v.size(); ++i)
+            set(i, v[i]);
+    }
+
+private:
+    void check(std::size_t slot) const {
+        if (slot >= n_)
+            throw std::out_of_range("SlotValues::at");
+    }
+    std::size_t n_ = 0;
+    T default_{};
+    std::unordered_map<std::size_t, T> values_;
+};
+
+/**
+ * @brief Archive per-slot arrays in argument order, each in the dense fixed-extent encoding.
+ *
+ * A SlotValues goes through a dense copy (and is rebuilt from it on a read), so an archive's
+ * bytes do not depend on how the values are held in memory; any other argument is passed to
+ * Archive::fixed unchanged.
+ */
+template <class Archive, class V> void fixedSlot(Archive& a, V& values) {
+    a.fixed(values);
+}
+template <class Archive, class T> void fixedSlot(Archive& a, SlotValues<T>& values) {
+    auto dense = values.dense();
+    a.fixed(dense);
+    if (a.reading())
+        values.assign(dense);
+}
+template <class Archive, class... V> void fixedSlots(Archive& a, V&... values) {
+    (fixedSlot(a, values), ...);
+}
+
+/**
  * @brief SoA storage for per-edge boundary conditions.
  *
  * All arrays are flat 2D: indexed as [cell * kMaxCellVerts + edge_local] where edge_local ∈
- * {0,1,2}. Only meaningful for boundary edges (tri_nbr == -1), but allocated for all edges to
- * avoid indirection in the flux loop.
+ * {0,1,2}. The type, wall drag and exterior flag are dense, one per slot, since the flux loop
+ * reads them for every edge; the values that only a boundary edge carries are kept per stored
+ * slot (SlotValues, SlotNames).
  */
 struct BoundaryData {
 
@@ -152,23 +274,23 @@ struct BoundaryData {
     /// Positive values drain outward; negative values prescribe inward flow.
     /// A zero slope zeroes the Manning outflow — the edge behaves as a
     /// Wall (validate_project warns; no auto-compute from bed geometry).
-    std::vector<double> edge_bed_slope;
+    SlotValues<double> edge_bed_slope;
 
     /// Prescribed total head for SPECIFIED_STAGE edges (m).
     /// For time-varying: updated each step from timeseries.
-    std::vector<double> edge_bc_head;
+    SlotValues<double> edge_bc_head;
 
     /// Timeseries index for time-varying SPECIFIED_STAGE.
     /// -1 = constant (use edge_bc_head as-is), -2 = unresolved name,
     /// >= 0 = resolved table index into SimulationContext::tables.
-    std::vector<int> edge_bc_tseries;
+    SlotValues<int> edge_bc_tseries{-1};
 
     /// Timeseries name for deferred resolution (cleared after resolve).
     SlotNames edge_bc_tseries_name;
 
     /// Cumulative boundary flux (m³, positive = outflow from domain).
     /// Tracked for mass balance reporting.
-    std::vector<double> edge_bc_cum_flux;
+    SlotValues<double> edge_bc_cum_flux;
 
     // -----------------------------------------------------------------------
     // V-E4 — SPECIFIED_FLOW slots (per-metre-of-edge discharge).
@@ -177,12 +299,12 @@ struct BoundaryData {
 
     /// Prescribed discharge per metre of edge (m³/s/m) for SPECIFIED_FLOW edges.
     /// For time-varying: updated each step from timeseries.
-    std::vector<double> edge_bc_flow;
+    SlotValues<double> edge_bc_flow;
 
     /// Timeseries index for time-varying SPECIFIED_FLOW.
     /// -1 = constant (use edge_bc_flow as-is), -2 = unresolved name,
     /// >= 0 = resolved table index into SimulationContext::tables.
-    std::vector<int> edge_bc_flow_tseries;
+    SlotValues<int> edge_bc_flow_tseries{-1};
 
     /// Timeseries name for deferred resolution (cleared after resolve).
     SlotNames edge_bc_flow_tseries_name;
@@ -193,7 +315,7 @@ struct BoundaryData {
 
     /// Curve registry index for RATING_CURVE edges.
     /// -1 = unset, -2 = unresolved name, >= 0 = resolved curve index.
-    std::vector<int> edge_bc_rating_curve;
+    SlotValues<int> edge_bc_rating_curve{-1};
 
     /// Curve name for deferred resolution (cleared after resolve).
     SlotNames edge_bc_rating_curve_name;

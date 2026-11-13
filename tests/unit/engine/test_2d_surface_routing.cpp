@@ -42,6 +42,8 @@
 #include <cmath>
 #include <cctype>
 #include <cstdlib>
+#include <limits>
+#include <utility>
 #include <vector>
 #include <sstream>
 #include <string>
@@ -307,6 +309,58 @@ TEST(V_E3_Parser, EmptyLineIsSilentlySkipped) {
     std::vector<openswmm::twoD::SurfaceRouter2D::PendingBoundaryRow> rows;
     EXPECT_TRUE(openswmm::twoD::parse2DBoundaryConditionsLine({}, rows).empty());
     EXPECT_EQ(rows.size(), 0u);
+}
+
+// The per-slot boundary values are held only where they differ from the
+// default, yet read, write and archive exactly like the dense arrays they
+// replaced (mesh open plan I3).
+TEST(BoundaryData, SlotValuesStoreOnlyWhatDiffersFromTheDefault) {
+    openswmm::twoD::SlotValues<double> v;
+    v.assign(8, 0.0);
+    EXPECT_EQ(v.size(), 8u);
+    EXPECT_EQ(v.stored(), 0u);
+    v[3] = 1.5;
+    v[3] += 0.25;
+    v[3] *= 2.0;
+    v[5] = v[3]; // a reference object copies the value, not the binding
+    v[6] = 0.0;  // the default is not stored
+    EXPECT_DOUBLE_EQ(v[3], 3.5);
+    EXPECT_DOUBLE_EQ(std::as_const(v)[5], 3.5);
+    EXPECT_EQ(v.stored(), 2u);
+    v[5] = 0.0; // back to the default: dropped
+    EXPECT_EQ(v.stored(), 1u);
+    // Bit-for-bit, so a dense copy is exactly what a dense array would hold.
+    v[1] = -0.0;
+    v[2] = std::numeric_limits<double>::quiet_NaN();
+    EXPECT_EQ(v.stored(), 3u);
+    const auto dense = v.dense();
+    ASSERT_EQ(dense.size(), 8u);
+    EXPECT_TRUE(std::signbit(dense[1]));
+    EXPECT_TRUE(std::isnan(dense[2]));
+    EXPECT_DOUBLE_EQ(dense[3], 3.5);
+    EXPECT_FALSE(std::signbit(dense[0]));
+    openswmm::twoD::SlotValues<double> back;
+    back.assign(dense);
+    EXPECT_EQ(back.size(), 8u);
+    EXPECT_EQ(back.stored(), 3u);
+    EXPECT_TRUE(std::signbit(back[1]));
+    EXPECT_THROW(std::as_const(v).at(8), std::out_of_range);
+    EXPECT_THROW(v.at(8) = 1.0, std::out_of_range);
+
+    // The table indices default to -1 ("none"), before and after a resize.
+    BoundaryData b;
+    EXPECT_EQ(std::as_const(b).edge_bc_tseries[0], -1);
+    b.resize(12);
+    b.edge_bc_rating_curve[7] = -2;
+    b.edge_bc_rating_curve.edit([](std::size_t slot, int& curve) {
+        EXPECT_EQ(slot, 7u);
+        curve = -1; // resolved to "none": dropped
+    });
+    EXPECT_EQ(b.edge_bc_rating_curve.stored(), 0u);
+    b.edge_bc_head[2] = 4.0;
+    b.resize(12); // a resize starts again from the defaults
+    EXPECT_EQ(b.edge_bc_head.stored(), 0u);
+    EXPECT_DOUBLE_EQ(b.edge_bc_head[2], 0.0);
 }
 
 TEST(BoundaryData, ResizeInitialisesAllSlotsIncludingV_E4andV_E5) {
