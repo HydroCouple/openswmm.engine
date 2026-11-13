@@ -1134,7 +1134,8 @@ const char* const kStandardOptionKeys[] = {
     "QUALITY_SOLVER", "WATER_AGE", "OUTFALL_BACKFLOW_QUALITY", "HEAT_TRANSPORT", "QUALITY_STEP",
     "MAX_SEGMENTS_PER_LINK", "DISPERSION", "RWPT_SEED", "WATER_DENSITY",
     "WATER_SPECIFIC_HEAT_CAPACITY", "WIND_FUNC_COEFF_A", "WIND_FUNC_COEFF_B", "PRESSURE_RATIO",
-    "FV_NODE_FEEDBACK_DT", "COMPATIBILITY", "VIRTUAL_JUNCTION_MOMENTUM", "THREADS",
+    "FV_NODE_FEEDBACK_DT", "WRITE_ABSOLUTE_PATHS", "COMPATIBILITY", "VIRTUAL_JUNCTION_MOMENTUM",
+    "THREADS",
 };
 
 } // namespace
@@ -1597,6 +1598,8 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine, const char* key, char* 
         val = fmt_full(opt.pressure_ratio);
     else if (k == "FV_NODE_FEEDBACK_DT")
         val = opt.fv.node_feedback_dt ? "YES" : "NO";
+    else if (k == "WRITE_ABSOLUTE_PATHS")
+        val = opt.write_absolute_paths ? "YES" : "NO";
     // Legacy COMPATIBILITY is kept verbatim for the round trip; the v6
     // engine does not act on it.
     else if (k == "COMPATIBILITY") {
@@ -2227,6 +2230,10 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine, const char* key, const 
             // Same grammar as the [OPTIONS] parser: anything but NO/FALSE/0/OFF is on.
             const std::string vu = upper_copy(v);
             opt.fv.node_feedback_dt = !(vu == "NO" || vu == "FALSE" || vu == "0" || vu == "OFF");
+        } else if (k == "WRITE_ABSOLUTE_PATHS") {
+            // The field itself, as swmm_options_set_ext does; never an ext_options copy.
+            opt.write_absolute_paths = openswmm::input::Tokenizer::parse_boolean(v);
+            opt.ext_options.erase("WRITE_ABSOLUTE_PATHS");
         } else if (k == "COMPATIBILITY") {
             if (v.empty())
                 opt.ext_options.erase("COMPATIBILITY");

@@ -1160,6 +1160,9 @@ static bool write2DSections(FILE* f, const SimulationContext& ctx, const std::st
     std::fprintf(f, "%-22s %.17g\n", "FLUX_DH_EPS", o.flux_dh_eps);
     std::fprintf(f, "%-22s %.17g\n", "COUPLING_CD", o.coupling_cd);
     std::fprintf(f, "%-22s %.17g\n", "COUPLING_SYNC", o.coupling_sync);
+    // Off by default; written only when set so default files are unchanged.
+    if (o.coupling_in_flooding)
+        std::fprintf(f, "%-22s %s\n", "COUPLING_IN_FLOODING", "YES");
     std::fprintf(
         f, "%-22s %s\n", "RAINFALL_MODE",
         sRainMode[static_cast<int>(o.rainfall_mode) >= 0 && static_cast<int>(o.rainfall_mode) <= 3

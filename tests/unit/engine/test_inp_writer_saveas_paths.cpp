@@ -398,3 +398,27 @@ TEST_F(SaveAsPathsTest, WriteAbsolutePathsExtKeySetsTheOptionNotExtOptions) {
     EXPECT_EQ(text.find("WRITE_ABSOLUTE_PATHS", first + 1), std::string::npos)
         << "WRITE_ABSOLUTE_PATHS emitted twice (ext_options copy not erased)";
 }
+
+// GUI review G-05: the Files page reads the flag through swmm_options_get, which did not know
+// the key (BADPARAM), so a file that said YES opened with the box unchecked.
+TEST_F(SaveAsPathsTest, WriteAbsolutePathsReadsBackThroughOptionsGet) {
+    eng_ = swmm_engine_create();
+    ASSERT_NE(eng_, nullptr);
+    const fs::path inp = src_dir_ / "model.inp";
+    ASSERT_EQ(swmm_engine_open(eng_, inp.string().c_str(), "", "", nullptr), 0);
+    char buf[32] = {};
+    ASSERT_EQ(swmm_options_get(eng_, "WRITE_ABSOLUTE_PATHS", buf, sizeof buf), 0);
+    EXPECT_STREQ(buf, "NO");
+    ASSERT_EQ(swmm_options_set(eng_, "WRITE_ABSOLUTE_PATHS", "YES"), 0);
+    ASSERT_EQ(swmm_options_get(eng_, "WRITE_ABSOLUTE_PATHS", buf, sizeof buf), 0);
+    EXPECT_STREQ(buf, "YES");
+
+    const fs::path out = dst_dir_ / "abs_readback.inp";
+    ASSERT_EQ(swmm_model_write(eng_, out.string().c_str()), 0);
+    SWMM_Engine reopened = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(reopened, out.string().c_str(), "", "", nullptr), 0);
+    ASSERT_EQ(swmm_options_get(reopened, "WRITE_ABSOLUTE_PATHS", buf, sizeof buf), 0);
+    EXPECT_STREQ(buf, "YES");
+    swmm_engine_close(reopened);
+    swmm_engine_destroy(reopened);
+}

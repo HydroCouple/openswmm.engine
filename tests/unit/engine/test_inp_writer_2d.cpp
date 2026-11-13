@@ -934,6 +934,25 @@ TEST_F(InpWriter2DTest, ExtOptions2DRouteToSolverAndPersist) {
     EXPECT_STREQ(buf, "hello");
 }
 
+// COUPLING_IN_FLOODING was parsed and saved to GeoPackage but never written to
+// the .inp, so a YES was lost on Open -> Save .inp (GUI review G-06).
+TEST_F(InpWriter2DTest, CouplingInFloodingSurvivesSaveAndReopen) {
+    const fs::path inp_a = dir_ / "flooding.inp";
+    write_file(inp_a, replace(k1DBase, "{FLOW_UNITS}", "CMS") + k2DSections);
+    eng_a_ = open_engine(inp_a);
+    char buf[64] = {};
+    ASSERT_EQ(swmm_options_set_ext(eng_a_, "COUPLING_IN_FLOODING", "YES"), 0);
+    ASSERT_EQ(swmm_options_get_ext(eng_a_, "COUPLING_IN_FLOODING", buf, sizeof(buf)), 0);
+    EXPECT_STREQ(buf, "YES");
+
+    const fs::path inp_b = dir_ / "flooding_out.inp";
+    ASSERT_EQ(swmm_model_write(eng_a_, inp_b.string().c_str()), 0);
+    EXPECT_NE(read_file(inp_b).find("COUPLING_IN_FLOODING"), std::string::npos);
+    eng_b_ = open_engine(inp_b);
+    ASSERT_EQ(swmm_options_get_ext(eng_b_, "COUPLING_IN_FLOODING", buf, sizeof(buf)), 0);
+    EXPECT_STREQ(buf, "YES");
+}
+
 // ---------------------------------------------------------------------------
 // [2D_MESH_FILE] is settable through swmm_options_set_ext on a model whose
 // engine holds NO in-memory mesh (the GUI "assign external .2dm" path). The
