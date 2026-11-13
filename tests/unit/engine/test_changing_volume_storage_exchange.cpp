@@ -35,7 +35,7 @@ std::string model(bool positive,bool tail) {
         "\nVARIABLE_STEP 0\nREPORT_STEP 00:00:01\nTHREADS 1\nALLOW_PONDING YES\nIGNORE_QUALITY NO\n"
         "[STORAGE]\nTank -10 1 10 FUNCTIONAL 0 0 " << 2*.02832/(.3048*.3048*.3048)
         << ' ' << 2*.02832/(.3048*.3048*.3048) << " 0\n"
-        "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nBACKEND CPU\nLTS_TIERS 1\nMAX_TIMESTEP " << (tail?.25:1./512)
+        "[2D_OPTIONS]\nMOMENTUM_EQUATION LOCAL_INERTIAL\nINTEGRATOR EXPLICIT\nBACKEND CPU\nLTS_TIERS 1\nMAX_TIMESTEP " << (tail?.25:1./512)
         << "\nCOUPLING_SYNC " << (tail?.25:1./512) << "\nREPORT_2D NO\n[2D_VERTICES]\n";
     for (int k=0;k<3;++k) {
         const int x=8*k;

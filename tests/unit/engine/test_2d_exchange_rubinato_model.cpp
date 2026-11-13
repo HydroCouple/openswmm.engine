@@ -248,7 +248,7 @@ std::string deck(const Case& c, const std::map<std::string, double>& rig, const 
         m << "C2 CIRCULAR " << rig.at("pipe_diameter_m") << " 0 0 0 1\n\n";
     if (sewer)
         m << "[INFLOWS]\nIN FLOW \"\" FLOW 1.0 1.0 " << c.q3 << "\n\n";
-    m << "[2D_OPTIONS]\nMAX_TIMESTEP 1\nDRY_DEPTH 0.0002\nREPORT_2D NO\nCOUPLING_LAW " << law
+    m << "[2D_OPTIONS]\nMOMENTUM_EQUATION LOCAL_INERTIAL\nMAX_TIMESTEP 1\nDRY_DEPTH 0.0002\nREPORT_2D NO\nCOUPLING_LAW " << law
       << "\nCOUPLING_HEAD STENCIL_WET_MEAN\nCOUPLING_POND_MODE CHAMBER\n"
       << extra2d
       << "\n"

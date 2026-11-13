@@ -132,7 +132,7 @@ std::string deck(Mesh m, const std::string& extra_gw = "", double hg0 = 0.5, dou
          // Interval <= the series' 10-min spacing (legacy ERROR 159).
          "[RAINGAGES]\nRG1 INTENSITY 0:10 1.0 TIMESERIES RAIN\n\n"
          "[TIMESERIES]\nRAIN  0:00  20.0\nRAIN  0:10  0.0\n\n"
-         "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\n"
+         "[2D_OPTIONS]\nMOMENTUM_EQUATION LOCAL_INERTIAL\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\n"
          "DRY_DEPTH 0.001\nCOUPLING_CD 0.7\nREPORT_2D NO\nRAINFALL_MODE SYSTEM\n"
          "EVAPORATION CLIMATE\n\n";
     // Ground at 0 m; the aquifer bottom is ZS below it.
@@ -1255,7 +1255,7 @@ std::string bedOnlyDeck(bool bed, const char* closure = "CLOSED_FORM", double zs
          "[OUTFALLS]\nO1 -2.5 FREE NO\n\n"
          "[CONDUITS]\nC1 J1 O1 30.0 0.013 0 0 0\n\n"
          "[XSECTIONS]\nC1 CIRCULAR 0.5 0 0 0 1\n\n"
-         "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\n"
+         "[2D_OPTIONS]\nMOMENTUM_EQUATION LOCAL_INERTIAL\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\n"
          "DRY_DEPTH 0.001\nCOUPLING_CD 0.7\nREPORT_2D NO\n"
          "RAINFALL_MODE SYSTEM\n\n"
          "[2D_VERTICES]\n0.0 0.0 0.0\n10.0 0.0 0.0\n10.0 10.0 0.0\n0.0 10.0 0.0\n\n"
@@ -1696,7 +1696,7 @@ TEST(GwTransportKernel, ReportSaysNaWhenThereIsNoScaleToDivideBy) {
          "[OUTFALLS]\nO1 -2.5 FREE NO\n\n"
          "[CONDUITS]\nC1 J1 O1 30.0 0.013 0 0 0\n\n"
          "[XSECTIONS]\nC1 CIRCULAR 0.5 0 0 0 1\n\n"
-         "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\n"
+         "[2D_OPTIONS]\nMOMENTUM_EQUATION LOCAL_INERTIAL\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\n"
          "DRY_DEPTH 0.001\nCOUPLING_CD 0.7\nREPORT_2D NO\n"
          "RAINFALL_MODE SYSTEM\n\n"
          "[2D_VERTICES]\n0.0 0.0 0.0\n10.0 0.0 0.0\n10.0 10.0 0.0\n0.0 10.0 0.0\n\n"
@@ -2987,7 +2987,7 @@ TEST(GwCompletion, HydraulicHeadAndTotalFlowBoundariesAgreeInUSAndSIProjects) {
                 << 2 * length << "\n[OUTFALLS]\nO1 " << -3 * length
                 << " FREE NO\n[CONDUITS]\nC1 J1 O1 " << 30 * length
                 << " .013 0 0 0\n[XSECTIONS]\nC1 CIRCULAR " << .5 * length << " 0 0 0 1\n"
-                << "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP .5\nREPORT_2D NO\nRAINFALL_MODE NONE\n"
+                << "[2D_OPTIONS]\nMOMENTUM_EQUATION LOCAL_INERTIAL\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP .5\nREPORT_2D NO\nRAINFALL_MODE NONE\n"
                 << "[2D_VERTICES]\n0 0 0\n"
                 << 10 * length << " 0 0\n"
                 << 10 * length << " " << 10 * length << " 0\n0 " << 10 * length << " 0\n"
@@ -4001,7 +4001,7 @@ TEST(GwIntegrated, UnequalGroundwaterClocksPreservePendingColdContactsAndExactRe
     for (const auto shape : {Mesh::Tri, Mesh::Quad, Mesh::Mixed}) {
         SCOPED_TRACE(meshName(shape));
         auto body = mappedPorousDeck(
-            "[OPTIONS]\nWATER_AGE ON\n[2D_OPTIONS]\nTRANSPORT_AGE YES\n"
+            "[OPTIONS]\nWATER_AGE ON\n[2D_OPTIONS]\nMOMENTUM_EQUATION LOCAL_INERTIAL\nTRANSPORT_AGE YES\n"
             "[GW_INITIAL_QUALITY]\n* SAT TSS 7\n* UNSAT TSS 7\n* SAT __TEMPERATURE__ 20\n* UNSAT __TEMPERATURE__ 20\n"
             "CELL 2 SAT TSS 2\nCELL 2 SAT __TEMPERATURE__ 5\nCELL 2 UNSAT __TEMPERATURE__ 5\n"
             "[GW_TRANSPORT_OPTIONS]\nDISPERSION YES\nCONDUCTION YES\nLATERAL_CONDUCTION YES\n"
@@ -4335,7 +4335,7 @@ TEST(GwIntegrated, AvailableOpenmpPluginIsExecutedByASurfaceOnlyPositiveControl)
     const std::string body =
         "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\nSTART_DATE 01/01/2026\n"
         "START_TIME 00:00:00\nEND_DATE 01/01/2026\nEND_TIME 00:00:02\nREPORT_STEP 00:00:01\nROUTING_STEP .1\n"
-        "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP .05\nREPORT_2D NO\nEVAPORATION NO\n"
+        "[2D_OPTIONS]\nMOMENTUM_EQUATION LOCAL_INERTIAL\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP .05\nREPORT_2D NO\nEVAPORATION NO\n"
         "[2D_VERTICES]\n0 0 0\n4 0 0\n4 4 0\n0 4 0\n[2D_TRIANGLES]\n0 1 2 .03 .2\n0 2 3 .03 .2\n";
     Deck r = open("openmp-surface-positive-control", body);
     ASSERT_TRUE(r.opened) << completionErrors(r);
@@ -4366,6 +4366,7 @@ TEST(GwIntegrated, AvailableOpenmpPluginIsExecutedByASurfaceOnlyPositiveControl)
 TEST(GwRechargePlugin, AllSoilLawsMatchScalarPhysicsAndMalformedInputsAreAtomic) {
     GroundwaterBackendOverride select("omp");
     openswmm::twoD::SolverOptions2D options;
+    options.momentum = openswmm::twoD::Momentum2D::LOCAL_INERTIAL;
     auto backend = openswmm::twoD::makeGwRechargeBackend(options, 100000);
     if (!backend.evaluate) {
         ASSERT_FALSE(std::getenv("OPENSWMM_GW_TEST_REQUIRE_PLUGIN")) << backend.diagnostic;
@@ -4660,6 +4661,7 @@ TEST(GwRechargePlugin, HostReactiveAndPorousOwnersPreserveCpuCanonicalState) {
 TEST(GwRechargePlugin, AutoRetainsScalarUntilIntegratedPerformanceIsQualified) {
     GroundwaterBackendOverride select(nullptr);
     openswmm::twoD::SolverOptions2D options;
+    options.momentum = openswmm::twoD::Momentum2D::LOCAL_INERTIAL;
     options.backend = openswmm::twoD::Backend2D::AUTO;
     auto backend = openswmm::twoD::makeGwRechargeBackend(options, 1000000);
     EXPECT_FALSE(backend.evaluate);
@@ -4669,7 +4671,7 @@ TEST(GwRechargePlugin, AutoRetainsScalarUntilIntegratedPerformanceIsQualified) {
 TEST(GwCompletion, BulkPorewaterAgeLedgerAndClockSurviveComponentRestore) {
     GroundwaterBackendOverride cpu("cpu");
     const auto body = forcingDeck(
-        "[OPTIONS]\nWATER_AGE ON\nHEAT_TRANSPORT YES\n[2D_OPTIONS]\nTRANSPORT_AGE YES\n"
+        "[OPTIONS]\nWATER_AGE ON\nHEAT_TRANSPORT YES\n[2D_OPTIONS]\nMOMENTUM_EQUATION LOCAL_INERTIAL\nTRANSPORT_AGE YES\n"
         "[GW_TRANSPORT_OPTIONS]\nTRANSPORT_AGE YES\nTHERMAL_MODEL POROUS_EQUILIBRIUM\nCONDUCTION NO\n"
         "[GW_INITIAL_QUALITY]\n* SAT __WATER_AGE__ 2\n* UNSAT __WATER_AGE__ 1\n");
     Deck a = open("bulk-pore-age-ledger", body), b = open("bulk-pore-age-restored", body);
@@ -5101,7 +5103,7 @@ inline std::string deck(int n, int kind, int pollutants, bool layered, int threa
            "[POLLUTANTS]\n";
     for (int s = 0; s < pollutants; ++s)
         out << "P" << s << " MG/L 0 0 0 0 NO * 0 0\n";
-    out << "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 3\nMAX_TIMESTEP 1\n"
+    out << "[2D_OPTIONS]\nMOMENTUM_EQUATION LOCAL_INERTIAL\nINTEGRATOR EXPLICIT\nLTS_TIERS 3\nMAX_TIMESTEP 1\n"
            "REPORT_2D NO\nTRANSPORT_AGE YES\n[2D_VERTICES]\n";
     for (int y = 0; y <= n; ++y) for (int x = 0; x <= n; ++x)
         out << x << ' ' << y << " 0\n";

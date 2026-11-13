@@ -1176,10 +1176,11 @@ static bool write2DSections(FILE* f, const SimulationContext& ctx, const std::st
     std::fprintf(f, "%-22s %.17g\n", "VFR_MIN_WET_FRAC", o.vfr_min_wet_frac);
     // Explicit-marcher configuration (the only 2D integrator).
     std::fprintf(f, "%-22s %s\n", "INTEGRATOR", "EXPLICIT");
-    // Momentum closure: the LOCAL_INERTIAL default is omitted (option-default
-    // rule — pre-2026-09 files round-trip byte-identically).
-    if (o.momentum == twoD::Momentum2D::FULL_SWE)
-        std::fprintf(f, "%-22s %s\n", "MOMENTUM_EQUATION", "FULL_SWE");
+    // Momentum closure: the FULL_SWE default is omitted (option-default rule);
+    // LOCAL_INERTIAL, the default before 2026-11-13, is written so a saved
+    // local-inertial model reopens as one.
+    if (o.momentum == twoD::Momentum2D::LOCAL_INERTIAL)
+        std::fprintf(f, "%-22s %s\n", "MOMENTUM_EQUATION", "LOCAL_INERTIAL");
     else if (o.momentum == twoD::Momentum2D::DIFFUSIVE_WAVE)
         std::fprintf(f, "%-22s %s\n", "MOMENTUM_EQUATION", "DIFFUSIVE_WAVE");
     if (o.coriolis != twoD::Coriolis2D::OFF)

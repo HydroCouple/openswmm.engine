@@ -415,7 +415,8 @@ TEST_F(InpWriter2DTest, MixedTriQuadRoundTrip) {
     ASSERT_EQ(swmm_model_write(eng_a_, inp_b.string().c_str()), 0);
     const std::string text = read_file(inp_b);
     EXPECT_NE(text.find("[2D_QUADS]"), std::string::npos);
-    EXPECT_NE(text.find("MOMENTUM_EQUATION      FULL_SWE"), std::string::npos);
+    // FULL_SWE is the default (since 2026-11-13), so it is not written; the reopen below reads it.
+    EXPECT_EQ(text.find("MOMENTUM_EQUATION"), std::string::npos);
     EXPECT_LT(text.find("[2D_TRIANGLES]"), text.find("[2D_QUADS]"));
 
     eng_b_ = open_engine(inp_b);
@@ -932,6 +933,27 @@ TEST_F(InpWriter2DTest, ExtOptions2DRouteToSolverAndPersist) {
     ASSERT_EQ(swmm_options_set_ext(eng_a_, "MY_PLUGIN_KEY", "hello"), 0);
     ASSERT_EQ(swmm_options_get_ext(eng_a_, "MY_PLUGIN_KEY", buf, sizeof(buf)), 0);
     EXPECT_STREQ(buf, "hello");
+}
+
+// The momentum closure defaults to FULL_SWE (2026-11-13). A model with no
+// MOMENTUM_EQUATION line runs it and saves without the line; LOCAL_INERTIAL,
+// the earlier default, is written explicitly so a saved local-inertial model
+// reopens as one.
+TEST_F(InpWriter2DTest, MomentumEquationDefaultsToFullSweAndLocalInertialIsWritten) {
+    const fs::path inp_a = dir_ / "momentum.inp";
+    write_file(inp_a, replace(k1DBase, "{FLOW_UNITS}", "CMS") + k2DSections);
+    eng_a_ = open_engine(inp_a);
+    char buf[64] = {};
+    ASSERT_EQ(swmm_options_get_ext(eng_a_, "MOMENTUM_EQUATION", buf, sizeof(buf)), 0);
+    EXPECT_STREQ(buf, "FULL_SWE");
+
+    ASSERT_EQ(swmm_options_set_ext(eng_a_, "MOMENTUM_EQUATION", "LOCAL_INERTIAL"), 0);
+    const fs::path inp_b = dir_ / "momentum_li.inp";
+    ASSERT_EQ(swmm_model_write(eng_a_, inp_b.string().c_str()), 0);
+    EXPECT_NE(read_file(inp_b).find("MOMENTUM_EQUATION      LOCAL_INERTIAL"), std::string::npos);
+    eng_b_ = open_engine(inp_b);
+    ASSERT_EQ(swmm_options_get_ext(eng_b_, "MOMENTUM_EQUATION", buf, sizeof(buf)), 0);
+    EXPECT_STREQ(buf, "LOCAL_INERTIAL");
 }
 
 // COUPLING_IN_FLOODING was parsed and saved to GeoPackage but never written to

@@ -38,7 +38,11 @@ struct Marcher {
     SimulationContext ctx;
     MeshData mesh;
     SurfaceStateData state;
-    SolverOptions2D options;
+    SolverOptions2D options = [] { // LOCAL_INERTIAL: not the default since 2026-11-13
+        SolverOptions2D o;
+        o.momentum = Momentum2D::LOCAL_INERTIAL;
+        return o;
+    }();
     ExplicitInertialSolver solver;
     std::vector<CouplingPoint> points;
     std::vector<double> published;
@@ -107,7 +111,7 @@ std::string deck(double surface_depth = .5, double sync = 0) {
     return "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\nSTART_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
         "END_DATE 01/01/2026\nEND_TIME 00:00:10\nROUTING_STEP 1\nVARIABLE_STEP 0\nREPORT_STEP 00:00:01\nTHREADS 1\n"
         "[POLLUTANTS]\nDye MG/L 0 0 0 0\n[STORAGE]\nTank 0 1 1 FUNCTIONAL 0 0 100 0 0\n"
-        "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nBACKEND CPU\nLTS_TIERS 1\nMAX_TIMESTEP 1\nCOUPLING_SYNC " + std::to_string(sync) +
+        "[2D_OPTIONS]\nMOMENTUM_EQUATION LOCAL_INERTIAL\nINTEGRATOR EXPLICIT\nBACKEND CPU\nLTS_TIERS 1\nMAX_TIMESTEP 1\nCOUPLING_SYNC " + std::to_string(sync) +
         "\nREPORT_2D NO\n[2D_VERTICES]\n0 0 1\n2 0 1\n0 1 1\n[2D_TRIANGLES]\n0 1 2 .03 " + std::to_string(surface_depth) +
         "\n[2D_VERTEX_NODE_MAP]\n0 Tank .7 .01\n[2D_INITIAL_QUALITY]\n* Dye 1\n[REPORT]\nINPUT NO\n";
 }
@@ -404,7 +408,7 @@ void startPonded(SWMMEngine& e, const std::string& name, const std::string& node
         "END_DATE 01/01/2026\nEND_TIME 00:00:01\nROUTING_STEP 0.0009765625\nVARIABLE_STEP 0\nREPORT_STEP 00:00:01\nTHREADS 1\nALLOW_PONDING YES\n"
         "[POLLUTANTS]\nDye MG/L 0 0 0 0 NO * 0 0 " << node_c <<
         "\n[STORAGE]\nTank -10 1 10 FUNCTIONAL 0 0 " << area << " " << area << " 0\n"
-        "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nBACKEND CPU\nLTS_TIERS 1\nMAX_TIMESTEP " << sync <<
+        "[2D_OPTIONS]\nMOMENTUM_EQUATION LOCAL_INERTIAL\nINTEGRATOR EXPLICIT\nBACKEND CPU\nLTS_TIERS 1\nMAX_TIMESTEP " << sync <<
         "\nCOUPLING_SYNC " << sync << "\nREPORT_2D NO\n"
         "[2D_VERTICES]\n" << (compact ?
         "0 0 -1\n.03 0 -1\n0 .01999777301694915 -1\n0 -.01999777301694915 -1\n"
@@ -964,7 +968,7 @@ void startAggregatePonded(SWMMEngine& e,const std::string& name,bool positive,
         "END_DATE 01/01/2026\nEND_TIME 00:00:01\nROUTING_STEP 0.0009765625\nVARIABLE_STEP 0\nREPORT_STEP 00:00:01\nTHREADS 1\nALLOW_PONDING YES\n"
         "[POLLUTANTS]\nDye MG/L 0 0 0 0 NO * 0 0 " << (repeated?(positive?.3:.6):(positive?1:2)) <<
         "\n[STORAGE]\nTank -10 1 10 FUNCTIONAL 0 0 " << (repeated?2*.02832/ft3:.0006) << ' ' << (repeated?2*.02832/ft3:.0006) << " 0\n"
-        "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nBACKEND CPU\nLTS_TIERS 1\nMAX_TIMESTEP " << (repeated && !long_history?".0009765625":".001953125") <<
+        "[2D_OPTIONS]\nMOMENTUM_EQUATION LOCAL_INERTIAL\nINTEGRATOR EXPLICIT\nBACKEND CPU\nLTS_TIERS 1\nMAX_TIMESTEP " << (repeated && !long_history?".0009765625":".001953125") <<
         "\nCOUPLING_SYNC .001953125\nREPORT_2D NO\n[2D_VERTICES]\n";
     // Dyadic translations preserve congruent cells. Repeated-firing storage
     // uses the native CMS volume conversion (.02832) to match its geometric

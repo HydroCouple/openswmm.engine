@@ -127,7 +127,7 @@ TEST(RunStats2D, GetterPopulatesDuringTheRunAndReportNamesTheSolver) {
     SWMM_2DRunStats s0{};
     ASSERT_EQ(swmm_2d_get_run_stats(eng, &s0), SWMM_OK);
     EXPECT_EQ(std::strncmp(s0.backend, "cpu", 3), 0) << s0.backend;
-    EXPECT_EQ(s0.momentum, 0); // LOCAL_INERTIAL (deck default)
+    EXPECT_EQ(s0.momentum, 1); // FULL_SWE (deck default since 2026-11-13)
     EXPECT_EQ(s0.lts_tiers, 2);
     EXPECT_EQ(s0.steps, 0);
 

@@ -342,8 +342,8 @@ preceded `FULL_SWE`.
 
 | Closure | Prognostic state | Face law | Valid regime | Cost | Status |
 |---|---|---|---|---|---|
-| `LOCAL_INERTIAL` (default) | \f$V\f$ per cell, \f$q\f$ per face | de Almeida and Bates, (9-7)–(9-10) | \f$Fr \lesssim 0.5\f$: ponds, streets, floodplains | 1× | \status{Implemented} |
-| `FULL_SWE` | \f$V\f$, \f$hu\f$, \f$hv\f$ per cell | hydrostatic reconstruction (9-36), rotated HLLC (9-38), bed-slope correction (9-39), semi-implicit friction per cell (9-40) | all Froude numbers: transcritical control, jumps, dam breaks, drawdown over crests | ≈ 2–3× (Courant ≤ ½ on \f$2A/P\f$, (9-41)); CPU marcher only | \status{Implemented} |
+| `LOCAL_INERTIAL` | \f$V\f$ per cell, \f$q\f$ per face | de Almeida and Bates, (9-7)–(9-10) | \f$Fr \lesssim 0.5\f$: ponds, streets, floodplains | 1× | \status{Implemented} |
+| `FULL_SWE` (default) | \f$V\f$, \f$hu\f$, \f$hv\f$ per cell | hydrostatic reconstruction (9-36), rotated HLLC (9-38), bed-slope correction (9-39), semi-implicit friction per cell (9-40) | all Froude numbers: transcritical control, jumps, dam breaks, drawdown over crests | ≈ 2–3× (Courant ≤ ½ on \f$2A/P\f$, (9-41)); CPU marcher only | \status{Implemented} |
 | `DIFFUSIVE_WAVE` | \f$V\f$ per cell | Manning quasi-steady balance (9-42) with a slope floor | slow floodplain inundation; steady uniform flow (exact) | \f$\Delta x^{2}\f$-bound steps (9-43), carried by the LTS tiers; CPU marcher only | \status{Implemented} |
 | `ADVECTION YES` | as `LOCAL_INERTIAL` | (9-7) plus a staggered upwind convective term (Stelling and Duinmeijer, 2003) | — | — | \status{Retired} |
 

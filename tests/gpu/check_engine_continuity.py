@@ -45,6 +45,11 @@ def main():
     parser.add_argument("--evaporation", action="store_true")
     args = parser.parse_args()
     deck = args.input.read_text()
+    # The Kokkos plugin serves only LOCAL_INERTIAL, no longer the default.
+    deck, pinned = re.subn(r"(?m)^\[2D_OPTIONS\]\s*$",
+                           "[2D_OPTIONS]\nMOMENTUM_EQUATION LOCAL_INERTIAL", deck)
+    if pinned != 1:
+        raise AssertionError("expected one [2D_OPTIONS] section in the input")
     if args.evaporation:
         # 100 mm/hour makes applied evaporation visible at report precision,
         # including budget-limited dry-out in the shallow cells.

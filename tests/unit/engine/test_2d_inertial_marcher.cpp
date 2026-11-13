@@ -211,6 +211,7 @@ static void checkLakeAtRestExactFlatAndVfr(double reference_step) {
             return 0.05 * x + 0.11 * y + 0.3 * std::sin(0.7 * x);
         });
         SolverOptions2D opts;
+        opts.momentum = Momentum2D::LOCAL_INERTIAL;
         opts.theta_reference_step = reference_step;
         opts.cell_closure = closure;
         auto state = makeState(mesh);
@@ -250,6 +251,7 @@ TEST(InertialMarcher, DryNeighbourWallNoCreep) {
     // Step bed: left half z = 0, right half z = 2. Puddle η = 1 on the left.
     auto mesh = makeGridMesh(8, 4, 2.0, [](double x, double) { return (x < 8.0) ? 0.0 : 2.0; });
     SolverOptions2D opts;
+    opts.momentum = Momentum2D::LOCAL_INERTIAL;
     auto state = makeState(mesh);
     seedSurface(mesh, opts, state, /*eta=*/1.0);
     const std::vector<double> v0 = state.volume;
@@ -278,6 +280,7 @@ TEST(InertialMarcher, DryNeighbourWallNoCreep) {
 static void checkClosedBasinConservationAndPositivity(double reference_step) {
     auto mesh = makeGridMesh(10, 10, 2.0, [](double, double) { return 0.0; });
     SolverOptions2D opts;
+    opts.momentum = Momentum2D::LOCAL_INERTIAL;
     opts.theta_reference_step = reference_step;
     auto state = makeState(mesh);
     // Column of water in the corner quarter.
@@ -322,6 +325,7 @@ static void checkManningSteadySlopeRainOutflow(double reference_step) {
     const int nx = 40, ny = 4;
     auto mesh = makeGridMesh(nx, ny, dx, [&](double x, double) { return S * x; }, n_man);
     SolverOptions2D opts;
+    opts.momentum = Momentum2D::LOCAL_INERTIAL;
     opts.theta_reference_step = reference_step;
     auto state = makeState(mesh);
 
@@ -424,6 +428,7 @@ static void checkSteadySlopeNoCheckerboard(double reference_step) {
     for (const auto closure : {CellClosure2D::FLAT, CellClosure2D::VFR}) {
         auto mesh = makeGridMesh(nx, ny, dx, [&](double x, double) { return S * x; }, n_man);
         SolverOptions2D opts;
+        opts.momentum = Momentum2D::LOCAL_INERTIAL;
         opts.theta_reference_step = reference_step;
         opts.cell_closure = closure;
         auto state = makeState(mesh);
@@ -507,6 +512,7 @@ TEST(InertialMomentum, SteadySlopeNoCheckerboard) { checkSteadySlopeNoCheckerboa
 TEST(InertialMarcher, SpecifiedStageFillAndDrawdownLedger) {
     auto mesh = makeGridMesh(8, 8, 1.0, [](double, double) { return 0.0; });
     SolverOptions2D opts;
+    opts.momentum = Momentum2D::LOCAL_INERTIAL;
     auto state = makeState(mesh); // dry everywhere
 
     BoundaryData boundary;
@@ -605,6 +611,7 @@ TEST(InertialMarcher, FroudeClampSteepFace) {
     const double S = 0.10; // 10 % street grade
     auto mesh = makeGridMesh(20, 3, 1.0, [&](double x, double) { return -S * x; }, 0.015);
     SolverOptions2D opts;
+    opts.momentum = Momentum2D::LOCAL_INERTIAL;
     auto state = makeState(mesh);
     for (int i = 0; i < mesh.n_triangles(); ++i) {
         if (mesh.tri_cx[i] < 3.0) { // reservoir at the top
@@ -673,6 +680,7 @@ TEST(InertialMarcher, LakeAtRestExactVfrFace) {
             return 0.05 * x + 0.11 * y + 0.3 * std::sin(0.7 * x);
         });
         SolverOptions2D opts;
+        opts.momentum = Momentum2D::LOCAL_INERTIAL;
         opts.cell_closure = closure;
         opts.face_reconstruction = FaceDepth2D::VFR_FACE;
         auto state = makeState(mesh);
@@ -697,6 +705,7 @@ TEST(InertialMarcher, LakeAtRestExactVfrFace) {
 TEST(InertialMarcher, DryNeighbourWallNoCreepVfrFace) {
     auto mesh = makeGridMesh(8, 4, 2.0, [](double x, double) { return (x < 8.0) ? 0.0 : 2.0; });
     SolverOptions2D opts;
+    opts.momentum = Momentum2D::LOCAL_INERTIAL;
     opts.face_reconstruction = FaceDepth2D::VFR_FACE;
     auto state = makeState(mesh);
     seedSurface(mesh, opts, state, /*eta=*/1.0);
@@ -741,6 +750,7 @@ TEST(InertialMarcher, ThinCrestRetentionVfrFace) {
     {
         auto mesh = makeGridMesh(8, 4, 2.0, ridgeZ);
         SolverOptions2D opts;
+        opts.momentum = Momentum2D::LOCAL_INERTIAL;
         opts.face_reconstruction = FaceDepth2D::VFR_FACE;
         auto state = makeState(mesh);
         seedLeftPool(mesh, opts, state);
@@ -762,7 +772,8 @@ TEST(InertialMarcher, ThinCrestRetentionVfrFace) {
     // MEAN leaks through the centroid-diluted crest (the documented defect).
     {
         auto mesh = makeGridMesh(8, 4, 2.0, ridgeZ);
-        SolverOptions2D opts; // default MEAN
+        SolverOptions2D opts;
+        opts.momentum = Momentum2D::LOCAL_INERTIAL; // default MEAN
         auto state = makeState(mesh);
         seedLeftPool(mesh, opts, state);
 
@@ -866,7 +877,11 @@ namespace {
 struct CoupledRkRig {
     MeshData mesh = makeGridMesh(1, 1, 4., [](double, double) { return 0.; });
     SurfaceStateData state = makeState(mesh);
-    SolverOptions2D opts;
+    SolverOptions2D opts = [] { // LOCAL_INERTIAL: not the default since 2026-11-13
+        SolverOptions2D o;
+        o.momentum = Momentum2D::LOCAL_INERTIAL;
+        return o;
+    }();
     ExplicitInertialSolver solver;
     SubsurfaceSolver gw;
     /**
@@ -6949,6 +6964,7 @@ TEST(CoupledGroundwaterRk2,
 TEST(CoupledGroundwaterRk2, ContactAreaUsesClippedTriangleAndQuadPlanesAndHasNoArtificialWetFloor) {
     auto mesh = makeGridMesh(1, 1, 4, [](double x, double) { return x / 4; });
     SolverOptions2D opts;
+    opts.momentum = Momentum2D::LOCAL_INERTIAL;
     opts.cell_closure = CellClosure2D::VFR;
     EXPECT_NEAR(inertial::cellWetArea(mesh, opts, 0, 8 * .008 / 3), 8 * .04, 1e-12);
     EXPECT_NEAR(inertial::cellWetArea(mesh, opts, 1, 8 * (.2 - 1. / 3 + .512 / 3)), 8 * .36, 1e-12);
@@ -11899,6 +11915,7 @@ TEST(IndependentGroundwaterClock, TwelveRungsCloseWaterAndTracerAtVariableRoutin
     auto mesh = makeGridMesh(18, 1, 1., [](double, double) { return 2.; });
     auto surface = makeState(mesh);
     SolverOptions2D options;
+    options.momentum = Momentum2D::LOCAL_INERTIAL;
     options.lts_tiers = 4;
     options.max_timestep = .2;
     options.groundwater = 1;
@@ -11997,6 +12014,7 @@ TEST(IndependentGroundwaterClock, FastSurfaceDoesNotForceTheSlowAquiferAtWindowE
     auto mesh = makeGridMesh(1, 1, 1., [](double, double) { return 2.; });
     auto surface = makeState(mesh);
     SolverOptions2D opts;
+    opts.momentum = Momentum2D::LOCAL_INERTIAL;
     opts.max_timestep = .05;
     opts.groundwater = 1;
     opts.lts_tiers = 3;

@@ -74,6 +74,7 @@ struct Env {
 TEST(BackendSafety, CpuDefaultDoesNotProbeEvenForLargeModels) {
     Env env("OPENSWMM_2D_BACKEND", nullptr);
     SolverOptions2D o;
+    o.momentum = Momentum2D::LOCAL_INERTIAL;
     o.auto_backend_cpu = true;
     const auto before = openswmm_test_probe_count();
     std::string label;
@@ -87,6 +88,7 @@ TEST(BackendSafety, CpuDefaultDoesNotProbeEvenForLargeModels) {
 TEST(BackendSafety, StalePluginRejectedBeforeProbe) {
     Env env("OPENSWMM_2D_BACKEND", "cuda"), stale("OPENSWMM_TEST_STALE_GPU", "1");
     SolverOptions2D o;
+    o.momentum = Momentum2D::LOCAL_INERTIAL;
     std::string label;
     const auto before = openswmm_test_probe_count();
     auto s = makeSurfaceSolver(o, &label, 1);
@@ -97,6 +99,7 @@ TEST(BackendSafety, StalePluginRejectedBeforeProbe) {
 TEST(BackendSafety, ExplicitRequestsOverrideCpuDefaultAndFactoryFailureIsContained) {
     Env env("OPENSWMM_2D_BACKEND", nullptr), stale("OPENSWMM_TEST_STALE_GPU", nullptr);
     SolverOptions2D o;
+    o.momentum = Momentum2D::LOCAL_INERTIAL;
     o.auto_backend_cpu = true;
     o.backend = Backend2D::CUDA;
     std::string label;
@@ -115,6 +118,7 @@ TEST(BackendSafety, ExplicitRequestsOverrideCpuDefaultAndFactoryFailureIsContain
 TEST(BackendSafety, InvalidEnvironmentFailsBeforeCapabilityFallback) {
     Env env("OPENSWMM_2D_BACKEND", "cudaa");
     SolverOptions2D o;
+    o.momentum = Momentum2D::LOCAL_INERTIAL;
     EXPECT_THROW(makeSurfaceSolver(o, nullptr, 1, false), std::invalid_argument);
 }
 TEST(BackendSafety, SessionPolicyRequiresMutableLifecycleAndRetainsAuthoredOption) {
@@ -305,6 +309,7 @@ TEST(BackendSafety, AdapterLifecycleAndDestructionStayOnAllocatingThread) {
         MeshData mesh;
         SurfaceStateData state;
         SolverOptions2D opts;
+        opts.momentum = Momentum2D::LOCAL_INERTIAL;
         solver.initialize(mesh, state, opts);
         EXPECT_TRUE(solver.is_initialized());
         EXPECT_DOUBLE_EQ(solver.advance(0, 4), 4);
@@ -346,6 +351,7 @@ TEST(BackendSafety, ConcurrentRealPluginModelsRetainSeparateState) {
                 state.resize(2, 4);
                 state.volume = {.1 * (run + 1), 0};
                 SolverOptions2D options;
+                options.momentum = Momentum2D::LOCAL_INERTIAL;
                 options.max_timestep = .01;
                 options.cfl_number = .4;
                 options.requested_threads = 2;
@@ -375,6 +381,7 @@ TEST(BackendSafety, PriorSurfaceAbiIsRejectedBeforeFactoryConstruction) {
     Env backend("OPENSWMM_2D_BACKEND", "cuda"), old("OPENSWMM_TEST_OLD_GPU_ABI", "1"),
         stale("OPENSWMM_TEST_STALE_GPU", nullptr);
     SolverOptions2D options;
+    options.momentum = Momentum2D::LOCAL_INERTIAL;
     std::string label;
     const int factories = openswmm_test_factory_count(), probes = openswmm_test_probe_count();
     auto solver = makeSurfaceSolver(options, &label, 1);

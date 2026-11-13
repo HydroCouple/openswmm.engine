@@ -265,7 +265,7 @@ struct SolverOptions2D {
     // 4.186 MJ/(m3 K); opt-in coupled heat uses configured water rho*cp.
     double water_heat_capacity = 4186000.0;
     /// [2D_OPTIONS] MOMENTUM_EQUATION — momentum closure (see Momentum2D).
-    Momentum2D momentum = Momentum2D::LOCAL_INERTIAL;
+    Momentum2D momentum = Momentum2D::FULL_SWE;
     /// Optional horizontal momentum physics; CPU FULL_SWE, global timestep only.
     Coriolis2D coriolis = Coriolis2D::OFF;
     Turbulence2D turbulence = Turbulence2D::NONE;

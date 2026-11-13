@@ -91,6 +91,7 @@ double barrierFlux(const ExplicitInertialSolver& solver, const SurfaceStateData&
 
 SolverOptions2D options(int tiers = 1) {
     SolverOptions2D o;
+    o.momentum = Momentum2D::LOCAL_INERTIAL;
     o.theta = 1;
     o.lts_tiers = tiers;
     o.max_timestep = .01;

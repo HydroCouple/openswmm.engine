@@ -51,7 +51,7 @@ class TestSurface2dRunStats(unittest.TestCase):
 
             st0 = surface.run_stats
             self.assertTrue(st0["backend"].startswith("cpu"), st0["backend"])
-            self.assertEqual(st0["momentum"], "LOCAL_INERTIAL")
+            self.assertEqual(st0["momentum"], "FULL_SWE")  # the default since 2026-11-13
             self.assertGreaterEqual(st0["lts_tiers"], 1)
             self.assertEqual(st0["steps"], 0)
 

@@ -70,7 +70,7 @@ struct Model {
                "[JUNCTIONS]\nJ1 -2 4 0 0 0\n\n[OUTFALLS]\nO1 -2.5 FREE NO\n\n"
                "[CONDUITS]\nC1 J1 O1 30 .013 0 0 0\n\n[XSECTIONS]\nC1 RECT_OPEN 1 2 0 0 1\n\n"
                "[COORDINATES]\nJ1 40 0\nO1 70 0\n\n[TAGS]\nNODE J1 forest\n\n"
-               "[2D_OPTIONS]\nREPORT_2D NO\nLTS_TIERS 1\nMAX_TIMESTEP 5\n"
+               "[2D_OPTIONS]\nMOMENTUM_EQUATION LOCAL_INERTIAL\nREPORT_2D NO\nLTS_TIERS 1\nMAX_TIMESTEP 5\n"
                "EVAPORATION NO\n\n"
             << mesh << extra;
         e = swmm_engine_create();
@@ -174,7 +174,11 @@ namespace {
 struct LocalHeat {
     Model model;
     openswmm::twoD::SurfaceStateData state;
-    openswmm::twoD::SolverOptions2D options;
+    openswmm::twoD::SolverOptions2D options = [] { // LOCAL_INERTIAL: not the default since 2026-11-13
+        openswmm::twoD::SolverOptions2D o;
+        o.momentum = openswmm::twoD::Momentum2D::LOCAL_INERTIAL;
+        return o;
+    }();
     /**
      * @brief Prepare local cell-heat storage/options around a parsed fixture mesh.
      *
@@ -769,7 +773,7 @@ TEST(MeshHeat, DrySurfaceRetainsLocalBedTracerAndAgeAndCleanRewettingReturnsItsS
 }
 TEST(MeshHeat, LocalBedTracerAndAgeRunOnBothActualSpeciesKernelsWithSeparateExchangeReceipts) {
     for (int pollutants : {1, 8}) {
-        std::string extra = "[OPTIONS]\nWATER_AGE ON\n[2D_OPTIONS]\nINFILTRATION NO\n"
+        std::string extra = "[OPTIONS]\nWATER_AGE ON\n[2D_OPTIONS]\nMOMENTUM_EQUATION LOCAL_INERTIAL\nINFILTRATION NO\n"
                             "[POLLUTANTS]\nDye MG/L 0 0 0 0 NO * 0 0\n";
         for (int p = 1; p < pollutants; ++p)
             extra += "P" + std::to_string(p) + " MG/L 0 0 0 0 NO * 0 0\n";

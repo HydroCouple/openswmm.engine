@@ -130,7 +130,7 @@ std::string deck(const Combo& c) {
          "[OUTFALLS]\nO1 -2.5 FREE NO\n\n"
          "[CONDUITS]\nC1 J1 O1 30.0 0.013 0 0 0\n\n"
          "[XSECTIONS]\nC1 CIRCULAR 0.5 0 0 0 1\n\n"
-         "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\n"
+         "[2D_OPTIONS]\nMOMENTUM_EQUATION LOCAL_INERTIAL\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\n"
          "DRY_DEPTH 0.001\nCOUPLING_CD 0.7\nREPORT_2D NO\nRAINFALL_MODE SYSTEM\n"
       << "TRANSPORT_TEMPERATURE " << (c.mesh_temperature ? "YES" : "NO") << '\n';
     if (c.groundwater)
@@ -757,7 +757,7 @@ EvapVolumes runSurface(const std::string& tag, const std::string& evaporation,
          "[INFILTRATION]\nS1 3.0 0.5 4 7 0\n\n"
          "[JUNCTIONS]\nJ1 -2.0 4.0 0 0 0\n\n[OUTFALLS]\nO1 -2.5 FREE NO\n\n"
          "[CONDUITS]\nC1 J1 O1 30.0 0.013 0 0 0\n\n[XSECTIONS]\nC1 CIRCULAR 0.5 0 0 0 1\n\n"
-         "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\n"
+         "[2D_OPTIONS]\nMOMENTUM_EQUATION LOCAL_INERTIAL\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\n"
          "DRY_DEPTH 0.001\nCOUPLING_CD 0.7\nREPORT_2D NO\nRAINFALL_MODE SYSTEM\nEVAPORATION CLIMATE\n\n"
          "[2D_VERTICES]\n0.0 0.0 0.0\n10.0 0.0 0.0\n10.0 10.0 0.0\n0.0 10.0 0.0\n\n"
          "[2D_TRIANGLES]\n0 1 2 0.03 0.05\n0 2 3 0.03 0.0\n\n"
@@ -1074,7 +1074,7 @@ std::string partialAquiferDeck(const std::string& aquifer_rows) {
            "[INFILTRATION]\nS1 3.0 0.5 4 7 0\n\n"
            "[JUNCTIONS]\nJ1 -2.0 4.0 0 0 0\n\n[OUTFALLS]\nO1 -2.5 FREE NO\n\n"
            "[CONDUITS]\nC1 J1 O1 30.0 0.013 0 0 0\n\n[XSECTIONS]\nC1 CIRCULAR 0.5 0 0 0 1\n\n"
-           "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\n"
+           "[2D_OPTIONS]\nMOMENTUM_EQUATION LOCAL_INERTIAL\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\n"
            "DRY_DEPTH 0.001\nCOUPLING_CD 0.7\nREPORT_2D NO\nRAINFALL_MODE SYSTEM\n\n"
            "[2D_VERTICES]\n0.0 0.0 0.0\n10.0 0.0 0.0\n10.0 10.0 0.0\n0.0 10.0 0.0\n\n"
            "[2D_TRIANGLES]\n0 1 2 0.03 0.0\n0 2 3 0.03 0.0\n\n"
@@ -1166,7 +1166,7 @@ TEST(HydrothermalConfig, MeshPackOverrideRunsUebAndHonorsPartialSnowCoverage) {
         s << name << " PLOWABLE" << pack << name << " IMPERVIOUS" << pack << name << " PERVIOUS"
           << pack;
     s << "UU UEB 0 1 0 .1 MODEL UEB\n"
-         "[2D_OPTIONS]\nMAX_TIMESTEP 30\nREPORT_2D NO\nINFILTRATION NO\nEVAPORATION NO\n"
+         "[2D_OPTIONS]\nMOMENTUM_EQUATION LOCAL_INERTIAL\nMAX_TIMESTEP 30\nREPORT_2D NO\nINFILTRATION NO\nEVAPORATION NO\n"
          "[2D_SNOW_DEFAULTS]\n* SNOWPACK DD\n"
          "[2D_SNOW]\nCELL 2 SNOWPACK UU\nCELL 3 SNOWPACK NONE\n"
          "[2D_VERTICES]\n0 0 0\n10 0 0\n10 10 0\n0 10 0\n-10 10 0\n"

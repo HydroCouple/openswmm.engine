@@ -67,7 +67,7 @@ std::string deck(const char* routing, const char* opts2d = "") {
          "[TIMESERIES]\n"
          "IN_TS 0:00 0.0\nIN_TS 0:02 0.09\nIN_TS 0:08 0.09\nIN_TS 0:09 0.0\n"
          "IN_TS 0:14 0.0\nIN_TS 0:15 0.09\nIN_TS 0:20 0.09\nIN_TS 0:21 0.0\nIN_TS 0:40 0.0\n\n"
-         "[2D_OPTIONS]\nMAX_TIMESTEP 1\nDRY_DEPTH 0.002\nREPORT_2D NO\n"
+         "[2D_OPTIONS]\nMOMENTUM_EQUATION LOCAL_INERTIAL\nMAX_TIMESTEP 1\nDRY_DEPTH 0.002\nREPORT_2D NO\n"
       << opts2d << "\n[2D_VERTICES]\n";
     for (int j = 0; j <= kN; ++j)
         for (int i = 0; i <= kN; ++i)
@@ -299,7 +299,7 @@ std::string chamberDeck() {
          "IN_TS 0:00 0.0\nIN_TS 0:02 1.0\nIN_TS 0:08 1.0\nIN_TS 0:09 0.0\n"
          "IN_TS 0:14 0.0\nIN_TS 0:15 1.0\nIN_TS 0:20 1.0\nIN_TS 0:21 0.0\nIN_TS 0:40 0.0\n\n"
          "[REPORT]\nCONTINUITY YES\n\n"
-         "[2D_OPTIONS]\nMAX_TIMESTEP 1\nDRY_DEPTH 0.002\nREPORT_2D NO\n\n[2D_VERTICES]\n";
+         "[2D_OPTIONS]\nMOMENTUM_EQUATION LOCAL_INERTIAL\nMAX_TIMESTEP 1\nDRY_DEPTH 0.002\nREPORT_2D NO\n\n[2D_VERTICES]\n";
     for (int j = 0; j <= kN; ++j)
         for (int i = 0; i <= kN; ++i)
             m << i * h << " " << j * h << " 1.0\n";

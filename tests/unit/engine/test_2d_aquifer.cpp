@@ -117,7 +117,7 @@ std::string deck(const std::string& aquifer_sections, const std::string& twod_op
          "[OUTFALLS]\nO1 -1.0 FREE NO\n\n"
          "[CONDUITS]\nC1 J1 O1 30.0 0.013 0 0 0\n\n"
          "[XSECTIONS]\nC1 CIRCULAR 0.5 0 0 0 1\n\n"
-         "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\n"
+         "[2D_OPTIONS]\nMOMENTUM_EQUATION LOCAL_INERTIAL\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\n"
          "DRY_DEPTH 0.001\nCOUPLING_CD 0.7\nREPORT_2D NO\n"
       << twod_options_extra
       << "\n"
@@ -465,7 +465,7 @@ TEST(Aquifer2D, ModelSectionsSurviveTwoSavesWithAnExternalMesh) {
              "[CONDUITS]\nC1 J1 O1 30.0 0.013 0 0 0\n\n[XSECTIONS]\nC1 CIRCULAR 0.5 0 0 0 1\n\n"
              "[POLLUTANTS]\nP1 MG/L 0 0 0 0 NO * 0 0 0\n\n[LANDUSES]\nPad 0 0 0\n\n"
              "[WASHOFF]\nPad P1 EXP 0.1 1.0 0 0\n\n"
-             "[2D_OPTIONS]\nMAX_TIMESTEP 5\nREPORT_2D NO\n\n[2D_MESH_FILE]\nFILE pan.2dm\n\n"
+             "[2D_OPTIONS]\nMOMENTUM_EQUATION LOCAL_INERTIAL\nMAX_TIMESTEP 5\nREPORT_2D NO\n\n[2D_MESH_FILE]\nFILE pan.2dm\n\n"
              "[2D_COVERAGES]\nTAG PAD Pad 100\n\n[2D_LOADINGS]\nTAG PAD P1 50\n\n"
              "[2D_AQUIFER]\n*  36.0  4.0  0.45  0.10  2.0  HG0 1.0\n\n"
              "[2D_AQUIFER_NODE]\nJ1  AUTO  EXCHANGE NO\n\n"
@@ -1759,7 +1759,7 @@ std::string twoWayDeck(double hg0, const std::string& link_rows = "",
          "[INFLOWS]\nJ1  FLOW  IN1  FLOW  1.0  1.0\n\n"
          "[TIMESERIES]\nIN1  0:00  0.5\nIN1  1:00  0.5\n\n"
          "[COORDINATES]\nJ1  1.0  5.0\nO1  9.0  5.0\n\n"
-         "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\n"
+         "[2D_OPTIONS]\nMOMENTUM_EQUATION LOCAL_INERTIAL\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\n"
          "DRY_DEPTH 0.001\nCOUPLING_CD 0.7\nREPORT_2D NO\n\n"
          "[2D_VERTICES]\n"
          "0.0 0.0 0.0\n10.0 0.0 0.0\n10.0 10.0 0.0\n0.0 10.0 0.0\n\n"
@@ -1993,7 +1993,11 @@ using openswmm::richards::Column;
 struct NodeTrialRig {
     MeshData mesh;
     InertialEdges edges;
-    SolverOptions2D options;
+    SolverOptions2D options = [] { // LOCAL_INERTIAL: not the default since 2026-11-13
+        SolverOptions2D o;
+        o.momentum = Momentum2D::LOCAL_INERTIAL;
+        return o;
+    }();
     SubsurfaceConfig config;
     SubsurfaceSolver gw;
     /**
@@ -3495,7 +3499,7 @@ TEST(Aquifer2D, DarcyVelocityReconstructsAPlanarWaterTable) {
          "ALLOW_PONDING NO\n\n"
          "[JUNCTIONS]\nJ1 0.0 3.0 0 0 0\n\n[OUTFALLS]\nO1 -1.0 FREE NO\n\n"
          "[CONDUITS]\nC1 J1 O1 30.0 0.013 0 0 0\n\n[XSECTIONS]\nC1 CIRCULAR 0.5 0 0 0 1\n\n"
-         "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\n"
+         "[2D_OPTIONS]\nMOMENTUM_EQUATION LOCAL_INERTIAL\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\n"
          "DRY_DEPTH 0.001\nCOUPLING_CD 0.7\nREPORT_2D NO\n\n[2D_VERTICES]\n";
     for (int j = 0; j <= ny; ++j)
         for (int i = 0; i <= nx; ++i)
@@ -3561,7 +3565,7 @@ std::string darcyStripDeck(double zs, double hg0, const std::string& boundaries)
          "ALLOW_PONDING NO\n\n"
          "[JUNCTIONS]\nJ1 0.0 3.0 0 0 0\n\n[OUTFALLS]\nO1 -1.0 FREE NO\n\n"
          "[CONDUITS]\nC1 J1 O1 30.0 0.013 0 0 0\n\n[XSECTIONS]\nC1 CIRCULAR 0.5 0 0 0 1\n\n"
-         "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\n"
+         "[2D_OPTIONS]\nMOMENTUM_EQUATION LOCAL_INERTIAL\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\n"
          "DRY_DEPTH 0.001\nCOUPLING_CD 0.7\nREPORT_2D NO\n\n[2D_VERTICES]\n";
     for (int j = 0; j <= 1; ++j)
         for (int i = 0; i <= nx; ++i)

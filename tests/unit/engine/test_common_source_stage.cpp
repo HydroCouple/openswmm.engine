@@ -58,7 +58,11 @@ struct AtmosphericInput {
 struct Model {
     MeshData mesh;
     SurfaceStateData surface;
-    SolverOptions2D options;
+    SolverOptions2D options = [] { // LOCAL_INERTIAL: not the default since 2026-11-13
+        SolverOptions2D o;
+        o.momentum = Momentum2D::LOCAL_INERTIAL;
+        return o;
+    }();
     InertialEdges edges;
     SubsurfaceConfig config;
     SubsurfaceSolver gw;
