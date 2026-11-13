@@ -27,12 +27,16 @@
 #include "../core/NamedObjectOverrides.hpp"
 #include "../quality/Treatment.hpp"
 #include "../data/LinkData.hpp"
+#include "../data/SoaRow.hpp"
 #include "../../../include/openswmm/engine/openswmm_edit.h"
 
 #include <algorithm>
 #include <cctype>
 #include <functional>
 #include <initializer_list>
+#include <memory>
+#include <optional>
+#include <type_traits>
 #include <sstream>
 #include <vector>
 
@@ -109,6 +113,167 @@ static void renumber_refs(std::vector<int>& refs, int deleted_idx) {
         if (r > deleted_idx)
             --r;
     }
+}
+
+/**
+ * @brief Inverse of renumber_refs: make room for a row reinserted at inserted_idx.
+ *
+ * @param[in,out] refs Integer reference vector; -1 and values below inserted_idx are unchanged.
+ * @param[in] inserted_idx Index the row is reinserted at.
+ */
+static void renumber_refs_up(std::vector<int>& refs, int inserted_idx) {
+    for (auto& r : refs) {
+        if (r >= inserted_idx)
+            ++r;
+    }
+}
+
+/**
+ * @brief Remove the cell at idx from an optional per-object vector, returning it if present.
+ *
+ * The inverse is put_cell(v, idx, cell).
+ */
+template <class T>
+static std::optional<T> take_cell(std::vector<T>& v, int idx) {
+    const auto ui = static_cast<std::size_t>(idx);
+    if (ui >= v.size())
+        return std::nullopt;
+    std::optional<T> cell(std::move(v[ui]));
+    v.erase(v.begin() + static_cast<std::ptrdiff_t>(idx));
+    return cell;
+}
+
+/// Reinsert a cell taken by take_cell; does nothing when there was none.
+template <class T>
+static void put_cell(std::vector<T>& v, int idx, const std::optional<T>& cell) {
+    if (cell)
+        v.insert(v.begin() + static_cast<std::ptrdiff_t>(idx), *cell);
+}
+
+/**
+ * @brief Record the user-flag values moveNamedOverrides is about to drop for one object.
+ *
+ * Covers only user flags. Node, link and subcatchment overrides also move initial quality, heat
+ * overrides and surface loadings, which their recorded deletes must record separately.
+ */
+static void record_user_flags(const SimulationContext& ctx, const char* type,
+                              const std::string& name, DeleteRecord& record) {
+    std::vector<std::pair<std::string, UserFlagValue>> values;
+    for (const auto& def : ctx.user_flags.all_defs())
+        if (auto value = ctx.user_flags.try_get_value(type, name, def.name))
+            values.emplace_back(def.name, std::move(*value));
+    if (values.empty())
+        return;
+    record.add({}, [type = std::string(type), name, values](SimulationContext& c) {
+        for (const auto& [flag, value] : values)
+            c.user_flags.set(type, name, flag, value);
+    });
+}
+
+/// Rows of @p v matching @p pred with their positions, ascending: what an erase is about to remove.
+template <class T, class Pred>
+static std::vector<std::pair<std::size_t, T>> rows_where(const std::vector<T>& v, Pred pred) {
+    std::vector<std::pair<std::size_t, T>> rows;
+    for (std::size_t i = 0; i < v.size(); ++i)
+        if (pred(v[i]))
+            rows.emplace_back(i, v[i]);
+    return rows;
+}
+
+/// Reinsert rows captured by rows_where after their erase. Ascending positions restore the
+/// original order; a position past the end (the table shrank since) appends.
+template <class T>
+static void insert_rows(std::vector<T>& v, const std::vector<std::pair<std::size_t, T>>& rows) {
+    for (const auto& [pos, row] : rows)
+        v.insert(v.begin() + static_cast<std::ptrdiff_t>(std::min(pos, v.size())), row);
+}
+
+/**
+ * @brief Record what moveNamedOverrides(ctx, "NODE"/"LINK", index, name, {}) is about to remove:
+ *        user flags, the element's initial-quality rows (and the renumbering of later ones) and
+ *        its heat override rows. Call immediately before moveNamedOverrides.
+ */
+static void record_element_overrides(const SimulationContext& ctx, bool link, int index,
+                                     const std::string& name, DeleteRecord& record) {
+    record_user_flags(ctx, link ? "LINK" : "NODE", name, record);
+    const auto& iq = ctx.initial_quality;
+    std::vector<std::pair<int, InitialQualityData>> iq_rows;
+    for (int row = 0; row < iq.count(); ++row)
+        if ((iq.is_link[static_cast<std::size_t>(row)] != 0) == link &&
+            iq.elem_idx[static_cast<std::size_t>(row)] == index)
+            iq_rows.emplace_back(row, soa::copy_row(iq, row));
+    const auto scope = link ? HeatScope::LINK : HeatScope::NODE;
+    auto heat_rows = rows_where(ctx.heat_config.overrides.rows, [&](const auto& row) {
+        return row.scope == scope && (CiEqual{}(row.name, name) || row.name.empty());
+    });
+    record.add({}, [link, index, iq_rows, heat_rows](SimulationContext& c) {
+        auto& q = c.initial_quality;
+        for (int row = 0; row < q.count(); ++row) {
+            const auto u = static_cast<std::size_t>(row);
+            if ((q.is_link[u] != 0) == link && q.elem_idx[u] >= index)
+                ++q.elem_idx[u];
+        }
+        for (const auto& [row, cells] : iq_rows) {
+            auto copy = cells;
+            soa::put_row(q, std::min(row, q.count()), std::move(copy));
+        }
+        insert_rows(c.heat_config.overrides.rows, heat_rows);
+    });
+}
+
+/**
+ * @brief Record what erase_reaction_element(ctx, link, deleted) is about to remove and renumber.
+ *        Call immediately before it.
+ */
+static void record_reaction_element(const SimulationContext& ctx, bool link, int deleted,
+                                    DeleteRecord& record) {
+    const auto& rx = ctx.reactions;
+    auto owned = [&](const auto& row) { return row.link == link && row.element == deleted; };
+    auto overrides = rows_where(rx.parameter_overrides, owned);
+    auto walls = rows_where(rx.wall_areas, owned);
+    decltype(rows_where(rx.sources, owned)) sources;
+    if (!link)
+        sources = rows_where(rx.sources, [&](const auto& row) { return row.node == deleted; });
+    std::vector<std::size_t> init_pos;
+    for (std::size_t k = 0; k < rx.init_elem_idx.size(); ++k)
+        if ((rx.init_elem_is_link[k] != 0) == link && rx.init_elem_idx[k] == deleted)
+            init_pos.push_back(k);
+    std::vector<int> init_species;
+    std::vector<double> init_value;
+    for (std::size_t k : init_pos) {
+        init_species.push_back(rx.init_elem_species[k]);
+        init_value.push_back(rx.init_elem_value[k]);
+    }
+    if (rx.parameter_overrides.empty() && rx.wall_areas.empty() && rx.sources.empty() &&
+        rx.init_elem_idx.empty())
+        return; // nothing to erase or renumber
+    record.add({}, [link, deleted, overrides, walls, sources, init_pos, init_species,
+                    init_value](SimulationContext& c) {
+        auto& r = c.reactions;
+        for (auto& row : r.parameter_overrides)
+            if (row.link == link && row.element >= deleted)
+                ++row.element;
+        for (auto& row : r.wall_areas)
+            if (row.link == link && row.element >= deleted)
+                ++row.element;
+        if (!link)
+            for (auto& row : r.sources)
+                if (row.node >= deleted)
+                    ++row.node;
+        for (std::size_t k = 0; k < r.init_elem_idx.size(); ++k)
+            if ((r.init_elem_is_link[k] != 0) == link && r.init_elem_idx[k] >= deleted)
+                ++r.init_elem_idx[k];
+        insert_rows(r.parameter_overrides, overrides);
+        insert_rows(r.wall_areas, walls);
+        insert_rows(r.sources, sources);
+        for (std::size_t j = 0; j < init_pos.size(); ++j) {
+            const auto at = static_cast<std::ptrdiff_t>(std::min(init_pos[j], r.init_elem_idx.size()));
+            r.init_elem_is_link.insert(r.init_elem_is_link.begin() + at, link ? 1 : 0);
+            r.init_elem_idx.insert(r.init_elem_idx.begin() + at, deleted);
+            r.init_elem_species.insert(r.init_elem_species.begin() + at, init_species[j]);
+            r.init_elem_value.insert(r.init_elem_value.begin() + at, init_value[j]);
+        }
+    });
 }
 
 // Erase all spatial arrays for a node at idx (if they exist).
@@ -383,14 +548,6 @@ CascadeResult analyze_node_impact(const SimulationContext& ctx, int node_idx) {
         if (ui < ctx.subcatches.gw_node.size() && ctx.subcatches.gw_node[ui] == node_idx)
             result.add(SWMM_REF_SUBCATCH, i, "gw_node", false);
     }
-    const int nn = ctx.n_nodes();
-    for (int i = 0; i < nn; ++i) {
-        if (i == node_idx)
-            continue;
-        const int r = ctx.node_subtypes.outfall_row(i);
-        if (r >= 0 && ctx.node_subtypes.outfalls.route_to[static_cast<std::size_t>(r)] == node_idx)
-            result.add(SWMM_REF_NODE, i, "outfall_route_to", false);
-    }
     const int niu = ctx.inlet_usages.count();
     for (int i = niu - 1; i >= 0; --i) {
         const auto uu = static_cast<std::size_t>(i);
@@ -618,24 +775,45 @@ CascadeResult analyze_transect_impact(const SimulationContext& ctx, int transect
 // DELETE — link (forward-declared for use by delete_node)
 // ============================================================================
 
-CascadeResult delete_link(SimulationContext& ctx, int link_idx);
+CascadeResult delete_link(SimulationContext& ctx, int link_idx, DeleteRecord* record);
 
 // ============================================================================
 // DELETE — node
 // ============================================================================
 
-CascadeResult delete_node(SimulationContext& ctx, int node_idx) {
+CascadeResult delete_node(SimulationContext& ctx, int node_idx, DeleteRecord* record) {
     CascadeResult result;
-    moveNamedOverrides(ctx, "NODE", node_idx, ctx.node_names.name_of(node_idx), {});
+    const std::string node_name = ctx.node_names.name_of(node_idx);
+    if (record) {
+        // Added first so its undo runs last, after every row is back.
+        record->add({}, [](SimulationContext& c) { refreshNamedHeatOverrides(c); });
+        record_element_overrides(ctx, false, node_idx, node_name, *record);
+    }
+    moveNamedOverrides(ctx, "NODE", node_idx, node_name, {});
+    std::vector<std::pair<int, std::string>> cleared_drains; // (LID usage row, old name)
     for (int row = 0; row < ctx.lid_usage.count(); ++row)
         if (ctx.node_names.find(ctx.lid_usage.drain_to[row]) == node_idx) {
+            cleared_drains.emplace_back(row, ctx.lid_usage.drain_to[row]);
             ctx.lid_usage.drain_to[row].clear();
             result.add(SWMM_REF_LID_USAGE, row, "drain_to", false);
         }
+    if (record && !cleared_drains.empty())
+        record->add(
+            [cleared_drains](const SimulationContext& c) {
+                for (const auto& [row, name] : cleared_drains)
+                    if (row >= c.lid_usage.count() ||
+                        !c.lid_usage.drain_to[static_cast<std::size_t>(row)].empty())
+                        return false;
+                return true;
+            },
+            [cleared_drains](SimulationContext& c) {
+                for (const auto& [row, name] : cleared_drains)
+                    c.lid_usage.drain_to[static_cast<std::size_t>(row)] = name;
+            });
 
 
     // --- Step 0: report (never edit) control rules referencing this node ---
-    add_rule_refs(ctx, ctx.node_names.name_of(node_idx), result);
+    add_rule_refs(ctx, node_name, result);
 
     // --- Step 1: cascade-delete all links that touch this node ---
     // Collect in descending order so erasure doesn't invalidate earlier indices.
@@ -652,68 +830,106 @@ CascadeResult delete_node(SimulationContext& ctx, int node_idx) {
         // field literals) before delete_link mutates the arrays.
         const char* end_field =
             ctx.links.node1[static_cast<std::size_t>(li)] == node_idx ? "node1" : "node2";
-        CascadeResult lr = delete_link(ctx, li);
+        CascadeResult lr = delete_link(ctx, li, record);
         result.add(SWMM_REF_LINK, li, end_field, true);
         for (auto& e : lr.entries)
             result.entries.push_back(e);
     }
 
     // --- Step 2: nullify subcatch outlet_node / gw_node references ---
+    // Recorded by subcatchment name: until subcatchment deletes are recorded too, a GUI batch
+    // re-adds its deleted subcatchments at the end of the table before this record restores.
+    std::vector<std::string> cleared_outlets, cleared_gw;
     const int nsc = ctx.n_subcatches();
     for (int i = 0; i < nsc; ++i) {
         const auto ui = static_cast<std::size_t>(i);
         if (ctx.subcatches.outlet_node[ui] == node_idx) {
             ctx.subcatches.outlet_node[ui] = -1;
             result.add(SWMM_REF_SUBCATCH, i, "outlet_node", false);
+            cleared_outlets.push_back(ctx.subcatch_names.name_of(i));
         }
         if (ui < ctx.subcatches.gw_node.size() && ctx.subcatches.gw_node[ui] == node_idx) {
             ctx.subcatches.gw_node[ui] = -1;
             result.add(SWMM_REF_SUBCATCH, i, "gw_node", false);
+            cleared_gw.push_back(ctx.subcatch_names.name_of(i));
         }
     }
-
-    // --- Step 3: nullify outfall_route_to on other nodes ---
-    const int nn = ctx.n_nodes();
-    for (int i = 0; i < nn; ++i) {
-        if (i == node_idx)
-            continue;
-        const int r = ctx.node_subtypes.outfall_row(i);
-        if (r >= 0 &&
-            ctx.node_subtypes.outfalls.route_to[static_cast<std::size_t>(r)] == node_idx) {
-            ctx.node_subtypes.outfalls.route_to[static_cast<std::size_t>(r)] = -1;
-            result.add(SWMM_REF_NODE, i, "outfall_route_to", false);
-        }
-    }
-
-    // --- Step 4: cascade-delete inlet_usage rows tied to this node ---
-    // Mirrors the link case (delete_link Step 2): a node-hosted row IS the
-    // inlet junction being deleted, and a row whose capture node is deleted
-    // has nowhere to deliver captured flow. Descending so the erase does not
-    // shift rows still to be visited.
-    for (int i = ctx.inlet_usages.count() - 1; i >= 0; --i) {
-        const auto uu = static_cast<std::size_t>(i);
-        const bool hosted = ctx.inlet_usages.node_host[uu] == node_idx;
-        const bool capture = ctx.inlet_usages.node_index[uu] == node_idx;
-        if (!hosted && !capture)
-            continue;
-        result.add(SWMM_REF_INLET_USAGE, i, hosted ? "node_host" : "node_index", true);
-        erase_inlet_usage(ctx, i);
-    }
-
-    // --- Step 4b: cascade-delete ext-inflow / DWF / RDII rows for this node ---
-    // Descending so erasure doesn't shift the indices still to be visited,
-    // and reported indices are the rows' original positions.
-    auto erase_node_rows = [&](auto& store, int ref_type) {
-        for (int i = store.count() - 1; i >= 0; --i) {
-            if (store.node_idx[static_cast<std::size_t>(i)] == node_idx) {
-                result.add(ref_type, i, "node_idx", true);
-                store.erase(i);
+    if (record && (!cleared_outlets.empty() || !cleared_gw.empty())) {
+        auto cleared = [](const SimulationContext& c, const std::vector<std::string>& names,
+                          const std::vector<int>& refs) {
+            for (const auto& name : names) {
+                const int i = c.subcatch_names.find(name);
+                if (i < 0 || static_cast<std::size_t>(i) >= refs.size() ||
+                    refs[static_cast<std::size_t>(i)] != -1)
+                    return false;
             }
+            return true;
+        };
+        record->add(
+            [cleared, cleared_outlets, cleared_gw](const SimulationContext& c) {
+                return cleared(c, cleared_outlets, c.subcatches.outlet_node) &&
+                       cleared(c, cleared_gw, c.subcatches.gw_node);
+            },
+            [cleared_outlets, cleared_gw, node_idx](SimulationContext& c) {
+                for (const auto& name : cleared_outlets)
+                    c.subcatches.outlet_node[static_cast<std::size_t>(c.subcatch_names.find(name))] =
+                        node_idx;
+                for (const auto& name : cleared_gw)
+                    c.subcatches.gw_node[static_cast<std::size_t>(c.subcatch_names.find(name))] =
+                        node_idx;
+            });
+    }
+
+    // An outfall's route_to is a subcatchment index (delete_subcatch handles it), not a node.
+
+    // --- Step 4 / 4b: cascade-delete the rows tied to this node ---
+    // Inlet usages: a node-hosted row IS the inlet junction being deleted, and a row whose
+    // capture node is deleted has nowhere to deliver captured flow (mirrors delete_link Step 2).
+    // Ext-inflow / DWF / RDII rows: keyed on the node. Descending so the erase does not shift
+    // rows still to be visited, and reported indices are the rows' original positions. A
+    // recorded delete takes the rows; the undo reinserts them ascending.
+    auto take_rows = [&](auto member, auto owned, auto report, auto erase) {
+        auto& store = ctx.*member;
+        using Store = std::decay_t<decltype(store)>;
+        std::vector<std::pair<int, Store>> taken;
+        for (int i = store.count() - 1; i >= 0; --i) {
+            if (!owned(store, static_cast<std::size_t>(i)))
+                continue;
+            report(store, i);
+            if (record)
+                taken.emplace_back(i, soa::take_row(store, i));
+            else
+                erase(i);
         }
+        if (record && !taken.empty())
+            record->add({}, [member, taken](SimulationContext& c) {
+                auto& s = c.*member;
+                for (auto it = taken.rbegin(); it != taken.rend(); ++it) {
+                    auto row = it->second;
+                    soa::put_row(s, std::min(it->first, s.count()), std::move(row));
+                }
+            });
     };
-    erase_node_rows(ctx.ext_inflows, SWMM_REF_EXT_INFLOW);
-    erase_node_rows(ctx.dwf_inflows, SWMM_REF_DWF_INFLOW);
-    erase_node_rows(ctx.rdii_assigns, SWMM_REF_RDII_ASSIGN);
+    take_rows(
+        &SimulationContext::inlet_usages,
+        [node_idx](const InletUsageStore& u, std::size_t i) {
+            return u.node_host[i] == node_idx || u.node_index[i] == node_idx;
+        },
+        [&](const InletUsageStore& u, int i) {
+            const bool hosted = u.node_host[static_cast<std::size_t>(i)] == node_idx;
+            result.add(SWMM_REF_INLET_USAGE, i, hosted ? "node_host" : "node_index", true);
+        },
+        [&](int i) { erase_inlet_usage(ctx, i); });
+    auto node_rows = [&](auto member, int ref_type) {
+        take_rows(
+            member,
+            [node_idx](const auto& s, std::size_t i) { return s.node_idx[i] == node_idx; },
+            [&result, ref_type](const auto&, int i) { result.add(ref_type, i, "node_idx", true); },
+            [&ctx, member](int i) { (ctx.*member).erase(i); });
+    };
+    node_rows(&SimulationContext::ext_inflows, SWMM_REF_EXT_INFLOW);
+    node_rows(&SimulationContext::dwf_inflows, SWMM_REF_DWF_INFLOW);
+    node_rows(&SimulationContext::rdii_assigns, SWMM_REF_RDII_ASSIGN);
 
     // --- Step 4c: erase this node's treatment stripe ---
     // The expression array is positional [node * n_pollutants + poll]; leaving
@@ -725,30 +941,81 @@ CascadeResult delete_node(SimulationContext& ctx, int node_idx) {
         for (int p = 0; p < np; ++p)
             if (!T.expressions[static_cast<std::size_t>(first + p)].empty())
                 result.add(SWMM_REF_TREATMENT, p, "expression", true);
+        auto stripe = std::make_shared<std::vector<std::string>>(
+            T.expressions.begin() + first, T.expressions.begin() + first + np);
         T.expressions.erase(T.expressions.begin() + first, T.expressions.begin() + first + np);
-        if (T.compiled.size() == static_cast<std::size_t>(T.n_nodes) * static_cast<std::size_t>(np))
+        std::shared_ptr<std::vector<treatment::TreatExpr>> compiled;
+        if (T.compiled.size() == static_cast<std::size_t>(T.n_nodes) * static_cast<std::size_t>(np)) {
+            compiled = std::make_shared<std::vector<treatment::TreatExpr>>(
+                T.compiled.begin() + first, T.compiled.begin() + first + np);
             T.compiled.erase(T.compiled.begin() + first, T.compiled.begin() + first + np);
-        if (T.has_treatment.size() == static_cast<std::size_t>(T.n_nodes))
+        }
+        std::optional<bool> flag;
+        if (T.has_treatment.size() == static_cast<std::size_t>(T.n_nodes)) {
+            flag = T.has_treatment[static_cast<std::size_t>(node_idx)];
             T.has_treatment.erase(T.has_treatment.begin() + node_idx);
+        }
         --T.n_nodes;
+        if (record)
+            record->add([np](const SimulationContext& c) { return c.treatment.n_pollutants == np; },
+                        [node_idx, first, stripe, compiled, flag](SimulationContext& c) {
+                            auto& t = c.treatment;
+                            t.expressions.insert(t.expressions.begin() + first, stripe->begin(),
+                                                 stripe->end());
+                            if (compiled)
+                                t.compiled.insert(t.compiled.begin() + first, compiled->begin(),
+                                                  compiled->end());
+                            if (flag)
+                                t.has_treatment.insert(t.has_treatment.begin() + node_idx, *flag);
+                            ++t.n_nodes;
+                        });
     }
 
     // --- Step 5: erase SoA row (base + subtype side-table) ---
+    if (record)
+        record_reaction_element(ctx, false, node_idx, *record);
     erase_reaction_element(ctx, false, node_idx);
-    erase_node_spatial(ctx, node_idx);
-    ctx.node_names.remove_at(node_idx);
-    ctx.nodes.erase_at(node_idx);
-    // Drop this node's subtype row and shift the side-table join keys for nodes
-    // after node_idx (mirrors the base-array index shift just done above).
-    ctx.node_subtypes.erase_node(node_idx, ctx.nodes.count());
-    // [2D_NODE_COUPLING] row for this node, and the index shift after it.
-    ctx.node_coupling_2d.erase_node(node_idx);
+    if (record) {
+        auto x = take_cell(ctx.spatial.node_x, node_idx);
+        auto y = take_cell(ctx.spatial.node_y, node_idx);
+        auto has_xy = take_cell(ctx.spatial.node_has_xy, node_idx);
+        ctx.node_names.remove_at(node_idx);
+        auto row = std::make_shared<NodeData>(ctx.nodes.take_row(node_idx));
+        auto subtype = std::make_shared<NodeSubtypes::TakenRow>(
+            ctx.node_subtypes.take_node(node_idx, ctx.nodes.count()));
+        const auto coupling = ctx.node_coupling_2d.take_node(node_idx);
+        const int conc_np = ctx.nodes.conc_n_pollutants;
+        const int stat_np = ctx.nodes.stat_n_pollutants;
+        record->add(
+            [node_name, conc_np, stat_np](const SimulationContext& c) {
+                return c.node_names.find(node_name) < 0 &&
+                       c.nodes.conc_n_pollutants == conc_np &&
+                       c.nodes.stat_n_pollutants == stat_np;
+            },
+            [node_idx, node_name, row, subtype, coupling, x, y, has_xy](SimulationContext& c) {
+                c.nodes.put_row(node_idx, std::move(*row));
+                c.node_names.insert_at(node_idx, node_name);
+                c.node_subtypes.put_node(node_idx, std::move(*subtype), c.nodes.count());
+                c.node_coupling_2d.put_node(node_idx, coupling);
+                put_cell(c.spatial.node_has_xy, node_idx, has_xy);
+                put_cell(c.spatial.node_y, node_idx, y);
+                put_cell(c.spatial.node_x, node_idx, x);
+            });
+    } else {
+        erase_node_spatial(ctx, node_idx);
+        ctx.node_names.remove_at(node_idx);
+        ctx.nodes.erase_at(node_idx);
+        // Drop this node's subtype row and shift the side-table join keys for nodes
+        // after node_idx (mirrors the base-array index shift just done above).
+        ctx.node_subtypes.erase_node(node_idx, ctx.nodes.count());
+        // [2D_NODE_COUPLING] row for this node, and the index shift after it.
+        ctx.node_coupling_2d.erase_node(node_idx);
+    }
 
     // --- Step 6: renumber cross-references for nodes with index > node_idx ---
     renumber_refs(ctx.links.node1, node_idx);
     renumber_refs(ctx.links.node2, node_idx);
     renumber_refs(ctx.subcatches.outlet_node, node_idx);
-    renumber_refs(ctx.node_subtypes.outfalls.route_to, node_idx);
     renumber_refs(ctx.inlet_usages.node_index, node_idx);
     renumber_refs(ctx.inlet_usages.node_host, node_idx);
     // gw_node in subcatches also references nodes
@@ -757,6 +1024,18 @@ CascadeResult delete_node(SimulationContext& ctx, int node_idx) {
     renumber_refs(ctx.ext_inflows.node_idx, node_idx);
     renumber_refs(ctx.dwf_inflows.node_idx, node_idx);
     renumber_refs(ctx.rdii_assigns.node_idx, node_idx);
+    if (record)
+        record->add({}, [node_idx](SimulationContext& c) {
+            renumber_refs_up(c.links.node1, node_idx);
+            renumber_refs_up(c.links.node2, node_idx);
+            renumber_refs_up(c.subcatches.outlet_node, node_idx);
+            renumber_refs_up(c.inlet_usages.node_index, node_idx);
+            renumber_refs_up(c.inlet_usages.node_host, node_idx);
+            renumber_refs_up(c.subcatches.gw_node, node_idx);
+            renumber_refs_up(c.ext_inflows.node_idx, node_idx);
+            renumber_refs_up(c.dwf_inflows.node_idx, node_idx);
+            renumber_refs_up(c.rdii_assigns.node_idx, node_idx);
+        });
 
     refreshNamedHeatOverrides(ctx);
     return result;
@@ -766,22 +1045,37 @@ CascadeResult delete_node(SimulationContext& ctx, int node_idx) {
 // DELETE — link
 // ============================================================================
 
-CascadeResult delete_link(SimulationContext& ctx, int link_idx) {
+CascadeResult delete_link(SimulationContext& ctx, int link_idx, DeleteRecord* record) {
     CascadeResult result;
-    moveNamedOverrides(ctx, "LINK", link_idx, ctx.link_names.name_of(link_idx), {});
+    const std::string link_name = ctx.link_names.name_of(link_idx);
+    if (record) {
+        // Added first so its undo runs last, after every row is back.
+        record->add({}, [](SimulationContext& c) { refreshNamedHeatOverrides(c); });
+        record_element_overrides(ctx, true, link_idx, link_name, *record);
+    }
+    moveNamedOverrides(ctx, "LINK", link_idx, link_name, {});
 
     // --- Step 0: report (never edit) control rules referencing this link ---
-    add_rule_refs(ctx, ctx.link_names.name_of(link_idx), result);
+    add_rule_refs(ctx, link_name, result);
 
     // --- Step 1: nullify divider_link on nodes ---
+    std::vector<int> cleared_dividers; // divider table rows
     const int nn = ctx.n_nodes();
     for (int i = 0; i < nn; ++i) {
         const int r = ctx.node_subtypes.divider_row(i);
         if (r >= 0 && ctx.node_subtypes.dividers.link[static_cast<std::size_t>(r)] == link_idx) {
             ctx.node_subtypes.dividers.link[static_cast<std::size_t>(r)] = -1;
             result.add(SWMM_REF_NODE, i, "divider_link", false);
+            cleared_dividers.push_back(r);
         }
     }
+    // No check: in a node batch a later delete can remove or move the divider row; the undo
+    // runs on the model exactly as this step left it.
+    if (record && !cleared_dividers.empty())
+        record->add({}, [cleared_dividers, link_idx](SimulationContext& c) {
+            for (int r : cleared_dividers)
+                c.node_subtypes.dividers.link[static_cast<std::size_t>(r)] = link_idx;
+        });
 
     // --- Step 2: delete inlet_usages that reference this link ---
     // Collect in descending order to avoid index shift during erase
@@ -792,14 +1086,40 @@ CascadeResult delete_link(SimulationContext& ctx, int link_idx) {
             usages_to_delete.push_back(i);
     }
     std::sort(usages_to_delete.rbegin(), usages_to_delete.rend());
+    std::vector<std::pair<int, InletUsageStore>> taken_usages;
     for (int ui : usages_to_delete) {
         result.add(SWMM_REF_INLET_USAGE, ui, "link_index", true);
-        erase_inlet_usage(ctx, ui);
+        if (record)
+            taken_usages.emplace_back(ui, soa::take_row(ctx.inlet_usages, ui));
+        else
+            erase_inlet_usage(ctx, ui);
+    }
+    if (record && !taken_usages.empty()) {
+        record->add({}, [taken_usages](SimulationContext& c) {
+            // Taken in descending order; reinsert ascending.
+            for (auto it = taken_usages.rbegin(); it != taken_usages.rend(); ++it) {
+                auto row = it->second;
+                soa::put_row(c.inlet_usages, std::min(it->first, c.inlet_usages.count()),
+                             std::move(row));
+            }
+        });
     }
 
     // --- Step 3: erase SoA row ---
+    if (record)
+        record_reaction_element(ctx, true, link_idx, *record);
     erase_reaction_element(ctx, true, link_idx);
-    erase_link_spatial(ctx, link_idx);
+    if (record) {
+        auto lid_outlets = rows_where(ctx.lid_node_outlets,
+                                      [link_idx](const auto& a) { return a.link == link_idx; });
+        if (!ctx.lid_node_outlets.empty())
+            record->add({}, [link_idx, lid_outlets](SimulationContext& c) {
+                for (auto& a : c.lid_node_outlets)
+                    if (a.link >= link_idx)
+                        ++a.link;
+                insert_rows(c.lid_node_outlets, lid_outlets);
+            });
+    }
     ctx.lid_node_outlets.erase(
         std::remove_if(ctx.lid_node_outlets.begin(), ctx.lid_node_outlets.end(),
                        [link_idx](const auto& a) { return a.link == link_idx; }),
@@ -807,22 +1127,68 @@ CascadeResult delete_link(SimulationContext& ctx, int link_idx) {
     for (auto& a : ctx.lid_node_outlets)
         if (a.link > link_idx)
             --a.link;
-    ctx.link_names.remove_at(link_idx);
-    ctx.links.erase_at(link_idx);
-    // Drop the subtype side-table row and renumber its join keys (mirrors
-    // delete_node's erase_node). Must run after LinkData::erase_at.
-    ctx.link_subtypes.erase_link(link_idx, ctx.links.count());
+    if (record) {
+        auto x = take_cell(ctx.spatial.link_x, link_idx);
+        auto y = take_cell(ctx.spatial.link_y, link_idx);
+        auto vx = take_cell(ctx.spatial.link_vertices_x, link_idx);
+        auto vy = take_cell(ctx.spatial.link_vertices_y, link_idx);
+        ctx.link_names.remove_at(link_idx);
+        auto row = std::make_shared<LinkData>(ctx.links.take_row(link_idx));
+        auto subtype = std::make_shared<LinkSubtypes::TakenRow>(
+            ctx.link_subtypes.take_link(link_idx, ctx.links.count()));
+        const int conc_np = ctx.links.conc_n_pollutants;
+        const int stat_np = ctx.links.stat_n_pollutants;
+        // Counts are checked once for the whole delete by seal_delete_record; a
+        // subtype row position cannot be checked here because later deletes in
+        // a batch shrink its table (put_link clamps instead).
+        record->add(
+            [link_name, conc_np, stat_np](const SimulationContext& c) {
+                return c.link_names.find(link_name) < 0 &&
+                       c.links.conc_n_pollutants == conc_np &&
+                       c.links.stat_n_pollutants == stat_np;
+            },
+            [link_idx, link_name, row, subtype, x, y, vx, vy](SimulationContext& c) {
+                c.links.put_row(link_idx, std::move(*row));
+                c.link_names.insert_at(link_idx, link_name);
+                c.link_subtypes.put_link(link_idx, std::move(*subtype), c.links.count());
+                put_cell(c.spatial.link_vertices_y, link_idx, vy);
+                put_cell(c.spatial.link_vertices_x, link_idx, vx);
+                put_cell(c.spatial.link_y, link_idx, y);
+                put_cell(c.spatial.link_x, link_idx, x);
+            });
+    } else {
+        erase_link_spatial(ctx, link_idx);
+        ctx.link_names.remove_at(link_idx);
+        ctx.links.erase_at(link_idx);
+        // Drop the subtype side-table row and renumber its join keys (mirrors
+        // delete_node's erase_node). Must run after LinkData::erase_at.
+        ctx.link_subtypes.erase_link(link_idx, ctx.links.count());
+    }
 
     // --- Step 4: renumber cross-references ---
     renumber_refs(ctx.node_subtypes.dividers.link, link_idx);
     renumber_refs(ctx.inlet_usages.link_index, link_idx);
     // outfall link_idx is a cached value rebuilt at init; nullify for safety
-    for (auto& v : ctx.node_subtypes.outfalls.link_idx) {
-        if (v == link_idx)
+    std::vector<std::size_t> cleared_outfalls;
+    auto& outfall_links = ctx.node_subtypes.outfalls.link_idx;
+    for (std::size_t k = 0; k < outfall_links.size(); ++k) {
+        auto& v = outfall_links[k];
+        if (v == link_idx) {
             v = -1;
-        else if (v > link_idx)
+            cleared_outfalls.push_back(k);
+        } else if (v > link_idx)
             --v;
     }
+    if (record)
+        record->add({}, [link_idx, cleared_outfalls](SimulationContext& c) {
+            renumber_refs_up(c.node_subtypes.dividers.link, link_idx);
+            renumber_refs_up(c.inlet_usages.link_index, link_idx);
+            auto& links = c.node_subtypes.outfalls.link_idx;
+            renumber_refs_up(links, link_idx);
+            for (std::size_t k : cleared_outfalls)
+                if (k < links.size())
+                    links[k] = link_idx;
+        });
 
     refreshNamedHeatOverrides(ctx);
     return result;
@@ -923,46 +1289,101 @@ CascadeResult delete_subcatch(SimulationContext& ctx, int sc_idx) {
 // DELETE — gage
 // ============================================================================
 
-CascadeResult delete_gage(SimulationContext& ctx, int gage_idx) {
+CascadeResult delete_gage(SimulationContext& ctx, int gage_idx, DeleteRecord* record) {
     CascadeResult result;
-    moveNamedOverrides(ctx, "GAGE", gage_idx, ctx.gage_names.name_of(gage_idx), {});
-    add_rule_refs(ctx, ctx.gage_names.name_of(gage_idx), result);
+    const std::string gage_name = ctx.gage_names.name_of(gage_idx);
+    if (record)
+        record_user_flags(ctx, "GAGE", gage_name, *record);
+    moveNamedOverrides(ctx, "GAGE", gage_idx, gage_name, {});
+    add_rule_refs(ctx, gage_name, result);
 
     // --- Step 1: nullify subcatch gage references ---
+    std::vector<int> cleared_subcatches;
     const int nsc = ctx.n_subcatches();
     for (int i = 0; i < nsc; ++i) {
         if (ctx.subcatches.gage[static_cast<std::size_t>(i)] == gage_idx) {
             ctx.subcatches.gage[static_cast<std::size_t>(i)] = -1;
             result.add(SWMM_REF_SUBCATCH, i, "gage", false);
+            cleared_subcatches.push_back(i);
         }
+    }
+    if (record && !cleared_subcatches.empty()) {
+        record->add(
+            [cleared_subcatches](const SimulationContext& c) {
+                for (int i : cleared_subcatches)
+                    if (i >= c.n_subcatches() || c.subcatches.gage[static_cast<std::size_t>(i)] != -1)
+                        return false;
+                return true;
+            },
+            [cleared_subcatches, gage_idx](SimulationContext& c) {
+                for (int i : cleared_subcatches)
+                    c.subcatches.gage[static_cast<std::size_t>(i)] = gage_idx;
+            });
     }
 
     // --- Step 1b: clear hydrograph gage assignments (name-based) ---
-    {
-        const std::string gage_name = ctx.gage_names.name_of(gage_idx);
-        if (!gage_name.empty()) {
-            for (std::size_t i = 0; i < ctx.unit_hyds.gage_names.size(); ++i) {
-                if (ctx.unit_hyds.gage_names[i] == gage_name) {
-                    ctx.unit_hyds.gage_names[i].clear();
-                    result.add(SWMM_REF_HYDROGRAPH, static_cast<int>(i), "gage_name", false);
-                }
+    if (!gage_name.empty()) {
+        std::vector<std::size_t> cleared_groups, cleared_entries;
+        for (std::size_t i = 0; i < ctx.unit_hyds.gage_names.size(); ++i) {
+            if (ctx.unit_hyds.gage_names[i] == gage_name) {
+                ctx.unit_hyds.gage_names[i].clear();
+                result.add(SWMM_REF_HYDROGRAPH, static_cast<int>(i), "gage_name", false);
+                cleared_groups.push_back(i);
             }
-            for (std::size_t i = 0; i < ctx.unit_hyds.entries.size(); ++i) {
-                if (ctx.unit_hyds.entries[i].gage_name == gage_name) {
-                    ctx.unit_hyds.entries[i].gage_name.clear();
-                    result.add(SWMM_REF_HYDROGRAPH, static_cast<int>(i), "uh_gage_name", false);
-                }
+        }
+        for (std::size_t i = 0; i < ctx.unit_hyds.entries.size(); ++i) {
+            if (ctx.unit_hyds.entries[i].gage_name == gage_name) {
+                ctx.unit_hyds.entries[i].gage_name.clear();
+                result.add(SWMM_REF_HYDROGRAPH, static_cast<int>(i), "uh_gage_name", false);
+                cleared_entries.push_back(i);
             }
+        }
+        if (record && (!cleared_groups.empty() || !cleared_entries.empty())) {
+            record->add(
+                [cleared_groups, cleared_entries](const SimulationContext& c) {
+                    for (std::size_t i : cleared_groups)
+                        if (i >= c.unit_hyds.gage_names.size() || !c.unit_hyds.gage_names[i].empty())
+                            return false;
+                    for (std::size_t i : cleared_entries)
+                        if (i >= c.unit_hyds.entries.size() ||
+                            !c.unit_hyds.entries[i].gage_name.empty())
+                            return false;
+                    return true;
+                },
+                [cleared_groups, cleared_entries, gage_name](SimulationContext& c) {
+                    for (std::size_t i : cleared_groups)
+                        c.unit_hyds.gage_names[i] = gage_name;
+                    for (std::size_t i : cleared_entries)
+                        c.unit_hyds.entries[i].gage_name = gage_name;
+                });
         }
     }
 
     // --- Step 2: erase SoA row ---
-    erase_gage_spatial(ctx, gage_idx);
-    ctx.gage_names.remove_at(gage_idx);
-    ctx.gages.erase_at(gage_idx);
+    if (record) {
+        auto x = take_cell(ctx.spatial.gage_x, gage_idx);
+        auto y = take_cell(ctx.spatial.gage_y, gage_idx);
+        ctx.gage_names.remove_at(gage_idx);
+        auto row = std::make_shared<GageData>(ctx.gages.take_row(gage_idx));
+        // Counts are checked once for the whole delete by seal_delete_record.
+        record->add(
+            [gage_name](const SimulationContext& c) { return c.gage_names.find(gage_name) < 0; },
+            [gage_idx, gage_name, row, x, y](SimulationContext& c) {
+                c.gages.put_row(gage_idx, std::move(*row));
+                c.gage_names.insert_at(gage_idx, gage_name);
+                put_cell(c.spatial.gage_y, gage_idx, y);
+                put_cell(c.spatial.gage_x, gage_idx, x);
+            });
+    } else {
+        erase_gage_spatial(ctx, gage_idx);
+        ctx.gage_names.remove_at(gage_idx);
+        ctx.gages.erase_at(gage_idx);
+    }
 
     // --- Step 3: renumber ---
     renumber_refs(ctx.subcatches.gage, gage_idx);
+    if (record)
+        record->add({}, [gage_idx](SimulationContext& c) { renumber_refs_up(c.subcatches.gage, gage_idx); });
 
     return result;
 }
@@ -1045,15 +1466,19 @@ CascadeResult delete_many_impl(std::vector<int> indices, DeleteFn&& del) {
 
 } // namespace
 
-CascadeResult delete_nodes_many(SimulationContext& ctx, std::vector<int> indices) {
+CascadeResult delete_nodes_many(SimulationContext& ctx, std::vector<int> indices,
+                                DeleteRecord* record) {
     // delete_node removes node names AND cascade-deleted link names.
     NameBulkScope scope{&ctx.node_names, &ctx.link_names};
-    return delete_many_impl(std::move(indices), [&ctx](int i) { return delete_node(ctx, i); });
+    return delete_many_impl(std::move(indices),
+                            [&ctx, record](int i) { return delete_node(ctx, i, record); });
 }
 
-CascadeResult delete_links_many(SimulationContext& ctx, std::vector<int> indices) {
+CascadeResult delete_links_many(SimulationContext& ctx, std::vector<int> indices,
+                                DeleteRecord* record) {
     NameBulkScope scope{&ctx.link_names};
-    return delete_many_impl(std::move(indices), [&ctx](int i) { return delete_link(ctx, i); });
+    return delete_many_impl(std::move(indices),
+                            [&ctx, record](int i) { return delete_link(ctx, i, record); });
 }
 
 CascadeResult delete_subcatches_many(SimulationContext& ctx, std::vector<int> indices) {
@@ -1061,9 +1486,23 @@ CascadeResult delete_subcatches_many(SimulationContext& ctx, std::vector<int> in
     return delete_many_impl(std::move(indices), [&ctx](int i) { return delete_subcatch(ctx, i); });
 }
 
-CascadeResult delete_gages_many(SimulationContext& ctx, std::vector<int> indices) {
+CascadeResult delete_gages_many(SimulationContext& ctx, std::vector<int> indices,
+                                DeleteRecord* record) {
+    // Descending order, so undoing the steps newest first reinserts the
+    // lowest index first and every later index lands where it was.
     NameBulkScope scope{&ctx.gage_names};
-    return delete_many_impl(std::move(indices), [&ctx](int i) { return delete_gage(ctx, i); });
+    return delete_many_impl(std::move(indices),
+                            [&ctx, record](int i) { return delete_gage(ctx, i, record); });
+}
+
+void seal_delete_record(const SimulationContext& ctx, DeleteRecord& record) {
+    record.add(
+        [nodes = ctx.n_nodes(), links = ctx.n_links(), subcatches = ctx.n_subcatches(),
+         gages = ctx.n_gages()](const SimulationContext& c) {
+            return c.n_nodes() == nodes && c.n_links() == links &&
+                   c.n_subcatches() == subcatches && c.n_gages() == gages;
+        },
+        {});
 }
 
 // ============================================================================

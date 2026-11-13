@@ -2842,7 +2842,7 @@ static void read_inlet_usage(sqlite3* db, SimulationContext& ctx, const std::str
         const auto ur = static_cast<std::size_t>(r);
         ctx.inlet_usages.num_inlets[ur] =
             column_is_null(stmt.get(), 4) ? 1 : column_int(stmt.get(), 4);
-        ctx.inlet_usages.clog_factor[ur] = 1.0 - column_double(stmt.get(), 5) / 100.0;
+        ctx.inlet_usages.pct_clogged[ur] = column_double(stmt.get(), 5);
         ctx.inlet_usages.flow_limit[ur] = column_double(stmt.get(), 6);
         ctx.inlet_usages.local_depress[ur] = column_double(stmt.get(), 7);
         ctx.inlet_usages.local_width[ur] = column_double(stmt.get(), 8);

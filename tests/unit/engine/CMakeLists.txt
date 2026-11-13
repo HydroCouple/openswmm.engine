@@ -526,6 +526,12 @@ add_gtest_unit(test_engine_object_deletion_ext test_object_deletion_ext.cpp)
 # Perf plan Phase A1 — swmm_*_delete_many parity with sequential descending
 # per-object deletes, all-or-nothing validation, and the one-rehash batch.
 add_gtest_unit(test_engine_object_deletion_many test_object_deletion_many.cpp)
+# Recorded deletes: swmm_*_delete_recorded + swmm_delete_record_restore put the
+# model back exactly. Each case writes its input and saved .inp files under
+# tests/output/delete_record_2026-11-12/<case>/ for review.
+add_gtest_unit(test_engine_delete_record test_delete_record.cpp)
+target_compile_definitions(test_engine_delete_record PRIVATE
+    OPENSWMM_DELETE_RECORD_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output/delete_record_2026-11-12")
 add_gtest_unit(test_engine_quality_roundtrip test_quality_roundtrip.cpp)
 add_gtest_unit(test_engine_type_conversion test_type_conversion.cpp)
 add_gtest_unit(test_engine_tags           test_tags.cpp)

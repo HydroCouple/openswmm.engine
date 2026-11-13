@@ -677,7 +677,7 @@ TEST_F(GeoPackageTest, StreetsInletsAndInletUsageRoundTrip) {
         const int r = ctx_out.inlet_usages.add_row(c1, -1, combo, j3);
         const auto ur = static_cast<std::size_t>(r);
         ctx_out.inlet_usages.num_inlets[ur] = 2;
-        ctx_out.inlet_usages.clog_factor[ur] = 0.75;
+        ctx_out.inlet_usages.pct_clogged[ur] = 25.0;
         ctx_out.inlet_usages.flow_limit[ur] = 1.5;
         ctx_out.inlet_usages.local_depress[ur] = 0.1;
         ctx_out.inlet_usages.local_width[ur] = 1.0;
@@ -732,7 +732,7 @@ TEST_F(GeoPackageTest, StreetsInletsAndInletUsageRoundTrip) {
         EXPECT_EQ(ctx_in.inlet_usages.design_index[ur], 0);
         EXPECT_EQ(ctx_in.node_names.name_of(ctx_in.inlet_usages.node_index[ur]), "J3");
         EXPECT_EQ(ctx_in.inlet_usages.num_inlets[ur], 2);
-        EXPECT_NEAR(ctx_in.inlet_usages.clog_factor[ur], 0.75, 1e-12);
+        EXPECT_EQ(ctx_in.inlet_usages.pct_clogged[ur], 25.0);
         EXPECT_DOUBLE_EQ(ctx_in.inlet_usages.flow_limit[ur], 1.5);
         EXPECT_DOUBLE_EQ(ctx_in.inlet_usages.local_depress[ur], 0.1);
         EXPECT_DOUBLE_EQ(ctx_in.inlet_usages.local_width[ur], 1.0);

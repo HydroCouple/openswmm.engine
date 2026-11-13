@@ -140,7 +140,7 @@ int find_inlet_design(const SimulationContext& ctx, std::string_view name) {
 struct UsageTail {
     int num_inlets = 1;
     int placement = 0; ///< 0=AUTOMATIC 1=ON_GRADE 2=ON_SAG
-    double clog_factor = 1.0;
+    double pct_clogged = 0.0;
     double flow_limit = 0.0;
     double local_depress = 0.0;
     double local_width = 0.0;
@@ -149,7 +149,7 @@ struct UsageTail {
 /**
  * @brief Parse optional inlet count, clogging, flow limit, geometry and placement.
  *
- * Requires count>=1, percent clog[0,99] (stored as 1-pct/100), flow/depression/width[0,1e30], known
+ * Requires count>=1, percent clog[0,99] (kept as authored), flow/depression/width[0,1e30], known
  * placement token. Numeric parsing is permissive and comparisons do not independently reject all
  * NaNs. Physical values remain project flow/length units.
  *
@@ -181,10 +181,8 @@ bool parse_inlet_usage_tail(SimulationContext& ctx, const std::vector<std::strin
         }
     }
     if (tok.size() > first + 1) {
-        double pct = 0.0;
-        if (!num(first + 1, pct, 0.0, 99.0))
+        if (!num(first + 1, out.pct_clogged, 0.0, 99.0))
             return false;
-        out.clog_factor = 1.0 - pct / 100.0;
     }
     if (tok.size() > first + 2 && !num(first + 2, out.flow_limit, 0.0, 1.0e30))
         return false;
@@ -217,7 +215,7 @@ void apply_usage_tail(InletUsageStore& u, int row, const UsageTail& t) {
     const auto ur = static_cast<std::size_t>(row);
     u.num_inlets[ur] = t.num_inlets;
     u.placement[ur] = t.placement;
-    u.clog_factor[ur] = t.clog_factor;
+    u.pct_clogged[ur] = t.pct_clogged;
     u.flow_limit[ur] = t.flow_limit;
     u.local_depress[ur] = t.local_depress;
     u.local_width[ur] = t.local_width;

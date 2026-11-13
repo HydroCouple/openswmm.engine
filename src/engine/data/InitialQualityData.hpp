@@ -35,6 +35,7 @@
 #ifndef OPENSWMM_ENGINE_INITIAL_QUALITY_DATA_HPP
 #define OPENSWMM_ENGINE_INITIAL_QUALITY_DATA_HPP
 
+#include "SoaRow.hpp"
 #include <vector>
 #include <string>
 
@@ -131,15 +132,22 @@ struct InitialQualityData {
     void erase(int idx) {
         if (idx < 0 || idx >= count())
             return;
-        const auto u = static_cast<std::size_t>(idx);
-        is_link.erase(is_link.begin() + u);
-        elem_name.erase(elem_name.begin() + u);
-        elem_idx.erase(elem_idx.begin() + u);
-        constituent.erase(constituent.begin() + u);
-        kind.erase(kind.begin() + u);
-        value.erase(value.begin() + u);
-        if (u < from_file.size())
-            from_file.erase(from_file.begin() + u);
+        (void)soa::take_row(*this, idx);
+    }
+
+    /**
+     * @brief Call @p f with a pointer to every per-row column member; the one list the erase and
+     *        the delete record's take/put share (SoaRow.hpp).
+     */
+    template <class F>
+    static void for_each_column(F&& f) {
+        f(&InitialQualityData::is_link);
+        f(&InitialQualityData::elem_name);
+        f(&InitialQualityData::elem_idx);
+        f(&InitialQualityData::constituent);
+        f(&InitialQualityData::kind);
+        f(&InitialQualityData::value);
+        f(&InitialQualityData::from_file);
     }
 };
 

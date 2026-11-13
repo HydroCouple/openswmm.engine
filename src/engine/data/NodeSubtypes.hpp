@@ -61,6 +61,7 @@
 #include <string>
 
 #include "NodeData.hpp"
+#include "SoaRow.hpp"
 
 namespace openswmm {
 
@@ -237,28 +238,34 @@ struct StorageData {
      * @param[in] r Existing dense subtype-row index, NOT the base-object index; caller validates
      *     bounds/alignment.
      */
-    void erase_at(int r) {
-        const auto p = static_cast<std::ptrdiff_t>(r);
-        node_idx.erase(node_idx.begin() + p);
-        curve.erase(curve.begin() + p);
-        curve_name.erase(curve_name.begin() + p);
-        shape.erase(shape.begin() + p);
-        a.erase(a.begin() + p);
-        b.erase(b.begin() + p);
-        c.erase(c.begin() + p);
-        p1.erase(p1.begin() + p);
-        p2.erase(p2.begin() + p);
-        p3.erase(p3.begin() + p);
-        seep_rate.erase(seep_rate.begin() + p);
-        evap_frac.erase(evap_frac.begin() + p);
-        evap_loss.erase(evap_loss.begin() + p);
-        exfil_loss.erase(exfil_loss.begin() + p);
-        exfil_rate.erase(exfil_rate.begin() + p);
-        exfil_suction.erase(exfil_suction.begin() + p);
-        exfil_ksat.erase(exfil_ksat.begin() + p);
-        exfil_imd.erase(exfil_imd.begin() + p);
-        lid.erase(lid.begin() + p);
-        lid_state.erase(lid_state.begin() + p);
+    void erase_at(int r) { (void)soa::take_row(*this, r); }
+
+    /**
+     * @brief Call @p f with a pointer to every per-row column member; the one list erase_at and
+     *        the delete record share (SoaRow.hpp).
+     */
+    template <class F>
+    static void for_each_column(F&& f) {
+        f(&StorageData::node_idx);
+        f(&StorageData::curve);
+        f(&StorageData::curve_name);
+        f(&StorageData::shape);
+        f(&StorageData::a);
+        f(&StorageData::b);
+        f(&StorageData::c);
+        f(&StorageData::p1);
+        f(&StorageData::p2);
+        f(&StorageData::p3);
+        f(&StorageData::seep_rate);
+        f(&StorageData::evap_frac);
+        f(&StorageData::evap_loss);
+        f(&StorageData::exfil_loss);
+        f(&StorageData::exfil_rate);
+        f(&StorageData::exfil_suction);
+        f(&StorageData::exfil_ksat);
+        f(&StorageData::exfil_imd);
+        f(&StorageData::lid);
+        f(&StorageData::lid_state);
     }
 };
 
@@ -386,19 +393,25 @@ struct OutfallData {
      * @param[in] r Existing dense subtype-row index, NOT the base-object index; caller validates
      *     bounds/alignment.
      */
-    void erase_at(int r) {
-        const auto p = static_cast<std::ptrdiff_t>(r);
-        node_idx.erase(node_idx.begin() + p);
-        bc_type.erase(bc_type.begin() + p);
-        param.erase(param.begin() + p);
-        param_name.erase(param_name.begin() + p);
-        has_flap_gate.erase(has_flap_gate.begin() + p);
-        route_to.erase(route_to.begin() + p);
-        route_to_name.erase(route_to_name.begin() + p);
-        link_idx.erase(link_idx.begin() + p);
-        link_offset.erase(link_offset.begin() + p);
-        head_2d.erase(head_2d.begin() + p);
-        ramp_2d.erase(ramp_2d.begin() + p);
+    void erase_at(int r) { (void)soa::take_row(*this, r); }
+
+    /**
+     * @brief Call @p f with a pointer to every per-row column member; the one list erase_at and
+     *        the delete record share (SoaRow.hpp).
+     */
+    template <class F>
+    static void for_each_column(F&& f) {
+        f(&OutfallData::node_idx);
+        f(&OutfallData::bc_type);
+        f(&OutfallData::param);
+        f(&OutfallData::param_name);
+        f(&OutfallData::has_flap_gate);
+        f(&OutfallData::route_to);
+        f(&OutfallData::route_to_name);
+        f(&OutfallData::link_idx);
+        f(&OutfallData::link_offset);
+        f(&OutfallData::head_2d);
+        f(&OutfallData::ramp_2d);
     }
 };
 
@@ -512,17 +525,23 @@ struct DividerData {
      * @param[in] r Existing dense subtype-row index, NOT the base-object index; caller validates
      *     bounds/alignment.
      */
-    void erase_at(int r) {
-        const auto p = static_cast<std::ptrdiff_t>(r);
-        node_idx.erase(node_idx.begin() + p);
-        method.erase(method.begin() + p);
-        cutoff.erase(cutoff.begin() + p);
-        cd.erase(cd.begin() + p);
-        max_depth.erase(max_depth.begin() + p);
-        curve.erase(curve.begin() + p);
-        link.erase(link.begin() + p);
-        link_name.erase(link_name.begin() + p);
-        curve_name.erase(curve_name.begin() + p);
+    void erase_at(int r) { (void)soa::take_row(*this, r); }
+
+    /**
+     * @brief Call @p f with a pointer to every per-row column member; the one list erase_at and
+     *        the delete record share (SoaRow.hpp).
+     */
+    template <class F>
+    static void for_each_column(F&& f) {
+        f(&DividerData::node_idx);
+        f(&DividerData::method);
+        f(&DividerData::cutoff);
+        f(&DividerData::cd);
+        f(&DividerData::max_depth);
+        f(&DividerData::curve);
+        f(&DividerData::link);
+        f(&DividerData::link_name);
+        f(&DividerData::curve_name);
     }
 };
 
@@ -670,17 +689,38 @@ struct NodeSubtypes {
      * @param[in] i Erased pre-deletion base-object index; call AFTER NodeData::erase_at(i).
      * @param[in] n_after Nonnegative base count after erasure; surviving join keys must fit this count.
      */
-    void erase_node(int i, int n_after) {
-        // Erase the row whose node_idx == i (in whichever table holds it).
-        auto drop = [i](auto& tbl) -> bool {
+    void erase_node(int i, int n_after) { (void)take_node(i, n_after); }
+
+    /// A node's subtype row as take_node removed it, for put_node.
+    struct TakenRow {
+        int table = -1; ///< 0 storage, 1 outfall, 2 divider; -1 when none (a junction)
+        int row = -1;   ///< Row index the node held in that table
+        StorageData storage;
+        OutfallData outfall;
+        DividerData divider;
+    };
+
+    /**
+     * @brief As erase_node, and return the removed subtype row so put_node can restore it.
+     * @param[in] i Erased base node index.
+     * @param[in] n_after Node count after the erase.
+     */
+    TakenRow take_node(int i, int n_after) {
+        TakenRow taken;
+        int table = 0;
+        auto drop = [i, &taken, &table](auto& tbl, auto& out) -> bool {
+            const int t = table++;
             for (int r = 0; r < tbl.count(); ++r)
                 if (tbl.node_idx[static_cast<std::size_t>(r)] == i) {
-                    tbl.erase_at(r);
+                    out = soa::take_row(tbl, r);
+                    taken.table = t;
+                    taken.row = r;
                     return true;
                 }
             return false;
         };
-        drop(storages) || drop(outfalls) || drop(dividers);
+        drop(storages, taken.storage) || drop(outfalls, taken.outfall) ||
+            drop(dividers, taken.divider);
 
         auto shift = [i](std::vector<int>& keys) {
             for (auto& k : keys)
@@ -692,6 +732,34 @@ struct NodeSubtypes {
         shift(dividers.node_idx);
 
         rebuild_index(n_after);
+        return taken;
+    }
+
+    /**
+     * @brief Inverse of take_node: make room for base node i again and reinsert its subtype row.
+     * @param[in] i Base node index being restored.
+     * @param[in] taken Value take_node(i, ...) returned; its row is moved out.
+     * @param[in] n Node count with node i restored.
+     */
+    void put_node(int i, TakenRow&& taken, int n) {
+        auto unshift = [i](std::vector<int>& keys) {
+            for (auto& k : keys)
+                if (k >= i)
+                    ++k;
+        };
+        unshift(storages.node_idx);
+        unshift(outfalls.node_idx);
+        unshift(dividers.node_idx);
+        auto put = [&taken](auto& tbl, auto& row) {
+            soa::put_row(tbl, std::min(taken.row, tbl.count()), std::move(row));
+        };
+        switch (taken.table) {
+        case 0: put(storages, taken.storage); break;
+        case 1: put(outfalls, taken.outfall); break;
+        case 2: put(dividers, taken.divider); break;
+        default: break;
+        }
+        rebuild_index(n);
     }
 
     /**

@@ -39,6 +39,7 @@
 #define OPENSWMM_ENGINE_GAGE_DATA_HPP
 
 #include "../core/FilePathPair.hpp"
+#include "SoaRow.hpp"
 #include "TableData.hpp"
 #include <vector>
 #include <string>
@@ -432,56 +433,91 @@ struct GageData {
     }
 
     /**
-     * @brief Erase a gage from the columns visited by this helper.
+     * @brief Call @p f with a pointer to every per-gage column member.
      *
-     * Each ordinary column is erased only if it contains idx; past_rain removes its full MAXPASTRAIN
-     * stride when present. station_id, rain_units, file_first_date/file_last_date/file_periods_precip
-     * and rain_series are not visited by the current implementation. Caller repairs these, spatial/name
-     * indexes, co-gage references and dependent subcatchments separately.
+     * The one list of columns that erase_at, take_row and put_row share, so a column added here is
+     * erased and restored alike. past_rain is not listed: it holds MAXPASTRAIN cells per gage and
+     * those three functions handle it as a chunk.
      *
-     * @param[in] idx Caller-validated existing gage index with aligned hourly history; no overall index
-     *     guard.
+     * @param[in] f Callable taking a pointer to a std::vector member of GageData.
      */
-    void erase_at(int idx) {
-        const auto ui = static_cast<std::size_t>(idx);
-        auto e = [&](auto& v) {
-            if (ui < v.size())
-                v.erase(v.begin() + static_cast<std::ptrdiff_t>(idx));
-        };
+    template <class F>
+    static void for_each_column(F&& f) {
+        f(&GageData::rain_type);
+        f(&GageData::source);
+        f(&GageData::ts_index);
+        f(&GageData::file_path);
+        f(&GageData::ts_name);
+        f(&GageData::col_name);
+        f(&GageData::station_id);
+        f(&GageData::rain_units);
+        f(&GageData::file_first_date);
+        f(&GageData::file_last_date);
+        f(&GageData::file_periods_precip);
+        f(&GageData::file_start_date);
+        f(&GageData::rain_series);
+        f(&GageData::file_format);
+        f(&GageData::interval_sec);
+        f(&GageData::snow_factor);
+        f(&GageData::scale_factor);
+        f(&GageData::rainfall);
+        f(&GageData::next_rainfall);
+        f(&GageData::api_rainfall);
+        f(&GageData::next_rain_date);
+        f(&GageData::is_raining);
+        f(&GageData::st_cur);
+        f(&GageData::st_next);
+        f(&GageData::st_rain);
+        f(&GageData::st_init);
+        f(&GageData::st_used);
+        f(&GageData::past_rain_accum);
+        f(&GageData::past_rain_interval);
+        f(&GageData::cumul_rain_accum);
+        f(&GageData::comments);
+        f(&GageData::co_gage_index);
+    }
 
-        e(rain_type);
-        e(source);
-        e(ts_index);
-        e(ts_name);
-        e(file_path);
-        e(col_name);
-        e(file_format);
-        e(interval_sec);
-        e(snow_factor);
-        e(scale_factor);
-        e(file_start_date);
-        e(rainfall);
-        e(next_rainfall);
-        e(api_rainfall);
-        e(next_rain_date);
-        e(is_raining);
-        e(st_cur);
-        e(st_next);
-        e(st_rain);
-        e(st_init);
-        e(st_used);
-        e(past_rain_accum);
-        e(past_rain_interval);
-        e(cumul_rain_accum);
-        e(co_gage_index);
-        e(comments);
+    /**
+     * @brief Erase a gage from every column.
+     *
+     * Each column is erased only if it contains idx; past_rain removes its full MAXPASTRAIN stride
+     * when present. Caller repairs spatial/name indexes, co-gage references and dependent
+     * subcatchments separately.
+     *
+     * @param[in] idx Caller-validated existing gage index; no overall index guard.
+     */
+    void erase_at(int idx) { (void)take_row(idx); }
 
+    /**
+     * @brief Remove a gage's cells from every column and return them as a one-gage GageData.
+     *
+     * A column too short to hold idx is left alone and stays empty in the returned row, so
+     * put_row(idx, row) is the exact inverse.
+     *
+     * @param[in] idx Caller-validated existing gage index.
+     * @return The removed cells: each column holds one cell or none; past_rain holds MAXPASTRAIN
+     *     cells or none.
+     */
+    GageData take_row(int idx) {
         // Flat 2D past_rain: [gage * MAXPASTRAIN + hour]
-        const auto base = ui * static_cast<std::size_t>(MAXPASTRAIN);
-        const auto end = base + static_cast<std::size_t>(MAXPASTRAIN);
-        if (end <= past_rain.size())
-            past_rain.erase(past_rain.begin() + static_cast<std::ptrdiff_t>(base),
-                            past_rain.begin() + static_cast<std::ptrdiff_t>(end));
+        auto past = soa::take_chunk(past_rain, idx, MAXPASTRAIN);
+        GageData row = soa::take_row(*this, idx);
+        row.past_rain = std::move(past);
+        return row;
+    }
+
+    /**
+     * @brief Insert a row taken by take_row back at idx.
+     *
+     * Only the cells the row holds are inserted; later gages shift up by one.
+     *
+     * @param[in] idx Index the row was taken from; each column the row holds a cell for has at least
+     *     idx cells.
+     * @param[in] row Value returned by take_row(idx); its cells are moved out.
+     */
+    void put_row(int idx, GageData&& row) {
+        soa::put_chunk(past_rain, idx, MAXPASTRAIN, row.past_rain);
+        soa::put_row(*this, idx, std::move(row));
     }
 
     /**

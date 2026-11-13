@@ -39,6 +39,7 @@
 #define OPENSWMM_ENGINE_OBJECT_DELETER_HPP
 
 #include "../core/SimulationContext.hpp"
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -78,6 +79,63 @@ struct CascadeResult {
     void add(int ot, int oi, const char* f, bool deleted) {
         entries.push_back({ot, oi, f, deleted});
     }
+};
+
+// ============================================================================
+// Delete record — everything one delete changed, so it can be put back
+// ============================================================================
+
+/**
+ * @brief Steps a recorded delete took, each with its inverse, so restore puts the model back
+ *        exactly: same indices, same order, same references.
+ *
+ * Each step has an optional check and an undo. Checks run first, all against the model as the
+ * delete left it; if any fails, restore changes nothing. Undos then run newest first. A record
+ * restores once; a later delete makes a new record.
+ */
+class DeleteRecord {
+public:
+    /// True when the model still holds the state this step left.
+    using Check = std::function<bool(const SimulationContext&)>;
+    /// Reverses the step. Runs after every later step has been reversed.
+    using Undo = std::function<void(SimulationContext&)>;
+
+    /**
+     * @brief Append one step.
+     * @param[in] check Optional; empty means the step needs no check.
+     * @param[in] undo Inverse of the step; empty for a step that only checks.
+     */
+    void add(Check check, Undo undo) { steps_.push_back({std::move(check), std::move(undo)}); }
+
+    /**
+     * @brief Reverse every step if the model still matches the state the delete left.
+     *
+     * Allocation failure part way through can leave the model partly restored.
+     *
+     * @param[in,out] ctx The context the delete was recorded on, BUILDING or OPENED.
+     * @return False, with no change, when the record was already restored or a check fails.
+     */
+    bool restore(SimulationContext& ctx) {
+        if (spent_)
+            return false;
+        for (const auto& step : steps_)
+            if (step.check && !step.check(ctx))
+                return false;
+        spent_ = true;
+        for (auto it = steps_.rbegin(); it != steps_.rend(); ++it)
+            if (it->undo)
+                it->undo(ctx);
+        steps_.clear();
+        return true;
+    }
+
+private:
+    struct Step {
+        Check check;
+        Undo undo;
+    };
+    std::vector<Step> steps_;
+    bool spent_ = false;
 };
 
 // ============================================================================
@@ -351,7 +409,8 @@ std::vector<int> find_control_rule_refs(const SimulationContext& ctx,
  * @return Owned impact entries with static field-name literals and indices at the time each entry
  *     was recorded.
  */
-CascadeResult delete_node(SimulationContext& ctx, int node_idx);
+// record: optional; receives every step this delete takes, including its cascaded link deletes.
+CascadeResult delete_node(SimulationContext& ctx, int node_idx, DeleteRecord* record = nullptr);
 /**
  * @brief Delete a link.
  *
@@ -367,7 +426,8 @@ CascadeResult delete_node(SimulationContext& ctx, int node_idx);
  * @return Owned impact entries with static field-name literals and indices at the time each entry
  *     was recorded.
  */
-CascadeResult delete_link(SimulationContext& ctx, int link_idx);
+// record: optional; receives every step this delete takes (see delete_gage).
+CascadeResult delete_link(SimulationContext& ctx, int link_idx, DeleteRecord* record = nullptr);
 /**
  * @brief Delete a subcatchment.
  *
@@ -397,10 +457,12 @@ CascadeResult delete_subcatch(SimulationContext& ctx, int sc_idx);
  * @param[in,out] ctx Caller-owned editable BUILDING/OPENED context with aligned stores. Caller
  *     enforces lifecycle/index validity; no guards or solver-cache rebuild are provided here.
  * @param[in] gage_idx Existing zero-based rain gage index, validated by the caller.
+ * @param[out] record Optional; receives every step this delete takes, so DeleteRecord::restore
+ *     can reverse it exactly. Must be empty.
  * @return Owned impact entries with static field-name literals and indices at the time each entry
  *     was recorded.
  */
-CascadeResult delete_gage(SimulationContext& ctx, int gage_idx);
+CascadeResult delete_gage(SimulationContext& ctx, int gage_idx, DeleteRecord* record = nullptr);
 
 /**
  * @brief Delete node rows in deduplicated descending pre-batch order.
@@ -417,7 +479,8 @@ CascadeResult delete_gage(SimulationContext& ctx, int gage_idx);
  * @return Owned aggregate cascade report with each entry using the index at its sequential deletion
  *     time.
  */
-CascadeResult delete_nodes_many(SimulationContext& ctx, std::vector<int> indices);
+CascadeResult delete_nodes_many(SimulationContext& ctx, std::vector<int> indices,
+                                DeleteRecord* record = nullptr);
 /**
  * @brief Delete link rows in deduplicated descending pre-batch order.
  *
@@ -433,7 +496,8 @@ CascadeResult delete_nodes_many(SimulationContext& ctx, std::vector<int> indices
  * @return Owned aggregate cascade report with each entry using the index at its sequential deletion
  *     time.
  */
-CascadeResult delete_links_many(SimulationContext& ctx, std::vector<int> indices);
+CascadeResult delete_links_many(SimulationContext& ctx, std::vector<int> indices,
+                                DeleteRecord* record = nullptr);
 /**
  * @brief Delete subcatchment rows in deduplicated descending pre-batch order.
  *
@@ -465,7 +529,20 @@ CascadeResult delete_subcatches_many(SimulationContext& ctx, std::vector<int> in
  * @return Owned aggregate cascade report with each entry using the index at its sequential deletion
  *     time.
  */
-CascadeResult delete_gages_many(SimulationContext& ctx, std::vector<int> indices);
+CascadeResult delete_gages_many(SimulationContext& ctx, std::vector<int> indices,
+                                DeleteRecord* record = nullptr);
+
+/**
+ * @brief Finish a record: add a check that the node, link, subcatchment and gage counts still
+ *        equal the counts the delete left.
+ *
+ * Call once after the whole delete (single or batch). Per-step checks cover only what stays true
+ * for the rest of a batch, so the counts are checked here.
+ *
+ * @param[in] ctx Context as the delete left it.
+ * @param[in,out] record Record of that delete.
+ */
+void seal_delete_record(const SimulationContext& ctx, DeleteRecord& record);
 /**
  * @brief Delete a time-series/curve table.
  *

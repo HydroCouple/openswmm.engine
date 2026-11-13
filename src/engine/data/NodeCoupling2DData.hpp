@@ -24,6 +24,7 @@
 #ifndef OPENSWMM_ENGINE_NODE_COUPLING_2D_DATA_HPP
 #define OPENSWMM_ENGINE_NODE_COUPLING_2D_DATA_HPP
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -154,13 +155,49 @@ struct NodeCoupling2DRows {
      *
      * @param[in] idx Deleted pre-erasure node key; caller has updated the base node store.
      */
-    void erase_node(int idx) {
-        const int r = row_of(idx);
-        if (r >= 0)
-            erase_row(r);
+    void erase_node(int idx) { (void)take_node(idx); }
+
+    /// A node's coupling row as take_node removed it; row is -1 when the node had none.
+    struct TakenRow {
+        int row = -1;
+        NodeCoupling2DType type{};
+        NodeCoupling2DParams params{};
+    };
+
+    /**
+     * @brief As erase_node, and return the removed row so put_node can restore it.
+     * @param[in] idx Deleted pre-erasure node key.
+     */
+    TakenRow take_node(int idx) {
+        TakenRow taken;
+        taken.row = row_of(idx);
+        if (taken.row >= 0) {
+            const auto u = static_cast<std::size_t>(taken.row);
+            taken.type = type[u];
+            taken.params = params[u];
+            erase_row(taken.row);
+        }
         for (auto& n : node)
             if (n > idx)
                 --n;
+        return taken;
+    }
+
+    /**
+     * @brief Inverse of take_node: shift node keys up from idx and reinsert the taken row.
+     * @param[in] idx Node key being restored.
+     * @param[in] taken Value take_node(idx) returned.
+     */
+    void put_node(int idx, const TakenRow& taken) {
+        for (auto& n : node)
+            if (n >= idx)
+                ++n;
+        if (taken.row < 0)
+            return;
+        const auto at = static_cast<std::ptrdiff_t>(std::min(taken.row, count()));
+        node.insert(node.begin() + at, idx);
+        type.insert(type.begin() + at, taken.type);
+        params.insert(params.begin() + at, taken.params);
     }
 
     /**

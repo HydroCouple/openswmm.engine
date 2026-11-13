@@ -72,6 +72,8 @@
 #include "../../src/engine/core/InpWriter.hpp"
 
 #include <openswmm/engine/openswmm_engine.h>
+#include <openswmm/engine/openswmm_infrastructure.h>
+#include <openswmm/engine/openswmm_model.h>
 #include <openswmm/legacy/engine/openswmm_solver.h>
 #include <openswmm/engine/openswmm_links.h>
 #include <openswmm/engine/openswmm_nodes.h>
@@ -484,7 +486,7 @@ TEST(InpWriterRoundTrip, InletUsageIsWritten) {
     EXPECT_EQ(c[1], "IN_A");
     EXPECT_EQ(c[2], "J5");
     EXPECT_EQ(c[3], "1");
-    EXPECT_EQ(c[4], "0"); // %Clog, stored as 1 - pct/100
+    EXPECT_EQ(c[4], "0"); // %Clog
     EXPECT_EQ(c[8], "ON_GRADE");
 }
 
@@ -502,7 +504,7 @@ TEST(InpWriterRoundTrip, InletUsageIsStillThereAfterReopening) {
     EXPECT_EQ(ctx.node_names.name_of(ctx.inlet_usages.node_index[0]), "J5");
     EXPECT_EQ(ctx.inlets.names[static_cast<std::size_t>(ctx.inlet_usages.design_index[0])], "IN_A");
     EXPECT_EQ(ctx.inlet_usages.num_inlets[0], 1);
-    EXPECT_DOUBLE_EQ(ctx.inlet_usages.clog_factor[0], 1.0);
+    EXPECT_EQ(ctx.inlet_usages.pct_clogged[0], 0.0);
     EXPECT_EQ(ctx.inlet_usages.placement[0], 1); // ON_GRADE
 }
 
@@ -1621,4 +1623,84 @@ TEST(InpWriterRoundTrip, NormalFlowNeitherIsWrittenAsLegacyNone) {
     SWMMEngine reopened;
     ASSERT_EQ(reopened.open(path.c_str(), data("_normal_flow_reopen.rpt").c_str(), nullptr), SWMM_OK);
     EXPECT_EQ(reopened.context().options.normal_flow_ltd, 3);
+}
+
+// ===========================================================================
+// Inlet clogging is kept as the authored percentage. The engine stored
+// 1 - pct/100 and wrote 100 * (1 - factor), so an authored 10 was saved and
+// reported as 9.9999999999999982 (about half of all typical values drifted).
+// ===========================================================================
+
+TEST(InpWriterRoundTrip, InletCloggingIsWrittenAsAuthored) {
+    const auto g = gen1("inlet_clogging.inp");
+    ASSERT_FALSE(g.text.empty());
+    const auto gut1 = row(g.text, "INLET_USAGE", "GUT1");
+    const auto gut2 = row(g.text, "INLET_USAGE", "GUT2");
+    const auto ij1 = row(g.text, "INLET_JUNCTIONS", "IJ1");
+    ASSERT_EQ(gut1.size(), 9u);
+    ASSERT_EQ(gut2.size(), 9u);
+    ASSERT_EQ(ij1.size(), 11u);
+    EXPECT_EQ(gut1[4], "10");
+    EXPECT_EQ(gut2[4], "33.299999999999997"); // %.17g of the double nearest 33.3
+    EXPECT_EQ(ij1[6], "2.5");
+}
+
+TEST(InpWriterRoundTrip, InletCloggingReadsBackAsAuthoredThroughTheApi) {
+    gen1("inlet_clogging.inp");
+    Reopened r("_inlet_clogging_rt1.inp");
+    ASSERT_EQ(swmm_inlet_usage_count(r.e), 3);
+    auto pct = [&](int usage) {
+        SWMM_InletUsage u{};
+        EXPECT_EQ(swmm_inlet_usage_get(r.e, usage, &u), SWMM_OK);
+        return u.pct_clogged;
+    };
+    const int gut1 = swmm_inlet_usage_find_link(r.e, swmm_link_index(r.e, "GUT1"));
+    const int gut2 = swmm_inlet_usage_find_link(r.e, swmm_link_index(r.e, "GUT2"));
+    const int ij1 = swmm_inlet_usage_find_node(r.e, swmm_node_index(r.e, "IJ1"));
+    ASSERT_GE(gut1, 0);
+    ASSERT_GE(gut2, 0);
+    ASSERT_GE(ij1, 0);
+    // Exact equality: EXPECT_DOUBLE_EQ would accept the one-ulp drift this guards against.
+    EXPECT_EQ(pct(gut1), 10.0);
+    EXPECT_EQ(pct(gut2), 33.3);
+    EXPECT_EQ(pct(ij1), 2.5);
+
+    // A value set through the API reads back and saves unchanged.
+    SWMM_InletUsage u{};
+    ASSERT_EQ(swmm_inlet_usage_get(r.e, gut1, &u), SWMM_OK);
+    u.pct_clogged = 0.5;
+    ASSERT_EQ(swmm_inlet_usage_set(r.e, &u, nullptr), SWMM_OK);
+    EXPECT_EQ(pct(gut1), 0.5);
+    const std::string out = data("_inlet_clogging_api.inp");
+    ASSERT_EQ(swmm_model_write(r.e, out.c_str()), SWMM_OK);
+    const auto saved = row(slurp(out), "INLET_USAGE", "GUT1");
+    ASSERT_EQ(saved.size(), 9u);
+    EXPECT_EQ(saved[4], "0.5");
+}
+
+// ===========================================================================
+// [USER_FLAG_VALUES] rows are saved in a fixed order: object type, object
+// name, flag name (ASCII case-insensitive; flag names are stored uppercase). They used to follow the value
+// map's hash order, so the same model could save its rows in a different
+// order after an object was deleted and restored.
+// ===========================================================================
+
+TEST(InpWriterRoundTrip, UserFlagValuesAreWrittenSorted) {
+    const auto g = gen1("user_flag_order.inp");
+    ASSERT_FALSE(g.text.empty());
+    std::vector<std::string> keys;
+    for (const auto& r : section(g.text, "USER_FLAG_VALUES")) {
+        const auto c = cols(r);
+        ASSERT_EQ(c.size(), 4u) << r;
+        keys.push_back(c[0] + " " + c[1] + " " + c[2] + " " + c[3]);
+    }
+    const std::vector<std::string> expected = {
+        "LINK C1 ZONE 1",    "LINK C2 OWNER city",   "LINK C3 ZONE 2",       "NODE J3 OWNER city",
+        "NODE J3 ZONE 3",    "NODE J30 OWNER state", "NODE J4 OWNER county", "NODE J4 ZONE 4",
+    };
+    EXPECT_EQ(keys, expected);
+
+    // The second generation saves the same bytes.
+    const auto g2 = writeOnce("_user_flag_order_rt1.inp", "_user_flag_order_rt2.inp");
+    EXPECT_EQ(g2.text, g.text);
 }

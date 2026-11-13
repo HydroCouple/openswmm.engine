@@ -719,7 +719,7 @@ void InletSolver::init(SimulationContext& ctx) {
         if (soa_.node_idx[ui] >= 0 && soa_.node_idx[ui] < nn)
             is_capture_node_[static_cast<std::size_t>(soa_.node_idx[ui])] = 1;
         soa_.num_inlets[ui] = usages.num_inlets[ui];
-        soa_.clog_factor[ui] = usages.clog_factor[ui];
+        soa_.clog_factor[ui] = 1.0 - usages.pct_clogged[ui] / 100.0;
         soa_.flow_limit[ui] = usages.flow_limit[ui] * inv_flow;
         soa_.local_depress[ui] = usages.local_depress[ui] * inv_len;
         soa_.local_width[ui] = usages.local_width[ui] * inv_len;

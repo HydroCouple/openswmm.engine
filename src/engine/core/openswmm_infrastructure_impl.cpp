@@ -928,7 +928,7 @@ SWMM_ENGINE_API int swmm_inlet_usage_get(SWMM_Engine engine, int usage_idx, SWMM
     out->design_idx = U.design_index[ur];
     out->capture_node_idx = U.node_index[ur];
     out->num_inlets = U.num_inlets[ur];
-    out->pct_clogged = (1.0 - U.clog_factor[ur]) * 100.0;
+    out->pct_clogged = U.pct_clogged[ur];
     out->flow_limit = U.flow_limit[ur];
     out->local_depress = U.local_depress[ur];
     out->local_width = U.local_width[ur];
@@ -1003,14 +1003,11 @@ SWMM_ENGINE_API int swmm_inlet_usage_set(SWMM_Engine engine, const SWMM_InletUsa
     }
     const auto ur = static_cast<std::size_t>(row);
     auto& U = ctx.inlet_usages;
-    const double previous_clogging = (1.0 - U.clog_factor[ur]) * 100.0;
     U.design_index[ur] = usage->design_idx;
     U.node_index[ur] = usage->capture_node_idx;
     U.num_inlets[ur] = usage->num_inlets;
     U.placement[ur] = usage->placement;
-    // Preserve the stored factor when changing a sibling field: percent conversion is lossy.
-    if (usage->pct_clogged != previous_clogging)
-        U.clog_factor[ur] = 1.0 - usage->pct_clogged / 100.0;
+    U.pct_clogged[ur] = usage->pct_clogged;
     U.flow_limit[ur] = usage->flow_limit;
     U.local_depress[ur] = usage->local_depress;
     U.local_width[ur] = usage->local_width;

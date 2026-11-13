@@ -3355,7 +3355,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                 (u < ctx.nodes.rim_depth.size()) ? ctx.nodes.rim_depth[u] : 0.0,
                 ctx.inlets.names[static_cast<size_t>(ctx.inlet_usages.design_index[ur])].c_str(),
                 ctx.node_names.name_of(ctx.inlet_usages.node_index[ur]).c_str(),
-                ctx.inlet_usages.num_inlets[ur], (1.0 - ctx.inlet_usages.clog_factor[ur]) * 100.0,
+                ctx.inlet_usages.num_inlets[ur], ctx.inlet_usages.pct_clogged[ur],
                 ctx.inlet_usages.flow_limit[ur], ctx.inlet_usages.local_depress[ur],
                 ctx.inlet_usages.local_width[ur], kInletPlacementWords[pl]);
         }
@@ -4026,7 +4026,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
     // Grammar: Link Inlet Node #Inlets %Clog Qmax aLocal wLocal Placement
     // Parsed into ctx.inlet_usages but previously never written, so every
     // inlet-to-link assignment was lost on save and [STREETS]/[INLETS] became
-    // inert. clog_factor is stored as 1 - pctClogged/100 (InfraHandler).
+    // inert. pct_clogged is kept as authored, so %Clog is written unchanged.
     // Node-hosted rows belong to [INLET_JUNCTIONS] and are skipped here.
     bool anyLinkUsage = false;
     for (int j = 0; j < ctx.inlet_usages.count(); ++j)
@@ -4080,7 +4080,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                          ctx.link_names.name_of(li).c_str(),
                          ctx.inlets.names[static_cast<size_t>(di)].c_str(),
                          ctx.node_names.name_of(ni).c_str(), ctx.inlet_usages.num_inlets[u],
-                         (1.0 - ctx.inlet_usages.clog_factor[u]) * 100.0,
+                         ctx.inlet_usages.pct_clogged[u],
                          ctx.inlet_usages.flow_limit[u], ctx.inlet_usages.local_depress[u],
                          ctx.inlet_usages.local_width[u], kPlacement[pl]);
         }
@@ -4883,6 +4883,13 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                      "Value");
         std::fprintf(f, ";;%-14s %-16s %-20s\n", "--------------", "----------------",
                      "--------------------");
+        // Sorted by object type, object name and flag name (ASCII case-insensitive), so the
+        // saved order does not depend on the value map's hash order.
+        struct FlagRow {
+            std::string type, object, flag;
+            const UserFlagValue* value;
+        };
+        std::vector<FlagRow> rows;
         for (const auto& kv : ctx.user_flags.all_values()) {
             const auto& k = kv.first;
             auto p1 = k.find(':');
@@ -4891,9 +4898,24 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
             auto p2 = k.find(':', p1 + 1);
             if (p2 == std::string::npos)
                 continue;
-            std::fprintf(f, "%-14s %-16s %-20s ", k.substr(0, p1).c_str(),
-                         k.substr(p1 + 1, p2 - p1 - 1).c_str(), k.substr(p2 + 1).c_str());
-            const auto& v = kv.second;
+            rows.push_back({k.substr(0, p1), k.substr(p1 + 1, p2 - p1 - 1), k.substr(p2 + 1),
+                            &kv.second});
+        }
+        const auto ci_less = [](const std::string& a, const std::string& b) {
+            return std::lexicographical_compare(
+                a.begin(), a.end(), b.begin(), b.end(),
+                [](char x, char y) { return ci_upper(x) < ci_upper(y); });
+        };
+        std::sort(rows.begin(), rows.end(), [&](const FlagRow& a, const FlagRow& b) {
+            if (!ieq(a.type, b.type))
+                return ci_less(a.type, b.type);
+            if (!ieq(a.object, b.object))
+                return ci_less(a.object, b.object);
+            return ci_less(a.flag, b.flag);
+        });
+        for (const auto& r : rows) {
+            std::fprintf(f, "%-14s %-16s %-20s ", r.type.c_str(), r.object.c_str(), r.flag.c_str());
+            const auto& v = *r.value;
             if (std::holds_alternative<bool>(v))
                 std::fprintf(f, "%s\n", std::get<bool>(v) ? "YES" : "NO");
             else if (std::holds_alternative<int>(v))

@@ -62,6 +62,7 @@
 #include <type_traits>
 
 #include "LinkData.hpp"
+#include "SoaRow.hpp"
 
 namespace openswmm {
 
@@ -255,29 +256,40 @@ struct ConduitData {
      * @param[in] r Existing dense subtype-row index, NOT the base-object index; caller validates
      *     bounds/alignment.
      */
-    void erase_at(int r) {
-        const auto p = static_cast<std::ptrdiff_t>(r);
-        link_idx.erase(link_idx.begin() + p);
-        roughness.erase(roughness.begin() + p);
-        length.erase(length.begin() + p);
-        true_length.erase(true_length.begin() + p);
-        slope.erase(slope.begin() + p);
-        mod_length.erase(mod_length.begin() + p);
-        barrels.erase(barrels.begin() + p);
-        beta.erase(beta.begin() + p);
-        rough_factor.erase(rough_factor.begin() + p);
-        q_full.erase(q_full.begin() + p);
-        q_max.erase(q_max.begin() + p);
-        loss_inlet.erase(loss_inlet.begin() + p);
-        loss_outlet.erase(loss_outlet.begin() + p);
-        loss_avg.erase(loss_avg.begin() + p);
-        seep_rate.erase(seep_rate.begin() + p);
-        culvert_code.erase(culvert_code.begin() + p);
-        evap_loss_rate.erase(evap_loss_rate.begin() + p);
-        seep_loss_rate.erase(seep_loss_rate.begin() + p);
-        normal_flow_limited.erase(normal_flow_limited.begin() + p);
-        inlet_control.erase(inlet_control.begin() + p);
-        full_state.erase(full_state.begin() + p);
+    void erase_at(int r) { (void)soa::take_row(*this, r); }
+
+    /**
+     * @brief Call @p f with a pointer to every per-row column member; the one list erase_at and
+     *        the delete record's take/put share (SoaRow.hpp).
+     */
+    template <class F>
+    static void for_each_column(F&& f) {
+        f(&ConduitData::link_idx);
+        f(&ConduitData::roughness);
+        f(&ConduitData::length);
+        f(&ConduitData::true_length);
+        f(&ConduitData::slope);
+        f(&ConduitData::mod_length);
+        f(&ConduitData::barrels);
+        f(&ConduitData::beta);
+        f(&ConduitData::rough_factor);
+        f(&ConduitData::q_full);
+        f(&ConduitData::q_max);
+        f(&ConduitData::loss_inlet);
+        f(&ConduitData::loss_outlet);
+        f(&ConduitData::loss_avg);
+        f(&ConduitData::seep_rate);
+        f(&ConduitData::culvert_code);
+        f(&ConduitData::evap_loss_rate);
+        f(&ConduitData::seep_loss_rate);
+        f(&ConduitData::normal_flow_limited);
+        f(&ConduitData::inlet_control);
+        f(&ConduitData::full_state);
+        f(&ConduitData::gw_coupled);
+        f(&ConduitData::gw_head_rel);
+        f(&ConduitData::gw_kc);
+        f(&ConduitData::gw_dc);
+        f(&ConduitData::gw_gain_max);
     }
 };
 
@@ -365,14 +377,20 @@ struct PumpData {
      * @param[in] r Existing dense subtype-row index, NOT the base-object index; caller validates
      *     bounds/alignment.
      */
-    void erase_at(int r) {
-        const auto p = static_cast<std::ptrdiff_t>(r);
-        link_idx.erase(link_idx.begin() + p);
-        curve.erase(curve.begin() + p);
-        init_state.erase(init_state.begin() + p);
-        startup.erase(startup.begin() + p);
-        shutoff.erase(shutoff.begin() + p);
-        curve_type.erase(curve_type.begin() + p);
+    void erase_at(int r) { (void)soa::take_row(*this, r); }
+
+    /**
+     * @brief Call @p f with a pointer to every per-row column member; the one list erase_at and
+     *        the delete record's take/put share (SoaRow.hpp).
+     */
+    template <class F>
+    static void for_each_column(F&& f) {
+        f(&PumpData::link_idx);
+        f(&PumpData::curve);
+        f(&PumpData::init_state);
+        f(&PumpData::startup);
+        f(&PumpData::shutoff);
+        f(&PumpData::curve_type);
     }
 };
 
@@ -447,12 +465,18 @@ struct OrificeData {
      * @param[in] r Existing dense subtype-row index, NOT the base-object index; caller validates
      *     bounds/alignment.
      */
-    void erase_at(int r) {
-        const auto p = static_cast<std::ptrdiff_t>(r);
-        link_idx.erase(link_idx.begin() + p);
-        orifice_type.erase(orifice_type.begin() + p);
-        cd.erase(cd.begin() + p);
-        orate.erase(orate.begin() + p);
+    void erase_at(int r) { (void)soa::take_row(*this, r); }
+
+    /**
+     * @brief Call @p f with a pointer to every per-row column member; the one list erase_at and
+     *        the delete record's take/put share (SoaRow.hpp).
+     */
+    template <class F>
+    static void for_each_column(F&& f) {
+        f(&OrificeData::link_idx);
+        f(&OrificeData::orifice_type);
+        f(&OrificeData::cd);
+        f(&OrificeData::orate);
     }
 };
 
@@ -558,18 +582,24 @@ struct WeirData {
      * @param[in] r Existing dense subtype-row index, NOT the base-object index; caller validates
      *     bounds/alignment.
      */
-    void erase_at(int r) {
-        const auto p = static_cast<std::ptrdiff_t>(r);
-        link_idx.erase(link_idx.begin() + p);
-        weir_type.erase(weir_type.begin() + p);
-        cd.erase(cd.begin() + p);
-        end_contractions.erase(end_contractions.begin() + p);
-        crest_height.erase(crest_height.begin() + p);
-        cd2.erase(cd2.begin() + p);
-        can_surcharge.erase(can_surcharge.begin() + p);
-        road_width.erase(road_width.begin() + p);
-        road_surface.erase(road_surface.begin() + p);
-        cd_curve.erase(cd_curve.begin() + p);
+    void erase_at(int r) { (void)soa::take_row(*this, r); }
+
+    /**
+     * @brief Call @p f with a pointer to every per-row column member; the one list erase_at and
+     *        the delete record's take/put share (SoaRow.hpp).
+     */
+    template <class F>
+    static void for_each_column(F&& f) {
+        f(&WeirData::link_idx);
+        f(&WeirData::weir_type);
+        f(&WeirData::cd);
+        f(&WeirData::end_contractions);
+        f(&WeirData::crest_height);
+        f(&WeirData::cd2);
+        f(&WeirData::can_surcharge);
+        f(&WeirData::road_width);
+        f(&WeirData::road_surface);
+        f(&WeirData::cd_curve);
     }
 };
 
@@ -657,14 +687,20 @@ struct OutletData {
      * @param[in] r Existing dense subtype-row index, NOT the base-object index; caller validates
      *     bounds/alignment.
      */
-    void erase_at(int r) {
-        const auto p = static_cast<std::ptrdiff_t>(r);
-        link_idx.erase(link_idx.begin() + p);
-        outlet_type.erase(outlet_type.begin() + p);
-        crest_height.erase(crest_height.begin() + p);
-        coeff.erase(coeff.begin() + p);
-        expon.erase(expon.begin() + p);
-        curve.erase(curve.begin() + p);
+    void erase_at(int r) { (void)soa::take_row(*this, r); }
+
+    /**
+     * @brief Call @p f with a pointer to every per-row column member; the one list erase_at and
+     *        the delete record's take/put share (SoaRow.hpp).
+     */
+    template <class F>
+    static void for_each_column(F&& f) {
+        f(&OutletData::link_idx);
+        f(&OutletData::outlet_type);
+        f(&OutletData::crest_height);
+        f(&OutletData::coeff);
+        f(&OutletData::expon);
+        f(&OutletData::curve);
     }
 };
 
@@ -856,16 +892,41 @@ struct LinkSubtypes {
      * @param[in] i Erased pre-deletion base-object index; call AFTER LinkData::erase_at(i).
      * @param[in] n_after Nonnegative base count after erasure; surviving join keys must fit this count.
      */
-    void erase_link(int i, int n_after) {
-        auto drop = [i](auto& tbl) -> bool {
+    void erase_link(int i, int n_after) { (void)take_link(i, n_after); }
+
+    /// A link's subtype row as take_link removed it, for put_link.
+    struct TakenRow {
+        int table = -1; ///< 0 conduit, 1 pump, 2 orifice, 3 weir, 4 outlet; -1 when none
+        int row = -1;   ///< Row index the link held in that table
+        ConduitData conduit;
+        PumpData pump;
+        OrificeData orifice;
+        WeirData weir;
+        OutletData outlet;
+    };
+
+    /**
+     * @brief As erase_link, and return the removed subtype row so put_link can restore it.
+     * @param[in] i Erased base link index.
+     * @param[in] n_after Link count after the erase.
+     */
+    TakenRow take_link(int i, int n_after) {
+        TakenRow taken;
+        int table = 0;
+        auto drop = [i, &taken, &table](auto& tbl, auto& out) -> bool {
+            const int t = table++;
             for (int r = 0; r < tbl.count(); ++r)
                 if (tbl.link_idx[static_cast<std::size_t>(r)] == i) {
-                    tbl.erase_at(r);
+                    out = soa::take_row(tbl, r);
+                    taken.table = t;
+                    taken.row = r;
                     return true;
                 }
             return false;
         };
-        drop(conduits) || drop(pumps) || drop(orifices) || drop(weirs) || drop(outlets);
+        drop(conduits, taken.conduit) || drop(pumps, taken.pump) ||
+            drop(orifices, taken.orifice) || drop(weirs, taken.weir) ||
+            drop(outlets, taken.outlet);
 
         auto shift = [i](std::vector<int>& keys) {
             for (auto& k : keys)
@@ -879,6 +940,39 @@ struct LinkSubtypes {
         shift(outlets.link_idx);
 
         rebuild_index(n_after);
+        return taken;
+    }
+
+    /**
+     * @brief Inverse of take_link: make room for base link i again and reinsert its subtype row.
+     * @param[in] i Base link index being restored.
+     * @param[in] taken Value take_link(i, ...) returned; its row is moved out.
+     * @param[in] n Link count with link i restored.
+     */
+    void put_link(int i, TakenRow&& taken, int n) {
+        auto unshift = [i](std::vector<int>& keys) {
+            for (auto& k : keys)
+                if (k >= i)
+                    ++k;
+        };
+        unshift(conduits.link_idx);
+        unshift(pumps.link_idx);
+        unshift(orifices.link_idx);
+        unshift(weirs.link_idx);
+        unshift(outlets.link_idx);
+        // The row goes back where it was; a table that shrank since appends it.
+        auto put = [&taken](auto& tbl, auto& row) {
+            soa::put_row(tbl, std::min(taken.row, tbl.count()), std::move(row));
+        };
+        switch (taken.table) {
+        case 0: put(conduits, taken.conduit); break;
+        case 1: put(pumps, taken.pump); break;
+        case 2: put(orifices, taken.orifice); break;
+        case 3: put(weirs, taken.weir); break;
+        case 4: put(outlets, taken.outlet); break;
+        default: break;
+        }
+        rebuild_index(n);
     }
 
     // O(1) row helpers (validate link_idx[r] == i, like NodeSubtypes::*_row).

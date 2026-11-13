@@ -40,6 +40,8 @@
 #ifndef OPENSWMM_ENGINE_LINK_DATA_HPP
 #define OPENSWMM_ENGINE_LINK_DATA_HPP
 
+#include "SoaRow.hpp"
+
 #include <vector>
 #include <cstdint>
 #include <string>
@@ -960,142 +962,140 @@ struct LinkData {
     }
 
     /**
-     * @brief Erase one link row from the columns visited by this helper.
+     * @brief Call @p f with a pointer to every per-link column member.
      *
-     * Visits owned base columns plus flow-class, local-step histogram, quality and load strides when
-     * present. Caller separately repairs subtype rows, topology references, names and spatial geometry;
+     * The one list of columns that erase_at, take_row and put_row share (see SoaRow.hpp). The
+     * chunked columns (conc, conc_old, stat_flow_class, stat_total_load, stat_lstep_bin_time) hold
+     * several cells per link and are handled by take_row and put_row.
+     */
+    template <class F>
+    static void for_each_column(F&& f) {
+        f(&LinkData::type);
+        f(&LinkData::node1);
+        f(&LinkData::node2);
+        f(&LinkData::offset1);
+        f(&LinkData::offset2);
+        f(&LinkData::q0);
+        f(&LinkData::q_limit);
+        f(&LinkData::xsect_shape);
+        f(&LinkData::xsect_y_full);
+        f(&LinkData::xsect_a_full);
+        f(&LinkData::xsect_w_max);
+        f(&LinkData::xsect_geom1);
+        f(&LinkData::xsect_geom2);
+        f(&LinkData::xsect_geom3);
+        f(&LinkData::xsect_geom4);
+        f(&LinkData::xsect_curve);
+        f(&LinkData::xsect_r_full);
+        f(&LinkData::xsect_s_full);
+        f(&LinkData::xsect_s_max);
+        f(&LinkData::xsect_y_bot);
+        f(&LinkData::xsect_a_bot);
+        f(&LinkData::xsect_s_bot);
+        f(&LinkData::xsect_r_bot);
+        f(&LinkData::xsect_yw_max);
+        f(&LinkData::xsect_batch_shape);
+        f(&LinkData::setting);
+        f(&LinkData::target_setting);
+        f(&LinkData::time_last_set);
+        f(&LinkData::direction);
+        f(&LinkData::pump_curve_name);
+        f(&LinkData::has_flap_gate);
+        f(&LinkData::dqdh);
+        f(&LinkData::flow);
+        f(&LinkData::kw_inflow);
+        f(&LinkData::depth);
+        f(&LinkData::volume);
+        f(&LinkData::slot_volume);
+        f(&LinkData::stat_slot_vol_dt);
+        f(&LinkData::stat_vol_dt);
+        f(&LinkData::stat_peak_slot_share);
+        f(&LinkData::stat_time_slot_above);
+        f(&LinkData::froude);
+        f(&LinkData::flow_class);
+        f(&LinkData::is_closed);
+        f(&LinkData::old_flow);
+        f(&LinkData::old_depth);
+        f(&LinkData::old_volume);
+        f(&LinkData::comments);
+        f(&LinkData::tags);
+        f(&LinkData::rpt_flag);
+        f(&LinkData::stat_vol_flow);
+        f(&LinkData::stat_max_flow);
+        f(&LinkData::stat_max_veloc);
+        f(&LinkData::stat_max_filling);
+        f(&LinkData::stat_time_surcharged);
+        f(&LinkData::stat_norm_ltd);
+        f(&LinkData::stat_inlet_ctrl);
+        f(&LinkData::stat_max_flow_date);
+        f(&LinkData::stat_time_full_upstream);
+        f(&LinkData::stat_time_full_dnstream);
+        f(&LinkData::stat_time_full_both);
+        f(&LinkData::stat_time_capacity_limited);
+        f(&LinkData::stat_pump_cycles);
+        f(&LinkData::stat_pump_on_time);
+        f(&LinkData::stat_pump_volume);
+        f(&LinkData::stat_pump_energy);
+        f(&LinkData::stat_pump_sum_flow);
+        f(&LinkData::stat_pump_periods);
+        f(&LinkData::stat_pump_off_curve_low);
+        f(&LinkData::stat_pump_off_curve_high);
+        f(&LinkData::stat_pump_was_on);
+        f(&LinkData::stat_flow_turns);
+        f(&LinkData::stat_flow_turn_sign);
+        f(&LinkData::stat_time_courant_critical);
+        f(&LinkData::stat_lstep_min);
+        f(&LinkData::stat_lstep_max);
+        f(&LinkData::stat_lstep_dt_time);
+        f(&LinkData::stat_lstep_time);
+        f(&LinkData::stat_conv_steps);
+        f(&LinkData::stat_conv_total);
+    }
+
+    /**
+     * @brief Erase one link row from every column (for_each_column) and every chunked column.
+     * Caller separately repairs subtype rows, topology references, names and spatial geometry;
      * no engine lifecycle check occurs here. Following rows shift down and element references/iterators
      * are invalidated. Does not make inconsistent stores transactional.
      *
      * @param[in] idx Caller-validated existing row index; aligned dimensions and representable size
      *     products required.
      */
-    void erase_at(int idx) {
-        const auto ui = static_cast<std::size_t>(idx);
-        auto e = [&](auto& v) {
-            if (ui < v.size())
-                v.erase(v.begin() + static_cast<std::ptrdiff_t>(idx));
-        };
+    void erase_at(int idx) { (void)take_row(idx); }
 
-        e(type);
-        e(node1);
-        e(node2);
-        e(offset1);
-        e(offset2);
-        e(q0);
-        e(q_limit);
+    /**
+     * @brief Remove a link's cells from every column, chunks included, and return them as a
+     *        one-link LinkData. put_row(idx, row) is the exact inverse while the pollutant strides
+     *        are unchanged.
+     * @param[in] idx Caller-validated existing link index.
+     */
+    LinkData take_row(int idx) {
+        auto lstep = soa::take_chunk(stat_lstep_bin_time, idx, N_LSTEP_BINS);
+        auto flow_class = soa::take_chunk(stat_flow_class, idx, N_FLOW_CLASSES);
+        auto c = soa::take_chunk(conc, idx, conc_n_pollutants);
+        auto c_old = soa::take_chunk(conc_old, idx, conc_n_pollutants);
+        auto load = soa::take_chunk(stat_total_load, idx, stat_n_pollutants);
+        LinkData row = soa::take_row(*this, idx);
+        row.stat_lstep_bin_time = std::move(lstep);
+        row.stat_flow_class = std::move(flow_class);
+        row.conc = std::move(c);
+        row.conc_old = std::move(c_old);
+        row.stat_total_load = std::move(load);
+        return row;
+    }
 
-        e(xsect_shape);
-        e(xsect_y_full);
-        e(xsect_a_full);
-        e(xsect_w_max);
-        e(xsect_curve);
-        e(xsect_geom1);
-        e(xsect_geom2);
-        e(xsect_geom3);
-        e(xsect_geom4);
-        e(xsect_r_full);
-        e(xsect_s_full);
-        e(xsect_s_max);
-        e(xsect_y_bot);
-        e(xsect_a_bot);
-        e(xsect_s_bot);
-        e(xsect_r_bot);
-        e(xsect_yw_max);
-        e(xsect_batch_shape);
-        e(setting);
-        e(target_setting);
-        e(direction);
-
-        e(pump_curve_name);
-
-        e(has_flap_gate);
-        e(dqdh);
-
-        e(flow);
-        e(depth);
-        e(volume);
-        e(froude);
-        e(flow_class);
-        e(is_closed);
-        e(kw_inflow);
-        e(old_flow);
-        e(old_depth);
-        e(old_volume);
-        e(comments);
-        e(tags);
-        e(rpt_flag);
-
-        e(stat_vol_flow);
-        e(stat_max_flow);
-        e(stat_max_veloc);
-        e(stat_max_filling);
-        e(stat_time_surcharged);
-        e(stat_norm_ltd);
-        e(stat_inlet_ctrl);
-        e(stat_max_flow_date);
-        e(stat_time_full_upstream);
-        e(stat_time_full_dnstream);
-        e(stat_time_full_both);
-        e(stat_time_capacity_limited);
-        e(stat_pump_cycles);
-        e(stat_pump_on_time);
-        e(stat_pump_volume);
-        e(stat_pump_energy);
-        e(stat_pump_off_curve_high);
-        e(stat_pump_off_curve_low);
-        e(stat_pump_periods);
-        e(stat_pump_sum_flow);
-        e(stat_pump_was_on);
-        e(stat_flow_turns);
-        e(stat_flow_turn_sign);
-        e(stat_time_courant_critical);
-        e(stat_lstep_min);
-        e(stat_lstep_max);
-        e(stat_lstep_dt_time);
-        e(stat_lstep_time);
-        e(stat_conv_steps);
-        e(stat_conv_total);
-        {
-            const auto base = ui * static_cast<std::size_t>(N_LSTEP_BINS);
-            const auto end = base + static_cast<std::size_t>(N_LSTEP_BINS);
-            if (end <= stat_lstep_bin_time.size())
-                stat_lstep_bin_time.erase(
-                    stat_lstep_bin_time.begin() + static_cast<std::ptrdiff_t>(base),
-                    stat_lstep_bin_time.begin() + static_cast<std::ptrdiff_t>(end));
-        }
-
-        // Flat 2D: stat_flow_class [link * N_FLOW_CLASSES + class]
-        {
-            const auto base = ui * static_cast<std::size_t>(N_FLOW_CLASSES);
-            const auto end = base + static_cast<std::size_t>(N_FLOW_CLASSES);
-            if (end <= stat_flow_class.size())
-                stat_flow_class.erase(stat_flow_class.begin() + static_cast<std::ptrdiff_t>(base),
-                                      stat_flow_class.begin() + static_cast<std::ptrdiff_t>(end));
-        }
-
-        // Flat 2D quality arrays: [link * np + p]
-        if (conc_n_pollutants > 0) {
-            const auto np = static_cast<std::size_t>(conc_n_pollutants);
-            const auto base = ui * np;
-            auto erase2d = [&](auto& v) {
-                if (base + np <= v.size())
-                    v.erase(v.begin() + static_cast<std::ptrdiff_t>(base),
-                            v.begin() + static_cast<std::ptrdiff_t>(base + np));
-            };
-            erase2d(conc);
-            erase2d(conc_old);
-        }
-
-        // Flat 2D stat load: [link * np + p]
-        if (stat_n_pollutants > 0) {
-            const auto np = static_cast<std::size_t>(stat_n_pollutants);
-            const auto base = ui * np;
-            if (base + np <= stat_total_load.size())
-                stat_total_load.erase(stat_total_load.begin() + static_cast<std::ptrdiff_t>(base),
-                                      stat_total_load.begin() +
-                                          static_cast<std::ptrdiff_t>(base + np));
-        }
+    /**
+     * @brief Insert a row taken by take_row back at idx; later links shift up by one.
+     * @param[in] idx Index the row was taken from.
+     * @param[in] row Value returned by take_row(idx), taken with the current pollutant strides.
+     */
+    void put_row(int idx, LinkData&& row) {
+        soa::put_chunk(stat_lstep_bin_time, idx, N_LSTEP_BINS, row.stat_lstep_bin_time);
+        soa::put_chunk(stat_flow_class, idx, N_FLOW_CLASSES, row.stat_flow_class);
+        soa::put_chunk(conc, idx, conc_n_pollutants, row.conc);
+        soa::put_chunk(conc_old, idx, conc_n_pollutants, row.conc_old);
+        soa::put_chunk(stat_total_load, idx, stat_n_pollutants, row.stat_total_load);
+        soa::put_row(*this, idx, std::move(row));
     }
 
     /**

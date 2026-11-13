@@ -265,6 +265,24 @@ public:
     }
 
     /**
+     * @brief Insert a name at idx and renumber following indices; the inverse of remove_at.
+     *
+     * Rebuilds the map. Must not be called inside a bulk-remove scope, whose stale map cannot
+     * detect a duplicate. Does not repair any model object references or enforce lifecycle.
+     *
+     * @param[in] idx Zero-based position, 0..size().
+     * @param[in] name Name to insert; refused if any name already matches it case-insensitively.
+     * @return False, with no change, for an out-of-range idx or a duplicate name.
+     */
+    bool insert_at(int idx, const std::string& name) {
+        if (idx < 0 || idx > static_cast<int>(names_.size()) || map_.count(name) != 0)
+            return false;
+        names_.insert(names_.begin() + idx, name);
+        rebuild_map_();
+        return true;
+    }
+
+    /**
      * @brief Erase an ordered name and renumber following indices.
      *
      * Within a bulk scope erases only names_, leaving the map stale. Outside a scope clears/rebuilds

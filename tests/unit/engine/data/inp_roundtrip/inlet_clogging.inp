@@ -1,0 +1,76 @@
+[TITLE]
+InpWriter round-trip fixture: inlet clogging percentages
+Each %Clog value must be saved and reported exactly as authored. The engine
+used to keep 1 - pct/100 and write 100 * (1 - factor), so 10 came back as
+9.9999999999999982.
+
+[OPTIONS]
+FLOW_UNITS           CFS
+INFILTRATION         HORTON
+FLOW_ROUTING         DYNWAVE
+START_DATE           01/01/2020
+START_TIME           00:00:00
+END_DATE             01/02/2020
+END_TIME             00:00:00
+REPORT_STEP          00:15:00
+WET_STEP             00:05:00
+DRY_STEP             01:00:00
+ROUTING_STEP         0:00:30
+MIN_SLOPE            0
+
+[JUNCTIONS]
+;;Name  Elev  MaxDepth  InitDepth  SurDepth  Aponded
+J3       12.0  5.0       0          0         0
+J4       11.0  5.0       0          0         0
+J5       10.0  5.0       0          0         0
+J6       10.8  5.0       0          0         0
+
+[INLET_JUNCTIONS]
+;;Name  Elev  MaxDepth  Inlet  CaptureNode  #Inlets  %Clog  Qmax  aLocal  wLocal  Placement
+IJ1      10.5  0.5       IN_A   J5           2        2.5    0     0       0       ON_SAG
+
+[OUTFALLS]
+;;Name  Elev  Type  StageData  Gated
+O1       9.0   FREE  *          NO
+
+[CONDUITS]
+;;Name  FromNode  ToNode  Length  Roughness  InOffset  OutOffset
+GUT1     J3        J4      300.0   0.016      0         0
+GUT2     J4        J6      300.0   0.016      0         0
+ST3      J6        IJ1     300.0   0.016      0         0
+ST4      IJ1       O1      300.0   0.016      0         0
+
+[XSECTIONS]
+;;Link  Shape     Geom1  Geom2  Geom3  Geom4  Barrels
+GUT1     STREET    ST_A
+GUT2     STREET    ST_A
+ST3      STREET    ST_A
+ST4      STREET    ST_A
+
+[STREETS]
+;;Name  Tcrown  Hcurb  Sx  nRoad  Hdep  Wg  Sides  Tback  Sback  nBack
+ST_A     20.0    0.5    4   0.016  0     0   2      20.0   0.04   0.016
+
+[INLETS]
+;;Name  Type   Length  Width  GrateType
+IN_A     GRATE  2.0     2.0    P_BAR-50
+
+[INLET_USAGE]
+;;Link  Inlet  Node  #Inlets  %Clog  Qmax  aLocal  wLocal  Placement
+GUT1     IN_A   J5    1        10     0     0       0       ON_GRADE
+GUT2     IN_A   J5    1        33.3   0     0       0       AUTOMATIC
+
+[REPORT]
+INPUT       NO
+CONTROLS    NO
+NODES       ALL
+LINKS       ALL
+
+[COORDINATES]
+;;Node  X-Coord  Y-Coord
+J3       0.0      0.0
+J4       300.0    0.0
+J6       450.0    0.0
+IJ1      525.0    0.0
+J5       300.0    100.0
+O1       600.0    0.0

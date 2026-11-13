@@ -36,6 +36,7 @@
 #include <string_view>
 
 #include "../core/StringCase.hpp"
+#include "SoaRow.hpp"
 
 namespace openswmm {
 
@@ -110,16 +111,24 @@ struct ExtInflowData {
     void erase(int idx) {
         if (idx < 0 || idx >= count())
             return;
-        const auto u = static_cast<std::size_t>(idx);
-        node_idx.erase(node_idx.begin() + u);
-        node_name.erase(node_name.begin() + u);
-        constituent.erase(constituent.begin() + u);
-        ts_name.erase(ts_name.begin() + u);
-        inflow_type.erase(inflow_type.begin() + u);
-        m_factor.erase(m_factor.begin() + u);
-        s_factor.erase(s_factor.begin() + u);
-        baseline.erase(baseline.begin() + u);
-        pattern_name.erase(pattern_name.begin() + u);
+        (void)soa::take_row(*this, idx);
+    }
+
+    /**
+     * @brief Call @p f with a pointer to every per-row column member; the one list erase and the
+     *        delete record share (SoaRow.hpp).
+     */
+    template <class F>
+    static void for_each_column(F&& f) {
+        f(&ExtInflowData::node_idx);
+        f(&ExtInflowData::node_name);
+        f(&ExtInflowData::constituent);
+        f(&ExtInflowData::ts_name);
+        f(&ExtInflowData::inflow_type);
+        f(&ExtInflowData::m_factor);
+        f(&ExtInflowData::s_factor);
+        f(&ExtInflowData::baseline);
+        f(&ExtInflowData::pattern_name);
     }
 };
 
@@ -191,15 +200,23 @@ struct DwfData {
     void erase(int idx) {
         if (idx < 0 || idx >= count())
             return;
-        const auto u = static_cast<std::size_t>(idx);
-        node_idx.erase(node_idx.begin() + u);
-        node_name.erase(node_name.begin() + u);
-        constituent.erase(constituent.begin() + u);
-        avg_value.erase(avg_value.begin() + u);
-        pat1.erase(pat1.begin() + u);
-        pat2.erase(pat2.begin() + u);
-        pat3.erase(pat3.begin() + u);
-        pat4.erase(pat4.begin() + u);
+        (void)soa::take_row(*this, idx);
+    }
+
+    /**
+     * @brief Call @p f with a pointer to every per-row column member; the one list erase and the
+     *        delete record share (SoaRow.hpp).
+     */
+    template <class F>
+    static void for_each_column(F&& f) {
+        f(&DwfData::node_idx);
+        f(&DwfData::node_name);
+        f(&DwfData::constituent);
+        f(&DwfData::avg_value);
+        f(&DwfData::pat1);
+        f(&DwfData::pat2);
+        f(&DwfData::pat3);
+        f(&DwfData::pat4);
     }
 };
 
@@ -257,11 +274,19 @@ struct RDIIAssignData {
     void erase(int idx) {
         if (idx < 0 || idx >= count())
             return;
-        const auto u = static_cast<std::size_t>(idx);
-        node_idx.erase(node_idx.begin() + u);
-        node_name.erase(node_name.begin() + u);
-        uh_name.erase(uh_name.begin() + u);
-        sewer_area.erase(sewer_area.begin() + u);
+        (void)soa::take_row(*this, idx);
+    }
+
+    /**
+     * @brief Call @p f with a pointer to every per-row column member; the one list erase and the
+     *        delete record share (SoaRow.hpp).
+     */
+    template <class F>
+    static void for_each_column(F&& f) {
+        f(&RDIIAssignData::node_idx);
+        f(&RDIIAssignData::node_name);
+        f(&RDIIAssignData::uh_name);
+        f(&RDIIAssignData::sewer_area);
     }
 };
 

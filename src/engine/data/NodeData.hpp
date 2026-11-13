@@ -52,6 +52,8 @@
 #include <string>
 #include <algorithm>
 
+#include "SoaRow.hpp"
+
 namespace openswmm {
 
 // ============================================================================
@@ -1050,134 +1052,134 @@ struct NodeData {
     }
 
     /**
-     * @brief Erase one node row from the columns visited by this helper.
+     * @brief Call @p f with a pointer to every per-node column member; the one list erase_at and
+     *        the delete record's take_row/put_row share (SoaRow.hpp).
      *
-     * Visits owned base columns and pollutant/load strides, checking each vector/stride for presence.
-     * The old LID drain volume/load arrays are not visited. Caller updates subtype/coupling tables,
-     * model references, names and spatial rows. This helper does not enforce BUILDING/OPENED lifecycle.
-     * Following rows shift down and element references/iterators are invalidated. Does not make
-     * inconsistent stores transactional.
-     *
-     * @param[in] idx Caller-validated existing row index; aligned dimensions and representable size
-     *     products required.
+     * Pollutant-strided columns ([node * np + p]) are handled by take_row/put_row.
+     * lid_drain_qual_load_old is run-time state sized per node in some paths and per node and
+     * pollutant in others, so it is left out, as erase_at always did.
      */
-    void erase_at(int idx) {
-        const auto ui = static_cast<std::size_t>(idx);
-        auto e = [&](auto& v) {
-            if (ui < v.size())
-                v.erase(v.begin() + static_cast<std::ptrdiff_t>(idx));
-        };
+    template <class F>
+    static void for_each_column(F&& f) {
+        f(&NodeData::type);
+        f(&NodeData::invert_elev);
+        f(&NodeData::full_depth);
+        f(&NodeData::init_depth);
+        f(&NodeData::sur_depth);
+        f(&NodeData::ponded_area);
+        f(&NodeData::storage_area);
+        f(&NodeData::is_virtual);
+        f(&NodeData::is_inlet);
+        f(&NodeData::rim_depth);
+        f(&NodeData::depth);
+        f(&NodeData::head);
+        f(&NodeData::volume);
+        f(&NodeData::lat_flow);
+        f(&NodeData::user_lat_flow);
+        f(&NodeData::runoff_inflow);
+        f(&NodeData::gw_inflow);
+        f(&NodeData::ext_inflow);
+        f(&NodeData::dwf_inflow);
+        f(&NodeData::rdii_inflow);
+        f(&NodeData::iface_inflow);
+        f(&NodeData::coupling_inflow);
+        f(&NodeData::coupling_volume);
+        f(&NodeData::aquifer2d_bed);
+        f(&NodeData::coupling_queue);
+        f(&NodeData::coupling_age_vol_queue);
+        f(&NodeData::coupling_temp_vol_queue);
+        f(&NodeData::coupling_age_vol_inflow);
+        f(&NodeData::coupling_temp_vol_inflow);
+        f(&NodeData::qual_vol_in);
+        f(&NodeData::lid_drain_qual_vol);
+        f(&NodeData::lid_drain_qual_vol_old);
+        f(&NodeData::lid_drain_inflow);
+        f(&NodeData::hrt);
+        f(&NodeData::inflow);
+        f(&NodeData::outflow);
+        f(&NodeData::overflow);
+        f(&NodeData::losses);
+        f(&NodeData::crown_elev);
+        f(&NodeData::degree);
+        f(&NodeData::old_net_inflow);
+        f(&NodeData::full_volume);
+        f(&NodeData::rpt_full_volume);
+        f(&NodeData::old_depth);
+        f(&NodeData::old_volume);
+        f(&NodeData::old_lat_flow);
+        f(&NodeData::old_inflow);
+        f(&NodeData::comments);
+        f(&NodeData::tags);
+        f(&NodeData::rpt_flag);
+        f(&NodeData::stat_vol_flooded);
+        f(&NodeData::stat_time_flooded);
+        f(&NodeData::stat_max_depth);
+        f(&NodeData::stat_max_overflow);
+        f(&NodeData::stat_max_overflow_date);
+        f(&NodeData::stat_sum_depth);
+        f(&NodeData::stat_sum_volume);
+        f(&NodeData::stat_storage_max_volume);
+        f(&NodeData::stat_storage_max_volume_date);
+        f(&NodeData::stat_max_depth_date);
+        f(&NodeData::stat_max_rpt_depth);
+        f(&NodeData::stat_max_inflow_date);
+        f(&NodeData::stat_time_surcharged);
+        f(&NodeData::stat_max_surcharge_height);
+        f(&NodeData::stat_outfall_avg_flow);
+        f(&NodeData::stat_max_lat_inflow);
+        f(&NodeData::stat_max_total_inflow);
+        f(&NodeData::stat_storage_max_outflow);
+        f(&NodeData::stat_lat_inflow_vol);
+        f(&NodeData::stat_total_inflow_vol);
+        f(&NodeData::stat_total_outflow_vol);
+        f(&NodeData::stat_outfall_max_flow);
+        f(&NodeData::stat_outfall_periods);
+        f(&NodeData::stat_non_converged_count);
+        f(&NodeData::stat_time_courant_critical);
+    }
 
-        e(type);
-        e(invert_elev);
-        e(full_depth);
-        e(init_depth);
-        e(sur_depth);
-        e(ponded_area);
-        e(storage_area);
-        e(is_virtual);
-        e(is_inlet);
-        e(rim_depth);
+    /**
+     * @brief Erase one node row: every listed column and the pollutant-strided chunks.
+     *
+     * Caller updates subtype/coupling tables, model references, names and spatial rows. Following
+     * rows shift down.
+     *
+     * @param[in] idx Caller-validated existing row index.
+     */
+    void erase_at(int idx) { (void)take_row(idx); }
 
-        // Subtype config (storage/outfall/divider) lives in NodeSubtypes side-tables;
-        // its rows are erased/renumbered by NodeSubtypes::erase_node (called by the
-        // node-delete path), not here.
-        e(depth);
-        e(head);
-        e(volume);
-        e(lat_flow);
-        e(user_lat_flow);
-        e(runoff_inflow);
-        e(gw_inflow);
-        e(ext_inflow);
-        e(dwf_inflow);
-        e(rdii_inflow);
-        e(iface_inflow);
-        e(coupling_inflow);
-        e(coupling_volume);
-        e(coupling_queue);
-        e(coupling_age_vol_queue);
-        e(coupling_temp_vol_queue);
-        e(coupling_age_vol_inflow);
-        e(coupling_temp_vol_inflow);
-        e(qual_vol_in);
-        e(lid_drain_qual_vol);
-        e(lid_drain_inflow);
-        e(inflow);
-        e(outflow);
-        e(overflow);
-        e(losses);
-        e(crown_elev);
-        e(degree);
-        e(old_net_inflow);
-        e(full_volume);
-        e(rpt_full_volume);
-        e(old_depth);
-        e(old_volume);
-        e(old_lat_flow);
-        e(old_inflow);
-        e(comments);
-        e(tags);
-        e(rpt_flag);
+    /**
+     * @brief Remove a node's cells from every column, chunks included, and return them as a
+     *        one-node NodeData. put_row(idx, row) is the exact inverse while the pollutant strides
+     *        are unchanged.
+     * @param[in] idx Caller-validated existing node index.
+     */
+    NodeData take_row(int idx) {
+        const int np = conc_n_pollutants;
+        std::vector<std::vector<double>> chunks;
+        for (auto* v : quality_chunks_())
+            chunks.push_back(soa::take_chunk(*v, idx, np));
+        auto load = soa::take_chunk(stat_total_load, idx, stat_n_pollutants);
+        NodeData row = soa::take_row(*this, idx);
+        auto rv = row.quality_chunks_();
+        for (std::size_t k = 0; k < rv.size(); ++k)
+            *rv[k] = std::move(chunks[k]);
+        row.stat_total_load = std::move(load);
+        return row;
+    }
 
-        e(stat_vol_flooded);
-        e(stat_time_flooded);
-        e(stat_max_depth);
-        e(stat_max_overflow);
-        e(stat_max_overflow_date);
-        e(stat_sum_depth);
-        e(stat_sum_volume);
-        e(stat_storage_max_volume_date);
-        e(stat_storage_max_volume);
-        e(stat_max_depth_date);
-        e(stat_max_rpt_depth);
-        e(stat_max_inflow_date);
-        e(stat_time_surcharged);
-        e(stat_max_surcharge_height);
-        e(stat_outfall_avg_flow);
-        e(stat_max_lat_inflow);
-        e(stat_max_total_inflow);
-        e(stat_storage_max_outflow);
-        e(stat_lat_inflow_vol);
-        e(stat_total_inflow_vol);
-        e(stat_total_outflow_vol);
-        e(stat_outfall_max_flow);
-        e(stat_outfall_periods);
-        e(stat_non_converged_count);
-        e(stat_time_courant_critical);
-
-        // Flat 2D quality arrays: [node * np + p] → erase the stride for idx
-        if (conc_n_pollutants > 0) {
-            const auto np = static_cast<std::size_t>(conc_n_pollutants);
-            const auto base = ui * np;
-            auto erase2d = [&](auto& v) {
-                if (base + np <= v.size())
-                    v.erase(v.begin() + static_cast<std::ptrdiff_t>(base),
-                            v.begin() + static_cast<std::ptrdiff_t>(base + np));
-            };
-            erase2d(conc);
-            erase2d(conc_old);
-            erase2d(qual_mass_in);
-            erase2d(iface_qual_mass);
-            erase2d(coupling_qual_queue);
-            erase2d(coupling_qual_inflow);
-            erase2d(ext_qual_mass);
-            erase2d(dwf_qual_mass);
-            erase2d(lid_drain_qual_load);
-            erase2d(user_conc_mass_flux);
-            if (ui < hrt.size())
-                hrt.erase(hrt.begin() + static_cast<std::ptrdiff_t>(idx));
-        }
-
-        // Flat 2D stat load: [node * np + p]
-        if (stat_n_pollutants > 0) {
-            const auto np = static_cast<std::size_t>(stat_n_pollutants);
-            const auto base = ui * np;
-            if (base + np <= stat_total_load.size())
-                stat_total_load.erase(stat_total_load.begin() + static_cast<std::ptrdiff_t>(base),
-                                      stat_total_load.begin() +
-                                          static_cast<std::ptrdiff_t>(base + np));
-        }
+    /**
+     * @brief Insert a row taken by take_row back at idx; later nodes shift up by one.
+     * @param[in] idx Index the row was taken from.
+     * @param[in] row Value returned by take_row(idx), taken with the current pollutant strides.
+     */
+    void put_row(int idx, NodeData&& row) {
+        auto mine = quality_chunks_();
+        auto theirs = row.quality_chunks_();
+        for (std::size_t k = 0; k < mine.size(); ++k)
+            soa::put_chunk(*mine[k], idx, conc_n_pollutants, *theirs[k]);
+        soa::put_chunk(stat_total_load, idx, stat_n_pollutants, row.stat_total_load);
+        soa::put_row(*this, idx, std::move(row));
     }
 
     /**
@@ -1420,6 +1422,14 @@ struct NodeData {
         std::fill(dwf_qual_mass.begin(), dwf_qual_mass.end(), 0.0);
         std::fill(qual_mass_in.begin(), qual_mass_in.end(), 0.0);
         std::fill(qual_vol_in.begin(), qual_vol_in.end(), 0.0);
+    }
+
+private:
+    /// The [node * conc_n_pollutants + p] columns, in one fixed order for take_row/put_row.
+    std::vector<std::vector<double>*> quality_chunks_() {
+        return {&conc,           &conc_old,           &qual_mass_in,     &iface_qual_mass,
+                &coupling_qual_queue, &coupling_qual_inflow, &ext_qual_mass, &dwf_qual_mass,
+                &lid_drain_qual_load, &user_conc_mass_flux};
     }
 };
 

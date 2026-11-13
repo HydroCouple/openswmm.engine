@@ -35,6 +35,7 @@
 
 #include <cstring>
 #include <cstdlib>
+#include <memory>
 #include <vector>
 
 // ============================================================================
@@ -109,6 +110,41 @@ static void conversion_to_c(const openswmm::edit::ConversionResult& res,
 // ============================================================================
 // extern "C" API
 // ============================================================================
+
+// ---------------------------------------------------------------------------
+// Recorded deletes — the handle pairs a record with the engine that made it.
+// ---------------------------------------------------------------------------
+
+namespace {
+struct DeleteRecordHandle {
+    SWMM_Engine owner = nullptr;
+    openswmm::edit::DeleteRecord record;
+};
+} // namespace
+
+/**
+ * @brief Run one recorded delete: hand @p del a fresh record when the caller wants one, report
+ *        the cascade, seal the record with the post-delete counts and return it.
+ * @param[in] del Callable taking DeleteRecord* (null for a plain delete) and returning the
+ *     CascadeResult; the caller has validated every index.
+ */
+template <class DeleteFn>
+static int run_recorded_delete(SWMM_Engine engine, openswmm::SimulationContext& ctx,
+                               SWMM_ImpactReport* cascade_out, SWMM_DeleteRecord* record_out,
+                               DeleteFn&& del) {
+    std::unique_ptr<DeleteRecordHandle> handle;
+    if (record_out) {
+        handle = std::make_unique<DeleteRecordHandle>();
+        handle->owner = engine;
+    }
+    auto res = del(handle ? &handle->record : nullptr);
+    cascade_to_c(res, cascade_out);
+    if (record_out) {
+        openswmm::edit::seal_delete_record(ctx, handle->record);
+        *record_out = handle.release();
+    }
+    return SWMM_OK;
+}
 
 extern "C" {
 
@@ -392,6 +428,86 @@ SWMM_ENGINE_API int swmm_gage_delete(SWMM_Engine engine, int idx, SWMM_ImpactRep
     auto res = openswmm::edit::delete_gage(ctx, idx);
     cascade_to_c(res, cascade_out);
     return SWMM_OK;
+}
+
+#define SWMM_DELETE_RECORDED_BODY(COUNT_EXPR, DELETE_FN)                                           \
+    CHECK_HANDLE(engine);                                                                          \
+    auto& ctx = to_engine(engine)->context();                                                      \
+    CHECK_EDITABLE(ctx);                                                                           \
+    CHECK_INDEX(idx >= 0 && idx < (COUNT_EXPR));                                                   \
+    return run_recorded_delete(engine, ctx, cascade_out, record_out,                               \
+                               [&](openswmm::edit::DeleteRecord* r) {                              \
+                                   return openswmm::edit::DELETE_FN(ctx, idx, r);                  \
+                               })
+
+// Every index is validated before any change, as for swmm_*_delete_many.
+#define SWMM_DELETE_MANY_RECORDED_BODY(COUNT_EXPR, MANY_FN)                                        \
+    CHECK_HANDLE(engine);                                                                          \
+    auto& ctx = to_engine(engine)->context();                                                      \
+    CHECK_EDITABLE(ctx);                                                                           \
+    if (n > 0 && !indices)                                                                         \
+        return SWMM_ERR_BADPARAM;                                                                  \
+    for (int k = 0; k < n; ++k)                                                                    \
+        CHECK_INDEX(indices[k] >= 0 && indices[k] < (COUNT_EXPR));                                 \
+    return run_recorded_delete(                                                                    \
+        engine, ctx, cascade_out, record_out, [&](openswmm::edit::DeleteRecord* r) {               \
+            return n > 0 ? openswmm::edit::MANY_FN(ctx, std::vector<int>(indices, indices + n), r) \
+                         : openswmm::edit::CascadeResult{};                                        \
+        })
+
+SWMM_ENGINE_API int swmm_gage_delete_recorded(SWMM_Engine engine, int idx,
+                                              SWMM_ImpactReport* cascade_out,
+                                              SWMM_DeleteRecord* record_out) {
+    SWMM_DELETE_RECORDED_BODY(ctx.n_gages(), delete_gage);
+}
+
+SWMM_ENGINE_API int swmm_gage_delete_many_recorded(SWMM_Engine engine, const int* indices, int n,
+                                                   SWMM_ImpactReport* cascade_out,
+                                                   SWMM_DeleteRecord* record_out) {
+    SWMM_DELETE_MANY_RECORDED_BODY(ctx.n_gages(), delete_gages_many);
+}
+
+SWMM_ENGINE_API int swmm_link_delete_recorded(SWMM_Engine engine, int idx,
+                                              SWMM_ImpactReport* cascade_out,
+                                              SWMM_DeleteRecord* record_out) {
+    SWMM_DELETE_RECORDED_BODY(ctx.n_links(), delete_link);
+}
+
+SWMM_ENGINE_API int swmm_link_delete_many_recorded(SWMM_Engine engine, const int* indices, int n,
+                                                   SWMM_ImpactReport* cascade_out,
+                                                   SWMM_DeleteRecord* record_out) {
+    SWMM_DELETE_MANY_RECORDED_BODY(ctx.n_links(), delete_links_many);
+}
+
+SWMM_ENGINE_API int swmm_node_delete_recorded(SWMM_Engine engine, int idx,
+                                              SWMM_ImpactReport* cascade_out,
+                                              SWMM_DeleteRecord* record_out) {
+    SWMM_DELETE_RECORDED_BODY(ctx.n_nodes(), delete_node);
+}
+
+SWMM_ENGINE_API int swmm_node_delete_many_recorded(SWMM_Engine engine, const int* indices, int n,
+                                                   SWMM_ImpactReport* cascade_out,
+                                                   SWMM_DeleteRecord* record_out) {
+    SWMM_DELETE_MANY_RECORDED_BODY(ctx.n_nodes(), delete_nodes_many);
+}
+
+#undef SWMM_DELETE_RECORDED_BODY
+#undef SWMM_DELETE_MANY_RECORDED_BODY
+
+SWMM_ENGINE_API int swmm_delete_record_restore(SWMM_Engine engine, SWMM_DeleteRecord record) {
+    CHECK_HANDLE(engine);
+    if (!record)
+        return SWMM_ERR_BADPARAM;
+    auto& handle = *static_cast<DeleteRecordHandle*>(record);
+    if (handle.owner != engine)
+        return SWMM_ERR_BADPARAM;
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+    return handle.record.restore(ctx) ? SWMM_OK : SWMM_ERR_BADPARAM;
+}
+
+SWMM_ENGINE_API void swmm_delete_record_destroy(SWMM_DeleteRecord record) {
+    delete static_cast<DeleteRecordHandle*>(record);
 }
 
 // ---------------------------------------------------------------------------

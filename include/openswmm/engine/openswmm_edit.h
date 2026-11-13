@@ -477,6 +477,112 @@ SWMM_ENGINE_API int swmm_subcatch_delete(SWMM_Engine engine, int idx,
  */
 SWMM_ENGINE_API int swmm_gage_delete(SWMM_Engine engine, int idx, SWMM_ImpactReport* cascade_out);
 
+/* =========================================================================
+ * Recorded deletes — undo a delete exactly
+ * ========================================================================= */
+
+/** Everything one recorded delete changed: the removed rows with their original indices and the
+ * references the delete cleared or renumbered. It belongs to the engine that made it and restores
+ * at most once. */
+typedef void* SWMM_DeleteRecord;
+
+/**
+ * @brief Delete a rain gage as swmm_gage_delete() does, and record how to undo it.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] idx Zero-based existing rain gage index.
+ * @param[out] cascade_out Optional; as for swmm_gage_delete().
+ * @param[out] record_out Optional. On success receives a new record that
+ *     swmm_delete_record_restore() can use to put the gage, its position and every reference back;
+ *     release it with swmm_delete_record_destroy(). Untouched on failure.
+ * @return As swmm_gage_delete().
+ * @note Requires BUILDING or OPENED.
+ */
+SWMM_ENGINE_API int swmm_gage_delete_recorded(SWMM_Engine engine, int idx,
+                                              SWMM_ImpactReport* cascade_out,
+                                              SWMM_DeleteRecord* record_out);
+
+/**
+ * @brief Delete a link as swmm_link_delete() does, and record how to undo it: the link's row,
+ *        subtype row, name and geometry, its inlet usages, LID node outlets, reaction rows,
+ *        initial quality, user flags and heat overrides, and every reference the delete cleared
+ *        or renumbered. Arguments and return as swmm_gage_delete_recorded().
+ */
+SWMM_ENGINE_API int swmm_link_delete_recorded(SWMM_Engine engine, int idx,
+                                              SWMM_ImpactReport* cascade_out,
+                                              SWMM_DeleteRecord* record_out);
+
+/**
+ * @brief Delete several links as swmm_link_delete_many() does, and record how to undo the whole
+ *        batch. Arguments and return as swmm_gage_delete_many_recorded().
+ */
+SWMM_ENGINE_API int swmm_link_delete_many_recorded(SWMM_Engine engine, const int* indices, int n,
+                                                   SWMM_ImpactReport* cascade_out,
+                                                   SWMM_DeleteRecord* record_out);
+
+/**
+ * @brief Delete a node as swmm_node_delete() does, and record how to undo it: the node's row,
+ *        subtype and 2D coupling rows, name and coordinates, every link it cascade-deletes (as
+ *        swmm_link_delete_recorded() records them), its inlet usages, inflow, DWF and RDII rows,
+ *        treatment, reaction rows, initial quality, user flags and heat overrides, and every
+ *        reference the delete cleared or renumbered. Arguments and return as
+ *        swmm_gage_delete_recorded().
+ */
+SWMM_ENGINE_API int swmm_node_delete_recorded(SWMM_Engine engine, int idx,
+                                              SWMM_ImpactReport* cascade_out,
+                                              SWMM_DeleteRecord* record_out);
+
+/**
+ * @brief Delete several nodes as swmm_node_delete_many() does, and record how to undo the whole
+ *        batch. Arguments and return as swmm_gage_delete_many_recorded().
+ */
+SWMM_ENGINE_API int swmm_node_delete_many_recorded(SWMM_Engine engine, const int* indices, int n,
+                                                   SWMM_ImpactReport* cascade_out,
+                                                   SWMM_DeleteRecord* record_out);
+
+/**
+ * @brief Delete several rain gages as swmm_gage_delete_many() does, and record how to undo the
+ *        whole batch.
+ *
+ * @param[in] engine Non-null live engine; caller serializes access.
+ * @param[in] indices Pre-batch gage indices, all validated before any change; duplicates are
+ *     ignored. May be NULL when n is 0.
+ * @param[in] n Number of indices; 0 deletes nothing and still returns a (no-op) record.
+ * @param[out] cascade_out Optional; as for swmm_gage_delete_many().
+ * @param[out] record_out Optional. On success receives one record that restores every gage of the
+ *     batch at its original index; release it with swmm_delete_record_destroy(). Untouched on
+ *     failure.
+ * @return As swmm_gage_delete_many().
+ * @note Requires BUILDING or OPENED.
+ */
+SWMM_ENGINE_API int swmm_gage_delete_many_recorded(SWMM_Engine engine, const int* indices, int n,
+                                                   SWMM_ImpactReport* cascade_out,
+                                                   SWMM_DeleteRecord* record_out);
+
+/**
+ * @brief Undo a recorded delete: reinsert every removed row at its original index and restore
+ *        every reference the delete cleared or renumbered.
+ *
+ * @details Refuses, changing nothing, when the model no longer matches the state the delete left
+ *          (object counts, the name being free, cleared references still clear), so a caller can
+ *          drop its undo step instead of corrupting the model. After a successful restore the
+ *          record is spent; to delete again, call the recorded delete again for a new record.
+ *
+ * @param[in] engine The engine that made the record, still holding the same model.
+ * @param[in] record Live record from a *_delete_recorded call on this engine.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for a null engine; SWMM_ERR_LIFECYCLE outside BUILDING or
+ *     OPENED; SWMM_ERR_BADPARAM for a null, foreign or spent record or a model that no longer
+ *     matches.
+ */
+SWMM_ENGINE_API int swmm_delete_record_restore(SWMM_Engine engine, SWMM_DeleteRecord record);
+
+/**
+ * @brief Release a delete record.
+ * @param[in] record Record from a *_delete_recorded call; NULL is safe. May be called after the
+ *     engine is destroyed.
+ */
+SWMM_ENGINE_API void swmm_delete_record_destroy(SWMM_DeleteRecord record);
+
 /**
  * @brief Delete a batch of node rows using pre-batch indices.
  *

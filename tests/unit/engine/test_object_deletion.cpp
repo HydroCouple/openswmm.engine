@@ -286,6 +286,53 @@ TEST_F(DeletionTest, DeleteGageNullifiesSubcatchGage) {
     swmm_impact_report_free(&report);
 }
 
+// Deleting a gage must shift every one of its columns, so the gages after it
+// keep their own file station and rain units.
+TEST_F(DeletionTest, DeleteGageKeepsLaterGagesStationAndUnits) {
+    ASSERT_EQ(swmm_gage_add(engine, "G0"), SWMM_OK);
+    ASSERT_EQ(swmm_gage_add(engine, "G1"), SWMM_OK);
+    ASSERT_EQ(swmm_gage_set_station_id(engine, 0, "STA0"), SWMM_OK);
+    ASSERT_EQ(swmm_gage_set_rain_units(engine, 0, 1), SWMM_OK); // MM
+    ASSERT_EQ(swmm_gage_set_station_id(engine, 1, "STA1"), SWMM_OK);
+    ASSERT_EQ(swmm_gage_set_rain_units(engine, 1, 0), SWMM_OK); // IN
+
+    ASSERT_EQ(swmm_gage_delete(engine, 0, nullptr), SWMM_OK);
+
+    ASSERT_STREQ(swmm_gage_id(engine, 0), "G1");
+    char sta[32] = {0};
+    ASSERT_EQ(swmm_gage_get_station_id(engine, 0, sta, sizeof sta), SWMM_OK);
+    EXPECT_STREQ(sta, "STA1");
+    int units = -1;
+    ASSERT_EQ(swmm_gage_get_rain_units(engine, 0, &units), SWMM_OK);
+    EXPECT_EQ(units, 0);
+}
+
+// An outfall's route-to is a SUBCATCHMENT index. Deleting a node used to clear it when it equalled
+// the node's index and renumber it as if it were a node, so the outfall ended up routed to another
+// subcatchment or to none.
+TEST_F(DeletionTest, DeleteNodeKeepsOutfallRouteTo) {
+    for (const char* id : {"J0", "J1", "J2"})
+        ASSERT_EQ(swmm_node_add(engine, id, SWMM_NODE_JUNCTION), SWMM_OK);
+    ASSERT_EQ(swmm_node_add(engine, "O", SWMM_NODE_OUTFALL), SWMM_OK);
+    for (const char* id : {"S0", "S1", "S2"})
+        ASSERT_EQ(swmm_subcatch_add(engine, id), SWMM_OK);
+    auto route = [&] {
+        int sc = -2;
+        EXPECT_EQ(swmm_node_get_outfall_route_to(engine, swmm_node_index(engine, "O"), &sc),
+                  SWMM_OK);
+        return sc;
+    };
+
+    ASSERT_EQ(swmm_node_set_outfall_route_to(engine, swmm_node_index(engine, "O"), 2), SWMM_OK);
+    ASSERT_EQ(swmm_node_delete(engine, swmm_node_index(engine, "J1"), nullptr), SWMM_OK);
+    EXPECT_EQ(route(), 2); // still S2, not renumbered to S1
+
+    ASSERT_EQ(swmm_node_set_outfall_route_to(engine, swmm_node_index(engine, "O"), 1), SWMM_OK);
+    ASSERT_EQ(swmm_node_index(engine, "J2"), 1);
+    ASSERT_EQ(swmm_node_delete(engine, 1, nullptr), SWMM_OK);
+    EXPECT_EQ(route(), 1); // still S1, not cleared because node 1 was deleted
+}
+
 // ============================================================================
 // Delete table nullifies pump_curve on link
 // ============================================================================

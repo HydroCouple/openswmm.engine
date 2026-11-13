@@ -2471,7 +2471,7 @@ static void write_inlet_usage(sqlite3* db, const SimulationContext& ctx,
         bind_text(stmt.get(), 4, ctx.inlets.names[static_cast<std::size_t>(di)]);
         bind_text(stmt.get(), 5, ctx.node_names.name_of(ni));
         bind_int(stmt.get(), 6, U.num_inlets[ur]);
-        bind_double(stmt.get(), 7, (1.0 - U.clog_factor[ur]) * 100.0);
+        bind_double(stmt.get(), 7, U.pct_clogged[ur]);
         bind_double(stmt.get(), 8, U.flow_limit[ur]);
         bind_double(stmt.get(), 9, U.local_depress[ur]);
         bind_double(stmt.get(), 10, U.local_width[ur]);

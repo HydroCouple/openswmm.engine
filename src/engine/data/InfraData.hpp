@@ -30,6 +30,7 @@
 #ifndef OPENSWMM_ENGINE_INFRA_DATA_HPP
 #define OPENSWMM_ENGINE_INFRA_DATA_HPP
 
+#include "SoaRow.hpp"
 #include <vector>
 #include <string>
 
@@ -215,7 +216,7 @@ struct InletUsageStore {
     std::vector<int> node_index;     ///< Capture (receiving / underdrain) node index
     std::vector<int> num_inlets;     ///< Number of inlets per side
     std::vector<int> placement;      ///< 0=auto, 1=on_grade, 2=on_sag
-    std::vector<double> clog_factor; ///< 1.0 - pctClogged/100
+    std::vector<double> pct_clogged; ///< Percent clogged (0..99), as authored; the solver uses 1 - pct/100
     std::vector<double> flow_limit;  ///< Max capture flow per inlet (user flow units), 0=unlimited
     std::vector<double> local_depress; ///< Local gutter depression (user length units)
     std::vector<double> local_width;   ///< Local depression width (user length units)
@@ -247,7 +248,7 @@ struct InletUsageStore {
         node_index.push_back(capture_node_idx);
         num_inlets.push_back(1);
         placement.push_back(0);
-        clog_factor.push_back(1.0);
+        pct_clogged.push_back(0.0);
         flow_limit.push_back(0.0);
         local_depress.push_back(0.0);
         local_width.push_back(0.0);
@@ -266,27 +267,32 @@ struct InletUsageStore {
      * @param[in] idx Row index; negative or out-of-range values skip each column independently.
      */
     void erase_row(int idx) {
-        auto e = [idx](auto& v) {
-            if (static_cast<std::size_t>(idx) < v.size())
-                v.erase(v.begin() + static_cast<std::ptrdiff_t>(idx));
-        };
-        e(link_index);
-        e(node_host);
-        e(design_index);
-        e(node_index);
-        e(num_inlets);
-        e(placement);
-        e(clog_factor);
-        e(flow_limit);
-        e(local_depress);
-        e(local_width);
-        e(street_index);
-        e(pending_design_name);
-        e(pending_capture_name);
-        e(stat_capture_vol);
-        e(stat_bypass_vol);
-        e(stat_backflow_vol);
-        e(stat_peak_flow);
+        (void)soa::take_row(*this, idx);
+    }
+
+    /**
+     * @brief Call @p f with a pointer to every per-row column member; the one list the erase and
+     *        the delete record's take/put share (SoaRow.hpp).
+     */
+    template <class F>
+    static void for_each_column(F&& f) {
+        f(&InletUsageStore::link_index);
+        f(&InletUsageStore::node_host);
+        f(&InletUsageStore::design_index);
+        f(&InletUsageStore::node_index);
+        f(&InletUsageStore::num_inlets);
+        f(&InletUsageStore::placement);
+        f(&InletUsageStore::pct_clogged);
+        f(&InletUsageStore::flow_limit);
+        f(&InletUsageStore::local_depress);
+        f(&InletUsageStore::local_width);
+        f(&InletUsageStore::street_index);
+        f(&InletUsageStore::pending_design_name);
+        f(&InletUsageStore::pending_capture_name);
+        f(&InletUsageStore::stat_capture_vol);
+        f(&InletUsageStore::stat_bypass_vol);
+        f(&InletUsageStore::stat_backflow_vol);
+        f(&InletUsageStore::stat_peak_flow);
     }
 
     /**
