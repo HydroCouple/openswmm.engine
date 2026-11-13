@@ -370,6 +370,52 @@ TEST(BoundaryData, SlotValuesStoreOnlyWhatDiffersFromTheDefault) {
     EXPECT_DOUBLE_EQ(b.edge_bc_head[2], 0.0);
 }
 
+// A mesh's tags and coupled node names are stored once per distinct string
+// and read back exactly as the string-per-element array they replaced
+// (working set plan W1).
+TEST(MeshData, InternedStringsReadBackAsOneStringPerElement) {
+    openswmm::twoD::InternedStrings v;
+    v.resize(5);
+    v.set(1, "road");
+    v.set(3, "road");
+    v.set(4, "roof");
+    EXPECT_EQ(v.size(), 5u);
+    EXPECT_EQ(v[0], "");
+    EXPECT_EQ(v[1], "road");
+    EXPECT_EQ(v[3], "road");
+    EXPECT_EQ(v[4], "roof");
+    v.set(4, ""); // cleared
+    v.set(1, "yard");
+    v.resize(7); // keeps what is there, new elements empty
+    const std::vector<std::string> expected{"", "yard", "", "road", "", "", ""};
+    EXPECT_EQ(v.dense(), expected);
+    v.resize(2);
+    EXPECT_EQ(v.dense(), (std::vector<std::string>{"", "yard"}));
+    openswmm::twoD::InternedStrings back;
+    back.assign(expected);
+    EXPECT_EQ(back.dense(), expected);
+    EXPECT_TRUE(back.interned());
+
+    // A column with more distinct strings than 2 bytes can index (a unique tag
+    // per vertex) falls back to one string per element and reads the same.
+    openswmm::twoD::InternedStrings many;
+    const std::size_t n = 70000;
+    many.resize(n);
+    for (std::size_t i = 0; i < n; ++i)
+        many.set(i, "v" + std::to_string(i));
+    EXPECT_FALSE(many.interned());
+    EXPECT_EQ(many.size(), n);
+    EXPECT_EQ(many[0], "v0");
+    EXPECT_EQ(many[65534], "v65534");
+    EXPECT_EQ(many[65535], "v65535");
+    EXPECT_EQ(many[69999], "v69999");
+    many.set(12, "");
+    many.resize(n + 1);
+    EXPECT_EQ(many[12], "");
+    EXPECT_EQ(many[n], "");
+    EXPECT_EQ(many[n - 1], "v69999");
+}
+
 TEST(BoundaryData, ResizeInitialisesAllSlotsIncludingV_E4andV_E5) {
     // Verifies V-E4 (SPECIFIED_FLOW) + V-E5 (RATING_CURVE) slots resize
     // correctly alongside the legacy stage/slope slots, and that the
@@ -1377,7 +1423,7 @@ TEST(InputParsing, Parse2DInitialVelocity) {
 TEST(InputParsing, Parse2DVertexNodeMap) {
     MeshData mesh;
     mesh.resize_vertices(3);
-    mesh.vtag[1] = "inlet";
+    mesh.vtag.set(1, "inlet");
 
     // By index
     auto err = parse2DVertexNodeMapLine({"0", "J1"}, mesh);
@@ -1396,7 +1442,7 @@ TEST(InputParsing, Parse2DTriangleNodeMap) {
     MeshData mesh;
     mesh.resize_vertices(3);
     mesh.resize_triangles(2);
-    mesh.tri_tag[1] = "road_surface";
+    mesh.tri_tag.set(1, "road_surface");
 
     auto err = parse2DTriangleNodeMapLine({"0", "J3"}, mesh);
     EXPECT_TRUE(err.empty()) << err;

@@ -229,7 +229,7 @@ double tryParseDouble(const std::string& s, bool& ok) {
  * null scans in row order. Without it a section of tag rows costs rows x n.
  * @return Zero-based first match or -1.
  */
-int findFirstTag(const std::vector<std::string>& tags, int n, const std::string& tag,
+int findFirstTag(const InternedStrings& tags, int n, const std::string& tag,
                  TagIndex* index) {
     if (index == nullptr) {
         for (int i = 0; i < n; ++i) {
@@ -1166,7 +1166,7 @@ std::string parseVertexRow(const Tokens& tokens, MeshData& mesh, int at = -1) {
     mesh.vx[idx] = x;
     mesh.vy[idx] = y;
     mesh.vz[idx] = z;
-    mesh.vtag[idx] = tag;
+    mesh.vtag.set(idx, tag);
 
     return {};
 }
@@ -1245,7 +1245,7 @@ std::string parseTriangleRow(const Tokens& tokens, MeshData& mesh, int at = -1) 
     mesh.set_triangle(idx, v0, v1, v2);
     mesh.mannings_n[idx] = n;
     mesh.tri_init_depth[idx] = init_depth;
-    mesh.tri_tag[idx] = tag;
+    mesh.tri_tag.set(idx, tag);
 
     return {};
 }
@@ -1317,7 +1317,7 @@ std::string parseQuadRow(const Tokens& tokens, MeshData& mesh, int at = -1) {
     mesh.set_quad(idx, v[0], v[1], v[2], v[3]);
     mesh.mannings_n[idx] = n;
     mesh.tri_init_depth[idx] = init_depth;
-    mesh.tri_tag[idx] = tag;
+    mesh.tri_tag.set(idx, tag);
 
     return {};
 }
@@ -1432,7 +1432,7 @@ std::string parse2DVertexNodeMapLine(const std::vector<std::string>& tokens, Mes
     if (vidx < 0 || vidx >= mesh.n_vertices())
         return "Vertex index out of range: " + tokens[0];
 
-    mesh.vert_coupled_node_name[vidx] = tokens[1];
+    mesh.vert_coupled_node_name.set(vidx, tokens[1]);
 
     // Optional discharge coefficient
     if (tokens.size() >= 3) {
@@ -1513,7 +1513,7 @@ std::string parse2DTriangleNodeMapLine(const std::vector<std::string>& tokens, M
     // the GeoPackage writer above all — read these arrays, so leaving them
     // to SurfaceRouter2D::initialize would drop couplings on an
     // opened-but-not-initialized model.
-    mesh.tri_coupled_node_name[tidx] = row.node_name;
+    mesh.tri_coupled_node_name.set(tidx, row.node_name);
     mesh.tri_coupling_cd[tidx] = row.cd;
     mesh.tri_coupling_area[tidx] = row.area;
 

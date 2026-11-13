@@ -184,7 +184,7 @@ protected:
         mesh_.vx = {0.0, 10.0, 10.0, 0.0};
         mesh_.vy = {0.0, 0.0, 10.0, 10.0};
         mesh_.vz = {10.0, 10.5, 11.0, 11.5};
-        mesh_.vtag[0] = "VT0";
+        mesh_.vtag.set(0, "VT0");
 
         mesh_.resize_triangles(2);
         mesh_.set_triangle(0, 0, 1, 2);
@@ -192,7 +192,7 @@ protected:
         mesh_.mannings_n = {0.03, 0.045};
         mesh_.tri_init_depth = {0.25, 0.0};
         mesh_.tri_init_hgl[1] = 10.75; // cell 0 stays NaN (not prescribed)
-        mesh_.tri_tag[1] = "T1";
+        mesh_.tri_tag.set(1, "T1");
     }
 
     /**
@@ -435,10 +435,10 @@ TEST_F(GeoPackageMesh2DTest, ConveyanceFallbackFromMeshSlots) {
 
 TEST_F(GeoPackageMesh2DTest, CouplingMapsRoundTrip) {
     makeUnitSquareMesh();
-    mesh_.vert_coupled_node_name[0] = "J1";
+    mesh_.vert_coupled_node_name.set(0, "J1");
     mesh_.vert_coupling_cd[0] = 0.7;
     mesh_.vert_coupling_area[0] = 2.5;
-    mesh_.tri_coupled_node_name[1] = "J3";
+    mesh_.tri_coupled_node_name.set(1, "J3");
     mesh_.tri_coupling_cd[1] = 0.55;
     mesh_.tri_coupling_area[1] = 4.0;
 
@@ -476,10 +476,10 @@ TEST_F(GeoPackageMesh2DTest, CouplingMapsRoundTrip) {
 
 TEST_F(GeoPackageMesh2DTest, RepeatedTriangleRowsAndAuthoredFlagsRoundTrip) {
     makeUnitSquareMesh();
-    mesh_.vert_coupled_node_name[0] = "J1"; // CD authored, AREA defaulted
+    mesh_.vert_coupled_node_name.set(0, "J1"); // CD authored, AREA defaulted
     mesh_.vert_coupling_cd[0] = 0.7;
     mesh_.vert_coupling_cd_set[0] = 1;
-    mesh_.vert_coupled_node_name[2] = "J3"; // nothing authored
+    mesh_.vert_coupled_node_name.set(2, "J3"); // nothing authored
     twoD::MeshData::TriCouplingRow a, b;
     a.tri = 1;
     a.node_name = "J1";
@@ -522,7 +522,7 @@ TEST_F(GeoPackageMesh2DTest, RepeatedTriangleRowsAndAuthoredFlagsRoundTrip) {
 // columns read back as authored.
 TEST_F(GeoPackageMesh2DTest, OldTriangleCouplingTableMigrates) {
     makeUnitSquareMesh();
-    mesh_.vert_coupled_node_name[0] = "J1";
+    mesh_.vert_coupled_node_name.set(0, "J1");
     mesh_.vert_coupling_cd[0] = 0.7;
     auto ctx = build_ctx_out();
     {
@@ -630,7 +630,7 @@ TEST_F(GeoPackageMesh2DTest, PostInitUnscaleWrite) {
         d *= ft_to_m;
     for (auto& h : mesh_.tri_init_hgl)
         h *= ft_to_m;
-    mesh_.vert_coupled_node_name[0] = "J1";
+    mesh_.vert_coupled_node_name.set(0, "J1");
     mesh_.vert_coupling_area[0] = 2.5 * ft_to_m * ft_to_m;
     opts_.mesh_scaled_to_si = true;
     opts_.len_1d_to_2d = ft_to_m;
@@ -708,7 +708,7 @@ TEST_F(GeoPackageMesh2DTest, MeshBearingFileIntoNull2DContextWarns) {
 
 TEST_F(GeoPackageMesh2DTest, UnknownCouplingNodeRollsBackWholeWrite) {
     makeUnitSquareMesh();
-    mesh_.vert_coupled_node_name[0] = "NO_SUCH_NODE";
+    mesh_.vert_coupled_node_name.set(0, "NO_SUCH_NODE");
 
     auto ctx = build_ctx_out();
     {
@@ -729,7 +729,7 @@ TEST_F(GeoPackageMesh2DTest, UnknownCouplingNodeRollsBackWholeWrite) {
 
 TEST_F(GeoPackageMesh2DTest, NodeDeleteCascadesCoupling) {
     makeUnitSquareMesh();
-    mesh_.vert_coupled_node_name[0] = "J1";
+    mesh_.vert_coupled_node_name.set(0, "J1");
 
     auto ctx = build_ctx_out();
     {

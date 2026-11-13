@@ -34,6 +34,7 @@
 #ifndef OPENSWMM_ENGINE_2D_MESH_DATA_HPP
 #define OPENSWMM_ENGINE_2D_MESH_DATA_HPP
 
+#include "InternedStrings.hpp"
 #include <bit>
 #include <vector>
 #include <string>
@@ -74,7 +75,7 @@ struct MeshData {
     std::vector<double> vx;        ///< Vertex X coordinate
     std::vector<double> vy;        ///< Vertex Y coordinate
     std::vector<double> vz;        ///< Vertex Z (ground elevation)
-    std::vector<std::string> vtag; ///< Optional vertex tag
+    InternedStrings vtag;          ///< Optional vertex tag
 
     // -----------------------------------------------------------------------
     // Cell static properties — indexed by cell index [0, n_triangles())
@@ -142,7 +143,7 @@ struct MeshData {
     std::vector<double> tri_init_hgl;
     std::vector<double> tri_init_u;     ///< [2D_INITIAL_VELOCITY] u (m/s, default 0)
     std::vector<double> tri_init_v;     ///< [2D_INITIAL_VELOCITY] v (m/s, default 0)
-    std::vector<std::string> tri_tag;   ///< Optional triangle tag
+    InternedStrings tri_tag;            ///< Optional triangle tag
 
     // -----------------------------------------------------------------------
     // Vertex reconstruction stencil (pseudo-Laplacian weights)
@@ -173,8 +174,8 @@ struct MeshData {
     std::vector<double> tri_coupling_area; ///< Effective exchange area
 
     // Deferred resolution names (populated during parsing, cleared after resolve)
-    std::vector<std::string> vert_coupled_node_name;
-    std::vector<std::string> tri_coupled_node_name;
+    InternedStrings vert_coupled_node_name;
+    InternedStrings tri_coupled_node_name;
 
     /// One authored node→cell coupling row (repeated-row form of
     /// [2D_TRIANGLE_NODE_MAP]). A triangle may carry several rows — one per

@@ -149,7 +149,7 @@ TEST(AquiferReceiving, AcceptedDeliveryClosesEachSoilAndClosureWithoutRejection)
 TEST(AquiferOwnership, MixedDefaultsSkipCoveredCellsAndExplicitConflictIsAtomic) {
     MeshData mesh;
     mesh.resize_triangles(3);
-    mesh.tri_tag = {"soil", "soil", "paved"};
+    mesh.tri_tag.assign({"soil", "soil", "paved"});
     Infil2D bank;
     Infil2DRow row;
     row.has_method = true;

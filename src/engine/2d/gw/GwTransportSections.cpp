@@ -909,7 +909,9 @@ std::vector<std::string> resolveGwTransport(SimulationContext& ctx, const MeshDa
             errs.push_back(std::string(sec) + " CELL " + std::to_string(cell + 1) +
                            " is off the mesh (" + std::to_string(n_cells) + " cells).");
     };
-    const std::unordered_set<std::string> knownTags(mesh.tri_tag.begin(), mesh.tri_tag.end());
+    std::unordered_set<std::string> knownTags;
+    for (std::size_t c = 0; c < mesh.tri_tag.size(); ++c)
+        knownTags.insert(mesh.tri_tag[c]);
     auto checkTag = [&](const std::string& tag, const char* sec) {
         if (tag.empty() || knownTags.count(tag))
             return;

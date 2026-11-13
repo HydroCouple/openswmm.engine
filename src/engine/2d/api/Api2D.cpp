@@ -429,9 +429,9 @@ int swmm_2d_set_vertex_tag(SWMM_Engine engine, int idx, const char* tag) {
 
     auto& m = router2d.mesh();
     if (!tag || tag[0] == '\0')
-        m.vtag[idx].clear();
+        m.vtag.set(idx, {});
     else
-        m.vtag[idx] = tag;
+        m.vtag.set(idx, tag);
     return SWMM_OK;
 }
 
@@ -442,9 +442,9 @@ int swmm_2d_set_triangle_tag(SWMM_Engine engine, int idx, const char* tag) {
 
     auto& m = router2d.mesh();
     if (!tag || tag[0] == '\0')
-        m.tri_tag[idx].clear();
+        m.tri_tag.set(idx, {});
     else
-        m.tri_tag[idx] = tag;
+        m.tri_tag.set(idx, tag);
     return SWMM_OK;
 }
 
@@ -575,14 +575,14 @@ int swmm_2d_set_vertex_coupled_node(SWMM_Engine engine, int vertex_idx, const ch
     auto& m = router2d.mesh();
     if (!node_name || node_name[0] == '\0') {
         // A cleared coupling forgets its row: defaults, nothing authored.
-        m.vert_coupled_node_name[vertex_idx].clear();
+        m.vert_coupled_node_name.set(vertex_idx, {});
         m.vert_coupled_node[vertex_idx] = -1;
         m.vert_coupling_cd[vertex_idx] = 0.65;
         m.vert_coupling_cd_set[vertex_idx] = 0;
         m.vert_coupling_area[vertex_idx] = 1.0;
         m.vert_coupling_area_set[vertex_idx] = 0;
     } else {
-        m.vert_coupled_node_name[vertex_idx] = node_name;
+        m.vert_coupled_node_name.set(vertex_idx, node_name);
         // Resolve against the live model now; -1 (unknown) is tolerated —
         // the .inp writer emits the stored name regardless, so the coupling
         // survives a save even before the node exists / is re-resolved.
@@ -621,7 +621,7 @@ int swmm_2d_add_triangle_coupling(SWMM_Engine engine, int tri_idx, const char* n
     m.tri_couplings.push_back(std::move(row));
 
     // Keep the legacy per-triangle mirror coherent (last row wins).
-    m.tri_coupled_node_name[tri_idx] = node_name;
+    m.tri_coupled_node_name.set(tri_idx, node_name);
     m.tri_coupled_node[tri_idx] = m.tri_couplings.back().node;
     m.tri_coupling_cd[tri_idx] = m.tri_couplings.back().cd;
     m.tri_coupling_area[tri_idx] = m.tri_couplings.back().area;
@@ -635,7 +635,7 @@ int swmm_2d_clear_triangle_couplings(SWMM_Engine engine) {
     auto& m = router2d.mesh();
     m.tri_couplings.clear();
     for (int t = 0; t < m.n_triangles(); ++t) {
-        m.tri_coupled_node_name[t].clear();
+        m.tri_coupled_node_name.set(t, {});
         m.tri_coupled_node[t] = -1;
         m.tri_coupling_cd[t] = 0.65;
         m.tri_coupling_area[t] = 1.0;

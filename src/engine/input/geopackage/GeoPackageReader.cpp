@@ -2992,7 +2992,7 @@ static void read_mesh_2d(sqlite3* db, SimulationContext& ctx, const std::string&
             mesh.vx[i] = column_double(stmt.get(), 1);
             mesh.vy[i] = column_double(stmt.get(), 2);
             mesh.vz[i] = column_double(stmt.get(), 3);
-            mesh.vtag[i] = column_text(stmt.get(), 4);
+            mesh.vtag.set(i, column_text(stmt.get(), 4));
         }
     }
 
@@ -3029,7 +3029,7 @@ static void read_mesh_2d(sqlite3* db, SimulationContext& ctx, const std::string&
             mesh.set_triangle(t, column_int(stmt.get(), 1), column_int(stmt.get(), 2),
                               column_int(stmt.get(), 3));
             mesh.mannings_n[t] = column_double(stmt.get(), 4);
-            mesh.tri_tag[t] = column_text(stmt.get(), 5);
+            mesh.tri_tag.set(t, column_text(stmt.get(), 5));
             if (has_init_depth)
                 mesh.tri_init_depth[t] = column_double(stmt.get(), 6);
             if (has_init_hgl && !column_is_null(stmt.get(), 7))
@@ -3065,7 +3065,7 @@ static void read_mesh_2d(sqlite3* db, SimulationContext& ctx, const std::string&
                     mesh.set_quad(t, column_int(stmt.get(), 1), column_int(stmt.get(), 2),
                                   column_int(stmt.get(), 3), column_int(stmt.get(), 4));
                     mesh.mannings_n[t] = column_double(stmt.get(), 5);
-                    mesh.tri_tag[t] = column_text(stmt.get(), 6);
+                    mesh.tri_tag.set(t, column_text(stmt.get(), 6));
                     mesh.tri_init_depth[t] = column_double(stmt.get(), 7);
                     if (has_init_hgl && !column_is_null(stmt.get(), 8))
                         mesh.tri_init_hgl[t] = column_double(stmt.get(), 8);
@@ -3094,7 +3094,7 @@ static void read_mesh_2d(sqlite3* db, SimulationContext& ctx, const std::string&
             const int i = column_int(stmt.get(), 0);
             if (i < 0 || i >= mesh.n_vertices())
                 continue;
-            mesh.vert_coupled_node_name[i] = column_text(stmt.get(), 1);
+            mesh.vert_coupled_node_name.set(i, column_text(stmt.get(), 1));
             mesh.vert_coupling_cd[i] = column_double(stmt.get(), 2);
             mesh.vert_coupling_area[i] = column_double(stmt.get(), 3);
             mesh.vert_coupling_cd_set[i] = authored(stmt.get(), 4) ? 1 : 0;
@@ -3122,7 +3122,7 @@ static void read_mesh_2d(sqlite3* db, SimulationContext& ctx, const std::string&
             row.area = column_double(stmt.get(), 3);
             row.cd_set = authored(stmt.get(), 4);
             row.area_set = authored(stmt.get(), 5);
-            mesh.tri_coupled_node_name[t] = row.node_name;
+            mesh.tri_coupled_node_name.set(t, row.node_name);
             mesh.tri_coupling_cd[t] = row.cd;
             mesh.tri_coupling_area[t] = row.area;
             mesh.tri_couplings.push_back(std::move(row));

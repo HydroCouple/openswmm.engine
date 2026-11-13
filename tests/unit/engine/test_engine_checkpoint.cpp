@@ -1585,7 +1585,7 @@ struct ThermalSurfaceSession {
         mesh.mannings_n = {.03, .03};
         mesh.tri_init_depth =
             dry_surface ? std::vector<double>{0, 0} : std::vector<double>{.04, .03};
-        mesh.tri_tag = {channel_tag, "floodplain"};
+        mesh.tri_tag.assign({channel_tag, "floodplain"});
         if (mesh_richards_lid) {
             mesh.tri_coupled_node = {ctx.node_names.find("LID"), -1};
             mesh.tri_coupling_cd = {0, 0};

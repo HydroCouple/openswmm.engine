@@ -1448,13 +1448,17 @@ std::string ExplicitInertialSolver::rk2CheckpointModel(const Rk2CheckpointBindin
     auto o = *opts_;
     auto gw = *gw_;
     gw.checkpoint(a, true, binding && binding->climate ? &binding->climate->temperature : nullptr);
-    a(m.vx, m.vy, m.vz, m.vtag, m.cell_nv, m.cell_v, m.cell_nbr, m.tri_area, m.tri_cx, m.tri_cy,
+    // Tags and coupled node names are interned in memory; the archive keeps one string each.
+    auto vtag = m.vtag.dense(), tri_tag = m.tri_tag.dense(),
+         vert_node_name = m.vert_coupled_node_name.dense(),
+         tri_node_name = m.tri_coupled_node_name.dense();
+    a(m.vx, m.vy, m.vz, vtag, m.cell_nv, m.cell_v, m.cell_nbr, m.tri_area, m.tri_cx, m.tri_cy,
       m.tri_cz, m.edge_length, m.edge_nx, m.edge_ny, m.edge_mx, m.edge_my, m.edge_mz, m.edge_dist_c,
       m.quad_vfr_z, m.quad_vfr_a, m.edge_conveyance, m.mannings_n, m.tri_init_depth, m.tri_init_u,
-      m.tri_init_v, m.tri_tag, m.vert_stencil_ptr, m.vert_stencil_idx, m.vert_stencil_wt,
+      m.tri_init_v, tri_tag, m.vert_stencil_ptr, m.vert_stencil_idx, m.vert_stencil_wt,
       m.vert_coupled_node, m.tri_coupled_node, m.vert_coupling_cd, m.vert_coupling_area,
-      m.vert_coupling_area_set, m.tri_coupling_cd, m.tri_coupling_area, m.vert_coupled_node_name,
-      m.tri_coupled_node_name);
+      m.vert_coupling_area_set, m.tri_coupling_cd, m.tri_coupling_area, vert_node_name,
+      tri_node_name);
     a(o.momentum, o.front_rebuild, o.reconstruction_order, o.max_timestep, o.dry_depth,
       o.limiter_epsilon, o.flux_dh_eps, o.coupling_sync, o.coupling_cd, o.report_2d,
       o.output_compression, o.report_2d_vars, o.report_2d_step, o.infiltration, o.infil_step,

@@ -266,11 +266,11 @@ TEST_F(InpWriterAtomic, MainShortWriteKeepsOriginalAndRetrySucceeds) {
 }
 TEST_F(InpWriterAtomic, SidecarShortWriteKeepsBothFilesAndRetrySucceeds) {
     attachMesh();
-    mesh.vtag[0] = std::string(131072, 'x');
+    mesh.vtag.set(0, std::string(131072, 'x'));
     EXPECT_TRUE(limited(32768, [&] { return write() != 0; }));
     EXPECT_EQ(read(model), "original model\n");
     EXPECT_EQ(read(meshFile), "original mesh\n");
-    mesh.vtag[0] = "corridor";
+    mesh.vtag.set(0, "corridor");
     ASSERT_EQ(write(), 0);
     EXPECT_NE(read(meshFile).find("corridor"), std::string::npos);
 }
