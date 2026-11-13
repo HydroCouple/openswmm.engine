@@ -255,9 +255,11 @@ void ExplicitInertialSolver::initialize(MeshData& mesh, SurfaceStateData& state,
 
     // Only the per-edge arrays this run's momentum law and face mode read
     // (fireFaces* build the VFR pair on demand if the face mode is switched).
+    // n_face is the diffusive-wave law's, n2_face the local-inertial law's;
+    // FULL_SWE applies friction per cell and reads neither.
     edges_.build(mesh, {opts.face_reconstruction == FaceDepth2D::VFR_FACE,
                         opts.momentum == Momentum2D::DIFFUSIVE_WAVE,
-                        opts.momentum != Momentum2D::DIFFUSIVE_WAVE});
+                        opts.momentum == Momentum2D::LOCAL_INERTIAL});
     const auto ne = static_cast<std::size_t>(edges_.ne);
     q_.assign(ne, 0.0);
     face_accum_stride_ = opts.momentum == Momentum2D::FULL_SWE ? 6 : 2;
